@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CoderMessage",
+  "description": "RenCrow CoderLoop における Coder の出力メッセージ型",
+  "oneOf": [
+    {
+      "title": "read_request",
+      "description": "リポジトリ読み取り依頼。Coder が Worker に調査を依頼する。",
+      "type": "object",
+      "required": ["type", "actions"],
+      "properties": {
+        "type": { "const": "read_request" },
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/WorkerAction" },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "plan",
+      "description": "作業計画。read_request の観測結果を踏まえて立てる。",
+      "type": "object",
+      "required": ["type", "task_summary", "steps"],
+      "properties": {
+        "type": { "const": "plan" },
+        "task_summary": { "type": "string" },
+        "steps": { "type": "array", "items": { "type": "string" } },
+        "risk": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "patch_proposal",
+      "description": "パッチ案。ParsePatch() が解析できる JSON 配列または Markdown コードブロック。",
+      "type": "object",
+      "required": ["type", "intent", "patch"],
+      "properties": {
+        "type": { "const": "patch_proposal" },
+        "intent": { "type": "string" },
+        "patch": { "type": "string", "description": "JSON array or Markdown fenced blocks" },
+        "tests": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "test_request",
+      "description": "テスト実行依頼。パッチ適用後に Worker へ検証を依頼する。",
+      "type": "object",
+      "required": ["type", "actions"],
+      "properties": {
+        "type": { "const": "test_request" },
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/WorkerAction" },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "revision_request",
+      "description": "修正依頼。テスト失敗時に原因調査と再試行を行う。",
+      "type": "object",
+      "required": ["type", "reason"],
+      "properties": {
+        "type": { "const": "revision_request" },
+        "reason": { "type": "string" },
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/WorkerAction" }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "final_report",
+      "description": "完了報告。ループを終了し Mio へ結果を返す。",
+      "type": "object",
+      "required": ["type", "summary"],
+      "properties": {
+        "type": { "const": "final_report" },
+        "summary": { "type": "string" },
+        "changed_files": { "type": "array", "items": { "type": "string" } },
+        "tests_run": { "type": "array", "items": { "type": "string" } },
+        "remaining_risks": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "definitions": {
+    "WorkerAction": {
+      "type": "object",
+      "required": ["action", "target"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["shell_command"],
+          "description": "観測系コマンド（git grep / git show / go test 等）"
+        },
+        "target": {
+          "type": "string",
+          "description": "実行するコマンド文字列"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

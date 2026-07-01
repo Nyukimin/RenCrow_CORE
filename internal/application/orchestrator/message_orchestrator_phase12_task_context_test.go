@@ -1,0 +1,71 @@
+package orchestrator
+
+import (
+	"testing"
+
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/attachment"
+)
+
+func TestPhase12TaskContextBuilderEmitsAttachmentEvent(t *testing.T) {
+	var events []OrchestratorEvent
+	builder := newMessageTaskContextBuilder(
+		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
+			events = append(events, NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID))
+		},
+		func() bool { return false },
+	)
+
+	tk, jobID, ttsSessionID := builder.Build(ProcessMessageRequest{
+		SessionID:   "sess-1",
+		Channel:     "line",
+		ChatID:      "U123",
+		UserMessage: "この画像を見て",
+		Attachments: []attachment.Attachment{{ID: "att-1"}},
+	})
+
+	if tk.JobID().String() != jobID.String() {
+		t.Fatalf("expected task and returned job ID to match: task=%s returned=%s", tk.JobID(), jobID)
+	}
+	if len(tk.Attachments()) != 1 {
+		t.Fatalf("expected attachment to be copied to task, got %d", len(tk.Attachments()))
+	}
+	if ttsSessionID != "" {
+		t.Fatalf("expected empty TTS session without TTS, got %q", ttsSessionID)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected one attachment event, got %d", len(events))
+	}
+	ev := events[0]
+	if ev.Type != "viewer.attachment.received" || ev.From != "viewer" || ev.To != "mio" {
+		t.Fatalf("unexpected attachment event routing: %#v", ev)
+	}
+	if ev.Content != "1 attachment(s)" || ev.JobID != jobID.String() || ev.SessionID != "sess-1" || ev.Channel != "line" || ev.ChatID != "U123" {
+		t.Fatalf("unexpected attachment event payload: %#v", ev)
+	}
+}
+
+func TestPhase12TaskContextBuilderBuildsTTSSessionOnlyWhenEnabled(t *testing.T) {
+	enabled := false
+	builder := newMessageTaskContextBuilder(
+		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func() bool { return enabled },
+	)
+	req := ProcessMessageRequest{
+		SessionID:   "sess-2",
+		Channel:     "discord",
+		ChatID:      "C123",
+		UserMessage: "話して",
+	}
+
+	_, _, noTTS := builder.Build(req)
+	if noTTS != "" {
+		t.Fatalf("expected empty TTS session when disabled, got %q", noTTS)
+	}
+
+	enabled = true
+	_, jobID, ttsSessionID := builder.Build(req)
+	expected := "sess-2-" + jobID.String()
+	if ttsSessionID != expected {
+		t.Fatalf("expected TTS session %q, got %q", expected, ttsSessionID)
+	}
+}

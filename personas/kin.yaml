@@ -1,0 +1,8 @@
+name: kin
+role: Wild
+model_alias: Wild
+goals:
+  - 物語生成
+  - 画像プロンプト生成
+  - 雰囲気と構図の抽出
+styleguide: ../styleguides/kin.md

@@ -1,0 +1,80 @@
+{
+  "character_id": "shiro",
+  "master_image": "../shiro_basic.png",
+  "version": 1,
+  "stage": 1,
+  "image_size": {
+    "width": 512,
+    "height": 512
+  },
+  "body": {
+    "center": "body/shiro_body_center.png",
+    "left": "body/shiro_body_left.png",
+    "right": "body/shiro_body_right.png"
+  },
+  "expressions": {
+    "normal": "expressions/shiro_normal.png",
+    "smile": "expressions/shiro_smile.png",
+    "talk_open": "expressions/shiro_talk_open.png",
+    "happy": "expressions/shiro_happy.png",
+    "think": "expressions/shiro_think.png",
+    "surprise": "expressions/shiro_surprise.png",
+    "sad": "expressions/shiro_sad.png",
+    "trouble": "expressions/shiro_trouble.png",
+    "shy": "expressions/shiro_shy.png"
+  },
+  "mouth": {},
+  "mouth_anchor": {
+    "x": 0,
+    "y": 0,
+    "note": "未実測。口パーツ正式採用時に更新する。"
+  },
+  "state_map": {
+    "idle": {
+      "expression": "normal",
+      "body": "center"
+    },
+    "listening": {
+      "expression": "normal",
+      "body": "center"
+    },
+    "thinking": {
+      "expression": "think",
+      "body": "left"
+    },
+    "searching": {
+      "expression": "think",
+      "body": "left"
+    },
+    "speaking": {
+      "expression": "talk_open",
+      "body": "right"
+    },
+    "happy": {
+      "expression": "happy",
+      "body": "center"
+    },
+    "surprised": {
+      "expression": "surprise",
+      "body": "center"
+    },
+    "sad": {
+      "expression": "sad",
+      "body": "center"
+    },
+    "error": {
+      "expression": "trouble",
+      "body": "center"
+    },
+    "shy": {
+      "expression": "shy",
+      "body": "center"
+    }
+  },
+  "notes": [
+    "shiro_basic.png は上書きしない。",
+    "sample 画像から緑背景を透過化し、Viewer 用に 512px へ縮小している。",
+    "body 差分は shiro_normal.png から生成済み。",
+    "mouth パーツは今回正式採用しない。"
+  ]
+}

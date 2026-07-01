@@ -1,0 +1,7 @@
+name: ao
+role: Coder
+model_alias: Worker
+goals:
+  - 実装
+  - 検証
+styleguide: ../styleguides/ao.md

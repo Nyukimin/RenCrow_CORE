@@ -1,0 +1,88 @@
+package tools
+
+// {{TOOL_ID}} -- {{DESCRIPTION}}
+//
+// TOOL_CONTRACT.md 準拠:
+//   - JSON 入出力（stdout=結果, stderr=ログ）
+//   - 入力バリデーション必須
+//   - dry-run (mode=plan) 対応（書き込み系）
+//   - fields/limit パラメータ対応（取得系）
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+// {{TOOL_ID}}Request は入力パラメータ
+type {{TOOL_ID}}Request struct {
+	// Mode は実行モード: "execute" | "plan" (dry-run)
+	Mode   string `json:"mode"`
+	// Fields は返却フィールド制限（取得系のみ）
+	Fields []string `json:"fields,omitempty"`
+	// Limit は最大件数（取得系のみ、デフォルト100）
+	Limit  int    `json:"limit,omitempty"`
+}
+
+// {{TOOL_ID}}Response は出力
+type {{TOOL_ID}}Response struct {
+	Result      interface{} `json:"result,omitempty"`
+	GeneratedAt string      `json:"generated_at"`
+}
+
+// {{TOOL_ID}}Error はエラー出力
+type {{TOOL_ID}}Error struct {
+	Error struct {
+		Code    string      `json:"code"`
+		Message string      `json:"message"`
+		Details interface{} `json:"details,omitempty"`
+	} `json:"error"`
+}
+
+// Execute{{TOOL_ID}} はツールのエントリーポイント
+func Execute{{TOOL_ID}}(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+	var req {{TOOL_ID}}Request
+	if err := json.Unmarshal(input, &req); err != nil {
+		return nil, fmt.Errorf("invalid input: %w", err)
+	}
+
+	// 入力バリデーション
+	if err := validate{{TOOL_ID}}Input(&req); err != nil {
+		return marshalError("VALIDATION_FAILED", err.Error(), nil)
+	}
+
+	// dry-run チェック
+	if req.Mode == "plan" {
+		return execute{{TOOL_ID}}DryRun(ctx, &req)
+	}
+
+	// 本実行
+	return execute{{TOOL_ID}}(ctx, &req)
+}
+
+func validate{{TOOL_ID}}Input(req *{{TOOL_ID}}Request) error {
+	// TODO: バリデーション実装
+	// - パストラバーサル検出
+	// - 制御文字検出
+	// - ID汚染検出（?, #, /, \ を含むIDは拒否）
+	return nil
+}
+
+func execute{{TOOL_ID}}DryRun(ctx context.Context, req *{{TOOL_ID}}Request) (json.RawMessage, error) {
+	// TODO: dry-run 実装（差分・対象件数を返す）
+	return nil, fmt.Errorf("not implemented")
+}
+
+func execute{{TOOL_ID}}(ctx context.Context, req *{{TOOL_ID}}Request) (json.RawMessage, error) {
+	// TODO: 本実行
+	return nil, fmt.Errorf("not implemented")
+}
+
+func marshalError(code, message string, details interface{}) (json.RawMessage, error) {
+	e := {{TOOL_ID}}Error{}
+	e.Error.Code = code
+	e.Error.Message = message
+	e.Error.Details = details
+	b, _ := json.Marshal(e)
+	return b, nil
+}

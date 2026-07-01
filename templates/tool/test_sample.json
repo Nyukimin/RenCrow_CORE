@@ -1,0 +1,42 @@
+{
+  "tests": [
+    {
+      "name": "basic_usage",
+      "description": "Basic functionality test",
+      "input": {
+        "mode": "execute"
+      },
+      "expected_output": {
+        "result": "..."
+      },
+      "expected_error": null
+    },
+    {
+      "name": "dry_run",
+      "description": "Dry-run returns plan without side effects",
+      "input": {
+        "mode": "plan"
+      },
+      "expected_output": {
+        "mode": "plan",
+        "actions": [],
+        "summary": {
+          "total_affected": 0
+        }
+      },
+      "expected_error": null
+    },
+    {
+      "name": "validation_error",
+      "description": "Invalid input returns VALIDATION_FAILED",
+      "input": {
+        "id": "../../../etc/passwd"
+      },
+      "expected_output": null,
+      "expected_error": {
+        "code": "VALIDATION_FAILED",
+        "message": "path traversal detected"
+      }
+    }
+  ]
+}

@@ -1,0 +1,673 @@
+{
+  "source_dir": "internal/adapter/viewer/assets/images/mio/parts/new_parts",
+  "canvas_size": {
+    "x": 0,
+    "y": 0,
+    "w": 1254,
+    "h": 1254
+  },
+  "body": "internal/adapter/viewer/assets/images/mio/parts/generated/base/mio_body_base.png",
+  "eyebrows": [
+    {
+      "id": "eyebrow_01",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_01.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_01.png",
+      "bounds": {
+        "x": 202,
+        "y": 98,
+        "w": 347,
+        "h": 39
+      },
+      "sheet_cell": {
+        "row": 1,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyebrow_02",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_02.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_02.png",
+      "bounds": {
+        "x": 704,
+        "y": 98,
+        "w": 347,
+        "h": 38
+      },
+      "sheet_cell": {
+        "row": 1,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyebrow_03",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_03.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_03.png",
+      "bounds": {
+        "x": 208,
+        "y": 256,
+        "w": 320,
+        "h": 57
+      },
+      "sheet_cell": {
+        "row": 2,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyebrow_04",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_04.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_04.png",
+      "bounds": {
+        "x": 724,
+        "y": 256,
+        "w": 319,
+        "h": 55
+      },
+      "sheet_cell": {
+        "row": 2,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyebrow_05",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_05.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_05.png",
+      "bounds": {
+        "x": 207,
+        "y": 423,
+        "w": 306,
+        "h": 68
+      },
+      "sheet_cell": {
+        "row": 3,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyebrow_06",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_06.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_06.png",
+      "bounds": {
+        "x": 738,
+        "y": 423,
+        "w": 308,
+        "h": 69
+      },
+      "sheet_cell": {
+        "row": 3,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyebrow_07",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_07.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_07.png",
+      "bounds": {
+        "x": 220,
+        "y": 583,
+        "w": 300,
+        "h": 83
+      },
+      "sheet_cell": {
+        "row": 4,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyebrow_08",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_08.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_08.png",
+      "bounds": {
+        "x": 733,
+        "y": 586,
+        "w": 313,
+        "h": 71
+      },
+      "sheet_cell": {
+        "row": 4,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyebrow_09",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_09.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_09.png",
+      "bounds": {
+        "x": 218,
+        "y": 775,
+        "w": 313,
+        "h": 64
+      },
+      "sheet_cell": {
+        "row": 5,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyebrow_10",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_10.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_10.png",
+      "bounds": {
+        "x": 717,
+        "y": 774,
+        "w": 312,
+        "h": 65
+      },
+      "sheet_cell": {
+        "row": 5,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyebrow_11",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_11.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_11.png",
+      "bounds": {
+        "x": 206,
+        "y": 924,
+        "w": 282,
+        "h": 80
+      },
+      "sheet_cell": {
+        "row": 6,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyebrow_12",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_12.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_12.png",
+      "bounds": {
+        "x": 748,
+        "y": 923,
+        "w": 280,
+        "h": 82
+      },
+      "sheet_cell": {
+        "row": 6,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyebrow_13",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_13.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_13.png",
+      "bounds": {
+        "x": 229,
+        "y": 1094,
+        "w": 288,
+        "h": 53
+      },
+      "sheet_cell": {
+        "row": 7,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyebrow_14",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/full/eyebrow_14.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyebrows/crop/eyebrow_14.png",
+      "bounds": {
+        "x": 733,
+        "y": 1094,
+        "w": 290,
+        "h": 53
+      },
+      "sheet_cell": {
+        "row": 7,
+        "col": 2
+      }
+    }
+  ],
+  "eyes": [
+    {
+      "id": "eyes_01",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_01.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_01.png",
+      "bounds": {
+        "x": 239,
+        "y": 39,
+        "w": 227,
+        "h": 127
+      },
+      "sheet_cell": {
+        "row": 1,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyes_02",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_02.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_02.png",
+      "bounds": {
+        "x": 786,
+        "y": 39,
+        "w": 225,
+        "h": 127
+      },
+      "sheet_cell": {
+        "row": 1,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyes_03",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_03.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_03.png",
+      "bounds": {
+        "x": 239,
+        "y": 238,
+        "w": 227,
+        "h": 106
+      },
+      "sheet_cell": {
+        "row": 2,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyes_04",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_04.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_04.png",
+      "bounds": {
+        "x": 783,
+        "y": 238,
+        "w": 228,
+        "h": 106
+      },
+      "sheet_cell": {
+        "row": 2,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyes_05",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_05.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_05.png",
+      "bounds": {
+        "x": 241,
+        "y": 433,
+        "w": 234,
+        "h": 90
+      },
+      "sheet_cell": {
+        "row": 3,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyes_06",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_06.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_06.png",
+      "bounds": {
+        "x": 773,
+        "y": 433,
+        "w": 236,
+        "h": 89
+      },
+      "sheet_cell": {
+        "row": 3,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyes_07",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_07.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_07.png",
+      "bounds": {
+        "x": 241,
+        "y": 591,
+        "w": 218,
+        "h": 108
+      },
+      "sheet_cell": {
+        "row": 4,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyes_08",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_08.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_08.png",
+      "bounds": {
+        "x": 791,
+        "y": 590,
+        "w": 217,
+        "h": 109
+      },
+      "sheet_cell": {
+        "row": 4,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyes_09",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_09.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_09.png",
+      "bounds": {
+        "x": 244,
+        "y": 746,
+        "w": 199,
+        "h": 139
+      },
+      "sheet_cell": {
+        "row": 5,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyes_10",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_10.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_10.png",
+      "bounds": {
+        "x": 809,
+        "y": 745,
+        "w": 198,
+        "h": 139
+      },
+      "sheet_cell": {
+        "row": 5,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyes_11",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_11.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_11.png",
+      "bounds": {
+        "x": 248,
+        "y": 952,
+        "w": 214,
+        "h": 62
+      },
+      "sheet_cell": {
+        "row": 6,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyes_12",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_12.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_12.png",
+      "bounds": {
+        "x": 789,
+        "y": 952,
+        "w": 213,
+        "h": 61
+      },
+      "sheet_cell": {
+        "row": 6,
+        "col": 2
+      }
+    },
+    {
+      "id": "eyes_13",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_13.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_13.png",
+      "bounds": {
+        "x": 230,
+        "y": 1080,
+        "w": 193,
+        "h": 118
+      },
+      "sheet_cell": {
+        "row": 7,
+        "col": 1
+      }
+    },
+    {
+      "id": "eyes_14",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/full/eyes_14.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/eyes/crop/eyes_14.png",
+      "bounds": {
+        "x": 825,
+        "y": 1110,
+        "w": 197,
+        "h": 60
+      },
+      "sheet_cell": {
+        "row": 7,
+        "col": 2
+      }
+    }
+  ],
+  "mouth": [
+    {
+      "id": "mouth_01",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/full/mouth_01.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/crop/mouth_01.png",
+      "bounds": {
+        "x": 178,
+        "y": 290,
+        "w": 134,
+        "h": 27
+      },
+      "sheet_cell": {
+        "row": 1,
+        "col": 1
+      }
+    },
+    {
+      "id": "mouth_02",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/full/mouth_02.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/crop/mouth_02.png",
+      "bounds": {
+        "x": 540,
+        "y": 288,
+        "w": 167,
+        "h": 34
+      },
+      "sheet_cell": {
+        "row": 1,
+        "col": 2
+      }
+    },
+    {
+      "id": "mouth_03",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/full/mouth_03.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/crop/mouth_03.png",
+      "bounds": {
+        "x": 925,
+        "y": 286,
+        "w": 144,
+        "h": 56
+      },
+      "sheet_cell": {
+        "row": 1,
+        "col": 3
+      }
+    },
+    {
+      "id": "mouth_04",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/full/mouth_04.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/crop/mouth_04.png",
+      "bounds": {
+        "x": 197,
+        "y": 578,
+        "w": 89,
+        "h": 55
+      },
+      "sheet_cell": {
+        "row": 2,
+        "col": 1
+      }
+    },
+    {
+      "id": "mouth_05",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/full/mouth_05.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/crop/mouth_05.png",
+      "bounds": {
+        "x": 576,
+        "y": 563,
+        "w": 86,
+        "h": 81
+      },
+      "sheet_cell": {
+        "row": 2,
+        "col": 2
+      }
+    },
+    {
+      "id": "mouth_06",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/full/mouth_06.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/crop/mouth_06.png",
+      "bounds": {
+        "x": 935,
+        "y": 546,
+        "w": 122,
+        "h": 117
+      },
+      "sheet_cell": {
+        "row": 2,
+        "col": 3
+      }
+    },
+    {
+      "id": "mouth_07",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/full/mouth_07.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/crop/mouth_07.png",
+      "bounds": {
+        "x": 210,
+        "y": 856,
+        "w": 67,
+        "h": 73
+      },
+      "sheet_cell": {
+        "row": 3,
+        "col": 1
+      }
+    },
+    {
+      "id": "mouth_08",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/full/mouth_08.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/crop/mouth_08.png",
+      "bounds": {
+        "x": 581,
+        "y": 887,
+        "w": 79,
+        "h": 21
+      },
+      "sheet_cell": {
+        "row": 3,
+        "col": 2
+      }
+    },
+    {
+      "id": "mouth_09",
+      "full_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/full/mouth_09.png",
+      "crop_path": "internal/adapter/viewer/assets/images/mio/parts/generated/mouth/crop/mouth_09.png",
+      "bounds": {
+        "x": 943,
+        "y": 886,
+        "w": 103,
+        "h": 24
+      },
+      "sheet_cell": {
+        "row": 3,
+        "col": 3
+      }
+    }
+  ],
+  "sample_anchors": {
+    "eyebrow_01": {
+      "x": 460,
+      "y": 355,
+      "method": "estimated_from:eyes_01",
+      "scale": 0.62,
+      "note": "Sampleでは眉が前髪に隠れるため目位置から推定"
+    },
+    "eyebrow_02": {
+      "x": 715,
+      "y": 319,
+      "method": "estimated_from:eyes_02",
+      "scale": 0.62,
+      "note": "Sampleでは眉が前髪に隠れるため目位置から推定"
+    },
+    "eyes_01": {
+      "x": 470,
+      "y": 427,
+      "method": "template_match:Mio_sample+manual_sample_scale",
+      "score": 32807.8071364047,
+      "scale": 0.62
+    },
+    "eyes_02": {
+      "x": 705,
+      "y": 391,
+      "method": "template_match:Mio_sample+manual_sample_scale",
+      "score": 35972.26863785696,
+      "scale": 0.62
+    },
+    "mouth_01": {
+      "x": 612,
+      "y": 575,
+      "method": "template_match:Mio_sample+manual_sample_scale",
+      "score": 5827.335958005249,
+      "scale": 0.58
+    }
+  },
+  "expressions": {
+    "happy": [
+      "eyebrow_13",
+      "eyebrow_14",
+      "eyes_11",
+      "eyes_12",
+      "mouth_03"
+    ],
+    "normal": [
+      "eyebrow_01",
+      "eyebrow_02",
+      "eyes_01",
+      "eyes_02",
+      "mouth_01"
+    ],
+    "sad": [
+      "eyebrow_09",
+      "eyebrow_10",
+      "eyes_05",
+      "eyes_06",
+      "mouth_09"
+    ],
+    "smile": [
+      "eyebrow_13",
+      "eyebrow_14",
+      "eyes_01",
+      "eyes_02",
+      "mouth_02"
+    ],
+    "surprise": [
+      "eyebrow_01",
+      "eyebrow_02",
+      "eyes_09",
+      "eyes_10",
+      "mouth_06"
+    ],
+    "talk_open": [
+      "eyebrow_01",
+      "eyebrow_02",
+      "eyes_01",
+      "eyes_02",
+      "mouth_06"
+    ],
+    "think": [
+      "eyebrow_05",
+      "eyebrow_06",
+      "eyes_05",
+      "eyes_06",
+      "mouth_08"
+    ],
+    "trouble": [
+      "eyebrow_11",
+      "eyebrow_12",
+      "eyes_07",
+      "eyes_08",
+      "mouth_09"
+    ],
+    "wink": [
+      "eyebrow_13",
+      "eyebrow_14",
+      "eyes_13",
+      "eyes_14",
+      "mouth_02"
+    ]
+  }
+}

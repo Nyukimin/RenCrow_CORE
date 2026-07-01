@@ -1,0 +1,22 @@
+skill:
+  id: "core.codebase-complexity-hotspot"
+  name: "Codebase Complexity Hotspot"
+  scope: "core"
+  version: "1.0.0"
+  description: "Report-only scan for complexity, repeated lookup, N+1, and render hotspots."
+  human_approval_required: true
+  enabled: true
+triggers:
+  keywords:
+    - "重いところ"
+    - "複雑なところ"
+    - "O(n"
+    - "N+1"
+    - "パフォーマンス改善"
+    - "renderが重い"
+    - "最適化候補"
+  intents:
+    - "complexity_hotspot_scan"
+    - "performance_review"
+    - "n_plus_one_review"
+    - "render_hotspot_review"

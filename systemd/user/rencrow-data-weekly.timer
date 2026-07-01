@@ -1,0 +1,11 @@
+[Unit]
+Description=RenCrow data weekly timer
+
+[Timer]
+OnCalendar=Sat 06:30
+Persistent=true
+AccuracySec=1m
+Unit=rencrow-data-weekly.service
+
+[Install]
+WantedBy=timers.target

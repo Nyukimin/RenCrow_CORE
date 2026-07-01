@@ -1,0 +1,29 @@
+server:
+  host: "0.0.0.0"
+  port: 18790
+
+ollama:
+  base_url: "http://127.0.0.1:11434"
+  model: "picoclaw-v1"
+
+session:
+  storage_dir: "./sessions"
+
+log:
+  level: "info"
+  format: "json"
+
+audio_router:
+  enabled: true
+  sse_url: "http://100.96.186.107:18790/audio-router/events"
+  connect_timeout_ms: 5000
+  download_timeout_ms: 15000
+  retry_delay_ms: 2000
+  buffer_ms: 120
+  device_map:
+    mio:
+      device_id: "{0.0.0.00000000}.{MIO-DEVICE-ID}"
+      display_name: "Audio-Out-Mio"
+    shiro:
+      device_id: "{0.0.0.00000000}.{SHIRO-DEVICE-ID}"
+      display_name: "Audio-Out-Shiro"

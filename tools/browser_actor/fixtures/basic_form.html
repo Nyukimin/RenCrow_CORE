@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Browser Actor Fixture</title>
+</head>
+<body>
+  <main>
+    <h1>Browser Actor Fixture</h1>
+    <label for="name">Name</label>
+    <input id="name" name="name" autocomplete="off">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password">
+    <p id="status">ready</p>
+    <button id="draft" type="button" onclick="localStorage.setItem('draftName', document.getElementById('name').value); document.getElementById('status').textContent = 'draft saved'; console.log('draft ready')">Draft</button>
+  </main>
+</body>
+</html>

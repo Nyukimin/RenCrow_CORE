@@ -1,0 +1,89 @@
+{
+  "macro_sources": [
+    {
+      "source_name": "csv_macro",
+      "fixture": "fixtures/macro_series.csv"
+    },
+    {
+      "source_name": "yahoo_macro_dgs10",
+      "provider": "yahoo",
+      "series_code": "DGS10",
+      "provider_symbol": "^TNX",
+      "value_scale": 0.1,
+      "first_date": "1980-01-01",
+      "unit": "percent"
+    },
+    {
+      "source_name": "yahoo_fx_usdjpy",
+      "provider": "yahoo",
+      "series_code": "USDJPY_BOJ",
+      "provider_symbol": "JPY=X",
+      "first_date": "2000-01-01",
+      "value_scale": 1.0,
+      "unit": "JPY"
+    },
+    {
+      "source_name": "yahoo_macro_vix",
+      "provider": "yahoo",
+      "series_code": "VIX",
+      "provider_symbol": "^VIX",
+      "first_date": "1990-01-01",
+      "value_scale": 1.0,
+      "unit": "index"
+    },
+    {
+      "source_name": "yahoo_macro_irx",
+      "provider": "yahoo",
+      "series_code": "IRX",
+      "provider_symbol": "^IRX",
+      "first_date": "1987-01-01",
+      "value_scale": 0.1,
+      "unit": "percent"
+    },
+    {
+      "source_name": "yahoo_macro_fvx",
+      "provider": "yahoo",
+      "series_code": "FVX",
+      "provider_symbol": "^FVX",
+      "first_date": "1987-01-01",
+      "value_scale": 0.1,
+      "unit": "percent"
+    },
+    {
+      "source_name": "yahoo_macro_tyx",
+      "provider": "yahoo",
+      "series_code": "TYX",
+      "provider_symbol": "^TYX",
+      "first_date": "1987-01-01",
+      "value_scale": 0.1,
+      "unit": "percent"
+    },
+    {
+      "source_name": "yahoo_macro_dxy",
+      "provider": "yahoo",
+      "series_code": "DXY",
+      "provider_symbol": "DX-Y.NYB",
+      "first_date": "1971-01-01",
+      "value_scale": 1.0,
+      "unit": "index"
+    },
+    {
+      "source_name": "yahoo_macro_gold_fut",
+      "provider": "yahoo",
+      "series_code": "GC",
+      "provider_symbol": "GC=F",
+      "first_date": "2000-01-01",
+      "value_scale": 1.0,
+      "unit": "usd"
+    },
+    {
+      "source_name": "yahoo_macro_oil_fut",
+      "provider": "yahoo",
+      "series_code": "CL",
+      "provider_symbol": "CL=F",
+      "first_date": "1983-01-01",
+      "value_scale": 1.0,
+      "unit": "usd"
+    }
+  ]
+}

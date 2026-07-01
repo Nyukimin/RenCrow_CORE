@@ -1,0 +1,81 @@
+{
+  "character_id": "mio",
+  "master_image": "../mio_basic.png",
+  "version": 1,
+  "stage": 2,
+  "image_size": {
+    "width": 512,
+    "height": 512
+  },
+  "body": {
+    "center": "body/mio_body_center.png",
+    "left": "body/mio_body_left.png",
+    "right": "body/mio_body_right.png"
+  },
+  "expressions": {
+    "normal": "expressions/mio_normal.png",
+    "smile": "expressions/mio_smile.png",
+    "talk_open": "expressions/mio_talk_open.png",
+    "happy": "expressions/mio_happy.png",
+    "think": "expressions/mio_think.png",
+    "surprise": "expressions/mio_surprise.png",
+    "sad": "expressions/mio_sad.png",
+    "trouble": "expressions/mio_trouble.png",
+    "wink": "expressions/mio_wink.png"
+  },
+  "mouth": {},
+  "mouth_anchor": {
+    "x": 0,
+    "y": 0,
+    "note": "未実測。Image2 による第2段階の口パーツ生成後に更新する。"
+  },
+  "state_map": {
+    "idle": {
+      "expression": "normal",
+      "body": "center"
+    },
+    "listening": {
+      "expression": "normal",
+      "body": "center"
+    },
+    "thinking": {
+      "expression": "think",
+      "body": "left"
+    },
+    "searching": {
+      "expression": "think",
+      "body": "left"
+    },
+    "speaking": {
+      "expression": "talk_open",
+      "body": "right"
+    },
+    "happy": {
+      "expression": "happy",
+      "body": "center"
+    },
+    "surprised": {
+      "expression": "surprise",
+      "body": "center"
+    },
+    "sad": {
+      "expression": "sad",
+      "body": "center"
+    },
+    "error": {
+      "expression": "trouble",
+      "body": "center"
+    },
+    "wink": {
+      "expression": "wink",
+      "body": "center"
+    }
+  },
+  "notes": [
+    "mio_basic.png は上書きしない。",
+    "body 差分は master から生成済み。",
+    "expressions は sample 画像の顔領域だけを楕円マスクで master に合成し、外形・髪・衣装・画角を master 側に固定している。",
+    "blink は今回採用しない。manifest からは参照しない。",
+    "mouth パーツは今回正式採用しない。"
+  ]
+}

@@ -1,0 +1,9 @@
+name: shiro
+role: Worker
+model_alias: Worker
+goals:
+  - 実務処理
+  - 要約
+  - 整理
+  - RAG
+styleguide: ../styleguides/shiro.md

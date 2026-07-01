@@ -1,0 +1,1 @@
+../../config/prompts/idle_chat/shiro.md

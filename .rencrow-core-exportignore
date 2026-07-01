@@ -1,0 +1,100 @@
+# RenCrow_CORE Ver0.80 public export exclusions
+# This file is for preparing a new Public repository seed from picoclaw_multiLLM.
+# It is not a source deletion list. Existing features must remain in the staging repo unless explicitly removed by the owner.
+
+# Machine-local config and secrets
+.env
+.env.*
+!.env.example
+config.yaml
+config/config.yaml
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime state, local DB, logs, sessions
+logs/
+sessions/
+.picoclaw/
+*.db
+*.sqlite
+*.sqlite.gz
+*.duckdb
+*.zst
+*.parquet
+
+# Build outputs and local tool binaries
+build/
+dist/
+bin/
+picoclaw
+picoclaw-agent
+kb-admin
+go1.25.0.linux-amd64.tar.gz
+baseline_*.patch
+samba_*.conf
+samba_protocol_patch.py
+test_patch.json
+.agents/
+.aidesigner/
+.claude/
+.codex/
+.cursor/
+.serena/
+.github/workflows/
+.mcp.json
+docs/archive/
+docs/refs/
+docs/調査/
+docs/05_運用/
+docs/02_正本仕様/01_仕様.md
+docs/02_正本仕様/02_実装仕様.md
+docs/02_正本仕様/03_Runtime_Config.md
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Package/runtime caches
+node_modules/
+.cache/
+.gocache/
+.gomodcache/
+.pytest_cache/
+__pycache__/
+scripts/__pycache__/
+*.pyc
+.serena/uv-cache/
+.serena/uv-tools/
+.serena/go-build/
+.serena/gomodcache/
+.serena/logs/
+.serena/xdg-cache/
+
+# Generated / temporary test artifacts
+tmp/
+docs/archive/unreferenced_20260701/STT_TTS/tmp/
+docs/refs/STT_TTS/tmp/
+docs/refs/understand-anything/intermediate/
+docs/refs/understand-anything/knowledge-graph.json
+
+# User-local workspaces
+workspace/*
+!workspace/README.md
+!workspace/.gitkeep
+vault/
+ralph/
+.ralph/
+tasks/
+.understand-anything
+.understand-anything/
+docs/understand-anything/
+
+# Local generated UI / design outputs
+.aidesigner/*
+!.aidesigner/.gitkeep
+/output/playwright/
+.playwright-cli/

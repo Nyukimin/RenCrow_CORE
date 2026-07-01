@@ -1,0 +1,39 @@
+linters:
+  enable:
+    - errcheck      # エラーチェック漏れ
+    - govet         # 疑わしいコード構造
+    - staticcheck   # 静的解析
+    - gosimple      # コード簡素化提案
+    - unused        # 未使用コード検出
+    - ineffassign   # 無駄な代入
+    - gofmt         # フォーマット確認
+    - goimports     # import 整理
+    - goconst       # 定数化可能な文字列
+    - misspell      # スペルチェック
+    - unconvert     # 不要な型変換
+    - unparam       # 未使用パラメータ
+
+linters-settings:
+  errcheck:
+    check-blank: true
+    check-type-assertions: true
+
+  govet:
+    check-shadowing: true
+
+  staticcheck:
+    checks: ["all"]
+
+run:
+  timeout: 5m
+  tests: true
+  skip-dirs:
+    - vendor
+    - .serena
+    - docs
+    - workspace
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0

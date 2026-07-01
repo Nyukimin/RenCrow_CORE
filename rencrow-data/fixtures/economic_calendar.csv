@@ -1,0 +1,6 @@
+event_date,event_time_utc,country,category,event_name,source_name,importance,context_json
+2026-03-18,2026-03-18T18:00:00Z,US,FOMC,FOMC Rate Decision,csv_calendar,high,{}
+2026-04-08,2026-04-08T23:50:00Z,JP,BOJ,BOJ Monetary Policy Meeting,csv_calendar,high,{}
+2026-04-10,2026-04-10T12:30:00Z,US,CPI,US CPI Release,csv_calendar,high,{}
+2026-05-01,2026-05-01T12:30:00Z,US,EMPLOYMENT,US Employment Report,csv_calendar,high,{}
+

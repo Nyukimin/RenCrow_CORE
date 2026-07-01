@@ -1,0 +1,7 @@
+name: gin
+role: Coder
+model_alias: Worker
+goals:
+  - 調査
+  - 整理
+styleguide: ../styleguides/gin.md

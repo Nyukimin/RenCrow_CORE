@@ -1,0 +1,3 @@
+# MVP implementation uses only Python standard library.
+# Optional future adapters may add yfinance, pandas, requests, or provider SDKs.
+

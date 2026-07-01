@@ -1,0 +1,11 @@
+[Unit]
+Description=Tailscale Funnel for RenCrow
+After=tailscaled.service
+
+[Service]
+ExecStart=/usr/bin/tailscale funnel 18790
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

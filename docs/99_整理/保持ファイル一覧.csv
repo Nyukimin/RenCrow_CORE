@@ -1,0 +1,16 @@
+type,source_path,kept_path,reason,bytes
+source,01_正本仕様/仕様.md,02_正本仕様/01_仕様.md,要件・上位仕様の正本,25960
+source,01_正本仕様/実装仕様.md,02_正本仕様/02_実装仕様.md,実装仕様の正本,49568
+source,01_正本仕様/RenCrow_Runtime_Config.md,02_正本仕様/03_Runtime_Config.md,LLM/TTS/STT runtime config 正本,8834
+source,01_正本仕様/03_IdleChat.md,02_正本仕様/04_IdleChat.md,IdleChat 正本,28122
+source,06_実装ガイド進行管理/README_Win11_Setup.md,05_運用/01_Win11_Setup.md,Windows 11 セットアップ入口,5294
+source,codebase-map/RUN_SUMMARY.md,05_運用/02_Codebase_Run_Summary.md,コードベース解析サマリ・構築リスク確認,16795
+generated,"/mnt/data/RenCrow_Char_README.md + /mnt/data/{mio,shiro,aka,ao,gin,kin,kuro,midori}.md",01_理解/02_キャラクター・エージェント仕様.md,現行Agent責務と安全境界を1ファイルに統合,10501
+generated,generated from整理方針,README.md,最小版の入口,1975
+generated,generated from docs README/classification,00_読む順番.md,読み順を固定し迷子を防ぐ,1548
+generated,01_正本仕様/仕様.md + 実装仕様.md + Runtime_Config.md,01_理解/01_システム概要.md,システム理解用の最小概要,2402
+generated,deep-research-report.md + 情報源について.txt,03_記憶検索/01_ローカルファースト検索・記憶アーキテクチャ.md,記憶/検索/情報源の最小正本化,4221
+generated,情報源について.txt + 実装仕様.md,04_構築指標/01_構築ロードマップ.md,実装順を迷わないための指標,3924
+generated,実装仕様.md + IdleChat.md + deep-research-report.md,04_構築指標/02_受入基準・テスト観点.md,構築完了の判定基準,3610
+generated,docs整理レポート_20260701.md + classification,99_整理/最小化判定.md,残す/外す判断根拠,2207
+generated,generated,99_整理/最小セット構成サマリ.md,最小セットの構成確認,1207

@@ -1,0 +1,76 @@
+profile_schema_version: "1.0"
+name: picoclaw_multiLLM
+
+output:
+  base: docs/codebase-map
+  modules_subdir: modules
+  anomaly_file: 潜在バグ一覧.md
+
+module_groups:
+  - id: cmd_runtime
+    name: 起動・HTTPルーティング・runtime配線
+    dirs:
+      - cmd/picoclaw
+      - cmd/picoclaw-agent
+      - pkg/rencrowclient
+    focus:
+      - server起動、HTTP route登録、Viewer/entry/healthの入口
+      - runtime依存の組み立て、background job、CLI facadeとの境界
+      - picoclaw.service運用時の落とし穴
+  - id: domain_application
+    name: Domain / Application層
+    dirs:
+      - internal/domain
+      - internal/application
+      - application
+      - domain
+    focus:
+      - Chat/Worker/Coder/Heavy/Wildの責務境界
+      - orchestrator、routing、job、memory、executionのデータフロー
+      - Clean Architecture上の依存方向と例外的な結合
+  - id: adapter_viewer_channels
+    name: Adapter / Viewer / Channel層
+    dirs:
+      - internal/adapter
+      - modules
+    focus:
+      - /viewer/* HTTP API、SSE、monitor store、Viewer assets
+      - LINE/Slack/Discord/Telegram/entry/chrome adapter
+      - modules/* bridgeとCore/Chat/Worker/STT/TTS/WebGatherの境界
+  - id: infrastructure_persistence
+    name: Infrastructure / Persistence / external provider層
+    dirs:
+      - internal/infrastructure
+      - infrastructure
+      - tools
+    focus:
+      - LLM/STT/TTS/webgather/MCP/browser actor/transport provider
+      - SQLite/JSONL/DuckDB/VectorDB永続化境界
+      - security/sandbox/tool runnerの安全レール
+  - id: docs_config_data
+    name: Docs / Config / Runtime data surface
+    dirs:
+      - docs
+      - config
+      - prompts
+      - skills
+      - schemas
+      - rencrow-data
+    focus:
+      - 正本仕様、Viewer仕様、Knowledge Wiki、投資研究基盤の配置
+      - config/prompts/skills/schemasの実行時参照関係
+      - docsと実装の乖離が起こりやすい境界
+
+use_cases:
+  - id: viewer_chat
+    name: Viewerから会話を送信してMio/Worker/Coderへ流す
+  - id: voice_chat
+    name: Viewer音声入力をSTTから会話経路へ渡す
+  - id: idlechat
+    name: IdleChatを開始・停止・監視する
+  - id: memory_recall
+    name: 会話履歴とKnowledge WikiをRecall Packとして注入する
+  - id: repair_plane
+    name: Viewer Repair Planeから自己修復ジョブを起動する
+  - id: investment_status
+    name: rencrow-data投資研究基盤をViewerへ表示する

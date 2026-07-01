@@ -1,0 +1,1453 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RenCrow Live</title>
+<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260627-lab-datetime-serif">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260511-memory-desk">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260517-desk-regenerated">
+</head>
+<body class="theme-modern">
+<header>
+  <div class="logo"><img src="/viewer/assets/images/rencrow-logo.png" alt="RenCrow" style="height:64px;width:auto"><span>RenCrow Live</span></div>
+  <div class="live-theater-banner" aria-label="妄想劇場">妄想劇場</div>
+  <div class="lipsync-stage" aria-hidden="true">
+    <div class="lipsync-actor mio">
+      <img id="lipSyncMio" src="/viewer/assets/images/mio/parts/expressions/mio_normal.png" data-open="/viewer/assets/images/mio/parts/expressions/mio_talk_open.png" data-closed="/viewer/assets/images/mio/parts/expressions/mio_normal.png" alt="Mio lipsync">
+      <div class="lipsync-actor-name">Mio</div>
+    </div>
+    <div class="lipsync-actor shiro">
+      <img id="lipSyncShiro" src="/viewer/assets/images/shiro/parts/expressions/shiro_normal.png" data-open="/viewer/assets/images/shiro/parts/expressions/shiro_talk_open.png" data-closed="/viewer/assets/images/shiro/parts/expressions/shiro_normal.png" alt="Shiro lipsync">
+      <div class="lipsync-actor-name">Shiro</div>
+    </div>
+  </div>
+  <div class="header-tools">
+    <div class="theme-switcher" aria-label="Viewer theme">
+      <button class="theme-btn" data-theme="classic" type="button" title="Classic">○</button>
+      <button class="theme-btn active" data-theme="modern" type="button" title="Modern">◐</button>
+      <button class="theme-btn" data-theme="compact" type="button" title="Compact">▦</button>
+    </div>
+    <div class="stat">
+      <div class="dot" id="dot"></div>
+      <span id="stxt">Connecting...</span>
+    </div>
+  </div>
+</header>
+<div class="live-topic-bar" id="liveTopicBar">
+  <span class="live-topic-label">TOPIC</span>
+  <span class="live-topic-text" id="liveTopicText">-</span>
+</div>
+<div class="lab-stream-shell" aria-label="RenCrow Chat and IdleChat lab view">
+  <div class="lab-world" aria-hidden="true">
+    <div class="lab-window lab-window-left"></div>
+    <div class="lab-window lab-window-right"></div>
+    <div class="lab-ceiling-ring"></div>
+    <div class="lab-holo-circle"></div>
+    <div class="lab-crystal lab-crystal-left"></div>
+    <div class="lab-crystal lab-crystal-center"></div>
+    <div class="lab-console lab-console-left"></div>
+    <div class="lab-console lab-console-right"></div>
+  </div>
+  <section class="lab-brand-panel">
+    <div class="lab-logo-row">
+      <img src="/viewer/assets/images/rencrow-logo.png" alt="">
+      <div>
+        <strong>RenCrow</strong>
+        <span>IdleChat</span>
+      </div>
+    </div>
+  </section>
+  <section class="lab-mode-indicator" id="labModeIndicator" aria-label="Conversation mode and partner switcher">
+    <button class="lab-mode-chip lab-mode-chip-chat" id="labModeChatChip" type="button" data-lab-switch="chat" aria-current="true" aria-pressed="true">Chat</button>
+    <button class="lab-mode-chip lab-mode-chip-idle" id="labModeIdleChip" type="button" data-lab-switch="idle" aria-current="false" aria-pressed="false">IdleChat</button>
+    <button class="lab-mode-chip lab-mode-chip-mio" id="labModeMioChip" type="button" data-lab-switch="mio" aria-current="true" aria-pressed="true">Mio</button>
+    <button class="lab-mode-chip lab-mode-chip-shiro" id="labModeShiroChip" type="button" data-lab-switch="shiro" aria-current="false" aria-pressed="false">Shiro</button>
+  </section>
+  <time class="lab-datetime-panel" id="labDateTimePanel" datetime="" aria-label="現在日時">0000（令和00）00月00日（-）00:00:00</time>
+  <section class="lab-camera-live-preview" id="labCameraLivePreview" aria-label="Media live preview">
+    <div class="lab-camera-live-badge">LIVE</div>
+    <video id="labCameraLiveVideo" autoplay playsinline muted></video>
+  </section>
+  <footer class="lab-footer lab-input-footer">
+    <label class="lab-input-label" for="labInp">メッセージを入力</label>
+    <div class="lab-input-shell">
+      <textarea id="labInp" rows="1" placeholder="メッセージを入力..." autocomplete="off" aria-label="メッセージを入力"></textarea>
+    </div>
+    <div class="lab-footer-controls" aria-label="Audio controls">
+      <button class="lab-icon-btn lab-audio-toggle off" id="labAudioBtn" type="button" title="TTS_OFF" aria-label="TTS_OFF" aria-pressed="false" data-control-state="TTS_OFF">
+        <svg class="lab-control-icon lab-control-icon-on" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 9v6h4l5 4V5L8 9H4z"></path>
+          <path d="M16 8.5a5 5 0 0 1 0 7"></path>
+          <path d="M18.5 6a8 8 0 0 1 0 12"></path>
+        </svg>
+        <svg class="lab-control-icon lab-control-icon-off" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 9v6h4l5 4V5L8 9H4z"></path>
+          <path d="M19 5 5 19"></path>
+        </svg>
+      </button>
+      <button class="lab-icon-btn lab-mic-toggle off" id="labMicBtn" type="button" title="STT_OFF" aria-label="STT_OFF" aria-pressed="false" data-control-state="STT_OFF">
+        <svg class="lab-control-icon lab-control-icon-on" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"></path>
+          <path d="M5 11a7 7 0 0 0 14 0"></path>
+          <path d="M12 18v3"></path>
+          <path d="M8 21h8"></path>
+        </svg>
+        <svg class="lab-control-icon lab-control-icon-off" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"></path>
+          <path d="M5 11a7 7 0 0 0 14 0"></path>
+          <path d="M12 18v3"></path>
+          <path d="M8 21h8"></path>
+          <path d="M19 5 5 19"></path>
+        </svg>
+      </button>
+      <button class="lab-icon-btn lab-attach-toggle" id="labAttachBtn" type="button" title="Attach files" aria-label="Attach files">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l9.8-9.8a4 4 0 0 1 5.7 5.7l-9.8 9.8a2 2 0 0 1-2.8-2.8l9.3-9.3"></path>
+        </svg>
+      </button>
+      <button class="lab-icon-btn lab-screen-toggle" id="labScreenBtn" type="button" title="画面/タブ入力" aria-label="画面/タブ入力">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="12" rx="2"></rect>
+          <path d="M8 20h8"></path>
+          <path d="M12 16v4"></path>
+        </svg>
+      </button>
+      <button class="lab-icon-btn lab-camera-toggle" id="labCameraBtn" type="button" title="カメラ/マイク入力" aria-label="カメラ/マイク入力">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M14.5 4 16 7h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3l1.5-3h5z"></path>
+          <circle cx="12" cy="13" r="3.5"></circle>
+        </svg>
+      </button>
+    </div>
+  </footer>
+</div>
+<div class="lab-mio-portrait" aria-hidden="true">
+  <img src="/viewer/mio-portrait.png" alt="">
+</div>
+<div class="lab-shiro-portrait" aria-hidden="true">
+  <img src="/viewer/shiro-portrait.png" alt="">
+</div>
+<div class="app-shell">
+  <div class="mobile-panel-switch" aria-label="Mobile panel navigation">
+    <button id="mobilePanelPrev" class="mobile-panel-step" type="button" aria-label="前のパネル">&lt;</button>
+    <label class="mobile-panel-label" for="mobilePanelSelect">Panel</label>
+    <select id="mobilePanelSelect" class="mobile-panel-select">
+      <option value="home">Home</option>
+      <option value="timeline">Chat</option>
+      <option value="develop">Develop</option>
+      <option value="instructions">Instructions</option>
+      <option value="backlog">Backlog</option>
+      <option value="reports">Reports</option>
+      <option value="memory">Memory</option>
+      <option value="movie-db">Movies</option>
+      <option value="news-pack">News Pack</option>
+      <option value="investment">Investment</option>
+      <option value="idlechat">IdleChat</option>
+      <option value="ops">Ops</option>
+      <option value="overview">Overview</option>
+      <option value="roles">Roles</option>
+      <option value="progress">Progress</option>
+      <option value="system">System</option>
+      <option value="sessions">Sessions</option>
+      <option value="jobs">Jobs</option>
+    </select>
+    <button id="mobilePanelNext" class="mobile-panel-step" type="button" aria-label="次のパネル">&gt;</button>
+  </div>
+  <nav class="tabs" aria-label="Viewer navigation">
+    <button class="tab-btn active" data-tab="home">Home</button>
+    <button class="tab-btn" data-tab="timeline">Chat</button>
+    <button class="tab-btn" data-tab="develop">Develop</button>
+    <button class="tab-btn" data-tab="instructions">Instructions</button>
+    <button class="tab-btn" data-tab="backlog">Backlog</button>
+    <button class="tab-btn" data-tab="reports">Reports</button>
+    <button class="tab-btn" data-tab="memory">Memory</button>
+    <button class="tab-btn" data-tab="movie-db">Movies</button>
+    <button class="tab-btn" data-tab="news-pack">News Pack</button>
+    <button class="tab-btn" data-tab="investment">Investment</button>
+    <button class="tab-btn" data-tab="idlechat">IdleChat</button>
+    <button class="tab-btn" data-tab="ops">Ops</button>
+    <button class="tab-btn" data-tab="overview">Overview</button>
+    <button class="tab-btn" data-tab="roles">Roles</button>
+    <button class="tab-btn" data-tab="progress">Progress</button>
+    <button class="tab-btn" data-tab="system">System</button>
+    <button class="tab-btn" data-tab="sessions">Sessions</button>
+    <button class="tab-btn" data-tab="jobs">Jobs</button>
+  </nav>
+  <main>
+  <section id="panel-home" class="panel active">
+    <div class="desk-screen desk-workspace">
+      <aside class="desk-side">
+        <div class="desk-brand">
+          <div class="desk-kicker">Home / Daily Desk</div>
+          <h2 class="daily-desk-title">今日なにをする？</h2>
+        </div>
+        <div class="desk-character">
+          <div class="desk-character-mark">R</div>
+          <div class="desk-character-name">RenCrow</div>
+          <div class="daily-desk-muted">会話、開発、調査、指示をここから始めます。</div>
+        </div>
+        <div id="homeStateBadge" class="desk-status-pill">loading</div>
+        <div id="homeStatusCard" class="daily-desk-card"></div>
+      </aside>
+      <section class="desk-main">
+        <div class="desk-head compact">
+          <div>
+            <div class="desk-kicker">Today's focus</div>
+            <h3>必要なものだけを見る</h3>
+          </div>
+        </div>
+        <section class="desk-card-list home-focus">
+          <div id="homeLastConversation" class="daily-desk-card"></div>
+          <div id="homeRunningWork" class="daily-desk-card"></div>
+          <div id="homeUnreadReports" class="daily-desk-card"></div>
+          <div id="homeOpenInstructions" class="daily-desk-card"></div>
+          <div id="homeAgents" class="daily-desk-card"></div>
+        </section>
+        <section class="daily-desk-card desk-compose desk-dock">
+          <div class="desk-compose-row">
+            <select id="homeTargetAgent" class="desk-select" aria-label="Home target agent">
+              <option value="chat">Chat</option>
+              <option value="worker">Worker</option>
+              <option value="coder">Coder</option>
+              <option value="heavy">Heavy</option>
+              <option value="wild">Wild</option>
+            </select>
+            <textarea id="homeInput" class="daily-desk-input" rows="1" placeholder="会話・開発・調査・指示を入力"></textarea>
+            <button id="homeSendBtn" class="desk-primary-btn" type="button">Send</button>
+          </div>
+        </section>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-develop" class="panel">
+    <div class="desk-screen desk-workspace">
+      <aside class="desk-side">
+        <div class="desk-brand">
+          <div class="desk-kicker">Develop</div>
+          <h2 class="daily-desk-title">開発タスクの現在地</h2>
+        </div>
+        <div class="desk-character">
+          <div class="desk-character-mark">W</div>
+          <div class="desk-character-name">Worker / Coder</div>
+          <div class="daily-desk-muted">作業の状態、確認待ち、次の判断だけを表示します。</div>
+        </div>
+        <button id="developRefreshBtn" class="desk-primary-btn" type="button">Refresh</button>
+      </aside>
+      <section class="desk-main">
+        <div class="desk-two-col">
+          <div id="developCurrentTask" class="daily-desk-card"></div>
+          <div id="developAgentPhase" class="daily-desk-card"></div>
+        </div>
+        <div id="developLogSummary" class="daily-desk-card"></div>
+        <div class="desk-two-col">
+          <div id="developArtifacts" class="daily-desk-card"></div>
+          <div id="developNextActions" class="daily-desk-card"></div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-instructions" class="panel">
+    <div class="desk-screen desk-workspace">
+      <aside class="desk-side">
+        <div class="desk-brand">
+          <div class="desk-kicker">Instructions</div>
+          <h2 class="daily-desk-title">指示キュー</h2>
+        </div>
+        <div class="desk-character">
+          <div class="desk-character-mark">I</div>
+          <div class="desk-character-name">Instruction Desk</div>
+          <div class="daily-desk-muted">やること、保留、完了だけを追います。</div>
+        </div>
+        <section class="daily-desk-card desk-form-card">
+          <textarea id="instructionText" class="daily-desk-input" rows="1" placeholder="新しい指示を書く"></textarea>
+          <div class="desk-form-grid">
+            <select id="instructionTarget" class="desk-select">
+              <option value="Chat">Chat</option>
+              <option value="Worker">Worker</option>
+              <option value="Coder">Coder</option>
+              <option value="Heavy">Heavy</option>
+              <option value="Wild">Wild</option>
+            </select>
+            <select id="instructionPriority" class="desk-select">
+              <option value="normal">normal</option>
+              <option value="high">high</option>
+              <option value="urgent">urgent</option>
+              <option value="low">low</option>
+            </select>
+          </div>
+          <button id="instructionAddBtn" class="desk-primary-btn" type="button">指示を追加</button>
+          <button id="instructionClearDoneBtn" class="ctl-btn" type="button">Doneを整理</button>
+        </section>
+      </aside>
+      <section class="desk-main">
+        <div id="instructionColumns" class="instruction-columns"></div>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-backlog" class="panel">
+    <div class="desk-screen desk-workspace">
+      <aside class="desk-side">
+        <div class="desk-brand">
+          <div class="desk-kicker">Backlog</div>
+          <h2 class="daily-desk-title">アイデア・未実装一覧</h2>
+        </div>
+        <div class="desk-character">
+          <div class="desk-character-mark">B</div>
+          <div class="desk-character-name">Idea Desk</div>
+          <div class="daily-desk-muted">面白そうなこと、未実装、実装中、テスト中、OKを追います。</div>
+        </div>
+        <section class="daily-desk-card desk-form-card">
+          <input id="backlogTitle" class="desk-input" type="text" placeholder="タイトル">
+          <textarea id="backlogBody" class="daily-desk-input" rows="2" placeholder="メモ・背景・期待する動き"></textarea>
+          <div class="desk-form-grid">
+            <select id="backlogKind" class="desk-select">
+              <option value="idea">idea</option>
+              <option value="unimplemented">unimplemented</option>
+            </select>
+            <select id="backlogSource" class="desk-select">
+              <option value="ren">Ren</option>
+              <option value="mio">Mio</option>
+              <option value="shiro">Shiro</option>
+              <option value="coder">Coder</option>
+            </select>
+            <select id="backlogPriority" class="desk-select">
+              <option value="normal">normal</option>
+              <option value="high">high</option>
+              <option value="urgent">urgent</option>
+              <option value="low">low</option>
+            </select>
+          </div>
+          <button id="backlogAddBtn" class="desk-primary-btn" type="button">メモする</button>
+          <button id="backlogRefreshBtn" class="ctl-btn" type="button">Refresh</button>
+        </section>
+      </aside>
+      <section class="desk-main">
+        <div class="desk-head compact">
+          <div>
+            <div class="desk-kicker">Implementation Board</div>
+            <h3>実装・テスト・修正・OK</h3>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="compact-table backlog-table">
+            <thead>
+              <tr><th>kind</th><th>status</th><th>title</th><th>source</th><th>owner</th><th>test</th><th>ok</th><th>actions</th></tr>
+            </thead>
+            <tbody id="backlogBodyTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-reports" class="panel">
+    <div class="desk-screen desk-workspace">
+      <aside class="desk-side">
+        <div class="desk-brand">
+          <div class="desk-kicker">Reports</div>
+          <h2 class="daily-desk-title">作業完了報告</h2>
+        </div>
+        <div class="desk-character">
+          <div class="desk-character-mark">R</div>
+          <div class="desk-character-name">Report Desk</div>
+          <div class="daily-desk-muted">完了、失敗、未確認を人が読める形で確認します。</div>
+        </div>
+        <div class="desk-action-row report-actions">
+          <select id="reportFilter" class="desk-select">
+            <option value="">all</option>
+            <option value="unread">unread</option>
+            <option value="success">success</option>
+            <option value="failed">failed</option>
+            <option value="partial">partial</option>
+          </select>
+          <button id="reportCopySummaryBtn" class="ctl-btn" type="button">Copy Summary</button>
+          <button id="reportCopyMarkdownBtn" class="ctl-btn" type="button">Copy Markdown</button>
+          <button id="reportMarkReadBtn" class="ctl-btn" type="button">Mark as Read</button>
+        </div>
+        <div id="reportList" class="report-list"></div>
+      </aside>
+      <section class="desk-main">
+        <div id="reportDetail" class="daily-desk-card report-detail">No report selected</div>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-ops" class="panel ops-panel">
+    <div class="ops-cockpit">
+      <header class="ops-hero">
+        <div class="ops-hero-main">
+          <div class="ops-kicker">Ops / Runtime Desk</div>
+          <h2 class="ops-hero-title">運用コックピット</h2>
+          <p class="ops-hero-copy">稼働状態、LLM、音声、ジョブ、失敗だけを先に確認します。監査ログと生テーブルは下の詳細に分離します。</p>
+        </div>
+        <nav class="ops-quick-nav" aria-label="Ops quick sections">
+          <a href="#opsDetailsRuntime">Runtime</a>
+          <a href="#opsDetailsEvidence">Evidence</a>
+          <a href="#opsDetailsTraces">Traces</a>
+        </nav>
+      </header>
+      <div class="ops-triage-grid" id="opsTriageCards"></div>
+      <section class="ops-section">
+        <div class="ops-section-title">
+          <span>Current Focus</span>
+          <small>最新ジョブ、Mio報告、進行中、失敗、稼働Agent</small>
+        </div>
+        <div class="ops-grid" id="opsCards"></div>
+      </section>
+      <details class="ops-details" id="opsDetailsEvidence">
+        <summary>Evidence / Governance</summary>
+        <div class="debug-panels ops-details-body">
+      <div class="debug-box">
+        <h4>Skill Governance External PR Submit Audits</h4>
+        <div class="small" style="margin-bottom:8px">Contribution Gate 通過後の外部 PR submit audit を確認します。adapter 未接続や送信失敗を PR 作成成功として扱いません。</div>
+        <table class="debug-table">
+          <thead><tr><th>time</th><th>submit</th><th>gate</th><th>repo</th><th>branch</th><th>status</th><th>adapter</th><th>PR</th><th>evidence</th></tr></thead>
+          <tbody id="skillExternalPRAuditBody"></tbody>
+        </table>
+        <pre id="skillExternalPRAuditResult" class="small llm-ops-raw">skill external PR submit audits: not created</pre>
+      </div>
+      <div class="debug-box">
+        <h4>Skill Evidence Audits</h4>
+        <div class="small" style="margin-bottom:8px">skill trigger / Contribution Gate / Coder transcript の証跡を照合します。外部 PR audit だけでは Coder evidence 保存確認として扱いません。</div>
+        <table class="debug-table">
+          <thead><tr><th>time</th><th>kind</th><th>id</th><th>skill/repo</th><th>status</th><th>evidence</th></tr></thead>
+          <tbody id="skillEvidenceAuditBody"></tbody>
+        </table>
+        <pre id="skillEvidenceAuditResult" class="small llm-ops-raw">skill evidence audits: -</pre>
+      </div>
+      <div class="debug-box">
+        <h4>SuperAgent Terminal Audits</h4>
+        <div class="small" style="margin-bottom:8px">LeadAgent run と run queue の terminal state を確認します。failed terminal は summary / reason を持つ場合だけ証跡として扱います。</div>
+        <table class="debug-table">
+          <thead><tr><th>time</th><th>kind</th><th>id</th><th>run</th><th>status</th><th>evidence</th></tr></thead>
+          <tbody id="superAgentTerminalAuditBody"></tbody>
+        </table>
+        <pre id="superAgentTerminalAuditResult" class="small llm-ops-raw">superagent terminal audits: -</pre>
+      </div>
+      <div class="debug-box">
+        <h4>SuperAgent Resume Audits</h4>
+        <div class="small" style="margin-bottom:8px">resume queue と pause/resume trace を照合します。手動台帳 reentry は真の長時間再開 E2E として扱いません。</div>
+        <table class="debug-table">
+          <thead><tr><th>time</th><th>queue</th><th>run</th><th>status</th><th>trace</th><th>runtime control</th><th>evidence</th></tr></thead>
+          <tbody id="superAgentResumeAuditBody"></tbody>
+        </table>
+        <pre id="superAgentResumeAuditResult" class="small llm-ops-raw">superagent resume audits: -</pre>
+      </div>
+      <div class="debug-box">
+        <h4>AI Workflow Run Evidence</h4>
+        <div class="small" style="margin-bottom:8px">command / context usage / SuperAgent trace を run_id 単位で照合します。scheduler 起点の正常完了証跡ではありません。</div>
+        <table class="debug-table">
+          <thead><tr><th>run</th><th>workstream</th><th>command</th><th>context</th><th>trace</th><th>status</th></tr></thead>
+          <tbody id="aiWorkflowRunEvidenceBody"></tbody>
+        </table>
+        <pre id="aiWorkflowRunEvidenceResult" class="small llm-ops-raw">ai workflow run evidence: -</pre>
+      </div>
+      <div class="debug-box">
+        <h4>Complexity Review Artifacts</h4>
+        <div class="small" style="margin-bottom:8px">report-only / review-only artifact を確認します。patch 適用、Sandbox apply、外部 PR 作成の成功証跡ではありません。</div>
+        <table class="debug-table">
+          <thead><tr><th>time</th><th>artifact</th><th>type</th><th>status</th><th>patch</th><th>approval</th></tr></thead>
+          <tbody id="complexityReviewArtifactBody"></tbody>
+        </table>
+        <pre id="complexityReviewArtifactResult" class="small llm-ops-raw">complexity review artifacts: -</pre>
+      </div>
+      <div class="debug-box">
+        <h4>Runtime Blocked Route Audits</h4>
+        <div class="small" style="margin-bottom:8px">依存不足で 503 を返す route を確認します。route 登録や readiness 表示だけでは機能成功扱いにしません。</div>
+        <table class="debug-table">
+          <thead><tr><th>route</th><th>status</th><th>result</th><th>body</th></tr></thead>
+          <tbody id="runtimeBlockedRouteAuditBody"></tbody>
+        </table>
+        <pre id="runtimeBlockedRouteAuditResult" class="small llm-ops-raw">runtime blocked route audits: -</pre>
+      </div>
+      <div class="debug-box">
+        <h4>Revenue Human Decision Gate</h4>
+        <div class="small" style="margin-bottom:8px">外部公開、高単価 offer、顧客の声利用などはここで承認・却下を記録します。承認は送信や公開の実行ではありません。</div>
+        <table class="debug-table">
+          <thead><tr><th>time</th><th>decision</th><th>type</th><th>status</th><th>description</th><th>action</th></tr></thead>
+          <tbody id="revenueDecisionBody"></tbody>
+        </table>
+        <pre id="revenueDecisionResult" class="small llm-ops-raw">revenue decision review: -</pre>
+      </div>
+      <div class="debug-box">
+        <h4>Revenue Channel Drafts</h4>
+        <div class="small" style="margin-bottom:8px">LINE / email / Discord などの closed channel 向け下書きを確認します。ここでは外部送信を実行しません。</div>
+        <table class="debug-table">
+          <thead><tr><th>time</th><th>draft</th><th>channel</th><th>status</th><th>source</th><th>body</th><th>send</th></tr></thead>
+          <tbody id="revenueChannelDraftBody"></tbody>
+        </table>
+        <pre id="revenueChannelDraftResult" class="small llm-ops-raw">revenue channel drafts: draft only / external send requires human approval</pre>
+      </div>
+      <div class="debug-box">
+        <h4>Revenue External Send Apply Audits</h4>
+        <div class="small" style="margin-bottom:8px">Human approval 後の外部送信 apply audit を確認します。adapter 未接続や送信失敗を送信成功として扱いません。</div>
+        <table class="debug-table">
+          <thead><tr><th>time</th><th>apply</th><th>draft</th><th>decision</th><th>channel</th><th>status</th><th>result</th><th>adapter</th><th>evidence</th></tr></thead>
+          <tbody id="revenueExternalSendAuditBody"></tbody>
+        </table>
+        <pre id="revenueExternalSendAuditResult" class="small llm-ops-raw">revenue external send apply audits: not sent</pre>
+      </div>
+      <div class="debug-box">
+        <h4>Revenue Drilldown</h4>
+        <div class="small" style="margin-bottom:8px">KPI 推移、商品別売上、顧客の声分類を確認します。これは分析表示であり、外部送信や販売操作は行いません。</div>
+        <pre id="revenueDrilldownResult" class="small llm-ops-raw">revenue drilldown: -</pre>
+      </div>
+      <div class="debug-box">
+        <h4>Workstream Vault Review</h4>
+        <div class="small" style="margin-bottom:8px">Vault update の承認・却下を記録します。proposed_content 付き承認は vault_root 配下の対象ファイルへ適用されます。</div>
+        <table class="debug-table">
+          <thead><tr><th>time</th><th>update</th><th>file</th><th>status</th><th>applied</th><th>applied path</th><th>proposal</th><th>action</th></tr></thead>
+          <tbody id="workstreamVaultReviewBody"></tbody>
+        </table>
+        <pre id="workstreamVaultReviewResult" class="small llm-ops-raw">workstream vault review: -</pre>
+      </div>
+      <div class="debug-box">
+        <h4>Persona Meta Review</h4>
+        <div class="small" style="margin-bottom:8px">Meta profile update の承認・却下を記録します。承認は character_root 配下の observers/{observer}/meta/{target}.md へ追記します。</div>
+        <table class="debug-table">
+          <thead><tr><th>time</th><th>update</th><th>target</th><th>status</th><th>proposal</th><th>action</th></tr></thead>
+          <tbody id="personaMetaReviewBody"></tbody>
+        </table>
+        <pre id="personaMetaReviewResult" class="small llm-ops-raw">persona meta review: -</pre>
+      </div>
+        </div>
+      </details>
+      <details class="ops-details" id="opsDetailsRuntime">
+        <summary>Runtime / LLM / Audio</summary>
+        <div class="debug-panels ops-details-body">
+      <div class="debug-box">
+        <h4>GPU メモリ占有（LLM/STT/TTS）</h4>
+        <div id="debugGpuSummary" class="small">loading...</div>
+      </div>
+      <div class="debug-box">
+        <h4>速度計測（LLM / TTS / STT / Network）</h4>
+        <div id="debugLatencySummary" class="debug-list"></div>
+      </div>
+      <div class="debug-box">
+        <h4>STT 認識経緯（途中判断含む）</h4>
+        <div class="debug-actions">
+          <button id="sttCaptureCopyBtn" class="ctl-btn" type="button">STTログコピー</button>
+          <button id="sttCaptureDownloadBtn" class="ctl-btn" type="button">STTログ保存</button>
+          <button id="sttCaptureClearBtn" class="ctl-btn" type="button">STTログクリア</button>
+          <button id="sttSessionCopyBtn" class="ctl-btn" type="button">SessionIDコピー</button>
+        </div>
+        <div id="debugSttSession" class="small">Session: (unknown)</div>
+        <div id="debugSttTrace" class="debug-list"></div>
+      </div>
+      <div class="debug-box">
+        <h4>STT テスト録音</h4>
+        <div class="small" style="margin-bottom:8px">Ops 専用: マイク ON から OFF まで連続録音し、まず <code>client_stt_input_latest_raw.wav</code> を保存してから両端トリムした <code>client_stt_input_latest.wav</code> を保存します。録音中は Chat の 🎤 は無効になります。</div>
+        <div class="debug-actions">
+          <button id="sttTestRecordStartBtn" class="ctl-btn" type="button">録音開始</button>
+          <button id="sttTestRecordStopBtn" class="ctl-btn" type="button" disabled>録音停止・保存</button>
+        </div>
+        <div id="sttTestRecordStatus" class="small">待機中</div>
+        <div id="sttTestRecordTranscript" class="small">確定文: -</div>
+      </div>
+      <div class="debug-box" id="llmOpsPanel">
+        <h4>MLX LLM 管理（Viewer 経由）</h4>
+        <div class="small" style="margin-bottom:8px">RenCrow が管理 API をプロキシします。トークンはサーバの LLM_OPS_TOKEN を使用してください。</div>
+        <div class="debug-actions">
+          <button id="llmOpsRefreshBtn" class="ctl-btn" type="button">状態取得</button>
+          <button id="llmOpsStopBtn" class="ctl-btn" type="button">停止 Chat+Worker</button>
+          <button id="llmOpsRestartBtn" class="ctl-btn" type="button">再起動（全ロール）</button>
+        </div>
+        <div id="llmOpsConfigState" class="small" style="margin-bottom:8px">checking...</div>
+        <div id="llmRuntimeConfigCards" class="llm-runtime-grid"></div>
+        <div id="webGatherOpsCards" class="llm-runtime-grid"></div>
+        <div id="runtimeReadinessCards" class="llm-runtime-grid"></div>
+        <div class="llm-memory-grid" id="llmMemoryCards">
+          <div class="llm-memory-card"><div class="ops-card-title">Total RAM</div><div class="ops-big">-</div></div>
+          <div class="llm-memory-card"><div class="ops-card-title">Used RAM</div><div class="ops-big">-</div></div>
+          <div class="llm-memory-card"><div class="ops-card-title">Free RAM</div><div class="ops-big">-</div></div>
+        </div>
+        <div id="llmMemorySystemBar" class="llm-memory-bar" aria-label="system memory usage"><span style="width:0%"></span></div>
+        <div id="llmMemoryProcessLists" class="llm-memory-process-grid"></div>
+        <div id="llmMemoryRoles" class="llm-role-memory-list"></div>
+        <pre id="llmOpsStatusPre" class="small llm-ops-raw">(llm_ops 未設定またはトークンなし)</pre>
+      </div>
+      <div class="debug-box">
+        <h4>LLM Think（agent.thinking）</h4>
+        <div id="debugThinkTrace" class="debug-list"></div>
+      </div>
+        </div>
+      </details>
+      <details class="ops-details" id="opsDetailsTraces">
+        <summary>Trace Tables / Raw Details</summary>
+        <div class="ops-stack ops-details-body">
+      <div class="ops-section-title">
+        <span>Secondary Checks</span>
+        <small>監査系の要約カード</small>
+      </div>
+      <div class="ops-grid ops-secondary-grid" id="opsSecondaryCards"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Current Focus</th><th>Value</th></tr></thead>
+          <tbody id="opsFocusBody"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Tool</th><th>Status</th><th>Repairs</th><th>Defaults</th><th>Input Hash</th></tr></thead>
+          <tbody id="toolHarnessBody"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <div class="debug-actions">
+          <input id="dciSearchInput" type="text" placeholder="DCI query (docs/10_新仕様 など)" />
+          <button id="dciSearchBtn" type="button">DCI Search</button>
+        </div>
+        <pre id="dciSearchResult" class="small llm-ops-raw">DCI manual search result: -</pre>
+        <table>
+          <thead><tr><th>Time</th><th>Event</th><th>Query</th><th>Evidence</th><th>Status</th><th>Scope</th></tr></thead>
+          <tbody id="dciTraceBody"></tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Sandbox</th><th>Type</th><th>Status</th><th>Path</th><th>Promotion</th><th>Gate</th><th>Action</th></tr></thead>
+          <tbody id="sandboxBody"></tbody>
+        </table>
+        <pre id="sandboxPromotionPreviewResult" class="small llm-ops-raw">sandbox promotion diff preview: -</pre>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Event</th><th>Promotion</th><th>Gate</th><th>Human</th><th>Post Apply</th><th>Reason</th></tr></thead>
+          <tbody id="sandboxGateLogBody"></tbody>
+        </table>
+        <pre id="sandboxGateLogResult" class="small llm-ops-raw">sandbox promotion gate logs: no apply evidence</pre>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Type</th><th>Actor</th><th>Job</th><th>Route</th><th>Content</th></tr></thead>
+          <tbody id="opsFeedBody"></tbody>
+        </table>
+      </div>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <section id="panel-overview" class="panel">
+    <div class="grid" id="agentCards"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Agent</th><th>State</th><th>Reason</th><th>Route</th><th>Last Event</th><th>Peer</th><th>Job</th><th>Updated</th><th>Preview</th></tr></thead>
+        <tbody id="overviewBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="panel-roles" class="panel">
+    <div class="panel-head">
+      <h3>Role Selector</h3>
+      <div class="sub">Chat / Worker / Wild / Coder</div>
+    </div>
+    <div class="filters">
+      <select id="roleFilter">
+        <option value="">role: all</option>
+        <option value="Chat">Chat</option>
+        <option value="Worker">Worker</option>
+        <option value="Wild">Wild</option>
+        <option value="Coder">Coder</option>
+      </select>
+    </div>
+    <div class="grid" id="roleSelectorCards"></div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Agent</th><th>Role</th><th>Model Alias</th><th>Use Case</th><th>State</th><th>Route</th><th>Action</th></tr></thead>
+        <tbody id="roleSelectorBody"></tbody>
+      </table>
+    </div>
+    <div id="roleSelectorDetail" class="card">
+      <h4>Selected Target</h4>
+      <div class="small">No role selected</div>
+    </div>
+  </section>
+
+  <section id="panel-progress" class="panel">
+    <div class="progress-head">
+      <h3>Agent Progress</h3>
+      <div class="progress-summary" id="progressAgentSummary">-</div>
+    </div>
+    <div class="grid" id="progressAgentCards"></div>
+    <div class="progress-head" style="margin-top:10px">
+      <h3>Job Progress</h3>
+      <div class="progress-summary" id="progressJobSummary">-</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Job ID</th><th>Route</th><th>Phase</th><th>Owner</th><th>Retry</th><th>Failure</th><th>Status</th><th>Updated</th><th>Summary</th><th>Detail</th></tr></thead>
+        <tbody id="progressBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="panel-timeline" class="panel chat-desk-panel">
+    <div class="chat-desk-shell">
+      <aside class="chat-character-pane" aria-label="Chat character panel">
+        <div class="chat-brand-row">
+          <div class="chat-logo-mark">R</div>
+          <div>
+            <div class="chat-brand-name">RenCrow</div>
+            <div class="chat-brand-sub">Chat workspace</div>
+          </div>
+        </div>
+        <div class="chat-character-portrait" aria-hidden="true">
+          <iframe id="chatLive2DMio" src="/viewer/live2d/embed?character_id=mio&emotion=normal&mode=normal&hide_ui=true"
+                  style="position:absolute;top:0;left:0;z-index:100;width:100%;height:100%;border:none;background:transparent;" allowtransparency="true"></iframe>
+        </div>
+      </aside>
+
+      <section class="chat-main-pane" aria-label="Chat content">
+        <header class="chat-desk-head">
+          <div>
+            <div class="chat-kicker">Chat</div>
+            <h3>Mio / Chat</h3>
+          </div>
+          <details class="chat-filter-details" hidden>
+            <summary>詳細フィルタ</summary>
+            <div class="filters chat-filter-controls">
+              <select id="fltType">
+                <option value="">type: all</option>
+                <option>message.received</option>
+                <option>routing.decision</option>
+                <option>agent.delegate</option>
+                <option>agent.note</option>
+                <option>agent.start</option>
+                <option>agent.thinking</option>
+                <option>agent.response</option>
+                <option>agent.report</option>
+                <option>worker.request</option>
+                <option>worker.result</option>
+                <option>tts.audio_chunk</option>
+              </select>
+              <select id="fltAgent">
+                <option value="">agent: all</option>
+                <option value="user">れん</option><option value="mio">みお</option><option value="shiro">しろ</option><option value="coder1">あか</option><option value="coder2">あお</option><option value="coder3">ぎん</option><option value="coder4">きん</option>
+              </select>
+              <select id="fltRoute">
+                <option value="">route: all</option>
+                <option>CHAT</option><option>OPS</option><option>PLAN</option><option>ANALYZE</option><option>RESEARCH</option><option>CODE</option><option>CODE1</option><option>CODE2</option><option>CODE3</option><option>CODE4</option>
+              </select>
+              <input id="fltJob" placeholder="job id contains...">
+              <input id="fltText" placeholder="content contains...">
+            </div>
+          </details>
+        </header>
+        <div class="chat-intent-strip" aria-label="Chat intent guidance">
+          <div><span class="chat-intent-label">Talk</span><strong>会話・相談</strong></div>
+          <div><span class="chat-intent-label">Investigate</span><strong>調査・確認</strong></div>
+          <div><span class="chat-intent-label">Route</span><strong>/ops /code /analyze</strong></div>
+        </div>
+        <div id="chat" class="chat-conversation">
+          <div class="empty chat-empty" id="empty">
+            <div class="chat-empty-mark">R</div>
+            <div class="chat-empty-title">メッセージ待機中</div>
+            <div class="chat-empty-sub">下の入力欄から、会話、相談、指示を送れます。</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-system" class="panel">
+    <div class="filters">
+      <select id="sysPreset">
+        <option value="all">view: all</option>
+        <option value="no-tts-audio">view: hide tts audio</option>
+        <option value="tts-only">view: tts only</option>
+        <option value="tts-audio-only">view: tts audio only</option>
+      </select>
+      <select id="sysType">
+        <option value="">type: all</option>
+        <option>routing.decision</option>
+        <option>entry.stage</option>
+        <option>agent.delegate</option>
+        <option>agent.dispatch</option>
+        <option>mailbox.sent</option>
+        <option>mailbox.waiting</option>
+        <option>mailbox.received</option>
+        <option>mailbox.error</option>
+        <option>agent.error</option>
+        <option>agent.start</option>
+        <option>agent.note</option>
+        <option>agent.response</option>
+        <option>agent.report</option>
+        <option>worker.request</option>
+        <option>worker.result</option>
+        <option>tts.audio_chunk</option>
+      </select>
+      <input id="sysText" placeholder="content contains...">
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Type</th><th>From</th><th>To</th><th>Route</th><th>Job</th><th>Content</th><th>Copy</th></tr></thead>
+        <tbody id="systemBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="panel-memory" class="panel">
+    <div class="panel-head">
+      <h3>Memory Inspector</h3>
+      <div class="sub">L1 memory / News Pack / Knowledge</div>
+    </div>
+    <div class="filters">
+      <input id="memorySession" placeholder="session id for L0/L2">
+      <input id="memoryNamespace" placeholder="namespace: conv:... / user:... / char:... / kb:...">
+      <input id="memoryCategory" placeholder="news category">
+      <input id="memoryDomain" placeholder="kb domain">
+      <input id="memoryEventNamespace" placeholder="event namespace: kb:web">
+      <select id="memoryPromoteKind">
+        <option value="user">user</option>
+        <option value="char">char</option>
+        <option value="kb">kb</option>
+      </select>
+      <input id="memoryPromoteID" placeholder="promote id: ren / mio / domain">
+      <button id="memoryRefreshBtn" class="ctl-btn" type="button">Refresh</button>
+    </div>
+    <div class="grid">
+      <div class="card"><h4>Memory</h4><div id="memoryCount" class="ops-big">0</div><div class="ops-sub">namespace filtered</div></div>
+      <div class="card"><h4>News</h4><div id="newsPackCount" class="ops-big">0</div><div class="ops-sub">recent items</div></div>
+      <div class="card"><h4>Digest</h4><div id="digestCount" class="ops-big">0</div><div class="ops-sub">daily slots</div></div>
+      <div class="card"><h4>Knowledge</h4><div id="knowledgeCount" class="ops-big">0</div><div class="ops-sub">domain filtered</div></div>
+      <div class="card"><h4>L0</h4><div id="memoryL0Count" class="ops-big">0</div><div class="ops-sub">current session</div></div>
+      <div class="card"><h4>L2</h4><div id="memoryL2Count" class="ops-big">0</div><div class="ops-sub">thread summaries</div></div>
+      <div class="card"><h4>L3</h4><div id="memoryL3Count" class="ops-big">0</div><div class="ops-sub">confirmed memory</div></div>
+      <div class="card"><h4>思い出したこと</h4><div id="recallPackCount" class="ops-big">0</div><div class="ops-sub">recall pack</div></div>
+      <div class="card"><h4>User Memory</h4><div id="userMemoryCount" class="ops-big">0</div><div class="ops-sub">user:ren</div></div>
+      <div class="card"><h4>Events</h4><div id="memoryEventCount" class="ops-big">0</div><div class="ops-sub">L1 event log</div></div>
+      <div class="card"><h4>Search Cache</h4><div id="searchCacheCount" class="ops-big">0</div><div class="ops-sub">fresh/recent cache</div></div>
+      <div class="card"><h4>Personal Archive</h4><div id="knowledgePersonalCount" class="ops-big">0</div><div class="ops-sub">protected originals</div></div>
+      <div class="card"><h4>Knowledge Sources</h4><div id="knowledgeSourceCount" class="ops-big">0</div><div class="ops-sub">creative / news / intake</div></div>
+      <div class="card"><h4>Dream Runs</h4><div id="knowledgeDreamCount" class="ops-big">0</div><div class="ops-sub">reviewed consolidation</div></div>
+      <div class="card"><h4>Domain Graph</h4><div id="domainGraphAssertionCount" class="ops-big">0</div><div class="ops-sub">assertions</div></div>
+      <div class="card"><h4>Graph Domains</h4><div id="domainGraphDomainCount" class="ops-big">0</div><div class="ops-sub">filtered domains</div></div>
+      <div class="card"><h4>Graph Sources</h4><div id="domainGraphSourceCount" class="ops-big">0</div><div class="ops-sub">source ids</div></div>
+    </div>
+    <div class="panel-head" style="margin-top:12px">
+      <h3>思い出したこと</h3>
+      <div class="sub">LLMへ渡す Recall Pack の確認用表示</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Layer</th><th>Namespace</th><th>State</th><th>Score</th><th>Kind</th><th>Summary</th><th>Evidence</th></tr></thead>
+        <tbody id="recallPackBody"></tbody>
+      </table>
+    </div>
+    <div class="panel-head" style="margin-top:12px">
+      <h3>User Memory</h3>
+      <div class="sub">user:ren の observed / candidate / confirmed / pinned</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>State</th><th>Type</th><th>Memory</th><th>Evidence</th><th>Updated</th><th>Action</th></tr></thead>
+        <tbody id="userMemoryBody"></tbody>
+      </table>
+    </div>
+    <div class="panel-head" style="margin-top:12px">
+      <h3>Knowledge Memory Ledger</h3>
+      <div class="sub">Personal originals / creative knowledge / news sources / intake rules / temporal markers / dream consolidation</div>
+    </div>
+    <div class="filters" style="margin-bottom:8px">
+      <select id="knowledgeMemoryTypeFilter">
+        <option value="">all types</option>
+        <option value="personal_archive">personal archive</option>
+        <option value="creative_knowledge">creative knowledge</option>
+        <option value="news_knowledge">news knowledge</option>
+        <option value="daily_intake_rule">daily intake rule</option>
+        <option value="temporal_marker">temporal marker</option>
+        <option value="dream_run">dream run</option>
+      </select>
+      <select id="knowledgeMemoryReviewFilter">
+        <option value="">all review states</option>
+        <option value="pending">pending</option>
+        <option value="approved">approved</option>
+        <option value="rejected">rejected</option>
+        <option value="promoted">promoted</option>
+        <option value="protected">protected</option>
+        <option value="enabled">enabled</option>
+        <option value="disabled">disabled</option>
+      </select>
+      <select id="knowledgeMemoryFlagFilter">
+        <option value="">all flags</option>
+        <option value="original">original</option>
+        <option value="protected">protected</option>
+        <option value="compressed">compressed</option>
+        <option value="warning">warning</option>
+      </select>
+    </div>
+    <div id="knowledgeMemoryDetail" class="small" style="margin-bottom:8px"></div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Type</th><th>ID</th><th>Title / Topic</th><th>Source</th><th>Status</th><th>Flags</th><th>Related Staging</th><th>Updated</th><th>Action</th></tr></thead>
+        <tbody id="knowledgeMemoryBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Layer</th><th>Scope</th><th>Kind</th><th>Summary</th><th>Updated</th></tr></thead>
+        <tbody id="memoryLayerBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Created</th><th>Namespace</th><th>Type</th><th>Source</th><th>Payload</th></tr></thead>
+        <tbody id="memoryEventBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Retrieved</th><th>Provider</th><th>Query</th><th>Expires</th><th>Sources</th></tr></thead>
+        <tbody id="searchCacheBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Web Gather</th><th>Value</th></tr></thead>
+        <tbody id="webGatherSummaryBody"></tbody>
+      </table>
+    </div>
+    <div class="panel-head" style="margin-top:12px">
+      <h3>Domain Graph Assertions</h3>
+      <div class="sub">外部世界の関係事実 current view</div>
+    </div>
+    <div class="filters">
+      <input id="domainGraphDomain" placeholder="domain: movie">
+      <input id="domainGraphEntityType" placeholder="entity type: work / person">
+      <input id="domainGraphSourceID" placeholder="source id">
+      <select id="domainGraphStatusFilter">
+        <option value="">validated</option>
+        <option value="pending">pending</option>
+        <option value="validated">validated</option>
+        <option value="rejected">rejected</option>
+      </select>
+      <button id="domainGraphRefreshBtn" class="ctl-btn" type="button">Refresh Graph</button>
+    </div>
+    <div id="domainGraphAssertionStatus" class="small" style="margin-bottom:8px"></div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Domain</th><th>Type</th><th>Entity</th><th>Relation</th><th>Conf</th><th>Source</th><th>Summary / Evidence</th><th>Created</th></tr></thead>
+        <tbody id="domainGraphAssertionBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Status</th><th>Source</th><th>Summary</th><th>Warnings</th><th>Action</th></tr></thead>
+        <tbody id="webGatherRecentBody"></tbody>
+      </table>
+    </div>
+    <div class="filters">
+      <input id="sourceRegistryID" placeholder="source id: rss:ai-official">
+      <input id="sourceRegistryURL" placeholder="source url">
+      <select id="sourceRegistryKind">
+        <option>rss</option>
+        <option>atom</option>
+        <option>official_api</option>
+        <option>github</option>
+        <option>huggingface</option>
+        <option>pypi</option>
+        <option>mediawiki</option>
+        <option>search_fallback</option>
+        <option>web_gather</option>
+      </select>
+      <input id="sourceRegistryTrust" placeholder="trust 0.0-1.0">
+      <input id="sourceRegistryInterval" placeholder="interval sec">
+      <input id="sourceRegistryLicense" placeholder="license note">
+      <input id="sourceRegistryNamespace" placeholder="namespace: kb:news">
+      <label class="small"><input id="sourceRegistryEnabled" type="checkbox" checked> enabled</label>
+      <button id="sourceRegistrySaveBtn" class="ctl-btn" type="button">Save Source</button>
+      <button id="sourceRegistryExportBtn" class="ctl-btn" type="button">Export YAML</button>
+      <button id="sourceRegistryImportBtn" class="ctl-btn" type="button">Import YAML</button>
+    </div>
+    <div id="sourceRegistryRunStatus" class="small" style="margin-bottom:8px"></div>
+    <textarea id="sourceRegistryYAML" placeholder="source_registry.yaml" style="width:100%;min-height:110px;margin-bottom:12px;background:rgba(255,255,255,.03);color:var(--t1);border:1px solid var(--border);border-radius:8px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:12px"></textarea>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>ID</th><th>Kind</th><th>Trust</th><th>Interval</th><th>Status</th><th>URL</th><th>Run</th></tr></thead>
+        <tbody id="sourceRegistryBody"></tbody>
+      </table>
+    </div>
+    <div class="filters">
+      <select id="sourceRegistryStagingStatus">
+        <option value="pending">pending</option>
+        <option value="validated">validated</option>
+        <option value="rejected">rejected</option>
+      </select>
+      <input id="sourceRegistryStagingTrust" placeholder="min trust 0.5">
+      <input id="sourceRegistryStagingCategory" placeholder="news category">
+      <input id="sourceRegistryStagingDomain" placeholder="knowledge domain">
+      <input id="sourceRegistryStagingNamespace" placeholder="memory namespace">
+      <input id="sourceRegistryStagingGraphDomain" placeholder="graph domain: movie">
+      <input id="sourceRegistryStagingGraphEntityType" placeholder="entity type: work / person">
+      <input id="sourceRegistryStagingGraphEntityID" placeholder="entity id: movie:1">
+      <input id="sourceRegistryStagingGraphRelation" placeholder="relation: catalog_fact">
+      <input id="sourceRegistryStagingGraphConfidence" placeholder="confidence 0.0-1.0">
+      <button id="sourceRegistryStagingRefreshBtn" class="ctl-btn" type="button">Refresh Staging</button>
+    </div>
+    <div id="sourceRegistryStagingStatusLine" class="small" style="margin-bottom:8px"></div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>ID</th><th>Status</th><th>Kind</th><th>Namespace</th><th>Source</th><th>Summary</th><th>Warnings</th><th>Knowledge</th><th>Action</th></tr></thead>
+        <tbody id="sourceRegistryStagingBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Response</th><th>Role</th><th>Layer</th><th>Kind</th><th>Status</th><th>Section</th><th>Tokens</th><th>Warning</th><th>Reason</th><th>Summary</th><th>Source</th><th>Created</th></tr></thead>
+        <tbody id="recallTraceBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Layer</th><th>State</th><th>Namespace</th><th>Speaker</th><th>Message</th><th>Updated</th><th>Action</th></tr></thead>
+        <tbody id="memoryBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Published</th><th>Category</th><th>Source</th><th>Summary</th><th>Keywords</th></tr></thead>
+        <tbody id="newsPackBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Slot</th><th>Category</th><th>Digest</th><th>Created</th></tr></thead>
+        <tbody id="digestBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="panel-movie-db" class="panel">
+    <div class="movie-db-screen">
+      <section class="movie-db-side">
+        <div class="desk-brand">
+          <div class="desk-kicker">Movie Database</div>
+          <h2 class="daily-desk-title">映画と人物のリンク</h2>
+        </div>
+        <div class="movie-db-meter">
+          <div><span id="movieDbMovieCount">0</span><small>Movies</small></div>
+          <div><span id="movieDbPersonCount">0</span><small>People</small></div>
+          <div><span id="movieDbEdgeCount">0</span><small>Links</small></div>
+        </div>
+        <details class="movie-db-fetch-box">
+          <summary>
+            <span>情報取得</span>
+            <small id="movieDbStatus">loading</small>
+          </summary>
+          <h3>情報取得</h3>
+          <select id="movieDbFetchKind" class="movie-db-select" aria-label="fetch target kind">
+            <option value="movie">映画名</option>
+            <option value="person">人物名</option>
+          </select>
+          <input id="movieDbFetchQuery" class="movie-db-search" placeholder="映画名・人物名、または映画.com URL">
+          <div class="movie-db-fetch-options">
+            <label><input id="movieDbFetchFollow" type="checkbox" checked> 関連リンクも取得</label>
+            <label><input id="movieDbFetchFilmography" type="checkbox" checked> 人物の出演映画も取得</label>
+          </div>
+          <div class="movie-db-fetch-row">
+            <input id="movieDbFetchMaxPages" class="movie-db-search" type="number" min="1" max="20" value="5" aria-label="max fetch pages">
+            <button id="movieDbFetchBtn" class="ctl-btn" type="button">取得</button>
+          </div>
+          <div id="movieDbFetchStatus" class="movie-db-fetch-status daily-desk-muted">名前は既存DB候補から解決します。未登録なら映画.com URLを貼ってください。</div>
+          <div id="movieDbFetchCandidates" class="movie-db-fetch-candidates"></div>
+        </details>
+      </section>
+      <section class="movie-db-main">
+        <div class="movie-db-toolbar">
+          <div class="movie-db-mode" role="tablist" aria-label="Movie catalog mode">
+            <button id="movieDbModeMovies" class="movie-db-mode-btn active" type="button">映画</button>
+            <button id="movieDbModePeople" class="movie-db-mode-btn" type="button">人物</button>
+          </div>
+          <div class="movie-db-history">
+            <button id="movieDbBack" class="ctl-btn" type="button">戻る</button>
+            <button id="movieDbForward" class="ctl-btn" type="button">進む</button>
+          </div>
+          <input id="movieDbSearch" class="movie-db-search" placeholder="映画名、人物名、あらすじ、略歴で検索">
+          <select id="movieDbRoleFilter" class="movie-db-select" aria-label="role filter">
+            <option value="">役割すべて</option>
+            <option value="出演">出演</option>
+            <option value="監督">監督</option>
+            <option value="脚本">脚本</option>
+            <option value="製作">製作</option>
+            <option value="製作総指揮">製作総指揮</option>
+          </select>
+          <select id="movieDbSourceFilter" class="movie-db-select" aria-label="source filter">
+            <option value="">取得元すべて</option>
+            <option value="movie_cast">映画キャスト</option>
+            <option value="movie_staff">映画スタッフ</option>
+            <option value="person_biography">人物略歴</option>
+            <option value="person_filmography">人物出演作</option>
+          </select>
+          <select id="movieDbLimit" class="movie-db-select" aria-label="items per page">
+            <option value="25">25件</option>
+            <option value="50">50件</option>
+          </select>
+          <button id="movieDbRefresh" class="ctl-btn" type="button">Refresh</button>
+        </div>
+        <div class="movie-db-content">
+          <section class="movie-db-list">
+            <div class="movie-db-list-head">
+              <h3 id="movieDbListTitle">映画</h3>
+              <span id="movieDbPageInfo" class="desk-pill">0 / 0</span>
+              <div class="movie-db-pager movie-db-pager-top">
+                <button id="movieDbFirst" class="ctl-btn" type="button">First</button>
+                <button id="movieDbPrev" class="ctl-btn" type="button">Prev</button>
+                <button id="movieDbNext" class="ctl-btn" type="button">Next</button>
+              </div>
+            </div>
+            <div id="movieDbRows" class="movie-db-rows"></div>
+            <div class="movie-db-pager">
+              <button id="movieDbFirstBottom" class="ctl-btn" type="button">First</button>
+              <button id="movieDbPrevBottom" class="ctl-btn" type="button">Prev</button>
+              <button id="movieDbNextBottom" class="ctl-btn" type="button">Next</button>
+            </div>
+          </section>
+          <section class="movie-db-detail">
+            <div class="movie-db-detail-actions">
+              <button id="movieDbDetailBack" class="ctl-btn" type="button">戻る</button>
+              <button id="movieDbDetailClose" class="ctl-btn" type="button">閉じる</button>
+            </div>
+            <div id="movieDbDetail" class="movie-db-detail-inner">項目を選ぶと詳細を表示します。</div>
+          </section>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-news-pack" class="panel">
+    <div class="panel-head">
+      <h3>News Pack</h3>
+      <div class="sub">Daily Digest / source detail / recall usage</div>
+    </div>
+    <div class="filters">
+      <input id="newsPackCategory" placeholder="category: ai / general">
+      <button id="newsPackRefreshBtn" class="ctl-btn" type="button">Refresh</button>
+    </div>
+    <div class="grid">
+      <div class="card"><h4>News</h4><div id="newsPackPanelCount" class="ops-big">0</div><div class="ops-sub">today candidates</div></div>
+      <div class="card"><h4>Digest</h4><div id="newsDigestPanelCount" class="ops-big">0</div><div class="ops-sub">day / morning / noon / evening</div></div>
+      <div class="card"><h4>Used</h4><div id="newsUsageCount" class="ops-big">0</div><div class="ops-sub">matched recall traces</div></div>
+    </div>
+    <div class="grid" style="grid-template-columns:minmax(320px,1.2fr) minmax(300px,.8fr)">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Published</th><th>Category</th><th>Source</th><th>Summary</th><th>Usage</th></tr></thead>
+          <tbody id="newsPackPanelBody"></tbody>
+        </table>
+      </div>
+      <div id="newsPackDetail" class="card">
+        <h4>Source Detail</h4>
+        <div class="small">No news selected</div>
+      </div>
+    </div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Slot</th><th>Category</th><th>Digest</th><th>News IDs</th><th>Created</th></tr></thead>
+        <tbody id="newsDigestPanelBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Response</th><th>Role</th><th>Matched Source</th><th>Used At</th></tr></thead>
+        <tbody id="newsUsageBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Layer</th><th>Kind</th><th>Reason</th><th>Summary</th></tr></thead>
+        <tbody id="newsRelatedMemoryBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="panel-investment" class="panel">
+    <div class="desk-screen desk-workspace">
+      <aside class="desk-side">
+        <div class="desk-brand">
+          <div class="desk-kicker">Investment / Data Desk</div>
+          <h2 class="daily-desk-title">学習基盤の状態</h2>
+        </div>
+        <div class="desk-character">
+          <div class="desk-character-mark">I</div>
+          <div class="desk-character-name">Investment Desk</div>
+          <div class="daily-desk-muted">株式・ETF 学習基盤の snapshot / feature / event を確認します。</div>
+        </div>
+        <button id="investmentRefreshBtn" class="desk-primary-btn" type="button">Refresh</button>
+        <div id="investmentStateBadge" class="desk-status-pill">loading</div>
+        <div id="investmentStatusCard" class="daily-desk-card"></div>
+      </aside>
+      <section class="desk-main">
+        <section id="investmentSummaryCards" class="desk-card-list home-focus"></section>
+        <div class="desk-two-col">
+          <div id="investmentSnapshotCard" class="daily-desk-card"></div>
+          <div id="investmentHealthCard" class="daily-desk-card"></div>
+        </div>
+        <div class="table-wrap" style="margin-top:10px">
+          <table>
+            <thead><tr><th>Snapshot Date</th><th>Status</th><th>DB Hash</th><th>Features Hash</th><th>Data Range</th><th>Missing</th><th>Updated</th></tr></thead>
+            <tbody id="investmentSnapshotBody"></tbody>
+          </table>
+        </div>
+        <div class="table-wrap" style="margin-top:10px">
+          <table>
+            <thead><tr><th>Source</th><th>Latest Status</th><th>Last Fetch</th><th>Success</th><th>Partial</th><th>Fail</th><th>Rows</th></tr></thead>
+            <tbody id="investmentSourceBody"></tbody>
+          </table>
+        </div>
+        <div class="table-wrap" style="margin-top:10px">
+          <table>
+            <thead><tr><th>Week End</th><th>Instrument</th><th>ret_1w</th><th>ret_12w</th><th>vol_12w</th><th>event_risk</th><th>Flags</th></tr></thead>
+            <tbody id="investmentFeatureBody"></tbody>
+          </table>
+        </div>
+        <div class="table-wrap" style="margin-top:10px">
+          <table>
+            <thead><tr><th>Event Time</th><th>Level</th><th>Scope</th><th>Reason</th><th>Risk</th><th>Resolved</th></tr></thead>
+            <tbody id="investmentEventBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-idlechat" class="panel idle-desk-panel">
+    <div class="idle-desk-shell">
+      <aside class="idle-character-pane" aria-label="IdleChat status and controls">
+        <div class="idle-brand-row">
+          <div class="chat-logo-mark">I</div>
+          <div>
+            <div class="chat-brand-name">IdleChat</div>
+            <div class="chat-brand-sub">Mio / Shiro background talk</div>
+          </div>
+        </div>
+        <div class="idle-character-portrait" aria-hidden="true">
+          <iframe class="idle-live2d-frame mio" src="/viewer/live2d/embed?character_id=mio&emotion=normal&mode=normal&hide_ui=true"
+                  allowtransparency="true"></iframe>
+          <iframe class="idle-live2d-frame shiro" src="/viewer/live2d/embed?character_id=shiro&emotion=normal&mode=normal&hide_ui=true"
+                  allowtransparency="true"></iframe>
+        </div>
+        <div class="idle-status-board">
+          <div class="chat-status-row"><span>Manual</span><span id="idleManual" class="badge state-offline">off</span></div>
+          <div class="chat-status-row"><span>Chat Active</span><span id="idleActive" class="badge state-offline">off</span></div>
+          <div class="idle-topic-card">
+            <span>Current Topic</span>
+            <strong id="idleTopicNow">-</strong>
+          </div>
+        </div>
+        <div class="idle-mode-board" aria-label="IdleChat mode controls">
+          <div class="idle-mode-title">開始モード</div>
+          <div class="idle-mode-note">下の固定バーのボタンで開始・停止します。ここでは状態と読み返しを確認します。</div>
+        </div>
+      </aside>
+
+      <section class="idle-main-pane" aria-label="IdleChat content">
+        <header class="idle-desk-head">
+          <div>
+            <div class="chat-kicker">IdleChat</div>
+            <h3>雑談を、ライブと要約で読む</h3>
+            <p>現在の会話はLive、後から見る内容はSummary Review、過去一覧はHistoryに分けます。</p>
+          </div>
+          <div class="idle-subtabs" role="tablist" aria-label="IdleChat views">
+            <button class="idle-subtab active" data-idle-view="live" type="button" role="tab" aria-controls="idleViewLive">Live</button>
+            <button class="idle-subtab" data-idle-view="summary" type="button" role="tab" aria-controls="idleViewSummary">Review</button>
+            <button class="idle-subtab" data-idle-view="history" type="button" role="tab" aria-controls="idleViewHistory">History</button>
+          </div>
+        </header>
+        <div id="idleViewLive" class="idle-subview active" role="tabpanel">
+          <div class="panel-head idle-panel-head">
+            <h3>Live Timeline</h3>
+            <div class="sub">今日のお題 / Mio・Shiro発話 / 要約</div>
+          </div>
+          <div id="idleLiveLog" class="idle-live">
+            <div class="idle-live-empty">No live IdleChat messages yet</div>
+          </div>
+        </div>
+        <div id="idleViewSummary" class="idle-subview" role="tabpanel">
+          <div class="panel-head idle-panel-head">
+            <h3>Summary Review</h3>
+            <div class="sub">後から読み返して内容チェック</div>
+          </div>
+          <div id="idleSummaryReview" class="idle-review">
+            <div class="idle-review-list" id="idleSummaryList">
+              <div class="idle-empty">No summaries yet</div>
+            </div>
+            <div class="idle-review-detail" id="idleSummaryDetail">
+              <div class="idle-empty">Select a summary</div>
+            </div>
+          </div>
+        </div>
+        <div id="idleViewHistory" class="idle-subview" role="tabpanel">
+          <div class="panel-head idle-panel-head">
+            <h3>History</h3>
+            <div class="sub">過去セッション一覧</div>
+          </div>
+          <div class="idle-history-wrap">
+            <table>
+              <thead><tr><th>Title</th><th>Topic</th><th>Turns</th><th>Loop Restart</th><th>Started (JST)</th><th>Ended (JST)</th><th>Summary</th></tr></thead>
+              <tbody id="idlechatBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-sessions" class="panel">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Session</th><th>Channel</th><th>Chat ID</th><th>Messages</th><th>Last Route</th><th>Last User Message</th><th>Active Agents</th><th>Updated</th></tr></thead>
+        <tbody id="sessionsBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="panel-jobs" class="panel">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Job ID</th><th>Route</th><th>Status</th><th>From -> To</th><th>Started</th><th>Updated</th><th>Events</th><th>Preview</th></tr></thead>
+        <tbody id="jobsBody"></tbody>
+      </table>
+    </div>
+    <div class="filters" style="margin-top:10px">
+      <select id="eviStatus">
+        <option value="">evidence status: all</option>
+        <option value="passed">passed</option>
+        <option value="failed">failed</option>
+      </select>
+      <select id="eviErrorKind">
+        <option value="">error kind: all</option>
+        <option value="apply">apply</option>
+        <option value="verify">verify</option>
+        <option value="repair">repair</option>
+      </select>
+      <button id="eviSort" class="ctl-btn">finished: newest</button>
+    </div>
+    <div class="grid" id="evidenceSummaryCards" style="margin-bottom:10px"></div>
+    <div class="table-wrap" style="margin-top:10px">
+      <table>
+        <thead><tr><th>Evidence Ref</th><th>Job ID</th><th>Status</th><th>Error Kind</th><th>Latest Verify</th><th>Steps</th><th>Verify</th><th>Goal</th><th>Attempt</th><th>Repair</th><th>Finished</th><th>Detail</th></tr></thead>
+        <tbody id="evidenceBody"></tbody>
+      </table>
+    </div>
+    <div class="table-wrap" style="margin-top:10px">
+      <table>
+        <thead><tr><th>Selected Evidence Detail</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>
+              <div class="filters" style="margin:0 0 8px 0">
+                <button id="eviPrev" class="ctl-btn">Prev</button>
+                <button id="eviNext" class="ctl-btn">Next</button>
+                <button id="eviCopy" class="ctl-btn">Copy JSON</button>
+                <button id="eviCopySummary" class="ctl-btn">Copy Summary</button>
+                <span id="eviPos" class="small">- / -</span>
+              </div>
+              <div id="evidenceDetail" class="small">No selection</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  </main>
+</div>
+
+<div id="ttsNowPlaying" class="tts-now-playing hidden" role="status" aria-live="polite">
+  <span class="label">Now Playing</span>
+  <span id="ttsNowPlayingText" class="text"></span>
+</div>
+<button class="audio-btn live-audio-btn" id="liveAudioBtn" type="button" title="音声を有効化">🔊</button>
+
+<div class="input-bar">
+  <div class="input-wrap">
+    <div class="input-main">
+      <div class="input-side">
+        <div class="input-audio-controls">
+          <button class="audio-btn" id="audioBtn" type="button" title="音声を有効化">🔊</button>
+          <button class="audio-btn" id="micBtn" type="button" title="音声入力">🎤</button>
+          <button class="audio-btn repair-btn" id="repairBtn" type="button" title="ログを見て修復">🔧</button>
+          <button class="audio-btn" id="attachBtn" type="button" title="画像・動画・PDF・テキストを添付">📎</button>
+          <button class="audio-btn" id="screenBtn" type="button" title="画面/タブ入力">🖥</button>
+          <button class="audio-btn" id="cameraBtn" type="button" title="カメラ/マイク入力">📷</button>
+          <input id="attachInput" type="file" multiple accept="image/*,video/*,audio/*,application/pdf,text/*,.txt,.md,.json,.csv,.yaml,.yml,.mp4,.mov,.webm,.m4v,.mp3,.wav,.m4a,.ogg" hidden>
+          <input id="cameraInput" type="file" accept="image/*,video/*,audio/*" capture="environment" hidden>
+        </div>
+        <div class="input-status-row">
+          <span id="micState" class="stt-state">Mic: off</span>
+          <span id="sttConnState" class="stt-state">STT: off</span>
+          <span id="sttSessionState" class="stt-state session-id" title="Session: (unknown)">Session: (unknown)</span>
+        </div>
+      </div>
+      <div class="input-compose">
+        <div class="input-text-stack">
+          <div id="sttCaption" class="stt-caption" aria-live="polite">
+            <span id="sttCaptionLabel" class="stt-caption-label">暫定文字列</span>
+            <span id="sttCaptionText" class="stt-caption-text">-</span>
+          </div>
+          <textarea id="inp" rows="1" placeholder="Mio にメッセージを送る..." autocomplete="off"></textarea>
+        </div>
+        <button class="send-btn" id="sendBtn" title="Send">&#x27A4;</button>
+      </div>
+    </div>
+    <div class="attachment-tray" id="attachmentTray" aria-live="polite"></div>
+    <div class="idle-tools">
+      <button id="idleModeNormal" class="ctl-btn" title="通常のIdleChat会話を選択">通常Chat</button>
+      <button id="idleModeForecast" class="ctl-btn mode-forecast" title="未来展望セッション（6ドメイン×100ターン）を選択">未来展望</button>
+      <button id="idleModeStorySimple" class="ctl-btn mode-story-simple" title="昔話の主人公改変ワンプロンプト物語（Coder2生成）">物語</button>
+      <button id="idleStart" class="ctl-btn" title="選択中のモードを開始">IdleChat開始</button>
+      <button id="idleStop" class="ctl-btn" title="IdleChatモードを停止">IdleChat停止</button>
+      <span id="idleState" class="idle-off">IdleChat: off</span>
+    </div>
+  </div>
+</div>
+<div class="camera-capture-modal hidden" id="cameraCaptureModal" role="dialog" aria-modal="true" aria-labelledby="cameraCaptureTitle">
+  <div class="camera-capture-panel">
+    <div class="camera-capture-head">
+      <h2 id="cameraCaptureTitle">Camera / Mic</h2>
+      <button class="camera-capture-close" id="cameraCaptureCloseBtn" type="button" aria-label="閉じる">×</button>
+    </div>
+    <video id="cameraCaptureVideo" class="camera-capture-video" autoplay playsinline muted></video>
+    <div class="camera-capture-status" id="cameraCaptureStatus">CAMERA_OFF</div>
+    <div class="camera-capture-controls">
+      <button class="camera-capture-btn" id="cameraPhotoBtn" type="button">単発静止画</button>
+      <button class="camera-capture-btn primary" id="cameraFrameStartBtn" type="button">1FPS開始</button>
+      <button class="camera-capture-btn" id="cameraFrameStopBtn" type="button" disabled>停止</button>
+    </div>
+  </div>
+</div>
+<div class="ctr" id="ctr" style="display:none">Messages: <span id="cnt">0</span></div>
+<button class="latest-btn" id="latestBtn" type="button" aria-label="最新を表示">
+  <span class="latest-ico">↓</span>
+  <span>最新表示</span>
+</button>
+<div class="toast" id="toast"></div>
+
+<script src="/viewer/assets/js/tabs/ops.js?v=20260510-tabs-ops" defer></script>
+<script src="/viewer/assets/js/tabs/home.js?v=20260517-desk-regenerated" defer></script>
+<script src="/viewer/assets/js/tabs/develop.js?v=20260517-desk-regenerated" defer></script>
+<script src="/viewer/assets/js/tabs/instructions.js?v=20260517-desk-regenerated" defer></script>
+<script src="/viewer/assets/js/tabs/backlog.js?v=20260618-backlog" defer></script>
+<script src="/viewer/assets/js/tabs/reports.js?v=20260517-desk-regenerated" defer></script>
+<script src="/viewer/assets/js/tabs/overview.js?v=20260510-tabs-overview" defer></script>
+<script src="/viewer/assets/js/tabs/system.js?v=20260510-tabs-system" defer></script>
+<script src="/viewer/assets/js/tabs/memory.js?v=20260518-knowledge-relations" defer></script>
+<script src="/viewer/assets/js/tabs/movie-db.js?v=20260602-movie-catalog" defer></script>
+<script src="/viewer/assets/js/tabs/news-pack.js?v=20260510-tabs-memory" defer></script>
+<script src="/viewer/assets/js/tabs/investment.js?v=20260616-investment-desk" defer></script>
+<script src="/viewer/assets/js/tabs/roles.js?v=20260510-tabs-roles" defer></script>
+<script src="/viewer/assets/js/tabs/progress.js?v=20260510-tabs-progress" defer></script>
+<script src="/viewer/assets/js/tabs/timeline.js?v=20260618-job-interrupt" defer></script>
+<script src="/viewer/assets/js/tabs/idlechat.js?v=20260527-tts-history-guard" defer></script>
+<script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
+<script src="/viewer/assets/js/tabs/jobs.js?v=20260510-tabs-jobs" defer></script>
+<script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
+<script src="/viewer/assets/js/viewer.js?v=20260630-character-init" defer></script>
+<script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+</body>
+</html>

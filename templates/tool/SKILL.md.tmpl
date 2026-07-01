@@ -1,0 +1,51 @@
+---
+tool_id: {{TOOL_ID}}
+version: 1.0.0
+category: {{CATEGORY}}
+dry_run: {{DRY_RUN}}
+invariants:
+  - "JSON 入出力"
+  - "入力バリデーション実装"
+deprecated: false
+replaced_by: null
+---
+
+# {{TOOL_ID}}
+
+{{DESCRIPTION}}
+
+## 入力
+
+```json
+{
+  "{{PARAM_1}}": "...",
+  "{{PARAM_2}}": "..."
+}
+```
+
+## 出力
+
+```json
+{
+  "result": "...",
+  "generated_at": "2026-01-01T00:00:00Z"
+}
+```
+
+## エラー
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "...",
+    "details": {}
+  }
+}
+```
+
+## 不変条件
+
+- JSON 入出力（stdout=結果, stderr=ログ）
+- 入力バリデーション（パストラバーサル、制御文字、ID汚染を弾く）
+- {{#IF DRY_RUN}}dry-run (mode=plan) で差分・対象件数を返す{{/IF}}

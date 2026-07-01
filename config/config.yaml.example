@@ -1,0 +1,401 @@
+# RenCrow 設定サンプル
+# このファイルをコピーして config.yaml として使用
+# ${ENV_VAR} は環境変数から自動展開される
+
+server:
+  host: "0.0.0.0"
+  port: 18790
+  tls:
+    enabled: false
+    cert_file: "./certs/dev.crt"
+    key_file: "./certs/dev.key"
+
+# Ollama 設定（mio/shiro/IdleChat共通モデル）
+ollama:
+  base_url: "http://192.168.1.31:11434"
+  model: "picoclaw-v1"  # 全Agent共通モデル
+  max_context: 131072   # 常駐モデルの最大コンテキスト長（超過するモデルはNG）
+
+# Chat / Worker / Heavy / Wild 用ローカルLLM（Mac MLX OpenAI互換サーバ）
+local_llm:
+  enabled: true
+  provider: "local_openai"        # local_openai | ollama
+  # 2026-05-11現在: Chat=8081, Worker=8082, Heavy=8083, Wild=8084 が標準。
+  base_url: "http://192.168.1.31:8081"
+  chat_base_url: "http://192.168.1.31:8081"
+  worker_base_url: "http://192.168.1.31:8082"
+  heavy_base_url: "http://192.168.1.31:8083"
+  wild_base_url: "http://192.168.1.31:8084"
+  api_key: ""
+  chat_model: "Chat"
+  worker_model: "Worker"
+  chat_worker_model: "ChatWorker" # IdleChat shiro用。Workerより短い出力capを使う。
+  heavy_model: "Heavy"
+  wild_model: "Wild"
+  timeout_sec: 120
+  warmup: false
+  global_concurrency: 2
+  model_concurrency: 1
+  model_context: 131072
+
+# DeepSeek API (Code1)
+deepseek:
+  api_key: "${DEEPSEEK_API_KEY}"
+  model: "deepseek-chat"
+
+# OpenAI API (Code2)
+openai:
+  api_key: "${OPENAI_API_KEY}"
+  model: "gpt-4o-mini"
+
+# Claude API (Code3)
+claude:
+  api_key: "${ANTHROPIC_API_KEY}"
+  model: "claude-sonnet-4-20250514"
+
+# LINE Messaging API
+line:
+  channel_secret: "${LINE_CHANNEL_SECRET}"
+  access_token: "${LINE_CHANNEL_TOKEN}"
+
+telegram:
+  bot_token: "${TELEGRAM_BOT_TOKEN}"
+  webhook_secret: "${TELEGRAM_WEBHOOK_SECRET}"
+
+discord:
+  bot_token: "${DISCORD_BOT_TOKEN}"
+  public_key: "${DISCORD_PUBLIC_KEY}"
+
+slack:
+  app_token: "${SLACK_APP_TOKEN}"
+  bot_token: "${SLACK_BOT_TOKEN}"
+  signing_secret: "${SLACK_SIGNING_SECRET}"
+
+# Google Search API (Chat用 - mio)
+google_search_chat:
+  api_key: "${GOOGLE_API_KEY_CHAT}"
+  search_engine_id: "${GOOGLE_SEARCH_ENGINE_ID_CHAT}"
+
+# Google Search API (Worker用 - shiro)
+google_search_worker:
+  api_key: "${GOOGLE_API_KEY_WORKER}"
+  search_engine_id: "${GOOGLE_SEARCH_ENGINE_ID_WORKER}"
+
+# Web 情報収集ツール
+# SearXNG は self-hosted endpoint を明示した場合だけ Worker tool / CLI で有効化される。
+web_gather:
+  searxng_base_url: ""
+
+# ComfyUI 画像生成 backend。ComfyUI 利用と画像解析/生成系は Wild 固定。
+comfyui:
+  base_url: "http://100.83.207.6:8188"
+  client_id: "rencrow-server"
+  poll_interval_sec: 3
+  timeout_sec: 300
+
+# Webwright は RenCrow_Tools に分離した任意のブラウザ取得補助ツール。
+# uvx_from は外部取得を伴うため、使う場合だけ明示する。
+webwright_fetch:
+  enabled: false
+  runner_path: "/home/nyukimi/RenCrow/RenCrow_Tools/tools/webwright_fetch/run_webwright_fetch.py"
+  config_path: "/home/nyukimi/RenCrow/RenCrow_Tools/tools/webwright_fetch/config_local_worker.yaml"
+  output_dir: "tmp/webwright_runs"
+  staging_output_dir: "tmp/webwright_staging"
+  uvx_from: ""
+  python: ""
+  responses_endpoint: "http://127.0.0.1:8082/v1/responses"
+  model: "Coder1"
+  api_key: "dummy"
+
+# Browser Actor は RenCrow_Tools に分離した任意のブラウザ操作 sidecar。
+# run は enabled=true のときだけ許可し、cookie 等は profile_root 配下の profile 単位で保持する。
+browser_actor:
+  enabled: false
+  runner_path: "/home/nyukimi/RenCrow/RenCrow_Tools/tools/browser_actor/run_browser_actor.mjs"
+  node_binary: "node"
+  browser: "chromium"
+  headless_default: true
+  profile_root: "workspace/browser_profiles"
+  artifact_root: "workspace/browser_runs"
+  timeout_ms: 30000
+  max_actions: 30
+  network_scope: "allowlist"
+  allowed_origins:
+    - "http://127.0.0.1:18790"
+    - "http://localhost:18790"
+    - "file://"
+  save_trace: true
+  save_screenshot: true
+  mask_secrets: true
+
+# セッション設定
+session:
+  storage_dir: "./sessions"
+
+# Worker 実行設定（Coderが生成したPatchの自動実行）
+worker:
+  auto_commit: false
+  commit_message_prefix: "[Worker Auto-Commit]"
+  command_timeout: 300       # シェルコマンド実行タイムアウト（秒）
+  git_timeout: 30            # Git操作タイムアウト（秒）
+  stop_on_error: true        # true=中断モード、false=継続モード
+  workspace: "."             # Patch実行のルートディレクトリ
+  protected_patterns:        # 保護ファイルパターン（機密情報保護）
+    - ".env*"
+    - "*credentials*"
+    - "*.key"
+    - "*.pem"
+  action_on_protected: "error"    # "error"=エラー停止、"skip"=スキップ、"log"=警告ログのみ
+  show_execution_summary: true    # 実行前にコマンド数・種別を表示
+  parallel_execution: false       # v4: true で Type-Based Phased Execution
+  max_parallelism: 4              # v4: 並列度上限
+
+# 実行ポリシー/監査（OpenClaw parity: Phase 01）
+security:
+  enabled: false                  # true で policy runner を有効化
+  policy_mode: "balanced"         # "strict" | "balanced" | "dev"
+  network_scope: ""               # ""(profile default) | "blocked" | "allowlist" | "full"
+  network_allowlist:              # used when network_scope=allowlist
+    - "localhost"
+    - "127.0.0.1"
+  deny_commands:
+    - "rm -rf"
+    - "git reset --hard"
+  workspace_enforced: true
+  audit:
+    enabled: true
+    backend: "jsonl"              # "jsonl" | "sqlite"（sqliteは将来拡張）
+    path: "logs/execution_audit.jsonl"
+
+# プロンプトファイルディレクトリ（未設定時はビルトインフォールバック）
+prompts_dir: "./prompts"       # デフォルトプロンプト（リポジトリ固定）
+workspace_dir: "./workspace"   # ユーザーカスタマイズ領域（オーバーライド）
+operation_memory_dir: "${HOME}/.picoclaw/rencrow/memory" # DB/ランタイム状態と一緒に持ち運ぶ運用記憶
+
+# ログ設定
+log:
+  level: "info"
+  format: "json"
+
+# 分散実行設定（v4.0）
+distributed:
+  enabled: false
+  transports:
+    mio:
+      type: "local"
+    shiro:
+      type: "local"
+    coder1:
+      type: "local"
+    coder2:
+      type: "local"
+    coder3:
+      type: "ssh"
+      remote_host: "192.168.1.100:22"
+      remote_user: "picoclaw"
+      ssh_key_path: "~/.ssh/id_ed25519_picoclaw"
+      strict_host_key: true
+      remote_agent_path: "/usr/local/bin/picoclaw-agent"
+      remote_config_path: "/etc/picoclaw/config.yaml"
+
+# Agent間雑談モード（v4.0）
+idle_chat:
+  enabled: false
+  participants:
+    - "mio"
+    - "shiro"
+  interval_min: 5        # 雑談開始までのアイドル時間（分）
+  interval_sec: 300      # 雑談開始までのアイドル時間（秒、指定時は interval_min より優先）
+  max_turns: 10           # 1回の雑談最大ターン数
+  temperature: 0.8        # 雑談時の温度
+  topic_generation:
+    enabled: true
+    candidates_per_attempt: 5
+    max_attempts: 3
+    judge_enabled: true
+    min_judge_total: 24
+    min_category_fit: 4
+    min_safety: 4
+    recent_topic_window: 12
+    recent_similarity_threshold: 0.82
+    log_candidates: true
+    log_judge_scores: true
+    prompts:
+      common: "prompts/idle_chat/topic_generator_common.md"
+      single: "prompts/idle_chat/topic_generator_single.md"
+      double: "prompts/idle_chat/topic_generator_double.md"
+      external: "prompts/idle_chat/topic_generator_external.md"
+      movie: "prompts/idle_chat/topic_generator_movie.md"
+      news: "prompts/idle_chat/topic_generator_news.md"
+      forecast: "prompts/idle_chat/topic_generator_forecast.md"
+      story: "prompts/idle_chat/topic_generator_story.md"
+      judge: "prompts/idle_chat/topic_judge.md"
+  dialogue_interestingness:
+    enabled: true
+    max_turns_per_topic: 12
+    min_quality_score: 70
+    max_quality_retries: 4
+    enforce_previous_uptake: true
+    enforce_one_new_contribution: true
+    enforce_category_axis: true
+    forbid_meta_leak: true
+    forbid_user_question: true
+    utterance:
+      min_runes: 20
+      max_runes: 160
+      preferred_max_sentences: 2
+    prompts:
+      common: "prompts/idle_chat/dialogue_common.md"
+      single: "prompts/idle_chat/dialogue_single.md"
+      double: "prompts/idle_chat/dialogue_double.md"
+      external: "prompts/idle_chat/dialogue_external.md"
+      movie: "prompts/idle_chat/dialogue_movie.md"
+      news: "prompts/idle_chat/dialogue_news.md"
+      forecast: "prompts/idle_chat/dialogue_forecast.md"
+      story: "prompts/idle_chat/dialogue_story.md"
+  speaker_llm_options:
+    mio:
+      think: false         # NoThink
+    shiro:
+      think: false         # NoThink
+    # その他の話者/モデルを参加させる場合は既定 Think。
+    # aka:
+    #   think: true
+
+# 会話LLM v5.0: 3層記憶（短期Redis・中期DuckDB・長期Qdrant）
+conversation:
+  enabled: false
+  redis_url: "redis://localhost:6379"
+  duckdb_path: "./data/memory.duckdb"
+  vectordb_url: "localhost:6334"
+  embed_model: "nomic-embed-text"
+  summary_model: ""      # 空の場合はOllama chatモデルを使用
+
+# サブエージェント設定（ReActループ）
+subagent:
+  enabled: false
+  max_iterations: 10     # ReActループ最大反復回数
+  provider: ""           # "ollama"(default), "claude", "openai", "deepseek"
+  model: ""              # 空の場合は各プロバイダーのデフォルトモデルを使用
+
+# ハートビート（定期タスク）
+heartbeat:
+  enabled: false
+  interval: 30            # チェック間隔（分）、最小5分
+  channel: "line"         # 通知先: line / telegram / discord / slack
+  chat_id: "${PICOCLAW_HEARTBEAT_CHAT_ID}"  # 各チャネルの送信先ID
+
+# TTS実行能力（OpenClaw parity）
+# 音声サーバメモ:
+# - RenCrow_TTS と RenCrow_STT は同一ホストを使用する
+# - 共通IP: 192.168.1.31
+# - STT Health: https://192.168.1.31:8443/health
+# - STT Stream: wss://192.168.1.31:8443/stt/stream
+# - STT File:   https://192.168.1.31:8443/stt/file
+# - STT Chat:   https://192.168.1.31:8443/stt/chat-input
+# - TTS Irodori wrapper: http://192.168.1.31:7870/api/tts
+# - 自己署名証明書のため curl は -k を付ける
+tts:
+  enabled: true
+  output_dir: "./workspace/tts"
+  # Optional: map relative audio_path (e.g. cache\\xxx.wav) to local playable path.
+  # Example on Linux with mounted Windows drive: /mnt/e/GenerativeAI/Style-Bert-VITS2
+  audio_path_root: ""
+  http_base_url: "http://192.168.1.31:7870"
+  ws_url: ""
+  connect_timeout_ms: 3000
+  receive_timeout_ms: 15000
+  chunk_gap_timeout_ms: 3000
+  voice_id: "mio"
+  speech_mode: "conversational"
+  provider_priority:
+    - "irodori"
+  # Viewerが /viewer/tts/audio から再生するため、サーバ側のffplay再生は使わない。
+  playback_commands: []
+  irodori:
+    enabled: true
+    base_url: "http://192.168.1.31:7870"
+    endpoint_path: "/api/tts"
+    voice_id: "mio"
+    voice_name: "Mio"
+    # New Irodori API: client sends only voice/style/text.
+    # Voice profiles, reference audio, seed and generation parameters are managed server-side.
+    timeout_sec: 120
+  azure:
+    enabled: false
+    endpoint: "${AZURE_TTS_ENDPOINT}"
+    api_key: "${AZURE_TTS_API_KEY}"
+    voice_name: "ja-JP-NanamiNeural"
+    timeout_sec: 20
+  eleven:
+    enabled: false
+    api_key: "${ELEVENLABS_API_KEY}"
+    voice_id: ""
+    model_id: "eleven_multilingual_v2"
+    timeout_sec: 20
+
+# STT基本機能
+# 本番の音声入力入口は HTTPS Viewer です。
+# Viewer は secure context でマイクを取得し、Mac STT の wss://192.168.1.31:8443/stt/stream にPCM chunkを送ります。
+stt:
+  enabled: true
+  provider: "external_http"    # external_http | mock
+  language: "ja"
+  model: "large-v3-v20240930_turbo"
+  timeout_ms: 600000           # WhisperKit初回モデル準備を考慮。運用安定後は短縮可
+  endpoint_path: "/stt"
+  stream_url: "wss://192.168.1.31:8443/stt/stream"
+  vad: true
+  debug:
+    save_audio: false
+    save_transcript: true
+  external_http:
+    # Mac上のrencrow-sttをHTTPS reverse proxy越しに使う場合:
+    url: "https://192.168.1.31:8443/stt/file" # 旧 STT_PROVIDER_URL 互換の外部Provider URL
+    stream_url: "wss://192.168.1.31:8443/stt/stream"
+
+vtuber:
+  enabled: false
+  tick_interval_ms: 100
+  connect_timeout_ms: 3000
+  write_timeout_ms: 2000
+  characters:
+    mio:
+      audio_output: "Audio-Out-Mio"
+      vts_host: "127.0.0.1"
+      vts_port: 8001
+      expression_map:
+        neutral: "ExpNeutral"
+        happy: "ExpHappy"
+        calm: "ExpCalm"
+        thinking: "ExpThinking"
+        surprised: "ExpSurprised"
+        annoyed: "ExpAnnoyed"
+        sad: "ExpSad"
+    shiro:
+      audio_output: "Audio-Out-Shiro"
+      vts_host: "127.0.0.1"
+      vts_port: 8002
+      expression_map:
+        neutral: "ExpNeutral"
+        happy: "ExpHappy"
+        calm: "ExpCalm"
+        thinking: "ExpThinking"
+        surprised: "ExpSurprised"
+        annoyed: "ExpAnnoyed"
+        sad: "ExpSad"
+
+audio_router:
+  enabled: false
+  sse_url: "http://127.0.0.1:18790/audio-router/events"
+  connect_timeout_ms: 5000
+  download_timeout_ms: 15000
+  retry_delay_ms: 2000
+  buffer_ms: 120
+  device_map:
+    mio:
+      device_id: "{0.0.0.00000000}.{MIO-DEVICE-ID}"
+      display_name: "Audio-Out-Mio"
+    shiro:
+      device_id: "{0.0.0.00000000}.{SHIRO-DEVICE-ID}"
+      display_name: "Audio-Out-Shiro"

@@ -1,0 +1,107 @@
+# Binaries
+# Go build artifacts
+bin/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/picoclaw
+/picoclaw-agent
+/picoclaw-test
+cmd/picoclaw/workspace
+
+# Picoclaw specific
+
+# PicoClaw
+.picoclaw/
+sessions/
+
+# Workspace ユーザーカスタマイズ領域（テンプレートのみコミット）
+workspace/*
+!workspace/README.md
+!workspace/.gitkeep
+!workspace/skills/
+workspace/skills/*
+!workspace/skills/log-ops/
+!workspace/skills/log-ops/SKILL.md
+
+# Secrets & Config (keep templates, ignore actual secrets)
+.env
+rencrow-data/data/
+rencrow-data/logs/
+rencrow-data/approvals/
+rencrow-data/reports/
+rencrow-data/.env
+*.sqlite
+*.db
+*.sqlite.gz
+*.zst
+*.parquet
+
+# Test binaries
+coverage.txt
+coverage.html
+test_output.txt
+/test-chat
+/test-coder
+/test-worker
+/test-conversation-engine
+/test-mio-web-search
+
+# OS
+.DS_Store
+
+# Ralph workspace
+ralph/
+.ralph/
+tasks/
+.understand-anything
+.understand-anything/
+docs/understand-anything/
+
+# Editors
+.vscode/
+.idea/
+
+# Cache directories
+node_modules/
+.cache/
+.gocache/
+.gomodcache/
+scripts/__pycache__/
+__pycache__/
+*.pyc
+
+# Local generated artifacts
+/tmp/*
+.playwright-cli/
+/output/playwright/
+!/tmp/stt_inputs/
+/tmp/stt_inputs/*
+!/tmp/stt_inputs/client_stt_input_20260609_140311*
+!/tmp/stt_inputs/client_stt_input_20260609_135459*
+!/tmp/stt_test_golden_25s_dataset.json
+!/tmp/stt_test_golden_25s_reference.txt
+!/tmp/stt_test_dataset_latest.json
+!/tmp/viewer_test_recording_script_golden_25s.md
+!/tmp/viewer_test_recording_script.md
+/vault/
+/test-story
+/.serena/go-build/
+/.serena/gomodcache/
+/.serena/logs/
+/.serena/xdg-cache/
+/.serena/serena_config.yml
+/.serena/memories/story_mode_pipeline_status.md
+
+# Added by goreleaser init:
+dist/
+config/config.yaml
+test_*.go
+test_*.sh
+*.log
+.aidesigner/*
+!.aidesigner/.gitkeep

@@ -1,0 +1,7 @@
+name: aka
+role: Coder
+model_alias: Worker
+goals:
+  - 設計
+  - 実装レビュー
+styleguide: ../styleguides/aka.md

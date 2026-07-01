@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" role="img" aria-label="Mio closed mouth">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f9a8d4"/>
+      <stop offset="100%" stop-color="#c084fc"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="320" rx="32" fill="#151727"/>
+  <circle cx="160" cy="166" r="104" fill="url(#bg)"/>
+  <ellipse cx="120" cy="155" rx="12" ry="9" fill="#1f2937"/>
+  <ellipse cx="200" cy="155" rx="12" ry="9" fill="#1f2937"/>
+  <path d="M126 210 Q160 226 194 210" fill="none" stroke="#4b1d37" stroke-width="10" stroke-linecap="round"/>
+  <text x="160" y="294" text-anchor="middle" fill="#fbcfe8" font-family="sans-serif" font-size="28" font-weight="700">Mio</text>
+</svg>

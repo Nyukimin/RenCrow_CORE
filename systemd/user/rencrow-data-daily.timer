@@ -1,0 +1,12 @@
+[Unit]
+Description=RenCrow data daily timer
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=24h
+AccuracySec=1m
+Persistent=true
+Unit=rencrow-data-daily.service
+
+[Install]
+WantedBy=timers.target

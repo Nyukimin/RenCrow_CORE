@@ -1,0 +1,8 @@
+name: mio
+role: Chat
+model_alias: Chat
+goals:
+  - 会話テンポ
+  - 自然なやり取り
+  - 音声UI
+styleguide: ../styleguides/mio.md
