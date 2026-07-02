@@ -150,13 +150,13 @@ func (f *WebwrightFetcher) run(ctx context.Context, command string, args []strin
 
 func (cfg WebwrightFetcherConfig) withDefaults() WebwrightFetcherConfig {
 	if strings.TrimSpace(cfg.RunnerPath) == "" {
-		cfg.RunnerPath = "/home/nyukimi/RenCrow/RenCrow_Tools/tools/webwright_fetch/run_webwright_fetch.py"
+		cfg.RunnerPath = defaultRenCrowToolsPath("tools", "webwright_fetch", "run_webwright_fetch.py")
 	}
 	if strings.TrimSpace(cfg.ConverterPath) == "" {
-		cfg.ConverterPath = "/home/nyukimi/RenCrow/RenCrow_Tools/tools/webwright_fetch/webwright_to_staging.py"
+		cfg.ConverterPath = defaultRenCrowToolsPath("tools", "webwright_fetch", "webwright_to_staging.py")
 	}
 	if strings.TrimSpace(cfg.ConfigPath) == "" {
-		cfg.ConfigPath = "/home/nyukimi/RenCrow/RenCrow_Tools/tools/webwright_fetch/config_local_worker.yaml"
+		cfg.ConfigPath = defaultRenCrowToolsPath("tools", "webwright_fetch", "config_local_worker.yaml")
 	}
 	if strings.TrimSpace(cfg.OutputDir) == "" {
 		cfg.OutputDir = "tmp/webwright_runs"
@@ -174,6 +174,20 @@ func (cfg WebwrightFetcherConfig) withDefaults() WebwrightFetcherConfig {
 		cfg.APIKey = "dummy"
 	}
 	return cfg
+}
+
+func defaultRenCrowToolsPath(parts ...string) string {
+	root := strings.TrimSpace(os.Getenv("RENCROW_TOOLS_ROOT"))
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err == nil && strings.TrimSpace(home) != "" {
+			root = filepath.Join(home, "RenCrow", "RenCrow_Tools")
+		}
+	}
+	if root == "" {
+		root = filepath.Join("RenCrow", "RenCrow_Tools")
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 func buildWebwrightRunnerCommand(cfg WebwrightFetcherConfig, task string, startURL string, taskID string) (string, []string) {

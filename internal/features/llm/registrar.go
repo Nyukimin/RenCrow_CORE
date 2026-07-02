@@ -7,14 +7,25 @@ import (
 
 // Dependencies groups feature dependencies supplied by cmd/picoclaw.
 type Dependencies struct {
-	Ports Ports
+	Ports  Ports
+	LLMOps LLMOpsRoutes
 }
 
-// RegisterRoutes reserves the feature route boundary. Existing routes remain in
-// their legacy packages until a phase migrates them through this registrar.
+// RegisterRoutes registers LLM feature routes while handler bodies remain in
+// their current adapter packages.
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
-	_ = mux
-	_ = deps
+	registerRoute(mux, "/viewer/llm-ops/health", deps.LLMOps.Health)
+	registerRoute(mux, "/viewer/llm-ops/status", deps.LLMOps.Status)
+	registerRoute(mux, "/viewer/llm-ops/start", deps.LLMOps.Start)
+	registerRoute(mux, "/viewer/llm-ops/stop", deps.LLMOps.Stop)
+	registerRoute(mux, "/viewer/llm-ops/restart", deps.LLMOps.Restart)
+}
+
+func registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
+	if handler == nil {
+		return
+	}
+	mux.HandleFunc(pattern, handler)
 }
 
 // StartBackground reserves the feature background-job boundary.

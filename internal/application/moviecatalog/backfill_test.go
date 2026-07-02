@@ -63,6 +63,9 @@ func TestRunOnceInvokesCrawlerForOneTarget(t *testing.T) {
 		},
 	})
 
+	toolsRoot := filepath.Join(t.TempDir(), "RenCrow_Tools")
+	t.Setenv("RENCROW_TOOLS_ROOT", toolsRoot)
+
 	result, err := svc.RunOnce(context.Background())
 	if err != nil {
 		t.Fatalf("run once: %v", err)
@@ -71,7 +74,7 @@ func TestRunOnceInvokesCrawlerForOneTarget(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	want := []string{
-		filepath.Join("/home/nyukimi/RenCrow/RenCrow_Tools", "tools", "eiga_catalog", "eiga_catalog.py"),
+		filepath.Join(toolsRoot, "tools", "eiga_catalog", "eiga_catalog.py"),
 		"--seed-url", "https://eiga.com/movie/200/",
 		"--max-pages", "1",
 		"--delay", "2",

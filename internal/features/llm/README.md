@@ -34,4 +34,4 @@ modules/llm, internal/infrastructure/llm, cmd/picoclaw/runtime_llm_*.go
 
 ## Migration Boundary
 
-This feature package is a registrar/facade entry point only. Existing implementation stays in the listed current files until contract tests and caller handoff are added for the relevant phase.
+This feature package owns the LLM route registrar boundary. Viewer LLM Ops route registration is handled here, while handler bodies and provider/runtime implementation stay in the listed current files until later handler-body migration phases.

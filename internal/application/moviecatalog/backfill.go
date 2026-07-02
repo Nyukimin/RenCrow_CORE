@@ -225,13 +225,27 @@ func crawlerArgs(targetURL string, dbPath string, maxPages int, crawlerDelay tim
 	outDir := filepath.Dir(dbPath)
 	delaySec := strconv.FormatFloat(crawlerDelay.Seconds(), 'f', -1, 64)
 	return []string{
-		filepath.Join("/home/nyukimi/RenCrow/RenCrow_Tools", "tools", "eiga_catalog", "eiga_catalog.py"),
+		defaultRenCrowToolsPath("tools", "eiga_catalog", "eiga_catalog.py"),
 		"--seed-url", targetURL,
 		"--max-pages", strconv.Itoa(maxPages),
 		"--delay", delaySec,
 		"--db", dbPath,
 		"--jsonl", filepath.Join(outDir, "eiga_catalog.jsonl"),
 	}
+}
+
+func defaultRenCrowToolsPath(parts ...string) string {
+	root := strings.TrimSpace(os.Getenv("RENCROW_TOOLS_ROOT"))
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err == nil && strings.TrimSpace(home) != "" {
+			root = filepath.Join(home, "RenCrow", "RenCrow_Tools")
+		}
+	}
+	if root == "" {
+		root = filepath.Join("RenCrow", "RenCrow_Tools")
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 func RunCrawlerCommand(ctx context.Context, workspaceDir string, args []string, timeout time.Duration) ([]byte, error) {

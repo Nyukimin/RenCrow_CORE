@@ -829,7 +829,7 @@ func parseWebGatherWebwrightFetchArgs(args []string) (webGatherWebwrightFetchReq
 func buildWebGatherWebwrightCommand(cfg config.WebwrightFetchConfig, req webGatherWebwrightFetchRequest) (string, []string, error) {
 	runnerPath := strings.TrimSpace(cfg.RunnerPath)
 	if runnerPath == "" {
-		runnerPath = "/home/nyukimi/RenCrow/RenCrow_Tools/tools/webwright_fetch/run_webwright_fetch.py"
+		runnerPath = defaultRenCrowToolsPath("tools", "webwright_fetch", "run_webwright_fetch.py")
 	}
 	args := []string{
 		runnerPath,
@@ -925,7 +925,7 @@ func runWebGatherDoctor(ctx context.Context, deps webGatherCLIDeps) webGatherDoc
 	add("webwright_enabled", true, "ok", "enabled")
 	runnerPath := strings.TrimSpace(deps.WebwrightFetch.RunnerPath)
 	if runnerPath == "" {
-		runnerPath = "/home/nyukimi/RenCrow/RenCrow_Tools/tools/webwright_fetch/run_webwright_fetch.py"
+		runnerPath = defaultRenCrowToolsPath("tools", "webwright_fetch", "run_webwright_fetch.py")
 	}
 	if st, err := os.Stat(runnerPath); err != nil {
 		add("webwright_runner", false, "fail", err.Error())
@@ -954,6 +954,20 @@ func runWebGatherDoctor(ctx context.Context, deps webGatherCLIDeps) webGatherDoc
 		add("webwright_responses_endpoint", true, "ok", deps.WebwrightFetch.ResponsesEndpoint)
 	}
 	return result
+}
+
+func defaultRenCrowToolsPath(parts ...string) string {
+	root := strings.TrimSpace(os.Getenv("RENCROW_TOOLS_ROOT"))
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err == nil && strings.TrimSpace(home) != "" {
+			root = filepath.Join(home, "RenCrow", "RenCrow_Tools")
+		}
+	}
+	if root == "" {
+		root = filepath.Join("RenCrow", "RenCrow_Tools")
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 func writeWebGatherDoctorText(out io.Writer, result webGatherDoctorResult) {

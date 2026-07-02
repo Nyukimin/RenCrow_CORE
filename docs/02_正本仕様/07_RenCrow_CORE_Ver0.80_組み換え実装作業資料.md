@@ -162,6 +162,7 @@ Viewer JS を触る場合は、最低 1 セッションで `/viewer/send`、Time
 | --- | --- | --- |
 | Viewer base | `adapter経由` | `internal/features/viewer` が base/static route 登録を所有する。 |
 | IdleChat | `adapter経由` | `internal/features/idlechat` が Viewer route 登録と background start handoff を所有する。 |
+| LLM Ops | `adapter経由` | `internal/features/llm` が `/viewer/llm-ops/*` route 登録を所有する。handler body は Viewer adapter の legacy-body に保持する。 |
 | Ops / jobs / workstream / revenue | `adapter経由` | `internal/features/ops` が route 登録を所有する。 |
 | Voice / STT / TTS | `adapter経由` | `internal/features/voice` が composite registrar、`stt` と `tts` が各 route 群を所有する。 |
 | Web / browser | `adapter経由` | `internal/features/web` が BrowserTrace / Complexity route 登録を所有する。 |
@@ -178,6 +179,8 @@ Viewer JS を触る場合は、最低 1 セッションで `/viewer/send`、Time
 rg -n 'mux\\.Handle(Func)?\\(' cmd/picoclaw internal/adapter/viewer
 GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw ./internal/adapter/viewer
 ```
+
+2026-07-01 の次フェーズ更新では、`cmd/picoclaw/registerLLMOpsRoutes` に残っていた direct `mux.HandleFunc("/viewer/llm-ops/*", ...)` を `internal/features/llm.RegisterRoutes` へ移した。これは handler 本体移動ではなく、route ownership handoff の継続である。確認は `GOCACHE=/tmp/picoclaw-gocache go test ./internal/features/llm ./cmd/picoclaw` で行う。
 
 ### CLI チェック
 

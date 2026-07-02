@@ -9,7 +9,9 @@ import { chromium } from 'playwright';
 const DEFAULT_URL = 'http://127.0.0.1:18790/viewer?tab=timeline';
 const DEFAULT_WAV = 'tmp/stt_inputs/client_stt_input_20260609_140311.wav';
 const DEFAULT_TARGET_BYTES = 820000;
-const DEFAULT_CHROMIUM = '/home/nyukimi/.cache/ms-playwright/chromium-1226/chrome-linux64/chrome';
+const DEFAULT_CHROMIUM = process.env.HOME
+  ? path.join(process.env.HOME, '.cache', 'ms-playwright', 'chromium-1226', 'chrome-linux64', 'chrome')
+  : '';
 
 export function parseArgs(argv) {
   const args = {

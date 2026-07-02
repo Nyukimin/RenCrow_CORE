@@ -133,3 +133,13 @@ Public repo 作成時は、repo root の `.rencrow-core-exportignore` を export
 `.agents/`、`.aidesigner/`、`.claude/`、`.codex/`、`.cursor/`、`.serena/`、`.mcp.json` は local agent / IDE / MCP / memory metadata であり、Public seed には含めない。`.github/workflows/` は staging repo 側の CI / scheduled job 定義であり、Ver0.80 Public seed の初期投入対象から外す。Public repo の CI は、公開範囲が確定した後に別 commit で明示的に追加する。
 
 Ver0.80 seed では Go module path は `github.com/Nyukimin/picoclaw_multiLLM` のまま保持する。Public repository 名を `RenCrow_CORE` に変えることと、Go module path を変更することは別作業である。module path rename は全 import path と downstream 利用者に影響するため、Ver0.80 初期投入では行わない。
+
+## Public repo 公開後の次フェーズ判断
+
+Public repo `RenCrow_CORE` の初期投入後は、次を Ver0.80 maintenance として扱う。
+
+- CI は Public repo 側に別 commit で追加する。初期 gate は clean clone で実証済みの `go test ./modules/...` と `go test ./cmd/picoclaw ./internal/features/... ./internal/adapter/viewer ./modules/...` に限定する。
+- Go module path rename は Ver0.80 では実施しない。理由は import path、downstream 利用者、staging repo との同期に影響するためである。rename を行う場合は Ver0.81 以降の互換 migration として、全 import path、module docs、release note、consumer migration guide を同時に更新する。
+- handler body migration は小さい feature group から進める。Ver0.80 maintenance の最初の対象は LLM Ops route ownership handoff とし、handler body は Viewer adapter 側 legacy-body に残す。
+- local path 一般化は secret 除外とは別作業である。RenCrow_Tools 参照は `RENCROW_TOOLS_ROOT` を優先し、未設定時は `$HOME/RenCrow/RenCrow_Tools` へ解決する。machine-local `config.yaml` 実体は staging repo で残っていても Public export から除外する。
+- tag / release note は Public repo の状態を基準に作成する。tag は `v0.80`、release note は Public seed の scope、代表テスト、既知の未移行 legacy-body、Go module path 維持方針、CI gate を含める。

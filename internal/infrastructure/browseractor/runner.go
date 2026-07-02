@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -98,7 +99,7 @@ func (r *Runner) runCommand(ctx context.Context, command string, args []string, 
 
 func (cfg Config) withDefaults() Config {
 	if strings.TrimSpace(cfg.RunnerPath) == "" {
-		cfg.RunnerPath = "/home/nyukimi/RenCrow/RenCrow_Tools/tools/browser_actor/run_browser_actor.mjs"
+		cfg.RunnerPath = defaultRenCrowToolsPath("tools", "browser_actor", "run_browser_actor.mjs")
 	}
 	if strings.TrimSpace(cfg.NodeBinary) == "" {
 		cfg.NodeBinary = "node"
@@ -125,6 +126,20 @@ func (cfg Config) withDefaults() Config {
 		cfg.AllowedOrigins = []string{"http://127.0.0.1:18790", "http://localhost:18790", "file://"}
 	}
 	return cfg
+}
+
+func defaultRenCrowToolsPath(parts ...string) string {
+	root := strings.TrimSpace(os.Getenv("RENCROW_TOOLS_ROOT"))
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err == nil && strings.TrimSpace(home) != "" {
+			root = filepath.Join(home, "RenCrow", "RenCrow_Tools")
+		}
+	}
+	if root == "" {
+		root = filepath.Join("RenCrow", "RenCrow_Tools")
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 func applyDefaults(req modulebrowser.RunRequest, cfg Config) modulebrowser.RunRequest {

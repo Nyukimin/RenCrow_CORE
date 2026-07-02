@@ -95,10 +95,11 @@ comfyui:
 
 # Webwright は RenCrow_Tools に分離した任意のブラウザ取得補助ツール。
 # uvx_from は外部取得を伴うため、使う場合だけ明示する。
+# runner_path / config_path 未指定時は RENCROW_TOOLS_ROOT、または $HOME/RenCrow/RenCrow_Tools から解決する。
 webwright_fetch:
   enabled: false
-  runner_path: "/home/nyukimi/RenCrow/RenCrow_Tools/tools/webwright_fetch/run_webwright_fetch.py"
-  config_path: "/home/nyukimi/RenCrow/RenCrow_Tools/tools/webwright_fetch/config_local_worker.yaml"
+  runner_path: ""
+  config_path: ""
   output_dir: "tmp/webwright_runs"
   staging_output_dir: "tmp/webwright_staging"
   uvx_from: ""
@@ -109,9 +110,10 @@ webwright_fetch:
 
 # Browser Actor は RenCrow_Tools に分離した任意のブラウザ操作 sidecar。
 # run は enabled=true のときだけ許可し、cookie 等は profile_root 配下の profile 単位で保持する。
+# runner_path 未指定時は RENCROW_TOOLS_ROOT、または $HOME/RenCrow/RenCrow_Tools から解決する。
 browser_actor:
   enabled: false
-  runner_path: "/home/nyukimi/RenCrow/RenCrow_Tools/tools/browser_actor/run_browser_actor.mjs"
+  runner_path: ""
   node_binary: "node"
   browser: "chromium"
   headless_default: true

@@ -66,10 +66,10 @@ func (c *Config) setDefaults() {
 		c.LocalLLM.ModelContext = 131072
 	}
 	if c.WebwrightFetch.RunnerPath == "" {
-		c.WebwrightFetch.RunnerPath = "/home/nyukimi/RenCrow/RenCrow_Tools/tools/webwright_fetch/run_webwright_fetch.py"
+		c.WebwrightFetch.RunnerPath = defaultRenCrowToolsPath("tools", "webwright_fetch", "run_webwright_fetch.py")
 	}
 	if c.WebwrightFetch.ConfigPath == "" {
-		c.WebwrightFetch.ConfigPath = "/home/nyukimi/RenCrow/RenCrow_Tools/tools/webwright_fetch/config_local_worker.yaml"
+		c.WebwrightFetch.ConfigPath = defaultRenCrowToolsPath("tools", "webwright_fetch", "config_local_worker.yaml")
 	}
 	if c.WebwrightFetch.OutputDir == "" {
 		c.WebwrightFetch.OutputDir = "tmp/webwright_runs"
@@ -106,7 +106,7 @@ func (c *Config) setDefaults() {
 		c.WebwrightFetch.APIKey = "dummy"
 	}
 	if c.BrowserActor.RunnerPath == "" {
-		c.BrowserActor.RunnerPath = "/home/nyukimi/RenCrow/RenCrow_Tools/tools/browser_actor/run_browser_actor.mjs"
+		c.BrowserActor.RunnerPath = defaultRenCrowToolsPath("tools", "browser_actor", "run_browser_actor.mjs")
 	}
 	if c.BrowserActor.NodeBinary == "" {
 		c.BrowserActor.NodeBinary = "node"
@@ -982,6 +982,20 @@ func (c *Config) applyIdleChatDialogueInterestingnessDefaults() {
 	if d.Prompts.Story == "" {
 		d.Prompts.Story = "prompts/idle_chat/dialogue_story.md"
 	}
+}
+
+func defaultRenCrowToolsPath(parts ...string) string {
+	root := strings.TrimSpace(os.Getenv("RENCROW_TOOLS_ROOT"))
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err == nil && strings.TrimSpace(home) != "" {
+			root = filepath.Join(home, "RenCrow", "RenCrow_Tools")
+		}
+	}
+	if root == "" {
+		root = filepath.Join("RenCrow", "RenCrow_Tools")
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 // DefaultOperationMemoryDir returns the runtime-owned operation memory directory.

@@ -14,6 +14,7 @@ import (
 	governancefeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/governance"
 	idlechatfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/idlechat"
 	knowledgefeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/knowledge"
+	llmfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/llm"
 	memoryfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/memory"
 	opsfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/ops"
 	reportsfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/reports"
@@ -152,11 +153,13 @@ func registerLLMOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *
 		return
 	}
 	dependencies.idleChatStartGate = viewer.NewLLMOpsIdleChatGate(llmOpsOpts)
-	mux.HandleFunc("/viewer/llm-ops/health", viewer.HandleLLMOpsHealth(llmOpsOpts))
-	mux.HandleFunc("/viewer/llm-ops/status", viewer.HandleLLMOpsStatus(llmOpsOpts))
-	mux.HandleFunc("/viewer/llm-ops/start", viewer.HandleLLMOpsStart(llmOpsOpts))
-	mux.HandleFunc("/viewer/llm-ops/stop", viewer.HandleLLMOpsStop(llmOpsOpts))
-	mux.HandleFunc("/viewer/llm-ops/restart", viewer.HandleLLMOpsRestart(llmOpsOpts))
+	llmfeature.RegisterRoutes(mux, llmfeature.Dependencies{LLMOps: llmfeature.LLMOpsRoutes{
+		Health:  viewer.HandleLLMOpsHealth(llmOpsOpts),
+		Status:  viewer.HandleLLMOpsStatus(llmOpsOpts),
+		Start:   viewer.HandleLLMOpsStart(llmOpsOpts),
+		Stop:    viewer.HandleLLMOpsStop(llmOpsOpts),
+		Restart: viewer.HandleLLMOpsRestart(llmOpsOpts),
+	}})
 	log.Printf("Viewer: MLX llm-ops proxy -> %s", strings.TrimRight(strings.TrimSpace(cfg.LLMOps.BaseURL), "/"))
 }
 
