@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"io"
 	"net"
 	"net/url"
@@ -20,7 +21,6 @@ import (
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/sourcefetcher"
 	webgatherapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/webgather"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 	webgatherinfra "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/webgather"
 	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
 )
@@ -81,7 +81,7 @@ type webGatherSearcher interface {
 }
 
 type webGatherSourceRegistry interface {
-	SaveSourceRegistryEntry(ctx context.Context, entry conversationpersistence.L1SourceRegistryEntry) (*conversationpersistence.L1SourceRegistryEntry, error)
+	SaveSourceRegistryEntry(ctx context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error)
 }
 
 type webGatherSourceRunner interface {
@@ -90,7 +90,7 @@ type webGatherSourceRunner interface {
 }
 
 type webGatherStagingStore interface {
-	SaveStagingItem(ctx context.Context, item conversationpersistence.L1StagingItem) (*conversationpersistence.L1StagingItem, error)
+	SaveStagingItem(ctx context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error)
 }
 
 type webGatherCommandRunner func(ctx context.Context, command string, args []string, out io.Writer, errOut io.Writer) int
@@ -644,9 +644,9 @@ func isAllowedWebGatherSearchProvider(value string) bool {
 	}
 }
 
-func parseWebGatherRegisterURLArgs(args []string) (conversationpersistence.L1SourceRegistryEntry, bool, error) {
-	entry := conversationpersistence.L1SourceRegistryEntry{
-		Kind:          conversationpersistence.L1SourceKindWebGather,
+func parseWebGatherRegisterURLArgs(args []string) (l1sqlite.L1SourceRegistryEntry, bool, error) {
+	entry := l1sqlite.L1SourceRegistryEntry{
+		Kind:          l1sqlite.L1SourceKindWebGather,
 		TrustScore:    0.5,
 		FetchInterval: time.Hour,
 		LicenseNote:   modulewebgather.DefaultLicenseNote,
@@ -775,7 +775,7 @@ func runWebGatherSource(ctx context.Context, runner webGatherSourceRunner, sourc
 		if entry.SourceID != sourceID {
 			continue
 		}
-		if entry.Kind != conversationpersistence.L1SourceKindWebGather {
+		if entry.Kind != l1sqlite.L1SourceKindWebGather {
 			return sourcefetcher.SweepResult{}, fmt.Errorf("source_id %s is not a web_gather source: %s", sourceID, entry.Kind)
 		}
 		return sourcefetcher.RunSource(ctx, runner, sourceID, now, sourcefetcher.SweepOptions{
@@ -1039,14 +1039,14 @@ func importWebwrightStagingJSONL(ctx context.Context, store webGatherStagingStor
 		if line == "" {
 			continue
 		}
-		var item conversationpersistence.L1StagingItem
+		var item l1sqlite.L1StagingItem
 		if err := json.Unmarshal([]byte(line), &item); err != nil {
 			return imported, fmt.Errorf("invalid webwright staging JSONL at line %d: %w", lineNo, err)
 		}
 		if err := validateWebwrightStagingItem(item); err != nil {
 			return imported, fmt.Errorf("invalid webwright staging item at line %d: %w", lineNo, err)
 		}
-		item.ValidationStatus = conversationpersistence.L1StagingStatusPending
+		item.ValidationStatus = l1sqlite.L1StagingStatusPending
 		if _, err := store.SaveStagingItem(ctx, item); err != nil {
 			return imported, fmt.Errorf("failed to save webwright staging item at line %d: %w", lineNo, err)
 		}
@@ -1058,12 +1058,12 @@ func importWebwrightStagingJSONL(ctx context.Context, store webGatherStagingStor
 	return imported, nil
 }
 
-func validateWebwrightStagingItem(item conversationpersistence.L1StagingItem) error {
-	if strings.TrimSpace(item.Kind) != conversationpersistence.L1StagingKindExternalFetch {
-		return fmt.Errorf("kind must be %s", conversationpersistence.L1StagingKindExternalFetch)
+func validateWebwrightStagingItem(item l1sqlite.L1StagingItem) error {
+	if strings.TrimSpace(item.Kind) != l1sqlite.L1StagingKindExternalFetch {
+		return fmt.Errorf("kind must be %s", l1sqlite.L1StagingKindExternalFetch)
 	}
 	status := strings.TrimSpace(item.ValidationStatus)
-	if status != "" && status != conversationpersistence.L1StagingStatusPending {
+	if status != "" && status != l1sqlite.L1StagingStatusPending {
 		return fmt.Errorf("validation_status must be pending")
 	}
 	if webGatherCredentialLikeText(item.RawText) {
@@ -1120,7 +1120,7 @@ func webGatherCredentialLikeText(text string) bool {
 	return webGatherCredentialLikeTextRE.MatchString(text)
 }
 
-func loadWebGatherStore(configPath string) (*config.Config, *conversationpersistence.L1SQLiteStore, error) {
+func loadWebGatherStore(configPath string) (*config.Config, *l1sqlite.L1SQLiteStore, error) {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return nil, nil, err
@@ -1132,7 +1132,7 @@ func loadWebGatherStore(configPath string) (*config.Config, *conversationpersist
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return nil, nil, err
 	}
-	store, err := conversationpersistence.NewL1SQLiteStore(p)
+	store, err := l1sqlite.NewL1SQLiteStore(p)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -3,12 +3,11 @@ package webgather
 import (
 	"context"
 	"encoding/json"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
 	"net/url"
 	"strings"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
-	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
 )
 
 const (
@@ -25,10 +24,10 @@ type FetchCache interface {
 }
 
 type L1FetchCacheStore interface {
-	GetFreshWebGatherFetchCache(ctx context.Context, rawURL string, fetchProvider string, extractor string, now time.Time) (*conversationpersistence.L1WebGatherFetchCacheEntry, error)
-	SaveWebGatherFetchCache(ctx context.Context, rawURL string, fetchProvider string, extractor string, status string, responseJSON string, ttl time.Duration) (*conversationpersistence.L1WebGatherFetchCacheEntry, error)
-	GetWebGatherRateState(ctx context.Context, domain string) (*conversationpersistence.L1WebGatherRateState, error)
-	SaveWebGatherRateState(ctx context.Context, domain string, at time.Time) (*conversationpersistence.L1WebGatherRateState, error)
+	GetFreshWebGatherFetchCache(ctx context.Context, rawURL string, fetchProvider string, extractor string, now time.Time) (*l1sqlite.L1WebGatherFetchCacheEntry, error)
+	SaveWebGatherFetchCache(ctx context.Context, rawURL string, fetchProvider string, extractor string, status string, responseJSON string, ttl time.Duration) (*l1sqlite.L1WebGatherFetchCacheEntry, error)
+	GetWebGatherRateState(ctx context.Context, domain string) (*l1sqlite.L1WebGatherRateState, error)
+	SaveWebGatherRateState(ctx context.Context, domain string, at time.Time) (*l1sqlite.L1WebGatherRateState, error)
 }
 
 type L1FetchCache struct {

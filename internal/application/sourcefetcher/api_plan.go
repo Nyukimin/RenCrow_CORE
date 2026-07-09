@@ -2,11 +2,10 @@ package sourcefetcher
 
 import (
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/url"
 	"path"
 	"strings"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type sourceAPIPlan struct {
@@ -14,12 +13,12 @@ type sourceAPIPlan struct {
 	Fetcher  string
 }
 
-func planSourceAPI(source conversationpersistence.L1SourceRegistryEntry) sourceAPIPlan {
+func planSourceAPI(source l1sqlite.L1SourceRegistryEntry) sourceAPIPlan {
 	if override := stringFromMeta(source.Meta, "api_url", ""); override != "" {
 		return sourceAPIPlan{FetchURL: override, Fetcher: source.Kind + "_api"}
 	}
 	switch source.Kind {
-	case conversationpersistence.L1SourceKindGitHub:
+	case l1sqlite.L1SourceKindGitHub:
 		if owner, repo := githubOwnerRepo(source.URL); owner != "" && repo != "" {
 			limit := int64FromMeta(source.Meta, "per_page", 30)
 			return sourceAPIPlan{
@@ -27,14 +26,14 @@ func planSourceAPI(source conversationpersistence.L1SourceRegistryEntry) sourceA
 				Fetcher:  "github_releases_api",
 			}
 		}
-	case conversationpersistence.L1SourceKindHuggingFace:
+	case l1sqlite.L1SourceKindHuggingFace:
 		if repo := huggingFaceRepoID(source.URL); repo != "" {
 			return sourceAPIPlan{
 				FetchURL: "https://huggingface.co/api/models/" + repo,
 				Fetcher:  "huggingface_model_api",
 			}
 		}
-	case conversationpersistence.L1SourceKindMediaWiki:
+	case l1sqlite.L1SourceKindMediaWiki:
 		if endpoint := mediaWikiRecentChangesEndpoint(source.URL, int64FromMeta(source.Meta, "limit", 50)); endpoint != "" {
 			return sourceAPIPlan{FetchURL: endpoint, Fetcher: "mediawiki_recentchanges_api"}
 		}

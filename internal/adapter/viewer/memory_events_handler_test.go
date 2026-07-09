@@ -3,12 +3,11 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type memoryEventsStoreStub struct {
@@ -16,10 +15,10 @@ type memoryEventsStoreStub struct {
 	limit     int
 }
 
-func (s *memoryEventsStoreStub) RecentEvents(_ context.Context, namespace string, limit int) ([]conversationpersistence.L1EventLogEntry, error) {
+func (s *memoryEventsStoreStub) RecentEvents(_ context.Context, namespace string, limit int) ([]l1sqlite.L1EventLogEntry, error) {
 	s.namespace = namespace
 	s.limit = limit
-	return []conversationpersistence.L1EventLogEntry{{
+	return []l1sqlite.L1EventLogEntry{{
 		ID:        "event-1",
 		EventType: "search.cache_saved",
 		Namespace: namespace,
@@ -29,9 +28,9 @@ func (s *memoryEventsStoreStub) RecentEvents(_ context.Context, namespace string
 	}}, nil
 }
 
-func (s *memoryEventsStoreStub) RecentSearchCache(_ context.Context, limit int) ([]conversationpersistence.L1SearchCacheEntry, error) {
+func (s *memoryEventsStoreStub) RecentSearchCache(_ context.Context, limit int) ([]l1sqlite.L1SearchCacheEntry, error) {
 	s.limit = limit
-	return []conversationpersistence.L1SearchCacheEntry{{
+	return []l1sqlite.L1SearchCacheEntry{{
 		QueryHash:       "hash-1",
 		NormalizedQuery: "rencrow",
 		Provider:        "web",
@@ -58,9 +57,9 @@ func TestHandleMemoryEvents(t *testing.T) {
 		t.Fatalf("unexpected store call: %+v", store)
 	}
 	var out struct {
-		Namespace   string                                       `json:"namespace"`
-		Events      []conversationpersistence.L1EventLogEntry    `json:"events"`
-		SearchCache []conversationpersistence.L1SearchCacheEntry `json:"search_cache"`
+		Namespace   string                        `json:"namespace"`
+		Events      []l1sqlite.L1EventLogEntry    `json:"events"`
+		SearchCache []l1sqlite.L1SearchCacheEntry `json:"search_cache"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("invalid json: %v", err)

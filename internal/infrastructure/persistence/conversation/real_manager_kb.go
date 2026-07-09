@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/vectordb"
 	"log"
 	"strings"
 	"time"
@@ -80,7 +82,7 @@ func (m *RealConversationManager) SaveWebSearchToKB(ctx context.Context, domain 
 	return nil
 }
 
-func (m *RealConversationManager) SaveL1KnowledgeItem(ctx context.Context, item L1KnowledgeItem) error {
+func (m *RealConversationManager) SaveL1KnowledgeItem(ctx context.Context, item l1sqlite.L1KnowledgeItem) error {
 	if m == nil || m.vectordbStore == nil || m.embedder == nil {
 		return nil
 	}
@@ -203,7 +205,7 @@ func (m *RealConversationManager) GetKBCollections(ctx context.Context) ([]strin
 }
 
 // GetKBStats はKBコレクションの統計情報を取得
-func (m *RealConversationManager) GetKBStats(ctx context.Context, domain string) (*KBStats, error) {
+func (m *RealConversationManager) GetKBStats(ctx context.Context, domain string) (*vectordb.KBStats, error) {
 	return m.vectordbStore.GetKBStats(ctx, domain)
 }
 

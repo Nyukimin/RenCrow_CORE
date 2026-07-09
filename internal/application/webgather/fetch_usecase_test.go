@@ -3,12 +3,11 @@ package webgather
 import (
 	"context"
 	"errors"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
 	"path/filepath"
 	"testing"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
-	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
 )
 
 type fakeFetcher struct {
@@ -266,7 +265,7 @@ func TestFetchURLDoesNotStageCredentialLikeText(t *testing.T) {
 
 func TestFetchURLStagesIntoL1AndDoesNotPromotePending(t *testing.T) {
 	ctx := context.Background()
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -293,17 +292,17 @@ func TestFetchURLStagesIntoL1AndDoesNotPromotePending(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchURL failed: %v", err)
 	}
-	items, err := store.RecentStagingItems(ctx, conversationpersistence.L1StagingStatusPending, 10)
+	items, err := store.RecentStagingItems(ctx, l1sqlite.L1StagingStatusPending, 10)
 	if err != nil {
 		t.Fatalf("RecentStagingItems failed: %v", err)
 	}
-	if len(items) != 1 || items[0].ID != resp.StagingID || items[0].Kind != conversationpersistence.L1StagingKindExternalFetch {
+	if len(items) != 1 || items[0].ID != resp.StagingID || items[0].Kind != l1sqlite.L1StagingKindExternalFetch {
 		t.Fatalf("unexpected staging item: resp=%+v items=%+v", resp, items)
 	}
 	if _, err := store.PromoteValidatedStagingItemToKnowledge(ctx, resp.StagingID, "web"); err == nil {
 		t.Fatal("pending staging item must not promote")
 	}
-	result, err := store.ValidateStagingItem(ctx, resp.StagingID, conversationpersistence.L1StagingValidationPolicy{Now: time.Now().UTC()})
+	result, err := store.ValidateStagingItem(ctx, resp.StagingID, l1sqlite.L1StagingValidationPolicy{Now: time.Now().UTC()})
 	if err != nil {
 		t.Fatalf("ValidateStagingItem failed: %v", err)
 	}

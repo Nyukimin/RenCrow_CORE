@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"os"
 	"strings"
 	"sync"
@@ -14,7 +15,6 @@ import (
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
 	domainrouting "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
 	domainsuperagent "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/superagent"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T) {
@@ -302,16 +302,16 @@ type countingMemoryLifecycleRunner struct {
 	calls atomic.Int64
 }
 
-func (r *countingMemoryLifecycleRunner) RunMemoryLifecycleMaintenance(context.Context, conversationpersistence.MemoryLifecycleOptions) (*conversationpersistence.MemoryLifecycleResult, error) {
+func (r *countingMemoryLifecycleRunner) RunMemoryLifecycleMaintenance(context.Context, l1sqlite.MemoryLifecycleOptions) (*l1sqlite.MemoryLifecycleResult, error) {
 	r.calls.Add(1)
-	return &conversationpersistence.MemoryLifecycleResult{}, nil
+	return &l1sqlite.MemoryLifecycleResult{}, nil
 }
 
 type failingMemoryLifecycleRunner struct {
 	err error
 }
 
-func (r *failingMemoryLifecycleRunner) RunMemoryLifecycleMaintenance(context.Context, conversationpersistence.MemoryLifecycleOptions) (*conversationpersistence.MemoryLifecycleResult, error) {
+func (r *failingMemoryLifecycleRunner) RunMemoryLifecycleMaintenance(context.Context, l1sqlite.MemoryLifecycleOptions) (*l1sqlite.MemoryLifecycleResult, error) {
 	return nil, r.err
 }
 

@@ -65,6 +65,7 @@ func (p InjectionPolicy) Decide(candidate RecallCandidate) InjectionDecision {
 	if role == "" {
 		role = "chat"
 	}
+	rolePolicy := NewInjectionPolicy(role).recallRolePolicy()
 	if strings.TrimSpace(candidate.SourceType) == "runtime_log" {
 		return InjectionDecision{Status: TraceStatusFilteredStatus, PromptSection: sectionForCandidate(candidate), Reason: "runtime logs are never directly injected", Score: candidate.Score}
 	}
@@ -89,7 +90,49 @@ func (p InjectionPolicy) Decide(candidate RecallCandidate) InjectionDecision {
 	if state == "candidate" || state == "observed" || state == "staging" || state == "raw" || state == "deleted" || state == "superseded" {
 		return InjectionDecision{Status: TraceStatusFilteredStatus, PromptSection: sectionForCandidate(candidate), Reason: "candidate lifecycle state is not injectable", Score: candidate.Score}
 	}
+	if isKnowledgeCandidate(candidate) {
+		if !rolePolicy.AllowKnowledge {
+			return InjectionDecision{Status: TraceStatusFilteredScope, PromptSection: PromptSectionKnowledge, Reason: "role " + role + " does not use Knowledge DB snippets by default", Score: candidate.Score}
+		}
+		if rolePolicy.RequireExplicit && !isExplicitKnowledgeSnippet(candidate.Summary) {
+			return InjectionDecision{Status: TraceStatusFilteredScope, PromptSection: PromptSectionKnowledge, Reason: "role " + role + " does not use Knowledge DB snippets by default", Score: candidate.Score}
+		}
+	}
+	if isWikiCandidate(candidate) {
+		if !rolePolicy.AllowKnowledge {
+			return InjectionDecision{Status: TraceStatusFilteredScope, PromptSection: PromptSectionKnowledge, Reason: "role " + role + " does not use Knowledge Wiki snippets by default", Score: candidate.Score}
+		}
+		if rolePolicy.RequireExplicit && len(candidate.Roles) == 0 {
+			return InjectionDecision{Status: TraceStatusFilteredScope, PromptSection: PromptSectionKnowledge, Reason: "role " + role + " does not use Knowledge Wiki snippets by default", Score: candidate.Score}
+		}
+	}
+	if isSearchCacheCandidate(candidate) {
+		if !rolePolicy.AllowSearchCache {
+			return InjectionDecision{Status: TraceStatusFilteredScope, PromptSection: PromptSectionNews, Reason: "role " + role + " does not use L1 search cache by default", Score: candidate.Score}
+		}
+		if rolePolicy.RequireExplicit && len(candidate.Roles) == 0 {
+			return InjectionDecision{Status: TraceStatusFilteredScope, PromptSection: PromptSectionNews, Reason: "role " + role + " does not use L1 search cache by default", Score: candidate.Score}
+		}
+	}
 	return InjectionDecision{Status: TraceStatusInjected, PromptSection: sectionForCandidate(candidate), Reason: "candidate passed injection policy", Score: candidate.Score}
+}
+
+func (p InjectionPolicy) recallRolePolicy() RecallRolePolicy {
+	role := normalizeRecallRole(p.Role)
+	switch role {
+	case "chat":
+		return RecallRolePolicy{Role: "chat", AllowKnowledge: true, AllowSearchCache: true, RequireExplicit: true}
+	case "worker":
+		return RecallRolePolicy{Role: "worker", AllowKnowledge: true, AllowSearchCache: true}
+	case "coder", "code":
+		return RecallRolePolicy{Role: "coder", AllowKnowledge: true, AllowSearchCache: true}
+	case "heavy", "wild":
+		return RecallRolePolicy{Role: role, AllowKnowledge: true, AllowSearchCache: false}
+	case "creative":
+		return RecallRolePolicy{Role: "creative", AllowKnowledge: true, AllowSearchCache: false}
+	default:
+		return RecallRolePolicy{Role: role, AllowKnowledge: false, AllowSearchCache: false}
+	}
 }
 
 func sectionForCandidate(candidate RecallCandidate) string {
@@ -99,9 +142,9 @@ func sectionForCandidate(candidate RecallCandidate) string {
 	switch {
 	case isUserMemoryCandidate(candidate):
 		return PromptSectionUserMemory
-	case kind == "knowledge" || strings.Contains(kind, "kb"):
+	case isKnowledgeCandidate(candidate) || isWikiCandidate(candidate):
 		return PromptSectionKnowledge
-	case kind == "search_cache" || kind == "news" || sourceType == "news":
+	case isSearchCacheCandidate(candidate) || kind == "news" || sourceType == "news":
 		return PromptSectionNews
 	case kind == "operation" || sourceType == "operation_memory":
 		return PromptSectionOperation
@@ -118,4 +161,25 @@ func isUserMemoryCandidate(candidate RecallCandidate) bool {
 	kind := strings.ToLower(strings.TrimSpace(candidate.Kind))
 	sourceType := strings.ToLower(strings.TrimSpace(candidate.SourceType))
 	return kind == "user_memory" || sourceType == "user_memory" || strings.HasPrefix(strings.TrimSpace(candidate.MemoryID), "user:")
+}
+
+func isKnowledgeCandidate(candidate RecallCandidate) bool {
+	kind := strings.ToLower(strings.TrimSpace(candidate.Kind))
+	return kind == "knowledge" || strings.Contains(kind, "kb")
+}
+
+func isWikiCandidate(candidate RecallCandidate) bool {
+	kind := strings.ToLower(strings.TrimSpace(candidate.Kind))
+	sourceType := strings.ToLower(strings.TrimSpace(candidate.SourceType))
+	return kind == "wiki_page" || sourceType == "knowledge_wiki"
+}
+
+func isSearchCacheCandidate(candidate RecallCandidate) bool {
+	kind := strings.ToLower(strings.TrimSpace(candidate.Kind))
+	return kind == "search_cache"
+}
+
+func isExplicitKnowledgeSnippet(snippet string) bool {
+	snippet = strings.TrimSpace(snippet)
+	return strings.HasPrefix(snippet, "[L1KB]") || strings.HasPrefix(snippet, "[VectorKB]")
 }

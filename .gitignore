@@ -105,3 +105,8 @@ test_*.sh
 *.log
 .aidesigner/*
 !.aidesigner/.gitkeep
+
+# Port hygiene: exclude local build artifacts and baselines
+baseline_*
+go*.linux-amd64.tar.gz
+/kb-admin

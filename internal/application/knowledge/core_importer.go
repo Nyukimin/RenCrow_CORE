@@ -5,15 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"io"
 	"strings"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type StagingStore interface {
-	SaveStagingItem(ctx context.Context, item conversationpersistence.L1StagingItem) (*conversationpersistence.L1StagingItem, error)
+	SaveStagingItem(ctx context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error)
 }
 
 type ImportOptions struct {
@@ -78,16 +77,16 @@ func ImportKnowledgeCoreJSONL(ctx context.Context, store StagingStore, r io.Read
 	return result, nil
 }
 
-func stagingItemFromCoreRecord(rec coreRecord, full map[string]interface{}, now time.Time) (conversationpersistence.L1StagingItem, error) {
+func stagingItemFromCoreRecord(rec coreRecord, full map[string]interface{}, now time.Time) (l1sqlite.L1StagingItem, error) {
 	rec.Domain = strings.TrimSpace(rec.Domain)
 	rec.ID = strings.TrimSpace(rec.ID)
 	rec.Title = strings.TrimSpace(rec.Title)
 	if rec.Domain == "" {
-		return conversationpersistence.L1StagingItem{}, fmt.Errorf("domain is required")
+		return l1sqlite.L1StagingItem{}, fmt.Errorf("domain is required")
 	}
 	if rec.ID == "" {
 		if rec.Title == "" {
-			return conversationpersistence.L1StagingItem{}, fmt.Errorf("id or title is required")
+			return l1sqlite.L1StagingItem{}, fmt.Errorf("id or title is required")
 		}
 		rec.ID = rec.Domain + ":" + strings.ToLower(strings.ReplaceAll(rec.Title, " ", "_"))
 	}
@@ -100,7 +99,7 @@ func stagingItemFromCoreRecord(rec coreRecord, full map[string]interface{}, now 
 		rawText = strings.TrimSpace(strings.Join([]string{rec.Title, rec.Summary}, "\n"))
 	}
 	if rawText == "" {
-		return conversationpersistence.L1StagingItem{}, fmt.Errorf("raw_text or summary is required")
+		return l1sqlite.L1StagingItem{}, fmt.Errorf("raw_text or summary is required")
 	}
 	meta := map[string]interface{}{}
 	if rec.Meta != nil {
@@ -120,8 +119,8 @@ func stagingItemFromCoreRecord(rec coreRecord, full map[string]interface{}, now 
 		meta["title"] = rec.Title
 	}
 	meta["domain"] = rec.Domain
-	return conversationpersistence.L1StagingItem{
-		Kind:             conversationpersistence.L1StagingKindExternalFetch,
+	return l1sqlite.L1StagingItem{
+		Kind:             l1sqlite.L1StagingKindExternalFetch,
 		Namespace:        "kb:" + rec.Domain,
 		EventID:          rec.ID,
 		SourceID:         sourceID,
@@ -131,7 +130,7 @@ func stagingItemFromCoreRecord(rec coreRecord, full map[string]interface{}, now 
 		SummaryDraft:     strings.TrimSpace(rec.Summary),
 		Keywords:         append([]string(nil), rec.Keywords...),
 		LicenseNote:      strings.TrimSpace(rec.LicenseNote),
-		ValidationStatus: conversationpersistence.L1StagingStatusPending,
+		ValidationStatus: l1sqlite.L1StagingStatusPending,
 		Meta:             meta,
 	}, nil
 }

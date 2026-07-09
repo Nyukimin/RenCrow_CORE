@@ -99,6 +99,62 @@ func TestBuildHealthService_LocalLLMUsesOpenAICompatibleChecks(t *testing.T) {
 	}
 }
 
+func TestBuildHealthService_SkipsDisabledRuntimeTopologyRoles(t *testing.T) {
+	var chatHits, workerHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/chat/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		chatHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"Chat"}]}`))
+	})
+	mux.HandleFunc("/worker/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		workerHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"Worker"},{"id":"ChatWorker"}]}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	disabled := false
+	cfg := &config.Config{
+		RuntimeTopology: config.RuntimeTopologyConfig{
+			Modules: map[string]config.RuntimeTopologyModuleConfig{
+				"RenCraw_LLM": {
+					Roles: map[string]config.RuntimeTopologyRoleConfig{
+						"heavy": {Enabled: &disabled},
+						"wild":  {Enabled: &disabled},
+					},
+				},
+			},
+		},
+		LocalLLM: config.LocalLLMConfig{
+			Enabled:         true,
+			Provider:        "local_openai",
+			BaseURL:         "http://127.0.0.1:1",
+			ChatBaseURL:     srv.URL + "/chat",
+			WorkerBaseURL:   srv.URL + "/worker",
+			HeavyBaseURL:    "http://127.0.0.1:1",
+			WildBaseURL:     "http://127.0.0.1:1",
+			ChatModel:       "Chat",
+			WorkerModel:     "Worker",
+			ChatWorkerModel: "ChatWorker",
+			HeavyModel:      "Heavy",
+			WildModel:       "Wild",
+			TimeoutSec:      1,
+		},
+	}
+	warmup := true
+	cfg.LocalLLM.Warmup = &warmup
+
+	report := buildHealthService(cfg).RunChecks(context.Background())
+	if report.Status != domainhealth.StatusOK {
+		t.Fatalf("status = %s, want ok; checks=%+v", report.Status, report.Checks)
+	}
+	if chatHits != 1 || workerHits != 2 {
+		t.Fatalf("expected only chat/worker hits, got chat=%d worker=%d", chatHits, workerHits)
+	}
+}
+
 type fakeHealthChecker struct {
 	report domainhealth.HealthReport
 }

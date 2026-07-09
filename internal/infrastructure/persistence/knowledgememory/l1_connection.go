@@ -3,13 +3,15 @@ package knowledgememory
 import (
 	"context"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/url"
 	"reflect"
 	"strings"
 	"time"
 
+	kmapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/knowledgememory"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/sourcefetcher"
 	domainkm "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/knowledgememory"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type Store interface {
@@ -28,11 +30,58 @@ type Store interface {
 }
 
 type L1StagingStore interface {
-	SaveStagingItem(ctx context.Context, item conversationpersistence.L1StagingItem) (*conversationpersistence.L1StagingItem, error)
+	SaveStagingItem(ctx context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error)
 }
 
 type L1SourceRegistryStore interface {
-	SaveSourceRegistryEntry(ctx context.Context, entry conversationpersistence.L1SourceRegistryEntry) (*conversationpersistence.L1SourceRegistryEntry, error)
+	SaveSourceRegistryEntry(ctx context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error)
+}
+
+type DailyIntakeL1Store interface {
+	L1SourceRegistryStore
+	sourcefetcher.RegistryStore
+}
+
+type DailyIntakeRegistryAdapter struct {
+	store DailyIntakeL1Store
+}
+
+func NewDailyIntakeRegistryAdapter(store DailyIntakeL1Store) *DailyIntakeRegistryAdapter {
+	if store == nil {
+		return nil
+	}
+	return &DailyIntakeRegistryAdapter{store: store}
+}
+
+func (a *DailyIntakeRegistryAdapter) SaveSourceRegistryEntry(ctx context.Context, entry kmapp.SourceRegistryEntry) (*kmapp.SourceRegistryEntry, error) {
+	if a == nil || a.store == nil {
+		return nil, fmt.Errorf("daily intake L1 store is nil")
+	}
+	saved, err := a.store.SaveSourceRegistryEntry(ctx, toL1SourceRegistryEntry(entry))
+	if err != nil {
+		return nil, err
+	}
+	out := fromL1SourceRegistryEntry(*saved)
+	return &out, nil
+}
+
+func (a *DailyIntakeRegistryAdapter) SweepDueSources(ctx context.Context, now time.Time, opts kmapp.SourceRegistrySweepOptions) (kmapp.SourceRegistrySweepResult, error) {
+	if a == nil || a.store == nil {
+		return kmapp.SourceRegistrySweepResult{}, fmt.Errorf("daily intake L1 store is nil")
+	}
+	result, err := sourcefetcher.SweepDueSources(ctx, a.store, now, sourcefetcher.SweepOptions{
+		LimitPerSource:    opts.LimitPerSource,
+		MinimumTrustScore: opts.MinimumTrustScore,
+	})
+	return kmapp.SourceRegistrySweepResult{
+		Sources:           result.Sources,
+		Staged:            result.Staged,
+		Warnings:          result.Warnings,
+		Validated:         result.Validated,
+		PromotedNews:      result.PromotedNews,
+		PromotedKnowledge: result.PromotedKnowledge,
+		Failed:            result.Failed,
+	}, err
 }
 
 type L1ConnectedStore struct {
@@ -59,6 +108,32 @@ func WithL1Connection(base Store, l1 any) Store {
 	}
 }
 
+func toL1SourceRegistryEntry(entry kmapp.SourceRegistryEntry) l1sqlite.L1SourceRegistryEntry {
+	return l1sqlite.L1SourceRegistryEntry{
+		SourceID:      entry.SourceID,
+		URL:           entry.URL,
+		Kind:          entry.Kind,
+		TrustScore:    entry.TrustScore,
+		FetchInterval: entry.FetchInterval,
+		LicenseNote:   entry.LicenseNote,
+		Enabled:       entry.Enabled,
+		Meta:          entry.Meta,
+	}
+}
+
+func fromL1SourceRegistryEntry(entry l1sqlite.L1SourceRegistryEntry) kmapp.SourceRegistryEntry {
+	return kmapp.SourceRegistryEntry{
+		SourceID:      entry.SourceID,
+		URL:           entry.URL,
+		Kind:          entry.Kind,
+		TrustScore:    entry.TrustScore,
+		FetchInterval: entry.FetchInterval,
+		LicenseNote:   entry.LicenseNote,
+		Enabled:       entry.Enabled,
+		Meta:          entry.Meta,
+	}
+}
+
 func isNilL1Store(l1 any) bool {
 	if l1 == nil {
 		return true
@@ -78,7 +153,7 @@ func (s *L1ConnectedStore) SavePersonalArchiveEntry(ctx context.Context, item do
 	}
 	namespace := userNamespace(item.UserID)
 	raw := strings.TrimSpace(item.OriginalText)
-	return s.stage(ctx, conversationpersistence.L1StagingKindMemoryCandidate, namespace, item.EntryID, "personal_archive", item.SourceRef, raw, "", []string{"personal_archive"}, map[string]interface{}{
+	return s.stage(ctx, l1sqlite.L1StagingKindMemoryCandidate, namespace, item.EntryID, "personal_archive", item.SourceRef, raw, "", []string{"personal_archive"}, map[string]interface{}{
 		"knowledge_memory_type": "personal_archive",
 		"protected_original":    item.Protected,
 		"source_ref":            item.SourceRef,
@@ -102,7 +177,7 @@ func (s *L1ConnectedStore) SaveCreativeKnowledgeItem(ctx context.Context, item d
 		"related: " + strings.Join(item.RelatedWorks, ", "),
 		"hints: " + strings.Join(item.ContentHints, ", "),
 	}), "\n")
-	return s.stage(ctx, conversationpersistence.L1StagingKindExternalFetch, "kb:creative", item.ItemID, "creative_knowledge", "", raw, item.Title, item.ContentHints, map[string]interface{}{
+	return s.stage(ctx, l1sqlite.L1StagingKindExternalFetch, "kb:creative", item.ItemID, "creative_knowledge", "", raw, item.Title, item.ContentHints, map[string]interface{}{
 		"knowledge_memory_type": "creative_knowledge",
 		"work_type":             item.WorkType,
 		"creator_names":         item.CreatorNames,
@@ -130,7 +205,7 @@ func (s *L1ConnectedStore) SaveNewsKnowledgeItem(ctx context.Context, item domai
 			return err
 		}
 	}
-	return s.stage(ctx, conversationpersistence.L1StagingKindExternalFetch, "kb:news", item.ItemID, "news_knowledge", item.URL, raw, item.Summary, []string{item.Topic, item.Source}, map[string]interface{}{
+	return s.stage(ctx, l1sqlite.L1StagingKindExternalFetch, "kb:news", item.ItemID, "news_knowledge", item.URL, raw, item.Summary, []string{item.Topic, item.Source}, map[string]interface{}{
 		"knowledge_memory_type": "news_knowledge",
 		"durable":               item.Durable,
 		"event_date":            item.EventDate,
@@ -158,7 +233,7 @@ func (s *L1ConnectedStore) SaveDailyIntakeRule(ctx context.Context, item domaink
 		"cadence: " + item.Cadence,
 		"status: " + item.Status,
 	}), "\n")
-	return s.stage(ctx, conversationpersistence.L1StagingKindMemoryCandidate, userNamespace(item.UserID), item.RuleID, "daily_intake_rule", "", raw, item.Topic, []string{"daily_intake", item.Topic}, map[string]interface{}{
+	return s.stage(ctx, l1sqlite.L1StagingKindMemoryCandidate, userNamespace(item.UserID), item.RuleID, "daily_intake_rule", "", raw, item.Topic, []string{"daily_intake", item.Topic}, map[string]interface{}{
 		"knowledge_memory_type": "daily_intake_rule",
 		"source_hint":           item.SourceHint,
 		"cadence":               item.Cadence,
@@ -190,7 +265,7 @@ func (s *L1ConnectedStore) SaveDreamConsolidationRun(ctx context.Context, item d
 		"status: " + item.Status,
 		"review_status: " + item.ReviewStatus,
 	}, item.IdeaSeeds...)), "\n")
-	return s.stage(ctx, conversationpersistence.L1StagingKindMemoryCandidate, "kb:dream", item.RunID, "dream_consolidation_run", "", raw, strings.Join(item.IdeaSeeds, "\n"), item.IdeaSeeds, map[string]interface{}{
+	return s.stage(ctx, l1sqlite.L1StagingKindMemoryCandidate, "kb:dream", item.RunID, "dream_consolidation_run", "", raw, strings.Join(item.IdeaSeeds, "\n"), item.IdeaSeeds, map[string]interface{}{
 		"knowledge_memory_type": "dream_consolidation_run",
 		"scope":                 item.Scope,
 		"review_status":         item.ReviewStatus,
@@ -227,7 +302,7 @@ func (s *L1ConnectedStore) stage(ctx context.Context, kind string, namespace str
 	meta["source_type"] = sourceType
 	meta["review_required"] = true
 	meta["auto_promote"] = false
-	_, err := s.staging.SaveStagingItem(ctx, conversationpersistence.L1StagingItem{
+	_, err := s.staging.SaveStagingItem(ctx, l1sqlite.L1StagingItem{
 		Kind:             kind,
 		Namespace:        namespace,
 		EventID:          eventID,
@@ -238,7 +313,7 @@ func (s *L1ConnectedStore) stage(ctx context.Context, kind string, namespace str
 		SummaryDraft:     summary,
 		Keywords:         compactStrings(keywords),
 		LicenseNote:      "knowledge memory candidate; review required before promote",
-		ValidationStatus: conversationpersistence.L1StagingStatusPending,
+		ValidationStatus: l1sqlite.L1StagingStatusPending,
 		Meta:             meta,
 	})
 	return err
@@ -248,10 +323,10 @@ func (s *L1ConnectedStore) saveSourceRegistryCandidate(ctx context.Context, id s
 	if s.registry == nil || !isHTTPURL(rawURL) {
 		return nil
 	}
-	_, err := s.registry.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	_, err := s.registry.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "knowledge_memory:" + sourceType + ":" + id,
 		URL:           rawURL,
-		Kind:          conversationpersistence.L1SourceKindSearchFallback,
+		Kind:          l1sqlite.L1SourceKindSearchFallback,
 		TrustScore:    0.50,
 		FetchInterval: 24 * time.Hour,
 		LicenseNote:   "knowledge memory source candidate; review required before promote",

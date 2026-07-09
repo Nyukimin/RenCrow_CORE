@@ -96,6 +96,26 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("browser_actor paths must not contain '..'")
 		}
 	}
+	if c.Codex.Enabled {
+		if strings.TrimSpace(c.Codex.Command) == "" {
+			return fmt.Errorf("codex.command is required when codex.enabled=true")
+		}
+		if c.Codex.Sandbox != "read-only" && c.Codex.Sandbox != "workspace-write" {
+			return fmt.Errorf("codex.sandbox must be one of [read-only, workspace-write]")
+		}
+		if c.Codex.TimeoutMS < 1000 || c.Codex.TimeoutMS > 3600000 {
+			return fmt.Errorf("codex.timeout_ms must be between 1000 and 3600000")
+		}
+		if c.Codex.MaxPromptBytes < 1 || c.Codex.MaxPromptBytes > 1048576 {
+			return fmt.Errorf("codex.max_prompt_bytes must be between 1 and 1048576")
+		}
+		if c.Codex.MaxOutputBytes < 1024 || c.Codex.MaxOutputBytes > 10485760 {
+			return fmt.Errorf("codex.max_output_bytes must be between 1024 and 10485760")
+		}
+		if strings.Contains(c.Codex.WorkingDir, "..") {
+			return fmt.Errorf("codex.working_dir must not contain '..'")
+		}
+	}
 
 	if !c.LocalLLM.Enabled {
 		// Ollama設定検証

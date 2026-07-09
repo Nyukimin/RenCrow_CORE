@@ -5,14 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 const (
@@ -21,7 +20,7 @@ const (
 )
 
 type HobbyDomainGraphAssertionStore interface {
-	DomainGraphAssertions(ctx context.Context, q conversationpersistence.DomainGraphAssertionQuery) (int, []conversationpersistence.L1DomainGraphAssertion, error)
+	DomainGraphAssertions(ctx context.Context, q l1sqlite.DomainGraphAssertionQuery) (int, []l1sqlite.L1DomainGraphAssertion, error)
 }
 
 type hobbyDomainGraphSyncResult struct {
@@ -108,20 +107,20 @@ func HandleHobbyDomainGraphSync(opts HobbyGraphOptions, store HobbyDomainGraphAs
 		}
 		defer db.Close()
 
-		_, itemAssertions, err := store.DomainGraphAssertions(r.Context(), conversationpersistence.DomainGraphAssertionQuery{
+		_, itemAssertions, err := store.DomainGraphAssertions(r.Context(), l1sqlite.DomainGraphAssertionQuery{
 			Domain:           domain,
 			EntityType:       "work",
-			ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+			ValidationStatus: l1sqlite.L1StagingStatusValidated,
 			Limit:            limit,
 		})
 		if err != nil {
 			http.Error(w, "failed to sync hobby domain graph assertions", http.StatusInternalServerError)
 			return
 		}
-		_, relationAssertions, err := store.DomainGraphAssertions(r.Context(), conversationpersistence.DomainGraphAssertionQuery{
+		_, relationAssertions, err := store.DomainGraphAssertions(r.Context(), l1sqlite.DomainGraphAssertionQuery{
 			Domain:           domain,
 			EntityType:       "work_relation",
-			ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+			ValidationStatus: l1sqlite.L1StagingStatusValidated,
 			Limit:            limit,
 		})
 		if err != nil {
@@ -171,7 +170,7 @@ func hobbyDomainGraphSyncLimit(r *http.Request) (int, error) {
 	return limit, nil
 }
 
-func syncHobbyDomainGraphItemAssertions(ctx context.Context, db *sql.DB, items []conversationpersistence.L1DomainGraphAssertion) (hobbyDomainGraphItemSyncResult, error) {
+func syncHobbyDomainGraphItemAssertions(ctx context.Context, db *sql.DB, items []l1sqlite.L1DomainGraphAssertion) (hobbyDomainGraphItemSyncResult, error) {
 	result := hobbyDomainGraphItemSyncResult{
 		Checked:     len(items),
 		ItemIDs:     []string{},
@@ -199,7 +198,7 @@ func syncHobbyDomainGraphItemAssertions(ctx context.Context, db *sql.DB, items [
 	return result, nil
 }
 
-func syncHobbyDomainGraphRelationAssertions(ctx context.Context, db *sql.DB, items []conversationpersistence.L1DomainGraphAssertion) (hobbyDomainGraphRelationSyncResult, error) {
+func syncHobbyDomainGraphRelationAssertions(ctx context.Context, db *sql.DB, items []l1sqlite.L1DomainGraphAssertion) (hobbyDomainGraphRelationSyncResult, error) {
 	result := hobbyDomainGraphRelationSyncResult{
 		Checked:     len(items),
 		SkipReasons: map[string]int{},
@@ -231,7 +230,7 @@ func syncHobbyDomainGraphRelationAssertions(ctx context.Context, db *sql.DB, ite
 	return result, nil
 }
 
-func hobbyDomainGraphWorkItemFromAssertion(item conversationpersistence.L1DomainGraphAssertion) (hobbyDomainGraphItemUpsert, string) {
+func hobbyDomainGraphWorkItemFromAssertion(item l1sqlite.L1DomainGraphAssertion) (hobbyDomainGraphItemUpsert, string) {
 	category, skipReason := hobbyDomainGraphCategory(item.Domain)
 	if skipReason != "" {
 		return hobbyDomainGraphItemUpsert{}, skipReason
@@ -253,7 +252,7 @@ func hobbyDomainGraphWorkItemFromAssertion(item conversationpersistence.L1Domain
 	return hobbyDomainGraphBuildItem(item, category, "work", entityID, title), ""
 }
 
-func hobbyDomainGraphRelationFromAssertion(item conversationpersistence.L1DomainGraphAssertion) (hobbyDomainGraphRelationUpsert, string) {
+func hobbyDomainGraphRelationFromAssertion(item l1sqlite.L1DomainGraphAssertion) (hobbyDomainGraphRelationUpsert, string) {
 	category, skipReason := hobbyDomainGraphCategory(item.Domain)
 	if skipReason != "" {
 		return hobbyDomainGraphRelationUpsert{}, skipReason
@@ -317,7 +316,7 @@ func hobbyDomainGraphRelationFromAssertion(item conversationpersistence.L1Domain
 	}, ""
 }
 
-func hobbyDomainGraphBuildItem(item conversationpersistence.L1DomainGraphAssertion, category string, itemType string, entityID string, title string) hobbyDomainGraphItemUpsert {
+func hobbyDomainGraphBuildItem(item l1sqlite.L1DomainGraphAssertion, category string, itemType string, entityID string, title string) hobbyDomainGraphItemUpsert {
 	normalizedTitle := normalizeHobbyGraphTitle(title)
 	itemID := hobbyGraphStableID("hobby_item", category, itemType, strings.TrimSpace(entityID))
 	return hobbyDomainGraphItemUpsert{

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"strings"
 
@@ -8,7 +9,6 @@ import (
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/viewer"
 	appverification "github.com/Nyukimin/picoclaw_multiLLM/internal/application/verification"
 	domainverification "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/verification"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 	verificationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/verification"
 )
 
@@ -17,7 +17,7 @@ type verificationRuntime struct {
 	Store    *verificationpersistence.JSONLReportStore
 }
 
-func buildVerificationRuntime(cfg *config.Config, deps *Dependencies, l1Store *conversationpersistence.L1SQLiteStore) verificationRuntime {
+func buildVerificationRuntime(cfg *config.Config, deps *Dependencies, l1Store *l1sqlite.L1SQLiteStore) verificationRuntime {
 	policy := domainverification.VerificationPolicy{
 		Enabled: cfg.Verification.Enabled,
 		Mode:    cfg.Verification.Mode,

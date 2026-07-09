@@ -2,6 +2,7 @@ package dci
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,12 +11,11 @@ import (
 
 	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
 	domaindci "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/dci"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 func TestL1SourceCandidateStoreStagesDCIEvidenceAsPendingSearchResult(t *testing.T) {
 	ctx := context.Background()
-	l1, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.sqlite"))
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.sqlite"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestL1SourceCandidateStoreStagesDCIEvidenceAsPendingSearchResult(t *testing
 	if err := store.SaveDCISourceCandidates(ctx, result); err != nil {
 		t.Fatalf("SaveDCISourceCandidates failed: %v", err)
 	}
-	items, err := l1.RecentStagingItems(ctx, conversationpersistence.L1StagingStatusPending, 10)
+	items, err := l1.RecentStagingItems(ctx, l1sqlite.L1StagingStatusPending, 10)
 	if err != nil {
 		t.Fatalf("RecentStagingItems failed: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestL1SourceCandidateStoreStagesDCIEvidenceAsPendingSearchResult(t *testing
 		t.Fatalf("expected one staging item, got %#v", items)
 	}
 	item := items[0]
-	if item.Kind != conversationpersistence.L1StagingKindSearchResult {
+	if item.Kind != l1sqlite.L1StagingKindSearchResult {
 		t.Fatalf("kind = %s", item.Kind)
 	}
 	if item.SourceID == "dci:evt_dci_1" || item.SourceURL == "" {
@@ -79,7 +79,7 @@ func TestL1SourceCandidateStoreStagesDCIEvidenceAsPendingSearchResult(t *testing
 	if entry.SourceID != item.SourceID || entry.URL != item.SourceURL {
 		t.Fatalf("source registry candidate does not match staging source: entry=%+v item=%+v", entry, item)
 	}
-	if entry.Kind != conversationpersistence.L1SourceKindSearchFallback || entry.Enabled {
+	if entry.Kind != l1sqlite.L1SourceKindSearchFallback || entry.Enabled {
 		t.Fatalf("unexpected source registry candidate state: %+v", entry)
 	}
 	if entry.Meta["source_kind"] != "dci" || entry.Meta["auto_fetch"] != false || entry.Meta["review_required"] != true {
@@ -116,16 +116,16 @@ func TestL1SourceCandidateStoreWithoutSourceRegistrySupportStillStages(t *testin
 
 func TestL1SourceMetadataRankerRanksEnabledLocalPathCandidates(t *testing.T) {
 	ctx := context.Background()
-	l1, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.sqlite"))
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.sqlite"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer l1.Close()
 	target := filepath.Join("docs", "10_新仕様", "19_DCI_直接コーパス探索仕様.md")
-	if _, err := l1.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := l1.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "src_dci_spec",
 		URL:           "https://local.rencrow.invalid/dci/docs%2F10_%E6%96%B0%E4%BB%95%E6%A7%98%2F19_DCI_%E7%9B%B4%E6%8E%A5%E3%82%B3%E3%83%BC%E3%83%91%E3%82%B9%E6%8E%A2%E7%B4%A2%E4%BB%95%E6%A7%98.md",
-		Kind:          conversationpersistence.L1SourceKindSearchFallback,
+		Kind:          l1sqlite.L1SourceKindSearchFallback,
 		TrustScore:    0.90,
 		FetchInterval: time.Hour,
 		LicenseNote:   "local DCI spec metadata",
@@ -137,10 +137,10 @@ func TestL1SourceMetadataRankerRanksEnabledLocalPathCandidates(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveSourceRegistryEntry failed: %v", err)
 	}
-	if _, err := l1.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := l1.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "src_disabled_dci_spec",
 		URL:           "https://local.rencrow.invalid/dci/docs%2Fdisabled.md",
-		Kind:          conversationpersistence.L1SourceKindSearchFallback,
+		Kind:          l1sqlite.L1SourceKindSearchFallback,
 		TrustScore:    1.0,
 		FetchInterval: time.Hour,
 		LicenseNote:   "disabled candidate",
@@ -171,7 +171,7 @@ func TestL1SourceMetadataRankerRanksEnabledLocalPathCandidates(t *testing.T) {
 func TestL1KnowledgeFTSCandidateProviderReturnsLocalPathCandidates(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	l1, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(root, "l1.sqlite"))
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(root, "l1.sqlite"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -183,8 +183,8 @@ func TestL1KnowledgeFTSCandidateProviderReturnsLocalPathCandidates(t *testing.T)
 	if err := os.WriteFile(target, []byte("DCI FTS evidence\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
-	staged, err := l1.SaveStagingItem(ctx, conversationpersistence.L1StagingItem{
-		Kind:             conversationpersistence.L1StagingKindSearchResult,
+	staged, err := l1.SaveStagingItem(ctx, l1sqlite.L1StagingItem{
+		Kind:             l1sqlite.L1StagingKindSearchResult,
 		Namespace:        "kb:general",
 		EventID:          "evt_fts",
 		SourceID:         "src_fts",
@@ -192,7 +192,7 @@ func TestL1KnowledgeFTSCandidateProviderReturnsLocalPathCandidates(t *testing.T)
 		RawText:          "DCI FTS evidence",
 		SummaryDraft:     "Direct Corpus Interaction",
 		Keywords:         []string{"DCI"},
-		ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+		ValidationStatus: l1sqlite.L1StagingStatusValidated,
 		Meta: map[string]interface{}{
 			"title":      "DCI FTS",
 			"local_path": target,
@@ -298,10 +298,10 @@ func TestVectorKBCandidateProviderSkipsOutsideAllowlist(t *testing.T) {
 }
 
 type stagingOnlyStore struct {
-	items []conversationpersistence.L1StagingItem
+	items []l1sqlite.L1StagingItem
 }
 
-func (s *stagingOnlyStore) SaveStagingItem(_ context.Context, item conversationpersistence.L1StagingItem) (*conversationpersistence.L1StagingItem, error) {
+func (s *stagingOnlyStore) SaveStagingItem(_ context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error) {
 	s.items = append(s.items, item)
 	return &item, nil
 }

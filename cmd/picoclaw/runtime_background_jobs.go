@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"os"
 	"path/filepath"
@@ -19,7 +20,6 @@ import (
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/sourcefetcher"
 	superagentapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/superagent"
 	domainsuperagent "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/superagent"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type backgroundJobFailureReporter struct {
@@ -119,7 +119,7 @@ func startConversationBackgroundJobs(runtime conversationRuntime, listener orche
 	}
 }
 
-func startSourceRegistrySweeper(store *conversationpersistence.L1SQLiteStore, reporter backgroundJobFailureReporter) {
+func startSourceRegistrySweeper(store *l1sqlite.L1SQLiteStore, reporter backgroundJobFailureReporter) {
 	sweep := func() {
 		result, err := sourcefetcher.SweepDueSources(context.Background(), store, time.Now().UTC(), sourcefetcher.SweepOptions{
 			LimitPerSource:    10,
@@ -145,7 +145,7 @@ func startSourceRegistrySweeper(store *conversationpersistence.L1SQLiteStore, re
 	}()
 }
 
-func startMemoryLifecycleJob(store *conversationpersistence.L1SQLiteStore, reporter backgroundJobFailureReporter) {
+func startMemoryLifecycleJob(store *l1sqlite.L1SQLiteStore, reporter backgroundJobFailureReporter) {
 	startMemoryLifecycleJobWithConfig(store, memoryLifecycleJobConfigFromEnv(time.Now), reporter)
 }
 
@@ -226,16 +226,16 @@ func memoryLifecycleDurationFromEnv(msKey string, secKey string) (time.Duration,
 	return 0, false
 }
 
-func startMemoryLifecycleJobWithConfig(store *conversationpersistence.L1SQLiteStore, cfg memoryLifecycleJobConfig, reporter backgroundJobFailureReporter) {
+func startMemoryLifecycleJobWithConfig(store *l1sqlite.L1SQLiteStore, cfg memoryLifecycleJobConfig, reporter backgroundJobFailureReporter) {
 	startMemoryLifecycleJobRunner(store, cfg, nil, reporter)
 }
 
-func startMemoryLifecycleJobWithStop(store *conversationpersistence.L1SQLiteStore, cfg memoryLifecycleJobConfig, stop <-chan struct{}, reporter backgroundJobFailureReporter) {
+func startMemoryLifecycleJobWithStop(store *l1sqlite.L1SQLiteStore, cfg memoryLifecycleJobConfig, stop <-chan struct{}, reporter backgroundJobFailureReporter) {
 	startMemoryLifecycleJobRunner(store, cfg, stop, reporter)
 }
 
 type memoryLifecycleMaintenanceRunner interface {
-	RunMemoryLifecycleMaintenance(ctx context.Context, opts conversationpersistence.MemoryLifecycleOptions) (*conversationpersistence.MemoryLifecycleResult, error)
+	RunMemoryLifecycleMaintenance(ctx context.Context, opts l1sqlite.MemoryLifecycleOptions) (*l1sqlite.MemoryLifecycleResult, error)
 }
 
 func startMemoryLifecycleJobRunner(store memoryLifecycleMaintenanceRunner, cfg memoryLifecycleJobConfig, stop <-chan struct{}, reporter backgroundJobFailureReporter) {
@@ -252,7 +252,7 @@ func startMemoryLifecycleJobRunner(store memoryLifecycleMaintenanceRunner, cfg m
 		log.Printf("Memory lifecycle job enabled: %s", cfg.Label)
 	}
 	run := func() {
-		opts := conversationpersistence.DefaultMemoryLifecycleOptions()
+		opts := l1sqlite.DefaultMemoryLifecycleOptions()
 		opts.Now = cfg.Now()
 		result, err := store.RunMemoryLifecycleMaintenance(context.Background(), opts)
 		if err != nil {

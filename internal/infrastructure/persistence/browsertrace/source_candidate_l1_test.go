@@ -2,17 +2,17 @@ package browsertrace
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"path/filepath"
 	"testing"
 	"time"
 
 	domaintrace "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/browsertrace"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 func TestL1APICandidateStoreStagesBrowserTraceCandidatesAsPendingSearchResult(t *testing.T) {
 	ctx := context.Background()
-	l1, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.sqlite"))
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.sqlite"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestL1APICandidateStoreStagesBrowserTraceCandidatesAsPendingSearchResult(t 
 	if err := store.SaveBrowserTraceAPICandidates(ctx, result); err != nil {
 		t.Fatalf("SaveBrowserTraceAPICandidates failed: %v", err)
 	}
-	items, err := l1.RecentStagingItems(ctx, conversationpersistence.L1StagingStatusPending, 10)
+	items, err := l1.RecentStagingItems(ctx, l1sqlite.L1StagingStatusPending, 10)
 	if err != nil {
 		t.Fatalf("RecentStagingItems failed: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestL1APICandidateStoreStagesBrowserTraceCandidatesAsPendingSearchResult(t 
 		t.Fatalf("expected one staging item, got %#v", items)
 	}
 	item := items[0]
-	if item.Kind != conversationpersistence.L1StagingKindSearchResult {
+	if item.Kind != l1sqlite.L1StagingKindSearchResult {
 		t.Fatalf("kind = %s", item.Kind)
 	}
 	if item.Namespace != "kb:browser_trace_api" || item.SourceID != "browser_trace:trace_1" {

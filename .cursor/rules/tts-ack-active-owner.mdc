@@ -1,0 +1,17 @@
+---
+description: TTS playback ACK must only complete pending state from the active audio owner
+globs: cmd/picoclaw/**/*.go,cmd/picoclaw/*.go,internal/adapter/viewer/assets/js/**/*.js,internal/adapter/viewer/**/*.test.mjs
+alwaysApply: false
+---
+
+# TTS ACK Active Owner Rule
+
+TTS / IdleChat の発話完了は、実際に音声再生を担当している active audio owner の ACK だけを根拠にする。
+
+- `active_audio=false` の Viewer ACK で backend の pending / response / topic gate を消化しない。
+- `status=error` は診断であり、non-active Viewer から来た場合は完了扱いしない。
+- `status=fallback` は禁止。受信した場合は明示エラーとして記録し、成功扱いしない。
+- 古い Viewer、audio disabled Viewer、non-active Viewer の ACK は観測ログだけにする。
+- pending を閉じてよいのは active audio owner の ACK、backend timeout、stop / interrupt / session cleanup だけ。
+- 複数 chunk の response では `response_id` だけで chunk 未再生を隠さない。
+- ACK ログは `session_id`, `response_id`, `utterance_id`, `message_id`, `turn_index`, `chunk_index` 相当, `viewer_client_id`, `active_audio`, `status`, `error_code` を追える形にする。

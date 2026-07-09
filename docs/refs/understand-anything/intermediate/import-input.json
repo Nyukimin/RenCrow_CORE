@@ -1,0 +1,5530 @@
+{
+  "projectRoot": "/home/nyukimi/RenCrow/picoclaw_multiLLM",
+  "files": [
+    {
+      "path": ".aidesigner/.gitkeep",
+      "language": "unknown",
+      "fileCategory": "code"
+    },
+    {
+      "path": ".dockerignore",
+      "language": "unknown",
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".env.example",
+      "language": "config",
+      "fileCategory": "config"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/bug_report.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/feature_request.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/general-task---todo.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".github/pull_request_template.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".github/workflows/build.yml",
+      "language": "yaml",
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".github/workflows/docker-build.yml",
+      "language": "yaml",
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".github/workflows/pr.yml",
+      "language": "yaml",
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "language": "yaml",
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".github/workflows/rencrow_data_daily_ingest.yml",
+      "language": "yaml",
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".github/workflows/rencrow_data_weekly_snapshot.yml",
+      "language": "yaml",
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".golangci.yml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": ".goreleaser.yaml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": ".mcp.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "AGENTS.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "application/vocabulary/app_service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "application/vocabulary/extractor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "baseline_git_diff.patch",
+      "language": "patch",
+      "fileCategory": "code"
+    },
+    {
+      "path": "baseline_mod_tidy_diff.patch",
+      "language": "patch",
+      "fileCategory": "code"
+    },
+    {
+      "path": "CLAUDE.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "cmd/glossary/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/kb-admin/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/kb-admin/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "cmd/picoclaw-agent/audio_router.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw-agent/handler_coder.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw-agent/handler_worker.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw-agent/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw-agent/message_loop.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw-agent/runtime_init.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw-agent/runtime_provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/autonomous_entry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/cli_browser_actor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/cli_channels.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/cli_chat.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/cli_evidence.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/cli_gateway_ollama.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/cli_jobs.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/cli_knowledge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/cli_logs.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/cli_operations.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/cli_source_registry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/cli_web_gather.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/health_commands.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/health_runtime.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/idlechat_tts_pending.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/idlechat_tts_prefetch.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/idlechat_tts_queue.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/idlechat_tts_text.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/idlechat_tts_timeout.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/idlechat_tts_voice.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/idlechat_tts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/idlechat_viewer_clients.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/live2d_chat_responder.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/llm_alias_provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/llm_busy_tracker.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/llm_conversation_runtime.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/llm_local_alias.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/llm_runtime_factory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/llm_runtime_warmup.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/module_chat_route.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/module_health.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/module_llm_diagnostics.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/module_llm_health.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/module_manifest.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/module_routes.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/module_stt_diagnostics.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/module_stt_viewer_input.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/module_tts_diagnostics.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/module_tts_playback_state.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/module_worker_diagnostics.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/routes.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_agents.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_background_jobs.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_capability.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_channels.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_coders.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_conversation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_dependencies.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_distributed_mode.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_env.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_event_relay.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_glossary.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_heartbeat.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_idlechat_handlers.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_idlechat.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_llm_providers.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_local_agents.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_orchestrator.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_readiness.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_repair.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_secret_refs.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_sessions.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_subagent_tools.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_tool_runtime.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_verification.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_viewer_bridges.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/runtime_viewer_handlers.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/stt_runtime_audio.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/stt_runtime_config.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/stt_runtime_factory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/stt_runtime_http.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/stt_runtime_websocket.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/stt_timing_trace.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/tailscale_viewer_guard.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/tts_browser_audio.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/tts_client_bridge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/tts_playback_ack.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/tts_public_session.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/tts_runtime_factory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/tts_runtime_irodori.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/tts_runtime_options.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/tts_vtuber_lipsync.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/viewer_active_control.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/voice_chat_runtime_bridge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/voice_chat_runtime_config.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/voice_chat_runtime_factory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/voice_chat_runtime_input_audio.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/voice_chat_runtime_websocket.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/vtuber_bridge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/picoclaw/web_search_cache_adapter.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/test-chat/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/test-coder/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/test-conversation-engine/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/test-mio-web-search/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/test-web-search-direct/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/test-worker-search/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/test-worker/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "cmd/vocabulary/update.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "commands/dci-search.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "commands/review-architecture.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "commands/tool-harness-check.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "config.yaml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "config.yaml.example",
+      "language": "example",
+      "fileCategory": "code"
+    },
+    {
+      "path": "config/config.yaml.example",
+      "language": "example",
+      "fileCategory": "code"
+    },
+    {
+      "path": "config/LLM_SETTINGS_MAP.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "config/Modelfile.chat",
+      "language": "chat",
+      "fileCategory": "code"
+    },
+    {
+      "path": "config/persona/PrimerMessage.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "config/picoclaw-funnel.service",
+      "language": "service",
+      "fileCategory": "code"
+    },
+    {
+      "path": "config/prompts/idle_chat/mio.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "config/prompts/idle_chat/shiro.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "config/SBV2_SERVER_IMPLEMENTATION_REQUIREMENTS.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "config/SBV2_SERVER_REQUEST_TEMPLATE.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "config/tailscale-funnel.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "config/watchdog.env.example",
+      "language": "example",
+      "fileCategory": "code"
+    },
+    {
+      "path": "data/story/archive/aladdin.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/archive/ali40.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/archive/beauty.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/archive/bremen.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/archive/bunbuku.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/archive/frogprince.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/archive/hansel.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/archive/kintaro.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/archive/puss.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/archive/sleepingbeauty.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/cinderella.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/emperors.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/hanasaka.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/issun.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/kaguya.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/kasajizo.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/kobutori.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/littlemermaid.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/matchgirl.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/momotaro.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/redriding.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/sarukani.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/shitakiri.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/snowwhite.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/threepigs.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/tsuru.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "data/story/urashima.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "DESIGN.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docker-compose.infra.yml",
+      "language": "yaml",
+      "fileCategory": "infra"
+    },
+    {
+      "path": "docker-compose.yml",
+      "language": "yaml",
+      "fileCategory": "infra"
+    },
+    {
+      "path": "Dockerfile",
+      "language": "dockerfile",
+      "fileCategory": "infra"
+    },
+    {
+      "path": "Dockerfile.goreleaser",
+      "language": "dockerfile",
+      "fileCategory": "infra"
+    },
+    {
+      "path": "docs/01_正本仕様/実装仕様.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "domain/vocabulary/entity.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "domain/vocabulary/repository.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "domain/vocabulary/service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "go.mod",
+      "language": "mod",
+      "fileCategory": "config"
+    },
+    {
+      "path": "go.sum",
+      "language": "sum",
+      "fileCategory": "config"
+    },
+    {
+      "path": "infrastructure/vocabulary/memory_repository.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "install-agent.ps1",
+      "language": "powershell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "install-agent.sh",
+      "language": "shell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "install.sh",
+      "language": "shell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "internal/adapter/channels/discord/adapter.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/channels/slack/adapter.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/channels/telegram/adapter.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/channels/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/chrome/bridge_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/config/channel_policy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/config/config_audio_agent_types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/config/config_defaults.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/config/config_local_llm.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/config/config_runtime_types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/config/config_types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/config/config_validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/config/config.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/config/promptbundle/bundle.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/config/prompts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/entry/handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/health/handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/line/handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/line/media.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/line/sender.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/line/signature.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/modulebridge/chat.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/modulebridge/llm.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/modulebridge/stt.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/modulebridge/tts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/modulebridge/worker.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/ai_workflow_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/artifact_cleanup_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets_git.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/css/tabs/desk.css",
+      "language": "css",
+      "fileCategory": "markup"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/css/tabs/ops.css",
+      "language": "css",
+      "fileCategory": "markup"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/css/viewer.css",
+      "language": "css",
+      "fileCategory": "markup"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/images/mio/Mio_透過版.html",
+      "language": "html",
+      "fileCategory": "markup"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/images/mio/parts/generated/manifest.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/images/mio/parts/manifest.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/images/shiro/parts/manifest.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/images/shiro/Shiro_透過版.html",
+      "language": "html",
+      "fileCategory": "markup"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/stt_test_record_utils.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/backlog.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/develop.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/home.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/idlechat.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/instructions.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/investment.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/jobs.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/memory.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/movie-db.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/news-pack.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/ops.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/overview.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/progress.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/reports.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/roles.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/sessions.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/system.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/tabs/timeline.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/js/viewer.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/assets/live2d_chat.html",
+      "language": "html",
+      "fileCategory": "markup"
+    },
+    {
+      "path": "internal/adapter/viewer/audio_router_sse.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/backlog_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/browser_trace_api_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/character_layered_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/character_layered.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/character_manifest.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/character_runtime_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/character_state_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/complexity_hotspot_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/dci_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/debug_system_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/docs_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/domain_graph_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/emotion_detector.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/event_log_gc.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/event_log_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/evidence_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/extension_health_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/glossary_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/handler_assets.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/handler_send.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/handler_sse.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/history_repair_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/hobby_domain_graph_sync.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/hobby_graph_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/hobby_topic_candidates_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/hub.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/investment_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/job_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/knowledge_memory_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/live2d_emotion_controller.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/live2d_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/llm_ops_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/memory_action_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/memory_events_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/memory_layers_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/memory_recall_pack_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/memory_snapshot_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/memory_user_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/monitor_events.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/monitor_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/monitor_helpers.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/monitor_queries.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/monitor_reducers.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/monitor_types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/monitor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/movie_catalog_domain_graph_sync.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/movie_catalog_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/movie_topic_candidates_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/otel_export_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/package_validation_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/persona_observation_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/recall_trace_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/repair_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/revenue_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/sandbox_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/scheduler_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/skill_governance_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/source_registry_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/stt_admin_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/stt_capture_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/superagent_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/tool_harness_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/verification_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/adapter/viewer/viewer.html",
+      "language": "html",
+      "fileCategory": "markup"
+    },
+    {
+      "path": "internal/adapter/viewer/workstream_handler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/aiworkflow/command_registry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/aiworkflow/project_init.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/aiworkflow/worktree_manager.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/archive/parquet_export_job.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/artifactcleanup/service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/attachment/extract.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/attachment/store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/autonomous/executor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/autonomous/service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/browsertrace/artifacts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/browsertrace/discovery.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/browsertrace/validator.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/channel/normalize_service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/characterruntime/service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/complexity/analyzer.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/complexity/candidate_patterns.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/complexity/coder_diff_service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/complexity/proposal.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/complexity/report.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/contract/normalizer.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/dci/explorer.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/execution/service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/health/service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/heartbeat/service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/historyrepair/jsonl_repair.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/archive/complex_story_mode/cmd_test-story/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/archive/complex_story_mode/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "internal/application/idlechat/archive/complex_story_mode/story_data.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/archive/complex_story_mode/story_dump.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/archive/complex_story_mode/story_mode.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/archive/complex_story_mode/story_specs.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/dialogue_config.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/dialogue_director.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/dialogue_prompt.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/dialogue_quality.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/dialogue_state.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/forecast_session_runner.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/forecast_session.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/forecast_summary.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/forecast_topic_generation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/forecast_topic_stock.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/forecast_trend_sources.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_constructor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_loop_attribution.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_loop_detection.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_loop_patterns.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_loop_similarity.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_modes.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_monitor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_prompts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_response_generation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_response_helpers.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_response_llm.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_response_retry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_sanitize_extract.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_sanitize_leak.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_sanitize_similarity.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_sanitize_style.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_sanitize.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_summary.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_timeline.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_topics.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator_watchdog.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/orchestrator.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/quality_review.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/story_mode_simple.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/topic_generator_interesting.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/topic_generator_prompt.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/topic_generator_prompts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/topic_generator_sources.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/topic_generator.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/topic_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/idlechat/topic_types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/jobmanager/manager.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/knowledge/core_importer.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/knowledgememory/daily_intake_job.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/knowledgememory/dream_consolidation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/moduleregistry/registry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/moviecatalog/backfill.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/moviecatalog/catalog_service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/ai_workflow_events.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/code_executor_events.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/code_executor_generate.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/code_executor_loop.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/code_executor_module_context.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/code_executor_proposal.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/code_executor_response.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/code_executor_selection.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/code_executor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/code_helpers.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/coder_status.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_attribution.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_autonomous.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_code.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_coder_selection.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_constructor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_dci.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_display.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_events.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_evidence.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_execution.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_ports.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_process.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_retry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_routes.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_runtime.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_session.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_settings.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_transport.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator_tts_lifecycle.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/distributed_orchestrator.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/event.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/idle_notifier.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/latency_metrics.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_autonomous.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_commands.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_dci.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_events.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_idle.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_persona.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_response.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_routes.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_routing.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_session.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_skill_bootstrap.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_slash_command.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_task.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_trace.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator_tts_lifecycle.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/message_orchestrator.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/node_selector.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/repair_job.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/stream_bundle.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/superagent_runtime.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/tts_bridge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/tts_support.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/voice_direct.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/vtuber_bridge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/vtuber_stream.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/orchestrator/vtuber_support.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/otelexport/service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/packagevalidation/service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/revenue/daily_routine.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/sandbox/post_apply_verification.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/sandbox/promotion_diff_apply.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/sandbox/worktree_sandbox.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/scheduler/service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/service/worker_execution_dispatch.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/service/worker_execution_errors.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/service/worker_execution_file_ops.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/service/worker_execution_git.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/service/worker_execution_lifecycle.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/service/worker_execution_modes.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/service/worker_execution_observation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/service/worker_execution_preflight.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/service/worker_execution_service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/service/worker_execution_shell.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/service/worker_execution_summary.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/skillgovernance/bootstrap_service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/skillgovernance/coder_evidence_service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/sourcefetcher/api_plan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/sourcefetcher/registry_sweeper.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/subagent/manager.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/superagent/run_controller.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/superagent/run_queue_scheduler.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/toolloop/loop.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/verification/claim_extractor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/verification/pipeline.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/verification/policy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/voiceinput/publisher.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/voiceinput/result_builder.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/voiceinput/result.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/voiceinput/side_effects.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/webgather/fetch_cache.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/webgather/fetch_usecase.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/webgather/search_and_fetch_usecase.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/webgather/search_cache.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/webgather/search_usecase.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/application/webgather/staging_writer.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/attachments.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/chat_commands.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/coder.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/conversation_memory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/heavy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/interfaces.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/light_memory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/mio_attribution.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/mio_helpers.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/mio_options.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/mio_persona.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/mio_web_search.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/mio.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/persona.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/shiro.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/subagent.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/user_memory_candidate.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/agent/wild.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/aiworkflow/context_budget.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/aiworkflow/external_control_policy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/aiworkflow/heavy_worker_policy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/aiworkflow/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/aiworkflow/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/attachment/attachment.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/backlog/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/browsertrace/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/browsertrace/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/capability/profile.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/capability/selector.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/capability/tool_registry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/capability/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/coderloop/message.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/coderloop/observation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/complexity/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/complexity/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/context/builder.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/context/skill.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/context/skills_loader.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/contract/contract.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/agent_status.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/document.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/embedding.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/engine.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/errors.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/injection_policy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/manager.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/message.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/persona.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/profile_extractor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/recall_pack.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/recall_trace.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/session_conversation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/status.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/summarizer.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/thread_detector.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/thread_summary.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/thread.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/conversation/user_profile.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/dci/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/dci/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/execution/model.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/execution/report.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/execution/repository.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/health/check.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/job/job.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/knowledgememory/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/knowledgememory/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/llm/busy_context.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/llm/provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/llm/stream.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/memory/memory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/memory/user_memory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/moduleregistry/module.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/node/capability.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/patch/command.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/patch/parser.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/patch/result.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/patch/target_guard.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/persona/character.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/persona/trigger_matcher.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/persona/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/persona/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/proposal/proposal.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/revenue/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/revenue/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/routing/route.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/sandbox/promotion.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/sandbox/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/sandbox/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/scheduler/schedule.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/scheduler/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/security/channel_policy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/security/profile.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/security/prompt_injection.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/session/distributed.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/session/repository.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/session/session.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/skillgovernance/bootstrap.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/skillgovernance/coder_evidence.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/skillgovernance/contribution_gate.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/skillgovernance/external_pr_submit.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/skillgovernance/manifest_loader.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/skillgovernance/skill_change_eval.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/skillgovernance/skill_change_gate.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/skillgovernance/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/skillgovernance/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/superagent/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/superagent/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/task/jobid.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/task/task.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/tool/error_code.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/tool/manifest.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/tool/metadata.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/tool/registry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/tool/response.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/tool/runner.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/tool/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/toolharness/harness.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/toolharness/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/transport/transport.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/verification/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/workstream/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/domain/workstream/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/glossary/application/service/glossary_service.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/glossary/domain/entity/glossary_item.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/glossary/domain/repository/glossary_repository.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/glossary/glossary_module.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/glossary/infrastructure/feed/rss_parser.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/glossary/infrastructure/persistence/sqlite_repository.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/glossary/interface/controller/glossary_controller.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/glossary/interface/mio_adapter/mio_adapter.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/audiorouter/http.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/audiorouter/player_stub.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/audiorouter/player_windows.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/audiorouter/router.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/audiorouter/status_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/browseractor/runner.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/capability/detector.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/capability/llm_prober.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/capability/memory_linux.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/capability/memory_stub.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/comfyui/client.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/health/ollama.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/health/openai_compatible.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/factory/factory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/middleware/context_budget.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/middleware/datetime.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/middleware/limited.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/middleware/rawlog.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/claude/provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/deepseek/provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/gemini/provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/ollama/chat_types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/ollama/embedder.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/ollama/model_ready.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/ollama/prompt.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/ollama/provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/ollama/stream.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/openai/embedder.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/openai/messages.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/openai/provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/openai/response_parse.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/openai/stream.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/providers/openai/thinking_bridge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/llm/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "internal/infrastructure/logging/session_log_writer.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/mcp/client.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/mcp/serena_client.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/aiworkflow/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/aiworkflow/sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/browsertrace/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/browsertrace/source_candidate_l1.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/browsertrace/sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/complexity/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/complexity/sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/daily_digest_summarizer.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/duckdb_export.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/duckdb_l1_archive.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/duckdb_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/duckdb_stub.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/duckdb_threads.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/engine_impl.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_domain_graph.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_events.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_knowledge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_lifecycle.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_messages.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_meta_helpers.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_news_digest.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_promotions.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_recall_trace.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_scan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_schema.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_search_cache.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_source_registry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_staging_validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_staging.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_user_memory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/l1_sqlite_web_gather_cache.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/llm_summarizer.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/namespace.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/profile_extractor_impl.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/real_manager_agent_status.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/real_manager_archive.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/real_manager_kb.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/real_manager_recall.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/real_manager_threads.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/real_manager_vector_cleanup.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/real_manager.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/redis_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/retry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/store_interfaces.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/stub_manager.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/thread_detector_impl.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/vectordb_cleanup.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/vectordb_kb.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/vectordb_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/conversation/vectordb_thread_memory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/dci/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/dci/l1_knowledge_fts_candidates.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/dci/session_log_candidate_provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/dci/source_candidate_l1.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/dci/source_metadata_ranker_l1.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/dci/sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/dci/vector_kb_candidate_provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/execution/jsonl_repository.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/execution/report_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/job/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/jsonlutil/jsonl.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/knowledgememory/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/knowledgememory/l1_connection.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/knowledgememory/sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/memory/file_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/persona/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/persona/meta_apply.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/persona/sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/revenue/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/revenue/sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/sandbox/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/sandbox/sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/scheduler/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/session/json_repository.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/skillgovernance/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/skillgovernance/sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/superagent/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/superagent/sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/toolharness/jsonl_recorder.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/toolregistry/duckdb_store_stub.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/toolregistry/duckdb_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/verification/l1_evidence_reader.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/verification/report_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/workstream/jsonl_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/workstream/sqlite_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persistence/workstream/vault_apply.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persona/character_loader.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persona/editor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/persona/registry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/routing/llm_classifier.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/routing/rule_dictionary.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/security/policy_engine.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/security/policy_runner.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/security/sandbox_guard.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/stt/busy_provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/stt/http.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/stt/provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/stt/types.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/composite_runner.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/context_budget_runner.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/harness_runner.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/middleware.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/runner_browser_actor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/runner_file.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/runner_registration.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/runner_shell.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/runner_web_gather.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/runner_web_search.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/runner_wrappers.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/runner.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tools/subagent.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/transport/factory.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/transport/local.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/transport/logger.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/transport/router.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/transport/ssh.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/audio_path.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/audio_sink.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/audio_url.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/chunk_plan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/errors.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/irodori_audio_download.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/irodori_defaults.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/irodori_provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/irodori_reference_audio.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/irodori_urls.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/player.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/provider_tts_bridge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/provider_unavailable.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/rencrow_tts_bridge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/rencrow_tts_errors.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/rencrow_tts_params.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/rencrow_tts_retry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/rencrow_tts_session.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/reorder_buffer.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/sbv2_provider.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/synthesizer.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/tts/wav_stats.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/vtuber/client_bridge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/webgather/feed_discovery.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/webgather/html_extractor.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/webgather/http_fetcher.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/webgather/searxng_discovery.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/webgather/webwright_fetcher.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/webgather/webwright_process_unix.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/webgather/webwright_process_windows.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "internal/infrastructure/webgather/yacy_discovery.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "kb-admin",
+      "language": "unknown",
+      "fileCategory": "code"
+    },
+    {
+      "path": "live2d_integration_summary.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "Makefile",
+      "language": "makefile",
+      "fileCategory": "infra"
+    },
+    {
+      "path": "Modelfile.chat",
+      "language": "chat",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/browseractor/contract.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/browseractor/errors.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/browseractor/masking.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/browseractor/policy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/browseractor/validation.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/chat/contracts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/chat/health.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/chat/idlechat_policy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/chat/input_defaults.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/chat/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "modules/chat/route_normalization.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/chat/route_report.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/chat/topic_json.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/chat/topic_policy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/chat/topic_prompt.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/chat/topic_seed.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/core/contracts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/core/http.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/core/manifest_snapshot.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/core/manifest.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/core/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "modules/core/runtime_health.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/CURRENT_MAP.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "modules/DEPENDENCY_RULES.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "modules/DESIGN.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "modules/llm/coder_provider_plan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/llm/contracts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/llm/conversation_runtime.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/llm/diagnostics.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/llm/health.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/llm/local_runtime.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/llm/primary_runtime.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/llm/provider_mapping.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/llm/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "modules/llm/request.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/llm/thinking_bridge.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/MIGRATION_PLAN.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "modules/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "modules/stt/audio_rules.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/stt/busy_policy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/stt/contracts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/stt/diagnostics.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/stt/http_result.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/stt/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "modules/stt/request.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/stt/runtime_plan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/stt/runtime_urls.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/stt/session_rules.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/stt/transcription_mapping.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/stt/viewer_input.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/stt/websocket_plan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/chunking.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/contracts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/diagnostics.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/emotion_mapping.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/emotion_models.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/emotion_planner.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/emotion_prefix.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/event_payload.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/health.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/idlechat_plan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/idlechat_text.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/idlechat_voice.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/irodori_rules.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/local_audio.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/pending_playback_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/playback_ack.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/playback_pending_action.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/playback_state.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/playback_timeout.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/provider_payload.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/public_session_resolution.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/public_session_route.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/public_session_rules.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/public_session_store.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "modules/tts/rencrow_bridge_rules.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/route_plan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/runtime_plan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/sbv2_rules.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/speech_plain_text.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/stream_chunker.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/synthesis_mapping.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/synthesis_retry.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/text_filter.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/tts/viewer_active_control.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/voicechat/bridge_plan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/voicechat/contracts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/voicechat/runtime_urls.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/voicechat/websocket_plan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/webgather/contract.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/webgather/errors.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/webgather/normalize.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/webgather/policy.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/worker/action.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/worker/autonomous_route.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/worker/autonomous_verification.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/worker/coder_capability_plan.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/worker/contracts.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/worker/diagnostics.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/worker/execution_failure.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/worker/health.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/worker/local_agent.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "modules/worker/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "package.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "personas/aka.yaml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "personas/ao.yaml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "personas/gin.yaml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "personas/kin.yaml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "personas/mio.yaml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "personas/shiro.yaml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "phase2_viewer_separation_tasks.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "phase3_completion_report.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "pkg/rencrowclient/client.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "prompts/classifier.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/coder.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/coder/codex_like.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/aka.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/ao.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/dialogue_common.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/dialogue_double.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/dialogue_external.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/dialogue_forecast.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/dialogue_movie.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/dialogue_news.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/dialogue_single.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/dialogue_story.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/gin.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/mio.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/shiro.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/story_topic_title.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/topic_generator_common.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/topic_generator_double.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/topic_generator_external.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/topic_generator_forecast.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/topic_generator_movie.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/topic_generator_news.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/topic_generator_single.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/topic_generator_story.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/idle_chat/topic_judge.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/mio.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/skills/file_list/SKILL.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/skills/file_read/SKILL.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/skills/file_write/SKILL.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/skills/shell/SKILL.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/skills/subagent/SKILL.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/skills/web_search/SKILL.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/worker.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "prompts/worker/safe_executor.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "README.ja.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "README.zh.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "refactor_investigation_report.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "refactor_questions.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "refactor-instructions.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rencrow-data/config/calendars.yml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "rencrow-data/config/costs.yml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "rencrow-data/config/instruments.yml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "rencrow-data/config/risk_limits.yml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "rencrow-data/config/sources.yml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "rencrow-data/fixtures/1306T_prices.csv",
+      "language": "csv",
+      "fileCategory": "data"
+    },
+    {
+      "path": "rencrow-data/fixtures/economic_calendar.csv",
+      "language": "csv",
+      "fileCategory": "data"
+    },
+    {
+      "path": "rencrow-data/fixtures/macro_series.csv",
+      "language": "csv",
+      "fileCategory": "data"
+    },
+    {
+      "path": "rencrow-data/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rencrow-data/requirements.txt",
+      "language": "txt",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rencrow-data/src/01_init_db.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/02_fetch_market.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/03_fetch_macro.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/04_build_features.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/05_detect_events.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/06_make_snapshot.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/07_sync_universe.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/08_validate_data.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/09_backtest_weekly_rotation.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/10_risk_check.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/11_generate_decision.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/12_paper_trade.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/13_llm_report.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/14_audit_report.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/15_manual_stop.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/__init__.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/audit.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/backtest.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/config.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/db.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/decision.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/events.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/features.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/hashing.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/llm_report.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/macro.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/market.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/paper.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/providers.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/quality.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/risk.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/snapshot.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/timeutil.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "rencrow-data/src/rencrow_data/universe.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "ROADMAP.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/common/GLOBAL_AGENT.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/common/rules_architecture.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/common/rules_backend.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/common/rules_frontend.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/common/rules_logging.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/common/rules_observation_verification.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/common/rules_regression_prevention.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/common/rules_security.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/common/rules_state_management.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/common/rules_testing.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/PROJECT_AGENT.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/routing-policy.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/rules_domain.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rules/rules_viewer_ui.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "samba_home_block.conf",
+      "language": "conf",
+      "fileCategory": "code"
+    },
+    {
+      "path": "samba_protocol_patch.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "samba_share_block.conf",
+      "language": "conf",
+      "fileCategory": "code"
+    },
+    {
+      "path": "schemas/agent_message.schema.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "scripts/coder4_audio_router_config.yaml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "scripts/deploy_rencrow_llm_vds_pr_l1.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "scripts/install_coder4_audio_router.ps1",
+      "language": "powershell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "scripts/llm_golden_audio_probe.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/measure_llm_voice_e2e_test.mjs",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/measure_llm_voice_e2e.mjs",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/migrate_config_v3_to_v4.sh",
+      "language": "shell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "scripts/ops_watchdog_kick.sh",
+      "language": "shell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "scripts/ops_watchdog.sh",
+      "language": "shell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "scripts/rencrow_data_scheduler.sh",
+      "language": "shell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "scripts/stt_e2e_probe_test.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/stt_e2e_probe.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/stt_go_mock_e2e.sh",
+      "language": "shell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "scripts/stt_viewer_browser_e2e.js",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/stt_vs_audio_direct_bench.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/tailscale_viewer_disable_funnel_and_verify.sh",
+      "language": "shell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "scripts/tailscale_viewer_serve_verify.sh",
+      "language": "shell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "scripts/tts_server.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/vds_e2e_probe_test.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/vds_e2e_probe.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/verify_llm_voice_latency_test.mjs",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/verify_llm_voice_latency.mjs",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "skills-lock.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "skills/core/codebase-complexity-hotspot/checklist.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "skills/core/codebase-complexity-hotspot/evals/cache-risk.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "skills/core/codebase-complexity-hotspot/evals/n-plus-one.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "skills/core/codebase-complexity-hotspot/evals/nested-loop.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "skills/core/codebase-complexity-hotspot/evals/react-render.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "skills/core/codebase-complexity-hotspot/evals/repeated-lookup.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "skills/core/codebase-complexity-hotspot/patterns.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "skills/core/codebase-complexity-hotspot/report_template.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "skills/core/codebase-complexity-hotspot/risk_matrix.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "skills/core/codebase-complexity-hotspot/skill_manifest.yaml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "skills/core/codebase-complexity-hotspot/SKILL.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "start_picoclaw.sh",
+      "language": "shell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "styleguides/aka.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "styleguides/ao.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "styleguides/gin.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "styleguides/kin.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "styleguides/mio.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "styleguides/shiro.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "systemd/user/picoclaw-watchdog.service",
+      "language": "service",
+      "fileCategory": "code"
+    },
+    {
+      "path": "systemd/user/picoclaw-watchdog.timer",
+      "language": "timer",
+      "fileCategory": "code"
+    },
+    {
+      "path": "systemd/user/rencrow-data-daily.service",
+      "language": "service",
+      "fileCategory": "code"
+    },
+    {
+      "path": "systemd/user/rencrow-data-daily.timer",
+      "language": "timer",
+      "fileCategory": "code"
+    },
+    {
+      "path": "systemd/user/rencrow-data-weekly.service",
+      "language": "service",
+      "fileCategory": "code"
+    },
+    {
+      "path": "systemd/user/rencrow-data-weekly.timer",
+      "language": "timer",
+      "fileCategory": "code"
+    },
+    {
+      "path": "templates/tool/main.go.tmpl",
+      "language": "tmpl",
+      "fileCategory": "code"
+    },
+    {
+      "path": "templates/tool/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "templates/tool/SKILL.md.tmpl",
+      "language": "tmpl",
+      "fileCategory": "code"
+    },
+    {
+      "path": "templates/tool/test_sample.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "test_patch.json",
+      "language": "json",
+      "fileCategory": "config"
+    },
+    {
+      "path": "test_webhook_simple.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "test_webhook.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "test-idlechat.sh",
+      "language": "shell",
+      "fileCategory": "script"
+    },
+    {
+      "path": "TOOL_CONTRACT.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "tools/browser_actor/fixtures/basic_form.html",
+      "language": "html",
+      "fileCategory": "markup"
+    },
+    {
+      "path": "tools/browser_actor/fixtures/external_effect.html",
+      "language": "html",
+      "fileCategory": "markup"
+    },
+    {
+      "path": "tools/browser_actor/fixtures/navigation.html",
+      "language": "html",
+      "fileCategory": "markup"
+    },
+    {
+      "path": "tools/browser_actor/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "tools/browser_actor/run_browser_actor.mjs",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/browser_actor/test_browser_actor.mjs",
+      "language": "javascript",
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/eiga_catalog/eiga_catalog.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/eiga_catalog/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "tools/mio_parts_extract/main.go",
+      "language": "go",
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/webwright_fetch/config_local_worker.yaml",
+      "language": "yaml",
+      "fileCategory": "config"
+    },
+    {
+      "path": "tools/webwright_fetch/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "tools/webwright_fetch/run_webwright_fetch.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/webwright_fetch/webwright_to_staging.py",
+      "language": "python",
+      "fileCategory": "code"
+    },
+    {
+      "path": "workspace/README.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    },
+    {
+      "path": "workspace/skills/log-ops/SKILL.md",
+      "language": "markdown",
+      "fileCategory": "docs"
+    }
+  ]
+}

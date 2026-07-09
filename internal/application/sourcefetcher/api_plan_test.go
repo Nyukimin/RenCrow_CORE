@@ -1,34 +1,33 @@
 package sourcefetcher
 
 import (
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 	"testing"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 func TestPlanSourceAPIUsesSpecificProviderEndpoints(t *testing.T) {
 	tests := []struct {
 		name    string
-		source  conversationpersistence.L1SourceRegistryEntry
+		source  l1sqlite.L1SourceRegistryEntry
 		wantURL string
 		fetcher string
 	}{
 		{
 			name:    "github releases",
-			source:  conversationpersistence.L1SourceRegistryEntry{Kind: conversationpersistence.L1SourceKindGitHub, URL: "https://github.com/openclaw/openclaw", Meta: map[string]interface{}{"per_page": float64(12)}},
+			source:  l1sqlite.L1SourceRegistryEntry{Kind: l1sqlite.L1SourceKindGitHub, URL: "https://github.com/openclaw/openclaw", Meta: map[string]interface{}{"per_page": float64(12)}},
 			wantURL: "https://api.github.com/repos/openclaw/openclaw/releases?per_page=12",
 			fetcher: "github_releases_api",
 		},
 		{
 			name:    "hugging face model",
-			source:  conversationpersistence.L1SourceRegistryEntry{Kind: conversationpersistence.L1SourceKindHuggingFace, URL: "https://huggingface.co/org/model"},
+			source:  l1sqlite.L1SourceRegistryEntry{Kind: l1sqlite.L1SourceKindHuggingFace, URL: "https://huggingface.co/org/model"},
 			wantURL: "https://huggingface.co/api/models/org/model",
 			fetcher: "huggingface_model_api",
 		},
 		{
 			name:    "mediawiki recent changes",
-			source:  conversationpersistence.L1SourceRegistryEntry{Kind: conversationpersistence.L1SourceKindMediaWiki, URL: "https://wiki.example.org/", Meta: map[string]interface{}{"limit": float64(7)}},
+			source:  l1sqlite.L1SourceRegistryEntry{Kind: l1sqlite.L1SourceKindMediaWiki, URL: "https://wiki.example.org/", Meta: map[string]interface{}{"limit": float64(7)}},
 			wantURL: "https://wiki.example.org/w/api.php",
 			fetcher: "mediawiki_recentchanges_api",
 		},
@@ -44,8 +43,8 @@ func TestPlanSourceAPIUsesSpecificProviderEndpoints(t *testing.T) {
 }
 
 func TestPlanSourceAPIHonorsOverride(t *testing.T) {
-	plan := planSourceAPI(conversationpersistence.L1SourceRegistryEntry{
-		Kind: conversationpersistence.L1SourceKindGitHub,
+	plan := planSourceAPI(l1sqlite.L1SourceRegistryEntry{
+		Kind: l1sqlite.L1SourceKindGitHub,
 		URL:  "https://github.com/openclaw/openclaw",
 		Meta: map[string]interface{}{"api_url": "http://127.0.0.1:1234/api"},
 	})

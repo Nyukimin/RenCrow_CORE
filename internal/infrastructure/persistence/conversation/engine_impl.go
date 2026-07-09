@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"strings"
 	"time"
@@ -18,6 +19,17 @@ type RealConversationEngine struct {
 	profileExtractor domconv.ProfileExtractor       // nil の場合はプロファイル抽出無効
 	profiles         map[string]domconv.UserProfile // インメモリキャッシュ
 	recallTraceStore domconv.RecallTraceStore
+}
+
+type conversationEngineExternalRecall interface {
+	GetFreshSearchCache(ctx context.Context, provider string, rawQuery string, now time.Time) (*l1sqlite.L1SearchCacheEntry, error)
+	SearchKnowledgeItemsFTS(ctx context.Context, domain string, query string, limit int) ([]l1sqlite.L1KnowledgeItem, error)
+	SearchWikiPageIndex(ctx context.Context, query string, limit int) ([]l1sqlite.WikiPageIndexItem, error)
+	SearchKB(ctx context.Context, domain string, query string, topK int) ([]*domconv.Document, error)
+}
+
+type conversationEngineRecallTraceRecorder interface {
+	SaveRecallTrace(ctx context.Context, trace domconv.RecallTrace) error
 }
 
 // NewRealConversationEngine は新しい ConversationEngine を作成
@@ -96,21 +108,19 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 	}
 
 	// Knowledge Base / SearchCache は、外部情報要求が明確な発話だけに使う。
-	if realMgr, ok := e.manager.(*RealConversationManager); ok && shouldUseExternalRecallForUserMessage(userMessage) {
-		if realMgr.l1Store != nil {
-			cacheEntry, err := realMgr.l1Store.GetFreshSearchCache(ctx, "web", userMessage, timeNowUTC())
-			if err != nil {
-				log.Printf("[ConversationEngine] WARN: SearchCache lookup failed: %v", err)
-			} else if cacheEntry != nil {
-				pack.SearchCacheSnippets = append(pack.SearchCacheSnippets, domconv.SearchCacheSnippet{
-					Query:       cacheEntry.RawQuery,
-					Provider:    cacheEntry.Provider,
-					ResultsJSON: cacheEntry.ResultsJSON,
-					SourceURLs:  cacheEntry.SourceURLs,
-					RetrievedAt: cacheEntry.RetrievedAt,
-					Roles:       []string{"chat", "worker", "coder"},
-				})
-			}
+	if externalRecall, ok := e.manager.(conversationEngineExternalRecall); ok && shouldUseExternalRecallForUserMessage(userMessage) {
+		cacheEntry, err := externalRecall.GetFreshSearchCache(ctx, "web", userMessage, timeNowUTC())
+		if err != nil {
+			log.Printf("[ConversationEngine] WARN: SearchCache lookup failed: %v", err)
+		} else if cacheEntry != nil {
+			pack.SearchCacheSnippets = append(pack.SearchCacheSnippets, domconv.SearchCacheSnippet{
+				Query:       cacheEntry.RawQuery,
+				Provider:    cacheEntry.Provider,
+				ResultsJSON: cacheEntry.ResultsJSON,
+				SourceURLs:  cacheEntry.SourceURLs,
+				RetrievedAt: cacheEntry.RetrievedAt,
+				Roles:       []string{"chat", "worker", "coder"},
+			})
 		}
 
 		// 現在のドメインを取得
@@ -119,51 +129,47 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 			domain = thread.Domain
 		}
 
-		if realMgr.l1Store != nil {
-			items, err := realMgr.l1Store.SearchKnowledgeItemsFTS(ctx, domain, userMessage, 3)
-			if err != nil {
-				log.Printf("[ConversationEngine] WARN: L1 Knowledge FTS failed: %v", err)
-			} else {
-				for _, item := range items {
-					snippet := strings.TrimSpace(item.SummaryDraft)
-					if snippet == "" {
-						snippet = strings.TrimSpace(item.RawText)
-					}
-					if snippet != "" {
-						pack.KBSnippets = append(pack.KBSnippets, "[L1KB] "+snippet)
-					}
+		items, err := externalRecall.SearchKnowledgeItemsFTS(ctx, domain, userMessage, 3)
+		if err != nil {
+			log.Printf("[ConversationEngine] WARN: L1 Knowledge FTS failed: %v", err)
+		} else {
+			for _, item := range items {
+				snippet := strings.TrimSpace(item.SummaryDraft)
+				if snippet == "" {
+					snippet = strings.TrimSpace(item.RawText)
+				}
+				if snippet != "" {
+					pack.KBSnippets = append(pack.KBSnippets, "[L1KB] "+snippet)
 				}
 			}
 		}
 
-		if realMgr.l1Store != nil {
-			items, err := realMgr.l1Store.SearchWikiPageIndex(ctx, userMessage, 3)
-			if err != nil {
-				log.Printf("[ConversationEngine] WARN: WikiPageIndex search failed: %v", err)
-			} else {
-				for _, item := range items {
-					summary := strings.TrimSpace(item.Summary)
-					if summary == "" {
-						summary = strings.TrimSpace(item.Title)
-					}
-					if summary != "" {
-						pack.WikiSnippets = append(pack.WikiSnippets, domconv.WikiSnippet{
-							PageID:      item.PageID,
-							Title:       item.Title,
-							Path:        item.Path,
-							Summary:     summary,
-							SourcePaths: append([]string(nil), item.SourcePaths...),
-							Related:     append([]string(nil), item.Related...),
-							UpdatedAt:   item.UpdatedAt,
-							Roles:       []string{"chat", "worker", "coder"},
-						})
-					}
+		wikiItems, err := externalRecall.SearchWikiPageIndex(ctx, userMessage, 3)
+		if err != nil {
+			log.Printf("[ConversationEngine] WARN: WikiPageIndex search failed: %v", err)
+		} else {
+			for _, item := range wikiItems {
+				summary := strings.TrimSpace(item.Summary)
+				if summary == "" {
+					summary = strings.TrimSpace(item.Title)
+				}
+				if summary != "" {
+					pack.WikiSnippets = append(pack.WikiSnippets, domconv.WikiSnippet{
+						PageID:      item.PageID,
+						Title:       item.Title,
+						Path:        item.Path,
+						Summary:     summary,
+						SourcePaths: append([]string(nil), item.SourcePaths...),
+						Related:     append([]string(nil), item.Related...),
+						UpdatedAt:   item.UpdatedAt,
+						Roles:       []string{"chat", "worker", "coder"},
+					})
 				}
 			}
 		}
 
 		// KB検索を実行
-		kbDocs, err := realMgr.SearchKB(ctx, domain, userMessage, 3)
+		kbDocs, err := externalRecall.SearchKB(ctx, domain, userMessage, 3)
 		if err != nil {
 			log.Printf("[ConversationEngine] WARN: SearchKB failed: %v", err)
 		} else if len(kbDocs) > 0 {
@@ -184,8 +190,8 @@ func (e *RealConversationEngine) saveBeginTurnRecallTrace(ctx context.Context, s
 		return
 	}
 	now := timeNowUTC()
-	traceID := recallTraceID(sessionID, now, userMessage)
-	items := traceItemRecordsFromPack(traceID, pack.ToTraceItems())
+	traceID := l1sqlite.RecallTraceID(sessionID, now, userMessage)
+	items := l1sqlite.TraceItemRecordsFromPack(traceID, pack.ToTraceItems())
 	injectedCount := 0
 	totalTokens := 0
 	for _, item := range items {
@@ -200,8 +206,8 @@ func (e *RealConversationEngine) saveBeginTurnRecallTrace(ctx context.Context, s
 		ChatID:              sessionID,
 		Persona:             "mio",
 		Route:               "chat",
-		UserMessageHash:     hashRecallText(userMessage),
-		QueryTextRedacted:   redactedRecallQuery(userMessage),
+		UserMessageHash:     l1sqlite.HashRecallText(userMessage),
+		QueryTextRedacted:   l1sqlite.RedactedRecallQuery(userMessage),
 		CreatedAt:           now,
 		RecallPolicyVersion: "memory-lifecycle-v1",
 		TotalCandidates:     len(items),
@@ -216,7 +222,7 @@ func (e *RealConversationEngine) saveBeginTurnRecallTrace(ctx context.Context, s
 		log.Printf("[ConversationEngine] WARN: AddRecallTraceItems failed: %v", err)
 		return
 	}
-	if err := e.recallTraceStore.AddPromptInjectionEvents(ctx, traceID, promptInjectionEventsFromItems(traceID, items, now)); err != nil {
+	if err := e.recallTraceStore.AddPromptInjectionEvents(ctx, traceID, l1sqlite.PromptInjectionEventsFromItems(traceID, items, now)); err != nil {
 		log.Printf("[ConversationEngine] WARN: AddPromptInjectionEvents failed: %v", err)
 		return
 	}
@@ -372,11 +378,11 @@ func (e *RealConversationEngine) RecordRecallTrace(ctx context.Context, sessionI
 	if len(items) == 0 {
 		return nil
 	}
-	realMgr, ok := e.manager.(*RealConversationManager)
-	if !ok || realMgr.l1Store == nil {
+	recorder, ok := e.manager.(conversationEngineRecallTraceRecorder)
+	if !ok {
 		return nil
 	}
-	return realMgr.l1Store.SaveRecallTrace(ctx, domconv.RecallTrace{
+	return recorder.SaveRecallTrace(ctx, domconv.RecallTrace{
 		ResponseID: responseID,
 		SessionID:  sessionID,
 		Role:       role,

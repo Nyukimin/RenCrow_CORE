@@ -19,6 +19,27 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		viewerSend: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusAccepted)
 		}),
+		viewerGamesStatus: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+		viewerGamesDecision: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}),
+		viewerGamesResult: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		viewerGamesSessions: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusPartialContent)
+		}),
+		viewerGamesEvents: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusResetContent)
+		}),
+		viewerGamesObserverPage: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusTeapot)
+		}),
+		viewerGamesObserverProxy: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+		}),
 		viewerStatus: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),
@@ -104,6 +125,13 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		{name: "viewer workstreams", method: http.MethodGet, path: "/viewer/workstreams", want: http.StatusCreated},
 		{name: "viewer revenue", method: http.MethodGet, path: "/viewer/revenue", want: http.StatusNoContent},
 		{name: "viewer dynamic send", method: http.MethodGet, path: "/viewer/send", want: http.StatusAccepted},
+		{name: "viewer games status", method: http.MethodGet, path: "/viewer/games/status", want: http.StatusOK},
+		{name: "viewer games decision", method: http.MethodGet, path: "/viewer/games/decision", want: http.StatusCreated},
+		{name: "viewer games result", method: http.MethodGet, path: "/viewer/games/result", want: http.StatusNoContent},
+		{name: "viewer games sessions", method: http.MethodGet, path: "/viewer/games/sessions", want: http.StatusPartialContent},
+		{name: "viewer games events", method: http.MethodGet, path: "/viewer/games/events", want: http.StatusResetContent},
+		{name: "viewer games observer", method: http.MethodGet, path: "/viewer/games/observer", want: http.StatusTeapot},
+		{name: "viewer games observer proxy", method: http.MethodGet, path: "/viewer/games/observer-api/games/status", want: http.StatusBadGateway},
 		{name: "module manifest", method: http.MethodGet, path: moduleManifestPath, want: http.StatusOK},
 		{name: "stt chat input", method: http.MethodGet, path: "/stt/chat-input", want: http.StatusMethodNotAllowed},
 		{name: "voice chat primary", method: http.MethodGet, path: "/voice-chat", want: http.StatusIMUsed},

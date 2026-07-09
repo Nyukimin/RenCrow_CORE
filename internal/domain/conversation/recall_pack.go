@@ -412,51 +412,38 @@ type RecallRolePolicy struct {
 }
 
 func RecallPolicyForRole(role string) RecallRolePolicy {
-	role = normalizeRecallRole(role)
-	switch role {
-	case "chat", "mio":
-		return RecallRolePolicy{Role: "chat", AllowKnowledge: true, AllowSearchCache: true, RequireExplicit: true}
-	case "worker", "shiro":
-		return RecallRolePolicy{Role: "worker", AllowKnowledge: true, AllowSearchCache: true}
-	case "coder", "code", "aka", "ao", "gin", "kin":
-		return RecallRolePolicy{Role: "coder", AllowKnowledge: true, AllowSearchCache: true}
-	case "heavy", "kuro", "wild":
-		return RecallRolePolicy{Role: role, AllowKnowledge: true, AllowSearchCache: false}
-	case "creative", "midori":
-		return RecallRolePolicy{Role: "creative", AllowKnowledge: true, AllowSearchCache: false}
-	default:
-		return RecallRolePolicy{Role: role, AllowKnowledge: false, AllowSearchCache: false}
-	}
+	return NewInjectionPolicy(role).recallRolePolicy()
 }
 
 func policyAllowsKnowledgeSnippet(policy RecallRolePolicy, snippet string) bool {
-	if !policy.AllowKnowledge {
-		return false
-	}
-	if !policy.RequireExplicit {
-		return true
-	}
-	return strings.HasPrefix(strings.TrimSpace(snippet), "[L1KB]") || strings.HasPrefix(strings.TrimSpace(snippet), "[VectorKB]")
+	return NewInjectionPolicy(policy.Role).Decide(RecallCandidate{
+		Kind:        "knowledge",
+		Summary:     snippet,
+		State:       "confirmed",
+		Sensitivity: "normal",
+	}).Status == TraceStatusInjected
 }
 
 func policyAllowsSearchCacheSnippet(policy RecallRolePolicy, role string, snippet SearchCacheSnippet) bool {
-	if !policy.AllowSearchCache {
-		return false
-	}
-	if policy.RequireExplicit && len(snippet.Roles) == 0 {
-		return false
-	}
-	return recallRolesMatch(snippet.Roles, role)
+	return NewInjectionPolicy(policy.Role).Decide(RecallCandidate{
+		Kind:        "search_cache",
+		Summary:     snippet.ToPromptText(),
+		State:       "confirmed",
+		Sensitivity: "normal",
+		Roles:       append([]string(nil), snippet.Roles...),
+	}).Status == TraceStatusInjected
 }
 
 func policyAllowsWikiSnippet(policy RecallRolePolicy, role string, snippet WikiSnippet) bool {
-	if !policy.AllowKnowledge {
-		return false
-	}
-	if policy.RequireExplicit && len(snippet.Roles) == 0 {
-		return false
-	}
-	return recallRolesMatch(snippet.Roles, role)
+	return NewInjectionPolicy(policy.Role).Decide(RecallCandidate{
+		Kind:        "wiki_page",
+		SourceID:    snippet.PageID,
+		SourceType:  "knowledge_wiki",
+		Summary:     snippet.ToPromptText(),
+		State:       "confirmed",
+		Sensitivity: "normal",
+		Roles:       append([]string(nil), snippet.Roles...),
+	}).Status == TraceStatusInjected
 }
 
 func recallRolesMatch(roles []string, role string) bool {

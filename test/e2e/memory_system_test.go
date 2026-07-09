@@ -3,13 +3,14 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/duckdb"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type memoryVectorHarness struct {
@@ -33,13 +34,13 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 
-	l1, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(tmp, "l1.db"))
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(tmp, "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer l1.Close()
 
-	l2, err := conversationpersistence.NewDuckDBStore(filepath.Join(tmp, "l2.duckdb"))
+	l2, err := duckdb.NewDuckDBStore(filepath.Join(tmp, "l2.duckdb"))
 	if err != nil {
 		t.Skipf("DuckDB unavailable for memory E2E: %v", err)
 	}
@@ -56,13 +57,13 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 			"turn_index": i,
 		})
 		activeThread.AddMessage(msg)
-		if err := l1.SaveMessage(ctx, sessionID, activeThread.ID, fmt.Sprintf("conv:%d", activeThread.ID), msg, conversationpersistence.MemoryStateObserved); err != nil {
+		if err := l1.SaveMessage(ctx, sessionID, activeThread.ID, fmt.Sprintf("conv:%d", activeThread.ID), msg, l1sqlite.MemoryStateObserved); err != nil {
 			t.Fatalf("SaveMessage turn %d failed: %v", i, err)
 		}
 
 		if i == 12 {
-			staged, err := l1.SaveStagingItem(ctx, conversationpersistence.L1StagingItem{
-				Kind:         conversationpersistence.L1StagingKindMemoryCandidate,
+			staged, err := l1.SaveStagingItem(ctx, l1sqlite.L1StagingItem{
+				Kind:         l1sqlite.L1StagingKindMemoryCandidate,
 				Namespace:    "user:memory-e2e",
 				EventID:      "daily-memory-preference",
 				SourceID:     "conversation",
@@ -80,7 +81,7 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 			if err != nil {
 				t.Fatalf("SaveStagingItem failed: %v", err)
 			}
-			validation, err := l1.ValidateStagingItem(ctx, staged.ID, conversationpersistence.L1StagingValidationPolicy{
+			validation, err := l1.ValidateStagingItem(ctx, staged.ID, l1sqlite.L1StagingValidationPolicy{
 				Now:               time.Now().UTC(),
 				SourceTrustScores: map[string]float64{"conversation": 1.0},
 				MinimumTrustScore: 0.5,
@@ -88,14 +89,14 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ValidateStagingItem failed: %v", err)
 			}
-			if !validation.Passed || validation.Status != conversationpersistence.L1StagingStatusValidated {
+			if !validation.Passed || validation.Status != l1sqlite.L1StagingStatusValidated {
 				t.Fatalf("staging validation did not pass: %+v", validation)
 			}
 			promoted, err := l1.PromoteValidatedStagingItemToMemory(ctx, staged.ID, "user:memory-e2e", "e2e")
 			if err != nil {
 				t.Fatalf("PromoteValidatedStagingItemToMemory failed: %v", err)
 			}
-			if promoted.MemoryState != conversationpersistence.MemoryStateConfirmed {
+			if promoted.MemoryState != l1sqlite.MemoryStateConfirmed {
 				t.Fatalf("promoted memory state = %q", promoted.MemoryState)
 			}
 
@@ -128,7 +129,7 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 		t.Fatalf("expected at least 15 L1 observed messages, got %d", len(l1Observed))
 	}
 
-	validated, err := l1.RecentStagingItems(ctx, conversationpersistence.L1StagingStatusValidated, 10)
+	validated, err := l1.RecentStagingItems(ctx, l1sqlite.L1StagingStatusValidated, 10)
 	if err != nil {
 		t.Fatalf("RecentStagingItems(validated) failed: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 		t.Fatalf("expected 1 validated staging item, got %d", len(validated))
 	}
 
-	confirmed, err := l1.RecentByState(ctx, conversationpersistence.MemoryStateConfirmed, 10)
+	confirmed, err := l1.RecentByState(ctx, l1sqlite.MemoryStateConfirmed, 10)
 	if err != nil {
 		t.Fatalf("RecentByState(confirmed) failed: %v", err)
 	}

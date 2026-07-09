@@ -3,25 +3,22 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"strings"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type MemoryActionStore interface {
 	UpdateMemoryState(ctx context.Context, id string, memoryState string) error
-	PromoteMemoryToNamespace(ctx context.Context, id string, targetNamespace string, promotedBy string) (*conversationpersistence.L1MemoryEvent, error)
+	PromoteMemoryToNamespace(ctx context.Context, id string, targetNamespace string, promotedBy string) (*l1sqlite.L1MemoryEvent, error)
 }
 
 func HandleMemoryState(store MemoryActionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireViewerMethod(w, r, http.MethodPost) {
 			return
 		}
-		if store == nil {
-			http.Error(w, "memory action unavailable", http.StatusServiceUnavailable)
+		if !requireViewerStore(w, store == nil, "memory action unavailable") {
 			return
 		}
 		var req struct {
@@ -42,19 +39,16 @@ func HandleMemoryState(store MemoryActionStore) http.HandlerFunc {
 			http.Error(w, "failed to update memory state", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
 
 func HandleMemoryPromote(store MemoryActionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireViewerMethod(w, r, http.MethodPost) {
 			return
 		}
-		if store == nil {
-			http.Error(w, "memory action unavailable", http.StatusServiceUnavailable)
+		if !requireViewerStore(w, store == nil, "memory action unavailable") {
 			return
 		}
 		var req struct {
@@ -77,7 +71,7 @@ func HandleMemoryPromote(store MemoryActionStore) http.HandlerFunc {
 			req.PromotedBy = "viewer"
 		}
 		if req.TargetNamespace == "" && req.TargetKind != "" && req.TargetID != "" {
-			namespace, err := conversationpersistence.BuildL1Namespace(req.TargetKind, req.TargetID)
+			namespace, err := l1sqlite.BuildL1Namespace(req.TargetKind, req.TargetID)
 			if err != nil {
 				http.Error(w, "invalid target namespace", http.StatusBadRequest)
 				return
@@ -88,7 +82,7 @@ func HandleMemoryPromote(store MemoryActionStore) http.HandlerFunc {
 			http.Error(w, "id and target namespace are required", http.StatusBadRequest)
 			return
 		}
-		if err := conversationpersistence.ValidateL1Namespace(req.TargetNamespace); err != nil {
+		if err := l1sqlite.ValidateL1Namespace(req.TargetNamespace); err != nil {
 			http.Error(w, "invalid target namespace", http.StatusBadRequest)
 			return
 		}
@@ -97,7 +91,6 @@ func HandleMemoryPromote(store MemoryActionStore) http.HandlerFunc {
 			http.Error(w, "failed to promote memory", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"item": item})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"item": memoryEventDTOFromL1Ptr(item)})
 	}
 }

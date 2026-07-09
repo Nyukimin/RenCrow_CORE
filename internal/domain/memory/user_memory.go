@@ -62,14 +62,18 @@ type CreateUserMemoryInput struct {
 	Source           string
 }
 
-type RecallPackView struct {
-	SessionID string           `json:"session_id"`
-	UserID    string           `json:"user_id"`
-	Items     []RecallPackItem `json:"items"`
-	CreatedAt time.Time        `json:"created_at"`
+// UserMemoryRecallView is a Viewer DTO for inspecting recalled user-memory items.
+// It is separate from conversation.RecallPack, which is used to assemble LLM prompts.
+type UserMemoryRecallView struct {
+	SessionID string                 `json:"session_id"`
+	UserID    string                 `json:"user_id"`
+	Items     []UserMemoryRecallItem `json:"items"`
+	CreatedAt time.Time              `json:"created_at"`
 }
 
-type RecallPackItem struct {
+// UserMemoryRecallItem is one Viewer recall item in UserMemoryRecallView.
+// conversation.RecallPack remains the prompt-injection format for LLM context.
+type UserMemoryRecallItem struct {
 	Layer       string   `json:"layer"`
 	Namespace   string   `json:"namespace"`
 	MemoryID    string   `json:"memory_id"`

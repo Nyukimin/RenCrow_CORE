@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	knowledgeapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/knowledge"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 func cmdKnowledge() {
@@ -125,4 +125,4 @@ func parseWikiIndexArgs(args []string) (string, string) {
 	return rootDir, repoRoot
 }
 
-var _ knowledgeCLIStore = (*conversationpersistence.L1SQLiteStore)(nil)
+var _ knowledgeCLIStore = (*l1sqlite.L1SQLiteStore)(nil)

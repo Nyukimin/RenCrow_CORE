@@ -4,6 +4,8 @@ const A = {
   user:   {c:'#94a3b8', l:'れん',  en:'Ren',   e:'\u{1f464}'},
   mio:    {c:'#f472b6', l:'みお',  en:'Mio',   e:'\u{1f338}'},
   shiro:  {c:'#22d3ee', l:'しろ',  en:'Shiro', e:'\u26a1'},
+  kuro:   {c:'#64748b', l:'くろ',  en:'Kuro',  e:'K'},
+  midori: {c:'#34d399', l:'みどり', en:'Midori', e:'M'},
   worker: {c:'#38bdf8', l:'Worker', en:'Worker', e:'W'},
   coder1: {c:'#818cf8', l:'あお',  en:'AO',    e:'\u{1f535}'},
   coder2: {c:'#fb923c', l:'あか',  en:'Aka',   e:'\u{1f534}'},
@@ -19,10 +21,14 @@ const RC = {
   PLAN:'#4ade80', ANALYZE:'#fbbf24', RESEARCH:'#34d399',
   IDLECHAT:'#a78bfa',
 };
-const AGENTS = ['mio', 'shiro', 'coder1', 'coder2', 'coder3', 'coder4'];
+const AGENTS = ['mio', 'shiro', 'kuro', 'midori', 'coder1', 'coder2', 'coder3', 'coder4'];
+const LAB_CHAT_PARTNERS = ['shiro', 'kuro', 'midori'];
+const LAB_CHAT_PARTNER_LABELS = {shiro: 'Shiro', kuro: 'Kuro', midori: 'Midori'};
 const ROLE_TARGETS = [
   {id:'mio', role:'Chat', alias:'Chat', use:'会話テンポ / ルミナ人格 / 音声UI'},
   {id:'shiro', role:'Worker', alias:'Worker', use:'実務処理 / 要約 / RAG'},
+  {id:'kuro', role:'Heavy', alias:'Heavy', use:'深い分析 / 長文推論 / 慎重な判断'},
+  {id:'midori', role:'Wild', alias:'Wild', use:'発想展開 / アイデア生成 / 変化球'},
   {id:'coder1', role:'Coder', alias:'Coder1', use:'仕様設計 / 構成整理 / 提案'},
   {id:'coder2', role:'Coder', alias:'Coder2', use:'実装 / 検証 / 差分整理'},
   {id:'coder3', role:'Coder', alias:'Coder3', use:'実装 / 調査 / テスト補助'},
@@ -252,6 +258,12 @@ const state = {
     dciTraces: [],
     dciFetchError: '',
     dciLastResult: null,
+    gameBridgeStatus: null,
+    gameBridgeSessions: [],
+    gameBridgeEvents: [],
+    gameBridgeStatusFetchError: '',
+    gameBridgeSourceFetchError: '',
+    gameBridgeSkippedCount: 0,
     sandboxes: [],
     sandboxArtifacts: [],
     sandboxPromotions: [],
@@ -1201,6 +1213,7 @@ const panels = {
   backlog: document.getElementById('panel-backlog'),
   reports: document.getElementById('panel-reports'),
   ops: document.getElementById('panel-ops'),
+  games: document.getElementById('panel-games'),
   overview: document.getElementById('panel-overview'),
   roles: document.getElementById('panel-roles'),
   progress: document.getElementById('panel-progress'),
@@ -1305,6 +1318,9 @@ function switchTab(tab) {
   if (tab === 'ops') {
     refreshSandboxData();
     refreshRuntimeBlockedRouteData();
+  }
+  if (tab === 'games' && typeof refreshGameBridgeData === 'function') {
+    refreshGameBridgeData();
   }
   if (tab === 'jobs') {
     refreshVerification();
@@ -2313,6 +2329,7 @@ function renderDeskViews() {
   if (typeof renderBacklogDesk === 'function') renderBacklogDesk();
   if (typeof renderReportsDesk === 'function') renderReportsDesk();
   if (typeof renderInvestmentDesk === 'function') renderInvestmentDesk();
+  if (typeof renderGamesDesk === 'function') renderGamesDesk();
 }
 
 function refreshOpsData() {
@@ -2398,6 +2415,78 @@ function refreshDCIData() {
       state.ops.dciTraces = [];
       if (typeof renderDCITraces === 'function') renderDCITraces();
       renderOps();
+      console.error(err);
+    });
+}
+
+function fetchGameBridgeJSON(path) {
+  return fetch(path, {cache: 'no-store'})
+    .then((r) => r.text().then((body) => {
+      let data = null;
+      if (body) {
+        try {
+          data = JSON.parse(body);
+        } catch (err) {
+          throw new Error('HTTP ' + String(r.status) + ': invalid JSON from ' + path);
+        }
+      }
+      if (!r.ok || (data && data.ok === false)) {
+        const message = data && (data.message || data.error)
+          ? String(data.message || data.error)
+          : (body || r.statusText || 'game bridge unavailable');
+        throw new Error('HTTP ' + String(r.status) + ': ' + message);
+      }
+      return data || {};
+    }));
+}
+
+function refreshGameBridgeData() {
+  fetchGameBridgeJSON('/viewer/games/status')
+    .then((status) => Promise.allSettled([
+      fetchGameBridgeJSON('/viewer/games/sessions?limit=5'),
+      fetchGameBridgeJSON('/viewer/games/events?limit=5'),
+    ]).then((results) => ({status, results})))
+    .then(({status, results}) => {
+      const sessionResult = results[0];
+      const eventResult = results[1];
+      const sourceErrors = [];
+      let skippedCount = 0;
+
+      state.ops.gameBridgeStatusFetchError = '';
+      state.ops.gameBridgeStatus = status || null;
+
+      if (sessionResult && sessionResult.status === 'fulfilled') {
+        const payload = sessionResult.value || {};
+        state.ops.gameBridgeSessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+        skippedCount += Number(payload.skipped_count || 0);
+      } else {
+        state.ops.gameBridgeSessions = [];
+        sourceErrors.push('sessions: ' + String(sessionResult && sessionResult.reason && sessionResult.reason.message ? sessionResult.reason.message : 'unavailable'));
+      }
+
+      if (eventResult && eventResult.status === 'fulfilled') {
+        const payload = eventResult.value || {};
+        state.ops.gameBridgeEvents = Array.isArray(payload.events) ? payload.events : [];
+        skippedCount += Number(payload.skipped_count || 0);
+      } else {
+        state.ops.gameBridgeEvents = [];
+        sourceErrors.push('events: ' + String(eventResult && eventResult.reason && eventResult.reason.message ? eventResult.reason.message : 'unavailable'));
+      }
+
+      state.ops.gameBridgeSourceFetchError = sourceErrors.join('\n');
+      state.ops.gameBridgeSkippedCount = skippedCount;
+      renderOps();
+      if (typeof renderGamesDesk === 'function') renderGamesDesk();
+    })
+    .catch((err) => {
+      state.ops.gameBridgeStatusFetchError = String(err && err.message ? err.message : err);
+      state.ops.gameBridgeStatus = null;
+      state.ops.gameBridgeSessions = [];
+      state.ops.gameBridgeEvents = [];
+      state.ops.gameBridgeSourceFetchError = '';
+      state.ops.gameBridgeSkippedCount = 0;
+      renderOps();
+      if (typeof renderGamesDesk === 'function') renderGamesDesk();
       console.error(err);
     });
 }
@@ -3220,10 +3309,30 @@ function initTabFromQuery() {
   } catch (_) {}
 }
 
+// Live2D モード: Viewer の UI を隠し、疑似 Live2D ステージを全画面表示する。
+// 対応キャラクターは assets/live2d/<character>/ 配下にビュワー一式を置いて追加する。
+function initLive2DMode(u) {
+  const stage = document.getElementById('live2dStage');
+  const frame = document.getElementById('live2dStageFrame');
+  if (!stage || !frame) return false;
+  const character = String(u.searchParams.get('character') || 'marin').trim().toLowerCase();
+  if (!/^[a-z0-9_-]+$/.test(character)) return false;
+  document.body.classList.add('live2d-mode');
+  const params = new URLSearchParams();
+  const expression = String(u.searchParams.get('expression') || '').trim();
+  if (expression) params.set('expression', expression);
+  if (u.searchParams.get('ui') === '0') params.set('ui', '0');
+  const query = params.toString();
+  frame.src = '/viewer/assets/live2d/' + character + '/index.html' + (query ? '?' + query : '');
+  stage.hidden = false;
+  return true;
+}
+
 function initLiveMode() {
   try {
     const u = new URL(window.location.href);
     const mode = String(u.searchParams.get('mode') || '').trim().toLowerCase();
+    if (mode === 'live2d') return initLive2DMode(u);
     if (mode !== 'live' && mode !== 'lab') return false;
     const isLabMode = mode === 'lab';
     document.body.classList.add('live-mode');
@@ -3261,6 +3370,14 @@ function initLiveMode() {
 
 const LAB_PARTNER_STORAGE_KEY = 'labConversation.selectedPartner';
 
+function isLabChatPartner(actor) {
+  return LAB_CHAT_PARTNERS.indexOf(String(actor || '').toLowerCase()) >= 0;
+}
+
+function labPartnerLabel(actor) {
+  return LAB_CHAT_PARTNER_LABELS[String(actor || '').toLowerCase()] || 'Shiro';
+}
+
 function normalizeLabActor(value) {
   if (value === null || value === undefined) return '';
   if (Array.isArray(value)) {
@@ -3279,8 +3396,10 @@ function normalizeLabActor(value) {
     return '';
   }
   const text = String(value).trim().toLowerCase();
-  if (text.includes('shiro')) return 'shiro';
-  if (text.includes('mio')) return 'mio';
+  if (text.includes('midori') || text.includes('みどり')) return 'midori';
+  if (text.includes('shiro') || text.includes('しろ')) return 'shiro';
+  if (text.includes('kuro') || text.includes('くろ')) return 'kuro';
+  if (text.includes('mio') || text.includes('みお')) return 'mio';
   return '';
 }
 
@@ -3301,17 +3420,17 @@ function deriveLabConversationMode(status) {
 function getLabSelectedPartner() {
   try {
     const stored = normalizeLabActor(localStorage.getItem(LAB_PARTNER_STORAGE_KEY));
-    if (stored) return stored;
+    if (isLabChatPartner(stored)) return stored;
     if (typeof selectedRoleTargetID === 'function') {
       const selected = normalizeLabActor(selectedRoleTargetID());
-      if (selected) return selected;
+      if (isLabChatPartner(selected)) return selected;
     }
   } catch (_) {}
-  return 'mio';
+  return 'shiro';
 }
 
 function syncLabRoleTarget(partner) {
-  const actor = normalizeLabActor(partner) || 'mio';
+  const actor = normalizeLabActor(partner) || 'shiro';
   try {
     const current = typeof selectedRoleTargetID === 'function'
       ? normalizeLabActor(selectedRoleTargetID())
@@ -3327,7 +3446,8 @@ function syncLabRoleTarget(partner) {
 }
 
 function setLabSelectedPartner(partner, syncRoleTarget) {
-  const actor = normalizeLabActor(partner) || 'mio';
+  const normalized = normalizeLabActor(partner);
+  const actor = normalized === 'mio' || isLabChatPartner(normalized) ? normalized : 'shiro';
   try { localStorage.setItem(LAB_PARTNER_STORAGE_KEY, actor); } catch (_) {}
   if (syncRoleTarget !== false) syncLabRoleTarget(actor);
   return actor;
@@ -3378,6 +3498,41 @@ function setLabChipState(id, enabled) {
   if (el.classList && typeof el.classList.toggle === 'function') el.classList.toggle('is-active', !!enabled);
 }
 
+function setLabPartnerMenuOpen(open) {
+  const chip = document.getElementById('labModePartnerChip');
+  const menu = document.getElementById('labPartnerOptions');
+  const body = document && document.body;
+  const isChat = !!(body && body.classList && body.classList.contains('lab-chat-mode'));
+  const shouldOpen = !!open && isChat && !!menu && !!chip && !chip.disabled;
+  if (menu) menu.hidden = !shouldOpen;
+  if (chip && typeof chip.setAttribute === 'function') chip.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+}
+
+function syncLabPartnerPicker(partner, isIdle) {
+  const actor = normalizeLabActor(partner) || getLabSelectedPartner();
+  const selectedPartner = isLabChatPartner(actor) ? actor : getLabSelectedPartner();
+  const isActivePartner = !isIdle && isLabChatPartner(actor);
+  const chip = document.getElementById('labModePartnerChip');
+  if (chip) {
+    chip.textContent = labPartnerLabel(selectedPartner);
+    chip.disabled = !!isIdle;
+    chip.title = '';
+    if (typeof chip.setAttribute === 'function') chip.setAttribute('aria-current', isActivePartner ? 'true' : 'false');
+    if (typeof chip.setAttribute === 'function') chip.setAttribute('aria-pressed', isActivePartner ? 'true' : 'false');
+    if (typeof chip.setAttribute === 'function') chip.setAttribute('aria-disabled', chip.disabled ? 'true' : 'false');
+    if (chip.classList && typeof chip.classList.toggle === 'function') chip.classList.toggle('is-active', isActivePartner);
+  }
+  document.querySelectorAll('[data-lab-partner-option]').forEach((btn) => {
+    const option = normalizeLabActor(btn.dataset.labPartnerOption);
+    btn.hidden = option === selectedPartner;
+    btn.textContent = labPartnerLabel(option);
+    btn.disabled = false;
+    btn.title = '';
+    if (typeof btn.setAttribute === 'function') btn.setAttribute('aria-disabled', 'false');
+  });
+  if (isIdle || !isActivePartner) setLabPartnerMenuOpen(false);
+}
+
 function applyLabConversationStatus(status) {
   const body = document && document.body;
   if (!body) return;
@@ -3386,11 +3541,13 @@ function applyLabConversationStatus(status) {
   const partner = isIdle
     ? getLabSelectedPartner()
     : setLabSelectedPartner(deriveLabConversationPartner(status || {}), true);
-  const isShiro = partner === 'shiro';
+  const isMio = partner === 'mio';
   setLabBodyClass('lab-idle-mode', isIdle);
   setLabBodyClass('lab-chat-mode', !isIdle);
-  setLabBodyClass('lab-partner-mio', isIdle || !isShiro);
-  setLabBodyClass('lab-partner-shiro', isIdle || isShiro);
+  setLabBodyClass('lab-partner-mio', isIdle || isMio);
+  setLabBodyClass('lab-partner-shiro', isIdle || !isMio);
+  setLabBodyClass('lab-partner-kuro', !isIdle && partner === 'kuro');
+  setLabBodyClass('lab-partner-midori', !isIdle && partner === 'midori');
   if (body.dataset) {
     body.dataset.labConversationMode = conversationMode;
     body.dataset.labPartner = isIdle ? 'both' : partner;
@@ -3399,13 +3556,14 @@ function applyLabConversationStatus(status) {
   setLabChipState('labModeChatChip', !isIdle);
   setLabChipState('labModeIdleChip', isIdle);
   setLabChipState('labModeMioChip', isIdle || partner === 'mio');
-  setLabChipState('labModeShiroChip', isIdle || partner === 'shiro');
+  syncLabPartnerPicker(partner, isIdle);
 }
 
 function setLabModeSwitcherBusy(enabled) {
-  document.querySelectorAll('[data-lab-switch]').forEach((btn) => {
+  document.querySelectorAll('[data-lab-switch], [data-lab-partner-toggle], [data-lab-partner-option]').forEach((btn) => {
     btn.disabled = !!enabled;
   });
+  if (enabled) setLabPartnerMenuOpen(false);
 }
 
 async function runLabIdleControl(path) {
@@ -3459,12 +3617,35 @@ function bindLabModeSwitcher() {
         switchLabConversation('idle');
         return;
       }
-      if (action === 'mio' || action === 'shiro') {
+      if (action === 'mio') {
         switchLabConversation('chat', action);
         return;
       }
       switchLabConversation('chat');
     });
+  });
+  const partnerChip = document.querySelector('[data-lab-partner-toggle]');
+  if (partnerChip) {
+    partnerChip.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      const body = document && document.body;
+      if (!body || !body.classList || !body.classList.contains('lab-chat-mode')) return;
+      const menu = document.getElementById('labPartnerOptions');
+      setLabPartnerMenuOpen(menu ? menu.hidden : true);
+    });
+  }
+  document.querySelectorAll('[data-lab-partner-option]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const actor = normalizeLabActor(btn.dataset.labPartnerOption);
+      if (!isLabChatPartner(actor)) return;
+      setLabPartnerMenuOpen(false);
+      switchLabConversation('chat', actor);
+    });
+  });
+  document.addEventListener('click', (ev) => {
+    const picker = document.getElementById('labPartnerPicker');
+    if (picker && typeof picker.contains === 'function' && picker.contains(ev.target)) return;
+    setLabPartnerMenuOpen(false);
   });
 }
 
@@ -3490,6 +3671,7 @@ function refreshOptionalPanelData() {
   refreshOpsData();
   refreshToolHarnessData();
   refreshDCIData();
+  if (typeof refreshGameBridgeData === 'function') refreshGameBridgeData();
   refreshSkillGovernanceData();
   refreshWorkstreamData();
   refreshRevenueData();
@@ -3521,6 +3703,7 @@ function setOptionalPanelRefreshIntervals() {
   setInterval(refreshOpsData, 5000);
   setInterval(refreshToolHarnessData, 5000);
   setInterval(refreshDCIData, 5000);
+  setInterval(() => { if (typeof refreshGameBridgeData === 'function') refreshGameBridgeData(); }, 5000);
   setInterval(() => { if (shouldRefreshOpsPanelDiagnostics()) refreshSandboxData(); }, 5000);
   setInterval(refreshSkillGovernanceData, 5000);
   setInterval(refreshWorkstreamData, 5000);
@@ -5549,12 +5732,12 @@ function send() {
   sendBtn.disabled = true;
   inp.disabled = true;
   if (typeof labInp !== 'undefined' && labInp) labInp.disabled = true;
-  if (attachBtn) attachBtn.disabled = true;
-  if (screenBtn) screenBtn.disabled = true;
-  if (cameraBtn) cameraBtn.disabled = true;
-  if (labAttachBtn) labAttachBtn.disabled = true;
-  if (labScreenBtn) labScreenBtn.disabled = true;
-  if (labCameraBtn) labCameraBtn.disabled = true;
+  if (typeof attachBtn !== 'undefined' && attachBtn) attachBtn.disabled = true;
+  if (typeof screenBtn !== 'undefined' && screenBtn) screenBtn.disabled = true;
+  if (typeof cameraBtn !== 'undefined' && cameraBtn) cameraBtn.disabled = true;
+  if (typeof labAttachBtn !== 'undefined' && labAttachBtn) labAttachBtn.disabled = true;
+  if (typeof labScreenBtn !== 'undefined' && labScreenBtn) labScreenBtn.disabled = true;
+  if (typeof labCameraBtn !== 'undefined' && labCameraBtn) labCameraBtn.disabled = true;
 
   const sendPromise = attachments.length > 0 ? sendViewerMessage(message, attachments) : sendViewerMessage(message);
   sendPromise
@@ -5581,12 +5764,12 @@ function send() {
     sendBtn.disabled = false;
     inp.disabled = false;
     if (typeof labInp !== 'undefined' && labInp) labInp.disabled = false;
-    if (attachBtn) attachBtn.disabled = false;
-    if (screenBtn) screenBtn.disabled = false;
-    if (cameraBtn) cameraBtn.disabled = false;
-    if (labAttachBtn) labAttachBtn.disabled = false;
-    if (labScreenBtn) labScreenBtn.disabled = false;
-    if (labCameraBtn) labCameraBtn.disabled = false;
+    if (typeof attachBtn !== 'undefined' && attachBtn) attachBtn.disabled = false;
+    if (typeof screenBtn !== 'undefined' && screenBtn) screenBtn.disabled = false;
+    if (typeof cameraBtn !== 'undefined' && cameraBtn) cameraBtn.disabled = false;
+    if (typeof labAttachBtn !== 'undefined' && labAttachBtn) labAttachBtn.disabled = false;
+    if (typeof labScreenBtn !== 'undefined' && labScreenBtn) labScreenBtn.disabled = false;
+    if (typeof labCameraBtn !== 'undefined' && labCameraBtn) labCameraBtn.disabled = false;
     const isLabMode = typeof document !== 'undefined' && document.body && document.body.classList.contains('lab-mode');
     const focusTarget = typeof labInp !== 'undefined' && isLabMode && labInp ? labInp : inp;
     focusTarget.focus();
@@ -7294,7 +7477,7 @@ async function startSTT() {
     showToast('音声入力は通常チャットでのみ有効です', 'error');
     return;
   }
-  const externalAudioStream = getSTTExternalAudioStream();
+  const externalAudioStream = typeof getSTTExternalAudioStream === 'function' ? getSTTExternalAudioStream() : null;
   const microphoneUnavailable = externalAudioStream ? '' : getSTTMicrophoneUnavailableReason();
   if (microphoneUnavailable) {
     sttState.isStarting = false;

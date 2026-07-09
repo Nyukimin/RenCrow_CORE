@@ -50,6 +50,13 @@ func CurrentToolDescriptors() []ToolDescriptor {
 			ExecutionPolicy: "WorkerExecutionService validates and executes proposal patches; diagnostics endpoint does not execute actions.",
 			Description:     "Execute a Coder-generated proposal patch through the Worker module contract.",
 		},
+		{
+			Name:            "codex.run",
+			RequiredArgs:    []string{"prompt"},
+			OptionalArgs:    []string{"working_dir", "sandbox", "model", "timeout_ms", "ephemeral"},
+			ExecutionPolicy: "Registered only when codex.enabled is true; Shiro may call it directly for drawing and folktale Codex work paths; read-only is the default sandbox.",
+			Description:     "Run Codex CLI for explicit Codex-owned work such as drawing specs and folktale generation.",
+		},
 	}
 }
 

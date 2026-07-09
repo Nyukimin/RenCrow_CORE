@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"io"
 	"net"
 	"net/http"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/sourcefetcher"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
 )
 
@@ -33,10 +33,10 @@ func (f *fakeWebGatherFetcher) FetchURL(_ context.Context, req modulewebgather.F
 type fakeWebGatherSearchCache struct{}
 
 type fakeWebGatherSourceRegistry struct {
-	entry conversationpersistence.L1SourceRegistryEntry
+	entry l1sqlite.L1SourceRegistryEntry
 }
 
-func (s *fakeWebGatherSourceRegistry) SaveSourceRegistryEntry(_ context.Context, entry conversationpersistence.L1SourceRegistryEntry) (*conversationpersistence.L1SourceRegistryEntry, error) {
+func (s *fakeWebGatherSourceRegistry) SaveSourceRegistryEntry(_ context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error) {
 	s.entry = entry
 	return &entry, nil
 }
@@ -193,7 +193,7 @@ func TestRunWebGatherCommandRegisterURL(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
-	if registry.entry.Kind != conversationpersistence.L1SourceKindWebGather || registry.entry.URL != "https://example.com/article" {
+	if registry.entry.Kind != l1sqlite.L1SourceKindWebGather || registry.entry.URL != "https://example.com/article" {
 		t.Fatalf("unexpected entry: %+v", registry.entry)
 	}
 	if registry.entry.SourceID == "" || registry.entry.Meta["namespace"] != "kb:research" || registry.entry.FetchInterval != 10*time.Minute {
@@ -212,15 +212,15 @@ func TestRunWebGatherCommandRunSourceStagesPending(t *testing.T) {
 	}))
 	defer server.Close()
 
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "web:run",
 		URL:           server.URL,
-		Kind:          conversationpersistence.L1SourceKindWebGather,
+		Kind:          l1sqlite.L1SourceKindWebGather,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "review source terms before promotion",
@@ -243,7 +243,7 @@ func TestRunWebGatherCommandRunSourceStagesPending(t *testing.T) {
 	if !strings.Contains(out.String(), `"staged":1`) || strings.Contains(out.String(), `"promoted_news":1`) {
 		t.Fatalf("expected pending-only run result, got %s", out.String())
 	}
-	items, err := store.RecentStagingItems(ctx, conversationpersistence.L1StagingStatusPending, 10)
+	items, err := store.RecentStagingItems(ctx, l1sqlite.L1StagingStatusPending, 10)
 	if err != nil {
 		t.Fatalf("RecentStagingItems failed: %v", err)
 	}
@@ -253,9 +253,9 @@ func TestRunWebGatherCommandRunSourceStagesPending(t *testing.T) {
 }
 
 func TestRunWebGatherCommandRunSourceRejectsNonWebGatherSource(t *testing.T) {
-	store := &webGatherSourceRunnerStub{entries: []conversationpersistence.L1SourceRegistryEntry{{
+	store := &webGatherSourceRunnerStub{entries: []l1sqlite.L1SourceRegistryEntry{{
 		SourceID: "rss:not-web",
-		Kind:     conversationpersistence.L1SourceKindRSS,
+		Kind:     l1sqlite.L1SourceKindRSS,
 		Enabled:  true,
 	}}}
 	var out, errOut bytes.Buffer
@@ -340,7 +340,7 @@ func TestRunWebGatherCommandWebwrightFetchPreflightsResponsesEndpoint(t *testing
 }
 
 func TestRunWebGatherCommandDoctorReportsSkippedWebwright(t *testing.T) {
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestRunWebGatherCommandDoctorReportsSkippedWebwright(t *testing.T) {
 }
 
 func TestRunWebGatherCommandDoctorFailsUnreachableWebwrightEndpoint(t *testing.T) {
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestRunWebGatherCommandDoctorPassesReachableWebwrightEndpoint(t *testing.T)
 	if err := os.WriteFile(runnerPath, []byte("#!/usr/bin/env python3\n"), 0o755); err != nil {
 		t.Fatalf("WriteFile runner failed: %v", err)
 	}
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(dir, "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(dir, "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestRunWebGatherCommandImportWebwrightJSONLStagesPending(t *testing.T) {
 	if err := os.WriteFile(inputPath, []byte(line), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(dir, "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(dir, "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestRunWebGatherCommandImportWebwrightJSONLStagesPending(t *testing.T) {
 	if !strings.Contains(out.String(), `"imported":1`) {
 		t.Fatalf("expected imported count JSON, got %s", out.String())
 	}
-	items, err := store.RecentStagingItems(ctx, conversationpersistence.L1StagingStatusPending, 10)
+	items, err := store.RecentStagingItems(ctx, l1sqlite.L1StagingStatusPending, 10)
 	if err != nil {
 		t.Fatalf("RecentStagingItems failed: %v", err)
 	}
@@ -461,7 +461,7 @@ func TestRunWebGatherCommandImportWebwrightJSONLRejectsUnsafeItem(t *testing.T) 
 	if err := os.WriteFile(inputPath, []byte(line), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(dir, "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(dir, "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestRunWebGatherCommandImportWebwrightJSONLRejectsUnsafeItem(t *testing.T) 
 	if code != 1 || !strings.Contains(errOut.String(), "credential material") {
 		t.Fatalf("expected credential rejection, code=%d stderr=%s", code, errOut.String())
 	}
-	items, err := store.RecentStagingItems(context.Background(), conversationpersistence.L1StagingStatusPending, 10)
+	items, err := store.RecentStagingItems(context.Background(), l1sqlite.L1StagingStatusPending, 10)
 	if err != nil {
 		t.Fatalf("RecentStagingItems failed: %v", err)
 	}
@@ -484,14 +484,14 @@ func TestRunWebGatherCommandImportWebwrightJSONLRejectsUnsafeItem(t *testing.T) 
 }
 
 type webGatherSourceRunnerStub struct {
-	entries []conversationpersistence.L1SourceRegistryEntry
+	entries []l1sqlite.L1SourceRegistryEntry
 }
 
-func (s *webGatherSourceRunnerStub) ListSourceRegistryEntries(_ context.Context, _ bool) ([]conversationpersistence.L1SourceRegistryEntry, error) {
+func (s *webGatherSourceRunnerStub) ListSourceRegistryEntries(_ context.Context, _ bool) ([]l1sqlite.L1SourceRegistryEntry, error) {
 	return s.entries, nil
 }
 
-func (s *webGatherSourceRunnerStub) DueSourceRegistryEntries(context.Context, time.Time) ([]conversationpersistence.L1SourceRegistryEntry, error) {
+func (s *webGatherSourceRunnerStub) DueSourceRegistryEntries(context.Context, time.Time) ([]l1sqlite.L1SourceRegistryEntry, error) {
 	return nil, nil
 }
 
@@ -499,19 +499,19 @@ func (s *webGatherSourceRunnerStub) SourceTrustScores(context.Context) (map[stri
 	return nil, nil
 }
 
-func (s *webGatherSourceRunnerStub) StageSourceRegistryFetch(context.Context, string, conversationpersistence.L1SourceFetchPayload) (*conversationpersistence.L1StagingItem, error) {
+func (s *webGatherSourceRunnerStub) StageSourceRegistryFetch(context.Context, string, l1sqlite.L1SourceFetchPayload) (*l1sqlite.L1StagingItem, error) {
 	return nil, nil
 }
 
-func (s *webGatherSourceRunnerStub) ValidateStagingItem(context.Context, string, conversationpersistence.L1StagingValidationPolicy) (*conversationpersistence.L1StagingValidationResult, error) {
+func (s *webGatherSourceRunnerStub) ValidateStagingItem(context.Context, string, l1sqlite.L1StagingValidationPolicy) (*l1sqlite.L1StagingValidationResult, error) {
 	return nil, nil
 }
 
-func (s *webGatherSourceRunnerStub) PromoteValidatedStagingItemToNews(context.Context, string, string) (*conversationpersistence.L1NewsItem, error) {
+func (s *webGatherSourceRunnerStub) PromoteValidatedStagingItemToNews(context.Context, string, string) (*l1sqlite.L1NewsItem, error) {
 	return nil, nil
 }
 
-func (s *webGatherSourceRunnerStub) PromoteValidatedStagingItemToKnowledge(context.Context, string, string) (*conversationpersistence.L1KnowledgeItem, error) {
+func (s *webGatherSourceRunnerStub) PromoteValidatedStagingItemToKnowledge(context.Context, string, string) (*l1sqlite.L1KnowledgeItem, error) {
 	return nil, nil
 }
 

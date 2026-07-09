@@ -48,6 +48,7 @@ type LocalLLMConfig struct {
 	BaseURL           string `yaml:"base_url"`
 	ChatBaseURL       string `yaml:"chat_base_url"`
 	WorkerBaseURL     string `yaml:"worker_base_url"`
+	ChatWorkerBaseURL string `yaml:"chat_worker_base_url"`
 	HeavyBaseURL      string `yaml:"heavy_base_url"`
 	WildBaseURL       string `yaml:"wild_base_url"`
 	APIKey            string `yaml:"api_key"`
@@ -125,6 +126,24 @@ func (c BrowserActorConfig) SaveScreenshotEnabled() bool {
 
 func (c BrowserActorConfig) MaskSecretsEnabled() bool {
 	return boolValueOrDefault(c.MaskSecrets, true)
+}
+
+// CodexConfig は Codex CLI の非対話実行を RenCrow ToolRunner から呼ぶ設定。
+// 既定は disabled/read-only で、workspace-write は明示指定時だけ許可する。
+type CodexConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	Command        string `yaml:"command"`
+	WorkingDir     string `yaml:"working_dir"`
+	Sandbox        string `yaml:"sandbox"`
+	Model          string `yaml:"model"`
+	TimeoutMS      int    `yaml:"timeout_ms"`
+	MaxPromptBytes int    `yaml:"max_prompt_bytes"`
+	MaxOutputBytes int    `yaml:"max_output_bytes"`
+	Ephemeral      *bool  `yaml:"ephemeral"`
+}
+
+func (c CodexConfig) EphemeralEnabled() bool {
+	return boolValueOrDefault(c.Ephemeral, true)
 }
 
 func boolValueOrDefault(value *bool, def bool) bool {

@@ -2,43 +2,43 @@ package verification
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"testing"
 	"time"
 
 	appverification "github.com/Nyukimin/picoclaw_multiLLM/internal/application/verification"
 	domainverification "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/verification"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type stubL1EvidenceStore struct {
-	kb       []conversationpersistence.L1KnowledgeItem
-	cache    *conversationpersistence.L1SearchCacheEntry
-	registry []conversationpersistence.L1SourceRegistryEntry
+	kb       []l1sqlite.L1KnowledgeItem
+	cache    *l1sqlite.L1SearchCacheEntry
+	registry []l1sqlite.L1SourceRegistryEntry
 }
 
-func (s stubL1EvidenceStore) SearchKnowledgeItemsFTS(context.Context, string, string, int) ([]conversationpersistence.L1KnowledgeItem, error) {
+func (s stubL1EvidenceStore) SearchKnowledgeItemsFTS(context.Context, string, string, int) ([]l1sqlite.L1KnowledgeItem, error) {
 	return s.kb, nil
 }
 
-func (s stubL1EvidenceStore) GetSimilarFreshSearchCache(context.Context, string, string, time.Time, float64) (*conversationpersistence.L1SearchCacheEntry, error) {
+func (s stubL1EvidenceStore) GetSimilarFreshSearchCache(context.Context, string, string, time.Time, float64) (*l1sqlite.L1SearchCacheEntry, error) {
 	return s.cache, nil
 }
 
-func (s stubL1EvidenceStore) ListSourceRegistryEntries(context.Context, bool) ([]conversationpersistence.L1SourceRegistryEntry, error) {
+func (s stubL1EvidenceStore) ListSourceRegistryEntries(context.Context, bool) ([]l1sqlite.L1SourceRegistryEntry, error) {
 	return s.registry, nil
 }
 
 func TestL1EvidenceReaderUsesRawKnowledgeAndSearchCache(t *testing.T) {
 	now := time.Now().UTC()
 	reader := NewL1EvidenceReader(stubL1EvidenceStore{
-		kb: []conversationpersistence.L1KnowledgeItem{{
+		kb: []l1sqlite.L1KnowledgeItem{{
 			ID:           "kb-1",
 			SourceURL:    "https://example.test/interstellar",
 			RawText:      "インターステラーは2014年公開の宇宙映画です。",
 			SummaryDraft: "要約は根拠補助であり raw_text を優先する。",
 			UpdatedAt:    now,
 		}},
-		cache: &conversationpersistence.L1SearchCacheEntry{
+		cache: &l1sqlite.L1SearchCacheEntry{
 			QueryHash:   "hash-1",
 			ResultsJSON: `{"title":"インターステラー","year":2014}`,
 			RetrievedAt: now,
@@ -66,7 +66,7 @@ func TestL1EvidenceReaderUsesRawKnowledgeAndSearchCache(t *testing.T) {
 
 func TestL1EvidenceReaderDoesNotTreatSourceRegistryAsPromotedEvidence(t *testing.T) {
 	reader := NewL1EvidenceReader(stubL1EvidenceStore{
-		registry: []conversationpersistence.L1SourceRegistryEntry{{
+		registry: []l1sqlite.L1SourceRegistryEntry{{
 			SourceID:      "news:interstellar",
 			URL:           "https://example.test/interstellar",
 			Kind:          "feed",

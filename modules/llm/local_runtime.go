@@ -31,20 +31,21 @@ const (
 )
 
 type LocalRuntimeConfig struct {
-	Provider         string
-	BaseURL          string
-	ChatBaseURL      string
-	WorkerBaseURL    string
-	HeavyBaseURL     string
-	WildBaseURL      string
-	ChatModel        string
-	WorkerModel      string
-	ChatWorkerModel  string
-	HeavyModel       string
-	WildModel        string
-	TimeoutSec       int
-	ModelConcurrency int
-	ModelContext     int
+	Provider          string
+	BaseURL           string
+	ChatBaseURL       string
+	WorkerBaseURL     string
+	ChatWorkerBaseURL string
+	HeavyBaseURL      string
+	WildBaseURL       string
+	ChatModel         string
+	WorkerModel       string
+	ChatWorkerModel   string
+	HeavyModel        string
+	WildModel         string
+	TimeoutSec        int
+	ModelConcurrency  int
+	ModelContext      int
 }
 
 type LocalAliasConfig struct {
@@ -151,7 +152,7 @@ func LocalBaseURLForAlias(cfg LocalRuntimeConfig, alias string) string {
 	case RoleWorker:
 		return FirstNonEmpty(cfg.WorkerBaseURL, cfg.BaseURL)
 	case "chatworker":
-		return FirstNonEmpty(cfg.WorkerBaseURL, cfg.BaseURL)
+		return FirstNonEmpty(cfg.ChatWorkerBaseURL, cfg.WorkerBaseURL, cfg.BaseURL)
 	case RoleHeavy:
 		return FirstNonEmpty(cfg.HeavyBaseURL, cfg.WorkerBaseURL, cfg.BaseURL)
 	case RoleWild:

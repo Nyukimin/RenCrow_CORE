@@ -1,0 +1,4 @@
+interface:
+  display_name: "STT Debug Report"
+  short_description: "Analyze STT logs in tmp/ and generate stt_share_for_server.md"
+  default_prompt: "STTログを解析してtmpにまとめて"

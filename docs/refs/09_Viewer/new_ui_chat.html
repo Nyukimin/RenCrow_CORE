@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RenCrow Chat UI Mock</title>
+  <style>
+    :root {
+      --rc-bg: #07101f;
+      --rc-bg-2: #0b1324;
+      --rc-panel: rgba(18, 28, 48, 0.86);
+      --rc-panel-strong: rgba(30, 48, 86, 0.82);
+      --rc-card: rgba(22, 33, 56, 0.88);
+      --rc-border: rgba(130, 160, 230, 0.24);
+      --rc-border-strong: rgba(135, 165, 255, 0.48);
+      --rc-text: #edf3ff;
+      --rc-muted: #9aa9c8;
+      --rc-soft: #c9d6f4;
+      --rc-accent: #6f8cff;
+      --rc-accent-2: #8fb7ff;
+      --rc-success: #39d98a;
+      --rc-warn: #f6c76f;
+      --rc-danger: #ff8f9a;
+      --rc-shadow: rgba(3, 8, 22, 0.52);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+    }
+
+    body {
+      color: var(--rc-text);
+      background:
+        radial-gradient(circle at 18% 18%, rgba(111, 140, 255, 0.22), transparent 34%),
+        radial-gradient(circle at 78% 16%, rgba(143, 183, 255, 0.12), transparent 30%),
+        linear-gradient(135deg, var(--rc-bg), var(--rc-bg-2) 54%, #050913);
+      font-family: Inter, "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+      overflow: hidden;
+    }
+
+    button,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .rc-shell {
+      display: grid;
+      grid-template-columns: minmax(340px, 390px) minmax(0, 1fr);
+      gap: 8px;
+      width: 100vw;
+      height: 100vh;
+      padding: 9px;
+      overflow: hidden;
+    }
+
+    .rc-character-pane,
+    .rc-main-pane {
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid var(--rc-border);
+      background: var(--rc-panel);
+      box-shadow: 0 24px 80px var(--rc-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(22px) saturate(1.08);
+    }
+
+    .rc-character-pane {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto auto;
+      gap: 10px;
+      border-radius: 15px;
+      padding: 9px;
+      overflow: hidden;
+    }
+
+    .rc-brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .rc-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .rc-logo-mark {
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border: 1px solid var(--rc-border-strong);
+      border-radius: 10px;
+      color: var(--rc-text);
+      background: linear-gradient(145deg, rgba(111, 140, 255, 0.24), rgba(143, 183, 255, 0.08));
+      box-shadow: 0 0 28px rgba(111, 140, 255, 0.18);
+    }
+
+    .rc-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 28px;
+      padding: 0 10px;
+      border: 1px solid rgba(57, 217, 138, 0.38);
+      border-radius: 999px;
+      color: #b9ffd9;
+      background: rgba(57, 217, 138, 0.10);
+      font-size: 10px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .rc-status-pill::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--rc-success);
+      box-shadow: 0 0 18px rgba(57, 217, 138, 0.8);
+    }
+
+    .rc-character-portrait {
+      display: grid;
+      align-items: end;
+      min-height: 0;
+      border: 1px solid rgba(135, 165, 255, 0.22);
+      border-radius: 14px;
+      padding: 9px;
+      background:
+        radial-gradient(circle at 52% 24%, rgba(143, 183, 255, 0.26), transparent 36%),
+        linear-gradient(180deg, rgba(30, 48, 86, 0.62), rgba(9, 16, 31, 0.92));
+      overflow: hidden;
+      position: relative;
+    }
+
+    .rc-character-portrait::before {
+      content: "";
+      position: absolute;
+      inset: 28px 56px 122px;
+      border-radius: 48% 48% 42% 42%;
+      background:
+        radial-gradient(circle at 50% 30%, rgba(237, 243, 255, 0.88), rgba(143, 183, 255, 0.24) 36%, transparent 38%),
+        linear-gradient(180deg, rgba(111, 140, 255, 0.72), rgba(21, 30, 54, 0.08));
+      filter: drop-shadow(0 0 44px rgba(143, 183, 255, 0.28));
+      opacity: 0.82;
+    }
+
+    .rc-character-portrait::after {
+      content: "";
+      position: absolute;
+      left: 86px;
+      right: 86px;
+      bottom: 104px;
+      height: 120px;
+      border-radius: 50% 50% 44% 44%;
+      background: linear-gradient(180deg, rgba(143, 183, 255, 0.48), rgba(111, 140, 255, 0.12));
+      transform: perspective(220px) rotateX(56deg);
+      opacity: 0.72;
+    }
+
+    .rc-character-copy {
+      position: relative;
+      z-index: 1;
+      max-width: 380px;
+    }
+
+    .rc-character-copy h1 {
+      margin: 0 0 8px;
+      font-size: 21px;
+      line-height: 1.06;
+      letter-spacing: 0;
+      font-weight: 720;
+    }
+
+    .rc-character-copy p {
+      margin: 0;
+      color: var(--rc-soft);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .rc-status-card {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid var(--rc-border);
+      border-radius: 16px;
+      background: rgba(9, 18, 36, 0.56);
+    }
+
+    .rc-status-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--rc-muted);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    .rc-status-row strong {
+      color: var(--rc-text);
+      font-weight: 650;
+    }
+
+    .rc-character-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .rc-agent-card {
+      min-height: 48px;
+      padding: 10px;
+      border: 1px solid var(--rc-border);
+      border-radius: 14px;
+      color: var(--rc-text);
+      background: rgba(22, 33, 56, 0.66);
+      text-align: left;
+      transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+    }
+
+    .rc-agent-card:hover,
+    .rc-agent-card:focus-visible,
+    .rc-agent-card.active {
+      outline: none;
+      border-color: var(--rc-border-strong);
+      background: rgba(30, 48, 86, 0.92);
+      transform: translateY(-1px);
+    }
+
+    .rc-agent-name {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .rc-agent-state {
+      color: var(--rc-muted);
+      font-size: 10px;
+    }
+
+    .rc-main-pane {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      border-radius: 15px;
+      overflow: hidden;
+    }
+
+    .rc-tabs {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 15px 18px;
+      border-bottom: 1px solid var(--rc-border);
+      background: rgba(7, 16, 31, 0.42);
+    }
+
+    .rc-page-title {
+      min-width: 0;
+    }
+
+    .rc-page-title h2 {
+      margin: 0 0 6px;
+      font-size: 20px;
+      line-height: 1.05;
+      letter-spacing: 0;
+      font-weight: 720;
+    }
+
+    .rc-page-title p {
+      margin: 0;
+      color: var(--rc-muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .rc-tab-list {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .rc-tab {
+      min-height: 30px;
+      padding: 0 11px;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      color: var(--rc-muted);
+      background: transparent;
+      font-size: 10px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .rc-tab.active,
+    .rc-tab:hover,
+    .rc-tab:focus-visible {
+      outline: none;
+      color: var(--rc-text);
+      border-color: var(--rc-border-strong);
+      background: rgba(111, 140, 255, 0.14);
+    }
+
+    .rc-content-area {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+      gap: 10px;
+      min-height: 0;
+      padding: 9px;
+      overflow: hidden;
+    }
+
+    .rc-chat-column,
+    .rc-context-column {
+      min-height: 0;
+      overflow-y: auto;
+      padding-right: 4px;
+      scrollbar-color: rgba(143, 183, 255, 0.42) transparent;
+    }
+
+    .rc-chat-column {
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      padding-bottom: 16px;
+    }
+
+    .rc-context-column {
+      display: grid;
+      align-content: start;
+      gap: 10px;
+    }
+
+    .rc-message-card {
+      display: grid;
+      gap: 8px;
+      width: min(100%, 820px);
+      padding: 15px;
+      border: 1px solid var(--rc-border);
+      border-radius: 14px;
+      background: var(--rc-card);
+      box-shadow: 0 18px 52px rgba(3, 8, 22, 0.28);
+    }
+
+    .rc-message-card.user {
+      justify-self: end;
+      background: rgba(34, 48, 80, 0.82);
+    }
+
+    .rc-message-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--rc-muted);
+      font-size: 10px;
+    }
+
+    .rc-speaker {
+      color: var(--rc-soft);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .rc-message-body {
+      margin: 0;
+      color: var(--rc-text);
+      font-size: 13px;
+      line-height: 1.72;
+    }
+
+    .rc-message-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .rc-soft-button,
+    .rc-primary-button,
+    .rc-icon-button {
+      min-height: 32px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .rc-soft-button {
+      padding: 0 10px;
+      border: 1px solid var(--rc-border);
+      color: var(--rc-soft);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .rc-soft-button:hover,
+    .rc-soft-button:focus-visible {
+      outline: none;
+      border-color: var(--rc-border-strong);
+      color: var(--rc-text);
+    }
+
+    .rc-context-card {
+      display: grid;
+      gap: 8px;
+      padding: 9px;
+      border: 1px solid var(--rc-border);
+      border-radius: 16px;
+      background: rgba(9, 18, 36, 0.56);
+    }
+
+    .rc-context-card h3 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.15;
+      letter-spacing: 0;
+      font-weight: 700;
+    }
+
+    .rc-context-card p,
+    .rc-context-card li {
+      color: var(--rc-muted);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .rc-context-card p,
+    .rc-context-card ul {
+      margin: 0;
+    }
+
+    .rc-context-card ul {
+      display: grid;
+      gap: 6px;
+      padding-left: 13px;
+    }
+
+    .rc-input-dock {
+      display: grid;
+      gap: 6px;
+      padding: 10px 18px 12px;
+      border-top: 1px solid var(--rc-border);
+      background: rgba(7, 16, 31, 0.68);
+    }
+
+    .rc-input-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      color: var(--rc-muted);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    .rc-input-row {
+      display: grid;
+      grid-template-columns: 96px minmax(0, 1fr) 38px 76px;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .rc-route-select,
+    .rc-chat-input,
+    .rc-icon-button,
+    .rc-primary-button {
+      border: 1px solid var(--rc-border);
+      color: var(--rc-text);
+      background: rgba(11, 20, 39, 0.9);
+    }
+
+    .rc-route-select {
+      min-height: 36px;
+      border-radius: 12px;
+      padding: 0 10px;
+      color: var(--rc-soft);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .rc-chat-input {
+      min-height: 38px;
+      max-height: 58px;
+      resize: none;
+      border-radius: 15px;
+      padding: 9px 14px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .rc-route-select:focus-visible,
+    .rc-chat-input:focus-visible,
+    .rc-icon-button:focus-visible,
+    .rc-primary-button:focus-visible {
+      outline: 2px solid rgba(143, 183, 255, 0.42);
+      outline-offset: 2px;
+      border-color: var(--rc-border-strong);
+    }
+
+    .rc-icon-button {
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      font-size: 15px;
+    }
+
+    .rc-primary-button {
+      padding: 0 15px;
+      border-color: rgba(143, 183, 255, 0.54);
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(111, 140, 255, 0.8), rgba(143, 183, 255, 0.42));
+      box-shadow: 0 14px 34px rgba(111, 140, 255, 0.22);
+    }
+
+    .rc-primary-button:hover,
+    .rc-icon-button:hover {
+      border-color: rgba(237, 243, 255, 0.54);
+      filter: brightness(1.08);
+    }
+
+    @media (max-width: 1500px) {
+      .rc-shell {
+        grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
+        gap: 8px;
+        padding: 9px;
+      }
+
+      .rc-character-pane {
+        padding: 15px;
+      }
+
+      .rc-content-area {
+        grid-template-columns: minmax(0, 1fr) minmax(230px, 300px);
+        padding: 10px;
+      }
+
+      .rc-character-copy h1 {
+        font-size: 19px;
+      }
+
+      .rc-message-body {
+        font-size: 12px;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      body {
+        overflow: auto;
+      }
+
+      .rc-shell {
+        height: auto;
+        min-height: 100vh;
+        grid-template-columns: 1fr;
+        overflow: visible;
+      }
+
+      .rc-character-pane {
+        grid-template-rows: auto minmax(190px, 34vh) auto;
+      }
+
+      .rc-status-card {
+        display: none;
+      }
+
+      .rc-main-pane {
+        min-height: 560px;
+      }
+
+      .rc-content-area {
+        grid-template-columns: 1fr;
+      }
+
+      .rc-context-column {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .rc-shell {
+        padding: 9px;
+      }
+
+      .rc-character-pane,
+      .rc-main-pane {
+        border-radius: 15px;
+      }
+
+      .rc-tabs,
+      .rc-input-dock {
+        padding: 11px;
+      }
+
+      .rc-tabs {
+        display: grid;
+        gap: 10px;
+      }
+
+      .rc-content-area {
+        padding: 11px;
+      }
+
+      .rc-context-column {
+        grid-template-columns: 1fr;
+      }
+
+      .rc-input-row {
+        grid-template-columns: 1fr;
+      }
+
+      .rc-chat-input {
+        min-height: 46px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="rc-shell">
+    <aside class="rc-character-pane" aria-label="RenCrow character panel">
+      <header class="rc-brand">
+        <div class="rc-logo">
+          <div class="rc-logo-mark">R</div>
+          <span>RenCrow</span>
+        </div>
+        <div class="rc-status-pill" id="statusPill">待機中</div>
+      </header>
+
+      <section class="rc-character-portrait" aria-label="Character portrait placeholder">
+        <div class="rc-character-copy">
+          <h1>Mio / Chat</h1>
+          <p>会話の入口。相談、指示、調査の始まりを受け取り、必要な相手へつなぎます。</p>
+        </div>
+      </section>
+
+      <section class="rc-status-card" aria-label="Current chat state">
+        <div class="rc-status-row"><span>現在状態</span><strong id="stateText">待機中</strong></div>
+        <div class="rc-status-row"><span>Route</span><strong id="routeText">Chat</strong></div>
+        <div class="rc-status-row"><span>Last session</span><strong>今日 02:13</strong></div>
+      </section>
+
+      <section class="rc-character-grid" aria-label="Available characters">
+        <button class="rc-agent-card active" data-agent="Chat">
+          <span class="rc-agent-name">Chat</span>
+          <span class="rc-agent-state">available</span>
+        </button>
+        <button class="rc-agent-card" data-agent="Worker">
+          <span class="rc-agent-name">Worker</span>
+          <span class="rc-agent-state">ready</span>
+        </button>
+        <button class="rc-agent-card" data-agent="Coder">
+          <span class="rc-agent-name">Coder</span>
+          <span class="rc-agent-state">planning</span>
+        </button>
+        <button class="rc-agent-card" data-agent="Heavy">
+          <span class="rc-agent-name">Heavy</span>
+          <span class="rc-agent-state">available</span>
+        </button>
+      </section>
+    </aside>
+
+    <section class="rc-main-pane" aria-label="Chat workspace">
+      <header class="rc-tabs">
+        <div class="rc-page-title">
+          <h2>Chat</h2>
+          <p>会話、相談、指示をここから始めます。細かな監視情報は表示しません。</p>
+        </div>
+        <nav class="rc-tab-list" aria-label="Common tabs">
+          <button class="rc-tab">Home</button>
+          <button class="rc-tab active">Chat</button>
+          <button class="rc-tab">Develop</button>
+          <button class="rc-tab">Instructions</button>
+          <button class="rc-tab">Reports</button>
+        </nav>
+      </header>
+
+      <section class="rc-content-area">
+        <div class="rc-chat-column" id="chatColumn" aria-live="polite">
+          <article class="rc-message-card assistant">
+            <div class="rc-message-meta">
+              <span class="rc-speaker">Mio</span>
+              <span>02:13 / Chat</span>
+            </div>
+            <p class="rc-message-body">今日は何から始めますか。会話、開発、調査、指示のどれでも、まずここに書いてください。</p>
+            <div class="rc-message-actions">
+              <button class="rc-soft-button">今日の作業を相談</button>
+              <button class="rc-soft-button">Workerへ依頼</button>
+              <button class="rc-soft-button">Reportsを見る</button>
+            </div>
+          </article>
+
+          <article class="rc-message-card user">
+            <div class="rc-message-meta">
+              <span class="rc-speaker">Ren</span>
+              <span>直前の会話</span>
+            </div>
+            <p class="rc-message-body">Viewer の新しい Chat 画面を、夜の作業机の雰囲気で試作したい。</p>
+          </article>
+
+          <article class="rc-message-card assistant">
+            <div class="rc-message-meta">
+              <span class="rc-speaker">Mio</span>
+              <span>Draft</span>
+            </div>
+            <p class="rc-message-body">画面の主役は会話です。左に相手がいて、中央で内容を読み、下部からすぐ入力できる構成にします。</p>
+          </article>
+        </div>
+
+        <aside class="rc-context-column" aria-label="Minimal chat context">
+          <section class="rc-context-card">
+            <h3>今日の入口</h3>
+            <p>細かなログは出さず、会話を始めるための必要最小限だけを表示します。</p>
+          </section>
+
+          <section class="rc-context-card">
+            <h3>送信先</h3>
+            <ul>
+              <li>Chat: 会話と整理</li>
+              <li>Worker: 実行依頼</li>
+              <li>Coder: 設計と差分作成</li>
+            </ul>
+          </section>
+
+          <section class="rc-context-card">
+            <h3>次の候補</h3>
+            <p>「これを実装して」「仕様を作って」「調べて」など、自然文で開始できます。</p>
+          </section>
+        </aside>
+      </section>
+
+      <footer class="rc-input-dock">
+        <div class="rc-input-label">
+          <span>メッセージ、指示、相談を入力してください...</span>
+          <span id="inputHint">Enter で送信 / Shift+Enter で改行</span>
+        </div>
+        <div class="rc-input-row">
+          <select class="rc-route-select" id="routeSelect" aria-label="送信先">
+            <option>Chat</option>
+            <option>Worker</option>
+            <option>Coder</option>
+            <option>Heavy</option>
+            <option>Wild</option>
+          </select>
+          <textarea class="rc-chat-input" id="chatInput" rows="2" placeholder="メッセージ、指示、相談を入力してください..."></textarea>
+          <button class="rc-icon-button" type="button" aria-label="音声入力">♪</button>
+          <button class="rc-primary-button" type="button" id="sendButton">Send</button>
+        </div>
+      </footer>
+    </section>
+  </main>
+
+  <script>
+    const chatInput = document.getElementById('chatInput');
+    const chatColumn = document.getElementById('chatColumn');
+    const sendButton = document.getElementById('sendButton');
+    const routeSelect = document.getElementById('routeSelect');
+    const routeText = document.getElementById('routeText');
+    const stateText = document.getElementById('stateText');
+    const statusPill = document.getElementById('statusPill');
+    const agentCards = Array.from(document.querySelectorAll('.rc-agent-card'));
+
+    function escapeHTML(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function setRoute(route) {
+      routeSelect.value = route;
+      routeText.textContent = route;
+      agentCards.forEach((card) => {
+        card.classList.toggle('active', card.dataset.agent === route);
+      });
+    }
+
+    function addMessage(role, speaker, body, route) {
+      const article = document.createElement('article');
+      article.className = 'rc-message-card ' + role;
+      article.innerHTML =
+        '<div class="rc-message-meta">' +
+          '<span class="rc-speaker">' + escapeHTML(speaker) + '</span>' +
+          '<span>' + escapeHTML(route || 'Chat') + '</span>' +
+        '</div>' +
+        '<p class="rc-message-body">' + escapeHTML(body) + '</p>';
+      chatColumn.appendChild(article);
+      article.scrollIntoView({block: 'nearest'});
+    }
+
+    function sendMessage() {
+      const text = chatInput.value.trim();
+      if (!text) return;
+      const route = routeSelect.value;
+      addMessage('user', 'Ren', text, route);
+      chatInput.value = '';
+      stateText.textContent = '応答中';
+      statusPill.textContent = '応答中';
+      window.setTimeout(() => {
+        addMessage('assistant', 'Mio', route + ' に渡す前提で受け取りました。必要な情報だけ整理して進めます。', route);
+        stateText.textContent = '待機中';
+        statusPill.textContent = '待機中';
+      }, 380);
+    }
+
+    sendButton.addEventListener('click', sendMessage);
+    chatInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+    routeSelect.addEventListener('change', () => setRoute(routeSelect.value));
+    agentCards.forEach((card) => {
+      card.addEventListener('click', () => setRoute(card.dataset.agent));
+    });
+  </script>
+</body>
+</html>

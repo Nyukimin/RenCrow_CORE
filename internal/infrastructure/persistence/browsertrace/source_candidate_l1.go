@@ -3,15 +3,15 @@ package browsertrace
 import (
 	"context"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 	"time"
 
 	domaintrace "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/browsertrace"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type L1StagingStore interface {
-	SaveStagingItem(ctx context.Context, item conversationpersistence.L1StagingItem) (*conversationpersistence.L1StagingItem, error)
+	SaveStagingItem(ctx context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error)
 }
 
 type L1APICandidateStore struct {
@@ -57,8 +57,8 @@ func (s *L1APICandidateStore) SaveBrowserTraceAPICandidates(ctx context.Context,
 		if strings.TrimSpace(candidate.TraceRunID) == "" {
 			return fmt.Errorf("browser trace api trace_run_id is required")
 		}
-		item := conversationpersistence.L1StagingItem{
-			Kind:         conversationpersistence.L1StagingKindSearchResult,
+		item := l1sqlite.L1StagingItem{
+			Kind:         l1sqlite.L1StagingKindSearchResult,
 			Namespace:    s.namespace,
 			EventID:      fmt.Sprintf("%s:%s", candidate.TraceRunID, candidate.CandidateID),
 			SourceID:     fmt.Sprintf("browser_trace:%s", candidate.TraceRunID),

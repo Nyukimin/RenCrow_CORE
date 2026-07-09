@@ -2,14 +2,13 @@ package sourcefetcher
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 func TestSweepDueSourcesStagesValidatesAndPromotesRSS(t *testing.T) {
@@ -24,15 +23,15 @@ func TestSweepDueSourcesStagesValidatesAndPromotesRSS(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "rss:test",
 		URL:           srv.URL,
-		Kind:          conversationpersistence.L1SourceKindRSS,
+		Kind:          l1sqlite.L1SourceKindRSS,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "rss",
@@ -80,15 +79,15 @@ func TestRunSourceStagesValidatesAndPromotesSelectedRSS(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "rss:selected",
 		URL:           srv.URL,
-		Kind:          conversationpersistence.L1SourceKindRSS,
+		Kind:          l1sqlite.L1SourceKindRSS,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "rss",
@@ -123,15 +122,15 @@ func TestRunSourceWebGatherStagesPendingWithoutAutoPromote(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "web:test",
 		URL:           srv.URL,
-		Kind:          conversationpersistence.L1SourceKindWebGather,
+		Kind:          l1sqlite.L1SourceKindWebGather,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "web page",
@@ -151,14 +150,14 @@ func TestRunSourceWebGatherStagesPendingWithoutAutoPromote(t *testing.T) {
 	if result.Sources != 1 || result.Staged != 1 || result.Validated != 0 || result.PromotedNews != 0 || result.PromotedKnowledge != 0 {
 		t.Fatalf("unexpected run result: %+v", result)
 	}
-	items, err := store.RecentStagingItems(ctx, conversationpersistence.L1StagingStatusPending, 10)
+	items, err := store.RecentStagingItems(ctx, l1sqlite.L1StagingStatusPending, 10)
 	if err != nil {
 		t.Fatalf("RecentStagingItems failed: %v", err)
 	}
 	if len(items) != 1 {
 		t.Fatalf("expected pending staging item, got %+v", items)
 	}
-	if items[0].Kind != conversationpersistence.L1StagingKindExternalFetch || items[0].SourceID != "web:test" || items[0].ValidationStatus != conversationpersistence.L1StagingStatusPending {
+	if items[0].Kind != l1sqlite.L1StagingKindExternalFetch || items[0].SourceID != "web:test" || items[0].ValidationStatus != l1sqlite.L1StagingStatusPending {
 		t.Fatalf("unexpected staging item: %+v", items[0])
 	}
 	if items[0].Meta["fetcher"] != "web_gather" || items[0].Meta["auto_promote"] != false || items[0].Meta["review_required"] != true {
@@ -185,15 +184,15 @@ func TestRunSourceAddsPromptInjectionWarningsToStagingMeta(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "rss:risky",
 		URL:           srv.URL,
-		Kind:          conversationpersistence.L1SourceKindRSS,
+		Kind:          l1sqlite.L1SourceKindRSS,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "rss",
@@ -210,7 +209,7 @@ func TestRunSourceAddsPromptInjectionWarningsToStagingMeta(t *testing.T) {
 	if result.Warnings != 2 {
 		t.Fatalf("expected 2 warnings, got %+v", result)
 	}
-	items, err := store.RecentStagingItems(ctx, conversationpersistence.L1StagingStatusValidated, 10)
+	items, err := store.RecentStagingItems(ctx, l1sqlite.L1StagingStatusValidated, 10)
 	if err != nil {
 		t.Fatalf("RecentStagingItems failed: %v", err)
 	}
@@ -235,15 +234,15 @@ func TestRunSourceStagesValidatesAndPromotesPyPIHTTPSource(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "pypi:sample",
 		URL:           srv.URL,
-		Kind:          conversationpersistence.L1SourceKindPyPI,
+		Kind:          l1sqlite.L1SourceKindPyPI,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "pypi json api",
@@ -280,15 +279,15 @@ func TestRunSourceHTTPFailureIncludesResponseBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "pypi:down",
 		URL:           srv.URL,
-		Kind:          conversationpersistence.L1SourceKindPyPI,
+		Kind:          l1sqlite.L1SourceKindPyPI,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "pypi json api",

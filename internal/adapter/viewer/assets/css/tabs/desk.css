@@ -114,6 +114,51 @@
   margin: 3px 0;
 }
 
+.games-info-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+}
+
+.games-info-tile {
+  background: rgba(143, 183, 255, 0.10);
+  border: 1px solid var(--desk-border);
+  border-radius: 10px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.games-info-tile small {
+  color: var(--desk-muted);
+  display: block;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.games-info-tile strong {
+  color: var(--desk-text);
+  display: block;
+  font-size: 15px;
+  line-height: 1.25;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.games-code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.games-error {
+  color: var(--desk-danger);
+  margin-top: 8px;
+  white-space: pre-wrap;
+}
+
+.games-table-wrap {
+  margin-top: 8px;
+}
+
 .daily-desk-body {
   color: var(--desk-text);
   font-size: 13px;

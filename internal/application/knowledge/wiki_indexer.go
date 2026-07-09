@@ -5,18 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"gopkg.in/yaml.v3"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
-	"gopkg.in/yaml.v3"
 )
 
 type WikiIndexStore interface {
-	SaveWikiPageIndex(ctx context.Context, item conversationpersistence.WikiPageIndexItem) (*conversationpersistence.WikiPageIndexItem, error)
+	SaveWikiPageIndex(ctx context.Context, item l1sqlite.WikiPageIndexItem) (*l1sqlite.WikiPageIndexItem, error)
 }
 
 type WikiIndexOptions struct {
@@ -86,18 +85,18 @@ func IndexKnowledgeWiki(ctx context.Context, store WikiIndexStore, opts WikiInde
 	return result, nil
 }
 
-func wikiPageIndexItemFromFile(filePath string, repoRoot string, now time.Time) (conversationpersistence.WikiPageIndexItem, error) {
+func wikiPageIndexItemFromFile(filePath string, repoRoot string, now time.Time) (l1sqlite.WikiPageIndexItem, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return conversationpersistence.WikiPageIndexItem{}, fmt.Errorf("failed to read wiki page %s: %w", filePath, err)
+		return l1sqlite.WikiPageIndexItem{}, fmt.Errorf("failed to read wiki page %s: %w", filePath, err)
 	}
 	fm, body, err := parseWikiFrontmatter(data)
 	if err != nil {
-		return conversationpersistence.WikiPageIndexItem{}, fmt.Errorf("invalid wiki page %s: %w", filePath, err)
+		return l1sqlite.WikiPageIndexItem{}, fmt.Errorf("invalid wiki page %s: %w", filePath, err)
 	}
 	relPath, err := filepath.Rel(repoRoot, filePath)
 	if err != nil {
-		return conversationpersistence.WikiPageIndexItem{}, fmt.Errorf("failed to resolve wiki page path %s: %w", filePath, err)
+		return l1sqlite.WikiPageIndexItem{}, fmt.Errorf("failed to resolve wiki page path %s: %w", filePath, err)
 	}
 	relPath = filepath.ToSlash(relPath)
 	title := firstMarkdownHeading(body)
@@ -112,7 +111,7 @@ func wikiPageIndexItemFromFile(filePath string, repoRoot string, now time.Time) 
 	if strings.TrimSpace(fm.Updated) != "" {
 		parsed, err := time.Parse("2006-01-02", strings.TrimSpace(fm.Updated))
 		if err != nil {
-			return conversationpersistence.WikiPageIndexItem{}, fmt.Errorf("invalid updated date: %w", err)
+			return l1sqlite.WikiPageIndexItem{}, fmt.Errorf("invalid updated date: %w", err)
 		}
 		updatedAt = parsed.UTC()
 	}
@@ -121,7 +120,7 @@ func wikiPageIndexItemFromFile(filePath string, repoRoot string, now time.Time) 
 		pageID = derivedWikiPageID(fm.Type, relPath)
 	}
 	sum := sha256.Sum256(data)
-	return conversationpersistence.WikiPageIndexItem{
+	return l1sqlite.WikiPageIndexItem{
 		PageID:          pageID,
 		Path:            relPath,
 		Title:           title,

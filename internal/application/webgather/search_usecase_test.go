@@ -2,12 +2,11 @@ package webgather
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
 	"path/filepath"
 	"testing"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
-	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
 )
 
 type fakeSearchProvider struct {
@@ -21,7 +20,7 @@ func (p fakeSearchProvider) Search(context.Context, modulewebgather.SearchReques
 
 func TestSearchUseCaseSavesAndReadsCache(t *testing.T) {
 	ctx := context.Background()
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -67,7 +66,7 @@ func TestSearchUseCaseUnconfiguredProviderFails(t *testing.T) {
 
 func TestL1SearchCacheReadsLegacyWebSearchResults(t *testing.T) {
 	ctx := context.Background()
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}

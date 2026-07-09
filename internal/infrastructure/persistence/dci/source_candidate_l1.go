@@ -5,21 +5,21 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
 
 	domaindci "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/dci"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type L1StagingStore interface {
-	SaveStagingItem(ctx context.Context, item conversationpersistence.L1StagingItem) (*conversationpersistence.L1StagingItem, error)
+	SaveStagingItem(ctx context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error)
 }
 
 type L1SourceRegistryStore interface {
-	SaveSourceRegistryEntry(ctx context.Context, entry conversationpersistence.L1SourceRegistryEntry) (*conversationpersistence.L1SourceRegistryEntry, error)
+	SaveSourceRegistryEntry(ctx context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error)
 }
 
 type L1SourceCandidateStore struct {
@@ -70,8 +70,8 @@ func (s *L1SourceCandidateStore) SaveDCISourceCandidates(ctx context.Context, re
 				return err
 			}
 		}
-		item := conversationpersistence.L1StagingItem{
-			Kind:         conversationpersistence.L1StagingKindSearchResult,
+		item := l1sqlite.L1StagingItem{
+			Kind:         l1sqlite.L1StagingKindSearchResult,
 			Namespace:    s.namespace,
 			EventID:      fmt.Sprintf("%s:%s", result.Trace.EventID, evidence.EvidenceID),
 			SourceID:     sourceID,
@@ -107,10 +107,10 @@ func (s *L1SourceCandidateStore) saveSourceRegistryCandidate(ctx context.Context
 	if !ok {
 		return nil
 	}
-	entry := conversationpersistence.L1SourceRegistryEntry{
+	entry := l1sqlite.L1SourceRegistryEntry{
 		SourceID:      sourceID,
 		URL:           sourceURL,
-		Kind:          conversationpersistence.L1SourceKindSearchFallback,
+		Kind:          l1sqlite.L1SourceKindSearchFallback,
 		TrustScore:    0.50,
 		FetchInterval: 24 * time.Hour,
 		LicenseNote:   "local corpus evidence discovered by DCI; review required before promote",

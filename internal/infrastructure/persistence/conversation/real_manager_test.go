@@ -3,6 +3,8 @@ package conversation
 import (
 	"context"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/vectordb"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +67,7 @@ func (m *mockRedisStore) Close() error { return nil }
 
 type mockDuckDBStore struct {
 	saved     []*domconv.ThreadSummary
-	kbArchive []L1KnowledgeItem
+	kbArchive []l1sqlite.L1KnowledgeItem
 }
 
 func (m *mockDuckDBStore) SaveThreadSummary(_ context.Context, s *domconv.ThreadSummary) error {
@@ -78,7 +80,7 @@ func (m *mockDuckDBStore) GetSessionHistory(_ context.Context, _ string, _ int) 
 func (m *mockDuckDBStore) SearchByDomain(_ context.Context, _ string, _ int) ([]*domconv.ThreadSummary, error) {
 	return nil, nil
 }
-func (m *mockDuckDBStore) SearchKnowledgeArchiveFTS(_ context.Context, _ string, _ string, _ int) ([]L1KnowledgeItem, error) {
+func (m *mockDuckDBStore) SearchKnowledgeArchiveFTS(_ context.Context, _ string, _ string, _ int) ([]l1sqlite.L1KnowledgeItem, error) {
 	return m.kbArchive, nil
 }
 func (m *mockDuckDBStore) ExportThreadSummariesParquet(_ context.Context, _ string) error {
@@ -131,28 +133,28 @@ func (m *mockVectorDBStore) ListKBDocuments(_ context.Context, _ string, _ int) 
 func (m *mockVectorDBStore) GetKBCollections(_ context.Context) ([]string, error) {
 	return []string{}, nil
 }
-func (m *mockVectorDBStore) GetKBStats(_ context.Context, _ string) (*KBStats, error) {
-	return &KBStats{Domain: "test", DocumentCount: 0, VectorSize: 768}, nil
+func (m *mockVectorDBStore) GetKBStats(_ context.Context, _ string) (*vectordb.KBStats, error) {
+	return &vectordb.KBStats{Domain: "test", DocumentCount: 0, VectorSize: 768}, nil
 }
 func (m *mockVectorDBStore) DeleteOldKBDocuments(_ context.Context, _ string, _ time.Time) (int, error) {
 	return 0, nil
 }
-func (m *mockVectorDBStore) CleanupMemoryVectors(_ context.Context, items []L1VectorCleanupItem) (*L1VectorCleanupResult, error) {
-	return &L1VectorCleanupResult{Deleted: len(items)}, nil
+func (m *mockVectorDBStore) CleanupMemoryVectors(_ context.Context, items []l1sqlite.L1VectorCleanupItem) (*l1sqlite.L1VectorCleanupResult, error) {
+	return &l1sqlite.L1VectorCleanupResult{Deleted: len(items)}, nil
 }
 func (m *mockVectorDBStore) Close() error { return nil }
 
 type mockL1Store struct {
-	saved     []L1MemoryEvent
-	cache     *L1SearchCacheEntry
-	knowledge []L1KnowledgeItem
-	wiki      []WikiPageIndexItem
-	events    []L1EventLogEntry
+	saved     []l1sqlite.L1MemoryEvent
+	cache     *l1sqlite.L1SearchCacheEntry
+	knowledge []l1sqlite.L1KnowledgeItem
+	wiki      []l1sqlite.WikiPageIndexItem
+	events    []l1sqlite.L1EventLogEntry
 	traces    []domconv.RecallTrace
 }
 
 func (m *mockL1Store) SaveMessage(_ context.Context, sessionID string, threadID int64, namespace string, msg domconv.Message, memoryState string) error {
-	m.saved = append(m.saved, L1MemoryEvent{
+	m.saved = append(m.saved, l1sqlite.L1MemoryEvent{
 		Namespace:   namespace,
 		SessionID:   sessionID,
 		ThreadID:    threadID,
@@ -160,12 +162,12 @@ func (m *mockL1Store) SaveMessage(_ context.Context, sessionID string, threadID 
 		Message:     msg.Msg,
 		Meta:        msg.Meta,
 		MemoryState: memoryState,
-		Layer:       MemoryLayerL1,
+		Layer:       l1sqlite.MemoryLayerL1,
 	})
 	return nil
 }
-func (m *mockL1Store) SaveSearchCache(_ context.Context, provider string, rawQuery string, resultsJSON string, sourceURLs []string, ttl time.Duration) (*L1SearchCacheEntry, error) {
-	m.cache = &L1SearchCacheEntry{
+func (m *mockL1Store) SaveSearchCache(_ context.Context, provider string, rawQuery string, resultsJSON string, sourceURLs []string, ttl time.Duration) (*l1sqlite.L1SearchCacheEntry, error) {
+	m.cache = &l1sqlite.L1SearchCacheEntry{
 		Provider:    provider,
 		RawQuery:    rawQuery,
 		ResultsJSON: resultsJSON,
@@ -175,13 +177,13 @@ func (m *mockL1Store) SaveSearchCache(_ context.Context, provider string, rawQue
 	}
 	return m.cache, nil
 }
-func (m *mockL1Store) GetFreshSearchCache(_ context.Context, provider string, rawQuery string, now time.Time) (*L1SearchCacheEntry, error) {
+func (m *mockL1Store) GetFreshSearchCache(_ context.Context, provider string, rawQuery string, now time.Time) (*l1sqlite.L1SearchCacheEntry, error) {
 	if m.cache == nil || m.cache.Provider != provider || m.cache.RawQuery != rawQuery || !m.cache.ExpiresAt.After(now) {
 		return nil, nil
 	}
 	return m.cache, nil
 }
-func (m *mockL1Store) GetSimilarFreshSearchCache(_ context.Context, provider string, _ string, now time.Time, _ float64) (*L1SearchCacheEntry, error) {
+func (m *mockL1Store) GetSimilarFreshSearchCache(_ context.Context, provider string, _ string, now time.Time, _ float64) (*l1sqlite.L1SearchCacheEntry, error) {
 	if m.cache == nil || m.cache.Provider != provider || !m.cache.ExpiresAt.After(now) {
 		return nil, nil
 	}
@@ -194,8 +196,8 @@ func (m *mockL1Store) InvalidateSearchCache(_ context.Context, provider string, 
 	m.cache = nil
 	return 1, nil
 }
-func (m *mockL1Store) SearchKnowledgeItemsFTS(_ context.Context, domain string, query string, limit int) ([]L1KnowledgeItem, error) {
-	var out []L1KnowledgeItem
+func (m *mockL1Store) SearchKnowledgeItemsFTS(_ context.Context, domain string, query string, limit int) ([]l1sqlite.L1KnowledgeItem, error) {
+	var out []l1sqlite.L1KnowledgeItem
 	query = strings.ToLower(strings.TrimSpace(query))
 	for _, item := range m.knowledge {
 		if item.Domain != domain {
@@ -211,11 +213,11 @@ func (m *mockL1Store) SearchKnowledgeItemsFTS(_ context.Context, domain string, 
 	}
 	return out, nil
 }
-func (m *mockL1Store) SearchWikiPageIndex(_ context.Context, query string, limit int) ([]WikiPageIndexItem, error) {
-	var out []WikiPageIndexItem
+func (m *mockL1Store) SearchWikiPageIndex(_ context.Context, query string, limit int) ([]l1sqlite.WikiPageIndexItem, error) {
+	var out []l1sqlite.WikiPageIndexItem
 	query = strings.ToLower(strings.TrimSpace(query))
 	for _, item := range m.wiki {
-		if item.Status == WikiPageStatusArchived || item.Status == WikiPageStatusDeprecated {
+		if item.Status == l1sqlite.WikiPageStatusArchived || item.Status == l1sqlite.WikiPageStatusDeprecated {
 			continue
 		}
 		haystack := strings.ToLower(item.Title + " " + item.Path + " " + item.Summary + " " + strings.Join(item.SourcePaths, " ") + " " + strings.Join(item.Related, " "))
@@ -237,8 +239,8 @@ func anyQueryTermMatches(haystack string, query string) bool {
 	}
 	return false
 }
-func (m *mockL1Store) AppendEvent(_ context.Context, eventType string, namespace string, sessionID string, threadID int64, payload map[string]interface{}, source string) (*L1EventLogEntry, error) {
-	entry := L1EventLogEntry{
+func (m *mockL1Store) AppendEvent(_ context.Context, eventType string, namespace string, sessionID string, threadID int64, payload map[string]interface{}, source string) (*l1sqlite.L1EventLogEntry, error) {
+	entry := l1sqlite.L1EventLogEntry{
 		ID:        fmt.Sprintf("%s:%s:%d", namespace, eventType, len(m.events)+1),
 		EventType: eventType,
 		Namespace: namespace,
@@ -251,8 +253,8 @@ func (m *mockL1Store) AppendEvent(_ context.Context, eventType string, namespace
 	m.events = append(m.events, entry)
 	return &entry, nil
 }
-func (m *mockL1Store) RecentEvents(_ context.Context, namespace string, _ int) ([]L1EventLogEntry, error) {
-	var out []L1EventLogEntry
+func (m *mockL1Store) RecentEvents(_ context.Context, namespace string, _ int) ([]l1sqlite.L1EventLogEntry, error) {
+	var out []l1sqlite.L1EventLogEntry
 	for i := len(m.events) - 1; i >= 0; i-- {
 		if m.events[i].Namespace == namespace {
 			out = append(out, m.events[i])
@@ -269,13 +271,13 @@ func (m *mockL1Store) UpdateMemoryState(_ context.Context, id string, memoryStat
 	}
 	return nil
 }
-func (m *mockL1Store) PromoteMemoryToNamespace(_ context.Context, id string, targetNamespace string, promotedBy string) (*L1MemoryEvent, error) {
+func (m *mockL1Store) PromoteMemoryToNamespace(_ context.Context, id string, targetNamespace string, promotedBy string) (*l1sqlite.L1MemoryEvent, error) {
 	for _, ev := range m.saved {
 		if ev.ID == id {
 			promoted := ev
 			promoted.ID = fmt.Sprintf("%s:%s", targetNamespace, id)
 			promoted.Namespace = targetNamespace
-			promoted.MemoryState = MemoryStateConfirmed
+			promoted.MemoryState = l1sqlite.MemoryStateConfirmed
 			if promoted.Meta == nil {
 				promoted.Meta = map[string]interface{}{}
 			}
@@ -286,8 +288,8 @@ func (m *mockL1Store) PromoteMemoryToNamespace(_ context.Context, id string, tar
 	}
 	return nil, nil
 }
-func (m *mockL1Store) RecentByNamespace(_ context.Context, namespace string, _ int) ([]L1MemoryEvent, error) {
-	var out []L1MemoryEvent
+func (m *mockL1Store) RecentByNamespace(_ context.Context, namespace string, _ int) ([]l1sqlite.L1MemoryEvent, error) {
+	var out []l1sqlite.L1MemoryEvent
 	for _, ev := range m.saved {
 		if ev.Namespace == namespace {
 			out = append(out, ev)
@@ -295,8 +297,8 @@ func (m *mockL1Store) RecentByNamespace(_ context.Context, namespace string, _ i
 	}
 	return out, nil
 }
-func (m *mockL1Store) RecentByState(_ context.Context, memoryState string, _ int) ([]L1MemoryEvent, error) {
-	var out []L1MemoryEvent
+func (m *mockL1Store) RecentByState(_ context.Context, memoryState string, _ int) ([]l1sqlite.L1MemoryEvent, error) {
+	var out []l1sqlite.L1MemoryEvent
 	for _, ev := range m.saved {
 		if ev.MemoryState == memoryState {
 			out = append(out, ev)
@@ -304,8 +306,8 @@ func (m *mockL1Store) RecentByState(_ context.Context, memoryState string, _ int
 	}
 	return out, nil
 }
-func (m *mockL1Store) RecentBySession(_ context.Context, sessionID string, _ int) ([]L1MemoryEvent, error) {
-	var out []L1MemoryEvent
+func (m *mockL1Store) RecentBySession(_ context.Context, sessionID string, _ int) ([]l1sqlite.L1MemoryEvent, error) {
+	var out []l1sqlite.L1MemoryEvent
 	for _, ev := range m.saved {
 		if ev.SessionID == sessionID {
 			out = append(out, ev)
@@ -420,10 +422,10 @@ func TestStore_MirrorsMessageToL1SQLiteStore(t *testing.T) {
 	if !strings.HasPrefix(ev.Namespace, "conv:") {
 		t.Fatalf("unexpected namespace: %s", ev.Namespace)
 	}
-	if ev.MemoryState != MemoryStateObserved {
+	if ev.MemoryState != l1sqlite.MemoryStateObserved {
 		t.Fatalf("unexpected state: %s", ev.MemoryState)
 	}
-	if ev.Layer != MemoryLayerL1 {
+	if ev.Layer != l1sqlite.MemoryLayerL1 {
 		t.Fatalf("unexpected layer: %s", ev.Layer)
 	}
 }
@@ -435,27 +437,27 @@ func TestRecall_UsesL1WhenRedisThreadMissing(t *testing.T) {
 	ctx := context.Background()
 
 	l1.saved = append(l1.saved,
-		L1MemoryEvent{
+		l1sqlite.L1MemoryEvent{
 			Namespace:   "conv:100",
 			SessionID:   "sess-l1-recall",
 			ThreadID:    100,
 			Speaker:     domconv.SpeakerUser,
 			Message:     "前回の話題",
 			Meta:        map[string]interface{}{"kind": "original"},
-			MemoryState: MemoryStateObserved,
-			Layer:       MemoryLayerL1,
+			MemoryState: l1sqlite.MemoryStateObserved,
+			Layer:       l1sqlite.MemoryLayerL1,
 			Source:      "conversation",
 			CreatedAt:   time.Date(2026, 5, 5, 10, 0, 0, 0, time.UTC),
 		},
-		L1MemoryEvent{
+		l1sqlite.L1MemoryEvent{
 			Namespace:   "conv:100",
 			SessionID:   "sess-l1-recall",
 			ThreadID:    100,
 			Speaker:     domconv.SpeakerMio,
 			Message:     "前回の返答",
 			Meta:        map[string]interface{}{},
-			MemoryState: MemoryStateObserved,
-			Layer:       MemoryLayerL1,
+			MemoryState: l1sqlite.MemoryStateObserved,
+			Layer:       l1sqlite.MemoryLayerL1,
 			Source:      "conversation",
 			CreatedAt:   time.Date(2026, 5, 5, 10, 1, 0, 0, time.UTC),
 		},
@@ -474,11 +476,75 @@ func TestRecall_UsesL1WhenRedisThreadMissing(t *testing.T) {
 	if messages[0].Meta["namespace"] != "conv:100" {
 		t.Fatalf("expected namespace meta, got %+v", messages[0].Meta)
 	}
-	if messages[0].Meta["memory_state"] != MemoryStateObserved {
+	if messages[0].Meta["memory_state"] != l1sqlite.MemoryStateObserved {
 		t.Fatalf("expected memory_state meta, got %+v", messages[0].Meta)
 	}
 	if messages[0].Meta["kind"] != "original" {
 		t.Fatalf("expected original meta to be preserved, got %+v", messages[0].Meta)
+	}
+}
+
+func TestRecall_SkipsDuckDBWhenArchiveDisabled(t *testing.T) {
+	embedder := &mockEmbeddingProvider{vec: []float32{0.1, 0.2, 0.3}}
+	vdb := &mockVectorDBStore{mockScore: 0.42}
+	vdb.saved = []*domconv.ThreadSummary{{
+		ThreadID: 301,
+		Summary:  "vector fallback summary",
+	}}
+	mgr := &RealConversationManager{
+		redisStore:    newMockRedisStore(),
+		duckdbStore:   nil,
+		vectordbStore: vdb,
+		embedder:      embedder,
+	}
+	ctx := context.Background()
+
+	messages, err := mgr.Recall(ctx, "sess-duckdb-disabled", "fallback", 3)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected vector fallback message, got %d", len(messages))
+	}
+	if !strings.Contains(messages[0].Msg, "[LongTermMemory] vector fallback summary") {
+		t.Fatalf("unexpected recall message: %+v", messages[0])
+	}
+	if messages[0].Meta["score"] != float32(0.42) {
+		t.Fatalf("unexpected score meta: %+v", messages[0].Meta)
+	}
+}
+
+func TestFlushThread_SkipsDuckDBWhenArchiveDisabled(t *testing.T) {
+	embedder := &mockEmbeddingProvider{vec: []float32{0.1, 0.2, 0.3}}
+	vdb := &mockVectorDBStore{mockScore: 0.5}
+	mgr := &RealConversationManager{
+		redisStore:    newMockRedisStore(),
+		duckdbStore:   nil,
+		vectordbStore: vdb,
+		embedder:      embedder,
+		summarizer:    &mockSummarizer{summary: "summary without duckdb", keywords: []string{"memory"}},
+	}
+	ctx := context.Background()
+
+	thread, err := mgr.CreateThread(ctx, "sess-flush-no-duckdb", "memory")
+	if err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "DuckDBなしでflush", nil))
+	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
+
+	summary, err := mgr.FlushThread(ctx, thread.ID)
+	if err != nil {
+		t.Fatalf("FlushThread failed: %v", err)
+	}
+	if summary.Summary != "summary without duckdb" {
+		t.Fatalf("unexpected summary: %s", summary.Summary)
+	}
+	if len(vdb.saved) != 1 {
+		t.Fatalf("expected vector save to continue, got %d", len(vdb.saved))
+	}
+	if _, err := mgr.redisStore.(*mockRedisStore).GetThread(ctx, thread.ID); err != domconv.ErrThreadNotFound {
+		t.Fatalf("expected flushed thread to be deleted, got err=%v", err)
 	}
 }
 
@@ -520,7 +586,7 @@ func TestSaveL1KnowledgeItemSavesVectorKBDocument(t *testing.T) {
 		embedder:      &mockEmbeddingProvider{vec: []float32{0.1, 0.2, 0.3}},
 	}
 
-	err := mgr.SaveL1KnowledgeItem(ctx, L1KnowledgeItem{
+	err := mgr.SaveL1KnowledgeItem(ctx, l1sqlite.L1KnowledgeItem{
 		ID:           "kb:movie:001",
 		Domain:       "movie",
 		Title:        "Example Movie",

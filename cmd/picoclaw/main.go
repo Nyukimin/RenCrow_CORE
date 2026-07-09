@@ -119,6 +119,7 @@ func cmdRun() {
 		Provider:          cfg.LocalLLM.Provider,
 		ChatBaseURL:       modulellm.LocalBaseURLForAlias(localRuntimeConfigFromAppConfig(cfg), "chat"),
 		WorkerBaseURL:     modulellm.LocalBaseURLForAlias(localRuntimeConfigFromAppConfig(cfg), "worker"),
+		ChatWorkerBaseURL: modulellm.LocalBaseURLForAlias(localRuntimeConfigFromAppConfig(cfg), "chatworker"),
 		HeavyBaseURL:      modulellm.LocalBaseURLForAlias(localRuntimeConfigFromAppConfig(cfg), "heavy"),
 		WildBaseURL:       modulellm.LocalBaseURLForAlias(localRuntimeConfigFromAppConfig(cfg), "wild"),
 		ChatModel:         cfg.LocalLLM.ChatModel,

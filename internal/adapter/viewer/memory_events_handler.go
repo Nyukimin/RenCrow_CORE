@@ -2,26 +2,22 @@ package viewer
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"strings"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type MemoryEventsStore interface {
-	RecentEvents(ctx context.Context, namespace string, limit int) ([]conversationpersistence.L1EventLogEntry, error)
-	RecentSearchCache(ctx context.Context, limit int) ([]conversationpersistence.L1SearchCacheEntry, error)
+	RecentEvents(ctx context.Context, namespace string, limit int) ([]l1sqlite.L1EventLogEntry, error)
+	RecentSearchCache(ctx context.Context, limit int) ([]l1sqlite.L1SearchCacheEntry, error)
 }
 
 func HandleMemoryEvents(store MemoryEventsStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireViewerMethod(w, r, http.MethodGet) {
 			return
 		}
-		if store == nil {
-			http.Error(w, "memory events unavailable", http.StatusServiceUnavailable)
+		if !requireViewerStore(w, store == nil, "memory events unavailable") {
 			return
 		}
 		limit, err := parseViewerLimit(r.URL.Query().Get("limit"), 20, 100)
@@ -45,11 +41,10 @@ func HandleMemoryEvents(store MemoryEventsStore) http.HandlerFunc {
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"namespace":    namespace,
-			"events":       events,
-			"search_cache": searchCache,
+			"events":       eventLogEntryDTOsFromL1(events),
+			"search_cache": searchCacheEntryDTOsFromL1(searchCache),
 		})
 	}
 }

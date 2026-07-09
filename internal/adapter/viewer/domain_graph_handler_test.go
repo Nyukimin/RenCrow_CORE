@@ -3,19 +3,18 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 func TestHandleDomainGraphAssertionsReturnsCurrentView(t *testing.T) {
 	ctx := context.Background()
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -43,7 +42,7 @@ func TestHandleDomainGraphAssertionsReturnsCurrentView(t *testing.T) {
 	if got.ID != assertion.ID || got.StagingID != assertion.StagingID || got.Domain != "movie" || got.EntityType != "work" {
 		t.Fatalf("unexpected assertion dto: %+v", got)
 	}
-	if got.SourceID != assertion.SourceID || got.RawHash != assertion.RawHash || got.ValidationStatus != conversationpersistence.L1StagingStatusValidated {
+	if got.SourceID != assertion.SourceID || got.RawHash != assertion.RawHash || got.ValidationStatus != l1sqlite.L1StagingStatusValidated {
 		t.Fatalf("unexpected source fields: %+v", got)
 	}
 	if got.Evidence["staging_id"] != assertion.StagingID {
@@ -68,7 +67,7 @@ func TestHandleDomainGraphAssertionsUnavailable(t *testing.T) {
 }
 
 func TestHandleDomainGraphAssertionsRejectsInvalidQuery(t *testing.T) {
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -90,10 +89,10 @@ func TestHandleDomainGraphAssertionsRejectsInvalidQuery(t *testing.T) {
 	}
 }
 
-func saveViewerDomainGraphAssertion(t *testing.T, ctx context.Context, store *conversationpersistence.L1SQLiteStore) *conversationpersistence.L1DomainGraphAssertion {
+func saveViewerDomainGraphAssertion(t *testing.T, ctx context.Context, store *l1sqlite.L1SQLiteStore) *l1sqlite.L1DomainGraphAssertion {
 	t.Helper()
-	item, err := store.SaveStagingItem(ctx, conversationpersistence.L1StagingItem{
-		Kind:         conversationpersistence.L1StagingKindExternalFetch,
+	item, err := store.SaveStagingItem(ctx, l1sqlite.L1StagingItem{
+		Kind:         l1sqlite.L1StagingKindExternalFetch,
 		Namespace:    "kb:movie",
 		EventID:      "viewer-domain-graph",
 		SourceID:     "web:eiga",
@@ -108,7 +107,7 @@ func saveViewerDomainGraphAssertion(t *testing.T, ctx context.Context, store *co
 	if err != nil {
 		t.Fatalf("SaveStagingItem failed: %v", err)
 	}
-	if _, err := store.ValidateStagingItem(ctx, item.ID, conversationpersistence.L1StagingValidationPolicy{
+	if _, err := store.ValidateStagingItem(ctx, item.ID, l1sqlite.L1StagingValidationPolicy{
 		SourceTrustScores: map[string]float64{"web:eiga": 0.9},
 		MinimumTrustScore: 0.5,
 		Now:               time.Date(2026, 6, 6, 10, 5, 0, 0, time.UTC),

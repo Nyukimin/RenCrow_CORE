@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type memoryActionStoreStub struct {
@@ -17,7 +16,7 @@ type memoryActionStoreStub struct {
 	promoteID     string
 	targetNS      string
 	promotedBy    string
-	promotedEvent conversationpersistence.L1MemoryEvent
+	promotedEvent l1sqlite.L1MemoryEvent
 }
 
 func (s *memoryActionStoreStub) UpdateMemoryState(_ context.Context, id string, memoryState string) error {
@@ -26,11 +25,11 @@ func (s *memoryActionStoreStub) UpdateMemoryState(_ context.Context, id string, 
 	return nil
 }
 
-func (s *memoryActionStoreStub) PromoteMemoryToNamespace(_ context.Context, id string, targetNamespace string, promotedBy string) (*conversationpersistence.L1MemoryEvent, error) {
+func (s *memoryActionStoreStub) PromoteMemoryToNamespace(_ context.Context, id string, targetNamespace string, promotedBy string) (*l1sqlite.L1MemoryEvent, error) {
 	s.promoteID = id
 	s.targetNS = targetNamespace
 	s.promotedBy = promotedBy
-	s.promotedEvent = conversationpersistence.L1MemoryEvent{ID: id, Namespace: targetNamespace, MemoryState: conversationpersistence.MemoryStateConfirmed}
+	s.promotedEvent = l1sqlite.L1MemoryEvent{ID: id, Namespace: targetNamespace, MemoryState: l1sqlite.MemoryStateConfirmed}
 	return &s.promotedEvent, nil
 }
 
@@ -65,7 +64,7 @@ func TestHandleMemoryPromote(t *testing.T) {
 		t.Fatalf("unexpected store call: %+v", store)
 	}
 	var out struct {
-		Item conversationpersistence.L1MemoryEvent `json:"item"`
+		Item l1sqlite.L1MemoryEvent `json:"item"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("invalid json: %v", err)

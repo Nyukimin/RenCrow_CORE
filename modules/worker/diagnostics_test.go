@@ -10,7 +10,7 @@ import (
 
 func TestCurrentToolDescriptorsIncludesProposalPatch(t *testing.T) {
 	tools := CurrentToolDescriptors()
-	if len(tools) != 1 {
+	if len(tools) != 2 {
 		t.Fatalf("unexpected worker tool count: got=%d tools=%+v", len(tools), tools)
 	}
 	tool := tools[0]
@@ -23,6 +23,13 @@ func TestCurrentToolDescriptorsIncludesProposalPatch(t *testing.T) {
 	if tool.ExecutionPolicy == "" || tool.Description == "" {
 		t.Fatalf("proposal patch tool is missing diagnostics metadata: %+v", tool)
 	}
+	codexTool := tools[1]
+	if codexTool.Name != "codex.run" {
+		t.Fatalf("unexpected codex tool: %+v", codexTool)
+	}
+	if !containsString(codexTool.RequiredArgs, "prompt") || !containsString(codexTool.OptionalArgs, "sandbox") {
+		t.Fatalf("codex.run tool args missing: %+v", codexTool)
+	}
 }
 
 func TestBuildDiagnosticsSnapshot(t *testing.T) {
@@ -30,7 +37,7 @@ func TestBuildDiagnosticsSnapshot(t *testing.T) {
 	if snapshot.UpdatedAt != "2026-05-30T01:02:03Z" {
 		t.Fatalf("unexpected diagnostics snapshot: %+v", snapshot)
 	}
-	if snapshot.Health.CheckedAt.IsZero() || len(snapshot.SupportedTools) != 1 {
+	if snapshot.Health.CheckedAt.IsZero() || len(snapshot.SupportedTools) != 2 {
 		t.Fatalf("diagnostics metadata missing: %+v", snapshot)
 	}
 }

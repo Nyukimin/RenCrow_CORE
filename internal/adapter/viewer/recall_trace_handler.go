@@ -2,7 +2,6 @@ package viewer
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -12,14 +11,13 @@ import (
 type RecallTraceStore interface {
 	RecentRecallTraces(ctx context.Context, sessionID string, limit int) ([]domconv.RecallTrace, error)
 }
+
 func HandleRecallTraces(store RecallTraceStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireViewerMethod(w, r, http.MethodGet) {
 			return
 		}
-		if store == nil {
-			http.Error(w, "recall trace unavailable", http.StatusServiceUnavailable)
+		if !requireViewerStore(w, store == nil, "recall trace unavailable") {
 			return
 		}
 		limit, err := parseViewerLimit(r.URL.Query().Get("limit"), 20, 100)
@@ -33,8 +31,7 @@ func HandleRecallTraces(store RecallTraceStore) http.HandlerFunc {
 			http.Error(w, "failed to load recall traces", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"items":      items,
 			"session_id": sessionID,
 		})

@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RenCrow 新仕様 モジュール関係図</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --paper: #ffffff;
+      --ink: #17202a;
+      --muted: #667085;
+      --line: #c7ced8;
+      --cmd: #355c7d;
+      --adapter: #1f7a8c;
+      --app: #8f5f32;
+      --domain: #4f6f52;
+      --infra: #7b4f8f;
+      --warn: #b54708;
+      --danger: #b42318;
+      --ok: #027a48;
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.65;
+    }
+
+    header {
+      background: #101828;
+      color: #fff;
+      padding: 32px 28px;
+    }
+
+    header h1 {
+      margin: 0 0 10px;
+      font-size: 28px;
+      letter-spacing: 0;
+    }
+
+    header p {
+      margin: 0;
+      max-width: 1040px;
+      color: #d0d5dd;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(255, 255, 255, 0.96);
+      border-bottom: 1px solid var(--line);
+      padding: 10px 22px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    nav a {
+      color: #344054;
+      text-decoration: none;
+      border: 1px solid #d0d5dd;
+      background: #fff;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+
+    section {
+      background: var(--paper);
+      border: 1px solid #e4e7ec;
+      box-shadow: var(--shadow);
+      border-radius: 8px;
+      padding: 24px;
+      margin: 0 0 28px;
+    }
+
+    h2 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 20px 0 10px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      margin: 0 0 20px;
+      color: var(--muted);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 16px 0 0;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: #344054;
+    }
+
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      display: inline-block;
+    }
+
+    .diagram {
+      overflow-x: auto;
+      padding: 6px 0 2px;
+    }
+
+    .lane-stack {
+      display: grid;
+      gap: 14px;
+      min-width: 980px;
+    }
+
+    .lane {
+      display: grid;
+      grid-template-columns: 190px 1fr;
+      border: 1px solid #d0d5dd;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .lane-title {
+      color: #fff;
+      padding: 16px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+    }
+
+    .lane-body {
+      padding: 14px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .box {
+      border: 1px solid #d0d5dd;
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 74px;
+    }
+
+    .box strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .box small {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .cmd { border-top: 5px solid var(--cmd); }
+    .adapter { border-top: 5px solid var(--adapter); }
+    .app { border-top: 5px solid var(--app); }
+    .domain { border-top: 5px solid var(--domain); }
+    .infra { border-top: 5px solid var(--infra); }
+    .warn { border-top: 5px solid var(--warn); }
+    .danger { border-top: 5px solid var(--danger); }
+    .ok { border-top: 5px solid var(--ok); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(132px, 1fr));
+      gap: 18px;
+      align-items: center;
+      min-width: 1080px;
+      margin: 14px 0;
+    }
+
+    .flow.three {
+      grid-template-columns: repeat(3, minmax(230px, 1fr));
+      min-width: 760px;
+    }
+
+    .flow.five {
+      grid-template-columns: repeat(5, minmax(160px, 1fr));
+      min-width: 920px;
+    }
+
+    .arrow {
+      position: relative;
+    }
+
+    .arrow::after {
+      content: "→";
+      position: absolute;
+      right: -18px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #667085;
+      font-weight: 700;
+      font-size: 20px;
+    }
+
+    .flow .box:last-child::after {
+      content: "";
+    }
+
+    .matrix {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+
+    .matrix th,
+    .matrix td {
+      border: 1px solid #d0d5dd;
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    .matrix th {
+      background: #f2f4f7;
+      font-weight: 700;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .rule-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .rule {
+      border: 1px solid #e4e7ec;
+      border-left: 6px solid #667085;
+      border-radius: 8px;
+      background: #fcfcfd;
+      padding: 12px;
+    }
+
+    .rule strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .note {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      border-left: 6px solid var(--warn);
+      padding: 12px;
+      border-radius: 8px;
+      margin: 14px 0;
+    }
+
+    .oknote {
+      background: #ecfdf3;
+      border: 1px solid #abefc6;
+      border-left: 6px solid var(--ok);
+      padding: 12px;
+      border-radius: 8px;
+      margin: 14px 0;
+    }
+
+    .module-map {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      min-width: 980px;
+    }
+
+    .cluster {
+      border: 1px solid #d0d5dd;
+      border-radius: 8px;
+      padding: 14px;
+      background: #fff;
+    }
+
+    .cluster h3 {
+      margin-top: 0;
+    }
+
+    .cluster .items {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    code {
+      color: #344054;
+      background: #f2f4f7;
+      border: 1px solid #e4e7ec;
+      border-radius: 4px;
+      padding: 1px 4px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    footer {
+      color: var(--muted);
+      text-align: center;
+      padding: 24px;
+      font-size: 13px;
+    }
+
+    @media (max-width: 860px) {
+      main {
+        padding: 16px;
+      }
+
+      section {
+        padding: 18px;
+      }
+
+      .grid-2,
+      .grid-3,
+      .rule-list {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media print {
+      nav {
+        position: static;
+      }
+
+      section {
+        break-inside: avoid;
+        box-shadow: none;
+      }
+
+      body {
+        background: #fff;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RenCrow 新仕様 モジュール関係図</h1>
+    <p>docs/10_新仕様 に記載されたモジュールの意味とつながりを、概要図から詳細図まで追えるように整理した図解です。コードではなく、責務境界、データの流れ、変更時に見る場所を把握するための資料です。</p>
+  </header>
+
+  <nav aria-label="図一覧">
+    <a href="#overview">概要</a>
+    <a href="#layers">層構造</a>
+    <a href="#message-flow">主要フロー</a>
+    <a href="#cwc">Chat/Worker/Coder</a>
+    <a href="#viewer">Viewer</a>
+    <a href="#idlechat">IdleChat/Audio</a>
+    <a href="#llm">LLM provider</a>
+    <a href="#memory">Memory</a>
+    <a href="#runtime">Runtime wiring</a>
+    <a href="#change">変更時の見方</a>
+  </nav>
+
+  <main>
+    <section id="overview">
+      <h2>1. 全体概要図</h2>
+      <p class="lead">RenCrow は、外部入力を Adapter が受け、Application が処理を調整し、Domain の契約に沿って Infrastructure の実装を使う構成です。`cmd/picoclaw` はそれらを起動時に接続する composition root です。</p>
+      <div class="diagram">
+        <div class="flow">
+          <div class="box adapter arrow"><strong>外部入力</strong><small>LINE / Slack / Discord / Telegram / Viewer / STT</small></div>
+          <div class="box adapter arrow"><strong>Adapter</strong><small>HTTP handler / channel / Viewer / health / config</small></div>
+          <div class="box app arrow"><strong>Application</strong><small>MessageOrchestrator / WorkerExecution / IdleChat</small></div>
+          <div class="box domain arrow"><strong>Domain</strong><small>route / task / proposal / patch / memory / session</small></div>
+          <div class="box infra arrow"><strong>Infrastructure</strong><small>LLM / persistence / tools / STT / TTS / transport</small></div>
+          <div class="box app arrow"><strong>Event / Report</strong><small>job / SSE / evidence / session / log</small></div>
+          <div class="box adapter"><strong>応答・観測</strong><small>Viewer 表示 / channel response / audio / logs</small></div>
+        </div>
+      </div>
+      <div class="legend">
+        <span><i class="swatch" style="background: var(--cmd)"></i>cmd</span>
+        <span><i class="swatch" style="background: var(--adapter)"></i>adapter</span>
+        <span><i class="swatch" style="background: var(--app)"></i>application</span>
+        <span><i class="swatch" style="background: var(--domain)"></i>domain</span>
+        <span><i class="swatch" style="background: var(--infra)"></i>infrastructure</span>
+      </div>
+    </section>
+
+    <section id="layers">
+      <h2>2. Clean Architecture 風の層構造</h2>
+      <p class="lead">各層は「何を置くか」と「何を置かないか」で分かれます。横断的な接続は `cmd/picoclaw/runtime_*.go` が行い、業務判断を `cmd/` に戻さないことが重要です。</p>
+      <div class="diagram">
+        <div class="lane-stack">
+          <div class="lane">
+            <div class="lane-title" style="background: var(--cmd)">cmd</div>
+            <div class="lane-body">
+              <div class="box cmd"><strong>main.go</strong><small>起動、CLI、HTTP server startup</small></div>
+              <div class="box cmd"><strong>routes.go</strong><small>HTTP route registration</small></div>
+              <div class="box cmd"><strong>runtime_*.go</strong><small>依存組み立て、provider wiring</small></div>
+              <div class="box cmd"><strong>picoclaw-agent</strong><small>standalone worker / coder process</small></div>
+            </div>
+          </div>
+          <div class="lane">
+            <div class="lane-title" style="background: var(--adapter)">internal/adapter</div>
+            <div class="lane-body">
+              <div class="box adapter"><strong>viewer</strong><small>UI / SSE / monitor / memory panels</small></div>
+              <div class="box adapter"><strong>channels</strong><small>LINE / Slack / Discord / Telegram</small></div>
+              <div class="box adapter"><strong>health</strong><small>health endpoint</small></div>
+              <div class="box adapter"><strong>config / entry / chrome</strong><small>外部入出力の入口</small></div>
+            </div>
+          </div>
+          <div class="lane">
+            <div class="lane-title" style="background: var(--app)">internal/application</div>
+            <div class="lane-body">
+              <div class="box app"><strong>orchestrator</strong><small>MessageOrchestrator / DistributedOrchestrator</small></div>
+              <div class="box app"><strong>service</strong><small>WorkerExecutionService</small></div>
+              <div class="box app"><strong>idlechat</strong><small>自律会話、forecast、story</small></div>
+              <div class="box app"><strong>sourcefetcher / tts</strong><small>Source Registry、TTS coordination</small></div>
+            </div>
+          </div>
+          <div class="lane">
+            <div class="lane-title" style="background: var(--domain)">internal/domain</div>
+            <div class="lane-body">
+              <div class="box domain"><strong>agent / routing</strong><small>Chat / Worker / Coder、route</small></div>
+              <div class="box domain"><strong>proposal / patch</strong><small>Coder 成果物と patch command</small></div>
+              <div class="box domain"><strong>execution / tool</strong><small>実行記録と tool contract</small></div>
+              <div class="box domain"><strong>conversation / memory</strong><small>RecallPack、memory contract</small></div>
+            </div>
+          </div>
+          <div class="lane">
+            <div class="lane-title" style="background: var(--infra)">internal/infrastructure</div>
+            <div class="lane-body">
+              <div class="box infra"><strong>llm/providers</strong><small>Ollama / OpenAI / Claude / DeepSeek / Gemini</small></div>
+              <div class="box infra"><strong>persistence</strong><small>L1SQLite / VectorDB / DuckDB / execution reports</small></div>
+              <div class="box infra"><strong>tools / security</strong><small>ToolRunner / PolicyEngine</small></div>
+              <div class="box infra"><strong>stt / tts / audiorouter / vtuber</strong><small>音声・口パク・外部接続</small></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="message-flow">
+      <h2>3. 主要メッセージフロー</h2>
+      <p class="lead">ユーザー入力は Adapter から MessageOrchestrator へ入り、Mio が route を決めます。CODE 系では Coder が候補を作り、Worker が実行します。</p>
+      <div class="diagram">
+        <div class="flow">
+          <div class="box adapter arrow"><strong>Input</strong><small>Viewer / channel / STT final text</small></div>
+          <div class="box app arrow"><strong>MessageOrchestrator</strong><small>session / event / route chain</small></div>
+          <div class="box domain arrow"><strong>Mio route decision</strong><small>explicit command / rule / classifier / fallback</small></div>
+          <div class="box domain arrow"><strong>Route</strong><small>CHAT / OPS / CODE / CODE1 / CODE2 / CODE3</small></div>
+          <div class="box app arrow"><strong>Execution path</strong><small>Chat response or Worker/Coder path</small></div>
+          <div class="box app arrow"><strong>Report / Event</strong><small>job / evidence / SSE / history</small></div>
+          <div class="box adapter"><strong>Output</strong><small>Viewer / channel / audio / logs</small></div>
+        </div>
+      </div>
+      <div class="note">fallback は正常系ではありません。分類失敗や provider 失敗などの回復経路として、ログと検証結果で区別します。</div>
+    </section>
+
+    <section id="cwc">
+      <h2>4. Chat / Worker / Coder 詳細図</h2>
+      <p class="lead">Chat は対話と判断、Worker は実行、Coder は提案生成です。Coder が破壊的操作を直接行う構造は仕様違反です。</p>
+      <div class="diagram">
+        <div class="flow three">
+          <div class="box domain arrow"><strong>Chat: Mio</strong><small>ユーザー対話、route 判断、結果返却。Coder へ直接指示しない。</small></div>
+          <div class="box app arrow"><strong>Worker: Shiro / Worker Core</strong><small>実行可否判断、Coder 選定、patch / command 実行、安全境界。</small></div>
+          <div class="box domain"><strong>Coder: AO / Aka / Kin</strong><small>plan / patch / proposal を生成。採用・実行はしない。</small></div>
+        </div>
+      </div>
+      <h3>Worker と Coder ができること</h3>
+      <div class="grid-3">
+        <div class="box app">
+          <strong>Worker ができること</strong>
+          <small>実行可否判断、Coder 選定、proposal 検証、protected file / workspace / policy 確認、file / shell / git / test 実行、patch 適用、report / event / log 記録。</small>
+        </div>
+        <div class="box domain">
+          <strong>Coder ができること</strong>
+          <small>plan / patch / proposal / risk / cost hint の生成、設計説明、複数案提示。成果物は実行命令ではなく候補として扱う。</small>
+        </div>
+        <div class="box danger">
+          <strong>Coder ができないこと</strong>
+          <small>採用決定、正本ブランチ管理、patch 適用、file / shell / git 実行、破壊的操作の直接実行。</small>
+        </div>
+      </div>
+      <table class="matrix">
+        <thead>
+          <tr><th>境界</th><th>守ること</th><th>主な実装</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>route chain</td><td>明示コマンド、ルール辞書、分類器、安全側 fallback の順に判断</td><td><code>message_orchestrator_*.go</code>, <code>internal/domain/routing</code></td></tr>
+          <tr><td>proposal</td><td>Coder の成果物は候補。plan / patch / risk を返す</td><td><code>internal/domain/proposal</code>, <code>internal/domain/patch</code>, <code>code_executor*.go</code></td></tr>
+          <tr><td>execution</td><td>Worker が protected file、workspace、policy を確認して実行する</td><td><code>internal/application/service/worker_execution_*.go</code></td></tr>
+          <tr><td>standalone agent</td><td>stdin/stdout protocol と handler 境界を守る</td><td><code>cmd/picoclaw-agent/*.go</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="viewer">
+      <h2>5. Viewer / 観測面の詳細図</h2>
+      <p class="lead">Viewer は UI と観測面です。表示本文、event、log、history、audio trigger は別々の契約として扱います。</p>
+      <div class="diagram">
+        <div class="module-map">
+          <div class="cluster">
+            <h3>Viewer API / Go 側</h3>
+            <div class="items">
+              <div class="box adapter"><strong>handler_send</strong><small>Viewer 送信入口</small></div>
+              <div class="box adapter"><strong>hub / SSE</strong><small>event stream</small></div>
+              <div class="box adapter"><strong>monitor_*</strong><small>status / agents / jobs / logs</small></div>
+              <div class="box adapter"><strong>memory / source handlers</strong><small>memory panels</small></div>
+            </div>
+          </div>
+          <div class="cluster">
+            <h3>Viewer UI / Browser 側</h3>
+            <div class="items">
+              <div class="box adapter"><strong>viewer.html</strong><small>main UI</small></div>
+              <div class="box adapter"><strong>assets/js</strong><small>tabs / interactions</small></div>
+              <div class="box adapter"><strong>assets/css</strong><small>layout / state display</small></div>
+              <div class="box adapter"><strong>audio playback</strong><small>TTS / audio router</small></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <table class="matrix">
+        <thead>
+          <tr><th>データ</th><th>意味</th><th>混同してはいけないもの</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>表示本文</td><td>ユーザーが読む view data</td><td>LLM raw log、TTS chunk</td></tr>
+          <tr><td>SSE event</td><td>状態更新の通知</td><td>永続ログそのもの</td></tr>
+          <tr><td>event log</td><td>観測・追跡の記録</td><td>UI 表示契約そのもの</td></tr>
+          <tr><td>audio trigger</td><td>音声再生と口パク開始</td><td>本文表示の根拠</td></tr>
+          <tr><td>runtime config</td><td>表示と操作のための投影</td><td>repo example、live config</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="idlechat">
+      <h2>6. IdleChat / STT / TTS / Audio 詳細図</h2>
+      <p class="lead">IdleChat は自律会話、STT は通常 chat 入力、TTS は音声出力です。STT 入力を IdleChat に直接流さないこと、TTS chunk を本文表示の根拠にしないことが重要です。</p>
+      <div class="diagram">
+        <div class="flow five">
+          <div class="box app arrow"><strong>IdleChat Orchestrator</strong><small>normal / forecast / story</small></div>
+          <div class="box app arrow"><strong>raw response</strong><small>LLM の素の出力、診断用</small></div>
+          <div class="box app arrow"><strong>view data</strong><small>Viewer 表示と会話注入</small></div>
+          <div class="box infra arrow"><strong>TTS bridge</strong><small>provider / queue / retry</small></div>
+          <div class="box infra"><strong>audio / lipsync</strong><small>browser playback / VTuber</small></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="box app">
+          <strong>IdleChat 主担当</strong>
+          <small><code>internal/application/idlechat/orchestrator*.go</code><br><code>forecast_*.go</code><br><code>topic_generator_*.go</code><br><code>orchestrator_sanitize_*.go</code></small>
+        </div>
+        <div class="box infra">
+          <strong>Audio 主担当</strong>
+          <small><code>internal/infrastructure/tts/rencrow_tts_*.go</code><br><code>internal/infrastructure/audiorouter</code><br><code>internal/infrastructure/vtuber</code><br><code>cmd/picoclaw/stt_runtime_*.go</code></small>
+        </div>
+      </div>
+      <div class="note">STT は通常 chat の入力経路です。IdleChat の会話生成、TTS、Viewer 表示とは別の入力境界として扱います。</div>
+    </section>
+
+    <section id="llm">
+      <h2>7. LLM provider 詳細図</h2>
+      <p class="lead">LLM provider は role ごとに使い分けます。factory と runtime wiring が provider を組み立て、Application は provider 固有の stream や response parse に直接依存しません。</p>
+      <div class="diagram">
+        <div class="flow five">
+          <div class="box cmd arrow"><strong>runtime config</strong><small>live config / env / defaults</small></div>
+          <div class="box cmd arrow"><strong>runtime_llm_providers</strong><small>Chat / Worker / Heavy / Wild / Coder assembly</small></div>
+          <div class="box infra arrow"><strong>factory</strong><small>provider selection</small></div>
+          <div class="box infra arrow"><strong>providers</strong><small>Ollama / OpenAI / Claude / DeepSeek / Gemini</small></div>
+          <div class="box app"><strong>Application</strong><small>routing / response / tool calling</small></div>
+        </div>
+      </div>
+      <table class="matrix">
+        <thead>
+          <tr><th>Provider 領域</th><th>主なファイル</th><th>意味</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>OpenAI</td><td><code>providers/openai/*.go</code></td><td>messages、stream、thinking bridge、response parse</td></tr>
+          <tr><td>Ollama</td><td><code>providers/ollama/*.go</code></td><td>chat types、stream、prompt、model ready</td></tr>
+          <tr><td>Claude</td><td><code>providers/claude/provider.go</code></td><td>Claude provider 単体</td></tr>
+          <tr><td>Middleware</td><td><code>internal/infrastructure/llm/middleware</code></td><td>raw log、観測、provider wrapping</td></tr>
+          <tr><td>LLM Ops</td><td><code>llm_ops_handler.go</code></td><td>Viewer からの status / start / stop / restart</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="memory">
+      <h2>8. Memory / Source Registry 詳細図</h2>
+      <p class="lead">記憶は段階を飛ばして正式化しません。Source Registry は observed から candidate / staging、validation、promotion を経て memory / news / knowledge になります。</p>
+      <div class="diagram">
+        <div class="flow five">
+          <div class="box adapter arrow"><strong>Source / Conversation</strong><small>Viewer / CLI / conversation event</small></div>
+          <div class="box infra arrow"><strong>L1SQLite</strong><small>observed / staging / search cache</small></div>
+          <div class="box app arrow"><strong>Validation</strong><small>sourcefetcher / validators</small></div>
+          <div class="box infra arrow"><strong>Promotion</strong><small>memory / news / knowledge</small></div>
+          <div class="box adapter"><strong>Viewer Panels</strong><small>memory / source registry projection</small></div>
+        </div>
+      </div>
+      <div class="grid-3">
+        <div class="box infra"><strong>VectorDB</strong><small><code>vectordb_thread_memory.go</code><br><code>vectordb_kb.go</code><br>thread memory / KB vector search</small></div>
+        <div class="box infra"><strong>DuckDB</strong><small><code>duckdb_l1_archive.go</code><br><code>duckdb_threads.go</code><br><code>duckdb_export.go</code></small></div>
+        <div class="box infra"><strong>RealConversationManager</strong><small><code>real_manager_*.go</code><br>recall / thread / archive / KB facade</small></div>
+      </div>
+      <h3>保存データの種類</h3>
+      <table class="matrix">
+        <thead>
+          <tr><th>種類</th><th>仕様上の意味</th><th>主な保存・検索境界</th><th>混同しないもの</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>会話データ</td>
+            <td>会話履歴、summary、RecallPack、thread memory。role に応じて prompt 注入用の文脈として選別される。</td>
+            <td><code>conversation memory</code>, <code>L1SQLite</code>, <code>VectorDB thread memory</code>, <code>DuckDB archive</code>, <code>RealConversationManager</code></td>
+            <td>Viewer 表示 state、TTS chunk、LLM raw log</td>
+          </tr>
+          <tr>
+            <td>ユーザー / セッションデータ</td>
+            <td>docs/10_新仕様では、独立したユーザープロフィール保存領域ではなく、session、session_id、memory contract、conversation tracking として扱う。</td>
+            <td><code>internal/domain/session</code>, <code>runtime_sessions</code>, <code>conversation memory</code></td>
+            <td>一般知識 KB、Source Registry の promoted knowledge</td>
+          </tr>
+          <tr>
+            <td>一般知識 / 外部ソース</td>
+            <td>Web search result や外部ソースを Source Registry / KB として扱う。observed、candidate / staging、validated、promoted の状態を分ける。</td>
+            <td><code>Source Registry</code>, <code>L1SQLite source registry</code>, <code>VectorDB KB</code>, <code>sourcefetcher</code></td>
+            <td>無審査の正式 memory 化、会話履歴そのもの</td>
+          </tr>
+          <tr>
+            <td>実行記録</td>
+            <td>Worker execution の job_id、session_id、route、status、結果。実行の追跡と検証に使う。</td>
+            <td><code>internal/domain/execution</code>, <code>internal/infrastructure/persistence/execution</code>, event / report / log</td>
+            <td>ユーザー向け自然対話の本文、正式 knowledge</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note">Source Registry を無審査で正式 memory へ昇格しない。Viewer 表示 state と永続化 state を同じものとして扱わない。</div>
+    </section>
+
+    <section id="runtime">
+      <h2>9. Runtime wiring 詳細図</h2>
+      <p class="lead">Phase28 以降、`buildDependencies()` は薄い composition root になり、runtime helper が各責務を組み立てます。</p>
+      <div class="diagram">
+        <div class="module-map">
+          <div class="cluster">
+            <h3>runtime assembly</h3>
+            <div class="items">
+              <div class="box cmd"><strong>runtime_capability</strong><small>NodeCapabilities</small></div>
+              <div class="box cmd"><strong>runtime_llm_providers</strong><small>Chat / Worker / Coder provider</small></div>
+              <div class="box cmd"><strong>runtime_tool_runtime</strong><small>ToolRunner / Subagent / Policy</small></div>
+              <div class="box cmd"><strong>runtime_conversation</strong><small>ConversationEngine / L1SQLite</small></div>
+              <div class="box cmd"><strong>runtime_agents</strong><small>Mio / Shiro / Heavy / Wild</small></div>
+              <div class="box cmd"><strong>runtime_orchestrator</strong><small>MessageOrchestrator / Distributed</small></div>
+            </div>
+          </div>
+          <div class="cluster">
+            <h3>adapter wiring</h3>
+            <div class="items">
+              <div class="box cmd"><strong>runtime_viewer_handlers</strong><small>EventHub / monitor / evidence</small></div>
+              <div class="box cmd"><strong>runtime_viewer_bridges</strong><small>viewer send / entry / chrome</small></div>
+              <div class="box cmd"><strong>runtime_idlechat</strong><small>IdleChatOrchestrator</small></div>
+              <div class="box cmd"><strong>runtime_channels</strong><small>LINE / Slack / Discord / Telegram</small></div>
+              <div class="box cmd"><strong>runtime_sessions</strong><small>session / central memory</small></div>
+              <div class="box cmd"><strong>runtime_heartbeat</strong><small>HeartbeatService</small></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="oknote">`cmd/` は接続を担当します。usecase 本体、provider 固有処理、Viewer 表示判断、DB state 遷移を `cmd/` に戻さないことが重要です。</div>
+    </section>
+
+    <section id="change">
+      <h2>10. 仕様変更時の見方</h2>
+      <p class="lead">仕様を変えるときは、まず「どのモジュールが主担当か」を決めます。1 対 1 で説明できない場合は、実装前に分割・再設計候補として記録します。</p>
+      <table class="matrix">
+        <thead>
+          <tr><th>変えたい仕様</th><th>最初に見る場所</th><th>注意する境界</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>route / Chat / Worker / Coder</td><td><code>message_orchestrator_*.go</code>, <code>internal/domain/routing</code></td><td>Coder は実行しない。Worker が実行主体。</td></tr>
+          <tr><td>Viewer 表示</td><td><code>internal/adapter/viewer</code>, <code>viewer.html</code>, <code>assets/</code></td><td>表示、event、log、audio trigger を分ける。</td></tr>
+          <tr><td>IdleChat</td><td><code>internal/application/idlechat</code></td><td>raw response、view data、audio trigger を分ける。</td></tr>
+          <tr><td>STT / TTS</td><td><code>cmd/picoclaw/stt_runtime_*.go</code>, <code>internal/infrastructure/tts</code></td><td>STT は通常 chat 入力。TTS chunk は本文ではない。</td></tr>
+          <tr><td>LLM provider</td><td><code>internal/infrastructure/llm/providers</code>, <code>factory</code>, <code>middleware</code></td><td>repo example と live runtime config を混同しない。</td></tr>
+          <tr><td>Memory / Source Registry</td><td><code>l1_sqlite_*.go</code>, <code>sourcefetcher</code>, <code>viewer/source_registry</code></td><td>observed / candidate / validated / promoted を飛ばさない。</td></tr>
+        </tbody>
+      </table>
+      <div class="rule-list">
+        <div class="rule" style="border-left-color: var(--danger)"><strong>禁止</strong>fallback を正常系として隠す。</div>
+        <div class="rule" style="border-left-color: var(--danger)"><strong>禁止</strong>Viewer 表示、音声、口パク、ログを同じ契約にする。</div>
+        <div class="rule" style="border-left-color: var(--danger)"><strong>禁止</strong>Coder が破壊的操作を直接実行する。</div>
+        <div class="rule" style="border-left-color: var(--danger)"><strong>禁止</strong>Source Registry を無審査で正式 memory へ昇格する。</div>
+        <div class="rule" style="border-left-color: var(--warn)"><strong>要注意</strong>repo example と live <code>~/.picoclaw/config.yaml</code> を混同しない。</div>
+        <div class="rule" style="border-left-color: var(--ok)"><strong>推奨</strong>変更前に主担当ファイル、入力、出力、副作用、ログ、エラー契約を決める。</div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Source: docs/10_新仕様, current implementation
+  </footer>
+</body>
+</html>

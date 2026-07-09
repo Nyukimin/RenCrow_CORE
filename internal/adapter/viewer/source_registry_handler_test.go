@@ -4,19 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type sourceRegistryStoreStub struct {
-	entries []conversationpersistence.L1SourceRegistryEntry
-	saved   []conversationpersistence.L1SourceRegistryEntry
+	entries []l1sqlite.L1SourceRegistryEntry
+	saved   []l1sqlite.L1SourceRegistryEntry
 }
 
 func TestHandleSourceRegistry_RunSelectedSource(t *testing.T) {
@@ -29,15 +28,15 @@ func TestHandleSourceRegistry_RunSelectedSource(t *testing.T) {
 </channel></rss>`))
 	}))
 	defer srv.Close()
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "rss:viewer-run",
 		URL:           srv.URL,
-		Kind:          conversationpersistence.L1SourceKindRSS,
+		Kind:          l1sqlite.L1SourceKindRSS,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "rss",
@@ -72,15 +71,15 @@ func TestHandleSourceRegistry_RunReturnsWarningCount(t *testing.T) {
 </channel></rss>`))
 	}))
 	defer srv.Close()
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "rss:viewer-risk",
 		URL:           srv.URL,
-		Kind:          conversationpersistence.L1SourceKindRSS,
+		Kind:          l1sqlite.L1SourceKindRSS,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "rss",
@@ -111,15 +110,15 @@ func TestHandleSourceRegistry_RunReturnsWarningCount(t *testing.T) {
 
 func TestHandleSourceRegistry_StagingListValidateAndPromote(t *testing.T) {
 	ctx := context.Background()
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "rss:viewer-staging",
 		URL:           "https://example.com/feed.xml",
-		Kind:          conversationpersistence.L1SourceKindRSS,
+		Kind:          l1sqlite.L1SourceKindRSS,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "rss",
@@ -128,8 +127,8 @@ func TestHandleSourceRegistry_StagingListValidateAndPromote(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveSourceRegistryEntry failed: %v", err)
 	}
-	staged, err := store.SaveStagingItem(ctx, conversationpersistence.L1StagingItem{
-		Kind:         conversationpersistence.L1StagingKindExternalFetch,
+	staged, err := store.SaveStagingItem(ctx, l1sqlite.L1StagingItem{
+		Kind:         l1sqlite.L1StagingKindExternalFetch,
 		Namespace:    "kb:ai",
 		EventID:      "evt-viewer-staging",
 		SourceID:     "rss:viewer-staging",
@@ -179,12 +178,12 @@ func TestHandleSourceRegistry_StagingListValidateAndPromote(t *testing.T) {
 		t.Fatalf("expected validation 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	var validateOut struct {
-		Result conversationpersistence.L1StagingValidationResult `json:"result"`
+		Result l1sqlite.L1StagingValidationResult `json:"result"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &validateOut); err != nil {
 		t.Fatalf("invalid validation json: %v", err)
 	}
-	if !validateOut.Result.Passed || validateOut.Result.Status != conversationpersistence.L1StagingStatusValidated {
+	if !validateOut.Result.Passed || validateOut.Result.Status != l1sqlite.L1StagingStatusValidated {
 		t.Fatalf("expected validated result, got %+v", validateOut.Result)
 	}
 
@@ -211,15 +210,15 @@ func TestHandleSourceRegistry_StagingListValidateAndPromote(t *testing.T) {
 
 func TestHandleSourceRegistry_PromoteStagingToDomainGraph(t *testing.T) {
 	ctx := context.Background()
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "web:movie",
 		URL:           "https://example.com/movie",
-		Kind:          conversationpersistence.L1SourceKindWebGather,
+		Kind:          l1sqlite.L1SourceKindWebGather,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "public page",
@@ -228,8 +227,8 @@ func TestHandleSourceRegistry_PromoteStagingToDomainGraph(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveSourceRegistryEntry failed: %v", err)
 	}
-	staged, err := store.SaveStagingItem(ctx, conversationpersistence.L1StagingItem{
-		Kind:         conversationpersistence.L1StagingKindExternalFetch,
+	staged, err := store.SaveStagingItem(ctx, l1sqlite.L1StagingItem{
+		Kind:         l1sqlite.L1StagingKindExternalFetch,
 		Namespace:    "kb:movie",
 		EventID:      "evt-domain-graph",
 		SourceID:     "web:movie",
@@ -244,7 +243,7 @@ func TestHandleSourceRegistry_PromoteStagingToDomainGraph(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveStagingItem failed: %v", err)
 	}
-	if _, err := store.ValidateStagingItem(ctx, staged.ID, conversationpersistence.L1StagingValidationPolicy{
+	if _, err := store.ValidateStagingItem(ctx, staged.ID, l1sqlite.L1StagingValidationPolicy{
 		SourceTrustScores: map[string]float64{"web:movie": 0.9},
 		MinimumTrustScore: 0.5,
 		Now:               time.Date(2026, 6, 6, 10, 5, 0, 0, time.UTC),
@@ -278,21 +277,21 @@ func TestHandleSourceRegistry_PromoteStagingToDomainGraph(t *testing.T) {
 	if out.Target != "domain_graph" || out.Item.StagingID != staged.ID || out.Item.Domain != "movie" || out.Item.EntityType != "work" {
 		t.Fatalf("unexpected domain graph promotion: %+v", out)
 	}
-	if out.Item.RelationType != "catalog_fact" || out.Item.Confidence != 0.7 || out.Item.ValidationStatus != conversationpersistence.L1StagingStatusValidated {
+	if out.Item.RelationType != "catalog_fact" || out.Item.Confidence != 0.7 || out.Item.ValidationStatus != l1sqlite.L1StagingStatusValidated {
 		t.Fatalf("unexpected domain graph assertion fields: %+v", out.Item)
 	}
 }
 
-func (s *sourceRegistryStoreStub) SaveSourceRegistryEntry(_ context.Context, entry conversationpersistence.L1SourceRegistryEntry) (*conversationpersistence.L1SourceRegistryEntry, error) {
+func (s *sourceRegistryStoreStub) SaveSourceRegistryEntry(_ context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error) {
 	s.saved = append(s.saved, entry)
 	return &entry, nil
 }
 
-func (s *sourceRegistryStoreStub) ListSourceRegistryEntries(_ context.Context, enabledOnly bool) ([]conversationpersistence.L1SourceRegistryEntry, error) {
+func (s *sourceRegistryStoreStub) ListSourceRegistryEntries(_ context.Context, enabledOnly bool) ([]l1sqlite.L1SourceRegistryEntry, error) {
 	if !enabledOnly {
 		return s.entries, nil
 	}
-	out := make([]conversationpersistence.L1SourceRegistryEntry, 0, len(s.entries))
+	out := make([]l1sqlite.L1SourceRegistryEntry, 0, len(s.entries))
 	for _, entry := range s.entries {
 		if entry.Enabled {
 			out = append(out, entry)
@@ -301,25 +300,25 @@ func (s *sourceRegistryStoreStub) ListSourceRegistryEntries(_ context.Context, e
 	return out, nil
 }
 
-func (s *sourceRegistryStoreStub) DueSourceRegistryEntries(_ context.Context, _ time.Time) ([]conversationpersistence.L1SourceRegistryEntry, error) {
+func (s *sourceRegistryStoreStub) DueSourceRegistryEntries(_ context.Context, _ time.Time) ([]l1sqlite.L1SourceRegistryEntry, error) {
 	return nil, nil
 }
 func (s *sourceRegistryStoreStub) SourceTrustScores(_ context.Context) (map[string]float64, error) {
 	return map[string]float64{}, nil
 }
-func (s *sourceRegistryStoreStub) StageSourceRegistryFetch(_ context.Context, _ string, _ conversationpersistence.L1SourceFetchPayload) (*conversationpersistence.L1StagingItem, error) {
+func (s *sourceRegistryStoreStub) StageSourceRegistryFetch(_ context.Context, _ string, _ l1sqlite.L1SourceFetchPayload) (*l1sqlite.L1StagingItem, error) {
 	return nil, fmt.Errorf("not used")
 }
-func (s *sourceRegistryStoreStub) ValidateStagingItem(_ context.Context, _ string, _ conversationpersistence.L1StagingValidationPolicy) (*conversationpersistence.L1StagingValidationResult, error) {
+func (s *sourceRegistryStoreStub) ValidateStagingItem(_ context.Context, _ string, _ l1sqlite.L1StagingValidationPolicy) (*l1sqlite.L1StagingValidationResult, error) {
 	return nil, fmt.Errorf("not used")
 }
-func (s *sourceRegistryStoreStub) PromoteValidatedStagingItemToNews(_ context.Context, _ string, _ string) (*conversationpersistence.L1NewsItem, error) {
+func (s *sourceRegistryStoreStub) PromoteValidatedStagingItemToNews(_ context.Context, _ string, _ string) (*l1sqlite.L1NewsItem, error) {
 	return nil, fmt.Errorf("not used")
 }
-func (s *sourceRegistryStoreStub) PromoteValidatedStagingItemToKnowledge(_ context.Context, _ string, _ string) (*conversationpersistence.L1KnowledgeItem, error) {
+func (s *sourceRegistryStoreStub) PromoteValidatedStagingItemToKnowledge(_ context.Context, _ string, _ string) (*l1sqlite.L1KnowledgeItem, error) {
 	return nil, fmt.Errorf("not used")
 }
-func (s *sourceRegistryStoreStub) PromoteValidatedStagingItemToDomainGraph(_ context.Context, _ string, _ string, _ string, _ string, _ string, _ float64) (*conversationpersistence.L1DomainGraphAssertion, error) {
+func (s *sourceRegistryStoreStub) PromoteValidatedStagingItemToDomainGraph(_ context.Context, _ string, _ string, _ string, _ string, _ string, _ float64) (*l1sqlite.L1DomainGraphAssertion, error) {
 	return nil, fmt.Errorf("not used")
 }
 func (s *sourceRegistryStoreStub) MarkSourceRegistryFetched(_ context.Context, _ string, _ time.Time, _ string, _ string) error {

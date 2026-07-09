@@ -3,18 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type sourceRegistryCLIStoreStub struct {
-	entries []conversationpersistence.L1SourceRegistryEntry
+	entries []l1sqlite.L1SourceRegistryEntry
 }
 
 func TestRunSourceRegistryCommand_Sweep(t *testing.T) {
@@ -27,15 +26,15 @@ func TestRunSourceRegistryCommand_Sweep(t *testing.T) {
 </channel></rss>`))
 	}))
 	defer srv.Close()
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SaveSourceRegistryEntry(ctx, conversationpersistence.L1SourceRegistryEntry{
+	if _, err := store.SaveSourceRegistryEntry(ctx, l1sqlite.L1SourceRegistryEntry{
 		SourceID:      "rss:test",
 		URL:           srv.URL,
-		Kind:          conversationpersistence.L1SourceKindRSS,
+		Kind:          l1sqlite.L1SourceKindRSS,
 		TrustScore:    0.9,
 		FetchInterval: time.Hour,
 		LicenseNote:   "rss",
@@ -62,7 +61,7 @@ func TestRunSourceRegistryCommand_Sweep(t *testing.T) {
 	}
 }
 
-func (s *sourceRegistryCLIStoreStub) SaveSourceRegistryEntry(_ context.Context, entry conversationpersistence.L1SourceRegistryEntry) (*conversationpersistence.L1SourceRegistryEntry, error) {
+func (s *sourceRegistryCLIStoreStub) SaveSourceRegistryEntry(_ context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error) {
 	for i := range s.entries {
 		if s.entries[i].SourceID == entry.SourceID {
 			s.entries[i] = entry
@@ -73,11 +72,11 @@ func (s *sourceRegistryCLIStoreStub) SaveSourceRegistryEntry(_ context.Context, 
 	return &entry, nil
 }
 
-func (s *sourceRegistryCLIStoreStub) ListSourceRegistryEntries(_ context.Context, enabledOnly bool) ([]conversationpersistence.L1SourceRegistryEntry, error) {
+func (s *sourceRegistryCLIStoreStub) ListSourceRegistryEntries(_ context.Context, enabledOnly bool) ([]l1sqlite.L1SourceRegistryEntry, error) {
 	if !enabledOnly {
 		return s.entries, nil
 	}
-	out := make([]conversationpersistence.L1SourceRegistryEntry, 0, len(s.entries))
+	out := make([]l1sqlite.L1SourceRegistryEntry, 0, len(s.entries))
 	for _, entry := range s.entries {
 		if entry.Enabled {
 			out = append(out, entry)
@@ -140,10 +139,10 @@ func TestRunSourceRegistryCommand_SaveRequiresFields(t *testing.T) {
 }
 
 func TestRunSourceRegistryCommand_Disable(t *testing.T) {
-	store := &sourceRegistryCLIStoreStub{entries: []conversationpersistence.L1SourceRegistryEntry{{
+	store := &sourceRegistryCLIStoreStub{entries: []l1sqlite.L1SourceRegistryEntry{{
 		SourceID:      "rss:ai",
 		URL:           "https://example.com/feed.xml",
-		Kind:          conversationpersistence.L1SourceKindRSS,
+		Kind:          l1sqlite.L1SourceKindRSS,
 		TrustScore:    0.8,
 		FetchInterval: time.Hour,
 		LicenseNote:   "public feed",

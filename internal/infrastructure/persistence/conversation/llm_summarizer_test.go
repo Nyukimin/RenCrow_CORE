@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 	"testing"
 	"time"
@@ -128,7 +129,7 @@ func TestLLMDailyDigestSummarizer_SummarizeDailyDigest(t *testing.T) {
 	provider := &mockLLMProvider{response: "LLM版Daily Digest"}
 	s := NewLLMDailyDigestSummarizer(provider)
 
-	got, err := s.SummarizeDailyDigest(context.Background(), time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC), "ai", L1DailyDigestSlotMorning, []L1NewsItem{{
+	got, err := s.SummarizeDailyDigest(context.Background(), time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC), "ai", l1sqlite.L1DailyDigestSlotMorning, []l1sqlite.L1NewsItem{{
 		SourceID:     "rss:test",
 		SourceURL:    "https://example.com/news",
 		PublishedAt:  time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC),

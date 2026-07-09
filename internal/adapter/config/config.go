@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,12 +16,22 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// ${ENV_VAR} を環境変数で展開してから YAML パース
-	expanded := os.ExpandEnv(string(data))
+	// ${ENV_VAR} を環境変数で展開してから YAML パースする。
+	// ${module:...} は runtime_topology resolver 用の参照なのでここでは保持する。
+	expanded := os.Expand(string(data), func(key string) string {
+		if strings.HasPrefix(key, "module:") {
+			return "${" + key + "}"
+		}
+		return os.Getenv(key)
+	})
 
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config YAML: %w", err)
+	}
+
+	if err := cfg.resolveRuntimeTopologyReferences(); err != nil {
+		return nil, fmt.Errorf("failed to resolve runtime topology references: %w", err)
 	}
 
 	// デフォルト値設定

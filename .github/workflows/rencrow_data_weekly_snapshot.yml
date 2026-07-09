@@ -1,0 +1,29 @@
+name: rencrow-data-weekly-snapshot
+
+on:
+  schedule:
+    - cron: "30 23 * * 5"
+  workflow_dispatch:
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run unit and E2E tests
+        run: PYTHONPATH=rencrow-data/src python3 -m unittest discover -s rencrow-data/tests
+      - name: Initialize database
+        run: PYTHONPATH=rencrow-data/src python3 rencrow-data/src/01_init_db.py
+      - name: Fetch market data
+        run: PYTHONPATH=rencrow-data/src python3 rencrow-data/src/02_fetch_market.py
+      - name: Fetch macro and calendar data
+        run: PYTHONPATH=rencrow-data/src python3 rencrow-data/src/03_fetch_macro.py
+      - name: Build features
+        run: PYTHONPATH=rencrow-data/src python3 rencrow-data/src/04_build_features.py
+      - name: Detect events
+        run: PYTHONPATH=rencrow-data/src python3 rencrow-data/src/05_detect_events.py
+      - name: Make snapshot
+        run: PYTHONPATH=rencrow-data/src python3 rencrow-data/src/06_make_snapshot.py

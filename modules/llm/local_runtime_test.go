@@ -7,17 +7,18 @@ import (
 
 func TestLocalBaseURLForAliasUsesRoleOverride(t *testing.T) {
 	cfg := LocalRuntimeConfig{
-		BaseURL:       "http://192.168.1.31:8081",
-		ChatBaseURL:   "http://192.168.1.31:8081",
-		WorkerBaseURL: "http://192.168.1.31:8082",
-		HeavyBaseURL:  "http://192.168.1.31:8083",
-		WildBaseURL:   "http://192.168.1.31:8084",
+		BaseURL:           "http://192.168.1.31:8081",
+		ChatBaseURL:       "http://192.168.1.31:8081",
+		WorkerBaseURL:     "http://192.168.1.31:8082",
+		ChatWorkerBaseURL: "http://192.168.1.31:18082",
+		HeavyBaseURL:      "http://192.168.1.31:8083",
+		WildBaseURL:       "http://192.168.1.31:8084",
 	}
 
 	cases := map[string]string{
 		"Chat":       "http://192.168.1.31:8081",
 		"Worker":     "http://192.168.1.31:8082",
-		"ChatWorker": "http://192.168.1.31:8082",
+		"ChatWorker": "http://192.168.1.31:18082",
 		"Heavy":      "http://192.168.1.31:8083",
 		"Wild":       "http://192.168.1.31:8084",
 	}

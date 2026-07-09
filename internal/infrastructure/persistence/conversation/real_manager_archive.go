@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 
 	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
 )
@@ -20,9 +21,9 @@ func (r *RealConversationManager) SearchByDomain(ctx context.Context, domain str
 	return r.duckdbStore.SearchByDomain(ctx, domain, limit)
 }
 
-func (r *RealConversationManager) SearchKnowledgeArchiveFTS(ctx context.Context, domain string, query string, limit int) ([]L1KnowledgeItem, error) {
+func (r *RealConversationManager) SearchKnowledgeArchiveFTS(ctx context.Context, domain string, query string, limit int) ([]l1sqlite.L1KnowledgeItem, error) {
 	if r == nil || r.duckdbStore == nil {
-		return []L1KnowledgeItem{}, nil
+		return []l1sqlite.L1KnowledgeItem{}, nil
 	}
 	return r.duckdbStore.SearchKnowledgeArchiveFTS(ctx, domain, query, limit)
 }

@@ -127,6 +127,7 @@ type LocalLLMRuntimeConfig struct {
 	Provider          string                       `json:"provider,omitempty"`
 	ChatBaseURL       string                       `json:"chat_base_url,omitempty"`
 	WorkerBaseURL     string                       `json:"worker_base_url,omitempty"`
+	ChatWorkerBaseURL string                       `json:"chat_worker_base_url,omitempty"`
 	HeavyBaseURL      string                       `json:"heavy_base_url,omitempty"`
 	WildBaseURL       string                       `json:"wild_base_url,omitempty"`
 	ChatModel         string                       `json:"chat_model,omitempty"`
@@ -331,6 +332,7 @@ func normalizeLocalLLMRuntimeConfig(in LocalLLMRuntimeConfig) LocalLLMRuntimeCon
 	in.Provider = strings.TrimSpace(in.Provider)
 	in.ChatBaseURL = strings.TrimRight(strings.TrimSpace(in.ChatBaseURL), "/")
 	in.WorkerBaseURL = strings.TrimRight(strings.TrimSpace(in.WorkerBaseURL), "/")
+	in.ChatWorkerBaseURL = strings.TrimRight(strings.TrimSpace(in.ChatWorkerBaseURL), "/")
 	in.HeavyBaseURL = strings.TrimRight(strings.TrimSpace(in.HeavyBaseURL), "/")
 	in.WildBaseURL = strings.TrimRight(strings.TrimSpace(in.WildBaseURL), "/")
 	in.ChatModel = strings.TrimSpace(in.ChatModel)
@@ -359,7 +361,7 @@ func fetchLocalLLMLiveModels(ctx context.Context, cfg LocalLLMRuntimeConfig) map
 	}{
 		{key: "chat", role: "Chat", alias: cfg.ChatModel, base: cfg.ChatBaseURL},
 		{key: "worker", role: "Worker", alias: cfg.WorkerModel, base: cfg.WorkerBaseURL},
-		{key: "chatworker", role: "ChatWorker", alias: cfg.ChatWorkerModel, base: cfg.WorkerBaseURL},
+		{key: "chatworker", role: "ChatWorker", alias: cfg.ChatWorkerModel, base: firstNonEmpty(cfg.ChatWorkerBaseURL, cfg.WorkerBaseURL)},
 	}
 	out := make(map[string]LocalLLMLiveModel, len(roles))
 	client := &http.Client{Timeout: 1500 * time.Millisecond}

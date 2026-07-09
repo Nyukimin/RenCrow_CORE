@@ -1,0 +1,8 @@
+{
+  "latest": "tmp/stt_test_golden_25s_dataset.json",
+  "id": "golden_25s_v1",
+  "captured_at": "20260609_140311",
+  "trimmed_wav": "tmp/client_stt_input_latest.wav",
+  "raw_wav": "tmp/client_stt_input_latest_raw.wav",
+  "reference_txt": "tmp/stt_inputs/client_stt_input_20260609_140311_reference.txt"
+}

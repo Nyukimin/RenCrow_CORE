@@ -144,6 +144,24 @@ func (c *Config) setDefaults() {
 	if c.BrowserActor.MaskSecrets == nil {
 		c.BrowserActor.MaskSecrets = boolConfigPtr(true)
 	}
+	if c.Codex.Command == "" {
+		c.Codex.Command = "codex"
+	}
+	if c.Codex.Sandbox == "" {
+		c.Codex.Sandbox = "read-only"
+	}
+	if c.Codex.TimeoutMS <= 0 {
+		c.Codex.TimeoutMS = 600000
+	}
+	if c.Codex.MaxPromptBytes <= 0 {
+		c.Codex.MaxPromptBytes = 65536
+	}
+	if c.Codex.MaxOutputBytes <= 0 {
+		c.Codex.MaxOutputBytes = 1048576
+	}
+	if c.Codex.Ephemeral == nil {
+		c.Codex.Ephemeral = boolConfigPtr(true)
+	}
 
 	if c.Log.Level == "" {
 		c.Log.Level = "info"

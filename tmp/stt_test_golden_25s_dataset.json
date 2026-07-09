@@ -1,0 +1,18 @@
+{
+  "id": "golden_25s_v1",
+  "captured_at": "20260609_140311",
+  "target_duration_sec": 25,
+  "raw_wav": "tmp/stt_inputs/client_stt_input_20260609_140311_raw.wav",
+  "trimmed_wav": "tmp/stt_inputs/client_stt_input_20260609_140311.wav",
+  "reference_txt": "tmp/stt_inputs/client_stt_input_20260609_140311_reference.txt",
+  "stt_txt": "tmp/stt_inputs/client_stt_input_20260609_140311_stt.txt",
+  "script_md": "tmp/viewer_test_recording_script_golden_25s.md",
+  "raw_duration_sec": 26.96,
+  "trimmed_duration_sec": 25.32,
+  "stt_provider": "http://192.168.1.207:8766/v1/audio/transcriptions",
+  "stt_ms": 2031.5,
+  "reference_text": "おはようございます。RenCrowの音声テストです。今日は2026年6月9日、午後9時ごろです。私の名前はゆきみです。この音声は文字起こし比較用です。数字の確認もお願いします。123、4567、89012。",
+  "stt_text": "おはようございます。デンクロの音声テストです。今日は2026年6月9日午後9時頃です。私の名前はゆきみです。この音声は文字起こし比較用です。数字の確認もお願いします。123456789012",
+  "stt_notes": "RenCrow→デンクロ、数字の読点欠落。35秒版と違い末尾ハルシネーションなし。",
+  "status": "recorded"
+}

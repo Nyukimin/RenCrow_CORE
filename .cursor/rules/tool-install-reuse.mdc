@@ -1,0 +1,14 @@
+---
+description: Confirm risk before installing tools and prefer reuse over creating new tools
+alwaysApply: true
+---
+
+# Tool Install / Reuse Rule
+
+RenCrow で外部ツール、CLI、MCP、ブラウザ自動化、補助スクリプト基盤を使う前に、危険性と再利用可能性を確認する。
+
+- インストール前に、目的、導入元、権限、ネットワークアクセス、書き込み範囲、シークレット要否を確認する。
+- 既存のインストール済みツール、自作ツール、skill、plugin、MCP、`tools/`、`scripts/`、`experiments/`、`sandbox/` を先に探す。
+- 新規ツール作成は最後の手段とし、既存ツールの再利用または小さい拡張を優先する。
+- 自分で作成またはインストールしたツールは、場所、用途、起動方法を記録し、次回以降は再利用する。
+- 出所不明、広範な権限、シークレット要求、既存環境破壊の可能性がある場合は、実行前に停止して報告する。

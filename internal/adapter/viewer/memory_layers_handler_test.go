@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,7 +11,6 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type memoryLayerHotStoreStub struct {
@@ -18,36 +18,36 @@ type memoryLayerHotStoreStub struct {
 	namespace string
 	state     string
 	limit     int
-	l0        []conversationpersistence.L1MemoryEvent
-	l1        []conversationpersistence.L1MemoryEvent
-	l3        []conversationpersistence.L1MemoryEvent
+	l0        []l1sqlite.L1MemoryEvent
+	l1        []l1sqlite.L1MemoryEvent
+	l3        []l1sqlite.L1MemoryEvent
 }
 
-func (s *memoryLayerHotStoreStub) RecentBySession(_ context.Context, sessionID string, limit int) ([]conversationpersistence.L1MemoryEvent, error) {
+func (s *memoryLayerHotStoreStub) RecentBySession(_ context.Context, sessionID string, limit int) ([]l1sqlite.L1MemoryEvent, error) {
 	s.sessionID = sessionID
 	s.limit = limit
 	if s.l0 != nil {
 		return s.l0, nil
 	}
-	return []conversationpersistence.L1MemoryEvent{{ID: "l0-1", SessionID: sessionID, Layer: "L0", Message: "current turn", CreatedAt: time.Now().UTC()}}, nil
+	return []l1sqlite.L1MemoryEvent{{ID: "l0-1", SessionID: sessionID, Layer: "L0", Message: "current turn", CreatedAt: time.Now().UTC()}}, nil
 }
 
-func (s *memoryLayerHotStoreStub) RecentByNamespace(_ context.Context, namespace string, limit int) ([]conversationpersistence.L1MemoryEvent, error) {
+func (s *memoryLayerHotStoreStub) RecentByNamespace(_ context.Context, namespace string, limit int) ([]l1sqlite.L1MemoryEvent, error) {
 	s.namespace = namespace
 	s.limit = limit
 	if s.l1 != nil {
 		return s.l1, nil
 	}
-	return []conversationpersistence.L1MemoryEvent{{ID: "l1-1", Namespace: namespace, Layer: "L1", Message: "today memory", CreatedAt: time.Now().UTC()}}, nil
+	return []l1sqlite.L1MemoryEvent{{ID: "l1-1", Namespace: namespace, Layer: "L1", Message: "today memory", CreatedAt: time.Now().UTC()}}, nil
 }
 
-func (s *memoryLayerHotStoreStub) RecentByState(_ context.Context, memoryState string, limit int) ([]conversationpersistence.L1MemoryEvent, error) {
+func (s *memoryLayerHotStoreStub) RecentByState(_ context.Context, memoryState string, limit int) ([]l1sqlite.L1MemoryEvent, error) {
 	s.state = memoryState
 	s.limit = limit
 	if s.l3 != nil {
 		return s.l3, nil
 	}
-	return []conversationpersistence.L1MemoryEvent{{ID: "l3-1", MemoryState: memoryState, Layer: "L3", Message: "confirmed memory", CreatedAt: time.Now().UTC()}}, nil
+	return []l1sqlite.L1MemoryEvent{{ID: "l3-1", MemoryState: memoryState, Layer: "L3", Message: "confirmed memory", CreatedAt: time.Now().UTC()}}, nil
 }
 
 type memoryLayerColdStoreStub struct {
@@ -101,7 +101,7 @@ func TestHandleMemoryLayers(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if hot.sessionID != "session-1" || hot.namespace != "user:ren" || hot.state != conversationpersistence.MemoryStateConfirmed || hot.limit != 4 {
+	if hot.sessionID != "session-1" || hot.namespace != "user:ren" || hot.state != l1sqlite.MemoryStateConfirmed || hot.limit != 4 {
 		t.Fatalf("unexpected hot calls: %+v", hot)
 	}
 	if cold.sessionID != "session-1" || cold.domain != "movie" || cold.limit != 4 || cold.kbDomain != "movie" || cold.kbLimit != 4 {
@@ -109,11 +109,11 @@ func TestHandleMemoryLayers(t *testing.T) {
 	}
 
 	var out struct {
-		L0       []conversationpersistence.L1MemoryEvent `json:"l0"`
-		L1       []conversationpersistence.L1MemoryEvent `json:"l1"`
-		L2       []*domconv.ThreadSummary                `json:"l2"`
-		L3       []conversationpersistence.L1MemoryEvent `json:"l3"`
-		L3Qdrant []*domconv.Document                     `json:"l3_qdrant"`
+		L0       []l1sqlite.L1MemoryEvent `json:"l0"`
+		L1       []l1sqlite.L1MemoryEvent `json:"l1"`
+		L2       []*domconv.ThreadSummary `json:"l2"`
+		L3       []l1sqlite.L1MemoryEvent `json:"l3"`
+		L3Qdrant []*domconv.Document      `json:"l3_qdrant"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("invalid json: %v", err)
@@ -144,7 +144,7 @@ func TestHandleMemoryLayersRejectsMalformedSnapshot(t *testing.T) {
 		{
 			name: "l1 missing message",
 			hot: &memoryLayerHotStoreStub{
-				l1: []conversationpersistence.L1MemoryEvent{{ID: "l1-1", Layer: "L1", CreatedAt: now}},
+				l1: []l1sqlite.L1MemoryEvent{{ID: "l1-1", Layer: "L1", CreatedAt: now}},
 			},
 			cold: &memoryLayerColdStoreStub{},
 			want: "l1 memory missing message",

@@ -67,8 +67,11 @@ func main() {
 	source := filepath.Join(root, "new_parts")
 	generated := filepath.Join(root, "generated")
 
-	if err := os.RemoveAll(generated); err != nil {
-		fatal(err)
+	// generated 直下の生成物のみ削除する（無関係な管理ファイルを巻き込まない）
+	for _, name := range []string{"base", "eyebrows", "eyes", "mouth", "preview", "manifest.json"} {
+		if err := os.RemoveAll(filepath.Join(generated, name)); err != nil {
+			fatal(err)
+		}
 	}
 	for _, dir := range []string{
 		filepath.Join(generated, "base"),
@@ -396,8 +399,13 @@ func resolveLayerAnchor(root, id string, anchors map[string]anchor, w, h int) (a
 	if !ok {
 		return anchor{}, false
 	}
-	centerX := base.X + baseW/2
-	centerY := base.Y + baseH/2
+	// base.X/Y はスケール適用後レイヤーの左上座標なので、中心計算もスケール後サイズで行う
+	baseScale := base.Scale
+	if baseScale <= 0 {
+		baseScale = 1.0
+	}
+	centerX := base.X + int(math.Round(float64(baseW)*baseScale))/2
+	centerY := base.Y + int(math.Round(float64(baseH)*baseScale))/2
 	return anchor{
 		X:      centerX - w/2,
 		Y:      centerY - h/2,

@@ -1,0 +1,21 @@
+---
+description: IdleChat topic speech text must preserve topics; only Story may generate a catchy title
+globs: internal/application/idlechat/**/*.go,cmd/picoclaw/*idlechat*.go,internal/adapter/viewer/*idlechat*,prompts/idle_chat/*.md,docs/01_正本仕様/08_IdleChat.md,docs/10_新仕様/06_IdleChat仕様.md
+alwaysApply: false
+---
+
+# IdleChat Topic Speech Title Rule
+
+IdleChat のお題読み上げは、カテゴリごとに「置換」と「生成」を混同しない。
+このルールの変換結果は読み上げ専用であり、Viewer 描画へ使わない。
+実装コードで決定できるカテゴリ分岐、prefix 付与、Viewer 禁止、TTS ルーティングを prompt に書かない。
+共通原則は `.cursor/rules/prompt-code-boundary.mdc` に従う。
+
+- Single / Double / External / Movie / News / Forecast は取得済み topic に `今日のお題。` を前置するだけ。カテゴリ名、strategy、seed、provider 名を読ませない。
+- 上記 6 カテゴリの topic 本文を LLM で再生成、要約、言い換えしない。句点や括弧など同一内容を保つ正規化だけを許可する。
+- Story だけは内部 topic を短いキャッチーなタイトルへ生成変換してよい。
+- Story 生成タイトルは元話と改変軸を保持し、`物語:`、カテゴリ名、解説、あらすじを出さない。
+- 最終読み上げ文字列は `今日のお題。<topic_or_story_title>` の 1 発話単位にする。
+- 読み上げ用文字列を Viewer topic、timeline、history、summary の描画本文へ流用しない。
+- `prompts/idle_chat/story_topic_title.md` には Story タイトル候補生成だけを書く。
+- 変更時は `docs/01_正本仕様/08_IdleChat.md` と `prompts/idle_chat/story_topic_title.md` を一次参照する。

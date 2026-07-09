@@ -2,26 +2,59 @@ package knowledgememory
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"path/filepath"
 	"testing"
 	"time"
 
+	kmapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/knowledgememory"
 	domainkm "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/knowledgememory"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type fakeL1KnowledgeMemoryStore struct {
-	staging  []conversationpersistence.L1StagingItem
-	registry []conversationpersistence.L1SourceRegistryEntry
+	staging  []l1sqlite.L1StagingItem
+	registry []l1sqlite.L1SourceRegistryEntry
 }
 
-func (s *fakeL1KnowledgeMemoryStore) SaveStagingItem(_ context.Context, item conversationpersistence.L1StagingItem) (*conversationpersistence.L1StagingItem, error) {
+func (s *fakeL1KnowledgeMemoryStore) SaveStagingItem(_ context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error) {
 	s.staging = append(s.staging, item)
 	return &item, nil
 }
 
-func (s *fakeL1KnowledgeMemoryStore) SaveSourceRegistryEntry(_ context.Context, entry conversationpersistence.L1SourceRegistryEntry) (*conversationpersistence.L1SourceRegistryEntry, error) {
+func (s *fakeL1KnowledgeMemoryStore) SaveSourceRegistryEntry(_ context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error) {
 	s.registry = append(s.registry, entry)
 	return &entry, nil
+}
+
+func TestDailyIntakeRegistryAdapterConvertsSourceRegistryEntry(t *testing.T) {
+	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	adapter := NewDailyIntakeRegistryAdapter(l1)
+	saved, err := adapter.SaveSourceRegistryEntry(context.Background(), kmapp.SourceRegistryEntry{
+		SourceID:      "knowledge_memory:daily_intake_rule:rule_1",
+		URL:           "https://example.com/feed.xml",
+		Kind:          kmapp.SourceKindSearchFallback,
+		TrustScore:    0.55,
+		FetchInterval: 24 * time.Hour,
+		LicenseNote:   "daily intake rule reviewed source; fetch to staging before promote",
+		Enabled:       true,
+		Meta:          map[string]interface{}{"daily_intake_enabled": true},
+	})
+	if err != nil {
+		t.Fatalf("SaveSourceRegistryEntry failed: %v", err)
+	}
+	if saved == nil || saved.SourceID != "knowledge_memory:daily_intake_rule:rule_1" || !saved.Enabled {
+		t.Fatalf("saved entry = %#v", saved)
+	}
+	entries, err := l1.ListSourceRegistryEntries(context.Background(), true)
+	if err != nil {
+		t.Fatalf("ListSourceRegistryEntries failed: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Kind != l1sqlite.L1SourceKindSearchFallback || entries[0].Meta["daily_intake_enabled"] != true {
+		t.Fatalf("entries = %#v", entries)
+	}
 }
 
 func TestWithL1ConnectionIgnoresTypedNilL1Store(t *testing.T) {
@@ -62,10 +95,10 @@ func TestL1ConnectedStoreStagesPersonalArchiveWithoutPromote(t *testing.T) {
 		t.Fatalf("expected one staging item, got %#v", l1.staging)
 	}
 	item := l1.staging[0]
-	if item.Kind != conversationpersistence.L1StagingKindMemoryCandidate || item.Namespace != "user:ren" {
+	if item.Kind != l1sqlite.L1StagingKindMemoryCandidate || item.Namespace != "user:ren" {
 		t.Fatalf("unexpected staging route: %#v", item)
 	}
-	if item.ValidationStatus != conversationpersistence.L1StagingStatusPending {
+	if item.ValidationStatus != l1sqlite.L1StagingStatusPending {
 		t.Fatalf("expected pending status, got %s", item.ValidationStatus)
 	}
 	if item.Meta["protected_original"] != true || item.Meta["auto_promote"] != false || item.Meta["review_required"] != true {
@@ -94,7 +127,7 @@ func TestL1ConnectedStoreStagesNewsAndDisabledSourceRegistryCandidate(t *testing
 	if len(l1.staging) != 1 {
 		t.Fatalf("expected one staging item, got %#v", l1.staging)
 	}
-	if l1.staging[0].Kind != conversationpersistence.L1StagingKindExternalFetch || l1.staging[0].Namespace != "kb:news" {
+	if l1.staging[0].Kind != l1sqlite.L1StagingKindExternalFetch || l1.staging[0].Namespace != "kb:news" {
 		t.Fatalf("unexpected news staging item: %#v", l1.staging[0])
 	}
 	if len(l1.registry) != 1 {
@@ -104,7 +137,7 @@ func TestL1ConnectedStoreStagesNewsAndDisabledSourceRegistryCandidate(t *testing
 	if source.Enabled {
 		t.Fatalf("source registry candidate must be disabled before review: %#v", source)
 	}
-	if source.URL != "https://example.com/news/1" || source.Kind != conversationpersistence.L1SourceKindSearchFallback {
+	if source.URL != "https://example.com/news/1" || source.Kind != l1sqlite.L1SourceKindSearchFallback {
 		t.Fatalf("unexpected source registry candidate: %#v", source)
 	}
 	if source.Meta["review_required"] != true || source.Meta["auto_fetch"] != false {
@@ -132,7 +165,7 @@ func TestL1ConnectedStoreDailyIntakeURLCreatesDisabledSourceRegistryCandidate(t 
 	if len(l1.staging) != 1 {
 		t.Fatalf("expected one staging item, got %#v", l1.staging)
 	}
-	if l1.staging[0].Kind != conversationpersistence.L1StagingKindMemoryCandidate || l1.staging[0].Namespace != "user:ren" {
+	if l1.staging[0].Kind != l1sqlite.L1StagingKindMemoryCandidate || l1.staging[0].Namespace != "user:ren" {
 		t.Fatalf("unexpected daily intake staging item: %#v", l1.staging[0])
 	}
 	if len(l1.registry) != 1 {

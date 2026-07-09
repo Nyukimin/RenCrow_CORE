@@ -3,19 +3,19 @@ package verification
 import (
 	"context"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	appverification "github.com/Nyukimin/picoclaw_multiLLM/internal/application/verification"
 	domainverification "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/verification"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type L1EvidenceStore interface {
-	SearchKnowledgeItemsFTS(ctx context.Context, domain string, query string, limit int) ([]conversationpersistence.L1KnowledgeItem, error)
-	GetSimilarFreshSearchCache(ctx context.Context, provider string, rawQuery string, now time.Time, threshold float64) (*conversationpersistence.L1SearchCacheEntry, error)
-	ListSourceRegistryEntries(ctx context.Context, enabledOnly bool) ([]conversationpersistence.L1SourceRegistryEntry, error)
+	SearchKnowledgeItemsFTS(ctx context.Context, domain string, query string, limit int) ([]l1sqlite.L1KnowledgeItem, error)
+	GetSimilarFreshSearchCache(ctx context.Context, provider string, rawQuery string, now time.Time, threshold float64) (*l1sqlite.L1SearchCacheEntry, error)
+	ListSourceRegistryEntries(ctx context.Context, enabledOnly bool) ([]l1sqlite.L1SourceRegistryEntry, error)
 }
 
 type L1EvidenceReader struct {
@@ -194,7 +194,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func sourceRegistryEntryMatches(query string, entry conversationpersistence.L1SourceRegistryEntry) bool {
+func sourceRegistryEntryMatches(query string, entry l1sqlite.L1SourceRegistryEntry) bool {
 	haystack := strings.ToLower(entry.SourceID + "\n" + entry.URL + "\n" + entry.Kind)
 	for _, term := range significantTerms(query) {
 		if strings.Contains(haystack, term) {

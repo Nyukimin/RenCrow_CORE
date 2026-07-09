@@ -1,3 +1,5 @@
+//go:build (linux && amd64) || (darwin && arm64)
+
 package toolregistry
 
 import (
@@ -56,10 +58,10 @@ func TestRegister_Idempotent(t *testing.T) {
 	ctx := context.Background()
 
 	entry := capability.ToolEntry{
-		Name:      "tool_a",
+		Name:       "tool_a",
 		SchemaJSON: `{}`,
-		Platforms: []string{"linux"},
-		Source:    capability.ToolSourceBuiltin,
+		Platforms:  []string{"linux"},
+		Source:     capability.ToolSourceBuiltin,
 	}
 
 	// 2回登録しても重複エラーにならない

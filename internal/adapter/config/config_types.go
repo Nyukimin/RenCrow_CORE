@@ -27,6 +27,9 @@ type Config struct {
 	// === MLX / local OpenAI-compatible LLM runtime ===
 	LocalLLM LocalLLMConfig `yaml:"local_llm"`
 
+	// === Runtime module placement source of truth ===
+	RuntimeTopology RuntimeTopologyConfig `yaml:"runtime_topology"`
+
 	// === Optional Webwright browser-backed fetch bridge ===
 	WebwrightFetch WebwrightFetchConfig `yaml:"webwright_fetch"`
 
@@ -35,6 +38,9 @@ type Config struct {
 
 	// === Browser Actor user-like browser operation sidecar ===
 	BrowserActor BrowserActorConfig `yaml:"browser_actor"`
+
+	// === Codex non-interactive coding agent bridge ===
+	Codex CodexConfig `yaml:"codex"`
 
 	// === ComfyUI image generation backend ===
 	ComfyUI ComfyUIConfig `yaml:"comfyui"`

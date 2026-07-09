@@ -1,12 +1,14 @@
 package main
 
 import (
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"path/filepath"
 
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/viewer"
 	characterruntimeapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/characterruntime"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
 	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 	executionpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/execution"
 	jobpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/job"
@@ -15,9 +17,10 @@ import (
 func buildViewerRuntimeHandlers(
 	cfg *config.Config,
 	deps *Dependencies,
-	l1Store *conversationpersistence.L1SQLiteStore,
+	l1Store *l1sqlite.L1SQLiteStore,
 	realMgr *conversationpersistence.RealConversationManager,
 	reportPath string,
+	gameDecisionProvider llm.LLMProvider,
 ) {
 	if l1Store == nil {
 		deps.viewerMemoryLayers = viewer.HandleMemoryLayers(nil, nil)
@@ -43,6 +46,39 @@ func buildViewerRuntimeHandlers(
 		deps.viewerMovieDomainGraphSync = viewer.HandleMovieDomainGraphSync(viewer.MovieCatalogOptions{}, l1Store)
 		deps.viewerHobbyDomainGraphSync = viewer.HandleHobbyDomainGraphSync(viewer.HobbyGraphOptions{}, l1Store)
 	}
+	gameBridgeStorePath := defaultGameBridgeStorePath(cfg.WorkspaceDir)
+	var gameBridgeStore *viewer.GameBridgeStore
+	var gameDecisionGenerator viewer.GameDecisionGenerator
+	gameBridgeResultMode := "candidate_ack"
+	gameBridgeDecisionMode := "deterministic_stub"
+	if gameBridgeStorePath != "" {
+		gameBridgeStore = viewer.NewGameBridgeStore(gameBridgeStorePath)
+		gameBridgeResultMode = "persisted_candidate"
+		log.Printf("Viewer game bridge candidate store enabled: %s", gameBridgeStorePath)
+	}
+	if gameDecisionProvider != nil {
+		gameDecisionGenerator = viewer.NewLLMGameDecisionGenerator(gameDecisionProvider)
+		gameBridgeDecisionMode = "llm"
+		log.Printf("Viewer game bridge LLM decision enabled: provider=%s", gameDecisionProvider.Name())
+	}
+	gameBridgeStatusOptions := viewer.GameBridgeStatusOptions{
+		ConversationEngineEnabled: realMgr != nil,
+		L1StoreEnabled:            l1Store != nil,
+		LLMRouterEnabled:          gameDecisionGenerator != nil,
+		DecisionMode:              gameBridgeDecisionMode,
+		ResultMode:                gameBridgeResultMode,
+	}
+	deps.viewerGamesStatus = viewer.HandleGameBridgeStatus(gameBridgeStatusOptions)
+	deps.viewerGamesDecision = viewer.HandleGameBridgeDecision(viewer.GameBridgeDecisionOptions{
+		RecallReader: gameBridgeStore,
+		Generator:    gameDecisionGenerator,
+	})
+	deps.viewerGamesResult = viewer.HandleGameBridgeResult(gameBridgeStore)
+	deps.viewerGamesSessions = viewer.HandleGameBridgeSessions(gameBridgeStore, gameBridgeStatusOptions)
+	deps.viewerGamesEvents = viewer.HandleGameBridgeEvents(gameBridgeStore)
+	gameObserverProxyOptions := viewer.GameObserverProxyOptions{}
+	deps.viewerGamesObserverPage = viewer.HandleGameObserverPage(gameObserverProxyOptions)
+	deps.viewerGamesObserverProxy = viewer.HandleGameObserverProxy(gameObserverProxyOptions)
 
 	hub := viewer.NewEventHub(200)
 	deps.eventHub = hub
@@ -104,4 +140,11 @@ func buildViewerRuntimeHandlers(
 		deps.jobNotifications = viewer.HandleJobNotifications(jobStore)
 		log.Printf("Viewer parallel job API enabled: %s", jobStorePath)
 	}
+}
+
+func defaultGameBridgeStorePath(workspaceDir string) string {
+	if workspaceDir == "" {
+		return ""
+	}
+	return filepath.Join(workspaceDir, "logs", "game_bridge_events.jsonl")
 }

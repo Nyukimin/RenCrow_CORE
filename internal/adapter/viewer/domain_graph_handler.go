@@ -4,16 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type DomainGraphAssertionStore interface {
-	DomainGraphAssertions(ctx context.Context, q conversationpersistence.DomainGraphAssertionQuery) (int, []conversationpersistence.L1DomainGraphAssertion, error)
+	DomainGraphAssertions(ctx context.Context, q l1sqlite.DomainGraphAssertionQuery) (int, []l1sqlite.L1DomainGraphAssertion, error)
 }
 
 type domainGraphAssertionsResponse struct {
@@ -71,27 +70,27 @@ func HandleDomainGraphAssertions(store DomainGraphAssertionStore) http.HandlerFu
 	}
 }
 
-func parseDomainGraphAssertionQuery(r *http.Request) (conversationpersistence.DomainGraphAssertionQuery, error) {
+func parseDomainGraphAssertionQuery(r *http.Request) (l1sqlite.DomainGraphAssertionQuery, error) {
 	limit, err := parseViewerLimit(r.URL.Query().Get("limit"), 50, 200)
 	if err != nil {
-		return conversationpersistence.DomainGraphAssertionQuery{}, err
+		return l1sqlite.DomainGraphAssertionQuery{}, err
 	}
 	offset := 0
 	if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil {
-			return conversationpersistence.DomainGraphAssertionQuery{}, err
+			return l1sqlite.DomainGraphAssertionQuery{}, err
 		}
 		if n < 0 {
-			return conversationpersistence.DomainGraphAssertionQuery{}, errors.New("negative offset")
+			return l1sqlite.DomainGraphAssertionQuery{}, errors.New("negative offset")
 		}
 		offset = n
 	}
 	status := strings.TrimSpace(r.URL.Query().Get("validation_status"))
 	if status != "" && status != "pending" && status != "validated" && status != "rejected" {
-		return conversationpersistence.DomainGraphAssertionQuery{}, errors.New("invalid validation_status")
+		return l1sqlite.DomainGraphAssertionQuery{}, errors.New("invalid validation_status")
 	}
-	return conversationpersistence.DomainGraphAssertionQuery{
+	return l1sqlite.DomainGraphAssertionQuery{
 		Domain:           r.URL.Query().Get("domain"),
 		EntityType:       r.URL.Query().Get("entity_type"),
 		EntityID:         r.URL.Query().Get("entity_id"),
@@ -103,7 +102,7 @@ func parseDomainGraphAssertionQuery(r *http.Request) (conversationpersistence.Do
 	}, nil
 }
 
-func domainGraphAssertionsToDTO(items []conversationpersistence.L1DomainGraphAssertion) []domainGraphAssertionDTO {
+func domainGraphAssertionsToDTO(items []l1sqlite.L1DomainGraphAssertion) []domainGraphAssertionDTO {
 	out := make([]domainGraphAssertionDTO, 0, len(items))
 	for _, item := range items {
 		out = append(out, domainGraphAssertionToDTO(item))
@@ -111,7 +110,7 @@ func domainGraphAssertionsToDTO(items []conversationpersistence.L1DomainGraphAss
 	return out
 }
 
-func domainGraphAssertionToDTO(item conversationpersistence.L1DomainGraphAssertion) domainGraphAssertionDTO {
+func domainGraphAssertionToDTO(item l1sqlite.L1DomainGraphAssertion) domainGraphAssertionDTO {
 	dto := domainGraphAssertionDTO{
 		ID:               item.ID,
 		StagingID:        item.StagingID,

@@ -99,13 +99,19 @@ func buildLocalLLMHealthChecks(cfg *config.Config) []domainhealth.Check {
 	}
 
 	checks := make([]domainhealth.Check, 0, 5)
-	checks = add(checks, "Chat", cfg.LocalLLM.ChatBaseURL, cfg.LocalLLM.ChatModel)
-	checks = add(checks, "Worker", cfg.LocalLLM.WorkerBaseURL, cfg.LocalLLM.WorkerModel)
-	checks = add(checks, "ChatWorker", cfg.LocalLLM.WorkerBaseURL, modulellm.LocalModelForAlias(localRuntimeConfigFromAppConfig(cfg), "chatworker"))
-	if strings.TrimSpace(cfg.LocalLLM.HeavyBaseURL) != "" {
+	if cfg.RuntimeTopologyRoleEnabled("RenCraw_LLM", "chat") {
+		checks = add(checks, "Chat", cfg.LocalLLM.ChatBaseURL, cfg.LocalLLM.ChatModel)
+	}
+	if cfg.RuntimeTopologyRoleEnabled("RenCraw_LLM", "worker") {
+		checks = add(checks, "Worker", cfg.LocalLLM.WorkerBaseURL, cfg.LocalLLM.WorkerModel)
+	}
+	if cfg.RuntimeTopologyRoleEnabled("RenCraw_LLM", "chatworker") {
+		checks = add(checks, "ChatWorker", firstNonEmpty(cfg.LocalLLM.ChatWorkerBaseURL, cfg.LocalLLM.WorkerBaseURL), modulellm.LocalModelForAlias(localRuntimeConfigFromAppConfig(cfg), "chatworker"))
+	}
+	if cfg.RuntimeTopologyRoleEnabled("RenCraw_LLM", "heavy") && strings.TrimSpace(cfg.LocalLLM.HeavyBaseURL) != "" {
 		checks = add(checks, "Heavy", cfg.LocalLLM.HeavyBaseURL, modulellm.LocalModelForAlias(localRuntimeConfigFromAppConfig(cfg), "heavy"))
 	}
-	if cfg.LocalLLMWarmupEnabled() {
+	if cfg.RuntimeTopologyRoleEnabled("RenCraw_LLM", "wild") && cfg.LocalLLMWarmupEnabled() {
 		checks = add(checks, "Wild", cfg.LocalLLM.WildBaseURL, cfg.LocalLLM.WildModel)
 	}
 	return checks

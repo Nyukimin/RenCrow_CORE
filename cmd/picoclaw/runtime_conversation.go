@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ import (
 type conversationRuntime struct {
 	Engine  conversation.ConversationEngine
 	Manager *conversationpersistence.RealConversationManager
-	L1Store *conversationpersistence.L1SQLiteStore
+	L1Store *l1sqlite.L1SQLiteStore
 }
 
 func buildConversationRuntime(
@@ -29,7 +30,7 @@ func buildConversationRuntime(
 ) conversationRuntime {
 	var convEngine conversation.ConversationEngine
 	var realMgr *conversationpersistence.RealConversationManager
-	var l1Store *conversationpersistence.L1SQLiteStore
+	var l1Store *l1sqlite.L1SQLiteStore
 	if cfg.Conversation.Enabled {
 		var err error
 		vectorCollection := cfg.Conversation.VectorCollection
@@ -55,7 +56,7 @@ func buildConversationRuntime(
 			if err := os.MkdirAll(filepath.Dir(cfg.Conversation.L1SQLitePath), 0755); err != nil {
 				log.Fatalf("Failed to create L1 SQLite directory: %v", err)
 			}
-			l1Store, err = conversationpersistence.NewL1SQLiteStore(cfg.Conversation.L1SQLitePath)
+			l1Store, err = l1sqlite.NewL1SQLiteStore(cfg.Conversation.L1SQLitePath)
 			if err != nil {
 				log.Fatalf("Failed to initialize L1 SQLite store: %v", err)
 			}

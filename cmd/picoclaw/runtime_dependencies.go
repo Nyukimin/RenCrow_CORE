@@ -80,6 +80,13 @@ type Dependencies struct {
 	viewerAuditSummary             http.HandlerFunc                            // viewer audit summary API
 	viewerJobDetail                http.HandlerFunc                            // viewer job detail API
 	viewerSend                     http.HandlerFunc                            // viewer message sender
+	viewerGamesStatus              http.HandlerFunc                            // RenCrow_GAMES bridge status API
+	viewerGamesDecision            http.HandlerFunc                            // RenCrow_GAMES synchronous decision API
+	viewerGamesResult              http.HandlerFunc                            // RenCrow_GAMES result callback API
+	viewerGamesSessions            http.HandlerFunc                            // RenCrow_GAMES recent session observer API
+	viewerGamesEvents              http.HandlerFunc                            // RenCrow_GAMES candidate event observer API
+	viewerGamesObserverPage        http.HandlerFunc                            // RenCrow_GAMES live observer UI proxy page
+	viewerGamesObserverProxy       http.HandlerFunc                            // RenCrow_GAMES live observer API proxy
 	live2DChatResponder            viewer.Live2DChatResponder                  // viewer Live2D chat -> orchestrator adapter
 	historyRepairJSONL             http.HandlerFunc                            // viewer JSONL history repair API
 	packageValidation              http.HandlerFunc                            // viewer package/update validation API
@@ -359,7 +366,8 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		filepath.Join(cfg.WorkspaceDir, "logs", "artifact_cleanup.jsonl"),
 	))
 	reportPath := defaultExecutionReportPath(cfg.WorkspaceDir)
-	buildViewerRuntimeHandlers(cfg, deps, conversationRuntime.L1Store, conversationRuntime.Manager, reportPath)
+	gameDecisionProvider := selectChatConversationProvider(llmRuntime.ChatWorker, llmRuntime.Chat)
+	buildViewerRuntimeHandlers(cfg, deps, conversationRuntime.L1Store, conversationRuntime.Manager, reportPath, gameDecisionProvider)
 	startConversationBackgroundJobs(conversationRuntime, deps.eventRelay)
 	if toolRuntime.ToolMediationRecorder != nil {
 		deps.toolHarnessRecent = viewer.HandleToolHarnessRecent(toolRuntime.ToolMediationRecorder)
@@ -718,7 +726,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		}
 		knowledgeMemoryStore = knowledgememorypersistence.WithL1Connection(knowledgeMemoryStore, conversationRuntime.L1Store)
 		if dailyRules, ok := knowledgeMemoryStore.(knowledgememoryapp.DailyIntakeRuleStore); ok && conversationRuntime.L1Store != nil {
-			startDailyIntakeSweeper(dailyRules, conversationRuntime.L1Store, newBackgroundJobFailureReporter(deps.eventRelay))
+			startDailyIntakeSweeper(dailyRules, knowledgememorypersistence.NewDailyIntakeRegistryAdapter(conversationRuntime.L1Store), newBackgroundJobFailureReporter(deps.eventRelay))
 		}
 		deps.knowledgeMemoryStatus = viewer.HandleKnowledgeMemoryStatus(knowledgeMemoryStore)
 		deps.personalArchiveCreate = viewer.HandlePersonalArchiveCreate(knowledgeMemoryStore)

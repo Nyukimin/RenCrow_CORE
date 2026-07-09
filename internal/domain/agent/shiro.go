@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
 )
 
@@ -68,6 +69,10 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	}
 	systemPrompt = ensureShiroJapaneseResponsePrompt(systemPrompt)
 
+	if resp, ok, err := s.tryExecuteCodexWorkPath(ctx, t); ok || err != nil {
+		return resp, err
+	}
+
 	// SubagentManager が設定されている場合は ReActLoop を使用
 	if s.subagentManager != nil {
 		result, err := s.runSubagentSafely(ctx, SubagentTask{
@@ -118,6 +123,65 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 		}
 	}
 	return resp.Content, nil
+}
+
+func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t task.Task) (string, bool, error) {
+	path := routing.DetectCodexWorkPath(t.UserMessage())
+	if !path.Found() || s.toolRunner == nil || !s.hasTool(ctx, "codex.run") {
+		return "", false, nil
+	}
+
+	resp, err := s.toolRunner.ExecuteV2(ctx, "codex.run", map[string]any{
+		"prompt":  buildCodexWorkPrompt(path, t.UserMessage()),
+		"sandbox": "read-only",
+	})
+	if err != nil {
+		return "", true, err
+	}
+	if resp == nil {
+		return "", true, fmt.Errorf("codex.run returned nil response")
+	}
+	if resp.IsError() {
+		return "", true, fmt.Errorf("%s", resp.Error.Message)
+	}
+	return resp.String(), true, nil
+}
+
+func (s *ShiroAgent) hasTool(ctx context.Context, toolID string) bool {
+	if s.toolRunner == nil {
+		return false
+	}
+	metas, err := s.toolRunner.ListTools(ctx)
+	if err != nil {
+		return false
+	}
+	for _, meta := range metas {
+		if meta.ToolID == toolID {
+			return true
+		}
+	}
+	return false
+}
+
+func buildCodexWorkPrompt(path routing.CodexWorkPath, userMessage string) string {
+	var role string
+	switch path.Domain {
+	case routing.CodexWorkDomainDrawing:
+		role = "描画領域。依頼内容から、画像生成や人間の描画作業にそのまま使える具体的な描画仕様または画像プロンプトを日本語で作成する。"
+	case routing.CodexWorkDomainFolktale:
+		role = "昔話生成領域。依頼内容に沿って、昔話として読める完成文または生成方針を自然な日本語で作成する。"
+	default:
+		role = "Codexの明示業務領域。依頼内容に沿って自然な日本語で成果物を返す。"
+	}
+	return strings.Join([]string{
+		"RenCrow Codex PATH",
+		role,
+		"この実行ではリポジトリの変更、コマンド実行、外部アクセスを前提にしない。",
+		"成果物だけを簡潔に返し、実装済みや保存済みのような未確認の主張はしない。",
+		"",
+		"ユーザー依頼:",
+		userMessage,
+	}, "\n")
 }
 
 func (s *ShiroAgent) runSubagentSafely(ctx context.Context, t SubagentTask) (res SubagentResult, err error) {

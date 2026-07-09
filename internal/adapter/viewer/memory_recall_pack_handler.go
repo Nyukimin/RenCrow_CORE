@@ -1,24 +1,21 @@
 package viewer
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"strings"
 	"time"
 
 	domainmemory "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/memory"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 func HandleMemoryRecallPack(hot MemoryLayerHotStore, cold MemoryLayerColdStore, users UserMemoryStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireViewerMethod(w, r, http.MethodGet) {
 			return
 		}
-		if hot == nil {
-			http.Error(w, "memory recall pack unavailable", http.StatusServiceUnavailable)
+		if !requireViewerStore(w, hot == nil, "memory recall pack unavailable") {
 			return
 		}
 		limit, err := parseViewerLimit(r.URL.Query().Get("limit"), 12, 50)
@@ -32,10 +29,10 @@ func HandleMemoryRecallPack(hot MemoryLayerHotStore, cold MemoryLayerColdStore, 
 			userID = "ren"
 		}
 		domain := strings.TrimSpace(r.URL.Query().Get("domain"))
-		pack := domainmemory.RecallPackView{
+		pack := domainmemory.UserMemoryRecallView{
 			SessionID: sessionID,
 			UserID:    userID,
-			Items:     []domainmemory.RecallPackItem{},
+			Items:     []domainmemory.UserMemoryRecallItem{},
 			CreatedAt: time.Now().UTC(),
 		}
 		if sessionID != "" {
@@ -60,7 +57,7 @@ func HandleMemoryRecallPack(hot MemoryLayerHotStore, cold MemoryLayerColdStore, 
 				}
 				switch mem.State {
 				case domainmemory.MemoryStateConfirmed, domainmemory.MemoryStatePinned:
-					pack.Items = append(pack.Items, domainmemory.RecallPackItem{
+					pack.Items = append(pack.Items, domainmemory.UserMemoryRecallItem{
 						Layer:       "UserMemory",
 						Namespace:   mem.Namespace,
 						MemoryID:    mem.ID,
@@ -85,7 +82,7 @@ func HandleMemoryRecallPack(hot MemoryLayerHotStore, cold MemoryLayerColdStore, 
 					if summary == nil || strings.TrimSpace(summary.Summary) == "" {
 						continue
 					}
-					pack.Items = append(pack.Items, domainmemory.RecallPackItem{
+					pack.Items = append(pack.Items, domainmemory.UserMemoryRecallItem{
 						Layer:     "L2",
 						Namespace: "conv:" + sessionID,
 						MemoryID:  fmt.Sprintf("thread:%d", summary.ThreadID),
@@ -106,7 +103,7 @@ func HandleMemoryRecallPack(hot MemoryLayerHotStore, cold MemoryLayerColdStore, 
 					if doc == nil || strings.TrimSpace(doc.Content) == "" {
 						continue
 					}
-					pack.Items = append(pack.Items, domainmemory.RecallPackItem{
+					pack.Items = append(pack.Items, domainmemory.UserMemoryRecallItem{
 						Layer:     "Knowledge",
 						Namespace: "kb:" + doc.Domain,
 						MemoryID:  doc.ID,
@@ -119,13 +116,12 @@ func HandleMemoryRecallPack(hot MemoryLayerHotStore, cold MemoryLayerColdStore, 
 				}
 			}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(pack)
+		writeJSON(w, http.StatusOK, pack)
 	}
 }
 
-func recallItemFromL1Event(layer string, kind string, ev conversationpersistence.L1MemoryEvent, score float64) domainmemory.RecallPackItem {
-	return domainmemory.RecallPackItem{
+func recallItemFromL1Event(layer string, kind string, ev l1sqlite.L1MemoryEvent, score float64) domainmemory.UserMemoryRecallItem {
+	return domainmemory.UserMemoryRecallItem{
 		Layer:       layer,
 		Namespace:   ev.Namespace,
 		MemoryID:    ev.ID,

@@ -73,6 +73,9 @@ func (r *ToolRunner) registerOptionalTools() {
 	if r.config.BrowserActorRunner != nil {
 		r.toolsV2["browser.run"] = r.executeBrowserRunV2
 	}
+	if r.config.CodexRunner != nil {
+		r.toolsV2["codex.run"] = r.executeCodexRunV2
+	}
 
 	// Phase 4: register_tool（ToolRegistry が有効な場合のみ登録）
 	if r.config.ToolRegistry != nil {
@@ -250,6 +253,30 @@ func (r *ToolRunner) registerToolMetadata() {
 					},
 				},
 				"required": []any{"start_url", "actions"},
+			},
+		}
+	}
+	if r.config.CodexRunner != nil {
+		r.metadata["codex.run"] = tool.ToolMetadata{
+			ToolID: "codex.run", Version: "0.1.0", Category: "mutation",
+			DryRun:      true,
+			Description: "Codex CLI の非対話実行を read-only または workspace-write sandbox で起動し、最終メッセージと実行メタデータを返す。",
+			Invariants: []string{
+				"danger-full-access is never accepted",
+				"the command is executed without a shell",
+				"read-only sandbox is the default",
+			},
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"prompt":      map[string]any{"type": "string", "description": "Codex に渡す指示文"},
+					"working_dir": map[string]any{"type": "string", "description": "実行する git repository root。省略時は設定値"},
+					"sandbox":     map[string]any{"type": "string", "enum": []any{"read-only", "workspace-write"}},
+					"model":       map[string]any{"type": "string", "description": "Codex CLI に渡す model override。省略可"},
+					"timeout_ms":  map[string]any{"type": "integer", "description": "この run の timeout"},
+					"ephemeral":   map[string]any{"type": "boolean", "description": "Codex session file を保存しない"},
+				},
+				"required": []any{"prompt"},
 			},
 		}
 	}

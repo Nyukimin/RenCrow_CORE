@@ -62,7 +62,14 @@
     <button class="lab-mode-chip lab-mode-chip-chat" id="labModeChatChip" type="button" data-lab-switch="chat" aria-current="true" aria-pressed="true">Chat</button>
     <button class="lab-mode-chip lab-mode-chip-idle" id="labModeIdleChip" type="button" data-lab-switch="idle" aria-current="false" aria-pressed="false">IdleChat</button>
     <button class="lab-mode-chip lab-mode-chip-mio" id="labModeMioChip" type="button" data-lab-switch="mio" aria-current="true" aria-pressed="true">Mio</button>
-    <button class="lab-mode-chip lab-mode-chip-shiro" id="labModeShiroChip" type="button" data-lab-switch="shiro" aria-current="false" aria-pressed="false">Shiro</button>
+    <div class="lab-partner-picker" id="labPartnerPicker">
+      <button class="lab-mode-chip lab-mode-chip-partner" id="labModePartnerChip" type="button" data-lab-partner-toggle aria-current="false" aria-pressed="false" aria-expanded="false">Shiro</button>
+      <div class="lab-partner-options" id="labPartnerOptions" hidden>
+        <button class="lab-mode-chip lab-partner-option" type="button" data-lab-partner-option="shiro">Shiro</button>
+        <button class="lab-mode-chip lab-partner-option" type="button" data-lab-partner-option="kuro">Kuro</button>
+        <button class="lab-mode-chip lab-partner-option" type="button" data-lab-partner-option="midori">Midori</button>
+      </div>
+    </div>
   </section>
   <time class="lab-datetime-panel" id="labDateTimePanel" datetime="" aria-label="現在日時">0000（令和00）00月00日（-）00:00:00</time>
   <section class="lab-camera-live-preview" id="labCameraLivePreview" aria-label="Media live preview">
@@ -145,6 +152,7 @@
       <option value="investment">Investment</option>
       <option value="idlechat">IdleChat</option>
       <option value="ops">Ops</option>
+      <option value="games">Games</option>
       <option value="overview">Overview</option>
       <option value="roles">Roles</option>
       <option value="progress">Progress</option>
@@ -167,6 +175,7 @@
     <button class="tab-btn" data-tab="investment">Investment</button>
     <button class="tab-btn" data-tab="idlechat">IdleChat</button>
     <button class="tab-btn" data-tab="ops">Ops</button>
+    <button class="tab-btn" data-tab="games">Games</button>
     <button class="tab-btn" data-tab="overview">Overview</button>
     <button class="tab-btn" data-tab="roles">Roles</button>
     <button class="tab-btn" data-tab="progress">Progress</button>
@@ -372,6 +381,32 @@
       </aside>
       <section class="desk-main">
         <div id="reportDetail" class="daily-desk-card report-detail">No report selected</div>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-games" class="panel">
+    <div class="desk-screen desk-workspace games-desk">
+      <aside class="desk-side">
+        <div class="desk-brand">
+          <div class="desk-kicker">Games / Bridge Desk</div>
+          <h2 class="daily-desk-title">ゲーム進行を見る</h2>
+        </div>
+        <div class="desk-character">
+          <div class="desk-character-mark">G</div>
+          <div class="desk-character-name">RenCrow_GAMES</div>
+          <div class="daily-desk-muted">PicoClaw 経由の判断、候補記憶、最新イベントを追います。</div>
+        </div>
+        <button id="gamesRefreshBtn" class="desk-primary-btn" type="button">Refresh</button>
+      </aside>
+      <section class="desk-main">
+        <div id="gamesBridgeStatusCard" class="daily-desk-card"></div>
+        <div class="desk-two-col">
+          <div id="gamesLatestSessionCard" class="daily-desk-card"></div>
+          <div id="gamesLatestEventCard" class="daily-desk-card"></div>
+        </div>
+        <div id="gamesSessionsCard" class="daily-desk-card"></div>
+        <div id="gamesEventsCard" class="daily-desk-card"></div>
       </section>
     </div>
   </section>
@@ -1428,7 +1463,12 @@
 </button>
 <div class="toast" id="toast"></div>
 
-<script src="/viewer/assets/js/tabs/ops.js?v=20260510-tabs-ops" defer></script>
+<!-- mode=live2d 用の全画面ステージ。src は initLive2DMode() が設定する -->
+<div id="live2dStage" hidden>
+  <iframe id="live2dStageFrame" title="Live2D Viewer"></iframe>
+</div>
+
+<script src="/viewer/assets/js/tabs/ops.js?v=20260702-game-bridge-card" defer></script>
 <script src="/viewer/assets/js/tabs/home.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/develop.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/instructions.js?v=20260517-desk-regenerated" defer></script>
@@ -1446,8 +1486,9 @@
 <script src="/viewer/assets/js/tabs/idlechat.js?v=20260527-tts-history-guard" defer></script>
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
 <script src="/viewer/assets/js/tabs/jobs.js?v=20260510-tabs-jobs" defer></script>
+<script src="/viewer/assets/js/tabs/games.js?v=20260702-games-tab" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
-<script src="/viewer/assets/js/viewer.js?v=20260630-character-init" defer></script>
+<script src="/viewer/assets/js/viewer.js?v=20260702-games-tab" defer></script>
 <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
 </body>
 </html>

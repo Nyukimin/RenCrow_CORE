@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 	"time"
 
@@ -17,7 +18,7 @@ func NewLLMDailyDigestSummarizer(provider llm.LLMProvider) *LLMDailyDigestSummar
 	return &LLMDailyDigestSummarizer{provider: provider}
 }
 
-func (s *LLMDailyDigestSummarizer) SummarizeDailyDigest(ctx context.Context, digestDate time.Time, category string, slot string, news []L1NewsItem) (string, error) {
+func (s *LLMDailyDigestSummarizer) SummarizeDailyDigest(ctx context.Context, digestDate time.Time, category string, slot string, news []l1sqlite.L1NewsItem) (string, error) {
 	if s == nil || s.provider == nil {
 		return "", fmt.Errorf("daily digest llm provider is nil")
 	}
@@ -39,7 +40,7 @@ func (s *LLMDailyDigestSummarizer) SummarizeDailyDigest(ctx context.Context, dig
 	return text, nil
 }
 
-func buildDailyDigestPrompt(digestDate time.Time, category string, slot string, news []L1NewsItem) string {
+func buildDailyDigestPrompt(digestDate time.Time, category string, slot string, news []l1sqlite.L1NewsItem) string {
 	var sb strings.Builder
 	sb.WriteString("以下のニュース候補を、雑談で使いやすい日本語の短いDaily Digestに要約してください。\n")
 	sb.WriteString("出典本文と要約案を混ぜず、事実を足さず、3〜5行でまとめてください。\n\n")

@@ -2,6 +2,12 @@ package conversation
 
 import (
 	"fmt"
+	"log"
+
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/duckdb"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	redisstore "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/redis"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/vectordb"
 
 	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
 )
@@ -23,24 +29,26 @@ func NewRealConversationManager(redisURL, duckdbPath, vectordbURL string) (*Real
 }
 
 func NewRealConversationManagerWithVectorOptions(redisURL, duckdbPath, vectordbURL string, vectorCollection string, vectorDimension uint64) (*RealConversationManager, error) {
-	redisStore, err := NewRedisStore(redisURL)
+	redisStore, err := redisstore.NewRedisStore(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create redis store: %w", err)
 	}
 
-	duckdbStore, err := NewDuckDBStore(duckdbPath)
+	duckdbStore, err := duckdb.NewDuckDBStore(duckdbPath)
 	if err != nil {
-		redisStore.Close()
-		return nil, fmt.Errorf("failed to create duckdb store: %w", err)
+		log.Printf("WARN: L2 archive (DuckDB) disabled: failed to create duckdb store: %v", err)
+		duckdbStore = nil
 	}
 
 	if vectorCollection == "" {
 		vectorCollection = "picoclaw_memory"
 	}
-	vectordbStore, err := NewVectorDBStoreWithDimension(vectordbURL, vectorCollection, vectorDimension)
+	vectordbStore, err := vectordb.NewVectorDBStoreWithDimension(vectordbURL, vectorCollection, vectorDimension)
 	if err != nil {
 		redisStore.Close()
-		duckdbStore.Close()
+		if duckdbStore != nil {
+			duckdbStore.Close()
+		}
 		return nil, fmt.Errorf("failed to create vectordb store: %w", err)
 	}
 
@@ -65,8 +73,8 @@ func (r *RealConversationManager) WithSummarizer(s domconv.ConversationSummarize
 }
 
 func (r *RealConversationManager) WithL1Store(store l1StoreIface) *RealConversationManager {
-	if l1, ok := store.(*L1SQLiteStore); ok {
-		if archiveStore, ok := r.duckdbStore.(L1ArchiveStore); ok {
+	if l1, ok := store.(*l1sqlite.L1SQLiteStore); ok {
+		if archiveStore, ok := r.duckdbStore.(l1sqlite.L1ArchiveStore); ok {
 			l1.WithArchiveStore(archiveStore)
 		}
 		l1.WithKnowledgeVectorSink(r)
@@ -82,8 +90,10 @@ func (r *RealConversationManager) Close() error {
 	if err := r.redisStore.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("redis close: %w", err))
 	}
-	if err := r.duckdbStore.Close(); err != nil {
-		errs = append(errs, fmt.Errorf("duckdb close: %w", err))
+	if r.duckdbStore != nil {
+		if err := r.duckdbStore.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("duckdb close: %w", err))
+		}
 	}
 	if err := r.vectordbStore.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("vectordb close: %w", err))

@@ -1,0 +1,24 @@
+[
+  {
+    "type": "file_edit",
+    "action": "create",
+    "target": "test_output.txt",
+    "content": "Hello from PicoClaw Worker!\nThis is a test file.\n"
+  },
+  {
+    "type": "shell_command",
+    "action": "run",
+    "target": "ls -la test_output.txt"
+  },
+  {
+    "type": "file_edit",
+    "action": "append",
+    "target": "test_output.txt",
+    "content": "Appended line at test\n"
+  },
+  {
+    "type": "shell_command",
+    "action": "run",
+    "target": "cat test_output.txt"
+  }
+]

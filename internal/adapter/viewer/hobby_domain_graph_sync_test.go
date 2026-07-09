@@ -4,26 +4,25 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type hobbyDomainGraphStoreStub struct {
 	itemTotal     int
-	itemItems     []conversationpersistence.L1DomainGraphAssertion
+	itemItems     []l1sqlite.L1DomainGraphAssertion
 	relationTotal int
-	relationItems []conversationpersistence.L1DomainGraphAssertion
-	queries       []conversationpersistence.DomainGraphAssertionQuery
+	relationItems []l1sqlite.L1DomainGraphAssertion
+	queries       []l1sqlite.DomainGraphAssertionQuery
 	err           error
 }
 
-func (s *hobbyDomainGraphStoreStub) DomainGraphAssertions(ctx context.Context, q conversationpersistence.DomainGraphAssertionQuery) (int, []conversationpersistence.L1DomainGraphAssertion, error) {
+func (s *hobbyDomainGraphStoreStub) DomainGraphAssertions(ctx context.Context, q l1sqlite.DomainGraphAssertionQuery) (int, []l1sqlite.L1DomainGraphAssertion, error) {
 	s.queries = append(s.queries, q)
 	if s.err != nil {
 		return 0, nil, s.err
@@ -39,7 +38,7 @@ func TestHandleHobbyDomainGraphSyncUpsertsWorkItems(t *testing.T) {
 	now := time.Now().UTC()
 	store := &hobbyDomainGraphStoreStub{
 		itemTotal: 2,
-		itemItems: []conversationpersistence.L1DomainGraphAssertion{
+		itemItems: []l1sqlite.L1DomainGraphAssertion{
 			{
 				ID:               "dg:manga:work:1",
 				Domain:           "manga",
@@ -47,7 +46,7 @@ func TestHandleHobbyDomainGraphSyncUpsertsWorkItems(t *testing.T) {
 				EntityID:         "manga:dungeon-meshi",
 				SourceURL:        "https://example.com/dungeon-meshi",
 				Summary:          "迷宮と食事を扱う漫画。",
-				ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+				ValidationStatus: l1sqlite.L1StagingStatusValidated,
 				Evidence: map[string]interface{}{
 					"title": "ダンジョン飯",
 				},
@@ -61,7 +60,7 @@ func TestHandleHobbyDomainGraphSyncUpsertsWorkItems(t *testing.T) {
 				EntityID:         "movie:57573",
 				SourceURL:        "https://eiga.com/movie/57573/",
 				Summary:          "Movie should skip.",
-				ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+				ValidationStatus: l1sqlite.L1StagingStatusValidated,
 				CreatedAt:        now,
 				UpdatedAt:        now,
 			},
@@ -78,10 +77,10 @@ func TestHandleHobbyDomainGraphSyncUpsertsWorkItems(t *testing.T) {
 	if len(store.queries) != 2 {
 		t.Fatalf("expected work and relation queries, got %+v", store.queries)
 	}
-	if store.queries[0].Domain != "manga" || store.queries[0].EntityType != "work" || store.queries[0].ValidationStatus != conversationpersistence.L1StagingStatusValidated || store.queries[0].Limit != 10 {
+	if store.queries[0].Domain != "manga" || store.queries[0].EntityType != "work" || store.queries[0].ValidationStatus != l1sqlite.L1StagingStatusValidated || store.queries[0].Limit != 10 {
 		t.Fatalf("unexpected work query: %+v", store.queries[0])
 	}
-	if store.queries[1].Domain != "manga" || store.queries[1].EntityType != "work_relation" || store.queries[1].ValidationStatus != conversationpersistence.L1StagingStatusValidated || store.queries[1].Limit != 10 {
+	if store.queries[1].Domain != "manga" || store.queries[1].EntityType != "work_relation" || store.queries[1].ValidationStatus != l1sqlite.L1StagingStatusValidated || store.queries[1].Limit != 10 {
 		t.Fatalf("unexpected relation query: %+v", store.queries[1])
 	}
 	var out hobbyDomainGraphSyncResult
@@ -123,7 +122,7 @@ func TestHandleHobbyDomainGraphSyncUpsertsWorkRelations(t *testing.T) {
 	now := time.Now().UTC()
 	store := &hobbyDomainGraphStoreStub{
 		relationTotal: 2,
-		relationItems: []conversationpersistence.L1DomainGraphAssertion{
+		relationItems: []l1sqlite.L1DomainGraphAssertion{
 			{
 				ID:               "dg:manga:relation:1",
 				Domain:           "manga",
@@ -132,7 +131,7 @@ func TestHandleHobbyDomainGraphSyncUpsertsWorkRelations(t *testing.T) {
 				RelationType:     "created_by",
 				SourceURL:        "https://example.com/dungeon-meshi",
 				Summary:          "ダンジョン飯の作者情報。",
-				ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+				ValidationStatus: l1sqlite.L1StagingStatusValidated,
 				Evidence: map[string]interface{}{
 					"work_id":      "manga:dungeon-meshi",
 					"work_title":   "ダンジョン飯",
@@ -148,7 +147,7 @@ func TestHandleHobbyDomainGraphSyncUpsertsWorkRelations(t *testing.T) {
 				EntityType:       "work_relation",
 				EntityID:         "manga:missing-target",
 				RelationType:     "created_by",
-				ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+				ValidationStatus: l1sqlite.L1StagingStatusValidated,
 				Evidence: map[string]interface{}{
 					"work_id": "manga:missing-target",
 				},

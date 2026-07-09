@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"path/filepath"
+	"time"
 
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/subagent"
@@ -58,6 +59,23 @@ func buildToolRuntime(
 	}
 	if cfg.BrowserActor.Enabled {
 		workerToolRunnerCfg.BrowserActorRunner = browseractorinfra.NewRunner(browserActorConfigFromRuntime(cfg.BrowserActor))
+	}
+	if cfg.Codex.Enabled {
+		workingDir := cfg.Codex.WorkingDir
+		if workingDir == "" {
+			workingDir = cfg.SelfSourceDir
+		}
+		workerToolRunnerCfg.CodexRunner = tools.NewCodexExecRunner(
+			cfg.Codex.Command,
+			workingDir,
+			cfg.Codex.Sandbox,
+			cfg.Codex.Model,
+			time.Duration(cfg.Codex.TimeoutMS)*time.Millisecond,
+			cfg.Codex.MaxPromptBytes,
+			cfg.Codex.MaxOutputBytes,
+			cfg.Codex.EphemeralEnabled(),
+		)
+		log.Printf("Codex runner enabled (sandbox=%s working_dir=%s)", cfg.Codex.Sandbox, workingDir)
 	}
 
 	chatToolRunnerV2 := tools.NewToolRunner(chatToolRunnerCfg)

@@ -1,0 +1,25 @@
+name: rencrow-data-daily-ingest
+
+on:
+  schedule:
+    - cron: "30 8 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Initialize database
+        run: PYTHONPATH=rencrow-data/src python3 rencrow-data/src/01_init_db.py
+      - name: Fetch market data
+        run: PYTHONPATH=rencrow-data/src python3 rencrow-data/src/02_fetch_market.py
+        env:
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+      - name: Fetch macro and calendar data
+        run: PYTHONPATH=rencrow-data/src python3 rencrow-data/src/03_fetch_macro.py
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}

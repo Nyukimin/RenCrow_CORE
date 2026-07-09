@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/sourcefetcher"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 func cmdSourceRegistry() {
@@ -31,8 +31,8 @@ func cmdSourceRegistry() {
 }
 
 type sourceRegistryCLIStore interface {
-	SaveSourceRegistryEntry(ctx context.Context, entry conversationpersistence.L1SourceRegistryEntry) (*conversationpersistence.L1SourceRegistryEntry, error)
-	ListSourceRegistryEntries(ctx context.Context, enabledOnly bool) ([]conversationpersistence.L1SourceRegistryEntry, error)
+	SaveSourceRegistryEntry(ctx context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error)
+	ListSourceRegistryEntries(ctx context.Context, enabledOnly bool) ([]l1sqlite.L1SourceRegistryEntry, error)
 }
 
 func runSourceRegistryCommand(args []string, store sourceRegistryCLIStore, out io.Writer, errOut io.Writer) int {
@@ -89,7 +89,7 @@ func runSourceRegistryCommand(args []string, store sourceRegistryCLIStore, out i
 			fmt.Fprintf(errOut, "failed to list source registry: %v\n", err)
 			return 1
 		}
-		var target *conversationpersistence.L1SourceRegistryEntry
+		var target *l1sqlite.L1SourceRegistryEntry
 		for i := range entries {
 			if entries[i].SourceID == sourceID {
 				target = &entries[i]
@@ -142,7 +142,7 @@ func runSourceRegistryCommand(args []string, store sourceRegistryCLIStore, out i
 	}
 }
 
-func parseSourceRegistrySaveArgs(args []string) (conversationpersistence.L1SourceRegistryEntry, bool, error) {
+func parseSourceRegistrySaveArgs(args []string) (l1sqlite.L1SourceRegistryEntry, bool, error) {
 	values := map[string]string{}
 	jsonOut := false
 	enabled := true
@@ -155,12 +155,12 @@ func parseSourceRegistrySaveArgs(args []string) (conversationpersistence.L1Sourc
 			enabled = false
 		case "--source-id", "--url", "--kind", "--trust-score", "--interval-sec", "--license-note", "--namespace":
 			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
-				return conversationpersistence.L1SourceRegistryEntry{}, jsonOut, fmt.Errorf("%s requires a value", key)
+				return l1sqlite.L1SourceRegistryEntry{}, jsonOut, fmt.Errorf("%s requires a value", key)
 			}
 			values[key] = strings.TrimSpace(args[i+1])
 			i++
 		default:
-			return conversationpersistence.L1SourceRegistryEntry{}, jsonOut, fmt.Errorf("unknown source-registry save option: %s", key)
+			return l1sqlite.L1SourceRegistryEntry{}, jsonOut, fmt.Errorf("unknown source-registry save option: %s", key)
 		}
 	}
 	sourceID := values["--source-id"]
@@ -168,13 +168,13 @@ func parseSourceRegistrySaveArgs(args []string) (conversationpersistence.L1Sourc
 	kind := values["--kind"]
 	licenseNote := values["--license-note"]
 	if sourceID == "" || sourceURL == "" || kind == "" || licenseNote == "" {
-		return conversationpersistence.L1SourceRegistryEntry{}, jsonOut, errors.New("source-id, url, kind, license-note are required")
+		return l1sqlite.L1SourceRegistryEntry{}, jsonOut, errors.New("source-id, url, kind, license-note are required")
 	}
 	trustScore := 0.5
 	if raw := values["--trust-score"]; raw != "" {
 		parsed, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
-			return conversationpersistence.L1SourceRegistryEntry{}, jsonOut, fmt.Errorf("invalid --trust-score: %s", raw)
+			return l1sqlite.L1SourceRegistryEntry{}, jsonOut, fmt.Errorf("invalid --trust-score: %s", raw)
 		}
 		trustScore = parsed
 	}
@@ -182,7 +182,7 @@ func parseSourceRegistrySaveArgs(args []string) (conversationpersistence.L1Sourc
 	if raw := values["--interval-sec"]; raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed <= 0 {
-			return conversationpersistence.L1SourceRegistryEntry{}, jsonOut, fmt.Errorf("invalid --interval-sec: %s", raw)
+			return l1sqlite.L1SourceRegistryEntry{}, jsonOut, fmt.Errorf("invalid --interval-sec: %s", raw)
 		}
 		interval = time.Duration(parsed) * time.Second
 	}
@@ -190,7 +190,7 @@ func parseSourceRegistrySaveArgs(args []string) (conversationpersistence.L1Sourc
 	if namespace := values["--namespace"]; namespace != "" {
 		meta["namespace"] = namespace
 	}
-	return conversationpersistence.L1SourceRegistryEntry{
+	return l1sqlite.L1SourceRegistryEntry{
 		SourceID:      sourceID,
 		URL:           sourceURL,
 		Kind:          kind,
@@ -277,7 +277,7 @@ func sourceRegistrySweepResultCLI(result sourcefetcher.SweepResult) map[string]a
 	}
 }
 
-func sourceRegistryCLIEntries(entries []conversationpersistence.L1SourceRegistryEntry) []map[string]any {
+func sourceRegistryCLIEntries(entries []l1sqlite.L1SourceRegistryEntry) []map[string]any {
 	out := make([]map[string]any, 0, len(entries))
 	for _, entry := range entries {
 		out = append(out, sourceRegistryCLIEntry(entry))
@@ -285,7 +285,7 @@ func sourceRegistryCLIEntries(entries []conversationpersistence.L1SourceRegistry
 	return out
 }
 
-func sourceRegistryCLIEntry(entry conversationpersistence.L1SourceRegistryEntry) map[string]any {
+func sourceRegistryCLIEntry(entry l1sqlite.L1SourceRegistryEntry) map[string]any {
 	return map[string]any{
 		"source_id":          entry.SourceID,
 		"url":                entry.URL,
@@ -298,7 +298,7 @@ func sourceRegistryCLIEntry(entry conversationpersistence.L1SourceRegistryEntry)
 	}
 }
 
-func loadSourceRegistryStore(configPath string) (*conversationpersistence.L1SQLiteStore, error) {
+func loadSourceRegistryStore(configPath string) (*l1sqlite.L1SQLiteStore, error) {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return nil, err
@@ -310,5 +310,5 @@ func loadSourceRegistryStore(configPath string) (*conversationpersistence.L1SQLi
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return nil, err
 	}
-	return conversationpersistence.NewL1SQLiteStore(p)
+	return l1sqlite.NewL1SQLiteStore(p)
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"path/filepath"
 	"time"
@@ -46,7 +47,7 @@ func buildAgentRuntime(
 	convEngine conversation.ConversationEngine,
 	recentGlossaryContext func(context.Context, int) (string, error),
 	realMgr *conversationpersistence.RealConversationManager,
-	l1Store *conversationpersistence.L1SQLiteStore,
+	l1Store *l1sqlite.L1SQLiteStore,
 	subagentMgr *subagent.Manager,
 ) agentRuntime {
 	mioAgent := agent.NewMioAgent(chatProvider, classifier, ruleDictionary, chatToolRunner, mcpClient, convEngine).

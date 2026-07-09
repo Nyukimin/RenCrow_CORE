@@ -4,27 +4,26 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type movieDomainGraphStoreStub struct {
 	total         int
-	items         []conversationpersistence.L1DomainGraphAssertion
+	items         []l1sqlite.L1DomainGraphAssertion
 	relationTotal int
-	relationItems []conversationpersistence.L1DomainGraphAssertion
-	query         conversationpersistence.DomainGraphAssertionQuery
-	queries       []conversationpersistence.DomainGraphAssertionQuery
+	relationItems []l1sqlite.L1DomainGraphAssertion
+	query         l1sqlite.DomainGraphAssertionQuery
+	queries       []l1sqlite.DomainGraphAssertionQuery
 	err           error
 }
 
-func (s *movieDomainGraphStoreStub) DomainGraphAssertions(ctx context.Context, q conversationpersistence.DomainGraphAssertionQuery) (int, []conversationpersistence.L1DomainGraphAssertion, error) {
+func (s *movieDomainGraphStoreStub) DomainGraphAssertions(ctx context.Context, q l1sqlite.DomainGraphAssertionQuery) (int, []l1sqlite.L1DomainGraphAssertion, error) {
 	s.query = q
 	s.queries = append(s.queries, q)
 	if s.err != nil {
@@ -41,7 +40,7 @@ func TestHandleMovieDomainGraphSyncUpsertsMovieWorks(t *testing.T) {
 	now := time.Now().UTC()
 	store := &movieDomainGraphStoreStub{
 		total: 2,
-		items: []conversationpersistence.L1DomainGraphAssertion{
+		items: []l1sqlite.L1DomainGraphAssertion{
 			{
 				ID:               "dg:movie:1",
 				Domain:           "movie",
@@ -49,7 +48,7 @@ func TestHandleMovieDomainGraphSyncUpsertsMovieWorks(t *testing.T) {
 				EntityID:         "movie:1",
 				SourceURL:        "https://example.com/movie/1",
 				Summary:          "Movie summary",
-				ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+				ValidationStatus: l1sqlite.L1StagingStatusValidated,
 				Evidence: map[string]interface{}{
 					"title": "Evidence Title",
 				},
@@ -62,7 +61,7 @@ func TestHandleMovieDomainGraphSyncUpsertsMovieWorks(t *testing.T) {
 				EntityType:       "work",
 				SourceURL:        "https://example.com/movie/skip",
 				Summary:          "Skip summary",
-				ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+				ValidationStatus: l1sqlite.L1StagingStatusValidated,
 				CreatedAt:        now,
 				UpdatedAt:        now,
 			},
@@ -79,10 +78,10 @@ func TestHandleMovieDomainGraphSyncUpsertsMovieWorks(t *testing.T) {
 	if len(store.queries) != 2 {
 		t.Fatalf("expected work and relation queries, got %+v", store.queries)
 	}
-	if store.queries[0].Domain != "movie" || store.queries[0].EntityType != "work" || store.queries[0].ValidationStatus != conversationpersistence.L1StagingStatusValidated || store.queries[0].Limit != 10 {
+	if store.queries[0].Domain != "movie" || store.queries[0].EntityType != "work" || store.queries[0].ValidationStatus != l1sqlite.L1StagingStatusValidated || store.queries[0].Limit != 10 {
 		t.Fatalf("unexpected work query: %+v", store.queries[0])
 	}
-	if store.queries[1].Domain != "movie" || store.queries[1].EntityType != "work_person" || store.queries[1].ValidationStatus != conversationpersistence.L1StagingStatusValidated || store.queries[1].Limit != 10 {
+	if store.queries[1].Domain != "movie" || store.queries[1].EntityType != "work_person" || store.queries[1].ValidationStatus != l1sqlite.L1StagingStatusValidated || store.queries[1].Limit != 10 {
 		t.Fatalf("unexpected relation query: %+v", store.queries[1])
 	}
 	var out movieDomainGraphSyncResult
@@ -134,14 +133,14 @@ func TestHandleMovieDomainGraphSyncResolvesMoviePrefixedIDToExistingCatalogID(t 
 	now := time.Now().UTC()
 	store := &movieDomainGraphStoreStub{
 		total: 1,
-		items: []conversationpersistence.L1DomainGraphAssertion{{
+		items: []l1sqlite.L1DomainGraphAssertion{{
 			ID:               "dg:movie:57573",
 			Domain:           "movie",
 			EntityType:       "work",
 			EntityID:         "movie:57573",
 			SourceURL:        "https://eiga.com/movie/57573/",
 			Summary:          "Domain Graph summary",
-			ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+			ValidationStatus: l1sqlite.L1StagingStatusValidated,
 			Evidence: map[string]interface{}{
 				"title": "マージン・コール",
 			},
@@ -201,7 +200,7 @@ func TestHandleMovieDomainGraphSyncUpsertsMoviePeopleEdges(t *testing.T) {
 	now := time.Now().UTC()
 	store := &movieDomainGraphStoreStub{
 		relationTotal: 2,
-		relationItems: []conversationpersistence.L1DomainGraphAssertion{
+		relationItems: []l1sqlite.L1DomainGraphAssertion{
 			{
 				ID:               "dg:movie:edge:1",
 				Domain:           "movie",
@@ -210,7 +209,7 @@ func TestHandleMovieDomainGraphSyncUpsertsMoviePeopleEdges(t *testing.T) {
 				RelationType:     "actor",
 				SourceURL:        "https://eiga.com/movie/57573/",
 				Summary:          "Movie person relation",
-				ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+				ValidationStatus: l1sqlite.L1StagingStatusValidated,
 				Evidence: map[string]interface{}{
 					"movie_id":    "movie:57573",
 					"movie_title": "マージン・コール",
@@ -229,7 +228,7 @@ func TestHandleMovieDomainGraphSyncUpsertsMoviePeopleEdges(t *testing.T) {
 				RelationType:     "actor",
 				SourceURL:        "https://eiga.com/movie/57573/",
 				Summary:          "Missing person",
-				ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+				ValidationStatus: l1sqlite.L1StagingStatusValidated,
 				Evidence: map[string]interface{}{
 					"movie_id": "movie:57573",
 				},

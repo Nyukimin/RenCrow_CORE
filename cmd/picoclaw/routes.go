@@ -11,6 +11,7 @@ import (
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/viewer"
 	aiworkflowfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/aiworkflow"
 	channelsfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/channels"
+	gamesfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/games"
 	governancefeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/governance"
 	idlechatfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/idlechat"
 	knowledgefeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/knowledge"
@@ -309,6 +310,15 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 	if dependencies.viewerSend != nil {
 		mux.HandleFunc("/viewer/send", dependencies.viewerSend)
 	}
+	gamesfeature.RegisterRoutes(mux, gamesfeature.Dependencies{Routes: gamesfeature.Routes{
+		Status:        dependencies.viewerGamesStatus,
+		Decision:      dependencies.viewerGamesDecision,
+		Result:        dependencies.viewerGamesResult,
+		Sessions:      dependencies.viewerGamesSessions,
+		Events:        dependencies.viewerGamesEvents,
+		ObserverPage:  dependencies.viewerGamesObserverPage,
+		ObserverProxy: dependencies.viewerGamesObserverProxy,
+	}})
 }
 
 func defaultInvestmentDBPath() string {

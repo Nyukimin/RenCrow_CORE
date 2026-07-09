@@ -4,6 +4,8 @@
 **対象プロジェクト**: picoclaw_multiLLM  
 **目的**: 既存仕様を壊さず、技術的負債を減らし、今後変更しやすい状態にする
 
+> [WARN] L番号定義の正本は `docs/refs/01_正本仕様/18_Memory_Lifecycle_Recall_Context.md` である。L0〜L4 は保存媒体ではなく lifecycle 上の位置で定義する。本書は 2026-06-12 時点の履歴文書であり、本文中の Redis / SQLite / DuckDB / Qdrant を L0〜L3 に割り当てる記述は旧定義として扱う。
+
 ---
 
 ## Objective

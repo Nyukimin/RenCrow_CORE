@@ -69,12 +69,15 @@ func TestViewerStaticContractDailyDeskTabs(t *testing.T) {
 		`data-tab="reports"`:                     "Reports tab",
 		`data-tab="movie-db"`:                    "Movie Database tab",
 		`data-tab="investment"`:                  "Investment tab",
+		`data-tab="games"`:                       "Games tab",
 		`id="panel-home" class="panel active"`:   "Home is the initial active panel",
 		`id="panel-develop"`:                     "Develop panel",
 		`id="panel-instructions"`:                "Instructions panel",
 		`id="panel-reports"`:                     "Reports panel",
 		`id="panel-movie-db"`:                    "Movie Database panel",
 		`id="panel-investment"`:                  "Investment panel",
+		`id="panel-games"`:                       "Games panel",
+		`id="gamesBridgeStatusCard"`:             "Games bridge status card",
 		`id="investmentRefreshBtn"`:              "Investment refresh action",
 		`id="movieDbFetchKind"`:                  "Movie Database fetch kind selector",
 		`id="movieDbFetchQuery"`:                 "Movie Database fetch query input",
@@ -86,6 +89,7 @@ func TestViewerStaticContractDailyDeskTabs(t *testing.T) {
 		`/viewer/assets/js/tabs/reports.js`:      "Reports tab JavaScript",
 		`/viewer/assets/js/tabs/movie-db.js`:     "Movie Database tab JavaScript",
 		`/viewer/assets/js/tabs/investment.js`:   "Investment tab JavaScript",
+		`/viewer/assets/js/tabs/games.js`:        "Games tab JavaScript",
 	}
 	for needle, purpose := range required {
 		if !strings.Contains(html, needle) {
@@ -149,6 +153,49 @@ func TestViewerStaticContractLabLiveModeHidesTopGuidancePanels(t *testing.T) {
 	for _, needle := range required {
 		if !strings.Contains(css, needle) {
 			t.Fatalf("Lab live mode top guidance cleanup missing %q", needle)
+		}
+	}
+}
+
+func TestViewerStaticContractLabModeIncludesAllChatRecipients(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	jsData, err := os.ReadFile("assets/js/viewer.js")
+	if err != nil {
+		t.Fatalf("read viewer.js: %v", err)
+	}
+	html := string(htmlData)
+	js := string(jsData)
+	if !strings.Contains(html, `data-lab-switch="mio"`) {
+		t.Fatal("viewer.html missing independent Mio lab switch")
+	}
+	if !strings.Contains(html, `id="labModePartnerChip"`) {
+		t.Fatal("viewer.html missing lab partner chip")
+	}
+	if !strings.Contains(html, `id="labPartnerOptions"`) {
+		t.Fatal("viewer.html missing lab partner options")
+	}
+	if strings.Contains(html, `data-lab-switch="kuro"`) || strings.Contains(html, `data-lab-switch="midori"`) {
+		t.Fatal("viewer.html must not render Kuro/Midori as horizontal lab switches")
+	}
+	for _, actor := range []string{"shiro", "kuro", "midori"} {
+		if !strings.Contains(html, `data-lab-partner-option="`+actor+`"`) {
+			t.Fatalf("viewer.html missing lab partner option for %s", actor)
+		}
+	}
+	if !strings.Contains(js, `const LAB_CHAT_PARTNERS = ['shiro', 'kuro', 'midori'];`) {
+		t.Fatal("viewer.js missing picker lab chat partner list")
+	}
+	for _, needle := range []string{
+		`data-lab-partner-toggle`,
+		`data-lab-partner-option`,
+		`setLabPartnerMenuOpen`,
+		`syncLabPartnerPicker`,
+	} {
+		if !strings.Contains(js, needle) {
+			t.Fatalf("viewer.js missing lab partner picker wiring %q", needle)
 		}
 	}
 }
@@ -266,5 +313,79 @@ func TestViewerStaticContractHobbyGraphOpsOverview(t *testing.T) {
 	}
 	if !strings.Contains(string(opsJS), "hobbyGraphOpsCard()") {
 		t.Fatal("ops.js missing Hobby Graph Ops card registration")
+	}
+}
+
+func TestViewerStaticContractGameBridgeOpsCard(t *testing.T) {
+	viewerJS, err := os.ReadFile("assets/js/viewer.js")
+	if err != nil {
+		t.Fatalf("read viewer.js: %v", err)
+	}
+	opsJS, err := os.ReadFile("assets/js/tabs/ops.js")
+	if err != nil {
+		t.Fatalf("read ops.js: %v", err)
+	}
+	gamesJS, err := os.ReadFile("assets/js/tabs/games.js")
+	if err != nil {
+		t.Fatalf("read games.js: %v", err)
+	}
+	html, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	viewer := string(viewerJS)
+	ops := string(opsJS)
+	games := string(gamesJS)
+	page := string(html)
+
+	for _, required := range []string{
+		"function refreshGameBridgeData()",
+		"/viewer/games/status",
+		"/viewer/games/sessions?limit=5",
+		"/viewer/games/events?limit=5",
+	} {
+		if !strings.Contains(viewer, required) {
+			t.Fatalf("viewer.js missing Game Bridge refresh contract: %s", required)
+		}
+	}
+	for _, required := range []string{
+		"function gameBridgeOpsCard()",
+		"title: 'Game Bridge'",
+		"candidate-only: not confirmed",
+		"gameBridgeOpsCard()",
+	} {
+		if !strings.Contains(ops, required) {
+			t.Fatalf("ops.js missing Game Bridge Ops card contract: %s", required)
+		}
+	}
+	for _, required := range []string{
+		"function renderGamesDesk()",
+		"gamesBridgeState()",
+		"gamesBridgeStatusCard",
+		"gamesLatestSessionCard",
+		"gamesEventsCard",
+		"candidate-only: not confirmed",
+	} {
+		if !strings.Contains(games, required) {
+			t.Fatalf("games.js missing Game Bridge Games tab contract: %s", required)
+		}
+	}
+	for _, required := range []string{
+		"games: document.getElementById('panel-games')",
+		"tab === 'games'",
+		"renderGamesDesk",
+	} {
+		if !strings.Contains(viewer, required) {
+			t.Fatalf("viewer.js missing Games tab wiring: %s", required)
+		}
+	}
+	if !strings.Contains(page, "ops.js?v=20260702-game-bridge-card") {
+		t.Fatal("viewer.html missing Game Bridge Ops cache buster")
+	}
+	if !strings.Contains(page, "games.js?v=20260702-games-tab") {
+		t.Fatal("viewer.html missing Games tab cache buster")
+	}
+	if !strings.Contains(page, "viewer.js?v=20260702-games-tab") {
+		t.Fatal("viewer.html missing Game Bridge viewer cache buster")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"io"
 	"net/http"
 	"sort"
@@ -12,24 +13,23 @@ import (
 	"time"
 
 	domainsecurity "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/security"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 	webgatherinfra "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/webgather"
 	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
 	"github.com/mmcdole/gofeed"
 )
 
 type RegistryStore interface {
-	DueSourceRegistryEntries(ctx context.Context, now time.Time) ([]conversationpersistence.L1SourceRegistryEntry, error)
+	DueSourceRegistryEntries(ctx context.Context, now time.Time) ([]l1sqlite.L1SourceRegistryEntry, error)
 	SourceTrustScores(ctx context.Context) (map[string]float64, error)
-	StageSourceRegistryFetch(ctx context.Context, sourceID string, payload conversationpersistence.L1SourceFetchPayload) (*conversationpersistence.L1StagingItem, error)
-	ValidateStagingItem(ctx context.Context, id string, policy conversationpersistence.L1StagingValidationPolicy) (*conversationpersistence.L1StagingValidationResult, error)
-	PromoteValidatedStagingItemToNews(ctx context.Context, id string, category string) (*conversationpersistence.L1NewsItem, error)
-	PromoteValidatedStagingItemToKnowledge(ctx context.Context, id string, domain string) (*conversationpersistence.L1KnowledgeItem, error)
+	StageSourceRegistryFetch(ctx context.Context, sourceID string, payload l1sqlite.L1SourceFetchPayload) (*l1sqlite.L1StagingItem, error)
+	ValidateStagingItem(ctx context.Context, id string, policy l1sqlite.L1StagingValidationPolicy) (*l1sqlite.L1StagingValidationResult, error)
+	PromoteValidatedStagingItemToNews(ctx context.Context, id string, category string) (*l1sqlite.L1NewsItem, error)
+	PromoteValidatedStagingItemToKnowledge(ctx context.Context, id string, domain string) (*l1sqlite.L1KnowledgeItem, error)
 	MarkSourceRegistryFetched(ctx context.Context, sourceID string, fetchedAt time.Time, status string, lastError string) error
 }
 
 type RegistrySourceLister interface {
-	ListSourceRegistryEntries(ctx context.Context, enabledOnly bool) ([]conversationpersistence.L1SourceRegistryEntry, error)
+	ListSourceRegistryEntries(ctx context.Context, enabledOnly bool) ([]l1sqlite.L1SourceRegistryEntry, error)
 }
 
 type SweepOptions struct {
@@ -68,9 +68,9 @@ func SweepDueSources(ctx context.Context, store RegistryStore, now time.Time, op
 	result := SweepResult{Sources: len(sources)}
 	parser := gofeed.NewParser()
 	for _, source := range sources {
-		if source.Kind == conversationpersistence.L1SourceKindWebGather {
+		if source.Kind == l1sqlite.L1SourceKindWebGather {
 			err = sweepWebGatherSource(ctx, store, source, now, &result)
-		} else if source.Kind != conversationpersistence.L1SourceKindRSS && source.Kind != conversationpersistence.L1SourceKindAtom {
+		} else if source.Kind != l1sqlite.L1SourceKindRSS && source.Kind != l1sqlite.L1SourceKindAtom {
 			err = sweepHTTPSource(ctx, store, source, trustScores, now, &result)
 		} else {
 			err = sweepFeedSource(ctx, store, parser, source, trustScores, now, opts, &result)
@@ -108,7 +108,7 @@ func RunSource(ctx context.Context, store interface {
 	if err != nil {
 		return SweepResult{}, err
 	}
-	var selected *conversationpersistence.L1SourceRegistryEntry
+	var selected *l1sqlite.L1SourceRegistryEntry
 	for _, entry := range entries {
 		if entry.SourceID == sourceID {
 			cp := entry
@@ -125,9 +125,9 @@ func RunSource(ctx context.Context, store interface {
 		return result, err
 	}
 	parser := gofeed.NewParser()
-	if selected.Kind == conversationpersistence.L1SourceKindWebGather {
+	if selected.Kind == l1sqlite.L1SourceKindWebGather {
 		err = sweepWebGatherSource(ctx, store, *selected, now, &result)
-	} else if selected.Kind != conversationpersistence.L1SourceKindRSS && selected.Kind != conversationpersistence.L1SourceKindAtom {
+	} else if selected.Kind != l1sqlite.L1SourceKindRSS && selected.Kind != l1sqlite.L1SourceKindAtom {
 		err = sweepHTTPSource(ctx, store, *selected, trustScores, now, &result)
 	} else {
 		err = sweepFeedSource(ctx, store, parser, *selected, trustScores, now, opts, &result)
@@ -143,7 +143,7 @@ func RunSource(ctx context.Context, store interface {
 	return result, nil
 }
 
-func sweepWebGatherSource(ctx context.Context, store RegistryStore, source conversationpersistence.L1SourceRegistryEntry, now time.Time, result *SweepResult) error {
+func sweepWebGatherSource(ctx context.Context, store RegistryStore, source l1sqlite.L1SourceRegistryEntry, now time.Time, result *SweepResult) error {
 	policy := modulewebgather.DefaultFetchPolicy()
 	if boolFromMeta(source.Meta, "allow_localhost", false) {
 		policy.AllowLocalhost = true
@@ -212,7 +212,7 @@ func sweepWebGatherSource(ctx context.Context, store RegistryStore, source conve
 		meta["security_warnings"] = warnings
 		result.Warnings += len(warnings)
 	}
-	staged, err := store.StageSourceRegistryFetch(ctx, source.SourceID, conversationpersistence.L1SourceFetchPayload{
+	staged, err := store.StageSourceRegistryFetch(ctx, source.SourceID, l1sqlite.L1SourceFetchPayload{
 		SourceURL:    firstNonEmpty(doc.CanonicalURL, artifact.FinalURL, normalizedURL),
 		FetchedAt:    firstNonZeroTime(artifact.FetchedAt, now),
 		PublishedAt:  firstNonZeroTime(doc.PublishedAt, now),
@@ -231,7 +231,7 @@ func sweepWebGatherSource(ctx context.Context, store RegistryStore, source conve
 	return nil
 }
 
-func sweepHTTPSource(ctx context.Context, store RegistryStore, source conversationpersistence.L1SourceRegistryEntry, trustScores map[string]float64, now time.Time, result *SweepResult) error {
+func sweepHTTPSource(ctx context.Context, store RegistryStore, source l1sqlite.L1SourceRegistryEntry, trustScores map[string]float64, now time.Time, result *SweepResult) error {
 	apiPlan := planSourceAPI(source)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiPlan.FetchURL, nil)
 	if err != nil {
@@ -271,7 +271,7 @@ func sweepHTTPSource(ctx context.Context, store RegistryStore, source conversati
 		"title":     title,
 		"api_url":   apiPlan.FetchURL,
 	}
-	if source.Kind == conversationpersistence.L1SourceKindPyPI {
+	if source.Kind == l1sqlite.L1SourceKindPyPI {
 		if parsed, ok := parsePyPIPayload(raw); ok {
 			raw = parsed.RawText
 			title = firstNonEmpty(stringFromMeta(source.Meta, "title", ""), parsed.Name, title)
@@ -285,7 +285,7 @@ func sweepHTTPSource(ctx context.Context, store RegistryStore, source conversati
 	}
 	meta, warnings := sourceRegistryMetaWithWarnings(meta, raw)
 	result.Warnings += warnings
-	staged, err := store.StageSourceRegistryFetch(ctx, source.SourceID, conversationpersistence.L1SourceFetchPayload{
+	staged, err := store.StageSourceRegistryFetch(ctx, source.SourceID, l1sqlite.L1SourceFetchPayload{
 		SourceURL:    source.URL,
 		FetchedAt:    now,
 		PublishedAt:  now,
@@ -298,7 +298,7 @@ func sweepHTTPSource(ctx context.Context, store RegistryStore, source conversati
 		return err
 	}
 	result.Staged++
-	validation, err := store.ValidateStagingItem(ctx, staged.ID, conversationpersistence.L1StagingValidationPolicy{
+	validation, err := store.ValidateStagingItem(ctx, staged.ID, l1sqlite.L1StagingValidationPolicy{
 		SourceTrustScores: trustScores,
 		MinimumTrustScore: 0.5,
 		Now:               now,
@@ -370,7 +370,7 @@ func parsePyPIPayload(raw string) (pyPIPayload, bool) {
 	}, true
 }
 
-func sweepFeedSource(ctx context.Context, store RegistryStore, parser *gofeed.Parser, source conversationpersistence.L1SourceRegistryEntry, trustScores map[string]float64, now time.Time, opts SweepOptions, result *SweepResult) error {
+func sweepFeedSource(ctx context.Context, store RegistryStore, parser *gofeed.Parser, source l1sqlite.L1SourceRegistryEntry, trustScores map[string]float64, now time.Time, opts SweepOptions, result *SweepResult) error {
 	feed, err := parser.ParseURLWithContext(source.URL, ctx)
 	if err != nil {
 		return err
@@ -396,7 +396,7 @@ func sweepFeedSource(ctx context.Context, store RegistryStore, parser *gofeed.Pa
 			"namespace": namespace,
 		}, raw)
 		result.Warnings += warnings
-		staged, err := store.StageSourceRegistryFetch(ctx, source.SourceID, conversationpersistence.L1SourceFetchPayload{
+		staged, err := store.StageSourceRegistryFetch(ctx, source.SourceID, l1sqlite.L1SourceFetchPayload{
 			SourceURL:    firstNonEmpty(item.Link, source.URL),
 			FetchedAt:    now,
 			PublishedAt:  publishedAt,
@@ -409,7 +409,7 @@ func sweepFeedSource(ctx context.Context, store RegistryStore, parser *gofeed.Pa
 			return err
 		}
 		result.Staged++
-		validation, err := store.ValidateStagingItem(ctx, staged.ID, conversationpersistence.L1StagingValidationPolicy{
+		validation, err := store.ValidateStagingItem(ctx, staged.ID, l1sqlite.L1StagingValidationPolicy{
 			SourceTrustScores: trustScores,
 			MinimumTrustScore: opts.MinimumTrustScore,
 			Now:               now,

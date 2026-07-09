@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 	"testing"
 	"time"
@@ -358,7 +359,7 @@ func TestBeginTurn_WithFreshSearchCache(t *testing.T) {
 func TestBeginTurn_UsesL1KnowledgeFTSBeforeVectorKB(t *testing.T) {
 	ctx := context.Background()
 	mgr := newTestManager(nil, nil)
-	l1 := &mockL1Store{knowledge: []L1KnowledgeItem{{
+	l1 := &mockL1Store{knowledge: []l1sqlite.L1KnowledgeItem{{
 		ID:           "kb-1",
 		Domain:       "general",
 		Title:        "RenCrow memory",
@@ -386,12 +387,12 @@ func TestBeginTurn_UsesL1KnowledgeFTSBeforeVectorKB(t *testing.T) {
 func TestBeginTurn_UsesWikiPageIndexForSpecRecall(t *testing.T) {
 	ctx := context.Background()
 	mgr := newTestManager(nil, nil)
-	l1 := &mockL1Store{wiki: []WikiPageIndexItem{{
+	l1 := &mockL1Store{wiki: []l1sqlite.WikiPageIndexItem{{
 		PageID:          "concept:recall-pack",
 		Path:            "docs/wiki/concepts/recall-pack.md",
 		Title:           "RecallPack",
 		Type:            "concept",
-		Status:          WikiPageStatusActive,
+		Status:          l1sqlite.WikiPageStatusActive,
 		Owner:           "core",
 		CanonicalSource: "docs/01_正本仕様/18_Memory_Lifecycle_Recall_Context.md",
 		SourcePaths:     []string{"internal/domain/conversation/recall_pack.go"},

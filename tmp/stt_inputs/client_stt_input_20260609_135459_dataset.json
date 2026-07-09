@@ -1,0 +1,13 @@
+{
+  "id": "long_35s_v1",
+  "captured_at": "20260609_135459",
+  "raw_wav": "tmp/stt_inputs/client_stt_input_20260609_135459_raw.wav",
+  "trimmed_wav": "tmp/stt_inputs/client_stt_input_20260609_135459.wav",
+  "reference_txt": "tmp/stt_inputs/client_stt_input_20260609_135459_reference.txt",
+  "stt_txt": "tmp/stt_inputs/client_stt_input_20260609_135459_stt.txt",
+  "raw_duration_sec": 35.83,
+  "trimmed_duration_sec": 34.59,
+  "stt_provider": "http://192.168.1.207:8766/v1/audio/transcriptions",
+  "stt_ok_prefix": "おはようございます。RenCrowの音声テストです。今日は2026年6月9日、午後9時ごろです。私の名前はゆきみです。この音声は、文字起こしとLLMへの直接入力の比較に使います。数字の確認もお願いします。123、4567、",
+  "notes": "89012以降でSTTが数字ループに崩れる。30秒チャンク超えの長尺ファイル推論。"
+}

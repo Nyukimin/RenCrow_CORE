@@ -151,6 +151,100 @@ func TestShiroAgentExecute(t *testing.T) {
 	}
 }
 
+func TestShiroAgentExecute_UsesCodexRunForWorkPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		message    string
+		wantPrompt string
+	}{
+		{
+			name:       "drawing",
+			message:    "この場面を描画して",
+			wantPrompt: "描画領域",
+		},
+		{
+			name:       "folktale",
+			message:    "桃太郎の昔話生成をして",
+			wantPrompt: "昔話生成領域",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			llmCalled := false
+			var capturedTool string
+			var capturedArgs map[string]any
+			llmProvider := &mockLLMProvider{
+				generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+					llmCalled = true
+					return llm.GenerateResponse{}, errors.New("LLM should not be called for Codex work path")
+				},
+			}
+			toolRunner := &mockToolRunner{
+				listFunc: func(ctx context.Context) ([]tool.ToolMetadata, error) {
+					return []tool.ToolMetadata{{ToolID: "codex.run"}}, nil
+				},
+				executeV2Func: func(ctx context.Context, toolName string, args map[string]any) (*tool.ToolResponse, error) {
+					capturedTool = toolName
+					capturedArgs = args
+					return tool.NewSuccess("codex output"), nil
+				},
+			}
+			shiro := NewShiroAgent(llmProvider, toolRunner, &mockMCPClient{}, "test prompt", nil)
+
+			result, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), tt.message, "line", "U123"))
+			if err != nil {
+				t.Fatalf("Execute failed: %v", err)
+			}
+			if result != "codex output" {
+				t.Fatalf("result = %q, want codex output", result)
+			}
+			if llmCalled {
+				t.Fatal("LLM should not be called")
+			}
+			if capturedTool != "codex.run" {
+				t.Fatalf("tool = %q, want codex.run", capturedTool)
+			}
+			if capturedArgs["sandbox"] != "read-only" {
+				t.Fatalf("sandbox = %#v, want read-only", capturedArgs["sandbox"])
+			}
+			prompt, ok := capturedArgs["prompt"].(string)
+			if !ok {
+				t.Fatalf("prompt arg missing or not string: %#v", capturedArgs["prompt"])
+			}
+			if !strings.Contains(prompt, tt.wantPrompt) || !strings.Contains(prompt, tt.message) {
+				t.Fatalf("prompt does not include domain and user message:\n%s", prompt)
+			}
+		})
+	}
+}
+
+func TestShiroAgentExecute_CodexWorkPathFallsBackWhenToolUnavailable(t *testing.T) {
+	llmProvider := &mockLLMProvider{
+		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+			return llm.GenerateResponse{Content: "LLM fallback"}, nil
+		},
+	}
+	toolRunner := &mockToolRunner{
+		listFunc: func(ctx context.Context) ([]tool.ToolMetadata, error) {
+			return []tool.ToolMetadata{{ToolID: "other.tool"}}, nil
+		},
+		executeV2Func: func(ctx context.Context, toolName string, args map[string]any) (*tool.ToolResponse, error) {
+			t.Fatalf("ExecuteV2 should not be called when codex.run is unavailable")
+			return nil, nil
+		},
+	}
+	shiro := NewShiroAgent(llmProvider, toolRunner, &mockMCPClient{}, "test prompt", nil)
+
+	result, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "この場面を描画して", "line", "U123"))
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result != "LLM fallback" {
+		t.Fatalf("result = %q, want LLM fallback", result)
+	}
+}
+
 func TestShiroAgentExecuteUsesLightMemory(t *testing.T) {
 	var captured []llm.Message
 	llmProvider := &mockLLMProvider{

@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marin Live2D Viewer (Pseudo Rig)</title>
+<style>
+  :root{
+    --hot-pink:#FF40A6;
+    --purple:#8A3FFC;
+    --mint:#6FE7D5;
+    --yellow:#FFD940;
+    --ink:#1A1A1A;
+    --bg:#12101c;
+    --panel:#1d1930;
+    --panel-line:#3a3358;
+    --text:#f2eefc;
+    --muted:#a89fc7;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    font-family:'Hiragino Sans','Noto Sans JP',system-ui,sans-serif;
+    background:radial-gradient(1200px 800px at 30% 20%, #241c3f 0%, var(--bg) 60%);
+    color:var(--text);
+    overflow:hidden;
+  }
+  .layout{display:flex;height:100dvh}
+  .stage-wrap{
+    flex:1;min-width:0;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:12px;padding:16px;
+  }
+  .title-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
+  .title-bar h1{margin:0;font-size:18px;letter-spacing:1px}
+  .badge{
+    font-size:10px;font-weight:700;letter-spacing:.5px;
+    padding:3px 8px;border-radius:999px;
+    background:rgba(255,64,166,.16);color:var(--hot-pink);
+    border:1px solid rgba(255,64,166,.5);
+  }
+  .catchphrase{font-size:12px;color:var(--muted)}
+  .stage{
+    position:relative;
+    height:min(78dvh,760px);
+    aspect-ratio:400/805;
+    border-radius:18px;
+    overflow:hidden;
+    box-shadow:0 18px 60px rgba(0,0,0,.55),0 0 0 1px var(--panel-line);
+  }
+  .rig{position:absolute;inset:0}
+  .rig .layer{position:absolute;user-select:none;-webkit-user-drag:none;pointer-events:none}
+  .rig img.base{position:absolute;inset:0;width:100%;height:100%;display:block}
+  /* 髪揺れ: ベース画像の複製を clip-path で切り出して回転させる */
+  .sway{
+    position:absolute;inset:0;
+    background-size:100% 100%;
+    will-change:transform;
+    pointer-events:none;
+  }
+  .part{display:none}
+  .part.show{display:block}
+  .stage-hint{font-size:11px;color:var(--muted)}
+  .panel{
+    width:300px;flex:none;
+    background:var(--panel);
+    border-left:1px solid var(--panel-line);
+    padding:14px;overflow-y:auto;
+    display:flex;flex-direction:column;gap:14px;
+  }
+  body.no-ui .panel{display:none}
+  .panel h2{
+    margin:0 0 8px;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;
+    color:var(--mint);
+  }
+  .expr-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .expr-btn{
+    display:flex;flex-direction:column;align-items:center;gap:4px;
+    padding:6px;border-radius:10px;cursor:pointer;
+    background:#141126;border:1px solid var(--panel-line);
+    color:var(--text);font-size:11px;font-family:inherit;
+  }
+  .expr-btn img{width:100%;border-radius:6px;display:block}
+  .expr-btn:hover{border-color:var(--hot-pink)}
+  .expr-btn.active{border-color:var(--hot-pink);box-shadow:0 0 0 1px var(--hot-pink)}
+  .toggle-row{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:6px}
+  .toggle-row input{accent-color:var(--hot-pink)}
+  .note{
+    font-size:10px;line-height:1.6;color:var(--muted);
+    border:1px dashed var(--panel-line);border-radius:8px;padding:8px;
+  }
+  .error-banner{
+    position:fixed;left:50%;top:14px;transform:translateX(-50%);
+    background:#3a1020;border:1px solid #ff5f8f;color:#ffd7e4;
+    padding:8px 14px;border-radius:10px;font-size:12px;display:none;z-index:10;
+  }
+</style>
+</head>
+<body>
+<div class="error-banner" id="errorBanner"></div>
+<div class="layout">
+  <div class="stage-wrap">
+    <div class="title-bar">
+      <h1 id="charName">Marin</h1>
+      <span class="badge">PSEUDO RIG — .moc3 未収録</span>
+    </div>
+    <div class="catchphrase" id="charCatchphrase"></div>
+    <div class="stage" id="stage">
+      <div class="rig" id="rig"></div>
+    </div>
+    <div class="stage-hint">クリック: リアクション</div>
+  </div>
+  <aside class="panel" id="panel">
+    <section>
+      <h2>Expressions</h2>
+      <div class="expr-grid" id="exprGrid"></div>
+    </section>
+    <section>
+      <h2>Auto Motion</h2>
+      <div class="toggle-row"><input type="checkbox" id="autoBlink" checked><label for="autoBlink">まばたき</label></div>
+      <div class="toggle-row"><input type="checkbox" id="autoChatter" checked><label for="autoChatter">口パク（おしゃべり）</label></div>
+      <div class="toggle-row"><input type="checkbox" id="autoSway" checked><label for="autoSway">髪揺れ・アホ毛</label></div>
+    </section>
+    <div class="note" id="modelNote"></div>
+  </aside>
+</div>
+<script>
+(() => {
+  'use strict';
+
+  const qs = new URLSearchParams(location.search);
+  if (qs.get('ui') === '0') document.body.classList.add('no-ui');
+
+  const state = {
+    model: null,
+    exprState: {eye_l: 'open', eye_r: 'open', mouth: 'open', bounce: false},
+    blinking: false,
+    chatterOpenUntil: 0,
+    reactUntil: 0,
+    swayLayers: [],
+    partEls: {},   // 例: partEls.eye_l.open / .closed / .happy
+  };
+
+  const el = (id) => document.getElementById(id);
+  const on = (id) => el(id).checked;
+
+  function showError(msg) {
+    const banner = el('errorBanner');
+    banner.textContent = msg;
+    banner.style.display = 'block';
+  }
+
+  // --- リグDOM構築: ベース + パーツ ---------------------------------------
+
+  function pct(v, total) { return (v / total * 100).toFixed(3) + '%'; }
+
+  function placeLayer(node, box, canvas) {
+    node.style.left = pct(box[0], canvas.width);
+    node.style.top = pct(box[1], canvas.height);
+    node.style.width = pct(box[2] - box[0], canvas.width);
+    node.style.height = pct(box[3] - box[1], canvas.height);
+  }
+
+  function buildRig() {
+    const model = state.model;
+    const rigEl = el('rig');
+    const canvas = model.rig.canvas;
+    const parts = model.rig.parts;
+
+    const base = document.createElement('img');
+    base.className = 'base';
+    base.id = 'base';
+    base.src = model.images.base;
+    base.alt = model.character.display_name;
+    base.draggable = false;
+    rigEl.appendChild(base);
+
+    // 髪揺れ: ベース画像の複製を clip-path で切り出して回転
+    Object.entries(model.rig.sway_regions).forEach(([name, region], i) => {
+      const div = document.createElement('div');
+      div.className = 'sway';
+      div.id = 'sway_' + name;
+      div.style.backgroundImage = 'url("' + model.images.base + '")';
+      div.style.clipPath = 'polygon(' + region.polygon.map(
+        (p) => pct(p[0], canvas.width) + ' ' + pct(p[1], canvas.height)
+      ).join(',') + ')';
+      div.style.transformOrigin =
+        pct(region.pivot[0], canvas.width) + ' ' + pct(region.pivot[1], canvas.height);
+      rigEl.appendChild(div);
+      state.swayLayers.push({el: div, region: region, phase: i * 1.7});
+    });
+
+    // アホ毛パーツ (振り子回転)
+    const ah = parts.ahoge;
+    const ahoge = document.createElement('img');
+    ahoge.className = 'layer';
+    ahoge.id = 'ahoge';
+    ahoge.src = ah.image;
+    ahoge.alt = '';
+    placeLayer(ahoge, ah.box, canvas);
+    ahoge.style.transformOrigin =
+      pct(ah.pivot[0] - ah.box[0], ah.box[2] - ah.box[0]) + ' ' +
+      pct(ah.pivot[1] - ah.box[1], ah.box[3] - ah.box[1]);
+    ahoge.style.willChange = 'transform';
+    rigEl.appendChild(ahoge);
+
+    // 目・口パーツ: 状態ごとの画像を配置し、表示切替で合成する
+    ['eye_l', 'eye_r', 'mouth'].forEach((name) => {
+      const def = parts[name];
+      state.partEls[name] = {};
+      Object.entries(def).forEach(([key, value]) => {
+        if (key === 'box') return;
+        const img = document.createElement('img');
+        img.className = 'layer part';
+        img.id = 'part_' + name + '_' + key;
+        img.src = value;
+        img.alt = '';
+        placeLayer(img, def.box, canvas);
+        rigEl.appendChild(img);
+        state.partEls[name][key] = img;
+      });
+    });
+  }
+
+  // --- パーツ状態の合成 -----------------------------------------------------
+
+  function applyEyeState() {
+    const s = state.exprState;
+    ['eye_l', 'eye_r'].forEach((name) => {
+      let mode = s[name];
+      if (mode === 'open' && state.blinking) mode = 'closed';
+      Object.entries(state.partEls[name]).forEach(([key, img]) => {
+        img.classList.toggle('show', key === mode);
+      });
+    });
+  }
+
+  function applyMouthState() {
+    const open = state.exprState.mouth === 'open' ||
+      performance.now() < state.chatterOpenUntil;
+    state.partEls.mouth.open.classList.toggle('show', open);
+    state.partEls.mouth.closed.classList.toggle('show', !open);
+  }
+
+  // --- 表情 -----------------------------------------------------------------
+
+  function buildExpressionUI() {
+    const grid = el('exprGrid');
+    state.model.expressions.forEach((ex) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'expr-btn';
+      btn.dataset.exprId = ex.id;
+      const img = document.createElement('img');
+      img.src = ex.image;
+      img.alt = ex.id;
+      img.loading = 'lazy';
+      const span = document.createElement('span');
+      span.textContent = ex.description || ex.id;
+      btn.append(img, span);
+      btn.addEventListener('click', () => setExpression(ex.id));
+      grid.appendChild(btn);
+    });
+  }
+
+  function setExpression(id) {
+    const ex = state.model.expressions.find((x) => x.id === id);
+    if (!ex) return;
+    state.exprState = Object.assign(
+      {eye_l: 'open', eye_r: 'open', mouth: 'open', bounce: false},
+      ex.rig_state || {}
+    );
+    document.querySelectorAll('.expr-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.exprId === id);
+    });
+    applyEyeState();
+    applyMouthState();
+    state.reactUntil = performance.now() + (state.exprState.bounce ? 900 : 500);
+  }
+
+  // --- 自動モーション ---------------------------------------------------------
+
+  function scheduleBlink() {
+    const delay = 2200 + Math.random() * 2800;
+    setTimeout(() => {
+      const doBlink = (then) => {
+        state.blinking = true;
+        applyEyeState();
+        setTimeout(() => {
+          state.blinking = false;
+          applyEyeState();
+          if (then) setTimeout(then, 140);
+        }, 110);
+      };
+      if (on('autoBlink')) {
+        // 15% で二連まばたき
+        doBlink(Math.random() < 0.15 ? doBlink : null);
+      }
+      scheduleBlink();
+    }, delay);
+  }
+
+  function scheduleChatter() {
+    const delay = 5000 + Math.random() * 5000;
+    setTimeout(() => {
+      if (on('autoChatter') && state.exprState.mouth === 'closed') {
+        let n = 2 + Math.floor(Math.random() * 3);
+        const flap = () => {
+          if (n-- <= 0) { applyMouthState(); return; }
+          state.chatterOpenUntil = performance.now() + 120 + Math.random() * 80;
+          applyMouthState();
+          setTimeout(() => { applyMouthState(); setTimeout(flap, 90 + Math.random() * 70); }, 160);
+        };
+        flap();
+      }
+      scheduleChatter();
+    }, delay);
+  }
+
+  function bindPointer() {
+    el('stage').addEventListener('pointerdown', () => {
+      // クリックで髪揺れ増幅 + 一声
+      state.reactUntil = performance.now() + 900;
+      state.chatterOpenUntil = performance.now() + 200;
+      applyMouthState();
+      setTimeout(applyMouthState, 220);
+    });
+  }
+
+  // 髪揺れ・アホ毛のみを動かす。ベース(背景を含む全身)は一切動かさない。
+  function tick(now) {
+    const t = now / 1000;
+    const swayOn = on('autoSway');
+    const boost = now < state.reactUntil ? 2.2 : 1;
+    state.swayLayers.forEach((s) => {
+      const a = swayOn
+        ? Math.sin((t / s.region.cycle_sec) * Math.PI * 2 + s.phase) * s.region.amp_deg * boost
+        : 0;
+      s.el.style.transform = 'rotate(' + a.toFixed(2) + 'deg)';
+    });
+    const ahogeEl = el('ahoge');
+    if (ahogeEl) {
+      const a = swayOn ? Math.sin((t / 2.4) * Math.PI * 2) * 3.5 * boost : 0;
+      ahogeEl.style.transform = 'rotate(' + a.toFixed(2) + 'deg)';
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // --- 起動 -------------------------------------------------------------------
+
+  async function init() {
+    let model;
+    try {
+      const res = await fetch('model.json', {cache: 'no-cache'});
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      model = await res.json();
+    } catch (err) {
+      showError('model.json の読み込みに失敗しました: ' + (err && err.message ? err.message : err));
+      return;
+    }
+    state.model = model;
+
+    if (model.model3) {
+      // 将来 .moc3 が用意されたら Cubism ランタイム読み込みへ切り替える差し替え口。
+      showError('model3 が設定されていますが Cubism ランタイム読み込みは未実装です。疑似リグ表示を継続します。');
+    }
+
+    el('charName').textContent = model.character.display_name || 'Marin';
+    el('charCatchphrase').textContent = model.character.catchphrase || '';
+    el('modelNote').textContent = model.note || '';
+
+    buildRig();
+    buildExpressionUI();
+    bindPointer();
+
+    const initialExpr = qs.get('expression');
+    setExpression(initialExpr && model.expressions.some((x) => x.id === initialExpr)
+      ? initialExpr
+      : 'normal_genki');
+    // 起動直後は落ち着いた閉じ口から始める
+    state.exprState.mouth = 'closed';
+    applyMouthState();
+
+    scheduleBlink();
+    scheduleChatter();
+    requestAnimationFrame(tick);
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

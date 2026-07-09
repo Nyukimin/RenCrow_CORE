@@ -3,16 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 func TestRunKnowledgeCommandImportCoreJSONL(t *testing.T) {
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -30,7 +29,7 @@ func TestRunKnowledgeCommandImportCoreJSONL(t *testing.T) {
 	if !strings.Contains(out.String(), `"imported":1`) {
 		t.Fatalf("expected json result, got %s", out.String())
 	}
-	items, err := store.RecentStagingItems(context.Background(), conversationpersistence.L1StagingStatusPending, 10)
+	items, err := store.RecentStagingItems(context.Background(), l1sqlite.L1StagingStatusPending, 10)
 	if err != nil {
 		t.Fatalf("RecentStagingItems failed: %v", err)
 	}
@@ -40,7 +39,7 @@ func TestRunKnowledgeCommandImportCoreJSONL(t *testing.T) {
 }
 
 func TestRunKnowledgeCommandIndexWiki(t *testing.T) {
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}

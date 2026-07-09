@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"io"
 	"net/http"
 	"strconv"
@@ -10,22 +11,21 @@ import (
 	"time"
 
 	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/sourcefetcher"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 	"gopkg.in/yaml.v3"
 )
 
 type SourceRegistryStore interface {
-	SaveSourceRegistryEntry(ctx context.Context, entry conversationpersistence.L1SourceRegistryEntry) (*conversationpersistence.L1SourceRegistryEntry, error)
-	ListSourceRegistryEntries(ctx context.Context, enabledOnly bool) ([]conversationpersistence.L1SourceRegistryEntry, error)
+	SaveSourceRegistryEntry(ctx context.Context, entry l1sqlite.L1SourceRegistryEntry) (*l1sqlite.L1SourceRegistryEntry, error)
+	ListSourceRegistryEntries(ctx context.Context, enabledOnly bool) ([]l1sqlite.L1SourceRegistryEntry, error)
 }
 
 type SourceRegistryStagingStore interface {
-	RecentStagingItems(ctx context.Context, validationStatus string, limit int) ([]conversationpersistence.L1StagingItem, error)
-	ValidateStagingItem(ctx context.Context, id string, policy conversationpersistence.L1StagingValidationPolicy) (*conversationpersistence.L1StagingValidationResult, error)
-	PromoteValidatedStagingItemToMemory(ctx context.Context, id string, targetNamespace string, promotedBy string) (*conversationpersistence.L1MemoryEvent, error)
-	PromoteValidatedStagingItemToNews(ctx context.Context, id string, category string) (*conversationpersistence.L1NewsItem, error)
-	PromoteValidatedStagingItemToKnowledge(ctx context.Context, id string, domain string) (*conversationpersistence.L1KnowledgeItem, error)
-	PromoteValidatedStagingItemToDomainGraph(ctx context.Context, id string, domain string, entityType string, entityID string, relationType string, confidence float64) (*conversationpersistence.L1DomainGraphAssertion, error)
+	RecentStagingItems(ctx context.Context, validationStatus string, limit int) ([]l1sqlite.L1StagingItem, error)
+	ValidateStagingItem(ctx context.Context, id string, policy l1sqlite.L1StagingValidationPolicy) (*l1sqlite.L1StagingValidationResult, error)
+	PromoteValidatedStagingItemToMemory(ctx context.Context, id string, targetNamespace string, promotedBy string) (*l1sqlite.L1MemoryEvent, error)
+	PromoteValidatedStagingItemToNews(ctx context.Context, id string, category string) (*l1sqlite.L1NewsItem, error)
+	PromoteValidatedStagingItemToKnowledge(ctx context.Context, id string, domain string) (*l1sqlite.L1KnowledgeItem, error)
+	PromoteValidatedStagingItemToDomainGraph(ctx context.Context, id string, domain string, entityType string, entityID string, relationType string, confidence float64) (*l1sqlite.L1DomainGraphAssertion, error)
 }
 
 type sourceRegistryEntryDTO struct {
@@ -107,7 +107,7 @@ func handleSourceRegistryStagingList(w http.ResponseWriter, r *http.Request, sto
 	}
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	if status == "" {
-		status = conversationpersistence.L1StagingStatusPending
+		status = l1sqlite.L1StagingStatusPending
 	}
 	limit := 20
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
@@ -191,7 +191,7 @@ func handleSourceRegistryStagingValidate(w http.ResponseWriter, r *http.Request,
 		}
 		trustScores = scores
 	}
-	result, err := stagingStore.ValidateStagingItem(r.Context(), id, conversationpersistence.L1StagingValidationPolicy{
+	result, err := stagingStore.ValidateStagingItem(r.Context(), id, l1sqlite.L1StagingValidationPolicy{
 		SourceTrustScores:          trustScores,
 		MinimumTrustScore:          minTrust,
 		Now:                        time.Now().UTC(),
@@ -372,7 +372,7 @@ func wantsYAML(r *http.Request) bool {
 	return strings.Contains(ct, "yaml") || strings.Contains(ct, "yml")
 }
 
-func sourceRegistryEntriesToDTO(entries []conversationpersistence.L1SourceRegistryEntry) []sourceRegistryEntryDTO {
+func sourceRegistryEntriesToDTO(entries []l1sqlite.L1SourceRegistryEntry) []sourceRegistryEntryDTO {
 	out := make([]sourceRegistryEntryDTO, 0, len(entries))
 	for _, entry := range entries {
 		out = append(out, sourceRegistryEntryToDTO(entry))
@@ -380,7 +380,7 @@ func sourceRegistryEntriesToDTO(entries []conversationpersistence.L1SourceRegist
 	return out
 }
 
-func sourceRegistryStagingItemsToDTO(items []conversationpersistence.L1StagingItem) []sourceRegistryStagingItemDTO {
+func sourceRegistryStagingItemsToDTO(items []l1sqlite.L1StagingItem) []sourceRegistryStagingItemDTO {
 	out := make([]sourceRegistryStagingItemDTO, 0, len(items))
 	for _, item := range items {
 		out = append(out, sourceRegistryStagingItemToDTO(item))
@@ -388,7 +388,7 @@ func sourceRegistryStagingItemsToDTO(items []conversationpersistence.L1StagingIt
 	return out
 }
 
-func sourceRegistryStagingItemToDTO(item conversationpersistence.L1StagingItem) sourceRegistryStagingItemDTO {
+func sourceRegistryStagingItemToDTO(item l1sqlite.L1StagingItem) sourceRegistryStagingItemDTO {
 	dto := sourceRegistryStagingItemDTO{
 		ID:               item.ID,
 		Kind:             item.Kind,
@@ -418,7 +418,7 @@ func sourceRegistryStagingItemToDTO(item conversationpersistence.L1StagingItem) 
 	return dto
 }
 
-func sourceRegistryEntryToDTO(entry conversationpersistence.L1SourceRegistryEntry) sourceRegistryEntryDTO {
+func sourceRegistryEntryToDTO(entry l1sqlite.L1SourceRegistryEntry) sourceRegistryEntryDTO {
 	dto := sourceRegistryEntryDTO{
 		SourceID:         entry.SourceID,
 		URL:              entry.URL,
@@ -443,8 +443,8 @@ func sourceRegistryEntryToDTO(entry conversationpersistence.L1SourceRegistryEntr
 	return dto
 }
 
-func (dto sourceRegistryEntryDTO) toEntry() conversationpersistence.L1SourceRegistryEntry {
-	return conversationpersistence.L1SourceRegistryEntry{
+func (dto sourceRegistryEntryDTO) toEntry() l1sqlite.L1SourceRegistryEntry {
+	return l1sqlite.L1SourceRegistryEntry{
 		SourceID:      dto.SourceID,
 		URL:           dto.URL,
 		Kind:          dto.Kind,

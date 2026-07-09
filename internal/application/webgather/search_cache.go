@@ -3,17 +3,16 @@ package webgather
 import (
 	"context"
 	"encoding/json"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
 	"strings"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
-	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
 )
 
 type L1SearchCacheStore interface {
-	GetFreshSearchCache(ctx context.Context, provider string, rawQuery string, now time.Time) (*conversationpersistence.L1SearchCacheEntry, error)
-	SaveSearchCache(ctx context.Context, provider string, rawQuery string, resultsJSON string, sourceURLs []string, ttl time.Duration) (*conversationpersistence.L1SearchCacheEntry, error)
-	RecentSearchCache(ctx context.Context, limit int) ([]conversationpersistence.L1SearchCacheEntry, error)
+	GetFreshSearchCache(ctx context.Context, provider string, rawQuery string, now time.Time) (*l1sqlite.L1SearchCacheEntry, error)
+	SaveSearchCache(ctx context.Context, provider string, rawQuery string, resultsJSON string, sourceURLs []string, ttl time.Duration) (*l1sqlite.L1SearchCacheEntry, error)
+	RecentSearchCache(ctx context.Context, limit int) ([]l1sqlite.L1SearchCacheEntry, error)
 }
 
 type L1SearchCache struct {

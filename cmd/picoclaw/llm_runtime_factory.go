@@ -86,20 +86,21 @@ func localRuntimeConfigFromAppConfig(cfg *config.Config) modulellm.LocalRuntimeC
 		return modulellm.LocalRuntimeConfig{}
 	}
 	return modulellm.LocalRuntimeConfig{
-		Provider:         cfg.LocalLLM.Provider,
-		BaseURL:          cfg.LocalLLM.BaseURL,
-		ChatBaseURL:      cfg.LocalLLM.ChatBaseURL,
-		WorkerBaseURL:    cfg.LocalLLM.WorkerBaseURL,
-		HeavyBaseURL:     cfg.LocalLLM.HeavyBaseURL,
-		WildBaseURL:      cfg.LocalLLM.WildBaseURL,
-		ChatModel:        cfg.LocalLLM.ChatModel,
-		WorkerModel:      cfg.LocalLLM.WorkerModel,
-		ChatWorkerModel:  cfg.LocalLLM.ChatWorkerModel,
-		HeavyModel:       cfg.LocalLLM.HeavyModel,
-		WildModel:        cfg.LocalLLM.WildModel,
-		TimeoutSec:       cfg.LocalLLM.TimeoutSec,
-		ModelConcurrency: cfg.LocalLLM.ModelConcurrency,
-		ModelContext:     cfg.LocalLLM.ModelContext,
+		Provider:          cfg.LocalLLM.Provider,
+		BaseURL:           cfg.LocalLLM.BaseURL,
+		ChatBaseURL:       cfg.LocalLLM.ChatBaseURL,
+		WorkerBaseURL:     cfg.LocalLLM.WorkerBaseURL,
+		ChatWorkerBaseURL: cfg.LocalLLM.ChatWorkerBaseURL,
+		HeavyBaseURL:      cfg.LocalLLM.HeavyBaseURL,
+		WildBaseURL:       cfg.LocalLLM.WildBaseURL,
+		ChatModel:         cfg.LocalLLM.ChatModel,
+		WorkerModel:       cfg.LocalLLM.WorkerModel,
+		ChatWorkerModel:   cfg.LocalLLM.ChatWorkerModel,
+		HeavyModel:        cfg.LocalLLM.HeavyModel,
+		WildModel:         cfg.LocalLLM.WildModel,
+		TimeoutSec:        cfg.LocalLLM.TimeoutSec,
+		ModelConcurrency:  cfg.LocalLLM.ModelConcurrency,
+		ModelContext:      cfg.LocalLLM.ModelContext,
 	}
 }
 

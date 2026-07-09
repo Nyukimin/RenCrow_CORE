@@ -2,16 +2,16 @@ package dci
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/url"
 	"path/filepath"
 	"strings"
 
 	domaindci "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/dci"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type L1SourceMetadataStore interface {
-	ListSourceRegistryEntries(ctx context.Context, enabledOnly bool) ([]conversationpersistence.L1SourceRegistryEntry, error)
+	ListSourceRegistryEntries(ctx context.Context, enabledOnly bool) ([]l1sqlite.L1SourceRegistryEntry, error)
 }
 
 type L1SourceMetadataRanker struct {
@@ -72,7 +72,7 @@ func (r *L1SourceMetadataRanker) RankDCICandidateFiles(ctx context.Context, path
 	return out, nil
 }
 
-func sourceRegistryLocalPath(entry conversationpersistence.L1SourceRegistryEntry) string {
+func sourceRegistryLocalPath(entry l1sqlite.L1SourceRegistryEntry) string {
 	for _, key := range []string{"local_path", "file_path", "path"} {
 		if value := stringMetaValue(entry.Meta, key); value != "" {
 			return value
@@ -90,7 +90,7 @@ func sourceRegistryLocalPath(entry conversationpersistence.L1SourceRegistryEntry
 	return unescaped
 }
 
-func sourceRegistryTermScore(entry conversationpersistence.L1SourceRegistryEntry, terms []string) float64 {
+func sourceRegistryTermScore(entry l1sqlite.L1SourceRegistryEntry, terms []string) float64 {
 	haystack := strings.ToLower(entry.SourceID + " " + entry.Kind + " " + entry.URL + " " + entry.LicenseNote + " " + sourceRegistryMetaText(entry.Meta))
 	score := 0.0
 	for _, term := range terms {

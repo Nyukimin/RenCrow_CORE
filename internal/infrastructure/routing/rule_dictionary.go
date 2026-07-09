@@ -161,6 +161,10 @@ func NewRuleDictionary() *RuleDictionary {
 func (d *RuleDictionary) Match(t task.Task) (routing.Route, float64, bool) {
 	message := strings.ToLower(t.UserMessage())
 
+	if path := routing.DetectCodexWorkPath(message); path.Found() {
+		return routing.RouteOPS, 0.92, true
+	}
+
 	if isCodeEditRequest(message) {
 		return routing.RouteCODE2, 0.9, true
 	}

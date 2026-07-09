@@ -4938,6 +4938,7 @@ test('viewer wires chat input and stt button to idlechat immediate stop', () => 
   const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
   const routesGo = fs.readFileSync('cmd/picoclaw/routes.go', 'utf8');
   const handlersGo = fs.readFileSync('cmd/picoclaw/runtime_idlechat_handlers.go', 'utf8');
+  const idlechatRegistrarGo = fs.readFileSync('internal/features/idlechat/registrar.go', 'utf8');
   assert.match(viewerJs, /function interruptIdleChatForUserInput/);
   assert.match(viewerJs, /fetch\('\/viewer\/idlechat\/stop'/);
   assert.match(viewerJs, /'user_input'[\s\S]*'stt_voice_start'[\s\S]*'vds_voice_start'/);
@@ -4950,8 +4951,9 @@ test('viewer wires chat input and stt button to idlechat immediate stop', () => 
   assert.match(viewerJs, /function abortSTTImmediately\(reason\)/);
   assert.match(viewerJs, /if \(typeof clearSTTFinalWaitTimer === 'function'\) clearSTTFinalWaitTimer\(\)/);
   assert.match(viewerJs, /if \(chunk\.mode === 'idlechat' && !isIdleChatActiveForTTS\(chunk\.sessionId\)\) return/);
-  assert.match(routesGo, /\/viewer\/idlechat\/stop/);
-  assert.match(routesGo, /\/viewer\/idlechat\/interrupt/);
+  assert.match(routesGo, /idlechatfeature\.RegisterRoutes/);
+  assert.match(idlechatRegistrarGo, /\/viewer\/idlechat\/stop/);
+  assert.match(idlechatRegistrarGo, /\/viewer\/idlechat\/interrupt/);
   assert.match(handlersGo, /handleIdleChatStop/);
   assert.match(handlersGo, /handleIdleChatInterrupt/);
 });

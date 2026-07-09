@@ -4,6 +4,8 @@ package conversation
 
 import (
 	"context"
+	redisstore "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/redis"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/vectordb"
 	"net/http"
 	"testing"
 	"time"
@@ -20,7 +22,7 @@ const (
 // skipIfUnavailable は接続確認し、未起動なら t.Skip()
 func skipIfRedisUnavailable(t *testing.T) {
 	t.Helper()
-	store, err := NewRedisStore(testRedisURL)
+	store, err := redisstore.NewRedisStore(testRedisURL)
 	if err != nil {
 		t.Skipf("Redis unavailable (%v) — run: docker compose -f docker-compose.infra.yml up -d", err)
 	}
@@ -41,9 +43,9 @@ func skipIfQdrantUnavailable(t *testing.T) {
 func TestRedisStore_Integration_SessionAndThread(t *testing.T) {
 	skipIfRedisUnavailable(t)
 
-	store, err := NewRedisStore(testRedisURL)
+	store, err := redisstore.NewRedisStore(testRedisURL)
 	if err != nil {
-		t.Fatalf("NewRedisStore failed: %v", err)
+		t.Fatalf("redisstore.NewRedisStore failed: %v", err)
 	}
 	defer store.Close()
 
@@ -87,9 +89,9 @@ func TestRedisStore_Integration_SessionAndThread(t *testing.T) {
 func TestVectorDBStore_Integration_SaveAndSearch(t *testing.T) {
 	skipIfQdrantUnavailable(t)
 
-	store, err := NewVectorDBStore(testVectorDBURL, testCollection)
+	store, err := vectordb.NewVectorDBStore(testVectorDBURL, testCollection)
 	if err != nil {
-		t.Fatalf("NewVectorDBStore failed: %v", err)
+		t.Fatalf("vectordb.NewVectorDBStore failed: %v", err)
 	}
 	defer store.Close()
 
@@ -171,7 +173,7 @@ func TestRealConversationManager_Integration_StoreAndRecall(t *testing.T) {
 	_ = err // 接続エラーは許容（Qdrantが起動していれば接続成功）
 
 	// Redisのみのシンプルなテスト
-	redisStore, err := NewRedisStore(testRedisURL)
+	redisStore, err := redisstore.NewRedisStore(testRedisURL)
 	if err != nil {
 		t.Fatalf("RedisStore failed: %v", err)
 	}
@@ -226,13 +228,13 @@ func TestConversationEngine_Integration_E2E(t *testing.T) {
 	sessionID := "e2e-engine-" + time.Now().Format("150405.000")
 
 	// 1. RealConversationManager（Redis + DuckDB + VectorDB）
-	redisStore, err := NewRedisStore(testRedisURL)
+	redisStore, err := redisstore.NewRedisStore(testRedisURL)
 	if err != nil {
 		t.Fatalf("RedisStore failed: %v", err)
 	}
 	defer redisStore.Close()
 
-	vdbStore, err := NewVectorDBStore(testVectorDBURL, testCollection)
+	vdbStore, err := vectordb.NewVectorDBStore(testVectorDBURL, testCollection)
 	if err != nil {
 		t.Fatalf("VectorDBStore failed: %v", err)
 	}

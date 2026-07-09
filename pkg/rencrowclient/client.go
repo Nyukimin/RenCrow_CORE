@@ -183,6 +183,7 @@ type LocalLLMRuntimeConfig struct {
 	Provider          string `json:"provider,omitempty"`
 	ChatBaseURL       string `json:"chat_base_url,omitempty"`
 	WorkerBaseURL     string `json:"worker_base_url,omitempty"`
+	ChatWorkerBaseURL string `json:"chat_worker_base_url,omitempty"`
 	HeavyBaseURL      string `json:"heavy_base_url,omitempty"`
 	WildBaseURL       string `json:"wild_base_url,omitempty"`
 	ChatModel         string `json:"chat_model,omitempty"`

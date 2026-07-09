@@ -2,12 +2,11 @@ package knowledge
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 func TestIndexKnowledgeWikiIndexesFrontmatterPages(t *testing.T) {
@@ -37,7 +36,7 @@ RecallPack は Mio に渡す文脈を選別済みにする prompt 注入用フ�
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
-	store, err := conversationpersistence.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}

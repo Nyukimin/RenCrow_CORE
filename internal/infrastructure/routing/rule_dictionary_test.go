@@ -65,6 +65,41 @@ func TestRuleDictionary_Match_NoMatch(t *testing.T) {
 	}
 }
 
+func TestRuleDictionary_Match_CodexWorkPath(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{
+			name:    "drawing bypasses wild",
+			message: "この場面を描画して",
+		},
+		{
+			name:    "folktale generation bypasses wild story",
+			message: "桃太郎の昔話生成をして",
+		},
+	}
+
+	dict := NewRuleDictionary()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testTask := task.NewTask(task.NewJobID(), tt.message, "line", "U123")
+
+			route, confidence, matched := dict.Match(testTask)
+			if !matched {
+				t.Fatal("Codex work path should match")
+			}
+			if route != routing.RouteOPS {
+				t.Fatalf("route = %s, want %s", route, routing.RouteOPS)
+			}
+			if confidence < 0.9 {
+				t.Fatalf("confidence = %f, want >= 0.9", confidence)
+			}
+		})
+	}
+}
+
 func TestRuleDictionary_Match_CodeKeywords(t *testing.T) {
 	tests := []struct {
 		name        string

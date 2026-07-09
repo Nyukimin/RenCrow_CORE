@@ -2,16 +2,16 @@ package dci
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/url"
 	"path/filepath"
 	"strings"
 
 	domaindci "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/dci"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type L1KnowledgeFTSStore interface {
-	SearchKnowledgeItemsFTS(ctx context.Context, domain string, query string, limit int) ([]conversationpersistence.L1KnowledgeItem, error)
+	SearchKnowledgeItemsFTS(ctx context.Context, domain string, query string, limit int) ([]l1sqlite.L1KnowledgeItem, error)
 }
 
 type L1KnowledgeFTSCandidateProvider struct {
@@ -81,7 +81,7 @@ func normalizeKnowledgeFTSDomains(domains []string) []string {
 	return out
 }
 
-func knowledgeItemLocalPath(item conversationpersistence.L1KnowledgeItem) string {
+func knowledgeItemLocalPath(item l1sqlite.L1KnowledgeItem) string {
 	for _, key := range []string{"local_path", "file_path", "path"} {
 		if value := stringMetaValue(item.Meta, key); value != "" {
 			return value
@@ -99,7 +99,7 @@ func knowledgeItemLocalPath(item conversationpersistence.L1KnowledgeItem) string
 	return unescaped
 }
 
-func knowledgeItemTermScore(item conversationpersistence.L1KnowledgeItem, terms []string) float64 {
+func knowledgeItemTermScore(item l1sqlite.L1KnowledgeItem, terms []string) float64 {
 	haystack := strings.ToLower(item.ID + " " + item.StagingID + " " + item.Domain + " " + item.Title + " " + item.SourceID + " " + item.SourceURL + " " + item.SummaryDraft + " " + strings.Join(item.Keywords, " ") + " " + sourceRegistryMetaText(item.Meta))
 	score := 0.0
 	for _, term := range terms {

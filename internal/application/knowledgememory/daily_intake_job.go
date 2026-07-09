@@ -7,19 +7,29 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/sourcefetcher"
 	domainkm "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/knowledgememory"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
+
+const SourceKindSearchFallback = "search_fallback"
 
 type DailyIntakeRuleStore interface {
 	ListDailyIntakeRules(ctx context.Context, limit int) ([]domainkm.DailyIntakeRule, error)
 }
 
 type DailyIntakeRegistryStore interface {
-	sourcefetcher.RegistryStore
-	sourcefetcher.RegistrySourceLister
-	SaveSourceRegistryEntry(ctx context.Context, entry conversationpersistence.L1SourceRegistryEntry) (*conversationpersistence.L1SourceRegistryEntry, error)
+	SaveSourceRegistryEntry(ctx context.Context, entry SourceRegistryEntry) (*SourceRegistryEntry, error)
+	SweepDueSources(ctx context.Context, now time.Time, opts SourceRegistrySweepOptions) (SourceRegistrySweepResult, error)
+}
+
+type SourceRegistryEntry struct {
+	SourceID      string
+	URL           string
+	Kind          string
+	TrustScore    float64
+	FetchInterval time.Duration
+	LicenseNote   string
+	Enabled       bool
+	Meta          map[string]interface{}
 }
 
 type DailyIntakeSweepOptions struct {
@@ -29,11 +39,26 @@ type DailyIntakeSweepOptions struct {
 	Now               time.Time
 }
 
+type SourceRegistrySweepOptions struct {
+	LimitPerSource    int
+	MinimumTrustScore float64
+}
+
+type SourceRegistrySweepResult struct {
+	Sources           int
+	Staged            int
+	Warnings          int
+	Validated         int
+	PromotedNews      int
+	PromotedKnowledge int
+	Failed            int
+}
+
 type DailyIntakeSweepResult struct {
 	RulesScanned       int
 	SourcesEnabled     int
 	SourcesSkipped     int
-	RegistrySweep      sourcefetcher.SweepResult
+	RegistrySweep      SourceRegistrySweepResult
 	RegistrySweepError string
 }
 
@@ -72,7 +97,7 @@ func RunDailyIntakeSweep(ctx context.Context, rules DailyIntakeRuleStore, regist
 		}
 		result.SourcesEnabled++
 	}
-	sweep, err := sourcefetcher.SweepDueSources(ctx, registry, now, sourcefetcher.SweepOptions{
+	sweep, err := registry.SweepDueSources(ctx, now, SourceRegistrySweepOptions{
 		LimitPerSource:    opts.SourceLimit,
 		MinimumTrustScore: opts.MinimumTrustScore,
 	})
@@ -92,15 +117,15 @@ func dailyIntakeRuleReady(rule domainkm.DailyIntakeRule) bool {
 	}
 }
 
-func dailyIntakeSourceRegistryEntry(rule domainkm.DailyIntakeRule, now time.Time) conversationpersistence.L1SourceRegistryEntry {
+func dailyIntakeSourceRegistryEntry(rule domainkm.DailyIntakeRule, now time.Time) SourceRegistryEntry {
 	interval := dailyIntakeFetchInterval(rule.Cadence)
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	return conversationpersistence.L1SourceRegistryEntry{
+	return SourceRegistryEntry{
 		SourceID:      "knowledge_memory:daily_intake_rule:" + strings.TrimSpace(rule.RuleID),
 		URL:           strings.TrimSpace(rule.SourceHint),
-		Kind:          conversationpersistence.L1SourceKindSearchFallback,
+		Kind:          SourceKindSearchFallback,
 		TrustScore:    0.55,
 		FetchInterval: interval,
 		LicenseNote:   "daily intake rule reviewed source; fetch to staging before promote",

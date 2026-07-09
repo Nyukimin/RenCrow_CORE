@@ -1,0 +1,612 @@
+{
+  "format": "rencrow-pseudo-live2d/1.0",
+  "generated_from": "tmp/Marin_Live2D_Data_Package (tables/*.csv, Marin_character_profile.yaml)",
+  "note": ".moc3 未収録のため、ベース画像(base.png)の上に目・口・アホ毛パーツを重ねる疑似リグで表示する。 パーツは tools/marin_parts_gen/gen_marin_patches.py で fullbody.png から生成。 .moc3 完成後は model3 フィールドに .model3.json のパスを設定して差し替える。",
+  "model3": null,
+  "character": {
+    "id": "marin",
+    "display_name": "Marin / マリン",
+    "role": "Wild（創造・ビジュアル・横展開）",
+    "catchphrase": "「ひらめきは、いつだってPOPに生きてるよ☆」",
+    "colors": {
+      "hot_pink": "#FF40A6",
+      "purple": "#8A3FFC",
+      "mint": "#6FE7D5",
+      "yellow": "#FFD940",
+      "white": "#FFFFFF",
+      "black": "#1A1A1A"
+    }
+  },
+  "images": {
+    "fullbody": "images/fullbody.png",
+    "base": "images/base.png"
+  },
+  "parameters": [
+    {
+      "id": "ParamAngleX",
+      "min": -30.0,
+      "max": 30.0,
+      "default": 0.0,
+      "description": "Face horizontal turn"
+    },
+    {
+      "id": "ParamAngleY",
+      "min": -30.0,
+      "max": 30.0,
+      "default": 0.0,
+      "description": "Face vertical turn"
+    },
+    {
+      "id": "ParamAngleZ",
+      "min": -30.0,
+      "max": 30.0,
+      "default": 0.0,
+      "description": "Head tilt"
+    },
+    {
+      "id": "ParamBodyAngleX",
+      "min": -15.0,
+      "max": 15.0,
+      "default": 0.0,
+      "description": "Body horizontal turn"
+    },
+    {
+      "id": "ParamBodyAngleY",
+      "min": -10.0,
+      "max": 10.0,
+      "default": 0.0,
+      "description": "Body vertical movement"
+    },
+    {
+      "id": "ParamBodyAngleZ",
+      "min": -10.0,
+      "max": 10.0,
+      "default": 0.0,
+      "description": "Body tilt"
+    },
+    {
+      "id": "ParamEyeLOpen",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "description": "Left eye open/close"
+    },
+    {
+      "id": "ParamEyeROpen",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "description": "Right eye open/close"
+    },
+    {
+      "id": "ParamEyeBallX",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Eye gaze X"
+    },
+    {
+      "id": "ParamEyeBallY",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Eye gaze Y"
+    },
+    {
+      "id": "ParamBrowLY",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Left brow Y"
+    },
+    {
+      "id": "ParamBrowRY",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Right brow Y"
+    },
+    {
+      "id": "ParamBrowLForm",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Left brow form"
+    },
+    {
+      "id": "ParamBrowRForm",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Right brow form"
+    },
+    {
+      "id": "ParamMouthOpenY",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Mouth open / lip sync"
+    },
+    {
+      "id": "ParamMouthForm",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Mouth smile-pout form"
+    },
+    {
+      "id": "ParamCheek",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Blush strength"
+    },
+    {
+      "id": "ParamBreath",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Breathing loop"
+    },
+    {
+      "id": "ParamArmL",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Left arm pose blend"
+    },
+    {
+      "id": "ParamArmR",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Right arm pose blend"
+    },
+    {
+      "id": "ParamHandL",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Left hand V-sign emphasis"
+    },
+    {
+      "id": "ParamHandR",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Right hand open emphasis"
+    },
+    {
+      "id": "ParamLegL",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Left leg slight pose"
+    },
+    {
+      "id": "ParamLegR",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Right leg slight pose"
+    },
+    {
+      "id": "ParamHairFront",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Front hair sway"
+    },
+    {
+      "id": "ParamHairSideL",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Left side hair sway"
+    },
+    {
+      "id": "ParamHairSideR",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Right side hair sway"
+    },
+    {
+      "id": "ParamAhoge",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Ahoge bounce"
+    },
+    {
+      "id": "ParamSkirt",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Skirt sway"
+    },
+    {
+      "id": "ParamCharm",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Charms swing"
+    },
+    {
+      "id": "ParamBag",
+      "min": -1.0,
+      "max": 1.0,
+      "default": 0.0,
+      "description": "Bag swing"
+    }
+  ],
+  "expressions": [
+    {
+      "id": "normal_genki",
+      "description": "元気な通常顔",
+      "image": "images/expressions/normal_genki.png",
+      "parameters": {
+        "ParamEyeLOpen": 1.0,
+        "ParamEyeROpen": 1.0,
+        "ParamMouthForm": 0.4,
+        "ParamMouthOpenY": 0.35,
+        "ParamBrowLY": 0.1,
+        "ParamBrowRY": 0.1
+      },
+      "rig_state": {
+        "eye_l": "open",
+        "eye_r": "open",
+        "mouth": "open",
+        "bounce": false
+      }
+    },
+    {
+      "id": "wink",
+      "description": "片目ウインク",
+      "image": "images/expressions/wink.png",
+      "parameters": {
+        "ParamEyeLOpen": 1.0,
+        "ParamEyeROpen": 0.0,
+        "ParamMouthForm": 0.7,
+        "ParamMouthOpenY": 0.45
+      },
+      "rig_state": {
+        "eye_l": "open",
+        "eye_r": "happy",
+        "mouth": "open",
+        "bounce": false
+      }
+    },
+    {
+      "id": "surprise",
+      "description": "驚き",
+      "image": "images/expressions/surprise.png",
+      "parameters": {
+        "ParamEyeLOpen": 1.0,
+        "ParamEyeROpen": 1.0,
+        "ParamMouthForm": 0.0,
+        "ParamMouthOpenY": 0.55,
+        "ParamBrowLY": 0.5,
+        "ParamBrowRY": 0.5
+      },
+      "rig_state": {
+        "eye_l": "open",
+        "eye_r": "open",
+        "mouth": "open",
+        "bounce": false
+      }
+    },
+    {
+      "id": "pout",
+      "description": "むすっ",
+      "image": "images/expressions/pout.png",
+      "parameters": {
+        "ParamEyeLOpen": 0.75,
+        "ParamEyeROpen": 0.75,
+        "ParamMouthForm": -0.8,
+        "ParamMouthOpenY": 0.05,
+        "ParamBrowLForm": -0.3,
+        "ParamBrowRForm": -0.3
+      },
+      "rig_state": {
+        "eye_l": "open",
+        "eye_r": "open",
+        "mouth": "closed",
+        "bounce": false
+      }
+    },
+    {
+      "id": "smile_niconico",
+      "description": "ニコニコ",
+      "image": "images/expressions/smile_niconico.png",
+      "parameters": {
+        "ParamEyeLOpen": 0.15,
+        "ParamEyeROpen": 0.15,
+        "ParamMouthForm": 1.0,
+        "ParamMouthOpenY": 0.45,
+        "ParamCheek": 0.8
+      },
+      "rig_state": {
+        "eye_l": "happy",
+        "eye_r": "happy",
+        "mouth": "open",
+        "bounce": true
+      }
+    },
+    {
+      "id": "thinking",
+      "description": "考え中",
+      "image": "images/expressions/thinking.png",
+      "parameters": {
+        "ParamEyeLOpen": 0.9,
+        "ParamEyeROpen": 0.9,
+        "ParamMouthForm": -0.1,
+        "ParamMouthOpenY": 0.05,
+        "ParamBrowLY": -0.2,
+        "ParamBrowRY": -0.2
+      },
+      "rig_state": {
+        "eye_l": "open",
+        "eye_r": "open",
+        "mouth": "closed",
+        "bounce": false
+      }
+    },
+    {
+      "id": "trouble",
+      "description": "困る",
+      "image": "images/expressions/trouble.png",
+      "parameters": {
+        "ParamEyeLOpen": 0.85,
+        "ParamEyeROpen": 0.85,
+        "ParamMouthForm": -0.4,
+        "ParamMouthOpenY": 0.18,
+        "ParamBrowLY": -0.45,
+        "ParamBrowRY": -0.45
+      },
+      "rig_state": {
+        "eye_l": "open",
+        "eye_r": "open",
+        "mouth": "closed",
+        "bounce": false
+      }
+    },
+    {
+      "id": "max_energy",
+      "description": "やる気MAX",
+      "image": "images/expressions/max_energy.png",
+      "parameters": {
+        "ParamEyeLOpen": 1.0,
+        "ParamEyeROpen": 1.0,
+        "ParamMouthForm": 0.8,
+        "ParamMouthOpenY": 0.65,
+        "ParamArmR": 0.8,
+        "ParamCheek": 0.6
+      },
+      "rig_state": {
+        "eye_l": "open",
+        "eye_r": "open",
+        "mouth": "open",
+        "bounce": true
+      }
+    }
+  ],
+  "idle_motion": {
+    "breath_cycle_sec": 3.2,
+    "sway_cycle_sec": 6.0,
+    "bob_cycle_sec": 4.4
+  },
+  "rig": {
+    "canvas": {
+      "width": 400,
+      "height": 805
+    },
+    "parts": {
+      "eye_l": {
+        "box": [
+          163,
+          283,
+          221,
+          346
+        ],
+        "open": "images/parts/eyeL_open.png",
+        "closed": "images/parts/eyeL_closed.png",
+        "happy": "images/parts/eyeL_happy.png"
+      },
+      "eye_r": {
+        "box": [
+          253,
+          276,
+          317,
+          338
+        ],
+        "open": "images/parts/eyeR_open.png",
+        "closed": "images/parts/eyeR_closed.png",
+        "happy": "images/parts/eyeR_happy.png"
+      },
+      "mouth": {
+        "box": [
+          218,
+          342,
+          264,
+          382
+        ],
+        "open": "images/parts/mouth_open.png",
+        "closed": "images/parts/mouth_closed.png"
+      },
+      "ahoge": {
+        "box": [
+          192,
+          78,
+          284,
+          144
+        ],
+        "image": "images/parts/ahoge.png",
+        "pivot": [
+          258,
+          136
+        ]
+      }
+    },
+    "sway_regions": {
+      "hair_side_l": {
+        "polygon": [
+          [
+            86,
+            258
+          ],
+          [
+            100,
+            247
+          ],
+          [
+            112,
+            254
+          ],
+          [
+            116,
+            272
+          ],
+          [
+            114,
+            300
+          ],
+          [
+            112,
+            326
+          ],
+          [
+            105,
+            348
+          ],
+          [
+            92,
+            352
+          ],
+          [
+            83,
+            330
+          ],
+          [
+            78,
+            300
+          ],
+          [
+            79,
+            274
+          ]
+        ],
+        "pivot": [
+          100,
+          250
+        ],
+        "amp_deg": 1.3,
+        "cycle_sec": 3.4
+      },
+      "hair_side_r": {
+        "polygon": [
+          [
+            352,
+            238
+          ],
+          [
+            368,
+            244
+          ],
+          [
+            384,
+            262
+          ],
+          [
+            394,
+            290
+          ],
+          [
+            396,
+            320
+          ],
+          [
+            390,
+            350
+          ],
+          [
+            378,
+            372
+          ],
+          [
+            362,
+            376
+          ],
+          [
+            352,
+            352
+          ],
+          [
+            348,
+            318
+          ],
+          [
+            346,
+            282
+          ],
+          [
+            347,
+            256
+          ]
+        ],
+        "pivot": [
+          352,
+          240
+        ],
+        "amp_deg": 1.5,
+        "cycle_sec": 3.9
+      },
+      "ribbon": {
+        "polygon": [
+          [
+            276,
+            118
+          ],
+          [
+            318,
+            104
+          ],
+          [
+            362,
+            118
+          ],
+          [
+            386,
+            158
+          ],
+          [
+            382,
+            210
+          ],
+          [
+            350,
+            244
+          ],
+          [
+            308,
+            240
+          ],
+          [
+            284,
+            206
+          ],
+          [
+            272,
+            158
+          ]
+        ],
+        "pivot": [
+          300,
+          228
+        ],
+        "amp_deg": 1.0,
+        "cycle_sec": 4.6
+      }
+    }
+  }
+}

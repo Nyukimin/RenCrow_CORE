@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,8 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 const (
@@ -23,7 +22,7 @@ const (
 )
 
 type MovieDomainGraphAssertionStore interface {
-	DomainGraphAssertions(ctx context.Context, q conversationpersistence.DomainGraphAssertionQuery) (int, []conversationpersistence.L1DomainGraphAssertion, error)
+	DomainGraphAssertions(ctx context.Context, q l1sqlite.DomainGraphAssertionQuery) (int, []l1sqlite.L1DomainGraphAssertion, error)
 }
 
 type movieDomainGraphSyncResult struct {
@@ -100,20 +99,20 @@ func HandleMovieDomainGraphSync(opts MovieCatalogOptions, store MovieDomainGraph
 		}
 		defer db.Close()
 
-		_, items, err := store.DomainGraphAssertions(r.Context(), conversationpersistence.DomainGraphAssertionQuery{
+		_, items, err := store.DomainGraphAssertions(r.Context(), l1sqlite.DomainGraphAssertionQuery{
 			Domain:           "movie",
 			EntityType:       "work",
-			ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+			ValidationStatus: l1sqlite.L1StagingStatusValidated,
 			Limit:            limit,
 		})
 		if err != nil {
 			http.Error(w, "failed to sync movie domain graph assertions", http.StatusInternalServerError)
 			return
 		}
-		_, relationItems, err := store.DomainGraphAssertions(r.Context(), conversationpersistence.DomainGraphAssertionQuery{
+		_, relationItems, err := store.DomainGraphAssertions(r.Context(), l1sqlite.DomainGraphAssertionQuery{
 			Domain:           "movie",
 			EntityType:       "work_person",
-			ValidationStatus: conversationpersistence.L1StagingStatusValidated,
+			ValidationStatus: l1sqlite.L1StagingStatusValidated,
 			Limit:            limit,
 		})
 		if err != nil {
@@ -157,7 +156,7 @@ func movieDomainGraphSyncLimit(r *http.Request) (int, error) {
 	return limit, nil
 }
 
-func syncMovieDomainGraphAssertions(ctx context.Context, db *sql.DB, items []conversationpersistence.L1DomainGraphAssertion) (movieDomainGraphSyncResult, error) {
+func syncMovieDomainGraphAssertions(ctx context.Context, db *sql.DB, items []l1sqlite.L1DomainGraphAssertion) (movieDomainGraphSyncResult, error) {
 	result := movieDomainGraphSyncResult{
 		Checked:     len(items),
 		MovieIDs:    []string{},
@@ -204,7 +203,7 @@ ON CONFLICT(movie_id) DO UPDATE SET
 	return result, nil
 }
 
-func syncMovieDomainGraphRelationAssertions(ctx context.Context, db *sql.DB, items []conversationpersistence.L1DomainGraphAssertion) (movieDomainGraphRelationSyncResult, error) {
+func syncMovieDomainGraphRelationAssertions(ctx context.Context, db *sql.DB, items []l1sqlite.L1DomainGraphAssertion) (movieDomainGraphRelationSyncResult, error) {
 	result := movieDomainGraphRelationSyncResult{
 		Checked:     len(items),
 		SkipReasons: map[string]int{},
@@ -287,7 +286,7 @@ CREATE TABLE IF NOT EXISTS movie_id_aliases(
 	return err
 }
 
-func movieCatalogWorkFromAssertion(item conversationpersistence.L1DomainGraphAssertion) (movieCatalogWorkUpsert, string) {
+func movieCatalogWorkFromAssertion(item l1sqlite.L1DomainGraphAssertion) (movieCatalogWorkUpsert, string) {
 	entityID := strings.TrimSpace(item.EntityID)
 	if entityID == "" {
 		return movieCatalogWorkUpsert{}, "missing_entity_id"
@@ -319,7 +318,7 @@ func movieCatalogWorkFromAssertion(item conversationpersistence.L1DomainGraphAss
 	}, ""
 }
 
-func movieCatalogPeopleEdgeFromAssertion(item conversationpersistence.L1DomainGraphAssertion) (movieCatalogPeopleEdgeUpsert, string) {
+func movieCatalogPeopleEdgeFromAssertion(item l1sqlite.L1DomainGraphAssertion) (movieCatalogPeopleEdgeUpsert, string) {
 	movieID := movieCatalogEvidenceString(item.Evidence, "movie_id")
 	if movieID == "" {
 		movieID = strings.TrimSpace(item.EntityID)
@@ -402,7 +401,7 @@ func normalizeMovieCatalogRole(raw string) string {
 	}
 }
 
-func resolveMovieCatalogWorkMovieID(ctx context.Context, db *sql.DB, item conversationpersistence.L1DomainGraphAssertion, rawMovieID string) (string, string, error) {
+func resolveMovieCatalogWorkMovieID(ctx context.Context, db *sql.DB, item l1sqlite.L1DomainGraphAssertion, rawMovieID string) (string, string, error) {
 	rawMovieID = strings.TrimSpace(rawMovieID)
 	candidate := movieCatalogCanonicalIDCandidate(item)
 	if candidate == "" {
@@ -421,7 +420,7 @@ func resolveMovieCatalogWorkMovieID(ctx context.Context, db *sql.DB, item conver
 	return candidate, candidate, nil
 }
 
-func movieCatalogCanonicalIDCandidate(item conversationpersistence.L1DomainGraphAssertion) string {
+func movieCatalogCanonicalIDCandidate(item l1sqlite.L1DomainGraphAssertion) string {
 	entityID := strings.TrimSpace(item.EntityID)
 	if strings.HasPrefix(entityID, "movie:") {
 		if id := strings.TrimPrefix(entityID, "movie:"); movieCatalogNumericIDPattern.MatchString(id) {

@@ -36,12 +36,10 @@ func HandleUserMemory(store UserMemoryStore) http.HandlerFunc {
 
 func HandleUserMemoryState(store UserMemoryStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireViewerMethod(w, r, http.MethodPost) {
 			return
 		}
-		if store == nil {
-			http.Error(w, "user memory unavailable", http.StatusServiceUnavailable)
+		if !requireViewerStore(w, store == nil, "user memory unavailable") {
 			return
 		}
 		var req struct {
@@ -58,18 +56,16 @@ func HandleUserMemoryState(store UserMemoryStore) http.HandlerFunc {
 			http.Error(w, "failed to update user memory state: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeMemoryJSON(w, map[string]interface{}{"item": item})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"item": item})
 	}
 }
 
 func HandleUserMemoryForget(store UserMemoryStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireViewerMethod(w, r, http.MethodPost) {
 			return
 		}
-		if store == nil {
-			http.Error(w, "user memory unavailable", http.StatusServiceUnavailable)
+		if !requireViewerStore(w, store == nil, "user memory unavailable") {
 			return
 		}
 		var req struct {
@@ -85,18 +81,16 @@ func HandleUserMemoryForget(store UserMemoryStore) http.HandlerFunc {
 			http.Error(w, "failed to forget user memory: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeMemoryJSON(w, map[string]interface{}{"item": item})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"item": item})
 	}
 }
 
 func HandleUserMemorySupersede(store UserMemoryStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireViewerMethod(w, r, http.MethodPost) {
 			return
 		}
-		if store == nil {
-			http.Error(w, "user memory unavailable", http.StatusServiceUnavailable)
+		if !requireViewerStore(w, store == nil, "user memory unavailable") {
 			return
 		}
 		var req struct {
@@ -113,7 +107,7 @@ func HandleUserMemorySupersede(store UserMemoryStore) http.HandlerFunc {
 			http.Error(w, "failed to supersede user memory: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeMemoryJSON(w, map[string]interface{}{"item": item})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"item": item})
 	}
 }
 
@@ -134,7 +128,7 @@ func handleUserMemoryList(w http.ResponseWriter, r *http.Request, store UserMemo
 		http.Error(w, "failed to list user memories: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeMemoryJSON(w, map[string]interface{}{"user_id": userID, "items": items})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"user_id": userID, "items": items})
 }
 
 func handleUserMemoryCreate(w http.ResponseWriter, r *http.Request, store UserMemoryStore) {
@@ -168,10 +162,5 @@ func handleUserMemoryCreate(w http.ResponseWriter, r *http.Request, store UserMe
 		http.Error(w, "failed to create user memory: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeMemoryJSON(w, map[string]interface{}{"item": item})
-}
-
-func writeMemoryJSON(w http.ResponseWriter, payload interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(payload)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"item": item})
 }

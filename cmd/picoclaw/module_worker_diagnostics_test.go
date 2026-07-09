@@ -37,7 +37,7 @@ func TestHandleModuleWorkerDiagnostics(t *testing.T) {
 	if got.Health.Module != "worker" || got.Health.CheckedAt.IsZero() {
 		t.Fatalf("health was not included with checked_at: %+v", got.Health)
 	}
-	if len(got.SupportedTools) != 1 || got.SupportedTools[0].Name != moduleworker.ToolProposalPatch {
+	if len(got.SupportedTools) != 2 || got.SupportedTools[0].Name != moduleworker.ToolProposalPatch || got.SupportedTools[1].Name != "codex.run" {
 		t.Fatalf("supported tools missing: %+v", got.SupportedTools)
 	}
 }

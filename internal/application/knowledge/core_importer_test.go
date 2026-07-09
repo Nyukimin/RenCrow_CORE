@@ -2,18 +2,17 @@ package knowledge
 
 import (
 	"context"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 	"testing"
 	"time"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
 )
 
 type fakeKnowledgeStagingStore struct {
-	items []conversationpersistence.L1StagingItem
+	items []l1sqlite.L1StagingItem
 }
 
-func (s *fakeKnowledgeStagingStore) SaveStagingItem(_ context.Context, item conversationpersistence.L1StagingItem) (*conversationpersistence.L1StagingItem, error) {
+func (s *fakeKnowledgeStagingStore) SaveStagingItem(_ context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error) {
 	s.items = append(s.items, item)
 	return &s.items[len(s.items)-1], nil
 }
@@ -33,7 +32,7 @@ func TestImportKnowledgeCoreJSONLToStaging(t *testing.T) {
 		t.Fatalf("unexpected import result=%+v items=%+v", result, store.items)
 	}
 	first := store.items[0]
-	if first.Kind != conversationpersistence.L1StagingKindExternalFetch || first.Namespace != "kb:movie" || first.EventID != "movie:interstellar" {
+	if first.Kind != l1sqlite.L1StagingKindExternalFetch || first.Namespace != "kb:movie" || first.EventID != "movie:interstellar" {
 		t.Fatalf("unexpected first staging identity: %+v", first)
 	}
 	if first.RawText != "Interstellar\n父と娘と時間の物語" || first.SummaryDraft != "父と娘と時間の物語" {

@@ -103,6 +103,64 @@ function renderOpsCardList(target, items) {
   });
 }
 
+function gameBridgeField(item, key) {
+  if (!item || !Object.prototype.hasOwnProperty.call(item, key)) return '';
+  return item[key];
+}
+
+function gameBridgeOpsCard() {
+  const statusError = String(state.ops.gameBridgeStatusFetchError || '').trim();
+  const sourceError = String(state.ops.gameBridgeSourceFetchError || '').trim();
+  const sessions = Array.isArray(state.ops.gameBridgeSessions) ? state.ops.gameBridgeSessions : [];
+  const events = Array.isArray(state.ops.gameBridgeEvents) ? state.ops.gameBridgeEvents : [];
+  const status = state.ops.gameBridgeStatus || null;
+  if (statusError) {
+    return {
+      title: 'Game Bridge',
+      big: 'unavailable',
+      sub: 'bridge: unavailable\nstatus: ' + compactOpsDetail(statusError, 120) + '\ncandidate-only: not confirmed',
+    };
+  }
+  if (!status) {
+    return {
+      title: 'Game Bridge',
+      big: 'checking',
+      sub: 'bridge status 未取得\ncandidate-only: not confirmed',
+    };
+  }
+  const latestSession = sessions[0] || null;
+  const latestEvent = events[0] || null;
+  const bridgeState = status.ok === true ? 'ok' : 'unavailable';
+  const decisionMode = gameBridgeField(latestSession, 'decision_mode') || status.decision_mode || '-';
+  const resultMode = gameBridgeField(latestSession, 'result_mode') || status.result_mode || '-';
+  const memoryMode = gameBridgeField(latestSession, 'memory_mode') || status.memory_mode || 'candidate_only';
+  const latestGame = gameBridgeField(latestSession, 'game_id') || gameBridgeField(latestEvent, 'game_id') || '-';
+  const latestSessionID = gameBridgeField(latestSession, 'session_id') || gameBridgeField(latestEvent, 'session_id') || '-';
+  const latestTurn = gameBridgeField(latestSession, 'latest_turn') || gameBridgeField(latestEvent, 'turn') || '-';
+  const latestEventID = gameBridgeField(latestSession, 'latest_event_id') || gameBridgeField(latestEvent, 'event_id') || '-';
+  const skipped = Number(state.ops.gameBridgeSkippedCount || 0);
+  const lines = [
+    'bridge: ' + bridgeState,
+    'decision: ' + String(decisionMode) + ' / result: ' + String(resultMode),
+    'memory: ' + String(memoryMode),
+    'recent sessions: ' + String(sessions.length) + ' / events: ' + String(events.length),
+    'latest: ' + String(latestGame) + ' / ' + String(latestSessionID) + ' / turn ' + String(latestTurn),
+    'latest event: ' + String(latestEventID),
+  ];
+  if (sourceError) {
+    lines.push('source: candidate_log unavailable: ' + compactOpsDetail(sourceError, 120));
+  }
+  if (skipped > 0) {
+    lines.push('skipped malformed rows: ' + String(skipped));
+  }
+  lines.push('candidate-only: not confirmed');
+  return {
+    title: 'Game Bridge',
+    big: sourceError && sessions.length === 0 && events.length === 0 ? 'source unavailable' : (String(sessions.length) + ' sessions'),
+    sub: lines.join('\n'),
+  };
+}
+
 function renderOps() {
   const cards = document.getElementById('opsCards');
   const secondaryCards = document.getElementById('opsSecondaryCards');
@@ -152,6 +210,7 @@ function renderOps() {
       big: String(activeAgents.length),
       sub: activeAgents.map((id) => agName(id) + ' · ' + (state.agents[id].state || '-')).join('\n') || '全員 offline',
     },
+    gameBridgeOpsCard(),
   ];
   const secondaryItems = [
     toolHarnessOpsCard(),

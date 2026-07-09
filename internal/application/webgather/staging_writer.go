@@ -2,14 +2,13 @@ package webgather
 
 import (
 	"context"
-	"strings"
-
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
+	"strings"
 )
 
 type L1StagingStore interface {
-	SaveStagingItem(ctx context.Context, item conversationpersistence.L1StagingItem) (*conversationpersistence.L1StagingItem, error)
+	SaveStagingItem(ctx context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error)
 }
 
 type L1StagingWriter struct {
@@ -38,8 +37,8 @@ func (w *L1StagingWriter) Save(ctx context.Context, req modulewebgather.FetchReq
 	if len(keywords) == 0 {
 		keywords = []string{"web_gather"}
 	}
-	item, err := w.store.SaveStagingItem(ctx, conversationpersistence.L1StagingItem{
-		Kind:             conversationpersistence.L1StagingKindExternalFetch,
+	item, err := w.store.SaveStagingItem(ctx, l1sqlite.L1StagingItem{
+		Kind:             l1sqlite.L1StagingKindExternalFetch,
 		Namespace:        req.Namespace,
 		EventID:          eventID,
 		SourceID:         sourceID,
@@ -50,7 +49,7 @@ func (w *L1StagingWriter) Save(ctx context.Context, req modulewebgather.FetchReq
 		SummaryDraft:     summary,
 		Keywords:         keywords,
 		LicenseNote:      req.LicenseNote,
-		ValidationStatus: conversationpersistence.L1StagingStatusPending,
+		ValidationStatus: l1sqlite.L1StagingStatusPending,
 		Meta:             meta,
 	})
 	if err != nil {

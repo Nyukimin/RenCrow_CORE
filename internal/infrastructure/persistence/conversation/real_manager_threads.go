@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"fmt"
+	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"strings"
 	"time"
@@ -25,7 +26,7 @@ func (r *RealConversationManager) Store(ctx context.Context, sessionID string, m
 	thread.AddMessage(msg)
 	if r.l1Store != nil {
 		namespace := fmt.Sprintf("conv:%d", thread.ID)
-		if err := r.l1Store.SaveMessage(ctx, sessionID, thread.ID, namespace, msg, MemoryStateObserved); err != nil {
+		if err := r.l1Store.SaveMessage(ctx, sessionID, thread.ID, namespace, msg, l1sqlite.MemoryStateObserved); err != nil {
 			log.Printf("Failed to save message to L1 SQLite: %v", err)
 		}
 	}
@@ -85,8 +86,10 @@ func (r *RealConversationManager) FlushThread(ctx context.Context, threadID int6
 		IsNovel:   false,
 	}
 
-	if err := r.duckdbStore.SaveThreadSummary(ctx, summary); err != nil {
-		return nil, fmt.Errorf("failed to save summary to duckdb: %w", err)
+	if r.duckdbStore != nil {
+		if err := r.duckdbStore.SaveThreadSummary(ctx, summary); err != nil {
+			return nil, fmt.Errorf("failed to save summary to duckdb: %w", err)
+		}
 	}
 
 	if len(summary.Embedding) > 0 {
