@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config/promptbundle"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/promptbundle"
 )
 
 // LoadedPrompts は外部ファイルから読み込まれたプロンプト群

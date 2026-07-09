@@ -3,9 +3,9 @@ package modulebridge
 import (
 	"context"
 
-	domainllm "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/core"
-	modulellm "github.com/Nyukimin/picoclaw_multiLLM/modules/llm"
+	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
+	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 )
 
 type LLMProviderAdapter struct {

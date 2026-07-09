@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -20,7 +20,7 @@ const (
 	sshMaxRetries      = 3
 	sshBaseBackoff     = 1 * time.Second
 	sshInboundBufSize  = 100
-	sshRemoteCommand   = "picoclaw-agent --standalone"
+	sshRemoteCommand   = "rencrow-agent --standalone"
 )
 
 // sshDialer はSSHクライアント生成の抽象化（テスト用DI）
@@ -79,7 +79,7 @@ type SSHTransport struct {
 	keyPath       string
 	agentType     string // "worker", "coder1", "coder2", "coder3"
 	strictHostKey bool   // true: known_hosts必須（本番用）
-	agentPath     string // リモートのpicoclaw-agentパス（空の場合はデフォルト）
+	agentPath     string // リモートのrencrow-agentパス（空の場合はデフォルト）
 	configPath    string // リモートのconfig.yamlパス（空の場合は省略）
 
 	dialer  sshDialer

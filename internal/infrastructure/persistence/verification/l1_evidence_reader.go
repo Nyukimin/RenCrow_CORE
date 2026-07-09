@@ -3,13 +3,13 @@ package verification
 import (
 	"context"
 	"fmt"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	appverification "github.com/Nyukimin/picoclaw_multiLLM/internal/application/verification"
-	domainverification "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/verification"
+	appverification "github.com/Nyukimin/RenCrow_CORE/internal/application/verification"
+	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
 )
 
 type L1EvidenceStore interface {

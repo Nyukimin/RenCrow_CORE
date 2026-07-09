@@ -2,16 +2,16 @@
 
 ## 1. 目的
 
-この仕様は、RenCrow_GAMES の browser Observer UI と PicoClaw Viewer / Ops
+この仕様は、RenCrow_GAMES の browser Observer UI と RenCrow Viewer / Ops
 を接続する read-only 観察 API を定義する。
 
 正本の game observer 仕様は
 `/home/nyukimi/RenCrow/RenCrow_GAMES/docs/08_Observer_UI仕様.md` に置く。
-この文書は、`picoclaw_multiLLM` 側が持つ範囲だけを定義する。
+この文書は、`RenCrow_CORE` 側が持つ範囲だけを定義する。
 
 ## 2. 責務境界
 
-PicoClaw が持つもの:
+RenCrow が持つもの:
 
 - game bridge status
 - recent game session summary
@@ -19,7 +19,7 @@ PicoClaw が持つもの:
 - Viewer / Ops の game bridge status card
 - replay turn と candidate event id の相関補助
 
-PicoClaw が持たないもの:
+RenCrow が持たないもの:
 
 - title world state の正本
 - title-specific board rendering
@@ -75,7 +75,7 @@ GET /viewer/games/observer-api/games/sessions/{session_id}/frames
 GET /viewer/games/observer-api/games/events
 ```
 
-`/viewer/games/observer` は browser Observer UI を PicoClaw Viewer と同じ
+`/viewer/games/observer` は browser Observer UI を RenCrow Viewer と同じ
 origin から配信するための薄い proxy page である。title world state の正本、
 描画ロジック、replay 仕様は RenCrow_GAMES 側に残す。
 `/viewer/games/observer-api/*` は local RenCrow_GAMES observer
@@ -157,7 +157,7 @@ Rules:
 
 ## 7. Viewer / Ops Card
 
-PicoClaw Viewer may add a Game Bridge card.
+RenCrow Viewer may add a Game Bridge card.
 
 Required display:
 
@@ -206,7 +206,7 @@ curl -s 'http://127.0.0.1:18790/viewer/games/events?limit=5'
 v0.1 does not implement:
 
 - confirmed memory promotion
-- game world reconstruction in PicoClaw
+- game world reconstruction in RenCrow
 - title-specific board rendering
-- game control from PicoClaw Viewer
+- game control from RenCrow Viewer
 - direct LLM calls from browser UI

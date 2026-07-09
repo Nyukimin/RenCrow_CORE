@@ -131,7 +131,7 @@ Viewer 実マイク録音から作成した **固定 WAV + 原文（期待テキ
 ### 4.1 HTTP file inference（trim WAV）
 
 ```bash
-cd picoclaw_multiLLM
+cd RenCrow_CORE
 
 # ゴールデン 25s（推奨）
 python3 scripts/stt_e2e_probe.py \
@@ -187,7 +187,7 @@ node scripts/stt_viewer_browser_e2e.js \
 |---------|------|-------------|
 | STT provider 変更 | `140311.wav` | 全文認識・数字・末尾ループなし |
 | STT 長尺 chunk 調査 | `135459.wav` | prefix 一致 / 89012 以降の劣化再現 |
-| LLM マルチモーダル | `140311.wav` | `input_audio` 投入後の応答（`scripts/llm_golden_audio_probe.py` または `picoclaw chat --audio-direct`） |
+| LLM マルチモーダル | `140311.wav` | `input_audio` 投入後の応答（`scripts/llm_golden_audio_probe.py` または `rencrow chat --audio-direct`） |
 | Viewer 録音パイプライン | 新規録音 → raw/trim 比較 | raw ≈ trim + 前後無音、Ops UI 秒数 |
 | トリムロジック変更 | `*_raw.wav` をローカル trim | `stt_test_record_utils.js` の `edgeOnly` |
 

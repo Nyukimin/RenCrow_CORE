@@ -30,7 +30,7 @@ voice disabled, session mismatch, LLM busy, and provider failure are explicit
 
 ## Current Main Files
 
-modules/voicechat, modules/stt, modules/tts, cmd/picoclaw/voice_chat_runtime_*.go, cmd/picoclaw/stt_runtime_*.go, cmd/picoclaw/tts_*.go, internal/adapter/viewer/audio_router_sse.go
+modules/voicechat, modules/stt, modules/tts, cmd/rencrow/voice_chat_runtime_*.go, cmd/rencrow/stt_runtime_*.go, cmd/rencrow/tts_*.go, internal/adapter/viewer/audio_router_sse.go
 
 ## Current Route Boundary
 

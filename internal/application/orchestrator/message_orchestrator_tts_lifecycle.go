@@ -4,10 +4,10 @@ import (
 	"context"
 	"log"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
-	moduletts "github.com/Nyukimin/picoclaw_multiLLM/modules/tts"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 type messageTTSLifecycle struct {

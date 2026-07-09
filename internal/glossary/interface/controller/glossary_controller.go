@@ -3,8 +3,8 @@ package controller
 import (
 	"context"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/glossary/application/service"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/glossary/domain/entity"
+	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/domain/entity"
 )
 
 type GlossaryController struct {

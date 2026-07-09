@@ -4,11 +4,11 @@ package chat
 import (
 	"context"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/core"
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/stt"
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/tts"
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/worker"
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
+	"github.com/Nyukimin/RenCrow_CORE/modules/llm"
+	"github.com/Nyukimin/RenCrow_CORE/modules/stt"
+	"github.com/Nyukimin/RenCrow_CORE/modules/tts"
+	"github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
 type Input struct {

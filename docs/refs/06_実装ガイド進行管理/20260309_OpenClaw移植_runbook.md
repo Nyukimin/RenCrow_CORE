@@ -13,7 +13,7 @@
 
 ## 2. 事前条件
 
-- サービス起動済み（`picoclaw.service`）
+- サービス起動済み（`rencrow.service`）
 - Viewer送信が利用可能
 - TTS Providerキー（OpenAI/ElevenLabs）またはローカルTTS環境が有効
 
@@ -33,7 +33,7 @@ curl -sS -X POST http://127.0.0.1:18790/viewer/send \
 
 ```bash
 rg -n "ProcessMessage START|proposal|patch|E2E|playback|execution_report|ProcessMessage COMPLETE|ProcessMessage error" \
-  ~/.picoclaw/logs/picoclaw.log | tail -n 200
+  ~/.rencrow/logs/rencrow.log | tail -n 200
 ```
 
 3. 証跡確認

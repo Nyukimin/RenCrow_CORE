@@ -4,11 +4,11 @@ import (
 	"context"
 	"log"
 
-	autonomousapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/autonomous"
-	contractapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/contract"
-	domaincontract "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/contract"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	autonomousapp "github.com/Nyukimin/RenCrow_CORE/internal/application/autonomous"
+	contractapp "github.com/Nyukimin/RenCrow_CORE/internal/application/contract"
+	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 type distributedDirectExecutor func(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error)

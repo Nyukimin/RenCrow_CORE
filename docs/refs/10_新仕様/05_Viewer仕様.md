@@ -31,7 +31,7 @@ Viewer では次を混同しない。
 | SSE hub | `internal/adapter/viewer/hub.go` |
 | event log | `internal/adapter/viewer/event_log_store.go`, `event_log_gc.go` |
 | monitor | `internal/adapter/viewer/monitor_*.go` |
-| runtime config | `internal/adapter/viewer/debug_system_handler.go`, `cmd/picoclaw/routes.go`, `cmd/picoclaw/runtime_*.go` |
+| runtime config | `internal/adapter/viewer/debug_system_handler.go`, `cmd/rencrow/routes.go`, `cmd/rencrow/runtime_*.go` |
 | LLM Ops | `internal/adapter/viewer/llm_ops_handler.go` |
 | Source Registry | `internal/adapter/viewer/source_registry_handler.go` |
 | Memory API | `internal/adapter/viewer/memory_*_handler.go` |
@@ -83,7 +83,7 @@ Viewer 添付は `internal/domain/attachment` の contract に正規化してか
 - `/viewer/tts/audio`
 - `/viewer/llm-ops/*`
 
-route 登録は `cmd/picoclaw/routes.go` が担当する。handler 本体は `internal/adapter/viewer` に置く。
+route 登録は `cmd/rencrow/routes.go` が担当する。handler 本体は `internal/adapter/viewer` に置く。
 
 ## runtime config
 
@@ -92,7 +92,7 @@ Viewer runtime config は表示と操作のための投影である。
 次を混同しない。
 
 - repo example config
-- live `~/.picoclaw/config.yaml`
+- live `~/.rencrow/config.yaml`
 - process 起動時に解決された runtime config
 - Viewer に返す runtime config
 
@@ -126,8 +126,8 @@ Viewer 変更では DOM 存在だけで完了扱いしない。
 主な確認:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/viewer
-GOCACHE=/tmp/picoclaw-gocache go test -count=1 -tags=e2e ./test/e2e
+GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/viewer
+GOCACHE=/tmp/rencrow-gocache go test -count=1 -tags=e2e ./test/e2e
 ```
 
 live 確認:

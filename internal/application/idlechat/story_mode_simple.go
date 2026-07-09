@@ -8,9 +8,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 // simpleStoryTales は簡易版物語生成で使う昔話リスト。

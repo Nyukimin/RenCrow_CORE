@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/pkg/rencrowclient"
+	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
 func TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubmit(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Skill Governance external PR client")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Skill Governance external PR client")
 	}
 
 	baseURL := liveBaseURL()
@@ -39,7 +39,7 @@ func TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubm
 		RealProblemVerified: true,
 		CoreChangeVerified:  true,
 		DiffHumanApproved:   true,
-		TestResult:          "PICOCLAW_LIVE_E2E=1 go test -tags=e2e ./test/e2e -run TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubmit",
+		TestResult:          "RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e -run TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubmit",
 	})
 	if err != nil {
 		t.Fatalf("EvaluateSkillGovernanceContributionGate() live call failed at %s: %v", baseURL, err)
@@ -65,7 +65,7 @@ func TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubm
 		Repo:                "example/repo",
 		Title:               "Live client E2E audit boundary",
 		DiffPath:            "workspace/logs/skill_governance/coder_evidence/e2e/skill_diff.md",
-		TestResult:          "PICOCLAW_LIVE_E2E=1 go test -tags=e2e ./test/e2e -run TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubmit",
+		TestResult:          "RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e -run TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubmit",
 		HumanApproved:       true,
 	})
 	if err != nil {

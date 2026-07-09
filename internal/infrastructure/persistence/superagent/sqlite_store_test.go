@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	domainsuperagent "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/superagent"
+	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 )
 
 func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {

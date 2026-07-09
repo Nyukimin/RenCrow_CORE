@@ -30,7 +30,7 @@
 
 確認対象:
 
-- `~/.picoclaw/config.yaml`
+- `~/.rencrow/config.yaml`
 - `http://127.0.0.1:18790/health`
 - `http://127.0.0.1:18790/viewer/runtime-config`
 - `/viewer` の実表示
@@ -60,7 +60,7 @@
 実行済み:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./...
+GOCACHE=/tmp/rencrow-gocache go test ./...
 ```
 
 判定:
@@ -95,24 +95,24 @@ node --test \
 実行済み:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./...
+GOCACHE=/tmp/rencrow-gocache go test ./...
 node internal/adapter/viewer/viewer_memory_panel.test.mjs
 git diff --check
-GOCACHE=/tmp/picoclaw-gocache go test ./pkg/rencrowclient -run TestAPIErrorIncludesStatus -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache go test ./pkg/rencrowclient -run 'TestSuperAgentStatus|TestSuperAgentStatusRejectsDuplicateCurrentView' -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache go test ./pkg/rencrowclient -run 'TestAIWorkflowStatusAndContextBudget|TestAIWorkflowStatusRejectsMalformedCurrentView' -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache go test ./pkg/rencrowclient -run 'TestComplexityStatus|TestComplexityStatusRejectsMalformedCurrentView' -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache go test ./pkg/rencrowclient -run 'TestSandboxStatus|TestSandboxStatusRejectsMalformedCurrentView' -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache go test ./pkg/rencrowclient -run 'Test(RevenueStatus|SkillGovernanceStatus)' -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache go test ./pkg/rencrowclient -run 'Test(EvaluateHeavyWorker|HeavyWorkerRuntimeDiagnostics)' -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache go test ./pkg/rencrowclient -run 'TestWorkstreamStatus' -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache go test ./pkg/rencrowclient -run 'TestBrowserTraceAPI' -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/viewer -run 'TestHandleSuperAgentStatus' -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache go test ./pkg/rencrowclient -run 'TestAIWorkflowStatus' -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/viewer -run 'TestHandleAIWorkflowStatus' -count=1 -v
-PICOCLAW_BROWSER_E2E=1 PICOCLAW_LIVE_E2E=1 PICOCLAW_LIVE_BASE_URL=http://127.0.0.1:18790 GOCACHE=/tmp/picoclaw-gocache go test -tags=e2e ./test/e2e -run TestE2E_Phase25BrowserViewerSessionContract -count=1 -v
-PICOCLAW_LIVE_E2E=1 PICOCLAW_LIVE_BASE_URL=http://127.0.0.1:18790 GOCACHE=/tmp/picoclaw-gocache go test -tags=e2e ./test/e2e -run TestE2E_SuperAgentRunQueueClientManualLedgerFlow -count=1 -v
-PICOCLAW_LIVE_E2E=1 PICOCLAW_LIVE_BASE_URL=http://127.0.0.1:18790 GOCACHE=/tmp/picoclaw-gocache go test -tags=e2e ./test/e2e -run TestE2E_AIWorkflowExternalControlClientRequiresApproval -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./pkg/rencrowclient -run TestAPIErrorIncludesStatus -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./pkg/rencrowclient -run 'TestSuperAgentStatus|TestSuperAgentStatusRejectsDuplicateCurrentView' -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./pkg/rencrowclient -run 'TestAIWorkflowStatusAndContextBudget|TestAIWorkflowStatusRejectsMalformedCurrentView' -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./pkg/rencrowclient -run 'TestComplexityStatus|TestComplexityStatusRejectsMalformedCurrentView' -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./pkg/rencrowclient -run 'TestSandboxStatus|TestSandboxStatusRejectsMalformedCurrentView' -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./pkg/rencrowclient -run 'Test(RevenueStatus|SkillGovernanceStatus)' -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./pkg/rencrowclient -run 'Test(EvaluateHeavyWorker|HeavyWorkerRuntimeDiagnostics)' -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./pkg/rencrowclient -run 'TestWorkstreamStatus' -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./pkg/rencrowclient -run 'TestBrowserTraceAPI' -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/viewer -run 'TestHandleSuperAgentStatus' -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./pkg/rencrowclient -run 'TestAIWorkflowStatus' -count=1 -v
+GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/viewer -run 'TestHandleAIWorkflowStatus' -count=1 -v
+RENCROW_BROWSER_E2E=1 RENCROW_LIVE_E2E=1 RENCROW_LIVE_BASE_URL=http://127.0.0.1:18790 GOCACHE=/tmp/rencrow-gocache go test -tags=e2e ./test/e2e -run TestE2E_Phase25BrowserViewerSessionContract -count=1 -v
+RENCROW_LIVE_E2E=1 RENCROW_LIVE_BASE_URL=http://127.0.0.1:18790 GOCACHE=/tmp/rencrow-gocache go test -tags=e2e ./test/e2e -run TestE2E_SuperAgentRunQueueClientManualLedgerFlow -count=1 -v
+RENCROW_LIVE_E2E=1 RENCROW_LIVE_BASE_URL=http://127.0.0.1:18790 GOCACHE=/tmp/rencrow-gocache go test -tags=e2e ./test/e2e -run TestE2E_AIWorkflowExternalControlClientRequiresApproval -count=1 -v
 ```
 
 判定:
@@ -182,15 +182,15 @@ PICOCLAW_LIVE_E2E=1 PICOCLAW_LIVE_BASE_URL=http://127.0.0.1:18790 GOCACHE=/tmp/p
 - 2026-05-20 14:25 UTC に Viewer IdleChat status / logs fetch failure 境界を補強し、`/viewer/idlechat/status` と `/viewer/idlechat/logs?limit=20` が non-2xx の場合は stale summary row や空表示を使わず、body 付き `IdleChat status unavailable: HTTP <status>: ...` / `IdleChat logs unavailable: HTTP <status>: ...` を IdleChat table に表示する Node contract test を追加した。これは status / logs route failure を IdleChat 稼働状態、履歴取得、live IdleChat session 成功として扱わないための local 表示境界であり、live IdleChat E2E の代替ではない。
 - 2026-05-20 14:35 UTC に Viewer live mode topic fetch failure 境界を補強し、`mode=live` の topic polling で `/viewer/idlechat/status` が non-2xx の場合は topic text を空や stale のままにせず、body 付き `IdleChat status unavailable: HTTP <status>: ...` を `#liveTopicText` に表示する Node contract test を追加した。これは live topic bar の status route failure を live IdleChat topic 更新成功や live session 成功として扱わないための local 表示境界であり、live IdleChat E2E の代替ではない。
 - 2026-05-20 10:01 UTC に IdleChat 外部 topic / trend source の HTTP failure 境界を補強し、NHK RSS / Google News RSS の non-2xx response body を error に保持する local test を追加した。Wikipedia / Google Trends / Reddit / Hatena の status error も同じ body 付き整形へ揃えた。これは外部 topic seed / trend fetch failure を status だけで失わないための local 境界確認であり、live IdleChat 会話 E2E や外部 RSS / API 到達成功の代替ではない。
-- 2026-05-20 08:20 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer` を Playwright Chromium で開き、route fulfill により `/viewer/idlechat/status` / `/viewer/idlechat/logs?limit=20` の non-2xx を再現した。IdleChat table と live topic bar に body 付き failure が表示されることを確認したが、API failure 再現の表示境界確認であり、live IdleChat 会話 E2E の代替ではない。スクリーンショットは `tmp/viewer-idlechat-failure-boundary.png` と `tmp/viewer-live-topic-failure-boundary.png`。
+- 2026-05-20 08:20 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer` を Playwright Chromium で開き、route fulfill により `/viewer/idlechat/status` / `/viewer/idlechat/logs?limit=20` の non-2xx を再現した。IdleChat table と live topic bar に body 付き failure が表示されることを確認したが、API failure 再現の表示境界確認であり、live IdleChat 会話 E2E の代替ではない。スクリーンショットは `tmp/viewer-idlechat-failure-boundary.png` と `tmp/viewer-live-topic-failure-boundary.png`。
 - 2026-05-20 08:23 UTC に Viewer Ops runtime config / debug system snapshot fetch failure 境界を補強し、`/viewer/runtime-config` と `/viewer/debug/system` が non-2xx の場合は stale local LLM config や単なる disabled / missing 表示にせず、body 付き `runtime config unavailable: HTTP <status>: ...` と `blocked: HTTP <status>: ...` を runtime readiness に表示する Node contract test を追加した。これは runtime dependency route failure を live runtime config 成功、STT / TTS readiness 成功、LLM Ops 到達成功として扱わないための visible-state 境界確認であり、実 browser audio / STT / TTS E2E の代替ではない。
-- 2026-05-20 08:26 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer?tab=ops` を Playwright Chromium で開き、route fulfill により `/viewer/runtime-config` 503 と `/viewer/debug/system` 502 を再現した。Runtime Config / STT / TTS readiness に body 付き failure が表示されることを確認した。スクリーンショットは `tmp/viewer-runtime-config-failure-boundary.png` と `tmp/viewer-debug-system-failure-boundary.png`。これは API failure 再現の表示境界確認であり、live runtime config 成功や実 browser audio / STT / TTS E2E の代替ではない。
+- 2026-05-20 08:26 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer?tab=ops` を Playwright Chromium で開き、route fulfill により `/viewer/runtime-config` 503 と `/viewer/debug/system` 502 を再現した。Runtime Config / STT / TTS readiness に body 付き failure が表示されることを確認した。スクリーンショットは `tmp/viewer-runtime-config-failure-boundary.png` と `tmp/viewer-debug-system-failure-boundary.png`。これは API failure 再現の表示境界確認であり、live runtime config 成功や実 browser audio / STT / TTS E2E の代替ではない。
 - 2026-05-20 08:29 UTC に Viewer TTS audio unlock / playback failure 境界を補強し、browser autoplay block などで `Audio.play()` が reject した場合は console-only `tts audio ... failed` にせず、`#ttsNowPlaying` に `TTS audio unavailable: <error>` を表示し、audio button の blocked state に error detail を保持する Node contract test を追加した。これは TTS playback / lip sync 成功の代替ではなく、音声失敗を本文表示 fallback や口パク成功と混同しないための visible-state 境界確認である。
-- 2026-05-20 08:31 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer` を Playwright Chromium で開き、`HTMLMediaElement.play()` reject を再現した。`#ttsNowPlayingText` に `TTS audio unavailable: NotAllowedError: browser blocked autoplay` が表示され、audio button title に error detail が残ることを確認した。スクリーンショットは `tmp/viewer-tts-audio-failure-boundary.png`。これは browser audio failure の visible-state 境界確認であり、TTS playback / lip sync 成功の代替ではない。
-- 2026-05-26 UTC に TTS timeout / drain の local 境界を補強した。IdleChat 発話単位 TTS 待ちは 15 秒、session drain は 15 秒で、発話 timeout は `tts_error_kind=timeout`、drain timeout は `session_audio_timeout` として記録する。timeout 済み TTS public route / pending を閉じて遅延 audio chunk を stale drop し、Viewer pending message fallback も 15 秒の `display_only` / `idle-display-only` に揃えた。`GOCACHE=/tmp/picoclaw-gocache go test ./internal/application/idlechat`、`GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw`、`node internal/adapter/viewer/viewer_audio_button.test.mjs`、`node internal/adapter/viewer/viewer_memory_panel.test.mjs` は pass。これは local contract / visible-state 境界確認であり、実 browser audio playback / lip sync 成功の代替ではない。
-- 2026-05-26 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer` を Playwright Chromium で開き、IdleChat pending message の display-only fallback と stale audio drop を確認した。browser 上で fallback delay 15000ms、`idle-display-only=true`、`idle-pending-tts=false`、古い session の `tts.audio_chunk` 投入後も `ttsPlayback.queue` が増えないことを確認した。これは実ブラウザ上の display-only / stale audio 境界確認であり、実 TTS provider 音声生成、実 audio playback、lip sync 成功の代替ではない。
+- 2026-05-20 08:31 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer` を Playwright Chromium で開き、`HTMLMediaElement.play()` reject を再現した。`#ttsNowPlayingText` に `TTS audio unavailable: NotAllowedError: browser blocked autoplay` が表示され、audio button title に error detail が残ることを確認した。スクリーンショットは `tmp/viewer-tts-audio-failure-boundary.png`。これは browser audio failure の visible-state 境界確認であり、TTS playback / lip sync 成功の代替ではない。
+- 2026-05-26 UTC に TTS timeout / drain の local 境界を補強した。IdleChat 発話単位 TTS 待ちは 15 秒、session drain は 15 秒で、発話 timeout は `tts_error_kind=timeout`、drain timeout は `session_audio_timeout` として記録する。timeout 済み TTS public route / pending を閉じて遅延 audio chunk を stale drop し、Viewer pending message fallback も 15 秒の `display_only` / `idle-display-only` に揃えた。`GOCACHE=/tmp/rencrow-gocache go test ./internal/application/idlechat`、`GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow`、`node internal/adapter/viewer/viewer_audio_button.test.mjs`、`node internal/adapter/viewer/viewer_memory_panel.test.mjs` は pass。これは local contract / visible-state 境界確認であり、実 browser audio playback / lip sync 成功の代替ではない。
+- 2026-05-26 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer` を Playwright Chromium で開き、IdleChat pending message の display-only fallback と stale audio drop を確認した。browser 上で fallback delay 15000ms、`idle-display-only=true`、`idle-pending-tts=false`、古い session の `tts.audio_chunk` 投入後も `ttsPlayback.queue` が増えないことを確認した。これは実ブラウザ上の display-only / stale audio 境界確認であり、実 TTS provider 音声生成、実 audio playback、lip sync 成功の代替ではない。
 - 2026-05-20 08:33 UTC に Viewer STT capture log / session id copy failure 境界を補強し、Clipboard write が reject した場合は toast / console-only にせず、`debugSttSession` と session badge に `STT log copy unavailable: ...` / `STT session copy unavailable: ...` を保持する Node contract test を追加した。これは STT 証跡コピー失敗を保存済み・共有済み証跡や実 mic STT 成功として扱わないための visible-state 境界確認である。
-- 2026-05-20 08:36 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer?tab=ops` を Playwright Chromium で開き、clipboard write reject を再現した。`debugSttSession` と session badge に `STT log copy unavailable: clipboard denied` が表示されることを確認した。スクリーンショットは `tmp/viewer-stt-copy-failure-boundary.png`。これは STT 証跡コピー失敗の visible-state 境界確認であり、実 browser microphone STT E2E の代替ではない。
+- 2026-05-20 08:36 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer?tab=ops` を Playwright Chromium で開き、clipboard write reject を再現した。`debugSttSession` と session badge に `STT log copy unavailable: clipboard denied` が表示されることを確認した。スクリーンショットは `tmp/viewer-stt-copy-failure-boundary.png`。これは STT 証跡コピー失敗の visible-state 境界確認であり、実 browser microphone STT E2E の代替ではない。
 - 2026-05-19 20:01 UTC に `pkg/rencrowclient.RuntimeHealth` を追加し、`/health` の 503 down body を client validation 経由で読めるようにした。HTTP status と body status の矛盾、down/degraded check の message 欠落、overall status と checks の矛盾は local client test で拒否する。live `TestE2E_Phase25LiveRuntimeHealth` は `local_llm_chat` / `local_llm_worker` の `connection refused` checks を出して fail のまま維持する。
 - 2026-05-19 21:44 UTC に `/health` / `/ready` handler の request timeout を短時間化し、local LLM endpoint 不達時も 5 秒 client timeout ではなく約 1.04 秒で 503 down body を返すことを live service で確認した。body は `local_llm_chat` / `local_llm_worker` の `connection refused` checks を含む。これは blocked 証跡の取得改善であり、`TestE2E_Phase25LiveRuntimeHealth` の成功条件ではない。
 - 2026-05-19 20:09 UTC に `pkg/rencrowclient.LLMOpsHealth` / `LLMOpsStatus` を追加し、`/viewer/llm-ops/health` / `status` の 2xx response でも health status、roles / health / halted / pid が不整合なら成功扱いしない local client test を追加した。live `TestE2E_Phase25LiveLLMOpsProxyClientBlockedOrLive` は health/status の 502 `upstream unreachable` を `APIError` body として保持することを確認して pass。これは LLM Ops 管理 API 不達の blocked 証跡であり、Chat / Worker endpoint 復旧ではない。
@@ -233,7 +233,7 @@ PICOCLAW_LIVE_E2E=1 PICOCLAW_LIVE_BASE_URL=http://127.0.0.1:18790 GOCACHE=/tmp/p
 - 2026-05-20 05:05 UTC に `pkg/rencrowclient.CreateWorkstreamArtifact` / `CreateWorkstreamVaultUpdate` / `ReviewWorkstreamVaultUpdate` は direct response の artifact / vault_update `created_at` 欠落を local client error として拒否する test を追加した。timestamp 欠落の direct response は Workstream Artifact / Vault Update 証跡として扱わない。
 - 2026-05-20 06:50 UTC に Workstream 保存前 domain validation は workstream / goal / artifact / annotation / steering / heartbeat / vault update の `created_at` 欠落と completed goal の `completed_at` 欠落を拒否する test を追加した。timestamp 欠落の ledger item は保存時点で拒否し、後続 current view を malformed にしない。
 - 2026-05-19 21:16 UTC に Workstream Vault Review の Viewer 表示へ `applied` / `applied_path` と集計を追加し、live `/viewer/workstreams?limit=3` の `vault_updates=[]` 状態でも `workstream vault review:` / `0 applied` / `blocked: no vault apply` を表示することを browser E2E で確認した。これは pending_review artifact / waiting goal と Vault apply 済みを混同しないための blocked 表示であり、Vault approved review による実ファイル適用の完了条件にはしない。
-- 2026-05-20 00:27 UTC に `TestE2E_WorkstreamVaultUpdatePreviewAndApprovedApply` で live `/viewer/workstreams/vault-updates` create、`/preview`、`/review` を実行し、`update_id=vault_apply_20260520002739.458203088` が `applied=true`、`applied_path=/home/nyukimi/picoclaw_multiLLM/vault/workstreams/live-e2e/ws_vault_apply_20260520002739.458203088/STATUS.md` として status current view に残ることを確認した。`TestE2E_Phase25BrowserViewerSessionContract` でも Workstreams card の `vault applied:` と Vault Review の applied count を確認済み。これは vault_root 配下の隔離 live-e2e file apply 成功であり、外部送信、PR 作成、scheduler 正常完了ではない。
+- 2026-05-20 00:27 UTC に `TestE2E_WorkstreamVaultUpdatePreviewAndApprovedApply` で live `/viewer/workstreams/vault-updates` create、`/preview`、`/review` を実行し、`update_id=vault_apply_20260520002739.458203088` が `applied=true`、`applied_path=/home/nyukimi/RenCrow_CORE/vault/workstreams/live-e2e/ws_vault_apply_20260520002739.458203088/STATUS.md` として status current view に残ることを確認した。`TestE2E_Phase25BrowserViewerSessionContract` でも Workstreams card の `vault applied:` と Vault Review の applied count を確認済み。これは vault_root 配下の隔離 live-e2e file apply 成功であり、外部送信、PR 作成、scheduler 正常完了ではない。
 - 2026-05-20 10:00 UTC に Viewer Ops は `/viewer/workstreams` fetch failure 時、stale な Vault update row を表示せず `Workstream vault reviews unavailable: ...` / `blocked: vault apply state unreadable` を表示する Node contract test を追加した。これは status API failure を Vault apply 証跡として扱わないための local 表示境界であり、live Vault apply / 正式 apply E2E の完了条件にはしない。
 - `pkg/rencrowclient.BrowserTraceAPIStatus` / `DiscoverBrowserTraceAPI` / `ValidateBrowserTraceAPICandidate` / `CreateBrowserTraceAPIFetcherProposal` は Browser Trace API discovery / validation review / fetcher proposal の malformed response を E2E 証跡として成功扱いしないことを確認済み。
 
@@ -254,12 +254,12 @@ curl -sS -i http://127.0.0.1:18790/viewer/superagent?limit=1
 curl -sS -i http://127.0.0.1:18790/viewer/ai-workflow?limit=1
 curl -sS -i http://127.0.0.1:18790/viewer/revenue?limit=1
 curl -sS -i http://127.0.0.1:18790/viewer/complexity-hotspots?limit=1
-PICOCLAW_LIVE_E2E=1 PICOCLAW_LIVE_BASE_URL=http://127.0.0.1:18790 \
-GOCACHE=/tmp/picoclaw-gocache go test -count=1 -tags=e2e ./test/e2e \
+RENCROW_LIVE_E2E=1 RENCROW_LIVE_BASE_URL=http://127.0.0.1:18790 \
+GOCACHE=/tmp/rencrow-gocache go test -count=1 -tags=e2e ./test/e2e \
   -run 'TestE2E_Phase25Live(RuntimeHealth|ViewerRuntimeConfigClient)' -v
-set -a; . "$HOME/.picoclaw/.env"; set +a
-PICOCLAW_CONFIG=$HOME/.picoclaw/config.yaml \
-GOCACHE=/tmp/picoclaw-gocache go test -count=1 -tags=e2e ./test/e2e \
+set -a; . "$HOME/.rencrow/.env"; set +a
+RENCROW_CONFIG=$HOME/.rencrow/config.yaml \
+GOCACHE=/tmp/rencrow-gocache go test -count=1 -tags=e2e ./test/e2e \
   -run 'TestE2E_OllamaProvider|TestE2E_MioAgent_Chat_RealOllama|TestE2E_Routing_Chat_NaturalLanguage' -v
 ```
 
@@ -269,7 +269,7 @@ GOCACHE=/tmp/picoclaw-gocache go test -count=1 -tags=e2e ./test/e2e \
 - `/viewer/runtime-config` は取得できるが、health fail のため live service health E2E は fail とする。runtime-config は `TestE2E_Phase25LiveViewerRuntimeConfigClient` で health と分離して readiness fields を確認する。
 - 2026-05-19 08:26 UTC に live service を現ソースで build した binary へ更新した。更新後、`/viewer/superagent`、`/viewer/ai-workflow`、`/viewer/revenue`、`/viewer/complexity-hotspots` は 200。更新前の installed binary は該当 route を含まず 404 だったため、古い binary の結果は現行実装判定に使わない。
 - Ollama は live config の `http://100.83.207.6:11434` で `/api/tags` / generate / MioAgent chat / natural language CHAT routing が pass。
-- `PICOCLAW_CONFIG=$HOME/.picoclaw/config.yaml` を使う場合、Ollama と無関係な外部 provider key validation も通る必要がある。最終確認では `~/.picoclaw/.env` を読み込んで validation を通し、実 key 値は記録していない。
+- `RENCROW_CONFIG=$HOME/.rencrow/config.yaml` を使う場合、Ollama と無関係な外部 provider key validation も通る必要がある。最終確認では `~/.rencrow/.env` を読み込んで validation を通し、実 key 値は記録していない。
 
 扱い:
 
@@ -283,7 +283,7 @@ GOCACHE=/tmp/picoclaw-gocache go test -count=1 -tags=e2e ./test/e2e \
 実行済み:
 
 ```bash
-set -a; [ -f "$HOME/.picoclaw/.env" ] && . "$HOME/.picoclaw/.env"; set +a
+set -a; [ -f "$HOME/.rencrow/.env" ] && . "$HOME/.rencrow/.env"; set +a
 for k in SLACK_BOT_TOKEN SLACK_SIGNING_SECRET DISCORD_BOT_TOKEN TELEGRAM_BOT_TOKEN TELEGRAM_WEBHOOK_SECRET \
   GOOGLE_API_KEY_CHAT GOOGLE_SEARCH_ENGINE_ID_CHAT GOOGLE_API_KEY_WORKER GOOGLE_SEARCH_ENGINE_ID_WORKER \
   STT_GATEWAY_URL RENCROW_STT_URL STT_PROVIDER_URL TTS_PROVIDER_URL TTS_PROVIDER IRODORI_BASE_URL SBV2_BASE_URL; do
@@ -293,9 +293,9 @@ curl -sS -m 5 http://127.0.0.1:18790/viewer/runtime-config
 curl -sS -m 5 http://127.0.0.1:18790/health
 curl -sS -i -m 5 http://192.168.1.33:8766/health || true
 curl -sS -i -m 5 http://192.168.1.33:8766/ || true
-set -a; [ -f "$HOME/.picoclaw/.env" ] && . "$HOME/.picoclaw/.env"; set +a
-PICOCLAW_CONFIG=$HOME/.picoclaw/config.yaml \
-GOCACHE=/tmp/picoclaw-gocache go test -tags=e2e ./test/e2e \
+set -a; [ -f "$HOME/.rencrow/.env" ] && . "$HOME/.rencrow/.env"; set +a
+RENCROW_CONFIG=$HOME/.rencrow/config.yaml \
+GOCACHE=/tmp/rencrow-gocache go test -tags=e2e ./test/e2e \
   -run 'TestE2E_GoogleSearch_(Chat|Worker)' -count=1 -v
 ```
 
@@ -312,11 +312,11 @@ GOCACHE=/tmp/picoclaw-gocache go test -tags=e2e ./test/e2e \
 - 2026-05-19 に `pkg/rencrowclient.RuntimeConfig` を追加し、runtime-config API の 2xx だけでは readiness view 成立扱いしない client boundary を追加した。LLM Ops enabled / configured / base URL、local LLM provider / Chat / Worker endpoint、STT / TTS URL、TTS health path、`runtime_readiness` fields が壊れた response は local client test で拒否する。Phase25 live E2E は `TestE2E_Phase25LiveRuntimeHealth` と `TestE2E_Phase25LiveViewerRuntimeConfigClient` に分離し、health fail が runtime-config readiness 証跡を隠さないようにした。
 - 2026-05-19 19:02 UTC に現 binary へ再 install / restart 後、`/viewer/llm-ops/status` が 502 `upstream unreachable` を返すこと、Viewer Ops readiness が LLM Ops `configured:present` / `proxy:present` / `live:missing` / `blocked: HTTP 502: upstream unreachable` を visible state として表示することを `TestE2E_Phase25BrowserViewerSessionContract` で確認した。これは LLM Ops proxy 設定済みを管理 API 到達成功と誤認しないための表示境界であり、Chat / Worker local LLM endpoint 復旧や scheduler 正常完了 E2E の完了条件にはしない。
 - 2026-05-19 20:51 UTC に `/health` の live 503 を Viewer Ops の Runtime Health card へ表示した。local Chat / Worker endpoint は `connection refused`、20:54 UTC の再起動後は 5 秒 timeout のままで、browser E2E は `service:missing` / `chat:missing` / `worker:missing` / `blocked:` を visible state として確認した。health fail を runtime-config / LLM Ops proxy 証跡と混同しない。
-- 2026-05-19 16:41 UTC に現 worktree を `make install` して `picoclaw.service` を再起動し、`TestE2E_Phase25LiveViewerRuntimeConfigClient` が live service に対して pass することを確認した。`/viewer/runtime-config` は `tts_base_url=http://192.168.1.13:7870` と `runtime_readiness` を返す。Slack / Discord / Telegram credential は false、STT gateway env は true、TTS provider env は false。`TestE2E_Phase25LiveRuntimeHealth` は `/health status=503, want 200` で fail のままなので、runtime-config readiness pass を health 成功や外部 API / 実ブラウザ音声 E2E 成功扱いにしない。
+- 2026-05-19 16:41 UTC に現 worktree を `make install` して `rencrow.service` を再起動し、`TestE2E_Phase25LiveViewerRuntimeConfigClient` が live service に対して pass することを確認した。`/viewer/runtime-config` は `tts_base_url=http://192.168.1.13:7870` と `runtime_readiness` を返す。Slack / Discord / Telegram credential は false、STT gateway env は true、TTS provider env は false。`TestE2E_Phase25LiveRuntimeHealth` は `/health status=503, want 200` で fail のままなので、runtime-config readiness pass を health 成功や外部 API / 実ブラウザ音声 E2E 成功扱いにしない。
 - 2026-05-19 16:46 UTC に `runtime_readiness` へ `stt_gateway_config_present` / `tts_provider_config_present` を追加した live binary へ更新した。`/viewer/runtime-config` は `stt_gateway_env_present=true` / `stt_gateway_config_present=true` / `tts_provider_env_present=false` / `tts_provider_config_present=true` を返し、`TestE2E_Phase25LiveViewerRuntimeConfigClient` は pass。env presence と effective config presence を分けて記録するが、実 provider health、実 browser playback、lip sync は未確認のまま blocked とする。
 - 2026-05-19 に `pkg/rencrowclient.RuntimeConfig` の validation を補強し、STT / TTS endpoint があるのに config-present field が false、または endpoint がないのに config-present field が true の response を E2E 証跡として受け取らない local client test を追加した。補強後も live `TestE2E_Phase25LiveViewerRuntimeConfigClient` は pass。
 - 2026-05-19 16:54 UTC に Viewer Ops へ runtime readiness card 表示を追加した。`viewer_memory_panel.test.mjs` は `runtimeReadinessCards` と STT / TTS / channel readiness badge 表示を確認して pass。live `/viewer` と配信中 `ops.js` にも該当 element / renderer が含まれることを curl で確認した。これは runtime readiness の表示確認であり、実ブラウザ操作 / 実 mic / 実 audio playback の成功条件ではない。
-- 2026-05-19 に `TestE2E_Phase25BrowserViewerSessionContract` へ Ops `runtimeReadinessCards` の visible state と readiness text 確認を追加し、`PICOCLAW_BROWSER_E2E=1 PICOCLAW_LIVE_BASE_URL=http://127.0.0.1:18790` で pass した。これは Viewer runtime readiness 表示の browser E2E であり、STT mic input、TTS playback、lip sync の audio flow 成功とは別項目として扱う。
+- 2026-05-19 に `TestE2E_Phase25BrowserViewerSessionContract` へ Ops `runtimeReadinessCards` の visible state と readiness text 確認を追加し、`RENCROW_BROWSER_E2E=1 RENCROW_LIVE_BASE_URL=http://127.0.0.1:18790` で pass した。これは Viewer runtime readiness 表示の browser E2E であり、STT mic input、TTS playback、lip sync の audio flow 成功とは別項目として扱う。
 - 2026-05-19 17:54 UTC に `/viewer/debug/system` の audio health probe を並列化し、STT / TTS endpoint 不達でも route が長時間固まらず blocked 証跡を返すようにした。live `time curl -sS -m 4 http://127.0.0.1:18790/viewer/debug/system` は約 1.2 秒で返り、`stt_ok=false`、`tts_live_ok=false`、`tts_ready_ok=false`、timeout `last_error` を返した。
 - `pkg/rencrowclient.DebugSystemSnapshot` を追加し、debug system response の `updated_at`、audio URL、ok state の整合性を local client test で検証するようにした。`TestE2E_Phase25LiveDebugSystemSnapshotClient` は live service に対して pass。これは STT / TTS blocked 証跡を読むための境界確認であり、実 mic STT、TTS playback、lip sync 成功扱いにはしない。
 - `pkg/rencrowclient.DebugSystemSnapshot` は `updated_at` の RFC3339 形式、endpoint 設定済み down 状態の health body または `last_error`、`tts_ready_ok` と `tts_live_ok` の整合性も検証する。空の down 状態や ready-only 状態を STT / TTS readiness 証跡として成功扱いしない。
@@ -329,9 +329,9 @@ GOCACHE=/tmp/picoclaw-gocache go test -tags=e2e ./test/e2e \
 実行済み:
 
 ```bash
-set -a; . "$HOME/.picoclaw/.env"; set +a
-PICOCLAW_CONFIG=$HOME/.picoclaw/config.yaml \
-GOCACHE=/tmp/picoclaw-gocache go test -count=1 -tags=e2e ./test/e2e \
+set -a; . "$HOME/.rencrow/.env"; set +a
+RENCROW_CONFIG=$HOME/.rencrow/config.yaml \
+GOCACHE=/tmp/rencrow-gocache go test -count=1 -tags=e2e ./test/e2e \
   -run 'TestE2E_GoogleSearch|TestE2E_APIProvider_Generate' -v
 ```
 
@@ -374,9 +374,9 @@ curl -sS -i http://127.0.0.1:18790/viewer/ai-workflow/context-budget/check \
   -d '{"event_id":"ctx_budget_stop_live_20260519093600","agent":"Worker","input_tokens":950,"context_tokens":950,"created_at":"2026-05-19T09:36:01Z"}'
 curl -sS http://127.0.0.1:18790/viewer/ai-workflow?limit=20 | \
   rg 'ctx_budget_warn_live_20260519093600|ctx_budget_stop_live_20260519093600|context_budget_warning|context_budget_exceeded'
-GOCACHE=/tmp/picoclaw-gocache PICOCLAW_LIVE_E2E=1 go test -tags=e2e ./test/e2e \
+GOCACHE=/tmp/rencrow-gocache RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e \
   -run 'TestE2E_AIWorkflow(CommandContextAndSuperAgentTraceSameRun|ExternalControlClientRequiresApproval)' -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache PICOCLAW_LIVE_E2E=1 PICOCLAW_LIVE_SANDBOX_E2E=1 go test -tags=e2e ./test/e2e \
+GOCACHE=/tmp/rencrow-gocache RENCROW_LIVE_E2E=1 RENCROW_LIVE_SANDBOX_E2E=1 go test -tags=e2e ./test/e2e \
   -run TestE2E_AIWorkflowPromotionWorkflowRequiresHumanApprovalBeforeApply -count=1 -v
 ```
 
@@ -475,7 +475,7 @@ GOCACHE=/tmp/picoclaw-gocache PICOCLAW_LIVE_E2E=1 PICOCLAW_LIVE_SANDBOX_E2E=1 go
 - 2026-05-20 13:15 UTC に Memory tab の Source Registry save / export / import action failure 境界を補強し、source save、YAML export、YAML import が non-2xx の場合は console-only generic error ではなく body 付き `HTTP <status>: ...` を Source Registry action status に表示する Node contract test を追加した。これは source 登録、YAML export/import、Source Registry 設定反映成功として扱わないための local 表示境界であり、live Source Registry E2E の代替ではない。
 - 2026-05-20 13:25 UTC に Memory tab の memory state / promote action failure 境界を補強し、`/viewer/memory/state` と `/viewer/memory/promote` が non-2xx の場合は generic error ではなく body 付き `HTTP <status>: ...` を Memory table に表示する Node contract test を追加した。これは memory state 更新や memory promote route failure を Memory Layers 反映、Source Registry 自動同期、正式 memory promote 成功として扱わないための local 表示境界であり、live memory promote E2E の代替ではない。
 - 2026-05-20 01:18 UTC に Source Registry validate response の terminal status 境界を追加し、`pending` response や `validated` / `rejected` と `passed` / issues が矛盾する response を local client test で拒否するようにした。`validated` は `passed=true` かつ issues 空、`rejected` は `passed=false` かつ issues ありでなければ E2E 証跡として扱わない。
-- 2026-05-19 23:22 UTC に一時 Conversation L1 config と隔離 SQLite `/tmp/picoclaw-source-registry-live-e2e/l1.sqlite` で `TestE2E_SourceRegistryStagingValidatePromoteAndMemoryLayers` を実行して pass。local RSS fixture の live source 登録、fetch/run、validated staging、明示 validate、memory promote、Memory Layers の promoted memory 表示まで確認した。通常 config は復元済みで、通常 live readiness は `conversation_enabled=false` / `l1_sqlite_config_present=false` / `source_registry_available=false` / `memory_layers_available=false` を正とする。
+- 2026-05-19 23:22 UTC に一時 Conversation L1 config と隔離 SQLite `/tmp/rencrow-source-registry-live-e2e/l1.sqlite` で `TestE2E_SourceRegistryStagingValidatePromoteAndMemoryLayers` を実行して pass。local RSS fixture の live source 登録、fetch/run、validated staging、明示 validate、memory promote、Memory Layers の promoted memory 表示まで確認した。通常 config は復元済みで、通常 live readiness は `conversation_enabled=false` / `l1_sqlite_config_present=false` / `source_registry_available=false` / `memory_layers_available=false` を正とする。
 - `pkg/rencrowclient.SourceRegistryStatus` / `SourceRegistryStaging` は source kind、fetch `last_status`、staging / validation status を許可値に限定し、`last_status=error` の source entry に `last_error` がない場合も E2E 証跡として成功扱いしない。保存層の `MarkSourceRegistryFetched` も unknown fetch status と error 証跡なしを拒否することを確認済み。
 - 2026-05-19 に `pkg/rencrowclient.BrowserTraceAPIStatus` / `DiscoverBrowserTraceAPI` / `CreateBrowserTraceAPIFetcherProposal` を追加し、`/viewer/browser-trace-api` / `discover` / `fetcher-proposals` の 2xx だけでは Browser Trace API discovery / fetcher proposal 成立扱いせず、trace / candidate / schema / validation / coverage / artifact の同一 ID 重複や必須 field 欠落、write method、validation status / issues、discover response の request trace 整合、fetcher proposal の `official_promotion=false` / `implementation_apply=false` / `pending_review` artifact / validated candidate / Workstream artifact 整合不備を local client test で拒否するようにした。これは Browser Trace API discovery と fetcher proposal を E2E 証跡として読むための境界確認であり、実 Fetcher 実装、正式 API 採用、promoted DB write、外部 API 利用規約確認の代替ではない。
 - 2026-05-20 02:05 UTC に Browser Trace API schema の `schema_json` を保存前 validation と client current view validation で JSON として検証し、壊れた schema 文字列を Browser Trace API discovery / fetcher proposal の E2E 証跡として受け取らない local test を追加した。
@@ -497,7 +497,7 @@ GOCACHE=/tmp/picoclaw-gocache PICOCLAW_LIVE_E2E=1 PICOCLAW_LIVE_SANDBOX_E2E=1 go
 - 2026-05-20 00:02 UTC に live Browser Trace discover/validation/proposal 後の Viewer Ops card 契約を `blocked: no trace candidates` から `fetcher proposals:` / `review-only: no official API adoption` へ更新した。live browser `TestE2E_Phase25BrowserViewerSessionContract` は pass。これは Browser Trace の current view が空でなくなったためであり、正式 API 採用や実 Fetcher 実装の成功扱いにはしない。
 - 2026-05-20 10:30 UTC に Browser Trace API status fetch failure 時は stale candidate / fetcher proposal を使わず `browser trace api status unavailable: ...` を visible state として表示する。これは status API failure の見せ方であり、正式 API 採用、promoted DB write、実 Fetcher 実装の成功ではない。
 - 2026-05-19 17:26 UTC に runtime を更新し、L1 store 無効時の live `/viewer/source-registry` は 404 ではなく 503 `source registry unavailable` を返すことを確認した。Source Registry staging review / validate / promote の live E2E は blocked として維持する。503 は依存不足の明示であり、route 成功扱いにしない。
-- 2026-05-19 17:31 UTC に `/viewer/runtime-config` の `runtime_readiness` へ Source Registry / Conversation L1 readiness を追加した。live config では `conversation_enabled=false`、`l1_sqlite_config_present=false`、`source_registry_available=false` であり、`TestE2E_Phase25LiveViewerRuntimeConfigClient` と `PICOCLAW_BROWSER_E2E=1` の `TestE2E_Phase25BrowserViewerSessionContract` で API / Ops visible state を確認した。readiness false は blocked 理由であり、Source Registry staging review / validate / promote 成功扱いにはしない。
+- 2026-05-19 17:31 UTC に `/viewer/runtime-config` の `runtime_readiness` へ Source Registry / Conversation L1 readiness を追加した。live config では `conversation_enabled=false`、`l1_sqlite_config_present=false`、`source_registry_available=false` であり、`TestE2E_Phase25LiveViewerRuntimeConfigClient` と `RENCROW_BROWSER_E2E=1` の `TestE2E_Phase25BrowserViewerSessionContract` で API / Ops visible state を確認した。readiness false は blocked 理由であり、Source Registry staging review / validate / promote 成功扱いにはしない。
 - 2026-05-19 20:45 UTC に Memory Layers / Source Registry route readiness を追加した。live `/viewer/runtime-config` は L1 disabled だが status route present として `memory_layers_status_available=true` / `source_registry_status_available=true` を返し、Ops readiness では `memory-route:present` / `source-route:present` と `blocked: conversation L1 disabled` が見える。503 route present は成功ではなく、blocked 証跡として扱う。
 - 2026-05-19 20:51 UTC に Runtime Health card を追加し、live `/health` 503 または timeout を Viewer Ops で `service:missing` / `chat:missing` / `worker:missing` として確認した。これは local LLM endpoint 復旧ではなく、画面上の失敗可視化である。
 - 2026-05-19 20:58 UTC に Revenue external send apply audit を Viewer Ops の専用表として表示するようにした。live current view は `external_channel_adapter=unconfigured`、apply audit は `blocked` / `not_sent` / `post_send_verified=false` / `external_send_applied=false` で、browser E2E は audit 表の visible state を確認した。これは外部送信 apply audit の可視化であり、実送信成功や post-send verification 成功ではない。
@@ -519,7 +519,7 @@ GOCACHE=/tmp/picoclaw-gocache PICOCLAW_LIVE_E2E=1 PICOCLAW_LIVE_SANDBOX_E2E=1 go
 ```bash
 curl -sS -i http://127.0.0.1:18790/viewer/complexity-hotspots/scan \
   -H 'Content-Type: application/json' \
-  -d '{"scan_id":"scan_live_20260519083500","workstream_id":"ws_live_20260519083500","repo":"picoclaw_multiLLM","root_path":".","scan_scope":["internal/application/complexity"],"max_hotspots":3,"exclude_dirs":[".git","build","node_modules","vendor"]}'
+  -d '{"scan_id":"scan_live_20260519083500","workstream_id":"ws_live_20260519083500","repo":"RenCrow_CORE","root_path":".","scan_scope":["internal/application/complexity"],"max_hotspots":3,"exclude_dirs":[".git","build","node_modules","vendor"]}'
 curl -sS http://127.0.0.1:18790/viewer/complexity-hotspots?limit=20 | \
   rg 'scan_live_20260519083500|art_complexity_scan_live_20260519083500|report_only'
 curl -sS -i http://127.0.0.1:18790/viewer/complexity-hotspots/proposals \
@@ -566,19 +566,19 @@ curl -sS -i http://127.0.0.1:18790/viewer/complexity-hotspots/concrete-diffs \
 実行済み:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/domain/skillgovernance ./internal/infrastructure/persistence/skillgovernance ./internal/adapter/viewer ./pkg/rencrowclient ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-gocache go test ./internal/domain/skillgovernance ./internal/infrastructure/persistence/skillgovernance ./internal/adapter/viewer ./pkg/rencrowclient ./cmd/rencrow
 node internal/adapter/viewer/viewer_memory_panel.test.mjs
-GOCACHE=/tmp/picoclaw-gocache PICOCLAW_LIVE_E2E=1 go test -tags=e2e ./test/e2e \
+GOCACHE=/tmp/rencrow-gocache RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e \
   -run TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubmit -count=1 -v
 curl -sS -i http://127.0.0.1:18790/viewer/skill-governance/contribution-gate \
   -H 'Content-Type: application/json' \
-  -d '{"event_id":"evt_skill_pr_gate_live_20260519103000","repo":"example/repo","target_branch":"main","problem_statement":"live audit boundary check for external PR submit","existing_prs_checked":true,"real_problem_verified":true,"core_change_verified":true,"diff_human_approved":true,"test_result":"GOCACHE=/tmp/picoclaw-gocache go test ./internal/domain/skillgovernance ./internal/infrastructure/persistence/skillgovernance ./internal/adapter/viewer ./pkg/rencrowclient ./cmd/picoclaw"}'
+  -d '{"event_id":"evt_skill_pr_gate_live_20260519103000","repo":"example/repo","target_branch":"main","problem_statement":"live audit boundary check for external PR submit","existing_prs_checked":true,"real_problem_verified":true,"core_change_verified":true,"diff_human_approved":true,"test_result":"GOCACHE=/tmp/rencrow-gocache go test ./internal/domain/skillgovernance ./internal/infrastructure/persistence/skillgovernance ./internal/adapter/viewer ./pkg/rencrowclient ./cmd/rencrow"}'
 curl -sS -i http://127.0.0.1:18790/viewer/skill-governance/external-pr-submit \
   -H 'Content-Type: application/json' \
   -d '{"submit_id":"submit_skill_pr_live_noapproval_20260519103000","contribution_event_id":"evt_skill_pr_gate_live_20260519103000","repo":"example/repo","title":"Live audit boundary check","human_approved":false}'
 curl -sS -i http://127.0.0.1:18790/viewer/skill-governance/external-pr-submit \
   -H 'Content-Type: application/json' \
-  -d '{"submit_id":"submit_skill_pr_live_20260519103000","contribution_event_id":"evt_skill_pr_gate_live_20260519103000","repo":"example/repo","title":"Live audit boundary check","diff_path":"workspace/logs/skill_governance/coder_evidence/job-live/skill_diff.md","test_result":"GOCACHE=/tmp/picoclaw-gocache go test ./internal/domain/skillgovernance ./internal/infrastructure/persistence/skillgovernance ./internal/adapter/viewer ./pkg/rencrowclient ./cmd/picoclaw","human_approved":true}'
+  -d '{"submit_id":"submit_skill_pr_live_20260519103000","contribution_event_id":"evt_skill_pr_gate_live_20260519103000","repo":"example/repo","title":"Live audit boundary check","diff_path":"workspace/logs/skill_governance/coder_evidence/job-live/skill_diff.md","test_result":"GOCACHE=/tmp/rencrow-gocache go test ./internal/domain/skillgovernance ./internal/infrastructure/persistence/skillgovernance ./internal/adapter/viewer ./pkg/rencrowclient ./cmd/rencrow","human_approved":true}'
 curl -sS 'http://127.0.0.1:18790/viewer/skill-governance/recent?limit=5' | \
   rg 'submit_skill_pr_live|external_pr_submit_records|external PR adapter'
 ```
@@ -621,7 +621,7 @@ rg -n 'NewBlockedExternalPRSubmitRecord|external PR adapter is not configured|Su
 
 判定:
 
-- `gh` は `/usr/bin/gh` に存在し、`github.com` へ `Nyukimin` として認証済み。`origin` は `https://github.com/Nyukimin/picoclaw_multiLLM`。
+- `gh` は `/usr/bin/gh` に存在し、`github.com` へ `Nyukimin` として認証済み。`origin` は `https://github.com/Nyukimin/RenCrow_CORE`。
 - ただし live `/viewer/skill-governance/recent?limit=5` の `external_pr_submit_records` は `submit_status=blocked`、`external_pr_created=false`、`post_submit_verified=false`、`pr_adapter=unconfigured` の audit record のみ。
 - handler は passed Contribution Gate と `human_approved=true` 後も `domainskill.NewBlockedExternalPRSubmitRecord` を保存し、response で `external_pr_created=false` / `external_pr_adapter_configuration=required` を返す。
 - GitHub CLI 認証は実 PR 作成 E2E の成功条件ではない。RenCrow 側 adapter、Human approval、対象 repo / branch、diff、rollback、test result、PR URL 保存、post-submit verification が揃うまで実 PR 作成は blocked とする。
@@ -646,9 +646,9 @@ curl -sS -i http://127.0.0.1:18790/viewer/superagent/run-queue \
   -d '{"queue_id":"rq_scheduler_live_20260519092900","run_id":"run_scheduler_live_20260519092900","workstream_id":"ws_scheduler_live_20260519092900","goal":"SuperAgent scheduler E2E ping. Do not send externally. Return a short diagnostic response.","action":"chat","status":"queued","priority":10,"created_at":"2026-05-19T09:29:00Z"}'
 sleep 5
 curl -sS http://127.0.0.1:18790/viewer/superagent?limit=100
-GOCACHE=/tmp/picoclaw-gocache PICOCLAW_LIVE_E2E=1 go test -tags=e2e ./test/e2e \
+GOCACHE=/tmp/rencrow-gocache RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e \
   -run TestE2E_SuperAgentRunQueueClientManualLedgerFlow -count=1 -v
-GOCACHE=/tmp/picoclaw-gocache PICOCLAW_LIVE_E2E=1 go test -tags=e2e ./test/e2e \
+GOCACHE=/tmp/rencrow-gocache RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e \
   -run 'TestE2E_SuperAgent(PauseResumeAndQueueReentryClientFlow|RunQueueClientManualLedgerFlow)' -count=1 -v
 ```
 
@@ -720,7 +720,7 @@ curl -sS -i http://127.0.0.1:18790/viewer/revenue/channel-drafts/external-send-a
   -d '{"apply_id":"rev_apply_live_no_approval_20260519092100","draft_id":"rev_draft_live_20260519084700","decision_id":"rev_decision_live_20260519084700"}'
 curl -sS http://127.0.0.1:18790/viewer/revenue?limit=50 | \
   rg 'rev_apply_live_20260519092100|rev_apply_live_no_approval_20260519092100|external_send_apply_count|external_actions_applied'
-GOCACHE=/tmp/picoclaw-gocache PICOCLAW_LIVE_E2E=1 go test -tags=e2e ./test/e2e \
+GOCACHE=/tmp/rencrow-gocache RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e \
   -run TestE2E_RevenueExternalSendClientRequiresApprovalAndAuditsBlockedApply -count=1 -v
 ```
 
@@ -780,8 +780,8 @@ rg -n 'external-send|ExternalSend|external_send|channel adapter|channel_adapter|
 ```bash
 curl -fsS http://127.0.0.1:18790/health
 curl -fsS http://127.0.0.1:18790/viewer/runtime-config
-PICOCLAW_LIVE_E2E=1 \
-GOCACHE=/tmp/picoclaw-gocache \
+RENCROW_LIVE_E2E=1 \
+GOCACHE=/tmp/rencrow-gocache \
 go test -count=1 -tags=e2e ./test/e2e \
   -run 'TestE2E_Phase25Live(RuntimeHealth|ViewerRuntimeConfigClient)' -v
 ```
@@ -806,9 +806,9 @@ go test -count=1 -tags=e2e ./test/e2e \
 確認コマンド:
 
 ```bash
-PICOCLAW_BROWSER_E2E=1 \
-PICOCLAW_LIVE_BASE_URL=http://127.0.0.1:18790 \
-GOCACHE=/tmp/picoclaw-gocache \
+RENCROW_BROWSER_E2E=1 \
+RENCROW_LIVE_BASE_URL=http://127.0.0.1:18790 \
+GOCACHE=/tmp/rencrow-gocache \
 go test -count=1 -tags=e2e ./test/e2e \
   -run TestE2E_Phase25BrowserViewerSessionContract -v
 ```
@@ -880,19 +880,19 @@ go test -count=1 -tags=e2e ./test/e2e \
 - download 失敗を「添付なし通常メッセージ」として処理する。
 - MIME 不許可や size 超過を fallback 応答で隠す。
 
-2026-05-19 15:45 UTC に adapter-level failure boundary として、Slack / Discord / Telegram の attachment download failure が 502 で止まり、orchestrator に進まないことを local test で確認した。`GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/channels/slack ./internal/adapter/channels/discord ./internal/adapter/channels/telegram -count=1 -v` は pass。これは実 API event、token、webhook、channel 環境を使う E2E の完了扱いにはしない。
+2026-05-19 15:45 UTC に adapter-level failure boundary として、Slack / Discord / Telegram の attachment download failure が 502 で止まり、orchestrator に進まないことを local test で確認した。`GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/channels/slack ./internal/adapter/channels/discord ./internal/adapter/channels/telegram -count=1 -v` は pass。これは実 API event、token、webhook、channel 環境を使う E2E の完了扱いにはしない。
 
-2026-05-20 09:35 UTC に adapter-level failure boundary を追加補強し、Slack / Discord / Telegram の attachment download failure が webhook 502 response に upstream body を保持することを local focused test で確認した。`GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/channels/slack ./internal/adapter/channels/discord ./internal/adapter/channels/telegram -run 'TestAdapter_ServeHTTP_(File|Attachment|Document)DownloadFailureDoesNotFallbackToChat' -count=1 -v` は pass。これは download failure の証跡を status だけで失わないための境界確認であり、実 API event、token、webhook、channel 環境を使う E2E の完了扱いにはしない。
+2026-05-20 09:35 UTC に adapter-level failure boundary を追加補強し、Slack / Discord / Telegram の attachment download failure が webhook 502 response に upstream body を保持することを local focused test で確認した。`GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/channels/slack ./internal/adapter/channels/discord ./internal/adapter/channels/telegram -run 'TestAdapter_ServeHTTP_(File|Attachment|Document)DownloadFailureDoesNotFallbackToChat' -count=1 -v` は pass。これは download failure の証跡を status だけで失わないための境界確認であり、実 API event、token、webhook、channel 環境を使う E2E の完了扱いにはしない。
 
-2026-05-20 09:40 UTC に adapter-level failure boundary を追加補強し、Slack / Discord / Telegram の Send / Probe failure が non-2xx response body を error に保持することを local focused test で確認した。`GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/channels/slack ./internal/adapter/channels/discord ./internal/adapter/channels/telegram -run TestAdapter_SendAndProbeFailuresIncludeResponseBody -count=1 -v` は pass。これは外部 API 送信 / probe failure の証跡を status だけで失わないための境界確認であり、実 API event、token、webhook、channel 環境を使う E2E の完了扱いにはしない。
+2026-05-20 09:40 UTC に adapter-level failure boundary を追加補強し、Slack / Discord / Telegram の Send / Probe failure が non-2xx response body を error に保持することを local focused test で確認した。`GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/channels/slack ./internal/adapter/channels/discord ./internal/adapter/channels/telegram -run TestAdapter_SendAndProbeFailuresIncludeResponseBody -count=1 -v` は pass。これは外部 API 送信 / probe failure の証跡を status だけで失わないための境界確認であり、実 API event、token、webhook、channel 環境を使う E2E の完了扱いにはしない。
 
-2026-05-20 09:45 UTC に LINE media download failure boundary を追加補強し、`MediaDownloader.DownloadContent` が LINE content API の non-2xx response body を error に保持することを local focused test で確認した。`GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/line -run TestMediaDownloader_DownloadContent_APIErrorIncludesResponseBody -count=1 -v` は pass。これは LINE media download failure の証跡を status だけで失わないための境界確認であり、実 LINE media event や外部チャネル file payload E2E の完了扱いにはしない。
+2026-05-20 09:45 UTC に LINE media download failure boundary を追加補強し、`MediaDownloader.DownloadContent` が LINE content API の non-2xx response body を error に保持することを local focused test で確認した。`GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/line -run TestMediaDownloader_DownloadContent_APIErrorIncludesResponseBody -count=1 -v` は pass。これは LINE media download failure の証跡を status だけで失わないための境界確認であり、実 LINE media event や外部チャネル file payload E2E の完了扱いにはしない。
 
-2026-05-20 09:50 UTC に Telegram `getFile` failure boundary を追加補強し、file download 前段の `getFile` non-2xx response body を webhook 502 response に保持することを local focused test で確認した。`GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/channels/telegram -run TestAdapter_ServeHTTP_GetFileFailureDoesNotFallbackToChat -count=1 -v` は pass。これは Telegram file metadata failure を status だけで失わず、添付なし通常 chat success に fallback しないための境界確認であり、実 Telegram API event E2E の完了扱いにはしない。
+2026-05-20 09:50 UTC に Telegram `getFile` failure boundary を追加補強し、file download 前段の `getFile` non-2xx response body を webhook 502 response に保持することを local focused test で確認した。`GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/channels/telegram -run TestAdapter_ServeHTTP_GetFileFailureDoesNotFallbackToChat -count=1 -v` は pass。これは Telegram file metadata failure を status だけで失わず、添付なし通常 chat success に fallback しないための境界確認であり、実 Telegram API event E2E の完了扱いにはしない。
 
-2026-05-19 15:47 UTC に common attachment store の unsupported MIME / size rejection と、Slack / Discord / Telegram adapter が `AttachmentSaver.SaveAll` rejection を 502 で停止して orchestrator へ進めないことを local test で確認した。`GOCACHE=/tmp/picoclaw-gocache go test ./internal/application/attachment ./internal/adapter/channels/slack ./internal/adapter/channels/discord ./internal/adapter/channels/telegram -count=1 -v` は pass。これは MIME 不許可 / size 超過を fallback success にしない境界確認であり、実 API event E2E の完了扱いにはしない。
+2026-05-19 15:47 UTC に common attachment store の unsupported MIME / size rejection と、Slack / Discord / Telegram adapter が `AttachmentSaver.SaveAll` rejection を 502 で停止して orchestrator へ進めないことを local test で確認した。`GOCACHE=/tmp/rencrow-gocache go test ./internal/application/attachment ./internal/adapter/channels/slack ./internal/adapter/channels/discord ./internal/adapter/channels/telegram -count=1 -v` は pass。これは MIME 不許可 / size 超過を fallback success にしない境界確認であり、実 API event E2E の完了扱いにはしない。
 
-2026-05-19 15:49 UTC に Slack / Discord / Telegram adapter の successful attachment path を real `internal/application/attachment.Store` 経由に寄せ、prompt injection warning が `security_warnings` metadata として orchestrator request の `Attachments` に残ることを local test で確認した。`GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/channels/slack ./internal/adapter/channels/discord ./internal/adapter/channels/telegram -count=1 -v` は pass。これは warning metadata を fallback 表示で隠さない境界確認であり、実 API event E2E の完了扱いにはしない。
+2026-05-19 15:49 UTC に Slack / Discord / Telegram adapter の successful attachment path を real `internal/application/attachment.Store` 経由に寄せ、prompt injection warning が `security_warnings` metadata として orchestrator request の `Attachments` に残ることを local test で確認した。`GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/channels/slack ./internal/adapter/channels/discord ./internal/adapter/channels/telegram -count=1 -v` は pass。これは warning metadata を fallback 表示で隠さない境界確認であり、実 API event E2E の完了扱いにはしない。
 
 2026-05-19 18:03 UTC に `/viewer/runtime-config` の `runtime_readiness` へ Slack / Discord / Telegram の `*_webhook_registered` と `*_file_payload_pipeline` を追加した。live service を `make install` / restart 後に確認し、Slack / Discord / Telegram は credentials / webhook / file pipeline がすべて false。`TestE2E_Phase25LiveViewerRuntimeConfigClient` は pass するが、これは外部チャネル file payload 実 API E2E の success ではなく、実 token / webhook / event 未準備による `blocked` 証跡である。`pkg/rencrowclient.RuntimeConfig` は file pipeline が true なのに webhook route が false の response を malformed として拒否する。
 
@@ -900,49 +900,49 @@ go test -count=1 -tags=e2e ./test/e2e \
 
 2026-05-19 23:08 UTC に Viewer Ops の Slack / Discord / Telegram readiness card へ `blocked: real external API file event E2E not verified` を明示した。Node Viewer contract と live browser E2E はこの文言を確認するが、実 token / webhook / 外部 API event / file payload E2E は未達のまま扱う。
 
-2026-05-19 18:10 UTC に Viewer Ops の runtime readiness card が `/viewer/debug/system` の audio snapshot も表示するようにした。live `/viewer/debug/system` は `stt_ok=false` / `tts_live_ok=false` / `tts_ready_ok=false` と timeout `last_error` を返し、Ops タブでは STT `health:missing`、TTS `live:missing` / `ready:missing`、`blocked:` detail が visible state として確認できる。`PICOCLAW_BROWSER_E2E=1 PICOCLAW_LIVE_E2E=1 ... TestE2E_Phase25BrowserViewerSessionContract` は pass。これは blocked 状態の表示確認であり、browser microphone STT、TTS playback、lip sync の成功扱いにはしない。
+2026-05-19 18:10 UTC に Viewer Ops の runtime readiness card が `/viewer/debug/system` の audio snapshot も表示するようにした。live `/viewer/debug/system` は `stt_ok=false` / `tts_live_ok=false` / `tts_ready_ok=false` と timeout `last_error` を返し、Ops タブでは STT `health:missing`、TTS `live:missing` / `ready:missing`、`blocked:` detail が visible state として確認できる。`RENCROW_BROWSER_E2E=1 RENCROW_LIVE_E2E=1 ... TestE2E_Phase25BrowserViewerSessionContract` は pass。これは blocked 状態の表示確認であり、browser microphone STT、TTS playback、lip sync の成功扱いにはしない。
 
 2026-05-19 23:02 UTC に Viewer Ops の STT / TTS readiness card へ `blocked: real microphone STT E2E not verified` と `blocked: browser audio playback/lip sync E2E not verified` を明示した。Node Viewer contract と live browser E2E はこの文言を確認するが、実 mic / 実 audio device / lip sync の成功条件は未達のまま扱う。
 
 2026-05-20 08:41 UTC に Viewer STT microphone start / artifact persistence failure 境界を補強した。`getUserMedia()` reject と STT log/WAV/autotest 保存 reject を toast / console-only にせず、`debugSttSession` と session badge に `STT microphone start unavailable: ...` / `STT artifact persistence unavailable: ...` を保持する Node contract test を追加し、`node internal/adapter/viewer/viewer_memory_panel.test.mjs` は 67件 pass。これは mic 権限拒否や保存失敗を実 mic STT 成功、保存済み証跡、STT provider readiness 成功として扱わないための local 表示境界であり、実 browser microphone STT E2E の代替ではない。
 
-2026-05-20 08:45 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer?tab=timeline` を Playwright Chromium で開き、`getUserMedia()` reject を再現した。session badge と `debugSttSession` に `STT microphone start unavailable: permission denied by test` が表示されることを確認した。スクリーンショットは `tmp/viewer-stt-microphone-start-failure-boundary.png`。これは browser microphone start failure の visible-state 境界確認であり、実 browser microphone STT E2E の代替ではない。
+2026-05-20 08:45 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer?tab=timeline` を Playwright Chromium で開き、`getUserMedia()` reject を再現した。session badge と `debugSttSession` に `STT microphone start unavailable: permission denied by test` が表示されることを確認した。スクリーンショットは `tmp/viewer-stt-microphone-start-failure-boundary.png`。これは browser microphone start failure の visible-state 境界確認であり、実 browser microphone STT E2E の代替ではない。
 
 2026-05-20 08:48 UTC に Viewer STT WebSocket message / transport failure 境界を補強した。STT server message が `type=error`、JSON parse failure、WebSocket `onerror` の場合は toast / console-only にせず、`debugSttSession` と session badge に `STT recognition unavailable: ...` / `STT message parse unavailable: ...` / `STT websocket unavailable: ...` を保持する Node contract test を追加し、`node internal/adapter/viewer/viewer_memory_panel.test.mjs` は 68件 pass。これは STT server / stream failure を実 mic STT 成功や provider readiness 成功として扱わないための local 表示境界であり、実 browser microphone STT E2E の代替ではない。
 
-2026-05-20 08:50 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer?tab=timeline` を Playwright Chromium で開き、fake WebSocket から `type=error` を流した。session badge と `debugSttSession` に `STT recognition unavailable: provider timeout live` が表示されることを確認した。スクリーンショットは `tmp/viewer-stt-websocket-message-failure-boundary.png`。これは STT websocket server error の visible-state 境界確認であり、実 browser microphone STT E2E の代替ではない。
+2026-05-20 08:50 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer?tab=timeline` を Playwright Chromium で開き、fake WebSocket から `type=error` を流した。session badge と `debugSttSession` に `STT recognition unavailable: provider timeout live` が表示されることを確認した。スクリーンショットは `tmp/viewer-stt-websocket-message-failure-boundary.png`。これは STT websocket server error の visible-state 境界確認であり、実 browser microphone STT E2E の代替ではない。
 
-2026-05-20 09:50 UTC に audio router HTTP/SSE failure 境界を補強した。`HTTPDownloader.Download` と `SSEClient` は audio download / event stream 接続の non-2xx response body を error に保持する。`GOCACHE=/tmp/picoclaw-gocache go test ./internal/infrastructure/audiorouter -run 'Test(HTTPDownloaderDownload_Non2xxIncludesResponseBody|SSEClientRun_NonOKIncludesResponseBody)' -count=1 -v` は pass。これは audio object expiration / stream unavailable の証跡を status だけで失わないための local 境界確認であり、実 browser audio playback / lip sync E2E の完了扱いにはしない。
+2026-05-20 09:50 UTC に audio router HTTP/SSE failure 境界を補強した。`HTTPDownloader.Download` と `SSEClient` は audio download / event stream 接続の non-2xx response body を error に保持する。`GOCACHE=/tmp/rencrow-gocache go test ./internal/infrastructure/audiorouter -run 'Test(HTTPDownloaderDownload_Non2xxIncludesResponseBody|SSEClientRun_NonOKIncludesResponseBody)' -count=1 -v` は pass。これは audio object expiration / stream unavailable の証跡を status だけで失わないための local 境界確認であり、実 browser audio playback / lip sync E2E の完了扱いにはしない。
 
 2026-05-20 08:54 UTC に Viewer Home send failure 境界を補強した。Home / Daily Desk の送信で `sendViewerMessage()` が reject した場合は toast / console-only にせず、`homeStatusCard` に `Home send unavailable: ...` を保持する Node contract test を追加し、`node internal/adapter/viewer/viewer_memory_panel.test.mjs` は 69件 pass。これは Home 入口の送信失敗を通常 chat 成功や fallback 成功として扱わないための local 表示境界であり、live Viewer send E2E の代替ではない。
 
-2026-05-20 08:56 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer?tab=home` を Playwright Chromium で開き、route fulfill により `/viewer/send` 502 を再現した。Home の `今日の状態` card に `Home send unavailable: HTTP 502: viewer send route unavailable live` が表示されることを確認した。スクリーンショットは `tmp/viewer-home-send-failure-boundary.png`。これは Home send route failure の visible-state 境界確認であり、live Viewer send 成功 E2E の代替ではない。
+2026-05-20 08:56 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer?tab=home` を Playwright Chromium で開き、route fulfill により `/viewer/send` 502 を再現した。Home の `今日の状態` card に `Home send unavailable: HTTP 502: viewer send route unavailable live` が表示されることを確認した。スクリーンショットは `tmp/viewer-home-send-failure-boundary.png`。これは Home send route failure の visible-state 境界確認であり、live Viewer send 成功 E2E の代替ではない。
 
 2026-05-20 09:01 UTC に Viewer evidence detail の JSON / summary copy failure 境界を補強した。clipboard write が reject した場合は `console.error` のみで終わらせず、copy button に `Evidence JSON copy unavailable: ...` / `Evidence summary copy unavailable: ...` を保持する Node contract test を追加し、`node internal/adapter/viewer/viewer_memory_panel.test.mjs` は 70件 pass。これは証跡コピー失敗を共有済み証跡や実行証跡取得成功として扱わないための local 表示境界であり、live evidence copy E2E の代替ではない。
 
-2026-05-20 09:05 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer?tab=jobs` を Playwright Chromium で開き、fake evidence detail と clipboard write reject を再現した。Copy JSON / Copy Summary button に `Evidence JSON copy unavailable: clipboard denied live` / `Evidence summary copy unavailable: clipboard denied live` が表示されることを確認した。スクリーンショットは `tmp/viewer-evidence-copy-failure-boundary.png`。これは evidence copy failure の visible-state 境界確認であり、実行証跡取得成功や共有成功の代替ではない。
+2026-05-20 09:05 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer?tab=jobs` を Playwright Chromium で開き、fake evidence detail と clipboard write reject を再現した。Copy JSON / Copy Summary button に `Evidence JSON copy unavailable: clipboard denied live` / `Evidence summary copy unavailable: clipboard denied live` が表示されることを確認した。スクリーンショットは `tmp/viewer-evidence-copy-failure-boundary.png`。これは evidence copy failure の visible-state 境界確認であり、実行証跡取得成功や共有成功の代替ではない。
 
 2026-05-20 09:07 UTC に Viewer generic copy payload failure 境界を補強した。Reports / IdleChat / System などが共有する `copyTextPayload()` で clipboard write が reject した場合は toast / console-only にせず、押下した copy button に `Copy unavailable: ...` を保持する Node contract test を追加し、`node internal/adapter/viewer/viewer_memory_panel.test.mjs` は 71件 pass。これはコピー失敗を共有済み証跡や transcript 取得成功として扱わないための local 表示境界であり、各画面の live copy E2E の代替ではない。
 
-2026-05-20 09:09 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer?tab=reports` を Playwright Chromium で開き、clipboard write reject を再現した。Report Copy Summary button に `Copy unavailable: clipboard denied live` が表示され、button title にも同じ失敗理由が残ることを確認した。スクリーンショットは `tmp/viewer-generic-copy-failure-boundary.png`。これは generic copy failure の visible-state 境界確認であり、各画面の transcript / report 共有成功の代替ではない。
+2026-05-20 09:09 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer?tab=reports` を Playwright Chromium で開き、clipboard write reject を再現した。Report Copy Summary button に `Copy unavailable: clipboard denied live` が表示され、button title にも同じ失敗理由が残ることを確認した。スクリーンショットは `tmp/viewer-generic-copy-failure-boundary.png`。これは generic copy failure の visible-state 境界確認であり、各画面の transcript / report 共有成功の代替ではない。
 
 2026-05-20 09:12 UTC に Viewer unsupported attachment failure 境界を補強した。Viewer 添付で不許可 MIME / 拡張子の file を選んだ場合は toast-only にせず、attachment tray に `Attachment unavailable: unsupported file type: ...` を保持する Node contract test を追加し、`node internal/adapter/viewer/viewer_memory_panel.test.mjs` は 72件 pass。これは不許可添付を添付成功や通常送信成功として扱わないための local 表示境界であり、live attachment upload E2E の代替ではない。
 
-2026-05-20 09:14 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer?tab=timeline` を Playwright Chromium で開き、不許可添付 `payload.exe` を input に設定した。attachment tray に `Attachment unavailable: unsupported file type: payload.exe` が表示されることを確認した。スクリーンショットは `tmp/viewer-unsupported-attachment-failure-boundary.png`。これは unsupported attachment failure の visible-state 境界確認であり、live attachment upload 成功や通常送信成功の代替ではない。
+2026-05-20 09:14 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer?tab=timeline` を Playwright Chromium で開き、不許可添付 `payload.exe` を input に設定した。attachment tray に `Attachment unavailable: unsupported file type: payload.exe` が表示されることを確認した。スクリーンショットは `tmp/viewer-unsupported-attachment-failure-boundary.png`。これは unsupported attachment failure の visible-state 境界確認であり、live attachment upload 成功や通常送信成功の代替ではない。
 
 2026-05-20 09:16 UTC に Viewer message copy failure 境界を補強した。通常 timeline / IdleChat message の `copyMsg()` で clipboard write が reject した場合は unhandled rejection や console-only にせず、押下した Copy button に `Copy unavailable: ...` を保持する Node contract test を追加し、`node internal/adapter/viewer/viewer_memory_panel.test.mjs` は 73件 pass。これは message copy 失敗を transcript / message 共有成功として扱わないための local 表示境界であり、live message copy E2E の代替ではない。
 
-2026-05-20 09:18 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer?tab=timeline` を Playwright Chromium で開き、message Copy button の clipboard write reject を再現した。Copy button に `Copy unavailable: clipboard denied live` が表示され、button title にも同じ失敗理由が残ることを確認した。スクリーンショットは `tmp/viewer-message-copy-failure-boundary.png`。これは message copy failure の visible-state 境界確認であり、timeline / IdleChat message 共有成功の代替ではない。
+2026-05-20 09:18 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer?tab=timeline` を Playwright Chromium で開き、message Copy button の clipboard write reject を再現した。Copy button に `Copy unavailable: clipboard denied live` が表示され、button title にも同じ失敗理由が残ることを確認した。スクリーンショットは `tmp/viewer-message-copy-failure-boundary.png`。これは message copy failure の visible-state 境界確認であり、timeline / IdleChat message 共有成功の代替ではない。
 
 2026-05-20 09:21 UTC に Viewer LLM Ops readiness failure 境界を補強した。alias route 送信前の `/viewer/llm-ops/health` / `status` / `stop` / `start` が non-2xx の場合、response body を `llm ops ... failed: HTTP <status>: ...` として保持する Node contract test を追加し、`node internal/adapter/viewer/viewer_memory_panel.test.mjs` は 74件 pass。これは LLM Ops readiness route failure を alias 送信成功や fallback 成功として扱わないための local 表示境界であり、live LLM start / stop 成功 E2E の代替ではない。
 
 2026-05-20 09:28 UTC に Viewer Timeline の local send failure 表示境界を補強した。`Viewer send unavailable: ...` の synthetic `agent.response` は TTS 同期話者 `mio` 由来でも Timeline に表示し、通常の TTS 同期応答は従来どおり本文表示側に重複させない Node contract test を追加し、`node internal/adapter/viewer/viewer_memory_panel.test.mjs` は 75件 pass。これは LLM Ops readiness failure や send route failure を silent drop / fallback 成功として扱わないための local 表示境界であり、live LLM start / stop 成功 E2E の代替ではない。
 
-2026-05-20 09:31 UTC に現ソースを `make install` して `picoclaw.service` を再起動後、配信中 `/viewer?tab=timeline` を Playwright Chromium で開き、route fulfill により `/viewer/llm-ops/health` 503 を再現した。Timeline に `Viewer send unavailable: llm ops health failed: HTTP 503: llm ops health unavailable live` が表示されることを確認した。スクリーンショットは `tmp/viewer-llm-ops-readiness-failure-boundary.png`。これは LLM Ops readiness failure の visible-state 境界確認であり、live LLM start / stop 成功 E2E の代替ではない。
+2026-05-20 09:31 UTC に現ソースを `make install` して `rencrow.service` を再起動後、配信中 `/viewer?tab=timeline` を Playwright Chromium で開き、route fulfill により `/viewer/llm-ops/health` 503 を再現した。Timeline に `Viewer send unavailable: llm ops health failed: HTTP 503: llm ops health unavailable live` が表示されることを確認した。スクリーンショットは `tmp/viewer-llm-ops-readiness-failure-boundary.png`。これは LLM Ops readiness failure の visible-state 境界確認であり、live LLM start / stop 成功 E2E の代替ではない。
 
 ### 4.0.3 2026-05-19 Sandbox promotion apply / rollback result
 
-2026-05-19 23:09 UTC に一時 sandbox config と隔離 apply root `/tmp/picoclaw-sandbox-promotion-apply-root` を使い、`PICOCLAW_LIVE_E2E=1 PICOCLAW_LIVE_SANDBOX_E2E=1 ... TestE2E_SandboxPromotionApplyAndRollbackWithHumanApproval` を live service に対して実行して pass。`promo_sandbox_apply_rollback_20260519230949.441009237` は Human approval granted、ExternalControl allow、unified diff apply、post-apply verification command、`promotion_applied` gate log、rollback API、`rollback_executed` gate log、completed `post_apply_verification` / `rollback_execution` artifact まで確認した。証跡取得後は `~/.picoclaw/config.yaml` を復元し、通常 config の `/viewer/runtime-config` は `sandbox_enabled=false`、`/viewer/sandbox?limit=1` は 503 `sandbox store unavailable` に戻した。
+2026-05-19 23:09 UTC に一時 sandbox config と隔離 apply root `/tmp/rencrow-sandbox-promotion-apply-root` を使い、`RENCROW_LIVE_E2E=1 RENCROW_LIVE_SANDBOX_E2E=1 ... TestE2E_SandboxPromotionApplyAndRollbackWithHumanApproval` を live service に対して実行して pass。`promo_sandbox_apply_rollback_20260519230949.441009237` は Human approval granted、ExternalControl allow、unified diff apply、post-apply verification command、`promotion_applied` gate log、rollback API、`rollback_executed` gate log、completed `post_apply_verification` / `rollback_execution` artifact まで確認した。証跡取得後は `~/.rencrow/config.yaml` を復元し、通常 config の `/viewer/runtime-config` は `sandbox_enabled=false`、`/viewer/sandbox?limit=1` は 503 `sandbox store unavailable` に戻した。
 
 ### 4.5 Wild / distributed runtime
 
@@ -952,7 +952,7 @@ go test -count=1 -tags=e2e ./test/e2e \
 
 確認対象:
 
-- `cmd/picoclaw/runtime_distributed_mode.go`
+- `cmd/rencrow/runtime_distributed_mode.go`
 - `internal/application/orchestrator/distributed_orchestrator_routes.go`
 - `internal/infrastructure/transport`
 - live / temporary distributed config
@@ -978,7 +978,7 @@ go test -count=1 -tags=e2e ./test/e2e \
 - `RouteWILD` の code path 存在だけで完了扱いにする。
 - route evidence なしで response だけを見る。
 
-2026-05-19 15:43 UTC に local distributed の `RouteWILD` test を強化し、`agent.response wild -> mio` event の `job_id` / `session_id` が `ProcessMessageResponse` と一致することを確認した。`GOCACHE=/tmp/picoclaw-gocache go test ./internal/application/orchestrator -run TestDistributedOrchestrator_ProcessMessage_WildRoute -count=1 -v` は pass。これは local transport / test runtime の境界確認であり、SSH transport / 複数マシン E2E の完了扱いにはしない。
+2026-05-19 15:43 UTC に local distributed の `RouteWILD` test を強化し、`agent.response wild -> mio` event の `job_id` / `session_id` が `ProcessMessageResponse` と一致することを確認した。`GOCACHE=/tmp/rencrow-gocache go test ./internal/application/orchestrator -run TestDistributedOrchestrator_ProcessMessage_WildRoute -count=1 -v` は pass。これは local transport / test runtime の境界確認であり、SSH transport / 複数マシン E2E の完了扱いにはしない。
 
 2026-05-19 18:14 UTC に `/viewer/runtime-config` の `runtime_readiness` へ distributed transport readiness を追加した。live では `distributed_enabled=false`、`distributed_transports_present=true`、`distributed_ssh_configured=true`、`distributed_ssh_connected=false`、`distributed_local_transport=false`。`pkg/rencrowclient.RuntimeConfig` は connected SSH transport と distributed enabled / ssh configured の矛盾を malformed response として拒否する。`TestE2E_Phase25LiveViewerRuntimeConfigClient` と `TestE2E_Phase25BrowserViewerSessionContract` は pass し、Ops タブで `Distributed` / `enabled:missing` / `ssh-connected:missing` / `blocked: distributed disabled` が見えることを確認した。これは blocked 理由の可視化であり、Wild SSH / 複数マシン transport E2E の完了扱いにはしない。
 

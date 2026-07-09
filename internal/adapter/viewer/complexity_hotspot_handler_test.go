@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	complexityapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/complexity"
-	domaincomplexity "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/complexity"
-	domaindci "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/dci"
-	domainsandbox "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/sandbox"
-	domainskill "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/skillgovernance"
-	domainworkstream "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/workstream"
+	complexityapp "github.com/Nyukimin/RenCrow_CORE/internal/application/complexity"
+	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
+	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
+	domainsandbox "github.com/Nyukimin/RenCrow_CORE/internal/domain/sandbox"
+	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
 
 type stubComplexityHotspotStore struct {

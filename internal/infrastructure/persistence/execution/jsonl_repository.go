@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	domain "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/execution"
+	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 )
 
 // JSONLRepository は execution record を JSONL で保持する

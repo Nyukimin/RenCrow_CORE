@@ -286,7 +286,7 @@ Codex の AGENTS.md 発見方式を踏襲する。
 ### 7.2 AGENTS.md の配置
 
 ```
-/home/nyukimi/picoclaw_multiLLM/AGENTS.md   ← 新規作成
+/home/nyukimi/RenCrow_CORE/AGENTS.md   ← 新規作成
 ```
 
 内容: RenCrow のアーキテクチャ概要・主要ディレクトリ・禁止事項・テストコマンド。

@@ -30,7 +30,7 @@ empty audio, timeout, busy, provider error, and viewer input failure remain dist
 
 ## Current Main Files
 
-modules/stt, internal/infrastructure/stt, cmd/picoclaw/stt_runtime_*.go
+modules/stt, internal/infrastructure/stt, cmd/rencrow/stt_runtime_*.go
 
 ## Current Route Boundary
 

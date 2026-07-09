@@ -223,8 +223,8 @@ type TransportConfig struct {
 	RemoteUser       string `yaml:"remote_user"`        // SSHユーザー名
 	SSHKeyPath       string `yaml:"ssh_key_path"`       // SSH秘密鍵パス
 	StrictHostKey    bool   `yaml:"strict_host_key"`    // true: known_hosts必須（本番用）、false: Insecureフォールバック許可
-	RemoteAgentPath  string `yaml:"remote_agent_path"`  // リモートのpicoclaw-agentパス（例: "C:/Users/nyuki/picoclaw-agent.exe"）
-	RemoteConfigPath string `yaml:"remote_config_path"` // リモートのconfig.yamlパス（例: "C:/Users/nyuki/.picoclaw/config.yaml"）
+	RemoteAgentPath  string `yaml:"remote_agent_path"`  // リモートのrencrow-agentパス（例: "C:/Users/nyuki/rencrow-agent.exe"）
+	RemoteConfigPath string `yaml:"remote_config_path"` // リモートのconfig.yamlパス（例: "C:/Users/nyuki/.rencrow/config.yaml"）
 }
 
 // IdleChatConfig はAgent間雑談モードの設定
@@ -309,9 +309,9 @@ type ConversationConfig struct {
 	Enabled          bool   `yaml:"enabled"`           // 会話LLM機能の有効化（デフォルト: false）
 	RedisURL         string `yaml:"redis_url"`         // Redis接続先（例: "redis://localhost:6379"）
 	L1SQLitePath     string `yaml:"l1_sqlite_path"`    // L1 hot store SQLite path（任意）
-	DuckDBPath       string `yaml:"duckdb_path"`       // DuckDBファイルパス（例: "/var/lib/picoclaw/memory.duckdb"）
+	DuckDBPath       string `yaml:"duckdb_path"`       // DuckDBファイルパス（例: "/var/lib/rencrow/memory.duckdb"）
 	VectorDBURL      string `yaml:"vectordb_url"`      // VectorDB gRPC接続先（例: "localhost:6334" for Qdrant）
-	VectorCollection string `yaml:"vector_collection"` // 会話要約用Qdrant collection名。空の場合はpicoclaw_memory
+	VectorCollection string `yaml:"vector_collection"` // 会話要約用Qdrant collection名。空の場合はrencrow_memory
 	VectorDimension  int    `yaml:"vector_dimension"`  // 会話要約用embedding次元。0の場合は768
 	EmbedProvider    string `yaml:"embed_provider"`    // Embedding provider（"ollama" または "openai"）。空の場合は従来の自動選択
 	EmbedBaseURL     string `yaml:"embed_base_url"`    // Embedding専用Base URL。空の場合はprovider既定URLを使用

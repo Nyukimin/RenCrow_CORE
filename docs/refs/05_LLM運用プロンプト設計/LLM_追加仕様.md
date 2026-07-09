@@ -60,7 +60,7 @@ CHATルート（Mio）をデフォルトで「会話モード」にする
 注入位置（重要）
 
 仕事モード指示は system ではなく、毎回の current user message 直前に role=user の短い指示として挿入する。
-理由：PicoClawは履歴＋systemが重いので、直近に置いた方が確実に効く。
+理由：RenCrowは履歴＋systemが重いので、直近に置いた方が確実に効く。
 
 TTLの消費ルール（ターン）
 
@@ -80,7 +80,7 @@ TTLの消費ルール（ターン）
 
 workspace/sessions/{sessionKey}.json に work_overlay_turns_left と work_overlay_directive を保存する
 
-PicoClaw再起動後も残ターンが復元される
+RenCrow再起動後も残ターンが復元される
 
 例外・安全
 

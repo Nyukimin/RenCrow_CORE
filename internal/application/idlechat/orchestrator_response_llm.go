@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 func (o *IdleChatOrchestrator) generateIdleLLM(provider llm.LLMProvider, req llm.GenerateRequest) (llm.GenerateResponse, error) {

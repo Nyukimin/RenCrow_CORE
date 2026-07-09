@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	vocabDomain "github.com/Nyukimin/picoclaw_multiLLM/domain/vocabulary"
+	vocabDomain "github.com/Nyukimin/RenCrow_CORE/domain/vocabulary"
 )
 
 // AppService implements the vocabulary service

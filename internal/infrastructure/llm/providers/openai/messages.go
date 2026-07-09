@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 // convertChatMessages はChatMessageをOpenAI APIフォーマットに変換

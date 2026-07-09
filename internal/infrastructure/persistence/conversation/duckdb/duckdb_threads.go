@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	_ "github.com/marcboeker/go-duckdb"
 )
 

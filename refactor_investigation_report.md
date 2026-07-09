@@ -29,7 +29,7 @@ rg -n "complex_story_mode|parquet_export_job" --glob '*.go' --glob '!internal/ap
 Result:
 
 - No active Go reference to `complex_story_mode` was found outside archive. Keep `internal/application/idlechat/archive/complex_story_mode/` as archive.
-- `internal/application/archive/parquet_export_job.go` is used via `archiveapp` from `cmd/picoclaw/runtime_background_jobs.go` when `RENCROW_PARQUET_EXPORT_DIR` is set. It is not safe to delete as unused archive code.
+- `internal/application/archive/parquet_export_job.go` is used via `archiveapp` from `cmd/rencrow/runtime_background_jobs.go` when `RENCROW_PARQUET_EXPORT_DIR` is set. It is not safe to delete as unused archive code.
 
 ## Legacy Tool Runner
 
@@ -105,14 +105,14 @@ Completed in this pass:
 Still required:
 
 - Broad `./internal/...` coverage remediation. Domain coverage now reaches the target, but the full internal aggregate is still below the instruction target because large adapter/application/infrastructure packages remain lightly covered.
-- Runtime health remediation. `PICOCLAW_CONFIG=config/config.yaml.example ./build/picoclaw-linux-amd64 doctor` runs, but reports health DOWN because the example local LLM endpoints are not accepting connections.
+- Runtime health remediation. `RENCROW_CONFIG=config/config.yaml.example ./build/rencrow-linux-amd64 doctor` runs, but reports health DOWN because the example local LLM endpoints are not accepting connections.
 
 ## Post-Change Verification
 
 Commands run:
 
 ```bash
-go test ./internal/adapter/config/... ./internal/domain/agent ./internal/domain/tool ./internal/infrastructure/persistence/conversation/... ./cmd/picoclaw ./cmd/picoclaw-agent ./test/e2e -v
+go test ./internal/adapter/config/... ./internal/domain/agent ./internal/domain/tool ./internal/infrastructure/persistence/conversation/... ./cmd/rencrow ./cmd/rencrow-agent ./test/e2e -v
 go test ./internal/adapter/config/... -v
 go test ./test/integration -v
 go test ./...
@@ -137,8 +137,8 @@ make build
 go vet ./...
 go mod verify
 git diff --check
-PICOCLAW_CONFIG=config/config.yaml.example ./build/picoclaw-linux-amd64 health
-PICOCLAW_CONFIG=config/config.yaml.example ./build/picoclaw-linux-amd64 doctor
+RENCROW_CONFIG=config/config.yaml.example ./build/rencrow-linux-amd64 health
+RENCROW_CONFIG=config/config.yaml.example ./build/rencrow-linux-amd64 doctor
 ```
 
 Results:
@@ -147,7 +147,7 @@ Results:
 - Config package tests passed after the config type split.
 - Integration tests passed after updating their test doubles to the V2 tool runner contract.
 - `go test ./...` passed after the Viewer/application extraction and the later glossary/autonomous/MCP/Gemini coverage additions.
-- `make build` passed after the Viewer/application extraction and produced `build/picoclaw-linux-amd64`.
+- `make build` passed after the Viewer/application extraction and produced `build/rencrow-linux-amd64`.
 - `go vet ./...` and `go mod verify` passed after the Viewer/application extraction; `git diff --check` passed again after the later coverage additions.
 - Domain coverage target is met: `go test ./internal/domain/... -coverprofile=/tmp/rencrow_domain_after_agent_memory_helpers.cover && go tool cover -func=/tmp/rencrow_domain_after_agent_memory_helpers.cover` reports total `95.0%`.
 - Full internal coverage target is not met: `go test ./internal/... -coverprofile=/tmp/rencrow_internal_after_gemini.cover && go tool cover -func=/tmp/rencrow_internal_after_gemini.cover` reports total `71.7%`.

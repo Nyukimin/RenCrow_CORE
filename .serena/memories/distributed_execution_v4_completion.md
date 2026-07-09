@@ -101,14 +101,14 @@ type Transport interface {
 - ✅ プロンプトテンプレート
 
 ### 5. Agentスタンドアロンモード
-**ディレクトリ**: `cmd/picoclaw-agent/`
+**ディレクトリ**: `cmd/rencrow-agent/`
 
 **ファイル**:
 - `main.go` - スタンドアロンAgentエントリーポイント
 
 **起動例**:
 ```bash
-picoclaw-agent --role=shiro --config=config.yaml
+rencrow-agent --role=shiro --config=config.yaml
 ```
 
 **機能**:
@@ -146,7 +146,7 @@ picoclaw-agent --role=shiro --config=config.yaml
 - 再接続ロジック組み込み
 
 ### ✅ Agentスタンドアロンモード
-- `picoclaw-agent --role=<agent>` で起動
+- `rencrow-agent --role=<agent>` で起動
 - リモートマシンでの実行対応
 - SSH経由で透過的に利用可能
 
@@ -196,7 +196,7 @@ distributed:
 ### ロールバック手順（実測5分以内）
 
 1. 設定変更: `distributed.enabled: false`
-2. 再起動: `sudo systemctl restart picoclaw`
+2. 再起動: `sudo systemctl restart rencrow`
 3. 確認: 全機能テスト
 
 **データロス**: なし
@@ -219,7 +219,7 @@ distributed:
   shiro:
     type: ssh
     remote_host: "192.168.1.100:22"
-    remote_user: picoclaw
+    remote_user: rencrow
     ssh_key_path: ~/.ssh/id_ed25519
     strict_host_key_checking: true
 
@@ -227,7 +227,7 @@ distributed:
   gin:
     type: ssh
     remote_host: "192.168.1.101:22"
-    remote_user: picoclaw
+    remote_user: rencrow
     ssh_key_path: ~/.ssh/id_ed25519
     strict_host_key_checking: true
 
@@ -252,12 +252,12 @@ idlechat:
 ### 📋 次のステップ（本番デプロイ）
 1. **SSH鍵ペア生成**:
    ```bash
-   ssh-keygen -t ed25519 -C "picoclaw@agent"
+   ssh-keygen -t ed25519 -C "rencrow@agent"
    ```
 
 2. **公開鍵配置**（リモートマシン）:
    ```bash
-   ssh-copy-id -i ~/.ssh/id_ed25519.pub picoclaw@192.168.1.100
+   ssh-copy-id -i ~/.ssh/id_ed25519.pub rencrow@192.168.1.100
    ```
 
 3. **known_hosts登録**:
@@ -265,23 +265,23 @@ idlechat:
    ssh-keyscan 192.168.1.100 >> ~/.ssh/known_hosts
    ```
 
-4. **picoclaw-agent配置**（リモートマシン）:
+4. **rencrow-agent配置**（リモートマシン）:
    ```bash
-   scp picoclaw-agent picoclaw@192.168.1.100:/usr/local/bin/
+   scp rencrow-agent rencrow@192.168.1.100:/usr/local/bin/
    ```
 
 5. **設定ファイル配置**:
    ```bash
-   scp config.yaml picoclaw@192.168.1.100:/etc/picoclaw/
+   scp config.yaml rencrow@192.168.1.100:/etc/rencrow/
    ```
 
 6. **動作確認**:
    ```bash
-   # ローカルでpicoclaw起動（distributed.enabled: true）
-   picoclaw --config=config.yaml
+   # ローカルでrencrow起動（distributed.enabled: true）
+   rencrow --config=config.yaml
    
    # リモートでAgentスタンドアロンモード起動
-   ssh picoclaw@192.168.1.100 "picoclaw-agent --role=shiro --config=/etc/picoclaw/config.yaml"
+   ssh rencrow@192.168.1.100 "rencrow-agent --role=shiro --config=/etc/rencrow/config.yaml"
    ```
 
 ---

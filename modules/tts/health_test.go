@@ -3,7 +3,7 @@ package tts
 import (
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/core"
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestBuildProviderHealth(t *testing.T) {

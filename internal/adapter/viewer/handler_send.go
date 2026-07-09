@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	appattachment "github.com/Nyukimin/picoclaw_multiLLM/internal/application/attachment"
-	domainattachment "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/attachment"
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
+	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 type MessageHandler func(ctx context.Context, req SendRequest) (string, error)

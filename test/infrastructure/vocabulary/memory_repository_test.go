@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	vocabDomain "github.com/Nyukimin/picoclaw_multiLLM/domain/vocabulary"
-	vocabInfra "github.com/Nyukimin/picoclaw_multiLLM/infrastructure/vocabulary"
+	vocabDomain "github.com/Nyukimin/RenCrow_CORE/domain/vocabulary"
+	vocabInfra "github.com/Nyukimin/RenCrow_CORE/infrastructure/vocabulary"
 )
 
 func TestMemoryRepository(t *testing.T) {

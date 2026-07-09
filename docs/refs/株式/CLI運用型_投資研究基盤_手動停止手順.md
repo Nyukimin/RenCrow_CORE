@@ -9,7 +9,7 @@
 ## 手動停止の記録
 
 ```bash
-cd picoclaw_multiLLM
+cd RenCrow_CORE
 PYTHONPATH=rencrow-data/src python3 rencrow-data/src/15_manual_stop.py \
   --db rencrow-data/data/rencrow.db \
   --operator "operator-name" \

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 )
 
 // executeShellCommand はシェルコマンドを実行

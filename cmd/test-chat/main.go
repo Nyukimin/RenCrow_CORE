@@ -6,15 +6,15 @@ import (
 	"log"
 	"os"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/service"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/agent"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/ollama"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/mcp"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/session"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/tools"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/session"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
 func main() {

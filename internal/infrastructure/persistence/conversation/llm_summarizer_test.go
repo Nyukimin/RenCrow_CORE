@@ -3,13 +3,13 @@ package conversation
 import (
 	"context"
 	"fmt"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 	"testing"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 // mockLLMProvider はテスト用のLLMプロバイダーモック

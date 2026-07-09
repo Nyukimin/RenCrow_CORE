@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	modulebrowser "github.com/Nyukimin/picoclaw_multiLLM/modules/browseractor"
+	modulebrowser "github.com/Nyukimin/RenCrow_CORE/modules/browseractor"
 )
 
 type fakeBrowserActorToolRunner struct {

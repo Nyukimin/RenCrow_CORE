@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	artifactcleanupapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/artifactcleanup"
+	artifactcleanupapp "github.com/Nyukimin/RenCrow_CORE/internal/application/artifactcleanup"
 )
 
 func TestHandleArtifactCleanupDryRun(t *testing.T) {

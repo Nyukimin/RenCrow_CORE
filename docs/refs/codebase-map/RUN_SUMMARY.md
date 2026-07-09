@@ -3,7 +3,7 @@ generated_at: "2026-07-01T13:29:00+09:00"
 run_id: run_20260701_131925
 phase: 2
 step: summary
-profile: picoclaw_multiLLM
+profile: RenCrow_CORE
 artifact: run_summary
 ---
 
@@ -12,7 +12,7 @@ artifact: run_summary
 - **run_id**: run_20260701_131925
 - **要求 phase**: all
 - **実行日時**: 2026-07-01T13:19:25+09:00 ～ 2026-07-01T13:29:00+09:00
-- **対象ディレクトリ**: `/home/nyukimi/RenCrow/picoclaw_multiLLM`
+- **対象ディレクトリ**: `/home/nyukimi/RenCrow/RenCrow_CORE`
 - **プロファイル**: `codebase-analysis-profile.yaml`
 - **git**: `feature/RenCrow_Start` / `29d17e4d`
 

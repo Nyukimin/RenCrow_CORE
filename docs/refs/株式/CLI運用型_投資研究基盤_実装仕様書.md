@@ -2,7 +2,7 @@
 
 ## 0. 位置づけ
 
-この仕様書は、`CLI運用型_投資研究基盤_仕様化プロンプト.md` に基づき、RenCrow / picoclaw_multiLLM の株式・ETF・暗号資産データ基盤を、CLI主体の投資研究・紙運用基盤として実装するための仕様である。
+この仕様書は、`CLI運用型_投資研究基盤_仕様化プロンプト.md` に基づき、RenCrow / RenCrow_CORE の株式・ETF・暗号資産データ基盤を、CLI主体の投資研究・紙運用基盤として実装するための仕様である。
 
 優先する source of truth は次の順序とする。
 
@@ -75,9 +75,9 @@
 
 ### 2.4 実行環境
 
-- 正本DBは `picoclaw_multiLLM/rencrow-data/data/rencrow.db` のSQLiteとする。
-- CLIは `picoclaw_multiLLM/rencrow-data/src/` 配下から実行する。
-- 設定は `picoclaw_multiLLM/rencrow-data/config/` 配下のYAMLを正本にする。
+- 正本DBは `RenCrow_CORE/rencrow-data/data/rencrow.db` のSQLiteとする。
+- CLIは `RenCrow_CORE/rencrow-data/src/` 配下から実行する。
+- 設定は `RenCrow_CORE/rencrow-data/config/` 配下のYAMLを正本にする。
 - DB、snapshot、logs、raw cacheはgit管理しない。
 - バックアップはsnapshot単位で保存し、同一週の判断を再現できる状態を維持する。
 
@@ -112,7 +112,7 @@
 日次:
 
 ```bash
-cd picoclaw_multiLLM/rencrow-data
+cd RenCrow_CORE/rencrow-data
 python src/02_fetch_market.py --incremental
 python src/03_fetch_macro.py --incremental
 python src/08_validate_data.py --as-of today
@@ -121,7 +121,7 @@ python src/08_validate_data.py --as-of today
 週次:
 
 ```bash
-cd picoclaw_multiLLM/rencrow-data
+cd RenCrow_CORE/rencrow-data
 python src/07_sync_universe.py --preset cascade --loop
 python src/04_build_features.py --week-end latest
 python src/05_detect_events.py --week-end latest
@@ -135,7 +135,7 @@ python src/13_llm_report.py --snapshot latest --decision latest
 紙運用:
 
 ```bash
-cd picoclaw_multiLLM/rencrow-data
+cd RenCrow_CORE/rencrow-data
 python src/12_paper_trade.py --decision latest --approval-file approvals/latest.yml
 python src/14_audit_report.py --snapshot latest --paper-latest
 ```

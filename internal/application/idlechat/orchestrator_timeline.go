@@ -5,8 +5,8 @@ import (
 	"log"
 	"strings"
 
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) <-chan struct{} {

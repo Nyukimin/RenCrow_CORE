@@ -1,5 +1,5 @@
 profile_schema_version: "1.0"
-name: picoclaw_multiLLM
+name: RenCrow_CORE
 
 output:
   base: docs/codebase-map
@@ -10,13 +10,13 @@ module_groups:
   - id: cmd_runtime
     name: 起動・HTTPルーティング・runtime配線
     dirs:
-      - cmd/picoclaw
-      - cmd/picoclaw-agent
+      - cmd/rencrow
+      - cmd/rencrow-agent
       - pkg/rencrowclient
     focus:
       - server起動、HTTP route登録、Viewer/entry/healthの入口
       - runtime依存の組み立て、background job、CLI facadeとの境界
-      - picoclaw.service運用時の落とし穴
+      - rencrow.service運用時の落とし穴
   - id: domain_application
     name: Domain / Application層
     dirs:

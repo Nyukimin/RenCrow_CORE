@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	domainllm "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 // DateTimeProvider は全てのLLMリクエストに現在日時を注入するデコレータ

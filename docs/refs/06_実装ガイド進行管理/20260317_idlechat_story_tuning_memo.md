@@ -2,10 +2,10 @@
 
 ## 現状
 
-- story mode の主実装は [story_mode.go](/home/nyukimi/picoclaw_multiLLM/internal/application/idlechat/story_mode.go) にある。
-- source ごとの骨格定義は [story_specs.go](/home/nyukimi/picoclaw_multiLLM/internal/application/idlechat/story_specs.go) にある。
-- live probe 用の最小実行入口は [main.go](/home/nyukimi/picoclaw_multiLLM/cmd/test-story/main.go) にある。
-- 回帰テストは [orchestrator_test.go](/home/nyukimi/picoclaw_multiLLM/internal/application/idlechat/orchestrator_test.go) に追加済み。
+- story mode の主実装は [story_mode.go](/home/nyukimi/RenCrow_CORE/internal/application/idlechat/story_mode.go) にある。
+- source ごとの骨格定義は [story_specs.go](/home/nyukimi/RenCrow_CORE/internal/application/idlechat/story_specs.go) にある。
+- live probe 用の最小実行入口は [main.go](/home/nyukimi/RenCrow_CORE/cmd/test-story/main.go) にある。
+- 回帰テストは [orchestrator_test.go](/home/nyukimi/RenCrow_CORE/internal/application/idlechat/orchestrator_test.go) に追加済み。
 
 ## 今回入れた変更
 
@@ -37,8 +37,8 @@
 以下は通っている。
 
 ```bash
-env GOCACHE=/home/nyukimi/picoclaw_multiLLM/.gocache GOMODCACHE=/home/nyukimi/picoclaw_multiLLM/.serena/gomodcache go test ./internal/application/idlechat
-env GOCACHE=/home/nyukimi/picoclaw_multiLLM/.gocache GOMODCACHE=/home/nyukimi/picoclaw_multiLLM/.serena/gomodcache go build -o test-story ./cmd/test-story
+env GOCACHE=/home/nyukimi/RenCrow_CORE/.gocache GOMODCACHE=/home/nyukimi/RenCrow_CORE/.serena/gomodcache go test ./internal/application/idlechat
+env GOCACHE=/home/nyukimi/RenCrow_CORE/.gocache GOMODCACHE=/home/nyukimi/RenCrow_CORE/.serena/gomodcache go build -o test-story ./cmd/test-story
 ```
 
 live probe では、recognizable な retelling fallback は出るが、「改作として面白い」を安定して満たせていない。

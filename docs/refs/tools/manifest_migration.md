@@ -36,5 +36,5 @@ Do not add new adapters that convert V2 runners back to the old `Execute/List` p
 
 ```bash
 grep -r "NewLegacyRunner\\|LegacyRunner" --include="*.go" .
-go test ./internal/domain/agent ./internal/domain/tool ./cmd/picoclaw -v
+go test ./internal/domain/agent ./internal/domain/tool ./cmd/rencrow -v
 ```

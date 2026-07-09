@@ -3,7 +3,7 @@ package config
 import (
 	"strings"
 
-	domainsecurity "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/security"
+	domainsecurity "github.com/Nyukimin/RenCrow_CORE/internal/domain/security"
 )
 
 func ResolveChannelPolicyConfig(cfg ChannelPolicyConfig) (domainsecurity.ChannelPolicy, bool) {

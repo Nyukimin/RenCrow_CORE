@@ -1,6 +1,6 @@
 # Web 情報収集ツール 実装仕様作成プロンプト
 
-あなたは RenCrow / picoclaw_multiLLM の仕様整理担当兼実装仕様作成担当です。
+あなたは RenCrow / RenCrow_CORE の仕様整理担当兼実装仕様作成担当です。
 
 目的は、`docs/10_新仕様/46_Web情報収集ツール仕様.md` を入口として、RenCrow が外部 SaaS / 有料検索 API に依存せず常用できる Web 情報収集ツールを実装できる粒度まで落とし込むことです。
 
@@ -47,8 +47,8 @@ internal/domain/security
 internal/infrastructure/persistence/toolregistry
 internal/domain/tool
 internal/infrastructure/tools
-cmd/picoclaw/cli_*.go
-cmd/picoclaw/runtime_viewer_handlers.go
+cmd/rencrow/cli_*.go
+cmd/rencrow/runtime_viewer_handlers.go
 RenCrow_Tools/tools/webwright_fetch
 ```
 
@@ -97,7 +97,7 @@ RenCrow_Tools/tools/webwright_fetch
 
 ### 2. CLI 追加方法
 
-- `picoclaw` CLI の subcommand 追加パターン
+- `rencrow` CLI の subcommand 追加パターン
 - config 読み込み、runtime dependency 初期化の範囲
 - CLI で L1 store を使う場合の初期化方法
 - CLI 実行結果の stdout / stderr 契約
@@ -242,7 +242,7 @@ internal/infrastructure/webgather
   yacy_discovery.go           # Phase 5
   cache.go
 
-cmd/picoclaw
+cmd/rencrow
   cli_web_gather.go
 ```
 
@@ -254,7 +254,7 @@ Phase 1 は必ず小さくする。
 
 実装対象:
 
-- `picoclaw web-gather url <url>`
+- `rencrow web-gather url <url>`
 - Go HTTP fetch
 - max body bytes
 - request timeout

@@ -1,6 +1,6 @@
 package tts
 
-import moduletts "github.com/Nyukimin/picoclaw_multiLLM/modules/tts"
+import moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 
 func withIrodoriDefaults(cfg IrodoriConfig) IrodoriConfig {
 	cfg.EndpointPath = moduletts.IrodoriEndpointPath(cfg.EndpointPath)

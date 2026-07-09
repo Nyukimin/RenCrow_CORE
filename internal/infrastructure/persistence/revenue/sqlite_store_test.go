@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	domainrevenue "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/revenue"
+	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
 )
 
 func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {

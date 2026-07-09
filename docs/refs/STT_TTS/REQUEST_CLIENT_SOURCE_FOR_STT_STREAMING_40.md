@@ -2,7 +2,7 @@
 
 ## 目的
 
-`40_STT_Streaming実装作業仕様.md` を source-level で実装・検証するため、RenCrow / Picoclaw Viewer Go クライアント側リポジトリをこちらで触れる状態にしてください。
+`40_STT_Streaming実装作業仕様.md` を source-level で実装・検証するため、RenCrow / RenCrow Viewer Go クライアント側リポジトリをこちらで触れる状態にしてください。
 
 `39_STT_Streaming暫定確定字幕仕様.md` は参考資料で、実装の主仕様は `40_STT_Streaming実装作業仕様.md` です。
 
@@ -23,8 +23,8 @@
 internal/adapter/viewer/assets/js/viewer.js
 internal/adapter/viewer/viewer.html
 internal/adapter/viewer/assets/css/viewer.css
-cmd/picoclaw/stt_runtime_websocket.go
-cmd/picoclaw/main_stt_gateway_test.go
+cmd/rencrow/stt_runtime_websocket.go
+cmd/rencrow/main_stt_gateway_test.go
 internal/adapter/viewer/viewer_stt_https.test.mjs
 scripts/stt_e2e_probe.py
 scripts/stt_e2e_probe_test.py
@@ -62,7 +62,7 @@ node --test internal/adapter/viewer/viewer_stt_https.test.mjs
 node --test internal/adapter/viewer/viewer_memory_panel.test.mjs
 python3 -m py_compile scripts/stt_e2e_probe.py scripts/stt_e2e_probe_test.py
 python3 -m unittest scripts/stt_e2e_probe_test.py
-GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw ./internal/adapter/viewer ./internal/infrastructure/stt -count=1
+GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow ./internal/adapter/viewer ./internal/infrastructure/stt -count=1
 git diff --check
 ```
 

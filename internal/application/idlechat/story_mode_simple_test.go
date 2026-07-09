@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 type blockingStoryProvider struct {

@@ -3,7 +3,7 @@ generated_at: "2026-07-01T13:19:25+09:00"
 run_id: run_20260701_131925
 phase: 2
 step: "10"
-profile: picoclaw_multiLLM
+profile: RenCrow_CORE
 artifact: module
 module_group_id: adapter_viewer_channels
 ---
@@ -41,7 +41,7 @@ module_group_id: adapter_viewer_channels
 
 ### モジュール間の関係
 
-- **依存元**: `cmd/picoclaw/routes.go` -> `internal/adapter/viewer`。route登録のほぼ全てはcmd側にある。
+- **依存元**: `cmd/rencrow/routes.go` -> `internal/adapter/viewer`。route登録のほぼ全てはcmd側にある。
 - **依存先**: Viewer handler -> application service/store interface。HTTP入力をdomain/applicationの型へ変換する。
 - **依存先**: Viewer EventHub -> orchestrator events。`EventHub.OnEvent`がlive updateの中心。
 - **依存先**: `modules/stt` -> STT runtime / Viewer input observer。Viewer音声入力と会話経路をつなぐ。
@@ -58,7 +58,7 @@ module_group_id: adapter_viewer_channels
 
 ### 落とし穴・注意点
 
-- Viewer endpointは多くが`cmd/picoclaw/routes.go`で登録されるため、handler名検索だけではURLが分からない。
+- Viewer endpointは多くが`cmd/rencrow/routes.go`で登録されるため、handler名検索だけではURLが分からない。
 - `MonitorStore`はlive event reducerであり、永続storeそのものではない。表示stateとaudit/evidenceの真実を混同しない。
 - STT/TTSはViewer、modules、infrastructure、外部RenCrow_STT/TTS repoの境界にまたがる。どのrepoが責務を持つか先に決める。
 - Viewer assetはembedded/static contract testを持つものがある。UI/API名変更ではJS testも確認対象にする。
@@ -71,6 +71,6 @@ module_group_id: adapter_viewer_channels
 ### 初期化
 
 - **module_init() 登録**: なし。route registrationで接続。
-- **優先度**: `cmd/picoclaw`のDependencies構築後、route登録時に各handlerへstore/serviceを渡す。
+- **優先度**: `cmd/rencrow`のDependencies構築後、route登録時に各handlerへstore/serviceを渡す。
 - **注意点**: SSE/EventHubはruntime process内stateを持つため、再起動やmultitabでhistory/client countの見え方が変わる。
 

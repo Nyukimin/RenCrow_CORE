@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/duckdb"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
-	redisstore "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/redis"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/vectordb"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/duckdb"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	redisstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/redis"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 // RealConversationManager は実ストアを統合した会話管理実装
@@ -25,7 +25,7 @@ type RealConversationManager struct {
 
 // NewRealConversationManager は新しいRealConversationManagerを生成
 func NewRealConversationManager(redisURL, duckdbPath, vectordbURL string) (*RealConversationManager, error) {
-	return NewRealConversationManagerWithVectorOptions(redisURL, duckdbPath, vectordbURL, "picoclaw_memory", 768)
+	return NewRealConversationManagerWithVectorOptions(redisURL, duckdbPath, vectordbURL, "rencrow_memory", 768)
 }
 
 func NewRealConversationManagerWithVectorOptions(redisURL, duckdbPath, vectordbURL string, vectorCollection string, vectorDimension uint64) (*RealConversationManager, error) {
@@ -41,7 +41,7 @@ func NewRealConversationManagerWithVectorOptions(redisURL, duckdbPath, vectordbU
 	}
 
 	if vectorCollection == "" {
-		vectorCollection = "picoclaw_memory"
+		vectorCollection = "rencrow_memory"
 	}
 	vectordbStore, err := vectordb.NewVectorDBStoreWithDimension(vectordbURL, vectorCollection, vectorDimension)
 	if err != nil {

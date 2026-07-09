@@ -3,7 +3,7 @@ package claude
 import (
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 func TestConvertMessagesUsesClaudeImageParts(t *testing.T) {

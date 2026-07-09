@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 func newLoadedModelServer(t *testing.T, model string, handler func(w http.ResponseWriter, r *http.Request)) *httptest.Server {

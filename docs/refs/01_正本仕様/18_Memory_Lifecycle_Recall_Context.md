@@ -1270,7 +1270,7 @@ Runtime / Status Logs は L0〜L4 memory store に入れないが、監査上あ
 ```bash
 RENCROW_MEMORY_LIFECYCLE_ACCEL_MONTH_SEC=3600 \
 RENCROW_MEMORY_LIFECYCLE_INTERVAL_SEC=30 \
-systemctl --user restart picoclaw.service
+systemctl --user restart rencrow.service
 ```
 
 検証用 DB を作って最短 smoke test を行う例:

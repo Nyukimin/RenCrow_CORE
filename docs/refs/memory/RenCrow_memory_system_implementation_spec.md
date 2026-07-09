@@ -578,10 +578,10 @@ UI は既存 Viewer に小さく追加する。
 conversation:
   enabled: true
   redis_url: redis://localhost:6379
-  l1_sqlite_path: /home/nyukimi/.picoclaw/l1_memory.db
-  duckdb_path: /home/nyukimi/.picoclaw/memory.duckdb
+  l1_sqlite_path: /home/nyukimi/.rencrow/l1_memory.db
+  duckdb_path: /home/nyukimi/.rencrow/memory.duckdb
   vectordb_url: localhost:6334
-  vector_collection: picoclaw_memory_3584
+  vector_collection: rencrow_memory_3584
   vector_dimension: 3584
   embed_provider: ollama
   embed_base_url: http://100.83.207.6:11434

@@ -13,7 +13,7 @@ var (
 	onlyPunctRe              = regexp.MustCompile(`^[\p{P}\p{S}\s]+$`)
 	multiSpaceRe             = regexp.MustCompile(`\s+`)
 	ackPrefixRe              = regexp.MustCompile(`^(はい、承知いたしました。|はい、承知しました。|承知いたしました。|承知しました。|了解しました。|かしこまりました。)\s*`)
-	idleChatTopicPauseMarker = "__PICOCLAW_IDLECHAT_TOPIC_PAUSE__"
+	idleChatTopicPauseMarker = "__RENCROW_IDLECHAT_TOPIC_PAUSE__"
 	speakNameRe              = strings.NewReplacer(
 		"Mio", "みお",
 		"mio", "みお",

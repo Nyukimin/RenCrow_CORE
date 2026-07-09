@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	domainmemory "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/memory"
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
 
 func TestL1SQLiteStore_UserMemoryCRUD(t *testing.T) {

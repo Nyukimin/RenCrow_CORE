@@ -15,7 +15,7 @@ Viewer マイク入力における STT（音声→テキスト）の体感遅延
 ```text
 Viewer（Browser マイク入力）
   ↓ WebSocket
-RenCrow Chat Server（Go / picoclaw_multiLLM） ← 透過プロキシ
+RenCrow Chat Server（Go / RenCrow_CORE） ← 透過プロキシ
   ↓ STT_GATEWAY_URL
 RenCrow_STT（Python / RenCrow_STT/src/rencrow/stt/server.py）
   ↓ Inference
@@ -234,7 +234,7 @@ RenCrow STT bridge はその終端イベントをViewerへ中継してsessionを
 
 ### 7.1 計測条件
 
-- 音声: `picoclaw_multiLLM/workspace/stt-bench/jfk.wav`（11.0秒）
+- 音声: `RenCrow_CORE/workspace/stt-bench/jfk.wav`（11.0秒）
 - 計測: 送受信を並行計測（`scripts/stt_e2e_probe.py` 並行版、または専用スクリプト）
 - 比較基準: 本仕様 §2 の実測値
 
@@ -250,7 +250,7 @@ RenCrow STT bridge はその終端イベントをViewerへ中継してsessionを
 ### 7.3 回帰テスト
 
 - `RenCrow_STT/tests/` の全テストが通過すること
-- `picoclaw_multiLLM/modules/stt/` の Go テストが通過すること
+- `RenCrow_CORE/modules/stt/` の Go テストが通過すること
 - `scripts/stt_e2e_probe.py` で WebSocket final が取得できること
 
 ---
@@ -363,5 +363,5 @@ PROVIDER_ERROR_PHRASES = (
 - `docs/10_新仕様/40_STT_Streaming実装作業仕様.md` — STT Streaming 実装仕様
 - `RenCrow_STT/src/rencrow/stt/server.py` — StreamingSession 実装
 - `RenCrow_STT/configs/stt.yaml` — 設定ファイル
-- `cmd/picoclaw/stt_runtime_http.go` — HTTP provider 呼び出し
-- `cmd/picoclaw/stt_runtime_websocket.go` — RenCrow STT bridge
+- `cmd/rencrow/stt_runtime_http.go` — HTTP provider 呼び出し
+- `cmd/rencrow/stt_runtime_websocket.go` — RenCrow STT bridge

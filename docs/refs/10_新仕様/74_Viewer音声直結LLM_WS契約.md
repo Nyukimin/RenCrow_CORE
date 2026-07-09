@@ -10,7 +10,7 @@
 
 ## 1. 概要
 
-Viewer と picoclaw 間の **Voice Direct Streaming (VDS)** WebSocket 契約。
+Viewer と rencrow 間の **Voice Direct Streaming (VDS)** WebSocket 契約。
 
 短い呼称では、本契約の `/voice-chat` 経路を **LLM音声** と呼ぶ。RenCrow_STT を使う `/stt` 経路は **STT音声** であり、本契約の `llm.delta` / `llm.final` と STT の `partial` / `final` は別物である。
 
@@ -28,7 +28,7 @@ STT `/stt` 契約（`39_STT_Streaming暫定確定字幕仕様.md`）と対称に
 ## 2. セッションライフサイクル
 
 ```text
-Viewer                         picoclaw                    RenCrow_LLM
+Viewer                         rencrow                    RenCrow_LLM
   | open WS                       |                              |
   |--- session.start (JSON) ----->|---- session.start ---------->|
   |<-- session.ready -------------|<-- session.ready ------------|
@@ -44,7 +44,7 @@ Viewer                         picoclaw                    RenCrow_LLM
 
 ---
 
-## 3. Client → Server（Viewer → picoclaw）
+## 3. Client → Server（Viewer → rencrow）
 
 ### 3.1 `session.start`
 
@@ -107,7 +107,7 @@ Viewer                         picoclaw                    RenCrow_LLM
 
 ---
 
-## 4. Server → Client（picoclaw → Viewer）
+## 4. Server → Client（rencrow → Viewer）
 
 ### 4.1 `session.ready`
 
@@ -149,7 +149,7 @@ Viewer                         picoclaw                    RenCrow_LLM
 
 - Viewer は Chat UI に streaming 追記
 - 同一 utterance で `seq` 单调増加
-- picoclaw は parallel で SSE `agent.response` stream も emit してよい（Phase 1 は WS のみでも可）
+- rencrow は parallel で SSE `agent.response` stream も emit してよい（Phase 1 は WS のみでも可）
 
 ### 4.4 `llm.final`
 
@@ -191,13 +191,13 @@ Viewer                         picoclaw                    RenCrow_LLM
 
 ---
 
-## 5. picoclaw ↔ RenCrow_LLM 内部契約（Phase 1）
+## 5. rencrow ↔ RenCrow_LLM 内部契約（Phase 1）
 
-Viewer 契約を picoclaw がそのまま LLM へ転送する **透過モード** を Phase 1 の default とする。
+Viewer 契約を rencrow がそのまま LLM へ転送する **透過モード** を Phase 1 の default とする。
 
 LLM 側 event 名 mapping:
 
-| Viewer/picoclaw | RenCrow_LLM |
+| Viewer/rencrow | RenCrow_LLM |
 | --- | --- |
 | `session.start` | `session.start` |
 | binary PCM | binary PCM |
@@ -238,7 +238,7 @@ Phase 1 実装簡略案:
 
 ## 8. 計測フィールド
 
-Viewer / picoclaw / Ops で共通利用:
+Viewer / rencrow / Ops で共通利用:
 
 | metric | 定義 |
 | --- | --- |

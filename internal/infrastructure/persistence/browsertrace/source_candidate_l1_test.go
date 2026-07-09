@@ -2,12 +2,12 @@ package browsertrace
 
 import (
 	"context"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"path/filepath"
 	"testing"
 	"time"
 
-	domaintrace "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/browsertrace"
+	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
 )
 
 func TestL1APICandidateStoreStagesBrowserTraceCandidatesAsPendingSearchResult(t *testing.T) {

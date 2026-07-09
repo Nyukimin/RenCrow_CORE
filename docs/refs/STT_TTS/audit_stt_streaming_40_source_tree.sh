@@ -25,8 +25,8 @@ required_files=(
   "internal/adapter/viewer/assets/js/viewer.js"
   "internal/adapter/viewer/viewer.html"
   "internal/adapter/viewer/assets/css/viewer.css"
-  "cmd/picoclaw/stt_runtime_websocket.go"
-  "cmd/picoclaw/main_stt_gateway_test.go"
+  "cmd/rencrow/stt_runtime_websocket.go"
+  "cmd/rencrow/main_stt_gateway_test.go"
   "internal/adapter/viewer/viewer_stt_https.test.mjs"
   "scripts/stt_e2e_probe.py"
   "scripts/stt_e2e_probe_test.py"
@@ -47,7 +47,7 @@ if [ "$missing" -ne 0 ]; then
   cat >&2 <<'EOF'
 
 The source tree is not ready for 40_STT_Streaming implementation.
-Provide the Picoclaw / RenCrow Viewer Go repository that contains the files above,
+Provide the RenCrow / RenCrow Viewer Go repository that contains the files above,
 or set STT_STREAMING_REPO=/path/to/repo and rerun this audit.
 EOF
   exit 1

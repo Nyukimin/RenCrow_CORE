@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	vocabDomain "github.com/Nyukimin/picoclaw_multiLLM/domain/vocabulary"
+	vocabDomain "github.com/Nyukimin/RenCrow_CORE/domain/vocabulary"
 )
 
 func TestEntry_IsRecent(t *testing.T) {

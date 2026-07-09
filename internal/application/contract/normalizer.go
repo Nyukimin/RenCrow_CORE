@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	domaincontract "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/contract"
+	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
 )
 
 // NormalizeRequest converts a free-form request into an executable contract.

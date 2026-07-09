@@ -95,7 +95,7 @@ hobby_relation:{sha1(from_item_id,to_item_id,relation_type,source)[:16]}
 
 - `internal/adapter/viewer/hobby_graph_handler.go`
 - `internal/adapter/viewer/hobby_graph_handler_test.go`
-- `cmd/picoclaw/routes.go`
+- `cmd/rencrow/routes.go`
 
 ## 8. テスト
 
@@ -107,7 +107,7 @@ hobby_relation:{sha1(from_item_id,to_item_id,relation_type,source)[:16]}
 ## 9. 検証コマンド
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer ./cmd/rencrow
 git diff --check
 ```
 

@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-// Dependencies groups feature dependencies supplied by cmd/picoclaw.
+// Dependencies groups feature dependencies supplied by cmd/rencrow.
 type Dependencies struct {
 	Ports Ports
 }

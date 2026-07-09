@@ -12,8 +12,8 @@ import (
 )
 
 func TestE2E_Phase25BrowserViewerSessionContract(t *testing.T) {
-	if os.Getenv("PICOCLAW_BROWSER_E2E") != "1" {
-		t.Skip("set PICOCLAW_BROWSER_E2E=1 to verify Viewer in a real browser session")
+	if os.Getenv("RENCROW_BROWSER_E2E") != "1" {
+		t.Skip("set RENCROW_BROWSER_E2E=1 to verify Viewer in a real browser session")
 	}
 	repoRoot := findRepoRoot(t)
 	playwrightBin := filepath.Join(repoRoot, "node_modules", ".bin", "playwright")
@@ -21,14 +21,14 @@ func TestE2E_Phase25BrowserViewerSessionContract(t *testing.T) {
 		t.Skipf("playwright binary is not available at %s: %v", playwrightBin, err)
 	}
 
-	baseURL := strings.TrimRight(os.Getenv("PICOCLAW_LIVE_BASE_URL"), "/")
+	baseURL := strings.TrimRight(os.Getenv("RENCROW_LIVE_BASE_URL"), "/")
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:18790"
 	}
 	message := "Phase25 browser e2e " + time.Now().UTC().Format("20060102T150405Z")
 
 	script := `const { chromium } = require('playwright');
-const baseURL = process.env.PICOCLAW_LIVE_BASE_URL || 'http://127.0.0.1:18790';
+const baseURL = process.env.RENCROW_LIVE_BASE_URL || 'http://127.0.0.1:18790';
 const message = process.env.PHASE25_BROWSER_MESSAGE;
 (async () => {
   const browser = await chromium.launch({ headless: true });
@@ -285,7 +285,7 @@ const message = process.env.PHASE25_BROWSER_MESSAGE;
 	cmd.Dir = repoRoot
 	cmd.Env = append(os.Environ(),
 		"NODE_PATH="+filepath.Join(repoRoot, "node_modules"),
-		"PICOCLAW_LIVE_BASE_URL="+baseURL,
+		"RENCROW_LIVE_BASE_URL="+baseURL,
 		"PHASE25_BROWSER_MESSAGE="+message,
 	)
 	out, err := cmd.CombinedOutput()

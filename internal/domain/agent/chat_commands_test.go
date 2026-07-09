@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	domainmemory "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/memory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
 
 type mockUserMemoryManager struct {

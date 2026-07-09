@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	sandboxapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/sandbox"
-	domainsandbox "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/sandbox"
-	domainworkstream "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/workstream"
+	sandboxapp "github.com/Nyukimin/RenCrow_CORE/internal/application/sandbox"
+	domainsandbox "github.com/Nyukimin/RenCrow_CORE/internal/domain/sandbox"
+	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
 
 type SandboxLister interface {

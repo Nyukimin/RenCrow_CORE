@@ -123,7 +123,7 @@ DB が見つからない場合は 200 JSON の `available=false` とする。`GE
 
 変更ファイル:
 
-- `cmd/picoclaw/routes.go`
+- `cmd/rencrow/routes.go`
 
 追加関数:
 
@@ -152,7 +152,7 @@ func hobbyTopicCandidateLimit(r *http.Request) (int, error)
 ## 8. 検証コマンド
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer ./cmd/rencrow
 git diff --check
 ```
 

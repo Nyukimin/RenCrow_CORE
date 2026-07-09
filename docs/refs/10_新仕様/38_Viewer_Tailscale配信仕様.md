@@ -260,7 +260,7 @@ Viewer Tailscale 配信の watchdog は、RenCrow health と Tailscale Serve の
 - LLM / Ollama / STT / TTS provider の復旧を担当しない。
 - RenCrow process の restart を自動実行しない。
 
-Funnel と Serve は同じ Tailscale Serve/Funnel config を共有するため、旧 Funnel watchdog が `tailscale funnel reset` を実行すると Viewer 用 Serve 設定も消える。Viewer 配信では旧 `picoclaw-watchdog.timer` の Funnel 復旧処理を使わず、`scripts/ops_watchdog.sh` の Viewer Serve 専用 watchdog を使う。
+Funnel と Serve は同じ Tailscale Serve/Funnel config を共有するため、旧 Funnel watchdog が `tailscale funnel reset` を実行すると Viewer 用 Serve 設定も消える。Viewer 配信では旧 `rencrow-watchdog.timer` の Funnel 復旧処理を使わず、`scripts/ops_watchdog.sh` の Viewer Serve 専用 watchdog を使う。
 
 運用コマンド:
 
@@ -270,7 +270,7 @@ make watchdog-run-once
 make watchdog-status
 ```
 
-このスクリプトは、`picoclaw-funnel.service` が active の場合は停止条件として exit 2 で止まる。Funnel 停止後に `tailscale serve --bg --yes http://127.0.0.1:18790` を設定し、Viewer HTTPS、`/viewer/runtime-config`、非 Viewer route guard、`/stt` WebSocket handshake を確認する。
+このスクリプトは、`rencrow-funnel.service` が active の場合は停止条件として exit 2 で止まる。Funnel 停止後に `tailscale serve --bg --yes http://127.0.0.1:18790` を設定し、Viewer HTTPS、`/viewer/runtime-config`、非 Viewer route guard、`/stt` WebSocket handshake を確認する。
 
 root 権限で Funnel 停止から検証まで一括で行う場合:
 
@@ -278,7 +278,7 @@ root 権限で Funnel 停止から検証まで一括で行う場合:
 sudo scripts/tailscale_viewer_disable_funnel_and_verify.sh
 ```
 
-この wrapper は `picoclaw-funnel.service` を `disable --now` し、停止と disable を確認した後、通常ユーザーに戻して `scripts/tailscale_viewer_serve_verify.sh` を実行する。
+この wrapper は `rencrow-funnel.service` を `disable --now` し、停止と disable を確認した後、通常ユーザーに戻して `scripts/tailscale_viewer_serve_verify.sh` を実行する。
 
 ## 9. Caddy / nginx 方針
 
@@ -447,7 +447,7 @@ Reverse proxy を使う場合の要件:
 
 対象:
 
-- `~/.picoclaw/config.yaml`
+- `~/.rencrow/config.yaml`
 - または `/viewer/runtime-config` の host-aware 出し分け実装
 
 検証:
@@ -503,18 +503,18 @@ Reverse proxy を使う場合の要件:
 
 ## 16. 再起動ルール
 
-RenCrow / PicoClaw を再起動する場合は、必ず以下を満たしてから起動する。
+RenCrow / RenCrow を再起動する場合は、必ず以下を満たしてから起動する。
 
-1. `systemctl --user stop picoclaw.service`
-2. `pgrep -a picoclaw` が空であること
+1. `systemctl --user stop rencrow.service`
+2. `pgrep -a rencrow` が空であること
 3. `ss -ltnp '( sport = :18790 )'` で listen がないこと
 4. `curl http://127.0.0.1:18790/health` が connection refused になること
 5. 必要な build / install を実行すること
-6. `systemctl --user start picoclaw.service`
+6. `systemctl --user start rencrow.service`
 
 再起動後は最低限以下を確認する。
 
-- `systemctl --user is-active picoclaw.service`
+- `systemctl --user is-active rencrow.service`
 - `/health`
 - `/viewer/runtime-config`
 - `/viewer/debug/system`

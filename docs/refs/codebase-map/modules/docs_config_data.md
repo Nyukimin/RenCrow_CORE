@@ -3,7 +3,7 @@ generated_at: "2026-07-01T13:19:25+09:00"
 run_id: run_20260701_131925
 phase: 2
 step: "10"
-profile: picoclaw_multiLLM
+profile: RenCrow_CORE
 artifact: module
 module_group_id: docs_config_data
 ---
@@ -37,7 +37,7 @@ module_group_id: docs_config_data
 | `prompts/` | role別prompt/idle chat/skill prompt | LLM挙動や役割文脈を見る時 |
 | `skills/` | repo-local skills | agent作業手順を確認する時 |
 | `schemas/` | JSON/data contract | 入出力検証を見る時 |
-| `docs/wiki` | Knowledge Wiki | `picoclaw knowledge index-wiki`やRecall Packを見る時 |
+| `docs/wiki` | Knowledge Wiki | `rencrow knowledge index-wiki`やRecall Packを見る時 |
 | `rencrow-data` | 投資研究基盤 | `/viewer/investment/*`やCLI運用を確認する時 |
 
 ### モジュール間の関係

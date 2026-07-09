@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
 const maxConversations = 100

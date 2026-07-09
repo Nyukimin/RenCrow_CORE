@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	domainhealth "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/health"
+	domainhealth "github.com/Nyukimin/RenCrow_CORE/internal/domain/health"
 )
 
 func TestOpenAICompatibleChatCheck_UsesModelsReadinessPath(t *testing.T) {

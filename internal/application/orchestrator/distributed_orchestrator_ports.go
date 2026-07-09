@@ -1,8 +1,8 @@
 package orchestrator
 
 import (
-	domainai "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/aiworkflow"
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
+	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
 // SetEventListener sets an optional listener for monitoring events.

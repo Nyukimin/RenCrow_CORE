@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 // TestKBIntegration_SaveAndSearch はKB保存と検索の統合テスト

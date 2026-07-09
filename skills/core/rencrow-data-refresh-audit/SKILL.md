@@ -11,7 +11,7 @@
 
 ## Required Context
 
-- repo root: `/home/nyukimi/RenCrow/picoclaw_multiLLM`
+- repo root: `/home/nyukimi/RenCrow/RenCrow_CORE`
 - data workflow: `rencrow-data/`
 - key docs: `docs/株式/`
 

@@ -3,7 +3,7 @@ package transport
 import (
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 )
 
 func TestTransportFactory_CreateLocal(t *testing.T) {
@@ -59,7 +59,7 @@ func TestTransportFactory_CreateSSH(t *testing.T) {
 			"coder3": {
 				Type:       "ssh",
 				RemoteHost: "192.168.1.200:22",
-				RemoteUser: "picoclaw",
+				RemoteUser: "rencrow",
 				SSHKeyPath: "/home/user/.ssh/id_ed25519",
 			},
 		},
@@ -88,7 +88,7 @@ func TestTransportFactory_SSHMissingHost(t *testing.T) {
 		Transports: map[string]config.TransportConfig{
 			"coder3": {
 				Type:       "ssh",
-				RemoteUser: "picoclaw",
+				RemoteUser: "rencrow",
 				SSHKeyPath: "/path/to/key",
 			},
 		},
@@ -127,7 +127,7 @@ func TestTransportFactory_SSHMissingKey(t *testing.T) {
 			"coder3": {
 				Type:       "ssh",
 				RemoteHost: "192.168.1.200:22",
-				RemoteUser: "picoclaw",
+				RemoteUser: "rencrow",
 			},
 		},
 	}
@@ -163,7 +163,7 @@ func TestTransportFactory_MultipleAgents(t *testing.T) {
 			"coder3": {
 				Type:       "ssh",
 				RemoteHost: "192.168.1.200:22",
-				RemoteUser: "picoclaw",
+				RemoteUser: "rencrow",
 				SSHKeyPath: "/path/to/key",
 			},
 		},

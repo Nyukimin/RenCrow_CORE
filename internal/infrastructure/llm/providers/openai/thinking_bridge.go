@@ -1,6 +1,6 @@
 package openai
 
-import modulellm "github.com/Nyukimin/picoclaw_multiLLM/modules/llm"
+import modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 
 func (p *OpenAIProvider) addThinkingBridgeFields(req map[string]interface{}, streaming bool) {
 	modulellm.ApplyThinkingBridgeFields(req, p.thinkingBridge, streaming)

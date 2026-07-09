@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // executeGitOperation はGit操作を実行

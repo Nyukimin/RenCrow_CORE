@@ -22,7 +22,7 @@ internal/adapter/viewer/handler.go
 internal/adapter/viewer/hub.go
 internal/adapter/viewer/evidence_handler.go
 internal/adapter/viewer/audio_router_sse.go
-cmd/picoclaw/main.go
+cmd/rencrow/main.go
 ```
 
 ## 2. 基本URL
@@ -263,7 +263,7 @@ Marin 疑似リグの方針:
 
 ## 10.2 Games Observer
 
-Viewer は RenCrow_GAMES の observer UI を PicoClaw の same-origin route から提供する。
+Viewer は RenCrow_GAMES の observer UI を RenCrow の same-origin route から提供する。
 
 REST API:
 
@@ -280,10 +280,10 @@ REST API:
 
 Rules:
 
-- `/viewer/games/observer-api/...` は PicoClaw の title logic ではなく、`127.0.0.1:18791` の RenCrow_GAMES local observer server への same-origin proxy として扱う。
+- `/viewer/games/observer-api/...` は RenCrow の title logic ではなく、`127.0.0.1:18791` の RenCrow_GAMES local observer server への same-origin proxy として扱う。
 - proxy は observer contract endpoint の HTTP method を保存して upstream へ転送する。session list / frames は `GET`、`retry` / `start_over` は `POST` である。
 - `retry` / `start_over` の受け入れ確認では、`18791` 直の成功だけで完了扱いにしない。必ず Viewer origin の `18790` 経由でも `POST /viewer/games/observer-api/games/sessions/{session_id}/retry` が `200 OK` になることを確認する。
-- GAMES 側の game-local candidate learning は RenCrow の confirmed memory ではない。PicoClaw proxy は memory promotion や title world state reconstruction を行わない。
+- GAMES 側の game-local candidate learning は RenCrow の confirmed memory ではない。RenCrow proxy は memory promotion や title world state reconstruction を行わない。
 
 ## 11. IdleChat 連携
 
@@ -401,7 +401,7 @@ Request:
 
 ### 13.1 ターミナル会話CLI
 
-`picoclaw chat` は、起動中の RenCrow server に対してターミナルから会話するための薄いCLIである。
+`rencrow chat` は、起動中の RenCrow server に対してターミナルから会話するための薄いCLIである。
 
 内部契約:
 
@@ -414,10 +414,10 @@ Request:
 使い方:
 
 ```bash
-picoclaw chat
-picoclaw chat --message "こんにちは"
-picoclaw chat --url http://127.0.0.1:18790 --message "/ops status"
-RENCROW_CHAT_URL=https://<ubuntu-tailnet-host> picoclaw chat
+rencrow chat
+rencrow chat --message "こんにちは"
+rencrow chat --url http://127.0.0.1:18790 --message "/ops status"
+RENCROW_CHAT_URL=https://<ubuntu-tailnet-host> rencrow chat
 ```
 
 外部アクセス:
@@ -468,11 +468,11 @@ staging archive:
 
 Source Registry CLI:
 
-- `picoclaw source-registry save --source-id <id> --url <url> --kind <kind> --license-note <text>` で登録できる
+- `rencrow source-registry save --source-id <id> --url <url> --kind <kind> --license-note <text>` で登録できる
 - `--trust-score`, `--interval-sec`, `--namespace`, `--disabled`, `--json` を指定できる
-- `picoclaw source-registry list --json` で登録済みsourceを確認できる
-- `picoclaw source-registry disable <source_id>` で登録済みsourceを無効化できる
-- `picoclaw source-registry sweep --limit <n> --min-trust <score> --json` でdue sourceのfetch / staging / validate / News昇格を手動実行できる
+- `rencrow source-registry list --json` で登録済みsourceを確認できる
+- `rencrow source-registry disable <source_id>` で登録済みsourceを無効化できる
+- `rencrow source-registry sweep --limit <n> --min-trust <score> --json` でdue sourceのfetch / staging / validate / News昇格を手動実行できる
 - CLIは `conversation.l1_sqlite_path` のL1 SQLite storeを使う
 
 Recall trace:

@@ -22,8 +22,8 @@ type GameBridgeStatusOptions struct {
 	DefaultPersona            string
 }
 
-// GameObservationRequest is the synchronous RenCrow_GAMES -> picoclaw decision
-// contract. Game rules and validation stay in RenCrow_GAMES; picoclaw owns the
+// GameObservationRequest is the synchronous RenCrow_GAMES -> rencrow decision
+// contract. Game rules and validation stay in RenCrow_GAMES; rencrow owns the
 // persona/recall/memory side of the bridge.
 type GameObservationRequest struct {
 	GameID           string         `json:"game_id"`
@@ -80,7 +80,7 @@ func (e GameDecisionGenerationError) Unwrap() error {
 	return e.Err
 }
 
-// GameResultRequest reports the executed game turn back to picoclaw.
+// GameResultRequest reports the executed game turn back to rencrow.
 type GameResultRequest struct {
 	GameID          string            `json:"game_id"`
 	SessionID       string            `json:"session_id"`

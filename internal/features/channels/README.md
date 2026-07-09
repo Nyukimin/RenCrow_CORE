@@ -30,7 +30,7 @@ signature failure, unsupported payload, and send failure remain explicit
 
 ## Current Main Files
 
-internal/adapter/line, internal/adapter/channels, internal/application/channel, cmd/picoclaw/runtime_channels.go
+internal/adapter/line, internal/adapter/channels, internal/application/channel, cmd/rencrow/runtime_channels.go
 
 ## Current Route Boundary
 

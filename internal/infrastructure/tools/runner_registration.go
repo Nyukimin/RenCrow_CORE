@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/tool"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
 // registerTools は利用可能なツールを登録（ミドルウェアで安全レール適用）

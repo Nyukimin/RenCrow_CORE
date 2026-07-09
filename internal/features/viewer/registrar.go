@@ -5,13 +5,13 @@ import (
 	"net/http"
 )
 
-// Dependencies groups feature dependencies supplied by cmd/picoclaw.
+// Dependencies groups feature dependencies supplied by cmd/rencrow.
 type Dependencies struct {
 	Ports Ports
 	Base  BaseRoutes
 }
 
-// BaseRoutes groups Viewer base/static route handlers supplied by cmd/picoclaw.
+// BaseRoutes groups Viewer base/static route handlers supplied by cmd/rencrow.
 // Handler implementations remain in legacy adapter/cmd packages during Ver0.80
 // migration; this registrar owns only route registration and dependency handoff.
 type BaseRoutes struct {

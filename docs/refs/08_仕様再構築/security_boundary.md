@@ -263,10 +263,10 @@ Move-Item のような物理移動は、実行環境・モデル格納・venv・
 Repair / Coder Proposal / Worker 自動実行では、RenCrow 本体の稼働プロセスと live binary を変更しない。
 
 manual_only とする対象:
-- `picoclaw.service` の `start` / `stop` / `restart` / `reload` / `enable` / `disable`
-- `picoclaw` プロセスへの `pkill` / `killall`
+- `rencrow.service` の `start` / `stop` / `restart` / `reload` / `enable` / `disable`
+- `rencrow` プロセスへの `pkill` / `killall`
 - `make install`
-- `~/.local/bin/picoclaw` へのコピー、上書き、削除
+- `~/.local/bin/rencrow` へのコピー、上書き、削除
 
 正しい処理:
 1. Coder は「再起動または install が必要」と Proposal / plan に明記する

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	domaincomplexity "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/complexity"
+	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
 )
 
 type ScanRequest struct {

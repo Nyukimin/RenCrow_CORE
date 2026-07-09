@@ -652,9 +652,9 @@ requires_ren_confirmation_each_send: true
 候補 CLI:
 
 ```bash
-picoclaw lumina draft --mode past_project_intake --instruction "過去プロジェクトを聞いて"
-picoclaw lumina import-response --session lumina_bridge_... --file response.md
-picoclaw lumina review --session lumina_bridge_...
+rencrow lumina draft --mode past_project_intake --instruction "過去プロジェクトを聞いて"
+rencrow lumina import-response --session lumina_bridge_... --file response.md
+rencrow lumina review --session lumina_bridge_...
 ```
 
 CLI は初期実装では ChatGPT 送信を行わない。

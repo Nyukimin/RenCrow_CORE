@@ -199,10 +199,10 @@ movie domain graph sync unavailable
 
 - `internal/adapter/viewer/movie_catalog_domain_graph_sync.go`
 - `internal/adapter/viewer/movie_catalog_domain_graph_sync_test.go`
-- `cmd/picoclaw/runtime_dependencies.go`
-- `cmd/picoclaw/runtime_viewer_handlers.go`
-- `cmd/picoclaw/routes.go`
-- `cmd/picoclaw/runtime_viewer_handlers_test.go`
+- `cmd/rencrow/runtime_dependencies.go`
+- `cmd/rencrow/runtime_viewer_handlers.go`
+- `cmd/rencrow/routes.go`
+- `cmd/rencrow/runtime_viewer_handlers_test.go`
 
 ### 7.2 store interface
 
@@ -283,7 +283,7 @@ func TestHandleMovieDomainGraphSyncRejectsInvalidMethod(t *testing.T)
 ### 9.3 実行コマンド
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer ./cmd/rencrow
 ```
 
 ## 10. 完了条件
@@ -298,7 +298,7 @@ GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer ./cmd/picoclaw
 - 以下が通る。
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer ./cmd/rencrow
 git diff --check
 ```
 

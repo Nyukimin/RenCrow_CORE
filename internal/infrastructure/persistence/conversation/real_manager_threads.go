@@ -3,12 +3,12 @@ package conversation
 import (
 	"context"
 	"fmt"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"strings"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 // Store はメッセージをActiveThreadに追加

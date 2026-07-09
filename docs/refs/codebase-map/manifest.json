@@ -2,7 +2,7 @@
   "version": "1.0",
   "manifest_schema_version": "1.0",
   "run_id": "run_20260701_131925",
-  "target_dir": "/home/nyukimi/RenCrow/picoclaw_multiLLM",
+  "target_dir": "/home/nyukimi/RenCrow/RenCrow_CORE",
   "phase_requested": "all",
   "phase_done": "phase2",
   "profile_path": "codebase-analysis-profile.yaml",

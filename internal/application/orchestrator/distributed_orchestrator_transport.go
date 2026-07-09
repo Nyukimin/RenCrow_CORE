@@ -6,9 +6,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
 )
 
 type distributedTimeoutResolver func(targetAgent string, msg domaintransport.Message) time.Duration

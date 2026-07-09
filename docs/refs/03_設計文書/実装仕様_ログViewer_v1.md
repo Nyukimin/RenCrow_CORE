@@ -43,7 +43,7 @@ RenCrow のログViewerは、実行中のイベント、ジョブ進捗、execut
 ### 2.1 コンポーネント構成
 
 ```text
-cmd/picoclaw/main.go
+cmd/rencrow/main.go
   ├── /viewer                      -> viewer.HandlePage
   ├── /viewer/logo.png             -> viewer.HandleLogo
   ├── /viewer/events               -> EventHub.HandleSSE

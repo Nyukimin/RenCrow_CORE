@@ -290,7 +290,7 @@ func (c *SerenaClient) recv(ctx context.Context, wantID int64) (json.RawMessage,
 }
 
 // enrichedEnv は現在の環境変数に ~/.local/bin / ~/go/bin を補完した env を返す。
-// picoclaw 自体が systemd 等の制限環境で起動している場合でも Serena が go/gopls を見つけられる。
+// rencrow 自体が systemd 等の制限環境で起動している場合でも Serena が go/gopls を見つけられる。
 func enrichedEnv() []string {
 	env := os.Environ()
 	home := os.Getenv("HOME")

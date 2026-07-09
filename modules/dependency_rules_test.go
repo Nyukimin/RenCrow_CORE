@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-const moduleImportPrefix = "github.com/Nyukimin/picoclaw_multiLLM/modules/"
+const moduleImportPrefix = "github.com/Nyukimin/RenCrow_CORE/modules/"
 
 var allowedModuleImports = map[string]map[string]bool{
 	"browseractor": {},
@@ -184,7 +184,7 @@ func TestModuleBridgeDoesNotImportCompositionRoot(t *testing.T) {
 			return err
 		}
 		for _, importPath := range imports {
-			if strings.Contains(importPath, "/cmd/picoclaw") {
+			if strings.Contains(importPath, "/cmd/rencrow") {
 				t.Fatalf("%s imports composition root %q", path, importPath)
 			}
 		}
@@ -219,7 +219,7 @@ func TestModuleBridgeDoesNotOwnHealthReportPolicy(t *testing.T) {
 }
 
 func TestCompositionRuntimeUsesModuleSTTViewerInputHealthPolicy(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "module_stt_viewer_input.go")
+	path := filepath.Join("..", "cmd", "rencrow", "module_stt_viewer_input.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -242,7 +242,7 @@ func TestCompositionRuntimeUsesModuleSTTViewerInputHealthPolicy(t *testing.T) {
 }
 
 func TestCompositionRuntimeUsesModuleTTSPlaybackHealthPolicy(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "module_tts_playback_state.go")
+	path := filepath.Join("..", "cmd", "rencrow", "module_tts_playback_state.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -267,7 +267,7 @@ func TestCompositionRuntimeUsesModuleTTSPlaybackHealthPolicy(t *testing.T) {
 }
 
 func TestCompositionRuntimeUsesModuleWorkerUnavailableExecutorPolicy(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "module_worker_diagnostics.go")
+	path := filepath.Join("..", "cmd", "rencrow", "module_worker_diagnostics.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -298,13 +298,13 @@ func TestCompositionRuntimeUsesModuleDiagnosticsUnavailableMessages(t *testing.T
 	}{
 		{
 			name:      "tts diagnostics",
-			path:      filepath.Join("..", "cmd", "picoclaw", "module_tts_diagnostics.go"),
+			path:      filepath.Join("..", "cmd", "rencrow", "module_tts_diagnostics.go"),
 			want:      "moduletts.DiagnosticsProviderUnavailableMessage",
 			forbidden: `"tts provider unavailable"`,
 		},
 		{
 			name:      "stt diagnostics",
-			path:      filepath.Join("..", "cmd", "picoclaw", "module_stt_diagnostics.go"),
+			path:      filepath.Join("..", "cmd", "rencrow", "module_stt_diagnostics.go"),
 			want:      "modulestt.DiagnosticsProviderUnavailableMessage",
 			forbidden: `"stt provider unavailable"`,
 		},
@@ -328,7 +328,7 @@ func TestCompositionRuntimeUsesModuleDiagnosticsUnavailableMessages(t *testing.T
 }
 
 func TestCompositionRuntimeUsesModuleChatRouteUnavailableMessage(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "module_chat_route.go")
+	path := filepath.Join("..", "cmd", "rencrow", "module_chat_route.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -352,7 +352,7 @@ func TestCompositionRuntimeUsesModuleStateEndpointMessages(t *testing.T) {
 	}{
 		{
 			name: "tts playback state",
-			path: filepath.Join("..", "cmd", "picoclaw", "module_tts_playback_state.go"),
+			path: filepath.Join("..", "cmd", "rencrow", "module_tts_playback_state.go"),
 			want: []string{
 				"moduletts.PlaybackStateObserverUnavailableMessage",
 				"moduletts.PlaybackStateSnapshotFailedPrefix",
@@ -365,7 +365,7 @@ func TestCompositionRuntimeUsesModuleStateEndpointMessages(t *testing.T) {
 		},
 		{
 			name: "stt viewer input",
-			path: filepath.Join("..", "cmd", "picoclaw", "module_stt_viewer_input.go"),
+			path: filepath.Join("..", "cmd", "rencrow", "module_stt_viewer_input.go"),
 			want: []string{
 				"modulestt.ViewerInputObserverUnavailableMessage",
 				"modulestt.ViewerInputSnapshotFailedPrefix",
@@ -474,7 +474,7 @@ func TestModuleBridgeUsesModuleRequestCopySemantics(t *testing.T) {
 }
 
 func TestCompositionRuntimeUsesModuleSTTTimeoutPolicy(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "stt_runtime_http.go")
+	path := filepath.Join("..", "cmd", "rencrow", "stt_runtime_http.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -496,7 +496,7 @@ func TestCompositionRuntimeUsesModuleSTTTimeoutPolicy(t *testing.T) {
 }
 
 func TestCompositionRuntimeUsesModuleSTTSessionRules(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "stt_runtime_websocket.go")
+	path := filepath.Join("..", "cmd", "rencrow", "stt_runtime_websocket.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -658,7 +658,7 @@ func TestTTSInfrastructureUsesModuleStringSelectionHelpers(t *testing.T) {
 }
 
 func TestCompositionRuntimeUsesModuleTTSProviderPlanEnumeration(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "tts_runtime_factory.go")
+	path := filepath.Join("..", "cmd", "rencrow", "tts_runtime_factory.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -684,7 +684,7 @@ func TestCompositionRuntimeUsesModuleTTSProviderPlanEnumeration(t *testing.T) {
 }
 
 func TestCompositionRuntimeUsesModuleTTSSelectionLogPolicy(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "tts_runtime_options.go")
+	path := filepath.Join("..", "cmd", "rencrow", "tts_runtime_options.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -705,7 +705,7 @@ func TestCompositionRuntimeUsesModuleTTSSelectionLogPolicy(t *testing.T) {
 }
 
 func TestCompositionRuntimeUsesModuleChatForecastProviderPlans(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "runtime_idlechat.go")
+	path := filepath.Join("..", "cmd", "rencrow", "runtime_idlechat.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -737,8 +737,8 @@ func TestCompositionRuntimeUsesModuleChatForecastProviderPlans(t *testing.T) {
 
 func TestCompositionRuntimeUsesModuleLLMNumCtxPlans(t *testing.T) {
 	for _, path := range []string{
-		filepath.Join("..", "cmd", "picoclaw", "llm_runtime_factory.go"),
-		filepath.Join("..", "cmd", "picoclaw", "llm_local_alias.go"),
+		filepath.Join("..", "cmd", "rencrow", "llm_runtime_factory.go"),
+		filepath.Join("..", "cmd", "rencrow", "llm_local_alias.go"),
 	} {
 		content, err := os.ReadFile(path)
 		if err != nil {
@@ -757,7 +757,7 @@ func TestCompositionRuntimeUsesModuleLLMNumCtxPlans(t *testing.T) {
 }
 
 func TestCompositionRuntimeUsesModuleLLMHealthCheckPolicy(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "module_llm_health.go")
+	path := filepath.Join("..", "cmd", "rencrow", "module_llm_health.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -783,8 +783,8 @@ func TestCompositionRuntimeUsesModuleLLMHealthCheckPolicy(t *testing.T) {
 
 func TestCompositionRuntimeUsesModuleWorkerExternalCoderPolicy(t *testing.T) {
 	paths := []string{
-		filepath.Join("..", "cmd", "picoclaw", "runtime_orchestrator.go"),
-		filepath.Join("..", "cmd", "picoclaw", "runtime_coders.go"),
+		filepath.Join("..", "cmd", "rencrow", "runtime_orchestrator.go"),
+		filepath.Join("..", "cmd", "rencrow", "runtime_coders.go"),
 	}
 	combined := ""
 	for _, path := range paths {
@@ -795,7 +795,7 @@ func TestCompositionRuntimeUsesModuleWorkerExternalCoderPolicy(t *testing.T) {
 		combined += string(content)
 	}
 	if !strings.Contains(combined, "BuildExternalCoderPolicy") {
-		t.Fatalf("cmd/picoclaw runtime must delegate external Coder policy to modules/worker")
+		t.Fatalf("cmd/rencrow runtime must delegate external Coder policy to modules/worker")
 	}
 	for _, forbidden := range []string{
 		"SetExternalCoderPolicy(map[string]bool",
@@ -805,13 +805,13 @@ func TestCompositionRuntimeUsesModuleWorkerExternalCoderPolicy(t *testing.T) {
 		`"coder4": coderProviderIsExternal`,
 	} {
 		if strings.Contains(combined, forbidden) {
-			t.Fatalf("cmd/picoclaw owns external Coder policy containing %q; keep it in modules/worker", forbidden)
+			t.Fatalf("cmd/rencrow owns external Coder policy containing %q; keep it in modules/worker", forbidden)
 		}
 	}
 }
 
 func TestCompositionRuntimeUsesModuleWorkerCoderSetupPlans(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "runtime_coders.go")
+	path := filepath.Join("..", "cmd", "rencrow", "runtime_coders.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -839,7 +839,7 @@ func TestCompositionRuntimeUsesModuleWorkerCoderSetupPlans(t *testing.T) {
 }
 
 func TestCompositionRuntimeUsesModuleTTSBridgeEventPayloadPolicy(t *testing.T) {
-	path := filepath.Join("..", "cmd", "picoclaw", "tts_client_bridge.go")
+	path := filepath.Join("..", "cmd", "rencrow", "tts_client_bridge.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -967,7 +967,7 @@ func TestWorkerServiceDoesNotImportAudioOrViewerImplementations(t *testing.T) {
 
 func TestTTSSpeechPolicyCallersUseModuleContract(t *testing.T) {
 	repoRoot := ".."
-	compatImport := "github.com/Nyukimin/picoclaw_multiLLM/internal/application/tts"
+	compatImport := "github.com/Nyukimin/RenCrow_CORE/internal/application/tts"
 
 	err := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -1004,7 +1004,7 @@ func TestTTSSpeechPolicyCallersUseModuleContract(t *testing.T) {
 }
 
 func TestModuleHTTPHandlersDoNotOwnResponseContracts(t *testing.T) {
-	dir := filepath.Join("..", "cmd", "picoclaw")
+	dir := filepath.Join("..", "cmd", "rencrow")
 	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr

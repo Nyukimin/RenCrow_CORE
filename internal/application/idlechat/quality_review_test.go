@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 )
 
 type queuedQualityProvider struct {

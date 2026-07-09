@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 )
 
 func newTestStore(t *testing.T) *DuckDBToolRegistryStore {

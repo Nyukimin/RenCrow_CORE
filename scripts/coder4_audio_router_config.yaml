@@ -4,7 +4,7 @@ server:
 
 ollama:
   base_url: "http://127.0.0.1:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 
 session:
   storage_dir: "./sessions"

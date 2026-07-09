@@ -2,7 +2,7 @@ package games
 
 import "net/http"
 
-// Dependencies groups game bridge dependencies supplied by cmd/picoclaw.
+// Dependencies groups game bridge dependencies supplied by cmd/rencrow.
 type Dependencies struct {
 	Routes Routes
 }

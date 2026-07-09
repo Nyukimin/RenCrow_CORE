@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	modulebrowser "github.com/Nyukimin/picoclaw_multiLLM/modules/browseractor"
+	modulebrowser "github.com/Nyukimin/RenCrow_CORE/modules/browseractor"
 )
 
 type Config struct {

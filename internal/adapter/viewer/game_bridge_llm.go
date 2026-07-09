@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 const defaultGameDecisionTimeout = 25 * time.Second
@@ -73,7 +73,7 @@ func gameDecisionSystemPrompt(persona string) string {
 	if persona == "" {
 		persona = "mio"
 	}
-	return fmt.Sprintf(`You are %s, a RenCrow game persona making a high-level game decision through PicoClaw.
+	return fmt.Sprintf(`You are %s, a RenCrow game persona making a high-level game decision through RenCrow.
 Use the recall section as candidate context only; do not claim it is confirmed memory.
 RenCrow_GAMES owns game physics and action validity. Choose only from the exact available_actions list.
 Return only one strict JSON object matching BrainDecision:

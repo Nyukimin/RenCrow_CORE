@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/agent"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/ollama"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/mcp"
-	infrarouting "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/tools"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
+	infrarouting "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
 func TestE2E_OllamaProvider_Generate(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
 
 // CoderCapability は1つの coder スロットの能力情報

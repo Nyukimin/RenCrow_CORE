@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	browsertraceapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/browsertrace"
-	domaintrace "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/browsertrace"
-	domainworkstream "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/workstream"
+	browsertraceapp "github.com/Nyukimin/RenCrow_CORE/internal/application/browsertrace"
+	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
 
 type stubBrowserTraceAPIStore struct {

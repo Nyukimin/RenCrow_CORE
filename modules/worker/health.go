@@ -1,6 +1,6 @@
 package worker
 
-import "github.com/Nyukimin/picoclaw_multiLLM/modules/core"
+import "github.com/Nyukimin/RenCrow_CORE/modules/core"
 
 type ExecutorHealthSnapshot struct {
 	Ready bool

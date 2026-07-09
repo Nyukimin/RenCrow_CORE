@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/memory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
 
 // BootstrapFile は workspace/ から読み込むファイル定義

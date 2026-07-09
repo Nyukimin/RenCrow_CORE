@@ -30,7 +30,7 @@ runner unavailable and start failure are visible repair errors
 
 ## Current Main Files
 
-internal/application/autonomous, internal/adapter/viewer/repair_handler.go, cmd/picoclaw/runtime_repair.go
+internal/application/autonomous, internal/adapter/viewer/repair_handler.go, cmd/rencrow/runtime_repair.go
 
 ## Migration Boundary
 

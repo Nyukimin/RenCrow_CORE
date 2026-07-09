@@ -3,8 +3,8 @@ package agent
 import (
 	"strings"
 
-	domainattachment "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/attachment"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 func userMessageWithAttachments(message string, attachments []domainattachment.Attachment) llm.Message {

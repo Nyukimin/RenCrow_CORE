@@ -2,7 +2,7 @@
 
 This directory defines the local module boundaries for RenCrow inside this worktree.
 
-For RenCrow_CORE Ver0.80, `modules/*` contains public contracts, DTOs, events, pure policy, and state ownership metadata. It does not require every implementation body to live under `modules/*` yet. Existing runtime implementations may remain in `cmd/picoclaw`, `internal/application`, `internal/infrastructure`, or `internal/adapter` as `legacy-body` while the contract boundary is made explicit.
+For RenCrow_CORE Ver0.80, `modules/*` contains public contracts, DTOs, events, pure policy, and state ownership metadata. It does not require every implementation body to live under `modules/*` yet. Existing runtime implementations may remain in `cmd/rencrow`, `internal/application`, `internal/infrastructure`, or `internal/adapter` as `legacy-body` while the contract boundary is made explicit.
 
 ## Layout
 

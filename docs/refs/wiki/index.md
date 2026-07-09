@@ -27,7 +27,7 @@ updated: 2026-06-25
 
 ## Modules
 
-- [picoclaw_multiLLM](modules/picoclaw-multillm.md)
+- [RenCrow_CORE](modules/rencrow-multillm.md)
 - [RenCrow_CMD](modules/rencrow-cmd.md)
 
 ## 使い方

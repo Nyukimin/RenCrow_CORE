@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	domainmemory "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/memory"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // KBManager はKB保存用のインターフェース（Phase 4.2）

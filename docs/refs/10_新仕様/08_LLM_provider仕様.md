@@ -22,7 +22,7 @@ Application / Domain は provider 固有の HTTP request、stream、response par
 | --- | --- |
 | provider interface | `internal/domain/llm` |
 | provider factory | `internal/infrastructure/llm/factory` |
-| runtime provider assembly | `cmd/picoclaw/llm_runtime_factory.go`, `cmd/picoclaw/runtime_llm_providers.go` |
+| runtime provider assembly | `cmd/rencrow/llm_runtime_factory.go`, `cmd/rencrow/runtime_llm_providers.go` |
 | middleware / raw log | `internal/infrastructure/llm/middleware` |
 | OpenAI provider | `internal/infrastructure/llm/providers/openai/*.go` |
 | Ollama provider | `internal/infrastructure/llm/providers/ollama/*.go` |
@@ -36,7 +36,7 @@ Application / Domain は provider 固有の HTTP request、stream、response par
 repo example と live runtime config を混同しない。
 
 - repo example は設定例である。
-- live runtime config は `~/.picoclaw/config.yaml` と実起動状態で決まる。
+- live runtime config は `~/.rencrow/config.yaml` と実起動状態で決まる。
 - Viewer runtime config は表示用の投影である。
 - provider health は inference endpoint と management API を分けて見る。
 
@@ -67,8 +67,8 @@ provider fallback は正常系ではない。
 主な確認:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/infrastructure/llm/factory ./internal/infrastructure/llm/middleware ./internal/infrastructure/llm/providers/...
-GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-gocache go test ./internal/infrastructure/llm/factory ./internal/infrastructure/llm/middleware ./internal/infrastructure/llm/providers/...
+GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow
 ```
 
 live 確認:

@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	appattachment "github.com/Nyukimin/picoclaw_multiLLM/internal/application/attachment"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	domainsecurity "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/security"
+	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	domainsecurity "github.com/Nyukimin/RenCrow_CORE/internal/domain/security"
 )
 
 // mockOrchestrator はテスト用のOrchestrator

@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"strings"
 
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 // pickRandom はスライスからn個をランダムに選択

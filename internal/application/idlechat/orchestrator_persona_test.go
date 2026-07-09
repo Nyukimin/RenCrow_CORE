@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	domainpersona "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/persona"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
+	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 )
 
 type idlePersonaRecorder struct {

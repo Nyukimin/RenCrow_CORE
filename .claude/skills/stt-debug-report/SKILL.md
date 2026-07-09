@@ -22,7 +22,7 @@ tmp/stt_server_analysis_latest.md
 
 ## 実行コマンド
 
-プロジェクトルート（`/home/nyukimi/picoclaw_multiLLM`）から:
+プロジェクトルート（`/home/nyukimi/RenCrow_CORE`）から:
 
 ```bash
 python3 /home/nyukimi/.claude/skills/stt-debug-report/scripts/build_stt_share.py \

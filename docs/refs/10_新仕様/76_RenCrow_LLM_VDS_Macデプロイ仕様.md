@@ -18,7 +18,7 @@ VDS の LLM 接続先は **RenCrow_LLM Chat**（`:8081`）である。
 
 PR-L1（`/v1/chat/audio/sessions`）は RenCrow_LLM のソースに含まれるが、**実行中 Chat プロセス**へ反映するには LLM ホスト上で `git pull` + `mlx-restart Chat` が必要。
 
-picoclaw / Viewer 側（PR-P1, PR-V1）は Linux 側で完了済み。  
+rencrow / Viewer 側（PR-P1, PR-V1）は Linux 側で完了済み。  
 **残タスク = LLM ホスト（Mac）への PR-L1 反映**。
 
 ---
@@ -39,12 +39,12 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8081/v1/chat/audio/ses
 
 ---
 
-## 4. Linux 側（picoclaw）の後続作業
+## 4. Linux 側（rencrow）の後続作業
 
 Mac 合格後:
 
 1. `RENCROW_LLM_CHAT_WS=ws://127.0.0.1:18091/...` を削除
-2. `systemctl --user restart picoclaw.service`
+2. `systemctl --user restart rencrow.service`
 3. `scripts/vds_e2e_probe.py` 再計測
 
 詳細: `scripts/deploy_rencrow_llm_vds_pr_l1.md`

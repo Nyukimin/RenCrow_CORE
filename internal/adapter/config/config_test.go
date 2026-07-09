@@ -27,7 +27,7 @@ server:
 
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 
 session:
   storage_dir: "./data/sessions"
@@ -59,8 +59,8 @@ log:
 		t.Errorf("Expected Ollama base URL, got '%s'", cfg.Ollama.BaseURL)
 	}
 
-	if cfg.Ollama.Model != "picoclaw-v1" {
-		t.Errorf("Expected Ollama model 'picoclaw-v1', got '%s'", cfg.Ollama.Model)
+	if cfg.Ollama.Model != "rencrow-v1" {
+		t.Errorf("Expected Ollama model 'rencrow-v1', got '%s'", cfg.Ollama.Model)
 	}
 
 	if cfg.Session.StorageDir != "./data/sessions" {
@@ -203,7 +203,7 @@ session:
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	if cfg.Ollama.Model != "picoclaw-v1" {
+	if cfg.Ollama.Model != "rencrow-v1" {
 		t.Errorf("Expected legacy ollama fields to be ignored and default model to be used, got '%s'", cfg.Ollama.Model)
 	}
 }
@@ -227,7 +227,7 @@ server:
 
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 
 claude:
   api_key: "${ANTHROPIC_API_KEY}"
@@ -314,8 +314,8 @@ session:
 	}
 
 	// Ollamaモデルデフォルト
-	if cfg.Ollama.Model != "picoclaw-v1" {
-		t.Errorf("Expected Ollama model 'picoclaw-v1', got '%s'", cfg.Ollama.Model)
+	if cfg.Ollama.Model != "rencrow-v1" {
+		t.Errorf("Expected Ollama model 'rencrow-v1', got '%s'", cfg.Ollama.Model)
 	}
 
 	if cfg.Log.Level == "" {
@@ -803,7 +803,7 @@ session:
 	if err != nil {
 		t.Fatalf("UserHomeDir: %v", err)
 	}
-	want := filepath.Join(home, ".picoclaw", "rencrow", "memory")
+	want := filepath.Join(home, ".rencrow", "memory")
 	if cfg.OperationMemoryDir != want {
 		t.Fatalf("unexpected operation memory dir: got %q want %q", cfg.OperationMemoryDir, want)
 	}
@@ -1156,7 +1156,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 security:
@@ -1193,7 +1193,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 security:
@@ -1249,7 +1249,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 skill_governance:
@@ -1335,7 +1335,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 workstream:
@@ -1406,7 +1406,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 revenue:
@@ -1474,7 +1474,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 persona_architecture:
@@ -1575,7 +1575,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 browser_trace_to_api:
@@ -1677,7 +1677,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 complexity_hotspot:
@@ -1747,7 +1747,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 superagent_harness:
@@ -1825,7 +1825,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 ai_workflow:
@@ -2033,7 +2033,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 tts:
@@ -2117,7 +2117,7 @@ server:
     key_file: "./certs/dev.key"
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 stt:
@@ -2170,7 +2170,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 `
@@ -2195,7 +2195,7 @@ server:
   port: 8080
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 tts:
@@ -2288,7 +2288,7 @@ func TestConfig_Validate(t *testing.T) {
 				},
 				Ollama: OllamaConfig{
 					BaseURL: "http://localhost:11434",
-					Model:   "picoclaw-v1",
+					Model:   "rencrow-v1",
 				},
 				Session: SessionConfig{
 					StorageDir: "./data/sessions",
@@ -2310,7 +2310,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "Invalid security network_scope",
 			config: &Config{
 				Server:  ServerConfig{Port: 8080},
-				Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "picoclaw-v1"},
+				Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 				Session: SessionConfig{StorageDir: "./data/sessions"},
 				Security: SecurityConfig{
 					Enabled:      true,
@@ -2328,7 +2328,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "Valid security policy_mode dev",
 			config: &Config{
 				Server:  ServerConfig{Port: 8080},
-				Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "picoclaw-v1"},
+				Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 				Session: SessionConfig{StorageDir: "./data/sessions"},
 				Security: SecurityConfig{
 					Enabled:    true,
@@ -2367,7 +2367,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "Invalid viewer log retention",
 			config: &Config{
 				Server:  ServerConfig{Port: 8080},
-				Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "picoclaw-v1"},
+				Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 				Session: SessionConfig{StorageDir: "./data/sessions"},
 				ViewerLog: ViewerLogConfig{
 					Enabled:           true,
@@ -2411,7 +2411,7 @@ func TestConfig_Validate(t *testing.T) {
 				},
 				Ollama: OllamaConfig{
 					BaseURL: "http://localhost:11434",
-					Model:   "picoclaw-v1",
+					Model:   "rencrow-v1",
 				},
 				Session: SessionConfig{
 					StorageDir: "",
@@ -2478,7 +2478,7 @@ func TestConfig_Validate_Distributed(t *testing.T) {
 	base := func() *Config {
 		cfg := &Config{
 			Server:  ServerConfig{Port: 8080},
-			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "picoclaw-v1"},
+			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		// Coder1-4 の最小限の設定（バリデーションを通すため）
@@ -2512,7 +2512,7 @@ func TestConfig_Validate_Distributed(t *testing.T) {
 		cfg := base()
 		cfg.Distributed.Enabled = true
 		cfg.Distributed.Transports = map[string]TransportConfig{
-			"coder3": {Type: "ssh", RemoteUser: "picoclaw", SSHKeyPath: "/path"},
+			"coder3": {Type: "ssh", RemoteUser: "rencrow", SSHKeyPath: "/path"},
 		}
 		if err := cfg.Validate(); err == nil {
 			t.Error("Expected error for SSH missing remote_host")
@@ -2524,7 +2524,7 @@ func TestConfig_Validate_Distributed(t *testing.T) {
 		cfg.Distributed.Enabled = true
 		cfg.Distributed.Transports = map[string]TransportConfig{
 			"mio":    {Type: "local"},
-			"coder3": {Type: "ssh", RemoteHost: "192.168.1.100:22", RemoteUser: "picoclaw", SSHKeyPath: "/path"},
+			"coder3": {Type: "ssh", RemoteHost: "192.168.1.100:22", RemoteUser: "rencrow", SSHKeyPath: "/path"},
 		}
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("Expected valid config, got error: %v", err)
@@ -2536,7 +2536,7 @@ func TestConfig_Validate_IdleChat(t *testing.T) {
 	base := func() *Config {
 		cfg := &Config{
 			Server:  ServerConfig{Port: 8080},
-			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "picoclaw-v1"},
+			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		// Coder1-4 の最小限の設定（バリデーションを通すため）
@@ -2594,7 +2594,7 @@ server:
 
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 
 session:
   storage_dir: "./data/sessions"
@@ -2673,7 +2673,7 @@ server:
 
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 
 session:
   storage_dir: "./data/sessions"
@@ -2741,7 +2741,7 @@ conversation:
   enabled: true
   redis_url: "redis://localhost:6379"
   vectordb_url: "localhost:6334"
-  vector_collection: "picoclaw_memory_3584"
+  vector_collection: "rencrow_memory_3584"
   vector_dimension: 3584
   embed_provider: "ollama"
   embed_base_url: "http://localhost:11434"
@@ -2757,8 +2757,8 @@ conversation:
 	if cfg.Conversation.EmbedModel != "nomic-embed-text" {
 		t.Errorf("expected EmbedModel 'nomic-embed-text', got %q", cfg.Conversation.EmbedModel)
 	}
-	if cfg.Conversation.VectorCollection != "picoclaw_memory_3584" {
-		t.Errorf("expected VectorCollection 'picoclaw_memory_3584', got %q", cfg.Conversation.VectorCollection)
+	if cfg.Conversation.VectorCollection != "rencrow_memory_3584" {
+		t.Errorf("expected VectorCollection 'rencrow_memory_3584', got %q", cfg.Conversation.VectorCollection)
 	}
 	if cfg.Conversation.VectorDimension != 3584 {
 		t.Errorf("expected VectorDimension 3584, got %d", cfg.Conversation.VectorDimension)
@@ -2786,7 +2786,7 @@ server:
 
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 
 session:
   storage_dir: "./data/sessions"
@@ -2847,7 +2847,7 @@ server:
 
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 
 session:
   storage_dir: "./data/sessions"
@@ -2909,7 +2909,7 @@ server:
 
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 
 session:
   storage_dir: "./data/sessions"
@@ -2996,7 +2996,7 @@ server:
 
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 
 session:
   storage_dir: "./data/sessions"
@@ -3233,7 +3233,7 @@ func TestConfig_Validate_LLMOps(t *testing.T) {
 	base := func() *Config {
 		cfg := &Config{
 			Server:  ServerConfig{Port: 8080},
-			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "picoclaw-v1"},
+			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		cfg.Coder1.Name = "ao"
@@ -3263,7 +3263,7 @@ func TestConfig_Validate_BrowserActor(t *testing.T) {
 	base := func() *Config {
 		cfg := &Config{
 			Server:  ServerConfig{Port: 8080},
-			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "picoclaw-v1"},
+			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		cfg.Coder1.Name = "ao"
@@ -3307,7 +3307,7 @@ func TestConfig_Validate_Codex(t *testing.T) {
 	base := func() *Config {
 		cfg := &Config{
 			Server:  ServerConfig{Port: 8080},
-			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "picoclaw-v1"},
+			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		cfg.Coder1.Name = "ao"

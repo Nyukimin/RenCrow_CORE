@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
 // TransportFactory はConfig.Distributed.TransportsからTransportを生成

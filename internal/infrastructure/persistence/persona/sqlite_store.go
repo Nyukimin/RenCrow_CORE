@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	domainpersona "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/persona"
+	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	_ "github.com/mattn/go-sqlite3"
 )
 

@@ -13,7 +13,7 @@ server:
 # Ollama 設定（mio/shiro/IdleChat共通モデル）
 ollama:
   base_url: "http://192.168.1.31:11434"
-  model: "picoclaw-v1"  # 全Agent共通モデル
+  model: "rencrow-v1"  # 全Agent共通モデル
   max_context: 131072   # 常駐モデルの最大コンテキスト長（超過するモデルはNG）
 
 # Chat / Worker / Heavy / Wild 用ローカルLLM（Mac MLX OpenAI互換サーバ）
@@ -172,7 +172,7 @@ security:
 # プロンプトファイルディレクトリ（未設定時はビルトインフォールバック）
 prompts_dir: "./prompts"       # デフォルトプロンプト（リポジトリ固定）
 workspace_dir: "./workspace"   # ユーザーカスタマイズ領域（オーバーライド）
-operation_memory_dir: "${HOME}/.picoclaw/rencrow/memory" # DB/ランタイム状態と一緒に持ち運ぶ運用記憶
+operation_memory_dir: "${HOME}/.rencrow/memory" # DB/ランタイム状態と一緒に持ち運ぶ運用記憶
 
 # ログ設定
 log:
@@ -194,11 +194,11 @@ distributed:
     coder3:
       type: "ssh"
       remote_host: "192.168.1.100:22"
-      remote_user: "picoclaw"
-      ssh_key_path: "~/.ssh/id_ed25519_picoclaw"
+      remote_user: "rencrow"
+      ssh_key_path: "~/.ssh/id_ed25519_rencrow"
       strict_host_key: true
-      remote_agent_path: "/usr/local/bin/picoclaw-agent"
-      remote_config_path: "/etc/picoclaw/config.yaml"
+      remote_agent_path: "/usr/local/bin/rencrow-agent"
+      remote_config_path: "/etc/rencrow/config.yaml"
 
 # Agent間雑談モード（v4.0）
 idle_chat:
@@ -285,7 +285,7 @@ heartbeat:
   enabled: false
   interval: 30            # チェック間隔（分）、最小5分
   channel: "line"         # 通知先: line / telegram / discord / slack
-  chat_id: "${PICOCLAW_HEARTBEAT_CHAT_ID}"  # 各チャネルの送信先ID
+  chat_id: "${RENCROW_HEARTBEAT_CHAT_ID}"  # 各チャネルの送信先ID
 
 # TTS実行能力（OpenClaw parity）
 # 音声サーバメモ:

@@ -22,7 +22,7 @@ Current high-impact areas:
 - `modules/webgather`
 - `internal/application/webgather`
 - `internal/infrastructure/webgather`
-- `cmd/picoclaw/cli_web_gather.go`
+- `cmd/rencrow/cli_web_gather.go`
 
 Boundary note:
 

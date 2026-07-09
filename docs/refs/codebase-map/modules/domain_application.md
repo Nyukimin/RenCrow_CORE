@@ -3,7 +3,7 @@ generated_at: "2026-07-01T13:19:25+09:00"
 run_id: run_20260701_131925
 phase: 2
 step: "10"
-profile: picoclaw_multiLLM
+profile: RenCrow_CORE
 artifact: module
 module_group_id: domain_application
 ---
@@ -42,7 +42,7 @@ module_group_id: domain_application
 
 - **依存先**: `internal/application/orchestrator` -> `internal/domain/agent/routing/task/session`。会話と実行の契約をdomainから受ける。
 - **依存先**: `internal/application/*` -> `internal/domain/*`。feature serviceはdomain entity/valueを入出力に使う。
-- **依存元**: `cmd/picoclaw` -> orchestrator/service constructors。runtime配線はcmd側で行う。
+- **依存元**: `cmd/rencrow` -> orchestrator/service constructors。runtime配線はcmd側で行う。
 - **依存元**: `internal/adapter/viewer` -> application service/store interface。Viewer handlerは薄いHTTP adapterとして呼び出す。
 - **依存先**: infrastructure interfaceはdomain/application側では抽象に寄せ、実装は`internal/infrastructure`で受ける。
 

@@ -166,7 +166,7 @@ class RuntimeState:
 
 
 runtime = RuntimeState()
-app = FastAPI(title="PicoClaw TTS Server", version="0.2.0")
+app = FastAPI(title="RenCrow TTS Server", version="0.2.0")
 app.mount("/cache", StaticFiles(directory=str(CACHE_DIR)), name="cache")
 
 
@@ -192,7 +192,7 @@ def find_model_file_from_info(info: Any) -> str:
 def normalize_text_for_speech(text: str) -> str:
     normalized = text
     replacements = {
-        "PicoClaw": "ピコクロウ",
+        "RenCrow": "ピコクロウ",
         "AI": "エーアイ",
         "LLM": "エル・エル・エム",
         "GPU": "ジーピーユー",

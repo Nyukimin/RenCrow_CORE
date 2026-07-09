@@ -11,7 +11,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	_ "github.com/marcboeker/go-duckdb"
 )
 

@@ -8,22 +8,22 @@ import (
 	"testing"
 	"time"
 
-	appconfig "github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/ollama"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/openai"
+	appconfig "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 	"gopkg.in/yaml.v3"
 )
 
 func TestLiveIdleChatTenThemesDoNotUseFallback(t *testing.T) {
-	if os.Getenv("PICOCLAW_IDLECHAT_LIVE") != "1" {
-		t.Skip("set PICOCLAW_IDLECHAT_LIVE=1 to run against the real local LLM")
+	if os.Getenv("RENCROW_IDLECHAT_LIVE") != "1" {
+		t.Skip("set RENCROW_IDLECHAT_LIVE=1 to run against the real local LLM")
 	}
 
-	cfgPath := os.Getenv("PICOCLAW_CONFIG")
+	cfgPath := os.Getenv("RENCROW_CONFIG")
 	if cfgPath == "" {
-		cfgPath = filepath.Join(os.Getenv("HOME"), ".picoclaw", "config.yaml")
+		cfgPath = filepath.Join(os.Getenv("HOME"), ".rencrow", "config.yaml")
 	}
 	cfg := loadLiveIdleChatConfig(t, cfgPath)
 
@@ -48,10 +48,10 @@ func TestLiveIdleChatTenThemesDoNotUseFallback(t *testing.T) {
 		"閉館後の図書室",
 		"朝の市場と手紙",
 	}
-	if limitText := strings.TrimSpace(os.Getenv("PICOCLAW_IDLECHAT_LIVE_LIMIT")); limitText != "" {
+	if limitText := strings.TrimSpace(os.Getenv("RENCROW_IDLECHAT_LIVE_LIMIT")); limitText != "" {
 		limit, err := strconv.Atoi(limitText)
 		if err != nil || limit < 1 || limit > len(topics) {
-			t.Fatalf("PICOCLAW_IDLECHAT_LIVE_LIMIT must be 1-%d, got %q", len(topics), limitText)
+			t.Fatalf("RENCROW_IDLECHAT_LIVE_LIMIT must be 1-%d, got %q", len(topics), limitText)
 		}
 		topics = topics[:limit]
 	}

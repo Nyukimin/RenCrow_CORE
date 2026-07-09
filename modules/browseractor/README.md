@@ -20,7 +20,7 @@ Non-responsibilities:
 Current high-impact areas:
 
 - `modules/browseractor`
-- Browser automation callers under `cmd/picoclaw`
+- Browser automation callers under `cmd/rencrow`
 - Browser trace and web gathering application packages
 
 Boundary note:

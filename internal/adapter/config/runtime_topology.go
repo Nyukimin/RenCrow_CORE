@@ -274,7 +274,7 @@ func builtInRuntimeTopologyPort(moduleID, portName string) int {
 	if moduleID != "RenCraw_LLM" {
 		if portName == "http" {
 			switch moduleID {
-			case "picoclaw":
+			case "rencrow":
 				return 18790
 			case "RenCrow_STT":
 				return 8766

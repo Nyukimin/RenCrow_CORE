@@ -151,7 +151,7 @@ runtime は既存 `POST /viewer/movie-catalog/domain-graph-sync` の中で secon
 ## 9. 検証コマンド
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer
 git diff --check
 ```
 

@@ -30,7 +30,7 @@ runner unavailable and item failure remain visible state errors
 
 ## Current Main Files
 
-internal/domain/backlog, internal/adapter/viewer/backlog_handler.go, cmd/picoclaw/runtime_dependencies.go
+internal/domain/backlog, internal/adapter/viewer/backlog_handler.go, cmd/rencrow/runtime_dependencies.go
 
 ## Migration Boundary
 

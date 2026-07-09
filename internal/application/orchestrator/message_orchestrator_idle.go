@@ -1,6 +1,6 @@
 package orchestrator
 
-import "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
+import "github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 
 type idleBusyGuardFactory struct {
 	idleNotifier IdleNotifier

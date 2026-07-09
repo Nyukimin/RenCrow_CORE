@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	domainai "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/aiworkflow"
-	domainskill "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/skillgovernance"
+	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 )
 
 const maxSlashCommandBodyBytes = 64 * 1024

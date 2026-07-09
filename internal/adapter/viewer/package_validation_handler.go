@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	packagevalidationapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/packagevalidation"
+	packagevalidationapp "github.com/Nyukimin/RenCrow_CORE/internal/application/packagevalidation"
 )
 
 func HandlePackageValidation(service *packagevalidationapp.Service) http.HandlerFunc {

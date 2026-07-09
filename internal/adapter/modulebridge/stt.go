@@ -3,9 +3,9 @@ package modulebridge
 import (
 	"context"
 
-	internalstt "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/stt"
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/core"
-	modulestt "github.com/Nyukimin/picoclaw_multiLLM/modules/stt"
+	internalstt "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/stt"
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
+	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
 type STTProviderAdapter struct {

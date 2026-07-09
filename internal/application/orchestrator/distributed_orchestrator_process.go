@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	appsubagent "github.com/Nyukimin/picoclaw_multiLLM/internal/application/subagent"
-	domainai "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/aiworkflow"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	appsubagent "github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
+	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // ProcessMessage は既存MessageOrchestratorと同じシグネチャでメッセージを処理

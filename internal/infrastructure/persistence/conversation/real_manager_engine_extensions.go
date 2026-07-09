@@ -2,10 +2,10 @@ package conversation
 
 import (
 	"context"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 func (r *RealConversationManager) GetFreshSearchCache(ctx context.Context, provider string, rawQuery string, now time.Time) (*l1sqlite.L1SearchCacheEntry, error) {

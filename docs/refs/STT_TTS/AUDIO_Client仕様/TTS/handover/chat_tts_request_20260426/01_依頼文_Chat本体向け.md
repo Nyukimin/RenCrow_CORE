@@ -1,6 +1,6 @@
 # RenCrow_TTS 連携実装のお願い（Chat本体）
 
-`picoclaw_multiLLM` 側で、`RenCrow_TTS_02` を使った音声返答連携の実装をお願いしたいです。  
+`RenCrow_CORE` 側で、`RenCrow_TTS_02` を使った音声返答連携の実装をお願いしたいです。  
 今回の接続先は **HTTPS / WSS 前提** です。
 
 ## 目的

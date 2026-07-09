@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	domainattachment "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/attachment"
+	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 )
 
 func TestStoreSaveAllPersistsSupportedAttachments(t *testing.T) {

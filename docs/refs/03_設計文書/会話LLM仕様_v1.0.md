@@ -332,7 +332,7 @@ job_id / turn_id / thread_id / session_id / event_id
 | 統合層 | RealConversationManager, RealConversationEngine | `internal/infrastructure/persistence/conversation/` |
 | LLM連携 | OllamaEmbedder, LLMSummarizer | `internal/infrastructure/llm/ollama/`, `infrastructure/persistence/conversation/` |
 | Agent統合 | MioAgent.Chat() 内で BeginTurn/EndTurn | `internal/domain/agent/mio.go` |
-| DI | main.go に ConversationEngine 注入 | `cmd/picoclaw/main.go` |
+| DI | main.go に ConversationEngine 注入 | `cmd/rencrow/main.go` |
 | テスト | 統合テスト 9件全通過 | `infrastructure/persistence/conversation/integration_test.go` |
 
 ### A.2 未実装ギャップ（8項目）

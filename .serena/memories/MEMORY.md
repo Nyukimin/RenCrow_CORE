@@ -52,10 +52,10 @@
 - Ollama remote: kawaguchike-llm (100.83.207.6:11434), model: chat-v1 (qwen3-vl 8.8B)
 - LINE webhook: `https://fujitsu-ubunts.tailb07d8d.ts.net/webhook`
 - Tailscale Funnel: `tailscale funnel --bg 18790` (systemd版は不安定→廃止)
-- 秘密値: `~/.picoclaw/.env` (chmod 600) → `source` or systemd `EnvironmentFile=`
+- 秘密値: `~/.rencrow/.env` (chmod 600) → `source` or systemd `EnvironmentFile=`
 - Config: `${ENV_VAR}` 展開 (`os.ExpandEnv`)、`loadFromEnv()` は廃止済み
-- Config読込: `PICOCLAW_CONFIG` 環境変数 (--config フラグは未実装)
-- ログローテーション: `~/.picoclaw/bin/log-rotate.sh` (cron 毎日04:00)
+- Config読込: `RENCROW_CONFIG` 環境変数 (--config フラグは未実装)
+- ログローテーション: `~/.rencrow/bin/log-rotate.sh` (cron 毎日04:00)
 - [Web Search Config](web_search_config.md) — Chat（即答/一般知識）とWorker（RESEARCH/エンタメDB）の検索対象分離
 
 # currentDate

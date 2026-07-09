@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	domainskill "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/skillgovernance"
+	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 )
 
 const maxSkillGovernanceEvidenceBytes = 256 * 1024

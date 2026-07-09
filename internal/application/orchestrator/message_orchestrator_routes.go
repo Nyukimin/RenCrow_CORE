@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 type messageStreamHook func(ctx context.Context, route routing.Route, jid, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle)

@@ -19,8 +19,8 @@
 
 ## パッケージ構造
 ```
-picoclaw/
-├── cmd/picoclaw/           # メインアプリケーション
+rencrow/
+├── cmd/rencrow/           # メインアプリケーション
 │   └── main.go             # エントリーポイント
 ├── pkg/                    # 再利用可能なパッケージ
 │   ├── agent/              # エージェントループとロジック
@@ -62,4 +62,4 @@ picoclaw/
 ## 設定
 - `config/config.example.json` を参照
 - 環境変数でオーバーライド可能
-- `~/.picoclaw/config.json` がデフォルトパス
+- `~/.rencrow/config.json` がデフォルトパス

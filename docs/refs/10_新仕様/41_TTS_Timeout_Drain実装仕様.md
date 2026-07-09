@@ -65,8 +65,8 @@
 | `internal/application/idlechat/orchestrator_summary.go` | summary 発話で timeout が display-only / error 記録になることを確認 |
 | `internal/application/idlechat/forecast_session_runner.go` | forecast session の TTS wait / drain が同じ契約に従うことを確認 |
 | `internal/application/idlechat/story_mode_simple.go` | story 発話の TTS wait が同じ契約に従うことを確認 |
-| `cmd/picoclaw/idlechat_tts*.go` | TTS done channel / session_id / utterance_id / chunk_index の追跡境界確認 |
-| `cmd/picoclaw/idlechat_tts_test.go` | timeout 後の古い audio / done signal の扱いを必要に応じて補強 |
+| `cmd/rencrow/idlechat_tts*.go` | TTS done channel / session_id / utterance_id / chunk_index の追跡境界確認 |
+| `cmd/rencrow/idlechat_tts_test.go` | timeout 後の古い audio / done signal の扱いを必要に応じて補強 |
 | `internal/adapter/viewer/assets/js/viewer.js` | 古い TTS audio event を現在 session / utterance / chunk へ混入させない境界確認 |
 | `internal/adapter/viewer/viewer_memory_panel.test.mjs` または関連 Viewer test | display-only / stale audio rejection の contract test |
 
@@ -155,8 +155,8 @@ timeout 後に遅れて届いた audio chunk は、現在の session / utterance
 最低限、以下を通す。
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/application/idlechat
-GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-gocache go test ./internal/application/idlechat
+GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow
 node internal/adapter/viewer/viewer_memory_panel.test.mjs
 ```
 

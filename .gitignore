@@ -8,15 +8,15 @@ build/
 *.dylib
 *.test
 *.out
-/picoclaw
-/picoclaw-agent
-/picoclaw-test
-cmd/picoclaw/workspace
+/rencrow
+/rencrow-agent
+/rencrow-test
+cmd/rencrow/workspace
 
-# Picoclaw specific
+# RenCrow specific
 
-# PicoClaw
-.picoclaw/
+# RenCrow
+.rencrow/
 sessions/
 
 # Workspace ユーザーカスタマイズ領域（テンプレートのみコミット）

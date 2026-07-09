@@ -1,7 +1,7 @@
 .PHONY: all build install uninstall clean help test install-watchdog enable-watchdog disable-watchdog watchdog-status watchdog-run-once test-watchdog-mock watchdog-kick install-data-scheduler enable-data-scheduler disable-data-scheduler data-scheduler-status rencrow-data-init rencrow-data-market rencrow-data-market-online rencrow-data-macro rencrow-data-macro-online rencrow-data-features rencrow-data-events rencrow-data-snapshot rencrow-data-validate rencrow-data-backtest rencrow-data-risk rencrow-data-decision rencrow-data-llm-report rencrow-data-audit-report rencrow-data-paper-trade rencrow-data-manual-stop rencrow-data-daily-refresh rencrow-data-weekly-research rencrow-data-test rencrow-data-e2e rencrow-data-backfill rencrow-data-check
 
 # Build variables
-BINARY_NAME=picoclaw
+BINARY_NAME=rencrow
 BUILD_DIR=build
 CMD_DIR=cmd/$(BINARY_NAME)
 MAIN_GO=$(CMD_DIR)/main.go
@@ -42,20 +42,20 @@ INSTALL_BIN_DIR=$(INSTALL_PREFIX)/bin
 INSTALL_MAN_DIR=$(INSTALL_PREFIX)/share/man/man1
 
 # Workspace and Skills
-PICOCLAW_HOME?=$(HOME)/.picoclaw
-WORKSPACE_DIR?=$(PICOCLAW_HOME)/workspace
+RENCROW_HOME?=$(HOME)/.rencrow
+WORKSPACE_DIR?=$(RENCROW_HOME)/workspace
 WORKSPACE_SKILLS_DIR=$(WORKSPACE_DIR)/skills
 BUILTIN_SKILLS_DIR=$(CURDIR)/skills
 SYSTEMD_USER_DIR=$(HOME)/.config/systemd/user
-PICOCLAW_SHARE_DIR=$(INSTALL_PREFIX)/share/picoclaw
+RENCROW_SHARE_DIR=$(INSTALL_PREFIX)/share/rencrow
 WATCHDOG_SCRIPT_SRC=$(CURDIR)/scripts/ops_watchdog.sh
-WATCHDOG_SCRIPT_DST=$(PICOCLAW_SHARE_DIR)/scripts/ops_watchdog.sh
+WATCHDOG_SCRIPT_DST=$(RENCROW_SHARE_DIR)/scripts/ops_watchdog.sh
 WATCHDOG_KICK_SCRIPT_SRC=$(CURDIR)/scripts/ops_watchdog_kick.sh
-WATCHDOG_KICK_SCRIPT_DST=$(PICOCLAW_SHARE_DIR)/scripts/ops_watchdog_kick.sh
-WATCHDOG_SERVICE_SRC=$(CURDIR)/systemd/user/picoclaw-watchdog.service
-WATCHDOG_TIMER_SRC=$(CURDIR)/systemd/user/picoclaw-watchdog.timer
+WATCHDOG_KICK_SCRIPT_DST=$(RENCROW_SHARE_DIR)/scripts/ops_watchdog_kick.sh
+WATCHDOG_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-watchdog.service
+WATCHDOG_TIMER_SRC=$(CURDIR)/systemd/user/rencrow-watchdog.timer
 DATA_SCHEDULER_SCRIPT_SRC=$(CURDIR)/scripts/rencrow_data_scheduler.sh
-DATA_SCHEDULER_SCRIPT_DST=$(PICOCLAW_SHARE_DIR)/scripts/rencrow_data_scheduler.sh
+DATA_SCHEDULER_SCRIPT_DST=$(RENCROW_SHARE_DIR)/scripts/rencrow_data_scheduler.sh
 DATA_DAILY_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-data-daily.service
 DATA_DAILY_TIMER_SRC=$(CURDIR)/systemd/user/rencrow-data-daily.timer
 DATA_WEEKLY_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-data-weekly.service
@@ -103,7 +103,7 @@ generate:
 	@$(GO) generate ./...
 	@echo "Run generate complete"
 
-## build: Build the picoclaw binary for current platform
+## build: Build the rencrow binary for current platform
 build: generate
 	@echo "Building $(BINARY_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
@@ -111,7 +111,7 @@ build: generate
 	@echo "Build complete: $(BINARY_PATH)"
 	@ln -sf $(BINARY_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(BINARY_NAME)
 
-## build-all: Build picoclaw for all platforms
+## build-all: Build rencrow for all platforms
 build-all: generate
 	@echo "Building for multiple platforms..."
 	@mkdir -p $(BUILD_DIR)
@@ -124,7 +124,7 @@ build-all: generate
 	GOOS=windows GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe ./$(CMD_DIR)
 	@echo "All builds complete"
 
-## install: Install picoclaw to system and copy builtin skills
+## install: Install rencrow to system and copy builtin skills
 install: build
 	@echo "Installing $(BINARY_NAME)..."
 	@mkdir -p $(INSTALL_BIN_DIR)
@@ -137,29 +137,29 @@ install: build
 ## install-watchdog: Install watchdog script and systemd --user units
 install-watchdog:
 	@echo "Installing watchdog script and systemd units..."
-	@mkdir -p $(PICOCLAW_SHARE_DIR)/scripts
+	@mkdir -p $(RENCROW_SHARE_DIR)/scripts
 	@mkdir -p $(SYSTEMD_USER_DIR)
 	@cp $(WATCHDOG_SCRIPT_SRC) $(WATCHDOG_SCRIPT_DST)
 	@chmod +x $(WATCHDOG_SCRIPT_DST)
 	@cp $(WATCHDOG_KICK_SCRIPT_SRC) $(WATCHDOG_KICK_SCRIPT_DST)
 	@chmod +x $(WATCHDOG_KICK_SCRIPT_DST)
-	@sed 's#%h/.local/share/picoclaw/scripts/ops_watchdog.sh#$(WATCHDOG_SCRIPT_DST)#g' $(WATCHDOG_SERVICE_SRC) > $(SYSTEMD_USER_DIR)/picoclaw-watchdog.service
-	@cp $(WATCHDOG_TIMER_SRC) $(SYSTEMD_USER_DIR)/picoclaw-watchdog.timer
+	@sed 's#%h/.local/share/rencrow/scripts/ops_watchdog.sh#$(WATCHDOG_SCRIPT_DST)#g' $(WATCHDOG_SERVICE_SRC) > $(SYSTEMD_USER_DIR)/rencrow-watchdog.service
+	@cp $(WATCHDOG_TIMER_SRC) $(SYSTEMD_USER_DIR)/rencrow-watchdog.timer
 	@systemctl --user daemon-reload
 	@echo "Installed: $(WATCHDOG_SCRIPT_DST)"
-	@echo "Installed: $(SYSTEMD_USER_DIR)/picoclaw-watchdog.service"
-	@echo "Installed: $(SYSTEMD_USER_DIR)/picoclaw-watchdog.timer"
+	@echo "Installed: $(SYSTEMD_USER_DIR)/rencrow-watchdog.service"
+	@echo "Installed: $(SYSTEMD_USER_DIR)/rencrow-watchdog.timer"
 
 ## install-data-scheduler: Install daily and weekly data scheduler units
 install-data-scheduler:
 	@echo "Installing data scheduler script and systemd units..."
-	@mkdir -p $(PICOCLAW_SHARE_DIR)/scripts
+	@mkdir -p $(RENCROW_SHARE_DIR)/scripts
 	@mkdir -p $(SYSTEMD_USER_DIR)
 	@cp $(DATA_SCHEDULER_SCRIPT_SRC) $(DATA_SCHEDULER_SCRIPT_DST)
 	@chmod +x $(DATA_SCHEDULER_SCRIPT_DST)
-	@sed 's#@PICOCLAW_REPO_DIR@#$(CURDIR)#g' $(DATA_DAILY_SERVICE_SRC) > $(SYSTEMD_USER_DIR)/rencrow-data-daily.service
+	@sed 's#@RENCROW_REPO_DIR@#$(CURDIR)#g' $(DATA_DAILY_SERVICE_SRC) > $(SYSTEMD_USER_DIR)/rencrow-data-daily.service
 	@cp $(DATA_DAILY_TIMER_SRC) $(SYSTEMD_USER_DIR)/rencrow-data-daily.timer
-	@sed 's#@PICOCLAW_REPO_DIR@#$(CURDIR)#g' $(DATA_WEEKLY_SERVICE_SRC) > $(SYSTEMD_USER_DIR)/rencrow-data-weekly.service
+	@sed 's#@RENCROW_REPO_DIR@#$(CURDIR)#g' $(DATA_WEEKLY_SERVICE_SRC) > $(SYSTEMD_USER_DIR)/rencrow-data-weekly.service
 	@cp $(DATA_WEEKLY_TIMER_SRC) $(SYSTEMD_USER_DIR)/rencrow-data-weekly.timer
 	@systemctl --user daemon-reload
 	@echo "Installed: $(DATA_SCHEDULER_SCRIPT_DST)"
@@ -191,18 +191,18 @@ data-scheduler-status:
 ## enable-watchdog: Enable and start watchdog timer
 enable-watchdog:
 	@systemctl --user daemon-reload
-	@systemctl --user enable --now picoclaw-watchdog.timer
+	@systemctl --user enable --now rencrow-watchdog.timer
 	@echo "watchdog timer enabled."
 
 ## disable-watchdog: Disable and stop watchdog timer
 disable-watchdog:
-	@systemctl --user disable --now picoclaw-watchdog.timer || true
+	@systemctl --user disable --now rencrow-watchdog.timer || true
 	@echo "watchdog timer disabled."
 
 ## watchdog-status: Show watchdog timer/service status
 watchdog-status:
-	@systemctl --user status picoclaw-watchdog.timer --no-pager || true
-	@systemctl --user status picoclaw-watchdog.service --no-pager || true
+	@systemctl --user status rencrow-watchdog.timer --no-pager || true
+	@systemctl --user status rencrow-watchdog.service --no-pager || true
 
 ## watchdog-run-once: Run watchdog script one time
 watchdog-run-once:
@@ -326,7 +326,7 @@ rencrow-data-backfill:
 watchdog-kick:
 	@bash "$(WATCHDOG_KICK_SCRIPT_DST)" "$(ACTION)" "$(SOURCE)" "$(TOKEN)"
 
-## uninstall: Remove picoclaw from system
+## uninstall: Remove rencrow from system
 uninstall:
 	@echo "Uninstalling $(BINARY_NAME)..."
 	@rm -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)
@@ -334,11 +334,11 @@ uninstall:
 	@echo "Note: Only the executable file has been deleted."
 	@echo "If you need to delete all configurations (config.json, workspace, etc.), run 'make uninstall-all'"
 
-## uninstall-all: Remove picoclaw and all data
+## uninstall-all: Remove rencrow and all data
 uninstall-all:
 	@echo "Removing workspace and skills..."
-	@rm -rf $(PICOCLAW_HOME)
-	@echo "Removed workspace: $(PICOCLAW_HOME)"
+	@rm -rf $(RENCROW_HOME)
+	@echo "Removed workspace: $(RENCROW_HOME)"
 	@echo "Complete uninstallation done!"
 
 ## clean: Remove build artifacts
@@ -372,13 +372,13 @@ update-deps:
 ## check: Run vet, fmt, and verify dependencies
 check: deps fmt vet test
 
-## run: Build and run picoclaw
+## run: Build and run rencrow
 run: build
 	@$(BUILD_DIR)/$(BINARY_NAME) $(ARGS)
 
 ## help: Show this help message
 help:
-	@echo "picoclaw Makefile"
+	@echo "rencrow Makefile"
 	@echo ""
 	@echo "Usage:"
 	@echo "  make [target]"
@@ -394,7 +394,7 @@ help:
 	@echo ""
 	@echo "Environment Variables:"
 	@echo "  INSTALL_PREFIX          # Installation prefix (default: ~/.local)"
-	@echo "  WORKSPACE_DIR           # Workspace directory (default: ~/.picoclaw/workspace)"
+	@echo "  WORKSPACE_DIR           # Workspace directory (default: ~/.rencrow/workspace)"
 	@echo "  VERSION                 # Version string (default: git describe)"
 	@echo ""
 	@echo "Current Configuration:"

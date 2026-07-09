@@ -354,12 +354,12 @@ internal/infrastructure/tts/sbv2_provider.go
   - SBV2 /voice Provider
   - ensureTTSPunctuation
 
-cmd/picoclaw/tts_client_bridge.go
+cmd/rencrow/tts_client_bridge.go
   - TTS Bridge 構築
   - tts.audio_chunk 発行
   - display_text 付与
 
-cmd/picoclaw/idlechat_tts.go
+cmd/rencrow/idlechat_tts.go
   - IdleChat の TTS用 text と display_text 分離
   - 「きょうのおだいです」と「今日のお題です」の分離
 

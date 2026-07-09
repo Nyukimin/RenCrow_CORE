@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 // LightMemory はセッション単位のインメモリ短期会話履歴。

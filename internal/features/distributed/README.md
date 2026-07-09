@@ -30,11 +30,11 @@ remote unavailable and delivery failure remain explicit
 
 ## Current Main Files
 
-internal/domain/transport, internal/infrastructure/transport, cmd/picoclaw/runtime_distributed_mode.go, cmd/picoclaw-agent
+internal/domain/transport, internal/infrastructure/transport, cmd/rencrow/runtime_distributed_mode.go, cmd/rencrow-agent
 
 ## Current Route Boundary
 
-Distributed owns transport and remote-agent semantics, but it has no direct HTTP route registrar in this step. Current distributed behavior remains in `cmd/picoclaw/runtime_distributed_mode.go` and `cmd/picoclaw-agent`.
+Distributed owns transport and remote-agent semantics, but it has no direct HTTP route registrar in this step. Current distributed behavior remains in `cmd/rencrow/runtime_distributed_mode.go` and `cmd/rencrow-agent`.
 
 ## Migration Boundary
 

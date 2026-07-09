@@ -349,7 +349,7 @@ func fetchRedditHot(subreddit string, limit int) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "RenCrow/1.0 (https://github.com/Nyukimin/picoclaw_multiLLM)")
+	req.Header.Set("User-Agent", "RenCrow/1.0 (https://github.com/Nyukimin/RenCrow_CORE)")
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)

@@ -3,8 +3,8 @@ package orchestrator
 import (
 	"time"
 
-	capdomain "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
-	domainnode "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/node"
+	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	domainnode "github.com/Nyukimin/RenCrow_CORE/internal/domain/node"
 )
 
 // SetMaxRepair は自律実行のリペア上限を設定する（デフォルト: 1）

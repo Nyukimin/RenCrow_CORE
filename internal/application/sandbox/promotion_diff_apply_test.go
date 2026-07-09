@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	domainsandbox "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/sandbox"
+	domainsandbox "github.com/Nyukimin/RenCrow_CORE/internal/domain/sandbox"
 )
 
 func TestPromotionDiffApplierAppliesUnifiedDiff(t *testing.T) {

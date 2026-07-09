@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	moduletts "github.com/Nyukimin/picoclaw_multiLLM/modules/tts"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 func shouldRetrySynthesis(code string, attempt int) bool {

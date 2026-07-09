@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	domainsandbox "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/sandbox"
+	domainsandbox "github.com/Nyukimin/RenCrow_CORE/internal/domain/sandbox"
 )
 
 func TestSQLiteStoreSaveAndListSandboxRecords(t *testing.T) {

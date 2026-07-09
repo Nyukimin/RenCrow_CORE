@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	schedulerapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/scheduler"
-	domainscheduler "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/scheduler"
+	schedulerapp "github.com/Nyukimin/RenCrow_CORE/internal/application/scheduler"
+	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
 )
 
 type SchedulerStore interface {

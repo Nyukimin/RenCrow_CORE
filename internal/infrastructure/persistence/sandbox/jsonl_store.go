@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	domainsandbox "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/sandbox"
+	domainsandbox "github.com/Nyukimin/RenCrow_CORE/internal/domain/sandbox"
 )
 
 type JSONLStore struct {

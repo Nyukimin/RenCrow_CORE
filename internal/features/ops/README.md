@@ -30,7 +30,7 @@ maintenance failure must be visible and must not mask runtime feature health
 
 ## Current Main Files
 
-cmd/picoclaw/health_*.go, cmd/picoclaw/cli_operations.go, internal/adapter/viewer/*_handler.go
+cmd/rencrow/health_*.go, cmd/rencrow/cli_operations.go, internal/adapter/viewer/*_handler.go
 
 ## Migration Boundary
 

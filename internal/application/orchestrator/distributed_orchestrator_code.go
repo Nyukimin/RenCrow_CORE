@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"log"
 
-	moduleapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/moduleregistry"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
-	domainskill "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/skillgovernance"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
+	moduleapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moduleregistry"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
 type distributedCoderSelector func(route routing.Route, userMessage string) string

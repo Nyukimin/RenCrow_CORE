@@ -4,7 +4,7 @@ package llm
 import (
 	"context"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/core"
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type MessagePartType string

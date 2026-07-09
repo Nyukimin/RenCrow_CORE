@@ -49,7 +49,7 @@ Actions:
 - Wrap `internal/domain/llm` provider contracts with `modules/llm`.
 - Wrap `internal/infrastructure/tts` provider contracts with `modules/tts`.
 - Wrap `internal/infrastructure/stt` provider contracts with `modules/stt`.
-- Keep `cmd/picoclaw` as composition root only.
+- Keep `cmd/rencrow` as composition root only.
 
 Current deliverable:
 
@@ -57,14 +57,14 @@ Current deliverable:
 - `internal/adapter/modulebridge` owns construction of the LLM module role provider map from existing domain providers.
 - `internal/adapter/modulebridge` owns runtime TTS/STT module adapter constructors, including TTS diagnostics output naming.
 - `internal/adapter/modulebridge` owns runtime Chat service and Worker executor module constructors.
-- `cmd/picoclaw` wires module contract providers into runtime state.
+- `cmd/rencrow` wires module contract providers into runtime state.
 - `modules/llm` owns standard runtime role names, role provider map construction, and module generate response construction.
 - `modules/tts` owns module synthesis result construction from provider audio output.
-- `modules/tts` owns runtime TTS provider priority, playback command normalization, voice selection, and Irodori provider option planning; `cmd/picoclaw` keeps concrete provider construction.
+- `modules/tts` owns runtime TTS provider priority, playback command normalization, voice selection, and Irodori provider option planning; `cmd/rencrow` keeps concrete provider construction.
 - `modules/tts` owns Irodori defaults, voice/style resolution, synthesis endpoint URL construction, Gradio run-generation payload ordering, audio URL parsing, download URL resolution, and loopback file URL rewrite rules; `internal/infrastructure/tts` keeps HTTP execution and thin adapter code.
 - `modules/tts` owns SBV2 voice alias resolution, voice URL construction, editor API URL construction, TTS punctuation, and audio prefix sanitization rules; `internal/infrastructure/tts` keeps HTTP execution and thin adapter code.
 - `modules/stt` owns transcription result construction, segment duration normalization, and STT provider health report normalization.
-- `modules/stt` owns runtime STT provider option planning and defaults for provider, model, language, timeout, busy policy, and external HTTP URL; `cmd/picoclaw` keeps concrete provider construction.
+- `modules/stt` owns runtime STT provider option planning and defaults for provider, model, language, timeout, busy policy, and external HTTP URL; `cmd/rencrow` keeps concrete provider construction.
 - `modules/llm` owns the generic health-checked provider wrapper used by runtime diagnostics.
 - `modules/llm` owns external health-check status normalization and local LLM health-check role-name normalization.
 - `modules/core` owns the current module inventory, runtime endpoint constants, contracts, and state ownership descriptors.
@@ -73,15 +73,15 @@ Current deliverable:
 - `modules/core` owns generic provider health normalization for nil providers, module names, and `checked_at`.
 - `modules/core` owns module health snapshot construction from health reports.
 - `modules/core` owns runtime module health report ordering and aggregate snapshot construction across Chat, Worker, TTS, TTS playback, STT, and STT Viewer input.
-- `modules/llm` owns the generation diagnostics policy; `cmd/picoclaw` only exposes it over HTTP.
-- `modules/llm` owns role-status collection for LLM diagnostics; `cmd/picoclaw` only provides the provider map and encodes the response.
+- `modules/llm` owns the generation diagnostics policy; `cmd/rencrow` only exposes it over HTTP.
+- `modules/llm` owns role-status collection for LLM diagnostics; `cmd/rencrow` only provides the provider map and encodes the response.
 - `modules/llm` owns role-qualified health report collection for LLM providers.
-- `modules/llm` owns primary Chat/Worker/Heavy/Wild provider plan construction, including local-vs-legacy mode selection, legacy Ollama worker-model fallback, and local warmup timeout selection; `cmd/picoclaw` keeps concrete provider construction, API keys, middleware wrapping, warmup goroutines, and process wiring.
-- `modules/llm` owns conversation summary and embedding provider plan construction; `cmd/picoclaw` keeps concrete provider/embedder construction and API key handling.
+- `modules/llm` owns primary Chat/Worker/Heavy/Wild provider plan construction, including local-vs-legacy mode selection, legacy Ollama worker-model fallback, and local warmup timeout selection; `cmd/rencrow` keeps concrete provider construction, API keys, middleware wrapping, warmup goroutines, and process wiring.
+- `modules/llm` owns conversation summary and embedding provider plan construction; `cmd/rencrow` keeps concrete provider/embedder construction and API key handling.
 - `modules/llm` owns Coder provider validation/planning for provider kind, required credentials, required base URLs, and local OpenAI timeout; `internal/infrastructure/llm/factory` keeps concrete provider construction.
 - `modules/llm` owns OpenAI-compatible ThinkingBridge request flags, provider-option filtering, and leaked-reasoning cleanup policy; current OpenAI provider keeps HTTP execution and compatibility wrappers.
-- `modules/llm`, `modules/tts`, `modules/stt`, and `modules/worker` own diagnostics snapshot construction; `cmd/picoclaw` only invokes and encodes snapshots.
-- `modules/core` owns manifest snapshot construction; `cmd/picoclaw` only provides descriptors and exposes them over HTTP.
+- `modules/llm`, `modules/tts`, `modules/stt`, and `modules/worker` own diagnostics snapshot construction; `cmd/rencrow` only invokes and encodes snapshots.
+- `modules/core` owns manifest snapshot construction; `cmd/rencrow` only provides descriptors and exposes them over HTTP.
 - `/viewer/modules/llm/diagnostics` exposes LLM role/provider health and generation contract metadata without executing generation.
 
 Validation:
@@ -95,7 +95,7 @@ Current validation:
 
 - `go test ./modules/... ./internal/adapter/modulebridge`
 - `go test ./internal/domain/llm ./internal/infrastructure/tts ./internal/infrastructure/stt ./internal/adapter/modulebridge ./modules/...`
-- `go test ./cmd/picoclaw ./internal/adapter/modulebridge ./modules/...`
+- `go test ./cmd/rencrow ./internal/adapter/modulebridge ./modules/...`
 - `go test ./...`
 - `go test ./modules -run TestModuleHTTPHandlersDoNotOwnResponseContracts -count=1`
 
@@ -116,25 +116,25 @@ Current deliverable:
 - `internal/adapter/modulebridge` exposes the existing orchestrator processor as `modules/chat.Service`.
 - `internal/adapter/modulebridge` exposes a runtime Chat service constructor that wires the Mio route policy.
 - `modules/chat.RoutePolicy` is the module contract for route decision.
-- `modules/chat` owns route-decision report construction; `cmd/picoclaw` only decodes the HTTP request, invokes the service, and encodes the report.
+- `modules/chat` owns route-decision report construction; `cmd/rencrow` only decodes the HTTP request, invokes the service, and encodes the report.
 - `modules/chat` owns route-name normalization from runtime route labels into module routes.
 - `modules/chat` owns Viewer input default normalization for channel and user identity.
-- `modules/chat` owns IdleChat forecast provider policy and speaker LLM option normalization; `cmd/picoclaw` still creates concrete providers and logs selection.
+- `modules/chat` owns IdleChat forecast provider policy and speaker LLM option normalization; `cmd/rencrow` still creates concrete providers and logs selection.
 - `modules/chat` owns IdleChat topic category contracts, daily seed DTOs, topic seed/candidate/judge DTOs, deterministic topic validation, RSS seed item parsing, seed selection/labels, prompt text construction, JSON parsing, judge thresholds, and recent-topic similarity checks; `internal/application/idlechat` now keeps only the remaining orchestration and source-fetching glue around the module contract.
 - `internal/adapter/modulebridge` adapts the current Mio route decision implementation to `modules/chat.RoutePolicy`.
 - `internal/adapter/modulebridge` exposes `WorkerExecutionService` as `modules/worker.Executor`.
 - `internal/adapter/modulebridge` exposes a runtime Worker executor constructor.
 - `modules/worker` owns Worker action tool validation, proposal patch argument extraction, and patch execution result mapping.
 - `modules/worker` owns Worker proposal execution failure classification and retryability policy; `internal/application/service` keeps concrete execution and result mutation.
-- `modules/worker` owns local/distributed worker-agent availability rules, unavailable reason formatting, and local coder reply target selection; `cmd/picoclaw` passes concrete transport/adapter availability and still runs loops/delivery.
-- `modules/worker` owns Coder capability plan construction from detected LLM capabilities, configured coder slots, and quality overrides; `cmd/picoclaw` converts app/domain DTOs.
+- `modules/worker` owns local/distributed worker-agent availability rules, unavailable reason formatting, and local coder reply target selection; `cmd/rencrow` passes concrete transport/adapter availability and still runs loops/delivery.
+- `modules/worker` owns Coder capability plan construction from detected LLM capabilities, configured coder slots, and quality overrides; `cmd/rencrow` converts app/domain DTOs.
 - `modules/worker` owns autonomous execution route classification, capability selection, execution step labels, failure classification, retry prompt construction, and route/contract attempt verification policy; `internal/application/orchestrator` keeps conversion from internal contract/result types and executor invocation.
 - `/viewer/modules/health` includes Chat service and Worker executor status.
 - `/viewer/modules/chat/route` exposes Chat route decisions through the module contract.
 - `/viewer/modules/worker/diagnostics` exposes Worker executor health and supported tools without executing actions.
-- `modules/llm` owns local LLM role/alias resolution for provider kind, base URL, model, timeout, and concurrency; `cmd/picoclaw` keeps concrete provider construction and middleware wiring.
-- `modules/llm` owns primary provider planning for Chat/Worker/Heavy/Wild; `cmd/picoclaw` converts the plan into Ollama/OpenAI providers and keeps API keys, middleware, warmup goroutines, and process wiring.
-- `modules/llm` owns conversation summary and embedding provider planning; `cmd/picoclaw` converts those plans into concrete conversation providers.
+- `modules/llm` owns local LLM role/alias resolution for provider kind, base URL, model, timeout, and concurrency; `cmd/rencrow` keeps concrete provider construction and middleware wiring.
+- `modules/llm` owns primary provider planning for Chat/Worker/Heavy/Wild; `cmd/rencrow` converts the plan into Ollama/OpenAI providers and keeps API keys, middleware, warmup goroutines, and process wiring.
+- `modules/llm` owns conversation summary and embedding provider planning; `cmd/rencrow` converts those plans into concrete conversation providers.
 - `modules/llm` owns Coder provider validation/planning; `internal/infrastructure/llm/factory` converts validated plans into concrete provider instances.
 - `modules/llm` owns OpenAI-compatible ThinkingBridge request/response cleanup policy; `internal/infrastructure/llm/providers/openai` applies those rules around concrete HTTP calls.
 
@@ -152,7 +152,7 @@ Validation:
 
 Current validation:
 
-- `go test ./internal/application/service ./internal/application/orchestrator ./cmd/picoclaw ./internal/adapter/modulebridge ./modules/...`
+- `go test ./internal/application/service ./internal/application/orchestrator ./cmd/rencrow ./internal/adapter/modulebridge ./modules/...`
 - `go test ./...`
 
 ## Phase 4: TTS/STT Viewer Boundary Cleanup
@@ -166,40 +166,40 @@ Actions:
 - Split provider TTS from playback ACK/pending lifecycle.
 - Keep HTTP decoding and cross-state cleanup in the composition root while moving reusable playback/session state rules into `modules/tts`.
 - Keep STT provider state separate from Viewer microphone UI state.
-- Move STT runtime URL inference for provider/base/gateway/WebSocket endpoints into `modules/stt`; keep environment reads, provider construction, and route registration in `cmd/picoclaw`.
+- Move STT runtime URL inference for provider/base/gateway/WebSocket endpoints into `modules/stt`; keep environment reads, provider construction, and route registration in `cmd/rencrow`.
 
 Current deliverable:
 
 - `modules/tts.PlaybackStateObserver` separates playback/pending state from synthesis provider contracts.
-- `modules/tts` owns playback-state report construction; `cmd/picoclaw` only collects the runtime snapshot and encodes the report.
-- `modules/tts` owns pending playback snapshot construction, including deterministic ID ordering and copy semantics; `cmd/picoclaw` only collects current pending IDs from runtime maps.
-- `modules/tts` owns the pending playback store, including pending wait channels, response lookup, topic gates, and topic route cleanup decisions; `cmd/picoclaw` keeps compatibility wrapper functions and applies public-session cleanup.
+- `modules/tts` owns playback-state report construction; `cmd/rencrow` only collects the runtime snapshot and encodes the report.
+- `modules/tts` owns pending playback snapshot construction, including deterministic ID ordering and copy semantics; `cmd/rencrow` only collects current pending IDs from runtime maps.
+- `modules/tts` owns the pending playback store, including pending wait channels, response lookup, topic gates, and topic route cleanup decisions; `cmd/rencrow` keeps compatibility wrapper functions and applies public-session cleanup.
 - `modules/tts` owns playback-state snapshot composition from pending state and public TTS session routing state.
-- `modules/tts` owns the public session route store, including route map, stale generation tracking, and chunk/response sequence counters; `cmd/picoclaw` keeps compatibility wrapper functions for runtime callers.
-- `modules/tts` owns timeout consumption matching for public session routes and returns `PlaybackTimeoutConsumption`; `cmd/picoclaw` applies the matched internal session IDs to pending cleanup.
-- `modules/tts` owns Viewer active audio/input owner state, playback ACK normalization rules, pending-consumption eligibility, and ACK receipt construction, including deprecated `fallback` ACK conversion to explicit `error` ACK metadata; `cmd/picoclaw` still owns HTTP decoding and applies pending consumption.
-- `modules/tts` owns IdleChat TTS speech/display text cleanup, topic-announcement formatting, event type classification, character ID normalization, voice profile mapping, and TTS session/payload plan construction; `cmd/picoclaw` converts runtime `TimelineEvent` values into module inputs and applies the plan to the bridge/runtime state.
+- `modules/tts` owns the public session route store, including route map, stale generation tracking, and chunk/response sequence counters; `cmd/rencrow` keeps compatibility wrapper functions for runtime callers.
+- `modules/tts` owns timeout consumption matching for public session routes and returns `PlaybackTimeoutConsumption`; `cmd/rencrow` applies the matched internal session IDs to pending cleanup.
+- `modules/tts` owns Viewer active audio/input owner state, playback ACK normalization rules, pending-consumption eligibility, and ACK receipt construction, including deprecated `fallback` ACK conversion to explicit `error` ACK metadata; `cmd/rencrow` still owns HTTP decoding and applies pending consumption.
+- `modules/tts` owns IdleChat TTS speech/display text cleanup, topic-announcement formatting, event type classification, character ID normalization, voice profile mapping, and TTS session/payload plan construction; `cmd/rencrow` converts runtime `TimelineEvent` values into module inputs and applies the plan to the bridge/runtime state.
 - `modules/tts` owns route-based TTS session metadata planning for message and distributed orchestrator lifecycles; `internal/application/orchestrator` converts route decisions into module inputs and applies the plan to the existing bridge contract.
 - `modules/tts` owns TTS text chunking rules and streaming chunk pending/emitted state; `internal/application/orchestrator` asks the module chunker for chunks before applying them to TTS and VTuber bridges.
 - `modules/tts` owns speech text filtering, emotion planning, emotion state/context types, and emotion prefix policy; the legacy app-layer wrapper has been retired.
-- `modules/tts` owns TTS runtime provider priority, playback command normalization, voice selection, and Irodori provider option planning; `cmd/picoclaw` converts app config into module DTOs and applies the returned plan to concrete provider construction.
+- `modules/tts` owns TTS runtime provider priority, playback command normalization, voice selection, and Irodori provider option planning; `cmd/rencrow` converts app config into module DTOs and applies the returned plan to concrete provider construction.
 - `modules/tts` owns Irodori defaults, voice/style resolution, synthesis endpoint URL construction, Gradio run-generation payload ordering, audio URL parsing, download URL resolution, and loopback file URL rewrite rules; `internal/infrastructure/tts` keeps HTTP execution and thin adapter code.
 - `modules/tts` owns SBV2 voice alias resolution, voice URL construction, editor API URL construction, TTS punctuation, and audio prefix sanitization rules; `internal/infrastructure/tts` keeps HTTP execution and thin adapter code.
-- `modules/tts` owns local audio path normalization, output-dir containment checks, and Viewer audio URL construction; `cmd/picoclaw` keeps HTTP file serving and concrete runtime wiring.
+- `modules/tts` owns local audio path normalization, output-dir containment checks, and Viewer audio URL construction; `cmd/rencrow` keeps HTTP file serving and concrete runtime wiring.
 - `modules/tts` owns RenCrow synthesis request payload construction, provider_params validation, emotion voice fallback, and request ID header construction; `internal/infrastructure/tts` keeps HTTP calls and thin adapter code while provider extraction continues.
 - `modules/tts` owns RenCrow synthesis error parsing, retry decisions, transport retry classification, and retry backoff; `internal/infrastructure/tts` keeps HTTP calls and context-aware sleep while provider extraction continues.
-- `modules/tts` owns the synthesis diagnostics policy; `cmd/picoclaw` only exposes it over HTTP.
+- `modules/tts` owns the synthesis diagnostics policy; `cmd/rencrow` only exposes it over HTTP.
 - `/viewer/modules/tts/diagnostics` exposes TTS provider health and synthesis contract metadata without synthesizing audio.
 - `/viewer/modules/tts/playback-state` exposes IdleChat pending, topic gates, and public session routing state.
 - `/viewer/modules/health` includes `tts.playback` separately from `tts`.
 - `modules/stt.ViewerInputObserver` separates Viewer microphone/transcript injection state from transcription provider contracts.
-- `modules/stt` owns Viewer-input report construction; `cmd/picoclaw` only collects the runtime snapshot and encodes the report.
+- `modules/stt` owns Viewer-input report construction; `cmd/rencrow` only collects the runtime snapshot and encodes the report.
 - `modules/stt` owns Viewer-input snapshot construction, including endpoint/path defaults, URL normalization, and configured flags.
-- `modules/stt` owns runtime STT provider option planning and defaults; `cmd/picoclaw` converts app config into module DTOs and applies the returned plan to concrete provider construction.
-- `modules/stt` owns WebSocket handler selection, compatibility route paths, and text/binary frame classification rules; `cmd/picoclaw` keeps concrete WebSocket handlers and proxy/provider execution.
-- `modules/stt` owns WebSocket control-message parsing, PCM16/WAV payload normalization, silence detection, and adaptive timeout clamp rules; `cmd/picoclaw` keeps env reads and provider/HTTP execution.
+- `modules/stt` owns runtime STT provider option planning and defaults; `cmd/rencrow` converts app config into module DTOs and applies the returned plan to concrete provider construction.
+- `modules/stt` owns WebSocket handler selection, compatibility route paths, and text/binary frame classification rules; `cmd/rencrow` keeps concrete WebSocket handlers and proxy/provider execution.
+- `modules/stt` owns WebSocket control-message parsing, PCM16/WAV payload normalization, silence detection, and adaptive timeout clamp rules; `cmd/rencrow` keeps env reads and provider/HTTP execution.
 - `modules/stt` owns Viewer STT debug artifact defaults and archive filename construction; Viewer handlers still own HTTP decoding and file writes.
-- `modules/stt` owns the transcription diagnostics policy; `cmd/picoclaw` only exposes it over HTTP.
+- `modules/stt` owns the transcription diagnostics policy; `cmd/rencrow` only exposes it over HTTP.
 - `/viewer/modules/stt/viewer-input` exposes STT Viewer input endpoints, debug artifact paths, provider/gateway wiring, and transcript injection contract.
 - `/viewer/modules/stt/diagnostics` exposes STT provider health and transcription contract metadata without transcribing audio.
 - `/viewer/modules/health` includes `stt.viewer_input` separately from `stt`.
@@ -209,15 +209,15 @@ Current deliverable:
 Validation:
 
 - `internal/adapter/viewer/viewer_audio_button.test.mjs`
-- `cmd/picoclaw/idlechat_tts_*` tests
+- `cmd/rencrow/idlechat_tts_*` tests
 - STT admin/capture tests
 
 Current validation:
 
-- `go test ./cmd/picoclaw ./internal/application/service ./internal/application/orchestrator ./internal/adapter/modulebridge ./internal/infrastructure/tts ./internal/infrastructure/stt ./internal/infrastructure/routing ./modules/...`
+- `go test ./cmd/rencrow ./internal/application/service ./internal/application/orchestrator ./internal/adapter/modulebridge ./internal/infrastructure/tts ./internal/infrastructure/stt ./internal/infrastructure/routing ./modules/...`
 - `go test ./...`
-- `cmd/picoclaw` module manifest tests verify manifest endpoint coverage and route registration coverage.
-- `cmd/picoclaw` module route tests verify every registered module endpoint returns JSON when provided module-contract dependencies.
+- `cmd/rencrow` module manifest tests verify manifest endpoint coverage and route registration coverage.
+- `cmd/rencrow` module route tests verify every registered module endpoint returns JSON when provided module-contract dependencies.
 
 ## Phase 5: Final Package Move Or Alias Stabilization
 

@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/pkg/rencrowclient"
+	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
 func TestE2E_ToolHarnessAndDCIStatusClientCurrentView(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Tool Harness and DCI status clients")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Tool Harness and DCI status clients")
 	}
 
 	baseURL := liveBaseURL()

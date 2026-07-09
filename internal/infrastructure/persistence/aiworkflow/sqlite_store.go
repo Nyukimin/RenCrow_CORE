@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	domainai "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/aiworkflow"
+	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	_ "github.com/mattn/go-sqlite3"
 )
 

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	domainjob "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/job"
-	jobpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/job"
+	domainjob "github.com/Nyukimin/RenCrow_CORE/internal/domain/job"
+	jobpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/job"
 )
 
 func TestManagerEmitsNotificationOnSucceeded(t *testing.T) {

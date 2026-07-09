@@ -30,7 +30,7 @@ avatar/bridge failure must not rewrite Chat display text
 
 ## Current Main Files
 
-internal/infrastructure/vtuber, cmd/picoclaw/vtuber_bridge.go, internal/adapter/viewer/live2d_*.go
+internal/infrastructure/vtuber, cmd/rencrow/vtuber_bridge.go, internal/adapter/viewer/live2d_*.go
 
 ## Migration Boundary
 

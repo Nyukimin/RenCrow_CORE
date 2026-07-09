@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/pkg/rencrowclient"
+	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
 func TestE2E_AIWorkflowExternalControlClientRequiresApproval(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live AI Workflow external control client")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live AI Workflow external control client")
 	}
 
 	baseURL := liveBaseURL()
@@ -66,8 +66,8 @@ func TestE2E_AIWorkflowExternalControlClientRequiresApproval(t *testing.T) {
 }
 
 func TestE2E_AIWorkflowCommandContextAndSuperAgentTraceSameRun(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live AI Workflow command/context client")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live AI Workflow command/context client")
 	}
 
 	baseURL := liveBaseURL()
@@ -203,11 +203,11 @@ func TestE2E_AIWorkflowCommandContextAndSuperAgentTraceSameRun(t *testing.T) {
 }
 
 func TestE2E_AIWorkflowPromotionWorkflowRequiresHumanApprovalBeforeApply(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live AI Workflow promotion workflow client")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live AI Workflow promotion workflow client")
 	}
-	if os.Getenv("PICOCLAW_LIVE_SANDBOX_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_SANDBOX_E2E=1 with sandbox enabled to verify live promotion workflow")
+	if os.Getenv("RENCROW_LIVE_SANDBOX_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_SANDBOX_E2E=1 with sandbox enabled to verify live promotion workflow")
 	}
 
 	baseURL := liveBaseURL()
@@ -310,7 +310,7 @@ func TestE2E_AIWorkflowPromotionWorkflowRequiresHumanApprovalBeforeApply(t *test
 }
 
 func liveBaseURL() string {
-	baseURL := strings.TrimRight(os.Getenv("PICOCLAW_LIVE_BASE_URL"), "/")
+	baseURL := strings.TrimRight(os.Getenv("RENCROW_LIVE_BASE_URL"), "/")
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:18790"
 	}

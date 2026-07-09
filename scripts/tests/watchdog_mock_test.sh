@@ -68,9 +68,9 @@ exit 0
 '
 
 export PATH="${MOCK_BIN}:$PATH"
-export PICO_HOME="${TMP_DIR}/picohome"
-export PICOCLAW_WATCHDOG_LOG_DIR="${LOG_DIR}"
-export PICOCLAW_WATCHDOG_LOG_FILE="${LOG_DIR}/ops-watchdog.log"
+export RENCROW_HOME="${TMP_DIR}/rencrowhome"
+export RENCROW_WATCHDOG_LOG_DIR="${LOG_DIR}"
+export RENCROW_WATCHDOG_LOG_FILE="${LOG_DIR}/ops-watchdog.log"
 export MOCK_SERVE_COUNT_FILE="${SERVE_COUNT_FILE}"
 
 assert_eq() {

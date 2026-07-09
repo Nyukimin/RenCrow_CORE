@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	domaincontract "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/contract"
-	domainexecution "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/execution"
+	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 )
 
 type CapabilityPack string

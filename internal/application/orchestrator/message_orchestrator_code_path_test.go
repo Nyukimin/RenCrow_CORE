@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/proposal"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
 
 type recordingEventListener struct {

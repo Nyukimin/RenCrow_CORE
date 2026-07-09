@@ -5,9 +5,9 @@ import (
 	"log"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 const defaultWildSystemPrompt = `You are Wild, a creative LLM for RenCrow.

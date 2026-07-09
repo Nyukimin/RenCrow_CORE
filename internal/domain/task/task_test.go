@@ -3,8 +3,8 @@ package task
 import (
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/attachment"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
 
 func TestNewTask(t *testing.T) {

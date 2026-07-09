@@ -6,8 +6,8 @@ set -e
 # 使い方: ./install-agent.sh <agent-type>
 #   agent-type: worker, coder1, coder2, coder3
 
-PICOCLAW_HOME="$HOME/.picoclaw"
-PICOCLAW_BIN="$HOME/.local/bin"
+RENCROW_HOME="$HOME/.rencrow"
+RENCROW_BIN="$HOME/.local/bin"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 
 if [ $# -lt 1 ]; then
@@ -82,33 +82,33 @@ echo ""
 # ビルド
 echo "[2/6] RenCrow Agent のビルド..."
 cd "$(dirname "$0")"
-go build -o picoclaw-agent ./cmd/picoclaw-agent
+go build -o rencrow-agent ./cmd/rencrow-agent
 echo "  ✓ ビルド完了（エージェント専用バイナリ）"
 
 # ディレクトリ作成
 echo "[3/6] ディレクトリの作成..."
-mkdir -p "$PICOCLAW_HOME"/{logs,workspace}
-mkdir -p "$PICOCLAW_BIN"
+mkdir -p "$RENCROW_HOME"/{logs,workspace}
+mkdir -p "$RENCROW_BIN"
 mkdir -p "$SYSTEMD_USER_DIR"
-echo "  ✓ $PICOCLAW_HOME"
-echo "  ✓ $PICOCLAW_BIN"
+echo "  ✓ $RENCROW_HOME"
+echo "  ✓ $RENCROW_BIN"
 echo "  ✓ $SYSTEMD_USER_DIR"
 
 # バイナリコピー
 echo "[4/6] バイナリのインストール..."
-cp picoclaw-agent "$PICOCLAW_BIN/picoclaw-agent"
-chmod +x "$PICOCLAW_BIN/picoclaw-agent"
-echo "  ✓ picoclaw-agent → $PICOCLAW_BIN/picoclaw-agent"
+cp rencrow-agent "$RENCROW_BIN/rencrow-agent"
+chmod +x "$RENCROW_BIN/rencrow-agent"
+echo "  ✓ rencrow-agent → $RENCROW_BIN/rencrow-agent"
 
 # 設定ファイル生成
 echo "[5/6] 設定ファイルの生成..."
-if [ ! -f "$PICOCLAW_HOME/config.yaml" ]; then
-    cp config.yaml.example "$PICOCLAW_HOME/config.yaml"
+if [ ! -f "$RENCROW_HOME/config.yaml" ]; then
+    cp config.yaml.example "$RENCROW_HOME/config.yaml"
 
     # パスを置換
-    sed -i "s|./workspace|$PICOCLAW_HOME/workspace|g" "$PICOCLAW_HOME/config.yaml"
+    sed -i "s|./workspace|$RENCROW_HOME/workspace|g" "$RENCROW_HOME/config.yaml"
 
-    echo "  ✓ $PICOCLAW_HOME/config.yaml"
+    echo "  ✓ $RENCROW_HOME/config.yaml"
 else
     echo "  ⚠️  config.yaml は既に存在します（スキップ）"
 fi
@@ -139,7 +139,7 @@ case "$AGENT_TYPE" in
 esac
 
 # .env 生成
-cat > "$PICOCLAW_HOME/.env" <<EOF
+cat > "$RENCROW_HOME/.env" <<EOF
 # RenCrow Agent 環境変数
 # Agent Type: $AGENT_TYPE
 # 生成日時: $(date)
@@ -150,9 +150,9 @@ $(if [ "$AGENT_TYPE" = "coder2" ]; then echo "OPENAI_API_KEY=\"$api_key\""; fi)
 $(if [ "$AGENT_TYPE" = "coder3" ]; then echo "ANTHROPIC_API_KEY=\"$api_key\""; fi)
 EOF
 
-chmod 600 "$PICOCLAW_HOME/.env"
+chmod 600 "$RENCROW_HOME/.env"
 echo ""
-echo "  ✓ $PICOCLAW_HOME/.env (chmod 600)"
+echo "  ✓ $RENCROW_HOME/.env (chmod 600)"
 
 if [ -n "$api_key" ]; then
     echo "  ✓ API キー設定済み"
@@ -163,8 +163,8 @@ echo ""
 # systemd サービスファイル生成
 echo "[6/6] systemd サービスの設定..."
 
-# picoclaw-agent-<type>.service
-cat > "$SYSTEMD_USER_DIR/picoclaw-agent-$AGENT_TYPE.service" <<EOF
+# rencrow-agent-<type>.service
+cat > "$SYSTEMD_USER_DIR/rencrow-agent-$AGENT_TYPE.service" <<EOF
 [Unit]
 Description=RenCrow Agent ($AGENT_TYPE)
 After=network-online.target
@@ -172,9 +172,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=$PICOCLAW_HOME
-ExecStart=$PICOCLAW_BIN/picoclaw-agent -standalone -agent $AGENT_TYPE -config $PICOCLAW_HOME/config.yaml
-EnvironmentFile=$PICOCLAW_HOME/.env
+WorkingDirectory=$RENCROW_HOME
+ExecStart=$RENCROW_BIN/rencrow-agent -standalone -agent $AGENT_TYPE -config $RENCROW_HOME/config.yaml
+EnvironmentFile=$RENCROW_HOME/.env
 Restart=always
 RestartSec=5
 StandardInput=null
@@ -185,12 +185,12 @@ StandardError=journal
 WantedBy=default.target
 EOF
 
-echo "  ✓ $SYSTEMD_USER_DIR/picoclaw-agent-$AGENT_TYPE.service"
+echo "  ✓ $SYSTEMD_USER_DIR/rencrow-agent-$AGENT_TYPE.service"
 
 # systemd reload & enable
 systemctl --user daemon-reload
-systemctl --user enable picoclaw-agent-$AGENT_TYPE
-echo "  ✓ systemctl --user enable picoclaw-agent-$AGENT_TYPE"
+systemctl --user enable rencrow-agent-$AGENT_TYPE
+echo "  ✓ systemctl --user enable rencrow-agent-$AGENT_TYPE"
 
 echo ""
 
@@ -220,17 +220,17 @@ echo ""
 echo "Agent Type: $AGENT_TYPE"
 echo ""
 echo "起動方法:"
-echo "  systemctl --user start picoclaw-agent-$AGENT_TYPE"
+echo "  systemctl --user start rencrow-agent-$AGENT_TYPE"
 echo ""
 echo "停止方法:"
-echo "  systemctl --user stop picoclaw-agent-$AGENT_TYPE"
+echo "  systemctl --user stop rencrow-agent-$AGENT_TYPE"
 echo ""
 echo "ログ確認:"
-echo "  journalctl --user -u picoclaw-agent-$AGENT_TYPE -f"
+echo "  journalctl --user -u rencrow-agent-$AGENT_TYPE -f"
 echo ""
 echo "設定ファイル:"
-echo "  $PICOCLAW_HOME/config.yaml"
-echo "  $PICOCLAW_HOME/.env"
+echo "  $RENCROW_HOME/config.yaml"
+echo "  $RENCROW_HOME/.env"
 echo ""
 echo "注意:"
 echo "  このエージェントは stdin/stdout で JSON 通信します。"
@@ -239,5 +239,5 @@ echo ""
 echo "次のステップ:"
 echo "  1. メインPCから SSH 接続テスト"
 echo "  2. メインPCの config.yaml で distributed.enabled=true"
-echo "  3. メインPCから picoclaw 起動"
+echo "  3. メインPCから rencrow 起動"
 echo ""

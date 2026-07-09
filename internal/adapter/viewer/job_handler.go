@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/jobmanager"
-	domainjob "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/job"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/jobmanager"
+	domainjob "github.com/Nyukimin/RenCrow_CORE/internal/domain/job"
 )
 
 type ParallelJobStore interface {

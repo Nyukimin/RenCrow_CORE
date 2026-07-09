@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/pkg/rencrowclient"
+	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
 func TestE2E_SandboxPromotionApplyAndRollbackWithHumanApproval(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Sandbox promotion apply/rollback")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Sandbox promotion apply/rollback")
 	}
-	if os.Getenv("PICOCLAW_LIVE_SANDBOX_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_SANDBOX_E2E=1 with sandbox enabled and isolated apply_root")
+	if os.Getenv("RENCROW_LIVE_SANDBOX_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_SANDBOX_E2E=1 with sandbox enabled and isolated apply_root")
 	}
 
 	baseURL := liveBaseURL()
@@ -106,17 +106,17 @@ func TestE2E_SandboxPromotionApplyAndRollbackWithHumanApproval(t *testing.T) {
 }
 
 func liveSandboxRoot() string {
-	if root := strings.TrimSpace(os.Getenv("PICOCLAW_LIVE_SANDBOX_ROOT")); root != "" {
+	if root := strings.TrimSpace(os.Getenv("RENCROW_LIVE_SANDBOX_ROOT")); root != "" {
 		return root
 	}
-	return "/home/nyukimi/picoclaw_multiLLM/workspace/sandbox-live-e2e"
+	return "/home/nyukimi/RenCrow_CORE/workspace/sandbox-live-e2e"
 }
 
 func liveSandboxApplyRoot() string {
-	if root := strings.TrimSpace(os.Getenv("PICOCLAW_LIVE_SANDBOX_APPLY_ROOT")); root != "" {
+	if root := strings.TrimSpace(os.Getenv("RENCROW_LIVE_SANDBOX_APPLY_ROOT")); root != "" {
 		return root
 	}
-	return "/tmp/picoclaw-sandbox-promotion-apply-root"
+	return "/tmp/rencrow-sandbox-promotion-apply-root"
 }
 
 func sandboxPromotionDiff(targetPath string) string {

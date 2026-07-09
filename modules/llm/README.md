@@ -25,8 +25,8 @@ Current high-impact areas:
 
 - `internal/domain/llm`
 - `internal/infrastructure/llm`
-- `cmd/picoclaw/llm_*`
-- `cmd/picoclaw/runtime_llm_providers.go`
+- `cmd/rencrow/llm_*`
+- `cmd/rencrow/runtime_llm_providers.go`
 
 Boundary note:
 

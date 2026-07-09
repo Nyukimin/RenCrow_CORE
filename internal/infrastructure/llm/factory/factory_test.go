@@ -3,12 +3,12 @@ package factory
 import (
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/claude"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/deepseek"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/gemini"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/ollama"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/claude"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/deepseek"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/gemini"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 )
 
 func TestCreateProvider_Disabled(t *testing.T) {

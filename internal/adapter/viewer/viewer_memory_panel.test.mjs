@@ -4936,8 +4936,8 @@ globalThis.__controlIdle = controlIdle;
 
 test('viewer wires chat input and stt button to idlechat immediate stop', () => {
   const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
-  const routesGo = fs.readFileSync('cmd/picoclaw/routes.go', 'utf8');
-  const handlersGo = fs.readFileSync('cmd/picoclaw/runtime_idlechat_handlers.go', 'utf8');
+  const routesGo = fs.readFileSync('cmd/rencrow/routes.go', 'utf8');
+  const handlersGo = fs.readFileSync('cmd/rencrow/runtime_idlechat_handlers.go', 'utf8');
   const idlechatRegistrarGo = fs.readFileSync('internal/features/idlechat/registrar.go', 'utf8');
   assert.match(viewerJs, /function interruptIdleChatForUserInput/);
   assert.match(viewerJs, /fetch\('\/viewer\/idlechat\/stop'/);

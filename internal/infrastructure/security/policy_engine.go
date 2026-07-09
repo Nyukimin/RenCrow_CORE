@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/execution"
-	domainsecurity "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/security"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	domainsecurity "github.com/Nyukimin/RenCrow_CORE/internal/domain/security"
 )
 
 // PolicyConfig はポリシー判定設定

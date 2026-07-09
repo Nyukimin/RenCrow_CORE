@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/pkg/rencrowclient"
+	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
 func TestE2E_SourceRegistryStagingValidatePromoteAndMemoryLayers(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" || os.Getenv("PICOCLAW_LIVE_SOURCE_REGISTRY_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 and PICOCLAW_LIVE_SOURCE_REGISTRY_E2E=1 to verify live Source Registry and Memory Layers")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" || os.Getenv("RENCROW_LIVE_SOURCE_REGISTRY_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 and RENCROW_LIVE_SOURCE_REGISTRY_E2E=1 to verify live Source Registry and Memory Layers")
 	}
 
 	baseURL := liveBaseURL()

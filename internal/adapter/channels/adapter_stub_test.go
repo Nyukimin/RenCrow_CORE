@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/channels/discord"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/channels/slack"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/channels/telegram"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/channels/discord"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/channels/slack"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/channels/telegram"
 )
 
 func TestStubAdapters_ProbeRequiresToken(t *testing.T) {

@@ -1,0 +1,14 @@
+[Unit]
+Description=RenCrow Viewer Tailscale Serve Watchdog (oneshot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash -lc 'if [ -f "%h/.rencrow/.env" ]; then set -a; . "%h/.rencrow/.env"; set +a; fi; exec "%h/.local/share/rencrow/scripts/ops_watchdog.sh" once'
+WorkingDirectory=%h
+StandardOutput=append:%h/.rencrow/logs/ops-watchdog.log
+StandardError=append:%h/.rencrow/logs/ops-watchdog.log
+
+[Install]
+WantedBy=default.target

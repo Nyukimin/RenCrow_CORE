@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/redis/go-redis/v9"
 )
 

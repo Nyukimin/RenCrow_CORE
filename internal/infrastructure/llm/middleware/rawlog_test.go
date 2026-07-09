@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	domainllm "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 type rawLogStubProvider struct{}
@@ -24,8 +24,8 @@ func TestRawLogProviderDoesNotWriteProviderCallsToIdleChatRaw(t *testing.T) {
 	dir := t.TempDir()
 	chatPath := filepath.Join(dir, "chat_raw.log")
 	idlePath := filepath.Join(dir, "IdleChat_raw.log")
-	t.Setenv("PICOCLAW_CHAT_RAW_LOG", chatPath)
-	t.Setenv("PICOCLAW_IDLECHAT_RAW_LOG", idlePath)
+	t.Setenv("RENCROW_CHAT_RAW_LOG", chatPath)
+	t.Setenv("RENCROW_IDLECHAT_RAW_LOG", idlePath)
 
 	provider := NewRawLogProvider(rawLogStubProvider{}, "chat")
 	_, err := provider.Generate(context.Background(), domainllm.GenerateRequest{

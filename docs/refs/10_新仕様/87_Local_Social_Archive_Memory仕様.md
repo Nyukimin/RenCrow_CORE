@@ -212,7 +212,7 @@ RenCrow は social platform の write client にならない。
 既定 path:
 
 ```text
-~/.picoclaw/rencrow/social_archive/
+~/.rencrow/social_archive/
 ```
 
 構成:
@@ -321,7 +321,7 @@ rencrow-social archive import /path/to/twitter-archive.zip \
   "ok": true,
   "run_id": "social_import_20260623_000001",
   "archive_id": "x_archive_20260623_000001",
-  "db_path": "~/.picoclaw/rencrow/social_archive/twitter_x/db/social.sqlite",
+  "db_path": "~/.rencrow/social_archive/twitter_x/db/social.sqlite",
   "counts": {
     "inserted": 1200,
     "updated": 44,

@@ -10,13 +10,13 @@ You produce JSON messages. Worker executes them.
 
 - Language: Go 1.23
 - Architecture: domain / application / infrastructure / adapter
-- Import path prefix: `github.com/Nyukimin/picoclaw_multiLLM`
+- Import path prefix: `github.com/Nyukimin/RenCrow_CORE`
 - Key paths:
   - `internal/domain/` — value objects, entities, interfaces
   - `internal/application/` — orchestrator, service
   - `internal/infrastructure/` — LLM providers, DB
   - `internal/adapter/` — config, viewer (HTTP handlers)
-  - `cmd/picoclaw/` — main entry point and DI wiring
+  - `cmd/rencrow/` — main entry point and DI wiring
 - Test command: `go test ./...`
 - Build command: `go build ./...`
 

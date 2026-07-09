@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	sttfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/stt"
-	ttsfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/tts"
+	sttfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/stt"
+	ttsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/tts"
 )
 
 func TestRegisterRoutesRegistersVoiceAudioAndSubfeaturePaths(t *testing.T) {

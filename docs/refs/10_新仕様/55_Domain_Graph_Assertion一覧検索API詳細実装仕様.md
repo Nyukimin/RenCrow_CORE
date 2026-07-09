@@ -65,11 +65,11 @@
 - `internal/adapter/viewer/memory_layers_handler.go`
   - store nil 時に 503 を返す。
   - handler 内で query parse / limit validation / snapshot validation を行う。
-- `cmd/picoclaw/runtime_viewer_handlers.go`
+- `cmd/rencrow/runtime_viewer_handlers.go`
   - L1 store が nil の場合も unavailable handler を deps に登録する pattern がある。
-- `cmd/picoclaw/routes.go`
+- `cmd/rencrow/routes.go`
   - deps に handler がある場合だけ route を登録する。
-- `cmd/picoclaw/runtime_dependencies.go`
+- `cmd/rencrow/runtime_dependencies.go`
   - Viewer handler は `Dependencies` の `http.HandlerFunc` field として保持する。
 
 不足:
@@ -204,10 +204,10 @@ func HandleDomainGraphAssertions(store DomainGraphAssertionStore) http.HandlerFu
 
 変更ファイル:
 
-- `cmd/picoclaw/runtime_dependencies.go`
-- `cmd/picoclaw/runtime_viewer_handlers.go`
-- `cmd/picoclaw/routes.go`
-- `cmd/picoclaw/runtime_viewer_handlers_test.go`
+- `cmd/rencrow/runtime_dependencies.go`
+- `cmd/rencrow/runtime_viewer_handlers.go`
+- `cmd/rencrow/routes.go`
+- `cmd/rencrow/runtime_viewer_handlers_test.go`
 
 追加 field:
 
@@ -600,7 +600,7 @@ func TestL1SQLiteStore_DomainGraphAssertionsRejectsNegativeOffset(t *testing.T)
 実行:
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/infrastructure/persistence/conversation
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/infrastructure/persistence/conversation
 ```
 
 ### 12.2 Handler
@@ -623,7 +623,7 @@ func TestHandleDomainGraphAssertionsRejectsInvalidQuery(t *testing.T)
 実行:
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer
 ```
 
 ### 12.3 Client
@@ -647,7 +647,7 @@ func TestDomainGraphAssertionsBuildsQuery(t *testing.T)
 実行:
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./pkg/rencrowclient
+GOCACHE=/tmp/rencrow-go-cache go test ./pkg/rencrowclient
 ```
 
 ### 12.4 Viewer Node contract
@@ -688,7 +688,7 @@ func TestBuildViewerRuntimeHandlersRegistersDomainGraphUnavailableHandler(t *tes
 実行:
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-go-cache go test ./cmd/rencrow
 ```
 
 ### 12.6 Live manual check
@@ -731,7 +731,7 @@ curl -sS 'http://127.0.0.1:18790/viewer/domain-graph/assertions?domain=movie&lim
 - 以下が通る。
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/infrastructure/persistence/conversation ./internal/adapter/viewer ./pkg/rencrowclient ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/infrastructure/persistence/conversation ./internal/adapter/viewer ./pkg/rencrowclient ./cmd/rencrow
 node --test internal/adapter/viewer/viewer_memory_panel.test.mjs
 ```
 

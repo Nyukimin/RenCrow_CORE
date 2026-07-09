@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	domainmemory "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/memory"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
 
 func (s *L1SQLiteStore) CreateUserMemory(ctx context.Context, input domainmemory.CreateUserMemoryInput) (*domainmemory.UserMemory, error) {

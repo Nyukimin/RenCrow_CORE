@@ -2,12 +2,12 @@ package conversation
 
 import (
 	"context"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"strings"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 // RealConversationEngine は ConversationEngine の実装
@@ -251,7 +251,7 @@ func shouldUseExternalRecallForUserMessage(message string) bool {
 			return true
 		}
 	}
-	topic := []string{"について教えて", "について調べて", "について検索", "とは", "仕様", "API", "Wiki", "RecallPack", "Source Registry", "RenCrow_CMD", "picoclaw"}
+	topic := []string{"について教えて", "について調べて", "について検索", "とは", "仕様", "API", "Wiki", "RecallPack", "Source Registry", "RenCrow_CMD", "rencrow"}
 	for _, marker := range topic {
 		if strings.Contains(message, marker) {
 			return true

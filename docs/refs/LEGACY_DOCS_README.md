@@ -148,7 +148,7 @@ v3.0 の上に分散実行機能を追加する仕様。
 | 内容 | 状態 |
 |------|------|
 | Transport層（Local/SSH） | 実装完了 |
-| picoclaw-agent（スタンドアロン） | 実装完了 |
+| rencrow-agent（スタンドアロン） | 実装完了 |
 | DistributedOrchestrator | 実装完了 |
 | 本番有効化 | Claude クレジット補充待ち |
 
@@ -379,5 +379,5 @@ TOOL_CONTRACT.md（ツール契約）
 
 ---
 
-**プロジェクトルート**: `/home/nyukimi/picoclaw_multiLLM/`
+**プロジェクトルート**: `/home/nyukimi/RenCrow_CORE/`
 **ブランチ**: `feature/rencrow`

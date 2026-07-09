@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	domainattachment "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/attachment"
-	domainsecurity "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/security"
+	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	domainsecurity "github.com/Nyukimin/RenCrow_CORE/internal/domain/security"
 )
 
 // IncomingFile is a transport-neutral upload passed into the attachment store.

@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
 // LoggingTransport はTransportのDecoratorパターンによるログ出力ラッパー

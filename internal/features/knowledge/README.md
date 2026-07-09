@@ -30,7 +30,7 @@ unreviewed discovery must not be treated as confirmed knowledge
 
 ## Current Main Files
 
-internal/application/knowledge, internal/application/knowledgememory, internal/adapter/viewer/knowledge_memory_handler.go, cmd/picoclaw/cli_knowledge.go
+internal/application/knowledge, internal/application/knowledgememory, internal/adapter/viewer/knowledge_memory_handler.go, cmd/rencrow/cli_knowledge.go
 
 ## Current Route Boundary
 

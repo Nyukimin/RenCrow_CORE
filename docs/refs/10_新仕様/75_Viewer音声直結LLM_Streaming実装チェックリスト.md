@@ -14,10 +14,10 @@ Objective: implement `75_Viewer音声直結LLM_Streaming実装作業仕様.md` P
 
 実装前に以下が存在すること:
 
-**picoclaw_multiLLM**
+**RenCrow_CORE**
 
-- `cmd/picoclaw/stt_runtime_websocket.go`（参照パターン）
-- `cmd/picoclaw/routes.go`
+- `cmd/rencrow/stt_runtime_websocket.go`（参照パターン）
+- `cmd/rencrow/routes.go`
 - `internal/adapter/viewer/assets/js/viewer.js`
 - `internal/adapter/viewer/debug_system_handler.go`
 - `internal/application/orchestrator/message_orchestrator.go`
@@ -52,7 +52,7 @@ python3 -m pytest tests/test_audio_session_contract.py -v
 
 ---
 
-## PR-P1: picoclaw bridge
+## PR-P1: rencrow bridge
 
 | Requirement | Target | Evidence |
 | --- | --- | --- |
@@ -66,8 +66,8 @@ python3 -m pytest tests/test_audio_session_contract.py -v
 | runtime-config fields | `debug_system_handler.go` | JSON has voice_chat_* |
 
 ```bash
-cd picoclaw_multiLLM
-go test ./cmd/picoclaw -run VoiceChat -count=1 -v
+cd RenCrow_CORE
+go test ./cmd/rencrow -run VoiceChat -count=1 -v
 go test ./internal/adapter/viewer -run RuntimeConfig -count=1 -v
 ```
 
@@ -125,7 +125,7 @@ node --test internal/adapter/viewer/viewer_stt_https.test.mjs
 | summary MD | `tmp/vds_vs_stt_bench_summary.md` | A/B table |
 
 ```bash
-cd picoclaw_multiLLM
+cd RenCrow_CORE
 python3 -m py_compile scripts/vds_e2e_probe.py scripts/vds_e2e_probe_test.py
 python3 -m unittest scripts/vds_e2e_probe_test.py
 python3 scripts/vds_e2e_probe.py \
@@ -161,4 +161,4 @@ python3 scripts/vds_e2e_probe.py \
 
 1. Set `VOICE_CHAT_ENABLED=false`
 2. Set `voice_input_mode=stt_primary`
-3. Redeploy picoclaw only（LLM WS 残存は無害）
+3. Redeploy rencrow only（LLM WS 残存は無害）

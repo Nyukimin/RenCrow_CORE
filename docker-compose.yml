@@ -1,40 +1,40 @@
 services:
   # ─────────────────────────────────────────────
   # RenCrow Agent (one-shot query)
-  #   docker compose run --rm picoclaw-agent -m "Hello"
+  #   docker compose run --rm rencrow-agent -m "Hello"
   # ─────────────────────────────────────────────
-  picoclaw-agent:
+  rencrow-agent:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: picoclaw-agent
+    container_name: rencrow-agent
     profiles:
       - agent
     volumes:
-      - ./config/config.json:/root/.picoclaw/config.json:ro
-      - picoclaw-workspace:/root/.picoclaw/workspace
-    entrypoint: ["picoclaw", "agent"]
+      - ./config/config.json:/root/.rencrow/config.json:ro
+      - rencrow-workspace:/root/.rencrow/workspace
+    entrypoint: ["rencrow", "agent"]
     stdin_open: true
     tty: true
 
   # ─────────────────────────────────────────────
   # RenCrow Gateway (Long-running Bot)
-  #   docker compose up picoclaw-gateway
+  #   docker compose up rencrow-gateway
   # ─────────────────────────────────────────────
-  picoclaw-gateway:
+  rencrow-gateway:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: picoclaw-gateway
+    container_name: rencrow-gateway
     restart: unless-stopped
     profiles:
       - gateway
     volumes:
       # Configuration file
-      - ./config/config.json:/root/.picoclaw/config.json:ro
+      - ./config/config.json:/root/.rencrow/config.json:ro
       # Persistent workspace (sessions, memory, logs)
-      - picoclaw-workspace:/root/.picoclaw/workspace
+      - rencrow-workspace:/root/.rencrow/workspace
     command: ["gateway"]
 
 volumes:
-  picoclaw-workspace:
+  rencrow-workspace:

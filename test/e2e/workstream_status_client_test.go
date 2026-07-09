@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/pkg/rencrowclient"
+	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
 func TestE2E_WorkstreamStatusClientCurrentView(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Workstream status client")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Workstream status client")
 	}
 
 	baseURL := liveBaseURL()
@@ -61,11 +61,11 @@ func TestE2E_WorkstreamStatusClientCurrentView(t *testing.T) {
 }
 
 func TestE2E_WorkstreamVaultUpdatePreviewAndApprovedApply(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Workstream vault apply")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Workstream vault apply")
 	}
-	if os.Getenv("PICOCLAW_LIVE_WORKSTREAM_VAULT_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_WORKSTREAM_VAULT_E2E=1 to allow an isolated live vault file write")
+	if os.Getenv("RENCROW_LIVE_WORKSTREAM_VAULT_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_WORKSTREAM_VAULT_E2E=1 to allow an isolated live vault file write")
 	}
 
 	baseURL := liveBaseURL()

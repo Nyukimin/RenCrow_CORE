@@ -181,7 +181,7 @@ function hobbyGraphOpsCard()
 ## 8. 検証コマンド
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer ./cmd/rencrow
 node --test internal/adapter/viewer/viewer_memory_panel.test.mjs
 git diff --check
 ```

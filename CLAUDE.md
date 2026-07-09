@@ -1,7 +1,7 @@
 # CLAUDE.md - RenCrow プロジェクトルール
 
 **作成日**: 2026-02-24
-**プロジェクト名**: RenCrow (picoclaw_multiLLM)
+**プロジェクト名**: RenCrow (RenCrow_CORE)
 **目的**: 超軽量 AI アシスタントのマルチ LLM ルーティング実装
 
 ---
@@ -10,7 +10,7 @@
 
 ### 1.1 プロジェクト名
 
-**RenCrow** (picoclaw_multiLLM)
+**RenCrow** (RenCrow_CORE)
 
 ### 1.2 目的
 
@@ -33,7 +33,7 @@
 
 | Module | Root | 用途 |
 | ------ | ---- | ---- |
-| Core / Chat / CLI | `/home/nyukimi/RenCrow/picoclaw_multiLLM` | RenCrow 本体、Viewer、Chat/Worker/Coder orchestration |
+| Core / Chat / CLI | `/home/nyukimi/RenCrow/RenCrow_CORE` | RenCrow 本体、Viewer、Chat/Worker/Coder orchestration |
 | STT | `/home/nyukimi/RenCrow/RenCrow_STT` | Speech-to-Text server |
 | TTS | `/home/nyukimi/RenCrow/RenCrow_TTS` | Text-to-Speech server |
 | LLM | `/home/nyukimi/RenCrow/RenCrow_LLM` | Chat / Worker / Heavy / Wild role servers |
@@ -41,7 +41,7 @@
 | CMD | `/home/nyukimi/RenCrow/RenCrow_CMD` | CLI client / entrypoint |
 | Tools | `/home/nyukimi/RenCrow/RenCrow_Tools` | 横断ツール、browser sidecar、データ変換、検証 CLI |
 
-横断的に再利用するツールは `RenCrow_Tools` を正本とする。`picoclaw_multiLLM/tools/` は既存互換または本体密結合の残置場所であり、新規の横断ツール置き場にしない。
+横断的に再利用するツールは `RenCrow_Tools` を正本とする。`RenCrow_CORE/tools/` は既存互換または本体密結合の残置場所であり、新規の横断ツール置き場にしない。
 
 ### 1.4 使用言語・プラットフォーム
 

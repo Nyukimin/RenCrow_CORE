@@ -27,7 +27,7 @@ After migration, confirm the Ollama block uses only the v4 model field:
 ```yaml
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
   max_context: 8192
 ```
 

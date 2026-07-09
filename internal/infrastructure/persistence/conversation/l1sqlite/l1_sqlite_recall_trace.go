@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 func (s *L1SQLiteStore) StartRecallTrace(ctx context.Context, trace domconv.RecallTraceRecord) error {

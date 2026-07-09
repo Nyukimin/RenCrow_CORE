@@ -10,13 +10,13 @@ args = [
 command = "/home/nyukimi/.local/bin/uvx"
 
   [mcp_servers.serena.env]
-  GOCACHE = "/home/nyukimi/picoclaw_multiLLM/.serena/go-build"
-  GOMODCACHE = "/home/nyukimi/picoclaw_multiLLM/.serena/gomodcache"
-  SERENA_HOME = "/home/nyukimi/picoclaw_multiLLM/.serena"
-  UV_CACHE_DIR = "/home/nyukimi/picoclaw_multiLLM/.serena/uv-cache"
+  GOCACHE = "/home/nyukimi/RenCrow_CORE/.serena/go-build"
+  GOMODCACHE = "/home/nyukimi/RenCrow_CORE/.serena/gomodcache"
+  SERENA_HOME = "/home/nyukimi/RenCrow_CORE/.serena"
+  UV_CACHE_DIR = "/home/nyukimi/RenCrow_CORE/.serena/uv-cache"
   UV_OFFLINE = "1"
-  UV_TOOL_DIR = "/home/nyukimi/picoclaw_multiLLM/.serena/uv-tools"
-  XDG_CACHE_HOME = "/home/nyukimi/picoclaw_multiLLM/.serena/xdg-cache"
+  UV_TOOL_DIR = "/home/nyukimi/RenCrow_CORE/.serena/uv-tools"
+  XDG_CACHE_HOME = "/home/nyukimi/RenCrow_CORE/.serena/xdg-cache"
 
 [mcp_servers.aidesigner]
 url = "https://api.aidesigner.ai/api/v1/mcp"

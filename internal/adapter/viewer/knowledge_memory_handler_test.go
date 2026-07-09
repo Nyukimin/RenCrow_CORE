@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	domainkm "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/knowledgememory"
+	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
 )
 
 type stubKnowledgeMemoryStore struct {

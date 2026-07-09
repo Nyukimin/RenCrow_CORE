@@ -13,8 +13,8 @@
   - なければフォールバック（従来の LLM.Generate）
 
 ### 2. DI 配線更新
-- `cmd/picoclaw/main.go`: SubagentManager を Shiro に渡す
-- `cmd/picoclaw-agent/main.go`: nil を渡す（分散実行用）
+- `cmd/rencrow/main.go`: SubagentManager を Shiro に渡す
+- `cmd/rencrow-agent/main.go`: nil を渡す（分散実行用）
 
 ### 3. config.yaml 更新
 ```yaml
@@ -63,8 +63,8 @@ Shiro: 最終出力を返す
 ## 変更ファイル
 - `internal/domain/agent/subagent.go`: SubagentManager インターフェース追加
 - `internal/domain/agent/shiro.go`: SubagentManager 統合
-- `cmd/picoclaw/main.go`: DI 配線
-- `cmd/picoclaw-agent/main.go`: nil 追加
+- `cmd/rencrow/main.go`: DI 配線
+- `cmd/rencrow-agent/main.go`: nil 追加
 - `config.yaml`: subagent セクション追加
 - `test/integration/ops_react_loop_test.go`: E2Eテスト追加（新規）
 - `internal/domain/agent/shiro_test.go`: テスト修正
@@ -72,7 +72,7 @@ Shiro: 最終出力を返す
 
 ## テスト結果
 ✅ すべてのテスト PASS
-✅ ビルド成功（picoclaw + picoclaw-agent）
+✅ ビルド成功（rencrow + rencrow-agent）
 ✅ E2Eテスト 3件追加（全PASS）
 
 ## 関連仕様

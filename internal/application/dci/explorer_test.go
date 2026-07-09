@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	skillbootstrap "github.com/Nyukimin/picoclaw_multiLLM/internal/application/skillgovernance"
-	domaindci "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/dci"
-	domainskill "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/skillgovernance"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/tool"
+	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
+	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
+	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
 type memoryTraceStore struct {

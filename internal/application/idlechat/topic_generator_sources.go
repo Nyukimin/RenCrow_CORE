@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 // DailySeedCache は1日1回取得する外部シードのキャッシュ
@@ -87,7 +87,7 @@ func fetchWikipediaRandom(limit int) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "RenCrow/1.0 (https://github.com/Nyukimin/picoclaw_multiLLM)")
+	req.Header.Set("User-Agent", "RenCrow/1.0 (https://github.com/Nyukimin/RenCrow_CORE)")
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -191,7 +191,7 @@ func fetchNewsSeedsFrom(source NewsSeedSource, limit int) ([]NewsSeed, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "RenCrow/1.0 (https://github.com/Nyukimin/picoclaw_multiLLM)")
+	req.Header.Set("User-Agent", "RenCrow/1.0 (https://github.com/Nyukimin/RenCrow_CORE)")
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)

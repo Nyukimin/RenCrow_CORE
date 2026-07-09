@@ -5,14 +5,14 @@ import (
 	"net/http"
 )
 
-// Dependencies groups feature dependencies supplied by cmd/picoclaw.
+// Dependencies groups feature dependencies supplied by cmd/rencrow.
 type Dependencies struct {
 	Ports      Ports
 	Routes     Routes
 	Background Background
 }
 
-// Routes groups IdleChat Viewer route handlers supplied by cmd/picoclaw.
+// Routes groups IdleChat Viewer route handlers supplied by cmd/rencrow.
 // Handler implementations remain in legacy cmd/application packages during
 // Ver0.80 migration; this registrar owns only route registration.
 type Routes struct {

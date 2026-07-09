@@ -7,8 +7,8 @@ import (
 	"log"
 	"strings"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 // LLMProfileExtractor は LLM を使ってユーザープロファイルを抽出する

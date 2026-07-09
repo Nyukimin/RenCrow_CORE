@@ -20,7 +20,7 @@ Non-responsibilities:
 Current high-impact areas:
 
 - `modules/voicechat`
-- `cmd/picoclaw/voice_chat_runtime_*`
+- `cmd/rencrow/voice_chat_runtime_*`
 - `internal/application/orchestrator/voice_direct*`
 
 Boundary note:

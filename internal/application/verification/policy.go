@@ -3,7 +3,7 @@ package verification
 import (
 	"strings"
 
-	domainverification "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/verification"
+	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
 )
 
 func DetermineTriggerLevel(req Request, fallback domainverification.TriggerLevel) domainverification.TriggerLevel {

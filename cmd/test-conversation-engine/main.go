@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 )
 
 func main() {

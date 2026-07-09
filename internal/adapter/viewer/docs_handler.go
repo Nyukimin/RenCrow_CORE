@@ -180,7 +180,7 @@ func discoverRenCrowDocsRoots() []docsRoot {
 	}
 	umbrella := filepath.Dir(wd)
 	for _, repo := range []string{
-		"picoclaw_multiLLM",
+		"RenCrow_CORE",
 		"RenCrow_CMD",
 		"RenCrow_STT",
 		"RenCrow_TTS",

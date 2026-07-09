@@ -77,7 +77,7 @@ git mv internal/application/idlechat/archive/complex_story_mode/story_dump.go \
 # （削除されたテストは git history から取得可能）
 
 # 4. ビルド確認
-go build ./cmd/picoclaw
+go build ./cmd/rencrow
 go test ./internal/application/idlechat/
 ```
 

@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 )
 
 var blockedSelfLifecycleCommandPatterns = []struct {
@@ -15,20 +15,20 @@ var blockedSelfLifecycleCommandPatterns = []struct {
 	re   *regexp.Regexp
 }{
 	{
-		name: "picoclaw.service lifecycle change",
-		re:   regexp.MustCompile(`(?i)\b(systemctl|service)\b[^\n;&|]*(restart|start|stop|reload|enable|disable)[^\n;&|]*\bpicoclaw(?:\.service)?\b`),
+		name: "rencrow.service lifecycle change",
+		re:   regexp.MustCompile(`(?i)\b(systemctl|service)\b[^\n;&|]*(restart|start|stop|reload|enable|disable)[^\n;&|]*\brencrow(?:\.service)?\b`),
 	},
 	{
-		name: "picoclaw.service lifecycle change",
-		re:   regexp.MustCompile(`(?i)\bservice\b[^\n;&|]*\bpicoclaw(?:\.service)?\b[^\n;&|]*(restart|start|stop|reload|enable|disable)\b`),
+		name: "rencrow.service lifecycle change",
+		re:   regexp.MustCompile(`(?i)\bservice\b[^\n;&|]*\brencrow(?:\.service)?\b[^\n;&|]*(restart|start|stop|reload|enable|disable)\b`),
 	},
 	{
-		name: "picoclaw process kill",
-		re:   regexp.MustCompile(`(?i)\b(pkill|killall)\b[^\n;&|]*\bpicoclaw\b`),
+		name: "rencrow process kill",
+		re:   regexp.MustCompile(`(?i)\b(pkill|killall)\b[^\n;&|]*\brencrow\b`),
 	},
 	{
 		name: "RenCrow live binary install",
-		re:   regexp.MustCompile(`(?i)(\bmake\s+install\b|\.local/bin/picoclaw|~/.local/bin/picoclaw)`),
+		re:   regexp.MustCompile(`(?i)(\bmake\s+install\b|\.local/bin/rencrow|~/.local/bin/rencrow)`),
 	},
 }
 

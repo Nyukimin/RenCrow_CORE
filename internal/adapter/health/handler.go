@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	domainhealth "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/health"
+	domainhealth "github.com/Nyukimin/RenCrow_CORE/internal/domain/health"
 )
 
 // CheckRunner はヘルスチェック実行のインタフェース

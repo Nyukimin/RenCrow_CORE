@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/google/uuid"
 	"github.com/qdrant/go-client/qdrant"
 )

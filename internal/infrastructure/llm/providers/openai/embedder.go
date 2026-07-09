@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 var _ domconv.EmbeddingProvider = (*OpenAIEmbedder)(nil)

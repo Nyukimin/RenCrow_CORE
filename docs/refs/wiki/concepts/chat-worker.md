@@ -8,7 +8,7 @@ source:
   - docs/10_新仕様/04_Chat_Worker_Coder仕様.md
 related:
   - docs/wiki/concepts/recall-pack.md
-  - docs/wiki/modules/picoclaw-multillm.md
+  - docs/wiki/modules/rencrow-multillm.md
 updated: 2026-06-25
 ---
 

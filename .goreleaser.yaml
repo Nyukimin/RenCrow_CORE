@@ -5,10 +5,10 @@ version: 2
 before:
   hooks:
     - go mod tidy
-    - go generate ./cmd/picoclaw
+    - go generate ./cmd/rencrow
 
 builds:
-  - id: picoclaw
+  - id: rencrow
     env:
       - CGO_ENABLED=0
     goos:
@@ -23,18 +23,18 @@ builds:
       - s390x
       - mips64
       - arm
-    main: ./cmd/picoclaw
+    main: ./cmd/rencrow
     ignore:
       - goos: windows
         goarch: arm
 
 dockers_v2:
-  - id: picoclaw
+  - id: rencrow
     dockerfile: Dockerfile.goreleaser
     ids:
-      - picoclaw
+      - rencrow
     images:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/picoclaw"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/rencrow"
       - "docker.io/{{ .Env.DOCKERHUB_IMAGE_NAME }}"
     tags:
       - "{{ .Tag }}"

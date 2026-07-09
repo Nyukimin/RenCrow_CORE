@@ -24,7 +24,7 @@
 **統合**:
 - `internal/adapter/config/config.go` - ConversationConfig追加（enabled/redis_url/duckdb_path/vectordb_url）
 - `internal/domain/agent/mio.go` - conversationMgr フィールド追加（6番目の依存、nilable）
-- `cmd/picoclaw/main.go` - ConversationManager初期化・DI実装
+- `cmd/rencrow/main.go` - ConversationManager初期化・DI実装
 
 **テスト**（3ファイル、24テスト、全通過）:
 - `message_test.go` - 11テスト（NewMessage、Speaker定数、タイムスタンプ）
@@ -141,7 +141,7 @@ sudo apt install build-essential
 go env -w CGO_ENABLED=1
 
 # ビルド確認
-CGO_ENABLED=1 go build ./cmd/picoclaw/
+CGO_ENABLED=1 go build ./cmd/rencrow/
 ```
 
 #### 2. VectorDBStore API不一致（10箇所）
@@ -174,7 +174,7 @@ conversation:
 conversation:
   enabled: true
   redis_url: "redis://localhost:6379"
-  duckdb_path: "/var/lib/picoclaw/memory.duckdb"
+  duckdb_path: "/var/lib/rencrow/memory.duckdb"
   vectordb_url: "http://localhost:6333"
 ```
 - RealConversationManager使用
@@ -197,7 +197,7 @@ conversation:
    - DuckDB動作確認
 
 3. **統合ビルド確認**
-   - `CGO_ENABLED=1 go build ./cmd/picoclaw/`
+   - `CGO_ENABLED=1 go build ./cmd/rencrow/`
    - 全ストア（Redis/DuckDB/VectorDB）ビルド成功確認
 
 ### LLM統合（Phase 3.1）
@@ -228,7 +228,7 @@ conversation:
 
 ### インフラ整備（Phase 3.3）
 1. Redis起動確認（`redis-cli ping`）
-2. DuckDB初期化（`/var/lib/picoclaw/memory.duckdb`）
+2. DuckDB初期化（`/var/lib/rencrow/memory.duckdb`）
 3. Qdrant起動確認（`curl http://localhost:6333/`）
 4. 統合E2Eテスト
 

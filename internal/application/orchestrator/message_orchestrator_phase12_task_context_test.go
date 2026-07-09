@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 )
 
 func TestPhase12TaskContextBuilderEmitsAttachmentEvent(t *testing.T) {

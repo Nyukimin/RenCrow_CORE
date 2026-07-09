@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"testing"
 
-	domainnode "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/node"
+	domainnode "github.com/Nyukimin/RenCrow_CORE/internal/domain/node"
 )
 
 func TestNodeSelector_Select(t *testing.T) {

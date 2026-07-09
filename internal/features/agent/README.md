@@ -30,7 +30,7 @@ unknown agent ID and missing persona must be explicit setup errors
 
 ## Current Main Files
 
-internal/domain/agent, workspace/persona, cmd/picoclaw/runtime_agents.go
+internal/domain/agent, workspace/persona, cmd/rencrow/runtime_agents.go
 
 ## Migration Boundary
 

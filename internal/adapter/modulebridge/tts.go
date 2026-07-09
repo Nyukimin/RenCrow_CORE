@@ -3,9 +3,9 @@ package modulebridge
 import (
 	"context"
 
-	internaltts "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/tts"
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/core"
-	moduletts "github.com/Nyukimin/picoclaw_multiLLM/modules/tts"
+	internaltts "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tts"
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 type TTSProviderAdapter struct {

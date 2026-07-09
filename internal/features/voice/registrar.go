@@ -4,12 +4,12 @@ import (
 	"context"
 	"net/http"
 
-	sttfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/stt"
-	ttsfeature "github.com/Nyukimin/picoclaw_multiLLM/internal/features/tts"
-	modulevoicechat "github.com/Nyukimin/picoclaw_multiLLM/modules/voicechat"
+	sttfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/stt"
+	ttsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/tts"
+	modulevoicechat "github.com/Nyukimin/RenCrow_CORE/modules/voicechat"
 )
 
-// Dependencies groups feature dependencies supplied by cmd/picoclaw.
+// Dependencies groups feature dependencies supplied by cmd/rencrow.
 type Dependencies struct {
 	Ports  Ports
 	Routes Routes
@@ -17,7 +17,7 @@ type Dependencies struct {
 	TTS    ttsfeature.Dependencies
 }
 
-// Routes groups Voice/Audio route handlers supplied by cmd/picoclaw.
+// Routes groups Voice/Audio route handlers supplied by cmd/rencrow.
 // Handler implementations stay in legacy adapter/cmd packages during Ver0.80
 // migration; this registrar owns only route registration and dependency handoff.
 type Routes struct {

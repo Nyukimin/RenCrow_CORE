@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	packagevalidationapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/packagevalidation"
+	packagevalidationapp "github.com/Nyukimin/RenCrow_CORE/internal/application/packagevalidation"
 )
 
 func TestHandlePackageValidationBlocksPackageUpdate(t *testing.T) {

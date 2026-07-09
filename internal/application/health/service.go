@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	domainhealth "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/health"
+	domainhealth "github.com/Nyukimin/RenCrow_CORE/internal/domain/health"
 )
 
 // HealthService はヘルスチェックを管理・実行するサービス

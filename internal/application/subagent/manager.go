@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/toolloop"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/agent"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	domainsuperagent "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/superagent"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/tool"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
 const defaultSystemPrompt = "You are a helpful assistant. Use the provided tools to complete the task."

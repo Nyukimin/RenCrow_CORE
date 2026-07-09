@@ -1,12 +1,12 @@
 # RenCrow_CORE Ver0.80 モジュール化実装仕様
 
 作成日: 2026-07-01
-対象: `picoclaw_multiLLM`
+対象: `RenCrow_CORE`
 位置づけ: `05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md` を実装へ移すための正本実装仕様
 
 ## RenCrow_CORE Public repo 起点化の前提
 
-この実装仕様は、`picoclaw_multiLLM` 現ブランチを RenCrow_CORE Ver0.80 の seed / staging source として整えるための手順である。
+この実装仕様は、`RenCrow_CORE` 現ブランチを RenCrow_CORE Ver0.80 の seed / staging source として整えるための手順である。
 
 作業は既存 repository 内で行うが、完了時点で push 済み HEAD を新規 Public repository `RenCrow_CORE` の Ver0.80 起点として使う。
 
@@ -20,7 +20,7 @@
 
 RenCrow_CORE 起点化では、既存機能を削って軽くするのではなく、未整理機能も `modules/*`、`internal/features/*`、`internal/adapter/*`、または `legacy-body` として保持する。Public repo 化のための除外は、secret、local config、cache、artifact、private-only docs など公開不能物に限る。
 
-実装に入る直前の作業資料は `docs/02_正本仕様/07_RenCrow_CORE_Ver0.80_組み換え実装作業資料.md` を参照する。特に `cmd/picoclaw` registrar 起点追加、Viewer Chat contract 固定、既存機能非削除チェックは同資料を使う。
+実装に入る直前の作業資料は `docs/02_正本仕様/07_RenCrow_CORE_Ver0.80_組み換え実装作業資料.md` を参照する。特に `cmd/rencrow` registrar 起点追加、Viewer Chat contract 固定、既存機能非削除チェックは同資料を使う。
 
 Public repository `RenCrow_CORE` の初期投入条件、公開範囲、root README 要件、secret / artifact / local config 除外条件は `docs/02_正本仕様/08_RenCrow_CORE_Ver0.80_Public_Repo起点化仕様.md` を正本とする。
 
@@ -54,7 +54,7 @@ Ver0.80 の実装は、機能を落とさず、挙動変更と構造変更を混
 6. 対象 feature について、入力、出力、副作用、永続化、ログ、エラー契約を書く。
 7. 既存テストを確認し、足りない contract test を先に追加する。
 8. `internal/features/<feature>` の facade / registrar / ports を作る。
-9. `cmd/picoclaw` から feature 内部 policy を削り、registrar 呼び出しに寄せる。
+9. `cmd/rencrow` から feature 内部 policy を削り、registrar 呼び出しに寄せる。
 10. package-local test、影響 package test、必要なら `go test ./...` を実行する。
 11. Viewer / runtime が関係する場合は、実ブラウザまたは API / log evidence で対象フローを確認する。
 
@@ -182,7 +182,7 @@ Ver0.80 の仕様は、`05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md` 
 | `modules/*` へ昇格する範囲 | 純粋な contract、DTO、event、policy、state ownership として説明できるものだけを `modules/<id>` へ置く。既存実装の束ね、DI、HTTP handler、legacy adapter、provider 実行はまず `internal/features/<id>` または `internal/adapter/*` に置く。 |
 | `internal/features/*` に置く範囲 | feature facade、ports、registrar、legacy 実装の束ね、feature 単位の依存注入を置く。実装本体を重複保持せず、将来 `modules/*` へ昇格する contract 候補を README と ports で見えるようにする。 |
 | Viewer 通常チャットの `to` 契約 | 新経路では `to=mio|shiro|kuro|midori` を contract test で固定する。`model_alias`、`route_prefix`、旧 route alias は legacy と明示して隔離する。`to=shiro` を Worker / OPS 実行 route と混同しない。 |
-| `cmd/picoclaw` の分割順 | 一度に分割せず、Viewer、IdleChat、Ops、Voice、Web、Knowledge / Memory、Governance など feature group ごとに registrar へ寄せる。registrar は route 登録と dependency handoff に限定し、新しい巨大 `manager` を作らない。 |
+| `cmd/rencrow` の分割順 | 一度に分割せず、Viewer、IdleChat、Ops、Voice、Web、Knowledge / Memory、Governance など feature group ごとに registrar へ寄せる。registrar は route 登録と dependency handoff に限定し、新しい巨大 `manager` を作らない。 |
 | 実体移動の開始条件 | feature README、contract test、facade / ports、呼び出し元の facade / contract 依存、package-local test が揃うまで `git mv` に入らない。 |
 
 したがって、各 feature の開始時に必要なのは「仕様を追加で作ること」ではなく、上記の判断点を対象 feature の入力、出力、副作用、永続化、ログ、エラー契約へ具体化することである。
@@ -237,7 +237,7 @@ Ver0.80 の仕様は、`05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md` 
 検証:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./modules/...
+GOCACHE=/tmp/rencrow-gocache go test ./modules/...
 ```
 
 完了条件:
@@ -250,7 +250,7 @@ GOCACHE=/tmp/picoclaw-gocache go test ./modules/...
 
 目的:
 
-- `cmd/picoclaw` と `internal/adapter/viewer` に散った feature を棚卸しし、feature registrar へ寄せる準備をする。
+- `cmd/rencrow` と `internal/adapter/viewer` に散った feature を棚卸しし、feature registrar へ寄せる準備をする。
 
 作業:
 
@@ -287,19 +287,19 @@ GOCACHE=/tmp/picoclaw-gocache go test ./modules/...
    - `channels`
    - `ops`
 3. 各 README に、入力、出力、副作用、永続化、ログ、エラー契約、現在の主ファイルを書く。
-4. `cmd/picoclaw` へ feature 固有 policy を追加しないため、既存 route / dependency を feature 別に分類する。
+4. `cmd/rencrow` へ feature 固有 policy を追加しないため、既存 route / dependency を feature 別に分類する。
 
 検証:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw ./internal/adapter/viewer ./modules/...
+GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow ./internal/adapter/viewer ./modules/...
 ```
 
 完了条件:
 
 - feature 一覧に抜けがない。
 - 新しい `internal/features/*` は facade / registrar の入口だけで、実装本体を重複保持しない。
-- `cmd/picoclaw` の責務が composition root として説明できる。
+- `cmd/rencrow` の責務が composition root として説明できる。
 
 ## Phase 3: Viewer Chat contract の固定
 
@@ -313,7 +313,7 @@ GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw ./internal/adapter/viewer .
 - `modules/chat`
 - `internal/adapter/viewer/handler_send.go`
 - `internal/application/orchestrator`
-- `cmd/picoclaw` の Viewer send route
+- `cmd/rencrow` の Viewer send route
 - Viewer JS send payload
 
 作業:
@@ -327,7 +327,7 @@ GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw ./internal/adapter/viewer .
 検証:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./modules/chat ./internal/adapter/viewer ./internal/application/orchestrator ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-gocache go test ./modules/chat ./internal/adapter/viewer ./internal/application/orchestrator ./cmd/rencrow
 ```
 
 Viewer を触る場合は、最低 1 セッションで送信、応答、Timeline event、error 表示を確認する。
@@ -338,11 +338,11 @@ Viewer を触る場合は、最低 1 セッションで送信、応答、Timelin
 - `to=shiro` と `OPS` 実行 route が混同されない。
 - 対象 runtime 不可時に Mio へ黙って fallback しない。
 
-## Phase 4: `cmd/picoclaw` registrar 分割
+## Phase 4: `cmd/rencrow` registrar 分割
 
 目的:
 
-- `cmd/picoclaw/routes.go` と `runtime_dependencies.go` に集まった feature 配線を、feature registrar 呼び出しへ分ける。
+- `cmd/rencrow/routes.go` と `runtime_dependencies.go` に集まった feature 配線を、feature registrar 呼び出しへ分ける。
 
 作業順:
 
@@ -354,30 +354,30 @@ Viewer を触る場合は、最低 1 セッションで送信、応答、Timelin
 6. `knowledge` / `memory` / `source` を知識 feature group として分ける。
 7. `governance` / `sandbox` / `security` / `reports` / `superagent` / `aiworkflow` を運用 feature group として分ける。
 
-現ブランチの Ver0.80 seed では、Phase 4 の HTTP route registrar handoff は完了状態として扱う。`cmd/picoclaw` は feature group ごとの wrapper を残すが、実 route 登録は `internal/features/*/registrar.go` が所有する。`security` と `distributed` は直接 HTTP route を持たないため、README で所有境界を記録する。
+現ブランチの Ver0.80 seed では、Phase 4 の HTTP route registrar handoff は完了状態として扱う。`cmd/rencrow` は feature group ごとの wrapper を残すが、実 route 登録は `internal/features/*/registrar.go` が所有する。`security` と `distributed` は直接 HTTP route を持たないため、README で所有境界を記録する。
 
 ルール:
 
 - 1 作業単位 / 1 feature group にする。
-- `cmd/picoclaw` から削った policy を別の巨大 `manager` へ移さない。
+- `cmd/rencrow` から削った policy を別の巨大 `manager` へ移さない。
 - registrar は route 登録と dependency handoff だけを行う。
 
 検証:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw ./internal/features/... ./internal/adapter/viewer ./modules/...
+GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow ./internal/features/... ./internal/adapter/viewer ./modules/...
 ```
 
 広範囲に触れた場合:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./...
-GOCACHE=/tmp/picoclaw-gocache go vet ./...
+GOCACHE=/tmp/rencrow-gocache go test ./...
+GOCACHE=/tmp/rencrow-gocache go vet ./...
 ```
 
 完了条件:
 
-- `cmd/picoclaw` は feature registrar を呼ぶだけに近づく。
+- `cmd/rencrow` は feature registrar を呼ぶだけに近づく。
 - feature 固有 handler / store / policy の所在が README で追える。
 - route 登録漏れが module / feature test で検出される。
 
@@ -398,7 +398,7 @@ GOCACHE=/tmp/picoclaw-gocache go vet ./...
 検証:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/application/idlechat ./modules/chat ./modules/tts ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-gocache go test ./internal/application/idlechat ./modules/chat ./modules/tts ./cmd/rencrow
 ```
 
 Viewer / 音声を触る場合は、最低 1 セッションで timeline、raw/view/audio trigger、終了状態を確認する。
@@ -427,7 +427,7 @@ Viewer / 音声を触る場合は、最低 1 セッションで timeline、raw/v
 検証:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/application/heartbeat ./internal/application/scheduler ./internal/application/revenue ./cmd/picoclaw ./internal/adapter/viewer
+GOCACHE=/tmp/rencrow-gocache go test ./internal/application/heartbeat ./internal/application/scheduler ./internal/application/revenue ./cmd/rencrow ./internal/adapter/viewer
 ```
 
 完了条件:
@@ -453,7 +453,7 @@ GOCACHE=/tmp/picoclaw-gocache go test ./internal/application/heartbeat ./interna
 検証:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./modules/browseractor ./modules/webgather ./internal/application/webgather ./internal/application/sourcefetcher ./internal/application/knowledge ./internal/application/knowledgememory
+GOCACHE=/tmp/rencrow-gocache go test ./modules/browseractor ./modules/webgather ./internal/application/webgather ./internal/application/sourcefetcher ./internal/application/knowledge ./internal/application/knowledgememory
 ```
 
 完了条件:
@@ -479,7 +479,7 @@ GOCACHE=/tmp/picoclaw-gocache go test ./modules/browseractor ./modules/webgather
 検証:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./modules/stt ./modules/tts ./modules/voicechat ./cmd/picoclaw ./internal/infrastructure/stt ./internal/infrastructure/tts
+GOCACHE=/tmp/rencrow-gocache go test ./modules/stt ./modules/tts ./modules/voicechat ./cmd/rencrow ./internal/infrastructure/stt ./internal/infrastructure/tts
 ```
 
 ブラウザを触る場合は、mic capture、transcript final、TTS playback、ACK、lipsync trigger を分けて確認する。
@@ -515,8 +515,8 @@ GOCACHE=/tmp/picoclaw-gocache go test ./modules/stt ./modules/tts ./modules/voic
 検証:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./...
-GOCACHE=/tmp/picoclaw-gocache go vet ./...
+GOCACHE=/tmp/rencrow-gocache go test ./...
+GOCACHE=/tmp/rencrow-gocache go vet ./...
 ```
 
 Viewer / runtime が関係する場合は、対象 route の API response と最低 1 つの実フローを確認する。
@@ -531,7 +531,7 @@ Viewer / runtime が関係する場合は、対象 route の API response と最
 
 作業:
 
-1. `picoclaw_multiLLM` 現ブランチで Ver0.80 の構成変更、検証、commit、push を完了する。
+1. `RenCrow_CORE` 現ブランチで Ver0.80 の構成変更、検証、commit、push を完了する。
 2. `docs/02_正本仕様/05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md` とこの文書が HEAD と矛盾していないことを確認する。
 3. `modules/README.md`、`modules/CURRENT_MAP.md`、`internal/features/README.md` が現状の module / feature 一覧を説明していることを確認する。
 4. `docs/02_正本仕様/08_RenCrow_CORE_Ver0.80_Public_Repo起点化仕様.md` に従い、root `README.md`、公開範囲、license / attribution、未移行領域の説明を確認する。
@@ -556,8 +556,8 @@ Viewer / runtime が関係する場合は、対象 route の API response と最
 検証:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./modules/...
-GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw ./internal/features/... ./internal/adapter/viewer ./modules/...
+GOCACHE=/tmp/rencrow-gocache go test ./modules/...
+GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow ./internal/features/... ./internal/adapter/viewer ./modules/...
 git diff --check
 ```
 
@@ -570,7 +570,7 @@ git log -1 --oneline
 
 完了条件:
 
-- `picoclaw_multiLLM` の push 済み HEAD が `RenCrow_CORE` Ver0.80 の起点として説明できる。
+- `RenCrow_CORE` の push 済み HEAD が `RenCrow_CORE` Ver0.80 の起点として説明できる。
 - Feature Module Catalog にある既存機能が削除されていない。
 - 公開不能物が `RenCrow_CORE` に入らない。
 - `RenCrow_CORE` の初期 README から module tree、実装仕様、未移行領域、代表テストへ辿れる。
@@ -620,15 +620,15 @@ internal/features/<feature>/
 
 | 範囲 | コマンド |
 | --- | --- |
-| module contract | `GOCACHE=/tmp/picoclaw-gocache go test ./modules/...` |
-| composition root | `GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw` |
-| Viewer adapter | `GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/viewer` |
-| Chat / Orchestrator | `GOCACHE=/tmp/picoclaw-gocache go test ./modules/chat ./internal/application/orchestrator` |
-| IdleChat | `GOCACHE=/tmp/picoclaw-gocache go test ./internal/application/idlechat ./modules/chat ./modules/tts` |
-| Worker | `GOCACHE=/tmp/picoclaw-gocache go test ./modules/worker ./internal/application/service` |
-| Audio | `GOCACHE=/tmp/picoclaw-gocache go test ./modules/stt ./modules/tts ./modules/voicechat` |
-| 全体 | `GOCACHE=/tmp/picoclaw-gocache go test ./...` |
-| vet | `GOCACHE=/tmp/picoclaw-gocache go vet ./...` |
+| module contract | `GOCACHE=/tmp/rencrow-gocache go test ./modules/...` |
+| composition root | `GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow` |
+| Viewer adapter | `GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/viewer` |
+| Chat / Orchestrator | `GOCACHE=/tmp/rencrow-gocache go test ./modules/chat ./internal/application/orchestrator` |
+| IdleChat | `GOCACHE=/tmp/rencrow-gocache go test ./internal/application/idlechat ./modules/chat ./modules/tts` |
+| Worker | `GOCACHE=/tmp/rencrow-gocache go test ./modules/worker ./internal/application/service` |
+| Audio | `GOCACHE=/tmp/rencrow-gocache go test ./modules/stt ./modules/tts ./modules/voicechat` |
+| 全体 | `GOCACHE=/tmp/rencrow-gocache go test ./...` |
+| vet | `GOCACHE=/tmp/rencrow-gocache go vet ./...` |
 
 ## 完了報告に含めること
 

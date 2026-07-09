@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
-	skillbootstrap "github.com/Nyukimin/picoclaw_multiLLM/internal/application/skillgovernance"
-	domainbacklog "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/backlog"
-	domainrevenue "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/revenue"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	domainskill "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/skillgovernance"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
-	domainworkstream "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/workstream"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
+	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
 
 // mockWorkerAgent はテスト用のHeartbeat workerモック。

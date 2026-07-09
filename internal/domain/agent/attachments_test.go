@@ -3,8 +3,8 @@ package agent
 import (
 	"testing"
 
-	domainattachment "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/attachment"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 func TestUserMessageWithAttachmentsIncludesAudioPart(t *testing.T) {

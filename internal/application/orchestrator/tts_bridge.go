@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"context"
 
-	moduletts "github.com/Nyukimin/picoclaw_multiLLM/modules/tts"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 // TTSSessionStart describes one TTS streaming session metadata.

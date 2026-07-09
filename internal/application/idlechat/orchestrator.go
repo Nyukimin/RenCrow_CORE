@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	domainpersona "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/persona"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 )
 
 const (

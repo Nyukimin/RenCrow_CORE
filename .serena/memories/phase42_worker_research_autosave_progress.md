@@ -76,7 +76,7 @@ func (m *mockToolRunner) ExecuteV2(ctx, toolName, args) (*tool.ToolResponse, err
 ### 1. LegacyRunner 対応【最優先】
 **問題:** `tool.LegacyRunner` が `ExecuteV2` 未実装
 
-**エラー箇所:** `cmd/picoclaw/main.go`
+**エラー箇所:** `cmd/rencrow/main.go`
 ```
 cannot use chatToolRunner (type *tool.LegacyRunner) as agent.ToolRunner:
   missing method ExecuteV2
@@ -87,7 +87,7 @@ cannot use chatToolRunner (type *tool.LegacyRunner) as agent.ToolRunner:
 - または LegacyRunner を ToolRunner に置き換え
 
 ### 2. main.go DI統合
-**ファイル:** `cmd/picoclaw/main.go`
+**ファイル:** `cmd/rencrow/main.go`
 
 **必要な変更:**
 ```go
@@ -116,7 +116,7 @@ mioAgent := agent.NewMioAgent(...)
 ## ビルドエラー詳細
 
 ```bash
-# cmd/picoclaw/main.go
+# cmd/rencrow/main.go
 Line 323: cannot use chatToolRunner (*tool.LegacyRunner) as agent.ToolRunner
            missing method ExecuteV2
 Line 407: cannot use chatToolRunner as agent.ToolRunner in NewMioAgent
@@ -165,7 +165,7 @@ Line 408: cannot use workerToolRunner as agent.ToolRunner in NewShiroAgent
 
 ### 未変更（要対応）
 - `internal/infrastructure/tools/legacy_runner.go` ※要確認
-- `cmd/picoclaw/main.go`
+- `cmd/rencrow/main.go`
 
 ### 関連ドキュメント
 - `docs/KB運用ガイド.md` - Phase 4.1 で作成済み

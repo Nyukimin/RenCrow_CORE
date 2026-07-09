@@ -13,7 +13,7 @@ func (c *Config) setDefaults() {
 	}
 
 	if c.Ollama.Model == "" {
-		c.Ollama.Model = "picoclaw-v1"
+		c.Ollama.Model = "rencrow-v1"
 	}
 
 	if c.Claude.Model == "" {
@@ -232,7 +232,7 @@ func (c *Config) setDefaults() {
 		c.Conversation.RedisURL = "redis://localhost:6379"
 	}
 	if c.Conversation.DuckDBPath == "" {
-		c.Conversation.DuckDBPath = "/var/lib/picoclaw/memory.duckdb"
+		c.Conversation.DuckDBPath = "/var/lib/rencrow/memory.duckdb"
 	}
 	if c.Conversation.VectorDBURL == "" {
 		c.Conversation.VectorDBURL = "localhost:6334"
@@ -1020,7 +1020,7 @@ func defaultRenCrowToolsPath(parts ...string) string {
 func DefaultOperationMemoryDir() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil || homeDir == "" {
-		return filepath.Join(".picoclaw", "rencrow", "memory")
+		return filepath.Join(".rencrow", "memory")
 	}
-	return filepath.Join(homeDir, ".picoclaw", "rencrow", "memory")
+	return filepath.Join(homeDir, ".rencrow", "memory")
 }

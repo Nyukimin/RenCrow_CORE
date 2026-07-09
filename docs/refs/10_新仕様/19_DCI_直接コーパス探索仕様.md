@@ -833,7 +833,7 @@ internal/domain/dci/
 internal/infrastructure/persistence/conversation/
   l1_sqlite_dci.go
 
-cmd/picoclaw/
+cmd/rencrow/
   runtime_dci.go
 
 configs or config schema:

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 func makeDetectorTestThread(domain string, turnsAgo time.Duration, messages ...string) *domconv.Thread {

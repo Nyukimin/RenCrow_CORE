@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 // コンパイル時インターフェース適合チェック

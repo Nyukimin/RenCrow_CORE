@@ -7,7 +7,7 @@ source:
   - docs/10_新仕様/05_Viewer仕様.md
   - docs/10_新仕様/02_モジュール構成仕様.md
 related:
-  - docs/wiki/modules/picoclaw-multillm.md
+  - docs/wiki/modules/rencrow-multillm.md
   - docs/wiki/modules/rencrow-cmd.md
 updated: 2026-06-25
 ---
@@ -37,4 +37,4 @@ Viewer は静的 UI ではなく、HTTP API、SSE event、event log、history、
 
 Viewer API では、表示本文、SSE event、event log、history、audio trigger、lipsync trigger、runtime config を混同しない。
 
-RenCrow_CMD は Viewer の CLI 版として、picoclaw_multiLLM サーバを起動し、この Viewer API と同じ口へ command を送る。
+RenCrow_CMD は Viewer の CLI 版として、RenCrow_CORE サーバを起動し、この Viewer API と同じ口へ command を送る。

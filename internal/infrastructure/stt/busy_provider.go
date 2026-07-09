@@ -3,7 +3,7 @@ package stt
 import (
 	"context"
 
-	modulestt "github.com/Nyukimin/picoclaw_multiLLM/modules/stt"
+	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
 type busyPolicyProvider struct {

@@ -85,7 +85,7 @@
 
 ### 4. ルーティング設定
 
-#### ファイル: `cmd/picoclaw/routes.go`
+#### ファイル: `cmd/rencrow/routes.go`
 
 追加エンドポイント:
 ```go

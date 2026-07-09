@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 )
 
 // DuckDBToolRegistryStore is unavailable on platforms where the DuckDB driver does not build.

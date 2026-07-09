@@ -54,7 +54,7 @@
 | 観点 | LightMemory | ConversationEngine |
 |---|---|---|
 | 生成 | `agent.NewLightMemory(maxTurns)` | `conversationpersistence.NewRealConversationEngine(manager, persona)` |
-| 配線 | `cmd/picoclaw/runtime_agents.go` で Shiro、`cmd/picoclaw/runtime_coders.go` と `cmd/picoclaw-agent/*` で Coder に注入 | `cmd/picoclaw/runtime_conversation.go` で構築し、Mio / Shiro / Heavy / Wild に注入 |
+| 配線 | `cmd/rencrow/runtime_agents.go` で Shiro、`cmd/rencrow/runtime_coders.go` と `cmd/rencrow-agent/*` で Coder に注入 | `cmd/rencrow/runtime_conversation.go` で構築し、Mio / Shiro / Heavy / Wild に注入 |
 | セッション単位 | `sessionID` key の map | `sessionID` に紐づく active thread / RecallPack / store |
 | 日次・明示 reset | `ClearAll()` はあるが、現状の検索範囲では runtime 配線からの定期呼び出しは見つからない | `/new` などから `ResetSession`、`/compact` などから `FlushCurrentThread` が使われる |
 | role | role filter なし。llm.Message の role は user / assistant 固定 | `FilterForRole("chat"|"worker"|"wild"|"heavy"|...)` あり |
@@ -90,21 +90,21 @@
   - Proposal 抽出と self-check 成功後に `LightMemory.Record(...)` する。
 - `CoderAgent.GenerateWithPrompt`
   - `GenerateProposal` と同様に直近履歴を追加し、応答後に `Record` する。
-- `cmd/picoclaw/runtime_coders.go`
+- `cmd/rencrow/runtime_coders.go`
   - Coder1〜4 で共有する `globalLightMemory` を使う。
   - 最初の LightMemory 有効 Coder で初期化し、以後の Coder に同じ instance を渡す。
-- `cmd/picoclaw-agent/handler_coder.go`
+- `cmd/rencrow-agent/handler_coder.go`
   - SSH / remote Coder 経路では handler の `globalMemory` を再利用する。
-- `cmd/picoclaw-agent/runtime_init.go`
+- `cmd/rencrow-agent/runtime_init.go`
   - standalone agent 初期化時は agent ごとに `NewLightMemory` する。
 
 ### 3.2 事実: ConversationEngine 呼び出し
 
-- `cmd/picoclaw/runtime_conversation.go`
+- `cmd/rencrow/runtime_conversation.go`
   - `cfg.Conversation.Enabled` のとき `RealConversationManager` と `RealConversationEngine` を構築する。
   - L1 SQLite path があれば `L1SQLiteStore` を接続し、engine に recall trace store として渡す。
   - embedder、summarizer、thread boundary detector、profile extractor を条件付きで接続する。
-- `cmd/picoclaw/runtime_agents.go`
+- `cmd/rencrow/runtime_agents.go`
   - Mio には `NewMioAgent(..., convEngine)` で注入する。
   - convEngine が nil でなければ Shiro / Heavy / Wild にも注入する。
 - `MioAgent.Chat`

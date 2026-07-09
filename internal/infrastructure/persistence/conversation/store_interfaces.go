@@ -2,13 +2,13 @@ package conversation
 
 import (
 	"context"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/duckdb"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
-	redisstore "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/redis"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/vectordb"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/duckdb"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	redisstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/redis"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 // redisStoreIface はRedisStoreのインターフェース（テスト用モック差し替え可能）

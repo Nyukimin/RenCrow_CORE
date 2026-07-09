@@ -520,10 +520,10 @@ Agent間の通信は**SSH経由**で行われます。
 **実装イメージ**:
 ```bash
 # Worker（CPU2）への接続
-ssh user@worker-host "picoclaw-agent worker"
+ssh user@worker-host "rencrow-agent worker"
 
 # Gin（CPU3）への接続
-ssh user@coder-host "picoclaw-agent coder --type=gin"
+ssh user@coder-host "rencrow-agent coder --type=gin"
 ```
 
 ---

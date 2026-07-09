@@ -3,7 +3,7 @@ generated_at: "2026-07-01T13:19:25+09:00"
 run_id: run_20260701_131925
 phase: 2
 step: "10"
-profile: picoclaw_multiLLM
+profile: RenCrow_CORE
 artifact: module
 module_group_id: infrastructure_persistence
 ---
@@ -41,7 +41,7 @@ module_group_id: infrastructure_persistence
 
 ### モジュール間の関係
 
-- **依存元**: `cmd/picoclaw/runtime_*.go` -> infrastructure constructors。起動時にstore/provider/runnerを具象化する。
+- **依存元**: `cmd/rencrow/runtime_*.go` -> infrastructure constructors。起動時にstore/provider/runnerを具象化する。
 - **依存先**: infrastructure -> external HTTP/DB/filesystem/process。失敗やtimeoutはこの層で扱うべき。
 - **依存元**: application services -> store interfaces。具象DBを直接知らない。
 - **依存先**: `internal/infrastructure/tools` -> security policy/sandbox guard。Worker/Coder実行の防波堤。
@@ -59,7 +59,7 @@ module_group_id: infrastructure_persistence
 ### 落とし穴・注意点
 
 - `persistence/conversation`はファイル数が多く、memory、Source Registry、Wiki、Recall Trace、web gather cacheが同居する。対象機能のDB table/namespaceを絞って読む。
-- JSONL storeとSQLite storeが同じdomainを別実装していることがある。runtime configがどちらを使うかを`cmd/picoclaw/runtime_*.go`で確認する。
+- JSONL storeとSQLite storeが同じdomainを別実装していることがある。runtime configがどちらを使うかを`cmd/rencrow/runtime_*.go`で確認する。
 - `tools/`は新規横断toolの正本ではない。AGENTS上、新規の横断再利用toolは`RenCrow_Tools`が正本。
 - 外部検索・web gatherは「発見」と「証拠」の境界を守る必要がある。Source Registryやcandidate intakeは人間確認前提。
 

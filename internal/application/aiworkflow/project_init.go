@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	domainai "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/aiworkflow"
+	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 )
 
 type ProjectInitStore interface {
@@ -191,7 +191,7 @@ func buildCommandDoc(root, kind string) string {
 	var commands []string
 	if fileExists(filepath.Join(root, "go.mod")) {
 		if kind == "test" {
-			commands = append(commands, "`GOCACHE=/tmp/picoclaw-gocache go test ./...`")
+			commands = append(commands, "`GOCACHE=/tmp/rencrow-gocache go test ./...`")
 		} else {
 			commands = append(commands, "`go build ./...`")
 		}

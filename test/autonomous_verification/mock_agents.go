@@ -5,10 +5,10 @@ package autonomousverification
 import (
 	"context"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/agent"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/proposal"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // ========================================

@@ -76,10 +76,10 @@ require_cmd tailscale
 require_cmd curl
 require_cmd python3
 
-if systemctl status picoclaw-funnel.service --no-pager >/dev/null 2>&1; then
-  if systemctl is-active --quiet picoclaw-funnel.service; then
-    log "blocked: picoclaw-funnel.service is active. Disable it before Serve verification:"
-    log "sudo systemctl disable --now picoclaw-funnel.service"
+if systemctl status rencrow-funnel.service --no-pager >/dev/null 2>&1; then
+  if systemctl is-active --quiet rencrow-funnel.service; then
+    log "blocked: rencrow-funnel.service is active. Disable it before Serve verification:"
+    log "sudo systemctl disable --now rencrow-funnel.service"
     exit 2
   fi
 fi

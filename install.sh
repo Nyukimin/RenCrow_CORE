@@ -2,11 +2,11 @@
 set -e
 
 # RenCrow インストールスクリプト
-# 使い方: curl -fsSL https://raw.githubusercontent.com/Nyukimin/picoclaw_multiLLM/main/install.sh | bash
+# 使い方: curl -fsSL https://raw.githubusercontent.com/Nyukimin/RenCrow_CORE/main/install.sh | bash
 # または: ./install.sh
 
-PICOCLAW_HOME="$HOME/.picoclaw"
-PICOCLAW_BIN="$HOME/.local/bin"
+RENCROW_HOME="$HOME/.rencrow"
+RENCROW_BIN="$HOME/.local/bin"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 
 echo "=========================================="
@@ -108,35 +108,35 @@ echo ""
 # ビルド
 echo "[2/7] RenCrow のビルド..."
 cd "$(dirname "$0")"
-go build -o picoclaw ./cmd/picoclaw
+go build -o rencrow ./cmd/rencrow
 echo "  ✓ ビルド完了（サーバーモード）"
 
 # ディレクトリ作成
 echo "[3/7] ディレクトリの作成..."
-mkdir -p "$PICOCLAW_HOME"/{logs,data/sessions}
-mkdir -p "$PICOCLAW_BIN"
+mkdir -p "$RENCROW_HOME"/{logs,data/sessions}
+mkdir -p "$RENCROW_BIN"
 mkdir -p "$SYSTEMD_USER_DIR"
-echo "  ✓ $PICOCLAW_HOME"
-echo "  ✓ $PICOCLAW_BIN"
+echo "  ✓ $RENCROW_HOME"
+echo "  ✓ $RENCROW_BIN"
 echo "  ✓ $SYSTEMD_USER_DIR"
 
 # バイナリコピー
 echo "[4/7] バイナリのインストール..."
-cp picoclaw "$PICOCLAW_BIN/picoclaw"
-chmod +x "$PICOCLAW_BIN/picoclaw"
-echo "  ✓ picoclaw → $PICOCLAW_BIN/picoclaw"
+cp rencrow "$RENCROW_BIN/rencrow"
+chmod +x "$RENCROW_BIN/rencrow"
+echo "  ✓ rencrow → $RENCROW_BIN/rencrow"
 
 # 設定ファイル生成
 echo "[5/7] 設定ファイルの生成..."
-if [ ! -f "$PICOCLAW_HOME/config.yaml" ]; then
-    cp config.yaml.example "$PICOCLAW_HOME/config.yaml"
+if [ ! -f "$RENCROW_HOME/config.yaml" ]; then
+    cp config.yaml.example "$RENCROW_HOME/config.yaml"
 
     # パスを置換
-    sed -i "s|./data/sessions|$PICOCLAW_HOME/data/sessions|g" "$PICOCLAW_HOME/config.yaml"
-    sed -i "s|./workspace|$PICOCLAW_HOME/workspace|g" "$PICOCLAW_HOME/config.yaml"
-    sed -i "s|./memory.duckdb|$PICOCLAW_HOME/memory.duckdb|g" "$PICOCLAW_HOME/config.yaml"
+    sed -i "s|./data/sessions|$RENCROW_HOME/data/sessions|g" "$RENCROW_HOME/config.yaml"
+    sed -i "s|./workspace|$RENCROW_HOME/workspace|g" "$RENCROW_HOME/config.yaml"
+    sed -i "s|./memory.duckdb|$RENCROW_HOME/memory.duckdb|g" "$RENCROW_HOME/config.yaml"
 
-    echo "  ✓ $PICOCLAW_HOME/config.yaml"
+    echo "  ✓ $RENCROW_HOME/config.yaml"
 else
     echo "  ⚠️  config.yaml は既に存在します（スキップ）"
 fi
@@ -160,7 +160,7 @@ echo -n "OpenAI API キー (Coder2用、空欄でスキップ): "
 read -r openai_key
 
 # .env 生成
-cat > "$PICOCLAW_HOME/.env" <<EOF
+cat > "$RENCROW_HOME/.env" <<EOF
 # RenCrow 環境変数
 # 生成日時: $(date)
 
@@ -174,9 +174,9 @@ DEEPSEEK_API_KEY="${deepseek_key}"
 OPENAI_API_KEY="${openai_key}"
 EOF
 
-chmod 600 "$PICOCLAW_HOME/.env"
+chmod 600 "$RENCROW_HOME/.env"
 echo ""
-echo "  ✓ $PICOCLAW_HOME/.env (chmod 600)"
+echo "  ✓ $RENCROW_HOME/.env (chmod 600)"
 
 # API キー設定状況
 if [ -n "$anthropic_key" ]; then
@@ -197,8 +197,8 @@ echo ""
 # systemd サービスファイル生成
 echo "[6/7] systemd サービスの設定..."
 
-# picoclaw.service
-cat > "$SYSTEMD_USER_DIR/picoclaw.service" <<EOF
+# rencrow.service
+cat > "$SYSTEMD_USER_DIR/rencrow.service" <<EOF
 [Unit]
 Description=RenCrow - Ultra-Lightweight AI Assistant
 After=network-online.target
@@ -206,25 +206,25 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=$HOME/picoclaw_multiLLM
-ExecStart=$PICOCLAW_BIN/picoclaw
-EnvironmentFile=$PICOCLAW_HOME/.env
-Environment="PICOCLAW_CONFIG=$PICOCLAW_HOME/config.yaml"
+WorkingDirectory=$HOME/RenCrow_CORE
+ExecStart=$RENCROW_BIN/rencrow
+EnvironmentFile=$RENCROW_HOME/.env
+Environment="RENCROW_CONFIG=$RENCROW_HOME/config.yaml"
 Restart=always
 RestartSec=5
-StandardOutput=append:$PICOCLAW_HOME/logs/picoclaw.log
-StandardError=append:$PICOCLAW_HOME/logs/picoclaw.log
+StandardOutput=append:$RENCROW_HOME/logs/rencrow.log
+StandardError=append:$RENCROW_HOME/logs/rencrow.log
 
 [Install]
 WantedBy=default.target
 EOF
 
-echo "  ✓ $SYSTEMD_USER_DIR/picoclaw.service"
+echo "  ✓ $SYSTEMD_USER_DIR/rencrow.service"
 
 # systemd reload & enable
 systemctl --user daemon-reload
-systemctl --user enable picoclaw
-echo "  ✓ systemctl --user enable picoclaw"
+systemctl --user enable rencrow
+echo "  ✓ systemctl --user enable rencrow"
 
 echo ""
 
@@ -258,18 +258,18 @@ echo "✓ インストール完了！"
 echo "=========================================="
 echo ""
 echo "起動方法:"
-echo "  systemctl --user start picoclaw"
+echo "  systemctl --user start rencrow"
 echo ""
 echo "停止方法:"
-echo "  systemctl --user stop picoclaw"
+echo "  systemctl --user stop rencrow"
 echo ""
 echo "ログ確認:"
-echo "  tail -f $PICOCLAW_HOME/logs/picoclaw.log"
-echo "  journalctl --user -u picoclaw -f"
+echo "  tail -f $RENCROW_HOME/logs/rencrow.log"
+echo "  journalctl --user -u rencrow -f"
 echo ""
 echo "設定ファイル:"
-echo "  $PICOCLAW_HOME/config.yaml"
-echo "  $PICOCLAW_HOME/.env"
+echo "  $RENCROW_HOME/config.yaml"
+echo "  $RENCROW_HOME/.env"
 echo ""
 echo "LINE webhook URL（Tailscale Funnel使用時）:"
 echo "  https://\$(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//')/webhook"
@@ -277,5 +277,5 @@ echo ""
 echo "次のステップ:"
 echo "  1. Tailscale認証（未実施の場合）: tailscale up"
 echo "  2. LINE Messaging API設定（webhook URLを登録）"
-echo "  3. RenCrow起動: systemctl --user start picoclaw"
+echo "  3. RenCrow起動: systemctl --user start rencrow"
 echo ""

@@ -28,9 +28,9 @@
 
 - `BrowserActorConfig`
 - config defaults / validation
-- `cmd/picoclaw/cli_browser_actor.go`
-- `picoclaw browser-actor run`
-- `picoclaw browser-actor doctor`
+- `cmd/rencrow/cli_browser_actor.go`
+- `rencrow browser-actor run`
+- `rencrow browser-actor doctor`
 - `internal/infrastructure/browseractor`
 - `internal/infrastructure/tools/runner_browser_actor.go`
 - `ToolRunnerConfig.BrowserActorRunner`
@@ -78,7 +78,7 @@ browser.run
   ↓
 internal/infrastructure/browseractor.Runner
   ↓
-picoclaw browser-actor run
+rencrow browser-actor run
   ↓
 RenCrow_Tools/tools/browser_actor/run_browser_actor.mjs
   ↓
@@ -118,7 +118,7 @@ internal/infrastructure/tools/
   runner_browser_actor.go
   runner_browser_actor_test.go
 
-cmd/picoclaw/
+cmd/rencrow/
   cli_browser_actor.go
   cli_browser_actor_test.go
 ```
@@ -137,8 +137,8 @@ node /home/nyukimi/RenCrow/RenCrow_Tools/tools/browser_actor/run_browser_actor.m
 Phase 2 の Go CLI はこれを包む。
 
 ```bash
-picoclaw browser-actor run --json < request.json
-picoclaw browser-actor doctor --json
+rencrow browser-actor run --json < request.json
+rencrow browser-actor doctor --json
 ```
 
 ### 5.2 request
@@ -616,13 +616,13 @@ func (r *Runner) Doctor(ctx context.Context) (browseractor.DoctorResponse, error
 type CommandRunner func(ctx context.Context, command string, args []string, stdin []byte) (stdout []byte, stderr []byte, exitCode int, err error)
 ```
 
-### 12.4 cmd/picoclaw CLI
+### 12.4 cmd/rencrow CLI
 
-`cmd/picoclaw/main.go` に command を追加する。
+`cmd/rencrow/main.go` に command を追加する。
 
 ```text
-picoclaw browser-actor run --json < request.json
-picoclaw browser-actor doctor --json
+rencrow browser-actor run --json < request.json
+rencrow browser-actor doctor --json
 ```
 
 CLI 実処理は test 可能にする。
@@ -752,10 +752,10 @@ test cases:
 commands:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./modules/browseractor
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/infrastructure/browseractor
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/infrastructure/tools
-GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-gocache go test ./modules/browseractor
+GOCACHE=/tmp/rencrow-gocache go test ./internal/infrastructure/browseractor
+GOCACHE=/tmp/rencrow-gocache go test ./internal/infrastructure/tools
+GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow
 ```
 
 test cases:
@@ -774,7 +774,7 @@ test cases:
 local Viewer:
 
 ```bash
-picoclaw browser-actor run --json < tmp/browser_actor_viewer_ops.json
+rencrow browser-actor run --json < tmp/browser_actor_viewer_ops.json
 ```
 
 requirements:
@@ -791,7 +791,7 @@ requirements:
 2. Add Node fixture tests.
 3. Add config type/default/validation.
 4. Add Go infrastructure runner.
-5. Add `picoclaw browser-actor` CLI.
+5. Add `rencrow browser-actor` CLI.
 6. Add ToolRunner V2 `browser.run`.
 7. Add PolicyEngine support.
 8. Add profile storage support.
@@ -815,8 +815,8 @@ Phase 1:
 Phase 2:
 
 - [ ] config defaults and validation pass
-- [ ] `picoclaw browser-actor doctor --json` works
-- [ ] `picoclaw browser-actor run --json` calls sidecar
+- [ ] `rencrow browser-actor doctor --json` works
+- [ ] `rencrow browser-actor run --json` calls sidecar
 - [ ] `browser.run` appears in ToolRunner metadata
 - [ ] `browser.run` returns structured `ToolResponse`
 - [ ] PolicyRunner can deny disallowed network
@@ -838,7 +838,7 @@ Phase 4:
 
 - Phase 2 で `browser.snapshot` を独立 tool として公開するか、`browser.run` に閉じるか。
 - `POST` をすべて止めると local app E2E が弱くなるため、Phase 2 で `allowed_methods` を導入するか。
-- profile storage root を `workspace/browser_profiles` のままにするか、runtime state として `~/.picoclaw/browser_profiles` に置くか。
+- profile storage root を `workspace/browser_profiles` のままにするか、runtime state として `~/.rencrow/browser_profiles` に置くか。
 - Viewer の human approval UI を Browser Actor 固有にするか、既存 Sandbox / Promotion Gate に寄せるか。
 
 Phase 1 の実装では、これらの未決事項を避ける。`browser.run` の最小 read-only / draft_input 実行を完成させてから決める。

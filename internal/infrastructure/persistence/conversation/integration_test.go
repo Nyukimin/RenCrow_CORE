@@ -4,19 +4,19 @@ package conversation
 
 import (
 	"context"
-	redisstore "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/redis"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/vectordb"
+	redisstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/redis"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
 	"net/http"
 	"testing"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 const (
 	testRedisURL    = "redis://localhost:6379"
 	testVectorDBURL = "localhost:6334"
-	testCollection  = "picoclaw_integration_test"
+	testCollection  = "rencrow_integration_test"
 )
 
 // skipIfUnavailable は接続確認し、未起動なら t.Skip()

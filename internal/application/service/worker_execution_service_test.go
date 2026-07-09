@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/proposal"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func TestWorkerShellCommand_PrefersBashLoginShell(t *testing.T) {
@@ -194,14 +194,14 @@ func TestExecuteProposal_BlocksSelfServiceRestartBeforeAnyCommandRuns(t *testing
 	markerPath := filepath.Join(tmpDir, "ran.txt")
 	patchJSON := `[
 		{"type":"shell_command","action":"run","target":"echo should-not-run > ` + markerPath + `"},
-		{"type":"shell_command","action":"run","target":"systemctl --user restart picoclaw.service"}
+		{"type":"shell_command","action":"run","target":"systemctl --user restart rencrow.service"}
 	]`
 
 	_, err := service.ExecuteProposal(context.Background(), task.NewJobID(), proposal.NewProposal("blocked", patchJSON, "", ""))
 	if err == nil {
 		t.Fatal("expected self lifecycle command to require approval")
 	}
-	if !strings.Contains(err.Error(), "approval required") || !strings.Contains(err.Error(), "picoclaw.service lifecycle change") {
+	if !strings.Contains(err.Error(), "approval required") || !strings.Contains(err.Error(), "rencrow.service lifecycle change") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, statErr := os.Stat(markerPath); !os.IsNotExist(statErr) {
@@ -217,7 +217,7 @@ func TestExecuteProposal_BlocksSelfInstallCommands(t *testing.T) {
 	service := NewWorkerExecutionService(cfg)
 	patchJSON := `[
 		{"type":"shell_command","action":"run","target":"make install"},
-		{"type":"shell_command","action":"run","target":"cp build/picoclaw-linux-amd64 ~/.local/bin/picoclaw"}
+		{"type":"shell_command","action":"run","target":"cp build/rencrow-linux-amd64 ~/.local/bin/rencrow"}
 	]`
 
 	_, err := service.ExecuteProposal(context.Background(), task.NewJobID(), proposal.NewProposal("blocked", patchJSON, "", ""))

@@ -122,16 +122,16 @@ Extractor は取得結果から本文と metadata を抽出する。
 最初の常用インターフェースは CLI とする。
 
 ```bash
-picoclaw web-gather url https://example.com/article \
+rencrow web-gather url https://example.com/article \
   --namespace kb:web \
   --source-id web:example:article
 
-picoclaw web-gather search "local LLM queue timeout" \
+rencrow web-gather search "local LLM queue timeout" \
   --provider searxng \
   --limit 5 \
   --namespace kb:research
 
-picoclaw web-gather run-source source_id
+rencrow web-gather run-source source_id
 ```
 
 CLI は取得結果を直接 memory / knowledge へ promote しない。出力は pending staging とし、既存の validator / promote を通す。
@@ -335,7 +335,7 @@ Viewer は収集結果を正式 memory として表示してはいけない。pe
 | `internal/infrastructure/webgather` | HTTP / Colly / SearXNG / YaCy / readability 実装 |
 | `RenCrow_Tools/tools/webwright_fetch` | JS fallback。既存ツールを再利用 |
 | `internal/application/sourcefetcher` | staging / validate / promote の既存境界 |
-| `cmd/picoclaw` | CLI / runtime wiring |
+| `cmd/rencrow` | CLI / runtime wiring |
 | `internal/adapter/viewer` | 診断表示 |
 
 Go 本体の第一実装は `http` + `go_readability` + staging writer とする。SearXNG / YaCy / Webwright は provider として後から追加できる形にする。
@@ -344,7 +344,7 @@ Go 本体の第一実装は `http` + `go_readability` + staging writer とする
 
 ### Phase 1: URL fetch 常用化
 
-- `picoclaw web-gather url <url>`
+- `rencrow web-gather url <url>`
 - Go HTTP fetch
 - go-readability 抽出
 - Source Registry pending staging JSON 生成
@@ -384,8 +384,8 @@ Go 本体の第一実装は `http` + `go_readability` + staging writer とする
 local test:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./modules/webgather ./internal/application/webgather ./internal/infrastructure/webgather
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/application/sourcefetcher ./internal/infrastructure/persistence/conversation
+GOCACHE=/tmp/rencrow-gocache go test ./modules/webgather ./internal/application/webgather ./internal/infrastructure/webgather
+GOCACHE=/tmp/rencrow-gocache go test ./internal/application/sourcefetcher ./internal/infrastructure/persistence/conversation
 ```
 
 fixture:
@@ -402,8 +402,8 @@ fixture:
 live 確認:
 
 ```bash
-picoclaw web-gather url https://example.com --namespace kb:web
-picoclaw web-gather search "RenCrow local LLM queue timeout" --provider searxng --limit 3
+rencrow web-gather url https://example.com --namespace kb:web
+rencrow web-gather search "RenCrow local LLM queue timeout" --provider searxng --limit 3
 curl -fsS 'http://127.0.0.1:18790/viewer/source-registry?action=staging&status=pending'
 ```
 

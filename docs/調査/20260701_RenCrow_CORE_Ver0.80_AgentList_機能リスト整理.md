@@ -1,7 +1,7 @@
 # RenCrow_CORE Ver0.80 AgentList・機能リスト整理
 
 作成日: 2026-07-01
-対象: `picoclaw_multiLLM` / RenCrow_CORE Ver0.80 構築判断
+対象: `RenCrow_CORE` / RenCrow_CORE Ver0.80 構築判断
 目的: AgentList と機能リストを、人格 Agent、補助ロール、機能単位へ分けて整理する。
 
 ## 位置づけ
@@ -33,7 +33,7 @@
 | Subagent / ResearchAgent 系 | 分担実行 | 調査や部分作業の分担単位。人格 Agent ではない。 |
 | Heartbeat Worker | 定期実行 | Backlog / Workstream / Revenue などの定期処理を起動する。 |
 | BrowserActor | ブラウザ操作 | Web 操作・ブラウザ実行系の tool agent。 |
-| Distributed remote agent / `picoclaw-agent` | 分散実行 | remote worker / coder 実行単位。 |
+| Distributed remote agent / `rencrow-agent` | 分散実行 | remote worker / coder 実行単位。 |
 | ChatWorker provider role | provider alias | Shiro / Worker 系の短文応答や IdleChat 向け alias。 |
 | ToolHarness / DCI 実行ロール | tool mediation | tool contract、直接コーパス探索、実行境界を扱う。 |
 
@@ -66,7 +66,7 @@ Ver0.80 では、UI タブ名や Go package 名をそのまま機能境界にし
 | Knowledge | Knowledge import / wiki index / vocabulary / glossary | 記憶・知識検索とは別に、知識資産管理として扱う。 |
 | Reports | Evidence / verification / reports | QA evidence、実行結果、検証結果を集約する。 |
 | Ops | Health / doctor / status / LLM Ops / local LLM runtime | 運用確認と LLM 起動・切替管理をまとめる。 |
-| Distributed | Distributed execution / transport / remote worker | `picoclaw-agent` と transport を分散実行機能として扱う。 |
+| Distributed | Distributed execution / transport / remote worker | `rencrow-agent` と transport を分散実行機能として扱う。 |
 | Security | Security / sandbox / capability registry | 実行可否、権限、promotion gate を扱う。 |
 | Registry | Module registry / capability registry | Ver0.80 の機能境界の登録・参照点にする。 |
 | Governance | Skill governance / package validation | Agent skill と package の安全性・整合性を扱う。 |

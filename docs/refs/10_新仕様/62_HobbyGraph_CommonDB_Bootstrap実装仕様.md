@@ -36,7 +36,7 @@ Movie Graph は映画.com catalog 専用 table を持つが、映画以外の趣
 
 解決順:
 
-1. env `PICOCLAW_HOBBY_GRAPH_DB`
+1. env `RENCROW_HOBBY_GRAPH_DB`
 2. `HobbyGraphOptions.DBPath`
 3. `tmp/hobby_graph/hobby_graph.sqlite`
 
@@ -122,7 +122,7 @@ DB が存在しない場合:
 
 変更ファイル:
 
-- `cmd/picoclaw/routes.go`
+- `cmd/rencrow/routes.go`
 
 追加関数:
 
@@ -144,7 +144,7 @@ func hobbyGraphStats(db *sql.DB) (map[string]int, error)
 ## 9. 検証コマンド
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer ./cmd/rencrow
 git diff --check
 ```
 

@@ -8,10 +8,10 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/tool"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/toolharness"
-	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/toolharness"
+	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
 )
 
 var validToolName = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)

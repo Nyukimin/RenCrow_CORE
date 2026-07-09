@@ -1,14 +1,14 @@
 package factory
 
 import (
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/claude"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/deepseek"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/gemini"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/ollama"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/openai"
-	modulellm "github.com/Nyukimin/picoclaw_multiLLM/modules/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/claude"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/deepseek"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/gemini"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 )
 
 // CreateProvider は CoderConfig から適切な LLMProvider を生成する。

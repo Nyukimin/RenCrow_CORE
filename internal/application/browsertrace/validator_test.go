@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	domaintrace "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/browsertrace"
+	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
 )
 
 func TestValidateAPICandidatesRequiresReviewForTermsPIIAndAuth(t *testing.T) {

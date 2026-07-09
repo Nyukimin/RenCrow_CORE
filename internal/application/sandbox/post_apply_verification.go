@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	domainsandbox "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/sandbox"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/tool"
+	domainsandbox "github.com/Nyukimin/RenCrow_CORE/internal/domain/sandbox"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
 type PostApplyToolRunner interface {

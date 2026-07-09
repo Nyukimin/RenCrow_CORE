@@ -6,10 +6,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/service"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/proposal"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func main() {

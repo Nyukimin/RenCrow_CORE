@@ -7,10 +7,10 @@
 
 ## 概要
 
-PicoClaw の Coder3 に Chrome 操作機能を追加するため、Win11 マシンに MCP Chrome ブリッジをセットアップします。
+RenCrow の Coder3 に Chrome 操作機能を追加するため、Win11 マシンに MCP Chrome ブリッジをセットアップします。
 
 ```
-PicoClaw (Linux) → HTTP → Win11 (mcp-chrome-bridge) → Chrome 拡張機能 → Chrome
+RenCrow (Linux) → HTTP → Win11 (mcp-chrome-bridge) → Chrome 拡張機能 → Chrome
 ```
 
 ---
@@ -72,7 +72,7 @@ Invoke-WebRequest -Uri http://localhost:12306/mcp -Method POST -ContentType "app
 
 ```bash
 # 接続テストスクリプトを実行
-cd /home/nyukimi/picoclaw_multiLLM
+cd /home/nyukimi/RenCrow_CORE
 ./scripts/test_mcp_connection.sh
 ```
 
@@ -182,7 +182,7 @@ mcp-chrome-bridge fix-permissions
 
 ## 次のステップ
 
-セットアップが完了したら、PicoClaw 側の統合を完了させます：
+セットアップが完了したら、RenCrow 側の統合を完了させます：
 
 1. **Phase 5-C2**: Coder3 のシステムプロンプトに MCP ツールを追加
 2. **Phase 5-C4**: Worker による Chrome 操作実行

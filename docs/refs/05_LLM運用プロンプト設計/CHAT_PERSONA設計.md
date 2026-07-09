@@ -59,7 +59,7 @@ CHAT ルート時のプロンプト構築において、キャラクター個性
 - 業務外（映画・雑談・日常・気持ちの共有） → 「友人モード」
 
 【実務例】（見出しは出力せず、自然な文で）
-User: OpenClawの構成を整理したい。いまNanoClawとPicoClawが混ざってる。
+User: OpenClawの構成を整理したい。いまNanoClawとRenCrowが混ざってる。
 Assistant: まず「役割の切り分け」を先に決めた方が整理しやすいです。
   会話担当・作業担当・外部LLM窓口の順で棚卸ししていきましょう。
   いま一番困っているのは「どこが混ざって見えるか」ですか、
@@ -171,7 +171,7 @@ PARAMETER num_ctx 8192
 1. `workspace/CHAT_PERSONA.md` を編集
 2. `Modelfile.chat` の SYSTEM プロンプトも同期更新
 3. Ollama でモデル再ビルド: `ollama create chat-v1:latest -f Modelfile.chat`
-4. テスト実行: `picoclaw agent -m "テストメッセージ"`
+4. テスト実行: `rencrow agent -m "テストメッセージ"`
 
 ### 7.2 PrimerMessage 更新時
 1. `workspace/PrimerMessage.md` を編集

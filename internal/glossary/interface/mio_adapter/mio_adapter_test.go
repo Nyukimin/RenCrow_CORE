@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/glossary/application/service"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/glossary/infrastructure/persistence"
+	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/infrastructure/persistence"
 )
 
 func TestMioGlossaryAdapterContextAndTopics(t *testing.T) {

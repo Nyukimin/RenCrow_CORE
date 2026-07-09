@@ -2,13 +2,13 @@ package knowledgememory
 
 import (
 	"context"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"path/filepath"
 	"testing"
 	"time"
 
-	kmapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/knowledgememory"
-	domainkm "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/knowledgememory"
+	kmapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
+	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
 )
 
 type fakeL1KnowledgeMemoryStore struct {

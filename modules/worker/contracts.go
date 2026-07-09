@@ -5,8 +5,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/core"
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/llm"
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
+	"github.com/Nyukimin/RenCrow_CORE/modules/llm"
 )
 
 type JobID string

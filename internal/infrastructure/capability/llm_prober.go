@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 )
 
 const probeTimeout = 5 * time.Second

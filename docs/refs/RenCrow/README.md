@@ -45,7 +45,7 @@ RenCrow のアイデア一覧、未実装一覧は Backlog タブで扱う。
 
 ## 初期検索対象
 
-- `picoclaw_multiLLM/docs/`
+- `RenCrow_CORE/docs/`
 - `RenCrow_CMD/docs/`
 - `RenCrow_STT/docs/`
 - `RenCrow_TTS/docs/`

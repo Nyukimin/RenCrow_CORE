@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 type traceAwareConversationEngine struct {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/tool"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
 // v2Wrap は V1 ToolFunc を V2 ToolFuncV2 に変換する

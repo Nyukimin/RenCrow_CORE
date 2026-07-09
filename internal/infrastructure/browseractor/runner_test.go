@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	modulebrowser "github.com/Nyukimin/picoclaw_multiLLM/modules/browseractor"
+	modulebrowser "github.com/Nyukimin/RenCrow_CORE/modules/browseractor"
 )
 
 func TestRunnerRunPassesJSONToSidecar(t *testing.T) {

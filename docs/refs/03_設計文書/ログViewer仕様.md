@@ -8,7 +8,7 @@
 - `internal/adapter/viewer/hub.go`
 - `internal/adapter/viewer/evidence_handler.go`
 - `internal/adapter/viewer/audio_router_sse.go`
-- `cmd/picoclaw/main.go`
+- `cmd/rencrow/main.go`
 
 ---
 

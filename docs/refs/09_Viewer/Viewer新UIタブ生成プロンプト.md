@@ -307,7 +307,7 @@ RenCrow Viewer 本体へ組み込む場合:
 
 ```bash
 node --check internal/adapter/viewer/assets/js/viewer.js
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/viewer
+GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/viewer
 git diff --check
 ```
 

@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	adapterchannels "github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/channels"
-	appattachment "github.com/Nyukimin/picoclaw_multiLLM/internal/application/attachment"
-	channelapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/channel"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
-	domainattachment "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/attachment"
+	adapterchannels "github.com/Nyukimin/RenCrow_CORE/internal/adapter/channels"
+	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
+	channelapp "github.com/Nyukimin/RenCrow_CORE/internal/application/channel"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 )
 
 type AttachmentSaver interface {

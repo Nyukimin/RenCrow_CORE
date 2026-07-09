@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/core"
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestCurrentGenerationPolicyDoesNotExecuteGeneration(t *testing.T) {

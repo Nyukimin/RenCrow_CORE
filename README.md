@@ -1,22 +1,22 @@
 # RenCrow_CORE Ver0.80
 
-RenCrow_CORE is the public-ready core runtime for RenCrow, staged from `picoclaw_multiLLM` as the Ver0.80 seed.
+RenCrow_CORE is the public-ready core runtime for RenCrow, staged from `RenCrow_CORE` as the Ver0.80 seed.
 
-Ver0.80 focuses on preserving existing behavior while making module and feature ownership explicit. It is not a feature-removal branch. Existing implementations that are not yet moved remain as `legacy-body` under `internal/domain`, `internal/application`, `internal/infrastructure`, `internal/adapter`, or `cmd/picoclaw` until their feature contracts and registrars are ready.
+Ver0.80 focuses on preserving existing behavior while making module and feature ownership explicit. It is not a feature-removal branch. Existing implementations that are not yet moved remain as `legacy-body` under `internal/domain`, `internal/application`, `internal/infrastructure`, `internal/adapter`, or `cmd/rencrow` until their feature contracts and registrars are ready.
 
 ## Goals
 
 - Keep existing Chat, Worker, Coder, Viewer, Voice, Ops, Web, Knowledge, Memory, Governance, Distributed, and Channel behavior intact.
 - Define stable `modules/*` contracts for reusable DTOs, events, pure policy, and state ownership.
 - Define `internal/features/*` registrar/facade boundaries for feature-group route registration and dependency handoff.
-- Keep `cmd/picoclaw` as the process composition root: config load, dependency assembly, feature registrar calls, and server startup.
+- Keep `cmd/rencrow` as the process composition root: config load, dependency assembly, feature registrar calls, and server startup.
 - Prepare this pushed HEAD as the initial source for the new Public repository `RenCrow_CORE`.
 
 ## Architecture Tree
 
 ```text
 RenCrow_CORE Ver0.80
-├── cmd/picoclaw                 # process composition root
+├── cmd/rencrow                 # process composition root
 │   ├── main.go
 │   ├── routes.go                # legacy route grouping retained during migration
 │   └── feature_registrars.go    # calls feature-group registrars
@@ -113,20 +113,20 @@ Viewer normal chat uses `to=mio|shiro|kuro|midori` as the recipient / character 
 
 ## Build and Test
 
-The Ver0.80 seed intentionally keeps the legacy Go module path `github.com/Nyukimin/picoclaw_multiLLM`. Renaming the Go module path to `RenCrow_CORE` is a later compatibility migration, not part of the initial Public seed.
+The Ver0.80 seed intentionally keeps the legacy Go module path `github.com/Nyukimin/RenCrow_CORE`. Renaming the Go module path to `RenCrow_CORE` is a later compatibility migration, not part of the initial Public seed.
 
 Public CI runs the module contract tests and the representative composition / feature / Viewer adapter test set. Full `go test ./...` remains a local broader check because some e2e packages can require runtime services or local fixtures.
 
 ```bash
 # Module contracts
-GOCACHE=/tmp/picoclaw-gocache go test ./modules/...
+GOCACHE=/tmp/rencrow-gocache go test ./modules/...
 
 # Composition root, feature registrars, Viewer adapter, module contracts
-GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw ./internal/features/... ./internal/adapter/viewer ./modules/...
+GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow ./internal/features/... ./internal/adapter/viewer ./modules/...
 
 # Full repository
-GOCACHE=/tmp/picoclaw-gocache go test ./...
-GOCACHE=/tmp/picoclaw-gocache go vet ./...
+GOCACHE=/tmp/rencrow-gocache go test ./...
+GOCACHE=/tmp/rencrow-gocache go vet ./...
 
 # Build / install local runtime
 make build
@@ -135,19 +135,19 @@ make install
 
 ## Run
 
-The local service is normally installed as `~/.local/bin/picoclaw` and run through the user service `picoclaw.service`.
+The local service is normally installed as `~/.local/bin/rencrow` and run through the user service `rencrow.service`.
 
 ```bash
 make install
-systemctl --user start picoclaw.service
+systemctl --user start rencrow.service
 curl http://127.0.0.1:18790/health
 ```
 
 Before restarting an existing local runtime, stop it cleanly:
 
 ```bash
-systemctl --user stop picoclaw.service
-pgrep -a picoclaw || true
+systemctl --user stop rencrow.service
+pgrep -a rencrow || true
 ss -ltnp | rg ':18790' || true
 curl -fsS -m 2 http://127.0.0.1:18790/health || true
 ```
@@ -173,4 +173,4 @@ Canonical Ver0.80 docs:
 
 RenCrow_CORE is distributed under the MIT License. See `LICENSE`.
 
-PicoClaw / RenCrow work is heavily inspired by and based on `nanobot` by HKUDS. The existing attribution is retained in `LICENSE`.
+RenCrow / RenCrow work is heavily inspired by and based on `nanobot` by HKUDS. The existing attribution is retained in `LICENSE`.

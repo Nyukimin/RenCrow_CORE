@@ -1,5 +1,5 @@
 # RenCrow_CORE Ver0.80 public export exclusions
-# This file is for preparing a new Public repository seed from picoclaw_multiLLM.
+# This file is for preparing a new Public repository seed from RenCrow_CORE.
 # It is not a source deletion list. Existing features must remain in the staging repo unless explicitly removed by the owner.
 
 # Machine-local config and secrets
@@ -16,7 +16,7 @@ config/config.yaml
 # Runtime state, local DB, logs, sessions
 logs/
 sessions/
-.picoclaw/
+.rencrow/
 *.db
 *.sqlite
 *.sqlite.gz
@@ -28,8 +28,8 @@ sessions/
 build/
 dist/
 bin/
-picoclaw
-picoclaw-agent
+rencrow
+rencrow-agent
 kb-admin
 go1.25.0.linux-amd64.tar.gz
 baseline_*.patch

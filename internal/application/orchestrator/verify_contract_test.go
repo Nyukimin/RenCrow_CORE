@@ -3,9 +3,9 @@ package orchestrator
 import (
 	"testing"
 
-	autonomousapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/autonomous"
-	domaincontract "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/contract"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
+	autonomousapp "github.com/Nyukimin/RenCrow_CORE/internal/application/autonomous"
+	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
 
 // --- looksLikeNonExecutable ---

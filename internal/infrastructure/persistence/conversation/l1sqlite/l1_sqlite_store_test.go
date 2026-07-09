@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 func TestL1SQLiteStore_SaveMessageAndRecentByNamespace(t *testing.T) {

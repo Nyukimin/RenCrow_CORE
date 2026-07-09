@@ -1,6 +1,6 @@
 ---
 description: IdleChat topic speech text must preserve topics; only Story may generate a catchy title
-globs: internal/application/idlechat/**/*.go,cmd/picoclaw/*idlechat*.go,internal/adapter/viewer/*idlechat*,prompts/idle_chat/*.md,docs/01_正本仕様/08_IdleChat.md,docs/10_新仕様/06_IdleChat仕様.md
+globs: internal/application/idlechat/**/*.go,cmd/rencrow/*idlechat*.go,internal/adapter/viewer/*idlechat*,prompts/idle_chat/*.md,docs/01_正本仕様/08_IdleChat.md,docs/10_新仕様/06_IdleChat仕様.md
 alwaysApply: false
 ---
 

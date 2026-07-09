@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/proposal"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func (w *workerExecutionService) parseProposalCommands(p *proposal.Proposal) ([]patch.PatchCommand, error) {

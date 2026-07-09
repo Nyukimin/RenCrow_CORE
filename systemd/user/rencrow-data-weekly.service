@@ -5,11 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-Environment=PICOCLAW_REPO_DIR=@PICOCLAW_REPO_DIR@
-ExecStart=/usr/bin/env bash -lc 'exec "%h/.local/share/picoclaw/scripts/rencrow_data_scheduler.sh" weekly'
+Environment=RENCROW_REPO_DIR=@RENCROW_REPO_DIR@
+ExecStart=/usr/bin/env bash -lc 'exec "%h/.local/share/rencrow/scripts/rencrow_data_scheduler.sh" weekly'
 WorkingDirectory=%h
-StandardOutput=append:%h/.picoclaw/logs/rencrow-data-weekly.log
-StandardError=append:%h/.picoclaw/logs/rencrow-data-weekly.log
+StandardOutput=append:%h/.rencrow/logs/rencrow-data-weekly.log
+StandardError=append:%h/.rencrow/logs/rencrow-data-weekly.log
 
 [Install]
 WantedBy=default.target

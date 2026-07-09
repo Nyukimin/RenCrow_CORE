@@ -18,4 +18,4 @@ updated: 2026-06-25
 - Wiki page frontmatter の必須 field を定義した。
 - 初期概念 page と module page を追加した。
 - L1 SQLite index と RecallPack 連携の実装対象を仕様化した。
-- `picoclaw knowledge index-wiki` による SQL index 更新導線を追加した。
+- `rencrow knowledge index-wiki` による SQL index 更新導線を追加した。

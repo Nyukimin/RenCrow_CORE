@@ -1,7 +1,7 @@
 # MessageOrchestrator分割リファクタリング - TDD実装計画
 
 **作成日**: 2026-03-26
-**対象**: RenCrow (picoclaw_multiLLM)
+**対象**: RenCrow (RenCrow_CORE)
 **目的**: MessageOrchestratorを段階的にリファクタリングし、CodeExecutorとStreamingOrchestratorを分離
 
 ---
@@ -38,15 +38,15 @@
 
 **目的**: CodeExecutorの責務とインターフェースを定義
 
-**ファイル**: `/home/nyukimi/picoclaw_multiLLM/internal/application/orchestrator/code_executor.go`
+**ファイル**: `/home/nyukimi/RenCrow_CORE/internal/application/orchestrator/code_executor.go`
 
 ```go
 package orchestrator
 
 import (
 	"context"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // CodeExecutor はコード生成タスクの実行を担当
@@ -79,7 +79,7 @@ type codeTarget struct {
 }
 ```
 
-**テストファイル**: `/home/nyukimi/picoclaw_multiLLM/internal/application/orchestrator/code_executor_test.go`
+**テストファイル**: `/home/nyukimi/RenCrow_CORE/internal/application/orchestrator/code_executor_test.go`
 
 ```go
 package orchestrator
@@ -87,8 +87,8 @@ package orchestrator
 import (
 	"context"
 	"testing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func TestCodeExecutor_ExecuteCode_CODE1_Success(t *testing.T) {
@@ -202,7 +202,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
 **目的**: テストを通す最小限の実装
 
-**実装**: `/home/nyukimi/picoclaw_multiLLM/internal/application/orchestrator/code_executor_impl.go`
+**実装**: `/home/nyukimi/RenCrow_CORE/internal/application/orchestrator/code_executor_impl.go`
 
 ```go
 package orchestrator
@@ -211,9 +211,9 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/service"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/agent"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
 
 // DefaultCodeExecutor はCodeExecutorのデフォルト実装
@@ -406,7 +406,7 @@ func (e *DefaultCodeExecutor) emit(typ, from, to, message, route, jobID, session
 }
 ```
 
-**ヘルパー関数の移動**: `/home/nyukimi/picoclaw_multiLLM/internal/application/orchestrator/code_helpers.go`
+**ヘルパー関数の移動**: `/home/nyukimi/RenCrow_CORE/internal/application/orchestrator/code_helpers.go`
 
 ```go
 package orchestrator
@@ -414,9 +414,9 @@ package orchestrator
 import (
 	"fmt"
 	"strings"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/proposal"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
 
 // explicitCodeRouteTarget はCODE1/CODE2/CODE3ルートに対応するCoderを返す
@@ -531,7 +531,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
 **目的**: MessageOrchestratorからCodeExecutorに委譲
 
-**変更**: `/home/nyukimi/picoclaw_multiLLM/internal/application/orchestrator/message_orchestrator.go`
+**変更**: `/home/nyukimi/RenCrow_CORE/internal/application/orchestrator/message_orchestrator.go`
 
 ```go
 // MessageOrchestrator struct に追加
@@ -647,7 +647,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
 **目的**: 重複コードの削除、ドキュメント更新
 
-**削除対象**: `/home/nyukimi/picoclaw_multiLLM/internal/application/orchestrator/message_orchestrator.go`
+**削除対象**: `/home/nyukimi/RenCrow_CORE/internal/application/orchestrator/message_orchestrator.go`
 
 ```go
 // 以下のメソッドを削除（CodeExecutorに移動済み）
@@ -804,16 +804,16 @@ type Orchestrator interface {
 ### 5.2 チャネルアダプターへの影響
 
 **影響ゼロ**: 以下のアダプターは変更不要
-- `/home/nyukimi/picoclaw_multiLLM/internal/adapter/channels/slack/adapter.go`
-- `/home/nyukimi/picoclaw_multiLLM/internal/adapter/channels/discord/adapter.go`
-- `/home/nyukimi/picoclaw_multiLLM/internal/adapter/channels/telegram/adapter.go`
-- `/home/nyukimi/picoclaw_multiLLM/internal/adapter/line/handler.go`
+- `/home/nyukimi/RenCrow_CORE/internal/adapter/channels/slack/adapter.go`
+- `/home/nyukimi/RenCrow_CORE/internal/adapter/channels/discord/adapter.go`
+- `/home/nyukimi/RenCrow_CORE/internal/adapter/channels/telegram/adapter.go`
+- `/home/nyukimi/RenCrow_CORE/internal/adapter/line/handler.go`
 
 ### 5.3 エントリーポイントへの影響
 
 **影響ゼロ**: 以下のエントリーポイントは変更不要
-- `/home/nyukimi/picoclaw_multiLLM/cmd/picoclaw/main.go`
-- `/home/nyukimi/picoclaw_multiLLM/cmd/test-chat/main.go`
+- `/home/nyukimi/RenCrow_CORE/cmd/rencrow/main.go`
+- `/home/nyukimi/RenCrow_CORE/cmd/test-chat/main.go`
 
 ---
 
@@ -965,19 +965,19 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 ### 10.1 関連ファイル
 
 **実装対象**:
-- `/home/nyukimi/picoclaw_multiLLM/internal/application/orchestrator/message_orchestrator.go` (838行)
-- `/home/nyukimi/picoclaw_multiLLM/internal/application/orchestrator/coder_status.go` (41行)
+- `/home/nyukimi/RenCrow_CORE/internal/application/orchestrator/message_orchestrator.go` (838行)
+- `/home/nyukimi/RenCrow_CORE/internal/application/orchestrator/coder_status.go` (41行)
 
 **テスト**:
-- `/home/nyukimi/picoclaw_multiLLM/internal/application/orchestrator/message_orchestrator_test.go` (789行)
-- `/home/nyukimi/picoclaw_multiLLM/internal/application/orchestrator/message_orchestrator_code3_test.go` (338行)
-- `/home/nyukimi/picoclaw_multiLLM/internal/application/orchestrator/message_orchestrator_code_path_test.go` (94行)
+- `/home/nyukimi/RenCrow_CORE/internal/application/orchestrator/message_orchestrator_test.go` (789行)
+- `/home/nyukimi/RenCrow_CORE/internal/application/orchestrator/message_orchestrator_code3_test.go` (338行)
+- `/home/nyukimi/RenCrow_CORE/internal/application/orchestrator/message_orchestrator_code_path_test.go` (94行)
 
 **依存アダプター**:
-- `/home/nyukimi/picoclaw_multiLLM/internal/adapter/channels/slack/adapter.go`
-- `/home/nyukimi/picoclaw_multiLLM/internal/adapter/channels/discord/adapter.go`
-- `/home/nyukimi/picoclaw_multiLLM/internal/adapter/channels/telegram/adapter.go`
-- `/home/nyukimi/picoclaw_multiLLM/internal/adapter/line/handler.go`
+- `/home/nyukimi/RenCrow_CORE/internal/adapter/channels/slack/adapter.go`
+- `/home/nyukimi/RenCrow_CORE/internal/adapter/channels/discord/adapter.go`
+- `/home/nyukimi/RenCrow_CORE/internal/adapter/channels/telegram/adapter.go`
+- `/home/nyukimi/RenCrow_CORE/internal/adapter/line/handler.go`
 
 ### 10.2 関連ドキュメント
 

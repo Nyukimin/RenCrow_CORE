@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	appattachment "github.com/Nyukimin/picoclaw_multiLLM/internal/application/attachment"
-	domainattachment "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/attachment"
+	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
+	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 )
 
 func TestHandleSendAttachmentE2EAcceptsImageAndText(t *testing.T) {

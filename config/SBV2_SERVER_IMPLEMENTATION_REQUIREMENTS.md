@@ -1,11 +1,11 @@
 # SBV2 サーバ実装要件（テスト連携用）
 
-このドキュメントは、PicoClaw 側から SBV2 サーバを利用するための契約を整理したものです。  
+このドキュメントは、RenCrow 側から SBV2 サーバを利用するための契約を整理したものです。  
 サーバ側の実装担当へ、そのまま共有できます。
 
-## 1. 前提（PicoClaw 側の利用モード）
+## 1. 前提（RenCrow 側の利用モード）
 
-PicoClaw では SBV2 を次の 2 経路で利用します。
+RenCrow では SBV2 を次の 2 経路で利用します。
 
 1. **Autonomous 直呼び出し（HTTP /synthesis）**
    - `tts.sbv2.base_url` を POST 先として直接呼ぶ
@@ -47,7 +47,7 @@ PicoClaw では SBV2 を次の 2 経路で利用します。
 }
 ```
 
-- `audio_path` は必須（空だと PicoClaw 側で失敗）
+- `audio_path` は必須（空だと RenCrow 側で失敗）
 - `duration_ms` は任意（0/省略可）
 - `voice_id` は任意（省略時はリクエスト値を継承）
 - HTTP ステータスは **2xx**
@@ -56,7 +56,7 @@ PicoClaw では SBV2 を次の 2 経路で利用します。
 
 - 絶対パス: そのまま利用
 - 相対パス（例: `cache\\oneshot-xxx.wav`）:  
-  PicoClaw 側で `tts.audio_path_root` と結合して解決
+  RenCrow 側で `tts.audio_path_root` と結合して解決
 - Windows 区切り（`\`）は `/` に正規化されても問題なし
 
 ---
@@ -84,7 +84,7 @@ PicoClaw では SBV2 を次の 2 経路で利用します。
 `{tts.ws_url}`  
 例: `ws://<host>:8765/sessions`
 
-#### PicoClaw -> サーバ（送信）
+#### RenCrow -> サーバ（送信）
 
 1. `session_start`
 ```json
@@ -134,7 +134,7 @@ PicoClaw では SBV2 を次の 2 経路で利用します。
 }
 ```
 
-#### サーバ -> PicoClaw（受信）
+#### サーバ -> RenCrow（受信）
 
 1. `audio_chunk_ready`（0回以上）
 ```json
@@ -197,7 +197,7 @@ PicoClaw では SBV2 を次の 2 経路で利用します。
 
 ---
 
-## 4. タイムアウト要件（PicoClaw 側）
+## 4. タイムアウト要件（RenCrow 側）
 
 - Connect timeout: `tts.connect_timeout_ms`（既定 3000ms）
 - Receive timeout: `tts.receive_timeout_ms`（既定 15000ms）
@@ -215,11 +215,11 @@ PicoClaw では SBV2 を次の 2 経路で利用します。
 3. `/synthesis` が `audio_path` を返す
 4. WS で `session_start` -> `text_delta` -> `session_end` を受け、`audio_chunk_ready` -> `session_completed` を返す
 5. 異常時に `type=error` を返す
-6. 相対 `audio_path` を返した場合でも、PicoClaw 側で再生可能な実ファイルを参照できる
+6. 相対 `audio_path` を返した場合でも、RenCrow 側で再生可能な実ファイルを参照できる
 
 ---
 
-## 6. PicoClaw 設定で揃える項目
+## 6. RenCrow 設定で揃える項目
 
 - `tts.enabled`
 - `tts.http_base_url`

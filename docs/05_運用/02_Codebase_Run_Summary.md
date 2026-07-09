@@ -6,7 +6,7 @@
 
 **実行 ID**: run_20260619_refs
 **実行日時**: 2026-06-19 (JST)
-**対象プロジェクト**: PicoClaw (picoclaw_multiLLM)
+**対象プロジェクト**: RenCrow (RenCrow_CORE)
 **解析モード**: `--refs docs/` （仕様文書 ↔ 実装 トレーサビリティ解析）
 **解析対象 docs 数**: 約 80 ファイル
 
@@ -51,14 +51,14 @@
 
 **実行 ID**: run_20260619_000000
 **実行日時**: 2026-06-19 (JST)
-**対象プロジェクト**: PicoClaw (picoclaw_multiLLM)
+**対象プロジェクト**: RenCrow (RenCrow_CORE)
 **解析フェーズ**: Phase 1-3 全フェーズ再解析
 **プロファイル**: codebase-analysis-profile.yaml
 
 ### 新規発見事項サマリー
 
 **最重要 Critical**:
-- `cmd/picoclaw/main.go` が ~40 の `internal/` パッケージを import しているが、**全パッケージ未実装**（ビルド不能状態）
+- `cmd/rencrow/main.go` が ~40 の `internal/` パッケージを import しているが、**全パッケージ未実装**（ビルド不能状態）
 - `pkg/agent/factory.go` の `resolveProvider()` が常に `nil` を返す（新アーキ有効時に nil panic）
 - `pkg/modules/order/approval.go` の `pendingProposals` マップに mutex 保護なし（data race）
 - `pkg/modules/worker/execution.go` の `response.Usage` nil チェック欠如
@@ -84,7 +84,7 @@
 
 **実行 ID**: run_20260228_170007
 **実行日時**: 2026-02-28 17:00 - 2026-02-28 20:30 (JST)
-**対象プロジェクト**: PicoClaw (picoclaw_multiLLM)
+**対象プロジェクト**: RenCrow (RenCrow_CORE)
 **解析フェーズ**: Phase 1（トップダウン）+ Phase 2（ボトムアップ）
 **プロファイル**: codebase-analysis-profile.yaml
 
@@ -101,7 +101,7 @@
 
 ### 実行パラメータ
 
-- **対象ディレクトリ**: /home/nyukimi/picoclaw_multiLLM
+- **対象ディレクトリ**: /home/nyukimi/RenCrow_CORE
 - **解析モジュール数**: 7 モジュール（core, agent, approval, llm_provider, session, mcp, infra）
 - **外部資料**: docs/ ディレクトリ（60+ ファイル、37 ファイルをマッピング）
 - **既存調査**: 監査差分分析 3 ファイル、実装ガイド進捗レポート 5 ファイル
@@ -352,7 +352,7 @@
 
 ## まとめ
 
-本解析実行（run_20260228_170007）では、PicoClaw プロジェクトの全 7 モジュールを Phase 1（トップダウン）と Phase 2（ボトムアップ）で解析し、以下の成果を達成しました:
+本解析実行（run_20260228_170007）では、RenCrow プロジェクトの全 7 モジュールを Phase 1（トップダウン）と Phase 2（ボトムアップ）で解析し、以下の成果を達成しました:
 
 - ✅ **完全な地図型ドキュメント生成**: 役割・関係性・構造マップ・落とし穴を網羅
 - ✅ **実装コードとの突合せ**: 7,000+ 行を検証し、Phase 1 ドキュメントの正確性を向上
@@ -360,7 +360,7 @@
 - ✅ **異常リスト生成**: 17 項目の潜在バグ・技術的負債を優先度順に整理
 - ✅ **次のアクション明確化**: 短期・中期・長期の改善ロードマップを提示
 
-**本解析は、PicoClaw プロジェクトの現状を正確に把握し、今後の開発・保守・改善のための強固な基盤を提供します。**
+**本解析は、RenCrow プロジェクトの現状を正確に把握し、今後の開発・保守・改善のための強固な基盤を提供します。**
 
 ---
 

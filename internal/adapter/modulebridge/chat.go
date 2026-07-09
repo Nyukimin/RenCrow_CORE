@@ -3,12 +3,12 @@ package modulebridge
 import (
 	"context"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/core"
-	modulellm "github.com/Nyukimin/picoclaw_multiLLM/modules/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
+	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 )
 
 type RouteDecisionProvider interface {

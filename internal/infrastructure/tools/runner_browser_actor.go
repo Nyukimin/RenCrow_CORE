@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/tool"
-	modulebrowser "github.com/Nyukimin/picoclaw_multiLLM/modules/browseractor"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulebrowser "github.com/Nyukimin/RenCrow_CORE/modules/browseractor"
 )
 
 type BrowserActorRunner interface {

@@ -7,8 +7,8 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 )
 
 // coderProbeTarget は API プロバイダー1件の疎通確認情報

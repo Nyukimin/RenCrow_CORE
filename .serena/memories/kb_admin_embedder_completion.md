@@ -13,12 +13,12 @@
 ### 実装詳細
 1. **Import追加** (line 15)
    ```go
-   "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/ollama"
+   "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/ollama"
    ```
 
 2. **initManager関数の改修** (lines 168-177)
    - 従来: TODOコメントのみで警告ログ出力
-   - 改善: cmd/picoclaw/main.go のパターンに準拠した実装
+   - 改善: cmd/rencrow/main.go のパターンに準拠した実装
    ```go
    // Embedder 注入（embed_model が設定されている場合）
    if cfg.Conversation.EmbedModel != "" {
@@ -46,7 +46,7 @@
 - 本番環境と同じ設定パターンを使用（運用統一）
 
 ## 関連実装
-- **参照元**: `cmd/picoclaw/main.go` (lines 351-356) の Embedder 初期化パターン
+- **参照元**: `cmd/rencrow/main.go` (lines 351-356) の Embedder 初期化パターン
 - **依存**: `internal/infrastructure/llm/ollama.OllamaEmbedder`
 - **注入先**: `RealConversationManager.WithEmbedder()`
 

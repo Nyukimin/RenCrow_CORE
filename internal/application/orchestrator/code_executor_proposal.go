@@ -6,12 +6,12 @@ import (
 	"log"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/service"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/agent"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/proposal"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	domainskill "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/skillgovernance"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 )
 
 func shouldUseProposalPath(route routing.Route, target codeTarget) bool {

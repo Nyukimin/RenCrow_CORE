@@ -1,5 +1,5 @@
 {
-  "projectRoot": "/home/nyukimi/RenCrow/picoclaw_multiLLM",
+  "projectRoot": "/home/nyukimi/RenCrow/RenCrow_CORE",
   "batchFiles": [
     {
       "path": ".aidesigner/.gitkeep",
@@ -152,589 +152,589 @@
       "fileCategory": "docs"
     },
     {
-      "path": "cmd/picoclaw-agent/audio_router.go",
+      "path": "cmd/rencrow-agent/audio_router.go",
       "language": "go",
       "sizeLines": 112,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw-agent/handler_coder.go",
+      "path": "cmd/rencrow-agent/handler_coder.go",
       "language": "go",
       "sizeLines": 125,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw-agent/handler_worker.go",
+      "path": "cmd/rencrow-agent/handler_worker.go",
       "language": "go",
       "sizeLines": 93,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw-agent/main.go",
+      "path": "cmd/rencrow-agent/main.go",
       "language": "go",
       "sizeLines": 110,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw-agent/message_loop.go",
+      "path": "cmd/rencrow-agent/message_loop.go",
       "language": "go",
       "sizeLines": 62,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw-agent/runtime_init.go",
+      "path": "cmd/rencrow-agent/runtime_init.go",
       "language": "go",
       "sizeLines": 140,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw-agent/runtime_provider.go",
+      "path": "cmd/rencrow-agent/runtime_provider.go",
       "language": "go",
       "sizeLines": 93,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/autonomous_entry.go",
+      "path": "cmd/rencrow/autonomous_entry.go",
       "language": "go",
       "sizeLines": 305,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/cli_browser_actor.go",
+      "path": "cmd/rencrow/cli_browser_actor.go",
       "language": "go",
       "sizeLines": 153,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/cli_channels.go",
+      "path": "cmd/rencrow/cli_channels.go",
       "language": "go",
       "sizeLines": 170,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/cli_chat.go",
+      "path": "cmd/rencrow/cli_chat.go",
       "language": "go",
       "sizeLines": 559,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/cli_evidence.go",
+      "path": "cmd/rencrow/cli_evidence.go",
       "language": "go",
       "sizeLines": 250,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/cli_gateway_ollama.go",
+      "path": "cmd/rencrow/cli_gateway_ollama.go",
       "language": "go",
       "sizeLines": 316,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/cli_jobs.go",
+      "path": "cmd/rencrow/cli_jobs.go",
       "language": "go",
       "sizeLines": 324,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/cli_knowledge.go",
+      "path": "cmd/rencrow/cli_knowledge.go",
       "language": "go",
       "sizeLines": 73,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/cli_logs.go",
+      "path": "cmd/rencrow/cli_logs.go",
       "language": "go",
       "sizeLines": 141,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/cli_operations.go",
+      "path": "cmd/rencrow/cli_operations.go",
       "language": "go",
       "sizeLines": 61,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/cli_source_registry.go",
+      "path": "cmd/rencrow/cli_source_registry.go",
       "language": "go",
       "sizeLines": 314,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/cli_web_gather.go",
+      "path": "cmd/rencrow/cli_web_gather.go",
       "language": "go",
       "sizeLines": 1126,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/health_commands.go",
+      "path": "cmd/rencrow/health_commands.go",
       "language": "go",
       "sizeLines": 298,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/health_runtime.go",
+      "path": "cmd/rencrow/health_runtime.go",
       "language": "go",
       "sizeLines": 150,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/idlechat_tts_pending.go",
+      "path": "cmd/rencrow/idlechat_tts_pending.go",
       "language": "go",
       "sizeLines": 49,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/idlechat_tts_prefetch.go",
+      "path": "cmd/rencrow/idlechat_tts_prefetch.go",
       "language": "go",
       "sizeLines": 348,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/idlechat_tts_queue.go",
+      "path": "cmd/rencrow/idlechat_tts_queue.go",
       "language": "go",
       "sizeLines": 87,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/idlechat_tts_text.go",
+      "path": "cmd/rencrow/idlechat_tts_text.go",
       "language": "go",
       "sizeLines": 27,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/idlechat_tts_timeout.go",
+      "path": "cmd/rencrow/idlechat_tts_timeout.go",
       "language": "go",
       "sizeLines": 30,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/idlechat_tts_voice.go",
+      "path": "cmd/rencrow/idlechat_tts_voice.go",
       "language": "go",
       "sizeLines": 19,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/idlechat_tts.go",
+      "path": "cmd/rencrow/idlechat_tts.go",
       "language": "go",
       "sizeLines": 131,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/idlechat_viewer_clients.go",
+      "path": "cmd/rencrow/idlechat_viewer_clients.go",
       "language": "go",
       "sizeLines": 28,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/live2d_chat_responder.go",
+      "path": "cmd/rencrow/live2d_chat_responder.go",
       "language": "go",
       "sizeLines": 44,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/llm_alias_provider.go",
+      "path": "cmd/rencrow/llm_alias_provider.go",
       "language": "go",
       "sizeLines": 27,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/llm_busy_tracker.go",
+      "path": "cmd/rencrow/llm_busy_tracker.go",
       "language": "go",
       "sizeLines": 154,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/llm_conversation_runtime.go",
+      "path": "cmd/rencrow/llm_conversation_runtime.go",
       "language": "go",
       "sizeLines": 55,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/llm_local_alias.go",
+      "path": "cmd/rencrow/llm_local_alias.go",
       "language": "go",
       "sizeLines": 87,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/llm_runtime_factory.go",
+      "path": "cmd/rencrow/llm_runtime_factory.go",
       "language": "go",
       "sizeLines": 118,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/llm_runtime_warmup.go",
+      "path": "cmd/rencrow/llm_runtime_warmup.go",
       "language": "go",
       "sizeLines": 28,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/main.go",
+      "path": "cmd/rencrow/main.go",
       "language": "go",
       "sizeLines": 247,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/module_chat_route.go",
+      "path": "cmd/rencrow/module_chat_route.go",
       "language": "go",
       "sizeLines": 33,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/module_health.go",
+      "path": "cmd/rencrow/module_health.go",
       "language": "go",
       "sizeLines": 63,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/module_llm_diagnostics.go",
+      "path": "cmd/rencrow/module_llm_diagnostics.go",
       "language": "go",
       "sizeLines": 22,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/module_llm_health.go",
+      "path": "cmd/rencrow/module_llm_health.go",
       "language": "go",
       "sizeLines": 62,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/module_manifest.go",
+      "path": "cmd/rencrow/module_manifest.go",
       "language": "go",
       "sizeLines": 21,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/module_routes.go",
+      "path": "cmd/rencrow/module_routes.go",
       "language": "go",
       "sizeLines": 47,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/module_stt_diagnostics.go",
+      "path": "cmd/rencrow/module_stt_diagnostics.go",
       "language": "go",
       "sizeLines": 23,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/module_stt_viewer_input.go",
+      "path": "cmd/rencrow/module_stt_viewer_input.go",
       "language": "go",
       "sizeLines": 51,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/module_tts_diagnostics.go",
+      "path": "cmd/rencrow/module_tts_diagnostics.go",
       "language": "go",
       "sizeLines": 23,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/module_tts_playback_state.go",
+      "path": "cmd/rencrow/module_tts_playback_state.go",
       "language": "go",
       "sizeLines": 45,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/module_worker_diagnostics.go",
+      "path": "cmd/rencrow/module_worker_diagnostics.go",
       "language": "go",
       "sizeLines": 34,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/routes.go",
+      "path": "cmd/rencrow/routes.go",
       "language": "go",
       "sizeLines": 550,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_agents.go",
+      "path": "cmd/rencrow/runtime_agents.go",
       "language": "go",
       "sizeLines": 108,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_background_jobs.go",
+      "path": "cmd/rencrow/runtime_background_jobs.go",
       "language": "go",
       "sizeLines": 411,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_capability.go",
+      "path": "cmd/rencrow/runtime_capability.go",
       "language": "go",
       "sizeLines": 51,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_channels.go",
+      "path": "cmd/rencrow/runtime_channels.go",
       "language": "go",
       "sizeLines": 44,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_coders.go",
+      "path": "cmd/rencrow/runtime_coders.go",
       "language": "go",
       "sizeLines": 215,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_conversation.go",
+      "path": "cmd/rencrow/runtime_conversation.go",
       "language": "go",
       "sizeLines": 153,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_dependencies.go",
+      "path": "cmd/rencrow/runtime_dependencies.go",
       "language": "go",
       "sizeLines": 1087,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_distributed_mode.go",
+      "path": "cmd/rencrow/runtime_distributed_mode.go",
       "language": "go",
       "sizeLines": 210,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_env.go",
+      "path": "cmd/rencrow/runtime_env.go",
       "language": "go",
       "sizeLines": 15,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_event_relay.go",
+      "path": "cmd/rencrow/runtime_event_relay.go",
       "language": "go",
       "sizeLines": 92,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_glossary.go",
+      "path": "cmd/rencrow/runtime_glossary.go",
       "language": "go",
       "sizeLines": 60,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_heartbeat.go",
+      "path": "cmd/rencrow/runtime_heartbeat.go",
       "language": "go",
       "sizeLines": 132,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_idlechat_handlers.go",
+      "path": "cmd/rencrow/runtime_idlechat_handlers.go",
       "language": "go",
       "sizeLines": 293,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_idlechat.go",
+      "path": "cmd/rencrow/runtime_idlechat.go",
       "language": "go",
       "sizeLines": 305,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_llm_providers.go",
+      "path": "cmd/rencrow/runtime_llm_providers.go",
       "language": "go",
       "sizeLines": 57,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_local_agents.go",
+      "path": "cmd/rencrow/runtime_local_agents.go",
       "language": "go",
       "sizeLines": 286,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_orchestrator.go",
+      "path": "cmd/rencrow/runtime_orchestrator.go",
       "language": "go",
       "sizeLines": 200,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_readiness.go",
+      "path": "cmd/rencrow/runtime_readiness.go",
       "language": "go",
       "sizeLines": 80,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_repair.go",
+      "path": "cmd/rencrow/runtime_repair.go",
       "language": "go",
       "sizeLines": 90,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_secret_refs.go",
+      "path": "cmd/rencrow/runtime_secret_refs.go",
       "language": "go",
       "sizeLines": 49,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_sessions.go",
+      "path": "cmd/rencrow/runtime_sessions.go",
       "language": "go",
       "sizeLines": 37,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_subagent_tools.go",
+      "path": "cmd/rencrow/runtime_subagent_tools.go",
       "language": "go",
       "sizeLines": 67,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_tool_runtime.go",
+      "path": "cmd/rencrow/runtime_tool_runtime.go",
       "language": "go",
       "sizeLines": 190,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_verification.go",
+      "path": "cmd/rencrow/runtime_verification.go",
       "language": "go",
       "sizeLines": 74,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_viewer_bridges.go",
+      "path": "cmd/rencrow/runtime_viewer_bridges.go",
       "language": "go",
       "sizeLines": 115,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/runtime_viewer_handlers.go",
+      "path": "cmd/rencrow/runtime_viewer_handlers.go",
       "language": "go",
       "sizeLines": 107,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/stt_runtime_audio.go",
+      "path": "cmd/rencrow/stt_runtime_audio.go",
       "language": "go",
       "sizeLines": 46,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/stt_runtime_config.go",
+      "path": "cmd/rencrow/stt_runtime_config.go",
       "language": "go",
       "sizeLines": 92,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/stt_runtime_factory.go",
+      "path": "cmd/rencrow/stt_runtime_factory.go",
       "language": "go",
       "sizeLines": 60,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/stt_runtime_http.go",
+      "path": "cmd/rencrow/stt_runtime_http.go",
       "language": "go",
       "sizeLines": 91,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/stt_runtime_websocket.go",
+      "path": "cmd/rencrow/stt_runtime_websocket.go",
       "language": "go",
       "sizeLines": 473,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/stt_timing_trace.go",
+      "path": "cmd/rencrow/stt_timing_trace.go",
       "language": "go",
       "sizeLines": 106,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/tailscale_viewer_guard.go",
+      "path": "cmd/rencrow/tailscale_viewer_guard.go",
       "language": "go",
       "sizeLines": 48,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/tts_browser_audio.go",
+      "path": "cmd/rencrow/tts_browser_audio.go",
       "language": "go",
       "sizeLines": 121,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/tts_client_bridge.go",
+      "path": "cmd/rencrow/tts_client_bridge.go",
       "language": "go",
       "sizeLines": 136,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/tts_playback_ack.go",
+      "path": "cmd/rencrow/tts_playback_ack.go",
       "language": "go",
       "sizeLines": 68,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/tts_public_session.go",
+      "path": "cmd/rencrow/tts_public_session.go",
       "language": "go",
       "sizeLines": 80,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/tts_runtime_factory.go",
+      "path": "cmd/rencrow/tts_runtime_factory.go",
       "language": "go",
       "sizeLines": 135,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/tts_runtime_irodori.go",
+      "path": "cmd/rencrow/tts_runtime_irodori.go",
       "language": "go",
       "sizeLines": 51,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/tts_runtime_options.go",
+      "path": "cmd/rencrow/tts_runtime_options.go",
       "language": "go",
       "sizeLines": 38,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/tts_vtuber_lipsync.go",
+      "path": "cmd/rencrow/tts_vtuber_lipsync.go",
       "language": "go",
       "sizeLines": 100,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/viewer_active_control.go",
+      "path": "cmd/rencrow/viewer_active_control.go",
       "language": "go",
       "sizeLines": 93,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/voice_chat_runtime_bridge.go",
+      "path": "cmd/rencrow/voice_chat_runtime_bridge.go",
       "language": "go",
       "sizeLines": 302,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/voice_chat_runtime_config.go",
+      "path": "cmd/rencrow/voice_chat_runtime_config.go",
       "language": "go",
       "sizeLines": 33,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/voice_chat_runtime_factory.go",
+      "path": "cmd/rencrow/voice_chat_runtime_factory.go",
       "language": "go",
       "sizeLines": 44,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/voice_chat_runtime_input_audio.go",
+      "path": "cmd/rencrow/voice_chat_runtime_input_audio.go",
       "language": "go",
       "sizeLines": 320,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/voice_chat_runtime_websocket.go",
+      "path": "cmd/rencrow/voice_chat_runtime_websocket.go",
       "language": "go",
       "sizeLines": 364,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/vtuber_bridge.go",
+      "path": "cmd/rencrow/vtuber_bridge.go",
       "language": "go",
       "sizeLines": 41,
       "fileCategory": "code"
     },
     {
-      "path": "cmd/picoclaw/web_search_cache_adapter.go",
+      "path": "cmd/rencrow/web_search_cache_adapter.go",
       "language": "go",
       "sizeLines": 53,
       "fileCategory": "code"
@@ -842,7 +842,7 @@
       "fileCategory": "docs"
     },
     {
-      "path": "config/picoclaw-funnel.service",
+      "path": "config/rencrow-funnel.service",
       "language": "service",
       "sizeLines": 11,
       "fileCategory": "code"
@@ -6410,7 +6410,7 @@
       "fileCategory": "docs"
     },
     {
-      "path": "start_picoclaw.sh",
+      "path": "start_rencrow.sh",
       "language": "shell",
       "sizeLines": 5,
       "fileCategory": "script"
@@ -6452,13 +6452,13 @@
       "fileCategory": "docs"
     },
     {
-      "path": "systemd/user/picoclaw-watchdog.service",
+      "path": "systemd/user/rencrow-watchdog.service",
       "language": "service",
       "sizeLines": 14,
       "fileCategory": "code"
     },
     {
-      "path": "systemd/user/picoclaw-watchdog.timer",
+      "path": "systemd/user/rencrow-watchdog.timer",
       "language": "timer",
       "sizeLines": 12,
       "fileCategory": "code"
@@ -6729,7 +6729,7 @@
       "internal/infrastructure/persistence/conversation/vectordb_thread_memory.go"
     ],
     "cmd/kb-admin/README.md": [],
-    "cmd/picoclaw-agent/audio_router.go": [
+    "cmd/rencrow-agent/audio_router.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -6745,7 +6745,7 @@
       "internal/infrastructure/audiorouter/router.go",
       "internal/infrastructure/audiorouter/status_store.go"
     ],
-    "cmd/picoclaw-agent/handler_coder.go": [
+    "cmd/rencrow-agent/handler_coder.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -6777,7 +6777,7 @@
       "internal/domain/task/task.go",
       "internal/domain/transport/transport.go"
     ],
-    "cmd/picoclaw-agent/handler_worker.go": [
+    "cmd/rencrow-agent/handler_worker.go": [
       "internal/application/service/worker_execution_dispatch.go",
       "internal/application/service/worker_execution_errors.go",
       "internal/application/service/worker_execution_file_ops.go",
@@ -6812,7 +6812,7 @@
       "internal/domain/task/task.go",
       "internal/domain/transport/transport.go"
     ],
-    "cmd/picoclaw-agent/main.go": [
+    "cmd/rencrow-agent/main.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -6824,10 +6824,10 @@
       "internal/adapter/config/prompts.go",
       "internal/domain/transport/transport.go"
     ],
-    "cmd/picoclaw-agent/message_loop.go": [
+    "cmd/rencrow-agent/message_loop.go": [
       "internal/domain/transport/transport.go"
     ],
-    "cmd/picoclaw-agent/runtime_init.go": [
+    "cmd/rencrow-agent/runtime_init.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -6888,7 +6888,7 @@
       "internal/infrastructure/tools/runner.go",
       "internal/infrastructure/tools/subagent.go"
     ],
-    "cmd/picoclaw-agent/runtime_provider.go": [
+    "cmd/rencrow-agent/runtime_provider.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -6910,7 +6910,7 @@
       "internal/infrastructure/llm/providers/openai/stream.go",
       "internal/infrastructure/llm/providers/openai/thinking_bridge.go"
     ],
-    "cmd/picoclaw/autonomous_entry.go": [
+    "cmd/rencrow/autonomous_entry.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -7013,7 +7013,7 @@
       "internal/infrastructure/tts/synthesizer.go",
       "internal/infrastructure/tts/wav_stats.go"
     ],
-    "cmd/picoclaw/cli_browser_actor.go": [
+    "cmd/rencrow/cli_browser_actor.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -7030,7 +7030,7 @@
       "modules/browseractor/policy.go",
       "modules/browseractor/validation.go"
     ],
-    "cmd/picoclaw/cli_channels.go": [
+    "cmd/rencrow/cli_channels.go": [
       "internal/adapter/channels/discord/adapter.go",
       "internal/adapter/channels/slack/adapter.go",
       "internal/adapter/channels/telegram/adapter.go",
@@ -7049,8 +7049,8 @@
       "internal/adapter/line/sender.go",
       "internal/adapter/line/signature.go"
     ],
-    "cmd/picoclaw/cli_chat.go": [],
-    "cmd/picoclaw/cli_evidence.go": [
+    "cmd/rencrow/cli_chat.go": [],
+    "cmd/rencrow/cli_evidence.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -7066,7 +7066,7 @@
       "internal/infrastructure/persistence/execution/jsonl_repository.go",
       "internal/infrastructure/persistence/execution/report_store.go"
     ],
-    "cmd/picoclaw/cli_gateway_ollama.go": [
+    "cmd/rencrow/cli_gateway_ollama.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -7078,7 +7078,7 @@
       "internal/adapter/config/prompts.go",
       "internal/domain/health/check.go"
     ],
-    "cmd/picoclaw/cli_jobs.go": [
+    "cmd/rencrow/cli_jobs.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -7092,10 +7092,10 @@
       "internal/domain/job/job.go",
       "internal/infrastructure/persistence/job/jsonl_store.go"
     ],
-    "cmd/picoclaw/cli_knowledge.go": [
+    "cmd/rencrow/cli_knowledge.go": [
       "internal/application/knowledge/core_importer.go"
     ],
-    "cmd/picoclaw/cli_logs.go": [
+    "cmd/rencrow/cli_logs.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -7106,8 +7106,8 @@
       "internal/adapter/config/config.go",
       "internal/adapter/config/prompts.go"
     ],
-    "cmd/picoclaw/cli_operations.go": [],
-    "cmd/picoclaw/cli_source_registry.go": [
+    "cmd/rencrow/cli_operations.go": [],
+    "cmd/rencrow/cli_source_registry.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -7166,7 +7166,7 @@
       "internal/infrastructure/persistence/conversation/vectordb_store.go",
       "internal/infrastructure/persistence/conversation/vectordb_thread_memory.go"
     ],
-    "cmd/picoclaw/cli_web_gather.go": [
+    "cmd/rencrow/cli_web_gather.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -7243,7 +7243,7 @@
       "modules/webgather/normalize.go",
       "modules/webgather/policy.go"
     ],
-    "cmd/picoclaw/health_commands.go": [
+    "cmd/rencrow/health_commands.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -7258,7 +7258,7 @@
       "internal/domain/execution/repository.go",
       "internal/domain/health/check.go"
     ],
-    "cmd/picoclaw/health_runtime.go": [
+    "cmd/rencrow/health_runtime.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -7288,7 +7288,7 @@
       "modules/llm/request.go",
       "modules/llm/thinking_bridge.go"
     ],
-    "cmd/picoclaw/idlechat_tts_pending.go": [
+    "cmd/rencrow/idlechat_tts_pending.go": [
       "modules/tts/chunking.go",
       "modules/tts/contracts.go",
       "modules/tts/diagnostics.go",
@@ -7324,7 +7324,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/idlechat_tts_prefetch.go": [
+    "cmd/rencrow/idlechat_tts_prefetch.go": [
       "internal/application/idlechat/dialogue_config.go",
       "internal/application/idlechat/dialogue_director.go",
       "internal/application/idlechat/dialogue_prompt.go",
@@ -7462,7 +7462,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/idlechat_tts_queue.go": [
+    "cmd/rencrow/idlechat_tts_queue.go": [
       "internal/application/idlechat/dialogue_config.go",
       "internal/application/idlechat/dialogue_director.go",
       "internal/application/idlechat/dialogue_prompt.go",
@@ -7566,7 +7566,7 @@
       "internal/application/orchestrator/vtuber_stream.go",
       "internal/application/orchestrator/vtuber_support.go"
     ],
-    "cmd/picoclaw/idlechat_tts_text.go": [
+    "cmd/rencrow/idlechat_tts_text.go": [
       "internal/application/idlechat/dialogue_config.go",
       "internal/application/idlechat/dialogue_director.go",
       "internal/application/idlechat/dialogue_prompt.go",
@@ -7644,7 +7644,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/idlechat_tts_timeout.go": [
+    "cmd/rencrow/idlechat_tts_timeout.go": [
       "internal/application/idlechat/dialogue_config.go",
       "internal/application/idlechat/dialogue_director.go",
       "internal/application/idlechat/dialogue_prompt.go",
@@ -7722,7 +7722,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/idlechat_tts_voice.go": [
+    "cmd/rencrow/idlechat_tts_voice.go": [
       "modules/tts/chunking.go",
       "modules/tts/contracts.go",
       "modules/tts/diagnostics.go",
@@ -7758,7 +7758,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/idlechat_tts.go": [
+    "cmd/rencrow/idlechat_tts.go": [
       "internal/application/idlechat/dialogue_config.go",
       "internal/application/idlechat/dialogue_director.go",
       "internal/application/idlechat/dialogue_prompt.go",
@@ -7896,8 +7896,8 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/idlechat_viewer_clients.go": [],
-    "cmd/picoclaw/live2d_chat_responder.go": [
+    "cmd/rencrow/idlechat_viewer_clients.go": [],
+    "cmd/rencrow/live2d_chat_responder.go": [
       "internal/application/orchestrator/ai_workflow_events.go",
       "internal/application/orchestrator/code_executor_events.go",
       "internal/application/orchestrator/code_executor_generate.go",
@@ -7959,17 +7959,17 @@
       "internal/application/orchestrator/vtuber_stream.go",
       "internal/application/orchestrator/vtuber_support.go"
     ],
-    "cmd/picoclaw/llm_alias_provider.go": [
+    "cmd/rencrow/llm_alias_provider.go": [
       "internal/domain/llm/busy_context.go",
       "internal/domain/llm/provider.go",
       "internal/domain/llm/stream.go"
     ],
-    "cmd/picoclaw/llm_busy_tracker.go": [
+    "cmd/rencrow/llm_busy_tracker.go": [
       "internal/domain/llm/busy_context.go",
       "internal/domain/llm/provider.go",
       "internal/domain/llm/stream.go"
     ],
-    "cmd/picoclaw/llm_conversation_runtime.go": [
+    "cmd/rencrow/llm_conversation_runtime.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -8028,7 +8028,7 @@
       "modules/llm/request.go",
       "modules/llm/thinking_bridge.go"
     ],
-    "cmd/picoclaw/llm_local_alias.go": [
+    "cmd/rencrow/llm_local_alias.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -8068,7 +8068,7 @@
       "modules/llm/request.go",
       "modules/llm/thinking_bridge.go"
     ],
-    "cmd/picoclaw/llm_runtime_factory.go": [
+    "cmd/rencrow/llm_runtime_factory.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -8107,12 +8107,12 @@
       "modules/llm/request.go",
       "modules/llm/thinking_bridge.go"
     ],
-    "cmd/picoclaw/llm_runtime_warmup.go": [
+    "cmd/rencrow/llm_runtime_warmup.go": [
       "internal/domain/llm/busy_context.go",
       "internal/domain/llm/provider.go",
       "internal/domain/llm/stream.go"
     ],
-    "cmd/picoclaw/main.go": [
+    "cmd/rencrow/main.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -8202,7 +8202,7 @@
       "modules/llm/request.go",
       "modules/llm/thinking_bridge.go"
     ],
-    "cmd/picoclaw/module_chat_route.go": [
+    "cmd/rencrow/module_chat_route.go": [
       "modules/chat/contracts.go",
       "modules/chat/health.go",
       "modules/chat/idlechat_policy.go",
@@ -8219,7 +8219,7 @@
       "modules/core/manifest.go",
       "modules/core/runtime_health.go"
     ],
-    "cmd/picoclaw/module_health.go": [
+    "cmd/rencrow/module_health.go": [
       "modules/chat/contracts.go",
       "modules/chat/health.go",
       "modules/chat/idlechat_policy.go",
@@ -8246,7 +8246,7 @@
       "modules/llm/request.go",
       "modules/llm/thinking_bridge.go"
     ],
-    "cmd/picoclaw/module_llm_diagnostics.go": [
+    "cmd/rencrow/module_llm_diagnostics.go": [
       "modules/core/contracts.go",
       "modules/core/http.go",
       "modules/core/manifest_snapshot.go",
@@ -8263,7 +8263,7 @@
       "modules/llm/request.go",
       "modules/llm/thinking_bridge.go"
     ],
-    "cmd/picoclaw/module_llm_health.go": [
+    "cmd/rencrow/module_llm_health.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -8285,21 +8285,21 @@
       "modules/llm/request.go",
       "modules/llm/thinking_bridge.go"
     ],
-    "cmd/picoclaw/module_manifest.go": [
+    "cmd/rencrow/module_manifest.go": [
       "modules/core/contracts.go",
       "modules/core/http.go",
       "modules/core/manifest_snapshot.go",
       "modules/core/manifest.go",
       "modules/core/runtime_health.go"
     ],
-    "cmd/picoclaw/module_routes.go": [
+    "cmd/rencrow/module_routes.go": [
       "modules/core/contracts.go",
       "modules/core/http.go",
       "modules/core/manifest_snapshot.go",
       "modules/core/manifest.go",
       "modules/core/runtime_health.go"
     ],
-    "cmd/picoclaw/module_stt_diagnostics.go": [
+    "cmd/rencrow/module_stt_diagnostics.go": [
       "modules/core/contracts.go",
       "modules/core/http.go",
       "modules/core/manifest_snapshot.go",
@@ -8318,7 +8318,7 @@
       "modules/stt/viewer_input.go",
       "modules/stt/websocket_plan.go"
     ],
-    "cmd/picoclaw/module_stt_viewer_input.go": [
+    "cmd/rencrow/module_stt_viewer_input.go": [
       "modules/core/contracts.go",
       "modules/core/http.go",
       "modules/core/manifest_snapshot.go",
@@ -8337,7 +8337,7 @@
       "modules/stt/viewer_input.go",
       "modules/stt/websocket_plan.go"
     ],
-    "cmd/picoclaw/module_tts_diagnostics.go": [
+    "cmd/rencrow/module_tts_diagnostics.go": [
       "modules/core/contracts.go",
       "modules/core/http.go",
       "modules/core/manifest_snapshot.go",
@@ -8378,7 +8378,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/module_tts_playback_state.go": [
+    "cmd/rencrow/module_tts_playback_state.go": [
       "modules/core/contracts.go",
       "modules/core/http.go",
       "modules/core/manifest_snapshot.go",
@@ -8419,7 +8419,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/module_worker_diagnostics.go": [
+    "cmd/rencrow/module_worker_diagnostics.go": [
       "modules/core/contracts.go",
       "modules/core/http.go",
       "modules/core/manifest_snapshot.go",
@@ -8435,7 +8435,7 @@
       "modules/worker/health.go",
       "modules/worker/local_agent.go"
     ],
-    "cmd/picoclaw/routes.go": [
+    "cmd/rencrow/routes.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -8527,7 +8527,7 @@
       "modules/stt/viewer_input.go",
       "modules/stt/websocket_plan.go"
     ],
-    "cmd/picoclaw/runtime_agents.go": [
+    "cmd/rencrow/runtime_agents.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -8633,7 +8633,7 @@
       "internal/infrastructure/routing/llm_classifier.go",
       "internal/infrastructure/routing/rule_dictionary.go"
     ],
-    "cmd/picoclaw/runtime_background_jobs.go": [
+    "cmd/rencrow/runtime_background_jobs.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -8761,7 +8761,7 @@
       "internal/infrastructure/persistence/conversation/vectordb_store.go",
       "internal/infrastructure/persistence/conversation/vectordb_thread_memory.go"
     ],
-    "cmd/picoclaw/runtime_capability.go": [
+    "cmd/rencrow/runtime_capability.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -8782,7 +8782,7 @@
       "internal/infrastructure/persistence/toolregistry/duckdb_store_stub.go",
       "internal/infrastructure/persistence/toolregistry/duckdb_store.go"
     ],
-    "cmd/picoclaw/runtime_channels.go": [
+    "cmd/rencrow/runtime_channels.go": [
       "internal/adapter/channels/discord/adapter.go",
       "internal/adapter/channels/slack/adapter.go",
       "internal/adapter/channels/telegram/adapter.go",
@@ -8802,7 +8802,7 @@
       "internal/application/attachment/extract.go",
       "internal/application/attachment/store.go"
     ],
-    "cmd/picoclaw/runtime_coders.go": [
+    "cmd/rencrow/runtime_coders.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -8851,7 +8851,7 @@
       "modules/worker/health.go",
       "modules/worker/local_agent.go"
     ],
-    "cmd/picoclaw/runtime_conversation.go": [
+    "cmd/rencrow/runtime_conversation.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -8958,7 +8958,7 @@
       "modules/webgather/normalize.go",
       "modules/webgather/policy.go"
     ],
-    "cmd/picoclaw/runtime_dependencies.go": [
+    "cmd/rencrow/runtime_dependencies.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -9318,7 +9318,7 @@
       "modules/worker/health.go",
       "modules/worker/local_agent.go"
     ],
-    "cmd/picoclaw/runtime_distributed_mode.go": [
+    "cmd/rencrow/runtime_distributed_mode.go": [
       "internal/adapter/channels/discord/adapter.go",
       "internal/adapter/channels/slack/adapter.go",
       "internal/adapter/channels/telegram/adapter.go",
@@ -9448,8 +9448,8 @@
       "internal/infrastructure/transport/router.go",
       "internal/infrastructure/transport/ssh.go"
     ],
-    "cmd/picoclaw/runtime_env.go": [],
-    "cmd/picoclaw/runtime_event_relay.go": [
+    "cmd/rencrow/runtime_env.go": [],
+    "cmd/rencrow/runtime_event_relay.go": [
       "internal/adapter/viewer/ai_workflow_handler.go",
       "internal/adapter/viewer/artifact_cleanup_handler.go",
       "internal/adapter/viewer/assets_git.go",
@@ -9626,7 +9626,7 @@
       "internal/application/voiceinput/result.go",
       "internal/application/voiceinput/side_effects.go"
     ],
-    "cmd/picoclaw/runtime_glossary.go": [
+    "cmd/rencrow/runtime_glossary.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -9707,7 +9707,7 @@
       "internal/adapter/viewer/workstream_handler.go",
       "internal/glossary/glossary_module.go"
     ],
-    "cmd/picoclaw/runtime_heartbeat.go": [
+    "cmd/rencrow/runtime_heartbeat.go": [
       "internal/adapter/channels/types.go",
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
@@ -9781,7 +9781,7 @@
       "internal/domain/agent/wild.go",
       "internal/infrastructure/persistence/memory/file_store.go"
     ],
-    "cmd/picoclaw/runtime_idlechat_handlers.go": [
+    "cmd/rencrow/runtime_idlechat_handlers.go": [
       "internal/adapter/viewer/ai_workflow_handler.go",
       "internal/adapter/viewer/artifact_cleanup_handler.go",
       "internal/adapter/viewer/assets_git.go",
@@ -9852,7 +9852,7 @@
       "internal/adapter/viewer/verification_handler.go",
       "internal/adapter/viewer/workstream_handler.go"
     ],
-    "cmd/picoclaw/runtime_idlechat.go": [
+    "cmd/rencrow/runtime_idlechat.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -9982,7 +9982,7 @@
       "modules/chat/topic_prompt.go",
       "modules/chat/topic_seed.go"
     ],
-    "cmd/picoclaw/runtime_llm_providers.go": [
+    "cmd/rencrow/runtime_llm_providers.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -10015,7 +10015,7 @@
       "modules/llm/request.go",
       "modules/llm/thinking_bridge.go"
     ],
-    "cmd/picoclaw/runtime_local_agents.go": [
+    "cmd/rencrow/runtime_local_agents.go": [
       "internal/adapter/viewer/ai_workflow_handler.go",
       "internal/adapter/viewer/artifact_cleanup_handler.go",
       "internal/adapter/viewer/assets_git.go",
@@ -10197,7 +10197,7 @@
       "modules/worker/health.go",
       "modules/worker/local_agent.go"
     ],
-    "cmd/picoclaw/runtime_orchestrator.go": [
+    "cmd/rencrow/runtime_orchestrator.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -10297,7 +10297,7 @@
       "internal/domain/session/session.go",
       "internal/infrastructure/logging/session_log_writer.go"
     ],
-    "cmd/picoclaw/runtime_readiness.go": [
+    "cmd/rencrow/runtime_readiness.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -10377,7 +10377,7 @@
       "internal/adapter/viewer/verification_handler.go",
       "internal/adapter/viewer/workstream_handler.go"
     ],
-    "cmd/picoclaw/runtime_repair.go": [
+    "cmd/rencrow/runtime_repair.go": [
       "internal/adapter/viewer/ai_workflow_handler.go",
       "internal/adapter/viewer/artifact_cleanup_handler.go",
       "internal/adapter/viewer/assets_git.go",
@@ -10508,7 +10508,7 @@
       "internal/application/orchestrator/vtuber_stream.go",
       "internal/application/orchestrator/vtuber_support.go"
     ],
-    "cmd/picoclaw/runtime_secret_refs.go": [
+    "cmd/rencrow/runtime_secret_refs.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -10588,7 +10588,7 @@
       "internal/adapter/viewer/verification_handler.go",
       "internal/adapter/viewer/workstream_handler.go"
     ],
-    "cmd/picoclaw/runtime_sessions.go": [
+    "cmd/rencrow/runtime_sessions.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -10664,7 +10664,7 @@
       "internal/infrastructure/persistence/memory/file_store.go",
       "internal/infrastructure/persistence/session/json_repository.go"
     ],
-    "cmd/picoclaw/runtime_subagent_tools.go": [
+    "cmd/rencrow/runtime_subagent_tools.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -10694,7 +10694,7 @@
       "internal/infrastructure/llm/providers/openai/stream.go",
       "internal/infrastructure/llm/providers/openai/thinking_bridge.go"
     ],
-    "cmd/picoclaw/runtime_tool_runtime.go": [
+    "cmd/rencrow/runtime_tool_runtime.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -10749,7 +10749,7 @@
       "internal/infrastructure/tools/runner.go",
       "internal/infrastructure/tools/subagent.go"
     ],
-    "cmd/picoclaw/runtime_verification.go": [
+    "cmd/rencrow/runtime_verification.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -10881,7 +10881,7 @@
       "internal/infrastructure/persistence/verification/l1_evidence_reader.go",
       "internal/infrastructure/persistence/verification/report_store.go"
     ],
-    "cmd/picoclaw/runtime_viewer_bridges.go": [
+    "cmd/rencrow/runtime_viewer_bridges.go": [
       "internal/adapter/chrome/bridge_handler.go",
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
@@ -11025,7 +11025,7 @@
       "internal/application/orchestrator/vtuber_stream.go",
       "internal/application/orchestrator/vtuber_support.go"
     ],
-    "cmd/picoclaw/runtime_viewer_handlers.go": [
+    "cmd/rencrow/runtime_viewer_handlers.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -11155,7 +11155,7 @@
       "internal/infrastructure/persistence/execution/report_store.go",
       "internal/infrastructure/persistence/job/jsonl_store.go"
     ],
-    "cmd/picoclaw/stt_runtime_audio.go": [
+    "cmd/rencrow/stt_runtime_audio.go": [
       "modules/stt/audio_rules.go",
       "modules/stt/busy_policy.go",
       "modules/stt/contracts.go",
@@ -11169,7 +11169,7 @@
       "modules/stt/viewer_input.go",
       "modules/stt/websocket_plan.go"
     ],
-    "cmd/picoclaw/stt_runtime_config.go": [
+    "cmd/rencrow/stt_runtime_config.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -11196,7 +11196,7 @@
       "modules/stt/viewer_input.go",
       "modules/stt/websocket_plan.go"
     ],
-    "cmd/picoclaw/stt_runtime_factory.go": [
+    "cmd/rencrow/stt_runtime_factory.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -11297,7 +11297,7 @@
       "modules/stt/viewer_input.go",
       "modules/stt/websocket_plan.go"
     ],
-    "cmd/picoclaw/stt_runtime_http.go": [
+    "cmd/rencrow/stt_runtime_http.go": [
       "modules/stt/audio_rules.go",
       "modules/stt/busy_policy.go",
       "modules/stt/contracts.go",
@@ -11311,7 +11311,7 @@
       "modules/stt/viewer_input.go",
       "modules/stt/websocket_plan.go"
     ],
-    "cmd/picoclaw/stt_runtime_websocket.go": [
+    "cmd/rencrow/stt_runtime_websocket.go": [
       "internal/infrastructure/stt/busy_provider.go",
       "internal/infrastructure/stt/http.go",
       "internal/infrastructure/stt/provider.go",
@@ -11329,14 +11329,14 @@
       "modules/stt/viewer_input.go",
       "modules/stt/websocket_plan.go"
     ],
-    "cmd/picoclaw/stt_timing_trace.go": [
+    "cmd/rencrow/stt_timing_trace.go": [
       "internal/infrastructure/stt/busy_provider.go",
       "internal/infrastructure/stt/http.go",
       "internal/infrastructure/stt/provider.go",
       "internal/infrastructure/stt/types.go"
     ],
-    "cmd/picoclaw/tailscale_viewer_guard.go": [],
-    "cmd/picoclaw/tts_browser_audio.go": [
+    "cmd/rencrow/tailscale_viewer_guard.go": [],
+    "cmd/rencrow/tts_browser_audio.go": [
       "modules/tts/chunking.go",
       "modules/tts/contracts.go",
       "modules/tts/diagnostics.go",
@@ -11372,7 +11372,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/tts_client_bridge.go": [
+    "cmd/rencrow/tts_client_bridge.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -11499,7 +11499,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/tts_playback_ack.go": [
+    "cmd/rencrow/tts_playback_ack.go": [
       "modules/tts/chunking.go",
       "modules/tts/contracts.go",
       "modules/tts/diagnostics.go",
@@ -11535,7 +11535,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/tts_public_session.go": [
+    "cmd/rencrow/tts_public_session.go": [
       "modules/tts/chunking.go",
       "modules/tts/contracts.go",
       "modules/tts/diagnostics.go",
@@ -11571,7 +11571,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/tts_runtime_factory.go": [
+    "cmd/rencrow/tts_runtime_factory.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -11643,7 +11643,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/tts_runtime_irodori.go": [
+    "cmd/rencrow/tts_runtime_irodori.go": [
       "internal/infrastructure/tts/audio_path.go",
       "internal/infrastructure/tts/audio_sink.go",
       "internal/infrastructure/tts/audio_url.go",
@@ -11701,7 +11701,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/tts_runtime_options.go": [
+    "cmd/rencrow/tts_runtime_options.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -11768,7 +11768,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/tts_vtuber_lipsync.go": [
+    "cmd/rencrow/tts_vtuber_lipsync.go": [
       "internal/application/orchestrator/ai_workflow_events.go",
       "internal/application/orchestrator/code_executor_events.go",
       "internal/application/orchestrator/code_executor_generate.go",
@@ -11830,7 +11830,7 @@
       "internal/application/orchestrator/vtuber_stream.go",
       "internal/application/orchestrator/vtuber_support.go"
     ],
-    "cmd/picoclaw/viewer_active_control.go": [
+    "cmd/rencrow/viewer_active_control.go": [
       "internal/application/orchestrator/ai_workflow_events.go",
       "internal/application/orchestrator/code_executor_events.go",
       "internal/application/orchestrator/code_executor_generate.go",
@@ -11926,7 +11926,7 @@
       "modules/tts/text_filter.go",
       "modules/tts/viewer_active_control.go"
     ],
-    "cmd/picoclaw/voice_chat_runtime_bridge.go": [
+    "cmd/rencrow/voice_chat_runtime_bridge.go": [
       "internal/application/orchestrator/ai_workflow_events.go",
       "internal/application/orchestrator/code_executor_events.go",
       "internal/application/orchestrator/code_executor_generate.go",
@@ -11998,7 +11998,7 @@
       "modules/voicechat/runtime_urls.go",
       "modules/voicechat/websocket_plan.go"
     ],
-    "cmd/picoclaw/voice_chat_runtime_config.go": [
+    "cmd/rencrow/voice_chat_runtime_config.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -12023,7 +12023,7 @@
       "modules/voicechat/runtime_urls.go",
       "modules/voicechat/websocket_plan.go"
     ],
-    "cmd/picoclaw/voice_chat_runtime_factory.go": [
+    "cmd/rencrow/voice_chat_runtime_factory.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -12167,7 +12167,7 @@
       "modules/voicechat/runtime_urls.go",
       "modules/voicechat/websocket_plan.go"
     ],
-    "cmd/picoclaw/voice_chat_runtime_input_audio.go": [
+    "cmd/rencrow/voice_chat_runtime_input_audio.go": [
       "internal/application/orchestrator/ai_workflow_events.go",
       "internal/application/orchestrator/code_executor_events.go",
       "internal/application/orchestrator/code_executor_generate.go",
@@ -12235,7 +12235,7 @@
       "modules/voicechat/runtime_urls.go",
       "modules/voicechat/websocket_plan.go"
     ],
-    "cmd/picoclaw/voice_chat_runtime_websocket.go": [
+    "cmd/rencrow/voice_chat_runtime_websocket.go": [
       "internal/application/orchestrator/ai_workflow_events.go",
       "internal/application/orchestrator/code_executor_events.go",
       "internal/application/orchestrator/code_executor_generate.go",
@@ -12305,7 +12305,7 @@
       "modules/voicechat/runtime_urls.go",
       "modules/voicechat/websocket_plan.go"
     ],
-    "cmd/picoclaw/vtuber_bridge.go": [
+    "cmd/rencrow/vtuber_bridge.go": [
       "internal/adapter/config/channel_policy.go",
       "internal/adapter/config/config_audio_agent_types.go",
       "internal/adapter/config/config_defaults.go",
@@ -12377,7 +12377,7 @@
       "internal/application/orchestrator/vtuber_support.go",
       "internal/infrastructure/vtuber/client_bridge.go"
     ],
-    "cmd/picoclaw/web_search_cache_adapter.go": [
+    "cmd/rencrow/web_search_cache_adapter.go": [
       "internal/infrastructure/persistence/conversation/daily_digest_summarizer.go",
       "internal/infrastructure/persistence/conversation/duckdb_export.go",
       "internal/infrastructure/persistence/conversation/duckdb_l1_archive.go",
@@ -12785,7 +12785,7 @@
     "config/LLM_SETTINGS_MAP.md": [],
     "config/Modelfile.chat": [],
     "config/persona/PrimerMessage.md": [],
-    "config/picoclaw-funnel.service": [],
+    "config/rencrow-funnel.service": [],
     "config/prompts/idle_chat/mio.md": [],
     "config/prompts/idle_chat/shiro.md": [],
     "config/SBV2_SERVER_IMPLEMENTATION_REQUIREMENTS.md": [],
@@ -20206,15 +20206,15 @@
     "skills/core/codebase-complexity-hotspot/risk_matrix.md": [],
     "skills/core/codebase-complexity-hotspot/skill_manifest.yaml": [],
     "skills/core/codebase-complexity-hotspot/SKILL.md": [],
-    "start_picoclaw.sh": [],
+    "start_rencrow.sh": [],
     "styleguides/aka.md": [],
     "styleguides/ao.md": [],
     "styleguides/gin.md": [],
     "styleguides/kin.md": [],
     "styleguides/mio.md": [],
     "styleguides/shiro.md": [],
-    "systemd/user/picoclaw-watchdog.service": [],
-    "systemd/user/picoclaw-watchdog.timer": [],
+    "systemd/user/rencrow-watchdog.service": [],
+    "systemd/user/rencrow-watchdog.timer": [],
     "systemd/user/rencrow-data-daily.service": [],
     "systemd/user/rencrow-data-daily.timer": [],
     "systemd/user/rencrow-data-weekly.service": [],

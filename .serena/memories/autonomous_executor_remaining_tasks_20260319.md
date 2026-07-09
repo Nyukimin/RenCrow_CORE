@@ -23,7 +23,7 @@
   - `internal/application/autonomous`
   - `internal/application/contract`
   - `internal/application/orchestrator/...`
-  - `go test -c ./cmd/picoclaw`
+  - `go test -c ./cmd/rencrow`
 
 ---
 

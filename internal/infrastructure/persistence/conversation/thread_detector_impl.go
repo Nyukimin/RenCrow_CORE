@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 // RealThreadBoundaryDetector はスレッド境界検出の実装

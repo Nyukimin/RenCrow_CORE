@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${STT_E2E_PORT:-18791}"
 WAV_PATH="${STT_E2E_WAV:-tmp/client_stt_input_latest.wav}"
-CFG="$(mktemp /tmp/picoclaw-stt-e2e-XXXX.yaml)"
-LOG="$(mktemp /tmp/picoclaw-stt-e2e-XXXX.log)"
+CFG="$(mktemp /tmp/rencrow-stt-e2e-XXXX.yaml)"
+LOG="$(mktemp /tmp/rencrow-stt-e2e-XXXX.log)"
 
 cleanup() {
   if [[ -n "${PID:-}" ]]; then
@@ -23,7 +23,7 @@ server:
   port: ${PORT}
 ollama:
   base_url: "http://localhost:11434"
-  model: "picoclaw-v1"
+  model: "rencrow-v1"
 session:
   storage_dir: "./data/sessions"
 tts:
@@ -36,7 +36,7 @@ stt:
   timeout_ms: 3000
 YAML
 
-PICOCLAW_CONFIG="$CFG" go run ./cmd/picoclaw run > "$LOG" 2>&1 &
+RENCROW_CONFIG="$CFG" go run ./cmd/rencrow run > "$LOG" 2>&1 &
 PID=$!
 
 for _ in $(seq 1 40); do

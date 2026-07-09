@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/moviecatalog"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/moviecatalog"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -339,7 +339,7 @@ func HandleMovieCatalogPreference(opts MovieCatalogOptions) http.HandlerFunc {
 
 func resolveMovieCatalogDBPath(configured string) string {
 	candidates := []string{}
-	if env := strings.TrimSpace(os.Getenv("PICOCLAW_MOVIE_CATALOG_DB")); env != "" {
+	if env := strings.TrimSpace(os.Getenv("RENCROW_MOVIE_CATALOG_DB")); env != "" {
 		candidates = append(candidates, env)
 	}
 	if configured = strings.TrimSpace(configured); configured != "" {
@@ -364,7 +364,7 @@ func resolveMovieCatalogWritableDBPath(configured string) string {
 	if resolved := resolveMovieCatalogDBPath(configured); resolved != "" {
 		return resolved
 	}
-	if env := strings.TrimSpace(os.Getenv("PICOCLAW_MOVIE_CATALOG_DB")); env != "" {
+	if env := strings.TrimSpace(os.Getenv("RENCROW_MOVIE_CATALOG_DB")); env != "" {
 		return env
 	}
 	if configured = strings.TrimSpace(configured); configured != "" {

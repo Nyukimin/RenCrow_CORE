@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	domainverification "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/verification"
+	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
 )
 
 type DefaultClaimExtractor struct{}

@@ -87,8 +87,8 @@ STT input は通常 chat に流す。IdleChat に直接流さない。
 | forecast | `internal/application/idlechat/forecast_*.go` |
 | story | `internal/application/idlechat/story_mode*.go` |
 | quality review | `internal/application/idlechat/quality_review.go` |
-| Viewer handlers | `cmd/picoclaw/runtime_idlechat_handlers.go`, `internal/adapter/viewer/*idlechat*` |
-| TTS bridge | `cmd/picoclaw/idlechat_tts*.go`, `internal/infrastructure/tts/rencrow_tts_*.go` |
+| Viewer handlers | `cmd/rencrow/runtime_idlechat_handlers.go`, `internal/adapter/viewer/*idlechat*` |
+| TTS bridge | `cmd/rencrow/idlechat_tts*.go`, `internal/infrastructure/tts/rencrow_tts_*.go` |
 
 ## raw response 診断
 
@@ -137,7 +137,7 @@ timeout 後に遅れて届いた音声は、session_id / utterance_id / chunk_in
 主な確認:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/application/idlechat
-GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw
-GOCACHE=/tmp/picoclaw-gocache go test -count=1 -tags=e2e ./test/e2e
+GOCACHE=/tmp/rencrow-gocache go test ./internal/application/idlechat
+GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow
+GOCACHE=/tmp/rencrow-gocache go test -count=1 -tags=e2e ./test/e2e
 ```

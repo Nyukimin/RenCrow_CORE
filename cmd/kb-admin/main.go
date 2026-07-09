@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/providers/ollama"
-	conversationpersistence "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
+	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 )
 
 const usageText = `kb-admin - Knowledge Base 管理ツール
@@ -121,7 +121,7 @@ func main() {
 func loadConfig(path string) (*config.Config, error) {
 	// .env ファイル読み込み
 	homeDir, _ := os.UserHomeDir()
-	loadDotEnv(filepath.Join(homeDir, ".picoclaw", ".env"))
+	loadDotEnv(filepath.Join(homeDir, ".rencrow", ".env"))
 	loadDotEnv(filepath.Join(filepath.Dir(path), ".env"))
 
 	return config.LoadConfig(path)

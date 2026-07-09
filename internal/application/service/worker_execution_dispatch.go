@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // executeCommand は単一コマンドを実行

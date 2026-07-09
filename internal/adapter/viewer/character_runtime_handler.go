@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/characterruntime"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/characterruntime"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
 func HandleCharacterRuntime(service *characterruntime.Service, listener orchestrator.EventListener) http.HandlerFunc {

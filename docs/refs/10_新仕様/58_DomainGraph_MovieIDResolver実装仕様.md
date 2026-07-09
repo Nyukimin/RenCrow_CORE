@@ -171,7 +171,7 @@ func upsertMovieCatalogIDAlias(ctx context.Context, db *sql.DB, aliasID string, 
 ## 10. 検証コマンド
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer
 git diff --check
 ```
 

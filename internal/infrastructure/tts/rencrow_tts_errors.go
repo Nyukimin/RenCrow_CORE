@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	moduletts "github.com/Nyukimin/picoclaw_multiLLM/modules/tts"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 func parseSynthesisError(body []byte) (string, string) {

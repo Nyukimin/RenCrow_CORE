@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/tools"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
 // getConfig は本番と同じ経路で config を読み込む
 // .env → 環境変数 → config.yaml ${ENV_VAR} 展開 → Config struct
 func getConfig(t *testing.T) *config.Config {
 	t.Helper()
-	configPath := os.Getenv("PICOCLAW_CONFIG")
+	configPath := os.Getenv("RENCROW_CONFIG")
 	if configPath == "" {
 		configPath = firstExistingPath(t,
 			"../../config/config.yaml",

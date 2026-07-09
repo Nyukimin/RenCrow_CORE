@@ -231,7 +231,7 @@ Movie Database tab では次を表示する。
 
 ```bash
 python3 -m unittest tests.tools_eiga_catalog.test_eiga_catalog
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/adapter/viewer -run 'TestHandleMovieCatalog' -count=1
+GOCACHE=/tmp/rencrow-gocache go test ./internal/adapter/viewer -run 'TestHandleMovieCatalog' -count=1
 node --test internal/adapter/viewer/viewer_static_contract_test.mjs
 ```
 

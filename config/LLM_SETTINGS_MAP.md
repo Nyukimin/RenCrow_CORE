@@ -40,7 +40,7 @@
 
 ## 5) 読み込みコード（参照先）
 
-- `cmd/picoclaw/main.go`
+- `cmd/rencrow/main.go`
   - 設定ファイルの既定パス解決。
 - `internal/adapter/config/config.go`
   - `config.yaml` のスキーマ定義と読み込み処理。

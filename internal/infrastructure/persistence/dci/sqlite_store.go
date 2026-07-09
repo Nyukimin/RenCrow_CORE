@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	domaindci "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/dci"
+	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 
 	_ "github.com/mattn/go-sqlite3"
 )

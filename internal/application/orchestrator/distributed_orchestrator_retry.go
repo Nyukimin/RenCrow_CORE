@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/agent"
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
 func nextCoderRetryRequest(userMessage string, proposal *domaintransport.ProposalPayload, shiroResult domaintransport.Message, attempt int) (string, bool) {

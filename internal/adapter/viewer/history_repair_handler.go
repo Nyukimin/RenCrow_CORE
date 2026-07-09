@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	historyrepairapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/historyrepair"
+	historyrepairapp "github.com/Nyukimin/RenCrow_CORE/internal/application/historyrepair"
 )
 
 func HandleHistoryRepairJSONL(service *historyrepairapp.JSONLRepairService) http.HandlerFunc {

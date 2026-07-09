@@ -1,6 +1,6 @@
 ---
 description: TTS playback ACK must only complete pending state from the active audio owner
-globs: cmd/picoclaw/**/*.go,cmd/picoclaw/*.go,internal/adapter/viewer/assets/js/**/*.js,internal/adapter/viewer/**/*.test.mjs
+globs: cmd/rencrow/**/*.go,cmd/rencrow/*.go,internal/adapter/viewer/assets/js/**/*.js,internal/adapter/viewer/**/*.test.mjs
 alwaysApply: false
 ---
 

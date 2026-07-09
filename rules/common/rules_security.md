@@ -191,9 +191,9 @@ class Config(BaseModel):
 Repair / Coder Proposal / Worker 自動実行では、RenCrow 本体の稼働プロセスと live binary を変更しない。
 
 自動実行禁止:
-- `picoclaw.service` の `start` / `stop` / `restart` / `reload` / `enable` / `disable`
-- `picoclaw` プロセスへの `pkill` / `killall`
+- `rencrow.service` の `start` / `stop` / `restart` / `reload` / `enable` / `disable`
+- `rencrow` プロセスへの `pkill` / `killall`
 - `make install`
-- `~/.local/bin/picoclaw` へのコピー、上書き、削除
+- `~/.local/bin/rencrow` へのコピー、上書き、削除
 
 必要な場合は Proposal に「承認が必要な運用手順」として記録し、Worker は `approval_required` で停止する。承認後の停止、port 停止確認、install、起動、health check は外側の operator が行う。

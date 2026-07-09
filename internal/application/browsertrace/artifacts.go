@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	domaintrace "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/browsertrace"
+	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
 )
 
 func BuildAPIArtifacts(result domaintrace.DiscoveryResult) []domaintrace.APIArtifact {

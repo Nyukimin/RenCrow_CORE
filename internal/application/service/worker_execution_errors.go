@@ -1,8 +1,8 @@
 package service
 
 import (
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
-	moduleworker "github.com/Nyukimin/picoclaw_multiLLM/modules/worker"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
 func (w *workerExecutionService) classifyExecutionFailure(result *patch.PatchExecutionResult) {

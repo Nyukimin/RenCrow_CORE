@@ -30,7 +30,7 @@ provider timeout, invalid audio, and playback timeout are distinct errors
 
 ## Current Main Files
 
-modules/tts, internal/infrastructure/tts, cmd/picoclaw/tts_*.go, cmd/picoclaw/idlechat_tts_*.go
+modules/tts, internal/infrastructure/tts, cmd/rencrow/tts_*.go, cmd/rencrow/idlechat_tts_*.go
 
 ## Current Route Boundary
 

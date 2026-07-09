@@ -1,6 +1,6 @@
 package tts
 
-import moduletts "github.com/Nyukimin/picoclaw_multiLLM/modules/tts"
+import moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 
 func buildRequestIDHeader(sessionID string, chunkIndex int) string {
 	return moduletts.BuildRequestIDHeader(sessionID, chunkIndex)

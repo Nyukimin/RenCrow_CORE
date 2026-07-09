@@ -11,7 +11,7 @@ make build
 # 全プラットフォーム用ビルド
 make build-all
 
-# インストール（~/.local/bin/picoclaw）
+# インストール（~/.local/bin/rencrow）
 make install
 
 # アンインストール
@@ -53,23 +53,23 @@ make check
 ## 実行
 ```bash
 # 初期化
-picoclaw onboard
+rencrow onboard
 
 # エージェントモード（対話）
-picoclaw agent -m "メッセージ"
+rencrow agent -m "メッセージ"
 
 # 対話モード
-picoclaw agent
+rencrow agent
 
 # ゲートウェイモード
-picoclaw gateway
+rencrow gateway
 
 # ステータス確認
-picoclaw status
+rencrow status
 
 # スケジュールタスク管理
-picoclaw cron list
-picoclaw cron add "タスク名" "スケジュール"
+rencrow cron list
+rencrow cron add "タスク名" "スケジュール"
 ```
 
 ## 監視ツール（watchdog）
@@ -99,7 +99,7 @@ make test-watchdog-mock
 docker compose --profile gateway up -d
 
 # ログ確認
-docker compose logs -f picoclaw-gateway
+docker compose logs -f rencrow-gateway
 
 # 停止
 docker compose --profile gateway down

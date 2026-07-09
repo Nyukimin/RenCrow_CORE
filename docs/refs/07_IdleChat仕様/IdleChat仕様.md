@@ -366,5 +366,5 @@ Viewer → IdleChat: ユーザーメッセージ → message.received → Notify
 | `internal/infrastructure/tts/audio_sink.go` | TTS チャンク再生 + 句間ブレイク（`pause_after` / `defaultChunkPause`） |
 | `internal/adapter/viewer/viewer.html` | Viewer フロントエンド |
 | `internal/adapter/viewer/hub.go` | EventHub（SSE ブロードキャスト） |
-| `cmd/picoclaw/main.go` | 初期化・API 登録・イベントブリッジ・TTS 連携 |
-| `cmd/picoclaw/idlechat_tts.go` | IdleChat TTS 非同期発火・完了通知 |
+| `cmd/rencrow/main.go` | 初期化・API 登録・イベントブリッジ・TTS 連携 |
+| `cmd/rencrow/idlechat_tts.go` | IdleChat TTS 非同期発火・完了通知 |

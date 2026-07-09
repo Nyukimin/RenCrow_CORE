@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/viewer"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 )
 
 func TestE2E_ViewerModelSwitch_RuntimeConfigStartAndSend(t *testing.T) {

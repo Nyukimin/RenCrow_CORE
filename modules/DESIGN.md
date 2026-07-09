@@ -22,7 +22,7 @@ internal/domain
 internal/application
 internal/infrastructure
 internal/adapter
-cmd/picoclaw
+cmd/rencrow
 ```
 
 `modules/` is the design and ownership boundary. Actual Go packages may stay in the existing `internal/...` tree until a dedicated migration phase moves or wraps them.
@@ -160,7 +160,7 @@ State must have a single owner:
 
 ## 5. Runtime Boundary
 
-`cmd/picoclaw` remains the composition root. It may wire modules together but should not become a business-logic owner.
+`cmd/rencrow` remains the composition root. It may wire modules together but should not become a business-logic owner.
 
 Composition root responsibilities:
 
@@ -170,7 +170,7 @@ Composition root responsibilities:
 - expose HTTP routes
 - start/stop runtime services
 
-If runtime code grows module-specific policy, move that policy into the corresponding module package and keep `cmd/picoclaw` as wiring.
+If runtime code grows module-specific policy, move that policy into the corresponding module package and keep `cmd/rencrow` as wiring.
 
 ## 6. Migration Policy
 

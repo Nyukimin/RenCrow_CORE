@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 // readStream は Ollama の NDJSON ストリームを読み込む

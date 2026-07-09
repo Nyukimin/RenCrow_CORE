@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
 func TestPhase19DistributedRouteDispatcherCHATBypassesAutonomousExecutor(t *testing.T) {

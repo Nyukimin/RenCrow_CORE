@@ -1,7 +1,7 @@
 # workspace/ - RenCrow ランタイムキャラクター設定
 
 RenCrowのキャラクター人格・行動規範・スキル定義を管理するディレクトリです。
-RenCrow本体（picoClawフレームワーク由来）のランタイム設定であり、
+RenCrow本体（RenCrowフレームワーク由来）のランタイム設定であり、
 LLMにコンテキストとして渡されます。
 
 ## prompts/ との違い
@@ -39,7 +39,7 @@ LLMにコンテキストとして渡されます。
 | `skills/` | スキル定義（各サブディレクトリに `SKILL.md`） |
 
 運用記憶（OperationMemory）は `workspace/` ではなく、`operation_memory_dir`
-（未設定時は `~/.picoclaw/rencrow/memory/`）に保存します。
+（未設定時は `~/.rencrow/memory/`）に保存します。
 DB や runtime state と同じ永続領域に置き、別 PC 起動時にも一緒に移せるようにします。
 
 ## skills/ 一覧

@@ -8,7 +8,7 @@
 
 ```text
 Viewer Chat mic
-  -> picoclaw /voice-chat
+  -> rencrow /voice-chat
   -> RenCrow_LLM /v1/chat/audio/sessions
   -> llm.delta / llm.final
   -> Viewer Chat表示
@@ -70,7 +70,7 @@ python3 scripts/vds_e2e_probe.py \
 
 ## 実装済み commit
 
-### picoclaw_multiLLM
+### RenCrow_CORE
 
 - `10949bb test: LLM音声E2E測定スクリプトを追加`
 - `1a9e0b6 test: LLM音声bridge境界metricsを追加`
@@ -83,13 +83,13 @@ python3 scripts/vds_e2e_probe.py \
 
 ## 測定で分かったこと
 
-picoclaw bridge metrics 追加後の Viewer fake mic E2E では、picoclaw は `session.commit` を RenCrow_LLM へ即時転送していた。
+rencrow bridge metrics 追加後の Viewer fake mic E2E では、rencrow は `session.commit` を RenCrow_LLM へ即時転送していた。
 
 代表値:
 
 ```text
-picoclaw_commit_recv_to_sent_ms: 0.1 ms
-picoclaw_commit_sent_to_final_recv_ms: 5875.3 ms
+rencrow_commit_recv_to_sent_ms: 0.1 ms
+rencrow_commit_sent_to_final_recv_ms: 5875.3 ms
 RenCrow_LLM commit_to_final_ms: 1431.4 ms
 Viewer commit -> final: 6332 ms
 /viewer/send: 0
@@ -110,7 +110,7 @@ delta gate: FAIL (delta_event_count=120 > 1)
 
 ## Mac 側反映手順
 
-Linux / picoclaw 側から LLM Ops proxy で `Chat` restart はできるが、Mac 側 checkout の `git pull` はできない。
+Linux / rencrow 側から LLM Ops proxy で `Chat` restart はできるが、Mac 側 checkout の `git pull` はできない。
 
 Mac で以下を実行する。
 
@@ -172,19 +172,19 @@ viewer_results: []
 - 3回の `commit -> llm.final` 中央値が 3s 未満、または RenCrow_LLM内部との差が 500ms 未満
 - `/viewer/send` が成功経路で呼ばれない
 - STT音声向け既存テストが通る
-- picoclaw service 反映済みで `/health` が ok
+- rencrow service 反映済みで `/health` が ok
 
 現状は Mac 側 `git pull` 未実施のため未完了。
 
 ## Mac 反映後の最終測定
 
-Mac 側で `git pull` と `uv run mlx-restart Chat` を実施後、picoclaw 側の final relay 順序も修正し、service へ反映した。
+Mac 側で `git pull` と `uv run mlx-restart Chat` を実施後、rencrow 側の final relay 順序も修正し、service へ反映した。
 
 修正内容:
 
 - RenCrow_LLM: audio session backend を final 優先の非streamingへ変更
 - RenCrow_LLM: `llm.delta` は多量送信せず、`llm.final` を正本として返す
-- picoclaw: gateway から受けた `llm.final` を Viewer へ先に relay し、その後で `ProcessVoiceDirect` を実行する
+- rencrow: gateway から受けた `llm.final` を Viewer へ先に relay し、その後で `ProcessVoiceDirect` を実行する
 - 測定: `null` mark を `0` と誤解する `deriveTimings` 集計バグを修正
 
 最終 verifier:

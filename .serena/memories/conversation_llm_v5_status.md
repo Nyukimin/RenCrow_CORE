@@ -122,7 +122,7 @@
 ```bash
 sudo apt install build-essential
 go env -w CGO_ENABLED=1
-CGO_ENABLED=1 go build ./cmd/picoclaw/
+CGO_ENABLED=1 go build ./cmd/rencrow/
 ```
 
 #### 2. VectorDBStore API不一致（10箇所）

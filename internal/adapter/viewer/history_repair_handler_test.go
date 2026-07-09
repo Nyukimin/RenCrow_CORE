@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	historyrepairapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/historyrepair"
+	historyrepairapp "github.com/Nyukimin/RenCrow_CORE/internal/application/historyrepair"
 )
 
 func TestHandleHistoryRepairJSONL(t *testing.T) {

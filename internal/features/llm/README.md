@@ -30,7 +30,7 @@ missing credentials, disabled provider, and health failure remain explicit
 
 ## Current Main Files
 
-modules/llm, internal/infrastructure/llm, cmd/picoclaw/runtime_llm_*.go
+modules/llm, internal/infrastructure/llm, cmd/rencrow/runtime_llm_*.go
 
 ## Migration Boundary
 

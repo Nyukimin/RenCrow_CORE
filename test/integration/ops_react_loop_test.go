@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/agent"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	infraRouting "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	infraRouting "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 )
 
 // mockSubagentManager は SubagentManager のモック

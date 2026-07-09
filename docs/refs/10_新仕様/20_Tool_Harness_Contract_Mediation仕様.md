@@ -935,7 +935,7 @@ internal/infrastructure/persistence/toolharness/
   sqlite_repairs.go
   sqlite_blocks.go
 
-cmd/picoclaw/
+cmd/rencrow/
   runtime_tool_harness.go
 ```
 
@@ -1000,8 +1000,8 @@ func MediateToolCall(ctx context.Context, req ToolCallRequest) ToolMediationResu
 推奨確認コマンド:
 
 ```bash
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/domain/toolharness ./internal/application/toolharness ./internal/infrastructure/tools
-GOCACHE=/tmp/picoclaw-gocache go test ./internal/application/toolloop ./internal/application/autonomous ./internal/application/subagent
+GOCACHE=/tmp/rencrow-gocache go test ./internal/domain/toolharness ./internal/application/toolharness ./internal/infrastructure/tools
+GOCACHE=/tmp/rencrow-gocache go test ./internal/application/toolloop ./internal/application/autonomous ./internal/application/subagent
 ```
 
 ## 28. 成功指標

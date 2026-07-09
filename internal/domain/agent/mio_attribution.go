@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 func buildAttributionContextsFromShort(short []conversation.Message, self conversation.Speaker, limit int) ([]string, []string) {

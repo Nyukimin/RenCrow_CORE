@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/config"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/agent"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
-	llmfactory "github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/llm/factory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	llmfactory "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/factory"
 )
 
 func main() {
@@ -88,7 +88,7 @@ func main() {
 }
 
 func loadConfig() (*config.Config, error) {
-	if path := os.Getenv("PICOCLAW_CONFIG"); path != "" {
+	if path := os.Getenv("RENCROW_CONFIG"); path != "" {
 		loadEnvFile(filepath.Join(filepath.Dir(path), ".env"))
 		return config.LoadConfig(path)
 	}
@@ -100,8 +100,8 @@ func loadConfig() (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	loadEnvFile(filepath.Join(home, ".picoclaw", ".env"))
-	return config.LoadConfig(filepath.Join(home, ".picoclaw", "config.yaml"))
+	loadEnvFile(filepath.Join(home, ".rencrow", ".env"))
+	return config.LoadConfig(filepath.Join(home, ".rencrow", "config.yaml"))
 }
 
 func loadEnvFile(path string) {

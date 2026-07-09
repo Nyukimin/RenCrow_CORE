@@ -30,7 +30,7 @@
 - Safe Build Mode: 既存コード、既存DB、既存環境、設定、運用、memory、Source Registry、validator、本番系に触る作業。
 - Tool Build Mode: 新規ツール、小物スクリプト、補助アプリ、検証用CLIを既存本体から切り離して作る作業。
 
-横断的に再利用する Tool Build Mode の成果物は `/home/nyukimi/RenCrow/RenCrow_Tools` を正本とする。`picoclaw_multiLLM/tools/` は既存互換または本体密結合の残置場所であり、新規の横断ツール置き場にしない。
+横断的に再利用する Tool Build Mode の成果物は `/home/nyukimi/RenCrow/RenCrow_Tools` を正本とする。`RenCrow_CORE/tools/` は既存互換または本体密結合の残置場所であり、新規の横断ツール置き場にしない。
 
 迷った場合は Safe Build Mode とし、追加確認が必要な状態として扱う。Tool Build Mode でも、既存本体に接続する、正式DBへ保存する、memoryを確定する、Source Registryを更新する、設定や環境を変える場合は Safe Build Mode へ切り替える。
 

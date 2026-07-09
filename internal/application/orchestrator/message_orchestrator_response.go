@@ -1,9 +1,9 @@
 package orchestrator
 
 import (
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
-	domainverification "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/verification"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
 )
 
 type messageResponseAssembler struct{}

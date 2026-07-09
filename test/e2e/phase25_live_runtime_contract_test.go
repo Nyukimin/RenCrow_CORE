@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/pkg/rencrowclient"
+	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
 func TestE2E_Phase25LiveRuntimeHealth(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live service health")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live service health")
 	}
 
 	baseURL := phase25LiveBaseURL()
@@ -37,8 +37,8 @@ func TestE2E_Phase25LiveRuntimeHealth(t *testing.T) {
 }
 
 func TestE2E_Phase25LiveLLMOpsProxyClientBlockedOrLive(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live LLM Ops status")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live LLM Ops status")
 	}
 
 	baseURL := phase25LiveBaseURL()
@@ -86,8 +86,8 @@ func assertLLMOpsUpstreamUnreachable(t *testing.T, err error) {
 }
 
 func TestE2E_Phase25LiveViewerRuntimeConfigClient(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Viewer runtime config")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Viewer runtime config")
 	}
 
 	baseURL := phase25LiveBaseURL()
@@ -172,8 +172,8 @@ func TestE2E_Phase25LiveViewerRuntimeConfigClient(t *testing.T) {
 }
 
 func TestE2E_Phase25LiveMemoryLayersUnavailableWhenL1Disabled(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Viewer memory layers availability")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Viewer memory layers availability")
 	}
 
 	baseURL := phase25LiveBaseURL()
@@ -196,8 +196,8 @@ func TestE2E_Phase25LiveMemoryLayersUnavailableWhenL1Disabled(t *testing.T) {
 }
 
 func TestE2E_Phase25LiveSandboxStatusUnavailableWhenSandboxDisabled(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Sandbox status availability")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Sandbox status availability")
 	}
 
 	baseURL := phase25LiveBaseURL()
@@ -221,8 +221,8 @@ func TestE2E_Phase25LiveSandboxStatusUnavailableWhenSandboxDisabled(t *testing.T
 }
 
 func TestE2E_Phase25LiveDebugSystemSnapshotClient(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Viewer debug system")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Viewer debug system")
 	}
 
 	baseURL := phase25LiveBaseURL()
@@ -251,7 +251,7 @@ func TestE2E_Phase25LiveDebugSystemSnapshotClient(t *testing.T) {
 }
 
 func phase25LiveBaseURL() string {
-	baseURL := strings.TrimRight(os.Getenv("PICOCLAW_LIVE_BASE_URL"), "/")
+	baseURL := strings.TrimRight(os.Getenv("RENCROW_LIVE_BASE_URL"), "/")
 	if baseURL == "" {
 		return "http://127.0.0.1:18790"
 	}

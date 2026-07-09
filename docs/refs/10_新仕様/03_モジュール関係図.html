@@ -397,7 +397,7 @@
   <main>
     <section id="overview">
       <h2>1. 全体概要図</h2>
-      <p class="lead">RenCrow は、外部入力を Adapter が受け、Application が処理を調整し、Domain の契約に沿って Infrastructure の実装を使う構成です。`cmd/picoclaw` はそれらを起動時に接続する composition root です。</p>
+      <p class="lead">RenCrow は、外部入力を Adapter が受け、Application が処理を調整し、Domain の契約に沿って Infrastructure の実装を使う構成です。`cmd/rencrow` はそれらを起動時に接続する composition root です。</p>
       <div class="diagram">
         <div class="flow">
           <div class="box adapter arrow"><strong>外部入力</strong><small>LINE / Slack / Discord / Telegram / Viewer / STT</small></div>
@@ -420,7 +420,7 @@
 
     <section id="layers">
       <h2>2. Clean Architecture 風の層構造</h2>
-      <p class="lead">各層は「何を置くか」と「何を置かないか」で分かれます。横断的な接続は `cmd/picoclaw/runtime_*.go` が行い、業務判断を `cmd/` に戻さないことが重要です。</p>
+      <p class="lead">各層は「何を置くか」と「何を置かないか」で分かれます。横断的な接続は `cmd/rencrow/runtime_*.go` が行い、業務判断を `cmd/` に戻さないことが重要です。</p>
       <div class="diagram">
         <div class="lane-stack">
           <div class="lane">
@@ -429,7 +429,7 @@
               <div class="box cmd"><strong>main.go</strong><small>起動、CLI、HTTP server startup</small></div>
               <div class="box cmd"><strong>routes.go</strong><small>HTTP route registration</small></div>
               <div class="box cmd"><strong>runtime_*.go</strong><small>依存組み立て、provider wiring</small></div>
-              <div class="box cmd"><strong>picoclaw-agent</strong><small>standalone worker / coder process</small></div>
+              <div class="box cmd"><strong>rencrow-agent</strong><small>standalone worker / coder process</small></div>
             </div>
           </div>
           <div class="lane">
@@ -522,7 +522,7 @@
           <tr><td>route chain</td><td>明示コマンド、ルール辞書、分類器、安全側 fallback の順に判断</td><td><code>message_orchestrator_*.go</code>, <code>internal/domain/routing</code></td></tr>
           <tr><td>proposal</td><td>Coder の成果物は候補。plan / patch / risk を返す</td><td><code>internal/domain/proposal</code>, <code>internal/domain/patch</code>, <code>code_executor*.go</code></td></tr>
           <tr><td>execution</td><td>Worker が protected file、workspace、policy を確認して実行する</td><td><code>internal/application/service/worker_execution_*.go</code></td></tr>
-          <tr><td>standalone agent</td><td>stdin/stdout protocol と handler 境界を守る</td><td><code>cmd/picoclaw-agent/*.go</code></td></tr>
+          <tr><td>standalone agent</td><td>stdin/stdout protocol と handler 境界を守る</td><td><code>cmd/rencrow-agent/*.go</code></td></tr>
         </tbody>
       </table>
     </section>
@@ -585,7 +585,7 @@
         </div>
         <div class="box infra">
           <strong>Audio 主担当</strong>
-          <small><code>internal/infrastructure/tts/rencrow_tts_*.go</code><br><code>internal/infrastructure/audiorouter</code><br><code>internal/infrastructure/vtuber</code><br><code>cmd/picoclaw/stt_runtime_*.go</code></small>
+          <small><code>internal/infrastructure/tts/rencrow_tts_*.go</code><br><code>internal/infrastructure/audiorouter</code><br><code>internal/infrastructure/vtuber</code><br><code>cmd/rencrow/stt_runtime_*.go</code></small>
         </div>
       </div>
       <div class="note">STT は通常 chat の入力経路です。IdleChat の会話生成、TTS、Viewer 表示とは別の入力境界として扱います。</div>
@@ -712,7 +712,7 @@
           <tr><td>route / Chat / Worker / Coder</td><td><code>message_orchestrator_*.go</code>, <code>internal/domain/routing</code></td><td>Coder は実行しない。Worker が実行主体。</td></tr>
           <tr><td>Viewer 表示</td><td><code>internal/adapter/viewer</code>, <code>viewer.html</code>, <code>assets/</code></td><td>表示、event、log、audio trigger を分ける。</td></tr>
           <tr><td>IdleChat</td><td><code>internal/application/idlechat</code></td><td>raw response、view data、audio trigger を分ける。</td></tr>
-          <tr><td>STT / TTS</td><td><code>cmd/picoclaw/stt_runtime_*.go</code>, <code>internal/infrastructure/tts</code></td><td>STT は通常 chat 入力。TTS chunk は本文ではない。</td></tr>
+          <tr><td>STT / TTS</td><td><code>cmd/rencrow/stt_runtime_*.go</code>, <code>internal/infrastructure/tts</code></td><td>STT は通常 chat 入力。TTS chunk は本文ではない。</td></tr>
           <tr><td>LLM provider</td><td><code>internal/infrastructure/llm/providers</code>, <code>factory</code>, <code>middleware</code></td><td>repo example と live runtime config を混同しない。</td></tr>
           <tr><td>Memory / Source Registry</td><td><code>l1_sqlite_*.go</code>, <code>sourcefetcher</code>, <code>viewer/source_registry</code></td><td>observed / candidate / validated / promoted を飛ばさない。</td></tr>
         </tbody>
@@ -722,7 +722,7 @@
         <div class="rule" style="border-left-color: var(--danger)"><strong>禁止</strong>Viewer 表示、音声、口パク、ログを同じ契約にする。</div>
         <div class="rule" style="border-left-color: var(--danger)"><strong>禁止</strong>Coder が破壊的操作を直接実行する。</div>
         <div class="rule" style="border-left-color: var(--danger)"><strong>禁止</strong>Source Registry を無審査で正式 memory へ昇格する。</div>
-        <div class="rule" style="border-left-color: var(--warn)"><strong>要注意</strong>repo example と live <code>~/.picoclaw/config.yaml</code> を混同しない。</div>
+        <div class="rule" style="border-left-color: var(--warn)"><strong>要注意</strong>repo example と live <code>~/.rencrow/config.yaml</code> を混同しない。</div>
         <div class="rule" style="border-left-color: var(--ok)"><strong>推奨</strong>変更前に主担当ファイル、入力、出力、副作用、ログ、エラー契約を決める。</div>
       </div>
     </section>

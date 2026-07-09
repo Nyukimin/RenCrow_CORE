@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/subagent"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 )
 
 // SubagentFunc はサブエージェント呼び出し関数の型

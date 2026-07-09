@@ -183,12 +183,12 @@ function firstExisting(paths) {
 
 const tourCandidates = [
   ["Project overview", "Start from the repository overview and agent rules.", ["README.md", "README.ja.md", "AGENTS.md", "CLAUDE.md"]],
-  ["Command entrypoints", "See how executable commands enter the runtime.", ["cmd/picoclaw/main.go", "cmd/agent/main.go"]],
+  ["Command entrypoints", "See how executable commands enter the runtime.", ["cmd/rencrow/main.go", "cmd/agent/main.go"]],
   ["Domain model", "Inspect core domain boundaries and policies.", scan.files.filter((f) => f.path.startsWith("internal/domain/")).slice(0, 3).map((f) => f.path)],
   ["Application layer", "Review use-case orchestration and application services.", scan.files.filter((f) => f.path.startsWith("internal/application/")).slice(0, 3).map((f) => f.path)],
   ["Infrastructure layer", "Review persistence, runtime integration, and external system wiring.", scan.files.filter((f) => f.path.startsWith("internal/infrastructure/")).slice(0, 3).map((f) => f.path)],
   ["Runtime modules", "Inspect feature modules attached to the runtime.", scan.files.filter((f) => f.path.startsWith("modules/")).slice(0, 3).map((f) => f.path)],
-  ["Operations", "Review deployment and operational scripts.", ["systemd/picoclaw.service", "Makefile", "docker-compose.yml"]],
+  ["Operations", "Review deployment and operational scripts.", ["systemd/rencrow.service", "Makefile", "docker-compose.yml"]],
 ];
 
 const tour = [];
@@ -209,7 +209,7 @@ const graph = {
   version: "1.0.0",
   kind: "codebase",
   project: {
-    name: "picoclaw_multiLLM",
+    name: "RenCrow_CORE",
     languages,
     frameworks: ["Go", "Node.js", "Python"],
     description: "RenCrow core/chat/CLI runtime, analyzed with deterministic Understand Anything extraction.",

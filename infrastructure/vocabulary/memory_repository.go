@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	vocabDomain "github.com/Nyukimin/picoclaw_multiLLM/domain/vocabulary"
+	vocabDomain "github.com/Nyukimin/RenCrow_CORE/domain/vocabulary"
 )
 
 // MemoryRepository implements in-memory storage for glossary entries

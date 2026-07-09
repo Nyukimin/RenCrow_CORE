@@ -595,7 +595,7 @@ kb-admin stats
 # → 対象ドメインが "empty" の場合はドキュメント未保存
 
 # 3. ログ確認
-tail -f ~/.picoclaw/logs/picoclaw.log | grep "SearchKB"
+tail -f ~/.rencrow/logs/rencrow.log | grep "SearchKB"
 ```
 
 ### Q2. KB保存が失敗する

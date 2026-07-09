@@ -1,6 +1,6 @@
 # Domain Graph Assertion 一覧検索 API 実装仕様作成プロンプト
 
-あなたは RenCrow / picoclaw_multiLLM の仕様整理担当兼実装仕様作成担当です。
+あなたは RenCrow / RenCrow_CORE の仕様整理担当兼実装仕様作成担当です。
 
 目的は、`docs/10_新仕様/53_Domain_Graph_Assertion一覧検索API実装仕様.md` を入口として、Domain Graph assertion の一覧・検索 API を実装できる粒度まで落とし込むことです。
 
@@ -44,8 +44,8 @@ internal/infrastructure/persistence/conversation/l1_sqlite_types.go
 internal/infrastructure/persistence/conversation/l1_sqlite_store_test.go
 internal/adapter/viewer/source_registry_handler.go
 internal/adapter/viewer/source_registry_handler_test.go
-cmd/picoclaw/runtime_viewer_handlers.go
-cmd/picoclaw/routes.go
+cmd/rencrow/runtime_viewer_handlers.go
+cmd/rencrow/routes.go
 pkg/rencrowclient/client.go
 internal/adapter/viewer/assets/js/tabs/memory.js
 internal/adapter/viewer/viewer.html
@@ -100,8 +100,8 @@ internal/adapter/viewer/viewer.html
 
 ### 3. Runtime wiring
 
-- `cmd/picoclaw/runtime_viewer_handlers.go` に追加する依存
-- `cmd/picoclaw/routes.go` に追加する route
+- `cmd/rencrow/runtime_viewer_handlers.go` に追加する依存
+- `cmd/rencrow/routes.go` に追加する route
 - `/viewer/runtime-config` readiness に出すかどうか
 - L1 store disabled の live runtime で blocked state をどう見せるか
 

@@ -63,7 +63,7 @@
 | `00_README.md` | 新仕様セットの入口、読み順、各文書の役割 |
 | `01_新仕様_概要.md` | RenCrow の目的、原則、主要コンポーネントの位置づけ |
 | `02_モジュール構成仕様.md` | Clean Architecture 風の層、主要実装箇所、仕様変更時に触る場所 |
-| `90_Runtime_Topology_Config仕様.md` | `~/.picoclaw/config.yaml` を module 配置と接続先の設計図として扱い、IP / host から endpoint を導出する runtime topology 仕様 |
+| `90_Runtime_Topology_Config仕様.md` | `~/.rencrow/config.yaml` を module 配置と接続先の設計図として扱い、IP / host から endpoint を導出する runtime topology 仕様 |
 | `03_モジュール関係図.html` | モジュールの意味とつながりを概要図から詳細図まで示す HTML 図解 |
 | `04_Chat_Worker_Coder仕様.md` | Chat / Worker / Coder の責務、route chain、plan / patch / execution 境界 |
 | `05_Viewer仕様.md` | Viewer 表示、SSE event、log、history、audio trigger の契約 |

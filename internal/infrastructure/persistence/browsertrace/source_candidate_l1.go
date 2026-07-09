@@ -3,11 +3,11 @@ package browsertrace
 import (
 	"context"
 	"fmt"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 	"time"
 
-	domaintrace "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/browsertrace"
+	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
 )
 
 type L1StagingStore interface {

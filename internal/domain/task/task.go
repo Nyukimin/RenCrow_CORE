@@ -1,8 +1,8 @@
 package task
 
 import (
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/attachment"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
 
 // Task はユーザーからの指示を表す値オブジェクト

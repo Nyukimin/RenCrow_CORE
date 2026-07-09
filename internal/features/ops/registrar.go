@@ -5,14 +5,14 @@ import (
 	"net/http"
 )
 
-// Dependencies groups feature dependencies supplied by cmd/picoclaw.
+// Dependencies groups feature dependencies supplied by cmd/rencrow.
 type Dependencies struct {
 	Ports  Ports
 	Routes Routes
 }
 
 // Routes groups Ops, job, backlog, scheduler, workstream, and revenue handlers
-// supplied by cmd/picoclaw. Handler implementations remain in legacy packages
+// supplied by cmd/rencrow. Handler implementations remain in legacy packages
 // during Ver0.80 migration; this registrar owns only route registration.
 type Routes struct {
 	Status                 http.HandlerFunc

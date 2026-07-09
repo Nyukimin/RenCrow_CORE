@@ -64,7 +64,7 @@ modules/tts must not import modules/llm or modules/stt
 modules/stt must not import modules/llm or modules/tts
 modules/worker must not import modules/tts or modules/stt
 modules/* contract packages must not import internal/* or cmd/*
-internal/adapter/modulebridge must not import cmd/picoclaw
+internal/adapter/modulebridge must not import cmd/rencrow
 internal/infrastructure/tts must not import stt/chat/llm/worker module ownership
 internal/infrastructure/stt must not import tts/chat/llm/worker module ownership
 internal/application/service must not import TTS/STT provider or Viewer implementations

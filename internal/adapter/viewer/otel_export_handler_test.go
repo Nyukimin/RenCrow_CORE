@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	otelexportapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/otelexport"
+	otelexportapp "github.com/Nyukimin/RenCrow_CORE/internal/application/otelexport"
 )
 
 func TestHandleOTelExportDryRun(t *testing.T) {

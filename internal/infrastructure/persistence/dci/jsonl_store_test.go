@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	domaindci "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/dci"
+	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 )
 
 func TestJSONLStoreSaveAndListRecent(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	kmapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/knowledgememory"
-	domainkm "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/knowledgememory"
+	kmapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
+	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
 )
 
 type KnowledgeMemoryLister interface {

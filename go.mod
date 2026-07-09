@@ -1,4 +1,4 @@
-module github.com/Nyukimin/picoclaw_multiLLM
+module github.com/Nyukimin/RenCrow_CORE
 
 go 1.25.0
 

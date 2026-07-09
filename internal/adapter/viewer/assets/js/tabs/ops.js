@@ -2487,7 +2487,7 @@ function syncLLMOpsPanel(cfg, fetchError) {
     } else if (configured) {
       configEl.innerHTML = '<span class="badge state-error">token missing</span> ' + esc(baseURL || 'llm_ops configured') + '<div class="ops-sub">LLM_OPS_TOKEN が未設定のためViewerプロキシは無効です</div>';
     } else {
-      configEl.innerHTML = '<span class="badge state-offline">disabled</span><div class="ops-sub">~/.picoclaw/config.yaml に llm_ops.enabled/base_url がありません</div>';
+      configEl.innerHTML = '<span class="badge state-offline">disabled</span><div class="ops-sub">~/.rencrow/config.yaml に llm_ops.enabled/base_url がありません</div>';
     }
   }
   renderLocalLLMRuntimeConfig();

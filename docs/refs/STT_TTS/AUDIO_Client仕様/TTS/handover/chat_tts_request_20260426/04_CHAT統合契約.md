@@ -1,8 +1,8 @@
-# Chat 統合契約（picoclaw_multiLLM 向け）
+# Chat 統合契約（RenCrow_CORE 向け）
 
 ## 前提
 
-- Chat: [github.com/Nyukimin/picoclaw_multiLLM](https://github.com/Nyukimin/picoclaw_multiLLM)（Go 96.4%）
+- Chat: [github.com/Nyukimin/RenCrow_CORE](https://github.com/Nyukimin/RenCrow_CORE)（Go 96.4%）
 - 現状: RenCrow_TTS は小さな TTS gateway と provider interface を定義する。実 SBV2 推論は外部 provider の責務
 - 目標: Chat の LLM 応答を RenCrow_TTS に流し、音声で返す経路を整備する
 - 本書は **Chat 側に何を実装してもらうか** を規定する契約書
@@ -10,7 +10,7 @@
 ## 1. 接続モデル
 
 ```
-[Chat (picoclaw_multiLLM)]
+[Chat (RenCrow_CORE)]
       |
       | HTTP POST /synthesis（単発） or WS /sessions（ストリーミング）
       v
@@ -50,7 +50,7 @@
 
 ## 3. Chat 側の責務
 
-| 責務 | 対応コード位置（picoclaw_multiLLM の想定） |
+| 責務 | 対応コード位置（RenCrow_CORE の想定） |
 |---|---|
 | HTTP クライアント | 新規 `pkg/voice/rencrow_tts_client.go` |
 | WS クライアント（オプション） | 新規 `pkg/voice/rencrow_tts_ws_client.go` |

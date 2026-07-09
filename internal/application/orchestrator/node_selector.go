@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	domainnode "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/node"
+	domainnode "github.com/Nyukimin/RenCrow_CORE/internal/domain/node"
 )
 
 // NodeSelector chooses a node from candidates based on capability matching.

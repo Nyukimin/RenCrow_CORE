@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVICE_NAME="${SERVICE_NAME:-picoclaw-funnel.service}"
+SERVICE_NAME="${SERVICE_NAME:-rencrow-funnel.service}"
 VERIFY_USER="${SUDO_USER:-${USER}}"
 
 log() {

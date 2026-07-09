@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/characterruntime"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/characterruntime"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
 type captureCharacterRuntimeEvents struct {

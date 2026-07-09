@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	otelexportapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/otelexport"
+	otelexportapp "github.com/Nyukimin/RenCrow_CORE/internal/application/otelexport"
 )
 
 func HandleOTelExport(service *otelexportapp.Service) http.HandlerFunc {

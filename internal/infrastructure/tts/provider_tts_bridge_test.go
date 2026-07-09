@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
 func TestProviderTTSBridgeSplitsLongTextBeforeSynthesis(t *testing.T) {

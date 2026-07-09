@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	domainmemory "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/memory"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func TestExtractUserMemoryCandidatePreferenceAndConstraints(t *testing.T) {

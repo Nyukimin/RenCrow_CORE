@@ -453,7 +453,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="VDS E2E probe for /voice-chat WebSocket")
     parser.add_argument("--wav", default=str(DEFAULT_WAV), help="Path to mono PCM16 WAV")
     parser.add_argument("--ws-url", default=DEFAULT_WS_URL)
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="picoclaw HTTP base for optional SSE")
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="rencrow HTTP base for optional SSE")
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
     parser.add_argument("--rounds", type=int, default=2)
     parser.add_argument("--wait", type=float, default=120.0)

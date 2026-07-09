@@ -11,16 +11,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
-	revenueapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/revenue"
-	skillbootstrap "github.com/Nyukimin/picoclaw_multiLLM/internal/application/skillgovernance"
-	domainbacklog "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/backlog"
-	ctxbuilder "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/context"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/memory"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	domainskill "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/skillgovernance"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
-	domainworkstream "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/workstream"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	revenueapp "github.com/Nyukimin/RenCrow_CORE/internal/application/revenue"
+	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
+	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	ctxbuilder "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
 
 // WorkerAgent はHeartbeatが作業処理を委譲するインターフェース。

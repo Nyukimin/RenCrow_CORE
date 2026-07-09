@@ -30,7 +30,7 @@ fallback and invalid response must not be treated as success
 
 ## Current Main Files
 
-internal/application/idlechat, cmd/picoclaw/runtime_idlechat*.go, cmd/picoclaw/idlechat_tts*.go
+internal/application/idlechat, cmd/rencrow/runtime_idlechat*.go, cmd/rencrow/idlechat_tts*.go
 
 ## Migration Boundary
 

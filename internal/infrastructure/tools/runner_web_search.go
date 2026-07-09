@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/tool"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
 // executeWebSearch はWeb検索を実行（Google Custom Search JSON API使用）

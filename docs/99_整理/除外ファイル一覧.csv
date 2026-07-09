@@ -56,13 +56,13 @@ path,status,category,bytes,reason,restore_when
 06_実装ガイド進行管理/win11_test_mcp.ps1,runbook-log,運用/実装メモ,4043,日付付き作業ログ/個別runbook。必要時のみ戻す,日付付き作業ログや個別runbookを検証するとき
 06_実装ガイド進行管理/実装ステップ_プロンプト前倒しガイド.md,runbook-log,運用/実装メモ,2784,日付付き作業ログ/個別runbook。必要時のみ戻す,日付付き作業ログや個別runbookを検証するとき
 07_調査/20260228_140724_ProcessHeartbeat設計問題.md,reference,調査,17937,参照資料。通常の理解・構築判断では入口にしない,ProcessHeartbeat等の個別調査を再検討するとき
-08_AIからの提案/PicoClaw_Worker_Coder_Escalation_Spec.md,reference,AI提案/参考,3022,参照資料。通常の理解・構築判断では入口にしない,未採用/保留のAI提案を再評価するとき
+08_AIからの提案/RenCrow_Worker_Coder_Escalation_Spec.md,reference,AI提案/参考,3022,参照資料。通常の理解・構築判断では入口にしない,未採用/保留のAI提案を再評価するとき
 08_AIからの提案/Twitter事例.md,reference,AI提案/参考,22084,参照資料。通常の理解・構築判断では入口にしない,未採用/保留のAI提案を再評価するとき
 08_AIからの提案/agents.md,reference,AI提案/参考,2795,参照資料。通常の理解・構築判断では入口にしない,未採用/保留のAI提案を再評価するとき
 08_AIからの提案/implementation_gap_analysis.md,reference,AI提案/参考,12895,参照資料。通常の理解・構築判断では入口にしない,未採用/保留のAI提案を再評価するとき
 08_AIからの提案/multi_agent_specification_日本語版.md,reference,AI提案/参考,3328,参照資料。通常の理解・構築判断では入口にしない,未採用/保留のAI提案を再評価するとき
 08_AIからの提案/openclaw_thread_summary_2026-02-22.md,reference,AI提案/参考,6998,参照資料。通常の理解・構築判断では入口にしない,未採用/保留のAI提案を再評価するとき
-08_AIからの提案/picoclaw-spec.md,reference,AI提案/参考,5353,参照資料。通常の理解・構築判断では入口にしない,未採用/保留のAI提案を再評価するとき
+08_AIからの提案/rencrow-spec.md,reference,AI提案/参考,5353,参照資料。通常の理解・構築判断では入口にしない,未採用/保留のAI提案を再評価するとき
 08_AIからの提案/routing-policy.md,reference,AI提案/参考,2540,参照資料。通常の理解・構築判断では入口にしない,未採用/保留のAI提案を再評価するとき
 08_AIからの提案/スレッドまとめ.md,reference,AI提案/参考,3648,参照資料。通常の理解・構築判断では入口にしない,未採用/保留のAI提案を再評価するとき
 09_IdleChat仕様/06_IdleChat仕様.md,active-detail,機能詳細/IdleChat,6989,詳細仕様。正本入口で足りない実装時のみ戻す,IdleChatの該当カテゴリ/停止/ID/品質制御を実装・修正するとき

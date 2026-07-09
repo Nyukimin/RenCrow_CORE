@@ -4,11 +4,11 @@ import (
 	"context"
 	"log"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/service"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
-	domainmodule "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/moduleregistry"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	domainmodule "github.com/Nyukimin/RenCrow_CORE/internal/domain/moduleregistry"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // CodeExecutor はコード生成タスクの実行を担当

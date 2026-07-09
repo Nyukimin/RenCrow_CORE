@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	aiworkflowapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/aiworkflow"
-	domainai "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/aiworkflow"
-	domainskill "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/skillgovernance"
+	aiworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/aiworkflow"
+	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 )
 
 type AIWorkflowLister interface {

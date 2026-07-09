@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	executionapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/execution"
-	domainexecution "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/execution"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/tool"
+	executionapp "github.com/Nyukimin/RenCrow_CORE/internal/application/execution"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
 // PolicyRunner は RunnerV2 をポリシー適用付きでラップする

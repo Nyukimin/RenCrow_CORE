@@ -28,7 +28,7 @@ Non-responsibilities:
 Current high-impact areas:
 
 - `internal/infrastructure/stt`
-- `cmd/picoclaw/stt_*`
+- `cmd/rencrow/stt_*`
 - `internal/adapter/viewer/stt_*`
 
 Boundary note:

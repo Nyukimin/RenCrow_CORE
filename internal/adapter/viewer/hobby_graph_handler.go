@@ -534,7 +534,7 @@ func hobbyGraphItemExists(ctx context.Context, db *sql.DB, itemID string) (bool,
 
 func resolveHobbyGraphDBPath(configured string) string {
 	candidates := []string{}
-	if env := strings.TrimSpace(os.Getenv("PICOCLAW_HOBBY_GRAPH_DB")); env != "" {
+	if env := strings.TrimSpace(os.Getenv("RENCROW_HOBBY_GRAPH_DB")); env != "" {
 		candidates = append(candidates, env)
 	}
 	if configured = strings.TrimSpace(configured); configured != "" {
@@ -556,7 +556,7 @@ func resolveHobbyGraphWritableDBPath(configured string) string {
 	if resolved := resolveHobbyGraphDBPath(configured); resolved != "" {
 		return resolved
 	}
-	if env := strings.TrimSpace(os.Getenv("PICOCLAW_HOBBY_GRAPH_DB")); env != "" {
+	if env := strings.TrimSpace(os.Getenv("RENCROW_HOBBY_GRAPH_DB")); env != "" {
 		return env
 	}
 	if configured = strings.TrimSpace(configured); configured != "" {

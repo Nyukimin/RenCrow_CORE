@@ -34,14 +34,14 @@
 repo 側の `prompts/characters/` は参照しない。
 
 ```text
-~/.picoclaw/workspace/prompts/characters/mio/
-~/.picoclaw/workspace/prompts/characters/shiro/
-~/.picoclaw/workspace/prompts/characters/kuro/
-~/.picoclaw/workspace/prompts/characters/midori/
-~/.picoclaw/workspace/prompts/characters/aka/
-~/.picoclaw/workspace/prompts/characters/ao/
-~/.picoclaw/workspace/prompts/characters/gin/
-~/.picoclaw/workspace/prompts/characters/kin/
+~/.rencrow/workspace/prompts/characters/mio/
+~/.rencrow/workspace/prompts/characters/shiro/
+~/.rencrow/workspace/prompts/characters/kuro/
+~/.rencrow/workspace/prompts/characters/midori/
+~/.rencrow/workspace/prompts/characters/aka/
+~/.rencrow/workspace/prompts/characters/ao/
+~/.rencrow/workspace/prompts/characters/gin/
+~/.rencrow/workspace/prompts/characters/kin/
 ```
 
 各 character ディレクトリには `manifest.txt` を置き、読み込む `.md` ファイルと順序を明示する。
@@ -49,7 +49,7 @@ repo 側の `prompts/characters/` は参照しない。
 例:
 
 ```text
-~/.picoclaw/workspace/prompts/characters/<character>/
+~/.rencrow/workspace/prompts/characters/<character>/
   manifest.txt
   00_system.md
   10_policy.md
@@ -60,10 +60,10 @@ repo 側の `prompts/characters/` は参照しない。
 将来的な role 共通配置として、以下の role ディレクトリも仕様上は扱える。
 
 ```text
-~/.picoclaw/prompts/llm/chat/
-~/.picoclaw/prompts/llm/worker/
-~/.picoclaw/prompts/llm/heavy/
-~/.picoclaw/prompts/llm/wild/
+~/.rencrow/prompts/llm/chat/
+~/.rencrow/prompts/llm/worker/
+~/.rencrow/prompts/llm/heavy/
+~/.rencrow/prompts/llm/wild/
 ```
 
 `manifest.txt` の例:
@@ -78,7 +78,7 @@ repo 側の `prompts/characters/` は参照しない。
 
 ## 読み込み仕様
 
-`~/.picoclaw/prompts/llm/{role}/manifest.txt` を、その role の固定プロンプト定義の正本とする。
+`~/.rencrow/prompts/llm/{role}/manifest.txt` を、その role の固定プロンプト定義の正本とする。
 
 manifest に列挙された `.md` ファイルを、記載順に結合する。この結合結果を `role_static_prompt` と呼ぶ。
 
@@ -172,26 +172,26 @@ duplicate entries:
 旧形式:
 
 ```text
-~/.picoclaw/prompts/llm/chat.system.md
-~/.picoclaw/prompts/llm/worker.system.md
-~/.picoclaw/prompts/llm/heavy.system.md
-~/.picoclaw/prompts/llm/wild.system.md
+~/.rencrow/prompts/llm/chat.system.md
+~/.rencrow/prompts/llm/worker.system.md
+~/.rencrow/prompts/llm/heavy.system.md
+~/.rencrow/prompts/llm/wild.system.md
 ```
 
 新形式:
 
 ```text
-~/.picoclaw/prompts/llm/chat/manifest.txt
-~/.picoclaw/prompts/llm/chat/00_system.md
+~/.rencrow/prompts/llm/chat/manifest.txt
+~/.rencrow/prompts/llm/chat/00_system.md
 
-~/.picoclaw/prompts/llm/worker/manifest.txt
-~/.picoclaw/prompts/llm/worker/00_system.md
+~/.rencrow/prompts/llm/worker/manifest.txt
+~/.rencrow/prompts/llm/worker/00_system.md
 
-~/.picoclaw/prompts/llm/heavy/manifest.txt
-~/.picoclaw/prompts/llm/heavy/00_system.md
+~/.rencrow/prompts/llm/heavy/manifest.txt
+~/.rencrow/prompts/llm/heavy/00_system.md
 
-~/.picoclaw/prompts/llm/wild/manifest.txt
-~/.picoclaw/prompts/llm/wild/00_system.md
+~/.rencrow/prompts/llm/wild/manifest.txt
+~/.rencrow/prompts/llm/wild/00_system.md
 ```
 
 移行期間を設ける場合は、新形式を優先する。

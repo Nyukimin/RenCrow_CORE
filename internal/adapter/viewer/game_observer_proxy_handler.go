@@ -17,7 +17,7 @@ const (
 )
 
 // GameObserverProxyOptions configures the read-only RenCrow_GAMES live
-// observer passthrough served from the PicoClaw Viewer origin.
+// observer passthrough served from the RenCrow Viewer origin.
 type GameObserverProxyOptions struct {
 	UIPath          string
 	ObserverBaseURL string
@@ -25,7 +25,7 @@ type GameObserverProxyOptions struct {
 }
 
 // HandleGameObserverPage serves the RenCrow_GAMES browser observer UI through
-// PicoClaw's reachable Viewer port, rewriting its live endpoint to the
+// RenCrow's reachable Viewer port, rewriting its live endpoint to the
 // same-origin proxy path.
 func HandleGameObserverPage(opts GameObserverProxyOptions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

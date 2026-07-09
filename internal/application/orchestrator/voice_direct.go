@@ -8,15 +8,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/voiceinput"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/voiceinput"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 const voiceChatSurfaceReason = voiceinput.SurfaceVoiceChat
 
 // ProcessVoiceDirectRequest は voice_chat surface の input_audio/VDS 確定後の orchestrator 連携入力。
-// Phase 1 では RenCrow_LLM WS が推論し、picoclaw は FinalText を受け取って Chat SSE を出す。
+// Phase 1 では RenCrow_LLM WS が推論し、rencrow は FinalText を受け取って Chat SSE を出す。
 type ProcessVoiceDirectRequest struct {
 	UtteranceID   string
 	SessionID     string

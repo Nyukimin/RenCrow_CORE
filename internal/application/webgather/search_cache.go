@@ -3,8 +3,8 @@ package webgather
 import (
 	"context"
 	"encoding/json"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
-	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
 	"strings"
 	"time"
 )

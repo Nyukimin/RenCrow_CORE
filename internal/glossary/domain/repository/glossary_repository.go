@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/glossary/domain/entity"
+	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/domain/entity"
 )
 
 type GlossaryRepository interface {

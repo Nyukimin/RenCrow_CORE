@@ -5,8 +5,8 @@ import (
 	"net/url"
 	"strings"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	domaindci "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/dci"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 )
 
 type VectorKBSearchStore interface {

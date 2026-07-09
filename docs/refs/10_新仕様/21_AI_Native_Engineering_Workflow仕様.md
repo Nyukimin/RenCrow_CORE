@@ -1168,7 +1168,7 @@ internal/infrastructure/persistence/aiworkflow/
   sqlite_worktrees.go
   sqlite_commands.go
 
-cmd/picoclaw/
+cmd/rencrow/
   runtime_ai_workflow.go
 ```
 

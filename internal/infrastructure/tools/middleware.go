@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/tool"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
 // withTimeout はツール関数にタイムアウトを適用する

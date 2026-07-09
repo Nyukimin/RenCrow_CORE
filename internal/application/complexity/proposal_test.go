@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	domaincomplexity "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/complexity"
+	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
 )
 
 func TestValidateConcreteDiffForHotspotRequiresUnifiedDiffScopedToFile(t *testing.T) {

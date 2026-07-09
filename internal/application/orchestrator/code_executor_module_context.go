@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	domainmodule "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/moduleregistry"
+	domainmodule "github.com/Nyukimin/RenCrow_CORE/internal/domain/moduleregistry"
 )
 
 const moduleContextHeader = "RenCrow module context"

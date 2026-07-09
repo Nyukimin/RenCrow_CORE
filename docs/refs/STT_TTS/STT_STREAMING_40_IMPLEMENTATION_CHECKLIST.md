@@ -5,7 +5,7 @@ Objective: implement `40_STT_Streaming実装作業仕様.md`.
 Use `40_STT_Streaming実装作業仕様.md` as the source of truth. Use
 `39_STT_Streaming暫定確定字幕仕様.md` only as protocol/behavior reference.
 
-This checklist is ready to use once the missing Picoclaw / RenCrow Viewer Go
+This checklist is ready to use once the missing RenCrow / RenCrow Viewer Go
 source tree is available and
 `ops/macbook207/audit_stt_streaming_40_source_tree.sh /path/to/repo` passes.
 
@@ -16,8 +16,8 @@ The implementation repository must contain:
 - `internal/adapter/viewer/assets/js/viewer.js`
 - `internal/adapter/viewer/viewer.html`
 - `internal/adapter/viewer/assets/css/viewer.css`
-- `cmd/picoclaw/stt_runtime_websocket.go`
-- `cmd/picoclaw/main_stt_gateway_test.go`
+- `cmd/rencrow/stt_runtime_websocket.go`
+- `cmd/rencrow/main_stt_gateway_test.go`
 - `internal/adapter/viewer/viewer_stt_https.test.mjs`
 - `scripts/stt_e2e_probe.py`
 - `scripts/stt_e2e_probe_test.py`
@@ -45,7 +45,7 @@ The implementation repository must contain:
 | Error before final shows error caption and no Chat send | `viewer.js`, `viewer_stt_https.test.mjs` | Test verifies error caption and no `/viewer/send` |
 | Error after final does not overwrite confirmed caption/chat input | `viewer.js`, test | Test verifies final remains authoritative |
 | Debug panel render exceptions do not stop STT handling | `viewer.js`, test | Test injects render exception and still processes final |
-| RenCrow STT bridge forwards Viewer text frames unchanged | `cmd/picoclaw/stt_runtime_websocket.go`, Go test | Go test compares upstream text frame payload |
+| RenCrow STT bridge forwards Viewer text frames unchanged | `cmd/rencrow/stt_runtime_websocket.go`, Go test | Go test compares upstream text frame payload |
 | RenCrow STT bridge forwards Viewer binary frames unchanged | `stt_runtime_websocket.go`, Go test | Go test compares upstream binary bytes |
 | RenCrow STT bridge forwards STT server text frames unchanged | `stt_runtime_websocket.go`, Go test | Go test observes downstream final frame |
 | RenCrow STT bridge does not interpret `start` / `stop` / `final_pending` | `stt_runtime_websocket.go`, Go test | Go test verifies JSON controls are byte-preserved |
@@ -78,7 +78,7 @@ node --test internal/adapter/viewer/viewer_stt_https.test.mjs
 node --test internal/adapter/viewer/viewer_memory_panel.test.mjs
 python3 -m py_compile scripts/stt_e2e_probe.py scripts/stt_e2e_probe_test.py
 python3 -m unittest scripts/stt_e2e_probe_test.py
-GOCACHE=/tmp/picoclaw-gocache go test ./cmd/picoclaw ./internal/adapter/viewer ./internal/infrastructure/stt -count=1
+GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow ./internal/adapter/viewer ./internal/infrastructure/stt -count=1
 git diff --check
 ```
 

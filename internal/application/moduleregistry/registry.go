@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	domain "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/moduleregistry"
+	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/moduleregistry"
 )
 
 type Registry struct {
@@ -34,16 +34,16 @@ func DefaultRegistry() *Registry {
 	return NewRegistry([]domain.Module{
 		{
 			ID:             "chat",
-			DisplayName:    "picoclaw_multiLLM",
-			Root:           filepath.Join(root, "picoclaw_multiLLM"),
+			DisplayName:    "RenCrow_CORE",
+			Root:           filepath.Join(root, "RenCrow_CORE"),
 			Kind:           "go",
 			BuildCommand:   "make build",
 			TestCommand:    "go test ./...",
-			InstallCommand: "cp build/picoclaw-linux-amd64 ~/.local/bin/picoclaw",
-			RestartTarget:  "picoclaw.service",
-			HealthCheck:    "systemctl --user status picoclaw.service --no-pager",
+			InstallCommand: "cp build/rencrow-linux-amd64 ~/.local/bin/rencrow",
+			RestartTarget:  "rencrow.service",
+			HealthCheck:    "systemctl --user status rencrow.service --no-pager",
 			OwnerRoute:     "CODE",
-			Aliases:        []string{"chat", "chat本体", "orchestrator", "viewer", "worker", "picoclaw", "picoclaw.service", "本体"},
+			Aliases:        []string{"chat", "chat本体", "orchestrator", "viewer", "worker", "rencrow_core", "rencrow.service", "本体"},
 		},
 		{
 			ID:             "cli",

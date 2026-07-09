@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	domainllm "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	modulellm "github.com/Nyukimin/picoclaw_multiLLM/modules/llm"
+	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 )
 
 type fakeDomainLLMProvider struct {

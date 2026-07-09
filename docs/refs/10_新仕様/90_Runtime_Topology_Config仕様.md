@@ -2,14 +2,14 @@
 
 ## 目的
 
-`~/.picoclaw/config.yaml` を、RenCrow の実行時モジュール構成を指し示す設計図として扱う。
+`~/.rencrow/config.yaml` を、RenCrow の実行時モジュール構成を指し示す設計図として扱う。
 
 この仕様でいう設計図とは、次を一箇所で読める設定である。
 
 - どのモジュールがどの PC / host にいるか。
 - そのモジュールを操作するための代表 endpoint は何か。
 - モジュールの実体 repo / root path はどこか。
-- `picoclaw` から見た公開 API と、モジュール内部から見た backend API を混同しないこと。
+- `rencrow` から見た公開 API と、モジュール内部から見た backend API を混同しないこと。
 
 個別モジュール固有の内部設定、たとえば model alias、parser、prompt、model path、queue policy までは `config.yaml` に集約しない。
 `config.yaml` は配置と接続の正本、各 module repo の設定はその module の内部挙動の正本とする。
@@ -26,7 +26,7 @@ runtime_topology:
   version: 1
 
   modules:
-    picoclaw:
+    rencrow:
       host: 127.0.0.1
 
     RenCraw_LLM:
@@ -41,7 +41,7 @@ runtime_topology:
 
 | 参照 | 導出 URL |
 | --- | --- |
-| `module:picoclaw.endpoints.http` | `http://127.0.0.1:18790` |
+| `module:rencrow.endpoints.http` | `http://127.0.0.1:18790` |
 | `module:RenCraw_LLM.endpoints.mgmt` | `http://127.0.0.1:8079` |
 | `module:RenCraw_LLM.endpoints.chat` | `http://127.0.0.1:8081` |
 | `module:RenCraw_LLM.endpoints.worker` | `http://127.0.0.1:8082` |
@@ -75,7 +75,7 @@ runtime_topology:
 ```yaml
 runtime_topology:
   default_ports:
-    picoclaw:
+    rencrow:
       http: 18790
 
     RenCraw_LLM:
@@ -114,7 +114,7 @@ runtime_topology:
 `RenCraw_LLM` では public endpoint と backend endpoint を分ける。
 
 ```text
-picoclaw
+rencrow
   -> RenCraw_LLM public endpoint
     -> LLM backend endpoint
 ```
@@ -122,16 +122,16 @@ picoclaw
 例:
 
 ```text
-picoclaw
+rencrow
   -> http://127.0.0.1:8081        # RenCraw_LLM Chat proxy
     -> http://192.168.1.34:18081  # Chat backend
 
-picoclaw
+rencrow
   -> http://127.0.0.1:8082        # RenCraw_LLM Worker proxy
     -> http://192.168.1.34:11434  # Worker backend
 ```
 
-`local_llm.*` は `picoclaw -> RenCraw_LLM` の public endpoint を指す。
+`local_llm.*` は `rencrow -> RenCraw_LLM` の public endpoint を指す。
 `RenCraw_LLM` の `backend_base` は `RenCraw_LLM -> LLM backend` を指す。
 この二つを同じ値にしない。
 
@@ -145,11 +145,11 @@ runtime_topology:
   profiles:
     home_linux:
       modules:
-        picoclaw:
+        rencrow:
           kind: core_viewer_server
           host: 127.0.0.1
-          root: /home/nyukimi/RenCrow/picoclaw_multiLLM
-          service: picoclaw.service
+          root: /home/nyukimi/RenCrow/RenCrow_CORE
+          service: rencrow.service
 
         RenCraw_LLM:
           kind: llm_role_server
@@ -226,7 +226,7 @@ resolver または生成ツールが具体 URL に展開してから既存 runti
 | Heavy | `RENCROW_HEAVY_BACKEND_BASE` | `module:RenCraw_LLM.backends.heavy` |
 | Wild | `RENCROW_WILD_BACKEND_BASE` | `module:RenCraw_LLM.backends.wild` |
 
-これにより、`RenCraw_LLM/configs/*.toml` は fallback と role 内部設定を保持しつつ、実運用の接続先は `~/.picoclaw/config.yaml` で決められる。
+これにより、`RenCraw_LLM/configs/*.toml` は fallback と role 内部設定を保持しつつ、実運用の接続先は `~/.rencrow/config.yaml` で決められる。
 
 ## 解決優先順位
 
@@ -283,15 +283,15 @@ Viewer / CLI の診断では、次を表示できるようにする。
 
 ## 移行手順
 
-1. `~/.picoclaw/config.yaml` に `runtime_topology` を追加する。既存 URL 設定はまだ残す。
+1. `~/.rencrow/config.yaml` に `runtime_topology` を追加する。既存 URL 設定はまだ残す。
 2. topology doctor / resolver を追加し、導出 URL と既存 URL の差分を warning として出す。
-3. `picoclaw` の `local_llm` / `rencrow.llm` / `llm_ops` は topology から導出できるようにする。
+3. `rencrow` の `local_llm` / `rencrow.llm` / `llm_ops` は topology から導出できるようにする。
 4. `RenCraw_LLM` 起動 wrapper は topology から backend env を export する。
 5. runtime 診断で衝突が消えたら、固定 IP の重複記述を減らす。
 
 ## 非目標
 
-- すべての module 固有設定を `~/.picoclaw/config.yaml` に吸い上げること。
+- すべての module 固有設定を `~/.rencrow/config.yaml` に吸い上げること。
 - module repo の内部 config を廃止すること。
 - secret を一箇所に集約して平文保存すること。
 - `RenCraw_LLM` の public endpoint と backend endpoint を同じ概念にすること。

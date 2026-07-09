@@ -13,7 +13,7 @@ func TestDefaultRegistryResolveExplicitModules(t *testing.T) {
 		{name: "tts", msg: "TTS の読み上げを直して", want: "tts"},
 		{name: "llm", msg: "RenCrow_LLM の MLX provider を確認して", want: "llm"},
 		{name: "cli", msg: "RenCrow_CLI の rencrow chat を修正して", want: "cli"},
-		{name: "chat", msg: "picoclaw.service の Worker を直して", want: "chat"},
+		{name: "chat", msg: "rencrow.service の Worker を直して", want: "chat"},
 		{name: "tools", msg: "RenCrow_Tools に検証ツールを追加して", want: "tools"},
 	}
 	for _, tt := range tests {

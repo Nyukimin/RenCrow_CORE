@@ -12,8 +12,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
-	moduletts "github.com/Nyukimin/picoclaw_multiLLM/modules/tts"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 func TestRenCrowTTSBridge_PushTextCallsSynthesis(t *testing.T) {

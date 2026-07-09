@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
 // MessageRouter はAgent間メッセージルーティングを管理

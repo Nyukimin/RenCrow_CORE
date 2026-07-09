@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/glossary/application/service"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/glossary/infrastructure/feed"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/glossary/infrastructure/persistence"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/glossary/interface/controller"
+	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/infrastructure/feed"
+	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/infrastructure/persistence"
+	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/interface/controller"
 )
 
 func main() {

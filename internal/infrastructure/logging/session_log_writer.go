@@ -27,7 +27,7 @@ type SessionLogWriter struct {
 }
 
 // NewSessionLogWriter は指定ディレクトリ配下にセッションログを書くWriterを返す
-// baseDir: ~/.picoclaw/logs/sessions のようなパス
+// baseDir: ~/.rencrow/logs/sessions のようなパス
 func NewSessionLogWriter(baseDir string) *SessionLogWriter {
 	return &SessionLogWriter{baseDir: baseDir}
 }

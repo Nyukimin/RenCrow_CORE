@@ -302,7 +302,7 @@ Worker: 登録
 ## 7. ファイル配置規約
 
 ```
-picoclaw_multiLLM/
+RenCrow_CORE/
 ├── TOOL_CONTRACT.md              # <-- この文書（根本ルール。唯一の正）
 ├── templates/
 │   └── tool/                     # ツール雛形（契約埋め込み済み）

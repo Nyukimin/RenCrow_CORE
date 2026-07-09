@@ -3,7 +3,7 @@ package chat
 import (
 	"strings"
 
-	moduleworker "github.com/Nyukimin/picoclaw_multiLLM/modules/worker"
+	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
 const ForecastWorkerFallbackLabel = "Worker local"

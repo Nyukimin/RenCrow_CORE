@@ -30,7 +30,7 @@ queue processor unavailable and run failure remain explicit
 
 ## Current Main Files
 
-internal/application/superagent, internal/adapter/viewer/superagent_handler.go, cmd/picoclaw/runtime_background_jobs.go
+internal/application/superagent, internal/adapter/viewer/superagent_handler.go, cmd/rencrow/runtime_background_jobs.go
 
 ## Current Route Boundary
 

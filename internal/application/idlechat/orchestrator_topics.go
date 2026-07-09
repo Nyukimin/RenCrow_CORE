@@ -7,9 +7,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 func (o *IdleChatOrchestrator) generateTopicFromChat(sessionID string, strategy TopicStrategy) (string, TopicStrategy) {

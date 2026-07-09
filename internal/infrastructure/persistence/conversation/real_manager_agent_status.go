@@ -3,7 +3,7 @@ package conversation
 import (
 	"context"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 // GetAgentStatus は Agent の状態を取得

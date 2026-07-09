@@ -2,8 +2,8 @@
 
 ## ディレクトリレイアウト
 ```
-picoclaw/
-├── cmd/picoclaw/              # メインアプリケーション
+rencrow/
+├── cmd/rencrow/              # メインアプリケーション
 │   ├── main.go                # エントリーポイント
 │   └── workspace/             # 埋め込みワークスペースファイル
 │       ├── AGENT.md           # エージェント行動ガイド
@@ -78,8 +78,8 @@ picoclaw/
 │
 ├── systemd/                   # systemd ユニットファイル
 │   └── user/
-│       ├── picoclaw-watchdog.service
-│       └── picoclaw-watchdog.timer
+│       ├── rencrow-watchdog.service
+│       └── rencrow-watchdog.timer
 │
 ├── Makefile                   # ビルドファイル
 ├── go.mod                     # Go モジュール定義
@@ -89,7 +89,7 @@ picoclaw/
 ```
 
 ## エントリーポイント
-- `cmd/picoclaw/main.go`: メインアプリケーション
+- `cmd/rencrow/main.go`: メインアプリケーション
   - サブコマンド: `onboard`, `agent`, `gateway`, `status`, `cron`
 
 ## 主要パッケージの役割

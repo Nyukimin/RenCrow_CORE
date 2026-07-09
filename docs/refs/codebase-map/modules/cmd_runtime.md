@@ -3,14 +3,14 @@ generated_at: "2026-07-01T13:19:25+09:00"
 run_id: run_20260701_131925
 phase: 2
 step: "10"
-profile: picoclaw_multiLLM
+profile: RenCrow_CORE
 artifact: module
 module_group_id: cmd_runtime
 ---
 
 ## 概要
 
-`cmd_runtime`は`picoclaw`プロセスの入口、HTTP routeの集約、runtime dependencyの組み立てを担う。実装上は`cmd/picoclaw/main.go`と`cmd/picoclaw/routes.go`が全体の交通整理を行い、各featureの実処理は`internal/application`、`internal/adapter/viewer`、`modules/*`へ委譲される。
+`cmd_runtime`は`rencrow`プロセスの入口、HTTP routeの集約、runtime dependencyの組み立てを担う。実装上は`cmd/rencrow/main.go`と`cmd/rencrow/routes.go`が全体の交通整理を行い、各featureの実処理は`internal/application`、`internal/adapter/viewer`、`modules/*`へ委譲される。
 
 ## 関連ドキュメント
 
@@ -22,7 +22,7 @@ module_group_id: cmd_runtime
 
 ### 役割と責務（Why）
 
-- `picoclaw`バイナリの起動、config読込、HTTP server公開、runtime依存注入の境界を提供する。
+- `rencrow`バイナリの起動、config読込、HTTP server公開、runtime依存注入の境界を提供する。
 - Viewer / STT / VoiceChat / entry / chrome bridge / health / module routesを1つの`http.ServeMux`へ登録する。
 - 個別featureの業務ロジックは保持せず、依存構築とroute配線に寄せる。
 
@@ -30,34 +30,34 @@ module_group_id: cmd_runtime
 
 | ファイル | 役割 | 読むべき場面 |
 |---|---|---|
-| `cmd/picoclaw/main.go` | `main`、config path、server起動、local pprof guard | 起動順、port、pprof公開条件を確認する時 |
-| `cmd/picoclaw/routes.go` | `/viewer/*`、`/health`、`/entry`、IdleChatなどのroute登録 | APIがどのhandlerへ届くか調べる時 |
-| `cmd/picoclaw/runtime_*.go` | LLM provider、Viewer handlers、background jobs、STT/TTS/voice runtimeの組み立て | featureがどのstore/serviceを使うか追う時 |
-| `cmd/picoclaw/module_routes.go` | `modules/*` bridge APIの登録 | module surfaceと本体runtimeの接続を見る時 |
-| `cmd/picoclaw-agent/` | 分散実行用agent standalone entry | remote worker/agent側を確認する時 |
+| `cmd/rencrow/main.go` | `main`、config path、server起動、local pprof guard | 起動順、port、pprof公開条件を確認する時 |
+| `cmd/rencrow/routes.go` | `/viewer/*`、`/health`、`/entry`、IdleChatなどのroute登録 | APIがどのhandlerへ届くか調べる時 |
+| `cmd/rencrow/runtime_*.go` | LLM provider、Viewer handlers、background jobs、STT/TTS/voice runtimeの組み立て | featureがどのstore/serviceを使うか追う時 |
+| `cmd/rencrow/module_routes.go` | `modules/*` bridge APIの登録 | module surfaceと本体runtimeの接続を見る時 |
+| `cmd/rencrow-agent/` | 分散実行用agent standalone entry | remote worker/agent側を確認する時 |
 | `pkg/rencrowclient/` | 外部/CLI facade向けHTTP client | `RenCrow_CMD`や他clientとのHTTP契約を見る時 |
 
 ### モジュール間の関係
 
-- **依存先**: `cmd/picoclaw` -> `internal/adapter/viewer`。`routes.go`がViewer handlerを大量登録する。
-- **依存先**: `cmd/picoclaw` -> `internal/application/orchestrator`。会話・repair・voice directなどのruntime入口を接続する。
-- **依存先**: `cmd/picoclaw` -> `internal/infrastructure/persistence/*`。Viewer用status/evidence/memory/storeを構築する。
-- **依存先**: `cmd/picoclaw` -> `modules/*`。STT/TTS/Chat/Worker/WebGatherのmodule bridge routeを登録する。
+- **依存先**: `cmd/rencrow` -> `internal/adapter/viewer`。`routes.go`がViewer handlerを大量登録する。
+- **依存先**: `cmd/rencrow` -> `internal/application/orchestrator`。会話・repair・voice directなどのruntime入口を接続する。
+- **依存先**: `cmd/rencrow` -> `internal/infrastructure/persistence/*`。Viewer用status/evidence/memory/storeを構築する。
+- **依存先**: `cmd/rencrow` -> `modules/*`。STT/TTS/Chat/Worker/WebGatherのmodule bridge routeを登録する。
 - **依存元**: `RenCrow_CMD`など外部client -> `pkg/rencrowclient` / `/viewer/*` HTTP API。仕様責任はこのrepo側にある。
 
 ### 大関数の構造マップ（50行超の関数のみ）
 
 | 関数名 | 行数 | 構造 | 行範囲の目安 |
 |---|---:|---|---|
-| `main()` | 180行級 | config読込 -> runtime構築 -> route登録 -> server起動 -> signal待機 | `cmd/picoclaw/main.go:27`以降 |
-| `registerViewerDynamicRoutes()` | 380行級 | Viewer dynamic endpointsを機能別に連続登録。memory/evidence/sandbox/revenue/persona/browsertrace/superagent/ai-workflow/knowledge-memory等 | `cmd/picoclaw/routes.go:140`以降 |
-| `startBackgroundJobs()`系 | 100行超の複数関数 | ticker/queue/schedulerを起動しevent hubへ通知 | `cmd/picoclaw/runtime_background_jobs.go` |
+| `main()` | 180行級 | config読込 -> runtime構築 -> route登録 -> server起動 -> signal待機 | `cmd/rencrow/main.go:27`以降 |
+| `registerViewerDynamicRoutes()` | 380行級 | Viewer dynamic endpointsを機能別に連続登録。memory/evidence/sandbox/revenue/persona/browsertrace/superagent/ai-workflow/knowledge-memory等 | `cmd/rencrow/routes.go:140`以降 |
+| `startBackgroundJobs()`系 | 100行超の複数関数 | ticker/queue/schedulerを起動しevent hubへ通知 | `cmd/rencrow/runtime_background_jobs.go` |
 
 ### 落とし穴・注意点
 
 - `routes.go`はroute一覧の正本に近いが、個別handlerの責務までは持たない。修正時にここへ業務分岐を足すと肥大化しやすい。
 - `/viewer/*`は`registerViewerBaseRoutes`と`registerViewerDynamicRoutes`に分かれる。APIの所在確認では両方を見る必要がある。
-- systemd運用では`picoclaw.service`のWorkingDirectoryが実行repoを決める。service再起動を伴う作業ではAGENTSの停止ルールに従う必要がある。
+- systemd運用では`rencrow.service`のWorkingDirectoryが実行repoを決める。service再起動を伴う作業ではAGENTSの停止ルールに従う必要がある。
 - `cmd/test-*`は検証用entryであり本番serverの責務とは分けて読む。
 
 ### 設計意図

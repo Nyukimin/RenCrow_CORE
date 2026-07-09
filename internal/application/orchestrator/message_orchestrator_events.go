@@ -4,7 +4,7 @@ import (
 	"log"
 	"sync"
 
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 type messageEventPort struct {

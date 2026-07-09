@@ -3,7 +3,7 @@ package gemini
 import (
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 func TestConvertMessagesUsesInlineDataParts(t *testing.T) {

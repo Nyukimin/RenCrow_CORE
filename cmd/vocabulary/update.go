@@ -3,8 +3,8 @@ package main
 import (
 	"log"
 
-	vocabApp "github.com/Nyukimin/picoclaw_multiLLM/application/vocabulary"
-	vocabInfra "github.com/Nyukimin/picoclaw_multiLLM/infrastructure/vocabulary"
+	vocabApp "github.com/Nyukimin/RenCrow_CORE/application/vocabulary"
+	vocabInfra "github.com/Nyukimin/RenCrow_CORE/infrastructure/vocabulary"
 )
 
 func main() {

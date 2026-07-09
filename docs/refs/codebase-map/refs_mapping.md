@@ -3,7 +3,7 @@ generated_at: "2026-07-01T13:19:25+09:00"
 run_id: run_20260701_131925
 phase: 0
 step: "0b"
-profile: picoclaw_multiLLM
+profile: RenCrow_CORE
 artifact: survey_mapping
 ---
 
@@ -22,7 +22,7 @@ artifact: survey_mapping
 
 | 調査ファイル | 主な対応module group | 理由 |
 |---|---|---|
-| `docs/調査/20260527_viewer_live_multitab_e2e.md` | `adapter_viewer_channels`, `cmd_runtime` | Viewer live/multitab検証は`cmd/picoclaw/routes.go`の`/viewer/*`登録と`internal/adapter/viewer`のSSE/handler群が中心。 |
+| `docs/調査/20260527_viewer_live_multitab_e2e.md` | `adapter_viewer_channels`, `cmd_runtime` | Viewer live/multitab検証は`cmd/rencrow/routes.go`の`/viewer/*`登録と`internal/adapter/viewer`のSSE/handler群が中心。 |
 | `docs/調査/20260527_viewer_state_inventory.md` | `adapter_viewer_channels`, `domain_application`, `infrastructure_persistence` | Viewer state inventoryは`MonitorStore`、job/evidence/memory状態、永続化storeの境界を横断する。 |
 | `docs/調査/20260527_forecast_provider_news調査.md` | `domain_application`, `infrastructure_persistence`, `docs_config_data` | forecast/newsは`internal/application/idlechat`、webgather/provider、docs/config側の運用仕様と関係する。 |
 

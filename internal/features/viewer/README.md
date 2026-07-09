@@ -30,7 +30,7 @@ status API failure must be visible and must not be rendered as stale success
 
 ## Current Main Files
 
-internal/adapter/viewer, cmd/picoclaw/routes.go, cmd/picoclaw/runtime_viewer_handlers.go
+internal/adapter/viewer, cmd/rencrow/routes.go, cmd/rencrow/runtime_viewer_handlers.go
 
 ## Migration Boundary
 

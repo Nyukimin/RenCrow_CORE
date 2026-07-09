@@ -1,8 +1,8 @@
-# Ollama（Windows常駐）× PicoClaw（Ubuntu監視）構成設計書 v1.0
+# Ollama（Windows常駐）× RenCrow（Ubuntu監視）構成設計書 v1.0
 
 ## 1. 結論
 
-監視はUbuntu側（PicoClaw）に配置するのが最も安定する。
+監視はUbuntu側（RenCrow）に配置するのが最も安定する。
 復旧処理はWindows側に残す二段構えが最小事故構成。
 
 ------------------------------------------------------------------------
@@ -17,7 +17,7 @@
 
 ### Ubuntu側
 
--   PicoClaw が定期ヘルスチェック
+-   RenCrow が定期ヘルスチェック
 -   異常時に通知
 -   必要に応じて復旧トリガー実行
 

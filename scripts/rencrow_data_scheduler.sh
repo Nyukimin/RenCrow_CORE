@@ -3,9 +3,9 @@ set -euo pipefail
 
 MODE="${1:-daily}"
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ROOT_DIR="${PICOCLAW_REPO_DIR:-$SCRIPT_ROOT}"
-LOCK_DIR="${PICOCLAW_DATA_LOCK_DIR:-$HOME/.picoclaw/locks}"
-LOG_DIR="${PICOCLAW_DATA_LOG_DIR:-$HOME/.picoclaw/logs}"
+ROOT_DIR="${RENCROW_REPO_DIR:-$SCRIPT_ROOT}"
+LOCK_DIR="${RENCROW_DATA_LOCK_DIR:-$HOME/.rencrow/locks}"
+LOG_DIR="${RENCROW_DATA_LOG_DIR:-$HOME/.rencrow/logs}"
 LOCK_FILE="$LOCK_DIR/rencrow-data-${MODE}.lock"
 LOG_FILE="$LOG_DIR/rencrow-data-${MODE}.log"
 RUN_MAKE_STATUS=0

@@ -3,13 +3,13 @@
     "serena": {
       "command": "/home/nyukimi/.local/bin/uvx",
       "env": {
-        "GOCACHE": "/home/nyukimi/picoclaw_multiLLM/.serena/go-build",
-        "GOMODCACHE": "/home/nyukimi/picoclaw_multiLLM/.serena/gomodcache",
-        "SERENA_HOME": "/home/nyukimi/picoclaw_multiLLM/.serena",
+        "GOCACHE": "/home/nyukimi/RenCrow_CORE/.serena/go-build",
+        "GOMODCACHE": "/home/nyukimi/RenCrow_CORE/.serena/gomodcache",
+        "SERENA_HOME": "/home/nyukimi/RenCrow_CORE/.serena",
         "UV_OFFLINE": "1",
-        "UV_CACHE_DIR": "/home/nyukimi/picoclaw_multiLLM/.serena/uv-cache",
-        "UV_TOOL_DIR": "/home/nyukimi/picoclaw_multiLLM/.serena/uv-tools",
-        "XDG_CACHE_HOME": "/home/nyukimi/picoclaw_multiLLM/.serena/xdg-cache"
+        "UV_CACHE_DIR": "/home/nyukimi/RenCrow_CORE/.serena/uv-cache",
+        "UV_TOOL_DIR": "/home/nyukimi/RenCrow_CORE/.serena/uv-tools",
+        "XDG_CACHE_HOME": "/home/nyukimi/RenCrow_CORE/.serena/xdg-cache"
       },
       "args": [
         "--from",

@@ -3,7 +3,7 @@
     "type": "file_edit",
     "action": "create",
     "target": "test_output.txt",
-    "content": "Hello from PicoClaw Worker!\nThis is a test file.\n"
+    "content": "Hello from RenCrow Worker!\nThis is a test file.\n"
   },
   {
     "type": "shell_command",

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/tools"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
 func newRegisterToolRunner(t *testing.T, registry *mockToolRegistry) (*tools.ToolRunner, string) {

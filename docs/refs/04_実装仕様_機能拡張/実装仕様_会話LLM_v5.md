@@ -20,10 +20,10 @@
 | Phase 2 | RealConversationManager | ✅ 完了 | 3層記憶統合 |
 | Phase 3 | OllamaEmbedder | ✅ 完了 | `internal/infrastructure/llm/ollama/embedder.go` |
 | Phase 3 | LLMSummarizer | ✅ 完了 | `internal/infrastructure/persistence/conversation/llm_summarizer.go` |
-| Phase 3 | main.go DI（Embedder/Summarizer注入） | ✅ 完了 | `cmd/picoclaw/main.go` |
+| Phase 3 | main.go DI（Embedder/Summarizer注入） | ✅ 完了 | `cmd/rencrow/main.go` |
 | インフラ | docker-compose.infra.yml（Qdrant port 6334） | ✅ 完了 | gRPCポート公開 |
-| インフラ | systemdサービス（picoclaw.service） | ✅ 完了 | `~/.config/systemd/user/picoclaw.service` |
-| インフラ | systemdサービス（picoclaw-funnel.service） | ✅ 完了 | Tailscale Funnel永続化 |
+| インフラ | systemdサービス（rencrow.service） | ✅ 完了 | `~/.config/systemd/user/rencrow.service` |
+| インフラ | systemdサービス（rencrow-funnel.service） | ✅ 完了 | Tailscale Funnel永続化 |
 | テスト | 統合テスト（Redis + DuckDB + Qdrant） | ✅ 9件全通過 | `integration_test.go` |
 | **Phase 4.1** | **KB基盤実装** | ✅ **完了** | **VectorDB KB機能** |
 | Phase 4.1 | SaveKB / SearchKB（VectorDB） | ✅ 完了 | ドメイン別コレクション |
@@ -42,7 +42,7 @@
 | サービス | ポート | プロトコル | 備考 |
 |---------|--------|-----------|------|
 | Redis | 6379 | TCP | 短期記憶（TTL: 24h） |
-| DuckDB | ファイル | - | `/home/nyukimi/.picoclaw/memory.duckdb` |
+| DuckDB | ファイル | - | `/home/nyukimi/.rencrow/memory.duckdb` |
 | Qdrant | 6333 (REST) / **6334 (gRPC)** | HTTP / gRPC | 長期記憶（VectorDB）|
 | Ollama | 11434 | HTTP | kawaguchike-llm: 100.83.207.6 |
 
@@ -54,7 +54,7 @@
 conversation:
   enabled: true
   redis_url: "redis://localhost:6379"
-  duckdb_path: "/home/nyukimi/.picoclaw/memory.duckdb"
+  duckdb_path: "/home/nyukimi/.rencrow/memory.duckdb"
   vectordb_url: "localhost:6334"        # gRPCポート
   embed_model: "nomic-embed-code:latest"
   summary_model: "Chat"
@@ -918,26 +918,26 @@ type AgentStatusManager interface {
 
 ### 7.2 管理ツールAPI（CLI/HTTP）
 
-**CLI**: `cmd/picoclaw-memory-admin/`
+**CLI**: `cmd/rencrow-memory-admin/`
 
 ```bash
 # Thread一覧
-picoclaw-memory-admin thread list --session <session_id>
+rencrow-memory-admin thread list --session <session_id>
 
 # Thread詳細
-picoclaw-memory-admin thread get --thread <thread_id>
+rencrow-memory-admin thread get --thread <thread_id>
 
 # Thread削除
-picoclaw-memory-admin thread delete --thread <thread_id>
+rencrow-memory-admin thread delete --thread <thread_id>
 
 # Session一覧
-picoclaw-memory-admin session list --user <user_id>
+rencrow-memory-admin session list --user <user_id>
 
 # Session復帰テスト
-picoclaw-memory-admin session restore --session <session_id>
+rencrow-memory-admin session restore --session <session_id>
 
 # メモリ使用量
-picoclaw-memory-admin stats
+rencrow-memory-admin stats
 ```
 
 ### 7.3 KB（Knowledge Base）API
@@ -1344,7 +1344,7 @@ func TestAgentStatus_CanJoinConversation(t *testing.T) {
 **モニタリング**:
 ```bash
 # メモリ使用量確認
-picoclaw-memory-admin stats
+rencrow-memory-admin stats
 ```
 
 ---
@@ -1403,7 +1403,7 @@ picoclaw-memory-admin stats
    conversation:
      enabled: true
      redis_url: "redis://localhost:6379"
-     duckdb_path: "/var/lib/picoclaw/memory.duckdb"
+     duckdb_path: "/var/lib/rencrow/memory.duckdb"
      vectordb_url: "http://localhost:6333"  # Qdrant例
    ```
 
@@ -1422,12 +1422,12 @@ picoclaw-memory-admin stats
 
 3. **データベース初期化**:
    ```bash
-   picoclaw-memory-admin init
+   rencrow-memory-admin init
    ```
 
 4. **RenCrow再起動**:
    ```bash
-   sudo systemctl restart picoclaw
+   sudo systemctl restart rencrow
    ```
 
 5. **動作確認**:
@@ -1436,7 +1436,7 @@ picoclaw-memory-admin stats
    curl http://localhost:18790/health
 
    # メモリ統計
-   picoclaw-memory-admin stats
+   rencrow-memory-admin stats
    ```
 
 ---
@@ -1453,7 +1453,7 @@ picoclaw-memory-admin stats
 
 2. **RenCrow再起動**:
    ```bash
-   sudo systemctl restart picoclaw
+   sudo systemctl restart rencrow
    ```
 
 3. **動作確認**:
@@ -1494,7 +1494,7 @@ picoclaw-memory-admin stats
 ### 14.1 環境変数設定
 
 ```bash
-# ~/.picoclaw/.env
+# ~/.rencrow/.env
 ANTHROPIC_API_KEY=sk-ant-...
 DEEPSEEK_API_KEY=sk-...
 OPENAI_API_KEY=sk-...
@@ -1544,14 +1544,14 @@ ollama list | grep nomic-embed-text
 
 ```bash
 # RenCrow起動
-./picoclaw
+./rencrow
 
 # 別ターミナルで動作確認
 # （LINE/Slack 経由でテストメッセージ送信）
 # 例: "Rustについて教えて"
 
 # ログ確認
-tail -f ~/.picoclaw/logs/picoclaw.log | grep "SaveWebSearchToKB"
+tail -f ~/.rencrow/logs/rencrow.log | grep "SaveWebSearchToKB"
 # 期待: SaveWebSearchToKB 成功ログが出力される
 
 # kb-admin で確認
@@ -1578,14 +1578,14 @@ go test ./test/integration/... -v
 make build
 
 # 2. バイナリ配置
-cp picoclaw ~/.picoclaw/bin/
-cp kb-admin ~/.picoclaw/bin/
+cp rencrow ~/.rencrow/bin/
+cp kb-admin ~/.rencrow/bin/
 
 # 3. systemd サービス再起動
-systemctl --user restart picoclaw
+systemctl --user restart rencrow
 
 # 4. ログ確認
-journalctl --user -u picoclaw -f
+journalctl --user -u rencrow -f
 
 # 期待ログ:
 # - "ConversationEngine v5.1 enabled"
@@ -1613,7 +1613,7 @@ docker compose -f docker-compose.infra.yml restart qdrant
 ollama pull nomic-embed-text
 
 # RenCrow 再起動
-systemctl --user restart picoclaw
+systemctl --user restart rencrow
 ```
 
 #### Embedder エラー
@@ -1625,7 +1625,7 @@ systemctl --user restart picoclaw
 **対処法**:
 ```bash
 ollama pull nomic-embed-text
-systemctl --user restart picoclaw
+systemctl --user restart rencrow
 ```
 
 ---

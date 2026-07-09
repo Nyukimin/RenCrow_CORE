@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	domainpersona "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/persona"
+	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 )
 
 func LoadCharacters(root string) (map[string]domainpersona.CharacterProfile, error) {

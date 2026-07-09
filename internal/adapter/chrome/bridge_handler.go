@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	entryadapter "github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/entry"
-	channelapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/channel"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
+	entryadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/entry"
+	channelapp "github.com/Nyukimin/RenCrow_CORE/internal/application/channel"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
 type BridgeRequest struct {

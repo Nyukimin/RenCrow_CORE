@@ -230,9 +230,9 @@ viewer_log:
 運用時の調査順序と不具合対策は Skill に置く。
 
 - docs
-  - [実装仕様_操作ログJSON保持_v1.md](/home/nyukimi/picoclaw_multiLLM/docs/実装仕様_操作ログJSON保持_v1.md)
+  - [実装仕様_操作ログJSON保持_v1.md](/home/nyukimi/RenCrow_CORE/docs/実装仕様_操作ログJSON保持_v1.md)
 - skill
-  - [SKILL.md](/home/nyukimi/picoclaw_multiLLM/workspace/skills/log-ops/SKILL.md)
+  - [SKILL.md](/home/nyukimi/RenCrow_CORE/workspace/skills/log-ops/SKILL.md)
 
 Skill 側に置く内容:
 

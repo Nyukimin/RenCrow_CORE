@@ -171,15 +171,15 @@ coder4:
 ### 4.1 環境変数ファイルの作成
 
 ```bash
-# ~/.picoclaw/.env ファイルを作成
-mkdir -p ~/.picoclaw
-touch ~/.picoclaw/.env
-chmod 600 ~/.picoclaw/.env  # セキュリティのため権限を制限
+# ~/.rencrow/.env ファイルを作成
+mkdir -p ~/.rencrow
+touch ~/.rencrow/.env
+chmod 600 ~/.rencrow/.env  # セキュリティのため権限を制限
 ```
 
 ### 4.2 API キーを記載
 
-`~/.picoclaw/.env`:
+`~/.rencrow/.env`:
 
 ```bash
 # DeepSeek (Coder1)
@@ -199,20 +199,20 @@ export GEMINI_API_KEY="..."
 
 **手動で読み込む場合**:
 ```bash
-source ~/.picoclaw/.env
+source ~/.rencrow/.env
 ```
 
 **systemd サービスで自動読み込み** (推奨):
 
-`/etc/systemd/user/picoclaw.service`:
+`/etc/systemd/user/rencrow.service`:
 ```ini
 [Unit]
 Description=RenCrow Multi-LLM Assistant
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/picoclaw run
-EnvironmentFile=/home/YOUR_USER/.picoclaw/.env
+ExecStart=/usr/local/bin/rencrow run
+EnvironmentFile=/home/YOUR_USER/.rencrow/.env
 Restart=always
 
 [Install]
@@ -222,7 +222,7 @@ WantedBy=default.target
 **起動**:
 ```bash
 systemctl --user daemon-reload
-systemctl --user restart picoclaw
+systemctl --user restart rencrow
 ```
 
 ---
@@ -233,7 +233,7 @@ systemctl --user restart picoclaw
 
 ```bash
 # 設定ファイルの読み込みテスト
-picoclaw doctor
+rencrow doctor
 
 # 期待される出力（一部）:
 # ✓ Config loaded successfully
@@ -247,9 +247,9 @@ picoclaw doctor
 
 ```bash
 # 個別テスト（実装予定）
-picoclaw test coder1
-picoclaw test coder2
-picoclaw test coder3
+rencrow test coder1
+rencrow test coder2
+rencrow test coder3
 ```
 
 ### 5.3 実際に使ってみる
@@ -351,10 +351,10 @@ distributed:
       type: ssh    # Windows PC で実行
       remote_host: "192.168.1.25:22"
       remote_user: "nyuki"
-      ssh_key_path: "/home/nyukimi/.ssh/picoclaw_agent"
+      ssh_key_path: "/home/nyukimi/.ssh/rencrow_agent"
       strict_host_key: false
-      remote_agent_path: "C:/Users/nyuki/picoclaw-agent.exe"
-      remote_config_path: "C:/Users/nyuki/.picoclaw/config.yaml"
+      remote_agent_path: "C:/Users/nyuki/rencrow-agent.exe"
+      remote_config_path: "C:/Users/nyuki/.rencrow/config.yaml"
     coder4:
       type: local
 ```
@@ -364,7 +364,7 @@ distributed:
 **Windows PC**:
 
 ```powershell
-# 1. picoclaw-agent をインストール
+# 1. rencrow-agent をインストール
 .\install-agent.ps1 coder3
 
 # 2. SSH サーバーを有効化（OpenSSH Server）
@@ -374,27 +374,27 @@ distributed:
 # C:\Users\nyuki\.ssh\authorized_keys に Worker の公開鍵を追加
 
 # 4. config.yaml は最小限でOK（API キーは Worker から送信される）
-# C:\Users\nyuki\.picoclaw\config.yaml
+# C:\Users\nyuki\.rencrow\config.yaml
 ```
 
 **Linux/Mac**:
 
 ```bash
-# 1. picoclaw-agent をインストール
+# 1. rencrow-agent をインストール
 ./install-agent.sh coder3
 
 # 2. SSH 公開鍵を登録
-cat ~/.ssh/picoclaw_agent.pub >> ~/.ssh/authorized_keys
+cat ~/.ssh/rencrow_agent.pub >> ~/.ssh/authorized_keys
 ```
 
 ### 7.4 接続テスト
 
 ```bash
 # Worker 側から SSH 接続確認
-ssh -i ~/.ssh/picoclaw_agent nyuki@192.168.1.25
+ssh -i ~/.ssh/rencrow_agent nyuki@192.168.1.25
 
-# picoclaw-agent が起動するか確認
-picoclaw-agent --standalone --agent coder3 --config ~/.picoclaw/config.yaml
+# rencrow-agent が起動するか確認
+rencrow-agent --standalone --agent coder3 --config ~/.rencrow/config.yaml
 ```
 
 詳細: [分散実行_前提条件とセットアップ.md](./分散実行_前提条件とセットアップ.md)
@@ -410,13 +410,13 @@ picoclaw-agent --standalone --agent coder3 --config ~/.picoclaw/config.yaml
 **対処法**:
 ```bash
 # 1. 環境変数ファイルを確認
-cat ~/.picoclaw/.env
+cat ~/.rencrow/.env
 
 # 2. 手動で読み込み
-source ~/.picoclaw/.env
+source ~/.rencrow/.env
 
 # 3. systemd の場合は EnvironmentFile を確認
-systemctl --user cat picoclaw | grep EnvironmentFile
+systemctl --user cat rencrow | grep EnvironmentFile
 ```
 
 ### 8.2 「coder1 is not enabled」エラー
@@ -446,14 +446,14 @@ Failed to connect SSH transport for agent 'coder3': dial tcp: i/o timeout
 **対処法**:
 ```bash
 # 1. SSH 接続確認
-ssh -i ~/.ssh/picoclaw_agent nyuki@192.168.1.25
+ssh -i ~/.ssh/rencrow_agent nyuki@192.168.1.25
 
 # 2. ファイアウォール確認
 # Remote 側でポート 22 が開いているか
 
 # 3. SSH キーの権限確認
-chmod 600 ~/.ssh/picoclaw_agent
-chmod 644 ~/.ssh/picoclaw_agent.pub
+chmod 600 ~/.ssh/rencrow_agent
+chmod 644 ~/.ssh/rencrow_agent.pub
 ```
 
 ### 8.5 「proposal generation failed: invalid format」
@@ -483,7 +483,7 @@ chmod 644 ~/.ssh/picoclaw_agent.pub
    - Coder1 のみ有効化 → 動作確認 → 他を追加
 
 2. **API キーはセキュアに管理**
-   - `~/.picoclaw/.env` のパーミッションは `600`
+   - `~/.rencrow/.env` のパーミッションは `600`
    - Git にコミットしない（`.gitignore` に追加済み）
 
 3. **コストを意識する**

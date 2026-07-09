@@ -294,7 +294,7 @@ Cookie export は原則禁止とする。
 ### 9.1 `browser-actor run`
 
 ```bash
-picoclaw browser-actor run --json < request.json
+rencrow browser-actor run --json < request.json
 ```
 
 input:
@@ -339,7 +339,7 @@ output:
 ### 9.2 `browser-actor profile login`
 
 ```bash
-picoclaw browser-actor profile login \
+rencrow browser-actor profile login \
   --profile-id github_main \
   --start-url https://github.com/login \
   --headed
@@ -350,7 +350,7 @@ picoclaw browser-actor profile login \
 ### 9.3 `browser-actor doctor`
 
 ```bash
-picoclaw browser-actor doctor --json
+rencrow browser-actor doctor --json
 ```
 
 確認項目:
@@ -575,7 +575,7 @@ RenCrow 本体への接続は小差分で行う。
 internal/domain/browseractor/
 internal/infrastructure/browseractor/
 internal/infrastructure/tools/runner_browser_actor.go
-cmd/picoclaw/cli_browser_actor.go
+cmd/rencrow/cli_browser_actor.go
 internal/adapter/config/
 internal/adapter/viewer/
 ```
@@ -596,7 +596,7 @@ internal/adapter/viewer/
 
 ### Phase 2: Go CLI / ToolRunner
 
-- `picoclaw browser-actor run`
+- `rencrow browser-actor run`
 - `browser.run` ToolRunner V2
 - config defaults / validation
 - PolicyRunner 連携
@@ -672,7 +672,7 @@ Phase 1 完了条件:
 
 Phase 2 完了条件:
 
-- `picoclaw browser-actor run` が動く
+- `rencrow browser-actor run` が動く
 - `browser.run` ToolRunner V2 から呼べる
 - external effect が approval なしで止まる
 - config / doctor / tests がある

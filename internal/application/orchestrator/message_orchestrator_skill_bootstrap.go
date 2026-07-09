@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	domainskill "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/skillgovernance"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 )
 
 func (o *MessageOrchestrator) recordRouteSkillBootstrap(ctx context.Context, req ProcessMessageRequest, route routing.Route) error {

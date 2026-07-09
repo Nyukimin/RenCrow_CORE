@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	domainhealth "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/health"
+	domainhealth "github.com/Nyukimin/RenCrow_CORE/internal/domain/health"
 )
 
 // OllamaCheck は Ollama サーバーへの接続確認（/api/tags）

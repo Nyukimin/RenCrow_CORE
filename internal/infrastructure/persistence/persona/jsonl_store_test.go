@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	domainpersona "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/persona"
+	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 )
 
 func TestJSONLStorePersonaLogs(t *testing.T) {

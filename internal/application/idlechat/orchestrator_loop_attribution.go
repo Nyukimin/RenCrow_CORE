@@ -3,7 +3,7 @@ package idlechat
 import (
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 )
 
 func latestOtherUtterance(entries []session.ConversationEntry, sessionID, speaker string) string {

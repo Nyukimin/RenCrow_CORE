@@ -254,9 +254,9 @@ finish reason、末尾、構文から途中切れを疑う。
 
 再起動は変更確認の一部ではなく、運用操作である。
 
-RenCrow / PicoClaw では以下を守る。
+RenCrow / RenCrow では以下を守る。
 
-1. `systemctl --user stop picoclaw.service`
+1. `systemctl --user stop rencrow.service`
 2. 残存プロセス停止
 3. `:18790` の listen 消失確認
 4. `/health` が応答しないことを確認

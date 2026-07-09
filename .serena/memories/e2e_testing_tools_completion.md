@@ -105,7 +105,7 @@ ANTHROPIC_API_KEY="sk-ant-..." ./test-coder claude "pkg/test/にテスト追加"
 
 ### 設定ファイル
 - **config.yaml**: シンボリックリンク → `config/config.yaml`
-- **環境変数**: `~/.picoclaw/.env`
+- **環境変数**: `~/.rencrow/.env`
   - ✅ GOOGLE_API_KEY_CHAT/WORKER設定済み
   - ❌ DEEPSEEK/OPENAI/ANTHROPIC_API_KEY未設定
 
@@ -125,7 +125,7 @@ ANTHROPIC_API_KEY="sk-ant-..." ./test-coder claude "pkg/test/にテスト追加"
 
 ### APIキー設定後
 3. **test-coder**: 実API呼び出しテスト
-   - `~/.picoclaw/.env`に以下を追加:
+   - `~/.rencrow/.env`に以下を追加:
      ```
      DEEPSEEK_API_KEY=sk-...
      OPENAI_API_KEY=sk-...
@@ -136,7 +136,7 @@ ANTHROPIC_API_KEY="sk-ant-..." ./test-coder claude "pkg/test/にテスト追加"
 ### 今後の開発
 4. **v4.0分散実行**: 本番デプロイ
    - SSH鍵ペア生成・配置
-   - リモートマシンへのpicoclaw-agent配置
+   - リモートマシンへのrencrow-agent配置
    - 性能測定
 
 ---
@@ -146,7 +146,7 @@ ANTHROPIC_API_KEY="sk-ant-..." ./test-coder claude "pkg/test/にテスト追加"
 ### 環境変数が読み込まれない場合
 ```bash
 # 明示的に環境変数を設定して起動
-source ~/.picoclaw/.env && ./test-chat "質問"
+source ~/.rencrow/.env && ./test-chat "質問"
 ```
 
 ### LINE Webhook署名検証エラー

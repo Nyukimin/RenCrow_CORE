@@ -1,10 +1,10 @@
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$ExeSource = Join-Path $RepoRoot "dist\picoclaw-agent-coder4.exe"
+$ExeSource = Join-Path $RepoRoot "dist\rencrow-agent-coder4.exe"
 $ConfigSource = Join-Path $RepoRoot "scripts\coder4_audio_router_config.yaml"
-$TargetDir = Join-Path $env:USERPROFILE ".picoclaw"
-$TargetExe = Join-Path $env:USERPROFILE "picoclaw-agent.exe"
+$TargetDir = Join-Path $env:USERPROFILE ".rencrow"
+$TargetExe = Join-Path $env:USERPROFILE "rencrow-agent.exe"
 $TargetConfig = Join-Path $TargetDir "config.yaml"
 
 New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null

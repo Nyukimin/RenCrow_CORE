@@ -1,7 +1,7 @@
 package idlechat
 
 import (
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 type TopicCategory = modulechat.TopicCategory

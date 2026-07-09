@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/pkg/rencrowclient"
+	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
 func TestE2E_SuperAgentRunQueueClientManualLedgerFlow(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live SuperAgent run queue client")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live SuperAgent run queue client")
 	}
 
 	baseURL := liveBaseURL()
@@ -96,8 +96,8 @@ func TestE2E_SuperAgentRunQueueClientManualLedgerFlow(t *testing.T) {
 }
 
 func TestE2E_SuperAgentPauseResumeAndQueueReentryClientFlow(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live SuperAgent pause/resume client")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live SuperAgent pause/resume client")
 	}
 
 	baseURL := liveBaseURL()

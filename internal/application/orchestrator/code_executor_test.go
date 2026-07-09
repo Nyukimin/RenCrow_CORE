@@ -6,15 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	moduleapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/moduleregistry"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/service"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
-	domainmodule "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/moduleregistry"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/proposal"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	domainskill "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/skillgovernance"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
+	moduleapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moduleregistry"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	domainmodule "github.com/Nyukimin/RenCrow_CORE/internal/domain/moduleregistry"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // TestCodeExecutor_CODE1Route はCODE1明示ルートのテスト（RED）
@@ -197,11 +197,11 @@ func TestAppendModuleContextLifecycleCommandsAreManualOnly(t *testing.T) {
 	got := appendModuleContextToCodeRequest("修復して", domainmodule.Resolution{
 		Module: domainmodule.Module{
 			ID:             "chat",
-			DisplayName:    "picoclaw_multiLLM",
-			Root:           "/home/nyukimi/RenCrow/picoclaw_multiLLM",
+			DisplayName:    "RenCrow_CORE",
+			Root:           "/home/nyukimi/RenCrow/RenCrow_CORE",
 			Kind:           "go",
-			InstallCommand: "cp build/picoclaw-linux-amd64 ~/.local/bin/picoclaw",
-			RestartTarget:  "picoclaw.service",
+			InstallCommand: "cp build/rencrow-linux-amd64 ~/.local/bin/rencrow",
+			RestartTarget:  "rencrow.service",
 		},
 		MatchedBy:  "test",
 		Confidence: 1,

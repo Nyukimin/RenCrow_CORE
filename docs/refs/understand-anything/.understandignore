@@ -15,11 +15,11 @@ build/
 *.dylib
 *.test
 *.out
-/picoclaw
-/picoclaw-agent
-/picoclaw-test
-cmd/picoclaw/workspace
-.picoclaw/
+/rencrow
+/rencrow-agent
+/rencrow-test
+cmd/rencrow/workspace
+.rencrow/
 sessions/
 workspace/*
 !workspace/README.md

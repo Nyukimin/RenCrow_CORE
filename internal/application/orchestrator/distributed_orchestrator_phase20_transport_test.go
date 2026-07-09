@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
 )
 
 func TestPhase20DistributedTransportExecutorExecuteToAgentUsesMessageFromAsReceiveAgent(t *testing.T) {

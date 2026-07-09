@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 )
 
 func splitTranscriptSpeaker(line string) (speaker, text string) {

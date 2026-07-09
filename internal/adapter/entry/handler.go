@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	channelapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/channel"
+	channelapp "github.com/Nyukimin/RenCrow_CORE/internal/application/channel"
 )
 
 // Request is a unified cross-platform entry payload.

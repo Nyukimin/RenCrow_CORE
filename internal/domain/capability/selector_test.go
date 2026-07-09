@@ -3,8 +3,8 @@ package capability_test
 import (
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
 
 func TestSelectCoder_CODE3_DirectMatch(t *testing.T) {

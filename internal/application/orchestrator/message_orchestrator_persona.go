@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	domainpersona "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/persona"
+	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 )
 
 func (o *MessageOrchestrator) recordPersonaRuntimeObservation(ctx context.Context, req ProcessMessageRequest) error {

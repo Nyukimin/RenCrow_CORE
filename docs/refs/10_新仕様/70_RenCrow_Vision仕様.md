@@ -265,7 +265,7 @@ RenCrow 本体には Vision provider interface を置く。
 modules/vision
 internal/infrastructure/vision
 internal/adapter/modulebridge
-cmd/picoclaw/vision_runtime_*.go
+cmd/rencrow/vision_runtime_*.go
 ```
 
 interface 案:
@@ -368,7 +368,7 @@ Vision error を Chat response と混同してはいけない。
 
 ### Runtime config
 
-`~/.picoclaw/config.yaml` に追加する設定案:
+`~/.rencrow/config.yaml` に追加する設定案:
 
 ```yaml
 vision:
@@ -471,7 +471,7 @@ live test:
 ```bash
 curl http://192.168.1.207:8770/health
 curl http://192.168.1.207:8770/v1/models
-curl -F "file=@assets/picoclaw_detect_person.mp4" \
+curl -F "file=@assets/rencrow_detect_person.mp4" \
   -F "prompt=人物が映っているか確認してください。回答は1文。" \
   http://192.168.1.207:8770/v1/vision/analyze
 ```
@@ -491,7 +491,7 @@ Viewer E2E:
 3. MacBook local で画像・動画解析を確認する
 4. LAN `192.168.1.207:<port>` で到達確認する
 5. RenCrow 本体に Vision Adapter を追加する
-6. `~/.picoclaw/config.yaml` に `vision` 設定を追加する
+6. `~/.rencrow/config.yaml` に `vision` 設定を追加する
 7. Viewer から画像・動画添付 E2E を確認する
 8. Tailscale IP `100.85.222.99` 経由に切り替える場合は、MacBook 側 bind / firewall / Tailscale ACL を確認する
 

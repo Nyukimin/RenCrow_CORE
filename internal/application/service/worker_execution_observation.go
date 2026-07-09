@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/coderloop"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/coderloop"
 )
 
 // ObservationAction は ExecuteObservation に渡す単一アクション（coderloop 型のエイリアス）

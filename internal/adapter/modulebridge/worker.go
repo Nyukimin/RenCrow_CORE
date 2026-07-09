@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/service"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/patch"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/proposal"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/task"
-	"github.com/Nyukimin/picoclaw_multiLLM/modules/core"
-	moduleworker "github.com/Nyukimin/picoclaw_multiLLM/modules/worker"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
+	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
 type WorkerExecutorAdapter struct {

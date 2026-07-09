@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	appsuperagent "github.com/Nyukimin/picoclaw_multiLLM/internal/application/superagent"
-	domainsuperagent "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/superagent"
+	appsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
+	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 )
 
 type stubSuperAgentStore struct {

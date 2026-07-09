@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	artifactcleanupapp "github.com/Nyukimin/picoclaw_multiLLM/internal/application/artifactcleanup"
+	artifactcleanupapp "github.com/Nyukimin/RenCrow_CORE/internal/application/artifactcleanup"
 )
 
 func HandleArtifactCleanup(service *artifactcleanupapp.Service) http.HandlerFunc {

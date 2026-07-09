@@ -1,4 +1,4 @@
-// Games tab module: read-only RenCrow_GAMES / PicoClaw bridge observer.
+// Games tab module: read-only RenCrow_GAMES / RenCrow bridge observer.
 function gamesBridgeField(item, key) {
   if (!item || !Object.prototype.hasOwnProperty.call(item, key)) return '';
   return item[key];

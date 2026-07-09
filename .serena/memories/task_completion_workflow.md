@@ -53,8 +53,8 @@ make check
 make build
 
 # ローカル実行テスト
-./build/picoclaw-linux-amd64 onboard
-./build/picoclaw-linux-amd64 agent -m "テストメッセージ"
+./build/rencrow-linux-amd64 onboard
+./build/rencrow-linux-amd64 agent -m "テストメッセージ"
 ```
 
 ## リリース前チェックリスト
@@ -75,7 +75,7 @@ docker compose --profile gateway build
 環境変数で制御:
 ```bash
 export LOG_LEVEL=DEBUG
-picoclaw agent
+rencrow agent
 ```
 
 ### 個別パッケージのテスト
@@ -97,7 +97,7 @@ go tool cover -html=coverage.out
 ```bash
 # 変更 → ビルド → テスト のループ
 while true; do
-  make build && make test && ./build/picoclaw-linux-amd64 agent -m "test"
+  make build && make test && ./build/rencrow-linux-amd64 agent -m "test"
   sleep 2
 done
 ```

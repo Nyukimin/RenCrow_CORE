@@ -190,7 +190,7 @@ internal/adapter/viewer/assets/images/
 ### ルーティング
 
 ```go
-// cmd/picoclaw/routes.go
+// cmd/rencrow/routes.go
 mux.HandleFunc("/viewer/live2d/character", viewer.HandleLive2DCharacter)
 mux.HandleFunc("/viewer/live2d/embed", viewer.HandleLive2DCharacterEmbed)
 mux.HandleFunc("/viewer/live2d/asset", viewer.HandleLive2DAsset)

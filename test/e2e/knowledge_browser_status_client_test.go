@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/pkg/rencrowclient"
+	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
 func TestE2E_KnowledgeMemoryAndBrowserTraceStatusClientCurrentView(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Knowledge Memory and Browser Trace API status clients")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Knowledge Memory and Browser Trace API status clients")
 	}
 
 	baseURL := liveBaseURL()
@@ -68,8 +68,8 @@ func TestE2E_KnowledgeMemoryAndBrowserTraceStatusClientCurrentView(t *testing.T)
 }
 
 func TestE2E_KnowledgeMemoryCreateReviewPromoteCurrentView(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Knowledge Memory create/review/promote flow")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Knowledge Memory create/review/promote flow")
 	}
 
 	baseURL := liveBaseURL()
@@ -150,8 +150,8 @@ func TestE2E_KnowledgeMemoryCreateReviewPromoteCurrentView(t *testing.T) {
 }
 
 func TestE2E_BrowserTraceAPIDiscoverValidateAndFetcherProposal(t *testing.T) {
-	if os.Getenv("PICOCLAW_LIVE_E2E") != "1" {
-		t.Skip("set PICOCLAW_LIVE_E2E=1 to verify live Browser Trace API discover/validate/proposal flow")
+	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
+		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Browser Trace API discover/validate/proposal flow")
 	}
 
 	baseURL := liveBaseURL()

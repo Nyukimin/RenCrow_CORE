@@ -27,8 +27,8 @@ boundary.
 Runtime routing must remain:
 
 ```text
-picoclaw -> RenCrow_LLM -> LLM backend
-picoclaw -> RenCrow_STT -> STT backend
+rencrow -> RenCrow_LLM -> LLM backend
+rencrow -> RenCrow_STT -> STT backend
 ```
 
 The Viewer must not call Gemma4, MLX-VLM, Ollama, STT providers, or other
@@ -46,7 +46,7 @@ sequence.
 The transport may be changed later to one-second video chunks:
 
 ```text
-camera/display stream -> 1s video chunk -> picoclaw -> RenCrow_LLM -> frame extraction or input_video
+camera/display stream -> 1s video chunk -> rencrow -> RenCrow_LLM -> frame extraction or input_video
 ```
 
 That change should stay behind the same RenCrow routing boundary. The upper

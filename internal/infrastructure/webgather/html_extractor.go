@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	modulewebgather "github.com/Nyukimin/picoclaw_multiLLM/modules/webgather"
+	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
 	"github.com/PuerkitoBio/goquery"
 	"golang.org/x/net/html/charset"
 )

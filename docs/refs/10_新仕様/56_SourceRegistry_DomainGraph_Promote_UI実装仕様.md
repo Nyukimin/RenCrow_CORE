@@ -253,7 +253,7 @@ test('viewer refreshes domain graph assertions after source registry graph promo
 backend は実装済みだが、回帰確認として次を実行する。
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer
 ```
 
 最低限、既存の domain graph promote handler test が通ること。
@@ -263,7 +263,7 @@ GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer
 `pkg/rencrowclient` は実装済みだが、domain graph promote request validation を壊していないことを確認する。
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./pkg/rencrowclient
+GOCACHE=/tmp/rencrow-go-cache go test ./pkg/rencrowclient
 ```
 
 ### 8.4 Viewer Node contract
@@ -293,7 +293,7 @@ node --test internal/adapter/viewer/viewer_memory_panel.test.mjs
 - promote 失敗時に response body が Viewer に表示される。
 - 既存の News / Knowledge / Memory promote が壊れていない。
 - `node --test internal/adapter/viewer/viewer_memory_panel.test.mjs` が通る。
-- `GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer ./pkg/rencrowclient` が通る。
+- `GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer ./pkg/rencrowclient` が通る。
 - `git diff --check` が通る。
 
 ## 11. 停止条件

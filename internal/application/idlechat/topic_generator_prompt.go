@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 func (g *TopicGenerator) BuildGenerationPrompt(category TopicCategory, seed TopicSeed, recent []RecentTopic, attempt int, lastErr error) (string, error) {

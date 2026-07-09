@@ -1,10 +1,10 @@
 package orchestrator
 
 import (
-	domainnode "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/node"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/transport"
+	domainnode "github.com/Nyukimin/RenCrow_CORE/internal/domain/node"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
 )
 
 // NewDistributedOrchestrator は新しいDistributedOrchestratorを作成

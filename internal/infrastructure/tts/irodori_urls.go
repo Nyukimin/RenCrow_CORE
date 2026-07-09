@@ -3,7 +3,7 @@ package tts
 import (
 	"encoding/json"
 
-	moduletts "github.com/Nyukimin/picoclaw_multiLLM/modules/tts"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 func (p *IrodoriProvider) synthesisURL() string {

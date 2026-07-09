@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	domainscheduler "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/scheduler"
+	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
 )
 
 type stubSchedulerStore struct {

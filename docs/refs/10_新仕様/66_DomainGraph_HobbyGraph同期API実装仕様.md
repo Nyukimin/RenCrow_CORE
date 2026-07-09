@@ -238,9 +238,9 @@ hobby domain graph sync unavailable
 
 変更ファイル:
 
-- `cmd/picoclaw/runtime_dependencies.go`
-- `cmd/picoclaw/runtime_viewer_handlers.go`
-- `cmd/picoclaw/routes.go`
+- `cmd/rencrow/runtime_dependencies.go`
+- `cmd/rencrow/runtime_viewer_handlers.go`
+- `cmd/rencrow/routes.go`
 
 追加関数:
 
@@ -278,7 +278,7 @@ runtime は `buildViewerRuntimeHandlers` で L1 store の有無に応じて hand
 ## 9. 検証コマンド
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer ./cmd/picoclaw
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer ./cmd/rencrow
 git diff --check
 ```
 

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	domainpersona "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/persona"
+	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 )
 
 func (s *JSONLStore) ApplyMetaProfileUpdate(_ context.Context, item domainpersona.MetaProfileUpdate) (string, error) {

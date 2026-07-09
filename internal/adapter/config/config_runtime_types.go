@@ -18,7 +18,7 @@ type TLSConfig struct {
 // 全Agent（mio/shiro/IdleChat参加Agent）が同一モデルを共用する
 type OllamaConfig struct {
 	BaseURL    string `yaml:"base_url"`
-	Model      string `yaml:"model"`       // v4: 共通モデル（例: "picoclaw-v1"）
+	Model      string `yaml:"model"`       // v4: 共通モデル（例: "rencrow-v1"）
 	MaxContext int    `yaml:"max_context"` // 常駐モデルの最大コンテキスト長（超過はNG）
 }
 

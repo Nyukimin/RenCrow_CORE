@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/session"
-	domaintransport "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/transport"
-	modulechat "github.com/Nyukimin/picoclaw_multiLLM/modules/chat"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 func detectLoopReason(transcript []string) string {

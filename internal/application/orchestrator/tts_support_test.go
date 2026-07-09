@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/routing"
-	moduletts "github.com/Nyukimin/picoclaw_multiLLM/modules/tts"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 func TestSplitTTSChunksSplitsLongFinalText(t *testing.T) {

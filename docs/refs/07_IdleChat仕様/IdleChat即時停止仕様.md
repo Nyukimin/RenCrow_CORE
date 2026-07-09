@@ -1,7 +1,7 @@
 # IdleChat 即時停止仕様
 
 作成日: 2026-05-23
-対象: RenCrow / PicoClaw Viewer の通常 Chat 入力、STT、IdleChat、TTS、LLM 応答処理
+対象: RenCrow / RenCrow Viewer の通常 Chat 入力、STT、IdleChat、TTS、LLM 応答処理
 ステータス: 仕様案
 
 ## 1. 目的

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	entryadapter "github.com/Nyukimin/picoclaw_multiLLM/internal/adapter/entry"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/application/orchestrator"
+	entryadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/entry"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
 func TestHandleBridge_Success(t *testing.T) {

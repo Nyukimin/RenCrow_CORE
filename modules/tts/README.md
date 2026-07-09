@@ -38,8 +38,8 @@ Non-responsibilities:
 Current high-impact areas:
 
 - `internal/infrastructure/tts`
-- `cmd/picoclaw/tts_*`
-- `cmd/picoclaw/idlechat_tts_*`
+- `cmd/rencrow/tts_*`
+- `cmd/rencrow/idlechat_tts_*`
 
 Boundary note:
 

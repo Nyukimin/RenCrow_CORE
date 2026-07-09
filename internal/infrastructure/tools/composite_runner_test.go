@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/capability"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/tool"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/tools"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
 // mockBaseRunner は base RunnerV2 のモック

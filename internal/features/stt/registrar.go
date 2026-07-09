@@ -4,16 +4,16 @@ import (
 	"context"
 	"net/http"
 
-	modulestt "github.com/Nyukimin/picoclaw_multiLLM/modules/stt"
+	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
-// Dependencies groups feature dependencies supplied by cmd/picoclaw.
+// Dependencies groups feature dependencies supplied by cmd/rencrow.
 type Dependencies struct {
 	Ports  Ports
 	Routes Routes
 }
 
-// Routes groups STT route handlers supplied by cmd/picoclaw.
+// Routes groups STT route handlers supplied by cmd/rencrow.
 // Handler implementations stay in legacy adapter/cmd packages during Ver0.80
 // migration; this registrar owns only route registration and dependency handoff.
 type Routes struct {

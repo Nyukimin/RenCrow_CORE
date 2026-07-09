@@ -65,7 +65,7 @@
 **削除実施**:
 - ✅ pkg/agent/router.go から /approve, /deny 削除
 
-**検証**: ビルド成功（`go build ./cmd/picoclaw`）
+**検証**: ビルド成功（`go build ./cmd/rencrow`）
 
 ### Task #19: WorkerExecutionService実装（核心機能） ✓
 **完了日**: 2026-03-02
@@ -128,7 +128,7 @@
    - エラーハンドリングテスト
    - 実行結果フォーマットテスト
 
-✅ cmd/picoclaw/main.go
+✅ cmd/rencrow/main.go
    - WorkerExecutionService DI設定
    - coderAdapter に GenerateProposal() 追加
    - MessageOrchestrator に workerExecution 追加
@@ -232,7 +232,7 @@
 - ✅ internal/application/orchestrator/message_orchestrator.go (+Worker統合)
 - ✅ internal/application/orchestrator/message_orchestrator_test.go (修正)
 - ✅ internal/application/orchestrator/message_orchestrator_code3_test.go (新規)
-- ✅ cmd/picoclaw/main.go (+WorkerExecutionService DI)
+- ✅ cmd/rencrow/main.go (+WorkerExecutionService DI)
 
 ### テストカバレッジ
 | パッケージ | Before | After | 改善 |
@@ -261,7 +261,7 @@
 - `internal/adapter/config/config.go`
 - `internal/application/service/worker_execution_service.go`
 - `internal/application/orchestrator/message_orchestrator.go`
-- `cmd/picoclaw/main.go`
+- `cmd/rencrow/main.go`
 - `internal/domain/patch/`
 - `internal/infrastructure/tools/`
 - `internal/infrastructure/mcp/`

@@ -80,7 +80,7 @@ python tools/webwright_fetch/run_webwright_fetch.py \
 Webwright の `report.json` を L1 staging JSONL へ変換:
 
 ```bash
-picoclaw web-gather webwright-fetch \
+rencrow web-gather webwright-fetch \
   --task "Collect the public article title, summary, and key facts" \
   --start-url "https://example.com/article" \
   --task-id ai_policy \
@@ -99,17 +99,17 @@ python tools/webwright_fetch/webwright_to_staging.py \
 変換済み JSONL を RenCrow L1 staging へ取り込む:
 
 ```bash
-picoclaw web-gather import-webwright-jsonl tmp/webwright_staging/ai_policy.jsonl --json
+rencrow web-gather import-webwright-jsonl tmp/webwright_staging/ai_policy.jsonl --json
 ```
 
 取り込み時も `webwright_fetch` 由来 metadata、`pending`、`auto_promote=false`、credential-like text の拒否を確認する。
 
-`picoclaw web-gather webwright-fetch` は実行前に `webwright_fetch.responses_endpoint` の TCP 到達性を確認する。local Worker Responses API が起動していない場合は Webwright を起動せず、preflight error として終了する。
+`rencrow web-gather webwright-fetch` は実行前に `webwright_fetch.responses_endpoint` の TCP 到達性を確認する。local Worker Responses API が起動していない場合は Webwright を起動せず、preflight error として終了する。
 
 実行前診断:
 
 ```bash
-picoclaw web-gather doctor --json
+rencrow web-gather doctor --json
 ```
 
 `doctor` は L1 staging store、SearXNG 設定、Webwright runner、Python、`uvx_from`、Responses endpoint 到達性を確認する。Webwright が disabled の場合は skipped として扱う。

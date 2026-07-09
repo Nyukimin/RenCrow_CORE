@@ -45,15 +45,15 @@ Source Registry と同じ L1-backed current view として扱う。
 
 - `internal/adapter/viewer/debug_system_handler.go`
 - `internal/adapter/viewer/runtime_config_test.go`
-- `cmd/picoclaw/runtime_readiness.go`
-- `cmd/picoclaw/runtime_readiness_test.go`
+- `cmd/rencrow/runtime_readiness.go`
+- `cmd/rencrow/runtime_readiness_test.go`
 - `pkg/rencrowclient/client.go`
 - `pkg/rencrowclient/client_test.go`
 
 ## 6. 検証コマンド
 
 ```bash
-GOCACHE=/tmp/picoclaw-go-cache go test ./internal/adapter/viewer ./cmd/picoclaw ./pkg/rencrowclient
+GOCACHE=/tmp/rencrow-go-cache go test ./internal/adapter/viewer ./cmd/rencrow ./pkg/rencrowclient
 git diff --check
 ```
 

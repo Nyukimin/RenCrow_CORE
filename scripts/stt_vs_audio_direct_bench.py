@@ -336,7 +336,7 @@ def render_markdown(report: dict) -> str:
         f"- 実行時刻: `{report['timestamp']}`",
         f"- WAV: `{report['wav']}`",
         f"- 音声長: `{report['wav_duration_sec']:.2f}s`",
-        f"- picoclaw base: `{report['base_url']}`",
+        f"- rencrow base: `{report['base_url']}`",
         f"- LLM API: `{report['llm_url']}`",
         "",
         "## 結果サマリ",
@@ -366,13 +366,13 @@ def render_markdown(report: dict) -> str:
         a_total = a.get("total_ms") or 0
         b_total = b.get("total_ms") or 0
         if a_total < b_total:
-            lines.append(f"- picoclaw 経路で早い方: **stt_text_llm**（差 `{round(b_total - a_total, 1)}ms`）")
+            lines.append(f"- rencrow 経路で早い方: **stt_text_llm**（差 `{round(b_total - a_total, 1)}ms`）")
         elif b_total < a_total:
-            lines.append(f"- picoclaw 経路で早い方: **audio_direct_llm**（差 `{round(a_total - b_total, 1)}ms`）")
+            lines.append(f"- rencrow 経路で早い方: **audio_direct_llm**（差 `{round(a_total - b_total, 1)}ms`）")
         else:
-            lines.append("- picoclaw 経路: **同程度**")
+            lines.append("- rencrow 経路: **同程度**")
     else:
-        lines.append("- picoclaw 経路の比較: いずれかが失敗")
+        lines.append("- rencrow 経路の比較: いずれかが失敗")
 
     lines.extend(["", "## 詳細", ""])
     for key in ("stt_text_llm", "audio_direct_llm", "direct_llm_api_input_audio"):

@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 func (p *OpenAIProvider) readChatCompletionsStream(body io.Reader, onToken llm.StreamCallback) (llm.GenerateResponse, error) {

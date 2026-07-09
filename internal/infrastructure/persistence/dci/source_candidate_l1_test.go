@@ -2,15 +2,15 @@ package dci
 
 import (
 	"context"
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
-	domaindci "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/dci"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 )
 
 func TestL1SourceCandidateStoreStagesDCIEvidenceAsPendingSearchResult(t *testing.T) {

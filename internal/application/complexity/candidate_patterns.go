@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	domaindci "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/dci"
+	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 )
 
 type DCITraceLister interface {

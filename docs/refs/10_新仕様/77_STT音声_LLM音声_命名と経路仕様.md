@@ -27,10 +27,10 @@ Viewer の Chat マイク入力には、RenCrow_STT を使う経路と RenCrow_L
 
 ```text
 Viewer Chat mic
-  -> picoclaw /stt or /stt-ws
+  -> rencrow /stt or /stt-ws
   -> RenCrow_STT
   -> partial / final text
-  -> picoclaw /viewer/send or equivalent Chat text path
+  -> rencrow /viewer/send or equivalent Chat text path
   -> RenCrow_LLM Chat
   -> Viewer Chat response
 ```
@@ -40,7 +40,7 @@ Viewer Chat mic
 | コンポーネント | 責務 |
 | --- | --- |
 | Viewer | マイク取得、STT WS 接続、partial/final 字幕表示、final text 投入 |
-| picoclaw `/stt` | Viewer と RenCrow_STT の bridge |
+| rencrow `/stt` | Viewer と RenCrow_STT の bridge |
 | RenCrow_STT | 音声から partial/final text を生成 |
 | RenCrow_LLM | STT final text を通常 Chat 入力として処理 |
 
@@ -58,8 +58,8 @@ Viewer Chat mic
 
 ```text
 Viewer Chat mic
-  -> picoclaw /voice-chat or /voice-chat-ws
-  -> picoclaw voice-chat runtime
+  -> rencrow /voice-chat or /voice-chat-ws
+  -> rencrow voice-chat runtime
   -> RenCrow_LLM Chat audio input
   -> llm.delta / llm.final
   -> Viewer Chat response
@@ -67,7 +67,7 @@ Viewer Chat mic
 
 ### 3.2 現行実装
 
-現行の `picoclaw` 実装では、Viewer からは WebSocket で PCM16 を受ける。
+現行の `rencrow` 実装では、Viewer からは WebSocket で PCM16 を受ける。
 
 内部では Viewer の `session.start` / PCM16 binary / `session.commit` を RenCrow_LLM の audio session WebSocket に透過し、RenCrow_LLM からの `llm.delta` / `llm.final` を Viewer へ返す。
 
@@ -78,13 +78,13 @@ Viewer /voice-chat WS
   session.commit
     |
     v
-picoclaw: WS frame relay
+rencrow: WS frame relay
     |
     v
 RenCrow_LLM /v1/chat/audio/sessions
     |
     v
-picoclaw -> Viewer: llm.delta / llm.final
+rencrow -> Viewer: llm.delta / llm.final
 ```
 
 現行コードの主担当は次の通り。
@@ -92,9 +92,9 @@ picoclaw -> Viewer: llm.delta / llm.final
 | ファイル | 役割 |
 | --- | --- |
 | `internal/adapter/viewer/assets/js/viewer.js` | Chat マイク、`vdsState`、`/voice-chat` 接続、PCM 送信、`llm.delta/final` 表示 |
-| `cmd/picoclaw/voice_chat_runtime_websocket.go` | `/voice-chat` route、disabled/unavailable handler、RenCrow_LLM audio session WS への透過 bridge |
-| `cmd/picoclaw/voice_chat_runtime_input_audio.go` | 旧 Phase 0 の PCM -> WAV -> `input_audio` handler。通常の LLM音声経路では使わない |
-| `cmd/picoclaw/voice_chat_runtime_bridge.go` | `llm.final` / delta idle を orchestrator の Voice Direct event へ接続 |
+| `cmd/rencrow/voice_chat_runtime_websocket.go` | `/voice-chat` route、disabled/unavailable handler、RenCrow_LLM audio session WS への透過 bridge |
+| `cmd/rencrow/voice_chat_runtime_input_audio.go` | 旧 Phase 0 の PCM -> WAV -> `input_audio` handler。通常の LLM音声経路では使わない |
+| `cmd/rencrow/voice_chat_runtime_bridge.go` | `llm.final` / delta idle を orchestrator の Voice Direct event へ接続 |
 | `modules/voicechat/` | `/voice-chat` event 名、route、mode 名の共通契約 |
 
 ### 3.3 注意

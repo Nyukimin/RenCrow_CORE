@@ -279,7 +279,7 @@ go test ./test/e2e -run Hobby -v
 **手動テスト**（サーバー起動が可能な場合）:
 ```bash
 # サーバー起動
-PICOCLAW_CONFIG=config/config.yaml.example ./build/picoclaw run
+RENCROW_CONFIG=config/config.yaml.example ./build/rencrow run
 
 # API テスト
 curl http://localhost:8080/viewer/complexity/hotspot

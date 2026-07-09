@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	domconv "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/conversation"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	_ "github.com/mattn/go-sqlite3"
 )
 

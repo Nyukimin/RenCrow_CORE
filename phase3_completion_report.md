@@ -38,7 +38,7 @@ $ go test ./test/e2e -run TestE2E_MemorySystemDailyConversationL0ToL3RecallPack 
 === RUN   TestE2E_MemorySystemDailyConversationL0ToL3RecallPack
 --- PASS: TestE2E_MemorySystemDailyConversationL0ToL3RecallPack (0.11s)
 PASS
-ok  	github.com/Nyukimin/picoclaw_multiLLM/test/e2e	(cached)
+ok  	github.com/Nyukimin/RenCrow_CORE/test/e2e	(cached)
 ```
 ✅ **成功**
 

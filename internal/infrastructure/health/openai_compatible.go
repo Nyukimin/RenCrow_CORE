@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	domainhealth "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/health"
+	domainhealth "github.com/Nyukimin/RenCrow_CORE/internal/domain/health"
 )
 
 // OpenAICompatibleChatCheck verifies an OpenAI-compatible local LLM endpoint.

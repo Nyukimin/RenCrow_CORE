@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	domainllm "github.com/Nyukimin/picoclaw_multiLLM/internal/domain/llm"
+	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 // RawLogProvider logs raw LLM responses for every Generate/Chat call.
@@ -164,9 +164,9 @@ func writeWorkerRaw(kind, provider, finish string, maxTokens int, msgCount int, 
 
 func openChatRawFile() *os.File {
 	chatRawOnce.Do(func() {
-		path := strings.TrimSpace(os.Getenv("PICOCLAW_CHAT_RAW_LOG"))
+		path := strings.TrimSpace(os.Getenv("RENCROW_CHAT_RAW_LOG"))
 		if path == "" {
-			path = "/home/nyukimi/.picoclaw/logs/chat_raw.log"
+			path = "/home/nyukimi/.rencrow/logs/chat_raw.log"
 		}
 		dir := filepath.Dir(path)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -191,9 +191,9 @@ func openChatRawFile() *os.File {
 
 func openWorkerRawFile() *os.File {
 	workerRawOnce.Do(func() {
-		path := strings.TrimSpace(os.Getenv("PICOCLAW_WORKER_RAW_LOG"))
+		path := strings.TrimSpace(os.Getenv("RENCROW_WORKER_RAW_LOG"))
 		if path == "" {
-			path = "/home/nyukimi/.picoclaw/logs/worker_raw.log"
+			path = "/home/nyukimi/.rencrow/logs/worker_raw.log"
 		}
 		dir := filepath.Dir(path)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -252,9 +252,9 @@ func writeIdleChatRaw(speaker, kind, provider, finish string, maxTokens int, msg
 
 func openIdleChatRawFile() *os.File {
 	idleRawOnce.Do(func() {
-		path := strings.TrimSpace(os.Getenv("PICOCLAW_IDLECHAT_RAW_LOG"))
+		path := strings.TrimSpace(os.Getenv("RENCROW_IDLECHAT_RAW_LOG"))
 		if path == "" {
-			path = "/home/nyukimi/.picoclaw/logs/IdleChat_raw.log"
+			path = "/home/nyukimi/.rencrow/logs/IdleChat_raw.log"
 		}
 		dir := filepath.Dir(path)
 		if err := os.MkdirAll(dir, 0o755); err != nil {

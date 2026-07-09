@@ -2,7 +2,7 @@
 
 **作成日**: 2026-02-24
 **最終更新**: 2026-05-09
-**プロジェクト名**: RenCrow (`picoclaw_multiLLM`)
+**プロジェクト名**: RenCrow (`RenCrow_CORE`)
 **目的**: RenCrow 固有の技術詳細、実装名、運用制約だけを定義する
 
 ---
@@ -136,19 +136,19 @@ RenCrow の実行ログでは、後から判断と実行を追えることを優
 
 ## 6. 再起動とヘルスチェック
 
-RenCrow / PicoClaw の再起動前には、既存の関連作業を必ず全停止する。
+RenCrow / RenCrow の再起動前には、既存の関連作業を必ず全停止する。
 
 最低限の順序:
 
-1. `systemctl --user stop picoclaw.service`
-2. 残存する `picoclaw` プロセス停止
+1. `systemctl --user stop rencrow.service`
+2. 残存する `rencrow` プロセス停止
 3. `:18790` の listen が消えたことを確認
 4. `http://127.0.0.1:18790/health` が失敗することを確認
 5. ビルド
 6. service 起動
 7. health が `200 OK` になることを確認
 
-`picoclaw.service` は `~/.local/bin/picoclaw` を自動再起動することがある。
+`rencrow.service` は `~/.local/bin/rencrow` を自動再起動することがある。
 プロセスだけ止めて再起動してはいけない。
 
 ---
@@ -173,7 +173,7 @@ RenCrow 固有の確認コマンドは、対象範囲に合わせて選ぶ。
 代表例:
 
 ```bash
-go test ./cmd/picoclaw ./internal/adapter/viewer ./internal/application/idlechat
+go test ./cmd/rencrow ./internal/adapter/viewer ./internal/application/idlechat
 node --test internal/adapter/viewer/*.test.mjs
 ```
 
@@ -188,7 +188,7 @@ RenCrow では、以下を標準とする。
 
 ### 9.1 CLI
 
-恒久的な RenCrow / PicoClaw CLI は Go を第一候補にする。
+恒久的な RenCrow / RenCrow CLI は Go を第一候補にする。
 
 対象:
 

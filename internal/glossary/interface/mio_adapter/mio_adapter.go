@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Nyukimin/picoclaw_multiLLM/internal/glossary/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/application/service"
 )
 
 type MioGlossaryAdapter struct {
