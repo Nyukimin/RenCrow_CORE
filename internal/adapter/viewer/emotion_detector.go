@@ -79,11 +79,11 @@ func DetectEmotion(text string) EmotionType {
 
 // ChatResponse represents a chat response with emotion
 type ChatResponse struct {
-	Message      string      `json:"message"`
-	CharacterID  string      `json:"character_id"`
-	Emotion      EmotionType `json:"emotion"`
-	Live2DURL    string      `json:"live2d_url,omitempty"`
-	Live2DEmbedURL string    `json:"live2d_embed_url,omitempty"`
+	Message        string      `json:"message"`
+	CharacterID    string      `json:"character_id"`
+	Emotion        EmotionType `json:"emotion"`
+	Live2DURL      string      `json:"live2d_url,omitempty"`
+	Live2DEmbedURL string      `json:"live2d_embed_url,omitempty"`
 }
 
 // BuildChatResponse creates a chat response with emotion detection

@@ -14,8 +14,8 @@ type SessionLogEntry struct {
 	Timestamp string `json:"ts"`
 	SessionID string `json:"session_id"`
 	Channel   string `json:"channel"`
-	Role      string `json:"role"`    // "user" | "assistant"
-	Route     string `json:"route"`   // "CHAT" | "CODE" etc. (assistantのみ)
+	Role      string `json:"role"`  // "user" | "assistant"
+	Route     string `json:"route"` // "CHAT" | "CODE" etc. (assistantのみ)
 	JobID     string `json:"job_id,omitempty"`
 	Content   string `json:"content"`
 }

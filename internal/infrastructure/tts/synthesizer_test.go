@@ -43,4 +43,3 @@ func TestFallbackSynthesizer_AllFailed(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-

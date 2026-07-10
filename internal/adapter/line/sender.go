@@ -189,7 +189,7 @@ func buildImageMessage(originalURL, previewURL string) (map[string]interface{}, 
 	}
 
 	return map[string]interface{}{
-		"type":              "image",
+		"type":               "image",
 		"originalContentUrl": originalURL,
 		"previewImageUrl":    previewURL,
 	}, nil

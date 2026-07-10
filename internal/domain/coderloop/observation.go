@@ -9,8 +9,8 @@ const maxObservationOutputBytes = 2048
 
 // ObservationAction は Worker に依頼する観測アクション（実行前）
 type ObservationAction struct {
-	Action string         `json:"action"` // "shell_command" | "mcp_tool"
-	Target string         `json:"target"` // shell_command: コマンド / mcp_tool: ツール名
+	Action string         `json:"action"`         // "shell_command" | "mcp_tool"
+	Target string         `json:"target"`         // shell_command: コマンド / mcp_tool: ツール名
 	Args   map[string]any `json:"args,omitempty"` // mcp_tool のみ使用
 }
 

@@ -50,4 +50,3 @@ func TestCommandPlayer_ReplacesAudioToken(t *testing.T) {
 		t.Fatalf("expected 0, got %d", r.ExitCode)
 	}
 }
-

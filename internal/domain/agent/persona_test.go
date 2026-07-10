@@ -31,7 +31,7 @@ func TestAgentPersona_BuildSystemPrompt(t *testing.T) {
 		{
 			name: "複数行 personality",
 			persona: AgentPersona{
-				Name: "Ao",
+				Name:        "Ao",
 				Personality: "あなたは Ao。\n実装力が高く効率を重視する。\n簡潔に要点を伝える。",
 				Tone:        "concise",
 			},

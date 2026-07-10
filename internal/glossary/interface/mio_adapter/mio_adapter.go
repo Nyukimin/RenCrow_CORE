@@ -21,11 +21,11 @@ func (a *MioGlossaryAdapter) GetContextForTerm(ctx context.Context, term string)
 	if err != nil {
 		return "", err
 	}
-	
+
 	if item == nil {
 		return "", nil
 	}
-	
+
 	return fmt.Sprintf("Recent context: %s (Source: %s)", item.Explanation, item.Source), nil
 }
 
@@ -34,7 +34,7 @@ func (a *MioGlossaryAdapter) GetRecentTopics(ctx context.Context, limit int) ([]
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var topics []string
 	for _, item := range items {
 		topics = append(topics, fmt.Sprintf("%s: %s", item.Term, item.Explanation))

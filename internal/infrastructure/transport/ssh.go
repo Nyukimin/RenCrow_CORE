@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	sshMaxRetries      = 3
-	sshBaseBackoff     = 1 * time.Second
-	sshInboundBufSize  = 100
-	sshRemoteCommand   = "rencrow-agent --standalone"
+	sshMaxRetries     = 3
+	sshBaseBackoff    = 1 * time.Second
+	sshInboundBufSize = 100
+	sshRemoteCommand  = "rencrow-agent --standalone"
 )
 
 // sshDialer はSSHクライアント生成の抽象化（テスト用DI）
@@ -89,8 +89,8 @@ type SSHTransport struct {
 	stdout  io.Reader
 
 	inbound         chan domaintransport.Message
-	sendMu          sync.Mutex     // エンコーダ保護
-	receiveLoopDone chan struct{}   // receiveLoopの完了通知
+	sendMu          sync.Mutex    // エンコーダ保護
+	receiveLoopDone chan struct{} // receiveLoopの完了通知
 
 	done         chan struct{}
 	mu           sync.Mutex

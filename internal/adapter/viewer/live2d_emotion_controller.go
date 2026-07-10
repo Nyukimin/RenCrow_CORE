@@ -40,18 +40,18 @@ var Live2DEmotionMapping = map[EmotionType]Live2DState{
 
 // Live2DState represents the state of Live2D character
 type Live2DState struct {
-	Motion     string  `json:"motion"`               // Motion name (e.g., "tapBody", "shake")
-	Expression string  `json:"expression"`           // Expression ID (e.g., "f01", "f02")
-	Scale      float64 `json:"scale,omitzero"`       // Scale (optional)
-	X          float64 `json:"x,omitzero"`           // X position (optional)
-	Y          float64 `json:"y,omitzero"`           // Y position (optional)
+	Motion     string  `json:"motion"`         // Motion name (e.g., "tapBody", "shake")
+	Expression string  `json:"expression"`     // Expression ID (e.g., "f01", "f02")
+	Scale      float64 `json:"scale,omitzero"` // Scale (optional)
+	X          float64 `json:"x,omitzero"`     // X position (optional)
+	Y          float64 `json:"y,omitzero"`     // Y position (optional)
 }
 
 // Live2DControlMessage represents a control message sent to Live2D iframe
 type Live2DControlMessage struct {
-	Type       string      `json:"type"`       // "emotion", "motion", "expression"
-	Emotion    EmotionType `json:"emotion,omitempty"`
-	State      Live2DState `json:"state,omitempty"`
+	Type    string      `json:"type"` // "emotion", "motion", "expression"
+	Emotion EmotionType `json:"emotion,omitempty"`
+	State   Live2DState `json:"state,omitempty"`
 }
 
 // HandleLive2DEmotionControl handles emotion control requests

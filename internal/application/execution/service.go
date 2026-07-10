@@ -21,10 +21,10 @@ type ToolExecutor interface {
 
 // Service はツール実行要求を評価して実行する。
 type Service struct {
-	policy      PolicyEvaluator
-	executor    ToolExecutor
-	repo        domain.Repository
-	now         func() time.Time
+	policy   PolicyEvaluator
+	executor ToolExecutor
+	repo     domain.Repository
+	now      func() time.Time
 }
 
 // Result は実行結果
@@ -38,10 +38,10 @@ func NewService(policy PolicyEvaluator, executor ToolExecutor, repo domain.Repos
 		repo = &noopRepository{}
 	}
 	return &Service{
-		policy:      policy,
-		executor:    executor,
-		repo:        repo,
-		now:         time.Now,
+		policy:   policy,
+		executor: executor,
+		repo:     repo,
+		now:      time.Now,
 	}
 }
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/domain/entity"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type SQLiteGlossaryRepository struct {

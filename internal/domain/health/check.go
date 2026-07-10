@@ -31,8 +31,8 @@ type CheckResult struct {
 // HealthReport は全チェック結果の集約
 type HealthReport struct {
 	Status    Status        `json:"status"`
-	Checks   []CheckResult `json:"checks"`
-	Timestamp time.Time    `json:"timestamp"`
+	Checks    []CheckResult `json:"checks"`
+	Timestamp time.Time     `json:"timestamp"`
 }
 
 // Aggregate は複数の CheckResult を HealthReport に集約する

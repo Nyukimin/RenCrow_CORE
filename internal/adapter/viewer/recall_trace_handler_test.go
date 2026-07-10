@@ -14,6 +14,7 @@ type recallTraceStoreStub struct {
 	limit     int
 	sessionID string
 }
+
 func (s *recallTraceStoreStub) RecentRecallTraces(_ context.Context, sessionID string, limit int) ([]domconv.RecallTrace, error) {
 	s.sessionID = sessionID
 	s.limit = limit

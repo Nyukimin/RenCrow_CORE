@@ -164,11 +164,11 @@ func (cm *CharacterManager) GetAvailableStates(characterID string) []string {
 
 // CharacterStateResponse represents the API response for character state
 type CharacterStateResponse struct {
-	CharacterID    string `json:"character_id"`
-	State          string `json:"state"`
-	ExpressionURL  string `json:"expression_url"`
-	BodyURL        string `json:"body_url"`
-	TalkOpenURL    string `json:"talk_open_url"`
-	TalkClosedURL  string `json:"talk_closed_url"`
+	CharacterID     string   `json:"character_id"`
+	State           string   `json:"state"`
+	ExpressionURL   string   `json:"expression_url"`
+	BodyURL         string   `json:"body_url"`
+	TalkOpenURL     string   `json:"talk_open_url"`
+	TalkClosedURL   string   `json:"talk_closed_url"`
 	AvailableStates []string `json:"available_states"`
 }

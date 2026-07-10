@@ -4,9 +4,9 @@ package patch
 type Type string
 
 const (
-	TypeFileEdit      Type = "file_edit"
-	TypeShellCommand  Type = "shell_command"
-	TypeGitOperation  Type = "git_operation"
+	TypeFileEdit     Type = "file_edit"
+	TypeShellCommand Type = "shell_command"
+	TypeGitOperation Type = "git_operation"
 )
 
 // Action はコマンドアクションを表す型

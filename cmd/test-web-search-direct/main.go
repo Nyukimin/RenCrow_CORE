@@ -12,7 +12,7 @@ func main() {
 	fmt.Println("=== Direct Web Search Test (Chat) ===")
 
 	cfg := tools.ToolRunnerConfig{
-		GoogleAPIKey:       os.Getenv("GOOGLE_API_KEY_CHAT"),
+		GoogleAPIKey:         os.Getenv("GOOGLE_API_KEY_CHAT"),
 		GoogleSearchEngineID: os.Getenv("GOOGLE_SEARCH_ENGINE_ID_CHAT"),
 	}
 

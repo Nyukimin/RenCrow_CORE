@@ -24,8 +24,8 @@ const (
 
 // SessionLogSource はDCIが参照するセッションログの参照先定義
 type SessionLogSource struct {
-	Name    string           // 表示名 ("rencrow", "codex", "claude" 等)
-	PathDir string           // GLOBで検索するベースディレクトリ
+	Name    string // 表示名 ("rencrow", "codex", "claude" 等)
+	PathDir string // GLOBで検索するベースディレクトリ
 	Format  SessionLogFormat
 }
 
@@ -204,4 +204,3 @@ func extractTextFromLine(data []byte, format SessionLogFormat) string {
 	}
 	return ""
 }
-

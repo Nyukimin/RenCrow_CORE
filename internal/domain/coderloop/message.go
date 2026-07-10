@@ -19,8 +19,8 @@ const (
 
 // WorkerAction は Coder が Worker に依頼する単一アクション
 type WorkerAction struct {
-	Action string         `json:"action"` // "shell_command" | "mcp_tool"
-	Target string         `json:"target"` // shell_command: コマンド文字列 / mcp_tool: ツール名
+	Action string         `json:"action"`         // "shell_command" | "mcp_tool"
+	Target string         `json:"target"`         // shell_command: コマンド文字列 / mcp_tool: ツール名
 	Args   map[string]any `json:"args,omitempty"` // mcp_tool のみ使用
 }
 
@@ -61,11 +61,11 @@ type RevisionRequestMessage struct {
 
 // FinalReportMessage は完了報告
 type FinalReportMessage struct {
-	Type            MessageType `json:"type"`
-	Summary         string      `json:"summary"`
-	ChangedFiles    []string    `json:"changed_files"`
-	TestsRun        []string    `json:"tests_run"`
-	RemainingRisks  []string    `json:"remaining_risks"`
+	Type           MessageType `json:"type"`
+	Summary        string      `json:"summary"`
+	ChangedFiles   []string    `json:"changed_files"`
+	TestsRun       []string    `json:"tests_run"`
+	RemainingRisks []string    `json:"remaining_risks"`
 }
 
 // CoderMessage は Coder の出力を保持する共用体

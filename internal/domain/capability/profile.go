@@ -4,11 +4,11 @@ package capability
 type Profile string
 
 const (
-	ProfileCoderHigh   Profile = "coder-high"   // Claude API 疎通OK
-	ProfileCoderMid    Profile = "coder-mid"     // OpenAI / DeepSeek 疎通OK
-	ProfileCoderLocal  Profile = "coder-local"   // Ollama のみ 8GB+
-	ProfileWorkerOnly  Profile = "worker-only"   // Ollama のみ 4GB未満
-	ProfileUnavailable Profile = "unavailable"   // LLM なし
+	ProfileCoderHigh   Profile = "coder-high"  // Claude API 疎通OK
+	ProfileCoderMid    Profile = "coder-mid"   // OpenAI / DeepSeek 疎通OK
+	ProfileCoderLocal  Profile = "coder-local" // Ollama のみ 8GB+
+	ProfileWorkerOnly  Profile = "worker-only" // Ollama のみ 4GB未満
+	ProfileUnavailable Profile = "unavailable" // LLM なし
 )
 
 const (

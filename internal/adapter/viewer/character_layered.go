@@ -10,14 +10,14 @@ import (
 
 // LayeredCharacterManifest represents the generated parts manifest structure
 type LayeredCharacterManifest struct {
-	SourceDir      string                      `json:"source_dir"`
-	CanvasSize     CanvasSize                  `json:"canvas_size"`
-	Body           string                      `json:"body"`
-	Eyebrows       []Part                      `json:"eyebrows"`
-	Eyes           []Part                      `json:"eyes"`
-	Mouth          []Part                      `json:"mouth"`
-	SampleAnchors  map[string]Anchor           `json:"sample_anchors"`
-	Expressions    map[string][]string         `json:"expressions"`
+	SourceDir     string              `json:"source_dir"`
+	CanvasSize    CanvasSize          `json:"canvas_size"`
+	Body          string              `json:"body"`
+	Eyebrows      []Part              `json:"eyebrows"`
+	Eyes          []Part              `json:"eyes"`
+	Mouth         []Part              `json:"mouth"`
+	SampleAnchors map[string]Anchor   `json:"sample_anchors"`
+	Expressions   map[string][]string `json:"expressions"`
 }
 
 type CanvasSize struct {

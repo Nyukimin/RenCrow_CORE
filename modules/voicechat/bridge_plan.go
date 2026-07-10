@@ -3,11 +3,11 @@ package voicechat
 import "strings"
 
 type BridgePlan struct {
-	Enabled     bool
-	GatewayURL  string
-	Available   bool
-	Disabled    bool
-	InputMode   string
+	Enabled    bool
+	GatewayURL string
+	Available  bool
+	Disabled   bool
+	InputMode  string
 }
 
 func BuildBridgePlan(enabled bool, gatewayURL, voiceInputMode string) BridgePlan {

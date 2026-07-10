@@ -13,10 +13,10 @@ import (
 
 // LLMProfileExtractor は LLM を使ってユーザープロファイルを抽出する
 type LLMProfileExtractor struct {
-	provider     llm.LLMProvider
-	minTurns     int // 最低ターン数（デフォルト: 3）
-	maxTokens    int
-	temperature  float64
+	provider    llm.LLMProvider
+	minTurns    int // 最低ターン数（デフォルト: 3）
+	maxTokens   int
+	temperature float64
 }
 
 // NewLLMProfileExtractor は新しい LLMProfileExtractor を作成

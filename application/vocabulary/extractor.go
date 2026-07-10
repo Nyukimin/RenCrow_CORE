@@ -21,7 +21,7 @@ func NewTermExtractor() *TermExtractor {
 	return &TermExtractor{
 		patterns: []*regexp.Regexp{
 			regexp.MustCompile(`\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b`), // Capitalized phrases
-			regexp.MustCompile(`\b[A-Z]{2,}\b`), // Acronyms
+			regexp.MustCompile(`\b[A-Z]{2,}\b`),                      // Acronyms
 		},
 	}
 }
@@ -30,7 +30,7 @@ func NewTermExtractor() *TermExtractor {
 func (e *TermExtractor) ExtractTerms(text string) []ExtractedTerm {
 	var terms []ExtractedTerm
 	seen := make(map[string]bool)
-	
+
 	for _, pattern := range e.patterns {
 		matches := pattern.FindAllString(text, -1)
 		for _, match := range matches {
@@ -38,7 +38,7 @@ func (e *TermExtractor) ExtractTerms(text string) []ExtractedTerm {
 			if len(match) < 3 || e.isCommonWord(match) {
 				continue
 			}
-			
+
 			if !seen[match] {
 				terms = append(terms, ExtractedTerm{
 					Term:        match,
@@ -48,7 +48,7 @@ func (e *TermExtractor) ExtractTerms(text string) []ExtractedTerm {
 			}
 		}
 	}
-	
+
 	return terms
 }
 

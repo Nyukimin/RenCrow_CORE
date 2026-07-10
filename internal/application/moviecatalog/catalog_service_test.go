@@ -139,11 +139,11 @@ func TestStats(t *testing.T) {
 	}
 
 	expected := map[string]int{
-		"movies":              3,
-		"people":              3,
-		"movie_people":        3,
-		"fetch_log":           1,
-		"movie_watch_events":  2,
+		"movies":             3,
+		"people":             3,
+		"movie_people":       3,
+		"fetch_log":          1,
+		"movie_watch_events": 2,
 	}
 
 	for table, expectedCount := range expected {
@@ -161,13 +161,13 @@ func TestMovies(t *testing.T) {
 	seedTestData(t, db)
 
 	tests := []struct {
-		name        string
-		params      QueryParams
-		limit       int
-		offset      int
-		wantTotal   int
-		wantCount   int
-		wantFirst   string
+		name      string
+		params    QueryParams
+		limit     int
+		offset    int
+		wantTotal int
+		wantCount int
+		wantFirst string
 	}{
 		{
 			name:      "list all movies",

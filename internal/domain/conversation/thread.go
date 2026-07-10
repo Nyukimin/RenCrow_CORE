@@ -16,15 +16,15 @@ const (
 
 // Thread は「話題のまとまり」（6〜8ターン相当）
 type Thread struct {
-	ID        int64        `json:"thread_id"`
-	SessionID string       `json:"session_id"`
-	Domain    string       `json:"domain"`
-	Turns     []Message    `json:"turns"`
-	Targets   []string     `json:"targets"`
+	ID        int64          `json:"thread_id"`
+	SessionID string         `json:"session_id"`
+	Domain    string         `json:"domain"`
+	Turns     []Message      `json:"turns"`
+	Targets   []string       `json:"targets"`
 	Cooldown  map[string]int `json:"ct"`
-	StartTime time.Time    `json:"ts_start"`
-	EndTime   *time.Time   `json:"ts_end,omitempty"`
-	Status    ThreadStatus `json:"status"`
+	StartTime time.Time      `json:"ts_start"`
+	EndTime   *time.Time     `json:"ts_end,omitempty"`
+	Status    ThreadStatus   `json:"status"`
 }
 
 // NewThread は新しいThreadを生成

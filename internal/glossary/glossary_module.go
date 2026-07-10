@@ -4,8 +4,8 @@ import (
 	"context"
 	"log"
 
-	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/infrastructure/feed"
 	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/infrastructure/feed"
 	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/infrastructure/persistence"
 	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/interface/mio_adapter"
 )
@@ -21,10 +21,10 @@ func NewGlossaryModule(dbPath string) (*GlossaryModule, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	service := service.NewGlossaryService(repo)
 	mioAdapter := mio_adapter.NewMioGlossaryAdapter(service)
-	
+
 	return &GlossaryModule{
 		Repository: repo,
 		Service:    service,

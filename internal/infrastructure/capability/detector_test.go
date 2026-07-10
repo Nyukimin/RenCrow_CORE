@@ -56,8 +56,8 @@ func TestProbeOllama_Unreachable(t *testing.T) {
 
 func TestProbeAPIProvider(t *testing.T) {
 	tests := []struct {
-		name     string
-		apiKey   string
+		name      string
+		apiKey    string
 		wantAvail bool
 	}{
 		{"with key", "sk-test", true},
