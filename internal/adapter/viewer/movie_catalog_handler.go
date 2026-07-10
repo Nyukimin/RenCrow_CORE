@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/moviecatalog"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 const defaultMovieCatalogLimit = 25
@@ -147,7 +147,7 @@ func HandleMovieCatalog(opts MovieCatalogOptions) http.HandlerFunc {
 			})
 			return
 		}
-		db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
+		db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_time_format=sqlite")
 		if err != nil {
 			http.Error(w, "failed to open movie catalog", http.StatusInternalServerError)
 			return
@@ -218,7 +218,7 @@ func HandleMovieCatalogFetch(opts MovieCatalogOptions) http.HandlerFunc {
 			http.Error(w, "failed to create movie catalog directory", http.StatusInternalServerError)
 			return
 		}
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 		if err != nil {
 			http.Error(w, "failed to open movie catalog", http.StatusInternalServerError)
 			return
@@ -298,7 +298,7 @@ func HandleMovieCatalogPreference(opts MovieCatalogOptions) http.HandlerFunc {
 			})
 			return
 		}
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 		if err != nil {
 			http.Error(w, "failed to open movie catalog", http.StatusInternalServerError)
 			return

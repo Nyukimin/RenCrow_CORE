@@ -56,7 +56,7 @@ func TestHandleHobbyTopicCandidatesGenerateCreatesFollowupRelation(t *testing.T)
 		}
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

@@ -1,5 +1,3 @@
-//go:build (linux && amd64) || (darwin && arm64)
-
 package toolregistry
 
 import (
@@ -7,15 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
-	"os"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
-	_ "github.com/marcboeker/go-duckdb"
+	_ "modernc.org/sqlite"
 )
 
-// DuckDBToolRegistryStore は DuckDB を使った ToolRegistry 実装
+// DuckDBToolRegistryStore はSQLite（pure Go, modernc.org/sqlite）を使った ToolRegistry 実装。
+// 型名は互換性維持のため DuckDB 時代のまま残している。
 type DuckDBToolRegistryStore struct {
 	db *sql.DB
 }
@@ -26,14 +23,7 @@ func NewDuckDBToolRegistryStore(dbPath string) (*DuckDBToolRegistryStore, error)
 	if dbPath == "" {
 		dbPath = ":memory:"
 	}
-	if dbPath != ":memory:" {
-		walPath := dbPath + ".wal"
-		if _, err := os.Stat(walPath); err == nil {
-			log.Printf("[DuckDB] removing stale WAL: %s", walPath)
-			os.Remove(walPath)
-		}
-	}
-	db, err := sql.Open("duckdb", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open duckdb: %w", err)
 	}
@@ -54,6 +44,7 @@ func (s *DuckDBToolRegistryStore) Close() error {
 // initTables は tool_registry テーブルを初期化する
 func (s *DuckDBToolRegistryStore) initTables(ctx context.Context) error {
 	schema := `
+	PRAGMA journal_mode=WAL;
 	CREATE TABLE IF NOT EXISTS tool_registry (
 		name         TEXT PRIMARY KEY,
 		description  TEXT NOT NULL,

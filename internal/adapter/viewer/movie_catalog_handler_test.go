@@ -72,7 +72,7 @@ func TestHandleMovieCatalogPersonDetailReturnsMovieLinks(t *testing.T) {
 
 func TestHandleMovieCatalogMovieDetailMarksUnfetchedPersonLinks(t *testing.T) {
 	dbPath := seedMovieCatalogTestDB(t)
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -116,7 +116,7 @@ VALUES('57573','99999','出演','movie_cast','マージン・コール','未取�
 
 func TestHandleMovieCatalogReturnsWatchEventsAndWatchedCounts(t *testing.T) {
 	dbPath := seedMovieCatalogTestDB(t)
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -194,7 +194,7 @@ VALUES('watch_1','57573','マージン・コール','2026-06-03','user_list','ba
 
 func TestHandleMovieCatalogReturnsFavoritePeople(t *testing.T) {
 	dbPath := seedMovieCatalogTestDB(t)
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestHandleMovieCatalogMissingDBIsSoftUnavailable(t *testing.T) {
 
 func TestResolveMovieCatalogFetchTargetByMovieName(t *testing.T) {
 	dbPath := seedMovieCatalogTestDB(t)
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestResolveMovieCatalogFetchTargetByMovieName(t *testing.T) {
 
 func TestResolveMovieCatalogFetchTargetUsesUnfetchedEdgeMovieName(t *testing.T) {
 	dbPath := seedMovieCatalogTestDB(t)
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestHandleMovieCatalogFetchNoCandidatesReturnsStructuredHint(t *testing.T) 
 
 func TestResolveMovieCatalogFetchTargetRejectsKindMismatch(t *testing.T) {
 	dbPath := seedMovieCatalogTestDB(t)
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestResolveMovieCatalogFetchTargetRejectsKindMismatch(t *testing.T) {
 func seedMovieCatalogTestDB(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "eiga_catalog.sqlite")
-	db, err := sql.Open("sqlite3", path)
+	db, err := sql.Open("sqlite", path+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

@@ -1,5 +1,3 @@
-//go:build (linux && amd64) || (darwin && arm64)
-
 package duckdb
 
 import (
@@ -9,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
-	_ "github.com/marcboeker/go-duckdb"
 )
 
 // SaveThreadSummary はThread要約をDuckDBに保存
@@ -28,7 +25,7 @@ func (d *DuckDBStore) SaveThreadSummary(ctx context.Context, summary *conversati
 	if embedding == nil {
 		embedding = []float32{}
 	}
-	// keywords と embedding を JSON 化（DuckDB の配列型として保存）
+	// keywords と embedding を JSON 化（TEXT カラムに JSON 文字列として保存）
 	keywordsJSON, err := json.Marshal(keywords)
 	if err != nil {
 		return fmt.Errorf("failed to marshal keywords: %w", err)
@@ -41,7 +38,7 @@ func (d *DuckDBStore) SaveThreadSummary(ctx context.Context, summary *conversati
 
 	query := `
 	INSERT INTO session_thread (thread_id, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel)
-	VALUES (?, ?, ?, ?, ?, ?, ?::VARCHAR[], ?::FLOAT[], ?)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT (thread_id) DO UPDATE SET
 		summary = excluded.summary,
 		keywords = excluded.keywords,
@@ -71,7 +68,7 @@ func (d *DuckDBStore) SaveThreadSummary(ctx context.Context, summary *conversati
 func (d *DuckDBStore) GetSessionHistory(ctx context.Context, sessionID string, limit int) ([]*conversation.ThreadSummary, error) {
 	query := `
 	SELECT thread_id, session_id, ts_start, ts_end, domain, summary,
-	       CAST(to_json(keywords) AS VARCHAR), CAST(to_json(embedding) AS VARCHAR), is_novel
+	       keywords, embedding, is_novel
 	FROM session_thread
 	WHERE session_id = ?
 	ORDER BY ts_start DESC
@@ -128,7 +125,7 @@ func (d *DuckDBStore) GetSessionHistory(ctx context.Context, sessionID string, l
 func (d *DuckDBStore) SearchByDomain(ctx context.Context, domain string, limit int) ([]*conversation.ThreadSummary, error) {
 	query := `
 	SELECT thread_id, session_id, ts_start, ts_end, domain, summary,
-	       CAST(to_json(keywords) AS VARCHAR), CAST(to_json(embedding) AS VARCHAR), is_novel
+	       keywords, embedding, is_novel
 	FROM session_thread
 	WHERE domain = ?
 	ORDER BY ts_start DESC

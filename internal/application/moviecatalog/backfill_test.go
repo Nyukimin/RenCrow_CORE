@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func TestNextBackfillTargetPrefersUnfetchedMovieBeforePerson(t *testing.T) {
@@ -131,7 +131,7 @@ func seedBackfillDB(t *testing.T) *sql.DB {
 func seedBackfillDBPath(t *testing.T) (string, *sql.DB) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "eiga_catalog.sqlite")
-	db, err := sql.Open("sqlite3", path)
+	db, err := sql.Open("sqlite", path+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

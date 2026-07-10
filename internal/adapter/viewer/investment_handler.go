@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type investmentStatusResponse struct {
@@ -197,7 +197,7 @@ func loadInvestmentStatus(ctx context.Context, dbPath string) investmentStatusRe
 		return resp
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		resp.StatusMessage = "investment database open failed: " + err.Error()
 		return resp

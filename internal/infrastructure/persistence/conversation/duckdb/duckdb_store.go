@@ -1,5 +1,3 @@
-//go:build (linux && amd64) || (darwin && arm64)
-
 package duckdb
 
 import (
@@ -7,10 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 
-	_ "github.com/marcboeker/go-duckdb"
+	_ "modernc.org/sqlite"
 )
 
-// DuckDBStore はDuckDBを使った会話記憶ストア（中期記憶warm、7日保持）
+// DuckDBStore はSQLite（pure Go, modernc.org/sqlite）を使った会話記憶ストア（中期記憶warm、7日保持）。
+// 型名・パッケージ名は互換性維持のため DuckDB 時代のまま残している。
 type DuckDBStore struct {
 	db *sql.DB
 }
@@ -24,7 +23,7 @@ const (
 
 // NewDuckDBStore は新しいDuckDBStoreを生成
 func NewDuckDBStore(dbPath string) (*DuckDBStore, error) {
-	db, err := sql.Open("duckdb", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open duckdb: %w", err)
 	}
@@ -48,6 +47,8 @@ func (d *DuckDBStore) Close() error {
 // initTables はテーブルを初期化
 func (d *DuckDBStore) initTables(ctx context.Context) error {
 	schema := `
+	PRAGMA journal_mode=WAL;
+
 	CREATE TABLE IF NOT EXISTS session_thread (
 		thread_id BIGINT PRIMARY KEY,
 		session_id VARCHAR NOT NULL,
@@ -55,8 +56,8 @@ func (d *DuckDBStore) initTables(ctx context.Context) error {
 		ts_end TIMESTAMP,
 		domain VARCHAR,
 		summary TEXT,
-		keywords VARCHAR[],
-		embedding FLOAT[],
+		keywords TEXT,
+		embedding TEXT,
 		is_novel BOOLEAN,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
@@ -65,7 +66,7 @@ func (d *DuckDBStore) initTables(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_session_thread_session_id ON session_thread(session_id);
 	CREATE INDEX IF NOT EXISTS idx_session_thread_domain ON session_thread(domain);
 	CREATE INDEX IF NOT EXISTS idx_session_thread_ts_start ON session_thread(ts_start);
-	
+
 	-- 複合インデックス（パフォーマンス最適化）
 	CREATE INDEX IF NOT EXISTS idx_session_thread_session_ts ON session_thread(session_id, ts_start DESC);
 	CREATE INDEX IF NOT EXISTS idx_session_thread_domain_ts ON session_thread(domain, ts_start DESC);

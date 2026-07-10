@@ -92,7 +92,7 @@ func HandleMovieDomainGraphSync(opts MovieCatalogOptions, store MovieDomainGraph
 			http.Error(w, "movie domain graph sync unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 		if err != nil {
 			http.Error(w, "movie domain graph sync unavailable", http.StatusServiceUnavailable)
 			return

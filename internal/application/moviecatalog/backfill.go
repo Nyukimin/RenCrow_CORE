@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -144,7 +144,7 @@ func (s *BackfillService) RunOnce(ctx context.Context) (BackfillResult, error) {
 	if s.dbPath == "" {
 		return BackfillResult{Status: "idle"}, nil
 	}
-	db, err := sql.Open("sqlite3", s.dbPath)
+	db, err := sql.Open("sqlite", s.dbPath+"?_time_format=sqlite")
 	if err != nil {
 		return BackfillResult{Status: "error"}, err
 	}

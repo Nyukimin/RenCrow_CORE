@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func (s *L1SQLiteStore) SaveSourceRegistryEntry(ctx context.Context, entry L1SourceRegistryEntry) (*L1SourceRegistryEntry, error) {

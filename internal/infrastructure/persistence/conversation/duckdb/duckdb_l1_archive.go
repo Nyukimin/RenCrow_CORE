@@ -1,15 +1,12 @@
-//go:build (linux && amd64) || (darwin && arm64)
-
 package duckdb
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 
-	_ "github.com/marcboeker/go-duckdb"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 )
 
 func (d *DuckDBStore) ArchiveL1MemoryEvents(ctx context.Context, items []l1sqlite.L1MemoryEvent) error {
@@ -40,7 +37,7 @@ func (d *DuckDBStore) ArchiveL1NewsItems(ctx context.Context, items []l1sqlite.L
 		if err != nil {
 			return err
 		}
-		var publishedAt interface{}
+		var publishedAt any
 		if !item.PublishedAt.IsZero() {
 			publishedAt = item.PublishedAt
 		}
@@ -133,7 +130,7 @@ func (d *DuckDBStore) ArchiveL1StagingItems(ctx context.Context, items []l1sqlit
 		if err != nil {
 			return err
 		}
-		var publishedAt interface{}
+		var publishedAt any
 		if !item.PublishedAt.IsZero() {
 			publishedAt = item.PublishedAt
 		}
@@ -155,7 +152,7 @@ INSERT INTO l1_staging_item_archive (
 	return nil
 }
 
-func marshalArchiveJSON(keywords []string, meta map[string]interface{}) (string, string, error) {
+func marshalArchiveJSON(keywords []string, meta map[string]any) (string, string, error) {
 	keywordsJSON, err := json.Marshal(keywords)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to marshal l1 archive keywords: %w", err)

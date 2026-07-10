@@ -33,7 +33,7 @@ func TestHandleHobbyGraphBootstrapCreatesCommonTables(t *testing.T) {
 		}
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestHandleHobbyGraphInteractionCreatesItemInteractionAndObservation(t *test
 		}
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestHandleHobbyGraphRelationCreatesRelationBetweenExistingItems(t *testing.
 		}
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func (s *L1SQLiteStore) RecentKnowledgeItems(ctx context.Context, domain string, limit int) ([]L1KnowledgeItem, error) {

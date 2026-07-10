@@ -57,7 +57,7 @@ func HandleMovieTopicCandidatesGenerate(opts MovieCatalogOptions) http.HandlerFu
 			})
 			return
 		}
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 		if err != nil {
 			http.Error(w, "failed to open movie catalog", http.StatusInternalServerError)
 			return

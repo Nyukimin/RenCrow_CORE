@@ -55,7 +55,7 @@ func HandleHobbyTopicCandidatesGenerate(opts HobbyGraphOptions) http.HandlerFunc
 			})
 			return
 		}
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 		if err != nil {
 			http.Error(w, "failed to open hobby graph", http.StatusInternalServerError)
 			return

@@ -97,7 +97,7 @@ func TestHandleHobbyDomainGraphSyncUpsertsWorkItems(t *testing.T) {
 		t.Fatalf("unexpected skip reasons: %+v", out.SkipReasons)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestHandleHobbyDomainGraphSyncUpsertsWorkRelations(t *testing.T) {
 		t.Fatalf("unexpected relation skip reasons: %+v", out.RelationSkipReasons)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

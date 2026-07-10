@@ -101,7 +101,7 @@ func TestHandleMovieDomainGraphSyncUpsertsMovieWorks(t *testing.T) {
 		t.Fatalf("unexpected skip reasons: %+v", out.SkipReasons)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestHandleMovieDomainGraphSyncResolvesMoviePrefixedIDToExistingCatalogID(t 
 		t.Fatalf("expected resolved id mapping, got %+v", out.ResolvedIDs)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestHandleMovieDomainGraphSyncUpsertsMoviePeopleEdges(t *testing.T) {
 		t.Fatalf("unexpected relation skip reasons: %+v", out.RelationSkipReasons)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

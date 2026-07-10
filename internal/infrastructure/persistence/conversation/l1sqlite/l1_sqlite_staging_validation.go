@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func (s *L1SQLiteStore) ValidateStagingItem(ctx context.Context, id string, policy L1StagingValidationPolicy) (*L1StagingValidationResult, error) {

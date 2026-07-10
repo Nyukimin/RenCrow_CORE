@@ -11,7 +11,7 @@ import (
 
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type SQLiteStore struct {
@@ -22,7 +22,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open dci sqlite: %w", err)
 	}

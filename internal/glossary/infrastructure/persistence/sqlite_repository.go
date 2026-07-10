@@ -5,7 +5,7 @@ import (
 	"database/sql"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/domain/entity"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type SQLiteGlossaryRepository struct {
@@ -13,7 +13,7 @@ type SQLiteGlossaryRepository struct {
 }
 
 func NewSQLiteGlossaryRepository(dbPath string) (*SQLiteGlossaryRepository, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		return nil, err
 	}

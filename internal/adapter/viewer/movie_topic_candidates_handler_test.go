@@ -12,7 +12,7 @@ import (
 
 func TestHandleMovieTopicCandidatesGenerateCreatesWatchedFollowup(t *testing.T) {
 	dbPath := seedMovieCatalogTestDB(t)
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -56,7 +56,7 @@ VALUES('watch_1','57573','マージン・コール','2026-06-03','user_list','ba
 		}
 	}
 
-	db, err = sql.Open("sqlite3", dbPath)
+	db, err = sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("reopen sqlite: %v", err)
 	}

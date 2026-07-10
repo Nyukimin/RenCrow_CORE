@@ -1,15 +1,15 @@
-//go:build (linux && amd64) || (darwin && arm64)
-
 package duckdb
 
 import (
 	"context"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/parquet-go/parquet-go"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
@@ -47,12 +47,15 @@ func TestDuckDBStore_ExportThreadSummariesParquet(t *testing.T) {
 		t.Fatal("parquet file should not be empty")
 	}
 
-	var count int
-	if err := store.db.QueryRowContext(ctx, "SELECT count(*) FROM read_parquet(?)", outPath).Scan(&count); err != nil {
-		t.Fatalf("read_parquet failed: %v", err)
+	readBack, err := parquet.ReadFile[threadSummaryParquetRow](outPath)
+	if err != nil {
+		t.Fatalf("failed to read back parquet file: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("parquet row count: want 1, got %d", count)
+	if len(readBack) != 1 {
+		t.Fatalf("parquet row count: want 1, got %d", len(readBack))
+	}
+	if readBack[0].ThreadID != 101 {
+		t.Fatalf("unexpected thread_id in parquet row: %+v", readBack[0])
 	}
 }
 
@@ -123,7 +126,7 @@ func TestDuckDBStore_ReadThreadSummaryRejectsMalformedRows(t *testing.T) {
 	_, err = store.db.ExecContext(ctx, `
 INSERT INTO session_thread (
 	thread_id, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel
-) VALUES (?, ?, ?, ?, ?, ?, ?::VARCHAR[], ?::FLOAT[], ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, int64(401), "sess-bad-l2", time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC), time.Date(2026, 5, 20, 9, 5, 0, 0, time.UTC), "memory", "", "[]", "[]", false)
 	if err != nil {
 		t.Fatalf("insert malformed thread summary: %v", err)
@@ -155,7 +158,7 @@ func TestDuckDBStore_ArchiveL1DataParquet(t *testing.T) {
 		ThreadID:    1,
 		Speaker:     "mio",
 		Message:     "confirmed preference",
-		Meta:        map[string]interface{}{"type": "preference"},
+		Meta:        map[string]any{"type": "preference"},
 		MemoryState: l1sqlite.MemoryStateConfirmed,
 		Layer:       l1sqlite.MemoryLayerL1,
 		Source:      "test",
@@ -177,7 +180,7 @@ func TestDuckDBStore_ArchiveL1DataParquet(t *testing.T) {
 		SummaryDraft: "summary news",
 		Keywords:     []string{"ai", "local"},
 		LicenseNote:  "public feed",
-		Meta:         map[string]interface{}{"event_id": "evt-news-1"},
+		Meta:         map[string]any{"event_id": "evt-news-1"},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}}); err != nil {
@@ -195,7 +198,7 @@ func TestDuckDBStore_ArchiveL1DataParquet(t *testing.T) {
 		SummaryDraft: "summary kb",
 		Keywords:     []string{"space"},
 		LicenseNote:  "manual",
-		Meta:         map[string]interface{}{"year": 2014},
+		Meta:         map[string]any{"year": 2014},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}}); err != nil {
@@ -216,7 +219,7 @@ func TestDuckDBStore_ArchiveL1DataParquet(t *testing.T) {
 		Keywords:         []string{"preference"},
 		LicenseNote:      "user provided",
 		ValidationStatus: l1sqlite.L1StagingStatusValidated,
-		Meta:             map[string]interface{}{"type": "preference"},
+		Meta:             map[string]any{"type": "preference"},
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}}); err != nil {
@@ -240,9 +243,35 @@ func TestDuckDBStore_ArchiveL1DataParquet(t *testing.T) {
 		if info.Size() == 0 {
 			t.Fatalf("parquet file for %s should not be empty", name)
 		}
+
 		var count int
-		if err := store.db.QueryRowContext(ctx, "SELECT count(*) FROM read_parquet(?)", path).Scan(&count); err != nil {
-			t.Fatalf("read_parquet %s failed: %v", name, err)
+		switch name {
+		case L1ArchiveMemory:
+			rows, err := parquet.ReadFile[l1MemoryEventParquetRow](path)
+			if err != nil {
+				t.Fatalf("failed to read back parquet file for %s: %v", name, err)
+			}
+			count = len(rows)
+		case L1ArchiveNews:
+			rows, err := parquet.ReadFile[l1NewsItemParquetRow](path)
+			if err != nil {
+				t.Fatalf("failed to read back parquet file for %s: %v", name, err)
+			}
+			count = len(rows)
+		case L1ArchiveKnowledge:
+			rows, err := parquet.ReadFile[l1KnowledgeItemParquetRow](path)
+			if err != nil {
+				t.Fatalf("failed to read back parquet file for %s: %v", name, err)
+			}
+			count = len(rows)
+		case L1ArchiveStaging:
+			rows, err := parquet.ReadFile[l1StagingItemParquetRow](path)
+			if err != nil {
+				t.Fatalf("failed to read back parquet file for %s: %v", name, err)
+			}
+			count = len(rows)
+		default:
+			t.Fatalf("unexpected archive kind %s", name)
 		}
 		if count != 1 {
 			t.Fatalf("parquet row count for %s: want 1, got %d", name, count)

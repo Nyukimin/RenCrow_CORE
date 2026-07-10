@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type HobbyGraphOptions struct {
@@ -203,7 +203,7 @@ func HandleHobbyGraph(opts HobbyGraphOptions) http.HandlerFunc {
 			})
 			return
 		}
-		db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
+		db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_time_format=sqlite")
 		if err != nil {
 			http.Error(w, "failed to open hobby graph", http.StatusInternalServerError)
 			return
@@ -251,7 +251,7 @@ func HandleHobbyGraphBootstrap(opts HobbyGraphOptions) http.HandlerFunc {
 			http.Error(w, "failed to create hobby graph directory", http.StatusInternalServerError)
 			return
 		}
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 		if err != nil {
 			http.Error(w, "failed to open hobby graph", http.StatusInternalServerError)
 			return
@@ -295,7 +295,7 @@ func HandleHobbyGraphInteraction(opts HobbyGraphOptions) http.HandlerFunc {
 			http.Error(w, "failed to create hobby graph directory", http.StatusInternalServerError)
 			return
 		}
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 		if err != nil {
 			http.Error(w, "failed to open hobby graph", http.StatusInternalServerError)
 			return
@@ -336,7 +336,7 @@ func HandleHobbyGraphRelation(opts HobbyGraphOptions) http.HandlerFunc {
 			http.Error(w, "failed to create hobby graph directory", http.StatusInternalServerError)
 			return
 		}
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 		if err != nil {
 			http.Error(w, "failed to open hobby graph", http.StatusInternalServerError)
 			return

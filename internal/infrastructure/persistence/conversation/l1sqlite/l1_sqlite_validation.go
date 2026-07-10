@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func validateMemoryState(memoryState string) error {

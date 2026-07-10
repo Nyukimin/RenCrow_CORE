@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func (s *L1SQLiteStore) SaveWebGatherFetchCache(ctx context.Context, rawURL string, fetchProvider string, extractor string, status string, responseJSON string, ttl time.Duration) (*L1WebGatherFetchCacheEntry, error) {

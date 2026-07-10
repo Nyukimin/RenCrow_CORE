@@ -100,7 +100,7 @@ func HandleHobbyDomainGraphSync(opts HobbyGraphOptions, store HobbyDomainGraphAs
 			http.Error(w, "hobby domain graph sync unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 		if err != nil {
 			http.Error(w, "hobby domain graph sync unavailable", http.StatusServiceUnavailable)
 			return

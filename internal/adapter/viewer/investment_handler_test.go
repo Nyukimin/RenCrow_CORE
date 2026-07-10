@@ -34,7 +34,7 @@ func TestHandleInvestmentStatusUnavailableWhenDBMissing(t *testing.T) {
 
 func TestHandleInvestmentStatusReturnsSnapshotAndHealth(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "rencrow.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

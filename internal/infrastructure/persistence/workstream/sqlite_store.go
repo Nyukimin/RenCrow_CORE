@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type SQLiteStore struct {
@@ -28,7 +28,7 @@ func NewSQLiteStoreWithVault(path, vaultRoot string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", path)
+	db, err := sql.Open("sqlite", path+"?_time_format=sqlite")
 	if err != nil {
 		return nil, err
 	}
