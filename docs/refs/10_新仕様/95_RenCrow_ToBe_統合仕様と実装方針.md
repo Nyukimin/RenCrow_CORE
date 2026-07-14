@@ -1071,6 +1071,8 @@ go test ./internal/domain/revenue ./internal/application/revenue ./internal/infr
 
 - 人間が状態を確認できるようにする。
 
+詳細な後続実装仕様は `100_ToBe_Ops表示実装仕様.md` を正とする。
+
 追加表示:
 
 - Advisor runs
@@ -1100,6 +1102,15 @@ go test ./internal/adapter/viewer ./pkg/rencrowclient
 目的:
 
 - 自律候補生成を安全に動かす。
+
+詳細な後続実装仕様は、対象ごとに以下へ分離する。
+
+```text
+Advisor / AgentProfile: 97_Advisor_AgentProfile接続実装仕様.md
+Knowledge Relation:     98_KnowledgeRelation接続実装仕様.md
+Economic Objective:     99_EconomicObjective接続実装仕様.md
+Viewer / Ops:           100_ToBe_Ops表示実装仕様.md
+```
 
 作業:
 
@@ -1386,4 +1397,3 @@ Knowledge relation は既存全データへ即時 backfill しない。
 - 仕様だけで runtime を変えない。runtime 接続は別 Phase で行う。
 - すべての自律処理は最初 draft-only にする。
 - Human approval gate を先に作ってから外部副作用へ接続する。
-

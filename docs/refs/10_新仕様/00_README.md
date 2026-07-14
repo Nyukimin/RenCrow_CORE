@@ -25,38 +25,42 @@
 3. `90_Runtime_Topology_Config仕様.md`
 4. `95_RenCrow_ToBe_統合仕様と実装方針.md`
 5. `96_CORE_機能台帳.md`
-6. `03_モジュール関係図.html`
-7. `04_Chat_Worker_Coder仕様.md`
-8. `05_Viewer仕様.md`
-9. `06_IdleChat仕様.md`
-10. `07_STT_TTS仕様.md`
-11. `08_LLM_provider仕様.md`
-12. `09_Memory_SourceRegistry仕様.md`
-13. `89_RenCrow_Knowledge_Wiki運用仕様.md`
-14. `10_検証仕様.md`
-15. `11_分割再設計候補.md`
-16. `12_新規リポジトリ移行方針.md`
-17. `13_実装項目インベントリ.md`
-18. `18_知識記憶システム構想.md`
-19. `19_DCI_直接コーパス探索仕様.md`
-20. `20_Tool_Harness_Contract_Mediation仕様.md`
-21. `21_AI_Native_Engineering_Workflow仕様.md`
-22. `22_Revenue_Operating_Principles仕様.md`
-23. `23_Workstream_Operating_Loop仕様.md`
-24. `24_Agent_Skill_Governance仕様.md`
-25. `25_Codebase_Complexity_Hotspot_Skill仕様.md`
-26. `26_Persona_Lore_and_Mutual_Observation仕様.md`
-27. `27_Browser_Trace_to_API_Discovery仕様.md`
-28. `28_SuperAgent_Harness_Reference_DeerFlow仕様.md`
-29. `29_Sandbox_Promotion_Gate仕様.md`
-30. `30_未実装項目実装仕様作成プロンプト.md`
-31. `31_未実装項目実装仕様.md`
-32. `32_E2E_runtime確認チェックリスト.md`
-33. `33_現状残課題整理作業手順書.md`
-34. `34_現状残課題クリア実装手順書.md`
-35. `49_Movie_Graph_Mio_Topic仕様.md`
-36. `50_Hobby_Graph_Mio_Topic仕様.md`
-37. `51_Movie_Watch_Event実装仕様.md`
+6. `97_Advisor_AgentProfile接続実装仕様.md`
+7. `98_KnowledgeRelation接続実装仕様.md`
+8. `99_EconomicObjective接続実装仕様.md`
+9. `100_ToBe_Ops表示実装仕様.md`
+10. `03_モジュール関係図.html`
+11. `04_Chat_Worker_Coder仕様.md`
+12. `05_Viewer仕様.md`
+13. `06_IdleChat仕様.md`
+14. `07_STT_TTS仕様.md`
+15. `08_LLM_provider仕様.md`
+16. `09_Memory_SourceRegistry仕様.md`
+17. `89_RenCrow_Knowledge_Wiki運用仕様.md`
+18. `10_検証仕様.md`
+19. `11_分割再設計候補.md`
+20. `12_新規リポジトリ移行方針.md`
+21. `13_実装項目インベントリ.md`
+22. `18_知識記憶システム構想.md`
+23. `19_DCI_直接コーパス探索仕様.md`
+24. `20_Tool_Harness_Contract_Mediation仕様.md`
+25. `21_AI_Native_Engineering_Workflow仕様.md`
+26. `22_Revenue_Operating_Principles仕様.md`
+27. `23_Workstream_Operating_Loop仕様.md`
+28. `24_Agent_Skill_Governance仕様.md`
+29. `25_Codebase_Complexity_Hotspot_Skill仕様.md`
+30. `26_Persona_Lore_and_Mutual_Observation仕様.md`
+31. `27_Browser_Trace_to_API_Discovery仕様.md`
+32. `28_SuperAgent_Harness_Reference_DeerFlow仕様.md`
+33. `29_Sandbox_Promotion_Gate仕様.md`
+34. `30_未実装項目実装仕様作成プロンプト.md`
+35. `31_未実装項目実装仕様.md`
+36. `32_E2E_runtime確認チェックリスト.md`
+37. `33_現状残課題整理作業手順書.md`
+38. `34_現状残課題クリア実装手順書.md`
+39. `49_Movie_Graph_Mio_Topic仕様.md`
+40. `50_Hobby_Graph_Mio_Topic仕様.md`
+41. `51_Movie_Watch_Event実装仕様.md`
 
 ## 文書一覧
 
@@ -68,6 +72,10 @@
 | `90_Runtime_Topology_Config仕様.md` | `~/.rencrow/config.yaml` を module 配置と接続先の設計図として扱い、IP / host から endpoint を導出する runtime topology 仕様 |
 | `95_RenCrow_ToBe_統合仕様と実装方針.md` | RenCrow のあるべき全体仕様、Agent / Advisor / Tool、Knowledge Relation、Economic Objective、実装 Phase、テスト条件を統合した実装方針 |
 | `96_CORE_機能台帳.md` | CORE の公開 contract、feature facade、legacy-body、To-Be 追加概念、CORE 対象外を状態付きで整理する機能台帳 |
+| `97_Advisor_AgentProfile接続実装仕様.md` | Advisor 永続化、score、registry、AgentProfile runtime policy 接続を扱う後続実装仕様 |
+| `98_KnowledgeRelation接続実装仕様.md` | Knowledge Relation の import hook、batch、1-2 hop recall expansion、Viewer read API を扱う後続実装仕様 |
+| `99_EconomicObjective接続実装仕様.md` | Opportunity / EconomicTask / Reflection を Revenue / Workstream / Approval / Heartbeat へ接続する後続実装仕様 |
+| `100_ToBe_Ops表示実装仕様.md` | Advisor、AgentProfile、Knowledge Relation、Economic Objective を Ops / Viewer に要約表示する後続実装仕様 |
 | `03_モジュール関係図.html` | モジュールの意味とつながりを概要図から詳細図まで示す HTML 図解 |
 | `04_Chat_Worker_Coder仕様.md` | Chat / Worker / Coder の責務、route chain、plan / patch / execution 境界 |
 | `05_Viewer仕様.md` | Viewer 表示、SSE event、log、history、audio trigger の契約 |

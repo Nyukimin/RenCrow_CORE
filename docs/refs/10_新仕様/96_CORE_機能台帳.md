@@ -111,10 +111,10 @@ legacy-body
 
 | Feature | State | 仕様 | 実装予定 package | 初回作業 |
 | --- | --- | --- | --- | --- |
-| `advisor` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md` | `internal/domain/advisor`, `internal/application/advisor` | Codex を AdvisorService 経由にするMVP。Shiro wiring 済み。persistence / score集計は後続 |
-| `agent_profile` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md` | `internal/domain/agentprofile`, `internal/application/agentprofile` | 8人格の静的 profile と AutonomyEnvelope MVP。runtime policy 反映は段階接続 |
-| `knowledge_relation` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md` | `internal/domain/knowledgerelation`, `internal/application/knowledgerelation`, `persistence/conversation/l1sqlite` | `l1_knowledge_entity` / `l1_knowledge_item_entity` / `l1_knowledge_item_relation` と RecallPack relation snippet MVP |
-| `economic_objective` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md` | `internal/domain/revenue`, `internal/application/revenue`, `persistence/revenue` | Opportunity / EconomicTask / Reflection と approval-required task guard MVP |
+| `advisor` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md`, `97_Advisor_AgentProfile接続実装仕様.md` | `internal/domain/advisor`, `internal/application/advisor` | Codex を AdvisorService 経由にするMVP。Shiro wiring 済み。persistence / score集計は `97` |
+| `agent_profile` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md`, `97_Advisor_AgentProfile接続実装仕様.md` | `internal/domain/agentprofile`, `internal/application/agentprofile` | 8人格の静的 profile と AutonomyEnvelope MVP。runtime policy 反映は `97` |
+| `knowledge_relation` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md`, `98_KnowledgeRelation接続実装仕様.md` | `internal/domain/knowledgerelation`, `internal/application/knowledgerelation`, `persistence/conversation/l1sqlite` | `l1_knowledge_entity` / `l1_knowledge_item_entity` / `l1_knowledge_item_relation` と RecallPack relation snippet MVP。import / batch / runtime expansion は `98` |
+| `economic_objective` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md`, `99_EconomicObjective接続実装仕様.md` | `internal/domain/revenue`, `internal/application/revenue`, `persistence/revenue` | Opportunity / EconomicTask / Reflection と approval-required task guard MVP。scheduler / approval UI 接続は `99` |
 
 ## 8. CORE 対象外 / 外部正本
 
@@ -137,8 +137,10 @@ legacy-body
 2. Agent Profile MVP（静的catalog実装済み。runtime policy 反映は後続）
 3. Knowledge Relation MVP（MVP実装済み。importer / batch / 1-2 hop runtime expansion は後続）
 4. Economic Objective MVP（MVP実装済み。scheduler / Viewer / approval UI 接続は後続）
-5. Viewer / Ops 表示
-6. Scheduler / Heartbeat 接続
+5. Advisor / AgentProfile 接続（`97`）
+6. Knowledge Relation 接続（`98`）
+7. Economic Objective 接続（`99`）
+8. Viewer / Ops 表示（`100`）
 ```
 
 ただし、各 Phase では次を守る。
