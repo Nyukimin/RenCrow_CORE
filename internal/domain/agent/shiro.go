@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -21,8 +22,9 @@ type ShiroAgent struct {
 	mcpClient       MCPClient
 	systemPrompt    string
 	subagentManager SubagentManager // v1.0: ReActループ統合
-	persona         *AgentPersona   // v4.2: Optional Agent Persona
-	lightMemory     *LightMemory    // Optional: short-term memory
+	advisorService  AdvisorService
+	persona         *AgentPersona // v4.2: Optional Agent Persona
+	lightMemory     *LightMemory  // Optional: short-term memory
 	conversation    conversation.ConversationEngine
 }
 
@@ -57,6 +59,11 @@ func (s *ShiroAgent) WithLightMemory(memory *LightMemory) *ShiroAgent {
 
 func (s *ShiroAgent) WithConversationEngine(engine conversation.ConversationEngine) *ShiroAgent {
 	s.conversation = engine
+	return s
+}
+
+func (s *ShiroAgent) WithAdvisorService(service AdvisorService) *ShiroAgent {
+	s.advisorService = service
 	return s
 }
 
@@ -127,7 +134,13 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 
 func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t task.Task) (string, bool, error) {
 	path := routing.DetectCodexWorkPath(t.UserMessage())
-	if !path.Found() || s.toolRunner == nil || !s.hasTool(ctx, "codex.run") {
+	if !path.Found() {
+		return "", false, nil
+	}
+	if s.advisorService != nil {
+		return s.requestCodexAdvice(ctx, path, t)
+	}
+	if s.toolRunner == nil || !s.hasTool(ctx, "codex.run") {
 		return "", false, nil
 	}
 
@@ -145,6 +158,30 @@ func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t task.Task) (
 		return "", true, fmt.Errorf("%s", resp.Error.Message)
 	}
 	return resp.String(), true, nil
+}
+
+func (s *ShiroAgent) requestCodexAdvice(ctx context.Context, path routing.CodexWorkPath, t task.Task) (string, bool, error) {
+	result, err := s.advisorService.RequestAdvice(ctx, advisor.AdviceRequest{
+		ID:               t.JobID().String(),
+		TaskID:           t.JobID().String(),
+		RequestedByAgent: "shiro",
+		AdvisorID:        advisor.AdvisorCodex,
+		Purpose:          "codex_work_path:" + string(path.Domain),
+		Prompt:           buildCodexWorkPrompt(path, t.UserMessage()),
+		RiskClass:        "low",
+		ApprovalMode:     "advice_only",
+	})
+	if err != nil {
+		return "", true, err
+	}
+	if result.Status != advisor.StatusCompleted {
+		return "", true, fmt.Errorf("advisor %s returned status %s", result.AdvisorID, result.Status)
+	}
+	output := result.OutputText()
+	if output == "" {
+		return "", true, fmt.Errorf("advisor %s returned empty advice", result.AdvisorID)
+	}
+	return output, true, nil
 }
 
 func (s *ShiroAgent) hasTool(ctx context.Context, toolID string) bool {

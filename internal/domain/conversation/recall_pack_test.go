@@ -222,6 +222,31 @@ func TestRecallPack_ToPromptMessages_WithSearchCacheSnippets(t *testing.T) {
 	}
 }
 
+func TestRecallPack_ToPromptMessages_WithRelationSnippets(t *testing.T) {
+	rp := &RecallPack{
+		RelationSnippets: []RelationSnippet{{
+			ItemID:       "github-mlx",
+			Title:        "mlx-lm",
+			Summary:      "MLX local LLM implementation",
+			SourceType:   "github",
+			RelationType: "same_entity",
+			Score:        3,
+			Evidence:     "same entity: MLX",
+			Hop:          1,
+		}},
+	}
+	msgs := rp.ToPromptMessages()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 context message, got %d", len(msgs))
+	}
+	if !contains(msgs[0].Content, "Knowledge Relation") {
+		t.Error("context should contain relation header")
+	}
+	if !contains(msgs[0].Content, "same_entity") || !contains(msgs[0].Content, "github-mlx") {
+		t.Fatalf("context should contain relation detail: %s", msgs[0].Content)
+	}
+}
+
 func TestRecallPack_ToPromptMessages_ShortContextRoles(t *testing.T) {
 	rp := &RecallPack{
 		ShortContext: []Message{
@@ -519,6 +544,45 @@ func TestRecallPack_FilterForRoleAppliesDefaultUseCasePolicy(t *testing.T) {
 	}).FilterForRole("Mio")
 	if len(localFirst.KBSnippets) != 1 || len(localFirst.WikiSnippets) != 1 || len(localFirst.SearchCacheSnippets) != 1 {
 		t.Fatalf("Mio should keep explicit local-first freshness recall: %+v", localFirst)
+	}
+}
+
+func TestRecallPack_FilterForRoleKeepsRelationForWorker(t *testing.T) {
+	rp := &RecallPack{
+		RelationSnippets: []RelationSnippet{{
+			ItemID:       "qiita-mlx",
+			Title:        "MLXでLLM",
+			Summary:      "MLX local LLM",
+			SourceType:   "qiita",
+			RelationType: "same_entity",
+			Score:        3,
+			Roles:        []string{"worker"},
+		}},
+	}
+	worker := rp.FilterForRole("worker")
+	if len(worker.RelationSnippets) != 1 {
+		t.Fatalf("worker should keep relation snippet: %+v", worker)
+	}
+	chat := rp.FilterForRole("chat")
+	if len(chat.RelationSnippets) != 0 || len(chat.RejectedTraceItems) == 0 {
+		t.Fatalf("chat should reject generic relation snippet by default: %+v", chat)
+	}
+}
+
+func TestRecallPack_FilterForRoleRejectsRelationForUnknownRole(t *testing.T) {
+	rp := &RecallPack{
+		RelationSnippets: []RelationSnippet{{
+			ItemID:       "github-mlx",
+			Title:        "mlx-lm",
+			Summary:      "MLX repository",
+			SourceType:   "github",
+			RelationType: "same_entity",
+			Score:        4,
+		}},
+	}
+	filtered := rp.FilterForRole("unknown")
+	if len(filtered.RelationSnippets) != 0 || len(filtered.RejectedTraceItems) != 1 {
+		t.Fatalf("unknown role should reject relation snippet: %+v", filtered)
 	}
 }
 

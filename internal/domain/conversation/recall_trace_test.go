@@ -50,6 +50,28 @@ func TestRecallPackToTraceItems(t *testing.T) {
 	}
 }
 
+func TestRecallPackToTraceItemsIncludesRelationSnippets(t *testing.T) {
+	pack := &RecallPack{
+		RelationSnippets: []RelationSnippet{{
+			ItemID:       "github-mlx",
+			Title:        "mlx-lm",
+			Summary:      "MLX local LLM implementation",
+			SourceType:   "github",
+			RelationType: "same_entity",
+			Score:        3,
+			Evidence:     "same entity: MLX",
+			Hop:          1,
+		}},
+	}
+	items := pack.ToTraceItems()
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	if items[0].Kind != "knowledge_relation" || items[0].SourceID != "github-mlx" || items[0].Score != 3 {
+		t.Fatalf("unexpected trace item: %#v", items[0])
+	}
+}
+
 func TestRecallPackFilterForRoleKeepsRejectedTraceItems(t *testing.T) {
 	rp := &RecallPack{
 		MidSummaries: []ThreadSummary{

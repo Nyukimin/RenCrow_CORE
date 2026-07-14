@@ -70,6 +70,51 @@ type RevenueEvent struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+type Opportunity struct {
+	OpportunityID   string    `json:"opportunity_id"`
+	SourceKind      string    `json:"source_kind"`
+	Title           string    `json:"title"`
+	Summary         string    `json:"summary,omitempty"`
+	TargetCustomer  string    `json:"target_customer,omitempty"`
+	ExpectedRevenue int       `json:"expected_revenue,omitempty"`
+	ExpectedCost    int       `json:"expected_cost,omitempty"`
+	ExpectedProfit  int       `json:"expected_profit,omitempty"`
+	ProfitMargin    float64   `json:"profit_margin,omitempty"`
+	ReuseValue      float64   `json:"reuse_value,omitempty"`
+	AutomationRate  float64   `json:"automation_rate,omitempty"`
+	StrategicValue  float64   `json:"strategic_value,omitempty"`
+	RiskScore       float64   `json:"risk_score,omitempty"`
+	ApprovalState   string    `json:"approval_state"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at,omitempty"`
+}
+
+type EconomicTask struct {
+	TaskID        string    `json:"task_id"`
+	OpportunityID string    `json:"opportunity_id"`
+	WorkstreamID  string    `json:"workstream_id,omitempty"`
+	AgentID       string    `json:"agent_id"`
+	TaskKind      string    `json:"task_kind"`
+	Status        string    `json:"status"`
+	ExpectedValue float64   `json:"expected_value,omitempty"`
+	Risk          float64   `json:"risk,omitempty"`
+	Cost          float64   `json:"cost,omitempty"`
+	ApprovalMode  string    `json:"approval_mode"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+}
+
+type EconomicReflection struct {
+	ReflectionID   string    `json:"reflection_id"`
+	OpportunityID  string    `json:"opportunity_id"`
+	RevenueEventID string    `json:"revenue_event_id,omitempty"`
+	Outcome        string    `json:"outcome"`
+	NetProfit      int       `json:"net_profit,omitempty"`
+	Lessons        []string  `json:"lessons,omitempty"`
+	NextActions    []string  `json:"next_actions,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
 type DailyRoutineReport struct {
 	ReportID            string    `json:"report_id"`
 	WorkstreamID        string    `json:"workstream_id,omitempty"`

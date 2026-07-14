@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -22,6 +23,10 @@ type RuleDictionary interface {
 type ToolRunner interface {
 	ExecuteV2(ctx context.Context, toolName string, args map[string]any) (*tool.ToolResponse, error) // Phase 4.2: 構造化レスポンス
 	ListTools(ctx context.Context) ([]tool.ToolMetadata, error)
+}
+
+type AdvisorService interface {
+	RequestAdvice(ctx context.Context, req advisor.AdviceRequest) (advisor.AdviceResult, error)
 }
 
 // MCPClient はMCPクライアントのインターフェース

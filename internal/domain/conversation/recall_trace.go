@@ -99,7 +99,7 @@ func (rp *RecallPack) ToTraceItems() []RecallTraceItem {
 	if rp == nil {
 		return nil
 	}
-	items := make([]RecallTraceItem, 0, len(rp.ShortContext)+len(rp.MidSummaries)+len(rp.LongFacts)+len(rp.KBSnippets)+len(rp.WikiSnippets)+len(rp.SearchCacheSnippets)+len(rp.RejectedTraceItems)+1)
+	items := make([]RecallTraceItem, 0, len(rp.ShortContext)+len(rp.MidSummaries)+len(rp.LongFacts)+len(rp.KBSnippets)+len(rp.WikiSnippets)+len(rp.SearchCacheSnippets)+len(rp.RelationSnippets)+len(rp.RejectedTraceItems)+1)
 	if rp.RollingSummary != "" {
 		items = append(items, RecallTraceItem{
 			Layer:         "L0",
@@ -198,6 +198,23 @@ func (rp *RecallPack) ToTraceItems() []RecallTraceItem {
 			PromptSection: PromptSectionNews,
 			TokenCount:    estimateRecallTokens(cache.ToPromptText()),
 			Reason:        "fresh L1 search cache hit selected for prompt",
+			PromptIndex:   len(items),
+		})
+	}
+	for _, relation := range rp.RelationSnippets {
+		promptText := relation.ToPromptText()
+		items = append(items, RecallTraceItem{
+			Layer:         "L1",
+			Kind:          "knowledge_relation",
+			SourceID:      relation.ItemID,
+			SourceType:    relation.SourceType,
+			Summary:       promptText,
+			Score:         float32(relation.Score),
+			Decision:      "included",
+			Status:        TraceStatusInjected,
+			PromptSection: PromptSectionKnowledge,
+			TokenCount:    estimateRecallTokens(promptText),
+			Reason:        "Knowledge Relation snippet selected for prompt",
 			PromptIndex:   len(items),
 		})
 	}

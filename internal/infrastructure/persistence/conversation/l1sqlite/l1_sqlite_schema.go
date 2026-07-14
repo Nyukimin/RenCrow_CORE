@@ -173,6 +173,37 @@ CREATE TABLE IF NOT EXISTS l1_knowledge_item (
 );
 CREATE INDEX IF NOT EXISTS idx_l1_knowledge_domain_title ON l1_knowledge_item(domain, title);
 CREATE INDEX IF NOT EXISTS idx_l1_knowledge_raw_hash ON l1_knowledge_item(raw_hash);
+CREATE TABLE IF NOT EXISTS l1_knowledge_entity (
+	entity_id TEXT PRIMARY KEY,
+	canonical_name TEXT NOT NULL,
+	entity_type TEXT NOT NULL,
+	aliases_json TEXT NOT NULL DEFAULT '[]',
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_l1_knowledge_entity_name ON l1_knowledge_entity(canonical_name, entity_type);
+CREATE TABLE IF NOT EXISTS l1_knowledge_item_entity (
+	item_id TEXT NOT NULL,
+	entity_id TEXT NOT NULL,
+	relation_kind TEXT NOT NULL,
+	score REAL NOT NULL,
+	evidence TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMP NOT NULL,
+	PRIMARY KEY (item_id, entity_id, relation_kind)
+);
+CREATE INDEX IF NOT EXISTS idx_l1_knowledge_item_entity_entity ON l1_knowledge_item_entity(entity_id);
+CREATE TABLE IF NOT EXISTS l1_knowledge_item_relation (
+	src_item_id TEXT NOT NULL,
+	dst_item_id TEXT NOT NULL,
+	relation_type TEXT NOT NULL,
+	score REAL NOT NULL,
+	evidence TEXT NOT NULL,
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL,
+	PRIMARY KEY (src_item_id, dst_item_id, relation_type)
+);
+CREATE INDEX IF NOT EXISTS idx_l1_knowledge_item_relation_src_score ON l1_knowledge_item_relation(src_item_id, score DESC);
+CREATE INDEX IF NOT EXISTS idx_l1_knowledge_item_relation_dst_score ON l1_knowledge_item_relation(dst_item_id, score DESC);
 CREATE TABLE IF NOT EXISTS l1_knowledge_item_fts (
 	id TEXT PRIMARY KEY,
 	domain TEXT NOT NULL,

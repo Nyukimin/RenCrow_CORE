@@ -25,6 +25,7 @@ var approvalRequiredDecisionTypes = map[string]struct{}{
 	"high_ticket_offer":           {},
 	"customer_voice_publication":  {},
 	"paid_ads":                    {},
+	"paid_api_use":                {},
 	"refund_policy":               {},
 	"medical_expression":          {},
 	"financial_expression":        {},
@@ -32,6 +33,10 @@ var approvalRequiredDecisionTypes = map[string]struct{}{
 	"external_publish":            {},
 	"closed_channel_send":         {},
 	"customer_individual_message": {},
+	"contract":                    {},
+	"billing":                     {},
+	"github_publication":          {},
+	"personal_data_use":           {},
 }
 
 func ValidateMarketResearchItem(item MarketResearchItem) error {
@@ -123,6 +128,91 @@ func ValidateRevenueEvent(item RevenueEvent) error {
 	return nil
 }
 
+func NormalizeOpportunityEconomics(item Opportunity) Opportunity {
+	item.ExpectedProfit = item.ExpectedRevenue - item.ExpectedCost
+	if item.ExpectedRevenue > 0 {
+		item.ProfitMargin = float64(item.ExpectedProfit) / float64(item.ExpectedRevenue)
+	}
+	return item
+}
+
+func ValidateOpportunity(item Opportunity) error {
+	if strings.TrimSpace(item.OpportunityID) == "" {
+		return errors.New("opportunity_id is required")
+	}
+	if strings.TrimSpace(item.SourceKind) == "" {
+		return errors.New("source_kind is required")
+	}
+	if strings.TrimSpace(item.Title) == "" {
+		return errors.New("title is required")
+	}
+	if item.ExpectedRevenue < 0 || item.ExpectedCost < 0 {
+		return errors.New("expected revenue/cost must be >= 0")
+	}
+	if item.RiskScore < 0 || item.RiskScore > 1 {
+		return errors.New("risk_score must be between 0 and 1")
+	}
+	switch strings.TrimSpace(item.ApprovalState) {
+	case "", "draft", "pending", "approved", "rejected":
+	default:
+		return errors.New("approval_state must be draft, pending, approved, or rejected")
+	}
+	if check := CheckEthics(strings.Join([]string{item.Title, item.Summary, item.TargetCustomer}, "\n")); !check.Allowed {
+		return errors.New(strings.Join(check.Reasons, "; "))
+	}
+	if item.CreatedAt.IsZero() {
+		return errors.New("created_at is required")
+	}
+	return nil
+}
+
+func ValidateEconomicTask(item EconomicTask) error {
+	if strings.TrimSpace(item.TaskID) == "" {
+		return errors.New("task_id is required")
+	}
+	if strings.TrimSpace(item.OpportunityID) == "" {
+		return errors.New("opportunity_id is required")
+	}
+	if strings.TrimSpace(item.AgentID) == "" {
+		return errors.New("agent_id is required")
+	}
+	if strings.TrimSpace(item.TaskKind) == "" {
+		return errors.New("task_kind is required")
+	}
+	if strings.TrimSpace(item.Status) == "" {
+		return errors.New("status is required")
+	}
+	if item.Risk < 0 || item.Risk > 1 {
+		return errors.New("risk must be between 0 and 1")
+	}
+	if item.Cost < 0 {
+		return errors.New("cost must be >= 0")
+	}
+	if requiresHumanApproval(item.TaskKind) && item.ApprovalMode != "human_required" {
+		return errors.New("approval_mode must be human_required for approval-required economic task")
+	}
+	if item.CreatedAt.IsZero() {
+		return errors.New("created_at is required")
+	}
+	return nil
+}
+
+func ValidateEconomicReflection(item EconomicReflection) error {
+	if strings.TrimSpace(item.ReflectionID) == "" {
+		return errors.New("reflection_id is required")
+	}
+	if strings.TrimSpace(item.OpportunityID) == "" {
+		return errors.New("opportunity_id is required")
+	}
+	if strings.TrimSpace(item.Outcome) == "" {
+		return errors.New("outcome is required")
+	}
+	if item.CreatedAt.IsZero() {
+		return errors.New("created_at is required")
+	}
+	return nil
+}
+
 func ValidateDailyRoutineReport(item DailyRoutineReport) error {
 	if strings.TrimSpace(item.ReportID) == "" {
 		return errors.New("report_id is required")
@@ -143,6 +233,15 @@ func ValidateDailyRoutineReport(item DailyRoutineReport) error {
 		return errors.New("created_at is required")
 	}
 	return nil
+}
+
+func requiresHumanApproval(decisionType string) bool {
+	_, ok := approvalRequiredDecisionTypes[strings.TrimSpace(decisionType)]
+	return ok
+}
+
+func RequiresHumanApproval(decisionType string) bool {
+	return requiresHumanApproval(decisionType)
 }
 
 func ValidateChannelDraft(item ChannelDraft) error {

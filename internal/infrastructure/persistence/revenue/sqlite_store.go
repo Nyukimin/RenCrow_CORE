@@ -69,6 +69,21 @@ func (s *SQLiteStore) migrate() error {
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS opportunity (
+			opportunity_id TEXT PRIMARY KEY,
+			created_at TEXT,
+			payload TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS economic_task (
+			task_id TEXT PRIMARY KEY,
+			created_at TEXT,
+			payload TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS economic_reflection (
+			reflection_id TEXT PRIMARY KEY,
+			created_at TEXT,
+			payload TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS human_decision_gate (
 			decision_id TEXT PRIMARY KEY,
 			created_at TEXT,
@@ -151,6 +166,40 @@ func (s *SQLiteStore) SaveRevenueEvent(ctx context.Context, item domainrevenue.R
 
 func (s *SQLiteStore) ListRevenueEvents(ctx context.Context, limit int) ([]domainrevenue.RevenueEvent, error) {
 	return listSQLiteItems[domainrevenue.RevenueEvent](ctx, s, "revenue_event", limit)
+}
+
+func (s *SQLiteStore) SaveOpportunity(ctx context.Context, item domainrevenue.Opportunity) error {
+	item = domainrevenue.NormalizeOpportunityEconomics(item)
+	if err := domainrevenue.ValidateOpportunity(item); err != nil {
+		return err
+	}
+	return s.save(ctx, "opportunity", "opportunity_id", item.OpportunityID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+}
+
+func (s *SQLiteStore) ListOpportunities(ctx context.Context, limit int) ([]domainrevenue.Opportunity, error) {
+	return listSQLiteItems[domainrevenue.Opportunity](ctx, s, "opportunity", limit)
+}
+
+func (s *SQLiteStore) SaveEconomicTask(ctx context.Context, item domainrevenue.EconomicTask) error {
+	if err := domainrevenue.ValidateEconomicTask(item); err != nil {
+		return err
+	}
+	return s.save(ctx, "economic_task", "task_id", item.TaskID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+}
+
+func (s *SQLiteStore) ListEconomicTasks(ctx context.Context, limit int) ([]domainrevenue.EconomicTask, error) {
+	return listSQLiteItems[domainrevenue.EconomicTask](ctx, s, "economic_task", limit)
+}
+
+func (s *SQLiteStore) SaveEconomicReflection(ctx context.Context, item domainrevenue.EconomicReflection) error {
+	if err := domainrevenue.ValidateEconomicReflection(item); err != nil {
+		return err
+	}
+	return s.save(ctx, "economic_reflection", "reflection_id", item.ReflectionID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+}
+
+func (s *SQLiteStore) ListEconomicReflections(ctx context.Context, limit int) ([]domainrevenue.EconomicReflection, error) {
+	return listSQLiteItems[domainrevenue.EconomicReflection](ctx, s, "economic_reflection", limit)
 }
 
 func (s *SQLiteStore) SaveHumanDecisionGateRecord(ctx context.Context, item domainrevenue.HumanDecisionGateRecord) error {

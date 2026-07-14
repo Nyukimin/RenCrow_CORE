@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"path/filepath"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	advisorapp "github.com/Nyukimin/RenCrow_CORE/internal/application/advisor"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -15,6 +15,7 @@ import (
 	comfyuiinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/comfyui"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 )
@@ -78,6 +79,10 @@ func buildAgentRuntime(
 		shiroSubagentManager = subagentMgr
 	}
 	shiroAgent := agent.NewShiroAgent(workerProvider, workerToolRunner, mcpClient, cfg.Prompts.Worker, shiroSubagentManager)
+	if cfg.Codex.Enabled && workerToolRunner != nil {
+		shiroAgent.WithAdvisorService(advisorapp.NewService(advisorapp.NewCodexToolAdvisor(workerToolRunner)))
+		log.Printf("Shiro: AdvisorService enabled (advisor=codex)")
+	}
 	heavyAgent := agent.NewHeavyAgent(heavyProvider, cfg.Prompts.Heavy)
 	wildAgent := agent.NewWildAgent(wildProvider, cfg.Prompts.Wild)
 	wildAgent.WithImageGenerator(comfyuiinfra.NewClient(comfyuiinfra.Config{

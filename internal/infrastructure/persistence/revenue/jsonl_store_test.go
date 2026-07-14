@@ -53,6 +53,42 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveRevenueEvent failed: %v", err)
 	}
+	if err := store.SaveOpportunity(ctx, domainrevenue.Opportunity{
+		OpportunityID:   "opp_1",
+		SourceKind:      "note_archive",
+		Title:           "ローカルLLM技術資料",
+		ExpectedRevenue: 3000,
+		ExpectedCost:    800,
+		RiskScore:       0.2,
+		ApprovalState:   "draft",
+		CreatedAt:       now,
+	}); err != nil {
+		t.Fatalf("SaveOpportunity failed: %v", err)
+	}
+	if err := store.SaveEconomicTask(ctx, domainrevenue.EconomicTask{
+		TaskID:        "task_1",
+		OpportunityID: "opp_1",
+		AgentID:       "shiro",
+		TaskKind:      "draft_report",
+		Status:        "draft",
+		ExpectedValue: 0.7,
+		Risk:          0.1,
+		Cost:          0.2,
+		ApprovalMode:  "none",
+		CreatedAt:     now,
+	}); err != nil {
+		t.Fatalf("SaveEconomicTask failed: %v", err)
+	}
+	if err := store.SaveEconomicReflection(ctx, domainrevenue.EconomicReflection{
+		ReflectionID:  "reflection_1",
+		OpportunityID: "opp_1",
+		Outcome:       "produced",
+		NetProfit:     2200,
+		Lessons:       []string{"再利用価値が高い"},
+		CreatedAt:     now,
+	}); err != nil {
+		t.Fatalf("SaveEconomicReflection failed: %v", err)
+	}
 	if err := store.SaveHumanDecisionGateRecord(ctx, domainrevenue.HumanDecisionGateRecord{
 		DecisionID:       "dec_1",
 		DecisionType:     "high_ticket_offer",
@@ -118,6 +154,18 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 	if err != nil || len(events) != 1 || events[0].EventID != "rev_1" {
 		t.Fatalf("events=%#v err=%v", events, err)
 	}
+	opportunities, err := store.ListOpportunities(ctx, 10)
+	if err != nil || len(opportunities) != 1 || opportunities[0].OpportunityID != "opp_1" || opportunities[0].ExpectedProfit != 2200 {
+		t.Fatalf("opportunities=%#v err=%v", opportunities, err)
+	}
+	tasks, err := store.ListEconomicTasks(ctx, 10)
+	if err != nil || len(tasks) != 1 || tasks[0].TaskID != "task_1" {
+		t.Fatalf("tasks=%#v err=%v", tasks, err)
+	}
+	reflections, err := store.ListEconomicReflections(ctx, 10)
+	if err != nil || len(reflections) != 1 || reflections[0].ReflectionID != "reflection_1" {
+		t.Fatalf("reflections=%#v err=%v", reflections, err)
+	}
 	decisions, err := store.ListHumanDecisionGateRecords(ctx, 10)
 	if err != nil || len(decisions) != 1 || decisions[0].DecisionID != "dec_1" {
 		t.Fatalf("decisions=%#v err=%v", decisions, err)
@@ -159,6 +207,12 @@ func TestJSONLStoreRejectsInvalidRevenueRecords(t *testing.T) {
 	}
 	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApprovalStatus: "pending", HumanApproved: true, ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "no adapter"}); err == nil {
 		t.Fatal("expected unapproved external send apply to fail")
+	}
+	if err := store.SaveOpportunity(ctx, domainrevenue.Opportunity{OpportunityID: "opp_1", SourceKind: "note", Title: "必ず稼げる資料", ApprovalState: "draft", CreatedAt: time.Now()}); err == nil {
+		t.Fatal("expected prohibited opportunity claim to fail")
+	}
+	if err := store.SaveEconomicTask(ctx, domainrevenue.EconomicTask{TaskID: "task_1", OpportunityID: "opp_1", AgentID: "shiro", TaskKind: "billing", Status: "planned", ApprovalMode: "none", CreatedAt: time.Now()}); err == nil {
+		t.Fatal("expected billing task without human approval to fail")
 	}
 }
 

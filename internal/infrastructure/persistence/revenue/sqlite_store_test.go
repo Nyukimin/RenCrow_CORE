@@ -57,6 +57,42 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveRevenueEvent failed: %v", err)
 	}
+	if err := store.SaveOpportunity(ctx, domainrevenue.Opportunity{
+		OpportunityID:   "opp_1",
+		SourceKind:      "note_archive",
+		Title:           "ローカルLLM技術資料",
+		ExpectedRevenue: 3000,
+		ExpectedCost:    800,
+		RiskScore:       0.2,
+		ApprovalState:   "draft",
+		CreatedAt:       now,
+	}); err != nil {
+		t.Fatalf("SaveOpportunity failed: %v", err)
+	}
+	if err := store.SaveEconomicTask(ctx, domainrevenue.EconomicTask{
+		TaskID:        "task_1",
+		OpportunityID: "opp_1",
+		AgentID:       "shiro",
+		TaskKind:      "draft_report",
+		Status:        "draft",
+		ExpectedValue: 0.7,
+		Risk:          0.1,
+		Cost:          0.2,
+		ApprovalMode:  "none",
+		CreatedAt:     now,
+	}); err != nil {
+		t.Fatalf("SaveEconomicTask failed: %v", err)
+	}
+	if err := store.SaveEconomicReflection(ctx, domainrevenue.EconomicReflection{
+		ReflectionID:  "reflection_1",
+		OpportunityID: "opp_1",
+		Outcome:       "produced",
+		NetProfit:     2200,
+		Lessons:       []string{"再利用価値が高い"},
+		CreatedAt:     now,
+	}); err != nil {
+		t.Fatalf("SaveEconomicReflection failed: %v", err)
+	}
 	if err := store.SaveHumanDecisionGateRecord(ctx, domainrevenue.HumanDecisionGateRecord{
 		DecisionID:       "dec_1",
 		DecisionType:     "high_ticket_offer",
@@ -117,6 +153,15 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 	assertOne("voices", err, len(voices))
 	events, err := store.ListRevenueEvents(ctx, 10)
 	assertOne("events", err, len(events))
+	opportunities, err := store.ListOpportunities(ctx, 10)
+	assertOne("opportunities", err, len(opportunities))
+	if opportunities[0].ExpectedProfit != 2200 {
+		t.Fatalf("opportunity expected_profit = %d, want 2200", opportunities[0].ExpectedProfit)
+	}
+	tasks, err := store.ListEconomicTasks(ctx, 10)
+	assertOne("economic tasks", err, len(tasks))
+	reflections, err := store.ListEconomicReflections(ctx, 10)
+	assertOne("economic reflections", err, len(reflections))
 	decisions, err := store.ListHumanDecisionGateRecords(ctx, 10)
 	assertOne("human decisions", err, len(decisions))
 	daily, err := store.ListDailyRoutineReports(ctx, 10)
@@ -142,5 +187,25 @@ func TestSQLiteStoreRejectsSuccessGuaranteeProduct(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected success guarantee product to fail")
+	}
+}
+
+func TestSQLiteStoreRejectsEconomicTaskWithoutRequiredApproval(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "revenue.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	err = store.SaveEconomicTask(context.Background(), domainrevenue.EconomicTask{
+		TaskID:        "task_1",
+		OpportunityID: "opp_1",
+		AgentID:       "shiro",
+		TaskKind:      "external_publish",
+		Status:        "planned",
+		ApprovalMode:  "none",
+		CreatedAt:     time.Now(),
+	})
+	if err == nil {
+		t.Fatal("expected external publish task without human approval to fail")
 	}
 }

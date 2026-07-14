@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -50,6 +51,17 @@ type panicSubagentManager struct{}
 
 func (m *panicSubagentManager) RunSync(ctx context.Context, task SubagentTask) (SubagentResult, error) {
 	panic("boom")
+}
+
+type mockAdvisorService struct {
+	req  advisor.AdviceRequest
+	resp advisor.AdviceResult
+	err  error
+}
+
+func (m *mockAdvisorService) RequestAdvice(_ context.Context, req advisor.AdviceRequest) (advisor.AdviceResult, error) {
+	m.req = req
+	return m.resp, m.err
 }
 
 func (m *mockMCPClient) CallTool(ctx context.Context, serverName, toolName string, args map[string]interface{}) (string, error) {
@@ -242,6 +254,43 @@ func TestShiroAgentExecute_CodexWorkPathFallsBackWhenToolUnavailable(t *testing.
 	}
 	if result != "LLM fallback" {
 		t.Fatalf("result = %q, want LLM fallback", result)
+	}
+}
+
+func TestShiroAgentExecute_UsesAdvisorForCodexWorkPath(t *testing.T) {
+	llmProvider := &mockLLMProvider{
+		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+			return llm.GenerateResponse{}, errors.New("LLM should not be called for Advisor work path")
+		},
+	}
+	toolRunner := &mockToolRunner{
+		executeV2Func: func(ctx context.Context, toolName string, args map[string]any) (*tool.ToolResponse, error) {
+			t.Fatalf("ToolRunner should not be called when AdvisorService is configured")
+			return nil, nil
+		},
+	}
+	advisorService := &mockAdvisorService{
+		resp: advisor.AdviceResult{
+			AdvisorID: advisor.AdvisorCodex,
+			Status:    advisor.StatusCompleted,
+			Summary:   "advisor output",
+		},
+	}
+	shiro := NewShiroAgent(llmProvider, toolRunner, &mockMCPClient{}, "test prompt", nil).
+		WithAdvisorService(advisorService)
+
+	result, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "この場面を描画して", "line", "U123"))
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result != "advisor output" {
+		t.Fatalf("result = %q, want advisor output", result)
+	}
+	if advisorService.req.AdvisorID != advisor.AdvisorCodex || advisorService.req.RequestedByAgent != "shiro" {
+		t.Fatalf("unexpected advisor request: %#v", advisorService.req)
+	}
+	if !strings.Contains(advisorService.req.Prompt, "描画領域") {
+		t.Fatalf("advisor prompt did not include codex work prompt: %s", advisorService.req.Prompt)
 	}
 }
 

@@ -49,6 +49,9 @@ type RecallPack struct {
 	// SearchCacheSnippets: 外部検索のfresh cache hitから得た参照情報
 	SearchCacheSnippets []SearchCacheSnippet
 
+	// RelationSnippets: Knowledge Relation layer から 1-2 hop で辿った関連知識
+	RelationSnippets []RelationSnippet
+
 	// RejectedTraceItems: role filterやbudget制御でプロンプト採用されなかった候補のtrace
 	RejectedTraceItems []RecallTraceItem
 
@@ -82,6 +85,18 @@ type WikiSnippet struct {
 	Roles       []string
 }
 
+type RelationSnippet struct {
+	ItemID       string
+	Title        string
+	Summary      string
+	SourceType   string
+	RelationType string
+	Score        float64
+	Evidence     string
+	Hop          int
+	Roles        []string
+}
+
 type TokenEstimator interface {
 	EstimateTokens(text string) int
 }
@@ -103,7 +118,8 @@ func (rp *RecallPack) HasContext() bool {
 		len(rp.LongFacts) > 0 ||
 		len(rp.KBSnippets) > 0 ||
 		len(rp.WikiSnippets) > 0 ||
-		len(rp.SearchCacheSnippets) > 0
+		len(rp.SearchCacheSnippets) > 0 ||
+		len(rp.RelationSnippets) > 0
 }
 
 // ToPromptMessages は RecallPack を llm.Message のスライスに変換
@@ -159,6 +175,12 @@ func (rp *RecallPack) ToPromptMessages() []llm.Message {
 			contextText += "- " + cache.ToPromptText() + "\n"
 		}
 	}
+	if len(rp.RelationSnippets) > 0 {
+		contextText += "【Knowledge Relation / 関連知識】\n"
+		for _, relation := range rp.RelationSnippets {
+			contextText += "- " + relation.ToPromptText() + "\n"
+		}
+	}
 	if contextText != "" {
 		messages = append(messages, llm.Message{
 			Role:    "system",
@@ -207,6 +229,7 @@ func (rp *RecallPack) ApplyRecallBudgetWithEstimator(maxContextTokens int, ratio
 	trimmed.KBSnippets = nil
 	trimmed.WikiSnippets = nil
 	trimmed.SearchCacheSnippets = nil
+	trimmed.RelationSnippets = nil
 	used := 0
 	canAdd := func(text string) (bool, int) {
 		cost := estimateWithFallback(estimator, text)
@@ -271,6 +294,17 @@ func (rp *RecallPack) ApplyRecallBudgetWithEstimator(maxContextTokens int, ratio
 			trimmed.RejectedTraceItems = append(trimmed.RejectedTraceItems, trace)
 		}
 	}
+	for _, relation := range rp.RelationSnippets {
+		promptText := relation.ToPromptText()
+		if ok, _ := canAdd(promptText); ok {
+			trimmed.RelationSnippets = append(trimmed.RelationSnippets, relation)
+		} else {
+			trace := rejectedRelationTrace(relation, "token budget dropped Knowledge Relation snippet")
+			trace.Status = TraceStatusBudgetDropped
+			trace.TokenCount = estimateWithFallback(estimator, promptText)
+			trimmed.RejectedTraceItems = append(trimmed.RejectedTraceItems, trace)
+		}
+	}
 	return trimmed
 }
 
@@ -299,6 +333,7 @@ func (rp *RecallPack) FilterForRole(role string) RecallPack {
 	filtered.KBSnippets = nil
 	filtered.WikiSnippets = nil
 	filtered.SearchCacheSnippets = nil
+	filtered.RelationSnippets = nil
 	filtered.RejectedTraceItems = append([]RecallTraceItem(nil), rp.RejectedTraceItems...)
 	for _, summary := range rp.MidSummaries {
 		if recallRolesMatch(summary.Roles, role) {
@@ -335,6 +370,17 @@ func (rp *RecallPack) FilterForRole(role string) RecallPack {
 			reason = "role " + role + " does not match search cache roles"
 		}
 		filtered.RejectedTraceItems = append(filtered.RejectedTraceItems, rejectedSearchCacheTrace(snippet, reason))
+	}
+	for _, snippet := range rp.RelationSnippets {
+		if policyAllowsRelationSnippet(policy, role, snippet) {
+			filtered.RelationSnippets = append(filtered.RelationSnippets, snippet)
+			continue
+		}
+		reason := "role " + role + " does not use Knowledge Relation snippets by default"
+		if policy.AllowKnowledge && !recallRolesMatch(snippet.Roles, role) {
+			reason = "role " + role + " does not match relation snippet roles"
+		}
+		filtered.RejectedTraceItems = append(filtered.RejectedTraceItems, rejectedRelationTrace(snippet, reason))
 	}
 	return filtered
 }
@@ -404,6 +450,23 @@ func rejectedSearchCacheTrace(snippet SearchCacheSnippet, reason string) RecallT
 	}
 }
 
+func rejectedRelationTrace(snippet RelationSnippet, reason string) RecallTraceItem {
+	return RecallTraceItem{
+		Layer:         "L1",
+		Kind:          "knowledge_relation",
+		SourceID:      snippet.ItemID,
+		SourceType:    snippet.SourceType,
+		Summary:       snippet.ToPromptText(),
+		Score:         float32(snippet.Score),
+		Decision:      "rejected",
+		Status:        TraceStatusFilteredScope,
+		PromptSection: PromptSectionKnowledge,
+		TokenCount:    estimateRecallTokens(snippet.ToPromptText()),
+		Reason:        reason,
+		PromptIndex:   -1,
+	}
+}
+
 type RecallRolePolicy struct {
 	Role             string
 	AllowKnowledge   bool
@@ -439,6 +502,18 @@ func policyAllowsWikiSnippet(policy RecallRolePolicy, role string, snippet WikiS
 		Kind:        "wiki_page",
 		SourceID:    snippet.PageID,
 		SourceType:  "knowledge_wiki",
+		Summary:     snippet.ToPromptText(),
+		State:       "confirmed",
+		Sensitivity: "normal",
+		Roles:       append([]string(nil), snippet.Roles...),
+	}).Status == TraceStatusInjected
+}
+
+func policyAllowsRelationSnippet(policy RecallRolePolicy, role string, snippet RelationSnippet) bool {
+	return NewInjectionPolicy(policy.Role).Decide(RecallCandidate{
+		Kind:        "knowledge_relation",
+		SourceID:    snippet.ItemID,
+		SourceType:  snippet.SourceType,
 		Summary:     snippet.ToPromptText(),
 		State:       "confirmed",
 		Sensitivity: "normal",
@@ -525,6 +600,35 @@ func (s WikiSnippet) ToPromptText() string {
 	}
 	if len(s.Related) > 0 {
 		parts = append(parts, "related="+strings.Join(s.Related, ", "))
+	}
+	if s.Summary != "" {
+		parts = append(parts, "summary="+s.Summary)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (s RelationSnippet) ToPromptText() string {
+	var parts []string
+	if s.Title != "" {
+		parts = append(parts, fmt.Sprintf("title=%s", s.Title))
+	}
+	if s.ItemID != "" {
+		parts = append(parts, fmt.Sprintf("item_id=%s", s.ItemID))
+	}
+	if s.SourceType != "" {
+		parts = append(parts, fmt.Sprintf("source_type=%s", s.SourceType))
+	}
+	if s.RelationType != "" {
+		parts = append(parts, fmt.Sprintf("relation=%s", s.RelationType))
+	}
+	if s.Score != 0 {
+		parts = append(parts, fmt.Sprintf("score=%.2f", s.Score))
+	}
+	if s.Hop > 0 {
+		parts = append(parts, fmt.Sprintf("hop=%d", s.Hop))
+	}
+	if s.Evidence != "" {
+		parts = append(parts, "evidence="+s.Evidence)
 	}
 	if s.Summary != "" {
 		parts = append(parts, "summary="+s.Summary)

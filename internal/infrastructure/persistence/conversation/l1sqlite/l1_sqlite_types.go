@@ -246,6 +246,34 @@ type L1KnowledgeItem struct {
 	UpdatedAt    time.Time
 }
 
+type L1KnowledgeEntity struct {
+	EntityID      string
+	CanonicalName string
+	EntityType    string
+	Aliases       []string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type L1KnowledgeItemEntity struct {
+	ItemID       string
+	EntityID     string
+	RelationKind string
+	Score        float64
+	Evidence     string
+	CreatedAt    time.Time
+}
+
+type L1KnowledgeItemRelation struct {
+	SrcItemID    string
+	DstItemID    string
+	RelationType string
+	Score        float64
+	Evidence     string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
 type L1ArchiveStore interface {
 	ArchiveL1MemoryEvents(ctx context.Context, items []L1MemoryEvent) error
 	ArchiveL1NewsItems(ctx context.Context, items []L1NewsItem) error

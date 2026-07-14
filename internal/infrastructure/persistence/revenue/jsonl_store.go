@@ -17,6 +17,9 @@ type JSONLStore struct {
 	productPath       string
 	customerVoicePath string
 	revenueEventPath  string
+	opportunityPath   string
+	economicTaskPath  string
+	reflectionPath    string
 	humanDecisionPath string
 	dailyRoutinePath  string
 	channelDraftPath  string
@@ -33,6 +36,9 @@ func NewJSONLStore(root string) *JSONLStore {
 		productPath:       filepath.Join(root, "product_catalog.jsonl"),
 		customerVoicePath: filepath.Join(root, "customer_voice.jsonl"),
 		revenueEventPath:  filepath.Join(root, "revenue_event.jsonl"),
+		opportunityPath:   filepath.Join(root, "opportunity.jsonl"),
+		economicTaskPath:  filepath.Join(root, "economic_task.jsonl"),
+		reflectionPath:    filepath.Join(root, "economic_reflection.jsonl"),
 		humanDecisionPath: filepath.Join(root, "human_decision_gate.jsonl"),
 		dailyRoutinePath:  filepath.Join(root, "daily_routine_report.jsonl"),
 		channelDraftPath:  filepath.Join(root, "channel_draft.jsonl"),
@@ -154,6 +160,82 @@ func (s *JSONLStore) ListRevenueEvents(_ context.Context, limit int) ([]domainre
 	var items []domainrevenue.RevenueEvent
 	if err := readJSONL(s.revenueEventPath, func(line []byte) error {
 		var item domainrevenue.RevenueEvent
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		items = append(items, item)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return reverseLimit(items, limit), nil
+}
+
+func (s *JSONLStore) SaveOpportunity(_ context.Context, item domainrevenue.Opportunity) error {
+	item = domainrevenue.NormalizeOpportunityEconomics(item)
+	if err := domainrevenue.ValidateOpportunity(item); err != nil {
+		return err
+	}
+	return appendJSONL(s.opportunityPath, item)
+}
+
+func (s *JSONLStore) ListOpportunities(_ context.Context, limit int) ([]domainrevenue.Opportunity, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var items []domainrevenue.Opportunity
+	if err := readJSONL(s.opportunityPath, func(line []byte) error {
+		var item domainrevenue.Opportunity
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		items = append(items, item)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return reverseLimit(items, limit), nil
+}
+
+func (s *JSONLStore) SaveEconomicTask(_ context.Context, item domainrevenue.EconomicTask) error {
+	if err := domainrevenue.ValidateEconomicTask(item); err != nil {
+		return err
+	}
+	return appendJSONL(s.economicTaskPath, item)
+}
+
+func (s *JSONLStore) ListEconomicTasks(_ context.Context, limit int) ([]domainrevenue.EconomicTask, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var items []domainrevenue.EconomicTask
+	if err := readJSONL(s.economicTaskPath, func(line []byte) error {
+		var item domainrevenue.EconomicTask
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		items = append(items, item)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return reverseLimit(items, limit), nil
+}
+
+func (s *JSONLStore) SaveEconomicReflection(_ context.Context, item domainrevenue.EconomicReflection) error {
+	if err := domainrevenue.ValidateEconomicReflection(item); err != nil {
+		return err
+	}
+	return appendJSONL(s.reflectionPath, item)
+}
+
+func (s *JSONLStore) ListEconomicReflections(_ context.Context, limit int) ([]domainrevenue.EconomicReflection, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var items []domainrevenue.EconomicReflection
+	if err := readJSONL(s.reflectionPath, func(line []byte) error {
+		var item domainrevenue.EconomicReflection
 		if err := json.Unmarshal(line, &item); err != nil {
 			return err
 		}

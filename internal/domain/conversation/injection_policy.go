@@ -165,7 +165,7 @@ func isUserMemoryCandidate(candidate RecallCandidate) bool {
 
 func isKnowledgeCandidate(candidate RecallCandidate) bool {
 	kind := strings.ToLower(strings.TrimSpace(candidate.Kind))
-	return kind == "knowledge" || strings.Contains(kind, "kb")
+	return kind == "knowledge" || kind == "knowledge_relation" || strings.Contains(kind, "kb")
 }
 
 func isWikiCandidate(candidate RecallCandidate) bool {

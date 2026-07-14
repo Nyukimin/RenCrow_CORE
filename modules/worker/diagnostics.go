@@ -54,8 +54,8 @@ func CurrentToolDescriptors() []ToolDescriptor {
 			Name:            "codex.run",
 			RequiredArgs:    []string{"prompt"},
 			OptionalArgs:    []string{"working_dir", "sandbox", "model", "timeout_ms", "ephemeral"},
-			ExecutionPolicy: "Registered only when codex.enabled is true; Shiro may call it directly for drawing and folktale Codex work paths; read-only is the default sandbox.",
-			Description:     "Run Codex CLI for explicit Codex-owned work such as drawing specs and folktale generation.",
+			ExecutionPolicy: "Registered only when codex.enabled is true; Shiro calls it through AdvisorService for drawing and folktale Codex work paths; read-only is the default sandbox.",
+			Description:     "Run Codex CLI as the Codex Advisor backend for explicit Codex-owned work such as drawing specs and folktale generation.",
 		},
 	}
 }
