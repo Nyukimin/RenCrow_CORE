@@ -129,6 +129,11 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		RevenueDailyRoutine:    dependencies.revenueDailyRoutine,
 		RevenueChannelDrafts:   dependencies.revenueChannelDraft,
 		RevenueExternalSend:    dependencies.revenueExternalSendApply,
+		Advisors:               dependencies.advisorStatus,
+		AdvisorRuns:            dependencies.advisorRuns,
+		AdvisorScores:          dependencies.advisorScores,
+		AgentProfiles:          dependencies.agentProfiles,
+		AgentPolicyDecisions:   dependencies.agentPolicyDecisions,
 	}})
 }
 

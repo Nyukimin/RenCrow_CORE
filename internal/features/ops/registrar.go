@@ -48,6 +48,11 @@ type Routes struct {
 	RevenueDailyRoutine    http.HandlerFunc
 	RevenueChannelDrafts   http.HandlerFunc
 	RevenueExternalSend    http.HandlerFunc
+	Advisors               http.HandlerFunc
+	AdvisorRuns            http.HandlerFunc
+	AdvisorScores          http.HandlerFunc
+	AgentProfiles          http.HandlerFunc
+	AgentPolicyDecisions   http.HandlerFunc
 }
 
 // RegisterRoutes reserves the feature route boundary. Existing routes remain in
@@ -87,6 +92,11 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/revenue/daily-routine", routes.RevenueDailyRoutine)
 	registerRoute(mux, "/viewer/revenue/channel-drafts", routes.RevenueChannelDrafts)
 	registerRoute(mux, "/viewer/revenue/channel-drafts/external-send-apply", routes.RevenueExternalSend)
+	registerRoute(mux, "/viewer/advisors", routes.Advisors)
+	registerRoute(mux, "/viewer/advisors/runs", routes.AdvisorRuns)
+	registerRoute(mux, "/viewer/advisors/scores", routes.AdvisorScores)
+	registerRoute(mux, "/viewer/agents/profiles", routes.AgentProfiles)
+	registerRoute(mux, "/viewer/agents/policy-decisions", routes.AgentPolicyDecisions)
 }
 
 // StartBackground reserves the feature background-job boundary.

@@ -160,6 +160,11 @@ type Dependencies struct {
 	revenueDailyRoutine            http.HandlerFunc                            // viewer revenue daily routine draft report API
 	revenueChannelDraft            http.HandlerFunc                            // viewer revenue channel draft API
 	revenueExternalSendApply       http.HandlerFunc                            // viewer revenue external send apply audit API
+	advisorStatus                  http.HandlerFunc                            // viewer advisor aggregate status API
+	advisorRuns                    http.HandlerFunc                            // viewer advisor run records API
+	advisorScores                  http.HandlerFunc                            // viewer advisor score snapshots API
+	agentProfiles                  http.HandlerFunc                            // viewer agent profiles API
+	agentPolicyDecisions           http.HandlerFunc                            // viewer agent policy decision traces API
 	personaObservation             http.HandlerFunc                            // viewer persona observation status API
 	personaDiscomfort              http.HandlerFunc                            // viewer persona discomfort log API
 	personaTrigger                 http.HandlerFunc                            // viewer persona trigger log API
@@ -235,6 +240,7 @@ type Dependencies struct {
 	idleChatStartGate              idleChatStartGate                           // IdleChat 起動前の LLM Ops ガード
 	sshTransports                  map[string]domaintransport.Transport        // v4 SSH transports
 	heartbeatSvc                   *heartbeat.HeartbeatService                 // heartbeat service
+	advisorCloser                  interface{ Close() error }                  // advisor SQLite store, when configured
 	toolRegistry                   capdomain.ToolRegistry                      // Phase 4: Shiro ツール共有用 ToolRegistry
 	moduleChatService              chatModuleService                           // module contract view of Chat service
 	moduleLLMProviders             map[string]modulellm.Provider               // module contract view of LLM providers
@@ -257,6 +263,11 @@ func (d *Dependencies) Shutdown() {
 	}
 	if d.heartbeatSvc != nil {
 		d.heartbeatSvc.Stop()
+	}
+	if d.advisorCloser != nil {
+		if err := d.advisorCloser.Close(); err != nil {
+			log.Printf("Failed to close advisor store: %v", err)
+		}
 	}
 	if d.idleChatOrch != nil {
 		d.idleChatOrch.Stop()
@@ -292,6 +303,10 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	classifier := routing.NewLLMClassifier(llmRuntime.Chat, cfg.Prompts.Classifier)
 	ruleDictionary := routing.NewRuleDictionary()
 	toolRuntime := buildToolRuntime(cfg, llmRuntime.WorkerToolProvider, runtimeToolRegistry, aiWorkflowStore)
+	advisorRuntime, err := buildAdvisorRuntime(cfg, toolRuntime.WorkerRuntimeRunnerV2)
+	if err != nil {
+		log.Fatalf("Failed to initialize Advisor runtime: %v", err)
+	}
 	mcpClient := mcp.NewMCPClient()
 	log.Printf("MCPClient initialized with %d servers", len(mcpClient.ListServers()))
 	conversationRuntime := buildConversationRuntime(cfg, llmRuntime.Primary, toolRuntime.ChatRunnerV2, toolRuntime.WorkerRunnerV2)
@@ -312,6 +327,8 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		conversationRuntime.Manager,
 		conversationRuntime.L1Store,
 		toolRuntime.SubagentMgr,
+		advisorRuntime.Service,
+		advisorRuntime.Policy,
 	)
 	sessionRuntime := buildSessionRuntime(cfg)
 	workerExecutionService := service.NewWorkerExecutionService(cfg.Worker)
@@ -343,6 +360,14 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 
 	deps := &Dependencies{}
+	deps.advisorCloser = advisorRuntime.Closer
+	deps.advisorStatus = viewer.HandleAdvisorsStatus(viewer.AdvisorStatusOptions{
+		Store: advisorRuntime.Store, AdvisorProfiles: advisorRuntime.Profiles, AgentProfiles: advisorRuntime.AgentProfiles,
+	})
+	deps.advisorRuns = viewer.HandleAdvisorRuns(advisorRuntime.Store)
+	deps.advisorScores = viewer.HandleAdvisorScores(advisorRuntime.Store)
+	deps.agentProfiles = viewer.HandleAgentProfiles(advisorRuntime.AgentProfiles)
+	deps.agentPolicyDecisions = viewer.HandleAgentPolicyDecisions(advisorRuntime.Store)
 	deps.llmBusyTracker = llmBusyTracker
 	deps.moduleLLMProviders = llmRuntime.ModuleProviders
 	deps.moduleWorkerExecutor = modulebridge.NewRuntimeWorkerExecutor(workerExecutionService)

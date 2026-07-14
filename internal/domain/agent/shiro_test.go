@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agentprofile"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -57,6 +58,17 @@ type mockAdvisorService struct {
 	req  advisor.AdviceRequest
 	resp advisor.AdviceResult
 	err  error
+}
+
+type mockAgentPolicyService struct {
+	decision agentprofile.PolicyDecision
+	err      error
+	calls    int
+}
+
+func (m *mockAgentPolicyService) Decide(_, _ string) (agentprofile.PolicyDecision, error) {
+	m.calls++
+	return m.decision, m.err
 }
 
 func (m *mockAdvisorService) RequestAdvice(_ context.Context, req advisor.AdviceRequest) (advisor.AdviceResult, error) {
@@ -291,6 +303,50 @@ func TestShiroAgentExecute_UsesAdvisorForCodexWorkPath(t *testing.T) {
 	}
 	if !strings.Contains(advisorService.req.Prompt, "描画領域") {
 		t.Fatalf("advisor prompt did not include codex work prompt: %s", advisorService.req.Prompt)
+	}
+}
+
+func TestShiroAgentExecute_AdvisorPolicyForbiddenFallsBackWithoutAdvisorCall(t *testing.T) {
+	llmProvider := &mockLLMProvider{
+		generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+			return llm.GenerateResponse{Content: "worker fallback"}, nil
+		},
+	}
+	advisorService := &mockAdvisorService{
+		resp: advisor.AdviceResult{Status: advisor.StatusCompleted, Summary: "must not be used"},
+	}
+	policy := &mockAgentPolicyService{decision: agentprofile.PolicyDecision{Decision: agentprofile.PolicyForbidden}}
+	shiro := NewShiroAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt", nil).
+		WithAdvisorService(advisorService).
+		WithAgentPolicyService(policy)
+
+	result, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "この場面を描画して", "line", "U123"))
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result != "worker fallback" || advisorService.req.AdvisorID != "" {
+		t.Fatalf("forbidden policy must skip advisor: result=%q request=%#v", result, advisorService.req)
+	}
+	if policy.calls != 1 {
+		t.Fatalf("policy calls=%d, want 1", policy.calls)
+	}
+}
+
+func TestShiroAgentExecute_AdvisorPolicyApprovalRequiredDoesNotCallAdvisor(t *testing.T) {
+	advisorService := &mockAdvisorService{
+		resp: advisor.AdviceResult{Status: advisor.StatusCompleted, Summary: "must not be used"},
+	}
+	policy := &mockAgentPolicyService{decision: agentprofile.PolicyDecision{Decision: agentprofile.PolicyApprovalRequired}}
+	shiro := NewShiroAgent(&mockLLMProvider{}, &mockToolRunner{}, &mockMCPClient{}, "test prompt", nil).
+		WithAdvisorService(advisorService).
+		WithAgentPolicyService(policy)
+
+	result, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "この場面を描画して", "line", "U123"))
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result != advisorApprovalRequiredMessage || advisorService.req.AdvisorID != "" {
+		t.Fatalf("approval-required policy must not call advisor: result=%q request=%#v", result, advisorService.req)
 	}
 }
 

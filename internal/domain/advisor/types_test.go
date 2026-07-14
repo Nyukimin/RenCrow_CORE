@@ -3,6 +3,7 @@ package advisor
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAdviceRequestValidate(t *testing.T) {
@@ -37,5 +38,61 @@ func TestAdviceResultOutputTextPrefersSummary(t *testing.T) {
 	}
 	if got := result.OutputText(); got != "summary" {
 		t.Fatalf("OutputText = %q, want summary", got)
+	}
+}
+
+func TestAdviceRunRecordValidate(t *testing.T) {
+	now := time.Now().UTC()
+	record := AdviceRunRecord{
+		RunID:            "run-1",
+		RequestedByAgent: "shiro",
+		AdvisorID:        AdvisorCodex,
+		ApprovalMode:     "advice_only",
+		Status:           AdviceStatus(StatusCompleted),
+		StartedAt:        now,
+		FinishedAt:       now.Add(time.Second),
+		LatencyMillis:    1000,
+	}
+	if err := record.Validate(); err != nil {
+		t.Fatalf("Validate failed: %v", err)
+	}
+}
+
+func TestAdviceRunRecordValidateRejectsUnsupportedPolicyValues(t *testing.T) {
+	record := AdviceRunRecord{
+		RunID:            "run-1",
+		RequestedByAgent: "shiro",
+		AdvisorID:        AdvisorCodex,
+		ApprovalMode:     "auto_apply",
+		Status:           AdviceStatus("running"),
+	}
+	if err := record.Validate(); err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestAdvisorAdoptionRecordValidateRejectsUnknownOutcome(t *testing.T) {
+	record := AdvisorAdoptionRecord{
+		AdoptionID:     "adoption-1",
+		RunID:          "run-1",
+		AdvisorID:      AdvisorCodex,
+		AdoptedByAgent: "shiro",
+		Outcome:        "unknown",
+		CreatedAt:      time.Now().UTC(),
+	}
+	if err := record.Validate(); err == nil {
+		t.Fatal("expected outcome validation error")
+	}
+}
+
+func TestAdvisorScoreSnapshotValidateRejectsOutOfRangeScore(t *testing.T) {
+	snapshot := AdvisorScoreSnapshot{
+		SnapshotID: "snapshot-1",
+		AdvisorID:  AdvisorCodex,
+		Score:      1.1,
+		CreatedAt:  time.Now().UTC(),
+	}
+	if err := snapshot.Validate(); err == nil {
+		t.Fatal("expected score validation error")
 	}
 }

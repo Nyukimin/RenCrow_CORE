@@ -116,6 +116,18 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("codex.working_dir must not contain '..'")
 		}
 	}
+	advisorConfigured := strings.TrimSpace(c.Advisor.Storage) != "" || strings.TrimSpace(c.Advisor.LogPath) != "" || strings.TrimSpace(c.Advisor.SQLitePath) != ""
+	if advisorConfigured {
+		if c.Advisor.Storage != "jsonl" && c.Advisor.Storage != "sqlite" {
+			return fmt.Errorf("advisor.storage must be jsonl or sqlite")
+		}
+		if strings.TrimSpace(c.Advisor.LogPath) == "" {
+			return fmt.Errorf("advisor.log_path is required")
+		}
+		if c.Advisor.Storage == "sqlite" && strings.TrimSpace(c.Advisor.SQLitePath) == "" {
+			return fmt.Errorf("advisor.sqlite_path is required when advisor.storage=sqlite")
+		}
+	}
 
 	if !c.LocalLLM.Enabled {
 		// Ollama設定検証

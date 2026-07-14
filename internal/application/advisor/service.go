@@ -3,6 +3,7 @@ package advisor
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,6 +54,18 @@ func (s *Service) RequestAdvice(ctx context.Context, req advisorDomain.AdviceReq
 		}, fmt.Errorf("advisor %q is not registered", req.AdvisorID)
 	}
 	return provider.RequestAdvice(ctx, req)
+}
+
+func (s *Service) Profiles() []advisorDomain.Profile {
+	if s == nil {
+		return []advisorDomain.Profile{}
+	}
+	profiles := make([]advisorDomain.Profile, 0, len(s.providers))
+	for _, provider := range s.providers {
+		profiles = append(profiles, provider.Profile())
+	}
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].ID < profiles[j].ID })
+	return profiles
 }
 
 type ToolRunner interface {

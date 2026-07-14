@@ -142,6 +142,12 @@ type CodexConfig struct {
 	Ephemeral      *bool  `yaml:"ephemeral"`
 }
 
+type AdvisorConfig struct {
+	Storage    string `yaml:"storage"`
+	LogPath    string `yaml:"log_path"`
+	SQLitePath string `yaml:"sqlite_path"`
+}
+
 func (c CodexConfig) EphemeralEnabled() bool {
 	return boolValueOrDefault(c.Ephemeral, true)
 }

@@ -47,6 +47,17 @@ func TestServiceRoutesToRequestedAdvisor(t *testing.T) {
 	}
 }
 
+func TestServiceProfilesReturnsRegisteredProfiles(t *testing.T) {
+	service := NewService(
+		&fakeProvider{profile: advisorDomain.Profile{ID: advisorDomain.AdvisorCodex, DisplayName: "Codex"}},
+		&fakeProvider{profile: advisorDomain.Profile{ID: "disabled", Disabled: true}},
+	)
+	profiles := service.Profiles()
+	if len(profiles) != 1 || profiles[0].ID != advisorDomain.AdvisorCodex {
+		t.Fatalf("unexpected profiles: %#v", profiles)
+	}
+}
+
 type fakeToolRunner struct {
 	tools []tool.ToolMetadata
 	args  map[string]any

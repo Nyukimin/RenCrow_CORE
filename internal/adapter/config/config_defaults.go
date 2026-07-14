@@ -328,6 +328,15 @@ func (c *Config) setDefaults() {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "./workspace"
 	}
+	if c.Advisor.Storage == "" {
+		c.Advisor.Storage = "jsonl"
+	}
+	if c.Advisor.LogPath == "" {
+		c.Advisor.LogPath = filepath.Join(c.WorkspaceDir, "logs", "advisor")
+	}
+	if c.Advisor.SQLitePath == "" {
+		c.Advisor.SQLitePath = filepath.Join(c.WorkspaceDir, "logs", "advisor.db")
+	}
 	if c.ToolHarness.Mode == "" {
 		c.ToolHarness.Mode = "validate_then_repair"
 	}

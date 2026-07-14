@@ -23,6 +23,7 @@ type ShiroAgent struct {
 	systemPrompt    string
 	subagentManager SubagentManager // v1.0: ReActループ統合
 	advisorService  AdvisorService
+	agentPolicy     AgentPolicyService
 	persona         *AgentPersona // v4.2: Optional Agent Persona
 	lightMemory     *LightMemory  // Optional: short-term memory
 	conversation    conversation.ConversationEngine
@@ -66,6 +67,13 @@ func (s *ShiroAgent) WithAdvisorService(service AdvisorService) *ShiroAgent {
 	s.advisorService = service
 	return s
 }
+
+func (s *ShiroAgent) WithAgentPolicyService(service AgentPolicyService) *ShiroAgent {
+	s.agentPolicy = service
+	return s
+}
+
+const advisorApprovalRequiredMessage = "Advisorの利用には人間の承認が必要です。自動実行は行いません。"
 
 // Execute はWorkerタスクを実行
 // v1.0: SubagentManager が設定されている場合は ReActLoop を使ってツールを自律的に選択・実行する
@@ -136,6 +144,23 @@ func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t task.Task) (
 	path := routing.DetectCodexWorkPath(t.UserMessage())
 	if !path.Found() {
 		return "", false, nil
+	}
+	if s.agentPolicy != nil {
+		decision, err := s.agentPolicy.Decide("shiro", "ask_advisor")
+		if err != nil {
+			log.Printf("[Shiro] ask_advisor policy failed; using normal worker path: %v", err)
+			return "", false, nil
+		}
+		switch decision.Decision {
+		case "forbidden":
+			return "", false, nil
+		case "approval_required":
+			return advisorApprovalRequiredMessage, true, nil
+		case "allowed":
+		default:
+			log.Printf("[Shiro] ask_advisor policy returned unsupported decision %q; using normal worker path", decision.Decision)
+			return "", false, nil
+		}
 	}
 	if s.advisorService != nil {
 		return s.requestCodexAdvice(ctx, path, t)

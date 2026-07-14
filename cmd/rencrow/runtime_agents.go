@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
-	advisorapp "github.com/Nyukimin/RenCrow_CORE/internal/application/advisor"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -50,6 +49,8 @@ func buildAgentRuntime(
 	realMgr *conversationpersistence.RealConversationManager,
 	l1Store *l1sqlite.L1SQLiteStore,
 	subagentMgr *subagent.Manager,
+	advisorService agent.AdvisorService,
+	agentPolicy agent.AgentPolicyService,
 ) agentRuntime {
 	mioAgent := agent.NewMioAgent(chatProvider, classifier, ruleDictionary, chatToolRunner, mcpClient, convEngine).
 		WithSystemPrompt(cfg.Prompts.MioPersona).
@@ -79,9 +80,13 @@ func buildAgentRuntime(
 		shiroSubagentManager = subagentMgr
 	}
 	shiroAgent := agent.NewShiroAgent(workerProvider, workerToolRunner, mcpClient, cfg.Prompts.Worker, shiroSubagentManager)
-	if cfg.Codex.Enabled && workerToolRunner != nil {
-		shiroAgent.WithAdvisorService(advisorapp.NewService(advisorapp.NewCodexToolAdvisor(workerToolRunner)))
+	if advisorService != nil {
+		shiroAgent.WithAdvisorService(advisorService)
 		log.Printf("Shiro: AdvisorService enabled (advisor=codex)")
+	}
+	if agentPolicy != nil {
+		shiroAgent.WithAgentPolicyService(agentPolicy)
+		log.Printf("Shiro: AgentProfile policy enabled")
 	}
 	heavyAgent := agent.NewHeavyAgent(heavyProvider, cfg.Prompts.Heavy)
 	wildAgent := agent.NewWildAgent(wildProvider, cfg.Prompts.Wild)

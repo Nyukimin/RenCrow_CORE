@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agentprofile"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -27,6 +28,10 @@ type ToolRunner interface {
 
 type AdvisorService interface {
 	RequestAdvice(ctx context.Context, req advisor.AdviceRequest) (advisor.AdviceResult, error)
+}
+
+type AgentPolicyService interface {
+	Decide(agentID string, action string) (agentprofile.PolicyDecision, error)
 }
 
 // MCPClient はMCPクライアントのインターフェース

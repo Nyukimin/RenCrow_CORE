@@ -42,6 +42,9 @@ type Config struct {
 	// === Codex non-interactive coding agent bridge ===
 	Codex CodexConfig `yaml:"codex"`
 
+	// === Advisor execution records and score snapshots ===
+	Advisor AdvisorConfig `yaml:"advisor"`
+
 	// === ComfyUI image generation backend ===
 	ComfyUI ComfyUIConfig `yaml:"comfyui"`
 

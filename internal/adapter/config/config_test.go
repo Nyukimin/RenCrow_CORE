@@ -3344,3 +3344,26 @@ func TestConfig_Validate_Codex(t *testing.T) {
 		}
 	})
 }
+
+func TestConfig_Validate_AdvisorPersistence(t *testing.T) {
+	cfg := &Config{
+		Server:  ServerConfig{Port: 8080},
+		Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
+		Session: SessionConfig{StorageDir: "./data"},
+	}
+	cfg.Coder1.Name = "ao"
+	cfg.Coder2.Name = "aka"
+	cfg.Coder3.Name = "kin"
+	cfg.Coder4.Name = "gin"
+	cfg.setDefaults()
+	if cfg.Advisor.Storage != "jsonl" || cfg.Advisor.LogPath == "" || cfg.Advisor.SQLitePath == "" {
+		t.Fatalf("advisor persistence defaults missing: %+v", cfg.Advisor)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("safe advisor defaults failed validation: %v", err)
+	}
+	cfg.Advisor.Storage = "remote"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "advisor.storage") {
+		t.Fatalf("expected advisor.storage validation error, got %v", err)
+	}
+}
