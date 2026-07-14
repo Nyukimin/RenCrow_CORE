@@ -1,16 +1,19 @@
 package main
 
 import (
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	"context"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	knowledgerelationapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgerelation"
 	webgatherapp "github.com/Nyukimin/RenCrow_CORE/internal/application/webgather"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainrelation "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgerelation"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	webgatherinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/webgather"
 	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
@@ -62,6 +65,21 @@ func buildConversationRuntime(
 			}
 			realMgr.WithL1Store(l1Store)
 			log.Printf("  L1 SQLite: %s", cfg.Conversation.L1SQLitePath)
+			if cfg.KnowledgeRelation.Enabled {
+				scoring := domainrelation.DefaultScoringConfig()
+				scoring.MinimumScore = cfg.KnowledgeRelation.MinimumScore
+				relationBuilder := knowledgerelationapp.NewRelationBuildService(l1Store, knowledgerelationapp.NewMetadataExtractor(nil), scoring)
+				if cfg.KnowledgeRelation.BuildOnImport {
+					realMgr.WithKnowledgeRelationImportHook(func(ctx context.Context, item l1sqlite.L1KnowledgeItem) error {
+						report, buildErr := relationBuilder.BuildForItem(ctx, item)
+						if buildErr == nil {
+							log.Printf("Knowledge Relation import build: item=%s entities=%d links=%d relations=%d status=%s", item.ID, report.EntityUpserts, report.ItemEntityUpserts, report.RelationUpserts, report.Status)
+						}
+						return buildErr
+					})
+					log.Printf("  Knowledge Relation import hook: enabled")
+				}
+			}
 		}
 
 		embedder, embedderLabel := buildConversationEmbedder(cfg)
@@ -96,6 +114,10 @@ func buildConversationRuntime(
 		).WithDetector(detector)
 		if l1Store != nil {
 			engine = engine.WithRecallTraceStore(l1Store)
+			if cfg.KnowledgeRelation.Enabled {
+				engine = engine.WithKnowledgeRelationRecall(cfg.KnowledgeRelation.MaxHops)
+				log.Printf("  Knowledge Relation recall: enabled (max_hops=%d)", cfg.KnowledgeRelation.MaxHops)
+			}
 		}
 		if profileExtractor != nil {
 			engine = engine.WithProfileExtractor(profileExtractor)

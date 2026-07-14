@@ -254,6 +254,191 @@ type LLMOpsHealth struct {
 	Daemon string `json:"daemon,omitempty"`
 }
 
+// AdvisorsStatus is the safe, read-only Advisor and AgentProfile operations view.
+// It intentionally has no prompt or raw output fields.
+type AdvisorsStatus struct {
+	Enabled         bool                   `json:"enabled"`
+	Status          string                 `json:"status"`
+	Profiles        []AdvisorProfile       `json:"profiles"`
+	RecentRuns      []AdvisorRun           `json:"recent_runs"`
+	ScoreSnapshots  []AdvisorScoreSnapshot `json:"score_snapshots"`
+	AgentProfiles   []AgentProfile         `json:"agent_profiles"`
+	PolicyDecisions []AgentPolicyDecision  `json:"policy_decisions"`
+	Warnings        []string               `json:"warnings"`
+	Summary         AdvisorSummary         `json:"summary"`
+}
+
+type AdvisorSummary struct {
+	AdvisorCount        int `json:"advisor_count"`
+	RecentRunCount      int `json:"recent_run_count"`
+	FailedRunCount      int `json:"failed_run_count"`
+	ScoreSnapshotCount  int `json:"score_snapshot_count"`
+	ProfileCount        int `json:"profile_count"`
+	PolicyDecisionCount int `json:"policy_decision_count"`
+}
+
+type AdvisorCapability struct {
+	Domain      string `json:"Domain"`
+	Level       int    `json:"Level"`
+	Description string `json:"Description"`
+}
+
+type AdvisorProfile struct {
+	ID           string              `json:"ID"`
+	DisplayName  string              `json:"DisplayName"`
+	Provider     string              `json:"Provider"`
+	Capabilities []AdvisorCapability `json:"Capabilities"`
+	AllowedModes []string            `json:"AllowedModes"`
+	Disabled     bool                `json:"Disabled"`
+}
+
+type AdvisorRun struct {
+	RunID            string    `json:"run_id"`
+	RequestID        string    `json:"request_id,omitempty"`
+	TaskID           string    `json:"task_id,omitempty"`
+	RequestedByAgent string    `json:"requested_by_agent"`
+	AdvisorID        string    `json:"advisor_id"`
+	Purpose          string    `json:"purpose,omitempty"`
+	PromptHash       string    `json:"prompt_hash,omitempty"`
+	RiskClass        string    `json:"risk_class,omitempty"`
+	ApprovalMode     string    `json:"approval_mode"`
+	Status           string    `json:"status"`
+	Summary          string    `json:"summary,omitempty"`
+	OutputHash       string    `json:"output_hash,omitempty"`
+	Error            string    `json:"error,omitempty"`
+	StartedAt        time.Time `json:"started_at"`
+	FinishedAt       time.Time `json:"finished_at"`
+	LatencyMillis    int64     `json:"latency_millis"`
+}
+
+type AdvisorScoreSnapshot struct {
+	SnapshotID       string    `json:"snapshot_id"`
+	AdvisorID        string    `json:"advisor_id"`
+	CapabilityID     string    `json:"capability_id,omitempty"`
+	WindowStart      time.Time `json:"window_start"`
+	WindowEnd        time.Time `json:"window_end"`
+	RequestCount     int       `json:"request_count"`
+	CompletedCount   int       `json:"completed_count"`
+	FailedCount      int       `json:"failed_count"`
+	UnavailableCount int       `json:"unavailable_count"`
+	AdoptedCount     int       `json:"adopted_count"`
+	SuccessCount     int       `json:"success_count"`
+	AvgLatencyMillis int64     `json:"avg_latency_millis"`
+	AvgRevisionCount float64   `json:"avg_revision_count"`
+	Score            float64   `json:"score"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type AgentCapability struct {
+	ID          string `json:"ID"`
+	Description string `json:"Description"`
+}
+
+type AgentGoal struct {
+	ID          string  `json:"ID"`
+	Description string  `json:"Description"`
+	Weight      float64 `json:"Weight"`
+}
+
+type AgentMotivationSignal struct {
+	ID          string  `json:"ID"`
+	Description string  `json:"Description"`
+	Weight      float64 `json:"Weight"`
+}
+
+type AgentUtilityProfile struct {
+	SuccessRate       float64 `json:"SuccessRate"`
+	UserValue         float64 `json:"UserValue"`
+	Quality           float64 `json:"Quality"`
+	ReuseValue        float64 `json:"ReuseValue"`
+	StrategicValue    float64 `json:"StrategicValue"`
+	ReworkPenalty     float64 `json:"ReworkPenalty"`
+	RiskPenalty       float64 `json:"RiskPenalty"`
+	ReputationPenalty float64 `json:"ReputationPenalty"`
+}
+
+type AgentAutonomyEnvelope struct {
+	Observe          []string `json:"Observe"`
+	Decide           []string `json:"Decide"`
+	ActAllowed       []string `json:"ActAllowed"`
+	ApprovalRequired []string `json:"ApprovalRequired"`
+	Forbidden        []string `json:"Forbidden"`
+}
+
+type AgentEconomicProfile struct {
+	Enabled       bool    `json:"Enabled"`
+	NetProfit     float64 `json:"NetProfit"`
+	CustomerValue float64 `json:"CustomerValue"`
+	Automation    float64 `json:"Automation"`
+	FutureValue   float64 `json:"FutureValue"`
+}
+
+type AgentKnowledgeAffinity struct {
+	Topic  string  `json:"Topic"`
+	Weight float64 `json:"Weight"`
+}
+
+type AgentProfile struct {
+	ID                string                   `json:"ID"`
+	DisplayName       string                   `json:"DisplayName"`
+	Role              string                   `json:"Role"`
+	Capabilities      []AgentCapability        `json:"Capabilities"`
+	Goals             []AgentGoal              `json:"Goals"`
+	Motivation        []AgentMotivationSignal  `json:"Motivation"`
+	UtilityProfile    AgentUtilityProfile      `json:"UtilityProfile"`
+	AutonomyEnvelope  AgentAutonomyEnvelope    `json:"AutonomyEnvelope"`
+	EconomicProfile   *AgentEconomicProfile    `json:"EconomicProfile,omitempty"`
+	KnowledgeAffinity []AgentKnowledgeAffinity `json:"KnowledgeAffinity"`
+}
+
+type AgentPolicyDecision struct {
+	DecisionID string    `json:"decision_id"`
+	AgentID    string    `json:"agent_id"`
+	Action     string    `json:"action"`
+	Decision   string    `json:"decision"`
+	Reason     string    `json:"reason"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type AgentProfilesStatus struct {
+	Profiles     []AgentProfile `json:"profiles"`
+	ProfileCount int            `json:"profile_count"`
+	Warnings     []string       `json:"-"`
+}
+
+type KnowledgeRelationSummary struct {
+	EntityCount     int `json:"entity_count"`
+	ItemEntityCount int `json:"item_entity_count"`
+	RelationCount   int `json:"relation_count"`
+	MaxHop          int `json:"max_hop"`
+}
+
+type KnowledgeRelationItem struct {
+	ItemID     string `json:"item_id"`
+	Domain     string `json:"domain"`
+	Title      string `json:"title"`
+	Summary    string `json:"summary"`
+	SourceType string `json:"source_type"`
+}
+
+type KnowledgeRelation struct {
+	SrcItemID    string  `json:"src_item_id"`
+	DstItemID    string  `json:"dst_item_id"`
+	RelationType string  `json:"relation_type"`
+	Score        float64 `json:"score"`
+	Evidence     string  `json:"evidence"`
+	Hop          int     `json:"hop"`
+}
+
+type KnowledgeRelationsStatus struct {
+	Enabled   bool                     `json:"enabled"`
+	Status    string                   `json:"status"`
+	Warnings  []string                 `json:"warnings"`
+	Summary   KnowledgeRelationSummary `json:"summary"`
+	Items     []KnowledgeRelationItem  `json:"items,omitempty"`
+	Relations []KnowledgeRelation      `json:"relations,omitempty"`
+}
+
 type llmOpsStopRequest struct {
 	Roles []string `json:"roles"`
 }
@@ -1715,6 +1900,68 @@ func (c *Client) DebugSystemSnapshot(ctx context.Context) (DebugSystemSnapshot, 
 	}
 	if err := validateDebugSystemSnapshot(out); err != nil {
 		return DebugSystemSnapshot{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) AdvisorsStatus(ctx context.Context, limit int) (AdvisorsStatus, error) {
+	path := "/viewer/advisors"
+	if limit > 0 {
+		path = fmt.Sprintf("%s?limit=%d", path, limit)
+	}
+	var out AdvisorsStatus
+	if err := c.doStrict(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return AdvisorsStatus{}, err
+	}
+	if err := validateAdvisorsStatus(&out); err != nil {
+		return AdvisorsStatus{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) AgentProfilesStatus(ctx context.Context) (AgentProfilesStatus, error) {
+	var out AgentProfilesStatus
+	if err := c.doStrict(ctx, http.MethodGet, "/viewer/agents/profiles", nil, &out); err != nil {
+		return AgentProfilesStatus{}, err
+	}
+	if err := validateAgentProfilesStatus(&out); err != nil {
+		return AgentProfilesStatus{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) KnowledgeRelationsStatus(ctx context.Context, limit int) (KnowledgeRelationsStatus, error) {
+	path := "/viewer/knowledge-relations/summary"
+	if limit > 0 {
+		path = fmt.Sprintf("%s?limit=%d", path, limit)
+	}
+	return c.knowledgeRelations(ctx, path)
+}
+
+func (c *Client) KnowledgeRelations(ctx context.Context, itemID string, maxHop int, limit int) (KnowledgeRelationsStatus, error) {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return KnowledgeRelationsStatus{}, fmt.Errorf("knowledge relations item_id is required")
+	}
+	if maxHop < 1 || maxHop > 2 {
+		return KnowledgeRelationsStatus{}, fmt.Errorf("knowledge relations max_hop must be 1 or 2")
+	}
+	values := url.Values{}
+	values.Set("item_id", itemID)
+	values.Set("max_hop", fmt.Sprintf("%d", maxHop))
+	if limit > 0 {
+		values.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	return c.knowledgeRelations(ctx, "/viewer/knowledge-relations?"+values.Encode())
+}
+
+func (c *Client) knowledgeRelations(ctx context.Context, path string) (KnowledgeRelationsStatus, error) {
+	var out KnowledgeRelationsStatus
+	if err := c.doStrict(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return KnowledgeRelationsStatus{}, err
+	}
+	if err := validateKnowledgeRelationsStatus(out); err != nil {
+		return KnowledgeRelationsStatus{}, err
 	}
 	return out, nil
 }
@@ -6690,7 +6937,190 @@ func validateOptionalRuntimeURL(raw string, field string) error {
 	return nil
 }
 
+func validateAdvisorsStatus(resp *AdvisorsStatus) error {
+	if resp == nil {
+		return fmt.Errorf("advisor status is required")
+	}
+	if !isOpsAvailabilityStatus(strings.TrimSpace(resp.Status)) {
+		return fmt.Errorf("advisor status has invalid status %q", resp.Status)
+	}
+	counts := map[string]int{
+		"advisor_count": resp.Summary.AdvisorCount, "recent_run_count": resp.Summary.RecentRunCount,
+		"failed_run_count": resp.Summary.FailedRunCount, "score_snapshot_count": resp.Summary.ScoreSnapshotCount,
+		"profile_count": resp.Summary.ProfileCount, "policy_decision_count": resp.Summary.PolicyDecisionCount,
+	}
+	for name, count := range counts {
+		if count < 0 {
+			return fmt.Errorf("advisor status %s count must be >= 0", name)
+		}
+	}
+	if resp.Summary.AdvisorCount != len(resp.Profiles) ||
+		resp.Summary.RecentRunCount != len(resp.RecentRuns) ||
+		resp.Summary.ScoreSnapshotCount != len(resp.ScoreSnapshots) ||
+		resp.Summary.ProfileCount != len(resp.AgentProfiles) ||
+		resp.Summary.PolicyDecisionCount != len(resp.PolicyDecisions) {
+		return fmt.Errorf("advisor status summary count mismatch")
+	}
+	failed := 0
+	for index, profile := range resp.Profiles {
+		if strings.TrimSpace(profile.ID) == "" {
+			return fmt.Errorf("advisor profile[%d] missing advisor id", index)
+		}
+	}
+	for index, run := range resp.RecentRuns {
+		if strings.TrimSpace(run.RunID) == "" || strings.TrimSpace(run.AdvisorID) == "" || strings.TrimSpace(run.Status) == "" {
+			return fmt.Errorf("advisor run[%d] requires run_id, advisor_id, and status", index)
+		}
+		switch run.Status {
+		case "completed", "failed", "unavailable", "rejected":
+		default:
+			return fmt.Errorf("advisor run[%d] has invalid status %q", index, run.Status)
+		}
+		if run.Status == "failed" || run.Status == "unavailable" {
+			failed++
+		}
+		if run.LatencyMillis < 0 {
+			return fmt.Errorf("advisor run[%d] latency_millis must be >= 0", index)
+		}
+	}
+	if failed != resp.Summary.FailedRunCount {
+		return fmt.Errorf("advisor status failed_run_count mismatch")
+	}
+	for index, snapshot := range resp.ScoreSnapshots {
+		if strings.TrimSpace(snapshot.SnapshotID) == "" || strings.TrimSpace(snapshot.AdvisorID) == "" {
+			return fmt.Errorf("advisor score[%d] requires snapshot_id and advisor_id", index)
+		}
+		if snapshot.Score < 0 || snapshot.Score > 1 {
+			return fmt.Errorf("advisor score[%d] score must be between 0 and 1", index)
+		}
+		for name, count := range map[string]int{
+			"request_count": snapshot.RequestCount, "completed_count": snapshot.CompletedCount,
+			"failed_count": snapshot.FailedCount, "unavailable_count": snapshot.UnavailableCount,
+			"adopted_count": snapshot.AdoptedCount, "success_count": snapshot.SuccessCount,
+		} {
+			if count < 0 {
+				return fmt.Errorf("advisor score[%d] %s must be >= 0", index, name)
+			}
+		}
+	}
+	if err := validateAgentProfiles(resp.AgentProfiles); err != nil {
+		return err
+	}
+	for index, decision := range resp.PolicyDecisions {
+		if strings.TrimSpace(decision.DecisionID) == "" || strings.TrimSpace(decision.AgentID) == "" || strings.TrimSpace(decision.Action) == "" {
+			return fmt.Errorf("agent policy decision[%d] requires decision_id, agent_id, and action", index)
+		}
+		switch decision.Decision {
+		case "allowed", "approval_required", "forbidden":
+		default:
+			return fmt.Errorf("agent policy decision[%d] has invalid decision %q", index, decision.Decision)
+		}
+	}
+	if len(resp.AgentProfiles) < 8 {
+		resp.Warnings = appendWarning(resp.Warnings, fmt.Sprintf("agent profile catalog has %d profiles; expected at least 8", len(resp.AgentProfiles)))
+	}
+	return nil
+}
+
+func validateAgentProfilesStatus(resp *AgentProfilesStatus) error {
+	if resp == nil {
+		return fmt.Errorf("agent profiles status is required")
+	}
+	if resp.ProfileCount < 0 {
+		return fmt.Errorf("agent profile count must be >= 0")
+	}
+	if resp.ProfileCount != len(resp.Profiles) {
+		return fmt.Errorf("agent profile count mismatch")
+	}
+	if err := validateAgentProfiles(resp.Profiles); err != nil {
+		return err
+	}
+	if len(resp.Profiles) < 8 {
+		resp.Warnings = append(resp.Warnings, fmt.Sprintf("agent profile catalog has %d profiles; expected at least 8", len(resp.Profiles)))
+	}
+	return nil
+}
+
+func validateAgentProfiles(profiles []AgentProfile) error {
+	seen := make(map[string]struct{}, len(profiles))
+	for index, profile := range profiles {
+		id := strings.TrimSpace(profile.ID)
+		if id == "" {
+			return fmt.Errorf("agent profile[%d] missing id", index)
+		}
+		if _, exists := seen[id]; exists {
+			return fmt.Errorf("duplicate agent profile id %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+	return nil
+}
+
+func validateKnowledgeRelationsStatus(resp KnowledgeRelationsStatus) error {
+	if !isOpsAvailabilityStatus(strings.TrimSpace(resp.Status)) {
+		return fmt.Errorf("knowledge relations invalid status %q", resp.Status)
+	}
+	for name, count := range map[string]int{
+		"entity_count": resp.Summary.EntityCount, "item_entity_count": resp.Summary.ItemEntityCount, "relation_count": resp.Summary.RelationCount,
+	} {
+		if count < 0 {
+			return fmt.Errorf("knowledge relations %s must be >= 0", name)
+		}
+	}
+	if resp.Summary.MaxHop < 1 || resp.Summary.MaxHop > 2 {
+		return fmt.Errorf("knowledge relations max_hop must be 1 or 2")
+	}
+	seenItems := map[string]bool{}
+	for index, item := range resp.Items {
+		if strings.TrimSpace(item.ItemID) == "" {
+			return fmt.Errorf("knowledge relation item[%d] missing item_id", index)
+		}
+		if seenItems[item.ItemID] {
+			return fmt.Errorf("duplicate knowledge relation item %q", item.ItemID)
+		}
+		seenItems[item.ItemID] = true
+	}
+	for index, relation := range resp.Relations {
+		if strings.TrimSpace(relation.SrcItemID) == "" || strings.TrimSpace(relation.DstItemID) == "" || strings.TrimSpace(relation.RelationType) == "" {
+			return fmt.Errorf("knowledge relation[%d] requires src_item_id, dst_item_id, and relation_type", index)
+		}
+		if relation.Hop < 1 || relation.Hop > 2 {
+			return fmt.Errorf("knowledge relation[%d] hop must be 1 or 2", index)
+		}
+		if relation.Score < 0 {
+			return fmt.Errorf("knowledge relation[%d] score must be >= 0", index)
+		}
+	}
+	return nil
+}
+
+func appendWarning(warnings []string, warning string) []string {
+	for _, existing := range warnings {
+		if existing == warning {
+			return warnings
+		}
+	}
+	return append(warnings, warning)
+}
+
+func isOpsAvailabilityStatus(status string) bool {
+	switch status {
+	case "ok", "warning", "blocked", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Client) do(ctx context.Context, method string, path string, body any, out any) error {
+	return c.doDecoded(ctx, method, path, body, out, false)
+}
+
+func (c *Client) doStrict(ctx context.Context, method string, path string, body any, out any) error {
+	return c.doDecoded(ctx, method, path, body, out, true)
+}
+
+func (c *Client) doDecoded(ctx context.Context, method string, path string, body any, out any, strict bool) error {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -6719,7 +7149,11 @@ func (c *Client) do(ctx context.Context, method string, path string, body any, o
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	decoder := json.NewDecoder(resp.Body)
+	if strict {
+		decoder.DisallowUnknownFields()
+	}
+	if err := decoder.Decode(out); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
 	return nil

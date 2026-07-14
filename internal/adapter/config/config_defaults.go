@@ -337,6 +337,12 @@ func (c *Config) setDefaults() {
 	if c.Advisor.SQLitePath == "" {
 		c.Advisor.SQLitePath = filepath.Join(c.WorkspaceDir, "logs", "advisor.db")
 	}
+	if c.KnowledgeRelation.MaxHops == 0 {
+		c.KnowledgeRelation.MaxHops = 2
+	}
+	if c.KnowledgeRelation.MinimumScore == 0 {
+		c.KnowledgeRelation.MinimumScore = 4
+	}
 	if c.ToolHarness.Mode == "" {
 		c.ToolHarness.Mode = "validate_then_repair"
 	}

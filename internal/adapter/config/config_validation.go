@@ -128,6 +128,18 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("advisor.sqlite_path is required when advisor.storage=sqlite")
 		}
 	}
+	knowledgeRelationConfigured := c.KnowledgeRelation.Enabled || c.KnowledgeRelation.BuildOnImport || c.KnowledgeRelation.MaxHops != 0 || c.KnowledgeRelation.MinimumScore != 0
+	if knowledgeRelationConfigured {
+		if c.KnowledgeRelation.MaxHops < 1 || c.KnowledgeRelation.MaxHops > 2 {
+			return fmt.Errorf("knowledge_relation.max_hops must be 1 or 2")
+		}
+		if c.KnowledgeRelation.MinimumScore <= 0 {
+			return fmt.Errorf("knowledge_relation.minimum_score must be > 0")
+		}
+		if c.KnowledgeRelation.BuildOnImport && !c.KnowledgeRelation.Enabled {
+			return fmt.Errorf("knowledge_relation.build_on_import requires enabled=true")
+		}
+	}
 
 	if !c.LocalLLM.Enabled {
 		// Ollama設定検証

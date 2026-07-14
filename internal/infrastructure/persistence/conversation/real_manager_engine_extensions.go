@@ -22,6 +22,19 @@ func (r *RealConversationManager) SearchKnowledgeItemsFTS(ctx context.Context, d
 	return r.l1Store.SearchKnowledgeItemsFTS(ctx, domain, query, limit)
 }
 
+func (r *RealConversationManager) RelatedKnowledgeItems(ctx context.Context, itemID string, maxHop int, limit int) ([]l1sqlite.L1KnowledgeRelationHit, error) {
+	if r == nil || r.l1Store == nil {
+		return []l1sqlite.L1KnowledgeRelationHit{}, nil
+	}
+	store, ok := r.l1Store.(interface {
+		RelatedKnowledgeItems(context.Context, string, int, int) ([]l1sqlite.L1KnowledgeRelationHit, error)
+	})
+	if !ok {
+		return []l1sqlite.L1KnowledgeRelationHit{}, nil
+	}
+	return store.RelatedKnowledgeItems(ctx, itemID, maxHop, limit)
+}
+
 func (r *RealConversationManager) SearchWikiPageIndex(ctx context.Context, query string, limit int) ([]l1sqlite.WikiPageIndexItem, error) {
 	if r == nil || r.l1Store == nil {
 		return nil, nil

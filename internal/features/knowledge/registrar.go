@@ -26,6 +26,8 @@ type Routes struct {
 	DreamConsolidationCreate   http.HandlerFunc
 	DreamConsolidationProposal http.HandlerFunc
 	DreamConsolidationReview   http.HandlerFunc
+	KnowledgeRelations         http.HandlerFunc
+	KnowledgeRelationSummary   http.HandlerFunc
 }
 
 // RegisterRoutes reserves the feature route boundary. Existing routes remain in
@@ -43,6 +45,8 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/knowledge-memory/dream-runs", routes.DreamConsolidationCreate)
 	registerRoute(mux, "/viewer/knowledge-memory/dream-runs/propose", routes.DreamConsolidationProposal)
 	registerRoute(mux, "/viewer/knowledge-memory/dream-runs/review", routes.DreamConsolidationReview)
+	registerRoute(mux, "/viewer/knowledge-relations", routes.KnowledgeRelations)
+	registerRoute(mux, "/viewer/knowledge-relations/summary", routes.KnowledgeRelationSummary)
 }
 
 // StartBackground reserves the feature background-job boundary.

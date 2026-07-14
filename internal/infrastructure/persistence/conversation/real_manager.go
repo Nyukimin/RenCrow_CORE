@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -14,13 +15,21 @@ import (
 
 // RealConversationManager は実ストアを統合した会話管理実装
 type RealConversationManager struct {
-	redisStore    redisStoreIface
-	l1Store       l1StoreIface
-	duckdbStore   duckdbStoreIface
-	vectordbStore vectordbStoreIface
-	embedder      domconv.EmbeddingProvider      // nilの場合はVectorDB機能無効
-	summarizer    domconv.ConversationSummarizer // nilの場合は簡易実装
-	agentStatuses map[string]*domconv.AgentStatus
+	redisStore                  redisStoreIface
+	l1Store                     l1StoreIface
+	duckdbStore                 duckdbStoreIface
+	vectordbStore               vectordbStoreIface
+	embedder                    domconv.EmbeddingProvider      // nilの場合はVectorDB機能無効
+	summarizer                  domconv.ConversationSummarizer // nilの場合は簡易実装
+	agentStatuses               map[string]*domconv.AgentStatus
+	knowledgeRelationImportHook func(context.Context, l1sqlite.L1KnowledgeItem) error
+}
+
+func (r *RealConversationManager) WithKnowledgeRelationImportHook(hook func(context.Context, l1sqlite.L1KnowledgeItem) error) *RealConversationManager {
+	if r != nil {
+		r.knowledgeRelationImportHook = hook
+	}
+	return r
 }
 
 // NewRealConversationManager は新しいRealConversationManagerを生成

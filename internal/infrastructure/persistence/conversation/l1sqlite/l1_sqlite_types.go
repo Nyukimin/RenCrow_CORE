@@ -274,6 +274,22 @@ type L1KnowledgeItemRelation struct {
 	UpdatedAt    time.Time
 }
 
+type L1KnowledgeRelationHit struct {
+	Item         L1KnowledgeItem
+	Hop          int
+	ViaItemID    string
+	RelationType string
+	Score        float64
+	Evidence     string
+}
+
+type KnowledgeRelationSummary struct {
+	EntityCount     int `json:"entity_count"`
+	ItemEntityCount int `json:"item_entity_count"`
+	RelationCount   int `json:"relation_count"`
+	MaxHop          int `json:"max_hop"`
+}
+
 type L1ArchiveStore interface {
 	ArchiveL1MemoryEvents(ctx context.Context, items []L1MemoryEvent) error
 	ArchiveL1NewsItems(ctx context.Context, items []L1NewsItem) error

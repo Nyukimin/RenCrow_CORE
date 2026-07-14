@@ -129,6 +129,11 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		RevenueDailyRoutine:    dependencies.revenueDailyRoutine,
 		RevenueChannelDrafts:   dependencies.revenueChannelDraft,
 		RevenueExternalSend:    dependencies.revenueExternalSendApply,
+		RevenueOpportunities:   dependencies.revenueOpportunities,
+		RevenueEconomicTasks:   dependencies.revenueEconomicTasks,
+		RevenueReflections:     dependencies.revenueEconomicReflections,
+		RevenueReflectionEvent: dependencies.revenueReflectionFromEvent,
+		RevenueOpportunityGoal: dependencies.revenueOpportunityGoal,
 		Advisors:               dependencies.advisorStatus,
 		AdvisorRuns:            dependencies.advisorRuns,
 		AdvisorScores:          dependencies.advisorScores,
@@ -219,6 +224,8 @@ func registerKnowledgeMemorySourceRoutes(mux *http.ServeMux, dependencies *Depen
 		DreamConsolidationCreate:   dependencies.dreamConsolidationCreate,
 		DreamConsolidationProposal: dependencies.dreamConsolidationProposal,
 		DreamConsolidationReview:   dependencies.dreamConsolidationReview,
+		KnowledgeRelations:         dependencies.knowledgeRelations,
+		KnowledgeRelationSummary:   dependencies.knowledgeRelationSummary,
 	}})
 	memoryfeature.RegisterRoutes(mux, memoryfeature.Dependencies{Routes: memoryfeature.Routes{
 		Snapshot:      dependencies.viewerMemorySnapshot,

@@ -48,6 +48,11 @@ type Routes struct {
 	RevenueDailyRoutine    http.HandlerFunc
 	RevenueChannelDrafts   http.HandlerFunc
 	RevenueExternalSend    http.HandlerFunc
+	RevenueOpportunities   http.HandlerFunc
+	RevenueEconomicTasks   http.HandlerFunc
+	RevenueReflections     http.HandlerFunc
+	RevenueReflectionEvent http.HandlerFunc
+	RevenueOpportunityGoal http.HandlerFunc
 	Advisors               http.HandlerFunc
 	AdvisorRuns            http.HandlerFunc
 	AdvisorScores          http.HandlerFunc
@@ -92,6 +97,11 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/revenue/daily-routine", routes.RevenueDailyRoutine)
 	registerRoute(mux, "/viewer/revenue/channel-drafts", routes.RevenueChannelDrafts)
 	registerRoute(mux, "/viewer/revenue/channel-drafts/external-send-apply", routes.RevenueExternalSend)
+	registerRoute(mux, "/viewer/revenue/opportunities", routes.RevenueOpportunities)
+	registerRoute(mux, "/viewer/revenue/economic-tasks", routes.RevenueEconomicTasks)
+	registerRoute(mux, "/viewer/revenue/economic-reflections", routes.RevenueReflections)
+	registerRoute(mux, "/viewer/revenue/economic-reflections/from-revenue-event", routes.RevenueReflectionEvent)
+	registerRoute(mux, "/viewer/revenue/opportunities/workstream-goal", routes.RevenueOpportunityGoal)
 	registerRoute(mux, "/viewer/advisors", routes.Advisors)
 	registerRoute(mux, "/viewer/advisors/runs", routes.AdvisorRuns)
 	registerRoute(mux, "/viewer/advisors/scores", routes.AdvisorScores)

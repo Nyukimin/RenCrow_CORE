@@ -8488,6 +8488,138 @@ func TestAPIErrorIncludesStatus(t *testing.T) {
 	}
 }
 
+func TestAdvisorsStatusReturnsValidatedReadModel(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+  "enabled": true,
+  "status": "ok",
+  "profiles": [{"ID":"codex","DisplayName":"Codex","Provider":"codex","Capabilities":[],"AllowedModes":["advice_only"],"Disabled":false}],
+  "recent_runs": [{"run_id":"run-1","requested_by_agent":"shiro","advisor_id":"codex","approval_mode":"advice_only","status":"completed","summary":"safe summary","started_at":"2026-07-14T00:00:00Z","finished_at":"2026-07-14T00:00:01Z","latency_millis":1000}],
+  "score_snapshots": [{"snapshot_id":"score-1","advisor_id":"codex","window_start":"2026-07-13T00:00:00Z","window_end":"2026-07-14T00:00:00Z","request_count":1,"completed_count":1,"failed_count":0,"unavailable_count":0,"adopted_count":1,"success_count":1,"avg_latency_millis":1000,"avg_revision_count":0,"score":0.9,"created_at":"2026-07-14T00:00:00Z"}],
+  "agent_profiles": [],
+  "policy_decisions": [{"decision_id":"decision-1","agent_id":"shiro","action":"ask_advisor","decision":"allowed","reason":"profile allows action","created_at":"2026-07-14T00:00:00Z"}],
+  "warnings": [],
+  "summary": {"advisor_count":1,"recent_run_count":1,"failed_run_count":0,"score_snapshot_count":1,"profile_count":0,"policy_decision_count":1}
+}`)
+	}))
+	defer server.Close()
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := client.AdvisorsStatus(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("AdvisorsStatus() error = %v", err)
+	}
+	if gotPath != "/viewer/advisors?limit=5" {
+		t.Fatalf("path=%q", gotPath)
+	}
+	if len(status.RecentRuns) != 1 || status.RecentRuns[0].Summary != "safe summary" {
+		t.Fatalf("status=%#v", status)
+	}
+}
+
+func TestAdvisorsStatusRejectsMalformedOrUnsafeResponse(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "raw output field",
+			body: `{"enabled":true,"status":"ok","profiles":[],"recent_runs":[{"run_id":"run-1","requested_by_agent":"shiro","advisor_id":"codex","approval_mode":"advice_only","status":"completed","raw_output":"secret"}],"score_snapshots":[],"agent_profiles":[],"policy_decisions":[],"warnings":[],"summary":{"advisor_count":0,"recent_run_count":1,"failed_run_count":0,"score_snapshot_count":0,"profile_count":0,"policy_decision_count":0}}`,
+			want: "unknown field",
+		},
+		{
+			name: "missing run id",
+			body: `{"enabled":true,"status":"ok","profiles":[],"recent_runs":[{"requested_by_agent":"shiro","advisor_id":"codex","approval_mode":"advice_only","status":"completed"}],"score_snapshots":[],"agent_profiles":[],"policy_decisions":[],"warnings":[],"summary":{"advisor_count":0,"recent_run_count":1,"failed_run_count":0,"score_snapshot_count":0,"profile_count":0,"policy_decision_count":0}}`,
+			want: "run_id",
+		},
+		{
+			name: "score out of range",
+			body: `{"enabled":true,"status":"ok","profiles":[],"recent_runs":[],"score_snapshots":[{"snapshot_id":"score-1","advisor_id":"codex","score":1.2}],"agent_profiles":[],"policy_decisions":[],"warnings":[],"summary":{"advisor_count":0,"recent_run_count":0,"failed_run_count":0,"score_snapshot_count":1,"profile_count":0,"policy_decision_count":0}}`,
+			want: "score",
+		},
+		{
+			name: "negative count",
+			body: `{"enabled":false,"status":"unavailable","profiles":[],"recent_runs":[],"score_snapshots":[],"agent_profiles":[],"policy_decisions":[],"warnings":["store unavailable"],"summary":{"advisor_count":-1,"recent_run_count":0,"failed_run_count":0,"score_snapshot_count":0,"profile_count":0,"policy_decision_count":0}}`,
+			want: "count",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			defer server.Close()
+			client, err := New(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.AdvisorsStatus(context.Background(), 0)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error=%v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestAgentProfilesStatusWarnsWhenCatalogIsIncomplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/viewer/agents/profiles" {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"profiles":[{"ID":"shiro","DisplayName":"Shiro","Role":"worker","Capabilities":[],"Goals":[],"Motivation":[],"UtilityProfile":{},"AutonomyEnvelope":{},"KnowledgeAffinity":[]}],"profile_count":1}`)
+	}))
+	defer server.Close()
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := client.AgentProfilesStatus(context.Background())
+	if err != nil {
+		t.Fatalf("AgentProfilesStatus() error = %v", err)
+	}
+	if status.ProfileCount != 1 || len(status.Warnings) != 1 || !strings.Contains(status.Warnings[0], "8") {
+		t.Fatalf("status=%#v", status)
+	}
+}
+
+func TestKnowledgeRelationsStatusAndHopValidation(t *testing.T) {
+	t.Run("summary", func(t *testing.T) {
+		var gotPath string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.String()
+			_, _ = io.WriteString(w, `{"enabled":true,"status":"ok","warnings":[],"summary":{"entity_count":2,"item_entity_count":3,"relation_count":1,"max_hop":2}}`)
+		}))
+		defer server.Close()
+		client, _ := New(server.URL)
+		status, err := client.KnowledgeRelationsStatus(context.Background(), 20)
+		if err != nil {
+			t.Fatalf("KnowledgeRelationsStatus() error=%v", err)
+		}
+		if gotPath != "/viewer/knowledge-relations/summary?limit=20" || status.Summary.RelationCount != 1 {
+			t.Fatalf("path=%q status=%#v", gotPath, status)
+		}
+	})
+	t.Run("reject hop three", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, `{"enabled":true,"status":"ok","warnings":[],"summary":{"entity_count":2,"item_entity_count":3,"relation_count":1,"max_hop":2},"items":[{"item_id":"b","domain":"general","title":"B","summary":"safe","source_type":"general"}],"relations":[{"src_item_id":"a","dst_item_id":"b","relation_type":"same_entity","score":5,"evidence":"same entity","hop":3}]}`)
+		}))
+		defer server.Close()
+		client, _ := New(server.URL)
+		_, err := client.KnowledgeRelationsStatus(context.Background(), 20)
+		if err == nil || !strings.Contains(err.Error(), "hop") {
+			t.Fatalf("error=%v", err)
+		}
+	})
+}
+
 func fullRuntimeReadiness(value bool) RuntimeDependencyReadiness {
 	return fullRuntimeReadinessWithConfig(value, value, value)
 }

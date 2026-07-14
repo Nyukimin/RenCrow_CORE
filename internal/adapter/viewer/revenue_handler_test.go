@@ -10,19 +10,48 @@ import (
 	"time"
 
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
+	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
 
+type stubRevenueGoalStore struct{ goals []domainworkstream.Goal }
+
+func (s *stubRevenueGoalStore) SaveGoal(_ context.Context, item domainworkstream.Goal) error {
+	if err := domainworkstream.ValidateGoal(item); err != nil {
+		return err
+	}
+	s.goals = append(s.goals, item)
+	return nil
+}
+
 type stubRevenueStore struct {
-	market    []domainrevenue.MarketResearchItem
-	posts     []domainrevenue.SNSPostMetric
-	products  []domainrevenue.Product
-	voices    []domainrevenue.CustomerVoice
-	events    []domainrevenue.RevenueEvent
-	decisions []domainrevenue.HumanDecisionGateRecord
-	daily     []domainrevenue.DailyRoutineReport
-	drafts    []domainrevenue.ChannelDraft
-	applies   []domainrevenue.ExternalSendApplyRecord
-	limit     int
+	market        []domainrevenue.MarketResearchItem
+	posts         []domainrevenue.SNSPostMetric
+	products      []domainrevenue.Product
+	voices        []domainrevenue.CustomerVoice
+	events        []domainrevenue.RevenueEvent
+	decisions     []domainrevenue.HumanDecisionGateRecord
+	daily         []domainrevenue.DailyRoutineReport
+	drafts        []domainrevenue.ChannelDraft
+	applies       []domainrevenue.ExternalSendApplyRecord
+	opportunities []domainrevenue.Opportunity
+	economicTasks []domainrevenue.EconomicTask
+	reflections   []domainrevenue.EconomicReflection
+	limit         int
+}
+
+func (s *stubRevenueStore) ListOpportunities(_ context.Context, limit int) ([]domainrevenue.Opportunity, error) {
+	s.limit = limit
+	return s.opportunities, nil
+}
+
+func (s *stubRevenueStore) ListEconomicTasks(_ context.Context, limit int) ([]domainrevenue.EconomicTask, error) {
+	s.limit = limit
+	return s.economicTasks, nil
+}
+
+func (s *stubRevenueStore) ListEconomicReflections(_ context.Context, limit int) ([]domainrevenue.EconomicReflection, error) {
+	s.limit = limit
+	return s.reflections, nil
 }
 
 func (s *stubRevenueStore) ListMarketResearchItems(_ context.Context, limit int) ([]domainrevenue.MarketResearchItem, error) {
@@ -139,6 +168,31 @@ func (s *stubRevenueStore) SaveExternalSendApplyRecord(_ context.Context, item d
 		return err
 	}
 	s.applies = append(s.applies, item)
+	return nil
+}
+
+func (s *stubRevenueStore) SaveOpportunity(_ context.Context, item domainrevenue.Opportunity) error {
+	item = domainrevenue.NormalizeOpportunityEconomics(item)
+	if err := domainrevenue.ValidateOpportunity(item); err != nil {
+		return err
+	}
+	s.opportunities = append(s.opportunities, item)
+	return nil
+}
+
+func (s *stubRevenueStore) SaveEconomicTask(_ context.Context, item domainrevenue.EconomicTask) error {
+	if err := domainrevenue.ValidateEconomicTask(item); err != nil {
+		return err
+	}
+	s.economicTasks = append(s.economicTasks, item)
+	return nil
+}
+
+func (s *stubRevenueStore) SaveEconomicReflection(_ context.Context, item domainrevenue.EconomicReflection) error {
+	if err := domainrevenue.ValidateEconomicReflection(item); err != nil {
+		return err
+	}
+	s.reflections = append(s.reflections, item)
 	return nil
 }
 
@@ -338,6 +392,51 @@ func TestHandleRevenueProductCreateRejectsSuccessGuarantee(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleRevenueEconomicObjectiveEndpoints(t *testing.T) {
+	store := &stubRevenueStore{}
+	oppReq := httptest.NewRequest(http.MethodPost, "/viewer/revenue/opportunities", bytes.NewBufferString(`{
+		"opportunity_id":"opp-1","source_kind":"note_archive","title":"ローカルLLM技術資料","expected_revenue":3000,"expected_cost":800,"approval_state":"draft"
+	}`))
+	oppRec := httptest.NewRecorder()
+	HandleRevenueOpportunities(store).ServeHTTP(oppRec, oppReq)
+	if oppRec.Code != http.StatusCreated || len(store.opportunities) != 1 || store.opportunities[0].ExpectedProfit != 2200 {
+		t.Fatalf("opportunity status=%d body=%s items=%#v", oppRec.Code, oppRec.Body.String(), store.opportunities)
+	}
+
+	taskReq := httptest.NewRequest(http.MethodPost, "/viewer/revenue/economic-tasks", bytes.NewBufferString(`{
+		"task_id":"task-1","opportunity_id":"opp-1","agent_id":"shiro","task_kind":"billing","status":"draft","approval_mode":"none"
+	}`))
+	taskRec := httptest.NewRecorder()
+	HandleRevenueEconomicTasks(store).ServeHTTP(taskRec, taskReq)
+	if taskRec.Code != http.StatusBadRequest || len(store.economicTasks) != 0 {
+		t.Fatalf("approval mismatch status=%d body=%s tasks=%#v", taskRec.Code, taskRec.Body.String(), store.economicTasks)
+	}
+
+	store.events = []domainrevenue.RevenueEvent{{EventID: "rev-1", EventType: "sold", Amount: 3000, CreatedAt: time.Now().UTC()}}
+	reflectionReq := httptest.NewRequest(http.MethodPost, "/viewer/revenue/economic-reflections/from-revenue-event", bytes.NewBufferString(`{
+		"reflection_id":"reflection-1","opportunity_id":"opp-1","revenue_event_id":"rev-1","outcome":"sold","lessons":["再利用価値が高い"]
+	}`))
+	reflectionRec := httptest.NewRecorder()
+	HandleRevenueReflectionFromEvent(store).ServeHTTP(reflectionRec, reflectionReq)
+	if reflectionRec.Code != http.StatusCreated || len(store.reflections) != 1 || store.reflections[0].NetProfit != 2200 {
+		t.Fatalf("reflection status=%d body=%s items=%#v", reflectionRec.Code, reflectionRec.Body.String(), store.reflections)
+	}
+
+	goals := &stubRevenueGoalStore{}
+	goalReq := httptest.NewRequest(http.MethodPost, "/viewer/revenue/opportunities/workstream-goal", bytes.NewBufferString(`{"opportunity_id":"opp-1","workstream_id":"ws-revenue"}`))
+	goalRec := httptest.NewRecorder()
+	HandleRevenueOpportunityWorkstreamGoal(store, goals).ServeHTTP(goalRec, goalReq)
+	if goalRec.Code != http.StatusCreated || len(goals.goals) != 1 || goals.goals[0].Status != domainworkstream.StatusDraft {
+		t.Fatalf("goal status=%d body=%s goals=%#v", goalRec.Code, goalRec.Body.String(), goals.goals)
+	}
+	missingReq := httptest.NewRequest(http.MethodPost, "/viewer/revenue/opportunities/workstream-goal", bytes.NewBufferString(`{"opportunity_id":"missing","workstream_id":"ws-revenue"}`))
+	missingRec := httptest.NewRecorder()
+	HandleRevenueOpportunityWorkstreamGoal(store, goals).ServeHTTP(missingRec, missingReq)
+	if missingRec.Code != http.StatusNotFound {
+		t.Fatalf("missing status=%d body=%s", missingRec.Code, missingRec.Body.String())
 	}
 }
 

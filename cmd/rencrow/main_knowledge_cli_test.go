@@ -84,3 +84,19 @@ Source Registry は外部 source の登録と検証境界。
 		t.Fatalf("unexpected wiki index results: %+v", results)
 	}
 }
+
+func TestRunKnowledgeCommandRelationsBuildDefaultsToDryRun(t *testing.T) {
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+	var out, errOut bytes.Buffer
+	code := runKnowledgeCommand([]string{"relations", "build", "--domain", "all", "--limit", "100", "--json"}, store, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("relations build failed: code=%d err=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), `"dry_run":true`) || !strings.Contains(out.String(), `"status":"completed"`) {
+		t.Fatalf("unexpected report: %s", out.String())
+	}
+}

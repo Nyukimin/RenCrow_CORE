@@ -160,11 +160,18 @@ type Dependencies struct {
 	revenueDailyRoutine            http.HandlerFunc                            // viewer revenue daily routine draft report API
 	revenueChannelDraft            http.HandlerFunc                            // viewer revenue channel draft API
 	revenueExternalSendApply       http.HandlerFunc                            // viewer revenue external send apply audit API
+	revenueOpportunities           http.HandlerFunc                            // viewer economic opportunities API
+	revenueEconomicTasks           http.HandlerFunc                            // viewer economic tasks API
+	revenueEconomicReflections     http.HandlerFunc                            // viewer economic reflections API
+	revenueReflectionFromEvent     http.HandlerFunc                            // viewer reflection from revenue event API
+	revenueOpportunityGoal         http.HandlerFunc                            // viewer opportunity to workstream goal API
 	advisorStatus                  http.HandlerFunc                            // viewer advisor aggregate status API
 	advisorRuns                    http.HandlerFunc                            // viewer advisor run records API
 	advisorScores                  http.HandlerFunc                            // viewer advisor score snapshots API
 	agentProfiles                  http.HandlerFunc                            // viewer agent profiles API
 	agentPolicyDecisions           http.HandlerFunc                            // viewer agent policy decision traces API
+	knowledgeRelations             http.HandlerFunc                            // viewer knowledge relation expansion API
+	knowledgeRelationSummary       http.HandlerFunc                            // viewer knowledge relation summary API
 	personaObservation             http.HandlerFunc                            // viewer persona observation status API
 	personaDiscomfort              http.HandlerFunc                            // viewer persona discomfort log API
 	personaTrigger                 http.HandlerFunc                            // viewer persona trigger log API
@@ -368,6 +375,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.advisorScores = viewer.HandleAdvisorScores(advisorRuntime.Store)
 	deps.agentProfiles = viewer.HandleAgentProfiles(advisorRuntime.AgentProfiles)
 	deps.agentPolicyDecisions = viewer.HandleAgentPolicyDecisions(advisorRuntime.Store)
+	knowledgeRelationOptions := viewer.KnowledgeRelationHandlerOptions{
+		Store: conversationRuntime.L1Store, Enabled: cfg.KnowledgeRelation.Enabled, MaxHops: cfg.KnowledgeRelation.MaxHops,
+	}
+	deps.knowledgeRelations = viewer.HandleKnowledgeRelations(knowledgeRelationOptions)
+	deps.knowledgeRelationSummary = viewer.HandleKnowledgeRelationSummary(knowledgeRelationOptions)
 	deps.llmBusyTracker = llmBusyTracker
 	deps.moduleLLMProviders = llmRuntime.ModuleProviders
 	deps.moduleWorkerExecutor = modulebridge.NewRuntimeWorkerExecutor(workerExecutionService)
@@ -575,6 +587,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.revenueDailyRoutine = viewer.HandleRevenueDailyRoutineReportCreate(revenueStore)
 		deps.revenueChannelDraft = viewer.HandleRevenueChannelDraftCreate(revenueStore)
 		deps.revenueExternalSendApply = viewer.HandleRevenueExternalSendApply(revenueStore)
+		deps.revenueOpportunities = viewer.HandleRevenueOpportunities(revenueStore)
+		deps.revenueEconomicTasks = viewer.HandleRevenueEconomicTasks(revenueStore)
+		deps.revenueEconomicReflections = viewer.HandleRevenueEconomicReflections(revenueStore)
+		deps.revenueReflectionFromEvent = viewer.HandleRevenueReflectionFromEvent(revenueStore)
+		deps.revenueOpportunityGoal = viewer.HandleRevenueOpportunityWorkstreamGoal(revenueStore, deps.workstreamStore)
 	}
 	if cfg.PersonaArchitecture.IsEnabled() {
 		var personaStore viewer.PersonaObservationStore

@@ -92,6 +92,33 @@ type mockRecallTraceStore struct {
 	finished []string
 }
 
+type mockExternalRecallManager struct {
+	*mockManager
+	items     []l1sqlite.L1KnowledgeItem
+	hits      map[string][]l1sqlite.L1KnowledgeRelationHit
+	vectorErr error
+}
+
+func (m *mockExternalRecallManager) GetFreshSearchCache(context.Context, string, string, time.Time) (*l1sqlite.L1SearchCacheEntry, error) {
+	return nil, nil
+}
+
+func (m *mockExternalRecallManager) SearchKnowledgeItemsFTS(context.Context, string, string, int) ([]l1sqlite.L1KnowledgeItem, error) {
+	return append([]l1sqlite.L1KnowledgeItem(nil), m.items...), nil
+}
+
+func (m *mockExternalRecallManager) SearchWikiPageIndex(context.Context, string, int) ([]l1sqlite.WikiPageIndexItem, error) {
+	return nil, nil
+}
+
+func (m *mockExternalRecallManager) SearchKB(context.Context, string, string, int) ([]*domconv.Document, error) {
+	return nil, m.vectorErr
+}
+
+func (m *mockExternalRecallManager) RelatedKnowledgeItems(_ context.Context, itemID string, _ int, _ int) ([]l1sqlite.L1KnowledgeRelationHit, error) {
+	return append([]l1sqlite.L1KnowledgeRelationHit(nil), m.hits[itemID]...), nil
+}
+
 func (m *mockRecallTraceStore) StartRecallTrace(_ context.Context, trace domconv.RecallTraceRecord) error {
 	m.started = append(m.started, trace)
 	return nil
@@ -150,6 +177,40 @@ func TestShouldUseExternalRecallForUserMessage(t *testing.T) {
 				t.Fatalf("shouldUseExternalRecallForUserMessage(%q)=%v, want %v", tt.message, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBeginTurnExpandsKnowledgeRelationsWhenVectorDBIsUnavailable(t *testing.T) {
+	mgr := &mockExternalRecallManager{
+		mockManager: &mockManager{},
+		items:       []l1sqlite.L1KnowledgeItem{{ID: "seed", Domain: "general", SummaryDraft: "seed summary"}},
+		hits: map[string][]l1sqlite.L1KnowledgeRelationHit{
+			"seed": {{
+				Item: l1sqlite.L1KnowledgeItem{ID: "related", Domain: "github", Title: "Related", SummaryDraft: "related summary"},
+				Hop:  1, RelationType: "same_entity", Score: 5, Evidence: "same entity: mlx",
+			}},
+		},
+		vectorErr: fmt.Errorf("vector db unavailable"),
+	}
+	traceStore := &mockRecallTraceStore{}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).
+		WithKnowledgeRelationRecall(2).
+		WithRecallTraceStore(traceStore)
+	pack, err := engine.BeginTurn(context.Background(), "s1", "RenCrow仕様について調べて")
+	if err != nil {
+		t.Fatalf("BeginTurn failed: %v", err)
+	}
+	if len(pack.RelationSnippets) != 1 || pack.RelationSnippets[0].Hop != 1 || pack.RelationSnippets[0].Evidence == "" {
+		t.Fatalf("relation snippets=%#v", pack.RelationSnippets)
+	}
+	foundTrace := false
+	for _, item := range traceStore.items {
+		if item.Kind == "knowledge_relation" && strings.Contains(item.Summary, "hop=1") && strings.Contains(item.Summary, "same entity: mlx") {
+			foundTrace = true
+		}
+	}
+	if !foundTrace {
+		t.Fatalf("knowledge relation trace missing hop/evidence: %#v", traceStore.items)
 	}
 }
 

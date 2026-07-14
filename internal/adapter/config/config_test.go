@@ -3367,3 +3367,27 @@ func TestConfig_Validate_AdvisorPersistence(t *testing.T) {
 		t.Fatalf("expected advisor.storage validation error, got %v", err)
 	}
 }
+
+func TestConfig_Validate_KnowledgeRelationDefaultsAndGuards(t *testing.T) {
+	cfg := &Config{
+		Server: ServerConfig{Port: 8080}, Ollama: OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
+		Session: SessionConfig{StorageDir: "./data"},
+	}
+	cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "ao", "aka", "kin", "gin"
+	cfg.setDefaults()
+	if cfg.KnowledgeRelation.MaxHops != 2 || cfg.KnowledgeRelation.MinimumScore != 4 || cfg.KnowledgeRelation.Enabled {
+		t.Fatalf("knowledge relation defaults=%+v", cfg.KnowledgeRelation)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("default config failed validation: %v", err)
+	}
+	cfg.KnowledgeRelation.BuildOnImport = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "build_on_import") {
+		t.Fatalf("expected build_on_import guard, got %v", err)
+	}
+	cfg.KnowledgeRelation.Enabled = true
+	cfg.KnowledgeRelation.MaxHops = 3
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "max_hops") {
+		t.Fatalf("expected max_hops guard, got %v", err)
+	}
+}

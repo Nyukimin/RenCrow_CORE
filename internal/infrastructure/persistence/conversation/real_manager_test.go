@@ -615,6 +615,23 @@ func TestSaveL1KnowledgeItemSavesVectorKBDocument(t *testing.T) {
 	}
 }
 
+func TestSaveL1KnowledgeItemRunsRelationHookWithoutVectorAndDegradesGracefully(t *testing.T) {
+	called := 0
+	mgr := (&RealConversationManager{}).WithKnowledgeRelationImportHook(func(_ context.Context, item l1sqlite.L1KnowledgeItem) error {
+		called++
+		if item.ID != "kb:test:1" {
+			t.Fatalf("item=%#v", item)
+		}
+		return fmt.Errorf("temporary relation failure")
+	})
+	if err := mgr.SaveL1KnowledgeItem(context.Background(), l1sqlite.L1KnowledgeItem{ID: "kb:test:1"}); err != nil {
+		t.Fatalf("relation failure must not fail knowledge save: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("hook calls=%d", called)
+	}
+}
+
 func TestFlushThread_EmbedderError_FallsBackToSimple(t *testing.T) {
 	embedder := &mockEmbeddingProvider{err: fmt.Errorf("API error")}
 	summarizer := &mockSummarizer{summary: "summary", keywords: []string{"kw"}}

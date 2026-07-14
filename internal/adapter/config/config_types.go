@@ -45,6 +45,9 @@ type Config struct {
 	// === Advisor execution records and score snapshots ===
 	Advisor AdvisorConfig `yaml:"advisor"`
 
+	// === Deterministic Knowledge Relation build and recall ===
+	KnowledgeRelation KnowledgeRelationConfig `yaml:"knowledge_relation"`
+
 	// === ComfyUI image generation backend ===
 	ComfyUI ComfyUIConfig `yaml:"comfyui"`
 
@@ -320,6 +323,13 @@ type ConversationConfig struct {
 	EmbedBaseURL     string `yaml:"embed_base_url"`    // Embedding専用Base URL。空の場合はprovider既定URLを使用
 	EmbedModel       string `yaml:"embed_model"`       // Embedding用モデル（例: "nomic-embed-text"）。空の場合はembedding無効
 	SummaryModel     string `yaml:"summary_model"`     // 要約用モデル（例: "Chat"）。空の場合はOllama chatモデルを使用
+}
+
+type KnowledgeRelationConfig struct {
+	Enabled       bool    `yaml:"enabled"`
+	BuildOnImport bool    `yaml:"build_on_import"`
+	MaxHops       int     `yaml:"max_hops"`
+	MinimumScore  float64 `yaml:"minimum_score"`
 }
 
 // HeartbeatConfig はハートビート（定期タスク）の設定

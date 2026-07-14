@@ -83,6 +83,11 @@ func (m *RealConversationManager) SaveWebSearchToKB(ctx context.Context, domain 
 }
 
 func (m *RealConversationManager) SaveL1KnowledgeItem(ctx context.Context, item l1sqlite.L1KnowledgeItem) error {
+	if m != nil && m.knowledgeRelationImportHook != nil {
+		if err := m.knowledgeRelationImportHook(ctx, item); err != nil {
+			log.Printf("SaveL1KnowledgeItem: WARN: knowledge relation build failed for item=%s: %v", item.ID, err)
+		}
+	}
 	if m == nil || m.vectordbStore == nil || m.embedder == nil {
 		return nil
 	}

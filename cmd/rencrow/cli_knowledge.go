@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	knowledgeapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledge"
+	knowledgerelationapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgerelation"
+	domainrelation "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgerelation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 )
 
 func cmdKnowledge() {
@@ -29,6 +32,7 @@ func cmdKnowledge() {
 type knowledgeCLIStore interface {
 	knowledgeapp.StagingStore
 	knowledgeapp.WikiIndexStore
+	knowledgerelationapp.RelationBuildStore
 }
 
 func runKnowledgeCommand(args []string, store knowledgeCLIStore, out io.Writer, errOut io.Writer) int {
@@ -85,11 +89,46 @@ func runKnowledgeCommand(args []string, store knowledgeCLIStore, out io.Writer, 
 		}
 		fmt.Fprintf(out, "indexed knowledge wiki pages: %d (skipped: %d)\n", result.Indexed, result.Skipped)
 		return 0
+	case "relations":
+		return runKnowledgeRelationsCommand(args[1:], store, out, errOut)
 	default:
 		fmt.Fprintf(errOut, "unknown knowledge subcommand: %s\n", subcmd)
-		fmt.Fprintln(errOut, "usage: rencrow knowledge import-core-jsonl <path> | index-wiki [docs/wiki] [--repo-root <path>]")
+		fmt.Fprintln(errOut, "usage: rencrow knowledge import-core-jsonl <path> | index-wiki [docs/wiki] [--repo-root <path>] | relations build [--domain all] [--limit 100] [--dry-run=true]")
 		return 1
 	}
+}
+
+func runKnowledgeRelationsCommand(args []string, store knowledgerelationapp.RelationBuildStore, out io.Writer, errOut io.Writer) int {
+	if len(args) == 0 || strings.ToLower(strings.TrimSpace(args[0])) != "build" {
+		fmt.Fprintln(errOut, "usage: rencrow knowledge relations build [--domain all] [--limit 100] [--dry-run=true] [--json]")
+		return 1
+	}
+	fs := flag.NewFlagSet("knowledge relations build", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	domain := fs.String("domain", "all", "knowledge domain or all")
+	limit := fs.Int("limit", 100, "maximum knowledge items")
+	dryRun := fs.Bool("dry-run", true, "report intended writes without applying them")
+	jsonOut := fs.Bool("json", false, "write JSON report")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 1
+	}
+	if *limit < 1 || *limit > 1000 {
+		fmt.Fprintln(errOut, "limit must be between 1 and 1000")
+		return 1
+	}
+	service := knowledgerelationapp.NewRelationBuildService(store, knowledgerelationapp.NewMetadataExtractor(nil), domainrelation.DefaultScoringConfig())
+	report, err := service.BuildBatch(context.Background(), knowledgerelationapp.BatchQuery{Domain: *domain, Limit: *limit, DryRun: *dryRun})
+	if err != nil {
+		fmt.Fprintf(errOut, "failed to build knowledge relations: %v\n", err)
+		return 1
+	}
+	if *jsonOut {
+		writeJSONCLI(out, report, false)
+		return 0
+	}
+	fmt.Fprintf(out, "knowledge relation build: status=%s dry_run=%t checked=%d entities=%d item_entities=%d relations=%d skipped=%d\n",
+		report.Status, report.DryRun, report.CheckedItems, report.EntityUpserts, report.ItemEntityUpserts, report.RelationUpserts, report.Skipped)
+	return 0
 }
 
 func parseWikiIndexArgs(args []string) (string, string) {

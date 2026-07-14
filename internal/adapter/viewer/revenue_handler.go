@@ -22,6 +22,9 @@ type RevenueLister interface {
 	ListDailyRoutineReports(ctx context.Context, limit int) ([]domainrevenue.DailyRoutineReport, error)
 	ListChannelDrafts(ctx context.Context, limit int) ([]domainrevenue.ChannelDraft, error)
 	ListExternalSendApplyRecords(ctx context.Context, limit int) ([]domainrevenue.ExternalSendApplyRecord, error)
+	ListOpportunities(ctx context.Context, limit int) ([]domainrevenue.Opportunity, error)
+	ListEconomicTasks(ctx context.Context, limit int) ([]domainrevenue.EconomicTask, error)
+	ListEconomicReflections(ctx context.Context, limit int) ([]domainrevenue.EconomicReflection, error)
 }
 
 type RevenueStore interface {
@@ -35,6 +38,9 @@ type RevenueStore interface {
 	SaveDailyRoutineReport(ctx context.Context, item domainrevenue.DailyRoutineReport) error
 	SaveChannelDraft(ctx context.Context, item domainrevenue.ChannelDraft) error
 	SaveExternalSendApplyRecord(ctx context.Context, item domainrevenue.ExternalSendApplyRecord) error
+	SaveOpportunity(ctx context.Context, item domainrevenue.Opportunity) error
+	SaveEconomicTask(ctx context.Context, item domainrevenue.EconomicTask) error
+	SaveEconomicReflection(ctx context.Context, item domainrevenue.EconomicReflection) error
 }
 
 type RevenueHumanDecisionGateReviewRequest struct {

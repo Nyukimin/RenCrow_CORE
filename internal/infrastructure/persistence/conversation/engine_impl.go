@@ -13,12 +13,14 @@ import (
 // RealConversationEngine は ConversationEngine の実装
 // 既存の RealConversationManager をラップし、RecallPack 生成を追加
 type RealConversationEngine struct {
-	manager          domconv.ConversationManager
-	persona          domconv.PersonaState
-	detector         domconv.ThreadBoundaryDetector // nil の場合はスレッド自動検出無効
-	profileExtractor domconv.ProfileExtractor       // nil の場合はプロファイル抽出無効
-	profiles         map[string]domconv.UserProfile // インメモリキャッシュ
-	recallTraceStore domconv.RecallTraceStore
+	manager                  domconv.ConversationManager
+	persona                  domconv.PersonaState
+	detector                 domconv.ThreadBoundaryDetector // nil の場合はスレッド自動検出無効
+	profileExtractor         domconv.ProfileExtractor       // nil の場合はプロファイル抽出無効
+	profiles                 map[string]domconv.UserProfile // インメモリキャッシュ
+	recallTraceStore         domconv.RecallTraceStore
+	knowledgeRelationEnabled bool
+	knowledgeRelationMaxHops int
 }
 
 type conversationEngineExternalRecall interface {
@@ -26,6 +28,7 @@ type conversationEngineExternalRecall interface {
 	SearchKnowledgeItemsFTS(ctx context.Context, domain string, query string, limit int) ([]l1sqlite.L1KnowledgeItem, error)
 	SearchWikiPageIndex(ctx context.Context, query string, limit int) ([]l1sqlite.WikiPageIndexItem, error)
 	SearchKB(ctx context.Context, domain string, query string, topK int) ([]*domconv.Document, error)
+	RelatedKnowledgeItems(ctx context.Context, itemID string, maxHop int, limit int) ([]l1sqlite.L1KnowledgeRelationHit, error)
 }
 
 type conversationEngineRecallTraceRecorder interface {
@@ -58,6 +61,18 @@ func (e *RealConversationEngine) WithProfileExtractor(pe domconv.ProfileExtracto
 
 func (e *RealConversationEngine) WithRecallTraceStore(store domconv.RecallTraceStore) *RealConversationEngine {
 	e.recallTraceStore = store
+	return e
+}
+
+func (e *RealConversationEngine) WithKnowledgeRelationRecall(maxHops int) *RealConversationEngine {
+	if maxHops < 1 {
+		maxHops = 1
+	}
+	if maxHops > 2 {
+		maxHops = 2
+	}
+	e.knowledgeRelationEnabled = true
+	e.knowledgeRelationMaxHops = maxHops
 	return e
 }
 
@@ -143,6 +158,9 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 				}
 			}
 		}
+		if e.knowledgeRelationEnabled && len(items) > 0 {
+			e.expandKnowledgeRelations(ctx, externalRecall, items, pack)
+		}
 
 		wikiItems, err := externalRecall.SearchWikiPageIndex(ctx, userMessage, 3)
 		if err != nil {
@@ -183,6 +201,44 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 	budgeted := pack.ApplyRecallBudget(pack.Constraints.MaxTotalTokens, pack.Constraints.RecallBudgetRatio)
 	e.saveBeginTurnRecallTrace(ctx, sessionID, userMessage, &budgeted, "completed")
 	return &budgeted, nil
+}
+
+func (e *RealConversationEngine) expandKnowledgeRelations(ctx context.Context, recall conversationEngineExternalRecall, seeds []l1sqlite.L1KnowledgeItem, pack *domconv.RecallPack) {
+	if pack == nil || recall == nil {
+		return
+	}
+	seen := make(map[string]bool, len(seeds))
+	for _, seed := range seeds {
+		seen[seed.ID] = true
+	}
+	for _, seed := range seeds {
+		hits, err := recall.RelatedKnowledgeItems(ctx, seed.ID, e.knowledgeRelationMaxHops, 3)
+		if err != nil {
+			log.Printf("[ConversationEngine] WARN: Knowledge Relation lookup failed for item=%s: %v", seed.ID, err)
+			continue
+		}
+		for _, hit := range hits {
+			if seen[hit.Item.ID] {
+				continue
+			}
+			seen[hit.Item.ID] = true
+			summary := strings.TrimSpace(hit.Item.SummaryDraft)
+			if summary == "" {
+				summary = strings.TrimSpace(hit.Item.RawText)
+			}
+			if summary == "" {
+				continue
+			}
+			pack.RelationSnippets = append(pack.RelationSnippets, domconv.RelationSnippet{
+				ItemID: hit.Item.ID, Title: hit.Item.Title, Summary: summary, SourceType: hit.Item.Domain,
+				RelationType: hit.RelationType, Score: hit.Score, Evidence: hit.Evidence, Hop: hit.Hop,
+				Roles: []string{"chat", "worker", "coder"},
+			})
+			if len(pack.RelationSnippets) >= 3 {
+				return
+			}
+		}
+	}
 }
 
 func (e *RealConversationEngine) saveBeginTurnRecallTrace(ctx context.Context, sessionID string, userMessage string, pack *domconv.RecallPack, status string) {

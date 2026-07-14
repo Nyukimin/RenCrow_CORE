@@ -63,32 +63,47 @@ func BuildPairRelations(src ItemMetadata, dst ItemMetadata, cfg ScoringConfig) [
 	}
 	cfg = normalizeScoringConfig(cfg)
 	now := cfg.Now().UTC()
+	type match struct {
+		relationType string
+		score        float64
+		evidence     string
+	}
+	matches := []match{}
+	addMatch := func(relationType string, score float64, evidence string) {
+		matches = append(matches, match{relationType: relationType, score: score, evidence: evidence})
+	}
+	if common := firstCommon(src.Entities, dst.Entities); common != "" {
+		addMatch(RelationSameEntity, cfg.SameEntityScore, "same entity: "+common)
+	}
+	if common := firstCommon(src.Projects, dst.Projects); common != "" {
+		addMatch(RelationSameProject, cfg.SameProjectScore, "same project: "+common)
+	}
+	if common := firstCommon(src.Topics, dst.Topics); common != "" {
+		addMatch(RelationSameTopic, cfg.SameTopicScore, "same topic: "+common)
+	}
+	if sameNonEmpty(src.Author, dst.Author) {
+		addMatch(RelationSameAuthor, cfg.SameAuthorScore, "same author: "+strings.TrimSpace(src.Author))
+	}
+	totalScore := 0.0
+	evidenceParts := make([]string, 0, len(matches))
+	for _, item := range matches {
+		totalScore += item.score
+		evidenceParts = append(evidenceParts, item.evidence)
+	}
+	if totalScore < cfg.MinimumScore || len(matches) == 0 {
+		return nil
+	}
 	var relations []Relation
-	add := func(relationType string, score float64, evidence string) {
-		if score < cfg.MinimumScore {
-			return
-		}
+	for _, item := range matches {
 		relations = append(relations, Relation{
 			SrcItemID:    src.ItemID,
 			DstItemID:    dst.ItemID,
-			RelationType: relationType,
-			Score:        score,
-			Evidence:     evidence,
+			RelationType: item.relationType,
+			Score:        totalScore,
+			Evidence:     strings.Join(evidenceParts, "; "),
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		})
-	}
-	if common := firstCommon(src.Entities, dst.Entities); common != "" {
-		add(RelationSameEntity, cfg.SameEntityScore, "same entity: "+common)
-	}
-	if common := firstCommon(src.Projects, dst.Projects); common != "" {
-		add(RelationSameProject, cfg.SameProjectScore, "same project: "+common)
-	}
-	if common := firstCommon(src.Topics, dst.Topics); common != "" {
-		add(RelationSameTopic, cfg.SameTopicScore, "same topic: "+common)
-	}
-	if sameNonEmpty(src.Author, dst.Author) {
-		add(RelationSameAuthor, cfg.SameAuthorScore, "same author: "+strings.TrimSpace(src.Author))
 	}
 	return relations
 }
