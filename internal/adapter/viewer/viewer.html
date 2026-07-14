@@ -426,6 +426,18 @@
         </nav>
       </header>
       <div class="ops-triage-grid" id="opsTriageCards"></div>
+      <section class="ops-section ops-to-be-section" aria-labelledby="toBeOpsTitle">
+        <div class="ops-section-title">
+          <span id="toBeOpsTitle">To-Be Summary</span>
+          <small>Advisor / Relation / Economic / Approval / Trace</small>
+        </div>
+        <div class="ops-to-be-grid" id="toBeOpsSummary" aria-live="polite" aria-busy="false">
+          <article class="ops-to-be-block status-unavailable" data-to-be-loading="true">
+            <header class="ops-to-be-head"><h3>To-Be services</h3><span class="ops-to-be-status">loading</span></header>
+            <p class="ops-to-be-loading">Safe summaries are loading.</p>
+          </article>
+        </div>
+      </section>
       <section class="ops-section">
         <div class="ops-section-title">
           <span>Current Focus</span>
@@ -1469,6 +1481,7 @@
 </div>
 
 <script src="/viewer/assets/js/tabs/ops.js?v=20260702-game-bridge-card" defer></script>
+<script src="/viewer/assets/js/tabs/to-be-ops.js?v=20260714-to-be-summary" defer></script>
 <script src="/viewer/assets/js/tabs/home.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/develop.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/instructions.js?v=20260517-desk-regenerated" defer></script>

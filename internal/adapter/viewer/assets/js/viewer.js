@@ -1318,6 +1318,7 @@ function switchTab(tab) {
   if (tab === 'ops') {
     refreshSandboxData();
     refreshRuntimeBlockedRouteData();
+    if (typeof refreshToBeOpsData === 'function') refreshToBeOpsData();
   }
   if (tab === 'games' && typeof refreshGameBridgeData === 'function') {
     refreshGameBridgeData();
@@ -3690,6 +3691,7 @@ function refreshOptionalPanelData() {
   if (shouldRefreshOpsPanelDiagnostics()) {
     refreshSandboxData();
     refreshRuntimeBlockedRouteData();
+    if (typeof refreshToBeOpsData === 'function') refreshToBeOpsData();
   }
   if (shouldRefreshEvidencePanelDiagnostics()) {
     refreshVerification();
@@ -3717,6 +3719,7 @@ function setOptionalPanelRefreshIntervals() {
   setInterval(refreshKnowledgeMemoryData, 5000);
   setInterval(() => { if (typeof refreshHobbyGraphOverviewData === 'function') refreshHobbyGraphOverviewData(); }, 5000);
   setInterval(() => { if (shouldRefreshOpsPanelDiagnostics()) refreshRuntimeBlockedRouteData(); }, 5000);
+  setInterval(() => { if (shouldRefreshOpsPanelDiagnostics() && typeof refreshToBeOpsData === 'function') refreshToBeOpsData(); }, 15000);
   setInterval(refreshEvidence, 5000);
   setInterval(refreshEvidenceSummary, 5000);
   setInterval(() => { if (shouldRefreshEvidencePanelDiagnostics()) refreshVerification(); }, 5000);

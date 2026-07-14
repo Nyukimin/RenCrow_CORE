@@ -18,6 +18,31 @@
 .ops-triage-card.state-thinking{border-color:rgba(251,191,36,.42);background:linear-gradient(180deg,rgba(99,73,18,.25),rgba(255,255,255,.035))}
 .ops-triage-card.state-error{border-color:rgba(248,113,113,.52);background:linear-gradient(180deg,rgba(96,28,35,.30),rgba(255,255,255,.035))}
 .ops-triage-card.state-offline{border-color:rgba(148,163,184,.32);background:rgba(255,255,255,.035)}
+.ops-to-be-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.ops-to-be-block{display:flex;flex-direction:column;min-width:0;border:1px solid var(--border);border-radius:16px;background:rgba(255,255,255,.04);padding:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.06);overflow:hidden}
+.ops-to-be-block.status-ok{border-color:rgba(74,222,128,.38);background:linear-gradient(180deg,rgba(18,72,48,.22),rgba(255,255,255,.035))}
+.ops-to-be-block.status-warning{border-color:rgba(251,191,36,.42);background:linear-gradient(180deg,rgba(99,73,18,.22),rgba(255,255,255,.035))}
+.ops-to-be-block.status-blocked{border-color:rgba(248,113,113,.50);background:linear-gradient(180deg,rgba(96,28,35,.28),rgba(255,255,255,.035))}
+.ops-to-be-block.status-unavailable{border-color:rgba(148,163,184,.32);background:rgba(255,255,255,.03)}
+.ops-to-be-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:10px}
+.ops-to-be-head h3{min-width:0;margin:0;color:var(--t1);font-size:13px;line-height:1.35;overflow-wrap:anywhere}
+.ops-to-be-status{flex:none;border:1px solid currentColor;border-radius:999px;padding:3px 6px;color:var(--t2);font-size:9px;font-weight:800;letter-spacing:.04em;line-height:1;text-transform:uppercase}
+.status-ok .ops-to-be-status{color:var(--ok)}
+.status-warning .ops-to-be-status{color:var(--warn)}
+.status-blocked .ops-to-be-status{color:var(--err)}
+.ops-to-be-metrics{display:grid;grid-template-columns:minmax(0,1fr);gap:0;margin:0 0 10px}
+.ops-to-be-metric{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0;border-top:1px solid rgba(255,255,255,.06);padding:5px 0}
+.ops-to-be-metric:first-child{border-top:0}
+.ops-to-be-metric dt{min-width:0;color:var(--t2);font-size:10px;line-height:1.3;overflow-wrap:anywhere}
+.ops-to-be-metric dd{min-width:0;margin:0;color:var(--t1);font-size:12px;font-weight:800;line-height:1.3;text-align:right;overflow-wrap:anywhere}
+.ops-to-be-details{margin-top:auto;border-top:1px solid rgba(255,255,255,.08);padding-top:7px;min-width:0}
+.ops-to-be-details>summary{min-height:36px;display:flex;align-items:center;cursor:pointer;color:var(--t2);font-size:10px;font-weight:750;line-height:1.35;list-style:none;overflow-wrap:anywhere}
+.ops-to-be-details>summary::-webkit-details-marker{display:none}
+.ops-to-be-details>summary::after{content:'+';margin-left:auto;padding-left:6px;color:var(--t2)}
+.ops-to-be-details[open]>summary::after{content:'-'}
+.ops-to-be-detail-body{min-width:0;color:var(--t2);font-size:10px;line-height:1.45;overflow-wrap:anywhere}
+.ops-to-be-detail-body ul{display:flex;flex-direction:column;gap:5px;margin:5px 0 0;padding-left:16px}
+.ops-to-be-detail-body p,.ops-to-be-loading{margin:5px 0 0;color:var(--t2);font-size:10px;line-height:1.45;overflow-wrap:anywhere}
 .ops-triage-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 .ops-triage-title{font-size:11px;font-weight:800;color:var(--t2);text-transform:uppercase}
 .ops-triage-dot{width:9px;height:9px;border-radius:999px;background:var(--t2);box-shadow:0 0 0 3px rgba(255,255,255,.04)}
@@ -78,11 +103,13 @@ body.theme-compact .ops-big{font-size:17px}
   .ops-hero{align-items:flex-start;flex-direction:column}
   .ops-quick-nav{justify-content:flex-start}
   .ops-triage-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ops-to-be-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
 @media (max-width: 640px){
   .ops-grid,.llm-memory-grid,.llm-memory-process-grid,.llm-runtime-grid{grid-template-columns:minmax(0,1fr)}
   .ops-triage-grid{grid-template-columns:minmax(0,1fr)}
+  .ops-to-be-grid{grid-template-columns:minmax(0,1fr)}
   .ops-hero{border-radius:14px;padding:14px}
   .ops-hero-title{font-size:20px}
   .ops-section-title{align-items:flex-start;flex-direction:column;gap:2px}
