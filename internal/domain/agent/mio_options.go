@@ -39,3 +39,15 @@ func (m *MioAgent) WithSystemPrompt(prompt string) *MioAgent {
 	m.systemPrompt = strings.TrimSpace(prompt)
 	return m
 }
+
+func (m *MioAgent) WithViewerRecipientPrompts(prompts map[string]string) *MioAgent {
+	m.viewerPrompts = make(map[string]string, len(prompts))
+	for name, prompt := range prompts {
+		name = strings.ToLower(strings.TrimSpace(name))
+		prompt = strings.TrimSpace(prompt)
+		if name != "" && prompt != "" {
+			m.viewerPrompts[name] = prompt
+		}
+	}
+	return m
+}

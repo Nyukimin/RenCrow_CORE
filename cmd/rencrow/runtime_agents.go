@@ -51,7 +51,8 @@ func buildAgentRuntime(
 	subagentMgr *subagent.Manager,
 ) agentRuntime {
 	mioAgent := agent.NewMioAgent(chatProvider, classifier, ruleDictionary, chatToolRunner, mcpClient, convEngine).
-		WithSystemPrompt(cfg.Prompts.MioPersona)
+		WithSystemPrompt(cfg.Prompts.MioPersona).
+		WithViewerRecipientPrompts(cfg.Prompts.CharacterPrompts)
 	if recentGlossaryContext != nil {
 		mioAgent = mioAgent.WithRecentContextProvider(recentGlossaryContext)
 		log.Printf("Mio: Glossary context injected")

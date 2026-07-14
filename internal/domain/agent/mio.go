@@ -60,6 +60,7 @@ type MioAgent struct {
 	personaEditor      PersonaEditor                   // ペルソナ自己編集用（nilを許容）
 	recentContext      func(context.Context, int) (string, error)
 	systemPrompt       string
+	viewerPrompts      map[string]string
 }
 
 // NewMioAgent は新しいMioAgentを作成
@@ -182,8 +183,8 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 
 	// === v5.1: ConversationEngine による RecallPack 生成 ===
 	var messages []llm.Message
-	if m.systemPrompt != "" {
-		messages = append(messages, llm.Message{Role: "system", Content: m.systemPrompt})
+	if systemPrompt := m.systemPromptForViewerRecipient(t.ViewerRecipient()); systemPrompt != "" {
+		messages = append(messages, llm.Message{Role: "system", Content: systemPrompt})
 	}
 	var recallPack *conversation.RecallPack
 	if m.conversationEngine != nil {
@@ -317,6 +318,16 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 	}
 
 	return response, nil
+}
+
+func (m *MioAgent) systemPromptForViewerRecipient(recipient string) string {
+	recipient = strings.ToLower(strings.TrimSpace(recipient))
+	if recipient != "" && recipient != "mio" {
+		if prompt := strings.TrimSpace(m.viewerPrompts[recipient]); prompt != "" {
+			return prompt
+		}
+	}
+	return m.systemPrompt
 }
 
 func viewerRecipientSystemPrompt(recipient, userMessage string) string {

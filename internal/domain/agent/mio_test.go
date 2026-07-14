@@ -376,6 +376,39 @@ func TestMioAgentChat_UsesViewerRecipientSystemPromptWithoutChangingUserMessage(
 	}
 }
 
+func TestMioAgentChat_UsesFullShiroPromptForShiroChat(t *testing.T) {
+	var gotReq llm.GenerateRequest
+	llmProvider := &mockLLMProvider{
+		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+			gotReq = req
+			return llm.GenerateResponse{Content: "Shiroです"}, nil
+		},
+	}
+	mio := NewMioAgent(
+		llmProvider,
+		&mockClassifier{},
+		&mockRuleDictionary{},
+		&mockToolRunner{},
+		&mockMCPClient{},
+		nil,
+	).WithSystemPrompt("Mio full prompt").WithViewerRecipientPrompts(map[string]string{
+		"shiro": "Shiro full prompt",
+	})
+
+	task := task.NewTask(task.NewJobID(), "名前を答えて", "viewer", "viewer-user").WithViewerRecipient("shiro")
+	if _, err := mio.Chat(context.Background(), task); err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+	if len(gotReq.Messages) == 0 || gotReq.Messages[0].Role != "system" || gotReq.Messages[0].Content != "Shiro full prompt" {
+		t.Fatalf("expected full Shiro prompt first, got %#v", gotReq.Messages)
+	}
+	for _, msg := range gotReq.Messages {
+		if msg.Role == "system" && strings.Contains(msg.Content, "Mio full prompt") {
+			t.Fatalf("Mio prompt leaked into Shiro chat: %#v", gotReq.Messages)
+		}
+	}
+}
+
 // === mockConversationEngine ===
 
 type mockConversationEngine struct {
