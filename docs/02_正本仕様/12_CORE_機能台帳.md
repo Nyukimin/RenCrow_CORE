@@ -1,5 +1,9 @@
 # CORE 機能台帳
 
+- status: canonical
+- canonical_path: `docs/02_正本仕様/12_CORE_機能台帳.md`
+- promoted_at: 2026-07-14
+
 ## 1. 目的
 
 本台帳は、RenCrow_CORE に存在する機能を、次の観点で混同しないための索引である。
@@ -14,7 +18,7 @@ legacy-body
 対象外
 ```
 
-詳細な実装証跡、E2E 状態、個別補足は `13_実装項目インベントリ.md` を参照する。本台帳はそれを置き換えない。
+詳細な実装証跡、E2E 状態、個別補足は `docs/refs/10_新仕様/13_実装項目インベントリ.md` を参照する。本台帳はそれを置き換えない。
 
 ## 2. 状態定義
 
@@ -34,7 +38,7 @@ legacy-body
 - `internal/features/<id>` だけがある機能は `facade_only` または `implemented` とする。
 - domain / application / persistence があり、runtime route / service wiring がある機能は `implemented` とする。
 - 実装本体が `cmd/rencrow`、`internal/application`、`internal/infrastructure`、`internal/adapter` に残るものは、必要に応じて `legacy_body` を併記する。
-- `95_RenCrow_ToBe_統合仕様と実装方針.md` で新たに定義した `advisor`、`agent_profile`、`knowledge_relation`、`economic_objective` は、MVP 実装後に `implemented` とし、未接続の runtime / Viewer / batch は備考に残す。
+- `10_RenCrow_ToBe_統合仕様.md` で新たに定義した `advisor`、`agent_profile`、`knowledge_relation`、`economic_objective` は、MVP 実装後に `implemented` とし、未接続の runtime / Viewer / batch は備考に残す。
 - CORE が接続先を管理するだけで、本体が外部 repo / server / data store にあるものは `out_of_scope` または接続機能として台帳化する。
 
 ## 4. 公開 module contract 台帳
@@ -111,10 +115,10 @@ legacy-body
 
 | Feature | State | 仕様 | 実装予定 package | 初回作業 |
 | --- | --- | --- | --- | --- |
-| `advisor` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md`, `97_Advisor_AgentProfile接続実装仕様.md` | `internal/domain/advisor`, `internal/application/advisor` | Codex を AdvisorService 経由にするMVP。Shiro wiring 済み。persistence / score集計は `97` |
-| `agent_profile` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md`, `97_Advisor_AgentProfile接続実装仕様.md` | `internal/domain/agentprofile`, `internal/application/agentprofile` | 8人格の静的 profile と AutonomyEnvelope MVP。runtime policy 反映は `97` |
-| `knowledge_relation` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md`, `98_KnowledgeRelation接続実装仕様.md` | `internal/domain/knowledgerelation`, `internal/application/knowledgerelation`, `persistence/conversation/l1sqlite` | `l1_knowledge_entity` / `l1_knowledge_item_entity` / `l1_knowledge_item_relation` と RecallPack relation snippet MVP。import / batch / runtime expansion は `98` |
-| `economic_objective` | `implemented` | `95_RenCrow_ToBe_統合仕様と実装方針.md`, `99_EconomicObjective接続実装仕様.md` | `internal/domain/revenue`, `internal/application/revenue`, `persistence/revenue` | Opportunity / EconomicTask / Reflection と approval-required task guard MVP。scheduler / approval UI 接続は `99` |
+| `advisor` | `implemented` | `10_RenCrow_ToBe_統合仕様.md`, `../04_構築指標/03_Advisor_AgentProfile接続実装仕様.md` | `internal/domain/advisor`, `internal/application/advisor` | Codex を AdvisorService 経由にするMVP。Shiro wiring 済み。persistence / score集計は `03` |
+| `agent_profile` | `implemented` | `10_RenCrow_ToBe_統合仕様.md`, `../04_構築指標/03_Advisor_AgentProfile接続実装仕様.md` | `internal/domain/agentprofile`, `internal/application/agentprofile` | 8人格の静的 profile と AutonomyEnvelope MVP。runtime policy 反映は `03` |
+| `knowledge_relation` | `implemented` | `10_RenCrow_ToBe_統合仕様.md`, `../04_構築指標/04_KnowledgeRelation接続実装仕様.md` | `internal/domain/knowledgerelation`, `internal/application/knowledgerelation`, `persistence/conversation/l1sqlite` | `l1_knowledge_entity` / `l1_knowledge_item_entity` / `l1_knowledge_item_relation` と RecallPack relation snippet MVP。import / batch / runtime expansion は `04` |
+| `economic_objective` | `implemented` | `10_RenCrow_ToBe_統合仕様.md`, `../04_構築指標/05_EconomicObjective接続実装仕様.md` | `internal/domain/revenue`, `internal/application/revenue`, `persistence/revenue` | Opportunity / EconomicTask / Reflection と approval-required task guard MVP。scheduler / approval UI 接続は `05` |
 
 ## 8. CORE 対象外 / 外部正本
 
@@ -130,17 +134,17 @@ legacy-body
 
 ## 9. 実装順
 
-本台帳以降の作業順は `95_RenCrow_ToBe_統合仕様と実装方針.md` に従う。
+本台帳以降の作業順は `11_RenCrow_ToBe_統合実装仕様.md` に従う。
 
 ```text
 1. Advisor MVP（MVP実装済み。persistence / score集計は後続）
 2. Agent Profile MVP（静的catalog実装済み。runtime policy 反映は後続）
 3. Knowledge Relation MVP（MVP実装済み。importer / batch / 1-2 hop runtime expansion は後続）
 4. Economic Objective MVP（MVP実装済み。scheduler / Viewer / approval UI 接続は後続）
-5. Advisor / AgentProfile 接続（`97`）
-6. Knowledge Relation 接続（`98`）
-7. Economic Objective 接続（`99`）
-8. Viewer / Ops 表示（`100`）
+5. Advisor / AgentProfile 接続（`04_構築指標/03`）
+6. Knowledge Relation 接続（`04_構築指標/04`）
+7. Economic Objective 接続（`04_構築指標/05`）
+8. Viewer / Ops 表示（`04_構築指標/06`）
 ```
 
 ただし、各 Phase では次を守る。
@@ -158,5 +162,5 @@ legacy-body
 - `internal/features/*` が列挙されている。
 - 各 feature に owner package と state がある。
 - `advisor`、`agent_profile`、`knowledge_relation`、`economic_objective` が MVP 実装状態として登録され、後続接続が明記されている。
-- `13_実装項目インベントリ.md` と役割が分かれている。
+- `docs/refs/10_新仕様/13_実装項目インベントリ.md` と役割が分かれている。
 - MVP 実装時は domain / application / persistence / runtime wiring の変更が対象 feature に限定されている。

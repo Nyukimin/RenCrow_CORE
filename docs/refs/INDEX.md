@@ -17,6 +17,7 @@
 | codebase summary | `codebase-map/RUN_SUMMARY.md` | 実装と仕様の乖離や解析結果を確認するとき |
 | codebase modules | `codebase-map/modules/` | 影響範囲を module 単位で確認するとき |
 | new specs overview | `10_新仕様/00_README.md` | 新仕様フォルダ全体の位置づけを確認するとき |
+| To-Be canonical specs | `../02_正本仕様/10_RenCrow_ToBe_統合仕様.md` | Advisor、Knowledge Relation、Economic Objective、Ops の正本仕様を確認するとき |
 | Chat / Worker / Coder | `10_新仕様/04_Chat_Worker_Coder仕様.md` | Agent 境界、CODE1-4、Shiro 経由実行を確認するとき |
 | Runtime topology | `10_新仕様/90_Runtime_Topology_Config仕様.md` | config.yaml を topology map として扱う判断を確認するとき |
 | Viewer | `09_Viewer/Viewer仕様.md` | Viewer UI / 表示 / 入力の詳細を確認するとき |

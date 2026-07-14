@@ -2,65 +2,66 @@
 
 ## このフォルダの役割
 
-`docs/10_新仕様/` は、RenCrow の現行正本仕様 `docs/01_正本仕様/` とリファクタリング結果を統合した、新規リポジトリ移行用の最新仕様セットである。
+`docs/refs/10_新仕様/` は、新規リポジトリ移行時に参照した新仕様・移行仕様の補助資料置き場である。現在の正本入口は `docs/README.md`、正本仕様の置き場は `docs/02_正本仕様/` とする。
 
-新規リポジトリへ RenCrow を移す場合は、このフォルダを仕様入口として持っていく。旧リポジトリ内では `docs/01_正本仕様/` が履歴上の正本仕様として残るが、移行先で読むべき最新の整理済み仕様はこのフォルダである。
+2026-07-14 に作成した旧 95～100 は、正本仕様と分割後の構築資料を区別し、`docs/02_正本仕様/10`～`12` と `docs/04_構築指標/03`～`06` に再編済みである。本フォルダ内の残る文書は、正本を補足する reference として扱う。
 
-現行実装判断は `docs/10_新仕様/` を入口にする。旧 docs は履歴参照であり、現行実装として必要な項目は `13_実装項目インベントリ.md` と該当仕様文書へ反映する。
+現行実装判断は `docs/02_正本仕様/` を先に読み、そこだけで判断できない場合に本フォルダの `13_実装項目インベントリ.md` などを補助参照する。
 
 ## 統合元
 
-- `docs/01_正本仕様/`
-- `docs/refactor/リファクタリング指針.md`
-- `docs/refactor/フォルダ構成方針.md`
-- `docs/refactor/検証方針.md`
+- 旧 `docs/01_正本仕様/`
+- 旧 `docs/refactor/リファクタリング指針.md`
+- 旧 `docs/refactor/フォルダ構成方針.md`
+- 旧 `docs/refactor/検証方針.md`
 - 現在の実装コード
 
-旧 `docs/codebase-map/` と Phase 系中間文書は削除済みであり、現行実装判断では参照しない。実装と矛盾する場合は、現在のコードとこの新仕様群を優先する。
+本フォルダの参照資料と `docs/02_正本仕様/` が矛盾する場合は、参照資料を自動採用せず、正本と現在の実装コードを調査して判断する。
 
 ## 読み順
 
 1. `01_新仕様_概要.md`
 2. `02_モジュール構成仕様.md`
 3. `90_Runtime_Topology_Config仕様.md`
-4. `95_RenCrow_ToBe_統合仕様と実装方針.md`
-5. `96_CORE_機能台帳.md`
-6. `97_Advisor_AgentProfile接続実装仕様.md`
-7. `98_KnowledgeRelation接続実装仕様.md`
-8. `99_EconomicObjective接続実装仕様.md`
-9. `100_ToBe_Ops表示実装仕様.md`
-10. `03_モジュール関係図.html`
-11. `04_Chat_Worker_Coder仕様.md`
-12. `05_Viewer仕様.md`
-13. `06_IdleChat仕様.md`
-14. `07_STT_TTS仕様.md`
-15. `08_LLM_provider仕様.md`
-16. `09_Memory_SourceRegistry仕様.md`
-17. `89_RenCrow_Knowledge_Wiki運用仕様.md`
-18. `10_検証仕様.md`
-19. `11_分割再設計候補.md`
-20. `12_新規リポジトリ移行方針.md`
-21. `13_実装項目インベントリ.md`
-22. `18_知識記憶システム構想.md`
-23. `19_DCI_直接コーパス探索仕様.md`
-24. `20_Tool_Harness_Contract_Mediation仕様.md`
-25. `21_AI_Native_Engineering_Workflow仕様.md`
-26. `22_Revenue_Operating_Principles仕様.md`
-27. `23_Workstream_Operating_Loop仕様.md`
-28. `24_Agent_Skill_Governance仕様.md`
-29. `25_Codebase_Complexity_Hotspot_Skill仕様.md`
-30. `26_Persona_Lore_and_Mutual_Observation仕様.md`
-31. `27_Browser_Trace_to_API_Discovery仕様.md`
-32. `28_SuperAgent_Harness_Reference_DeerFlow仕様.md`
-33. `29_Sandbox_Promotion_Gate仕様.md`
-34. `30_未実装項目実装仕様作成プロンプト.md`
-35. `31_未実装項目実装仕様.md`
-36. `32_E2E_runtime確認チェックリスト.md`
-37. `33_現状残課題整理作業手順書.md`
-38. `34_現状残課題クリア実装手順書.md`
-39. `49_Movie_Graph_Mio_Topic仕様.md`
-40. `50_Hobby_Graph_Mio_Topic仕様.md`
-41. `51_Movie_Watch_Event実装仕様.md`
+4. `../../02_正本仕様/10_RenCrow_ToBe_統合仕様.md`
+5. `../../02_正本仕様/11_RenCrow_ToBe_統合実装仕様.md`
+6. `../../02_正本仕様/12_CORE_機能台帳.md`
+7. `../../04_構築指標/03_Advisor_AgentProfile接続実装仕様.md`
+8. `../../04_構築指標/04_KnowledgeRelation接続実装仕様.md`
+9. `../../04_構築指標/05_EconomicObjective接続実装仕様.md`
+10. `../../04_構築指標/06_ToBe_Ops表示実装仕様.md`
+11. `03_モジュール関係図.html`
+12. `04_Chat_Worker_Coder仕様.md`
+13. `05_Viewer仕様.md`
+14. `06_IdleChat仕様.md`
+15. `07_STT_TTS仕様.md`
+16. `08_LLM_provider仕様.md`
+17. `09_Memory_SourceRegistry仕様.md`
+18. `89_RenCrow_Knowledge_Wiki運用仕様.md`
+19. `10_検証仕様.md`
+20. `11_分割再設計候補.md`
+21. `12_新規リポジトリ移行方針.md`
+22. `13_実装項目インベントリ.md`
+23. `18_知識記憶システム構想.md`
+24. `19_DCI_直接コーパス探索仕様.md`
+25. `20_Tool_Harness_Contract_Mediation仕様.md`
+26. `21_AI_Native_Engineering_Workflow仕様.md`
+27. `22_Revenue_Operating_Principles仕様.md`
+28. `23_Workstream_Operating_Loop仕様.md`
+29. `24_Agent_Skill_Governance仕様.md`
+30. `25_Codebase_Complexity_Hotspot_Skill仕様.md`
+31. `26_Persona_Lore_and_Mutual_Observation仕様.md`
+32. `27_Browser_Trace_to_API_Discovery仕様.md`
+33. `28_SuperAgent_Harness_Reference_DeerFlow仕様.md`
+34. `29_Sandbox_Promotion_Gate仕様.md`
+35. `30_未実装項目実装仕様作成プロンプト.md`
+36. `31_未実装項目実装仕様.md`
+37. `32_E2E_runtime確認チェックリスト.md`
+38. `33_現状残課題整理作業手順書.md`
+39. `34_現状残課題クリア実装手順書.md`
+40. `49_Movie_Graph_Mio_Topic仕様.md`
+41. `50_Hobby_Graph_Mio_Topic仕様.md`
+42. `51_Movie_Watch_Event実装仕様.md`
 
 ## 文書一覧
 
@@ -70,12 +71,13 @@
 | `01_新仕様_概要.md` | RenCrow の目的、原則、主要コンポーネントの位置づけ |
 | `02_モジュール構成仕様.md` | Clean Architecture 風の層、主要実装箇所、仕様変更時に触る場所 |
 | `90_Runtime_Topology_Config仕様.md` | `~/.rencrow/config.yaml` を module 配置と接続先の設計図として扱い、IP / host から endpoint を導出する runtime topology 仕様 |
-| `95_RenCrow_ToBe_統合仕様と実装方針.md` | RenCrow のあるべき全体仕様、Agent / Advisor / Tool、Knowledge Relation、Economic Objective、実装 Phase、テスト条件を統合した実装方針 |
-| `96_CORE_機能台帳.md` | CORE の公開 contract、feature facade、legacy-body、To-Be 追加概念、CORE 対象外を状態付きで整理する機能台帳 |
-| `97_Advisor_AgentProfile接続実装仕様.md` | Advisor 永続化、score、registry、AgentProfile runtime policy 接続を扱う後続実装仕様 |
-| `98_KnowledgeRelation接続実装仕様.md` | Knowledge Relation の import hook、batch、1-2 hop recall expansion、Viewer read API を扱う後続実装仕様 |
-| `99_EconomicObjective接続実装仕様.md` | Opportunity / EconomicTask / Reflection を Revenue / Workstream / Approval / Heartbeat へ接続する後続実装仕様 |
-| `100_ToBe_Ops表示実装仕様.md` | Advisor、AgentProfile、Knowledge Relation、Economic Objective を Ops / Viewer に要約表示する後続実装仕様 |
+| `../../02_正本仕様/10_RenCrow_ToBe_統合仕様.md` | 正本仕様。RenCrow のあるべき全体像、Agent / Advisor / Tool、Knowledge Relation、Economic Objective、Runtime flow を定義する |
+| `../../02_正本仕様/11_RenCrow_ToBe_統合実装仕様.md` | 正本実装仕様。To-Be の実装 Phase、実装順、テスト、移行、受入条件を定義する |
+| `../../02_正本仕様/12_CORE_機能台帳.md` | 正本。CORE の公開 contract、feature facade、legacy-body、To-Be 追加概念、CORE 対象外を状態付きで整理する機能台帳 |
+| `../../04_構築指標/03_Advisor_AgentProfile接続実装仕様.md` | 構築指標。Advisor 永続化、score、registry、AgentProfile runtime policy 接続を扱う分割後の実装仕様 |
+| `../../04_構築指標/04_KnowledgeRelation接続実装仕様.md` | 構築指標。Knowledge Relation の import hook、batch、1-2 hop recall expansion、Viewer read API を扱う分割後の実装仕様 |
+| `../../04_構築指標/05_EconomicObjective接続実装仕様.md` | 構築指標。Opportunity / EconomicTask / Reflection を Revenue / Workstream / Approval / Heartbeat へ接続する分割後の実装仕様 |
+| `../../04_構築指標/06_ToBe_Ops表示実装仕様.md` | 構築指標。Advisor、AgentProfile、Knowledge Relation、Economic Objective を Ops / Viewer に要約表示する分割後の実装仕様 |
 | `03_モジュール関係図.html` | モジュールの意味とつながりを概要図から詳細図まで示す HTML 図解 |
 | `04_Chat_Worker_Coder仕様.md` | Chat / Worker / Coder の責務、route chain、plan / patch / execution 境界 |
 | `05_Viewer仕様.md` | Viewer 表示、SSE event、log、history、audio trigger の契約 |

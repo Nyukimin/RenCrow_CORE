@@ -1,5 +1,11 @@
 # Knowledge Relation 接続実装仕様
 
+- status: active
+- document_type: implementation_spec
+- path: `docs/04_構築指標/04_KnowledgeRelation接続実装仕様.md`
+- source_spec: `docs/02_正本仕様/10_RenCrow_ToBe_統合仕様.md`
+- last_reviewed: 2026-07-14
+
 ## 1. 目的
 
 本仕様は、`knowledge_relation` MVP を Knowledge import、batch、Recall runtime へ接続するための実装仕様である。

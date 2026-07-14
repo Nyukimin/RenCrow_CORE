@@ -1,5 +1,11 @@
 # Economic Objective 接続実装仕様
 
+- status: active
+- document_type: implementation_spec
+- path: `docs/04_構築指標/05_EconomicObjective接続実装仕様.md`
+- source_spec: `docs/02_正本仕様/10_RenCrow_ToBe_統合仕様.md`
+- last_reviewed: 2026-07-14
+
 ## 1. 目的
 
 本仕様は、`economic_objective` MVP を Revenue / Workstream / Approval / Heartbeat へ接続し、半自律の収益候補生成を draft-only で運用できる状態にするための実装仕様である。

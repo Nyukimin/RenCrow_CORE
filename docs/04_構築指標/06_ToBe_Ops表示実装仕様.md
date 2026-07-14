@@ -1,5 +1,11 @@
 # To-Be Ops 表示実装仕様
 
+- status: active
+- document_type: implementation_spec
+- path: `docs/04_構築指標/06_ToBe_Ops表示実装仕様.md`
+- source_spec: `docs/02_正本仕様/10_RenCrow_ToBe_統合仕様.md`
+- last_reviewed: 2026-07-14
+
 ## 1. 目的
 
 本仕様は、Advisor / AgentProfile / Knowledge Relation / Economic Objective の状態を Viewer / Ops から確認できるようにするための表示・API・client・E2E 実装仕様である。
@@ -93,7 +99,7 @@ GET /viewer/revenue/economic-reflections
 POST /viewer/revenue/human-decision-gate/review
 ```
 
-本仕様で新規に write API を追加する場合は、`99_EconomicObjective接続実装仕様.md` の Opportunity / EconomicTask / EconomicReflection 作成に限定する。
+本仕様で新規に write API を追加する場合は、`05_EconomicObjective接続実装仕様.md` の Opportunity / EconomicTask / EconomicReflection 作成に限定する。
 
 ## 5. Ops summary response
 

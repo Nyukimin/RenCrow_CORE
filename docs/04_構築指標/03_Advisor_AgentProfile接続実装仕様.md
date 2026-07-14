@@ -1,8 +1,14 @@
 # Advisor / AgentProfile 接続実装仕様
 
+- status: active
+- document_type: implementation_spec
+- path: `docs/04_構築指標/03_Advisor_AgentProfile接続実装仕様.md`
+- source_spec: `docs/02_正本仕様/10_RenCrow_ToBe_統合仕様.md`
+- last_reviewed: 2026-07-14
+
 ## 1. 目的
 
-本仕様は、`95_RenCrow_ToBe_統合仕様と実装方針.md` と `96_CORE_機能台帳.md` で MVP 実装済みとなった `advisor` と `agent_profile` を、runtime の判断材料として安全に接続するための実装仕様である。
+本仕様は、`docs/02_正本仕様/10_RenCrow_ToBe_統合仕様.md` と `docs/02_正本仕様/12_CORE_機能台帳.md` で MVP 実装済みとなった `advisor` と `agent_profile` を、runtime の判断材料として安全に接続するための実装仕様である。
 
 対象は次である。
 
