@@ -576,7 +576,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			revenueStore = revenuepersistence.NewJSONLStore(cfg.Revenue.LogPath)
 		}
 		deps.revenueStore = revenueStore
-		deps.revenueStatus = viewer.HandleRevenueStatus(revenueStore)
+		deps.revenueStatus = viewer.HandleRevenueStatus(revenueStore, viewer.RevenueEconomicObjectiveSettings{
+			Enabled: cfg.EconomicObjective.Enabled, DraftOnly: cfg.EconomicObjective.DraftOnlyEnabled(),
+		})
 		deps.revenueMarket = viewer.HandleRevenueMarketResearchCreate(revenueStore)
 		deps.revenueSNSPost = viewer.HandleRevenueSNSPostMetricCreate(revenueStore)
 		deps.revenueProduct = viewer.HandleRevenueProductCreate(revenueStore)

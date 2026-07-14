@@ -77,6 +77,15 @@ func TestEconomicServiceDraftOpportunityCalculatesProfitAndStores(t *testing.T) 
 	if item.ApprovalState != "draft" || !item.CreatedAt.Equal(now) {
 		t.Fatalf("defaults not applied: %#v", item)
 	}
+	zeroRevenue, err := service.DraftOpportunity(context.Background(), revenuedomain.Opportunity{
+		OpportunityID: "opp-zero", SourceKind: "market_research", Title: "Zero revenue draft", ProfitMargin: 0.9,
+	})
+	if err != nil {
+		t.Fatalf("DraftOpportunity zero revenue failed: %v", err)
+	}
+	if zeroRevenue.ProfitMargin != 0 || zeroRevenue.ExpectedProfit != 0 {
+		t.Fatalf("zero revenue economics not normalized: %#v", zeroRevenue)
+	}
 }
 
 func TestEconomicServiceRejectsApprovalMismatchAndCreatesDraftGoal(t *testing.T) {

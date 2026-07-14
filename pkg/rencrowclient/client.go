@@ -1449,6 +1449,7 @@ type RevenueStatus struct {
 	ExternalChannelAdapterConfigured     *bool                            `json:"external_channel_adapter_configured"`
 	HumanApprovalRequiredForExternalSend *bool                            `json:"human_approval_required_for_external_send"`
 	Summary                              RevenueDashboardSummary          `json:"summary"`
+	EconomicObjective                    *RevenueEconomicObjectiveSummary `json:"economic_objective,omitempty"`
 }
 
 type RevenueDashboardSummary struct {
@@ -1457,6 +1458,117 @@ type RevenueDashboardSummary struct {
 	ChannelDraftCount      int  `json:"channel_draft_count"`
 	ExternalSendApplyCount int  `json:"external_send_apply_count"`
 	ExternalActionsApplied bool `json:"external_actions_applied"`
+}
+
+type RevenueEconomicObjectiveSummary struct {
+	Enabled                  bool `json:"enabled"`
+	OpportunityCount         int  `json:"opportunity_count"`
+	PendingApprovalTaskCount int  `json:"pending_approval_task_count"`
+	ReflectionCount          int  `json:"reflection_count"`
+	DraftOnly                bool `json:"draft_only"`
+	ExternalActionBlocked    bool `json:"external_action_blocked"`
+}
+
+// RevenueOpportunity is a draft-only economic opportunity exposed by Viewer.
+type RevenueOpportunity struct {
+	OpportunityID   string    `json:"opportunity_id"`
+	SourceKind      string    `json:"source_kind"`
+	Title           string    `json:"title"`
+	Summary         string    `json:"summary,omitempty"`
+	TargetCustomer  string    `json:"target_customer,omitempty"`
+	ExpectedRevenue int       `json:"expected_revenue,omitempty"`
+	ExpectedCost    int       `json:"expected_cost,omitempty"`
+	ExpectedProfit  int       `json:"expected_profit,omitempty"`
+	ProfitMargin    float64   `json:"profit_margin,omitempty"`
+	ReuseValue      float64   `json:"reuse_value,omitempty"`
+	AutomationRate  float64   `json:"automation_rate,omitempty"`
+	StrategicValue  float64   `json:"strategic_value,omitempty"`
+	RiskScore       float64   `json:"risk_score,omitempty"`
+	ApprovalState   string    `json:"approval_state,omitempty"`
+	CreatedAt       time.Time `json:"created_at,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at,omitempty"`
+}
+
+type RevenueOpportunitiesStatus struct {
+	Status           string               `json:"status,omitempty"`
+	Warnings         []string             `json:"warnings,omitempty"`
+	Opportunities    []RevenueOpportunity `json:"opportunities"`
+	OpportunityCount int                  `json:"opportunity_count"`
+}
+
+type RevenueOpportunityResponse struct {
+	Opportunity                     RevenueOpportunity `json:"opportunity"`
+	HumanApprovalRequiredForPublish bool               `json:"human_approval_required_for_publish"`
+}
+
+type RevenueEconomicTask struct {
+	TaskID        string    `json:"task_id"`
+	OpportunityID string    `json:"opportunity_id"`
+	WorkstreamID  string    `json:"workstream_id,omitempty"`
+	AgentID       string    `json:"agent_id"`
+	TaskKind      string    `json:"task_kind"`
+	Status        string    `json:"status,omitempty"`
+	ExpectedValue float64   `json:"expected_value,omitempty"`
+	Risk          float64   `json:"risk,omitempty"`
+	Cost          float64   `json:"cost,omitempty"`
+	ApprovalMode  string    `json:"approval_mode,omitempty"`
+	CreatedAt     time.Time `json:"created_at,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+}
+
+type RevenueEconomicTasksStatus struct {
+	Status        string                `json:"status,omitempty"`
+	Warnings      []string              `json:"warnings,omitempty"`
+	EconomicTasks []RevenueEconomicTask `json:"economic_tasks"`
+	TaskCount     int                   `json:"task_count"`
+}
+
+type RevenueEconomicTaskResponse struct {
+	EconomicTask          RevenueEconomicTask `json:"economic_task"`
+	HumanApprovalRequired bool                `json:"human_approval_required"`
+	AutoExecutionAllowed  bool                `json:"auto_execution_allowed"`
+}
+
+type RevenueEconomicReflection struct {
+	ReflectionID   string    `json:"reflection_id"`
+	OpportunityID  string    `json:"opportunity_id"`
+	RevenueEventID string    `json:"revenue_event_id,omitempty"`
+	Outcome        string    `json:"outcome"`
+	NetProfit      int       `json:"net_profit,omitempty"`
+	Lessons        []string  `json:"lessons,omitempty"`
+	NextActions    []string  `json:"next_actions,omitempty"`
+	CreatedAt      time.Time `json:"created_at,omitempty"`
+}
+
+type RevenueEconomicReflectionsStatus struct {
+	Status              string                      `json:"status,omitempty"`
+	Warnings            []string                    `json:"warnings,omitempty"`
+	EconomicReflections []RevenueEconomicReflection `json:"economic_reflections"`
+	ReflectionCount     int                         `json:"reflection_count"`
+}
+
+type RevenueEconomicReflectionResponse struct {
+	EconomicReflection RevenueEconomicReflection `json:"economic_reflection"`
+}
+
+type RevenueReflectionFromEventRequest struct {
+	ReflectionID   string   `json:"reflection_id"`
+	OpportunityID  string   `json:"opportunity_id"`
+	RevenueEventID string   `json:"revenue_event_id"`
+	Outcome        string   `json:"outcome"`
+	Lessons        []string `json:"lessons,omitempty"`
+	NextActions    []string `json:"next_actions,omitempty"`
+}
+
+type RevenueOpportunityWorkstreamGoalRequest struct {
+	OpportunityID string `json:"opportunity_id"`
+	WorkstreamID  string `json:"workstream_id"`
+}
+
+type RevenueOpportunityWorkstreamGoalResponse struct {
+	Goal                   WorkstreamGoal `json:"goal"`
+	Status                 string         `json:"status"`
+	ExternalActionsApplied bool           `json:"external_actions_applied"`
 }
 
 type RevenueHumanDecisionReview struct {
@@ -2554,6 +2666,146 @@ func (c *Client) RevenueStatus(ctx context.Context, limit int) (RevenueStatus, e
 	return out, nil
 }
 
+func (c *Client) RevenueOpportunities(ctx context.Context, limit int) (RevenueOpportunitiesStatus, error) {
+	path := "/viewer/revenue/opportunities"
+	if limit > 0 {
+		path = fmt.Sprintf("%s?limit=%d", path, limit)
+	}
+	var out RevenueOpportunitiesStatus
+	if err := c.doStrict(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return RevenueOpportunitiesStatus{}, err
+	}
+	if err := validateRevenueOpportunitiesStatus(out); err != nil {
+		return RevenueOpportunitiesStatus{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateRevenueOpportunity(ctx context.Context, item RevenueOpportunity) (RevenueOpportunityResponse, error) {
+	if err := validateRevenueOpportunity(item, false); err != nil {
+		return RevenueOpportunityResponse{}, err
+	}
+	var out RevenueOpportunityResponse
+	if err := c.doStrict(ctx, http.MethodPost, "/viewer/revenue/opportunities", item, &out); err != nil {
+		return RevenueOpportunityResponse{}, err
+	}
+	if err := validateRevenueOpportunity(out.Opportunity, true); err != nil {
+		return RevenueOpportunityResponse{}, err
+	}
+	if out.Opportunity.OpportunityID != item.OpportunityID {
+		return RevenueOpportunityResponse{}, fmt.Errorf("revenue opportunity response opportunity_id mismatch")
+	}
+	if !out.HumanApprovalRequiredForPublish {
+		return RevenueOpportunityResponse{}, fmt.Errorf("revenue opportunity response missing publish approval requirement")
+	}
+	return out, nil
+}
+
+func (c *Client) RevenueEconomicTasks(ctx context.Context, limit int) (RevenueEconomicTasksStatus, error) {
+	path := "/viewer/revenue/economic-tasks"
+	if limit > 0 {
+		path = fmt.Sprintf("%s?limit=%d", path, limit)
+	}
+	var out RevenueEconomicTasksStatus
+	if err := c.doStrict(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return RevenueEconomicTasksStatus{}, err
+	}
+	if err := validateRevenueEconomicTasksStatus(out); err != nil {
+		return RevenueEconomicTasksStatus{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateRevenueEconomicTask(ctx context.Context, item RevenueEconomicTask) (RevenueEconomicTaskResponse, error) {
+	if err := validateRevenueEconomicTask(item, false); err != nil {
+		return RevenueEconomicTaskResponse{}, err
+	}
+	var out RevenueEconomicTaskResponse
+	if err := c.doStrict(ctx, http.MethodPost, "/viewer/revenue/economic-tasks", item, &out); err != nil {
+		return RevenueEconomicTaskResponse{}, err
+	}
+	if err := validateRevenueEconomicTask(out.EconomicTask, true); err != nil {
+		return RevenueEconomicTaskResponse{}, err
+	}
+	if out.EconomicTask.TaskID != item.TaskID {
+		return RevenueEconomicTaskResponse{}, fmt.Errorf("revenue economic task response task_id mismatch")
+	}
+	requiresApproval := revenueTaskRequiresHumanApproval(out.EconomicTask.TaskKind)
+	if out.HumanApprovalRequired != requiresApproval {
+		return RevenueEconomicTaskResponse{}, fmt.Errorf("revenue economic task response approval requirement mismatch")
+	}
+	if requiresApproval && out.AutoExecutionAllowed {
+		return RevenueEconomicTaskResponse{}, fmt.Errorf("revenue economic task response allows automatic execution for approval-required task")
+	}
+	return out, nil
+}
+
+func (c *Client) RevenueEconomicReflections(ctx context.Context, limit int) (RevenueEconomicReflectionsStatus, error) {
+	path := "/viewer/revenue/economic-reflections"
+	if limit > 0 {
+		path = fmt.Sprintf("%s?limit=%d", path, limit)
+	}
+	var out RevenueEconomicReflectionsStatus
+	if err := c.doStrict(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return RevenueEconomicReflectionsStatus{}, err
+	}
+	if err := validateRevenueEconomicReflectionsStatus(out); err != nil {
+		return RevenueEconomicReflectionsStatus{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateRevenueEconomicReflection(ctx context.Context, item RevenueEconomicReflection) (RevenueEconomicReflectionResponse, error) {
+	if err := validateRevenueEconomicReflection(item, false); err != nil {
+		return RevenueEconomicReflectionResponse{}, err
+	}
+	var out RevenueEconomicReflectionResponse
+	if err := c.doStrict(ctx, http.MethodPost, "/viewer/revenue/economic-reflections", item, &out); err != nil {
+		return RevenueEconomicReflectionResponse{}, err
+	}
+	if err := validateRevenueEconomicReflection(out.EconomicReflection, true); err != nil {
+		return RevenueEconomicReflectionResponse{}, err
+	}
+	if out.EconomicReflection.ReflectionID != item.ReflectionID {
+		return RevenueEconomicReflectionResponse{}, fmt.Errorf("revenue economic reflection response reflection_id mismatch")
+	}
+	return out, nil
+}
+
+func (c *Client) ReflectRevenueEvent(ctx context.Context, item RevenueReflectionFromEventRequest) (RevenueEconomicReflectionResponse, error) {
+	if err := validateRevenueReflectionFromEventRequest(item); err != nil {
+		return RevenueEconomicReflectionResponse{}, err
+	}
+	var out RevenueEconomicReflectionResponse
+	if err := c.doStrict(ctx, http.MethodPost, "/viewer/revenue/economic-reflections/from-revenue-event", item, &out); err != nil {
+		return RevenueEconomicReflectionResponse{}, err
+	}
+	if err := validateRevenueEconomicReflection(out.EconomicReflection, true); err != nil {
+		return RevenueEconomicReflectionResponse{}, err
+	}
+	if out.EconomicReflection.ReflectionID != item.ReflectionID || out.EconomicReflection.OpportunityID != item.OpportunityID || out.EconomicReflection.RevenueEventID != item.RevenueEventID {
+		return RevenueEconomicReflectionResponse{}, fmt.Errorf("revenue event reflection response identifier mismatch")
+	}
+	return out, nil
+}
+
+func (c *Client) CreateRevenueOpportunityWorkstreamGoal(ctx context.Context, item RevenueOpportunityWorkstreamGoalRequest) (RevenueOpportunityWorkstreamGoalResponse, error) {
+	if strings.TrimSpace(item.OpportunityID) == "" || strings.TrimSpace(item.WorkstreamID) == "" {
+		return RevenueOpportunityWorkstreamGoalResponse{}, fmt.Errorf("revenue opportunity workstream goal requires opportunity_id and workstream_id")
+	}
+	var out RevenueOpportunityWorkstreamGoalResponse
+	if err := c.doStrict(ctx, http.MethodPost, "/viewer/revenue/opportunities/workstream-goal", item, &out); err != nil {
+		return RevenueOpportunityWorkstreamGoalResponse{}, err
+	}
+	if strings.TrimSpace(out.Goal.GoalID) == "" || out.Goal.WorkstreamID != item.WorkstreamID || out.Goal.Status != "draft" || out.Status != "draft" {
+		return RevenueOpportunityWorkstreamGoalResponse{}, fmt.Errorf("revenue opportunity workstream goal response is not a matching draft goal")
+	}
+	if out.ExternalActionsApplied {
+		return RevenueOpportunityWorkstreamGoalResponse{}, fmt.Errorf("revenue opportunity workstream goal response applied external action")
+	}
+	return out, nil
+}
+
 func (c *Client) EvaluateRevenueHumanDecision(ctx context.Context, item RevenueHumanDecision) (RevenueHumanDecisionResponse, error) {
 	if err := validateRevenueHumanDecisionRequest(item); err != nil {
 		return RevenueHumanDecisionResponse{}, err
@@ -2653,6 +2905,165 @@ func (c *Client) SubmitSkillGovernanceExternalPR(ctx context.Context, item Skill
 	return out, nil
 }
 
+func validateRevenueOpportunitiesStatus(resp RevenueOpportunitiesStatus) error {
+	if resp.Status != "" && !isOpsAvailabilityStatus(strings.TrimSpace(resp.Status)) {
+		return fmt.Errorf("revenue opportunities invalid status %q", resp.Status)
+	}
+	if resp.OpportunityCount < 0 {
+		return fmt.Errorf("revenue opportunity count must be >= 0")
+	}
+	if resp.OpportunityCount != len(resp.Opportunities) {
+		return fmt.Errorf("revenue opportunity count mismatch")
+	}
+	seen := make(map[string]struct{}, len(resp.Opportunities))
+	for index, item := range resp.Opportunities {
+		if err := validateRevenueOpportunity(item, true); err != nil {
+			return fmt.Errorf("revenue opportunity[%d]: %w", index, err)
+		}
+		if _, ok := seen[item.OpportunityID]; ok {
+			return fmt.Errorf("duplicate revenue opportunity_id %q", item.OpportunityID)
+		}
+		seen[item.OpportunityID] = struct{}{}
+	}
+	return nil
+}
+
+func validateRevenueOpportunity(item RevenueOpportunity, requireStoredFields bool) error {
+	if strings.TrimSpace(item.OpportunityID) == "" {
+		return fmt.Errorf("revenue opportunity missing opportunity_id")
+	}
+	if strings.TrimSpace(item.SourceKind) == "" {
+		return fmt.Errorf("revenue opportunity missing source_kind")
+	}
+	if strings.TrimSpace(item.Title) == "" {
+		return fmt.Errorf("revenue opportunity missing title")
+	}
+	if item.ExpectedRevenue < 0 || item.ExpectedCost < 0 {
+		return fmt.Errorf("revenue opportunity expected revenue/cost must be >= 0")
+	}
+	if item.RiskScore < 0 || item.RiskScore > 1 || item.ReuseValue < 0 || item.ReuseValue > 1 || item.AutomationRate < 0 || item.AutomationRate > 1 || item.StrategicValue < 0 || item.StrategicValue > 1 {
+		return fmt.Errorf("revenue opportunity value scores must be between 0 and 1")
+	}
+	if !requireStoredFields {
+		return nil
+	}
+	expectedProfit := item.ExpectedRevenue - item.ExpectedCost
+	if item.ExpectedProfit != expectedProfit {
+		return fmt.Errorf("revenue opportunity expected_profit mismatch")
+	}
+	expectedMargin := 0.0
+	if item.ExpectedRevenue > 0 {
+		expectedMargin = float64(expectedProfit) / float64(item.ExpectedRevenue)
+	}
+	delta := item.ProfitMargin - expectedMargin
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta > 0.000001 {
+		return fmt.Errorf("revenue opportunity profit_margin mismatch")
+	}
+	switch strings.TrimSpace(item.ApprovalState) {
+	case "draft", "pending", "approved", "rejected":
+	default:
+		return fmt.Errorf("revenue opportunity invalid approval_state %q", item.ApprovalState)
+	}
+	if item.CreatedAt.IsZero() {
+		return fmt.Errorf("revenue opportunity missing created_at")
+	}
+	return nil
+}
+
+func validateRevenueEconomicTasksStatus(resp RevenueEconomicTasksStatus) error {
+	if resp.Status != "" && !isOpsAvailabilityStatus(strings.TrimSpace(resp.Status)) {
+		return fmt.Errorf("revenue economic tasks invalid status %q", resp.Status)
+	}
+	if resp.TaskCount < 0 {
+		return fmt.Errorf("revenue economic task count must be >= 0")
+	}
+	if resp.TaskCount != len(resp.EconomicTasks) {
+		return fmt.Errorf("revenue economic task count mismatch")
+	}
+	seen := make(map[string]struct{}, len(resp.EconomicTasks))
+	for index, item := range resp.EconomicTasks {
+		if err := validateRevenueEconomicTask(item, true); err != nil {
+			return fmt.Errorf("revenue economic task[%d]: %w", index, err)
+		}
+		if _, ok := seen[item.TaskID]; ok {
+			return fmt.Errorf("duplicate revenue economic task_id %q", item.TaskID)
+		}
+		seen[item.TaskID] = struct{}{}
+	}
+	return nil
+}
+
+func validateRevenueEconomicTask(item RevenueEconomicTask, requireStoredFields bool) error {
+	if strings.TrimSpace(item.TaskID) == "" || strings.TrimSpace(item.OpportunityID) == "" || strings.TrimSpace(item.AgentID) == "" || strings.TrimSpace(item.TaskKind) == "" {
+		return fmt.Errorf("revenue economic task requires task_id, opportunity_id, agent_id, and task_kind")
+	}
+	if item.Risk < 0 || item.Risk > 1 || item.Cost < 0 {
+		return fmt.Errorf("revenue economic task risk must be 0-1 and cost must be >= 0")
+	}
+	if revenueTaskRequiresHumanApproval(item.TaskKind) && strings.TrimSpace(item.ApprovalMode) != "human_required" {
+		return fmt.Errorf("revenue economic task approval_mode must be human_required for %s", item.TaskKind)
+	}
+	if !requireStoredFields {
+		return nil
+	}
+	if strings.TrimSpace(item.Status) == "" || strings.TrimSpace(item.ApprovalMode) == "" || item.CreatedAt.IsZero() {
+		return fmt.Errorf("revenue economic task stored record requires status, approval_mode, and created_at")
+	}
+	return nil
+}
+
+func revenueTaskRequiresHumanApproval(taskKind string) bool {
+	switch strings.TrimSpace(taskKind) {
+	case "external_publish", "billing", "contract", "paid_api_use", "github_publication", "personal_data_use":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateRevenueEconomicReflectionsStatus(resp RevenueEconomicReflectionsStatus) error {
+	if resp.Status != "" && !isOpsAvailabilityStatus(strings.TrimSpace(resp.Status)) {
+		return fmt.Errorf("revenue economic reflections invalid status %q", resp.Status)
+	}
+	if resp.ReflectionCount < 0 {
+		return fmt.Errorf("revenue economic reflection count must be >= 0")
+	}
+	if resp.ReflectionCount != len(resp.EconomicReflections) {
+		return fmt.Errorf("revenue economic reflection count mismatch")
+	}
+	seen := make(map[string]struct{}, len(resp.EconomicReflections))
+	for index, item := range resp.EconomicReflections {
+		if err := validateRevenueEconomicReflection(item, true); err != nil {
+			return fmt.Errorf("revenue economic reflection[%d]: %w", index, err)
+		}
+		if _, ok := seen[item.ReflectionID]; ok {
+			return fmt.Errorf("duplicate revenue economic reflection_id %q", item.ReflectionID)
+		}
+		seen[item.ReflectionID] = struct{}{}
+	}
+	return nil
+}
+
+func validateRevenueEconomicReflection(item RevenueEconomicReflection, requireStoredFields bool) error {
+	if strings.TrimSpace(item.ReflectionID) == "" || strings.TrimSpace(item.OpportunityID) == "" || strings.TrimSpace(item.Outcome) == "" {
+		return fmt.Errorf("revenue economic reflection requires reflection_id, opportunity_id, and outcome")
+	}
+	if requireStoredFields && item.CreatedAt.IsZero() {
+		return fmt.Errorf("revenue economic reflection missing created_at")
+	}
+	return nil
+}
+
+func validateRevenueReflectionFromEventRequest(item RevenueReflectionFromEventRequest) error {
+	if strings.TrimSpace(item.ReflectionID) == "" || strings.TrimSpace(item.OpportunityID) == "" || strings.TrimSpace(item.RevenueEventID) == "" || strings.TrimSpace(item.Outcome) == "" {
+		return fmt.Errorf("revenue event reflection requires reflection_id, opportunity_id, revenue_event_id, and outcome")
+	}
+	return nil
+}
+
 func validateRevenueStatus(resp RevenueStatus) error {
 	if strings.TrimSpace(resp.ExternalChannelAdapter) == "" {
 		return fmt.Errorf("revenue status missing external_channel_adapter")
@@ -2674,6 +3085,14 @@ func validateRevenueStatus(resp RevenueStatus) error {
 		resp.Summary.ChannelDraftCount < 0 ||
 		resp.Summary.ExternalSendApplyCount < 0 {
 		return fmt.Errorf("revenue status summary counts must be >= 0")
+	}
+	if resp.EconomicObjective != nil {
+		if resp.EconomicObjective.OpportunityCount < 0 || resp.EconomicObjective.PendingApprovalTaskCount < 0 || resp.EconomicObjective.ReflectionCount < 0 {
+			return fmt.Errorf("revenue economic objective summary counts must be >= 0")
+		}
+		if !resp.EconomicObjective.ExternalActionBlocked {
+			return fmt.Errorf("revenue economic objective must block external actions")
+		}
 	}
 	decisions := map[string]struct{}{}
 	for _, item := range resp.HumanDecisions {

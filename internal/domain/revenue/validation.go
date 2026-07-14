@@ -132,6 +132,8 @@ func NormalizeOpportunityEconomics(item Opportunity) Opportunity {
 	item.ExpectedProfit = item.ExpectedRevenue - item.ExpectedCost
 	if item.ExpectedRevenue > 0 {
 		item.ProfitMargin = float64(item.ExpectedProfit) / float64(item.ExpectedRevenue)
+	} else {
+		item.ProfitMargin = 0
 	}
 	return item
 }

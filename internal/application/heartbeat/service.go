@@ -71,23 +71,24 @@ type IdleChatSequenceCheck struct {
 
 // HeartbeatService はHEARTBEAT.mdを定期的に読み込み、エージェントに処理させるサービス
 type HeartbeatService struct {
-	workerAgent      WorkerAgent
-	sender           NotificationSender
-	workspaceDir     string
-	contextBuilder   *ctxbuilder.Builder
-	listener         orchestrator.EventListener
-	workstreamStore  WorkstreamHeartbeatStore
-	backlogStore     BacklogStore
-	revenueStore     RevenueDailyRoutineStore
-	revenueRoutine   *revenueapp.DailyRoutineService
-	skills           *skillbootstrap.BootstrapService
-	idleChatMonitor  IdleChatSequenceMonitor
-	interval         time.Duration
-	idleChatInterval time.Duration
-	stopCh           chan struct{}
-	done             chan struct{}
-	mu               sync.Mutex
-	running          bool
+	workerAgent       WorkerAgent
+	sender            NotificationSender
+	workspaceDir      string
+	contextBuilder    *ctxbuilder.Builder
+	listener          orchestrator.EventListener
+	workstreamStore   WorkstreamHeartbeatStore
+	backlogStore      BacklogStore
+	revenueStore      RevenueDailyRoutineStore
+	revenueRoutine    *revenueapp.DailyRoutineService
+	economicDiscovery *EconomicObjectiveDiscoveryService
+	skills            *skillbootstrap.BootstrapService
+	idleChatMonitor   IdleChatSequenceMonitor
+	interval          time.Duration
+	idleChatInterval  time.Duration
+	stopCh            chan struct{}
+	done              chan struct{}
+	mu                sync.Mutex
+	running           bool
 }
 
 // NewHeartbeatService は新しいHeartbeatServiceを作成
@@ -146,6 +147,19 @@ func (s *HeartbeatService) WithRevenueDailyRoutineStore(store RevenueDailyRoutin
 	s.revenueStore = store
 	s.revenueRoutine = revenueapp.NewDailyRoutineService(store)
 	return s
+}
+
+// WithEconomicObjectiveDiscovery enables safe draft-only Opportunity discovery.
+func (s *HeartbeatService) WithEconomicObjectiveDiscovery(store EconomicObjectiveDiscoveryStore, goalStore EconomicObjectiveGoalStore, options EconomicObjectiveDiscoveryOptions) *HeartbeatService {
+	s.economicDiscovery = NewEconomicObjectiveDiscoveryService(store, goalStore, options)
+	return s
+}
+
+func (s *HeartbeatService) RunEconomicOpportunityDiscovery(ctx context.Context, now time.Time) (EconomicObjectiveDiscoveryReport, error) {
+	if s == nil || s.economicDiscovery == nil {
+		return EconomicObjectiveDiscoveryReport{Status: "skipped", Reason: "economic discovery not configured", ExternalActionsApplied: false}, nil
+	}
+	return s.economicDiscovery.Run(ctx, now)
 }
 
 func (s *HeartbeatService) WithSkillBootstrap(service *skillbootstrap.BootstrapService) *HeartbeatService {
@@ -264,6 +278,14 @@ func (s *HeartbeatService) runIdleChatSequenceCheck(ctx context.Context, now tim
 
 // tick は1回のHeartbeat処理を実行
 func (s *HeartbeatService) tick(ctx context.Context) error {
+	if report, err := s.RunEconomicOpportunityDiscovery(ctx, time.Now().UTC()); err != nil {
+		log.Printf("[Heartbeat] economic opportunity discovery error: %v", err)
+		s.emitEvent("heartbeat.economic_objective.error", err.Error())
+	} else if report.Created > 0 || report.Failed > 0 {
+		log.Printf("[Heartbeat] economic opportunity discovery: status=%s checked=%d created=%d duplicate_skipped=%d failed=%d",
+			report.Status, report.Checked, report.Created, report.DuplicateSkipped, report.Failed)
+		s.emitEvent("heartbeat.economic_objective."+report.Status, fmt.Sprintf("created=%d duplicate_skipped=%d failed=%d", report.Created, report.DuplicateSkipped, report.Failed))
+	}
 	// HEARTBEAT.md を読み込み
 	heartbeatPath := filepath.Join(s.workspaceDir, "HEARTBEAT.md")
 	data, err := os.ReadFile(heartbeatPath)

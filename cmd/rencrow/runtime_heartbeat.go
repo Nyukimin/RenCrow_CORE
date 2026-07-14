@@ -122,6 +122,20 @@ func buildHeartbeatRuntime(
 	}
 	if deps.revenueStore != nil {
 		heartbeatSvc.WithRevenueDailyRoutineStore(deps.revenueStore)
+		if discoveryStore, ok := deps.revenueStore.(heartbeat.EconomicObjectiveDiscoveryStore); ok {
+			var goalStore heartbeat.EconomicObjectiveGoalStore
+			if candidate, ok := deps.workstreamStore.(heartbeat.EconomicObjectiveGoalStore); ok {
+				goalStore = candidate
+			}
+			heartbeatSvc.WithEconomicObjectiveDiscovery(discoveryStore, goalStore, heartbeat.EconomicObjectiveDiscoveryOptions{
+				Enabled:                   cfg.EconomicObjective.Enabled,
+				DraftOnly:                 cfg.EconomicObjective.DraftOnlyEnabled(),
+				HeartbeatDiscoveryEnabled: cfg.EconomicObjective.HeartbeatDiscoveryEnabled,
+				DailyOpportunityLimit:     cfg.EconomicObjective.DailyOpportunityLimit,
+			})
+		} else if cfg.EconomicObjective.HeartbeatDiscoveryEnabled {
+			log.Printf("[Heartbeat] economic opportunity discovery unavailable: revenue store does not implement discovery interface")
+		}
 	}
 	if deps.skillBootstrap != nil {
 		heartbeatSvc.WithSkillBootstrap(deps.skillBootstrap)

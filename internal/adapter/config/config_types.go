@@ -48,6 +48,9 @@ type Config struct {
 	// === Deterministic Knowledge Relation build and recall ===
 	KnowledgeRelation KnowledgeRelationConfig `yaml:"knowledge_relation"`
 
+	// === Draft-only economic objective discovery ===
+	EconomicObjective EconomicObjectiveConfig `yaml:"economic_objective"`
+
 	// === ComfyUI image generation backend ===
 	ComfyUI ComfyUIConfig `yaml:"comfyui"`
 
@@ -330,6 +333,17 @@ type KnowledgeRelationConfig struct {
 	BuildOnImport bool    `yaml:"build_on_import"`
 	MaxHops       int     `yaml:"max_hops"`
 	MinimumScore  float64 `yaml:"minimum_score"`
+}
+
+type EconomicObjectiveConfig struct {
+	Enabled                   bool  `yaml:"enabled"`
+	DraftOnly                 *bool `yaml:"draft_only"`
+	HeartbeatDiscoveryEnabled bool  `yaml:"heartbeat_discovery_enabled"`
+	DailyOpportunityLimit     int   `yaml:"daily_opportunity_limit"`
+}
+
+func (c EconomicObjectiveConfig) DraftOnlyEnabled() bool {
+	return c.DraftOnly == nil || *c.DraftOnly
 }
 
 // HeartbeatConfig はハートビート（定期タスク）の設定

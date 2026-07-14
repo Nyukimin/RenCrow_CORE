@@ -87,6 +87,20 @@ type RevenueDashboardSummary struct {
 	ExternalActionsApplied bool                        `json:"external_actions_applied"`
 }
 
+type RevenueEconomicObjectiveSettings struct {
+	Enabled   bool
+	DraftOnly bool
+}
+
+type RevenueEconomicObjectiveSummary struct {
+	Enabled                  bool `json:"enabled"`
+	OpportunityCount         int  `json:"opportunity_count"`
+	PendingApprovalTaskCount int  `json:"pending_approval_task_count"`
+	ReflectionCount          int  `json:"reflection_count"`
+	DraftOnly                bool `json:"draft_only"`
+	ExternalActionBlocked    bool `json:"external_action_blocked"`
+}
+
 type RevenueKPIDay struct {
 	Date          string `json:"date"`
 	RevenueAmount int    `json:"revenue_amount"`
@@ -108,7 +122,11 @@ type RevenueCustomerVoiceCount struct {
 	Count     int    `json:"count"`
 }
 
-func HandleRevenueStatus(store RevenueLister) http.HandlerFunc {
+func HandleRevenueStatus(store RevenueLister, economicSettings ...RevenueEconomicObjectiveSettings) http.HandlerFunc {
+	settings := RevenueEconomicObjectiveSettings{DraftOnly: true}
+	if len(economicSettings) > 0 {
+		settings = economicSettings[0]
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -168,6 +186,21 @@ func HandleRevenueStatus(store RevenueLister) http.HandlerFunc {
 			http.Error(w, "failed to load external send apply records", http.StatusInternalServerError)
 			return
 		}
+		opportunities, err := store.ListOpportunities(r.Context(), limit)
+		if err != nil {
+			http.Error(w, "failed to load opportunities", http.StatusInternalServerError)
+			return
+		}
+		economicTasks, err := store.ListEconomicTasks(r.Context(), limit)
+		if err != nil {
+			http.Error(w, "failed to load economic tasks", http.StatusInternalServerError)
+			return
+		}
+		economicReflections, err := store.ListEconomicReflections(r.Context(), limit)
+		if err != nil {
+			http.Error(w, "failed to load economic reflections", http.StatusInternalServerError)
+			return
+		}
 		if market == nil {
 			market = []domainrevenue.MarketResearchItem{}
 		}
@@ -195,6 +228,15 @@ func HandleRevenueStatus(store RevenueLister) http.HandlerFunc {
 		if externalSendApplyRecords == nil {
 			externalSendApplyRecords = []domainrevenue.ExternalSendApplyRecord{}
 		}
+		if opportunities == nil {
+			opportunities = []domainrevenue.Opportunity{}
+		}
+		if economicTasks == nil {
+			economicTasks = []domainrevenue.EconomicTask{}
+		}
+		if economicReflections == nil {
+			economicReflections = []domainrevenue.EconomicReflection{}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"market_research":                           market,
 			"sns_post_metrics":                          posts,
@@ -205,12 +247,30 @@ func HandleRevenueStatus(store RevenueLister) http.HandlerFunc {
 			"daily_routine_reports":                     dailyReports,
 			"channel_drafts":                            channelDrafts,
 			"external_send_apply_records":               externalSendApplyRecords,
+			"opportunities":                             opportunities,
+			"economic_tasks":                            economicTasks,
+			"economic_reflections":                      economicReflections,
 			"external_channel_adapter":                  "unconfigured",
 			"external_channel_adapter_configured":       false,
 			"human_approval_required_for_external_send": true,
 			"summary":                                   buildRevenueDashboardSummary(market, posts, products, voices, events, decisions, dailyReports, channelDrafts, externalSendApplyRecords),
+			"economic_objective":                        buildRevenueEconomicObjectiveSummary(settings, opportunities, economicTasks, economicReflections),
 		})
 	}
+}
+
+func buildRevenueEconomicObjectiveSummary(settings RevenueEconomicObjectiveSettings, opportunities []domainrevenue.Opportunity, tasks []domainrevenue.EconomicTask, reflections []domainrevenue.EconomicReflection) RevenueEconomicObjectiveSummary {
+	summary := RevenueEconomicObjectiveSummary{
+		Enabled: settings.Enabled, OpportunityCount: len(opportunities), ReflectionCount: len(reflections),
+		DraftOnly: settings.DraftOnly, ExternalActionBlocked: true,
+	}
+	for _, item := range tasks {
+		status := strings.TrimSpace(item.Status)
+		if domainrevenue.RequiresHumanApproval(item.TaskKind) && item.ApprovalMode == "human_required" && status != "completed" && status != "rejected" {
+			summary.PendingApprovalTaskCount++
+		}
+	}
+	return summary
 }
 
 func buildRevenueDashboardSummary(market []domainrevenue.MarketResearchItem, posts []domainrevenue.SNSPostMetric, products []domainrevenue.Product, voices []domainrevenue.CustomerVoice, events []domainrevenue.RevenueEvent, decisions []domainrevenue.HumanDecisionGateRecord, reports []domainrevenue.DailyRoutineReport, channelDrafts []domainrevenue.ChannelDraft, externalSendApplyRecords []domainrevenue.ExternalSendApplyRecord) RevenueDashboardSummary {

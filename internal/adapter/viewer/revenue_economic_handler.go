@@ -29,6 +29,10 @@ func HandleRevenueOpportunities(store RevenueStore) http.HandlerFunc {
 	service := revenueapp.NewEconomicService(store, time.Now)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if store == nil {
+			if r.Method == http.MethodGet {
+				writeJSON(w, http.StatusOK, map[string]any{"status": "unavailable", "warnings": []string{"revenue store unavailable"}, "opportunities": []domainrevenue.Opportunity{}, "opportunity_count": 0})
+				return
+			}
 			http.Error(w, "revenue store unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -47,7 +51,7 @@ func HandleRevenueOpportunities(store RevenueStore) http.HandlerFunc {
 			if items == nil {
 				items = []domainrevenue.Opportunity{}
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"opportunities": items, "opportunity_count": len(items)})
+			writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "warnings": []string{}, "opportunities": items, "opportunity_count": len(items)})
 		case http.MethodPost:
 			var item domainrevenue.Opportunity
 			if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
@@ -70,6 +74,10 @@ func HandleRevenueEconomicTasks(store RevenueStore) http.HandlerFunc {
 	service := revenueapp.NewEconomicService(store, time.Now)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if store == nil {
+			if r.Method == http.MethodGet {
+				writeJSON(w, http.StatusOK, map[string]any{"status": "unavailable", "warnings": []string{"revenue store unavailable"}, "economic_tasks": []domainrevenue.EconomicTask{}, "task_count": 0})
+				return
+			}
 			http.Error(w, "revenue store unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -88,7 +96,7 @@ func HandleRevenueEconomicTasks(store RevenueStore) http.HandlerFunc {
 			if items == nil {
 				items = []domainrevenue.EconomicTask{}
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"economic_tasks": items, "task_count": len(items)})
+			writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "warnings": []string{}, "economic_tasks": items, "task_count": len(items)})
 		case http.MethodPost:
 			var item domainrevenue.EconomicTask
 			if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
@@ -114,6 +122,10 @@ func HandleRevenueEconomicReflections(store RevenueStore) http.HandlerFunc {
 	service := revenueapp.NewEconomicService(store, time.Now)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if store == nil {
+			if r.Method == http.MethodGet {
+				writeJSON(w, http.StatusOK, map[string]any{"status": "unavailable", "warnings": []string{"revenue store unavailable"}, "economic_reflections": []domainrevenue.EconomicReflection{}, "reflection_count": 0})
+				return
+			}
 			http.Error(w, "revenue store unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -132,7 +144,7 @@ func HandleRevenueEconomicReflections(store RevenueStore) http.HandlerFunc {
 			if items == nil {
 				items = []domainrevenue.EconomicReflection{}
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"economic_reflections": items, "reflection_count": len(items)})
+			writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "warnings": []string{}, "economic_reflections": items, "reflection_count": len(items)})
 		case http.MethodPost:
 			var item domainrevenue.EconomicReflection
 			if err := json.NewDecoder(r.Body).Decode(&item); err != nil {

@@ -199,20 +199,23 @@ func (s *stubRevenueStore) SaveEconomicReflection(_ context.Context, item domain
 func TestHandleRevenueStatus(t *testing.T) {
 	day := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &stubRevenueStore{
-		market:    []domainrevenue.MarketResearchItem{{ItemID: "mkt_1", SourcePlatform: "note"}},
-		posts:     []domainrevenue.SNSPostMetric{{PostID: "post_1", Platform: "x", PostedAt: day}},
-		products:  []domainrevenue.Product{{ProductID: "prod_1", ProductName: "商品設計シート", Status: "active"}},
-		voices:    []domainrevenue.CustomerVoice{{VoiceID: "voice_1", VoiceType: "confusion", RawText: "good", UsableForMarketing: true, CreatedAt: day}},
-		events:    []domainrevenue.RevenueEvent{{EventID: "rev_1", EventType: "purchase", ProductID: "prod_1", Amount: 980, CustomerID: "cust_1", CreatedAt: day}},
-		decisions: []domainrevenue.HumanDecisionGateRecord{{DecisionID: "dec_1", DecisionType: "external_publish", ApprovalStatus: "pending", GateStatus: "needs_review"}},
-		daily:     []domainrevenue.DailyRoutineReport{{ReportID: "daily_1", Date: "2026-05-18", Status: "draft_report"}},
-		drafts:    []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "本文", ApprovalStatus: "pending", CreatedAt: day}},
-		applies:   []domainrevenue.ExternalSendApplyRecord{{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_2", Channel: "email", ApprovalStatus: "approved", HumanApproved: true, ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured", CreatedAt: day}},
+		market:        []domainrevenue.MarketResearchItem{{ItemID: "mkt_1", SourcePlatform: "note"}},
+		posts:         []domainrevenue.SNSPostMetric{{PostID: "post_1", Platform: "x", PostedAt: day}},
+		products:      []domainrevenue.Product{{ProductID: "prod_1", ProductName: "商品設計シート", Status: "active"}},
+		voices:        []domainrevenue.CustomerVoice{{VoiceID: "voice_1", VoiceType: "confusion", RawText: "good", UsableForMarketing: true, CreatedAt: day}},
+		events:        []domainrevenue.RevenueEvent{{EventID: "rev_1", EventType: "purchase", ProductID: "prod_1", Amount: 980, CustomerID: "cust_1", CreatedAt: day}},
+		decisions:     []domainrevenue.HumanDecisionGateRecord{{DecisionID: "dec_1", DecisionType: "external_publish", ApprovalStatus: "pending", GateStatus: "needs_review"}},
+		daily:         []domainrevenue.DailyRoutineReport{{ReportID: "daily_1", Date: "2026-05-18", Status: "draft_report"}},
+		drafts:        []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "本文", ApprovalStatus: "pending", CreatedAt: day}},
+		applies:       []domainrevenue.ExternalSendApplyRecord{{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_2", Channel: "email", ApprovalStatus: "approved", HumanApproved: true, ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured", CreatedAt: day}},
+		opportunities: []domainrevenue.Opportunity{{OpportunityID: "opp_1", SourceKind: "market_research", Title: "Draft opportunity", ApprovalState: "draft", CreatedAt: day}},
+		economicTasks: []domainrevenue.EconomicTask{{TaskID: "task_1", OpportunityID: "opp_1", AgentID: "shiro", TaskKind: "billing", Status: "draft", ApprovalMode: "human_required", CreatedAt: day}},
+		reflections:   []domainrevenue.EconomicReflection{{ReflectionID: "reflection_1", OpportunityID: "opp_1", Outcome: "drafted", CreatedAt: day}},
 	}
 	req := httptest.NewRequest(http.MethodGet, "/viewer/revenue?limit=5", nil)
 	rec := httptest.NewRecorder()
 
-	HandleRevenueStatus(store).ServeHTTP(rec, req)
+	HandleRevenueStatus(store, RevenueEconomicObjectiveSettings{Enabled: true, DraftOnly: true}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -233,6 +236,7 @@ func TestHandleRevenueStatus(t *testing.T) {
 		ExternalChannelAdapterConfigured     bool                                    `json:"external_channel_adapter_configured"`
 		HumanApprovalRequiredForExternalSend bool                                    `json:"human_approval_required_for_external_send"`
 		Summary                              RevenueDashboardSummary                 `json:"summary"`
+		EconomicObjective                    RevenueEconomicObjectiveSummary         `json:"economic_objective"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -267,6 +271,10 @@ func TestHandleRevenueStatus(t *testing.T) {
 		body.Summary.LatestChannelDraftID != "draft_1" ||
 		body.Summary.ExternalSendApplyCount != 1 {
 		t.Fatalf("summary=%#v", body.Summary)
+	}
+	if !body.EconomicObjective.Enabled || !body.EconomicObjective.DraftOnly || !body.EconomicObjective.ExternalActionBlocked ||
+		body.EconomicObjective.OpportunityCount != 1 || body.EconomicObjective.PendingApprovalTaskCount != 1 || body.EconomicObjective.ReflectionCount != 1 {
+		t.Fatalf("economic objective summary=%#v", body.EconomicObjective)
 	}
 	if len(body.Summary.KPITrend) != 1 ||
 		body.Summary.KPITrend[0].Date != "2026-05-18" ||
@@ -437,6 +445,26 @@ func TestHandleRevenueEconomicObjectiveEndpoints(t *testing.T) {
 	HandleRevenueOpportunityWorkstreamGoal(store, goals).ServeHTTP(missingRec, missingReq)
 	if missingRec.Code != http.StatusNotFound {
 		t.Fatalf("missing status=%d body=%s", missingRec.Code, missingRec.Body.String())
+	}
+}
+
+func TestHandleRevenueEconomicObjectiveReadEndpointsReturnUnavailableWarnings(t *testing.T) {
+	cases := []struct {
+		path    string
+		handler http.HandlerFunc
+	}{
+		{path: "/viewer/revenue/opportunities", handler: HandleRevenueOpportunities(nil)},
+		{path: "/viewer/revenue/economic-tasks", handler: HandleRevenueEconomicTasks(nil)},
+		{path: "/viewer/revenue/economic-reflections", handler: HandleRevenueEconomicReflections(nil)},
+	}
+	for _, tt := range cases {
+		t.Run(tt.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			tt.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+			if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"unavailable"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"warnings"`)) {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 

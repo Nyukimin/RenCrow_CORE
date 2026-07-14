@@ -140,6 +140,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("knowledge_relation.build_on_import requires enabled=true")
 		}
 	}
+	if c.EconomicObjective.DailyOpportunityLimit != 0 && (c.EconomicObjective.DailyOpportunityLimit < 1 || c.EconomicObjective.DailyOpportunityLimit > 50) {
+		return fmt.Errorf("economic_objective.daily_opportunity_limit must be between 1 and 50")
+	}
+	if c.EconomicObjective.HeartbeatDiscoveryEnabled && !c.EconomicObjective.Enabled {
+		return fmt.Errorf("economic_objective.heartbeat_discovery_enabled requires enabled=true")
+	}
+	if c.EconomicObjective.HeartbeatDiscoveryEnabled && !c.EconomicObjective.DraftOnlyEnabled() {
+		return fmt.Errorf("economic_objective.heartbeat_discovery_enabled requires draft_only=true")
+	}
 
 	if !c.LocalLLM.Enabled {
 		// Ollama設定検証

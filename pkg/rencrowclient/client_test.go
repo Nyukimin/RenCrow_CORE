@@ -8620,6 +8620,107 @@ func TestKnowledgeRelationsStatusAndHopValidation(t *testing.T) {
 	})
 }
 
+func TestRevenueOpportunitiesValidatesSafeReadModel(t *testing.T) {
+	now := "2026-07-14T00:00:00Z"
+	t.Run("valid response", func(t *testing.T) {
+		var gotPath string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.String()
+			_, _ = io.WriteString(w, `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe draft","expected_revenue":3000,"expected_cost":800,"expected_profit":2200,"profit_margin":0.7333333333333333,"approval_state":"draft","created_at":"`+now+`"}],"opportunity_count":1}`)
+		}))
+		defer server.Close()
+		client, _ := New(server.URL)
+		status, err := client.RevenueOpportunities(context.Background(), 5)
+		if err != nil {
+			t.Fatalf("RevenueOpportunities() error=%v", err)
+		}
+		if gotPath != "/viewer/revenue/opportunities?limit=5" || status.OpportunityCount != 1 {
+			t.Fatalf("path=%q status=%#v", gotPath, status)
+		}
+	})
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "negative count", body: `{"opportunities":[],"opportunity_count":-1}`, want: "count"},
+		{name: "count mismatch", body: `{"opportunities":[],"opportunity_count":1}`, want: "mismatch"},
+		{name: "negative revenue", body: `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe","expected_revenue":-1,"approval_state":"draft","created_at":"` + now + `"}],"opportunity_count":1}`, want: "expected revenue"},
+		{name: "profit mismatch", body: `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe","expected_revenue":3000,"expected_cost":800,"expected_profit":1,"approval_state":"draft","created_at":"` + now + `"}],"opportunity_count":1}`, want: "expected_profit"},
+		{name: "unsafe unknown field", body: `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe","approval_state":"draft","created_at":"` + now + `","raw_output":"secret"}],"opportunity_count":1}`, want: "unknown field"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			defer server.Close()
+			client, _ := New(server.URL)
+			_, err := client.RevenueOpportunities(context.Background(), 0)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error=%v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRevenueEconomicTasksRejectApprovalMismatch(t *testing.T) {
+	now := "2026-07-14T00:00:00Z"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"economic_tasks":[{"task_id":"task-1","opportunity_id":"opp-1","agent_id":"shiro","task_kind":"billing","status":"draft","approval_mode":"none","created_at":"`+now+`"}],"task_count":1}`)
+	}))
+	defer server.Close()
+	client, _ := New(server.URL)
+	_, err := client.RevenueEconomicTasks(context.Background(), 10)
+	if err == nil || !strings.Contains(err.Error(), "human_required") {
+		t.Fatalf("RevenueEconomicTasks() error=%v", err)
+	}
+}
+
+func TestCreateRevenueOpportunityValidatesRequestAndResponse(t *testing.T) {
+	client, called, cleanup := newNoRequestClient(t)
+	defer cleanup()
+	_, err := client.CreateRevenueOpportunity(context.Background(), RevenueOpportunity{
+		OpportunityID: "opp-1", SourceKind: "market_research", Title: "Safe", ExpectedRevenue: -1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "expected revenue") {
+		t.Fatalf("CreateRevenueOpportunity() error=%v", err)
+	}
+	if *called {
+		t.Fatal("server was called for invalid opportunity")
+	}
+
+	now := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/viewer/revenue/opportunities" {
+			t.Fatalf("request=%s %s", r.Method, r.URL.Path)
+		}
+		var req RevenueOpportunity
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		req.ExpectedProfit = req.ExpectedRevenue - req.ExpectedCost
+		req.ProfitMargin = float64(req.ExpectedProfit) / float64(req.ExpectedRevenue)
+		req.ApprovalState = "draft"
+		req.CreatedAt = now
+		_ = json.NewEncoder(w).Encode(RevenueOpportunityResponse{
+			Opportunity: req, HumanApprovalRequiredForPublish: true,
+		})
+	}))
+	defer server.Close()
+	client, _ = New(server.URL)
+	resp, err := client.CreateRevenueOpportunity(context.Background(), RevenueOpportunity{
+		OpportunityID: "opp-1", SourceKind: "market_research", Title: "Safe", ExpectedRevenue: 3000, ExpectedCost: 800,
+	})
+	if err != nil {
+		t.Fatalf("CreateRevenueOpportunity() error=%v", err)
+	}
+	if resp.Opportunity.ExpectedProfit != 2200 || !resp.HumanApprovalRequiredForPublish {
+		t.Fatalf("response=%#v", resp)
+	}
+}
+
 func fullRuntimeReadiness(value bool) RuntimeDependencyReadiness {
 	return fullRuntimeReadinessWithConfig(value, value, value)
 }

@@ -343,6 +343,12 @@ func (c *Config) setDefaults() {
 	if c.KnowledgeRelation.MinimumScore == 0 {
 		c.KnowledgeRelation.MinimumScore = 4
 	}
+	if c.EconomicObjective.DraftOnly == nil {
+		c.EconomicObjective.DraftOnly = boolConfigPtr(true)
+	}
+	if c.EconomicObjective.DailyOpportunityLimit == 0 {
+		c.EconomicObjective.DailyOpportunityLimit = 5
+	}
 	if c.ToolHarness.Mode == "" {
 		c.ToolHarness.Mode = "validate_then_repair"
 	}

@@ -3391,3 +3391,43 @@ func TestConfig_Validate_KnowledgeRelationDefaultsAndGuards(t *testing.T) {
 		t.Fatalf("expected max_hops guard, got %v", err)
 	}
 }
+
+func TestConfig_Validate_EconomicObjectiveDefaultsAndGuards(t *testing.T) {
+	base := func() *Config {
+		cfg := &Config{
+			Server: ServerConfig{Port: 8080}, Ollama: OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
+			Session: SessionConfig{StorageDir: "./data"},
+		}
+		cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "ao", "aka", "kin", "gin"
+		cfg.setDefaults()
+		return cfg
+	}
+
+	cfg := base()
+	if cfg.EconomicObjective.Enabled || !cfg.EconomicObjective.DraftOnlyEnabled() || cfg.EconomicObjective.HeartbeatDiscoveryEnabled || cfg.EconomicObjective.DailyOpportunityLimit != 5 {
+		t.Fatalf("economic objective defaults=%+v", cfg.EconomicObjective)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("default config failed validation: %v", err)
+	}
+
+	cfg = base()
+	cfg.EconomicObjective.HeartbeatDiscoveryEnabled = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "requires enabled") {
+		t.Fatalf("expected enabled guard, got %v", err)
+	}
+
+	cfg = base()
+	cfg.EconomicObjective.Enabled = true
+	cfg.EconomicObjective.HeartbeatDiscoveryEnabled = true
+	cfg.EconomicObjective.DraftOnly = boolConfigPtr(false)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "draft_only") {
+		t.Fatalf("expected draft_only guard, got %v", err)
+	}
+
+	cfg = base()
+	cfg.EconomicObjective.DailyOpportunityLimit = 51
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "daily_opportunity_limit") {
+		t.Fatalf("expected daily opportunity limit guard, got %v", err)
+	}
+}
