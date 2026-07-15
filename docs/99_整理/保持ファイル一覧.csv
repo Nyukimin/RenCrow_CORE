@@ -1,29 +1,50 @@
 type,source_path,kept_path,reason,bytes
-source,01_正本仕様/仕様.md,02_正本仕様/01_仕様.md,要件・上位仕様の正本,26188
-source,01_正本仕様/実装仕様.md,02_正本仕様/02_実装仕様.md,実装仕様の正本,51166
+source,01_正本仕様/仕様.md,02_正本仕様/01_仕様.md,要件・上位仕様の正本,1888
+source,01_正本仕様/実装仕様.md,02_正本仕様/02_実装仕様.md,実装仕様の正本,2594
 source,01_正本仕様/RenCrow_Runtime_Config.md,02_正本仕様/03_Runtime_Config.md,LLM/TTS/STT runtime config 正本,11567
 source,01_正本仕様/03_IdleChat.md,02_正本仕様/04_IdleChat.md,IdleChat 正本,28781
 source,06_実装ガイド進行管理/README_Win11_Setup.md,05_運用/01_Win11_Setup.md,Windows 11 セットアップ入口,5286
 source,codebase-map/RUN_SUMMARY.md,05_運用/02_Codebase_Run_Summary.md,コードベース解析サマリ・構築リスク確認,16769
 generated,"/mnt/data/RenCrow_Char_README.md + /mnt/data/{mio,shiro,aka,ao,gin,kin,kuro,midori}.md",01_理解/02_キャラクター・エージェント仕様.md,現行Agent責務と安全境界を1ファイルに統合,10797
-generated,generated from整理方針,README.md,最小版の入口,3650
-generated,generated from docs README/classification,00_読む順番.md,読み順を固定し迷子を防ぐ,3443
+generated,generated from整理方針,README.md,最小版の入口,4847
+generated,generated from docs README/classification,00_読む順番.md,読み順を固定し迷子を防ぐ,3868
 generated,01_正本仕様/仕様.md + 実装仕様.md + Runtime_Config.md,01_理解/01_システム概要.md,システム理解用の最小概要,2393
 generated,deep-research-report.md + 情報源について.txt,03_記憶検索/01_ローカルファースト検索・記憶アーキテクチャ.md,記憶/検索/情報源の構築判断用派生アーキテクチャ,5058
 generated,情報源について.txt + 実装仕様.md,04_構築指標/01_構築ロードマップ.md,実装順を迷わないための指標,3924
 generated,実装仕様.md + IdleChat.md + deep-research-report.md,04_構築指標/02_受入基準・テスト観点.md,構築完了の判定基準,3968
-generated,docs整理レポート_20260701.md + classification,99_整理/最小化判定.md,残す/外す判断根拠,3861
-generated,generated,99_整理/最小セット構成サマリ.md,最小セットの構成確認,1547
-generated,2026-07-15 正本仕様棚卸し,02_正本仕様/00_正本仕様Tree.md,正本12本の責務・依存・lifecycle・派生境界の索引,9517
+generated,docs整理レポート_20260701.md + classification,99_整理/最小化判定.md,残す/外す判断根拠,4446
+generated,generated,99_整理/最小セット構成サマリ.md,最小セットの構成確認,2267
+generated,2026-07-15 正本仕様棚卸し,02_正本仕様/00_正本仕様Tree.md,正本12本の責務・依存・lifecycle・派生境界の索引,11876
 generated,Ver0.80 module boundary review,02_正本仕様/05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md,Ver0.80 module構造の正本,22038
 generated,Ver0.80 implementation planning,02_正本仕様/06_RenCrow_CORE_Ver0.80_モジュール化実装仕様.md,Ver0.80 module移行の正本実装仕様,28186
-generated,Ver0.80 implementation work material,02_正本仕様/07_RenCrow_CORE_Ver0.80_組み換え実装作業資料.md,Ver0.80組み換えのsupporting作業資料,18137
-generated,Ver0.80 public seed planning,02_正本仕様/08_RenCrow_CORE_Ver0.80_Public_Repo起点化仕様.md,Public repo起点化のfrozen baseline,9362
+generated,Ver0.80 implementation work material,02_正本仕様/07_RenCrow_CORE_Ver0.80_組み換え実装作業資料.md,Ver0.80組み換えのsupporting作業資料,18612
+generated,Ver0.80 public seed planning,02_正本仕様/08_RenCrow_CORE_Ver0.80_Public_Repo起点化仕様.md,Public repo起点化のfrozen baseline,10043
 generated,Game Bridge contract,02_正本仕様/09_Game_Bridge_Observer_API.md,CORE側Game Bridge read-only契約,5696
-generated,RenCrow To-Be consolidation,02_正本仕様/10_RenCrow_ToBe_統合仕様.md,To-Be目標状態の正本,20687
+generated,RenCrow To-Be consolidation,02_正本仕様/10_RenCrow_ToBe_統合仕様.md,To-Be目標状態の正本,2392
 generated,RenCrow To-Be implementation planning,02_正本仕様/11_RenCrow_ToBe_統合実装仕様.md,To-Be実装Phase・移行・受入の正本,13461
 generated,CORE feature inventory,02_正本仕様/12_CORE_機能台帳.md,CORE機能の現在状態台帳,15327
 generated,To-Be follow-up split,04_構築指標/03_Advisor_AgentProfile接続実装仕様.md,AdvisorとAgentProfileの派生接続実装資料,12303
 generated,To-Be follow-up split,04_構築指標/04_KnowledgeRelation接続実装仕様.md,Knowledge Relationの派生接続実装資料,9037
 generated,To-Be follow-up split,04_構築指標/05_EconomicObjective接続実装仕様.md,Economic Objectiveの派生接続実装資料,8856
 generated,To-Be follow-up split,04_構築指標/06_ToBe_Ops表示実装仕様.md,To-Be Opsの派生表示実装資料,7338
+generated,2026-07-15 canonical chapter split,02_正本仕様/01_仕様/01_全体構成・役割.md,上位仕様の全体構成と役割を分割,16723
+generated,2026-07-15 canonical chapter split,02_正本仕様/01_仕様/02_ルーティング・出力契約.md,上位仕様のroutingと出力契約を分割,3877
+generated,2026-07-15 canonical chapter split,02_正本仕様/01_仕様/03_表示・安全・状態管理.md,上位仕様の表示・安全・状態契約を分割,4004
+generated,2026-07-15 canonical chapter split,02_正本仕様/01_仕様/04_LLM運用・拡張性.md,上位仕様のLLM運用境界を分割,1304
+generated,2026-07-15 canonical chapter split,02_正本仕様/02_実装仕様/01_エージェント・責務境界.md,実装仕様のAgent責務境界を分割,26689
+generated,2026-07-15 code and test audit,02_正本仕様/02_実装仕様/02_ルーティング・ループ制御.md,現行RuleDictionaryとroute契約を正本化,3631
+generated,2026-07-15 code and test audit,02_正本仕様/02_実装仕様/03_IO・Worker契約.md,現行IOとWorker境界を正本化,4696
+generated,2026-07-15 canonical chapter split,02_正本仕様/02_実装仕様/04_安全・ログ・Prompt・状態管理.md,安全・log・Prompt・状態契約を分割,6836
+generated,2026-07-15 canonical chapter split,02_正本仕様/02_実装仕様/05_Heartbeat・合議制.md,Heartbeatと合議制を分割,3429
+generated,2026-07-15 canonical chapter split,02_正本仕様/02_実装仕様/06_参照・実装状況.md,参照関係と実装状況を分割,10204
+generated,2026-07-15 refs code test audit,02_正本仕様/02_実装仕様/07_Memory_Lifecycle・Recall_Context.md,MemoryとRecallの安定実装契約を吸収,4355
+generated,2026-07-15 refs code test audit,02_正本仕様/02_実装仕様/08_TTS・Viewer同期契約.md,TTSとViewer同期の安定実装契約を吸収,3675
+generated,2026-07-15 refs code test audit,02_正本仕様/02_実装仕様/09_Viewer_API・表示契約.md,Viewer APIと表示の安定実装契約を吸収,4101
+generated,2026-07-15 canonical chapter split,02_正本仕様/10_RenCrow_ToBe_統合仕様/01_全体像・CORE責務.md,To-Be全体像とCORE責務を分割,6614
+generated,2026-07-15 canonical chapter split,02_正本仕様/10_RenCrow_ToBe_統合仕様/02_Agent_Profile・Autonomy.md,Agent ProfileとAutonomyを分割,2460
+generated,2026-07-15 canonical chapter split,02_正本仕様/10_RenCrow_ToBe_統合仕様/03_Advisor_Layer.md,Advisor Layerを分割,3944
+generated,2026-07-15 canonical chapter split,02_正本仕様/10_RenCrow_ToBe_統合仕様/04_Knowledge_Relation・Recall.md,Knowledge RelationとRecallを分割,4038
+generated,2026-07-15 canonical chapter split,02_正本仕様/10_RenCrow_ToBe_統合仕様/05_Economic_Objective・Revenue.md,Economic ObjectiveとRevenueを分割,3247
+generated,2026-07-15 canonical chapter split,02_正本仕様/10_RenCrow_ToBe_統合仕様/06_GPT_OSS・Runtime_Flow.md,GPT-OSSとruntime flowを分割,2183
+generated,2026-07-15 refs code test audit,99_整理/正本候補監査_20260715.md,refs候補の採否とcode・test根拠を記録,11555
+generated,2026-07-15 canonical inventory backlog,更新候補一覧.md,棚卸し課題17件の実施状態を記録,15526

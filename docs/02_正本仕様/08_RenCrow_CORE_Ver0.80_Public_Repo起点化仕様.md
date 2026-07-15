@@ -1,8 +1,16 @@
 # RenCrow_CORE Ver0.80 Public Repo 起点化仕様
 
-作成日: 2026-07-01
-対象: `RenCrow_CORE`
-位置づけ: push 済み HEAD から新規 Public repository `RenCrow_CORE` を作るための公開前仕様
+- status: frozen
+- lifecycle: frozen baseline
+- owner: RenCrow_CORE
+- parent_spec: `05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md`、`06_RenCrow_CORE_Ver0.80_モジュール化実装仕様.md`
+- source_spec: `05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md`、`06_RenCrow_CORE_Ver0.80_モジュール化実装仕様.md`
+- created: 2026-07-01
+- last_reviewed: 2026-07-15
+- review_trigger: 新しいPublic seed、再export、公開境界変更を行う場合
+- scope: Ver0.80 Public repository初期投入時の公開境界と完了条件
+
+本書は完了済みのPublic repo起点化を記録する凍結baselineであり、現在の通常開発・release・push手順ではない。新しいPublic seedまたは再exportを行う場合だけ、現行code、依存、secret、license、CIを再監査して改訂する。
 
 ## 目的
 

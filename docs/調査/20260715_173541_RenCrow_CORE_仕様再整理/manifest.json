@@ -1,0 +1,17 @@
+{
+  "generated_at": "2026-07-15T17:35:41Z",
+  "repository": "/home/nyukimi/RenCrow/RenCrow_CORE",
+  "purpose": "Separate current overall, implemented, unimplemented, and stale RenCrow CORE specifications",
+  "artifacts": [
+    "00_読み方・分類基準.md",
+    "01_最新の全体仕様.md",
+    "02_実装済み仕様.md",
+    "03_未実装仕様.md",
+    "04_古い仕様・不採用・要再確認.md",
+    "20260715_173541_検証_RenCrow_CORE仕様分類.md",
+    "RUN_SUMMARY.md"
+  ],
+  "source_map": "../20260715_170940_RenCrow_CORE_codebase-map",
+  "live_runtime_verified": false,
+  "existing_canonical_docs_modified": false
+}

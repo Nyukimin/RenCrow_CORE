@@ -1,8 +1,15 @@
 # RenCrow_CORE Ver0.80 組み換え実装作業資料
 
-作成日: 2026-07-01
-対象: `RenCrow_CORE`
-位置づけ: `06_RenCrow_CORE_Ver0.80_モジュール化実装仕様.md` に基づき、実装に入る直前に使う作業資料
+- status: supporting
+- lifecycle: supporting work material
+- owner: RenCrow_CORE
+- parent_spec: `06_RenCrow_CORE_Ver0.80_モジュール化実装仕様.md`
+- source_spec: `06_RenCrow_CORE_Ver0.80_モジュール化実装仕様.md`
+- created: 2026-07-01
+- last_reviewed: 2026-07-15
+- scope: Ver0.80のregistrar追加、Viewer contract固定、既存機能非削除確認の作業手順
+
+本書は親仕様`06_RenCrow_CORE_Ver0.80_モジュール化実装仕様.md`を実施するための補助作業資料であり、単独で仕様、責務境界、route、公開契約を変更しない。親仕様と衝突する場合は親仕様を優先する。
 
 ## 目的
 
