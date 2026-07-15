@@ -1,0 +1,122 @@
+profile_schema_version: "1.0"
+name: RenCrow_CORE_20260715_refined
+auto_discover: false
+generated_meta:
+  source_run_id: run_20260715_170940
+  generated_at: "2026-07-15T17:09:40+09:00"
+  target_dir: /home/nyukimi/RenCrow/RenCrow_CORE
+  source_profile: codebase-analysis-profile.yaml
+
+exclude_patterns:
+  - ".git/**"
+  - "node_modules/**"
+  - "build/**"
+  - "output/**"
+  - "tmp/**"
+  - "**/archive/**"
+  - "**/*_test.go"
+  - "test/**"
+  - "tests/**"
+  - ".agents/**"
+  - ".claude/**"
+  - ".cursor/**"
+  - ".aidesigner/**"
+  - ".playwright-cli/**"
+  - ".serena/**"
+  - "install-agent.sh"
+  - "install.sh"
+  - "samba_protocol_patch.py"
+  - "start_rencrow.sh"
+  - "test-idlechat.sh"
+
+module_groups:
+  - id: cmd_runtime
+    name: 起動・CLI・runtime composition
+    dirs:
+      - cmd
+      - pkg/rencrowclient
+    focus:
+      - server起動、Config選択、signal shutdown
+      - HTTP route登録、依存注入、background job
+      - CLI facade、remote agent、client contract
+  - id: domain_application
+    name: Domain / Application / Glossary
+    dirs:
+      - internal/domain
+      - internal/application
+      - internal/glossary
+      - application
+      - domain
+    focus:
+      - Chat、Worker、Coder、Advisorの責務
+      - routing、orchestration、memory、heartbeat、revenue
+      - 外部技術に依存しないcontractとuse case
+  - id: adapter_viewer_channels
+    name: Adapter / Viewer / public module contracts
+    dirs:
+      - internal/adapter
+      - modules
+    focus:
+      - Viewer HTTP API、SSE、channel adapter
+      - modules contractとmodulebridge
+      - STT、TTS、LLM、Game、Browser境界
+  - id: feature_facades
+    name: Feature facade / registrar
+    dirs:
+      - internal/features
+    focus:
+      - feature単位のroute registrar
+      - ports、facade、legacy-bodyとの境界
+      - Ver0.80移行進捗
+  - id: infrastructure_persistence
+    name: Infrastructure / Persistence / provider
+    dirs:
+      - internal/infrastructure
+      - infrastructure
+      - tools
+    focus:
+      - LLM、STT、TTS、Web、MCP、transport provider
+      - SQLite、JSONL、DuckDB、VectorDB
+      - ToolRunner、sandbox、security
+  - id: docs_config_data
+    name: Canonical docs / Config / operational data
+    dirs:
+      - docs
+      - config
+      - prompts
+      - skills
+      - schemas
+      - rencrow-data
+      - scripts
+      - commands
+      - workspace
+    focus:
+      - canonical specと実装のtraceability
+      - runtime config、prompt、skill、schema
+      - 投資研究CLIと運用補助
+
+refs_keywords:
+  cmd_runtime: ["Runtime Config", "起動", "Viewer API", "CLI"]
+  domain_application: ["責務", "ルーティング", "Memory", "Heartbeat", "Advisor", "Economic"]
+  adapter_viewer_channels: ["Viewer", "SSE", "TTS", "STT", "Game Bridge", "channel"]
+  feature_facades: ["Ver0.80", "Feature Registrar", "facade", "module"]
+  infrastructure_persistence: ["provider", "persistence", "ToolRunner", "Source Registry", "sandbox"]
+  docs_config_data: ["正本", "Config", "運用", "機能台帳", "rencrow-data"]
+
+use_cases:
+  - id: startup
+    name: Configを読み込みruntimeを構築してHTTP serverを起動する
+  - id: viewer_chat
+    name: Viewerから会話を送信してMio・Shiro・Coderへ流す
+  - id: voice_chat
+    name: Viewer音声入力をSTTから会話・TTS経路へ渡す
+  - id: idlechat
+    name: IdleChatを開始・停止・監視する
+  - id: memory_recall
+    name: 会話履歴・Wiki・RelationをRecallPackへ注入する
+  - id: advisor_work
+    name: Shiroが承認方針に従ってCodex Advisorへ相談する
+  - id: economic_loop
+    name: HeartbeatがEconomic Opportunityをdraft-onlyで発見する
+  - id: repair_plane
+    name: Viewer Repair Planeから自己修復ジョブを起動する

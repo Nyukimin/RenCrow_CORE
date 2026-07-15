@@ -4,6 +4,7 @@ package e2e_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +30,12 @@ type coderAdapter struct {
 
 func (a *coderAdapter) Generate(ctx context.Context, t task.Task, systemPrompt string) (string, error) {
 	return a.domainCoder.GenerateWithPrompt(ctx, t, systemPrompt)
+}
+
+type staticCoder struct{}
+
+func (staticCoder) Generate(context.Context, task.Task, string) (string, error) {
+	return "unused", nil
 }
 
 // buildOrchestrator は本番同等の Orchestrator を config.yaml から構築する
@@ -120,13 +127,10 @@ func TestE2E_Routing_ChromeKeywords_CODE3(t *testing.T) {
 	}
 }
 
-// TestE2E_Routing_FallbackChain_Coder1ToCoder2 はCODEルートでCoder1がnil時に
-// Coder2（OpenAI）にフォールバックすることを検証する。
-func TestE2E_Routing_FallbackChain_Coder1ToCoder2(t *testing.T) {
+// TestE2E_Routing_GenericCodeRequiresCoder1 はgeneric CODEルートでCoder1がnilの場合、
+// 利用可能なCoder2へ暗黙fallbackせず明示routeを要求することを検証する。
+func TestE2E_Routing_GenericCodeRequiresCoder1(t *testing.T) {
 	cfg := getConfig(t)
-	if cfg.OpenAI.APIKey == "" {
-		t.Skip("OpenAI API key not configured")
-	}
 
 	ollamaProvider := ollama.NewOllamaProvider(cfg.Ollama.BaseURL, cfg.Ollama.Model)
 	classifier := infrarouting.NewLLMClassifier(ollamaProvider, cfg.Prompts.Classifier)
@@ -139,74 +143,63 @@ func TestE2E_Routing_FallbackChain_Coder1ToCoder2(t *testing.T) {
 	mcpClient := mcp.NewMCPClient()
 	mioAgent := agent.NewMioAgent(ollamaProvider, classifier, ruleDictionary, chatToolRunner, mcpClient, nil)
 
-	// Coder2 (OpenAI) のみ設定、Coder1 = nil
-	op := openai.NewOpenAIProvider(cfg.OpenAI.APIKey, cfg.OpenAI.Model)
-	dc := agent.NewCoderAgent(op, nil, nil, cfg.Prompts.CoderProposal)
-	coder2 := &coderAdapter{domainCoder: dc}
-
 	sessionRepo := session.NewJSONSessionRepository(t.TempDir())
 	workerExec := service.NewWorkerExecutionService(cfg.Worker)
 
 	orch := orchestrator.NewMessageOrchestrator(
 		sessionRepo, mioAgent, nil,
-		nil, coder2, nil, nil, // coder1=nil → coder2にフォールバック
+		nil, staticCoder{}, nil, nil, // coder1=nil、coder2ありでも暗黙fallbackしない
 		workerExec,
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	resp, err := orch.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
+	_, err := orch.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
 		SessionID:   "e2e-test-fallback",
 		Channel:     "test",
 		ChatID:      "e2e-user",
-		UserMessage: "GoでHello Worldを実装して",
+		UserMessage: "/code GoでHello Worldを実装して",
 	})
-	if err != nil {
-		t.Fatalf("ProcessMessage failed: %v", err)
+	if err == nil {
+		t.Fatal("expected generic CODE to fail when coder1 is unavailable")
 	}
-
-	if resp.Route != routing.RouteCODE {
-		t.Errorf("route: want CODE, got %s", resp.Route)
+	if !strings.Contains(err.Error(), "CODE route requested but coder1 is unavailable") {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.Response == "" {
-		t.Error("expected non-empty response from Coder2 (fallback)")
-	}
-	t.Logf("Route: %s (confidence: %.2f)", resp.Route, resp.Confidence)
-	t.Logf("Response (first 500 chars): %.500s", resp.Response)
 }
 
 // TestE2E_Routing_Code_NaturalLanguage は自然言語でルーター（ルール辞書）を通し、
-// CODE ルートに分類されて Coder1 (DeepSeek) が応答することを検証する。
+// CODE2 ルートに分類されることを検証する。
 func TestE2E_Routing_Code_NaturalLanguage(t *testing.T) {
 	cfg := getConfig(t)
-	if cfg.DeepSeek.APIKey == "" {
-		t.Skip("DeepSeek API key not configured")
-	}
-
-	orch := buildOrchestrator(t, cfg)
+	ollamaProvider := ollama.NewOllamaProvider(cfg.Ollama.BaseURL, cfg.Ollama.Model)
+	mioAgent := agent.NewMioAgent(
+		ollamaProvider,
+		infrarouting.NewLLMClassifier(ollamaProvider, cfg.Prompts.Classifier),
+		infrarouting.NewRuleDictionary(),
+		nil,
+		nil,
+		nil,
+	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	resp, err := orch.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
-		SessionID:   "e2e-test-code-natural",
-		Channel:     "test",
-		ChatID:      "e2e-user",
-		UserMessage: "Goでfizzbuzzの関数を作って、テストを追加して",
-	})
+	decision, err := mioAgent.DecideAction(ctx, task.NewTask(
+		task.NewJobID(),
+		"Goでfizzbuzzの関数を作って、テストを追加して",
+		"test",
+		"e2e-user",
+	))
 	if err != nil {
-		t.Fatalf("ProcessMessage failed: %v", err)
+		t.Fatalf("DecideAction failed: %v", err)
 	}
 
-	if resp.Route != routing.RouteCODE {
-		t.Errorf("route: want CODE, got %s", resp.Route)
+	if decision.Route != routing.RouteCODE2 {
+		t.Errorf("route: want CODE2, got %s", decision.Route)
 	}
-	if resp.Response == "" {
-		t.Error("expected non-empty response from Coder")
-	}
-	t.Logf("Route: %s (confidence: %.2f)", resp.Route, resp.Confidence)
-	t.Logf("Response (first 500 chars): %.500s", resp.Response)
+	t.Logf("Route: %s (confidence: %.2f)", decision.Route, decision.Confidence)
 }
 
 // TestE2E_Routing_Chat_NaturalLanguage は日常会話がルーターで CHAT に分類され、

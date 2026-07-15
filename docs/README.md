@@ -37,7 +37,7 @@
 
 ## このセットの位置づけ
 
-- **正本**: `02_正本仕様/`。`00_正本仕様Tree.md`を索引とし、基本仕様、実装仕様、Runtime Config、IdleChat、Ver0.80 仕様、Game Bridge / Observer API、To-Be 統合仕様・統合実装仕様、CORE 機能台帳を置く。`07`はsupporting、`08`はfrozen baselineとして区別する。
+- **正本**: `02_正本仕様/`。`00_正本仕様Tree.md`を索引とし、基本仕様、実装仕様、Runtime Config、IdleChat、Ver0.80 仕様、Game Bridge / Observer API、To-Be 統合仕様・統合実装仕様、CORE 機能台帳を置く。`01_仕様.md`、`02_実装仕様.md`、`10_RenCrow_ToBe_統合仕様.md`は安定したcanonical indexで、同名folderの子文書が詳細章を持つ。`07`はsupporting、`08`はfrozen baselineとして区別する。
 - **理解用**: `01_理解/`。新しい参加者や将来の自分が読む入口。
 - **構築判断用**: `03_記憶検索/` と `04_構築指標/`。分割後の Advisor / Knowledge Relation / Economic Objective / Ops 接続実装仕様は `04_構築指標/03`～`06` に置く。
 - **運用補助**: `05_運用/`。セットアップとコードベース現状確認。
@@ -49,8 +49,21 @@
 
 参照資料を採用する場合は、関連する DOC チケットへ理由、関係する正本、一時参照か恒久追加かを記録する。
 
+## 正本子文書
+
+入口文書を順に全部読む必要はない。対象領域だけを選ぶ。
+
+| 入口 | 子文書 | 用途 |
+| --- | --- | --- |
+| `02_正本仕様/01_仕様.md` | `02_正本仕様/01_仕様/` | 全体構成、routing、表示・安全、LLM運用 |
+| `02_正本仕様/02_実装仕様.md` | `02_正本仕様/02_実装仕様/` | Agent、routing、I/O、state、Memory、TTS同期、Viewer |
+| `02_正本仕様/10_RenCrow_ToBe_統合仕様.md` | `02_正本仕様/10_RenCrow_ToBe_統合仕様/` | CORE、Agent Profile、Advisor、Knowledge、Economic Objective、runtime flow |
+
+Memory lifecycleは`02_実装仕様/07`、TTS / Viewer同期は`02_実装仕様/08`、Viewer API・表示境界は`02_実装仕様/09`を現行正本とする。旧詳細仕様は`refs/`に残すが、子文書を上書きしない。
+
 ## 更新ルール
 
 - 挙動や契約を変える場合は、先に `02_正本仕様/` を更新する。
+- canonical indexの子文書を追加・削除・改名する場合は、入口文書、`00_正本仕様Tree.md`、本README、`99_整理/保持ファイル一覧.csv`を同じ変更で更新する。
 - `01_理解/` と `04_構築指標/` は、正本を読みやすくするための派生ドキュメント。正本更新後に再生成/更新する。
 - `99_整理/除外ファイル一覧.csv` にある詳細資料を戻す場合は、戻す理由を `99_整理/最小化判定.md` に追記する。

@@ -1,8 +1,10 @@
 # RenCrow_CORE 正本仕様Tree
 
 - status: active
+- lifecycle: canonical index
 - owner: RenCrow_CORE
-- source: 2026-07-15 正本仕様棚卸し
+- parent_spec: none
+- source_spec: 2026-07-15 正本仕様棚卸し
 - last_reviewed: 2026-07-15
 - scope: `docs/02_正本仕様/` の責務、依存関係、優先順位、派生資料との境界
 
@@ -19,9 +21,23 @@
 RenCrow_CORE
 ├── A. 現行システム契約
 │   ├── 01_仕様.md
-│   │   └── 02_実装仕様.md
-│   │       ├── 03_Runtime_Config.md
-│   │       └── 04_IdleChat.md
+│   │   ├── 01_仕様/01_全体構成・役割.md
+│   │   ├── 01_仕様/02_ルーティング・出力契約.md
+│   │   ├── 01_仕様/03_表示・安全・状態管理.md
+│   │   └── 01_仕様/04_LLM運用・拡張性.md
+│   │
+│   ├── 02_実装仕様.md
+│   │   ├── 02_実装仕様/01_エージェント・責務境界.md
+│   │   ├── 02_実装仕様/02_ルーティング・ループ制御.md
+│   │   ├── 02_実装仕様/03_IO・Worker契約.md
+│   │   ├── 02_実装仕様/04_安全・ログ・Prompt・状態管理.md
+│   │   ├── 02_実装仕様/05_Heartbeat・合議制.md
+│   │   ├── 02_実装仕様/06_参照・実装状況.md
+│   │   ├── 02_実装仕様/07_Memory_Lifecycle・Recall_Context.md
+│   │   ├── 02_実装仕様/08_TTS・Viewer同期契約.md
+│   │   └── 02_実装仕様/09_Viewer_API・表示契約.md
+│   ├── 03_Runtime_Config.md
+│   └── 04_IdleChat.md
 │   │
 │   ├── B. Ver0.80 モジュール構造
 │   │   └── 05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md
@@ -35,6 +51,12 @@ RenCrow_CORE
 │
 ├── D. To-Be 目標状態
 │   └── 10_RenCrow_ToBe_統合仕様.md
+│       ├── 10_RenCrow_ToBe_統合仕様/01_全体像・CORE責務.md
+│       ├── 10_RenCrow_ToBe_統合仕様/02_Agent_Profile・Autonomy.md
+│       ├── 10_RenCrow_ToBe_統合仕様/03_Advisor_Layer.md
+│       ├── 10_RenCrow_ToBe_統合仕様/04_Knowledge_Relation・Recall.md
+│       ├── 10_RenCrow_ToBe_統合仕様/05_Economic_Objective・Revenue.md
+│       ├── 10_RenCrow_ToBe_統合仕様/06_GPT_OSS・Runtime_Flow.md
 │       ├── 11_RenCrow_ToBe_統合実装仕様.md
 │       │   ├── derived: 04_構築指標/03_Advisor_AgentProfile接続実装仕様.md
 │       │   ├── derived: 04_構築指標/04_KnowledgeRelation接続実装仕様.md
@@ -57,8 +79,8 @@ RenCrow_CORE
 
 | ID | 文書 | 役割 | lifecycle | 親・根拠 | 更新する場面 |
 | --- | --- | --- | --- | --- | --- |
-| `01` | `01_仕様.md` | 現行システムの利用者向け挙動、ルーティング、安全境界 | active | 最上位の現行仕様 | システムの意味・挙動・権限を変える |
-| `02` | `02_実装仕様.md` | `01` を実装する唯一の統合実装正本 | active | `01` | I/O、route、状態、ログ、実装契約を変える |
+| `01` | `01_仕様.md` + `01_仕様/` | 現行システムの利用者向け挙動、ルーティング、安全境界 | active / canonical index | 最上位の現行仕様 | システムの意味・挙動・権限を変える |
+| `02` | `02_実装仕様.md` + `02_実装仕様/` | `01` を実装する唯一の統合実装正本 | active / canonical index | `01` | I/O、route、状態、ログ、実装契約を変える |
 | `03` | `03_Runtime_Config.md` | runtime topology、Config選択、LLM/TTS/STT接続境界 | active / specific | `01`, `02` | Config schema、endpoint、起動時選択を変える |
 | `04` | `04_IdleChat.md` | IdleChatの状態、停止、TTS、Viewer契約 | active / specific | `01`, `02` | IdleChatのライフサイクル・表示・音声を変える |
 | `05` | `05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md` | module / feature / legacy-body の構造正本 | active / versioned | `02`, `03` | module責務・依存方向・状態所有を変える |
@@ -66,7 +88,7 @@ RenCrow_CORE
 | `07` | `07_RenCrow_CORE_Ver0.80_組み換え実装作業資料.md` | registrar・非削除確認の作業資料 | supporting | `06` | 作業手順を更新する。単独で仕様変更しない |
 | `08` | `08_RenCrow_CORE_Ver0.80_Public_Repo起点化仕様.md` | Public repo初期投入時の公開境界 | frozen baseline | `05`～`07` | 再export・新規公開起点を作る場合だけ見直す |
 | `09` | `09_Game_Bridge_Observer_API.md` | CORE側のread-only Game Bridge契約 | active / specific | RenCrow_GAMES正本 | proxy API・Viewer観察境界を変える |
-| `10` | `10_RenCrow_ToBe_統合仕様.md` | Advisor、Knowledge Relation、Economic Objective等の目標状態 | active / target | `01`～`06`とrefsの採用判断 | To-Be責務・domain・安全境界を変える |
+| `10` | `10_RenCrow_ToBe_統合仕様.md` + `10_RenCrow_ToBe_統合仕様/` | Advisor、Knowledge Relation、Economic Objective等の目標状態 | active / target index | `01`～`06`とrefsの採用判断 | To-Be責務・domain・安全境界を変える |
 | `11` | `11_RenCrow_ToBe_統合実装仕様.md` | `10` のPhase、migration、test、acceptance | active / target implementation | `10` | To-Be実装順・移行・受入を変える |
 | `12` | `12_CORE_機能台帳.md` | contract、実装、facade、legacy、conceptの現在状態 | active / inventory | code、test、`05`, `10`, `11` | production wiringや実装状態が変わる |
 
@@ -88,9 +110,12 @@ RenCrow_CORE
 
 | 目的 | 読む順 |
 | --- | --- |
-| ルーティング・Agent・安全境界 | `01` → `02` → `12` |
+| ルーティング・Agent・安全境界 | `01` → `01_仕様/02` → `02` → `02_実装仕様/01`～`04` → `12` |
 | Runtime / endpoint / Config | `01` → `02` → `03` |
 | IdleChat | `02` → `04` → 必要な`refs/07_IdleChat仕様/` |
+| Memory lifecycle / Recall Context | `02` → `02_実装仕様/07` → `12` |
+| TTS / Viewer同期 | `02` → `02_実装仕様/08` → `03` / `04` |
+| Viewer API / 表示 | `02` → `02_実装仕様/09` → `DESIGN.md` / Viewer rules |
 | module分離・refactor | `05` → `06` → `07` → `12` |
 | Public exportの履歴・再実施 | `05` → `06` → `08` |
 | Game Observer接続 | `09` → RenCrow_GAMESの正本 |
@@ -117,11 +142,13 @@ RenCrow_CORE
 | `DOC-TREE-01` | resolved | 正本12本の役割と親子関係が番号一覧だけでは分からない | 本Treeを正本入口へ追加 |
 | `DOC-PATH-01` | resolved | activeなAGENTS / rulesに移動前の`01_正本仕様`、`10_新仕様`参照が残る | 現行正本または`docs/refs/`へ修正 |
 | `DOC-ROLE-01` | resolved | `03_記憶検索`が本文で「最小正本」を名乗り、配置規約と衝突する | 構築判断資料へ表記を統一 |
-| `DOC-ROLE-02` | tracked | `07`は正本folder内の作業資料 | path互換のため移動せず、本Treeでsupportingと明記 |
-| `DOC-LIFE-01` | tracked | `08`は完了済みPublic起点化の一回性が強い | path互換のため残し、frozen baselineとして扱う |
-| `DOC-GAP-01` | tracked | Memory lifecycle、TTS/Viewer、Viewer詳細、指示配置等の詳細仕様はrefsにしかない | 個別改訂時に`02_正本仕様`へ吸収・昇格するか判断 |
-| `DOC-GAP-02` | tracked | `02_実装仕様`のルール辞書とWorkerInput詳細は旧分割アーカイブを履歴ソースにしている | 改訂時に旧ZIP、現行code、testを監査し、必要な契約を`02`へ吸収 |
-| `DOC-SIZE-01` | tracked | `01`、`02`、`10`が大きく、現行契約・履歴・実装状況が混在する | 意味を変えずに章分割する別作業とする |
+| `DOC-ROLE-02` | resolved | `07`は正本folder内の作業資料 | 本文へsupporting、親仕様、単独で仕様変更しないことを明記 |
+| `DOC-LIFE-01` | resolved | `08`は完了済みPublic起点化の一回性が強い | 本文へfrozen baseline、再確認条件、通常手順ではないことを明記 |
+| `DOC-GAP-01` | resolved | Memory lifecycle、TTS/Viewer、Viewer詳細、指示配置等の詳細仕様はrefsにしかない | 現行code・testを監査し、Memory / TTS同期 / Viewer安定契約を`02_実装仕様/07`～`09`へ吸収。指示配置はactive rulesを正としてrefs維持 |
+| `DOC-GAP-02` | resolved | `02_実装仕様`のルール辞書とWorkerInput詳細は旧分割アーカイブを履歴ソースにしている | RuleDictionaryを現行codeへ同期。未実装の統合`WorkerInput`は不採用とし、現行task / module境界を明記 |
+| `DOC-SIZE-01` | resolved | `01`、`02`、`10`が大きく、現行契約・履歴・実装状況が混在する | 元pathをcanonical indexとして維持し、責務・変更・検証境界ごとの子文書へ章分割 |
+
+実施順、依存関係、対象、完了条件は`docs/更新候補一覧.md`の「2026-07-15 正本仕様棚卸しの作業項目」で管理する。
 
 ## 8. 更新ルール
 
@@ -130,3 +157,4 @@ RenCrow_CORE
 - 作業資料、調査ログ、派生実装資料を正本へ昇格する場合は、採用理由と置換対象を記録する。
 - 移動時はリンクを全検索し、互換リンクまたは参照更新を同じ変更に含める。
 - To-Beの実装状態が変わったら、仕様本文だけでなく`12_CORE_機能台帳.md`を更新する。
+- canonical indexの子文書を追加・削除・改名したら、index、Tree、`docs/README.md`、保持台帳を同時に更新する。
