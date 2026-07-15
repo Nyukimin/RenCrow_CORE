@@ -1,0 +1,11 @@
+path,page_id,type,status,canonical_source,summary
+docs/wiki/index.md,index:rencrow-core,index,active,docs/README.md,Knowledge Wiki と収録基準の索引
+docs/wiki/log.md,log:rencrow-core,log,active,docs/08_実装状況・ロードマップ.md,Knowledge 更新履歴
+docs/wiki/modules/rencrow-core.md,module:rencrow-core,module,active,docs/01_システム概要.md,CORE の責務と外部 module 境界
+docs/wiki/concepts/agent-responsibilities.md,concept:agent-responsibilities,concept,active,docs/03_キャラクター・エージェント仕様.md,Agent Advisor Tool の責務
+docs/wiki/concepts/routing-contract.md,concept:routing-contract,concept,active,docs/02_機能仕様.md,通常 message と明示 command の routing
+docs/wiki/concepts/memory-recall.md,concept:memory-recall,concept,active,docs/02_機能仕様.md,RecallPack Knowledge Relation provenance
+docs/wiki/concepts/safety-approval.md,concept:safety-approval,concept,active,docs/07_安全・承認・データ方針.md,side effect と approval
+docs/wiki/concepts/runtime-state.md,concept:runtime-state,concept,active,docs/02_機能仕様.md,runtime の success degraded error
+docs/wiki/specs/public-api.md,spec:public-api,spec,active,docs/06_Public_API仕様.md,HTTP API と chat recipient
+docs/wiki/specs/runtime-config.md,spec:runtime-config,spec,active,docs/05_設定リファレンス.md,config 読込 secret endpoint
