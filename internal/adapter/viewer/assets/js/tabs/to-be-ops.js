@@ -179,6 +179,7 @@
 
     const traces = objectValue(data.traces);
     const recentTrace = traceSummary(traces);
+    const traceStatus = statusFromSources([traces], Boolean(errors.traces));
     const injectedCount = recentTrace.relationItems.filter(({item}) => textValue(field(item, 'status', 'Status')).toLowerCase() === 'injected').length;
 
     return [
@@ -228,7 +229,7 @@
         detailsLabel: 'Pending approval IDs', details: safeApprovalDetails(tasks, revenue), emptyDetail: 'No pending approvals.',
       },
       {
-        key: 'recent-trace', title: 'Recent Trace', status: errors.traces ? 'unavailable' : 'ok',
+        key: 'recent-trace', title: 'Recent Trace', status: traceStatus,
         metrics: [
           metric('Responses', recentTrace.responses.length),
           metric('Relation items', recentTrace.relationItems.length),
@@ -236,7 +237,7 @@
           metric('Not injected', Math.max(0, recentTrace.relationItems.length - injectedCount)),
           metric('View', 'safe IDs'),
         ],
-        detailsLabel: 'Knowledge relation trace IDs', details: safeTraceDetails(recentTrace), emptyDetail: errors.traces ? 'Recall trace unavailable.' : 'No recent Knowledge Relation trace.',
+        detailsLabel: 'Knowledge relation trace IDs', details: safeTraceDetails(recentTrace), emptyDetail: traceStatus === 'unavailable' ? 'Recall trace unavailable.' : 'No recent Knowledge Relation trace.',
       },
     ];
   }
@@ -268,10 +269,20 @@
     }).join('');
   }
 
-  async function fetchToBeOpsJSON(path) {
-    const response = await fetch(path, {headers: {'Accept': 'application/json'}});
-    if (!response.ok) throw new Error('request unavailable');
-    return response.json();
+  async function fetchToBeOpsJSON(path, options) {
+    const settings = objectValue(options);
+    const fetchImpl = typeof settings.fetchImpl === 'function' ? settings.fetchImpl : fetch;
+    const configuredTimeout = Number(settings.timeoutMS);
+    const timeoutMS = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 5000;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMS);
+    try {
+      const response = await fetchImpl(path, {headers: {'Accept': 'application/json'}, signal: controller.signal});
+      if (!response.ok) throw new Error('request unavailable');
+      return response.json();
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   let refreshSequence = 0;
@@ -306,7 +317,7 @@
     return model;
   }
 
-  const api = {buildToBeOpsViewModel, renderToBeOpsHTML, refreshToBeOpsData, normalizeToBeOpsStatus};
+  const api = {buildToBeOpsViewModel, renderToBeOpsHTML, refreshToBeOpsData, normalizeToBeOpsStatus, fetchToBeOpsJSON};
   if (root) root.refreshToBeOpsData = refreshToBeOpsData;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

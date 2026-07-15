@@ -34,6 +34,17 @@ func buildConversationRuntime(
 	var convEngine conversation.ConversationEngine
 	var realMgr *conversationpersistence.RealConversationManager
 	var l1Store *l1sqlite.L1SQLiteStore
+	if cfg.Conversation.L1SQLitePath != "" {
+		if err := os.MkdirAll(filepath.Dir(cfg.Conversation.L1SQLitePath), 0755); err != nil {
+			log.Fatalf("Failed to create L1 SQLite directory: %v", err)
+		}
+		var err error
+		l1Store, err = l1sqlite.NewL1SQLiteStore(cfg.Conversation.L1SQLitePath)
+		if err != nil {
+			log.Fatalf("Failed to initialize L1 SQLite store: %v", err)
+		}
+		log.Printf("  L1 SQLite: %s", cfg.Conversation.L1SQLitePath)
+	}
 	if cfg.Conversation.Enabled {
 		var err error
 		vectorCollection := cfg.Conversation.VectorCollection
@@ -55,16 +66,8 @@ func buildConversationRuntime(
 			log.Fatalf("Failed to initialize conversation manager: %v", err)
 		}
 		log.Printf("  VectorDB collection: %s (dimension=%d)", vectorCollection, vectorDimension)
-		if cfg.Conversation.L1SQLitePath != "" {
-			if err := os.MkdirAll(filepath.Dir(cfg.Conversation.L1SQLitePath), 0755); err != nil {
-				log.Fatalf("Failed to create L1 SQLite directory: %v", err)
-			}
-			l1Store, err = l1sqlite.NewL1SQLiteStore(cfg.Conversation.L1SQLitePath)
-			if err != nil {
-				log.Fatalf("Failed to initialize L1 SQLite store: %v", err)
-			}
+		if l1Store != nil {
 			realMgr.WithL1Store(l1Store)
-			log.Printf("  L1 SQLite: %s", cfg.Conversation.L1SQLitePath)
 			if cfg.KnowledgeRelation.Enabled {
 				scoring := domainrelation.DefaultScoringConfig()
 				scoring.MinimumScore = cfg.KnowledgeRelation.MinimumScore
@@ -138,7 +141,7 @@ func buildConversationRuntime(
 		workerToolRunnerV2.WithWebSearchCache(webSearchCache)
 		log.Printf("ToolRunner web_search cache enabled via Conversation L1")
 	}
-	if l1Store != nil {
+	if l1Store != nil && workerToolRunnerV2 != nil {
 		webGatherUseCase := webgatherapp.NewUseCase(
 			webgatherinfra.NewHTTPFetcher(),
 			webgatherinfra.NewBasicExtractor(),

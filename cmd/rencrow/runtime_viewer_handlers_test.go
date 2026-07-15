@@ -46,6 +46,24 @@ func TestBuildViewerRuntimeHandlersRegistersMemoryLayersUnavailableHandler(t *te
 	}
 }
 
+func TestBuildViewerRuntimeHandlersRegistersRecallTraceUnavailableHandler(t *testing.T) {
+	deps := &Dependencies{}
+	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil)
+	if deps.viewerRecallTraces == nil {
+		t.Fatal("viewerRecallTraces handler is nil")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/viewer/recall/traces?limit=5", nil)
+	rec := httptest.NewRecorder()
+	deps.viewerRecallTraces.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"unavailable"`) {
+		t.Fatalf("body=%q", rec.Body.String())
+	}
+}
+
 func TestBuildViewerRuntimeHandlersRegistersDomainGraphUnavailableHandler(t *testing.T) {
 	deps := &Dependencies{}
 	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil)

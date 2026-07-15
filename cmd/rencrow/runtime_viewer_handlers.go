@@ -23,6 +23,7 @@ func buildViewerRuntimeHandlers(
 	gameDecisionProvider llm.LLMProvider,
 ) {
 	if l1Store == nil {
+		deps.viewerRecallTraces = viewer.HandleRecallTraces(nil)
 		deps.viewerMemoryLayers = viewer.HandleMemoryLayers(nil, nil)
 		deps.viewerSourceRegistry = viewer.HandleSourceRegistry(nil)
 		deps.viewerDomainGraphAssertions = viewer.HandleDomainGraphAssertions(nil)
@@ -30,6 +31,7 @@ func buildViewerRuntimeHandlers(
 		deps.viewerHobbyDomainGraphSync = viewer.HandleHobbyDomainGraphSync(viewer.HobbyGraphOptions{}, nil)
 	}
 	if l1Store != nil {
+		deps.viewerRecallTraces = viewer.HandleRecallTraces(l1Store)
 		deps.viewerMemorySnapshot = viewer.HandleMemorySnapshot(l1Store)
 		deps.viewerMemoryLayers = viewer.HandleMemoryLayers(l1Store, realMgr)
 		deps.viewerMemoryEvents = viewer.HandleMemoryEvents(l1Store)
@@ -40,7 +42,6 @@ func buildViewerRuntimeHandlers(
 		deps.viewerMemoryUserForget = viewer.HandleUserMemoryForget(l1Store)
 		deps.viewerMemoryUserSupersede = viewer.HandleUserMemorySupersede(l1Store)
 		deps.viewerMemoryRecallPack = viewer.HandleMemoryRecallPack(l1Store, realMgr, l1Store)
-		deps.viewerRecallTraces = viewer.HandleRecallTraces(l1Store)
 		deps.viewerSourceRegistry = viewer.HandleSourceRegistry(l1Store)
 		deps.viewerDomainGraphAssertions = viewer.HandleDomainGraphAssertions(l1Store)
 		deps.viewerMovieDomainGraphSync = viewer.HandleMovieDomainGraphSync(viewer.MovieCatalogOptions{}, l1Store)

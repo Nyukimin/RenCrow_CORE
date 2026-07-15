@@ -17,7 +17,13 @@ func HandleRecallTraces(store RecallTraceStore) http.HandlerFunc {
 		if !requireViewerMethod(w, r, http.MethodGet) {
 			return
 		}
-		if !requireViewerStore(w, store == nil, "recall trace unavailable") {
+		if store == nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"status":     "unavailable",
+				"warnings":   []string{"recall trace store unavailable"},
+				"items":      []domconv.RecallTrace{},
+				"session_id": strings.TrimSpace(r.URL.Query().Get("session_id")),
+			})
 			return
 		}
 		limit, err := parseViewerLimit(r.URL.Query().Get("limit"), 20, 100)

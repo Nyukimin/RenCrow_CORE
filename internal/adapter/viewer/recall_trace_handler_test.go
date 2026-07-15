@@ -50,3 +50,23 @@ func TestHandleRecallTraces(t *testing.T) {
 		t.Fatalf("unexpected traces: %+v", out)
 	}
 }
+
+func TestHandleRecallTracesUnavailableReturnsWarningNot500(t *testing.T) {
+	rec := httptest.NewRecorder()
+	HandleRecallTraces(nil)(rec, httptest.NewRequest(http.MethodGet, "/viewer/recall/traces?limit=5", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Status   string                `json:"status"`
+		Warnings []string              `json:"warnings"`
+		Items    []domconv.RecallTrace `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if out.Status != "unavailable" || len(out.Warnings) == 0 || len(out.Items) != 0 {
+		t.Fatalf("unexpected unavailable response: %#v", out)
+	}
+}

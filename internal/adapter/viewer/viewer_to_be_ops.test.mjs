@@ -57,3 +57,27 @@ test('To-Be Ops is wired into the existing Ops tab and mobile layout', () => {
   assert.match(css, /overflow-wrap:anywhere/);
   assert.match(css, /@media \(max-width: 640px\)[\s\S]*\.ops-to-be-grid\{grid-template-columns:minmax\(0,1fr\)\}/);
 });
+
+test('To-Be Ops preserves Recall Trace unavailable status', () => {
+  const {buildToBeOpsViewModel} = require('./assets/js/tabs/to-be-ops.js');
+  const model = buildToBeOpsViewModel({
+    traces: {status: 'unavailable', warnings: ['recall trace store unavailable'], items: []},
+    errors: {},
+  });
+
+  assert.equal(model[4].key, 'recent-trace');
+  assert.equal(model[4].status, 'unavailable');
+  assert.match(model[4].emptyDetail, /unavailable/i);
+});
+
+test('To-Be Ops API fetch has a finite timeout', async () => {
+  const {fetchToBeOpsJSON} = require('./assets/js/tabs/to-be-ops.js');
+  const fetchImpl = (_path, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new Error('aborted')), {once: true});
+  });
+
+  await assert.rejects(
+    fetchToBeOpsJSON('/viewer/slow', {fetchImpl, timeoutMS: 10}),
+    /aborted/,
+  );
+});

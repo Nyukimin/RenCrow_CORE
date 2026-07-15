@@ -1,0 +1,105 @@
+server:
+  host: "127.0.0.1"
+  port: ${RENCROW_E2E_PORT}
+  tls:
+    enabled: false
+
+ollama:
+  base_url: "http://127.0.0.1:9"
+  model: "browser-e2e-disabled"
+  max_context: 8192
+
+local_llm:
+  enabled: false
+
+session:
+  storage_dir: "${RENCROW_E2E_RUNTIME}/sessions"
+
+worker:
+  auto_commit: false
+  workspace: "${RENCROW_E2E_RUNTIME}/worker"
+  stop_on_error: true
+  protected_patterns:
+    - ".env*"
+    - "*credentials*"
+    - "*.key"
+    - "*.pem"
+  action_on_protected: "error"
+
+prompts_dir: "${RENCROW_E2E_REPO}/prompts"
+workspace_dir: "${RENCROW_E2E_RUNTIME}/workspace"
+operation_memory_dir: "${RENCROW_E2E_RUNTIME}/memory"
+self_source_dir: "${RENCROW_E2E_REPO}"
+
+viewer_log:
+  enabled: true
+  path: "${RENCROW_E2E_RUNTIME}/workspace/logs/orchestrator_event_log.jsonl"
+  retention_days: 1
+  gc_interval_minutes: 60
+
+idle_chat:
+  enabled: false
+conversation:
+  enabled: false
+heartbeat:
+  enabled: false
+distributed:
+  enabled: false
+
+codex:
+  enabled: false
+webwright_fetch:
+  enabled: false
+browser_actor:
+  enabled: false
+security:
+  enabled: false
+sandbox:
+  enabled: false
+tool_harness:
+  enabled: false
+dci:
+  enabled: false
+skill_governance:
+  enabled: false
+workstream:
+  enabled: false
+persona_architecture:
+  enabled: false
+browser_trace_to_api:
+  enabled: false
+complexity_hotspot:
+  enabled: false
+superagent_harness:
+  enabled: false
+ai_workflow:
+  enabled: false
+knowledge_memory:
+  enabled: false
+
+advisor:
+  storage: "jsonl"
+  log_path: "${RENCROW_E2E_RUNTIME}/workspace/logs/advisor"
+  sqlite_path: "${RENCROW_E2E_RUNTIME}/workspace/logs/advisor.db"
+
+knowledge_relation:
+  enabled: false
+  build_on_import: false
+  max_hops: 2
+  minimum_score: 4
+
+economic_objective:
+  enabled: true
+  draft_only: true
+  heartbeat_discovery_enabled: false
+  daily_opportunity_limit: 5
+
+revenue:
+  enabled: true
+  storage: "jsonl"
+  log_path: "${RENCROW_E2E_RUNTIME}/workspace/logs/revenue"
+  sqlite_path: "${RENCROW_E2E_RUNTIME}/workspace/revenue.db"
+  prohibit_success_guarantee: true
+  require_customer_voice_permission: true
+  external_publish_requires_approval: true
+  high_ticket_offer_requires_approval: true
