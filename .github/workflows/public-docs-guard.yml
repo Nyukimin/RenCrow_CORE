@@ -18,7 +18,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git ls-files docs | LC_ALL=C sort > /tmp/tracked-docs.txt
+          git -c core.quotepath=false ls-files docs | LC_ALL=C sort > /tmp/tracked-docs.txt
           LC_ALL=C sort .public-docs-allowlist > /tmp/allowed-docs.txt
           if ! diff -u /tmp/allowed-docs.txt /tmp/tracked-docs.txt; then
             echo "Tracked docs must exactly match .public-docs-allowlist" >&2
