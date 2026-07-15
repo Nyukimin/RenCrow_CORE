@@ -4,7 +4,7 @@
 
 外部情報調査では、検索とブラウジングを分離する。
 
-正本仕様は `docs/10_新仕様/86_Search_Discovery_Browse_Evidence分離仕様.md` とする。
+詳細な補助仕様は `docs/refs/10_新仕様/86_Search_Discovery_Browse_Evidence分離仕様.md` とし、正本へ反映する場合は `docs/02_正本仕様/00_正本仕様Tree.md` に従う。
 
 ## Core Rule
 

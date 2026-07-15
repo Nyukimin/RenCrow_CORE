@@ -25,5 +25,5 @@ RenCrow の module / directory 固有制約を、常時 `AGENTS.md` へ詰め込
 | `rencrow-data/**` | market data workflow。snapshot_id、approval_reason、paper_trade_log、CLI audit を保つ。 | `skills/core/rencrow-data-refresh-audit` |
 | `systemd/**` | live service deployment。restart 前に service stop、残 process、port、health down を確認する。 | `skills/core/rencrow-service-rebuild-restart` |
 | `internal/infrastructure/persistence/**` | DB / JSONL persistence。schema、audit trail、migration、direct write boundary を確認する。 | `rules/common/rules_state_management.md` |
-| `docs/10_新仕様/**` | 新仕様。既存番号と衝突させず、関連仕様を検索して接続を書く。 | `docs/10_新仕様/82_Claude_Code指示配置ガバナンス仕様.md` |
-
+| `docs/02_正本仕様/**` | 正本仕様。親仕様、lifecycle、Tree、派生文書を同時に更新する。 | `docs/02_正本仕様/00_正本仕様Tree.md` |
+| `docs/refs/10_新仕様/**` | 補助参照。正本へ無審査で戻さず、採用時は`docs/02_正本仕様/`へ反映する。 | `docs/refs/10_新仕様/82_Claude_Code指示配置ガバナンス仕様.md` |

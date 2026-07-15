@@ -6,7 +6,7 @@
 詳細設計や背景説明は `CLAUDE.md`、共通方針は `rules/`、実装仕様の正本は `docs/` を参照してください。
 
 このファイルは常時必要な判断基準だけを置く。path 固有の制約は `rules/`、再利用手順は `skills/`、機械的に止めるべき危険操作は hooks / permissions へ分離する。
-指示配置の正本は `docs/10_新仕様/82_Claude_Code指示配置ガバナンス仕様.md` とする。
+指示配置の補助仕様は `docs/refs/10_新仕様/82_Claude_Code指示配置ガバナンス仕様.md` とし、正本配置は `docs/02_正本仕様/00_正本仕様Tree.md` に従う。
 
 ---
 
@@ -16,10 +16,11 @@
 
 1. `AGENTS.md`  
 2. `CLAUDE.md`  
-3. `docs/01_正本仕様/実装仕様.md`  
-4. Viewer / UI / 見た目に関わる作業では `DESIGN.md`
-5. 関連する実装ファイルとその周辺コード  
-6. 必要に応じて以下を参照  
+3. `docs/02_正本仕様/00_正本仕様Tree.md`
+4. `docs/02_正本仕様/02_実装仕様.md`
+5. Viewer / UI / 見た目に関わる作業では `DESIGN.md`
+6. 関連する実装ファイルとその周辺コード
+7. 必要に応じて以下を参照
    - `rules/PROJECT_AGENT.md`
    - `rules/common/GLOBAL_AGENT.md`
    - `rules/common/rules_architecture.md`
@@ -37,10 +38,10 @@
    - `rules/rules_path_scoped_constraints.md`
    - `rules/rules_search_browse_evidence.md`
    - `rules/rules_domain.md`
-   - `docs/01_正本仕様/18_Memory_Lifecycle_Recall_Context.md`（Memory lifecycle / Recall Context / prompt 注入方針を扱う場合の正本実装仕様）
-   - `docs/10_新仕様/09_Memory_SourceRegistry仕様.md`（Memory / Source Registry / 保存境界を扱う場合の補助仕様）
+   - `docs/refs/01_正本仕様/18_Memory_Lifecycle_Recall_Context.md`（Memory lifecycle / Recall Context / prompt 注入方針を扱う場合の補助仕様）
+   - `docs/refs/10_新仕様/09_Memory_SourceRegistry仕様.md`（Memory / Source Registry / 保存境界を扱う場合の補助仕様）
 
-実装判断で迷った場合、**一次参照は `docs/01_正本仕様/実装仕様.md`** とする。
+実装判断で迷った場合、**一次参照は `docs/02_正本仕様/00_正本仕様Tree.md` と `docs/02_正本仕様/02_実装仕様.md`** とする。
 Viewer / UI / 見た目の判断で迷った場合、**視覚方針の一次参照は `DESIGN.md`** とし、実装・状態管理・検証の一次参照は正本仕様と rules に戻る。
 
 ---
@@ -233,7 +234,7 @@ v0.1 では次を行わない。
 
 1. 対象タスクの責務を確認する  
    - Chat / Worker / Coder のどこか
-2. `docs/01_正本仕様/実装仕様.md` を確認する
+2. `docs/02_正本仕様/00_正本仕様Tree.md` と `docs/02_正本仕様/02_実装仕様.md` を確認する
 3. 対象ファイルだけでなく周辺コードも読む
 4. 既存の命名・構造・流れを把握する
 
@@ -383,7 +384,7 @@ Worker は実行主体である。
   ルーティング判断の実務ポリシー
 - `rules/rules_viewer_ui.md`
   RenCrow Viewer の新 UI / 新タブ追加時の見た目と情報量の実務ルール
-- `docs/01_正本仕様/実装仕様.md`  
+- `docs/02_正本仕様/02_実装仕様.md`
   実装の一次参照
 
 ### 必要に応じて読むもの
@@ -417,7 +418,7 @@ Worker は実行主体である。
 
 ### 旧 docs 参照ルール
 - 削除済みの `docs/archive/`、`docs/codebase-map/`、`docs/STT_TTS/archive/`、`old/` 配下、古い `docs/refactor/Phase*` 文書を参照しない。
-- 必要な内容は `docs/01_正本仕様/` または `docs/10_新仕様/` に統合されたものを参照する。
+- 必要な内容は `docs/02_正本仕様/` に統合されたものを参照し、不足時だけ `docs/refs/` を補助参照する。
 
 ---
 
@@ -465,7 +466,7 @@ Worker は実行主体である。
 迷った場合は次を優先する。
 
 1. 責務分離を守る
-2. `docs/01_正本仕様/実装仕様.md` に戻る
+2. `docs/02_正本仕様/00_正本仕様Tree.md` と `docs/02_正本仕様/02_実装仕様.md` に戻る
 3. 変更を小さく保つ
 4. 安全側に倒す
 5. 勝手に広げず、分離して報告する

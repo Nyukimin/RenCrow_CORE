@@ -6,7 +6,7 @@
 目的は、ユーザー入力を適切な役割と処理カテゴリへ振り分け、責務の混線を防ぐこと。
 
 この文書は「どこへ渡すか」を決めるためのものであり、  
-詳細実装や背景思想は `CLAUDE.md`、作業ルールは `AGENTS.md`、実装仕様は `docs/01_正本仕様/実装仕様.md` を参照する。
+詳細実装や背景思想は `CLAUDE.md`、作業ルールは `AGENTS.md`、正本選択は `docs/02_正本仕様/00_正本仕様Tree.md`、実装仕様は `docs/02_正本仕様/02_実装仕様.md` を参照する。
 
 ---
 
@@ -273,7 +273,7 @@ RenCrow では、入力を以下のカテゴリへ分類する。
 - ComfyUI 利用エージェントは Wild 固定とする。
 - 画像解析・画像分析も Wild 固定とし、Worker / ANALYZE / RESEARCH へ流さない。
 - 画像生成は ComfyUI を既定 backend とする。
-- ComfyUI API 仕様は `docs/10_新仕様/48_ComfyUI_RenCrow_API仕様.md` を参照する。
+- ComfyUI API の補助仕様は `docs/refs/10_新仕様/48_ComfyUI_RenCrow_API仕様.md` を参照する。
 - 任意 workflow JSON をそのまま ComfyUI に渡さず、RenCrow 側で検証済み workflow template を使う。
 
 例：

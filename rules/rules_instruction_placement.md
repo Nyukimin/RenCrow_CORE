@@ -4,7 +4,7 @@
 
 RenCrow の AI エージェント向け指示を、常時読み込み、path 固有制約、再利用手順、隔離調査、機械的安全柵へ分離する。
 
-正本仕様は `docs/10_新仕様/82_Claude_Code指示配置ガバナンス仕様.md` とする。
+配置の補助仕様は `docs/refs/10_新仕様/82_Claude_Code指示配置ガバナンス仕様.md` とし、正本の配置階層は `docs/02_正本仕様/00_正本仕様Tree.md` に従う。
 
 ## 配置基準
 
@@ -36,4 +36,3 @@ RenCrow の AI エージェント向け指示を、常時読み込み、path 固
 - broad delete
 - external PR 作成、外部投稿、公開、課金、送信
 - secret / token / key の表示、保存、commit
-

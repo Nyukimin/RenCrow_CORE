@@ -12,31 +12,32 @@
 ## 最初に読む順番
 
 1. `00_読む順番.md`
-2. `01_理解/01_システム概要.md`
-3. `01_理解/02_キャラクター・エージェント仕様.md`
-4. `02_正本仕様/01_仕様.md`
-5. `02_正本仕様/02_実装仕様.md`
-6. `02_正本仕様/03_Runtime_Config.md`
-7. `02_正本仕様/04_IdleChat.md`
-8. `02_正本仕様/05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md`
-9. `02_正本仕様/06_RenCrow_CORE_Ver0.80_モジュール化実装仕様.md`
-10. `02_正本仕様/07_RenCrow_CORE_Ver0.80_組み換え実装作業資料.md`
-11. `02_正本仕様/08_RenCrow_CORE_Ver0.80_Public_Repo起点化仕様.md`
-12. `02_正本仕様/09_Game_Bridge_Observer_API.md`
-13. `02_正本仕様/10_RenCrow_ToBe_統合仕様.md`
-14. `02_正本仕様/11_RenCrow_ToBe_統合実装仕様.md`
-15. `02_正本仕様/12_CORE_機能台帳.md`
-16. `03_記憶検索/01_ローカルファースト検索・記憶アーキテクチャ.md`
-17. `04_構築指標/01_構築ロードマップ.md`
-18. `04_構築指標/02_受入基準・テスト観点.md`
-19. `04_構築指標/03_Advisor_AgentProfile接続実装仕様.md`
-20. `04_構築指標/04_KnowledgeRelation接続実装仕様.md`
-21. `04_構築指標/05_EconomicObjective接続実装仕様.md`
-22. `04_構築指標/06_ToBe_Ops表示実装仕様.md`
+2. `02_正本仕様/00_正本仕様Tree.md`
+3. `01_理解/01_システム概要.md`
+4. `01_理解/02_キャラクター・エージェント仕様.md`
+5. `02_正本仕様/01_仕様.md`
+6. `02_正本仕様/02_実装仕様.md`
+7. `02_正本仕様/03_Runtime_Config.md`
+8. `02_正本仕様/04_IdleChat.md`
+9. `02_正本仕様/05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md`
+10. `02_正本仕様/06_RenCrow_CORE_Ver0.80_モジュール化実装仕様.md`
+11. `02_正本仕様/07_RenCrow_CORE_Ver0.80_組み換え実装作業資料.md`
+12. `02_正本仕様/08_RenCrow_CORE_Ver0.80_Public_Repo起点化仕様.md`
+13. `02_正本仕様/09_Game_Bridge_Observer_API.md`
+14. `02_正本仕様/10_RenCrow_ToBe_統合仕様.md`
+15. `02_正本仕様/11_RenCrow_ToBe_統合実装仕様.md`
+16. `02_正本仕様/12_CORE_機能台帳.md`
+17. `03_記憶検索/01_ローカルファースト検索・記憶アーキテクチャ.md`
+18. `04_構築指標/01_構築ロードマップ.md`
+19. `04_構築指標/02_受入基準・テスト観点.md`
+20. `04_構築指標/03_Advisor_AgentProfile接続実装仕様.md`
+21. `04_構築指標/04_KnowledgeRelation接続実装仕様.md`
+22. `04_構築指標/05_EconomicObjective接続実装仕様.md`
+23. `04_構築指標/06_ToBe_Ops表示実装仕様.md`
 
 ## このセットの位置づけ
 
-- **正本**: `02_正本仕様/`。基本仕様、実装仕様、Runtime Config、IdleChat、Ver0.80 仕様、Game Bridge / Observer API、To-Be 統合仕様・統合実装仕様、CORE 機能台帳を置く。
+- **正本**: `02_正本仕様/`。`00_正本仕様Tree.md`を索引とし、基本仕様、実装仕様、Runtime Config、IdleChat、Ver0.80 仕様、Game Bridge / Observer API、To-Be 統合仕様・統合実装仕様、CORE 機能台帳を置く。`07`はsupporting、`08`はfrozen baselineとして区別する。
 - **理解用**: `01_理解/`。新しい参加者や将来の自分が読む入口。
 - **構築判断用**: `03_記憶検索/` と `04_構築指標/`。分割後の Advisor / Knowledge Relation / Economic Objective / Ops 接続実装仕様は `04_構築指標/03`～`06` に置く。
 - **運用補助**: `05_運用/`。セットアップとコードベース現状確認。
