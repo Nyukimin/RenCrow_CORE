@@ -1,6 +1,6 @@
 # Public API 仕様
 
-RenCrow_CORE の HTTP API は、Viewer と CLI facade が共通利用する runtime contract です。endpoint は `/viewer/*` を中心に構成されます。
+RenCrow_CORE の HTTP API は、RenCrow_PORTAL、Debug Viewer、CLI facade が共通利用するruntime contractです。endpointは互換性維持のため`/viewer/*`を中心に構成されますが、外部公開可否はclientごとのallowlistで制限します。
 
 ## 安定性区分
 
@@ -46,3 +46,12 @@ mio | shiro | kuro | midori
 - write/action endpoint は approval、idempotency、request provenance を保持する。
 - SSE は再接続と重複 event を考慮する。
 - debug/admin API を public network へ直接公開しない。
+
+## PORTAL公開境界
+
+`RenCrow_PORTAL`はCOREの全APIを透過公開しません。
+
+- `view`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りだけを許可する。
+- `lab`: viewの読み取りに加え、`POST /viewer/send`、`POST /viewer/idlechat/start|stop`だけを初期allowlistとする。
+- Debug、Ops、Repair、LLM管理、設定変更APIはPORTALから遮断する。
+- 新しい公開操作はCORE側のAPI追加だけで自動公開せず、PORTAL側でmethod/pathと契約テストを追加する。

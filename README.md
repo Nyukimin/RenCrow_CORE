@@ -1,6 +1,6 @@
 # RenCrow_CORE
 
-RenCrow_CORE は、人格を持つ会話、複数エージェントへのルーティング、記憶・Recall、作業実行、承認、継続作業、Viewer による観測を一つの runtime にまとめる RenCrow システムの中核です。
+RenCrow_CORE は、人格を持つ会話、複数エージェントへのルーティング、記憶・Recall、作業実行、承認、継続作業、Debug Viewer による観測を一つの runtime にまとめる RenCrow システムの中核です。
 
 CORE は外部モジュールの実装本体を抱え込まず、契約、ルーティング、状態、承認、監査、UI projection を所有します。LLM、STT、TTS、Vision、ゲーム世界、横断ツールは、それぞれ独立した RenCrow モジュールが担当します。
 
@@ -33,6 +33,14 @@ curl http://127.0.0.1:18790/health
 ```
 
 API key や token はリポジトリへ保存せず、`${ENV_VAR}` 形式で環境変数から展開してください。
+
+外部利用者向けの`view`／`lab`画面は独立した`RenCrow_PORTAL`が所有します。COREの通常Viewerはデバッグ・運用確認用として残ります。
+
+```bash
+RENCROW_PORTAL_URL=http://127.0.0.1:18791 ./build/rencrow
+```
+
+この設定時、従来の`/viewer?mode=view|live|lab`はPORTALへリダイレクトされます。PORTALが未導入の環境では、変数を設定しなければ従来画面を互換経路として利用できます。
 
 ## ドキュメント
 
