@@ -331,21 +331,20 @@ Worker は実行主体である。
 
 ## テスト方針
 
-挙動を変える場合は、原則としてテストも追加または更新する。
+コード、設定、API、Viewer、runtime の挙動を変える場合は、`rules/common/rules_testing.md` を必ず適用する。
 
 原則：
 
-- まず対象モジュールに近いユニットテストを優先する
-- 既存テスト構造があるなら、それに合わせる
-- 実装されていない仕様を勝手に作らない
-- バグ修正時は、可能なら再現テストを先に考える
-- 関連テストまで含めて確認する
+- 実装前に受入条件を定義し、期待した理由で失敗する Red を確認する
+- Green は最小実装とし、その後に関連テストを通したまま Refactor する
+- API / DB / adapter / config は unit に加えて統合・契約テストを行う
+- Viewer、起動、service、WebSocket、stream、STT/TTS、外部連携は実runtime E2Eを行う
+- Viewer は Playwright 実ブラウザで操作、network、console、最終状態、desktop / mobile を確認する
+- 正常系をmockだけで代替せず、異常系fault injectionは実backendシナリオと分離する
+- 未実施、失敗、flaky、環境不足がある場合は完了扱いせず、未確認範囲を報告する
+- docs / コメントだけの変更は TDD / E2E 対象外だが、link / format / index を確認する
 
-Go のテスト実行例：
-
-- `go test ./pkg/...`
-
-重要パッケージはカバレッジも意識する。
+適用判断、隔離方法、シナリオ行列、完了証跡は `rules/common/rules_testing.md` を正とする。
 
 ---
 
