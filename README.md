@@ -1,176 +1,64 @@
-# RenCrow_CORE Ver0.80
+# RenCrow_CORE
 
-RenCrow_CORE is the public-ready core runtime for RenCrow, staged from `RenCrow_CORE` as the Ver0.80 seed.
+RenCrow_CORE は、人格を持つ会話、複数エージェントへのルーティング、記憶・Recall、作業実行、承認、継続作業、Viewer による観測を一つの runtime にまとめる RenCrow システムの中核です。
 
-Ver0.80 focuses on preserving existing behavior while making module and feature ownership explicit. It is not a feature-removal branch. Existing implementations that are not yet moved remain as `legacy-body` under `internal/domain`, `internal/application`, `internal/infrastructure`, `internal/adapter`, or `cmd/rencrow` until their feature contracts and registrars are ready.
+CORE は外部モジュールの実装本体を抱え込まず、契約、ルーティング、状態、承認、監査、UI projection を所有します。LLM、STT、TTS、Vision、ゲーム世界、横断ツールは、それぞれ独立した RenCrow モジュールが担当します。
 
-## Goals
+## 主な機能
 
-- Keep existing Chat, Worker, Coder, Viewer, Voice, Ops, Web, Knowledge, Memory, Governance, Distributed, and Channel behavior intact.
-- Define stable `modules/*` contracts for reusable DTOs, events, pure policy, and state ownership.
-- Define `internal/features/*` registrar/facade boundaries for feature-group route registration and dependency handoff.
-- Keep `cmd/rencrow` as the process composition root: config load, dependency assembly, feature registrar calls, and server startup.
-- Prepare this pushed HEAD as the initial source for the new Public repository `RenCrow_CORE`.
+- Mio、Shiro、Kuro、Midori を使い分ける会話とルーティング
+- Worker、Coder、Advisor、Tool の責務分離
+- 会話履歴、RecallPack、Knowledge Relation、provenance
+- 承認ゲート、Workstream、Scheduler、Heartbeat
+- Opportunity、EconomicTask、RevenueEvent、Reflection の安全な管理
+- Viewer REST/SSE、状態表示、ログ、ジョブ・エージェント観測
+- LLM、STT、TTS、Browser、外部 runtime との接続契約
 
-## Architecture Tree
+## クイックスタート
 
-```text
-RenCrow_CORE Ver0.80
-├── cmd/rencrow                 # process composition root
-│   ├── main.go
-│   ├── routes.go                # legacy route grouping retained during migration
-│   └── feature_registrars.go    # calls feature-group registrars
-├── modules                      # public contracts and pure policy
-│   ├── core
-│   ├── chat
-│   ├── worker
-│   ├── llm
-│   ├── tts
-│   ├── stt
-│   ├── voicechat
-│   ├── browseractor
-│   └── webgather
-├── internal/features            # feature facades, ports, registrars
-│   ├── core
-│   ├── agent
-│   ├── chat
-│   ├── worker
-│   ├── idlechat
-│   ├── viewer
-│   ├── llm
-│   ├── tts
-│   ├── stt
-│   ├── voice
-│   ├── avatar
-│   ├── backlog
-│   ├── heartbeat
-│   ├── scheduler
-│   ├── workstream
-│   ├── revenue
-│   ├── repair
-│   ├── web
-│   ├── source
-│   ├── knowledge
-│   ├── memory
-│   ├── reports
-│   ├── security
-│   ├── sandbox
-│   ├── governance
-│   ├── superagent
-│   ├── aiworkflow
-│   ├── distributed
-│   ├── channels
-│   └── ops
-├── internal/adapter             # external adapters and compatibility adapters
-├── internal/domain              # legacy-body plus domain values and validation
-├── internal/application         # legacy-body use cases and orchestration
-└── internal/infrastructure      # legacy-body providers, persistence, transport, tools
-```
-
-## Module Contracts
-
-Current module packages:
-
-| Module | Owns |
-| --- | --- |
-| `modules/core` | module descriptors, health aggregation, state ownership metadata, module endpoint constants |
-| `modules/chat` | Viewer recipient contract, route policy, final response and IdleChat topic policy |
-| `modules/worker` | proposal / patch / execution result / failure classification contracts |
-| `modules/llm` | role provider contracts, runtime provider planning, diagnostics, health policy |
-| `modules/tts` | synthesis, provider planning, playback state, audio chunk and ACK contracts |
-| `modules/stt` | transcription, viewer input observer, busy policy, websocket planning contracts |
-| `modules/voicechat` | VoiceChat / VDS bridge / websocket route planning contracts |
-| `modules/browseractor` | browser automation request / response, risk classification, artifact contract |
-| `modules/webgather` | discovery, fetch, extraction, staging, and search contract boundary |
-
-See `modules/README.md`, `modules/CURRENT_MAP.md`, and `modules/DEPENDENCY_RULES.md` for the current ownership map and dependency rules.
-
-## Feature Catalog
-
-Feature registrars live under `internal/features/*`. They own route registration and dependency handoff only. Handler bodies, providers, stores, background jobs, and CLI implementations remain in their existing legacy-body files unless a later migration phase explicitly moves them.
-
-Current feature inventory:
-
-```text
-core, agent, chat, worker, idlechat, viewer, llm, tts, stt, voice, avatar,
-backlog, heartbeat, scheduler, workstream, revenue, repair, web, source,
-knowledge, memory, reports, security, sandbox, governance, superagent,
-aiworkflow, distributed, channels, ops
-```
-
-See `internal/features/README.md` and each feature README for inputs, outputs, side effects, persistence, logs, error contract, and current main files.
-
-## Viewer Chat Contract
-
-Viewer normal chat uses `to=mio|shiro|kuro|midori` as the recipient / character selection contract.
-
-- `to=mio`: normal Mio chat.
-- `to=shiro`: Shiro as the visible recipient / speaker; this is not an OPS or Worker execution route.
-- `to=kuro`: Kuro analysis-oriented chat.
-- `to=midori`: Midori creative / exploratory chat.
-
-`model_alias`, `route_prefix`, and old route aliases are legacy compatibility paths and must not become the primary normal Chat contract.
-
-## Build and Test
-
-The Ver0.80 seed intentionally keeps the legacy Go module path `github.com/Nyukimin/RenCrow_CORE`. Renaming the Go module path to `RenCrow_CORE` is a later compatibility migration, not part of the initial Public seed.
-
-Public CI runs the module contract tests and the representative composition / feature / Viewer adapter test set. Full `go test ./...` remains a local broader check because some e2e packages can require runtime services or local fixtures.
+必要条件は Go 1.25 以降です。外部 LLM などを利用する場合は、その runtime も別途用意してください。
 
 ```bash
-# Module contracts
-GOCACHE=/tmp/rencrow-gocache go test ./modules/...
-
-# Composition root, feature registrars, Viewer adapter, module contracts
-GOCACHE=/tmp/rencrow-gocache go test ./cmd/rencrow ./internal/features/... ./internal/adapter/viewer ./modules/...
-
-# Full repository
-GOCACHE=/tmp/rencrow-gocache go test ./...
-GOCACHE=/tmp/rencrow-gocache go vet ./...
-
-# Build / install local runtime
+cp config/config.yaml.example config.yaml
+# config.yaml の endpoint、model、保存先を環境に合わせて編集
 make build
-make install
+./build/rencrow
 ```
 
-## Run
-
-The local service is normally installed as `~/.local/bin/rencrow` and run through the user service `rencrow.service`.
+既定の設定ファイルは作業ディレクトリの `./config.yaml` です。別の場所を使う場合は `RENCROW_CONFIG` を指定します。
 
 ```bash
-make install
-systemctl --user start rencrow.service
+RENCROW_CONFIG=/path/to/config.yaml ./build/rencrow
 curl http://127.0.0.1:18790/health
 ```
 
-Before restarting an existing local runtime, stop it cleanly:
+API key や token はリポジトリへ保存せず、`${ENV_VAR}` 形式で環境変数から展開してください。
+
+## ドキュメント
+
+公開仕様は [docs/README.md](docs/README.md) から読めます。実装状況は [docs/08_実装状況・ロードマップ.md](docs/08_実装状況・ロードマップ.md) に、公開 API の安定性区分は [docs/06_Public_API仕様.md](docs/06_Public_API仕様.md) に記載しています。
+
+整理前の資料、旧仕様、解析データは保存用ブランチ [`archive/docs-classified-20260715`](https://github.com/Nyukimin/RenCrow_CORE/tree/archive/docs-classified-20260715) に残し、LLM 向けに人手で選別した Knowledge は [`knowledge/rencrow-core`](https://github.com/Nyukimin/RenCrow_CORE/tree/knowledge/rencrow-core) で管理します。これらは現在の公開仕様の正本ではありません。
+
+## 開発と検証
 
 ```bash
-systemctl --user stop rencrow.service
-pgrep -a rencrow || true
-ss -ltnp | rg ':18790' || true
-curl -fsS -m 2 http://127.0.0.1:18790/health || true
+go test ./modules/...
+go test ./cmd/rencrow ./internal/features/... ./internal/adapter/viewer ./modules/...
+go test ./...
+go vet ./...
 ```
 
-## Configuration and Secrets
+- `modules/*`: 外部利用可能な契約と純粋 policy
+- `internal/features/*`: feature 単位の route・依存境界
+- `internal/domain/*`: domain type と validation
+- `internal/application/*`: use case と orchestration
+- `internal/adapter/*`: Viewer、channel、provider adapter
+- `internal/infrastructure/*`: persistence と技術実装
+- `cmd/rencrow`: process composition root
 
-Do not commit local secrets or machine-local configuration.
+貢献方法は [CONTRIBUTING.md](CONTRIBUTING.md)、脆弱性報告は [SECURITY.md](SECURITY.md) を参照してください。
 
-Use environment variables or local files outside the public repository for API keys and private runtime settings. `.env`, private keys, runtime DBs, logs, caches, generated artifacts, and local `config.yaml` files are not part of the Public repo seed.
+## License
 
-When exporting from this staging repository into a new Public `RenCrow_CORE` repository, use `.rencrow-core-exportignore` as the export exclusion manifest. It is not a deletion list for this staging repo.
-
-## Public Repo Seed Docs
-
-Canonical Ver0.80 docs:
-
-- `docs/02_正本仕様/05_RenCrow_CORE_Ver0.80_モジュール構成仕様.md`
-- `docs/02_正本仕様/06_RenCrow_CORE_Ver0.80_モジュール化実装仕様.md`
-- `docs/02_正本仕様/07_RenCrow_CORE_Ver0.80_組み換え実装作業資料.md`
-- `docs/02_正本仕様/08_RenCrow_CORE_Ver0.80_Public_Repo起点化仕様.md`
-
-## License and Attribution
-
-RenCrow_CORE is distributed under the MIT License. See `LICENSE`.
-
-RenCrow / RenCrow work is heavily inspired by and based on `nanobot` by HKUDS. The existing attribution is retained in `LICENSE`.
+MIT License。詳細と attribution は [LICENSE](LICENSE) を参照してください。

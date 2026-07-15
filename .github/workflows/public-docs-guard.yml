@@ -1,0 +1,67 @@
+name: Public Docs Guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  public-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce public docs allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files docs | LC_ALL=C sort > /tmp/tracked-docs.txt
+          LC_ALL=C sort .public-docs-allowlist > /tmp/allowed-docs.txt
+          if ! diff -u /tmp/allowed-docs.txt /tmp/tracked-docs.txt; then
+            echo "Tracked docs must exactly match .public-docs-allowlist" >&2
+            exit 1
+          fi
+      - name: Reject local paths and private network addresses
+        shell: bash
+        run: |
+          set -euo pipefail
+          if rg -n '/home/[^/<[:space:]]+|C:\\Users\\[^\\<[:space:]]+|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' README.md ROADMAP.md CONTRIBUTING.md SECURITY.md docs; then
+            echo "Machine-local path or private network address found in public docs" >&2
+            exit 1
+          fi
+      - name: Reject likely embedded secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if rg -n --pcre2 '(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*\S{20,}' README.md ROADMAP.md CONTRIBUTING.md SECURITY.md docs; then
+            echo "Likely embedded secret found in public docs" >&2
+            exit 1
+          fi
+      - name: Check relative Markdown links
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          roots = [Path("README.md"), Path("ROADMAP.md"), Path("CONTRIBUTING.md"), Path("SECURITY.md")]
+          roots.extend(Path("docs").glob("*.md"))
+          failures = []
+          for source in roots:
+              text = source.read_text(encoding="utf-8")
+              for target in re.findall(r"(?<!!)\[[^]]*\]\(([^)]+)\)", text):
+                  target = target.split("#", 1)[0]
+                  if not target or "://" in target or target.startswith("mailto:"):
+                      continue
+                  resolved = (source.parent / target).resolve()
+                  if not resolved.exists():
+                      failures.append(f"{source}: missing {target}")
+          if failures:
+              print("\n".join(failures), file=sys.stderr)
+              raise SystemExit(1)
+          PY
