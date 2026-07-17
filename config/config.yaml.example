@@ -295,7 +295,8 @@ heartbeat:
 # - STT Stream: wss://192.168.1.31:8443/stt/stream
 # - STT File:   https://192.168.1.31:8443/stt/file
 # - STT Chat:   https://192.168.1.31:8443/stt/chat-input
-# - TTS Irodori wrapper: http://192.168.1.31:7870/api/tts
+# - TTS Go Gateway: http://192.168.1.31:7870/api/tts
+# - Irodori targetはGatewayから接続し、COREから直接参照しない
 # - 自己署名証明書のため curl は -k を付ける
 tts:
   enabled: true

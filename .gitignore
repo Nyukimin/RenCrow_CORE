@@ -76,6 +76,7 @@ __pycache__/
 *.pyc
 
 # Local generated artifacts
+/run/
 /tmp/*
 .playwright-cli/
 /output/playwright/
