@@ -244,6 +244,7 @@ const state = {
     interruptedAt: 0,
     interruptedSessionId: '',
     currentTopic: '',
+    forecastStock: null,
     history: [],
     openIndex: -1,
     selectedSummaryIndex: 0,

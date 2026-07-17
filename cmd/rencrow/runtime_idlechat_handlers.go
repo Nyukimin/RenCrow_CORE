@@ -127,6 +127,7 @@ func (d *Dependencies) handleIdleChatStatus() http.HandlerFunc {
 			"active_session_id": activeSessionID,
 			"active_transcript": activeTranscript,
 			"watchdog":          d.idleChatOrch.WatchdogSnapshot(time.Now().UTC()),
+			"forecast_stock":    d.idleChatOrch.ForecastTopicStockSnapshot(),
 			"llm_busy":          d.snapshotLLMBusy(),
 			"tts_pending":       snapshotIdleChatTTSPending(),
 			"tts_public":        snapshotTTSPublicSessions(),

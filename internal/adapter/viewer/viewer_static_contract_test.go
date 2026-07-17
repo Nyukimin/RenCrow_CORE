@@ -122,6 +122,8 @@ func TestViewerStaticContractChatAndIdleChatDeskRedesign(t *testing.T) {
 		`class="idle-mode-board"`:                           "IdleChat mode controls are first-class controls",
 		`id="idleLiveLog"`:                                  "IdleChat live render target remains stable",
 		`id="idleSummaryReview"`:                            "IdleChat summary review remains stable",
+		`data-idle-view="stock"`:                           "IdleChat stock subview is selectable",
+		`id="idleForecastStock"`:                           "IdleChat forecast stock is readable",
 		`id="idlechatBody"`:                                 "IdleChat history body remains stable",
 	}
 	for needle, purpose := range required {
@@ -133,6 +135,23 @@ func TestViewerStaticContractChatAndIdleChatDeskRedesign(t *testing.T) {
 	if strings.Contains(html, `<section id="panel-idlechat" class="panel">
     <div class="grid">`) {
 		t.Fatal("IdleChat must not use the old generic grid-first layout")
+	}
+}
+
+func TestViewerStaticContractIdleChatRendersForecastStockSnapshot(t *testing.T) {
+	data, err := os.ReadFile("assets/js/tabs/idlechat.js")
+	if err != nil {
+		t.Fatalf("read idlechat.js: %v", err)
+	}
+	js := string(data)
+	for _, needle := range []string{
+		"function renderIdleForecastStock()",
+		"state.idleChat.forecastStock = d.forecast_stock || null",
+		"forecastStock.domains",
+	} {
+		if !strings.Contains(js, needle) {
+			t.Fatalf("IdleChat stock Viewer contract missing %q", needle)
+		}
 	}
 }
 

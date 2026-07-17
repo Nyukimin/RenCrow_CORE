@@ -1302,6 +1302,7 @@
           </div>
           <div class="idle-subtabs" role="tablist" aria-label="IdleChat views">
             <button class="idle-subtab active" data-idle-view="live" type="button" role="tab" aria-controls="idleViewLive">Live</button>
+            <button class="idle-subtab" data-idle-view="stock" type="button" role="tab" aria-controls="idleViewStock">Stock</button>
             <button class="idle-subtab" data-idle-view="summary" type="button" role="tab" aria-controls="idleViewSummary">Review</button>
             <button class="idle-subtab" data-idle-view="history" type="button" role="tab" aria-controls="idleViewHistory">History</button>
           </div>
@@ -1313,6 +1314,15 @@
           </div>
           <div id="idleLiveLog" class="idle-live">
             <div class="idle-live-empty">No live IdleChat messages yet</div>
+          </div>
+        </div>
+        <div id="idleViewStock" class="idle-subview" role="tabpanel">
+          <div class="panel-head idle-panel-head">
+            <h3>Forecast Topic Stock</h3>
+            <div class="sub">6ドメイン / 各2件までの永続お題ストック</div>
+          </div>
+          <div id="idleForecastStock" class="idle-forecast-stock" aria-live="polite">
+            <div class="idle-empty">Forecast stock snapshot is unavailable</div>
           </div>
         </div>
         <div id="idleViewSummary" class="idle-subview" role="tabpanel">
@@ -1496,7 +1506,7 @@
 <script src="/viewer/assets/js/tabs/roles.js?v=20260510-tabs-roles" defer></script>
 <script src="/viewer/assets/js/tabs/progress.js?v=20260510-tabs-progress" defer></script>
 <script src="/viewer/assets/js/tabs/timeline.js?v=20260618-job-interrupt" defer></script>
-<script src="/viewer/assets/js/tabs/idlechat.js?v=20260527-tts-history-guard" defer></script>
+<script src="/viewer/assets/js/tabs/idlechat.js?v=20260717-forecast-stock" defer></script>
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
 <script src="/viewer/assets/js/tabs/jobs.js?v=20260510-tabs-jobs" defer></script>
 <script src="/viewer/assets/js/tabs/games.js?v=20260702-games-tab" defer></script>

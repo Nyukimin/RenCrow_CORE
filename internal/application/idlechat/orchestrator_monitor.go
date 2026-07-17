@@ -23,6 +23,7 @@ func (o *IdleChatOrchestrator) monitorLoop() {
 		case <-o.ctx.Done():
 			return
 		case <-ticker.C:
+			o.RefillForecastTopicStockIfIdle("idle")
 			go o.checkAndStartChat()
 		}
 	}
@@ -42,7 +43,9 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 	if o.externalLLMBusy != nil {
 		externalLLMBusy = o.externalLLMBusy()
 	}
-	if disabled || externalLLMBusy || o.chatActive || chatBusy || workerBusy || (!nextTopicAt.IsZero() && now.Before(nextTopicAt)) || (!manualMode && idleDuration < threshold) {
+	stock := o.topicStockBuf
+	stockFilling := stock != nil && stock.anyFilling()
+	if disabled || externalLLMBusy || stockFilling || o.chatActive || chatBusy || workerBusy || (!nextTopicAt.IsZero() && now.Before(nextTopicAt)) || (!manualMode && idleDuration < threshold) {
 		o.mu.Unlock()
 		return
 	}

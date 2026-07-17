@@ -1,12 +1,60 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
+
+func TestHandleIdleChatStatusIncludesForecastStockSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
+	data, err := json.Marshal(map[string]any{"stock": map[string]any{
+		"AI技術": []map[string]any{{
+			"topic":   "保存済みのAI技術お題",
+			"seeds":   []string{"seed"},
+			"created": time.Now().UTC(),
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orch := idlechat.NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	orch.InitForecastTopicStock(path)
+	deps := &Dependencies{idleChatOrch: orch}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/viewer/idlechat/status", nil)
+
+	deps.handleIdleChatStatus().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		ForecastStock idlechat.ForecastTopicStockSnapshot `json:"forecast_stock"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.ForecastStock.Enabled || payload.ForecastStock.Total != 1 {
+		t.Fatalf("forecast stock snapshot = %+v", payload.ForecastStock)
+	}
+	if got := payload.ForecastStock.Domains[0].Topics[0].Topic; got != "保存済みのAI技術お題" {
+		t.Fatalf("forecast topic = %q", got)
+	}
+}
 
 func TestSelectForecastProviderPrefersCoderPriorityOverWorker(t *testing.T) {
 	worker := fakeConversationProvider{name: "worker-provider"}

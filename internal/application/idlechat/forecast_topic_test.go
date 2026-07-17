@@ -2,11 +2,16 @@ package idlechat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -71,12 +76,9 @@ func TestBuildForecastLLMTopicNeverStartsWithEmptyTopic(t *testing.T) {
 	}
 }
 
-func TestInitForecastTopicStockDoesNotFillWorkerQueueOnStartup(t *testing.T) {
-	provider := &queuedForecastProvider{
-		responses: []string{"起動時に生成してはいけない"},
-	}
+func TestInitForecastTopicStockBootstrapsOneTopicPerDomainWhenEmpty(t *testing.T) {
 	o := NewIdleChatOrchestrator(
-		provider,
+		failingForecastProvider{err: errors.New("provider should not be called directly")},
 		session.NewCentralMemory(),
 		[]string{"mio", "shiro"},
 		5,
@@ -85,13 +87,179 @@ func TestInitForecastTopicStockDoesNotFillWorkerQueueOnStartup(t *testing.T) {
 		nil,
 		"",
 	)
-	o.SetForecastProviderWithLabel(provider, "Worker local")
-
-	o.InitForecastTopicStock("")
-
-	if provider.requests != 0 {
-		t.Fatalf("InitForecastTopicStock must not call forecast provider on startup, got %d requests", provider.requests)
+	var calls atomic.Int32
+	o.forecastTopicGenerator = func(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
+		calls.Add(1)
+		return domain.Name + "の初期お題", []string{"seed"}, nil
 	}
+	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
+
+	o.InitForecastTopicStock(path)
+	waitForForecastStock(t, o, func(snapshot ForecastTopicStockSnapshot) bool {
+		return snapshot.Total == len(forecastDomains) && !snapshot.Filling
+	})
+
+	snapshot := o.ForecastTopicStockSnapshot()
+	if got, want := calls.Load(), int32(len(forecastDomains)); got != want {
+		t.Fatalf("startup bootstrap calls = %d, want %d", got, want)
+	}
+	for _, domain := range snapshot.Domains {
+		if domain.Count != 1 {
+			t.Fatalf("startup bootstrap domain %s count = %d, want 1", domain.Name, domain.Count)
+		}
+	}
+	if snapshot.LastTrigger != "startup" {
+		t.Fatalf("last trigger = %q, want startup", snapshot.LastTrigger)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("bootstrap stock was not persisted: %v", err)
+	}
+}
+
+func TestInitForecastTopicStockReusesPersistedStockWithoutBootstrap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
+	data, err := json.Marshal(stockFile{Stock: map[string][]PreparedTopic{
+		"AI技術": {{Domain: forecastDomains[0], Topic: "保存済みのお題", Created: time.Now().UTC()}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	var calls atomic.Int32
+	o.forecastTopicGenerator = func(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
+		calls.Add(1)
+		return domain.Name + "の再生成", nil, nil
+	}
+
+	o.InitForecastTopicStock(path)
+	time.Sleep(50 * time.Millisecond)
+
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("persisted stock must suppress startup bootstrap, calls=%d", got)
+	}
+	if got := o.ForecastTopicStockSnapshot().Total; got != 1 {
+		t.Fatalf("persisted stock total = %d, want 1", got)
+	}
+}
+
+func TestRefillForecastTopicStockIfIdleAddsOneAndDefersWhenBusy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
+	data, err := json.Marshal(stockFile{Stock: map[string][]PreparedTopic{
+		"AI技術": {{Domain: forecastDomains[0], Topic: "保存済みのお題", Created: time.Now().UTC()}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	var calls atomic.Int32
+	o.forecastTopicGenerator = func(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
+		n := calls.Add(1)
+		return domain.Name + "の補充お題" + string(rune('0'+n)), nil, nil
+	}
+	o.InitForecastTopicStock(path)
+
+	if !o.RefillForecastTopicStockIfIdle("heartbeat") {
+		t.Fatal("heartbeat refill was not started")
+	}
+	waitForForecastStock(t, o, func(snapshot ForecastTopicStockSnapshot) bool {
+		return snapshot.Total == 2 && !snapshot.Filling
+	})
+	if got := o.ForecastTopicStockSnapshot().LastTrigger; got != "heartbeat" {
+		t.Fatalf("last trigger = %q, want heartbeat", got)
+	}
+
+	o.SetExternalLLMBusyFunc(func() bool { return true })
+	if o.RefillForecastTopicStockIfIdle("idle") {
+		t.Fatal("refill must be deferred while an external LLM is busy")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("busy refill called generator: calls=%d", got)
+	}
+}
+
+func TestRefillForecastTopicStockIfIdleIsSingleFlightAcrossTriggers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
+	data, err := json.Marshal(stockFile{Stock: map[string][]PreparedTopic{
+		"AI技術": {{Domain: forecastDomains[0], Topic: "保存済みのお題", Created: time.Now().UTC()}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	o.forecastTopicGenerator = func(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
+		calls.Add(1)
+		close(started)
+		<-release
+		return domain.Name + "の補充お題", nil, nil
+	}
+	o.InitForecastTopicStock(path)
+
+	if !o.RefillForecastTopicStockIfIdle("idle") {
+		t.Fatal("first refill was not started")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first refill did not reach generator")
+	}
+	if o.RefillForecastTopicStockIfIdle("heartbeat") {
+		t.Fatal("concurrent heartbeat must not start a second stock generation")
+	}
+	close(release)
+	waitForForecastStock(t, o, func(snapshot ForecastTopicStockSnapshot) bool { return !snapshot.Filling })
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("single-flight generator calls = %d, want 1", got)
+	}
+}
+
+func TestForecastTopicStockLoadDiscardsInvalidDuplicateAndUnknownRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
+	data, err := json.Marshal(stockFile{Stock: map[string][]PreparedTopic{
+		"AI技術": {
+			{Topic: "有効なお題", Created: time.Now().UTC()},
+			{Topic: "  有効なお題  ", Created: time.Now().UTC()},
+			{Topic: "   ", Created: time.Now().UTC()},
+		},
+		"未知": {{Topic: "未知ドメイン", Created: time.Now().UTC()}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := newForecastTopicStock(path).snapshot()
+	if snapshot.Total != 1 {
+		t.Fatalf("validated stock total = %d, want 1: %+v", snapshot.Total, snapshot)
+	}
+	if len(snapshot.Domains) != len(forecastDomains) {
+		t.Fatalf("snapshot domains = %d, want %d", len(snapshot.Domains), len(forecastDomains))
+	}
+}
+
+func waitForForecastStock(t *testing.T, o *IdleChatOrchestrator, ready func(ForecastTopicStockSnapshot) bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if snapshot := o.ForecastTopicStockSnapshot(); ready(snapshot) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("forecast stock condition timed out: %+v", o.ForecastTopicStockSnapshot())
 }
 
 func TestFetchNewsHeadlinesFromNonOKIncludesResponseBody(t *testing.T) {
