@@ -34,7 +34,7 @@ curl http://127.0.0.1:18790/health
 
 API key や token はリポジトリへ保存せず、`${ENV_VAR}` 形式で環境変数から展開してください。
 
-外部利用者向けの`view`／`lab`画面は独立した`RenCrow_PORTAL`が所有します。COREの通常Viewerはデバッグ・運用確認用として残ります。
+外部利用者向けの`view`／`live`／`lab`画面は独立した`RenCrow_PORTAL`が所有します。`live`は配信用、`lab`は操作可能なAI VTuber部屋として分離し、COREの通常Viewerはデバッグ・運用確認用として残します。
 
 ```bash
 RENCROW_PORTAL_URL=http://127.0.0.1:18791 ./build/rencrow

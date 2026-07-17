@@ -67,6 +67,7 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		Live2DEmotionControl:         viewer.HandleLive2DEmotionControl,
 		Live2DChatAPI:                viewer.HandleLive2DChatAPIWithResponder(newLive2DOrchestratorResponder(dependencies)),
 		Events:                       dependencies.eventHub.HandleSSE,
+		RecipientSelection:           viewer.HandleRecipientSelection(dependencies.eventHub.OnEvent),
 		DebugSystem:                  viewer.HandleDebugSystemSnapshot(debugSystemOpts),
 		DocsSearch:                   viewer.HandleDocsSearch(),
 		DocsDetail:                   viewer.HandleDocsDetail(),

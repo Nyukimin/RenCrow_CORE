@@ -16,7 +16,7 @@ func TestHandlePageRedirectsExternalModesToPortal(t *testing.T) {
 	}{
 		{path: "/viewer?mode=lab", want: "http://127.0.0.1:18791/?mode=lab"},
 		{path: "/viewer?mode=view", want: "http://127.0.0.1:18791/?mode=view"},
-		{path: "/viewer?mode=live", want: "http://127.0.0.1:18791/?mode=view"},
+		{path: "/viewer?mode=live", want: "http://127.0.0.1:18791/?mode=live"},
 	}
 	for _, tt := range tests {
 		rec := httptest.NewRecorder()

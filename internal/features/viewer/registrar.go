@@ -37,6 +37,7 @@ type BaseRoutes struct {
 	Live2DEmotionControl         http.HandlerFunc
 	Live2DChatAPI                http.HandlerFunc
 	Events                       http.HandlerFunc
+	RecipientSelection           http.HandlerFunc
 	DebugSystem                  http.HandlerFunc
 	DocsSearch                   http.HandlerFunc
 	DocsDetail                   http.HandlerFunc
@@ -92,6 +93,7 @@ func RegisterBaseRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/live2d/emotion", base.Live2DEmotionControl)
 	registerRoute(mux, "/viewer/api/chat", base.Live2DChatAPI)
 	registerRoute(mux, "/viewer/events", base.Events)
+	registerRoute(mux, "/viewer/recipient-selection", base.RecipientSelection)
 	registerRoute(mux, "/viewer/debug/system", base.DebugSystem)
 	registerRoute(mux, "/viewer/docs/search", base.DocsSearch)
 	registerRoute(mux, "/viewer/docs/detail", base.DocsDetail)

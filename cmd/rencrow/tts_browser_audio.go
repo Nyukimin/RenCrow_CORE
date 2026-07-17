@@ -2,7 +2,6 @@ package main
 
 import (
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -96,20 +95,11 @@ func proxyRemoteTTSAudio(w http.ResponseWriter, r *http.Request, client *http.Cl
 
 func isAllowedRemoteTTSAudioHost(rawHost, allowedHost string) bool {
 	host := strings.TrimSpace(rawHost)
-	if host == "" {
+	configuredHost := strings.TrimSpace(allowedHost)
+	if host == "" || configuredHost == "" {
 		return false
 	}
-	if allowedHost != "" && strings.EqualFold(host, allowedHost) {
-		return true
-	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	return strings.EqualFold(host, configuredHost)
 }
 
 func normalizeLocalTTSAudioBase(outputDir string) (string, bool) {

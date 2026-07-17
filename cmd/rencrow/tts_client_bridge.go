@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -22,6 +24,7 @@ func buildTTSClientBridge(
 		return nil
 	}
 	cmds := buildTTSCommandSpecs(cfg)
+	var sessionResponseIDs sync.Map
 
 	sink := ttsinfra.AudioSink(ttsinfra.NewNoopAudioSink())
 	if len(cmds) == 0 {
@@ -36,6 +39,9 @@ func buildTTSClientBridge(
 			return
 		}
 		publicSessionID, publicChunkIndex := resolveTTSPublicChunk(sessionID, chunkIndex)
+		if normalizedResponseID := strings.TrimSpace(responseID); normalizedResponseID != "" {
+			sessionResponseIDs.Store(sessionID, normalizedResponseID)
+		}
 		messageID, turnIndex, utteranceID := resolveTTSPublicMessage(sessionID)
 		if utteranceID == "" {
 			utteranceID = fmt.Sprintf("%s:%04d", publicSessionID, publicChunkIndex)
@@ -86,6 +92,12 @@ func buildTTSClientBridge(
 		}
 		publicSessionID := resolveTTSPublicSession(sessionID)
 		responseID := resolveTTSPublicResponse(sessionID)
+		if responseID == "" {
+			if remembered, ok := sessionResponseIDs.Load(sessionID); ok {
+				responseID = strings.TrimSpace(remembered.(string))
+			}
+		}
+		sessionResponseIDs.Delete(sessionID)
 		messageID, turnIndex, utteranceID := resolveTTSPublicMessage(sessionID)
 		payload := moduletts.BuildSessionCompletedEventPayload(moduletts.SessionCompletedEventPayloadInput{
 			SessionID:   publicSessionID,

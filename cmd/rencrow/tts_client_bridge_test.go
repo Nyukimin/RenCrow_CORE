@@ -161,6 +161,48 @@ func TestTTSClientBridgeIdleChatChunkPayloadIncludesCanonicalSpeechFields(t *tes
 	}
 }
 
+func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"audio_path":"/audio/chat.wav"}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	var events []orchestrator.OrchestratorEvent
+	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
+		Enabled: true, HTTPBaseURL: srv.URL, VoiceID: "mio", TimeoutMS: 15000,
+	}}, func(event orchestrator.OrchestratorEvent) {
+		events = append(events, event)
+	}, nil, nil)
+
+	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
+		SessionID: "viewer-chat-1", ResponseID: "response-chat-1", CharacterID: "mio", VoiceID: "mio",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.PushText(context.Background(), "viewer-chat-1", "完了です。", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.EndSession(context.Background(), "viewer-chat-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, event := range events {
+		if event.Type != "tts.session_completed" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["response_id"] != "response-chat-1" {
+			t.Fatalf("completion response_id = %#v, want response-chat-1; payload=%#v", payload["response_id"], payload)
+		}
+		return
+	}
+	t.Fatal("tts.session_completed event was not emitted")
+}
+
 func TestTTSClientBridgeTopicPayloadIncludesBrightTopicPrefix(t *testing.T) {
 	resetTTSPublicSessionStateForTest()
 	clearAllIdleChatTTSPending()

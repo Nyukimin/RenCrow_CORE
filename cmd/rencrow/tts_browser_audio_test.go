@@ -89,6 +89,22 @@ func TestHandleTTSAudio_RejectsPublicRemoteAudioURL(t *testing.T) {
 	}
 }
 
+func TestHandleTTSAudio_RejectsUnconfiguredPrivateRemoteAudioURL(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("unconfigured private upstream must not be called")
+	}))
+	defer upstream.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/viewer/tts/audio?url="+url.QueryEscape(upstream.URL+"/audio.wav"), nil)
+	rec := httptest.NewRecorder()
+
+	handleTTSAudio(t.TempDir(), "http://127.0.0.1:7870")(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
 func TestHandleLocalTTSAudio_RejectsTraversal(t *testing.T) {
 	outputDir := t.TempDir()
 	req := httptest.NewRequest(http.MethodGet, "/viewer/tts/audio?path=../secret.wav", nil)

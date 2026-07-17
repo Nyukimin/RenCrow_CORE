@@ -36,9 +36,6 @@ func portalRedirectTarget(r *http.Request, configuredURL string) (string, bool) 
 	if err != nil || (portalURL.Scheme != "http" && portalURL.Scheme != "https") || portalURL.Host == "" || portalURL.User != nil {
 		return "", false
 	}
-	if mode == "live" {
-		mode = "view"
-	}
 	query := r.URL.Query()
 	query.Set("mode", mode)
 	portalURL.RawQuery = query.Encode()
