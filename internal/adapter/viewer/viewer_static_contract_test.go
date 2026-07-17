@@ -155,6 +155,47 @@ func TestViewerStaticContractIdleChatRendersForecastStockSnapshot(t *testing.T) 
 	}
 }
 
+func TestViewerStaticContractIdleChatStockUsesReadableInspectionLayout(t *testing.T) {
+	cssData, err := os.ReadFile("assets/css/viewer.css")
+	if err != nil {
+		t.Fatalf("read viewer.css: %v", err)
+	}
+	jsData, err := os.ReadFile("assets/js/tabs/idlechat.js")
+	if err != nil {
+		t.Fatalf("read idlechat.js: %v", err)
+	}
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+
+	css := string(cssData)
+	js := string(jsData)
+	html := string(htmlData)
+	for _, needle := range []string{
+		".idle-desk-shell.stock-view",
+		".idle-stock-overview",
+		".idle-stock-diagnostics",
+		".idle-stock-topic-grid",
+	} {
+		if !strings.Contains(css, needle) {
+			t.Fatalf("IdleChat stock readable layout CSS missing %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		"classList.toggle('stock-view', next === 'stock')",
+		`<details class="idle-stock-diagnostics"`,
+		`class="idle-stock-topic-grid"`,
+	} {
+		if !strings.Contains(js, needle) {
+			t.Fatalf("IdleChat stock readable layout render contract missing %q", needle)
+		}
+	}
+	if !strings.Contains(html, "viewer.css?v=20260718-idle-stock-reader") {
+		t.Fatal("IdleChat stock layout must invalidate the Viewer CSS cache")
+	}
+}
+
 func TestViewerStaticContractLabLiveModeHidesTopGuidancePanels(t *testing.T) {
 	data, err := os.ReadFile("assets/css/viewer.css")
 	if err != nil {

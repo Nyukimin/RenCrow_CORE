@@ -666,6 +666,8 @@ function setIdleSelectedView(view) {
 	const next = (view === 'stock' || view === 'summary' || view === 'history') ? view : 'live';
   state.idleChat.selectedView = next;
   localStorage.setItem('idlechat.selectedView', next);
+	const deskShell = document.querySelector('.idle-desk-shell');
+	if (deskShell) deskShell.classList.toggle('stock-view', next === 'stock');
   idleSubtabs.forEach((btn) => {
     const active = btn.dataset.idleView === next;
     btn.classList.toggle('active', active);
@@ -786,42 +788,52 @@ function renderIdleForecastStock() {
   const missing = Number(forecastStock.missing || 0);
   const lastTrigger = String(forecastStock.last_trigger || '-');
   const statusClass = forecastStock.filling ? 'state-running' : (missing > 0 ? 'state-thinking' : 'state-idle');
-  const statusLabel = forecastStock.filling ? 'generating' : (missing > 0 ? 'waiting refill' : 'full');
+  const statusLabel = forecastStock.filling ? '生成中' : (missing > 0 ? '補充待ち' : '準備完了');
   const errorBlock = forecastStock.last_error
-    ? '<div class="idle-stock-error"><strong>Last error</strong><span>' + esc(String(forecastStock.last_error)) + '</span></div>'
+    ? '<details class="idle-stock-diagnostics"><summary><span>最後の生成エラー</span><strong>詳細を表示</strong></summary>' +
+      '<div>' + esc(String(forecastStock.last_error)) + '</div></details>'
     : '';
   const domains = Array.isArray(forecastStock.domains) ? forecastStock.domains : [];
   const domainCards = domains.map((domain) => {
     const count = Number(domain && domain.count || 0);
     const domainCapacity = Number(domain && domain.capacity || 0);
     const topics = Array.isArray(domain && domain.topics) ? domain.topics : [];
-    const topicRows = topics.length > 0 ? topics.map((item, index) => {
+    const topicRows = Array.from({length: Math.max(domainCapacity, topics.length)}, (_, index) => {
+      const item = topics[index];
+      if (!item) {
+        return '<article class="idle-stock-topic is-empty">' +
+          '<div class="idle-stock-topic-head"><span>お題 ' + esc(String(index + 1)) + '</span><time>未生成</time></div>' +
+          '<p>補充待ち</p><small>IdleまたはHeartbeat時に生成されます</small>' +
+        '</article>';
+      }
       const seeds = Array.isArray(item && item.seeds) ? item.seeds : [];
       const seedDetails = seeds.length > 0
         ? '<details class="idle-stock-seeds"><summary>Seeds ' + esc(String(seeds.length)) + '</summary><ul>' +
           seeds.map((seed) => '<li>' + esc(String(seed || '-')) + '</li>').join('') + '</ul></details>'
-        : '<div class="idle-stock-seed-empty">Seeds 0</div>';
+        : '';
       return '<article class="idle-stock-topic">' +
-        '<div class="idle-stock-topic-head"><span>#' + esc(String(index + 1)) + '</span><time>' + esc(fdt(item && item.created)) + '</time></div>' +
-        '<strong>' + esc(String(item && item.topic || '-')) + '</strong>' + seedDetails +
+        '<div class="idle-stock-topic-head"><span>お題 ' + esc(String(index + 1)) + '</span><time>' + esc(fdt(item && item.created)) + '</time></div>' +
+        '<p>' + esc(String(item && item.topic || '-')) + '</p>' + seedDetails +
       '</article>';
-    }).join('') : '<div class="idle-stock-empty">No prepared topics</div>';
+    }).join('');
     return '<section class="idle-stock-domain">' +
-      '<header><h4>' + esc(String(domain && domain.name || '-')) + '</h4>' +
+      '<header><div><span>ドメイン</span><h4>' + esc(String(domain && domain.name || '-')) + '</h4></div>' +
       '<span class="badge ' + (domain && domain.filling ? 'state-running' : (count >= domainCapacity ? 'state-idle' : 'state-thinking')) + '">' +
-      esc(String(count)) + ' / ' + esc(String(domainCapacity)) + (domain && domain.filling ? ' generating' : '') + '</span></header>' +
-      '<div class="idle-stock-topic-list">' + topicRows + '</div>' +
+      esc(String(count)) + ' / ' + esc(String(domainCapacity)) + (domain && domain.filling ? ' 生成中' : '') + '</span></header>' +
+      '<div class="idle-stock-topic-grid">' + topicRows + '</div>' +
     '</section>';
   }).join('');
 
   root.innerHTML =
-    '<div class="idle-stock-summary">' +
-      '<div><span>Prepared</span><strong>' + esc(String(total)) + ' / ' + esc(String(capacity)) + '</strong></div>' +
-      '<div><span>Missing</span><strong>' + esc(String(missing)) + '</strong></div>' +
-      '<div><span>State</span><strong class="badge ' + statusClass + '">' + esc(statusLabel) + '</strong></div>' +
-      '<div><span>Last trigger</span><strong>' + esc(lastTrigger) + '</strong></div>' +
-      '<div><span>Last attempt</span><strong>' + esc(formatIdleStockTime(forecastStock.last_attempt_at)) + '</strong></div>' +
-      '<div><span>Last success</span><strong>' + esc(formatIdleStockTime(forecastStock.last_success_at)) + '</strong></div>' +
+    '<div class="idle-stock-overview">' +
+      '<div><span>準備済み</span><strong>' + esc(String(total)) + ' / ' + esc(String(capacity)) + '</strong></div>' +
+      '<div><span>不足</span><strong>' + esc(String(missing)) + '件</strong></div>' +
+      '<div><span>生成状態</span><strong class="badge ' + statusClass + '">' + esc(statusLabel) + '</strong></div>' +
+    '</div>' +
+    '<div class="idle-stock-meta">' +
+      '<span>最終トリガー <strong>' + esc(lastTrigger) + '</strong></span>' +
+      '<span>試行 <strong>' + esc(formatIdleStockTime(forecastStock.last_attempt_at)) + '</strong></span>' +
+      '<span>成功 <strong>' + esc(formatIdleStockTime(forecastStock.last_success_at)) + '</strong></span>' +
     '</div>' + errorBlock +
     '<div class="idle-stock-domains">' + domainCards + '</div>';
 }
