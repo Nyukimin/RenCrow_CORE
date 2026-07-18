@@ -99,8 +99,10 @@ func localRuntimeConfigFromAppConfig(cfg *config.Config) modulellm.LocalRuntimeC
 		HeavyModel:        cfg.LocalLLM.HeavyModel,
 		WildModel:         cfg.LocalLLM.WildModel,
 		TimeoutSec:        cfg.LocalLLM.TimeoutSec,
+		ChatTimeoutSec:    cfg.LocalLLM.ChatTimeoutSec,
 		ModelConcurrency:  cfg.LocalLLM.ModelConcurrency,
 		ModelContext:      cfg.LocalLLM.ModelContext,
+		ChatModelContext:  cfg.LocalLLM.ChatModelContext,
 	}
 }
 

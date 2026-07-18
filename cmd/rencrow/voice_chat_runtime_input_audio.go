@@ -3,11 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -15,12 +13,30 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 	modulevoicechat "github.com/Nyukimin/RenCrow_CORE/modules/voicechat"
 	"golang.org/x/net/websocket"
 )
 
 const voiceChatInputAudioTimeout = 180 * time.Second
+
+type voiceChatInputAudioSettings struct {
+	Model          string
+	APIKey         string
+	Timeout        time.Duration
+	ModelContext   int
+	Stream         bool
+	MaxTokens      int
+	Temperature    float64
+	TopP           *float64
+	TopK           *int
+	MinP           *float64
+	Seed           *int64
+	EnableThinking *bool
+	Prompt         string
+}
 
 type voiceChatInputAudioSession struct {
 	utteranceID string
@@ -34,7 +50,7 @@ type voiceChatInputAudioSession struct {
 	pcm         bytes.Buffer
 }
 
-func handleVoiceChatInputAudioBridge(gatewayURL string, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier) http.Handler {
+func handleVoiceChatInputAudioBridge(gatewayURL string, settings voiceChatInputAudioSettings, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier) http.Handler {
 	return websocket.Handler(func(conn *websocket.Conn) {
 		defer conn.Close()
 		viewerClientID := voiceChatViewerClientID(conn)
@@ -44,13 +60,13 @@ func handleVoiceChatInputAudioBridge(gatewayURL string, voiceDirect voiceDirectF
 			return
 		}
 		log.Printf("[voice-chat] viewer connected viewer_client_id=%s input_audio_base=%s", viewerClientID, baseURL)
-		if err := serveVoiceChatInputAudio(conn, baseURL, voiceDirect, idleNotifier, viewerClientID); err != nil {
+		if err := serveVoiceChatInputAudio(conn, baseURL, settings, voiceDirect, idleNotifier, viewerClientID); err != nil {
 			log.Printf("[voice-chat] input_audio bridge closed viewer_client_id=%s err=%v", viewerClientID, err)
 		}
 	})
 }
 
-func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier, viewerClientID string) error {
+func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, settings voiceChatInputAudioSettings, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier, viewerClientID string) error {
 	var sess *voiceChatInputAudioSession
 	chatBusy := false
 	clearChatBusy := func() {
@@ -81,7 +97,7 @@ func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, voiceDirect 
 						chatBusy = true
 					}
 				}
-				sess = newVoiceChatInputAudioSession(ev)
+				sess = newVoiceChatInputAudioSession(ev, settings.Prompt)
 				if err := sendVoiceChatJSON(conn, map[string]any{
 					"type":         modulevoicechat.EventSessionReady,
 					"utterance_id": sess.utteranceID,
@@ -97,7 +113,7 @@ func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, voiceDirect 
 				if utteranceID := stringField(ev, "utterance_id"); utteranceID != "" {
 					sess.utteranceID = utteranceID
 				}
-				text, err := postVoiceChatInputAudio(context.Background(), baseURL, sess)
+				text, err := postVoiceChatInputAudio(context.Background(), baseURL, settings, sess)
 				if err != nil {
 					_ = sendVoiceChatError(conn, modulevoicechat.ErrorLLMInferenceFailed, err.Error())
 					sess = nil
@@ -144,7 +160,7 @@ func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, voiceDirect 
 	}
 }
 
-func newVoiceChatInputAudioSession(ev map[string]any) *voiceChatInputAudioSession {
+func newVoiceChatInputAudioSession(ev map[string]any, defaultPrompt string) *voiceChatInputAudioSession {
 	utteranceID := stringField(ev, "utterance_id")
 	if utteranceID == "" {
 		utteranceID = fmt.Sprintf("utt-%d", time.Now().UnixNano())
@@ -166,72 +182,74 @@ func newVoiceChatInputAudioSession(ev map[string]any) *voiceChatInputAudioSessio
 		sessionID:   sessionID,
 		channel:     voiceChatFirstNonEmpty(stringField(ev, "channel"), "viewer"),
 		chatID:      stringField(ev, "chat_id"),
-		prompt:      voiceChatFirstNonEmpty(stringField(ev, "prompt"), "聞こえた音声内容を日本語で短く確認してください。"),
+		prompt:      voiceChatFirstNonEmpty(stringField(ev, "prompt"), defaultPrompt, "音声の内容を理解し、日本語で短く自然に返答してください。"),
 		sampleRate:  sampleRate,
 		channels:    channels,
 		startedAt:   time.Now(),
 	}
 }
 
-func postVoiceChatInputAudio(ctx context.Context, baseURL string, sess *voiceChatInputAudioSession) (string, error) {
+func postVoiceChatInputAudio(ctx context.Context, baseURL string, settings voiceChatInputAudioSettings, sess *voiceChatInputAudioSession) (string, error) {
 	if sess == nil {
 		return "", fmt.Errorf("voice chat session is nil")
 	}
 	if sess.pcm.Len() == 0 {
 		return "", fmt.Errorf("voice chat audio is empty")
 	}
-	ctx, cancel := context.WithTimeout(ctx, voiceChatInputAudioTimeout)
+	settings = normalizeVoiceChatInputAudioSettings(settings)
+	ctx, cancel := context.WithTimeout(ctx, settings.Timeout)
 	defer cancel()
 	wav := encodePCM16WAV(sess.pcm.Bytes(), sess.sampleRate, sess.channels)
-	payload := map[string]any{
-		"model":      "Chat",
-		"think":      false,
-		"max_tokens": 160,
-		"messages": []map[string]any{
-			{
-				"role": "user",
-				"content": []map[string]any{
-					{"type": "text", "text": sess.prompt},
-					{"type": "input_audio", "input_audio": map[string]any{
-						"data":   base64.StdEncoding.EncodeToString(wav),
-						"format": "wav",
-					}},
-				},
+	providerOptions := make(map[string]any, 5)
+	if settings.TopP != nil {
+		providerOptions["top_p"] = *settings.TopP
+	}
+	if settings.TopK != nil {
+		providerOptions["top_k"] = *settings.TopK
+	}
+	if settings.MinP != nil {
+		providerOptions["min_p"] = *settings.MinP
+	}
+	if settings.Seed != nil {
+		providerOptions["seed"] = *settings.Seed
+	}
+	if settings.EnableThinking != nil {
+		providerOptions["chat_template_kwargs"] = map[string]any{"enable_thinking": *settings.EnableThinking}
+	}
+	request := llm.GenerateRequest{
+		Messages: []llm.Message{{
+			Role: "user",
+			Parts: []llm.MessagePart{
+				{Type: llm.MessagePartAudio, MimeType: "audio/wav", Data: wav},
+				{Type: llm.MessagePartText, Text: sess.prompt},
 			},
-		},
+		}},
+		MaxTokens:       settings.MaxTokens,
+		Temperature:     settings.Temperature,
+		ProviderOptions: providerOptions,
 	}
-	body, err := json.Marshal(payload)
+	if settings.Stream {
+		request.OnToken = func(string) {}
+	}
+	provider := openai.NewOpenAIProviderWithModelContext(settings.APIKey, settings.Model, baseURL, settings.Timeout, settings.ModelContext)
+	resp, err := provider.Generate(ctx, request)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("RenCrow LLM input_audio failed: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/v1/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return "", err
+	return strings.TrimSpace(resp.Content), nil
+}
+
+func normalizeVoiceChatInputAudioSettings(settings voiceChatInputAudioSettings) voiceChatInputAudioSettings {
+	if strings.TrimSpace(settings.Model) == "" {
+		settings.Model = "Chat"
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
+	if settings.Timeout <= 0 {
+		settings.Timeout = voiceChatInputAudioTimeout
 	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("RenCrow LLM input_audio failed: status=%d body=%s", resp.StatusCode, voiceChatShortLogText(string(data), 500))
+	if settings.MaxTokens <= 0 {
+		settings.MaxTokens = 160
 	}
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		return "", err
-	}
-	if len(out.Choices) == 0 {
-		return "", fmt.Errorf("RenCrow LLM input_audio returned no choices")
-	}
-	return strings.TrimSpace(out.Choices[0].Message.Content), nil
+	return settings
 }
 
 func processVoiceChatInputAudioFinalAsync(handler voiceDirectFinalHandler, sess *voiceChatInputAudioSession, text string) {

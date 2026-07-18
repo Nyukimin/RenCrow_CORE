@@ -17,6 +17,9 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+func float64Ptr(v float64) *float64 { return &v }
+func intPtr(v int) *int             { return &v }
+
 type slowVoiceDirectHandler struct {
 	delay time.Duration
 	done  chan struct{}
@@ -308,6 +311,12 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode payload: %v", err)
 		}
+		if payload["model"] != "mio-gemma-4-12b-it" || payload["max_tokens"] != float64(256) || payload["temperature"] != 0.3 {
+			t.Fatalf("unexpected generation payload: %#v", payload)
+		}
+		if payload["top_p"] != 0.9 || payload["top_k"] != float64(40) || payload["min_p"] != 0.0 {
+			t.Fatalf("unexpected sampling payload: %#v", payload)
+		}
 		rawMessages, _ := payload["messages"].([]any)
 		if len(rawMessages) != 1 {
 			t.Fatalf("messages = %#v", payload["messages"])
@@ -317,7 +326,7 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 		if len(content) != 2 {
 			t.Fatalf("content = %#v", msg["content"])
 		}
-		audioPart, _ := content[1].(map[string]any)
+		audioPart, _ := content[0].(map[string]any)
 		inputAudio, _ := audioPart["input_audio"].(map[string]any)
 		data, _ := inputAudio["data"].(string)
 		if data == "" {
@@ -329,7 +338,14 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 	defer llm.Close()
 
 	mux := http.NewServeMux()
-	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", nil, nil))
+	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{
+		Model:       "mio-gemma-4-12b-it",
+		MaxTokens:   256,
+		Temperature: 0.3,
+		TopP:        float64Ptr(0.9),
+		TopK:        intPtr(40),
+		MinP:        float64Ptr(0.0),
+	}, nil, nil))
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 
@@ -381,7 +397,7 @@ func TestVoiceChatInputAudioBridge_InterruptsIdleChatDuringVoiceSession(t *testi
 
 	idle := &recordingVoiceChatIdleNotifier{}
 	mux := http.NewServeMux()
-	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", nil, idle))
+	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, nil, idle))
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 

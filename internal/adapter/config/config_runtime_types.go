@@ -58,10 +58,40 @@ type LocalLLMConfig struct {
 	HeavyModel        string `yaml:"heavy_model"`
 	WildModel         string `yaml:"wild_model"`
 	TimeoutSec        int    `yaml:"timeout_sec"`
+	ChatTimeoutSec    int    `yaml:"chat_timeout_sec"`
 	Warmup            *bool  `yaml:"warmup"`
 	GlobalConcurrency int    `yaml:"global_concurrency"`
 	ModelConcurrency  int    `yaml:"model_concurrency"`
 	ModelContext      int    `yaml:"model_context"`
+	ChatModelContext  int    `yaml:"chat_model_context"`
+}
+
+// MioConfig controls Mio-specific behavior without changing the shared Chat provider.
+type MioConfig struct {
+	Generation MioGenerationConfig `yaml:"generation"`
+	InputAudio MioInputAudioConfig `yaml:"input_audio"`
+}
+
+// MioGenerationConfig is the request policy used for Mio's conversational replies.
+type MioGenerationConfig struct {
+	Stream             bool                  `yaml:"stream"`
+	MaxTokens          int                   `yaml:"max_tokens"`
+	Temperature        float64               `yaml:"temperature"`
+	TopP               *float64              `yaml:"top_p"`
+	TopK               *int                  `yaml:"top_k"`
+	MinP               *float64              `yaml:"min_p"`
+	Seed               *int64                `yaml:"seed"`
+	ChatTemplateKwargs MioChatTemplateKwargs `yaml:"chat_template_kwargs"`
+}
+
+// MioInputAudioConfig controls the text instruction paired with direct WAV input.
+type MioInputAudioConfig struct {
+	Prompt string `yaml:"prompt"`
+}
+
+// MioChatTemplateKwargs contains llama.cpp chat-template switches for Mio.
+type MioChatTemplateKwargs struct {
+	EnableThinking *bool `yaml:"enable_thinking"`
 }
 
 // LLMOpsConfig は MLX 運用デーモン（8079 番管理 API）への Viewer 経由プロキシ用。

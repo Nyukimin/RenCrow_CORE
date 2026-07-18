@@ -23,7 +23,7 @@ func registerVoiceChatRoutes(mux *http.ServeMux, handler http.Handler) {
 	}
 }
 
-func resolveVoiceChatWebSocketHandler(plan modulevoicechat.BridgePlan, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier) http.Handler {
+func resolveVoiceChatWebSocketHandler(plan modulevoicechat.BridgePlan, inputAudio voiceChatInputAudioSettings, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier) http.Handler {
 	switch {
 	case plan.Disabled:
 		return handleVoiceChatDisabled()
@@ -31,7 +31,7 @@ func resolveVoiceChatWebSocketHandler(plan modulevoicechat.BridgePlan, voiceDire
 		return handleVoiceChatUnavailable()
 	default:
 		if voiceChatHTTPBaseURLFromGateway(plan.GatewayURL) != "" {
-			return handleVoiceChatInputAudioBridge(plan.GatewayURL, voiceDirect, idleNotifier)
+			return handleVoiceChatInputAudioBridge(plan.GatewayURL, inputAudio, voiceDirect, idleNotifier)
 		}
 		return handleVoiceChatWebSocketBridge(plan.GatewayURL, voiceDirect, idleNotifier)
 	}

@@ -31,3 +31,25 @@ func inferVoiceChatGatewayURL(cfg *config.Config) string {
 		chatBaseURL,
 	)
 }
+
+func voiceChatInputAudioSettingsFromConfig(cfg *config.Config) voiceChatInputAudioSettings {
+	if cfg == nil {
+		return voiceChatInputAudioSettings{}
+	}
+	local := localRuntimeConfigFromAppConfig(cfg)
+	return voiceChatInputAudioSettings{
+		Model:          modulellm.LocalModelForAlias(local, modulellm.RoleChat),
+		APIKey:         cfg.LocalLLM.APIKey,
+		Timeout:        modulellm.LocalTimeoutForAlias(local, modulellm.RoleChat),
+		ModelContext:   modulellm.LocalModelContextForAlias(local, modulellm.RoleChat),
+		Stream:         cfg.Mio.Generation.Stream,
+		MaxTokens:      cfg.Mio.Generation.MaxTokens,
+		Temperature:    cfg.Mio.Generation.Temperature,
+		TopP:           cfg.Mio.Generation.TopP,
+		TopK:           cfg.Mio.Generation.TopK,
+		MinP:           cfg.Mio.Generation.MinP,
+		Seed:           cfg.Mio.Generation.Seed,
+		EnableThinking: cfg.Mio.Generation.ChatTemplateKwargs.EnableThinking,
+		Prompt:         cfg.Mio.InputAudio.Prompt,
+	}
+}

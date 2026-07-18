@@ -27,6 +27,9 @@ type Config struct {
 	// === MLX / local OpenAI-compatible LLM runtime ===
 	LocalLLM LocalLLMConfig `yaml:"local_llm"`
 
+	// === Mio chat generation policy ===
+	Mio MioConfig `yaml:"mio"`
+
 	// === Runtime module placement source of truth ===
 	RuntimeTopology RuntimeTopologyConfig `yaml:"runtime_topology"`
 

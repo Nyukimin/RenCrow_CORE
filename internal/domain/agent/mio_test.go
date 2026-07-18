@@ -509,6 +509,50 @@ func TestMioAgent_Chat_WithConversationEngine(t *testing.T) {
 	}
 }
 
+func TestMioAgent_Chat_UsesConfiguredGenerationOptions(t *testing.T) {
+	var captured llm.GenerateRequest
+	provider := &mockLLMProvider{
+		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+			captured = req
+			return llm.GenerateResponse{Content: "ok"}, nil
+		},
+	}
+	topP := 0.9
+	topK := 40
+	minP := 0.0
+	enableThinking := false
+	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil).
+		WithGenerationOptions(MioGenerationOptions{
+			Stream:         true,
+			MaxTokens:      256,
+			Temperature:    0.3,
+			TopP:           &topP,
+			TopK:           &topK,
+			MinP:           &minP,
+			EnableThinking: &enableThinking,
+		})
+
+	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "hello", "line", "U123")); err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+	if captured.MaxTokens != 256 || captured.Temperature != 0.3 {
+		t.Fatalf("unexpected generation basics: %+v", captured)
+	}
+	if captured.OnToken == nil {
+		t.Fatal("configured stream=true should select the streaming provider path")
+	}
+	if captured.ProviderOptions["top_p"] != 0.9 || captured.ProviderOptions["top_k"] != 40 || captured.ProviderOptions["min_p"] != 0.0 {
+		t.Fatalf("unexpected provider options: %#v", captured.ProviderOptions)
+	}
+	kwargs, ok := captured.ProviderOptions["chat_template_kwargs"].(map[string]any)
+	if !ok || kwargs["enable_thinking"] != false {
+		t.Fatalf("unexpected chat_template_kwargs: %#v", captured.ProviderOptions)
+	}
+	if _, exists := captured.ProviderOptions["seed"]; exists {
+		t.Fatalf("nil seed should be omitted: %#v", captured.ProviderOptions)
+	}
+}
+
 func TestMioAgent_Chat_AppliesChatRecallRoleFilter(t *testing.T) {
 	engine := &mockConversationEngine{
 		beginTurnFunc: func(ctx context.Context, sessionID, msg string) (*conversation.RecallPack, error) {

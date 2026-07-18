@@ -26,7 +26,7 @@ func buildVoiceChatRuntime(cfg *config.Config, voiceDirect voiceDirectFinalHandl
 		Enabled:    plan.Enabled,
 		GatewayURL: plan.GatewayURL,
 		InputMode:  plan.InputMode,
-		WSHandler:  resolveVoiceChatWebSocketHandler(plan, voiceDirect, idleNotifier),
+		WSHandler:  resolveVoiceChatWebSocketHandler(plan, voiceChatInputAudioSettingsFromConfig(cfg), voiceDirect, idleNotifier),
 	}
 }
 

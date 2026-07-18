@@ -73,6 +73,28 @@ func TestLocalTimeoutForAliasUsesRoleSpecificTimeouts(t *testing.T) {
 	}
 }
 
+func TestLocalChatUsesDedicatedTimeoutAndContext(t *testing.T) {
+	cfg := LocalRuntimeConfig{
+		TimeoutSec:       120,
+		ChatTimeoutSec:   300,
+		ModelContext:     131072,
+		ChatModelContext: 4096,
+	}
+
+	if got := LocalTimeoutForAlias(cfg, "Chat"); got != 300*time.Second {
+		t.Fatalf("Chat timeout = %s, want 300s", got)
+	}
+	if got := LocalTimeoutForAlias(cfg, "Worker"); got != 120*time.Second {
+		t.Fatalf("Worker timeout = %s, want 120s", got)
+	}
+	if got := LocalModelContextForAlias(cfg, "Chat"); got != 4096 {
+		t.Fatalf("Chat context = %d, want 4096", got)
+	}
+	if got := LocalModelContextForAlias(cfg, "Worker"); got != 131072 {
+		t.Fatalf("Worker context = %d, want 131072", got)
+	}
+}
+
 func TestLocalQueueTimeoutForAliasUsesRoleSpecificTimeouts(t *testing.T) {
 	cases := map[string]time.Duration{
 		"Chat":       time.Second,

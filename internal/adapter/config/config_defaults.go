@@ -65,6 +65,15 @@ func (c *Config) setDefaults() {
 	if c.LocalLLM.ModelContext <= 0 {
 		c.LocalLLM.ModelContext = 131072
 	}
+	if c.Mio.Generation.MaxTokens <= 0 {
+		c.Mio.Generation.MaxTokens = 512
+	}
+	if c.Mio.Generation.Temperature <= 0 {
+		c.Mio.Generation.Temperature = 0.7
+	}
+	if strings.TrimSpace(c.Mio.InputAudio.Prompt) == "" {
+		c.Mio.InputAudio.Prompt = "音声の内容を理解し、日本語で短く自然に返答してください。"
+	}
 	if c.WebwrightFetch.RunnerPath == "" {
 		c.WebwrightFetch.RunnerPath = defaultRenCrowToolsPath("tools", "webwright_fetch", "run_webwright_fetch.py")
 	}

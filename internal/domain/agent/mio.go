@@ -61,6 +61,7 @@ type MioAgent struct {
 	recentContext      func(context.Context, int) (string, error)
 	systemPrompt       string
 	viewerPrompts      map[string]string
+	generation         MioGenerationOptions
 }
 
 // NewMioAgent は新しいMioAgentを作成
@@ -82,6 +83,7 @@ func NewMioAgent(
 		kbManager:          nil, // WithKBManager() でセット
 		searchCacheManager: nil, // WithSearchCacheManager() でセット
 		userMemoryManager:  nil, // WithUserMemoryManager() でセット
+		generation:         defaultMioGenerationOptions(),
 	}
 }
 
@@ -277,12 +279,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 	// ユーザーメッセージを最後に追加
 	messages = append(messages, userMessageWithAttachments(userMessage, t.Attachments()))
 
-	req := llm.GenerateRequest{
-		Messages:    messages,
-		MaxTokens:   512,
-		Temperature: 0.7,
-		OnToken:     llm.StreamCallbackFromContext(ctx),
-	}
+	req := m.generationRequest(messages, llm.StreamCallbackFromContext(ctx))
 
 	resp, err := m.llmProvider.Generate(ctx, req)
 	if err != nil {
@@ -296,12 +293,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 			Role:    "user",
 			Content: "直前の返答は発言帰属が曖昧です。誰のアイデアかを明示して1回だけ言い直してください。",
 		})
-		retryResp, retryErr := m.llmProvider.Generate(ctx, llm.GenerateRequest{
-			Messages:    retryMessages,
-			MaxTokens:   512,
-			Temperature: 0.7,
-			OnToken:     llm.StreamCallbackFromContext(ctx),
-		})
+		retryResp, retryErr := m.llmProvider.Generate(ctx, m.generationRequest(retryMessages, llm.StreamCallbackFromContext(ctx)))
 		if retryErr == nil && strings.TrimSpace(retryResp.Content) != "" {
 			response = strings.TrimSpace(retryResp.Content)
 		}

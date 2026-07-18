@@ -876,6 +876,58 @@ local_llm:
 	}
 }
 
+func TestLoadConfig_MioGeneration(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "mio_generation.yaml")
+
+	content := `
+server:
+  port: 8080
+session:
+  storage_dir: "./data/sessions"
+ollama:
+  base_url: "http://localhost:11434"
+  model: "rencrow-v1"
+mio:
+  input_audio:
+    prompt: "音声の内容を理解し、日本語で短く自然に返答してください。"
+  generation:
+    stream: true
+    max_tokens: 256
+    temperature: 0.3
+    top_p: 0.9
+    top_k: 40
+    min_p: 0.0
+    seed: null
+    chat_template_kwargs:
+      enable_thinking: false
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	got := cfg.Mio.Generation
+	if !got.Stream || cfg.Mio.InputAudio.Prompt == "" {
+		t.Fatalf("unexpected Mio stream/input_audio config: %+v", cfg.Mio)
+	}
+	if got.MaxTokens != 256 || got.Temperature != 0.3 {
+		t.Fatalf("unexpected Mio generation basics: %+v", got)
+	}
+	if got.TopP == nil || *got.TopP != 0.9 || got.TopK == nil || *got.TopK != 40 {
+		t.Fatalf("unexpected Mio sampling config: %+v", got)
+	}
+	if got.MinP == nil || *got.MinP != 0.0 || got.Seed != nil {
+		t.Fatalf("unexpected Mio min_p/seed config: %+v", got)
+	}
+	if got.ChatTemplateKwargs.EnableThinking == nil || *got.ChatTemplateKwargs.EnableThinking {
+		t.Fatalf("unexpected Mio chat template config: %+v", got.ChatTemplateKwargs)
+	}
+}
+
 func TestLoadConfig_WebwrightFetchDefaultsFromLocalWorker(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "webwright_fetch.yaml")

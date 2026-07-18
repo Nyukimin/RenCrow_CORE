@@ -41,6 +41,28 @@ func (c *Config) Validate() error {
 		if c.LocalLLM.ModelConcurrency < 1 {
 			return fmt.Errorf("local_llm model_concurrency must be >= 1")
 		}
+		if c.LocalLLM.ChatTimeoutSec < 0 {
+			return fmt.Errorf("local_llm chat_timeout_sec must be >= 0")
+		}
+		if c.LocalLLM.ChatModelContext < 0 {
+			return fmt.Errorf("local_llm chat_model_context must be >= 0")
+		}
+	}
+
+	if c.Mio.Generation.MaxTokens < 0 {
+		return fmt.Errorf("mio.generation.max_tokens must be >= 0")
+	}
+	if c.Mio.Generation.Temperature < 0 || c.Mio.Generation.Temperature > 2 {
+		return fmt.Errorf("mio.generation.temperature must be between 0 and 2")
+	}
+	if c.Mio.Generation.TopP != nil && (*c.Mio.Generation.TopP < 0 || *c.Mio.Generation.TopP > 1) {
+		return fmt.Errorf("mio.generation.top_p must be between 0 and 1")
+	}
+	if c.Mio.Generation.TopK != nil && *c.Mio.Generation.TopK < 0 {
+		return fmt.Errorf("mio.generation.top_k must be >= 0")
+	}
+	if c.Mio.Generation.MinP != nil && (*c.Mio.Generation.MinP < 0 || *c.Mio.Generation.MinP > 1) {
+		return fmt.Errorf("mio.generation.min_p must be between 0 and 1")
 	}
 
 	if c.LLMOps.Enabled {

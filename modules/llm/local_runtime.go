@@ -44,8 +44,10 @@ type LocalRuntimeConfig struct {
 	HeavyModel        string
 	WildModel         string
 	TimeoutSec        int
+	ChatTimeoutSec    int
 	ModelConcurrency  int
 	ModelContext      int
+	ChatModelContext  int
 }
 
 type LocalAliasConfig struct {
@@ -88,6 +90,9 @@ func LocalOllamaNumCtxForAlias(_ string) int {
 }
 
 func LocalModelContextForAlias(cfg LocalRuntimeConfig, alias string) int {
+	if strings.EqualFold(strings.TrimSpace(alias), RoleChat) && cfg.ChatModelContext > 0 {
+		return cfg.ChatModelContext
+	}
 	if cfg.ModelContext > 0 {
 		return cfg.ModelContext
 	}
@@ -97,6 +102,9 @@ func LocalModelContextForAlias(cfg LocalRuntimeConfig, alias string) int {
 func LocalTimeoutForAlias(cfg LocalRuntimeConfig, alias string) time.Duration {
 	switch strings.ToLower(strings.TrimSpace(alias)) {
 	case RoleChat:
+		if cfg.ChatTimeoutSec > 0 {
+			return time.Duration(cfg.ChatTimeoutSec) * time.Second
+		}
 		if cfg.TimeoutSec > 0 {
 			return time.Duration(cfg.TimeoutSec) * time.Second
 		}

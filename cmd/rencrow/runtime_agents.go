@@ -54,7 +54,17 @@ func buildAgentRuntime(
 ) agentRuntime {
 	mioAgent := agent.NewMioAgent(chatProvider, classifier, ruleDictionary, chatToolRunner, mcpClient, convEngine).
 		WithSystemPrompt(cfg.Prompts.MioPersona).
-		WithViewerRecipientPrompts(cfg.Prompts.CharacterPrompts)
+		WithViewerRecipientPrompts(cfg.Prompts.CharacterPrompts).
+		WithGenerationOptions(agent.MioGenerationOptions{
+			Stream:         cfg.Mio.Generation.Stream,
+			MaxTokens:      cfg.Mio.Generation.MaxTokens,
+			Temperature:    cfg.Mio.Generation.Temperature,
+			TopP:           cfg.Mio.Generation.TopP,
+			TopK:           cfg.Mio.Generation.TopK,
+			MinP:           cfg.Mio.Generation.MinP,
+			Seed:           cfg.Mio.Generation.Seed,
+			EnableThinking: cfg.Mio.Generation.ChatTemplateKwargs.EnableThinking,
+		})
 	if recentGlossaryContext != nil {
 		mioAgent = mioAgent.WithRecentContextProvider(recentGlossaryContext)
 		log.Printf("Mio: Glossary context injected")
