@@ -122,8 +122,8 @@ func TestViewerStaticContractChatAndIdleChatDeskRedesign(t *testing.T) {
 		`class="idle-mode-board"`:                           "IdleChat mode controls are first-class controls",
 		`id="idleLiveLog"`:                                  "IdleChat live render target remains stable",
 		`id="idleSummaryReview"`:                            "IdleChat summary review remains stable",
-		`data-idle-view="stock"`:                           "IdleChat stock subview is selectable",
-		`id="idleForecastStock"`:                           "IdleChat forecast stock is readable",
+		`data-idle-view="stock"`:                            "IdleChat stock subview is selectable",
+		`id="idleForecastStock"`:                            "IdleChat forecast stock is readable",
 		`id="idlechatBody"`:                                 "IdleChat history body remains stable",
 	}
 	for needle, purpose := range required {
