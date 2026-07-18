@@ -360,6 +360,7 @@ func registerIdleChatRoutes(mux *http.ServeMux, dependencies *Dependencies) {
 
 func registerHealthRoutes(mux *http.ServeMux, dependencies *Dependencies, cfg *config.Config) {
 	healthHandler := dependencies.buildHealthHandler(cfg)
+	mux.HandleFunc("/health/live", healthHandler.HandleLive)
 	mux.HandleFunc("/health", healthHandler.HandleHealth)
 	mux.HandleFunc("/ready", healthHandler.HandleReady)
 }

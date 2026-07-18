@@ -41,6 +41,8 @@ func main() {
 		cmdStatus()
 	case "doctor":
 		cmdDoctor()
+	case "resilience":
+		cmdResilience()
 	case "channels":
 		cmdChannels()
 	case "gateway":

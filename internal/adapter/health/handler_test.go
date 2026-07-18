@@ -80,6 +80,25 @@ func TestHandleHealth_OK(t *testing.T) {
 	}
 }
 
+func TestHandleLive_DoesNotRunDependencyChecks(t *testing.T) {
+	h := NewHandler(&contextAwareSlowRunner{report: newStubDown().report})
+	req := httptest.NewRequest("GET", "/health/live", nil)
+	w := httptest.NewRecorder()
+
+	start := time.Now()
+	h.HandleLive(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("liveness handler ran dependency checks: %s", elapsed)
+	}
+	if got := w.Body.String(); got != "{\"alive\":true}\n" {
+		t.Fatalf("unexpected body: %q", got)
+	}
+}
+
 func TestHandleHealth_Down(t *testing.T) {
 	h := NewHandler(newStubDown())
 	req := httptest.NewRequest("GET", "/health", nil)

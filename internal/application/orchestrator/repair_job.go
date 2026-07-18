@@ -82,40 +82,55 @@ Requirements:
 - Do not perform destructive operations in the Coder proposal; Worker applies executable changes.`, req.Reason, req.TargetRoute, req.TargetAgent, req.Recent, req.Source, req.Instruction)
 }
 
-func repairTask(req ProcessRepairRequest) task.Task {
-	return task.NewTask(task.JobIDFromString(req.JobID), repairTaskMessage(req), "viewer", "repair").WithRoute(routing.RouteCODE2)
+func repairTargetRoute(target string) routing.Route {
+	switch strings.ToUpper(strings.TrimSpace(target)) {
+	case string(routing.RouteCODE1):
+		return routing.RouteCODE1
+	case string(routing.RouteCODE3):
+		return routing.RouteCODE3
+	case string(routing.RouteCODE4):
+		return routing.RouteCODE4
+	default:
+		return routing.RouteCODE2
+	}
+}
+
+func repairTask(req ProcessRepairRequest, route routing.Route) task.Task {
+	return task.NewTask(task.JobIDFromString(req.JobID), repairTaskMessage(req), "viewer", "repair").WithRoute(route)
 }
 
 func (o *MessageOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepairRequest) (ProcessRepairResponse, error) {
 	req = normalizeRepairProcessRequest(req)
-	t := repairTask(req)
+	route := repairTargetRoute(req.TargetRoute)
+	t := repairTask(req, route)
 	startedAt := time.Now()
 	if o.events != nil {
-		o.events.Emit("repair.dispatch", "repair", "shiro", "dispatch repair job to Coder via CODE2", string(routing.RouteCODE2), req.JobID, req.SessionID, "viewer", "repair")
+		o.events.Emit("repair.dispatch", "repair", "shiro", "dispatch repair job to Coder via "+route.String(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
 	}
-	response, err := o.routeDispatcher.ExecuteTask(ctx, t, routing.RouteCODE2, req.SessionID, "viewer", "repair", "")
+	response, err := o.routeDispatcher.ExecuteTask(ctx, t, route, req.SessionID, "viewer", "repair", "")
 	if err != nil {
 		if o.events != nil {
-			o.events.Emit("repair.failed", "shiro", "repair", err.Error(), string(routing.RouteCODE2), req.JobID, req.SessionID, "viewer", "repair")
+			o.events.Emit("repair.failed", "shiro", "repair", err.Error(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
 		}
 		return ProcessRepairResponse{}, err
 	}
 	if o.events != nil {
-		o.events.Emit("repair.completed", "shiro", "repair", fmt.Sprintf("repair job completed in %s", time.Since(startedAt).Round(time.Millisecond)), string(routing.RouteCODE2), req.JobID, req.SessionID, "viewer", "repair")
+		o.events.Emit("repair.completed", "shiro", "repair", fmt.Sprintf("repair job completed in %s", time.Since(startedAt).Round(time.Millisecond)), route.String(), req.JobID, req.SessionID, "viewer", "repair")
 	}
-	return ProcessRepairResponse{Response: response, Route: routing.RouteCODE2, JobID: req.JobID}, nil
+	return ProcessRepairResponse{Response: response, Route: route, JobID: req.JobID}, nil
 }
 
 func (o *DistributedOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepairRequest) (ProcessRepairResponse, error) {
 	req = normalizeRepairProcessRequest(req)
-	t := repairTask(req)
+	route := repairTargetRoute(req.TargetRoute)
+	t := repairTask(req, route)
 	startedAt := time.Now()
-	o.emit("repair.dispatch", "repair", "shiro", "dispatch repair job to Coder via CODE2", string(routing.RouteCODE2), req.JobID, req.SessionID, "viewer", "repair")
-	response, err := o.routes.ExecuteTask(ctx, t, routing.RouteCODE2, req.SessionID, "")
+	o.emit("repair.dispatch", "repair", "shiro", "dispatch repair job to Coder via "+route.String(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
+	response, err := o.routes.ExecuteTask(ctx, t, route, req.SessionID, "")
 	if err != nil {
-		o.emit("repair.failed", "shiro", "repair", err.Error(), string(routing.RouteCODE2), req.JobID, req.SessionID, "viewer", "repair")
+		o.emit("repair.failed", "shiro", "repair", err.Error(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
 		return ProcessRepairResponse{}, err
 	}
-	o.emit("repair.completed", "shiro", "repair", fmt.Sprintf("repair job completed in %s", time.Since(startedAt).Round(time.Millisecond)), string(routing.RouteCODE2), req.JobID, req.SessionID, "viewer", "repair")
-	return ProcessRepairResponse{Response: response, Route: routing.RouteCODE2, JobID: req.JobID}, nil
+	o.emit("repair.completed", "shiro", "repair", fmt.Sprintf("repair job completed in %s", time.Since(startedAt).Round(time.Millisecond)), route.String(), req.JobID, req.SessionID, "viewer", "repair")
+	return ProcessRepairResponse{Response: response, Route: route, JobID: req.JobID}, nil
 }

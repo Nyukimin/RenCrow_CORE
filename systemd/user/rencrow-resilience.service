@@ -1,0 +1,15 @@
+[Unit]
+Description=RenCrow CORE resilience reconciliation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@RENCROW_REPO_DIR@
+Environment=RENCROW_CONFIG=%h/.rencrow/config.yaml
+Environment=RENCROW_RESILIENCE_BASE_URL=http://127.0.0.1:18790
+Environment=RENCROW_RESILIENCE_REPO_DIR=@RENCROW_REPO_DIR@
+Environment=RENCROW_RESILIENCE_AUTO_REPAIR=true
+Environment=RENCROW_RESILIENCE_REPAIR_ROUTE=CODE2
+ExecStart=%h/.local/bin/rencrow resilience reconcile
+TimeoutStartSec=30min

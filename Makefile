@@ -1,4 +1,4 @@
-.PHONY: all build install uninstall clean help test install-watchdog enable-watchdog disable-watchdog watchdog-status watchdog-run-once test-watchdog-mock watchdog-kick install-data-scheduler enable-data-scheduler disable-data-scheduler data-scheduler-status rencrow-data-init rencrow-data-market rencrow-data-market-online rencrow-data-macro rencrow-data-macro-online rencrow-data-features rencrow-data-events rencrow-data-snapshot rencrow-data-validate rencrow-data-backtest rencrow-data-risk rencrow-data-decision rencrow-data-llm-report rencrow-data-audit-report rencrow-data-paper-trade rencrow-data-manual-stop rencrow-data-daily-refresh rencrow-data-weekly-research rencrow-data-test rencrow-data-e2e rencrow-data-backfill rencrow-data-check
+.PHONY: all build install uninstall clean help test install-watchdog enable-watchdog disable-watchdog watchdog-status watchdog-run-once test-watchdog-mock watchdog-kick install-log-retention enable-log-retention disable-log-retention log-retention-status log-retention-run-once test-log-retention install-resilience enable-resilience disable-resilience resilience-status resilience-run-once install-data-scheduler enable-data-scheduler disable-data-scheduler data-scheduler-status rencrow-data-init rencrow-data-market rencrow-data-market-online rencrow-data-macro rencrow-data-macro-online rencrow-data-features rencrow-data-events rencrow-data-snapshot rencrow-data-validate rencrow-data-backtest rencrow-data-risk rencrow-data-decision rencrow-data-llm-report rencrow-data-audit-report rencrow-data-paper-trade rencrow-data-manual-stop rencrow-data-daily-refresh rencrow-data-weekly-research rencrow-data-test rencrow-data-e2e rencrow-data-backfill rencrow-data-check
 
 # Build variables
 BINARY_NAME=rencrow
@@ -54,6 +54,15 @@ WATCHDOG_KICK_SCRIPT_SRC=$(CURDIR)/scripts/ops_watchdog_kick.sh
 WATCHDOG_KICK_SCRIPT_DST=$(RENCROW_SHARE_DIR)/scripts/ops_watchdog_kick.sh
 WATCHDOG_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-watchdog.service
 WATCHDOG_TIMER_SRC=$(CURDIR)/systemd/user/rencrow-watchdog.timer
+LOG_ROTATE_SCRIPT_SRC=$(CURDIR)/scripts/rencrow_log_rotate.sh
+LOG_ROTATE_SCRIPT_DST=$(RENCROW_SHARE_DIR)/scripts/rencrow_log_rotate.sh
+LOG_ROTATE_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-log-rotate.service
+LOG_ROTATE_TIMER_SRC=$(CURDIR)/systemd/user/rencrow-log-rotate.timer
+PANIC_STACK_DROPIN_SRC=$(CURDIR)/systemd/user/rencrow.service.d/10-panic-stack.conf
+PANIC_STACK_DROPIN_DIR=$(SYSTEMD_USER_DIR)/rencrow.service.d
+RESILIENCE_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-resilience.service
+RESILIENCE_TIMER_SRC=$(CURDIR)/systemd/user/rencrow-resilience.timer
+RESILIENCE_DROPIN_SRC=$(CURDIR)/systemd/user/rencrow.service.d/20-resilience.conf
 DATA_SCHEDULER_SCRIPT_SRC=$(CURDIR)/scripts/rencrow_data_scheduler.sh
 DATA_SCHEDULER_SCRIPT_DST=$(RENCROW_SHARE_DIR)/scripts/rencrow_data_scheduler.sh
 DATA_DAILY_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-data-daily.service
@@ -128,10 +137,13 @@ build-all: generate
 install: build
 	@echo "Installing $(BINARY_NAME)..."
 	@mkdir -p $(INSTALL_BIN_DIR)
-	@cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_BIN_DIR)/$(BINARY_NAME)
-	@chmod +x $(INSTALL_BIN_DIR)/$(BINARY_NAME)
+	@cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_BIN_DIR)/.$(BINARY_NAME).new
+	@chmod +x $(INSTALL_BIN_DIR)/.$(BINARY_NAME).new
+	@mv -f $(INSTALL_BIN_DIR)/.$(BINARY_NAME).new $(INSTALL_BIN_DIR)/$(BINARY_NAME)
 	@echo "Installed binary to $(INSTALL_BIN_DIR)/$(BINARY_NAME)"
 	@echo "Installation complete!"
+	@echo "Tip: run 'make install-log-retention enable-log-retention' to retain CORE logs for seven days."
+	@echo "Tip: run 'make install-resilience enable-resilience' to enable restart and self-repair."
 	@echo "Tip: run 'make install-watchdog enable-watchdog' to enable ops watchdog."
 
 ## install-watchdog: Install watchdog script and systemd --user units
@@ -149,6 +161,81 @@ install-watchdog:
 	@echo "Installed: $(WATCHDOG_SCRIPT_DST)"
 	@echo "Installed: $(SYSTEMD_USER_DIR)/rencrow-watchdog.service"
 	@echo "Installed: $(SYSTEMD_USER_DIR)/rencrow-watchdog.timer"
+
+## install-log-retention: Install seven-day journal archives and full panic stack settings
+install-log-retention:
+	@echo "Installing log retention script and systemd units..."
+	@mkdir -p $(RENCROW_SHARE_DIR)/scripts
+	@mkdir -p $(SYSTEMD_USER_DIR)
+	@mkdir -p $(PANIC_STACK_DROPIN_DIR)
+	@cp $(LOG_ROTATE_SCRIPT_SRC) $(LOG_ROTATE_SCRIPT_DST)
+	@chmod +x $(LOG_ROTATE_SCRIPT_DST)
+	@cp $(LOG_ROTATE_SERVICE_SRC) $(SYSTEMD_USER_DIR)/rencrow-log-rotate.service
+	@cp $(LOG_ROTATE_TIMER_SRC) $(SYSTEMD_USER_DIR)/rencrow-log-rotate.timer
+	@cp $(PANIC_STACK_DROPIN_SRC) $(PANIC_STACK_DROPIN_DIR)/10-panic-stack.conf
+	@systemctl --user daemon-reload
+	@echo "Installed: $(LOG_ROTATE_SCRIPT_DST)"
+	@echo "Installed: $(SYSTEMD_USER_DIR)/rencrow-log-rotate.service"
+	@echo "Installed: $(SYSTEMD_USER_DIR)/rencrow-log-rotate.timer"
+	@echo "Installed: $(PANIC_STACK_DROPIN_DIR)/10-panic-stack.conf"
+
+## enable-log-retention: Enable hourly seven-day log archives
+enable-log-retention:
+	@systemctl --user daemon-reload
+	@systemctl --user enable --now rencrow-log-rotate.timer
+	@echo "RenCrow log retention timer enabled."
+
+## disable-log-retention: Disable hourly log archives
+disable-log-retention:
+	@systemctl --user disable --now rencrow-log-rotate.timer || true
+	@echo "RenCrow log retention timer disabled."
+
+## log-retention-status: Show log retention timer/service status
+log-retention-status:
+	@systemctl --user status rencrow-log-rotate.timer --no-pager || true
+	@systemctl --user status rencrow-log-rotate.service --no-pager || true
+
+## log-retention-run-once: Archive RenCrow CORE journal immediately
+log-retention-run-once:
+	@systemctl --user start rencrow-log-rotate.service
+
+## test-log-retention: Run log retention regression tests
+test-log-retention:
+	@bash scripts/tests/log_retention_test.sh
+
+## install-resilience: Install CORE restart, incident ledger, and self-repair units
+install-resilience: install
+	@echo "Installing resilience systemd units..."
+	@mkdir -p $(SYSTEMD_USER_DIR)
+	@mkdir -p $(PANIC_STACK_DROPIN_DIR)
+	@sed 's#@RENCROW_REPO_DIR@#$(CURDIR)#g' $(RESILIENCE_SERVICE_SRC) > $(SYSTEMD_USER_DIR)/rencrow-resilience.service
+	@cp $(RESILIENCE_TIMER_SRC) $(SYSTEMD_USER_DIR)/rencrow-resilience.timer
+	@cp $(RESILIENCE_DROPIN_SRC) $(PANIC_STACK_DROPIN_DIR)/20-resilience.conf
+	@systemctl --user daemon-reload
+	@echo "Installed: $(SYSTEMD_USER_DIR)/rencrow-resilience.service"
+	@echo "Installed: $(SYSTEMD_USER_DIR)/rencrow-resilience.timer"
+	@echo "Installed: $(PANIC_STACK_DROPIN_DIR)/20-resilience.conf"
+
+## enable-resilience: Enable continuous CORE liveness/recovery checks
+enable-resilience:
+	@systemctl --user daemon-reload
+	@systemctl --user enable --now rencrow-resilience.timer
+	@echo "RenCrow resilience timer enabled."
+
+## disable-resilience: Disable automatic liveness/recovery checks
+disable-resilience:
+	@systemctl --user disable --now rencrow-resilience.timer || true
+	@echo "RenCrow resilience timer disabled."
+
+## resilience-status: Show supervisor and incident ledger status
+resilience-status:
+	@systemctl --user status rencrow-resilience.timer --no-pager || true
+	@systemctl --user status rencrow-resilience.service --no-pager || true
+	@$(INSTALL_BIN_DIR)/rencrow resilience status
+
+## resilience-run-once: Run one liveness/recovery reconciliation
+resilience-run-once:
+	@systemctl --user start rencrow-resilience.service
 
 ## install-data-scheduler: Install daily and weekly data scheduler units
 install-data-scheduler:

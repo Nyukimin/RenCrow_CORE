@@ -8,6 +8,7 @@ set -e
 RENCROW_HOME="$HOME/.rencrow"
 RENCROW_BIN="$HOME/.local/bin"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+RENCROW_SHARE_DIR="$HOME/.local/share/rencrow"
 
 echo "=========================================="
 echo "RenCrow インストーラー v1.0"
@@ -116,14 +117,16 @@ echo "[3/7] ディレクトリの作成..."
 mkdir -p "$RENCROW_HOME"/{logs,data/sessions}
 mkdir -p "$RENCROW_BIN"
 mkdir -p "$SYSTEMD_USER_DIR"
+mkdir -p "$RENCROW_SHARE_DIR/scripts"
 echo "  ✓ $RENCROW_HOME"
 echo "  ✓ $RENCROW_BIN"
 echo "  ✓ $SYSTEMD_USER_DIR"
 
 # バイナリコピー
 echo "[4/7] バイナリのインストール..."
-cp rencrow "$RENCROW_BIN/rencrow"
-chmod +x "$RENCROW_BIN/rencrow"
+cp rencrow "$RENCROW_BIN/.rencrow.new"
+chmod +x "$RENCROW_BIN/.rencrow.new"
+mv -f "$RENCROW_BIN/.rencrow.new" "$RENCROW_BIN/rencrow"
 echo "  ✓ rencrow → $RENCROW_BIN/rencrow"
 
 # 設定ファイル生成
@@ -204,6 +207,7 @@ cat > "$SYSTEMD_USER_DIR/rencrow.service" <<EOF
 Description=RenCrow - Ultra-Lightweight AI Assistant
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -211,10 +215,13 @@ WorkingDirectory=$HOME/RenCrow_CORE
 ExecStart=$RENCROW_BIN/rencrow
 EnvironmentFile=$RENCROW_HOME/.env
 Environment="RENCROW_CONFIG=$RENCROW_HOME/config.yaml"
+Environment=GOTRACEBACK=all
 Restart=always
 RestartSec=5
-StandardOutput=append:$RENCROW_HOME/logs/rencrow.log
-StandardError=append:$RENCROW_HOME/logs/rencrow.log
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=0
+LogRateLimitBurst=0
 
 [Install]
 WantedBy=default.target
@@ -222,10 +229,33 @@ EOF
 
 echo "  ✓ $SYSTEMD_USER_DIR/rencrow.service"
 
+# 7日保持のCORE journalアーカイブ
+cp scripts/rencrow_log_rotate.sh "$RENCROW_SHARE_DIR/scripts/rencrow_log_rotate.sh"
+chmod +x "$RENCROW_SHARE_DIR/scripts/rencrow_log_rotate.sh"
+cp systemd/user/rencrow-log-rotate.service "$SYSTEMD_USER_DIR/rencrow-log-rotate.service"
+cp systemd/user/rencrow-log-rotate.timer "$SYSTEMD_USER_DIR/rencrow-log-rotate.timer"
+mkdir -p "$SYSTEMD_USER_DIR/rencrow.service.d"
+cp systemd/user/rencrow.service.d/10-panic-stack.conf \
+    "$SYSTEMD_USER_DIR/rencrow.service.d/10-panic-stack.conf"
+echo "  ✓ COREログ7日保持とpanic全stack出力"
+
+sed "s#@RENCROW_REPO_DIR@#$(pwd)#g" \
+    systemd/user/rencrow-resilience.service \
+    > "$SYSTEMD_USER_DIR/rencrow-resilience.service"
+cp systemd/user/rencrow-resilience.timer \
+    "$SYSTEMD_USER_DIR/rencrow-resilience.timer"
+cp systemd/user/rencrow.service.d/20-resilience.conf \
+    "$SYSTEMD_USER_DIR/rencrow.service.d/20-resilience.conf"
+echo "  ✓ CORE再起動・事故台帳・自己修復"
+
 # systemd reload & enable
 systemctl --user daemon-reload
 systemctl --user enable rencrow
+systemctl --user enable --now rencrow-log-rotate.timer
+systemctl --user enable --now rencrow-resilience.timer
 echo "  ✓ systemctl --user enable rencrow"
+echo "  ✓ systemctl --user enable --now rencrow-log-rotate.timer"
+echo "  ✓ systemctl --user enable --now rencrow-resilience.timer"
 
 echo ""
 
@@ -265,8 +295,8 @@ echo "停止方法:"
 echo "  systemctl --user stop rencrow"
 echo ""
 echo "ログ確認:"
-echo "  tail -f $RENCROW_HOME/logs/rencrow.log"
 echo "  journalctl --user -u rencrow -f"
+echo "  ls -lh $RENCROW_HOME/logs/archive/"
 echo ""
 echo "設定ファイル:"
 echo "  $RENCROW_HOME/config.yaml"

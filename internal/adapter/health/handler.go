@@ -34,6 +34,14 @@ func NewHandlerWithTimeout(service CheckRunner, timeout time.Duration) *Handler 
 	return &Handler{service: service, timeout: timeout}
 }
 
+// HandleLive はHTTPイベントループ自身の生存だけを返す。
+// LLMなどの外部依存を確認しないため、監視側は依存障害をCORE停止と誤判定しない。
+func (h *Handler) HandleLive(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]bool{"alive": true})
+}
+
 // HandleHealth は /health エンドポイント（全チェック結果を返す）
 func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.timeout)

@@ -1,0 +1,12 @@
+[Unit]
+Description=Check RenCrow CORE liveness and incident recovery
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+Unit=rencrow-resilience.service
+
+[Install]
+WantedBy=timers.target

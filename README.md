@@ -42,6 +42,25 @@ RENCROW_PORTAL_URL=http://127.0.0.1:18791 ./build/rencrow
 
 この設定時、従来の`/viewer?mode=view|live|lab`はPORTALへリダイレクトされます。PORTALが未導入の環境では、変数を設定しなければ従来画面を互換経路として利用できます。
 
+## 運用ログ
+
+Linuxの常用環境では、COREのstdout/stderrをsystemd journalへ記録し、panic時は`GOTRACEBACK=all`で全goroutineのstackを残します。journalは1時間ごとに日別gzipへ書き出し、直近7日分を`~/.rencrow/logs/archive/`へ保持します。
+
+CORE自身のpanic・異常終了・ハングは`rencrow-resilience.timer`が監視します。systemdがプロセスを再起動し、Go製のresilience処理が事故証拠の集約、`doctor`、Repairジョブ、修正後のtest/build/atomic install、24時間の再発監視を行います。未解決事故は削除せず、同じ事故を署名でまとめて容量を制限します。
+
+```bash
+make install-log-retention enable-log-retention
+make install-resilience enable-resilience
+systemctl --user restart rencrow.service
+
+journalctl --user -u rencrow.service -f
+make log-retention-status
+make log-retention-run-once
+ls -lh ~/.rencrow/logs/archive/
+```
+
+panic調査では、journalと日別アーカイブの両方を確認します。詳細は[運用ログ・panic保存仕様](docs/09_運用ログ・panic保存仕様.md)を参照してください。
+
 ## ドキュメント
 
 公開仕様は [docs/README.md](docs/README.md) から読めます。実装状況は [docs/08_実装状況・ロードマップ.md](docs/08_実装状況・ロードマップ.md) に、公開 API の安定性区分は [docs/06_Public_API仕様.md](docs/06_Public_API仕様.md) に記載しています。

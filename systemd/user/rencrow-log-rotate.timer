@@ -1,0 +1,11 @@
+[Unit]
+Description=Archive RenCrow CORE logs hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=2m
+Unit=rencrow-log-rotate.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Archive and retain RenCrow CORE logs
+
+[Service]
+Type=oneshot
+Environment=RENCROW_LOG_RETENTION_DAYS=7
+ExecStart=%h/.local/share/rencrow/scripts/rencrow_log_rotate.sh
+StandardOutput=journal
+StandardError=journal
