@@ -31,9 +31,9 @@ func (r *RealConversationManager) Recall(ctx context.Context, sessionID string, 
 		}
 	}
 
-	// 2. 中期記憶（DuckDB: Session履歴）
-	if r.duckdbStore != nil {
-		summaries, err := r.duckdbStore.GetSessionHistory(ctx, sessionID, topK)
+	// 2. 中期記憶（SQLite archive: Session履歴）
+	if r.archiveStore != nil {
+		summaries, err := r.archiveStore.GetSessionHistory(ctx, sessionID, topK)
 		if err == nil && len(summaries) > 0 {
 			messages := make([]domconv.Message, 0, len(summaries))
 			for _, s := range summaries {

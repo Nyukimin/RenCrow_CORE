@@ -3,7 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/duckdb"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"path/filepath"
 	"strings"
@@ -40,9 +40,9 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 	}
 	defer l1.Close()
 
-	l2, err := duckdb.NewDuckDBStore(filepath.Join(tmp, "l2.duckdb"))
+	l2, err := archivesqlite.NewArchiveSQLiteStore(filepath.Join(tmp, "l2_archive.db"))
 	if err != nil {
-		t.Skipf("DuckDB unavailable for memory E2E: %v", err)
+		t.Skipf("SQLite archive unavailable for memory E2E: %v", err)
 	}
 	defer l2.Close()
 

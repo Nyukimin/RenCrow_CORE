@@ -52,7 +52,7 @@ func (r *RealConversationManager) Store(ctx context.Context, sessionID string, m
 	return nil
 }
 
-// FlushThread はThreadを要約してDuckDB/VectorDBに保存
+// FlushThread はThreadを要約してSQLite archive/VectorDBに保存する。
 func (r *RealConversationManager) FlushThread(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error) {
 	thread, err := r.redisStore.GetThread(ctx, threadID)
 	if err != nil {
@@ -86,9 +86,9 @@ func (r *RealConversationManager) FlushThread(ctx context.Context, threadID int6
 		IsNovel:   false,
 	}
 
-	if r.duckdbStore != nil {
-		if err := r.duckdbStore.SaveThreadSummary(ctx, summary); err != nil {
-			return nil, fmt.Errorf("failed to save summary to duckdb: %w", err)
+	if r.archiveStore != nil {
+		if err := r.archiveStore.SaveThreadSummary(ctx, summary); err != nil {
+			return nil, fmt.Errorf("failed to save summary to archive sqlite: %w", err)
 		}
 	}
 

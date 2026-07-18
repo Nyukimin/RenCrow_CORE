@@ -1,4 +1,4 @@
-package duckdb
+package archivesqlite
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 )
 
-func (d *DuckDBStore) ArchiveL1MemoryEvents(ctx context.Context, items []l1sqlite.L1MemoryEvent) error {
+func (d *ArchiveSQLiteStore) ArchiveL1MemoryEvents(ctx context.Context, items []l1sqlite.L1MemoryEvent) error {
 	for _, item := range items {
 		metaJSON, err := json.Marshal(item.Meta)
 		if err != nil {
@@ -31,7 +31,7 @@ INSERT INTO l1_memory_event_archive (
 	return nil
 }
 
-func (d *DuckDBStore) ArchiveL1NewsItems(ctx context.Context, items []l1sqlite.L1NewsItem) error {
+func (d *ArchiveSQLiteStore) ArchiveL1NewsItems(ctx context.Context, items []l1sqlite.L1NewsItem) error {
 	for _, item := range items {
 		keywordsJSON, metaJSON, err := marshalArchiveJSON(item.Keywords, item.Meta)
 		if err != nil {
@@ -59,7 +59,7 @@ INSERT INTO l1_news_item_archive (
 	return nil
 }
 
-func (d *DuckDBStore) ArchiveL1KnowledgeItems(ctx context.Context, items []l1sqlite.L1KnowledgeItem) error {
+func (d *ArchiveSQLiteStore) ArchiveL1KnowledgeItems(ctx context.Context, items []l1sqlite.L1KnowledgeItem) error {
 	for _, item := range items {
 		keywordsJSON, metaJSON, err := marshalArchiveJSON(item.Keywords, item.Meta)
 		if err != nil {
@@ -90,14 +90,14 @@ VALUES (?, ?, ?, ?, ?, ?)
 	return nil
 }
 
-func (d *DuckDBStore) SearchKnowledgeArchiveFTS(ctx context.Context, domain string, query string, limit int) ([]l1sqlite.L1KnowledgeItem, error) {
+func (d *ArchiveSQLiteStore) SearchKnowledgeArchiveFTS(ctx context.Context, domain string, query string, limit int) ([]l1sqlite.L1KnowledgeItem, error) {
 	if err := l1sqlite.ValidateKnowledgeDomain(domain); err != nil {
 		return nil, err
 	}
 	domain = l1sqlite.NormalizeNewsCategory(domain)
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return nil, fmt.Errorf("duckdb knowledge fts query is required")
+		return nil, fmt.Errorf("archive sqlite knowledge fts query is required")
 	}
 	if limit <= 0 {
 		limit = 20
@@ -118,13 +118,13 @@ ORDER BY k.updated_at DESC
 LIMIT ?
 `, l1sqlite.LikeQuery(query), l1sqlite.LikeQuery(query), l1sqlite.LikeQuery(query), l1sqlite.LikeQuery(query), domain, limit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to search duckdb knowledge fts archive: %w", err)
+		return nil, fmt.Errorf("failed to search archive sqlite knowledge fts: %w", err)
 	}
 	defer rows.Close()
 	return l1sqlite.ScanL1KnowledgeItems(rows)
 }
 
-func (d *DuckDBStore) ArchiveL1StagingItems(ctx context.Context, items []l1sqlite.L1StagingItem) error {
+func (d *ArchiveSQLiteStore) ArchiveL1StagingItems(ctx context.Context, items []l1sqlite.L1StagingItem) error {
 	for _, item := range items {
 		keywordsJSON, metaJSON, err := marshalArchiveJSON(item.Keywords, item.Meta)
 		if err != nil {

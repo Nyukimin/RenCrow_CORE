@@ -1,4 +1,4 @@
-package duckdb
+package archivesqlite
 
 import (
 	"context"
@@ -8,9 +8,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// DuckDBStore はSQLite（pure Go, modernc.org/sqlite）を使った会話記憶ストア（中期記憶warm、7日保持）。
-// 型名・パッケージ名は互換性維持のため DuckDB 時代のまま残している。
-type DuckDBStore struct {
+// ArchiveSQLiteStore はSQLite（pure Go, modernc.org/sqlite）を使ったL2会話アーカイブである。
+type ArchiveSQLiteStore struct {
 	db *sql.DB
 }
 
@@ -21,14 +20,14 @@ const (
 	L1ArchiveStaging   = "staging"
 )
 
-// NewDuckDBStore は新しいDuckDBStoreを生成
-func NewDuckDBStore(dbPath string) (*DuckDBStore, error) {
+// NewArchiveSQLiteStore は新しいArchiveSQLiteStoreを生成
+func NewArchiveSQLiteStore(dbPath string) (*ArchiveSQLiteStore, error) {
 	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
-		return nil, fmt.Errorf("failed to open duckdb: %w", err)
+		return nil, fmt.Errorf("failed to open archive sqlite: %w", err)
 	}
 
-	store := &DuckDBStore{db: db}
+	store := &ArchiveSQLiteStore{db: db}
 
 	// テーブル初期化
 	if err := store.initTables(context.Background()); err != nil {
@@ -39,13 +38,13 @@ func NewDuckDBStore(dbPath string) (*DuckDBStore, error) {
 	return store, nil
 }
 
-// Close はDuckDB接続を閉じる
-func (d *DuckDBStore) Close() error {
+// Close はSQLite接続を閉じる。
+func (d *ArchiveSQLiteStore) Close() error {
 	return d.db.Close()
 }
 
 // initTables はテーブルを初期化
-func (d *DuckDBStore) initTables(ctx context.Context) error {
+func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 	schema := `
 	PRAGMA journal_mode=WAL;
 

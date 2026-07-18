@@ -134,7 +134,8 @@ if [ ! -f "$RENCROW_HOME/config.yaml" ]; then
     # パスを置換
     sed -i "s|./data/sessions|$RENCROW_HOME/data/sessions|g" "$RENCROW_HOME/config.yaml"
     sed -i "s|./workspace|$RENCROW_HOME/workspace|g" "$RENCROW_HOME/config.yaml"
-    sed -i "s|./memory.duckdb|$RENCROW_HOME/memory.duckdb|g" "$RENCROW_HOME/config.yaml"
+    sed -i "s|./data/l1_memory.db|$RENCROW_HOME/data/l1_memory.db|g" "$RENCROW_HOME/config.yaml"
+    sed -i "s|./data/memory_archive.db|$RENCROW_HOME/data/memory_archive.db|g" "$RENCROW_HOME/config.yaml"
 
     echo "  ✓ $RENCROW_HOME/config.yaml"
 else

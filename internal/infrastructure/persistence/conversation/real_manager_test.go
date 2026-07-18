@@ -3,13 +3,15 @@ package conversation
 import (
 	"context"
 	"fmt"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
 )
 
 // --- モック実装 ---
@@ -65,32 +67,32 @@ func (m *mockRedisStore) DeleteThread(_ context.Context, threadID int64) error {
 }
 func (m *mockRedisStore) Close() error { return nil }
 
-type mockDuckDBStore struct {
+type mockArchiveSQLiteStore struct {
 	saved     []*domconv.ThreadSummary
 	kbArchive []l1sqlite.L1KnowledgeItem
 }
 
-func (m *mockDuckDBStore) SaveThreadSummary(_ context.Context, s *domconv.ThreadSummary) error {
+func (m *mockArchiveSQLiteStore) SaveThreadSummary(_ context.Context, s *domconv.ThreadSummary) error {
 	m.saved = append(m.saved, s)
 	return nil
 }
-func (m *mockDuckDBStore) GetSessionHistory(_ context.Context, _ string, _ int) ([]*domconv.ThreadSummary, error) {
+func (m *mockArchiveSQLiteStore) GetSessionHistory(_ context.Context, _ string, _ int) ([]*domconv.ThreadSummary, error) {
 	return m.saved, nil
 }
-func (m *mockDuckDBStore) SearchByDomain(_ context.Context, _ string, _ int) ([]*domconv.ThreadSummary, error) {
+func (m *mockArchiveSQLiteStore) SearchByDomain(_ context.Context, _ string, _ int) ([]*domconv.ThreadSummary, error) {
 	return nil, nil
 }
-func (m *mockDuckDBStore) SearchKnowledgeArchiveFTS(_ context.Context, _ string, _ string, _ int) ([]l1sqlite.L1KnowledgeItem, error) {
+func (m *mockArchiveSQLiteStore) SearchKnowledgeArchiveFTS(_ context.Context, _ string, _ string, _ int) ([]l1sqlite.L1KnowledgeItem, error) {
 	return m.kbArchive, nil
 }
-func (m *mockDuckDBStore) ExportThreadSummariesParquet(_ context.Context, _ string) error {
+func (m *mockArchiveSQLiteStore) ExportThreadSummariesParquet(_ context.Context, _ string) error {
 	return nil
 }
-func (m *mockDuckDBStore) ExportL1ArchivesParquet(_ context.Context, _ string) (map[string]string, error) {
+func (m *mockArchiveSQLiteStore) ExportL1ArchivesParquet(_ context.Context, _ string) (map[string]string, error) {
 	return map[string]string{}, nil
 }
-func (m *mockDuckDBStore) CleanupOldRecords(_ context.Context) (int64, error) { return 0, nil }
-func (m *mockDuckDBStore) Close() error                                       { return nil }
+func (m *mockArchiveSQLiteStore) CleanupOldRecords(_ context.Context) (int64, error) { return 0, nil }
+func (m *mockArchiveSQLiteStore) Close() error                                       { return nil }
 
 type mockVectorDBStore struct {
 	saved     []*domconv.ThreadSummary
@@ -360,7 +362,7 @@ var _ = time.Duration(0)
 func newTestManager(embedder domconv.EmbeddingProvider, summarizer domconv.ConversationSummarizer) *RealConversationManager {
 	return &RealConversationManager{
 		redisStore:    newMockRedisStore(),
-		duckdbStore:   &mockDuckDBStore{},
+		archiveStore:  &mockArchiveSQLiteStore{},
 		vectordbStore: &mockVectorDBStore{mockScore: 0.5},
 		embedder:      embedder,
 		summarizer:    summarizer,
@@ -484,7 +486,7 @@ func TestRecall_UsesL1WhenRedisThreadMissing(t *testing.T) {
 	}
 }
 
-func TestRecall_SkipsDuckDBWhenArchiveDisabled(t *testing.T) {
+func TestRecall_SkipsSQLiteArchiveWhenArchiveDisabled(t *testing.T) {
 	embedder := &mockEmbeddingProvider{vec: []float32{0.1, 0.2, 0.3}}
 	vdb := &mockVectorDBStore{mockScore: 0.42}
 	vdb.saved = []*domconv.ThreadSummary{{
@@ -493,13 +495,13 @@ func TestRecall_SkipsDuckDBWhenArchiveDisabled(t *testing.T) {
 	}}
 	mgr := &RealConversationManager{
 		redisStore:    newMockRedisStore(),
-		duckdbStore:   nil,
+		archiveStore:  nil,
 		vectordbStore: vdb,
 		embedder:      embedder,
 	}
 	ctx := context.Background()
 
-	messages, err := mgr.Recall(ctx, "sess-duckdb-disabled", "fallback", 3)
+	messages, err := mgr.Recall(ctx, "sess-archive_sqlite-disabled", "fallback", 3)
 	if err != nil {
 		t.Fatalf("Recall failed: %v", err)
 	}
@@ -514,30 +516,44 @@ func TestRecall_SkipsDuckDBWhenArchiveDisabled(t *testing.T) {
 	}
 }
 
-func TestFlushThread_SkipsDuckDBWhenArchiveDisabled(t *testing.T) {
+func TestOpenArchiveSQLiteStoreReturnsNilInterfaceForLegacyDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.duckdb")
+	if err := os.WriteFile(path, []byte("legacy non-sqlite database"), 0600); err != nil {
+		t.Fatalf("write legacy database: %v", err)
+	}
+	store, err := openArchiveSQLiteStore(path)
+	if err == nil {
+		t.Fatal("expected non-SQLite archive to be rejected")
+	}
+	if store != nil {
+		t.Fatalf("failed archive initialization must return a nil interface: %#v", store)
+	}
+}
+
+func TestFlushThread_SkipsSQLiteArchiveWhenArchiveDisabled(t *testing.T) {
 	embedder := &mockEmbeddingProvider{vec: []float32{0.1, 0.2, 0.3}}
 	vdb := &mockVectorDBStore{mockScore: 0.5}
 	mgr := &RealConversationManager{
 		redisStore:    newMockRedisStore(),
-		duckdbStore:   nil,
+		archiveStore:  nil,
 		vectordbStore: vdb,
 		embedder:      embedder,
-		summarizer:    &mockSummarizer{summary: "summary without duckdb", keywords: []string{"memory"}},
+		summarizer:    &mockSummarizer{summary: "summary without archive_sqlite", keywords: []string{"memory"}},
 	}
 	ctx := context.Background()
 
-	thread, err := mgr.CreateThread(ctx, "sess-flush-no-duckdb", "memory")
+	thread, err := mgr.CreateThread(ctx, "sess-flush-no-archive_sqlite", "memory")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
-	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "DuckDBなしでflush", nil))
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "SQLite archiveなしでflush", nil))
 	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
 
 	summary, err := mgr.FlushThread(ctx, thread.ID)
 	if err != nil {
 		t.Fatalf("FlushThread failed: %v", err)
 	}
-	if summary.Summary != "summary without duckdb" {
+	if summary.Summary != "summary without archive_sqlite" {
 		t.Fatalf("unexpected summary: %s", summary.Summary)
 	}
 	if len(vdb.saved) != 1 {
@@ -581,7 +597,7 @@ func TestSaveL1KnowledgeItemSavesVectorKBDocument(t *testing.T) {
 	vdb := &mockVectorDBStore{}
 	mgr := &RealConversationManager{
 		redisStore:    newMockRedisStore(),
-		duckdbStore:   &mockDuckDBStore{},
+		archiveStore:  &mockArchiveSQLiteStore{},
 		vectordbStore: vdb,
 		embedder:      &mockEmbeddingProvider{vec: []float32{0.1, 0.2, 0.3}},
 	}
@@ -698,7 +714,7 @@ func TestIsNovelInformation_HighSimilarity_NotNovel(t *testing.T) {
 	vdb.saved = []*domconv.ThreadSummary{{Summary: "既存の記憶"}}
 	mgr := &RealConversationManager{
 		redisStore:    newMockRedisStore(),
-		duckdbStore:   &mockDuckDBStore{},
+		archiveStore:  &mockArchiveSQLiteStore{},
 		vectordbStore: vdb,
 		embedder:      embedder,
 		summarizer:    &mockSummarizer{},

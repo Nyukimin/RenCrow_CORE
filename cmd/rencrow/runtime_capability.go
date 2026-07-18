@@ -14,7 +14,7 @@ func buildRuntimeToolRegistry(cfg *config.Config) capdomain.ToolRegistry {
 	if cfg.Capability.ToolRegistryDB == "" {
 		return nil
 	}
-	tr, err := toolregistry.NewDuckDBToolRegistryStore(cfg.Capability.ToolRegistryDB)
+	tr, err := toolregistry.NewSQLiteToolRegistryStore(cfg.Capability.ToolRegistryDB)
 	if err != nil {
 		log.Printf("WARN: ToolRegistry init failed (%s): %v", cfg.Capability.ToolRegistryDB, err)
 		return nil

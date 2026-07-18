@@ -103,7 +103,7 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 			pack.ShortContext = append(pack.ShortContext, msg)
 
 		case msg.Speaker == domconv.SpeakerSystem && strings.HasPrefix(msg.Msg, "[Summary]"):
-			// 中期記憶（DuckDB ThreadSummary）: MidSummaries に変換
+			// 中期記憶（SQLite archive ThreadSummary）: MidSummaries に変換
 			summary := strings.TrimPrefix(msg.Msg, "[Summary] ")
 			pack.MidSummaries = append(pack.MidSummaries, domconv.ThreadSummary{
 				Summary: summary,

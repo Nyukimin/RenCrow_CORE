@@ -749,7 +749,7 @@ dci:
 	}
 }
 
-func TestLoadConfig_ConversationL1SQLitePath(t *testing.T) {
+func TestLoadConfig_ConversationSQLitePaths(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "conversation_l1.yaml")
 
@@ -764,7 +764,7 @@ conversation:
   enabled: true
   redis_url: "redis://localhost:6379"
   l1_sqlite_path: "./data/l1_memory.db"
-  duckdb_path: "./data/memory.duckdb"
+  archive_sqlite_path: "./data/memory_archive.db"
   vectordb_url: "localhost:6334"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
@@ -776,6 +776,68 @@ conversation:
 	}
 	if cfg.Conversation.L1SQLitePath != "./data/l1_memory.db" {
 		t.Fatalf("unexpected l1 sqlite path: %s", cfg.Conversation.L1SQLitePath)
+	}
+	if cfg.Conversation.ArchiveSQLitePath != "./data/memory_archive.db" {
+		t.Fatalf("unexpected archive sqlite path: %s", cfg.Conversation.ArchiveSQLitePath)
+	}
+}
+
+func TestLoadConfig_ConversationLegacyArchiveSQLitePathUsesSafeSQLiteArchivePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "conversation_legacy_archive.yaml")
+
+	content := `
+server:
+  port: 8080
+ollama:
+  base_url: "http://localhost:11434"
+session:
+  storage_dir: "./data/sessions"
+conversation:
+  enabled: true
+  redis_url: "redis://localhost:6379"
+  duckdb_path: "./data/memory.duckdb"
+  vectordb_url: "localhost:6334"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Conversation.ArchiveSQLitePath != "data/memory_archive.db" {
+		t.Fatalf("legacy DuckDB path must not be opened as SQLite: %s", cfg.Conversation.ArchiveSQLitePath)
+	}
+}
+
+func TestLoadConfig_ConversationArchiveSQLitePathTakesPrecedenceOverLegacyKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "conversation_archive_precedence.yaml")
+
+	content := `
+server:
+  port: 8080
+ollama:
+  base_url: "http://localhost:11434"
+session:
+  storage_dir: "./data/sessions"
+conversation:
+  enabled: true
+  redis_url: "redis://localhost:6379"
+  archive_sqlite_path: "./data/chosen_archive.db"
+  duckdb_path: "./data/legacy.duckdb"
+  vectordb_url: "localhost:6334"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Conversation.ArchiveSQLitePath != "./data/chosen_archive.db" {
+		t.Fatalf("archive_sqlite_path must take precedence: %s", cfg.Conversation.ArchiveSQLitePath)
 	}
 }
 

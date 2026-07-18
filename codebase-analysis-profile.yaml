@@ -45,7 +45,7 @@ module_groups:
       - tools
     focus:
       - LLM/STT/TTS/webgather/MCP/browser actor/transport provider
-      - SQLite/JSONL/DuckDB/VectorDB永続化境界
+      - SQLite/JSONL/Qdrant永続化境界
       - security/sandbox/tool runnerの安全レール
   - id: docs_config_data
     name: Docs / Config / Runtime data surface

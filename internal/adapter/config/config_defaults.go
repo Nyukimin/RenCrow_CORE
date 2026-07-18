@@ -240,8 +240,12 @@ func (c *Config) setDefaults() {
 	if c.Conversation.RedisURL == "" {
 		c.Conversation.RedisURL = "redis://localhost:6379"
 	}
-	if c.Conversation.DuckDBPath == "" {
-		c.Conversation.DuckDBPath = "/var/lib/rencrow/memory.duckdb"
+	if c.Conversation.ArchiveSQLitePath == "" {
+		if c.Conversation.DeprecatedArchivePath != "" {
+			c.Conversation.ArchiveSQLitePath = archiveSQLitePathFromLegacy(c.Conversation.DeprecatedArchivePath)
+		} else {
+			c.Conversation.ArchiveSQLitePath = "/var/lib/rencrow/memory_archive.db"
+		}
 	}
 	if c.Conversation.VectorDBURL == "" {
 		c.Conversation.VectorDBURL = "localhost:6334"
@@ -880,6 +884,18 @@ func (c *Config) setDefaults() {
 	if c.Coder4.LightMemory.MaxTurns == 0 {
 		c.Coder4.LightMemory.MaxTurns = 3
 	}
+}
+
+func archiveSQLitePathFromLegacy(legacyPath string) string {
+	legacyPath = strings.TrimSpace(legacyPath)
+	if legacyPath == "" || legacyPath == ":memory:" {
+		return legacyPath
+	}
+	cleaned := filepath.Clean(legacyPath)
+	if strings.EqualFold(filepath.Ext(cleaned), ".duckdb") {
+		return strings.TrimSuffix(cleaned, filepath.Ext(cleaned)) + "_archive.db"
+	}
+	return cleaned
 }
 
 func boolConfigPtr(value bool) *bool {

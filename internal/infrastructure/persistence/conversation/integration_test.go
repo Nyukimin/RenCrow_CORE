@@ -181,7 +181,7 @@ func TestRealConversationManager_Integration_StoreAndRecall(t *testing.T) {
 
 	simpleMgr := &RealConversationManager{
 		redisStore:    redisStore,
-		duckdbStore:   &mockDuckDBStore{},
+		archiveStore:  &mockArchiveSQLiteStore{},
 		vectordbStore: &mockVectorDBStore{mockScore: 0.5},
 		embedder:      nil,
 		summarizer:    nil,
@@ -227,7 +227,7 @@ func TestConversationEngine_Integration_E2E(t *testing.T) {
 	ctx := context.Background()
 	sessionID := "e2e-engine-" + time.Now().Format("150405.000")
 
-	// 1. RealConversationManager（Redis + DuckDB + VectorDB）
+	// 1. RealConversationManager（Redis + SQLite archive + VectorDB）
 	redisStore, err := redisstore.NewRedisStore(testRedisURL)
 	if err != nil {
 		t.Fatalf("RedisStore failed: %v", err)
@@ -242,7 +242,7 @@ func TestConversationEngine_Integration_E2E(t *testing.T) {
 
 	mgr := &RealConversationManager{
 		redisStore:    redisStore,
-		duckdbStore:   &mockDuckDBStore{},
+		archiveStore:  &mockArchiveSQLiteStore{},
 		vectordbStore: vdbStore,
 	}
 
@@ -303,7 +303,7 @@ func TestConversationEngine_Integration_E2E(t *testing.T) {
 	t.Logf("Status: session=%s, thread=%d, turns=%d, domain=%s",
 		status.SessionID, status.ThreadID, status.TurnCount, status.ThreadDomain)
 
-	// 8. FlushCurrentThread → DuckDB/VectorDB 保存
+	// 8. FlushCurrentThread → SQLite archive/VectorDB 保存
 	err = engine.FlushCurrentThread(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("FlushCurrentThread failed: %v", err)

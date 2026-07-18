@@ -73,7 +73,7 @@ func (s *L1SQLiteStore) PromoteValidatedStagingItemToMemory(ctx context.Context,
 		return nil, err
 	}
 	// SQLite is the source of truth for promotion. The promoted row and event log
-	// commit atomically; DuckDB archive sync follows the commit and keeps the
+	// commit atomically; SQLite archive sync follows the commit and keeps the
 	// existing error-return semantics as a best-effort downstream follower.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -169,7 +169,7 @@ func (s *L1SQLiteStore) PromoteValidatedStagingItemToNews(ctx context.Context, i
 		return nil, err
 	}
 	// SQLite is the source of truth for promotion. The news row and event log
-	// commit atomically; DuckDB archive sync follows the commit and keeps the
+	// commit atomically; SQLite archive sync follows the commit and keeps the
 	// existing error-return semantics as a best-effort downstream follower.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -279,7 +279,7 @@ func (s *L1SQLiteStore) PromoteValidatedStagingItemToKnowledge(ctx context.Conte
 		return nil, err
 	}
 	// SQLite is the source of truth for promotion. The knowledge row, FTS row,
-	// and event log commit atomically; DuckDB archive and vector sync follow the
+	// and event log commit atomically; SQLite archive and vector sync follow the
 	// commit and keep the existing error-return semantics as best-effort followers.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

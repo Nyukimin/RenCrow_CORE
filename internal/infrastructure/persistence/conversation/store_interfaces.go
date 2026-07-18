@@ -2,7 +2,7 @@ package conversation
 
 import (
 	"context"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/duckdb"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	redisstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/redis"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
@@ -23,8 +23,8 @@ type redisStoreIface interface {
 	Close() error
 }
 
-// duckdbStoreIface はDuckDBStoreのインターフェース
-type duckdbStoreIface interface {
+// archiveStoreIface はArchiveSQLiteStoreのインターフェース
+type archiveStoreIface interface {
 	SaveThreadSummary(ctx context.Context, summary *conversation.ThreadSummary) error
 	GetSessionHistory(ctx context.Context, sessionID string, limit int) ([]*conversation.ThreadSummary, error)
 	SearchByDomain(ctx context.Context, domain string, limit int) ([]*conversation.ThreadSummary, error)
@@ -78,6 +78,6 @@ const noveltyThreshold = float32(0.85)
 
 // _ はコンパイル時のインターフェース適合チェック
 var _ redisStoreIface = (*redisstore.RedisStore)(nil)
-var _ duckdbStoreIface = (*duckdb.DuckDBStore)(nil)
+var _ archiveStoreIface = (*archivesqlite.ArchiveSQLiteStore)(nil)
 var _ vectordbStoreIface = (*vectordb.VectorDBStore)(nil)
 var _ l1StoreIface = (*l1sqlite.L1SQLiteStore)(nil)

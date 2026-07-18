@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/duckdb"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	redisstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/redis"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
@@ -17,7 +17,7 @@ import (
 type RealConversationManager struct {
 	redisStore                  redisStoreIface
 	l1Store                     l1StoreIface
-	duckdbStore                 duckdbStoreIface
+	archiveStore                archiveStoreIface
 	vectordbStore               vectordbStoreIface
 	embedder                    domconv.EmbeddingProvider      // nilの場合はVectorDB機能無効
 	summarizer                  domconv.ConversationSummarizer // nilの場合は簡易実装
@@ -33,20 +33,19 @@ func (r *RealConversationManager) WithKnowledgeRelationImportHook(hook func(cont
 }
 
 // NewRealConversationManager は新しいRealConversationManagerを生成
-func NewRealConversationManager(redisURL, duckdbPath, vectordbURL string) (*RealConversationManager, error) {
-	return NewRealConversationManagerWithVectorOptions(redisURL, duckdbPath, vectordbURL, "rencrow_memory", 768)
+func NewRealConversationManager(redisURL, archiveSQLitePath, vectordbURL string) (*RealConversationManager, error) {
+	return NewRealConversationManagerWithVectorOptions(redisURL, archiveSQLitePath, vectordbURL, "rencrow_memory", 768)
 }
 
-func NewRealConversationManagerWithVectorOptions(redisURL, duckdbPath, vectordbURL string, vectorCollection string, vectorDimension uint64) (*RealConversationManager, error) {
+func NewRealConversationManagerWithVectorOptions(redisURL, archiveSQLitePath, vectordbURL string, vectorCollection string, vectorDimension uint64) (*RealConversationManager, error) {
 	redisStore, err := redisstore.NewRedisStore(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create redis store: %w", err)
 	}
 
-	duckdbStore, err := duckdb.NewDuckDBStore(duckdbPath)
+	archiveStore, err := openArchiveSQLiteStore(archiveSQLitePath)
 	if err != nil {
-		log.Printf("WARN: L2 archive (DuckDB) disabled: failed to create duckdb store: %v", err)
-		duckdbStore = nil
+		log.Printf("WARN: L2 SQLite archive disabled: %v", err)
 	}
 
 	if vectorCollection == "" {
@@ -55,18 +54,26 @@ func NewRealConversationManagerWithVectorOptions(redisURL, duckdbPath, vectordbU
 	vectordbStore, err := vectordb.NewVectorDBStoreWithDimension(vectordbURL, vectorCollection, vectorDimension)
 	if err != nil {
 		redisStore.Close()
-		if duckdbStore != nil {
-			duckdbStore.Close()
+		if archiveStore != nil {
+			archiveStore.Close()
 		}
 		return nil, fmt.Errorf("failed to create vectordb store: %w", err)
 	}
 
 	return &RealConversationManager{
 		redisStore:    redisStore,
-		duckdbStore:   duckdbStore,
+		archiveStore:  archiveStore,
 		vectordbStore: vectordbStore,
 		agentStatuses: map[string]*domconv.AgentStatus{},
 	}, nil
+}
+
+func openArchiveSQLiteStore(path string) (archiveStoreIface, error) {
+	store, err := archivesqlite.NewArchiveSQLiteStore(path)
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 // WithEmbedder はEmbeddingProviderを注入する（チェーン可能）
@@ -83,7 +90,7 @@ func (r *RealConversationManager) WithSummarizer(s domconv.ConversationSummarize
 
 func (r *RealConversationManager) WithL1Store(store l1StoreIface) *RealConversationManager {
 	if l1, ok := store.(*l1sqlite.L1SQLiteStore); ok {
-		if archiveStore, ok := r.duckdbStore.(l1sqlite.L1ArchiveStore); ok {
+		if archiveStore, ok := r.archiveStore.(*archivesqlite.ArchiveSQLiteStore); ok && archiveStore != nil {
 			l1.WithArchiveStore(archiveStore)
 		}
 		l1.WithKnowledgeVectorSink(r)
@@ -99,9 +106,9 @@ func (r *RealConversationManager) Close() error {
 	if err := r.redisStore.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("redis close: %w", err))
 	}
-	if r.duckdbStore != nil {
-		if err := r.duckdbStore.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("duckdb close: %w", err))
+	if r.archiveStore != nil {
+		if err := r.archiveStore.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("archive sqlite close: %w", err))
 		}
 	}
 	if err := r.vectordbStore.Close(); err != nil {

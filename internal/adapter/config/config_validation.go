@@ -328,8 +328,8 @@ func (c *Config) Validate() error {
 		if c.Conversation.RedisURL == "" {
 			return fmt.Errorf("conversation.redis_url is required when conversation.enabled=true")
 		}
-		if c.Conversation.DuckDBPath == "" {
-			return fmt.Errorf("conversation.duckdb_path is required when conversation.enabled=true")
+		if c.Conversation.ArchiveSQLitePath == "" {
+			return fmt.Errorf("conversation.archive_sqlite_path is required when conversation.enabled=true")
 		}
 		if c.Conversation.VectorDBURL == "" {
 			return fmt.Errorf("conversation.vectordb_url is required when conversation.enabled=true")

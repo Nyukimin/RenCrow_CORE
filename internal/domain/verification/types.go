@@ -51,7 +51,7 @@ const (
 	EvidenceL1SQLite           EvidenceSourceType = "l1_sqlite"
 	EvidenceVectorThreadMemory EvidenceSourceType = "vector_thread_memory"
 	EvidenceVectorKB           EvidenceSourceType = "vector_kb"
-	EvidenceDuckDBArchive      EvidenceSourceType = "duckdb_archive"
+	EvidenceSQLiteArchive      EvidenceSourceType = "sqlite_archive"
 	EvidenceSourceRegistry     EvidenceSourceType = "source_registry"
 	EvidenceSearchCache        EvidenceSourceType = "search_cache"
 	EvidenceRawExternalSource  EvidenceSourceType = "raw_external_source"
@@ -59,9 +59,13 @@ const (
 )
 
 func (t EvidenceSourceType) Valid() bool {
+	// 旧リリースが保存した値は読み取り互換だけを維持する。
+	if t == EvidenceSourceType("duckdb_archive") {
+		return true
+	}
 	switch t {
 	case EvidenceRecallPack, EvidenceConversationMemory, EvidenceL1SQLite, EvidenceVectorThreadMemory,
-		EvidenceVectorKB, EvidenceDuckDBArchive, EvidenceSourceRegistry, EvidenceSearchCache,
+		EvidenceVectorKB, EvidenceSQLiteArchive, EvidenceSourceRegistry, EvidenceSearchCache,
 		EvidenceRawExternalSource, EvidenceExecutionReport:
 		return true
 	default:

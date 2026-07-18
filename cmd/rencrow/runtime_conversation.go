@@ -57,7 +57,7 @@ func buildConversationRuntime(
 		}
 		realMgr, err = conversationpersistence.NewRealConversationManagerWithVectorOptions(
 			cfg.Conversation.RedisURL,
-			cfg.Conversation.DuckDBPath,
+			cfg.Conversation.ArchiveSQLitePath,
 			cfg.Conversation.VectorDBURL,
 			vectorCollection,
 			uint64(vectorDimension),
@@ -129,7 +129,7 @@ func buildConversationRuntime(
 
 		log.Printf("ConversationEngine v5.1 enabled (RecallPack + Persona + ProfileExtractor)")
 		log.Printf("  Redis: %s", cfg.Conversation.RedisURL)
-		log.Printf("  DuckDB: %s", cfg.Conversation.DuckDBPath)
+		log.Printf("  SQLite archive: %s", cfg.Conversation.ArchiveSQLitePath)
 		log.Printf("  VectorDB: %s", cfg.Conversation.VectorDBURL)
 	} else {
 		convEngine = nil

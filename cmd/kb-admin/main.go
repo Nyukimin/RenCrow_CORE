@@ -158,7 +158,7 @@ func initManager(cfg *config.Config) (*conversationpersistence.RealConversationM
 
 	mgr, err := conversationpersistence.NewRealConversationManager(
 		cfg.Conversation.RedisURL,
-		cfg.Conversation.DuckDBPath,
+		cfg.Conversation.ArchiveSQLitePath,
 		cfg.Conversation.VectorDBURL,
 	)
 	if err != nil {

@@ -281,11 +281,12 @@ idle_chat:
     # aka:
     #   think: true
 
-# 会話LLM v5.0: 3層記憶（短期Redis・中期DuckDB・長期Qdrant）
+# 会話LLM v5.0: 3層記憶（短期Redis・中期SQLite archive・長期Qdrant）
 conversation:
   enabled: false
   redis_url: "redis://localhost:6379"
-  duckdb_path: "./data/memory.duckdb"
+  l1_sqlite_path: "./data/l1_memory.db"
+  archive_sqlite_path: "./data/memory_archive.db"
   vectordb_url: "localhost:6334"
   embed_model: "nomic-embed-text"
   summary_model: ""      # 空の場合はOllama chatモデルを使用

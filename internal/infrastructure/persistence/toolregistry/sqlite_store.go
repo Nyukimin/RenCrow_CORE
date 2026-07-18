@@ -11,24 +11,23 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// DuckDBToolRegistryStore はSQLite（pure Go, modernc.org/sqlite）を使った ToolRegistry 実装。
-// 型名は互換性維持のため DuckDB 時代のまま残している。
-type DuckDBToolRegistryStore struct {
+// SQLiteToolRegistryStore はSQLite（pure Go, modernc.org/sqlite）を使った ToolRegistry 実装。
+type SQLiteToolRegistryStore struct {
 	db *sql.DB
 }
 
-// NewDuckDBToolRegistryStore は新しい DuckDBToolRegistryStore を作成する。
+// NewSQLiteToolRegistryStore は新しい SQLiteToolRegistryStore を作成する。
 // dbPath が空の場合はインメモリ DB（":memory:"）を使用する。
-func NewDuckDBToolRegistryStore(dbPath string) (*DuckDBToolRegistryStore, error) {
+func NewSQLiteToolRegistryStore(dbPath string) (*SQLiteToolRegistryStore, error) {
 	if dbPath == "" {
 		dbPath = ":memory:"
 	}
 	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
-		return nil, fmt.Errorf("failed to open duckdb: %w", err)
+		return nil, fmt.Errorf("failed to open tool registry sqlite: %w", err)
 	}
 
-	store := &DuckDBToolRegistryStore{db: db}
+	store := &SQLiteToolRegistryStore{db: db}
 	if err := store.initTables(context.Background()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize tool_registry table: %w", err)
@@ -37,12 +36,12 @@ func NewDuckDBToolRegistryStore(dbPath string) (*DuckDBToolRegistryStore, error)
 }
 
 // Close はデータベース接続を閉じる
-func (s *DuckDBToolRegistryStore) Close() error {
+func (s *SQLiteToolRegistryStore) Close() error {
 	return s.db.Close()
 }
 
 // initTables は tool_registry テーブルを初期化する
-func (s *DuckDBToolRegistryStore) initTables(ctx context.Context) error {
+func (s *SQLiteToolRegistryStore) initTables(ctx context.Context) error {
 	schema := `
 	PRAGMA journal_mode=WAL;
 	CREATE TABLE IF NOT EXISTS tool_registry (
@@ -60,7 +59,7 @@ func (s *DuckDBToolRegistryStore) initTables(ctx context.Context) error {
 }
 
 // Register はツールを登録または更新する（name が同じ場合は上書き）
-func (s *DuckDBToolRegistryStore) Register(ctx context.Context, entry capability.ToolEntry) error {
+func (s *SQLiteToolRegistryStore) Register(ctx context.Context, entry capability.ToolEntry) error {
 	platformsJSON, err := json.Marshal(entry.Platforms)
 	if err != nil {
 		return fmt.Errorf("marshal platforms: %w", err)
@@ -95,7 +94,7 @@ func (s *DuckDBToolRegistryStore) Register(ctx context.Context, entry capability
 }
 
 // ListForPlatform は指定プラットフォームに対応するツールを返す
-func (s *DuckDBToolRegistryStore) ListForPlatform(ctx context.Context, platform string) ([]capability.ToolEntry, error) {
+func (s *SQLiteToolRegistryStore) ListForPlatform(ctx context.Context, platform string) ([]capability.ToolEntry, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT name, description, schema_json, platforms, source, created_at, created_by
 		FROM tool_registry
@@ -110,7 +109,7 @@ func (s *DuckDBToolRegistryStore) ListForPlatform(ctx context.Context, platform 
 }
 
 // Get は名前でツールを取得する
-func (s *DuckDBToolRegistryStore) Get(ctx context.Context, name string) (capability.ToolEntry, error) {
+func (s *SQLiteToolRegistryStore) Get(ctx context.Context, name string) (capability.ToolEntry, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT name, description, schema_json, platforms, source, created_at, created_by
 		FROM tool_registry WHERE name = ?
@@ -163,4 +162,4 @@ func scanEntries(rows *sql.Rows) ([]capability.ToolEntry, error) {
 }
 
 // コンパイル時インターフェース適合チェック
-var _ capability.ToolRegistry = (*DuckDBToolRegistryStore)(nil)
+var _ capability.ToolRegistry = (*SQLiteToolRegistryStore)(nil)

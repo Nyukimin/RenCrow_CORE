@@ -1,4 +1,4 @@
-package duckdb
+package archivesqlite
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
-// SaveThreadSummary はThread要約をDuckDBに保存
-func (d *DuckDBStore) SaveThreadSummary(ctx context.Context, summary *conversation.ThreadSummary) error {
+// SaveThreadSummary はThread要約をSQLite archiveに保存する。
+func (d *ArchiveSQLiteStore) SaveThreadSummary(ctx context.Context, summary *conversation.ThreadSummary) error {
 	if summary == nil {
 		return fmt.Errorf("thread summary is required")
 	}
@@ -58,14 +58,14 @@ func (d *DuckDBStore) SaveThreadSummary(ctx context.Context, summary *conversati
 		summary.IsNovel,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to save thread summary to duckdb: %w", err)
+		return fmt.Errorf("failed to save thread summary to archive sqlite: %w", err)
 	}
 
 	return nil
 }
 
 // GetSessionHistory はセッションの履歴を取得（最新limit件）
-func (d *DuckDBStore) GetSessionHistory(ctx context.Context, sessionID string, limit int) ([]*conversation.ThreadSummary, error) {
+func (d *ArchiveSQLiteStore) GetSessionHistory(ctx context.Context, sessionID string, limit int) ([]*conversation.ThreadSummary, error) {
 	query := `
 	SELECT thread_id, session_id, ts_start, ts_end, domain, summary,
 	       keywords, embedding, is_novel
@@ -122,7 +122,7 @@ func (d *DuckDBStore) GetSessionHistory(ctx context.Context, sessionID string, l
 }
 
 // SearchByDomain はドメインで Thread要約を検索
-func (d *DuckDBStore) SearchByDomain(ctx context.Context, domain string, limit int) ([]*conversation.ThreadSummary, error) {
+func (d *ArchiveSQLiteStore) SearchByDomain(ctx context.Context, domain string, limit int) ([]*conversation.ThreadSummary, error) {
 	query := `
 	SELECT thread_id, session_id, ts_start, ts_end, domain, summary,
 	       keywords, embedding, is_novel

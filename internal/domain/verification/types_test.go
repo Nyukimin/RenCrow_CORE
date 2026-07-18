@@ -40,7 +40,7 @@ func TestTriggerLevelAndEvidenceSourceValidity(t *testing.T) {
 		EvidenceL1SQLite,
 		EvidenceVectorThreadMemory,
 		EvidenceVectorKB,
-		EvidenceDuckDBArchive,
+		EvidenceSQLiteArchive,
 		EvidenceSourceRegistry,
 		EvidenceSearchCache,
 		EvidenceRawExternalSource,
@@ -52,6 +52,9 @@ func TestTriggerLevelAndEvidenceSourceValidity(t *testing.T) {
 	}
 	if EvidenceSourceType("screenshot").Valid() {
 		t.Fatal("screenshot must not be accepted as an evidence source type")
+	}
+	if !EvidenceSourceType("duckdb_archive").Valid() {
+		t.Fatal("persisted legacy archive evidence must remain readable")
 	}
 }
 

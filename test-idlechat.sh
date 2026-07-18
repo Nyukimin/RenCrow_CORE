@@ -11,17 +11,17 @@ pkill -9 -f "/home/nyukimi/.local/bin/rencrow" 2>/dev/null || true
 pkill -9 -f "rencrow-test" 2>/dev/null || true
 sleep 3
 
-# DuckDBをロックしているプロセスを強制終了
-LOCK_PID=$(lsof /home/nyukimi/.rencrow/memory.duckdb 2>/dev/null | tail -n1 | awk '{print $2}')
+# SQLite archiveをロックしているプロセスを強制終了
+LOCK_PID=$(lsof /home/nyukimi/.rencrow/memory_archive.db 2>/dev/null | tail -n1 | awk '{print $2}')
 if [ -n "$LOCK_PID" ] && [ "$LOCK_PID" != "PID" ]; then
-    echo "   Killing DuckDB lock holder: PID $LOCK_PID"
+    echo "   Killing SQLite archive lock holder: PID $LOCK_PID"
     kill -9 $LOCK_PID 2>/dev/null || true
     sleep 2
 fi
 
-# DuckDB ロックを確認
-if lsof /home/nyukimi/.rencrow/memory.duckdb 2>/dev/null; then
-    echo "Warning: DuckDB still locked. Waiting..."
+# SQLite archive ロックを確認
+if lsof /home/nyukimi/.rencrow/memory_archive.db 2>/dev/null; then
+    echo "Warning: SQLite archive still locked. Waiting..."
     sleep 3
 fi
 

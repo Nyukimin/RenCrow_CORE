@@ -1,4 +1,4 @@
-package duckdb
+package archivesqlite
 
 import (
 	"context"
@@ -27,7 +27,7 @@ type threadSummaryParquetRow struct {
 	CreatedAt time.Time  `parquet:"created_at"`
 }
 
-func (d *DuckDBStore) ExportThreadSummariesParquet(ctx context.Context, outputPath string) error {
+func (d *ArchiveSQLiteStore) ExportThreadSummariesParquet(ctx context.Context, outputPath string) error {
 	outputPath = strings.TrimSpace(outputPath)
 	if outputPath == "" {
 		return fmt.Errorf("parquet output path is required")
@@ -165,7 +165,7 @@ type l1StagingItemParquetRow struct {
 	UpdatedAt        time.Time  `parquet:"updated_at"`
 }
 
-func (d *DuckDBStore) ExportL1ArchivesParquet(ctx context.Context, outputDir string) (map[string]string, error) {
+func (d *ArchiveSQLiteStore) ExportL1ArchivesParquet(ctx context.Context, outputDir string) (map[string]string, error) {
 	outputDir = strings.TrimSpace(outputDir)
 	if outputDir == "" {
 		return nil, fmt.Errorf("parquet output directory is required")
@@ -203,7 +203,7 @@ func (d *DuckDBStore) ExportL1ArchivesParquet(ctx context.Context, outputDir str
 	return paths, nil
 }
 
-func (d *DuckDBStore) exportMemoryEventArchiveParquet(ctx context.Context, outputPath string) error {
+func (d *ArchiveSQLiteStore) exportMemoryEventArchiveParquet(ctx context.Context, outputPath string) error {
 	rows, err := d.db.QueryContext(ctx, `
 	SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
 	       memory_state, layer, source, created_at, updated_at
@@ -232,7 +232,7 @@ func (d *DuckDBStore) exportMemoryEventArchiveParquet(ctx context.Context, outpu
 	return parquet.WriteFile(outputPath, records)
 }
 
-func (d *DuckDBStore) exportNewsItemArchiveParquet(ctx context.Context, outputPath string) error {
+func (d *ArchiveSQLiteStore) exportNewsItemArchiveParquet(ctx context.Context, outputPath string) error {
 	rows, err := d.db.QueryContext(ctx, `
 	SELECT id, staging_id, category, source_id, source_url, published_at, fetched_at,
 	       raw_text, raw_hash, summary_draft, keywords_json, license_note, meta_json,
@@ -268,7 +268,7 @@ func (d *DuckDBStore) exportNewsItemArchiveParquet(ctx context.Context, outputPa
 	return parquet.WriteFile(outputPath, records)
 }
 
-func (d *DuckDBStore) exportKnowledgeItemArchiveParquet(ctx context.Context, outputPath string) error {
+func (d *ArchiveSQLiteStore) exportKnowledgeItemArchiveParquet(ctx context.Context, outputPath string) error {
 	rows, err := d.db.QueryContext(ctx, `
 	SELECT id, staging_id, domain, title, source_id, source_url, raw_text, raw_hash,
 	       summary_draft, keywords_json, license_note, meta_json, created_at, updated_at
@@ -298,7 +298,7 @@ func (d *DuckDBStore) exportKnowledgeItemArchiveParquet(ctx context.Context, out
 	return parquet.WriteFile(outputPath, records)
 }
 
-func (d *DuckDBStore) exportStagingItemArchiveParquet(ctx context.Context, outputPath string) error {
+func (d *ArchiveSQLiteStore) exportStagingItemArchiveParquet(ctx context.Context, outputPath string) error {
 	rows, err := d.db.QueryContext(ctx, `
 	SELECT id, kind, namespace, event_id, source_id, source_url, fetched_at, published_at,
 	       raw_text, raw_hash, summary_draft, keywords_json, license_note,
@@ -336,7 +336,7 @@ func (d *DuckDBStore) exportStagingItemArchiveParquet(ctx context.Context, outpu
 }
 
 // CleanupOldRecords は7日以上経過したレコードを削除
-func (d *DuckDBStore) CleanupOldRecords(ctx context.Context) (int64, error) {
+func (d *ArchiveSQLiteStore) CleanupOldRecords(ctx context.Context) (int64, error) {
 	cutoff := time.Now().Add(-7 * 24 * time.Hour)
 
 	query := `DELETE FROM session_thread WHERE ts_start < ?`

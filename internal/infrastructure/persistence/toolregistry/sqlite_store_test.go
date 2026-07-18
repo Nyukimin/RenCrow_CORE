@@ -8,11 +8,11 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 )
 
-func newTestStore(t *testing.T) *DuckDBToolRegistryStore {
+func newTestStore(t *testing.T) *SQLiteToolRegistryStore {
 	t.Helper()
-	store, err := NewDuckDBToolRegistryStore(":memory:")
+	store, err := NewSQLiteToolRegistryStore(":memory:")
 	if err != nil {
-		t.Fatalf("NewDuckDBToolRegistryStore: %v", err)
+		t.Fatalf("NewSQLiteToolRegistryStore: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
 	return store

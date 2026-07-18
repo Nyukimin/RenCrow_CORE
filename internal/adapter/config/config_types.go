@@ -318,17 +318,18 @@ type IdleChatLLMOptions struct {
 
 // ConversationConfig は会話LLMの設定
 type ConversationConfig struct {
-	Enabled          bool   `yaml:"enabled"`           // 会話LLM機能の有効化（デフォルト: false）
-	RedisURL         string `yaml:"redis_url"`         // Redis接続先（例: "redis://localhost:6379"）
-	L1SQLitePath     string `yaml:"l1_sqlite_path"`    // L1 hot store SQLite path（任意）
-	DuckDBPath       string `yaml:"duckdb_path"`       // DuckDBファイルパス（例: "/var/lib/rencrow/memory.duckdb"）
-	VectorDBURL      string `yaml:"vectordb_url"`      // VectorDB gRPC接続先（例: "localhost:6334" for Qdrant）
-	VectorCollection string `yaml:"vector_collection"` // 会話要約用Qdrant collection名。空の場合はrencrow_memory
-	VectorDimension  int    `yaml:"vector_dimension"`  // 会話要約用embedding次元。0の場合は768
-	EmbedProvider    string `yaml:"embed_provider"`    // Embedding provider（"ollama" または "openai"）。空の場合は従来の自動選択
-	EmbedBaseURL     string `yaml:"embed_base_url"`    // Embedding専用Base URL。空の場合はprovider既定URLを使用
-	EmbedModel       string `yaml:"embed_model"`       // Embedding用モデル（例: "nomic-embed-text"）。空の場合はembedding無効
-	SummaryModel     string `yaml:"summary_model"`     // 要約用モデル（例: "Chat"）。空の場合はOllama chatモデルを使用
+	Enabled               bool   `yaml:"enabled"`             // 会話LLM機能の有効化（デフォルト: false）
+	RedisURL              string `yaml:"redis_url"`           // Redis接続先（例: "redis://localhost:6379"）
+	L1SQLitePath          string `yaml:"l1_sqlite_path"`      // L1 hot store SQLite path（任意）
+	ArchiveSQLitePath     string `yaml:"archive_sqlite_path"` // L2 archive SQLite path（例: "/var/lib/rencrow/memory_archive.db"）
+	DeprecatedArchivePath string `yaml:"duckdb_path"`         // 旧設定キーの読み取り互換。新規設定では使用しない
+	VectorDBURL           string `yaml:"vectordb_url"`        // VectorDB gRPC接続先（例: "localhost:6334" for Qdrant）
+	VectorCollection      string `yaml:"vector_collection"`   // 会話要約用Qdrant collection名。空の場合はrencrow_memory
+	VectorDimension       int    `yaml:"vector_dimension"`    // 会話要約用embedding次元。0の場合は768
+	EmbedProvider         string `yaml:"embed_provider"`      // Embedding provider（"ollama" または "openai"）。空の場合は従来の自動選択
+	EmbedBaseURL          string `yaml:"embed_base_url"`      // Embedding専用Base URL。空の場合はprovider既定URLを使用
+	EmbedModel            string `yaml:"embed_model"`         // Embedding用モデル（例: "nomic-embed-text"）。空の場合はembedding無効
+	SummaryModel          string `yaml:"summary_model"`       // 要約用モデル（例: "Chat"）。空の場合はOllama chatモデルを使用
 }
 
 type KnowledgeRelationConfig struct {
@@ -379,7 +380,7 @@ type CapabilityConfig struct {
 	// false の場合は config に記載された情報だけでケイパビリティを決定する
 	ProbeLLMs bool `yaml:"probe_llms"`
 
-	// ToolRegistryDB: ToolRegistry の DuckDB ファイルパス（空の場合は ToolRegistry 無効）
+	// ToolRegistryDB: ToolRegistry のSQLiteファイルパス（空の場合は ToolRegistry 無効）
 	ToolRegistryDB string `yaml:"tool_registry_db"`
 
 	// LLMQualityOverrides: モデル名 → 品質ランク（1〜5）の上書き設定

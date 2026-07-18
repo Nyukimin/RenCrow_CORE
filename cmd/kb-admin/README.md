@@ -65,7 +65,7 @@ kb-admin cleanup <domain> <days>
 `.env` ファイルから以下の環境変数を読み込みます:
 
 - `REDIS_URL` - Redis 接続先
-- `DUCKDB_PATH` - DuckDB ファイルパス
+- `ARCHIVE_SQLITE_PATH` - SQLite archive ファイルパス
 - `VECTORDB_URL` - Qdrant 接続先 (例: `localhost:6334`)
 
 ## 使用例

@@ -1,4 +1,4 @@
-package duckdb
+package archivesqlite
 
 import (
 	"context"
@@ -14,11 +14,11 @@ import (
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
-func TestDuckDBStore_ExportThreadSummariesParquet(t *testing.T) {
+func TestArchiveSQLiteStore_ExportThreadSummariesParquet(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewDuckDBStore(":memory:")
+	store, err := NewArchiveSQLiteStore(":memory:")
 	if err != nil {
-		t.Fatalf("NewDuckDBStore failed: %v", err)
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
 	}
 	defer store.Close()
 
@@ -59,11 +59,11 @@ func TestDuckDBStore_ExportThreadSummariesParquet(t *testing.T) {
 	}
 }
 
-func TestDuckDBStore_SaveThreadSummaryArchivesSessionID(t *testing.T) {
+func TestArchiveSQLiteStore_SaveThreadSummaryArchivesSessionID(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewDuckDBStore(":memory:")
+	store, err := NewArchiveSQLiteStore(":memory:")
 	if err != nil {
-		t.Fatalf("NewDuckDBStore failed: %v", err)
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
 	}
 	defer store.Close()
 
@@ -88,11 +88,11 @@ func TestDuckDBStore_SaveThreadSummaryArchivesSessionID(t *testing.T) {
 	}
 }
 
-func TestDuckDBStore_SaveThreadSummaryRejectsMalformedSummary(t *testing.T) {
+func TestArchiveSQLiteStore_SaveThreadSummaryRejectsMalformedSummary(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewDuckDBStore(":memory:")
+	store, err := NewArchiveSQLiteStore(":memory:")
 	if err != nil {
-		t.Fatalf("NewDuckDBStore failed: %v", err)
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
 	}
 	defer store.Close()
 
@@ -115,11 +115,11 @@ func TestDuckDBStore_SaveThreadSummaryRejectsMalformedSummary(t *testing.T) {
 	}
 }
 
-func TestDuckDBStore_ReadThreadSummaryRejectsMalformedRows(t *testing.T) {
+func TestArchiveSQLiteStore_ReadThreadSummaryRejectsMalformedRows(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewDuckDBStore(":memory:")
+	store, err := NewArchiveSQLiteStore(":memory:")
 	if err != nil {
-		t.Fatalf("NewDuckDBStore failed: %v", err)
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
 	}
 	defer store.Close()
 
@@ -142,11 +142,11 @@ INSERT INTO session_thread (
 	}
 }
 
-func TestDuckDBStore_ArchiveL1DataParquet(t *testing.T) {
+func TestArchiveSQLiteStore_ArchiveL1DataParquet(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewDuckDBStore(":memory:")
+	store, err := NewArchiveSQLiteStore(":memory:")
 	if err != nil {
-		t.Fatalf("NewDuckDBStore failed: %v", err)
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
 	}
 	defer store.Close()
 
@@ -279,11 +279,11 @@ func TestDuckDBStore_ArchiveL1DataParquet(t *testing.T) {
 	}
 }
 
-func TestDuckDBStore_SearchKnowledgeArchiveFTS(t *testing.T) {
+func TestArchiveSQLiteStore_SearchKnowledgeArchiveFTS(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewDuckDBStore(":memory:")
+	store, err := NewArchiveSQLiteStore(":memory:")
 	if err != nil {
-		t.Fatalf("NewDuckDBStore failed: %v", err)
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
 	}
 	defer store.Close()
 

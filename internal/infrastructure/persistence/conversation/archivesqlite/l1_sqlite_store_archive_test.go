@@ -1,4 +1,4 @@
-package duckdb
+package archivesqlite
 
 import (
 	"context"
@@ -8,16 +8,16 @@ import (
 	"time"
 )
 
-func TestL1SQLiteStore_SaveStagingItemArchivesToDuckDB(t *testing.T) {
+func TestL1SQLiteStore_SaveStagingItemArchivesToSQLite(t *testing.T) {
 	ctx := context.Background()
 	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("l1sqlite.NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
-	archive, err := NewDuckDBStore(filepath.Join(t.TempDir(), "archive.duckdb"))
+	archive, err := NewArchiveSQLiteStore(filepath.Join(t.TempDir(), "archive.db"))
 	if err != nil {
-		t.Fatalf("NewDuckDBStore failed: %v", err)
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
 	}
 	defer archive.Close()
 	store.WithArchiveStore(archive)
@@ -46,16 +46,16 @@ func TestL1SQLiteStore_SaveStagingItemArchivesToDuckDB(t *testing.T) {
 	}
 }
 
-func TestL1SQLiteStore_PromoterArchivesPromotedItemsToDuckDB(t *testing.T) {
+func TestL1SQLiteStore_PromoterArchivesPromotedItemsToSQLite(t *testing.T) {
 	ctx := context.Background()
 	l1, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("l1sqlite.NewL1SQLiteStore failed: %v", err)
 	}
 	defer l1.Close()
-	archive, err := NewDuckDBStore(filepath.Join(t.TempDir(), "archive.duckdb"))
+	archive, err := NewArchiveSQLiteStore(filepath.Join(t.TempDir(), "archive.db"))
 	if err != nil {
-		t.Fatalf("NewDuckDBStore failed: %v", err)
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
 	}
 	defer archive.Close()
 	l1.WithArchiveStore(archive)

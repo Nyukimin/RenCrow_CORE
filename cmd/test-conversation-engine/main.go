@@ -15,14 +15,14 @@ func main() {
 
 	// 1. ConversationManager + Engine 初期化
 	redisURL := envOrDefault("REDIS_URL", "redis://localhost:6379")
-	duckdbPath := envOrDefault("DUCKDB_PATH", "/tmp/test_conversation_engine.duckdb")
+	archiveSQLitePath := envOrDefault("ARCHIVE_SQLITE_PATH", "/tmp/test_conversation_engine_archive.db")
 	vectordbURL := envOrDefault("VECTORDB_URL", "localhost:6334")
 
-	// テスト用DuckDB（既存のものと競合しないように別パス）
-	defer os.Remove(duckdbPath)
-	defer os.Remove(duckdbPath + ".wal")
+	// テスト用SQLite archive（既存のものと競合しないように別パス）
+	defer os.Remove(archiveSQLitePath)
+	defer os.Remove(archiveSQLitePath + ".wal")
 
-	realMgr, err := conversationpersistence.NewRealConversationManager(redisURL, duckdbPath, vectordbURL)
+	realMgr, err := conversationpersistence.NewRealConversationManager(redisURL, archiveSQLitePath, vectordbURL)
 	if err != nil {
 		log.Fatalf("Failed to init ConversationManager: %v", err)
 	}
