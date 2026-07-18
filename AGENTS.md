@@ -2,11 +2,11 @@
 
 ## このファイルの役割
 
-このファイルは、RenCrow リポジトリで作業する AI エージェント向けの最小実務ルールです。  
-詳細設計や背景説明は `CLAUDE.md`、共通方針は `rules/`、実装仕様の正本は `docs/` を参照してください。
+このファイルは、RenCrow_CORE で作業する AI エージェント向けの最小実務ルールです。
+製品仕様の唯一の正本は `docs/README.md` と、そこに列挙された9つの仕様書です。`CLAUDE.md` と `rules/` は作業制約であり、製品仕様を再定義しません。
 
 このファイルは常時必要な判断基準だけを置く。path 固有の制約は `rules/`、再利用手順は `skills/`、機械的に止めるべき危険操作は hooks / permissions へ分離する。
-指示配置の補助仕様は `docs/refs/10_新仕様/82_Claude_Code指示配置ガバナンス仕様.md` とし、正本配置は `docs/02_正本仕様/00_正本仕様Tree.md` に従う。
+指示配置は `rules/rules_instruction_placement.md`、path 固有制約は `rules/rules_path_scoped_constraints.md` に従う。
 
 ---
 
@@ -14,12 +14,12 @@
 
 作業前に、必要に応じて次の順で確認すること。
 
-1. `AGENTS.md`  
-2. `CLAUDE.md`  
-3. `docs/02_正本仕様/00_正本仕様Tree.md`
-4. `docs/02_正本仕様/02_実装仕様.md`
+1. `AGENTS.md`
+2. `docs/README.md`
+3. `docs/README.md` から選んだ対象領域の現行正本
+4. `CLAUDE.md` と対象作業に関係する `rules/`
 5. Viewer / UI / 見た目に関わる作業では `DESIGN.md`
-6. 関連する実装ファイルとその周辺コード
+6. 関連する実装ファイル、test、production wiring、config
 7. 必要に応じて以下を参照
    - `rules/PROJECT_AGENT.md`
    - `rules/common/GLOBAL_AGENT.md`
@@ -38,11 +38,9 @@
    - `rules/rules_path_scoped_constraints.md`
    - `rules/rules_search_browse_evidence.md`
    - `rules/rules_domain.md`
-   - `docs/refs/01_正本仕様/18_Memory_Lifecycle_Recall_Context.md`（Memory lifecycle / Recall Context / prompt 注入方針を扱う場合の補助仕様）
-   - `docs/refs/10_新仕様/09_Memory_SourceRegistry仕様.md`（Memory / Source Registry / 保存境界を扱う場合の補助仕様）
 
-実装判断で迷った場合、**一次参照は `docs/02_正本仕様/00_正本仕様Tree.md` と `docs/02_正本仕様/02_実装仕様.md`** とする。
-Viewer / UI / 見た目の判断で迷った場合、**視覚方針の一次参照は `DESIGN.md`** とし、実装・状態管理・検証の一次参照は正本仕様と rules に戻る。
+実装判断で迷った場合、**`docs/README.md` から該当する現行正本へ戻る**。不足事項を旧資料やarchiveで補完せず、production wiringとtestを照合して現行正本を更新する。
+Viewer / UI / 見た目の判断で迷った場合、**視覚方針は `DESIGN.md`** とし、製品契約は現行正本、実装・状態管理・検証の制約はrulesへ戻る。
 
 ---
 
@@ -109,7 +107,7 @@ Coder が行うのは次のみ：
 
 ### コーディングAIの Safe / Tool Build Mode
 
-コーディング作業は、`docs/コーディング/coding_agent_modes.md` と `docs/コーディング/coding_agent_implementation_spec.md` を前提に、次の2形態を区別する。
+コーディング作業は、次の2形態を区別する。
 
 - **Safe Build Mode**: 既存コード、既存DB、既存環境、設定、運用系に触る作業。既存システムを壊さず、小さい差分、影響範囲、テスト、ログを優先する。
 - **Tool Build Mode**: 新規ツール、小物スクリプト、補助アプリ、検証用CLIなどを、`/home/nyukimi/RenCrow/RenCrow_Tools`、`experiments/`、`sandbox/` 配下で既存本体から切り離して作る作業。
@@ -117,18 +115,6 @@ Coder が行うのは次のみ：
 横断的に再利用するツール、ブラウザ sidecar、データ変換、検証用 CLI は `RenCrow_Tools` を正本とする。`RenCrow_CORE/tools/` は既存互換または本体密結合の残置場所であり、新規の横断ツール置き場にしない。
 
 判断に迷う場合は Safe Build Mode に倒す。Tool Build Mode でも、既存本体、DB、設定、運用、Source Registry、memory、validator に踏み込む場合は Safe Build Mode として扱う。
-
-`coding_agent_implementation_spec.md` の v0.1 は「自律コーディングAI」ではなく「コーディングAIの運用判断エンジン」とする。v0.1 では、依頼文の分析、モード判定、理由生成、ガードレール判定、Worker / Coder プロンプト生成、WorkLog 雛形生成、MemoryCandidate 生成、CLI確認、代表テストまでを対象にする。
-
-v0.1 では次を行わない。
-
-- 実コード変更の自動実行
-- Git操作の自動実行
-- official DB への直接write
-- `user:<uid>` への直接upsert
-- confirmed / pinned memory への直接昇格
-- Source Registry への無審査追加
-- LangGraph接続、自律エージェント実行、外部検索
 
 ---
 
@@ -190,11 +176,11 @@ v0.1 では次を行わない。
 
 通常の処理フローは以下。
 
-ユーザー入力  
-→ Chat が解釈・ルーティング  
-→ Coder が `plan` / `patch` を生成  
-→ Worker が実行  
-→ Chat が結果を返す
+ユーザー入力
+→ MessageOrchestrator
+→ Mio が route decision
+→ 選択された Chat / Worker / Coder / Advisor / Tool
+→ Mio が結果を返す
 
 実装時は、今の変更がどの層の責務かを先に判断すること。  
 責務の違う層へロジックを混ぜないこと。
@@ -214,6 +200,8 @@ v0.1 では次を行わない。
 - `CODE1`
 - `CODE2`
 - `CODE3`
+- `CODE4`
+- `WILD`
 
 優先順位：
 
@@ -234,7 +222,7 @@ v0.1 では次を行わない。
 
 1. 対象タスクの責務を確認する  
    - Chat / Worker / Coder のどこか
-2. `docs/02_正本仕様/00_正本仕様Tree.md` と `docs/02_正本仕様/02_実装仕様.md` を確認する
+2. `docs/README.md` から対象領域の現行正本を確認する
 3. 対象ファイルだけでなく周辺コードも読む
 4. 既存の命名・構造・流れを把握する
 
@@ -293,7 +281,7 @@ v0.1 では次を行わない。
 
 - API キーを設定ファイルへ平文保存する
 - 保護ファイルパターンや Git auto-commit を無効化する
-- MaxContext 制約を無視した Ollama モデル運用を前提にする
+- backendやmodel固有のcontext、常駐、management方式をCOREへ固定する
 
 ---
 
@@ -372,30 +360,31 @@ Worker は実行主体である。
 
 ## ドキュメント参照方針
 
-このプロジェクトには複数の文書がある。  
-使い分けは以下。
+このプロジェクトには製品仕様、作業制約、視覚方針、tool契約がある。役割を混同しない。
 
 ### 最小限で必ず意識するもの
 - `AGENTS.md`  
   作業ルール
+- `docs/README.md`
+  唯一の現行正本の入口
 - `CLAUDE.md`  
-  プロジェクト概要と全体整理
+  AI作業時の短い参照案内
 - `rules/routing-policy.md`
   ルーティング判断の実務ポリシー
 - `rules/rules_viewer_ui.md`
   RenCrow Viewer の新 UI / 新タブ追加時の見た目と情報量の実務ルール
-- `docs/02_正本仕様/02_実装仕様.md`
-  実装の一次参照
 
 ### 必要に応じて読むもの
-- `docs/コーディング/coding_agent_modes.md`
-- `docs/コーディング/coding_agent_implementation_spec.md`
-- `docs/04_実装仕様_機能拡張/実装仕様_分散実行_v4.md`
-- `docs/04_実装仕様_機能拡張/実装仕様_会話LLM_v5.md`
-- `docs/04_実装仕様_機能拡張/実装仕様_会話エンジン_v5.1.md`
-- `docs/LLM運用/`
-- `docs/04_実装仕様_機能拡張/実装仕様_OpenClaw移植_v1.md`
-- `docs/02_OpenClaw移植詳細仕様/`
+- `docs/01_システム概要.md`
+- `docs/02_機能仕様.md`
+- `docs/03_キャラクター・エージェント仕様.md`
+- `docs/04_アーキテクチャ概要.md`
+- `docs/05_設定リファレンス.md`
+- `docs/06_Public_API仕様.md`
+- `docs/07_安全・承認・データ方針.md`
+- `docs/08_実装状況・ロードマップ.md`
+- `docs/09_運用ログ・panic保存仕様.md`
+- `DESIGN.md`
 - `TOOL_CONTRACT.md`
 
 ### 共通ルール
@@ -417,8 +406,8 @@ Worker は実行主体である。
 - `rules/rules_domain.md`
 
 ### 旧 docs 参照ルール
-- 削除済みの `docs/archive/`、`docs/codebase-map/`、`docs/STT_TTS/archive/`、`old/` 配下、古い `docs/refactor/Phase*` 文書を参照しない。
-- 必要な内容は `docs/02_正本仕様/` に統合されたものを参照し、不足時だけ `docs/refs/` を補助参照する。
+- archive branch、Knowledge、削除済みdocs、版付き旧仕様、引き継ぎ資料を現行正本として参照しない。
+- 現行正本に不足がある場合は、旧資料を補助正本にせず、実装・test・production wiringを確認して `docs/README.md` に列挙された該当文書を更新する。
 
 ---
 
@@ -466,7 +455,7 @@ Worker は実行主体である。
 迷った場合は次を優先する。
 
 1. 責務分離を守る
-2. `docs/02_正本仕様/00_正本仕様Tree.md` と `docs/02_正本仕様/02_実装仕様.md` に戻る
+2. `docs/README.md` から対象領域の現行正本に戻る
 3. 変更を小さく保つ
 4. 安全側に倒す
 5. 勝手に広げず、分離して報告する

@@ -1,246 +1,87 @@
-# rules_domain.md - RenCrow ドメイン固有ルール
+# rules_domain.md - RenCrow_CORE ドメイン実装ルール
 
-**作成日**: 2026-02-24
-**最終更新**: 2026-05-09
-**プロジェクト名**: RenCrow (`RenCrow_CORE`)
-**目的**: RenCrow 固有の技術詳細、実装名、運用制約だけを定義する
-
----
+**最終更新**: 2026-07-18
 
 ## 0. このファイルの役割
 
-このファイルは RenCrow 固有の補足ルールである。
+このファイルはRenCrow_CORE固有の実装・運用上の注意を定義します。製品仕様の正本ではありません。
 
-一般的な Go / テスト / ログ / 状態管理 / セキュリティ / アーキテクチャのルールは `rules/common/` に置く。
-このファイルには、RenCrow の実装名、ローカル LLM 運用、ルーティング、セッション、ヘルスチェックなど、このプロジェクトでしか意味を持たない内容だけを書く。
+製品の所有範囲、機能、agent、architecture、config、API、安全、実装状況、運用契約は `docs/README.md` から該当する現行正本を参照します。一般的なGo、test、logging、state、securityは `rules/common/` に従います。
 
-共通ルールは以下を参照する。
+## 1. 外部LLM境界
 
-- `rules/common/rules_backend.md`
-- `rules/common/rules_testing.md`
-- `rules/common/rules_logging.md`
-- `rules/common/rules_state_management.md`
-- `rules/common/rules_observation_verification.md`
-- `rules/common/rules_architecture.md`
+- COREはrole、agent、request context、response、health projectionを扱う。
+- backendごとのmodel process、KV session、sampling、management runtimeはRenCrow_LLM側の責務とする。
+- Ollama、llama.cpp、MLXなど特定backendの常駐方法、context上限、management commandをCOREの固定要件にしない。
+- inference endpointとmanagement endpointを混同しない。
+- configで選択したroleやruntimeが利用不能な場合、別roleへ黙ってfallbackしない。
+- model固有のsecretをsource、sample config、test、logへ保存しない。
 
----
+製品境界は `docs/01_システム概要.md`、`docs/04_アーキテクチャ概要.md`、設定は `docs/05_設定リファレンス.md` に従います。
 
-## 1. LLM プロバイダー統合
+## 2. routingとagent
 
-RenCrow の LLM 呼び出しは、Chat / Worker / Coder の責務分離を前提にする。
+- 通常入力のroute owner、明示commandの優先、agentの責務は現行正本に従う。
+- Shiroとの会話とShiro/Workerのside effect実行を同一視しない。
+- Coder、Advisor、Toolをside effectの最終責任者にしない。
+- agent間移譲の会話eventを内部logだけで代替しない。
+- route、agent、runtime、modelを同じ識別子として扱わない。
 
-主なプロバイダー用途:
+製品契約は `docs/02_機能仕様.md` と `docs/03_キャラクター・エージェント仕様.md`、AI作業時の振り分けは `rules/routing-policy.md` に従います。
 
-| プロバイダー | 用途 | 認証方式 |
-| --- | --- | --- |
-| Ollama | Chat / Worker ローカル実行 | なし |
-| DeepSeek | Coder1 相当の仕様整理 | API キー |
-| OpenAI | Coder2 相当の実装 | API キー |
-| Claude | Coder3 相当の高品質推論 | API キー |
+## 3. conversation、Memory、storage
 
-API キーは環境変数または安全なシークレット管理から取得する。
-設定ファイルやテストコードへ平文保存してはいけない。
+- conversation、episode recall、確定Memory、Knowledge検索を区別する。
+- recall結果をagentの偽発言としてhistoryへ挿入しない。
+- stateにはowner、寿命、永続化先、再構築元を定める。
+- runtime storageを過去資料や特定toolの都合で置き換えない。
+- migrationはschema、audit、rollback、既存dataの互換性を確認する。
 
-対象環境変数:
+製品契約は `docs/02_機能仕様.md`、storage構成は `docs/04_アーキテクチャ概要.md`、実装制約は `rules/common/rules_state_management.md` に従います。
 
-- `ANTHROPIC_API_KEY`
-- `DEEPSEEK_API_KEY`
-- `OPENAI_API_KEY`
+## 4. PORTAL、Debug Viewer、音声
 
----
+- RenCrow_PORTALは外部向けview/live/lab、COREはDebug Viewerを所有する。
+- PORTALからDebug、Ops、Repair、LLM管理、設定変更APIを透過公開しない。
+- 表示本文、TTS音声生成、音声取得、browser再生、口パクを別の成功条件として扱う。
+- STT録音状態と認識結果の投入先を分離する。
+- recipient、TTS、STTなどclient-localの選択をCOREのglobal stateへ誤昇格しない。
 
-## 2. Ollama 運用制約
+製品契約は `docs/02_機能仕様.md`、`docs/04_アーキテクチャ概要.md`、`docs/06_Public_API仕様.md` に従います。
 
-RenCrow は低スペック環境でのローカル LLM 常駐を前提にする。
+## 5. health、restart、logging
 
-- Chat / Worker モデルは `keep_alive: -1` を前提にする
-- MaxContext 8192 を超える前提で設計しない
-- 起動時、LLM 呼び出し前、失敗時の再試行前にヘルスチェックする
-- Ollama のモデルロード状態と context_length を確認する
+- `/health/live`はCORE processのliveness確認に使う。
+- `/health`は依存を含む総合状態、`/ready`は受付可能状態として分ける。
+- 外部LLM、STT、TTSの停止だけを理由にCOREを再起動しない。
+- panicやhang後のrestartをCORE process自身だけへ依存させない。
+- incident、panic stack、repair、retentionの状態を別々の一時logへ散らさない。
 
-Ollama の一般的な接続確認やリトライ方針は `rules/common/rules_backend.md` と `rules/common/rules_architecture.md` に従う。
+endpoint契約は `docs/06_Public_API仕様.md`、再起動・自己修復・7日保持は `docs/09_運用ログ・panic保存仕様.md` に従います。
 
----
+## 6. 実機確認
 
-## 3. ルーティング
+Viewer、IdleChat、STT、TTS、external runtimeを含む変更はtest通過だけで完了扱いしません。
 
-ルーティング判断の正本は `rules/routing-policy.md` とする。
+- 1 session以上の開始から終了まで追う。
+- 表示、event、log、network、最終stateを照合する。
+- desktopとnarrow/mobileを実ブラウザで確認する。
+- backend health、実request、生成成功、取得成功、再生成功を分ける。
+- unavailable、pending、degraded、errorを空の成功へ丸めない。
 
-RenCrow の主なカテゴリ:
+詳細は `rules/common/rules_observation_verification.md` と `rules/common/rules_testing.md` に従います。
 
-- `CHAT`
-- `PLAN`
-- `ANALYZE`
-- `OPS`
-- `RESEARCH`
-- `CODE`
-- `CODE1`
-- `CODE2`
-- `CODE3`
+## 7. 言語とtool所有
 
-優先順位:
+- CORE runtimeと恒久的なCORE運用CLIはGoを第一候補にする。
+- Go versionとmodule pathは `go.mod` を確認する。
+- Viewerのbrowser E2Eはrepository管理されたNode.js/Playwrightを優先する。
+- Pythonは音声・data・解析・一時調査の補助に限定し、恒久runtimeへ採用する場合はmodule境界を再確認する。
+- 横断的に再利用するtool、browser sidecar、converter、validation CLIはRenCrow_Toolsへ置く。
+- `RenCrow_CORE/tools/`へ新しい横断toolを追加しない。
 
-1. 明示コマンド
-2. ルール辞書
-3. 分類器
-4. 安全側フォールバック
+## 8. 更新ルール
 
-曖昧な入力や危険な入力は、安易に `OPS` や `CODE` に流さず、まず `CHAT` / `PLAN` / `ANALYZE` へ戻す。
-
----
-
-## 4. セッション管理
-
-RenCrow では `session_id` を追跡の中心にする。
-
-- セッションごとに必要最小限の状態だけを持つ
-- 長期記憶は外部ストアや Obsidian などへ逃がす
-- 日次カットオーバーで古いセッションを整理する
-- 派生 ID を増やす前に、既存の `session_id` で表現できないか確認する
-
-ID、cache、queue、pending 状態の追加判断は `rules/common/rules_state_management.md` に従う。
-
----
-
-## 5. ログとトレーサビリティ
-
-RenCrow の実行ログでは、後から判断と実行を追えることを優先する。
-
-最低限意識する項目:
-
-- `job_id`
-- `session_id`
-- selected category
-- selected route
-- execution status
-- executed commands
-- failed commands
-- git commit hash
-- coder output summary
-
-重要イベント例:
-
-- `router.decision`
-- `classifier.error`
-- `worker.success`
-- `worker.fail`
-- `worker.executed`
-- `worker.rollback`
-- `coder.plan_generated`
-- `route.override`
-- `final.route`
-
-ログ一般、マスキング、調査記録は `rules/common/rules_logging.md` に従う。
-
----
-
-## 6. 再起動とヘルスチェック
-
-RenCrow / RenCrow の再起動前には、既存の関連作業を必ず全停止する。
-
-最低限の順序:
-
-1. `systemctl --user stop rencrow.service`
-2. 残存する `rencrow` プロセス停止
-3. `:18790` の listen が消えたことを確認
-4. `http://127.0.0.1:18790/health` が失敗することを確認
-5. ビルド
-6. service 起動
-7. health が `200 OK` になることを確認
-
-`rencrow.service` は `~/.local/bin/rencrow` を自動再起動することがある。
-プロセスだけ止めて再起動してはいけない。
-
----
-
-## 7. 実機 / Viewer / 音声系の確認
-
-Viewer、IdleChat、STT、TTS のような実機状態を伴う機能では、テスト通過だけで完了扱いしない。
-
-- 実機または Playwright で対象フローを追う
-- 1 セッション以上の開始から終了まで確認する
-- 表示ログ、イベントログ、画面状態を照合する
-- TTS / STT / Viewer 表示の責務を混同しない
-
-詳細は `rules/common/rules_observation_verification.md` と `rules/common/rules_state_management.md` に従う。
-
----
-
-## 8. テストと Lint
-
-RenCrow 固有の確認コマンドは、対象範囲に合わせて選ぶ。
-
-代表例:
-
-```bash
-go test ./cmd/rencrow ./internal/adapter/viewer ./internal/application/idlechat
-node --test internal/adapter/viewer/*.test.mjs
-```
-
-全体の TDD、Lint、カバレッジ、E2E 方針は `rules/common/rules_testing.md` と `rules/common/rules_backend.md` に従う。
-
----
-
-## 9. RenCrow の言語選択
-
-技術選定の共通原則は `rules/common/rules_architecture.md` に従う。
-RenCrow では、以下を標準とする。
-
-### 9.1 CLI
-
-恒久的な RenCrow / RenCrow CLI は Go を第一候補にする。
-
-対象:
-
-- service 操作
-- health / debug / diagnosis
-- config 検証
-- IdleChat / STT / TTS の実機診断
-- RenCrow 内部 API と密接に関わる運用コマンド
-
-理由:
-
-- 本体が Go である
-- 1 バイナリで配布しやすい
-- systemd / Linux 運用と相性がよい
-- 既存 config 型や内部 API と統合しやすい
-
-### 9.2 Viewer / Playwright E2E
-
-Viewer、ブラウザ、DOM、console、WebSocket を検証する E2E は Node.js Playwright を第一候補にする。
-
-依存は `package.json` / `package-lock.json` で管理する。
-Python の `requirements.txt` へ入れない。
-
-### 9.3 Python を使ってよい領域
-
-Python は以下の補助用途で使ってよい。
-
-- 音声ファイル処理
-- STT / Whisper 周辺の実験
-- ログ解析
-- データ加工
-- 一時的な調査スクリプト
-
-恒久運用 CLI にする場合は、Go へ寄せるべきか再検討する。
-
-### 9.4 判断に迷った場合
-
-迷った場合は以下の順で選ぶ。
-
-1. RenCrow 本体や運用 CLIなら Go
-2. Viewer / browser E2E なら Node.js
-3. 音声・データ・解析補助なら Python
-4. 例外が必要なら、理由と依存管理方法を明記する
-
----
-
-## 10. このファイルの更新ルール
-
-以下の場合だけ、このファイルを更新対象にする。
-
-- RenCrow 固有の実装名やルーティングが変わった
-- RenCrow 固有の運用手順が変わった
-- RenCrow 固有のセッション、LLM、Viewer、音声系の制約が増えた
-
-一般化できる内容は、このファイルではなく `rules/common/` に追加する。
+- 製品契約が変わる場合は、先に `docs/README.md` に列挙された該当正本を更新する。
+- このファイルにはCORE固有の実装上の注意だけを置く。
+- 一般化できる内容は `rules/common/`、反復手順はskill、機械的安全柵はhooks/permissionsへ置く。

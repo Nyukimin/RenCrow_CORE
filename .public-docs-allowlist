@@ -6,4 +6,5 @@ docs/05_設定リファレンス.md
 docs/06_Public_API仕様.md
 docs/07_安全・承認・データ方針.md
 docs/08_実装状況・ロードマップ.md
+docs/09_運用ログ・panic保存仕様.md
 docs/README.md
