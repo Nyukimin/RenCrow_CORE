@@ -17,6 +17,7 @@ type Routes struct {
 	Result        http.HandlerFunc
 	Sessions      http.HandlerFunc
 	Events        http.HandlerFunc
+	Launch        http.HandlerFunc
 	ObserverPage  http.HandlerFunc
 	ObserverProxy http.HandlerFunc
 }
@@ -29,6 +30,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/games/result", routes.Result)
 	registerRoute(mux, "/viewer/games/sessions", routes.Sessions)
 	registerRoute(mux, "/viewer/games/events", routes.Events)
+	registerRoute(mux, "/viewer/games/launch", routes.Launch)
 	registerRoute(mux, "/viewer/games/observer", routes.ObserverPage)
 	registerRoute(mux, "/viewer/games/observer-api", routes.ObserverProxy)
 	registerRoute(mux, "/viewer/games/observer-api/", routes.ObserverProxy)

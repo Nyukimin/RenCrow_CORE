@@ -80,6 +80,10 @@ func buildViewerRuntimeHandlers(
 	gameObserverProxyOptions := viewer.GameObserverProxyOptions{}
 	deps.viewerGamesObserverPage = viewer.HandleGameObserverPage(gameObserverProxyOptions)
 	deps.viewerGamesObserverProxy = viewer.HandleGameObserverProxy(gameObserverProxyOptions)
+	deps.viewerGamesLaunch = viewer.HandleGameLaunch(viewer.GameLaunchOptions{
+		ObserverBaseURL: gameObserverProxyOptions.ObserverBaseURL,
+		Store:           gameBridgeStore,
+	})
 
 	hub := viewer.NewEventHub(200)
 	deps.eventHub = hub
