@@ -20,11 +20,16 @@ func (e *DefaultCodeExecutor) executeCoderGeneratePath(
 }
 
 func (e *DefaultCodeExecutor) emitCoderGenerateError(req CodeExecutionRequest, target codeTarget, err error) {
+	report := "実行失敗: " + err.Error()
 	e.emit("agent.response", target.name, "shiro", "エラー: "+err.Error(), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
+	e.emit("agent.report", target.name, "shiro", formatAgentHandoffCompletionSpeech("shiro", target.name, report), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
+	e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(req.Route, req.JobID, report), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
 }
 
 func (e *DefaultCodeExecutor) emitCoderGenerateResponse(req CodeExecutionRequest, target codeTarget, response string) {
 	content := truncate(response, 500)
 	e.emit("agent.response", target.name, "shiro", content, req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
+	e.emit("agent.report", target.name, "shiro", formatAgentHandoffCompletionSpeech("shiro", target.name, content), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
 	e.emit("agent.response", "shiro", "mio", content, req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
+	e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(req.Route, req.JobID, content), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
 }

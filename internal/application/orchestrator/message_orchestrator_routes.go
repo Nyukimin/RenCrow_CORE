@@ -64,6 +64,7 @@ func (d *messageRouteDispatcher) ExecuteTask(ctx context.Context, t task.Task, r
 	if route != routing.RouteCHAT {
 		if shouldTraceShiroDelegation(route) {
 			d.emit("agent.delegate", "mio", "shiro", formatMioToShiroInstruction(t, route), route.String(), t.JobID().String(), sessionID, channel, chatID)
+			d.emit("agent.acknowledge", "shiro", "mio", formatShiroReadbackToMio(t, route), route.String(), t.JobID().String(), sessionID, channel, chatID)
 		}
 		return d.executeAutonomous(ctx, t, route, sessionID, channel, chatID, ttsSessionID)
 	}
@@ -119,6 +120,8 @@ func (d *messageRouteDispatcher) executeOPSRoute(ctx context.Context, t task.Tas
 		d.emit("agent.response", "shiro", "mio", resp, "OPS", jid, sessionID, channel, chatID)
 		d.emit("agent.report", "shiro", "mio", formatShiroToMioReport(routing.RouteOPS, jid, resp), "OPS", jid, sessionID, channel, chatID)
 		d.pushTTS(ctx, ttsSessionID, routing.RouteOPS, "agent.response", resp)
+	} else {
+		d.emit("agent.report", "shiro", "mio", formatShiroToMioReport(routing.RouteOPS, jid, "実行失敗: "+err.Error()), "OPS", jid, sessionID, channel, chatID)
 	}
 	return resp, err
 }
@@ -136,12 +139,18 @@ func (d *messageRouteDispatcher) executeWildRoute(ctx context.Context, t task.Ta
 		return "", fmt.Errorf("no wild agent available")
 	}
 	jid := t.JobID().String()
+	work := fmt.Sprintf("route=%s job=%s の創作", routing.RouteWILD.String(), jid)
+	d.emit("agent.delegate", "mio", "wild", formatAgentHandoffSpeech("mio", "wild", work, t.UserMessage()), "WILD", jid, sessionID, channel, chatID)
+	d.emit("agent.acknowledge", "wild", "mio", formatAgentHandoffReadbackSpeech("mio", "wild", work, t.UserMessage()), "WILD", jid, sessionID, channel, chatID)
 	d.emit("agent.start", "mio", "wild", "創作中...", "WILD", jid, sessionID, channel, chatID)
 	streamCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteWILD, jid, sessionID, channel, chatID, ttsSessionID)
 	resp, err := d.wild.Generate(streamCtx, t)
 	if err == nil {
 		d.emit("agent.response", "wild", "mio", resp, "WILD", jid, sessionID, channel, chatID)
+		d.emit("agent.report", "wild", "mio", formatAgentHandoffCompletionSpeech("mio", "wild", resp), "WILD", jid, sessionID, channel, chatID)
 		ttsStream.Finalize(ctx, resp)
+	} else {
+		d.emit("agent.report", "wild", "mio", formatAgentHandoffCompletionSpeech("mio", "wild", "実行失敗: "+err.Error()), "WILD", jid, sessionID, channel, chatID)
 	}
 	return resp, err
 }
@@ -163,15 +172,20 @@ func (d *messageRouteDispatcher) executeAnalyzeRoute(ctx context.Context, t task
 	if d.heavy == nil {
 		return "", fmt.Errorf("no heavy agent available")
 	}
+	work := fmt.Sprintf("route=%s job=%s の分析", routing.RouteANALYZE.String(), jid)
+	d.emit("agent.delegate", "mio", "heavy", formatAgentHandoffSpeech("mio", "heavy", work, t.UserMessage()), "ANALYZE", jid, sessionID, channel, chatID)
+	d.emit("agent.acknowledge", "heavy", "mio", formatAgentHandoffReadbackSpeech("mio", "heavy", work, t.UserMessage()), "ANALYZE", jid, sessionID, channel, chatID)
 	d.emit("agent.start", "mio", "heavy", "分析中...", "ANALYZE", jid, sessionID, channel, chatID)
 	recordHeavyWorkflowEvent(ctx, d.workflowEvents, "started", "Heavy Worker started", jid)
 	analyzeCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteANALYZE, jid, sessionID, channel, chatID, ttsSessionID)
 	resp, err := d.heavy.Generate(analyzeCtx, t)
 	if err == nil {
 		d.emit("agent.response", "heavy", "mio", resp, "ANALYZE", jid, sessionID, channel, chatID)
+		d.emit("agent.report", "heavy", "mio", formatAgentHandoffCompletionSpeech("mio", "heavy", resp), "ANALYZE", jid, sessionID, channel, chatID)
 		ttsStream.Finalize(ctx, resp)
 		recordHeavyWorkflowEvent(ctx, d.workflowEvents, "completed", "Heavy Worker completed", jid)
 	} else {
+		d.emit("agent.report", "heavy", "mio", formatAgentHandoffCompletionSpeech("mio", "heavy", "実行失敗: "+err.Error()), "ANALYZE", jid, sessionID, channel, chatID)
 		recordHeavyWorkflowEvent(ctx, d.workflowEvents, "failed", err.Error(), jid)
 	}
 	return resp, err

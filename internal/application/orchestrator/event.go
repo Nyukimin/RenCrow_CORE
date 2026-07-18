@@ -51,7 +51,7 @@ func NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, ch
 
 func isConversationMessageEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "message.received", "agent.response":
+	case "message.received", "agent.response", "agent.delegate", "agent.acknowledge", "agent.report":
 		return true
 	default:
 		return false

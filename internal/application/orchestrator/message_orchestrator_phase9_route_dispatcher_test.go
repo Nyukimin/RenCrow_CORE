@@ -60,6 +60,34 @@ func TestPhase9RouteDispatcher_NonCHATUsesAutonomousExecutor(t *testing.T) {
 	}
 }
 
+func TestPhase9RouteDispatcher_OPSVerbalizesNamedHandoffAndReadback(t *testing.T) {
+	var events []OrchestratorEvent
+	dispatcher := newMessageRouteDispatcher(
+		&mockMioAgent{},
+		&mockShiroAgent{},
+		nil,
+		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
+			events = append(events, NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID))
+		},
+		nil,
+		nil,
+	)
+	dispatcher.SetAutonomousExecutor(func(ctx context.Context, gotTask task.Task, route routing.Route, sessionID, channel, chatID, ttsSessionID string) (string, error) {
+		return "ops response", nil
+	})
+
+	tk := task.NewTask(task.NewJobID(), "TTSの接続を確認して", "viewer", "viewer-user")
+	if _, err := dispatcher.ExecuteTask(context.Background(), tk, routing.RouteOPS, "sess-1", "viewer", "viewer-user", ""); err != nil {
+		t.Fatalf("ExecuteTask failed: %v", err)
+	}
+	if len(events) < 2 {
+		t.Fatalf("expected handoff and readback events, got %#v", events)
+	}
+	if events[0].Type != "agent.delegate" || events[0].From != "mio" || events[0].To != "shiro" || events[1].Type != "agent.acknowledge" || events[1].From != "shiro" || events[1].To != "mio" {
+		t.Fatalf("unexpected handoff sequence: %#v", events)
+	}
+}
+
 func TestPhase9RouteDispatcher_SetHeavyAgentUpdatesAnalyzeRoute(t *testing.T) {
 	mio := &mockMioAgent{response: "mio analyze"}
 	heavy := &mockHeavyAgent{response: "heavy analyze"}

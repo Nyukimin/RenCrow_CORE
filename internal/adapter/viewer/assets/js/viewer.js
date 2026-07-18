@@ -1360,7 +1360,7 @@ function matchesFilters(ev) {
 function isSystemEvent(ev) {
   if (!ev) return false;
   if (ev.type === 'routing.decision' || ev.type === 'entry.stage' || ev.type === 'tts.audio_chunk') return true;
-  if (ev.type === 'agent.delegate' || ev.type === 'agent.report' || ev.type === 'worker.request' || ev.type === 'worker.result') return true;
+  if (ev.type === 'agent.delegate' || ev.type === 'agent.acknowledge' || ev.type === 'agent.report' || ev.type === 'worker.request' || ev.type === 'worker.result') return true;
   if (ev.type === 'agent.dispatch' || ev.type === 'mailbox.sent' || ev.type === 'mailbox.waiting' || ev.type === 'mailbox.received' || ev.type === 'mailbox.error' || ev.type === 'agent.error') return true;
   if (ev.type === 'agent.start' || ev.type === 'agent.note' || ev.type === 'agent.response') {
     const to = String(ev.to || '').toLowerCase();

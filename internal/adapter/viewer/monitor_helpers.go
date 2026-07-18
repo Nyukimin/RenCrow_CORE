@@ -18,6 +18,8 @@ func classifyJobPhase(ev orchestrator.OrchestratorEvent, current *JobSnapshot) (
 		return "routing", valueOr(current.Owner, "mio")
 	case "agent.delegate":
 		return "delegating", valueOr(to, current.Owner)
+	case "agent.acknowledge":
+		return "delegating", valueOr(from, current.Owner)
 	case "agent.dispatch":
 		return "delegating", valueOr(to, current.Owner)
 	case "agent.thinking":

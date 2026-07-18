@@ -13,9 +13,12 @@ import (
 
 func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWithoutProposal(t *testing.T) {
 	var coderMsg domaintransport.Message
+	var events []OrchestratorEvent
 	coordinator := newDistributedCodeExecutionCoordinator(
 		session.NewCentralMemory(),
-		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
+			events = append(events, NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID))
+		},
 		func(from, to, content, route, jobID, sessionID, channel, chatID string) {},
 		func(route routing.Route, userMessage string) string { return "coder3" },
 		func() map[string]interface{} { return map[string]interface{}{"coder3": "cfg"} },
@@ -44,6 +47,18 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 	}
 	if coderMsg.Context["coder_config"] != "cfg" {
 		t.Fatalf("expected coder_config, got %#v", coderMsg.Context)
+	}
+	mioDelegate := orchestratorEventIndex(events, "agent.delegate", "mio", "shiro")
+	shiroReadback := orchestratorEventIndex(events, "agent.acknowledge", "shiro", "mio")
+	coderDelegate := orchestratorEventIndex(events, "agent.delegate", "shiro", "coder3")
+	coderReadback := orchestratorEventIndex(events, "agent.acknowledge", "coder3", "shiro")
+	coderReport := orchestratorEventIndex(events, "agent.report", "coder3", "shiro")
+	shiroReport := orchestratorEventIndex(events, "agent.report", "shiro", "mio")
+	if mioDelegate < 0 || shiroReadback < 0 || coderDelegate < 0 || coderReadback < 0 || coderReport < 0 || shiroReport < 0 {
+		t.Fatalf("missing distributed handoff speech events: %#v", events)
+	}
+	if !(mioDelegate < shiroReadback && shiroReadback < coderDelegate && coderDelegate < coderReadback && coderReadback < coderReport && coderReport < shiroReport) {
+		t.Fatalf("unexpected distributed handoff order: %#v", events)
 	}
 }
 

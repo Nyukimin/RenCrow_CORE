@@ -83,6 +83,7 @@ func (e *DefaultCodeExecutor) generateProposalForTarget(
 			err = fmt.Errorf("%w; retry failed: %v", err, retryErr)
 		}
 		e.emit("agent.response", target.name, "shiro", "エラー: "+err.Error(), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
+		e.emitProposalFailure(req, target, "Proposal生成失敗: "+err.Error())
 		return nil, fmt.Errorf("%s proposal generation failed: %w", target.name, err)
 	}
 	return p, nil
@@ -214,11 +215,18 @@ func (e *DefaultCodeExecutor) validateGeneratedProposal(
 		return nil
 	}
 	e.emit("agent.response", target.name, "shiro", "無効な Proposal が返されました", req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
+	e.emitProposalFailure(req, target, "Proposal形式不正")
 	return fmt.Errorf("%s proposal generation failed: invalid proposal", target.name)
+}
+
+func (e *DefaultCodeExecutor) emitProposalFailure(req CodeExecutionRequest, target codeTarget, report string) {
+	e.emit("agent.report", target.name, "shiro", formatAgentHandoffCompletionSpeech("shiro", target.name, report), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
+	e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(req.Route, req.JobID, report), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
 }
 
 func (e *DefaultCodeExecutor) emitProposalPlan(req CodeExecutionRequest, target codeTarget, p *proposal.Proposal) {
 	e.emit("agent.response", target.name, "shiro", "## Plan\n"+p.Plan(), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
+	e.emit("agent.report", target.name, "shiro", formatAgentHandoffCompletionSpeech("shiro", target.name, "Planを生成しました。"+p.Plan()), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
 }
 
 func (e *DefaultCodeExecutor) executeProposalWithWorker(

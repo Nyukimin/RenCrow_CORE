@@ -20,8 +20,21 @@ func shouldTraceShiroDelegation(route routing.Route) bool {
 }
 
 func formatMioToShiroInstruction(t task.Task, route routing.Route) string {
-	return fmt.Sprintf("MioからShiroへの指示: route=%s job=%s。ユーザー指示を実行タスクとして扱って。内容: %s",
-		route.String(), t.JobID().String(), traceShortText(t.UserMessage(), 600))
+	return formatAgentHandoffSpeech(
+		"mio",
+		"shiro",
+		fmt.Sprintf("route=%s job=%s の実行", route.String(), t.JobID().String()),
+		t.UserMessage(),
+	)
+}
+
+func formatShiroReadbackToMio(t task.Task, route routing.Route) string {
+	return formatAgentHandoffReadbackSpeech(
+		"mio",
+		"shiro",
+		fmt.Sprintf("route=%s job=%s の実行", route.String(), t.JobID().String()),
+		t.UserMessage(),
+	)
 }
 
 func formatShiroToWorkerInstruction(req CodeExecutionRequest, p *proposal.Proposal) string {
@@ -45,8 +58,11 @@ func formatWorkerToShiroResult(result *patch.PatchExecutionResult, err error) st
 }
 
 func formatShiroToMioReport(route routing.Route, jobID, body string) string {
-	return fmt.Sprintf("ShiroからMioへの戻り報告: route=%s job=%s。%s",
-		route.String(), strings.TrimSpace(jobID), traceShortText(body, 900))
+	return formatAgentHandoffCompletionSpeech(
+		"mio",
+		"shiro",
+		fmt.Sprintf("route=%s job=%s。%s", route.String(), strings.TrimSpace(jobID), handoffSpeechText(body, "結果なし")),
+	)
 }
 
 func proposalPlanText(p *proposal.Proposal) string {

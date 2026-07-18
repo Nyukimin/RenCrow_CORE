@@ -25,6 +25,7 @@ function classifyJobPhase(ev, current) {
   if (ev.type === 'message.received') return {phase: 'received', owner: 'mio'};
   if (ev.type === 'routing.decision') return {phase: 'routing', owner: current.owner || 'mio'};
   if (ev.type === 'agent.delegate') return {phase: 'delegating', owner: to || current.owner};
+  if (ev.type === 'agent.acknowledge') return {phase: 'delegating', owner: from || current.owner};
   if (ev.type === 'agent.dispatch') return {phase: 'delegating', owner: to || current.owner};
   if (ev.type === 'agent.thinking') return {phase: 'chatting', owner: from || current.owner};
   if (ev.type === 'mailbox.sent') return {phase: 'queued', owner: to || current.owner};

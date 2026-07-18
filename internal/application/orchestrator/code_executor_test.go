@@ -485,14 +485,30 @@ func TestCodeExecutor_ProposalPathEmitsLanguageTrace(t *testing.T) {
 	}
 
 	delegate := codeExecutorEventIndex(events, "agent.delegate", "mio", "shiro")
+	shiroReadback := codeExecutorEventIndex(events, "agent.acknowledge", "shiro", "mio")
+	coderDelegate := codeExecutorEventIndex(events, "agent.delegate", "shiro", "coder3")
+	coderReadback := codeExecutorEventIndex(events, "agent.acknowledge", "coder3", "shiro")
+	coderReport := codeExecutorEventIndex(events, "agent.report", "coder3", "shiro")
 	request := codeExecutorEventIndex(events, "worker.request", "shiro", "worker")
 	result := codeExecutorEventIndex(events, "worker.result", "worker", "shiro")
 	report := codeExecutorEventIndex(events, "agent.report", "shiro", "mio")
-	if delegate < 0 || request < 0 || result < 0 || report < 0 {
+	if delegate < 0 || shiroReadback < 0 || coderDelegate < 0 || coderReadback < 0 || coderReport < 0 || request < 0 || result < 0 || report < 0 {
 		t.Fatalf("missing language trace events: %#v", events)
 	}
-	if !(delegate < request && request < result && result < report) {
-		t.Fatalf("unexpected language trace order: delegate=%d request=%d result=%d report=%d", delegate, request, result, report)
+	if !(delegate < shiroReadback && shiroReadback < coderDelegate && coderDelegate < coderReadback && coderReadback < coderReport && coderReport < request && request < result && result < report) {
+		t.Fatalf("unexpected language trace order: delegate=%d shiro_readback=%d coder_delegate=%d coder_readback=%d coder_report=%d request=%d result=%d report=%d", delegate, shiroReadback, coderDelegate, coderReadback, coderReport, request, result, report)
+	}
+	if !strings.HasPrefix(events[delegate].content, "Shiro、") || !strings.Contains(events[delegate].content, "会話内容") {
+		t.Fatalf("Mio handoff must name Shiro and include conversation: %q", events[delegate].content)
+	}
+	if !strings.HasPrefix(events[shiroReadback].content, "Mio、") || !strings.Contains(events[shiroReadback].content, "復唱") {
+		t.Fatalf("Shiro readback must name Mio and repeat the handoff: %q", events[shiroReadback].content)
+	}
+	if !strings.HasPrefix(events[coderDelegate].content, "Coder3、") || !strings.HasPrefix(events[coderReadback].content, "Shiro、") {
+		t.Fatalf("Coder handoff must use named speech: delegate=%q readback=%q", events[coderDelegate].content, events[coderReadback].content)
+	}
+	if !strings.HasPrefix(events[coderReport].content, "Shiro、") || !strings.HasPrefix(events[report].content, "Mio、") {
+		t.Fatalf("completion reports must name the delegator: coder=%q shiro=%q", events[coderReport].content, events[report].content)
 	}
 	if !strings.Contains(events[request].content, "Shiro内部実行器への指示") {
 		t.Fatalf("worker request is not verbalized: %q", events[request].content)

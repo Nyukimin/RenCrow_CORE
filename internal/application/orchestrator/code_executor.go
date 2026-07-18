@@ -114,7 +114,7 @@ func (e *DefaultCodeExecutor) ExecuteCode(ctx context.Context, req CodeExecution
 	// CoderLoop パス: CoderAgentWithLoop かつ loopPrompt が設定されている場合
 	if loopPrompt, ok := e.coderLoopPrompts[target.name]; ok && loopPrompt != "" {
 		if loopCoder, ok := target.coder.(CoderAgentWithLoop); ok && e.workerExecution != nil {
-			loopExec := NewCoderLoopExecutor(loopCoder, e.workerExecution, loopPrompt, e.eventEmitter)
+			loopExec := NewCoderLoopExecutor(loopCoder, e.workerExecution, target.name, loopPrompt, e.eventEmitter)
 			return loopExec.Execute(ctx, req)
 		}
 	}

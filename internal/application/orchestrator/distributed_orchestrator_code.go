@@ -69,6 +69,9 @@ func (c *distributedCodeExecutionCoordinator) Execute(ctx context.Context, t tas
 	}
 	log.Printf("[DistributedOrch] code handoff route=%s target=%s job=%s", route, coderAgent, jid)
 
+	shiroWork := fmt.Sprintf("route=%s job=%s のコード作業取りまとめ", route, jid)
+	c.emit("agent.delegate", "mio", "shiro", formatAgentHandoffSpeech("mio", "shiro", shiroWork, t.UserMessage()), string(route), jid, sessionID, t.Channel(), t.ChatID())
+	c.emit("agent.acknowledge", "shiro", "mio", formatAgentHandoffReadbackSpeech("mio", "shiro", shiroWork, t.UserMessage()), string(route), jid, sessionID, t.Channel(), t.ChatID())
 	c.emit("agent.start", "mio", "shiro", "コードタスクをShiro経由で実行", string(route), jid, sessionID, t.Channel(), t.ChatID())
 	c.emitNote("mio", "user", "しろにコード実装の取りまとめをお願いしたよ。", string(route), jid, sessionID, t.Channel(), t.ChatID())
 	requestText := t.UserMessage()
@@ -81,6 +84,9 @@ func (c *distributedCodeExecutionCoordinator) Execute(ctx context.Context, t tas
 	}
 
 	for attempt := 0; attempt <= c.coderRetryMax(); attempt++ {
+		coderWork := fmt.Sprintf("route=%s job=%s retry=%d の設計・コード生成", route, jid, attempt)
+		c.emit("agent.delegate", "shiro", coderAgent, formatAgentHandoffSpeech("shiro", coderAgent, coderWork, requestText), string(route), jid, sessionID, t.Channel(), t.ChatID())
+		c.emit("agent.acknowledge", coderAgent, "shiro", formatAgentHandoffReadbackSpeech("shiro", coderAgent, coderWork, requestText), string(route), jid, sessionID, t.Channel(), t.ChatID())
 		c.emit("agent.start", "shiro", coderAgent, requestText, string(route), jid, sessionID, t.Channel(), t.ChatID())
 		if attempt == 0 {
 			c.emitNote("shiro", "mio", fmt.Sprintf("%sにコーディング依頼しました。進捗を監視して、必要なら作業を前に進めます。", displayAgentName(coderAgent)), string(route), jid, sessionID, t.Channel(), t.ChatID())
@@ -95,14 +101,18 @@ func (c *distributedCodeExecutionCoordinator) Execute(ctx context.Context, t tas
 		coderResult, err := c.executeMailbox(ctx, coderAgent, coderMsg, "mio")
 		if err != nil {
 			failureKind, reason, retryable := classifyDistributedExecutionError(err)
+			failureReport := fmt.Sprintf("実行失敗: %s: %s", failureKind, reason)
+			c.emit("agent.report", coderAgent, "shiro", formatAgentHandoffCompletionSpeech("shiro", coderAgent, failureReport), string(route), jid, sessionID, t.Channel(), t.ChatID())
 			if retryable && attempt < c.coderRetryMax() {
 				c.emit("worker.classified_failure", "shiro", coderAgent, fmt.Sprintf("%s: %s", failureKind, reason), string(route), jid, sessionID, t.Channel(), t.ChatID())
 				requestText = buildCoderRetryInstruction(t.UserMessage(), nil, failureKind, reason, attempt+1)
 				continue
 			}
+			c.emit("agent.report", "shiro", "mio", formatAgentHandoffCompletionSpeech("mio", "shiro", failureReport), string(route), jid, sessionID, t.Channel(), t.ChatID())
 			return "", err
 		}
 		c.emit("agent.response", coderAgent, "shiro", coderResult.Content, string(route), jid, sessionID, t.Channel(), t.ChatID())
+		c.emit("agent.report", coderAgent, "shiro", formatAgentHandoffCompletionSpeech("shiro", coderAgent, coderResult.Content), string(route), jid, sessionID, t.Channel(), t.ChatID())
 		c.emitNote(coderAgent, "shiro", "おわったっす。", string(route), jid, sessionID, t.Channel(), t.ChatID())
 		c.emitNote("shiro", "mio", fmt.Sprintf("%sの結果を受け取って、内容確認と仕上げを進めます。", displayAgentName(coderAgent)), string(route), jid, sessionID, t.Channel(), t.ChatID())
 
@@ -120,7 +130,9 @@ func (c *distributedCodeExecutionCoordinator) Execute(ctx context.Context, t tas
 		}
 		return response, nil
 	}
-	return "", fmt.Errorf("coder retry budget exhausted for job %s", jid)
+	err := fmt.Errorf("coder retry budget exhausted for job %s", jid)
+	c.emit("agent.report", "shiro", "mio", formatAgentHandoffCompletionSpeech("mio", "shiro", "実行失敗: "+err.Error()), string(route), jid, sessionID, t.Channel(), t.ChatID())
+	return "", err
 }
 
 func (c *distributedCodeExecutionCoordinator) buildCoderMessage(coderAgent, sessionID, jid, requestText string, route routing.Route, t task.Task, attempt int) domaintransport.Message {
@@ -153,9 +165,11 @@ func (c *distributedCodeExecutionCoordinator) finishWithoutProposal(ctx context.
 	c.memory.RecordMessage(shiroTask)
 	shiroResult, err := c.executeToAgent(ctx, "shiro", shiroTask)
 	if err != nil {
+		c.emit("agent.report", "shiro", "mio", formatAgentHandoffCompletionSpeech("mio", "shiro", "実行失敗: "+err.Error()), string(route), jid, sessionID, t.Channel(), t.ChatID())
 		return "", err
 	}
 	c.emit("agent.response", "shiro", "mio", shiroResult.Content, string(route), jid, sessionID, t.Channel(), t.ChatID())
+	c.emit("agent.report", "shiro", "mio", formatAgentHandoffCompletionSpeech("mio", "shiro", shiroResult.Content), string(route), jid, sessionID, t.Channel(), t.ChatID())
 	c.emitNote("shiro", "mio", fmt.Sprintf("%sの作業が終わりました。", displayAgentName(coderAgent)), string(route), jid, sessionID, t.Channel(), t.ChatID())
 	return shiroResult.Content, nil
 }
@@ -190,9 +204,11 @@ func (c *distributedCodeExecutionCoordinator) executeProposal(ctx context.Contex
 			return "", buildCoderRetryInstruction(t.UserMessage(), coderResult.Proposal, failureKind, reason, attempt+1), true, nil
 		}
 		c.recordCoderProposalEvidence(ctx, t, route, sessionID, jid, coderAgent, coderResult.Proposal, domaintransport.Message{}, err)
+		c.emit("agent.report", "shiro", "mio", formatAgentHandoffCompletionSpeech("mio", "shiro", "実行失敗: "+err.Error()), string(route), jid, sessionID, t.Channel(), t.ChatID())
 		return "", "", false, err
 	}
 	c.emit("agent.response", "shiro", "mio", shiroResult.Content, string(route), jid, sessionID, t.Channel(), t.ChatID())
+	c.emit("agent.report", "shiro", "mio", formatAgentHandoffCompletionSpeech("mio", "shiro", shiroResult.Content), string(route), jid, sessionID, t.Channel(), t.ChatID())
 	c.emitNote("shiro", "mio", fmt.Sprintf("%sの作業が終わりました。", displayAgentName(coderAgent)), string(route), jid, sessionID, t.Channel(), t.ChatID())
 	c.recordCoderProposalEvidence(ctx, t, route, sessionID, jid, coderAgent, coderResult.Proposal, shiroResult, nil)
 

@@ -98,3 +98,19 @@ func TestPhase11EventPortAssignsStableConversationIdentity(t *testing.T) {
 		t.Fatalf("non conversation event should not get conversation identity: %#v", listener.events[2])
 	}
 }
+
+func TestPhase11EventPortTreatsHandoffSpeechAsConversation(t *testing.T) {
+	listener := &phase11RecordingEventListener{}
+	port := newMessageEventPort(listener)
+
+	port.Emit("agent.delegate", "mio", "shiro", "Shiro、作業をお願いします。", "OPS", "job-1", "sess-1", "viewer", "viewer-user")
+	port.Emit("agent.acknowledge", "shiro", "mio", "Mio、復唱します。", "OPS", "job-1", "sess-1", "viewer", "viewer-user")
+	port.Emit("agent.report", "shiro", "mio", "Mio、完了しました。", "OPS", "job-1", "sess-1", "viewer", "viewer-user")
+
+	for i, ev := range listener.events {
+		wantTurn := i + 1
+		if ev.TurnIndex != wantTurn || ev.MessageID == "" {
+			t.Fatalf("handoff event must have conversation identity: %#v", ev)
+		}
+	}
+}

@@ -28,6 +28,7 @@ type CoderAgentWithLoop interface {
 type CoderLoopExecutor struct {
 	coder           CoderAgentWithLoop
 	workerExecution workerObservationExecutor
+	agentName       string
 	systemPrompt    string
 	maxTurns        int
 	eventEmitter    func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string)
@@ -43,12 +44,14 @@ type workerObservationExecutor interface {
 func NewCoderLoopExecutor(
 	coder CoderAgentWithLoop,
 	worker workerObservationExecutor,
+	agentName string,
 	systemPrompt string,
 	eventEmitter func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string),
 ) *CoderLoopExecutor {
 	return &CoderLoopExecutor{
 		coder:           coder,
 		workerExecution: worker,
+		agentName:       agentName,
 		systemPrompt:    systemPrompt,
 		maxTurns:        defaultLoopMaxTurns,
 		eventEmitter:    eventEmitter,
@@ -74,16 +77,19 @@ type LoopResult struct {
 // Execute はエージェントループを実行する
 func (e *CoderLoopExecutor) Execute(ctx context.Context, req CodeExecutionRequest) (CodeExecutionResponse, error) {
 	log.Printf("[CoderLoop] start job=%s route=%s", req.JobID, req.Route)
-	e.emit("agent.start", "coder_loop", "mio", "CoderLoop 開始", req)
+	e.emit("agent.start", e.agentName, "shiro", "CoderLoop 開始", req)
 
 	result, err := e.runLoop(ctx, req)
 	if err != nil {
-		e.emit("agent.response", "coder_loop", "mio", "CoderLoop エラー: "+err.Error(), req)
+		report := "CoderLoop エラー: " + err.Error()
+		e.emit("agent.report", e.agentName, "shiro", formatAgentHandoffCompletionSpeech("shiro", e.agentName, report), req)
+		e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(req.Route, req.JobID, report), req)
 		return CodeExecutionResponse{}, err
 	}
 
 	summary := e.formatLoopResult(result)
-	e.emit("agent.report", "coder_loop", "mio", summary, req)
+	e.emit("agent.report", e.agentName, "shiro", formatAgentHandoffCompletionSpeech("shiro", e.agentName, summary), req)
+	e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(req.Route, req.JobID, summary), req)
 	return buildProposalHandledResponse(summary), nil
 }
 
@@ -113,7 +119,7 @@ func (e *CoderLoopExecutor) runLoop(ctx context.Context, req CodeExecutionReques
 		msg, err := coderloop.ParseCoderMessage(content)
 		if err != nil {
 			log.Printf("[CoderLoop] parse error turn=%d: %v", turn, err)
-			e.emit("agent.response", "coder_loop", "mio",
+			e.emit("agent.response", e.agentName, "shiro",
 				fmt.Sprintf("[turn %d] Coder 出力を解析できません: %v", turn, err), req)
 			// パース失敗は連続失敗カウント対象
 			consecutiveFails++
@@ -128,7 +134,7 @@ func (e *CoderLoopExecutor) runLoop(ctx context.Context, req CodeExecutionReques
 			continue
 		}
 
-		e.emit("agent.response", "coder_loop", "shiro",
+		e.emit("agent.response", e.agentName, "shiro",
 			fmt.Sprintf("[turn %d] type=%s", turn, msg.Type), req)
 
 		// メッセージ種別ごとの処理

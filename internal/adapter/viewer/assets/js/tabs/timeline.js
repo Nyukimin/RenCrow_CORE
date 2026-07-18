@@ -226,7 +226,7 @@ function addMsgToTimeline(ev) {
 
 function isCoordinationTraceEvent(ev) {
   const type = String(ev && ev.type ? ev.type : '');
-  return type === 'agent.delegate' || type === 'agent.report' || type === 'worker.request' || type === 'worker.result';
+  return type === 'agent.delegate' || type === 'agent.acknowledge' || type === 'agent.report' || type === 'worker.request' || type === 'worker.result';
 }
 
 function addCoordinationTraceToTimeline(ev) {
