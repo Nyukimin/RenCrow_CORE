@@ -388,6 +388,61 @@ func TestGenerateForecastTopicUsesInterestingJudge(t *testing.T) {
 	}
 }
 
+func TestGenerateForecastTopicUsesDedicatedShiroProvider(t *testing.T) {
+	coder := &queuedForecastProvider{
+		responses: []string{
+			topicCandidatesJSON("Coderが生成したお題", "Coder route"),
+			topicJudgeJSON("Coderが生成したお題"),
+		},
+		name: "coder",
+	}
+	shiro := &queuedForecastProvider{
+		responses: []string{
+			topicCandidatesJSON("AI技術が、地域医療の担い手をどう変えるか", "変化の分岐"),
+			topicJudgeJSON("AI技術が、地域医療の担い手をどう変えるか"),
+		},
+		name: "worker",
+	}
+	o := NewIdleChatOrchestrator(
+		coder,
+		session.NewCentralMemory(),
+		[]string{"mio", "shiro"},
+		5,
+		10,
+		0.7,
+		nil,
+		"",
+	)
+	o.SetForecastProviderWithLabel(coder, "Coder1 local_openai (Coder1)")
+	o.SetForecastTopicProviderWithLabel(shiro, "Shiro")
+
+	topic, failure := o.generateForecastTopic(ForecastDomain{Name: "AI技術"}, []string{"生成AI規制の新指針"})
+	if failure != nil {
+		t.Fatalf("unexpected failure: %+v", failure)
+	}
+	if topic != "AI技術が、地域医療の担い手をどう変えるか" {
+		t.Fatalf("topic = %q", topic)
+	}
+	if shiro.requests != 2 {
+		t.Fatalf("Shiro provider requests = %d, want candidates + judge", shiro.requests)
+	}
+	if coder.requests != 0 {
+		t.Fatalf("Coder provider must not generate stock topics, requests = %d", coder.requests)
+	}
+}
+
+func TestForecastTopicGenerationConfigCapsDedicatedShiroCandidates(t *testing.T) {
+	base := TopicGenerationConfig{CandidatesPerAttempt: 5}
+	shiro := forecastTopicGenerationConfigForProvider(base, true)
+	if shiro.CandidatesPerAttempt != 3 {
+		t.Fatalf("Shiro forecast candidates = %d, want 3", shiro.CandidatesPerAttempt)
+	}
+	legacy := forecastTopicGenerationConfigForProvider(base, false)
+	if legacy.CandidatesPerAttempt != 5 {
+		t.Fatalf("legacy forecast candidates = %d, want configured 5", legacy.CandidatesPerAttempt)
+	}
+}
+
 func TestExtractForecastKeywordReturnsFailureWithoutDomainFallback(t *testing.T) {
 	o := NewIdleChatOrchestrator(
 		failingForecastProvider{err: errors.New("should not be called")},

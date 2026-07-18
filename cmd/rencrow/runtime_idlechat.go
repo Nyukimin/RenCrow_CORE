@@ -62,10 +62,14 @@ func buildIdleChatRuntime(
 	idleChatOrch.SetSpeakerProviderOptions(idleChatProviderOptionsFromConfig(cfg.IdleChat.SpeakerLLMOptions))
 	idleChatOrch.SetTopicGenerationConfig(idleChatTopicGenerationConfigFromRuntime(cfg.IdleChat.TopicGeneration))
 	idleChatOrch.SetDialogueInterestingnessConfig(idleChatDialogueInterestingnessConfigFromRuntime(cfg.IdleChat.DialogueInterestingness))
+	if topicProvider, label := selectForecastTopicProvider(workerProvider); topicProvider != nil {
+		idleChatOrch.SetForecastTopicProviderWithLabel(topicProvider, label)
+		idleChatOrch.InitForecastTopicStock(filepath.Join(cfg.Session.StorageDir, "forecast_topic_stock.json"))
+		log.Printf("IdleChat: Forecast topic generator set to %s, topic stock bootstrap/idle/heartbeat refill enabled", label)
+	}
 	if forecastProvider, label := selectForecastProviderForRuntime(cfg, workerProvider); forecastProvider != nil {
 		idleChatOrch.SetForecastProviderWithLabel(forecastProvider, label)
-		idleChatOrch.InitForecastTopicStock(filepath.Join(cfg.Session.StorageDir, "forecast_topic_stock.json"))
-		log.Printf("IdleChat: Forecast provider set to %s, topic stock bootstrap/idle/heartbeat refill enabled", forecastProviderLogLabel(label))
+		log.Printf("IdleChat: Forecast session provider set to %s", forecastProviderLogLabel(label))
 	}
 	if recentGlossaryTopics != nil {
 		idleChatOrch.SetRecentTopicProvider(recentGlossaryTopics)
@@ -175,6 +179,13 @@ func selectForecastProviderForRuntime(cfg *config.Config, workerProvider llm.LLM
 		return workerProvider, modulechat.ForecastWorkerFallbackLabel
 	}
 	return nil, ""
+}
+
+func selectForecastTopicProvider(workerProvider llm.LLMProvider) (llm.LLMProvider, string) {
+	if workerProvider == nil {
+		return nil, ""
+	}
+	return workerProvider, modulechat.ForecastTopicGeneratorAgent
 }
 
 func coderProviderIsExternal(cc config.CoderConfig) bool {

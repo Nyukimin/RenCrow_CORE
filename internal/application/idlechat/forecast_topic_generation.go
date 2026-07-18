@@ -145,7 +145,7 @@ func normalizeForecastDisplayTopic(domain ForecastDomain, topic string) string {
 func (o *IdleChatOrchestrator) generateForecastTopic(domain ForecastDomain, seeds []string) (string, *forecastTopicFailure) {
 	recentTopics := o.getRecentTopics(12)
 	pastTitleThemes := o.getHistoricalTitleThemes(500)
-	provider, providerLabel := o.forecastPrimaryLLMInfo()
+	provider, providerLabel := o.forecastTopicLLMInfo()
 	if provider == nil {
 		err := errors.New("forecast primary LLM provider unavailable")
 		logForecastLLMError("topic", domain.Name, providerLabel, err)
@@ -159,7 +159,9 @@ func (o *IdleChatOrchestrator) generateForecastTopic(domain ForecastDomain, seed
 	}
 	o.mu.Lock()
 	topicGenerationConfig := o.topicGenerationConfig
+	dedicatedShiroProvider := o.forecastTopicProvider != nil
 	o.mu.Unlock()
+	topicGenerationConfig = forecastTopicGenerationConfigForProvider(topicGenerationConfig, dedicatedShiroProvider)
 	topicGenerationConfig.ProviderName = providerLabel
 	generator := NewTopicGenerator(provider, topicGenerationConfig)
 	result, err := generator.GenerateInterestingTopic(o.idleRunContext(), TopicCategoryForecast, seed, recent)
@@ -172,6 +174,14 @@ func (o *IdleChatOrchestrator) generateForecastTopic(domain ForecastDomain, seed
 	}
 	logForecastLLMError("topic", domain.Name, providerLabel, err)
 	return "", newForecastTopicFailure("topic", domain.Name, providerLabel, err)
+}
+
+func forecastTopicGenerationConfigForProvider(config TopicGenerationConfig, dedicatedShiroProvider bool) TopicGenerationConfig {
+	const shiroCandidatesPerAttempt = 3
+	if dedicatedShiroProvider && config.CandidatesPerAttempt > shiroCandidatesPerAttempt {
+		config.CandidatesPerAttempt = shiroCandidatesPerAttempt
+	}
+	return config
 }
 
 // extractForecastKeyword はNHKヘッドラインからドメインに関連する注目キーワードを1つ抽出する。
@@ -217,7 +227,7 @@ func (o *IdleChatOrchestrator) extractForecastKeyword(domain ForecastDomain, hea
 }
 
 func (o *IdleChatOrchestrator) generateForecastLLM(phase, domainName string, req llm.GenerateRequest) (llm.GenerateResponse, string, error) {
-	provider, providerLabel := o.forecastPrimaryLLMInfo()
+	provider, providerLabel := o.forecastTopicLLMInfo()
 	if provider != nil {
 		resp, err := provider.Generate(o.idleRunContext(), req)
 		if err == nil {
@@ -230,6 +240,23 @@ func (o *IdleChatOrchestrator) generateForecastLLM(phase, domainName string, req
 		logForecastLLMError(phase, domainName, providerLabel, err)
 		return llm.GenerateResponse{}, providerLabel, err
 	}
+}
+
+func (o *IdleChatOrchestrator) forecastTopicLLMInfo() (llm.LLMProvider, string) {
+	o.mu.Lock()
+	provider := o.forecastTopicProvider
+	label := strings.TrimSpace(o.forecastTopicProviderLabel)
+	o.mu.Unlock()
+	if provider != nil {
+		if label == "" {
+			label = strings.TrimSpace(provider.Name())
+		}
+		if label == "" {
+			label = "Shiro"
+		}
+		return provider, label
+	}
+	return o.forecastPrimaryLLMInfo()
 }
 
 func logForecastLLMError(phase, domainName, providerLabel string, err error) {

@@ -193,6 +193,18 @@ func TestSelectForecastProviderUsesWorkerWhenNoLocalCoderAvailableAtRuntime(t *t
 	}
 }
 
+func TestSelectForecastTopicProviderUsesWorkerAsShiro(t *testing.T) {
+	worker := fakeConversationProvider{name: "worker-provider"}
+	provider, label := selectForecastTopicProvider(worker)
+
+	if provider != worker {
+		t.Fatalf("expected Shiro Worker provider, got %#v", provider)
+	}
+	if label != modulechat.ForecastTopicGeneratorAgent {
+		t.Fatalf("unexpected topic generator label: %q", label)
+	}
+}
+
 func TestCoderProviderIsExternal(t *testing.T) {
 	tests := []struct {
 		provider string

@@ -114,25 +114,27 @@ type PersonaRuntimeRecorder interface {
 // IdleChatOrchestrator はアイドル時のAgent間雑談を管理
 
 type IdleChatOrchestrator struct {
-	llmProvider           llm.LLMProvider
-	speakerLLMs           map[string]llm.LLMProvider
-	forecastProvider      llm.LLMProvider // 未来展望セッションの思考用（明示選択済み provider）
-	forecastProviderLabel string
-	sessionContext        string // 現在のセッション固有コンテキスト（既出テーマ等）
-	memory                *session.CentralMemory
-	participants          []string
-	intervalMin           int
-	interval              time.Duration
-	maxTurns              int
-	temperature           float64
-	personalities         map[string]string
-	speakerOptions        map[string]map[string]any
-	topicGenerationConfig TopicGenerationConfig
-	dialogueConfig        DialogueInterestingnessConfig
-	currentTopicResult    *TopicGenerationResult
-	currentDialoguePlan   *DialogueArcPlan
-	currentDialogueState  *DialogueArcState
-	lastDialogueQuality   DialogueQualityResult
+	llmProvider                llm.LLMProvider
+	speakerLLMs                map[string]llm.LLMProvider
+	forecastProvider           llm.LLMProvider // 未来展望セッションの思考用（明示選択済み provider）
+	forecastProviderLabel      string
+	forecastTopicProvider      llm.LLMProvider // 未来展望のお題生成を担当するShiro provider
+	forecastTopicProviderLabel string
+	sessionContext             string // 現在のセッション固有コンテキスト（既出テーマ等）
+	memory                     *session.CentralMemory
+	participants               []string
+	intervalMin                int
+	interval                   time.Duration
+	maxTurns                   int
+	temperature                float64
+	personalities              map[string]string
+	speakerOptions             map[string]map[string]any
+	topicGenerationConfig      TopicGenerationConfig
+	dialogueConfig             DialogueInterestingnessConfig
+	currentTopicResult         *TopicGenerationResult
+	currentDialoguePlan        *DialogueArcPlan
+	currentDialogueState       *DialogueArcState
+	lastDialogueQuality        DialogueQualityResult
 
 	lastActivity              time.Time
 	chatActive                bool

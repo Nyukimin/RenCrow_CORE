@@ -103,6 +103,15 @@ func (o *IdleChatOrchestrator) SetForecastProviderWithLabel(provider llm.LLMProv
 	o.forecastProviderLabel = strings.TrimSpace(label)
 }
 
+// SetForecastTopicProviderWithLabel assigns the Shiro LLM route used only for
+// forecast keyword extraction and topic stock generation.
+func (o *IdleChatOrchestrator) SetForecastTopicProviderWithLabel(provider llm.LLMProvider, label string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.forecastTopicProvider = provider
+	o.forecastTopicProviderLabel = strings.TrimSpace(label)
+}
+
 func (o *IdleChatOrchestrator) SetRecentTopicProvider(provider func(context.Context, int) ([]string, error)) {
 	o.mu.Lock()
 	defer o.mu.Unlock()

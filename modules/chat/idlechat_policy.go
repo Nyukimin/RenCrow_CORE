@@ -6,7 +6,10 @@ import (
 	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
-const ForecastWorkerFallbackLabel = "Worker local"
+const (
+	ForecastWorkerFallbackLabel = "Worker local"
+	ForecastTopicGeneratorAgent = "Shiro"
+)
 
 type IdleChatCoderProviderConfig struct {
 	Enabled  bool
