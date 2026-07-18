@@ -231,6 +231,10 @@ func TestExecuteProposal_BlocksSelfInstallCommands(t *testing.T) {
 
 func TestExecuteProposal_ClassifiesMissingCommandAsRetryable(t *testing.T) {
 	tmpDir := t.TempDir()
+	const missingCommand = "rencrow-test-command-that-must-not-exist"
+	if path, err := exec.LookPath(missingCommand); err == nil {
+		t.Fatalf("test requires a missing command, but found %q at %s", missingCommand, path)
+	}
 	cfg := config.WorkerConfig{
 		Workspace:      tmpDir,
 		StopOnError:    true,
@@ -238,7 +242,7 @@ func TestExecuteProposal_ClassifiesMissingCommandAsRetryable(t *testing.T) {
 	}
 	service := NewWorkerExecutionService(cfg)
 	jobID := task.NewJobID()
-	p := proposal.NewProposal("retry test", `[{"type":"shell_command","action":"run","target":"pip install foo"}]`, "", "")
+	p := proposal.NewProposal("retry test", `[{"type":"shell_command","action":"run","target":"`+missingCommand+`"}]`, "", "")
 
 	result, err := service.ExecuteProposal(context.Background(), jobID, p)
 	if err != nil {
