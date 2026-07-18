@@ -136,7 +136,7 @@ func (rp *RecallPack) ToTraceItems() []RecallTraceItem {
 			Status:        TraceStatusInjected,
 			PromptSection: PromptSectionConversation,
 			TokenCount:    estimateRecallTokens(summary.Summary),
-			Reason:        "role-filtered L2 thread summary selected for prompt",
+			Reason:        "shared L2 thread summary selected for prompt",
 			PromptIndex:   len(items),
 		})
 	}

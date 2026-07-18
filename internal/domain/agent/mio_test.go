@@ -553,7 +553,7 @@ func TestMioAgent_Chat_UsesConfiguredGenerationOptions(t *testing.T) {
 	}
 }
 
-func TestMioAgent_Chat_AppliesChatRecallRoleFilter(t *testing.T) {
+func TestMioAgent_Chat_SharesMemoryAndFiltersExternalRecallByRole(t *testing.T) {
 	engine := &mockConversationEngine{
 		beginTurnFunc: func(ctx context.Context, sessionID, msg string) (*conversation.RecallPack, error) {
 			return &conversation.RecallPack{
@@ -589,14 +589,14 @@ func TestMioAgent_Chat_AppliesChatRecallRoleFilter(t *testing.T) {
 		prompt.WriteString("\n")
 	}
 	got := prompt.String()
-	if !strings.Contains(got, "chat memory") {
-		t.Fatalf("chat role recall should be included, got:\n%s", got)
+	if !strings.Contains(got, "chat memory") || !strings.Contains(got, "worker memory") {
+		t.Fatalf("all conversation memory should be shared with Mio, got:\n%s", got)
 	}
 	if !strings.Contains(got, "chat search") {
 		t.Fatalf("chat role search cache should be included, got:\n%s", got)
 	}
-	if strings.Contains(got, "worker memory") || strings.Contains(got, "wild search") {
-		t.Fatalf("non-chat role recall should be filtered, got:\n%s", got)
+	if strings.Contains(got, "wild search") {
+		t.Fatalf("non-chat external search context should be filtered, got:\n%s", got)
 	}
 }
 

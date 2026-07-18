@@ -380,7 +380,7 @@ func TestShiroAgentExecuteUsesLightMemory(t *testing.T) {
 	}
 }
 
-func TestShiroAgentExecuteAppliesWorkerRecallRoleFilter(t *testing.T) {
+func TestShiroAgentExecuteSharesAllConversationMemory(t *testing.T) {
 	engine := &mockConversationEngine{
 		beginTurnFunc: func(ctx context.Context, sessionID, msg string) (*conversation.RecallPack, error) {
 			return &conversation.RecallPack{
@@ -409,11 +409,8 @@ func TestShiroAgentExecuteAppliesWorkerRecallRoleFilter(t *testing.T) {
 		prompt.WriteString("\n")
 	}
 	got := prompt.String()
-	if !strings.Contains(got, "worker memory") {
-		t.Fatalf("worker recall should be included, got:\n%s", got)
-	}
-	if strings.Contains(got, "chat memory") {
-		t.Fatalf("chat recall should be filtered for worker, got:\n%s", got)
+	if !strings.Contains(got, "worker memory") || !strings.Contains(got, "chat memory") {
+		t.Fatalf("all conversation memory should be shared with Shiro, got:\n%s", got)
 	}
 }
 

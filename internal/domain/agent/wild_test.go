@@ -88,7 +88,7 @@ func TestWildAgentBuilderOptionsAndCommandStrip(t *testing.T) {
 	}
 }
 
-func TestWildAgentGenerateAppliesWildRecallRoleFilter(t *testing.T) {
+func TestWildAgentGenerateSharesMemoryAndFiltersExternalRecallByRole(t *testing.T) {
 	engine := &mockConversationEngine{
 		beginTurnFunc: func(ctx context.Context, sessionID, msg string) (*conversation.RecallPack, error) {
 			return &conversation.RecallPack{
@@ -120,11 +120,11 @@ func TestWildAgentGenerateAppliesWildRecallRoleFilter(t *testing.T) {
 		prompt.WriteString("\n")
 	}
 	got := prompt.String()
-	if !strings.Contains(got, "wild mood board") {
-		t.Fatalf("wild recall should be included, got:\n%s", got)
+	if !strings.Contains(got, "wild mood board") || !strings.Contains(got, "worker plan") {
+		t.Fatalf("all conversation memory should be shared with Wild, got:\n%s", got)
 	}
-	if strings.Contains(got, "worker plan") || strings.Contains(got, "worker report") {
-		t.Fatalf("worker recall should be filtered for wild, got:\n%s", got)
+	if strings.Contains(got, "worker report") {
+		t.Fatalf("worker external search context should be filtered for Wild, got:\n%s", got)
 	}
 }
 

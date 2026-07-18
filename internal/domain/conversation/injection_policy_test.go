@@ -25,9 +25,9 @@ func TestInjectionPolicyRejectsUnsafeCandidates(t *testing.T) {
 			want: TraceStatusFilteredStatus,
 		},
 		{
-			name: "worker scoped",
+			name: "worker labeled conversation memory is shared",
 			in:   RecallCandidate{Kind: "thread_summary", State: "confirmed", Roles: []string{"worker"}},
-			want: TraceStatusFilteredScope,
+			want: TraceStatusInjected,
 		},
 	}
 	for _, tc := range cases {
@@ -94,18 +94,18 @@ func TestInjectionPolicyCharacterizationMatrix(t *testing.T) {
 			want: TraceStatusFilteredSensitivity,
 		},
 		{
-			name: "worker scoped thread summary for chat",
+			name: "worker labeled thread summary is shared with chat",
 			role: "chat",
 			in: RecallCandidate{
 				Kind:  "thread_summary",
 				State: "confirmed",
 				Roles: []string{"worker"},
 			},
-			want: TraceStatusFilteredScope,
+			want: TraceStatusInjected,
 		},
 		{
-			name: "chat scoped thread summary for mio alias",
-			role: "mio",
+			name: "chat scoped thread summary is shared with worker",
+			role: "worker",
 			in: RecallCandidate{
 				Kind:  "thread_summary",
 				State: "confirmed",

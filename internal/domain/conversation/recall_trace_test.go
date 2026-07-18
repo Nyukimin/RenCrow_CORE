@@ -96,13 +96,10 @@ func TestRecallPackFilterForRoleKeepsRejectedTraceItems(t *testing.T) {
 			rejected = append(rejected, item)
 		}
 	}
-	if len(rejected) != 4 {
-		t.Fatalf("expected rejected worker/KB/search trace items, got %+v", items)
+	if len(rejected) != 3 {
+		t.Fatalf("expected only KB/wiki/search trace items to be rejected, got %+v", items)
 	}
-	if rejected[0].Kind != "thread_summary" || rejected[0].Summary != "worker memory" || rejected[0].PromptIndex != -1 {
-		t.Fatalf("unexpected rejected summary trace: %+v", rejected[0])
-	}
-	if rejected[1].Kind != "knowledge" || rejected[2].Kind != "wiki_page" || rejected[3].Kind != "search_cache" {
+	if rejected[0].Kind != "knowledge" || rejected[1].Kind != "wiki_page" || rejected[2].Kind != "search_cache" {
 		t.Fatalf("unexpected rejected trace kinds: %+v", rejected)
 	}
 	for _, item := range rejected {

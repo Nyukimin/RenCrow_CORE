@@ -329,19 +329,11 @@ func (rp *RecallPack) FilterForRole(role string) RecallPack {
 	}
 	policy := RecallPolicyForRole(role)
 	filtered := *rp
-	filtered.MidSummaries = nil
 	filtered.KBSnippets = nil
 	filtered.WikiSnippets = nil
 	filtered.SearchCacheSnippets = nil
 	filtered.RelationSnippets = nil
 	filtered.RejectedTraceItems = append([]RecallTraceItem(nil), rp.RejectedTraceItems...)
-	for _, summary := range rp.MidSummaries {
-		if recallRolesMatch(summary.Roles, role) {
-			filtered.MidSummaries = append(filtered.MidSummaries, summary)
-		} else {
-			filtered.RejectedTraceItems = append(filtered.RejectedTraceItems, rejectedThreadSummaryTrace(summary, "role "+role+" does not match candidate roles"))
-		}
-	}
 	for _, snippet := range rp.KBSnippets {
 		if policyAllowsKnowledgeSnippet(policy, snippet) {
 			filtered.KBSnippets = append(filtered.KBSnippets, snippet)

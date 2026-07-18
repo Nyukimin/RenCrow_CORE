@@ -69,11 +69,12 @@ func (p InjectionPolicy) Decide(candidate RecallCandidate) InjectionDecision {
 	if strings.TrimSpace(candidate.SourceType) == "runtime_log" {
 		return InjectionDecision{Status: TraceStatusFilteredStatus, PromptSection: sectionForCandidate(candidate), Reason: "runtime logs are never directly injected", Score: candidate.Score}
 	}
-	if !recallRolesMatch(candidate.Roles, role) {
+	sharedMemory := isSharedMemoryCandidate(candidate)
+	if !sharedMemory && !recallRolesMatch(candidate.Roles, role) {
 		return InjectionDecision{Status: TraceStatusFilteredScope, PromptSection: sectionForCandidate(candidate), Reason: "candidate roles do not match role " + role, Score: candidate.Score}
 	}
 	scope := strings.ToLower(strings.TrimSpace(candidate.Scope))
-	if scope != "" && scope != "all" && scope != "all_personas" && scope != role && scope != role+"_only" {
+	if !sharedMemory && scope != "" && scope != "all" && scope != "all_personas" && scope != role && scope != role+"_only" {
 		return InjectionDecision{Status: TraceStatusFilteredScope, PromptSection: sectionForCandidate(candidate), Reason: "candidate scope does not match role " + role, Score: candidate.Score}
 	}
 	if sensitivity := strings.ToLower(strings.TrimSpace(candidate.Sensitivity)); sensitivity != "" && sensitivity != "normal" {
@@ -161,6 +162,21 @@ func isUserMemoryCandidate(candidate RecallCandidate) bool {
 	kind := strings.ToLower(strings.TrimSpace(candidate.Kind))
 	sourceType := strings.ToLower(strings.TrimSpace(candidate.SourceType))
 	return kind == "user_memory" || sourceType == "user_memory" || strings.HasPrefix(strings.TrimSpace(candidate.MemoryID), "user:")
+}
+
+// isSharedMemoryCandidate は、全Agentで共有する会話・ユーザー・エピソード記憶を判定する。
+// Knowledge、検索結果、運用情報は含めず、それぞれのrole policyを維持する。
+func isSharedMemoryCandidate(candidate RecallCandidate) bool {
+	if isUserMemoryCandidate(candidate) {
+		return true
+	}
+	kind := strings.ToLower(strings.TrimSpace(candidate.Kind))
+	sourceType := strings.ToLower(strings.TrimSpace(candidate.SourceType))
+	switch kind {
+	case "rolling_summary", "short_context", "thread_summary", "long_fact", "episode", "episodic_memory":
+		return true
+	}
+	return sourceType == "conversation_memory" || sourceType == "episodic_memory"
 }
 
 func isKnowledgeCandidate(candidate RecallCandidate) bool {
