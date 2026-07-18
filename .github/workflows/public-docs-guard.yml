@@ -40,6 +40,35 @@ jobs:
             echo "Likely embedded secret found in public docs" >&2
             exit 1
           fi
+      - name: Enforce active instruction source-of-truth references
+        shell: bash
+        run: |
+          set -euo pipefail
+          retired='docs/(00_ドキュメント分類一覧|02_正本仕様|02_OpenClaw移植詳細仕様|02_v2統合分割仕様|03_設計文書|04_実装仕様_機能拡張|05_LLM運用プロンプト設計|06_実装ガイド進行管理|LLM運用|コーディング|refs|tooling)(/|\.md|`)'
+          if rg -n "$retired" AGENTS.md CLAUDE.md rules; then
+            echo "Active instructions must reference docs/README.md and docs/01-09 only" >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          allowed = {
+              line.strip()
+              for line in Path(".public-docs-allowlist").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          }
+          sources = [Path("AGENTS.md"), Path("CLAUDE.md")]
+          sources.extend(Path("rules").rglob("*.md"))
+          failures = []
+          for source in sources:
+              text = source.read_text(encoding="utf-8")
+              for target in re.findall(r"`(docs/[^`]+\.md)`", text):
+                  if target not in allowed:
+                      failures.append(f"{source}: non-canonical docs reference {target}")
+          if failures:
+              raise SystemExit("\n".join(failures))
+          PY
       - name: Check relative Markdown links
         shell: bash
         run: |
@@ -49,8 +78,16 @@ jobs:
           import re
           import sys
 
-          roots = [Path("README.md"), Path("ROADMAP.md"), Path("CONTRIBUTING.md"), Path("SECURITY.md")]
+          roots = [
+              Path("README.md"),
+              Path("ROADMAP.md"),
+              Path("CONTRIBUTING.md"),
+              Path("SECURITY.md"),
+              Path("AGENTS.md"),
+              Path("CLAUDE.md"),
+          ]
           roots.extend(Path("docs").glob("*.md"))
+          roots.extend(Path("rules").rglob("*.md"))
           failures = []
           for source in roots:
               text = source.read_text(encoding="utf-8")

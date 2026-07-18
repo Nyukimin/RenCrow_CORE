@@ -5,8 +5,7 @@
 このファイルは、RenCrow におけるルーティング判断の実務ルールを定義する。  
 目的は、ユーザー入力を適切な役割と処理カテゴリへ振り分け、責務の混線を防ぐこと。
 
-この文書は「どこへ渡すか」を決めるためのものであり、  
-詳細実装や背景思想は `CLAUDE.md`、作業ルールは `AGENTS.md`、正本選択は `docs/02_正本仕様/00_正本仕様Tree.md`、実装仕様は `docs/02_正本仕様/02_実装仕様.md` を参照する。
+この文書は「どこへ渡すか」を決める作業ルールである。製品契約は `docs/README.md` から `docs/02_機能仕様.md` と `docs/03_キャラクター・エージェント仕様.md` を参照し、作業制約は `AGENTS.md` と `rules/PROJECT_AGENT.md` に従う。
 
 ---
 
@@ -25,7 +24,7 @@
 
 ### コーディング作業の Safe / Tool Build 判定
 
-コーディング作業は `docs/コーディング/coding_agent_modes.md` に従い、役割に渡す前に Safe Build Mode / Tool Build Mode を判定する。
+コーディング作業は `rules/PROJECT_AGENT.md` に従い、役割に渡す前に Safe Build Mode / Tool Build Mode を判定する。
 
 - Safe Build Mode: 既存コード、既存DB、既存環境、設定、運用、memory、Source Registry、validator、本番系に触る作業。
 - Tool Build Mode: 新規ツール、小物スクリプト、補助アプリ、検証用CLIを既存本体から切り離して作る作業。
@@ -33,8 +32,6 @@
 横断的に再利用する Tool Build Mode の成果物は `/home/nyukimi/RenCrow/RenCrow_Tools` を正本とする。`RenCrow_CORE/tools/` は既存互換または本体密結合の残置場所であり、新規の横断ツール置き場にしない。
 
 迷った場合は Safe Build Mode とし、追加確認が必要な状態として扱う。Tool Build Mode でも、既存本体に接続する、正式DBへ保存する、memoryを確定する、Source Registryを更新する、設定や環境を変える場合は Safe Build Mode へ切り替える。
-
-`docs/コーディング/coding_agent_implementation_spec.md` の v0.1 実装では、Mode Selector、Guardrails Checker、Prompt Builder、Worklog Generator、Memory Candidate Generator、CLI、Tests までを対象にする。実コード変更、Git操作、DB正式保存、confirmed / pinned memory 昇格、Source Registry更新、LangGraph接続、自律実行、外部検索は v0.1 ではルーティングしない。
 
 ---
 
@@ -273,7 +270,6 @@ RenCrow では、入力を以下のカテゴリへ分類する。
 - ComfyUI 利用エージェントは Wild 固定とする。
 - 画像解析・画像分析も Wild 固定とし、Worker / ANALYZE / RESEARCH へ流さない。
 - 画像生成は ComfyUI を既定 backend とする。
-- ComfyUI API の補助仕様は `docs/refs/10_新仕様/48_ComfyUI_RenCrow_API仕様.md` を参照する。
 - 任意 workflow JSON をそのまま ComfyUI に渡さず、RenCrow 側で検証済み workflow template を使う。
 
 例：

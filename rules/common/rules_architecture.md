@@ -245,8 +245,9 @@ def load_config(common_path: str, user_path: str | None = None) -> dict:
 
 ### 8.3 管理場所
 
-- `docs/adr/ADR-XXX_<タイトル>.md` 形式で保存することを推奨
-- 番号は通し番号とし、変更履歴が追いやすい形を保つ
+- 比較検討中のADRはGit管理外の `logs/decisions/ADR-XXX_<タイトル>.md` に保存する
+- 採用した決定は `docs/README.md` から該当する現行正本へ反映し、ADRを第二の正本にしない
+- 番号は通し番号とし、調査中の変更履歴を追いやすい形に保つ
 
 ---
 
