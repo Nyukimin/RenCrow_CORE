@@ -1,6 +1,6 @@
 # Public API 仕様
 
-RenCrow_CORE の HTTP API は、RenCrow_PORTAL、Debug Viewer、CLI facade が共通利用するruntime contractです。endpointは互換性維持のため`/viewer/*`を中心に構成されますが、外部公開可否はclientごとのallowlistで制限します。
+RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewer、CLI facade が利用するruntime contractです。endpointは互換性維持のため`/viewer/*`を中心に構成されますが、外部公開可否はclientごとのallowlistで制限します。
 
 ## 安定性区分
 
@@ -83,3 +83,12 @@ TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`respon
 - `lab`: viewの読み取りに加え、chat、recipient通知、active audio/input ownership、TTS再生、STT入力に必要な公開契約だけをallowlistとする。
 - Debug、Ops、Repair、LLM管理、設定変更APIはPORTALから遮断する。
 - 新しい公開操作はCORE側のAPI追加だけで自動公開せず、PORTAL側でmethod/pathと契約テストを追加する。
+
+## ASSISTANT連携境界
+
+`RenCrow_ASSISTANT`はAgent対話、調査、生成、継続Taskへ昇格する場合だけCORE Public APIを利用します。利用者ID、household、許可scope、request／task相関IDを維持し、必要最小限のcontextだけを送ります。
+
+- 目覚まし、生活Routine、PUSH、acknowledgement、snooze、端末retryはASSISTANT側の契約とする。
+- COREのDebug、Ops、Repair、LLM管理APIをASSISTANTから利用しない。
+- CORE unavailable時はASSISTANTがAgent処理をdegradedとして扱い、別Agentの成功へ丸めない。
+- 専用endpointを追加する場合は、既存Viewer内部APIの無制限な再公開ではなく、認証、scope、idempotency、監査を含むpublic contractとして定義する。
