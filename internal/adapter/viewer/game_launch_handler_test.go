@@ -70,8 +70,18 @@ func TestHandleGameLaunchForwardsAndRecordsMotive(t *testing.T) {
 	if len(personas) != 2 {
 		t.Fatalf("personas must be forwarded: %v", upstreamBody)
 	}
-	if len(store.saved) != 1 || store.saved[0].Turn != -1 || store.saved[0].Decision.Intent != "play_game" {
-		t.Fatalf("motive must be recorded as turn -1 play_game: %+v", store.saved)
+	// B-3: 動機は参加ペルソナ全員に記録される（言い出しっぺ + 誘われた側）。
+	if len(store.saved) != 2 {
+		t.Fatalf("motive must be recorded for all personas: %+v", store.saved)
+	}
+	if store.saved[0].Turn != -1 || store.saved[0].Persona != "mio" || store.saved[0].Decision.Intent != "play_game" {
+		t.Fatalf("initiator motive must be turn -1 play_game: %+v", store.saved[0])
+	}
+	if store.saved[1].Turn != -2 || store.saved[1].Persona != "kuro" || store.saved[1].Decision.Intent != "invited_to_play" {
+		t.Fatalf("invitee motive must be turn -2 invited_to_play: %+v", store.saved[1])
+	}
+	if store.saved[1].Result["invited_by"] != "mio" {
+		t.Fatalf("invitee must record invited_by: %+v", store.saved[1].Result)
 	}
 	if store.saved[0].SessionID != "hz_test_1" {
 		t.Fatalf("motive must reference launched session: %+v", store.saved[0])
@@ -98,19 +108,27 @@ func TestHandleGameLaunchWithoutReasonSkipsMotive(t *testing.T) {
 	}
 }
 
-func TestHandleGameLaunchValidation(t *testing.T) {
+func TestHandleGameLaunchRequiresGameID(t *testing.T) {
 	handler := HandleGameLaunch(GameLaunchOptions{ObserverBaseURL: "http://127.0.0.1:1"})
-	cases := []map[string]any{
-		{"game_id": "unknown_game"},
-		{"game_id": "nethack", "personas": []string{"mio", "kuro"}},
-		{"game_id": "territory_commander", "personas": []string{"a", "b", "c"}},
-		{"game_id": "herzog_zwei", "personas": []string{"mio", "mio"}},
-		{"game_id": "herzog_zwei", "personas": []string{" "}},
+	if response := postGameLaunch(t, handler, map[string]any{"personas": []string{"mio"}}); response.Code != http.StatusBadRequest {
+		t.Fatalf("missing game_id must be 400: %d", response.Code)
 	}
-	for i, body := range cases {
-		if response := postGameLaunch(t, handler, body); response.Code != http.StatusBadRequest {
-			t.Fatalf("case %d: status=%d want 400 (%v)", i, response.Code, body)
-		}
+}
+
+// B-2: タイトル・人数の capability 検証は observer が正本。CORE は
+// 二重管理せず、observer の 400 をそのまま透過する。
+func TestHandleGameLaunchCapabilityValidationPassesThroughObserver(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `game "nethack" supports 1-1 personas, got 2`, http.StatusBadRequest)
+	}))
+	defer upstream.Close()
+	handler := HandleGameLaunch(GameLaunchOptions{ObserverBaseURL: upstream.URL})
+	response := postGameLaunch(t, handler, map[string]any{"game_id": "nethack", "personas": []string{"mio", "kuro"}})
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("observer 400 must pass through: %d", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), "supports 1-1 personas") {
+		t.Fatalf("observer error message must pass through: %s", response.Body.String())
 	}
 }
 
