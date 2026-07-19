@@ -56,6 +56,36 @@ func TestHandleIdleChatStatusIncludesForecastStockSnapshot(t *testing.T) {
 	}
 }
 
+func TestIdleChatNewsSourceConfigFromRuntimeResolvesTokenWithoutChangingQueries(t *testing.T) {
+	t.Setenv("RENCROW_X_BEARER_TOKEN", "secret-token")
+	redditEnabled := true
+
+	got := idleChatNewsSourceConfigFromRuntime(config.IdleChatNewsSourcesConfig{
+		Reddit: config.IdleChatRedditNewsSourceConfig{
+			Enabled:     &redditEnabled,
+			Communities: []string{"technology", "science"},
+			Limit:       8,
+		},
+		X: config.IdleChatXNewsSourceConfig{
+			Enabled:        true,
+			BearerTokenEnv: "RENCROW_X_BEARER_TOKEN",
+			Queries: []config.IdleChatXNewsQueryConfig{
+				{Name: "X AI", Category: "tech", Query: "AI lang:ja -is:retweet", Limit: 10},
+			},
+		},
+	})
+
+	if !got.RedditEnabled || got.RedditLimit != 8 || len(got.RedditCommunities) != 2 {
+		t.Fatalf("unexpected Reddit runtime config: %+v", got)
+	}
+	if !got.XEnabled || got.XBearerToken != "secret-token" || len(got.XQueries) != 1 {
+		t.Fatalf("unexpected X runtime config")
+	}
+	if got.XQueries[0].Query != "AI lang:ja -is:retweet" {
+		t.Fatalf("X query = %q", got.XQueries[0].Query)
+	}
+}
+
 func TestSelectForecastProviderPrefersCoderPriorityOverWorker(t *testing.T) {
 	worker := fakeConversationProvider{name: "worker-provider"}
 	chat := fakeConversationProvider{name: "chat-provider"}

@@ -12,9 +12,15 @@ import (
 )
 
 func (o *IdleChatOrchestrator) Start() {
+	o.mu.Lock()
+	newsSourceConfig := o.newsSourceConfig
+	newsSourceConfig.RedditCommunities = append([]string(nil), newsSourceConfig.RedditCommunities...)
+	newsSourceConfig.XQueries = append([]XNewsQuery(nil), newsSourceConfig.XQueries...)
+	o.mu.Unlock()
+
 	// 起動時に外部シード取得（非同期）
 	go func() {
-		if err := fetchDailySeeds(); err != nil {
+		if err := fetchDailySeeds(newsSourceConfig); err != nil {
 			log.Printf("[IdleChat] Daily seeds fetch failed: %v", err)
 		}
 	}()

@@ -63,11 +63,12 @@ type ExternalMaterialSeed struct {
 }
 
 type NewsSeed struct {
-	Title    string `json:"title"`
-	Category string `json:"category,omitempty"`
-	Source   string `json:"source,omitempty"`
-	URL      string `json:"url,omitempty"`
-	Summary  string `json:"summary,omitempty"`
+	Title      string `json:"title"`
+	Category   string `json:"category,omitempty"`
+	Source     string `json:"source,omitempty"`
+	SourceType string `json:"source_type,omitempty"`
+	URL        string `json:"url,omitempty"`
+	Summary    string `json:"summary,omitempty"`
 }
 
 type RecentTopic struct {

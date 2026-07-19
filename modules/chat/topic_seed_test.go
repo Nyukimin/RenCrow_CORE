@@ -100,6 +100,7 @@ func TestParseNewsSeedsExtractsCategorySourceAndURL(t *testing.T) {
 	if got[0].Title != "新型端末の省電力技術を発表" ||
 		got[0].Category != "tech" ||
 		got[0].Source != "Example Tech" ||
+		got[0].SourceType != "rss" ||
 		got[0].URL != "https://example.test/tech/1" {
 		t.Fatalf("news seed mismatch: %+v", got[0])
 	}

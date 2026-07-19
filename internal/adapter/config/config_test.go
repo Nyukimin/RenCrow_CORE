@@ -2775,6 +2775,61 @@ idle_chat:
 	if cfg.IdleChat.DialogueInterestingness.Prompts.Common != "prompts/idle_chat/dialogue_common.md" {
 		t.Fatalf("Expected dialogue common prompt default, got %q", cfg.IdleChat.DialogueInterestingness.Prompts.Common)
 	}
+	if cfg.IdleChat.NewsSources.Reddit.Enabled == nil || !*cfg.IdleChat.NewsSources.Reddit.Enabled {
+		t.Fatalf("Expected Reddit news source default enabled, got %#v", cfg.IdleChat.NewsSources.Reddit.Enabled)
+	}
+	if len(cfg.IdleChat.NewsSources.Reddit.Communities) == 0 {
+		t.Fatal("Expected default Reddit communities")
+	}
+	if cfg.IdleChat.NewsSources.X.Enabled {
+		t.Fatal("Expected X news source default disabled")
+	}
+	if cfg.IdleChat.NewsSources.X.BearerTokenEnv != "RENCROW_X_BEARER_TOKEN" {
+		t.Fatalf("Expected default X bearer token env, got %q", cfg.IdleChat.NewsSources.X.BearerTokenEnv)
+	}
+}
+
+func TestLoadConfig_IdleChatXSourceRequiresConfiguredToken(t *testing.T) {
+	t.Setenv("RENCROW_X_BEARER_TOKEN", "")
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := `
+server:
+  port: 8080
+ollama:
+  base_url: "http://localhost:11434"
+  model: "Chat"
+session:
+  storage_dir: "./data"
+idle_chat:
+  enabled: true
+  news_sources:
+    x:
+      enabled: true
+      bearer_token_env: "RENCROW_X_BEARER_TOKEN"
+      queries:
+        - name: "X AI"
+          category: "tech"
+          query: "AI lang:ja -is:retweet"
+          limit: 10
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	_, err := LoadConfig(configPath)
+	if err == nil || !strings.Contains(err.Error(), "RENCROW_X_BEARER_TOKEN") {
+		t.Fatalf("LoadConfig error = %v, want missing X token error", err)
+	}
+
+	t.Setenv("RENCROW_X_BEARER_TOKEN", "secret-token")
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig with X token failed: %v", err)
+	}
+	if !cfg.IdleChat.NewsSources.X.Enabled || len(cfg.IdleChat.NewsSources.X.Queries) != 1 {
+		t.Fatalf("unexpected X source config: %+v", cfg.IdleChat.NewsSources.X)
+	}
 }
 
 func TestLoadConfig_IdleChatOtherSpeakersDefaultThinkTrue(t *testing.T) {

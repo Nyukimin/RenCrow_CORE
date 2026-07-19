@@ -19,8 +19,10 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /health` | COREと設定済み依存serviceの総合health |
 | `GET /ready` | request受付可否 |
 | `/viewer/api/chat` | Viewer chat request と response |
+| `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage送信とSSE event購読 |
 | `/viewer/status`, `/viewer/agents` | runtime と agent の状態 |
 | `GET /viewer/idlechat/status` | IdleChat状態と読み取り専用の`forecast_stock` snapshot |
+| `POST /viewer/idlechat/start`, `POST /viewer/idlechat/stop` | IdleChatの開始・停止。認可されたwrite clientだけが利用する |
 | `/viewer/jobs`, `/viewer/logs` | job と監査可能な log |
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
 | `/viewer/workstreams/*` | goal、artifact、annotation、heartbeat、review |
@@ -67,6 +69,26 @@ TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`respon
 
 `GET /viewer/idlechat/status`の`forecast_stock`は、`enabled`、`total`、`capacity`、`missing`、`filling`、最終生成状態と、6ドメインの`topics`を返します。これは観測用snapshotであり、GETによって生成・消費・補充を開始しません。
 
+## Interaction client共通意味論
+
+PORTAL、CMD、ASSISTANTは、COREとのInteractionで次の意味論を共有します。
+
+| 能力 | contract |
+| --- | --- |
+| Chat | requestごとに利用者scopeと明示recipientを持ち、別recipientへ黙ってfallbackしない |
+| IdleChat | status／event購読と開始／停止を分け、write権限のないclientから操作しない |
+| recipient | UI選択通知は観測event、実送信先はmessage requestの`to`を正とする |
+| event | reconnectと重複を前提に、event IDまたは相関IDで二重処理を防ぐ |
+| session | request、response、Task、audio、外部deliveryへ追跡可能な相関を保つ |
+| STT／TTS | input、合成、audio取得、再生、ACKを別々の成功条件として報告する |
+| Task | 受付と完了を同一視せず、status、result、error、provenanceを追跡する |
+| error | unavailable、degraded、denied、expired、failedを区別する |
+
+各clientは同じ意味論を、Web、terminal、PUSH／Deviceへ異なる形で表示できます。
+すべてのclientが全能力を公開する必要はなく、client profile、認証scope、mode、Device
+capabilityで制限します。profile名を使う統一認可設定と共通SDKは未実装であり、現行の
+endpoint allowlistとserver-side authorizationを置き換えたとは扱いません。
+
 ## Client の注意
 
 - method、status code、content type を確認する。
@@ -92,3 +114,5 @@ TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`respon
 - COREのDebug、Ops、Repair、LLM管理APIをASSISTANTから利用しない。
 - CORE unavailable時はASSISTANTがAgent処理をdegradedとして扱い、別Agentの成功へ丸めない。
 - 専用endpointを追加する場合は、既存Viewer内部APIの無制限な再公開ではなく、認証、scope、idempotency、監査を含むpublic contractとして定義する。
+- ASSISTANTのPUSHを第二の会話systemにせず、CORE応答を利用者、source、category、
+  correlation ID付きのInteraction outputとして元のdeliveryへ戻せるようにする。

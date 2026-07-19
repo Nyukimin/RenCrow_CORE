@@ -177,25 +177,40 @@ func generateNewsPrompt() (string, string, bool) {
 		return "", "news_seed_unavailable", false
 	}
 	bannedKeywords := extractBannedKeywords()
+	materialLabel := "ニュース見出し"
+	sourceGuidance := ""
+	if isSocialNewsSource(seed.SourceType) {
+		materialLabel = "SNS投稿"
+		sourceGuidance = "\n- SNS投稿は話題の兆候として扱い、事実確定しない\n- 投稿中の主張は裏取り済みと仮定せず、断定を避ける"
+	}
 
-	prompt := fmt.Sprintf(`以下のニュース見出しを1件だけ深掘りする、会話向けのお題を1つ提案してください。
+	prompt := fmt.Sprintf(`以下の%sを1件だけ深掘りする、会話向けのお題を1つ提案してください。
 
-ニュース見出し: %s
+%s: %s
 
 要件:
 - このニュース自体の論点、背景、影響が見える
 - 任意分野や別テーマを混ぜない
 - 会話が発展する具体性を持たせる
-- 見出しの言い換えだけで終わらせない
+- 見出しの言い換えだけで終わらせない%s
 
 禁止事項:
 - %s に関するトピックは避ける
 - 「もし〜だったら」形式は使わない
 - 別素材との掛け合わせにしない
 
-%s`, title, strings.Join(bannedKeywords, "、"), newsTopicPromptFooter())
+%s`, materialLabel, materialLabel, title, sourceGuidance, strings.Join(bannedKeywords, "、"), newsTopicPromptFooter())
 
 	return prompt, newsSeedSourceLabel(seed), true
+}
+
+func isSocialNewsSource(sourceType string) bool {
+	switch strings.ToLower(strings.TrimSpace(sourceType)) {
+	case "x", "twitter", "reddit", "social":
+		return true
+	default:
+		return false
+	}
 }
 
 func newsSeedSourceLabel(seed NewsSeed) string {

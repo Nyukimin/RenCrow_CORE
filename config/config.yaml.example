@@ -227,6 +227,19 @@ idle_chat:
   interval_sec: 300      # 雑談開始までのアイドル時間（秒、指定時は interval_min より優先）
   max_turns: 10           # 1回の雑談最大ターン数
   temperature: 0.8        # 雑談時の温度
+  news_sources:
+    reddit:
+      enabled: true
+      communities: ["technology", "worldnews", "science", "economics"]
+      limit: 8
+    x:
+      enabled: false
+      bearer_token_env: "RENCROW_X_BEARER_TOKEN" # token本体は環境変数へ置く
+      queries:
+        - name: "X Japan Trends"
+          category: "social"
+          query: "(ニュース OR 速報 OR 話題) lang:ja -is:retweet"
+          limit: 10
   topic_generation:
     enabled: true
     candidates_per_attempt: 5

@@ -31,8 +31,8 @@ var defaultNewsSeedSources = []NewsSeedSource{
 	{Category: "business", Name: "ITmedia Business", URL: "https://rss.itmedia.co.jp/rss/2.0/business.xml", Limit: 3},
 }
 
-// fetchDailySeeds は1日1回、起動時に外部シードを取得してキャッシュ
-func fetchDailySeeds() error {
+// fetchDailySeeds は1日1回、起動時に外部シードを取得してキャッシュする。
+func fetchDailySeeds(sourceConfig NewsSourceConfig) error {
 	today := time.Now().In(jst).Format("2006-01-02")
 
 	cacheMu.RLock()
@@ -60,11 +60,34 @@ func fetchDailySeeds() error {
 	}
 
 	// News Headlines（カテゴリ付きRSS）
-	newsSeedItems, err := fetchNewsSeedItems(defaultNewsSeedSources, 20)
+	rssSeedItems, err := fetchNewsSeedItems(defaultNewsSeedSources, 20)
 	if err != nil {
 		log.Printf("[IdleChat] News fetch failed: %v", err)
-		newsSeedItems = []NewsSeed{} // フォールバック
+		rssSeedItems = []NewsSeed{} // フォールバック
 	}
+
+	var redditSeedItems []NewsSeed
+	if sourceConfig.RedditEnabled {
+		redditSeedItems, err = fetchRedditHotSeeds(sourceConfig.RedditCommunities, sourceConfig.RedditLimit)
+		if err != nil {
+			log.Printf("[IdleChat] Reddit news fetch failed: %v", err)
+			redditSeedItems = []NewsSeed{}
+		}
+	}
+
+	var xSeedItems []NewsSeed
+	if sourceConfig.XEnabled {
+		for _, query := range sourceConfig.XQueries {
+			seeds, fetchErr := fetchXRecentSeeds(sourceConfig.XBearerToken, query)
+			if fetchErr != nil {
+				log.Printf("[IdleChat] X news fetch failed source=%s: %v", strings.TrimSpace(query.Name), fetchErr)
+				continue
+			}
+			xSeedItems = append(xSeedItems, seeds...)
+		}
+	}
+
+	newsSeedItems := mergeNewsSeeds(36, rssSeedItems, redditSeedItems, xSeedItems)
 	newsSeeds := newsSeedTitles(newsSeedItems)
 
 	dailyCache = &DailySeedCache{
@@ -75,7 +98,7 @@ func fetchDailySeeds() error {
 		FetchedAt:      time.Now(),
 	}
 
-	log.Printf("[IdleChat] Daily seeds fetched: Wikipedia=%d, News=%d categories=%s", len(wikiSeeds), len(newsSeeds), newsSeedCategorySummary(newsSeedItems))
+	log.Printf("[IdleChat] Daily seeds fetched: Wikipedia=%d, News=%d RSS=%d Reddit=%d X=%d categories=%s", len(wikiSeeds), len(newsSeeds), len(rssSeedItems), len(redditSeedItems), len(xSeedItems), newsSeedCategorySummary(newsSeedItems))
 	return nil
 }
 
