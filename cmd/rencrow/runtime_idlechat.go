@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -60,6 +61,7 @@ func buildIdleChatRuntime(
 		"wild":       wildProvider,
 	})
 	idleChatOrch.SetSpeakerProviderOptions(idleChatProviderOptionsFromConfig(cfg.IdleChat.SpeakerLLMOptions))
+	idleChatOrch.SetNewsSourceConfig(idleChatNewsSourceConfigFromRuntime(cfg.IdleChat.NewsSources))
 	idleChatOrch.SetTopicGenerationConfig(idleChatTopicGenerationConfigFromRuntime(cfg.IdleChat.TopicGeneration))
 	idleChatOrch.SetDialogueInterestingnessConfig(idleChatDialogueInterestingnessConfigFromRuntime(cfg.IdleChat.DialogueInterestingness))
 	if topicProvider, label := selectForecastTopicProvider(workerProvider); topicProvider != nil {
@@ -144,6 +146,27 @@ func buildIdleChatRuntime(
 	}
 	deps.idleChatOrch = idleChatOrch
 	log.Printf("IdleChat enabled (participants=%v)", cfg.IdleChat.Participants)
+}
+
+func idleChatNewsSourceConfigFromRuntime(cfg config.IdleChatNewsSourcesConfig) idlechat.NewsSourceConfig {
+	redditEnabled := cfg.Reddit.Enabled != nil && *cfg.Reddit.Enabled
+	xQueries := make([]idlechat.XNewsQuery, 0, len(cfg.X.Queries))
+	for _, query := range cfg.X.Queries {
+		xQueries = append(xQueries, idlechat.XNewsQuery{
+			Name:     query.Name,
+			Category: query.Category,
+			Query:    query.Query,
+			Limit:    query.Limit,
+		})
+	}
+	return idlechat.NewsSourceConfig{
+		RedditEnabled:     redditEnabled,
+		RedditCommunities: append([]string(nil), cfg.Reddit.Communities...),
+		RedditLimit:       cfg.Reddit.Limit,
+		XEnabled:          cfg.X.Enabled,
+		XBearerToken:      os.Getenv(strings.TrimSpace(cfg.X.BearerTokenEnv)),
+		XQueries:          xQueries,
+	}
 }
 
 func selectForecastProvider(cfg *config.Config, chatProvider, workerProvider, wildProvider llm.LLMProvider) (llm.LLMProvider, string) {

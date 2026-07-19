@@ -127,6 +127,30 @@ func TestNewsPromptUsesNewsSeedWithoutGenreMixing(t *testing.T) {
 	}
 }
 
+func TestNewsPromptTreatsSocialPostAsUnverifiedSignal(t *testing.T) {
+	withDailySeedCache(t, &DailySeedCache{
+		Date: "2026-07-18",
+		NewsSeedItems: []NewsSeed{
+			{
+				Title:      "新しい研究結果が話題になっている",
+				Category:   "tech",
+				Source:     "Reddit r/technology",
+				SourceType: "reddit",
+				URL:        "https://www.reddit.com/r/technology/comments/example",
+			},
+		},
+		FetchedAt: time.Now(),
+	})
+
+	prompt, _, ok := generateNewsPrompt()
+	if !ok {
+		t.Fatal("social news prompt unavailable")
+	}
+	if !strings.Contains(prompt, "SNS投稿") || !strings.Contains(prompt, "事実確定") || !strings.Contains(prompt, "裏取り") {
+		t.Fatalf("social source caution missing: %s", prompt)
+	}
+}
+
 func TestNewsPromptKeepsLegacyNewsSeedsCompatible(t *testing.T) {
 	withDailySeedCache(t, &DailySeedCache{
 		Date:           "2026-05-27",

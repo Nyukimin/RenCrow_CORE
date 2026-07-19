@@ -233,6 +233,7 @@ func (c *Config) setDefaults() {
 		c.applyIdleChatTopicGenerationDefaults()
 		c.applyIdleChatDialogueInterestingnessDefaults()
 		c.applyIdleChatSpeakerLLMDefaults()
+		c.applyIdleChatNewsSourceDefaults()
 	}
 
 	// v5.0 Conversation デフォルト
@@ -900,6 +901,31 @@ func archiveSQLitePathFromLegacy(legacyPath string) string {
 
 func boolConfigPtr(value bool) *bool {
 	return &value
+}
+
+func (c *Config) applyIdleChatNewsSourceDefaults() {
+	if c.IdleChat.NewsSources.Reddit.Enabled == nil {
+		c.IdleChat.NewsSources.Reddit.Enabled = boolConfigPtr(true)
+	}
+	if len(c.IdleChat.NewsSources.Reddit.Communities) == 0 {
+		c.IdleChat.NewsSources.Reddit.Communities = []string{"technology", "worldnews", "science", "economics"}
+	}
+	if c.IdleChat.NewsSources.Reddit.Limit <= 0 {
+		c.IdleChat.NewsSources.Reddit.Limit = 8
+	}
+	if strings.TrimSpace(c.IdleChat.NewsSources.X.BearerTokenEnv) == "" {
+		c.IdleChat.NewsSources.X.BearerTokenEnv = "RENCROW_X_BEARER_TOKEN"
+	}
+	if len(c.IdleChat.NewsSources.X.Queries) == 0 {
+		c.IdleChat.NewsSources.X.Queries = []IdleChatXNewsQueryConfig{
+			{
+				Name:     "X Japan Trends",
+				Category: "social",
+				Query:    "(ニュース OR 速報 OR 話題) lang:ja -is:retweet",
+				Limit:    10,
+			},
+		}
+	}
 }
 
 func (c *Config) applyIdleChatSpeakerLLMDefaults() {

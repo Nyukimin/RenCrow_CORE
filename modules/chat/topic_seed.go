@@ -124,10 +124,11 @@ func ParseNewsSeeds(reader io.Reader, source NewsSeedSource, limit int) ([]NewsS
 			continue
 		}
 		seeds = append(seeds, NewsSeed{
-			Title:    title,
-			Category: strings.TrimSpace(source.Category),
-			Source:   strings.TrimSpace(source.Name),
-			URL:      strings.TrimSpace(item.Link),
+			Title:      title,
+			Category:   strings.TrimSpace(source.Category),
+			Source:     strings.TrimSpace(source.Name),
+			SourceType: "rss",
+			URL:        strings.TrimSpace(item.Link),
 		})
 		if limit > 0 && len(seeds) >= limit {
 			break

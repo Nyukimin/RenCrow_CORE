@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"os"
 	"strings"
 )
 
@@ -293,6 +294,40 @@ func (c *Config) Validate() error {
 		}
 		if c.IdleChat.Temperature < 0 || c.IdleChat.Temperature > 2.0 {
 			return fmt.Errorf("idle_chat.temperature must be between 0 and 2.0")
+		}
+		if c.IdleChat.NewsSources.Reddit.Enabled != nil && *c.IdleChat.NewsSources.Reddit.Enabled {
+			if len(c.IdleChat.NewsSources.Reddit.Communities) == 0 {
+				return fmt.Errorf("idle_chat.news_sources.reddit.communities is required when enabled=true")
+			}
+			if c.IdleChat.NewsSources.Reddit.Limit < 1 || c.IdleChat.NewsSources.Reddit.Limit > 100 {
+				return fmt.Errorf("idle_chat.news_sources.reddit.limit must be between 1 and 100")
+			}
+			for _, community := range c.IdleChat.NewsSources.Reddit.Communities {
+				community = strings.TrimSpace(community)
+				if community == "" || strings.ContainsAny(community, "/?#&+ ") {
+					return fmt.Errorf("idle_chat.news_sources.reddit.communities contains invalid community %q", community)
+				}
+			}
+		}
+		if c.IdleChat.NewsSources.X.Enabled {
+			tokenEnv := strings.TrimSpace(c.IdleChat.NewsSources.X.BearerTokenEnv)
+			if tokenEnv == "" {
+				return fmt.Errorf("idle_chat.news_sources.x.bearer_token_env is required when enabled=true")
+			}
+			if strings.TrimSpace(os.Getenv(tokenEnv)) == "" {
+				return fmt.Errorf("idle_chat.news_sources.x requires non-empty environment variable %s", tokenEnv)
+			}
+			if len(c.IdleChat.NewsSources.X.Queries) == 0 {
+				return fmt.Errorf("idle_chat.news_sources.x.queries is required when enabled=true")
+			}
+			for i, query := range c.IdleChat.NewsSources.X.Queries {
+				if strings.TrimSpace(query.Name) == "" || strings.TrimSpace(query.Query) == "" {
+					return fmt.Errorf("idle_chat.news_sources.x.queries[%d] requires name and query", i)
+				}
+				if query.Limit < 10 || query.Limit > 100 {
+					return fmt.Errorf("idle_chat.news_sources.x.queries[%d].limit must be between 10 and 100", i)
+				}
+			}
 		}
 		if c.IdleChat.TopicGeneration.Enabled {
 			tg := c.IdleChat.TopicGeneration

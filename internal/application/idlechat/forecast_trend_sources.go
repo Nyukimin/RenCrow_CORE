@@ -1,7 +1,6 @@
 package idlechat
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -344,50 +343,11 @@ func fetchGoogleTrendsJP(limit int) ([]string, error) {
 
 // fetchRedditHot は Reddit サブレディットの hot 記事タイトルを取得する。
 func fetchRedditHot(subreddit string, limit int) ([]string, error) {
-	url := fmt.Sprintf("https://www.reddit.com/r/%s/hot.json?limit=%d", subreddit, limit)
-	req, err := http.NewRequest("GET", url, nil)
+	seeds, err := fetchRedditHotSeeds([]string{subreddit}, limit)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "RenCrow/1.0 (https://github.com/Nyukimin/RenCrow_CORE)")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, idlechatHTTPStatusError(fmt.Sprintf("reddit r/%s status", subreddit), resp.StatusCode, resp.Body)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var result struct {
-		Data struct {
-			Children []struct {
-				Data struct {
-					Title string `json:"title"`
-				} `json:"data"`
-			} `json:"children"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("reddit json parse: %w", err)
-	}
-
-	var titles []string
-	for _, child := range result.Data.Children {
-		t := strings.TrimSpace(child.Data.Title)
-		if t != "" {
-			titles = append(titles, t)
-		}
-	}
-	return titles, nil
+	return newsSeedTitles(seeds), nil
 }
 
 // fetchHatenaHotentry ははてなブックマークのホットエントリRSSからタイトルを取得する。

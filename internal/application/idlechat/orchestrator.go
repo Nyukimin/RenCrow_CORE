@@ -131,6 +131,7 @@ type IdleChatOrchestrator struct {
 	speakerOptions             map[string]map[string]any
 	topicGenerationConfig      TopicGenerationConfig
 	dialogueConfig             DialogueInterestingnessConfig
+	newsSourceConfig           NewsSourceConfig
 	currentTopicResult         *TopicGenerationResult
 	currentDialoguePlan        *DialogueArcPlan
 	currentDialogueState       *DialogueArcState
@@ -177,6 +178,16 @@ type IdleChatOrchestrator struct {
 	watchdogUpdatedAt   time.Time
 	mu                  sync.Mutex
 	wg                  sync.WaitGroup
+}
+
+// SetNewsSourceConfig はIdleChatのお題に使うSNS取得先を設定する。
+// secretは呼び出し元で環境変数から解決し、設定後にlogへ出さない。
+func (o *IdleChatOrchestrator) SetNewsSourceConfig(cfg NewsSourceConfig) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	cfg.RedditCommunities = append([]string(nil), cfg.RedditCommunities...)
+	cfg.XQueries = append([]XNewsQuery(nil), cfg.XQueries...)
+	o.newsSourceConfig = cfg
 }
 
 type TTSTimeoutEvent struct {

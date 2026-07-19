@@ -252,9 +252,36 @@ type IdleChatConfig struct {
 	Temperature             float64                               `yaml:"temperature"`               // 雑談時の温度（デフォルト: 0.8）
 	StoryDataDir            string                                `yaml:"story_data_dir"`            // 物語データJSONディレクトリ（デフォルト: "data/story"）
 	ForecastExternalEnabled bool                                  `yaml:"forecast_external_enabled"` // true の場合のみ Forecast で外部 Coder API を明示利用する
+	NewsSources             IdleChatNewsSourcesConfig             `yaml:"news_sources"`              // IdleChatのお題に使うニュース・SNS取得先
 	TopicGeneration         IdleChatTopicGenerationConfig         `yaml:"topic_generation"`          // お題候補生成・Judge設定
 	DialogueInterestingness IdleChatDialogueInterestingnessConfig `yaml:"dialogue_interestingness"`  // 対話演出・品質判定設定
 	SpeakerLLMOptions       map[string]IdleChatLLMOptions         `yaml:"speaker_llm_options"`       // 話者別LLMオプション
+}
+
+// IdleChatNewsSourcesConfig はIdleChatのお題に使うSNS取得先を定義する。
+// 一般ニュースRSSはCORE既定値を維持し、SNS固有の認証・検索条件だけを設定する。
+type IdleChatNewsSourcesConfig struct {
+	Reddit IdleChatRedditNewsSourceConfig `yaml:"reddit"`
+	X      IdleChatXNewsSourceConfig      `yaml:"x"`
+}
+
+type IdleChatRedditNewsSourceConfig struct {
+	Enabled     *bool    `yaml:"enabled"`
+	Communities []string `yaml:"communities"`
+	Limit       int      `yaml:"limit"`
+}
+
+type IdleChatXNewsSourceConfig struct {
+	Enabled        bool                       `yaml:"enabled"`
+	BearerTokenEnv string                     `yaml:"bearer_token_env"`
+	Queries        []IdleChatXNewsQueryConfig `yaml:"queries"`
+}
+
+type IdleChatXNewsQueryConfig struct {
+	Name     string `yaml:"name"`
+	Category string `yaml:"category"`
+	Query    string `yaml:"query"`
+	Limit    int    `yaml:"limit"`
 }
 
 type IdleChatTopicGenerationConfig struct {
