@@ -771,6 +771,33 @@ func (c *Config) setDefaults() {
 	if c.TTS.ProviderParams == nil {
 		c.TTS.ProviderParams = map[string]any{}
 	}
+	if c.TTS.PronunciationCheck.ToolBaseURL == "" {
+		c.TTS.PronunciationCheck.ToolBaseURL = "http://127.0.0.1:7892"
+	}
+	if c.TTS.PronunciationCheck.Schedule == "" {
+		c.TTS.PronunciationCheck.Schedule = "cron 30 19 * * *"
+	}
+	if c.TTS.PronunciationCheck.GPUMatch == "" {
+		c.TTS.PronunciationCheck.GPUMatch = "RTX 5060 Ti"
+	}
+	if c.TTS.PronunciationCheck.MinFreeMB <= 0 {
+		c.TTS.PronunciationCheck.MinFreeMB = 768
+	}
+	if c.TTS.PronunciationCheck.MaxUtilizationPercent <= 0 {
+		c.TTS.PronunciationCheck.MaxUtilizationPercent = 10
+	}
+	if c.TTS.PronunciationCheck.IdleSamples <= 0 {
+		c.TTS.PronunciationCheck.IdleSamples = 5
+	}
+	if c.TTS.PronunciationCheck.SampleIntervalSeconds <= 0 {
+		c.TTS.PronunciationCheck.SampleIntervalSeconds = 2
+	}
+	if c.TTS.PronunciationCheck.RetryIntervalSeconds <= 0 {
+		c.TTS.PronunciationCheck.RetryIntervalSeconds = 300
+	}
+	if c.TTS.PronunciationCheck.TimeoutMinutes <= 0 {
+		c.TTS.PronunciationCheck.TimeoutMinutes = 45
+	}
 	if c.STT.Provider == "" {
 		c.STT.Provider = "external_http"
 	}

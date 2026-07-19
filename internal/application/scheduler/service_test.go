@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -41,9 +42,52 @@ type recordingExecutor struct {
 	jobID string
 }
 
+type deferredExecutor struct{}
+
+func (deferredExecutor) ExecuteScheduledJob(context.Context, domainscheduler.Job) (string, error) {
+	return "GPU is busy", NewDeferredError(5*time.Minute, errors.New("gpu busy"))
+}
+
 func (e *recordingExecutor) ExecuteScheduledJob(_ context.Context, job domainscheduler.Job) (string, error) {
 	e.jobID = job.JobID
 	return "executed " + job.Name, nil
+}
+
+func TestServiceDefersJobWithoutAdvancingToNextSchedule(t *testing.T) {
+	now := time.Date(2026, 7, 19, 19, 30, 0, 0, time.UTC)
+	store := &memoryStore{jobs: []domainscheduler.Job{{
+		JobID: "tts_pronunciation_daily", Name: "TTS pronunciation daily",
+		Schedule: "cron 30 19 * * *", Target: "tts_pronunciation_check", Enabled: true,
+		CreatedAt: now.Add(-24 * time.Hour), UpdatedAt: now.Add(-24 * time.Hour), NextRunAt: now,
+	}}}
+	svc := NewService(store, deferredExecutor{}).WithNow(func() time.Time { return now })
+	log, err := svc.RunJob(context.Background(), "tts_pronunciation_daily", "due")
+	if err != nil {
+		t.Fatalf("RunJob() error = %v", err)
+	}
+	if log.Status != "deferred" || log.Error != "" {
+		t.Fatalf("log = %+v", log)
+	}
+	if want := now.Add(5 * time.Minute); !store.jobs[0].NextRunAt.Equal(want) {
+		t.Fatalf("NextRunAt=%v want=%v", store.jobs[0].NextRunAt, want)
+	}
+}
+
+func TestServiceRunsOnlyRequestedDueJob(t *testing.T) {
+	now := time.Date(2026, 7, 19, 19, 30, 0, 0, time.UTC)
+	store := &memoryStore{jobs: []domainscheduler.Job{
+		{JobID: "tts_pronunciation_daily", Name: "TTS pronunciation daily", Schedule: "every 24h", Enabled: true, CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour), NextRunAt: now},
+		{JobID: "unrelated", Name: "Unrelated", Schedule: "every 24h", Enabled: true, CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour), NextRunAt: now},
+	}}
+	executor := &recordingExecutor{}
+	svc := NewService(store, executor).WithNow(func() time.Time { return now })
+	log, ran, err := svc.RunDueJob(context.Background(), "tts_pronunciation_daily")
+	if err != nil || !ran || log.JobID != "tts_pronunciation_daily" || executor.jobID != "tts_pronunciation_daily" {
+		t.Fatalf("log=%+v ran=%v executor=%+v err=%v", log, ran, executor, err)
+	}
+	if len(store.logs) != 1 {
+		t.Fatalf("logs=%+v", store.logs)
+	}
 }
 
 func TestServiceCreateDueRunAndDisableJob(t *testing.T) {

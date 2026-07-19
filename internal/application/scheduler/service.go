@@ -2,12 +2,36 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
 )
+
+type DeferredError struct {
+	RetryAfter time.Duration
+	cause      error
+}
+
+func NewDeferredError(retryAfter time.Duration, cause error) *DeferredError {
+	return &DeferredError{RetryAfter: retryAfter, cause: cause}
+}
+
+func (e *DeferredError) Error() string {
+	if e == nil || e.cause == nil {
+		return "scheduled job deferred"
+	}
+	return e.cause.Error()
+}
+
+func (e *DeferredError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
 
 type Store interface {
 	ListJobs(ctx context.Context, limit int) ([]domainscheduler.Job, error)
@@ -77,6 +101,20 @@ func (s *Service) DueJobs(ctx context.Context, limit int) ([]domainscheduler.Due
 	return out, nil
 }
 
+func (s *Service) RunDueJob(ctx context.Context, jobID string) (domainscheduler.RunLog, bool, error) {
+	due, err := s.DueJobs(ctx, 1000)
+	if err != nil {
+		return domainscheduler.RunLog{}, false, err
+	}
+	for _, item := range due {
+		if item.Job.JobID == strings.TrimSpace(jobID) {
+			log, err := s.RunJob(ctx, item.Job.JobID, "due")
+			return log, true, err
+		}
+	}
+	return domainscheduler.RunLog{}, false, nil
+}
+
 func (s *Service) RunJob(ctx context.Context, jobID string, trigger string) (domainscheduler.RunLog, error) {
 	if s == nil || s.store == nil {
 		return domainscheduler.RunLog{}, fmt.Errorf("scheduler store unavailable")
@@ -93,19 +131,29 @@ func (s *Service) RunJob(ctx context.Context, jobID string, trigger string) (dom
 		Status:    "completed",
 		StartedAt: now,
 	}
+	var deferredRetryAfter time.Duration
 	if s.executor != nil {
 		summary, execErr := s.executor.ExecuteScheduledJob(ctx, job)
 		log.Summary = strings.TrimSpace(summary)
 		if execErr != nil {
-			log.Status = "failed"
-			log.Error = execErr.Error()
+			var deferred *DeferredError
+			if errors.As(execErr, &deferred) {
+				log.Status = "deferred"
+				log.Summary = firstNonEmpty(log.Summary, deferred.Error())
+				deferredRetryAfter = deferred.RetryAfter
+			} else {
+				log.Status = "failed"
+				log.Error = execErr.Error()
+			}
 		}
 	} else {
 		log.Summary = "scheduler run recorded without executor"
 	}
 	log.CompletedAt = s.now().UTC()
 	job.LastRunAt = log.StartedAt
-	if next, err := domainscheduler.NextRunAfter(job.Schedule, log.StartedAt); err == nil {
+	if log.Status == "deferred" && deferredRetryAfter > 0 {
+		job.NextRunAt = log.CompletedAt.Add(deferredRetryAfter)
+	} else if next, err := domainscheduler.NextRunAfter(job.Schedule, log.StartedAt); err == nil {
 		job.NextRunAt = next
 	} else {
 		job.Enabled = false

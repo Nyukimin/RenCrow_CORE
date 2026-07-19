@@ -26,7 +26,8 @@ job_id, schedule_id, due_at, status, error kind
 
 ## Error Contract
 
-invalid schedule and run failure remain explicit status values
+invalid schedule and run failure remain explicit status values. Resource-gated jobs use
+`deferred` with a concrete retry time instead of consuming the next normal schedule.
 
 ## Current Main Files
 

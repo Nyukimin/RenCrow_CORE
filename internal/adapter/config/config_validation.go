@@ -3,8 +3,12 @@ package config
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strings"
+	"time"
+
+	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
 )
 
 // Validate は設定の妥当性を検証
@@ -69,6 +73,21 @@ func (c *Config) Validate() error {
 	if c.LLMOps.Enabled {
 		if strings.TrimSpace(c.LLMOps.BaseURL) == "" {
 			return fmt.Errorf("llm_ops.base_url is required when llm_ops.enabled=true")
+		}
+	}
+	if c.TTS.PronunciationCheck.Enabled {
+		parsed, err := url.Parse(c.TTS.PronunciationCheck.ToolBaseURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return fmt.Errorf("tts.pronunciation_check.tool_base_url must be an absolute HTTP URL")
+		}
+		if _, err := domainscheduler.NextRunAfter(c.TTS.PronunciationCheck.Schedule, time.Now().UTC()); err != nil {
+			return fmt.Errorf("tts.pronunciation_check.schedule: %w", err)
+		}
+		if c.TTS.PronunciationCheck.MaxUtilizationPercent < 1 || c.TTS.PronunciationCheck.MaxUtilizationPercent > 100 {
+			return fmt.Errorf("tts.pronunciation_check.max_utilization_percent must be between 1 and 100")
+		}
+		if c.TTS.PronunciationCheck.IdleSamples < 1 || c.TTS.PronunciationCheck.IdleSamples > 30 {
+			return fmt.Errorf("tts.pronunciation_check.idle_samples must be between 1 and 30")
 		}
 	}
 	if c.WebwrightFetch.Enabled {

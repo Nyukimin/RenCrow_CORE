@@ -16,21 +16,35 @@ type VerificationConfig struct {
 
 // TTSConfig configures provider fallback and playback verification.
 type TTSConfig struct {
-	Enabled          bool                `yaml:"enabled"`
-	OutputDir        string              `yaml:"output_dir"`
-	AudioPathRoot    string              `yaml:"audio_path_root"`
-	HTTPBaseURL      string              `yaml:"http_base_url"`
-	TLSSkipVerify    bool                `yaml:"tls_skip_verify"`
-	TimeoutMS        int                 `yaml:"timeout_ms"`
-	VoiceID          string              `yaml:"voice_id"`
-	Speed            float64             `yaml:"speed"`
-	ProviderParams   map[string]any      `yaml:"provider_params"`
-	ProviderPriority []string            `yaml:"provider_priority"` // e.g. irodori
-	PlaybackCommands []TTSCommandConfig  `yaml:"playback_commands"`
-	SBV2             TTSSBV2Config       `yaml:"sbv2"`
-	Irodori          TTSIrodoriConfig    `yaml:"irodori"`
-	Azure            TTSAzureConfig      `yaml:"azure"`
-	Eleven           TTSElevenLabsConfig `yaml:"eleven"`
+	Enabled            bool                        `yaml:"enabled"`
+	OutputDir          string                      `yaml:"output_dir"`
+	AudioPathRoot      string                      `yaml:"audio_path_root"`
+	HTTPBaseURL        string                      `yaml:"http_base_url"`
+	TLSSkipVerify      bool                        `yaml:"tls_skip_verify"`
+	TimeoutMS          int                         `yaml:"timeout_ms"`
+	VoiceID            string                      `yaml:"voice_id"`
+	Speed              float64                     `yaml:"speed"`
+	ProviderParams     map[string]any              `yaml:"provider_params"`
+	ProviderPriority   []string                    `yaml:"provider_priority"` // e.g. irodori
+	PlaybackCommands   []TTSCommandConfig          `yaml:"playback_commands"`
+	SBV2               TTSSBV2Config               `yaml:"sbv2"`
+	Irodori            TTSIrodoriConfig            `yaml:"irodori"`
+	PronunciationCheck TTSPronunciationCheckConfig `yaml:"pronunciation_check"`
+	Azure              TTSAzureConfig              `yaml:"azure"`
+	Eleven             TTSElevenLabsConfig         `yaml:"eleven"`
+}
+
+type TTSPronunciationCheckConfig struct {
+	Enabled               bool   `yaml:"enabled"`
+	ToolBaseURL           string `yaml:"tool_base_url"`
+	Schedule              string `yaml:"schedule"`
+	GPUMatch              string `yaml:"gpu_match"`
+	MinFreeMB             int    `yaml:"min_free_mb"`
+	MaxUtilizationPercent int    `yaml:"max_utilization_percent"`
+	IdleSamples           int    `yaml:"idle_samples"`
+	SampleIntervalSeconds int    `yaml:"sample_interval_seconds"`
+	RetryIntervalSeconds  int    `yaml:"retry_interval_seconds"`
+	TimeoutMinutes        int    `yaml:"timeout_minutes"`
 }
 
 type STTConfig struct {

@@ -320,13 +320,12 @@ heartbeat:
 
 # TTS実行能力（OpenClaw parity）
 # 音声サーバメモ:
-# - RenCrow_TTS と RenCrow_STT は同一ホストを使用する
-# - 共通IP: 192.168.1.31
+# - RenCrow_STTはMac、RenCrow_TTSはRTX機で分離する
 # - STT Health: https://192.168.1.31:8443/health
 # - STT Stream: wss://192.168.1.31:8443/stt/stream
 # - STT File:   https://192.168.1.31:8443/stt/file
 # - STT Chat:   https://192.168.1.31:8443/stt/chat-input
-# - TTS Go Gateway: http://192.168.1.31:7870/api/tts
+# - TTS Go Gateway: http://192.168.1.205:7870/api/tts
 # - Irodori targetはGatewayから接続し、COREから直接参照しない
 # - 自己署名証明書のため curl は -k を付ける
 tts:
@@ -335,7 +334,7 @@ tts:
   # Optional: map relative audio_path (e.g. cache\\xxx.wav) to local playable path.
   # Example on Linux with mounted Windows drive: /mnt/e/GenerativeAI/Style-Bert-VITS2
   audio_path_root: ""
-  http_base_url: "http://192.168.1.31:7870"
+  http_base_url: "http://192.168.1.205:7870"
   ws_url: ""
   connect_timeout_ms: 3000
   receive_timeout_ms: 15000
@@ -348,13 +347,25 @@ tts:
   playback_commands: []
   irodori:
     enabled: true
-    base_url: "http://192.168.1.31:7870"
+    base_url: "http://192.168.1.205:7870"
     endpoint_path: "/api/tts"
     voice_id: "mio"
     voice_name: "Mio"
     # New Irodori API: client sends only voice/style/text.
     # Voice profiles, reference audio, seed and generation parameters are managed server-side.
     timeout_sec: 120
+  # CORE Scheduler owns execution timing. The cron expression is UTC (19:30 UTC = 04:30 JST).
+  pronunciation_check:
+    enabled: true
+    tool_base_url: "http://192.168.1.205:7892"
+    schedule: "cron 30 19 * * *"
+    gpu_match: "RTX 5060 Ti"
+    min_free_mb: 768
+    max_utilization_percent: 10
+    idle_samples: 5
+    sample_interval_seconds: 2
+    retry_interval_seconds: 300
+    timeout_minutes: 45
   azure:
     enabled: false
     endpoint: "${AZURE_TTS_ENDPOINT}"

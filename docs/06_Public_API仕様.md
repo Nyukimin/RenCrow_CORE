@@ -59,6 +59,8 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 
 実際に有効な endpoint は build と config に依存します。process supervisorは`/health/live`だけを再起動判定に使います。利用者向け機能の確認では`/health`と`/viewer/status`も確認し、featureがunavailable/degradedの場合は成功として扱わないでください。
 
+Scheduler run logの`status`は`completed`、`failed`に加えて`deferred`を返す場合があります。`deferred`はGPUなどの実行資源が使用中で、ジョブの`next_run_at`を近い再試行時刻へ更新した状態です。
+
 ## Chat recipient contract
 
 Viewer 通常 chat の宛先は次の値を使用します。

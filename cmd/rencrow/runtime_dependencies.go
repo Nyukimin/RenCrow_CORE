@@ -225,6 +225,7 @@ type Dependencies struct {
 	aiWorkflowStore                viewer.AIWorkflowStore                      // workflow telemetry store
 	schedulerStatus                http.HandlerFunc                            // viewer in-app scheduler API
 	schedulerStore                 viewer.SchedulerStore                       // in-app scheduler persistent store
+	pronunciationCheckCancel       context.CancelFunc                          // TTS pronunciation CORE task
 	knowledgeMemoryStatus          http.HandlerFunc                            // viewer knowledge memory status API
 	personalArchiveCreate          http.HandlerFunc                            // viewer personal archive API
 	creativeKnowledgeCreate        http.HandlerFunc                            // viewer creative knowledge API
@@ -267,6 +268,9 @@ type idleChatStartGate interface {
 
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
+	if d.pronunciationCheckCancel != nil {
+		d.pronunciationCheckCancel()
+	}
 	if d.gameAutoplay != nil {
 		d.gameAutoplay.Stop()
 	}
@@ -853,6 +857,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		verificationRuntime,
 	)
 	buildHeartbeatRuntime(cfg, deps, agents.Shiro, sessionRuntime.MemoryStore)
+	buildPronunciationCheckRuntime(cfg, deps)
 	deps.extensionHealth = buildExtensionHealthHandler(cfg, deps)
 
 	log.Println("Dependency injection complete")

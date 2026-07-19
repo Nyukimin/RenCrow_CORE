@@ -18,6 +18,10 @@ type SchedulerStore interface {
 }
 
 func HandleScheduler(store SchedulerStore) http.HandlerFunc {
+	return HandleSchedulerWithExecutor(store, nil)
+}
+
+func HandleSchedulerWithExecutor(store SchedulerStore, executor schedulerapp.Executor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if store == nil {
 			http.Error(w, "scheduler store unavailable", http.StatusServiceUnavailable)
@@ -48,14 +52,14 @@ func HandleScheduler(store SchedulerStore) http.HandlerFunc {
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs, "run_logs": logs})
 		case http.MethodPost:
-			handleSchedulerPost(w, r, store)
+			handleSchedulerPost(w, r, store, executor)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	}
 }
 
-func handleSchedulerPost(w http.ResponseWriter, r *http.Request, store SchedulerStore) {
+func handleSchedulerPost(w http.ResponseWriter, r *http.Request, store SchedulerStore, executor schedulerapp.Executor) {
 	var req struct {
 		Action     string              `json:"action"`
 		Job        domainscheduler.Job `json:"job"`
@@ -68,7 +72,7 @@ func handleSchedulerPost(w http.ResponseWriter, r *http.Request, store Scheduler
 		http.Error(w, "invalid scheduler payload: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	svc := schedulerapp.NewService(store, nil)
+	svc := schedulerapp.NewService(store, executor)
 	switch strings.TrimSpace(req.Action) {
 	case "create":
 		job, err := svc.CreateJob(r.Context(), req.Job)

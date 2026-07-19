@@ -2331,6 +2331,19 @@ tts:
 	}
 }
 
+func TestPronunciationCheckDefaults(t *testing.T) {
+	cfg := &Config{}
+	cfg.TTS.PronunciationCheck.Enabled = true
+	cfg.setDefaults()
+	got := cfg.TTS.PronunciationCheck
+	if got.ToolBaseURL != "http://127.0.0.1:7892" || got.Schedule != "cron 30 19 * * *" {
+		t.Fatalf("pronunciation check defaults = %+v", got)
+	}
+	if got.GPUMatch != "RTX 5060 Ti" || got.MinFreeMB != 768 || got.IdleSamples < 2 {
+		t.Fatalf("pronunciation GPU defaults = %+v", got)
+	}
+}
+
 func TestLoadConfig_VTuberSettings(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "vtuber.yaml")
