@@ -1,1 +1,9 @@
 config/config.yaml.example
+# === RenCrow_GAMES 連携 (マルチペルソナ WP6) ===
+# ペルソナの自発プレイ。ペースは固定間隔ではなく LLM が
+# next_check_minutes で自己決定する (RenCrow_GAMES/docs/10)。
+games:
+  auto_play:
+    enabled: false                     # true で自発プレイを有効化 (LLM プロバイダ必須)
+    personas: [mio, shiro, midori]     # 常時参加できるペルソナ
+    max_sessions_per_day: 8            # 1 日の安全上限

@@ -87,6 +87,7 @@ type Dependencies struct {
 	viewerGamesEvents              http.HandlerFunc                            // RenCrow_GAMES candidate event observer API
 	viewerGamesObserverPage        http.HandlerFunc                            // RenCrow_GAMES live observer UI proxy page
 	viewerGamesLaunch              http.HandlerFunc                            // RenCrow_GAMES launch proxy (マルチペルソナ WP5)
+	gameAutoplay                   *viewer.GameAutoplayService                 // ペルソナ自発プレイランナー (マルチペルソナ WP6)
 	viewerGamesObserverProxy       http.HandlerFunc                            // RenCrow_GAMES live observer API proxy
 	live2DChatResponder            viewer.Live2DChatResponder                  // viewer Live2D chat -> orchestrator adapter
 	historyRepairJSONL             http.HandlerFunc                            // viewer JSONL history repair API
@@ -266,6 +267,9 @@ type idleChatStartGate interface {
 
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
+	if d.gameAutoplay != nil {
+		d.gameAutoplay.Stop()
+	}
 	if d.eventLogGC != nil {
 		d.eventLogGC.Stop()
 	}

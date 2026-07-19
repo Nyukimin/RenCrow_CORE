@@ -84,6 +84,25 @@ func buildViewerRuntimeHandlers(
 		ObserverBaseURL: gameObserverProxyOptions.ObserverBaseURL,
 		Store:           gameBridgeStore,
 	})
+	// ペルソナ自発プレイ (マルチペルソナ WP6)。LLM プロバイダが無ければ
+	// 起動しない（「遊びたい」は判断であり、ランダムでは代替しない）。
+	if cfg.Games.AutoPlay.Enabled && gameDecisionProvider != nil {
+		autoplayOptions := viewer.GameAutoplayOptions{
+			Provider: gameDecisionProvider,
+			Launch: viewer.GameLaunchOptions{
+				ObserverBaseURL: gameObserverProxyOptions.ObserverBaseURL,
+				Store:           gameBridgeStore,
+			},
+			Personas:          cfg.Games.AutoPlay.Personas,
+			MaxSessionsPerDay: cfg.Games.AutoPlay.MaxSessionsPerDay,
+		}
+		if gameBridgeStore != nil {
+			autoplayOptions.Recall = gameBridgeStore
+		}
+		deps.gameAutoplay = viewer.NewGameAutoplayService(autoplayOptions)
+		deps.gameAutoplay.Start()
+		log.Printf("Games autoplay enabled: personas=%v provider=%s", cfg.Games.AutoPlay.Personas, gameDecisionProvider.Name())
+	}
 
 	hub := viewer.NewEventHub(200)
 	deps.eventHub = hub

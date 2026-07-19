@@ -33,6 +33,9 @@ type Config struct {
 	// === Runtime module placement source of truth ===
 	RuntimeTopology RuntimeTopologyConfig `yaml:"runtime_topology"`
 
+	// === RenCrow_GAMES 連携 (マルチペルソナ WP6) ===
+	Games GamesConfig `yaml:"games"`
+
 	// === Optional Webwright browser-backed fetch bridge ===
 	WebwrightFetch WebwrightFetchConfig `yaml:"webwright_fetch"`
 

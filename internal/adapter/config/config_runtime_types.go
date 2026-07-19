@@ -196,3 +196,21 @@ type ComfyUIConfig struct {
 	PollIntervalSec int    `yaml:"poll_interval_sec"`
 	TimeoutSec      int    `yaml:"timeout_sec"`
 }
+
+// GamesConfig は RenCrow_GAMES 連携の設定（マルチペルソナ WP6）。
+type GamesConfig struct {
+	AutoPlay GamesAutoPlayConfig `yaml:"auto_play"`
+}
+
+// GamesAutoPlayConfig はペルソナの自発プレイ（autoplay ランナー）の設定。
+// ペースは固定間隔ではなく LLM 自身が next_check_minutes で決める
+// （RenCrow_GAMES/docs/10_RenCrow自発プレイ仕様.md）。
+type GamesAutoPlayConfig struct {
+	// Enabled が false（既定）の間、ランナーは起動しない。
+	Enabled bool `yaml:"enabled"`
+	// Personas は自発プレイに常時参加できるペルソナ。空なら既定
+	// (mio, shiro, midori)。
+	Personas []string `yaml:"personas"`
+	// MaxSessionsPerDay は 1 日の自発起動上限。0 以下は既定 8。
+	MaxSessionsPerDay int `yaml:"max_sessions_per_day"`
+}
