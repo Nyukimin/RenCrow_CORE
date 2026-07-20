@@ -5324,7 +5324,7 @@ test('viewer chat send ignores runtime route aliases and leaves routing to orche
   assert.equal(store.has('chatRouteAlias.selected'), false);
 });
 
-test('viewer chat send uses recipient contract instead of Shiro execution route', () => {
+test('viewer chat send uses Shiro and Midori recipient contracts', () => {
   const rolesJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/roles.js', 'utf8');
   const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
   const store = new Map([['roleSelector.selectedTarget', 'shiro']]);
@@ -5336,7 +5336,7 @@ test('viewer chat send uses recipient contract instead of Shiro execution route'
       removeItem: (key) => store.delete(key),
     },
     renderRoleSelector: () => {},
-    ROLE_TARGETS: [{id: 'mio'}, {id: 'shiro'}, {id: 'coder1'}],
+    ROLE_TARGETS: [{id: 'mio'}, {id: 'shiro'}, {id: 'midori'}, {id: 'coder1'}],
   });
   vm.runInContext(rolesJs, context);
   vm.runInContext(timelineJs, context);
@@ -5346,6 +5346,10 @@ test('viewer chat send uses recipient contract instead of Shiro execution route'
   assert.equal(Object.hasOwn(req, 'model_alias'), false);
   assert.equal(Object.hasOwn(req, 'route_prefix'), false);
   assert.equal(req.message.startsWith('/ops '), false);
+
+  store.set('roleSelector.selectedTarget', 'midori');
+  const midoriReq = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('物語を相談したい'))", context));
+  assert.deepEqual(midoriReq, {message: '物語を相談したい', to: 'midori'});
 });
 
 test('viewer chat legacy coder role target remains explicit route command', () => {
