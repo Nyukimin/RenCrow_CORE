@@ -2,10 +2,8 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strings"
-	"syscall"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
@@ -76,18 +74,4 @@ func loadDotEnv(path string) {
 			os.Setenv(key, val)
 		}
 	}
-}
-
-// protectStdout はstdout fd を通信専用fd として早期確保し、fd1 を stderr にリダイレクトする。
-// これにより CGO ライブラリ等の想定外の stdout 書き込みから JSON 通信チャネルを保護する。
-func protectStdout() io.Writer {
-	fd, err := syscall.Dup(syscall.Stdout)
-	if err != nil {
-		return os.Stdout
-	}
-	if err := syscall.Dup2(syscall.Stderr, syscall.Stdout); err != nil {
-		syscall.Close(fd)
-		return os.Stdout
-	}
-	return os.NewFile(uintptr(fd), "json-out")
 }

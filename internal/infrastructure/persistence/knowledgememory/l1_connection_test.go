@@ -31,6 +31,7 @@ func TestDailyIntakeRegistryAdapterConvertsSourceRegistryEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
+	t.Cleanup(func() { _ = l1.Close() })
 	adapter := NewDailyIntakeRegistryAdapter(l1)
 	saved, err := adapter.SaveSourceRegistryEntry(context.Background(), kmapp.SourceRegistryEntry{
 		SourceID:      "knowledge_memory:daily_intake_rule:rule_1",

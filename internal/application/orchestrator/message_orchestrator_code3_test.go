@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -67,7 +68,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_WithProposal_JSONPatch(t *test
 		{
 			"type": "file_edit",
 			"action": "create",
-			"target": "` + tmpDir + `/test.txt",
+			"target": "` + filepath.ToSlash(tmpDir) + `/test.txt",
 			"content": "Hello, CODE3!"
 		}
 	]`
@@ -176,7 +177,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_RetriesRetryableProposalFailur
 		{
 			"type": "file_edit",
 			"action": "create",
-			"target": "` + tmpDir + `/retry.txt",
+			"target": "` + filepath.ToSlash(tmpDir) + `/retry.txt",
 			"content": "retry ok"
 		}
 	]`
@@ -361,7 +362,7 @@ func TestFormatExecutionResult_SuccessWithGitCommit(t *testing.T) {
 	}
 	shiro := &mockShiroAgent{}
 
-	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + tmpDir + `/test.txt", "content": "Test"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(tmpDir) + `/test.txt", "content": "Test"}]`
 	testProposal := proposal.NewProposal("Test plan", jsonPatch, "Low", "Low")
 
 	coder3 := &mockCoderAgentWithProposal{proposal: testProposal}
@@ -404,7 +405,7 @@ func TestFormatExecutionResult_PartialFailure(t *testing.T) {
 
 	// 最初は成功、2番目は失敗するPatch
 	jsonPatch := `[
-		{"type": "file_edit", "action": "create", "target": "` + tmpDir + `/ok.txt", "content": "OK"},
+		{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(tmpDir) + `/ok.txt", "content": "OK"},
 		{"type": "shell_command", "action": "run", "target": "false"}
 	]`
 

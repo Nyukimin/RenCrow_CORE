@@ -71,7 +71,7 @@ func (s *L1SQLiteStore) CreateUserMemory(ctx context.Context, input domainmemory
 	if err != nil {
 		return nil, err
 	}
-	id := fmt.Sprintf("%s:user_memory:%d", namespace, now.UnixNano())
+	id := fmt.Sprintf("%s:user_memory:%d:%d", namespace, now.UnixNano(), l1IDSequence.Add(1))
 	_, err = s.db.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
 	id, namespace, session_id, thread_id, speaker, message, meta_json,

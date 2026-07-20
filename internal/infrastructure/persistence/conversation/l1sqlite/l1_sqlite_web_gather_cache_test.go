@@ -9,7 +9,7 @@ import (
 
 func TestL1SQLiteStore_WebGatherFetchCacheAndRateState(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}

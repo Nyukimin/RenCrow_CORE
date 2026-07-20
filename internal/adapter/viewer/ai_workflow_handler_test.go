@@ -505,7 +505,7 @@ func TestHandleAIWorkflowProjectInit(t *testing.T) {
 	store := &stubAIWorkflowStore{}
 	scanner := aiworkflowapp.NewProjectScanner(store)
 	rec := httptest.NewRecorder()
-	body := `{"repo_root":"` + root + `","repo_name":"example"}`
+	body := `{"repo_root":"` + filepath.ToSlash(root) + `","repo_name":"example"}`
 
 	HandleAIWorkflowProjectInit(scanner, ".ai").ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/viewer/ai-workflow/project-init", strings.NewReader(body)))
 

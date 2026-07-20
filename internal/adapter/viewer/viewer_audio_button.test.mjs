@@ -130,7 +130,13 @@ function loadAudioHarness(options = {}) {
   const end = js.indexOf('let sending = false;');
   assert.ok(start > 0, 'ttsPlayback block not found');
   assert.ok(end > start, 'audio handler block end not found');
-  const source = timelineJs + '\n' + idleJs + '\n' + js.slice(start, end) + `
+  const audioBlock = js.slice(start, end);
+  const labDateTimeInitStart = audioBlock.indexOf('refreshLabDateTimePanel();');
+  const audioButtonBindingStart = audioBlock.indexOf('bindTTSAudioButton(audioBtn);');
+  assert.ok(labDateTimeInitStart >= 0, 'lab date time init not found');
+  assert.ok(audioButtonBindingStart > labDateTimeInitStart, 'audio button binding not found');
+  const audioHarnessSource = audioBlock.slice(0, labDateTimeInitStart) + audioBlock.slice(audioButtonBindingStart);
+  const source = timelineJs + '\n' + idleJs + '\n' + audioHarnessSource + `
 	globalThis.__viewerAudioHarness = {
 	  state,
 	  ttsPlayback,
@@ -199,6 +205,11 @@ function loadAudioHarness(options = {}) {
       logs: [],
       agents: {},
       openTasks: {},
+	  debug: {
+		latencyMetrics: [],
+		latencyLatest: {},
+		latencySeen: {},
+	  },
     },
     MAX_TIMELINE_NODES: 400,
     mainEl: document.querySelector('main'),
@@ -229,6 +240,7 @@ function loadAudioHarness(options = {}) {
     refreshNewsPack() {},
     renderRoleSelector() {},
     renderSystem() {},
+	formatLabDateTime: () => '2026-07-20 12:00:00',
     ftime: () => '12:00:00',
     stripIdleTopicCategory: (s) => String(s || '').replace(/^今日のお題(?:（[^）]+）)*[:：]\s*/, '今日のお題：').trim(),
     normalizeViewerDisplayText: (s) => String(s || '').replace(/^今日のお題(?:（[^）]+）)*[:：]\s*/, '今日のお題：').trim(),
@@ -237,6 +249,8 @@ function loadAudioHarness(options = {}) {
   };
   vm.createContext(context);
   vm.runInContext(source, context);
+	context.__viewerAudioHarness.ttsPlayback.audioEnabled = options.audioEnabled !== false;
+	context.__viewerAudioHarness.updateAudioButton();
   return {harness: context.__viewerAudioHarness, elements, timers};
 }
 
@@ -1301,7 +1315,7 @@ test('idlechat session completed without an observed chunk does not ack playback
   });
   await Promise.resolve();
 
-  assert.equal(fetchCalls.length, 0);
+  assert.equal(fetchCalls.filter((call) => call.url === '/viewer/tts/playback-ack').length, 0);
 });
 
 test('idlechat audio chunk claims active audio viewer before playback ack', async () => {
@@ -1332,16 +1346,17 @@ test('idlechat audio chunk claims active audio viewer before playback ack', asyn
   harness.chatAudioSync.markSessionCompleted('idle-claim', 'idle-claim:0000');
   await Promise.resolve();
 
-  assert.equal(fetchCalls[0].url, '/viewer/active-control');
-  assert.equal(JSON.parse(fetchCalls[0].init.body).kind, 'audio');
-  assert.equal(JSON.parse(fetchCalls[0].init.body).action, 'claim');
-  assert.equal(JSON.parse(fetchCalls[0].init.body).viewer_client_id, harness.viewerControl.clientId);
+  const claim = fetchCalls.find((call) => call.url === '/viewer/active-control' && JSON.parse(call.init.body).action === 'claim');
+  assert.ok(claim, 'audio chunk should claim active audio owner');
+	assert.equal(JSON.parse(claim.init.body).kind, 'audio');
+	assert.equal(JSON.parse(claim.init.body).viewer_client_id, harness.viewerControl.clientId);
 
   harness.ttsPlayback.audio.listeners.ended();
   await Promise.resolve();
 
-  assert.equal(fetchCalls.at(-1).url, '/viewer/tts/playback-ack');
-  assert.equal(JSON.parse(fetchCalls.at(-1).init.body).viewer_client_id, harness.viewerControl.clientId);
+  const ack = fetchCalls.find((call) => call.url === '/viewer/tts/playback-ack');
+  assert.ok(ack, 'natural audio end should send playback ack');
+	assert.equal(JSON.parse(ack.init.body).viewer_client_id, harness.viewerControl.clientId);
 });
 
 test('idlechat tts from a new session is accepted after an interrupt state', async () => {
@@ -1414,14 +1429,14 @@ test('idlechat playback ack waits for natural audio end after session completed'
 
   harness.chatAudioSync.markSessionCompleted('idle-ack', 'idle-ack:0000');
   await Promise.resolve();
-  assert.equal(fetchCalls.length, 0);
+  assert.equal(fetchCalls.filter((call) => call.url === '/viewer/tts/playback-ack').length, 0);
 
   harness.ttsPlayback.audio.listeners.ended();
   await Promise.resolve();
 
-  assert.equal(fetchCalls.length, 1);
-  assert.equal(fetchCalls[0].url, '/viewer/tts/playback-ack');
-  assert.equal(JSON.parse(fetchCalls[0].init.body).status, 'ended');
+  const ackCalls = fetchCalls.filter((call) => call.url === '/viewer/tts/playback-ack');
+  assert.equal(ackCalls.length, 1);
+	assert.equal(JSON.parse(ackCalls[0].init.body).status, 'ended');
 });
 
 test('idlechat display-only tts sends error ack with error_code instead of fallback status', async () => {

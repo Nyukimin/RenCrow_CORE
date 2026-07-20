@@ -47,7 +47,7 @@ func (s *L1SQLiteStore) SaveMessage(ctx context.Context, sessionID string, threa
 	if err != nil {
 		return err
 	}
-	id := fmt.Sprintf("%s:%d:%d:%s", sessionID, threadID, createdAt.UnixNano(), msg.Speaker)
+	id := fmt.Sprintf("%s:%d:%d:%s:%d", sessionID, threadID, createdAt.UnixNano(), msg.Speaker, l1IDSequence.Add(1))
 	event := L1MemoryEvent{
 		ID:          id,
 		Namespace:   namespace,
@@ -167,7 +167,7 @@ func (s *L1SQLiteStore) PromoteMemoryToNamespace(ctx context.Context, id string,
 		return nil, err
 	}
 	promoted := &L1MemoryEvent{
-		ID:          fmt.Sprintf("%s:%s:%d", targetNamespace, source.ID, now.UnixNano()),
+		ID:          fmt.Sprintf("%s:%s:%d:%d", targetNamespace, source.ID, now.UnixNano(), l1IDSequence.Add(1)),
 		Namespace:   targetNamespace,
 		SessionID:   source.SessionID,
 		ThreadID:    source.ThreadID,

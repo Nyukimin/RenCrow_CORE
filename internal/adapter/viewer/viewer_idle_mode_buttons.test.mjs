@@ -125,6 +125,7 @@ globalThis.__idleHarness = {
         return elements.get(id);
       },
       createElement: () => new FakeElement(),
+	  querySelector: () => null,
     },
     localStorage: {
       getItem: (key) => localStore.get(key) || null,

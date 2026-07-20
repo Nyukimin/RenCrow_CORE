@@ -515,7 +515,7 @@ func normalizeDiffPath(path string) string {
 	path = strings.TrimSpace(path)
 	path = strings.TrimPrefix(path, "a/")
 	path = strings.TrimPrefix(path, "b/")
-	return filepath.Clean(path)
+	return filepath.ToSlash(filepath.Clean(path))
 }
 
 func resolveApplyRoot(root string) (string, error) {

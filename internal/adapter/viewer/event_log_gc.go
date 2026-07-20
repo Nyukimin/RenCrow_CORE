@@ -120,7 +120,6 @@ func (s *EventLogGCService) RunOnce(_ context.Context, now time.Time) (EventGCRe
 		return report, fmt.Errorf("open source: %w", err)
 	}
 	defer src.Close()
-
 	tmpPath := s.store.path + ".tmp"
 	tmp, err := os.Create(tmpPath)
 	if err != nil {
@@ -192,6 +191,7 @@ func (s *EventLogGCService) RunOnce(_ context.Context, now time.Time) (EventGCRe
 		report.AfterCount++
 	}
 	if err := sc.Err(); err != nil {
+		_ = src.Close()
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 		report.Status = "error"
@@ -199,6 +199,15 @@ func (s *EventLogGCService) RunOnce(_ context.Context, now time.Time) (EventGCRe
 		report.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 		_ = appendGCReport(s.reportPath, report)
 		return report, fmt.Errorf("scan source: %w", err)
+	}
+	if err := src.Close(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		report.Status = "error"
+		report.Error = err.Error()
+		report.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+		_ = appendGCReport(s.reportPath, report)
+		return report, fmt.Errorf("close source: %w", err)
 	}
 	if err := expiredArchive.Close(); err != nil {
 		_ = tmp.Close()

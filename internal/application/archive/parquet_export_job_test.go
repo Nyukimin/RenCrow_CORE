@@ -35,10 +35,10 @@ func TestParquetExportJobRunOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunOnce failed: %v", err)
 	}
-	if store.threadPath != "/tmp/rencrow-archive/20260505T103000Z/thread_summaries.parquet" {
+	if store.threadPath != filepath.Join("/tmp/rencrow-archive", "20260505T103000Z", "thread_summaries.parquet") {
 		t.Fatalf("unexpected thread export path: %s", store.threadPath)
 	}
-	if store.archiveDir != "/tmp/rencrow-archive/20260505T103000Z/l1" {
+	if store.archiveDir != filepath.Join("/tmp/rencrow-archive", "20260505T103000Z", "l1") {
 		t.Fatalf("unexpected l1 archive dir: %s", store.archiveDir)
 	}
 	if result.ThreadSummariesPath != store.threadPath || result.L1ArchivePaths["memory"] == "" {

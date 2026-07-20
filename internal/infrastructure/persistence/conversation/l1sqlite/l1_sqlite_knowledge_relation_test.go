@@ -10,7 +10,7 @@ import (
 )
 
 func TestL1SQLiteStore_KnowledgeRelationTables(t *testing.T) {
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestL1SQLiteStore_KnowledgeRelationTables(t *testing.T) {
 }
 
 func TestL1SQLiteStoreRelatedKnowledgeItemsHonorsHopLimitAndDeduplicatesCycles(t *testing.T) {
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestL1SQLiteStoreRelatedKnowledgeItemsHonorsHopLimitAndDeduplicatesCycles(t
 }
 
 func TestL1SQLiteStoreKnowledgeRelationSummaryAndBatchList(t *testing.T) {
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}

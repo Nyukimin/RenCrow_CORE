@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -41,7 +40,10 @@ func (r *ToolRunner) executeShell(ctx context.Context, args map[string]interface
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd, err := shellCommandContext(ctx, command)
+	if err != nil {
+		return "", fmt.Errorf("command failed: %w", err)
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("command failed: %w, output: %s", err, string(output))

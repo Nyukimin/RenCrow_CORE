@@ -4,12 +4,20 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
+func testCommand(script string) CommandSpec {
+	if runtime.GOOS == "windows" {
+		return CommandSpec{Name: "cmd.exe", Args: []string{"/d", "/s", "/c", script}}
+	}
+	return CommandSpec{Name: "sh", Args: []string{"-c", script}}
+}
+
 func TestCommandPlayer_PlaySuccess(t *testing.T) {
 	p := NewCommandPlayer([]CommandSpec{
-		{Name: "sh", Args: []string{"-c", "exit 0"}},
+		testCommand("exit 0"),
 	})
 	r, err := p.Play(context.Background(), "/tmp/a.wav")
 	if err != nil {
@@ -22,7 +30,7 @@ func TestCommandPlayer_PlaySuccess(t *testing.T) {
 
 func TestCommandPlayer_PlayFailure(t *testing.T) {
 	p := NewCommandPlayer([]CommandSpec{
-		{Name: "sh", Args: []string{"-c", "exit 7"}},
+		testCommand("exit 7"),
 	})
 	r, err := p.Play(context.Background(), "/tmp/a.wav")
 	if err == nil {
@@ -39,9 +47,11 @@ func TestCommandPlayer_ReplacesAudioToken(t *testing.T) {
 	if err := os.WriteFile(audio, []byte("x"), 0644); err != nil {
 		t.Fatalf("write audio failed: %v", err)
 	}
-	p := NewCommandPlayer([]CommandSpec{
-		{Name: "sh", Args: []string{"-c", "test -f {audio}"}},
-	})
+	checkFile := `test -f "{audio}"`
+	if runtime.GOOS == "windows" {
+		checkFile = `if exist {audio} (exit 0) else (exit 1)`
+	}
+	p := NewCommandPlayer([]CommandSpec{testCommand(checkFile)})
 	r, err := p.Play(context.Background(), audio)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)

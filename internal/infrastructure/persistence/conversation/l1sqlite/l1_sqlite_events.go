@@ -29,7 +29,7 @@ func (s *L1SQLiteStore) RecentEvents(ctx context.Context, namespace string, limi
 SELECT id, event_type, namespace, session_id, thread_id, payload_json, source, created_at
 FROM l1_event_log
 WHERE namespace = ?
-ORDER BY created_at DESC
+ORDER BY created_at DESC, rowid DESC
 LIMIT ?
 `, namespace, limit)
 	if err != nil {

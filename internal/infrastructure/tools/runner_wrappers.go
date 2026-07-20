@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"errors"
+	"os"
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
@@ -28,8 +30,11 @@ func classifyV1Error(err error) *tool.ToolResponse {
 	}
 
 	// context.DeadlineExceeded → TIMEOUT
-	if err == context.DeadlineExceeded {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return tool.NewError(tool.ErrTimeout, err.Error(), nil)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return tool.NewError(tool.ErrNotFound, err.Error(), nil)
 	}
 
 	// エラーメッセージによる分類

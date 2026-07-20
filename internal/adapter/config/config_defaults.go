@@ -921,9 +921,9 @@ func archiveSQLitePathFromLegacy(legacyPath string) string {
 	}
 	cleaned := filepath.Clean(legacyPath)
 	if strings.EqualFold(filepath.Ext(cleaned), ".duckdb") {
-		return strings.TrimSuffix(cleaned, filepath.Ext(cleaned)) + "_archive.db"
+		return filepath.ToSlash(strings.TrimSuffix(cleaned, filepath.Ext(cleaned)) + "_archive.db")
 	}
-	return cleaned
+	return filepath.ToSlash(cleaned)
 }
 
 func boolConfigPtr(value bool) *bool {

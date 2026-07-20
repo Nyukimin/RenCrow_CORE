@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -132,7 +131,10 @@ func (c *CompositeRunnerV2) executeRegistered(ctx context.Context, toolName stri
 	ctx, cancel := context.WithTimeout(ctx, registeredToolTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", scriptPath, string(argsJSON))
+	cmd, err := shellScriptCommandContext(ctx, scriptPath, string(argsJSON))
+	if err != nil {
+		return tool.NewError(tool.ErrInternalError, fmt.Sprintf("tool %q failed: %v", toolName, err), nil), nil
+	}
 	output, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {

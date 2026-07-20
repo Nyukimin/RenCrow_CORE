@@ -143,6 +143,9 @@ func (s *ProjectScanner) Run(ctx context.Context, opts ProjectInitOptions) (Proj
 
 func rejectProjectInitUnsafeRoot(absRoot string) error {
 	clean := filepath.Clean(absRoot)
+	if filepath.Dir(clean) == clean {
+		return fmt.Errorf("refusing to project-init broad or system root: %s", clean)
+	}
 	switch clean {
 	case "/", "/home", "/tmp", "/var", "/etc", "/usr", "/System", "/Applications":
 		return fmt.Errorf("refusing to project-init broad or system root: %s", clean)

@@ -154,7 +154,7 @@ func applyDefaults(req modulebrowser.RunRequest, cfg Config) modulebrowser.RunRe
 		req.AllowedOrigins = append([]string(nil), cfg.AllowedOrigins...)
 	}
 	if strings.TrimSpace(req.StorageStatePath) == "" && strings.TrimSpace(req.ProfileID) != "" {
-		req.StorageStatePath = filepath.Join(cfg.ProfileRoot, req.ProfileID, "storage_state.json")
+		req.StorageStatePath = filepath.ToSlash(filepath.Join(cfg.ProfileRoot, req.ProfileID, "storage_state.json"))
 	}
 	if strings.TrimSpace(req.ArtifactDir) == "" && strings.TrimSpace(req.RunID) != "" {
 		req.ArtifactDir = strings.TrimRight(cfg.ArtifactRoot, "/") + "/" + req.RunID

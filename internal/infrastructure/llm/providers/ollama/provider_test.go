@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
@@ -187,18 +188,25 @@ func TestOllamaProviderGenerate_ServerError(t *testing.T) {
 }
 
 func TestOllamaProviderGenerate_Timeout(t *testing.T) {
+	releaseHandler := make(chan struct{})
 	server := newLoadedModelServer(t, "test-model", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/generate" {
 			t.Fatalf("expected path '/api/generate', got '%s'", r.URL.Path)
 		}
 		// タイムアウトをシミュレート（レスポンスを返さない）
-		<-r.Context().Done()
+		select {
+		case <-r.Context().Done():
+		case <-releaseHandler:
+		}
 	})
-	defer server.Close()
+	t.Cleanup(func() {
+		close(releaseHandler)
+		server.Close()
+	})
 
 	provider := NewOllamaProvider(server.URL, "test-model")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100) // 100ms
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
 	req := llm.GenerateRequest{

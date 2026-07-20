@@ -56,7 +56,7 @@ func (s *L1SQLiteStore) PromoteValidatedStagingItemToMemory(ctx context.Context,
 	sessionID := metaString(item.Meta, "session_id")
 	threadID := metaInt64(item.Meta, "thread_id")
 	promoted := &L1MemoryEvent{
-		ID:          fmt.Sprintf("%s:%s:%d", targetNamespace, item.ID, now.UnixNano()),
+		ID:          fmt.Sprintf("%s:%s:%d:%d", targetNamespace, item.ID, now.UnixNano(), l1IDSequence.Add(1)),
 		Namespace:   targetNamespace,
 		SessionID:   sessionID,
 		ThreadID:    threadID,

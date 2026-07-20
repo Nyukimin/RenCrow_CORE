@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
@@ -21,7 +22,11 @@ func (p rawLogStubProvider) Name() string {
 }
 
 func TestRawLogProviderDoesNotWriteProviderCallsToIdleChatRaw(t *testing.T) {
+	resetChatRawLogForTest()
 	dir := t.TempDir()
+	// Cleanup callbacks run in LIFO order. Register this after TempDir so the
+	// open Windows file handle is closed before the directory is removed.
+	t.Cleanup(resetChatRawLogForTest)
 	chatPath := filepath.Join(dir, "chat_raw.log")
 	idlePath := filepath.Join(dir, "IdleChat_raw.log")
 	t.Setenv("RENCROW_CHAT_RAW_LOG", chatPath)
@@ -46,4 +51,15 @@ func TestRawLogProviderDoesNotWriteProviderCallsToIdleChatRaw(t *testing.T) {
 	if _, err := os.Stat(idlePath); !os.IsNotExist(err) {
 		t.Fatalf("provider raw call should not create IdleChat raw log, stat err=%v", err)
 	}
+}
+
+func resetChatRawLogForTest() {
+	chatRawMu.Lock()
+	defer chatRawMu.Unlock()
+	if chatRawFile != nil {
+		_ = chatRawFile.Close()
+	}
+	chatRawFile = nil
+	chatRawErr = nil
+	chatRawOnce = sync.Once{}
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -43,6 +45,17 @@ func (w *workerExecutionService) executeShellCommand(
 }
 
 func workerShellCommand(ctx context.Context, command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		for _, root := range []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)")} {
+			if strings.TrimSpace(root) == "" {
+				continue
+			}
+			bashPath := filepath.Join(root, "Git", "bin", "bash.exe")
+			if _, err := os.Stat(bashPath); err == nil {
+				return exec.CommandContext(ctx, bashPath, "-lc", command)
+			}
+		}
+	}
 	if _, err := exec.LookPath("bash"); err == nil {
 		return exec.CommandContext(ctx, "bash", "-lc", command)
 	}

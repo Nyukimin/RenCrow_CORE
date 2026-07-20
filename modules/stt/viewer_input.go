@@ -93,14 +93,14 @@ func BuildViewerInputArchivePath(archiveDir string, capturedAt time.Time) string
 	if capturedAt.IsZero() {
 		capturedAt = time.Now()
 	}
-	return filepath.Join(defaultString(archiveDir, DefaultViewerArchiveDir), fmt.Sprintf("client_stt_input_%s.wav", capturedAt.Format("20060102_150405")))
+	return filepath.ToSlash(filepath.Join(defaultString(archiveDir, DefaultViewerArchiveDir), fmt.Sprintf("client_stt_input_%s.wav", capturedAt.Format("20060102_150405"))))
 }
 
 func BuildViewerInputRawArchivePath(archiveDir string, capturedAt time.Time) string {
 	if capturedAt.IsZero() {
 		capturedAt = time.Now()
 	}
-	return filepath.Join(defaultString(archiveDir, DefaultViewerArchiveDir), fmt.Sprintf("client_stt_input_%s_raw.wav", capturedAt.Format("20060102_150405")))
+	return filepath.ToSlash(filepath.Join(defaultString(archiveDir, DefaultViewerArchiveDir), fmt.Sprintf("client_stt_input_%s_raw.wav", capturedAt.Format("20060102_150405"))))
 }
 
 func defaultString(value string, fallback string) string {

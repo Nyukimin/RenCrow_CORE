@@ -9,7 +9,7 @@ import (
 )
 
 func TestL1SQLiteStore_UserMemoryCRUD(t *testing.T) {
-	store, err := NewL1SQLiteStore(t.TempDir() + "/l1.db")
+	store, err := NewL1SQLiteStore(l1TestTempDir(t) + "/l1.db")
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestL1SQLiteStore_UserMemoryCRUD(t *testing.T) {
 
 func TestL1SQLiteStore_ListPromptInjectableUserMemories(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestL1SQLiteStore_ListPromptInjectableUserMemories(t *testing.T) {
 }
 
 func TestL1SQLiteStore_UserMemoryRejectsUnsafePromotion(t *testing.T) {
-	store, err := NewL1SQLiteStore(t.TempDir() + "/l1.db")
+	store, err := NewL1SQLiteStore(l1TestTempDir(t) + "/l1.db")
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}

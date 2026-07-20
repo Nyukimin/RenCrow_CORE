@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -3426,8 +3427,9 @@ func validateSkillGovernanceStatus(resp SkillGovernanceStatus) error {
 		}
 		evidencePath := strings.TrimSpace(item.EvidencePath)
 		if evidencePath != "" {
-			clean := filepath.Clean(evidencePath)
-			if filepath.IsAbs(evidencePath) || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+			normalized := strings.ReplaceAll(evidencePath, "\\", "/")
+			clean := path.Clean(normalized)
+			if filepath.IsAbs(evidencePath) || filepath.VolumeName(evidencePath) != "" || clean == ".." || strings.HasPrefix(clean, "../") {
 				return fmt.Errorf("skill governance status coder_transcript invalid evidence_path")
 			}
 		}

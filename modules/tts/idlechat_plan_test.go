@@ -21,7 +21,7 @@ func TestBuildIdleChatTTSPlanBuildsSessionAndVoiceMetadata(t *testing.T) {
 	if !ok {
 		t.Fatal("expected plan")
 	}
-	if got.SessionID != "idle-1-tts-12345" ||
+	if got.SessionID != "idle-1-tts-12345-idle-1:0001" ||
 		got.PublicSessionID != "idle-1" ||
 		got.ResponseID != "idle-1:0001" ||
 		got.MessageID != "idle-1:msg:0002" ||
@@ -53,6 +53,28 @@ func TestBuildIdleChatTTSPlanDefaultsDisplayAndTimeOfDay(t *testing.T) {
 	}
 	if got.DisplayText != "本文です。" || got.TimeOfDay != "day" {
 		t.Fatalf("unexpected defaults: %+v", got)
+	}
+}
+
+func TestBuildIdleChatTTSPlanDisambiguatesResponsesAtSameTimestamp(t *testing.T) {
+	now := time.Unix(0, 12345)
+	first, firstOK := BuildIdleChatTTSPlan(IdleChatTTSPlanInput{
+		PublicSessionID: "idle-1",
+		ResponseID:      "idle-1:0001",
+		SpeechText:      "一つ目",
+		Now:             now,
+	})
+	second, secondOK := BuildIdleChatTTSPlan(IdleChatTTSPlanInput{
+		PublicSessionID: "idle-1",
+		ResponseID:      "idle-1:0002",
+		SpeechText:      "二つ目",
+		Now:             now,
+	})
+	if !firstOK || !secondOK {
+		t.Fatal("expected both plans")
+	}
+	if first.SessionID == second.SessionID {
+		t.Fatalf("responses at the same timestamp must have distinct session IDs: %q", first.SessionID)
 	}
 }
 

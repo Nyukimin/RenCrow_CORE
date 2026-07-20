@@ -64,7 +64,7 @@ func BuildIdleChatTTSPlan(input IdleChatTTSPlanInput) (IdleChatTTSPlan, bool) {
 		timeOfDay = IdleChatTimeOfDayAt(now)
 	}
 	return IdleChatTTSPlan{
-		SessionID:        fmt.Sprintf("%s-tts-%d", publicSessionID, now.UnixNano()),
+		SessionID:        fmt.Sprintf("%s-tts-%d-%s", publicSessionID, now.UnixNano(), responseID),
 		PublicSessionID:  publicSessionID,
 		ResponseID:       responseID,
 		MessageID:        strings.TrimSpace(input.MessageID),

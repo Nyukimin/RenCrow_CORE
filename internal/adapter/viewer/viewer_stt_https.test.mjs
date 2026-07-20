@@ -125,7 +125,7 @@ test('viewer renders partial and final STT captions outside the chat input', () 
 });
 
 test('viewer renders STT errors in the caption area without keeping stale partial text', () => {
-  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8').replace(/\r\n/g, '\n');
   const css = fs.readFileSync('internal/adapter/viewer/assets/css/viewer.css', 'utf8');
   assert.match(js, /errorCaptionText:\s*''/);
   assert.match(js, /setCaption\('STT error', errorText, 'stt-caption has-text error'\)/);

@@ -14,7 +14,7 @@ import (
 
 func TestL1SQLiteStore_SaveMessageAndRecentByNamespace(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestL1SQLiteStore_SaveMessageAndRecentByNamespace(t *testing.T) {
 
 func TestL1SQLiteStore_DefaultNamespaceAndState(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestL1SQLiteStore_DefaultNamespaceAndState(t *testing.T) {
 
 func TestL1SQLiteStore_RejectsInvalidNamespace(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestL1SQLiteStore_RejectsInvalidNamespace(t *testing.T) {
 
 func TestL1SQLiteStore_UpdateMemoryState(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestL1SQLiteStore_UpdateMemoryState(t *testing.T) {
 
 func TestL1SQLiteStore_RejectsInvalidMemoryState(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestL1SQLiteStore_RejectsInvalidMemoryState(t *testing.T) {
 
 func TestL1SQLiteStore_SaveMessageRejectsMalformedMemoryEvent(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestL1SQLiteStore_SaveMessageRejectsMalformedMemoryEvent(t *testing.T) {
 
 func TestL1SQLiteStore_RecentMemoryRejectsMalformedRows(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -256,7 +256,7 @@ INSERT INTO l1_memory_event (
 
 func TestL1SQLiteStore_SearchCacheFreshHit(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestL1SQLiteStore_SearchCacheFreshHit(t *testing.T) {
 
 func TestL1SQLiteStore_RecentSearchCache(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestL1SQLiteStore_RecentSearchCache(t *testing.T) {
 
 func TestL1SQLiteStore_SearchCacheMissesAfterExpiry(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestL1SQLiteStore_SearchCacheMissesAfterExpiry(t *testing.T) {
 
 func TestL1SQLiteStore_SearchCacheSimilarHitAndInvalidate(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestL1SQLiteStore_SearchCacheSimilarHitAndInvalidate(t *testing.T) {
 
 func TestL1SQLiteStore_SearchCacheRejectsInvalidInput(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -399,7 +399,7 @@ func TestL1SQLiteStore_SearchCacheRejectsInvalidInput(t *testing.T) {
 
 func TestL1SQLiteStore_EventLogAppendAndRecent(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestL1SQLiteStore_EventLogAppendAndRecent(t *testing.T) {
 
 func TestL1SQLiteStore_EventLogRejectsInvalidInput(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -457,7 +457,7 @@ func TestL1SQLiteStore_EventLogRejectsInvalidInput(t *testing.T) {
 
 func TestL1SQLiteStore_SaveMessageAppendsEventLog(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestL1SQLiteStore_SaveMessageAppendsEventLog(t *testing.T) {
 
 func TestL1SQLiteStore_SaveMessageRollsBackWhenEventLogInsertFails(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -516,7 +516,7 @@ func TestL1SQLiteStore_SaveMessageRollsBackWhenEventLogInsertFails(t *testing.T)
 
 func TestL1SQLiteStore_SaveSearchCacheAppendsEventLog(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestL1SQLiteStore_SaveSearchCacheAppendsEventLog(t *testing.T) {
 
 func TestL1SQLiteStore_UpdateMemoryStateAppendsEventLog(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -587,7 +587,7 @@ func TestL1SQLiteStore_UpdateMemoryStateAppendsEventLog(t *testing.T) {
 
 func TestL1SQLiteStore_PromoteMemoryToNamespace(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -645,7 +645,7 @@ func TestL1SQLiteStore_PromoteMemoryToNamespace(t *testing.T) {
 
 func TestL1SQLiteStore_PromoteMemoryRejectsInvalidTargetNamespace(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -658,7 +658,7 @@ func TestL1SQLiteStore_PromoteMemoryRejectsInvalidTargetNamespace(t *testing.T) 
 
 func TestL1SQLiteStore_SaveStagingItemAndRecentByStatus(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -726,7 +726,7 @@ func TestL1SQLiteStore_SaveStagingItemAndRecentByStatus(t *testing.T) {
 
 func TestL1SQLiteStore_SaveStagingItemRejectsInvalidInput(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -774,7 +774,7 @@ func TestL1SQLiteStore_SaveStagingItemRejectsInvalidInput(t *testing.T) {
 
 func TestL1SQLiteStore_ValidateStagingItemMarksValidated(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -828,7 +828,7 @@ func TestL1SQLiteStore_ValidateStagingItemMarksValidated(t *testing.T) {
 
 func TestL1SQLiteStore_ValidateStagingItemRejectsUnsafeCandidate(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -895,7 +895,7 @@ func TestL1SQLiteStore_ValidateStagingItemRejectsUnsafeCandidate(t *testing.T) {
 
 func TestL1SQLiteStore_PromoteValidatedStagingItemToDomainGraph(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -955,7 +955,7 @@ func TestL1SQLiteStore_PromoteValidatedStagingItemToDomainGraph(t *testing.T) {
 
 func TestL1SQLiteStore_DomainGraphAssertionsFiltersAndPagination(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1010,7 +1010,7 @@ func TestL1SQLiteStore_DomainGraphAssertionsFiltersAndPagination(t *testing.T) {
 
 func TestL1SQLiteStore_DomainGraphAssertionsRejectsNegativeOffset(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1055,7 +1055,7 @@ func saveValidatedDomainGraphAssertion(t *testing.T, ctx context.Context, store 
 
 func TestL1SQLiteStore_PromoteValidatedStagingItemToMemory(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1116,7 +1116,7 @@ func TestL1SQLiteStore_PromoteValidatedStagingItemToMemory(t *testing.T) {
 
 func TestL1SQLiteStore_PromoteValidatedStagingItemToMemorySkipsMissingArchive(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1157,7 +1157,7 @@ func TestL1SQLiteStore_PromoteValidatedStagingItemToMemorySkipsMissingArchive(t 
 
 func TestL1SQLiteStore_PromoteValidatedStagingItemToMemoryRollsBackWhenEventLogInsertFails(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1200,7 +1200,7 @@ func TestL1SQLiteStore_PromoteValidatedStagingItemToMemoryRollsBackWhenEventLogI
 
 func TestL1SQLiteStore_ValidateStagingItemAutoPromotesMemoryCandidate(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1251,7 +1251,7 @@ func TestL1SQLiteStore_ValidateStagingItemAutoPromotesMemoryCandidate(t *testing
 
 func TestL1SQLiteStore_PromoteStagingItemRequiresValidatedStatus(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1280,7 +1280,7 @@ func TestL1SQLiteStore_PromoteStagingItemRequiresValidatedStatus(t *testing.T) {
 
 func TestL1SQLiteStore_SourceRegistrySaveListAndTrustScores(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1331,7 +1331,7 @@ func TestL1SQLiteStore_SourceRegistrySaveListAndTrustScores(t *testing.T) {
 
 func TestL1SQLiteStore_DueSourceRegistryEntriesAndFetchStatus(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1383,7 +1383,7 @@ func TestL1SQLiteStore_DueSourceRegistryEntriesAndFetchStatus(t *testing.T) {
 
 func TestL1SQLiteStore_SaveAndRecentRecallTraces(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1412,7 +1412,7 @@ func TestL1SQLiteStore_SaveAndRecentRecallTraces(t *testing.T) {
 
 func TestL1SQLiteStore_StageSourceRegistryFetchToStaging(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1464,7 +1464,7 @@ func TestL1SQLiteStore_StageSourceRegistryFetchToStaging(t *testing.T) {
 
 func TestL1SQLiteStore_SourceRegistryRejectsInvalidInput(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1516,7 +1516,7 @@ func TestL1SQLiteStore_SourceRegistryRejectsInvalidInput(t *testing.T) {
 
 func TestL1SQLiteStore_PromoteValidatedStagingItemToNews(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1577,7 +1577,7 @@ func TestL1SQLiteStore_PromoteValidatedStagingItemToNews(t *testing.T) {
 
 func TestL1SQLiteStore_PromoteValidatedStagingItemToNewsRollsBackWhenEventLogInsertFails(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1620,7 +1620,7 @@ func TestL1SQLiteStore_PromoteValidatedStagingItemToNewsRollsBackWhenEventLogIns
 
 func TestL1SQLiteStore_PromoteNewsRequiresValidatedExternalItem(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1671,7 +1671,7 @@ func TestL1SQLiteStore_PromoteNewsRequiresValidatedExternalItem(t *testing.T) {
 
 func TestL1SQLiteStore_BuildDailyDigestFromNews(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1759,7 +1759,7 @@ func (s *stubKnowledgeVectorSink) SaveL1KnowledgeItem(_ context.Context, item L1
 
 func TestL1SQLiteStore_PromoteKnowledgeSyncsVectorSink(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1802,7 +1802,7 @@ func TestL1SQLiteStore_PromoteKnowledgeSyncsVectorSink(t *testing.T) {
 
 func TestL1SQLiteStore_BuildDailyDigestUsesSummarizer(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1851,7 +1851,7 @@ func TestL1SQLiteStore_BuildDailyDigestUsesSummarizer(t *testing.T) {
 
 func TestL1SQLiteStore_BuildDailyDigestForSlots(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1916,7 +1916,7 @@ func TestL1SQLiteStore_BuildDailyDigestForSlots(t *testing.T) {
 
 func TestL1SQLiteStore_BuildDailyDigestRequiresNews(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1932,7 +1932,7 @@ func TestL1SQLiteStore_BuildDailyDigestRequiresNews(t *testing.T) {
 
 func TestL1SQLiteStore_PromoteValidatedStagingItemToKnowledge(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -1987,7 +1987,7 @@ func TestL1SQLiteStore_PromoteValidatedStagingItemToKnowledge(t *testing.T) {
 
 func TestL1SQLiteStore_PromoteValidatedStagingItemToKnowledgeRollsBackWhenEventLogInsertFails(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -2034,7 +2034,7 @@ func TestL1SQLiteStore_PromoteValidatedStagingItemToKnowledgeRollsBackWhenEventL
 
 func TestL1SQLiteStore_SearchKnowledgeItemsFTS(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -2089,7 +2089,7 @@ func TestL1SQLiteStore_SearchKnowledgeItemsFTS(t *testing.T) {
 
 func TestL1SQLiteStore_SearchWikiPageIndex(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -2147,7 +2147,7 @@ func TestL1SQLiteStore_SearchWikiPageIndex(t *testing.T) {
 
 func TestL1SQLiteStore_SaveWikiPageIndexValidatesPathAndSource(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -2178,7 +2178,7 @@ func TestL1SQLiteStore_SaveWikiPageIndexValidatesPathAndSource(t *testing.T) {
 
 func TestL1SQLiteStore_PromoteKnowledgeRequiresValidatedItem(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -2208,7 +2208,7 @@ func TestL1SQLiteStore_PromoteKnowledgeRequiresValidatedItem(t *testing.T) {
 
 func TestL1SQLiteStore_ExportAndImportStagingItemsJSONL(t *testing.T) {
 	ctx := context.Background()
-	source, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "source.db"))
+	source, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "source.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore source failed: %v", err)
 	}
@@ -2237,7 +2237,7 @@ func TestL1SQLiteStore_ExportAndImportStagingItemsJSONL(t *testing.T) {
 		t.Fatalf("unexpected JSONL output: %q", buf.String())
 	}
 
-	target, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "target.db"))
+	target, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "target.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore target failed: %v", err)
 	}

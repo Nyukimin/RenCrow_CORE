@@ -40,7 +40,7 @@ function sourceBetween(source, startNeedle, endNeedle) {
 
 test('viewer exposes memory inspector and news pack UI hooks', () => {
   const html = fs.readFileSync('internal/adapter/viewer/viewer.html', 'utf8');
-  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8').replace(/\r\n/g, '\n');
   const opsJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/ops.js', 'utf8');
   const memoryJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/memory.js', 'utf8');
   const newsPackJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/news-pack.js', 'utf8');

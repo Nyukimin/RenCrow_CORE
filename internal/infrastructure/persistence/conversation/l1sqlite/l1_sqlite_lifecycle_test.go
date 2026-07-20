@@ -17,7 +17,7 @@ import (
 
 func TestL1SQLiteStore_RunMemoryLifecycleMaintenance(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestL1SQLiteStore_RunMemoryLifecycleMaintenance(t *testing.T) {
 
 func TestL1SQLiteStore_RunMemoryLifecycleMaintenanceExecutesVectorCleanup(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestL1SQLiteStore_RunMemoryLifecycleMaintenanceExecutesVectorCleanup(t *tes
 
 func TestL1SQLiteStore_RunMemoryLifecycleMaintenanceBuildsMonthlyHighlightsAndThreadSeeds(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestL1SQLiteStore_RunMemoryLifecycleMaintenanceBuildsMonthlyHighlightsAndTh
 
 func TestL1SQLiteStore_RunMemoryLifecycleMaintenanceUsesDomainDecayPolicy(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestL1SQLiteStore_AcceleratedVerificationDB(t *testing.T) {
 
 func TestL1SQLiteStore_MemoryRetentionQualityEvalOneYear(t *testing.T) {
 	ctx := context.Background()
-	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}

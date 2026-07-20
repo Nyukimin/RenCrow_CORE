@@ -334,7 +334,7 @@ func TestViewerResponsiveBreakpointsUseViewportShape(t *testing.T) {
 		t.Fatalf("read desk.css: %v", err)
 	}
 	viewerCSS := string(viewerData)
-	deskCSS := string(deskData)
+	deskCSS := strings.ReplaceAll(string(deskData), "\r\n", "\n")
 	narrowQuery := `@media (max-width: 900px), (max-aspect-ratio: 21/20)`
 
 	if !strings.Contains(viewerCSS, narrowQuery) {

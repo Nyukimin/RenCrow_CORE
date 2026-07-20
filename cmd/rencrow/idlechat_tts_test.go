@@ -525,6 +525,14 @@ func TestEmitIdleChatTTSAsyncSerializesIdleSpeech(t *testing.T) {
 }
 
 func TestEmitIdleChatTTSAsyncPrefetchesWithoutPlaybackCompletion(t *testing.T) {
+	clearAllIdleChatTTSPending()
+	resetTTSPublicSessionStateForTest()
+	setIdleChatViewerClientCount(func() int { return 1 })
+	t.Cleanup(func() {
+		setIdleChatViewerClientCount(nil)
+		clearAllIdleChatTTSPending()
+		resetTTSPublicSessionStateForTest()
+	})
 	bridge := &idleChatMockTTSBridge{notifyOnEnd: false}
 
 	first := emitIdleChatTTSAsync(bridge, idlechat.TimelineEvent{

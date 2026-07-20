@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+var l1IDSequence atomic.Uint64
 
 const (
 	MemoryStateObserved  = "observed"
@@ -129,7 +132,7 @@ func appendL1EventLog(ctx context.Context, execer l1SQLExecer, eventType string,
 	}
 	now := time.Now().UTC()
 	entry := &L1EventLogEntry{
-		ID:        fmt.Sprintf("%s:%s:%d", namespace, eventType, now.UnixNano()),
+		ID:        fmt.Sprintf("%s:%s:%d:%d", namespace, eventType, now.UnixNano(), l1IDSequence.Add(1)),
 		EventType: eventType,
 		Namespace: namespace,
 		SessionID: sessionID,

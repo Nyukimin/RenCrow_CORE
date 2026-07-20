@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -297,16 +298,19 @@ func enrichedEnv() []string {
 	extra := []string{
 		filepath.Join(home, ".local", "bin"),
 		filepath.Join(home, "go", "bin"),
-		"/usr/local/go/bin",
 	}
+	if runtime.GOOS != "windows" {
+		extra = append(extra, "/usr/local/go/bin")
+	}
+	separator := string(os.PathListSeparator)
 	// 既存 PATH に追記
 	for i, e := range env {
 		if current, ok := strings.CutPrefix(e, "PATH="); ok {
-			env[i] = "PATH=" + strings.Join(extra, ":") + ":" + current
+			env[i] = "PATH=" + strings.Join(extra, separator) + separator + current
 			return env
 		}
 	}
-	env = append(env, "PATH="+strings.Join(extra, ":")+":"+os.Getenv("PATH"))
+	env = append(env, "PATH="+strings.Join(extra, separator)+separator+os.Getenv("PATH"))
 	return env
 }
 

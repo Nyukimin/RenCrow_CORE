@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,14 @@ type failingWriter struct{}
 
 func (w *failingWriter) Write(p []byte) (int, error) { return 0, fmt.Errorf("write error") }
 func (w *failingWriter) Close() error                { return nil }
+
+func setTestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
+}
 
 // === sshDialer / sshClient / sshSession モック ===
 
@@ -206,9 +215,7 @@ func TestSSHTransport_SendWithoutConnection(t *testing.T) {
 func TestSSHTransport_GetHostKeyCallback_NoKnownHosts(t *testing.T) {
 	// HOME を known_hosts が無いtmpdirに変更
 	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	setTestHome(t, tmpHome)
 
 	st := NewSSHTransport("192.168.1.100:22", "user", "/path/to/key", "worker")
 	defer st.Close()
@@ -232,9 +239,7 @@ func TestSSHTransport_GetHostKeyCallback_WithKnownHosts(t *testing.T) {
 	knownHostsPath := filepath.Join(sshDir, "known_hosts")
 	os.WriteFile(knownHostsPath, []byte(""), 0600)
 
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	setTestHome(t, tmpHome)
 
 	st := NewSSHTransport("192.168.1.100:22", "user", "/path/to/key", "worker")
 	defer st.Close()
@@ -381,16 +386,14 @@ func TestSSHTransport_IsHealthy_WhileReconnecting(t *testing.T) {
 func TestSSHTransport_StrictHostKey_NoKnownHosts(t *testing.T) {
 	// HOME を known_hosts が無いtmpdirに変更
 	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	setTestHome(t, tmpHome)
 
 	st := NewSSHTransportStrict("192.168.1.100:22", "user", "/path/to/key", "worker", true)
 	defer st.Close()
 
 	_, err := st.getHostKeyCallback()
 	if err == nil {
-		t.Error("Expected error with strict_host_key=true and no known_hosts")
+		t.Fatal("Expected error with strict_host_key=true and no known_hosts")
 	}
 	if !strings.Contains(err.Error(), "strict_host_key=true") {
 		t.Errorf("Error should mention strict_host_key, got: %v", err)
@@ -403,9 +406,7 @@ func TestSSHTransport_StrictHostKey_WithKnownHosts(t *testing.T) {
 	os.MkdirAll(sshDir, 0700)
 	os.WriteFile(filepath.Join(sshDir, "known_hosts"), []byte(""), 0600)
 
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	setTestHome(t, tmpHome)
 
 	st := NewSSHTransportStrict("192.168.1.100:22", "user", "/path/to/key", "worker", true)
 	defer st.Close()
@@ -563,9 +564,7 @@ func TestEstablishConnection_ParseKeyError(t *testing.T) {
 func TestEstablishConnection_DialError(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	setTestHome(t, tmpHome)
 
 	keyPath := generateTestKeyFile(t, tmpDir)
 
@@ -586,9 +585,7 @@ func TestEstablishConnection_DialError(t *testing.T) {
 func TestEstablishConnection_NewSessionError(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	setTestHome(t, tmpHome)
 
 	keyPath := generateTestKeyFile(t, tmpDir)
 	mockClient := &mockSSHClient{sessionErr: fmt.Errorf("session creation failed")}
@@ -613,9 +610,7 @@ func TestEstablishConnection_NewSessionError(t *testing.T) {
 func TestEstablishConnection_StdinPipeError(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	setTestHome(t, tmpHome)
 
 	keyPath := generateTestKeyFile(t, tmpDir)
 	mockSession := &mockSSHSession{stdinPipeErr: fmt.Errorf("stdin pipe failed")}
@@ -644,9 +639,7 @@ func TestEstablishConnection_StdinPipeError(t *testing.T) {
 func TestEstablishConnection_StdoutPipeError(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	setTestHome(t, tmpHome)
 
 	keyPath := generateTestKeyFile(t, tmpDir)
 	mockSession := &mockSSHSession{
@@ -678,9 +671,7 @@ func TestEstablishConnection_StdoutPipeError(t *testing.T) {
 func TestEstablishConnection_StartError(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	setTestHome(t, tmpHome)
 
 	keyPath := generateTestKeyFile(t, tmpDir)
 	pr, _ := io.Pipe()
@@ -714,9 +705,7 @@ func TestEstablishConnection_StartError(t *testing.T) {
 func TestEstablishConnection_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpHome := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpHome)
-	defer os.Setenv("HOME", origHome)
+	setTestHome(t, tmpHome)
 
 	keyPath := generateTestKeyFile(t, tmpDir)
 	pr, pw := io.Pipe()

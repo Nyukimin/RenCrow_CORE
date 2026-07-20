@@ -1,6 +1,7 @@
 package moduleregistry
 
 import (
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,7 +19,7 @@ func NewRegistry(modules []domain.Module) *Registry {
 	for _, m := range modules {
 		m.ID = strings.ToLower(strings.TrimSpace(m.ID))
 		m.DisplayName = strings.TrimSpace(m.DisplayName)
-		m.Root = filepath.Clean(strings.TrimSpace(m.Root))
+		m.Root = cleanModuleRoot(m.Root)
 		if m.ID == "" || seen[m.ID] {
 			continue
 		}
@@ -35,7 +36,7 @@ func DefaultRegistry() *Registry {
 		{
 			ID:             "chat",
 			DisplayName:    "RenCrow_CORE",
-			Root:           filepath.Join(root, "RenCrow_CORE"),
+			Root:           path.Join(root, "RenCrow_CORE"),
 			Kind:           "go",
 			BuildCommand:   "make build",
 			TestCommand:    "go test ./...",
@@ -48,7 +49,7 @@ func DefaultRegistry() *Registry {
 		{
 			ID:             "cli",
 			DisplayName:    "RenCrow_CMD",
-			Root:           filepath.Join(root, "RenCrow_CMD"),
+			Root:           path.Join(root, "RenCrow_CMD"),
 			Kind:           "go",
 			BuildCommand:   "make build",
 			TestCommand:    "go test ./...",
@@ -59,7 +60,7 @@ func DefaultRegistry() *Registry {
 		{
 			ID:          "stt",
 			DisplayName: "RenCrow_STT",
-			Root:        filepath.Join(root, "RenCrow_STT"),
+			Root:        path.Join(root, "RenCrow_STT"),
 			Kind:        "mixed",
 			OwnerRoute:  "CODE",
 			Aliases:     []string{"rencrow_stt", "stt", "音声認識", "音声入力", "streaming transcript", "字幕"},
@@ -67,7 +68,7 @@ func DefaultRegistry() *Registry {
 		{
 			ID:          "tts",
 			DisplayName: "RenCrow_TTS",
-			Root:        filepath.Join(root, "RenCrow_TTS"),
+			Root:        path.Join(root, "RenCrow_TTS"),
 			Kind:        "mixed",
 			OwnerRoute:  "CODE",
 			Aliases:     []string{"rencrow_tts", "tts", "音声合成", "読み上げ", "口パク", "lipsync"},
@@ -75,7 +76,7 @@ func DefaultRegistry() *Registry {
 		{
 			ID:          "llm",
 			DisplayName: "RenCrow_LLM",
-			Root:        filepath.Join(root, "RenCrow_LLM"),
+			Root:        path.Join(root, "RenCrow_LLM"),
 			Kind:        "mixed",
 			OwnerRoute:  "CODE",
 			Aliases:     []string{"rencrow_llm", "llm", "モデル", "provider", "mlx", "ollama", "openai互換", "model gateway"},
@@ -83,7 +84,7 @@ func DefaultRegistry() *Registry {
 		{
 			ID:          "vision",
 			DisplayName: "RenCrow_Vision",
-			Root:        filepath.Join(root, "RenCrow_Vision"),
+			Root:        path.Join(root, "RenCrow_Vision"),
 			Kind:        "mixed",
 			OwnerRoute:  "CODE",
 			Aliases:     []string{"rencrow_vision", "vision", "画像認識", "動画認識", "vision analysis"},
@@ -91,7 +92,7 @@ func DefaultRegistry() *Registry {
 		{
 			ID:          "image",
 			DisplayName: "RenCrow_Image",
-			Root:        filepath.Join(root, "RenCrow_Image"),
+			Root:        path.Join(root, "RenCrow_Image"),
 			Kind:        "mixed",
 			OwnerRoute:  "CODE",
 			Aliases:     []string{"rencrow_image", "image", "画像生成", "comfyui", "image workflow"},
@@ -99,7 +100,7 @@ func DefaultRegistry() *Registry {
 		{
 			ID:          "tools",
 			DisplayName: "RenCrow_Tools",
-			Root:        filepath.Join(root, "RenCrow_Tools"),
+			Root:        path.Join(root, "RenCrow_Tools"),
 			Kind:        "mixed",
 			TestCommand: "make test",
 			OwnerRoute:  "CODE",
@@ -108,12 +109,20 @@ func DefaultRegistry() *Registry {
 		{
 			ID:          "workspace",
 			DisplayName: "RenCrow_Workspace",
-			Root:        filepath.Join(root, "RenCrow_Workspace"),
+			Root:        path.Join(root, "RenCrow_Workspace"),
 			Kind:        "config",
 			OwnerRoute:  "OPS",
 			Aliases:     []string{"rencrow_workspace", "workspace", "config", "成果物", "共有作業領域"},
 		},
 	})
+}
+
+func cleanModuleRoot(root string) string {
+	root = strings.TrimSpace(root)
+	if strings.HasPrefix(root, "/") {
+		return path.Clean(root)
+	}
+	return filepath.Clean(root)
 }
 
 func (r *Registry) Modules() []domain.Module {

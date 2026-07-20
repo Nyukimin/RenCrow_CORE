@@ -189,8 +189,9 @@ func TestSerenaClientInitializeSendsNotification(t *testing.T) {
 }
 
 func TestEnrichedEnvAddsToolPaths(t *testing.T) {
-	t.Setenv("HOME", "/tmp/rencrow-home")
-	t.Setenv("PATH", "/usr/bin")
+	home := filepath.Join(t.TempDir(), "rencrow-home")
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", filepath.Join(home, "existing-bin"))
 	env := enrichedEnv()
 	var path string
 	for _, item := range env {
@@ -199,7 +200,8 @@ func TestEnrichedEnvAddsToolPaths(t *testing.T) {
 			break
 		}
 	}
-	if !strings.HasPrefix(path, "/tmp/rencrow-home/.local/bin:/tmp/rencrow-home/go/bin:/usr/local/go/bin:") {
+	wantPrefix := strings.Join([]string{filepath.Join(home, ".local", "bin"), filepath.Join(home, "go", "bin")}, string(os.PathListSeparator)) + string(os.PathListSeparator)
+	if !strings.HasPrefix(path, wantPrefix) {
 		t.Fatalf("PATH was not enriched as expected: %q", path)
 	}
 }

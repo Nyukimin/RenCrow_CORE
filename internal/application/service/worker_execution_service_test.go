@@ -16,7 +16,7 @@ import (
 
 func TestWorkerShellCommand_PrefersBashLoginShell(t *testing.T) {
 	cmd := workerShellCommand(context.Background(), "echo ok")
-	if filepath.Base(cmd.Path) != "bash" {
+	if strings.TrimSuffix(filepath.Base(cmd.Path), filepath.Ext(cmd.Path)) != "bash" {
 		t.Skip("bash is not available in test environment")
 	}
 	if len(cmd.Args) < 3 || cmd.Args[1] != "-lc" || cmd.Args[2] != "echo ok" {
@@ -47,7 +47,7 @@ func TestExecuteProposal_Success_JSONPatch(t *testing.T) {
 		{
 			"type": "file_edit",
 			"action": "create",
-			"target": "` + filepath.Join(tmpDir, "test.txt") + `",
+			"target": "` + filepath.ToSlash(filepath.Join(tmpDir, "test.txt")) + `",
 			"content": "Hello, World!"
 		}
 	]`
@@ -193,7 +193,7 @@ func TestExecuteProposal_BlocksSelfServiceRestartBeforeAnyCommandRuns(t *testing
 	service := NewWorkerExecutionService(cfg)
 	markerPath := filepath.Join(tmpDir, "ran.txt")
 	patchJSON := `[
-		{"type":"shell_command","action":"run","target":"echo should-not-run > ` + markerPath + `"},
+		{"type":"shell_command","action":"run","target":"echo should-not-run > ` + filepath.ToSlash(markerPath) + `"},
 		{"type":"shell_command","action":"run","target":"systemctl --user restart rencrow.service"}
 	]`
 
@@ -271,7 +271,7 @@ func TestExecuteFileEdit_Create(t *testing.T) {
 	service := &workerExecutionService{config: cfg}
 
 	testFile := filepath.Join(tmpDir, "create_test.txt")
-	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + testFile + `", "content": "Created"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(testFile) + `", "content": "Created"}]`
 
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	jobID := task.NewJobID()
@@ -306,7 +306,7 @@ func TestExecuteFileEdit_Update(t *testing.T) {
 
 	service := &workerExecutionService{config: cfg}
 
-	jsonPatch := `[{"type": "file_edit", "action": "update", "target": "` + testFile + `", "content": "Updated"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "update", "target": "` + filepath.ToSlash(testFile) + `", "content": "Updated"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	jobID := task.NewJobID()
 
@@ -328,7 +328,7 @@ func TestExecuteFileEdit_UpdateRequiresExistingTarget(t *testing.T) {
 	cfg := config.WorkerConfig{Workspace: tmpDir}
 	service := &workerExecutionService{config: cfg}
 
-	jsonPatch := `[{"type": "file_edit", "action": "update", "target": "` + testFile + `", "content": "package main\n"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "update", "target": "` + filepath.ToSlash(testFile) + `", "content": "package main\n"}]`
 	p := proposal.NewProposal("update missing file", jsonPatch, "", "")
 
 	_, err := service.ExecuteProposal(context.Background(), task.NewJobID(), p)
@@ -348,7 +348,7 @@ func TestExecuteFileEdit_RejectsPlaceholderTarget(t *testing.T) {
 	cfg := config.WorkerConfig{Workspace: tmpDir}
 	service := &workerExecutionService{config: cfg}
 
-	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.Join(tmpDir, "path", "to", "chat_module.go") + `", "content": "package main\n"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(filepath.Join(tmpDir, "path", "to", "chat_module.go")) + `", "content": "package main\n"}]`
 	p := proposal.NewProposal("placeholder file", jsonPatch, "", "")
 
 	_, err := service.ExecuteProposal(context.Background(), task.NewJobID(), p)
@@ -366,7 +366,7 @@ func TestExecuteFileEdit_RejectsGoContentWithoutPackageDeclaration(t *testing.T)
 	cfg := config.WorkerConfig{Workspace: tmpDir}
 	service := &workerExecutionService{config: cfg}
 
-	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + testFile + `", "content": "func main() {}\n"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(testFile) + `", "content": "func main() {}\n"}]`
 	p := proposal.NewProposal("bad go file", jsonPatch, "", "")
 
 	_, err := service.ExecuteProposal(context.Background(), task.NewJobID(), p)
@@ -387,7 +387,7 @@ func TestExecuteFileEdit_RejectsRootGoFileCreation(t *testing.T) {
 	cfg := config.WorkerConfig{Workspace: tmpDir}
 	service := &workerExecutionService{config: cfg}
 
-	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + testFile + `", "content": "package main\n"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(testFile) + `", "content": "package main\n"}]`
 	p := proposal.NewProposal("root go file", jsonPatch, "", "")
 
 	_, err := service.ExecuteProposal(context.Background(), task.NewJobID(), p)
@@ -415,7 +415,7 @@ func TestExecuteFileEdit_Delete(t *testing.T) {
 
 	service := &workerExecutionService{config: cfg}
 
-	jsonPatch := `[{"type": "file_edit", "action": "delete", "target": "` + testFile + `"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "delete", "target": "` + filepath.ToSlash(testFile) + `"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	jobID := task.NewJobID()
 
@@ -444,7 +444,7 @@ func TestExecuteFileEdit_Append(t *testing.T) {
 
 	service := &workerExecutionService{config: cfg}
 
-	jsonPatch := `[{"type": "file_edit", "action": "append", "target": "` + testFile + `", "content": "Line2\n"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "append", "target": "` + filepath.ToSlash(testFile) + `", "content": "Line2\n"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	jobID := task.NewJobID()
 
@@ -471,7 +471,7 @@ func TestExecuteFileEdit_Mkdir(t *testing.T) {
 
 	service := &workerExecutionService{config: cfg}
 
-	jsonPatch := `[{"type": "file_edit", "action": "mkdir", "target": "` + newDir + `"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "mkdir", "target": "` + filepath.ToSlash(newDir) + `"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	jobID := task.NewJobID()
 
@@ -529,7 +529,7 @@ func TestProtectedFile_Error(t *testing.T) {
 
 	// 保護ファイルへの書き込み試行
 	envFile := filepath.Join(tmpDir, ".env")
-	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + envFile + `", "content": "SECRET=xxx"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(envFile) + `", "content": "SECRET=xxx"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	jobID := task.NewJobID()
 
@@ -589,8 +589,8 @@ func TestExecuteFileEdit_Rename(t *testing.T) {
 	jsonPatch := `[{
 		"type": "file_edit",
 		"action": "rename",
-		"target": "` + oldFile + `",
-		"metadata": {"new_name": "` + newFile + `"}
+		"target": "` + filepath.ToSlash(oldFile) + `",
+		"metadata": {"new_name": "` + filepath.ToSlash(newFile) + `"}
 	}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	jobID := task.NewJobID()
@@ -627,8 +627,8 @@ func TestExecuteFileEdit_Copy(t *testing.T) {
 	jsonPatch := `[{
 		"type": "file_edit",
 		"action": "copy",
-		"target": "` + srcFile + `",
-		"metadata": {"destination": "` + destFile + `"}
+		"target": "` + filepath.ToSlash(srcFile) + `",
+		"metadata": {"destination": "` + filepath.ToSlash(destFile) + `"}
 	}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	jobID := task.NewJobID()
@@ -698,7 +698,7 @@ func TestShowExecutionSummary(t *testing.T) {
 	service := NewWorkerExecutionService(cfg)
 
 	jsonPatch := `[
-		{"type": "file_edit", "action": "create", "target": "` + tmpDir + `/test1.txt", "content": "A"},
+		{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(tmpDir) + `/test1.txt", "content": "A"},
 		{"type": "shell_command", "action": "run", "target": "echo test"}
 	]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
@@ -732,7 +732,7 @@ func TestProtectedFile_Skip(t *testing.T) {
 	service := &workerExecutionService{config: cfg}
 
 	envFile := filepath.Join(tmpDir, ".env")
-	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + envFile + `", "content": "SECRET=xxx"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(envFile) + `", "content": "SECRET=xxx"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	jobID := task.NewJobID()
 
@@ -761,7 +761,7 @@ func TestProtectedFile_Log(t *testing.T) {
 	service := &workerExecutionService{config: cfg}
 
 	envFile := filepath.Join(tmpDir, ".env")
-	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + envFile + `", "content": "SECRET=xxx"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(envFile) + `", "content": "SECRET=xxx"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	jobID := task.NewJobID()
 
@@ -796,9 +796,9 @@ func TestStopOnError_vs_ContinueOnError(t *testing.T) {
 		missingFile := filepath.Join(tmpDir, "missing-stop.txt")
 
 		jsonPatch := `[
-			{"type": "file_edit", "action": "create", "target": "` + file1 + `", "content": "OK"},
-			{"type": "file_edit", "action": "delete", "target": "` + missingFile + `"},
-			{"type": "file_edit", "action": "create", "target": "` + file2 + `", "content": "Should not execute"}
+			{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(file1) + `", "content": "OK"},
+			{"type": "file_edit", "action": "delete", "target": "` + filepath.ToSlash(missingFile) + `"},
+			{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(file2) + `", "content": "Should not execute"}
 		]`
 
 		p := proposal.NewProposal("", jsonPatch, "", "")
@@ -834,9 +834,9 @@ func TestStopOnError_vs_ContinueOnError(t *testing.T) {
 		missingFile := filepath.Join(tmpDir, "missing-continue.txt")
 
 		jsonPatch := `[
-			{"type": "file_edit", "action": "create", "target": "` + file3 + `", "content": "OK"},
-			{"type": "file_edit", "action": "delete", "target": "` + missingFile + `"},
-			{"type": "file_edit", "action": "create", "target": "` + file4 + `", "content": "Should execute"}
+			{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(file3) + `", "content": "OK"},
+			{"type": "file_edit", "action": "delete", "target": "` + filepath.ToSlash(missingFile) + `"},
+			{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(file4) + `", "content": "Should execute"}
 		]`
 
 		p := proposal.NewProposal("", jsonPatch, "", "")
@@ -1184,7 +1184,7 @@ func TestExecuteProposal_WithAutoCommit(t *testing.T) {
 	svc := NewWorkerExecutionService(cfg)
 
 	testFile := filepath.Join(tmpDir, "autocommit_test.txt")
-	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + testFile + `", "content": "auto-committed"}]`
+	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(testFile) + `", "content": "auto-committed"}]`
 	p := proposal.NewProposal("Test plan", jsonPatch, "Low", "Low")
 	jobID := task.NewJobID()
 
@@ -1219,8 +1219,8 @@ func TestExecuteProposal_ParallelWithMixedTypes(t *testing.T) {
 
 	// file_edit + shell_command + git_operation の混合
 	jsonPatch := `[
-		{"type": "file_edit", "action": "create", "target": "` + file1 + `", "content": "A"},
-		{"type": "file_edit", "action": "create", "target": "` + file2 + `", "content": "B"},
+		{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(file1) + `", "content": "A"},
+		{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(file2) + `", "content": "B"},
 		{"type": "shell_command", "action": "run", "target": "echo mixed-test"},
 		{"type": "git_operation", "action": "add", "target": "add -A"}
 	]`
