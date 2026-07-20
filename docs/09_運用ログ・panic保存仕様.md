@@ -24,6 +24,29 @@ journalctl --user -u rencrow.service -f
 
 systemdの起動、停止、終了コードと、COREが出力する通常ログ、panic、stackは同じunitの時系列として確認できます。panic時は`GOTRACEBACK=all`を使用し、panicしたgoroutineだけでなく全goroutineのstackをstderrへ出力します。
 
+### Viewer requestの操作元ログ
+
+`POST /viewer/send`の受付、非同期処理開始、完了、errorには、同じ`job_id`と次の操作元fieldを記録します。
+
+```text
+operation_source="RenCrow_PORTAL"
+viewer_client_id="portal-..."
+input_source=stt
+user_id="viewer-user"
+device_name="Linux x86_64"
+source_ip_masked="192.168.1.x"
+source_ip_hash=0123456789abcdef
+user_agent="Mozilla/5.0 ..."
+recipient=mio
+```
+
+- `operation_source`はserverが確認したclient種別、`viewer_client_id`はbrowser tab単位の相関です。
+- `input_source`は`text`、`stt`、または未指定clientの`unknown`です。
+- `user_id`と`device_name`はclient申告の観測値であり、認証・認可には使用しません。現行PORTALの`user_id`は`viewer-user`です。
+- browser APIはhostnameを公開しないため、`device_name`にはOS／platform名を記録します。tabの区別には`viewer_client_id`を使用します。
+- 接続元IPの生値はjournalへ書かず、IPv4末尾octetまたはIPv6 `/64`をマスクした値と、同一接続元を照合する短いSHA-256相関hashを記録します。
+- User-Agentは制御文字を除去し、512文字まで記録します。
+
 ## 7日保持
 
 `rencrow-log-rotate.timer`は1時間ごとに起動し、journalをUTC日付単位のgzipへ書き出します。

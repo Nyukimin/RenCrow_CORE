@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -23,10 +25,17 @@ func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 	}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{
-		"message":"作業手順を相談したい",
-		"to":"shiro"
-	}`))
+			"message":"作業手順を相談したい",
+			"to":"shiro",
+			"viewer_client_id":"portal-tab-1",
+			"input_source":"stt",
+			"user_id":"viewer-user",
+			"device_name":"Linux x86_64"
+		}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-RenCrow-Client", "RenCrow_PORTAL")
+	req.Header.Set("X-Forwarded-For", "203.0.113.42")
+	req.Header.Set("User-Agent", "Mozilla/5.0 test-browser")
 	rec := httptest.NewRecorder()
 	h(rec, req)
 
@@ -42,6 +51,13 @@ func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 			t.Fatalf("normal viewer send response must not include legacy %s: %#v", key, body)
 		}
 	}
+	jobID, _ := body["job_id"].(string)
+	if jobID == "" {
+		t.Fatalf("viewer send response must include job_id: %#v", body)
+	}
+	if body["viewer_client_id"] != "portal-tab-1" || body["recipient"] != "shiro" {
+		t.Fatalf("viewer send response must echo correlation fields: %#v", body)
+	}
 
 	select {
 	case got := <-received:
@@ -50,6 +66,26 @@ func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 		}
 		if got.To != "shiro" {
 			t.Fatalf("recipient = %q, want shiro", got.To)
+		}
+		if got.JobID != jobID || got.ViewerClientID != "portal-tab-1" {
+			t.Fatalf("correlation = job:%q client:%q, want job:%q client:portal-tab-1", got.JobID, got.ViewerClientID, jobID)
+		}
+		want := RequestProvenance{
+			OperationSource: "RenCrow_PORTAL",
+			InputSource:     "stt",
+			UserID:          "viewer-user",
+			DeviceName:      "Linux x86_64",
+			SourceIPMasked:  "203.0.113.x",
+			UserAgent:       "Mozilla/5.0 test-browser",
+		}
+		if got.Provenance.OperationSource != want.OperationSource ||
+			got.Provenance.InputSource != want.InputSource ||
+			got.Provenance.UserID != want.UserID ||
+			got.Provenance.DeviceName != want.DeviceName ||
+			got.Provenance.SourceIPMasked != want.SourceIPMasked ||
+			got.Provenance.SourceIPHash == "" ||
+			got.Provenance.UserAgent != want.UserAgent {
+			t.Fatalf("provenance = %#v, want fields %#v and a non-empty IP hash", got.Provenance, want)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("handler was not called")
@@ -78,6 +114,79 @@ func TestHandleSendRejectsUnknownViewerRecipient(t *testing.T) {
 	case got := <-received:
 		t.Fatalf("handler should not be called, got %#v", got)
 	default:
+	}
+}
+
+func TestHandleSendLogsCorrelationFields(t *testing.T) {
+	var logs bytes.Buffer
+	previousWriter := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(previousWriter)
+
+	completed := make(chan struct{})
+	h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {
+		return "", errors.New("test failure")
+	}, func(req SendRequest, err error) {
+		close(completed)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{
+		"message":"ログ確認",
+		"to":"midori",
+		"viewer_client_id":"portal-tab-log",
+		"input_source":"text",
+		"user_id":"viewer-user",
+		"device_name":"Linux x86_64"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-RenCrow-Client", "RenCrow_PORTAL")
+	req.Header.Set("X-Forwarded-For", "203.0.113.42")
+	req.Header.Set("User-Agent", "Mozilla/5.0 test-browser")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+
+	var body struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	select {
+	case <-completed:
+	case <-time.After(time.Second):
+		t.Fatal("handler was not called")
+	}
+	for _, marker := range []string{
+		"job_id=" + body.JobID,
+		`viewer_client_id="portal-tab-log"`,
+		"recipient=midori",
+		`operation_source="RenCrow_PORTAL"`,
+		"input_source=text",
+		`user_id="viewer-user"`,
+		`device_name="Linux x86_64"`,
+		`source_ip_masked="203.0.113.x"`,
+		"source_ip_hash=",
+		`user_agent="Mozilla/5.0 test-browser"`,
+	} {
+		if !strings.Contains(logs.String(), marker) {
+			t.Fatalf("correlation log marker %q is missing: %s", marker, logs.String())
+		}
+	}
+}
+
+func TestHandleSendRejectsUnknownInputSource(t *testing.T) {
+	h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {
+		return "ok", nil
+	}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{
+		"message":"invalid source",
+		"to":"mio",
+		"input_source":"microphone-ish"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body=%s", rec.Code, rec.Body.String())
 	}
 }
 

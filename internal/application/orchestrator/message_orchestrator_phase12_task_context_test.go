@@ -69,3 +69,22 @@ func TestPhase12TaskContextBuilderBuildsTTSSessionOnlyWhenEnabled(t *testing.T) 
 		t.Fatalf("expected TTS session %q, got %q", expected, ttsSessionID)
 	}
 }
+
+func TestPhase12TaskContextBuilderPreservesProvidedJobID(t *testing.T) {
+	builder := newMessageTaskContextBuilder(
+		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func() bool { return false },
+	)
+
+	_, jobID, _ := builder.Build(ProcessMessageRequest{
+		JobID:       "viewer-job-1",
+		SessionID:   "viewer",
+		Channel:     "viewer",
+		ChatID:      "viewer-user",
+		UserMessage: "こんにちは",
+	})
+
+	if jobID.String() != "viewer-job-1" {
+		t.Fatalf("job ID = %q, want viewer-job-1", jobID.String())
+	}
+}

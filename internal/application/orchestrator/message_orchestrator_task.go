@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
@@ -21,8 +22,15 @@ func newMessageTaskContextBuilder(emit messageEventEmitter, ttsEnabled ttsEnable
 }
 
 func (b *messageTaskContextBuilder) Build(req ProcessMessageRequest) (task.Task, task.JobID, string) {
-	jobID := task.NewJobID()
+	jobID := resolveProcessMessageJobID(req.JobID)
 	return b.BuildWithJobID(req, jobID)
+}
+
+func resolveProcessMessageJobID(raw string) task.JobID {
+	if jobID := strings.TrimSpace(raw); jobID != "" {
+		return task.JobIDFromString(jobID)
+	}
+	return task.NewJobID()
 }
 
 func (b *messageTaskContextBuilder) BuildWithJobID(req ProcessMessageRequest, jobID task.JobID) (task.Task, task.JobID, string) {

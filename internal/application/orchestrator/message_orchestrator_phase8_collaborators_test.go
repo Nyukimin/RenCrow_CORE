@@ -55,7 +55,7 @@ func TestPhase8MessageResponseAssemblerContracts(t *testing.T) {
 		t.Fatalf("expected job ID %s, got %s", jobID.String(), resp.JobID)
 	}
 
-	commandResp := assembler.BuildChatCommand("停止しました")
+	commandResp := assembler.BuildChatCommand("停止しました", jobID)
 	if commandResp.Response != "停止しました" {
 		t.Fatalf("expected chat command response text to be preserved, got %q", commandResp.Response)
 	}
@@ -65,8 +65,8 @@ func TestPhase8MessageResponseAssemblerContracts(t *testing.T) {
 	if commandResp.Confidence != 1.0 {
 		t.Fatalf("expected chat command confidence 1.0, got %f", commandResp.Confidence)
 	}
-	if commandResp.JobID == "" {
-		t.Fatal("expected chat command response to include a job ID")
+	if commandResp.JobID != jobID.String() {
+		t.Fatalf("expected chat command response to preserve job ID %s, got %s", jobID.String(), commandResp.JobID)
 	}
 }
 

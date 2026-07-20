@@ -22,11 +22,11 @@ func (messageResponseAssembler) BuildWithVerification(response string, decision 
 	}
 }
 
-func (messageResponseAssembler) BuildChatCommand(response string) ProcessMessageResponse {
+func (messageResponseAssembler) BuildChatCommand(response string, jobID task.JobID) ProcessMessageResponse {
 	return ProcessMessageResponse{
 		Response:   response,
 		Route:      routing.RouteCHAT,
 		Confidence: 1.0,
-		JobID:      task.NewJobID().String(),
+		JobID:      jobID.String(),
 	}
 }

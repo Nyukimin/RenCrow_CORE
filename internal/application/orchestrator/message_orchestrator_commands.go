@@ -29,6 +29,7 @@ func (h *preRoutingCommandHandler) Handle(ctx context.Context, req ProcessMessag
 	if !cmdResult.Handled {
 		return ProcessMessageResponse{}, false, nil
 	}
-	h.emit("agent.response", "mio", "user", cmdResult.Response, "CHAT", "", req.SessionID, req.Channel, req.ChatID)
-	return h.responses.BuildChatCommand(cmdResult.Response), true, nil
+	jobID := resolveProcessMessageJobID(req.JobID)
+	h.emit("agent.response", "mio", "user", cmdResult.Response, "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+	return h.responses.BuildChatCommand(cmdResult.Response, jobID), true, nil
 }

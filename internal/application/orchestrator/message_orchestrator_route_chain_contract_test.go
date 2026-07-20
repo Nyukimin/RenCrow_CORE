@@ -147,7 +147,9 @@ func TestMessageOrchestrator_RouteChainContract_ChatCommandBypassesRouteDecision
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
 
-	resp, err := orch.ProcessMessage(context.Background(), defaultReq())
+	req := defaultReq()
+	req.JobID = "viewer-command-job"
+	resp, err := orch.ProcessMessage(context.Background(), req)
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
@@ -157,11 +159,18 @@ func TestMessageOrchestrator_RouteChainContract_ChatCommandBypassesRouteDecision
 	if resp.Route != routing.RouteCHAT {
 		t.Fatalf("chat command route = %s, want CHAT", resp.Route)
 	}
+	if resp.JobID != req.JobID {
+		t.Fatalf("chat command job ID = %q, want %q", resp.JobID, req.JobID)
+	}
 	if indexOfEvent(rec.events, "routing.decision", "mio", "", "OPS") >= 0 {
 		t.Fatalf("routing.decision should not be emitted for handled chat command: %#v", rec.events)
 	}
-	if indexOfEvent(rec.events, "agent.response", "mio", "user", "CHAT") < 0 {
+	responseIndex := indexOfEvent(rec.events, "agent.response", "mio", "user", "CHAT")
+	if responseIndex < 0 {
 		t.Fatalf("chat command response event missing: %#v", rec.events)
+	}
+	if rec.events[responseIndex].JobID != req.JobID {
+		t.Fatalf("chat command response event job ID = %q, want %q", rec.events[responseIndex].JobID, req.JobID)
 	}
 }
 

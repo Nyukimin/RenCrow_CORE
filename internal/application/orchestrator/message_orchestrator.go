@@ -28,6 +28,7 @@ import (
 
 // ProcessMessageRequest はメッセージ処理リクエスト
 type ProcessMessageRequest struct {
+	JobID       string
 	SessionID   string
 	Channel     string
 	ChatID      string
@@ -425,8 +426,10 @@ func (o *MessageOrchestrator) ttsEnabled() bool {
 func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (ProcessMessageResponse, error) {
 	latencyStartedAt := time.Now()
 	ctx = contextWithLatencyTrace(ctx, latencyStartedAt)
-	log.Printf("[MessageOrch] ProcessMessage START: sessionID=%s channel=%s chatID=%s message=%q",
-		req.SessionID, req.Channel, req.ChatID, req.UserMessage)
+	jobID := resolveProcessMessageJobID(req.JobID)
+	req.JobID = jobID.String()
+	log.Printf("[MessageOrch] ProcessMessage START: jobID=%s sessionID=%s channel=%s chatID=%s message=%q",
+		jobID.String(), req.SessionID, req.Channel, req.ChatID, req.UserMessage)
 
 	endChatBusy := o.idleBusyGuards.BeginChat()
 	defer endChatBusy()
@@ -454,7 +457,6 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		req = expandedReq
 	}
 
-	jobID := task.NewJobID()
 	o.events.EmitMessageReceived(req, jobID.String())
 	t, jobID, ttsSessionID := o.taskContexts.BuildWithJobID(req, jobID)
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t.WithRoute(routing.RouteRESEARCH), jobID); err != nil {

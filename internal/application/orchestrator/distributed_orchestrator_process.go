@@ -16,8 +16,10 @@ import (
 // ProcessMessage は既存MessageOrchestratorと同じシグネチャでメッセージを処理
 // 分散環境ではTransport経由でAgent間通信を行う
 func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (ProcessMessageResponse, error) {
-	log.Printf("[DistributedOrch] ProcessMessage START: sessionID=%s channel=%s chatID=%s message=%q",
-		req.SessionID, req.Channel, req.ChatID, req.UserMessage)
+	jobID := resolveProcessMessageJobID(req.JobID)
+	req.JobID = jobID.String()
+	log.Printf("[DistributedOrch] ProcessMessage START: jobID=%s sessionID=%s channel=%s chatID=%s message=%q",
+		jobID.String(), req.SessionID, req.Channel, req.ChatID, req.UserMessage)
 	startedAt := time.Now().UTC()
 
 	if o.idleNotifier != nil {
@@ -32,7 +34,6 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		return ProcessMessageResponse{}, fmt.Errorf("failed to load or create session: %w", err)
 	}
 
-	jobID := task.NewJobID()
 	recipient := normalizeProcessViewerRecipient(req.To)
 	o.emit("message.received", "user", recipient, req.UserMessage, "", jobID.String(), req.SessionID, req.Channel, req.ChatID)
 	if expandedReq, handled, err := o.expandRegisteredSlashCommand(ctx, req); err != nil {

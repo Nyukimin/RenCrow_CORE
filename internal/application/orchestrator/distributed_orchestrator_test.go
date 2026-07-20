@@ -176,6 +176,7 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
+		JobID:       "viewer-distributed-job",
 		SessionID:   "test-session",
 		Channel:     "line",
 		ChatID:      "U123",
@@ -188,6 +189,9 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 
 	if resp.Response != "Hello from Mio!" {
 		t.Errorf("Expected 'Hello from Mio!', got '%s'", resp.Response)
+	}
+	if resp.JobID != "viewer-distributed-job" {
+		t.Errorf("JobID = %q, want viewer-distributed-job", resp.JobID)
 	}
 }
 

@@ -13,10 +13,12 @@ import (
 
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 type MessageHandler func(ctx context.Context, req SendRequest) (string, error)
+type MessageErrorHandler func(req SendRequest, err error)
 
 // AttachmentSaver persists uploaded Viewer files before they enter orchestration.
 
@@ -27,18 +29,25 @@ type AttachmentSaver interface {
 // SendRequest is the adapter-neutral payload passed from Viewer to orchestration.
 
 type SendRequest struct {
-	Message     string
-	To          modulechat.ViewerRecipient
-	Attachments []domainattachment.Attachment
+	JobID          string
+	ViewerClientID string
+	Provenance     RequestProvenance
+	Message        string
+	To             modulechat.ViewerRecipient
+	Attachments    []domainattachment.Attachment
 }
 
 type viewerSendRequest struct {
-	Message     string `json:"message"`
-	To          string `json:"to,omitempty"`
-	ModelAlias  string `json:"model_alias,omitempty"`
-	BaseURL     string `json:"base_url,omitempty"`
-	Model       string `json:"model,omitempty"`
-	RoutePrefix string `json:"route_prefix,omitempty"`
+	ViewerClientID string `json:"viewer_client_id,omitempty"`
+	InputSource    string `json:"input_source,omitempty"`
+	UserID         string `json:"user_id,omitempty"`
+	DeviceName     string `json:"device_name,omitempty"`
+	Message        string `json:"message"`
+	To             string `json:"to,omitempty"`
+	ModelAlias     string `json:"model_alias,omitempty"`
+	BaseURL        string `json:"base_url,omitempty"`
+	Model          string `json:"model,omitempty"`
+	RoutePrefix    string `json:"route_prefix,omitempty"`
 }
 
 type viewerLLMAliasSpec struct {
@@ -134,16 +143,14 @@ func viewerEffectiveMessage(req viewerSendRequest) (string, viewerLLMAliasSpec, 
 // HandleSend creates an HTTP handler that receives messages from the viewer input.
 // onError is called with the processing error if the async handler fails (may be nil).
 
-func HandleSend(handler MessageHandler, onError func(error)) http.HandlerFunc {
+func HandleSend(handler MessageHandler, onError MessageErrorHandler) http.HandlerFunc {
 	return HandleSendWithAttachments(handler, onError, nil)
 }
 
 // HandleSendWithAttachments receives text and optional file attachments from the Viewer.
 
-func HandleSendWithAttachments(handler MessageHandler, onError func(error), saver AttachmentSaver) http.HandlerFunc {
+func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[Viewer] HandleSend: received request from %s", r.RemoteAddr)
-
 		if r.Method != http.MethodPost {
 			log.Printf("[Viewer] HandleSend: method not allowed: %s", r.Method)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -168,11 +175,29 @@ func HandleSendWithAttachments(handler MessageHandler, onError func(error), save
 			return
 		}
 		req.To = string(recipient)
+		req.ViewerClientID = strings.TrimSpace(req.ViewerClientID)
+		provenance, err := buildViewerRequestProvenance(r, req)
+		if err != nil {
+			log.Printf("[Viewer] HandleSend: invalid request provenance: %v", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		jobID := task.NewJobID().String()
+		sendReq := SendRequest{
+			JobID:          jobID,
+			ViewerClientID: req.ViewerClientID,
+			Provenance:     provenance,
+			To:             recipient,
+			Attachments:    attachments,
+		}
 
 		effectiveMessage, aliasSpec, aliasApplied := viewerEffectiveMessage(req)
 		if strings.TrimSpace(effectiveMessage) == "" && len(attachments) > 0 {
 			effectiveMessage = defaultAttachmentMessage(attachments)
 		}
+		sendReq.Message = effectiveMessage
+		log.Printf("[Viewer] HandleSend: accepted job_id=%s viewer_client_id=%q recipient=%s attachment_count=%d message_len=%d %s",
+			jobID, req.ViewerClientID, recipient, len(attachments), len([]rune(effectiveMessage)), provenance.LogFields())
 		if aliasApplied {
 			log.Printf("[Viewer] HandleSend: message received: %q alias=%s base_url=%s model=%s route_prefix=%s",
 				req.Message, aliasSpec.ModelAlias, aliasSpec.BaseURL, aliasSpec.Model, aliasSpec.RoutePrefix)
@@ -184,43 +209,58 @@ func HandleSendWithAttachments(handler MessageHandler, onError func(error), save
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
-			log.Printf("[Viewer] HandleSend: starting async handler for message: %q", effectiveMessage)
-			response, err := handler(ctx, SendRequest{Message: effectiveMessage, To: recipient, Attachments: attachments})
+			log.Printf("[Viewer] HandleSend: async start job_id=%s viewer_client_id=%q recipient=%s %s", jobID, req.ViewerClientID, recipient, provenance.LogFields())
+			response, err := handler(ctx, sendReq)
 			if err != nil {
-				log.Printf("[Viewer] HandleSend: handler error: %v", err)
+				log.Printf("[Viewer] HandleSend: async error job_id=%s viewer_client_id=%q recipient=%s %s err=%v", jobID, req.ViewerClientID, recipient, provenance.LogFields(), err)
 				if onError != nil {
-					onError(err)
+					onError(sendReq, err)
 				}
 			} else {
-				log.Printf("[Viewer] HandleSend: handler completed successfully, response length: %d", len(response))
+				log.Printf("[Viewer] HandleSend: async complete job_id=%s viewer_client_id=%q recipient=%s response_len=%d %s", jobID, req.ViewerClientID, recipient, len(response), provenance.LogFields())
 			}
 		}()
 
 		w.Header().Set("Content-Type", "application/json")
 		if aliasApplied {
 			resp := struct {
-				OK          bool   `json:"ok"`
-				ModelAlias  string `json:"model_alias"`
-				BaseURL     string `json:"base_url"`
-				Model       string `json:"model"`
-				RoutePrefix string `json:"route_prefix"`
-				Attachments int    `json:"attachment_count"`
+				OK             bool   `json:"ok"`
+				JobID          string `json:"job_id"`
+				ViewerClientID string `json:"viewer_client_id,omitempty"`
+				Recipient      string `json:"recipient"`
+				ModelAlias     string `json:"model_alias"`
+				BaseURL        string `json:"base_url"`
+				Model          string `json:"model"`
+				RoutePrefix    string `json:"route_prefix"`
+				Attachments    int    `json:"attachment_count"`
 			}{
-				OK:          true,
-				ModelAlias:  aliasSpec.ModelAlias,
-				BaseURL:     aliasSpec.BaseURL,
-				Model:       aliasSpec.Model,
-				RoutePrefix: aliasSpec.RoutePrefix,
-				Attachments: len(attachments),
+				OK:             true,
+				JobID:          jobID,
+				ViewerClientID: req.ViewerClientID,
+				Recipient:      string(recipient),
+				ModelAlias:     aliasSpec.ModelAlias,
+				BaseURL:        aliasSpec.BaseURL,
+				Model:          aliasSpec.Model,
+				RoutePrefix:    aliasSpec.RoutePrefix,
+				Attachments:    len(attachments),
 			}
 			if err := json.NewEncoder(w).Encode(resp); err != nil {
 				log.Printf("[Viewer] HandleSend: response encode error: %v", err)
 			}
 		} else {
 			resp := struct {
-				OK          bool `json:"ok"`
-				Attachments int  `json:"attachment_count"`
-			}{OK: true, Attachments: len(attachments)}
+				OK             bool   `json:"ok"`
+				JobID          string `json:"job_id"`
+				ViewerClientID string `json:"viewer_client_id,omitempty"`
+				Recipient      string `json:"recipient"`
+				Attachments    int    `json:"attachment_count"`
+			}{
+				OK:             true,
+				JobID:          jobID,
+				ViewerClientID: req.ViewerClientID,
+				Recipient:      string(recipient),
+				Attachments:    len(attachments),
+			}
 			if err := json.NewEncoder(w).Encode(resp); err != nil {
 				log.Printf("[Viewer] HandleSend: response encode error: %v", err)
 			}
@@ -263,12 +303,16 @@ func parseViewerMultipartSendRequest(r *http.Request, saver AttachmentSaver) (vi
 		return viewerSendRequest{}, nil, fmt.Errorf("parse multipart: %w", err)
 	}
 	req := viewerSendRequest{
-		Message:     r.FormValue("message"),
-		To:          r.FormValue("to"),
-		ModelAlias:  r.FormValue("model_alias"),
-		BaseURL:     r.FormValue("base_url"),
-		Model:       r.FormValue("model"),
-		RoutePrefix: r.FormValue("route_prefix"),
+		ViewerClientID: r.FormValue("viewer_client_id"),
+		InputSource:    r.FormValue("input_source"),
+		UserID:         r.FormValue("user_id"),
+		DeviceName:     r.FormValue("device_name"),
+		Message:        r.FormValue("message"),
+		To:             r.FormValue("to"),
+		ModelAlias:     r.FormValue("model_alias"),
+		BaseURL:        r.FormValue("base_url"),
+		Model:          r.FormValue("model"),
+		RoutePrefix:    r.FormValue("route_prefix"),
 	}
 
 	files, err := incomingViewerFiles(r.MultipartForm)
