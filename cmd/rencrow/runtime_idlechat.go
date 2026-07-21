@@ -57,6 +57,7 @@ func buildIdleChatRuntime(
 	idleChatOrch.SetSpeakerProviders(map[string]llm.LLMProvider{
 		"mio":        chatProvider,
 		"shiro":      firstNonNilLLMProvider(chatWorkerAliasProvider, workerProvider),
+		"worker":     workerProvider,
 		"chatworker": chatWorkerAliasProvider,
 		"kuro":       heavyProvider,
 		"wild":       wildProvider,

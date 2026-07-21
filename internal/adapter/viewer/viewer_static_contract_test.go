@@ -145,6 +145,7 @@ func TestViewerStaticContractInformationCollectionTab(t *testing.T) {
 		"collection.sources",
 		"collection.enrichment_status",
 		"collection.skill_id",
+		"item.translated_body",
 		"item.summary",
 		"item.term_notes",
 		"item.perspective",
@@ -153,11 +154,12 @@ func TestViewerStaticContractInformationCollectionTab(t *testing.T) {
 			t.Fatalf("collection.js contract missing %q", needle)
 		}
 	}
+	translationIndex := strings.Index(collectionJS, "<strong>原文翻訳</strong>")
 	termNotesIndex := strings.Index(collectionJS, "<strong>用語補足</strong>")
 	summaryIndex := strings.Index(collectionJS, "<strong>サマリ</strong>")
 	perspectiveIndex := strings.Index(collectionJS, "<strong>Shiroの見解</strong>")
-	if termNotesIndex < 0 || summaryIndex < 0 || perspectiveIndex < 0 || !(termNotesIndex < summaryIndex && summaryIndex < perspectiveIndex) {
-		t.Fatalf("collection output order must be 用語補足 -> サマリ -> Shiroの見解")
+	if translationIndex < 0 || summaryIndex < 0 || perspectiveIndex < 0 || termNotesIndex < 0 || !(translationIndex < summaryIndex && summaryIndex < perspectiveIndex && perspectiveIndex < termNotesIndex) {
+		t.Fatalf("collection output order must be 原文翻訳 -> サマリ -> Shiroの見解 -> 用語補足")
 	}
 }
 

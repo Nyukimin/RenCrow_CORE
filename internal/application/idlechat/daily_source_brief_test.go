@@ -43,6 +43,9 @@ func (p *orderedDailyBriefProvider) Generate(_ context.Context, req llm.Generate
 	p.requests = append(p.requests, req)
 	prompt := req.Messages[len(req.Messages)-1].Content
 	switch {
+	case strings.Contains(prompt, "工程: 原文翻訳"):
+		*p.events = append(*p.events, "LLM:原文翻訳")
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"新しいRAG検索支援機能を提供します。LLMへの入力に検索資料を追加し、回答を根拠づけます。"}]}`}, nil
 	case strings.Contains(prompt, "工程: 用語抽出"):
 		*p.events = append(*p.events, "LLM:用語抽出")
 		return llm.GenerateResponse{Content: `{"items":[{"index":0,"terms":[{"term":"LLM","explanation":"文章を生成・理解する大規模言語モデルです。","needs_lookup":false},{"term":"RAG","explanation":"本文だけでは意味を特定できません。","needs_lookup":true,"lookup_query":"RAG 公式 定義"}]}]}`}, nil
@@ -57,7 +60,7 @@ func (p *orderedDailyBriefProvider) Generate(_ context.Context, req llm.Generate
 	}
 }
 
-func (p *orderedDailyBriefProvider) Name() string { return "collection-test-shiro" }
+func (p *orderedDailyBriefProvider) Name() string { return "collection-test-worker" }
 
 func TestBuildDailySourceBriefReadsBodyBeforeSummaryAndSearchesOnlyUnknownTerms(t *testing.T) {
 	articleURL := "https://example.com/articles/rag"
@@ -85,6 +88,7 @@ func TestBuildDailySourceBriefReadsBodyBeforeSummaryAndSearchesOnlyUnknownTerms(
 	}
 	wantEvents := []string{
 		"本文取得:" + articleURL,
+		"LLM:原文翻訳",
 		"LLM:用語抽出",
 		"用語検索:RAG:RAG 公式 定義",
 		"本文取得:" + definitionURL,
@@ -103,17 +107,17 @@ func TestBuildDailySourceBriefReadsBodyBeforeSummaryAndSearchesOnlyUnknownTerms(
 	if got[0].TermNotes[1].Term != "RAG" || got[0].TermNotes[1].SourceURL != definitionURL || got[0].TermNotes[1].Status != "confirmed" {
 		t.Fatalf("検索で確認した用語 = %+v", got[0].TermNotes[1])
 	}
-	if got[0].Summary == "" || got[0].Perspective == "" || got[0].SourceReadStatus != "ready" {
+	if got[0].TranslatedBody == "" || got[0].Summary == "" || got[0].Perspective == "" || got[0].SourceReadStatus != "ready" {
 		t.Fatalf("ブリーフ = %+v", got[0])
 	}
-	if len(provider.requests) != 3 {
+	if len(provider.requests) != 4 {
 		t.Fatalf("LLM呼び出し回数 = %d", len(provider.requests))
 	}
-	resolutionPrompt := provider.requests[1].Messages[len(provider.requests[1].Messages)-1].Content
+	resolutionPrompt := provider.requests[2].Messages[len(provider.requests[2].Messages)-1].Content
 	if !strings.Contains(resolutionPrompt, "RAGは、検索した外部情報") {
 		t.Fatalf("不明語補足は検索先本文を根拠にする必要があります: %s", resolutionPrompt)
 	}
-	finalPrompt := provider.requests[2].Messages[len(provider.requests[2].Messages)-1].Content
+	finalPrompt := provider.requests[3].Messages[len(provider.requests[3].Messages)-1].Content
 	if !strings.Contains(finalPrompt, "検索拡張生成の略") || strings.Contains(finalPrompt, "検索結果のスニペット") {
 		t.Fatalf("最終工程は確定済み用語補足を受け取る必要があります: %s", finalPrompt)
 	}
@@ -142,6 +146,9 @@ func TestBuildDailySourceBriefDoesNotGuessWhenArticleBodyCannotBeRead(t *testing
 	}
 	if got[0].SourceReadStatus != "unavailable" || !strings.Contains(got[0].Summary, "本文を取得できませんでした") {
 		t.Fatalf("本文未取得の明示 = %+v", got[0])
+	}
+	if !strings.Contains(got[0].TranslatedBody, "翻訳できませんでした") {
+		t.Fatalf("本文未取得時は原文翻訳不能を明示する必要があります: %+v", got[0])
 	}
 	if len(got[0].TermNotes) != 1 || got[0].TermNotes[0].Status != "unavailable" {
 		t.Fatalf("用語補足も未確認を明示する必要があります: %+v", got[0].TermNotes)
@@ -176,5 +183,12 @@ func TestParseDailyBriefRejectsNonJapaneseBody(t *testing.T) {
 	_, err := parseDailyBriefResponse(`{"items":[{"index":0,"summary":"This is a summary.","perspective":"This is my view."}]}`, 1)
 	if err == nil {
 		t.Fatal("日本語を含まない本文は拒否する必要があります")
+	}
+}
+
+func TestParseDailyTranslationRejectsNonJapaneseBody(t *testing.T) {
+	_, err := parseDailyTranslationResponse(`{"items":[{"index":0,"translated_body":"This is a translation."}]}`, 1)
+	if err == nil {
+		t.Fatal("日本語を含まない原文翻訳は拒否する必要があります")
 	}
 }

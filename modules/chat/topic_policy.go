@@ -70,9 +70,10 @@ type NewsSeed struct {
 	URL              string         `json:"url,omitempty"`
 	SourceReadStatus string         `json:"source_read_status,omitempty"`
 	SourceReadURL    string         `json:"source_read_url,omitempty"`
-	TermNotes        []NewsTermNote `json:"term_notes,omitempty"`
+	TranslatedBody   string         `json:"translated_body,omitempty"`
 	Summary          string         `json:"summary,omitempty"`
 	Perspective      string         `json:"perspective,omitempty"`
+	TermNotes        []NewsTermNote `json:"term_notes,omitempty"`
 }
 
 // NewsTermNote は、サマリ作成前に確定した用語補足を表す。

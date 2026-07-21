@@ -29,9 +29,10 @@ type DailySeedCollectionItem struct {
 	URL              string                    `json:"url,omitempty"`
 	SourceReadStatus string                    `json:"source_read_status,omitempty"`
 	SourceReadURL    string                    `json:"source_read_url,omitempty"`
-	TermNotes        []modulechat.NewsTermNote `json:"term_notes"`
+	TranslatedBody   string                    `json:"translated_body"`
 	Summary          string                    `json:"summary"`
 	Perspective      string                    `json:"perspective"`
+	TermNotes        []modulechat.NewsTermNote `json:"term_notes"`
 }
 
 // DailySeedCollectionSource describes a configured collection target without secrets.
@@ -116,9 +117,10 @@ func (o *IdleChatOrchestrator) DailySeedCollectionSnapshot(now time.Time) DailyS
 				URL:              strings.TrimSpace(item.URL),
 				SourceReadStatus: strings.TrimSpace(item.SourceReadStatus),
 				SourceReadURL:    strings.TrimSpace(item.SourceReadURL),
-				TermNotes:        append([]modulechat.NewsTermNote(nil), item.TermNotes...),
+				TranslatedBody:   strings.TrimSpace(item.TranslatedBody),
 				Summary:          strings.TrimSpace(item.Summary),
 				Perspective:      strings.TrimSpace(item.Perspective),
+				TermNotes:        append([]modulechat.NewsTermNote(nil), item.TermNotes...),
 			})
 			snapshot.CategoryCounts[category]++
 			snapshot.SourceCounts[source]++

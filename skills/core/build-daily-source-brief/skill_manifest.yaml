@@ -2,13 +2,14 @@ skill:
   id: "core.build-daily-source-brief"
   name: "日次一次情報ブリーフ"
   scope: "core"
-  version: "1.0.0"
-  description: "特定URL本文、用語補足、サマリ、Shiroの見解を日本語で順次生成する。"
+  version: "1.2.0"
+  description: "Workerで特定URLを1件ずつ処理し、原文翻訳、サマリ、Shiroの見解、用語補足を日本語で生成する。"
   human_approval_required: false
   enabled: true
 triggers:
   keywords:
     - "日次情報収集"
+    - "原文翻訳"
     - "用語補足"
     - "収集情報のサマリ"
     - "一次情報ブリーフ"

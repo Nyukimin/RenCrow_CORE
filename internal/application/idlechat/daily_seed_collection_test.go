@@ -15,7 +15,7 @@ func TestDailySeedCollectionSnapshotExposesCachedItemsAndConfiguredSources(t *te
 		Date:           "2026-07-21",
 		WikipediaSeeds: []string{"項目A", "項目B"},
 		NewsSeedItems: []NewsSeed{
-			{Title: "AIニュース", Category: "ai_frontier", Source: "OpenAI News", SourceType: "rss", URL: "https://example.com/ai", SourceReadStatus: "ready", SourceReadURL: "https://example.com/ai", TermNotes: []modulechat.NewsTermNote{{Term: "LLM", Explanation: "大規模言語モデルです。", SourceKind: "article_context", Status: "contextual"}}, Summary: "要点", Perspective: "Shiroの見解: 見解"},
+			{Title: "AIニュース", Category: "ai_frontier", Source: "OpenAI News", SourceType: "rss", URL: "https://example.com/ai", SourceReadStatus: "ready", SourceReadURL: "https://example.com/ai", TranslatedBody: "原文の日本語訳", Summary: "要点", Perspective: "Shiroの見解: 見解", TermNotes: []modulechat.NewsTermNote{{Term: "LLM", Explanation: "大規模言語モデルです。", SourceKind: "article_context", Status: "contextual"}}},
 			{Title: "世間の反応", Category: "social", Source: "Reddit r/technology", SourceType: "reddit", URL: "https://example.com/reddit"},
 		},
 		FetchedAt:          fetchedAt,
@@ -57,7 +57,7 @@ func TestDailySeedCollectionSnapshotExposesCachedItemsAndConfiguredSources(t *te
 	if len(got.Items) != 2 || got.Items[0].URL != "https://example.com/ai" {
 		t.Fatalf("items = %+v", got.Items)
 	}
-	if got.Items[0].Summary != "要点" || len(got.Items[0].TermNotes) != 1 || got.Items[0].Perspective != "Shiroの見解: 見解" {
+	if got.Items[0].TranslatedBody != "原文の日本語訳" || got.Items[0].Summary != "要点" || got.Items[0].Perspective != "Shiroの見解: 見解" || len(got.Items[0].TermNotes) != 1 {
 		t.Fatalf("annotations = %+v", got.Items[0])
 	}
 	if got.EnrichmentStatus != "ready" || got.EnrichmentProvider != "ChatWorker" || got.EnrichedAt == nil {

@@ -72,7 +72,7 @@ function renderCollectionData() {
     if (!query) return true;
     const termText = (Array.isArray(item.term_notes) ? item.term_notes : [])
       .map((note) => String(note.term || '') + ' ' + String(note.explanation || '')).join(' ');
-    return [item.title, item.source, item.source_type, item.category, termText, item.summary, item.perspective]
+    return [item.title, item.source, item.source_type, item.category, item.translated_body, item.summary, item.perspective, termText]
       .some((value) => String(value || '').toLowerCase().includes(query));
   });
 
@@ -139,9 +139,10 @@ function renderCollectionData() {
         '<div class="collection-item-meta"><span>' + collectionEscape(item.category || '未分類') + '</span><span>' + collectionEscape(item.source_type || '種別不明') + '</span></div>' +
         '<h4>' + linkedTitle + '</h4>' +
 		'<div class="collection-item-source">' + collectionEscape(item.source || '取得元不明') + '</div>' +
-		'<section class="collection-annotation collection-terms"><strong>用語補足</strong>' + termNotesHTML + '</section>' +
+		'<section class="collection-annotation collection-translation"><strong>原文翻訳</strong><p>' + collectionEscape(item.translated_body || '原文翻訳はまだありません。') + '</p></section>' +
         '<section class="collection-annotation collection-summary"><strong>サマリ</strong><p>' + collectionEscape(item.summary || 'サマリはまだありません。') + '</p></section>' +
 		'<section class="collection-annotation collection-perspective"><strong>Shiroの見解</strong><p>' + collectionEscape(item.perspective || '見解はまだありません。') + '</p></section>' +
+		'<section class="collection-annotation collection-terms"><strong>用語補足</strong>' + termNotesHTML + '</section>' +
         '</article>';
     }).join('') : '<div class="daily-desk-card daily-desk-muted">該当する収集項目はありません。</div>';
   }
