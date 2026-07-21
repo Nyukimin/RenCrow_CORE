@@ -839,6 +839,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		sessionRuntime.CentralMemory,
 		llmRuntime.Coder2,
 		glossaryRuntime.RecentTopics,
+		newRuntimeDailySourceBriefResearch(conversationRuntime.WebGatherFetcher, toolRuntime.WorkerRuntimeRunnerV2),
 		ttsBridge,
 	)
 	startMovieCatalogBackfillJob(cfg, newBackgroundJobFailureReporter(deps.eventRelay))

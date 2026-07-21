@@ -22,8 +22,11 @@ func (o *IdleChatOrchestrator) Start() {
 	go func() {
 		if err := fetchDailySeeds(newsSourceConfig); err != nil {
 			log.Printf("[IdleChat] Daily seeds fetch failed: %v", err)
+			return
 		}
+		o.enrichCurrentDailySeeds()
 	}()
+	o.startDailySeedRefreshScheduler(newsSourceConfig)
 
 	o.wg.Add(1)
 	go o.monitorLoop()

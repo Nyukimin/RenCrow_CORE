@@ -174,6 +174,7 @@ func (u *UseCase) FetchURL(ctx context.Context, req modulewebgather.FetchRequest
 		ContentType:      artifact.ContentType,
 		Title:            doc.Title,
 		TextPreview:      modulewebgather.TextPreview(doc.Text, 240),
+		ExtractedText:    doc.Text,
 		RawHash:          rawHash,
 		RawBytes:         artifact.RawBytes,
 		ExtractedChars:   len([]rune(doc.Text)),

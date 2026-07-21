@@ -73,13 +73,16 @@ type SearchAndFetchResponse struct {
 }
 
 type FetchResponse struct {
-	URL              string         `json:"url"`
-	FinalURL         string         `json:"final_url,omitempty"`
-	Status           string         `json:"status"`
-	HTTPStatus       int            `json:"http_status,omitempty"`
-	ContentType      string         `json:"content_type,omitempty"`
-	Title            string         `json:"title,omitempty"`
-	TextPreview      string         `json:"text_preview,omitempty"`
+	URL         string `json:"url"`
+	FinalURL    string `json:"final_url,omitempty"`
+	Status      string `json:"status"`
+	HTTPStatus  int    `json:"http_status,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	Title       string `json:"title,omitempty"`
+	TextPreview string `json:"text_preview,omitempty"`
+	// ExtractedText は同一プロセス内の一次情報処理だけで使う全文であり、
+	// API応答・ツール出力・永続キャッシュには含めない。
+	ExtractedText    string         `json:"-"`
 	RawHash          string         `json:"raw_hash,omitempty"`
 	RawBytes         int64          `json:"raw_bytes,omitempty"`
 	ExtractedChars   int            `json:"extracted_chars,omitempty"`

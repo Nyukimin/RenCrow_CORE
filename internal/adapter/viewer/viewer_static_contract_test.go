@@ -102,6 +102,65 @@ func TestViewerStaticContractDailyDeskTabs(t *testing.T) {
 	}
 }
 
+func TestViewerStaticContractInformationCollectionTab(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	jsData, err := os.ReadFile("assets/js/viewer.js")
+	if err != nil {
+		t.Fatalf("read viewer.js: %v", err)
+	}
+	collectionData, err := os.ReadFile("assets/js/tabs/collection.js")
+	if err != nil {
+		t.Fatalf("read collection.js: %v", err)
+	}
+
+	html := string(htmlData)
+	for _, needle := range []string{
+		`data-tab="collection"`,
+		`id="panel-collection"`,
+		`id="collectionStatus"`,
+		`id="collectionCategoryFilter"`,
+		`id="collectionSourceFilter"`,
+		`id="collectionItems"`,
+		`id="collectionSources"`,
+		`/viewer/assets/css/tabs/collection.css`,
+		`/viewer/assets/js/tabs/collection.js`,
+	} {
+		if !strings.Contains(html, needle) {
+			t.Fatalf("collection Viewer contract missing %q", needle)
+		}
+	}
+	if !strings.Contains(string(jsData), "collection: document.getElementById('panel-collection')") ||
+		!strings.Contains(string(jsData), "refreshCollectionData") {
+		t.Fatal("viewer tab switch must register and refresh Collection")
+	}
+	collectionJS := string(collectionData)
+	for _, needle := range []string{
+		"/viewer/idlechat/collection",
+		"function refreshCollectionData()",
+		"function renderCollectionData()",
+		"collection.category_counts",
+		"collection.sources",
+		"collection.enrichment_status",
+		"collection.skill_id",
+		"item.summary",
+		"item.term_notes",
+		"item.perspective",
+	} {
+		if !strings.Contains(collectionJS, needle) {
+			t.Fatalf("collection.js contract missing %q", needle)
+		}
+	}
+	termNotesIndex := strings.Index(collectionJS, "<strong>用語補足</strong>")
+	summaryIndex := strings.Index(collectionJS, "<strong>サマリ</strong>")
+	perspectiveIndex := strings.Index(collectionJS, "<strong>Shiroの見解</strong>")
+	if termNotesIndex < 0 || summaryIndex < 0 || perspectiveIndex < 0 || !(termNotesIndex < summaryIndex && summaryIndex < perspectiveIndex) {
+		t.Fatalf("collection output order must be 用語補足 -> サマリ -> Shiroの見解")
+	}
+}
+
 func TestViewerStaticContractChatAndIdleChatDeskRedesign(t *testing.T) {
 	data, err := os.ReadFile("viewer.html")
 	if err != nil {

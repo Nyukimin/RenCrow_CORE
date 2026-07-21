@@ -74,6 +74,7 @@ func TestParseNewsSeedsExtractsCategorySourceAndURL(t *testing.T) {
     <item>
       <title>新型端末の省電力技術を発表</title>
       <link>https://example.test/tech/1</link>
+      <description><![CDATA[<p>新型端末は消費電力を従来比で削減する技術を採用した。</p>]]></description>
     </item>
     <item>
       <title>  </title>
@@ -101,8 +102,38 @@ func TestParseNewsSeedsExtractsCategorySourceAndURL(t *testing.T) {
 		got[0].Category != "tech" ||
 		got[0].Source != "Example Tech" ||
 		got[0].SourceType != "rss" ||
-		got[0].URL != "https://example.test/tech/1" {
+		got[0].URL != "https://example.test/tech/1" ||
+		got[0].Summary != "新型端末は消費電力を従来比で削減する技術を採用した。" {
 		t.Fatalf("news seed mismatch: %+v", got[0])
+	}
+}
+
+func TestParseNewsSeedsSupportsAtomEntries(t *testing.T) {
+	const atom = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Multimodal agent research</title>
+    <link href="https://arxiv.org/abs/2607.00001" rel="alternate" />
+    <summary>画像と文章を扱うagentの評価方法を提案する。</summary>
+  </entry>
+</feed>`
+
+	got, err := ParseNewsSeeds(strings.NewReader(atom), NewsSeedSource{
+		Category: "ai_research",
+		Name:     "arXiv AI Research",
+		URL:      "https://export.arxiv.org/api/query",
+	}, 3)
+	if err != nil {
+		t.Fatalf("ParseNewsSeeds atom error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("atom seeds len = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].Title != "Multimodal agent research" ||
+		got[0].URL != "https://arxiv.org/abs/2607.00001" ||
+		got[0].SourceType != "atom" ||
+		got[0].Summary != "画像と文章を扱うagentの評価方法を提案する。" {
+		t.Fatalf("atom seed mismatch: %+v", got[0])
 	}
 }
 

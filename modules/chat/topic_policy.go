@@ -63,12 +63,27 @@ type ExternalMaterialSeed struct {
 }
 
 type NewsSeed struct {
-	Title      string `json:"title"`
-	Category   string `json:"category,omitempty"`
-	Source     string `json:"source,omitempty"`
-	SourceType string `json:"source_type,omitempty"`
-	URL        string `json:"url,omitempty"`
-	Summary    string `json:"summary,omitempty"`
+	Title            string         `json:"title"`
+	Category         string         `json:"category,omitempty"`
+	Source           string         `json:"source,omitempty"`
+	SourceType       string         `json:"source_type,omitempty"`
+	URL              string         `json:"url,omitempty"`
+	SourceReadStatus string         `json:"source_read_status,omitempty"`
+	SourceReadURL    string         `json:"source_read_url,omitempty"`
+	TermNotes        []NewsTermNote `json:"term_notes,omitempty"`
+	Summary          string         `json:"summary,omitempty"`
+	Perspective      string         `json:"perspective,omitempty"`
+}
+
+// NewsTermNote は、サマリ作成前に確定した用語補足を表す。
+// SourceKind は article_context または searched_source、Status は
+// contextual、confirmed、unresolved、unavailable のいずれかを使う。
+type NewsTermNote struct {
+	Term        string `json:"term"`
+	Explanation string `json:"explanation"`
+	SourceKind  string `json:"source_kind"`
+	SourceURL   string `json:"source_url,omitempty"`
+	Status      string `json:"status"`
 }
 
 type RecentTopic struct {

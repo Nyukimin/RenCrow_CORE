@@ -56,6 +56,35 @@ func TestHandleIdleChatStatusIncludesForecastStockSnapshot(t *testing.T) {
 	}
 }
 
+func TestHandleIdleChatCollectionReturnsReadOnlySnapshot(t *testing.T) {
+	orch := idlechat.NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	deps := &Dependencies{idleChatOrch: orch}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/viewer/idlechat/collection", nil)
+
+	deps.handleIdleChatCollection().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		OK         bool                                 `json:"ok"`
+		Collection idlechat.DailySeedCollectionSnapshot `json:"collection"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.OK || payload.Collection.Schedule != "04:00" || payload.Collection.Timezone != "JST" {
+		t.Fatalf("collection payload = %+v", payload)
+	}
+
+	postRecorder := httptest.NewRecorder()
+	deps.handleIdleChatCollection().ServeHTTP(postRecorder, httptest.NewRequest(http.MethodPost, "/viewer/idlechat/collection", nil))
+	if postRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d", postRecorder.Code)
+	}
+}
+
 func TestIdleChatNewsSourceConfigFromRuntimeResolvesTokenWithoutChangingQueries(t *testing.T) {
 	t.Setenv("RENCROW_X_BEARER_TOKEN", "secret-token")
 	redditEnabled := true

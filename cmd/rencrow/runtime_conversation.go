@@ -20,9 +20,10 @@ import (
 )
 
 type conversationRuntime struct {
-	Engine  conversation.ConversationEngine
-	Manager *conversationpersistence.RealConversationManager
-	L1Store *l1sqlite.L1SQLiteStore
+	Engine           conversation.ConversationEngine
+	Manager          *conversationpersistence.RealConversationManager
+	L1Store          *l1sqlite.L1SQLiteStore
+	WebGatherFetcher tools.WebGatherFetcher
 }
 
 func buildConversationRuntime(
@@ -141,34 +142,48 @@ func buildConversationRuntime(
 		workerToolRunnerV2.WithWebSearchCache(webSearchCache)
 		log.Printf("ToolRunner web_search cache enabled via Conversation L1")
 	}
-	if l1Store != nil && workerToolRunnerV2 != nil {
+	var dailySourceFetcher tools.WebGatherFetcher
+	if workerToolRunnerV2 != nil {
 		webGatherUseCase := webgatherapp.NewUseCase(
 			webgatherinfra.NewHTTPFetcher(),
 			webgatherinfra.NewBasicExtractor(),
-			webgatherapp.NewL1StagingWriter(l1Store),
-		).WithFetchCache(webgatherapp.NewL1FetchCache(l1Store))
+			nil,
+		)
+		if l1Store != nil {
+			webGatherUseCase = webgatherapp.NewUseCase(
+				webgatherinfra.NewHTTPFetcher(),
+				webgatherinfra.NewBasicExtractor(),
+				webgatherapp.NewL1StagingWriter(l1Store),
+			).WithFetchCache(webgatherapp.NewL1FetchCache(l1Store))
+		}
 		if cfg.WebwrightFetch.Enabled {
 			webGatherUseCase.WithFetchProvider("webwright", webgatherinfra.NewWebwrightFetcher(webwrightFetcherConfigFromRuntime(cfg.WebwrightFetch)))
 		}
-		webGatherProviders := map[string]modulewebgather.SearchProvider{}
-		webGatherProviders["rss_atom"] = webgatherinfra.NewFeedDiscoveryProvider()
-		webGatherProviders["sitemap"] = webgatherinfra.NewFeedDiscoveryProvider()
-		if searxngBaseURL := strings.TrimSpace(cfg.WebGather.SearXNGBaseURL); searxngBaseURL != "" {
-			webGatherProviders["searxng"] = webgatherinfra.NewSearXNGProvider(searxngBaseURL)
+		dailySourceFetcher = webGatherUseCase
+		if l1Store == nil {
+			log.Printf("Daily source brief direct URL fetch enabled without L1 staging")
+		} else {
+			webGatherProviders := map[string]modulewebgather.SearchProvider{}
+			webGatherProviders["rss_atom"] = webgatherinfra.NewFeedDiscoveryProvider()
+			webGatherProviders["sitemap"] = webgatherinfra.NewFeedDiscoveryProvider()
+			if searxngBaseURL := strings.TrimSpace(cfg.WebGather.SearXNGBaseURL); searxngBaseURL != "" {
+				webGatherProviders["searxng"] = webgatherinfra.NewSearXNGProvider(searxngBaseURL)
+			}
+			if yacyBaseURL := strings.TrimSpace(cfg.WebGather.YaCyBaseURL); yacyBaseURL != "" {
+				webGatherProviders["yacy"] = webgatherinfra.NewYaCyProvider(yacyBaseURL)
+			}
+			webGatherSearchUseCase := webgatherapp.NewSearchUseCase(webgatherapp.NewL1SearchCache(l1Store), webGatherProviders)
+			webGatherSearchAndFetchUseCase := webgatherapp.NewSearchAndFetchUseCase(webGatherSearchUseCase, webGatherUseCase)
+			workerToolRunnerV2.WithWebGatherFetcher(webGatherUseCase)
+			workerToolRunnerV2.WithWebGatherSearcher(webGatherSearchUseCase)
+			workerToolRunnerV2.WithWebGatherSearchAndFetcher(webGatherSearchAndFetchUseCase)
+			log.Printf("ToolRunner web_gather.fetch/search/search_and_fetch enabled via Conversation L1")
 		}
-		if yacyBaseURL := strings.TrimSpace(cfg.WebGather.YaCyBaseURL); yacyBaseURL != "" {
-			webGatherProviders["yacy"] = webgatherinfra.NewYaCyProvider(yacyBaseURL)
-		}
-		webGatherSearchUseCase := webgatherapp.NewSearchUseCase(webgatherapp.NewL1SearchCache(l1Store), webGatherProviders)
-		webGatherSearchAndFetchUseCase := webgatherapp.NewSearchAndFetchUseCase(webGatherSearchUseCase, webGatherUseCase)
-		workerToolRunnerV2.WithWebGatherFetcher(webGatherUseCase)
-		workerToolRunnerV2.WithWebGatherSearcher(webGatherSearchUseCase)
-		workerToolRunnerV2.WithWebGatherSearchAndFetcher(webGatherSearchAndFetchUseCase)
-		log.Printf("ToolRunner web_gather.fetch/search/search_and_fetch enabled via Conversation L1")
 	}
 	return conversationRuntime{
-		Engine:  convEngine,
-		Manager: realMgr,
-		L1Store: l1Store,
+		Engine:           convEngine,
+		Manager:          realMgr,
+		L1Store:          l1Store,
+		WebGatherFetcher: dailySourceFetcher,
 	}
 }

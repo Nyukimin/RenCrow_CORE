@@ -30,6 +30,7 @@ func buildIdleChatRuntime(
 	centralMemory *domainsession.CentralMemory,
 	coder2Adapter *coderAdapter,
 	recentGlossaryTopics func(context.Context, int) ([]string, error),
+	dailySourceBriefResearch idlechat.DailySourceBriefResearch,
 	ttsBridge orchestrator.TTSBridge,
 ) {
 	if !cfg.IdleChat.Enabled {
@@ -62,6 +63,7 @@ func buildIdleChatRuntime(
 	})
 	idleChatOrch.SetSpeakerProviderOptions(idleChatProviderOptionsFromConfig(cfg.IdleChat.SpeakerLLMOptions))
 	idleChatOrch.SetNewsSourceConfig(idleChatNewsSourceConfigFromRuntime(cfg.IdleChat.NewsSources))
+	idleChatOrch.SetDailySourceBriefResearch(dailySourceBriefResearch)
 	idleChatOrch.SetTopicGenerationConfig(idleChatTopicGenerationConfigFromRuntime(cfg.IdleChat.TopicGeneration))
 	idleChatOrch.SetDialogueInterestingnessConfig(idleChatDialogueInterestingnessConfigFromRuntime(cfg.IdleChat.DialogueInterestingness))
 	if topicProvider, label := selectForecastTopicProvider(workerProvider); topicProvider != nil {

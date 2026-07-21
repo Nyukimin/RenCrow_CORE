@@ -1,0 +1,4 @@
+interface:
+  display_name: "日次一次情報ブリーフ"
+  short_description: "特定URL本文から用語補足、要約、Shiroの見解を日本語で作成"
+  default_prompt: "$build-daily-source-briefを使い、収集済みURLから日本語の日次一次情報ブリーフを作成してください。"

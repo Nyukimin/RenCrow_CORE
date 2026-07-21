@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260718-idle-stock-reader">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260511-memory-desk">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260517-desk-regenerated">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
 </head>
 <body class="theme-modern">
 <header>
@@ -149,6 +150,7 @@
       <option value="memory">Memory</option>
       <option value="movie-db">Movies</option>
       <option value="news-pack">News Pack</option>
+	  <option value="collection">情報収集</option>
       <option value="investment">Investment</option>
       <option value="idlechat">IdleChat</option>
       <option value="ops">Ops</option>
@@ -172,6 +174,7 @@
     <button class="tab-btn" data-tab="memory">Memory</button>
     <button class="tab-btn" data-tab="movie-db">Movies</button>
     <button class="tab-btn" data-tab="news-pack">News Pack</button>
+	<button class="tab-btn" data-tab="collection">情報収集</button>
     <button class="tab-btn" data-tab="investment">Investment</button>
     <button class="tab-btn" data-tab="idlechat">IdleChat</button>
     <button class="tab-btn" data-tab="ops">Ops</button>
@@ -1215,6 +1218,66 @@
     </div>
   </section>
 
+  <section id="panel-collection" class="panel collection-panel">
+    <div class="desk-screen desk-workspace collection-workspace">
+      <aside class="desk-side collection-side">
+        <div class="desk-brand">
+		  <div class="desk-kicker">IdleChat / 日次情報収集</div>
+          <h2 class="daily-desk-title">情報収集データ</h2>
+        </div>
+        <div class="desk-character collection-character">
+          <div class="desk-character-mark">C</div>
+		  <div class="desk-character-name">Shiro / 情報収集</div>
+          <div class="daily-desk-muted">毎日04:00 JSTに収集するニュース・研究・SNS候補を確認します。</div>
+        </div>
+		<div id="collectionStatus" class="desk-status-pill">読込中</div>
+        <div class="daily-desk-card collection-schedule-card">
+		  <div class="collection-meta-row"><span>最終収集</span><strong id="collectionFetchedAt">-</strong></div>
+		  <div class="collection-meta-row"><span>次回実行</span><strong id="collectionNextRunAt">-</strong></div>
+		  <div class="collection-meta-row"><span>実行予定</span><strong id="collectionSchedule">04:00 JST</strong></div>
+		  <div class="collection-meta-row"><span>処理状態</span><strong id="collectionEnrichmentStatus">-</strong></div>
+		  <div class="collection-meta-row"><span>処理完了</span><strong id="collectionEnrichedAt">-</strong></div>
+		  <div class="collection-meta-row"><span>使用Skill</span><strong id="collectionSkillID">-</strong></div>
+        </div>
+		<button id="collectionRefreshBtn" class="ctl-btn" type="button">再読込</button>
+      </aside>
+      <section class="desk-main collection-main">
+        <div class="desk-head compact collection-head">
+          <div>
+			<div class="desk-kicker">現在のプロセス内キャッシュ</div>
+            <h3>収集結果と取得元</h3>
+          </div>
+          <div class="collection-filters">
+			<select id="collectionCategoryFilter" aria-label="収集カテゴリ">
+			  <option value="">すべてのカテゴリ</option>
+            </select>
+			<input id="collectionSourceFilter" type="search" placeholder="取得元・見出し・用語" aria-label="取得元、見出し、用語で絞り込む">
+          </div>
+        </div>
+        <div class="collection-summary-grid">
+		  <div class="daily-desk-card"><span>収集件数</span><strong id="collectionTotal">0</strong><small>ニュース・研究・SNS</small></div>
+		  <div class="daily-desk-card"><span>Wikipedia</span><strong id="collectionWikipediaCount">0</strong><small>ランダム話題候補</small></div>
+		  <div class="daily-desk-card"><span>カテゴリ</span><strong id="collectionCategoryCount">0</strong><small>分類済みグループ</small></div>
+		  <div class="daily-desk-card"><span>取得先</span><strong id="collectionSourceCount">0</strong><small>設定済み対象</small></div>
+        </div>
+		<div id="collectionCategorySummary" class="collection-category-summary" aria-label="カテゴリ別件数"></div>
+        <div id="collectionError" class="collection-error" hidden></div>
+        <section>
+          <div class="collection-section-head">
+			<h3>収集項目</h3>
+			<span id="collectionVisibleCount" class="desk-pill">0件表示</span>
+          </div>
+          <div id="collectionItems" class="collection-items"></div>
+        </section>
+        <details class="collection-details">
+          <summary>取得先・利用ツールを確認</summary>
+		  <div class="collection-tool-row"><strong>利用ツール</strong><div id="collectionTools" class="collection-tools"></div></div>
+          <div id="collectionSources" class="collection-sources"></div>
+        </details>
+      </section>
+    </div>
+  </section>
+
   <section id="panel-investment" class="panel">
     <div class="desk-screen desk-workspace">
       <aside class="desk-side">
@@ -1504,6 +1567,7 @@
 <script src="/viewer/assets/js/tabs/memory.js?v=20260518-knowledge-relations" defer></script>
 <script src="/viewer/assets/js/tabs/movie-db.js?v=20260602-movie-catalog" defer></script>
 <script src="/viewer/assets/js/tabs/news-pack.js?v=20260510-tabs-memory" defer></script>
+<script src="/viewer/assets/js/tabs/collection.js?v=20260721-daily-collection" defer></script>
 <script src="/viewer/assets/js/tabs/investment.js?v=20260616-investment-desk" defer></script>
 <script src="/viewer/assets/js/tabs/roles.js?v=20260510-tabs-roles" defer></script>
 <script src="/viewer/assets/js/tabs/progress.js?v=20260510-tabs-progress" defer></script>

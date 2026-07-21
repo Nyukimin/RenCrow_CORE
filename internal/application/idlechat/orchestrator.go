@@ -132,6 +132,7 @@ type IdleChatOrchestrator struct {
 	topicGenerationConfig      TopicGenerationConfig
 	dialogueConfig             DialogueInterestingnessConfig
 	newsSourceConfig           NewsSourceConfig
+	dailySourceBriefResearch   DailySourceBriefResearch
 	currentTopicResult         *TopicGenerationResult
 	currentDialoguePlan        *DialogueArcPlan
 	currentDialogueState       *DialogueArcState
@@ -188,6 +189,14 @@ func (o *IdleChatOrchestrator) SetNewsSourceConfig(cfg NewsSourceConfig) {
 	cfg.RedditCommunities = append([]string(nil), cfg.RedditCommunities...)
 	cfg.XQueries = append([]XNewsQuery(nil), cfg.XQueries...)
 	o.newsSourceConfig = cfg
+}
+
+// SetDailySourceBriefResearch は、日次一次情報ブリーフのURL本文取得と
+// 不明語検索を担う外部I/Oを注入する。
+func (o *IdleChatOrchestrator) SetDailySourceBriefResearch(research DailySourceBriefResearch) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.dailySourceBriefResearch = research
 }
 
 type TTSTimeoutEvent struct {

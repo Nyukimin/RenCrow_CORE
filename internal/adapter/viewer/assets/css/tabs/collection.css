@@ -1,0 +1,336 @@
+.collection-panel {
+  --collection-accent: #8bd8ff;
+  --collection-green: #86efac;
+}
+
+.collection-workspace {
+  grid-template-columns: minmax(250px, 310px) minmax(0, 1fr);
+}
+
+.collection-character {
+  background:
+    radial-gradient(circle at 30% 20%, rgba(139, 216, 255, 0.24), transparent 38%),
+    linear-gradient(145deg, rgba(85, 130, 220, 0.16), rgba(255, 255, 255, 0.035));
+}
+
+.collection-meta-row {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.collection-meta-row:last-child {
+  margin-bottom: 0;
+}
+
+.collection-meta-row span {
+  color: var(--desk-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.collection-meta-row strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.collection-head {
+  align-items: end;
+}
+
+.collection-filters {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(170px, .6fr) minmax(220px, 1fr);
+  width: min(620px, 65%);
+}
+
+.collection-filters select,
+.collection-filters input {
+  background: rgba(8, 12, 20, 0.74);
+  border: 1px solid var(--desk-border);
+  border-radius: 10px;
+  box-sizing: border-box;
+  color: var(--desk-text);
+  min-height: 38px;
+  min-width: 0;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.collection-summary-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.collection-summary-grid .daily-desk-card {
+  display: grid;
+  gap: 4px;
+}
+
+.collection-summary-grid span,
+.collection-summary-grid small {
+  color: var(--desk-muted);
+  font-size: 10px;
+}
+
+.collection-summary-grid strong {
+  color: var(--collection-accent);
+  font-size: 26px;
+  line-height: 1;
+}
+
+.collection-category-summary,
+.collection-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.collection-category-chip {
+  align-items: center;
+  background: rgba(139, 216, 255, 0.08);
+  border: 1px solid var(--desk-border);
+  border-radius: 999px;
+  color: var(--desk-text);
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  padding: 6px 10px;
+}
+
+.collection-category-chip strong {
+  color: var(--collection-accent);
+}
+
+.collection-error {
+  background: rgba(255, 143, 154, 0.1);
+  border: 1px solid rgba(255, 143, 154, 0.35);
+  border-radius: 10px;
+  color: var(--desk-danger);
+  padding: 10px;
+}
+
+.collection-section-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.collection-section-head h3 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.collection-items {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.collection-item {
+  background: rgba(8, 12, 20, 0.46);
+  border: 1px solid var(--desk-border);
+  border-radius: 12px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 11px;
+}
+
+.collection-item h4 {
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.collection-item a,
+.collection-source a {
+  color: var(--desk-text);
+  text-decoration-color: rgba(139, 216, 255, 0.52);
+  text-underline-offset: 3px;
+}
+
+.collection-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.collection-item-meta span {
+  background: rgba(139, 216, 255, 0.09);
+  border-radius: 999px;
+  color: var(--collection-accent);
+  font-size: 10px;
+  padding: 4px 7px;
+}
+
+.collection-item-source {
+  color: var(--desk-muted);
+  font-size: 11px;
+}
+
+.collection-annotation {
+  background: rgba(139, 216, 255, 0.045);
+  border-left: 2px solid rgba(139, 216, 255, 0.38);
+  border-radius: 0 8px 8px 0;
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.collection-annotation strong {
+  color: var(--collection-accent);
+  font-size: 10px;
+  letter-spacing: .04em;
+}
+
+.collection-annotation p {
+  color: var(--desk-soft);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.collection-term-notes {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.collection-term-notes li {
+  display: grid;
+  gap: 3px;
+}
+
+.collection-term-notes li > strong {
+  color: var(--desk-text);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.collection-term-notes span {
+  color: var(--desk-soft);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.collection-term-notes small {
+  color: var(--desk-muted);
+  font-size: 10px;
+}
+
+.collection-term-notes a {
+  color: var(--collection-accent);
+}
+
+.collection-perspective {
+  border-left-color: rgba(134, 239, 172, 0.44);
+  margin-top: 7px;
+}
+
+.collection-perspective strong {
+  color: var(--collection-green);
+}
+
+.collection-item-details {
+  border-top: 1px solid var(--desk-border);
+  padding-top: 7px;
+}
+
+.collection-item-details summary {
+  color: var(--desk-muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.collection-item-details[open] summary {
+  margin-bottom: 8px;
+}
+
+.collection-details {
+  background: rgba(8, 12, 20, 0.38);
+  border: 1px solid var(--desk-border);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.collection-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.collection-tool-row {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.collection-sources {
+  display: grid;
+  gap: 6px;
+}
+
+.collection-source {
+  align-items: center;
+  border-top: 1px solid var(--desk-border);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, .65fr) minmax(240px, 1.35fr) auto;
+  padding: 9px 0;
+}
+
+.collection-source > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.collection-source span,
+.collection-source-target {
+  color: var(--desk-muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.collection-source.disabled {
+  opacity: .6;
+}
+
+@media (max-width: 900px) {
+  .collection-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .collection-character {
+    min-height: 150px;
+  }
+
+  .collection-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .collection-filters {
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .collection-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .collection-items {
+    grid-template-columns: 1fr;
+  }
+
+  .collection-source {
+    align-items: start;
+    grid-template-columns: 1fr;
+  }
+}

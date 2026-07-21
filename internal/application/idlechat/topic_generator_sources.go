@@ -22,6 +22,13 @@ type NewsSeed = modulechat.NewsSeed
 type NewsSeedSource = modulechat.NewsSeedSource
 
 var defaultNewsSeedSources = []NewsSeedSource{
+	{Category: "ai_frontier", Name: "OpenAI News", URL: "https://openai.com/news/rss.xml", Limit: 4},
+	{Category: "ai_frontier", Name: "Google DeepMind", URL: "https://deepmind.google/blog/rss.xml", Limit: 4},
+	{Category: "ai_open_source", Name: "Hugging Face Blog", URL: "https://huggingface.co/blog/feed.xml", Limit: 5},
+	{Category: "ai_research", Name: "Microsoft Research", URL: "https://www.microsoft.com/en-us/research/feed/", Limit: 4},
+	{Category: "ai_research", Name: "Google Research", URL: "https://research.google/blog/rss/", Limit: 4},
+	{Category: "ai_infrastructure", Name: "NVIDIA Generative AI", URL: "https://blogs.nvidia.com/blog/category/generative-ai/feed/", Limit: 4},
+	{Category: "ai_research", Name: "arXiv AI Research", URL: "https://export.arxiv.org/api/query?search_query=cat%3Acs.AI%20OR%20cat%3Acs.LG%20OR%20cat%3Acs.CL%20OR%20cat%3Acs.CV%20OR%20cat%3Acs.RO&start=0&max_results=8&sortBy=submittedDate&sortOrder=descending", Limit: 8},
 	{Category: "general", Name: "NHK Top", URL: "https://www.nhk.or.jp/rss/news/cat0.xml", Limit: 4},
 	{Category: "culture", Name: "NHK Science/Culture", URL: "https://www.nhk.or.jp/rss/news/cat3.xml", Limit: 3},
 	{Category: "business", Name: "NHK Business", URL: "https://www.nhk.or.jp/rss/news/cat5.xml", Limit: 3},
@@ -31,12 +38,24 @@ var defaultNewsSeedSources = []NewsSeedSource{
 	{Category: "business", Name: "ITmedia Business", URL: "https://rss.itmedia.co.jp/rss/2.0/business.xml", Limit: 3},
 }
 
-// fetchDailySeeds は1日1回、起動時に外部シードを取得してキャッシュする。
+const (
+	dailyRSSSeedLimit  = 64
+	dailyNewsSeedLimit = 80
+)
+
+// fetchDailySeeds は起動時に同日cacheを再利用しながら外部シードを取得する。
 func fetchDailySeeds(sourceConfig NewsSourceConfig) error {
-	today := time.Now().In(jst).Format("2006-01-02")
+	return refreshDailySeeds(sourceConfig, false)
+}
+
+// refreshDailySeeds は外部シードを取得する。scheduled=trueではJST 04:00の定期更新を優先し、
+// 同日cacheが存在しても再取得する。
+func refreshDailySeeds(sourceConfig NewsSourceConfig, scheduled bool) error {
+	now := time.Now()
+	today := now.In(jst).Format("2006-01-02")
 
 	cacheMu.RLock()
-	if dailyCache != nil && dailyCache.Date == today {
+	if !shouldRefreshDailySeeds(dailyCache, now, scheduled) {
 		cacheMu.RUnlock()
 		return nil // 既に取得済み
 	}
@@ -46,11 +65,15 @@ func fetchDailySeeds(sourceConfig NewsSourceConfig) error {
 	defer cacheMu.Unlock()
 
 	// ダブルチェック
-	if dailyCache != nil && dailyCache.Date == today {
+	if !shouldRefreshDailySeeds(dailyCache, now, scheduled) {
 		return nil
 	}
 
-	log.Printf("[IdleChat] Fetching daily seeds for %s...", today)
+	trigger := "startup"
+	if scheduled {
+		trigger = "scheduled_04_jst"
+	}
+	log.Printf("[IdleChat] Fetching daily seeds for %s trigger=%s...", today, trigger)
 
 	// Wikipedia Random（10件）
 	wikiSeeds, err := fetchWikipediaRandom(10)
@@ -60,7 +83,7 @@ func fetchDailySeeds(sourceConfig NewsSourceConfig) error {
 	}
 
 	// News Headlines（カテゴリ付きRSS）
-	rssSeedItems, err := fetchNewsSeedItems(defaultNewsSeedSources, 20)
+	rssSeedItems, err := fetchNewsSeedItems(defaultNewsSeedSources, dailyRSSSeedLimit)
 	if err != nil {
 		log.Printf("[IdleChat] News fetch failed: %v", err)
 		rssSeedItems = []NewsSeed{} // フォールバック
@@ -87,19 +110,27 @@ func fetchDailySeeds(sourceConfig NewsSourceConfig) error {
 		}
 	}
 
-	newsSeedItems := mergeNewsSeeds(36, rssSeedItems, redditSeedItems, xSeedItems)
+	newsSeedItems := mergeNewsSeeds(dailyNewsSeedLimit, rssSeedItems, redditSeedItems, xSeedItems)
 	newsSeeds := newsSeedTitles(newsSeedItems)
 
 	dailyCache = &DailySeedCache{
-		Date:           today,
-		WikipediaSeeds: wikiSeeds,
-		NewsSeeds:      newsSeeds,
-		NewsSeedItems:  newsSeedItems,
-		FetchedAt:      time.Now(),
+		Date:             today,
+		WikipediaSeeds:   wikiSeeds,
+		NewsSeeds:        newsSeeds,
+		NewsSeedItems:    newsSeedItems,
+		FetchedAt:        time.Now(),
+		EnrichmentStatus: "pending",
 	}
 
 	log.Printf("[IdleChat] Daily seeds fetched: Wikipedia=%d, News=%d RSS=%d Reddit=%d X=%d categories=%s", len(wikiSeeds), len(newsSeeds), len(rssSeedItems), len(redditSeedItems), len(xSeedItems), newsSeedCategorySummary(newsSeedItems))
 	return nil
+}
+
+func shouldRefreshDailySeeds(cache *DailySeedCache, now time.Time, scheduled bool) bool {
+	if scheduled || cache == nil {
+		return true
+	}
+	return cache.Date != now.In(jst).Format("2006-01-02")
 }
 
 // fetchWikipediaRandom はWikipedia Random APIから記事タイトルを取得

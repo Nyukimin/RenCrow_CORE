@@ -3,18 +3,26 @@ package chat
 import (
 	"encoding/xml"
 	"fmt"
+	"html"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 )
 
 type DailySeedCache struct {
-	Date           string     `json:"date"`
-	WikipediaSeeds []string   `json:"wikipedia_seeds"`
-	NewsSeeds      []string   `json:"news_seeds"`
-	NewsSeedItems  []NewsSeed `json:"news_seed_items"`
-	FetchedAt      time.Time  `json:"fetched_at"`
+	Date               string     `json:"date"`
+	WikipediaSeeds     []string   `json:"wikipedia_seeds"`
+	NewsSeeds          []string   `json:"news_seeds"`
+	NewsSeedItems      []NewsSeed `json:"news_seed_items"`
+	FetchedAt          time.Time  `json:"fetched_at"`
+	EnrichmentStatus   string     `json:"enrichment_status,omitempty"`
+	EnrichmentProvider string     `json:"enrichment_provider,omitempty"`
+	EnrichmentError    string     `json:"enrichment_error,omitempty"`
+	EnrichedAt         time.Time  `json:"enriched_at,omitempty"`
 }
+
+var newsSeedHTMLTagPattern = regexp.MustCompile(`(?s)<[^>]*>`)
 
 type NewsSeedSource struct {
 	Category    string
@@ -109,9 +117,20 @@ func NewsSeedCategorySummary(seeds []NewsSeed) string {
 func ParseNewsSeeds(reader io.Reader, source NewsSeedSource, limit int) ([]NewsSeed, error) {
 	var feed struct {
 		Items []struct {
-			Title string `xml:"title"`
-			Link  string `xml:"link"`
+			Title       string `xml:"title"`
+			Link        string `xml:"link"`
+			Description string `xml:"description"`
+			Content     string `xml:"encoded"`
 		} `xml:"channel>item"`
+		Entries []struct {
+			Title   string `xml:"title"`
+			Summary string `xml:"summary"`
+			Content string `xml:"content"`
+			Links   []struct {
+				Href string `xml:"href,attr"`
+				Rel  string `xml:"rel,attr"`
+			} `xml:"link"`
+		} `xml:"entry"`
 	}
 	if err := xml.NewDecoder(reader).Decode(&feed); err != nil {
 		return nil, err
@@ -129,12 +148,61 @@ func ParseNewsSeeds(reader io.Reader, source NewsSeedSource, limit int) ([]NewsS
 			Source:     strings.TrimSpace(source.Name),
 			SourceType: "rss",
 			URL:        strings.TrimSpace(item.Link),
+			Summary:    normalizeNewsSeedSummary(firstNewsSeedText(item.Description, item.Content)),
+		})
+		if limit > 0 && len(seeds) >= limit {
+			return seeds, nil
+		}
+	}
+	for _, entry := range feed.Entries {
+		title := strings.TrimSpace(entry.Title)
+		if title == "" {
+			continue
+		}
+		link := ""
+		for _, candidate := range entry.Links {
+			rel := strings.TrimSpace(candidate.Rel)
+			if rel == "" || rel == "alternate" {
+				link = strings.TrimSpace(candidate.Href)
+				if link != "" {
+					break
+				}
+			}
+		}
+		seeds = append(seeds, NewsSeed{
+			Title:      title,
+			Category:   strings.TrimSpace(source.Category),
+			Source:     strings.TrimSpace(source.Name),
+			SourceType: "atom",
+			URL:        link,
+			Summary:    normalizeNewsSeedSummary(firstNewsSeedText(entry.Summary, entry.Content)),
 		})
 		if limit > 0 && len(seeds) >= limit {
 			break
 		}
 	}
 	return seeds, nil
+}
+
+func firstNewsSeedText(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func normalizeNewsSeedSummary(value string) string {
+	value = newsSeedHTMLTagPattern.ReplaceAllString(value, " ")
+	value = html.UnescapeString(value)
+	value = strings.Join(strings.Fields(value), " ")
+	const maxRunes = 800
+	runes := []rune(value)
+	if len(runes) > maxRunes {
+		value = string(runes[:maxRunes]) + "…"
+	}
+	return value
 }
 
 func RecentTopicRecords(topics []string) []RecentTopic {

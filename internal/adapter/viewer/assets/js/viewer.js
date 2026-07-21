@@ -1223,6 +1223,7 @@ const panels = {
   memory: document.getElementById('panel-memory'),
   'movie-db': document.getElementById('panel-movie-db'),
   'news-pack': document.getElementById('panel-news-pack'),
+  collection: document.getElementById('panel-collection'),
   investment: document.getElementById('panel-investment'),
   idlechat: document.getElementById('panel-idlechat'),
   sessions: document.getElementById('panel-sessions'),
@@ -1315,6 +1316,7 @@ function switchTab(tab) {
   }
   if (tab === 'timeline' && timelineAutoFollow) scrollToBottom(true);
   if (tab === 'investment' && typeof refreshInvestmentData === 'function') refreshInvestmentData();
+  if (tab === 'collection' && typeof refreshCollectionData === 'function') refreshCollectionData();
   if (tab === 'backlog' && typeof refreshBacklog === 'function') refreshBacklog();
   if (tab === 'ops') {
     refreshSandboxData();

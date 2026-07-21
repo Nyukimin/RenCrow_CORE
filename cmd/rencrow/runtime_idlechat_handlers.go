@@ -135,6 +135,23 @@ func (d *Dependencies) handleIdleChatStatus() http.HandlerFunc {
 	}
 }
 
+func (d *Dependencies) handleIdleChatCollection() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if d.idleChatOrch == nil {
+			http.Error(w, "idlechat not enabled", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"ok":         true,
+			"collection": d.idleChatOrch.DailySeedCollectionSnapshot(time.Now()),
+		})
+	}
+}
+
 func (d *Dependencies) snapshotLLMBusy() llmBusySnapshot {
 	if d == nil || d.llmBusyTracker == nil {
 		return llmBusySnapshot{}

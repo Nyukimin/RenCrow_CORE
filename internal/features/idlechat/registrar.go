@@ -20,6 +20,7 @@ type Routes struct {
 	Stop        http.HandlerFunc
 	Interrupt   http.HandlerFunc
 	Status      http.HandlerFunc
+	Collection  http.HandlerFunc
 	Logs        http.HandlerFunc
 	Forecast    http.HandlerFunc
 	Story       http.HandlerFunc
@@ -39,6 +40,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/idlechat/stop", routes.Stop)
 	registerRoute(mux, "/viewer/idlechat/interrupt", routes.Interrupt)
 	registerRoute(mux, "/viewer/idlechat/status", routes.Status)
+	registerRoute(mux, "/viewer/idlechat/collection", routes.Collection)
 	registerRoute(mux, "/viewer/idlechat/logs", routes.Logs)
 	registerRoute(mux, "/viewer/idlechat/forecast", routes.Forecast)
 	registerRoute(mux, "/viewer/idlechat/story", routes.Story)

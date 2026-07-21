@@ -22,6 +22,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage送信とSSE event購読 |
 | `/viewer/status`, `/viewer/agents` | runtime と agent の状態 |
 | `GET /viewer/idlechat/status` | IdleChat状態と読み取り専用の`forecast_stock` snapshot |
+| `GET /viewer/idlechat/collection` | IdleChat日次収集cache、次回04:00 JST、取得元、利用toolの読み取り専用snapshot |
 | `POST /viewer/idlechat/start`, `POST /viewer/idlechat/stop` | IdleChatの開始・停止。認可されたwrite clientだけが利用する |
 | `/viewer/jobs`, `/viewer/logs` | job と監査可能な log |
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
@@ -83,6 +84,8 @@ TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`respon
 `GET /viewer/tts/audio?url=...`が取得できるremote音声は、COREのTTS設定にあるbase URLと同一hostのものだけです。
 
 `GET /viewer/idlechat/status`の`forecast_stock`は、`enabled`、`total`、`capacity`、`missing`、`filling`、最終生成状態と、6ドメインの`topics`を返します。これは観測用snapshotであり、GETによって生成・消費・補充を開始しません。
+
+`GET /viewer/idlechat/collection`は、`status`、`skill_id`（`core.build-daily-source-brief`）、`schedule`、`timezone`、`fetched_at`、`next_run_at`、ニュース件数、Wikipedia件数、カテゴリ／source別件数、`items`、`sources`、`tools`を返します。分析状態は`enrichment_status`（`pending`、`enriching`、`ready`、`partial`、`fallback`）、`enrichment_provider`、`enrichment_error`、`enriched_at`で確認できます。`items`はtitle、category、source、`source_type`、元URL、`source_read_status`（`ready`／`unavailable`／`unprocessed`）、`source_read_url`、`term_notes`、`summary`、事実と分離したShiroの`perspective`を持ちます。`term_notes`は用語、説明、確認方法、確認元URL、`contextual`／`confirmed`／`unresolved`／`unavailable`の状態を返します。表示順は「用語補足 → サマリ → Shiroの見解」です。`sources`はcredentialを除いた取得先設定を持ちます。このGETは現在のプロセス内cacheをコピーして返す観測用snapshotであり、収集、分析、再収集、cache消費、Memory昇格を開始しません。
 
 ## Interaction client共通意味論
 
