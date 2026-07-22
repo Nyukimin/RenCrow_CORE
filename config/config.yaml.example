@@ -10,36 +10,6 @@ server:
     cert_file: "./certs/dev.crt"
     key_file: "./certs/dev.key"
 
-# Ollama 設定（mio/shiro/IdleChat共通モデル）
-ollama:
-  base_url: "http://192.168.1.31:11434"
-  model: "rencrow-v1"  # 全Agent共通モデル
-  max_context: 131072   # 常駐モデルの最大コンテキスト長（超過するモデルはNG）
-
-# Chat / Worker / Heavy / Wild 用ローカルLLM（Mac MLX OpenAI互換サーバ）
-local_llm:
-  enabled: true
-  provider: "local_openai"        # local_openai | ollama
-  # 2026-05-11現在: Chat=8081, Worker=8082, Heavy=8083, Wild=8084 が標準。
-  base_url: "http://192.168.1.31:8081"
-  chat_base_url: "http://192.168.1.31:8081"
-  worker_base_url: "http://192.168.1.31:8082"
-  heavy_base_url: "http://192.168.1.31:8083"
-  wild_base_url: "http://192.168.1.31:8084"
-  api_key: ""
-  chat_model: "Chat"
-  worker_model: "Worker"
-  chat_worker_model: "ChatWorker" # IdleChat shiro用。Workerより短い出力capを使う。
-  heavy_model: "Heavy"
-  wild_model: "Wild"
-  timeout_sec: 120
-  chat_timeout_sec: 0            # 0 の場合は timeout_sec。Mioだけ上書きする場合に指定。
-  warmup: false
-  global_concurrency: 2
-  model_concurrency: 1
-  model_context: 131072
-  chat_model_context: 0          # 0 の場合は model_context。Mioだけ上書きする場合に指定。
-
 # Mio 会話生成。stream=true は通常会話と input_audio 直結経路の両方に適用する。
 mio:
   generation:
@@ -146,6 +116,27 @@ browser_actor:
   save_trace: true
   save_screenshot: true
   mask_secrets: true
+
+# Production LLM execution enters RenCrow_LLM through one Gateway URL.
+# Physical URLs, models and command targets are configured in RenCrow_LLM, not CORE.
+llm_gateway:
+  enabled: true
+  base_url: "http://127.0.0.1:8090"
+  api_key_env: ""
+  timeout_sec: 600
+
+# Codex CLI bridge for codex.run Tool / Advisor only. Kuro's normal LLM is
+# configured as a codex_cli target in RenCrow_LLM and is independent of this Tool.
+codex:
+  enabled: false
+  command: "codex"
+  working_dir: ""
+  sandbox: "read-only"
+  model: ""
+  timeout_ms: 600000
+  max_prompt_bytes: 65536
+  max_output_bytes: 1048576
+  ephemeral: true
 
 # セッション設定
 session:

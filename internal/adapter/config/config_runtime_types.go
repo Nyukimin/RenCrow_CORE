@@ -66,6 +66,14 @@ type LocalLLMConfig struct {
 	ChatModelContext  int    `yaml:"chat_model_context"`
 }
 
+// LLMGatewayConfig connects CORE to RenCrow_LLM using logical Agent IDs only.
+type LLMGatewayConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	BaseURL    string `yaml:"base_url"`
+	APIKeyEnv  string `yaml:"api_key_env"`
+	TimeoutSec int    `yaml:"timeout_sec"`
+}
+
 // MioConfig controls Mio-specific behavior without changing the shared Chat provider.
 type MioConfig struct {
 	Generation MioGenerationConfig `yaml:"generation"`

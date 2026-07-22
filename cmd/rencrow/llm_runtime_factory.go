@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"log"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	llmmiddleware "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/middleware"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 )
 
@@ -24,6 +29,9 @@ const (
 )
 
 func buildPrimaryLLMProviders(cfg *config.Config, contextBudgetRecorder llmmiddleware.ContextBudgetRecorder) primaryLLMProviders {
+	if cfg != nil && cfg.LLMGateway.Enabled {
+		return buildGatewayPrimaryLLMProviders(cfg, contextBudgetRecorder)
+	}
 	plan := modulellm.BuildPrimaryProviderPlan(primaryRuntimeConfigFromAppConfig(cfg))
 	if plan.Mode == modulellm.PrimaryModeLocal {
 		global := make(chan struct{}, cfg.LocalLLM.GlobalConcurrency)
@@ -38,13 +46,14 @@ func buildPrimaryLLMProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		heavy := buildLocalAliasProvider(cfg, "Heavy", modulellm.LocalModelForAlias(localCfg, "Heavy"), heavyTimeout, global)
 		wild := buildLocalAliasProvider(cfg, "Wild", cfg.LocalLLM.WildModel, wildTimeout, global)
 		if cfg.LocalLLMWarmupEnabled() {
-			go warmPrimaryLLMProviders(context.Background(), map[string]llm.LLMProvider{
+			warmupProviders := map[string]llm.LLMProvider{
 				"Chat":       chat,
 				"Worker":     worker,
 				"ChatWorker": chatWorker,
-				"Heavy":      heavy,
 				"Wild":       wild,
-			}, maxDuration(chatTimeout, workerTimeout, heavyTimeout, wildTimeout))
+			}
+			warmupProviders["Heavy"] = heavy
+			go warmPrimaryLLMProviders(context.Background(), warmupProviders, maxDuration(chatTimeout, workerTimeout, heavyTimeout, wildTimeout))
 		}
 		return primaryLLMProviders{
 			Chat:       wrapPrimaryLLMProvider(cfg, "chat", chat, contextBudgetRecorder),
@@ -65,6 +74,27 @@ func buildPrimaryLLMProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		ChatWorker: wrapPrimaryLLMProvider(cfg, "chatworker", workerRawProvider, contextBudgetRecorder),
 		Heavy:      wrapPrimaryLLMProvider(cfg, "heavy", workerRawProvider, contextBudgetRecorder),
 		Wild:       wrapPrimaryLLMProvider(cfg, "wild", workerRawProvider, contextBudgetRecorder),
+	}
+}
+
+func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.ContextBudgetRecorder) primaryLLMProviders {
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.LLMGateway.BaseURL), "/")
+	timeout := time.Duration(cfg.LLMGateway.TimeoutSec) * time.Second
+	apiKey := ""
+	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
+		apiKey = strings.TrimSpace(os.Getenv(envName))
+	}
+	provider := func(role, agentID string) llm.LLMProvider {
+		raw := openai.NewOpenAIProviderWithOptions(apiKey, agentID, baseURL, timeout)
+		return wrapPrimaryLLMProvider(cfg, role, raw, recorder)
+	}
+	log.Printf("RenCrow_LLM Gateway enabled (base_url=%s)", baseURL)
+	return primaryLLMProviders{
+		Chat:       provider("chat", "mio"),
+		Worker:     provider("worker", "worker"),
+		ChatWorker: provider("chatworker", "shiro"),
+		Heavy:      provider("heavy", "kuro"),
+		Wild:       provider("wild", "midori"),
 	}
 }
 

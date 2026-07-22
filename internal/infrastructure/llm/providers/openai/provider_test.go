@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
@@ -21,6 +22,16 @@ func TestNewOpenAIProvider(t *testing.T) {
 
 	if provider.Name() != "openai-gpt-4" {
 		t.Errorf("Expected name 'openai-gpt-4', got '%s'", provider.Name())
+	}
+}
+
+func TestStreamingGatewayErrorIsNotAnEmptySuccess(t *testing.T) {
+	provider := NewOpenAIProviderWithOptions("", "mio", "http://gateway.invalid", time.Second)
+	stream := strings.NewReader("data: {\"error\":{\"code\":\"EMPTY_FINAL_CONTENT\",\"message\":\"target stream returned no content\"}}\n\ndata: [DONE]\n\n")
+
+	_, err := provider.readChatCompletionsStream(stream, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "EMPTY_FINAL_CONTENT") {
+		t.Fatalf("error=%v", err)
 	}
 }
 

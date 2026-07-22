@@ -19,6 +19,7 @@ type distributedNoteEmitter func(from, to, content, route, jobID, sessionID, cha
 
 type distributedRouteDispatcher struct {
 	mio                 MioAgent
+	shiroChat           MioAgent
 	wild                WildAgent
 	heavy               HeavyAgent
 	memory              *session.CentralMemory
@@ -66,6 +67,10 @@ func (d *distributedRouteDispatcher) SetWildAgent(wild WildAgent) {
 
 func (d *distributedRouteDispatcher) SetHeavyAgent(heavy HeavyAgent) {
 	d.heavy = heavy
+}
+
+func (d *distributedRouteDispatcher) SetShiroChatAgent(chat MioAgent) {
+	d.shiroChat = chat
 }
 
 func (d *distributedRouteDispatcher) SetAutonomousExecutor(execute distributedAutonomousExecutor) {
@@ -146,14 +151,14 @@ func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, t task.T
 
 func (d *distributedRouteDispatcher) executeLocalRoute(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID, jid string) (string, error) {
 	speaker := chatSpeakerForTask(t)
-	guardedTask := d.withAttribution(t, "mio", sessionID)
+	guardedTask := d.withAttribution(t, speaker, sessionID)
 	userMsg := domaintransport.NewMessage("user", speaker, sessionID, jid, t.UserMessage())
 	userMsg.Type = domaintransport.MessageTypeTask
 	d.memory.RecordMessage(userMsg)
 
 	d.emit("agent.start", speaker, "user", "考え中...", string(route), jid, sessionID, t.Channel(), t.ChatID())
 	streamCtx, ttsStream := d.withStreamHooks(ctx, route, jid, sessionID, t.Channel(), t.ChatID(), ttsSessionID)
-	resp, err := d.mio.Chat(streamCtx, guardedTask)
+	resp, err := d.generateLocalChatResponse(streamCtx, guardedTask, speaker)
 	if err == nil {
 		respMsg := domaintransport.NewMessage(speaker, "user", sessionID, jid, resp)
 		respMsg.Type = domaintransport.MessageTypeResult
@@ -163,6 +168,30 @@ func (d *distributedRouteDispatcher) executeLocalRoute(ctx context.Context, t ta
 		ttsStream.Finalize(ctx, resp)
 	}
 	return resp, err
+}
+
+func (d *distributedRouteDispatcher) generateLocalChatResponse(ctx context.Context, t task.Task, speaker string) (string, error) {
+	switch speaker {
+	case "mio":
+		return d.mio.Chat(ctx, t)
+	case "shiro":
+		if d.shiroChat == nil {
+			return "", fmt.Errorf("no ChatWorker agent available for Shiro CHAT")
+		}
+		return d.shiroChat.Chat(ctx, t)
+	case "midori":
+		if d.wild == nil {
+			return "", fmt.Errorf("no Wild agent available for Midori CHAT")
+		}
+		return d.wild.Generate(ctx, t)
+	case "kuro":
+		if d.heavy == nil {
+			return "", fmt.Errorf("no heavy agent available for Kuro CHAT")
+		}
+		return d.heavy.Generate(ctx, t)
+	default:
+		return "", fmt.Errorf("unsupported CHAT recipient %q", speaker)
+	}
 }
 
 func (d *distributedRouteDispatcher) executeRemoteRoute(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID, jid, targetAgent string) (string, error) {

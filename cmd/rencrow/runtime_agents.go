@@ -27,15 +27,17 @@ func durationSeconds(sec int) time.Duration {
 }
 
 type agentRuntime struct {
-	Mio   *agent.MioAgent
-	Shiro *agent.ShiroAgent
-	Heavy *agent.HeavyAgent
-	Wild  *agent.WildAgent
+	Mio       *agent.MioAgent
+	ShiroChat *agent.MioAgent
+	Shiro     *agent.ShiroAgent
+	Heavy     *agent.HeavyAgent
+	Wild      *agent.WildAgent
 }
 
 func buildAgentRuntime(
 	cfg *config.Config,
 	chatProvider llm.LLMProvider,
+	chatWorkerProvider llm.LLMProvider,
 	workerProvider llm.LLMProvider,
 	heavyProvider llm.LLMProvider,
 	wildProvider llm.LLMProvider,
@@ -65,16 +67,32 @@ func buildAgentRuntime(
 			Seed:           cfg.Mio.Generation.Seed,
 			EnableThinking: cfg.Mio.Generation.ChatTemplateKwargs.EnableThinking,
 		})
+	shiroChatAgent := agent.NewMioAgent(chatWorkerProvider, classifier, ruleDictionary, nil, mcpClient, convEngine).
+		WithSystemPrompt(cfg.Prompts.MioPersona).
+		WithViewerRecipientPrompts(cfg.Prompts.CharacterPrompts).
+		WithGenerationOptions(agent.MioGenerationOptions{
+			Stream:         cfg.Mio.Generation.Stream,
+			MaxTokens:      cfg.Mio.Generation.MaxTokens,
+			Temperature:    cfg.Mio.Generation.Temperature,
+			TopP:           cfg.Mio.Generation.TopP,
+			TopK:           cfg.Mio.Generation.TopK,
+			MinP:           cfg.Mio.Generation.MinP,
+			Seed:           cfg.Mio.Generation.Seed,
+			EnableThinking: cfg.Mio.Generation.ChatTemplateKwargs.EnableThinking,
+		})
 	if recentGlossaryContext != nil {
 		mioAgent = mioAgent.WithRecentContextProvider(recentGlossaryContext)
+		shiroChatAgent = shiroChatAgent.WithRecentContextProvider(recentGlossaryContext)
 		log.Printf("Mio: Glossary context injected")
 	}
 	if realMgr != nil {
 		mioAgent = mioAgent.WithKBManager(realMgr)
+		shiroChatAgent = shiroChatAgent.WithKBManager(realMgr)
 		log.Printf("Mio: KBManager injected (KB autosave enabled)")
 	}
 	if l1Store != nil {
 		mioAgent = mioAgent.WithUserMemoryManager(l1Store)
+		shiroChatAgent = shiroChatAgent.WithUserMemoryManager(l1Store)
 		log.Printf("Mio: UserMemoryManager injected")
 	}
 	mioPersonaFile := filepath.Join(cfg.WorkspaceDir, "persona", "mio.md")
@@ -126,5 +144,5 @@ func buildAgentRuntime(
 		shiroAgent.WithLightMemory(agent.NewLightMemory(cfg.Worker.LightMemory.MaxTurns))
 		log.Printf("Shiro: LightMemory enabled (max_turns=%d)", cfg.Worker.LightMemory.MaxTurns)
 	}
-	return agentRuntime{Mio: mioAgent, Shiro: shiroAgent, Heavy: heavyAgent, Wild: wildAgent}
+	return agentRuntime{Mio: mioAgent, ShiroChat: shiroChatAgent, Shiro: shiroAgent, Heavy: heavyAgent, Wild: wildAgent}
 }

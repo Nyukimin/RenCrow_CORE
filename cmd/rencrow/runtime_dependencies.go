@@ -329,7 +329,8 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	glossaryRuntime := buildGlossaryRuntime(cfg)
 	agents := buildAgentRuntime(
 		cfg,
-		selectChatConversationProvider(llmRuntime.ChatWorker, llmRuntime.Chat),
+		llmRuntime.Chat,
+		llmRuntime.ChatWorker,
 		llmRuntime.Worker,
 		llmRuntime.Heavy,
 		llmRuntime.Wild,

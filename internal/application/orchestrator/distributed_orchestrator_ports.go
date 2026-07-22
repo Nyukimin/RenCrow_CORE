@@ -75,6 +75,12 @@ func (o *DistributedOrchestrator) SetHeavyAgent(heavy HeavyAgent) {
 	}
 }
 
+func (o *DistributedOrchestrator) SetShiroChatAgent(chat MioAgent) {
+	if o.routes != nil {
+		o.routes.SetShiroChatAgent(chat)
+	}
+}
+
 // SetTTSBridge sets an optional TTS bridge.
 func (o *DistributedOrchestrator) SetTTSBridge(b TTSBridge) {
 	o.ttsBridge = b

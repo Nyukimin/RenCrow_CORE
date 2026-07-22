@@ -72,6 +72,8 @@ mio | shiro | kuro | midori
 
 `model_alias` や旧 route alias は互換経路であり、新規 client の primary contract にしません。指定 recipient が利用不能な場合に別 recipient へ黙って fallback しません。
 
+recipientは物理Model選択ではありません。COREがrouteとAgentを確定した後、RenCrow_LLM Gatewayへ論理Agent IDを送ります。通常CHATの対応は`mio -> mio`、`shiro -> shiro`（ChatWorker）、`midori -> midori`（Wild）、`kuro -> kuro`です。物理targetの情報はCORE Public APIとCMDへ公開しません。
+
 `POST /viewer/recipient-selection`は`viewer_client_id`と`recipient`を受け、`viewer.recipient_selected`を観測eventとして発行します。選択状態はclient-localであり、COREのglobal stateにはせず、実際の送信先は`POST /viewer/send`の`to`を正とします。
 
 `POST /viewer/send`は`message`、`to`に加えて、clientを追跡できる場合は`viewer_client_id`、`input_source`（`text | stt | unknown`）、`user_id`、`device_name`を受けます。`input_source`の未知値は400で拒否します。`user_id`と`device_name`は観測用metadataであり、認証・認可には使用しません。PORTALに利用者認証がない現行構成では`user_id=viewer-user`、`device_name`はブラウザが公開するOS／platform名であり、端末hostnameではありません。

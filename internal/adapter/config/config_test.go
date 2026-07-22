@@ -3527,6 +3527,27 @@ func TestConfig_Validate_Codex(t *testing.T) {
 	})
 }
 
+func TestLLMGatewayDefaultsAndValidation(t *testing.T) {
+	cfg := &Config{Server: ServerConfig{Port: 18790}, Ollama: OllamaConfig{BaseURL: "http://127.0.0.1:11434"}, LLMGateway: LLMGatewayConfig{Enabled: true, BaseURL: "http://127.0.0.1:8090"}}
+	cfg.Session.StorageDir = "./data"
+	cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "ao", "aka", "kin", "gin"
+	cfg.setDefaults()
+	if cfg.LLMGateway.TimeoutSec != 600 {
+		t.Fatalf("timeout_sec=%d, want 600", cfg.LLMGateway.TimeoutSec)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error=%v", err)
+	}
+}
+
+func TestLLMGatewayRejectsMissingAbsoluteBaseURL(t *testing.T) {
+	cfg := &Config{Server: ServerConfig{Port: 18790}, Ollama: OllamaConfig{BaseURL: "http://127.0.0.1:11434"}, LLMGateway: LLMGatewayConfig{Enabled: true, BaseURL: "localhost:8090", TimeoutSec: 60}}
+	cfg.Session.StorageDir = "./data"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "llm_gateway.base_url") {
+		t.Fatalf("Validate() error=%v", err)
+	}
+}
+
 func TestConfig_Validate_AdvisorPersistence(t *testing.T) {
 	cfg := &Config{
 		Server:  ServerConfig{Port: 8080},

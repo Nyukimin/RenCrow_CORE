@@ -53,6 +53,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("local_llm chat_model_context must be >= 0")
 		}
 	}
+	if c.LLMGateway.Enabled {
+		gatewayURL, err := url.Parse(strings.TrimSpace(c.LLMGateway.BaseURL))
+		if err != nil || gatewayURL.Host == "" || (gatewayURL.Scheme != "http" && gatewayURL.Scheme != "https") {
+			return fmt.Errorf("llm_gateway.base_url must be an absolute HTTP URL when enabled=true")
+		}
+		if c.LLMGateway.TimeoutSec < 1 {
+			return fmt.Errorf("llm_gateway.timeout_sec must be >= 1")
+		}
+	}
 
 	if c.Mio.Generation.MaxTokens < 0 {
 		return fmt.Errorf("mio.generation.max_tokens must be >= 0")
@@ -192,7 +201,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("economic_objective.heartbeat_discovery_enabled requires draft_only=true")
 	}
 
-	if !c.LocalLLM.Enabled {
+	if !c.LocalLLM.Enabled && !c.LLMGateway.Enabled {
 		// Ollama設定検証
 		if c.Ollama.BaseURL == "" {
 			return fmt.Errorf("ollama base_url is required")

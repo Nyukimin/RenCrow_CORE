@@ -50,6 +50,7 @@ func buildOrchestratorRuntime(
 			vtuberBridge,
 			nodeCaps,
 		)
+		deps.distOrch.SetShiroChatAgent(agents.ShiroChat)
 		deps.moduleChatService = modulebridge.NewRuntimeChatService(deps.distOrch, agents.Mio)
 		deps.live2DChatResponder = &live2DOrchestratorResponder{orch: deps.distOrch}
 		deps.viewerSend = bridges.ViewerSendFromOrch(deps.distOrch)
@@ -98,6 +99,7 @@ func buildOrchestratorRuntime(
 	orch.SetMaxRepair(cfg.Worker.MaxRepair)
 	orch.SetWildAgent(agents.Wild)
 	orch.SetHeavyAgent(agents.Heavy)
+	orch.SetShiroChatAgent(agents.ShiroChat)
 	orch.SetHeavyWorkerPolicy(domainai.HeavyWorkerPolicy{
 		Enabled:                 cfg.AIWorkflow.HeavyWorkerEnabled,
 		RequireReason:           cfg.AIWorkflow.HeavyWorkerRequireReason,

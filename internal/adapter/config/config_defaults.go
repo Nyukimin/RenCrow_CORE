@@ -31,6 +31,9 @@ func (c *Config) setDefaults() {
 	if c.LocalLLM.Provider == "" {
 		c.LocalLLM.Provider = "local_openai"
 	}
+	if c.LLMGateway.TimeoutSec <= 0 {
+		c.LLMGateway.TimeoutSec = 600
+	}
 	if c.LocalLLM.ChatModel == "" {
 		c.LocalLLM.ChatModel = "Chat"
 	}

@@ -327,6 +327,13 @@ func (o *MessageOrchestrator) SetHeavyAgent(heavy HeavyAgent) {
 	}
 }
 
+// SetShiroChatAgent selects the ChatWorker-backed conversational Shiro.
+func (o *MessageOrchestrator) SetShiroChatAgent(chat MioAgent) {
+	if o.routeDispatcher != nil {
+		o.routeDispatcher.SetShiroChatAgent(chat)
+	}
+}
+
 func (o *MessageOrchestrator) SetHeavyWorkerPolicy(policy domainai.HeavyWorkerPolicy) {
 	if o.routeDecisions != nil {
 		o.routeDecisions.SetHeavyWorkerPolicy(policy)

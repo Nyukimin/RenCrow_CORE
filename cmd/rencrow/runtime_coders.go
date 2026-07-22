@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
@@ -12,6 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	llmfactory "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/factory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
@@ -140,7 +143,17 @@ func setupCoders(cfg *config.Config, busyTracker *llmBusyTracker) (coder1, coder
 		}
 
 		// LLM Provider 生成
-		provider, err := llmfactory.CreateProvider(cc)
+		var provider llm.LLMProvider
+		var err error
+		if cfg.LLMGateway.Enabled {
+			apiKey := ""
+			if cfg.LLMGateway.APIKeyEnv != "" {
+				apiKey = strings.TrimSpace(os.Getenv(cfg.LLMGateway.APIKeyEnv))
+			}
+			provider = openai.NewOpenAIProviderWithOptions(apiKey, strings.ToLower(plan.Name), strings.TrimRight(cfg.LLMGateway.BaseURL, "/"), time.Duration(cfg.LLMGateway.TimeoutSec)*time.Second)
+		} else {
+			provider, err = llmfactory.CreateProvider(cc)
+		}
 		if err != nil {
 			log.Printf("[setupCoders] %s (%s) provider creation failed: %v", plan.Name, cc.Name, err)
 			continue

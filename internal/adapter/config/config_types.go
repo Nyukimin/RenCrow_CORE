@@ -27,6 +27,9 @@ type Config struct {
 	// === MLX / local OpenAI-compatible LLM runtime ===
 	LocalLLM LocalLLMConfig `yaml:"local_llm"`
 
+	// === Mandatory production LLM Gateway client ===
+	LLMGateway LLMGatewayConfig `yaml:"llm_gateway"`
+
 	// === Mio chat generation policy ===
 	Mio MioConfig `yaml:"mio"`
 

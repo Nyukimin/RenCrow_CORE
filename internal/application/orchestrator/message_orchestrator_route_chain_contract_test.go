@@ -61,17 +61,13 @@ func TestMessageOrchestrator_RouteChainContract_ViewerRecipientBecomesChatSpeake
 			Confidence: 0.91,
 			Reason:     "test rule",
 		}),
-		chatFunc: func(ctx context.Context, t task.Task) (string, error) {
-			if t.ViewerRecipient() != "kuro" {
-				return "", errors.New("missing viewer recipient")
-			}
-			if t.UserMessage() != "合言葉 RC_kuro_contract で返答して" {
-				return "", errors.New("user message was changed")
-			}
-			return "RC_kuro_contract、分析完了です。", nil
+		chatFunc: func(context.Context, task.Task) (string, error) {
+			return "", errors.New("Kuro CHAT must not use Mio's chat provider")
 		},
 	}
+	heavy := &mockHeavyAgent{response: "RC_kuro_contract、分析完了です。"}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetHeavyAgent(heavy)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
 	req := defaultReq()
@@ -85,6 +81,9 @@ func TestMessageOrchestrator_RouteChainContract_ViewerRecipientBecomesChatSpeake
 	if resp.Response != "RC_kuro_contract、分析完了です。" {
 		t.Fatalf("response = %q", resp.Response)
 	}
+	if !heavy.called {
+		t.Fatal("Kuro CHAT must use the Heavy agent")
+	}
 
 	messageIdx := indexOfEvent(rec.events, "message.received", "user", "kuro", "")
 	startIdx := indexOfEvent(rec.events, "agent.start", "kuro", "user", "CHAT")
@@ -97,6 +96,71 @@ func TestMessageOrchestrator_RouteChainContract_ViewerRecipientBecomesChatSpeake
 	}
 	if rec.events[messageIdx].JobID == "" {
 		t.Fatalf("message.received must carry job_id for sequence tracking: %#v", rec.events[messageIdx])
+	}
+}
+
+func TestMessageOrchestrator_RouteChainContract_KuroUnavailableDoesNotFallbackToMio(t *testing.T) {
+	repo := newMockSessionRepository()
+	mio := &mockMioAgent{
+		decision: routing.NewDecisionWithEvidence(routing.RouteCHAT, 0.91, "chat", routing.DecisionEvidence{
+			Source:     routing.EvidenceSourceRuleDictionary,
+			Matched:    true,
+			Route:      routing.RouteCHAT,
+			Confidence: 0.91,
+			Reason:     "test rule",
+		}),
+		chatFunc: func(context.Context, task.Task) (string, error) {
+			return "mio fallback", nil
+		},
+	}
+	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	req := defaultReq()
+	req.To = "kuro"
+
+	resp, err := orch.ProcessMessage(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "no heavy agent available for Kuro") {
+		t.Fatalf("expected Kuro unavailable error, got response=%+v err=%v", resp, err)
+	}
+	if resp.Response == "mio fallback" {
+		t.Fatal("Kuro failure must not silently fall back to Mio")
+	}
+}
+
+func TestMessageOrchestrator_RouteChainContract_ShiroUsesDedicatedChatWorker(t *testing.T) {
+	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteCHAT, 1, "test"), chatFunc: func(context.Context, task.Task) (string, error) {
+		return "", errors.New("Shiro CHAT must not use Mio")
+	}}
+	shiroChat := &mockMioAgent{response: "shiro chatworker response"}
+	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetShiroChatAgent(shiroChat)
+	req := defaultReq()
+	req.To = "shiro"
+
+	resp, err := orch.ProcessMessage(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProcessMessage() error=%v", err)
+	}
+	if resp.Response != "shiro chatworker response" {
+		t.Fatalf("response=%q", resp.Response)
+	}
+}
+
+func TestMessageOrchestrator_RouteChainContract_MidoriUsesWildAgent(t *testing.T) {
+	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteCHAT, 1, "test"), chatFunc: func(context.Context, task.Task) (string, error) {
+		return "", errors.New("Midori CHAT must not use Mio")
+	}}
+	wild := &mockWildAgent{response: "midori wild response"}
+	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetWildAgent(wild)
+	req := defaultReq()
+	req.To = "midori"
+
+	resp, err := orch.ProcessMessage(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ProcessMessage() error=%v", err)
+	}
+	if resp.Response != "midori wild response" {
+		t.Fatalf("response=%q", resp.Response)
 	}
 }
 

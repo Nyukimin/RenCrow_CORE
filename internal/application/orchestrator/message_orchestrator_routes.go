@@ -15,6 +15,7 @@ type messageTTSPusher func(ctx context.Context, sessionID string, route routing.
 
 type messageRouteDispatcher struct {
 	mio               MioAgent
+	shiroChat         MioAgent
 	shiro             ShiroAgent
 	wild              WildAgent
 	heavy             HeavyAgent
@@ -50,6 +51,10 @@ func (d *messageRouteDispatcher) SetWildAgent(wild WildAgent) {
 
 func (d *messageRouteDispatcher) SetHeavyAgent(heavy HeavyAgent) {
 	d.heavy = heavy
+}
+
+func (d *messageRouteDispatcher) SetShiroChatAgent(chat MioAgent) {
+	d.shiroChat = chat
 }
 
 func (d *messageRouteDispatcher) SetAutonomousExecutor(execute autonomousRouteExecutor) {
@@ -96,12 +101,36 @@ func (d *messageRouteDispatcher) executeChatRoute(ctx context.Context, t task.Ta
 	speaker := chatSpeakerForTask(t)
 	d.emit("agent.start", speaker, "user", "考え中...", "CHAT", jid, sessionID, channel, chatID)
 	streamCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteCHAT, jid, sessionID, channel, chatID, ttsSessionID)
-	resp, err := d.mio.Chat(streamCtx, t)
+	resp, err := d.generateChatResponse(streamCtx, t, speaker)
 	if err == nil {
 		d.emit("agent.response", speaker, "user", resp, "CHAT", jid, sessionID, channel, chatID)
 		ttsStream.Finalize(ctx, resp)
 	}
 	return resp, err
+}
+
+func (d *messageRouteDispatcher) generateChatResponse(ctx context.Context, t task.Task, speaker string) (string, error) {
+	switch speaker {
+	case string(modulechat.ViewerRecipientMio):
+		return d.mio.Chat(ctx, t)
+	case string(modulechat.ViewerRecipientShiro):
+		if d.shiroChat == nil {
+			return "", fmt.Errorf("no ChatWorker agent available for Shiro CHAT")
+		}
+		return d.shiroChat.Chat(ctx, t)
+	case string(modulechat.ViewerRecipientMidori):
+		if d.wild == nil {
+			return "", fmt.Errorf("no Wild agent available for Midori CHAT")
+		}
+		return d.wild.Generate(ctx, t)
+	case string(modulechat.ViewerRecipientKuro):
+		if d.heavy == nil {
+			return "", fmt.Errorf("no heavy agent available for Kuro CHAT")
+		}
+		return d.heavy.Generate(ctx, t)
+	default:
+		return "", fmt.Errorf("unsupported CHAT recipient %q", speaker)
+	}
 }
 
 func chatSpeakerForTask(t task.Task) string {

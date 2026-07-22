@@ -202,6 +202,7 @@ func TestDistributedOrchestrator_ProcessMessage_ViewerRecipientBecomesChatSpeake
 	defer router.Stop()
 	memory := session.NewCentralMemory()
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	orch.SetWildAgent(&distMockWildAgent{response: "RC_midori_contract、発想を広げたよ。"})
 	rec := &distRecordingEventListener{}
 	orch.SetEventListener(rec)
 
@@ -218,11 +219,8 @@ func TestDistributedOrchestrator_ProcessMessage_ViewerRecipientBecomesChatSpeake
 	if resp.Response != "RC_midori_contract、発想を広げたよ。" {
 		t.Fatalf("response = %q", resp.Response)
 	}
-	if mockMio.lastViewerRecipient != "midori" {
-		t.Fatalf("viewer recipient = %q, want midori", mockMio.lastViewerRecipient)
-	}
-	if mockMio.lastChatInput != "合言葉 RC_midori_contract で返答して" {
-		t.Fatalf("chat input changed: %q", mockMio.lastChatInput)
+	if mockMio.lastChatInput != "" {
+		t.Fatalf("Midori CHAT fell back to Mio: %q", mockMio.lastChatInput)
 	}
 	if distIndexOfEvent(rec.events, "message.received", "user", "midori", "") < 0 {
 		t.Fatalf("missing user->midori message.received: %#v", rec.events)

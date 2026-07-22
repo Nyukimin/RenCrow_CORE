@@ -29,6 +29,10 @@ func (p *OpenAIProvider) readChatCompletionsStream(body io.Reader, onToken llm.S
 			break
 		}
 		var chunk struct {
+			Error *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error,omitempty"`
 			Choices []struct {
 				Delta struct {
 					Content string `json:"content"`
@@ -38,6 +42,9 @@ func (p *OpenAIProvider) readChatCompletionsStream(body io.Reader, onToken llm.S
 		}
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			return llm.GenerateResponse{}, fmt.Errorf("failed to decode stream chunk: %w", err)
+		}
+		if chunk.Error != nil {
+			return llm.GenerateResponse{}, fmt.Errorf("gateway stream error %s: %s", chunk.Error.Code, chunk.Error.Message)
 		}
 		for _, choice := range chunk.Choices {
 			if choice.FinishReason != "" {
@@ -57,6 +64,9 @@ func (p *OpenAIProvider) readChatCompletionsStream(body io.Reader, onToken llm.S
 		finishReason = "stop"
 	}
 	content := full.String()
+	if strings.TrimSpace(content) == "" {
+		return llm.GenerateResponse{}, fmt.Errorf("stream completed without final content")
+	}
 	if p.thinkingBridge && looksLikeUntaggedReasoning(content) {
 		content = extractFinalAnswerFromUntaggedReasoning(content)
 		if content != "" {
