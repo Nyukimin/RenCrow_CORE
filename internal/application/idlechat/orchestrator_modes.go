@@ -100,6 +100,9 @@ func (o *IdleChatOrchestrator) Interrupt(reason string) {
 func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	o.mu.Lock()
 	cancel := o.runCancel
+	dailyEnrichmentCancel := o.dailyEnrichmentCancel
+	o.dailyEnrichmentCancel = nil
+	o.dailyEnrichmentGeneration++
 	if o.manualMode || o.chatActive {
 		log.Printf("[IdleChat] Interrupted: reason=%s generation=%d session=%s", strings.TrimSpace(reason), o.activeGeneration, o.activeSessionID)
 	}
@@ -129,6 +132,9 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	o.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if dailyEnrichmentCancel != nil {
+		dailyEnrichmentCancel()
 	}
 }
 

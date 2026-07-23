@@ -148,9 +148,11 @@ func (o *IdleChatOrchestrator) enrichCurrentDailySeeds() {
 	var failures []string
 	for start := 0; start < len(rawItems); start += dailySeedEnrichmentBatchSize {
 		end := min(start+dailySeedEnrichmentBatchSize, len(rawItems))
-		ctx, cancel := context.WithTimeout(o.ctx, dailySeedEnrichmentTimeout)
-		enriched, err := buildDailySourceBriefBatch(ctx, provider, research, append([]NewsSeed(nil), rawItems[start:end]...))
-		cancel()
+		enriched, err := o.buildDailySourceBriefBatchWithForegroundPriority(
+			provider,
+			research,
+			append([]NewsSeed(nil), rawItems[start:end]...),
+		)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("batch %d-%d: %v", start, end-1, err))
 			log.Printf("[IdleChat] Daily source brief failed skill=%s batch=%d-%d provider=%s: %v", dailySourceBriefSkillID, start, end-1, providerName, err)
@@ -172,6 +174,73 @@ func (o *IdleChatOrchestrator) enrichCurrentDailySeeds() {
 	}
 	finishDailySeedEnrichment(cache.FetchedAt, items, status, providerName, errorText)
 	log.Printf("[IdleChat] Daily source brief completed skill=%s status=%s provider=%s items=%d batches=%d failures=%d", dailySourceBriefSkillID, status, providerName, len(items), successfulBatches, len(failures))
+}
+
+// buildDailySourceBriefBatchWithForegroundPriority は日次処理の入力やcontextを
+// 変更せず、対話・明示Worker実行が始まった時だけ実行中requestを中断して同じ記事を再試行する。
+func (o *IdleChatOrchestrator) buildDailySourceBriefBatchWithForegroundPriority(
+	provider llm.LLMProvider,
+	research DailySourceBriefResearch,
+	seeds []NewsSeed,
+) ([]NewsSeed, error) {
+	for {
+		if err := o.waitForDailyEnrichmentWindow(); err != nil {
+			return nil, err
+		}
+		ctx, release, ok := o.beginDailyEnrichmentBatch()
+		if !ok {
+			continue
+		}
+		enriched, err := buildDailySourceBriefBatch(ctx, provider, research, seeds)
+		ctxErr := ctx.Err()
+		release()
+		if ctxErr == context.Canceled && o.ctx.Err() == nil {
+			log.Printf("[IdleChat] Daily source brief paused for foreground activity skill=%s", dailySourceBriefSkillID)
+			continue
+		}
+		return enriched, err
+	}
+}
+
+func (o *IdleChatOrchestrator) waitForDailyEnrichmentWindow() error {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := o.ctx.Err(); err != nil {
+			return err
+		}
+		o.mu.Lock()
+		foregroundBusy := o.chatBusy || o.workerBusy
+		o.mu.Unlock()
+		if !foregroundBusy {
+			return nil
+		}
+		select {
+		case <-o.ctx.Done():
+			return o.ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (o *IdleChatOrchestrator) beginDailyEnrichmentBatch() (context.Context, func(), bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.chatBusy || o.workerBusy || o.ctx.Err() != nil {
+		return nil, nil, false
+	}
+	ctx, cancel := context.WithTimeout(llm.WithBusySource(o.ctx, "idlechat"), dailySeedEnrichmentTimeout)
+	o.dailyEnrichmentGeneration++
+	generation := o.dailyEnrichmentGeneration
+	o.dailyEnrichmentCancel = cancel
+	return ctx, func() {
+		cancel()
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		if o.dailyEnrichmentGeneration == generation {
+			o.dailyEnrichmentCancel = nil
+		}
+	}, true
 }
 
 // publishDailySeedEnrichmentItems は完了した記事だけを即時公開し、次の記事の

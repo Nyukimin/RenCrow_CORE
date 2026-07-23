@@ -163,22 +163,24 @@ type IdleChatOrchestrator struct {
 	personaTriggers           []domainpersona.TriggerDefinition
 	personaCanonicalResponses []domainpersona.CanonicalResponseDefinition
 
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	runCtx              context.Context
-	runCancel           context.CancelFunc
-	activeSessionID     string
-	activeGeneration    uint64
-	interruptedSessions map[string]struct{}
-	watchdogStage       string
-	watchdogDetail      string
-	watchdogFrom        string
-	watchdogTo          string
-	watchdogMessageID   string
-	watchdogTurnIndex   int
-	watchdogUpdatedAt   time.Time
-	mu                  sync.Mutex
-	wg                  sync.WaitGroup
+	ctx                       context.Context
+	cancel                    context.CancelFunc
+	runCtx                    context.Context
+	runCancel                 context.CancelFunc
+	dailyEnrichmentCancel     context.CancelFunc
+	dailyEnrichmentGeneration uint64
+	activeSessionID           string
+	activeGeneration          uint64
+	interruptedSessions       map[string]struct{}
+	watchdogStage             string
+	watchdogDetail            string
+	watchdogFrom              string
+	watchdogTo                string
+	watchdogMessageID         string
+	watchdogTurnIndex         int
+	watchdogUpdatedAt         time.Time
+	mu                        sync.Mutex
+	wg                        sync.WaitGroup
 }
 
 // SetNewsSourceConfig はIdleChatのお題に使うSNS取得先を設定する。

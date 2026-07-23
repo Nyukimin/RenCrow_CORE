@@ -12,9 +12,11 @@ import (
 type blockingInterruptProvider struct {
 	started chan struct{}
 	done    chan error
+	stream  chan bool
 }
 
 func (p *blockingInterruptProvider) Generate(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+	p.stream <- req.OnToken != nil
 	close(p.started)
 	<-ctx.Done()
 	err := ctx.Err()
@@ -28,6 +30,7 @@ func TestIdleChatInterruptResetsStateAndCancelsRunContext(t *testing.T) {
 	provider := &blockingInterruptProvider{
 		started: make(chan struct{}),
 		done:    make(chan error, 1),
+		stream:  make(chan bool, 1),
 	}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
 
@@ -49,6 +52,9 @@ func TestIdleChatInterruptResetsStateAndCancelsRunContext(t *testing.T) {
 	case <-provider.started:
 	case <-time.After(time.Second):
 		t.Fatal("provider did not start")
+	}
+	if streaming := <-provider.stream; !streaming {
+		t.Fatal("IdleChat request must stream so interrupt reaches the physical backend")
 	}
 
 	o.Interrupt("user_input")

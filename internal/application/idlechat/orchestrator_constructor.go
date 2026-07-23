@@ -29,7 +29,7 @@ func NewIdleChatOrchestrator(
 	_ = storyDataDir // unused
 	ctx, cancel := context.WithCancel(context.Background())
 	return &IdleChatOrchestrator{
-		llmProvider:    llmProvider,
+		llmProvider:    interruptibleIdleChatProvider(llmProvider),
 		speakerLLMs:    make(map[string]llm.LLMProvider),
 		speakerOptions: defaultIdleChatSpeakerOptions(participants),
 		memory:         memory,
@@ -99,7 +99,7 @@ func (o *IdleChatOrchestrator) SetForecastProvider(provider llm.LLMProvider) {
 func (o *IdleChatOrchestrator) SetForecastProviderWithLabel(provider llm.LLMProvider, label string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.forecastProvider = provider
+	o.forecastProvider = interruptibleIdleChatProvider(provider)
 	o.forecastProviderLabel = strings.TrimSpace(label)
 }
 
@@ -108,7 +108,7 @@ func (o *IdleChatOrchestrator) SetForecastProviderWithLabel(provider llm.LLMProv
 func (o *IdleChatOrchestrator) SetForecastTopicProviderWithLabel(provider llm.LLMProvider, label string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.forecastTopicProvider = provider
+	o.forecastTopicProvider = interruptibleIdleChatProvider(provider)
 	o.forecastTopicProviderLabel = strings.TrimSpace(label)
 }
 
@@ -128,8 +128,35 @@ func (o *IdleChatOrchestrator) SetSpeakerProviders(providers map[string]llm.LLMP
 		if provider == nil {
 			continue
 		}
-		o.speakerLLMs[strings.ToLower(strings.TrimSpace(name))] = provider
+		o.speakerLLMs[strings.ToLower(strings.TrimSpace(name))] = interruptibleIdleChatProvider(provider)
 	}
+}
+
+// idleChatInterruptibleProvider は応答内容を変えずSSE転送を有効にし、
+// Interruptのcontext cancelをGateway/proxy/物理backendまで伝播させる。
+type idleChatInterruptibleProvider struct {
+	inner llm.LLMProvider
+}
+
+func interruptibleIdleChatProvider(provider llm.LLMProvider) llm.LLMProvider {
+	if provider == nil {
+		return nil
+	}
+	if _, ok := provider.(idleChatInterruptibleProvider); ok {
+		return provider
+	}
+	return idleChatInterruptibleProvider{inner: provider}
+}
+
+func (p idleChatInterruptibleProvider) Generate(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+	if req.OnToken == nil {
+		req.OnToken = func(string) {}
+	}
+	return p.inner.Generate(ctx, req)
+}
+
+func (p idleChatInterruptibleProvider) Name() string {
+	return p.inner.Name()
 }
 
 func (o *IdleChatOrchestrator) SetSpeakerProviderOptions(options map[string]map[string]any) {
