@@ -50,6 +50,9 @@ type movieCatalogMovieItem struct {
 	PeopleCount int    `json:"people_count"`
 	Watched     bool   `json:"watched"`
 	WatchCount  int    `json:"watch_count"`
+	Familiarity string `json:"familiarity"`
+	Sentiment   string `json:"sentiment"`
+	Assessed    bool   `json:"assessed"`
 }
 
 type movieCatalogPersonItem struct {
@@ -62,6 +65,9 @@ type movieCatalogPersonItem struct {
 	WatchedMovieCount int    `json:"watched_movie_count"`
 	Favorite          bool   `json:"favorite"`
 	PreferenceCount   int    `json:"preference_count"`
+	Familiarity       string `json:"familiarity"`
+	Sentiment         string `json:"sentiment"`
+	Assessed          bool   `json:"assessed"`
 }
 
 type movieCatalogEdgeItem struct {
@@ -107,6 +113,8 @@ type movieCatalogPreferenceRequest struct {
 	SignalType  string  `json:"signal_type"`
 	Weight      float64 `json:"weight"`
 	GeneratedBy string  `json:"generated_by"`
+	Dimension   string  `json:"dimension"`
+	Value       string  `json:"value"`
 }
 
 type movieCatalogFetchCandidate struct {
@@ -284,9 +292,12 @@ func HandleMovieCatalogPreference(opts MovieCatalogOptions) http.HandlerFunc {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if err := normalizeMovieCatalogPreferenceRequest(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+		isAssessment := strings.TrimSpace(req.Dimension) != ""
+		if !isAssessment {
+			if err := normalizeMovieCatalogPreferenceRequest(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 		dbPath := resolveMovieCatalogDBPath(opts.DBPath)
 		if dbPath == "" {
@@ -304,6 +315,41 @@ func HandleMovieCatalogPreference(opts MovieCatalogOptions) http.HandlerFunc {
 			return
 		}
 		defer db.Close()
+		if isAssessment {
+			assessmentReq := moviecatalog.AssessmentRequest{
+				Kind:        req.Kind,
+				TargetID:    req.TargetID,
+				TargetLabel: req.TargetLabel,
+				Dimension:   req.Dimension,
+				Value:       req.Value,
+				UpdatedBy:   req.GeneratedBy,
+			}
+			if err := moviecatalog.SetAssessment(db, assessmentReq); err != nil {
+				if errors.Is(err, moviecatalog.ErrInvalidAssessment) {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				http.Error(w, "failed to update movie catalog assessment", http.StatusInternalServerError)
+				return
+			}
+			assessment, err := moviecatalog.AssessmentFor(db, strings.TrimSpace(req.Kind), strings.TrimSpace(req.TargetID))
+			if err != nil {
+				http.Error(w, "failed to reload movie catalog assessment", http.StatusInternalServerError)
+				return
+			}
+			writeMovieCatalogJSON(w, movieCatalogResponse{
+				Available: true,
+				DBPath:    dbPath,
+				Action:    "assessment",
+				Detail: map[string]any{
+					"kind":        strings.TrimSpace(req.Kind),
+					"target_id":   strings.TrimSpace(req.TargetID),
+					"familiarity": assessment.Familiarity,
+					"sentiment":   assessment.Sentiment,
+				},
+			})
+			return
+		}
 		prefReq := moviecatalog.PreferenceRequest{
 			Kind:        req.Kind,
 			TargetID:    req.TargetID,

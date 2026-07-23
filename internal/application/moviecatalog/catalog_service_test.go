@@ -274,6 +274,14 @@ func TestPeople(t *testing.T) {
 			wantTotal: 3,
 			wantCount: 2,
 		},
+		{
+			name:      "filter actors by role",
+			params:    QueryParams{Role: "Actor"},
+			limit:     10,
+			offset:    0,
+			wantTotal: 1,
+			wantCount: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -420,6 +428,122 @@ func TestSetPersonFavorite(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("PersonPreferenceCount() after unset: got %d, want 0", count)
+	}
+}
+
+func TestSetAssessmentPersistsMovieAndPersonSelections(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+
+	if err := SetAssessment(db, AssessmentRequest{
+		Kind:        "movie",
+		TargetID:    "m2",
+		TargetLabel: "Test Movie 2",
+		Dimension:   "familiarity",
+		Value:       "unseen",
+		UpdatedBy:   "viewer",
+	}); err != nil {
+		t.Fatalf("SetAssessment(movie familiarity) failed: %v", err)
+	}
+	if err := SetAssessment(db, AssessmentRequest{
+		Kind:        "movie",
+		TargetID:    "m2",
+		TargetLabel: "Test Movie 2",
+		Dimension:   "sentiment",
+		Value:       "like",
+		UpdatedBy:   "viewer",
+	}); err != nil {
+		t.Fatalf("SetAssessment(movie sentiment) failed: %v", err)
+	}
+	if err := SetAssessment(db, AssessmentRequest{
+		Kind:        "person",
+		TargetID:    "p1",
+		TargetLabel: "Test Person 1",
+		Dimension:   "familiarity",
+		Value:       "known",
+		UpdatedBy:   "viewer",
+	}); err != nil {
+		t.Fatalf("SetAssessment(person familiarity) failed: %v", err)
+	}
+	if err := SetAssessment(db, AssessmentRequest{
+		Kind:        "person",
+		TargetID:    "p1",
+		TargetLabel: "Test Person 1",
+		Dimension:   "sentiment",
+		Value:       "dislike",
+		UpdatedBy:   "viewer",
+	}); err != nil {
+		t.Fatalf("SetAssessment(person sentiment) failed: %v", err)
+	}
+
+	_, movies, err := Movies(db, QueryParams{Query: "Test Movie 2"}, 10, 0)
+	if err != nil {
+		t.Fatalf("Movies() failed: %v", err)
+	}
+	if len(movies) != 1 || movies[0].Familiarity != "unseen" || movies[0].Sentiment != "like" {
+		t.Fatalf("unexpected movie assessment: %+v", movies)
+	}
+	_, people, err := People(db, QueryParams{Query: "Test Person 1"}, 10, 0)
+	if err != nil {
+		t.Fatalf("People() failed: %v", err)
+	}
+	if len(people) != 1 || people[0].Familiarity != "known" || people[0].Sentiment != "dislike" {
+		t.Fatalf("unexpected person assessment: %+v", people)
+	}
+
+	if err := SetAssessment(db, AssessmentRequest{
+		Kind:        "movie",
+		TargetID:    "m2",
+		TargetLabel: "Test Movie 2",
+		Dimension:   "familiarity",
+		Value:       "seen",
+		UpdatedBy:   "viewer",
+	}); err != nil {
+		t.Fatalf("SetAssessment(movie replacement) failed: %v", err)
+	}
+	assessment, err := AssessmentFor(db, "movie", "m2")
+	if err != nil {
+		t.Fatalf("AssessmentFor(movie) failed: %v", err)
+	}
+	if assessment.Familiarity != "seen" || assessment.Sentiment != "like" {
+		t.Fatalf("replacement must preserve the other dimension: %+v", assessment)
+	}
+
+	if err := SetAssessment(db, AssessmentRequest{
+		Kind:        "movie",
+		TargetID:    "m1",
+		TargetLabel: "Test Movie 1",
+		Dimension:   "familiarity",
+		Value:       "",
+		UpdatedBy:   "viewer",
+	}); err != nil {
+		t.Fatalf("SetAssessment(movie clear) failed: %v", err)
+	}
+	_, watchedMovies, err := Movies(db, QueryParams{Query: "Test Movie 1"}, 10, 0)
+	if err != nil {
+		t.Fatalf("Movies() after explicit clear failed: %v", err)
+	}
+	if len(watchedMovies) != 1 || watchedMovies[0].Familiarity != "" {
+		t.Fatalf("explicit clear must not fall back to imported watch history: %+v", watchedMovies)
+	}
+}
+
+func TestSetAssessmentValidatesKindDimensionAndValue(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+
+	tests := []AssessmentRequest{
+		{Kind: "movie", TargetID: "m1", Dimension: "familiarity", Value: "known"},
+		{Kind: "person", TargetID: "p1", Dimension: "familiarity", Value: "seen"},
+		{Kind: "movie", TargetID: "m1", Dimension: "sentiment", Value: "neutral"},
+		{Kind: "series", TargetID: "m1", Dimension: "sentiment", Value: "like"},
+	}
+	for _, req := range tests {
+		if err := SetAssessment(db, req); err == nil {
+			t.Fatalf("SetAssessment(%+v) should fail", req)
+		}
 	}
 }
 

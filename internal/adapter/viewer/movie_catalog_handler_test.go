@@ -333,6 +333,51 @@ func TestHandleMovieCatalogPreferenceTogglesPersonFavorite(t *testing.T) {
 	}
 }
 
+func TestHandleMovieCatalogPreferenceStoresGridAssessment(t *testing.T) {
+	dbPath := seedMovieCatalogTestDB(t)
+	write := HandleMovieCatalogPreference(MovieCatalogOptions{DBPath: dbPath})
+
+	rec := httptest.NewRecorder()
+	write(rec, httptest.NewRequest(http.MethodPost, "/viewer/movie-catalog/preference", strings.NewReader(`{
+		"kind":"movie",
+		"target_id":"57573",
+		"target_label":"マージン・コール",
+		"dimension":"familiarity",
+		"value":"unseen",
+		"generated_by":"viewer"
+	}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	read := HandleMovieCatalog(MovieCatalogOptions{DBPath: dbPath})
+	listRec := httptest.NewRecorder()
+	read(listRec, httptest.NewRequest(http.MethodGet, "/viewer/movie-catalog?action=movies&q=マージン", nil))
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", listRec.Code, listRec.Body.String())
+	}
+	var out struct {
+		Items []movieCatalogMovieItem `json:"items"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("invalid list json: %v", err)
+	}
+	if len(out.Items) != 1 || out.Items[0].Familiarity != "unseen" {
+		t.Fatalf("expected unseen assessment, got %+v", out.Items)
+	}
+
+	badRec := httptest.NewRecorder()
+	write(badRec, httptest.NewRequest(http.MethodPost, "/viewer/movie-catalog/preference", strings.NewReader(`{
+		"kind":"movie",
+		"target_id":"57573",
+		"dimension":"familiarity",
+		"value":"known"
+	}`)))
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid movie familiarity, got %d: %s", badRec.Code, badRec.Body.String())
+	}
+}
+
 func TestHandleMovieCatalogMissingDBIsSoftUnavailable(t *testing.T) {
 	h := HandleMovieCatalog(MovieCatalogOptions{DBPath: filepath.Join(t.TempDir(), "missing.sqlite")})
 	rec := httptest.NewRecorder()

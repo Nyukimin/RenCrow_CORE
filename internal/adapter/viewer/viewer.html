@@ -6,7 +6,7 @@
 <title>RenCrow Live</title>
 <link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260718-idle-stock-reader">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260511-memory-desk">
-<link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260517-desk-regenerated">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260723-movie-assessment-grid-2">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
 </head>
 <body class="theme-modern">
@@ -148,7 +148,7 @@
       <option value="backlog">Backlog</option>
       <option value="reports">Reports</option>
       <option value="memory">Memory</option>
-      <option value="movie-db">Movies</option>
+      <option value="movie-db">映画・俳優</option>
       <option value="news-pack">News Pack</option>
 	  <option value="collection">情報収集</option>
       <option value="investment">Investment</option>
@@ -172,7 +172,7 @@
     <button class="tab-btn" data-tab="backlog">Backlog</button>
     <button class="tab-btn" data-tab="reports">Reports</button>
     <button class="tab-btn" data-tab="memory">Memory</button>
-    <button class="tab-btn" data-tab="movie-db">Movies</button>
+    <button class="tab-btn" data-tab="movie-db">映画・俳優</button>
     <button class="tab-btn" data-tab="news-pack">News Pack</button>
 	<button class="tab-btn" data-tab="collection">情報収集</button>
     <button class="tab-btn" data-tab="investment">Investment</button>
@@ -1079,8 +1079,8 @@
     <div class="movie-db-screen">
       <section class="movie-db-side">
         <div class="desk-brand">
-          <div class="desk-kicker">Movie Database</div>
-          <h2 class="daily-desk-title">映画と人物のリンク</h2>
+          <div class="desk-kicker">Movie Check</div>
+          <h2 class="daily-desk-title">映画・俳優チェック</h2>
         </div>
         <div class="movie-db-meter">
           <div><span id="movieDbMovieCount">0</span><small>Movies</small></div>
@@ -1114,13 +1114,13 @@
         <div class="movie-db-toolbar">
           <div class="movie-db-mode" role="tablist" aria-label="Movie catalog mode">
             <button id="movieDbModeMovies" class="movie-db-mode-btn active" type="button">映画</button>
-            <button id="movieDbModePeople" class="movie-db-mode-btn" type="button">人物</button>
+            <button id="movieDbModePeople" class="movie-db-mode-btn" type="button">俳優</button>
           </div>
           <div class="movie-db-history">
             <button id="movieDbBack" class="ctl-btn" type="button">戻る</button>
             <button id="movieDbForward" class="ctl-btn" type="button">進む</button>
           </div>
-          <input id="movieDbSearch" class="movie-db-search" placeholder="映画名、人物名、あらすじ、略歴で検索">
+          <input id="movieDbSearch" class="movie-db-search" placeholder="映画名または俳優名で検索">
           <select id="movieDbRoleFilter" class="movie-db-select" aria-label="role filter">
             <option value="">役割すべて</option>
             <option value="出演">出演</option>
@@ -1147,6 +1147,7 @@
             <div class="movie-db-list-head">
               <h3 id="movieDbListTitle">映画</h3>
               <span id="movieDbPageInfo" class="desk-pill">0 / 0</span>
+              <span id="movieDbSaveStatus" class="movie-db-save-status" aria-live="polite">変更は自動保存されます</span>
               <div class="movie-db-pager movie-db-pager-top">
                 <button id="movieDbFirst" class="ctl-btn" type="button">First</button>
                 <button id="movieDbPrev" class="ctl-btn" type="button">Prev</button>
@@ -1565,7 +1566,7 @@
 <script src="/viewer/assets/js/tabs/overview.js?v=20260510-tabs-overview" defer></script>
 <script src="/viewer/assets/js/tabs/system.js?v=20260510-tabs-system" defer></script>
 <script src="/viewer/assets/js/tabs/memory.js?v=20260518-knowledge-relations" defer></script>
-<script src="/viewer/assets/js/tabs/movie-db.js?v=20260602-movie-catalog" defer></script>
+<script src="/viewer/assets/js/tabs/movie-db.js?v=20260723-assessment-grid-2" defer></script>
 <script src="/viewer/assets/js/tabs/news-pack.js?v=20260510-tabs-memory" defer></script>
 <script src="/viewer/assets/js/tabs/collection.js?v=20260721-daily-collection" defer></script>
 <script src="/viewer/assets/js/tabs/investment.js?v=20260616-investment-desk" defer></script>

@@ -46,6 +46,8 @@ function movieDbQueryParams(action) {
   if (movieDbState.mode === 'movies') {
     if (movieDbState.role) params.set('role', movieDbState.role);
     if (movieDbState.source) params.set('source', movieDbState.source);
+  } else {
+    params.set('role', '出演');
   }
   return params;
 }
@@ -71,7 +73,7 @@ function movieDbRefreshList() {
   const title = movieDbEl('movieDbListTitle');
   const rows = movieDbEl('movieDbRows');
   const detail = movieDbEl('movieDbDetail');
-  if (title) title.textContent = movieDbState.mode === 'people' ? '人物' : '映画';
+  if (title) title.textContent = movieDbState.mode === 'people' ? '俳優' : '映画';
   if (rows) rows.innerHTML = '<div class="daily-desk-muted">loading...</div>';
   if (detail && !movieDbState.selectedID) detail.textContent = '項目を選ぶと詳細を表示します。';
   const params = movieDbQueryParams(movieDbState.mode);
@@ -126,27 +128,29 @@ function movieDbRenderRows(items) {
   rows.querySelectorAll('.movie-db-row').forEach((row) => {
     row.addEventListener('click', () => movieDbOpenDetail(row.dataset.id || ''));
   });
-  rows.querySelectorAll('.movie-db-favorite-toggle').forEach((control) => {
-    control.addEventListener('click', (ev) => ev.stopPropagation());
-    control.addEventListener('change', () => movieDbSetPersonFavorite(control));
+  rows.querySelectorAll('.movie-db-assessment-choice').forEach((choice) => {
+    choice.addEventListener('click', (ev) => ev.stopPropagation());
+  });
+  rows.querySelectorAll('.movie-db-assessment-toggle').forEach((control) => {
+    control.addEventListener('change', () => movieDbSetAssessment(control));
   });
 }
 
 function movieDbTableHeadHTML() {
   if (movieDbState.mode === 'people') {
-    return '<tr><th>人物</th><th>好き</th><th>関連映画</th><th>見た映画</th><th>略歴</th><th>ID</th></tr>';
+    return '<tr><th>俳優</th><th>知ってる</th><th>知らない</th><th>好き</th><th>嫌い</th></tr>';
   }
-  return '<tr><th>映画</th><th>見た</th><th>人物</th><th>あらすじ</th><th>ID</th></tr>';
+  return '<tr><th>映画</th><th>見た</th><th>見てない</th><th>好き</th><th>嫌い</th></tr>';
 }
 
 function movieDbMovieRowHTML(item) {
   const id = movieDbItemID(item);
   return '<tr class="movie-db-row' + (movieDbState.selectedID === id ? ' active' : '') + '" data-id="' + escAttr(id) + '">' +
     '<td class="movie-db-title-cell">' + esc(item.title || '-') + '</td>' +
-    '<td>' + movieDbWatchedBadgeHTML(item) + '</td>' +
-    '<td>' + esc(String(item.people_count || 0)) + '</td>' +
-    '<td class="movie-db-body-cell">' + esc(short(item.synopsis || '-', 180)) + '</td>' +
-    '<td class="movie-db-id-cell">' + esc(item.movie_id || '-') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'familiarity', 'seen', '見た') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'familiarity', 'unseen', '見てない') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'sentiment', 'like', '好き') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'sentiment', 'dislike', '嫌い') + '</td>' +
     '</tr>';
 }
 
@@ -154,12 +158,99 @@ function movieDbPersonRowHTML(item) {
   const id = movieDbItemID(item);
   return '<tr class="movie-db-row' + (movieDbState.selectedID === id ? ' active' : '') + '" data-id="' + escAttr(id) + '">' +
     '<td class="movie-db-title-cell">' + esc(item.name || '-') + '</td>' +
-    '<td>' + movieDbFavoriteToggleHTML(item) + '</td>' +
-    '<td>' + esc(String(item.movie_count || 0)) + '</td>' +
-    '<td>' + esc(String(item.watched_movie_count || 0)) + '</td>' +
-    '<td class="movie-db-body-cell">' + esc(short(item.biography || '-', 180)) + '</td>' +
-    '<td class="movie-db-id-cell">' + esc(item.person_id || '-') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'familiarity', 'known', '知ってる') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'familiarity', 'unknown', '知らない') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'sentiment', 'like', '好き') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'sentiment', 'dislike', '嫌い') + '</td>' +
     '</tr>';
+}
+
+function movieDbAssessmentToggleHTML(item, dimension, value, label) {
+  const kind = movieDbState.mode === 'people' ? 'person' : 'movie';
+  const id = String(kind === 'person' ? (item.person_id || '') : (item.movie_id || ''));
+  const targetLabel = String(kind === 'person' ? (item.name || id) : (item.title || id));
+  const selectedValue = String(item && item[dimension] ? item[dimension] : '');
+  const checked = selectedValue === value ? ' checked' : '';
+  const disabled = id ? '' : ' disabled';
+  return '<label class="movie-db-assessment-choice">' +
+    '<input class="movie-db-assessment-toggle" type="checkbox"' +
+      ' data-kind="' + escAttr(kind) + '"' +
+      ' data-target-id="' + escAttr(id) + '"' +
+      ' data-target-label="' + escAttr(targetLabel) + '"' +
+      ' data-dimension="' + escAttr(dimension) + '"' +
+      ' data-value="' + escAttr(value) + '"' +
+      ' data-selected-value="' + escAttr(selectedValue) + '"' + checked + disabled + '>' +
+    '<span>' + esc(label) + '</span>' +
+    '</label>';
+}
+
+function movieDbSetAssessment(control) {
+  if (!control || !control.dataset) return;
+  const kind = String(control.dataset.kind || '');
+  const targetID = String(control.dataset.targetId || '');
+  const targetLabel = String(control.dataset.targetLabel || targetID);
+  const dimension = String(control.dataset.dimension || '');
+  const selectedValue = String(control.dataset.selectedValue || '');
+  const value = control.checked ? String(control.dataset.value || '') : '';
+  if (!kind || !targetID || !dimension) return;
+
+  const row = control.closest('.movie-db-row');
+  const group = row
+    ? Array.from(row.querySelectorAll('.movie-db-assessment-toggle[data-dimension="' + dimension + '"]'))
+    : [control];
+  group.forEach((item) => {
+    item.checked = value !== '' && item.dataset.value === value;
+    item.disabled = true;
+  });
+  movieDbSetSaveStatus('保存中...', '');
+
+  fetch('/viewer/movie-catalog/preference', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      kind: kind,
+      target_id: targetID,
+      target_label: targetLabel,
+      dimension: dimension,
+      value: value,
+      generated_by: 'viewer',
+    }),
+  })
+    .then((r) => {
+      if (!r.ok) return r.text().then((text) => { throw new Error(text || ('HTTP ' + String(r.status))); });
+      return r.json();
+    })
+    .then((data) => {
+      const detail = data && data.detail ? data.detail : {};
+      const savedValue = String(detail[dimension] || '');
+      group.forEach((item) => {
+        item.dataset.selectedValue = savedValue;
+        item.checked = savedValue !== '' && item.dataset.value === savedValue;
+      });
+      movieDbSetSaveStatus('保存済み', 'ok');
+      if (movieDbState.selectedID === targetID) {
+        window.setTimeout(() => movieDbOpenDetail(targetID, {skipHistory: true}), 80);
+      }
+    })
+    .catch((err) => {
+      group.forEach((item) => {
+        item.checked = selectedValue !== '' && item.dataset.value === selectedValue;
+      });
+      movieDbSetSaveStatus('保存できません: ' + String(err && err.message ? err.message : err), 'err');
+    })
+    .finally(() => {
+      group.forEach((item) => {
+        item.disabled = false;
+      });
+    });
+}
+
+function movieDbSetSaveStatus(message, kind) {
+  const status = movieDbEl('movieDbSaveStatus');
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle('ok', kind === 'ok');
+  status.classList.toggle('err', kind === 'err');
 }
 
 function movieDbWatchedBadgeHTML(item) {

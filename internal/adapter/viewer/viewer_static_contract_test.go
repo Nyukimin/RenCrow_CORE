@@ -332,6 +332,44 @@ func TestViewerStaticContractMovieDatabaseTabSwitchMapping(t *testing.T) {
 	}
 }
 
+func TestViewerStaticContractMovieAssessmentGrid(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	jsData, err := os.ReadFile("assets/js/tabs/movie-db.js")
+	if err != nil {
+		t.Fatalf("read movie-db.js: %v", err)
+	}
+	html := string(htmlData)
+	js := string(jsData)
+
+	for needle, purpose := range map[string]string{
+		`id="movieDbModeMovies"`: "movie screen selector",
+		`id="movieDbModePeople"`: "actor screen selector",
+		`id="movieDbSaveStatus"`: "assessment autosave status",
+	} {
+		if !strings.Contains(html, needle) {
+			t.Fatalf("viewer.html missing %s (%s)", needle, purpose)
+		}
+	}
+	for _, needle := range []string{
+		"見た",
+		"見てない",
+		"知ってる",
+		"知らない",
+		"好き",
+		"嫌い",
+		"movie-db-assessment-toggle",
+		"dimension: dimension",
+		"value: value",
+	} {
+		if !strings.Contains(js, needle) {
+			t.Fatalf("movie assessment grid contract missing %q", needle)
+		}
+	}
+}
+
 func TestViewerStaticContractInvestmentTabSwitchMapping(t *testing.T) {
 	data, err := os.ReadFile("assets/js/viewer.js")
 	if err != nil {
