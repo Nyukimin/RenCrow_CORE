@@ -12,8 +12,20 @@ func TestBuildConversationTextProviderPlanUsesPrimaryWorker(t *testing.T) {
 		SummaryModel:       "summary",
 		OllamaBaseURL:      "http://ollama",
 	})
-	if !got.UseWorker || got.Provider != ConversationTextProviderPrimaryWorker || got.Description != "local_llm Worker" {
+	if !got.UseWorker || got.Provider != ConversationTextProviderPrimaryWorker || got.Description != "primary Worker" {
 		t.Fatalf("BuildConversationTextProviderPlan() = %#v, want primary worker", got)
+	}
+}
+
+func TestBuildConversationTextProviderPlanUsesPrimaryWorkerForGateway(t *testing.T) {
+	got := BuildConversationTextProviderPlan(ConversationRuntimeConfig{
+		LocalEnabled:       false,
+		PrimaryWorkerReady: true,
+		SummaryModel:       "legacy-summary",
+		OllamaBaseURL:      "http://legacy-ollama",
+	})
+	if !got.UseWorker || got.Provider != ConversationTextProviderPrimaryWorker {
+		t.Fatalf("BuildConversationTextProviderPlan() = %#v, want gateway primary worker", got)
 	}
 }
 

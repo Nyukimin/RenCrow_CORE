@@ -121,7 +121,7 @@ func TestBuildConversationTextProviderUsesLocalWorkerWhenLocalLLMEnabled(t *test
 	if provider != worker {
 		t.Fatalf("expected local Worker provider, got %#v", provider)
 	}
-	if label != "local_llm Worker" {
+	if label != "primary Worker" {
 		t.Fatalf("unexpected label: %s", label)
 	}
 }

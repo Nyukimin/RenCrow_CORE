@@ -53,11 +53,11 @@ type ConversationEmbedderPlan struct {
 }
 
 func BuildConversationTextProviderPlan(cfg ConversationRuntimeConfig) ConversationTextProviderPlan {
-	if cfg.LocalEnabled && cfg.PrimaryWorkerReady {
+	if cfg.PrimaryWorkerReady {
 		return ConversationTextProviderPlan{
 			Provider:    ConversationTextProviderPrimaryWorker,
 			UseWorker:   true,
-			Description: "local_llm Worker",
+			Description: "primary Worker",
 		}
 	}
 	model := FirstNonEmpty(cfg.SummaryModel, cfg.OllamaModel)

@@ -65,6 +65,62 @@ func TestRuleDictionary_Match_NoMatch(t *testing.T) {
 	}
 }
 
+func TestRuleDictionary_Match_ObviousGreetingAsChat(t *testing.T) {
+	dict := NewRuleDictionary()
+
+	route, confidence, matched := dict.Match(task.NewTask(task.NewJobID(), "おはようございます", "viewer", "viewer-user"))
+	if !matched || route != routing.RouteCHAT || confidence < 0.9 {
+		t.Fatalf("greeting match = (%s, %.2f, %t), want CHAT with high confidence", route, confidence, matched)
+	}
+}
+
+func TestRuleDictionary_DoesNotHideActionBehindGreeting(t *testing.T) {
+	dict := NewRuleDictionary()
+
+	route, _, matched := dict.Match(task.NewTask(task.NewJobID(), "おはよう、COREを再起動して", "viewer", "viewer-user"))
+	if !matched || route != routing.RouteOPS {
+		t.Fatalf("compound greeting route = %s matched=%t, want OPS", route, matched)
+	}
+}
+
+func TestRuleDictionary_Match_HighConfidenceConversationAsChat(t *testing.T) {
+	dict := NewRuleDictionary()
+	tests := []string{
+		"ProfileExtractorって重いの？",
+		"Rawデータ残ってるよね？",
+		"30文字以内で「はい」とだけ答えてください。",
+		"今の構成をざっくり説明して",
+		"これってどう思う？",
+		"まず何をすべき？",
+	}
+
+	for _, message := range tests {
+		t.Run(message, func(t *testing.T) {
+			route, confidence, matched := dict.Match(task.NewTask(task.NewJobID(), message, "viewer", "viewer-user"))
+			if !matched || route != routing.RouteCHAT || confidence < 0.9 {
+				t.Fatalf("conversation match = (%s, %.2f, %t), want CHAT with high confidence", route, confidence, matched)
+			}
+		})
+	}
+}
+
+func TestRuleDictionary_HighConfidenceConversationDoesNotHideAmbiguousWork(t *testing.T) {
+	dict := NewRuleDictionary()
+	for _, message := range []string{
+		"COREは動いてる？",
+		"ログ残ってる？",
+		"このエラーの原因は？",
+		"設定合ってる？",
+		"COREの状態を答えて",
+	} {
+		t.Run(message, func(t *testing.T) {
+			if route, _, matched := dict.Match(task.NewTask(task.NewJobID(), message, "viewer", "viewer-user")); matched && route == routing.RouteCHAT {
+				t.Fatalf("ambiguous work %q was hidden by CHAT fast path", message)
+			}
+		})
+	}
+}
+
 func TestRuleDictionary_Match_CodexWorkPath(t *testing.T) {
 	tests := []struct {
 		name    string

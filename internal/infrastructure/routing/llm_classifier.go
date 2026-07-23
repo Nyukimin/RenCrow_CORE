@@ -10,6 +10,8 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
+const classifierMaxTokens = 8
+
 // LLMClassifier はLLMベースのタスク分類器
 type LLMClassifier struct {
 	llmProvider  llm.LLMProvider
@@ -33,8 +35,14 @@ func (c *LLMClassifier) Classify(ctx context.Context, t task.Task) (routing.Deci
 		Messages: []llm.Message{
 			{Role: "user", Content: userMessage},
 		},
-		MaxTokens:   100,
+		MaxTokens:   classifierMaxTokens,
 		Temperature: 0.3, // 低温度で安定した分類
+		ProviderOptions: map[string]any{
+			"think": false,
+			"chat_template_kwargs": map[string]any{
+				"enable_thinking": false,
+			},
+		},
 	}
 
 	resp, err := c.llmProvider.Generate(ctx, req)

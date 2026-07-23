@@ -12,11 +12,15 @@ import (
 
 // mockLLMProvider はテスト用のLLMプロバイダー
 type mockLLMProvider struct {
-	response string
-	err      error
+	response   string
+	err        error
+	onGenerate func(llm.GenerateRequest)
 }
 
 func (m *mockLLMProvider) Generate(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+	if m.onGenerate != nil {
+		m.onGenerate(req)
+	}
 	if m.err != nil {
 		return llm.GenerateResponse{}, m.err
 	}
@@ -24,6 +28,28 @@ func (m *mockLLMProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 		Content:    m.response,
 		TokensUsed: 100,
 	}, nil
+}
+
+func TestLLMClassifier_Classify_DisablesThinkingAndBoundsOutput(t *testing.T) {
+	var captured llm.GenerateRequest
+	provider := &mockLLMProvider{
+		response: "CHAT",
+		onGenerate: func(req llm.GenerateRequest) {
+			captured = req
+		},
+	}
+	classifier := NewLLMClassifier(provider, "test prompt")
+
+	if _, err := classifier.Classify(context.Background(), task.NewTask(task.NewJobID(), "こんにちは", "line", "U123")); err != nil {
+		t.Fatalf("Classify failed: %v", err)
+	}
+	if captured.MaxTokens != 8 {
+		t.Fatalf("MaxTokens = %d, want 8", captured.MaxTokens)
+	}
+	kwargs, ok := captured.ProviderOptions["chat_template_kwargs"].(map[string]any)
+	if captured.ProviderOptions["think"] != false || !ok || kwargs["enable_thinking"] != false {
+		t.Fatalf("ProviderOptions = %#v, want chat_template_kwargs.enable_thinking=false", captured.ProviderOptions)
+	}
 }
 
 func (m *mockLLMProvider) Name() string {

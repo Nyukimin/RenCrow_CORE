@@ -177,8 +177,56 @@ func (d *RuleDictionary) Match(t task.Task) (routing.Route, float64, bool) {
 			}
 		}
 	}
+	if isObviousGreeting(message) {
+		return routing.RouteCHAT, 0.98, true
+	}
+	if isHighConfidenceConversation(message) {
+		return routing.RouteCHAT, 0.95, true
+	}
 
 	return "", 0.0, false
+}
+
+func isObviousGreeting(message string) bool {
+	normalized := strings.Trim(strings.TrimSpace(message), "。！!？?、,. ")
+	switch normalized {
+	case "おはよう", "おはようございます", "こんにちは", "こんばんは", "ただいま", "おやすみ", "おやすみなさい", "ありがとう", "ありがとうございます":
+		return true
+	default:
+		return false
+	}
+}
+
+func isHighConfidenceConversation(message string) bool {
+	conversationMarkers := []string{
+		"?", "？", "答えて", "説明して", "教えて", "どう思", "話そう", "聞いて", "相談したい",
+	}
+	hasConversationMarker := false
+	for _, marker := range conversationMarkers {
+		if strings.Contains(message, marker) {
+			hasConversationMarker = true
+			break
+		}
+	}
+	if !hasConversationMarker {
+		return false
+	}
+
+	// 質問符だけでは、実装・運用・調査を伴う依頼までCHATに短絡できない。
+	// 既存の具体ルールで確定しなかった曖昧な作業要求はLLM classifierへ残す。
+	delegatedWorkHints := []string{
+		"実装", "修正", "変更", "追加", "削除", "作成", "更新", "編集", "書き換", "直せ", "直し",
+		"調査", "分析", "解析", "診断", "レビュー", "検索", "リサーチ", "収集",
+		"ビルド", "起動", "停止", "再起動", "デプロイ", "実行", "テスト", "適用",
+		"確認", "疎通", "稼働", "動いて", "生きて", "ログ", "ポート", "ヘルス", "状態",
+		"エラー", "不具合", "設計", "計画", "プラン", "設定", "ファイル", "コード", "ブラウザ", "画面操作",
+	}
+	for _, hint := range delegatedWorkHints {
+		if strings.Contains(message, hint) {
+			return false
+		}
+	}
+	return true
 }
 
 func isCodeEditRequest(message string) bool {
