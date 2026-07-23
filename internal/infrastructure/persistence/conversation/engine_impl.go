@@ -407,7 +407,7 @@ func (e *RealConversationEngine) EndTurnAs(ctx context.Context, sessionID string
 	}
 
 	// UserProfile 自動抽出（best-effort）
-	if e.profileExtractor != nil {
+	if e.profileExtractor != nil && shouldExtractUserProfile(userMessage) {
 		thread, err := e.manager.GetActiveThread(ctx, sessionID)
 		if err == nil && thread != nil {
 			existing := e.profiles[sessionID]
@@ -427,6 +427,25 @@ func (e *RealConversationEngine) EndTurnAs(ctx context.Context, sessionID string
 	}
 
 	return nil
+}
+
+func shouldExtractUserProfile(userMessage string) bool {
+	message := strings.ToLower(strings.TrimSpace(userMessage))
+	if message == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"覚えて", "記憶して", "私は", "わたしは", "僕は", "ぼくは", "俺は",
+		"好き", "嫌い", "苦手", "得意", "仕事", "職業", "住んで", "出身",
+		"家族", "誕生日", "名前は", "呼んで", "好み", "毎日", "毎週", "いつも",
+		"i am ", "i'm ", "i like ", "i love ", "i hate ", "i prefer ",
+		"my name ", "remember that ", "i live ", "my job ",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *RealConversationEngine) RecordRecallTrace(ctx context.Context, sessionID string, responseID string, role string, pack domconv.RecallPack) error {

@@ -342,12 +342,16 @@ func (m *mockEmbeddingProvider) Embed(_ context.Context, _ string) ([]float32, e
 }
 
 type mockSummarizer struct {
-	summary  string
-	keywords []string
-	err      error
+	summary       string
+	keywords      []string
+	err           error
+	summarizeFunc func(context.Context, *domconv.Thread) (string, error)
 }
 
-func (m *mockSummarizer) Summarize(_ context.Context, _ *domconv.Thread) (string, error) {
+func (m *mockSummarizer) Summarize(ctx context.Context, thread *domconv.Thread) (string, error) {
+	if m.summarizeFunc != nil {
+		return m.summarizeFunc(ctx, thread)
+	}
 	return m.summary, m.err
 }
 func (m *mockSummarizer) ExtractKeywords(_ context.Context, _ *domconv.Thread) ([]string, error) {
@@ -888,6 +892,105 @@ func TestStore_AppendsToExistingThread(t *testing.T) {
 	}
 	if len(thread.Turns) != 2 {
 		t.Errorf("Expected 2 turns, got %d", len(thread.Turns))
+	}
+}
+
+func TestStore_RollsThreadWithoutWaitingForLLMSummary(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	summarizer := &mockSummarizer{
+		keywords: []string{"greeting"},
+		summarizeFunc: func(ctx context.Context, thread *domconv.Thread) (string, error) {
+			close(started)
+			select {
+			case <-release:
+				return "greeting summary", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		},
+	}
+	mgr := newTestManager(nil, summarizer)
+	ctx := context.Background()
+	thread, err := mgr.CreateThread(ctx, "session-async-roll", "general")
+	if err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+	for i := 0; i < 11; i++ {
+		thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, fmt.Sprintf("message-%d", i), nil))
+	}
+	if err := mgr.redisStore.SaveThread(ctx, thread); err != nil {
+		t.Fatalf("SaveThread failed: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- mgr.Store(ctx, "session-async-roll", domconv.NewMessage(domconv.SpeakerMio, "latest", nil))
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Store failed: %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		close(release)
+		<-done
+		t.Fatal("Store waited for the LLM summary")
+	}
+
+	active, err := mgr.GetActiveThread(ctx, "session-async-roll")
+	if err != nil {
+		t.Fatalf("GetActiveThread failed: %v", err)
+	}
+	if active.ID == thread.ID || len(active.Turns) != 1 || active.Turns[0].Msg != "latest" {
+		t.Fatalf("active thread was not rolled immediately: %#v", active)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("background summary did not start")
+	}
+	close(release)
+	mgr.waitForBackgroundJobs()
+	if _, err := mgr.redisStore.GetThread(ctx, thread.ID); err != domconv.ErrThreadNotFound {
+		t.Fatalf("old thread should be archived and deleted, got %v", err)
+	}
+}
+
+func TestStore_BackgroundSummaryTimeoutPersistsSimpleFallback(t *testing.T) {
+	summarizer := &mockSummarizer{
+		summarizeFunc: func(ctx context.Context, thread *domconv.Thread) (string, error) {
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+	}
+	mgr := newTestManager(nil, summarizer)
+	mgr.backgroundFlushTimeout = 5 * time.Millisecond
+	ctx := context.Background()
+	thread, err := mgr.CreateThread(ctx, "session-timeout-roll", "general")
+	if err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+	for i := 0; i < 11; i++ {
+		thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, fmt.Sprintf("message-%d", i), nil))
+	}
+	if err := mgr.redisStore.SaveThread(ctx, thread); err != nil {
+		t.Fatalf("SaveThread failed: %v", err)
+	}
+
+	if err := mgr.Store(ctx, "session-timeout-roll", domconv.NewMessage(domconv.SpeakerMio, "latest", nil)); err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+	mgr.waitForBackgroundJobs()
+
+	archive := mgr.archiveStore.(*mockArchiveSQLiteStore)
+	if len(archive.saved) != 1 || !strings.HasPrefix(archive.saved[0].Summary, "Start:") {
+		t.Fatalf("simple fallback was not archived: %#v", archive.saved)
+	}
+	if _, err := mgr.redisStore.GetThread(ctx, thread.ID); err != domconv.ErrThreadNotFound {
+		t.Fatalf("old thread should be deleted after simple fallback, got %v", err)
 	}
 }
 

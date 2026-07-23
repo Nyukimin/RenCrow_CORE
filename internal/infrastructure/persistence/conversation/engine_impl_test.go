@@ -79,9 +79,11 @@ func (m *mockDetector) Detect(currentThread *domconv.Thread, newMessage, newDoma
 type mockExtractor struct {
 	result *domconv.ProfileExtractionResult
 	err    error
+	calls  int
 }
 
 func (m *mockExtractor) Extract(ctx context.Context, thread *domconv.Thread, existing domconv.UserProfile) (*domconv.ProfileExtractionResult, error) {
+	m.calls++
 	return m.result, m.err
 }
 
@@ -518,7 +520,7 @@ func TestEndTurn_WithDetector_NoBoundary(t *testing.T) {
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithDetector(detector)
 
-	err := engine.EndTurn(context.Background(), "s1", "hello", "hi")
+	err := engine.EndTurn(context.Background(), "s1", "私はGoが好きです", "覚えておきます")
 	if err != nil {
 		t.Fatalf("EndTurn failed: %v", err)
 	}
@@ -567,7 +569,7 @@ func TestEndTurn_WithProfileExtractor(t *testing.T) {
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithProfileExtractor(extractor)
 
-	err := engine.EndTurn(context.Background(), "s1", "hello", "hi")
+	err := engine.EndTurn(context.Background(), "s1", "私の仕事は開発者です", "了解です")
 	if err != nil {
 		t.Fatalf("EndTurn failed: %v", err)
 	}
@@ -580,6 +582,18 @@ func TestEndTurn_WithProfileExtractor(t *testing.T) {
 	}
 	if len(profile.Facts) != 1 || profile.Facts[0] != "developer" {
 		t.Errorf("profile facts: want ['developer'], got %v", profile.Facts)
+	}
+}
+
+func TestEndTurn_SkipsProfileExtractorForGreeting(t *testing.T) {
+	extractor := &mockExtractor{result: &domconv.ProfileExtractionResult{}}
+	engine := NewRealConversationEngine(&mockManager{}, domconv.PersonaState{}).WithProfileExtractor(extractor)
+
+	if err := engine.EndTurn(context.Background(), "s1", "おはようございます", "おはようございます"); err != nil {
+		t.Fatalf("EndTurn failed: %v", err)
+	}
+	if extractor.calls != 0 {
+		t.Fatalf("profile extractor calls = %d, want 0 for greeting", extractor.calls)
 	}
 }
 

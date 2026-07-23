@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
@@ -23,6 +25,10 @@ type RealConversationManager struct {
 	summarizer                  domconv.ConversationSummarizer // nilの場合は簡易実装
 	agentStatuses               map[string]*domconv.AgentStatus
 	knowledgeRelationImportHook func(context.Context, l1sqlite.L1KnowledgeItem) error
+	backgroundMu                sync.Mutex
+	backgroundWG                sync.WaitGroup
+	backgroundClosed            bool
+	backgroundFlushTimeout      time.Duration
 }
 
 func (r *RealConversationManager) WithKnowledgeRelationImportHook(hook func(context.Context, l1sqlite.L1KnowledgeItem) error) *RealConversationManager {
@@ -102,6 +108,11 @@ func (r *RealConversationManager) WithL1Store(store l1StoreIface) *RealConversat
 
 // Close はすべてのストアを閉じる
 func (r *RealConversationManager) Close() error {
+	r.backgroundMu.Lock()
+	r.backgroundClosed = true
+	r.backgroundMu.Unlock()
+	r.backgroundWG.Wait()
+
 	var errs []error
 	if err := r.redisStore.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("redis close: %w", err))

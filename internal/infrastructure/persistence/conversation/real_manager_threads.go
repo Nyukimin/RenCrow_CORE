@@ -24,32 +24,77 @@ func (r *RealConversationManager) Store(ctx context.Context, sessionID string, m
 	}
 
 	thread.AddMessage(msg)
-	if r.l1Store != nil {
-		namespace := fmt.Sprintf("conv:%d", thread.ID)
-		if err := r.l1Store.SaveMessage(ctx, sessionID, thread.ID, namespace, msg, l1sqlite.MemoryStateObserved); err != nil {
-			log.Printf("Failed to save message to L1 SQLite: %v", err)
-		}
-	}
 
 	if len(thread.Turns) >= 12 {
-		summary, err := r.FlushThread(ctx, thread.ID)
-		if err != nil {
-			log.Printf("FlushThread failed: %v", err)
-		} else {
-			log.Printf("Thread #%d flushed: %s", thread.ID, summary.Summary)
-		}
+		oldThreadID := thread.ID
 		newThread, err := r.CreateThread(ctx, sessionID, thread.Domain)
 		if err != nil {
-			return fmt.Errorf("failed to create new thread after flush: %w", err)
+			return fmt.Errorf("failed to create new thread before background flush: %w", err)
 		}
 		newThread.AddMessage(msg)
-		thread = newThread
+		if err := r.saveObservedMessage(ctx, sessionID, newThread.ID, msg); err != nil {
+			log.Printf("Failed to save message to L1 SQLite: %v", err)
+		}
+		if err := r.redisStore.SaveThread(ctx, newThread); err != nil {
+			return fmt.Errorf("failed to save rolled thread to redis: %w", err)
+		}
+		r.enqueueThreadFlush(ctx, oldThreadID)
+		return nil
+	}
+
+	if err := r.saveObservedMessage(ctx, sessionID, thread.ID, msg); err != nil {
+		log.Printf("Failed to save message to L1 SQLite: %v", err)
 	}
 
 	if err := r.redisStore.SaveThread(ctx, thread); err != nil {
 		return fmt.Errorf("failed to save thread to redis: %w", err)
 	}
 	return nil
+}
+
+func (r *RealConversationManager) saveObservedMessage(ctx context.Context, sessionID string, threadID int64, msg domconv.Message) error {
+	if r.l1Store == nil {
+		return nil
+	}
+	namespace := fmt.Sprintf("conv:%d", threadID)
+	return r.l1Store.SaveMessage(ctx, sessionID, threadID, namespace, msg, l1sqlite.MemoryStateObserved)
+}
+
+func (r *RealConversationManager) enqueueThreadFlush(parent context.Context, threadID int64) {
+	r.backgroundMu.Lock()
+	if r.backgroundClosed {
+		r.backgroundMu.Unlock()
+		log.Printf("Thread #%d background flush skipped: manager is closing", threadID)
+		return
+	}
+	r.backgroundWG.Add(1)
+	r.backgroundMu.Unlock()
+
+	go func() {
+		defer r.backgroundWG.Done()
+		timeout := r.backgroundFlushTimeout
+		if timeout <= 0 {
+			timeout = 45 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
+		defer cancel()
+		summary, err := r.FlushThread(ctx, threadID)
+		if err != nil {
+			log.Printf("Thread #%d LLM background flush failed, using simple summary: %v", threadID, err)
+			persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+			defer persistCancel()
+			summary, err = r.flushThreadWithSimpleSummary(persistCtx, threadID)
+			if err != nil {
+				log.Printf("Thread #%d simple background flush failed: %v", threadID, err)
+				return
+			}
+		}
+		log.Printf("Thread #%d background flushed: %s", threadID, summary.Summary)
+	}()
+}
+
+func (r *RealConversationManager) waitForBackgroundJobs() {
+	r.backgroundWG.Wait()
 }
 
 // FlushThread はThreadを要約してSQLite archive/VectorDBに保存する。
@@ -74,6 +119,18 @@ func (r *RealConversationManager) FlushThread(ctx context.Context, threadID int6
 		}
 	}
 
+	return r.archiveThreadSummary(ctx, thread, summaryText, keywords, embedding)
+}
+
+func (r *RealConversationManager) flushThreadWithSimpleSummary(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error) {
+	thread, err := r.redisStore.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get thread for simple summary: %w", err)
+	}
+	return r.archiveThreadSummary(ctx, thread, generateSimpleSummary(thread), []string{thread.Domain}, nil)
+}
+
+func (r *RealConversationManager) archiveThreadSummary(ctx context.Context, thread *domconv.Thread, summaryText string, keywords []string, embedding []float32) (*domconv.ThreadSummary, error) {
 	summary := &domconv.ThreadSummary{
 		ThreadID:  thread.ID,
 		SessionID: thread.SessionID,
@@ -98,7 +155,7 @@ func (r *RealConversationManager) FlushThread(ctx context.Context, threadID int6
 		}
 	}
 
-	if err := r.redisStore.DeleteThread(ctx, threadID); err != nil {
+	if err := r.redisStore.DeleteThread(ctx, thread.ID); err != nil {
 		log.Printf("Failed to delete thread from redis: %v", err)
 	}
 	return summary, nil
