@@ -42,7 +42,12 @@ func (m *MioAgent) generationRequest(messages []llm.Message, onToken llm.StreamC
 	if onToken == nil && m.generation.Stream {
 		onToken = func(string) {}
 	}
-	options := make(map[string]any, 5)
+	options := make(map[string]any, 6)
+	// CHATは応答速度と会話契約を優先し、設定値にかかわらずthinkingを使用しない。
+	options["think"] = false
+	options["chat_template_kwargs"] = map[string]any{
+		"enable_thinking": false,
+	}
 	if m.generation.TopP != nil {
 		options["top_p"] = *m.generation.TopP
 	}
@@ -54,11 +59,6 @@ func (m *MioAgent) generationRequest(messages []llm.Message, onToken llm.StreamC
 	}
 	if m.generation.Seed != nil {
 		options["seed"] = *m.generation.Seed
-	}
-	if m.generation.EnableThinking != nil {
-		options["chat_template_kwargs"] = map[string]any{
-			"enable_thinking": *m.generation.EnableThinking,
-		}
 	}
 	return llm.GenerateRequest{
 		Messages:        messages,

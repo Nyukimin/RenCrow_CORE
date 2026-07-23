@@ -163,6 +163,44 @@ func TestOllamaProviderGenerate_SendsNumCtxWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestOllamaProviderGenerate_PreservesRoleThinkingPolicy(t *testing.T) {
+	tests := []struct {
+		name        string
+		options     map[string]any
+		wantThink   any
+		wantPresent bool
+	}{
+		{name: "Worker inherits backend default", wantPresent: false},
+		{name: "Worker can enable thinking", options: map[string]any{"think": true}, wantThink: true, wantPresent: true},
+		{name: "Chat policy disables thinking", options: map[string]any{"think": false}, wantThink: false, wantPresent: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var captured map[string]any
+			server := newLoadedModelServer(t, "test-model", func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"response": "ok", "done": true})
+			})
+			defer server.Close()
+
+			provider := NewOllamaProvider(server.URL, "test-model")
+			_, err := provider.Generate(context.Background(), llm.GenerateRequest{
+				Messages:        []llm.Message{{Role: "user", Content: "test"}},
+				ProviderOptions: tt.options,
+			})
+			if err != nil {
+				t.Fatalf("Generate failed: %v", err)
+			}
+			got, present := captured["think"]
+			if present != tt.wantPresent || got != tt.wantThink {
+				t.Fatalf("think = %#v, present=%v; want %#v, present=%v; payload=%#v", got, present, tt.wantThink, tt.wantPresent, captured)
+			}
+		})
+	}
+}
+
 func TestOllamaProviderGenerate_ServerError(t *testing.T) {
 	server := newLoadedModelServer(t, "test-model", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/generate" {

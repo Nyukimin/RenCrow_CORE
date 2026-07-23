@@ -78,6 +78,9 @@ func (c *Config) Validate() error {
 	if c.Mio.Generation.MinP != nil && (*c.Mio.Generation.MinP < 0 || *c.Mio.Generation.MinP > 1) {
 		return fmt.Errorf("mio.generation.min_p must be between 0 and 1")
 	}
+	if enabled := c.Mio.Generation.ChatTemplateKwargs.EnableThinking; enabled != nil && *enabled {
+		return fmt.Errorf("mio.generation.chat_template_kwargs.enable_thinking must be false: CHAT thinking is disabled by contract")
+	}
 
 	if c.LLMOps.Enabled {
 		if strings.TrimSpace(c.LLMOps.BaseURL) == "" {

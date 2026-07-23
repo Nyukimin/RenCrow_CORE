@@ -317,6 +317,10 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 		if payload["top_p"] != 0.9 || payload["top_k"] != float64(40) || payload["min_p"] != 0.0 {
 			t.Fatalf("unexpected sampling payload: %#v", payload)
 		}
+		kwargs, _ := payload["chat_template_kwargs"].(map[string]any)
+		if payload["think"] != false || kwargs["enable_thinking"] != false {
+			t.Fatalf("voice CHAT must force enable_thinking=false: %#v", payload)
+		}
 		rawMessages, _ := payload["messages"].([]any)
 		if len(rawMessages) != 1 {
 			t.Fatalf("messages = %#v", payload["messages"])

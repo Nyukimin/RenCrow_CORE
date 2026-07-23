@@ -43,6 +43,8 @@ func buildPrimaryLLMProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		chat := buildLocalAliasProvider(cfg, "Chat", cfg.LocalLLM.ChatModel, chatTimeout, global)
 		worker := buildLocalAliasProvider(cfg, "Worker", cfg.LocalLLM.WorkerModel, workerTimeout, global)
 		chatWorker := buildLocalAliasProvider(cfg, "ChatWorker", cfg.LocalLLM.ChatWorkerModel, workerTimeout, global)
+		chat = enforceThinkingPolicyForRole("chat", chat)
+		chatWorker = enforceThinkingPolicyForRole("chatworker", chatWorker)
 		heavy := buildLocalAliasProvider(cfg, "Heavy", modulellm.LocalModelForAlias(localCfg, "Heavy"), heavyTimeout, global)
 		wild := buildLocalAliasProvider(cfg, "Wild", cfg.LocalLLM.WildModel, wildTimeout, global)
 		if cfg.LocalLLMWarmupEnabled() {
@@ -69,9 +71,9 @@ func buildPrimaryLLMProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 	chatRawProvider := ollama.NewOllamaProviderWithNumCtx(chatRole.BaseURL, chatRole.Model, chatRole.NumCtx)
 	workerRawProvider := ollama.NewOllamaProviderWithNumCtx(workerRole.BaseURL, workerRole.Model, workerRole.NumCtx)
 	return primaryLLMProviders{
-		Chat:       wrapPrimaryLLMProvider(cfg, "chat", chatRawProvider, contextBudgetRecorder),
+		Chat:       wrapPrimaryLLMProvider(cfg, "chat", enforceThinkingPolicyForRole("chat", chatRawProvider), contextBudgetRecorder),
 		Worker:     wrapPrimaryLLMProvider(cfg, "worker", workerRawProvider, contextBudgetRecorder),
-		ChatWorker: wrapPrimaryLLMProvider(cfg, "chatworker", workerRawProvider, contextBudgetRecorder),
+		ChatWorker: wrapPrimaryLLMProvider(cfg, "chatworker", enforceThinkingPolicyForRole("chatworker", workerRawProvider), contextBudgetRecorder),
 		Heavy:      wrapPrimaryLLMProvider(cfg, "heavy", workerRawProvider, contextBudgetRecorder),
 		Wild:       wrapPrimaryLLMProvider(cfg, "wild", workerRawProvider, contextBudgetRecorder),
 	}
@@ -86,7 +88,7 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 	}
 	provider := func(role, agentID string) llm.LLMProvider {
 		raw := openai.NewOpenAIProviderWithOptions(apiKey, agentID, baseURL, timeout)
-		return wrapPrimaryLLMProvider(cfg, role, raw, recorder)
+		return wrapPrimaryLLMProvider(cfg, role, enforceThinkingPolicyForRole(role, raw), recorder)
 	}
 	log.Printf("RenCrow_LLM Gateway enabled (base_url=%s)", baseURL)
 	return primaryLLMProviders{
@@ -95,6 +97,17 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 		ChatWorker: provider("chatworker", "shiro"),
 		Heavy:      provider("heavy", "kuro"),
 		Wild:       provider("wild", "midori"),
+	}
+}
+
+func enforceThinkingPolicyForRole(role string, provider llm.LLMProvider) llm.LLMProvider {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "chat":
+		return llmmiddleware.NewNoThinkingProvider(provider)
+	case "chatworker":
+		return llmmiddleware.NewLowThinkingProvider(provider)
+	default:
+		return provider
 	}
 }
 

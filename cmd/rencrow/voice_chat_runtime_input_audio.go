@@ -200,7 +200,10 @@ func postVoiceChatInputAudio(ctx context.Context, baseURL string, settings voice
 	ctx, cancel := context.WithTimeout(ctx, settings.Timeout)
 	defer cancel()
 	wav := encodePCM16WAV(sess.pcm.Bytes(), sess.sampleRate, sess.channels)
-	providerOptions := make(map[string]any, 5)
+	providerOptions := make(map[string]any, 6)
+	// input_audioも通常会話と同じCHAT契約であり、thinkingは常に無効にする。
+	providerOptions["think"] = false
+	providerOptions["chat_template_kwargs"] = map[string]any{"enable_thinking": false}
 	if settings.TopP != nil {
 		providerOptions["top_p"] = *settings.TopP
 	}
@@ -212,9 +215,6 @@ func postVoiceChatInputAudio(ctx context.Context, baseURL string, settings voice
 	}
 	if settings.Seed != nil {
 		providerOptions["seed"] = *settings.Seed
-	}
-	if settings.EnableThinking != nil {
-		providerOptions["chat_template_kwargs"] = map[string]any{"enable_thinking": *settings.EnableThinking}
 	}
 	request := llm.GenerateRequest{
 		Messages: []llm.Message{{

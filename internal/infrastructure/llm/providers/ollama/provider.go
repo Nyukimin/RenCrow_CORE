@@ -61,12 +61,19 @@ func (p *OllamaProvider) Generate(ctx context.Context, req llm.GenerateRequest) 
 		"prompt":     prompt,
 		"stream":     streaming,
 		"keep_alive": -1,
-		"think":      false, // thinking モデル（gemma4等）の思考タグ出力を抑制
 		"options": map[string]interface{}{
 			"temperature": req.Temperature,
 			"num_predict": req.MaxTokens,
 			"stop":        []string{},
 		},
+	}
+	// ChatのNO-ThinkとChatWorkerのlowはrole middlewareが明示する。未指定時は
+	// Workerを含むbackend既定policyを維持し、provider全体では停止しない。
+	if think, ok := req.ProviderOptions["think"]; ok {
+		switch think.(type) {
+		case bool, string:
+			ollamaReq["think"] = think
+		}
 	}
 	if p.numCtx > 0 {
 		ollamaReq["options"].(map[string]interface{})["num_ctx"] = p.numCtx

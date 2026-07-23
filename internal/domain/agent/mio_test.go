@@ -553,6 +553,58 @@ func TestMioAgent_Chat_UsesConfiguredGenerationOptions(t *testing.T) {
 	}
 }
 
+func TestMioAgent_Chat_AlwaysDisablesThinking(t *testing.T) {
+	trueValue := true
+	falseValue := false
+	for _, tc := range []struct {
+		name  string
+		value *bool
+	}{
+		{name: "unset", value: nil},
+		{name: "false", value: &falseValue},
+		{name: "true_is_clamped", value: &trueValue},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured llm.GenerateRequest
+			provider := &mockLLMProvider{
+				generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+					captured = req
+					return llm.GenerateResponse{Content: "ok"}, nil
+				},
+			}
+			mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil).
+				WithGenerationOptions(MioGenerationOptions{EnableThinking: tc.value})
+
+			if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "hello", "line", "U123")); err != nil {
+				t.Fatalf("Chat failed: %v", err)
+			}
+			kwargs, ok := captured.ProviderOptions["chat_template_kwargs"].(map[string]any)
+			if captured.ProviderOptions["think"] != false || !ok || kwargs["enable_thinking"] != false {
+				t.Fatalf("CHAT must force enable_thinking=false, got %#v", captured.ProviderOptions)
+			}
+		})
+	}
+}
+
+func TestMioAgent_Chat_ForwardsBackendGenerationMetrics(t *testing.T) {
+	provider := &mockLLMProvider{
+		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+			return llm.GenerateResponse{Content: "ok", TokensUsed: 7, TokensPerSecond: 51.1808}, nil
+		},
+	}
+	var got llm.GenerationMetrics
+	ctx := llm.ContextWithGenerationMetricsCallback(context.Background(), func(metrics llm.GenerationMetrics) {
+		got = metrics
+	})
+	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil)
+	if _, err := mio.Chat(ctx, task.NewTask(task.NewJobID(), "hello", "line", "U123")); err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+	if got.CompletionTokens != 7 || got.TokensPerSecond != 51.1808 {
+		t.Fatalf("metrics = %+v, want completion_tokens=7 tokens_per_second=51.1808", got)
+	}
+}
+
 func TestMioAgent_Chat_SharesMemoryAndFiltersExternalRecallByRole(t *testing.T) {
 	engine := &mockConversationEngine{
 		beginTurnFunc: func(ctx context.Context, sessionID, msg string) (*conversation.RecallPack, error) {

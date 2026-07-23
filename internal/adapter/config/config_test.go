@@ -990,6 +990,32 @@ mio:
 	}
 }
 
+func TestLoadConfig_RejectsMioChatThinkingEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "mio_thinking_enabled.yaml")
+	content := `
+server:
+  port: 8080
+session:
+  storage_dir: "./data/sessions"
+ollama:
+  base_url: "http://localhost:11434"
+  model: "rencrow-v1"
+mio:
+  generation:
+    chat_template_kwargs:
+      enable_thinking: true
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := LoadConfig(configPath)
+	if err == nil || !strings.Contains(err.Error(), "mio.generation.chat_template_kwargs.enable_thinking must be false") {
+		t.Fatalf("LoadConfig error = %v, want CHAT thinking validation error", err)
+	}
+}
+
 func TestLoadConfig_WebwrightFetchDefaultsFromLocalWorker(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "webwright_fetch.yaml")
