@@ -533,12 +533,15 @@ func hobbyGraphItemExists(ctx context.Context, db *sql.DB, itemID string) (bool,
 }
 
 func resolveHobbyGraphDBPath(configured string) string {
+	if configured = strings.TrimSpace(configured); configured != "" {
+		if st, err := os.Stat(configured); err == nil && !st.IsDir() {
+			return configured
+		}
+		return ""
+	}
 	candidates := []string{}
 	if env := strings.TrimSpace(os.Getenv("RENCROW_HOBBY_GRAPH_DB")); env != "" {
 		candidates = append(candidates, env)
-	}
-	if configured = strings.TrimSpace(configured); configured != "" {
-		candidates = append(candidates, configured)
 	}
 	candidates = append(candidates, filepath.Join("tmp", "hobby_graph", "hobby_graph.sqlite"))
 	for _, p := range candidates {
@@ -556,11 +559,11 @@ func resolveHobbyGraphWritableDBPath(configured string) string {
 	if resolved := resolveHobbyGraphDBPath(configured); resolved != "" {
 		return resolved
 	}
-	if env := strings.TrimSpace(os.Getenv("RENCROW_HOBBY_GRAPH_DB")); env != "" {
-		return env
-	}
 	if configured = strings.TrimSpace(configured); configured != "" {
 		return configured
+	}
+	if env := strings.TrimSpace(os.Getenv("RENCROW_HOBBY_GRAPH_DB")); env != "" {
+		return env
 	}
 	return filepath.Join("tmp", "hobby_graph", "hobby_graph.sqlite")
 }

@@ -1,4 +1,4 @@
-.PHONY: all build install uninstall clean help test install-watchdog enable-watchdog disable-watchdog watchdog-status watchdog-run-once test-watchdog-mock watchdog-kick install-log-retention enable-log-retention disable-log-retention log-retention-status log-retention-run-once test-log-retention install-resilience enable-resilience disable-resilience resilience-status resilience-run-once install-data-scheduler enable-data-scheduler disable-data-scheduler data-scheduler-status rencrow-data-init rencrow-data-market rencrow-data-market-online rencrow-data-macro rencrow-data-macro-online rencrow-data-features rencrow-data-events rencrow-data-snapshot rencrow-data-validate rencrow-data-backtest rencrow-data-risk rencrow-data-decision rencrow-data-llm-report rencrow-data-audit-report rencrow-data-paper-trade rencrow-data-manual-stop rencrow-data-daily-refresh rencrow-data-weekly-research rencrow-data-test rencrow-data-e2e rencrow-data-backfill rencrow-data-check
+.PHONY: all build install uninstall clean help test install-watchdog enable-watchdog disable-watchdog watchdog-status watchdog-run-once test-watchdog-mock watchdog-kick install-log-retention enable-log-retention disable-log-retention log-retention-status log-retention-run-once test-log-retention install-resilience enable-resilience disable-resilience resilience-status resilience-run-once install-storage-backup enable-storage-backup disable-storage-backup storage-backup-status storage-backup-check storage-backup-run-once storage-restore-check test-storage-backup install-data-scheduler enable-data-scheduler disable-data-scheduler data-scheduler-status rencrow-data-init rencrow-data-market rencrow-data-market-online rencrow-data-macro rencrow-data-macro-online rencrow-data-features rencrow-data-events rencrow-data-snapshot rencrow-data-validate rencrow-data-backtest rencrow-data-risk rencrow-data-decision rencrow-data-llm-report rencrow-data-audit-report rencrow-data-paper-trade rencrow-data-manual-stop rencrow-data-daily-refresh rencrow-data-weekly-research rencrow-data-test rencrow-data-e2e rencrow-data-backfill rencrow-data-check
 
 # Build variables
 BINARY_NAME=rencrow
@@ -63,6 +63,12 @@ PANIC_STACK_DROPIN_DIR=$(SYSTEMD_USER_DIR)/rencrow.service.d
 RESILIENCE_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-resilience.service
 RESILIENCE_TIMER_SRC=$(CURDIR)/systemd/user/rencrow-resilience.timer
 RESILIENCE_DROPIN_SRC=$(CURDIR)/systemd/user/rencrow.service.d/20-resilience.conf
+STORAGE_BACKUP_SCRIPT_SRC=$(CURDIR)/scripts/rencrow-storage-backup
+STORAGE_BACKUP_SCRIPT_DST=$(INSTALL_BIN_DIR)/rencrow-storage-backup
+STORAGE_RESTORE_CHECK_SCRIPT_SRC=$(CURDIR)/scripts/rencrow-storage-restore-check
+STORAGE_RESTORE_CHECK_SCRIPT_DST=$(INSTALL_BIN_DIR)/rencrow-storage-restore-check
+STORAGE_BACKUP_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-storage-backup.service
+STORAGE_BACKUP_TIMER_SRC=$(CURDIR)/systemd/user/rencrow-storage-backup.timer
 DATA_SCHEDULER_SCRIPT_SRC=$(CURDIR)/scripts/rencrow_data_scheduler.sh
 DATA_SCHEDULER_SCRIPT_DST=$(RENCROW_SHARE_DIR)/scripts/rencrow_data_scheduler.sh
 DATA_DAILY_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-data-daily.service
@@ -236,6 +242,39 @@ resilience-status:
 ## resilience-run-once: Run one liveness/recovery reconciliation
 resilience-run-once:
 	@systemctl --user start rencrow-resilience.service
+
+## install-storage-backup: Install config-driven CORE/Knowledge backup runner and timer
+install-storage-backup: install
+	@echo "Installing storage backup runner and systemd units..."
+	@mkdir -p $(INSTALL_BIN_DIR) $(SYSTEMD_USER_DIR)
+	@install -m 0755 $(STORAGE_BACKUP_SCRIPT_SRC) $(STORAGE_BACKUP_SCRIPT_DST)
+	@install -m 0755 $(STORAGE_RESTORE_CHECK_SCRIPT_SRC) $(STORAGE_RESTORE_CHECK_SCRIPT_DST)
+	@install -m 0644 $(STORAGE_BACKUP_SERVICE_SRC) $(SYSTEMD_USER_DIR)/rencrow-storage-backup.service
+	@install -m 0644 $(STORAGE_BACKUP_TIMER_SRC) $(SYSTEMD_USER_DIR)/rencrow-storage-backup.timer
+	@systemctl --user daemon-reload
+	@echo "Installed storage backup runtime."
+
+enable-storage-backup:
+	@systemctl --user enable --now rencrow-storage-backup.timer
+
+disable-storage-backup:
+	@systemctl --user disable --now rencrow-storage-backup.timer
+
+storage-backup-status:
+	@systemctl --user status rencrow-storage-backup.timer --no-pager
+
+storage-backup-check:
+	@$(STORAGE_BACKUP_SCRIPT_DST) check
+
+storage-backup-run-once:
+	@systemctl --user start rencrow-storage-backup.service
+
+storage-restore-check:
+	@test -n "$(SNAPSHOT_DIR)" || (echo "SNAPSHOT_DIR is required" >&2; exit 2)
+	@$(STORAGE_RESTORE_CHECK_SCRIPT_DST) "$(SNAPSHOT_DIR)"
+
+test-storage-backup:
+	@bash scripts/tests/storage_backup_contract_test.sh
 
 ## install-data-scheduler: Install daily and weekly data scheduler units
 install-data-scheduler:

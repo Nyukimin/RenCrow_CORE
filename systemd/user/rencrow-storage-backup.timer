@@ -1,0 +1,11 @@
+[Unit]
+Description=RenCrow memory backup every six hours
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:30:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+Unit=rencrow-storage-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,347 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+mode=${1:-}
+if [[ ${mode} != config && ${mode} != check && ${mode} != run ]]; then
+  echo "usage: rencrow-storage-backup {config|check|run}" >&2
+  exit 2
+fi
+
+config_file=${RENCROW_CONFIG:-/home/nyukimi/.rencrow/config.yaml}
+rencrow_binary=${RENCROW_BINARY:-/home/nyukimi/.local/bin/rencrow}
+restore_checker=${RENCROW_RESTORE_CHECKER:-/home/nyukimi/.local/bin/rencrow-storage-restore-check}
+if [[ ! -f ${config_file} ]]; then
+  echo "[NG] config file not found: ${config_file}" >&2
+  exit 1
+fi
+if [[ ! -x ${rencrow_binary} ]]; then
+  echo "[NG] rencrow binary not found: ${rencrow_binary}" >&2
+  exit 1
+fi
+
+mapfile -t backup_config < <(RENCROW_CONFIG="${config_file}" "${rencrow_binary}" config backup-values)
+if (( ${#backup_config[@]} != 19 )); then
+  echo "[NG] failed to load complete backup config from ${config_file}" >&2
+  exit 1
+fi
+
+core_root=${backup_config[0]}
+core_snapshot_root=${backup_config[1]}
+knowledge_root=${backup_config[2]}
+knowledge_mirror=${backup_config[3]}
+knowledge_versions=${backup_config[4]}
+recent_keep=${backup_config[5]}
+daily_keep=${backup_config[6]}
+weekly_keep=${backup_config[7]}
+monthly_keep=${backup_config[8]}
+session_dir=${backup_config[9]}
+operation_memory_dir=${backup_config[10]}
+cold_export_dir=${backup_config[11]}
+require_memory_exports=${backup_config[12]}
+redis_enabled=${backup_config[13]}
+redis_container=${backup_config[14]}
+qdrant_enabled=${backup_config[15]}
+qdrant_base_url=${backup_config[16]%/}
+conversation_l1=${backup_config[17]}
+conversation_archive=${backup_config[18]}
+lock_file=/home/nyukimi/.cache/rencrow-storage-backup.lock
+
+for retention in "${recent_keep}" "${daily_keep}" "${weekly_keep}" "${monthly_keep}"; do
+  if [[ ! ${retention} =~ ^[1-9][0-9]*$ ]]; then
+    echo "[NG] backup retention must be a positive integer" >&2
+    exit 1
+  fi
+done
+for boolean in "${require_memory_exports}" "${redis_enabled}" "${qdrant_enabled}"; do
+  if [[ ${boolean} != true && ${boolean} != false ]]; then
+    echo "[NG] backup boolean value is invalid: ${boolean}" >&2
+    exit 1
+  fi
+done
+
+relative_to_core() {
+  local path=$1
+  if [[ ${path} == "${core_root}" ]]; then
+    printf '.\n'
+  elif [[ ${path} == "${core_root}/"* ]]; then
+    printf '%s\n' "${path#"${core_root}/"}"
+  else
+    echo "[NG] configured path is outside core source: ${path}" >&2
+    return 1
+  fi
+}
+
+session_relative=$(relative_to_core "${session_dir}")
+operation_memory_relative=$(relative_to_core "${operation_memory_dir}")
+cold_export_relative=$(relative_to_core "${cold_export_dir}")
+conversation_l1_relative=$(relative_to_core "${conversation_l1}")
+conversation_archive_relative=$(relative_to_core "${conversation_archive}")
+
+if [[ ${mode} == config ]]; then
+  printf '%s\n' \
+    "config=${config_file}" \
+    "core_source=${core_root}" \
+    "core_snapshot_root=${core_snapshot_root}" \
+    "knowledge_source=${knowledge_root}" \
+    "knowledge_mirror=${knowledge_mirror}" \
+    "knowledge_versions=${knowledge_versions}" \
+    "memory=session:${session_dir},operation:${operation_memory_dir},cold:${cold_export_dir}" \
+    "redis=enabled:${redis_enabled},container:${redis_container}" \
+    "qdrant=enabled:${qdrant_enabled},base_url:${qdrant_base_url}" \
+    "retention=recent:${recent_keep},daily:${daily_keep},weekly:${weekly_keep},monthly:${monthly_keep}"
+  exit 0
+fi
+
+mkdir -p /home/nyukimi/.cache
+exec 9>"${lock_file}"
+if ! flock -n 9; then
+  echo "[WARN] another backup process is running" >&2
+  exit 0
+fi
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "[NG] required command not found: $1" >&2
+    exit 1
+  fi
+}
+
+require_backing_mount() {
+  local path=$1
+  local mount_target
+  timeout 20 stat "${path}" >/dev/null
+  mount_target=$(findmnt -n -o TARGET -T "${path}")
+  if [[ -z ${mount_target} || ${mount_target} == / ]] || ! mountpoint -q "${mount_target}"; then
+    echo "[NG] required backing mount is unavailable for ${path}" >&2
+    exit 1
+  fi
+}
+
+for command in curl docker findmnt flock gzip python3 rsync sha256sum tar timeout; do
+  require_command "${command}"
+done
+require_backing_mount "${core_snapshot_root}"
+require_backing_mount "${knowledge_root}"
+require_backing_mount "${knowledge_mirror}"
+
+mkdir -p \
+  "${core_snapshot_root}/recent" \
+  "${core_snapshot_root}/daily" \
+  "${core_snapshot_root}/weekly" \
+  "${core_snapshot_root}/monthly" \
+  "${knowledge_mirror}" \
+  "${knowledge_versions}"
+
+check_redis() {
+  docker inspect -f '{{.State.Running}}' "${redis_container}" | grep -qx true
+  docker exec "${redis_container}" redis-cli ping | grep -qx PONG
+}
+
+check_qdrant() {
+  curl -fsS "${qdrant_base_url}/snapshots" \
+    | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value.get("status") == "ok"'
+}
+
+if [[ ${redis_enabled} == true ]]; then
+  check_redis
+fi
+if [[ ${qdrant_enabled} == true ]]; then
+  check_qdrant
+fi
+if [[ ${require_memory_exports} == true && ( ${redis_enabled} != true || ${qdrant_enabled} != true ) ]]; then
+  echo "[NG] required memory exporters are disabled" >&2
+  exit 1
+fi
+
+if [[ ${mode} == check ]]; then
+  if [[ ! -x ${restore_checker} ]]; then
+    echo "[NG] restore checker not found: ${restore_checker}" >&2
+    exit 1
+  fi
+  echo "[OK] all storage mounts and memory backends are available"
+  du -sh "${core_root}" "${knowledge_root}"
+  rsync -rtn \
+    --safe-links \
+    --modify-window=1 \
+    --exclude='.rsync-partial/' \
+    "${knowledge_root}/" \
+    "${knowledge_mirror}/"
+  echo "[OK] backup dry-run completed"
+  exit 0
+fi
+
+if [[ ! -x ${restore_checker} ]]; then
+  echo "[NG] restore checker not found: ${restore_checker}" >&2
+  exit 1
+fi
+
+timestamp=$(TZ=Asia/Tokyo date +%Y%m%d-%H%M%S)
+hour=$(TZ=Asia/Tokyo date +%H)
+weekday=$(TZ=Asia/Tokyo date +%u)
+monthday=$(TZ=Asia/Tokyo date +%d)
+staging=$(mktemp -d "/home/nyukimi/.cache/rencrow-backup.${timestamp}.XXXXXX")
+core_was_active=false
+qdrant_snapshot_name=
+qdrant_snapshot_checksum=
+
+cleanup_qdrant_snapshot() {
+  if [[ -n ${qdrant_snapshot_name} ]]; then
+    curl -fsS -X DELETE "${qdrant_base_url}/snapshots/${qdrant_snapshot_name}" >/dev/null || true
+    qdrant_snapshot_name=
+  fi
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  cleanup_qdrant_snapshot
+  if [[ ${core_was_active} == true ]] && ! systemctl --user is-active --quiet rencrow.service; then
+    systemctl --user start rencrow.service || true
+  fi
+  if [[ -n ${staging:-} && -d ${staging} && ${staging} == /home/nyukimi/.cache/rencrow-backup.* ]]; then
+    rm -rf -- "${staging}"
+  fi
+  exit "${status}"
+}
+trap cleanup EXIT INT TERM
+
+if systemctl --user is-active --quiet rencrow.service; then
+  core_was_active=true
+  echo "[INFO] stopping CORE for a consistent snapshot"
+  systemctl --user stop rencrow.service
+fi
+
+mkdir -p "${staging}/external-memory/redis" "${staging}/external-memory/qdrant"
+
+if [[ ${redis_enabled} == true ]]; then
+  redis_dir=$(docker exec "${redis_container}" redis-cli --raw CONFIG GET dir | tail -n 1)
+  redis_filename=$(docker exec "${redis_container}" redis-cli --raw CONFIG GET dbfilename | tail -n 1)
+  docker exec "${redis_container}" redis-cli SAVE | grep -qx OK
+  docker exec "${redis_container}" redis-check-rdb "${redis_dir}/${redis_filename}"
+  docker cp "${redis_container}:${redis_dir}/${redis_filename}" "${staging}/external-memory/redis/dump.rdb"
+  [[ $(head -c 5 "${staging}/external-memory/redis/dump.rdb") == REDIS ]]
+fi
+
+if [[ ${qdrant_enabled} == true ]]; then
+  qdrant_response="${staging}/qdrant-snapshot-response.json"
+  curl -fsS -X POST "${qdrant_base_url}/snapshots" -o "${qdrant_response}"
+  mapfile -t qdrant_meta < <(python3 -c 'import json,sys; result=json.load(open(sys.argv[1]))["result"]; print(result["name"]); print(result["checksum"])' "${qdrant_response}")
+  qdrant_snapshot_name=${qdrant_meta[0]:-}
+  qdrant_snapshot_checksum=${qdrant_meta[1]:-}
+  if [[ -z ${qdrant_snapshot_name} || ${qdrant_snapshot_name} == */* || ! ${qdrant_snapshot_checksum} =~ ^[0-9a-f]{64}$ ]]; then
+    echo "[NG] Qdrant returned unsafe or incomplete snapshot metadata" >&2
+    exit 1
+  fi
+  curl -fsS "${qdrant_base_url}/snapshots/${qdrant_snapshot_name}" \
+    -o "${staging}/external-memory/qdrant/${qdrant_snapshot_name}"
+  [[ -s "${staging}/external-memory/qdrant/${qdrant_snapshot_name}" ]]
+  printf '%s  %s\n' \
+    "${qdrant_snapshot_checksum}" \
+    "${staging}/external-memory/qdrant/${qdrant_snapshot_name}" \
+    | sha256sum -c -
+fi
+
+core_parent=$(dirname "${core_root}")
+core_name=$(basename "${core_root}")
+archive="${staging}/rencrow-state.tar.gz"
+tar \
+  --acls \
+  --xattrs \
+  --numeric-owner \
+  --exclude="${core_name}/.env" \
+  --exclude="${core_name}/llm_ops.env" \
+  --exclude="${core_name}/ssl/*.key" \
+  --exclude="${core_name}/bin" \
+  --exclude="${core_name}/logs" \
+  --exclude="${core_name}/locks" \
+  --exclude="${core_name}/tmp" \
+  -C "${core_parent}" \
+  -czf "${archive}" \
+  "${core_name}" \
+  -C "${staging}" \
+  external-memory
+gzip -t "${archive}"
+
+if [[ ${core_was_active} == true ]]; then
+  systemctl --user start rencrow.service
+  core_was_active=false
+  echo "[OK] CORE restarted"
+fi
+
+candidate_dir="${staging}/snapshot"
+mkdir -p "${candidate_dir}"
+mv "${archive}" "${candidate_dir}/rencrow-state.tar.gz"
+(
+  cd "${candidate_dir}"
+  sha256sum rencrow-state.tar.gz > SHA256SUMS
+)
+printf '%s\n' \
+  'format_version=3' \
+  "created_at_jst=${timestamp}" \
+  "source=${core_root}" \
+  "core_name=${core_name}" \
+  "session_relative=${session_relative}" \
+  "operation_memory_relative=${operation_memory_relative}" \
+  "cold_export_relative=${cold_export_relative}" \
+  "conversation_l1_relative=${conversation_l1_relative}" \
+  "conversation_archive_relative=${conversation_archive_relative}" \
+  "redis_export=$([[ ${redis_enabled} == true ]] && printf 'external-memory/redis/dump.rdb' || printf 'disabled')" \
+  "qdrant_export=$([[ ${qdrant_enabled} == true ]] && printf 'external-memory/qdrant/%s' "${qdrant_snapshot_name}" || printf 'disabled')" \
+  "qdrant_sha256=$([[ ${qdrant_enabled} == true ]] && printf '%s' "${qdrant_snapshot_checksum}" || printf 'disabled')" \
+  'excluded=.env,llm_ops.env,ssl/*.key,bin,logs,locks,tmp' \
+  'restore_format=tar.gz' \
+  > "${candidate_dir}/manifest.txt"
+
+"${restore_checker}" "${candidate_dir}"
+snapshot_dir="${core_snapshot_root}/recent/${timestamp}"
+mv "${candidate_dir}" "${snapshot_dir}"
+cleanup_qdrant_snapshot
+
+if [[ ${hour} == 03 ]]; then
+  cp -a "${snapshot_dir}" "${core_snapshot_root}/daily/${timestamp}"
+  if [[ ${weekday} == 7 ]]; then
+    cp -a "${snapshot_dir}" "${core_snapshot_root}/weekly/${timestamp}"
+  fi
+  if [[ ${monthday} == 01 ]]; then
+    cp -a "${snapshot_dir}" "${core_snapshot_root}/monthly/${timestamp}"
+  fi
+fi
+
+prune_snapshots() {
+  local root=$1
+  local keep=$2
+  local index=0
+  local entry
+  if [[ ${root} != "${core_snapshot_root}/"* ]]; then
+    echo "[NG] refusing to prune outside snapshot root: ${root}" >&2
+    return 1
+  fi
+  while IFS= read -r entry; do
+    index=$((index + 1))
+    if (( index > keep )); then
+      rm -rf -- "${entry}"
+    fi
+  done < <(find "${root}" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
+}
+
+prune_snapshots "${core_snapshot_root}/recent" "${recent_keep}"
+prune_snapshots "${core_snapshot_root}/daily" "${daily_keep}"
+prune_snapshots "${core_snapshot_root}/weekly" "${weekly_keep}"
+prune_snapshots "${core_snapshot_root}/monthly" "${monthly_keep}"
+
+version_dir="${knowledge_versions}/${timestamp}"
+mkdir -p "${version_dir}"
+rsync -rt \
+  --safe-links \
+  --modify-window=1 \
+  --partial \
+  --partial-dir=.rsync-partial \
+  --backup \
+  --backup-dir="${version_dir}" \
+  "${knowledge_root}/" \
+  "${knowledge_mirror}/"
+rmdir "${version_dir}" 2>/dev/null || true
+
+echo "[OK] CORE and memory snapshot verified: ${snapshot_dir}"
+echo "[OK] knowledge backup: ${knowledge_mirror}"

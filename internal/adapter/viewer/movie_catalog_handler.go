@@ -384,12 +384,15 @@ func HandleMovieCatalogPreference(opts MovieCatalogOptions) http.HandlerFunc {
 }
 
 func resolveMovieCatalogDBPath(configured string) string {
+	if configured = strings.TrimSpace(configured); configured != "" {
+		if st, err := os.Stat(configured); err == nil && !st.IsDir() {
+			return configured
+		}
+		return ""
+	}
 	candidates := []string{}
 	if env := strings.TrimSpace(os.Getenv("RENCROW_MOVIE_CATALOG_DB")); env != "" {
 		candidates = append(candidates, env)
-	}
-	if configured = strings.TrimSpace(configured); configured != "" {
-		candidates = append(candidates, configured)
 	}
 	candidates = append(candidates,
 		filepath.Join("tmp", "eiga_catalog", "eiga_catalog.sqlite"),
@@ -410,11 +413,11 @@ func resolveMovieCatalogWritableDBPath(configured string) string {
 	if resolved := resolveMovieCatalogDBPath(configured); resolved != "" {
 		return resolved
 	}
-	if env := strings.TrimSpace(os.Getenv("RENCROW_MOVIE_CATALOG_DB")); env != "" {
-		return env
-	}
 	if configured = strings.TrimSpace(configured); configured != "" {
 		return configured
+	}
+	if env := strings.TrimSpace(os.Getenv("RENCROW_MOVIE_CATALOG_DB")); env != "" {
+		return env
 	}
 	return filepath.Join("tmp", "eiga_catalog", "eiga_catalog.sqlite")
 }

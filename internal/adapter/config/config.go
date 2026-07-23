@@ -28,12 +28,17 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config YAML: %w", err)
 	}
 
+	if err := cfg.applyCanonicalStoragePaths(); err != nil {
+		return nil, fmt.Errorf("failed to resolve storage database paths: %w", err)
+	}
+
 	if err := cfg.resolveRuntimeTopologyReferences(); err != nil {
 		return nil, fmt.Errorf("failed to resolve runtime topology references: %w", err)
 	}
 
 	// デフォルト値設定
 	cfg.setDefaults()
+	cfg.populateCanonicalStoragePaths()
 
 	// バリデーション
 	if err := cfg.Validate(); err != nil {

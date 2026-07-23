@@ -39,6 +39,7 @@ Commands:
   health    Run health checks and output JSON
   status    Show system status overview
   doctor    Diagnose config and runtime prerequisites
+  config    Read validated runtime configuration
   resilience  Inspect/reconcile restart and self-repair incidents
   channels  List/probe channel adapters
   gateway   Gateway status/restart operations

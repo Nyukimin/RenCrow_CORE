@@ -10,6 +10,8 @@ type Config struct {
 	DeepSeek DeepSeekConfig `yaml:"deepseek"`
 	OpenAI   OpenAIConfig   `yaml:"openai"`
 	Session  SessionConfig  `yaml:"session"`
+	Storage  StorageConfig  `yaml:"storage"`
+	Backup   BackupConfig   `yaml:"backup"`
 	Worker   WorkerConfig   `yaml:"worker"`
 	Line     LineConfig     `yaml:"line"`
 	Telegram TelegramConfig `yaml:"telegram"`
@@ -160,6 +162,81 @@ type Config struct {
 // SessionConfig はセッション設定
 type SessionConfig struct {
 	StorageDir string `yaml:"storage_dir"`
+}
+
+// StorageConfig はruntimeが使用するDBファイルの物理配置を一元管理する。
+// 各feature固有の旧path keyは読み取り互換として残すが、新規設定では本sectionを正本とする。
+type StorageConfig struct {
+	Databases       DatabasePathsConfig       `yaml:"databases"`
+	LegacyDatabases LegacyDatabasePathsConfig `yaml:"legacy_databases"`
+	Memory          MemoryStorageConfig       `yaml:"memory"`
+}
+
+// MemoryStorageConfig はCOREが直接所有する記憶ファイルの物理配置を一元管理する。
+type MemoryStorageConfig struct {
+	SessionDir         string `yaml:"session_dir"`
+	OperationMemoryDir string `yaml:"operation_memory_dir"`
+	ColdExportDir      string `yaml:"cold_export_dir"`
+}
+
+type DatabasePathsConfig struct {
+	ConversationL1      string `yaml:"conversation_l1"`
+	ConversationArchive string `yaml:"conversation_archive"`
+	ToolRegistry        string `yaml:"tool_registry"`
+	Glossary            string `yaml:"glossary"`
+	MovieCatalog        string `yaml:"movie_catalog"`
+	HobbyGraph          string `yaml:"hobby_graph"`
+	Investment          string `yaml:"investment"`
+	Advisor             string `yaml:"advisor"`
+	Sandbox             string `yaml:"sandbox"`
+	DCI                 string `yaml:"dci"`
+	SkillGovernance     string `yaml:"skill_governance"`
+	Workstream          string `yaml:"workstream"`
+	Revenue             string `yaml:"revenue"`
+	PersonaArchitecture string `yaml:"persona_architecture"`
+	BrowserTraceToAPI   string `yaml:"browser_trace_to_api"`
+	ComplexityHotspot   string `yaml:"complexity_hotspot"`
+	SuperAgentHarness   string `yaml:"super_agent_harness"`
+	AIWorkflow          string `yaml:"ai_workflow"`
+	KnowledgeMemory     string `yaml:"knowledge_memory"`
+}
+
+// LegacyDatabasePathsConfig はbackup対象として保持するがruntimeから開かない旧形式DBを記録する。
+type LegacyDatabasePathsConfig struct {
+	MemoryDuckDB       string `yaml:"memory_duckdb"`
+	ToolRegistryDuckDB string `yaml:"tool_registry_duckdb"`
+}
+
+// BackupConfig は外部backup runnerが参照する物理保存先と世代数を定義する。
+// credentialは含めず、mount済みのローカルpathだけを記載する。
+type BackupConfig struct {
+	CoreSource        string             `yaml:"core_source"`
+	CoreSnapshotRoot  string             `yaml:"core_snapshot_root"`
+	KnowledgeSource   string             `yaml:"knowledge_source"`
+	KnowledgeMirror   string             `yaml:"knowledge_mirror"`
+	KnowledgeVersions string             `yaml:"knowledge_versions"`
+	RecentKeep        int                `yaml:"recent_keep"`
+	DailyKeep         int                `yaml:"daily_keep"`
+	WeeklyKeep        int                `yaml:"weekly_keep"`
+	MonthlyKeep       int                `yaml:"monthly_keep"`
+	Memory            MemoryBackupConfig `yaml:"memory"`
+}
+
+// MemoryBackupConfig は外部記憶backendから可逆snapshotを取得する契約を定義する。
+type MemoryBackupConfig struct {
+	RequireExports bool               `yaml:"require_exports"`
+	Redis          RedisBackupConfig  `yaml:"redis"`
+	Qdrant         QdrantBackupConfig `yaml:"qdrant"`
+}
+
+type RedisBackupConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Container string `yaml:"container"`
+}
+
+type QdrantBackupConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	BaseURL string `yaml:"base_url"`
 }
 
 // WorkerConfig はWorker実行設定

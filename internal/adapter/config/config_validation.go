@@ -13,6 +13,10 @@ import (
 
 // Validate は設定の妥当性を検証
 func (c *Config) Validate() error {
+	if err := c.validateBackupConfig(); err != nil {
+		return err
+	}
+
 	// サーバー設定検証
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("invalid server port: %d (must be 1-65535)", c.Server.Port)

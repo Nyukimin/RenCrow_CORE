@@ -44,6 +44,7 @@ func registerChannelRoutes(mux *http.ServeMux, dependencies *Dependencies) {
 }
 
 func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dependencies, debugSystemOpts viewer.DebugSystemOptions) {
+	databasePaths := viewerDatabasePaths(cfg)
 	viewerfeature.RegisterBaseRoutes(mux, viewerfeature.Dependencies{Base: viewerfeature.BaseRoutes{
 		Page:                         viewer.HandlePage,
 		Asset:                        viewer.HandleAsset,
@@ -78,16 +79,16 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		OTELExport:                   dependencies.otelExport,
 		ArtifactCleanup:              dependencies.artifactCleanup,
 		AssetsGitStatus:              viewer.HandleAssetsGitStatus(defaultAssetsGitRepoPath()),
-		MovieCatalog:                 viewer.HandleMovieCatalog(viewer.MovieCatalogOptions{}),
-		MovieCatalogFetch:            viewer.HandleMovieCatalogFetch(viewer.MovieCatalogOptions{}),
-		MovieCatalogPreference:       viewer.HandleMovieCatalogPreference(viewer.MovieCatalogOptions{}),
-		MovieTopicCandidatesGenerate: viewer.HandleMovieTopicCandidatesGenerate(viewer.MovieCatalogOptions{}),
-		HobbyGraph:                   viewer.HandleHobbyGraph(viewer.HobbyGraphOptions{}),
-		HobbyGraphBootstrap:          viewer.HandleHobbyGraphBootstrap(viewer.HobbyGraphOptions{}),
-		HobbyGraphInteraction:        viewer.HandleHobbyGraphInteraction(viewer.HobbyGraphOptions{}),
-		HobbyGraphRelation:           viewer.HandleHobbyGraphRelation(viewer.HobbyGraphOptions{}),
-		HobbyTopicCandidatesGenerate: viewer.HandleHobbyTopicCandidatesGenerate(viewer.HobbyGraphOptions{}),
-		InvestmentStatus:             viewer.HandleInvestmentStatus(defaultInvestmentDBPath()),
+		MovieCatalog:                 viewer.HandleMovieCatalog(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
+		MovieCatalogFetch:            viewer.HandleMovieCatalogFetch(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
+		MovieCatalogPreference:       viewer.HandleMovieCatalogPreference(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
+		MovieTopicCandidatesGenerate: viewer.HandleMovieTopicCandidatesGenerate(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
+		HobbyGraph:                   viewer.HandleHobbyGraph(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
+		HobbyGraphBootstrap:          viewer.HandleHobbyGraphBootstrap(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
+		HobbyGraphInteraction:        viewer.HandleHobbyGraphInteraction(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
+		HobbyGraphRelation:           viewer.HandleHobbyGraphRelation(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
+		HobbyTopicCandidatesGenerate: viewer.HandleHobbyTopicCandidatesGenerate(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
+		InvestmentStatus:             viewer.HandleInvestmentStatus(databasePaths.Investment),
 		InvestmentNotify:             viewer.HandleInvestmentNotify(dependencies.eventHub),
 	}})
 }
@@ -335,11 +336,29 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 	}})
 }
 
-func defaultInvestmentDBPath() string {
-	if env := strings.TrimSpace(os.Getenv("RENCROW_DATA_DB")); env != "" {
-		return env
+type configuredViewerDatabasePaths struct {
+	MovieCatalog string
+	HobbyGraph   string
+	Investment   string
+}
+
+func viewerDatabasePaths(cfg *config.Config) configuredViewerDatabasePaths {
+	var paths configuredViewerDatabasePaths
+	if cfg != nil {
+		paths = configuredViewerDatabasePaths{
+			MovieCatalog: strings.TrimSpace(cfg.Storage.Databases.MovieCatalog),
+			HobbyGraph:   strings.TrimSpace(cfg.Storage.Databases.HobbyGraph),
+			Investment:   strings.TrimSpace(cfg.Storage.Databases.Investment),
+		}
 	}
-	return filepath.Join("rencrow-data", "data", "rencrow.db")
+	if paths.Investment == "" {
+		if env := strings.TrimSpace(os.Getenv("RENCROW_DATA_DB")); env != "" {
+			paths.Investment = env
+		} else {
+			paths.Investment = filepath.Join("rencrow-data", "data", "rencrow.db")
+		}
+	}
+	return paths
 }
 
 func registerIdleChatRoutes(mux *http.ServeMux, dependencies *Dependencies) {

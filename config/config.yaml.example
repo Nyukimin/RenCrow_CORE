@@ -138,9 +138,56 @@ codex:
   max_output_bytes: 1048576
   ephemeral: true
 
-# セッション設定
-session:
-  storage_dir: "./sessions"
+# DB・記憶ファイルの物理配置の正本。feature固有の旧path keyではなく、ここへ集約する。
+storage:
+  memory:
+    session_dir: "${HOME}/.rencrow/sessions"
+    operation_memory_dir: "${HOME}/.rencrow/memory"
+    cold_export_dir: "${HOME}/.rencrow/exports/parquet"
+  databases:
+    conversation_l1: "./data/l1_memory.db"
+    conversation_archive: "./data/memory_archive.db"
+    tool_registry: "" # SQLite ToolRegistryを使う場合だけ設定
+    glossary: "./data/glossary.db"
+    movie_catalog: "./data/movie_catalog/eiga_catalog.sqlite"
+    hobby_graph: "./data/hobby_graph/hobby_graph.sqlite"
+    investment: "./data/investment/rencrow.db"
+    advisor: "./workspace/logs/advisor.db"
+    sandbox: "./workspace/logs/sandbox.db"
+    dci: "./workspace/dci.db"
+    skill_governance: "./workspace/logs/skill_governance.db"
+    workstream: "./workspace/logs/workstream.db"
+    revenue: "./workspace/logs/revenue.db"
+    persona_architecture: "./workspace/logs/persona.db"
+    browser_trace_to_api: "./workspace/browser_trace_to_api.db"
+    complexity_hotspot: "./workspace/logs/complexity_hotspot.db"
+    super_agent_harness: "./workspace/logs/superagent_harness.db"
+    ai_workflow: "./workspace/logs/ai_workflow.db"
+    knowledge_memory: "./workspace/logs/knowledge_memory.db"
+  legacy_databases:
+    memory_duckdb: ""
+    tool_registry_duckdb: ""
+
+# backup runnerを使う環境では、次を絶対pathで設定する。
+# storage.databasesとstorage.memoryの各pathはcore_source配下に置くこと。
+# backup:
+#   core_source: "/home/user/.rencrow"
+#   core_snapshot_root: "/srv/rencrow/backup-local/RenCrow/core-snapshots"
+#   knowledge_source: "/srv/rencrow/knowledge/RenCrowKnowledge"
+#   knowledge_mirror: "/srv/rencrow/backup-moca/RenCrow/knowledge"
+#   knowledge_versions: "/srv/rencrow/backup-moca/RenCrow/knowledge-versions"
+#   recent_keep: 28
+#   daily_keep: 14
+#   weekly_keep: 8
+#   monthly_keep: 12
+#   memory:
+#     require_exports: true
+#     redis:
+#       enabled: true
+#       container: "rencrow-redis"
+#     qdrant:
+#       enabled: true
+#       base_url: "http://127.0.0.1:6333"
 
 # Worker 実行設定（Coderが生成したPatchの自動実行）
 worker:
@@ -180,7 +227,6 @@ security:
 # プロンプトファイルディレクトリ（未設定時はビルトインフォールバック）
 prompts_dir: "./prompts"       # デフォルトプロンプト（リポジトリ固定）
 workspace_dir: "./workspace"   # ユーザーカスタマイズ領域（オーバーライド）
-operation_memory_dir: "${HOME}/.rencrow/memory" # DB/ランタイム状態と一緒に持ち運ぶ運用記憶
 
 # ログ設定
 log:
@@ -289,8 +335,6 @@ idle_chat:
 conversation:
   enabled: false
   redis_url: "redis://localhost:6379"
-  l1_sqlite_path: "./data/l1_memory.db"
-  archive_sqlite_path: "./data/memory_archive.db"
   vectordb_url: "localhost:6334"
   embed_model: "nomic-embed-text"
   summary_model: ""      # 空の場合はOllama chatモデルを使用

@@ -1,0 +1,10 @@
+[Unit]
+Description=RenCrow CORE and knowledge backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/rencrow-storage-backup run
+Nice=10
+IOSchedulingClass=idle

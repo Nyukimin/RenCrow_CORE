@@ -108,14 +108,14 @@ func backgroundJobFailureNotification(job string, errorText string, detail strin
 	return content
 }
 
-func startConversationBackgroundJobs(runtime conversationRuntime, listener orchestrator.EventListener) {
+func startConversationBackgroundJobs(cfg *config.Config, runtime conversationRuntime, listener orchestrator.EventListener) {
 	reporter := newBackgroundJobFailureReporter(listener)
 	if runtime.L1Store != nil {
 		startSourceRegistrySweeper(runtime.L1Store, reporter)
 		startMemoryLifecycleJob(runtime.L1Store, reporter)
 	}
 	if runtime.Manager != nil {
-		startParquetExportJob(runtime.Manager, reporter)
+		startParquetExportJob(cfg.Storage.Memory.ColdExportDir, runtime.Manager, reporter)
 	}
 }
 
@@ -310,8 +310,11 @@ func startDailyIntakeSweeper(rules knowledgememoryapp.DailyIntakeRuleStore, regi
 	}()
 }
 
-func startParquetExportJob(store archiveapp.ParquetExportStore, reporter backgroundJobFailureReporter) {
-	outputDir := strings.TrimSpace(os.Getenv("RENCROW_PARQUET_EXPORT_DIR"))
+func startParquetExportJob(configuredOutputDir string, store archiveapp.ParquetExportStore, reporter backgroundJobFailureReporter) {
+	outputDir := strings.TrimSpace(configuredOutputDir)
+	if outputDir == "" {
+		outputDir = strings.TrimSpace(os.Getenv("RENCROW_PARQUET_EXPORT_DIR"))
+	}
 	if outputDir == "" {
 		return
 	}
@@ -356,7 +359,7 @@ func startMovieCatalogBackfillJob(cfg *config.Config, reporter backgroundJobFail
 		log.Printf("[MovieCatalogBackfill] disabled by environment")
 		return
 	}
-	dbPath := resolveMovieCatalogBackfillDBPath()
+	dbPath := resolveMovieCatalogBackfillDBPath(cfg.Storage.Databases.MovieCatalog)
 	if dbPath == "" {
 		log.Printf("[MovieCatalogBackfill] skipped: movie catalog DB not found")
 		return
@@ -410,7 +413,13 @@ func movieCatalogBackfillDisabled() bool {
 	return false
 }
 
-func resolveMovieCatalogBackfillDBPath() string {
+func resolveMovieCatalogBackfillDBPath(configured string) string {
+	if configured = strings.TrimSpace(configured); configured != "" {
+		if st, err := os.Stat(configured); err == nil && !st.IsDir() {
+			return configured
+		}
+		return ""
+	}
 	candidates := []string{}
 	if env := strings.TrimSpace(os.Getenv("RENCROW_MOVIE_CATALOG_DB")); env != "" {
 		candidates = append(candidates, env)

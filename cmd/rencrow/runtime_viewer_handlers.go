@@ -22,13 +22,16 @@ func buildViewerRuntimeHandlers(
 	reportPath string,
 	gameDecisionProvider llm.LLMProvider,
 ) {
+	databasePaths := viewerDatabasePaths(cfg)
+	movieOptions := viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}
+	hobbyOptions := viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}
 	if l1Store == nil {
 		deps.viewerRecallTraces = viewer.HandleRecallTraces(nil)
 		deps.viewerMemoryLayers = viewer.HandleMemoryLayers(nil, nil)
 		deps.viewerSourceRegistry = viewer.HandleSourceRegistry(nil)
 		deps.viewerDomainGraphAssertions = viewer.HandleDomainGraphAssertions(nil)
-		deps.viewerMovieDomainGraphSync = viewer.HandleMovieDomainGraphSync(viewer.MovieCatalogOptions{}, nil)
-		deps.viewerHobbyDomainGraphSync = viewer.HandleHobbyDomainGraphSync(viewer.HobbyGraphOptions{}, nil)
+		deps.viewerMovieDomainGraphSync = viewer.HandleMovieDomainGraphSync(movieOptions, nil)
+		deps.viewerHobbyDomainGraphSync = viewer.HandleHobbyDomainGraphSync(hobbyOptions, nil)
 	}
 	if l1Store != nil {
 		deps.viewerRecallTraces = viewer.HandleRecallTraces(l1Store)
@@ -44,8 +47,8 @@ func buildViewerRuntimeHandlers(
 		deps.viewerMemoryRecallPack = viewer.HandleMemoryRecallPack(l1Store, realMgr, l1Store)
 		deps.viewerSourceRegistry = viewer.HandleSourceRegistry(l1Store)
 		deps.viewerDomainGraphAssertions = viewer.HandleDomainGraphAssertions(l1Store)
-		deps.viewerMovieDomainGraphSync = viewer.HandleMovieDomainGraphSync(viewer.MovieCatalogOptions{}, l1Store)
-		deps.viewerHobbyDomainGraphSync = viewer.HandleHobbyDomainGraphSync(viewer.HobbyGraphOptions{}, l1Store)
+		deps.viewerMovieDomainGraphSync = viewer.HandleMovieDomainGraphSync(movieOptions, l1Store)
+		deps.viewerHobbyDomainGraphSync = viewer.HandleHobbyDomainGraphSync(hobbyOptions, l1Store)
 	}
 	gameBridgeStorePath := defaultGameBridgeStorePath(cfg.WorkspaceDir)
 	var gameBridgeStore *viewer.GameBridgeStore
