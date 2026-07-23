@@ -31,13 +31,14 @@ func buildViewerBridgeHandlers(
 		return viewer.HandleSendWithAttachments(func(ctx context.Context, req viewer.SendRequest) (string, error) {
 			log.Printf("[main] viewerSendFromOrch: start job_id=%s viewer_client_id=%q recipient=%s attachments=%d %s", req.JobID, req.ViewerClientID, req.To, len(req.Attachments), req.Provenance.LogFields())
 			resp, err := proc.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
-				JobID:       req.JobID,
-				SessionID:   "viewer",
-				Channel:     "viewer",
-				ChatID:      "viewer-user",
-				UserMessage: req.Message,
-				To:          string(req.To),
-				Attachments: req.Attachments,
+				JobID:           req.JobID,
+				SessionID:       "viewer",
+				Channel:         "viewer",
+				ChatID:          "viewer-user",
+				UserMessage:     req.Message,
+				To:              string(req.To),
+				OperationSource: req.Provenance.OperationSource,
+				Attachments:     req.Attachments,
 			})
 			if err != nil {
 				log.Printf("[main] viewerSendFromOrch: error job_id=%s viewer_client_id=%q recipient=%s %s err=%v", req.JobID, req.ViewerClientID, req.To, req.Provenance.LogFields(), err)

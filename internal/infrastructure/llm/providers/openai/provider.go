@@ -73,6 +73,9 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req llm.GenerateRequest) 
 	p.addThinkingBridgeFields(openaiReq, streaming)
 	p.addProviderOptions(openaiReq, req.ProviderOptions)
 	p.addModelContextOption(openaiReq)
+	if streaming {
+		openaiReq["stream_options"] = map[string]any{"include_usage": true}
+	}
 
 	// MaxTokens（OpenAIではmax_tokens）
 	if req.MaxTokens > 0 {

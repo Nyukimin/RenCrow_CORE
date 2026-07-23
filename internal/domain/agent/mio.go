@@ -287,6 +287,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 	}
 
 	response := strings.TrimSpace(resp.Content)
+	finalGeneration := resp
 	if violatesAttributionInChat(response, latestOther) {
 		retryMessages := append([]llm.Message{}, messages...)
 		retryMessages = append(retryMessages, llm.Message{
@@ -296,7 +297,14 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		retryResp, retryErr := m.llmProvider.Generate(ctx, m.generationRequest(retryMessages, llm.StreamCallbackFromContext(ctx)))
 		if retryErr == nil && strings.TrimSpace(retryResp.Content) != "" {
 			response = strings.TrimSpace(retryResp.Content)
+			finalGeneration = retryResp
 		}
+	}
+	if onMetrics := llm.GenerationMetricsCallbackFromContext(ctx); onMetrics != nil && (finalGeneration.TokensUsed > 0 || finalGeneration.TokensPerSecond > 0) {
+		onMetrics(llm.GenerationMetrics{
+			CompletionTokens: finalGeneration.TokensUsed,
+			TokensPerSecond:  finalGeneration.TokensPerSecond,
+		})
 	}
 
 	// === v5.1: EndTurn（Store） ===

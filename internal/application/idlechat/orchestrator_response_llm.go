@@ -13,6 +13,7 @@ func (o *IdleChatOrchestrator) generateIdleLLM(provider llm.LLMProvider, req llm
 	if provider == nil {
 		return llm.GenerateResponse{}, fmt.Errorf("idlechat LLM provider is nil")
 	}
+	provider = interruptibleIdleChatProvider(provider)
 	timeout := idleChatLLMGenerateTimeout
 	role := "none"
 	if len(req.Messages) > 0 {

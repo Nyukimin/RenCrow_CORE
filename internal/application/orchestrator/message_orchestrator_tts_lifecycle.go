@@ -78,10 +78,11 @@ func (l *messageTTSLifecycle) WithStreamHooks(
 	jid, sessionID, channel, chatID, ttsSessionID string,
 ) (context.Context, *streamBundle) {
 	prev := llm.StreamCallbackFromContext(ctx)
+	previousMetrics := llm.GenerationMetricsCallbackFromContext(ctx)
 	latency := latencyTraceFromContext(ctx)
 	ttsStream := newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, "agent.response", "[MessageOrch] TTS push degraded:")
 	vtuberStream := newVTuberStreamForwarder(l.vtuberBridge, ttsSessionID, route, "agent.response", "[MessageOrch] VTuber push degraded:")
-	return llm.ContextWithStreamCallback(ctx, func(token string) {
+	streamCtx := llm.ContextWithStreamCallback(ctx, func(token string) {
 		if prev != nil {
 			prev(token)
 		}
@@ -91,7 +92,14 @@ func (l *messageTTSLifecycle) WithStreamHooks(
 		l.emit("agent.thinking", "mio", "user", token, string(route), jid, sessionID, channel, chatID)
 		ttsStream.OnToken(ctx, token)
 		vtuberStream.OnToken(ctx, token)
-	}), &streamBundle{tts: ttsStream, vtuber: vtuberStream}
+	})
+	streamCtx = llm.ContextWithGenerationMetricsCallback(streamCtx, func(metrics llm.GenerationMetrics) {
+		if previousMetrics != nil {
+			previousMetrics(metrics)
+		}
+		emitLLMThroughputMetric(l.emit, metrics, string(route), jid, sessionID, channel, chatID)
+	})
+	return streamCtx, &streamBundle{tts: ttsStream, vtuber: vtuberStream}
 }
 
 func (l *messageTTSLifecycle) Push(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {

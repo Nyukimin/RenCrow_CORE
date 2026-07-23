@@ -67,6 +67,26 @@ func TestPhase16DistributedTTSLifecycleStartFailureClearsSession(t *testing.T) {
 	}
 }
 
+func TestPhase16DistributedTTSLifecycleSkipsRenCrowCMD(t *testing.T) {
+	bridge := &mockTTSBridge{}
+	lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
+
+	ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
+		SessionID:       "viewer",
+		Channel:         "viewer",
+		ChatID:          "viewer-user",
+		UserMessage:     "おはようございます",
+		OperationSource: "RenCrow_CMD",
+	}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 0.98, "chat"))
+
+	if ttsSessionID != "" {
+		t.Fatalf("expected CMD text chat to skip TTS, got %q", ttsSessionID)
+	}
+	if len(bridge.startReqs) != 0 {
+		t.Fatalf("expected no TTS start request for CMD, got %d", len(bridge.startReqs))
+	}
+}
+
 func TestPhase16DistributedTTSLifecycleStreamHooksPreservePreviousCallbackAndEmitThinking(t *testing.T) {
 	var previous []string
 	var emitted []string

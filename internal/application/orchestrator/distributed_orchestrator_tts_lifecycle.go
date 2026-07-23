@@ -34,7 +34,7 @@ func (l *distributedTTSLifecycle) SetVTuberBridge(vtuberBridge VTuberBridge) {
 }
 
 func (l *distributedTTSLifecycle) StartSessionForRoute(ctx context.Context, req ProcessMessageRequest, jobID task.JobID, decision routing.Decision) string {
-	if l.ttsBridge == nil {
+	if l.ttsBridge == nil || !ttsAllowedForOperationSource(req.OperationSource) {
 		return ""
 	}
 	ttsSessionID := fmt.Sprintf("%s-%s", req.SessionID, jobID.String())

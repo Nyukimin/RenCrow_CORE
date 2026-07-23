@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 type latencyTraceContextKey struct{}
@@ -18,12 +20,14 @@ type latencyTrace struct {
 }
 
 type latencyMetricPayload struct {
-	Kind      string  `json:"kind"`
-	Point     string  `json:"point"`
-	ElapsedMS float64 `json:"elapsed_ms,omitempty"`
-	SinceMS   float64 `json:"since_ms,omitempty"`
-	AtUnixMS  int64   `json:"at_unix_ms"`
-	Detail    string  `json:"detail,omitempty"`
+	Kind             string  `json:"kind"`
+	Point            string  `json:"point"`
+	ElapsedMS        float64 `json:"elapsed_ms,omitempty"`
+	SinceMS          float64 `json:"since_ms,omitempty"`
+	AtUnixMS         int64   `json:"at_unix_ms"`
+	Detail           string  `json:"detail,omitempty"`
+	CompletionTokens int     `json:"completion_tokens,omitempty"`
+	TokensPerSecond  float64 `json:"tokens_per_second,omitempty"`
 }
 
 func contextWithLatencyTrace(ctx context.Context, startedAt time.Time) context.Context {
@@ -73,6 +77,28 @@ func emitLatencyMetric(
 	content, err := json.Marshal(payload)
 	if err != nil {
 		content = []byte(fmt.Sprintf(`{"kind":%q,"point":%q,"at_unix_ms":%d,"detail":"marshal_failed"}`, kind, point, now.UnixMilli()))
+	}
+	emit("metrics.latency", "metrics", "viewer", string(content), route, jobID, sessionID, channel, chatID)
+}
+
+func emitLLMThroughputMetric(
+	emit messageEventEmitter,
+	metrics llm.GenerationMetrics,
+	route, jobID, sessionID, channel, chatID string,
+) {
+	if emit == nil || (metrics.CompletionTokens <= 0 && metrics.TokensPerSecond <= 0) {
+		return
+	}
+	payload := latencyMetricPayload{
+		Kind:             "llm",
+		Point:            "throughput",
+		AtUnixMS:         time.Now().UnixMilli(),
+		CompletionTokens: metrics.CompletionTokens,
+		TokensPerSecond:  metrics.TokensPerSecond,
+	}
+	content, err := json.Marshal(payload)
+	if err != nil {
+		return
 	}
 	emit("metrics.latency", "metrics", "viewer", string(content), route, jobID, sessionID, channel, chatID)
 }

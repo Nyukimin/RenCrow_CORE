@@ -43,8 +43,12 @@ func (b *messageTaskContextBuilder) BuildWithJobID(req ProcessMessageRequest, jo
 			"", jobID.String(), req.SessionID, req.Channel, req.ChatID)
 	}
 	ttsSessionID := ""
-	if b.ttsEnabled() {
+	if b.ttsEnabled() && ttsAllowedForOperationSource(req.OperationSource) {
 		ttsSessionID = fmt.Sprintf("%s-%s", req.SessionID, jobID.String())
 	}
 	return t, jobID, ttsSessionID
+}
+
+func ttsAllowedForOperationSource(operationSource string) bool {
+	return !strings.EqualFold(strings.TrimSpace(operationSource), "RenCrow_CMD")
 }

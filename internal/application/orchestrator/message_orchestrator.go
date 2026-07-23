@@ -28,13 +28,14 @@ import (
 
 // ProcessMessageRequest はメッセージ処理リクエスト
 type ProcessMessageRequest struct {
-	JobID       string
-	SessionID   string
-	Channel     string
-	ChatID      string
-	UserMessage string
-	To          string
-	Attachments []attachment.Attachment
+	JobID           string
+	SessionID       string
+	Channel         string
+	ChatID          string
+	UserMessage     string
+	To              string
+	OperationSource string
+	Attachments     []attachment.Attachment
 }
 
 // ProcessMessageResponse はメッセージ処理レスポンス

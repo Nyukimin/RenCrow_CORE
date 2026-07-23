@@ -30,6 +30,13 @@ type MessagePart struct {
 // StreamCallback はストリーミング時にトークンごとに呼ばれるコールバック
 type StreamCallback func(token string)
 
+type GenerationMetrics struct {
+	CompletionTokens int
+	TokensPerSecond  float64
+}
+
+type GenerationMetricsCallback func(metrics GenerationMetrics)
+
 // GenerateRequest はLLM生成リクエスト
 type GenerateRequest struct {
 	Messages        []Message
@@ -38,13 +45,15 @@ type GenerateRequest struct {
 	SystemPrompt    string
 	ProviderOptions map[string]any
 	OnToken         StreamCallback // nil = 非ストリーミング
+	OnMetrics       GenerationMetricsCallback
 }
 
 // GenerateResponse はLLM生成レスポンス
 type GenerateResponse struct {
-	Content      string
-	TokensUsed   int
-	FinishReason string
+	Content         string
+	TokensUsed      int
+	TokensPerSecond float64
+	FinishReason    string
 }
 
 // LLMProvider はLLMプロバイダーの抽象化

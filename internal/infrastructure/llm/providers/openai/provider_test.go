@@ -341,6 +341,89 @@ func TestOpenAIProviderGenerate_LocalCompatibleStreamingUsesDeltaContentOnly(t *
 	}
 }
 
+func TestOpenAIProviderGenerate_StreamsOrdinaryContentBeforeDone(t *testing.T) {
+	chunkFlushed := make(chan struct{})
+	releaseDone := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("response writer is not flushable")
+		}
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"逐次"}}]}`)
+		fmt.Fprintln(w)
+		flusher.Flush()
+		close(chunkFlushed)
+		<-releaseDone
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"応答"},"finish_reason":"stop"}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: [DONE]`)
+		fmt.Fprintln(w)
+		flusher.Flush()
+	}))
+	defer server.Close()
+
+	tokens := make(chan string, 2)
+	result := make(chan error, 1)
+	provider := NewOpenAIProviderWithOptions("", "mio", server.URL, time.Second)
+	go func() {
+		_, err := provider.Generate(context.Background(), llm.GenerateRequest{
+			Messages: []llm.Message{{Role: "user", Content: "ping"}},
+			OnToken:  func(token string) { tokens <- token },
+		})
+		result <- err
+	}()
+
+	<-chunkFlushed
+	select {
+	case token := <-tokens:
+		if token != "逐次" {
+			t.Fatalf("first token = %q, want 逐次", token)
+		}
+	case <-time.After(100 * time.Millisecond):
+		close(releaseDone)
+		<-result
+		t.Fatal("ordinary content was buffered until stream completion")
+	}
+	close(releaseDone)
+	if err := <-result; err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+}
+
+func TestOpenAIProviderGenerate_StreamingReturnsBackendThroughput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		streamOptions, _ := request["stream_options"].(map[string]any)
+		if streamOptions["include_usage"] != true {
+			t.Fatalf("stream_options = %#v, want include_usage=true", streamOptions)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"こんにちは"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[],"usage":{"completion_tokens":7},"timings":{"predicted_per_second":51.1808}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: [DONE]`)
+		fmt.Fprintln(w)
+	}))
+	defer server.Close()
+
+	provider := NewOpenAIProviderWithOptions("", "mio", server.URL, time.Second)
+	resp, err := provider.Generate(context.Background(), llm.GenerateRequest{
+		Messages: []llm.Message{{Role: "user", Content: "ping"}},
+		OnToken:  func(string) {},
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if resp.TokensUsed != 7 || resp.TokensPerSecond != 51.1808 {
+		t.Fatalf("stream metrics = tokens:%d rate:%f, want tokens:7 rate:51.1808", resp.TokensUsed, resp.TokensPerSecond)
+	}
+}
+
 func TestOpenAIProviderGenerate_LocalCompatibleStreamingDropsUntaggedReasoning(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

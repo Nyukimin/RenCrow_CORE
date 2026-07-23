@@ -70,6 +70,25 @@ func TestPhase12TaskContextBuilderBuildsTTSSessionOnlyWhenEnabled(t *testing.T) 
 	}
 }
 
+func TestPhase12TaskContextBuilderSkipsTTSSessionForRenCrowCMD(t *testing.T) {
+	builder := newMessageTaskContextBuilder(
+		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func() bool { return true },
+	)
+
+	_, _, ttsSessionID := builder.Build(ProcessMessageRequest{
+		SessionID:       "viewer",
+		Channel:         "viewer",
+		ChatID:          "viewer-user",
+		UserMessage:     "おはようございます",
+		OperationSource: "RenCrow_CMD",
+	})
+
+	if ttsSessionID != "" {
+		t.Fatalf("expected CMD text chat to skip TTS, got %q", ttsSessionID)
+	}
+}
+
 func TestPhase12TaskContextBuilderPreservesProvidedJobID(t *testing.T) {
 	builder := newMessageTaskContextBuilder(
 		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},

@@ -80,6 +80,34 @@ func TestPhase10TTSLifecycleStreamHooksEmitFirstTokenLatencyMetric(t *testing.T)
 	}
 }
 
+func TestPhase10TTSLifecycleStreamHooksEmitBackendThroughputMetric(t *testing.T) {
+	var events []OrchestratorEvent
+	lifecycle := newMessageTTSLifecycle(nil, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
+		events = append(events, NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID))
+	})
+
+	streamCtx, _ := lifecycle.WithStreamHooks(context.Background(), routing.RouteCHAT, "job-rate", "sess-1", "line", "U123", "")
+	callback := llm.GenerationMetricsCallbackFromContext(streamCtx)
+	if callback == nil {
+		t.Fatal("expected generation metrics callback")
+	}
+	callback(llm.GenerationMetrics{CompletionTokens: 7, TokensPerSecond: 51.1808})
+
+	for _, ev := range events {
+		if ev.Type != "metrics.latency" {
+			continue
+		}
+		var payload latencyMetricPayload
+		if err := json.Unmarshal([]byte(ev.Content), &payload); err != nil {
+			t.Fatalf("metric content should be JSON: %v", err)
+		}
+		if payload.Kind == "llm" && payload.Point == "throughput" && payload.CompletionTokens == 7 && payload.TokensPerSecond == 51.1808 {
+			return
+		}
+	}
+	t.Fatalf("backend throughput metric not emitted: %#v", events)
+}
+
 func TestPhase10TTSLifecycleStreamHooksPreservePreviousCallbackAndEmitThinking(t *testing.T) {
 	var previous []string
 	var emitted []string
