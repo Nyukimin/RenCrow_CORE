@@ -32,3 +32,19 @@ func TestLive2DOrchestratorResponderUsesViewerLive2DChannel(t *testing.T) {
 		t.Fatalf("request=%#v", orch.req)
 	}
 }
+
+func TestLive2DOrchestratorResponderPassesCharacterAsViewerRecipient(t *testing.T) {
+	orch := &stubLive2DOrch{}
+	responder := &live2DOrchestratorResponder{orch: orch}
+
+	if _, err := responder.RespondLive2DChat(context.Background(), "session-shiro", " Shiro ", "相談です"); err != nil {
+		t.Fatalf("RespondLive2DChat() error = %v", err)
+	}
+
+	if orch.req.To != "shiro" {
+		t.Fatalf("viewer recipient = %q, want shiro", orch.req.To)
+	}
+	if orch.req.ChatID != "shiro" {
+		t.Fatalf("chat ID = %q, want shiro", orch.req.ChatID)
+	}
+}

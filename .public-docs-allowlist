@@ -8,3 +8,4 @@ docs/07_安全・承認・データ方針.md
 docs/08_実装状況・ロードマップ.md
 docs/09_運用ログ・panic保存仕様.md
 docs/README.md
+docs/調査/20260724_231313_character_chat_SystemPrompt反映不整合.md

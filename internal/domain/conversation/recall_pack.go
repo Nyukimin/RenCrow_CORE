@@ -377,6 +377,13 @@ func (rp *RecallPack) FilterForRole(role string) RecallPack {
 	return filtered
 }
 
+// WithoutPersonaSystemPrompt removes the stored conversation persona while
+// preserving shared user memory and conversation context for another character.
+func (rp RecallPack) WithoutPersonaSystemPrompt() RecallPack {
+	rp.Persona.SystemPrompt = ""
+	return rp
+}
+
 func rejectedThreadSummaryTrace(summary ThreadSummary, reason string) RecallTraceItem {
 	return RecallTraceItem{
 		Layer:         "L2",

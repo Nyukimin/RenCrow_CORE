@@ -27,14 +27,16 @@ func (r *live2DOrchestratorResponder) RespondLive2DChat(ctx context.Context, ses
 	if r == nil || r.orch == nil {
 		return "", nil
 	}
+	recipient := strings.ToLower(strings.TrimSpace(characterID))
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		sessionID = "viewer_live2d:" + strings.ToLower(strings.TrimSpace(characterID))
+		sessionID = "viewer_live2d:" + recipient
 	}
 	resp, err := r.orch.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
 		SessionID:   sessionID,
 		Channel:     "viewer_live2d",
-		ChatID:      strings.ToLower(strings.TrimSpace(characterID)),
+		ChatID:      recipient,
+		To:          recipient,
 		UserMessage: strings.TrimSpace(message),
 	})
 	if err != nil {

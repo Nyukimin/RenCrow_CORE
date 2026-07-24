@@ -197,6 +197,9 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		}
 		if recallPack != nil {
 			filtered := recallPack.FilterForRole("chat")
+			if recipient := strings.ToLower(strings.TrimSpace(t.ViewerRecipient())); recipient != "" && recipient != "mio" {
+				filtered = filtered.WithoutPersonaSystemPrompt()
+			}
 			recallPack = &filtered
 			if err := recordRecallTrace(ctx, m.conversationEngine, t.ChatID(), t.JobID().String(), "chat", filtered); err != nil {
 				log.Printf("[Mio] RecordRecallTrace failed: %v", err)

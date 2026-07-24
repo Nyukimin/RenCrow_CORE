@@ -37,6 +37,8 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `/viewer/ai-workflow/*` | AI engineering workflow の experimental API |
 | `/viewer/games/*` | RenCrow_GAMES bridge（status/decision/result/sessions/events/launch/observer proxy） |
 
+`POST /viewer/api/chat`の`character_id`は`mio`、`shiro`、`kuro`、`midori`を受け付け、通常CHATのrecipientとしてorchestratorへ引き渡します。responseの`character_id`表示だけを切り替えて、実際のAgentをMioへ固定してはなりません。
+
 ### Game Launch（マルチペルソナ WP5）
 
 `POST /viewer/games/launch` は、ペルソナが「遊びたい時に自分で起動する」

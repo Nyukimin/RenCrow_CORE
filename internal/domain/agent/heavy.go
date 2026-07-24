@@ -41,7 +41,7 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 		if err != nil {
 			log.Printf("[Heavy] BeginTurn failed: %v", err)
 		} else if recallPack != nil {
-			filtered := recallPack.FilterForRole("heavy")
+			filtered := recallPack.FilterForRole("heavy").WithoutPersonaSystemPrompt()
 			if err := recordRecallTrace(ctx, h.conversationEngine, t.ChatID(), t.JobID().String(), "heavy", filtered); err != nil {
 				log.Printf("[Heavy] RecordRecallTrace failed: %v", err)
 			}

@@ -93,6 +93,7 @@ func TestWildAgentGenerateSharesMemoryAndFiltersExternalRecallByRole(t *testing.
 	engine := &mockConversationEngine{
 		beginTurnFunc: func(ctx context.Context, sessionID, msg string) (*conversation.RecallPack, error) {
 			return &conversation.RecallPack{
+				Persona: conversation.PersonaState{Name: "Mio", SystemPrompt: "Mio recall persona must not override Wild"},
 				MidSummaries: []conversation.ThreadSummary{
 					{Summary: "wild mood board", Roles: []string{"wild"}},
 					{Summary: "worker plan", Roles: []string{"worker"}},
@@ -126,6 +127,9 @@ func TestWildAgentGenerateSharesMemoryAndFiltersExternalRecallByRole(t *testing.
 	}
 	if strings.Contains(got, "worker report") {
 		t.Fatalf("worker external search context should be filtered for Wild, got:\n%s", got)
+	}
+	if strings.Contains(got, "Mio recall persona") {
+		t.Fatalf("Mio recall persona leaked into Wild system context:\n%s", got)
 	}
 }
 

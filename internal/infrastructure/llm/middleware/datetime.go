@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
@@ -11,19 +12,22 @@ import (
 // DateTimeProvider は全てのLLMリクエストに現在日時を注入するデコレータ
 type DateTimeProvider struct {
 	Inner domainllm.LLMProvider
+	now   func() time.Time
 }
 
 // NewDateTimeProvider はデコレータを作成する
 func NewDateTimeProvider(inner domainllm.LLMProvider) *DateTimeProvider {
-	return &DateTimeProvider{Inner: inner}
+	return &DateTimeProvider{Inner: inner, now: time.Now}
 }
 
 // Generate は安定した履歴prefixを保ったまま、最新user messageへ現在日時を注入する。
 // 動的な日時を先頭へ置くと、日時が変わるたびに物理LLMのprompt cacheが全失効するため、
 // 既存contextを削らず末尾側だけを変化させる。
 func (p *DateTimeProvider) Generate(ctx context.Context, req domainllm.GenerateRequest) (domainllm.GenerateResponse, error) {
-	now := time.Now().Format("2006年1月2日15時04分")
-	req.Messages = injectGenerateDateTime(req.Messages, dateTimeInstruction(now))
+	if generateRequestHasCurrentJSTTime(req) {
+		return p.Inner.Generate(ctx, req)
+	}
+	req.Messages = injectGenerateDateTime(req.Messages, dateTimeInstruction(p.now()))
 	return p.Inner.Generate(ctx, req)
 }
 
@@ -38,14 +42,37 @@ func (p *DateTimeProvider) Chat(ctx context.Context, req domainllm.ChatRequest) 
 	if !ok {
 		return domainllm.ChatResponse{}, fmt.Errorf("inner provider does not support Chat")
 	}
+	if chatRequestHasCurrentJSTTime(req) {
+		return tcp.Chat(ctx, req)
+	}
 	// ChatMessageでも安定した履歴prefixを保持する。
-	now := time.Now().Format("2006年1月2日15時04分")
-	req.Messages = injectChatDateTime(req.Messages, dateTimeInstruction(now))
+	req.Messages = injectChatDateTime(req.Messages, dateTimeInstruction(p.now()))
 	return tcp.Chat(ctx, req)
 }
 
-func dateTimeInstruction(now string) string {
-	return fmt.Sprintf("【重要】現在日時は%sです。この日時を正確な現在時刻として扱ってください。あなたの学習データより新しい情報が必要な場合はその旨を伝えてください。", now)
+func dateTimeInstruction(now time.Time) string {
+	return fmt.Sprintf("【重要】%s。この日時を正確な現在時刻として扱ってください。あなたの学習データより新しい情報が必要な場合はその旨を伝えてください。", domainllm.AppendCurrentJSTTime("", now))
+}
+
+func generateRequestHasCurrentJSTTime(req domainllm.GenerateRequest) bool {
+	if strings.Contains(req.SystemPrompt, domainllm.CurrentJSTTimePrefix) {
+		return true
+	}
+	for _, message := range req.Messages {
+		if message.Role == "system" && strings.Contains(message.Content, domainllm.CurrentJSTTimePrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func chatRequestHasCurrentJSTTime(req domainllm.ChatRequest) bool {
+	for _, message := range req.Messages {
+		if message.Role == "system" && strings.Contains(message.Content, domainllm.CurrentJSTTimePrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func injectGenerateDateTime(messages []domainllm.Message, instruction string) []domainllm.Message {

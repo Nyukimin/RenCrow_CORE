@@ -388,6 +388,7 @@ func TestShiroAgentExecuteSharesAllConversationMemory(t *testing.T) {
 	engine := &mockConversationEngine{
 		beginTurnFunc: func(ctx context.Context, sessionID, msg string) (*conversation.RecallPack, error) {
 			return &conversation.RecallPack{
+				Persona: conversation.PersonaState{Name: "Mio", SystemPrompt: "Mio recall persona must not override Shiro"},
 				MidSummaries: []conversation.ThreadSummary{
 					{Summary: "worker memory", Roles: []string{"worker"}},
 					{Summary: "chat memory", Roles: []string{"chat"}},
@@ -415,6 +416,9 @@ func TestShiroAgentExecuteSharesAllConversationMemory(t *testing.T) {
 	got := prompt.String()
 	if !strings.Contains(got, "worker memory") || !strings.Contains(got, "chat memory") {
 		t.Fatalf("all conversation memory should be shared with Shiro, got:\n%s", got)
+	}
+	if strings.Contains(got, "Mio recall persona") {
+		t.Fatalf("Mio recall persona leaked into Shiro system context:\n%s", got)
 	}
 }
 

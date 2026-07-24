@@ -72,7 +72,7 @@ func TestHeavyAgentGenerateWithConversationEngine(t *testing.T) {
 				t.Fatalf("userMessage=%q", userMessage)
 			}
 			return &conversation.RecallPack{
-				Persona:      conversation.PersonaState{Name: "Heavy"},
+				Persona:      conversation.PersonaState{Name: "Mio", SystemPrompt: "Mio recall persona must not override Heavy"},
 				ShortContext: []conversation.Message{{Speaker: conversation.SpeakerUser, Msg: "before"}},
 			}, nil
 		},
@@ -95,5 +95,10 @@ func TestHeavyAgentGenerateWithConversationEngine(t *testing.T) {
 	}
 	if len(gotReq.Messages) < 2 {
 		t.Fatalf("expected recall and user messages: %#v", gotReq.Messages)
+	}
+	for _, message := range gotReq.Messages {
+		if strings.Contains(message.Content, "Mio recall persona") {
+			t.Fatalf("Mio recall persona leaked into Heavy system context: %#v", gotReq.Messages)
+		}
 	}
 }

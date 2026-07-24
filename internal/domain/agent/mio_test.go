@@ -380,6 +380,13 @@ func TestMioAgentChat_UsesViewerRecipientSystemPromptWithoutChangingUserMessage(
 
 func TestMioAgentChat_UsesFullShiroPromptForShiroChat(t *testing.T) {
 	var gotReq llm.GenerateRequest
+	engine := &mockConversationEngine{
+		beginTurnFunc: func(context.Context, string, string) (*conversation.RecallPack, error) {
+			return &conversation.RecallPack{
+				Persona: conversation.PersonaState{Name: "Mio", SystemPrompt: "Mio recall persona must not override Shiro Chat"},
+			}, nil
+		},
+	}
 	llmProvider := &mockLLMProvider{
 		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
 			gotReq = req
@@ -392,7 +399,7 @@ func TestMioAgentChat_UsesFullShiroPromptForShiroChat(t *testing.T) {
 		&mockRuleDictionary{},
 		&mockToolRunner{},
 		&mockMCPClient{},
-		nil,
+		engine,
 	).WithSystemPrompt("Mio full prompt").WithViewerRecipientPrompts(map[string]string{
 		"shiro": "Shiro full prompt",
 	})
@@ -410,6 +417,9 @@ func TestMioAgentChat_UsesFullShiroPromptForShiroChat(t *testing.T) {
 	for _, msg := range gotReq.Messages {
 		if msg.Role == "system" && strings.Contains(msg.Content, "Mio full prompt") {
 			t.Fatalf("Mio prompt leaked into Shiro chat: %#v", gotReq.Messages)
+		}
+		if msg.Role == "system" && strings.Contains(msg.Content, "Mio recall persona") {
+			t.Fatalf("Mio recall persona leaked into Shiro chat: %#v", gotReq.Messages)
 		}
 	}
 }
