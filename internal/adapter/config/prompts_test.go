@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/agentcontrol"
 )
 
 func TestLoadPromptsLoadsCharacterBundlesFromWorkspace(t *testing.T) {
@@ -124,6 +126,54 @@ func TestBuildIdleChatAgentPromptsLayersCharacterBundleThenIdleCorrection(t *tes
 		}
 		if strings.Index(got[key], "shiro character system") > strings.Index(got[key], "shiro idle correction") {
 			t.Fatalf("shiro idle correction should be appended after character prompt:\n%s", got[key])
+		}
+	}
+}
+
+func TestApplyAgentControlAppendsValidatedSharedControlToCharacterPrompts(t *testing.T) {
+	p := &LoadedPrompts{
+		MioPersona:       "mio system",
+		Worker:           "shiro system",
+		Heavy:            "kuro system",
+		Wild:             "midori system",
+		CharacterPrompts: map[string]string{"mio": "mio system", "shiro": "shiro system", "kuro": "kuro system", "midori": "midori system"},
+	}
+	control := &agentcontrol.Control{
+		Agents: map[string]agentcontrol.Agent{
+			"mio":    {Role: "chat", Capabilities: []string{"conversation"}},
+			"shiro":  {Role: "worker", Capabilities: []string{"execution"}},
+			"kuro":   {Role: "heavy", Capabilities: []string{"analysis"}},
+			"midori": {Role: "wild", Capabilities: []string{"creation"}},
+		},
+		Handoff: agentcontrol.Handoff{
+			DestinationOwner:        "orchestrator",
+			AgentSelectsDestination: false,
+			RequiredFields:          []string{"reason"},
+		},
+		Tools: agentcontrol.Tools{
+			MetadataSource:       "core_toolrunner",
+			AvailabilityRequired: true,
+			Agents: map[string]agentcontrol.AgentTools{
+				"mio":    {Access: "chat_read_only"},
+				"shiro":  {Access: "worker_policy"},
+				"kuro":   {Access: "evidence_only"},
+				"midori": {Access: "creative_policy"},
+			},
+		},
+	}
+
+	ApplyAgentControl(p, control)
+
+	for name, prompt := range p.CharacterPrompts {
+		if !strings.Contains(prompt, "Shared Agent Control") {
+			t.Fatalf("%s prompt did not receive shared control:\n%s", name, prompt)
+		}
+	}
+	for name, prompt := range map[string]string{
+		"mio": p.MioPersona, "shiro": p.Worker, "kuro": p.Heavy, "midori": p.Wild,
+	} {
+		if !strings.Contains(prompt, "Shared Agent Control") {
+			t.Fatalf("%s runtime prompt did not receive shared control:\n%s", name, prompt)
 		}
 	}
 }

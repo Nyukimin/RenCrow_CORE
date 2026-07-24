@@ -1,5 +1,7 @@
 package config
 
+import "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/agentcontrol"
+
 // Config はアプリケーション全体の設定
 // v3既存フィールドをそのまま維持し、v4.0で Distributed, IdleChat を追加
 type Config struct {
@@ -66,11 +68,12 @@ type Config struct {
 	ComfyUI ComfyUIConfig `yaml:"comfyui"`
 
 	// === v5.1 プロンプト外部ファイル ===
-	PromptsDir         string         `yaml:"prompts_dir"`          // プロンプトファイルのベースディレクトリ（デフォルト）
-	WorkspaceDir       string         `yaml:"workspace_dir"`        // ユーザーカスタマイズ領域（オーバーライド）
-	OperationMemoryDir string         `yaml:"operation_memory_dir"` // RenCrow operational memory の永続ディレクトリ
-	SelfSourceDir      string         `yaml:"self_source_dir"`      // RenCrow 自身のソースコードディレクトリ（デフォルト: cwd）
-	Prompts            *LoadedPrompts `yaml:"-"`                    // 読み込み済みプロンプト（YAML非対象）
+	PromptsDir         string                `yaml:"prompts_dir"`          // プロンプトファイルのベースディレクトリ（デフォルト）
+	WorkspaceDir       string                `yaml:"workspace_dir"`        // ユーザーカスタマイズ領域（オーバーライド）
+	OperationMemoryDir string                `yaml:"operation_memory_dir"` // RenCrow operational memory の永続ディレクトリ
+	SelfSourceDir      string                `yaml:"self_source_dir"`      // RenCrow 自身のソースコードディレクトリ（デフォルト: cwd）
+	Prompts            *LoadedPrompts        `yaml:"-"`                    // 読み込み済みプロンプト（YAML非対象）
+	AgentControl       *agentcontrol.Control `yaml:"-"`                    // workspace/control の検証済み共通制御
 
 	// === Heartbeat ===
 	Heartbeat HeartbeatConfig `yaml:"heartbeat"`

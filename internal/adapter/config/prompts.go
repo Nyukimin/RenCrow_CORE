@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/agentcontrol"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/promptbundle"
 )
 
@@ -132,6 +133,23 @@ func applyCharacterPrompt(name, content string, p *LoadedPrompts) {
 		p.Heavy = content
 	case "midori":
 		p.Wild = content
+	}
+}
+
+// ApplyAgentControl appends the validated shared control slice to every
+// character prompt and refreshes the runtime role prompts derived from them.
+func ApplyAgentControl(p *LoadedPrompts, control *agentcontrol.Control) {
+	if p == nil || control == nil {
+		return
+	}
+	for name, characterPrompt := range p.CharacterPrompts {
+		controlPrompt := control.PromptFor(name)
+		if strings.TrimSpace(controlPrompt) == "" {
+			continue
+		}
+		content := strings.TrimSpace(characterPrompt) + promptbundle.Separator + controlPrompt
+		p.CharacterPrompts[name] = content
+		applyCharacterPrompt(name, content, p)
 	}
 }
 

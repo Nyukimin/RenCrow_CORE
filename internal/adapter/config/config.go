@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/agentcontrol"
 	"gopkg.in/yaml.v3"
 )
 
@@ -47,6 +49,14 @@ func LoadConfig(path string) (*Config, error) {
 
 	// プロンプトファイル読み込み（prompts/ → workspace/ の順でオーバーライド）
 	cfg.Prompts = LoadPrompts(cfg.PromptsDir, cfg.WorkspaceDir)
+	cfg.AgentControl, err = agentcontrol.Load(cfg.WorkspaceDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load shared agent control: %w", err)
+	}
+	if cfg.AgentControl != nil {
+		ApplyAgentControl(cfg.Prompts, cfg.AgentControl)
+		log.Printf("Loaded shared agent control from %s", cfg.WorkspaceDir)
+	}
 
 	return &cfg, nil
 }
