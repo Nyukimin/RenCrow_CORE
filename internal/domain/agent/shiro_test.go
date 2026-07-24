@@ -150,6 +150,10 @@ func TestShiroAgentExecute(t *testing.T) {
 				if !strings.Contains(req.Messages[0].Content, "必ず自然な日本語で応答") {
 					t.Errorf("Shiro system prompt should force Japanese response: %s", req.Messages[0].Content)
 				}
+				if !strings.Contains(req.Messages[0].Content, "\n\n現在時刻（JST）: ") ||
+					!strings.HasSuffix(req.Messages[0].Content, " JST") {
+					t.Errorf("Shiro system prompt should end with current JST time: %s", req.Messages[0].Content)
+				}
 			}
 
 			return llm.GenerateResponse{

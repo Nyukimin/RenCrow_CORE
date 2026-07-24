@@ -324,7 +324,9 @@ func TestMioAgentChat_UsesSystemPrompt(t *testing.T) {
 	if len(gotMessages) == 0 {
 		t.Fatal("expected messages")
 	}
-	if gotMessages[0].Role != "system" || gotMessages[0].Content != "Mio system prompt" {
+	if gotMessages[0].Role != "system" ||
+		!strings.HasPrefix(gotMessages[0].Content, "Mio system prompt\n\n現在時刻（JST）: ") ||
+		!strings.HasSuffix(gotMessages[0].Content, " JST") {
 		t.Fatalf("expected system prompt first, got %#v", gotMessages[0])
 	}
 }
@@ -399,7 +401,10 @@ func TestMioAgentChat_UsesFullShiroPromptForShiroChat(t *testing.T) {
 	if _, err := mio.Chat(context.Background(), task); err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}
-	if len(gotReq.Messages) == 0 || gotReq.Messages[0].Role != "system" || gotReq.Messages[0].Content != "Shiro full prompt" {
+	if len(gotReq.Messages) == 0 ||
+		gotReq.Messages[0].Role != "system" ||
+		!strings.HasPrefix(gotReq.Messages[0].Content, "Shiro full prompt\n\n現在時刻（JST）: ") ||
+		!strings.HasSuffix(gotReq.Messages[0].Content, " JST") {
 		t.Fatalf("expected full Shiro prompt first, got %#v", gotReq.Messages)
 	}
 	for _, msg := range gotReq.Messages {

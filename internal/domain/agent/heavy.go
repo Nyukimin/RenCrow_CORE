@@ -49,12 +49,12 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 		}
 	}
 	messages = append(messages, userMessageWithAttachments(userMessage, t.Attachments()))
-	req := llm.GenerateRequest{
+	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		SystemPrompt: h.systemPrompt,
 		Messages:     messages,
 		MaxTokens:    2048,
 		Temperature:  0.4,
-	}
+	})
 	resp, err := h.llmProvider.Generate(ctx, req)
 	if err != nil {
 		return "", err

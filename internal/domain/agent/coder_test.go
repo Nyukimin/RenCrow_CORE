@@ -43,12 +43,19 @@ func TestCoderAgentBuilderOptionsAndGenerateWithContext(t *testing.T) {
 	if coder.persona == nil || coder.persona.Name != "Aka" || coder.lightMemory != memory {
 		t.Fatalf("builder options not set: %#v", coder)
 	}
-	resp, err := coder.GenerateWithContext(context.Background(), []llm.Message{{Role: "user", Content: "hello"}})
+	resp, err := coder.GenerateWithContext(context.Background(), []llm.Message{
+		{Role: "system", Content: "loop system"},
+		{Role: "user", Content: "hello"},
+	})
 	if err != nil {
 		t.Fatalf("GenerateWithContext failed: %v", err)
 	}
-	if resp != "context response" || len(gotReq.Messages) != 1 || gotReq.MaxTokens != 8192 || gotReq.Temperature != 0.5 {
+	if resp != "context response" || len(gotReq.Messages) != 2 || gotReq.MaxTokens != 8192 || gotReq.Temperature != 0.5 {
 		t.Fatalf("resp=%q req=%#v", resp, gotReq)
+	}
+	if !strings.HasPrefix(gotReq.Messages[0].Content, "loop system\n\n現在時刻（JST）: ") ||
+		!strings.HasSuffix(gotReq.Messages[0].Content, " JST") {
+		t.Fatalf("system prompt missing current JST time: %q", gotReq.Messages[0].Content)
 	}
 
 	llmProvider.generateFunc = func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
@@ -451,7 +458,8 @@ func TestCoderAgentGenerateWithPrompt(t *testing.T) {
 		t.Errorf("Expected 'Generated code response', got '%s'", result)
 	}
 
-	if capturedPrompt != "You are a specification design assistant." {
+	if !strings.HasPrefix(capturedPrompt, "You are a specification design assistant.\n\n現在時刻（JST）: ") ||
+		!strings.HasSuffix(capturedPrompt, " JST") {
 		t.Errorf("Expected system prompt to be passed through, got '%s'", capturedPrompt)
 	}
 }

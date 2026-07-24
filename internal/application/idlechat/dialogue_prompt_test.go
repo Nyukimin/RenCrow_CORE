@@ -51,6 +51,10 @@ func TestGenerateResponseFirstTurnUsesActualSpeaker(t *testing.T) {
 	if len(provider.requests) != 2 {
 		t.Fatalf("requests = %d, want 2", len(provider.requests))
 	}
+	system := provider.requests[0].Messages[0].Content
+	if !strings.Contains(system, "\n\n現在時刻（JST）: ") || !strings.HasSuffix(system, " JST") {
+		t.Fatalf("IdleChat system prompt should end with current JST time:\n%s", system)
+	}
 	last := provider.requests[0].Messages[len(provider.requests[0].Messages)-1].Content
 	if !strings.Contains(last, "mioとして、会話の最初の発話を1〜2文") {
 		t.Fatalf("first turn prompt should use actual speaker mio:\n%s", last)

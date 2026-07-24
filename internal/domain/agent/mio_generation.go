@@ -60,11 +60,11 @@ func (m *MioAgent) generationRequest(messages []llm.Message, onToken llm.StreamC
 	if m.generation.Seed != nil {
 		options["seed"] = *m.generation.Seed
 	}
-	return llm.GenerateRequest{
+	return llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:        messages,
 		MaxTokens:       m.generation.MaxTokens,
 		Temperature:     m.generation.Temperature,
 		ProviderOptions: options,
 		OnToken:         onToken,
-	}
+	})
 }

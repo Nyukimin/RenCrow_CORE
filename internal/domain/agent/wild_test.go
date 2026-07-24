@@ -28,7 +28,8 @@ func TestWildAgentGenerateUsesWildPromptAndStripsCommand(t *testing.T) {
 	if resp != "vivid prompt" {
 		t.Fatalf("response should be trimmed, got %q", resp)
 	}
-	if captured.SystemPrompt != "creative system" {
+	if !strings.HasPrefix(captured.SystemPrompt, "creative system\n\n現在時刻（JST）: ") ||
+		!strings.HasSuffix(captured.SystemPrompt, " JST") {
 		t.Fatalf("SystemPrompt: want custom prompt, got %q", captured.SystemPrompt)
 	}
 	if len(captured.Messages) != 1 || captured.Messages[0].Role != "user" {

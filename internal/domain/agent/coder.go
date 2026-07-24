@@ -105,11 +105,11 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t task.Task) (*propos
 		messages = append(messages, c.lightMemory.RecentMessages(t.ChatID())...)
 	}
 	messages = append(messages, userMessageWithAttachments(t.UserMessage(), t.Attachments()))
-	req := llm.GenerateRequest{
+	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   8192,
 		Temperature: 0.5,
-	}
+	})
 
 	resp, err := c.llmProvider.Generate(ctx, req)
 	if err != nil {
@@ -137,11 +137,11 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t task.Task) (*propos
 
 // GenerateWithContext は会話履歴を渡して LLM 応答を生成する（CoderLoop 多ターン用）
 func (c *CoderAgent) GenerateWithContext(ctx context.Context, messages []llm.Message) (string, error) {
-	req := llm.GenerateRequest{
+	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   8192,
 		Temperature: 0.5,
-	}
+	})
 	resp, err := c.llmProvider.Generate(ctx, req)
 	if err != nil {
 		return "", err
@@ -162,11 +162,11 @@ func (c *CoderAgent) GenerateWithPrompt(ctx context.Context, t task.Task, system
 		messages = append(messages, c.lightMemory.RecentMessages(t.ChatID())...)
 	}
 	messages = append(messages, userMessageWithAttachments(t.UserMessage(), t.Attachments()))
-	req := llm.GenerateRequest{
+	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   8192,
 		Temperature: 0.5,
-	}
+	})
 
 	resp, err := c.llmProvider.Generate(ctx, req)
 	if err != nil {

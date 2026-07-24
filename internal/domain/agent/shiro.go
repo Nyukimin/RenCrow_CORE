@@ -87,6 +87,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	if resp, ok, err := s.tryExecuteCodexWorkPath(ctx, t); ok || err != nil {
 		return resp, err
 	}
+	systemPrompt = llm.AppendNowJST(systemPrompt)
 
 	// SubagentManager が設定されている場合は ReActLoop を使用
 	if s.subagentManager != nil {
