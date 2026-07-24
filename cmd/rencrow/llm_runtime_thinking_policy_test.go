@@ -70,3 +70,40 @@ func TestPrimaryLLMProviders_ApplyChatNoThinkChatWorkerLowAndWorkerDefault(t *te
 		t.Fatalf("Worker must not receive forced chat_template_kwargs: %#v", requests["worker"])
 	}
 }
+
+func TestPrimaryLLMProviders_ApplyWildNoThinkAndStreaming(t *testing.T) {
+	var request map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{}
+	cfg.LLMGateway.Enabled = true
+	cfg.LLMGateway.BaseURL = server.URL
+	cfg.LLMGateway.TimeoutSec = 10
+	providers := buildPrimaryLLMProviders(cfg, nil)
+
+	var tokens []string
+	if _, err := providers.Wild.Generate(context.Background(), llm.GenerateRequest{
+		Messages: []llm.Message{{Role: "user", Content: "ping"}},
+		OnToken:  func(token string) { tokens = append(tokens, token) },
+	}); err != nil {
+		t.Fatalf("Generate(wild): %v", err)
+	}
+
+	if request["stream"] != true {
+		t.Fatalf("Wild must use streaming when a token callback is present: %#v", request)
+	}
+	kwargs, _ := request["chat_template_kwargs"].(map[string]any)
+	if request["think"] != false || kwargs["enable_thinking"] != false {
+		t.Fatalf("Wild must force NO-Think: %#v", request)
+	}
+	if len(tokens) != 1 || tokens[0] != "ok" {
+		t.Fatalf("Wild streaming tokens = %#v, want [ok]", tokens)
+	}
+}

@@ -86,11 +86,16 @@ func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 		}
 	}
 	messages = append(messages, userMessageWithAttachments(userMessage, t.Attachments()))
+	onToken := llm.StreamCallbackFromContext(ctx)
+	if onToken == nil {
+		onToken = func(string) {}
+	}
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		SystemPrompt: w.systemPrompt,
 		Messages:     messages,
 		MaxTokens:    2048,
 		Temperature:  0.8,
+		OnToken:      onToken,
 	})
 	resp, err := w.llmProvider.Generate(ctx, req)
 	if err != nil {

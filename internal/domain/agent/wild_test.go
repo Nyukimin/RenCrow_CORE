@@ -38,6 +38,30 @@ func TestWildAgentGenerateUsesWildPromptAndStripsCommand(t *testing.T) {
 	if strings.Contains(captured.Messages[0].Content, "/wild") {
 		t.Fatalf("wild command should be stripped, got %q", captured.Messages[0].Content)
 	}
+	if captured.OnToken == nil {
+		t.Fatal("Wild must always select the streaming provider path")
+	}
+}
+
+func TestWildAgentGenerateForwardsStreamCallback(t *testing.T) {
+	var streamed []string
+	provider := &mockLLMProvider{
+		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+			req.OnToken("green")
+			return llm.GenerateResponse{Content: "green"}, nil
+		},
+	}
+	wild := NewWildAgent(provider, "creative system")
+	ctx := llm.ContextWithStreamCallback(context.Background(), func(token string) {
+		streamed = append(streamed, token)
+	})
+
+	if _, err := wild.Generate(ctx, task.NewTask(task.NewJobID(), "/wild color", "viewer", "viewer-user")); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if len(streamed) != 1 || streamed[0] != "green" {
+		t.Fatalf("streamed tokens = %#v, want [green]", streamed)
+	}
 }
 
 func TestImageGenerationResultFormatForUserVariants(t *testing.T) {

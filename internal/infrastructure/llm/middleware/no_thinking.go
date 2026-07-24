@@ -6,7 +6,7 @@ import (
 	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
-// NoThinkingProvider enforces the Chat no-thinking contract.
+// NoThinkingProvider enforces a role's no-thinking contract.
 type NoThinkingProvider struct {
 	inner domainllm.LLMProvider
 }

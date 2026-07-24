@@ -102,7 +102,7 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 
 func enforceThinkingPolicyForRole(role string, provider llm.LLMProvider) llm.LLMProvider {
 	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "chat":
+	case "chat", "wild":
 		return llmmiddleware.NewNoThinkingProvider(provider)
 	case "chatworker":
 		return llmmiddleware.NewLowThinkingProvider(provider)

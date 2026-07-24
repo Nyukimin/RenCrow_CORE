@@ -37,6 +37,12 @@ func NewRuleDictionary() *RuleDictionary {
 					"小説",
 					"短編",
 					"脚本",
+					"文章作成",
+					"文章を作",
+					"作文",
+					"執筆",
+					"紹介文",
+					"キャッチコピー",
 					"世界観",
 					"キャラクター設定",
 					"画像プロンプト",
@@ -162,7 +168,7 @@ func (d *RuleDictionary) Match(t task.Task) (routing.Route, float64, bool) {
 	message := strings.ToLower(t.UserMessage())
 
 	if path := routing.DetectCodexWorkPath(message); path.Found() {
-		return routing.RouteOPS, 0.92, true
+		return routing.RouteWILD, 0.92, true
 	}
 
 	if isCodeEditRequest(message) {

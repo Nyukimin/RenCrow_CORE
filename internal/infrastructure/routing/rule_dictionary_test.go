@@ -121,18 +121,22 @@ func TestRuleDictionary_HighConfidenceConversationDoesNotHideAmbiguousWork(t *te
 	}
 }
 
-func TestRuleDictionary_Match_CodexWorkPath(t *testing.T) {
+func TestRuleDictionary_Match_CreativeWorkUsesWild(t *testing.T) {
 	tests := []struct {
 		name    string
 		message string
 	}{
 		{
-			name:    "drawing bypasses wild",
+			name:    "drawing",
 			message: "この場面を描画して",
 		},
 		{
-			name:    "folktale generation bypasses wild story",
+			name:    "folktale generation",
 			message: "桃太郎の昔話生成をして",
+		},
+		{
+			name:    "prose writing",
+			message: "春をテーマに紹介文章を作成して",
 		},
 	}
 
@@ -144,13 +148,13 @@ func TestRuleDictionary_Match_CodexWorkPath(t *testing.T) {
 
 			route, confidence, matched := dict.Match(testTask)
 			if !matched {
-				t.Fatal("Codex work path should match")
+				t.Fatal("creative work should match")
 			}
-			if route != routing.RouteOPS {
-				t.Fatalf("route = %s, want %s", route, routing.RouteOPS)
+			if route != routing.RouteWILD {
+				t.Fatalf("route = %s, want %s", route, routing.RouteWILD)
 			}
-			if confidence < 0.9 {
-				t.Fatalf("confidence = %f, want >= 0.9", confidence)
+			if confidence < 0.85 {
+				t.Fatalf("confidence = %f, want >= 0.85", confidence)
 			}
 		})
 	}
