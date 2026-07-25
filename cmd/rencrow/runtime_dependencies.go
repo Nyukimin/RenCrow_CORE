@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/modulebridge"
@@ -112,6 +113,7 @@ type Dependencies struct {
 	viewerMemoryUserForget         http.HandlerFunc                            // viewer user memory forget API
 	viewerMemoryUserSupersede      http.HandlerFunc                            // viewer user memory supersede API
 	viewerMemoryRecallPack         http.HandlerFunc                            // viewer memory recall pack API
+	viewerMemoryProfilePromotions  http.HandlerFunc                            // async ProfilePromotion job API
 	viewerRecallTraces             http.HandlerFunc                            // viewer recall trace API
 	viewerSourceRegistry           http.HandlerFunc                            // viewer source registry API
 	viewerDomainGraphAssertions    http.HandlerFunc                            // viewer domain graph assertion API
@@ -251,6 +253,8 @@ type Dependencies struct {
 	sshTransports                  map[string]domaintransport.Transport        // v4 SSH transports
 	heartbeatSvc                   *heartbeat.HeartbeatService                 // heartbeat service
 	advisorCloser                  interface{ Close() error }                  // advisor SQLite store, when configured
+	advisorScoreCancel             context.CancelFunc                          // Advisor daily score job
+	memoryPromotionCancel          context.CancelFunc                          // async ProfilePromotion worker
 	toolRegistry                   capdomain.ToolRegistry                      // Phase 4: Shiro ツール共有用 ToolRegistry
 	moduleChatService              chatModuleService                           // module contract view of Chat service
 	moduleLLMProviders             map[string]modulellm.Provider               // module contract view of LLM providers
@@ -268,6 +272,12 @@ type idleChatStartGate interface {
 
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
+	if d.memoryPromotionCancel != nil {
+		d.memoryPromotionCancel()
+	}
+	if d.advisorScoreCancel != nil {
+		d.advisorScoreCancel()
+	}
 	if d.pronunciationCheckCancel != nil {
 		d.pronunciationCheckCancel()
 	}
@@ -415,6 +425,20 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	reportPath := defaultExecutionReportPath(cfg.WorkspaceDir)
 	gameDecisionProvider := selectChatConversationProvider(llmRuntime.ChatWorker, llmRuntime.Chat)
 	buildViewerRuntimeHandlers(cfg, deps, conversationRuntime.L1Store, conversationRuntime.Manager, reportPath, gameDecisionProvider)
+	deps.advisorScoreCancel = startAdvisorScoreJob(
+		advisorRuntime.Store,
+		advisorRuntime.Profiles,
+		newBackgroundJobFailureReporter(deps.eventRelay),
+	)
+	if conversationRuntime.ProfilePromotion != nil {
+		deps.memoryPromotionCancel = startMemoryPromotionWorker(
+			conversationRuntime.ProfilePromotion,
+			llmBusyTracker,
+			time.Duration(cfg.Conversation.ProfilePromotionIdleGraceSeconds)*time.Second,
+			time.Duration(cfg.Conversation.ProfilePromotionTimeoutSeconds)*time.Second,
+			newBackgroundJobFailureReporter(deps.eventRelay),
+		)
+	}
 	startConversationBackgroundJobs(cfg, conversationRuntime, deps.eventRelay)
 	if toolRuntime.ToolMediationRecorder != nil {
 		deps.toolHarnessRecent = viewer.HandleToolHarnessRecent(toolRuntime.ToolMediationRecorder)

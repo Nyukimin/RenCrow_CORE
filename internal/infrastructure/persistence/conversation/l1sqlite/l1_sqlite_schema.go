@@ -29,6 +29,23 @@ CREATE INDEX IF NOT EXISTS idx_l1_memory_namespace_created ON l1_memory_event(na
 CREATE INDEX IF NOT EXISTS idx_l1_memory_session_created ON l1_memory_event(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_memory_state_created ON l1_memory_event(memory_state, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_memory_thread_created ON l1_memory_event(thread_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS l1_profile_promotion_job (
+	evidence_event_id TEXT PRIMARY KEY,
+	session_id TEXT NOT NULL,
+	thread_id INTEGER NOT NULL,
+	state TEXT NOT NULL,
+	attempt_count INTEGER NOT NULL DEFAULT 0,
+	lease_token TEXT NOT NULL DEFAULT '',
+	lease_expires_at TIMESTAMP,
+	next_attempt_at TIMESTAMP,
+	last_error TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_l1_profile_promotion_state_retry
+	ON l1_profile_promotion_job(state, next_attempt_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_l1_profile_promotion_session_thread
+	ON l1_profile_promotion_job(session_id, thread_id, created_at);
 CREATE TABLE IF NOT EXISTS l1_search_cache (
 	query_hash TEXT PRIMARY KEY,
 	normalized_query TEXT NOT NULL,

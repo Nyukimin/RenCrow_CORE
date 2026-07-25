@@ -78,6 +78,15 @@ func TestAdvisorStoresRoundTripNewestFirst(t *testing.T) {
 			if err != nil || len(adoptions) != 1 || adoptions[0].AdoptionID != "adopt-1" {
 				t.Fatalf("unexpected adoptions=%#v err=%v", adoptions, err)
 			}
+			adoption.Outcome = "partial"
+			adoption.Reason = "late outcome update"
+			if err := store.SaveAdvisorAdoption(ctx, adoption); err != nil {
+				t.Fatalf("update AdvisorAdoption failed: %v", err)
+			}
+			adoptions, err = store.ListAdvisorAdoptions(ctx, 10)
+			if err != nil || len(adoptions) != 1 || adoptions[0].Outcome != "partial" {
+				t.Fatalf("AdvisorAdoption must be idempotently updated: %#v err=%v", adoptions, err)
+			}
 
 			snapshot := advisorDomain.AdvisorScoreSnapshot{
 				SnapshotID: "score-1", AdvisorID: advisorDomain.AdvisorCodex,
@@ -89,6 +98,14 @@ func TestAdvisorStoresRoundTripNewestFirst(t *testing.T) {
 			snapshots, err := store.ListAdvisorScoreSnapshots(ctx, 10)
 			if err != nil || len(snapshots) != 1 || snapshots[0].SnapshotID != "score-1" {
 				t.Fatalf("unexpected snapshots=%#v err=%v", snapshots, err)
+			}
+			snapshot.Score = 0.9
+			if err := store.SaveAdvisorScoreSnapshot(ctx, snapshot); err != nil {
+				t.Fatalf("update AdvisorScoreSnapshot failed: %v", err)
+			}
+			snapshots, err = store.ListAdvisorScoreSnapshots(ctx, 10)
+			if err != nil || len(snapshots) != 1 || snapshots[0].Score != 0.9 {
+				t.Fatalf("AdvisorScoreSnapshot must be idempotently updated: %#v err=%v", snapshots, err)
 			}
 
 			decision := domainagentprofile.PolicyDecision{

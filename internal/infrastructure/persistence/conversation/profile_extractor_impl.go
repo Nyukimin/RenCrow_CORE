@@ -29,6 +29,14 @@ func NewLLMProfileExtractor(provider llm.LLMProvider) *LLMProfileExtractor {
 	}
 }
 
+func (e *LLMProfileExtractor) WithMinimumUserMessages(minimum int) *LLMProfileExtractor {
+	if minimum < 1 {
+		minimum = 1
+	}
+	e.minTurns = minimum
+	return e
+}
+
 // Extract はスレッド内の会話からユーザープロファイルを抽出する
 func (e *LLMProfileExtractor) Extract(ctx context.Context, thread *domconv.Thread, existing domconv.UserProfile) (*domconv.ProfileExtractionResult, error) {
 	if thread == nil || len(thread.Turns) < e.minTurns {
@@ -88,7 +96,7 @@ JSON形式で出力してください。
 	resp, err := e.provider.Generate(ctx, req)
 	if err != nil {
 		log.Printf("[ProfileExtractor] LLM call failed: %v", err)
-		return &domconv.ProfileExtractionResult{}, nil
+		return nil, fmt.Errorf("profile extractor LLM call failed: %w", err)
 	}
 
 	// JSON パース（best-effort）
@@ -96,7 +104,7 @@ JSON形式で出力してください。
 	content := extractJSON(resp.Content)
 	if err := json.Unmarshal([]byte(content), result); err != nil {
 		log.Printf("[ProfileExtractor] JSON parse failed: %v (content: %s)", err, resp.Content)
-		return &domconv.ProfileExtractionResult{}, nil
+		return nil, fmt.Errorf("profile extractor JSON parse failed: %w", err)
 	}
 
 	return result, nil

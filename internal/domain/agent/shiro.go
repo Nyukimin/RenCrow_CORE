@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -206,6 +207,23 @@ func (s *ShiroAgent) requestCodexAdvice(ctx context.Context, path routing.CodexW
 	output := result.OutputText()
 	if output == "" {
 		return "", true, fmt.Errorf("advisor %s returned empty advice", result.AdvisorID)
+	}
+	if recorder, ok := s.advisorService.(AdvisorAdoptionRecorder); ok && strings.TrimSpace(result.RunID) != "" {
+		record := advisor.AdvisorAdoptionRecord{
+			AdoptionID:     "advisor-adoption:" + result.RunID + ":shiro",
+			RunID:          result.RunID,
+			TaskID:         t.JobID().String(),
+			AdvisorID:      result.AdvisorID,
+			AdoptedByAgent: "shiro",
+			Adopted:        true,
+			Outcome:        "success",
+			RevisionCount:  0,
+			Reason:         "advisor output returned as Shiro response",
+			CreatedAt:      time.Now().UTC(),
+		}
+		if err := recorder.RecordAdoption(ctx, record); err != nil {
+			log.Printf("[Shiro] advisor adoption record failed: %v", err)
+		}
 	}
 	return output, true, nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
+	agentfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/agent"
 	aiworkflowfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/aiworkflow"
 	channelsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/channels"
 	gamesfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/games"
@@ -19,6 +20,7 @@ import (
 	memoryfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/memory"
 	opsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/ops"
 	reportsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/reports"
+	revenuefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/revenue"
 	sandboxfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/sandbox"
 	sourcefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/source"
 	sttfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/stt"
@@ -27,6 +29,7 @@ import (
 	viewerfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/viewer"
 	voicefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/voice"
 	webfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/web"
+	workstreamfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/workstream"
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
@@ -98,49 +101,42 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		dependencies.backlogStore = viewer.NewBacklogStore(filepath.Join(cfg.WorkspaceDir, "logs", "backlog.jsonl"))
 	}
 	opsfeature.RegisterRoutes(mux, opsfeature.Dependencies{Routes: opsfeature.Routes{
-		Status:                 dependencies.viewerStatus,
-		Agents:                 dependencies.viewerAgents,
-		AgentDetail:            dependencies.viewerAgentDetail,
-		Jobs:                   dependencies.viewerJobs,
-		ParallelJobs:           dependencies.parallelJobs,
-		ParallelJobDetail:      dependencies.parallelJobDetail,
-		JobNotifications:       dependencies.jobNotifications,
-		Logs:                   dependencies.viewerLogs,
-		AuditSummary:           dependencies.viewerAuditSummary,
-		JobDetail:              dependencies.viewerJobDetail,
-		RepairRun:              viewer.HandleRepairRunWithRunner(dependencies.eventRelay, dependencies.repairRunner),
-		Backlog:                viewer.HandleBacklog(dependencies.backlogStore),
-		Scheduler:              dependencies.schedulerStatus,
-		Workstreams:            dependencies.workstreamStatus,
-		WorkstreamGoals:        dependencies.workstreamGoal,
-		WorkstreamArtifacts:    dependencies.workstreamArtifact,
-		WorkstreamAnnotations:  dependencies.workstreamAnnotation,
-		WorkstreamSteering:     dependencies.workstreamSteering,
-		WorkstreamHeartbeats:   dependencies.workstreamHeartbeat,
-		WorkstreamVaultUpdates: dependencies.workstreamVaultUpdate,
-		WorkstreamVaultReview:  dependencies.workstreamVaultReview,
-		WorkstreamVaultPreview: dependencies.workstreamVaultPreview,
-		Revenue:                dependencies.revenueStatus,
-		RevenueMarketResearch:  dependencies.revenueMarket,
-		RevenueSNSPosts:        dependencies.revenueSNSPost,
-		RevenueProducts:        dependencies.revenueProduct,
-		RevenueCustomerVoices:  dependencies.revenueCustomerVoice,
-		RevenueEvents:          dependencies.revenueEvent,
-		RevenueDecisionGate:    dependencies.revenueHumanDecisionGate,
-		RevenueDecisionReview:  dependencies.revenueHumanDecisionReview,
-		RevenueDailyRoutine:    dependencies.revenueDailyRoutine,
-		RevenueChannelDrafts:   dependencies.revenueChannelDraft,
-		RevenueExternalSend:    dependencies.revenueExternalSendApply,
-		RevenueOpportunities:   dependencies.revenueOpportunities,
-		RevenueEconomicTasks:   dependencies.revenueEconomicTasks,
-		RevenueReflections:     dependencies.revenueEconomicReflections,
-		RevenueReflectionEvent: dependencies.revenueReflectionFromEvent,
-		RevenueOpportunityGoal: dependencies.revenueOpportunityGoal,
-		Advisors:               dependencies.advisorStatus,
-		AdvisorRuns:            dependencies.advisorRuns,
-		AdvisorScores:          dependencies.advisorScores,
-		AgentProfiles:          dependencies.agentProfiles,
-		AgentPolicyDecisions:   dependencies.agentPolicyDecisions,
+		Status:            dependencies.viewerStatus,
+		Agents:            dependencies.viewerAgents,
+		AgentDetail:       dependencies.viewerAgentDetail,
+		Jobs:              dependencies.viewerJobs,
+		ParallelJobs:      dependencies.parallelJobs,
+		ParallelJobDetail: dependencies.parallelJobDetail,
+		JobNotifications:  dependencies.jobNotifications,
+		Logs:              dependencies.viewerLogs,
+		AuditSummary:      dependencies.viewerAuditSummary,
+		JobDetail:         dependencies.viewerJobDetail,
+		RepairRun:         viewer.HandleRepairRunWithRunner(dependencies.eventRelay, dependencies.repairRunner),
+		Backlog:           viewer.HandleBacklog(dependencies.backlogStore),
+		Scheduler:         dependencies.schedulerStatus,
+	}})
+	workstreamfeature.RegisterRoutes(mux, workstreamfeature.Dependencies{Routes: workstreamfeature.Routes{
+		Status: dependencies.workstreamStatus, Goals: dependencies.workstreamGoal,
+		Artifacts: dependencies.workstreamArtifact, Annotations: dependencies.workstreamAnnotation,
+		Steering: dependencies.workstreamSteering, Heartbeats: dependencies.workstreamHeartbeat,
+		VaultUpdates: dependencies.workstreamVaultUpdate, VaultReview: dependencies.workstreamVaultReview,
+		VaultPreview: dependencies.workstreamVaultPreview,
+	}})
+	revenuefeature.RegisterRoutes(mux, revenuefeature.Dependencies{Routes: revenuefeature.Routes{
+		Status: dependencies.revenueStatus, MarketResearch: dependencies.revenueMarket,
+		SNSPosts: dependencies.revenueSNSPost, Products: dependencies.revenueProduct,
+		CustomerVoices: dependencies.revenueCustomerVoice, Events: dependencies.revenueEvent,
+		DecisionGate: dependencies.revenueHumanDecisionGate, DecisionReview: dependencies.revenueHumanDecisionReview,
+		DailyRoutine: dependencies.revenueDailyRoutine, ChannelDrafts: dependencies.revenueChannelDraft,
+		ExternalSend: dependencies.revenueExternalSendApply, Opportunities: dependencies.revenueOpportunities,
+		EconomicTasks: dependencies.revenueEconomicTasks, Reflections: dependencies.revenueEconomicReflections,
+		ReflectionFromEvent:       dependencies.revenueReflectionFromEvent,
+		OpportunityWorkstreamGoal: dependencies.revenueOpportunityGoal,
+	}})
+	agentfeature.RegisterRoutes(mux, agentfeature.Dependencies{Routes: agentfeature.Routes{
+		Advisors: dependencies.advisorStatus, AdvisorRuns: dependencies.advisorRuns,
+		AdvisorScores: dependencies.advisorScores, Profiles: dependencies.agentProfiles,
+		PolicyDecisions: dependencies.agentPolicyDecisions,
 	}})
 }
 
@@ -230,17 +226,18 @@ func registerKnowledgeMemorySourceRoutes(mux *http.ServeMux, dependencies *Depen
 		KnowledgeRelationSummary:   dependencies.knowledgeRelationSummary,
 	}})
 	memoryfeature.RegisterRoutes(mux, memoryfeature.Dependencies{Routes: memoryfeature.Routes{
-		Snapshot:      dependencies.viewerMemorySnapshot,
-		Layers:        dependencies.viewerMemoryLayers,
-		Events:        dependencies.viewerMemoryEvents,
-		State:         dependencies.viewerMemoryState,
-		Promote:       dependencies.viewerMemoryPromote,
-		User:          dependencies.viewerMemoryUser,
-		UserState:     dependencies.viewerMemoryUserState,
-		UserForget:    dependencies.viewerMemoryUserForget,
-		UserSupersede: dependencies.viewerMemoryUserSupersede,
-		RecallPack:    dependencies.viewerMemoryRecallPack,
-		RecallTraces:  dependencies.viewerRecallTraces,
+		Snapshot:          dependencies.viewerMemorySnapshot,
+		Layers:            dependencies.viewerMemoryLayers,
+		Events:            dependencies.viewerMemoryEvents,
+		State:             dependencies.viewerMemoryState,
+		Promote:           dependencies.viewerMemoryPromote,
+		User:              dependencies.viewerMemoryUser,
+		UserState:         dependencies.viewerMemoryUserState,
+		UserForget:        dependencies.viewerMemoryUserForget,
+		UserSupersede:     dependencies.viewerMemoryUserSupersede,
+		RecallPack:        dependencies.viewerMemoryRecallPack,
+		RecallTraces:      dependencies.viewerRecallTraces,
+		ProfilePromotions: dependencies.viewerMemoryProfilePromotions,
 	}})
 	sourcefeature.RegisterRoutes(mux, sourcefeature.Dependencies{Routes: sourcefeature.Routes{
 		Registry:              dependencies.viewerSourceRegistry,

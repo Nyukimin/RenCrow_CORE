@@ -31,6 +31,7 @@ func TestL1SQLiteStore_RunMemoryLifecycleMaintenance(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET created_at = ?, updated_at = ? WHERE namespace = 'conv:1'`, old, old); err != nil {
 		t.Fatalf("backdate conv memory failed: %v", err)
 	}
+	markProfilePromotionCompletedForNamespace(t, store, "conv:1")
 
 	candidate, err := store.CreateUserMemory(ctx, domainmemory.CreateUserMemoryInput{
 		UserID:      "ren",
@@ -548,6 +549,7 @@ func TestL1SQLiteStore_MemoryRetentionQualityEvalOneYear(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET created_at = ?, updated_at = ? WHERE namespace = ?`, base, base, "conv:quality-noise"); err != nil {
 		t.Fatalf("backdate noise memory failed: %v", err)
 	}
+	markProfilePromotionCompletedForNamespace(t, store, "conv:quality-noise")
 
 	runLifecycleMonths(t, ctx, store, base, 12)
 
@@ -565,6 +567,18 @@ func TestL1SQLiteStore_MemoryRetentionQualityEvalOneYear(t *testing.T) {
 		t.Fatalf("memory retention quality eval failed: score=%.2f failures=%v", eval.Score, eval.Failures)
 	}
 	t.Logf("memory retention quality eval passed: score=%.2f", eval.Score)
+}
+
+func markProfilePromotionCompletedForNamespace(t *testing.T, store *L1SQLiteStore, namespace string) {
+	t.Helper()
+	if _, err := store.db.Exec(`
+UPDATE l1_profile_promotion_job
+SET state = ?
+WHERE evidence_event_id IN (
+	SELECT id FROM l1_memory_event WHERE namespace = ?
+)`, domainmemory.ProfilePromotionCompleted, namespace); err != nil {
+		t.Fatalf("mark profile promotion completed for %s: %v", namespace, err)
+	}
 }
 
 func acceleratedVerificationMonths(t *testing.T) int {

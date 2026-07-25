@@ -6,9 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	knowledgerelationapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgerelation"
+	memorypromotionapp "github.com/Nyukimin/RenCrow_CORE/internal/application/memorypromotion"
 	webgatherapp "github.com/Nyukimin/RenCrow_CORE/internal/application/webgather"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainrelation "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgerelation"
@@ -24,6 +26,7 @@ type conversationRuntime struct {
 	Manager          *conversationpersistence.RealConversationManager
 	L1Store          *l1sqlite.L1SQLiteStore
 	WebGatherFetcher tools.WebGatherFetcher
+	ProfilePromotion *memorypromotionapp.Service
 }
 
 func buildConversationRuntime(
@@ -35,6 +38,7 @@ func buildConversationRuntime(
 	var convEngine conversation.ConversationEngine
 	var realMgr *conversationpersistence.RealConversationManager
 	var l1Store *l1sqlite.L1SQLiteStore
+	var profilePromotion *memorypromotionapp.Service
 	if cfg.Conversation.L1SQLitePath != "" {
 		if err := os.MkdirAll(filepath.Dir(cfg.Conversation.L1SQLitePath), 0755); err != nil {
 			log.Fatalf("Failed to create L1 SQLite directory: %v", err)
@@ -106,12 +110,6 @@ func buildConversationRuntime(
 		embedderForDetector = embedder
 		detector := conversationpersistence.NewThreadBoundaryDetector(embedderForDetector)
 
-		var profileExtractor conversation.ProfileExtractor
-		if summaryProvider != nil {
-			profileExtractor = conversationpersistence.NewLLMProfileExtractor(summaryProvider)
-			log.Printf("  ProfileExtractor: %s", summaryProviderLabel)
-		}
-
 		engine := conversationpersistence.NewRealConversationEngine(
 			realMgr,
 			conversation.NewMioPersona(cfg.Prompts.MioPersona),
@@ -123,12 +121,19 @@ func buildConversationRuntime(
 				log.Printf("  Knowledge Relation recall: enabled (max_hops=%d)", cfg.KnowledgeRelation.MaxHops)
 			}
 		}
-		if profileExtractor != nil {
-			engine = engine.WithProfileExtractor(profileExtractor)
+		if cfg.Conversation.ProfilePromotionEnabledValue() && l1Store != nil && summaryProvider != nil {
+			extractor := conversationpersistence.NewLLMProfileExtractor(summaryProvider).WithMinimumUserMessages(1)
+			profilePromotion = memorypromotionapp.NewService(l1Store, extractor, memorypromotionapp.Options{
+				UserID:        "ren",
+				BatchMessages: cfg.Conversation.ProfilePromotionBatchMessages,
+				MaxAttempts:   cfg.Conversation.ProfilePromotionMaxAttempts,
+				LeaseDuration: time.Duration(cfg.Conversation.ProfilePromotionTimeoutSeconds+30) * time.Second,
+			})
+			log.Printf("  Async ProfilePromotion: %s", summaryProviderLabel)
 		}
 		convEngine = engine
 
-		log.Printf("ConversationEngine v5.1 enabled (RecallPack + Persona + ProfileExtractor)")
+		log.Printf("ConversationEngine v5.1 enabled (RecallPack + Persona + async ProfilePromotion)")
 		log.Printf("  Redis: %s", cfg.Conversation.RedisURL)
 		log.Printf("  SQLite archive: %s", cfg.Conversation.ArchiveSQLitePath)
 		log.Printf("  VectorDB: %s", cfg.Conversation.VectorDBURL)
@@ -185,5 +190,6 @@ func buildConversationRuntime(
 		Manager:          realMgr,
 		L1Store:          l1Store,
 		WebGatherFetcher: dailySourceFetcher,
+		ProfilePromotion: profilePromotion,
 	}
 }

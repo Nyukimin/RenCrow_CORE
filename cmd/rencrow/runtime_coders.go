@@ -150,7 +150,12 @@ func setupCoders(cfg *config.Config, busyTracker *llmBusyTracker) (coder1, coder
 			if cfg.LLMGateway.APIKeyEnv != "" {
 				apiKey = strings.TrimSpace(os.Getenv(cfg.LLMGateway.APIKeyEnv))
 			}
-			provider = openai.NewOpenAIProviderWithOptions(apiKey, strings.ToLower(plan.Name), strings.TrimRight(cfg.LLMGateway.BaseURL, "/"), time.Duration(cfg.LLMGateway.TimeoutSec)*time.Second)
+			provider = openai.NewOpenAIProviderWithOptions(
+				apiKey,
+				strings.ToLower(plan.Name),
+				strings.TrimRight(cfg.LLMGateway.BaseURL, "/"),
+				time.Duration(cfg.LLMGateway.TimeoutSec)*time.Second,
+			).WithRenCrowExecution(strings.ToLower(plan.Name), "coder", strings.ToLower(plan.Name))
 		} else {
 			provider, err = llmfactory.CreateProvider(cc)
 		}

@@ -373,20 +373,16 @@ func TestBeginTurn_RecallError_GracefulDegradation(t *testing.T) {
 	}
 }
 
-func TestBeginTurn_WithUserProfile(t *testing.T) {
+func TestBeginTurn_DoesNotReadLegacyInMemoryUserProfile(t *testing.T) {
 	mgr := &mockManager{}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})
-	// Pre-populate profile cache
-	profile := domconv.NewUserProfile("s1")
-	profile.Merge(map[string]string{"lang": "Go"}, nil)
-	engine.profiles["s1"] = profile
 
 	pack, err := engine.BeginTurn(context.Background(), "s1", "hello")
 	if err != nil {
 		t.Fatalf("BeginTurn failed: %v", err)
 	}
-	if pack.UserProfile.Preferences["lang"] != "Go" {
-		t.Error("UserProfile should be loaded from cache")
+	if len(pack.UserProfile.Preferences) != 0 || len(pack.UserProfile.Facts) != 0 {
+		t.Error("legacy in-memory UserProfile must not be a Recall source")
 	}
 }
 
@@ -559,7 +555,7 @@ func TestEndTurn_WithDetector_Boundary(t *testing.T) {
 	}
 }
 
-func TestEndTurn_WithProfileExtractor(t *testing.T) {
+func TestEndTurn_DoesNotRunLegacySynchronousProfileExtractor(t *testing.T) {
 	mgr := &mockManager{}
 	extractor := &mockExtractor{
 		result: &domconv.ProfileExtractionResult{
@@ -573,15 +569,8 @@ func TestEndTurn_WithProfileExtractor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EndTurn failed: %v", err)
 	}
-	profile, ok := engine.profiles["s1"]
-	if !ok {
-		t.Fatal("profile should be cached")
-	}
-	if profile.Preferences["lang"] != "Go" {
-		t.Errorf("profile lang: want 'Go', got %q", profile.Preferences["lang"])
-	}
-	if len(profile.Facts) != 1 || profile.Facts[0] != "developer" {
-		t.Errorf("profile facts: want ['developer'], got %v", profile.Facts)
+	if extractor.calls != 0 {
+		t.Fatalf("legacy synchronous extractor calls=%d", extractor.calls)
 	}
 }
 
@@ -597,14 +586,13 @@ func TestEndTurn_SkipsProfileExtractorForGreeting(t *testing.T) {
 	}
 }
 
-func TestEndTurn_ProfileExtractorError(t *testing.T) {
+func TestEndTurn_IgnoresLegacyProfileExtractor(t *testing.T) {
 	mgr := &mockManager{}
 	extractor := &mockExtractor{
 		err: fmt.Errorf("LLM failed"),
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithProfileExtractor(extractor)
 
-	// Should not return error — profile extraction is best-effort
 	err := engine.EndTurn(context.Background(), "s1", "hello", "hi")
 	if err != nil {
 		t.Fatalf("EndTurn should succeed even on extractor error: %v", err)

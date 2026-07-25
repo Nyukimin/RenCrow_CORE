@@ -405,6 +405,18 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("conversation.vectordb_url is required when conversation.enabled=true")
 		}
 	}
+	if c.Conversation.ProfilePromotionIdleGraceSeconds < 0 {
+		return fmt.Errorf("conversation.profile_promotion_idle_grace_seconds must be >= 0")
+	}
+	if c.Conversation.ProfilePromotionTimeoutSeconds < 0 {
+		return fmt.Errorf("conversation.profile_promotion_timeout_seconds must be >= 0")
+	}
+	if c.Conversation.ProfilePromotionBatchMessages < 0 {
+		return fmt.Errorf("conversation.profile_promotion_batch_messages must be >= 0")
+	}
+	if c.Conversation.ProfilePromotionMaxAttempts < 0 {
+		return fmt.Errorf("conversation.profile_promotion_max_attempts must be >= 0")
+	}
 
 	if c.Security.Enabled {
 		if c.Security.PolicyMode != "strict" && c.Security.PolicyMode != "balanced" && c.Security.PolicyMode != "dev" {

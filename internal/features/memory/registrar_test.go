@@ -9,17 +9,18 @@ import (
 func TestRegisterRoutesRegistersMemoryPaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
-		Snapshot:      statusHandler(http.StatusOK),
-		Layers:        statusHandler(http.StatusCreated),
-		Events:        statusHandler(http.StatusAccepted),
-		State:         statusHandler(http.StatusNoContent),
-		Promote:       statusHandler(http.StatusPartialContent),
-		User:          statusHandler(http.StatusResetContent),
-		UserState:     statusHandler(http.StatusAlreadyReported),
-		UserForget:    statusHandler(http.StatusIMUsed),
-		UserSupersede: statusHandler(http.StatusMultiStatus),
-		RecallPack:    statusHandler(http.StatusBadRequest),
-		RecallTraces:  statusHandler(http.StatusConflict),
+		Snapshot:          statusHandler(http.StatusOK),
+		Layers:            statusHandler(http.StatusCreated),
+		Events:            statusHandler(http.StatusAccepted),
+		State:             statusHandler(http.StatusNoContent),
+		Promote:           statusHandler(http.StatusPartialContent),
+		User:              statusHandler(http.StatusResetContent),
+		UserState:         statusHandler(http.StatusAlreadyReported),
+		UserForget:        statusHandler(http.StatusIMUsed),
+		UserSupersede:     statusHandler(http.StatusMultiStatus),
+		RecallPack:        statusHandler(http.StatusBadRequest),
+		RecallTraces:      statusHandler(http.StatusConflict),
+		ProfilePromotions: statusHandler(http.StatusTeapot),
 	}})
 
 	tests := []struct {
@@ -37,6 +38,7 @@ func TestRegisterRoutesRegistersMemoryPaths(t *testing.T) {
 		{path: "/viewer/memory/user/supersede", want: http.StatusMultiStatus},
 		{path: "/viewer/memory/recall-pack", want: http.StatusBadRequest},
 		{path: "/viewer/recall/traces", want: http.StatusConflict},
+		{path: "/viewer/memory/profile-promotions", want: http.StatusTeapot},
 	}
 
 	for _, tt := range tests {

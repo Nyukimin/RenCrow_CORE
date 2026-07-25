@@ -96,6 +96,7 @@ func (r AdviceRequest) Validate() error {
 }
 
 type AdviceResult struct {
+	RunID        string
 	RequestID    string
 	AdvisorID    AdvisorID
 	Status       string

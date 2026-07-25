@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"math"
 	"strings"
@@ -86,6 +87,7 @@ func (s *RecordingService) RequestAdvice(ctx context.Context, req advisorDomain.
 		FinishedAt:       finished,
 		LatencyMillis:    max(0, finished.Sub(started).Milliseconds()),
 	}
+	result.RunID = record.RunID
 	if callErr != nil {
 		record.Error = boundedSummary(callErr.Error(), 512)
 	}
@@ -105,6 +107,21 @@ func (s *RecordingService) RequestAdvice(ctx context.Context, req advisorDomain.
 	return result, callErr
 }
 
+func (s *RecordingService) RecordAdoption(ctx context.Context, record advisorDomain.AdvisorAdoptionRecord) error {
+	if err := record.Validate(); err != nil {
+		return err
+	}
+	if s == nil || s.store == nil {
+		return nil
+	}
+	if err := s.store.SaveAdvisorAdoption(ctx, record); err != nil {
+		s.setStoreError(err)
+		return err
+	}
+	s.setStoreError(nil)
+	return nil
+}
+
 func (s *RecordingService) LastStoreError() error {
 	if s == nil {
 		return nil
@@ -121,25 +138,36 @@ func (s *RecordingService) setStoreError(err error) {
 }
 
 func BuildScoreSnapshot(runs []advisorDomain.AdviceRunRecord, adoptions []advisorDomain.AdvisorAdoptionRecord, windowStart, windowEnd time.Time) advisorDomain.AdvisorScoreSnapshot {
+	advisorID := advisorDomain.AdvisorID("")
+	if len(runs) > 0 {
+		advisorID = runs[0].AdvisorID
+	} else if len(adoptions) > 0 {
+		advisorID = adoptions[0].AdvisorID
+	}
+	return buildScoreSnapshotForAdvisor(advisorID, runs, adoptions, windowStart, windowEnd)
+}
+
+func buildScoreSnapshotForAdvisor(advisorID advisorDomain.AdvisorID, runs []advisorDomain.AdviceRunRecord, adoptions []advisorDomain.AdvisorAdoptionRecord, windowStart, windowEnd time.Time) advisorDomain.AdvisorScoreSnapshot {
 	filtered := make([]advisorDomain.AdviceRunRecord, 0, len(runs))
 	for _, run := range runs {
+		if run.AdvisorID != advisorID {
+			continue
+		}
 		if !windowStart.IsZero() && run.StartedAt.Before(windowStart) {
 			continue
 		}
-		if !windowEnd.IsZero() && run.StartedAt.After(windowEnd) {
+		if !windowEnd.IsZero() && !run.StartedAt.Before(windowEnd) {
 			continue
 		}
 		filtered = append(filtered, run)
 	}
 	snapshot := advisorDomain.AdvisorScoreSnapshot{
-		SnapshotID:   uuid.NewString(),
+		SnapshotID:   fmt.Sprintf("advisor-score:%s:%s", advisorID, windowStart.UTC().Format("2006-01-02")),
+		AdvisorID:    advisorID,
 		WindowStart:  windowStart,
 		WindowEnd:    windowEnd,
-		CreatedAt:    time.Now().UTC(),
+		CreatedAt:    windowEnd.UTC(),
 		RequestCount: len(filtered),
-	}
-	if len(filtered) > 0 {
-		snapshot.AdvisorID = filtered[0].AdvisorID
 	}
 	knownRuns := make(map[string]struct{}, len(filtered))
 	var latencyTotal int64
@@ -159,7 +187,15 @@ func BuildScoreSnapshot(runs []advisorDomain.AdviceRunRecord, adoptions []adviso
 		snapshot.AvgLatencyMillis = latencyTotal / int64(snapshot.RequestCount)
 	}
 	var revisions int
+	seenAdoptions := make(map[string]struct{}, len(adoptions))
 	for _, adoption := range adoptions {
+		if adoption.AdvisorID != advisorID {
+			continue
+		}
+		if _, seen := seenAdoptions[adoption.AdoptionID]; seen {
+			continue
+		}
+		seenAdoptions[adoption.AdoptionID] = struct{}{}
 		if _, ok := knownRuns[adoption.RunID]; !ok || !adoption.Adopted {
 			continue
 		}

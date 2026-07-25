@@ -7,14 +7,31 @@ import (
 
 // Dependencies groups feature dependencies supplied by cmd/rencrow.
 type Dependencies struct {
-	Ports Ports
+	Ports  Ports
+	Routes Routes
 }
 
-// RegisterRoutes reserves the feature route boundary. Existing routes remain in
-// their legacy packages until a phase migrates them through this registrar.
+type Routes struct {
+	Advisors        http.HandlerFunc
+	AdvisorRuns     http.HandlerFunc
+	AdvisorScores   http.HandlerFunc
+	Profiles        http.HandlerFunc
+	PolicyDecisions http.HandlerFunc
+}
+
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
-	_ = mux
-	_ = deps
+	routes := deps.Routes
+	registerRoute(mux, "/viewer/advisors", routes.Advisors)
+	registerRoute(mux, "/viewer/advisors/runs", routes.AdvisorRuns)
+	registerRoute(mux, "/viewer/advisors/scores", routes.AdvisorScores)
+	registerRoute(mux, "/viewer/agents/profiles", routes.Profiles)
+	registerRoute(mux, "/viewer/agents/policy-decisions", routes.PolicyDecisions)
+}
+
+func registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
+	if mux != nil && pattern != "" && handler != nil {
+		mux.HandleFunc(pattern, handler)
+	}
 }
 
 // StartBackground reserves the feature background-job boundary.

@@ -81,12 +81,37 @@ func TestRecordingServiceStoresHashesWithoutPromptBody(t *testing.T) {
 	if result.Summary != "safe summary" || len(store.runs) != 1 {
 		t.Fatalf("unexpected result=%#v runs=%#v", result, store.runs)
 	}
+	if result.RunID == "" || result.RunID != store.runs[0].RunID {
+		t.Fatalf("result run_id=%q run=%#v", result.RunID, store.runs[0])
+	}
 	run := store.runs[0]
 	if run.PromptHash == "" || run.PromptHash == "secret prompt body" {
 		t.Fatalf("prompt hash was not recorded safely: %q", run.PromptHash)
 	}
 	if run.OutputHash == "" || run.LatencyMillis != 1500 {
 		t.Fatalf("output hash or latency missing: %#v", run)
+	}
+}
+
+func TestRecordingServiceStoresIdempotentAdoptionIdentity(t *testing.T) {
+	now := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+	store := &recordingStore{}
+	service := NewRecordingService(recordingInner{}, store, func() time.Time { return now })
+	record := advisorDomain.AdvisorAdoptionRecord{
+		AdoptionID:     "advisor-adoption:run-1:shiro",
+		RunID:          "run-1",
+		AdvisorID:      advisorDomain.AdvisorCodex,
+		AdoptedByAgent: "shiro",
+		Adopted:        true,
+		Outcome:        "success",
+		CreatedAt:      now,
+	}
+
+	if err := service.RecordAdoption(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.adoptions) != 1 || store.adoptions[0].AdoptionID != record.AdoptionID {
+		t.Fatalf("adoptions=%#v", store.adoptions)
 	}
 }
 

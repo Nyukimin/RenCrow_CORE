@@ -9,23 +9,15 @@ import (
 func TestRegisterRoutesKeepsOpsViewerPaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
-		Status:                 statusHandler(http.StatusOK),
-		Jobs:                   statusHandler(http.StatusAccepted),
-		JobDetail:              statusHandler(http.StatusNoContent),
-		Logs:                   statusHandler(http.StatusPartialContent),
-		RepairRun:              statusHandler(http.StatusCreated),
-		Backlog:                statusHandler(http.StatusResetContent),
-		Scheduler:              statusHandler(http.StatusAlreadyReported),
-		Workstreams:            statusHandler(http.StatusConflict),
-		WorkstreamGoals:        statusHandler(http.StatusMultiStatus),
-		WorkstreamHeartbeats:   statusHandler(http.StatusIMUsed),
-		Revenue:                statusHandler(http.StatusNonAuthoritativeInfo),
-		RevenueDailyRoutine:    statusHandler(http.StatusUseProxy),
-		RevenueExternalSend:    statusHandler(http.StatusTemporaryRedirect),
-		ParallelJobs:           statusHandler(http.StatusCreated),
-		JobNotifications:       statusHandler(http.StatusAccepted),
-		RevenueDecisionReview:  statusHandler(http.StatusOK),
-		WorkstreamVaultPreview: statusHandler(http.StatusOK),
+		Status:           statusHandler(http.StatusOK),
+		Jobs:             statusHandler(http.StatusAccepted),
+		JobDetail:        statusHandler(http.StatusNoContent),
+		Logs:             statusHandler(http.StatusPartialContent),
+		RepairRun:        statusHandler(http.StatusCreated),
+		Backlog:          statusHandler(http.StatusResetContent),
+		Scheduler:        statusHandler(http.StatusAlreadyReported),
+		ParallelJobs:     statusHandler(http.StatusCreated),
+		JobNotifications: statusHandler(http.StatusAccepted),
 	}})
 
 	tests := []struct {
@@ -39,16 +31,8 @@ func TestRegisterRoutesKeepsOpsViewerPaths(t *testing.T) {
 		{path: "/viewer/repair/run", want: http.StatusCreated},
 		{path: "/viewer/backlog", want: http.StatusResetContent},
 		{path: "/viewer/scheduler", want: http.StatusAlreadyReported},
-		{path: "/viewer/workstreams", want: http.StatusConflict},
-		{path: "/viewer/workstreams/goals", want: http.StatusMultiStatus},
-		{path: "/viewer/workstreams/heartbeats", want: http.StatusIMUsed},
-		{path: "/viewer/workstreams/vault-updates/preview", want: http.StatusOK},
-		{path: "/viewer/revenue", want: http.StatusNonAuthoritativeInfo},
-		{path: "/viewer/revenue/daily-routine", want: http.StatusUseProxy},
-		{path: "/viewer/revenue/channel-drafts/external-send-apply", want: http.StatusTemporaryRedirect},
 		{path: "/viewer/parallel-jobs", want: http.StatusCreated},
 		{path: "/viewer/job-notifications", want: http.StatusAccepted},
-		{path: "/viewer/revenue/human-decision-gate/review", want: http.StatusOK},
 	}
 
 	for _, tt := range tests {

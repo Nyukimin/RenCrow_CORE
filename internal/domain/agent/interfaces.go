@@ -30,6 +30,10 @@ type AdvisorService interface {
 	RequestAdvice(ctx context.Context, req advisor.AdviceRequest) (advisor.AdviceResult, error)
 }
 
+type AdvisorAdoptionRecorder interface {
+	RecordAdoption(ctx context.Context, record advisor.AdvisorAdoptionRecord) error
+}
+
 type AgentPolicyService interface {
 	Decide(agentID string, action string) (agentprofile.PolicyDecision, error)
 }

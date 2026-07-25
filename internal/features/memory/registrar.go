@@ -15,17 +15,18 @@ type Dependencies struct {
 // Handler implementations stay in legacy adapter/cmd packages during Ver0.80
 // migration; this registrar owns only route registration and dependency handoff.
 type Routes struct {
-	Snapshot      http.HandlerFunc
-	Layers        http.HandlerFunc
-	Events        http.HandlerFunc
-	State         http.HandlerFunc
-	Promote       http.HandlerFunc
-	User          http.HandlerFunc
-	UserState     http.HandlerFunc
-	UserForget    http.HandlerFunc
-	UserSupersede http.HandlerFunc
-	RecallPack    http.HandlerFunc
-	RecallTraces  http.HandlerFunc
+	Snapshot          http.HandlerFunc
+	Layers            http.HandlerFunc
+	Events            http.HandlerFunc
+	State             http.HandlerFunc
+	Promote           http.HandlerFunc
+	User              http.HandlerFunc
+	UserState         http.HandlerFunc
+	UserForget        http.HandlerFunc
+	UserSupersede     http.HandlerFunc
+	RecallPack        http.HandlerFunc
+	RecallTraces      http.HandlerFunc
+	ProfilePromotions http.HandlerFunc
 }
 
 // RegisterRoutes reserves the feature route boundary. Existing routes remain in
@@ -43,6 +44,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/memory/user/supersede", routes.UserSupersede)
 	registerRoute(mux, "/viewer/memory/recall-pack", routes.RecallPack)
 	registerRoute(mux, "/viewer/recall/traces", routes.RecallTraces)
+	registerRoute(mux, "/viewer/memory/profile-promotions", routes.ProfilePromotions)
 }
 
 // StartBackground reserves the feature background-job boundary.

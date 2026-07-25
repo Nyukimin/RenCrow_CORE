@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	_ "modernc.org/sqlite"
 )
 
@@ -91,6 +92,16 @@ ON CONFLICT(id) DO UPDATE SET
 		"layer":        layer,
 	}, "conversation"); err != nil {
 		return rollbackL1Tx(tx, fmt.Errorf("failed to append l1 message event log: %w", err))
+	}
+	if msg.Speaker == domconv.SpeakerUser && memoryState == MemoryStateObserved && strings.HasPrefix(namespace, "conv:") {
+		if _, err := tx.ExecContext(ctx, `
+INSERT OR IGNORE INTO l1_profile_promotion_job (
+	evidence_event_id, session_id, thread_id, state, attempt_count,
+	lease_token, last_error, created_at, updated_at
+) VALUES (?, ?, ?, ?, 0, '', '', ?, ?)
+`, id, sessionID, threadID, domainmemory.ProfilePromotionPending, createdAt, now); err != nil {
+			return rollbackL1Tx(tx, fmt.Errorf("failed to enqueue profile promotion job: %w", err))
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return rollbackL1Tx(tx, fmt.Errorf("failed to commit l1 message transaction: %w", err))

@@ -69,6 +69,18 @@ func TestPrimaryLLMProviders_ApplyChatNoThinkChatWorkerLowAndWorkerDefault(t *te
 	if _, forced := requests["worker"]["chat_template_kwargs"]; forced {
 		t.Fatalf("Worker must not receive forced chat_template_kwargs: %#v", requests["worker"])
 	}
+	for alias, want := range map[string]map[string]string{
+		"mio":    {"agent_id": "mio", "execution_role": "chat", "execution_alias": "mio"},
+		"shiro":  {"agent_id": "shiro", "execution_role": "chatworker", "execution_alias": "shiro"},
+		"worker": {"agent_id": "shiro", "execution_role": "worker", "execution_alias": "worker"},
+	} {
+		metadata, _ := requests[alias]["rencrow"].(map[string]any)
+		for key, value := range want {
+			if metadata[key] != value {
+				t.Errorf("%s rencrow.%s=%#v want %q", alias, key, metadata[key], value)
+			}
+		}
+	}
 }
 
 func TestPrimaryLLMProviders_ApplyWildNoThinkAndStreaming(t *testing.T) {

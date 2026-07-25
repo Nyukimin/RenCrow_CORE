@@ -4,11 +4,24 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	domainadvisor "github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
+
+type advisorScoreRunnerStub struct {
+	called chan struct{}
+}
+
+func (s advisorScoreRunnerStub) Run(context.Context) (int, error) {
+	select {
+	case s.called <- struct{}{}:
+	default:
+	}
+	return 1, nil
+}
 
 type advisorRuntimeToolRunner struct{}
 
@@ -49,5 +62,21 @@ func TestBuildAdvisorRuntimeWiresRecordingAndPolicy(t *testing.T) {
 	runs, err := runtime.Store.ListAdviceRuns(context.Background(), 10)
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("advisor run was not persisted: runs=%#v err=%v", runs, err)
+	}
+}
+
+func TestStartAdvisorScoreJobRunnerRunsImmediately(t *testing.T) {
+	called := make(chan struct{}, 1)
+	cancel := startAdvisorScoreJobRunner(
+		advisorScoreRunnerStub{called: called},
+		time.Hour,
+		backgroundJobFailureReporter{},
+	)
+	defer cancel()
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("Advisor score job did not run")
 	}
 }

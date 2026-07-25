@@ -23,6 +23,19 @@ type OpenAIProvider struct {
 	thinkingBridge bool
 	modelContext   int
 	client         *http.Client
+	agentID        string
+	executionRole  string
+	executionAlias string
+}
+
+// WithRenCrowExecution adds the explicit Agent/Role meaning of a Gateway
+// execution alias. Physical OpenAI-compatible targets never receive this
+// metadata because RenCrow_LLM removes the rencrow field before proxying.
+func (p *OpenAIProvider) WithRenCrowExecution(agentID, executionRole, executionAlias string) *OpenAIProvider {
+	p.agentID = strings.TrimSpace(agentID)
+	p.executionRole = strings.ToLower(strings.TrimSpace(executionRole))
+	p.executionAlias = strings.TrimSpace(executionAlias)
+	return p
 }
 
 // NewOpenAIProvider は新しいOpenAIProviderを作成
@@ -73,6 +86,7 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req llm.GenerateRequest) 
 	p.addThinkingBridgeFields(openaiReq, streaming)
 	p.addProviderOptions(openaiReq, req.ProviderOptions)
 	p.addModelContextOption(openaiReq)
+	p.addRenCrowExecutionMetadata(openaiReq)
 	if streaming {
 		openaiReq["stream_options"] = map[string]any{"include_usage": true}
 	}
@@ -175,6 +189,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Cha
 	}
 	p.addThinkingBridgeFields(openaiReq, false)
 	p.addModelContextOption(openaiReq)
+	p.addRenCrowExecutionMetadata(openaiReq)
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]interface{}, 0, len(req.Tools))
 		for _, td := range req.Tools {
@@ -219,4 +234,15 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Cha
 	}
 
 	return p.parseChatResponse(resp.Body)
+}
+
+func (p *OpenAIProvider) addRenCrowExecutionMetadata(payload map[string]interface{}) {
+	if p.agentID == "" || p.executionRole == "" || p.executionAlias == "" {
+		return
+	}
+	payload["rencrow"] = map[string]any{
+		"agent_id":        p.agentID,
+		"execution_role":  p.executionRole,
+		"execution_alias": p.executionAlias,
+	}
 }

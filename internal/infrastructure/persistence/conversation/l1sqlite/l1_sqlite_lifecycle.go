@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
 
 type MemoryLifecycleOptions struct {
@@ -148,9 +150,15 @@ WHERE id IN (
 	WHERE namespace LIKE 'conv:%'
 	  AND memory_state = ?
 	  AND created_at < ?
+	  AND NOT EXISTS (
+		SELECT 1
+		FROM l1_profile_promotion_job p
+		WHERE p.evidence_event_id = l1_memory_event.id
+		  AND p.state <> ?
+	  )
 	ORDER BY created_at ASC
 	LIMIT ?
-)`, MemoryStateObserved, cutoff.UTC(), limit)
+)`, MemoryStateObserved, cutoff.UTC(), domainmemory.ProfilePromotionCompleted, limit)
 	if err != nil {
 		return 0, fmt.Errorf("failed to compact old conversation raw memory: %w", err)
 	}

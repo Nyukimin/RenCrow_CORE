@@ -2931,6 +2931,37 @@ session:
 	if cfg.Conversation.VectorDBURL != "localhost:6334" {
 		t.Errorf("unexpected VectorDBURL: %s", cfg.Conversation.VectorDBURL)
 	}
+	if !cfg.Conversation.ProfilePromotionEnabledValue() ||
+		cfg.Conversation.ProfilePromotionIdleGraceSeconds != 10 ||
+		cfg.Conversation.ProfilePromotionTimeoutSeconds != 45 ||
+		cfg.Conversation.ProfilePromotionBatchMessages != 24 ||
+		cfg.Conversation.ProfilePromotionMaxAttempts != 5 {
+		t.Fatalf("unexpected profile promotion defaults: %+v", cfg.Conversation)
+	}
+}
+
+func TestConversationConfig_ProfilePromotionCanBeDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := `
+server:
+  port: 8080
+ollama:
+  base_url: "http://localhost:11434"
+  model: "Chat"
+session:
+  storage_dir: "./data"
+conversation:
+  profile_promotion_enabled: false
+`
+	os.WriteFile(configPath, []byte(configContent), 0644)
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Conversation.ProfilePromotionEnabledValue() {
+		t.Fatal("profile promotion should be disabled")
+	}
 }
 
 func TestConversationConfig_EmbedAndSummaryModel(t *testing.T) {

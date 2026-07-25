@@ -22,9 +22,15 @@ type llmBusySnapshot struct {
 var errTrackedProviderNoToolCalling = errors.New("tracked provider inner does not support tool calling")
 
 type llmBusyTracker struct {
-	mu      sync.Mutex
-	sources map[string]int
+	mu              sync.Mutex
+	sources         map[string]int
+	idleLease       *llmIdleLease
+	idleLeaseCancel context.CancelFunc
 }
+
+type llmIdleLease struct{}
+
+type llmIdleLeaseContextKey struct{}
 
 func newLLMBusyTracker() *llmBusyTracker {
 	return &llmBusyTracker{sources: map[string]int{}}
@@ -42,6 +48,15 @@ func (t *llmBusyTracker) Begin(ctx context.Context, fallbackSource string) func(
 		source = "unknown"
 	}
 	t.mu.Lock()
+	lease, _ := ctx.Value(llmIdleLeaseContextKey{}).(*llmIdleLease)
+	if t.idleLease != nil && lease != t.idleLease {
+		cancel := t.idleLeaseCancel
+		t.idleLease = nil
+		t.idleLeaseCancel = nil
+		if cancel != nil {
+			cancel()
+		}
+	}
 	if t.sources == nil {
 		t.sources = map[string]int{}
 	}
@@ -56,6 +71,32 @@ func (t *llmBusyTracker) Begin(ctx context.Context, fallbackSource string) func(
 		}
 		t.sources[source]--
 	}
+}
+
+func (t *llmBusyTracker) TryAcquireIdleLease(parent context.Context) (context.Context, func(), bool) {
+	if t == nil {
+		return parent, func() {}, false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(copyBusySources(t.sources)) > 0 || t.idleLease != nil {
+		return parent, func() {}, false
+	}
+	lease := &llmIdleLease{}
+	leaseCtx, cancel := context.WithCancel(parent)
+	leaseCtx = context.WithValue(leaseCtx, llmIdleLeaseContextKey{}, lease)
+	t.idleLease = lease
+	t.idleLeaseCancel = cancel
+	return leaseCtx, func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if t.idleLease != lease {
+			return
+		}
+		t.idleLease = nil
+		t.idleLeaseCancel = nil
+		cancel()
+	}, true
 }
 
 func (t *llmBusyTracker) Snapshot() llmBusySnapshot {

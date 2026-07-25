@@ -254,6 +254,18 @@ func (c *Config) setDefaults() {
 	if c.Conversation.VectorDBURL == "" {
 		c.Conversation.VectorDBURL = "localhost:6334"
 	}
+	if c.Conversation.ProfilePromotionIdleGraceSeconds == 0 {
+		c.Conversation.ProfilePromotionIdleGraceSeconds = 10
+	}
+	if c.Conversation.ProfilePromotionTimeoutSeconds == 0 {
+		c.Conversation.ProfilePromotionTimeoutSeconds = 45
+	}
+	if c.Conversation.ProfilePromotionBatchMessages == 0 {
+		c.Conversation.ProfilePromotionBatchMessages = 24
+	}
+	if c.Conversation.ProfilePromotionMaxAttempts == 0 {
+		c.Conversation.ProfilePromotionMaxAttempts = 5
+	}
 
 	// Heartbeat デフォルト
 	if c.Heartbeat.Interval == 0 {

@@ -29,7 +29,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `/viewer/workstreams/*` | goal、artifact、annotation、heartbeat、review |
 | `/viewer/advisors/*`, `/viewer/agents/profiles` | Advisor run/score と AgentProfile |
 | `/viewer/revenue/*` | Opportunity、EconomicTask、RevenueEvent、Reflection、approval |
-| `/viewer/memory/*` | memory event と Recall の観測 |
+| `/viewer/memory/*` | memory event、Recall、ProfilePromotion job の観測 |
 | `GET /viewer/movie-catalog` | 映画・俳優catalogと利用者評価の一覧・詳細 |
 | `POST /viewer/movie-catalog/preference` | 映画・俳優の認知・好み評価を保存 |
 | `/viewer/active-control`, `/viewer/tts/*`, `/viewer/stt/*` | audio/control bridge |
@@ -92,8 +92,9 @@ Execution Roleを確定した後、RenCrow_LLM Gatewayへ現行互換の論理ex
 これらはCOREからRenCrow_LLMへ送るopaqueな互換wire keyであり、Agent ID、Execution Role ID、
 物理Target名のいずれか一つを表す汎用fieldではありません。PORTAL、CMD、ASSISTANTはaliasを
 選択せず、COREへrecipient Agentを送ります。Agent／Role bindingが同じままTargetだけを
-変更する場合はaliasを変更しません。将来`agent_id`と`execution_role`を明示fieldへ分離する
-までは、`mio_chat`や`kuro_heavy`等へのrenameを移行要件にしません。
+変更する場合はaliasを変更しません。COREはGateway requestの`rencrow` metadataへ
+`agent_id`、`execution_role`、`execution_alias`を明示し、`mio_chat`や`kuro_heavy`等への
+renameを移行要件にしません。
 
 物理targetの情報は通常のCORE Public APIとCMDへ公開しません。認可された運用status／logでは、
 同一requestを追跡できるよう、次のfieldを意味上区別します。
@@ -166,8 +167,9 @@ endpoint allowlistとserver-side authorizationを置き換えたとは扱いま�
 
 `RenCrow_PORTAL`はCOREの全APIを透過公開しません。
 
-- `view`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りだけを許可する。
-- `lab`: viewの読み取りに加え、chat、recipient通知、active audio/input ownership、TTS再生、STT入力に必要な公開契約だけをallowlistとする。
+- `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りだけを許可する。旧`view`は互換名として受理する。
+- `live`: 配信用の読み取り専用画面とし、Labの部屋・操作UIを含めない。
+- `lab`: IdleChatの読み取りに加え、chat、recipient通知、active audio/input ownership、TTS再生、STT入力に必要な公開契約だけをallowlistとする。
 - Debug、Ops、Repair、LLM管理、設定変更APIはPORTALから遮断する。
 - 新しい公開操作はCORE側のAPI追加だけで自動公開せず、PORTAL側でmethod/pathと契約テストを追加する。
 

@@ -55,9 +55,10 @@ func (m *panicSubagentManager) RunSync(ctx context.Context, task SubagentTask) (
 }
 
 type mockAdvisorService struct {
-	req  advisor.AdviceRequest
-	resp advisor.AdviceResult
-	err  error
+	req      advisor.AdviceRequest
+	resp     advisor.AdviceResult
+	err      error
+	adoption advisor.AdvisorAdoptionRecord
 }
 
 type mockAgentPolicyService struct {
@@ -74,6 +75,11 @@ func (m *mockAgentPolicyService) Decide(_, _ string) (agentprofile.PolicyDecisio
 func (m *mockAdvisorService) RequestAdvice(_ context.Context, req advisor.AdviceRequest) (advisor.AdviceResult, error) {
 	m.req = req
 	return m.resp, m.err
+}
+
+func (m *mockAdvisorService) RecordAdoption(_ context.Context, record advisor.AdvisorAdoptionRecord) error {
+	m.adoption = record
+	return nil
 }
 
 func (m *mockMCPClient) CallTool(ctx context.Context, serverName, toolName string, args map[string]interface{}) (string, error) {
@@ -287,6 +293,7 @@ func TestShiroAgentExecute_UsesAdvisorForCodexWorkPath(t *testing.T) {
 	}
 	advisorService := &mockAdvisorService{
 		resp: advisor.AdviceResult{
+			RunID:     "run-advisor-1",
 			AdvisorID: advisor.AdvisorCodex,
 			Status:    advisor.StatusCompleted,
 			Summary:   "advisor output",
@@ -307,6 +314,10 @@ func TestShiroAgentExecute_UsesAdvisorForCodexWorkPath(t *testing.T) {
 	}
 	if !strings.Contains(advisorService.req.Prompt, "描画領域") {
 		t.Fatalf("advisor prompt did not include codex work prompt: %s", advisorService.req.Prompt)
+	}
+	if !advisorService.adoption.Adopted || advisorService.adoption.RunID != "run-advisor-1" ||
+		advisorService.adoption.Outcome != "success" {
+		t.Fatalf("advisor adoption was not recorded: %#v", advisorService.adoption)
 	}
 }
 

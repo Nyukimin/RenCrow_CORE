@@ -28,6 +28,7 @@ func buildViewerRuntimeHandlers(
 	if l1Store == nil {
 		deps.viewerRecallTraces = viewer.HandleRecallTraces(nil)
 		deps.viewerMemoryLayers = viewer.HandleMemoryLayers(nil, nil)
+		deps.viewerMemoryProfilePromotions = viewer.HandleMemoryProfilePromotions(nil)
 		deps.viewerSourceRegistry = viewer.HandleSourceRegistry(nil)
 		deps.viewerDomainGraphAssertions = viewer.HandleDomainGraphAssertions(nil)
 		deps.viewerMovieDomainGraphSync = viewer.HandleMovieDomainGraphSync(movieOptions, nil)
@@ -45,6 +46,7 @@ func buildViewerRuntimeHandlers(
 		deps.viewerMemoryUserForget = viewer.HandleUserMemoryForget(l1Store)
 		deps.viewerMemoryUserSupersede = viewer.HandleUserMemorySupersede(l1Store)
 		deps.viewerMemoryRecallPack = viewer.HandleMemoryRecallPack(l1Store, realMgr, l1Store)
+		deps.viewerMemoryProfilePromotions = viewer.HandleMemoryProfilePromotions(l1Store)
 		deps.viewerSourceRegistry = viewer.HandleSourceRegistry(l1Store)
 		deps.viewerDomainGraphAssertions = viewer.HandleDomainGraphAssertions(l1Store)
 		deps.viewerMovieDomainGraphSync = viewer.HandleMovieDomainGraphSync(movieOptions, l1Store)

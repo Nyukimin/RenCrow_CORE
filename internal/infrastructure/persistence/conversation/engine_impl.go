@@ -16,8 +16,6 @@ type RealConversationEngine struct {
 	manager                  domconv.ConversationManager
 	persona                  domconv.PersonaState
 	detector                 domconv.ThreadBoundaryDetector // nil の場合はスレッド自動検出無効
-	profileExtractor         domconv.ProfileExtractor       // nil の場合はプロファイル抽出無効
-	profiles                 map[string]domconv.UserProfile // インメモリキャッシュ
 	recallTraceStore         domconv.RecallTraceStore
 	knowledgeRelationEnabled bool
 	knowledgeRelationMaxHops int
@@ -41,9 +39,8 @@ func NewRealConversationEngine(
 	persona domconv.PersonaState,
 ) *RealConversationEngine {
 	return &RealConversationEngine{
-		manager:  manager,
-		persona:  persona,
-		profiles: make(map[string]domconv.UserProfile),
+		manager: manager,
+		persona: persona,
 	}
 }
 
@@ -53,9 +50,9 @@ func (e *RealConversationEngine) WithDetector(d domconv.ThreadBoundaryDetector) 
 	return e
 }
 
-// WithProfileExtractor はプロファイル抽出器を設定する（オプション）
+// WithProfileExtractor is retained as a source-compatible no-op.
+// Profile extraction runs asynchronously from durable L1 raw events.
 func (e *RealConversationEngine) WithProfileExtractor(pe domconv.ProfileExtractor) *RealConversationEngine {
-	e.profileExtractor = pe
 	return e
 }
 
@@ -81,11 +78,6 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 	pack := &domconv.RecallPack{
 		Persona:     e.persona,
 		Constraints: domconv.DefaultConstraints(),
-	}
-
-	// UserProfile 読み込み
-	if profile, ok := e.profiles[sessionID]; ok {
-		pack.UserProfile = profile
 	}
 
 	// Recall（想起）
@@ -406,46 +398,7 @@ func (e *RealConversationEngine) EndTurnAs(ctx context.Context, sessionID string
 		log.Printf("[ConversationEngine] WARN: Store (%s) failed: %v", speaker, err)
 	}
 
-	// UserProfile 自動抽出（best-effort）
-	if e.profileExtractor != nil && shouldExtractUserProfile(userMessage) {
-		thread, err := e.manager.GetActiveThread(ctx, sessionID)
-		if err == nil && thread != nil {
-			existing := e.profiles[sessionID]
-			result, err := e.profileExtractor.Extract(ctx, thread, existing)
-			if err != nil {
-				log.Printf("[ConversationEngine] WARN: ProfileExtract failed: %v", err)
-			} else if result != nil && result.HasData() {
-				if existing.UserID == "" {
-					existing = domconv.NewUserProfile(sessionID)
-				}
-				existing.Merge(result.NewPreferences, result.NewFacts)
-				e.profiles[sessionID] = existing
-				log.Printf("[ConversationEngine] UserProfile updated: +%d prefs, +%d facts",
-					len(result.NewPreferences), len(result.NewFacts))
-			}
-		}
-	}
-
 	return nil
-}
-
-func shouldExtractUserProfile(userMessage string) bool {
-	message := strings.ToLower(strings.TrimSpace(userMessage))
-	if message == "" {
-		return false
-	}
-	for _, marker := range []string{
-		"覚えて", "記憶して", "私は", "わたしは", "僕は", "ぼくは", "俺は",
-		"好き", "嫌い", "苦手", "得意", "仕事", "職業", "住んで", "出身",
-		"家族", "誕生日", "名前は", "呼んで", "好み", "毎日", "毎週", "いつも",
-		"i am ", "i'm ", "i like ", "i love ", "i hate ", "i prefer ",
-		"my name ", "remember that ", "i live ", "my job ",
-	} {
-		if strings.Contains(message, marker) {
-			return true
-		}
-	}
-	return false
 }
 
 func (e *RealConversationEngine) RecordRecallTrace(ctx context.Context, sessionID string, responseID string, role string, pack domconv.RecallPack) error {

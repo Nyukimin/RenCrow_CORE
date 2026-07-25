@@ -2,6 +2,7 @@ package advisor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -48,7 +49,7 @@ func (s *JSONLStore) SaveAdvisorAdoption(_ context.Context, item advisorDomain.A
 	if err := item.Validate(); err != nil {
 		return err
 	}
-	return s.append(s.adoptionPath, item)
+	return s.upsert(s.adoptionPath, "adoption_id", item.AdoptionID, item)
 }
 
 func (s *JSONLStore) ListAdvisorAdoptions(_ context.Context, limit int) ([]advisorDomain.AdvisorAdoptionRecord, error) {
@@ -59,7 +60,7 @@ func (s *JSONLStore) SaveAdvisorScoreSnapshot(_ context.Context, item advisorDom
 	if err := item.Validate(); err != nil {
 		return err
 	}
-	return s.append(s.scorePath, item)
+	return s.upsert(s.scorePath, "snapshot_id", item.SnapshotID, item)
 }
 
 func (s *JSONLStore) ListAdvisorScoreSnapshots(_ context.Context, limit int) ([]advisorDomain.AdvisorScoreSnapshot, error) {
@@ -99,6 +100,78 @@ func (s *JSONLStore) append(path string, item any) error {
 		return err
 	}
 	return file.Sync()
+}
+
+func (s *JSONLStore) upsert(path, idField, id string, item any) error {
+	if s == nil {
+		return errors.New("advisor jsonl store is required")
+	}
+	payload, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	lines := bytes.Split(bytes.TrimSpace(existing), []byte{'\n'})
+	output := make([][]byte, 0, len(lines)+1)
+	replaced := false
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var metadata map[string]json.RawMessage
+		if err := json.Unmarshal(line, &metadata); err != nil {
+			return err
+		}
+		var existingID string
+		if raw := metadata[idField]; len(raw) > 0 {
+			if err := json.Unmarshal(raw, &existingID); err != nil {
+				return err
+			}
+		}
+		if existingID == id {
+			output = append(output, payload)
+			replaced = true
+			continue
+		}
+		output = append(output, append([]byte(nil), line...))
+	}
+	if !replaced {
+		output = append(output, payload)
+	}
+	encoded := bytes.Join(output, []byte{'\n'})
+	encoded = append(encoded, '\n')
+	temp, err := os.CreateTemp(dir, ".advisor-upsert-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if _, err := temp.Write(encoded); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, path)
 }
 
 func readJSONL[T any](s *JSONLStore, path string, limit int) ([]T, error) {

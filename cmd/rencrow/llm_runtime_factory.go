@@ -86,17 +86,18 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
 		apiKey = strings.TrimSpace(os.Getenv(envName))
 	}
-	provider := func(role, agentID string) llm.LLMProvider {
-		raw := openai.NewOpenAIProviderWithOptions(apiKey, agentID, baseURL, timeout)
+	provider := func(role, alias, agentID string) llm.LLMProvider {
+		raw := openai.NewOpenAIProviderWithOptions(apiKey, alias, baseURL, timeout).
+			WithRenCrowExecution(agentID, role, alias)
 		return wrapPrimaryLLMProvider(cfg, role, enforceThinkingPolicyForRole(role, raw), recorder)
 	}
 	log.Printf("RenCrow_LLM Gateway enabled (base_url=%s)", baseURL)
 	return primaryLLMProviders{
-		Chat:       provider("chat", "mio"),
-		Worker:     provider("worker", "worker"),
-		ChatWorker: provider("chatworker", "shiro"),
-		Heavy:      provider("heavy", "kuro"),
-		Wild:       provider("wild", "midori"),
+		Chat:       provider("chat", "mio", "mio"),
+		Worker:     provider("worker", "worker", "shiro"),
+		ChatWorker: provider("chatworker", "shiro", "shiro"),
+		Heavy:      provider("heavy", "kuro", "kuro"),
+		Wild:       provider("wild", "midori", "midori"),
 	}
 }
 

@@ -25,6 +25,36 @@ func TestNewOpenAIProvider(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderSendsRenCrowExecutionMetadata(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewOpenAIProviderWithOptions("", "worker", server.URL, time.Second).
+		WithRenCrowExecution("shiro", "worker", "worker")
+	_, err := provider.Generate(context.Background(), llm.GenerateRequest{
+		Messages: []llm.Message{{Role: "user", Content: "run"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, _ := payload["rencrow"].(map[string]any)
+	for key, want := range map[string]string{
+		"agent_id":        "shiro",
+		"execution_role":  "worker",
+		"execution_alias": "worker",
+	} {
+		if metadata[key] != want {
+			t.Errorf("rencrow.%s=%#v want %q", key, metadata[key], want)
+		}
+	}
+}
+
 func TestStreamingGatewayErrorIsNotAnEmptySuccess(t *testing.T) {
 	provider := NewOpenAIProviderWithOptions("", "mio", "http://gateway.invalid", time.Second)
 	stream := strings.NewReader("data: {\"error\":{\"code\":\"EMPTY_FINAL_CONTENT\",\"message\":\"target stream returned no content\"}}\n\ndata: [DONE]\n\n")
