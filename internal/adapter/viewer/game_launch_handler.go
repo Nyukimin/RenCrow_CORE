@@ -32,7 +32,6 @@ type GameLaunchRequest struct {
 	Reason   string   `json:"reason,omitempty"`
 }
 
-
 // GameLaunchResult は起動成功時の要約。
 type GameLaunchResult struct {
 	GameID         string
