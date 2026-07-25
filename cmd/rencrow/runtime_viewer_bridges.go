@@ -29,9 +29,11 @@ func buildViewerBridgeHandlers(
 	viewerSendFromOrch := func(proc messageProcessor) http.HandlerFunc {
 		attachmentStore := attachmentapp.NewStore(cfg.WorkspaceDir)
 		return viewer.HandleSendWithAttachments(func(ctx context.Context, req viewer.SendRequest) (string, error) {
-			log.Printf("[main] viewerSendFromOrch: start job_id=%s viewer_client_id=%q recipient=%s attachments=%d %s", req.JobID, req.ViewerClientID, req.To, len(req.Attachments), req.Provenance.LogFields())
+			log.Printf("[main] viewerSendFromOrch: start job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachments=%d %s", req.JobID, req.TraceID, req.MessageID, req.ViewerClientID, req.To, len(req.Attachments), req.Provenance.LogFields())
 			resp, err := proc.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
 				JobID:           req.JobID,
+				MessageID:       req.MessageID,
+				TraceID:         req.TraceID,
 				SessionID:       "viewer",
 				Channel:         "viewer",
 				ChatID:          "viewer-user",
@@ -41,10 +43,10 @@ func buildViewerBridgeHandlers(
 				Attachments:     req.Attachments,
 			})
 			if err != nil {
-				log.Printf("[main] viewerSendFromOrch: error job_id=%s viewer_client_id=%q recipient=%s %s err=%v", req.JobID, req.ViewerClientID, req.To, req.Provenance.LogFields(), err)
+				log.Printf("[main] viewerSendFromOrch: error job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s err=%v", req.JobID, req.TraceID, req.MessageID, req.ViewerClientID, req.To, req.Provenance.LogFields(), err)
 				return "", err
 			}
-			log.Printf("[main] viewerSendFromOrch: complete job_id=%s viewer_client_id=%q recipient=%s route=%s %s", resp.JobID, req.ViewerClientID, req.To, resp.Route, req.Provenance.LogFields())
+			log.Printf("[main] viewerSendFromOrch: complete job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s route=%s %s", resp.JobID, resp.TraceID, resp.MessageID, req.ViewerClientID, req.To, resp.Route, req.Provenance.LogFields())
 			return resp.Response, nil
 		}, func(req viewer.SendRequest, err error) {
 			if deps.eventRelay != nil {

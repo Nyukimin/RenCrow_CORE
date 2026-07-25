@@ -30,6 +30,7 @@ type Workstream struct {
 
 type Goal struct {
 	GoalID          string    `json:"goal_id"`
+	TraceID         string    `json:"trace_id,omitempty"`
 	WorkstreamID    string    `json:"workstream_id"`
 	Title           string    `json:"title"`
 	Description     string    `json:"description,omitempty"`
@@ -42,6 +43,7 @@ type Goal struct {
 
 type Artifact struct {
 	ArtifactID   string    `json:"artifact_id"`
+	TraceID      string    `json:"trace_id,omitempty"`
 	WorkstreamID string    `json:"workstream_id"`
 	Type         string    `json:"artifact_type"`
 	FilePath     string    `json:"file_path,omitempty"`

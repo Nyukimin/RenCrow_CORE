@@ -129,7 +129,8 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		DecisionGate: dependencies.revenueHumanDecisionGate, DecisionReview: dependencies.revenueHumanDecisionReview,
 		DailyRoutine: dependencies.revenueDailyRoutine, ChannelDrafts: dependencies.revenueChannelDraft,
 		ExternalSend: dependencies.revenueExternalSendApply, Opportunities: dependencies.revenueOpportunities,
-		EconomicTasks: dependencies.revenueEconomicTasks, Reflections: dependencies.revenueEconomicReflections,
+		EconomicTasks: dependencies.revenueEconomicTasks, Deliveries: dependencies.revenueDeliveries,
+		Reflections:               dependencies.revenueEconomicReflections,
 		ReflectionFromEvent:       dependencies.revenueReflectionFromEvent,
 		OpportunityWorkstreamGoal: dependencies.revenueOpportunityGoal,
 	}})

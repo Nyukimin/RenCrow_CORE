@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	revenueapp "github.com/Nyukimin/RenCrow_CORE/internal/application/revenue"
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type RevenueLister interface {
@@ -41,6 +43,8 @@ type RevenueStore interface {
 	SaveOpportunity(ctx context.Context, item domainrevenue.Opportunity) error
 	SaveEconomicTask(ctx context.Context, item domainrevenue.EconomicTask) error
 	SaveEconomicReflection(ctx context.Context, item domainrevenue.EconomicReflection) error
+	SaveDelivery(ctx context.Context, item domainrevenue.Delivery) error
+	ListDeliveries(ctx context.Context, limit int) ([]domainrevenue.Delivery, error)
 }
 
 type RevenueHumanDecisionGateReviewRequest struct {
@@ -57,6 +61,9 @@ type RevenueDailyRoutineRequest struct {
 
 type RevenueExternalSendApplyRequest struct {
 	ApplyID        string `json:"apply_id"`
+	DeliveryID     string `json:"delivery_id,omitempty"`
+	TraceID        string `json:"trace_id,omitempty"`
+	OpportunityID  string `json:"opportunity_id,omitempty"`
 	DraftID        string `json:"draft_id"`
 	DecisionID     string `json:"decision_id"`
 	Destination    string `json:"destination,omitempty"`
@@ -530,6 +537,15 @@ func HandleRevenueEventCreate(store RevenueStore) http.HandlerFunc {
 		if item.CreatedAt.IsZero() {
 			item.CreatedAt = time.Now().UTC()
 		}
+		resolvedTraceID, status, err := resolveRevenueOpportunityTrace(r.Context(), store, item.OpportunityID, item.TraceID)
+		if err != nil {
+			http.Error(w, err.Error(), status)
+			return
+		}
+		item.TraceID = resolvedTraceID
+		if strings.TrimSpace(item.TraceID) == "" {
+			item.TraceID = string(modulecore.NewTraceID())
+		}
 		if err := store.SaveRevenueEvent(r.Context(), item); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -555,6 +571,22 @@ func HandleRevenueHumanDecisionGate(store RevenueStore) http.HandlerFunc {
 		}
 		if item.CreatedAt.IsZero() {
 			item.CreatedAt = time.Now().UTC()
+		}
+		if strings.TrimSpace(item.TraceID) == "" && item.DecisionType == "closed_channel_send" && strings.TrimSpace(item.SubjectID) != "" {
+			drafts, err := store.ListChannelDrafts(r.Context(), 500)
+			if err != nil {
+				http.Error(w, "failed to load channel drafts", http.StatusInternalServerError)
+				return
+			}
+			for i := range drafts {
+				if drafts[i].DraftID == item.SubjectID {
+					item.TraceID = drafts[i].TraceID
+					break
+				}
+			}
+		}
+		if strings.TrimSpace(item.TraceID) == "" {
+			item.TraceID = string(modulecore.NewTraceID())
 		}
 		record := domainrevenue.BuildHumanDecisionGateRecord(item)
 		if err := store.SaveHumanDecisionGateRecord(r.Context(), record); err != nil {
@@ -614,6 +646,7 @@ func HandleRevenueHumanDecisionGateReview(store RevenueStore) http.HandlerFunc {
 		}
 		decision := domainrevenue.HumanDecisionGateRequest{
 			DecisionID:     current.DecisionID,
+			TraceID:        current.TraceID,
 			DecisionType:   current.DecisionType,
 			SubjectID:      current.SubjectID,
 			Description:    current.Description,
@@ -695,6 +728,15 @@ func HandleRevenueChannelDraftCreate(store RevenueStore) http.HandlerFunc {
 		if item.CreatedAt.IsZero() {
 			item.CreatedAt = time.Now().UTC()
 		}
+		resolvedTraceID, status, err := resolveRevenueOpportunityTrace(r.Context(), store, item.OpportunityID, item.TraceID)
+		if err != nil {
+			http.Error(w, err.Error(), status)
+			return
+		}
+		item.TraceID = resolvedTraceID
+		if strings.TrimSpace(item.TraceID) == "" {
+			item.TraceID = string(modulecore.NewTraceID())
+		}
 		if err := store.SaveChannelDraft(r.Context(), item); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -768,8 +810,51 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			return
 		}
 
+		traceID := strings.TrimSpace(req.TraceID)
+		for _, candidate := range []string{strings.TrimSpace(draft.TraceID), strings.TrimSpace(decision.TraceID)} {
+			if candidate == "" {
+				continue
+			}
+			if traceID != "" && traceID != candidate {
+				http.Error(w, "trace_id does not match draft or decision", http.StatusConflict)
+				return
+			}
+			traceID = candidate
+		}
+		if traceID == "" {
+			traceID = string(modulecore.NewTraceID())
+		}
+		deliveryID := strings.TrimSpace(req.DeliveryID)
+		if deliveryID == "" {
+			deliveryID = "delivery_" + strings.TrimSpace(req.ApplyID)
+		}
+		now := time.Now().UTC()
+		delivery := domainrevenue.Delivery{
+			DeliveryID:     deliveryID,
+			TraceID:        traceID,
+			OpportunityID:  strings.TrimSpace(req.OpportunityID),
+			WorkstreamID:   draft.WorkstreamID,
+			ApprovalID:     decision.DecisionID,
+			DeliveryKind:   "external_send",
+			Status:         "blocked",
+			Target:         strings.TrimSpace(req.Destination),
+			Result:         "not_sent",
+			ExternalAction: true,
+			CreatedAt:      now,
+		}
+		delivery, err = revenueapp.NewEconomicService(store, time.Now).RecordDelivery(r.Context(), delivery)
+		if err != nil {
+			if err == revenueapp.ErrOpportunityNotFound {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		record := domainrevenue.ExternalSendApplyRecord{
 			ApplyID:             strings.TrimSpace(req.ApplyID),
+			TraceID:             traceID,
+			DeliveryID:          deliveryID,
 			DraftID:             draft.DraftID,
 			DecisionID:          decision.DecisionID,
 			Channel:             draft.Channel,
@@ -782,7 +867,7 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			FailureReason:       "external channel adapter is not configured",
 			PostSendVerified:    false,
 			ExternalSendApplied: false,
-			CreatedAt:           time.Now().UTC(),
+			CreatedAt:           now,
 		}
 		if err := store.SaveExternalSendApplyRecord(r.Context(), record); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -790,6 +875,7 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"external_send_apply_record":             record,
+			"delivery":                               delivery,
 			"external_actions_applied":               false,
 			"post_send_verified":                     false,
 			"human_approval_required_for_retry":      true,
@@ -797,6 +883,32 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			"failure_reason":                         record.FailureReason,
 		})
 	}
+}
+
+func resolveRevenueOpportunityTrace(ctx context.Context, store RevenueStore, opportunityID, traceID string) (string, int, error) {
+	opportunityID = strings.TrimSpace(opportunityID)
+	traceID = strings.TrimSpace(traceID)
+	if opportunityID == "" {
+		return traceID, 0, nil
+	}
+	opportunities, err := store.ListOpportunities(ctx, 500)
+	if err != nil {
+		return "", http.StatusInternalServerError, fmt.Errorf("failed to load opportunities")
+	}
+	for _, opportunity := range opportunities {
+		if opportunity.OpportunityID != opportunityID {
+			continue
+		}
+		opportunityTraceID := strings.TrimSpace(opportunity.TraceID)
+		if traceID != "" && opportunityTraceID != "" && traceID != opportunityTraceID {
+			return "", http.StatusConflict, fmt.Errorf("trace_id does not match opportunity")
+		}
+		if traceID == "" {
+			traceID = opportunityTraceID
+		}
+		return traceID, 0, nil
+	}
+	return "", http.StatusNotFound, revenueapp.ErrOpportunityNotFound
 }
 
 func decodeRevenuePost(w http.ResponseWriter, r *http.Request, out any, store RevenueStore) bool {

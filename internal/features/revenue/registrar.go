@@ -25,6 +25,7 @@ type Routes struct {
 	ExternalSend              http.HandlerFunc
 	Opportunities             http.HandlerFunc
 	EconomicTasks             http.HandlerFunc
+	Deliveries                http.HandlerFunc
 	Reflections               http.HandlerFunc
 	ReflectionFromEvent       http.HandlerFunc
 	OpportunityWorkstreamGoal http.HandlerFunc
@@ -45,6 +46,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/revenue/channel-drafts/external-send-apply", routes.ExternalSend)
 	registerRoute(mux, "/viewer/revenue/opportunities", routes.Opportunities)
 	registerRoute(mux, "/viewer/revenue/economic-tasks", routes.EconomicTasks)
+	registerRoute(mux, "/viewer/revenue/deliveries", routes.Deliveries)
 	registerRoute(mux, "/viewer/revenue/economic-reflections", routes.Reflections)
 	registerRoute(mux, "/viewer/revenue/economic-reflections/from-revenue-event", routes.ReflectionFromEvent)
 	registerRoute(mux, "/viewer/revenue/opportunities/workstream-goal", routes.OpportunityWorkstreamGoal)

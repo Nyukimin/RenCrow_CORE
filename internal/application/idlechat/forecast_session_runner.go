@@ -70,7 +70,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		// ドメインアナウンス
 		announce := fmt.Sprintf("%sのテーマの時間です。", domain.Name)
 		log.Printf("[Forecast] [Domain %d/%d] %s", domainIdx+1, len(sessionDomains), domain.Name)
-		announceMessageID := fmt.Sprintf("%s:domain:%04d", sessionID, domainIdx)
+		announceMessageID := newIdleChatMessageID()
 
 		announceMsg := domaintransport.NewMessage("user", "mio", sessionID, "", announce)
 		announceMsg.Type = domaintransport.MessageTypeIdleChat
@@ -123,7 +123,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 
 		// Viewer/TTS には通常 IdleChat と同じ topic イベント契約で表示する。
 		topicAnnounce := fmt.Sprintf("今日のお題（%s）: %s", StrategyForecast, displayTopic)
-		topicMessageID := fmt.Sprintf("%s:topic:%04d", sessionID, domainIdx)
+		topicMessageID := newIdleChatMessageID()
 		topicMsg := domaintransport.NewMessage("user", "mio", sessionID, "", topicAnnounce)
 		topicMsg.Type = domaintransport.MessageTypeIdleChat
 		topicMsg.Context = idleChatMessageContext(topicMessageID, 0)
@@ -223,7 +223,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 			o.mu.Unlock()
 
 			turnIndex := totalTurns + 1
-			messageID := idleChatMessageID(sessionID, turnIndex)
+			messageID := o.idleChatMessageID(sessionID, turnIndex)
 			msg := domaintransport.NewMessage(speaker, nextSpeaker, sessionID, "", response)
 			msg.Type = domaintransport.MessageTypeIdleChat
 			msg.Context = idleChatMessageContext(messageID, turnIndex)

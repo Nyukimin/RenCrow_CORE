@@ -1,6 +1,7 @@
 package idlechat
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ func TestEmitTopicToTimelineDoesNotWaitForTTSCompletion(t *testing.T) {
 		if ev.Type != "idlechat.topic" {
 			t.Fatalf("unexpected event type: %s", ev.Type)
 		}
-		if ev.MessageID != "idle-wait:topic" || ev.TurnIndex != 0 {
+		if !strings.HasPrefix(ev.MessageID, "msg_") || ev.TurnIndex != 0 {
 			t.Fatalf("unexpected topic identity: %+v", ev)
 		}
 		eventSeen <- struct{}{}

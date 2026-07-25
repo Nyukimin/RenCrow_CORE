@@ -16,10 +16,12 @@ type fakeOpportunityStore struct {
 	tasks         []revenuedomain.EconomicTask
 	reflections   []revenuedomain.EconomicReflection
 	events        []revenuedomain.RevenueEvent
+	deliveries    []revenuedomain.Delivery
 }
 
 func (f *fakeOpportunityStore) SaveOpportunity(_ context.Context, item revenuedomain.Opportunity) error {
 	f.item = item
+	f.opportunities = append(f.opportunities, item)
 	return nil
 }
 
@@ -47,6 +49,15 @@ func (f *fakeOpportunityStore) ListEconomicReflections(context.Context, int) ([]
 
 func (f *fakeOpportunityStore) ListRevenueEvents(context.Context, int) ([]revenuedomain.RevenueEvent, error) {
 	return append([]revenuedomain.RevenueEvent(nil), f.events...), nil
+}
+
+func (f *fakeOpportunityStore) SaveDelivery(_ context.Context, item revenuedomain.Delivery) error {
+	f.deliveries = append(f.deliveries, item)
+	return nil
+}
+
+func (f *fakeOpportunityStore) ListDeliveries(context.Context, int) ([]revenuedomain.Delivery, error) {
+	return append([]revenuedomain.Delivery(nil), f.deliveries...), nil
 }
 
 type fakeGoalStore struct{ goals []workstreamdomain.Goal }
@@ -85,6 +96,45 @@ func TestEconomicServiceDraftOpportunityCalculatesProfitAndStores(t *testing.T) 
 	}
 	if zeroRevenue.ProfitMargin != 0 || zeroRevenue.ExpectedProfit != 0 {
 		t.Fatalf("zero revenue economics not normalized: %#v", zeroRevenue)
+	}
+}
+
+func TestEconomicServiceGeneratesAndPropagatesTraceToTaskAndDelivery(t *testing.T) {
+	now := time.Date(2026, 7, 14, 1, 2, 3, 0, time.UTC)
+	store := &fakeOpportunityStore{}
+	service := NewEconomicService(store, func() time.Time { return now }).
+		WithTraceIDGenerator(func() string { return "trc_fixed" })
+
+	opportunity, err := service.DraftOpportunity(context.Background(), revenuedomain.Opportunity{
+		OpportunityID: "opp-trace", SourceKind: "note", Title: "Trace chain",
+	})
+	if err != nil {
+		t.Fatalf("DraftOpportunity failed: %v", err)
+	}
+	if opportunity.TraceID != "trc_fixed" {
+		t.Fatalf("opportunity trace_id = %q", opportunity.TraceID)
+	}
+
+	task, err := service.DraftEconomicTask(context.Background(), revenuedomain.EconomicTask{
+		TaskID: "task-trace", OpportunityID: opportunity.OpportunityID, AgentID: "shiro",
+		TaskKind: "draft_report", ApprovalMode: "none",
+	})
+	if err != nil {
+		t.Fatalf("DraftEconomicTask failed: %v", err)
+	}
+	if task.TraceID != opportunity.TraceID {
+		t.Fatalf("task trace_id = %q, want %q", task.TraceID, opportunity.TraceID)
+	}
+
+	delivery, err := service.RecordDelivery(context.Background(), revenuedomain.Delivery{
+		DeliveryID: "delivery-trace", OpportunityID: opportunity.OpportunityID,
+		DeliveryKind: "handoff", Status: "completed", Target: "internal-review",
+	})
+	if err != nil {
+		t.Fatalf("RecordDelivery failed: %v", err)
+	}
+	if delivery.TraceID != opportunity.TraceID || len(store.deliveries) != 1 {
+		t.Fatalf("delivery trace was not propagated: delivery=%#v stored=%#v", delivery, store.deliveries)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/voiceinput"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const voiceChatSurfaceReason = voiceinput.SurfaceVoiceChat
@@ -116,6 +117,9 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 		NewJobID: func() string {
 			return task.NewJobID().String()
 		},
+		NewMessageID: func() string {
+			return string(modulecore.NewMessageID())
+		},
 		EmitMetric: func(kind, point string, startedAt time.Time, route, jobID, sessionID, channel, chatID, detail string) {
 			emitLatencyMetric(o.events.Emit, kind, point, startedAt, route, jobID, sessionID, channel, chatID, detail)
 		},
@@ -145,7 +149,11 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	}
 
 	_ = ctx
-	return o.responses.Build(result.Reply, decision, jobID), nil
+	return ensureProcessResponseIdentity(
+		o.responses.Build(result.Reply, decision, jobID),
+		jobID.String(),
+		o.events.TakeResponseMessageID,
+	), nil
 }
 
 // NotifyVoiceDirectFirstToken は bridge が初回 llm.delta を転送したタイミングで呼ぶ。

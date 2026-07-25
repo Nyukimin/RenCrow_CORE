@@ -175,7 +175,7 @@ func TestEmitTopicUsesTopicEventOutsideConversationTurns(t *testing.T) {
 	if emitted[0].Type != "idlechat.topic" {
 		t.Fatalf("topic event type = %q, want idlechat.topic", emitted[0].Type)
 	}
-	if emitted[0].MessageID != "idle-topic-contract:topic" || emitted[0].TurnIndex != 0 {
+	if !strings.HasPrefix(emitted[0].MessageID, "msg_") || emitted[0].TurnIndex != 0 {
 		t.Fatalf("topic identity = %+v", emitted[0])
 	}
 	if emitted[0].Category != TopicCategoryExternal || emitted[0].Strategy != StrategyExternalStimulus {

@@ -2,6 +2,7 @@ package idlechat
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
@@ -56,8 +57,11 @@ func TestGenerateResponseWithRawStreamsPrimaryTokensToPrefetchEmitter(t *testing
 		if got[i].SessionID != "idle-prefetch" {
 			t.Fatalf("event[%d] session_id = %q, want idle-prefetch", i, got[i].SessionID)
 		}
-		if got[i].MessageID != "idle-prefetch:msg:0002" {
-			t.Fatalf("event[%d] message_id = %q, want idle-prefetch:msg:0002", i, got[i].MessageID)
+		if !strings.HasPrefix(got[i].MessageID, "msg_") {
+			t.Fatalf("event[%d] message_id = %q, want UUID message identity", i, got[i].MessageID)
+		}
+		if got[i].MessageID != got[0].MessageID {
+			t.Fatalf("event[%d] message_id = %q, want same logical response ID %q", i, got[i].MessageID, got[0].MessageID)
 		}
 		if got[i].Token != token {
 			t.Fatalf("event[%d] token = %q, want %q", i, got[i].Token, token)

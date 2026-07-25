@@ -203,6 +203,7 @@ func (o *IdleChatOrchestrator) activateIdleSession(sessionID string) uint64 {
 		o.beginIdleRunLocked()
 	}
 	o.activeSessionID = strings.TrimSpace(sessionID)
+	o.messageIDs = make(map[string]string)
 	if o.interruptedSessions != nil {
 		delete(o.interruptedSessions, o.activeSessionID)
 	}
@@ -328,7 +329,7 @@ func idleChatMessageMetadata(msg domaintransport.Message, fallbackIndex int) (st
 			return strings.TrimSpace(id), turnIndex
 		}
 	}
-	return idleChatMessageID(msg.SessionID, turnIndex), turnIndex
+	return legacyIdleChatMessageID(msg.SessionID, turnIndex), turnIndex
 }
 
 func (o *IdleChatOrchestrator) getHistoricalTitleThemes(limit int) []string {

@@ -289,6 +289,37 @@ func TestValidateExternalSendApplyRecordRequiresApprovedHumanDecision(t *testing
 	}
 }
 
+func TestValidateDeliveryRequiresStableTraceAndProtectsExternalCompletion(t *testing.T) {
+	now := time.Now().UTC()
+	valid := Delivery{
+		DeliveryID:     "delivery_1",
+		TraceID:        "trc_1",
+		DeliveryKind:   "billing",
+		Status:         "pending",
+		Target:         "customer_1",
+		ExternalAction: true,
+		CreatedAt:      now,
+	}
+	if err := ValidateDelivery(valid); err != nil {
+		t.Fatalf("valid pending delivery rejected: %v", err)
+	}
+	withoutTrace := valid
+	withoutTrace.TraceID = ""
+	if err := ValidateDelivery(withoutTrace); err == nil {
+		t.Fatal("delivery without trace_id must be rejected")
+	}
+	completed := valid
+	completed.Status = "completed"
+	if err := ValidateDelivery(completed); err == nil {
+		t.Fatal("completed external delivery without approval/evidence must be rejected")
+	}
+	completed.ApprovalID = "approval_1"
+	completed.Evidence = "receipt_1"
+	if err := ValidateDelivery(completed); err != nil {
+		t.Fatalf("approved and evidenced delivery rejected: %v", err)
+	}
+}
+
 func TestValidateExternalSendApplyRecordRequiredFieldsAndStatuses(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	validBlocked := ExternalSendApplyRecord{

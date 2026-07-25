@@ -104,6 +104,11 @@ func (s *SQLiteStore) migrate() error {
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS delivery (
+			delivery_id TEXT PRIMARY KEY,
+			created_at TEXT,
+			payload TEXT NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -244,6 +249,17 @@ func (s *SQLiteStore) SaveExternalSendApplyRecord(ctx context.Context, item doma
 
 func (s *SQLiteStore) ListExternalSendApplyRecords(ctx context.Context, limit int) ([]domainrevenue.ExternalSendApplyRecord, error) {
 	return listSQLiteItems[domainrevenue.ExternalSendApplyRecord](ctx, s, "external_send_apply", limit)
+}
+
+func (s *SQLiteStore) SaveDelivery(ctx context.Context, item domainrevenue.Delivery) error {
+	if err := domainrevenue.ValidateDelivery(item); err != nil {
+		return err
+	}
+	return s.save(ctx, "delivery", "delivery_id", item.DeliveryID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+}
+
+func (s *SQLiteStore) ListDeliveries(ctx context.Context, limit int) ([]domainrevenue.Delivery, error) {
+	return listSQLiteItems[domainrevenue.Delivery](ctx, s, "delivery", limit)
 }
 
 func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, id string, createdAt string, item any) error {

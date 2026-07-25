@@ -29,6 +29,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `/viewer/workstreams/*` | goal、artifact、annotation、heartbeat、review |
 | `/viewer/advisors/*`, `/viewer/agents/profiles` | Advisor run/score と AgentProfile |
 | `/viewer/revenue/*` | Opportunity、EconomicTask、RevenueEvent、Reflection、approval |
+| `GET/POST /viewer/revenue/deliveries` | trace付き汎用Deliveryの一覧・draft/状態record作成 |
 | `/viewer/memory/*` | memory event、Recall、ProfilePromotion job の観測 |
 | `GET /viewer/movie-catalog` | 映画・俳優catalogと利用者評価の一覧・詳細 |
 | `POST /viewer/movie-catalog/preference` | 映画・俳優の認知・好み評価を保存 |
@@ -118,7 +119,11 @@ renameを移行要件にしません。
 
 `POST /viewer/send`は`message`、`to`に加えて、clientを追跡できる場合は`viewer_client_id`、`input_source`（`text | stt | unknown`）、`user_id`、`device_name`を受けます。`input_source`の未知値は400で拒否します。`user_id`と`device_name`は観測用metadataであり、認証・認可には使用しません。PORTALに利用者認証がない現行構成では`user_id=viewer-user`、`device_name`はブラウザが公開するOS／platform名であり、端末hostnameではありません。
 
-COREは受付時に`job_id`を発行し、HTTP responseの`job_id`、`viewer_client_id`、`recipient`と、同じ処理から発行する`message.received`、`agent.response`、error eventの`job_id`を一致させます。受付・開始・完了・errorログには同じ`job_id`とともに、`operation_source`、`input_source`、`user_id`、`device_name`、`source_ip_masked`、`source_ip_hash`、`user_agent`を記録します。接続元IPは生値を記録せず、IPv4は末尾octetをマスク、IPv6は`/64`へマスクし、同一接続元の相関用hashを併記します。`session_id`は会話sessionの単位であり、1 request / responseの完了判定には使いません。
+COREは受付時に`job_id`、root `trace_id`、利用者発話の`message_id`を発行します。`POST /viewer/send`の受付responseは`job_id`、`trace_id`、`message_id`、`viewer_client_id`、`recipient`を返します。現行のroot `trace_id`は`job_id`と同じopaque値です。同じ処理から発行する`message.received`、`agent.response`、error eventは同じ`trace_id`を持ち、`message.received.message_id`は受付responseの`message_id`と一致します。Agent発話は利用者発話とは別の`message_id`を持ちます。
+
+`message_id`は`msg_` prefix付きUUIDのopaque値です。clientは形式を解析せず、SSE再接続・再送時の重複排除と、同じ発話に由来する表示・保存の対応付けに使用します。`turn_index`は表示順の補助であり、IDの代替にしません。受付・開始・完了・errorログには同じ`trace_id`と`job_id`を、会話本文を持つlogには対応する`message_id`を記録します。TTS eventはmessage確定後なら同じ`message_id`を持ち、stream開始時に未確定なら従来どおり`response_id`で応答へ対応付けます。
+
+受付・開始・完了・errorログには`operation_source`、`input_source`、`user_id`、`device_name`、`source_ip_masked`、`source_ip_hash`、`user_agent`も記録します。接続元IPは生値を記録せず、IPv4は末尾octetをマスク、IPv6は`/64`へマスクし、同一接続元の相関用hashを併記します。`session_id`は会話sessionの単位であり、1 request / responseの完了判定には使いません。
 
 `X-RenCrow-Client: RenCrow_CMD`で送られたterminal text chatは音声を消費しないため、COREはTTS sessionを開始しません。PORTAL／Debug Viewerなど音声再生能力を持つclientのTTS契約は維持します。client provenanceは観測と出力能力の選択に使う情報であり、認証・認可の代替にはしません。
 
@@ -134,6 +139,8 @@ TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`respon
 `GET /viewer/idlechat/collection`は、`status`、`skill_id`（`core.build-daily-source-brief`）、`schedule`、`timezone`、`fetched_at`、`next_run_at`、ニュース件数、Wikipedia件数、カテゴリ／source別件数、`items`、`sources`、`tools`を返します。分析状態は`enrichment_status`（`pending`、`enriching`、`ready`、`partial`、`fallback`）、`enrichment_provider`、`enrichment_error`、`enriched_at`で確認できます。収集後の分析は`Worker`が記事を1件ずつ完了させ、`enriching`中も完了済み記事を順次snapshotへ反映します。`ChatWorker`は使用しません。`items`はtitle、category、source、`source_type`、元URL、`source_read_status`（`ready`／`unavailable`／`unprocessed`）、`source_read_url`、原文の日本語訳`translated_body`、`summary`、事実と分離したShiroの`perspective`、`term_notes`を持ちます。`term_notes`は用語、説明、確認方法、確認元URL、`contextual`／`confirmed`／`unresolved`／`unavailable`の状態を返します。表示順は「原文翻訳 → サマリ → Shiroの見解 → 用語補足」です。`sources`はcredentialを除いた取得先設定を持ちます。このGETは現在のプロセス内cacheをコピーして返す観測用snapshotであり、収集、分析、再収集、cache消費、Memory昇格を開始しません。
 
 `GET /viewer/movie-catalog?action=movies|people`は一覧項目に`familiarity`、`sentiment`、`assessed`を返します。映画の`familiarity`は`seen | unseen | ""`、俳優の`familiarity`は`known | unknown | ""`、`sentiment`は共通で`like | dislike | ""`です。`POST /viewer/movie-catalog/preference`へ`kind`（`movie | person`）、`target_id`、`target_label`、`dimension`（`familiarity | sentiment`）、`value`、`generated_by`を送ると一方のdimensionだけを更新し、他方を維持します。空の`value`はそのdimensionを明示的な未選択へ戻します。Viewer内部のwrite APIであり、PORTALへ自動公開しません。
+
+Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCOREが生成します。EconomicTask、Delivery、RevenueEvent、Reflectionの作成では、参照元Opportunityまたは上流entityの`trace_id`を引き継ぎ、別の値へ黙って付け替えません。`POST /viewer/revenue/deliveries`は`delivery_id`、`trace_id`、`delivery_kind`、`status`、任意の上流IDとtarget/evidenceを受けます。`external_action=true`かつ`status=completed`では`approval_id`と`evidence`が必須です。
 
 ## Interaction client共通意味論
 

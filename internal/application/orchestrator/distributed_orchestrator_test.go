@@ -193,6 +193,9 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 	if resp.JobID != "viewer-distributed-job" {
 		t.Errorf("JobID = %q, want viewer-distributed-job", resp.JobID)
 	}
+	if resp.TraceID != resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
+		t.Fatalf("response identity is incomplete: %+v", resp)
+	}
 }
 
 func TestDistributedOrchestrator_ProcessMessage_ViewerRecipientBecomesChatSpeaker(t *testing.T) {

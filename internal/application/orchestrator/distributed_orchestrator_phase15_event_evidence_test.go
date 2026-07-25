@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,14 +34,20 @@ func TestPhase15DistributedEventPortAssignsStableConversationIdentity(t *testing
 	port.Emit("agent.response", "mio", "user", "hi", "CHAT", "job-1", "session-1", "line", "chat-1")
 	port.Emit("agent.note", "mio", "user", "note", "CHAT", "job-1", "session-1", "line", "chat-1")
 
-	if listener.events[0].MessageID != "session-1:chat:msg:0001" || listener.events[0].TurnIndex != 1 {
+	if !strings.HasPrefix(listener.events[0].MessageID, "msg_") || listener.events[0].TurnIndex != 1 {
 		t.Fatalf("first conversation identity = %#v", listener.events[0])
 	}
-	if listener.events[1].MessageID != "session-1:chat:msg:0002" || listener.events[1].TurnIndex != 2 {
+	if !strings.HasPrefix(listener.events[1].MessageID, "msg_") || listener.events[1].TurnIndex != 2 {
 		t.Fatalf("second conversation identity = %#v", listener.events[1])
+	}
+	if listener.events[0].MessageID == listener.events[1].MessageID {
+		t.Fatalf("different messages must have different IDs: %#v", listener.events)
 	}
 	if listener.events[2].MessageID != "" || listener.events[2].TurnIndex != 0 {
 		t.Fatalf("non conversation event should not get conversation identity: %#v", listener.events[2])
+	}
+	if listener.events[1].TraceID != "job-1" || listener.events[2].TraceID != "job-1" {
+		t.Fatalf("all job events must retain trace_id: %#v", listener.events)
 	}
 }
 

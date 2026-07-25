@@ -8,6 +8,7 @@ import (
 
 	revenuedomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
 	workstreamdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type OpportunityStore interface {
@@ -22,6 +23,8 @@ type EconomicStore interface {
 	SaveEconomicReflection(ctx context.Context, item revenuedomain.EconomicReflection) error
 	ListEconomicReflections(ctx context.Context, limit int) ([]revenuedomain.EconomicReflection, error)
 	ListRevenueEvents(ctx context.Context, limit int) ([]revenuedomain.RevenueEvent, error)
+	SaveDelivery(ctx context.Context, item revenuedomain.Delivery) error
+	ListDeliveries(ctx context.Context, limit int) ([]revenuedomain.Delivery, error)
 }
 
 type WorkstreamGoalStore interface {
@@ -37,6 +40,7 @@ type EconomicService struct {
 	store           OpportunityStore
 	workstreamGoals WorkstreamGoalStore
 	now             func() time.Time
+	newTraceID      func() string
 }
 
 func (s *EconomicService) WithWorkstreamGoalStore(store WorkstreamGoalStore) *EconomicService {
@@ -50,7 +54,20 @@ func NewEconomicService(store OpportunityStore, now func() time.Time) *EconomicS
 	if now == nil {
 		now = time.Now
 	}
-	return &EconomicService{store: store, now: now}
+	return &EconomicService{
+		store: store,
+		now:   now,
+		newTraceID: func() string {
+			return string(modulecore.NewTraceID())
+		},
+	}
+}
+
+func (s *EconomicService) WithTraceIDGenerator(generate func() string) *EconomicService {
+	if s != nil && generate != nil {
+		s.newTraceID = generate
+	}
+	return s
 }
 
 func (s *EconomicService) DraftEconomicTask(ctx context.Context, item revenuedomain.EconomicTask) (revenuedomain.EconomicTask, error) {
@@ -69,6 +86,15 @@ func (s *EconomicService) DraftEconomicTask(ctx context.Context, item revenuedom
 	}
 	if item.ApprovalMode == "" && !revenuedomain.RequiresHumanApproval(item.TaskKind) {
 		item.ApprovalMode = "none"
+	}
+	opportunity, err := findOpportunity(ctx, store, item.OpportunityID)
+	if err != nil {
+		return revenuedomain.EconomicTask{}, err
+	}
+	if item.TraceID == "" {
+		item.TraceID = opportunity.TraceID
+	} else if opportunity.TraceID != "" && item.TraceID != opportunity.TraceID {
+		return revenuedomain.EconomicTask{}, fmt.Errorf("trace_id must match opportunity")
 	}
 	if err := revenuedomain.ValidateEconomicTask(item); err != nil {
 		return revenuedomain.EconomicTask{}, err
@@ -89,6 +115,15 @@ func (s *EconomicService) DraftReflection(ctx context.Context, item revenuedomai
 	}
 	if item.CreatedAt.IsZero() {
 		item.CreatedAt = s.now().UTC()
+	}
+	opportunity, err := findOpportunity(ctx, store, item.OpportunityID)
+	if err != nil {
+		return revenuedomain.EconomicReflection{}, err
+	}
+	if item.TraceID == "" {
+		item.TraceID = opportunity.TraceID
+	} else if opportunity.TraceID != "" && item.TraceID != opportunity.TraceID {
+		return revenuedomain.EconomicReflection{}, fmt.Errorf("trace_id must match opportunity")
 	}
 	if err := revenuedomain.ValidateEconomicReflection(item); err != nil {
 		return revenuedomain.EconomicReflection{}, err
@@ -160,7 +195,7 @@ func (s *EconomicService) ReflectRevenueEvent(ctx context.Context, req Reflectio
 		return revenuedomain.EconomicReflection{}, ErrRevenueEventNotFound
 	}
 	return s.DraftReflection(ctx, revenuedomain.EconomicReflection{
-		ReflectionID: req.ReflectionID, OpportunityID: opportunity.OpportunityID, RevenueEventID: event.EventID,
+		ReflectionID: req.ReflectionID, TraceID: firstNonEmptyTraceID(event.TraceID, opportunity.TraceID), OpportunityID: opportunity.OpportunityID, RevenueEventID: event.EventID,
 		Outcome: req.Outcome, NetProfit: event.Amount - opportunity.ExpectedCost,
 		Lessons: append([]string(nil), req.Lessons...), NextActions: append([]string(nil), req.NextActions...), CreatedAt: s.now().UTC(),
 	})
@@ -189,6 +224,9 @@ func (s *EconomicService) DraftOpportunity(ctx context.Context, item revenuedoma
 	if item.ApprovalState == "" {
 		item.ApprovalState = "draft"
 	}
+	if item.TraceID == "" {
+		item.TraceID = s.newTraceID()
+	}
 	item = revenuedomain.NormalizeOpportunityEconomics(item)
 	if err := revenuedomain.ValidateOpportunity(item); err != nil {
 		return revenuedomain.Opportunity{}, err
@@ -201,6 +239,49 @@ func (s *EconomicService) DraftOpportunity(ctx context.Context, item revenuedoma
 	return item, nil
 }
 
+func (s *EconomicService) RecordDelivery(ctx context.Context, item revenuedomain.Delivery) (revenuedomain.Delivery, error) {
+	if s == nil {
+		return revenuedomain.Delivery{}, fmt.Errorf("economic store is required")
+	}
+	store, ok := s.store.(EconomicStore)
+	if !ok {
+		return revenuedomain.Delivery{}, fmt.Errorf("economic store is required")
+	}
+	if item.OpportunityID != "" {
+		opportunity, err := findOpportunity(ctx, store, item.OpportunityID)
+		if err != nil {
+			return revenuedomain.Delivery{}, err
+		}
+		if item.TraceID == "" {
+			item.TraceID = opportunity.TraceID
+		} else if opportunity.TraceID != "" && item.TraceID != opportunity.TraceID {
+			return revenuedomain.Delivery{}, fmt.Errorf("trace_id must match opportunity")
+		}
+	}
+	if item.TraceID == "" {
+		item.TraceID = s.newTraceID()
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = s.now().UTC()
+	}
+	if err := revenuedomain.ValidateDelivery(item); err != nil {
+		return revenuedomain.Delivery{}, err
+	}
+	if err := store.SaveDelivery(ctx, item); err != nil {
+		return revenuedomain.Delivery{}, err
+	}
+	return item, nil
+}
+
+func firstNonEmptyTraceID(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func GoalFromOpportunity(item revenuedomain.Opportunity, workstreamID string, now time.Time) (workstreamdomain.Goal, error) {
 	item = revenuedomain.NormalizeOpportunityEconomics(item)
 	if err := revenuedomain.ValidateOpportunity(item); err != nil {
@@ -211,6 +292,7 @@ func GoalFromOpportunity(item revenuedomain.Opportunity, workstreamID string, no
 	}
 	return workstreamdomain.Goal{
 		GoalID:       "goal_" + item.OpportunityID,
+		TraceID:      item.TraceID,
 		WorkstreamID: workstreamID,
 		Title:        item.Title,
 		Description:  item.Summary,

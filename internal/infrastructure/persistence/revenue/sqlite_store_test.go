@@ -137,6 +137,12 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveExternalSendApplyRecord failed: %v", err)
 	}
+	if err := store.SaveDelivery(ctx, domainrevenue.Delivery{
+		DeliveryID: "delivery_1", TraceID: "trc_1", OpportunityID: "opp_1",
+		DeliveryKind: "handoff", Status: "completed", Target: "internal-review", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveDelivery failed: %v", err)
+	}
 	assertOne := func(name string, err error, got int) {
 		t.Helper()
 		if err != nil || got != 1 {
@@ -170,6 +176,8 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 	assertOne("channel drafts", err, len(drafts))
 	applies, err := store.ListExternalSendApplyRecords(ctx, 10)
 	assertOne("external send applies", err, len(applies))
+	deliveries, err := store.ListDeliveries(ctx, 10)
+	assertOne("deliveries", err, len(deliveries))
 }
 
 func TestSQLiteStoreRejectsSuccessGuaranteeProduct(t *testing.T) {

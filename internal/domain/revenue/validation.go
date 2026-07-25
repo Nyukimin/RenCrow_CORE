@@ -215,6 +215,37 @@ func ValidateEconomicReflection(item EconomicReflection) error {
 	return nil
 }
 
+func ValidateDelivery(item Delivery) error {
+	if strings.TrimSpace(item.DeliveryID) == "" {
+		return errors.New("delivery_id is required")
+	}
+	if strings.TrimSpace(item.TraceID) == "" {
+		return errors.New("trace_id is required")
+	}
+	switch strings.TrimSpace(item.DeliveryKind) {
+	case "external_send", "publish", "billing", "contract", "handoff", "other":
+	default:
+		return errors.New("delivery_kind must be external_send, publish, billing, contract, handoff, or other")
+	}
+	switch strings.TrimSpace(item.Status) {
+	case "draft", "pending", "blocked", "failed", "completed", "cancelled":
+	default:
+		return errors.New("status must be draft, pending, blocked, failed, completed, or cancelled")
+	}
+	if item.ExternalAction && item.Status == "completed" {
+		if strings.TrimSpace(item.ApprovalID) == "" {
+			return errors.New("approval_id is required for completed external delivery")
+		}
+		if strings.TrimSpace(item.Evidence) == "" {
+			return errors.New("evidence is required for completed external delivery")
+		}
+	}
+	if item.CreatedAt.IsZero() {
+		return errors.New("created_at is required")
+	}
+	return nil
+}
+
 func ValidateDailyRoutineReport(item DailyRoutineReport) error {
 	if strings.TrimSpace(item.ReportID) == "" {
 		return errors.New("report_id is required")
@@ -469,6 +500,7 @@ func BuildHumanDecisionGateRecord(req HumanDecisionGateRequest) HumanDecisionGat
 	}
 	return HumanDecisionGateRecord{
 		DecisionID:       strings.TrimSpace(req.DecisionID),
+		TraceID:          strings.TrimSpace(req.TraceID),
 		DecisionType:     strings.TrimSpace(req.DecisionType),
 		SubjectID:        strings.TrimSpace(req.SubjectID),
 		Description:      req.Description,

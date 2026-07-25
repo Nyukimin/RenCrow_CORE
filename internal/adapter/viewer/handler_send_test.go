@@ -55,6 +55,14 @@ func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 	if jobID == "" {
 		t.Fatalf("viewer send response must include job_id: %#v", body)
 	}
+	traceID, _ := body["trace_id"].(string)
+	if traceID != jobID {
+		t.Fatalf("viewer send trace_id = %q, want root job_id %q", traceID, jobID)
+	}
+	messageID, _ := body["message_id"].(string)
+	if !strings.HasPrefix(messageID, "msg_") {
+		t.Fatalf("viewer send response must include generated message_id: %#v", body)
+	}
 	if body["viewer_client_id"] != "portal-tab-1" || body["recipient"] != "shiro" {
 		t.Fatalf("viewer send response must echo correlation fields: %#v", body)
 	}
@@ -69,6 +77,9 @@ func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 		}
 		if got.JobID != jobID || got.ViewerClientID != "portal-tab-1" {
 			t.Fatalf("correlation = job:%q client:%q, want job:%q client:portal-tab-1", got.JobID, got.ViewerClientID, jobID)
+		}
+		if got.TraceID != traceID || got.MessageID != messageID {
+			t.Fatalf("identity = trace:%q message:%q, want trace:%q message:%q", got.TraceID, got.MessageID, traceID, messageID)
 		}
 		want := RequestProvenance{
 			OperationSource: "RenCrow_PORTAL",

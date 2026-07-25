@@ -91,7 +91,7 @@ func (o *IdleChatOrchestrator) speakSummary(sessionID, summary string) <-chan st
 	o.waitBreak(topicBreak)
 	spokenSummary := "今回のまとめです。\n" + strings.TrimSpace(summary)
 	turnIndex := o.nextIdleChatTurnIndex(sessionID)
-	messageID := idleChatMessageID(sessionID, turnIndex)
+	messageID := o.idleChatMessageID(sessionID, turnIndex)
 	msg := domaintransport.NewMessage("mio", "user", sessionID, "", spokenSummary)
 	msg.Type = domaintransport.MessageTypeIdleChat
 	msg.Context = idleChatMessageContext(messageID, turnIndex)
@@ -217,7 +217,7 @@ func (o *IdleChatOrchestrator) saveSummary(sessionID, topic string, strategy Top
 	msg := domaintransport.NewMessage("shiro", "idlechat_summary", sessionID, "", title+"\n"+summary)
 	msg.Type = domaintransport.MessageTypeIdleChat
 	turnIndex := o.nextIdleChatTurnIndex(sessionID)
-	messageID := idleChatMessageID(sessionID, turnIndex)
+	messageID := o.idleChatMessageID(sessionID, turnIndex)
 	msg.Context = idleChatMessageContext(messageID, turnIndex)
 	o.memory.RecordMessage(msg)
 	o.emitTimelineEvent(TimelineEvent{

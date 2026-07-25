@@ -1,9 +1,11 @@
 package orchestrator
 
 import (
-	"fmt"
 	"strings"
+	"sync"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 var jst = time.FixedZone("JST", 9*60*60)
@@ -21,12 +23,13 @@ type OrchestratorEvent struct {
 	To         string `json:"to,omitempty"`          // target agent
 	Content    string `json:"content"`               // message content
 	RawContent string `json:"raw_content,omitempty"` // unedited model output for diagnostics
-	MessageID  string `json:"message_id,omitempty"`  // stable message identifier within a session
+	MessageID  string `json:"message_id,omitempty"`  // globally unique identity of one logical message
 	TurnIndex  int    `json:"turn_index,omitempty"`  // stable turn order within a session
 	Category   string `json:"category,omitempty"`    // domain-specific category (e.g. IdleChat topic category)
 	Strategy   string `json:"strategy,omitempty"`    // domain-specific strategy (e.g. IdleChat topic strategy)
 	Route      string `json:"route,omitempty"`       // routing category
 	JobID      string `json:"job_id,omitempty"`      // task identifier
+	TraceID    string `json:"trace_id,omitempty"`    // root interaction correlation identifier
 	SessionID  string `json:"session_id,omitempty"`  // session identifier
 	Channel    string `json:"channel,omitempty"`     // channel identifier
 	ChatID     string `json:"chat_id,omitempty"`     // chat identifier
@@ -42,6 +45,7 @@ func NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, ch
 		Content:   content,
 		Route:     route,
 		JobID:     jobID,
+		TraceID:   jobID,
 		SessionID: sessionID,
 		Channel:   channel,
 		ChatID:    chatID,
@@ -70,10 +74,48 @@ func conversationIdentitySession(sessionID, chatID string) string {
 	return "chat"
 }
 
-func conversationMessageID(sessionID string, turnIndex int) string {
-	sessionID = conversationIdentitySession(sessionID, "")
-	if turnIndex < 1 {
-		turnIndex = 1
+func conversationMessageID() string {
+	return string(modulecore.NewMessageID())
+}
+
+type conversationIdentityTracker struct {
+	mu                 sync.Mutex
+	turns              map[string]int
+	responseMessageIDs map[string]string
+}
+
+func newConversationIdentityTracker() *conversationIdentityTracker {
+	return &conversationIdentityTracker{
+		turns:              map[string]int{},
+		responseMessageIDs: map[string]string{},
 	}
-	return fmt.Sprintf("%s:chat:msg:%04d", sessionID, turnIndex)
+}
+
+func (t *conversationIdentityTracker) Assign(ev *OrchestratorEvent, preferredMessageID string) {
+	if t == nil || ev == nil || !isConversationMessageEvent(ev.Type) {
+		return
+	}
+	sessionID := conversationIdentitySession(ev.SessionID, ev.ChatID)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.turns[sessionID]++
+	ev.TurnIndex = t.turns[sessionID]
+	ev.MessageID = strings.TrimSpace(preferredMessageID)
+	if ev.MessageID == "" {
+		ev.MessageID = conversationMessageID()
+	}
+	if ev.Type == "agent.response" && strings.TrimSpace(ev.JobID) != "" {
+		t.responseMessageIDs[ev.JobID] = ev.MessageID
+	}
+}
+
+func (t *conversationIdentityTracker) TakeResponseMessageID(jobID string) string {
+	if t == nil || strings.TrimSpace(jobID) == "" {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	messageID := t.responseMessageIDs[jobID]
+	delete(t.responseMessageIDs, jobID)
+	return messageID
 }

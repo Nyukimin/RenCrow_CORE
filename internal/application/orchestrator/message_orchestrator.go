@@ -29,6 +29,8 @@ import (
 // ProcessMessageRequest はメッセージ処理リクエスト
 type ProcessMessageRequest struct {
 	JobID           string
+	MessageID       string
+	TraceID         string
 	SessionID       string
 	Channel         string
 	ChatID          string
@@ -44,6 +46,8 @@ type ProcessMessageResponse struct {
 	Route        routing.Route
 	Confidence   float64
 	JobID        string
+	MessageID    string                                 `json:"message_id,omitempty"`
+	TraceID      string                                 `json:"trace_id,omitempty"`
 	Verification *domainverification.VerificationReport `json:"verification,omitempty"`
 }
 
@@ -436,8 +440,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	ctx = contextWithLatencyTrace(ctx, latencyStartedAt)
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
-	log.Printf("[MessageOrch] ProcessMessage START: jobID=%s sessionID=%s channel=%s chatID=%s message=%q",
-		jobID.String(), req.SessionID, req.Channel, req.ChatID, req.UserMessage)
+	ensureProcessRequestIdentity(&req, jobID.String())
+	log.Printf("[MessageOrch] ProcessMessage START: jobID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
+		jobID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
 
 	endChatBusy := o.idleBusyGuards.BeginChat()
 	defer endChatBusy()
@@ -447,16 +452,17 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, err
 	}
 
-	emitLatencyMetric(o.events.Emit, "network", "server_received", latencyStartedAt, "", "", req.SessionID, req.Channel, req.ChatID, "")
-	if o.sessionTurnLogger != nil {
-		o.sessionTurnLogger.WriteUser(req.SessionID, req.Channel, req.UserMessage)
-	}
+	emitLatencyMetric(o.events.Emit, "network", "server_received", latencyStartedAt, "", jobID.String(), req.SessionID, req.Channel, req.ChatID, "")
+	writeUserSessionTurn(o.sessionTurnLogger, req)
 	if err := o.recordPersonaRuntimeObservation(ctx, req); err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	o.events.EmitMessageReceived(req, jobID.String())
 	if resp, handled, err := o.preRoutingCommands.Handle(ctx, req); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID)
+		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
 	if expandedReq, handled, err := o.expandRegisteredSlashCommand(ctx, req); err != nil {
@@ -465,11 +471,12 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		req = expandedReq
 	}
 
-	o.events.EmitMessageReceived(req, jobID.String())
 	t, jobID, ttsSessionID := o.taskContexts.BuildWithJobID(req, jobID)
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t.WithRoute(routing.RouteRESEARCH), jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID)
+		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
 
@@ -549,11 +556,13 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, err
 	}
 
-	log.Printf("[MessageOrch] ProcessMessage COMPLETE: jobID=%s route=%s response_len=%d",
-		jobID.String(), decision.Route, len(response))
-	if o.sessionTurnLogger != nil {
-		o.sessionTurnLogger.WriteAssistant(req.SessionID, req.Channel, string(decision.Route), jobID.String(), response)
-	}
-
-	return o.responses.BuildWithVerification(response, decision, jobID, verificationReport), nil
+	resp := ensureProcessResponseIdentity(
+		o.responses.BuildWithVerification(response, decision, jobID, verificationReport),
+		jobID.String(),
+		o.events.TakeResponseMessageID,
+	)
+	log.Printf("[MessageOrch] ProcessMessage COMPLETE: jobID=%s traceID=%s messageID=%s route=%s response_len=%d",
+		jobID.String(), resp.TraceID, resp.MessageID, decision.Route, len(response))
+	writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
+	return resp, nil
 }

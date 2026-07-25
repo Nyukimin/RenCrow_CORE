@@ -57,6 +57,7 @@ func NewIdleChatOrchestrator(
 		cancel:              cancel,
 		runCtx:              ctx,
 		interruptedSessions: make(map[string]struct{}),
+		messageIDs:          make(map[string]string),
 	}
 }
 

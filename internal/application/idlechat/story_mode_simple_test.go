@@ -2,7 +2,6 @@ package idlechat
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -182,9 +181,8 @@ func TestRunSimpleStorySessionEmitsUniqueStoryTTSMessageIDs(t *testing.T) {
 		t.Fatalf("story TTS id count=%d, want at least 4: %#v", len(ttsIDs), ttsIDs)
 	}
 	for i, id := range ttsIDs {
-		want := fmt.Sprintf(":story:%04d", i+1)
-		if !strings.Contains(id, want) {
-			t.Fatalf("story TTS id[%d]=%q, want sequential suffix containing %q", i, id, want)
+		if !strings.HasPrefix(id, "msg_") {
+			t.Fatalf("story TTS id[%d]=%q, want UUID message identity", i, id)
 		}
 	}
 }

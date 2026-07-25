@@ -18,8 +18,9 @@ import (
 func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (ProcessMessageResponse, error) {
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
-	log.Printf("[DistributedOrch] ProcessMessage START: jobID=%s sessionID=%s channel=%s chatID=%s message=%q",
-		jobID.String(), req.SessionID, req.Channel, req.ChatID, req.UserMessage)
+	ensureProcessRequestIdentity(&req, jobID.String())
+	log.Printf("[DistributedOrch] ProcessMessage START: jobID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
+		jobID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
 	startedAt := time.Now().UTC()
 
 	if o.idleNotifier != nil {
@@ -34,8 +35,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		return ProcessMessageResponse{}, fmt.Errorf("failed to load or create session: %w", err)
 	}
 
-	recipient := normalizeProcessViewerRecipient(req.To)
-	o.emit("message.received", "user", recipient, req.UserMessage, "", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+	o.events.EmitMessageReceived(req, jobID.String())
 	if expandedReq, handled, err := o.expandRegisteredSlashCommand(ctx, req); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
@@ -47,7 +47,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
-		return resp, nil
+		return ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID), nil
 	}
 
 	// 3. mio がルーティング決定
@@ -137,16 +137,17 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		return ProcessMessageResponse{}, err
 	}
 
-	log.Printf("[DistributedOrch] ProcessMessage COMPLETE: jobID=%s route=%s response_len=%d",
-		jobID.String(), decision.Route, len(response))
 	if decision.Route == routing.RouteCHAT {
 		o.saveExecutionReport(ctx, jobID.String(), req.UserMessage, string(decision.Route), startedAt, time.Now().UTC(), nil)
 	}
 
-	return ProcessMessageResponse{
+	resp := ensureProcessResponseIdentity(ProcessMessageResponse{
 		Response:   response,
 		Route:      decision.Route,
 		Confidence: decision.Confidence,
 		JobID:      jobID.String(),
-	}, nil
+	}, jobID.String(), o.events.TakeResponseMessageID)
+	log.Printf("[DistributedOrch] ProcessMessage COMPLETE: jobID=%s traceID=%s messageID=%s route=%s response_len=%d",
+		jobID.String(), resp.TraceID, resp.MessageID, decision.Route, len(response))
+	return resp, nil
 }

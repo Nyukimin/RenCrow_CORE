@@ -7,6 +7,7 @@ import (
 
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) <-chan struct{} {
@@ -26,7 +27,7 @@ func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) <-chan struct
 
 func (o *IdleChatOrchestrator) emitTopicToTimeline(sessionID, topic string, strategy TopicStrategy) <-chan struct{} {
 	content := fmt.Sprintf("今日のお題（%s）: %s", strategy, topic)
-	messageID := idleChatTopicMessageID(sessionID)
+	messageID := idleChatTopicMessageID()
 	category, _ := modulechat.NormalizeTopicCategory(string(strategy))
 	return o.emitTimelineEvent(TimelineEvent{
 		Type:      "idlechat.topic",
@@ -55,7 +56,7 @@ func (o *IdleChatOrchestrator) recordGenerationErrorToTimeline(speaker, target, 
 		reason = "generation_error"
 	}
 	content := fmt.Sprintf("生成エラー: %s の応答生成に失敗しました（%s）。", speaker, reason)
-	messageID := idleChatMessageID(sessionID, turnIndex)
+	messageID := o.idleChatMessageID(sessionID, turnIndex)
 	msg := domaintransport.NewMessage(speaker, target, sessionID, "", content)
 	msg.Type = domaintransport.MessageTypeIdleChat
 	msg.Context = idleChatMessageContext(messageID, turnIndex)
@@ -71,7 +72,45 @@ func (o *IdleChatOrchestrator) recordGenerationErrorToTimeline(speaker, target, 
 	})
 }
 
-func idleChatMessageID(sessionID string, turnIndex int) string {
+func (o *IdleChatOrchestrator) idleChatMessageID(sessionID string, turnIndex int) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		sessionID = "idlechat"
+	}
+	if turnIndex < 0 {
+		turnIndex = 0
+	}
+	return o.cachedIdleChatMessageID(fmt.Sprintf("message\x00%s\x00%d", sessionID, turnIndex))
+}
+
+func idleChatTopicMessageID() string {
+	return newIdleChatMessageID()
+}
+
+func (o *IdleChatOrchestrator) cachedIdleChatMessageID(key string) string {
+	if o == nil {
+		return string(modulecore.NewMessageID())
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.messageIDs == nil {
+		o.messageIDs = make(map[string]string)
+	}
+	if messageID := o.messageIDs[key]; messageID != "" {
+		return messageID
+	}
+	messageID := string(modulecore.NewMessageID())
+	o.messageIDs[key] = messageID
+	return messageID
+}
+
+func newIdleChatMessageID() string {
+	return string(modulecore.NewMessageID())
+}
+
+// legacyIdleChatMessageID is read compatibility for persisted IdleChat rows
+// created before message_id became a UUID contract. New messages must not use it.
+func legacyIdleChatMessageID(sessionID string, turnIndex int) string {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		sessionID = "idlechat"
@@ -80,14 +119,6 @@ func idleChatMessageID(sessionID string, turnIndex int) string {
 		turnIndex = 0
 	}
 	return fmt.Sprintf("%s:msg:%04d", sessionID, turnIndex)
-}
-
-func idleChatTopicMessageID(sessionID string) string {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		sessionID = "idlechat"
-	}
-	return sessionID + ":topic"
 }
 
 func idleChatMessageContext(messageID string, turnIndex int) map[string]any {

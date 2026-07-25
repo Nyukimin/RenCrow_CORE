@@ -60,18 +60,22 @@ type CustomerVoice struct {
 }
 
 type RevenueEvent struct {
-	EventID    string    `json:"event_id"`
-	EventType  string    `json:"event_type"`
-	ProductID  string    `json:"product_id,omitempty"`
-	Amount     int       `json:"amount,omitempty"`
-	Channel    string    `json:"channel,omitempty"`
-	CustomerID string    `json:"customer_id,omitempty"`
-	Notes      string    `json:"notes,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	EventID       string    `json:"event_id"`
+	TraceID       string    `json:"trace_id,omitempty"`
+	OpportunityID string    `json:"opportunity_id,omitempty"`
+	DeliveryID    string    `json:"delivery_id,omitempty"`
+	EventType     string    `json:"event_type"`
+	ProductID     string    `json:"product_id,omitempty"`
+	Amount        int       `json:"amount,omitempty"`
+	Channel       string    `json:"channel,omitempty"`
+	CustomerID    string    `json:"customer_id,omitempty"`
+	Notes         string    `json:"notes,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type Opportunity struct {
 	OpportunityID   string    `json:"opportunity_id"`
+	TraceID         string    `json:"trace_id,omitempty"`
 	SourceKind      string    `json:"source_kind"`
 	Title           string    `json:"title"`
 	Summary         string    `json:"summary,omitempty"`
@@ -91,6 +95,7 @@ type Opportunity struct {
 
 type EconomicTask struct {
 	TaskID        string    `json:"task_id"`
+	TraceID       string    `json:"trace_id,omitempty"`
 	OpportunityID string    `json:"opportunity_id"`
 	WorkstreamID  string    `json:"workstream_id,omitempty"`
 	AgentID       string    `json:"agent_id"`
@@ -106,6 +111,7 @@ type EconomicTask struct {
 
 type EconomicReflection struct {
 	ReflectionID   string    `json:"reflection_id"`
+	TraceID        string    `json:"trace_id,omitempty"`
 	OpportunityID  string    `json:"opportunity_id"`
 	RevenueEventID string    `json:"revenue_event_id,omitempty"`
 	Outcome        string    `json:"outcome"`
@@ -135,6 +141,8 @@ type DailyRoutineReport struct {
 
 type ChannelDraft struct {
 	DraftID             string    `json:"draft_id"`
+	TraceID             string    `json:"trace_id,omitempty"`
+	OpportunityID       string    `json:"opportunity_id,omitempty"`
 	WorkstreamID        string    `json:"workstream_id,omitempty"`
 	Channel             string    `json:"channel"`
 	Subject             string    `json:"subject,omitempty"`
@@ -147,6 +155,8 @@ type ChannelDraft struct {
 
 type ExternalSendApplyRecord struct {
 	ApplyID             string    `json:"apply_id"`
+	TraceID             string    `json:"trace_id,omitempty"`
+	DeliveryID          string    `json:"delivery_id,omitempty"`
 	DraftID             string    `json:"draft_id"`
 	DecisionID          string    `json:"decision_id"`
 	Channel             string    `json:"channel"`
@@ -163,6 +173,24 @@ type ExternalSendApplyRecord struct {
 	CreatedAt           time.Time `json:"created_at"`
 }
 
+type Delivery struct {
+	DeliveryID     string    `json:"delivery_id"`
+	TraceID        string    `json:"trace_id"`
+	OpportunityID  string    `json:"opportunity_id,omitempty"`
+	TaskID         string    `json:"task_id,omitempty"`
+	WorkstreamID   string    `json:"workstream_id,omitempty"`
+	ArtifactID     string    `json:"artifact_id,omitempty"`
+	ApprovalID     string    `json:"approval_id,omitempty"`
+	DeliveryKind   string    `json:"delivery_kind"`
+	Status         string    `json:"status"`
+	Target         string    `json:"target,omitempty"`
+	Result         string    `json:"result,omitempty"`
+	Evidence       string    `json:"evidence,omitempty"`
+	ExternalAction bool      `json:"external_action"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at,omitempty"`
+}
+
 type EthicsCheck struct {
 	Allowed  bool     `json:"allowed"`
 	Reasons  []string `json:"reasons,omitempty"`
@@ -171,6 +199,7 @@ type EthicsCheck struct {
 
 type HumanDecisionGateRequest struct {
 	DecisionID     string    `json:"decision_id,omitempty"`
+	TraceID        string    `json:"trace_id,omitempty"`
 	DecisionType   string    `json:"decision_type"`
 	SubjectID      string    `json:"subject_id,omitempty"`
 	Description    string    `json:"description,omitempty"`
@@ -186,6 +215,7 @@ type HumanDecisionGateResult struct {
 
 type HumanDecisionGateRecord struct {
 	DecisionID       string    `json:"decision_id"`
+	TraceID          string    `json:"trace_id,omitempty"`
 	DecisionType     string    `json:"decision_type"`
 	SubjectID        string    `json:"subject_id,omitempty"`
 	Description      string    `json:"description,omitempty"`

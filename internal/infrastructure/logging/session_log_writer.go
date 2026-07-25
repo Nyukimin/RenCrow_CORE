@@ -17,6 +17,8 @@ type SessionLogEntry struct {
 	Role      string `json:"role"`  // "user" | "assistant"
 	Route     string `json:"route"` // "CHAT" | "CODE" etc. (assistantのみ)
 	JobID     string `json:"job_id,omitempty"`
+	MessageID string `json:"message_id,omitempty"`
+	TraceID   string `json:"trace_id,omitempty"`
 	Content   string `json:"content"`
 }
 
@@ -34,17 +36,27 @@ func NewSessionLogWriter(baseDir string) *SessionLogWriter {
 
 // WriteUser はユーザーメッセージを記録する
 func (w *SessionLogWriter) WriteUser(sessionID, channel, content string) {
+	w.WriteUserWithIdentity(sessionID, channel, "", "", content)
+}
+
+func (w *SessionLogWriter) WriteUserWithIdentity(sessionID, channel, messageID, traceID, content string) {
 	w.write(SessionLogEntry{
 		Timestamp: now(),
 		SessionID: sessionID,
 		Channel:   channel,
 		Role:      "user",
+		MessageID: messageID,
+		TraceID:   traceID,
 		Content:   content,
 	})
 }
 
 // WriteAssistant はアシスタント応答を記録する
 func (w *SessionLogWriter) WriteAssistant(sessionID, channel, route, jobID, content string) {
+	w.WriteAssistantWithIdentity(sessionID, channel, route, jobID, "", jobID, content)
+}
+
+func (w *SessionLogWriter) WriteAssistantWithIdentity(sessionID, channel, route, jobID, messageID, traceID, content string) {
 	w.write(SessionLogEntry{
 		Timestamp: now(),
 		SessionID: sessionID,
@@ -52,6 +64,8 @@ func (w *SessionLogWriter) WriteAssistant(sessionID, channel, route, jobID, cont
 		Role:      "assistant",
 		Route:     route,
 		JobID:     jobID,
+		MessageID: messageID,
+		TraceID:   traceID,
 		Content:   content,
 	})
 }

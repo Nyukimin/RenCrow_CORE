@@ -130,6 +130,8 @@ func toEntryResult(sessionID string, resp orchestrator.ProcessMessageResponse, e
 		SessionID:   sessionID,
 		Route:       string(resp.Route),
 		JobID:       resp.JobID,
+		MessageID:   resp.MessageID,
+		TraceID:     resp.TraceID,
 		Response:    resp.Response,
 		EvidenceRef: evidenceRef,
 	}

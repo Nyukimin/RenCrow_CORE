@@ -170,4 +170,7 @@ func TestIdleChatAppliesPersonaCanonicalResponse(t *testing.T) {
 	if len(recorder.canonical) != 1 || recorder.canonical[0].ResponseID != "kuro_destructive_block" || !recorder.canonical[0].Used {
 		t.Fatalf("canonical logs = %#v", recorder.canonical)
 	}
+	if !strings.HasPrefix(recorder.canonical[0].MessageID, "msg_") {
+		t.Fatalf("canonical message_id = %q, want generated message identity", recorder.canonical[0].MessageID)
+	}
 }

@@ -183,7 +183,7 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
 		o.mu.Unlock()
 
 		turnIndex := turn + 1
-		messageID := idleChatMessageID(segmentID, turnIndex)
+		messageID := o.idleChatMessageID(segmentID, turnIndex)
 		o.markWatchdogStage("message_record", fmt.Sprintf("%s->%s turn=%d", speaker, nextSpeaker, turnIndex), TimelineEvent{
 			From:      speaker,
 			To:        nextSpeaker,

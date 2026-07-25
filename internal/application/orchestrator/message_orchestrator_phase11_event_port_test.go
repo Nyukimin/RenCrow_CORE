@@ -1,6 +1,9 @@
 package orchestrator
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 type phase11RecordingEventListener struct {
 	events []OrchestratorEvent
@@ -51,8 +54,11 @@ func TestPhase11EventPortUsesUpdatedListener(t *testing.T) {
 	if received.Route != "" || received.JobID != "job-2" {
 		t.Fatalf("message.received should include job but not route before decision: %#v", received)
 	}
-	if received.MessageID != "sess-2:chat:msg:0001" || received.TurnIndex != 1 {
+	if !strings.HasPrefix(received.MessageID, "msg_") || received.TurnIndex != 1 {
 		t.Fatalf("message.received should include stable conversation identity: %#v", received)
+	}
+	if received.TraceID != "job-2" {
+		t.Fatalf("message.received trace_id = %q, want root job_id", received.TraceID)
 	}
 }
 
@@ -88,14 +94,51 @@ func TestPhase11EventPortAssignsStableConversationIdentity(t *testing.T) {
 	port.Emit("agent.response", "mio", "user", "hi", "CHAT", "job-1", "sess-1", "viewer", "viewer-user")
 	port.Emit("routing.decision", "mio", "", "CHAT", "CHAT", "job-1", "sess-1", "viewer", "viewer-user")
 
-	if listener.events[0].MessageID != "sess-1:chat:msg:0001" || listener.events[0].TurnIndex != 1 {
+	if !strings.HasPrefix(listener.events[0].MessageID, "msg_") || listener.events[0].TurnIndex != 1 {
 		t.Fatalf("first conversation identity = %#v", listener.events[0])
 	}
-	if listener.events[1].MessageID != "sess-1:chat:msg:0002" || listener.events[1].TurnIndex != 2 {
+	if !strings.HasPrefix(listener.events[1].MessageID, "msg_") || listener.events[1].TurnIndex != 2 {
 		t.Fatalf("second conversation identity = %#v", listener.events[1])
+	}
+	if listener.events[0].MessageID == listener.events[1].MessageID {
+		t.Fatalf("different messages must have different IDs: %#v", listener.events)
 	}
 	if listener.events[2].MessageID != "" || listener.events[2].TurnIndex != 0 {
 		t.Fatalf("non conversation event should not get conversation identity: %#v", listener.events[2])
+	}
+	if listener.events[1].TraceID != "job-1" || listener.events[2].TraceID != "job-1" {
+		t.Fatalf("all job events must retain trace_id: %#v", listener.events)
+	}
+}
+
+func TestPhase11EventPortDoesNotReuseMessageIDAfterRestart(t *testing.T) {
+	firstListener := &phase11RecordingEventListener{}
+	newMessageEventPort(firstListener).Emit(
+		"message.received", "user", "mio", "first", "", "job-1", "sess-1", "viewer", "viewer-user",
+	)
+	secondListener := &phase11RecordingEventListener{}
+	newMessageEventPort(secondListener).Emit(
+		"message.received", "user", "mio", "second", "", "job-2", "sess-1", "viewer", "viewer-user",
+	)
+
+	if firstListener.events[0].MessageID == secondListener.events[0].MessageID {
+		t.Fatalf("fresh event ports reused message ID: %q", firstListener.events[0].MessageID)
+	}
+}
+
+func TestPhase11MessageReceivedPreservesIngressMessageID(t *testing.T) {
+	listener := &phase11RecordingEventListener{}
+	port := newMessageEventPort(listener)
+	port.EmitMessageReceived(ProcessMessageRequest{
+		MessageID:   "msg_client_or_adapter_generated",
+		SessionID:   "sess-1",
+		Channel:     "viewer",
+		ChatID:      "viewer-user",
+		UserMessage: "hello",
+	}, "job-1")
+
+	if got := listener.events[0].MessageID; got != "msg_client_or_adapter_generated" {
+		t.Fatalf("message_id = %q, want ingress ID", got)
 	}
 }
 

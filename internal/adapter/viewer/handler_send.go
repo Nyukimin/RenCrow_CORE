@@ -15,6 +15,7 @@ import (
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type MessageHandler func(ctx context.Context, req SendRequest) (string, error)
@@ -30,6 +31,8 @@ type AttachmentSaver interface {
 
 type SendRequest struct {
 	JobID          string
+	MessageID      string
+	TraceID        string
 	ViewerClientID string
 	Provenance     RequestProvenance
 	Message        string
@@ -183,8 +186,11 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			return
 		}
 		jobID := task.NewJobID().String()
+		messageID := string(modulecore.NewMessageID())
 		sendReq := SendRequest{
 			JobID:          jobID,
+			MessageID:      messageID,
+			TraceID:        jobID,
 			ViewerClientID: req.ViewerClientID,
 			Provenance:     provenance,
 			To:             recipient,
@@ -196,8 +202,8 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			effectiveMessage = defaultAttachmentMessage(attachments)
 		}
 		sendReq.Message = effectiveMessage
-		log.Printf("[Viewer] HandleSend: accepted job_id=%s viewer_client_id=%q recipient=%s attachment_count=%d message_len=%d %s",
-			jobID, req.ViewerClientID, recipient, len(attachments), len([]rune(effectiveMessage)), provenance.LogFields())
+		log.Printf("[Viewer] HandleSend: accepted job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachment_count=%d message_len=%d %s",
+			jobID, jobID, messageID, req.ViewerClientID, recipient, len(attachments), len([]rune(effectiveMessage)), provenance.LogFields())
 		if aliasApplied {
 			log.Printf("[Viewer] HandleSend: message received: %q alias=%s base_url=%s model=%s route_prefix=%s",
 				req.Message, aliasSpec.ModelAlias, aliasSpec.BaseURL, aliasSpec.Model, aliasSpec.RoutePrefix)
@@ -209,15 +215,15 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
-			log.Printf("[Viewer] HandleSend: async start job_id=%s viewer_client_id=%q recipient=%s %s", jobID, req.ViewerClientID, recipient, provenance.LogFields())
+			log.Printf("[Viewer] HandleSend: async start job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s", jobID, jobID, messageID, req.ViewerClientID, recipient, provenance.LogFields())
 			response, err := handler(ctx, sendReq)
 			if err != nil {
-				log.Printf("[Viewer] HandleSend: async error job_id=%s viewer_client_id=%q recipient=%s %s err=%v", jobID, req.ViewerClientID, recipient, provenance.LogFields(), err)
+				log.Printf("[Viewer] HandleSend: async error job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s err=%v", jobID, jobID, messageID, req.ViewerClientID, recipient, provenance.LogFields(), err)
 				if onError != nil {
 					onError(sendReq, err)
 				}
 			} else {
-				log.Printf("[Viewer] HandleSend: async complete job_id=%s viewer_client_id=%q recipient=%s response_len=%d %s", jobID, req.ViewerClientID, recipient, len(response), provenance.LogFields())
+				log.Printf("[Viewer] HandleSend: async complete job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s response_len=%d %s", jobID, jobID, messageID, req.ViewerClientID, recipient, len(response), provenance.LogFields())
 			}
 		}()
 
@@ -226,6 +232,8 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			resp := struct {
 				OK             bool   `json:"ok"`
 				JobID          string `json:"job_id"`
+				MessageID      string `json:"message_id"`
+				TraceID        string `json:"trace_id"`
 				ViewerClientID string `json:"viewer_client_id,omitempty"`
 				Recipient      string `json:"recipient"`
 				ModelAlias     string `json:"model_alias"`
@@ -236,6 +244,8 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			}{
 				OK:             true,
 				JobID:          jobID,
+				MessageID:      messageID,
+				TraceID:        jobID,
 				ViewerClientID: req.ViewerClientID,
 				Recipient:      string(recipient),
 				ModelAlias:     aliasSpec.ModelAlias,
@@ -251,12 +261,16 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			resp := struct {
 				OK             bool   `json:"ok"`
 				JobID          string `json:"job_id"`
+				MessageID      string `json:"message_id"`
+				TraceID        string `json:"trace_id"`
 				ViewerClientID string `json:"viewer_client_id,omitempty"`
 				Recipient      string `json:"recipient"`
 				Attachments    int    `json:"attachment_count"`
 			}{
 				OK:             true,
 				JobID:          jobID,
+				MessageID:      messageID,
+				TraceID:        jobID,
 				ViewerClientID: req.ViewerClientID,
 				Recipient:      string(recipient),
 				Attachments:    len(attachments),

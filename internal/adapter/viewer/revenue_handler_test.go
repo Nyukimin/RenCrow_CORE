@@ -36,6 +36,7 @@ type stubRevenueStore struct {
 	opportunities []domainrevenue.Opportunity
 	economicTasks []domainrevenue.EconomicTask
 	reflections   []domainrevenue.EconomicReflection
+	deliveries    []domainrevenue.Delivery
 	limit         int
 }
 
@@ -52,6 +53,11 @@ func (s *stubRevenueStore) ListEconomicTasks(_ context.Context, limit int) ([]do
 func (s *stubRevenueStore) ListEconomicReflections(_ context.Context, limit int) ([]domainrevenue.EconomicReflection, error) {
 	s.limit = limit
 	return s.reflections, nil
+}
+
+func (s *stubRevenueStore) ListDeliveries(_ context.Context, limit int) ([]domainrevenue.Delivery, error) {
+	s.limit = limit
+	return s.deliveries, nil
 }
 
 func (s *stubRevenueStore) ListMarketResearchItems(_ context.Context, limit int) ([]domainrevenue.MarketResearchItem, error) {
@@ -193,6 +199,14 @@ func (s *stubRevenueStore) SaveEconomicReflection(_ context.Context, item domain
 		return err
 	}
 	s.reflections = append(s.reflections, item)
+	return nil
+}
+
+func (s *stubRevenueStore) SaveDelivery(_ context.Context, item domainrevenue.Delivery) error {
+	if err := domainrevenue.ValidateDelivery(item); err != nil {
+		return err
+	}
+	s.deliveries = append(s.deliveries, item)
 	return nil
 }
 
@@ -448,6 +462,32 @@ func TestHandleRevenueEconomicObjectiveEndpoints(t *testing.T) {
 	}
 }
 
+func TestHandleRevenueDeliveriesGeneratesAndPropagatesTrace(t *testing.T) {
+	now := time.Now().UTC()
+	store := &stubRevenueStore{opportunities: []domainrevenue.Opportunity{{
+		OpportunityID: "opp-delivery", TraceID: "trc-economic", SourceKind: "note",
+		Title: "Delivery trace", ApprovalState: "draft", CreatedAt: now,
+	}}}
+	body := bytes.NewBufferString(`{
+		"delivery_id":"delivery-1",
+		"opportunity_id":"opp-delivery",
+		"delivery_kind":"handoff",
+		"status":"completed",
+		"target":"internal-review"
+	}`)
+	rec := httptest.NewRecorder()
+	HandleRevenueDeliveries(store).ServeHTTP(
+		rec,
+		httptest.NewRequest(http.MethodPost, "/viewer/revenue/deliveries", body),
+	)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.deliveries) != 1 || store.deliveries[0].TraceID != "trc-economic" {
+		t.Fatalf("delivery trace not propagated: %#v", store.deliveries)
+	}
+}
+
 func TestHandleRevenueEconomicObjectiveReadEndpointsReturnUnavailableWarnings(t *testing.T) {
 	cases := []struct {
 		path    string
@@ -493,6 +533,58 @@ func TestHandleRevenueHumanDecisionGateNeedsReview(t *testing.T) {
 	}
 	if len(store.decisions) != 1 || store.decisions[0].ApprovalStatus != "pending" {
 		t.Fatalf("decisions=%#v", store.decisions)
+	}
+	if store.decisions[0].TraceID == "" {
+		t.Fatalf("decision trace_id must be generated: %#v", store.decisions[0])
+	}
+}
+
+func TestHandleRevenueEventCreateInheritsOpportunityTrace(t *testing.T) {
+	store := &stubRevenueStore{
+		opportunities: []domainrevenue.Opportunity{{
+			OpportunityID: "opp_1",
+			TraceID:       "trc_opportunity",
+		}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/events", bytes.NewBufferString(`{
+		"event_id":"event_1",
+		"opportunity_id":"opp_1",
+		"event_type":"purchase"
+	}`))
+	rec := httptest.NewRecorder()
+
+	HandleRevenueEventCreate(store).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.events) != 1 || store.events[0].TraceID != "trc_opportunity" {
+		t.Fatalf("events=%#v", store.events)
+	}
+}
+
+func TestHandleRevenueChannelDraftCreateInheritsOpportunityTrace(t *testing.T) {
+	store := &stubRevenueStore{
+		opportunities: []domainrevenue.Opportunity{{
+			OpportunityID: "opp_1",
+			TraceID:       "trc_opportunity",
+		}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts", bytes.NewBufferString(`{
+		"draft_id":"draft_1",
+		"opportunity_id":"opp_1",
+		"channel":"email",
+		"body":"下書き本文"
+	}`))
+	rec := httptest.NewRecorder()
+
+	HandleRevenueChannelDraftCreate(store).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.drafts) != 1 || store.drafts[0].TraceID != "trc_opportunity" {
+		t.Fatalf("drafts=%#v", store.drafts)
 	}
 }
 
@@ -717,9 +809,10 @@ func TestHandleRevenueExternalSendApplyRequiresHumanApproval(t *testing.T) {
 
 func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable(t *testing.T) {
 	store := &stubRevenueStore{
-		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ApprovalStatus: "pending"}},
+		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", TraceID: "trc_external_send", Channel: "email", Body: "下書き本文", ApprovalStatus: "pending"}},
 		decisions: []domainrevenue.HumanDecisionGateRecord{{
 			DecisionID:       "dec_1",
+			TraceID:          "trc_external_send",
 			DecisionType:     "closed_channel_send",
 			SubjectID:        "draft_1",
 			ApprovalStatus:   "approved",
@@ -748,6 +841,16 @@ func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable
 	record := store.applies[0]
 	if record.ApplyStatus != "blocked" || record.SendResult != "not_sent" || record.ExternalSendApplied || record.PostSendVerified || record.ChannelAdapter != "unconfigured" {
 		t.Fatalf("unexpected apply record: %#v", record)
+	}
+	if record.TraceID != "trc_external_send" || record.DeliveryID == "" {
+		t.Fatalf("external send identity not preserved: %#v", record)
+	}
+	if len(store.deliveries) != 1 {
+		t.Fatalf("deliveries=%#v", store.deliveries)
+	}
+	delivery := store.deliveries[0]
+	if delivery.DeliveryID != record.DeliveryID || delivery.TraceID != record.TraceID || delivery.DeliveryKind != "external_send" || delivery.Status != "blocked" {
+		t.Fatalf("unexpected delivery: %#v", delivery)
 	}
 	var body struct {
 		Record                 domainrevenue.ExternalSendApplyRecord `json:"external_send_apply_record"`

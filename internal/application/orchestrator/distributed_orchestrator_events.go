@@ -1,19 +1,16 @@
 package orchestrator
 
 import (
-	"sync"
-
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
 type distributedEventPort struct {
-	listener EventListener
-	mu       sync.Mutex
-	turns    map[string]int
+	listener   EventListener
+	identities *conversationIdentityTracker
 }
 
 func newDistributedEventPort(listener EventListener) *distributedEventPort {
-	return &distributedEventPort{listener: listener, turns: map[string]int{}}
+	return &distributedEventPort{listener: listener, identities: newConversationIdentityTracker()}
 }
 
 func (p *distributedEventPort) SetListener(listener EventListener) {
@@ -21,11 +18,21 @@ func (p *distributedEventPort) SetListener(listener EventListener) {
 }
 
 func (p *distributedEventPort) Emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
+	ev := NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+	p.emitWithMessageID(ev, "")
+}
+
+func (p *distributedEventPort) EmitMessageReceived(req ProcessMessageRequest, jobID string) {
+	recipient := normalizeProcessViewerRecipient(req.To)
+	ev := NewEvent("message.received", "user", recipient, req.UserMessage, "", jobID, req.SessionID, req.Channel, req.ChatID)
+	p.emitWithMessageID(ev, req.MessageID)
+}
+
+func (p *distributedEventPort) emitWithMessageID(ev OrchestratorEvent, messageID string) {
+	p.identities.Assign(&ev, messageID)
 	if p.listener == nil {
 		return
 	}
-	ev := NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
-	p.assignConversationIdentity(&ev)
 	p.listener.OnEvent(ev)
 }
 
@@ -38,14 +45,6 @@ func (p *distributedEventPort) EmitProgress(eventType, from, to, content string,
 	p.Emit(eventType, from, to, content, route, msg.JobID, msg.SessionID, channel, chatID)
 }
 
-func (p *distributedEventPort) assignConversationIdentity(ev *OrchestratorEvent) {
-	if ev == nil || !isConversationMessageEvent(ev.Type) {
-		return
-	}
-	sessionID := conversationIdentitySession(ev.SessionID, ev.ChatID)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.turns[sessionID]++
-	ev.TurnIndex = p.turns[sessionID]
-	ev.MessageID = conversationMessageID(sessionID, ev.TurnIndex)
+func (p *distributedEventPort) TakeResponseMessageID(jobID string) string {
+	return p.identities.TakeResponseMessageID(jobID)
 }

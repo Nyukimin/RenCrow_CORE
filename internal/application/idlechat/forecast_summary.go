@@ -53,7 +53,7 @@ func (o *IdleChatOrchestrator) saveForecastSummary(sessionID string, domain Fore
 	msg := domaintransport.NewMessage("shiro", "forecast_summary", sessionID, "", title+"\n"+summary)
 	msg.Type = domaintransport.MessageTypeIdleChat
 	turnIndex := o.nextIdleChatTurnIndex(sessionID)
-	messageID := idleChatMessageID(sessionID, turnIndex)
+	messageID := o.idleChatMessageID(sessionID, turnIndex)
 	msg.Context = idleChatMessageContext(messageID, turnIndex)
 	o.memory.RecordMessage(msg)
 	o.emitTimelineEvent(TimelineEvent{

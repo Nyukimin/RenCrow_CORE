@@ -163,6 +163,60 @@ func HandleRevenueEconomicReflections(store RevenueStore) http.HandlerFunc {
 	}
 }
 
+func HandleRevenueDeliveries(store RevenueStore) http.HandlerFunc {
+	service := revenueapp.NewEconomicService(store, time.Now)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if store == nil {
+			if r.Method == http.MethodGet {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"status": "unavailable", "warnings": []string{"revenue store unavailable"},
+					"deliveries": []domainrevenue.Delivery{}, "delivery_count": 0,
+				})
+				return
+			}
+			http.Error(w, "revenue store unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			limit, err := parseViewerLimit(r.URL.Query().Get("limit"), 50, 100)
+			if err != nil {
+				http.Error(w, "invalid limit", http.StatusBadRequest)
+				return
+			}
+			items, err := store.ListDeliveries(r.Context(), limit)
+			if err != nil {
+				http.Error(w, "failed to load deliveries", http.StatusInternalServerError)
+				return
+			}
+			if items == nil {
+				items = []domainrevenue.Delivery{}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "ok", "warnings": []string{}, "deliveries": items, "delivery_count": len(items),
+			})
+		case http.MethodPost:
+			var item domainrevenue.Delivery
+			if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
+				http.Error(w, "invalid delivery payload", http.StatusBadRequest)
+				return
+			}
+			created, err := service.RecordDelivery(r.Context(), item)
+			if errors.Is(err, revenueapp.ErrOpportunityNotFound) {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, http.StatusCreated, map[string]any{"delivery": created})
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
 func HandleRevenueReflectionFromEvent(store RevenueStore) http.HandlerFunc {
 	service := revenueapp.NewEconomicService(store, time.Now)
 	return func(w http.ResponseWriter, r *http.Request) {

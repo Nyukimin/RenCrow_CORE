@@ -133,6 +133,12 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveExternalSendApplyRecord failed: %v", err)
 	}
+	if err := store.SaveDelivery(ctx, domainrevenue.Delivery{
+		DeliveryID: "delivery_1", TraceID: "trc_1", OpportunityID: "opp_1",
+		DeliveryKind: "handoff", Status: "completed", Target: "internal-review", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveDelivery failed: %v", err)
+	}
 
 	markets, err := store.ListMarketResearchItems(ctx, 10)
 	if err != nil || len(markets) != 1 || markets[0].ItemID != "mkt_1" {
@@ -181,6 +187,10 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 	applies, err := store.ListExternalSendApplyRecords(ctx, 10)
 	if err != nil || len(applies) != 1 || applies[0].ApplyID != "apply_1" {
 		t.Fatalf("applies=%#v err=%v", applies, err)
+	}
+	deliveries, err := store.ListDeliveries(ctx, 10)
+	if err != nil || len(deliveries) != 1 || deliveries[0].DeliveryID != "delivery_1" {
+		t.Fatalf("deliveries=%#v err=%v", deliveries, err)
 	}
 }
 

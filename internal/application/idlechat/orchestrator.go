@@ -179,6 +179,7 @@ type IdleChatOrchestrator struct {
 	watchdogMessageID         string
 	watchdogTurnIndex         int
 	watchdogUpdatedAt         time.Time
+	messageIDs                map[string]string
 	mu                        sync.Mutex
 	wg                        sync.WaitGroup
 }
@@ -319,7 +320,7 @@ func shouldProposeIdlePersonaMetaUpdateFromText(message string) bool {
 	return false
 }
 
-func (o *IdleChatOrchestrator) applyPersonaCanonicalResponse(speaker, sessionID, candidate string) string {
+func (o *IdleChatOrchestrator) applyPersonaCanonicalResponse(speaker, sessionID, messageID, candidate string) string {
 	candidate = strings.TrimSpace(candidate)
 	if o == nil || candidate == "" {
 		return ""
@@ -360,7 +361,7 @@ func (o *IdleChatOrchestrator) applyPersonaCanonicalResponse(speaker, sessionID,
 		EventID:     "evt_persona_idlechat_canonical_" + formatPersonaEventTime(now),
 		CharacterID: def.CharacterID,
 		ResponseID:  def.ResponseID,
-		MessageID:   strings.TrimSpace(sessionID),
+		MessageID:   strings.TrimSpace(messageID),
 		Used:        true,
 		Rewritten:   false,
 		CreatedAt:   now,

@@ -498,6 +498,7 @@ func TestMessageOrchestrator_AppliesPersonaCanonicalResponse(t *testing.T) {
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "session-1",
+		MessageID:   "msg_persona_input",
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "このファイルを削除して",
@@ -510,6 +511,9 @@ func TestMessageOrchestrator_AppliesPersonaCanonicalResponse(t *testing.T) {
 	}
 	if len(recorder.canonical) != 1 || recorder.canonical[0].ResponseID != "kuro_destructive_block" || !recorder.canonical[0].Used || recorder.canonical[0].Rewritten {
 		t.Fatalf("canonical logs = %#v", recorder.canonical)
+	}
+	if recorder.canonical[0].MessageID != "msg_persona_input" {
+		t.Fatalf("canonical message_id = %q, want input message identity", recorder.canonical[0].MessageID)
 	}
 }
 
@@ -604,6 +608,9 @@ func TestMessageOrchestrator_ProcessMessage_AttachesVerificationReport(t *testin
 	}
 	if resp.Verification.Status != domainverification.StatusWeaklySupported {
 		t.Fatalf("unexpected verification status: %s", resp.Verification.Status)
+	}
+	if resp.JobID == "" || resp.TraceID != resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
+		t.Fatalf("response identity is incomplete: %+v", resp)
 	}
 	if verifier.req.DraftResponse != "これは2014年公開です。" || verifier.req.UserMessage != "作品情報を教えて" {
 		t.Fatalf("unexpected verifier request: %+v", verifier.req)

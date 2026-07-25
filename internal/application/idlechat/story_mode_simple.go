@@ -344,7 +344,7 @@ func (o *IdleChatOrchestrator) emitStoryParagraph(sessionID, paragraph string, u
 		if utteranceSeq != nil && *utteranceSeq > 0 {
 			turnIndex = *utteranceSeq
 		}
-		messageID := fmt.Sprintf("%s:story:%04d", sessionID, turnIndex)
+		messageID := newIdleChatMessageID()
 		ttsEvent := TimelineEvent{
 			Type:      "idlechat.tts",
 			From:      "mio",

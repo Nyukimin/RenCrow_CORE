@@ -2,19 +2,17 @@ package orchestrator
 
 import (
 	"log"
-	"sync"
 
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 type messageEventPort struct {
-	listener EventListener
-	mu       sync.Mutex
-	turns    map[string]int
+	listener   EventListener
+	identities *conversationIdentityTracker
 }
 
 func newMessageEventPort(listener EventListener) *messageEventPort {
-	return &messageEventPort{listener: listener, turns: map[string]int{}}
+	return &messageEventPort{listener: listener, identities: newConversationIdentityTracker()}
 }
 
 func (p *messageEventPort) SetListener(listener EventListener) {
@@ -22,39 +20,36 @@ func (p *messageEventPort) SetListener(listener EventListener) {
 }
 
 func (p *messageEventPort) Emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
+	ev := NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+	p.emitWithMessageID(ev, "")
+}
+
+func (p *messageEventPort) EmitWithMessageID(eventType, from, to, content, route, jobID, sessionID, channel, chatID, messageID string) {
+	ev := NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+	p.emitWithMessageID(ev, messageID)
+}
+
+func (p *messageEventPort) emitWithMessageID(ev OrchestratorEvent, messageID string) {
+	p.identities.Assign(&ev, messageID)
 	if p.listener == nil {
-		log.Printf("[MessageOrch] emit SKIPPED: no listener (eventType=%s from=%s to=%s)", eventType, from, to)
+		log.Printf("[MessageOrch] emit SKIPPED: no listener (eventType=%s from=%s to=%s)", ev.Type, ev.From, ev.To)
 		return
 	}
-	log.Printf("[MessageOrch] emit: eventType=%s from=%s to=%s route=%s jobID=%s", eventType, from, to, route, jobID)
-	ev := NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
-	p.assignConversationIdentity(&ev)
+	log.Printf("[MessageOrch] emit: eventType=%s from=%s to=%s route=%s jobID=%s", ev.Type, ev.From, ev.To, ev.Route, ev.JobID)
 	p.listener.OnEvent(ev)
 }
 
 func (p *messageEventPort) EmitMessageReceived(req ProcessMessageRequest, jobID string) {
 	recipient := normalizeProcessViewerRecipient(req.To)
-	p.Emit("message.received", "user", recipient, req.UserMessage, "", jobID, req.SessionID, req.Channel, req.ChatID)
+	p.EmitWithMessageID("message.received", "user", recipient, req.UserMessage, "", jobID, req.SessionID, req.Channel, req.ChatID, req.MessageID)
 }
 
 func (o *MessageOrchestrator) emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
 	o.events.Emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
 }
 
-func (o *MessageOrchestrator) emitMessageReceived(req ProcessMessageRequest) {
-	o.events.EmitMessageReceived(req, "")
-}
-
-func (p *messageEventPort) assignConversationIdentity(ev *OrchestratorEvent) {
-	if ev == nil || !isConversationMessageEvent(ev.Type) {
-		return
-	}
-	sessionID := conversationIdentitySession(ev.SessionID, ev.ChatID)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.turns[sessionID]++
-	ev.TurnIndex = p.turns[sessionID]
-	ev.MessageID = conversationMessageID(sessionID, ev.TurnIndex)
+func (p *messageEventPort) TakeResponseMessageID(jobID string) string {
+	return p.identities.TakeResponseMessageID(jobID)
 }
 
 func normalizeProcessViewerRecipient(raw string) string {

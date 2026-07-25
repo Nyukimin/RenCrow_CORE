@@ -10,7 +10,8 @@ func TestRegisterRoutesOwnsRevenuePaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
 		Status: statusHandler(http.StatusOK), DailyRoutine: statusHandler(http.StatusCreated),
-		ExternalSend: statusHandler(http.StatusAccepted), OpportunityWorkstreamGoal: statusHandler(http.StatusNoContent),
+		ExternalSend: statusHandler(http.StatusAccepted), Deliveries: statusHandler(http.StatusCreated),
+		OpportunityWorkstreamGoal: statusHandler(http.StatusNoContent),
 	}})
 	for _, tt := range []struct {
 		path string
@@ -19,6 +20,7 @@ func TestRegisterRoutesOwnsRevenuePaths(t *testing.T) {
 		{"/viewer/revenue", http.StatusOK},
 		{"/viewer/revenue/daily-routine", http.StatusCreated},
 		{"/viewer/revenue/channel-drafts/external-send-apply", http.StatusAccepted},
+		{"/viewer/revenue/deliveries", http.StatusCreated},
 		{"/viewer/revenue/opportunities/workstream-goal", http.StatusNoContent},
 	} {
 		rec := httptest.NewRecorder()

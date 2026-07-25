@@ -166,6 +166,7 @@ type Dependencies struct {
 	revenueExternalSendApply       http.HandlerFunc                            // viewer revenue external send apply audit API
 	revenueOpportunities           http.HandlerFunc                            // viewer economic opportunities API
 	revenueEconomicTasks           http.HandlerFunc                            // viewer economic tasks API
+	revenueDeliveries              http.HandlerFunc                            // viewer economic deliveries API
 	revenueEconomicReflections     http.HandlerFunc                            // viewer economic reflections API
 	revenueReflectionFromEvent     http.HandlerFunc                            // viewer reflection from revenue event API
 	revenueOpportunityGoal         http.HandlerFunc                            // viewer opportunity to workstream goal API
@@ -625,6 +626,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.revenueExternalSendApply = viewer.HandleRevenueExternalSendApply(revenueStore)
 		deps.revenueOpportunities = viewer.HandleRevenueOpportunities(revenueStore)
 		deps.revenueEconomicTasks = viewer.HandleRevenueEconomicTasks(revenueStore)
+		deps.revenueDeliveries = viewer.HandleRevenueDeliveries(revenueStore)
 		deps.revenueEconomicReflections = viewer.HandleRevenueEconomicReflections(revenueStore)
 		deps.revenueReflectionFromEvent = viewer.HandleRevenueReflectionFromEvent(revenueStore)
 		deps.revenueOpportunityGoal = viewer.HandleRevenueOpportunityWorkstreamGoal(revenueStore, deps.workstreamStore)

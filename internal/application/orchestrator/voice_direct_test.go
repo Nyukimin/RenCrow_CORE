@@ -39,6 +39,9 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 	if resp.Route != routing.RouteCHAT || resp.Response != "おはよう" || resp.JobID == "" {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
+	if resp.TraceID != resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
+		t.Fatalf("voice response identity is incomplete: %+v", resp)
+	}
 
 	decisionIdx := indexOfEvent(rec.events, "routing.decision", "mio", "", "CHAT")
 	responseIdx := indexOfEvent(rec.events, "agent.response", "mio", "user", "CHAT")
@@ -53,6 +56,14 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 	}
 	if !strings.Contains(rec.events[decisionIdx].Content, "evidence=voice_direct") {
 		t.Fatalf("routing.decision should preserve voice_direct evidence: %#v", rec.events[decisionIdx])
+	}
+	if rec.events[responseIdx].MessageID != resp.MessageID || rec.events[responseIdx].TraceID != resp.TraceID {
+		t.Fatalf("voice response identity drifted: response=%+v event=%+v", resp, rec.events[responseIdx])
+	}
+	for _, ev := range rec.events {
+		if ev.JobID != "" && ev.TraceID != resp.TraceID {
+			t.Fatalf("voice event lost root trace: %+v", ev)
+		}
 	}
 }
 

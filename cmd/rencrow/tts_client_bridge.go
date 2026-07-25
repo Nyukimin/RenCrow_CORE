@@ -82,7 +82,10 @@ func buildTTSClientBridge(
 			return
 		}
 		route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-		onChunk(orchestrator.NewEvent("tts.audio_chunk", "tts", "user", string(payloadJSON), "TTS", "", payload.SessionID, route.Channel, route.ChatID))
+		event := orchestrator.NewEvent("tts.audio_chunk", "tts", "user", string(payloadJSON), "TTS", payload.ResponseID, payload.SessionID, route.Channel, route.ChatID)
+		event.MessageID = payload.MessageID
+		event.TurnIndex = payload.TurnIndex
+		onChunk(event)
 	}
 	onSessionDoneFn := func(sessionID, characterID string) {
 		if isStaleTTSPublicSession(sessionID) {
@@ -113,7 +116,10 @@ func buildTTSClientBridge(
 				log.Printf("WARN: tts session completed payload marshal failed: %v", err)
 			} else {
 				route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-				onChunk(orchestrator.NewEvent("tts.session_completed", "tts", "user", string(payloadJSON), "TTS", "", payload.SessionID, route.Channel, route.ChatID))
+				event := orchestrator.NewEvent("tts.session_completed", "tts", "user", string(payloadJSON), "TTS", payload.ResponseID, payload.SessionID, route.Channel, route.ChatID)
+				event.MessageID = payload.MessageID
+				event.TurnIndex = payload.TurnIndex
+				onChunk(event)
 			}
 		}
 		if onSessionCompleted != nil {

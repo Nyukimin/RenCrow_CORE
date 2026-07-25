@@ -24,6 +24,7 @@ type JSONLStore struct {
 	dailyRoutinePath  string
 	channelDraftPath  string
 	externalSendPath  string
+	deliveryPath      string
 }
 
 func NewJSONLStore(root string) *JSONLStore {
@@ -43,6 +44,7 @@ func NewJSONLStore(root string) *JSONLStore {
 		dailyRoutinePath:  filepath.Join(root, "daily_routine_report.jsonl"),
 		channelDraftPath:  filepath.Join(root, "channel_draft.jsonl"),
 		externalSendPath:  filepath.Join(root, "external_send_apply.jsonl"),
+		deliveryPath:      filepath.Join(root, "delivery.jsonl"),
 	}
 }
 
@@ -353,6 +355,31 @@ func (s *JSONLStore) ListExternalSendApplyRecords(_ context.Context, limit int) 
 	var items []domainrevenue.ExternalSendApplyRecord
 	if err := readJSONL(s.externalSendPath, func(line []byte) error {
 		var item domainrevenue.ExternalSendApplyRecord
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		items = append(items, item)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return reverseLimit(items, limit), nil
+}
+
+func (s *JSONLStore) SaveDelivery(_ context.Context, item domainrevenue.Delivery) error {
+	if err := domainrevenue.ValidateDelivery(item); err != nil {
+		return err
+	}
+	return appendJSONL(s.deliveryPath, item)
+}
+
+func (s *JSONLStore) ListDeliveries(_ context.Context, limit int) ([]domainrevenue.Delivery, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var items []domainrevenue.Delivery
+	if err := readJSONL(s.deliveryPath, func(line []byte) error {
+		var item domainrevenue.Delivery
 		if err := json.Unmarshal(line, &item); err != nil {
 			return err
 		}
