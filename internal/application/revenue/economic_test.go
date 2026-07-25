@@ -17,6 +17,7 @@ type fakeOpportunityStore struct {
 	reflections   []revenuedomain.EconomicReflection
 	events        []revenuedomain.RevenueEvent
 	deliveries    []revenuedomain.Delivery
+	decisions     []revenuedomain.HumanDecisionGateRecord
 }
 
 func (f *fakeOpportunityStore) SaveOpportunity(_ context.Context, item revenuedomain.Opportunity) error {
@@ -60,10 +61,29 @@ func (f *fakeOpportunityStore) ListDeliveries(context.Context, int) ([]revenuedo
 	return append([]revenuedomain.Delivery(nil), f.deliveries...), nil
 }
 
-type fakeGoalStore struct{ goals []workstreamdomain.Goal }
+func (f *fakeOpportunityStore) SaveHumanDecisionGateRecord(_ context.Context, item revenuedomain.HumanDecisionGateRecord) error {
+	if err := revenuedomain.ValidateHumanDecisionGateRecord(item); err != nil {
+		return err
+	}
+	f.decisions = append(f.decisions, item)
+	return nil
+}
+
+type fakeGoalStore struct {
+	goals     []workstreamdomain.Goal
+	artifacts []workstreamdomain.Artifact
+}
 
 func (f *fakeGoalStore) SaveGoal(_ context.Context, item workstreamdomain.Goal) error {
 	f.goals = append(f.goals, item)
+	return nil
+}
+
+func (f *fakeGoalStore) SaveArtifact(_ context.Context, item workstreamdomain.Artifact) error {
+	if err := workstreamdomain.ValidateArtifact(item); err != nil {
+		return err
+	}
+	f.artifacts = append(f.artifacts, item)
 	return nil
 }
 
@@ -155,8 +175,18 @@ func TestEconomicServiceRejectsApprovalMismatchAndCreatesDraftGoal(t *testing.T)
 	if err != nil {
 		t.Fatalf("CreateWorkstreamGoal failed: %v", err)
 	}
-	if goal.Status != "draft" || len(goals.goals) != 1 {
-		t.Fatalf("goal=%#v saved=%#v", goal, goals.goals)
+	if goal.Status != "draft" || len(goals.goals) != 1 || len(goals.artifacts) != 1 || len(store.decisions) != 1 {
+		t.Fatalf("goal=%#v saved=%#v artifacts=%#v decisions=%#v", goal, goals.goals, goals.artifacts, store.decisions)
+	}
+	if goals.artifacts[0].TraceID != goal.TraceID || store.decisions[0].TraceID != goal.TraceID {
+		t.Fatalf("economic chain trace mismatch: goal=%#v artifact=%#v decision=%#v", goal, goals.artifacts[0], store.decisions[0])
+	}
+	if store.decisions[0].SubjectID != goals.artifacts[0].ArtifactID ||
+		store.decisions[0].DecisionType != "economic_opportunity_execution" ||
+		store.decisions[0].ApprovalStatus != "pending" ||
+		store.decisions[0].GateStatus != "needs_review" ||
+		!store.decisions[0].RequiresApproval {
+		t.Fatalf("approval does not target artifact: artifact=%#v decision=%#v", goals.artifacts[0], store.decisions[0])
 	}
 	if _, err := service.CreateWorkstreamGoal(context.Background(), "missing", "ws-revenue"); !errors.Is(err, ErrOpportunityNotFound) {
 		t.Fatalf("missing opportunity error=%v", err)

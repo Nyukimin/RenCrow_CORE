@@ -30,8 +30,8 @@ avatar/bridge failure must not rewrite Chat display text
 
 ## Current Main Files
 
-internal/infrastructure/vtuber, cmd/rencrow/vtuber_bridge.go, internal/adapter/viewer/live2d_*.go
+internal/features/avatar/character_runtime_handler.go, internal/infrastructure/vtuber, cmd/rencrow/vtuber_bridge.go, internal/adapter/viewer/live2d_*.go
 
-## Migration Boundary
+## Ownership Boundary
 
-This feature package is a registrar/facade entry point only. Existing implementation stays in the listed current files until contract tests and caller handoff are added for the relevant phase.
+This feature owns Character Runtime handler behavior and route registration. `internal/adapter/viewer/character_runtime_handler.go` is a compatibility shim. Live2D and VTuber bridge bodies remain in their current adapter/infrastructure packages.

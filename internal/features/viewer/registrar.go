@@ -43,7 +43,6 @@ type BaseRoutes struct {
 	DocsDetail                   http.HandlerFunc
 	HistoryRepairJSONL           http.HandlerFunc
 	PackageValidation            http.HandlerFunc
-	CharacterRuntime             http.HandlerFunc
 	ExtensionHealth              http.HandlerFunc
 	OTELExport                   http.HandlerFunc
 	ArtifactCleanup              http.HandlerFunc
@@ -99,7 +98,6 @@ func RegisterBaseRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/docs/detail", base.DocsDetail)
 	registerRoute(mux, "/viewer/history-repair/jsonl", base.HistoryRepairJSONL)
 	registerRoute(mux, "/viewer/package-validation", base.PackageValidation)
-	registerRoute(mux, "/viewer/character-runtime", base.CharacterRuntime)
 	registerRoute(mux, "/viewer/extensions/health", base.ExtensionHealth)
 	registerRoute(mux, "/viewer/otel/export", base.OTELExport)
 	registerRoute(mux, "/viewer/artifact-cleanup", base.ArtifactCleanup)

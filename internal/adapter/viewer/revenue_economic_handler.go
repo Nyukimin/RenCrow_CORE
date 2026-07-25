@@ -269,7 +269,7 @@ func HandleRevenueOpportunityWorkstreamGoal(store RevenueStore, goalStore revenu
 			http.Error(w, "opportunity_id and workstream_id are required", http.StatusBadRequest)
 			return
 		}
-		goal, err := service.CreateWorkstreamGoal(r.Context(), req.OpportunityID, req.WorkstreamID)
+		chain, err := service.CreateOpportunityWorkstreamChain(r.Context(), req.OpportunityID, req.WorkstreamID)
 		if errors.Is(err, revenueapp.ErrOpportunityNotFound) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -278,6 +278,9 @@ func HandleRevenueOpportunityWorkstreamGoal(store RevenueStore, goalStore revenu
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"goal": goal, "status": "draft", "external_actions_applied": false})
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"goal": chain.Goal, "artifact": chain.Artifact, "approval": chain.Approval,
+			"status": "pending_review", "external_actions_applied": false,
+		})
 	}
 }

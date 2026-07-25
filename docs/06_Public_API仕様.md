@@ -20,6 +20,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /ready` | request受付可否 |
 | `/viewer/api/chat` | Viewer chat request と response |
 | `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage送信とSSE event購読 |
+| `GET/POST /viewer/character-runtime` | Character一覧、複数Character Roundと会話ID |
 | `/viewer/status`, `/viewer/agents` | runtime と agent の状態 |
 | `GET /viewer/idlechat/status` | IdleChat状態と読み取り専用の`forecast_stock` snapshot |
 | `GET /viewer/idlechat/collection` | IdleChat日次収集cache、次回04:00 JST、取得元、利用toolの読み取り専用snapshot |
@@ -123,6 +124,8 @@ COREは受付時に`job_id`、root `trace_id`、利用者発話の`message_id`�
 
 `message_id`は`msg_` prefix付きUUIDのopaque値です。clientは形式を解析せず、SSE再接続・再送時の重複排除と、同じ発話に由来する表示・保存の対応付けに使用します。`turn_index`は表示順の補助であり、IDの代替にしません。受付・開始・完了・errorログには同じ`trace_id`と`job_id`を、会話本文を持つlogには対応する`message_id`を記録します。TTS eventはmessage確定後なら同じ`message_id`を持ち、stream開始時に未確定なら従来どおり`response_id`で応答へ対応付けます。
 
+`POST /viewer/character-runtime`は1 Roundの`trace_id`、`user_message_id`、各Turnの`message_id`と`turn_index`を返します。`trace_id`は全Turnで共通、`message_id`は利用者発話と各Character発話で別のUUIDです。
+
 受付・開始・完了・errorログには`operation_source`、`input_source`、`user_id`、`device_name`、`source_ip_masked`、`source_ip_hash`、`user_agent`も記録します。接続元IPは生値を記録せず、IPv4は末尾octetをマスク、IPv6は`/64`へマスクし、同一接続元の相関用hashを併記します。`session_id`は会話sessionの単位であり、1 request / responseの完了判定には使いません。
 
 `X-RenCrow-Client: RenCrow_CMD`で送られたterminal text chatは音声を消費しないため、COREはTTS sessionを開始しません。PORTAL／Debug Viewerなど音声再生能力を持つclientのTTS契約は維持します。client provenanceは観測と出力能力の選択に使う情報であり、認証・認可の代替にはしません。
@@ -141,6 +144,8 @@ TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`respon
 `GET /viewer/movie-catalog?action=movies|people`は一覧項目に`familiarity`、`sentiment`、`assessed`を返します。映画の`familiarity`は`seen | unseen | ""`、俳優の`familiarity`は`known | unknown | ""`、`sentiment`は共通で`like | dislike | ""`です。`POST /viewer/movie-catalog/preference`へ`kind`（`movie | person`）、`target_id`、`target_label`、`dimension`（`familiarity | sentiment`）、`value`、`generated_by`を送ると一方のdimensionだけを更新し、他方を維持します。空の`value`はそのdimensionを明示的な未選択へ戻します。Viewer内部のwrite APIであり、PORTALへ自動公開しません。
 
 Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCOREが生成します。EconomicTask、Delivery、RevenueEvent、Reflectionの作成では、参照元Opportunityまたは上流entityの`trace_id`を引き継ぎ、別の値へ黙って付け替えません。`POST /viewer/revenue/deliveries`は`delivery_id`、`trace_id`、`delivery_kind`、`status`、任意の上流IDとtarget/evidenceを受けます。`external_action=true`かつ`status=completed`では`approval_id`と`evidence`が必須です。
+
+`POST /viewer/revenue/opportunities/workstream-goal`は`opportunity_id`と`workstream_id`を受け、draft Goal、pending-review Artifact、`decision_type=economic_opportunity_execution`のpending Approvalを同じ`trace_id`で保存して返します。既存Opportunityに`trace_id`がない場合は、このuse caseが生成してOpportunityへ保存します。responseの`external_actions_applied`は`false`であり、このAPI自体は外部side effectを実行しません。
 
 ## Interaction client共通意味論
 

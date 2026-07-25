@@ -1,14 +1,12 @@
 # Feature Registrars
 
-This directory is the Ver0.80 feature registrar inventory. It does not move existing implementations by itself.
-
-Each feature keeps only README, ports, and registrar scaffolding until a later phase moves route registration or runtime wiring behind the feature facade.
+This directory owns feature route registration and dependency handoff. Handler bodies move here when a concrete change benefits from feature-level change isolation; compatibility shims may remain in their former adapter package.
 
 ## Ver0.80 Registrar Status
 
-HTTP route registration has been handed off from `cmd/rencrow/routes.go` to feature registrars for Viewer base, IdleChat, Ops, Voice/STT/TTS, Web/browser, Knowledge/Memory/Source, Reports/Governance/Sandbox/SuperAgent/AIWorkflow, and Channels.
+Product HTTP route registration has been handed off from `cmd/rencrow/routes.go` to feature registrars, including Chat send, Core health/module routes, Viewer base, Avatar Character Runtime, IdleChat, Ops, Voice/STT/TTS, Web/browser, Knowledge/Memory/Source, Reports/Governance/Sandbox/SuperAgent/AIWorkflow, and Channels. Process-local pprof registration remains in the composition root.
 
-Handler bodies, providers, stores, runtime background jobs, and CLI implementations remain in their existing legacy-body files unless a later phase explicitly moves them. `security` and `distributed` currently record ownership boundaries but do not own direct HTTP route registration in this pass.
+Character Runtime is the first handler body moved behind its feature owner while retaining a Viewer compatibility shim. Other stable handler bodies, providers, stores, runtime background jobs, and CLI implementations stay in their current packages until a concrete change-isolation or reuse benefit justifies moving them. `security` and `distributed` record ownership boundaries but do not currently own direct HTTP routes.
 
 ## Inventory
 

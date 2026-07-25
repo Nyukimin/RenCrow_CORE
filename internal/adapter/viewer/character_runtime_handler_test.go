@@ -32,8 +32,11 @@ func TestHandleCharacterRuntimeRunRoundEmitsSixTurns(t *testing.T) {
 	}
 	var body struct {
 		Result struct {
-			Turns []struct {
+			TraceID       string `json:"trace_id"`
+			UserMessageID string `json:"user_message_id"`
+			Turns         []struct {
 				CharacterID string `json:"character_id"`
+				MessageID   string `json:"message_id"`
 			} `json:"turns"`
 		} `json:"result"`
 	}
@@ -48,6 +51,17 @@ func TestHandleCharacterRuntimeRunRoundEmitsSixTurns(t *testing.T) {
 	}
 	if events.events[0].Type != "character_runtime.turn" || events.events[0].Route != "CHARACTER_RUNTIME" {
 		t.Fatalf("unexpected event: %#v", events.events[0])
+	}
+	if !strings.HasPrefix(body.Result.TraceID, "trc_") || !strings.HasPrefix(body.Result.UserMessageID, "msg_") {
+		t.Fatalf("missing result identity: %#v", body.Result)
+	}
+	for i, event := range events.events {
+		if event.TraceID != body.Result.TraceID || event.MessageID != body.Result.Turns[i].MessageID {
+			t.Fatalf("event %d identity=%#v result=%#v", i, event, body.Result.Turns[i])
+		}
+		if !strings.HasPrefix(event.MessageID, "msg_") {
+			t.Fatalf("event %d message_id=%q", i, event.MessageID)
+		}
 	}
 }
 

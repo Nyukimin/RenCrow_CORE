@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type Character struct {
@@ -25,6 +27,7 @@ type RunRequest struct {
 
 type Turn struct {
 	TurnIndex   int       `json:"turn_index"`
+	MessageID   string    `json:"message_id"`
 	CharacterID string    `json:"character_id"`
 	Name        string    `json:"name"`
 	Role        string    `json:"role"`
@@ -33,19 +36,31 @@ type Turn struct {
 }
 
 type RunResult struct {
-	SessionID    string      `json:"session_id"`
-	Mode         string      `json:"mode"`
-	Participants []Character `json:"participants"`
-	Turns        []Turn      `json:"turns"`
-	CreatedAt    time.Time   `json:"created_at"`
+	SessionID     string      `json:"session_id"`
+	TraceID       string      `json:"trace_id"`
+	UserMessageID string      `json:"user_message_id"`
+	Mode          string      `json:"mode"`
+	Participants  []Character `json:"participants"`
+	Turns         []Turn      `json:"turns"`
+	CreatedAt     time.Time   `json:"created_at"`
 }
 
 type Service struct {
-	now func() time.Time
+	now          func() time.Time
+	newTraceID   func() string
+	newMessageID func() string
 }
 
 func NewService() *Service {
-	return &Service{now: func() time.Time { return time.Now().UTC() }}
+	return &Service{
+		now: func() time.Time { return time.Now().UTC() },
+		newTraceID: func() string {
+			return string(modulecore.NewTraceID())
+		},
+		newMessageID: func() string {
+			return string(modulecore.NewMessageID())
+		},
+	}
 }
 
 func (s *Service) RunRound(_ context.Context, req RunRequest) (RunResult, error) {
@@ -68,6 +83,8 @@ func (s *Service) RunRound(_ context.Context, req RunRequest) (RunResult, error)
 		maxTurns = len(participants)
 	}
 	now := s.now().UTC()
+	traceID := s.newTraceID()
+	userMessageID := s.newMessageID()
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" {
 		sessionID = "char_runtime_" + now.Format("20060102150405.000000000")
@@ -76,6 +93,7 @@ func (s *Service) RunRound(_ context.Context, req RunRequest) (RunResult, error)
 	for i, character := range participants[:maxTurns] {
 		turns = append(turns, Turn{
 			TurnIndex:   i + 1,
+			MessageID:   s.newMessageID(),
 			CharacterID: character.ID,
 			Name:        character.Name,
 			Role:        character.Role,
@@ -84,11 +102,13 @@ func (s *Service) RunRound(_ context.Context, req RunRequest) (RunResult, error)
 		})
 	}
 	return RunResult{
-		SessionID:    sessionID,
-		Mode:         "six_character_round",
-		Participants: participants,
-		Turns:        turns,
-		CreatedAt:    now,
+		SessionID:     sessionID,
+		TraceID:       traceID,
+		UserMessageID: userMessageID,
+		Mode:          "six_character_round",
+		Participants:  participants,
+		Turns:         turns,
+		CreatedAt:     now,
 	}, nil
 }
 

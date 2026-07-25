@@ -32,6 +32,6 @@ invalid recipient and runtime-unavailable errors must not silently fall back to 
 
 modules/chat, internal/application/orchestrator, internal/adapter/viewer/handler_send.go
 
-## Migration Boundary
+## Ownership Boundary
 
-This feature package is a registrar/facade entry point only. Existing implementation stays in the listed current files until contract tests and caller handoff are added for the relevant phase.
+This feature owns `/viewer/send` route registration. The existing Viewer handler remains an adapter implementation until a concrete change-isolation benefit justifies moving it.

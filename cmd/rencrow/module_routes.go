@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	corefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/core"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -35,13 +36,15 @@ func registerModuleRoutes(mux *http.ServeMux, dependencies *Dependencies, sttRun
 		dependencies.moduleSTTViewerInput,
 		dependencies.moduleWorkerExecutor,
 	)
-	mux.HandleFunc(moduleManifestPath, handleModuleManifest())
-	mux.HandleFunc(moduleHealthPath, dependencies.moduleHealth)
-	mux.HandleFunc(moduleLLMDiagnosticsPath, handleModuleLLMDiagnostics(dependencies.moduleLLMProviders))
-	mux.HandleFunc(moduleChatRoutePath, handleModuleChatRouteDecision(dependencies.moduleChatService))
-	mux.HandleFunc(moduleWorkerDiagnosticsPath, handleModuleWorkerDiagnostics(dependencies.moduleWorkerExecutor))
-	mux.HandleFunc(moduleTTSDiagnosticsPath, handleModuleTTSDiagnostics(dependencies.moduleTTSProvider))
-	mux.HandleFunc(moduleTTSPlaybackStatePath, handleModuleTTSPlaybackState(dependencies.moduleTTSPlayback))
-	mux.HandleFunc(moduleSTTDiagnosticsPath, handleModuleSTTDiagnostics(sttRuntime.Module))
-	mux.HandleFunc(moduleSTTViewerInputPath, handleModuleSTTViewerInput(dependencies.moduleSTTViewerInput))
+	corefeature.RegisterRoutes(mux, corefeature.Dependencies{Routes: corefeature.Routes{
+		ModuleManifest:    handleModuleManifest(),
+		ModuleHealth:      dependencies.moduleHealth,
+		LLMDiagnostics:    handleModuleLLMDiagnostics(dependencies.moduleLLMProviders),
+		ChatRoute:         handleModuleChatRouteDecision(dependencies.moduleChatService),
+		WorkerDiagnostics: handleModuleWorkerDiagnostics(dependencies.moduleWorkerExecutor),
+		TTSDiagnostics:    handleModuleTTSDiagnostics(dependencies.moduleTTSProvider),
+		TTSPlaybackState:  handleModuleTTSPlaybackState(dependencies.moduleTTSPlayback),
+		STTDiagnostics:    handleModuleSTTDiagnostics(sttRuntime.Module),
+		STTViewerInput:    handleModuleSTTViewerInput(dependencies.moduleSTTViewerInput),
+	}})
 }

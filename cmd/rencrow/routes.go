@@ -11,7 +11,10 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	agentfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/agent"
 	aiworkflowfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/aiworkflow"
+	avatarfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/avatar"
 	channelsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/channels"
+	chatfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/chat"
+	corefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/core"
 	gamesfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/games"
 	governancefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/governance"
 	idlechatfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/idlechat"
@@ -77,7 +80,6 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		DocsDetail:                   viewer.HandleDocsDetail(),
 		HistoryRepairJSONL:           dependencies.historyRepairJSONL,
 		PackageValidation:            dependencies.packageValidation,
-		CharacterRuntime:             dependencies.characterRuntime,
 		ExtensionHealth:              dependencies.extensionHealth,
 		OTELExport:                   dependencies.otelExport,
 		ArtifactCleanup:              dependencies.artifactCleanup,
@@ -93,6 +95,9 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		HobbyTopicCandidatesGenerate: viewer.HandleHobbyTopicCandidatesGenerate(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
 		InvestmentStatus:             viewer.HandleInvestmentStatus(databasePaths.Investment),
 		InvestmentNotify:             viewer.HandleInvestmentNotify(dependencies.eventHub),
+	}})
+	avatarfeature.RegisterRoutes(mux, avatarfeature.Dependencies{Routes: avatarfeature.Routes{
+		CharacterRuntime: dependencies.characterRuntime,
 	}})
 }
 
@@ -319,9 +324,9 @@ func registerGovernanceSecurityReportRoutes(mux *http.ServeMux, dependencies *De
 }
 
 func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies) {
-	if dependencies.viewerSend != nil {
-		mux.HandleFunc("/viewer/send", dependencies.viewerSend)
-	}
+	chatfeature.RegisterRoutes(mux, chatfeature.Dependencies{Routes: chatfeature.Routes{
+		Send: dependencies.viewerSend,
+	}})
 	gamesfeature.RegisterRoutes(mux, gamesfeature.Dependencies{Routes: gamesfeature.Routes{
 		Status:        dependencies.viewerGamesStatus,
 		Decision:      dependencies.viewerGamesDecision,
@@ -378,7 +383,7 @@ func registerIdleChatRoutes(mux *http.ServeMux, dependencies *Dependencies) {
 
 func registerHealthRoutes(mux *http.ServeMux, dependencies *Dependencies, cfg *config.Config) {
 	healthHandler := dependencies.buildHealthHandler(cfg)
-	mux.HandleFunc("/health/live", healthHandler.HandleLive)
-	mux.HandleFunc("/health", healthHandler.HandleHealth)
-	mux.HandleFunc("/ready", healthHandler.HandleReady)
+	corefeature.RegisterRoutes(mux, corefeature.Dependencies{Routes: corefeature.Routes{
+		Live: healthHandler.HandleLive, Health: healthHandler.HandleHealth, Ready: healthHandler.HandleReady,
+	}})
 }

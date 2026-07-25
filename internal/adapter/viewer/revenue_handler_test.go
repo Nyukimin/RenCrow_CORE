@@ -13,13 +13,24 @@ import (
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
 
-type stubRevenueGoalStore struct{ goals []domainworkstream.Goal }
+type stubRevenueGoalStore struct {
+	goals     []domainworkstream.Goal
+	artifacts []domainworkstream.Artifact
+}
 
 func (s *stubRevenueGoalStore) SaveGoal(_ context.Context, item domainworkstream.Goal) error {
 	if err := domainworkstream.ValidateGoal(item); err != nil {
 		return err
 	}
 	s.goals = append(s.goals, item)
+	return nil
+}
+
+func (s *stubRevenueGoalStore) SaveArtifact(_ context.Context, item domainworkstream.Artifact) error {
+	if err := domainworkstream.ValidateArtifact(item); err != nil {
+		return err
+	}
+	s.artifacts = append(s.artifacts, item)
 	return nil
 }
 
@@ -451,8 +462,24 @@ func TestHandleRevenueEconomicObjectiveEndpoints(t *testing.T) {
 	goalReq := httptest.NewRequest(http.MethodPost, "/viewer/revenue/opportunities/workstream-goal", bytes.NewBufferString(`{"opportunity_id":"opp-1","workstream_id":"ws-revenue"}`))
 	goalRec := httptest.NewRecorder()
 	HandleRevenueOpportunityWorkstreamGoal(store, goals).ServeHTTP(goalRec, goalReq)
-	if goalRec.Code != http.StatusCreated || len(goals.goals) != 1 || goals.goals[0].Status != domainworkstream.StatusDraft {
-		t.Fatalf("goal status=%d body=%s goals=%#v", goalRec.Code, goalRec.Body.String(), goals.goals)
+	if goalRec.Code != http.StatusCreated || len(goals.goals) != 1 || goals.goals[0].Status != domainworkstream.StatusDraft ||
+		len(goals.artifacts) != 1 || len(store.decisions) != 1 {
+		t.Fatalf("chain status=%d body=%s goals=%#v artifacts=%#v decisions=%#v", goalRec.Code, goalRec.Body.String(), goals.goals, goals.artifacts, store.decisions)
+	}
+	if goals.artifacts[0].TraceID != goals.goals[0].TraceID || store.decisions[0].TraceID != goals.goals[0].TraceID {
+		t.Fatalf("trace mismatch goal=%#v artifact=%#v decision=%#v", goals.goals[0], goals.artifacts[0], store.decisions[0])
+	}
+	var chainBody struct {
+		Goal     domainworkstream.Goal                 `json:"goal"`
+		Artifact domainworkstream.Artifact             `json:"artifact"`
+		Approval domainrevenue.HumanDecisionGateRecord `json:"approval"`
+	}
+	if err := json.Unmarshal(goalRec.Body.Bytes(), &chainBody); err != nil {
+		t.Fatalf("decode chain response: %v", err)
+	}
+	if chainBody.Artifact.ArtifactID != goals.artifacts[0].ArtifactID ||
+		chainBody.Approval.DecisionID != store.decisions[0].DecisionID {
+		t.Fatalf("chain response=%#v", chainBody)
 	}
 	missingReq := httptest.NewRequest(http.MethodPost, "/viewer/revenue/opportunities/workstream-goal", bytes.NewBufferString(`{"opportunity_id":"missing","workstream_id":"ws-revenue"}`))
 	missingRec := httptest.NewRecorder()

@@ -9,6 +9,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	characterruntimeapp "github.com/Nyukimin/RenCrow_CORE/internal/application/characterruntime"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	avatarfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/avatar"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
 	jobpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/job"
@@ -111,7 +112,7 @@ func buildViewerRuntimeHandlers(
 
 	hub := viewer.NewEventHub(200)
 	deps.eventHub = hub
-	deps.characterRuntime = viewer.HandleCharacterRuntime(characterruntimeapp.NewService(), hub)
+	deps.characterRuntime = avatarfeature.HandleCharacterRuntime(characterruntimeapp.NewService(), hub)
 	setIdleChatViewerClientCount(hub.ClientCount)
 	hub.SetClientCountListener(handleIdleChatViewerClientCountChanged)
 	if cfg.ViewerLog.Enabled {

@@ -31,6 +31,15 @@ type WorkstreamGoalStore interface {
 	SaveGoal(ctx context.Context, item workstreamdomain.Goal) error
 }
 
+type EconomicApprovalStore interface {
+	SaveHumanDecisionGateRecord(ctx context.Context, item revenuedomain.HumanDecisionGateRecord) error
+}
+
+type WorkstreamEconomicStore interface {
+	WorkstreamGoalStore
+	SaveArtifact(ctx context.Context, item workstreamdomain.Artifact) error
+}
+
 var (
 	ErrOpportunityNotFound  = errors.New("opportunity not found")
 	ErrRevenueEventNotFound = errors.New("revenue event not found")
@@ -41,6 +50,12 @@ type EconomicService struct {
 	workstreamGoals WorkstreamGoalStore
 	now             func() time.Time
 	newTraceID      func() string
+}
+
+type OpportunityWorkstreamChain struct {
+	Goal     workstreamdomain.Goal
+	Artifact workstreamdomain.Artifact
+	Approval revenuedomain.HumanDecisionGateRecord
 }
 
 func (s *EconomicService) WithWorkstreamGoalStore(store WorkstreamGoalStore) *EconomicService {
@@ -135,28 +150,65 @@ func (s *EconomicService) DraftReflection(ctx context.Context, item revenuedomai
 }
 
 func (s *EconomicService) CreateWorkstreamGoal(ctx context.Context, opportunityID, workstreamID string) (workstreamdomain.Goal, error) {
+	chain, err := s.CreateOpportunityWorkstreamChain(ctx, opportunityID, workstreamID)
+	if err != nil {
+		return workstreamdomain.Goal{}, err
+	}
+	return chain.Goal, nil
+}
+
+func (s *EconomicService) CreateOpportunityWorkstreamChain(ctx context.Context, opportunityID, workstreamID string) (OpportunityWorkstreamChain, error) {
 	if s == nil {
-		return workstreamdomain.Goal{}, fmt.Errorf("economic store is required")
+		return OpportunityWorkstreamChain{}, fmt.Errorf("economic store is required")
 	}
 	store, ok := s.store.(EconomicStore)
 	if !ok {
-		return workstreamdomain.Goal{}, fmt.Errorf("economic store is required")
+		return OpportunityWorkstreamChain{}, fmt.Errorf("economic store is required")
 	}
 	if s.workstreamGoals == nil {
-		return workstreamdomain.Goal{}, fmt.Errorf("workstream goal store is required")
+		return OpportunityWorkstreamChain{}, fmt.Errorf("workstream goal store is required")
+	}
+	workstreamStore, ok := s.workstreamGoals.(WorkstreamEconomicStore)
+	if !ok {
+		return OpportunityWorkstreamChain{}, fmt.Errorf("workstream artifact store is required")
+	}
+	approvalStore, ok := s.store.(EconomicApprovalStore)
+	if !ok {
+		return OpportunityWorkstreamChain{}, fmt.Errorf("economic approval store is required")
 	}
 	opportunity, err := findOpportunity(ctx, store, opportunityID)
 	if err != nil {
-		return workstreamdomain.Goal{}, err
+		return OpportunityWorkstreamChain{}, err
 	}
-	goal, err := GoalFromOpportunity(opportunity, workstreamID, s.now().UTC())
+	if opportunity.TraceID == "" {
+		opportunity.TraceID = s.newTraceID()
+		if err := store.SaveOpportunity(ctx, opportunity); err != nil {
+			return OpportunityWorkstreamChain{}, err
+		}
+	}
+	now := s.now().UTC()
+	goal, err := GoalFromOpportunity(opportunity, workstreamID, now)
 	if err != nil {
-		return workstreamdomain.Goal{}, err
+		return OpportunityWorkstreamChain{}, err
+	}
+	artifact := ArtifactFromOpportunity(opportunity, workstreamID, now)
+	if err := workstreamdomain.ValidateArtifact(artifact); err != nil {
+		return OpportunityWorkstreamChain{}, err
+	}
+	approval := ApprovalFromOpportunityArtifact(opportunity, artifact, now)
+	if err := revenuedomain.ValidateHumanDecisionGateRecord(approval); err != nil {
+		return OpportunityWorkstreamChain{}, err
 	}
 	if err := s.workstreamGoals.SaveGoal(ctx, goal); err != nil {
-		return workstreamdomain.Goal{}, err
+		return OpportunityWorkstreamChain{}, err
 	}
-	return goal, nil
+	if err := workstreamStore.SaveArtifact(ctx, artifact); err != nil {
+		return OpportunityWorkstreamChain{}, err
+	}
+	if err := approvalStore.SaveHumanDecisionGateRecord(ctx, approval); err != nil {
+		return OpportunityWorkstreamChain{}, err
+	}
+	return OpportunityWorkstreamChain{Goal: goal, Artifact: artifact, Approval: approval}, nil
 }
 
 type ReflectionFromRevenueEventRequest struct {
@@ -308,4 +360,34 @@ func GoalFromOpportunity(item revenuedomain.Opportunity, workstreamID string, no
 		Status:    workstreamdomain.StatusDraft,
 		CreatedAt: now.UTC(),
 	}, nil
+}
+
+func ArtifactFromOpportunity(item revenuedomain.Opportunity, workstreamID string, now time.Time) workstreamdomain.Artifact {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return workstreamdomain.Artifact{
+		ArtifactID:   "artifact_" + item.OpportunityID,
+		TraceID:      item.TraceID,
+		WorkstreamID: workstreamID,
+		Type:         "economic_opportunity_brief",
+		Title:        item.Title,
+		Status:       "pending_review",
+		CreatedAt:    now.UTC(),
+	}
+}
+
+func ApprovalFromOpportunityArtifact(item revenuedomain.Opportunity, artifact workstreamdomain.Artifact, now time.Time) revenuedomain.HumanDecisionGateRecord {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return revenuedomain.BuildHumanDecisionGateRecord(revenuedomain.HumanDecisionGateRequest{
+		DecisionID:     "approval_" + item.OpportunityID,
+		TraceID:        item.TraceID,
+		DecisionType:   "economic_opportunity_execution",
+		SubjectID:      artifact.ArtifactID,
+		Description:    "Review the economic opportunity artifact before any external action",
+		ApprovalStatus: "pending",
+		CreatedAt:      now.UTC(),
+	})
 }

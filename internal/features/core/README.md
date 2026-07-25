@@ -14,7 +14,7 @@ manifest data, aggregate health, readiness state, registrar wiring points
 
 ## Side Effects
 
-none in this scaffold; existing process wiring remains in cmd/rencrow
+none; process wiring remains in cmd/rencrow
 
 ## Persistence
 
@@ -32,6 +32,6 @@ visible health/readiness errors; no silent fallback from repo-local config
 
 modules/core, cmd/rencrow/module_*.go, cmd/rencrow/runtime_*.go
 
-## Migration Boundary
+## Ownership Boundary
 
-This feature package is a registrar/facade entry point only. Existing implementation stays in the listed current files until contract tests and caller handoff are added for the relevant phase.
+This feature owns process health, readiness, manifest, and module diagnostic route registration. Handler construction and process lifecycle remain composition-root responsibilities.
