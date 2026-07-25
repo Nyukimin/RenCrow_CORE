@@ -19,13 +19,14 @@ const (
 // RequestProvenance contains observation-only metadata for correlating Viewer requests.
 // These client-provided values must not be used for authentication or authorization.
 type RequestProvenance struct {
-	OperationSource string
-	InputSource     string
-	UserID          string
-	DeviceName      string
-	SourceIPMasked  string
-	SourceIPHash    string
-	UserAgent       string
+	OperationSource    string
+	InteractionProfile string
+	InputSource        string
+	UserID             string
+	DeviceName         string
+	SourceIPMasked     string
+	SourceIPHash       string
+	UserAgent          string
 }
 
 func buildViewerRequestProvenance(r *http.Request, req viewerSendRequest) (RequestProvenance, error) {
@@ -40,6 +41,10 @@ func buildViewerRequestProvenance(r *http.Request, req viewerSendRequest) (Reque
 	operationSource := sanitizeViewerMetadata(r.Header.Get("X-RenCrow-Client"), 80)
 	if operationSource == "" {
 		operationSource = defaultViewerOperationSource
+	}
+	interactionProfile := sanitizeViewerMetadata(r.Header.Get("X-RenCrow-Interaction-Profile"), 80)
+	if interactionProfile == "" {
+		interactionProfile = unknownViewerMetadata
 	}
 	userID := sanitizeViewerMetadata(req.UserID, 120)
 	if userID == "" {
@@ -56,21 +61,23 @@ func buildViewerRequestProvenance(r *http.Request, req viewerSendRequest) (Reque
 
 	sourceIP := viewerSourceIP(r, operationSource)
 	return RequestProvenance{
-		OperationSource: operationSource,
-		InputSource:     inputSource,
-		UserID:          userID,
-		DeviceName:      deviceName,
-		SourceIPMasked:  maskViewerSourceIP(sourceIP),
-		SourceIPHash:    hashViewerSourceIP(sourceIP),
-		UserAgent:       userAgent,
+		OperationSource:    operationSource,
+		InteractionProfile: interactionProfile,
+		InputSource:        inputSource,
+		UserID:             userID,
+		DeviceName:         deviceName,
+		SourceIPMasked:     maskViewerSourceIP(sourceIP),
+		SourceIPHash:       hashViewerSourceIP(sourceIP),
+		UserAgent:          userAgent,
 	}, nil
 }
 
 // LogFields formats escaped provenance fields for the existing text logger.
 func (p RequestProvenance) LogFields() string {
 	return fmt.Sprintf(
-		`operation_source=%q input_source=%s user_id=%q device_name=%q source_ip_masked=%q source_ip_hash=%s user_agent=%q`,
+		`operation_source=%q interaction_profile=%q input_source=%s user_id=%q device_name=%q source_ip_masked=%q source_ip_hash=%s user_agent=%q`,
 		p.OperationSource,
+		p.InteractionProfile,
 		p.InputSource,
 		p.UserID,
 		p.DeviceName,

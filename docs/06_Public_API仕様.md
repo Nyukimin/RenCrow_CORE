@@ -164,8 +164,22 @@ PORTAL、CMD、ASSISTANTは、COREとのInteractionで次の意味論を共有�
 
 各clientは同じ意味論を、Web、terminal、PUSH／Deviceへ異なる形で表示できます。
 すべてのclientが全能力を公開する必要はなく、client profile、認証scope、mode、Device
-capabilityで制限します。profile名を使う統一認可設定と共通SDKは未実装であり、現行の
-endpoint allowlistとserver-side authorizationを置き換えたとは扱いません。
+capabilityで制限します。
+
+既知の外部clientは次のprofileを使用します。
+
+| `X-RenCrow-Client` | `X-RenCrow-Interaction-Profile` | 許可する主な能力 |
+| --- | --- | --- |
+| `RenCrow_PORTAL` | `portal-chat` | PORTAL Chat allowlist |
+| `RenCrow_PORTAL` | `portal-idlechat` | IdleChatの読み取り |
+| `RenCrow_CMD` | `cmd-chat` | Chat送信とevent購読 |
+| `RenCrow_CMD` | `cmd-idlechat` | IdleChat status／event／start／stop |
+| `RenCrow_ASSISTANT` | `assistant-core` | COREへのChat送信とevent購読 |
+
+COREは既知clientのprofile欠落、client/profile不一致、profile外method/pathを403で拒否します。
+profile headerは認証credentialではなく、既存のendpoint allowlist、TLS、network境界、
+server-side authorizationを置き換えません。共通SDKは実caller間の重複が確認されるまで
+先行作成しません。
 
 ## Client の注意
 
@@ -181,6 +195,7 @@ endpoint allowlistとserver-side authorizationを置き換えたとは扱いま�
 
 - `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りだけを許可する。
 - `Chat`: IdleChatの読み取りに加え、chat、recipient通知、active audio/input ownership、TTS再生、STT入力に必要な公開契約だけをallowlistとする。
+- COREへのproxy requestはmodeに応じて`portal-chat`または`portal-idlechat` profileを付ける。
 - 旧`view`、`live`、`lab`のpage modeとAPI prefixは受理しない。
 - Debug、Ops、Repair、LLM管理、設定変更APIはPORTALから遮断する。
 - 新しい公開操作はCORE側のAPI追加だけで自動公開せず、PORTAL側でmethod/pathと契約テストを追加する。

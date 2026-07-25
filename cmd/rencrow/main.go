@@ -182,7 +182,7 @@ func cmdRun() {
 
 	server := &http.Server{
 		Addr:    addr,
-		Handler: withTailscaleViewerOnlyGuard(mux),
+		Handler: withTailscaleViewerOnlyGuard(withInteractionProfileGuard(mux)),
 	}
 	if envBool("RENCROW_DEBUG_CONNSTATE") {
 		server.ConnState = func(conn net.Conn, state http.ConnState) {

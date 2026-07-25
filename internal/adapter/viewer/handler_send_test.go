@@ -34,6 +34,7 @@ func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 		}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-RenCrow-Client", "RenCrow_PORTAL")
+	req.Header.Set("X-RenCrow-Interaction-Profile", "portal-chat")
 	req.Header.Set("X-Forwarded-For", "203.0.113.42")
 	req.Header.Set("User-Agent", "Mozilla/5.0 test-browser")
 	rec := httptest.NewRecorder()
@@ -82,14 +83,16 @@ func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 			t.Fatalf("identity = trace:%q message:%q, want trace:%q message:%q", got.TraceID, got.MessageID, traceID, messageID)
 		}
 		want := RequestProvenance{
-			OperationSource: "RenCrow_PORTAL",
-			InputSource:     "stt",
-			UserID:          "viewer-user",
-			DeviceName:      "Linux x86_64",
-			SourceIPMasked:  "203.0.113.x",
-			UserAgent:       "Mozilla/5.0 test-browser",
+			OperationSource:    "RenCrow_PORTAL",
+			InteractionProfile: "portal-chat",
+			InputSource:        "stt",
+			UserID:             "viewer-user",
+			DeviceName:         "Linux x86_64",
+			SourceIPMasked:     "203.0.113.x",
+			UserAgent:          "Mozilla/5.0 test-browser",
 		}
 		if got.Provenance.OperationSource != want.OperationSource ||
+			got.Provenance.InteractionProfile != want.InteractionProfile ||
 			got.Provenance.InputSource != want.InputSource ||
 			got.Provenance.UserID != want.UserID ||
 			got.Provenance.DeviceName != want.DeviceName ||
@@ -150,6 +153,7 @@ func TestHandleSendLogsCorrelationFields(t *testing.T) {
 	}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-RenCrow-Client", "RenCrow_PORTAL")
+	req.Header.Set("X-RenCrow-Interaction-Profile", "portal-chat")
 	req.Header.Set("X-Forwarded-For", "203.0.113.42")
 	req.Header.Set("User-Agent", "Mozilla/5.0 test-browser")
 	rec := httptest.NewRecorder()
@@ -171,6 +175,7 @@ func TestHandleSendLogsCorrelationFields(t *testing.T) {
 		`viewer_client_id="portal-tab-log"`,
 		"recipient=midori",
 		`operation_source="RenCrow_PORTAL"`,
+		`interaction_profile="portal-chat"`,
 		"input_source=text",
 		`user_id="viewer-user"`,
 		`device_name="Linux x86_64"`,
