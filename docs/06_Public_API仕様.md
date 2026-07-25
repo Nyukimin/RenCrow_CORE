@@ -76,7 +76,42 @@ mio | shiro | kuro | midori
 
 `model_alias` や旧 route alias は互換経路であり、新規 client の primary contract にしません。指定 recipient が利用不能な場合に別 recipient へ黙って fallback しません。
 
-recipientは物理Model選択ではありません。COREがrouteとAgentを確定した後、RenCrow_LLM Gatewayへ論理Agent IDを送ります。通常CHATの対応は`mio -> mio`、`shiro -> shiro`（ChatWorker）、`midori -> midori`（Wild）、`kuro -> kuro`です。物理targetの情報はCORE Public APIとCMDへ公開しません。
+recipientは物理ModelやExecution Roleの直接選択ではありません。COREがroute、Agent、
+Execution Roleを確定した後、RenCrow_LLM Gatewayへ現行互換の論理execution aliasを送ります。
+
+### 現行execution aliasの互換契約
+
+| alias | 現在のAgent／Role binding | 備考 |
+| --- | --- | --- |
+| `mio` | Mio／Chat | Agent IDやModel名として再解釈しない |
+| `shiro` | Shiro／ChatWorker | Shiroの通常CHAT |
+| `worker` | Shiro／Worker | 主にShiroのOPS。内部background利用時もCOREがAgent contextを保持する |
+| `midori` | Midori／Wild | Agent IDやModel名として再解釈しない |
+| `kuro` | Kuro／Heavy | Codex、Heavy、Model名そのものではない |
+
+これらはCOREからRenCrow_LLMへ送るopaqueな互換wire keyであり、Agent ID、Execution Role ID、
+物理Target名のいずれか一つを表す汎用fieldではありません。PORTAL、CMD、ASSISTANTはaliasを
+選択せず、COREへrecipient Agentを送ります。Agent／Role bindingが同じままTargetだけを
+変更する場合はaliasを変更しません。将来`agent_id`と`execution_role`を明示fieldへ分離する
+までは、`mio_chat`や`kuro_heavy`等へのrenameを移行要件にしません。
+
+物理targetの情報は通常のCORE Public APIとCMDへ公開しません。認可された運用status／logでは、
+同一requestを追跡できるよう、次のfieldを意味上区別します。
+
+| field | 意味 |
+| --- | --- |
+| `agent_id` | COREが選んだAgent |
+| `execution_role` | COREが選んだRole |
+| `execution_alias` | Gatewayへ送った現行互換wire key |
+| `role_profile_revision` | Gatewayが解決したRole profileのrevision |
+| `target_id` | Gateway内部のTarget識別子 |
+| `provider` | local／外部API／Agent Runtimeのprovider |
+| `model` | 実際に使用したModel。取得不能時はunknown |
+
+通常client向けresponseは物理Target情報を必須とせず、監査・診断surfaceだけが権限に応じて
+表示します。未知Agentは`UNKNOWN_AGENT`、既知Agentに対する未対応Roleは
+`UNSUPPORTED_ROLE`、有効なbinding先の停止は`TARGET_UNAVAILABLE`として区別し、別Agentや
+別providerの成功へ丸めません。
 
 `POST /viewer/recipient-selection`は`viewer_client_id`と`recipient`を受け、`viewer.recipient_selected`を観測eventとして発行します。選択状態はclient-localであり、COREのglobal stateにはせず、実際の送信先は`POST /viewer/send`の`to`を正とします。
 
