@@ -179,9 +179,9 @@ endpoint allowlistとserver-side authorizationを置き換えたとは扱いま�
 
 `RenCrow_PORTAL`はCOREの全APIを透過公開しません。
 
-- `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りだけを許可する。旧`view`は互換名として受理する。
-- `live`: 配信用の読み取り専用画面とし、Labの部屋・操作UIを含めない。
-- `lab`: IdleChatの読み取りに加え、chat、recipient通知、active audio/input ownership、TTS再生、STT入力に必要な公開契約だけをallowlistとする。
+- `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りだけを許可する。
+- `Chat`: IdleChatの読み取りに加え、chat、recipient通知、active audio/input ownership、TTS再生、STT入力に必要な公開契約だけをallowlistとする。
+- 旧`view`、`live`、`lab`のpage modeとAPI prefixは受理しない。
 - Debug、Ops、Repair、LLM管理、設定変更APIはPORTALから遮断する。
 - 新しい公開操作はCORE側のAPI追加だけで自動公開せず、PORTAL側でmethod/pathと契約テストを追加する。
 

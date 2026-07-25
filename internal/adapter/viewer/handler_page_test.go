@@ -7,31 +7,21 @@ import (
 	"testing"
 )
 
-func TestHandlePageRedirectsExternalModesToPortal(t *testing.T) {
-	t.Setenv("RENCROW_PORTAL_URL", "http://127.0.0.1:18791")
-
-	tests := []struct {
-		path string
-		want string
-	}{
-		{path: "/viewer?mode=lab", want: "http://127.0.0.1:18791/?mode=lab"},
-		{path: "/viewer?mode=view", want: "http://127.0.0.1:18791/?mode=view"},
-		{path: "/viewer?mode=live", want: "http://127.0.0.1:18791/?mode=live"},
-	}
-	for _, tt := range tests {
+func TestHandlePageRejectsLegacyExternalModes(t *testing.T) {
+	for _, path := range []string{
+		"/viewer?mode=lab",
+		"/viewer?mode=view",
+		"/viewer?mode=live",
+	} {
 		rec := httptest.NewRecorder()
-		HandlePage(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
-		if rec.Code != http.StatusTemporaryRedirect {
-			t.Fatalf("%s status=%d", tt.path, rec.Code)
-		}
-		if got := rec.Header().Get("Location"); got != tt.want {
-			t.Fatalf("%s location=%q want=%q", tt.path, got, tt.want)
+		HandlePage(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s status=%d, want 404", path, rec.Code)
 		}
 	}
 }
 
 func TestHandlePageKeepsDebugViewerInCore(t *testing.T) {
-	t.Setenv("RENCROW_PORTAL_URL", "http://127.0.0.1:18791")
 	rec := httptest.NewRecorder()
 	HandlePage(rec, httptest.NewRequest(http.MethodGet, "/viewer?tab=ops", nil))
 	if rec.Code != http.StatusOK {
