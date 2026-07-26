@@ -96,7 +96,7 @@ func (m *WorktreeManager) Create(ctx context.Context, opts WorktreeCreateOptions
 	if pathName == "" {
 		pathName = safePathName(branch)
 	}
-	if pathName == "" || filepath.IsAbs(pathName) || strings.Contains(pathName, "..") {
+	if pathName == "" || isCallerAbsPath(pathName) || strings.Contains(pathName, "..") {
 		return WorktreeCreateResult{}, fmt.Errorf("path_name must be a safe relative name")
 	}
 	worktreePath := filepath.Join(absBase, pathName)
@@ -192,7 +192,7 @@ func (m *WorktreeManager) Close(ctx context.Context, opts WorktreeCloseOptions) 
 	if worktreePath == "" {
 		return WorktreeCloseResult{}, fmt.Errorf("worktree_path is required")
 	}
-	if !filepath.IsAbs(worktreePath) {
+	if !isCallerAbsPath(worktreePath) {
 		worktreePath = filepath.Join(absBase, worktreePath)
 	}
 	absWorktree, err := filepath.Abs(worktreePath)
