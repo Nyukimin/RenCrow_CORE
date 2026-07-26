@@ -2,6 +2,7 @@ package entity
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,6 +29,15 @@ func NewGlossaryItem(term, explanation, source, category string) *GlossaryItem {
 	}
 }
 
+// idSequence は生成するIDの一意性を担保する
+var idSequence atomic.Uint64
+
+// generateID は用語集エントリのIDを生成する
+//
+// ID は PRIMARY KEY であり、保存は INSERT OR REPLACE のため、衝突すると
+// エラーにならず先行レコードを無言で上書きする。time.Now().UnixNano() だけでは
+// クロック粒度が粗い環境（Windowsでは100ns〜1ms程度）で連続生成したIDが
+// 衝突するため、単調増加カウンタを併用する。
 func generateID() string {
-	return fmt.Sprintf("gloss_%d", time.Now().UnixNano())
+	return fmt.Sprintf("gloss_%d_%d", time.Now().UnixNano(), idSequence.Add(1))
 }
