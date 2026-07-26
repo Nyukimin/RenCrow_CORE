@@ -150,7 +150,7 @@ func (c *Config) validateBackupConfig() error {
 		if strings.TrimSpace(required.value) == "" {
 			return fmt.Errorf("%s is required when backup is configured", required.key)
 		}
-		if !filepath.IsAbs(required.value) {
+		if !configPathIsAbs(required.value) {
 			return fmt.Errorf("%s must be an absolute path", required.key)
 		}
 	}
@@ -244,8 +244,31 @@ func (c *Config) validateBackupConfig() error {
 	return nil
 }
 
+// configPathIsAbs reports whether a configured path is absolute on any
+// supported platform. config.yaml is shared across Windows, Linux, and macOS,
+// so a POSIX path such as "/state" must validate on Windows too, where
+// filepath.IsAbs requires a drive letter or a UNC prefix.
+func configPathIsAbs(p string) bool {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return false
+	}
+	if filepath.IsAbs(p) {
+		return true
+	}
+	slash := filepath.ToSlash(p)
+	if strings.HasPrefix(slash, "/") {
+		return true
+	}
+	if len(slash) >= 3 && slash[1] == ':' && slash[2] == '/' {
+		drive := slash[0]
+		return (drive >= 'a' && drive <= 'z') || (drive >= 'A' && drive <= 'Z')
+	}
+	return false
+}
+
 func pathWithin(root, path string) (bool, error) {
-	if !filepath.IsAbs(path) {
+	if !configPathIsAbs(path) {
 		return false, nil
 	}
 	relative, err := filepath.Rel(root, filepath.Clean(path))
