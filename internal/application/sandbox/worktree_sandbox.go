@@ -23,17 +23,16 @@ type WorktreeSandboxStore interface {
 }
 
 type WorktreeSandboxCreateOptions struct {
-	RepoRoot      string
-	BaseDir       string
-	RepoName      string
-	Branch        string
-	PathName      string
-	Purpose       string
-	OwnerAgent    string
-	WorkstreamID  string
-	GoalID        string
-	HumanApproved bool
-	Now           func() time.Time
+	RepoRoot     string
+	BaseDir      string
+	RepoName     string
+	Branch       string
+	PathName     string
+	Purpose      string
+	OwnerAgent   string
+	WorkstreamID string
+	GoalID       string
+	Now          func() time.Time
 }
 
 type WorktreeSandboxCreateResult struct {
@@ -42,18 +41,17 @@ type WorktreeSandboxCreateResult struct {
 }
 
 type WorktreeSandboxCloseOptions struct {
-	RepoRoot      string
-	BaseDir       string
-	RepoName      string
-	WorktreeID    string
-	WorktreePath  string
-	Branch        string
-	OwnerAgent    string
-	SandboxID     string
-	WorkstreamID  string
-	GoalID        string
-	HumanApproved bool
-	Now           func() time.Time
+	RepoRoot     string
+	BaseDir      string
+	RepoName     string
+	WorktreeID   string
+	WorktreePath string
+	Branch       string
+	OwnerAgent   string
+	SandboxID    string
+	WorkstreamID string
+	GoalID       string
+	Now          func() time.Time
 }
 
 type WorktreeSandboxCloseResult struct {
@@ -84,15 +82,14 @@ func (m *WorktreeSandboxManager) Create(ctx context.Context, opts WorktreeSandbo
 		return WorktreeSandboxCreateResult{}, fmt.Errorf("sandbox store unavailable")
 	}
 	worktreeResult, err := m.worktrees.Create(ctx, aiworkflowapp.WorktreeCreateOptions{
-		RepoRoot:      opts.RepoRoot,
-		BaseDir:       opts.BaseDir,
-		RepoName:      opts.RepoName,
-		Branch:        opts.Branch,
-		PathName:      opts.PathName,
-		Purpose:       opts.Purpose,
-		OwnerAgent:    opts.OwnerAgent,
-		HumanApproved: opts.HumanApproved,
-		Now:           opts.Now,
+		RepoRoot:   opts.RepoRoot,
+		BaseDir:    opts.BaseDir,
+		RepoName:   opts.RepoName,
+		Branch:     opts.Branch,
+		PathName:   opts.PathName,
+		Purpose:    opts.Purpose,
+		OwnerAgent: opts.OwnerAgent,
+		Now:        opts.Now,
 	})
 	if err != nil {
 		return WorktreeSandboxCreateResult{}, err
@@ -133,15 +130,14 @@ func (m *WorktreeSandboxManager) Close(ctx context.Context, opts WorktreeSandbox
 		return WorktreeSandboxCloseResult{}, fmt.Errorf("sandbox store unavailable")
 	}
 	worktreeResult, err := m.worktrees.Close(ctx, aiworkflowapp.WorktreeCloseOptions{
-		RepoRoot:      opts.RepoRoot,
-		BaseDir:       opts.BaseDir,
-		RepoName:      opts.RepoName,
-		WorktreeID:    opts.WorktreeID,
-		WorktreePath:  opts.WorktreePath,
-		Branch:        opts.Branch,
-		OwnerAgent:    opts.OwnerAgent,
-		HumanApproved: opts.HumanApproved,
-		Now:           opts.Now,
+		RepoRoot:     opts.RepoRoot,
+		BaseDir:      opts.BaseDir,
+		RepoName:     opts.RepoName,
+		WorktreeID:   opts.WorktreeID,
+		WorktreePath: opts.WorktreePath,
+		Branch:       opts.Branch,
+		OwnerAgent:   opts.OwnerAgent,
+		Now:          opts.Now,
 	})
 	if err != nil {
 		return WorktreeSandboxCloseResult{}, err

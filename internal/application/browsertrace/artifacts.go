@@ -300,7 +300,7 @@ func BuildFetcherProposalMarkdown(candidate domaintrace.APICandidate, validation
 	fmt.Fprintf(&b, "- output must go to staging / Source Registry candidate first\n")
 	fmt.Fprintf(&b, "- no direct promoted DB write\n")
 	fmt.Fprintf(&b, "- credentials, cookies, session tokens, and CSRF tokens must not be persisted\n")
-	fmt.Fprintf(&b, "- human review is required before implementation\n")
+	fmt.Fprintf(&b, "- additional validation is required before implementation\n")
 	return b.String()
 }
 

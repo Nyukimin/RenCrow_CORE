@@ -38,7 +38,7 @@ type SuperAgentRecorder interface {
 type ManagerOption func(*Manager)
 
 // WithToolRegistry は ToolRegistry を Manager に注入する（Phase 4）
-// RunSync 毎に承認済みツールを toolDefs に動的マージする
+// RunSync 毎に登録済みツールを toolDefs に動的マージする
 func WithToolRegistry(reg capability.ToolRegistry) ManagerOption {
 	return func(m *Manager) {
 		m.registry = reg
@@ -151,7 +151,7 @@ func (m *Manager) RunSync(ctx context.Context, task agent.SubagentTask) (agent.S
 	}, nil
 }
 
-// mergeToolDefs は base toolDefs と ToolRegistry の承認済みツールをマージする
+// mergeToolDefs は base toolDefs と ToolRegistry の登録済みツールをマージする
 // base のツールが優先される（名前重複は base が勝つ）
 func (m *Manager) mergeToolDefs(ctx context.Context) []llm.ToolDefinition {
 	if m.registry == nil {

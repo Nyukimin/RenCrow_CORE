@@ -23,7 +23,7 @@ func TestValidateUpdateBlocksPackagePathsWithoutRollback(t *testing.T) {
 	if len(report.PackagePaths) != 1 || report.PackagePaths[0] != "go.mod" {
 		t.Fatalf("package paths = %#v", report.PackagePaths)
 	}
-	if containsString(report.MissingRequirements, "human_approved") || !containsString(report.MissingRequirements, "rollback_evidence_path") {
+	if !containsString(report.MissingRequirements, "rollback_evidence_path") {
 		t.Fatalf("missing requirements = %#v", report.MissingRequirements)
 	}
 }
@@ -46,7 +46,7 @@ func TestValidateUpdateAllowsPackagePathWithRollbackEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidateUpdate() error = %v", err)
 	}
-	if report.Status != "policy_satisfied" || !report.InstallAllowed || !report.RequiresManualReview {
+	if report.Status != "policy_satisfied" || !report.InstallAllowed || !report.PolicySensitive {
 		t.Fatalf("unexpected report: %#v", report)
 	}
 	if report.RollbackEvidencePath != "reports/rollback.md" {
@@ -63,7 +63,7 @@ func TestValidateUpdateAllowsNonPackagePaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidateUpdate() error = %v", err)
 	}
-	if report.Status != "allowed" || !report.InstallAllowed || report.RequiresManualReview {
+	if report.Status != "allowed" || !report.InstallAllowed || report.PolicySensitive {
 		t.Fatalf("unexpected report: %#v", report)
 	}
 }

@@ -35,36 +35,33 @@ func TestE2E_RevenueExternalSendClientAuditsPolicyBlockedApply(t *testing.T) {
 		Channel:             "email",
 		Subject:             "Live client E2E audit boundary",
 		Body:                "外部送信せず、同期policyの apply audit だけを確認する下書きです。",
-		ApprovalStatus:      "not_required",
 		ExternalSendApplied: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateRevenueChannelDraft() live call failed at %s: %v", baseURL, err)
 	}
-	if draft.Draft.ExternalSendApplied || draft.ExternalActionsApplied || draft.HumanApprovalRequiredForExternalSendApply {
+	if draft.Draft.ExternalSendApplied || draft.ExternalActionsApplied {
 		t.Fatalf("channel draft response=%+v, want draft-only without external send", draft)
 	}
 
-	decision, err := client.EvaluateRevenueHumanDecision(ctx, rencrowclient.RevenueHumanDecision{
-		DecisionID:     decisionID,
-		DecisionType:   "closed_channel_send",
-		SubjectID:      draftID,
-		Description:    "live client E2E: evaluate policy before external send apply",
-		ApprovalStatus: "not_required",
+	decision, err := client.EvaluateRevenuePolicyDecision(ctx, rencrowclient.RevenuePolicyDecision{
+		DecisionID:   decisionID,
+		DecisionType: "closed_channel_send",
+		SubjectID:    draftID,
+		Description:  "live client E2E: evaluate policy before external send apply",
 	})
 	if err != nil {
-		t.Fatalf("EvaluateRevenueHumanDecision() live call failed at %s: %v", baseURL, err)
+		t.Fatalf("EvaluateRevenuePolicyDecision() live call failed at %s: %v", baseURL, err)
 	}
-	if decision.Record.DecisionID != decisionID || decision.Result.RequiresApproval || decision.Result.Status != "allowed" {
-		t.Fatalf("policy decision response=%+v, want allowed without approval wait", decision)
+	if decision.Record.DecisionID != decisionID || decision.Result.Status != "allowed" {
+		t.Fatalf("policy decision response=%+v, want allowed", decision)
 	}
 
 	apply, err := client.ApplyRevenueExternalSend(ctx, rencrowclient.RevenueExternalSendApplyRequest{
-		ApplyID:       applyID,
-		DraftID:       draftID,
-		DecisionID:    decisionID,
-		Destination:   "customer@example.invalid",
-		HumanApproved: false,
+		ApplyID:     applyID,
+		DraftID:     draftID,
+		DecisionID:  decisionID,
+		Destination: "customer@example.invalid",
 	})
 	if err != nil {
 		t.Fatalf("ApplyRevenueExternalSend() live call failed at %s: %v", baseURL, err)
@@ -80,7 +77,7 @@ func TestE2E_RevenueExternalSendClientAuditsPolicyBlockedApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RevenueStatus() live call failed at %s: %v", baseURL, err)
 	}
-	if status.ExternalChannelAdapter != "unconfigured" || status.ExternalChannelAdapterConfigured == nil || *status.ExternalChannelAdapterConfigured || status.HumanApprovalRequiredForExternalSend == nil || *status.HumanApprovalRequiredForExternalSend {
+	if status.ExternalChannelAdapter != "unconfigured" || status.ExternalChannelAdapterConfigured == nil || *status.ExternalChannelAdapterConfigured {
 		t.Fatalf("revenue external channel readiness=%+v", status)
 	}
 	for _, record := range status.ExternalSendApplyRecords {

@@ -12,7 +12,6 @@ import (
 type ValidationRequest struct {
 	Paths                []string `json:"paths"`
 	RollbackEvidencePath string   `json:"rollback_evidence_path,omitempty"`
-	HumanApproved        bool     `json:"human_approved"`
 	RequestedBy          string   `json:"requested_by,omitempty"`
 	Reason               string   `json:"reason,omitempty"`
 }
@@ -20,7 +19,7 @@ type ValidationRequest struct {
 type ValidationReport struct {
 	Status               string   `json:"status"`
 	InstallAllowed       bool     `json:"install_allowed"`
-	RequiresManualReview bool     `json:"requires_manual_review"`
+	PolicySensitive      bool     `json:"policy_sensitive"`
 	RiskFlags            []string `json:"risk_flags,omitempty"`
 	PackagePaths         []string `json:"package_paths,omitempty"`
 	ValidatedPaths       []string `json:"validated_paths"`
@@ -77,7 +76,7 @@ func (s *Service) ValidateUpdate(_ context.Context, req ValidationRequest) (Vali
 		return report, nil
 	}
 
-	report.RequiresManualReview = true
+	report.PolicySensitive = true
 	if strings.TrimSpace(req.RollbackEvidencePath) == "" {
 		report.MissingRequirements = append(report.MissingRequirements, "rollback_evidence_path")
 	} else {

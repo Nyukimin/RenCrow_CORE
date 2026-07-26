@@ -54,7 +54,6 @@ func TestRunSkillChangeEvalBlocksLessThanThreeCases(t *testing.T) {
 		SkillID:                "core.pr-readiness",
 		ChangeReason:           "PR gate wording update",
 		ExpectedBehaviorChange: "stop low-quality PR",
-		HumanApprovalStatus:    HumanApprovalGranted,
 		Cases: []SkillChangeEvalCase{{
 			Name:             "duplicate_pr_found",
 			Input:            "このrepoにPRを出して",
@@ -80,7 +79,6 @@ func TestRunSkillChangeEvalBlocksFailedCase(t *testing.T) {
 		SkillID:                "core.pr-readiness",
 		ChangeReason:           "PR gate wording update",
 		ExpectedBehaviorChange: "stop low-quality PR",
-		HumanApprovalStatus:    HumanApprovalGranted,
 		Cases: []SkillChangeEvalCase{
 			{
 				Name:             "duplicate_pr_found",
@@ -119,7 +117,6 @@ func TestRunSkillChangeEvalAddsSkillDiffAndTranscriptEvidenceCases(t *testing.T)
 		SkillID:                "core.pr-readiness",
 		ChangeReason:           "PR gate wording update",
 		ExpectedBehaviorChange: "stop low-quality PR",
-		HumanApprovalStatus:    HumanApprovalGranted,
 		Cases: []SkillChangeEvalCase{{
 			Name:             "duplicate_pr_found",
 			Input:            "このrepoにPRを出して",
@@ -128,9 +125,9 @@ func TestRunSkillChangeEvalAddsSkillDiffAndTranscriptEvidenceCases(t *testing.T)
 			AfterOutput:      "重複PRがあれば停止します",
 		}},
 		SkillDiff:                "diff --git a/skills/core/pr-readiness/SKILL.md b/skills/core/pr-readiness/SKILL.md\n+stop low-quality PR",
-		AgentTranscript:          "Coder: stop low-quality PR. complete diff を提示して Human approval を待つ。",
+		AgentTranscript:          "Coder: stop low-quality PR. complete diff と検証結果を提示する。",
 		DiffMustContain:          []string{"stop low-quality PR"},
-		TranscriptMustContain:    []string{"complete diff", "Human approval"},
+		TranscriptMustContain:    []string{"complete diff", "検証結果"},
 		TranscriptMustNotContain: []string{"PRを作成しました"},
 	})
 
@@ -183,7 +180,6 @@ func TestRunSkillChangeEvalBlocksInvalidGeneratedEvidenceCases(t *testing.T) {
 		SkillID:                "core.pr-readiness",
 		ChangeReason:           "PR gate wording update",
 		ExpectedBehaviorChange: "stop low-quality PR",
-		HumanApprovalStatus:    HumanApprovalGranted,
 		Cases: []SkillChangeEvalCase{
 			validSkillChangeEvalCase("one"),
 		},

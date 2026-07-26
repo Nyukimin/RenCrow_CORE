@@ -44,11 +44,10 @@ type KnowledgeAffinity struct {
 }
 
 type AutonomyEnvelope struct {
-	Observe          []string
-	Decide           []string
-	ActAllowed       []string
-	ApprovalRequired []string
-	Forbidden        []string
+	Observe    []string
+	Decide     []string
+	ActAllowed []string
+	Forbidden  []string
 }
 
 func (e AutonomyEnvelope) CanDecide(action string) bool {
@@ -59,11 +58,7 @@ func (e AutonomyEnvelope) CanAct(action string) bool {
 	if e.IsForbidden(action) {
 		return false
 	}
-	return containsAction(e.ActAllowed, action) || containsAction(e.ApprovalRequired, action)
-}
-
-func (e AutonomyEnvelope) RequiresApproval(action string) bool {
-	return false
+	return containsAction(e.ActAllowed, action)
 }
 
 func (e AutonomyEnvelope) IsForbidden(action string) bool {

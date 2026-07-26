@@ -404,7 +404,7 @@ func TestHandleWorkstreamVaultUpdateReviewApproves(t *testing.T) {
 		"workstream_id":"ws_1",
 		"file_path":"vault/workstreams/ws_1/STATUS.md",
 		"update_type":"status",
-		"review_status":"approved"
+		"review_status":"adopted"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -416,11 +416,11 @@ func TestHandleWorkstreamVaultUpdateReviewApproves(t *testing.T) {
 	if len(store.vaultUpdates) != 1 {
 		t.Fatalf("vaultUpdates=%#v", store.vaultUpdates)
 	}
-	if store.vaultUpdates[0].ReviewStatus != domainworkstream.VaultReviewApproved {
+	if store.vaultUpdates[0].ReviewStatus != domainworkstream.VaultReviewAdopted {
 		t.Fatalf("vaultUpdates=%#v", store.vaultUpdates)
 	}
 	if len(store.applied) != 0 {
-		t.Fatalf("expected approval without proposed_content to remain ledger-only, applied=%#v", store.applied)
+		t.Fatalf("expected adopted review without proposed_content to remain ledger-only, applied=%#v", store.applied)
 	}
 }
 
@@ -431,8 +431,8 @@ func TestHandleWorkstreamVaultUpdateReviewAppliesProposedContent(t *testing.T) {
 		"workstream_id":"ws_1",
 		"file_path":"ws_1/STATUS.md",
 		"update_type":"status",
-		"proposed_content":"# STATUS\n\napproved",
-		"review_status":"approved"
+		"proposed_content":"# STATUS\n\nadopted",
+		"review_status":"adopted"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -454,7 +454,7 @@ func TestHandleWorkstreamVaultUpdateReviewAppliesProposedContent(t *testing.T) {
 	if len(store.applied) != 1 || store.applied[0].ProposedContent == "" {
 		t.Fatalf("applied=%#v", store.applied)
 	}
-	if len(store.vaultUpdates) != 1 || store.vaultUpdates[0].ReviewStatus != domainworkstream.VaultReviewApproved || !store.vaultUpdates[0].Applied || store.vaultUpdates[0].AppliedPath != store.appliedPath {
+	if len(store.vaultUpdates) != 1 || store.vaultUpdates[0].ReviewStatus != domainworkstream.VaultReviewAdopted || !store.vaultUpdates[0].Applied || store.vaultUpdates[0].AppliedPath != store.appliedPath {
 		t.Fatalf("vaultUpdates=%#v", store.vaultUpdates)
 	}
 }

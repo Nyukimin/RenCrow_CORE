@@ -72,7 +72,7 @@ func staticProfiles() []agentprofile.Profile {
 				Observe:    []string{"conversation", "task_state", "recall_pack"},
 				Decide:     []string{"route", "ask_clarification", "delegate", "defer"},
 				ActAllowed: []string{"respond", "route_task", "external_send", "memory_promote"},
-				Forbidden:  []string{"delete_production_data", "expose_secret", "bypass_approval"},
+				Forbidden:  []string{"delete_production_data", "expose_secret", "bypass_policy"},
 			},
 			KnowledgeAffinity: []agentprofile.KnowledgeAffinity{
 				{Topic: "conversation", Weight: 1.0},
@@ -100,7 +100,7 @@ func staticProfiles() []agentprofile.Profile {
 				Observe:    []string{"logs", "health", "task_state", "repo_state"},
 				Decide:     []string{"retry", "ask_advisor", "ask_coder", "run_test", "defer"},
 				ActAllowed: []string{"read_file", "run_test", "apply_safe_patch", "restart_service", "write_config", "git_push", "external_send"},
-				Forbidden:  []string{"delete_production_data", "expose_secret", "bypass_approval"},
+				Forbidden:  []string{"delete_production_data", "expose_secret", "bypass_policy"},
 			},
 			KnowledgeAffinity: []agentprofile.KnowledgeAffinity{
 				{Topic: "execution", Weight: 1.0},
@@ -130,7 +130,7 @@ func staticProfiles() []agentprofile.Profile {
 				Observe:    []string{"logs", "health", "risk", "cost", "permission"},
 				Decide:     []string{"analyze", "ask_advisor", "recommend_stop", "defer"},
 				ActAllowed: []string{"read_file", "read_log", "write_risk_report", "restart_service", "write_config", "git_push"},
-				Forbidden:  []string{"delete_production_data", "expose_secret", "bypass_approval"},
+				Forbidden:  []string{"delete_production_data", "expose_secret", "bypass_policy"},
 			},
 			KnowledgeAffinity: []agentprofile.KnowledgeAffinity{
 				{Topic: "risk", Weight: 1.0},
@@ -155,7 +155,7 @@ func staticProfiles() []agentprofile.Profile {
 				Observe:    []string{"topic", "creative_context", "knowledge_affinity"},
 				Decide:     []string{"explore", "generate_alternative", "ask_advisor", "defer"},
 				ActAllowed: []string{"draft", "summarize", "generate_prompt", "external_publish", "paid_api_use"},
-				Forbidden:  []string{"expose_secret", "bypass_approval"},
+				Forbidden:  []string{"expose_secret", "bypass_policy"},
 			},
 			KnowledgeAffinity: []agentprofile.KnowledgeAffinity{
 				{Topic: "story", Weight: 1.0},
@@ -186,7 +186,7 @@ func codeProfile(id, displayName, role, primaryTopic, secondaryTopic string) age
 			Observe:    []string{"code", "spec", "test", "diff"},
 			Decide:     []string{"propose_plan", "propose_patch", "ask_advisor", "defer"},
 			ActAllowed: []string{"draft_plan", "draft_patch", "review_diff", "apply_patch", "run_command", "git_push"},
-			Forbidden:  []string{"delete_production_data", "expose_secret", "bypass_approval"},
+			Forbidden:  []string{"delete_production_data", "expose_secret", "bypass_policy"},
 		},
 		KnowledgeAffinity: []agentprofile.KnowledgeAffinity{
 			{Topic: primaryTopic, Weight: 1.0},

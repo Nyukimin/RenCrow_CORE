@@ -283,7 +283,7 @@ function renderOps() {
   renderComplexityReviewArtifacts();
   renderRuntimeBlockedRouteAudits();
   renderWorkstreamVaultReviews();
-  renderRevenueHumanDecisions();
+  renderRevenuePolicyDecisions();
   renderRevenueChannelDrafts();
   renderRevenueExternalSendAudits();
   renderRevenueDrilldown();
@@ -472,7 +472,7 @@ function sandboxOpsCard() {
   const promotions = Array.isArray(state.ops.sandboxPromotions) ? state.ops.sandboxPromotions : [];
   const decisions = Array.isArray(state.ops.sandboxDecisions) ? state.ops.sandboxDecisions : [];
   const logs = Array.isArray(state.ops.sandboxGateLogs) ? state.ops.sandboxGateLogs : [];
-  const blocked = decisions.filter((d) => String(sandboxField(d, 'status', 'Status') || '') !== 'approve').length;
+  const blocked = decisions.filter((d) => String(sandboxField(d, 'status', 'Status') || '') !== 'passed').length;
   const latestLog = logs[0] || null;
   return {
     title: 'Sandbox Gate',
@@ -517,9 +517,6 @@ function renderSandboxStatus() {
     const preview = promotionID
       ? '<button class="ctl-btn sandbox-promotion-preview" type="button" data-promotion="' + escAttr(previewPayload) + '">Preview</button>'
       : '-';
-    const manualReview = promotionID
-      ? ' <button class="ctl-btn sandbox-promotion-manual-review" type="button" data-promotion="' + escAttr(previewPayload) + '">Manual Review</button>'
-      : '';
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td class="code">' + esc(sandboxField(sandbox, 'sandbox_id', 'SandboxID') || sandboxField(promotion, 'sandbox_id', 'SandboxID') || '-') + '</td>' +
@@ -528,17 +525,12 @@ function renderSandboxStatus() {
       '<td class="code">' + esc(short(sandboxField(sandbox, 'path', 'Path') || '-', 90)) + '</td>' +
       '<td class="code">' + esc(promotionID || '-') + '</td>' +
       '<td><span class="badge ' + stateClass(gate) + '">' + esc(gate) + '</span></td>' +
-      '<td>' + preview + manualReview + '</td>';
+      '<td>' + preview + '</td>';
     body.appendChild(tr);
   }
   body.querySelectorAll('.sandbox-promotion-preview').forEach((btn) => {
     btn.addEventListener('click', () => {
       previewSandboxPromotion(btn.getAttribute('data-promotion') || '');
-    });
-  });
-  body.querySelectorAll('.sandbox-promotion-manual-review').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      requestSandboxPromotionManualReview(btn.getAttribute('data-promotion') || '');
     });
   });
   renderSandboxPromotionPreviewResult();
@@ -558,8 +550,7 @@ function renderSandboxPromotionPreviewResult() {
     el.textContent = 'sandbox promotion diff preview: -';
     return;
   }
-  const reviewResult = state.ops.sandboxPromotionManualReviewResult || null;
-  el.textContent = formatSandboxPromotionDiffPreview(preview) + (reviewResult ? '\n\nmanual review workflow:\n' + JSON.stringify(reviewResult, null, 2) : '');
+  el.textContent = formatSandboxPromotionDiffPreview(preview);
 }
 
 function renderSandboxGateLogs() {
@@ -569,7 +560,7 @@ function renderSandboxGateLogs() {
   const fetchError = String(state.ops.sandboxFetchError || '');
   if (fetchError) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="7" class="small">Sandbox gate logs unavailable: ' + esc(fetchError) + '</td>';
+    tr.innerHTML = '<td colspan="6" class="small">Sandbox gate logs unavailable: ' + esc(fetchError) + '</td>';
     body.appendChild(tr);
     renderSandboxGateLogResult();
     return;
@@ -577,7 +568,7 @@ function renderSandboxGateLogs() {
   const logs = Array.isArray(state.ops.sandboxGateLogs) ? state.ops.sandboxGateLogs : [];
   if (logs.length === 0) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="7" class="small">No sandbox promotion gate logs yet</td>';
+    tr.innerHTML = '<td colspan="6" class="small">No sandbox promotion gate logs yet</td>';
     body.appendChild(tr);
     renderSandboxGateLogResult();
     return;
@@ -586,7 +577,6 @@ function renderSandboxGateLogs() {
     const eventID = String(sandboxField(item, 'event_id', 'EventID') || '');
     const promotionID = String(sandboxField(item, 'promotion_id', 'PromotionID') || '');
     const gate = String(sandboxField(item, 'gate_status', 'GateStatus') || '-');
-    const human = String(sandboxField(item, 'human_approval_status', 'HumanApprovalStatus') || '-');
     const postApply = String(sandboxField(item, 'post_apply_verification', 'PostApplyVerification') || '');
     const reason = String(sandboxField(item, 'reason', 'Reason') || '');
     const gateClass = gate === 'promotion_applied' || gate === 'rollback_executed' ? 'running' : (gate === 'reject' ? 'error' : 'offline');
@@ -596,7 +586,6 @@ function renderSandboxGateLogs() {
       '<td class="code">' + esc(short(eventID || '-', 42)) + '</td>' +
       '<td class="code">' + esc(short(promotionID || '-', 42)) + '</td>' +
       '<td><span class="badge ' + stateClass(gateClass) + '">' + esc(gate) + '</span></td>' +
-      '<td>' + esc(human) + '</td>' +
       '<td>' + esc(postApply || '-') + '</td>' +
       '<td>' + esc(short(reason || '-', 140)) + '</td>';
     body.appendChild(tr);
@@ -634,21 +623,21 @@ function formatSandboxPromotionDiffPreview(preview) {
   const added = sandboxField(item, 'added_lines', 'AddedLines');
   const removed = sandboxField(item, 'removed_lines', 'RemovedLines');
   const riskFlags = sandboxDiffRiskFlags(item);
-  const manualReview = Boolean(sandboxField(item, 'requires_manual_review', 'RequiresManualReview'));
+  const policyBlocked = Boolean(sandboxField(item, 'blocked_by_policy', 'BlockedByPolicy'));
   const lines = [
     'sandbox promotion diff preview:',
     'status: ' + String(sandboxField(item, 'status', 'Status') || '-'),
     'files: ' + String(fileCount == null ? files.length : fileCount) + ' added: ' + String(added == null ? '-' : added) + ' removed: ' + String(removed == null ? '-' : removed),
-    'manual review: ' + String(manualReview ? 'required' : 'not required'),
+    'policy block: ' + String(policyBlocked ? 'yes' : 'no'),
     'risk flags: ' + (riskFlags.length ? riskFlags.join(', ') : '-'),
   ];
   files.slice(0, 6).forEach((file, idx) => {
     const fileRiskFlags = sandboxDiffRiskFlags(file);
-    const fileManualReview = Boolean(sandboxField(file, 'requires_manual_review', 'RequiresManualReview'));
+    const filePolicyBlock = Boolean(sandboxField(file, 'blocked_by_policy', 'BlockedByPolicy'));
     lines.push('');
     lines.push('file ' + String(idx + 1) + ': ' + String(sandboxField(file, 'path', 'Path') || '-'));
     lines.push('added: ' + String(sandboxField(file, 'added_lines', 'AddedLines') || 0) + ' removed: ' + String(sandboxField(file, 'removed_lines', 'RemovedLines') || 0) + ' hunks: ' + String(sandboxField(file, 'hunk_count', 'HunkCount') || 0));
-    if (fileManualReview || fileRiskFlags.length) {
+    if (filePolicyBlock || fileRiskFlags.length) {
       lines.push('review: required risk flags: ' + (fileRiskFlags.length ? fileRiskFlags.join(', ') : '-'));
     }
     const hunks = Array.isArray(sandboxField(file, 'hunks', 'Hunks')) ? sandboxField(file, 'hunks', 'Hunks') : [];
@@ -1177,7 +1166,7 @@ function renderComplexityReviewArtifacts() {
   const fetchError = String(state.ops.complexityFetchError || '');
   if (fetchError) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6" class="small">Complexity review artifacts unavailable: ' + esc(fetchError) + '</td>';
+    tr.innerHTML = '<td colspan="5" class="small">Complexity review artifacts unavailable: ' + esc(fetchError) + '</td>';
     body.appendChild(tr);
     renderComplexityReviewArtifactResult([]);
     return;
@@ -1185,22 +1174,20 @@ function renderComplexityReviewArtifacts() {
   const rows = complexityReviewArtifactRows();
   if (rows.length === 0) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6" class="small">No complexity review artifacts yet</td>';
+    tr.innerHTML = '<td colspan="5" class="small">No complexity review artifacts yet</td>';
     body.appendChild(tr);
     renderComplexityReviewArtifactResult(rows);
     return;
   }
   rows.slice(0, 20).forEach((item) => {
     const patch = item.patchApplied ? 'applied' : 'not applied';
-    const legacyApprovalFlag = item.humanApprovalRequired ? 'true (ignored)' : 'false';
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td>' + esc(ftime(item.createdAt)) + '</td>' +
       '<td class="code">' + esc(short(item.artifactID || '-', 48)) + '</td>' +
       '<td>' + esc(short(item.artifactType || '-', 52)) + '</td>' +
       '<td><span class="badge ' + stateClass(item.status) + '">' + esc(item.status || '-') + '</span></td>' +
-      '<td><span class="badge ' + stateClass(item.patchApplied ? 'error' : 'running') + '">' + esc(patch) + '</span></td>' +
-      '<td>' + esc(legacyApprovalFlag) + '</td>';
+      '<td><span class="badge ' + stateClass(item.patchApplied ? 'error' : 'running') + '">' + esc(patch) + '</span></td>';
     body.appendChild(tr);
   });
   renderComplexityReviewArtifactResult(rows);
@@ -1217,7 +1204,6 @@ function complexityReviewArtifactRows() {
       status: String(sandboxField(item, 'status', 'Status') || ''),
       createdAt: sandboxField(item, 'created_at', 'CreatedAt'),
       patchApplied: normalized.includes('patch applied: `true`') || normalized.includes('patch applied: true'),
-      humanApprovalRequired: normalized.includes('human approval required: `true`') || normalized.includes('human approval required: true'),
     };
   });
 }
@@ -1234,8 +1220,7 @@ function renderComplexityReviewArtifactResult(rows) {
   const pendingReview = list.filter((item) => item.status === 'pending_review').length;
   const failed = list.filter((item) => item.status === 'failed' || item.artifactType === 'complexity_coder_diff_failure').length;
   const patchApplied = list.filter((item) => item.patchApplied).length;
-  const approvalRequired = list.filter((item) => item.humanApprovalRequired).length;
-  el.textContent = 'complexity review artifacts: ' + String(list.length) + ' total / ' + String(pendingReview) + ' pending-review / ' + String(failed) + ' failed / ' + String(patchApplied) + ' patch applied / ' + String(approvalRequired) + ' legacy approval-required artifact(s)\nmode: review-only blocked: no patch applied';
+  el.textContent = 'complexity review artifacts: ' + String(list.length) + ' total / ' + String(pendingReview) + ' pending-review / ' + String(failed) + ' failed / ' + String(patchApplied) + ' patch applied\nmode: review-only blocked: no patch applied';
 }
 
 function workstreamOpsCard() {
@@ -1314,7 +1299,7 @@ function renderWorkstreamVaultReviews() {
       ? '<button class="ctl-btn workstream-vault-preview" type="button" data-update="' + escAttr(payload) + '">Preview</button> '
       : '';
     const actions = preview + (pending && updateID
-      ? '<button class="ctl-btn workstream-vault-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="approved">Adopt</button> <button class="ctl-btn workstream-vault-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="rejected">Reject</button>'
+      ? '<button class="ctl-btn workstream-vault-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="adopted">Adopt</button> <button class="ctl-btn workstream-vault-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="rejected">Reject</button>'
       : '<span class="small">-</span>');
     const tr = document.createElement('tr');
     tr.innerHTML =
@@ -1362,10 +1347,10 @@ function renderWorkstreamVaultReviewResult() {
 function workstreamVaultReviewSummary() {
   const updates = latestWorkstreamVaultUpdates(Array.isArray(state.ops.workstreamVaultUpdates) ? state.ops.workstreamVaultUpdates : []);
   const pending = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'pending').length;
-  const adopted = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'approved').length;
+  const adopted = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'adopted').length;
   const rejected = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'rejected').length;
   const applied = updates.filter((item) => Boolean(sandboxField(item, 'applied', 'Applied'))).length;
-  const adoptedNotApplied = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'approved' && !Boolean(sandboxField(item, 'applied', 'Applied'))).length;
+  const adoptedNotApplied = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'adopted' && !Boolean(sandboxField(item, 'applied', 'Applied'))).length;
   const lines = [
     'workstream vault review: ' + String(updates.length) + ' total / ' + String(pending) + ' pending / ' + String(adopted) + ' adopted / ' + String(rejected) + ' rejected / ' + String(applied) + ' applied',
   ];
@@ -1494,44 +1479,8 @@ async function previewSandboxPromotion(encodedPromotion) {
   renderSandboxPromotionPreviewResult();
 }
 
-async function requestSandboxPromotionManualReview(encodedPromotion) {
-  if (!encodedPromotion) return;
-  let promotion = {};
-  try {
-    promotion = JSON.parse(decodeURIComponent(encodedPromotion));
-  } catch (_) {
-    state.ops.sandboxPromotionManualReviewResult = {status: 'failed', error: 'invalid sandbox promotion payload'};
-    renderSandboxPromotionPreviewResult();
-    return;
-  }
-  try {
-    const res = await fetch('/viewer/sandbox/promotions/manual-review', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        promotion,
-        workstream_id: sandboxField(promotion, 'workstream_id', 'WorkstreamID') || '',
-      }),
-    });
-    const text = await res.text();
-    let data = null;
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch (_) {
-      data = {raw: text};
-    }
-    state.ops.sandboxPromotionManualReviewResult = res.ok ? data : {status: 'failed', http_status: res.status, response: data};
-    if (res.ok && data && data.preview) {
-      state.ops.sandboxPromotionPreviewResult = {preview: data.preview};
-    }
-  } catch (err) {
-    state.ops.sandboxPromotionManualReviewResult = {status: 'failed', error: String(err && err.message ? err.message : err)};
-  }
-  renderSandboxPromotionPreviewResult();
-}
-
 async function reviewWorkstreamVaultUpdate(encodedUpdate, reviewStatus) {
-  if (!encodedUpdate || (reviewStatus !== 'approved' && reviewStatus !== 'rejected')) return;
+  if (!encodedUpdate || (reviewStatus !== 'adopted' && reviewStatus !== 'rejected')) return;
   let payload = {};
   try {
     payload = JSON.parse(decodeURIComponent(encodedUpdate));
@@ -1580,14 +1529,14 @@ function revenueOpsCard() {
   const products = Array.isArray(state.ops.revenueProducts) ? state.ops.revenueProducts : [];
   const voices = Array.isArray(state.ops.revenueCustomerVoices) ? state.ops.revenueCustomerVoices : [];
   const events = Array.isArray(state.ops.revenueEvents) ? state.ops.revenueEvents : [];
-  const decisions = latestRevenueHumanDecisions(Array.isArray(state.ops.revenueHumanDecisions) ? state.ops.revenueHumanDecisions : []);
+  const decisions = latestRevenuePolicyDecisions(Array.isArray(state.ops.revenuePolicyDecisions) ? state.ops.revenuePolicyDecisions : []);
   const dailyReports = Array.isArray(state.ops.revenueDailyRoutineReports) ? state.ops.revenueDailyRoutineReports : [];
   const channelDrafts = Array.isArray(state.ops.revenueChannelDrafts) ? state.ops.revenueChannelDrafts : [];
   const externalSendApplies = Array.isArray(state.ops.revenueExternalSendApplyRecords) ? state.ops.revenueExternalSendApplyRecords : [];
   const summary = state.ops.revenueSummary && typeof state.ops.revenueSummary === 'object' ? state.ops.revenueSummary : null;
   const paid = events.filter((item) => Number(sandboxField(item, 'amount', 'Amount') || 0) > 0).length;
   const usableVoices = voices.filter((item) => Boolean(sandboxField(item, 'usable_for_marketing', 'UsableForMarketing'))).length;
-  const blockedDecisions = decisions.filter((item) => String(sandboxField(item, 'gate_status', 'GateStatus') || '') === 'blocked').length;
+  const blockedDecisions = decisions.filter((item) => String(sandboxField(item, 'status', 'Status') || '') === 'blocked').length;
   const totalRevenue = summary ? Number(sandboxField(summary, 'total_revenue_amount', 'TotalRevenueAmount') || 0) : events.reduce((sum, item) => sum + Math.max(0, Number(sandboxField(item, 'amount', 'Amount') || 0)), 0);
   const paidCustomers = summary ? Number(sandboxField(summary, 'paid_customer_count', 'PaidCustomerCount') || 0) : 0;
   const trend = summary && Array.isArray(sandboxField(summary, 'kpi_trend', 'KPITrend')) ? sandboxField(summary, 'kpi_trend', 'KPITrend') : [];
@@ -1608,7 +1557,7 @@ function revenueOpsCard() {
   };
 }
 
-function latestRevenueHumanDecisions(items) {
+function latestRevenuePolicyDecisions(items) {
   const seen = new Set();
   const out = [];
   items.forEach((item) => {
@@ -1621,31 +1570,28 @@ function latestRevenueHumanDecisions(items) {
   return out;
 }
 
-function renderRevenueHumanDecisions() {
+function renderRevenuePolicyDecisions() {
   const body = document.getElementById('revenueDecisionBody');
   if (!body) return;
   body.innerHTML = '';
-  const decisions = latestRevenueHumanDecisions(Array.isArray(state.ops.revenueHumanDecisions) ? state.ops.revenueHumanDecisions : []);
+  const decisions = latestRevenuePolicyDecisions(Array.isArray(state.ops.revenuePolicyDecisions) ? state.ops.revenuePolicyDecisions : []);
   if (decisions.length === 0) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6" class="small">No revenue policy decisions yet</td>';
+    tr.innerHTML = '<td colspan="5" class="small">No revenue policy decisions yet</td>';
     body.appendChild(tr);
     renderRevenueDecisionResult();
     return;
   }
   decisions.slice(0, 20).forEach((item) => {
     const decisionID = String(sandboxField(item, 'decision_id', 'DecisionID') || '');
-    const approval = String(sandboxField(item, 'approval_status', 'ApprovalStatus') || '-');
-    const gate = String(sandboxField(item, 'gate_status', 'GateStatus') || '-');
-    const actions = '<span class="small">automatic</span>';
+    const status = String(sandboxField(item, 'status', 'Status') || '-');
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td>' + esc(ftime(sandboxField(item, 'created_at', 'CreatedAt'))) + '</td>' +
       '<td class="code">' + esc(decisionID || '-') + '</td>' +
       '<td>' + esc(sandboxField(item, 'decision_type', 'DecisionType') || '-') + '</td>' +
-      '<td><span class="badge ' + stateClass(gate) + '">' + esc(approval + ' / ' + gate) + '</span></td>' +
-      '<td>' + esc(short(sandboxField(item, 'description', 'Description') || '-', 120)) + '</td>' +
-      '<td>' + actions + '</td>';
+      '<td><span class="badge ' + stateClass(status) + '">' + esc(status) + '</span></td>' +
+      '<td>' + esc(short(sandboxField(item, 'description', 'Description') || '-', 120)) + '</td>';
     body.appendChild(tr);
   });
   renderRevenueDecisionResult();
@@ -1654,12 +1600,9 @@ function renderRevenueHumanDecisions() {
 function renderRevenueDecisionResult() {
   const el = document.getElementById('revenueDecisionResult');
   if (!el) return;
-  const result = state.ops.revenueDecisionReviewResult || null;
-  if (!result) {
-    el.textContent = 'revenue decision review: -';
-    return;
-  }
-  el.textContent = JSON.stringify(result, null, 2);
+  const decisions = latestRevenuePolicyDecisions(Array.isArray(state.ops.revenuePolicyDecisions) ? state.ops.revenuePolicyDecisions : []);
+  const blocked = decisions.filter((item) => String(sandboxField(item, 'status', 'Status') || '') === 'blocked').length;
+  el.textContent = 'revenue policy decisions: ' + String(decisions.length) + ' total / ' + String(blocked) + ' blocked / synchronous evaluation';
 }
 
 function renderRevenueChannelDrafts() {
@@ -1669,7 +1612,7 @@ function renderRevenueChannelDrafts() {
   const drafts = Array.isArray(state.ops.revenueChannelDrafts) ? state.ops.revenueChannelDrafts : [];
   if (drafts.length === 0) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="7" class="small">No revenue channel drafts yet</td>';
+    tr.innerHTML = '<td colspan="6" class="small">No revenue channel drafts yet</td>';
     body.appendChild(tr);
     renderRevenueChannelDraftResult();
     return;
@@ -1677,7 +1620,6 @@ function renderRevenueChannelDrafts() {
   drafts.slice(0, 20).forEach((item) => {
     const draftID = String(sandboxField(item, 'draft_id', 'DraftID') || '');
     const channel = String(sandboxField(item, 'channel', 'Channel') || '-');
-    const approval = String(sandboxField(item, 'approval_status', 'ApprovalStatus') || '-');
     const externalSend = Boolean(sandboxField(item, 'external_send_applied', 'ExternalSendApplied'));
     const sendState = externalSend ? 'sent unexpectedly' : 'draft only';
     const source = sandboxField(item, 'source_report_id', 'SourceReportID') || sandboxField(item, 'source_workstream_id', 'SourceWorkstreamID') || '-';
@@ -1688,7 +1630,6 @@ function renderRevenueChannelDrafts() {
       '<td>' + esc(ftime(sandboxField(item, 'created_at', 'CreatedAt'))) + '</td>' +
       '<td class="code">' + esc(draftID || '-') + '</td>' +
       '<td>' + esc(channel) + '</td>' +
-      '<td><span class="badge ' + stateClass(approval) + '">' + esc(approval) + '</span></td>' +
       '<td class="code">' + esc(short(source, 42)) + '</td>' +
       '<td>' + esc(short((subject ? subject + ' / ' : '') + bodyText, 160)) + '</td>' +
       '<td><span class="badge ' + stateClass(externalSend ? 'failed' : 'pending') + '">' + esc(sendState) + '</span></td>';
@@ -1798,7 +1739,7 @@ function revenueDrilldownLines() {
   const trend = Array.isArray(sandboxField(summary, 'kpi_trend', 'KPITrend')) ? sandboxField(summary, 'kpi_trend', 'KPITrend') : [];
   const productSales = Array.isArray(sandboxField(summary, 'product_sales', 'ProductSales')) ? sandboxField(summary, 'product_sales', 'ProductSales') : [];
   const voiceTypes = Array.isArray(sandboxField(summary, 'customer_voice_types', 'CustomerVoiceTypes')) ? sandboxField(summary, 'customer_voice_types', 'CustomerVoiceTypes') : [];
-  const decisions = latestRevenueHumanDecisions(Array.isArray(state.ops.revenueHumanDecisions) ? state.ops.revenueHumanDecisions : []);
+  const decisions = latestRevenuePolicyDecisions(Array.isArray(state.ops.revenuePolicyDecisions) ? state.ops.revenuePolicyDecisions : []);
   const drafts = Array.isArray(state.ops.revenueChannelDrafts) ? state.ops.revenueChannelDrafts : [];
   const externalSendApplies = Array.isArray(state.ops.revenueExternalSendApplyRecords) ? state.ops.revenueExternalSendApplyRecords : [];
   const maxRevenue = Math.max(1, ...trend.map((item) => Number(sandboxField(item, 'revenue_amount', 'RevenueAmount') || 0)));
@@ -1808,7 +1749,7 @@ function revenueDrilldownLines() {
     'Revenue Drilldown',
     'summary: revenue=' + String(sandboxField(summary, 'total_revenue_amount', 'TotalRevenueAmount') || 0) +
       ' paid_customers=' + String(sandboxField(summary, 'paid_customer_count', 'PaidCustomerCount') || 0) +
-      ' pending_decisions=' + String(sandboxField(summary, 'pending_decision_count', 'PendingDecisionCount') || 0) +
+      ' blocked_decisions=' + String(sandboxField(summary, 'blocked_decision_count', 'BlockedDecisionCount') || 0) +
       ' channel_drafts=' + String(sandboxField(summary, 'channel_draft_count', 'ChannelDraftCount') || drafts.length) +
       ' external_apply_audits=' + String(sandboxField(summary, 'external_send_apply_count', 'ExternalSendApplyCount') || externalSendApplies.length),
     '',
@@ -1854,8 +1795,7 @@ function revenueDrilldownLines() {
       lines.push(
         String(sandboxField(item, 'decision_id', 'DecisionID') || '-') +
         ' / ' + String(sandboxField(item, 'decision_type', 'DecisionType') || '-') +
-        ' / ' + String(sandboxField(item, 'approval_status', 'ApprovalStatus') || '-') +
-        ' / ' + String(sandboxField(item, 'gate_status', 'GateStatus') || '-')
+        ' / ' + String(sandboxField(item, 'status', 'Status') || '-')
       );
     });
   }
@@ -1868,33 +1808,6 @@ function renderRevenueDrilldown() {
   el.textContent = revenueDrilldownLines().join('\n');
 }
 
-async function reviewRevenueHumanDecision(decisionID, approvalStatus) {
-  if (!decisionID || (approvalStatus !== 'approved' && approvalStatus !== 'rejected')) return;
-  const payload = {decision_id: decisionID, approval_status: approvalStatus};
-  try {
-    const res = await fetch('/viewer/revenue/human-decision-gate/review', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
-    });
-    const text = await res.text();
-    let data = null;
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch (_) {
-      data = {raw: text};
-    }
-    if (!res.ok) {
-      state.ops.revenueDecisionReviewResult = {status: 'failed', http_status: res.status, response: data};
-    } else {
-      state.ops.revenueDecisionReviewResult = data;
-      refreshRevenueData();
-    }
-  } catch (err) {
-    state.ops.revenueDecisionReviewResult = {status: 'failed', error: String(err && err.message ? err.message : err)};
-  }
-  renderRevenueHumanDecisions();
-}
 
 function personaObservationOpsCard() {
   const fetchError = String(state.ops.personaObservationFetchError || '');
@@ -1963,7 +1876,7 @@ function renderPersonaMetaReviews() {
     const pending = review === 'pending';
     const payload = encodeURIComponent(JSON.stringify(item));
     const actions = pending && updateID
-      ? '<button class="ctl-btn persona-meta-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="approved">Adopt</button> <button class="ctl-btn persona-meta-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="rejected">Reject</button>'
+      ? '<button class="ctl-btn persona-meta-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="adopted">Adopt</button> <button class="ctl-btn persona-meta-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="rejected">Reject</button>'
       : '<span class="small">-</span>';
     const tr = document.createElement('tr');
     tr.innerHTML =
@@ -2000,7 +1913,7 @@ function renderPersonaMetaReviewResult() {
 }
 
 async function reviewPersonaMetaUpdate(encodedUpdate, reviewStatus) {
-  if (!encodedUpdate || (reviewStatus !== 'approved' && reviewStatus !== 'rejected')) return;
+  if (!encodedUpdate || (reviewStatus !== 'adopted' && reviewStatus !== 'rejected')) return;
   let payload = {};
   try {
     payload = JSON.parse(decodeURIComponent(encodedUpdate));

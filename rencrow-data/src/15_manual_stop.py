@@ -100,7 +100,7 @@ def main() -> None:
         "note": args.note,
         "recorded_at": utcnow_iso(),
         "manual_stop": True,
-        "recovery_rule": "risk_check must pass after manual review before trading resumes",
+        "recovery_rule": "risk_check must pass after policy re-evaluation before trading resumes",
     }
     db.log_event(
         con,

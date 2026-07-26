@@ -112,7 +112,6 @@ func HandleSkillGovernanceRecent(store SkillGovernanceLister) http.HandlerFunc {
 			"external_pr_submit_records":     externalPRSubmits,
 			"external_pr_adapter":            "unconfigured",
 			"external_pr_adapter_configured": false,
-			"human_approval_required_for_pr": false,
 			"coder_transcripts":              transcripts,
 		})
 	}
@@ -284,7 +283,6 @@ func HandleSkillGovernanceExternalPRSubmit(store SkillGovernanceStore) http.Hand
 			"external_pr_submit_record":         record,
 			"external_pr_created":               false,
 			"post_submit_verified":              false,
-			"human_approval_required_for_pr":    false,
 			"external_pr_adapter_configuration": "required",
 			"message":                           "external PR adapter is not configured; no PR was created",
 		})

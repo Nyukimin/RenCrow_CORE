@@ -143,20 +143,19 @@ func TestHandleAIWorkflowEventCreate(t *testing.T) {
 	}
 }
 
-func TestHandleAIWorkflowExternalControlCheckDoesNotWaitForApproval(t *testing.T) {
+func TestHandleAIWorkflowExternalControlCheckAllowsPolicyMatch(t *testing.T) {
 	store := &stubAIWorkflowStore{}
 	rec := httptest.NewRecorder()
-	body := `{"actor":"Worker","channel_id":"viewer","action":"promotion_apply","human_approved":false}`
+	body := `{"actor":"Worker","channel_id":"viewer","action":"promotion_apply"}`
 	HandleAIWorkflowExternalControlCheck(store, domainai.ExternalControlPolicy{
-		AllowedActors:    []string{"Worker"},
-		AllowedChannels:  []string{"viewer"},
-		AllowedActions:   []string{"promotion_apply"},
-		ApprovalRequired: []string{"promotion_apply"},
+		AllowedActors:   []string{"Worker"},
+		AllowedChannels: []string{"viewer"},
+		AllowedActions:  []string{"promotion_apply"},
 	}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/viewer/ai-workflow/external-control/check", strings.NewReader(body)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"status":"allowed"`) || !strings.Contains(rec.Body.String(), `"requires_approval":false`) {
+	if !strings.Contains(rec.Body.String(), `"status":"allowed"`) {
 		t.Fatalf("body=%s", rec.Body.String())
 	}
 	if len(store.events) != 1 || store.events[0].EventType != "external_control_policy_checked" || store.events[0].Status != domainai.ExternalControlStatusAllowed {
@@ -166,7 +165,7 @@ func TestHandleAIWorkflowExternalControlCheckDoesNotWaitForApproval(t *testing.T
 
 func TestHandleAIWorkflowExternalControlCheckBlocksUnknownChannel(t *testing.T) {
 	rec := httptest.NewRecorder()
-	body := `{"actor":"Worker","channel_id":"public-web","action":"status_read","human_approved":true}`
+	body := `{"actor":"Worker","channel_id":"public-web","action":"status_read"}`
 	HandleAIWorkflowExternalControlCheck(nil, domainai.ExternalControlPolicy{
 		AllowedActors:   []string{"Worker"},
 		AllowedChannels: []string{"viewer"},
@@ -523,7 +522,7 @@ func TestHandleAIWorkflowProjectInit(t *testing.T) {
 	}
 }
 
-func TestHandleAIWorkflowWorktreeCreateStillRejectsProtectedBranchWithoutApprovalField(t *testing.T) {
+func TestHandleAIWorkflowWorktreeCreateRejectsProtectedBranchByPolicy(t *testing.T) {
 	store := &stubAIWorkflowStore{}
 	manager := aiworkflowapp.NewWorktreeManager(store)
 	rec := httptest.NewRecorder()
@@ -539,11 +538,11 @@ func TestHandleAIWorkflowWorktreeCreateStillRejectsProtectedBranchWithoutApprova
 	}
 }
 
-func TestHandleAIWorkflowWorktreeCloseStillRejectsOutsidePathWithoutApprovalField(t *testing.T) {
+func TestHandleAIWorkflowWorktreeCloseRejectsOutsidePathByPolicy(t *testing.T) {
 	store := &stubAIWorkflowStore{}
 	manager := aiworkflowapp.NewWorktreeManager(store)
 	rec := httptest.NewRecorder()
-	body := `{"repo_root":".","worktree_path":"/tmp/outside","branch":"feature/no-approval"}`
+	body := `{"repo_root":".","worktree_path":"/tmp/outside","branch":"feature/policy-check"}`
 
 	HandleAIWorkflowWorktreeCloseRuntime(manager, "../worktrees").ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/viewer/ai-workflow/worktrees/close", strings.NewReader(body)))
 

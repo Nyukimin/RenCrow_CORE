@@ -17,7 +17,7 @@ type fakeOpportunityStore struct {
 	reflections   []revenuedomain.EconomicReflection
 	events        []revenuedomain.RevenueEvent
 	deliveries    []revenuedomain.Delivery
-	decisions     []revenuedomain.HumanDecisionGateRecord
+	decisions     []revenuedomain.PolicyDecisionRecord
 }
 
 func (f *fakeOpportunityStore) SaveOpportunity(_ context.Context, item revenuedomain.Opportunity) error {
@@ -61,8 +61,8 @@ func (f *fakeOpportunityStore) ListDeliveries(context.Context, int) ([]revenuedo
 	return append([]revenuedomain.Delivery(nil), f.deliveries...), nil
 }
 
-func (f *fakeOpportunityStore) SaveHumanDecisionGateRecord(_ context.Context, item revenuedomain.HumanDecisionGateRecord) error {
-	if err := revenuedomain.ValidateHumanDecisionGateRecord(item); err != nil {
+func (f *fakeOpportunityStore) SavePolicyDecisionRecord(_ context.Context, item revenuedomain.PolicyDecisionRecord) error {
+	if err := revenuedomain.ValidatePolicyDecisionRecord(item); err != nil {
 		return err
 	}
 	f.decisions = append(f.decisions, item)
@@ -105,7 +105,7 @@ func TestEconomicServiceDraftOpportunityCalculatesProfitAndStores(t *testing.T) 
 	if item.ExpectedProfit != 4000 || store.item.ExpectedProfit != 4000 {
 		t.Fatalf("expected profit not calculated: item=%#v stored=%#v", item, store.item)
 	}
-	if item.ApprovalState != "draft" || !item.CreatedAt.Equal(now) {
+	if !item.CreatedAt.Equal(now) {
 		t.Fatalf("defaults not applied: %#v", item)
 	}
 	zeroRevenue, err := service.DraftOpportunity(context.Background(), revenuedomain.Opportunity{
@@ -137,7 +137,7 @@ func TestEconomicServiceGeneratesAndPropagatesTraceToTaskAndDelivery(t *testing.
 
 	task, err := service.DraftEconomicTask(context.Background(), revenuedomain.EconomicTask{
 		TaskID: "task-trace", OpportunityID: opportunity.OpportunityID, AgentID: "shiro",
-		TaskKind: "draft_report", ApprovalMode: "none",
+		TaskKind: "draft_report",
 	})
 	if err != nil {
 		t.Fatalf("DraftEconomicTask failed: %v", err)
@@ -158,18 +158,18 @@ func TestEconomicServiceGeneratesAndPropagatesTraceToTaskAndDelivery(t *testing.
 	}
 }
 
-func TestEconomicServiceCreatesPolicyDecisionWithoutApprovalWait(t *testing.T) {
+func TestEconomicServiceCreatesPolicyDecision(t *testing.T) {
 	now := time.Date(2026, 7, 14, 1, 2, 3, 0, time.UTC)
 	store := &fakeOpportunityStore{opportunities: []revenuedomain.Opportunity{{
 		OpportunityID: "opp-negative", SourceKind: "note", Title: "Internal draft", ExpectedRevenue: 100,
-		ExpectedCost: 200, ApprovalState: "draft", CreatedAt: now,
+		ExpectedCost: 200, CreatedAt: now,
 	}}}
 	goals := &fakeGoalStore{}
 	service := NewEconomicService(store, func() time.Time { return now }).WithWorkstreamGoalStore(goals)
 	if _, err := service.DraftEconomicTask(context.Background(), revenuedomain.EconomicTask{
-		TaskID: "task-1", OpportunityID: "opp-negative", AgentID: "shiro", TaskKind: "billing", ApprovalMode: "none",
+		TaskID: "task-1", OpportunityID: "opp-negative", AgentID: "shiro", TaskKind: "billing",
 	}); err != nil {
-		t.Fatalf("billing task must not wait for human approval: %v", err)
+		t.Fatalf("billing task draft failed: %v", err)
 	}
 	goal, err := service.CreateWorkstreamGoal(context.Background(), "opp-negative", "ws-revenue")
 	if err != nil {
@@ -183,9 +183,7 @@ func TestEconomicServiceCreatesPolicyDecisionWithoutApprovalWait(t *testing.T) {
 	}
 	if store.decisions[0].SubjectID != goals.artifacts[0].ArtifactID ||
 		store.decisions[0].DecisionType != "economic_opportunity_execution" ||
-		store.decisions[0].ApprovalStatus != "not_required" ||
-		store.decisions[0].GateStatus != "allowed" ||
-		store.decisions[0].RequiresApproval {
+		store.decisions[0].Status != "allowed" {
 		t.Fatalf("policy decision does not target artifact: artifact=%#v decision=%#v", goals.artifacts[0], store.decisions[0])
 	}
 	if _, err := service.CreateWorkstreamGoal(context.Background(), "missing", "ws-revenue"); !errors.Is(err, ErrOpportunityNotFound) {
@@ -196,7 +194,7 @@ func TestEconomicServiceCreatesPolicyDecisionWithoutApprovalWait(t *testing.T) {
 func TestEconomicServiceReflectRevenueEvent(t *testing.T) {
 	now := time.Date(2026, 7, 14, 1, 2, 3, 0, time.UTC)
 	store := &fakeOpportunityStore{
-		opportunities: []revenuedomain.Opportunity{{OpportunityID: "opp-1", SourceKind: "note", Title: "Draft", ExpectedCost: 300, ApprovalState: "draft", CreatedAt: now}},
+		opportunities: []revenuedomain.Opportunity{{OpportunityID: "opp-1", SourceKind: "note", Title: "Draft", ExpectedCost: 300, CreatedAt: now}},
 		events:        []revenuedomain.RevenueEvent{{EventID: "rev-1", EventType: "sold", Amount: 1000, CreatedAt: now}},
 	}
 	service := NewEconomicService(store, func() time.Time { return now })
@@ -220,7 +218,6 @@ func TestGoalFromOpportunity(t *testing.T) {
 		ExpectedRevenue: 5000,
 		ExpectedCost:    1000,
 		RiskScore:       0.2,
-		ApprovalState:   "draft",
 		CreatedAt:       time.Now(),
 	}, "ws-1", time.Now())
 	if err != nil {

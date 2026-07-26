@@ -91,14 +91,14 @@ case "$MODE" in
     [[ "$RUN_MAKE_STATUS" == "2" ]] && notify_viewer macro partial "weekly macro increment partial" || notify_viewer macro success "weekly macro increment"
     run_make rencrow-data-weekly-research SNAPSHOT_DATE="${SNAPSHOT_DATE:-$(date -u +%F)}"
     notify_viewer research success "weekly research flow"
-    if [[ -f "${DATA_APPROVAL_FILE:-rencrow-data/approvals/latest.yml}" ]]; then
-      run_make rencrow-data-paper-trade DATA_APPROVAL_FILE="${DATA_APPROVAL_FILE:-rencrow-data/approvals/latest.yml}"
+    if [[ -f "${DATA_POLICY_FILE:-rencrow-data/policies/latest.yml}" ]]; then
+      run_make rencrow-data-paper-trade DATA_POLICY_FILE="${DATA_POLICY_FILE:-rencrow-data/policies/latest.yml}"
       notify_viewer paper_trade success "weekly paper trade recorded"
       run_make rencrow-data-audit-report
       notify_viewer audit success "weekly paper audit refreshed"
     else
-      log "skip paper trade: approval file not found path=${DATA_APPROVAL_FILE:-rencrow-data/approvals/latest.yml}"
-      notify_viewer paper_trade skipped "approval file not found"
+      log "skip paper trade: policy file not found path=${DATA_POLICY_FILE:-rencrow-data/policies/latest.yml}"
+      notify_viewer paper_trade skipped "policy file not found"
     fi
     ;;
   *)

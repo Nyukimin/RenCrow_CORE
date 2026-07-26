@@ -381,7 +381,7 @@ Worker は実行主体である。
 - `docs/04_アーキテクチャ概要.md`
 - `docs/05_設定リファレンス.md`
 - `docs/06_Public_API仕様.md`
-- `docs/07_安全・承認・データ方針.md`
+- `docs/07_安全・自動実行・データ方針.md`
 - `docs/08_実装状況・ロードマップ.md`
 - `docs/09_運用ログ・panic保存仕様.md`
 - `DESIGN.md`

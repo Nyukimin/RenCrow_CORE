@@ -5,29 +5,25 @@ import (
 )
 
 const (
-	ExternalControlStatusAllowed       = "allowed"
-	ExternalControlStatusNeedsApproval = "needs_approval"
-	ExternalControlStatusBlocked       = "blocked"
+	ExternalControlStatusAllowed = "allowed"
+	ExternalControlStatusBlocked = "blocked"
 )
 
 type ExternalControlPolicy struct {
-	AllowedActors    []string
-	AllowedChannels  []string
-	AllowedActions   []string
-	ApprovalRequired []string
+	AllowedActors   []string
+	AllowedChannels []string
+	AllowedActions  []string
 }
 
 type ExternalControlRequest struct {
-	Actor         string `json:"actor"`
-	ChannelID     string `json:"channel_id"`
-	Action        string `json:"action"`
-	HumanApproved bool   `json:"human_approved"`
+	Actor     string `json:"actor"`
+	ChannelID string `json:"channel_id"`
+	Action    string `json:"action"`
 }
 
 type ExternalControlDecision struct {
-	Status           string   `json:"status"`
-	RequiresApproval bool     `json:"requires_approval"`
-	Reasons          []string `json:"reasons,omitempty"`
+	Status  string   `json:"status"`
+	Reasons []string `json:"reasons,omitempty"`
 }
 
 func EvaluateExternalControl(policy ExternalControlPolicy, req ExternalControlRequest) ExternalControlDecision {
@@ -56,7 +52,7 @@ func EvaluateExternalControl(policy ExternalControlPolicy, req ExternalControlRe
 	if len(reasons) > 0 {
 		return ExternalControlDecision{Status: ExternalControlStatusBlocked, Reasons: reasons}
 	}
-	return ExternalControlDecision{Status: ExternalControlStatusAllowed, RequiresApproval: false}
+	return ExternalControlDecision{Status: ExternalControlStatusAllowed}
 }
 
 func containsFold(values []string, target string) bool {

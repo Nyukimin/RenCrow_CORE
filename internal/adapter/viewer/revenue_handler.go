@@ -20,7 +20,7 @@ type RevenueLister interface {
 	ListProducts(ctx context.Context, limit int) ([]domainrevenue.Product, error)
 	ListCustomerVoices(ctx context.Context, limit int) ([]domainrevenue.CustomerVoice, error)
 	ListRevenueEvents(ctx context.Context, limit int) ([]domainrevenue.RevenueEvent, error)
-	ListHumanDecisionGateRecords(ctx context.Context, limit int) ([]domainrevenue.HumanDecisionGateRecord, error)
+	ListPolicyDecisionRecords(ctx context.Context, limit int) ([]domainrevenue.PolicyDecisionRecord, error)
 	ListDailyRoutineReports(ctx context.Context, limit int) ([]domainrevenue.DailyRoutineReport, error)
 	ListChannelDrafts(ctx context.Context, limit int) ([]domainrevenue.ChannelDraft, error)
 	ListExternalSendApplyRecords(ctx context.Context, limit int) ([]domainrevenue.ExternalSendApplyRecord, error)
@@ -36,7 +36,7 @@ type RevenueStore interface {
 	SaveProduct(ctx context.Context, item domainrevenue.Product) error
 	SaveCustomerVoice(ctx context.Context, item domainrevenue.CustomerVoice) error
 	SaveRevenueEvent(ctx context.Context, item domainrevenue.RevenueEvent) error
-	SaveHumanDecisionGateRecord(ctx context.Context, item domainrevenue.HumanDecisionGateRecord) error
+	SavePolicyDecisionRecord(ctx context.Context, item domainrevenue.PolicyDecisionRecord) error
 	SaveDailyRoutineReport(ctx context.Context, item domainrevenue.DailyRoutineReport) error
 	SaveChannelDraft(ctx context.Context, item domainrevenue.ChannelDraft) error
 	SaveExternalSendApplyRecord(ctx context.Context, item domainrevenue.ExternalSendApplyRecord) error
@@ -45,11 +45,6 @@ type RevenueStore interface {
 	SaveEconomicReflection(ctx context.Context, item domainrevenue.EconomicReflection) error
 	SaveDelivery(ctx context.Context, item domainrevenue.Delivery) error
 	ListDeliveries(ctx context.Context, limit int) ([]domainrevenue.Delivery, error)
-}
-
-type RevenueHumanDecisionGateReviewRequest struct {
-	DecisionID     string `json:"decision_id"`
-	ApprovalStatus string `json:"approval_status"`
 }
 
 type RevenueDailyRoutineRequest struct {
@@ -68,7 +63,6 @@ type RevenueExternalSendApplyRequest struct {
 	DecisionID     string `json:"decision_id"`
 	Destination    string `json:"destination,omitempty"`
 	ChannelAdapter string `json:"channel_adapter,omitempty"`
-	HumanApproved  bool   `json:"human_approved"`
 }
 
 type RevenueDashboardSummary struct {
@@ -82,7 +76,7 @@ type RevenueDashboardSummary struct {
 	PaidEventCount         int                         `json:"paid_event_count"`
 	PaidCustomerCount      int                         `json:"paid_customer_count"`
 	TotalRevenueAmount     int                         `json:"total_revenue_amount"`
-	PendingDecisionCount   int                         `json:"pending_decision_count"`
+	BlockedDecisionCount   int                         `json:"blocked_decision_count"`
 	DailyReportCount       int                         `json:"daily_report_count"`
 	LatestDailyReportID    string                      `json:"latest_daily_report_id,omitempty"`
 	ChannelDraftCount      int                         `json:"channel_draft_count"`
@@ -100,12 +94,11 @@ type RevenueEconomicObjectiveSettings struct {
 }
 
 type RevenueEconomicObjectiveSummary struct {
-	Enabled                  bool `json:"enabled"`
-	OpportunityCount         int  `json:"opportunity_count"`
-	PendingApprovalTaskCount int  `json:"pending_approval_task_count"`
-	ReflectionCount          int  `json:"reflection_count"`
-	DraftOnly                bool `json:"draft_only"`
-	ExternalActionBlocked    bool `json:"external_action_blocked"`
+	Enabled               bool `json:"enabled"`
+	OpportunityCount      int  `json:"opportunity_count"`
+	ReflectionCount       int  `json:"reflection_count"`
+	DraftOnly             bool `json:"draft_only"`
+	ExternalActionBlocked bool `json:"external_action_blocked"`
 }
 
 type RevenueKPIDay struct {
@@ -173,9 +166,9 @@ func HandleRevenueStatus(store RevenueLister, economicSettings ...RevenueEconomi
 			http.Error(w, "failed to load revenue events", http.StatusInternalServerError)
 			return
 		}
-		decisions, err := store.ListHumanDecisionGateRecords(r.Context(), limit)
+		decisions, err := store.ListPolicyDecisionRecords(r.Context(), limit)
 		if err != nil {
-			http.Error(w, "failed to load human decision gate records", http.StatusInternalServerError)
+			http.Error(w, "failed to load policy decision records", http.StatusInternalServerError)
 			return
 		}
 		dailyReports, err := store.ListDailyRoutineReports(r.Context(), limit)
@@ -224,7 +217,7 @@ func HandleRevenueStatus(store RevenueLister, economicSettings ...RevenueEconomi
 			events = []domainrevenue.RevenueEvent{}
 		}
 		if decisions == nil {
-			decisions = []domainrevenue.HumanDecisionGateRecord{}
+			decisions = []domainrevenue.PolicyDecisionRecord{}
 		}
 		if dailyReports == nil {
 			dailyReports = []domainrevenue.DailyRoutineReport{}
@@ -245,23 +238,22 @@ func HandleRevenueStatus(store RevenueLister, economicSettings ...RevenueEconomi
 			economicReflections = []domainrevenue.EconomicReflection{}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"market_research":                           market,
-			"sns_post_metrics":                          posts,
-			"products":                                  products,
-			"customer_voices":                           voices,
-			"revenue_events":                            events,
-			"human_decisions":                           decisions,
-			"daily_routine_reports":                     dailyReports,
-			"channel_drafts":                            channelDrafts,
-			"external_send_apply_records":               externalSendApplyRecords,
-			"opportunities":                             opportunities,
-			"economic_tasks":                            economicTasks,
-			"economic_reflections":                      economicReflections,
-			"external_channel_adapter":                  "unconfigured",
-			"external_channel_adapter_configured":       false,
-			"human_approval_required_for_external_send": false,
-			"summary":                                   buildRevenueDashboardSummary(market, posts, products, voices, events, decisions, dailyReports, channelDrafts, externalSendApplyRecords),
-			"economic_objective":                        buildRevenueEconomicObjectiveSummary(settings, opportunities, economicTasks, economicReflections),
+			"market_research":                     market,
+			"sns_post_metrics":                    posts,
+			"products":                            products,
+			"customer_voices":                     voices,
+			"revenue_events":                      events,
+			"policy_decisions":                    decisions,
+			"daily_routine_reports":               dailyReports,
+			"channel_drafts":                      channelDrafts,
+			"external_send_apply_records":         externalSendApplyRecords,
+			"opportunities":                       opportunities,
+			"economic_tasks":                      economicTasks,
+			"economic_reflections":                economicReflections,
+			"external_channel_adapter":            "unconfigured",
+			"external_channel_adapter_configured": false,
+			"summary":                             buildRevenueDashboardSummary(market, posts, products, voices, events, decisions, dailyReports, channelDrafts, externalSendApplyRecords),
+			"economic_objective":                  buildRevenueEconomicObjectiveSummary(settings, opportunities, economicTasks, economicReflections),
 		})
 	}
 }
@@ -271,16 +263,11 @@ func buildRevenueEconomicObjectiveSummary(settings RevenueEconomicObjectiveSetti
 		Enabled: settings.Enabled, OpportunityCount: len(opportunities), ReflectionCount: len(reflections),
 		DraftOnly: settings.DraftOnly, ExternalActionBlocked: true,
 	}
-	for _, item := range tasks {
-		status := strings.TrimSpace(item.Status)
-		if domainrevenue.RequiresHumanApproval(item.TaskKind) && item.ApprovalMode == "human_required" && status != "completed" && status != "rejected" {
-			summary.PendingApprovalTaskCount++
-		}
-	}
+	_ = tasks
 	return summary
 }
 
-func buildRevenueDashboardSummary(market []domainrevenue.MarketResearchItem, posts []domainrevenue.SNSPostMetric, products []domainrevenue.Product, voices []domainrevenue.CustomerVoice, events []domainrevenue.RevenueEvent, decisions []domainrevenue.HumanDecisionGateRecord, reports []domainrevenue.DailyRoutineReport, channelDrafts []domainrevenue.ChannelDraft, externalSendApplyRecords []domainrevenue.ExternalSendApplyRecord) RevenueDashboardSummary {
+func buildRevenueDashboardSummary(market []domainrevenue.MarketResearchItem, posts []domainrevenue.SNSPostMetric, products []domainrevenue.Product, voices []domainrevenue.CustomerVoice, events []domainrevenue.RevenueEvent, decisions []domainrevenue.PolicyDecisionRecord, reports []domainrevenue.DailyRoutineReport, channelDrafts []domainrevenue.ChannelDraft, externalSendApplyRecords []domainrevenue.ExternalSendApplyRecord) RevenueDashboardSummary {
 	summary := RevenueDashboardSummary{
 		MarketResearchCount:    len(market),
 		SNSPostCount:           len(posts),
@@ -310,7 +297,7 @@ func buildRevenueDashboardSummary(market []domainrevenue.MarketResearchItem, pos
 		}
 	}
 	summary.PaidCustomerCount = len(paidCustomers)
-	latestDecisions := map[string]domainrevenue.HumanDecisionGateRecord{}
+	latestDecisions := map[string]domainrevenue.PolicyDecisionRecord{}
 	for _, decision := range decisions {
 		key := strings.TrimSpace(decision.DecisionID)
 		if key == "" {
@@ -319,8 +306,8 @@ func buildRevenueDashboardSummary(market []domainrevenue.MarketResearchItem, pos
 		latestDecisions[key] = decision
 	}
 	for _, decision := range latestDecisions {
-		if decision.ApprovalStatus == "pending" || decision.GateStatus == "needs_review" {
-			summary.PendingDecisionCount++
+		if decision.Status == "blocked" {
+			summary.BlockedDecisionCount++
 		}
 	}
 	if len(reports) > 0 {
@@ -554,7 +541,7 @@ func HandleRevenueEventCreate(store RevenueStore) http.HandlerFunc {
 	}
 }
 
-func HandleRevenueHumanDecisionGate(store RevenueStore) http.HandlerFunc {
+func HandleRevenuePolicyDecision(store RevenueStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -564,7 +551,7 @@ func HandleRevenueHumanDecisionGate(store RevenueStore) http.HandlerFunc {
 			http.Error(w, "revenue store unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		var item domainrevenue.HumanDecisionGateRequest
+		var item domainrevenue.PolicyDecisionRequest
 		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
 			http.Error(w, "invalid revenue decision payload", http.StatusBadRequest)
 			return
@@ -588,83 +575,17 @@ func HandleRevenueHumanDecisionGate(store RevenueStore) http.HandlerFunc {
 		if strings.TrimSpace(item.TraceID) == "" {
 			item.TraceID = string(modulecore.NewTraceID())
 		}
-		record := domainrevenue.BuildHumanDecisionGateRecord(item)
-		if err := store.SaveHumanDecisionGateRecord(r.Context(), record); err != nil {
+		record := domainrevenue.BuildPolicyDecisionRecord(item)
+		if err := store.SavePolicyDecisionRecord(r.Context(), record); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"decision": item,
 			"record":   record,
-			"result": domainrevenue.HumanDecisionGateResult{
-				Status:           record.GateStatus,
-				RequiresApproval: record.RequiresApproval,
-				Reasons:          record.Reasons,
-			},
-		})
-	}
-}
-
-func HandleRevenueHumanDecisionGateReview(store RevenueStore) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if store == nil {
-			http.Error(w, "revenue store unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		var req RevenueHumanDecisionGateReviewRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid revenue decision review payload", http.StatusBadRequest)
-			return
-		}
-		if req.DecisionID == "" {
-			http.Error(w, "decision_id is required", http.StatusBadRequest)
-			return
-		}
-		if req.ApprovalStatus != "approved" && req.ApprovalStatus != "rejected" {
-			http.Error(w, "approval_status must be approved or rejected", http.StatusBadRequest)
-			return
-		}
-		records, err := store.ListHumanDecisionGateRecords(r.Context(), 500)
-		if err != nil {
-			http.Error(w, "failed to load human decision gate records", http.StatusInternalServerError)
-			return
-		}
-		var current *domainrevenue.HumanDecisionGateRecord
-		for i := range records {
-			if records[i].DecisionID == req.DecisionID {
-				current = &records[i]
-				break
-			}
-		}
-		if current == nil {
-			http.Error(w, "human decision gate record not found", http.StatusNotFound)
-			return
-		}
-		decision := domainrevenue.HumanDecisionGateRequest{
-			DecisionID:     current.DecisionID,
-			TraceID:        current.TraceID,
-			DecisionType:   current.DecisionType,
-			SubjectID:      current.SubjectID,
-			Description:    current.Description,
-			ApprovalStatus: req.ApprovalStatus,
-			CreatedAt:      current.CreatedAt,
-		}
-		record := domainrevenue.BuildHumanDecisionGateRecord(decision)
-		if err := store.SaveHumanDecisionGateRecord(r.Context(), record); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"decision": decision,
-			"record":   record,
-			"result": domainrevenue.HumanDecisionGateResult{
-				Status:           record.GateStatus,
-				RequiresApproval: record.RequiresApproval,
-				Reasons:          record.Reasons,
+			"result": domainrevenue.PolicyDecisionResult{
+				Status:  record.Status,
+				Reasons: record.Reasons,
 			},
 		})
 	}
@@ -710,7 +631,6 @@ func HandleRevenueDailyRoutineReportCreate(store RevenueStore) http.HandlerFunc 
 			"mode":                     result.Mode,
 			"daily_routine_report":     result.Report,
 			"external_actions_applied": result.ExternalActionsApplied,
-			"human_approval_required_for_external_actions": result.HumanApprovalRequiredForExternalActions,
 		})
 	}
 }
@@ -720,9 +640,6 @@ func HandleRevenueChannelDraftCreate(store RevenueStore) http.HandlerFunc {
 		var item domainrevenue.ChannelDraft
 		if !decodeRevenuePost(w, r, &item, store) {
 			return
-		}
-		if item.ApprovalStatus == "" {
-			item.ApprovalStatus = "not_required"
 		}
 		item.ExternalSendApplied = false
 		if item.CreatedAt.IsZero() {
@@ -742,9 +659,8 @@ func HandleRevenueChannelDraftCreate(store RevenueStore) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
-			"channel_draft":                                   item,
-			"external_actions_applied":                        false,
-			"human_approval_required_for_external_send_apply": false,
+			"channel_draft":            item,
+			"external_actions_applied": false,
 		})
 	}
 }
@@ -784,12 +700,12 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			return
 		}
 
-		decisions, err := store.ListHumanDecisionGateRecords(r.Context(), 500)
+		decisions, err := store.ListPolicyDecisionRecords(r.Context(), 500)
 		if err != nil {
-			http.Error(w, "failed to load human decision gate records", http.StatusInternalServerError)
+			http.Error(w, "failed to load policy decision records", http.StatusInternalServerError)
 			return
 		}
-		var decision *domainrevenue.HumanDecisionGateRecord
+		var decision *domainrevenue.PolicyDecisionRecord
 		for i := range decisions {
 			if decisions[i].DecisionID == req.DecisionID {
 				decision = &decisions[i]
@@ -797,10 +713,10 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			}
 		}
 		if decision == nil {
-			http.Error(w, "human decision gate record not found", http.StatusNotFound)
+			http.Error(w, "policy decision record not found", http.StatusNotFound)
 			return
 		}
-		policyResult := domainrevenue.EvaluateHumanDecisionGate(domainrevenue.HumanDecisionGateRequest{
+		policyResult := domainrevenue.EvaluatePolicyDecision(domainrevenue.PolicyDecisionRequest{
 			DecisionType: decision.DecisionType,
 			Description:  decision.Description,
 		})
@@ -859,8 +775,6 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			Channel:             draft.Channel,
 			Destination:         strings.TrimSpace(req.Destination),
 			ChannelAdapter:      "unconfigured",
-			ApprovalStatus:      "not_required",
-			HumanApproved:       false,
 			ApplyStatus:         "blocked",
 			SendResult:          "not_sent",
 			FailureReason:       "external channel adapter is not configured",
@@ -877,7 +791,6 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			"delivery":                               delivery,
 			"external_actions_applied":               false,
 			"post_send_verified":                     false,
-			"human_approval_required_for_retry":      false,
 			"external_channel_adapter_configuration": "required",
 			"failure_reason":                         record.FailureReason,
 		})

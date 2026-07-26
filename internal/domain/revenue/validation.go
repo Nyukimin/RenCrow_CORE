@@ -19,27 +19,6 @@ var prohibitedClaims = []string{
 	"失敗しない",
 }
 
-var approvalRequiredDecisionTypes = map[string]struct{}{
-	"market_selection":               {},
-	"product_price":                  {},
-	"high_ticket_offer":              {},
-	"customer_voice_publication":     {},
-	"paid_ads":                       {},
-	"paid_api_use":                   {},
-	"refund_policy":                  {},
-	"medical_expression":             {},
-	"financial_expression":           {},
-	"legal_expression":               {},
-	"economic_opportunity_execution": {},
-	"external_publish":               {},
-	"closed_channel_send":            {},
-	"customer_individual_message":    {},
-	"contract":                       {},
-	"billing":                        {},
-	"github_publication":             {},
-	"personal_data_use":              {},
-}
-
 func ValidateMarketResearchItem(item MarketResearchItem) error {
 	if strings.TrimSpace(item.ItemID) == "" {
 		return errors.New("item_id is required")
@@ -155,11 +134,6 @@ func ValidateOpportunity(item Opportunity) error {
 	if item.RiskScore < 0 || item.RiskScore > 1 {
 		return errors.New("risk_score must be between 0 and 1")
 	}
-	switch strings.TrimSpace(item.ApprovalState) {
-	case "", "draft", "pending", "approved", "rejected":
-	default:
-		return errors.New("approval_state must be draft, pending, approved, or rejected")
-	}
 	if check := CheckEthics(strings.Join([]string{item.Title, item.Summary, item.TargetCustomer}, "\n")); !check.Allowed {
 		return errors.New(strings.Join(check.Reasons, "; "))
 	}
@@ -231,7 +205,7 @@ func ValidateDelivery(item Delivery) error {
 		return errors.New("status must be draft, pending, blocked, failed, completed, or cancelled")
 	}
 	if item.ExternalAction && item.Status == "completed" {
-		if strings.TrimSpace(item.PolicyDecisionID) == "" && strings.TrimSpace(item.ApprovalID) == "" {
+		if strings.TrimSpace(item.PolicyDecisionID) == "" {
 			return errors.New("policy_decision_id is required for completed external delivery")
 		}
 		if strings.TrimSpace(item.Evidence) == "" {
@@ -257,21 +231,13 @@ func ValidateDailyRoutineReport(item DailyRoutineReport) error {
 	if item.ExternalSendApplied {
 		return errors.New("daily routine report must not apply external send")
 	}
-	if item.MarketResearch < 0 || item.SNSPosts < 0 || item.Products < 0 || item.CustomerVoices < 0 || item.RevenueEvents < 0 || item.PaidCustomers < 0 || item.PendingDecisions < 0 {
+	if item.MarketResearch < 0 || item.SNSPosts < 0 || item.Products < 0 || item.CustomerVoices < 0 || item.RevenueEvents < 0 || item.PaidCustomers < 0 || item.BlockedDecisions < 0 {
 		return errors.New("daily routine counts must be >= 0")
 	}
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
 	}
 	return nil
-}
-
-func requiresHumanApproval(decisionType string) bool {
-	return false
-}
-
-func RequiresHumanApproval(decisionType string) bool {
-	return requiresHumanApproval(decisionType)
 }
 
 func ValidateChannelDraft(item ChannelDraft) error {
@@ -283,11 +249,6 @@ func ValidateChannelDraft(item ChannelDraft) error {
 	}
 	if strings.TrimSpace(item.Body) == "" {
 		return errors.New("body is required")
-	}
-	switch strings.TrimSpace(item.ApprovalStatus) {
-	case "", "not_required", "pending", "approved", "rejected":
-	default:
-		return errors.New("approval_status must be pending, approved, or rejected")
 	}
 	if item.ExternalSendApplied {
 		return errors.New("channel draft must not apply external send")
@@ -349,20 +310,17 @@ func ValidateExternalSendApplyRecord(item ExternalSendApplyRecord) error {
 	return nil
 }
 
-func ValidateHumanDecisionGateRecord(item HumanDecisionGateRecord) error {
+func ValidatePolicyDecisionRecord(item PolicyDecisionRecord) error {
 	if strings.TrimSpace(item.DecisionID) == "" {
 		return errors.New("decision_id is required")
 	}
 	if strings.TrimSpace(item.DecisionType) == "" {
 		return errors.New("decision_type is required")
 	}
-	switch strings.TrimSpace(item.ApprovalStatus) {
-	case "", "not_required", "pending", "approved", "rejected":
+	switch strings.TrimSpace(item.Status) {
+	case "allowed", "blocked":
 	default:
-		return errors.New("approval_status must be pending, approved, or rejected")
-	}
-	if strings.TrimSpace(item.GateStatus) == "" {
-		return errors.New("gate_status is required")
+		return errors.New("status must be allowed or blocked")
 	}
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
@@ -393,7 +351,7 @@ type DailyRoutineInput struct {
 	Products       []Product
 	CustomerVoices []CustomerVoice
 	RevenueEvents  []RevenueEvent
-	Decisions      []HumanDecisionGateRecord
+	Decisions      []PolicyDecisionRecord
 }
 
 func BuildDailyRoutineReport(input DailyRoutineInput) DailyRoutineReport {
@@ -410,10 +368,10 @@ func BuildDailyRoutineReport(input DailyRoutineInput) DailyRoutineReport {
 		reportID = "rev_daily_" + now.UTC().Format("20060102T150405Z")
 	}
 	paidCustomers := uniquePaidCustomerCount(input.RevenueEvents)
-	pendingDecisions := 0
+	blockedDecisions := 0
 	for _, decision := range input.Decisions {
-		if decision.ApprovalStatus == "pending" || decision.GateStatus == "needs_review" {
-			pendingDecisions++
+		if decision.Status == "blocked" {
+			blockedDecisions++
 		}
 	}
 	report := DailyRoutineReport{
@@ -426,7 +384,7 @@ func BuildDailyRoutineReport(input DailyRoutineInput) DailyRoutineReport {
 		CustomerVoices:      len(input.CustomerVoices),
 		RevenueEvents:       len(input.RevenueEvents),
 		PaidCustomers:       paidCustomers,
-		PendingDecisions:    pendingDecisions,
+		BlockedDecisions:    blockedDecisions,
 		Status:              "draft_report",
 		ExternalSendApplied: false,
 		CreatedAt:           now.UTC(),
@@ -474,8 +432,8 @@ func buildDailyRoutineSuggestedActions(report DailyRoutineReport) []string {
 	if report.CustomerVoices == 0 {
 		actions = append(actions, "購入者または見込み顧客の声を記録する")
 	}
-	if report.PendingDecisions > 0 {
-		actions = append(actions, "Human Decision Gateの保留判断を確認する")
+	if report.BlockedDecisions > 0 {
+		actions = append(actions, "blockedとなったPolicy Decisionの理由を確認する")
 	}
 	if len(actions) == 0 {
 		actions = append(actions, "反応が取れた投稿と顧客の声から次の商品改善案を作る")
@@ -483,33 +441,26 @@ func buildDailyRoutineSuggestedActions(report DailyRoutineReport) []string {
 	return actions
 }
 
-func BuildHumanDecisionGateRecord(req HumanDecisionGateRequest) HumanDecisionGateRecord {
-	result := EvaluateHumanDecisionGate(req)
-	approvalStatus := strings.TrimSpace(req.ApprovalStatus)
-	if approvalStatus == "" {
-		approvalStatus = "not_required"
-	}
-	return HumanDecisionGateRecord{
-		DecisionID:       strings.TrimSpace(req.DecisionID),
-		TraceID:          strings.TrimSpace(req.TraceID),
-		DecisionType:     strings.TrimSpace(req.DecisionType),
-		SubjectID:        strings.TrimSpace(req.SubjectID),
-		Description:      req.Description,
-		ApprovalStatus:   approvalStatus,
-		GateStatus:       result.Status,
-		RequiresApproval: result.RequiresApproval,
-		Reasons:          result.Reasons,
-		CreatedAt:        req.CreatedAt,
+func BuildPolicyDecisionRecord(req PolicyDecisionRequest) PolicyDecisionRecord {
+	result := EvaluatePolicyDecision(req)
+	return PolicyDecisionRecord{
+		DecisionID:   strings.TrimSpace(req.DecisionID),
+		TraceID:      strings.TrimSpace(req.TraceID),
+		DecisionType: strings.TrimSpace(req.DecisionType),
+		SubjectID:    strings.TrimSpace(req.SubjectID),
+		Description:  req.Description,
+		Status:       result.Status,
+		Reasons:      result.Reasons,
+		CreatedAt:    req.CreatedAt,
 	}
 }
 
-func EvaluateHumanDecisionGate(req HumanDecisionGateRequest) HumanDecisionGateResult {
+func EvaluatePolicyDecision(req PolicyDecisionRequest) PolicyDecisionResult {
 	decisionType := strings.TrimSpace(req.DecisionType)
 	if decisionType == "" {
-		return HumanDecisionGateResult{
-			Status:           "blocked",
-			RequiresApproval: false,
-			Reasons:          []string{"decision_type is required"},
+		return PolicyDecisionResult{
+			Status:  "blocked",
+			Reasons: []string{"decision_type is required"},
 		}
 	}
 
@@ -518,15 +469,11 @@ func EvaluateHumanDecisionGate(req HumanDecisionGateRequest) HumanDecisionGateRe
 		reasons = append(reasons, check.Reasons...)
 	}
 	if len(reasons) > 0 {
-		return HumanDecisionGateResult{
-			Status:           "blocked",
-			RequiresApproval: false,
-			Reasons:          reasons,
+		return PolicyDecisionResult{
+			Status:  "blocked",
+			Reasons: reasons,
 		}
 	}
 
-	return HumanDecisionGateResult{
-		Status:           "allowed",
-		RequiresApproval: false,
-	}
+	return PolicyDecisionResult{Status: "allowed"}
 }

@@ -16,11 +16,11 @@ test('To-Be Ops renders exactly five safe summary blocks', () => {
     },
     knowledge: {enabled: false, status: 'unavailable', warnings: ['disabled by config'], summary: {entity_count: 0, relation_count: 0, max_hop: 2, last_build_status: 'not_run'}},
     opportunities: {status: 'blocked', opportunities: [{opportunity_id: 'opp-1', title: 'Draft'}], opportunity_count: 1},
-    tasks: {status: 'ok', economic_tasks: [{task_id: 'task-1', opportunity_id: 'opp-1', task_kind: 'billing', status: 'draft', approval_mode: 'not_required'}], task_count: 1},
+    tasks: {status: 'ok', economic_tasks: [{task_id: 'task-1', opportunity_id: 'opp-1', task_kind: 'billing', status: 'draft'}], task_count: 1},
     reflections: {status: 'ok', economic_reflections: [{reflection_id: 'reflection-1', opportunity_id: 'opp-1', outcome: 'drafted'}], reflection_count: 1},
     revenue: {
       economic_objective: {enabled: false, draft_only: true, external_action_blocked: true},
-      human_decisions: [{decision_id: 'decision-1', decision_type: 'billing', subject_id: 'opp-1', approval_status: 'not_required', gate_status: 'allowed', description: 'DO_NOT_RENDER_DESCRIPTION'}],
+      policy_decisions: [{decision_id: 'decision-1', decision_type: 'billing', subject_id: 'opp-1', status: 'allowed', description: 'DO_NOT_RENDER_DESCRIPTION'}],
     },
     traces: {items: [{ResponseID: 'response-1', Role: 'mio', Items: [{Kind: 'knowledge_relation', SourceID: 'source-1', Status: 'injected', Summary: 'DO_NOT_RENDER_TRACE_SUMMARY', PromptSection: 'knowledge'}]}]},
     errors: {},
@@ -41,7 +41,7 @@ test('To-Be Ops renders exactly five safe summary blocks', () => {
   assert.match(html, /run-with-a-very-long-identifier-1234567890/);
   assert.match(html, /task task-1 · billing · draft/);
   assert.match(html, /decision decision-1 · target opp-1 · billing · allowed/);
-  assert.match(html, /Approval wait<\/dt><dd>disabled/);
+  assert.match(html, /Evaluation<\/dt><dd>synchronous/);
 });
 
 test('To-Be Ops is wired into the existing Ops tab and mobile layout', () => {

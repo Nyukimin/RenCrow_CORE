@@ -3,8 +3,8 @@
 This directory contains the repository-local workflow for stock, ETF, and crypto
 research data. It is an implementation runbook, not an additional product source of
 truth. Runtime database placement follows
-[the configuration reference](../docs/05_設定リファレンス.md), and any approval or
-external action follows [the safety policy](../docs/07_安全・承認・データ方針.md).
+[the configuration reference](../docs/05_設定リファレンス.md), and any external
+action follows [the automatic execution and safety policy](../docs/07_安全・自動実行・データ方針.md).
 
 MVP commands:
 
@@ -38,14 +38,14 @@ snapshot before falling back to the latest decision candidate.
 Paper trading uses the generated decision policy file and does not place broker orders:
 
 ```bash
-make rencrow-data-paper-trade DATA_APPROVAL_FILE=rencrow-data/approvals/latest.yml
+make rencrow-data-paper-trade DATA_POLICY_FILE=rencrow-data/policies/latest.yml
 ```
 
 Live broker orders are disabled in the initial MVP. The schema keeps `order_log`
 as a future placeholder, but inserts are blocked until a separate live-trading
 specification explicitly replaces that guard.
 
-Generated databases, snapshots, backtest CSVs, approval files, and reports are
+Generated databases, snapshots, backtest CSVs, policy files, and reports are
 runtime artifacts. Keep them out of git unless a specific fixture is being added.
 
 For historical backfill from online providers:

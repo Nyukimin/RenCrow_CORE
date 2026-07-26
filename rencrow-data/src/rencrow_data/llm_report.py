@@ -108,7 +108,6 @@ def build_llm_report(con, options: LLMReportOptions) -> dict[str, object]:
         else {
             "decision_id": decision["decision_id"],
             "account_scope": decision["account_scope"],
-            "approved": decision["approved"],
             "candidate_json": json.loads(decision["candidate_json"] or "{}"),
             "veto_json": json.loads(decision["veto_json"] or "{}"),
         },
@@ -148,8 +147,7 @@ def build_llm_report(con, options: LLMReportOptions) -> dict[str, object]:
         lines.extend(
             [
                 f"- decision_id: {decision['decision_id']}",
-                f"- approval_required: {candidate.get('approval_required')}",
-                f"- approved: {decision['approved']}",
+                f"- policy_status: {candidate.get('policy_status')}",
                 f"- vetoed: {veto.get('vetoed')}",
                 f"- risk_status: {candidate.get('risk_status')}",
             ]
@@ -177,7 +175,7 @@ def build_llm_report(con, options: LLMReportOptions) -> dict[str, object]:
             "",
             "- This report is explanatory only.",
             "- It does not create orders.",
-            "- If uncertainty_flag is 1, human review or no-trade handling is required.",
+            "- If uncertainty_flag is 1, quality review or no-trade handling is required.",
             f"- uncertainty_flag: {uncertainty}",
             "",
         ]

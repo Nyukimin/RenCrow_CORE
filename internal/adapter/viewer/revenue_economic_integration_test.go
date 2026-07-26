@@ -50,16 +50,16 @@ func TestRevenueOpportunityWorkstreamChainPersistsSameTrace(t *testing.T) {
 		t.Fatalf("chain status=%d body=%s", chainRec.Code, chainRec.Body.String())
 	}
 	var response struct {
-		Goal                   domainworkstream.Goal                 `json:"goal"`
-		Artifact               domainworkstream.Artifact             `json:"artifact"`
-		Approval               domainrevenue.HumanDecisionGateRecord `json:"approval"`
-		ExternalActionsApplied bool                                  `json:"external_actions_applied"`
+		Goal                   domainworkstream.Goal              `json:"goal"`
+		Artifact               domainworkstream.Artifact          `json:"artifact"`
+		PolicyDecision         domainrevenue.PolicyDecisionRecord `json:"policy_decision"`
+		ExternalActionsApplied bool                               `json:"external_actions_applied"`
 	}
 	if err := json.Unmarshal(chainRec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if response.Goal.TraceID == "" || response.Artifact.TraceID != response.Goal.TraceID ||
-		response.Approval.TraceID != response.Goal.TraceID || response.ExternalActionsApplied {
+		response.PolicyDecision.TraceID != response.Goal.TraceID || response.ExternalActionsApplied {
 		t.Fatalf("response chain mismatch: %#v", response)
 	}
 
@@ -72,16 +72,15 @@ func TestRevenueOpportunityWorkstreamChainPersistsSameTrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListArtifacts: %v", err)
 	}
-	approvals, err := revenueStore.ListHumanDecisionGateRecords(ctx, 10)
+	decisions, err := revenueStore.ListPolicyDecisionRecords(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListHumanDecisionGateRecords: %v", err)
+		t.Fatalf("ListPolicyDecisionRecords: %v", err)
 	}
-	if len(goals) != 1 || len(artifacts) != 1 || len(approvals) != 1 {
-		t.Fatalf("persisted chain goals=%#v artifacts=%#v approvals=%#v", goals, artifacts, approvals)
+	if len(goals) != 1 || len(artifacts) != 1 || len(decisions) != 1 {
+		t.Fatalf("persisted chain goals=%#v artifacts=%#v decisions=%#v", goals, artifacts, decisions)
 	}
 	if goals[0].TraceID != response.Goal.TraceID || artifacts[0].TraceID != response.Goal.TraceID ||
-		approvals[0].TraceID != response.Goal.TraceID || approvals[0].ApprovalStatus != "not_required" ||
-		approvals[0].GateStatus != "allowed" || approvals[0].RequiresApproval {
-		t.Fatalf("persisted trace mismatch goals=%#v artifacts=%#v approvals=%#v", goals, artifacts, approvals)
+		decisions[0].TraceID != response.Goal.TraceID || decisions[0].Status != "allowed" {
+		t.Fatalf("persisted trace mismatch goals=%#v artifacts=%#v decisions=%#v", goals, artifacts, decisions)
 	}
 }

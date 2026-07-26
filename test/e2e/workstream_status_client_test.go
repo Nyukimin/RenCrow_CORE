@@ -60,7 +60,7 @@ func TestE2E_WorkstreamStatusClientCurrentView(t *testing.T) {
 	}
 }
 
-func TestE2E_WorkstreamVaultUpdatePreviewAndApprovedApply(t *testing.T) {
+func TestE2E_WorkstreamVaultUpdatePreviewAndAdoptedApply(t *testing.T) {
 	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
 		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Workstream vault apply")
 	}
@@ -106,13 +106,13 @@ func TestE2E_WorkstreamVaultUpdatePreviewAndApprovedApply(t *testing.T) {
 		t.Fatalf("preview response=%+v, want proposed content and diff", preview)
 	}
 
-	item.ReviewStatus = "approved"
+	item.ReviewStatus = "adopted"
 	reviewed, err := client.ReviewWorkstreamVaultUpdate(ctx, item)
 	if err != nil {
 		t.Fatalf("ReviewWorkstreamVaultUpdate() live call failed at %s: %v", baseURL, err)
 	}
-	if !reviewed.Applied || reviewed.AppliedPath == "" || reviewed.VaultUpdate.ReviewStatus != "approved" {
-		t.Fatalf("review response=%+v, want approved applied vault update", reviewed)
+	if !reviewed.Applied || reviewed.AppliedPath == "" || reviewed.VaultUpdate.ReviewStatus != "adopted" {
+		t.Fatalf("review response=%+v, want adopted applied vault update", reviewed)
 	}
 	assertE2EFile(t, reviewed.AppliedPath, proposed)
 
@@ -120,20 +120,20 @@ func TestE2E_WorkstreamVaultUpdatePreviewAndApprovedApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WorkstreamStatus() live call failed at %s: %v", baseURL, err)
 	}
-	foundApproved := false
+	foundAdopted := false
 	foundApplied := false
 	for _, update := range status.VaultUpdates {
 		if update.UpdateID != updateID {
 			continue
 		}
-		if update.ReviewStatus == "approved" {
-			foundApproved = true
+		if update.ReviewStatus == "adopted" {
+			foundAdopted = true
 		}
 		if update.Applied && update.AppliedPath == reviewed.AppliedPath {
 			foundApplied = true
 		}
 	}
-	if !foundApproved || !foundApplied {
-		t.Fatalf("status vault_updates did not expose latest approved applied evidence for %s: approved=%v applied=%v", updateID, foundApproved, foundApplied)
+	if !foundAdopted || !foundApplied {
+		t.Fatalf("status vault_updates did not expose latest adopted applied evidence for %s: adopted=%v applied=%v", updateID, foundAdopted, foundApplied)
 	}
 }

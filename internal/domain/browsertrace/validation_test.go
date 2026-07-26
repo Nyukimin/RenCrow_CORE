@@ -132,7 +132,7 @@ func TestValidateAPICandidateValidationResultRequiresIssueCode(t *testing.T) {
 		ValidationID: "api_val_1",
 		CandidateID:  "api_cand_1",
 		TraceRunID:   "trace_1",
-		Status:       "approved",
+		Status:       "adopted",
 		CreatedAt:    now,
 		Issues: []APIValidationIssue{{
 			Code:    "terms_review_required",

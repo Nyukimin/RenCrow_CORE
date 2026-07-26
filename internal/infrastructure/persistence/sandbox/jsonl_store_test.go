@@ -73,15 +73,14 @@ func TestJSONLStoreSaveAndListPromotionRequests(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 
 	if err := store.SavePromotionRequest(ctx, domainsandbox.PromotionRequest{
-		PromotionID:         "prom_1",
-		SandboxID:           "sbx_1",
-		TargetPath:          "docs/a.md",
-		DiffPath:            "sandbox/sbx_1/diff.patch",
-		Reason:              "docs update",
-		TestResultPath:      "sandbox/sbx_1/test.txt",
-		RollbackPlanPath:    "sandbox/sbx_1/rollback.md",
-		HumanApprovalStatus: domainsandbox.ApprovalPending,
-		CreatedAt:           now,
+		PromotionID:      "prom_1",
+		SandboxID:        "sbx_1",
+		TargetPath:       "docs/a.md",
+		DiffPath:         "sandbox/sbx_1/diff.patch",
+		Reason:           "docs update",
+		TestResultPath:   "sandbox/sbx_1/test.txt",
+		RollbackPlanPath: "sandbox/sbx_1/rollback.md",
+		CreatedAt:        now,
 	}); err != nil {
 		t.Fatalf("SavePromotionRequest failed: %v", err)
 	}
@@ -101,12 +100,11 @@ func TestJSONLStoreSaveAndListPromotionGateLogs(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 
 	if err := store.SavePromotionGateLog(ctx, domainsandbox.PromotionGateLog{
-		EventID:             "evt_promotion_gate_1",
-		PromotionID:         "prom_1",
-		GateStatus:          domainsandbox.GateStatusNeedsReview,
-		Reason:              "promotion requirements missing: rollback_plan_path",
-		HumanApprovalStatus: domainsandbox.ApprovalPending,
-		CreatedAt:           now,
+		EventID:     "evt_promotion_gate_1",
+		PromotionID: "prom_1",
+		GateStatus:  domainsandbox.GateStatusNeedsReview,
+		Reason:      "promotion requirements missing: rollback_plan_path",
+		CreatedAt:   now,
 	}); err != nil {
 		t.Fatalf("SavePromotionGateLog failed: %v", err)
 	}

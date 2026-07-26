@@ -541,7 +541,6 @@ type SandboxPromotionConfig struct {
 	RequireReason                bool   `yaml:"require_reason"`
 	RequireTestResult            bool   `yaml:"require_test_result"`
 	RequireRollbackPlan          bool   `yaml:"require_rollback_plan"`
-	RequireHumanApproval         bool   `yaml:"require_human_approval"`
 	RequirePostApplyVerification bool   `yaml:"require_post_apply_verification"`
 	ApplyRoot                    string `yaml:"apply_root"`
 }
@@ -609,7 +608,6 @@ type SkillContributionGateConfig struct {
 	RequireOpenClosedPRSearch bool `yaml:"require_open_closed_pr_search"`
 	RequireRealProblem        bool `yaml:"require_real_problem"`
 	RequireCompleteDiffReview bool `yaml:"require_complete_diff_review"`
-	RequireHumanApproval      bool `yaml:"require_human_approval"`
 	OneProblemPerPR           bool `yaml:"one_problem_per_pr"`
 }
 
@@ -633,14 +631,12 @@ func (c WorkstreamConfig) IsEnabled() bool {
 }
 
 type RevenueConfig struct {
-	Enabled                         *bool  `yaml:"enabled"`
-	Storage                         string `yaml:"storage"`
-	LogPath                         string `yaml:"log_path"`
-	SQLitePath                      string `yaml:"sqlite_path"`
-	ProhibitSuccessGuarantee        bool   `yaml:"prohibit_success_guarantee"`
-	RequireCustomerVoicePermission  bool   `yaml:"require_customer_voice_permission"`
-	ExternalPublishRequiresApproval bool   `yaml:"external_publish_requires_approval"`
-	HighTicketOfferRequiresApproval bool   `yaml:"high_ticket_offer_requires_approval"`
+	Enabled                        *bool  `yaml:"enabled"`
+	Storage                        string `yaml:"storage"`
+	LogPath                        string `yaml:"log_path"`
+	SQLitePath                     string `yaml:"sqlite_path"`
+	ProhibitSuccessGuarantee       bool   `yaml:"prohibit_success_guarantee"`
+	RequireCustomerVoicePermission bool   `yaml:"require_customer_voice_permission"`
 }
 
 func (c RevenueConfig) IsEnabled() bool {
@@ -659,7 +655,7 @@ type PersonaArchitectureConfig struct {
 	CanonicalResponseMaxPerSession int    `yaml:"canonical_response_max_per_session"`
 	RequireLorePersonaSplit        bool   `yaml:"require_lore_persona_split"`
 	RequireTriggerCategories       bool   `yaml:"require_trigger_categories"`
-	HumanReviewRequiredForMeta     bool   `yaml:"human_review_required_for_meta"`
+	ReviewRequiredForMeta          bool   `yaml:"review_required_for_meta"`
 	RequireSessionKeying           bool   `yaml:"require_session_keying"`
 	MaxTriggerCandidates           int    `yaml:"max_trigger_candidates"`
 }
@@ -669,18 +665,17 @@ func (c PersonaArchitectureConfig) IsEnabled() bool {
 }
 
 type BrowserTraceToAPIConfig struct {
-	Enabled                     *bool    `yaml:"enabled"`
-	Storage                     string   `yaml:"storage"`
-	LogPath                     string   `yaml:"log_path"`
-	SQLitePath                  string   `yaml:"sqlite_path"`
-	ReadOnlyOnly                bool     `yaml:"read_only_only"`
-	RequireTermsReview          bool     `yaml:"require_terms_review"`
-	RequireHumanApprovalPromote bool     `yaml:"require_human_approval_for_promote"`
-	GenerateOpenAPI             bool     `yaml:"generate_openapi"`
-	GenerateCoverageReport      bool     `yaml:"generate_coverage_report"`
-	AcceptedPaths               []string `yaml:"accepted_paths"`
-	DenyMethods                 []string `yaml:"deny_methods"`
-	DenySensitiveFlows          []string `yaml:"deny_sensitive_flows"`
+	Enabled                *bool    `yaml:"enabled"`
+	Storage                string   `yaml:"storage"`
+	LogPath                string   `yaml:"log_path"`
+	SQLitePath             string   `yaml:"sqlite_path"`
+	ReadOnlyOnly           bool     `yaml:"read_only_only"`
+	RequireTermsReview     bool     `yaml:"require_terms_review"`
+	GenerateOpenAPI        bool     `yaml:"generate_openapi"`
+	GenerateCoverageReport bool     `yaml:"generate_coverage_report"`
+	AcceptedPaths          []string `yaml:"accepted_paths"`
+	DenyMethods            []string `yaml:"deny_methods"`
+	DenySensitiveFlows     []string `yaml:"deny_sensitive_flows"`
 }
 
 func (c BrowserTraceToAPIConfig) IsEnabled() bool {
@@ -688,16 +683,15 @@ func (c BrowserTraceToAPIConfig) IsEnabled() bool {
 }
 
 type ComplexityHotspotConfig struct {
-	Enabled                      *bool    `yaml:"enabled"`
-	Storage                      string   `yaml:"storage"`
-	LogPath                      string   `yaml:"log_path"`
-	SQLitePath                   string   `yaml:"sqlite_path"`
-	DefaultMode                  string   `yaml:"default_mode"`
-	MaxHotspots                  int      `yaml:"max_hotspots"`
-	ExcludeDirs                  []string `yaml:"exclude_dirs"`
-	AutoApply                    bool     `yaml:"auto_apply"`
-	RequireHumanApprovalForPatch bool     `yaml:"require_human_approval_for_patch"`
-	OneHotspotPerPR              bool     `yaml:"one_hotspot_per_pr"`
+	Enabled         *bool    `yaml:"enabled"`
+	Storage         string   `yaml:"storage"`
+	LogPath         string   `yaml:"log_path"`
+	SQLitePath      string   `yaml:"sqlite_path"`
+	DefaultMode     string   `yaml:"default_mode"`
+	MaxHotspots     int      `yaml:"max_hotspots"`
+	ExcludeDirs     []string `yaml:"exclude_dirs"`
+	AutoApply       bool     `yaml:"auto_apply"`
+	OneHotspotPerPR bool     `yaml:"one_hotspot_per_pr"`
 }
 
 func (c ComplexityHotspotConfig) IsEnabled() bool {
@@ -718,7 +712,6 @@ type SuperAgentHarnessConfig struct {
 	RequireTerminationCondition  bool   `yaml:"require_termination_condition"`
 	ReturnSummaryOnly            bool   `yaml:"return_summary_only"`
 	PromotionGateRequired        bool   `yaml:"promotion_gate_required"`
-	ExternalSendRequiresApproval bool   `yaml:"external_send_requires_approval"`
 	TraceAgentRun                bool   `yaml:"trace_agent_run"`
 }
 
@@ -727,28 +720,27 @@ func (c SuperAgentHarnessConfig) IsEnabled() bool {
 }
 
 type AIWorkflowConfig struct {
-	Enabled                         *bool    `yaml:"enabled"`
-	Storage                         string   `yaml:"storage"`
-	LogPath                         string   `yaml:"log_path"`
-	SQLitePath                      string   `yaml:"sqlite_path"`
-	ProjectMemoryRoot               string   `yaml:"project_memory_root"`
-	WorktreeBaseDir                 string   `yaml:"worktree_base_dir"`
-	RequiredBeforeModify            bool     `yaml:"required_before_modify"`
-	WorktreeRequiredForWrite        bool     `yaml:"worktree_required_for_write"`
-	RequiredCLITools                []string `yaml:"required_cli_tools"`
-	ContextTrackingEnabled          bool     `yaml:"context_tracking_enabled"`
-	ContextBudgetTokens             int      `yaml:"context_budget_tokens"`
-	ContextBudgetWarnRatio          float64  `yaml:"context_budget_warn_ratio"`
-	ContextBudgetStopRatio          float64  `yaml:"context_budget_stop_ratio"`
-	HeavyWorkerEnabled              bool     `yaml:"heavy_worker_enabled"`
-	HeavyWorkerRequireReason        bool     `yaml:"heavy_worker_require_reason"`
-	HeavyWorkerFileThreshold        int      `yaml:"heavy_worker_file_threshold"`
-	HeavyWorkerSpecThreshold        int      `yaml:"heavy_worker_spec_threshold"`
-	HeavyWorkerRetryThreshold       int      `yaml:"heavy_worker_retry_threshold"`
-	ExternalControlAllowedActors    []string `yaml:"external_control_allowed_actors"`
-	ExternalControlAllowedChannels  []string `yaml:"external_control_allowed_channels"`
-	ExternalControlAllowedActions   []string `yaml:"external_control_allowed_actions"`
-	ExternalControlApprovalRequired []string `yaml:"external_control_approval_required"`
+	Enabled                        *bool    `yaml:"enabled"`
+	Storage                        string   `yaml:"storage"`
+	LogPath                        string   `yaml:"log_path"`
+	SQLitePath                     string   `yaml:"sqlite_path"`
+	ProjectMemoryRoot              string   `yaml:"project_memory_root"`
+	WorktreeBaseDir                string   `yaml:"worktree_base_dir"`
+	RequiredBeforeModify           bool     `yaml:"required_before_modify"`
+	WorktreeRequiredForWrite       bool     `yaml:"worktree_required_for_write"`
+	RequiredCLITools               []string `yaml:"required_cli_tools"`
+	ContextTrackingEnabled         bool     `yaml:"context_tracking_enabled"`
+	ContextBudgetTokens            int      `yaml:"context_budget_tokens"`
+	ContextBudgetWarnRatio         float64  `yaml:"context_budget_warn_ratio"`
+	ContextBudgetStopRatio         float64  `yaml:"context_budget_stop_ratio"`
+	HeavyWorkerEnabled             bool     `yaml:"heavy_worker_enabled"`
+	HeavyWorkerRequireReason       bool     `yaml:"heavy_worker_require_reason"`
+	HeavyWorkerFileThreshold       int      `yaml:"heavy_worker_file_threshold"`
+	HeavyWorkerSpecThreshold       int      `yaml:"heavy_worker_spec_threshold"`
+	HeavyWorkerRetryThreshold      int      `yaml:"heavy_worker_retry_threshold"`
+	ExternalControlAllowedActors   []string `yaml:"external_control_allowed_actors"`
+	ExternalControlAllowedChannels []string `yaml:"external_control_allowed_channels"`
+	ExternalControlAllowedActions  []string `yaml:"external_control_allowed_actions"`
 }
 
 func (c AIWorkflowConfig) IsEnabled() bool {
@@ -761,7 +753,7 @@ type KnowledgeMemoryConfig struct {
 	LogPath                     string `yaml:"log_path"`
 	SQLitePath                  string `yaml:"sqlite_path"`
 	ProtectPersonalArchive      bool   `yaml:"protect_personal_archive"`
-	DreamRequiresHumanReview    bool   `yaml:"dream_requires_human_review"`
+	DreamRequiresReview         bool   `yaml:"dream_requires_review"`
 	DailyIntakePromoteToStaging bool   `yaml:"daily_intake_promote_to_staging"`
 }
 

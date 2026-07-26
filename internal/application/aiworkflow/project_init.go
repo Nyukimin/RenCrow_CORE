@@ -233,10 +233,10 @@ func buildCodingConventions(root string) string {
 func buildRiskNotes(root string) string {
 	risks := []string{"`.env`、秘密鍵、認証情報は読み取らない。"}
 	if fileExists(filepath.Join(root, "go.mod")) {
-		risks = append(risks, "Go 依存関係変更は明示承認後に行う。")
+		risks = append(risks, "Go 依存関係変更は同期policyで許可された場合だけ行う。")
 	}
 	if fileExists(filepath.Join(root, "package.json")) {
-		risks = append(risks, "Node 依存関係 install / update は明示承認後に行う。")
+		risks = append(risks, "Node 依存関係 install / update は同期policyで許可された場合だけ行う。")
 	}
 	return "# Risk Notes\n\n" + markdownList(risks)
 }

@@ -15,14 +15,13 @@ type Dependencies struct {
 // Handler implementations stay in legacy adapter/cmd packages during Ver0.80
 // migration; this registrar owns only route registration and dependency handoff.
 type Routes struct {
-	Status                http.HandlerFunc
-	Promotion             http.HandlerFunc
-	PromotionApply        http.HandlerFunc
-	PromotionRollback     http.HandlerFunc
-	PromotionPreview      http.HandlerFunc
-	PromotionManualReview http.HandlerFunc
-	WorktreeCreate        http.HandlerFunc
-	WorktreeClose         http.HandlerFunc
+	Status            http.HandlerFunc
+	Promotion         http.HandlerFunc
+	PromotionApply    http.HandlerFunc
+	PromotionRollback http.HandlerFunc
+	PromotionPreview  http.HandlerFunc
+	WorktreeCreate    http.HandlerFunc
+	WorktreeClose     http.HandlerFunc
 }
 
 // RegisterRoutes reserves the feature route boundary. Existing routes remain in
@@ -34,7 +33,6 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/sandbox/promotions/apply", routes.PromotionApply)
 	registerRoute(mux, "/viewer/sandbox/promotions/rollback", routes.PromotionRollback)
 	registerRoute(mux, "/viewer/sandbox/promotions/preview", routes.PromotionPreview)
-	registerRoute(mux, "/viewer/sandbox/promotions/manual-review", routes.PromotionManualReview)
 	registerRoute(mux, "/viewer/sandbox/worktrees/create", routes.WorktreeCreate)
 	registerRoute(mux, "/viewer/sandbox/worktrees/close", routes.WorktreeClose)
 }

@@ -705,9 +705,6 @@ func (c *Config) Validate() error {
 	if err := validateNonEmptyList("ai_workflow.external_control_allowed_actions", c.AIWorkflow.ExternalControlAllowedActions); err != nil {
 		return err
 	}
-	if err := validateNonEmptyList("ai_workflow.external_control_approval_required", c.AIWorkflow.ExternalControlApprovalRequired); err != nil {
-		return err
-	}
 	knowledgeMemoryConfigured := (c.KnowledgeMemory.Enabled != nil && *c.KnowledgeMemory.Enabled) ||
 		strings.TrimSpace(c.KnowledgeMemory.LogPath) != ""
 	if knowledgeMemoryConfigured {
@@ -723,8 +720,8 @@ func (c *Config) Validate() error {
 		if !c.KnowledgeMemory.ProtectPersonalArchive {
 			return fmt.Errorf("knowledge_memory.protect_personal_archive must be true when knowledge_memory is enabled")
 		}
-		if !c.KnowledgeMemory.DreamRequiresHumanReview {
-			return fmt.Errorf("knowledge_memory.dream_requires_human_review must be true when knowledge_memory is enabled")
+		if !c.KnowledgeMemory.DreamRequiresReview {
+			return fmt.Errorf("knowledge_memory.dream_requires_review must be true when knowledge_memory is enabled")
 		}
 	}
 	if c.ViewerLog.Enabled {

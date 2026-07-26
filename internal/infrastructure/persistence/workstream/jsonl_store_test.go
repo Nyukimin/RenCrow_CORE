@@ -131,8 +131,8 @@ func TestJSONLStoreListsLatestVaultUpdatePerID(t *testing.T) {
 			UpdateID:        "upd_1",
 			WorkstreamID:    "ws_1",
 			FilePath:        "vault/workstreams/ws_1/STATUS.md",
-			ProposedContent: "approved",
-			ReviewStatus:    "approved",
+			ProposedContent: "adopted",
+			ReviewStatus:    "adopted",
 			CreatedAt:       now.Add(time.Second),
 		},
 	} {
@@ -144,8 +144,8 @@ func TestJSONLStoreListsLatestVaultUpdatePerID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListVaultUpdateLogs failed: %v", err)
 	}
-	if len(vaultUpdates) != 1 || vaultUpdates[0].UpdateID != "upd_1" || vaultUpdates[0].ReviewStatus != "approved" {
-		t.Fatalf("vaultUpdates=%#v, want latest approved state only", vaultUpdates)
+	if len(vaultUpdates) != 1 || vaultUpdates[0].UpdateID != "upd_1" || vaultUpdates[0].ReviewStatus != "adopted" {
+		t.Fatalf("vaultUpdates=%#v, want latest adopted state only", vaultUpdates)
 	}
 }
 
@@ -263,7 +263,7 @@ func TestJSONLStoreWithVaultRejectsUnsafeWorkstreamID(t *testing.T) {
 	}
 }
 
-func TestJSONLStoreApplyVaultUpdateWritesApprovedProposedContent(t *testing.T) {
+func TestJSONLStoreApplyVaultUpdateWritesAdoptedProposedContent(t *testing.T) {
 	root := t.TempDir()
 	vaultRoot := filepath.Join(root, "vault")
 	store := NewJSONLStoreWithVault(filepath.Join(root, "logs"), vaultRoot)
@@ -272,8 +272,8 @@ func TestJSONLStoreApplyVaultUpdateWritesApprovedProposedContent(t *testing.T) {
 		UpdateID:        "upd_1",
 		WorkstreamID:    "ws_1",
 		FilePath:        "ws_1/STATUS.md",
-		ProposedContent: "# STATUS\n\napproved\n",
-		ReviewStatus:    domainworkstream.VaultReviewApproved,
+		ProposedContent: "# STATUS\n\nadopted\n",
+		ReviewStatus:    domainworkstream.VaultReviewAdopted,
 		CreatedAt:       time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
@@ -287,7 +287,7 @@ func TestJSONLStoreApplyVaultUpdateWritesApprovedProposedContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read applied file: %v", err)
 	}
-	if string(content) != "# STATUS\n\napproved\n" {
+	if string(content) != "# STATUS\n\nadopted\n" {
 		t.Fatalf("content=%q", content)
 	}
 }
@@ -309,7 +309,7 @@ func TestJSONLStoreApplyVaultUpdateAppendsStructuredContent(t *testing.T) {
 		FilePath:        "ws_1/STATUS.md",
 		UpdateType:      "append_status",
 		ProposedContent: "- Next Action: Source Registry relation確認済み\n",
-		ReviewStatus:    domainworkstream.VaultReviewApproved,
+		ReviewStatus:    domainworkstream.VaultReviewAdopted,
 		CreatedAt:       time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
 	}
 
@@ -352,7 +352,7 @@ func TestJSONLStoreApplyVaultUpdateRejectsTraversalPath(t *testing.T) {
 		WorkstreamID:    "ws_1",
 		FilePath:        "../outside.md",
 		ProposedContent: "escape",
-		ReviewStatus:    domainworkstream.VaultReviewApproved,
+		ReviewStatus:    domainworkstream.VaultReviewAdopted,
 		CreatedAt:       time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
 	})
 	if err == nil || !strings.Contains(err.Error(), "escapes vault root") {
@@ -360,7 +360,7 @@ func TestJSONLStoreApplyVaultUpdateRejectsTraversalPath(t *testing.T) {
 	}
 }
 
-func TestJSONLStoreApplyVaultUpdateRequiresApprovedReview(t *testing.T) {
+func TestJSONLStoreApplyVaultUpdateRequiresAdoptedReview(t *testing.T) {
 	store := NewJSONLStoreWithVault(t.TempDir(), t.TempDir())
 
 	_, err := store.ApplyVaultUpdate(context.Background(), domainworkstream.VaultUpdateLog{
@@ -371,7 +371,7 @@ func TestJSONLStoreApplyVaultUpdateRequiresApprovedReview(t *testing.T) {
 		ReviewStatus:    domainworkstream.VaultReviewPending,
 		CreatedAt:       time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
 	})
-	if err == nil || !strings.Contains(err.Error(), "must be approved") {
-		t.Fatalf("expected non-approved review to fail, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "must be adopted") {
+		t.Fatalf("expected non-adopted review to fail, got %v", err)
 	}
 }

@@ -311,7 +311,7 @@ class AuditReportTest(unittest.TestCase):
                 insert_costed_backtest(con, backtest_id=f"bt-{idx}", snapshot_id=snapshot_id, decision_date=decision_date)
                 candidate_json = json.dumps(
                     {
-                        "approval_required": True,
+                        "policy_status": "allowed",
                         "risk_status": "pass",
                         "risk_check_id": f"risk-{idx}",
                         "week_end": decision_date,
@@ -332,11 +332,11 @@ class AuditReportTest(unittest.TestCase):
                     """
                     INSERT INTO decision_log(
                       snapshot_id, decision_date, account_scope, strategy_name, candidate_json,
-                      veto_json, approved, approver, approved_at, approval_reason
+                      veto_json
                     )
-                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, ?, 1, 'unit-test', ?, 'weekly approval')
+                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, ?)
                     """,
-                    (snapshot_id, decision_date, candidate_json, veto_json, f"{decision_date}T00:00:00+00:00"),
+                    (snapshot_id, decision_date, candidate_json, veto_json),
                 )
                 decision_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
                 con.execute(
@@ -395,13 +395,11 @@ class AuditReportTest(unittest.TestCase):
             self.assertEqual(summary["paper_gate"]["paper_span_days"], 49)
             self.assertEqual(summary["paper_gate"]["gate_failures"], [])
             self.assertEqual(summary["paper_gate"]["performance_failure_rows"], 0)
-            self.assertEqual(summary["paper_gate"]["missing_approval_evidence_rows"], 0)
             self.assertEqual(summary["paper_gate"]["missing_decision_evidence_rows"], 0)
             self.assertEqual(summary["paper_gate"]["tca_rows"], 1)
             self.assertEqual(summary["paper_gate"]["missing_tca_evidence_rows"], 0)
             self.assertEqual(summary["paper_gate"]["event_veto_rows"], 1)
             self.assertGreater(summary["paper_gate"]["no_trade_rows"], 0)
-            self.assertEqual(summary["decision_evidence"]["approval_reason"], "weekly approval")
             self.assertEqual(summary["decision_evidence"]["candidate"]["week_end"], "2026-05-01")
             self.assertEqual(summary["decision_evidence"]["signals"][0]["asset_type"], "ETF")
             self.assertEqual(summary["decision_evidence"]["signals"][0]["reason"]["reason"], "event_veto")
@@ -420,12 +418,10 @@ class AuditReportTest(unittest.TestCase):
             self.assertIn("### Weekly Ledger", text)
             self.assertIn("paper_span_days: 49", text)
             self.assertIn("performance_failure_rows: 0", text)
-            self.assertIn("missing_approval_evidence_rows: 0", text)
             self.assertIn("missing_decision_evidence_rows: 0", text)
             self.assertIn("tca_rows: 1", text)
             self.assertIn("missing_tca_evidence_rows: 0", text)
             self.assertIn("| snapshot_date | decision_id | snapshot_id | complete | missing |", text)
-            self.assertIn("approval_reason: weekly approval", text)
 
     def test_audit_report_marks_preferred_paper_gate_ready_after_12_weeks(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -468,7 +464,7 @@ class AuditReportTest(unittest.TestCase):
                 insert_costed_backtest(con, backtest_id=f"bt-preferred-{idx}", snapshot_id=snapshot_id, decision_date=decision_date)
                 candidate_json = json.dumps(
                     {
-                        "approval_required": True,
+                        "policy_status": "allowed",
                         "risk_status": "pass",
                         "risk_check_id": risk_check_id,
                         "week_end": decision_date,
@@ -490,11 +486,11 @@ class AuditReportTest(unittest.TestCase):
                     """
                     INSERT INTO decision_log(
                       snapshot_id, decision_date, account_scope, strategy_name, candidate_json,
-                      veto_json, approved, approver, approved_at, approval_reason
+                      veto_json
                     )
-                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, ?, 1, 'unit-test', ?, 'preferred weekly approval')
+                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, ?)
                     """,
-                    (snapshot_id, decision_date, candidate_json, veto_json, f"{decision_date}T00:00:00+00:00"),
+                    (snapshot_id, decision_date, candidate_json, veto_json),
                 )
                 decision_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
                 con.execute(
@@ -557,7 +553,7 @@ class AuditReportTest(unittest.TestCase):
             self.assertIn("status: preferred_ready", text)
             self.assertIn("preferred_required_span_days: 77", text)
 
-    def test_audit_report_does_not_require_legacy_approval_evidence(self) -> None:
+    def test_audit_report_uses_policy_decision_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp_path = Path(td)
             db_path = tmp_path / "rencrow.db"
@@ -579,7 +575,7 @@ class AuditReportTest(unittest.TestCase):
                     INSERT INTO data_quality_check(run_id, instrument_id, check_date, check_type, severity, status)
                     VALUES (?, NULL, ?, 'fetch_status', 'info', 'pass')
                     """,
-                    (f"run-approval-{idx}", decision_date),
+                    (f"run-policy-{idx}", decision_date),
                 )
                 con.execute(
                     """
@@ -593,22 +589,16 @@ class AuditReportTest(unittest.TestCase):
                     "INSERT INTO feature_weekly(instrument_id, week_end, close_adj_jpy) VALUES (?, ?, 100)",
                     (snapshot_id, decision_date),
                 )
-                insert_costed_backtest(con, backtest_id=f"bt-approval-{idx}", snapshot_id=snapshot_id, decision_date=decision_date)
+                insert_costed_backtest(con, backtest_id=f"bt-policy-{idx}", snapshot_id=snapshot_id, decision_date=decision_date)
                 con.execute(
                     """
                     INSERT INTO decision_log(
                       snapshot_id, decision_date, account_scope, strategy_name, candidate_json,
-                      veto_json, approved, approver, approved_at, approval_reason
+                      veto_json
                     )
-                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', '{"approval_required":true}', '{"vetoed":true}', 1, ?, ?, ?)
+                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', '{"policy_status":"blocked"}', '{"vetoed":true}')
                     """,
-                    (
-                        snapshot_id,
-                        decision_date,
-                        "" if idx == 0 else "unit-test",
-                        "" if idx == 0 else f"{decision_date}T00:00:00+00:00",
-                        "" if idx == 0 else "weekly approval",
-                    ),
+                    (snapshot_id, decision_date),
                 )
                 decision_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
                 con.execute(
@@ -616,7 +606,7 @@ class AuditReportTest(unittest.TestCase):
                     INSERT INTO risk_check_result(risk_check_id, snapshot_id, strategy_id, decision_id, status)
                     VALUES (?, ?, 'weekly_etf_rotation_v1', ?, 'pass')
                     """,
-                    (f"risk-approval-{idx}", str(snapshot_id), str(decision_id)),
+                    (f"risk-policy-{idx}", str(snapshot_id), str(decision_id)),
                 )
                 con.execute(
                     """
@@ -629,7 +619,7 @@ class AuditReportTest(unittest.TestCase):
                     con.execute(
                         """
                         INSERT INTO weekly_signal(signal_id, snapshot_id, strategy_id, week_end, instrument_id, rank, target_weight, vetoed, reason_json)
-                        VALUES ('signal-approval-event-veto', ?, 'weekly_etf_rotation_v1', ?, ?, 1, 0, 1, '{"reason":"event_veto"}')
+                        VALUES ('signal-policy-event-veto', ?, 'weekly_etf_rotation_v1', ?, ?, 1, 0, 1, '{"reason":"event_veto"}')
                         """,
                         (str(snapshot_id), decision_date, snapshot_id),
                     )
@@ -638,7 +628,7 @@ class AuditReportTest(unittest.TestCase):
                     INSERT INTO llm_audit_log(llm_log_id, snapshot_id, task_type, model, prompt_version, input_hash, output_hash, output_path)
                     VALUES (?, ?, 'weekly_report', 'local', 'v1', 'in', 'out', 'report.md')
                     """,
-                    (f"llm-approval-{idx}", str(snapshot_id)),
+                    (f"llm-policy-{idx}", str(snapshot_id)),
                 )
             con.commit()
             con.close()
@@ -654,12 +644,8 @@ class AuditReportTest(unittest.TestCase):
                 "--json",
             )
             summary = json.loads(result.stdout)
-            first_week = summary["paper_gate"]["weeks"][0]
             self.assertEqual(summary["paper_gate"]["status"], "not_ready")
-            self.assertEqual(summary["paper_gate"]["missing_approval_evidence_rows"], 0)
-            self.assertNotIn("missing_approval_evidence", summary["paper_gate"]["gate_failures"])
-            self.assertTrue(first_week["approval"])
-            self.assertNotIn("approval", first_week["missing"])
+            self.assertEqual(summary["paper_gate"]["missing_decision_evidence_rows"], 8)
 
     def test_audit_report_rejects_missing_decision_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -700,7 +686,7 @@ class AuditReportTest(unittest.TestCase):
                 )
                 insert_costed_backtest(con, backtest_id=f"bt-decision-evidence-{idx}", snapshot_id=snapshot_id, decision_date=decision_date)
                 candidate = {
-                    "approval_required": True,
+                    "policy_status": "allowed",
                     "risk_status": "pass",
                     "risk_check_id": risk_check_id,
                     "week_end": decision_date,
@@ -712,15 +698,14 @@ class AuditReportTest(unittest.TestCase):
                     """
                     INSERT INTO decision_log(
                       snapshot_id, decision_date, account_scope, strategy_name, candidate_json,
-                      veto_json, approved, approver, approved_at, approval_reason
+                      veto_json
                     )
-                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, '{"vetoed":true}', 1, 'unit-test', ?, 'weekly approval')
+                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, '{"vetoed":true}')
                     """,
                     (
                         snapshot_id,
                         decision_date,
                         json.dumps(candidate, separators=(",", ":")),
-                        f"{decision_date}T00:00:00+00:00",
                     ),
                 )
                 decision_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -815,7 +800,7 @@ class AuditReportTest(unittest.TestCase):
                 insert_costed_backtest(con, backtest_id=f"bt-tca-{idx}", snapshot_id=snapshot_id, decision_date=decision_date)
                 candidate_json = json.dumps(
                     {
-                        "approval_required": True,
+                        "policy_status": "allowed",
                         "risk_status": "pass",
                         "risk_check_id": risk_check_id,
                         "week_end": decision_date,
@@ -827,11 +812,11 @@ class AuditReportTest(unittest.TestCase):
                     """
                     INSERT INTO decision_log(
                       snapshot_id, decision_date, account_scope, strategy_name, candidate_json,
-                      veto_json, approved, approver, approved_at, approval_reason
+                      veto_json
                     )
-                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, '{"vetoed":true}', 1, 'unit-test', ?, 'weekly approval')
+                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, '{"vetoed":true}')
                     """,
-                    (snapshot_id, decision_date, candidate_json, f"{decision_date}T00:00:00+00:00"),
+                    (snapshot_id, decision_date, candidate_json),
                 )
                 decision_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
                 con.execute(
@@ -933,8 +918,8 @@ class AuditReportTest(unittest.TestCase):
                 insert_costed_backtest(con, backtest_id=f"bt-compressed-{idx}", snapshot_id=snapshot_id, decision_date=decision_date)
                 con.execute(
                     """
-                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', '{}', '{}', 1)
+                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', '{}', '{}')
                     """,
                     (snapshot_id, decision_date),
                 )
@@ -1017,8 +1002,8 @@ class AuditReportTest(unittest.TestCase):
                 insert_costed_backtest(con, backtest_id=f"bt-no-evidence-{idx}", snapshot_id=snapshot_id, decision_date=decision_date)
                 con.execute(
                     """
-                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', '{}', '{}', 1)
+                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', '{}', '{}')
                     """,
                     (snapshot_id, decision_date),
                 )
@@ -1109,13 +1094,13 @@ class AuditReportTest(unittest.TestCase):
                 )
                 con.execute(
                     """
-                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, '{"vetoed":true}', 1)
+                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+                    VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, '{"vetoed":true}')
                     """,
                     (
                         snapshot_id,
                         decision_date,
-                        json.dumps({"approval_required": True, "risk_status": "pass", "week_end": decision_date, "candidates": []}),
+                        json.dumps({"policy_status": "allowed", "risk_status": "pass", "week_end": decision_date, "candidates": []}),
                     ),
                 )
                 decision_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -1188,8 +1173,8 @@ class AuditReportTest(unittest.TestCase):
             )
             con.execute(
                 """
-                INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-                VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', '{}', '{}', 0)
+                INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+                VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', '{}', '{}')
                 """,
             )
             con.commit()
@@ -1234,8 +1219,8 @@ class AuditReportTest(unittest.TestCase):
             for idx in range(2):
                 con.execute(
                     """
-                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-                    VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', '{}', '{}', 0)
+                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+                    VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', '{}', '{}')
                     """,
                 )
                 decision_ids.append(con.execute("SELECT last_insert_rowid()").fetchone()[0])
@@ -1282,13 +1267,12 @@ class AuditReportTest(unittest.TestCase):
                 VALUES (1, '2026-05-16', 'dbhash', 'featurehash', 'success')
                 """,
             )
-            for approved in (1, 0):
+            for _ in range(2):
                 con.execute(
                     """
-                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-                    VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', '{}', '{}', ?)
+                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+                    VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', '{}', '{}')
                     """,
-                    (approved,),
                 )
             traded_decision_id = 1
             latest_untraded_decision_id = 2
@@ -1346,10 +1330,10 @@ class AuditReportTest(unittest.TestCase):
             for idx in range(2):
                 con.execute(
                     """
-                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-                    VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', ?, '{}', 0)
+                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+                    VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', ?, '{}')
                     """,
-                    (json.dumps({"approval_required": True, "risk_check_id": "risk-1", "week_end": "2026-05-16", "candidates": []}),),
+                    (json.dumps({"policy_status": "allowed", "risk_check_id": "risk-1", "week_end": "2026-05-16", "candidates": []}),),
                 )
             con.execute(
                 """
@@ -1422,7 +1406,7 @@ class AuditReportTest(unittest.TestCase):
                 insert_costed_backtest(con, backtest_id=f"bt-regen-{idx}", snapshot_id=snapshot_id, decision_date=decision_date)
                 candidate_json = json.dumps(
                     {
-                        "approval_required": True,
+                        "policy_status": "allowed",
                         "risk_status": "pass",
                         "risk_check_id": risk_check_id,
                         "week_end": decision_date,
@@ -1433,8 +1417,8 @@ class AuditReportTest(unittest.TestCase):
                 if idx == 0:
                     con.execute(
                         """
-                        INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-                        VALUES (?, ?, 'taxable', 'weekly_etf_rotation_v1', ?, '{}', 0)
+                        INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+                        VALUES (?, ?, 'taxable', 'weekly_etf_rotation_v1', ?, '{}')
                         """,
                         (snapshot_id, decision_date, candidate_json),
                     )
@@ -1443,11 +1427,11 @@ class AuditReportTest(unittest.TestCase):
                         """
                         INSERT INTO decision_log(
                           snapshot_id, decision_date, account_scope, strategy_name, candidate_json,
-                          veto_json, approved, approver, approved_at, approval_reason
+                          veto_json
                         )
-                        VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, '{"vetoed":true}', 1, 'unit-test', ?, 'weekly approval')
+                        VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, '{"vetoed":true}')
                         """,
-                        (snapshot_id, decision_date, candidate_json, f"{decision_date}T00:00:00+00:00"),
+                        (snapshot_id, decision_date, candidate_json),
                     )
                     paper_decision_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
                 else:
@@ -1455,11 +1439,11 @@ class AuditReportTest(unittest.TestCase):
                         """
                         INSERT INTO decision_log(
                           snapshot_id, decision_date, account_scope, strategy_name, candidate_json,
-                          veto_json, approved, approver, approved_at, approval_reason
+                          veto_json
                         )
-                        VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, '{"vetoed":true}', 1, 'unit-test', ?, 'weekly approval')
+                        VALUES (?, ?, 'paper', 'weekly_etf_rotation_v1', ?, '{"vetoed":true}')
                         """,
-                        (snapshot_id, decision_date, candidate_json, f"{decision_date}T00:00:00+00:00"),
+                        (snapshot_id, decision_date, candidate_json),
                     )
                     paper_decision_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
                     linked_decision_id = paper_decision_id

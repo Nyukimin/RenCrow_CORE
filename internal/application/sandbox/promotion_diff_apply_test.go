@@ -118,7 +118,7 @@ func TestPromotionDiffApplierPreviewsUnifiedDiffSideBySideRows(t *testing.T) {
 	}
 }
 
-func TestPromotionDiffApplierPreviewsManualReviewRiskFlags(t *testing.T) {
+func TestPromotionDiffApplierPreviewsPolicyBlockRiskFlags(t *testing.T) {
 	sandboxRoot := t.TempDir()
 	applyRoot := t.TempDir()
 	diff := strings.Join([]string{
@@ -147,21 +147,21 @@ func TestPromotionDiffApplierPreviewsManualReviewRiskFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreviewPromotionDiff() error = %v", err)
 	}
-	if preview.Status != "needs_manual_review" || !preview.RequiresManualReview {
+	if preview.Status != "blocked" || !preview.BlockedByPolicy {
 		t.Fatalf("preview risk status = %#v", preview)
 	}
 	if !hasRiskFlag(preview.RiskFlags, "dependency_change") || !hasRiskFlag(preview.RiskFlags, "db_migration") {
 		t.Fatalf("risk flags = %#v", preview.RiskFlags)
 	}
-	if !preview.Files[0].RequiresManualReview || !hasRiskFlag(preview.Files[0].RiskFlags, "dependency_change") {
+	if !preview.Files[0].BlockedByPolicy || !hasRiskFlag(preview.Files[0].RiskFlags, "dependency_change") {
 		t.Fatalf("dependency file risk = %#v", preview.Files[0])
 	}
-	if !preview.Files[1].RequiresManualReview || !hasRiskFlag(preview.Files[1].RiskFlags, "db_migration") {
+	if !preview.Files[1].BlockedByPolicy || !hasRiskFlag(preview.Files[1].RiskFlags, "db_migration") {
 		t.Fatalf("migration file risk = %#v", preview.Files[1])
 	}
 }
 
-func TestPromotionDiffApplierPreviewsUnsupportedDiffAsManualReview(t *testing.T) {
+func TestPromotionDiffApplierPreviewsUnsupportedDiffAsPolicyBlock(t *testing.T) {
 	sandboxRoot := t.TempDir()
 	applyRoot := t.TempDir()
 	diff := `diff --git a/docs/old.md b/docs/new.md
@@ -178,12 +178,12 @@ rename to docs/new.md
 	if err != nil {
 		t.Fatalf("PreviewPromotionDiff() error = %v", err)
 	}
-	if preview.Status != "needs_manual_review" || !preview.RequiresManualReview || !hasRiskFlag(preview.RiskFlags, "rename_diff") {
+	if preview.Status != "blocked" || !preview.BlockedByPolicy || !hasRiskFlag(preview.RiskFlags, "rename_diff") {
 		t.Fatalf("preview = %#v", preview)
 	}
 }
 
-func TestPromotionDiffApplierRejectsManualReviewRiskOnApply(t *testing.T) {
+func TestPromotionDiffApplierRejectsPolicyBlockRiskOnApply(t *testing.T) {
 	sandboxRoot := t.TempDir()
 	applyRoot := t.TempDir()
 	writeFile(t, filepath.Join(applyRoot, "go.mod"), "module example.test/app\n\ngo 1.22\n")
@@ -207,7 +207,7 @@ func TestPromotionDiffApplierRejectsManualReviewRiskOnApply(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected dependency change rejection")
 	}
-	if !strings.Contains(err.Error(), "requires manual review") || !strings.Contains(err.Error(), "dependency_change") {
+	if !strings.Contains(err.Error(), "blocked by policy") || !strings.Contains(err.Error(), "dependency_change") {
 		t.Fatalf("err = %v", err)
 	}
 	data, readErr := os.ReadFile(filepath.Join(applyRoot, "go.mod"))

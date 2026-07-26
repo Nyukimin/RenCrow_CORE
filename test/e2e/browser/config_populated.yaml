@@ -106,5 +106,3 @@ revenue:
   sqlite_path: "${RENCROW_E2E_RUNTIME}/workspace/revenue.db"
   prohibit_success_guarantee: true
   require_customer_voice_permission: true
-  external_publish_requires_approval: false
-  high_ticket_offer_requires_approval: false

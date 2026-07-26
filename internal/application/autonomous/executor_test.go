@@ -113,31 +113,6 @@ func TestRunExecutorApplyFailureAndVerifyErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy approval error becomes policy blocked", func(t *testing.T) {
-		attempts := 0
-		result, err := RunExecutor(context.Background(), ExecuteRequest{
-			Contract:  testContract(),
-			MaxRepair: 1,
-			Execute: func(ctx context.Context, attempt int, failureKind, failureReason string) (AttemptResult, error) {
-				attempts++
-				return AttemptResult{}, errors.New("approval required: command modifies RenCrow runtime lifecycle")
-			},
-			Verify: func(ctx context.Context, c domaincontract.Contract, last AttemptResult) (bool, string, string, error) {
-				t.Fatal("verify should not run after approval-required apply error")
-				return false, "", "", nil
-			},
-		})
-		if err == nil {
-			t.Fatal("expected approval-required error")
-		}
-		if attempts != 1 {
-			t.Fatalf("approval-required failure should not retry, attempts=%d", attempts)
-		}
-		if result.Report.RepairCount != 0 || result.Report.ErrorKind != "policy_blocked" {
-			t.Fatalf("unexpected policy-blocked report: %#v", result.Report)
-		}
-	})
-
 	t.Run("verify error retry exhausted", func(t *testing.T) {
 		result, err := RunExecutor(context.Background(), ExecuteRequest{
 			Contract:  testContract(),
@@ -200,7 +175,6 @@ func TestExecutorHelpers(t *testing.T) {
 		"dependency module unavailable": "dependency_missing",
 		"no such file or path":          "path_mismatch",
 		"ollama model unavailable":      "provider_unavailable",
-		"approval required":             "policy_blocked",
 		"other failure":                 "apply",
 	}
 	for msg, want := range tests {

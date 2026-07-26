@@ -279,7 +279,6 @@ const state = {
     skillExternalPRSubmitRecords: [],
     skillExternalPRAdapter: '',
     skillExternalPRAdapterConfigured: false,
-    skillExternalPRHumanApprovalRequired: false,
     skillGovernanceFetchError: '',
     workstreams: [],
     workstreamGoals: [],
@@ -296,16 +295,14 @@ const state = {
     revenueProducts: [],
     revenueCustomerVoices: [],
     revenueEvents: [],
-    revenueHumanDecisions: [],
+    revenuePolicyDecisions: [],
     revenueDailyRoutineReports: [],
     revenueChannelDrafts: [],
     revenueExternalSendApplyRecords: [],
     revenueExternalChannelAdapter: '',
     revenueExternalChannelAdapterConfigured: false,
-    revenueExternalSendHumanApprovalRequired: false,
     revenueSummary: null,
     revenueFetchError: '',
-    revenueDecisionReviewResult: null,
     personaDiscomfortLogs: [],
     personaTriggerLogs: [],
     personaCanonicalResponseLogs: [],
@@ -2549,7 +2546,6 @@ function refreshSkillGovernanceData() {
       state.ops.skillExternalPRSubmitRecords = Array.isArray(data.external_pr_submit_records) ? data.external_pr_submit_records : [];
       state.ops.skillExternalPRAdapter = data.external_pr_adapter ? String(data.external_pr_adapter) : '';
       state.ops.skillExternalPRAdapterConfigured = Boolean(data.external_pr_adapter_configured);
-      state.ops.skillExternalPRHumanApprovalRequired = data.human_approval_required_for_pr !== false;
       state.ops.coderTranscripts = Array.isArray(data.coder_transcripts) ? data.coder_transcripts : [];
       renderOps();
     })
@@ -2618,13 +2614,12 @@ function refreshRevenueData() {
       state.ops.revenueProducts = Array.isArray(data.products) ? data.products : [];
       state.ops.revenueCustomerVoices = Array.isArray(data.customer_voices) ? data.customer_voices : [];
       state.ops.revenueEvents = Array.isArray(data.revenue_events) ? data.revenue_events : [];
-      state.ops.revenueHumanDecisions = Array.isArray(data.human_decisions) ? data.human_decisions : [];
+      state.ops.revenuePolicyDecisions = Array.isArray(data.policy_decisions) ? data.policy_decisions : [];
       state.ops.revenueDailyRoutineReports = Array.isArray(data.daily_routine_reports) ? data.daily_routine_reports : [];
       state.ops.revenueChannelDrafts = Array.isArray(data.channel_drafts) ? data.channel_drafts : [];
       state.ops.revenueExternalSendApplyRecords = Array.isArray(data.external_send_apply_records) ? data.external_send_apply_records : [];
       state.ops.revenueExternalChannelAdapter = String(data.external_channel_adapter || '');
       state.ops.revenueExternalChannelAdapterConfigured = Boolean(data.external_channel_adapter_configured);
-      state.ops.revenueExternalSendHumanApprovalRequired = Boolean(data.human_approval_required_for_external_send);
       state.ops.revenueSummary = data && data.summary && typeof data.summary === 'object' ? data.summary : null;
       renderOps();
     })
@@ -2635,7 +2630,7 @@ function refreshRevenueData() {
       state.ops.revenueProducts = [];
       state.ops.revenueCustomerVoices = [];
       state.ops.revenueEvents = [];
-      state.ops.revenueHumanDecisions = [];
+      state.ops.revenuePolicyDecisions = [];
       state.ops.revenueDailyRoutineReports = [];
       state.ops.revenueChannelDrafts = [];
       state.ops.revenueExternalSendApplyRecords = [];

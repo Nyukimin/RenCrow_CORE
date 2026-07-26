@@ -500,7 +500,7 @@
         <h4>Complexity Review Artifacts</h4>
         <div class="small" style="margin-bottom:8px">report-only / review-only artifact を確認します。patch 適用、Sandbox apply、外部 PR 作成の成功証跡ではありません。</div>
         <table class="debug-table">
-          <thead><tr><th>time</th><th>artifact</th><th>type</th><th>status</th><th>patch</th><th>legacy approval field</th></tr></thead>
+          <thead><tr><th>time</th><th>artifact</th><th>type</th><th>status</th><th>patch</th></tr></thead>
           <tbody id="complexityReviewArtifactBody"></tbody>
         </table>
         <pre id="complexityReviewArtifactResult" class="small llm-ops-raw">complexity review artifacts: -</pre>
@@ -516,9 +516,9 @@
       </div>
       <div class="debug-box">
         <h4>Revenue Policy Decisions</h4>
-        <div class="small" style="margin-bottom:8px">外部公開、高単価 offer、顧客の声利用などの同期policy判定を表示します。人間の承認待ちや承認操作は行いません。</div>
+        <div class="small" style="margin-bottom:8px">外部公開、高単価 offer、顧客の声利用などの同期 policy 判定を表示します。状態は allowed / blocked です。</div>
         <table class="debug-table">
-          <thead><tr><th>time</th><th>decision</th><th>type</th><th>status</th><th>description</th><th>action</th></tr></thead>
+          <thead><tr><th>time</th><th>decision</th><th>type</th><th>status</th><th>description</th></tr></thead>
           <tbody id="revenueDecisionBody"></tbody>
         </table>
         <pre id="revenueDecisionResult" class="small llm-ops-raw">revenue policy decisions: -</pre>
@@ -527,7 +527,7 @@
         <h4>Revenue Channel Drafts</h4>
         <div class="small" style="margin-bottom:8px">LINE / email / Discord などの closed channel 向け下書きを確認します。ここでは外部送信を実行しません。</div>
         <table class="debug-table">
-          <thead><tr><th>time</th><th>draft</th><th>channel</th><th>status</th><th>source</th><th>body</th><th>send</th></tr></thead>
+          <thead><tr><th>time</th><th>draft</th><th>channel</th><th>source</th><th>body</th><th>send</th></tr></thead>
           <tbody id="revenueChannelDraftBody"></tbody>
         </table>
         <pre id="revenueChannelDraftResult" class="small llm-ops-raw">revenue channel drafts: draft only / external send uses synchronous policy</pre>
@@ -666,7 +666,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Time</th><th>Event</th><th>Promotion</th><th>Gate</th><th>Human</th><th>Post Apply</th><th>Reason</th></tr></thead>
+          <thead><tr><th>Time</th><th>Event</th><th>Promotion</th><th>Gate</th><th>Post Apply</th><th>Reason</th></tr></thead>
           <tbody id="sandboxGateLogBody"></tbody>
         </table>
         <pre id="sandboxGateLogResult" class="small llm-ops-raw">sandbox promotion gate logs: no apply evidence</pre>
@@ -919,7 +919,7 @@
       <select id="knowledgeMemoryReviewFilter">
         <option value="">all review states</option>
         <option value="pending">pending</option>
-        <option value="approved">approved</option>
+        <option value="adopted">adopted</option>
         <option value="rejected">rejected</option>
         <option value="promoted">promoted</option>
         <option value="protected">protected</option>

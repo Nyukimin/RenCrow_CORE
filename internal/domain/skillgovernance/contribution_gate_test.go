@@ -12,7 +12,7 @@ func TestEvaluateContributionGateBlocksMissingRequiredChecks(t *testing.T) {
 		ExistingPRsChecked:  true,
 		RealProblemVerified: false,
 		CoreChangeVerified:  true,
-		DiffHumanApproved:   false,
+		DiffReviewed:        false,
 		TestResult:          "go test ./...",
 	})
 	if decision.Status != GateStatusBlocked || decision.CanContribute {
@@ -53,7 +53,7 @@ func TestEvaluateContributionGatePassesWhenAllChecksArePresent(t *testing.T) {
 		ExistingPRsChecked:  true,
 		RealProblemVerified: true,
 		CoreChangeVerified:  true,
-		DiffHumanApproved:   true,
+		DiffReviewed:        true,
 		TestResult:          "go test ./...",
 	})
 	if decision.Status != GateStatusPassed || !decision.CanContribute {
@@ -72,7 +72,7 @@ func TestNewContributionGateLogSetsStatusAndTimestamp(t *testing.T) {
 		ExistingPRsChecked:  true,
 		RealProblemVerified: true,
 		CoreChangeVerified:  true,
-		DiffHumanApproved:   true,
+		DiffReviewed:        true,
 		TestResult:          "go test ./...",
 	}, now)
 	if err != nil {

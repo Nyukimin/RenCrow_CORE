@@ -191,10 +191,6 @@ CREATE TABLE IF NOT EXISTS decision_log (
   strategy_name TEXT,
   candidate_json TEXT,
   veto_json TEXT,
-  approved INTEGER DEFAULT 0,
-  approver TEXT,
-  approved_at TEXT,
-  approval_reason TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -432,7 +428,6 @@ def init_schema(con: sqlite3.Connection) -> None:
     _ensure_column(con, "paper_trade_log", "notional", "REAL")
     _ensure_column(con, "paper_trade_log", "estimated_cost", "REAL")
     _ensure_column(con, "paper_trade_log", "slippage", "REAL")
-    _ensure_column(con, "decision_log", "approval_reason", "TEXT")
     _ensure_column(con, "llm_audit_log", "uncertainty_flag", "INTEGER DEFAULT 0")
     _ensure_column(con, "llm_audit_log", "decision_id", "INTEGER")
     _ensure_column(con, "event_log", "snapshot_id", "INTEGER")

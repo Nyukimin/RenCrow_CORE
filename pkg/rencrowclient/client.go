@@ -302,7 +302,6 @@ type AdvisorRun struct {
 	Purpose          string    `json:"purpose,omitempty"`
 	PromptHash       string    `json:"prompt_hash,omitempty"`
 	RiskClass        string    `json:"risk_class,omitempty"`
-	ApprovalMode     string    `json:"approval_mode"`
 	Status           string    `json:"status"`
 	Summary          string    `json:"summary,omitempty"`
 	OutputHash       string    `json:"output_hash,omitempty"`
@@ -359,11 +358,10 @@ type AgentUtilityProfile struct {
 }
 
 type AgentAutonomyEnvelope struct {
-	Observe          []string `json:"Observe"`
-	Decide           []string `json:"Decide"`
-	ActAllowed       []string `json:"ActAllowed"`
-	ApprovalRequired []string `json:"ApprovalRequired"`
-	Forbidden        []string `json:"Forbidden"`
+	Observe    []string `json:"Observe"`
+	Decide     []string `json:"Decide"`
+	ActAllowed []string `json:"ActAllowed"`
+	Forbidden  []string `json:"Forbidden"`
 }
 
 type AgentEconomicProfile struct {
@@ -1060,16 +1058,14 @@ type BrowserTraceAPIDiscoverResponse struct {
 }
 
 type BrowserTraceAPIFetcherProposalRequest struct {
-	CandidateID   string `json:"candidate_id"`
-	WorkstreamID  string `json:"workstream_id,omitempty"`
-	HumanApproved bool   `json:"human_approved"`
+	CandidateID  string `json:"candidate_id"`
+	WorkstreamID string `json:"workstream_id,omitempty"`
 }
 
 type BrowserTraceAPIValidationReviewRequest struct {
 	CandidateID         string `json:"candidate_id"`
 	Reviewer            string `json:"reviewer"`
 	ReviewNote          string `json:"review_note,omitempty"`
-	HumanApproved       bool   `json:"human_approved"`
 	TermsReviewed       bool   `json:"terms_reviewed"`
 	OfficialAPIReviewed bool   `json:"official_api_reviewed"`
 	PIIReviewed         bool   `json:"pii_reviewed"`
@@ -1167,16 +1163,14 @@ type RunStateResponse struct {
 }
 
 type ExternalControlRequest struct {
-	Actor         string `json:"actor"`
-	ChannelID     string `json:"channel_id"`
-	Action        string `json:"action"`
-	HumanApproved bool   `json:"human_approved"`
+	Actor     string `json:"actor"`
+	ChannelID string `json:"channel_id"`
+	Action    string `json:"action"`
 }
 
 type ExternalControlDecision struct {
-	Status           string   `json:"status"`
-	RequiresApproval bool     `json:"requires_approval"`
-	Reasons          []string `json:"reasons,omitempty"`
+	Status  string   `json:"status"`
+	Reasons []string `json:"reasons,omitempty"`
 }
 
 type ExternalControlResponse struct {
@@ -1371,7 +1365,6 @@ type ComplexityConcreteDiffRequest struct {
 	TestResultPath            string `json:"test_result_path,omitempty"`
 	RollbackPlanPath          string `json:"rollback_plan_path,omitempty"`
 	PostApplyVerificationPath string `json:"post_apply_verification_path,omitempty"`
-	HumanApprovalStatus       string `json:"human_approval_status,omitempty"`
 }
 
 type ComplexityCoderDiffRequest struct {
@@ -1386,7 +1379,6 @@ type ComplexityCoderDiffRequest struct {
 	TestResultPath            string `json:"test_result_path,omitempty"`
 	RollbackPlanPath          string `json:"rollback_plan_path,omitempty"`
 	PostApplyVerificationPath string `json:"post_apply_verification_path,omitempty"`
-	HumanApprovalStatus       string `json:"human_approval_status,omitempty"`
 }
 
 type ComplexityCoderDiffResult struct {
@@ -1397,64 +1389,60 @@ type ComplexityCoderDiffResult struct {
 }
 
 type ComplexityDiffResponse struct {
-	Hotspot               ComplexityHotspot          `json:"hotspot"`
-	CoderResult           *ComplexityCoderDiffResult `json:"coder_result,omitempty"`
-	ConcreteDiffArtifact  ComplexityReportArtifact   `json:"concrete_diff_artifact"`
-	WorkstreamArtifact    *WorkstreamArtifact        `json:"workstream_artifact,omitempty"`
-	HumanApprovalRequired bool                       `json:"human_approval_required"`
-	PatchApplied          bool                       `json:"patch_applied"`
-	SandboxPromotion      *PromotionRequest          `json:"sandbox_promotion,omitempty"`
-	SandboxDecision       *PromotionGateDecision     `json:"sandbox_decision,omitempty"`
-	SandboxGateLog        *PromotionGateLog          `json:"sandbox_gate_log,omitempty"`
+	Hotspot              ComplexityHotspot          `json:"hotspot"`
+	CoderResult          *ComplexityCoderDiffResult `json:"coder_result,omitempty"`
+	ConcreteDiffArtifact ComplexityReportArtifact   `json:"concrete_diff_artifact"`
+	WorkstreamArtifact   *WorkstreamArtifact        `json:"workstream_artifact,omitempty"`
+	PatchApplied         bool                       `json:"patch_applied"`
+	SandboxPromotion     *PromotionRequest          `json:"sandbox_promotion,omitempty"`
+	SandboxDecision      *PromotionGateDecision     `json:"sandbox_decision,omitempty"`
+	SandboxGateLog       *PromotionGateLog          `json:"sandbox_gate_log,omitempty"`
 }
 
-type RevenueHumanDecision struct {
-	DecisionID     string    `json:"decision_id,omitempty"`
-	DecisionType   string    `json:"decision_type"`
-	SubjectID      string    `json:"subject_id,omitempty"`
-	Description    string    `json:"description,omitempty"`
-	ApprovalStatus string    `json:"approval_status,omitempty"`
-	CreatedAt      time.Time `json:"created_at,omitempty"`
+type RevenuePolicyDecision struct {
+	DecisionID   string    `json:"decision_id,omitempty"`
+	TraceID      string    `json:"trace_id,omitempty"`
+	DecisionType string    `json:"decision_type"`
+	SubjectID    string    `json:"subject_id,omitempty"`
+	Description  string    `json:"description,omitempty"`
+	CreatedAt    time.Time `json:"created_at,omitempty"`
 }
 
-type RevenueHumanDecisionResult struct {
-	Status           string   `json:"status"`
-	RequiresApproval bool     `json:"requires_approval"`
-	Reasons          []string `json:"reasons,omitempty"`
+type RevenuePolicyDecisionResult struct {
+	Status  string   `json:"status"`
+	Reasons []string `json:"reasons,omitempty"`
 }
 
-type RevenueHumanDecisionRecord struct {
-	DecisionID       string    `json:"decision_id"`
-	DecisionType     string    `json:"decision_type"`
-	SubjectID        string    `json:"subject_id,omitempty"`
-	Description      string    `json:"description,omitempty"`
-	ApprovalStatus   string    `json:"approval_status"`
-	GateStatus       string    `json:"gate_status"`
-	RequiresApproval bool      `json:"requires_approval"`
-	Reasons          []string  `json:"reasons,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
+type RevenuePolicyDecisionRecord struct {
+	DecisionID   string    `json:"decision_id"`
+	TraceID      string    `json:"trace_id,omitempty"`
+	DecisionType string    `json:"decision_type"`
+	SubjectID    string    `json:"subject_id,omitempty"`
+	Description  string    `json:"description,omitempty"`
+	Status       string    `json:"status"`
+	Reasons      []string  `json:"reasons,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
-type RevenueHumanDecisionResponse struct {
-	Decision RevenueHumanDecision       `json:"decision"`
-	Record   RevenueHumanDecisionRecord `json:"record"`
-	Result   RevenueHumanDecisionResult `json:"result"`
+type RevenuePolicyDecisionResponse struct {
+	Decision RevenuePolicyDecision       `json:"decision"`
+	Record   RevenuePolicyDecisionRecord `json:"record"`
+	Result   RevenuePolicyDecisionResult `json:"result"`
 }
 
 type RevenueStatus struct {
-	HumanDecisions                       []RevenueHumanDecisionRecord     `json:"human_decisions"`
-	DailyRoutineReports                  []RevenueDailyRoutineReport      `json:"daily_routine_reports"`
-	ChannelDrafts                        []RevenueChannelDraft            `json:"channel_drafts"`
-	ExternalSendApplyRecords             []RevenueExternalSendApplyRecord `json:"external_send_apply_records"`
-	ExternalChannelAdapter               string                           `json:"external_channel_adapter"`
-	ExternalChannelAdapterConfigured     *bool                            `json:"external_channel_adapter_configured"`
-	HumanApprovalRequiredForExternalSend *bool                            `json:"human_approval_required_for_external_send"`
-	Summary                              RevenueDashboardSummary          `json:"summary"`
-	EconomicObjective                    *RevenueEconomicObjectiveSummary `json:"economic_objective,omitempty"`
+	PolicyDecisions                  []RevenuePolicyDecisionRecord    `json:"policy_decisions"`
+	DailyRoutineReports              []RevenueDailyRoutineReport      `json:"daily_routine_reports"`
+	ChannelDrafts                    []RevenueChannelDraft            `json:"channel_drafts"`
+	ExternalSendApplyRecords         []RevenueExternalSendApplyRecord `json:"external_send_apply_records"`
+	ExternalChannelAdapter           string                           `json:"external_channel_adapter"`
+	ExternalChannelAdapterConfigured *bool                            `json:"external_channel_adapter_configured"`
+	Summary                          RevenueDashboardSummary          `json:"summary"`
+	EconomicObjective                *RevenueEconomicObjectiveSummary `json:"economic_objective,omitempty"`
 }
 
 type RevenueDashboardSummary struct {
-	PendingDecisionCount   int  `json:"pending_decision_count"`
+	BlockedDecisionCount   int  `json:"blocked_decision_count"`
 	DailyReportCount       int  `json:"daily_report_count"`
 	ChannelDraftCount      int  `json:"channel_draft_count"`
 	ExternalSendApplyCount int  `json:"external_send_apply_count"`
@@ -1462,17 +1450,17 @@ type RevenueDashboardSummary struct {
 }
 
 type RevenueEconomicObjectiveSummary struct {
-	Enabled                  bool `json:"enabled"`
-	OpportunityCount         int  `json:"opportunity_count"`
-	PendingApprovalTaskCount int  `json:"pending_approval_task_count"`
-	ReflectionCount          int  `json:"reflection_count"`
-	DraftOnly                bool `json:"draft_only"`
-	ExternalActionBlocked    bool `json:"external_action_blocked"`
+	Enabled               bool `json:"enabled"`
+	OpportunityCount      int  `json:"opportunity_count"`
+	ReflectionCount       int  `json:"reflection_count"`
+	DraftOnly             bool `json:"draft_only"`
+	ExternalActionBlocked bool `json:"external_action_blocked"`
 }
 
 // RevenueOpportunity is a draft-only economic opportunity exposed by Viewer.
 type RevenueOpportunity struct {
 	OpportunityID   string    `json:"opportunity_id"`
+	TraceID         string    `json:"trace_id,omitempty"`
 	SourceKind      string    `json:"source_kind"`
 	Title           string    `json:"title"`
 	Summary         string    `json:"summary,omitempty"`
@@ -1485,7 +1473,6 @@ type RevenueOpportunity struct {
 	AutomationRate  float64   `json:"automation_rate,omitempty"`
 	StrategicValue  float64   `json:"strategic_value,omitempty"`
 	RiskScore       float64   `json:"risk_score,omitempty"`
-	ApprovalState   string    `json:"approval_state,omitempty"`
 	CreatedAt       time.Time `json:"created_at,omitempty"`
 	UpdatedAt       time.Time `json:"updated_at,omitempty"`
 }
@@ -1498,12 +1485,13 @@ type RevenueOpportunitiesStatus struct {
 }
 
 type RevenueOpportunityResponse struct {
-	Opportunity                     RevenueOpportunity `json:"opportunity"`
-	HumanApprovalRequiredForPublish bool               `json:"human_approval_required_for_publish"`
+	Opportunity                      RevenueOpportunity `json:"opportunity"`
+	ExecutionPolicyEvaluatedAtAction bool               `json:"execution_policy_evaluated_at_action"`
 }
 
 type RevenueEconomicTask struct {
 	TaskID        string    `json:"task_id"`
+	TraceID       string    `json:"trace_id,omitempty"`
 	OpportunityID string    `json:"opportunity_id"`
 	WorkstreamID  string    `json:"workstream_id,omitempty"`
 	AgentID       string    `json:"agent_id"`
@@ -1512,7 +1500,6 @@ type RevenueEconomicTask struct {
 	ExpectedValue float64   `json:"expected_value,omitempty"`
 	Risk          float64   `json:"risk,omitempty"`
 	Cost          float64   `json:"cost,omitempty"`
-	ApprovalMode  string    `json:"approval_mode,omitempty"`
 	CreatedAt     time.Time `json:"created_at,omitempty"`
 	UpdatedAt     time.Time `json:"updated_at,omitempty"`
 }
@@ -1525,13 +1512,13 @@ type RevenueEconomicTasksStatus struct {
 }
 
 type RevenueEconomicTaskResponse struct {
-	EconomicTask          RevenueEconomicTask `json:"economic_task"`
-	HumanApprovalRequired bool                `json:"human_approval_required"`
-	AutoExecutionAllowed  bool                `json:"auto_execution_allowed"`
+	EconomicTask                     RevenueEconomicTask `json:"economic_task"`
+	ExecutionPolicyEvaluatedAtAction bool                `json:"execution_policy_evaluated_at_action"`
 }
 
 type RevenueEconomicReflection struct {
 	ReflectionID   string    `json:"reflection_id"`
+	TraceID        string    `json:"trace_id,omitempty"`
 	OpportunityID  string    `json:"opportunity_id"`
 	RevenueEventID string    `json:"revenue_event_id,omitempty"`
 	Outcome        string    `json:"outcome"`
@@ -1572,11 +1559,6 @@ type RevenueOpportunityWorkstreamGoalResponse struct {
 	ExternalActionsApplied bool           `json:"external_actions_applied"`
 }
 
-type RevenueHumanDecisionReview struct {
-	DecisionID     string `json:"decision_id"`
-	ApprovalStatus string `json:"approval_status"`
-}
-
 type RevenueDailyRoutineRequest struct {
 	ReportID     string `json:"report_id,omitempty"`
 	WorkstreamID string `json:"workstream_id,omitempty"`
@@ -1595,7 +1577,7 @@ type RevenueDailyRoutineReport struct {
 	CustomerVoices      int       `json:"customer_voice_count"`
 	RevenueEvents       int       `json:"revenue_event_count"`
 	PaidCustomers       int       `json:"paid_customer_count"`
-	PendingDecisions    int       `json:"pending_decision_count"`
+	BlockedDecisions    int       `json:"blocked_decision_count"`
 	SuggestedActions    []string  `json:"suggested_actions,omitempty"`
 	Status              string    `json:"status"`
 	ExternalSendApplied bool      `json:"external_send_applied"`
@@ -1603,47 +1585,48 @@ type RevenueDailyRoutineReport struct {
 }
 
 type RevenueDailyRoutineResponse struct {
-	Report                                  RevenueDailyRoutineReport `json:"daily_routine_report"`
-	ExternalActionsApplied                  bool                      `json:"external_actions_applied"`
-	HumanApprovalRequiredForExternalActions bool                      `json:"human_approval_required_for_external_actions"`
+	Report                 RevenueDailyRoutineReport `json:"daily_routine_report"`
+	ExternalActionsApplied bool                      `json:"external_actions_applied"`
 }
 
 type RevenueChannelDraft struct {
 	DraftID             string    `json:"draft_id"`
+	TraceID             string    `json:"trace_id,omitempty"`
+	OpportunityID       string    `json:"opportunity_id,omitempty"`
 	WorkstreamID        string    `json:"workstream_id,omitempty"`
 	Channel             string    `json:"channel"`
 	Subject             string    `json:"subject,omitempty"`
 	Body                string    `json:"body"`
 	SourceReportID      string    `json:"source_report_id,omitempty"`
-	ApprovalStatus      string    `json:"approval_status,omitempty"`
 	ExternalSendApplied bool      `json:"external_send_applied"`
 	CreatedAt           time.Time `json:"created_at,omitempty"`
 }
 
 type RevenueChannelDraftResponse struct {
-	Draft                                     RevenueChannelDraft `json:"channel_draft"`
-	ExternalActionsApplied                    bool                `json:"external_actions_applied"`
-	HumanApprovalRequiredForExternalSendApply bool                `json:"human_approval_required_for_external_send_apply"`
+	Draft                  RevenueChannelDraft `json:"channel_draft"`
+	ExternalActionsApplied bool                `json:"external_actions_applied"`
 }
 
 type RevenueExternalSendApplyRequest struct {
 	ApplyID        string `json:"apply_id"`
+	DeliveryID     string `json:"delivery_id,omitempty"`
+	TraceID        string `json:"trace_id,omitempty"`
+	OpportunityID  string `json:"opportunity_id,omitempty"`
 	DraftID        string `json:"draft_id"`
 	DecisionID     string `json:"decision_id"`
 	Destination    string `json:"destination,omitempty"`
 	ChannelAdapter string `json:"channel_adapter,omitempty"`
-	HumanApproved  bool   `json:"human_approved"`
 }
 
 type RevenueExternalSendApplyRecord struct {
 	ApplyID             string    `json:"apply_id"`
+	TraceID             string    `json:"trace_id,omitempty"`
+	DeliveryID          string    `json:"delivery_id,omitempty"`
 	DraftID             string    `json:"draft_id"`
 	DecisionID          string    `json:"decision_id"`
 	Channel             string    `json:"channel"`
 	Destination         string    `json:"destination,omitempty"`
 	ChannelAdapter      string    `json:"channel_adapter,omitempty"`
-	ApprovalStatus      string    `json:"approval_status"`
-	HumanApproved       bool      `json:"human_approved"`
 	ApplyStatus         string    `json:"apply_status"`
 	SendResult          string    `json:"send_result"`
 	FailureReason       string    `json:"failure_reason,omitempty"`
@@ -1653,11 +1636,29 @@ type RevenueExternalSendApplyRecord struct {
 	CreatedAt           time.Time `json:"created_at"`
 }
 
+type RevenueDelivery struct {
+	DeliveryID       string    `json:"delivery_id"`
+	TraceID          string    `json:"trace_id"`
+	OpportunityID    string    `json:"opportunity_id,omitempty"`
+	TaskID           string    `json:"task_id,omitempty"`
+	WorkstreamID     string    `json:"workstream_id,omitempty"`
+	ArtifactID       string    `json:"artifact_id,omitempty"`
+	PolicyDecisionID string    `json:"policy_decision_id,omitempty"`
+	DeliveryKind     string    `json:"delivery_kind"`
+	Status           string    `json:"status"`
+	Target           string    `json:"target,omitempty"`
+	Result           string    `json:"result,omitempty"`
+	Evidence         string    `json:"evidence,omitempty"`
+	ExternalAction   bool      `json:"external_action"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at,omitempty"`
+}
+
 type RevenueExternalSendApplyResponse struct {
 	Record                              RevenueExternalSendApplyRecord `json:"external_send_apply_record"`
+	Delivery                            RevenueDelivery                `json:"delivery"`
 	ExternalActionsApplied              bool                           `json:"external_actions_applied"`
 	PostSendVerified                    bool                           `json:"post_send_verified"`
-	HumanApprovalRequiredForRetry       bool                           `json:"human_approval_required_for_retry"`
 	ExternalChannelAdapterConfiguration string                         `json:"external_channel_adapter_configuration"`
 	FailureReason                       string                         `json:"failure_reason"`
 }
@@ -1670,7 +1671,6 @@ type SkillGovernanceExternalPRSubmitRequest struct {
 	Title               string `json:"title,omitempty"`
 	DiffPath            string `json:"diff_path,omitempty"`
 	TestResult          string `json:"test_result,omitempty"`
-	HumanApproved       bool   `json:"human_approved"`
 }
 
 type SkillGovernanceExternalPRSubmitRecord struct {
@@ -1681,8 +1681,6 @@ type SkillGovernanceExternalPRSubmitRecord struct {
 	Title               string    `json:"title,omitempty"`
 	DiffPath            string    `json:"diff_path,omitempty"`
 	TestResult          string    `json:"test_result,omitempty"`
-	ApprovalStatus      string    `json:"approval_status"`
-	HumanApproved       bool      `json:"human_approved"`
 	SubmitStatus        string    `json:"submit_status"`
 	PRURL               string    `json:"pr_url,omitempty"`
 	FailureReason       string    `json:"failure_reason,omitempty"`
@@ -1697,7 +1695,6 @@ type SkillGovernanceExternalPRSubmitResponse struct {
 	Record                         SkillGovernanceExternalPRSubmitRecord `json:"external_pr_submit_record"`
 	ExternalPRCreated              bool                                  `json:"external_pr_created"`
 	PostSubmitVerified             bool                                  `json:"post_submit_verified"`
-	HumanApprovalRequiredForPR     bool                                  `json:"human_approval_required_for_pr"`
 	ExternalPRAdapterConfiguration string                                `json:"external_pr_adapter_configuration"`
 	Message                        string                                `json:"message"`
 }
@@ -1710,7 +1707,6 @@ type SkillGovernanceStatus struct {
 	ExternalPRSubmitRecords     []SkillGovernanceExternalPRSubmitRecord `json:"external_pr_submit_records"`
 	ExternalPRAdapter           string                                  `json:"external_pr_adapter"`
 	ExternalPRAdapterConfigured *bool                                   `json:"external_pr_adapter_configured"`
-	HumanApprovalRequiredForPR  *bool                                   `json:"human_approval_required_for_pr"`
 	CoderTranscripts            []SkillGovernanceCoderTranscript        `json:"coder_transcripts"`
 }
 
@@ -1732,11 +1728,10 @@ type SkillGovernanceTriggerLog struct {
 }
 
 type SkillGovernanceChangeLog struct {
-	ChangeID            string    `json:"change_id"`
-	SkillID             string    `json:"skill_id"`
-	EvalResult          string    `json:"eval_result,omitempty"`
-	HumanApprovalStatus string    `json:"human_approval_status,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
+	ChangeID   string    `json:"change_id"`
+	SkillID    string    `json:"skill_id"`
+	EvalResult string    `json:"eval_result,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type SkillGovernanceCoderTranscript struct {
@@ -1760,7 +1755,7 @@ type SkillGovernanceContributionGateRequest struct {
 	ExistingPRsChecked  bool   `json:"existing_prs_checked"`
 	RealProblemVerified bool   `json:"real_problem_verified"`
 	CoreChangeVerified  bool   `json:"core_change_verified"`
-	DiffHumanApproved   bool   `json:"diff_human_approved"`
+	DiffReviewed        bool   `json:"diff_reviewed"`
 	TestResult          string `json:"test_result,omitempty"`
 }
 
@@ -1772,7 +1767,7 @@ type SkillGovernanceContributionGateLog struct {
 	ExistingPRsChecked  bool      `json:"existing_prs_checked"`
 	RealProblemVerified bool      `json:"real_problem_verified"`
 	CoreChangeVerified  bool      `json:"core_change_verified"`
-	DiffHumanApproved   bool      `json:"diff_human_approved"`
+	DiffReviewed        bool      `json:"diff_reviewed"`
 	TestResult          string    `json:"test_result,omitempty"`
 	GateStatus          string    `json:"gate_status"`
 	CreatedAt           time.Time `json:"created_at"`
@@ -1834,7 +1829,6 @@ type PromotionRequest struct {
 	Reason                    string    `json:"reason"`
 	RollbackPlanPath          string    `json:"rollback_plan_path"`
 	PostApplyVerificationPath string    `json:"post_apply_verification_path,omitempty"`
-	HumanApprovalStatus       string    `json:"human_approval_status"`
 	CreatedAt                 time.Time `json:"created_at"`
 }
 
@@ -1849,7 +1843,6 @@ type PromotionGateLog struct {
 	PromotionID           string    `json:"promotion_id"`
 	GateStatus            string    `json:"gate_status"`
 	Reason                string    `json:"reason"`
-	HumanApprovalStatus   string    `json:"human_approval_status"`
 	PostApplyVerification string    `json:"post_apply_verification,omitempty"`
 	CreatedAt             time.Time `json:"created_at"`
 }
@@ -1868,7 +1861,6 @@ type PromotionApplyRequest struct {
 	ApplyTarget                  string           `json:"apply_target,omitempty"`
 	PostApplyVerificationPath    string           `json:"post_apply_verification_path"`
 	PostApplyVerificationCommand string           `json:"post_apply_verification_command,omitempty"`
-	HumanApproved                bool             `json:"human_approved"`
 }
 
 type PromotionDiffApplyResult struct {
@@ -1894,12 +1886,11 @@ type PromotionRollbackResponse struct {
 
 type PromotionWorkflowRequest struct {
 	Promotion                    PromotionRequest        `json:"promotion"`
-	ApplyAfterApproval           bool                    `json:"apply_after_approval,omitempty"`
+	ApplyAfterPolicyPass         bool                    `json:"apply_after_policy_pass,omitempty"`
 	AppliedBy                    string                  `json:"applied_by,omitempty"`
 	ApplyTarget                  string                  `json:"apply_target,omitempty"`
 	PostApplyVerificationPath    string                  `json:"post_apply_verification_path,omitempty"`
 	PostApplyVerificationCommand string                  `json:"post_apply_verification_command,omitempty"`
-	HumanApproved                bool                    `json:"human_approved,omitempty"`
 	ExternalControl              *ExternalControlRequest `json:"external_control,omitempty"`
 }
 
@@ -2645,7 +2636,6 @@ func (c *Client) CreateComplexityCoderDiff(ctx context.Context, req ComplexityCo
 		TestResultPath:            req.TestResultPath,
 		RollbackPlanPath:          req.RollbackPlanPath,
 		PostApplyVerificationPath: req.PostApplyVerificationPath,
-		HumanApprovalStatus:       req.HumanApprovalStatus,
 	}, req, true); err != nil {
 		return ComplexityDiffResponse{}, err
 	}
@@ -2797,30 +2787,16 @@ func (c *Client) CreateRevenueOpportunityWorkstreamGoal(ctx context.Context, ite
 	return out, nil
 }
 
-func (c *Client) EvaluateRevenueHumanDecision(ctx context.Context, item RevenueHumanDecision) (RevenueHumanDecisionResponse, error) {
-	if err := validateRevenueHumanDecisionRequest(item); err != nil {
-		return RevenueHumanDecisionResponse{}, err
+func (c *Client) EvaluateRevenuePolicyDecision(ctx context.Context, item RevenuePolicyDecision) (RevenuePolicyDecisionResponse, error) {
+	if err := validateRevenuePolicyDecisionRequest(item); err != nil {
+		return RevenuePolicyDecisionResponse{}, err
 	}
-	var out RevenueHumanDecisionResponse
-	if err := c.do(ctx, http.MethodPost, "/viewer/revenue/human-decision-gate", item, &out); err != nil {
-		return RevenueHumanDecisionResponse{}, err
+	var out RevenuePolicyDecisionResponse
+	if err := c.do(ctx, http.MethodPost, "/viewer/revenue/policy-decisions", item, &out); err != nil {
+		return RevenuePolicyDecisionResponse{}, err
 	}
-	if err := validateRevenueHumanDecisionResponse(out, item, ""); err != nil {
-		return RevenueHumanDecisionResponse{}, err
-	}
-	return out, nil
-}
-
-func (c *Client) ReviewRevenueHumanDecision(ctx context.Context, item RevenueHumanDecisionReview) (RevenueHumanDecisionResponse, error) {
-	if err := validateRevenueHumanDecisionReviewRequest(item); err != nil {
-		return RevenueHumanDecisionResponse{}, err
-	}
-	var out RevenueHumanDecisionResponse
-	if err := c.do(ctx, http.MethodPost, "/viewer/revenue/human-decision-gate/review", item, &out); err != nil {
-		return RevenueHumanDecisionResponse{}, err
-	}
-	if err := validateRevenueHumanDecisionResponse(out, RevenueHumanDecision{DecisionID: item.DecisionID}, item.ApprovalStatus); err != nil {
-		return RevenueHumanDecisionResponse{}, err
+	if err := validateRevenuePolicyDecisionResponse(out, item); err != nil {
+		return RevenuePolicyDecisionResponse{}, err
 	}
 	return out, nil
 }
@@ -2953,11 +2929,6 @@ func validateRevenueOpportunity(item RevenueOpportunity, requireStoredFields boo
 	if delta > 0.000001 {
 		return fmt.Errorf("revenue opportunity profit_margin mismatch")
 	}
-	switch strings.TrimSpace(item.ApprovalState) {
-	case "draft", "pending", "approved", "rejected":
-	default:
-		return fmt.Errorf("revenue opportunity invalid approval_state %q", item.ApprovalState)
-	}
 	if item.CreatedAt.IsZero() {
 		return fmt.Errorf("revenue opportunity missing created_at")
 	}
@@ -2997,14 +2968,10 @@ func validateRevenueEconomicTask(item RevenueEconomicTask, requireStoredFields b
 	if !requireStoredFields {
 		return nil
 	}
-	if strings.TrimSpace(item.Status) == "" || strings.TrimSpace(item.ApprovalMode) == "" || item.CreatedAt.IsZero() {
-		return fmt.Errorf("revenue economic task stored record requires status, approval_mode, and created_at")
+	if strings.TrimSpace(item.Status) == "" || item.CreatedAt.IsZero() {
+		return fmt.Errorf("revenue economic task stored record requires status and created_at")
 	}
 	return nil
-}
-
-func revenueTaskRequiresHumanApproval(taskKind string) bool {
-	return false
 }
 
 func validateRevenueEconomicReflectionsStatus(resp RevenueEconomicReflectionsStatus) error {
@@ -3054,20 +3021,17 @@ func validateRevenueStatus(resp RevenueStatus) error {
 	if resp.ExternalChannelAdapterConfigured == nil {
 		return fmt.Errorf("revenue status missing external_channel_adapter_configured")
 	}
-	if resp.HumanApprovalRequiredForExternalSend == nil {
-		return fmt.Errorf("revenue status missing human_approval_required_for_external_send")
-	}
 	if strings.TrimSpace(resp.ExternalChannelAdapter) == "unconfigured" && *resp.ExternalChannelAdapterConfigured {
 		return fmt.Errorf("revenue status unconfigured external channel adapter marked configured")
 	}
-	if resp.Summary.PendingDecisionCount < 0 ||
+	if resp.Summary.BlockedDecisionCount < 0 ||
 		resp.Summary.DailyReportCount < 0 ||
 		resp.Summary.ChannelDraftCount < 0 ||
 		resp.Summary.ExternalSendApplyCount < 0 {
 		return fmt.Errorf("revenue status summary counts must be >= 0")
 	}
 	if resp.EconomicObjective != nil {
-		if resp.EconomicObjective.OpportunityCount < 0 || resp.EconomicObjective.PendingApprovalTaskCount < 0 || resp.EconomicObjective.ReflectionCount < 0 {
+		if resp.EconomicObjective.OpportunityCount < 0 || resp.EconomicObjective.ReflectionCount < 0 {
 			return fmt.Errorf("revenue economic objective summary counts must be >= 0")
 		}
 		if !resp.EconomicObjective.ExternalActionBlocked {
@@ -3075,26 +3039,23 @@ func validateRevenueStatus(resp RevenueStatus) error {
 		}
 	}
 	decisions := map[string]struct{}{}
-	for _, item := range resp.HumanDecisions {
+	for _, item := range resp.PolicyDecisions {
 		id := strings.TrimSpace(item.DecisionID)
 		if id == "" {
-			return fmt.Errorf("revenue status human_decisions missing decision_id")
+			return fmt.Errorf("revenue status policy_decisions missing decision_id")
 		}
 		if _, ok := decisions[id]; ok {
-			return fmt.Errorf("revenue status duplicate human_decision decision_id=%s", id)
+			return fmt.Errorf("revenue status duplicate policy_decision decision_id=%s", id)
 		}
 		decisions[id] = struct{}{}
 		if strings.TrimSpace(item.DecisionType) == "" {
-			return fmt.Errorf("revenue status human_decision missing decision_type")
+			return fmt.Errorf("revenue status policy_decision missing decision_type")
 		}
-		if strings.TrimSpace(item.ApprovalStatus) == "" {
-			return fmt.Errorf("revenue status human_decision missing approval_status")
-		}
-		if strings.TrimSpace(item.GateStatus) == "" {
-			return fmt.Errorf("revenue status human_decision missing gate_status")
+		if item.Status != "allowed" && item.Status != "blocked" {
+			return fmt.Errorf("revenue status policy_decision invalid status=%q", item.Status)
 		}
 		if item.CreatedAt.IsZero() {
-			return fmt.Errorf("revenue status human_decision %s missing created_at", id)
+			return fmt.Errorf("revenue status policy_decision %s missing created_at", id)
 		}
 	}
 	reports := map[string]struct{}{}
@@ -3136,9 +3097,6 @@ func validateRevenueStatus(resp RevenueStatus) error {
 		if strings.TrimSpace(item.Body) == "" {
 			return fmt.Errorf("revenue status channel_draft missing body")
 		}
-		if strings.TrimSpace(item.ApprovalStatus) == "" {
-			return fmt.Errorf("revenue status channel_draft missing approval_status")
-		}
 		if item.CreatedAt.IsZero() {
 			return fmt.Errorf("revenue status channel_draft %s missing created_at", id)
 		}
@@ -3167,9 +3125,6 @@ func validateRevenueStatus(resp RevenueStatus) error {
 		}
 		if strings.TrimSpace(item.Channel) == "" {
 			return fmt.Errorf("revenue status external_send_apply_record missing channel")
-		}
-		if strings.TrimSpace(item.ApprovalStatus) == "" {
-			return fmt.Errorf("revenue status external_send_apply_record missing approval_status")
 		}
 		if strings.TrimSpace(item.ApplyStatus) == "" {
 			return fmt.Errorf("revenue status external_send_apply_record missing apply_status")
@@ -3222,7 +3177,7 @@ func validateSkillGovernanceStatus(resp SkillGovernanceStatus) error {
 	if strings.TrimSpace(resp.ExternalPRAdapter) == "" {
 		return fmt.Errorf("skill governance status missing external_pr_adapter")
 	}
-	if resp.ExternalPRAdapterConfigured == nil || resp.HumanApprovalRequiredForPR == nil {
+	if resp.ExternalPRAdapterConfigured == nil {
 		return fmt.Errorf("skill governance status missing external PR readiness fields")
 	}
 	if *resp.ExternalPRAdapterConfigured && strings.TrimSpace(resp.ExternalPRAdapter) == "unconfigured" {
@@ -3326,9 +3281,6 @@ func validateSkillGovernanceStatus(resp SkillGovernanceStatus) error {
 		}
 		if item.CreatedAt.IsZero() {
 			return fmt.Errorf("skill governance status external_pr_submit_record %s missing created_at", id)
-		}
-		if strings.TrimSpace(item.ApprovalStatus) == "" {
-			return fmt.Errorf("skill governance status external_pr_submit_record missing approval_status")
 		}
 		if strings.TrimSpace(item.Title) == "" {
 			return fmt.Errorf("skill governance status external_pr_submit_record missing title")
@@ -3446,19 +3398,9 @@ func validateRevenueDailyRoutineResponse(resp RevenueDailyRoutineResponse, req R
 	return nil
 }
 
-func validateRevenueHumanDecisionRequest(item RevenueHumanDecision) error {
+func validateRevenuePolicyDecisionRequest(item RevenuePolicyDecision) error {
 	if strings.TrimSpace(item.DecisionType) == "" {
-		return fmt.Errorf("revenue human decision request missing decision_type")
-	}
-	return nil
-}
-
-func validateRevenueHumanDecisionReviewRequest(item RevenueHumanDecisionReview) error {
-	if strings.TrimSpace(item.DecisionID) == "" {
-		return fmt.Errorf("revenue human decision review request missing decision_id")
-	}
-	if strings.TrimSpace(item.ApprovalStatus) == "" {
-		return fmt.Errorf("revenue human decision review request missing approval_status")
+		return fmt.Errorf("revenue policy decision request missing decision_type")
 	}
 	return nil
 }
@@ -3585,7 +3527,7 @@ func validateComplexityDiffResponse(resp ComplexityDiffResponse, req ComplexityC
 			return fmt.Errorf("complexity diff response sandbox gate status mismatch")
 		}
 		switch strings.TrimSpace(resp.SandboxDecision.Status) {
-		case "approve", "reject", "needs_review", "needs_more_tests":
+		case "passed", "reject", "needs_review", "needs_more_tests":
 		default:
 			return fmt.Errorf("complexity diff response invalid sandbox decision status")
 		}
@@ -3620,10 +3562,6 @@ func validateRevenueChannelDraftResponse(resp RevenueChannelDraftResponse, req R
 	if resp.Draft.ExternalSendApplied {
 		return fmt.Errorf("revenue channel draft response draft claims external send applied")
 	}
-	approvalStatus := strings.TrimSpace(resp.Draft.ApprovalStatus)
-	if approvalStatus != "" && approvalStatus != "not_required" && approvalStatus != "pending" {
-		return fmt.Errorf("revenue channel draft response approval_status must be not_required or pending")
-	}
 	if resp.Draft.CreatedAt.IsZero() {
 		return fmt.Errorf("revenue channel draft response draft missing created_at")
 	}
@@ -3646,9 +3584,6 @@ func validateRevenueExternalSendApplyResponse(resp RevenueExternalSendApplyRespo
 	}
 	if resp.PostSendVerified != record.PostSendVerified {
 		return fmt.Errorf("external send apply response mismatch: post_send_verified=%t record.post_send_verified=%t", resp.PostSendVerified, record.PostSendVerified)
-	}
-	if strings.TrimSpace(record.ApprovalStatus) == "" {
-		return fmt.Errorf("external send apply response missing compatibility approval_status")
 	}
 	if strings.TrimSpace(record.ApplyStatus) != "sent" && strings.TrimSpace(record.SendResult) == "sent" {
 		return fmt.Errorf("external send apply response send_result=sent requires sent apply_status")
@@ -3699,9 +3634,6 @@ func validateSkillGovernanceExternalPRSubmitResponse(resp SkillGovernanceExterna
 	}
 	if resp.PostSubmitVerified != record.PostSubmitVerified {
 		return fmt.Errorf("external PR submit response mismatch: post_submit_verified=%t record.post_submit_verified=%t", resp.PostSubmitVerified, record.PostSubmitVerified)
-	}
-	if strings.TrimSpace(record.ApprovalStatus) == "" {
-		return fmt.Errorf("external PR submit response missing compatibility approval_status")
 	}
 	if !resp.ExternalPRCreated && strings.TrimSpace(resp.ExternalPRAdapterConfiguration) == "required" && recordAdapterConfigured(record.PRAdapter) {
 		return fmt.Errorf("external PR submit response pr_adapter conflicts with required external PR adapter configuration")
@@ -4481,9 +4413,9 @@ func validateKnowledgeMemoryDreamReviewConsistency(status string, reviewStatus s
 		if status != "draft" && status != "proposal" {
 			return fmt.Errorf("knowledge memory status dream_run pending review requires draft or proposal status")
 		}
-	case "approved":
+	case "adopted":
 		if status != "reviewed" && status != "promoted" {
-			return fmt.Errorf("knowledge memory status dream_run cannot be auto-approved")
+			return fmt.Errorf("knowledge memory status dream_run cannot be auto-adopted")
 		}
 	case "rejected":
 		if status != "rejected" {
@@ -4579,7 +4511,7 @@ func isKnowledgeMemoryDreamStatus(status string) bool {
 
 func isKnowledgeMemoryReviewStatus(status string) bool {
 	switch status {
-	case "pending", "approved", "rejected":
+	case "pending", "adopted", "rejected":
 		return true
 	default:
 		return false
@@ -4594,12 +4526,12 @@ func validateKnowledgeMemoryReviewRequest(req KnowledgeMemoryReviewRequest) erro
 		return fmt.Errorf("knowledge memory review request missing id")
 	}
 	switch strings.TrimSpace(req.ReviewStatus) {
-	case "approved", "rejected":
+	case "adopted", "rejected":
 	default:
-		return fmt.Errorf("knowledge memory review request review_status must be approved or rejected")
+		return fmt.Errorf("knowledge memory review request review_status must be adopted or rejected")
 	}
-	if req.Promote && strings.TrimSpace(req.ReviewStatus) != "approved" {
-		return fmt.Errorf("knowledge memory review request promote requires approved review_status")
+	if req.Promote && strings.TrimSpace(req.ReviewStatus) != "adopted" {
+		return fmt.Errorf("knowledge memory review request promote requires adopted review_status")
 	}
 	return nil
 }
@@ -4632,7 +4564,7 @@ func validateKnowledgeMemoryReviewResponse(resp KnowledgeMemoryReviewResponse, r
 	if req.Promote && resp.Comparison.TargetStatus != expectedKnowledgeMemoryPromotedStatus(req.DetailType) {
 		return fmt.Errorf("knowledge memory review response target_status mismatch")
 	}
-	if !req.Promote && req.ReviewStatus == "approved" && resp.Comparison.TargetStatus != "reviewed" {
+	if !req.Promote && req.ReviewStatus == "adopted" && resp.Comparison.TargetStatus != "reviewed" {
 		return fmt.Errorf("knowledge memory review response target_status mismatch")
 	}
 	if req.ReviewStatus == "rejected" && resp.Comparison.TargetStatus != "rejected" {
@@ -5864,18 +5796,12 @@ func validateExternalControlRequest(req ExternalControlRequest) error {
 func validateExternalControlResponse(resp ExternalControlResponse, req ExternalControlRequest) error {
 	if strings.TrimSpace(resp.Request.Actor) != strings.TrimSpace(req.Actor) ||
 		strings.TrimSpace(resp.Request.ChannelID) != strings.TrimSpace(req.ChannelID) ||
-		strings.TrimSpace(resp.Request.Action) != strings.TrimSpace(req.Action) ||
-		resp.Request.HumanApproved != req.HumanApproved {
+		strings.TrimSpace(resp.Request.Action) != strings.TrimSpace(req.Action) {
 		return fmt.Errorf("external control response request mismatch")
 	}
 	status := strings.TrimSpace(resp.Decision.Status)
 	switch status {
 	case "allowed":
-		if resp.Decision.RequiresApproval {
-			return fmt.Errorf("external control response allowed action but requires_approval is true")
-		}
-	case "needs_approval":
-		return fmt.Errorf("external control response returned retired needs_approval status")
 	case "blocked":
 		if len(resp.Decision.Reasons) == 0 {
 			return fmt.Errorf("external control response blocked without reasons")
@@ -6257,12 +6183,12 @@ func validateWorkstreamStatus(resp WorkstreamStatus) error {
 			return fmt.Errorf("workstream status vault_update %s missing created_at", id)
 		}
 		switch strings.TrimSpace(item.ReviewStatus) {
-		case "pending", "approved", "rejected":
+		case "pending", "adopted", "rejected":
 		default:
 			return fmt.Errorf("workstream status invalid vault_update review_status=%q", item.ReviewStatus)
 		}
-		if item.Applied && strings.TrimSpace(item.ReviewStatus) != "approved" {
-			return fmt.Errorf("workstream status vault_update applied without approved review")
+		if item.Applied && strings.TrimSpace(item.ReviewStatus) != "adopted" {
+			return fmt.Errorf("workstream status vault_update applied without adopted review")
 		}
 		if item.Applied && strings.TrimSpace(item.AppliedPath) == "" {
 			return fmt.Errorf("workstream status vault_update applied without applied_path")
@@ -6325,7 +6251,7 @@ func validateWorkstreamVaultUpdateRequest(item WorkstreamVaultUpdate) error {
 		return fmt.Errorf("workstream vault update request missing review_status")
 	}
 	switch status {
-	case "pending", "approved", "rejected":
+	case "pending", "adopted", "rejected":
 	default:
 		return fmt.Errorf("workstream vault update request invalid review_status=%q", status)
 	}
@@ -6408,9 +6334,9 @@ func validateWorkstreamVaultUpdateEcho(got WorkstreamVaultUpdate, req Workstream
 func validateWorkstreamVaultUpdateReviewResponse(resp WorkstreamVaultUpdateResponse, req WorkstreamVaultUpdate) error {
 	status := strings.TrimSpace(req.ReviewStatus)
 	switch status {
-	case "approved", "rejected":
+	case "adopted", "rejected":
 	default:
-		return fmt.Errorf("workstream vault review request status must be approved or rejected")
+		return fmt.Errorf("workstream vault review request status must be adopted or rejected")
 	}
 	if err := validateWorkstreamVaultUpdateEcho(resp.VaultUpdate, req); err != nil {
 		return fmt.Errorf("%s", strings.NewReplacer("workstream vault update response", "workstream vault review response").Replace(err.Error()))
@@ -6427,8 +6353,8 @@ func validateWorkstreamVaultUpdateReviewResponse(resp WorkstreamVaultUpdateRespo
 	if strings.TrimSpace(resp.AppliedPath) != strings.TrimSpace(resp.VaultUpdate.AppliedPath) {
 		return fmt.Errorf("workstream vault review response applied_path mismatch")
 	}
-	if status == "approved" && strings.TrimSpace(req.ProposedContent) != "" && !resp.Applied {
-		return fmt.Errorf("workstream vault review response did not apply approved proposed_content")
+	if status == "adopted" && strings.TrimSpace(req.ProposedContent) != "" && !resp.Applied {
+		return fmt.Errorf("workstream vault review response did not apply adopted proposed_content")
 	}
 	if resp.VaultUpdate.CreatedAt.IsZero() {
 		return fmt.Errorf("workstream vault review response vault_update missing created_at")
@@ -6436,36 +6362,30 @@ func validateWorkstreamVaultUpdateReviewResponse(resp WorkstreamVaultUpdateRespo
 	return nil
 }
 
-func validateRevenueHumanDecisionResponse(resp RevenueHumanDecisionResponse, req RevenueHumanDecision, expectedApprovalStatus string) error {
+func validateRevenuePolicyDecisionResponse(resp RevenuePolicyDecisionResponse, req RevenuePolicyDecision) error {
 	if strings.TrimSpace(req.DecisionID) != "" && strings.TrimSpace(resp.Record.DecisionID) != strings.TrimSpace(req.DecisionID) {
-		return fmt.Errorf("revenue human decision response decision_id mismatch")
+		return fmt.Errorf("revenue policy decision response decision_id mismatch")
 	}
 	if strings.TrimSpace(req.DecisionType) != "" && strings.TrimSpace(resp.Record.DecisionType) != strings.TrimSpace(req.DecisionType) {
-		return fmt.Errorf("revenue human decision response decision_type mismatch")
+		return fmt.Errorf("revenue policy decision response decision_type mismatch")
 	}
 	if strings.TrimSpace(resp.Record.DecisionID) == "" {
-		return fmt.Errorf("revenue human decision response missing decision_id")
+		return fmt.Errorf("revenue policy decision response missing decision_id")
 	}
 	if strings.TrimSpace(resp.Record.DecisionType) == "" {
-		return fmt.Errorf("revenue human decision response missing decision_type")
+		return fmt.Errorf("revenue policy decision response missing decision_type")
 	}
-	if strings.TrimSpace(resp.Result.Status) != strings.TrimSpace(resp.Record.GateStatus) {
-		return fmt.Errorf("revenue human decision response status mismatch")
+	if strings.TrimSpace(resp.Result.Status) != strings.TrimSpace(resp.Record.Status) {
+		return fmt.Errorf("revenue policy decision response status mismatch")
 	}
-	// requires_approval is retained only for compatibility with old servers and
-	// records. Execution is governed by the synchronous gate status above.
-	expectedApprovalStatus = strings.TrimSpace(expectedApprovalStatus)
-	if expectedApprovalStatus != "" && strings.TrimSpace(resp.Record.ApprovalStatus) != expectedApprovalStatus {
-		return fmt.Errorf("revenue human decision response approval_status mismatch")
+	if strings.TrimSpace(resp.Record.Status) == "blocked" && len(resp.Record.Reasons) == 0 && len(resp.Result.Reasons) == 0 {
+		return fmt.Errorf("revenue policy decision response blocked without reasons")
 	}
-	if strings.TrimSpace(resp.Record.GateStatus) == "blocked" && len(resp.Record.Reasons) == 0 && len(resp.Result.Reasons) == 0 {
-		return fmt.Errorf("revenue human decision response blocked without reasons")
-	}
-	if strings.TrimSpace(resp.Record.GateStatus) == "needs_review" {
-		return fmt.Errorf("revenue human decision response returned retired needs_review status")
+	if resp.Record.Status != "allowed" && resp.Record.Status != "blocked" {
+		return fmt.Errorf("revenue policy decision response invalid status=%q", resp.Record.Status)
 	}
 	if resp.Record.CreatedAt.IsZero() {
-		return fmt.Errorf("revenue human decision response record missing created_at")
+		return fmt.Errorf("revenue policy decision response record missing created_at")
 	}
 	return nil
 }
@@ -6733,7 +6653,7 @@ func (c *Client) RollbackPromotion(ctx context.Context, req PromotionApplyReques
 }
 
 func (c *Client) SubmitPromotionWorkflow(ctx context.Context, req PromotionWorkflowRequest) (PromotionWorkflowResponse, error) {
-	if req.ApplyAfterApproval && req.ExternalControl == nil {
+	if req.ApplyAfterPolicyPass && req.ExternalControl == nil {
 		return PromotionWorkflowResponse{SkippedReason: "external control policy is required before apply"}, nil
 	}
 	if req.ExternalControl != nil {
@@ -6750,12 +6670,12 @@ func (c *Client) SubmitPromotionWorkflow(ctx context.Context, req PromotionWorkf
 		return PromotionWorkflowResponse{}, err
 	}
 	resp := PromotionWorkflowResponse{PromotionResponse: promotionResp}
-	if promotionResp.Decision.Status != "approve" {
-		resp.SkippedReason = "promotion gate did not approve"
+	if promotionResp.Decision.Status != "passed" {
+		resp.SkippedReason = "promotion gate did not pass"
 		return resp, nil
 	}
-	if !req.ApplyAfterApproval {
-		resp.SkippedReason = "apply_after_approval is false"
+	if !req.ApplyAfterPolicyPass {
+		resp.SkippedReason = "apply_after_policy_pass is false"
 		return resp, nil
 	}
 	if strings.TrimSpace(req.PostApplyVerificationPath) == "" {
@@ -6768,7 +6688,6 @@ func (c *Client) SubmitPromotionWorkflow(ctx context.Context, req PromotionWorkf
 		ApplyTarget:                  req.ApplyTarget,
 		PostApplyVerificationPath:    req.PostApplyVerificationPath,
 		PostApplyVerificationCommand: req.PostApplyVerificationCommand,
-		HumanApproved:                req.HumanApproved,
 	}
 	if err := validatePromotionApplyRequest(applyReq); err != nil {
 		resp.SkippedReason = err.Error()
@@ -6825,7 +6744,7 @@ func validatePromotionRollbackRequest(req PromotionApplyRequest) error {
 
 func isSandboxGateStatus(status string) bool {
 	switch status {
-	case "approve", "reject", "needs_review", "needs_more_tests", "promotion_applied", "rollback_executed":
+	case "passed", "reject", "needs_review", "needs_more_tests", "promotion_applied", "rollback_executed":
 		return true
 	default:
 		return false
@@ -6855,7 +6774,7 @@ func validatePromotionRequestResponse(resp PromotionRequestResponse, req Promoti
 		return fmt.Errorf("promotion request response gate status mismatch")
 	}
 	switch strings.TrimSpace(resp.Decision.Status) {
-	case "approve", "reject":
+	case "passed", "reject":
 		if len(resp.Decision.MissingRequirements) > 0 {
 			return fmt.Errorf("promotion request response terminal decision includes missing requirements")
 		}
@@ -7344,7 +7263,7 @@ func validateAdvisorsStatus(resp *AdvisorsStatus) error {
 			return fmt.Errorf("agent policy decision[%d] requires decision_id, agent_id, and action", index)
 		}
 		switch decision.Decision {
-		case "allowed", "approval_required", "forbidden":
+		case "allowed", "forbidden":
 		default:
 			return fmt.Errorf("agent policy decision[%d] has invalid decision %q", index, decision.Decision)
 		}

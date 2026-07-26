@@ -98,9 +98,6 @@ func ParseManifestYAML(content string) SkillManifest {
 				listKey = ""
 			}
 		default:
-			if key == "human_approval_required" {
-				manifest.HumanApprovalRequired = value == "true"
-			}
 			listKey = ""
 		}
 	}
@@ -119,8 +116,6 @@ func applySkillField(manifest *SkillManifest, key, value string) {
 		manifest.Version = value
 	case "description":
 		manifest.Description = value
-	case "human_approval_required":
-		manifest.HumanApprovalRequired = value == "true"
 	case "enabled":
 		manifest.Enabled = value != "false"
 	}

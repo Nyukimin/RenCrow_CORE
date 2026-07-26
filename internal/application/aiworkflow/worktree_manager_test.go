@@ -26,7 +26,7 @@ func (s *memoryWorktreeStore) SaveWorkflowEvent(_ context.Context, item domainai
 	return nil
 }
 
-func TestWorktreeManagerDoesNotRequireHumanApproval(t *testing.T) {
+func TestWorktreeManagerUsesPolicyChecks(t *testing.T) {
 	repo := initGitRepo(t)
 	manager := NewWorktreeManager(nil)
 
@@ -36,7 +36,7 @@ func TestWorktreeManagerDoesNotRequireHumanApproval(t *testing.T) {
 		Branch:   "feature/test",
 	})
 	if err != nil {
-		t.Fatalf("missing legacy human approval must not block: %v", err)
+		t.Fatalf("policy checks should allow this operation: %v", err)
 	}
 	if result.Worktree.Status != "active" {
 		t.Fatalf("unexpected result: %#v", result)
@@ -48,10 +48,9 @@ func TestWorktreeManagerRejectsProtectedBranch(t *testing.T) {
 	manager := NewWorktreeManager(nil)
 
 	if _, err := manager.Create(context.Background(), WorktreeCreateOptions{
-		RepoRoot:      repo,
-		BaseDir:       filepath.Join(t.TempDir(), "worktrees"),
-		Branch:        "main",
-		HumanApproved: true,
+		RepoRoot: repo,
+		BaseDir:  filepath.Join(t.TempDir(), "worktrees"),
+		Branch:   "main",
 	}); err == nil {
 		t.Fatal("expected protected branch to fail")
 	}
@@ -65,14 +64,13 @@ func TestWorktreeManagerCreatesGitWorktreeAndRegistry(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 
 	result, err := manager.Create(context.Background(), WorktreeCreateOptions{
-		RepoRoot:      repo,
-		BaseDir:       base,
-		RepoName:      "example",
-		Branch:        "feature/project-init",
-		Purpose:       "Project Init test",
-		OwnerAgent:    "Worker",
-		HumanApproved: true,
-		Now:           func() time.Time { return now },
+		RepoRoot:   repo,
+		BaseDir:    base,
+		RepoName:   "example",
+		Branch:     "feature/project-init",
+		Purpose:    "Project Init test",
+		OwnerAgent: "Worker",
+		Now:        func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
@@ -94,24 +92,22 @@ func TestWorktreeManagerClosesGitWorktreeAndRegistry(t *testing.T) {
 	store := &memoryWorktreeStore{}
 	manager := NewWorktreeManager(store)
 	created, err := manager.Create(context.Background(), WorktreeCreateOptions{
-		RepoRoot:      repo,
-		BaseDir:       base,
-		RepoName:      "example",
-		Branch:        "feature/close-me",
-		HumanApproved: true,
+		RepoRoot: repo,
+		BaseDir:  base,
+		RepoName: "example",
+		Branch:   "feature/close-me",
 	})
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
 
 	closed, err := manager.Close(context.Background(), WorktreeCloseOptions{
-		RepoRoot:      repo,
-		BaseDir:       base,
-		RepoName:      "example",
-		WorktreeID:    created.Worktree.WorktreeID,
-		WorktreePath:  created.Worktree.Path,
-		Branch:        created.Worktree.Branch,
-		HumanApproved: true,
+		RepoRoot:     repo,
+		BaseDir:      base,
+		RepoName:     "example",
+		WorktreeID:   created.Worktree.WorktreeID,
+		WorktreePath: created.Worktree.Path,
+		Branch:       created.Worktree.Branch,
 	})
 	if err != nil {
 		t.Fatalf("Close failed: %v", err)

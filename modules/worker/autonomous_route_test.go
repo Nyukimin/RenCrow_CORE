@@ -47,7 +47,6 @@ func TestClassifyExecutorFailure(t *testing.T) {
 		{errors.New("proposal is invalid"), FailureProposalInvalid},
 		{errors.New("binary not found"), FailureCommandMissing},
 		{errors.New("ollama model unavailable"), FailureProviderUnavailable},
-		{errors.New("approval required: command modifies runtime lifecycle"), FailureApprovalRequired},
 		{errors.New("patch failed"), FailureApply},
 	}
 	for _, tt := range tests {
@@ -67,7 +66,7 @@ func TestBuildExecutorRetryMessage(t *testing.T) {
 	if strings.Contains(got, "Do not defer required fixes to the user") {
 		t.Fatalf("retry message should not force manual-only commands into executable output:\n%s", got)
 	}
-	if !strings.Contains(got, "manual-only lifecycle commands") || !strings.Contains(got, "approval-required steps") {
+	if !strings.Contains(got, "policy blocks") || !strings.Contains(got, "policy reason") {
 		t.Fatalf("retry message missing manual-only lifecycle guidance:\n%s", got)
 	}
 }

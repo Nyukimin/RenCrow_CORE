@@ -112,11 +112,11 @@ func reviewKnowledgeMemoryItem(ctx context.Context, store KnowledgeMemoryStore, 
 	if detailType == "" || id == "" || reviewStatus == "" {
 		return nil, fmt.Errorf("detail_type, id and review_status are required")
 	}
-	if reviewStatus != "approved" && reviewStatus != "rejected" {
-		return nil, fmt.Errorf("review_status must be approved or rejected")
+	if reviewStatus != "adopted" && reviewStatus != "rejected" {
+		return nil, fmt.Errorf("review_status must be adopted or rejected")
 	}
-	if req.Promote && reviewStatus != "approved" {
-		return nil, fmt.Errorf("promote requires approved review_status")
+	if req.Promote && reviewStatus != "adopted" {
+		return nil, fmt.Errorf("promote requires adopted review_status")
 	}
 	current, ok, err := findKnowledgeMemoryDetail(ctx, store, detailType, id, 100)
 	if err != nil {
@@ -384,8 +384,8 @@ func HandleDreamConsolidationRunCreate(store KnowledgeMemoryStore) http.HandlerF
 		if err := dec.Decode(&item); err != nil {
 			return err
 		}
-		if item.ReviewStatus == "approved" {
-			return fmt.Errorf("dream consolidation cannot be created with approved review_status; use review API")
+		if item.ReviewStatus == "adopted" {
+			return fmt.Errorf("dream consolidation cannot be created with adopted review_status; use review API")
 		}
 		if item.CreatedAt.IsZero() {
 			item.CreatedAt = time.Now().UTC()
@@ -439,8 +439,8 @@ func HandleDreamConsolidationReview(store KnowledgeMemoryStore) http.HandlerFunc
 			http.Error(w, "run_id and review_status are required", http.StatusBadRequest)
 			return
 		}
-		if req.ReviewStatus != "approved" && req.ReviewStatus != "rejected" {
-			http.Error(w, "review_status must be approved or rejected", http.StatusBadRequest)
+		if req.ReviewStatus != "adopted" && req.ReviewStatus != "rejected" {
+			http.Error(w, "review_status must be adopted or rejected", http.StatusBadRequest)
 			return
 		}
 		run, ok, err := findDreamConsolidationRun(r.Context(), store, req.RunID, 100)
@@ -452,8 +452,8 @@ func HandleDreamConsolidationReview(store KnowledgeMemoryStore) http.HandlerFunc
 			http.Error(w, "dream consolidation run not found", http.StatusNotFound)
 			return
 		}
-		if req.Promote && req.ReviewStatus != "approved" {
-			http.Error(w, "promote requires approved review_status", http.StatusBadRequest)
+		if req.Promote && req.ReviewStatus != "adopted" {
+			http.Error(w, "promote requires adopted review_status", http.StatusBadRequest)
 			return
 		}
 		run.ReviewStatus = req.ReviewStatus

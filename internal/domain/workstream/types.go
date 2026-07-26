@@ -13,7 +13,7 @@ const (
 
 const (
 	VaultReviewPending  = "pending"
-	VaultReviewApproved = "approved"
+	VaultReviewAdopted  = "adopted"
 	VaultReviewRejected = "rejected"
 )
 

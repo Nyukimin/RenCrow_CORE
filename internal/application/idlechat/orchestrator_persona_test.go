@@ -131,7 +131,7 @@ func TestIdleChatCreatesPendingMetaUpdateCandidateFromTimelineEvent(t *testing.T
 	if got.TargetID != "mio" || got.ReviewStatus != "pending" || got.Section != "flow_observation" {
 		t.Fatalf("unexpected meta update = %#v", got)
 	}
-	if !strings.Contains(got.ProposedContent, "Human review is required") || !strings.Contains(got.ProposedContent, "映画の話題") {
+	if !strings.Contains(got.ProposedContent, "Quality review is required") || !strings.Contains(got.ProposedContent, "映画の話題") {
 		t.Fatalf("proposed content = %q", got.ProposedContent)
 	}
 }

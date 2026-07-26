@@ -58,9 +58,9 @@ func TestValidateObservationLogRequiresReviewForSensitive(t *testing.T) {
 	if err := ValidateObservationLog(item); err != nil {
 		t.Fatalf("ValidateObservationLog() error = %v", err)
 	}
-	item.ReviewStatus = "approved"
+	item.ReviewStatus = "adopted"
 	if err := ValidateObservationLog(item); err == nil {
-		t.Fatal("expected sensitive auto-approved observation to fail")
+		t.Fatal("expected sensitive auto-adopted observation to fail")
 	}
 }
 
@@ -82,7 +82,7 @@ func TestValidateMetaProfileUpdateReviewRequiresTerminalStatus(t *testing.T) {
 	if err := ValidateMetaProfileUpdateReview(item); err == nil {
 		t.Fatal("expected pending meta update review to fail")
 	}
-	item.ReviewStatus = "approved"
+	item.ReviewStatus = "adopted"
 	if err := ValidateMetaProfileUpdateReview(item); err != nil {
 		t.Fatalf("ValidateMetaProfileUpdateReview() error = %v", err)
 	}

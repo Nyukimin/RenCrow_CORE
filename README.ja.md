@@ -3,7 +3,7 @@
 RenCrow_CORE の日本語READMEは [README.md](README.md) です。
 
 RenCrow_CORE は、人格を持つ会話、複数エージェントへのルーティング、記憶・Recall、
-作業実行、承認、継続作業、Debug Viewerによる観測を統合するRenCrowの中核runtimeです。
+作業実行、同期Policy Decision、継続作業、Debug Viewerによる観測を統合するRenCrowの中核runtimeです。
 LLM、STT、TTS、Vision、ゲーム、横断ツール、個人・家族向けPUSH、外部Web UIは、
 それぞれ独立したRenCrow moduleが実装本体を所有します。
 

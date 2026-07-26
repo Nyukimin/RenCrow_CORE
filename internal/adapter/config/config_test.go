@@ -375,8 +375,8 @@ session:
 	if cfg.Sandbox.SQLitePath != cfg.WorkspaceDir+"/logs/sandbox.db" {
 		t.Errorf("Expected Sandbox SQLitePath under workspace, got '%s'", cfg.Sandbox.SQLitePath)
 	}
-	if !cfg.Sandbox.Promotion.RequireDiff || cfg.Sandbox.Promotion.RequireHumanApproval || !cfg.Sandbox.Promotion.RequireRollbackPlan {
-		t.Errorf("Expected Sandbox promotion gate defaults to require diff and rollback without human approval: %+v", cfg.Sandbox.Promotion)
+	if !cfg.Sandbox.Promotion.RequireDiff || !cfg.Sandbox.Promotion.RequireRollbackPlan {
+		t.Errorf("Expected Sandbox promotion gate defaults to require diff and rollback: %+v", cfg.Sandbox.Promotion)
 	}
 	if !cfg.ToolHarness.IsEnabled() {
 		t.Error("ToolHarness should be enabled by default")
@@ -426,7 +426,7 @@ session:
 	if !cfg.SkillGovernance.RequiredForCoder || !cfg.SkillGovernance.RequiredForWorker || !cfg.SkillGovernance.WarnIfSkillNotUsed {
 		t.Errorf("unexpected SkillGovernance bootstrap defaults: %+v", cfg.SkillGovernance)
 	}
-	if !cfg.SkillGovernance.ContributionGate.Enabled || cfg.SkillGovernance.ContributionGate.RequireHumanApproval {
+	if !cfg.SkillGovernance.ContributionGate.Enabled {
 		t.Errorf("unexpected SkillGovernance contribution defaults: %+v", cfg.SkillGovernance.ContributionGate)
 	}
 	if !cfg.Workstream.IsEnabled() {
@@ -459,7 +459,7 @@ session:
 	if cfg.Revenue.SQLitePath != cfg.WorkspaceDir+"/logs/revenue.db" {
 		t.Errorf("Expected Revenue SQLitePath under workspace, got '%s'", cfg.Revenue.SQLitePath)
 	}
-	if !cfg.Revenue.ProhibitSuccessGuarantee || !cfg.Revenue.RequireCustomerVoicePermission || cfg.Revenue.ExternalPublishRequiresApproval || cfg.Revenue.HighTicketOfferRequiresApproval {
+	if !cfg.Revenue.ProhibitSuccessGuarantee || !cfg.Revenue.RequireCustomerVoicePermission {
 		t.Errorf("unexpected Revenue defaults: %+v", cfg.Revenue)
 	}
 	if !cfg.PersonaArchitecture.IsEnabled() {
@@ -479,7 +479,7 @@ session:
 	}
 	if !cfg.PersonaArchitecture.RequireLorePersonaSplit ||
 		!cfg.PersonaArchitecture.RequireTriggerCategories ||
-		!cfg.PersonaArchitecture.HumanReviewRequiredForMeta ||
+		!cfg.PersonaArchitecture.ReviewRequiredForMeta ||
 		!cfg.PersonaArchitecture.RequireSessionKeying ||
 		cfg.PersonaArchitecture.MaxTriggerCandidates != 15 {
 		t.Errorf("unexpected PersonaArchitecture defaults: %+v", cfg.PersonaArchitecture)
@@ -498,7 +498,6 @@ session:
 	}
 	if !cfg.BrowserTraceToAPI.ReadOnlyOnly ||
 		!cfg.BrowserTraceToAPI.RequireTermsReview ||
-		cfg.BrowserTraceToAPI.RequireHumanApprovalPromote ||
 		len(cfg.BrowserTraceToAPI.DenyMethods) != 3 {
 		t.Errorf("unexpected BrowserTraceToAPI defaults: %+v", cfg.BrowserTraceToAPI)
 	}
@@ -517,7 +516,6 @@ session:
 	if cfg.ComplexityHotspot.DefaultMode != "report_only" ||
 		cfg.ComplexityHotspot.MaxHotspots != 20 ||
 		cfg.ComplexityHotspot.AutoApply ||
-		cfg.ComplexityHotspot.RequireHumanApprovalForPatch ||
 		!cfg.ComplexityHotspot.OneHotspotPerPR {
 		t.Errorf("unexpected ComplexityHotspot defaults: %+v", cfg.ComplexityHotspot)
 	}
@@ -542,7 +540,6 @@ session:
 		!cfg.SuperAgentHarness.RequireTerminationCondition ||
 		!cfg.SuperAgentHarness.ReturnSummaryOnly ||
 		!cfg.SuperAgentHarness.PromotionGateRequired ||
-		cfg.SuperAgentHarness.ExternalSendRequiresApproval ||
 		!cfg.SuperAgentHarness.TraceAgentRun {
 		t.Errorf("unexpected SuperAgentHarness defaults: %+v", cfg.SuperAgentHarness)
 	}
@@ -585,7 +582,7 @@ session:
 		t.Errorf("Expected KnowledgeMemory SQLitePath under workspace, got '%s'", cfg.KnowledgeMemory.SQLitePath)
 	}
 	if !cfg.KnowledgeMemory.ProtectPersonalArchive ||
-		!cfg.KnowledgeMemory.DreamRequiresHumanReview ||
+		!cfg.KnowledgeMemory.DreamRequiresReview ||
 		!cfg.KnowledgeMemory.DailyIntakePromoteToStaging {
 		t.Errorf("unexpected KnowledgeMemory defaults: %+v", cfg.KnowledgeMemory)
 	}
@@ -1349,7 +1346,6 @@ sandbox:
     require_reason: true
     require_test_result: true
     require_rollback_plan: true
-    require_human_approval: true
     require_post_apply_verification: true
     apply_root: "../worktrees/rencrow-feature"
 `
@@ -1408,7 +1404,6 @@ skill_governance:
     require_open_closed_pr_search: true
     require_real_problem: true
     require_complete_diff_review: true
-    require_human_approval: true
     one_problem_per_pr: true
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
@@ -1556,8 +1551,6 @@ revenue:
   sqlite_path: "./logs/revenue.db"
   prohibit_success_guarantee: true
   require_customer_voice_permission: true
-  external_publish_requires_approval: true
-  high_ticket_offer_requires_approval: true
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
@@ -1573,7 +1566,7 @@ revenue:
 	if cfg.Revenue.Storage != "sqlite" || cfg.Revenue.LogPath != "./logs/revenue" || cfg.Revenue.SQLitePath != "./logs/revenue.db" {
 		t.Fatalf("unexpected revenue config: %+v", cfg.Revenue)
 	}
-	if !cfg.Revenue.RequireCustomerVoicePermission || !cfg.Revenue.HighTicketOfferRequiresApproval {
+	if !cfg.Revenue.RequireCustomerVoicePermission {
 		t.Fatalf("unexpected revenue gates: %+v", cfg.Revenue)
 	}
 }
@@ -1629,7 +1622,7 @@ persona_architecture:
   canonical_response_max_per_session: 2
   require_lore_persona_split: true
   require_trigger_categories: true
-  human_review_required_for_meta: true
+  review_required_for_meta: true
   require_session_keying: true
   max_trigger_candidates: 12
 `
@@ -1725,7 +1718,6 @@ browser_trace_to_api:
   sqlite_path: "./data/browser_trace_to_api.db"
   read_only_only: true
   require_terms_review: true
-  require_human_approval_for_promote: true
   generate_openapi: true
   generate_coverage_report: true
   accepted_paths:
@@ -1831,7 +1823,6 @@ complexity_hotspot:
     - node_modules
     - dist
   auto_apply: false
-  require_human_approval_for_patch: true
   one_hotspot_per_pr: true
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
@@ -1904,7 +1895,6 @@ superagent_harness:
   require_termination_condition: true
   return_summary_only: true
   promotion_gate_required: true
-  external_send_requires_approval: true
   trace_agent_run: true
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
@@ -1995,8 +1985,6 @@ ai_workflow:
     - "viewer"
   external_control_allowed_actions:
     - "promotion_apply"
-  external_control_approval_required:
-    - "promotion_apply"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
@@ -2036,8 +2024,7 @@ ai_workflow:
 	}
 	if len(cfg.AIWorkflow.ExternalControlAllowedActors) != 1 || cfg.AIWorkflow.ExternalControlAllowedActors[0] != "Worker" ||
 		len(cfg.AIWorkflow.ExternalControlAllowedChannels) != 1 || cfg.AIWorkflow.ExternalControlAllowedChannels[0] != "viewer" ||
-		len(cfg.AIWorkflow.ExternalControlAllowedActions) != 1 || cfg.AIWorkflow.ExternalControlAllowedActions[0] != "promotion_apply" ||
-		len(cfg.AIWorkflow.ExternalControlApprovalRequired) != 1 || cfg.AIWorkflow.ExternalControlApprovalRequired[0] != "promotion_apply" {
+		len(cfg.AIWorkflow.ExternalControlAllowedActions) != 1 || cfg.AIWorkflow.ExternalControlAllowedActions[0] != "promotion_apply" {
 		t.Fatalf("unexpected ai workflow external control config: %+v", cfg.AIWorkflow)
 	}
 }
@@ -2106,9 +2093,9 @@ func TestConfigValidation_AIWorkflowRejectsEmptyExternalControlPolicyValue(t *te
 func TestConfigValidation_KnowledgeMemoryRequiresProtectedArchive(t *testing.T) {
 	cfg := &Config{
 		KnowledgeMemory: KnowledgeMemoryConfig{
-			Storage:                  "jsonl",
-			LogPath:                  "logs/knowledge_memory",
-			DreamRequiresHumanReview: true,
+			Storage:             "jsonl",
+			LogPath:             "logs/knowledge_memory",
+			DreamRequiresReview: true,
 		},
 	}
 	if err := cfg.Validate(); err == nil {
@@ -2119,10 +2106,10 @@ func TestConfigValidation_KnowledgeMemoryRequiresProtectedArchive(t *testing.T) 
 func TestConfigValidation_KnowledgeMemoryRejectsInvalidStorage(t *testing.T) {
 	cfg := &Config{
 		KnowledgeMemory: KnowledgeMemoryConfig{
-			Storage:                  "memory",
-			LogPath:                  "logs/knowledge_memory",
-			ProtectPersonalArchive:   true,
-			DreamRequiresHumanReview: true,
+			Storage:                "memory",
+			LogPath:                "logs/knowledge_memory",
+			ProtectPersonalArchive: true,
+			DreamRequiresReview:    true,
 		},
 	}
 	if err := cfg.Validate(); err == nil {

@@ -34,6 +34,7 @@ workspace/skills/*
 rencrow-data/data/
 rencrow-data/logs/
 rencrow-data/approvals/
+rencrow-data/policies/
 rencrow-data/reports/
 rencrow-data/.env
 *.sqlite

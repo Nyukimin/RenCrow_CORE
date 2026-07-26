@@ -7,12 +7,7 @@ import (
 )
 
 const (
-	ApprovalPending     = "pending"
-	ApprovalGranted     = "granted"
-	ApprovalRejected    = "rejected"
-	ApprovalNotRequired = "not_required"
-
-	GateStatusApproved      = "approve"
+	GateStatusPassed        = "passed"
 	GateStatusRejected      = "reject"
 	GateStatusNeedsReview   = "needs_review"
 	GateStatusNeedsMoreTest = "needs_more_tests"
@@ -33,7 +28,6 @@ type PromotionRequest struct {
 	Reason                    string    `json:"reason"`
 	RollbackPlanPath          string    `json:"rollback_plan_path"`
 	PostApplyVerificationPath string    `json:"post_apply_verification_path,omitempty"`
-	HumanApprovalStatus       string    `json:"human_approval_status"`
 	CreatedAt                 time.Time `json:"created_at"`
 }
 
@@ -48,7 +42,6 @@ type PromotionGateLog struct {
 	PromotionID           string    `json:"promotion_id"`
 	GateStatus            string    `json:"gate_status"`
 	Reason                string    `json:"reason"`
-	HumanApprovalStatus   string    `json:"human_approval_status"`
 	PostApplyVerification string    `json:"post_apply_verification,omitempty"`
 	CreatedAt             time.Time `json:"created_at"`
 }
@@ -59,7 +52,6 @@ type PromotionApplyRequest struct {
 	ApplyTarget                  string           `json:"apply_target,omitempty"`
 	PostApplyVerificationPath    string           `json:"post_apply_verification_path"`
 	PostApplyVerificationCommand string           `json:"post_apply_verification_command,omitempty"`
-	HumanApproved                bool             `json:"human_approved"`
 }
 
 type PromotionApplyDecision struct {
@@ -82,14 +74,14 @@ func EvaluatePromotionRequest(req PromotionRequest) PromotionGateDecision {
 		}
 	}
 	return PromotionGateDecision{
-		Status: GateStatusApproved,
+		Status: GateStatusPassed,
 		Reason: "promotion requirements satisfied",
 	}
 }
 
 func EvaluatePromotionApplyRequest(req PromotionApplyRequest) PromotionApplyDecision {
 	gate := EvaluatePromotionRequest(req.Promotion)
-	if gate.Status != GateStatusApproved {
+	if gate.Status != GateStatusPassed {
 		return PromotionApplyDecision{
 			Status:              gate.Status,
 			Reason:              gate.Reason,

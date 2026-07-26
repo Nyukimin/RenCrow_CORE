@@ -99,7 +99,7 @@ func TestE2E_KnowledgeMemoryCreateReviewPromoteCurrentView(t *testing.T) {
 	newsReview, err := client.ReviewKnowledgeMemory(ctx, rencrowclient.KnowledgeMemoryReviewRequest{
 		DetailType:   "news_knowledge",
 		ID:           newsID,
-		ReviewStatus: "approved",
+		ReviewStatus: "adopted",
 		Promote:      true,
 		ReviewedBy:   "live-e2e",
 	})
@@ -123,7 +123,7 @@ func TestE2E_KnowledgeMemoryCreateReviewPromoteCurrentView(t *testing.T) {
 	ruleReview, err := client.ReviewKnowledgeMemory(ctx, rencrowclient.KnowledgeMemoryReviewRequest{
 		DetailType:   "daily_intake_rule",
 		ID:           ruleID,
-		ReviewStatus: "approved",
+		ReviewStatus: "adopted",
 		Promote:      true,
 		ReviewedBy:   "live-e2e",
 	})
@@ -216,7 +216,6 @@ func TestE2E_BrowserTraceAPIDiscoverValidateAndFetcherProposal(t *testing.T) {
 		CandidateID:         candidate.CandidateID,
 		Reviewer:            "live-e2e",
 		ReviewNote:          "local fixture only; no official promotion or implementation apply",
-		HumanApproved:       true,
 		TermsReviewed:       true,
 		OfficialAPIReviewed: true,
 		PIIReviewed:         true,
@@ -231,8 +230,7 @@ func TestE2E_BrowserTraceAPIDiscoverValidateAndFetcherProposal(t *testing.T) {
 	}
 
 	proposal, err := client.CreateBrowserTraceAPIFetcherProposal(ctx, rencrowclient.BrowserTraceAPIFetcherProposalRequest{
-		CandidateID:   candidate.CandidateID,
-		HumanApproved: true,
+		CandidateID: candidate.CandidateID,
 	})
 	if err != nil {
 		t.Fatalf("CreateBrowserTraceAPIFetcherProposal() live call failed: %v", err)

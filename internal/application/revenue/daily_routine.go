@@ -22,7 +22,7 @@ type DailyRoutineStore interface {
 	ListProducts(ctx context.Context, limit int) ([]domainrevenue.Product, error)
 	ListCustomerVoices(ctx context.Context, limit int) ([]domainrevenue.CustomerVoice, error)
 	ListRevenueEvents(ctx context.Context, limit int) ([]domainrevenue.RevenueEvent, error)
-	ListHumanDecisionGateRecords(ctx context.Context, limit int) ([]domainrevenue.HumanDecisionGateRecord, error)
+	ListPolicyDecisionRecords(ctx context.Context, limit int) ([]domainrevenue.PolicyDecisionRecord, error)
 	SaveDailyRoutineReport(ctx context.Context, item domainrevenue.DailyRoutineReport) error
 }
 
@@ -39,11 +39,10 @@ type DailyRoutineRequest struct {
 }
 
 type DailyRoutineResult struct {
-	Agent                                   string                           `json:"agent"`
-	Mode                                    string                           `json:"mode"`
-	Report                                  domainrevenue.DailyRoutineReport `json:"daily_routine_report"`
-	ExternalActionsApplied                  bool                             `json:"external_actions_applied"`
-	HumanApprovalRequiredForExternalActions bool                             `json:"human_approval_required_for_external_actions"`
+	Agent                  string                           `json:"agent"`
+	Mode                   string                           `json:"mode"`
+	Report                 domainrevenue.DailyRoutineReport `json:"daily_routine_report"`
+	ExternalActionsApplied bool                             `json:"external_actions_applied"`
 }
 
 func NewDailyRoutineService(store DailyRoutineStore) *DailyRoutineService {
@@ -78,9 +77,9 @@ func (s *DailyRoutineService) RunDailyRoutine(ctx context.Context, req DailyRout
 	if err != nil {
 		return DailyRoutineResult{}, fmt.Errorf("failed to load revenue events: %w", err)
 	}
-	decisions, err := s.store.ListHumanDecisionGateRecords(ctx, limit)
+	decisions, err := s.store.ListPolicyDecisionRecords(ctx, limit)
 	if err != nil {
-		return DailyRoutineResult{}, fmt.Errorf("failed to load human decision gate records: %w", err)
+		return DailyRoutineResult{}, fmt.Errorf("failed to load policy decision records: %w", err)
 	}
 	report := domainrevenue.BuildDailyRoutineReport(domainrevenue.DailyRoutineInput{
 		ReportID:       req.ReportID,
@@ -101,11 +100,10 @@ func (s *DailyRoutineService) RunDailyRoutine(ctx context.Context, req DailyRout
 		return DailyRoutineResult{}, err
 	}
 	return DailyRoutineResult{
-		Agent:                                   AgentRevenue,
-		Mode:                                    ModeDraftReportOnly,
-		Report:                                  report,
-		ExternalActionsApplied:                  false,
-		HumanApprovalRequiredForExternalActions: false,
+		Agent:                  AgentRevenue,
+		Mode:                   ModeDraftReportOnly,
+		Report:                 report,
+		ExternalActionsApplied: false,
 	}, nil
 }
 

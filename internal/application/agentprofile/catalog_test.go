@@ -44,8 +44,8 @@ func TestStaticCatalogShiroCanAskAdvisorAndPolicyAllowsGitPush(t *testing.T) {
 	if !shiro.AutonomyEnvelope.CanDecide("ask_advisor") {
 		t.Fatal("Shiro should be able to decide ask_advisor")
 	}
-	if !shiro.AutonomyEnvelope.CanAct("git_push") || shiro.AutonomyEnvelope.RequiresApproval("git_push") {
-		t.Fatal("Shiro git_push should be allowed without approval wait")
+	if !shiro.AutonomyEnvelope.CanAct("git_push") {
+		t.Fatal("Shiro git_push should be allowed")
 	}
 }
 

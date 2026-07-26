@@ -30,8 +30,8 @@ func applyVaultUpdate(vaultRoot string, item domainworkstream.VaultUpdateLog) (s
 	if strings.TrimSpace(vaultRoot) == "" {
 		return "", fmt.Errorf("vault root is not configured")
 	}
-	if item.ReviewStatus != domainworkstream.VaultReviewApproved {
-		return "", fmt.Errorf("vault update must be approved before apply")
+	if item.ReviewStatus != domainworkstream.VaultReviewAdopted {
+		return "", fmt.Errorf("vault update must be adopted before apply")
 	}
 	if strings.TrimSpace(item.ProposedContent) == "" {
 		return "", fmt.Errorf("proposed_content is required for vault apply")

@@ -436,7 +436,7 @@ func TestHandleComplexityHotspotProposalCreatesGoalAndPendingArtifact(t *testing
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body["patch_applied"] != false || body["human_approval_required"] != false {
+	if body["patch_applied"] != false {
 		t.Fatalf("body=%#v", body)
 	}
 	if body["proposal_artifact"] == nil {
@@ -516,8 +516,7 @@ func TestHandleComplexityHotspotProposalCreatesSandboxPromotionDraft(t *testing.
 		"diff_path":"sandbox/ws_1/diff/hot_1.patch",
 		"test_result_path":"sandbox/ws_1/reports/test.txt",
 		"rollback_plan_path":"sandbox/ws_1/reports/rollback.md",
-		"post_apply_verification_path":"sandbox/ws_1/reports/post_apply.md",
-		"human_approval_status":"granted"
+		"post_apply_verification_path":"sandbox/ws_1/reports/post_apply.md"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/complexity-hotspots/proposals", bytes.NewReader(payload))
 	rec := httptest.NewRecorder()
@@ -532,13 +531,13 @@ func TestHandleComplexityHotspotProposalCreatesSandboxPromotionDraft(t *testing.
 	if promotion.SandboxID != "sbx_1" || promotion.WorkstreamID != "ws_1" || promotion.TargetPath != "internal/application/example.go" {
 		t.Fatalf("promotion=%#v", promotion)
 	}
-	if promotion.RequestedBy != "complexity_hotspot" || promotion.RiskLevel != "medium" || promotion.HumanApprovalStatus != domainsandbox.ApprovalGranted {
+	if promotion.RequestedBy != "complexity_hotspot" || promotion.RiskLevel != "medium" {
 		t.Fatalf("promotion metadata=%#v", promotion)
 	}
 	if len(sandboxSink.gateLogs) != 1 {
 		t.Fatalf("gateLogs=%#v", sandboxSink.gateLogs)
 	}
-	if sandboxSink.gateLogs[0].GateStatus != domainsandbox.GateStatusApproved {
+	if sandboxSink.gateLogs[0].GateStatus != domainsandbox.GateStatusPassed {
 		t.Fatalf("gate log=%#v", sandboxSink.gateLogs[0])
 	}
 	var body map[string]any
@@ -549,7 +548,7 @@ func TestHandleComplexityHotspotProposalCreatesSandboxPromotionDraft(t *testing.
 		t.Fatalf("body=%#v", body)
 	}
 	decision := body["sandbox_decision"].(map[string]any)
-	if decision["status"] != domainsandbox.GateStatusApproved {
+	if decision["status"] != domainsandbox.GateStatusPassed {
 		t.Fatalf("decision=%#v", decision)
 	}
 }
@@ -576,9 +575,6 @@ func TestHandleComplexityHotspotProposalCreatesNeedsReviewSandboxPromotionWhenDi
 	}
 	if len(sandboxSink.promotions) != 1 || len(sandboxSink.gateLogs) != 1 {
 		t.Fatalf("promotions=%#v gateLogs=%#v", sandboxSink.promotions, sandboxSink.gateLogs)
-	}
-	if sandboxSink.promotions[0].HumanApprovalStatus != domainsandbox.ApprovalNotRequired {
-		t.Fatalf("promotion=%#v", sandboxSink.promotions[0])
 	}
 	if sandboxSink.gateLogs[0].GateStatus != domainsandbox.GateStatusNeedsMoreTest {
 		t.Fatalf("gate log=%#v", sandboxSink.gateLogs[0])
@@ -659,7 +655,7 @@ func TestHandleComplexityHotspotConcreteDiffStoresReviewOnlyArtifact(t *testing.
 	if report.Type != "complexity_concrete_diff_proposal" || report.Status != "pending_review" {
 		t.Fatalf("report=%#v", report)
 	}
-	for _, want := range []string{"Complexity Concrete Diff Proposal", "Patch applied: `false`", "Human approval required: `false`", "```diff", "Sandbox Promotion Gate"} {
+	for _, want := range []string{"Complexity Concrete Diff Proposal", "Patch applied: `false`", "```diff", "Sandbox Promotion Gate"} {
 		if !bytes.Contains([]byte(report.Content), []byte(want)) {
 			t.Fatalf("report missing %q:\n%s", want, report.Content)
 		}
@@ -671,7 +667,7 @@ func TestHandleComplexityHotspotConcreteDiffStoresReviewOnlyArtifact(t *testing.
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body["patch_applied"] != false || body["human_approval_required"] != false || body["concrete_diff_artifact"] == nil {
+	if body["patch_applied"] != false || body["concrete_diff_artifact"] == nil {
 		t.Fatalf("body=%#v", body)
 	}
 }
@@ -725,7 +721,6 @@ func TestHandleComplexityHotspotConcreteDiffCreatesSandboxPromotionGate(t *testi
 		"test_result_path":"sandbox/ws_1/reports/test.txt",
 		"rollback_plan_path":"sandbox/ws_1/reports/rollback.md",
 		"post_apply_verification_path":"sandbox/ws_1/reports/post_apply.md",
-		"human_approval_status":"granted",
 		"concrete_diff":"diff --git a/internal/application/example.go b/internal/application/example.go\n--- a/internal/application/example.go\n+++ b/internal/application/example.go\n@@ -1 +1 @@\n-old\n+new"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/complexity-hotspots/concrete-diffs", bytes.NewReader(payload))
@@ -737,7 +732,7 @@ func TestHandleComplexityHotspotConcreteDiffCreatesSandboxPromotionGate(t *testi
 	if len(sandboxSink.promotions) != 1 || sandboxSink.promotions[0].RequestedBy != "complexity_concrete_diff" {
 		t.Fatalf("promotions=%#v", sandboxSink.promotions)
 	}
-	if len(sandboxSink.gateLogs) != 1 || sandboxSink.gateLogs[0].GateStatus != domainsandbox.GateStatusApproved {
+	if len(sandboxSink.gateLogs) != 1 || sandboxSink.gateLogs[0].GateStatus != domainsandbox.GateStatusPassed {
 		t.Fatalf("gateLogs=%#v", sandboxSink.gateLogs)
 	}
 	var body map[string]any
@@ -745,7 +740,7 @@ func TestHandleComplexityHotspotConcreteDiffCreatesSandboxPromotionGate(t *testi
 		t.Fatalf("decode response: %v", err)
 	}
 	decision := body["sandbox_decision"].(map[string]any)
-	if decision["status"] != domainsandbox.GateStatusApproved {
+	if decision["status"] != domainsandbox.GateStatusPassed {
 		t.Fatalf("decision=%#v", decision)
 	}
 }
@@ -831,7 +826,7 @@ func TestHandleComplexityHotspotCoderDiffGeneratesReviewOnlyArtifact(t *testing.
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("json decode: %v", err)
 	}
-	if body["patch_applied"] != false || body["human_approval_required"] != false || body["coder_result"] == nil {
+	if body["patch_applied"] != false || body["coder_result"] == nil {
 		t.Fatalf("unexpected response=%#v", body)
 	}
 }

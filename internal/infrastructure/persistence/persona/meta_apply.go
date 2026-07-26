@@ -22,8 +22,8 @@ func applyMetaProfileUpdate(metaRoot string, item domainpersona.MetaProfileUpdat
 	if strings.TrimSpace(metaRoot) == "" {
 		return "", fmt.Errorf("persona meta root is not configured")
 	}
-	if item.ReviewStatus != "approved" {
-		return "", fmt.Errorf("meta profile update must be approved before apply")
+	if item.ReviewStatus != "adopted" {
+		return "", fmt.Errorf("meta profile update must be adopted before apply")
 	}
 	if strings.TrimSpace(item.ProposedContent) == "" {
 		return "", fmt.Errorf("proposed_content is required for meta profile apply")

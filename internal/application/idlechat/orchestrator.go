@@ -298,7 +298,7 @@ func buildIdlePersonaMetaProfileUpdateCandidate(ev TimelineEvent, observerID str
 		ObserverID:      observerID,
 		TargetID:        idlePersonaTargetID(ev),
 		Section:         "flow_observation",
-		ProposedContent: "Runtime candidate from IdleChat timeline event. Human review is required before treating this as stable memory.\n\n" + strings.TrimSpace(ev.Content),
+		ProposedContent: "Runtime candidate from IdleChat timeline event. Quality review is required before treating this as stable memory.\n\n" + strings.TrimSpace(ev.Content),
 		EvidenceRefs:    idlePersonaEvidenceRefs(ev),
 		Sensitivity:     "normal",
 		ReviewStatus:    "pending",

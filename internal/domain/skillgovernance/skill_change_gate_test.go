@@ -10,7 +10,6 @@ func TestEvaluateSkillChangeGateBlocksMissingEvaluation(t *testing.T) {
 		SkillID:                "core.pr-readiness",
 		ChangeReason:           "PR gate wording update",
 		ExpectedBehaviorChange: "stop low-quality PR",
-		HumanApprovalStatus:    HumanApprovalGranted,
 	})
 	if decision.Status != ChangeGateStatusBlocked || decision.CanApply {
 		t.Fatalf("decision=%#v", decision)
@@ -41,7 +40,7 @@ func TestEvaluateSkillChangeGateBlocksAllMissingInputs(t *testing.T) {
 	}
 }
 
-func TestEvaluateSkillChangeGatePassesWithEvaluationWithoutApproval(t *testing.T) {
+func TestEvaluateSkillChangeGatePassesWithEvaluation(t *testing.T) {
 	decision := EvaluateSkillChangeGate(SkillChangeLog{
 		SkillID:                "core.pr-readiness",
 		ChangeReason:           "PR gate wording update",
@@ -60,7 +59,6 @@ func TestNewSkillChangeLogSetsIDAndCreatedAt(t *testing.T) {
 		ChangeReason:           "PR gate wording update",
 		ExpectedBehaviorChange: "stop low-quality PR",
 		EvalResult:             "before/after passed",
-		HumanApprovalStatus:    HumanApprovalGranted,
 	}, now)
 	if err != nil {
 		t.Fatalf("NewSkillChangeLog failed: %v", err)

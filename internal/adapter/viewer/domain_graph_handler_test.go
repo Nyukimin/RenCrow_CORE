@@ -75,7 +75,7 @@ func TestHandleDomainGraphAssertionsRejectsInvalidQuery(t *testing.T) {
 	h := HandleDomainGraphAssertions(store)
 	for _, path := range []string{
 		"/viewer/domain-graph/assertions?offset=-1",
-		"/viewer/domain-graph/assertions?validation_status=approved",
+		"/viewer/domain-graph/assertions?validation_status=adopted",
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()

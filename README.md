@@ -1,15 +1,15 @@
 # RenCrow_CORE
 
-RenCrow_CORE は、人格を持つ会話、複数エージェントへのルーティング、記憶・Recall、作業実行、承認、継続作業、Debug Viewer による観測を一つの runtime にまとめる RenCrow システムの中核です。
+RenCrow_CORE は、人格を持つ会話、複数エージェントへのルーティング、記憶・Recall、作業実行、同期Policy Decision、継続作業、Debug Viewer による観測を一つの runtime にまとめる RenCrow システムの中核です。
 
-CORE は外部モジュールの実装本体を抱え込まず、契約、ルーティング、状態、承認、監査、UI projection を所有します。LLM、STT、TTS、Vision、ゲーム世界、横断ツールは、それぞれ独立した RenCrow モジュールが担当します。
+CORE は外部モジュールの実装本体を抱え込まず、契約、ルーティング、状態、同期policy、監査、UI projection を所有します。LLM、STT、TTS、Vision、ゲーム世界、横断ツールは、それぞれ独立した RenCrow モジュールが担当します。
 
 ## 主な機能
 
 - Mio、Shiro、Kuro、Midori を使い分ける会話とルーティング
 - Worker、Coder、Advisor、Tool の責務分離
 - 会話履歴、RecallPack、Knowledge Relation、provenance
-- 承認ゲート、Workstream、Scheduler、Heartbeat
+- Policy Decision、安全gate、Workstream、Scheduler、Heartbeat
 - Opportunity、EconomicTask、RevenueEvent、Reflection の安全な管理
 - Viewer REST/SSE、状態表示、ログ、ジョブ・エージェント観測
 - LLM、STT、TTS、Browser、外部 runtime との接続契約

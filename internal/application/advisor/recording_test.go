@@ -73,7 +73,6 @@ func TestRecordingServiceStoresHashesWithoutPromptBody(t *testing.T) {
 		Purpose:          "review",
 		Prompt:           "secret prompt body",
 		RiskClass:        "low",
-		ApprovalMode:     "advice_only",
 	})
 	if err != nil {
 		t.Fatalf("RequestAdvice failed: %v", err)
@@ -129,7 +128,6 @@ func TestRecordingServiceDegradesGracefullyWhenStoreFails(t *testing.T) {
 		AdvisorID:        advisorDomain.AdvisorCodex,
 		Purpose:          "review",
 		Prompt:           "prompt",
-		ApprovalMode:     "advice_only",
 	})
 	if err != nil || result.Status != advisorDomain.StatusCompleted {
 		t.Fatalf("store failure must not fail advice: result=%#v err=%v", result, err)

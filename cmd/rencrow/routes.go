@@ -132,8 +132,8 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		Status: dependencies.revenueStatus, MarketResearch: dependencies.revenueMarket,
 		SNSPosts: dependencies.revenueSNSPost, Products: dependencies.revenueProduct,
 		CustomerVoices: dependencies.revenueCustomerVoice, Events: dependencies.revenueEvent,
-		DecisionGate: dependencies.revenueHumanDecisionGate, DecisionReview: dependencies.revenueHumanDecisionReview,
-		DailyRoutine: dependencies.revenueDailyRoutine, ChannelDrafts: dependencies.revenueChannelDraft,
+		PolicyDecisions: dependencies.revenuePolicyDecision,
+		DailyRoutine:    dependencies.revenueDailyRoutine, ChannelDrafts: dependencies.revenueChannelDraft,
 		ExternalSend: dependencies.revenueExternalSendApply, Opportunities: dependencies.revenueOpportunities,
 		EconomicTasks: dependencies.revenueEconomicTasks, Deliveries: dependencies.revenueDeliveries,
 		Reflections:               dependencies.revenueEconomicReflections,
@@ -284,14 +284,13 @@ func registerGovernanceSecurityReportRoutes(mux *http.ServeMux, dependencies *De
 		PersonaSession:              dependencies.personaSession,
 	}})
 	sandboxfeature.RegisterRoutes(mux, sandboxfeature.Dependencies{Routes: sandboxfeature.Routes{
-		Status:                dependencies.sandboxStatus,
-		Promotion:             dependencies.sandboxPromotion,
-		PromotionApply:        dependencies.sandboxPromotionApply,
-		PromotionRollback:     dependencies.sandboxPromotionRollback,
-		PromotionPreview:      dependencies.sandboxPromotionPreview,
-		PromotionManualReview: dependencies.sandboxPromotionManualReview,
-		WorktreeCreate:        dependencies.sandboxWorktreeCreate,
-		WorktreeClose:         dependencies.sandboxWorktreeClose,
+		Status:            dependencies.sandboxStatus,
+		Promotion:         dependencies.sandboxPromotion,
+		PromotionApply:    dependencies.sandboxPromotionApply,
+		PromotionRollback: dependencies.sandboxPromotionRollback,
+		PromotionPreview:  dependencies.sandboxPromotionPreview,
+		WorktreeCreate:    dependencies.sandboxWorktreeCreate,
+		WorktreeClose:     dependencies.sandboxWorktreeClose,
 	}})
 	superagentfeature.RegisterRoutes(mux, superagentfeature.Dependencies{Routes: superagentfeature.Routes{
 		Status:           dependencies.superAgentStatus,

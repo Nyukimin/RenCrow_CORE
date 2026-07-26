@@ -13,7 +13,7 @@ func TestEvaluatePromotionRequestApprovesOnlyCompleteRequest(t *testing.T) {
 		RollbackPlanPath: "sandbox/sbx_1/reports/rollback.md",
 	})
 
-	if decision.Status != GateStatusApproved {
+	if decision.Status != GateStatusPassed {
 		t.Fatalf("status = %s reason=%s missing=%v", decision.Status, decision.Reason, decision.MissingRequirements)
 	}
 }
@@ -38,17 +38,16 @@ func TestEvaluatePromotionRequestRejectsMissingChecklist(t *testing.T) {
 
 func TestEvaluatePromotionRequestIgnoresLegacyHumanRejection(t *testing.T) {
 	decision := EvaluatePromotionRequest(PromotionRequest{
-		PromotionID:         "prom_1",
-		SandboxID:           "sbx_1",
-		TargetPath:          "docs/example.md",
-		DiffPath:            "sandbox/sbx_1/diff/changes.patch",
-		Reason:              "仕様に基づく文書更新",
-		TestResultPath:      "sandbox/sbx_1/reports/test.txt",
-		RollbackPlanPath:    "sandbox/sbx_1/reports/rollback.md",
-		HumanApprovalStatus: ApprovalRejected,
+		PromotionID:      "prom_1",
+		SandboxID:        "sbx_1",
+		TargetPath:       "docs/example.md",
+		DiffPath:         "sandbox/sbx_1/diff/changes.patch",
+		Reason:           "仕様に基づく文書更新",
+		TestResultPath:   "sandbox/sbx_1/reports/test.txt",
+		RollbackPlanPath: "sandbox/sbx_1/reports/rollback.md",
 	})
 
-	if decision.Status != GateStatusApproved {
+	if decision.Status != GateStatusPassed {
 		t.Fatalf("status = %s", decision.Status)
 	}
 }

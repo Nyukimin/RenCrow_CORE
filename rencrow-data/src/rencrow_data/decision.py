@@ -150,22 +150,26 @@ def _rank_candidates(con, snapshot_id: str, strategy_id: str, week_end: str, con
     return candidates
 
 
-def _approval_payload(*, decision_id: int, snapshot_id: str, strategy_id: str, status: str, candidates: list[dict[str, object]]) -> dict[str, object]:
+def _policy_payload(
+    *,
+    decision_id: int,
+    snapshot_id: str,
+    strategy_id: str,
+    risk_status: str,
+    policy_status: str,
+    candidates: list[dict[str, object]],
+) -> dict[str, object]:
     return {
         "decision_id": decision_id,
         "snapshot_id": snapshot_id,
         "strategy_id": strategy_id,
-        "approval_required": False,
-        "approved": False,
-        "approver": "",
-        "approved_at": "",
-        "approval_reason": "",
-        "risk_status": status,
+        "policy_status": policy_status,
+        "risk_status": risk_status,
         "candidate_symbols": [item["symbol"] for item in candidates],
     }
 
 
-def _write_json_approval(path: Path, payload: dict[str, object]) -> None:
+def _write_json_policy(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -183,7 +187,7 @@ def _yaml_scalar(value: object) -> str:
     return text
 
 
-def _write_yaml_approval(path: Path, payload: dict[str, object]) -> None:
+def _write_yaml_policy(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     for key, value in payload.items():
@@ -208,6 +212,7 @@ def generate_decision(con, options: DecisionOptions) -> dict[str, object]:
 
     candidates = _rank_candidates(con, options.snapshot_id, options.strategy_id, week_end, config)
     vetoed = 1 if risk_status in {"stop", "kill_switch"} else 0
+    policy_status = "blocked" if vetoed else "allowed"
     target_weight = 0.0 if vetoed else (0.5 if risk_status == "reduce" else 1.0)
     selected = candidates[: max(top_n, 1)]
     for idx, item in enumerate(selected, start=1):
@@ -236,7 +241,7 @@ def generate_decision(con, options: DecisionOptions) -> dict[str, object]:
                         "asset_type": item["asset_type"],
                         "risk_check_id": options.risk_check_id,
                         "risk_status": risk_status,
-                        "approval_required": False,
+                        "policy_status": policy_status,
                         "veto_reason": None if not vetoed else "risk_check_blocked",
                     }
                 ),
@@ -244,7 +249,7 @@ def generate_decision(con, options: DecisionOptions) -> dict[str, object]:
         )
 
     candidate_json = {
-        "approval_required": False,
+        "policy_status": policy_status,
         "risk_check_id": options.risk_check_id,
         "risk_status": risk_status,
         "week_end": week_end,
@@ -271,8 +276,8 @@ def generate_decision(con, options: DecisionOptions) -> dict[str, object]:
     }
     con.execute(
         """
-        INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-        VALUES (?, ?, 'paper', ?, ?, ?, 0)
+        INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+        VALUES (?, ?, 'paper', ?, ?, ?)
         """,
         (int(options.snapshot_id), snapshot_date, options.strategy_id, _json(candidate_json), _json(veto_json)),
     )
@@ -288,32 +293,32 @@ def generate_decision(con, options: DecisionOptions) -> dict[str, object]:
     )
     con.commit()
 
-    output_dir = options.output_dir or Path("rencrow-data/approvals")
-    approval_payload = _approval_payload(
+    output_dir = options.output_dir or Path("rencrow-data/policies")
+    policy_payload = _policy_payload(
         decision_id=decision_id,
         snapshot_id=options.snapshot_id,
         strategy_id=options.strategy_id,
-        status=risk_status,
+        risk_status=risk_status,
+        policy_status=policy_status,
         candidates=selected,
     )
-    approval_path = output_dir / f"decision_{decision_id}.approval.yml"
-    approval_json_path = output_dir / f"decision_{decision_id}.approval.json"
+    policy_path = output_dir / f"decision_{decision_id}.policy.yml"
+    policy_json_path = output_dir / f"decision_{decision_id}.policy.json"
     latest_path = output_dir / "latest.yml"
-    _write_yaml_approval(approval_path, approval_payload)
-    _write_yaml_approval(latest_path, approval_payload)
-    _write_json_approval(approval_json_path, approval_payload)
+    _write_yaml_policy(policy_path, policy_payload)
+    _write_yaml_policy(latest_path, policy_payload)
+    _write_json_policy(policy_json_path, policy_payload)
     return {
         "decision_id": decision_id,
         "snapshot_id": options.snapshot_id,
         "strategy_id": options.strategy_id,
         "risk_check_id": options.risk_check_id,
         "risk_status": risk_status,
-        "approval_required": False,
-        "approved": False,
+        "policy_status": policy_status,
         "vetoed": bool(vetoed),
         "week_end": week_end,
         "candidates": candidate_json["candidates"],
-        "approval_path": str(approval_path),
-        "approval_latest_path": str(latest_path),
-        "approval_json_path": str(approval_json_path),
+        "policy_path": str(policy_path),
+        "policy_latest_path": str(latest_path),
+        "policy_json_path": str(policy_json_path),
     }

@@ -77,7 +77,7 @@ func buildChatMetaProfileUpdateCandidate(req ProcessMessageRequest, now time.Tim
 		ObserverID:      "mio",
 		TargetID:        "ren",
 		Section:         "flow_observation",
-		ProposedContent: "Runtime candidate from Chat user message. Human review is required before treating this as stable memory.\n\n" + message,
+		ProposedContent: "Runtime candidate from Chat user message. Quality review is required before treating this as stable memory.\n\n" + message,
 		EvidenceRefs:    append([]string(nil), evidenceRefs...),
 		Sensitivity:     "normal",
 		ReviewStatus:    "pending",

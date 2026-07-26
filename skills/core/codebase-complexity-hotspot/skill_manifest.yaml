@@ -4,7 +4,6 @@ skill:
   scope: "core"
   version: "1.0.0"
   description: "Report-only scan for complexity, repeated lookup, N+1, and render hotspots."
-  human_approval_required: false
   enabled: true
 triggers:
   keywords:

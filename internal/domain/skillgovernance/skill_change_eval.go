@@ -27,7 +27,6 @@ type SkillChangeEvalRequest struct {
 	NewVersion               string                `json:"new_version,omitempty"`
 	ChangeReason             string                `json:"change_reason"`
 	ExpectedBehaviorChange   string                `json:"expected_behavior_change"`
-	HumanApprovalStatus      string                `json:"human_approval_status"`
 	Cases                    []SkillChangeEvalCase `json:"cases"`
 	SkillDiff                string                `json:"skill_diff,omitempty"`
 	AgentTranscript          string                `json:"agent_transcript,omitempty"`
@@ -110,7 +109,6 @@ func RunSkillChangeEval(req SkillChangeEvalRequest) SkillChangeEvalResult {
 		ExpectedBehaviorChange: req.ExpectedBehaviorChange,
 		EvalResult:             summary,
 		EvidenceSummary:        BuildSkillChangeEvidenceSummary(req),
-		HumanApprovalStatus:    req.HumanApprovalStatus,
 	}
 	if status != SkillChangeEvalStatusPassed {
 		changeLog.EvalResult = ""

@@ -119,7 +119,7 @@ class WeeklyCLIFlowTest(unittest.TestCase):
                     "--snapshot",
                     "latest",
                     "--output-dir",
-                    str(data_root / "approvals"),
+                    str(data_root / "policies"),
                     "--json",
                 ).stdout
             )
@@ -137,13 +137,7 @@ class WeeklyCLIFlowTest(unittest.TestCase):
                     "--json",
                 ).stdout
             )
-            approval_path = Path(decision["approval_path"])
-            approval = approval_path.read_text(encoding="utf-8")
-            approval = approval.replace("approved: false", "approved: true")
-            approval = approval.replace('approver: ""', "approver: unit-test")
-            approval = approval.replace('approved_at: ""', "approved_at: 2026-05-16T00:00:00+00:00")
-            approval = approval.replace('approval_reason: ""', "approval_reason: weekly fixture paper approval")
-            approval_path.write_text(approval, encoding="utf-8")
+            policy_path = Path(decision["policy_path"])
             paper = json.loads(
                 run_script(
                     "12_paper_trade.py",
@@ -151,8 +145,8 @@ class WeeklyCLIFlowTest(unittest.TestCase):
                     str(db_path),
                     "--decision",
                     str(decision["decision_id"]),
-                    "--approval-file",
-                    str(approval_path),
+                    "--policy-file",
+                    str(policy_path),
                     "--fill-model",
                     "close_next_week",
                     "--json",
@@ -174,7 +168,7 @@ class WeeklyCLIFlowTest(unittest.TestCase):
                 ).stdout
             )
 
-            self.assertTrue(Path(decision["approval_path"]).exists())
+            self.assertTrue(Path(decision["policy_path"]).exists())
             self.assertTrue(Path(report["output_path"]).exists())
             self.assertTrue(Path(audit["output_path"]).exists())
             self.assertEqual(paper["decision_id"], decision["decision_id"])

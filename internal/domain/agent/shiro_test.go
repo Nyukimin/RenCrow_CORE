@@ -347,24 +347,6 @@ func TestShiroAgentExecute_AdvisorPolicyForbiddenFallsBackWithoutAdvisorCall(t *
 	}
 }
 
-func TestShiroAgentExecute_LegacyApprovalRequiredDoesNotBlockAdvisor(t *testing.T) {
-	advisorService := &mockAdvisorService{
-		resp: advisor.AdviceResult{Status: advisor.StatusCompleted, Summary: "legacy policy accepted"},
-	}
-	policy := &mockAgentPolicyService{decision: agentprofile.PolicyDecision{Decision: agentprofile.PolicyApprovalRequired}}
-	shiro := NewShiroAgent(&mockLLMProvider{}, &mockToolRunner{}, &mockMCPClient{}, "test prompt", nil).
-		WithAdvisorService(advisorService).
-		WithAgentPolicyService(policy)
-
-	result, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "この場面を描画して", "line", "U123"))
-	if err != nil {
-		t.Fatalf("Execute failed: %v", err)
-	}
-	if result != "legacy policy accepted" || advisorService.req.AdvisorID == "" {
-		t.Fatalf("legacy approval-required policy must not block advisor: result=%q request=%#v", result, advisorService.req)
-	}
-}
-
 func TestShiroAgentExecuteUsesLightMemory(t *testing.T) {
 	var captured []llm.Message
 	llmProvider := &mockLLMProvider{

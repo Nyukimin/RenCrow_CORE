@@ -279,7 +279,7 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(opsJs, /sandbox promotion diff preview/);
   assert.match(opsJs, /function sandboxDiffRiskFlags/);
   assert.match(opsJs, /risk flags/);
-  assert.match(opsJs, /manual review/);
+  assert.match(opsJs, /policy block/);
   assert.ok(viewer.includes('/viewer/sandbox/promotions/preview'));
   assert.match(opsJs, /function skillGovernanceOpsCard/);
   assert.match(opsJs, /skillManifests/);
@@ -421,7 +421,7 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.ok(viewer.includes('Workstream Vault Review'));
   assert.ok(viewer.includes('function previewWorkstreamVaultUpdate'));
   assert.ok(viewer.includes('/viewer/revenue'));
-  assert.ok(viewer.includes('/viewer/revenue/human-decision-gate/review'));
+  assert.ok(viewer.includes('data.policy_decisions'));
   assert.ok(viewer.includes('revenueProducts'));
   assert.ok(viewer.includes('revenueSummary'));
   assert.ok(viewer.includes('kpi_trend'));
@@ -449,9 +449,9 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.ok(viewer.includes('KPI trend graph'));
   assert.ok(viewer.includes('Product sales graph'));
   assert.ok(viewer.includes('Customer voice graph'));
-  assert.ok(viewer.includes('revenueHumanDecisions'));
-  assert.ok(viewer.includes('revenueDecisionReviewResult'));
-  assert.ok(viewer.includes('function reviewRevenueHumanDecision'));
+  assert.ok(viewer.includes('revenuePolicyDecisions'));
+  assert.ok(viewer.includes('revenue policy decisions'));
+  assert.ok(viewer.includes('function renderRevenuePolicyDecisions'));
   assert.ok(viewer.includes('paid events'));
   assert.ok(viewer.includes('policy decisions blocked'));
   assert.ok(viewer.includes('Revenue Policy Decisions'));
@@ -686,7 +686,7 @@ const state = {ops: {
     artifact_id: 'art_diff_1',
     artifact_type: 'complexity_concrete_diff_proposal',
     status: 'pending_review',
-    content: 'Patch applied: false\\nHuman approval required: true',
+    content: 'Patch applied: false\\nPolicy status: blocked',
   }],
 }};
 ` + sourceBetween(opsJs, 'function renderComplexityReviewArtifacts', 'function workstreamOpsCard') + `
@@ -701,8 +701,7 @@ globalThis.__complexityArtifactResult = document.getElementById('complexityRevie
   assert.match(context.__complexityArtifacts, /complexity_concrete_diff_proposal/);
   assert.match(context.__complexityArtifacts, /pending_review/);
   assert.match(context.__complexityArtifacts, /not applied/);
-  assert.match(context.__complexityArtifacts, /true \(ignored\)/);
-  assert.match(context.__complexityArtifactResult, /1 total \/ 1 pending-review \/ 0 failed \/ 0 patch applied \/ 1 legacy approval-required artifact\(s\)/);
+  assert.match(context.__complexityArtifactResult, /1 total \/ 1 pending-review \/ 0 failed \/ 0 patch applied/);
   assert.match(context.__complexityArtifactResult, /mode: review-only blocked: no patch applied/);
 });
 
@@ -734,7 +733,7 @@ const state = {ops: {
     artifact_id: 'art_fail_1',
     artifact_type: 'complexity_coder_diff_failure',
     status: 'failed',
-    content: 'Failure reason: timeout\\nPatch applied: false\\nHuman approval required: true',
+    content: 'Failure reason: timeout\\nPatch applied: false\\nPolicy status: blocked',
   }],
 }};
 ` + sourceBetween(opsJs, 'function renderComplexityReviewArtifacts', 'function workstreamOpsCard') + `
@@ -749,7 +748,7 @@ globalThis.__complexityArtifactResult = document.getElementById('complexityRevie
   assert.match(context.__complexityArtifacts, /complexity_coder_diff_failure/);
   assert.match(context.__complexityArtifacts, /failed/);
   assert.match(context.__complexityArtifacts, /not applied/);
-  assert.match(context.__complexityArtifactResult, /1 total \/ 0 pending-review \/ 1 failed \/ 0 patch applied \/ 1 legacy approval-required artifact\(s\)/);
+  assert.match(context.__complexityArtifactResult, /1 total \/ 0 pending-review \/ 1 failed \/ 0 patch applied/);
   assert.match(context.__complexityArtifactResult, /mode: review-only blocked: no patch applied/);
 });
 
@@ -785,7 +784,7 @@ const state = {ops: {
     artifact_id: 'stale_patch',
     artifact_type: 'complexity_concrete_diff_proposal',
     status: 'pending_review',
-    content: 'Patch applied: true\\nHuman approval required: false',
+    content: 'Patch applied: true\\nPolicy status: allowed',
   }],
 }};
 ` + sourceBetween(opsJs, 'function renderComplexityReviewArtifacts', 'function workstreamOpsCard') + `
@@ -1024,7 +1023,7 @@ const state = {ops: {
   workstreamSteering: [],
   workstreamHeartbeats: [],
   workstreamVaultUpdates: [
-    {update_id: 'stale_vault', file_path: 'vault/stale.md', review_status: 'approved', proposed_content: 'old', applied: true, applied_path: 'vault/stale.md'},
+    {update_id: 'stale_vault', file_path: 'vault/stale.md', review_status: 'adopted', proposed_content: 'old', applied: true, applied_path: 'vault/stale.md'},
   ],
 }};
 function escAttr(s) { return String(s || ''); }
@@ -2384,11 +2383,10 @@ function sandboxField(obj, snake, pascal) {
 const state = {ops: {
   revenueExternalChannelAdapter: 'unconfigured',
   revenueExternalChannelAdapterConfigured: false,
-  revenueExternalSendHumanApprovalRequired: true,
   revenueSummary: {
     total_revenue_amount: 3000,
     paid_customer_count: 2,
-    pending_decision_count: 1,
+    blocked_decision_count: 1,
     channel_draft_count: 1,
     external_send_apply_count: 1,
     kpi_trend: [
@@ -2398,11 +2396,11 @@ const state = {ops: {
     product_sales: [{product_id: 'prod_1', product_name: '低単価商品', revenue_amount: 3000, sales_count: 2}],
     customer_voice_types: [{voice_type: 'blocker', count: 3}],
   },
-  revenueHumanDecisions: [{decision_id: 'dec_1', decision_type: 'external_publish', approval_status: 'pending', gate_status: 'needs_review'}],
-  revenueChannelDrafts: [{draft_id: 'draft_1', approval_status: 'pending'}],
+  revenuePolicyDecisions: [{decision_id: 'dec_1', decision_type: 'external_publish', status: 'blocked'}],
+  revenueChannelDrafts: [{draft_id: 'draft_1'}],
   revenueExternalSendApplyRecords: [{apply_id: 'apply_1', apply_status: 'blocked', send_result: 'not_sent'}],
 }};
-` + sourceBetween(opsJs, 'function revenueOpsCard', 'async function reviewRevenueHumanDecision') + `
+` + sourceBetween(opsJs, 'function revenueOpsCard', 'function personaObservationOpsCard') + `
 renderRevenueDrilldown();
 renderRevenueChannelDrafts();
 renderRevenueExternalSendAudits();
@@ -2883,7 +2881,7 @@ const state = {ops: {
   revenueChannelDrafts: [{draft_id: 'stale_draft', external_send_applied: true}],
   revenueSummary: {total_revenue_amount: 999},
 }};
-` + sourceBetween(opsJs, 'function revenueOpsCard', 'async function reviewRevenueHumanDecision') + `
+` + sourceBetween(opsJs, 'function revenueOpsCard', 'function personaObservationOpsCard') + `
 globalThis.__card = revenueOpsCard();
 renderRevenueDrilldown();
 renderRevenueChannelDrafts();
@@ -2933,9 +2931,9 @@ function sandboxField(obj, snake, pascal) {
 }
 const state = {ops: {
   personaObservationFetchError: 'HTTP 500: persona observation store unavailable',
-  personaObservationLogs: [{observation_id: 'stale_observation', review_status: 'approved'}],
-  personaMetaProfileUpdates: [{update_id: 'stale_meta', review_status: 'approved', proposed_content: 'stale approved update'}],
-  personaMetaReviewResult: {status: 'approved', update_id: 'stale_meta'},
+  personaObservationLogs: [{observation_id: 'stale_observation', review_status: 'adopted'}],
+  personaMetaProfileUpdates: [{update_id: 'stale_meta', review_status: 'adopted', proposed_content: 'stale adopted update'}],
+  personaMetaReviewResult: {status: 'adopted', update_id: 'stale_meta'},
 }};
 ` + sourceBetween(opsJs, 'function personaObservationOpsCard', 'function browserTraceAPIOpsCard') + `
 globalThis.__card = personaObservationOpsCard();
@@ -2952,7 +2950,7 @@ globalThis.__personaMetaReviewResult = document.getElementById('personaMetaRevie
   assert.match(context.__card.sub, /blocked: long-term personality update state unreadable/);
   assert.match(context.__personaMetaReviews, /Persona meta reviews unavailable: HTTP 500: persona observation store unavailable/);
   assert.doesNotMatch(context.__personaMetaReviews, /stale_meta/);
-  assert.doesNotMatch(context.__personaMetaReviews, /stale approved update/);
+  assert.doesNotMatch(context.__personaMetaReviews, /stale adopted update/);
   assert.match(context.__personaMetaReviewResult, /persona meta review unavailable: HTTP 500: persona observation store unavailable/);
   assert.match(context.__personaMetaReviewResult, /blocked: persona meta review state unreadable/);
 });
@@ -3178,7 +3176,6 @@ function sandboxField(obj, snake, pascal) {
 const state = {ops: {
   skillExternalPRAdapter: 'unconfigured',
   skillExternalPRAdapterConfigured: false,
-  skillExternalPRHumanApprovalRequired: true,
   skillExternalPRSubmitRecords: [{
     submit_id: 'submit_1',
     contribution_event_id: 'gate_1',
@@ -3289,7 +3286,7 @@ function sandboxField(obj, snake, pascal) {
 }
 const state = {ops: {
   skillTriggerLogs: [{event_id: 'evt_trigger_1', skill_id: 'core.skill', status: 'triggered', trigger_reason: 'complexity_hotspot_scan'}],
-  contributionGateLogs: [{event_id: 'evt_contrib_1', repo: 'example/repo', gate_status: 'passed', diff_human_approved: true, test_result: 'go test ./...'}],
+  contributionGateLogs: [{event_id: 'evt_contrib_1', repo: 'example/repo', gate_status: 'passed', diff_reviewed: true, test_result: 'go test ./...'}],
   coderTranscripts: [],
 }};
 ` + sourceBetween(opsJs, 'function renderSkillEvidenceAudits', 'function renderSuperAgentTerminalAudits') + `
@@ -3646,8 +3643,7 @@ const state = {ops: {
     event_id: 'evt_gate_1',
     promotion_id: 'promo_1',
     gate_status: 'needs_review',
-    human_approval_status: 'pending',
-    reason: 'human approval missing',
+    reason: 'verification evidence missing',
   }],
 }};
 ` + sourceBetween(opsJs, 'function renderSandboxGateLogs', 'function formatSandboxPromotionDiffPreview') + `
@@ -3661,8 +3657,7 @@ globalThis.__sandboxGateLogResult = document.getElementById('sandboxGateLogResul
   assert.match(context.__sandboxGateLogs, /evt_gate_1/);
   assert.match(context.__sandboxGateLogs, /promo_1/);
   assert.match(context.__sandboxGateLogs, /needs_review/);
-  assert.match(context.__sandboxGateLogs, /pending/);
-  assert.match(context.__sandboxGateLogs, /human approval missing/);
+  assert.match(context.__sandboxGateLogs, /verification evidence missing/);
   assert.match(context.__sandboxGateLogResult, /1 total \/ 1 needs-review \/ 0 applied \/ 0 rollback \/ 0 post-apply evidence/);
   assert.match(context.__sandboxGateLogResult, /execution policy: synchronous/);
   assert.match(context.__sandboxGateLogResult, /blocked: no promotion applied/);

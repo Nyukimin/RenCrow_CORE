@@ -74,12 +74,11 @@ func (s *SQLiteStore) migrate() error {
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS promotion_gate_log (
-			event_id TEXT PRIMARY KEY,
-			promotion_id TEXT,
-			gate_status TEXT,
-			human_approval_status TEXT,
-			created_at TEXT,
-			payload TEXT NOT NULL
+				event_id TEXT PRIMARY KEY,
+				promotion_id TEXT,
+				gate_status TEXT,
+				created_at TEXT,
+				payload TEXT NOT NULL
 		)`,
 	}
 	for _, stmt := range stmts {
@@ -125,7 +124,7 @@ func (s *SQLiteStore) SavePromotionRequest(ctx context.Context, req domainsandbo
 	return s.save(ctx, `INSERT OR REPLACE INTO sandbox_promotion_request (
 		promotion_id, sandbox_id, workstream_id, goal_id, target_path, status, created_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.PromotionID, req.SandboxID, req.WorkstreamID, req.GoalID, req.TargetPath, req.HumanApprovalStatus, req.CreatedAt.Format(timeFormatRFC3339Nano), req)
+		req.PromotionID, req.SandboxID, req.WorkstreamID, req.GoalID, req.TargetPath, domainsandbox.EvaluatePromotionRequest(req).Status, req.CreatedAt.Format(timeFormatRFC3339Nano), req)
 }
 
 func (s *SQLiteStore) ListPromotionRequests(ctx context.Context, limit int) ([]domainsandbox.PromotionRequest, error) {
@@ -137,9 +136,9 @@ func (s *SQLiteStore) SavePromotionGateLog(ctx context.Context, log domainsandbo
 		return err
 	}
 	return s.save(ctx, `INSERT OR REPLACE INTO promotion_gate_log (
-		event_id, promotion_id, gate_status, human_approval_status, created_at, payload
-	) VALUES (?, ?, ?, ?, ?, ?)`,
-		log.EventID, log.PromotionID, log.GateStatus, log.HumanApprovalStatus, log.CreatedAt.Format(timeFormatRFC3339Nano), log)
+			event_id, promotion_id, gate_status, created_at, payload
+		) VALUES (?, ?, ?, ?, ?)`,
+		log.EventID, log.PromotionID, log.GateStatus, log.CreatedAt.Format(timeFormatRFC3339Nano), log)
 }
 
 func (s *SQLiteStore) ListPromotionGateLogs(ctx context.Context, limit int) ([]domainsandbox.PromotionGateLog, error) {

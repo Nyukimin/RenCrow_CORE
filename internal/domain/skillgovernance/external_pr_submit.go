@@ -65,7 +65,6 @@ func NewBlockedExternalPRSubmitRecord(input ExternalPRSubmitRecord, now time.Tim
 		now = time.Now().UTC()
 	}
 	record := input
-	record.ApprovalStatus = "not_required"
 	record.SubmitStatus = ExternalPRSubmitStatusBlocked
 	record.PRURL = ""
 	record.FailureReason = "external PR adapter is not configured"

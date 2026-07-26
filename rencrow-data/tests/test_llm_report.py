@@ -179,8 +179,8 @@ class LLMReportTest(unittest.TestCase):
             )
             con.execute(
                 """
-                INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-                VALUES (2, '2026-05-23', 'paper', 'weekly_etf_rotation_v1', '{}', '{}', 0)
+                INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+                VALUES (2, '2026-05-23', 'paper', 'weekly_etf_rotation_v1', '{}', '{}')
                 """
             )
             decision_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -223,10 +223,10 @@ class LLMReportTest(unittest.TestCase):
             for _ in range(2):
                 con.execute(
                     """
-                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-                    VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', ?, '{}', 0)
+                    INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+                    VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', ?, '{}')
                     """,
-                    (json.dumps({"approval_required": True, "risk_check_id": "risk-1", "week_end": "2026-05-16", "candidates": []}),),
+                    (json.dumps({"policy_status": "allowed", "risk_check_id": "risk-1", "week_end": "2026-05-16", "candidates": []}),),
                 )
             con.execute(
                 """
@@ -276,13 +276,13 @@ class LLMReportTest(unittest.TestCase):
             )
             con.execute(
                 """
-                INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json, approved)
-                VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', ?, ?, 0)
+                INSERT INTO decision_log(snapshot_id, decision_date, account_scope, strategy_name, candidate_json, veto_json)
+                VALUES (1, '2026-05-16', 'paper', 'weekly_etf_rotation_v1', ?, ?)
                 """,
                 (
                     json.dumps(
                         {
-                            "approval_required": True,
+                            "policy_status": "allowed",
                             "risk_status": "pass",
                             "risk_check_id": "risk-stable",
                             "week_end": "2026-05-16",

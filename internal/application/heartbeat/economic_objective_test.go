@@ -107,7 +107,7 @@ func TestRunEconomicOpportunityDiscoveryCreatesOnlyDraftsFromAllSources(t *testi
 		t.Fatalf("saved=%d, want 5", len(store.saved))
 	}
 	for _, item := range store.saved {
-		if item.ApprovalState != "draft" || item.CreatedAt.IsZero() {
+		if item.CreatedAt.IsZero() {
 			t.Fatalf("non-draft opportunity=%+v", item)
 		}
 		if item.Summary == "private raw voice" {

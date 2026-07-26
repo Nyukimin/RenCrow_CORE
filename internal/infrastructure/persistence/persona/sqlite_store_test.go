@@ -106,7 +106,7 @@ func TestSQLiteStorePersonaLogs(t *testing.T) {
 	}
 }
 
-func TestSQLiteStoreRejectsSensitiveAutoApprovedObservation(t *testing.T) {
+func TestSQLiteStoreRejectsSensitiveAutoAdoptedObservation(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "persona.db"))
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
@@ -118,10 +118,10 @@ func TestSQLiteStoreRejectsSensitiveAutoApprovedObservation(t *testing.T) {
 		TargetID:        "ren",
 		ObservationType: "daily",
 		Sensitivity:     "health",
-		ReviewStatus:    "approved",
+		ReviewStatus:    "adopted",
 		CreatedAt:       time.Now().UTC(),
 	})
 	if err == nil {
-		t.Fatal("expected sensitive auto-approved observation to fail")
+		t.Fatal("expected sensitive auto-adopted observation to fail")
 	}
 }

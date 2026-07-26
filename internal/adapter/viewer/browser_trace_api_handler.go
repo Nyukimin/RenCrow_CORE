@@ -56,16 +56,14 @@ type BrowserTraceAPIDiscoverRequest struct {
 }
 
 type BrowserTraceAPIFetcherProposalRequest struct {
-	CandidateID   string `json:"candidate_id"`
-	WorkstreamID  string `json:"workstream_id,omitempty"`
-	HumanApproved bool   `json:"human_approved"`
+	CandidateID  string `json:"candidate_id"`
+	WorkstreamID string `json:"workstream_id,omitempty"`
 }
 
 type BrowserTraceAPIValidationReviewRequest struct {
 	CandidateID         string `json:"candidate_id"`
 	Reviewer            string `json:"reviewer"`
 	ReviewNote          string `json:"review_note,omitempty"`
-	HumanApproved       bool   `json:"human_approved"`
 	TermsReviewed       bool   `json:"terms_reviewed"`
 	OfficialAPIReviewed bool   `json:"official_api_reviewed"`
 	PIIReviewed         bool   `json:"pii_reviewed"`

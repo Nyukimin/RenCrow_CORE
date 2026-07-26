@@ -4,7 +4,6 @@ skill:
   scope: "core"
   version: "1.2.0"
   description: "Workerで特定URLを1件ずつ処理し、原文翻訳、サマリ、Shiroの見解、用語補足を日本語で生成する。"
-  human_approval_required: false
   enabled: true
 triggers:
   keywords:

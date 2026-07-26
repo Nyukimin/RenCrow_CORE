@@ -28,16 +28,15 @@ func TestE2E_AIWorkflowExternalControlClientUsesSynchronousPolicy(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	resp, err := client.CheckExternalControl(ctx, rencrowclient.ExternalControlRequest{
-		Actor:         "Worker",
-		ChannelID:     "viewer",
-		Action:        "promotion_apply",
-		HumanApproved: false,
+		Actor:     "Worker",
+		ChannelID: "viewer",
+		Action:    "promotion_apply",
 	})
 	if err != nil {
 		t.Fatalf("CheckExternalControl() live call failed at %s: %v", baseURL, err)
 	}
-	if resp.Decision.Status != "allowed" || resp.Decision.RequiresApproval {
-		t.Fatalf("external control decision = %+v, want allowed with requires_approval=false", resp.Decision)
+	if resp.Decision.Status != "allowed" {
+		t.Fatalf("external control decision = %+v, want allowed", resp.Decision)
 	}
 
 	statusResp, err := http.Get(baseURL + "/viewer/ai-workflow?limit=20")
@@ -231,30 +230,27 @@ func TestE2E_AIWorkflowPromotionWorkflowSupportsExplicitPreviewOnly(t *testing.T
 			TargetPath:                "internal/example.go",
 			DiffPath:                  "sandbox/live-e2e/diff.patch",
 			TestResultPath:            "sandbox/live-e2e/test.log",
-			Reason:                    "live E2E: verify promotion workflow can remain preview-only without an approval wait",
+			Reason:                    "live E2E: verify promotion workflow can remain preview-only",
 			RollbackPlanPath:          "sandbox/live-e2e/rollback.md",
 			PostApplyVerificationPath: "sandbox/live-e2e/post-apply.md",
-			HumanApprovalStatus:       "granted",
 			CreatedAt:                 time.Now().UTC(),
 		},
-		ApplyAfterApproval:        false,
+		ApplyAfterPolicyPass:      false,
 		AppliedBy:                 "Worker",
 		PostApplyVerificationPath: "sandbox/live-e2e/post-apply.md",
-		HumanApproved:             false,
 		ExternalControl: &rencrowclient.ExternalControlRequest{
-			Actor:         "Worker",
-			ChannelID:     "viewer",
-			Action:        "promotion_apply",
-			HumanApproved: true,
+			Actor:     "Worker",
+			ChannelID: "viewer",
+			Action:    "promotion_apply",
 		},
 	})
 	if err != nil {
 		t.Fatalf("SubmitPromotionWorkflow() live call failed at %s: %v", baseURL, err)
 	}
-	if resp.PromotionResponse.Decision.Status != "approve" {
-		t.Fatalf("promotion gate decision = %+v, want approve", resp.PromotionResponse.Decision)
+	if resp.PromotionResponse.Decision.Status != "passed" {
+		t.Fatalf("promotion gate decision = %+v, want passed", resp.PromotionResponse.Decision)
 	}
-	if resp.Applied || resp.ApplyResponse != nil || resp.SkippedReason != "apply_after_approval is false" {
+	if resp.Applied || resp.ApplyResponse != nil || resp.SkippedReason != "apply_after_policy_pass is false" {
 		t.Fatalf("promotion workflow response=%+v, want explicit preview-only result", resp)
 	}
 
@@ -264,7 +260,7 @@ func TestE2E_AIWorkflowPromotionWorkflowSupportsExplicitPreviewOnly(t *testing.T
 	}
 	foundPromotion := false
 	for _, promotion := range status.Promotions {
-		if promotion.PromotionID == promotionID && promotion.HumanApprovalStatus == "granted" {
+		if promotion.PromotionID == promotionID {
 			foundPromotion = true
 			break
 		}
@@ -272,21 +268,21 @@ func TestE2E_AIWorkflowPromotionWorkflowSupportsExplicitPreviewOnly(t *testing.T
 	if !foundPromotion {
 		t.Fatalf("live Sandbox status did not include promotion request %q", promotionID)
 	}
-	foundGateApprove := false
+	foundGatePassed := false
 	foundAppliedLog := false
 	for _, log := range status.GateLogs {
 		if log.PromotionID != promotionID {
 			continue
 		}
 		switch log.GateStatus {
-		case "approve":
-			foundGateApprove = true
+		case "passed":
+			foundGatePassed = true
 		case "promotion_applied":
 			foundAppliedLog = true
 		}
 	}
-	if !foundGateApprove {
-		t.Fatalf("live Sandbox status did not include approve gate log for promotion %q", promotionID)
+	if !foundGatePassed {
+		t.Fatalf("live Sandbox status did not include passed gate log for promotion %q", promotionID)
 	}
 	if foundAppliedLog {
 		t.Fatalf("live Sandbox status included promotion_applied log for preview-only promotion %q", promotionID)

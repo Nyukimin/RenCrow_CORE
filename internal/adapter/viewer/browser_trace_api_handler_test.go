@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -332,7 +331,7 @@ func TestHandleBrowserTraceAPIFetcherProposalCreatesReviewArtifactForValidatedCa
 		}},
 	}
 	workstreamSink := &stubBrowserTraceWorkstreamArtifactSink{}
-	body := []byte(`{"candidate_id":"api_cand_1","workstream_id":"ws_1","human_approved":true}`)
+	body := []byte(`{"candidate_id":"api_cand_1","workstream_id":"ws_1"}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/browser-trace-api/fetcher-proposals", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -377,7 +376,7 @@ func TestHandleBrowserTraceAPIValidationReviewMarksCandidateValidated(t *testing
 			CreatedAt:            now,
 		}},
 	}
-	body := []byte(`{"candidate_id":"api_cand_1","reviewer":"live-e2e","human_approved":true,"terms_reviewed":true,"official_api_reviewed":true,"pii_reviewed":true,"schema_reviewed":true,"risk_reviewed":true}`)
+	body := []byte(`{"candidate_id":"api_cand_1","reviewer":"live-e2e","terms_reviewed":true,"official_api_reviewed":true,"pii_reviewed":true,"schema_reviewed":true,"risk_reviewed":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/browser-trace-api/validations", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -418,7 +417,7 @@ func TestHandleBrowserTraceAPIValidationReviewRecordsMissingEvidenceAsNeedsRevie
 			CreatedAt:            now,
 		}},
 	}
-	body := []byte(`{"candidate_id":"api_cand_1","reviewer":"reviewer","human_approved":true}`)
+	body := []byte(`{"candidate_id":"api_cand_1","reviewer":"reviewer"}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/browser-trace-api/validations", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -457,7 +456,7 @@ func TestHandleBrowserTraceAPIFetcherProposalRejectsUnvalidatedCandidate(t *test
 			CreatedAt:    now,
 		}},
 	}
-	body := []byte(`{"candidate_id":"api_cand_1","human_approved":true}`)
+	body := []byte(`{"candidate_id":"api_cand_1"}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/browser-trace-api/fetcher-proposals", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -471,15 +470,15 @@ func TestHandleBrowserTraceAPIFetcherProposalRejectsUnvalidatedCandidate(t *test
 	}
 }
 
-func TestHandleBrowserTraceAPIFetcherProposalDoesNotRequireHumanApproval(t *testing.T) {
+func TestHandleBrowserTraceAPIFetcherProposalUsesPolicyChecks(t *testing.T) {
 	store := &stubBrowserTraceAPIStore{}
-	body := []byte(`{"candidate_id":"api_cand_1","human_approved":false}`)
+	body := []byte(`{"candidate_id":"api_cand_1"}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/browser-trace-api/fetcher-proposals", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
 	HandleBrowserTraceAPIFetcherProposal(store, nil).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "human_approved") {
+	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

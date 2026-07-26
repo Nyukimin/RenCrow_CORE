@@ -19,7 +19,6 @@ type AdviceRunRecord struct {
 	Purpose          string       `json:"purpose,omitempty"`
 	PromptHash       string       `json:"prompt_hash,omitempty"`
 	RiskClass        string       `json:"risk_class,omitempty"`
-	ApprovalMode     string       `json:"approval_mode"`
 	Status           AdviceStatus `json:"status"`
 	Summary          string       `json:"summary,omitempty"`
 	OutputHash       string       `json:"output_hash,omitempty"`
@@ -38,11 +37,6 @@ func (r AdviceRunRecord) Validate() error {
 	}
 	if strings.TrimSpace(r.RequestedByAgent) == "" {
 		return fmt.Errorf("requested_by_agent is required")
-	}
-	switch strings.TrimSpace(r.ApprovalMode) {
-	case "advice_only", "human_required":
-	default:
-		return fmt.Errorf("approval_mode must be advice_only or human_required")
 	}
 	switch string(r.Status) {
 	case StatusCompleted, StatusFailed, StatusUnavailable, StatusRejected:

@@ -75,7 +75,7 @@
   function safeEconomicDetails(opportunities, tasks, reflections) {
     const details = [];
     for (const item of arrayValue(field(opportunities, 'opportunities', 'Opportunities')).slice(0, 2)) {
-      details.push('opportunity ' + textValue(field(item, 'opportunity_id', 'OpportunityID'), '-') + ' · ' + textValue(field(item, 'approval_state', 'ApprovalState'), 'draft'));
+      details.push('opportunity ' + textValue(field(item, 'opportunity_id', 'OpportunityID'), '-') + ' · draft');
     }
     for (const item of arrayValue(field(tasks, 'economic_tasks', 'EconomicTasks')).slice(0, 2)) {
       details.push('task ' + textValue(field(item, 'task_id', 'TaskID'), '-') + ' · ' + textValue(field(item, 'task_kind', 'TaskKind'), 'unknown') + ' · ' + textValue(field(item, 'status', 'Status'), 'unknown'));
@@ -87,7 +87,7 @@
   }
 
   function policyDecisions(revenue) {
-    return arrayValue(field(revenue, 'human_decisions', 'HumanDecisions'));
+    return arrayValue(field(revenue, 'policy_decisions', 'PolicyDecisions'));
   }
 
   function safePolicyDetails(revenue) {
@@ -95,7 +95,7 @@
       return 'decision ' + textValue(field(item, 'decision_id', 'DecisionID'), '-') +
         ' · target ' + textValue(field(item, 'subject_id', 'SubjectID'), '-') +
         ' · ' + textValue(field(item, 'decision_type', 'DecisionType'), 'unknown') +
-        ' · ' + textValue(field(item, 'gate_status', 'GateStatus'), 'unknown');
+        ' · ' + textValue(field(item, 'status', 'Status'), 'unknown');
     });
   }
 
@@ -155,8 +155,8 @@
     );
     if (field(economic, 'enabled', 'Enabled') === false && economicStatus !== 'unavailable') economicStatus = 'warning';
     const decisions = policyDecisions(revenue);
-    const blockedDecisions = decisions.filter((item) => textValue(field(item, 'gate_status', 'GateStatus')).toLowerCase() === 'blocked');
-    const allowedDecisions = decisions.filter((item) => textValue(field(item, 'gate_status', 'GateStatus')).toLowerCase() === 'allowed');
+    const blockedDecisions = decisions.filter((item) => textValue(field(item, 'status', 'Status')).toLowerCase() === 'blocked');
+    const allowedDecisions = decisions.filter((item) => textValue(field(item, 'status', 'Status')).toLowerCase() === 'allowed');
     let policyStatus = economicStatus;
     if (blockedDecisions.length > 0 && policyStatus !== 'unavailable') policyStatus = 'blocked';
 
@@ -206,7 +206,6 @@
           metric('Decisions', decisions.length),
           metric('Allowed', allowedDecisions.length),
           metric('Blocked', blockedDecisions.length),
-          metric('Approval wait', 'disabled'),
           metric('Evaluation', 'synchronous'),
         ],
         detailsLabel: 'Policy decision IDs', details: safePolicyDetails(revenue), emptyDetail: 'No policy decisions.',

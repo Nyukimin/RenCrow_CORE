@@ -239,12 +239,12 @@ func TestKnowledgeMemoryCreateHandlers(t *testing.T) {
 	}
 }
 
-func TestDreamConsolidationCreateRejectsApprovedReviewStatus(t *testing.T) {
+func TestDreamConsolidationCreateRejectsAdoptedReviewStatus(t *testing.T) {
 	store := &stubKnowledgeMemoryStore{}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs", bytes.NewBufferString(`{
 		"run_id":"dream_1",
 		"status":"draft",
-		"review_status":"approved"
+		"review_status":"adopted"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -301,7 +301,7 @@ func TestDreamConsolidationReviewApprovesWithoutAutoPromote(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs/review", bytes.NewBufferString(`{
 		"run_id":"dream_1",
-		"review_status":"approved"
+		"review_status":"adopted"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -314,7 +314,7 @@ func TestDreamConsolidationReviewApprovesWithoutAutoPromote(t *testing.T) {
 		t.Fatalf("dream=%#v", store.dream)
 	}
 	reviewed := store.dream[1]
-	if reviewed.RunID != "dream_1" || reviewed.Status != "reviewed" || reviewed.ReviewStatus != "approved" {
+	if reviewed.RunID != "dream_1" || reviewed.Status != "reviewed" || reviewed.ReviewStatus != "adopted" {
 		t.Fatalf("reviewed dream=%#v", reviewed)
 	}
 	var body map[string]any
@@ -326,7 +326,7 @@ func TestDreamConsolidationReviewApprovesWithoutAutoPromote(t *testing.T) {
 	}
 }
 
-func TestDreamConsolidationReviewPromotesOnlyApproved(t *testing.T) {
+func TestDreamConsolidationReviewPromotesOnlyAdopted(t *testing.T) {
 	now := fixedViewerKnowledgeMemoryTime()
 	store := &stubKnowledgeMemoryStore{
 		dream: []domainkm.DreamConsolidationRun{{
@@ -339,7 +339,7 @@ func TestDreamConsolidationReviewPromotesOnlyApproved(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs/review", bytes.NewBufferString(`{
 		"run_id":"dream_1",
-		"review_status":"approved",
+		"review_status":"adopted",
 		"promote":true
 	}`))
 	rec := httptest.NewRecorder()
@@ -350,7 +350,7 @@ func TestDreamConsolidationReviewPromotesOnlyApproved(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	promoted := store.dream[len(store.dream)-1]
-	if promoted.Status != "promoted" || promoted.ReviewStatus != "approved" {
+	if promoted.Status != "promoted" || promoted.ReviewStatus != "adopted" {
 		t.Fatalf("promoted dream=%#v", promoted)
 	}
 	var body map[string]any
@@ -362,7 +362,7 @@ func TestDreamConsolidationReviewPromotesOnlyApproved(t *testing.T) {
 	}
 }
 
-func TestDreamConsolidationReviewRejectsPromoteWithoutApproval(t *testing.T) {
+func TestDreamConsolidationReviewRejectsPromoteWithoutAdoption(t *testing.T) {
 	store := &stubKnowledgeMemoryStore{
 		dream: []domainkm.DreamConsolidationRun{{
 			RunID:        "dream_1",
@@ -401,7 +401,7 @@ func TestKnowledgeMemoryReviewPromotesNewsWithComparison(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/review", bytes.NewBufferString(`{
 		"detail_type":"news_knowledge",
 		"id":"news_1",
-		"review_status":"approved",
+		"review_status":"adopted",
 		"promote":true,
 		"reviewed_by":"viewer"
 	}`))
@@ -430,7 +430,7 @@ func TestKnowledgeMemoryReviewPromotesNewsWithComparison(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if body.Status != "reviewed" || !body.Promoted || body.AutoPromote || body.ReviewStatus != "approved" {
+	if body.Status != "reviewed" || !body.Promoted || body.AutoPromote || body.ReviewStatus != "adopted" {
 		t.Fatalf("body=%#v", body)
 	}
 	if body.Comparison.CurrentStatus != "candidate" || body.Comparison.TargetStatus != "promoted" || body.Comparison.TargetItem.Status != "promoted" {
@@ -441,7 +441,7 @@ func TestKnowledgeMemoryReviewPromotesNewsWithComparison(t *testing.T) {
 	}
 }
 
-func TestKnowledgeMemoryReviewEnablesDailyIntakeRuleAfterApproval(t *testing.T) {
+func TestKnowledgeMemoryReviewEnablesDailyIntakeRuleAfterAdoption(t *testing.T) {
 	now := fixedViewerKnowledgeMemoryTime()
 	store := &stubKnowledgeMemoryStore{
 		intake: []domainkm.DailyIntakeRule{{
@@ -456,7 +456,7 @@ func TestKnowledgeMemoryReviewEnablesDailyIntakeRuleAfterApproval(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/review", bytes.NewBufferString(`{
 		"detail_type":"daily_intake_rule",
 		"id":"rule_1",
-		"review_status":"approved",
+		"review_status":"adopted",
 		"promote":true
 	}`))
 	rec := httptest.NewRecorder()
@@ -487,7 +487,7 @@ func fixedViewerKnowledgeMemoryTime() time.Time {
 	return time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 }
 
-func TestKnowledgeMemoryReviewRejectsPromoteWithoutApproval(t *testing.T) {
+func TestKnowledgeMemoryReviewRejectsPromoteWithoutAdoption(t *testing.T) {
 	store := &stubKnowledgeMemoryStore{
 		creative: []domainkm.CreativeKnowledgeItem{{
 			ItemID: "ck_1",

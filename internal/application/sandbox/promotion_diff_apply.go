@@ -20,24 +20,24 @@ type PromotionDiffApplyResult struct {
 }
 
 type PromotionDiffPreviewResult struct {
-	DiffPath             string                     `json:"diff_path"`
-	Files                []PromotionDiffFilePreview `json:"files"`
-	FileCount            int                        `json:"file_count"`
-	AddedLines           int                        `json:"added_lines"`
-	RemovedLines         int                        `json:"removed_lines"`
-	RiskFlags            []string                   `json:"risk_flags,omitempty"`
-	RequiresManualReview bool                       `json:"requires_manual_review"`
-	Status               string                     `json:"status"`
+	DiffPath        string                     `json:"diff_path"`
+	Files           []PromotionDiffFilePreview `json:"files"`
+	FileCount       int                        `json:"file_count"`
+	AddedLines      int                        `json:"added_lines"`
+	RemovedLines    int                        `json:"removed_lines"`
+	RiskFlags       []string                   `json:"risk_flags,omitempty"`
+	BlockedByPolicy bool                       `json:"blocked_by_policy"`
+	Status          string                     `json:"status"`
 }
 
 type PromotionDiffFilePreview struct {
-	Path                 string                     `json:"path"`
-	HunkCount            int                        `json:"hunk_count"`
-	AddedLines           int                        `json:"added_lines"`
-	RemovedLines         int                        `json:"removed_lines"`
-	RiskFlags            []string                   `json:"risk_flags,omitempty"`
-	RequiresManualReview bool                       `json:"requires_manual_review"`
-	Hunks                []PromotionDiffHunkPreview `json:"hunks"`
+	Path            string                     `json:"path"`
+	HunkCount       int                        `json:"hunk_count"`
+	AddedLines      int                        `json:"added_lines"`
+	RemovedLines    int                        `json:"removed_lines"`
+	RiskFlags       []string                   `json:"risk_flags,omitempty"`
+	BlockedByPolicy bool                       `json:"blocked_by_policy"`
+	Hunks           []PromotionDiffHunkPreview `json:"hunks"`
 }
 
 type PromotionDiffHunkPreview struct {
@@ -91,10 +91,10 @@ func (a *PromotionDiffApplier) PreviewPromotionDiff(_ context.Context, req domai
 	if err != nil {
 		if len(rawRiskFlags) > 0 {
 			return PromotionDiffPreviewResult{
-				DiffPath:             diffPath,
-				RiskFlags:            rawRiskFlags,
-				RequiresManualReview: true,
-				Status:               "needs_manual_review",
+				DiffPath:        diffPath,
+				RiskFlags:       rawRiskFlags,
+				BlockedByPolicy: true,
+				Status:          "blocked",
 			}, nil
 		}
 		return PromotionDiffPreviewResult{}, err
@@ -111,18 +111,18 @@ func (a *PromotionDiffApplier) PreviewPromotionDiff(_ context.Context, req domai
 	for _, patch := range patches {
 		file := buildFilePreview(patch)
 		file.RiskFlags = classifyPromotionPathRisk(patch.path)
-		file.RequiresManualReview = len(file.RiskFlags) > 0
+		file.BlockedByPolicy = len(file.RiskFlags) > 0
 		result.RiskFlags = mergeRiskFlags(result.RiskFlags, file.RiskFlags...)
-		if file.RequiresManualReview {
-			result.RequiresManualReview = true
+		if file.BlockedByPolicy {
+			result.BlockedByPolicy = true
 		}
 		result.AddedLines += file.AddedLines
 		result.RemovedLines += file.RemovedLines
 		result.Files = append(result.Files, file)
 	}
 	result.FileCount = len(result.Files)
-	if result.RequiresManualReview {
-		result.Status = "needs_manual_review"
+	if result.BlockedByPolicy {
+		result.Status = "blocked"
 	}
 	return result, nil
 }
@@ -163,7 +163,7 @@ func (a *PromotionDiffApplier) applyPromotionDiff(req domainsandbox.PromotionApp
 	appliedFiles := make([]string, 0, len(patches))
 	for _, patch := range patches {
 		if flags := classifyPromotionPathRisk(patch.path); len(flags) > 0 {
-			return PromotionDiffApplyResult{}, fmt.Errorf("promotion diff for %s requires manual review: %s", patch.path, strings.Join(flags, ","))
+			return PromotionDiffApplyResult{}, fmt.Errorf("promotion diff for %s is blocked by policy: %s", patch.path, strings.Join(flags, ","))
 		}
 		targetPath, err := resolveApplyTargetPath(applyRoot, patch.path)
 		if err != nil {

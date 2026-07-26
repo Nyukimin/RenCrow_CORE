@@ -31,8 +31,8 @@ type WorkstreamGoalStore interface {
 	SaveGoal(ctx context.Context, item workstreamdomain.Goal) error
 }
 
-type EconomicApprovalStore interface {
-	SaveHumanDecisionGateRecord(ctx context.Context, item revenuedomain.HumanDecisionGateRecord) error
+type EconomicPolicyStore interface {
+	SavePolicyDecisionRecord(ctx context.Context, item revenuedomain.PolicyDecisionRecord) error
 }
 
 type WorkstreamEconomicStore interface {
@@ -53,9 +53,9 @@ type EconomicService struct {
 }
 
 type OpportunityWorkstreamChain struct {
-	Goal     workstreamdomain.Goal
-	Artifact workstreamdomain.Artifact
-	Approval revenuedomain.HumanDecisionGateRecord
+	Goal           workstreamdomain.Goal
+	Artifact       workstreamdomain.Artifact
+	PolicyDecision revenuedomain.PolicyDecisionRecord
 }
 
 func (s *EconomicService) WithWorkstreamGoalStore(store WorkstreamGoalStore) *EconomicService {
@@ -98,9 +98,6 @@ func (s *EconomicService) DraftEconomicTask(ctx context.Context, item revenuedom
 	}
 	if item.Status == "" {
 		item.Status = "draft"
-	}
-	if item.ApprovalMode == "" && !revenuedomain.RequiresHumanApproval(item.TaskKind) {
-		item.ApprovalMode = "none"
 	}
 	opportunity, err := findOpportunity(ctx, store, item.OpportunityID)
 	if err != nil {
@@ -172,9 +169,9 @@ func (s *EconomicService) CreateOpportunityWorkstreamChain(ctx context.Context, 
 	if !ok {
 		return OpportunityWorkstreamChain{}, fmt.Errorf("workstream artifact store is required")
 	}
-	approvalStore, ok := s.store.(EconomicApprovalStore)
+	policyStore, ok := s.store.(EconomicPolicyStore)
 	if !ok {
-		return OpportunityWorkstreamChain{}, fmt.Errorf("economic approval store is required")
+		return OpportunityWorkstreamChain{}, fmt.Errorf("economic policy store is required")
 	}
 	opportunity, err := findOpportunity(ctx, store, opportunityID)
 	if err != nil {
@@ -195,8 +192,8 @@ func (s *EconomicService) CreateOpportunityWorkstreamChain(ctx context.Context, 
 	if err := workstreamdomain.ValidateArtifact(artifact); err != nil {
 		return OpportunityWorkstreamChain{}, err
 	}
-	approval := ApprovalFromOpportunityArtifact(opportunity, artifact, now)
-	if err := revenuedomain.ValidateHumanDecisionGateRecord(approval); err != nil {
+	policyDecision := PolicyDecisionFromOpportunityArtifact(opportunity, artifact, now)
+	if err := revenuedomain.ValidatePolicyDecisionRecord(policyDecision); err != nil {
 		return OpportunityWorkstreamChain{}, err
 	}
 	if err := s.workstreamGoals.SaveGoal(ctx, goal); err != nil {
@@ -205,10 +202,10 @@ func (s *EconomicService) CreateOpportunityWorkstreamChain(ctx context.Context, 
 	if err := workstreamStore.SaveArtifact(ctx, artifact); err != nil {
 		return OpportunityWorkstreamChain{}, err
 	}
-	if err := approvalStore.SaveHumanDecisionGateRecord(ctx, approval); err != nil {
+	if err := policyStore.SavePolicyDecisionRecord(ctx, policyDecision); err != nil {
 		return OpportunityWorkstreamChain{}, err
 	}
-	return OpportunityWorkstreamChain{Goal: goal, Artifact: artifact, Approval: approval}, nil
+	return OpportunityWorkstreamChain{Goal: goal, Artifact: artifact, PolicyDecision: policyDecision}, nil
 }
 
 type ReflectionFromRevenueEventRequest struct {
@@ -272,9 +269,6 @@ func (s *EconomicService) DraftOpportunity(ctx context.Context, item revenuedoma
 	}
 	if item.CreatedAt.IsZero() {
 		item.CreatedAt = s.now().UTC()
-	}
-	if item.ApprovalState == "" {
-		item.ApprovalState = "draft"
 	}
 	if item.TraceID == "" {
 		item.TraceID = s.newTraceID()
@@ -377,17 +371,16 @@ func ArtifactFromOpportunity(item revenuedomain.Opportunity, workstreamID string
 	}
 }
 
-func ApprovalFromOpportunityArtifact(item revenuedomain.Opportunity, artifact workstreamdomain.Artifact, now time.Time) revenuedomain.HumanDecisionGateRecord {
+func PolicyDecisionFromOpportunityArtifact(item revenuedomain.Opportunity, artifact workstreamdomain.Artifact, now time.Time) revenuedomain.PolicyDecisionRecord {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	return revenuedomain.BuildHumanDecisionGateRecord(revenuedomain.HumanDecisionGateRequest{
-		DecisionID:     "approval_" + item.OpportunityID,
-		TraceID:        item.TraceID,
-		DecisionType:   "economic_opportunity_execution",
-		SubjectID:      artifact.ArtifactID,
-		Description:    "Evaluate the economic opportunity artifact against the execution policy",
-		ApprovalStatus: "not_required",
-		CreatedAt:      now.UTC(),
+	return revenuedomain.BuildPolicyDecisionRecord(revenuedomain.PolicyDecisionRequest{
+		DecisionID:   "policy_" + item.OpportunityID,
+		TraceID:      item.TraceID,
+		DecisionType: "economic_opportunity_execution",
+		SubjectID:    artifact.ArtifactID,
+		Description:  "Evaluate the economic opportunity artifact against the execution policy",
+		CreatedAt:    now.UTC(),
 	})
 }

@@ -225,7 +225,7 @@ make run
 
 5. **L0/L1/L2/L3 記憶システムの階層性**:
    - L0 → L1 → L2 → L3 の一方向フロー
-   - staging → validator → promoter の承認フロー
+   - staging → validator → promoter の検証・採用フロー
 
 6. **既存 API 契約**:
    - LINE/Slack Webhook エンドポイント
@@ -246,7 +246,7 @@ make run
    - **Phase 3 完了時点**: Domain層 95%以上（✅達成済み）、全体 70%以上（✅達成済み: 71.7%）
    - **Phase 4 完了時点**: 全体 85%以上、新規コード 90%以上
    - **注**: カバレッジ85%達成は Phase 3 完了後に実施
-6. **データ変換方針**（人間の承認: 方法1）:
+6. **データ変換方針**（決定: 方法1）:
    - **後方互換性は不要**: 古い形式を永続的にサポートするコードは書かない
    - **一度きりの変換スクリプト提供**: ユーザーが一度だけ実行する変換スクリプトを提供
    - **対象**: 設定ファイル（config.yaml）、データベーススキーマ（SQLite/DuckDB）
@@ -360,7 +360,7 @@ grep -r "complex_story_mode" /home/nyukimi/RenCrow/RenCrow_CORE --include="*.go"
 grep -r "parquet_export_job" /home/nyukimi/RenCrow/RenCrow_CORE --include="*.go" --exclude-dir=archive
 ```
 
-**実装担当モデルの判断**: **今すぐ実装してよい**（人間の承認済み）
+**実装担当モデルの判断**: **今すぐ実装してよい**（方針確定済み）
 
 ---
 
@@ -400,7 +400,7 @@ grep -r "NewLegacyRunner\|LegacyRunner" /home/nyukimi/RenCrow/RenCrow_CORE --inc
 find /home/nyukimi/RenCrow/RenCrow_CORE/tools -name "*.json" -o -name "*.yaml" | head -10
 ```
 
-**実装担当モデルの判断**: **今すぐ実装してよい**（人間の承認済み、即時移行）
+**実装担当モデルの判断**: **今すぐ実装してよい**（方針確定済み、即時移行）
 
 ---
 
@@ -445,7 +445,7 @@ grep -n "deprecated" /home/nyukimi/RenCrow/RenCrow_CORE/internal/adapter/config/
 diff config/config.yaml.example config/config.yaml.example.new
 ```
 
-**実装担当モデルの判断**: **今すぐ実装してよい**（人間の承認済み）
+**実装担当モデルの判断**: **今すぐ実装してよい**（方針確定済み）
 
 ---
 
@@ -478,7 +478,7 @@ diff config/config.yaml.example config/config.yaml.example.new
 1. **記憶システムの store 責務整理**（優先度：最高）
    - Redis/DuckDB/VectorDB の3層構成の境界を明確化
    - L0 → L1 → L2 → L3 のデータフローを完成
-   - staging → validator → promoter の承認フローを完成
+   - staging → validator → promoter の検証・採用フローを完成
    - 各層のインターフェース定義とテスト追加
    - **完成の定義**: E2E テスト通過
 
@@ -498,7 +498,7 @@ E2E テストシナリオ「日常会話の記憶システム」：
 6. L3 Qdrant embedding 保存
 7. 次回会話で RecallPack に含まれることを確認
 
-**実装担当モデルの判断**: **今すぐ実装してよい**（人間の承認済み、焦点を絞った）
+**実装担当モデルの判断**: **今すぐ実装してよい**（方針確定済み、焦点を絞った）
 
 ---
 
@@ -664,7 +664,7 @@ go test ./internal/infrastructure/persistence/conversation/... -v
    grep -n "deprecated" ./internal/adapter/config/*.go
    ```
 
-5. **データベーススキーマ変更の必要性を調査**（人間の承認: 方法1）
+5. **データベーススキーマ変更の必要性を調査**（決定: 方法1）
    ```bash
    # 現在のスキーマ確認
    find ./internal/infrastructure/persistence -name "*.sql" -o -name "*schema*"
@@ -694,11 +694,11 @@ go test ./internal/infrastructure/persistence/conversation/... -v
 
 ### Phase 1: 低リスク・高効果の改善（3-5日）
 
-**目的**: 既存挙動を壊さず、明らかに安全な整理を行う（人間の承認済み）
+**目的**: 既存挙動を壊さず、明らかに安全な整理を行う（方針確定済み）
 
 **タスク**:
 
-#### 1.1 設定ファイル・データベースの変換スクリプト作成（人間の承認: 方法1）
+#### 1.1 設定ファイル・データベースの変換スクリプト作成（決定: 方法1）
 
 **1.1.1 設定ファイル変換スクリプト**
 - **一度きりの変換スクリプト作成**（`scripts/migrate_config_v3_to_v4.sh`）
@@ -746,7 +746,7 @@ sqlite3 data/l1_memory.db "SELECT * FROM l1_memory LIMIT 5"
 
 **検証**: `go test ./internal/infrastructure/persistence/conversation/... -v`
 
-#### 1.3 Archive コードの整理（人間の承認済み）
+#### 1.3 Archive コードの整理（方針確定済み）
 - `complex_story_mode` を参照しているコードを検索
   - 参照がなければ、archive ディレクトリ内に保持（完全削除しない）
   - `orchestrator_story_test.go` のテストケースが重要なら `story_mode_simple.go` に移植
@@ -755,7 +755,7 @@ sqlite3 data/l1_memory.db "SELECT * FROM l1_memory LIMIT 5"
 
 **検証**: 削除後にテストが通ることを確認
 
-#### 1.4 Legacy ツールランナーの即時移行（人間の承認済み）
+#### 1.4 Legacy ツールランナーの即時移行（方針確定済み）
 - 既存ツールが legacy runner を使用しているか確認
 - **利用中のツールを即時、新 Manifest 形式に移行**
 - 使用されていない legacy ツールは削除
@@ -809,7 +809,7 @@ go test ./internal/domain/tool/... -v
 
 ### Phase 3: 日常会話の記憶システムの完成（最優先、7-14日）
 
-**目的**: L0/L1/L2/L3 の4層記憶システムを完成させ、E2E テストを通す（人間の承認済み）
+**目的**: L0/L1/L2/L3 の4層記憶システムを完成させ、E2E テストを通す（方針確定済み）
 
 **重要**: このPhaseを最優先で実施。カバレッジ85%達成やViewer分離完了は Phase 3 完了後に実施。
 
@@ -1185,7 +1185,7 @@ Phase X+1 に進む / 質問がある / policy blocked
 
 ## Out-of-scope Items
 
-以下は**このリファクタリングの対象外**とする（人間の承認済み）：
+以下は**このリファクタリングの対象外**とする（方針確定済み）：
 
 1. **LangGraph への移行**: 
    - **ペンディング**（人間の回答: GoとPythonのメリットデメリットがわかっていない）

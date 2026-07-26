@@ -6,22 +6,6 @@ import (
 	"time"
 )
 
-func TestNewBlockedExternalPRSubmitRecordDoesNotRequireHumanApproval(t *testing.T) {
-	record, err := NewBlockedExternalPRSubmitRecord(ExternalPRSubmitRecord{
-		SubmitID:            "submit_1",
-		ContributionEventID: "evt_contrib_1",
-		Repo:                "example/repo",
-		Title:               "Fix bug",
-		HumanApproved:       false,
-	}, time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC))
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if record.ApprovalStatus != "not_required" {
-		t.Fatalf("approval_status=%q", record.ApprovalStatus)
-	}
-}
-
 func TestNewBlockedExternalPRSubmitRecordCreatesBlockedAudit(t *testing.T) {
 	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
 	record, err := NewBlockedExternalPRSubmitRecord(ExternalPRSubmitRecord{
@@ -32,7 +16,6 @@ func TestNewBlockedExternalPRSubmitRecordCreatesBlockedAudit(t *testing.T) {
 		Title:               "Fix bug",
 		DiffPath:            "workspace/logs/skill_governance/coder_evidence/job-1/skill_diff.md",
 		TestResult:          "go test ./internal/domain/skillgovernance",
-		HumanApproved:       true,
 	}, now)
 	if err != nil {
 		t.Fatalf("NewBlockedExternalPRSubmitRecord() error = %v", err)
@@ -55,8 +38,6 @@ func TestValidateExternalPRSubmitRecordRejectsMissingRequiredFieldsAndInvalidSta
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		SubmitStatus:        ExternalPRSubmitStatusBlocked,
 		FailureReason:       "external PR adapter is not configured",
 		CreatedAt:           now,
@@ -93,8 +74,6 @@ func TestValidateExternalPRSubmitRecordRejectsCreatedStatusWithoutCreatedPR(t *t
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		SubmitStatus:        ExternalPRSubmitStatusCreated,
 		ExternalPRCreated:   false,
 		PostSubmitVerified:  false,
@@ -111,8 +90,6 @@ func TestValidateExternalPRSubmitRecordRejectsCreatedFlagWithoutCreatedStatus(t 
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		SubmitStatus:        ExternalPRSubmitStatusBlocked,
 		FailureReason:       "external PR adapter is not configured",
 		ExternalPRCreated:   true,
@@ -129,8 +106,6 @@ func TestValidateExternalPRSubmitRecordRejectsPostSubmitVerificationWithoutCreat
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		SubmitStatus:        ExternalPRSubmitStatusBlocked,
 		FailureReason:       "external PR adapter is not configured",
 		ExternalPRCreated:   false,
@@ -148,8 +123,6 @@ func TestValidateExternalPRSubmitRecordRejectsCreatedPRWithoutPostSubmitVerifica
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		SubmitStatus:        ExternalPRSubmitStatusCreated,
 		PRURL:               "https://github.com/example/repo/pull/1",
 		ExternalPRCreated:   true,
@@ -167,8 +140,6 @@ func TestValidateExternalPRSubmitRecordRejectsCreatedPRWithoutPRURL(t *testing.T
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		SubmitStatus:        ExternalPRSubmitStatusCreated,
 		ExternalPRCreated:   true,
 		PostSubmitVerified:  true,
@@ -186,8 +157,6 @@ func TestValidateExternalPRSubmitRecordRejectsPostSubmitVerificationWithoutEvide
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		SubmitStatus:        ExternalPRSubmitStatusCreated,
 		PRURL:               "https://github.com/example/repo/pull/1",
 		ExternalPRCreated:   true,
@@ -205,8 +174,6 @@ func TestValidateExternalPRSubmitRecordAcceptsCreatedPRWithVerificationEvidence(
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		SubmitStatus:        ExternalPRSubmitStatusCreated,
 		PRURL:               "https://github.com/example/repo/pull/1",
 		ExternalPRCreated:   true,

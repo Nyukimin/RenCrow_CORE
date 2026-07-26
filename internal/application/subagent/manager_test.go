@@ -295,7 +295,7 @@ func TestMergeToolDefs_NilRegistry_ReturnsBaseDefs(t *testing.T) {
 	}
 }
 
-func TestMergeToolDefs_WithRegistry_MergesApprovedTools(t *testing.T) {
+func TestMergeToolDefs_WithRegistry_MergesRegisteredTools(t *testing.T) {
 	baseDefs := []llm.ToolDefinition{
 		{Type: "function", Function: llm.ToolFunctionDef{Name: "shell"}},
 	}

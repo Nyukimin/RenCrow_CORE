@@ -639,8 +639,8 @@ function knowledgeMemoryReviewActions(type, id, status) {
   }
   return [
     '<button class="ctl-btn" onclick="fetchMemoryKnowledgeDetail(&quot;' + esc(type) + '&quot;,&quot;' + esc(id) + '&quot;)">Detail</button>',
-    '<button class="ctl-btn" onclick="reviewKnowledgeMemoryItem(&quot;' + payload + '&quot;,&quot;approved&quot;,false)">Review</button>',
-    '<button class="ctl-btn" onclick="reviewKnowledgeMemoryItem(&quot;' + payload + '&quot;,&quot;approved&quot;,true)">Promote</button>',
+    '<button class="ctl-btn" onclick="reviewKnowledgeMemoryItem(&quot;' + payload + '&quot;,&quot;adopted&quot;,false)">Review</button>',
+    '<button class="ctl-btn" onclick="reviewKnowledgeMemoryItem(&quot;' + payload + '&quot;,&quot;adopted&quot;,true)">Promote</button>',
     '<button class="ctl-btn" onclick="reviewKnowledgeMemoryItem(&quot;' + payload + '&quot;,&quot;rejected&quot;,false)">Reject</button>',
   ].join(' ');
 }

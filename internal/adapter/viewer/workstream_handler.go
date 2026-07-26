@@ -373,7 +373,7 @@ func HandleWorkstreamVaultUpdateReview(store WorkstreamStore) http.HandlerFunc {
 		}
 		applied := false
 		appliedPath := ""
-		if item.ReviewStatus == domainworkstream.VaultReviewApproved && item.ProposedContent != "" {
+		if item.ReviewStatus == domainworkstream.VaultReviewAdopted && item.ProposedContent != "" {
 			applier, ok := store.(WorkstreamVaultUpdateApplier)
 			if !ok {
 				http.Error(w, "vault update apply unavailable", http.StatusServiceUnavailable)

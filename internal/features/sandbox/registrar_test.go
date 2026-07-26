@@ -9,14 +9,13 @@ import (
 func TestRegisterRoutesRegistersSandboxPaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
-		Status:                statusHandler(http.StatusOK),
-		Promotion:             statusHandler(http.StatusCreated),
-		PromotionApply:        statusHandler(http.StatusAccepted),
-		PromotionRollback:     statusHandler(http.StatusNoContent),
-		PromotionPreview:      statusHandler(http.StatusPartialContent),
-		PromotionManualReview: statusHandler(http.StatusResetContent),
-		WorktreeCreate:        statusHandler(http.StatusAlreadyReported),
-		WorktreeClose:         statusHandler(http.StatusIMUsed),
+		Status:            statusHandler(http.StatusOK),
+		Promotion:         statusHandler(http.StatusCreated),
+		PromotionApply:    statusHandler(http.StatusAccepted),
+		PromotionRollback: statusHandler(http.StatusNoContent),
+		PromotionPreview:  statusHandler(http.StatusPartialContent),
+		WorktreeCreate:    statusHandler(http.StatusAlreadyReported),
+		WorktreeClose:     statusHandler(http.StatusIMUsed),
 	}})
 
 	tests := []struct {
@@ -28,7 +27,6 @@ func TestRegisterRoutesRegistersSandboxPaths(t *testing.T) {
 		{path: "/viewer/sandbox/promotions/apply", want: http.StatusAccepted},
 		{path: "/viewer/sandbox/promotions/rollback", want: http.StatusNoContent},
 		{path: "/viewer/sandbox/promotions/preview", want: http.StatusPartialContent},
-		{path: "/viewer/sandbox/promotions/manual-review", want: http.StatusResetContent},
 		{path: "/viewer/sandbox/worktrees/create", want: http.StatusAlreadyReported},
 		{path: "/viewer/sandbox/worktrees/close", want: http.StatusIMUsed},
 	}

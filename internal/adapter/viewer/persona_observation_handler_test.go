@@ -204,7 +204,7 @@ func TestHandlePersonaObservationCreateEndpoints(t *testing.T) {
 			name:    "meta_update",
 			handler: HandlePersonaMetaProfileUpdateCreate(store),
 			path:    "/viewer/persona-observation/meta-updates",
-			body:    `{"update_id":"meta_upd_1","observer_id":"lumina","target_id":"ren","section":"Workstyle","proposed_content":"作業を仕様化してから進める","review_status":"approved"}`,
+			body:    `{"update_id":"meta_upd_1","observer_id":"lumina","target_id":"ren","section":"Workstyle","proposed_content":"作業を仕様化してから進める","review_status":"adopted"}`,
 		},
 		{
 			name:    "session",
@@ -234,7 +234,7 @@ func TestHandlePersonaMetaProfileUpdateCreateForcesPending(t *testing.T) {
 		"section":"Risk Signs",
 		"proposed_content":"疲労時は判断を急がない方がよい",
 		"sensitivity":"health",
-		"review_status":"approved"
+		"review_status":"adopted"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -295,13 +295,13 @@ func TestHandlePersonaObservationAggregateCreatesPendingSummaryAndMetaUpdate(t *
 		t.Fatalf("meta=%#v", meta)
 	}
 	var response struct {
-		SourceCount  int  `json:"source_count"`
-		AutoApproved bool `json:"auto_approved"`
+		SourceCount int  `json:"source_count"`
+		AutoAdopted bool `json:"auto_adopted"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.SourceCount != 1 || response.AutoApproved {
+	if response.SourceCount != 1 || response.AutoAdopted {
 		t.Fatalf("response=%#v", response)
 	}
 }
@@ -354,7 +354,7 @@ func TestHandlePersonaMetaProfileUpdateReviewApprovesSensitiveUpdate(t *testing.
 		"section":"Risk Signs",
 		"proposed_content":"疲労時は判断を急がない方がよい",
 		"sensitivity":"health",
-		"review_status":"approved"
+		"review_status":"adopted"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -373,10 +373,10 @@ func TestHandlePersonaMetaProfileUpdateReviewApprovesSensitiveUpdate(t *testing.
 	if !body.Applied || body.AppliedPath != store.appliedPath {
 		t.Fatalf("unexpected apply result: %#v", body)
 	}
-	if len(store.metaUpdates) != 1 || store.metaUpdates[0].ReviewStatus != "approved" || store.metaUpdates[0].ReviewedAt.IsZero() {
+	if len(store.metaUpdates) != 1 || store.metaUpdates[0].ReviewStatus != "adopted" || store.metaUpdates[0].ReviewedAt.IsZero() {
 		t.Fatalf("meta updates=%#v", store.metaUpdates)
 	}
-	if len(store.applied) != 1 || store.applied[0].ReviewStatus != "approved" {
+	if len(store.applied) != 1 || store.applied[0].ReviewStatus != "adopted" {
 		t.Fatalf("applied=%#v", store.applied)
 	}
 }
@@ -407,7 +407,7 @@ func TestHandlePersonaMetaProfileUpdateReviewRejectDoesNotApply(t *testing.T) {
 	}
 }
 
-func TestHandlePersonaObservationRejectsSensitiveApprovedObservation(t *testing.T) {
+func TestHandlePersonaObservationRejectsSensitiveAdoptedObservation(t *testing.T) {
 	store := &stubPersonaObservationStore{}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/persona-observation/observations", bytes.NewBufferString(`{
 		"event_id":"evt_observation_1",
@@ -415,7 +415,7 @@ func TestHandlePersonaObservationRejectsSensitiveApprovedObservation(t *testing.
 		"target_id":"ren",
 		"observation_type":"daily",
 		"sensitivity":"health",
-		"review_status":"approved"
+		"review_status":"adopted"
 	}`))
 	rec := httptest.NewRecorder()
 

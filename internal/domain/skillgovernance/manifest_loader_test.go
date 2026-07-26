@@ -13,7 +13,6 @@ func TestParseManifestYAML(t *testing.T) {
   scope: "core"
   version: "1.0.0"
   description: "PR gate"
-  human_approval_required: true
 triggers:
   keywords:
     - "PR"
@@ -26,9 +25,6 @@ triggers:
 	}
 	if manifest.Scope != ScopeCore {
 		t.Fatalf("Scope=%q", manifest.Scope)
-	}
-	if !manifest.HumanApprovalRequired {
-		t.Fatal("expected human approval required")
 	}
 	if len(manifest.KeywordTriggers) != 2 || manifest.KeywordTriggers[0] != "PR" {
 		t.Fatalf("KeywordTriggers=%#v", manifest.KeywordTriggers)
@@ -71,7 +67,6 @@ triggers:
 func TestParseManifestYAMLDefaultsAndTopLevelFields(t *testing.T) {
 	manifest := ParseManifestYAML(`
 # comment
-human_approval_required: true
 skill:
   id: project.local
   name: Local Skill
@@ -84,8 +79,8 @@ triggers:
 	if manifest.SkillID != "project.local" || manifest.Name != "Local Skill" {
 		t.Fatalf("manifest=%#v", manifest)
 	}
-	if manifest.Enabled || !manifest.HumanApprovalRequired {
-		t.Fatalf("enabled/human approval flags wrong: %#v", manifest)
+	if manifest.Enabled {
+		t.Fatalf("enabled flag wrong: %#v", manifest)
 	}
 	if len(manifest.KeywordTriggers) != 1 || manifest.KeywordTriggers[0] != "local" {
 		t.Fatalf("keywords=%#v", manifest.KeywordTriggers)

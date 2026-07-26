@@ -13,9 +13,8 @@ import (
 )
 
 const (
-	DecisionAllowed          = domainagentprofile.PolicyAllowed
-	DecisionApprovalRequired = domainagentprofile.PolicyApprovalRequired
-	DecisionForbidden        = domainagentprofile.PolicyForbidden
+	DecisionAllowed   = domainagentprofile.PolicyAllowed
+	DecisionForbidden = domainagentprofile.PolicyForbidden
 )
 
 type PolicyService struct {
@@ -56,9 +55,6 @@ func (s *PolicyService) Decide(agentID string, action string) (domainagentprofil
 	switch {
 	case profile.AutonomyEnvelope.IsForbidden(action):
 		reason = "action is explicitly forbidden"
-	case profile.AutonomyEnvelope.RequiresApproval(action):
-		decision = domainagentprofile.PolicyAllowed
-		reason = "action is allowed by the autonomy envelope without a human approval wait"
 	case profile.AutonomyEnvelope.CanDecide(action) || profile.AutonomyEnvelope.CanAct(action):
 		decision = domainagentprofile.PolicyAllowed
 		reason = "action is allowed by the autonomy envelope"

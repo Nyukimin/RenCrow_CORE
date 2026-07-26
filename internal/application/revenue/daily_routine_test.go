@@ -14,7 +14,7 @@ type memoryDailyRoutineStore struct {
 	products  []domainrevenue.Product
 	voices    []domainrevenue.CustomerVoice
 	events    []domainrevenue.RevenueEvent
-	decisions []domainrevenue.HumanDecisionGateRecord
+	decisions []domainrevenue.PolicyDecisionRecord
 	reports   []domainrevenue.DailyRoutineReport
 	lastLimit int
 }
@@ -40,8 +40,8 @@ func (s *memoryDailyRoutineStore) ListRevenueEvents(_ context.Context, _ int) ([
 	return append([]domainrevenue.RevenueEvent(nil), s.events...), nil
 }
 
-func (s *memoryDailyRoutineStore) ListHumanDecisionGateRecords(_ context.Context, _ int) ([]domainrevenue.HumanDecisionGateRecord, error) {
-	return append([]domainrevenue.HumanDecisionGateRecord(nil), s.decisions...), nil
+func (s *memoryDailyRoutineStore) ListPolicyDecisionRecords(_ context.Context, _ int) ([]domainrevenue.PolicyDecisionRecord, error) {
+	return append([]domainrevenue.PolicyDecisionRecord(nil), s.decisions...), nil
 }
 
 func (s *memoryDailyRoutineStore) SaveDailyRoutineReport(_ context.Context, item domainrevenue.DailyRoutineReport) error {
@@ -60,12 +60,10 @@ func TestDailyRoutineServiceCreatesRevenueAgentDraftOnlyReport(t *testing.T) {
 		products: []domainrevenue.Product{{ProductID: "prod_1", ProductName: "商品設計シート", Status: "draft"}},
 		voices:   []domainrevenue.CustomerVoice{{VoiceID: "voice_1", RawText: "ここがわからない", PermissionStatus: "unknown"}},
 		events:   []domainrevenue.RevenueEvent{{EventID: "rev_1", EventType: "purchase", Amount: 980, CustomerID: "cust_1"}},
-		decisions: []domainrevenue.HumanDecisionGateRecord{{
-			DecisionID:       "dec_1",
-			DecisionType:     "external_publish",
-			ApprovalStatus:   "pending",
-			GateStatus:       "needs_review",
-			RequiresApproval: true,
+		decisions: []domainrevenue.PolicyDecisionRecord{{
+			DecisionID:   "dec_1",
+			DecisionType: "external_publish",
+			Status:       "blocked",
 		}},
 	}
 	result, err := NewDailyRoutineService(store).RunDailyRoutine(context.Background(), DailyRoutineRequest{
@@ -81,8 +79,8 @@ func TestDailyRoutineServiceCreatesRevenueAgentDraftOnlyReport(t *testing.T) {
 	if result.Agent != AgentRevenue || result.Mode != ModeDraftReportOnly {
 		t.Fatalf("unexpected routine metadata: %#v", result)
 	}
-	if result.ExternalActionsApplied || result.HumanApprovalRequiredForExternalActions {
-		t.Fatalf("expected draft-only report without approval wait: %#v", result)
+	if result.ExternalActionsApplied {
+		t.Fatalf("expected draft-only report: %#v", result)
 	}
 	if len(store.reports) != 1 {
 		t.Fatalf("expected one saved report, got %#v", store.reports)
@@ -91,7 +89,7 @@ func TestDailyRoutineServiceCreatesRevenueAgentDraftOnlyReport(t *testing.T) {
 	if report.ReportID != "daily_1" || report.WorkstreamID != "ws_revenue" || report.Status != "draft_report" || report.ExternalSendApplied {
 		t.Fatalf("unexpected saved report: %#v", report)
 	}
-	if report.MarketResearch != 1 || report.SNSPosts != 1 || report.Products != 1 || report.CustomerVoices != 1 || report.RevenueEvents != 1 || report.PaidCustomers != 1 || report.PendingDecisions != 1 {
+	if report.MarketResearch != 1 || report.SNSPosts != 1 || report.Products != 1 || report.CustomerVoices != 1 || report.RevenueEvents != 1 || report.PaidCustomers != 1 || report.BlockedDecisions != 1 {
 		t.Fatalf("unexpected counts: %#v", report)
 	}
 	if store.lastLimit != 20 {

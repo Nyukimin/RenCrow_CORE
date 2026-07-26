@@ -196,4 +196,4 @@ Repair / Coder Proposal / Worker 自動実行では、RenCrow 本体の稼働プ
 - `make install`
 - `~/.local/bin/rencrow` へのコピー、上書き、削除
 
-必要な場合は Proposal に外側の operator が行う運用手順として記録し、Worker は人間の承認を待たず `policy_blocked` で終了する。停止、port 停止確認、install、起動、health check は、その操作を明示的な依頼範囲として受けた外側の operator が行う。
+必要な場合は Proposal に外側の operator が行う運用手順として記録し、Worker は実行権限を拡張せず `policy_blocked` で終了する。停止、port 停止確認、install、起動、health check は、その操作を明示的な依頼範囲として受けた外側の operator が行う。

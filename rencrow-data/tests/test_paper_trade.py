@@ -103,7 +103,7 @@ def prepare_decision(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
             "--risk-check",
             "latest",
             "--output-dir",
-            str(data_root / "approvals"),
+            str(data_root / "policies"),
             "--json",
         ).stdout
     )
@@ -111,7 +111,7 @@ def prepare_decision(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
 
 
 class PaperTradeTest(unittest.TestCase):
-    def test_paper_trade_uses_generated_policy_file_without_approval(self) -> None:
+    def test_paper_trade_uses_generated_policy_file(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             data_root, db_path, decision = prepare_decision(Path(td))
             result = run_script(
@@ -120,8 +120,8 @@ class PaperTradeTest(unittest.TestCase):
                 str(db_path),
                 "--decision",
                 str(decision["decision_id"]),
-                "--approval-file",
-                decision["approval_path"],
+                "--policy-file",
+                decision["policy_path"],
                 "--json",
                 check=False,
             )
@@ -129,19 +129,18 @@ class PaperTradeTest(unittest.TestCase):
             con = sqlite3.connect(db_path)
             self.assertGreater(con.execute("SELECT COUNT(*) FROM paper_trade_log").fetchone()[0], 0)
 
-    def test_paper_trade_records_simulated_fill_without_approval(self) -> None:
+    def test_paper_trade_records_simulated_fill(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             data_root, db_path, decision = prepare_decision(Path(td))
-            approval_path = Path(decision["approval_path"])
-            approval = approval_path.read_text(encoding="utf-8")
+            policy_path = Path(decision["policy_path"])
             result = run_script(
                 "12_paper_trade.py",
                 "--db",
                 str(db_path),
                 "--decision",
                 str(decision["decision_id"]),
-                "--approval-file",
-                str(approval_path),
+                "--policy-file",
+                str(policy_path),
                 "--capital",
                 "1000000",
                 "--json",
@@ -184,14 +183,8 @@ class PaperTradeTest(unittest.TestCase):
             self.assertEqual(cli_row[0], "simulated")
             self.assertEqual(cli_row[1], 1)
             self.assertEqual(cli_row[2], 0)
-            decision_row = con.execute(
-                "SELECT approved, approver, approved_at, approval_reason FROM decision_log WHERE decision_id=?",
-                (decision["decision_id"],),
-            ).fetchone()
-            self.assertEqual(decision_row[0], 0)
-            self.assertEqual(decision_row[1] or "", "")
-            self.assertEqual(decision_row[2] or "", "")
-            self.assertEqual(decision_row[3] or "", "")
+            decision_columns = {row[1] for row in con.execute("PRAGMA table_info(decision_log)")}
+            self.assertNotIn("policy_status", decision_columns)
             lot = con.execute("SELECT account_scope, quantity, acquisition_price FROM tax_lot_log").fetchone()
             self.assertEqual(lot[0], "taxable")
             self.assertGreater(lot[1], 0)
@@ -204,13 +197,7 @@ class PaperTradeTest(unittest.TestCase):
             con.execute("UPDATE feature_weekly SET ret_12w_skip1=9.0 WHERE week_end=?", (decision["week_end"],))
             con.commit()
             con.close()
-            approval_path = Path(decision["approval_path"])
-            approval = approval_path.read_text(encoding="utf-8")
-            approval = approval.replace("approved: false", "approved: true")
-            approval = approval.replace('approver: ""', "approver: unit-test")
-            approval = approval.replace('approved_at: ""', "approved_at: 2026-05-16T00:00:00+00:00")
-            approval = approval.replace('approval_reason: ""', "approval_reason: changed feature scope should stop")
-            approval_path.write_text(approval, encoding="utf-8")
+            policy_path = Path(decision["policy_path"])
 
             result = run_script(
                 "12_paper_trade.py",
@@ -218,8 +205,8 @@ class PaperTradeTest(unittest.TestCase):
                 str(db_path),
                 "--decision",
                 str(decision["decision_id"]),
-                "--approval-file",
-                str(approval_path),
+                "--policy-file",
+                str(policy_path),
                 "--json",
                 check=False,
             )
@@ -229,18 +216,15 @@ class PaperTradeTest(unittest.TestCase):
             con = sqlite3.connect(db_path)
             self.assertEqual(con.execute("SELECT COUNT(*) FROM paper_trade_log").fetchone()[0], 0)
 
-    def test_paper_trade_accepts_yaml_approval_file(self) -> None:
+    def test_paper_trade_accepts_yaml_policy_file(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             data_root, db_path, decision = prepare_decision(Path(td))
-            approval_path = data_root / "approvals" / "latest.yml"
-            approval_path.write_text(
+            policy_path = data_root / "policies" / "latest.yml"
+            policy_path.write_text(
                 "\n".join(
                     [
                         f"decision_id: {decision['decision_id']}",
-                        "approved: true",
-                        "approver: unit-test",
-                        "approved_at: 2026-05-16T00:00:00+00:00",
-                        "approval_reason: weekly paper approval",
+                        "policy_status: allowed",
                         "",
                     ]
                 ),
@@ -253,8 +237,8 @@ class PaperTradeTest(unittest.TestCase):
                 str(db_path),
                 "--decision",
                 str(decision["decision_id"]),
-                "--approval-file",
-                str(approval_path),
+                "--policy-file",
+                str(policy_path),
                 "--json",
             )
             summary = json.loads(result.stdout)
@@ -278,17 +262,14 @@ class PaperTradeTest(unittest.TestCase):
                 con.commit()
                 con.close()
 
-                approval_path = Path(decision["approval_path"])
-                approval_path.write_text(
+                policy_path = Path(decision["policy_path"])
+                policy_path.write_text(
                     "\n".join(
                         [
                             f"decision_id: {decision['decision_id']}",
                             f"snapshot_id: {decision['snapshot_id']}",
                             "strategy_id: weekly_etf_rotation_v1",
-                            "approved: true",
-                            "approver: unit-test",
-                            "approved_at: 2026-05-16T00:00:00+00:00",
-                            f"approval_reason: approval via {fill_model}",
+                            "policy_status: allowed",
                             "candidate_symbols:",
                             "  - 1306.T",
                             "",
@@ -303,8 +284,8 @@ class PaperTradeTest(unittest.TestCase):
                     str(db_path),
                     "--decision",
                     str(decision["decision_id"]),
-                    "--approval-file",
-                    str(approval_path),
+                    "--policy-file",
+                    str(policy_path),
                     "--fill-model",
                     fill_model,
                     "--capital",
@@ -326,13 +307,7 @@ class PaperTradeTest(unittest.TestCase):
             con.execute("UPDATE decision_log SET account_scope='taxable' WHERE decision_id=?", (decision["decision_id"],))
             con.commit()
             con.close()
-            approval_path = Path(decision["approval_path"])
-            approval = approval_path.read_text(encoding="utf-8")
-            approval = approval.replace("approved: false", "approved: true")
-            approval = approval.replace('approver: ""', "approver: unit-test")
-            approval = approval.replace('approved_at: ""', "approved_at: 2026-05-16T00:00:00+00:00")
-            approval = approval.replace('approval_reason: ""', "approval_reason: taxable decision should not paper trade")
-            approval_path.write_text(approval, encoding="utf-8")
+            policy_path = Path(decision["policy_path"])
 
             result = run_script(
                 "12_paper_trade.py",
@@ -340,8 +315,8 @@ class PaperTradeTest(unittest.TestCase):
                 str(db_path),
                 "--decision",
                 str(decision["decision_id"]),
-                "--approval-file",
-                str(approval_path),
+                "--policy-file",
+                str(policy_path),
                 "--json",
                 check=False,
             )
@@ -352,17 +327,13 @@ class PaperTradeTest(unittest.TestCase):
             self.assertEqual(con.execute("SELECT COUNT(*) FROM paper_trade_log").fetchone()[0], 0)
             self.assertEqual(con.execute("SELECT COUNT(*) FROM tax_lot_log").fetchone()[0], 0)
 
-    def test_paper_trade_rejects_approval_account_scope_mismatch(self) -> None:
+    def test_paper_trade_rejects_policy_account_scope_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             data_root, db_path, decision = prepare_decision(Path(td))
-            approval_path = Path(decision["approval_path"])
-            approval = approval_path.read_text(encoding="utf-8")
-            approval = approval.replace("approved: false", "approved: true")
-            approval = approval.replace('approver: ""', "approver: unit-test")
-            approval = approval.replace('approved_at: ""', "approved_at: 2026-05-16T00:00:00+00:00")
-            approval = approval.replace('approval_reason: ""', "approval_reason: wrong account scope")
-            approval += "account_scope: taxable\n"
-            approval_path.write_text(approval, encoding="utf-8")
+            policy_path = Path(decision["policy_path"])
+            policy_text = policy_path.read_text(encoding="utf-8")
+            policy_text += "account_scope: taxable\n"
+            policy_path.write_text(policy_text, encoding="utf-8")
 
             result = run_script(
                 "12_paper_trade.py",
@@ -370,8 +341,8 @@ class PaperTradeTest(unittest.TestCase):
                 str(db_path),
                 "--decision",
                 str(decision["decision_id"]),
-                "--approval-file",
-                str(approval_path),
+                "--policy-file",
+                str(policy_path),
                 "--json",
                 check=False,
             )
@@ -393,19 +364,16 @@ class PaperTradeTest(unittest.TestCase):
                 """,
                 (
                     json.dumps({"vetoed": True, "risk_status": "stop"}, sort_keys=True),
-                    json.dumps({"approval_required": True, "risk_status": "stop", "week_end": decision["week_end"], "candidates": decision["candidates"]}, sort_keys=True),
+                    json.dumps({"policy_status": "blocked", "risk_status": "stop", "week_end": decision["week_end"], "candidates": decision["candidates"]}, sort_keys=True),
                     decision["decision_id"],
                 ),
             )
             con.commit()
             con.close()
-            approval_path = Path(decision["approval_path"])
-            approval = approval_path.read_text(encoding="utf-8")
-            approval = approval.replace("approved: false", "approved: true")
-            approval = approval.replace('approver: ""', "approver: unit-test")
-            approval = approval.replace('approved_at: ""', "approved_at: 2026-05-16T00:00:00+00:00")
-            approval = approval.replace('approval_reason: ""', "approval_reason: stopped no trade")
-            approval_path.write_text(approval, encoding="utf-8")
+            policy_path = Path(decision["policy_path"])
+            policy_text = policy_path.read_text(encoding="utf-8")
+            policy_text = policy_text.replace("policy_status: allowed", "policy_status: blocked")
+            policy_path.write_text(policy_text, encoding="utf-8")
 
             result = run_script(
                 "12_paper_trade.py",
@@ -413,8 +381,8 @@ class PaperTradeTest(unittest.TestCase):
                 str(db_path),
                 "--decision",
                 str(decision["decision_id"]),
-                "--approval-file",
-                str(approval_path),
+                "--policy-file",
+                str(policy_path),
                 "--json",
             )
             summary = json.loads(result.stdout)
@@ -427,17 +395,15 @@ class PaperTradeTest(unittest.TestCase):
             self.assertEqual(row[2], "vetoed")
             self.assertEqual(row[3], "close_next_week")
 
-    def test_paper_trade_does_not_require_approval_metadata(self) -> None:
+    def test_paper_trade_accepts_minimal_policy(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             data_root, db_path, decision = prepare_decision(Path(td))
-            approval_path = data_root / "approvals" / "missing_reason.yml"
-            approval_path.write_text(
+            policy_path = data_root / "policies" / "missing_reason.yml"
+            policy_path.write_text(
                 "\n".join(
                     [
                         f"decision_id: {decision['decision_id']}",
-                        "approved: true",
-                        "approver: unit-test",
-                        "approved_at: 2026-05-16T00:00:00+00:00",
+                        "policy_status: allowed",
                         "",
                     ]
                 ),
@@ -450,24 +416,20 @@ class PaperTradeTest(unittest.TestCase):
                 str(db_path),
                 "--decision",
                 str(decision["decision_id"]),
-                "--approval-file",
-                str(approval_path),
+                "--policy-file",
+                str(policy_path),
                 "--json",
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_paper_trade_rejects_approval_scope_mismatch(self) -> None:
+    def test_paper_trade_rejects_policy_scope_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             data_root, db_path, decision = prepare_decision(Path(td))
-            approval_path = Path(decision["approval_path"])
-            approval = approval_path.read_text(encoding="utf-8")
-            approval = approval.replace(f"snapshot_id: {decision['snapshot_id']}", "snapshot_id: 999999")
-            approval = approval.replace("approved: false", "approved: true")
-            approval = approval.replace('approver: ""', "approver: unit-test")
-            approval = approval.replace('approved_at: ""', "approved_at: 2026-05-16T00:00:00+00:00")
-            approval = approval.replace('approval_reason: ""', "approval_reason: wrong snapshot approval")
-            approval_path.write_text(approval, encoding="utf-8")
+            policy_path = Path(decision["policy_path"])
+            policy_text = policy_path.read_text(encoding="utf-8")
+            policy_text = policy_text.replace(f"snapshot_id: {decision['snapshot_id']}", "snapshot_id: 999999")
+            policy_path.write_text(policy_text, encoding="utf-8")
 
             result = run_script(
                 "12_paper_trade.py",
@@ -475,8 +437,8 @@ class PaperTradeTest(unittest.TestCase):
                 str(db_path),
                 "--decision",
                 str(decision["decision_id"]),
-                "--approval-file",
-                str(approval_path),
+                "--policy-file",
+                str(policy_path),
                 "--json",
                 check=False,
             )

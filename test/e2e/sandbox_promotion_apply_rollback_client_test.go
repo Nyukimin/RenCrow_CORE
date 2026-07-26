@@ -14,7 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
-func TestE2E_SandboxPromotionApplyAndRollbackWithHumanApproval(t *testing.T) {
+func TestE2E_SandboxPromotionApplyAndRollbackWithPolicyGate(t *testing.T) {
 	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
 		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Sandbox promotion apply/rollback")
 	}
@@ -59,20 +59,17 @@ func TestE2E_SandboxPromotionApplyAndRollbackWithHumanApproval(t *testing.T) {
 			Reason:                    "live E2E: verify sandbox promotion apply and rollback with synchronous policy",
 			RollbackPlanPath:          rollbackPlanPath,
 			PostApplyVerificationPath: postApplyPath,
-			HumanApprovalStatus:       "granted",
 			CreatedAt:                 time.Now().UTC(),
 		},
-		ApplyAfterApproval:           true,
+		ApplyAfterPolicyPass:         true,
 		AppliedBy:                    "Worker",
 		ApplyTarget:                  targetPath,
 		PostApplyVerificationPath:    postApplyPath,
 		PostApplyVerificationCommand: "grep -q '^TWO$' " + shellQuote(filepath.Join(applyRoot, filepath.FromSlash(targetPath))) + " && printf verified",
-		HumanApproved:                true,
 		ExternalControl: &rencrowclient.ExternalControlRequest{
-			Actor:         "Worker",
-			ChannelID:     "viewer",
-			Action:        "promotion_apply",
-			HumanApproved: true,
+			Actor:     "Worker",
+			ChannelID: "viewer",
+			Action:    "promotion_apply",
 		},
 	})
 	if err != nil {
@@ -88,7 +85,6 @@ func TestE2E_SandboxPromotionApplyAndRollbackWithHumanApproval(t *testing.T) {
 		AppliedBy:                 "Worker",
 		ApplyTarget:               targetPath,
 		PostApplyVerificationPath: postApplyPath,
-		HumanApproved:             true,
 	})
 	if err != nil {
 		t.Fatalf("RollbackPromotion() live call failed at %s: %v", baseURL, err)
@@ -159,7 +155,7 @@ func assertSandboxPromotionEvidence(t *testing.T, status rencrowclient.SandboxSt
 	foundPostApplyArtifact := false
 	foundRollbackArtifact := false
 	for _, promotion := range status.Promotions {
-		if promotion.PromotionID == promotionID && promotion.SandboxID == sandboxID && promotion.HumanApprovalStatus == "granted" {
+		if promotion.PromotionID == promotionID && promotion.SandboxID == sandboxID {
 			foundPromotion = true
 			break
 		}

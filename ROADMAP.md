@@ -6,7 +6,7 @@ RenCrow_COREの実装状態、採用済み・未実装項目、deployment依存�
 
 現在のmodule責務は次のとおりです。
 
-- COREはAgent、Persona、Memory、Recall、意味route、approval、Workstreamを所有する。
+- COREはAgent、Persona、Memory、Recall、意味route、Policy Decision、Workstreamを所有する。
 - RenCrow_LLM、STT、TTS、Vision、GAMES、Toolsは各実装本体を所有する。
 - RenCrow_ASSISTANTはpersonal／family Routine、PUSH、端末配信を所有する。
 - RenCrow_PORTALは外部利用者向けChat／IdleChat Web UIを所有する。

@@ -215,10 +215,6 @@ def _decision_evidence(con, decision) -> dict[str, object] | None:
         "decision_date": decision["decision_date"],
         "account_scope": decision["account_scope"],
         "strategy_name": decision["strategy_name"],
-        "approved": bool(decision["approved"]),
-        "approver": decision["approver"],
-        "approved_at": decision["approved_at"],
-        "approval_reason": decision["approval_reason"],
         "candidate": candidate,
         "veto": veto,
         "signals": signals,
@@ -275,8 +271,8 @@ def _decision_trace_evidence(decision) -> dict[str, object]:
     if not isinstance(candidate, dict):
         missing.append("candidate_json")
     else:
-        if not isinstance(candidate.get("approval_required"), bool):
-            missing.append("approval_required")
+        if candidate.get("policy_status") not in {"allowed", "blocked"}:
+            missing.append("policy_status")
         if not candidate.get("risk_status"):
             missing.append("risk_status")
         if not candidate.get("risk_check_id"):
@@ -376,8 +372,7 @@ def _paper_gate(con) -> dict[str, object]:
     paper_decisions = con.execute(
         """
         SELECT d.decision_id, d.snapshot_id, d.decision_date, d.account_scope, d.strategy_name,
-               d.candidate_json, d.veto_json, d.approved, d.approver, d.approved_at,
-               d.approval_reason, d.created_at, s.snapshot_date, s.source_summary_json
+               d.candidate_json, d.veto_json, d.created_at, s.snapshot_date, s.source_summary_json
           FROM decision_log d
           LEFT JOIN snapshot_registry s ON s.snapshot_id=d.snapshot_id
          WHERE d.account_scope='paper'
@@ -442,7 +437,6 @@ def _paper_gate(con) -> dict[str, object]:
         "feature": 0,
         "backtest": 0,
         "performance": 0,
-        "approval": 0,
         "decision_evidence": 0,
         "tca": 0,
         "risk": 0,
@@ -450,7 +444,6 @@ def _paper_gate(con) -> dict[str, object]:
         "report": 0,
     }
     performance_failure_rows = 0
-    missing_approval_evidence_rows = 0
     missing_decision_evidence_rows = 0
     missing_tca_evidence_rows = 0
     weeks: list[dict[str, object]] = []
@@ -468,7 +461,6 @@ def _paper_gate(con) -> dict[str, object]:
             "backtest": False,
             "performance": False,
             "performance_failure": None,
-            "approval": False,
             "decision_evidence": False,
             "decision_evidence_missing": [],
             "tca": False,
@@ -491,10 +483,6 @@ def _paper_gate(con) -> dict[str, object]:
         decision_trace = _decision_trace_evidence(row)
         risk = _risk_for_decision(con, row)
         risk_count = 1 if risk is not None else 0
-        # Legacy approval evidence is not an execution prerequisite. Keep the
-        # compatibility column green while policy/risk evidence is audited
-        # independently.
-        approval_complete = True
         paper_trade_count = _count(con, "SELECT COUNT(*) FROM paper_trade_log WHERE decision_id=?", (decision_id,))
         executed_trade_count = _count(
             con,
@@ -536,7 +524,6 @@ def _paper_gate(con) -> dict[str, object]:
                 "performance": bool(performance["complete"]),
                 "performance_failure": performance["failure"],
                 "performance_evidence": performance,
-                "approval": approval_complete,
                 "decision_evidence": bool(decision_trace["complete"]),
                 "decision_evidence_missing": decision_trace["missing"],
                 "tca": executed_trade_count == 0 or incomplete_tca_count == 0,
@@ -562,10 +549,6 @@ def _paper_gate(con) -> dict[str, object]:
             missing_logs["performance"] += 1
             performance_failure_rows += 1
             missing_for_week.append("performance")
-        if not approval_complete:
-            missing_logs["approval"] += 1
-            missing_approval_evidence_rows += 1
-            missing_for_week.append("approval")
         if not decision_trace["complete"]:
             missing_logs["decision_evidence"] += 1
             missing_decision_evidence_rows += 1
@@ -598,8 +581,6 @@ def _paper_gate(con) -> dict[str, object]:
         gate_failures.append("missing_weekly_logs")
     if performance_failure_rows:
         gate_failures.append("missing_or_degraded_tax_cost_performance")
-    if missing_approval_evidence_rows:
-        gate_failures.append("missing_approval_evidence")
     if missing_decision_evidence_rows:
         gate_failures.append("missing_decision_evidence")
     if tca_rows == 0 or missing_tca_evidence_rows:
@@ -614,7 +595,6 @@ def _paper_gate(con) -> dict[str, object]:
         and missing_decision_paper == 0
         and missing_weekly_logs == 0
         and performance_failure_rows == 0
-        and missing_approval_evidence_rows == 0
         and missing_decision_evidence_rows == 0
         and tca_rows > 0
         and missing_tca_evidence_rows == 0
@@ -628,7 +608,6 @@ def _paper_gate(con) -> dict[str, object]:
         and missing_decision_paper == 0
         and missing_weekly_logs == 0
         and performance_failure_rows == 0
-        and missing_approval_evidence_rows == 0
         and missing_decision_evidence_rows == 0
         and tca_rows > 0
         and missing_tca_evidence_rows == 0
@@ -655,7 +634,6 @@ def _paper_gate(con) -> dict[str, object]:
         "missing_weekly_logs": missing_weekly_logs,
         "missing_logs": missing_logs,
         "performance_failure_rows": performance_failure_rows,
-        "missing_approval_evidence_rows": missing_approval_evidence_rows,
         "missing_decision_evidence_rows": missing_decision_evidence_rows,
         "missing_tca_evidence_rows": missing_tca_evidence_rows,
         "weeks": weeks,
@@ -761,11 +739,7 @@ def build_audit_report(con, options: AuditOptions) -> dict[str, object]:
             [
                 f"- decision_id: {decision['decision_id']}",
                 f"- account_scope: {decision['account_scope']}",
-                f"- approved: {decision['approved']}",
-                f"- approver: {decision['approver'] or ''}",
-                f"- approved_at: {decision['approved_at'] or ''}",
-                f"- approval_reason: {decision['approval_reason'] or ''}",
-                f"- approval_required: {candidate.get('approval_required')}",
+                f"- policy_status: {candidate.get('policy_status')}",
                 f"- vetoed: {veto.get('vetoed')}",
                 f"- risk_status: {candidate.get('risk_status')}",
                 f"- paper_trade_rows: {paper_count}",
@@ -856,7 +830,6 @@ def build_audit_report(con, options: AuditOptions) -> dict[str, object]:
             f"- event_veto_rows: {paper_gate['event_veto_rows']}",
             f"- missing_weekly_logs: {paper_gate['missing_weekly_logs']}",
             f"- performance_failure_rows: {paper_gate['performance_failure_rows']}",
-            f"- missing_approval_evidence_rows: {paper_gate['missing_approval_evidence_rows']}",
             f"- missing_decision_evidence_rows: {paper_gate['missing_decision_evidence_rows']}",
             f"- missing_tca_evidence_rows: {paper_gate['missing_tca_evidence_rows']}",
             f"- missing_logs: {json.dumps(paper_gate['missing_logs'], ensure_ascii=False, sort_keys=True)}",

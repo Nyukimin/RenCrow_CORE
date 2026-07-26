@@ -9,8 +9,6 @@ import (
 const (
 	ChangeGateStatusPassed  = "passed"
 	ChangeGateStatusBlocked = "blocked"
-
-	HumanApprovalGranted = "granted"
 )
 
 type SkillChangeGateDecision struct {

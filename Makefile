@@ -28,9 +28,9 @@ DATA_LOOKBACK_DAYS?=
 DATA_STRATEGY?=weekly_etf_rotation_v1
 DATA_RISK_CONFIG?=rencrow-data/config/risk_limits.yml
 DATA_BACKTEST_OUTPUT_DIR?=rencrow-data/data/backtests
-DATA_APPROVAL_DIR?=rencrow-data/approvals
+DATA_POLICY_DIR?=rencrow-data/policies
 DATA_REPORT_DIR?=rencrow-data/reports
-DATA_APPROVAL_FILE?=$(DATA_APPROVAL_DIR)/latest.yml
+DATA_POLICY_FILE?=$(DATA_POLICY_DIR)/latest.yml
 DATA_PAPER_CAPITAL?=1000000
 DATA_STOP_OPERATOR?=manual
 DATA_STOP_REASON?=manual stop requested
@@ -390,7 +390,7 @@ rencrow-data-risk:
 
 ## rencrow-data-decision: Generate a policy-evaluated weekly decision candidate
 rencrow-data-decision:
-	@PYTHONPATH=$(PYTHONPATH) $(PYTHON) rencrow-data/src/11_generate_decision.py --db $(DATA_DB) --snapshot latest --strategy $(DATA_STRATEGY) --output-dir $(DATA_APPROVAL_DIR)
+	@PYTHONPATH=$(PYTHONPATH) $(PYTHON) rencrow-data/src/11_generate_decision.py --db $(DATA_DB) --snapshot latest --strategy $(DATA_STRATEGY) --output-dir $(DATA_POLICY_DIR)
 
 ## rencrow-data-llm-report: Generate the local deterministic weekly report
 rencrow-data-llm-report:
@@ -402,7 +402,7 @@ rencrow-data-audit-report:
 
 ## rencrow-data-paper-trade: Record a paper trade after synchronous policy and risk checks
 rencrow-data-paper-trade:
-	@PYTHONPATH=$(PYTHONPATH) $(PYTHON) rencrow-data/src/12_paper_trade.py --db $(DATA_DB) --decision latest --approval-file $(DATA_APPROVAL_FILE) --capital $(DATA_PAPER_CAPITAL)
+	@PYTHONPATH=$(PYTHONPATH) $(PYTHON) rencrow-data/src/12_paper_trade.py --db $(DATA_DB) --decision latest --policy-file $(DATA_POLICY_FILE) --capital $(DATA_PAPER_CAPITAL)
 
 ## rencrow-data-manual-stop: Record a manual kill switch event before risk/decision
 rencrow-data-manual-stop:

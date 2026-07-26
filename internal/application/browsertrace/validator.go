@@ -199,7 +199,7 @@ func apiCandidateValidationIssues(candidate domaintrace.APICandidate, policy Val
 	if risk != "" && risk != "low" {
 		issues = append(issues, domaintrace.APIValidationIssue{
 			Code:     "risk_review_required",
-			Message:  "candidate risk level requires human review before promotion",
+			Message:  "candidate risk level requires additional validation before promotion",
 			Severity: "medium",
 		})
 	}

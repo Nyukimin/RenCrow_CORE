@@ -67,7 +67,7 @@ func (s *L1APICandidateStore) SaveBrowserTraceAPICandidates(ctx context.Context,
 			RawText:      apiCandidateRawText(candidate),
 			SummaryDraft: apiCandidateSummary(candidate),
 			Keywords:     apiCandidateKeywords(candidate),
-			LicenseNote:  "browser trace observed API candidate; terms and human review required before promote",
+			LicenseNote:  "browser trace observed API candidate; terms validation is required before promote",
 			Meta: map[string]interface{}{
 				"source_kind":                "browser_trace_api",
 				"trace_run_id":               candidate.TraceRunID,

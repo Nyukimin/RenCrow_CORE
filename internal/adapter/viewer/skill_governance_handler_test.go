@@ -104,7 +104,7 @@ func TestHandleSkillGovernanceRecent(t *testing.T) {
 			Agent:     "Coder",
 			Role:      "coder",
 			Segment:   "plan",
-			Text:      "complete diff を提示して Human approval を待つ",
+			Text:      "complete diff と検証結果を提示する",
 			CreatedAt: now,
 		}},
 	}
@@ -125,7 +125,6 @@ func TestHandleSkillGovernanceRecent(t *testing.T) {
 		PRSubmits    []domainskill.ExternalPRSubmitRecord `json:"external_pr_submit_records"`
 		PRAdapter    string                               `json:"external_pr_adapter"`
 		PRConfigured bool                                 `json:"external_pr_adapter_configured"`
-		PRApproval   bool                                 `json:"human_approval_required_for_pr"`
 		Transcripts  []domainskill.CoderTranscriptEntry   `json:"coder_transcripts"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -140,8 +139,8 @@ func TestHandleSkillGovernanceRecent(t *testing.T) {
 	if len(body.Transcripts) != 1 || body.Transcripts[0].EventID != "evt_coder_transcript_1" {
 		t.Fatalf("transcripts=%#v", body.Transcripts)
 	}
-	if body.PRAdapter != "unconfigured" || body.PRConfigured || body.PRApproval {
-		t.Fatalf("external PR readiness adapter=%q configured=%t approval=%t", body.PRAdapter, body.PRConfigured, body.PRApproval)
+	if body.PRAdapter != "unconfigured" || body.PRConfigured {
+		t.Fatalf("external PR readiness adapter=%q configured=%t", body.PRAdapter, body.PRConfigured)
 	}
 }
 
@@ -221,7 +220,7 @@ func TestHandleSkillGovernanceContributionGateBlocksIncompleteRequest(t *testing
 		"existing_prs_checked":true,
 		"real_problem_verified":false,
 		"core_change_verified":true,
-		"diff_human_approved":false,
+		"diff_reviewed":false,
 		"test_result":"go test ./..."
 	}`))
 	rec := httptest.NewRecorder()
@@ -256,7 +255,7 @@ func TestHandleSkillGovernanceContributionGatePassesCompleteRequest(t *testing.T
 		"existing_prs_checked":true,
 		"real_problem_verified":true,
 		"core_change_verified":true,
-		"diff_human_approved":true,
+		"diff_reviewed":true,
 		"test_result":"go test ./..."
 	}`))
 	rec := httptest.NewRecorder()
@@ -278,7 +277,7 @@ func TestHandleSkillGovernanceSkillChangeBlocksMissingEvaluation(t *testing.T) {
 		"skill_id":"core.pr-readiness",
 		"change_reason":"PR gate wording update",
 		"expected_behavior_change":"stop low-quality PR",
-		"human_approval_status":"granted"
+		"eval_result":""
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -308,7 +307,7 @@ func TestHandleSkillGovernanceSkillChangePassesCompleteRequest(t *testing.T) {
 		"change_reason":"PR gate wording update",
 		"expected_behavior_change":"stop low-quality PR",
 		"eval_result":"before/after passed",
-		"human_approval_status":"granted"
+		"eval_result":"before/after passed"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -337,7 +336,6 @@ func TestHandleSkillGovernanceSkillChangeEvalSavesPassingEval(t *testing.T) {
 		"skill_id":"core.pr-readiness",
 		"change_reason":"PR gate wording update",
 		"expected_behavior_change":"stop low-quality PR",
-		"human_approval_status":"granted",
 		"cases":[
 			{
 				"name":"duplicate_pr_found",
@@ -372,7 +370,7 @@ func TestHandleSkillGovernanceSkillChangeEvalSavesPassingEval(t *testing.T) {
 	if len(store.changes) != 1 {
 		t.Fatalf("changes=%#v", store.changes)
 	}
-	if store.changes[0].EvalResult == "" || store.changes[0].HumanApprovalStatus != domainskill.HumanApprovalGranted {
+	if store.changes[0].EvalResult == "" {
 		t.Fatalf("change log=%#v", store.changes[0])
 	}
 	var body domainskill.SkillChangeEvalResult
@@ -390,7 +388,6 @@ func TestHandleSkillGovernanceSkillChangeEvalDoesNotSaveBlockedEval(t *testing.T
 		"skill_id":"core.pr-readiness",
 		"change_reason":"PR gate wording update",
 		"expected_behavior_change":"stop low-quality PR",
-		"human_approval_status":"granted",
 		"cases":[
 			{
 				"name":"duplicate_pr_found",
@@ -426,7 +423,6 @@ func TestHandleSkillGovernanceSkillChangeEvalAcceptsDiffAndTranscriptEvidence(t 
 		"skill_id":"core.pr-readiness",
 		"change_reason":"PR gate wording update",
 		"expected_behavior_change":"stop low-quality PR",
-		"human_approval_status":"granted",
 		"cases":[
 			{
 				"name":"duplicate_pr_found",
@@ -437,9 +433,9 @@ func TestHandleSkillGovernanceSkillChangeEvalAcceptsDiffAndTranscriptEvidence(t 
 			}
 		],
 		"skill_diff":"diff --git a/skills/core/pr-readiness/SKILL.md b/skills/core/pr-readiness/SKILL.md\n+stop low-quality PR",
-		"agent_transcript":"Coder: stop low-quality PR. complete diff を提示して Human approval を待つ。",
+		"agent_transcript":"Coder: stop low-quality PR. complete diff と検証結果を提示する。",
 		"diff_must_contain":["stop low-quality PR"],
-		"transcript_must_contain":["complete diff","Human approval"],
+		"transcript_must_contain":["complete diff","検証結果"],
 		"transcript_must_not_contain":["PRを作成しました"]
 	}`))
 	rec := httptest.NewRecorder()
@@ -477,7 +473,7 @@ func TestHandleSkillGovernanceSkillChangeEvalLoadsDiffAndTranscriptEvidenceFiles
 	if err := os.WriteFile(diffPath, []byte("diff --git a/skills/core/pr-readiness/SKILL.md b/skills/core/pr-readiness/SKILL.md\n+stop low-quality PR\n"), 0o644); err != nil {
 		t.Fatalf("write diff: %v", err)
 	}
-	if err := os.WriteFile(transcriptPath, []byte("Coder: stop low-quality PR. complete diff を提示して Human approval を待つ。\n"), 0o644); err != nil {
+	if err := os.WriteFile(transcriptPath, []byte("Coder: stop low-quality PR. complete diff と検証結果を提示する。\n"), 0o644); err != nil {
 		t.Fatalf("write transcript: %v", err)
 	}
 	store := &stubSkillGovernanceLister{}
@@ -485,7 +481,6 @@ func TestHandleSkillGovernanceSkillChangeEvalLoadsDiffAndTranscriptEvidenceFiles
 		"skill_id":"core.pr-readiness",
 		"change_reason":"PR gate wording update",
 		"expected_behavior_change":"stop low-quality PR",
-		"human_approval_status":"granted",
 		"cases":[
 			{
 				"name":"duplicate_pr_found",
@@ -498,7 +493,7 @@ func TestHandleSkillGovernanceSkillChangeEvalLoadsDiffAndTranscriptEvidenceFiles
 		"skill_diff_path":"tmp/skill_change_eval_diff_test.txt",
 		"agent_transcript_path":"tmp/skill_change_eval_transcript_test.txt",
 		"diff_must_contain":["stop low-quality PR"],
-		"transcript_must_contain":["complete diff","Human approval"],
+		"transcript_must_contain":["complete diff","検証結果"],
 		"transcript_must_not_contain":["PRを作成しました"]
 	}`))
 	rec := httptest.NewRecorder()
@@ -530,7 +525,6 @@ func TestHandleSkillGovernanceSkillChangeEvalRejectsUnsafeEvidencePath(t *testin
 		"skill_id":"core.pr-readiness",
 		"change_reason":"PR gate wording update",
 		"expected_behavior_change":"stop low-quality PR",
-		"human_approval_status":"granted",
 		"cases":[],
 		"skill_diff_path":"../.env"
 	}`))
@@ -546,7 +540,7 @@ func TestHandleSkillGovernanceSkillChangeEvalRejectsUnsafeEvidencePath(t *testin
 	}
 }
 
-func TestHandleSkillGovernanceExternalPRSubmitDoesNotRequireHumanApproval(t *testing.T) {
+func TestHandleSkillGovernanceExternalPRSubmitAcceptsPassedGate(t *testing.T) {
 	store := &stubSkillGovernanceLister{
 		contributions: []domainskill.ContributionGateLog{{
 			EventID:             "evt_contrib_1",
@@ -556,7 +550,7 @@ func TestHandleSkillGovernanceExternalPRSubmitDoesNotRequireHumanApproval(t *tes
 			ExistingPRsChecked:  true,
 			RealProblemVerified: true,
 			CoreChangeVerified:  true,
-			DiffHumanApproved:   true,
+			DiffReviewed:        true,
 			TestResult:          "go test ./...",
 			GateStatus:          domainskill.GateStatusPassed,
 		}},
@@ -565,8 +559,7 @@ func TestHandleSkillGovernanceExternalPRSubmitDoesNotRequireHumanApproval(t *tes
 		"submit_id":"submit_1",
 		"contribution_event_id":"evt_contrib_1",
 		"repo":"example/repo",
-		"title":"Fix bug",
-		"human_approved":false
+		"title":"Fix bug"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -575,7 +568,7 @@ func TestHandleSkillGovernanceExternalPRSubmitDoesNotRequireHumanApproval(t *tes
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.prSubmits) != 1 || store.prSubmits[0].HumanApproved || store.prSubmits[0].ApprovalStatus != "not_required" {
+	if len(store.prSubmits) != 1 || store.prSubmits[0].SubmitStatus != domainskill.ExternalPRSubmitStatusBlocked {
 		t.Fatalf("pr submit audit=%#v", store.prSubmits)
 	}
 }
@@ -590,7 +583,7 @@ func TestHandleSkillGovernanceExternalPRSubmitSavesBlockedAudit(t *testing.T) {
 			ExistingPRsChecked:  true,
 			RealProblemVerified: true,
 			CoreChangeVerified:  true,
-			DiffHumanApproved:   true,
+			DiffReviewed:        true,
 			TestResult:          "go test ./...",
 			GateStatus:          domainskill.GateStatusPassed,
 		}},
@@ -607,8 +600,7 @@ func TestHandleSkillGovernanceExternalPRSubmitSavesBlockedAudit(t *testing.T) {
 		"external_pr_created":true,
 		"post_submit_verified":true,
 		"post_submit_evidence":"pretend checks passed",
-		"pr_adapter":"github",
-		"human_approved":true
+		"pr_adapter":"github"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -651,8 +643,7 @@ func TestHandleSkillGovernanceExternalPRSubmitRequiresPassedGate(t *testing.T) {
 		"submit_id":"submit_1",
 		"contribution_event_id":"evt_contrib_1",
 		"repo":"example/repo",
-		"title":"Fix bug",
-		"human_approved":true
+		"title":"Fix bug"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -676,7 +667,7 @@ func TestHandleSkillGovernanceExternalPRSubmitRejectsGateRepoMismatch(t *testing
 			ExistingPRsChecked:  true,
 			RealProblemVerified: true,
 			CoreChangeVerified:  true,
-			DiffHumanApproved:   true,
+			DiffReviewed:        true,
 			TestResult:          "go test ./...",
 			GateStatus:          domainskill.GateStatusPassed,
 		}},
@@ -685,8 +676,7 @@ func TestHandleSkillGovernanceExternalPRSubmitRejectsGateRepoMismatch(t *testing
 		"submit_id":"submit_1",
 		"contribution_event_id":"evt_contrib_1",
 		"repo":"example/repo-b",
-		"title":"Fix bug",
-		"human_approved":true
+		"title":"Fix bug"
 	}`))
 	rec := httptest.NewRecorder()
 

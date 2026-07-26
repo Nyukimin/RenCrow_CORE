@@ -72,7 +72,6 @@ type AdviceRequest struct {
 	RiskClass        string
 	CostBudget       CostBudget
 	TimeoutMillis    int
-	ApprovalMode     string
 	CreatedAt        time.Time
 }
 

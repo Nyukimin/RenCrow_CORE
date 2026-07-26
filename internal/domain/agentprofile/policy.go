@@ -7,9 +7,8 @@ import (
 )
 
 const (
-	PolicyAllowed          = "allowed"
-	PolicyApprovalRequired = "approval_required"
-	PolicyForbidden        = "forbidden"
+	PolicyAllowed   = "allowed"
+	PolicyForbidden = "forbidden"
 )
 
 type PolicyDecision struct {
@@ -28,7 +27,7 @@ func (d PolicyDecision) Validate() error {
 		return fmt.Errorf("decision_id, agent_id, and action are required")
 	}
 	switch d.Decision {
-	case PolicyAllowed, PolicyApprovalRequired, PolicyForbidden:
+	case PolicyAllowed, PolicyForbidden:
 	default:
 		return fmt.Errorf("unsupported policy decision %q", d.Decision)
 	}

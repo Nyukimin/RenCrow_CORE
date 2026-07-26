@@ -104,7 +104,7 @@ else
       log "removing empty leftover directory $NESTED_DIR"
       rmdir "$NESTED_DIR"
     else
-      log "WARNING: $NESTED_DIR still has content after de-nesting, left in place for manual review:"
+      log "WARNING: $NESTED_DIR still has content after de-nesting, left in place for operator inspection:"
       ls -A "$NESTED_DIR" | sed 's/^/[migrate_picoclaw_home]   /'
     fi
   fi

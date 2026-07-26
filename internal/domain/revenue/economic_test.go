@@ -16,14 +16,13 @@ func TestNormalizeOpportunityEconomics(t *testing.T) {
 	}
 }
 
-func TestValidateEconomicTaskAllowsPublishWithoutHumanApproval(t *testing.T) {
+func TestValidateEconomicTaskAllowsPublishDraft(t *testing.T) {
 	err := ValidateEconomicTask(EconomicTask{
 		TaskID:        "task-1",
 		OpportunityID: "opp-1",
 		AgentID:       "shiro",
 		TaskKind:      "external_publish",
 		Status:        "draft",
-		ApprovalMode:  "auto",
 		CreatedAt:     time.Now(),
 	})
 	if err != nil {
@@ -37,7 +36,6 @@ func TestValidateOpportunityRejectsProhibitedClaim(t *testing.T) {
 		SourceKind:      "market_research",
 		Title:           "誰でも必ず稼げるテンプレート",
 		ExpectedRevenue: 1000,
-		ApprovalState:   "draft",
 		CreatedAt:       time.Now(),
 	})
 	if err == nil || !strings.Contains(err.Error(), "prohibited") {

@@ -18,8 +18,7 @@ type Routes struct {
 	Products                  http.HandlerFunc
 	CustomerVoices            http.HandlerFunc
 	Events                    http.HandlerFunc
-	DecisionGate              http.HandlerFunc
-	DecisionReview            http.HandlerFunc
+	PolicyDecisions           http.HandlerFunc
 	DailyRoutine              http.HandlerFunc
 	ChannelDrafts             http.HandlerFunc
 	ExternalSend              http.HandlerFunc
@@ -39,8 +38,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/revenue/products", routes.Products)
 	registerRoute(mux, "/viewer/revenue/customer-voices", routes.CustomerVoices)
 	registerRoute(mux, "/viewer/revenue/events", routes.Events)
-	registerRoute(mux, "/viewer/revenue/human-decision-gate", routes.DecisionGate)
-	registerRoute(mux, "/viewer/revenue/human-decision-gate/review", routes.DecisionReview)
+	registerRoute(mux, "/viewer/revenue/policy-decisions", routes.PolicyDecisions)
 	registerRoute(mux, "/viewer/revenue/daily-routine", routes.DailyRoutine)
 	registerRoute(mux, "/viewer/revenue/channel-drafts", routes.ChannelDrafts)
 	registerRoute(mux, "/viewer/revenue/channel-drafts/external-send-apply", routes.ExternalSend)

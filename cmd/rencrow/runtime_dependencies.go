@@ -133,7 +133,6 @@ type Dependencies struct {
 	sandboxPromotionApply          http.HandlerFunc                            // viewer sandbox promotion apply checkpoint API
 	sandboxPromotionRollback       http.HandlerFunc                            // viewer sandbox promotion rollback checkpoint API
 	sandboxPromotionPreview        http.HandlerFunc                            // viewer sandbox promotion diff preview API
-	sandboxPromotionManualReview   http.HandlerFunc                            // viewer sandbox high-risk promotion review workflow API
 	sandboxWorktreeCreate          http.HandlerFunc                            // viewer sandbox code worktree create API
 	sandboxWorktreeClose           http.HandlerFunc                            // viewer sandbox code worktree close API
 	skillGovernanceRecent          http.HandlerFunc                            // viewer skill governance API
@@ -159,8 +158,7 @@ type Dependencies struct {
 	revenueProduct                 http.HandlerFunc                            // viewer revenue product API
 	revenueCustomerVoice           http.HandlerFunc                            // viewer revenue customer voice API
 	revenueEvent                   http.HandlerFunc                            // viewer revenue event API
-	revenueHumanDecisionGate       http.HandlerFunc                            // viewer revenue human decision gate API
-	revenueHumanDecisionReview     http.HandlerFunc                            // viewer revenue human decision gate review API
+	revenuePolicyDecision          http.HandlerFunc                            // viewer revenue policy decision API
 	revenueDailyRoutine            http.HandlerFunc                            // viewer revenue daily routine draft report API
 	revenueChannelDraft            http.HandlerFunc                            // viewer revenue channel draft API
 	revenueExternalSendApply       http.HandlerFunc                            // viewer revenue external send apply audit API
@@ -596,7 +594,6 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.workstreamVaultReview = viewer.HandleWorkstreamVaultUpdateReview(workstreamStore)
 		deps.workstreamVaultPreview = viewer.HandleWorkstreamVaultUpdatePreview(workstreamStore)
 		if sandboxStore != nil && promotionDiffPreviewer != nil {
-			deps.sandboxPromotionManualReview = viewer.HandleSandboxPromotionManualReview(promotionDiffPreviewer, workstreamStore, sandboxStore)
 		}
 	}
 	if cfg.Revenue.IsEnabled() {
@@ -619,8 +616,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.revenueProduct = viewer.HandleRevenueProductCreate(revenueStore)
 		deps.revenueCustomerVoice = viewer.HandleRevenueCustomerVoiceCreate(revenueStore)
 		deps.revenueEvent = viewer.HandleRevenueEventCreate(revenueStore)
-		deps.revenueHumanDecisionGate = viewer.HandleRevenueHumanDecisionGate(revenueStore)
-		deps.revenueHumanDecisionReview = viewer.HandleRevenueHumanDecisionGateReview(revenueStore)
+		deps.revenuePolicyDecision = viewer.HandleRevenuePolicyDecision(revenueStore)
 		deps.revenueDailyRoutine = viewer.HandleRevenueDailyRoutineReportCreate(revenueStore)
 		deps.revenueChannelDraft = viewer.HandleRevenueChannelDraftCreate(revenueStore)
 		deps.revenueExternalSendApply = viewer.HandleRevenueExternalSendApply(revenueStore)
@@ -771,10 +767,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			StopAtRatio:      cfg.AIWorkflow.ContextBudgetStopRatio,
 		})
 		deps.aiWorkflowExternalControl = viewer.HandleAIWorkflowExternalControlCheck(aiWorkflowStore, domainai.ExternalControlPolicy{
-			AllowedActors:    cfg.AIWorkflow.ExternalControlAllowedActors,
-			AllowedChannels:  cfg.AIWorkflow.ExternalControlAllowedChannels,
-			AllowedActions:   cfg.AIWorkflow.ExternalControlAllowedActions,
-			ApprovalRequired: cfg.AIWorkflow.ExternalControlApprovalRequired,
+			AllowedActors:   cfg.AIWorkflow.ExternalControlAllowedActors,
+			AllowedChannels: cfg.AIWorkflow.ExternalControlAllowedChannels,
+			AllowedActions:  cfg.AIWorkflow.ExternalControlAllowedActions,
 		})
 		deps.aiWorkflowHeavyWorker = viewer.HandleAIWorkflowHeavyWorkerEvaluate(aiWorkflowStore, domainai.HeavyWorkerPolicy{
 			Enabled:                 cfg.AIWorkflow.HeavyWorkerEnabled,

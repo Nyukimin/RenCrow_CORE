@@ -323,14 +323,12 @@ func (c *Config) setDefaults() {
 		!c.Sandbox.Promotion.RequireReason &&
 		!c.Sandbox.Promotion.RequireTestResult &&
 		!c.Sandbox.Promotion.RequireRollbackPlan &&
-		!c.Sandbox.Promotion.RequireHumanApproval &&
 		!c.Sandbox.Promotion.RequirePostApplyVerification {
 		c.Sandbox.Promotion = SandboxPromotionConfig{
 			RequireDiff:                  true,
 			RequireReason:                true,
 			RequireTestResult:            true,
 			RequireRollbackPlan:          true,
-			RequireHumanApproval:         false,
 			RequirePostApplyVerification: true,
 		}
 	}
@@ -463,14 +461,12 @@ func (c *Config) setDefaults() {
 		!c.SkillGovernance.ContributionGate.RequireOpenClosedPRSearch &&
 		!c.SkillGovernance.ContributionGate.RequireRealProblem &&
 		!c.SkillGovernance.ContributionGate.RequireCompleteDiffReview &&
-		!c.SkillGovernance.ContributionGate.RequireHumanApproval &&
 		!c.SkillGovernance.ContributionGate.OneProblemPerPR {
 		c.SkillGovernance.ContributionGate = SkillContributionGateConfig{
 			Enabled:                   true,
 			RequireOpenClosedPRSearch: true,
 			RequireRealProblem:        true,
 			RequireCompleteDiffReview: true,
-			RequireHumanApproval:      false,
 			OneProblemPerPR:           true,
 		}
 	}
@@ -501,9 +497,7 @@ func (c *Config) setDefaults() {
 		c.Revenue.SQLitePath = c.WorkspaceDir + "/logs/revenue.db"
 	}
 	if !c.Revenue.ProhibitSuccessGuarantee &&
-		!c.Revenue.RequireCustomerVoicePermission &&
-		!c.Revenue.ExternalPublishRequiresApproval &&
-		!c.Revenue.HighTicketOfferRequiresApproval {
+		!c.Revenue.RequireCustomerVoicePermission {
 		c.Revenue.ProhibitSuccessGuarantee = true
 		c.Revenue.RequireCustomerVoicePermission = true
 	}
@@ -536,11 +530,11 @@ func (c *Config) setDefaults() {
 	}
 	if !c.PersonaArchitecture.RequireLorePersonaSplit &&
 		!c.PersonaArchitecture.RequireTriggerCategories &&
-		!c.PersonaArchitecture.HumanReviewRequiredForMeta &&
+		!c.PersonaArchitecture.ReviewRequiredForMeta &&
 		!c.PersonaArchitecture.RequireSessionKeying {
 		c.PersonaArchitecture.RequireLorePersonaSplit = true
 		c.PersonaArchitecture.RequireTriggerCategories = true
-		c.PersonaArchitecture.HumanReviewRequiredForMeta = true
+		c.PersonaArchitecture.ReviewRequiredForMeta = true
 		c.PersonaArchitecture.RequireSessionKeying = true
 	}
 	if c.BrowserTraceToAPI.LogPath == "" {
@@ -563,7 +557,6 @@ func (c *Config) setDefaults() {
 	}
 	if !c.BrowserTraceToAPI.ReadOnlyOnly &&
 		!c.BrowserTraceToAPI.RequireTermsReview &&
-		!c.BrowserTraceToAPI.RequireHumanApprovalPromote &&
 		!c.BrowserTraceToAPI.GenerateOpenAPI &&
 		!c.BrowserTraceToAPI.GenerateCoverageReport {
 		c.BrowserTraceToAPI.ReadOnlyOnly = true
@@ -589,7 +582,7 @@ func (c *Config) setDefaults() {
 	if len(c.ComplexityHotspot.ExcludeDirs) == 0 {
 		c.ComplexityHotspot.ExcludeDirs = []string{"node_modules", ".venv", "venv", "dist", "build", "coverage", ".git"}
 	}
-	if !c.ComplexityHotspot.RequireHumanApprovalForPatch && !c.ComplexityHotspot.OneHotspotPerPR {
+	if !c.ComplexityHotspot.OneHotspotPerPR {
 		c.ComplexityHotspot.OneHotspotPerPR = true
 	}
 	if c.SuperAgentHarness.LogPath == "" {
@@ -617,7 +610,6 @@ func (c *Config) setDefaults() {
 		!c.SuperAgentHarness.RequireTerminationCondition &&
 		!c.SuperAgentHarness.ReturnSummaryOnly &&
 		!c.SuperAgentHarness.PromotionGateRequired &&
-		!c.SuperAgentHarness.ExternalSendRequiresApproval &&
 		!c.SuperAgentHarness.TraceAgentRun {
 		c.SuperAgentHarness.RequireScope = true
 		c.SuperAgentHarness.RequireTerminationCondition = true
@@ -684,10 +676,10 @@ func (c *Config) setDefaults() {
 		c.KnowledgeMemory.SQLitePath = c.WorkspaceDir + "/logs/knowledge_memory.db"
 	}
 	if !c.KnowledgeMemory.ProtectPersonalArchive &&
-		!c.KnowledgeMemory.DreamRequiresHumanReview &&
+		!c.KnowledgeMemory.DreamRequiresReview &&
 		!c.KnowledgeMemory.DailyIntakePromoteToStaging {
 		c.KnowledgeMemory.ProtectPersonalArchive = true
-		c.KnowledgeMemory.DreamRequiresHumanReview = true
+		c.KnowledgeMemory.DreamRequiresReview = true
 		c.KnowledgeMemory.DailyIntakePromoteToStaging = true
 	}
 	if c.OperationMemoryDir == "" {

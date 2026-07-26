@@ -12,7 +12,6 @@ const (
 	FailureProposalInvalid     = "proposal_invalid"
 	FailureCommandMissing      = "command_missing"
 	FailureProviderUnavailable = "provider_unavailable"
-	FailureApprovalRequired    = "approval_required"
 	FailureApply               = "apply"
 )
 
@@ -62,8 +61,6 @@ func ClassifyExecutorFailure(err error) string {
 	}
 	lower := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(lower, "approval required"):
-		return FailureApprovalRequired
 	case strings.Contains(lower, "proposal"):
 		return FailureProposalInvalid
 	case strings.Contains(lower, "not found"), strings.Contains(lower, "exit status 127"):
@@ -87,7 +84,7 @@ func BuildExecutorRetryMessage(userMessage string, route string, failureKind, fa
 ## Requirements
 - Keep the response executable and directly verifiable
 - Include the missing repair steps in the next result
-- Do not include manual-only lifecycle commands in executable output; report them as approval-required steps
+- Do not include lifecycle commands that policy blocks in executable output; report the policy reason
 `, userMessage, attempt, route, fallbackString(failureKind, "unknown"), fallbackString(failureReason, "execution failed"))
 }
 

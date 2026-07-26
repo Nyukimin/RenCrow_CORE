@@ -18,15 +18,14 @@ type WorktreeStore interface {
 }
 
 type WorktreeCreateOptions struct {
-	RepoRoot      string
-	BaseDir       string
-	RepoName      string
-	Branch        string
-	PathName      string
-	Purpose       string
-	OwnerAgent    string
-	HumanApproved bool
-	Now           func() time.Time
+	RepoRoot   string
+	BaseDir    string
+	RepoName   string
+	Branch     string
+	PathName   string
+	Purpose    string
+	OwnerAgent string
+	Now        func() time.Time
 }
 
 type WorktreeCreateResult struct {
@@ -36,15 +35,14 @@ type WorktreeCreateResult struct {
 }
 
 type WorktreeCloseOptions struct {
-	RepoRoot      string
-	BaseDir       string
-	RepoName      string
-	WorktreeID    string
-	WorktreePath  string
-	Branch        string
-	OwnerAgent    string
-	HumanApproved bool
-	Now           func() time.Time
+	RepoRoot     string
+	BaseDir      string
+	RepoName     string
+	WorktreeID   string
+	WorktreePath string
+	Branch       string
+	OwnerAgent   string
+	Now          func() time.Time
 }
 
 type WorktreeCloseResult struct {

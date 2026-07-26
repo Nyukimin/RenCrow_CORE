@@ -66,10 +66,6 @@ func (s *RecordingService) RequestAdvice(ctx context.Context, req advisorDomain.
 			status = advisorDomain.StatusCompleted
 		}
 	}
-	approvalMode := strings.TrimSpace(req.ApprovalMode)
-	if approvalMode == "" {
-		approvalMode = "advice_only"
-	}
 	record := advisorDomain.AdviceRunRecord{
 		RunID:            uuid.NewString(),
 		RequestID:        req.ID,
@@ -79,7 +75,6 @@ func (s *RecordingService) RequestAdvice(ctx context.Context, req advisorDomain.
 		Purpose:          req.Purpose,
 		PromptHash:       hashText(req.Prompt),
 		RiskClass:        req.RiskClass,
-		ApprovalMode:     approvalMode,
 		Status:           advisorDomain.AdviceStatus(status),
 		Summary:          boundedSummary(result.Summary, 512),
 		OutputHash:       hashText(result.OutputText()),

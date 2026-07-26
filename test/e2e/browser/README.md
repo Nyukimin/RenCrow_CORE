@@ -52,7 +52,7 @@ RENCROW_E2E_PORT=28791 npm run test:e2e:viewer:to-be
 ## 合格条件と証跡
 
 - 7本のTo-Be APIが実HTTP GETで200になる。
-- Advisor、Knowledge Relation、Economic、Approval、Recall Traceの実fixtureが表示される。
+- Advisor、Knowledge Relation、Economic、Policy Decision、Recall Traceの実fixtureが表示される。
 - `ok / warning / blocked / unavailable` が期待するカードへ伝播する。
 - 全detailsが操作でき、長いIDでもdesktop/mobileに横あふれがない。
 - refreshとreload後も実ストアデータが維持される。

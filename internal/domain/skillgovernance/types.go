@@ -15,17 +15,16 @@ const (
 )
 
 type SkillManifest struct {
-	SkillID               string    `json:"skill_id"`
-	Name                  string    `json:"name"`
-	Scope                 string    `json:"scope"`
-	Version               string    `json:"version"`
-	Path                  string    `json:"path"`
-	Description           string    `json:"description,omitempty"`
-	KeywordTriggers       []string  `json:"keyword_triggers,omitempty"`
-	IntentTriggers        []string  `json:"intent_triggers,omitempty"`
-	HumanApprovalRequired bool      `json:"human_approval_required,omitempty"`
-	Enabled               bool      `json:"enabled"`
-	UpdatedAt             time.Time `json:"updated_at"`
+	SkillID         string    `json:"skill_id"`
+	Name            string    `json:"name"`
+	Scope           string    `json:"scope"`
+	Version         string    `json:"version"`
+	Path            string    `json:"path"`
+	Description     string    `json:"description,omitempty"`
+	KeywordTriggers []string  `json:"keyword_triggers,omitempty"`
+	IntentTriggers  []string  `json:"intent_triggers,omitempty"`
+	Enabled         bool      `json:"enabled"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type TaskContext struct {
@@ -63,7 +62,6 @@ type SkillChangeLog struct {
 	ExpectedBehaviorChange string    `json:"expected_behavior_change,omitempty"`
 	EvalResult             string    `json:"eval_result,omitempty"`
 	EvidenceSummary        string    `json:"evidence_summary,omitempty"`
-	HumanApprovalStatus    string    `json:"human_approval_status,omitempty"`
 	CreatedAt              time.Time `json:"created_at"`
 }
 
@@ -75,7 +73,7 @@ type ContributionGateLog struct {
 	ExistingPRsChecked  bool      `json:"existing_prs_checked"`
 	RealProblemVerified bool      `json:"real_problem_verified"`
 	CoreChangeVerified  bool      `json:"core_change_verified"`
-	DiffHumanApproved   bool      `json:"diff_human_approved"`
+	DiffReviewed        bool      `json:"diff_reviewed"`
 	TestResult          string    `json:"test_result,omitempty"`
 	GateStatus          string    `json:"gate_status"`
 	CreatedAt           time.Time `json:"created_at"`
@@ -89,8 +87,6 @@ type ExternalPRSubmitRecord struct {
 	Title               string    `json:"title,omitempty"`
 	DiffPath            string    `json:"diff_path,omitempty"`
 	TestResult          string    `json:"test_result,omitempty"`
-	ApprovalStatus      string    `json:"approval_status"`
-	HumanApproved       bool      `json:"human_approved"`
 	SubmitStatus        string    `json:"submit_status"`
 	PRURL               string    `json:"pr_url,omitempty"`
 	FailureReason       string    `json:"failure_reason,omitempty"`

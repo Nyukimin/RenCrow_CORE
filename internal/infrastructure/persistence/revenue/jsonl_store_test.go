@@ -60,7 +60,6 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 		ExpectedRevenue: 3000,
 		ExpectedCost:    800,
 		RiskScore:       0.2,
-		ApprovalState:   "draft",
 		CreatedAt:       now,
 	}); err != nil {
 		t.Fatalf("SaveOpportunity failed: %v", err)
@@ -74,7 +73,6 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 		ExpectedValue: 0.7,
 		Risk:          0.1,
 		Cost:          0.2,
-		ApprovalMode:  "none",
 		CreatedAt:     now,
 	}); err != nil {
 		t.Fatalf("SaveEconomicTask failed: %v", err)
@@ -89,15 +87,13 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveEconomicReflection failed: %v", err)
 	}
-	if err := store.SaveHumanDecisionGateRecord(ctx, domainrevenue.HumanDecisionGateRecord{
-		DecisionID:       "dec_1",
-		DecisionType:     "high_ticket_offer",
-		ApprovalStatus:   "pending",
-		GateStatus:       "needs_review",
-		RequiresApproval: true,
-		CreatedAt:        now,
+	if err := store.SavePolicyDecisionRecord(ctx, domainrevenue.PolicyDecisionRecord{
+		DecisionID:   "dec_1",
+		DecisionType: "high_ticket_offer",
+		Status:       "blocked",
+		CreatedAt:    now,
 	}); err != nil {
-		t.Fatalf("SaveHumanDecisionGateRecord failed: %v", err)
+		t.Fatalf("SavePolicyDecisionRecord failed: %v", err)
 	}
 	if err := store.SaveDailyRoutineReport(ctx, domainrevenue.DailyRoutineReport{
 		ReportID:            "daily_1",
@@ -109,12 +105,11 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 		t.Fatalf("SaveDailyRoutineReport failed: %v", err)
 	}
 	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{
-		DraftID:        "draft_1",
-		Channel:        "email",
-		Subject:        "購入者向け案内",
-		Body:           "下書き本文",
-		ApprovalStatus: "pending",
-		CreatedAt:      now,
+		DraftID:   "draft_1",
+		Channel:   "email",
+		Subject:   "購入者向け案内",
+		Body:      "下書き本文",
+		CreatedAt: now,
 	}); err != nil {
 		t.Fatalf("SaveChannelDraft failed: %v", err)
 	}
@@ -123,8 +118,6 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		ApplyStatus:         "blocked",
 		SendResult:          "not_sent",
 		FailureReason:       "external channel adapter is not configured",
@@ -172,7 +165,7 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 	if err != nil || len(reflections) != 1 || reflections[0].ReflectionID != "reflection_1" {
 		t.Fatalf("reflections=%#v err=%v", reflections, err)
 	}
-	decisions, err := store.ListHumanDecisionGateRecords(ctx, 10)
+	decisions, err := store.ListPolicyDecisionRecords(ctx, 10)
 	if err != nil || len(decisions) != 1 || decisions[0].DecisionID != "dec_1" {
 		t.Fatalf("decisions=%#v err=%v", decisions, err)
 	}
@@ -206,54 +199,52 @@ func TestJSONLStoreRejectsInvalidRevenueRecords(t *testing.T) {
 	if err := store.SaveCustomerVoice(ctx, domainrevenue.CustomerVoice{VoiceID: "voice_1", RawText: "よかった", PermissionStatus: "unknown", UsableForMarketing: true}); err == nil {
 		t.Fatal("expected marketing voice without permission to fail")
 	}
-	if err := store.SaveHumanDecisionGateRecord(ctx, domainrevenue.HumanDecisionGateRecord{DecisionID: "dec_1", DecisionType: "external_publish", ApprovalStatus: "granted", GateStatus: "approved"}); err == nil {
-		t.Fatal("expected invalid decision approval status to fail")
+	if err := store.SavePolicyDecisionRecord(ctx, domainrevenue.PolicyDecisionRecord{DecisionID: "dec_1", DecisionType: "external_publish", Status: "adopted"}); err == nil {
+		t.Fatal("expected invalid decision status to fail")
 	}
 	if err := store.SaveDailyRoutineReport(ctx, domainrevenue.DailyRoutineReport{ReportID: "daily_1", Date: "2026-05-18", Status: "sent", ExternalSendApplied: true}); err == nil {
 		t.Fatal("expected non-draft daily routine report to fail")
 	}
-	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "送信済み", ApprovalStatus: "approved", ExternalSendApplied: true}); err == nil {
+	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "送信済み", ExternalSendApplied: true}); err == nil {
 		t.Fatal("expected externally applied channel draft to fail")
 	}
-	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApprovalStatus: "pending", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "no adapter", CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("legacy approval fields must not block external send audit: %v", err)
+	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "no adapter", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("external send audit failed: %v", err)
 	}
-	if err := store.SaveOpportunity(ctx, domainrevenue.Opportunity{OpportunityID: "opp_1", SourceKind: "note", Title: "必ず稼げる資料", ApprovalState: "draft", CreatedAt: time.Now()}); err == nil {
+	if err := store.SaveOpportunity(ctx, domainrevenue.Opportunity{OpportunityID: "opp_1", SourceKind: "note", Title: "必ず稼げる資料", CreatedAt: time.Now()}); err == nil {
 		t.Fatal("expected prohibited opportunity claim to fail")
 	}
-	if err := store.SaveEconomicTask(ctx, domainrevenue.EconomicTask{TaskID: "task_1", OpportunityID: "opp_1", AgentID: "shiro", TaskKind: "billing", Status: "planned", ApprovalMode: "none", CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("billing task must not wait for human approval: %v", err)
+	if err := store.SaveEconomicTask(ctx, domainrevenue.EconomicTask{TaskID: "task_1", OpportunityID: "opp_1", AgentID: "shiro", TaskKind: "billing", Status: "planned", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("billing task failed: %v", err)
 	}
 }
 
-func TestJSONLStoreListHumanDecisionGateRecordsReturnsLatestStatePerDecision(t *testing.T) {
+func TestJSONLStoreListPolicyDecisionRecordsReturnsLatestStatePerDecision(t *testing.T) {
 	store := NewJSONLStore(t.TempDir())
 	ctx := context.Background()
 	now := time.Date(2026, 5, 19, 8, 47, 0, 0, time.UTC)
-	pending := domainrevenue.HumanDecisionGateRecord{
-		DecisionID:       "dec_1",
-		DecisionType:     "closed_channel_send",
-		ApprovalStatus:   "pending",
-		GateStatus:       "needs_review",
-		RequiresApproval: true,
-		CreatedAt:        now,
+	blocked := domainrevenue.PolicyDecisionRecord{
+		DecisionID:   "dec_1",
+		DecisionType: "closed_channel_send",
+		Status:       "blocked",
+		Reasons:      []string{"target is outside policy scope"},
+		CreatedAt:    now,
 	}
-	approved := pending
-	approved.ApprovalStatus = "approved"
-	approved.GateStatus = "approved"
-	approved.Reasons = nil
-	if err := store.SaveHumanDecisionGateRecord(ctx, pending); err != nil {
-		t.Fatalf("SaveHumanDecisionGateRecord(pending) failed: %v", err)
+	allowed := blocked
+	allowed.Status = "allowed"
+	allowed.Reasons = nil
+	if err := store.SavePolicyDecisionRecord(ctx, blocked); err != nil {
+		t.Fatalf("SavePolicyDecisionRecord(blocked) failed: %v", err)
 	}
-	if err := store.SaveHumanDecisionGateRecord(ctx, approved); err != nil {
-		t.Fatalf("SaveHumanDecisionGateRecord(approved) failed: %v", err)
+	if err := store.SavePolicyDecisionRecord(ctx, allowed); err != nil {
+		t.Fatalf("SavePolicyDecisionRecord(allowed) failed: %v", err)
 	}
 
-	decisions, err := store.ListHumanDecisionGateRecords(ctx, 10)
+	decisions, err := store.ListPolicyDecisionRecords(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListHumanDecisionGateRecords failed: %v", err)
+		t.Fatalf("ListPolicyDecisionRecords failed: %v", err)
 	}
-	if len(decisions) != 1 || decisions[0].DecisionID != "dec_1" || decisions[0].ApprovalStatus != "approved" || decisions[0].GateStatus != "approved" {
+	if len(decisions) != 1 || decisions[0].DecisionID != "dec_1" || decisions[0].Status != "allowed" {
 		t.Fatalf("decisions=%#v", decisions)
 	}
 }

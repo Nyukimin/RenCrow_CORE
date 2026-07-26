@@ -50,7 +50,6 @@ func TestAdvisorStoresRoundTripNewestFirst(t *testing.T) {
 					RunID:            runID,
 					RequestedByAgent: "shiro",
 					AdvisorID:        advisorDomain.AdvisorCodex,
-					ApprovalMode:     "advice_only",
 					Status:           advisorDomain.AdviceStatus(advisorDomain.StatusCompleted),
 					PromptHash:       "prompt-hash",
 					OutputHash:       "output-hash",
@@ -129,7 +128,7 @@ func TestJSONLStoreDoesNotPersistPromptOrRawOutputFields(t *testing.T) {
 	now := time.Now().UTC()
 	err := store.SaveAdviceRun(context.Background(), advisorDomain.AdviceRunRecord{
 		RunID: "run-1", RequestedByAgent: "shiro", AdvisorID: advisorDomain.AdvisorCodex,
-		ApprovalMode: "advice_only", Status: advisorDomain.AdviceStatus(advisorDomain.StatusCompleted),
+		Status:     advisorDomain.AdviceStatus(advisorDomain.StatusCompleted),
 		PromptHash: "safe-prompt-hash", OutputHash: "safe-output-hash", StartedAt: now, FinishedAt: now,
 	})
 	if err != nil {

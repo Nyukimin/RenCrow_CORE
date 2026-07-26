@@ -64,7 +64,7 @@ func HandleRevenueOpportunities(store RevenueStore) http.HandlerFunc {
 				return
 			}
 			writeJSON(w, http.StatusCreated, map[string]any{
-				"opportunity": created, "human_approval_required_for_publish": false,
+				"opportunity":                          created,
 				"execution_policy_evaluated_at_action": true,
 			})
 		default:
@@ -112,8 +112,8 @@ func HandleRevenueEconomicTasks(store RevenueStore) http.HandlerFunc {
 				return
 			}
 			writeJSON(w, http.StatusCreated, map[string]any{
-				"economic_task": created, "human_approval_required": domainrevenue.RequiresHumanApproval(created.TaskKind),
-				"auto_execution_allowed": !domainrevenue.RequiresHumanApproval(created.TaskKind),
+				"economic_task":                        created,
+				"execution_policy_evaluated_at_action": true,
 			})
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -282,8 +282,8 @@ func HandleRevenueOpportunityWorkstreamGoal(store RevenueStore, goalStore revenu
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
-			"goal": chain.Goal, "artifact": chain.Artifact, "approval": chain.Approval,
-			"status": "pending_review", "external_actions_applied": false,
+			"goal": chain.Goal, "artifact": chain.Artifact, "policy_decision": chain.PolicyDecision,
+			"status": chain.PolicyDecision.Status, "external_actions_applied": false,
 		})
 	}
 }

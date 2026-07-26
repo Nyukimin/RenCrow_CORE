@@ -88,7 +88,6 @@ type Opportunity struct {
 	AutomationRate  float64   `json:"automation_rate,omitempty"`
 	StrategicValue  float64   `json:"strategic_value,omitempty"`
 	RiskScore       float64   `json:"risk_score,omitempty"`
-	ApprovalState   string    `json:"approval_state"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at,omitempty"`
 }
@@ -104,7 +103,6 @@ type EconomicTask struct {
 	ExpectedValue float64   `json:"expected_value,omitempty"`
 	Risk          float64   `json:"risk,omitempty"`
 	Cost          float64   `json:"cost,omitempty"`
-	ApprovalMode  string    `json:"approval_mode"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at,omitempty"`
 }
@@ -132,7 +130,7 @@ type DailyRoutineReport struct {
 	CustomerVoices      int       `json:"customer_voice_count"`
 	RevenueEvents       int       `json:"revenue_event_count"`
 	PaidCustomers       int       `json:"paid_customer_count"`
-	PendingDecisions    int       `json:"pending_decision_count"`
+	BlockedDecisions    int       `json:"blocked_decision_count"`
 	SuggestedActions    []string  `json:"suggested_actions,omitempty"`
 	Status              string    `json:"status"`
 	ExternalSendApplied bool      `json:"external_send_applied"`
@@ -148,7 +146,6 @@ type ChannelDraft struct {
 	Subject             string    `json:"subject,omitempty"`
 	Body                string    `json:"body"`
 	SourceReportID      string    `json:"source_report_id,omitempty"`
-	ApprovalStatus      string    `json:"approval_status"`
 	ExternalSendApplied bool      `json:"external_send_applied"`
 	CreatedAt           time.Time `json:"created_at"`
 }
@@ -162,8 +159,6 @@ type ExternalSendApplyRecord struct {
 	Channel             string    `json:"channel"`
 	Destination         string    `json:"destination,omitempty"`
 	ChannelAdapter      string    `json:"channel_adapter,omitempty"`
-	ApprovalStatus      string    `json:"approval_status"`
-	HumanApproved       bool      `json:"human_approved"`
 	ApplyStatus         string    `json:"apply_status"`
 	SendResult          string    `json:"send_result"`
 	FailureReason       string    `json:"failure_reason,omitempty"`
@@ -181,7 +176,6 @@ type Delivery struct {
 	WorkstreamID     string    `json:"workstream_id,omitempty"`
 	ArtifactID       string    `json:"artifact_id,omitempty"`
 	PolicyDecisionID string    `json:"policy_decision_id,omitempty"`
-	ApprovalID       string    `json:"approval_id,omitempty"`
 	DeliveryKind     string    `json:"delivery_kind"`
 	Status           string    `json:"status"`
 	Target           string    `json:"target,omitempty"`
@@ -198,31 +192,27 @@ type EthicsCheck struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-type HumanDecisionGateRequest struct {
-	DecisionID     string    `json:"decision_id,omitempty"`
-	TraceID        string    `json:"trace_id,omitempty"`
-	DecisionType   string    `json:"decision_type"`
-	SubjectID      string    `json:"subject_id,omitempty"`
-	Description    string    `json:"description,omitempty"`
-	ApprovalStatus string    `json:"approval_status,omitempty"`
-	CreatedAt      time.Time `json:"created_at,omitempty"`
+type PolicyDecisionRequest struct {
+	DecisionID   string    `json:"decision_id,omitempty"`
+	TraceID      string    `json:"trace_id,omitempty"`
+	DecisionType string    `json:"decision_type"`
+	SubjectID    string    `json:"subject_id,omitempty"`
+	Description  string    `json:"description,omitempty"`
+	CreatedAt    time.Time `json:"created_at,omitempty"`
 }
 
-type HumanDecisionGateResult struct {
-	Status           string   `json:"status"`
-	RequiresApproval bool     `json:"requires_approval"`
-	Reasons          []string `json:"reasons,omitempty"`
+type PolicyDecisionResult struct {
+	Status  string   `json:"status"`
+	Reasons []string `json:"reasons,omitempty"`
 }
 
-type HumanDecisionGateRecord struct {
-	DecisionID       string    `json:"decision_id"`
-	TraceID          string    `json:"trace_id,omitempty"`
-	DecisionType     string    `json:"decision_type"`
-	SubjectID        string    `json:"subject_id,omitempty"`
-	Description      string    `json:"description,omitempty"`
-	ApprovalStatus   string    `json:"approval_status"`
-	GateStatus       string    `json:"gate_status"`
-	RequiresApproval bool      `json:"requires_approval"`
-	Reasons          []string  `json:"reasons,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
+type PolicyDecisionRecord struct {
+	DecisionID   string    `json:"decision_id"`
+	TraceID      string    `json:"trace_id,omitempty"`
+	DecisionType string    `json:"decision_type"`
+	SubjectID    string    `json:"subject_id,omitempty"`
+	Description  string    `json:"description,omitempty"`
+	Status       string    `json:"status"`
+	Reasons      []string  `json:"reasons,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }

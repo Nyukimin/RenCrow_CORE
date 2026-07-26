@@ -47,7 +47,6 @@ func TestAdviceRunRecordValidate(t *testing.T) {
 		RunID:            "run-1",
 		RequestedByAgent: "shiro",
 		AdvisorID:        AdvisorCodex,
-		ApprovalMode:     "advice_only",
 		Status:           AdviceStatus(StatusCompleted),
 		StartedAt:        now,
 		FinishedAt:       now.Add(time.Second),
@@ -63,7 +62,6 @@ func TestAdviceRunRecordValidateRejectsUnsupportedPolicyValues(t *testing.T) {
 		RunID:            "run-1",
 		RequestedByAgent: "shiro",
 		AdvisorID:        AdvisorCodex,
-		ApprovalMode:     "auto_apply",
 		Status:           AdviceStatus("running"),
 	}
 	if err := record.Validate(); err == nil {

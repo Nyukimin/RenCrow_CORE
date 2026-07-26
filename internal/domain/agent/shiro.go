@@ -154,7 +154,7 @@ func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t task.Task) (
 		switch decision.Decision {
 		case "forbidden":
 			return "", false, nil
-		case "approval_required", "allowed":
+		case "allowed":
 		default:
 			log.Printf("[Shiro] ask_advisor policy returned unsupported decision %q; using normal worker path", decision.Decision)
 			return "", false, nil
@@ -192,7 +192,6 @@ func (s *ShiroAgent) requestCodexAdvice(ctx context.Context, path routing.CodexW
 		Purpose:          "codex_work_path:" + string(path.Domain),
 		Prompt:           buildCodexWorkPrompt(path, t.UserMessage()),
 		RiskClass:        "low",
-		ApprovalMode:     "advice_only",
 	})
 	if err != nil {
 		return "", true, err

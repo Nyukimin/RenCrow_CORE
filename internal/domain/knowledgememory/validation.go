@@ -138,9 +138,9 @@ func ValidateDreamConsolidationRun(item DreamConsolidationRun) error {
 		if item.Status != "draft" && item.Status != "proposal" {
 			return fmt.Errorf("dream consolidation pending review requires draft or proposal status")
 		}
-	case "approved":
+	case "adopted":
 		if item.Status != "reviewed" && item.Status != "promoted" {
-			return fmt.Errorf("dream consolidation cannot be auto-approved")
+			return fmt.Errorf("dream consolidation cannot be auto-adopted")
 		}
 	case "rejected":
 		if item.Status != "rejected" {
@@ -179,7 +179,7 @@ func isDreamStatus(status string) bool {
 
 func isDreamReviewStatus(status string) bool {
 	switch strings.TrimSpace(status) {
-	case "pending", "approved", "rejected":
+	case "pending", "adopted", "rejected":
 		return true
 	default:
 		return false

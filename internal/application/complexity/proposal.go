@@ -108,7 +108,6 @@ func BuildConcreteDiffProposalMarkdown(hotspot domaincomplexity.Hotspot, concret
 	fmt.Fprintf(&b, "- Risk: `%s`\n\n", hotspot.RiskLevel)
 	fmt.Fprintf(&b, "## Review State\n\n")
 	fmt.Fprintf(&b, "- Patch applied: `false`\n")
-	fmt.Fprintf(&b, "- Human approval required: `false`\n")
 	if strings.TrimSpace(testResultPath) != "" {
 		fmt.Fprintf(&b, "- Test result path: `%s`\n", strings.TrimSpace(testResultPath))
 	}
@@ -171,7 +170,7 @@ func writeExternalPRReviewChecklist(b *strings.Builder, hotspot domaincomplexity
 	fmt.Fprintf(b, "- Confirm this is a real observed performance or complexity problem, not a speculative cleanup.\n")
 	fmt.Fprintf(b, "- Keep one PR to one hotspot and one intent: `%s`.\n", fallbackText(hotspot.HotspotID, "unknown"))
 	fmt.Fprintf(b, "- Search existing open and closed issues / PRs before external submission.\n")
-	fmt.Fprintf(b, "- Include complete diff, test result, rollback plan, and risk explanation for human review.\n")
+	fmt.Fprintf(b, "- Include complete diff, test result, rollback plan, and risk explanation for quality review.\n")
 	fmt.Fprintf(b, "- If the change is project-specific, keep it local instead of proposing it as a core or upstream change.\n")
 }
 

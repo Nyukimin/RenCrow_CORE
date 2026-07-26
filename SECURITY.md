@@ -14,5 +14,5 @@ Repository owner の GitHub profile から private contact を利用するか、
 
 - API key、token、private key を YAML やログへ保存しない。
 - Viewer や管理 API を外部公開する場合は、network boundary と認証を別途設計する。
-- Tool、Browser、Worker の書込・外部送信範囲を allowlist と approval で制限する。
-- 公開、送信、請求、契約、価格決定を人間承認なしに実行しない。
+- Tool、Browser、Worker の書込・外部送信範囲を allowlist、capability、同期policyで制限する。
+- 公開、送信、請求、契約、価格決定は、専用capability、対象scope、上限、credential、監査条件が揃った場合だけ実行し、それ以外は理由付きで`blocked`にする。

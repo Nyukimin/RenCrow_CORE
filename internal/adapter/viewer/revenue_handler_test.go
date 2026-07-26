@@ -40,7 +40,7 @@ type stubRevenueStore struct {
 	products      []domainrevenue.Product
 	voices        []domainrevenue.CustomerVoice
 	events        []domainrevenue.RevenueEvent
-	decisions     []domainrevenue.HumanDecisionGateRecord
+	decisions     []domainrevenue.PolicyDecisionRecord
 	daily         []domainrevenue.DailyRoutineReport
 	drafts        []domainrevenue.ChannelDraft
 	applies       []domainrevenue.ExternalSendApplyRecord
@@ -96,7 +96,7 @@ func (s *stubRevenueStore) ListRevenueEvents(_ context.Context, limit int) ([]do
 	return s.events, nil
 }
 
-func (s *stubRevenueStore) ListHumanDecisionGateRecords(_ context.Context, limit int) ([]domainrevenue.HumanDecisionGateRecord, error) {
+func (s *stubRevenueStore) ListPolicyDecisionRecords(_ context.Context, limit int) ([]domainrevenue.PolicyDecisionRecord, error) {
 	s.limit = limit
 	return s.decisions, nil
 }
@@ -156,8 +156,8 @@ func (s *stubRevenueStore) SaveRevenueEvent(_ context.Context, item domainrevenu
 	return nil
 }
 
-func (s *stubRevenueStore) SaveHumanDecisionGateRecord(_ context.Context, item domainrevenue.HumanDecisionGateRecord) error {
-	if err := domainrevenue.ValidateHumanDecisionGateRecord(item); err != nil {
+func (s *stubRevenueStore) SavePolicyDecisionRecord(_ context.Context, item domainrevenue.PolicyDecisionRecord) error {
+	if err := domainrevenue.ValidatePolicyDecisionRecord(item); err != nil {
 		return err
 	}
 	s.decisions = append(s.decisions, item)
@@ -229,12 +229,12 @@ func TestHandleRevenueStatus(t *testing.T) {
 		products:      []domainrevenue.Product{{ProductID: "prod_1", ProductName: "商品設計シート", Status: "active"}},
 		voices:        []domainrevenue.CustomerVoice{{VoiceID: "voice_1", VoiceType: "confusion", RawText: "good", UsableForMarketing: true, CreatedAt: day}},
 		events:        []domainrevenue.RevenueEvent{{EventID: "rev_1", EventType: "purchase", ProductID: "prod_1", Amount: 980, CustomerID: "cust_1", CreatedAt: day}},
-		decisions:     []domainrevenue.HumanDecisionGateRecord{{DecisionID: "dec_1", DecisionType: "external_publish", ApprovalStatus: "pending", GateStatus: "needs_review"}},
+		decisions:     []domainrevenue.PolicyDecisionRecord{{DecisionID: "dec_1", DecisionType: "external_publish", Status: "blocked"}},
 		daily:         []domainrevenue.DailyRoutineReport{{ReportID: "daily_1", Date: "2026-05-18", Status: "draft_report"}},
-		drafts:        []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "本文", ApprovalStatus: "pending", CreatedAt: day}},
-		applies:       []domainrevenue.ExternalSendApplyRecord{{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_2", Channel: "email", ApprovalStatus: "approved", HumanApproved: true, ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured", CreatedAt: day}},
-		opportunities: []domainrevenue.Opportunity{{OpportunityID: "opp_1", SourceKind: "market_research", Title: "Draft opportunity", ApprovalState: "draft", CreatedAt: day}},
-		economicTasks: []domainrevenue.EconomicTask{{TaskID: "task_1", OpportunityID: "opp_1", AgentID: "shiro", TaskKind: "billing", Status: "draft", ApprovalMode: "human_required", CreatedAt: day}},
+		drafts:        []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "本文", CreatedAt: day}},
+		applies:       []domainrevenue.ExternalSendApplyRecord{{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_2", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured", CreatedAt: day}},
+		opportunities: []domainrevenue.Opportunity{{OpportunityID: "opp_1", SourceKind: "market_research", Title: "Draft opportunity", CreatedAt: day}},
+		economicTasks: []domainrevenue.EconomicTask{{TaskID: "task_1", OpportunityID: "opp_1", AgentID: "shiro", TaskKind: "billing", Status: "draft", CreatedAt: day}},
 		reflections:   []domainrevenue.EconomicReflection{{ReflectionID: "reflection_1", OpportunityID: "opp_1", Outcome: "drafted", CreatedAt: day}},
 	}
 	req := httptest.NewRequest(http.MethodGet, "/viewer/revenue?limit=5", nil)
@@ -249,19 +249,18 @@ func TestHandleRevenueStatus(t *testing.T) {
 		t.Fatalf("limit=%d", store.limit)
 	}
 	var body struct {
-		MarketResearch                       []domainrevenue.MarketResearchItem      `json:"market_research"`
-		Products                             []domainrevenue.Product                 `json:"products"`
-		Voices                               []domainrevenue.CustomerVoice           `json:"customer_voices"`
-		Events                               []domainrevenue.RevenueEvent            `json:"revenue_events"`
-		Decisions                            []domainrevenue.HumanDecisionGateRecord `json:"human_decisions"`
-		DailyReports                         []domainrevenue.DailyRoutineReport      `json:"daily_routine_reports"`
-		ChannelDrafts                        []domainrevenue.ChannelDraft            `json:"channel_drafts"`
-		Applies                              []domainrevenue.ExternalSendApplyRecord `json:"external_send_apply_records"`
-		ExternalChannelAdapter               string                                  `json:"external_channel_adapter"`
-		ExternalChannelAdapterConfigured     bool                                    `json:"external_channel_adapter_configured"`
-		HumanApprovalRequiredForExternalSend bool                                    `json:"human_approval_required_for_external_send"`
-		Summary                              RevenueDashboardSummary                 `json:"summary"`
-		EconomicObjective                    RevenueEconomicObjectiveSummary         `json:"economic_objective"`
+		MarketResearch                   []domainrevenue.MarketResearchItem      `json:"market_research"`
+		Products                         []domainrevenue.Product                 `json:"products"`
+		Voices                           []domainrevenue.CustomerVoice           `json:"customer_voices"`
+		Events                           []domainrevenue.RevenueEvent            `json:"revenue_events"`
+		Decisions                        []domainrevenue.PolicyDecisionRecord    `json:"policy_decisions"`
+		DailyReports                     []domainrevenue.DailyRoutineReport      `json:"daily_routine_reports"`
+		ChannelDrafts                    []domainrevenue.ChannelDraft            `json:"channel_drafts"`
+		Applies                          []domainrevenue.ExternalSendApplyRecord `json:"external_send_apply_records"`
+		ExternalChannelAdapter           string                                  `json:"external_channel_adapter"`
+		ExternalChannelAdapterConfigured bool                                    `json:"external_channel_adapter_configured"`
+		Summary                          RevenueDashboardSummary                 `json:"summary"`
+		EconomicObjective                RevenueEconomicObjectiveSummary         `json:"economic_objective"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -281,7 +280,7 @@ func TestHandleRevenueStatus(t *testing.T) {
 	if len(body.Applies) != 1 || body.Applies[0].ApplyID != "apply_1" {
 		t.Fatalf("external send applies=%#v", body.Applies)
 	}
-	if body.ExternalChannelAdapter != "unconfigured" || body.ExternalChannelAdapterConfigured || body.HumanApprovalRequiredForExternalSend {
+	if body.ExternalChannelAdapter != "unconfigured" || body.ExternalChannelAdapterConfigured {
 		t.Fatalf("external channel readiness=%#v", body)
 	}
 	if body.Summary.MarketResearchCount != 1 ||
@@ -290,7 +289,7 @@ func TestHandleRevenueStatus(t *testing.T) {
 		body.Summary.PurchaseCount != 1 ||
 		body.Summary.TotalRevenueAmount != 980 ||
 		body.Summary.PaidCustomerCount != 1 ||
-		body.Summary.PendingDecisionCount != 1 ||
+		body.Summary.BlockedDecisionCount != 1 ||
 		body.Summary.LatestDailyReportID != "daily_1" ||
 		body.Summary.ChannelDraftCount != 1 ||
 		body.Summary.LatestChannelDraftID != "draft_1" ||
@@ -298,7 +297,7 @@ func TestHandleRevenueStatus(t *testing.T) {
 		t.Fatalf("summary=%#v", body.Summary)
 	}
 	if !body.EconomicObjective.Enabled || !body.EconomicObjective.DraftOnly || !body.EconomicObjective.ExternalActionBlocked ||
-		body.EconomicObjective.OpportunityCount != 1 || body.EconomicObjective.PendingApprovalTaskCount != 0 || body.EconomicObjective.ReflectionCount != 1 {
+		body.EconomicObjective.OpportunityCount != 1 || body.EconomicObjective.ReflectionCount != 1 {
 		t.Fatalf("economic objective summary=%#v", body.EconomicObjective)
 	}
 	if len(body.Summary.KPITrend) != 1 ||
@@ -392,7 +391,7 @@ func TestHandleRevenueCreateEndpoints(t *testing.T) {
 			path:    "/viewer/revenue/channel-drafts",
 			body:    `{"draft_id":"draft_1","channel":"email","subject":"案内","body":"下書き本文"}`,
 			assert: func(t *testing.T, store *stubRevenueStore) {
-				if len(store.drafts) != 1 || store.drafts[0].ApprovalStatus != "not_required" || store.drafts[0].ExternalSendApplied {
+				if len(store.drafts) != 1 || store.drafts[0].ExternalSendApplied {
 					t.Fatalf("drafts=%#v", store.drafts)
 				}
 			},
@@ -431,7 +430,7 @@ func TestHandleRevenueProductCreateRejectsSuccessGuarantee(t *testing.T) {
 func TestHandleRevenueEconomicObjectiveEndpoints(t *testing.T) {
 	store := &stubRevenueStore{}
 	oppReq := httptest.NewRequest(http.MethodPost, "/viewer/revenue/opportunities", bytes.NewBufferString(`{
-		"opportunity_id":"opp-1","source_kind":"note_archive","title":"ローカルLLM技術資料","expected_revenue":3000,"expected_cost":800,"approval_state":"draft"
+		"opportunity_id":"opp-1","source_kind":"note_archive","title":"ローカルLLM技術資料","expected_revenue":3000,"expected_cost":800
 	}`))
 	oppRec := httptest.NewRecorder()
 	HandleRevenueOpportunities(store).ServeHTTP(oppRec, oppReq)
@@ -440,7 +439,7 @@ func TestHandleRevenueEconomicObjectiveEndpoints(t *testing.T) {
 	}
 
 	taskReq := httptest.NewRequest(http.MethodPost, "/viewer/revenue/economic-tasks", bytes.NewBufferString(`{
-		"task_id":"task-1","opportunity_id":"opp-1","agent_id":"shiro","task_kind":"billing","status":"draft","approval_mode":"none"
+		"task_id":"task-1","opportunity_id":"opp-1","agent_id":"shiro","task_kind":"billing","status":"draft"
 	}`))
 	taskRec := httptest.NewRecorder()
 	HandleRevenueEconomicTasks(store).ServeHTTP(taskRec, taskReq)
@@ -470,15 +469,15 @@ func TestHandleRevenueEconomicObjectiveEndpoints(t *testing.T) {
 		t.Fatalf("trace mismatch goal=%#v artifact=%#v decision=%#v", goals.goals[0], goals.artifacts[0], store.decisions[0])
 	}
 	var chainBody struct {
-		Goal     domainworkstream.Goal                 `json:"goal"`
-		Artifact domainworkstream.Artifact             `json:"artifact"`
-		Approval domainrevenue.HumanDecisionGateRecord `json:"approval"`
+		Goal           domainworkstream.Goal              `json:"goal"`
+		Artifact       domainworkstream.Artifact          `json:"artifact"`
+		PolicyDecision domainrevenue.PolicyDecisionRecord `json:"policy_decision"`
 	}
 	if err := json.Unmarshal(goalRec.Body.Bytes(), &chainBody); err != nil {
 		t.Fatalf("decode chain response: %v", err)
 	}
 	if chainBody.Artifact.ArtifactID != goals.artifacts[0].ArtifactID ||
-		chainBody.Approval.DecisionID != store.decisions[0].DecisionID {
+		chainBody.PolicyDecision.DecisionID != store.decisions[0].DecisionID {
 		t.Fatalf("chain response=%#v", chainBody)
 	}
 	missingReq := httptest.NewRequest(http.MethodPost, "/viewer/revenue/opportunities/workstream-goal", bytes.NewBufferString(`{"opportunity_id":"missing","workstream_id":"ws-revenue"}`))
@@ -493,7 +492,7 @@ func TestHandleRevenueDeliveriesGeneratesAndPropagatesTrace(t *testing.T) {
 	now := time.Now().UTC()
 	store := &stubRevenueStore{opportunities: []domainrevenue.Opportunity{{
 		OpportunityID: "opp-delivery", TraceID: "trc-economic", SourceKind: "note",
-		Title: "Delivery trace", ApprovalState: "draft", CreatedAt: now,
+		Title: "Delivery trace", CreatedAt: now,
 	}}}
 	body := bytes.NewBufferString(`{
 		"delivery_id":"delivery-1",
@@ -535,30 +534,30 @@ func TestHandleRevenueEconomicObjectiveReadEndpointsReturnUnavailableWarnings(t 
 	}
 }
 
-func TestHandleRevenueHumanDecisionGateAllowsWithoutReview(t *testing.T) {
+func TestHandleRevenuePolicyDecisionAllowsSafeAction(t *testing.T) {
 	store := &stubRevenueStore{}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/human-decision-gate", bytes.NewBufferString(`{
+	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/policy-decisions", bytes.NewBufferString(`{
 		"decision_id":"dec_1",
 		"decision_type":"high_ticket_offer",
 		"description":"30万円の導入支援を案内する"
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleRevenueHumanDecisionGate(store).ServeHTTP(rec, req)
+	HandleRevenuePolicyDecision(store).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	var body struct {
-		Result domainrevenue.HumanDecisionGateResult `json:"result"`
+		Result domainrevenue.PolicyDecisionResult `json:"result"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Result.Status != "allowed" || body.Result.RequiresApproval {
+	if body.Result.Status != "allowed" {
 		t.Fatalf("unexpected result: %#v", body.Result)
 	}
-	if len(store.decisions) != 1 || store.decisions[0].ApprovalStatus != "not_required" {
+	if len(store.decisions) != 1 || store.decisions[0].Status != "allowed" {
 		t.Fatalf("decisions=%#v", store.decisions)
 	}
 	if store.decisions[0].TraceID == "" {
@@ -615,23 +614,22 @@ func TestHandleRevenueChannelDraftCreateInheritsOpportunityTrace(t *testing.T) {
 	}
 }
 
-func TestHandleRevenueHumanDecisionGateBlocksProhibitedClaim(t *testing.T) {
+func TestHandleRevenuePolicyDecisionBlocksProhibitedClaim(t *testing.T) {
 	store := &stubRevenueStore{}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/human-decision-gate", bytes.NewBufferString(`{
+	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/policy-decisions", bytes.NewBufferString(`{
 		"decision_id":"dec_1",
 		"decision_type":"external_publish",
-		"description":"必ず稼げますと投稿する",
-		"approval_status":"approved"
+		"description":"必ず稼げますと投稿する"
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleRevenueHumanDecisionGate(store).ServeHTTP(rec, req)
+	HandleRevenuePolicyDecision(store).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	var body struct {
-		Result domainrevenue.HumanDecisionGateResult `json:"result"`
+		Result domainrevenue.PolicyDecisionResult `json:"result"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -641,95 +639,18 @@ func TestHandleRevenueHumanDecisionGateBlocksProhibitedClaim(t *testing.T) {
 	}
 }
 
-func TestHandleRevenueHumanDecisionGateRejectsMissingDecisionID(t *testing.T) {
+func TestHandleRevenuePolicyDecisionRejectsMissingDecisionID(t *testing.T) {
 	store := &stubRevenueStore{}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/human-decision-gate", bytes.NewBufferString(`{
+	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/policy-decisions", bytes.NewBufferString(`{
 		"decision_type":"high_ticket_offer",
 		"description":"30万円の導入支援を案内する"
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleRevenueHumanDecisionGate(store).ServeHTTP(rec, req)
+	HandleRevenuePolicyDecision(store).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHandleRevenueHumanDecisionGateReviewApprovesExistingDecision(t *testing.T) {
-	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
-	store := &stubRevenueStore{
-		decisions: []domainrevenue.HumanDecisionGateRecord{{
-			DecisionID:       "dec_1",
-			DecisionType:     "high_ticket_offer",
-			Description:      "30万円の導入支援を案内する",
-			ApprovalStatus:   "pending",
-			GateStatus:       "needs_review",
-			RequiresApproval: true,
-			CreatedAt:        now,
-		}},
-	}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/human-decision-gate/review", bytes.NewBufferString(`{
-		"decision_id":"dec_1",
-		"approval_status":"approved"
-	}`))
-	rec := httptest.NewRecorder()
-
-	HandleRevenueHumanDecisionGateReview(store).ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	var body struct {
-		Record domainrevenue.HumanDecisionGateRecord `json:"record"`
-		Result domainrevenue.HumanDecisionGateResult `json:"result"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if body.Record.DecisionID != "dec_1" || body.Record.ApprovalStatus != "approved" || body.Result.Status != "allowed" || body.Result.RequiresApproval {
-		t.Fatalf("unexpected review response: %#v", body)
-	}
-	if len(store.decisions) != 2 || store.decisions[1].ApprovalStatus != "approved" {
-		t.Fatalf("decisions=%#v", store.decisions)
-	}
-}
-
-func TestHandleRevenueLegacyReviewRejectionDoesNotBlockPolicy(t *testing.T) {
-	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
-	store := &stubRevenueStore{
-		decisions: []domainrevenue.HumanDecisionGateRecord{{
-			DecisionID:       "dec_1",
-			DecisionType:     "external_publish",
-			Description:      "投稿下書きを公開する",
-			ApprovalStatus:   "pending",
-			GateStatus:       "needs_review",
-			RequiresApproval: true,
-			CreatedAt:        now,
-		}},
-	}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/human-decision-gate/review", bytes.NewBufferString(`{
-		"decision_id":"dec_1",
-		"approval_status":"rejected"
-	}`))
-	rec := httptest.NewRecorder()
-
-	HandleRevenueHumanDecisionGateReview(store).ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	var body struct {
-		Result domainrevenue.HumanDecisionGateResult `json:"result"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if body.Result.Status != "allowed" || body.Result.RequiresApproval {
-		t.Fatalf("unexpected result: %#v", body.Result)
-	}
-	if len(store.decisions) != 2 || store.decisions[1].ApprovalStatus != "rejected" {
-		t.Fatalf("decisions=%#v", store.decisions)
 	}
 }
 
@@ -744,12 +665,10 @@ func TestHandleRevenueDailyRoutineReportCreatesDraftOnlyReport(t *testing.T) {
 		}},
 		voices: []domainrevenue.CustomerVoice{{VoiceID: "voice_1", RawText: "ここがわからない", PermissionStatus: "unknown"}},
 		events: []domainrevenue.RevenueEvent{{EventID: "rev_1", EventType: "purchase", Amount: 980, CustomerID: "cust_1"}},
-		decisions: []domainrevenue.HumanDecisionGateRecord{{
-			DecisionID:       "dec_1",
-			DecisionType:     "external_publish",
-			ApprovalStatus:   "pending",
-			GateStatus:       "needs_review",
-			RequiresApproval: true,
+		decisions: []domainrevenue.PolicyDecisionRecord{{
+			DecisionID:   "dec_1",
+			DecisionType: "external_publish",
+			Status:       "blocked",
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/daily-routine", bytes.NewBufferString(`{
@@ -772,49 +691,31 @@ func TestHandleRevenueDailyRoutineReportCreatesDraftOnlyReport(t *testing.T) {
 	if report.Status != "draft_report" || report.ExternalSendApplied {
 		t.Fatalf("expected draft-only report: %#v", report)
 	}
-	if report.MarketResearch != 1 || report.SNSPosts != 1 || report.Products != 1 || report.CustomerVoices != 1 || report.RevenueEvents != 1 || report.PaidCustomers != 1 || report.PendingDecisions != 1 {
+	if report.MarketResearch != 1 || report.SNSPosts != 1 || report.Products != 1 || report.CustomerVoices != 1 || report.RevenueEvents != 1 || report.PaidCustomers != 1 || report.BlockedDecisions != 1 {
 		t.Fatalf("unexpected counts: %#v", report)
 	}
 	var body struct {
-		Report                                  domainrevenue.DailyRoutineReport `json:"daily_routine_report"`
-		Agent                                   string                           `json:"agent"`
-		Mode                                    string                           `json:"mode"`
-		ExternalActionsApplied                  bool                             `json:"external_actions_applied"`
-		HumanApprovalRequiredForExternalActions bool                             `json:"human_approval_required_for_external_actions"`
+		Report                 domainrevenue.DailyRoutineReport `json:"daily_routine_report"`
+		Agent                  string                           `json:"agent"`
+		Mode                   string                           `json:"mode"`
+		ExternalActionsApplied bool                             `json:"external_actions_applied"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Agent != "RevenueAgent" || body.Mode != "draft_report_only" || body.Report.ReportID != "daily_1" || body.ExternalActionsApplied || body.HumanApprovalRequiredForExternalActions {
+	if body.Agent != "RevenueAgent" || body.Mode != "draft_report_only" || body.Report.ReportID != "daily_1" || body.ExternalActionsApplied {
 		t.Fatalf("unexpected response: %#v", body)
 	}
 }
 
-func TestHandleRevenueHumanDecisionGateReviewRejectsInvalidApprovalStatus(t *testing.T) {
-	store := &stubRevenueStore{}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/human-decision-gate/review", bytes.NewBufferString(`{
-		"decision_id":"dec_1",
-		"approval_status":"pending"
-	}`))
-	rec := httptest.NewRecorder()
-
-	HandleRevenueHumanDecisionGateReview(store).ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHandleRevenueExternalSendApplyDoesNotRequireHumanApproval(t *testing.T) {
+func TestHandleRevenueExternalSendApplyRequiresAllowedPolicy(t *testing.T) {
 	store := &stubRevenueStore{
-		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ApprovalStatus: "pending"}},
-		decisions: []domainrevenue.HumanDecisionGateRecord{{
-			DecisionID:       "dec_1",
-			DecisionType:     "closed_channel_send",
-			SubjectID:        "draft_1",
-			ApprovalStatus:   "approved",
-			GateStatus:       "approved",
-			RequiresApproval: true,
+		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文"}},
+		decisions: []domainrevenue.PolicyDecisionRecord{{
+			DecisionID:   "dec_1",
+			DecisionType: "closed_channel_send",
+			SubjectID:    "draft_1",
+			Status:       "allowed",
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
@@ -829,31 +730,28 @@ func TestHandleRevenueExternalSendApplyDoesNotRequireHumanApproval(t *testing.T)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.applies) != 1 || store.applies[0].HumanApproved || store.applies[0].ApprovalStatus != "not_required" {
+	if len(store.applies) != 1 {
 		t.Fatalf("applies=%#v", store.applies)
 	}
 }
 
 func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable(t *testing.T) {
 	store := &stubRevenueStore{
-		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", TraceID: "trc_external_send", Channel: "email", Body: "下書き本文", ApprovalStatus: "pending"}},
-		decisions: []domainrevenue.HumanDecisionGateRecord{{
-			DecisionID:       "dec_1",
-			TraceID:          "trc_external_send",
-			DecisionType:     "closed_channel_send",
-			SubjectID:        "draft_1",
-			ApprovalStatus:   "approved",
-			GateStatus:       "approved",
-			RequiresApproval: true,
+		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", TraceID: "trc_external_send", Channel: "email", Body: "下書き本文"}},
+		decisions: []domainrevenue.PolicyDecisionRecord{{
+			DecisionID:   "dec_1",
+			TraceID:      "trc_external_send",
+			DecisionType: "closed_channel_send",
+			SubjectID:    "draft_1",
+			Status:       "adopted",
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
 		"apply_id":"apply_1",
 		"draft_id":"draft_1",
-		"decision_id":"dec_1",
-		"destination":"customer@example.test",
-		"channel_adapter":"slack",
-		"human_approved":true
+			"decision_id":"dec_1",
+			"destination":"customer@example.test",
+			"channel_adapter":"slack"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -875,7 +773,7 @@ func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable
 	if len(store.deliveries) != 1 {
 		t.Fatalf("deliveries=%#v", store.deliveries)
 	}
-	if store.deliveries[0].PolicyDecisionID != "dec_1" || store.deliveries[0].ApprovalID != "" {
+	if store.deliveries[0].PolicyDecisionID != "dec_1" {
 		t.Fatalf("delivery policy identity=%#v", store.deliveries[0])
 	}
 	delivery := store.deliveries[0]
@@ -896,23 +794,20 @@ func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable
 	}
 }
 
-func TestHandleRevenueExternalSendApplyIgnoresLegacyPendingApproval(t *testing.T) {
+func TestHandleRevenueExternalSendApplyUsesAllowedPolicyDecision(t *testing.T) {
 	store := &stubRevenueStore{
-		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ApprovalStatus: "pending"}},
-		decisions: []domainrevenue.HumanDecisionGateRecord{{
-			DecisionID:       "dec_1",
-			DecisionType:     "closed_channel_send",
-			SubjectID:        "draft_1",
-			ApprovalStatus:   "pending",
-			GateStatus:       "needs_review",
-			RequiresApproval: true,
+		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文"}},
+		decisions: []domainrevenue.PolicyDecisionRecord{{
+			DecisionID:   "dec_1",
+			DecisionType: "closed_channel_send",
+			SubjectID:    "draft_1",
+			Status:       "needs_review",
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
 		"apply_id":"apply_1",
 		"draft_id":"draft_1",
-		"decision_id":"dec_1",
-		"human_approved":true
+		"decision_id":"dec_1"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -928,21 +823,18 @@ func TestHandleRevenueExternalSendApplyIgnoresLegacyPendingApproval(t *testing.T
 
 func TestHandleRevenueExternalSendApplyRejectsDecisionSubjectMismatch(t *testing.T) {
 	store := &stubRevenueStore{
-		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ApprovalStatus: "pending"}},
-		decisions: []domainrevenue.HumanDecisionGateRecord{{
-			DecisionID:       "dec_1",
-			DecisionType:     "closed_channel_send",
-			SubjectID:        "draft_2",
-			ApprovalStatus:   "approved",
-			GateStatus:       "approved",
-			RequiresApproval: true,
+		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文"}},
+		decisions: []domainrevenue.PolicyDecisionRecord{{
+			DecisionID:   "dec_1",
+			DecisionType: "closed_channel_send",
+			SubjectID:    "draft_2",
+			Status:       "adopted",
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
 		"apply_id":"apply_1",
 		"draft_id":"draft_1",
-		"decision_id":"dec_1",
-		"human_approved":true
+		"decision_id":"dec_1"
 	}`))
 	rec := httptest.NewRecorder()
 

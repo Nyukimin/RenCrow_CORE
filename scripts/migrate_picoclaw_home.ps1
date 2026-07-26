@@ -76,7 +76,7 @@ if ($DryRun) {
             Write-Log "removing empty leftover directory $NestedDir"
             Remove-Item -LiteralPath $NestedDir -Force
         } else {
-            Write-Log "WARNING: $NestedDir still has content after de-nesting, left in place for manual review:"
+            Write-Log "WARNING: $NestedDir still has content after de-nesting, left in place for operator inspection:"
             $remaining | ForEach-Object { Write-Log "WARNING:   $($_.Name)" }
         }
     }

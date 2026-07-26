@@ -64,7 +64,6 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 		ExpectedRevenue: 3000,
 		ExpectedCost:    800,
 		RiskScore:       0.2,
-		ApprovalState:   "draft",
 		CreatedAt:       now,
 	}); err != nil {
 		t.Fatalf("SaveOpportunity failed: %v", err)
@@ -78,7 +77,6 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 		ExpectedValue: 0.7,
 		Risk:          0.1,
 		Cost:          0.2,
-		ApprovalMode:  "none",
 		CreatedAt:     now,
 	}); err != nil {
 		t.Fatalf("SaveEconomicTask failed: %v", err)
@@ -93,15 +91,13 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveEconomicReflection failed: %v", err)
 	}
-	if err := store.SaveHumanDecisionGateRecord(ctx, domainrevenue.HumanDecisionGateRecord{
-		DecisionID:       "dec_1",
-		DecisionType:     "high_ticket_offer",
-		ApprovalStatus:   "pending",
-		GateStatus:       "needs_review",
-		RequiresApproval: true,
-		CreatedAt:        now,
+	if err := store.SavePolicyDecisionRecord(ctx, domainrevenue.PolicyDecisionRecord{
+		DecisionID:   "dec_1",
+		DecisionType: "high_ticket_offer",
+		Status:       "blocked",
+		CreatedAt:    now,
 	}); err != nil {
-		t.Fatalf("SaveHumanDecisionGateRecord failed: %v", err)
+		t.Fatalf("SavePolicyDecisionRecord failed: %v", err)
 	}
 	if err := store.SaveDailyRoutineReport(ctx, domainrevenue.DailyRoutineReport{
 		ReportID:            "daily_1",
@@ -113,12 +109,11 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 		t.Fatalf("SaveDailyRoutineReport failed: %v", err)
 	}
 	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{
-		DraftID:        "draft_1",
-		Channel:        "email",
-		Subject:        "購入者向け案内",
-		Body:           "下書き本文",
-		ApprovalStatus: "pending",
-		CreatedAt:      now,
+		DraftID:   "draft_1",
+		Channel:   "email",
+		Subject:   "購入者向け案内",
+		Body:      "下書き本文",
+		CreatedAt: now,
 	}); err != nil {
 		t.Fatalf("SaveChannelDraft failed: %v", err)
 	}
@@ -127,8 +122,6 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		ApplyStatus:         "blocked",
 		SendResult:          "not_sent",
 		FailureReason:       "external channel adapter is not configured",
@@ -168,8 +161,8 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 	assertOne("economic tasks", err, len(tasks))
 	reflections, err := store.ListEconomicReflections(ctx, 10)
 	assertOne("economic reflections", err, len(reflections))
-	decisions, err := store.ListHumanDecisionGateRecords(ctx, 10)
-	assertOne("human decisions", err, len(decisions))
+	decisions, err := store.ListPolicyDecisionRecords(ctx, 10)
+	assertOne("policy decisions", err, len(decisions))
 	daily, err := store.ListDailyRoutineReports(ctx, 10)
 	assertOne("daily routine reports", err, len(daily))
 	drafts, err := store.ListChannelDrafts(ctx, 10)
@@ -198,7 +191,7 @@ func TestSQLiteStoreRejectsSuccessGuaranteeProduct(t *testing.T) {
 	}
 }
 
-func TestSQLiteStoreAllowsEconomicTaskWithoutHumanApproval(t *testing.T) {
+func TestSQLiteStoreAllowsEconomicTask(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "revenue.db"))
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
@@ -210,10 +203,9 @@ func TestSQLiteStoreAllowsEconomicTaskWithoutHumanApproval(t *testing.T) {
 		AgentID:       "shiro",
 		TaskKind:      "external_publish",
 		Status:        "planned",
-		ApprovalMode:  "none",
 		CreatedAt:     time.Now(),
 	})
 	if err != nil {
-		t.Fatalf("external publish task must not wait for human approval: %v", err)
+		t.Fatalf("external publish task should persist: %v", err)
 	}
 }

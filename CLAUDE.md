@@ -29,7 +29,7 @@
 | `docs/04_アーキテクチャ概要.md` | module、UI、code、依存、storage境界 |
 | `docs/05_設定リファレンス.md` | config読込、主要section、外部endpoint |
 | `docs/06_Public_API仕様.md` | health、Viewer、PORTAL、client契約 |
-| `docs/07_安全・承認・データ方針.md` | approval、secret、Memory、degraded state |
+| `docs/07_安全・自動実行・データ方針.md` | 同期policy、secret、Memory、degraded state |
 | `docs/08_実装状況・ロードマップ.md` | 実装済み、未実装、deployment依存、旧構想 |
 | `docs/09_運用ログ・panic保存仕様.md` | logging、panic、restart、self-repair、retention |
 
@@ -41,7 +41,7 @@
 - providerやbackend固有のmodel、context、常駐、management方式をCOREの固定要件にしない。
 - Goのversionとmodule pathは `go.mod`、公開設定例は `config/config.yaml.example` を実ファイルとして確認する。
 - secretはsource、docs、log、trace、artifactへ保存しない。
-- side effect、approval、degraded state、healthの意味を黙って変更しない。
+- side effect、同期policy、degraded state、healthの意味を黙って変更しない。
 - docsだけの変更でも、索引、相対link、CI guard、旧正本参照がないことを確認する。
 
 ## 作業ルールの入口

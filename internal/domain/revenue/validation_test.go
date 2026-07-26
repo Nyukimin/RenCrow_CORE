@@ -95,9 +95,9 @@ func TestValidateRevenueRejectsMissingCreatedAt(t *testing.T) {
 		{name: "customer voice", err: ValidateCustomerVoice(CustomerVoice{VoiceID: "voice_1", RawText: "よかった", PermissionStatus: "unknown"})},
 		{name: "revenue event", err: ValidateRevenueEvent(RevenueEvent{EventID: "rev_1", EventType: "purchase"})},
 		{name: "daily routine", err: ValidateDailyRoutineReport(DailyRoutineReport{ReportID: "daily_1", Date: "2026-05-20", Status: "draft_report"})},
-		{name: "channel draft", err: ValidateChannelDraft(ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ApprovalStatus: "pending"})},
-		{name: "external send apply", err: ValidateExternalSendApplyRecord(ExternalSendApplyRecord{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApprovalStatus: "approved", HumanApproved: true, ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured"})},
-		{name: "human decision", err: ValidateHumanDecisionGateRecord(HumanDecisionGateRecord{DecisionID: "dec_1", DecisionType: "external_publish", ApprovalStatus: "pending", GateStatus: "needs_review"})},
+		{name: "channel draft", err: ValidateChannelDraft(ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "下書き本文"})},
+		{name: "external send apply", err: ValidateExternalSendApplyRecord(ExternalSendApplyRecord{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured"})},
+		{name: "policy decision", err: ValidatePolicyDecisionRecord(PolicyDecisionRecord{DecisionID: "dec_1", DecisionType: "external_publish", Status: "blocked"})},
 		{name: "product updated_at optional", err: ValidateProduct(Product{ProductID: "prod_1", ProductName: "商品設計シート", Status: "draft", CreatedAt: now})},
 	}
 	for _, tc := range cases {
@@ -117,8 +117,8 @@ func TestValidateRevenueRejectsMissingCreatedAt(t *testing.T) {
 
 func TestValidateChannelDraft(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
-	if err := ValidateChannelDraft(ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ApprovalStatus: "", CreatedAt: now}); err != nil {
-		t.Fatalf("empty approval status should use pending semantics: %v", err)
+	if err := ValidateChannelDraft(ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "下書き本文", CreatedAt: now}); err != nil {
+		t.Fatalf("empty policy metadata should be accepted: %v", err)
 	}
 
 	cases := []struct {
@@ -126,12 +126,11 @@ func TestValidateChannelDraft(t *testing.T) {
 		item ChannelDraft
 		want string
 	}{
-		{name: "missing id", item: ChannelDraft{Channel: "email", Body: "下書き本文", ApprovalStatus: "pending", CreatedAt: now}, want: "draft_id"},
-		{name: "missing channel", item: ChannelDraft{DraftID: "draft_1", Body: "下書き本文", ApprovalStatus: "pending", CreatedAt: now}, want: "channel"},
-		{name: "missing body", item: ChannelDraft{DraftID: "draft_1", Channel: "email", ApprovalStatus: "pending", CreatedAt: now}, want: "body"},
-		{name: "invalid approval status", item: ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ApprovalStatus: "granted", CreatedAt: now}, want: "approval_status"},
-		{name: "external send applied", item: ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ApprovalStatus: "approved", ExternalSendApplied: true, CreatedAt: now}, want: "external send"},
-		{name: "prohibited claim", item: ChannelDraft{DraftID: "draft_1", Channel: "email", Subject: "案内", Body: "誰でも必ず稼げる", ApprovalStatus: "pending", CreatedAt: now}, want: "prohibited revenue claim"},
+		{name: "missing id", item: ChannelDraft{Channel: "email", Body: "下書き本文", CreatedAt: now}, want: "draft_id"},
+		{name: "missing channel", item: ChannelDraft{DraftID: "draft_1", Body: "下書き本文", CreatedAt: now}, want: "channel"},
+		{name: "missing body", item: ChannelDraft{DraftID: "draft_1", Channel: "email", CreatedAt: now}, want: "body"},
+		{name: "external send applied", item: ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ExternalSendApplied: true, CreatedAt: now}, want: "external send"},
+		{name: "prohibited claim", item: ChannelDraft{DraftID: "draft_1", Channel: "email", Subject: "案内", Body: "誰でも必ず稼げる", CreatedAt: now}, want: "prohibited revenue claim"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,43 +142,41 @@ func TestValidateChannelDraft(t *testing.T) {
 	}
 }
 
-func TestEvaluateHumanDecisionGateAllowsHighTicketOfferWithoutApprovalWait(t *testing.T) {
-	result := EvaluateHumanDecisionGate(HumanDecisionGateRequest{
+func TestEvaluatePolicyDecisionAllowsHighTicketOffer(t *testing.T) {
+	result := EvaluatePolicyDecision(PolicyDecisionRequest{
 		DecisionType: "high_ticket_offer",
 		Description:  "30万円の導入支援を案内する",
 	})
 
-	if result.Status != "allowed" || result.RequiresApproval {
+	if result.Status != "allowed" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }
 
-func TestEvaluateHumanDecisionGateIgnoresLegacyRejectedApproval(t *testing.T) {
-	result := EvaluateHumanDecisionGate(HumanDecisionGateRequest{
-		DecisionType:   "customer_voice_publication",
-		Description:    "購入者の声を販売ページへ掲載する",
-		ApprovalStatus: "rejected",
+func TestEvaluatePolicyDecisionAllowsSafePublication(t *testing.T) {
+	result := EvaluatePolicyDecision(PolicyDecisionRequest{
+		DecisionType: "customer_voice_publication",
+		Description:  "購入者の声を販売ページへ掲載する",
 	})
 
-	if result.Status != "allowed" || result.RequiresApproval {
+	if result.Status != "allowed" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }
 
-func TestEvaluateHumanDecisionGateAllowsApprovedDecision(t *testing.T) {
-	result := EvaluateHumanDecisionGate(HumanDecisionGateRequest{
-		DecisionType:   "product_price",
-		Description:    "低単価商品の価格を980円にする",
-		ApprovalStatus: "approved",
+func TestEvaluatePolicyDecisionAllowsSafePriceDecision(t *testing.T) {
+	result := EvaluatePolicyDecision(PolicyDecisionRequest{
+		DecisionType: "product_price",
+		Description:  "低単価商品の価格を980円にする",
 	})
 
-	if result.Status != "allowed" || result.RequiresApproval {
+	if result.Status != "allowed" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }
 
-func TestEvaluateHumanDecisionGateBlocksProhibitedClaim(t *testing.T) {
-	result := EvaluateHumanDecisionGate(HumanDecisionGateRequest{
+func TestEvaluatePolicyDecisionBlocksProhibitedClaim(t *testing.T) {
+	result := EvaluatePolicyDecision(PolicyDecisionRequest{
 		DecisionType: "external_publish",
 		Description:  "誰でも必ず稼げると投稿する",
 	})
@@ -189,64 +186,63 @@ func TestEvaluateHumanDecisionGateBlocksProhibitedClaim(t *testing.T) {
 	}
 }
 
-func TestEvaluateHumanDecisionGateBlocksMissingTypeAndApprovesSafeInternalDecision(t *testing.T) {
-	missing := EvaluateHumanDecisionGate(HumanDecisionGateRequest{Description: "通常の内部メモ"})
-	if missing.Status != "blocked" || missing.RequiresApproval || len(missing.Reasons) == 0 {
+func TestEvaluatePolicyDecisionBlocksMissingTypeAndAllowsSafeInternalDecision(t *testing.T) {
+	missing := EvaluatePolicyDecision(PolicyDecisionRequest{Description: "通常の内部メモ"})
+	if missing.Status != "blocked" || len(missing.Reasons) == 0 {
 		t.Fatalf("unexpected missing type result: %#v", missing)
 	}
 
-	safe := EvaluateHumanDecisionGate(HumanDecisionGateRequest{
+	safe := EvaluatePolicyDecision(PolicyDecisionRequest{
 		DecisionType: "internal_note",
 		Description:  "次回の商品改善メモを作る",
 	})
-	if safe.Status != "allowed" || safe.RequiresApproval {
+	if safe.Status != "allowed" {
 		t.Fatalf("unexpected safe result: %#v", safe)
 	}
 }
 
-func TestBuildHumanDecisionGateRecordDefaultsToNoApprovalRequired(t *testing.T) {
+func TestBuildPolicyDecisionRecordReturnsAllowed(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
-	record := BuildHumanDecisionGateRecord(HumanDecisionGateRequest{
+	record := BuildPolicyDecisionRecord(PolicyDecisionRequest{
 		DecisionID:   "dec_1",
 		DecisionType: "high_ticket_offer",
 		Description:  "30万円の導入支援を案内する",
 		CreatedAt:    now,
 	})
 
-	if record.ApprovalStatus != "not_required" || record.GateStatus != "allowed" || record.RequiresApproval {
+	if record.Status != "allowed" {
 		t.Fatalf("unexpected record: %#v", record)
 	}
-	if err := ValidateHumanDecisionGateRecord(record); err != nil {
+	if err := ValidatePolicyDecisionRecord(record); err != nil {
 		t.Fatalf("record should be valid: %v", err)
 	}
 }
 
-func TestValidateHumanDecisionGateRecordRejectsInvalidApprovalStatus(t *testing.T) {
-	err := ValidateHumanDecisionGateRecord(HumanDecisionGateRecord{
-		DecisionID:     "dec_1",
-		DecisionType:   "external_publish",
-		ApprovalStatus: "granted",
-		GateStatus:     "approved",
+func TestValidatePolicyDecisionRecordRejectsInvalidStatus(t *testing.T) {
+	err := ValidatePolicyDecisionRecord(PolicyDecisionRecord{
+		DecisionID:   "dec_1",
+		DecisionType: "external_publish",
+		Status:       "adopted",
 	})
 	if err == nil {
-		t.Fatal("expected invalid approval_status to fail")
+		t.Fatal("expected invalid status to fail")
 	}
 }
 
-func TestValidateHumanDecisionGateRecordRequiredFields(t *testing.T) {
+func TestValidatePolicyDecisionRecordRequiredFields(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	cases := []struct {
 		name string
-		item HumanDecisionGateRecord
+		item PolicyDecisionRecord
 		want string
 	}{
-		{name: "missing id", item: HumanDecisionGateRecord{DecisionType: "external_publish", ApprovalStatus: "pending", GateStatus: "needs_review", CreatedAt: now}, want: "decision_id"},
-		{name: "missing type", item: HumanDecisionGateRecord{DecisionID: "dec_1", ApprovalStatus: "pending", GateStatus: "needs_review", CreatedAt: now}, want: "decision_type"},
-		{name: "missing gate status", item: HumanDecisionGateRecord{DecisionID: "dec_1", DecisionType: "external_publish", ApprovalStatus: "pending", CreatedAt: now}, want: "gate_status"},
+		{name: "missing id", item: PolicyDecisionRecord{DecisionType: "external_publish", Status: "blocked", CreatedAt: now}, want: "decision_id"},
+		{name: "missing type", item: PolicyDecisionRecord{DecisionID: "dec_1", Status: "blocked", CreatedAt: now}, want: "decision_type"},
+		{name: "missing status", item: PolicyDecisionRecord{DecisionID: "dec_1", DecisionType: "external_publish", CreatedAt: now}, want: "status"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateHumanDecisionGateRecord(tc.item)
+			err := ValidatePolicyDecisionRecord(tc.item)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err=%v, want containing %q", err, tc.want)
 			}
@@ -254,14 +250,13 @@ func TestValidateHumanDecisionGateRecordRequiredFields(t *testing.T) {
 	}
 }
 
-func TestValidateExternalSendApplyRecordDoesNotRequireHumanDecision(t *testing.T) {
+func TestValidateExternalSendApplyRecordUsesPolicyDecision(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	record := ExternalSendApplyRecord{
 		ApplyID:             "apply_1",
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",
-		ApprovalStatus:      "not_required",
 		ApplyStatus:         "blocked",
 		SendResult:          "not_sent",
 		FailureReason:       "external channel adapter is not configured",
@@ -272,11 +267,6 @@ func TestValidateExternalSendApplyRecordDoesNotRequireHumanDecision(t *testing.T
 		t.Fatalf("record should be valid: %v", err)
 	}
 
-	record.ApprovalStatus = "pending"
-	if err := ValidateExternalSendApplyRecord(record); err != nil {
-		t.Fatalf("legacy pending approval must not block: %v", err)
-	}
-	record.ApprovalStatus = "not_required"
 	record.ExternalSendApplied = true
 	if err := ValidateExternalSendApplyRecord(record); err == nil {
 		t.Fatal("expected externally applied non-sent record to fail")
@@ -317,16 +307,14 @@ func TestValidateDeliveryRequiresStableTraceAndProtectsExternalCompletion(t *tes
 func TestValidateExternalSendApplyRecordRequiredFieldsAndStatuses(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	validBlocked := ExternalSendApplyRecord{
-		ApplyID:        "apply_1",
-		DraftID:        "draft_1",
-		DecisionID:     "dec_1",
-		Channel:        "email",
-		ApprovalStatus: "approved",
-		HumanApproved:  true,
-		ApplyStatus:    "blocked",
-		SendResult:     "not_sent",
-		FailureReason:  "external channel adapter is not configured",
-		CreatedAt:      now,
+		ApplyID:       "apply_1",
+		DraftID:       "draft_1",
+		DecisionID:    "dec_1",
+		Channel:       "email",
+		ApplyStatus:   "blocked",
+		SendResult:    "not_sent",
+		FailureReason: "external channel adapter is not configured",
+		CreatedAt:     now,
 	}
 	cases := []struct {
 		name   string
@@ -360,8 +348,6 @@ func TestValidateExternalSendApplyRecordRequiresSentStateForSuccessfulSend(t *te
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		ApplyStatus:         "sent",
 		SendResult:          "sent",
 		ExternalSendApplied: false,
@@ -394,8 +380,6 @@ func TestValidateExternalSendApplyRecordRejectsVerificationWithoutSentStatus(t *
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		ApplyStatus:         "blocked",
 		SendResult:          "not_sent",
 		FailureReason:       "external channel adapter is not configured",
@@ -413,8 +397,6 @@ func TestValidateExternalSendApplyRecordRejectsSentResultWithoutSentStatus(t *te
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		ApplyStatus:         "blocked",
 		SendResult:          "sent",
 		FailureReason:       "external channel adapter is not configured",
@@ -439,13 +421,13 @@ func TestBuildDailyRoutineReportIsDraftOnly(t *testing.T) {
 			{EventID: "rev_1", EventType: "purchase", Amount: 980, CustomerID: "cust_1"},
 			{EventID: "rev_2", EventType: "purchase", Amount: 1980, CustomerID: "cust_1"},
 		},
-		Decisions: []HumanDecisionGateRecord{{DecisionID: "dec_1", DecisionType: "external_publish", ApprovalStatus: "pending", GateStatus: "needs_review"}},
+		Decisions: []PolicyDecisionRecord{{DecisionID: "dec_1", DecisionType: "external_publish", Status: "blocked"}},
 	})
 
 	if report.Status != "draft_report" || report.ExternalSendApplied {
 		t.Fatalf("expected draft-only report: %#v", report)
 	}
-	if report.PaidCustomers != 1 || report.PendingDecisions != 1 {
+	if report.PaidCustomers != 1 || report.BlockedDecisions != 1 {
 		t.Fatalf("unexpected counts: %#v", report)
 	}
 	if err := ValidateDailyRoutineReport(report); err != nil {

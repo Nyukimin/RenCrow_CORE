@@ -126,7 +126,7 @@ type memoryRevenueDailyRoutineStore struct {
 	products  []domainrevenue.Product
 	voices    []domainrevenue.CustomerVoice
 	events    []domainrevenue.RevenueEvent
-	decisions []domainrevenue.HumanDecisionGateRecord
+	decisions []domainrevenue.PolicyDecisionRecord
 	reports   []domainrevenue.DailyRoutineReport
 }
 
@@ -159,8 +159,8 @@ func (s *memoryRevenueDailyRoutineStore) ListRevenueEvents(_ context.Context, _ 
 	return append([]domainrevenue.RevenueEvent(nil), s.events...), nil
 }
 
-func (s *memoryRevenueDailyRoutineStore) ListHumanDecisionGateRecords(_ context.Context, _ int) ([]domainrevenue.HumanDecisionGateRecord, error) {
-	return append([]domainrevenue.HumanDecisionGateRecord(nil), s.decisions...), nil
+func (s *memoryRevenueDailyRoutineStore) ListPolicyDecisionRecords(_ context.Context, _ int) ([]domainrevenue.PolicyDecisionRecord, error) {
+	return append([]domainrevenue.PolicyDecisionRecord(nil), s.decisions...), nil
 }
 
 func (s *memoryRevenueDailyRoutineStore) SaveDailyRoutineReport(_ context.Context, item domainrevenue.DailyRoutineReport) error {
@@ -791,7 +791,7 @@ func TestRunDueWorkstreamHeartbeatsCreatesRevenueDailyRoutineDraftReport(t *test
 		}},
 		voices:    []domainrevenue.CustomerVoice{{VoiceID: "voice_1", RawText: "ここがわからない", PermissionStatus: "unknown"}},
 		events:    []domainrevenue.RevenueEvent{{EventID: "rev_1", EventType: "purchase", Amount: 980, CustomerID: "cust_1"}},
-		decisions: []domainrevenue.HumanDecisionGateRecord{{DecisionID: "dec_1", DecisionType: "external_publish", ApprovalStatus: "pending", GateStatus: "needs_review"}},
+		decisions: []domainrevenue.PolicyDecisionRecord{{DecisionID: "dec_1", DecisionType: "external_publish", Status: "blocked"}},
 	}
 	sender := &mockSender{}
 	svc := NewHeartbeatService(&mockWorkerAgent{response: "revenue draft"}, sender, dir, 30).
@@ -815,7 +815,7 @@ func TestRunDueWorkstreamHeartbeatsCreatesRevenueDailyRoutineDraftReport(t *test
 	if daily.Status != "draft_report" || daily.ExternalSendApplied {
 		t.Fatalf("expected draft-only revenue report: %#v", daily)
 	}
-	if daily.WorkstreamID != "ws_revenue" || daily.MarketResearch != 1 || daily.SNSPosts != 1 || daily.Products != 1 || daily.CustomerVoices != 1 || daily.RevenueEvents != 1 || daily.PaidCustomers != 1 || daily.PendingDecisions != 1 {
+	if daily.WorkstreamID != "ws_revenue" || daily.MarketResearch != 1 || daily.SNSPosts != 1 || daily.Products != 1 || daily.CustomerVoices != 1 || daily.RevenueEvents != 1 || daily.PaidCustomers != 1 || daily.BlockedDecisions != 1 {
 		t.Fatalf("unexpected revenue daily routine report: %#v", daily)
 	}
 }

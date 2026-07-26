@@ -40,27 +40,25 @@ func TestSQLiteStoreSaveAndListSandboxRecords(t *testing.T) {
 		t.Fatalf("SaveSandboxArtifact failed: %v", err)
 	}
 	if err := store.SavePromotionRequest(ctx, domainsandbox.PromotionRequest{
-		PromotionID:         "prom_1",
-		SandboxID:           "sbx_1",
-		WorkstreamID:        "ws_1",
-		GoalID:              "goal_1",
-		TargetPath:          "docs/example.md",
-		DiffPath:            "sandbox/ws_1/sbx_1/diff.patch",
-		Reason:              "仕様反映",
-		TestResultPath:      "sandbox/ws_1/sbx_1/test.txt",
-		RollbackPlanPath:    "sandbox/ws_1/sbx_1/rollback.md",
-		HumanApprovalStatus: domainsandbox.ApprovalPending,
-		CreatedAt:           now,
+		PromotionID:      "prom_1",
+		SandboxID:        "sbx_1",
+		WorkstreamID:     "ws_1",
+		GoalID:           "goal_1",
+		TargetPath:       "docs/example.md",
+		DiffPath:         "sandbox/ws_1/sbx_1/diff.patch",
+		Reason:           "仕様反映",
+		TestResultPath:   "sandbox/ws_1/sbx_1/test.txt",
+		RollbackPlanPath: "sandbox/ws_1/sbx_1/rollback.md",
+		CreatedAt:        now,
 	}); err != nil {
 		t.Fatalf("SavePromotionRequest failed: %v", err)
 	}
 	if err := store.SavePromotionGateLog(ctx, domainsandbox.PromotionGateLog{
-		EventID:             "evt_gate_1",
-		PromotionID:         "prom_1",
-		GateStatus:          domainsandbox.GateStatusNeedsReview,
-		Reason:              "promotion requirements missing: human_approval",
-		HumanApprovalStatus: domainsandbox.ApprovalPending,
-		CreatedAt:           now,
+		EventID:     "evt_gate_1",
+		PromotionID: "prom_1",
+		GateStatus:  domainsandbox.GateStatusNeedsReview,
+		Reason:      "promotion requirements missing: rollback_plan_path",
+		CreatedAt:   now,
 	}); err != nil {
 		t.Fatalf("SavePromotionGateLog failed: %v", err)
 	}

@@ -84,7 +84,7 @@ func (s *SQLiteStore) migrate() error {
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS human_decision_gate (
+		`CREATE TABLE IF NOT EXISTS policy_decision (
 			decision_id TEXT PRIMARY KEY,
 			created_at TEXT,
 			payload TEXT NOT NULL
@@ -207,15 +207,15 @@ func (s *SQLiteStore) ListEconomicReflections(ctx context.Context, limit int) ([
 	return listSQLiteItems[domainrevenue.EconomicReflection](ctx, s, "economic_reflection", limit)
 }
 
-func (s *SQLiteStore) SaveHumanDecisionGateRecord(ctx context.Context, item domainrevenue.HumanDecisionGateRecord) error {
-	if err := domainrevenue.ValidateHumanDecisionGateRecord(item); err != nil {
+func (s *SQLiteStore) SavePolicyDecisionRecord(ctx context.Context, item domainrevenue.PolicyDecisionRecord) error {
+	if err := domainrevenue.ValidatePolicyDecisionRecord(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "human_decision_gate", "decision_id", item.DecisionID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "policy_decision", "decision_id", item.DecisionID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
-func (s *SQLiteStore) ListHumanDecisionGateRecords(ctx context.Context, limit int) ([]domainrevenue.HumanDecisionGateRecord, error) {
-	return listSQLiteItems[domainrevenue.HumanDecisionGateRecord](ctx, s, "human_decision_gate", limit)
+func (s *SQLiteStore) ListPolicyDecisionRecords(ctx context.Context, limit int) ([]domainrevenue.PolicyDecisionRecord, error) {
+	return listSQLiteItems[domainrevenue.PolicyDecisionRecord](ctx, s, "policy_decision", limit)
 }
 
 func (s *SQLiteStore) SaveDailyRoutineReport(ctx context.Context, item domainrevenue.DailyRoutineReport) error {

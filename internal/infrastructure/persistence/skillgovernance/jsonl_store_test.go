@@ -58,8 +58,6 @@ func TestJSONLStoreSaveAndListSkillGovernanceRecords(t *testing.T) {
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
 		SubmitStatus:        domainskill.ExternalPRSubmitStatusBlocked,
 		FailureReason:       "external PR adapter is not configured",
 		CreatedAt:           now,
@@ -73,7 +71,7 @@ func TestJSONLStoreSaveAndListSkillGovernanceRecords(t *testing.T) {
 		Agent:     "Coder",
 		Role:      "coder",
 		Segment:   "plan",
-		Text:      "complete diff を提示して Human approval を待つ",
+		Text:      "complete diff と検証結果を提示する",
 		CreatedAt: now,
 	}); err != nil {
 		t.Fatalf("SaveCoderTranscriptEntry failed: %v", err)

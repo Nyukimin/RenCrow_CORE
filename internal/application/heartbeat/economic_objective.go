@@ -189,7 +189,7 @@ func newDraftOpportunity(id, sourceKind, title, summary, target string, expected
 	return domainrevenue.Opportunity{
 		OpportunityID: id, SourceKind: sourceKind, Title: strings.TrimSpace(title), Summary: strings.TrimSpace(summary),
 		TargetCustomer: strings.TrimSpace(target), ExpectedRevenue: expectedRevenue, ReuseValue: 0.5,
-		AutomationRate: 0.25, StrategicValue: 0.5, RiskScore: 0.25, ApprovalState: "draft", CreatedAt: now,
+		AutomationRate: 0.25, StrategicValue: 0.5, RiskScore: 0.25, CreatedAt: now,
 	}
 }
 

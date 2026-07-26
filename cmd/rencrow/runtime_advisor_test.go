@@ -54,8 +54,7 @@ func TestBuildAdvisorRuntimeWiresRecordingAndPolicy(t *testing.T) {
 	}
 	_, err = runtime.Service.RequestAdvice(context.Background(), domainadvisor.AdviceRequest{
 		ID: "req-1", RequestedByAgent: "shiro", AdvisorID: domainadvisor.AdvisorCodex,
-		Purpose: "review", Prompt: "inspect", ApprovalMode: "advice_only",
-	})
+		Purpose: "review", Prompt: "inspect"})
 	if err != nil {
 		t.Fatalf("RequestAdvice failed: %v", err)
 	}

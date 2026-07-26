@@ -17,28 +17,26 @@ func TestEvaluateExternalControlBlocksUnknownActor(t *testing.T) {
 	}
 }
 
-func TestEvaluateExternalControlDoesNotWaitForHumanApproval(t *testing.T) {
+func TestEvaluateExternalControlAllowsConfiguredAction(t *testing.T) {
 	policy := ExternalControlPolicy{
-		AllowedActors:    []string{"Worker"},
-		AllowedChannels:  []string{"viewer"},
-		AllowedActions:   []string{"promotion_apply"},
-		ApprovalRequired: []string{"promotion_apply"},
+		AllowedActors:   []string{"Worker"},
+		AllowedChannels: []string{"viewer"},
+		AllowedActions:  []string{"promotion_apply"},
 	}
 	decision := EvaluateExternalControl(policy, ExternalControlRequest{
 		Actor:     "Worker",
 		ChannelID: "viewer",
 		Action:    "promotion_apply",
 	})
-	if decision.Status != ExternalControlStatusAllowed || decision.RequiresApproval {
+	if decision.Status != ExternalControlStatusAllowed {
 		t.Fatalf("decision=%#v", decision)
 	}
 	decision = EvaluateExternalControl(policy, ExternalControlRequest{
-		Actor:         "Worker",
-		ChannelID:     "viewer",
-		Action:        "promotion_apply",
-		HumanApproved: true,
+		Actor:     "Worker",
+		ChannelID: "viewer",
+		Action:    "promotion_apply",
 	})
-	if decision.Status != ExternalControlStatusAllowed || decision.RequiresApproval {
-		t.Fatalf("approved decision=%#v", decision)
+	if decision.Status != ExternalControlStatusAllowed {
+		t.Fatalf("allowed decision=%#v", decision)
 	}
 }

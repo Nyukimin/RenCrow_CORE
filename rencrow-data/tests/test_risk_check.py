@@ -548,7 +548,7 @@ class RiskCheckTest(unittest.TestCase):
                 "--operator",
                 "unit-test",
                 "--reason",
-                "manual review cleared",
+                "operator reset recorded",
                 "--resolve-event-id",
                 str(stop_summary["event_id"]),
                 "--json",
@@ -574,7 +574,7 @@ class RiskCheckTest(unittest.TestCase):
                 (stop_summary["event_id"],),
             ).fetchone()
             self.assertTrue(row[0])
-            self.assertIn("manual review cleared", row[1])
+            self.assertIn("operator reset recorded", row[1])
 
     def test_manual_stop_resolution_input_errors_return_code_4_and_log_failure(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -586,7 +586,7 @@ class RiskCheckTest(unittest.TestCase):
                 "--operator",
                 "unit-test",
                 "--reason",
-                "manual review cleared",
+                "operator reset recorded",
                 "--resolve-event-id",
                 "9999",
                 "--json",
@@ -613,7 +613,7 @@ class RiskCheckTest(unittest.TestCase):
                 "--operator",
                 "unit-test",
                 "--reason",
-                "manual review cleared",
+                "operator reset recorded",
                 "--resolve-event-id",
                 str(stop_summary["event_id"]),
                 "--json",
@@ -625,7 +625,7 @@ class RiskCheckTest(unittest.TestCase):
                 "--operator",
                 "unit-test",
                 "--reason",
-                "manual review cleared again",
+                "operator reset recorded again",
                 "--resolve-event-id",
                 str(stop_summary["event_id"]),
                 "--json",

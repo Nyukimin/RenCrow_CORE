@@ -62,7 +62,7 @@ def main() -> None:
     parser.add_argument("--snapshot", required=True)
     parser.add_argument("--strategy", default="weekly_etf_rotation_v1")
     parser.add_argument("--risk-check", default="latest")
-    parser.add_argument("--output-dir", default="rencrow-data/approvals")
+    parser.add_argument("--output-dir", default="rencrow-data/policies")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     args.db_path = str(resolve_repo_relative_path(args.db_path))
@@ -109,7 +109,7 @@ def main() -> None:
         print(
             "decision candidate "
             f"id={result['decision_id']} strategy={result['strategy_id']} snapshot={result['snapshot_id']} "
-            f"risk={result['risk_status']} vetoed={result['vetoed']} approval={result['approval_path']}"
+            f"risk={result['risk_status']} vetoed={result['vetoed']} policy={result['policy_path']}"
         )
 
 

@@ -48,7 +48,7 @@ func (s *fakeWorktreeSandboxStore) SaveSandbox(_ context.Context, record domains
 	return s.err
 }
 
-func TestWorktreeSandboxManagerDoesNotRequireHumanApproval(t *testing.T) {
+func TestWorktreeSandboxManagerUsesPolicyChecks(t *testing.T) {
 	creator := &fakeWorktreeCreator{}
 	manager := NewWorktreeSandboxManager(creator, &fakeWorktreeSandboxStore{})
 
@@ -56,7 +56,7 @@ func TestWorktreeSandboxManagerDoesNotRequireHumanApproval(t *testing.T) {
 		Branch: "feature/sandbox",
 	})
 	if err != nil {
-		t.Fatalf("missing legacy human approval must not block: %v", err)
+		t.Fatalf("policy checks should allow this operation: %v", err)
 	}
 }
 
@@ -78,22 +78,21 @@ func TestWorktreeSandboxManagerCreatesWorktreeAndSandboxRecord(t *testing.T) {
 	manager := NewWorktreeSandboxManager(creator, store)
 
 	result, err := manager.Create(context.Background(), WorktreeSandboxCreateOptions{
-		RepoRoot:      "/repo",
-		BaseDir:       "/tmp/worktrees",
-		RepoName:      "repo",
-		Branch:        "feature/sandbox",
-		PathName:      "repo-feature-sandbox",
-		Purpose:       "sandbox code change",
-		OwnerAgent:    "Worker",
-		WorkstreamID:  "ws_1",
-		GoalID:        "goal_1",
-		HumanApproved: true,
-		Now:           func() time.Time { return now },
+		RepoRoot:     "/repo",
+		BaseDir:      "/tmp/worktrees",
+		RepoName:     "repo",
+		Branch:       "feature/sandbox",
+		PathName:     "repo-feature-sandbox",
+		Purpose:      "sandbox code change",
+		OwnerAgent:   "Worker",
+		WorkstreamID: "ws_1",
+		GoalID:       "goal_1",
+		Now:          func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
-	if !creator.createOpts.HumanApproved || creator.createOpts.Branch != "feature/sandbox" {
+	if creator.createOpts.Branch != "feature/sandbox" {
 		t.Fatalf("worktree opts not forwarded: %#v", creator.createOpts)
 	}
 	if !store.called {
@@ -125,22 +124,21 @@ func TestWorktreeSandboxManagerSurfacesRegistryFailure(t *testing.T) {
 	manager := NewWorktreeSandboxManager(creator, store)
 
 	_, err := manager.Create(context.Background(), WorktreeSandboxCreateOptions{
-		Branch:        "feature/sandbox",
-		HumanApproved: true,
+		Branch: "feature/sandbox",
 	})
 	if err == nil {
 		t.Fatal("expected registry failure")
 	}
 }
 
-func TestWorktreeSandboxManagerCloseDoesNotRequireHumanApproval(t *testing.T) {
+func TestWorktreeSandboxManagerCloseUsesPolicyChecks(t *testing.T) {
 	manager := NewWorktreeSandboxManager(&fakeWorktreeCreator{}, &fakeWorktreeSandboxStore{})
 
 	_, err := manager.Close(context.Background(), WorktreeSandboxCloseOptions{
 		WorktreePath: "/tmp/worktrees/repo-feature-sandbox",
 	})
 	if err != nil {
-		t.Fatalf("missing legacy human approval must not block: %v", err)
+		t.Fatalf("policy checks should allow this operation: %v", err)
 	}
 }
 
@@ -163,23 +161,22 @@ func TestWorktreeSandboxManagerClosesWorktreeAndSandboxRecord(t *testing.T) {
 	manager := NewWorktreeSandboxManager(creator, store)
 
 	result, err := manager.Close(context.Background(), WorktreeSandboxCloseOptions{
-		RepoRoot:      "/repo",
-		BaseDir:       "/tmp/worktrees",
-		RepoName:      "repo",
-		WorktreeID:    "worktree:repo:feature-sandbox",
-		WorktreePath:  "/tmp/worktrees/repo-feature-sandbox",
-		Branch:        "feature/sandbox",
-		OwnerAgent:    "Worker",
-		SandboxID:     "sandbox:worktree:repo:feature-sandbox",
-		WorkstreamID:  "ws_1",
-		GoalID:        "goal_1",
-		HumanApproved: true,
-		Now:           func() time.Time { return now },
+		RepoRoot:     "/repo",
+		BaseDir:      "/tmp/worktrees",
+		RepoName:     "repo",
+		WorktreeID:   "worktree:repo:feature-sandbox",
+		WorktreePath: "/tmp/worktrees/repo-feature-sandbox",
+		Branch:       "feature/sandbox",
+		OwnerAgent:   "Worker",
+		SandboxID:    "sandbox:worktree:repo:feature-sandbox",
+		WorkstreamID: "ws_1",
+		GoalID:       "goal_1",
+		Now:          func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
-	if !creator.closeOpts.HumanApproved || creator.closeOpts.WorktreePath != "/tmp/worktrees/repo-feature-sandbox" {
+	if creator.closeOpts.WorktreePath != "/tmp/worktrees/repo-feature-sandbox" {
 		t.Fatalf("worktree close opts not forwarded: %#v", creator.closeOpts)
 	}
 	if !store.called {

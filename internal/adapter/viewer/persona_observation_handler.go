@@ -232,7 +232,7 @@ func HandlePersonaMetaProfileUpdateReview(store PersonaObservationStore) http.Ha
 		}
 		applied := false
 		appliedPath := ""
-		if item.ReviewStatus == "approved" {
+		if item.ReviewStatus == "adopted" {
 			applier, ok := store.(PersonaMetaProfileUpdateApplier)
 			if !ok {
 				http.Error(w, "persona meta profile apply unavailable", http.StatusServiceUnavailable)
@@ -362,7 +362,7 @@ func HandlePersonaObservationAggregate(store PersonaObservationStore) http.Handl
 			"summary_observation": summaryLog,
 			"meta_profile_update": metaUpdate,
 			"source_count":        len(source),
-			"auto_approved":       false,
+			"auto_adopted":        false,
 		})
 	}
 }

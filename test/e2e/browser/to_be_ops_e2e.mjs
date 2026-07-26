@@ -54,7 +54,6 @@ async function seedEconomicRecords(runID) {
           title: `Browser E2E draft opportunity ${index}`,
           expected_revenue: index === 0 ? 0 : 3000 + index,
           expected_cost: index === 0 ? 0 : 800,
-          approval_state: 'draft',
         },
       });
       assert.equal(opportunity.status(), 201, `seed opportunity failed: ${opportunity.status()} ${await opportunity.text()}`);
@@ -66,19 +65,17 @@ async function seedEconomicRecords(runID) {
           agent_id: 'shiro',
           task_kind: 'billing',
           status: 'draft',
-          approval_mode: 'not_required',
         },
       });
       assert.equal(task.status(), 201, `seed economic task failed: ${task.status()} ${await task.text()}`);
 
       decisionID = `decision-browser-e2e-${suffix}`;
-      const decision = await api.post('/viewer/revenue/human-decision-gate', {
+      const decision = await api.post('/viewer/revenue/policy-decisions', {
         data: {
           decision_id: decisionID,
           decision_type: 'billing',
           subject_id: opportunityID,
           description: 'browser E2E synchronous policy fixture',
-          approval_status: 'not_required',
         },
       });
       assert.equal(decision.status(), 200, `seed policy decision failed: ${decision.status()} ${await decision.text()}`);
@@ -218,13 +215,13 @@ async function verifyViewport(browser, viewport, fixture) {
       await summary.click();
     }
     const expanded = await page.evaluate(({opportunityID, taskID}) => {
-      const block = document.querySelector('[data-to-be-block="approval-queue"]');
+      const block = document.querySelector('[data-to-be-block="policy-decisions"]');
       const details = block?.querySelector('details');
       const text = details?.textContent || '';
       return {
         open: details?.open === true,
         openCount: document.querySelectorAll('#toBeOpsSummary details[open]').length,
-        hasFixture: text.includes(opportunityID) && text.includes(taskID),
+        hasFixture: text.includes(opportunityID),
         documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
         blockOverflow: block ? block.scrollWidth > block.clientWidth + 1 : true,
       };
@@ -235,16 +232,16 @@ async function verifyViewport(browser, viewport, fixture) {
     assert.equal(expanded.documentOverflow, false);
     assert.equal(expanded.blockOverflow, false);
     if (viewport.width <= 640) {
-      const approvalCard = page.locator('[data-to-be-block="approval-queue"]');
+      const policyCard = page.locator('[data-to-be-block="policy-decisions"]');
       const traceCard = page.locator('[data-to-be-block="recent-trace"]');
-      if (!(await approvalCard.locator('details').evaluate((element) => element.open))) await approvalCard.locator('details > summary').click();
-      await approvalCard.evaluate((element) => element.scrollIntoView({block: 'center'}));
+      if (!(await policyCard.locator('details').evaluate((element) => element.open))) await policyCard.locator('details > summary').click();
+      await policyCard.evaluate((element) => element.scrollIntoView({block: 'center'}));
       await page.waitForTimeout(50);
-      assert.equal(await approvalCard.evaluate((element) => {
+      assert.equal(await policyCard.evaluate((element) => {
         const input = document.querySelector('.input-bar');
         return !input || element.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1;
-      }), true, 'Approval details must be scrollable above the fixed input bar');
-      await approvalCard.screenshot({path: path.join(artifactDir, `${label}-approval-open.png`)});
+      }), true, 'Policy details must be scrollable above the fixed input bar');
+      await policyCard.screenshot({path: path.join(artifactDir, `${label}-policy-open.png`)});
       if (!(await traceCard.locator('details').evaluate((element) => element.open))) await traceCard.locator('details > summary').click();
       await traceCard.evaluate((element) => element.scrollIntoView({block: 'center'}));
       await page.waitForTimeout(50);

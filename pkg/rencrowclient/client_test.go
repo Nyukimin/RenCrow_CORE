@@ -1399,7 +1399,7 @@ func TestCheckExternalControl(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.Actor != "Worker" || req.ChannelID != "viewer" || req.Action != "promotion_apply" || req.HumanApproved {
+		if req.Actor != "Worker" || req.ChannelID != "viewer" || req.Action != "promotion_apply" {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(ExternalControlResponse{
@@ -1423,7 +1423,7 @@ func TestCheckExternalControl(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckExternalControl() error = %v", err)
 	}
-	if resp.Decision.Status != "allowed" || resp.Decision.RequiresApproval {
+	if resp.Decision.Status != "allowed" {
 		t.Fatalf("response=%#v", resp)
 	}
 }
@@ -1471,17 +1471,9 @@ func TestCheckExternalControlRejectsMalformedResponse(t *testing.T) {
 			name: "invalid status",
 			resp: ExternalControlResponse{
 				Request:  ExternalControlRequest{Actor: "Worker", ChannelID: "viewer", Action: "promotion_apply"},
-				Decision: ExternalControlDecision{Status: "approved"},
+				Decision: ExternalControlDecision{Status: "adopted"},
 			},
 			want: "invalid status",
-		},
-		{
-			name: "retired needs approval status",
-			resp: ExternalControlResponse{
-				Request:  ExternalControlRequest{Actor: "Worker", ChannelID: "viewer", Action: "promotion_apply"},
-				Decision: ExternalControlDecision{Status: "needs_approval"},
-			},
-			want: "retired needs_approval",
 		},
 		{
 			name: "blocked without reasons",
@@ -1490,14 +1482,6 @@ func TestCheckExternalControlRejectsMalformedResponse(t *testing.T) {
 				Decision: ExternalControlDecision{Status: "blocked"},
 			},
 			want: "blocked without reasons",
-		},
-		{
-			name: "allowed with retired approval flag",
-			resp: ExternalControlResponse{
-				Request:  ExternalControlRequest{Actor: "Worker", ChannelID: "viewer", Action: "promotion_apply"},
-				Decision: ExternalControlDecision{Status: "allowed", RequiresApproval: true},
-			},
-			want: "requires_approval is true",
 		},
 	}
 	for _, tt := range tests {
@@ -2627,7 +2611,7 @@ func TestKnowledgeMemoryStatusAndReview(t *testing.T) {
 	review, err := client.ReviewKnowledgeMemory(context.Background(), KnowledgeMemoryReviewRequest{
 		DetailType:   "news_knowledge",
 		ID:           "news_1",
-		ReviewStatus: "approved",
+		ReviewStatus: "adopted",
 		Promote:      true,
 		ReviewedBy:   "viewer",
 	})
@@ -2749,18 +2733,18 @@ func TestKnowledgeMemoryStatusRejectsMalformedCurrentView(t *testing.T) {
 		{name: "invalid dream review status", mutate: func(s *KnowledgeMemoryStatus) {
 			s.DreamRuns[0].ReviewStatus = "done"
 		}, want: "invalid dream_run review_status"},
-		{name: "dream auto approved", mutate: func(s *KnowledgeMemoryStatus) {
+		{name: "dream auto adopted", mutate: func(s *KnowledgeMemoryStatus) {
 			s.DreamRuns[0].Status = "proposal"
-			s.DreamRuns[0].ReviewStatus = "approved"
-		}, want: "cannot be auto-approved"},
+			s.DreamRuns[0].ReviewStatus = "adopted"
+		}, want: "cannot be auto-adopted"},
 		{name: "dream promoted with pending review", mutate: func(s *KnowledgeMemoryStatus) {
 			s.DreamRuns[0].Status = "promoted"
 			s.DreamRuns[0].ReviewStatus = "pending"
 		}, want: "pending review requires draft or proposal status"},
-		{name: "dream rejected with approved review", mutate: func(s *KnowledgeMemoryStatus) {
+		{name: "dream rejected with adopted review", mutate: func(s *KnowledgeMemoryStatus) {
 			s.DreamRuns[0].Status = "rejected"
-			s.DreamRuns[0].ReviewStatus = "approved"
-		}, want: "cannot be auto-approved"},
+			s.DreamRuns[0].ReviewStatus = "adopted"
+		}, want: "cannot be auto-adopted"},
 		{name: "dream reviewed with rejected review", mutate: func(s *KnowledgeMemoryStatus) {
 			s.DreamRuns[0].Status = "reviewed"
 			s.DreamRuns[0].ReviewStatus = "rejected"
@@ -2798,10 +2782,10 @@ func TestReviewKnowledgeMemoryRejectsInvalidRequest(t *testing.T) {
 		req  KnowledgeMemoryReviewRequest
 		want string
 	}{
-		{name: "missing detail type", req: KnowledgeMemoryReviewRequest{ID: "news_1", ReviewStatus: "approved"}, want: "missing detail_type"},
-		{name: "missing id", req: KnowledgeMemoryReviewRequest{DetailType: "news_knowledge", ReviewStatus: "approved"}, want: "missing id"},
-		{name: "invalid review", req: KnowledgeMemoryReviewRequest{DetailType: "news_knowledge", ID: "news_1", ReviewStatus: "pending"}, want: "approved or rejected"},
-		{name: "promote rejected", req: KnowledgeMemoryReviewRequest{DetailType: "news_knowledge", ID: "news_1", ReviewStatus: "rejected", Promote: true}, want: "promote requires approved"},
+		{name: "missing detail type", req: KnowledgeMemoryReviewRequest{ID: "news_1", ReviewStatus: "adopted"}, want: "missing detail_type"},
+		{name: "missing id", req: KnowledgeMemoryReviewRequest{DetailType: "news_knowledge", ReviewStatus: "adopted"}, want: "missing id"},
+		{name: "invalid review", req: KnowledgeMemoryReviewRequest{DetailType: "news_knowledge", ID: "news_1", ReviewStatus: "pending"}, want: "adopted or rejected"},
+		{name: "promote rejected", req: KnowledgeMemoryReviewRequest{DetailType: "news_knowledge", ID: "news_1", ReviewStatus: "rejected", Promote: true}, want: "promote requires adopted"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2824,7 +2808,7 @@ func TestReviewKnowledgeMemoryRejectsMalformedResponse(t *testing.T) {
 			Status:       "reviewed",
 			DetailType:   "daily_intake_rule",
 			ID:           "rule_1",
-			ReviewStatus: "approved",
+			ReviewStatus: "adopted",
 			Promoted:     true,
 			AutoPromote:  false,
 			Comparison: KnowledgeMemoryReviewComparison{
@@ -2873,7 +2857,7 @@ func TestReviewKnowledgeMemoryRejectsMalformedResponse(t *testing.T) {
 			_, err = client.ReviewKnowledgeMemory(context.Background(), KnowledgeMemoryReviewRequest{
 				DetailType:   "daily_intake_rule",
 				ID:           "rule_1",
-				ReviewStatus: "approved",
+				ReviewStatus: "adopted",
 				Promote:      true,
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -3233,7 +3217,7 @@ func TestSourceRegistryStagingRejectsMalformedCurrentView(t *testing.T) {
 			s.Items[0].RawText = ""
 		}, want: "missing raw_text"},
 		{name: "invalid validation status", mutate: func(s *SourceRegistryStagingStatus) {
-			s.Items[0].ValidationStatus = "approved"
+			s.Items[0].ValidationStatus = "adopted"
 		}, want: "invalid validation_status"},
 		{name: "missing created at", mutate: func(s *SourceRegistryStagingStatus) {
 			s.Items[0].CreatedAt = ""
@@ -3374,7 +3358,7 @@ func TestDomainGraphAssertionsRejectsMalformedCurrentView(t *testing.T) {
 			s.Items[0].RawHash = ""
 		}, want: "missing raw_hash"},
 		{name: "invalid validation status", mutate: func(s *DomainGraphAssertionsResponse) {
-			s.Items[0].ValidationStatus = "approved"
+			s.Items[0].ValidationStatus = "adopted"
 		}, want: "invalid validation_status"},
 		{name: "confidence out of range", mutate: func(s *DomainGraphAssertionsResponse) {
 			s.Items[0].Confidence = 1.5
@@ -3533,7 +3517,7 @@ func TestSourceRegistryValidateAndPromoteRejectMalformedResponse(t *testing.T) {
 			handler: func(w http.ResponseWriter) {
 				_ = json.NewEncoder(w).Encode(SourceRegistryValidationResponse{Result: SourceRegistryValidationResult{
 					ItemID: "stg_1",
-					Status: "approved",
+					Status: "adopted",
 					Issues: []SourceRegistryValidationIssue{{Code: "policy", Message: "policy required"}},
 				}})
 			},
@@ -3744,7 +3728,6 @@ func TestBrowserTraceAPIStatusDiscoverAndFetcherProposal(t *testing.T) {
 	review, err := client.ValidateBrowserTraceAPICandidate(context.Background(), BrowserTraceAPIValidationReviewRequest{
 		CandidateID:         "api_cand_1",
 		Reviewer:            "client-test",
-		HumanApproved:       false,
 		TermsReviewed:       true,
 		OfficialAPIReviewed: true,
 		PIIReviewed:         true,
@@ -3758,9 +3741,8 @@ func TestBrowserTraceAPIStatusDiscoverAndFetcherProposal(t *testing.T) {
 		t.Fatalf("review=%#v", review)
 	}
 	proposal, err := client.CreateBrowserTraceAPIFetcherProposal(context.Background(), BrowserTraceAPIFetcherProposalRequest{
-		CandidateID:   "api_cand_1",
-		WorkstreamID:  "ws_1",
-		HumanApproved: false,
+		CandidateID:  "api_cand_1",
+		WorkstreamID: "ws_1",
 	})
 	if err != nil {
 		t.Fatalf("CreateBrowserTraceAPIFetcherProposal() error = %v", err)
@@ -3791,7 +3773,7 @@ func TestBrowserTraceAPIStatusRejectsMalformedCurrentView(t *testing.T) {
 		{name: "schema confidence out of range", resp: BrowserTraceAPIStatus{APISchemas: []BrowserTraceAPISchema{{SchemaID: "schema_1", CandidateID: "api_1", SchemaType: "response", SchemaJSON: `{"type":"object"}`, SampleCount: 1, Confidence: -0.1, CreatedAt: now}}}, want: "schema confidence out of range"},
 		{name: "schema missing created at", resp: BrowserTraceAPIStatus{APISchemas: []BrowserTraceAPISchema{{SchemaID: "schema_1", CandidateID: "api_1", SchemaType: "response", SchemaJSON: `{"type":"object"}`, SampleCount: 1}}}, want: "schema missing created_at"},
 		{name: "validation failed without issues", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "needs_review", CreatedAt: now}}}, want: "failed without issues"},
-		{name: "validation unknown status", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "approved", Passed: false, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "validation status"},
+		{name: "validation unknown status", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "adopted", Passed: false, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "validation status"},
 		{name: "validated without passed", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "validated", CreatedAt: now}}}, want: "validated status without passed"},
 		{name: "validated with issues", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "validated", Passed: true, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "validated status with issues"},
 		{name: "needs review with passed", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "needs_review", Passed: true, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "passed without validated status"},
@@ -3869,7 +3851,7 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 				ImplementationApply: true,
 			},
 			call: func(c *Client) error {
-				_, err := c.CreateBrowserTraceAPIFetcherProposal(context.Background(), BrowserTraceAPIFetcherProposalRequest{CandidateID: "api_1", HumanApproved: true})
+				_, err := c.CreateBrowserTraceAPIFetcherProposal(context.Background(), BrowserTraceAPIFetcherProposalRequest{CandidateID: "api_1"})
 				return err
 			},
 			want: "implementation_apply",
@@ -3896,7 +3878,7 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 				Validation: BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Passed: false, Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now},
 			},
 			call: func(c *Client) error {
-				_, err := c.ValidateBrowserTraceAPICandidate(context.Background(), BrowserTraceAPIValidationReviewRequest{CandidateID: "api_1", Reviewer: "reviewer", HumanApproved: true, TermsReviewed: true, OfficialAPIReviewed: true, PIIReviewed: true, SchemaReviewed: true, RiskReviewed: true})
+				_, err := c.ValidateBrowserTraceAPICandidate(context.Background(), BrowserTraceAPIValidationReviewRequest{CandidateID: "api_1", Reviewer: "reviewer", TermsReviewed: true, OfficialAPIReviewed: true, PIIReviewed: true, SchemaReviewed: true, RiskReviewed: true})
 				return err
 			},
 			want: "expected validated result",
@@ -3911,7 +3893,7 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 				Validation:         BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Passed: true, Status: "validated", CreatedAt: now},
 			},
 			call: func(c *Client) error {
-				_, err := c.CreateBrowserTraceAPIFetcherProposal(context.Background(), BrowserTraceAPIFetcherProposalRequest{CandidateID: "api_1", WorkstreamID: "ws_1", HumanApproved: true})
+				_, err := c.CreateBrowserTraceAPIFetcherProposal(context.Background(), BrowserTraceAPIFetcherProposalRequest{CandidateID: "api_1", WorkstreamID: "ws_1"})
 				return err
 			},
 			want: "workstream artifact missing created_at",
@@ -3925,7 +3907,7 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 				Validation:  BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Passed: false, Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "terms_unverified", Message: "terms required"}}},
 			},
 			call: func(c *Client) error {
-				_, err := c.CreateBrowserTraceAPIFetcherProposal(context.Background(), BrowserTraceAPIFetcherProposalRequest{CandidateID: "api_1", HumanApproved: true})
+				_, err := c.CreateBrowserTraceAPIFetcherProposal(context.Background(), BrowserTraceAPIFetcherProposalRequest{CandidateID: "api_1"})
 				return err
 			},
 			want: "requires validated candidate",
@@ -4068,17 +4050,17 @@ func TestWorkstreamStatusRejectsMalformedCurrentView(t *testing.T) {
 		{name: "invalid vault review status", mutate: func(s *WorkstreamStatus) {
 			s.VaultUpdates[0].ReviewStatus = "applied"
 		}, want: "invalid vault_update review_status"},
-		{name: "applied vault update without approved review", mutate: func(s *WorkstreamStatus) {
+		{name: "applied vault update without adopted review", mutate: func(s *WorkstreamStatus) {
 			s.VaultUpdates[0].ReviewStatus = "rejected"
 			s.VaultUpdates[0].Applied = true
 			s.VaultUpdates[0].AppliedPath = "/tmp/vault/status.md"
-		}, want: "vault_update applied without approved review"},
+		}, want: "vault_update applied without adopted review"},
 		{name: "applied vault update without path", mutate: func(s *WorkstreamStatus) {
-			s.VaultUpdates[0].ReviewStatus = "approved"
+			s.VaultUpdates[0].ReviewStatus = "adopted"
 			s.VaultUpdates[0].Applied = true
 		}, want: "vault_update applied without applied_path"},
 		{name: "vault update path without applied", mutate: func(s *WorkstreamStatus) {
-			s.VaultUpdates[0].ReviewStatus = "approved"
+			s.VaultUpdates[0].ReviewStatus = "adopted"
 			s.VaultUpdates[0].AppliedPath = "/tmp/vault/status.md"
 		}, want: "vault_update has applied_path without applied"},
 	}
@@ -4479,7 +4461,7 @@ func TestReviewWorkstreamVaultUpdate(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.UpdateID != "upd_1" || req.WorkstreamID != "ws_1" || req.ReviewStatus != "approved" {
+		if req.UpdateID != "upd_1" || req.WorkstreamID != "ws_1" || req.ReviewStatus != "adopted" {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(WorkstreamVaultUpdateResponse{VaultUpdate: req})
@@ -4493,18 +4475,18 @@ func TestReviewWorkstreamVaultUpdate(t *testing.T) {
 		UpdateID:     "upd_1",
 		WorkstreamID: "ws_1",
 		FilePath:     "vault/workstreams/ws_1/STATUS.md",
-		ReviewStatus: "approved",
+		ReviewStatus: "adopted",
 		CreatedAt:    time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatalf("ReviewWorkstreamVaultUpdate() error = %v", err)
 	}
-	if resp.VaultUpdate.UpdateID != "upd_1" || resp.VaultUpdate.ReviewStatus != "approved" {
+	if resp.VaultUpdate.UpdateID != "upd_1" || resp.VaultUpdate.ReviewStatus != "adopted" {
 		t.Fatalf("response=%#v", resp)
 	}
 }
 
-func TestReviewWorkstreamVaultUpdateRequiresAppliedEvidenceForApprovedProposedContent(t *testing.T) {
+func TestReviewWorkstreamVaultUpdateRequiresAppliedEvidenceForAdoptedProposedContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/viewer/workstreams/vault-updates/review" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -4526,8 +4508,8 @@ func TestReviewWorkstreamVaultUpdateRequiresAppliedEvidenceForApprovedProposedCo
 		UpdateID:        "upd_1",
 		WorkstreamID:    "ws_1",
 		FilePath:        "vault/workstreams/ws_1/STATUS.md",
-		ReviewStatus:    "approved",
-		ProposedContent: "# STATUS\n\napproved",
+		ReviewStatus:    "adopted",
+		ProposedContent: "# STATUS\n\nadopted",
 		CreatedAt:       time.Now().UTC(),
 	})
 	if err != nil {
@@ -4620,9 +4602,9 @@ func TestReviewWorkstreamVaultUpdateRejectsInvalidRequest(t *testing.T) {
 		item WorkstreamVaultUpdate
 		want string
 	}{
-		{name: "missing update", item: WorkstreamVaultUpdate{WorkstreamID: "ws_1", FilePath: "vault/status.md", ReviewStatus: "approved"}, want: "missing update_id"},
-		{name: "missing workstream", item: WorkstreamVaultUpdate{UpdateID: "upd_1", FilePath: "vault/status.md", ReviewStatus: "approved"}, want: "missing workstream_id"},
-		{name: "missing file", item: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", ReviewStatus: "approved"}, want: "missing file_path"},
+		{name: "missing update", item: WorkstreamVaultUpdate{WorkstreamID: "ws_1", FilePath: "vault/status.md", ReviewStatus: "adopted"}, want: "missing update_id"},
+		{name: "missing workstream", item: WorkstreamVaultUpdate{UpdateID: "upd_1", FilePath: "vault/status.md", ReviewStatus: "adopted"}, want: "missing workstream_id"},
+		{name: "missing file", item: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", ReviewStatus: "adopted"}, want: "missing file_path"},
 		{name: "missing status", item: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", FilePath: "vault/status.md"}, want: "missing review_status"},
 	}
 	for _, tt := range tests {
@@ -4648,17 +4630,17 @@ func TestReviewWorkstreamVaultUpdateRejectsMalformedResponse(t *testing.T) {
 	}{
 		{
 			name: "wrong update id",
-			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "other", WorkstreamID: "ws_1", FilePath: "vault/workstreams/ws_1/STATUS.md", ReviewStatus: "approved"}},
+			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "other", WorkstreamID: "ws_1", FilePath: "vault/workstreams/ws_1/STATUS.md", ReviewStatus: "adopted"}},
 			want: "update_id mismatch",
 		},
 		{
 			name: "wrong workstream",
-			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "other_ws", FilePath: "vault/workstreams/ws_1/STATUS.md", ReviewStatus: "approved"}},
+			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "other_ws", FilePath: "vault/workstreams/ws_1/STATUS.md", ReviewStatus: "adopted"}},
 			want: "workstream_id mismatch",
 		},
 		{
 			name: "wrong file path",
-			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", FilePath: "other.md", ReviewStatus: "approved"}},
+			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", FilePath: "other.md", ReviewStatus: "adopted"}},
 			want: "file_path mismatch",
 		},
 		{
@@ -4668,18 +4650,18 @@ func TestReviewWorkstreamVaultUpdateRejectsMalformedResponse(t *testing.T) {
 		},
 		{
 			name: "applied without path",
-			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", FilePath: "vault/workstreams/ws_1/STATUS.md", ReviewStatus: "approved"}, Applied: true},
+			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", FilePath: "vault/workstreams/ws_1/STATUS.md", ReviewStatus: "adopted"}, Applied: true},
 			want: "applied without applied_path",
 		},
 		{
 			name: "path without applied",
-			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", FilePath: "vault/workstreams/ws_1/STATUS.md", ReviewStatus: "approved"}, AppliedPath: "/tmp/vault/STATUS.md"},
+			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", FilePath: "vault/workstreams/ws_1/STATUS.md", ReviewStatus: "adopted"}, AppliedPath: "/tmp/vault/STATUS.md"},
 			want: "applied_path without applied",
 		},
 		{
-			name: "approved proposed content not applied",
-			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", FilePath: "vault/workstreams/ws_1/STATUS.md", ReviewStatus: "approved"}},
-			want: "did not apply approved proposed_content",
+			name: "adopted proposed content not applied",
+			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", FilePath: "vault/workstreams/ws_1/STATUS.md", ReviewStatus: "adopted"}},
+			want: "did not apply adopted proposed_content",
 		},
 		{
 			name: "missing created at",
@@ -4688,7 +4670,7 @@ func TestReviewWorkstreamVaultUpdateRejectsMalformedResponse(t *testing.T) {
 					UpdateID:     "upd_1",
 					WorkstreamID: "ws_1",
 					FilePath:     "vault/workstreams/ws_1/STATUS.md",
-					ReviewStatus: "approved",
+					ReviewStatus: "adopted",
 					Applied:      true,
 					AppliedPath:  "/tmp/vault/STATUS.md",
 				},
@@ -4715,7 +4697,7 @@ func TestReviewWorkstreamVaultUpdateRejectsMalformedResponse(t *testing.T) {
 				UpdateID:        "upd_1",
 				WorkstreamID:    "ws_1",
 				FilePath:        "vault/workstreams/ws_1/STATUS.md",
-				ReviewStatus:    "approved",
+				ReviewStatus:    "adopted",
 				ProposedContent: "draft",
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -4733,7 +4715,7 @@ func TestCreateWorkstreamVaultUpdateRejectsMalformedResponse(t *testing.T) {
 	}{
 		{
 			name: "wrong status",
-			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", FilePath: "vault/status.md", ReviewStatus: "approved"}},
+			resp: WorkstreamVaultUpdateResponse{VaultUpdate: WorkstreamVaultUpdate{UpdateID: "upd_1", WorkstreamID: "ws_1", FilePath: "vault/status.md", ReviewStatus: "adopted"}},
 			want: "status mismatch",
 		},
 		{
@@ -4976,7 +4958,7 @@ func TestComplexityStatusRejectsMalformedCurrentView(t *testing.T) {
 		},
 		{
 			name: "concrete diff missing patch not applied evidence",
-			resp: ComplexityStatus{Reports: []ComplexityReportArtifact{{ArtifactID: "art_1", ScanID: "scan_1", Type: "complexity_concrete_diff_proposal", Title: "title", Status: "pending_review", Content: "Patch applied: `true`\nHuman approval required: `true`", CreatedAt: now}}},
+			resp: ComplexityStatus{Reports: []ComplexityReportArtifact{{ArtifactID: "art_1", ScanID: "scan_1", Type: "complexity_concrete_diff_proposal", Title: "title", Status: "pending_review", Content: "Patch applied: `true`\nPolicy status: `blocked`", CreatedAt: now}}},
 			want: "must not claim patch applied",
 		},
 		{
@@ -5048,7 +5030,7 @@ func TestCreateComplexityConcreteDiff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateComplexityConcreteDiff() error = %v", err)
 	}
-	if resp.PatchApplied || resp.HumanApprovalRequired || resp.ConcreteDiffArtifact.Status != "pending_review" {
+	if resp.PatchApplied || resp.ConcreteDiffArtifact.Status != "pending_review" {
 		t.Fatalf("response=%#v", resp)
 	}
 }
@@ -5178,7 +5160,7 @@ func TestCreateComplexityCoderDiff(t *testing.T) {
 		resp := complexityDiffResponseFixture("hot_1", "scan_1", "art_1")
 		resp.CoderResult = &ComplexityCoderDiffResult{JobID: "job_1", ConcreteDiff: "diff --git a/internal/app.go b/internal/app.go\n"}
 		resp.SandboxPromotion = &PromotionRequest{PromotionID: "promo_1", SandboxID: "sandbox_1", TargetPath: "internal/app.go", DiffPath: "sandbox/diff.patch", CreatedAt: now}
-		resp.SandboxDecision = &PromotionGateDecision{Status: "needs_review", Reason: "human approval is required"}
+		resp.SandboxDecision = &PromotionGateDecision{Status: "needs_review", Reason: "additional verification is required"}
 		resp.SandboxGateLog = &PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "needs_review", CreatedAt: now}
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
@@ -5248,7 +5230,7 @@ func TestCreateComplexityCoderDiffRejectsMalformedResponse(t *testing.T) {
 		{
 			name: "sandbox gate mismatch",
 			mutate: func(resp *ComplexityDiffResponse) {
-				resp.SandboxGateLog.GateStatus = "approve"
+				resp.SandboxGateLog.GateStatus = "reject"
 			},
 			want: "sandbox gate status mismatch",
 		},
@@ -5279,7 +5261,7 @@ func TestCreateComplexityCoderDiffRejectsMalformedResponse(t *testing.T) {
 			resp := complexityDiffResponseFixture("hot_1", "scan_1", "art_1")
 			resp.CoderResult = &ComplexityCoderDiffResult{JobID: "job_1", ConcreteDiff: "diff --git a/internal/app.go b/internal/app.go\n"}
 			resp.SandboxPromotion = &PromotionRequest{PromotionID: "promo_1", SandboxID: "sandbox_1", TargetPath: "internal/app.go", DiffPath: "sandbox/diff.patch", CreatedAt: now}
-			resp.SandboxDecision = &PromotionGateDecision{Status: "needs_review", Reason: "human approval is required"}
+			resp.SandboxDecision = &PromotionGateDecision{Status: "needs_review", Reason: "additional verification is required"}
 			resp.SandboxGateLog = &PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "needs_review", CreatedAt: now}
 			tt.mutate(&resp)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -5330,37 +5312,33 @@ func complexityDiffResponseFixture(hotspotID string, scanID string, artifactID s
 			Content:    "review only",
 			CreatedAt:  now,
 		},
-		HumanApprovalRequired: false,
-		PatchApplied:          false,
+		PatchApplied: false,
 	}
 }
 
-func TestEvaluateRevenueHumanDecision(t *testing.T) {
+func TestEvaluateRevenuePolicyDecision(t *testing.T) {
 	now := time.Date(2026, 5, 20, 4, 50, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/viewer/revenue/human-decision-gate" {
+		if r.Method != http.MethodPost || r.URL.Path != "/viewer/revenue/policy-decisions" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		var req RevenueHumanDecision
+		var req RevenuePolicyDecision
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.DecisionID != "dec_1" || req.DecisionType != "high_ticket_offer" || req.ApprovalStatus != "" {
+		if req.DecisionID != "dec_1" || req.DecisionType != "high_ticket_offer" {
 			t.Fatalf("payload=%#v", req)
 		}
-		_ = json.NewEncoder(w).Encode(RevenueHumanDecisionResponse{
+		_ = json.NewEncoder(w).Encode(RevenuePolicyDecisionResponse{
 			Decision: req,
-			Record: RevenueHumanDecisionRecord{
-				DecisionID:       req.DecisionID,
-				DecisionType:     req.DecisionType,
-				ApprovalStatus:   "not_required",
-				GateStatus:       "allowed",
-				RequiresApproval: true,
-				CreatedAt:        now,
+			Record: RevenuePolicyDecisionRecord{
+				DecisionID:   req.DecisionID,
+				DecisionType: req.DecisionType,
+				Status:       "allowed",
+				CreatedAt:    now,
 			},
-			Result: RevenueHumanDecisionResult{
-				Status:           "allowed",
-				RequiresApproval: false,
+			Result: RevenuePolicyDecisionResult{
+				Status: "allowed",
 			},
 		})
 	}))
@@ -5369,66 +5347,66 @@ func TestEvaluateRevenueHumanDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := client.EvaluateRevenueHumanDecision(context.Background(), RevenueHumanDecision{
+	resp, err := client.EvaluateRevenuePolicyDecision(context.Background(), RevenuePolicyDecision{
 		DecisionID:   "dec_1",
 		DecisionType: "high_ticket_offer",
 		Description:  "高単価 offer を案内する",
 	})
 	if err != nil {
-		t.Fatalf("EvaluateRevenueHumanDecision() error = %v", err)
+		t.Fatalf("EvaluateRevenuePolicyDecision() error = %v", err)
 	}
-	if resp.Result.Status != "allowed" || !resp.Record.RequiresApproval || resp.Result.RequiresApproval || resp.Record.DecisionID != "dec_1" {
+	if resp.Result.Status != "allowed" || resp.Record.Status != "allowed" || resp.Record.DecisionID != "dec_1" {
 		t.Fatalf("response=%#v", resp)
 	}
 }
 
-func TestEvaluateRevenueHumanDecisionRejectsInvalidRequest(t *testing.T) {
+func TestEvaluateRevenuePolicyDecisionRejectsInvalidRequest(t *testing.T) {
 	client, called, cleanup := newNoRequestClient(t)
 	defer cleanup()
-	_, err := client.EvaluateRevenueHumanDecision(context.Background(), RevenueHumanDecision{})
+	_, err := client.EvaluateRevenuePolicyDecision(context.Background(), RevenuePolicyDecision{})
 	if err == nil || !strings.Contains(err.Error(), "missing decision_type") {
-		t.Fatalf("EvaluateRevenueHumanDecision() error = %v, want missing decision_type", err)
+		t.Fatalf("EvaluateRevenuePolicyDecision() error = %v, want missing decision_type", err)
 	}
 	if *called {
 		t.Fatal("server was called for invalid request")
 	}
 }
 
-func TestEvaluateRevenueHumanDecisionRejectsMalformedResponse(t *testing.T) {
+func TestEvaluateRevenuePolicyDecisionRejectsMalformedResponse(t *testing.T) {
 	tests := []struct {
 		name string
-		resp RevenueHumanDecisionResponse
+		resp RevenuePolicyDecisionResponse
 		want string
 	}{
 		{
 			name: "decision mismatch",
-			resp: RevenueHumanDecisionResponse{
-				Record: RevenueHumanDecisionRecord{DecisionID: "other", DecisionType: "high_ticket_offer", GateStatus: "allowed"},
-				Result: RevenueHumanDecisionResult{Status: "allowed"},
+			resp: RevenuePolicyDecisionResponse{
+				Record: RevenuePolicyDecisionRecord{DecisionID: "other", DecisionType: "high_ticket_offer", Status: "allowed"},
+				Result: RevenuePolicyDecisionResult{Status: "allowed"},
 			},
 			want: "decision_id mismatch",
 		},
 		{
 			name: "status mismatch",
-			resp: RevenueHumanDecisionResponse{
-				Record: RevenueHumanDecisionRecord{DecisionID: "dec_1", DecisionType: "high_ticket_offer", GateStatus: "allowed"},
-				Result: RevenueHumanDecisionResult{Status: "blocked"},
+			resp: RevenuePolicyDecisionResponse{
+				Record: RevenuePolicyDecisionRecord{DecisionID: "dec_1", DecisionType: "high_ticket_offer", Status: "allowed"},
+				Result: RevenuePolicyDecisionResult{Status: "blocked"},
 			},
 			want: "status mismatch",
 		},
 		{
 			name: "blocked without reasons",
-			resp: RevenueHumanDecisionResponse{
-				Record: RevenueHumanDecisionRecord{DecisionID: "dec_1", DecisionType: "high_ticket_offer", GateStatus: "blocked"},
-				Result: RevenueHumanDecisionResult{Status: "blocked"},
+			resp: RevenuePolicyDecisionResponse{
+				Record: RevenuePolicyDecisionRecord{DecisionID: "dec_1", DecisionType: "high_ticket_offer", Status: "blocked"},
+				Result: RevenuePolicyDecisionResult{Status: "blocked"},
 			},
 			want: "blocked without reasons",
 		},
 		{
 			name: "missing created at",
-			resp: RevenueHumanDecisionResponse{
-				Record: RevenueHumanDecisionRecord{DecisionID: "dec_1", DecisionType: "high_ticket_offer", ApprovalStatus: "not_required", GateStatus: "allowed"},
-				Result: RevenueHumanDecisionResult{Status: "allowed"},
+			resp: RevenuePolicyDecisionResponse{
+				Record: RevenuePolicyDecisionRecord{DecisionID: "dec_1", DecisionType: "high_ticket_offer", Status: "allowed"},
+				Result: RevenuePolicyDecisionResult{Status: "allowed"},
 			},
 			want: "record missing created_at",
 		},
@@ -5436,7 +5414,7 @@ func TestEvaluateRevenueHumanDecisionRejectsMalformedResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.Path != "/viewer/revenue/human-decision-gate" {
+				if r.Method != http.MethodPost || r.URL.Path != "/viewer/revenue/policy-decisions" {
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
 				_ = json.NewEncoder(w).Encode(tt.resp)
@@ -5446,145 +5424,13 @@ func TestEvaluateRevenueHumanDecisionRejectsMalformedResponse(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = client.EvaluateRevenueHumanDecision(context.Background(), RevenueHumanDecision{
+			_, err = client.EvaluateRevenuePolicyDecision(context.Background(), RevenuePolicyDecision{
 				DecisionID:   "dec_1",
 				DecisionType: "high_ticket_offer",
 				Description:  "30万円の導入支援を案内する",
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("EvaluateRevenueHumanDecision() error = %v, want %q", err, tt.want)
-			}
-		})
-	}
-}
-
-func TestReviewRevenueHumanDecision(t *testing.T) {
-	now := time.Date(2026, 5, 20, 4, 50, 0, 0, time.UTC)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/viewer/revenue/human-decision-gate/review" {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		var req RevenueHumanDecisionReview
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatal(err)
-		}
-		if req.DecisionID != "dec_1" || req.ApprovalStatus != "approved" {
-			t.Fatalf("payload=%#v", req)
-		}
-		_ = json.NewEncoder(w).Encode(RevenueHumanDecisionResponse{
-			Record: RevenueHumanDecisionRecord{
-				DecisionID:       req.DecisionID,
-				DecisionType:     "external_publish",
-				ApprovalStatus:   "approved",
-				GateStatus:       "allowed",
-				RequiresApproval: false,
-				CreatedAt:        now,
-			},
-			Result: RevenueHumanDecisionResult{
-				Status:           "allowed",
-				RequiresApproval: false,
-			},
-		})
-	}))
-	defer server.Close()
-	client, err := New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := client.ReviewRevenueHumanDecision(context.Background(), RevenueHumanDecisionReview{
-		DecisionID:     "dec_1",
-		ApprovalStatus: "approved",
-	})
-	if err != nil {
-		t.Fatalf("ReviewRevenueHumanDecision() error = %v", err)
-	}
-	if resp.Result.Status != "allowed" || resp.Result.RequiresApproval || resp.Record.ApprovalStatus != "approved" {
-		t.Fatalf("response=%#v", resp)
-	}
-}
-
-func TestReviewRevenueHumanDecisionRejectsInvalidRequest(t *testing.T) {
-	tests := []struct {
-		name string
-		item RevenueHumanDecisionReview
-		want string
-	}{
-		{name: "missing decision", item: RevenueHumanDecisionReview{ApprovalStatus: "approved"}, want: "missing decision_id"},
-		{name: "missing approval", item: RevenueHumanDecisionReview{DecisionID: "dec_1"}, want: "missing approval_status"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client, called, cleanup := newNoRequestClient(t)
-			defer cleanup()
-			_, err := client.ReviewRevenueHumanDecision(context.Background(), tt.item)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("ReviewRevenueHumanDecision() error = %v, want %q", err, tt.want)
-			}
-			if *called {
-				t.Fatal("server was called for invalid request")
-			}
-		})
-	}
-}
-
-func TestReviewRevenueHumanDecisionRejectsMalformedResponse(t *testing.T) {
-	tests := []struct {
-		name string
-		resp RevenueHumanDecisionResponse
-		want string
-	}{
-		{
-			name: "wrong decision",
-			resp: RevenueHumanDecisionResponse{
-				Record: RevenueHumanDecisionRecord{DecisionID: "other", DecisionType: "external_publish", ApprovalStatus: "approved", GateStatus: "approved", RequiresApproval: true},
-				Result: RevenueHumanDecisionResult{Status: "approved", RequiresApproval: true},
-			},
-			want: "decision_id mismatch",
-		},
-		{
-			name: "wrong approval",
-			resp: RevenueHumanDecisionResponse{
-				Record: RevenueHumanDecisionRecord{DecisionID: "dec_1", DecisionType: "external_publish", ApprovalStatus: "pending", GateStatus: "allowed"},
-				Result: RevenueHumanDecisionResult{Status: "allowed"},
-			},
-			want: "approval_status mismatch",
-		},
-		{
-			name: "result mismatch",
-			resp: RevenueHumanDecisionResponse{
-				Record: RevenueHumanDecisionRecord{DecisionID: "dec_1", DecisionType: "external_publish", ApprovalStatus: "approved", GateStatus: "allowed"},
-				Result: RevenueHumanDecisionResult{Status: "blocked"},
-			},
-			want: "status mismatch",
-		},
-		{
-			name: "missing created at",
-			resp: RevenueHumanDecisionResponse{
-				Record: RevenueHumanDecisionRecord{DecisionID: "dec_1", DecisionType: "external_publish", ApprovalStatus: "approved", GateStatus: "allowed"},
-				Result: RevenueHumanDecisionResult{Status: "allowed"},
-			},
-			want: "record missing created_at",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.Path != "/viewer/revenue/human-decision-gate/review" {
-					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-				}
-				_ = json.NewEncoder(w).Encode(tt.resp)
-			}))
-			defer server.Close()
-			client, err := New(server.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = client.ReviewRevenueHumanDecision(context.Background(), RevenueHumanDecisionReview{
-				DecisionID:     "dec_1",
-				ApprovalStatus: "approved",
-			})
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("ReviewRevenueHumanDecision() error = %v, want %q", err, tt.want)
+				t.Fatalf("EvaluateRevenuePolicyDecision() error = %v, want %q", err, tt.want)
 			}
 		})
 	}
@@ -5613,8 +5459,7 @@ func TestCreateRevenueDailyRoutineReport(t *testing.T) {
 				MarketResearch:      1,
 				CreatedAt:           now,
 			},
-			ExternalActionsApplied:                  false,
-			HumanApprovalRequiredForExternalActions: false,
+			ExternalActionsApplied: false,
 		})
 	}))
 	defer server.Close()
@@ -5631,7 +5476,7 @@ func TestCreateRevenueDailyRoutineReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRevenueDailyRoutineReport() error = %v", err)
 	}
-	if resp.Report.Status != "draft_report" || resp.Report.ExternalSendApplied || resp.ExternalActionsApplied || resp.HumanApprovalRequiredForExternalActions {
+	if resp.Report.Status != "draft_report" || resp.Report.ExternalSendApplied || resp.ExternalActionsApplied {
 		t.Fatalf("response=%#v", resp)
 	}
 }
@@ -5663,7 +5508,6 @@ func TestCreateRevenueDailyRoutineReportRejectsMalformedResponse(t *testing.T) {
 					Date:         "2026-05-18",
 					Status:       "draft_report",
 				},
-				HumanApprovalRequiredForExternalActions: true,
 			},
 			want: "report_id mismatch",
 		},
@@ -5676,7 +5520,6 @@ func TestCreateRevenueDailyRoutineReportRejectsMalformedResponse(t *testing.T) {
 					Date:         "2026-05-18",
 					Status:       "sent",
 				},
-				HumanApprovalRequiredForExternalActions: true,
 			},
 			want: "status must be draft_report",
 		},
@@ -5689,8 +5532,7 @@ func TestCreateRevenueDailyRoutineReportRejectsMalformedResponse(t *testing.T) {
 					Date:         "2026-05-18",
 					Status:       "draft_report",
 				},
-				ExternalActionsApplied:                  true,
-				HumanApprovalRequiredForExternalActions: true,
+				ExternalActionsApplied: true,
 			},
 			want: "applied external action",
 		},
@@ -5704,7 +5546,6 @@ func TestCreateRevenueDailyRoutineReportRejectsMalformedResponse(t *testing.T) {
 					Status:              "draft_report",
 					ExternalSendApplied: true,
 				},
-				HumanApprovalRequiredForExternalActions: true,
 			},
 			want: "applied external action",
 		},
@@ -5717,7 +5558,6 @@ func TestCreateRevenueDailyRoutineReportRejectsMalformedResponse(t *testing.T) {
 					Date:         "2026-05-18",
 					Status:       "draft_report",
 				},
-				HumanApprovalRequiredForExternalActions: true,
 			},
 			want: "report missing created_at",
 		},
@@ -5762,12 +5602,10 @@ func TestCreateRevenueChannelDraft(t *testing.T) {
 			t.Fatalf("payload=%#v", req)
 		}
 		req.ExternalSendApplied = false
-		req.ApprovalStatus = "not_required"
 		req.CreatedAt = now
 		_ = json.NewEncoder(w).Encode(RevenueChannelDraftResponse{
 			Draft:                  req,
 			ExternalActionsApplied: false,
-			HumanApprovalRequiredForExternalSendApply: false,
 		})
 	}))
 	defer server.Close()
@@ -5785,7 +5623,7 @@ func TestCreateRevenueChannelDraft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRevenueChannelDraft() error = %v", err)
 	}
-	if resp.Draft.ExternalSendApplied || resp.Draft.ApprovalStatus != "not_required" || resp.HumanApprovalRequiredForExternalSendApply {
+	if resp.Draft.ExternalSendApplied {
 		t.Fatalf("response=%#v", resp)
 	}
 }
@@ -5825,11 +5663,9 @@ func TestCreateRevenueChannelDraftRejectsMalformedResponse(t *testing.T) {
 			name: "draft id mismatch",
 			resp: RevenueChannelDraftResponse{
 				Draft: RevenueChannelDraft{
-					DraftID:        "other",
-					Channel:        "email",
-					ApprovalStatus: "pending",
+					DraftID: "other",
+					Channel: "email",
 				},
-				HumanApprovalRequiredForExternalSendApply: true,
 			},
 			want: "draft_id mismatch",
 		},
@@ -5837,12 +5673,10 @@ func TestCreateRevenueChannelDraftRejectsMalformedResponse(t *testing.T) {
 			name: "external action applied",
 			resp: RevenueChannelDraftResponse{
 				Draft: RevenueChannelDraft{
-					DraftID:        "draft_1",
-					Channel:        "email",
-					ApprovalStatus: "pending",
+					DraftID: "draft_1",
+					Channel: "email",
 				},
-				ExternalActionsApplied:                    true,
-				HumanApprovalRequiredForExternalSendApply: true,
+				ExternalActionsApplied: true,
 			},
 			want: "applied external action",
 		},
@@ -5852,34 +5686,18 @@ func TestCreateRevenueChannelDraftRejectsMalformedResponse(t *testing.T) {
 				Draft: RevenueChannelDraft{
 					DraftID:             "draft_1",
 					Channel:             "email",
-					ApprovalStatus:      "pending",
 					ExternalSendApplied: true,
 				},
-				HumanApprovalRequiredForExternalSendApply: true,
 			},
 			want: "draft claims external send applied",
-		},
-		{
-			name: "already approved",
-			resp: RevenueChannelDraftResponse{
-				Draft: RevenueChannelDraft{
-					DraftID:        "draft_1",
-					Channel:        "email",
-					ApprovalStatus: "approved",
-				},
-				HumanApprovalRequiredForExternalSendApply: true,
-			},
-			want: "approval_status must be not_required or pending",
 		},
 		{
 			name: "missing created at",
 			resp: RevenueChannelDraftResponse{
 				Draft: RevenueChannelDraft{
-					DraftID:        "draft_1",
-					Channel:        "email",
-					ApprovalStatus: "pending",
+					DraftID: "draft_1",
+					Channel: "email",
 				},
-				HumanApprovalRequiredForExternalSendApply: true,
 			},
 			want: "draft missing created_at",
 		},
@@ -5920,7 +5738,7 @@ func TestApplyRevenueExternalSend(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.ApplyID != "apply_1" || req.DraftID != "draft_1" || req.DecisionID != "dec_1" || req.HumanApproved {
+		if req.ApplyID != "apply_1" || req.DraftID != "draft_1" || req.DecisionID != "dec_1" {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(RevenueExternalSendApplyResponse{
@@ -5930,8 +5748,6 @@ func TestApplyRevenueExternalSend(t *testing.T) {
 				DecisionID:          req.DecisionID,
 				Channel:             "email",
 				ChannelAdapter:      "unconfigured",
-				ApprovalStatus:      "not_required",
-				HumanApproved:       false,
 				ApplyStatus:         "blocked",
 				SendResult:          "not_sent",
 				FailureReason:       "external channel adapter is not configured",
@@ -5940,7 +5756,6 @@ func TestApplyRevenueExternalSend(t *testing.T) {
 			},
 			ExternalActionsApplied:              false,
 			PostSendVerified:                    false,
-			HumanApprovalRequiredForRetry:       false,
 			ExternalChannelAdapterConfiguration: "required",
 			FailureReason:                       "external channel adapter is not configured",
 		})
@@ -5951,15 +5766,14 @@ func TestApplyRevenueExternalSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, err := client.ApplyRevenueExternalSend(context.Background(), RevenueExternalSendApplyRequest{
-		ApplyID:       "apply_1",
-		DraftID:       "draft_1",
-		DecisionID:    "dec_1",
-		HumanApproved: false,
+		ApplyID:    "apply_1",
+		DraftID:    "draft_1",
+		DecisionID: "dec_1",
 	})
 	if err != nil {
 		t.Fatalf("ApplyRevenueExternalSend() error = %v", err)
 	}
-	if resp.Record.ApplyStatus != "blocked" || resp.Record.ExternalSendApplied || resp.ExternalActionsApplied || resp.HumanApprovalRequiredForRetry {
+	if resp.Record.ApplyStatus != "blocked" || resp.Record.ExternalSendApplied || resp.ExternalActionsApplied {
 		t.Fatalf("response=%#v", resp)
 	}
 }
@@ -6024,8 +5838,6 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 					DraftID:             "draft_1",
 					DecisionID:          "dec_1",
 					Channel:             "email",
-					ApprovalStatus:      "approved",
-					HumanApproved:       true,
 					ApplyStatus:         "blocked",
 					SendResult:          "not_sent",
 					FailureReason:       "external channel adapter is not configured",
@@ -6045,16 +5857,13 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 					DraftID:             "draft_1",
 					DecisionID:          "dec_1",
 					Channel:             "email",
-					ApprovalStatus:      "approved",
-					HumanApproved:       true,
 					ApplyStatus:         "blocked",
 					SendResult:          "not_sent",
 					ExternalSendApplied: false,
 					PostSendVerified:    false,
 				},
-				ExternalActionsApplied:        false,
-				PostSendVerified:              false,
-				HumanApprovalRequiredForRetry: true,
+				ExternalActionsApplied: false,
+				PostSendVerified:       false,
 			},
 			want: "without failure_reason",
 		},
@@ -6067,8 +5876,6 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 					DecisionID:          "dec_1",
 					Channel:             "email",
 					ChannelAdapter:      "unconfigured",
-					ApprovalStatus:      "approved",
-					HumanApproved:       true,
 					ApplyStatus:         "blocked",
 					SendResult:          "sent",
 					FailureReason:       "external channel adapter is not configured",
@@ -6077,7 +5884,6 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 				},
 				ExternalActionsApplied:              false,
 				PostSendVerified:                    false,
-				HumanApprovalRequiredForRetry:       true,
 				ExternalChannelAdapterConfiguration: "required",
 			},
 			want: "send_result=sent requires sent apply_status",
@@ -6091,8 +5897,6 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 					DecisionID:          "dec_1",
 					Channel:             "email",
 					ChannelAdapter:      "email_api",
-					ApprovalStatus:      "approved",
-					HumanApproved:       true,
 					ApplyStatus:         "blocked",
 					SendResult:          "not_sent",
 					FailureReason:       "external channel adapter is not configured",
@@ -6101,7 +5905,6 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 				},
 				ExternalActionsApplied:              false,
 				PostSendVerified:                    false,
-				HumanApprovalRequiredForRetry:       true,
 				ExternalChannelAdapterConfiguration: "required",
 			},
 			want: "channel_adapter conflicts",
@@ -6114,17 +5917,14 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 					DraftID:             "draft_1",
 					DecisionID:          "dec_1",
 					Channel:             "email",
-					ApprovalStatus:      "approved",
-					HumanApproved:       true,
 					ApplyStatus:         "blocked",
 					SendResult:          "not_sent",
 					FailureReason:       "external channel adapter is not configured",
 					ExternalSendApplied: false,
 					PostSendVerified:    false,
 				},
-				ExternalActionsApplied:        false,
-				PostSendVerified:              false,
-				HumanApprovalRequiredForRetry: true,
+				ExternalActionsApplied: false,
+				PostSendVerified:       false,
 			},
 			want: "record missing created_at",
 		},
@@ -6143,10 +5943,9 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = client.ApplyRevenueExternalSend(context.Background(), RevenueExternalSendApplyRequest{
-				ApplyID:       "apply_1",
-				DraftID:       "draft_1",
-				DecisionID:    "dec_1",
-				HumanApproved: true,
+				ApplyID:    "apply_1",
+				DraftID:    "draft_1",
+				DecisionID: "dec_1",
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("ApplyRevenueExternalSend() error = %v, want %q", err, tt.want)
@@ -6164,12 +5963,11 @@ func TestRevenueStatus(t *testing.T) {
 			t.Fatalf("method=%s", r.Method)
 		}
 		_ = json.NewEncoder(w).Encode(RevenueStatus{
-			HumanDecisions: []RevenueHumanDecisionRecord{{
-				DecisionID:     "dec_1",
-				DecisionType:   "closed_channel_send",
-				ApprovalStatus: "approved",
-				GateStatus:     "approved",
-				CreatedAt:      now,
+			PolicyDecisions: []RevenuePolicyDecisionRecord{{
+				DecisionID:   "dec_1",
+				DecisionType: "closed_channel_send",
+				Status:       "allowed",
+				CreatedAt:    now,
 			}},
 			DailyRoutineReports: []RevenueDailyRoutineReport{{
 				ReportID:  "report_1",
@@ -6178,27 +5976,23 @@ func TestRevenueStatus(t *testing.T) {
 				CreatedAt: now,
 			}},
 			ChannelDrafts: []RevenueChannelDraft{{
-				DraftID:        "draft_1",
-				Channel:        "email",
-				Body:           "下書き",
-				ApprovalStatus: "pending",
-				CreatedAt:      now,
+				DraftID:   "draft_1",
+				Channel:   "email",
+				Body:      "下書き",
+				CreatedAt: now,
 			}},
 			ExternalSendApplyRecords: []RevenueExternalSendApplyRecord{{
-				ApplyID:        "apply_1",
-				DraftID:        "draft_1",
-				DecisionID:     "dec_1",
-				Channel:        "email",
-				ApprovalStatus: "approved",
-				HumanApproved:  true,
-				ApplyStatus:    "blocked",
-				SendResult:     "not_sent",
-				FailureReason:  "external channel adapter is not configured",
-				CreatedAt:      now,
+				ApplyID:       "apply_1",
+				DraftID:       "draft_1",
+				DecisionID:    "dec_1",
+				Channel:       "email",
+				ApplyStatus:   "blocked",
+				SendResult:    "not_sent",
+				FailureReason: "external channel adapter is not configured",
+				CreatedAt:     now,
 			}},
-			ExternalChannelAdapter:               "unconfigured",
-			ExternalChannelAdapterConfigured:     boolPtr(false),
-			HumanApprovalRequiredForExternalSend: boolPtr(true),
+			ExternalChannelAdapter:           "unconfigured",
+			ExternalChannelAdapterConfigured: boolPtr(false),
 		})
 	}))
 	defer server.Close()
@@ -6216,7 +6010,7 @@ func TestRevenueStatus(t *testing.T) {
 	if len(status.ExternalSendApplyRecords) != 1 || status.ExternalSendApplyRecords[0].ApplyID != "apply_1" {
 		t.Fatalf("status=%#v", status)
 	}
-	if status.ExternalChannelAdapter != "unconfigured" || status.ExternalChannelAdapterConfigured == nil || *status.ExternalChannelAdapterConfigured || status.HumanApprovalRequiredForExternalSend == nil || !*status.HumanApprovalRequiredForExternalSend {
+	if status.ExternalChannelAdapter != "unconfigured" || status.ExternalChannelAdapterConfigured == nil || *status.ExternalChannelAdapterConfigured {
 		t.Fatalf("external channel readiness=%#v", status)
 	}
 }
@@ -6225,12 +6019,11 @@ func TestRevenueStatusRejectsMalformedCurrentView(t *testing.T) {
 	now := time.Date(2026, 5, 20, 4, 15, 0, 0, time.UTC)
 	valid := func() RevenueStatus {
 		return RevenueStatus{
-			HumanDecisions: []RevenueHumanDecisionRecord{{
-				DecisionID:     "dec_1",
-				DecisionType:   "closed_channel_send",
-				ApprovalStatus: "approved",
-				GateStatus:     "approved",
-				CreatedAt:      now,
+			PolicyDecisions: []RevenuePolicyDecisionRecord{{
+				DecisionID:   "dec_1",
+				DecisionType: "closed_channel_send",
+				Status:       "allowed",
+				CreatedAt:    now,
 			}},
 			DailyRoutineReports: []RevenueDailyRoutineReport{{
 				ReportID:  "report_1",
@@ -6239,27 +6032,23 @@ func TestRevenueStatusRejectsMalformedCurrentView(t *testing.T) {
 				CreatedAt: now,
 			}},
 			ChannelDrafts: []RevenueChannelDraft{{
-				DraftID:        "draft_1",
-				Channel:        "email",
-				Body:           "下書き",
-				ApprovalStatus: "pending",
-				CreatedAt:      now,
+				DraftID:   "draft_1",
+				Channel:   "email",
+				Body:      "下書き",
+				CreatedAt: now,
 			}},
 			ExternalSendApplyRecords: []RevenueExternalSendApplyRecord{{
-				ApplyID:        "apply_1",
-				DraftID:        "draft_1",
-				DecisionID:     "dec_1",
-				Channel:        "email",
-				ApprovalStatus: "approved",
-				HumanApproved:  true,
-				ApplyStatus:    "blocked",
-				SendResult:     "not_sent",
-				FailureReason:  "external channel adapter is not configured",
-				CreatedAt:      now,
+				ApplyID:       "apply_1",
+				DraftID:       "draft_1",
+				DecisionID:    "dec_1",
+				Channel:       "email",
+				ApplyStatus:   "blocked",
+				SendResult:    "not_sent",
+				FailureReason: "external channel adapter is not configured",
+				CreatedAt:     now,
 			}},
-			ExternalChannelAdapter:               "unconfigured",
-			ExternalChannelAdapterConfigured:     boolPtr(false),
-			HumanApprovalRequiredForExternalSend: boolPtr(true),
+			ExternalChannelAdapter:           "unconfigured",
+			ExternalChannelAdapterConfigured: boolPtr(false),
 		}
 	}
 	tests := []struct {
@@ -6268,11 +6057,11 @@ func TestRevenueStatusRejectsMalformedCurrentView(t *testing.T) {
 		want   string
 	}{
 		{name: "duplicate decision", mutate: func(s *RevenueStatus) {
-			s.HumanDecisions = append(s.HumanDecisions, s.HumanDecisions[0])
-		}, want: "duplicate human_decision"},
+			s.PolicyDecisions = append(s.PolicyDecisions, s.PolicyDecisions[0])
+		}, want: "duplicate policy_decision"},
 		{name: "decision missing created at", mutate: func(s *RevenueStatus) {
-			s.HumanDecisions[0].CreatedAt = time.Time{}
-		}, want: "human_decision dec_1 missing created_at"},
+			s.PolicyDecisions[0].CreatedAt = time.Time{}
+		}, want: "policy_decision dec_1 missing created_at"},
 		{name: "missing draft body", mutate: func(s *RevenueStatus) {
 			s.ChannelDrafts[0].Body = ""
 		}, want: "missing body"},
@@ -6363,7 +6152,7 @@ func TestSandboxStatus(t *testing.T) {
 			Sandboxes: []SandboxRecord{{SandboxID: "sbx_1", Type: "code", Status: "active", CreatedAt: now}},
 			Decisions: []PromotionGateDecision{{
 				Status: "needs_review",
-				Reason: "missing approval",
+				Reason: "missing verification",
 			}},
 		})
 	}))
@@ -6462,7 +6251,7 @@ func TestSandboxStatusRejectsMalformedCurrentView(t *testing.T) {
 		},
 		{
 			name: "missing decision status",
-			resp: SandboxStatus{Decisions: []PromotionGateDecision{{Reason: "missing approval"}}},
+			resp: SandboxStatus{Decisions: []PromotionGateDecision{{Reason: "missing verification"}}},
 			want: "decision missing status",
 		},
 		{
@@ -6502,15 +6291,13 @@ func TestSandboxStatusRejectsMalformedCurrentView(t *testing.T) {
 					TargetPath:                "internal/app.go",
 					DiffPath:                  "sandbox/change.diff",
 					PostApplyVerificationPath: "sandbox/post-apply.log",
-					HumanApprovalStatus:       "granted",
 					CreatedAt:                 now,
 				}},
 				GateLogs: []PromotionGateLog{{
-					EventID:             "evt_1",
-					PromotionID:         "promo_1",
-					GateStatus:          "promotion_applied",
-					HumanApprovalStatus: "granted",
-					CreatedAt:           now,
+					EventID:     "evt_1",
+					PromotionID: "promo_1",
+					GateStatus:  "promotion_applied",
+					CreatedAt:   now,
 				}},
 			},
 			want: "promotion_applied gate_log missing post_apply_verification",
@@ -6521,7 +6308,6 @@ func TestSandboxStatusRejectsMalformedCurrentView(t *testing.T) {
 				EventID:               "evt_1",
 				PromotionID:           "promo_1",
 				GateStatus:            "promotion_applied",
-				HumanApprovalStatus:   "granted",
 				PostApplyVerification: "sandbox/post-apply.log",
 				CreatedAt:             now,
 			}}},
@@ -6536,14 +6322,12 @@ func TestSandboxStatusRejectsMalformedCurrentView(t *testing.T) {
 					TargetPath:                "internal/app.go",
 					DiffPath:                  "sandbox/change.diff",
 					PostApplyVerificationPath: "sandbox/post-apply.log",
-					HumanApprovalStatus:       "granted",
 					CreatedAt:                 now,
 				}},
 				GateLogs: []PromotionGateLog{{
 					EventID:               "evt_1",
 					PromotionID:           "promo_1",
 					GateStatus:            "promotion_applied",
-					HumanApprovalStatus:   "granted",
 					PostApplyVerification: "sandbox/post-apply.log",
 					CreatedAt:             now,
 				}},
@@ -6554,19 +6338,17 @@ func TestSandboxStatusRejectsMalformedCurrentView(t *testing.T) {
 			name: "rollback gate log missing completed artifact",
 			resp: SandboxStatus{
 				Promotions: []PromotionRequest{{
-					PromotionID:         "promo_1",
-					SandboxID:           "sbx_1",
-					TargetPath:          "internal/app.go",
-					RollbackPlanPath:    "sandbox/rollback.plan",
-					HumanApprovalStatus: "granted",
-					CreatedAt:           now,
+					PromotionID:      "promo_1",
+					SandboxID:        "sbx_1",
+					TargetPath:       "internal/app.go",
+					RollbackPlanPath: "sandbox/rollback.plan",
+					CreatedAt:        now,
 				}},
 				GateLogs: []PromotionGateLog{{
-					EventID:             "evt_1",
-					PromotionID:         "promo_1",
-					GateStatus:          "rollback_executed",
-					HumanApprovalStatus: "granted",
-					CreatedAt:           now,
+					EventID:     "evt_1",
+					PromotionID: "promo_1",
+					GateStatus:  "rollback_executed",
+					CreatedAt:   now,
 				}},
 			},
 			want: "rollback_executed missing completed rollback_execution artifact",
@@ -6607,7 +6389,6 @@ func TestSandboxStatusAcceptsAppliedAndRollbackEvidence(t *testing.T) {
 			DiffPath:                  "sandbox/change.diff",
 			RollbackPlanPath:          "sandbox/rollback.plan",
 			PostApplyVerificationPath: "sandbox/post-apply.log",
-			HumanApprovalStatus:       "granted",
 			CreatedAt:                 now,
 		}},
 		GateLogs: []PromotionGateLog{
@@ -6615,16 +6396,14 @@ func TestSandboxStatusAcceptsAppliedAndRollbackEvidence(t *testing.T) {
 				EventID:               "evt_apply_1",
 				PromotionID:           "promo_1",
 				GateStatus:            "promotion_applied",
-				HumanApprovalStatus:   "granted",
 				PostApplyVerification: "sandbox/post-apply.log",
 				CreatedAt:             now,
 			},
 			{
-				EventID:             "evt_rollback_1",
-				PromotionID:         "promo_1",
-				GateStatus:          "rollback_executed",
-				HumanApprovalStatus: "granted",
-				CreatedAt:           now,
+				EventID:     "evt_rollback_1",
+				PromotionID: "promo_1",
+				GateStatus:  "rollback_executed",
+				CreatedAt:   now,
 			},
 		},
 	}
@@ -6658,13 +6437,13 @@ func TestCreatePromotionRequest(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.PromotionID != "promo_1" || req.SandboxID != "sbx_1" || req.HumanApprovalStatus != "granted" {
+		if req.PromotionID != "promo_1" || req.SandboxID != "sbx_1" {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(PromotionRequestResponse{
 			Promotion: req,
-			Decision:  PromotionGateDecision{Status: "approve", Reason: "ok"},
-			GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: req.PromotionID, GateStatus: "approve", CreatedAt: now},
+			Decision:  PromotionGateDecision{Status: "passed", Reason: "ok"},
+			GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: req.PromotionID, GateStatus: "passed", CreatedAt: now},
 		})
 	}))
 	defer server.Close()
@@ -6673,20 +6452,19 @@ func TestCreatePromotionRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, err := client.CreatePromotionRequest(context.Background(), PromotionRequest{
-		PromotionID:         "promo_1",
-		SandboxID:           "sbx_1",
-		TargetPath:          "internal/example.go",
-		DiffPath:            "sandbox/diff.patch",
-		TestResultPath:      "sandbox/test.log",
-		Reason:              "verified patch",
-		RollbackPlanPath:    "sandbox/rollback.md",
-		HumanApprovalStatus: "granted",
-		CreatedAt:           time.Now().UTC(),
+		PromotionID:      "promo_1",
+		SandboxID:        "sbx_1",
+		TargetPath:       "internal/example.go",
+		DiffPath:         "sandbox/diff.patch",
+		TestResultPath:   "sandbox/test.log",
+		Reason:           "verified patch",
+		RollbackPlanPath: "sandbox/rollback.md",
+		CreatedAt:        time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatalf("CreatePromotionRequest() error = %v", err)
 	}
-	if resp.Promotion.PromotionID != "promo_1" || resp.Decision.Status != "approve" || resp.GateLog.EventID != "evt_1" {
+	if resp.Promotion.PromotionID != "promo_1" || resp.Decision.Status != "passed" || resp.GateLog.EventID != "evt_1" {
 		t.Fatalf("response=%#v", resp)
 	}
 }
@@ -6738,8 +6516,8 @@ func TestCreatePromotionRequestRejectsMalformedResponse(t *testing.T) {
 			name: "promotion id mismatch",
 			resp: PromotionRequestResponse{
 				Promotion: PromotionRequest{PromotionID: "other", SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch"},
-				Decision:  PromotionGateDecision{Status: "approve", Reason: "ok"},
-				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: "other", GateStatus: "approve"},
+				Decision:  PromotionGateDecision{Status: "passed", Reason: "ok"},
+				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: "other", GateStatus: "passed"},
 			},
 			want: "promotion_id mismatch",
 		},
@@ -6747,8 +6525,8 @@ func TestCreatePromotionRequestRejectsMalformedResponse(t *testing.T) {
 			name: "missing gate event",
 			resp: PromotionRequestResponse{
 				Promotion: PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch"},
-				Decision:  PromotionGateDecision{Status: "approve", Reason: "ok"},
-				GateLog:   PromotionGateLog{PromotionID: "promo_1", GateStatus: "approve"},
+				Decision:  PromotionGateDecision{Status: "passed", Reason: "ok"},
+				GateLog:   PromotionGateLog{PromotionID: "promo_1", GateStatus: "passed"},
 			},
 			want: "missing gate event_id",
 		},
@@ -6756,7 +6534,7 @@ func TestCreatePromotionRequestRejectsMalformedResponse(t *testing.T) {
 			name: "gate status mismatch",
 			resp: PromotionRequestResponse{
 				Promotion: PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch"},
-				Decision:  PromotionGateDecision{Status: "approve", Reason: "ok"},
+				Decision:  PromotionGateDecision{Status: "passed", Reason: "ok"},
 				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "needs_review"},
 			},
 			want: "gate status mismatch",
@@ -6765,7 +6543,7 @@ func TestCreatePromotionRequestRejectsMalformedResponse(t *testing.T) {
 			name: "review without missing requirements",
 			resp: PromotionRequestResponse{
 				Promotion: PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch"},
-				Decision:  PromotionGateDecision{Status: "needs_review", Reason: "missing approval"},
+				Decision:  PromotionGateDecision{Status: "needs_review", Reason: "missing verification"},
 				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "needs_review"},
 			},
 			want: "review decision without missing requirements",
@@ -6774,8 +6552,8 @@ func TestCreatePromotionRequestRejectsMalformedResponse(t *testing.T) {
 			name: "rollback artifact path mismatch",
 			resp: PromotionRequestResponse{
 				Promotion:        PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch"},
-				Decision:         PromotionGateDecision{Status: "approve", Reason: "ok"},
-				GateLog:          PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "approve"},
+				Decision:         PromotionGateDecision{Status: "passed", Reason: "ok"},
+				GateLog:          PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "passed"},
 				RollbackArtifact: &SandboxArtifact{ArtifactID: "art_1", SandboxID: "sbx_1", Type: "rollback_plan", FilePath: "sandbox/other.md", Status: "completed"},
 			},
 			want: "rollback artifact path mismatch",
@@ -6784,8 +6562,8 @@ func TestCreatePromotionRequestRejectsMalformedResponse(t *testing.T) {
 			name: "post apply artifact type mismatch",
 			resp: PromotionRequestResponse{
 				Promotion:                     PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch"},
-				Decision:                      PromotionGateDecision{Status: "approve", Reason: "ok"},
-				GateLog:                       PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "approve"},
+				Decision:                      PromotionGateDecision{Status: "passed", Reason: "ok"},
+				GateLog:                       PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "passed"},
 				PostApplyVerificationArtifact: &SandboxArtifact{ArtifactID: "art_2", SandboxID: "sbx_1", Type: "other", FilePath: "sandbox/post-apply.log", Status: "pending"},
 			},
 			want: "post-apply artifact type mismatch",
@@ -6794,8 +6572,8 @@ func TestCreatePromotionRequestRejectsMalformedResponse(t *testing.T) {
 			name: "promotion missing created at",
 			resp: PromotionRequestResponse{
 				Promotion: PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch"},
-				Decision:  PromotionGateDecision{Status: "approve", Reason: "ok"},
-				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "approve", CreatedAt: time.Date(2026, 5, 20, 5, 20, 0, 0, time.UTC)},
+				Decision:  PromotionGateDecision{Status: "passed", Reason: "ok"},
+				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "passed", CreatedAt: time.Date(2026, 5, 20, 5, 20, 0, 0, time.UTC)},
 			},
 			want: "promotion missing created_at",
 		},
@@ -6803,8 +6581,8 @@ func TestCreatePromotionRequestRejectsMalformedResponse(t *testing.T) {
 			name: "gate log missing created at",
 			resp: PromotionRequestResponse{
 				Promotion: PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch", CreatedAt: time.Date(2026, 5, 20, 5, 20, 0, 0, time.UTC)},
-				Decision:  PromotionGateDecision{Status: "approve", Reason: "ok"},
-				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "approve"},
+				Decision:  PromotionGateDecision{Status: "passed", Reason: "ok"},
+				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "passed"},
 			},
 			want: "gate_log missing created_at",
 		},
@@ -6831,7 +6609,6 @@ func TestCreatePromotionRequestRejectsMalformedResponse(t *testing.T) {
 				Reason:                    "verified patch",
 				RollbackPlanPath:          "sandbox/rollback.md",
 				PostApplyVerificationPath: "sandbox/post-apply.log",
-				HumanApprovalStatus:       "granted",
 				CreatedAt:                 time.Now().UTC(),
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -6851,7 +6628,7 @@ func TestApplyPromotion(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.Promotion.PromotionID != "promo_1" || !req.HumanApproved || req.PostApplyVerificationPath == "" {
+		if req.Promotion.PromotionID != "promo_1" || req.PostApplyVerificationPath == "" {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(PromotionApplyResponse{
@@ -6868,19 +6645,17 @@ func TestApplyPromotion(t *testing.T) {
 	}
 	resp, err := client.ApplyPromotion(context.Background(), PromotionApplyRequest{
 		Promotion: PromotionRequest{
-			PromotionID:         "promo_1",
-			SandboxID:           "sbx_1",
-			TargetPath:          "internal/example.go",
-			DiffPath:            "sandbox/diff.patch",
-			TestResultPath:      "sandbox/test.log",
-			Reason:              "verified patch",
-			RollbackPlanPath:    "sandbox/rollback.md",
-			HumanApprovalStatus: "granted",
-			CreatedAt:           time.Now().UTC(),
+			PromotionID:      "promo_1",
+			SandboxID:        "sbx_1",
+			TargetPath:       "internal/example.go",
+			DiffPath:         "sandbox/diff.patch",
+			TestResultPath:   "sandbox/test.log",
+			Reason:           "verified patch",
+			RollbackPlanPath: "sandbox/rollback.md",
+			CreatedAt:        time.Now().UTC(),
 		},
 		AppliedBy:                 "Worker",
 		PostApplyVerificationPath: "sandbox/post-apply.log",
-		HumanApproved:             true,
 	})
 	if err != nil {
 		t.Fatalf("ApplyPromotion() error = %v", err)
@@ -6902,26 +6677,23 @@ func TestApplyPromotionRejectsInvalidRequest(t *testing.T) {
 		{
 			name: "missing promotion",
 			req: PromotionApplyRequest{
-				Promotion:                 PromotionRequest{SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch", HumanApprovalStatus: "granted"},
+				Promotion:                 PromotionRequest{SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch"},
 				PostApplyVerificationPath: "sandbox/post-apply.log",
-				HumanApproved:             true,
 			},
 			want: "missing promotion_id",
 		},
 		{
 			name: "missing diff",
 			req: PromotionApplyRequest{
-				Promotion:                 PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go", HumanApprovalStatus: "granted"},
+				Promotion:                 PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go"},
 				PostApplyVerificationPath: "sandbox/post-apply.log",
-				HumanApproved:             true,
 			},
 			want: "missing diff_path",
 		},
 		{
 			name: "missing post apply evidence",
 			req: PromotionApplyRequest{
-				Promotion:     PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch", HumanApprovalStatus: "granted"},
-				HumanApproved: true,
+				Promotion: PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go", DiffPath: "sandbox/diff.patch"},
 			},
 			want: "missing post_apply_verification_path",
 		},
@@ -6945,19 +6717,17 @@ func TestApplyPromotionRejectsMalformedApplyResponse(t *testing.T) {
 	now := time.Date(2026, 5, 20, 5, 20, 0, 0, time.UTC)
 	req := PromotionApplyRequest{
 		Promotion: PromotionRequest{
-			PromotionID:         "promo_1",
-			SandboxID:           "sbx_1",
-			TargetPath:          "internal/example.go",
-			DiffPath:            "sandbox/diff.patch",
-			TestResultPath:      "sandbox/test.log",
-			Reason:              "verified patch",
-			RollbackPlanPath:    "sandbox/rollback.md",
-			HumanApprovalStatus: "granted",
-			CreatedAt:           time.Now().UTC(),
+			PromotionID:      "promo_1",
+			SandboxID:        "sbx_1",
+			TargetPath:       "internal/example.go",
+			DiffPath:         "sandbox/diff.patch",
+			TestResultPath:   "sandbox/test.log",
+			Reason:           "verified patch",
+			RollbackPlanPath: "sandbox/rollback.md",
+			CreatedAt:        time.Now().UTC(),
 		},
 		AppliedBy:                 "Worker",
 		PostApplyVerificationPath: "sandbox/post-apply.log",
-		HumanApproved:             true,
 	}
 	valid := PromotionApplyResponse{
 		Decision:                      PromotionGateDecision{Status: "promotion_applied", Reason: "recorded"},
@@ -7077,7 +6847,7 @@ func TestRollbackPromotion(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.Promotion.PromotionID != "promo_1" || !req.HumanApproved || req.PostApplyVerificationPath == "" {
+		if req.Promotion.PromotionID != "promo_1" || req.PostApplyVerificationPath == "" {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(PromotionRollbackResponse{
@@ -7094,19 +6864,17 @@ func TestRollbackPromotion(t *testing.T) {
 	}
 	resp, err := client.RollbackPromotion(context.Background(), PromotionApplyRequest{
 		Promotion: PromotionRequest{
-			PromotionID:         "promo_1",
-			SandboxID:           "sbx_1",
-			TargetPath:          "internal/example.go",
-			DiffPath:            "sandbox/diff.patch",
-			TestResultPath:      "sandbox/test.log",
-			Reason:              "verified patch",
-			RollbackPlanPath:    "sandbox/rollback.md",
-			HumanApprovalStatus: "granted",
-			CreatedAt:           time.Now().UTC(),
+			PromotionID:      "promo_1",
+			SandboxID:        "sbx_1",
+			TargetPath:       "internal/example.go",
+			DiffPath:         "sandbox/diff.patch",
+			TestResultPath:   "sandbox/test.log",
+			Reason:           "verified patch",
+			RollbackPlanPath: "sandbox/rollback.md",
+			CreatedAt:        time.Now().UTC(),
 		},
 		AppliedBy:                 "Worker",
 		PostApplyVerificationPath: "sandbox/post-rollback.log",
-		HumanApproved:             true,
 	})
 	if err != nil {
 		t.Fatalf("RollbackPromotion() error = %v", err)
@@ -7128,16 +6896,14 @@ func TestRollbackPromotionRejectsInvalidRequest(t *testing.T) {
 		{
 			name: "missing promotion",
 			req: PromotionApplyRequest{
-				Promotion:     PromotionRequest{SandboxID: "sbx_1", TargetPath: "internal/example.go", RollbackPlanPath: "sandbox/rollback.md", HumanApprovalStatus: "granted"},
-				HumanApproved: true,
+				Promotion: PromotionRequest{SandboxID: "sbx_1", TargetPath: "internal/example.go", RollbackPlanPath: "sandbox/rollback.md"},
 			},
 			want: "missing promotion_id",
 		},
 		{
 			name: "missing rollback plan",
 			req: PromotionApplyRequest{
-				Promotion:     PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go", HumanApprovalStatus: "granted"},
-				HumanApproved: true,
+				Promotion: PromotionRequest{PromotionID: "promo_1", SandboxID: "sbx_1", TargetPath: "internal/example.go"},
 			},
 			want: "missing rollback_plan_path",
 		},
@@ -7210,19 +6976,17 @@ func TestRollbackPromotionRejectsMalformedResponse(t *testing.T) {
 			}
 			_, err = client.RollbackPromotion(context.Background(), PromotionApplyRequest{
 				Promotion: PromotionRequest{
-					PromotionID:         "promo_1",
-					SandboxID:           "sbx_1",
-					TargetPath:          "internal/example.go",
-					DiffPath:            "sandbox/diff.patch",
-					TestResultPath:      "sandbox/test.log",
-					Reason:              "verified patch",
-					RollbackPlanPath:    "sandbox/rollback.md",
-					HumanApprovalStatus: "granted",
-					CreatedAt:           now,
+					PromotionID:      "promo_1",
+					SandboxID:        "sbx_1",
+					TargetPath:       "internal/example.go",
+					DiffPath:         "sandbox/diff.patch",
+					TestResultPath:   "sandbox/test.log",
+					Reason:           "verified patch",
+					RollbackPlanPath: "sandbox/rollback.md",
+					CreatedAt:        now,
 				},
 				AppliedBy:                 "Worker",
 				PostApplyVerificationPath: "sandbox/post-rollback.log",
-				HumanApproved:             true,
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("RollbackPromotion() error = %v, want %q", err, tt.want)
@@ -7263,8 +7027,8 @@ func TestSubmitPromotionWorkflowCreatesRequestWithoutApply(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(PromotionRequestResponse{
 			Promotion: req,
-			Decision:  PromotionGateDecision{Status: "approve", Reason: "ok"},
-			GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: req.PromotionID, GateStatus: "approve", CreatedAt: now},
+			Decision:  PromotionGateDecision{Status: "passed", Reason: "ok"},
+			GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: req.PromotionID, GateStatus: "passed", CreatedAt: now},
 		})
 	}))
 	defer server.Close()
@@ -7274,30 +7038,27 @@ func TestSubmitPromotionWorkflowCreatesRequestWithoutApply(t *testing.T) {
 	}
 	resp, err := client.SubmitPromotionWorkflow(context.Background(), PromotionWorkflowRequest{
 		Promotion: PromotionRequest{
-			PromotionID:         "promo_1",
-			SandboxID:           "sbx_1",
-			TargetPath:          "internal/example.go",
-			DiffPath:            "sandbox/diff.patch",
-			TestResultPath:      "sandbox/test.log",
-			Reason:              "verified patch",
-			RollbackPlanPath:    "sandbox/rollback.md",
-			HumanApprovalStatus: "granted",
-			CreatedAt:           time.Now().UTC(),
+			PromotionID:      "promo_1",
+			SandboxID:        "sbx_1",
+			TargetPath:       "internal/example.go",
+			DiffPath:         "sandbox/diff.patch",
+			TestResultPath:   "sandbox/test.log",
+			Reason:           "verified patch",
+			RollbackPlanPath: "sandbox/rollback.md",
+			CreatedAt:        time.Now().UTC(),
 		},
-		ApplyAfterApproval:        false,
+		ApplyAfterPolicyPass:      false,
 		PostApplyVerificationPath: "sandbox/post-apply.log",
-		HumanApproved:             false,
 		ExternalControl: &ExternalControlRequest{
-			Actor:         "Worker",
-			ChannelID:     "viewer",
-			Action:        "promotion_apply",
-			HumanApproved: true,
+			Actor:     "Worker",
+			ChannelID: "viewer",
+			Action:    "promotion_apply",
 		},
 	})
 	if err != nil {
 		t.Fatalf("SubmitPromotionWorkflow() error = %v", err)
 	}
-	if resp.Applied || resp.ApplyResponse != nil || resp.SkippedReason != "apply_after_approval is false" {
+	if resp.Applied || resp.ApplyResponse != nil || resp.SkippedReason != "apply_after_policy_pass is false" {
 		t.Fatalf("workflow response=%#v", resp)
 	}
 	if len(paths) != 2 || paths[0] != "/viewer/ai-workflow/external-control/check" || paths[1] != "/viewer/sandbox/promotions" {
@@ -7318,19 +7079,17 @@ func TestSubmitPromotionWorkflowRequiresExternalControlBeforeApply(t *testing.T)
 	}
 	resp, err := client.SubmitPromotionWorkflow(context.Background(), PromotionWorkflowRequest{
 		Promotion: PromotionRequest{
-			PromotionID:         "promo_1",
-			SandboxID:           "sbx_1",
-			TargetPath:          "internal/example.go",
-			DiffPath:            "sandbox/diff.patch",
-			TestResultPath:      "sandbox/test.log",
-			Reason:              "verified patch",
-			RollbackPlanPath:    "sandbox/rollback.md",
-			HumanApprovalStatus: "granted",
-			CreatedAt:           time.Now().UTC(),
+			PromotionID:      "promo_1",
+			SandboxID:        "sbx_1",
+			TargetPath:       "internal/example.go",
+			DiffPath:         "sandbox/diff.patch",
+			TestResultPath:   "sandbox/test.log",
+			Reason:           "verified patch",
+			RollbackPlanPath: "sandbox/rollback.md",
+			CreatedAt:        time.Now().UTC(),
 		},
-		ApplyAfterApproval:        true,
+		ApplyAfterPolicyPass:      true,
 		PostApplyVerificationPath: "sandbox/post-apply.log",
-		HumanApproved:             true,
 	})
 	if err != nil {
 		t.Fatalf("SubmitPromotionWorkflow() error = %v", err)
@@ -7363,18 +7122,16 @@ func TestSubmitPromotionWorkflowStopsWhenExternalControlPolicyBlocks(t *testing.
 	}
 	resp, err := client.SubmitPromotionWorkflow(context.Background(), PromotionWorkflowRequest{
 		Promotion: PromotionRequest{
-			PromotionID:         "promo_1",
-			SandboxID:           "sbx_1",
-			TargetPath:          "internal/example.go",
-			DiffPath:            "sandbox/diff.patch",
-			TestResultPath:      "sandbox/test.log",
-			Reason:              "verified patch",
-			RollbackPlanPath:    "sandbox/rollback.md",
-			HumanApprovalStatus: "granted",
-			CreatedAt:           time.Now().UTC(),
+			PromotionID:      "promo_1",
+			SandboxID:        "sbx_1",
+			TargetPath:       "internal/example.go",
+			DiffPath:         "sandbox/diff.patch",
+			TestResultPath:   "sandbox/test.log",
+			Reason:           "verified patch",
+			RollbackPlanPath: "sandbox/rollback.md",
+			CreatedAt:        time.Now().UTC(),
 		},
-		ApplyAfterApproval: true,
-		HumanApproved:      true,
+		ApplyAfterPolicyPass: true,
 		ExternalControl: &ExternalControlRequest{
 			Actor:     "Worker",
 			ChannelID: "viewer",
@@ -7392,7 +7149,7 @@ func TestSubmitPromotionWorkflowStopsWhenExternalControlPolicyBlocks(t *testing.
 	}
 }
 
-func TestSubmitPromotionWorkflowDoesNotApplyWhenGateDoesNotApprove(t *testing.T) {
+func TestSubmitPromotionWorkflowDoesNotApplyWhenGateDoesNotPass(t *testing.T) {
 	var paths []string
 	now := time.Date(2026, 5, 20, 5, 20, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -7435,29 +7192,26 @@ func TestSubmitPromotionWorkflowDoesNotApplyWhenGateDoesNotApprove(t *testing.T)
 	}
 	resp, err := client.SubmitPromotionWorkflow(context.Background(), PromotionWorkflowRequest{
 		Promotion: PromotionRequest{
-			PromotionID:         "promo_1",
-			SandboxID:           "sbx_1",
-			TargetPath:          "internal/example.go",
-			DiffPath:            "sandbox/diff.patch",
-			Reason:              "verified patch",
-			RollbackPlanPath:    "sandbox/rollback.md",
-			HumanApprovalStatus: "granted",
-			CreatedAt:           time.Now().UTC(),
+			PromotionID:      "promo_1",
+			SandboxID:        "sbx_1",
+			TargetPath:       "internal/example.go",
+			DiffPath:         "sandbox/diff.patch",
+			Reason:           "verified patch",
+			RollbackPlanPath: "sandbox/rollback.md",
+			CreatedAt:        time.Now().UTC(),
 		},
-		ApplyAfterApproval:        true,
+		ApplyAfterPolicyPass:      true,
 		PostApplyVerificationPath: "sandbox/post-apply.log",
-		HumanApproved:             true,
 		ExternalControl: &ExternalControlRequest{
-			Actor:         "Worker",
-			ChannelID:     "viewer",
-			Action:        "promotion_apply",
-			HumanApproved: true,
+			Actor:     "Worker",
+			ChannelID: "viewer",
+			Action:    "promotion_apply",
 		},
 	})
 	if err != nil {
 		t.Fatalf("SubmitPromotionWorkflow() error = %v", err)
 	}
-	if resp.Applied || resp.SkippedReason != "promotion gate did not approve" {
+	if resp.Applied || resp.SkippedReason != "promotion gate did not pass" {
 		t.Fatalf("workflow response=%#v", resp)
 	}
 	if len(paths) != 2 || paths[0] != "/viewer/ai-workflow/external-control/check" || paths[1] != "/viewer/sandbox/promotions" {
@@ -7465,7 +7219,7 @@ func TestSubmitPromotionWorkflowDoesNotApplyWhenGateDoesNotApprove(t *testing.T)
 	}
 }
 
-func TestSubmitPromotionWorkflowAppliesAfterGateWithoutApproval(t *testing.T) {
+func TestSubmitPromotionWorkflowAppliesAfterGateAfterPolicyPass(t *testing.T) {
 	var paths []string
 	now := time.Date(2026, 5, 20, 5, 20, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -7493,8 +7247,8 @@ func TestSubmitPromotionWorkflowAppliesAfterGateWithoutApproval(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(PromotionRequestResponse{
 				Promotion: req,
-				Decision:  PromotionGateDecision{Status: "approve", Reason: "ok"},
-				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: req.PromotionID, GateStatus: "approve", CreatedAt: now},
+				Decision:  PromotionGateDecision{Status: "passed", Reason: "ok"},
+				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: req.PromotionID, GateStatus: "passed", CreatedAt: now},
 			})
 		case "/viewer/sandbox/promotions/apply":
 			if r.Method != http.MethodPost {
@@ -7504,7 +7258,7 @@ func TestSubmitPromotionWorkflowAppliesAfterGateWithoutApproval(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
-			if req.Promotion.PromotionID != "promo_1" || req.HumanApproved || req.PostApplyVerificationPath != "sandbox/post-apply.log" {
+			if req.Promotion.PromotionID != "promo_1" || req.PostApplyVerificationPath != "sandbox/post-apply.log" {
 				t.Fatalf("apply payload=%#v", req)
 			}
 			_ = json.NewEncoder(w).Encode(PromotionApplyResponse{
@@ -7524,25 +7278,22 @@ func TestSubmitPromotionWorkflowAppliesAfterGateWithoutApproval(t *testing.T) {
 	}
 	resp, err := client.SubmitPromotionWorkflow(context.Background(), PromotionWorkflowRequest{
 		Promotion: PromotionRequest{
-			PromotionID:         "promo_1",
-			SandboxID:           "sbx_1",
-			TargetPath:          "internal/example.go",
-			DiffPath:            "sandbox/diff.patch",
-			TestResultPath:      "sandbox/test.log",
-			Reason:              "verified patch",
-			RollbackPlanPath:    "sandbox/rollback.md",
-			HumanApprovalStatus: "granted",
-			CreatedAt:           time.Now().UTC(),
+			PromotionID:      "promo_1",
+			SandboxID:        "sbx_1",
+			TargetPath:       "internal/example.go",
+			DiffPath:         "sandbox/diff.patch",
+			TestResultPath:   "sandbox/test.log",
+			Reason:           "verified patch",
+			RollbackPlanPath: "sandbox/rollback.md",
+			CreatedAt:        time.Now().UTC(),
 		},
-		ApplyAfterApproval:        true,
+		ApplyAfterPolicyPass:      true,
 		AppliedBy:                 "Worker",
 		PostApplyVerificationPath: "sandbox/post-apply.log",
-		HumanApproved:             false,
 		ExternalControl: &ExternalControlRequest{
-			Actor:         "Worker",
-			ChannelID:     "viewer",
-			Action:        "promotion_apply",
-			HumanApproved: false,
+			Actor:     "Worker",
+			ChannelID: "viewer",
+			Action:    "promotion_apply",
 		},
 	})
 	if err != nil {
@@ -7578,8 +7329,8 @@ func TestSubmitPromotionWorkflowDoesNotMarkMalformedApplyResponseApplied(t *test
 			}
 			_ = json.NewEncoder(w).Encode(PromotionRequestResponse{
 				Promotion: req,
-				Decision:  PromotionGateDecision{Status: "approve", Reason: "ok"},
-				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: req.PromotionID, GateStatus: "approve", CreatedAt: now},
+				Decision:  PromotionGateDecision{Status: "passed", Reason: "ok"},
+				GateLog:   PromotionGateLog{EventID: "evt_1", PromotionID: req.PromotionID, GateStatus: "passed", CreatedAt: now},
 			})
 		case "/viewer/sandbox/promotions/apply":
 			_ = json.NewEncoder(w).Encode(PromotionApplyResponse{
@@ -7598,25 +7349,22 @@ func TestSubmitPromotionWorkflowDoesNotMarkMalformedApplyResponseApplied(t *test
 	}
 	resp, err := client.SubmitPromotionWorkflow(context.Background(), PromotionWorkflowRequest{
 		Promotion: PromotionRequest{
-			PromotionID:         "promo_1",
-			SandboxID:           "sbx_1",
-			TargetPath:          "internal/example.go",
-			DiffPath:            "sandbox/diff.patch",
-			TestResultPath:      "sandbox/test.log",
-			Reason:              "verified patch",
-			RollbackPlanPath:    "sandbox/rollback.md",
-			HumanApprovalStatus: "granted",
-			CreatedAt:           time.Now().UTC(),
+			PromotionID:      "promo_1",
+			SandboxID:        "sbx_1",
+			TargetPath:       "internal/example.go",
+			DiffPath:         "sandbox/diff.patch",
+			TestResultPath:   "sandbox/test.log",
+			Reason:           "verified patch",
+			RollbackPlanPath: "sandbox/rollback.md",
+			CreatedAt:        time.Now().UTC(),
 		},
-		ApplyAfterApproval:        true,
+		ApplyAfterPolicyPass:      true,
 		AppliedBy:                 "Worker",
 		PostApplyVerificationPath: "sandbox/post-apply.log",
-		HumanApproved:             false,
 		ExternalControl: &ExternalControlRequest{
-			Actor:         "Worker",
-			ChannelID:     "viewer",
-			Action:        "promotion_apply",
-			HumanApproved: false,
+			Actor:     "Worker",
+			ChannelID: "viewer",
+			Action:    "promotion_apply",
 		},
 	})
 	if err != nil {
@@ -7630,7 +7378,7 @@ func TestSubmitPromotionWorkflowDoesNotMarkMalformedApplyResponseApplied(t *test
 	}
 }
 
-func TestSubmitSkillGovernanceExternalPRSendsApprovalGatedAuditRequest(t *testing.T) {
+func TestSubmitSkillGovernanceExternalPRSendsPolicyGatedAuditRequest(t *testing.T) {
 	now := time.Date(2026, 5, 20, 4, 35, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/viewer/skill-governance/external-pr-submit" {
@@ -7640,7 +7388,7 @@ func TestSubmitSkillGovernanceExternalPRSendsApprovalGatedAuditRequest(t *testin
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.SubmitID != "submit_1" || req.ContributionEventID != "evt_contrib_1" || req.HumanApproved {
+		if req.SubmitID != "submit_1" || req.ContributionEventID != "evt_contrib_1" {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(SkillGovernanceExternalPRSubmitResponse{
@@ -7649,8 +7397,6 @@ func TestSubmitSkillGovernanceExternalPRSendsApprovalGatedAuditRequest(t *testin
 				ContributionEventID: req.ContributionEventID,
 				Repo:                req.Repo,
 				Title:               req.Title,
-				ApprovalStatus:      "not_required",
-				HumanApproved:       false,
 				SubmitStatus:        "blocked",
 				FailureReason:       "external PR adapter is not configured",
 				ExternalPRCreated:   false,
@@ -7659,7 +7405,6 @@ func TestSubmitSkillGovernanceExternalPRSendsApprovalGatedAuditRequest(t *testin
 			},
 			ExternalPRCreated:              false,
 			PostSubmitVerified:             false,
-			HumanApprovalRequiredForPR:     false,
 			ExternalPRAdapterConfiguration: "required",
 			Message:                        "external PR adapter is not configured; no PR was created",
 		})
@@ -7674,7 +7419,6 @@ func TestSubmitSkillGovernanceExternalPRSendsApprovalGatedAuditRequest(t *testin
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
-		HumanApproved:       false,
 	})
 	if err != nil {
 		t.Fatalf("SubmitSkillGovernanceExternalPR() error = %v", err)
@@ -7745,16 +7489,13 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 					ContributionEventID: "evt_contrib_1",
 					Repo:                "example/repo",
 					Title:               "Fix bug",
-					ApprovalStatus:      "approved",
-					HumanApproved:       true,
 					SubmitStatus:        "blocked",
 					FailureReason:       "external PR adapter is not configured",
 					ExternalPRCreated:   false,
 					PostSubmitVerified:  false,
 				},
-				ExternalPRCreated:          true,
-				PostSubmitVerified:         true,
-				HumanApprovalRequiredForPR: true,
+				ExternalPRCreated:  true,
+				PostSubmitVerified: true,
 			},
 			want: "external PR submit response mismatch",
 		},
@@ -7773,15 +7514,12 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 					ContributionEventID: "evt_contrib_1",
 					Repo:                "example/repo",
 					Title:               "Fix bug",
-					ApprovalStatus:      "approved",
-					HumanApproved:       true,
 					SubmitStatus:        "blocked",
 					ExternalPRCreated:   false,
 					PostSubmitVerified:  false,
 				},
-				ExternalPRCreated:          false,
-				PostSubmitVerified:         false,
-				HumanApprovalRequiredForPR: true,
+				ExternalPRCreated:  false,
+				PostSubmitVerified: false,
 			},
 			want: "without failure_reason",
 		},
@@ -7793,16 +7531,13 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 					ContributionEventID: "evt_contrib_1",
 					Repo:                "example/repo",
 					Title:               "Fix bug",
-					ApprovalStatus:      "approved",
-					HumanApproved:       true,
 					SubmitStatus:        "blocked",
 					FailureReason:       "external PR adapter is not configured",
 					ExternalPRCreated:   false,
 					PostSubmitVerified:  false,
 				},
-				ExternalPRCreated:          false,
-				PostSubmitVerified:         false,
-				HumanApprovalRequiredForPR: true,
+				ExternalPRCreated:  false,
+				PostSubmitVerified: false,
 			},
 			want: "record missing created_at",
 		},
@@ -7814,8 +7549,6 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 					ContributionEventID: "evt_contrib_1",
 					Repo:                "example/repo",
 					Title:               "Fix bug",
-					ApprovalStatus:      "approved",
-					HumanApproved:       true,
 					SubmitStatus:        "blocked",
 					FailureReason:       "external PR adapter is not configured",
 					ExternalPRCreated:   false,
@@ -7824,7 +7557,6 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 				},
 				ExternalPRCreated:              false,
 				PostSubmitVerified:             false,
-				HumanApprovalRequiredForPR:     true,
 				ExternalPRAdapterConfiguration: "required",
 			},
 			want: "pr_adapter conflicts",
@@ -7848,7 +7580,6 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 				ContributionEventID: "evt_contrib_1",
 				Repo:                "example/repo",
 				Title:               "Fix bug",
-				HumanApproved:       true,
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("SubmitSkillGovernanceExternalPR() error = %v, want %q", err, tt.want)
@@ -7896,15 +7627,12 @@ func TestSkillGovernanceStatus(t *testing.T) {
 				ContributionEventID: "evt_contrib_1",
 				Repo:                "example/repo",
 				Title:               "Fix bug",
-				ApprovalStatus:      "approved",
-				HumanApproved:       true,
 				SubmitStatus:        "blocked",
 				FailureReason:       "external PR adapter is not configured",
 				CreatedAt:           now,
 			}},
 			ExternalPRAdapter:           "unconfigured",
 			ExternalPRAdapterConfigured: boolPtr(false),
-			HumanApprovalRequiredForPR:  boolPtr(true),
 			CoderTranscripts: []SkillGovernanceCoderTranscript{{
 				EventID:   "evt_transcript_1",
 				JobID:     "job_1",
@@ -7943,7 +7671,7 @@ func TestSkillGovernanceStatus(t *testing.T) {
 	if len(status.ExternalPRSubmitRecords) != 1 || status.ExternalPRSubmitRecords[0].SubmitID != "submit_1" {
 		t.Fatalf("status=%#v", status)
 	}
-	if status.ExternalPRAdapter != "unconfigured" || status.ExternalPRAdapterConfigured == nil || *status.ExternalPRAdapterConfigured || status.HumanApprovalRequiredForPR == nil || !*status.HumanApprovalRequiredForPR {
+	if status.ExternalPRAdapter != "unconfigured" || status.ExternalPRAdapterConfigured == nil || *status.ExternalPRAdapterConfigured {
 		t.Fatalf("external PR readiness=%#v", status)
 	}
 }
@@ -7954,7 +7682,6 @@ func TestSkillGovernanceStatusRejectsMalformedCurrentView(t *testing.T) {
 		return SkillGovernanceStatus{
 			ExternalPRAdapter:           "unconfigured",
 			ExternalPRAdapterConfigured: boolPtr(false),
-			HumanApprovalRequiredForPR:  boolPtr(true),
 			Manifests: []SkillGovernanceManifest{{
 				SkillID: "skill_1",
 				Name:    "Example",
@@ -7985,8 +7712,6 @@ func TestSkillGovernanceStatusRejectsMalformedCurrentView(t *testing.T) {
 				ContributionEventID: "evt_contrib_1",
 				Repo:                "example/repo",
 				Title:               "Fix bug",
-				ApprovalStatus:      "approved",
-				HumanApproved:       true,
 				SubmitStatus:        "blocked",
 				FailureReason:       "external PR adapter is not configured",
 				CreatedAt:           now,
@@ -8126,7 +7851,7 @@ func TestEvaluateSkillGovernanceContributionGate(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.EventID != "evt_contrib_1" || req.Repo != "example/repo" || !req.DiffHumanApproved {
+		if req.EventID != "evt_contrib_1" || req.Repo != "example/repo" || !req.DiffReviewed {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(SkillGovernanceContributionGateResponse{
@@ -8154,7 +7879,7 @@ func TestEvaluateSkillGovernanceContributionGate(t *testing.T) {
 		ExistingPRsChecked:  true,
 		RealProblemVerified: true,
 		CoreChangeVerified:  true,
-		DiffHumanApproved:   true,
+		DiffReviewed:        true,
 		TestResult:          "go test ./...",
 	})
 	if err != nil {
@@ -8252,7 +7977,7 @@ func TestEvaluateSkillGovernanceContributionGateRejectsMalformedResponse(t *test
 				ExistingPRsChecked:  true,
 				RealProblemVerified: true,
 				CoreChangeVerified:  true,
-				DiffHumanApproved:   true,
+				DiffReviewed:        true,
 				TestResult:          "go test ./...",
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -8302,7 +8027,7 @@ func TestAdvisorsStatusReturnsValidatedReadModel(t *testing.T) {
   "enabled": true,
   "status": "ok",
   "profiles": [{"ID":"codex","DisplayName":"Codex","Provider":"codex","Capabilities":[],"AllowedModes":["advice_only"],"Disabled":false}],
-  "recent_runs": [{"run_id":"run-1","requested_by_agent":"shiro","advisor_id":"codex","approval_mode":"advice_only","status":"completed","summary":"safe summary","started_at":"2026-07-14T00:00:00Z","finished_at":"2026-07-14T00:00:01Z","latency_millis":1000}],
+  "recent_runs": [{"run_id":"run-1","requested_by_agent":"shiro","advisor_id":"codex","status":"completed","summary":"safe summary","started_at":"2026-07-14T00:00:00Z","finished_at":"2026-07-14T00:00:01Z","latency_millis":1000}],
   "score_snapshots": [{"snapshot_id":"score-1","advisor_id":"codex","window_start":"2026-07-13T00:00:00Z","window_end":"2026-07-14T00:00:00Z","request_count":1,"completed_count":1,"failed_count":0,"unavailable_count":0,"adopted_count":1,"success_count":1,"avg_latency_millis":1000,"avg_revision_count":0,"score":0.9,"created_at":"2026-07-14T00:00:00Z"}],
   "agent_profiles": [],
   "policy_decisions": [{"decision_id":"decision-1","agent_id":"shiro","action":"ask_advisor","decision":"allowed","reason":"profile allows action","created_at":"2026-07-14T00:00:00Z"}],
@@ -8335,12 +8060,12 @@ func TestAdvisorsStatusRejectsMalformedOrUnsafeResponse(t *testing.T) {
 	}{
 		{
 			name: "raw output field",
-			body: `{"enabled":true,"status":"ok","profiles":[],"recent_runs":[{"run_id":"run-1","requested_by_agent":"shiro","advisor_id":"codex","approval_mode":"advice_only","status":"completed","raw_output":"secret"}],"score_snapshots":[],"agent_profiles":[],"policy_decisions":[],"warnings":[],"summary":{"advisor_count":0,"recent_run_count":1,"failed_run_count":0,"score_snapshot_count":0,"profile_count":0,"policy_decision_count":0}}`,
+			body: `{"enabled":true,"status":"ok","profiles":[],"recent_runs":[{"run_id":"run-1","requested_by_agent":"shiro","advisor_id":"codex","status":"completed","raw_output":"secret"}],"score_snapshots":[],"agent_profiles":[],"policy_decisions":[],"warnings":[],"summary":{"advisor_count":0,"recent_run_count":1,"failed_run_count":0,"score_snapshot_count":0,"profile_count":0,"policy_decision_count":0}}`,
 			want: "unknown field",
 		},
 		{
 			name: "missing run id",
-			body: `{"enabled":true,"status":"ok","profiles":[],"recent_runs":[{"requested_by_agent":"shiro","advisor_id":"codex","approval_mode":"advice_only","status":"completed"}],"score_snapshots":[],"agent_profiles":[],"policy_decisions":[],"warnings":[],"summary":{"advisor_count":0,"recent_run_count":1,"failed_run_count":0,"score_snapshot_count":0,"profile_count":0,"policy_decision_count":0}}`,
+			body: `{"enabled":true,"status":"ok","profiles":[],"recent_runs":[{"requested_by_agent":"shiro","advisor_id":"codex","status":"completed"}],"score_snapshots":[],"agent_profiles":[],"policy_decisions":[],"warnings":[],"summary":{"advisor_count":0,"recent_run_count":1,"failed_run_count":0,"score_snapshot_count":0,"profile_count":0,"policy_decision_count":0}}`,
 			want: "run_id",
 		},
 		{
@@ -8431,7 +8156,7 @@ func TestRevenueOpportunitiesValidatesSafeReadModel(t *testing.T) {
 		var gotPath string
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotPath = r.URL.String()
-			_, _ = io.WriteString(w, `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe draft","expected_revenue":3000,"expected_cost":800,"expected_profit":2200,"profit_margin":0.7333333333333333,"approval_state":"draft","created_at":"`+now+`"}],"opportunity_count":1}`)
+			_, _ = io.WriteString(w, `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe draft","expected_revenue":3000,"expected_cost":800,"expected_profit":2200,"profit_margin":0.7333333333333333,"created_at":"`+now+`"}],"opportunity_count":1}`)
 		}))
 		defer server.Close()
 		client, _ := New(server.URL)
@@ -8451,9 +8176,9 @@ func TestRevenueOpportunitiesValidatesSafeReadModel(t *testing.T) {
 	}{
 		{name: "negative count", body: `{"opportunities":[],"opportunity_count":-1}`, want: "count"},
 		{name: "count mismatch", body: `{"opportunities":[],"opportunity_count":1}`, want: "mismatch"},
-		{name: "negative revenue", body: `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe","expected_revenue":-1,"approval_state":"draft","created_at":"` + now + `"}],"opportunity_count":1}`, want: "expected revenue"},
-		{name: "profit mismatch", body: `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe","expected_revenue":3000,"expected_cost":800,"expected_profit":1,"approval_state":"draft","created_at":"` + now + `"}],"opportunity_count":1}`, want: "expected_profit"},
-		{name: "unsafe unknown field", body: `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe","approval_state":"draft","created_at":"` + now + `","raw_output":"secret"}],"opportunity_count":1}`, want: "unknown field"},
+		{name: "negative revenue", body: `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe","expected_revenue":-1,"created_at":"` + now + `"}],"opportunity_count":1}`, want: "expected revenue"},
+		{name: "profit mismatch", body: `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe","expected_revenue":3000,"expected_cost":800,"expected_profit":1,"created_at":"` + now + `"}],"opportunity_count":1}`, want: "expected_profit"},
+		{name: "unsafe unknown field", body: `{"opportunities":[{"opportunity_id":"opp-1","source_kind":"market_research","title":"Safe","created_at":"` + now + `","raw_output":"secret"}],"opportunity_count":1}`, want: "unknown field"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -8470,10 +8195,10 @@ func TestRevenueOpportunitiesValidatesSafeReadModel(t *testing.T) {
 	}
 }
 
-func TestRevenueEconomicTasksAcceptLegacyApprovalModeWithoutGating(t *testing.T) {
+func TestRevenueEconomicTasksAcceptDraftTask(t *testing.T) {
 	now := "2026-07-14T00:00:00Z"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"economic_tasks":[{"task_id":"task-1","opportunity_id":"opp-1","agent_id":"shiro","task_kind":"billing","status":"draft","approval_mode":"none","created_at":"`+now+`"}],"task_count":1}`)
+		_, _ = io.WriteString(w, `{"economic_tasks":[{"task_id":"task-1","opportunity_id":"opp-1","agent_id":"shiro","task_kind":"billing","status":"draft","created_at":"`+now+`"}],"task_count":1}`)
 	}))
 	defer server.Close()
 	client, _ := New(server.URL)
@@ -8510,10 +8235,9 @@ func TestCreateRevenueOpportunityValidatesRequestAndResponse(t *testing.T) {
 		}
 		req.ExpectedProfit = req.ExpectedRevenue - req.ExpectedCost
 		req.ProfitMargin = float64(req.ExpectedProfit) / float64(req.ExpectedRevenue)
-		req.ApprovalState = "draft"
 		req.CreatedAt = now
 		_ = json.NewEncoder(w).Encode(RevenueOpportunityResponse{
-			Opportunity: req, HumanApprovalRequiredForPublish: false,
+			Opportunity: req, ExecutionPolicyEvaluatedAtAction: true,
 		})
 	}))
 	defer server.Close()
@@ -8524,7 +8248,7 @@ func TestCreateRevenueOpportunityValidatesRequestAndResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRevenueOpportunity() error=%v", err)
 	}
-	if resp.Opportunity.ExpectedProfit != 2200 || resp.HumanApprovalRequiredForPublish {
+	if resp.Opportunity.ExpectedProfit != 2200 {
 		t.Fatalf("response=%#v", resp)
 	}
 }

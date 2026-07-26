@@ -37,7 +37,7 @@ func TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit(t *testing
 		ExistingPRsChecked:  true,
 		RealProblemVerified: true,
 		CoreChangeVerified:  true,
-		DiffHumanApproved:   true,
+		DiffReviewed:        true,
 		TestResult:          "RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e -run TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit",
 	})
 	if err != nil {
@@ -54,7 +54,6 @@ func TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit(t *testing
 		Title:               "Live client E2E audit boundary",
 		DiffPath:            "workspace/logs/skill_governance/coder_evidence/e2e/skill_diff.md",
 		TestResult:          "RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e -run TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit",
-		HumanApproved:       false,
 	})
 	if err != nil {
 		t.Fatalf("SubmitSkillGovernanceExternalPR() live call failed at %s: %v", baseURL, err)
@@ -70,7 +69,7 @@ func TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit(t *testing
 	if err != nil {
 		t.Fatalf("SkillGovernanceStatus() live call failed at %s: %v", baseURL, err)
 	}
-	if status.ExternalPRAdapter != "unconfigured" || status.ExternalPRAdapterConfigured == nil || *status.ExternalPRAdapterConfigured || status.HumanApprovalRequiredForPR == nil || *status.HumanApprovalRequiredForPR {
+	if status.ExternalPRAdapter != "unconfigured" || status.ExternalPRAdapterConfigured == nil || *status.ExternalPRAdapterConfigured {
 		t.Fatalf("live Skill Governance external PR readiness=%+v", status)
 	}
 	for _, record := range status.ExternalPRSubmitRecords {

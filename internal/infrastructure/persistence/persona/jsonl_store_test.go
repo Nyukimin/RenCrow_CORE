@@ -105,7 +105,7 @@ func TestJSONLStorePersonaLogs(t *testing.T) {
 	}
 }
 
-func TestJSONLStoreRejectsSensitiveAutoApprovedObservation(t *testing.T) {
+func TestJSONLStoreRejectsSensitiveAutoAdoptedObservation(t *testing.T) {
 	store := NewJSONLStore(t.TempDir())
 	err := store.SaveObservationLog(context.Background(), domainpersona.ObservationLog{
 		EventID:         "evt_observation_1",
@@ -113,11 +113,11 @@ func TestJSONLStoreRejectsSensitiveAutoApprovedObservation(t *testing.T) {
 		TargetID:        "ren",
 		ObservationType: "daily",
 		Sensitivity:     "health",
-		ReviewStatus:    "approved",
+		ReviewStatus:    "adopted",
 		CreatedAt:       time.Now().UTC(),
 	})
 	if err == nil {
-		t.Fatal("expected sensitive auto-approved observation to fail")
+		t.Fatal("expected sensitive auto-adopted observation to fail")
 	}
 }
 
@@ -168,7 +168,7 @@ func TestJSONLStoreCompactsOperationalInterfaceSessionsOnly(t *testing.T) {
 	}
 }
 
-func TestJSONLStoreApplyMetaProfileUpdateAppendsApprovedContent(t *testing.T) {
+func TestJSONLStoreApplyMetaProfileUpdateAppendsAdoptedContent(t *testing.T) {
 	root := t.TempDir()
 	metaRoot := filepath.Join(root, "characters")
 	store := NewJSONLStoreWithMetaRoot(filepath.Join(root, "logs"), metaRoot)
@@ -181,7 +181,7 @@ func TestJSONLStoreApplyMetaProfileUpdateAppendsApprovedContent(t *testing.T) {
 		ProposedContent: "疲労時は判断を急がない方がよい",
 		EvidenceRefs:    []string{"evt_observation_1"},
 		Sensitivity:     "health",
-		ReviewStatus:    "approved",
+		ReviewStatus:    "adopted",
 		CreatedAt:       time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
 		ReviewedAt:      time.Date(2026, 5, 18, 13, 0, 0, 0, time.UTC),
 	})
@@ -211,7 +211,7 @@ func TestJSONLStoreApplyMetaProfileUpdateRejectsUnsafeTarget(t *testing.T) {
 		Section:         "Risk Signs",
 		ProposedContent: "escape",
 		Sensitivity:     "normal",
-		ReviewStatus:    "approved",
+		ReviewStatus:    "adopted",
 		CreatedAt:       time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
 	})
 	if err == nil || !strings.Contains(err.Error(), "invalid target_id") {
@@ -219,7 +219,7 @@ func TestJSONLStoreApplyMetaProfileUpdateRejectsUnsafeTarget(t *testing.T) {
 	}
 }
 
-func TestJSONLStoreApplyMetaProfileUpdateRequiresApprovedReview(t *testing.T) {
+func TestJSONLStoreApplyMetaProfileUpdateRequiresAdoptedReview(t *testing.T) {
 	store := NewJSONLStoreWithMetaRoot(t.TempDir(), t.TempDir())
 	_, err := store.ApplyMetaProfileUpdate(context.Background(), domainpersona.MetaProfileUpdate{
 		UpdateID:        "meta_upd_1",
@@ -231,7 +231,7 @@ func TestJSONLStoreApplyMetaProfileUpdateRequiresApprovedReview(t *testing.T) {
 		ReviewStatus:    "pending",
 		CreatedAt:       time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
 	})
-	if err == nil || !strings.Contains(err.Error(), "must be approved") {
+	if err == nil || !strings.Contains(err.Error(), "must be adopted") {
 		t.Fatalf("expected pending review to fail, got %v", err)
 	}
 }

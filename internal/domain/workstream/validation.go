@@ -149,9 +149,9 @@ func ValidateVaultUpdateReview(item VaultUpdateLog) error {
 		return err
 	}
 	switch item.ReviewStatus {
-	case VaultReviewApproved, VaultReviewRejected:
+	case VaultReviewAdopted, VaultReviewRejected:
 		return nil
 	default:
-		return errors.New("review_status must be approved or rejected")
+		return errors.New("review_status must be adopted or rejected")
 	}
 }

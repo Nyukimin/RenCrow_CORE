@@ -37,8 +37,7 @@ func TestHandleAdvisorsStatusReturnsSafeSummary(t *testing.T) {
 	store := &advisorHandlerStore{
 		runs: []domainadvisor.AdviceRunRecord{{
 			RunID: "run-1", AdvisorID: domainadvisor.AdvisorCodex,
-			RequestedByAgent: "shiro", ApprovalMode: "advice_only",
-			Status:  domainadvisor.AdviceStatus(domainadvisor.StatusCompleted),
+			RequestedByAgent: "shiro", Status: domainadvisor.AdviceStatus(domainadvisor.StatusCompleted),
 			Summary: "safe summary", PromptHash: "prompt-hash", OutputHash: "output-hash",
 		}},
 		scores: []domainadvisor.AdvisorScoreSnapshot{{

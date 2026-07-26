@@ -39,7 +39,6 @@ internal/application/sandbox, internal/adapter/viewer/sandbox_handler.go
 - `/viewer/sandbox/promotions/apply`
 - `/viewer/sandbox/promotions/rollback`
 - `/viewer/sandbox/promotions/preview`
-- `/viewer/sandbox/promotions/manual-review`
 - `/viewer/sandbox/worktrees/create`
 - `/viewer/sandbox/worktrees/close`
 

@@ -68,7 +68,7 @@ func TestValidateKnowledgeMemoryAcceptsCompleteRecords(t *testing.T) {
 	}
 	for _, run := range []DreamConsolidationRun{
 		{RunID: "dream_1", Status: "proposal", ReviewStatus: "pending", CreatedAt: now},
-		{RunID: "dream_2", Status: "reviewed", ReviewStatus: "approved", CreatedAt: now},
+		{RunID: "dream_2", Status: "reviewed", ReviewStatus: "adopted", CreatedAt: now},
 		{RunID: "dream_3", Status: "rejected", ReviewStatus: "rejected", CreatedAt: now},
 	} {
 		if err := ValidateDreamConsolidationRun(run); err != nil {
@@ -238,11 +238,11 @@ func TestValidateDreamConsolidationRejectsAutoApprove(t *testing.T) {
 	err := ValidateDreamConsolidationRun(DreamConsolidationRun{
 		RunID:        "dream_1",
 		Status:       "draft",
-		ReviewStatus: "approved",
+		ReviewStatus: "adopted",
 		CreatedAt:    time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
 	})
-	if err == nil || !strings.Contains(err.Error(), "auto-approved") {
-		t.Fatalf("expected auto-approved error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "auto-adopted") {
+		t.Fatalf("expected auto-adopted error, got %v", err)
 	}
 }
 

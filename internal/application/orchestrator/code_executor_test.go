@@ -179,7 +179,7 @@ func TestCodeExecutor_ModuleRegistryInjectsContextAndWorkspace(t *testing.T) {
 		strings.Contains(coder2.lastProposalInput, "build, and restart") {
 		t.Fatalf("coder received executable lifecycle context: %s", coder2.lastProposalInput)
 	}
-	if !strings.Contains(coder2.lastProposalInput, "manual approval steps") {
+	if !strings.Contains(coder2.lastProposalInput, "operator-run deployment steps") {
 		t.Fatalf("coder did not receive manual-only lifecycle rule: %s", coder2.lastProposalInput)
 	}
 	if workerService.workspace != "/home/nyukimi/RenCrow/RenCrow_STT" {
@@ -209,7 +209,7 @@ func TestAppendModuleContextLifecycleCommandsAreManualOnly(t *testing.T) {
 	if strings.Contains(got, "install_command:") || strings.Contains(got, "restart_target:") {
 		t.Fatalf("module context exposed executable lifecycle commands:\n%s", got)
 	}
-	for _, want := range []string{"install_command_manual_only:", "restart_target_manual_only:", "manual approval steps"} {
+	for _, want := range []string{"install_command_manual_only:", "restart_target_manual_only:", "operator-run deployment steps"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("module context missing %q:\n%s", want, got)
 		}

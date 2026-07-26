@@ -122,7 +122,7 @@ def prepare_decision_inputs(tmp_path: Path, *, strict_risk: bool = False) -> tup
 
 
 class GenerateDecisionTest(unittest.TestCase):
-    def test_generate_decision_writes_signal_log_and_approval_file(self) -> None:
+    def test_generate_decision_writes_signal_log_and_policy_file(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             data_root, db_path = prepare_decision_inputs(Path(td))
             result = run_script(
@@ -134,32 +134,28 @@ class GenerateDecisionTest(unittest.TestCase):
                 "--risk-check",
                 "latest",
                 "--output-dir",
-                str(data_root / "approvals"),
+                str(data_root / "policies"),
                 "--json",
             )
             summary = json.loads(result.stdout)
             self.assertFalse(summary["vetoed"])
-            self.assertFalse(summary["approval_required"])
-            self.assertFalse(summary["approved"])
+            self.assertEqual(summary["policy_status"], "allowed")
             self.assertEqual(summary["candidates"][0]["symbol"], "1306.T")
             self.assertEqual(summary["candidates"][0]["asset_type"], "ETF")
-            self.assertTrue(Path(summary["approval_path"]).exists())
-            self.assertTrue(summary["approval_path"].endswith(".approval.yml"))
-            self.assertTrue(Path(summary["approval_latest_path"]).exists())
-            self.assertTrue(Path(summary["approval_json_path"]).exists())
-            self.assertEqual(Path(summary["approval_latest_path"]).name, "latest.yml")
-            approval_text = Path(summary["approval_path"]).read_text(encoding="utf-8")
-            self.assertIn(f"decision_id: {summary['decision_id']}", approval_text)
-            self.assertIn("approval_required: false", approval_text)
-            self.assertIn("approved: false", approval_text)
-            self.assertIn('approval_reason: ""', approval_text)
+            self.assertTrue(Path(summary["policy_path"]).exists())
+            self.assertTrue(summary["policy_path"].endswith(".policy.yml"))
+            self.assertTrue(Path(summary["policy_latest_path"]).exists())
+            self.assertTrue(Path(summary["policy_json_path"]).exists())
+            self.assertEqual(Path(summary["policy_latest_path"]).name, "latest.yml")
+            policy_text = Path(summary["policy_path"]).read_text(encoding="utf-8")
+            self.assertIn(f"decision_id: {summary['decision_id']}", policy_text)
+            self.assertIn("policy_status: allowed", policy_text)
 
             con = sqlite3.connect(db_path)
             con.row_factory = sqlite3.Row
             decision = con.execute("SELECT * FROM decision_log WHERE decision_id=?", (summary["decision_id"],)).fetchone()
             self.assertIsNotNone(decision)
-            self.assertEqual(decision["approved"], 0)
-            self.assertIn('"approval_required":false', decision["candidate_json"])
+            self.assertIn('"policy_status":"allowed"', decision["candidate_json"])
             self.assertIn('"asset_type":"ETF"', decision["candidate_json"])
             self.assertEqual(con.execute("SELECT COUNT(*) FROM weekly_signal").fetchone()[0], 1)
             reason = con.execute("SELECT reason_json FROM weekly_signal").fetchone()[0]
@@ -175,7 +171,7 @@ class GenerateDecisionTest(unittest.TestCase):
                 "--snapshot",
                 "latest",
                 "--output-dir",
-                str(data_root / "approvals"),
+                str(data_root / "policies"),
                 "--json",
             )
             summary = json.loads(result.stdout)
@@ -195,7 +191,7 @@ class GenerateDecisionTest(unittest.TestCase):
                     "--risk-check",
                     "latest",
                     "--output-dir",
-                    str(data_root / "approvals"),
+                    str(data_root / "policies"),
                     "--json",
                 ).stdout
             )
@@ -209,7 +205,7 @@ class GenerateDecisionTest(unittest.TestCase):
                     "--risk-check",
                     first["risk_check_id"],
                     "--output-dir",
-                    str(data_root / "approvals"),
+                    str(data_root / "policies"),
                     "--json",
                 ).stdout
             )
@@ -241,7 +237,7 @@ class GenerateDecisionTest(unittest.TestCase):
                     "--risk-check",
                     "latest",
                     "--output-dir",
-                    str(data_root / "approvals"),
+                    str(data_root / "policies"),
                     "--json",
                 ).stdout
             )
@@ -270,7 +266,7 @@ class GenerateDecisionTest(unittest.TestCase):
                     "--risk-check",
                     before["risk_check_id"],
                     "--output-dir",
-                    str(data_root / "approvals"),
+                    str(data_root / "policies"),
                     "--json",
                 ).stdout
             )
@@ -291,7 +287,7 @@ class GenerateDecisionTest(unittest.TestCase):
                     "--risk-check",
                     "latest",
                     "--output-dir",
-                    str(data_root / "approvals"),
+                    str(data_root / "policies"),
                     "--json",
                 ).stdout
             )
@@ -309,7 +305,7 @@ class GenerateDecisionTest(unittest.TestCase):
                 "--risk-check",
                 before["risk_check_id"],
                 "--output-dir",
-                str(data_root / "approvals"),
+                str(data_root / "policies"),
                 "--json",
                 check=False,
             )
@@ -330,7 +326,7 @@ class GenerateDecisionTest(unittest.TestCase):
                     "--risk-check",
                     "latest",
                     "--output-dir",
-                    str(data_root / "approvals"),
+                    str(data_root / "policies"),
                     "--json",
                 ).stdout
             )
@@ -359,7 +355,7 @@ class GenerateDecisionTest(unittest.TestCase):
                     "--risk-check",
                     before["risk_check_id"],
                     "--output-dir",
-                    str(data_root / "approvals"),
+                    str(data_root / "policies"),
                     "--json",
                 ).stdout
             )
@@ -381,14 +377,14 @@ class GenerateDecisionTest(unittest.TestCase):
                 "--risk-check",
                 "latest",
                 "--output-dir",
-                str(data_root / "approvals"),
+                str(data_root / "policies"),
                 "--json",
             )
             summary = json.loads(result.stdout)
             self.assertTrue(summary["vetoed"])
             self.assertEqual(summary["risk_status"], "stop")
             self.assertEqual(summary["candidates"][0]["target_weight"], 0.0)
-            self.assertTrue(Path(summary["approval_path"]).exists())
+            self.assertTrue(Path(summary["policy_path"]).exists())
 
     def test_generate_decision_rejects_non_tradable_strategy_universe_asset_type(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -432,7 +428,7 @@ class GenerateDecisionTest(unittest.TestCase):
                 "--risk-check",
                 "latest",
                 "--output-dir",
-                str(data_root / "approvals"),
+                str(data_root / "policies"),
                 "--json",
                 check=False,
             )

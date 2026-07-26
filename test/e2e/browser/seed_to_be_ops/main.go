@@ -28,8 +28,8 @@ func main() {
 	runID := "advisor-run-e2e-" + longSuffix
 	must(advisorStore.SaveAdviceRun(ctx, domainadvisor.AdviceRunRecord{
 		RunID: runID, RequestedByAgent: "shiro", AdvisorID: domainadvisor.AdvisorCodex,
-		Purpose: "browser E2E evidence", ApprovalMode: "advice_only",
-		Status: domainadvisor.AdviceStatus(domainadvisor.StatusCompleted), Summary: "safe summary",
+		Purpose: "browser E2E evidence",
+		Status:  domainadvisor.AdviceStatus(domainadvisor.StatusCompleted), Summary: "safe summary",
 		StartedAt: now.Add(-250 * time.Millisecond), FinishedAt: now, LatencyMillis: 250,
 	}))
 	must(advisorStore.SaveAdvisorScoreSnapshot(ctx, domainadvisor.AdvisorScoreSnapshot{
@@ -39,7 +39,7 @@ func main() {
 	}))
 	must(advisorStore.SaveAgentPolicyDecision(ctx, domainagentprofile.PolicyDecision{
 		DecisionID: "policy-decision-e2e", AgentID: "shiro", Action: "external_publish",
-		Decision: domainagentprofile.PolicyApprovalRequired, Reason: "browser E2E approval boundary", CreatedAt: now,
+		Decision: domainagentprofile.PolicyAllowed, Reason: "browser E2E policy boundary", CreatedAt: now,
 	}))
 
 	l1Path := filepath.Join(runtimeRoot, "workspace", "l1.db")

@@ -23,7 +23,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", "--db-path", dest="db_path", default="rencrow-data/data/rencrow.db")
     parser.add_argument("--decision", required=True)
-    parser.add_argument("--approval-file", required=True)
+    parser.add_argument("--policy-file", required=True)
     parser.add_argument("--fill-model", choices=("close_next_week", "open_next_session", "vwap_approx"), default="close_next_week")
     parser.add_argument("--capital", type=float, default=1_000_000.0)
     parser.add_argument("--cost-bps", type=float, default=10.0)
@@ -40,7 +40,7 @@ def main() -> None:
             con,
             PaperTradeOptions(
                 decision_id=decision_id,
-                approval_file=resolve_repo_relative_path(args.approval_file),
+                policy_file=resolve_repo_relative_path(args.policy_file),
                 fill_model=args.fill_model,
                 capital=args.capital,
                 cost_bps=args.cost_bps,
@@ -59,11 +59,11 @@ def main() -> None:
         result = db.finish_cli_run(con, run, result)
     except FileNotFoundError as exc:
         db.fail_cli_run(con, run, error_message=str(exc), exit_code=4)
-        print(f"approval error: file not found: {exc}", file=sys.stderr)
+        print(f"policy error: file not found: {exc}", file=sys.stderr)
         raise SystemExit(4)
     except PermissionError as exc:
         db.fail_cli_run(con, run, error_message=str(exc), exit_code=3)
-        print(f"approval error: {exc}", file=sys.stderr)
+        print(f"policy error: {exc}", file=sys.stderr)
         raise SystemExit(3)
     except ValueError as exc:
         db.fail_cli_run(con, run, error_message=str(exc), exit_code=4)

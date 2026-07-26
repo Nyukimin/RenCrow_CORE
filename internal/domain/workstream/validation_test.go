@@ -209,9 +209,9 @@ func TestValidateVaultUpdateReviewAllowsOnlyTerminalReviewStatus(t *testing.T) {
 	if err := ValidateVaultUpdateReview(item); err == nil {
 		t.Fatal("expected pending review status to fail")
 	}
-	item.ReviewStatus = VaultReviewApproved
+	item.ReviewStatus = VaultReviewAdopted
 	if err := ValidateVaultUpdateReview(item); err != nil {
-		t.Fatalf("ValidateVaultUpdateReview approved failed: %v", err)
+		t.Fatalf("ValidateVaultUpdateReview adopted failed: %v", err)
 	}
 	item.ReviewStatus = VaultReviewRejected
 	if err := ValidateVaultUpdateReview(item); err != nil {

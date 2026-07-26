@@ -81,7 +81,6 @@ type ComplexityHotspotProposalRequest struct {
 	TestResultPath            string `json:"test_result_path,omitempty"`
 	RollbackPlanPath          string `json:"rollback_plan_path,omitempty"`
 	PostApplyVerificationPath string `json:"post_apply_verification_path,omitempty"`
-	HumanApprovalStatus       string `json:"human_approval_status,omitempty"`
 }
 
 type ComplexityConcreteDiffRequest struct {
@@ -96,7 +95,6 @@ type ComplexityConcreteDiffRequest struct {
 	TestResultPath            string `json:"test_result_path,omitempty"`
 	RollbackPlanPath          string `json:"rollback_plan_path,omitempty"`
 	PostApplyVerificationPath string `json:"post_apply_verification_path,omitempty"`
-	HumanApprovalStatus       string `json:"human_approval_status,omitempty"`
 }
 
 type ComplexityCoderDiffRequest struct {
@@ -111,7 +109,6 @@ type ComplexityCoderDiffRequest struct {
 	TestResultPath            string `json:"test_result_path,omitempty"`
 	RollbackPlanPath          string `json:"rollback_plan_path,omitempty"`
 	PostApplyVerificationPath string `json:"post_apply_verification_path,omitempty"`
-	HumanApprovalStatus       string `json:"human_approval_status,omitempty"`
 }
 
 func HandleComplexityHotspotStatus(store ComplexityHotspotLister) http.HandlerFunc {
@@ -388,13 +385,12 @@ func HandleComplexityHotspotProposalWithSandbox(store ComplexityHotspotLister, w
 			return
 		}
 		response := map[string]any{
-			"hotspot":                 hotspot,
-			"goal":                    goal,
-			"artifact":                artifact,
-			"proposal_artifact":       proposalArtifact,
-			"coder_diff_request":      coderDiffArtifact,
-			"human_approval_required": false,
-			"patch_applied":           false,
+			"hotspot":            hotspot,
+			"goal":               goal,
+			"artifact":           artifact,
+			"proposal_artifact":  proposalArtifact,
+			"coder_diff_request": coderDiffArtifact,
+			"patch_applied":      false,
 		}
 		if isHighRiskComplexityHotspot(hotspot) {
 			reviewGoal := buildHighRiskComplexityReviewGoal(req.WorkstreamID, hotspot, now)
@@ -423,12 +419,11 @@ func HandleComplexityHotspotProposalWithSandbox(store ComplexityHotspotLister, w
 				return
 			}
 			log := domainsandbox.PromotionGateLog{
-				EventID:             fmt.Sprintf("evt_complexity_promotion_gate_%d", now.UnixNano()),
-				PromotionID:         promotion.PromotionID,
-				GateStatus:          decision.Status,
-				Reason:              decision.Reason,
-				HumanApprovalStatus: promotion.HumanApprovalStatus,
-				CreatedAt:           now,
+				EventID:     fmt.Sprintf("evt_complexity_promotion_gate_%d", now.UnixNano()),
+				PromotionID: promotion.PromotionID,
+				GateStatus:  decision.Status,
+				Reason:      decision.Reason,
+				CreatedAt:   now,
 			}
 			if err := sandboxSink.SavePromotionGateLog(r.Context(), log); err != nil {
 				http.Error(w, "failed to save complexity sandbox promotion gate log", http.StatusInternalServerError)
@@ -503,10 +498,9 @@ func HandleComplexityHotspotConcreteDiffWithSandbox(store ComplexityHotspotStore
 			return
 		}
 		response := map[string]any{
-			"hotspot":                 hotspot,
-			"concrete_diff_artifact":  report,
-			"human_approval_required": false,
-			"patch_applied":           false,
+			"hotspot":                hotspot,
+			"concrete_diff_artifact": report,
+			"patch_applied":          false,
 		}
 		if workstreamSink != nil && strings.TrimSpace(req.WorkstreamID) != "" {
 			artifact := domainworkstream.Artifact{
@@ -535,12 +529,11 @@ func HandleComplexityHotspotConcreteDiffWithSandbox(store ComplexityHotspotStore
 				return
 			}
 			log := domainsandbox.PromotionGateLog{
-				EventID:             fmt.Sprintf("evt_complexity_concrete_diff_gate_%d", now.UnixNano()),
-				PromotionID:         promotion.PromotionID,
-				GateStatus:          decision.Status,
-				Reason:              decision.Reason,
-				HumanApprovalStatus: promotion.HumanApprovalStatus,
-				CreatedAt:           now,
+				EventID:     fmt.Sprintf("evt_complexity_concrete_diff_gate_%d", now.UnixNano()),
+				PromotionID: promotion.PromotionID,
+				GateStatus:  decision.Status,
+				Reason:      decision.Reason,
+				CreatedAt:   now,
 			}
 			if err := sandboxSink.SavePromotionGateLog(r.Context(), log); err != nil {
 				http.Error(w, "failed to save complexity concrete diff sandbox promotion gate log", http.StatusInternalServerError)
@@ -627,7 +620,6 @@ func HandleComplexityHotspotCoderDiffWithSandbox(store ComplexityHotspotStore, g
 			TestResultPath:            req.TestResultPath,
 			RollbackPlanPath:          req.RollbackPlanPath,
 			PostApplyVerificationPath: req.PostApplyVerificationPath,
-			HumanApprovalStatus:       req.HumanApprovalStatus,
 		}
 		report, workstreamArtifact, sandboxPayload, err := saveComplexityConcreteDiffReview(r.Context(), store, workstreamSink, sandboxSink, concreteReq, hotspot, time.Now().UTC())
 		if err != nil {
@@ -635,11 +627,10 @@ func HandleComplexityHotspotCoderDiffWithSandbox(store ComplexityHotspotStore, g
 			return
 		}
 		response := map[string]any{
-			"hotspot":                 hotspot,
-			"coder_result":            result,
-			"concrete_diff_artifact":  report,
-			"human_approval_required": false,
-			"patch_applied":           false,
+			"hotspot":                hotspot,
+			"coder_result":           result,
+			"concrete_diff_artifact": report,
+			"patch_applied":          false,
 		}
 		if workstreamArtifact != nil {
 			response["workstream_artifact"] = *workstreamArtifact
@@ -766,12 +757,11 @@ func saveComplexityConcreteDiffReview(ctx context.Context, store ComplexityHotsp
 			return domaincomplexity.ReportArtifact{}, nil, nil, fmt.Errorf("failed to save complexity concrete diff sandbox promotion request")
 		}
 		log := domainsandbox.PromotionGateLog{
-			EventID:             fmt.Sprintf("evt_complexity_concrete_diff_gate_%d", now.UnixNano()),
-			PromotionID:         promotion.PromotionID,
-			GateStatus:          decision.Status,
-			Reason:              decision.Reason,
-			HumanApprovalStatus: promotion.HumanApprovalStatus,
-			CreatedAt:           now,
+			EventID:     fmt.Sprintf("evt_complexity_concrete_diff_gate_%d", now.UnixNano()),
+			PromotionID: promotion.PromotionID,
+			GateStatus:  decision.Status,
+			Reason:      decision.Reason,
+			CreatedAt:   now,
 		}
 		if err := sandboxSink.SavePromotionGateLog(ctx, log); err != nil {
 			return domaincomplexity.ReportArtifact{}, nil, nil, fmt.Errorf("failed to save complexity concrete diff sandbox promotion gate log")
@@ -835,10 +825,6 @@ func buildComplexitySandboxPromotionRequest(req ComplexityHotspotProposalRequest
 	if targetPath == "" {
 		targetPath = hotspot.FilePath
 	}
-	humanApproval := strings.TrimSpace(req.HumanApprovalStatus)
-	if humanApproval == "" {
-		humanApproval = domainsandbox.ApprovalNotRequired
-	}
 	reason := strings.TrimSpace("Complexity hotspot proposal for " + hotspot.HotspotType + ": " + hotspot.Summary)
 	if reason == "Complexity hotspot proposal for :" {
 		reason = "Complexity hotspot proposal"
@@ -856,7 +842,6 @@ func buildComplexitySandboxPromotionRequest(req ComplexityHotspotProposalRequest
 		Reason:                    reason,
 		RollbackPlanPath:          strings.TrimSpace(req.RollbackPlanPath),
 		PostApplyVerificationPath: strings.TrimSpace(req.PostApplyVerificationPath),
-		HumanApprovalStatus:       humanApproval,
 		CreatedAt:                 now,
 	}
 }
@@ -869,10 +854,6 @@ func buildComplexityConcreteDiffSandboxPromotionRequest(req ComplexityConcreteDi
 	targetPath := strings.TrimSpace(req.TargetPath)
 	if targetPath == "" {
 		targetPath = hotspot.FilePath
-	}
-	humanApproval := strings.TrimSpace(req.HumanApprovalStatus)
-	if humanApproval == "" {
-		humanApproval = domainsandbox.ApprovalNotRequired
 	}
 	return domainsandbox.PromotionRequest{
 		PromotionID:               promotionID,
@@ -887,7 +868,6 @@ func buildComplexityConcreteDiffSandboxPromotionRequest(req ComplexityConcreteDi
 		Reason:                    "Concrete diff proposal for complexity hotspot " + hotspot.HotspotID,
 		RollbackPlanPath:          strings.TrimSpace(req.RollbackPlanPath),
 		PostApplyVerificationPath: strings.TrimSpace(req.PostApplyVerificationPath),
-		HumanApprovalStatus:       humanApproval,
 		CreatedAt:                 now,
 	}
 }

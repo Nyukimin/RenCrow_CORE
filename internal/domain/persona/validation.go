@@ -78,8 +78,8 @@ func ValidateObservationLog(item ObservationLog) error {
 	if strings.TrimSpace(item.ReviewStatus) == "" {
 		return errors.New("review_status is required")
 	}
-	if item.Sensitivity != "normal" && item.ReviewStatus == "approved" {
-		return errors.New("sensitive observation cannot be auto-approved")
+	if item.Sensitivity != "normal" && item.ReviewStatus == "adopted" {
+		return errors.New("sensitive observation cannot be auto-adopted")
 	}
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
@@ -107,13 +107,13 @@ func ValidateMetaProfileUpdate(item MetaProfileUpdate) error {
 		return errors.New("sensitivity is required")
 	}
 	switch strings.TrimSpace(item.ReviewStatus) {
-	case "pending", "approved", "rejected":
+	case "pending", "adopted", "rejected":
 		if item.CreatedAt.IsZero() {
 			return errors.New("created_at is required")
 		}
 		return nil
 	default:
-		return errors.New("review_status must be pending, approved, or rejected")
+		return errors.New("review_status must be pending, adopted, or rejected")
 	}
 }
 
@@ -122,10 +122,10 @@ func ValidateMetaProfileUpdateReview(item MetaProfileUpdate) error {
 		return err
 	}
 	switch strings.TrimSpace(item.ReviewStatus) {
-	case "approved", "rejected":
+	case "adopted", "rejected":
 		return nil
 	default:
-		return errors.New("review_status must be approved or rejected")
+		return errors.New("review_status must be adopted or rejected")
 	}
 }
 

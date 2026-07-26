@@ -27,7 +27,7 @@ Character Runtime is the first handler body moved behind its feature owner while
 - `ops`: Health, doctor, cleanup, package validation, history repair, and OTEL export boundary.
 - `repair`: Out-of-band repair request, repair job event, and Viewer repair operation boundary.
 - `reports`: Evidence item, verification summary, report status, and evidence CLI boundary.
-- `revenue`: Daily routine, draft, and human decision gate boundary.
+- `revenue`: Daily routine, draft, and policy decision boundary.
 - `sandbox`: Post-apply verification, promotion gate, and rollback-facing operation boundary.
 - `scheduler`: In-app due jobs, run log, and status boundary.
 - `security`: Security policy result, channel policy, promotion gates, and rollback guard boundary.

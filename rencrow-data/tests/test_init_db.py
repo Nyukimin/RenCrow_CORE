@@ -68,7 +68,7 @@ class InitDBTest(unittest.TestCase):
             self.assertIn("estimated_cost", paper_columns)
             self.assertIn("slippage", paper_columns)
             decision_columns = {row[1] for row in con.execute("PRAGMA table_info(decision_log)").fetchall()}
-            self.assertIn("approval_reason", decision_columns)
+            self.assertNotIn("policy_status", decision_columns)
             llm_columns = {row[1] for row in con.execute("PRAGMA table_info(llm_audit_log)").fetchall()}
             self.assertIn("uncertainty_flag", llm_columns)
             self.assertIn("decision_id", llm_columns)

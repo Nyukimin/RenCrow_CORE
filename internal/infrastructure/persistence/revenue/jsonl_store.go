@@ -12,19 +12,19 @@ import (
 )
 
 type JSONLStore struct {
-	marketPath        string
-	snsPostMetricPath string
-	productPath       string
-	customerVoicePath string
-	revenueEventPath  string
-	opportunityPath   string
-	economicTaskPath  string
-	reflectionPath    string
-	humanDecisionPath string
-	dailyRoutinePath  string
-	channelDraftPath  string
-	externalSendPath  string
-	deliveryPath      string
+	marketPath         string
+	snsPostMetricPath  string
+	productPath        string
+	customerVoicePath  string
+	revenueEventPath   string
+	opportunityPath    string
+	economicTaskPath   string
+	reflectionPath     string
+	policyDecisionPath string
+	dailyRoutinePath   string
+	channelDraftPath   string
+	externalSendPath   string
+	deliveryPath       string
 }
 
 func NewJSONLStore(root string) *JSONLStore {
@@ -32,19 +32,19 @@ func NewJSONLStore(root string) *JSONLStore {
 		root = "workspace/logs/revenue"
 	}
 	return &JSONLStore{
-		marketPath:        filepath.Join(root, "market_research_item.jsonl"),
-		snsPostMetricPath: filepath.Join(root, "sns_post_metric.jsonl"),
-		productPath:       filepath.Join(root, "product_catalog.jsonl"),
-		customerVoicePath: filepath.Join(root, "customer_voice.jsonl"),
-		revenueEventPath:  filepath.Join(root, "revenue_event.jsonl"),
-		opportunityPath:   filepath.Join(root, "opportunity.jsonl"),
-		economicTaskPath:  filepath.Join(root, "economic_task.jsonl"),
-		reflectionPath:    filepath.Join(root, "economic_reflection.jsonl"),
-		humanDecisionPath: filepath.Join(root, "human_decision_gate.jsonl"),
-		dailyRoutinePath:  filepath.Join(root, "daily_routine_report.jsonl"),
-		channelDraftPath:  filepath.Join(root, "channel_draft.jsonl"),
-		externalSendPath:  filepath.Join(root, "external_send_apply.jsonl"),
-		deliveryPath:      filepath.Join(root, "delivery.jsonl"),
+		marketPath:         filepath.Join(root, "market_research_item.jsonl"),
+		snsPostMetricPath:  filepath.Join(root, "sns_post_metric.jsonl"),
+		productPath:        filepath.Join(root, "product_catalog.jsonl"),
+		customerVoicePath:  filepath.Join(root, "customer_voice.jsonl"),
+		revenueEventPath:   filepath.Join(root, "revenue_event.jsonl"),
+		opportunityPath:    filepath.Join(root, "opportunity.jsonl"),
+		economicTaskPath:   filepath.Join(root, "economic_task.jsonl"),
+		reflectionPath:     filepath.Join(root, "economic_reflection.jsonl"),
+		policyDecisionPath: filepath.Join(root, "policy_decision.jsonl"),
+		dailyRoutinePath:   filepath.Join(root, "daily_routine_report.jsonl"),
+		channelDraftPath:   filepath.Join(root, "channel_draft.jsonl"),
+		externalSendPath:   filepath.Join(root, "external_send_apply.jsonl"),
+		deliveryPath:       filepath.Join(root, "delivery.jsonl"),
 	}
 }
 
@@ -249,20 +249,20 @@ func (s *JSONLStore) ListEconomicReflections(_ context.Context, limit int) ([]do
 	return reverseLimit(items, limit), nil
 }
 
-func (s *JSONLStore) SaveHumanDecisionGateRecord(_ context.Context, item domainrevenue.HumanDecisionGateRecord) error {
-	if err := domainrevenue.ValidateHumanDecisionGateRecord(item); err != nil {
+func (s *JSONLStore) SavePolicyDecisionRecord(_ context.Context, item domainrevenue.PolicyDecisionRecord) error {
+	if err := domainrevenue.ValidatePolicyDecisionRecord(item); err != nil {
 		return err
 	}
-	return appendJSONL(s.humanDecisionPath, item)
+	return appendJSONL(s.policyDecisionPath, item)
 }
 
-func (s *JSONLStore) ListHumanDecisionGateRecords(_ context.Context, limit int) ([]domainrevenue.HumanDecisionGateRecord, error) {
+func (s *JSONLStore) ListPolicyDecisionRecords(_ context.Context, limit int) ([]domainrevenue.PolicyDecisionRecord, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	var items []domainrevenue.HumanDecisionGateRecord
-	if err := readJSONL(s.humanDecisionPath, func(line []byte) error {
-		var item domainrevenue.HumanDecisionGateRecord
+	var items []domainrevenue.PolicyDecisionRecord
+	if err := readJSONL(s.policyDecisionPath, func(line []byte) error {
+		var item domainrevenue.PolicyDecisionRecord
 		if err := json.Unmarshal(line, &item); err != nil {
 			return err
 		}
@@ -271,15 +271,15 @@ func (s *JSONLStore) ListHumanDecisionGateRecords(_ context.Context, limit int) 
 	}); err != nil {
 		return nil, err
 	}
-	return latestHumanDecisionRecords(items, limit), nil
+	return latestPolicyDecisionRecords(items, limit), nil
 }
 
-func latestHumanDecisionRecords(items []domainrevenue.HumanDecisionGateRecord, limit int) []domainrevenue.HumanDecisionGateRecord {
+func latestPolicyDecisionRecords(items []domainrevenue.PolicyDecisionRecord, limit int) []domainrevenue.PolicyDecisionRecord {
 	if limit <= 0 {
 		limit = len(items)
 	}
 	seen := map[string]struct{}{}
-	out := make([]domainrevenue.HumanDecisionGateRecord, 0, minRevenueLimit(limit, len(items)))
+	out := make([]domainrevenue.PolicyDecisionRecord, 0, minRevenueLimit(limit, len(items)))
 	for i := len(items) - 1; i >= 0 && len(out) < limit; i-- {
 		item := items[i]
 		if _, ok := seen[item.DecisionID]; ok {

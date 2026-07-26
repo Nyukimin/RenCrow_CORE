@@ -10,13 +10,13 @@ from .hashing import assert_snapshot_features_unchanged
 @dataclass(frozen=True)
 class PaperTradeOptions:
     decision_id: int
-    approval_file: Path
+    policy_file: Path
     fill_model: str = "close_next_week"
     capital: float = 1_000_000.0
     cost_bps: float = 10.0
 
 
-def _load_approval(path: Path) -> dict[str, object]:
+def _load_policy(path: Path) -> dict[str, object]:
     if not path.exists():
         raise FileNotFoundError(path)
     text = path.read_text(encoding="utf-8").strip()
@@ -24,14 +24,14 @@ def _load_approval(path: Path) -> dict[str, object]:
         return {}
     if text.startswith("{"):
         return json.loads(text)
-    approval: dict[str, object] = {}
+    policy: dict[str, object] = {}
     list_key: str | None = None
     for raw_line in text.splitlines():
         line_without_comment = raw_line.split("#", 1)[0]
         if list_key and line_without_comment.startswith("  - "):
-            if not isinstance(approval.get(list_key), list):
-                approval[list_key] = []
-            approval[list_key].append(line_without_comment[4:].strip())
+            if not isinstance(policy.get(list_key), list):
+                policy[list_key] = []
+            policy[list_key].append(line_without_comment[4:].strip())
             continue
         line = line_without_comment.strip()
         if not line or ":" not in line:
@@ -51,8 +51,8 @@ def _load_approval(path: Path) -> dict[str, object]:
                 parsed = int(value)
             except ValueError:
                 parsed = value
-        approval[key.strip()] = parsed
-    return approval
+        policy[key.strip()] = parsed
+    return policy
 
 
 def _decision(con, decision_id: int):
@@ -79,16 +79,19 @@ def _require_policy_scope(policy: dict[str, object], decision, candidate: dict[s
         raise ValueError("policy snapshot_id does not match decision")
     if "strategy_id" in policy and str(policy["strategy_id"]) != str(decision["strategy_name"]):
         raise ValueError("policy strategy_id does not match decision")
+    expected_status = "blocked" if bool(json.loads(decision["veto_json"] or "{}").get("vetoed")) else "allowed"
+    if str(policy.get("policy_status", "")) != expected_status:
+        raise ValueError("policy status does not match decision")
     if "candidate_symbols" in policy:
-        approved_symbols = policy["candidate_symbols"]
-        if isinstance(approved_symbols, str):
-            approved = [approved_symbols]
-        elif isinstance(approved_symbols, list):
-            approved = [str(symbol) for symbol in approved_symbols]
+        policy_symbols = policy["candidate_symbols"]
+        if isinstance(policy_symbols, str):
+            selected = [policy_symbols]
+        elif isinstance(policy_symbols, list):
+            selected = [str(symbol) for symbol in policy_symbols]
         else:
-            approved = []
+            selected = []
         current = [str(item.get("symbol")) for item in candidate.get("candidates", [])]
-        if approved != current:
+        if selected != current:
             raise ValueError("policy candidate_symbols do not match decision")
 
 
@@ -150,7 +153,7 @@ def _feature_price(con, instrument_id: int, week_end: str, fill_model: str) -> f
 
 
 def run_paper_trade(con, options: PaperTradeOptions) -> dict[str, object]:
-    policy = _load_approval(options.approval_file)
+    policy = _load_policy(options.policy_file)
     if int(policy.get("decision_id", -1)) != options.decision_id:
         raise ValueError("policy decision_id does not match")
     decision = _decision(con, options.decision_id)

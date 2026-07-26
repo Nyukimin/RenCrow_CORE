@@ -311,7 +311,7 @@ func ensureVaultFiles(root string, item domainworkstream.Workstream) (string, er
 		"OPEN_LOOPS.md": "# OPEN_LOOPS\n\n- [ ] 未完了事項を追加する\n",
 		"ARTIFACTS.md":  "# ARTIFACTS\n\n| artifact | status | path |\n|---|---|---|\n",
 		"NOTES.md":      "# NOTES\n\n",
-		"MEMORY.md":     "# MEMORY\n\nHuman Review が必要な記憶候補をここに整理する。\n",
+		"MEMORY.md":     "# MEMORY\n\nQuality Review が必要な記憶候補をここに整理する。\n",
 	}
 	for name, content := range files {
 		path := filepath.Join(dir, name)
