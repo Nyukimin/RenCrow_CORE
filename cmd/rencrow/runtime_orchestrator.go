@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/modulebridge"
@@ -14,6 +12,7 @@ import (
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	logginginfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/logging"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/userhome"
 )
 
 func buildOrchestratorRuntime(
@@ -89,9 +88,12 @@ func buildOrchestratorRuntime(
 	}
 
 	// セッション会話ターンロガー: ~/.rencrow/logs/sessions/ に記録
-	sessionLogDir := filepath.Join(os.Getenv("HOME"), ".rencrow", "logs", "sessions")
-	orch.SetSessionTurnLogger(logginginfra.NewSessionLogWriter(sessionLogDir))
-	log.Printf("Session turn logger initialized: %s", sessionLogDir)
+	if sessionLogDir, err := userhome.Join(".rencrow", "logs", "sessions"); err != nil {
+		log.Printf("WARN: session turn logger disabled: %v", err)
+	} else {
+		orch.SetSessionTurnLogger(logginginfra.NewSessionLogWriter(sessionLogDir))
+		log.Printf("Session turn logger initialized: %s", sessionLogDir)
+	}
 	orch.SetEventListener(deps.eventRelay)
 	if deps.reportStore != nil {
 		orch.SetReportStore(deps.reportStore)

@@ -190,7 +190,10 @@ func TestSerenaClientInitializeSendsNotification(t *testing.T) {
 
 func TestEnrichedEnvAddsToolPaths(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "rencrow-home")
+	// os.UserHomeDir が参照する環境変数はOSごとに異なる（Unix系は HOME、
+	// Windows は USERPROFILE）。両方を設定する
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("PATH", filepath.Join(home, "existing-bin"))
 	env := enrichedEnv()
 	var path string

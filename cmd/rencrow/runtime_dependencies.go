@@ -52,6 +52,7 @@ import (
 	personainfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/userhome"
 	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
@@ -1149,8 +1150,9 @@ func buildSessionLogSources(cfg *config.Config) []dcipersistence.SessionLogSourc
 		return sources
 	}
 	// デフォルト: RenCrow/Codex/Claude の既知パス
-	home := os.Getenv("HOME")
-	if home == "" {
+	home, err := userhome.Dir()
+	if err != nil {
+		log.Printf("WARN: session log sources disabled: %v", err)
 		return nil
 	}
 	return []dcipersistence.SessionLogSource{

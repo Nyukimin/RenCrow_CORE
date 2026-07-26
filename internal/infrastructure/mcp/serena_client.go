@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/userhome"
 )
 
 // SerenaClient は Serena MCP サーバーのサブプロセスを管理し、
@@ -294,10 +296,13 @@ func (c *SerenaClient) recv(ctx context.Context, wantID int64) (json.RawMessage,
 // rencrow 自体が systemd 等の制限環境で起動している場合でも Serena が go/gopls を見つけられる。
 func enrichedEnv() []string {
 	env := os.Environ()
-	home := os.Getenv("HOME")
-	extra := []string{
-		filepath.Join(home, ".local", "bin"),
-		filepath.Join(home, "go", "bin"),
+	extra := []string{}
+	// home が解決できない場合は PATH へ無効なパスを足さない
+	if home, err := userhome.Dir(); err == nil {
+		extra = append(extra,
+			filepath.Join(home, ".local", "bin"),
+			filepath.Join(home, "go", "bin"),
+		)
 	}
 	if runtime.GOOS != "windows" {
 		extra = append(extra, "/usr/local/go/bin")
