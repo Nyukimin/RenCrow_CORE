@@ -29,7 +29,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
 | `/viewer/workstreams/*` | goal、artifact、annotation、heartbeat、review |
 | `/viewer/advisors/*`, `/viewer/agents/profiles` | Advisor run/score と AgentProfile |
-| `/viewer/revenue/*` | Opportunity、EconomicTask、RevenueEvent、Reflection、approval |
+| `/viewer/revenue/*` | Opportunity、EconomicTask、RevenueEvent、Reflection、policy decision |
 | `GET/POST /viewer/revenue/deliveries` | trace付き汎用Deliveryの一覧・draft/状態record作成 |
 | `/viewer/memory/*` | memory event、Recall、ProfilePromotion job の観測 |
 | `GET /viewer/movie-catalog` | 映画・俳優catalogと利用者評価の一覧・詳細 |
@@ -155,9 +155,9 @@ TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`respon
 
 `GET /viewer/movie-catalog?action=movies|people`は一覧項目に`familiarity`、`sentiment`、`assessed`を返します。映画の`familiarity`は`seen | unseen | ""`、俳優の`familiarity`は`known | unknown | ""`、`sentiment`は共通で`like | dislike | ""`です。`POST /viewer/movie-catalog/preference`へ`kind`（`movie | person`）、`target_id`、`target_label`、`dimension`（`familiarity | sentiment`）、`value`、`generated_by`を送ると一方のdimensionだけを更新し、他方を維持します。空の`value`はそのdimensionを明示的な未選択へ戻します。Viewer内部のwrite APIであり、PORTALへ自動公開しません。
 
-Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCOREが生成します。EconomicTask、Delivery、RevenueEvent、Reflectionの作成では、参照元Opportunityまたは上流entityの`trace_id`を引き継ぎ、別の値へ黙って付け替えません。`POST /viewer/revenue/deliveries`は`delivery_id`、`trace_id`、`delivery_kind`、`status`、任意の上流IDとtarget/evidenceを受けます。`external_action=true`かつ`status=completed`では`approval_id`と`evidence`が必須です。
+Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCOREが生成します。EconomicTask、Delivery、RevenueEvent、Reflectionの作成では、参照元Opportunityまたは上流entityの`trace_id`を引き継ぎ、別の値へ黙って付け替えません。`POST /viewer/revenue/deliveries`は`delivery_id`、`trace_id`、`delivery_kind`、`status`、任意の上流IDとtarget/evidenceを受けます。`external_action=true`かつ`status=completed`では、許可されたpolicy decisionと`evidence`が必須です。旧`approval_id`は移行互換fieldとして省略できます。
 
-`POST /viewer/revenue/opportunities/workstream-goal`は`opportunity_id`と`workstream_id`を受け、draft Goal、pending-review Artifact、`decision_type=economic_opportunity_execution`のpending Approvalを同じ`trace_id`で保存して返します。既存Opportunityに`trace_id`がない場合は、このuse caseが生成してOpportunityへ保存します。responseの`external_actions_applied`は`false`であり、このAPI自体は外部side effectを実行しません。
+`POST /viewer/revenue/opportunities/workstream-goal`は`opportunity_id`と`workstream_id`を受け、draft Goal、pending-review Artifact、`decision_type=economic_opportunity_execution`のPolicy Decisionを同じ`trace_id`で保存して返します。既存Opportunityに`trace_id`がない場合は、このuse caseが生成してOpportunityへ保存します。responseの`external_actions_applied`は`false`であり、このAPI自体は外部side effectを実行しません。後続の実行requestは承認待ちにせず、同期policy判定で許可または拒否します。
 
 ## Interaction client共通意味論
 
@@ -197,7 +197,7 @@ server-side authorizationを置き換えません。共通SDKは実caller間の�
 
 - method、status code、content type を確認する。
 - unknown field を許容し、既存 field の意味を推測で変更しない。
-- write/action endpoint は approval、idempotency、request provenance を保持する。
+- write/action endpoint は policy decision、idempotency、request provenance を保持する。
 - SSE は再接続と重複 event を考慮する。
 - debug/admin API を public network へ直接公開しない。
 

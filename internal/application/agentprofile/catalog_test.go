@@ -35,7 +35,7 @@ func TestStaticCatalogCoderIdentityMapping(t *testing.T) {
 	}
 }
 
-func TestStaticCatalogShiroCanAskAdvisorButRequiresApprovalForGitPush(t *testing.T) {
+func TestStaticCatalogShiroCanAskAdvisorAndPolicyAllowsGitPush(t *testing.T) {
 	catalog := NewStaticCatalog()
 	shiro, err := catalog.MustGet("shiro")
 	if err != nil {
@@ -44,8 +44,8 @@ func TestStaticCatalogShiroCanAskAdvisorButRequiresApprovalForGitPush(t *testing
 	if !shiro.AutonomyEnvelope.CanDecide("ask_advisor") {
 		t.Fatal("Shiro should be able to decide ask_advisor")
 	}
-	if shiro.AutonomyEnvelope.CanAct("git_push") || !shiro.AutonomyEnvelope.RequiresApproval("git_push") {
-		t.Fatal("Shiro git_push should require approval")
+	if !shiro.AutonomyEnvelope.CanAct("git_push") || shiro.AutonomyEnvelope.RequiresApproval("git_push") {
+		t.Fatal("Shiro git_push should be allowed without approval wait")
 	}
 }
 

@@ -56,7 +56,7 @@ func TestE2E_SandboxPromotionApplyAndRollbackWithHumanApproval(t *testing.T) {
 			TargetPath:                targetPath,
 			DiffPath:                  diffPath,
 			TestResultPath:            testResultPath,
-			Reason:                    "live E2E: verify sandbox promotion apply and rollback with human approval",
+			Reason:                    "live E2E: verify sandbox promotion apply and rollback with synchronous policy",
 			RollbackPlanPath:          rollbackPlanPath,
 			PostApplyVerificationPath: postApplyPath,
 			HumanApprovalStatus:       "granted",

@@ -215,14 +215,14 @@ func TestJSONLStoreRejectsInvalidRevenueRecords(t *testing.T) {
 	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "送信済み", ApprovalStatus: "approved", ExternalSendApplied: true}); err == nil {
 		t.Fatal("expected externally applied channel draft to fail")
 	}
-	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApprovalStatus: "pending", HumanApproved: true, ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "no adapter"}); err == nil {
-		t.Fatal("expected unapproved external send apply to fail")
+	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApprovalStatus: "pending", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "no adapter", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("legacy approval fields must not block external send audit: %v", err)
 	}
 	if err := store.SaveOpportunity(ctx, domainrevenue.Opportunity{OpportunityID: "opp_1", SourceKind: "note", Title: "必ず稼げる資料", ApprovalState: "draft", CreatedAt: time.Now()}); err == nil {
 		t.Fatal("expected prohibited opportunity claim to fail")
 	}
-	if err := store.SaveEconomicTask(ctx, domainrevenue.EconomicTask{TaskID: "task_1", OpportunityID: "opp_1", AgentID: "shiro", TaskKind: "billing", Status: "planned", ApprovalMode: "none", CreatedAt: time.Now()}); err == nil {
-		t.Fatal("expected billing task without human approval to fail")
+	if err := store.SaveEconomicTask(ctx, domainrevenue.EconomicTask{TaskID: "task_1", OpportunityID: "opp_1", AgentID: "shiro", TaskKind: "billing", Status: "planned", ApprovalMode: "none", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("billing task must not wait for human approval: %v", err)
 	}
 }
 

@@ -175,7 +175,7 @@ func BuildRiskAssessmentMarkdown(result domaintrace.DiscoveryResult) string {
 		fmt.Fprintf(&b, "- Risk: %s\n", candidate.RiskLevel)
 		fmt.Fprintf(&b, "- Auth required: %v\n", candidate.AuthRequired)
 		fmt.Fprintf(&b, "- Contains personal data: %s\n", candidate.ContainsPersonalData)
-		fmt.Fprintf(&b, "- Promote requirement: validator and human approval\n\n")
+		fmt.Fprintf(&b, "- Promote requirement: validator and synchronous execution policy\n\n")
 	}
 	return b.String()
 }
@@ -204,7 +204,7 @@ func BuildFetcherPlanMarkdown(result domaintrace.DiscoveryResult, validations []
 		fmt.Fprintf(&b, "- Validation status: %s\n", status)
 		fmt.Fprintf(&b, "- Fetcher action: ")
 		if ok && validation.Passed {
-			fmt.Fprintf(&b, "proposal allowed after human approval\n")
+			fmt.Fprintf(&b, "proposal allowed by synchronous execution policy\n")
 		} else {
 			fmt.Fprintf(&b, "blocked until validator issues are resolved\n")
 		}
@@ -227,7 +227,7 @@ func BuildClientDraftMJS(result domaintrace.DiscoveryResult, validations []domai
 	var b strings.Builder
 	fmt.Fprintf(&b, "// Generated client draft from observed browser trace.\n")
 	fmt.Fprintf(&b, "// Trace run: %s\n", result.Run.TraceRunID)
-	fmt.Fprintf(&b, "// This draft is review-only. Do not run it against live services before validator and human approval pass.\n\n")
+	fmt.Fprintf(&b, "// This draft is review-only. Do not run it against live services before validator and execution policy pass.\n\n")
 	fmt.Fprintf(&b, "export const traceRunId = %q;\n\n", result.Run.TraceRunID)
 	fmt.Fprintf(&b, "export const endpoints = [\n")
 	for _, candidate := range result.Candidates {
@@ -243,12 +243,12 @@ func BuildClientDraftMJS(result domaintrace.DiscoveryResult, validations []domai
 		fmt.Fprintf(&b, "    pathTemplate: %q,\n", candidate.PathTemplate)
 		fmt.Fprintf(&b, "    observedUrl: %q,\n", candidate.ObservedURL)
 		fmt.Fprintf(&b, "    validationStatus: %q,\n", status)
-		fmt.Fprintf(&b, "    fetchAllowedAfterHumanApproval: %t,\n", allowed)
+		fmt.Fprintf(&b, "    fetchAllowedByPolicy: %t,\n", allowed)
 		fmt.Fprintf(&b, "  },\n")
 	}
 	fmt.Fprintf(&b, "];\n\n")
 	fmt.Fprintf(&b, "export async function fetchObservedEndpoint(endpoint, fetcher = fetch) {\n")
-	fmt.Fprintf(&b, "  if (!endpoint.fetchAllowedAfterHumanApproval) {\n")
+	fmt.Fprintf(&b, "  if (!endpoint.fetchAllowedByPolicy) {\n")
 	fmt.Fprintf(&b, "    throw new Error(`API candidate ${endpoint.candidateId} is not validated for fetcher use`);\n")
 	fmt.Fprintf(&b, "  }\n")
 	fmt.Fprintf(&b, "  const response = await fetcher(endpoint.observedUrl, { method: endpoint.method });\n")

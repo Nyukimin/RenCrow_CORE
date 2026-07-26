@@ -285,5 +285,5 @@ needs_owner_decision
 - 「代表機能が動いた」だけで全体完了にしない。
 - screenshot / log / API response などの evidence なしに UI 完了を主張しない。
 - live service の再ビルドや再起動が必要な場合は、対象 skill / runbook に従う。
-- 外部送信、公開、課金、正式 DB promotion は Human approval なしに行わない。
+- 外部送信、公開、課金、正式 DB promotion はrequest時に同期policy判定し、許可なら実行、条件不足または禁止なら理由付き`blocked`にする。
 - tracker を複数に分散させない。必ず単一の正準表へ戻す。

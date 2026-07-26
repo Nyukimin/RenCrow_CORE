@@ -70,23 +70,17 @@ def _assert_decision_snapshot_features_unchanged(con, decision) -> None:
     assert_snapshot_features_unchanged(con, snapshot_id, row["snapshot_date"], row["features_hash"])
 
 
-def _require_approval_metadata(approval: dict[str, object]) -> None:
-    missing = [key for key in ("approver", "approved_at", "approval_reason") if not str(approval.get(key) or "").strip()]
-    if missing:
-        raise PermissionError(f"approval file is missing required metadata: {', '.join(missing)}")
-
-
-def _require_approval_scope(approval: dict[str, object], decision, candidate: dict[str, object]) -> None:
+def _require_policy_scope(policy: dict[str, object], decision, candidate: dict[str, object]) -> None:
     if decision["account_scope"] != "paper":
         raise PermissionError("paper trade requires a paper account_scope decision")
-    if "account_scope" in approval and str(approval["account_scope"]) != "paper":
-        raise ValueError("approval account_scope must be paper")
-    if "snapshot_id" in approval and str(approval["snapshot_id"]) != str(decision["snapshot_id"]):
-        raise ValueError("approval snapshot_id does not match decision")
-    if "strategy_id" in approval and str(approval["strategy_id"]) != str(decision["strategy_name"]):
-        raise ValueError("approval strategy_id does not match decision")
-    if "candidate_symbols" in approval:
-        approved_symbols = approval["candidate_symbols"]
+    if "account_scope" in policy and str(policy["account_scope"]) != "paper":
+        raise ValueError("policy account_scope must be paper")
+    if "snapshot_id" in policy and str(policy["snapshot_id"]) != str(decision["snapshot_id"]):
+        raise ValueError("policy snapshot_id does not match decision")
+    if "strategy_id" in policy and str(policy["strategy_id"]) != str(decision["strategy_name"]):
+        raise ValueError("policy strategy_id does not match decision")
+    if "candidate_symbols" in policy:
+        approved_symbols = policy["candidate_symbols"]
         if isinstance(approved_symbols, str):
             approved = [approved_symbols]
         elif isinstance(approved_symbols, list):
@@ -95,7 +89,7 @@ def _require_approval_scope(approval: dict[str, object], decision, candidate: di
             approved = []
         current = [str(item.get("symbol")) for item in candidate.get("candidates", [])]
         if approved != current:
-            raise ValueError("approval candidate_symbols do not match decision")
+            raise ValueError("policy candidate_symbols do not match decision")
 
 
 def _feature_price(con, instrument_id: int, week_end: str, fill_model: str) -> float | None:
@@ -156,31 +150,15 @@ def _feature_price(con, instrument_id: int, week_end: str, fill_model: str) -> f
 
 
 def run_paper_trade(con, options: PaperTradeOptions) -> dict[str, object]:
-    approval = _load_approval(options.approval_file)
-    if int(approval.get("decision_id", -1)) != options.decision_id:
-        raise ValueError("approval decision_id does not match")
-    if not approval.get("approved"):
-        raise PermissionError("approval file is present but approved=false")
-    _require_approval_metadata(approval)
+    policy = _load_approval(options.approval_file)
+    if int(policy.get("decision_id", -1)) != options.decision_id:
+        raise ValueError("policy decision_id does not match")
     decision = _decision(con, options.decision_id)
     _assert_decision_snapshot_features_unchanged(con, decision)
     snapshot_id = decision["snapshot_id"]
     candidate = json.loads(decision["candidate_json"] or "{}")
     veto = json.loads(decision["veto_json"] or "{}")
-    _require_approval_scope(approval, decision, candidate)
-    con.execute(
-        """
-        UPDATE decision_log
-           SET approved=1, approver=?, approved_at=?, approval_reason=?
-         WHERE decision_id=?
-        """,
-        (
-            approval.get("approver") or "",
-            approval.get("approved_at") or "",
-            approval.get("approval_reason") or "",
-            options.decision_id,
-        ),
-    )
+    _require_policy_scope(policy, decision, candidate)
     candidates = candidate.get("candidates", [])
     if veto.get("vetoed") or not candidates:
         con.execute(

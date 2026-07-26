@@ -32,7 +32,7 @@ RenCrow の AI エージェント向け指示を、常時読み込み、path 固
 - `git reset --hard`
 - 未確認の `git checkout --`
 - workspace root `/home/nyukimi/RenCrow` での誤った build / test / git 操作
-- official DB / confirmed memory / Source Registry への未承認 direct write
+- official DB / confirmed memory / Source Registry へのpolicy・証跡なしの direct write
 - broad delete
 - external PR 作成、外部投稿、公開、課金、送信
 - secret / token / key の表示、保存、commit

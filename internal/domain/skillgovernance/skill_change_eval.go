@@ -74,10 +74,6 @@ func RunSkillChangeEval(req SkillChangeEvalRequest) SkillChangeEvalResult {
 		stopReasons = append(stopReasons, "expected_behavior_change is required")
 		nextActions = append(nextActions, "期待する Agent 行動変化を記録する")
 	}
-	if strings.TrimSpace(req.HumanApprovalStatus) != HumanApprovalGranted {
-		stopReasons = append(stopReasons, "human approval is required")
-		nextActions = append(nextActions, "Human approval を granted にする")
-	}
 	if len(req.Cases) < 3 {
 		stopReasons = append(stopReasons, "at least 3 eval cases are required")
 		nextActions = append(nextActions, "最低3件の before / after eval case を用意する")

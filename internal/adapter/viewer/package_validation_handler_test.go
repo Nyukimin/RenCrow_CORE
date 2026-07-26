@@ -18,7 +18,7 @@ func TestHandlePackageValidationBlocksPackageUpdate(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"status":"blocked"`, `"install_allowed":false`, `"human_approved"`, `"rollback_evidence_path"`} {
+	for _, want := range []string{`"status":"blocked"`, `"install_allowed":false`, `"rollback_evidence_path"`} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("response missing %s: %s", want, rec.Body.String())
 		}

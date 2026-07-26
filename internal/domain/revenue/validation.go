@@ -191,9 +191,6 @@ func ValidateEconomicTask(item EconomicTask) error {
 	if item.Cost < 0 {
 		return errors.New("cost must be >= 0")
 	}
-	if requiresHumanApproval(item.TaskKind) && item.ApprovalMode != "human_required" {
-		return errors.New("approval_mode must be human_required for approval-required economic task")
-	}
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
 	}
@@ -234,8 +231,8 @@ func ValidateDelivery(item Delivery) error {
 		return errors.New("status must be draft, pending, blocked, failed, completed, or cancelled")
 	}
 	if item.ExternalAction && item.Status == "completed" {
-		if strings.TrimSpace(item.ApprovalID) == "" {
-			return errors.New("approval_id is required for completed external delivery")
+		if strings.TrimSpace(item.PolicyDecisionID) == "" && strings.TrimSpace(item.ApprovalID) == "" {
+			return errors.New("policy_decision_id is required for completed external delivery")
 		}
 		if strings.TrimSpace(item.Evidence) == "" {
 			return errors.New("evidence is required for completed external delivery")
@@ -270,8 +267,7 @@ func ValidateDailyRoutineReport(item DailyRoutineReport) error {
 }
 
 func requiresHumanApproval(decisionType string) bool {
-	_, ok := approvalRequiredDecisionTypes[strings.TrimSpace(decisionType)]
-	return ok
+	return false
 }
 
 func RequiresHumanApproval(decisionType string) bool {
@@ -289,7 +285,7 @@ func ValidateChannelDraft(item ChannelDraft) error {
 		return errors.New("body is required")
 	}
 	switch strings.TrimSpace(item.ApprovalStatus) {
-	case "", "pending", "approved", "rejected":
+	case "", "not_required", "pending", "approved", "rejected":
 	default:
 		return errors.New("approval_status must be pending, approved, or rejected")
 	}
@@ -317,12 +313,6 @@ func ValidateExternalSendApplyRecord(item ExternalSendApplyRecord) error {
 	}
 	if strings.TrimSpace(item.Channel) == "" {
 		return errors.New("channel is required")
-	}
-	if strings.TrimSpace(item.ApprovalStatus) != "approved" {
-		return errors.New("approval_status must be approved")
-	}
-	if !item.HumanApproved {
-		return errors.New("human_approved is required")
 	}
 	switch strings.TrimSpace(item.ApplyStatus) {
 	case "blocked", "failed", "sent":
@@ -367,7 +357,7 @@ func ValidateHumanDecisionGateRecord(item HumanDecisionGateRecord) error {
 		return errors.New("decision_type is required")
 	}
 	switch strings.TrimSpace(item.ApprovalStatus) {
-	case "", "pending", "approved", "rejected":
+	case "", "not_required", "pending", "approved", "rejected":
 	default:
 		return errors.New("approval_status must be pending, approved, or rejected")
 	}
@@ -496,8 +486,8 @@ func buildDailyRoutineSuggestedActions(report DailyRoutineReport) []string {
 func BuildHumanDecisionGateRecord(req HumanDecisionGateRequest) HumanDecisionGateRecord {
 	result := EvaluateHumanDecisionGate(req)
 	approvalStatus := strings.TrimSpace(req.ApprovalStatus)
-	if approvalStatus == "" && result.RequiresApproval {
-		approvalStatus = "pending"
+	if approvalStatus == "" {
+		approvalStatus = "not_required"
 	}
 	return HumanDecisionGateRecord{
 		DecisionID:       strings.TrimSpace(req.DecisionID),
@@ -518,7 +508,7 @@ func EvaluateHumanDecisionGate(req HumanDecisionGateRequest) HumanDecisionGateRe
 	if decisionType == "" {
 		return HumanDecisionGateResult{
 			Status:           "blocked",
-			RequiresApproval: true,
+			RequiresApproval: false,
 			Reasons:          []string{"decision_type is required"},
 		}
 	}
@@ -530,36 +520,13 @@ func EvaluateHumanDecisionGate(req HumanDecisionGateRequest) HumanDecisionGateRe
 	if len(reasons) > 0 {
 		return HumanDecisionGateResult{
 			Status:           "blocked",
-			RequiresApproval: true,
+			RequiresApproval: false,
 			Reasons:          reasons,
 		}
 	}
 
-	_, requiresApproval := approvalRequiredDecisionTypes[decisionType]
-	if !requiresApproval {
-		return HumanDecisionGateResult{
-			Status:           "approved",
-			RequiresApproval: false,
-		}
-	}
-
-	switch strings.TrimSpace(req.ApprovalStatus) {
-	case "approved":
-		return HumanDecisionGateResult{
-			Status:           "approved",
-			RequiresApproval: true,
-		}
-	case "rejected":
-		return HumanDecisionGateResult{
-			Status:           "blocked",
-			RequiresApproval: true,
-			Reasons:          []string{"human approval was rejected"},
-		}
-	default:
-		return HumanDecisionGateResult{
-			Status:           "needs_review",
-			RequiresApproval: true,
-			Reasons:          []string{"human approval is required"},
-		}
+	return HumanDecisionGateResult{
+		Status:           "allowed",
+		RequiresApproval: false,
 	}
 }

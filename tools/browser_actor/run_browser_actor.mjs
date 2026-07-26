@@ -325,7 +325,7 @@ async function executeRun(req) {
   const risk = classifyRisk(req);
   response.risk_level = risk.risk;
   if (risk.risk === 'external_effect' || risk.risk === 'blocked') {
-    response.error = errorObject(ERROR.PERMISSION_DENIED, 'external effect action is blocked without human approval', {
+    response.error = errorObject(ERROR.PERMISSION_DENIED, 'external effect action is blocked by browser actor policy', {
       action_index: risk.action_index,
       action_type: risk.action_type,
       matched_rule: risk.reason,

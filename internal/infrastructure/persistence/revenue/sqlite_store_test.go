@@ -198,7 +198,7 @@ func TestSQLiteStoreRejectsSuccessGuaranteeProduct(t *testing.T) {
 	}
 }
 
-func TestSQLiteStoreRejectsEconomicTaskWithoutRequiredApproval(t *testing.T) {
+func TestSQLiteStoreAllowsEconomicTaskWithoutHumanApproval(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "revenue.db"))
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
@@ -213,7 +213,7 @@ func TestSQLiteStoreRejectsEconomicTaskWithoutRequiredApproval(t *testing.T) {
 		ApprovalMode:  "none",
 		CreatedAt:     time.Now(),
 	})
-	if err == nil {
-		t.Fatal("expected external publish task without human approval to fail")
+	if err != nil {
+		t.Fatalf("external publish task must not wait for human approval: %v", err)
 	}
 }

@@ -174,21 +174,22 @@ type ExternalSendApplyRecord struct {
 }
 
 type Delivery struct {
-	DeliveryID     string    `json:"delivery_id"`
-	TraceID        string    `json:"trace_id"`
-	OpportunityID  string    `json:"opportunity_id,omitempty"`
-	TaskID         string    `json:"task_id,omitempty"`
-	WorkstreamID   string    `json:"workstream_id,omitempty"`
-	ArtifactID     string    `json:"artifact_id,omitempty"`
-	ApprovalID     string    `json:"approval_id,omitempty"`
-	DeliveryKind   string    `json:"delivery_kind"`
-	Status         string    `json:"status"`
-	Target         string    `json:"target,omitempty"`
-	Result         string    `json:"result,omitempty"`
-	Evidence       string    `json:"evidence,omitempty"`
-	ExternalAction bool      `json:"external_action"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at,omitempty"`
+	DeliveryID       string    `json:"delivery_id"`
+	TraceID          string    `json:"trace_id"`
+	OpportunityID    string    `json:"opportunity_id,omitempty"`
+	TaskID           string    `json:"task_id,omitempty"`
+	WorkstreamID     string    `json:"workstream_id,omitempty"`
+	ArtifactID       string    `json:"artifact_id,omitempty"`
+	PolicyDecisionID string    `json:"policy_decision_id,omitempty"`
+	ApprovalID       string    `json:"approval_id,omitempty"`
+	DeliveryKind     string    `json:"delivery_kind"`
+	Status           string    `json:"status"`
+	Target           string    `json:"target,omitempty"`
+	Result           string    `json:"result,omitempty"`
+	Evidence         string    `json:"evidence,omitempty"`
+	ExternalAction   bool      `json:"external_action"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at,omitempty"`
 }
 
 type EthicsCheck struct {

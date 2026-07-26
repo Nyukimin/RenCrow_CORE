@@ -158,7 +158,7 @@ func TestEconomicServiceGeneratesAndPropagatesTraceToTaskAndDelivery(t *testing.
 	}
 }
 
-func TestEconomicServiceRejectsApprovalMismatchAndCreatesDraftGoal(t *testing.T) {
+func TestEconomicServiceCreatesPolicyDecisionWithoutApprovalWait(t *testing.T) {
 	now := time.Date(2026, 7, 14, 1, 2, 3, 0, time.UTC)
 	store := &fakeOpportunityStore{opportunities: []revenuedomain.Opportunity{{
 		OpportunityID: "opp-negative", SourceKind: "note", Title: "Internal draft", ExpectedRevenue: 100,
@@ -168,8 +168,8 @@ func TestEconomicServiceRejectsApprovalMismatchAndCreatesDraftGoal(t *testing.T)
 	service := NewEconomicService(store, func() time.Time { return now }).WithWorkstreamGoalStore(goals)
 	if _, err := service.DraftEconomicTask(context.Background(), revenuedomain.EconomicTask{
 		TaskID: "task-1", OpportunityID: "opp-negative", AgentID: "shiro", TaskKind: "billing", ApprovalMode: "none",
-	}); err == nil {
-		t.Fatal("billing without human approval must be rejected")
+	}); err != nil {
+		t.Fatalf("billing task must not wait for human approval: %v", err)
 	}
 	goal, err := service.CreateWorkstreamGoal(context.Background(), "opp-negative", "ws-revenue")
 	if err != nil {
@@ -183,10 +183,10 @@ func TestEconomicServiceRejectsApprovalMismatchAndCreatesDraftGoal(t *testing.T)
 	}
 	if store.decisions[0].SubjectID != goals.artifacts[0].ArtifactID ||
 		store.decisions[0].DecisionType != "economic_opportunity_execution" ||
-		store.decisions[0].ApprovalStatus != "pending" ||
-		store.decisions[0].GateStatus != "needs_review" ||
-		!store.decisions[0].RequiresApproval {
-		t.Fatalf("approval does not target artifact: artifact=%#v decision=%#v", goals.artifacts[0], store.decisions[0])
+		store.decisions[0].ApprovalStatus != "not_required" ||
+		store.decisions[0].GateStatus != "allowed" ||
+		store.decisions[0].RequiresApproval {
+		t.Fatalf("policy decision does not target artifact: artifact=%#v decision=%#v", goals.artifacts[0], store.decisions[0])
 	}
 	if _, err := service.CreateWorkstreamGoal(context.Background(), "missing", "ws-revenue"); !errors.Is(err, ErrOpportunityNotFound) {
 		t.Fatalf("missing opportunity error=%v", err)

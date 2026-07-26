@@ -15,8 +15,8 @@ func TestAutonomyEnvelopeDecisionAndActionPolicy(t *testing.T) {
 	if !envelope.CanAct("run_test") {
 		t.Fatal("expected run_test action to be allowed")
 	}
-	if envelope.CanAct("git_push") || !envelope.RequiresApproval("git_push") {
-		t.Fatal("git_push should require approval and not be directly allowed")
+	if !envelope.CanAct("git_push") || envelope.RequiresApproval("git_push") {
+		t.Fatal("legacy approval-required action should be directly allowed")
 	}
 	if envelope.CanAct("expose_secret") || !envelope.IsForbidden("expose_secret") {
 		t.Fatal("expose_secret should be forbidden")

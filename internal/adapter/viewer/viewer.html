@@ -432,7 +432,7 @@
       <section class="ops-section ops-to-be-section" aria-labelledby="toBeOpsTitle">
         <div class="ops-section-title">
           <span id="toBeOpsTitle">To-Be Summary</span>
-          <small>Advisor / Relation / Economic / Approval / Trace</small>
+          <small>Advisor / Relation / Economic / Policy / Trace</small>
         </div>
         <div class="ops-to-be-grid" id="toBeOpsSummary" aria-live="polite" aria-busy="false">
           <article class="ops-to-be-block status-unavailable" data-to-be-loading="true">
@@ -500,7 +500,7 @@
         <h4>Complexity Review Artifacts</h4>
         <div class="small" style="margin-bottom:8px">report-only / review-only artifact を確認します。patch 適用、Sandbox apply、外部 PR 作成の成功証跡ではありません。</div>
         <table class="debug-table">
-          <thead><tr><th>time</th><th>artifact</th><th>type</th><th>status</th><th>patch</th><th>approval</th></tr></thead>
+          <thead><tr><th>time</th><th>artifact</th><th>type</th><th>status</th><th>patch</th><th>legacy approval field</th></tr></thead>
           <tbody id="complexityReviewArtifactBody"></tbody>
         </table>
         <pre id="complexityReviewArtifactResult" class="small llm-ops-raw">complexity review artifacts: -</pre>
@@ -515,13 +515,13 @@
         <pre id="runtimeBlockedRouteAuditResult" class="small llm-ops-raw">runtime blocked route audits: -</pre>
       </div>
       <div class="debug-box">
-        <h4>Revenue Human Decision Gate</h4>
-        <div class="small" style="margin-bottom:8px">外部公開、高単価 offer、顧客の声利用などはここで承認・却下を記録します。承認は送信や公開の実行ではありません。</div>
+        <h4>Revenue Policy Decisions</h4>
+        <div class="small" style="margin-bottom:8px">外部公開、高単価 offer、顧客の声利用などの同期policy判定を表示します。人間の承認待ちや承認操作は行いません。</div>
         <table class="debug-table">
           <thead><tr><th>time</th><th>decision</th><th>type</th><th>status</th><th>description</th><th>action</th></tr></thead>
           <tbody id="revenueDecisionBody"></tbody>
         </table>
-        <pre id="revenueDecisionResult" class="small llm-ops-raw">revenue decision review: -</pre>
+        <pre id="revenueDecisionResult" class="small llm-ops-raw">revenue policy decisions: -</pre>
       </div>
       <div class="debug-box">
         <h4>Revenue Channel Drafts</h4>
@@ -530,11 +530,11 @@
           <thead><tr><th>time</th><th>draft</th><th>channel</th><th>status</th><th>source</th><th>body</th><th>send</th></tr></thead>
           <tbody id="revenueChannelDraftBody"></tbody>
         </table>
-        <pre id="revenueChannelDraftResult" class="small llm-ops-raw">revenue channel drafts: draft only / external send requires human approval</pre>
+        <pre id="revenueChannelDraftResult" class="small llm-ops-raw">revenue channel drafts: draft only / external send uses synchronous policy</pre>
       </div>
       <div class="debug-box">
         <h4>Revenue External Send Apply Audits</h4>
-        <div class="small" style="margin-bottom:8px">Human approval 後の外部送信 apply audit を確認します。adapter 未接続や送信失敗を送信成功として扱いません。</div>
+        <div class="small" style="margin-bottom:8px">同期policy判定後の外部送信 apply audit を確認します。adapter 未接続や送信失敗を送信成功として扱いません。</div>
         <table class="debug-table">
           <thead><tr><th>time</th><th>apply</th><th>draft</th><th>decision</th><th>channel</th><th>status</th><th>result</th><th>adapter</th><th>evidence</th></tr></thead>
           <tbody id="revenueExternalSendAuditBody"></tbody>
@@ -548,7 +548,7 @@
       </div>
       <div class="debug-box">
         <h4>Workstream Vault Review</h4>
-        <div class="small" style="margin-bottom:8px">Vault update の承認・却下を記録します。proposed_content 付き承認は vault_root 配下の対象ファイルへ適用されます。</div>
+        <div class="small" style="margin-bottom:8px">Vault update の採用・却下を記録します。proposed_content 付き採用は vault_root 配下の対象ファイルへ適用されます。</div>
         <table class="debug-table">
           <thead><tr><th>time</th><th>update</th><th>file</th><th>status</th><th>applied</th><th>applied path</th><th>proposal</th><th>action</th></tr></thead>
           <tbody id="workstreamVaultReviewBody"></tbody>
@@ -557,7 +557,7 @@
       </div>
       <div class="debug-box">
         <h4>Persona Meta Review</h4>
-        <div class="small" style="margin-bottom:8px">Meta profile update の承認・却下を記録します。承認は character_root 配下の observers/{observer}/meta/{target}.md へ追記します。</div>
+        <div class="small" style="margin-bottom:8px">Meta profile update の採用・却下を記録します。採用時は character_root 配下の observers/{observer}/meta/{target}.md へ追記します。</div>
         <table class="debug-table">
           <thead><tr><th>time</th><th>update</th><th>target</th><th>status</th><th>proposal</th><th>action</th></tr></thead>
           <tbody id="personaMetaReviewBody"></tbody>

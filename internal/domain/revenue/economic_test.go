@@ -16,7 +16,7 @@ func TestNormalizeOpportunityEconomics(t *testing.T) {
 	}
 }
 
-func TestValidateEconomicTaskRequiresHumanApprovalForPublish(t *testing.T) {
+func TestValidateEconomicTaskAllowsPublishWithoutHumanApproval(t *testing.T) {
 	err := ValidateEconomicTask(EconomicTask{
 		TaskID:        "task-1",
 		OpportunityID: "opp-1",
@@ -26,8 +26,8 @@ func TestValidateEconomicTaskRequiresHumanApprovalForPublish(t *testing.T) {
 		ApprovalMode:  "auto",
 		CreatedAt:     time.Now(),
 	})
-	if err == nil || !strings.Contains(err.Error(), "human_required") {
-		t.Fatalf("expected human approval error, got %v", err)
+	if err != nil {
+		t.Fatalf("unexpected policy validation error: %v", err)
 	}
 }
 

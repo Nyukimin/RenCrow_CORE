@@ -40,6 +40,7 @@ async function seedEconomicRecords(runID) {
   let opportunityID = '';
   let taskID = '';
   let reflectionID = '';
+  let decisionID = '';
   try {
     for (let index = 0; index < recordCount; index += 1) {
       const suffix = index === recordCount - 1 ? `${runID}-${longSuffix}` : `${runID}-${index}`;
@@ -65,10 +66,22 @@ async function seedEconomicRecords(runID) {
           agent_id: 'shiro',
           task_kind: 'billing',
           status: 'draft',
-          approval_mode: 'human_required',
+          approval_mode: 'not_required',
         },
       });
       assert.equal(task.status(), 201, `seed economic task failed: ${task.status()} ${await task.text()}`);
+
+      decisionID = `decision-browser-e2e-${suffix}`;
+      const decision = await api.post('/viewer/revenue/human-decision-gate', {
+        data: {
+          decision_id: decisionID,
+          decision_type: 'billing',
+          subject_id: opportunityID,
+          description: 'browser E2E synchronous policy fixture',
+          approval_status: 'not_required',
+        },
+      });
+      assert.equal(decision.status(), 200, `seed policy decision failed: ${decision.status()} ${await decision.text()}`);
 
       const reflection = await api.post('/viewer/revenue/economic-reflections', {
         data: {
@@ -83,7 +96,7 @@ async function seedEconomicRecords(runID) {
   } finally {
     await api.dispose();
   }
-  return {opportunityID, taskID, reflectionID, recordCount};
+  return {opportunityID, taskID, reflectionID, decisionID, recordCount};
 }
 
 async function verifyViewport(browser, viewport, fixture) {
@@ -137,7 +150,7 @@ async function verifyViewport(browser, viewport, fixture) {
         };
       });
       const economicText = summary.querySelector('[data-to-be-block="economic-objective"]')?.textContent || '';
-      const approvalText = summary.querySelector('[data-to-be-block="approval-queue"]')?.textContent || '';
+      const policyText = summary.querySelector('[data-to-be-block="policy-decisions"]')?.textContent || '';
       return {
         viewportWidth: width,
         titles: rects.map((item) => item.title),
@@ -153,19 +166,19 @@ async function verifyViewport(browser, viewport, fixture) {
         gridColumns: getComputedStyle(summary).gridTemplateColumns,
         rects,
         economicHasFixture: economicText.includes(opportunityID),
-        approvalHasFixture: approvalText.includes(taskID) && approvalText.includes(opportunityID),
+        policyHasFixture: policyText.includes(decisionID) && policyText.includes(opportunityID),
         advisorHasFixture: (summary.querySelector('[data-to-be-block="advisor-agent"]')?.textContent || '').includes('advisor-run-e2e'),
         traceHasFixture: (summary.querySelector('[data-to-be-block="recent-trace"]')?.textContent || '').includes('response-e2e'),
         forbiddenTextVisible: /raw_output|prompt body|api[_-]?key|secret value/i.test(summary.textContent || ''),
       };
     }, {...fixture, width: viewport.width});
 
-    const expectedTitles = ['Advisor / Agent', 'Knowledge Relation', 'Economic Objective', 'Approval Queue', 'Recent Trace'];
+    const expectedTitles = ['Advisor / Agent', 'Knowledge Relation', 'Economic Objective', 'Policy Decisions', 'Recent Trace'];
     assert.deepEqual(ui.titles, expectedTitles);
-    assert.deepEqual(ui.keys, ['advisor-agent', 'knowledge-relation', 'economic-objective', 'approval-queue', 'recent-trace']);
+    assert.deepEqual(ui.keys, ['advisor-agent', 'knowledge-relation', 'economic-objective', 'policy-decisions', 'recent-trace']);
     const expectedStatuses = scenario === 'populated'
-      ? ['ok', 'ok', 'ok', 'warning', 'ok']
-      : ['warning', 'unavailable', 'ok', 'warning', 'unavailable'];
+      ? ['ok', 'ok', 'ok', 'ok', 'ok']
+      : ['warning', 'unavailable', 'ok', 'ok', 'unavailable'];
     assert.deepEqual(ui.statuses, expectedStatuses);
     assert.deepEqual(ui.metricCounts, [5, 5, 5, 5, 5]);
     assert.equal(ui.detailsCount, 5);
@@ -175,7 +188,7 @@ async function verifyViewport(browser, viewport, fixture) {
     assert.equal(ui.documentOverflow, false);
     assert.equal(ui.cardOverflow, false);
     assert.equal(ui.economicHasFixture, true, 'Economic Objective must show the real API fixture ID');
-    assert.equal(ui.approvalHasFixture, true, 'Approval Queue must show the real API task and target IDs');
+    assert.equal(ui.policyHasFixture, true, 'Policy Decisions must show the real API decision and target IDs');
     assert.equal(ui.advisorHasFixture, scenario === 'populated');
     assert.equal(ui.traceHasFixture, scenario === 'populated');
     assert.equal(ui.forbiddenTextVisible, false);

@@ -28,7 +28,7 @@ func TestPolicyServiceDecideUsesAutonomyEnvelopePrecedence(t *testing.T) {
 		want   string
 	}{
 		{action: "ask_advisor", want: DecisionAllowed},
-		{action: "git_push", want: DecisionApprovalRequired},
+		{action: "git_push", want: DecisionAllowed},
 		{action: "expose_secret", want: DecisionForbidden},
 		{action: "unknown_action", want: DecisionForbidden},
 	}

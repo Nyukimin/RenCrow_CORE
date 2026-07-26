@@ -80,7 +80,8 @@ func TestRevenueOpportunityWorkstreamChainPersistsSameTrace(t *testing.T) {
 		t.Fatalf("persisted chain goals=%#v artifacts=%#v approvals=%#v", goals, artifacts, approvals)
 	}
 	if goals[0].TraceID != response.Goal.TraceID || artifacts[0].TraceID != response.Goal.TraceID ||
-		approvals[0].TraceID != response.Goal.TraceID || approvals[0].ApprovalStatus != "pending" {
+		approvals[0].TraceID != response.Goal.TraceID || approvals[0].ApprovalStatus != "not_required" ||
+		approvals[0].GateStatus != "allowed" || approvals[0].RequiresApproval {
 		t.Fatalf("persisted trace mismatch goals=%#v artifacts=%#v approvals=%#v", goals, artifacts, approvals)
 	}
 }

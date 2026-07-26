@@ -281,7 +281,7 @@ func TestHandleRevenueStatus(t *testing.T) {
 	if len(body.Applies) != 1 || body.Applies[0].ApplyID != "apply_1" {
 		t.Fatalf("external send applies=%#v", body.Applies)
 	}
-	if body.ExternalChannelAdapter != "unconfigured" || body.ExternalChannelAdapterConfigured || !body.HumanApprovalRequiredForExternalSend {
+	if body.ExternalChannelAdapter != "unconfigured" || body.ExternalChannelAdapterConfigured || body.HumanApprovalRequiredForExternalSend {
 		t.Fatalf("external channel readiness=%#v", body)
 	}
 	if body.Summary.MarketResearchCount != 1 ||
@@ -298,7 +298,7 @@ func TestHandleRevenueStatus(t *testing.T) {
 		t.Fatalf("summary=%#v", body.Summary)
 	}
 	if !body.EconomicObjective.Enabled || !body.EconomicObjective.DraftOnly || !body.EconomicObjective.ExternalActionBlocked ||
-		body.EconomicObjective.OpportunityCount != 1 || body.EconomicObjective.PendingApprovalTaskCount != 1 || body.EconomicObjective.ReflectionCount != 1 {
+		body.EconomicObjective.OpportunityCount != 1 || body.EconomicObjective.PendingApprovalTaskCount != 0 || body.EconomicObjective.ReflectionCount != 1 {
 		t.Fatalf("economic objective summary=%#v", body.EconomicObjective)
 	}
 	if len(body.Summary.KPITrend) != 1 ||
@@ -392,7 +392,7 @@ func TestHandleRevenueCreateEndpoints(t *testing.T) {
 			path:    "/viewer/revenue/channel-drafts",
 			body:    `{"draft_id":"draft_1","channel":"email","subject":"案内","body":"下書き本文"}`,
 			assert: func(t *testing.T, store *stubRevenueStore) {
-				if len(store.drafts) != 1 || store.drafts[0].ApprovalStatus != "pending" || store.drafts[0].ExternalSendApplied {
+				if len(store.drafts) != 1 || store.drafts[0].ApprovalStatus != "not_required" || store.drafts[0].ExternalSendApplied {
 					t.Fatalf("drafts=%#v", store.drafts)
 				}
 			},
@@ -444,8 +444,8 @@ func TestHandleRevenueEconomicObjectiveEndpoints(t *testing.T) {
 	}`))
 	taskRec := httptest.NewRecorder()
 	HandleRevenueEconomicTasks(store).ServeHTTP(taskRec, taskReq)
-	if taskRec.Code != http.StatusBadRequest || len(store.economicTasks) != 0 {
-		t.Fatalf("approval mismatch status=%d body=%s tasks=%#v", taskRec.Code, taskRec.Body.String(), store.economicTasks)
+	if taskRec.Code != http.StatusCreated || len(store.economicTasks) != 1 {
+		t.Fatalf("policy decision status=%d body=%s tasks=%#v", taskRec.Code, taskRec.Body.String(), store.economicTasks)
 	}
 
 	store.events = []domainrevenue.RevenueEvent{{EventID: "rev-1", EventType: "sold", Amount: 3000, CreatedAt: time.Now().UTC()}}
@@ -535,7 +535,7 @@ func TestHandleRevenueEconomicObjectiveReadEndpointsReturnUnavailableWarnings(t 
 	}
 }
 
-func TestHandleRevenueHumanDecisionGateNeedsReview(t *testing.T) {
+func TestHandleRevenueHumanDecisionGateAllowsWithoutReview(t *testing.T) {
 	store := &stubRevenueStore{}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/human-decision-gate", bytes.NewBufferString(`{
 		"decision_id":"dec_1",
@@ -555,10 +555,10 @@ func TestHandleRevenueHumanDecisionGateNeedsReview(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Result.Status != "needs_review" || !body.Result.RequiresApproval {
+	if body.Result.Status != "allowed" || body.Result.RequiresApproval {
 		t.Fatalf("unexpected result: %#v", body.Result)
 	}
-	if len(store.decisions) != 1 || store.decisions[0].ApprovalStatus != "pending" {
+	if len(store.decisions) != 1 || store.decisions[0].ApprovalStatus != "not_required" {
 		t.Fatalf("decisions=%#v", store.decisions)
 	}
 	if store.decisions[0].TraceID == "" {
@@ -687,7 +687,7 @@ func TestHandleRevenueHumanDecisionGateReviewApprovesExistingDecision(t *testing
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Record.DecisionID != "dec_1" || body.Record.ApprovalStatus != "approved" || body.Result.Status != "approved" {
+	if body.Record.DecisionID != "dec_1" || body.Record.ApprovalStatus != "approved" || body.Result.Status != "allowed" || body.Result.RequiresApproval {
 		t.Fatalf("unexpected review response: %#v", body)
 	}
 	if len(store.decisions) != 2 || store.decisions[1].ApprovalStatus != "approved" {
@@ -695,7 +695,7 @@ func TestHandleRevenueHumanDecisionGateReviewApprovesExistingDecision(t *testing
 	}
 }
 
-func TestHandleRevenueHumanDecisionGateReviewRejectsExistingDecision(t *testing.T) {
+func TestHandleRevenueLegacyReviewRejectionDoesNotBlockPolicy(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	store := &stubRevenueStore{
 		decisions: []domainrevenue.HumanDecisionGateRecord{{
@@ -725,7 +725,7 @@ func TestHandleRevenueHumanDecisionGateReviewRejectsExistingDecision(t *testing.
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Result.Status != "blocked" || len(body.Result.Reasons) == 0 {
+	if body.Result.Status != "allowed" || body.Result.RequiresApproval {
 		t.Fatalf("unexpected result: %#v", body.Result)
 	}
 	if len(store.decisions) != 2 || store.decisions[1].ApprovalStatus != "rejected" {
@@ -785,7 +785,7 @@ func TestHandleRevenueDailyRoutineReportCreatesDraftOnlyReport(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Agent != "RevenueAgent" || body.Mode != "draft_report_only" || body.Report.ReportID != "daily_1" || body.ExternalActionsApplied || !body.HumanApprovalRequiredForExternalActions {
+	if body.Agent != "RevenueAgent" || body.Mode != "draft_report_only" || body.Report.ReportID != "daily_1" || body.ExternalActionsApplied || body.HumanApprovalRequiredForExternalActions {
 		t.Fatalf("unexpected response: %#v", body)
 	}
 }
@@ -805,7 +805,7 @@ func TestHandleRevenueHumanDecisionGateReviewRejectsInvalidApprovalStatus(t *tes
 	}
 }
 
-func TestHandleRevenueExternalSendApplyRequiresHumanApproval(t *testing.T) {
+func TestHandleRevenueExternalSendApplyDoesNotRequireHumanApproval(t *testing.T) {
 	store := &stubRevenueStore{
 		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ApprovalStatus: "pending"}},
 		decisions: []domainrevenue.HumanDecisionGateRecord{{
@@ -826,10 +826,10 @@ func TestHandleRevenueExternalSendApplyRequiresHumanApproval(t *testing.T) {
 
 	HandleRevenueExternalSendApply(store).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.applies) != 0 {
+	if len(store.applies) != 1 || store.applies[0].HumanApproved || store.applies[0].ApprovalStatus != "not_required" {
 		t.Fatalf("applies=%#v", store.applies)
 	}
 }
@@ -875,6 +875,9 @@ func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable
 	if len(store.deliveries) != 1 {
 		t.Fatalf("deliveries=%#v", store.deliveries)
 	}
+	if store.deliveries[0].PolicyDecisionID != "dec_1" || store.deliveries[0].ApprovalID != "" {
+		t.Fatalf("delivery policy identity=%#v", store.deliveries[0])
+	}
 	delivery := store.deliveries[0]
 	if delivery.DeliveryID != record.DeliveryID || delivery.TraceID != record.TraceID || delivery.DeliveryKind != "external_send" || delivery.Status != "blocked" {
 		t.Fatalf("unexpected delivery: %#v", delivery)
@@ -893,7 +896,7 @@ func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable
 	}
 }
 
-func TestHandleRevenueExternalSendApplyRejectsUnapprovedDecision(t *testing.T) {
+func TestHandleRevenueExternalSendApplyIgnoresLegacyPendingApproval(t *testing.T) {
 	store := &stubRevenueStore{
 		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ApprovalStatus: "pending"}},
 		decisions: []domainrevenue.HumanDecisionGateRecord{{
@@ -915,10 +918,10 @@ func TestHandleRevenueExternalSendApplyRejectsUnapprovedDecision(t *testing.T) {
 
 	HandleRevenueExternalSendApply(store).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusConflict {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.applies) != 0 {
+	if len(store.applies) != 1 {
 		t.Fatalf("applies=%#v", store.applies)
 	}
 }

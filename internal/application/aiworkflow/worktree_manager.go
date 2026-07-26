@@ -62,9 +62,6 @@ func NewWorktreeManager(store WorktreeStore) *WorktreeManager {
 }
 
 func (m *WorktreeManager) Create(ctx context.Context, opts WorktreeCreateOptions) (WorktreeCreateResult, error) {
-	if !opts.HumanApproved {
-		return WorktreeCreateResult{}, fmt.Errorf("human_approved=true is required to create a worktree")
-	}
 	repoRoot := strings.TrimSpace(opts.RepoRoot)
 	if repoRoot == "" {
 		repoRoot = "."
@@ -168,9 +165,6 @@ func (m *WorktreeManager) Create(ctx context.Context, opts WorktreeCreateOptions
 }
 
 func (m *WorktreeManager) Close(ctx context.Context, opts WorktreeCloseOptions) (WorktreeCloseResult, error) {
-	if !opts.HumanApproved {
-		return WorktreeCloseResult{}, fmt.Errorf("human_approved=true is required to close a worktree")
-	}
 	repoRoot := strings.TrimSpace(opts.RepoRoot)
 	if repoRoot == "" {
 		repoRoot = "."

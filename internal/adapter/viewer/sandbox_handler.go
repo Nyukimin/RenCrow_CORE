@@ -138,7 +138,7 @@ func HandleSandboxPromotionRequest(store SandboxPromotionStore) http.HandlerFunc
 			req.CreatedAt = now
 		}
 		if req.HumanApprovalStatus == "" {
-			req.HumanApprovalStatus = domainsandbox.ApprovalPending
+			req.HumanApprovalStatus = domainsandbox.ApprovalNotRequired
 		}
 		decision := domainsandbox.EvaluatePromotionRequest(req)
 		if err := store.SavePromotionRequest(r.Context(), req); err != nil {
@@ -283,7 +283,7 @@ func HandleSandboxPromotionApplyWithVerifierAndApplier(store SandboxPromotionSto
 			PromotionID:           req.Promotion.PromotionID,
 			GateStatus:            decision.Status,
 			Reason:                reason,
-			HumanApprovalStatus:   domainsandbox.ApprovalGranted,
+			HumanApprovalStatus:   domainsandbox.ApprovalNotRequired,
 			PostApplyVerification: req.PostApplyVerificationPath,
 			CreatedAt:             now,
 		}
@@ -356,7 +356,7 @@ func HandleSandboxPromotionRollback(store SandboxPromotionStore, rollbacker Sand
 			PromotionID:           req.Promotion.PromotionID,
 			GateStatus:            decision.Status,
 			Reason:                reason,
-			HumanApprovalStatus:   domainsandbox.ApprovalGranted,
+			HumanApprovalStatus:   domainsandbox.ApprovalNotRequired,
 			PostApplyVerification: req.PostApplyVerificationPath,
 			CreatedAt:             now,
 		}
@@ -466,7 +466,7 @@ func HandleSandboxPromotionManualReview(previewer SandboxPromotionDiffPreviewer,
 				"risk_flags を確認し、自動 apply / rollback しない理由を記録する",
 				"diff、test result、rollback plan、post-apply verification の妥当性を確認する",
 				"必要なら PR review checklist または migration review checklist に分岐する",
-				"Human approval なしに正式環境へ適用しない",
+				"実行policyと事後検証を満たさず正式環境へ適用しない",
 			},
 			Verification: []string{
 				"Promotion diff preview の risk_flags / requires_manual_review を確認する",

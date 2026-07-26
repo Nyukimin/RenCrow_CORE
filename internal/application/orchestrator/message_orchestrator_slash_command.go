@@ -190,8 +190,8 @@ func buildSlashCommandRuntimePrompt(command domainai.CommandRegistry, commandBod
 	b.WriteString("\nUser input:\n")
 	b.WriteString(userInput)
 	b.WriteString("\n\nSafety:\n")
-	b.WriteString("- Treat this as a command workflow, not as permission to bypass Tool Harness, Sandbox Promotion Gate, or Human approval.\n")
-	b.WriteString("- Do not publish, send externally, mutate official state, or run destructive operations unless the normal approval gates allow it.\n")
+	b.WriteString("- Treat this as a command workflow, not as permission to bypass Tool Harness, Sandbox Promotion Gate, or execution policy.\n")
+	b.WriteString("- Do not publish, send externally, mutate official state, or run destructive operations unless the normal policy checks allow it.\n")
 	return b.String()
 }
 

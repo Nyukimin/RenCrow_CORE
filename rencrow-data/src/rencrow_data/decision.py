@@ -155,7 +155,7 @@ def _approval_payload(*, decision_id: int, snapshot_id: str, strategy_id: str, s
         "decision_id": decision_id,
         "snapshot_id": snapshot_id,
         "strategy_id": strategy_id,
-        "approval_required": True,
+        "approval_required": False,
         "approved": False,
         "approver": "",
         "approved_at": "",
@@ -236,7 +236,7 @@ def generate_decision(con, options: DecisionOptions) -> dict[str, object]:
                         "asset_type": item["asset_type"],
                         "risk_check_id": options.risk_check_id,
                         "risk_status": risk_status,
-                        "approval_required": True,
+                        "approval_required": False,
                         "veto_reason": None if not vetoed else "risk_check_blocked",
                     }
                 ),
@@ -244,7 +244,7 @@ def generate_decision(con, options: DecisionOptions) -> dict[str, object]:
         )
 
     candidate_json = {
-        "approval_required": True,
+        "approval_required": False,
         "risk_check_id": options.risk_check_id,
         "risk_status": risk_status,
         "week_end": week_end,
@@ -308,7 +308,7 @@ def generate_decision(con, options: DecisionOptions) -> dict[str, object]:
         "strategy_id": options.strategy_id,
         "risk_check_id": options.risk_check_id,
         "risk_status": risk_status,
-        "approval_required": True,
+        "approval_required": False,
         "approved": False,
         "vetoed": bool(vetoed),
         "week_end": week_end,

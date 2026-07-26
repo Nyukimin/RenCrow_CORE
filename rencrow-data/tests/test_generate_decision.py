@@ -139,7 +139,7 @@ class GenerateDecisionTest(unittest.TestCase):
             )
             summary = json.loads(result.stdout)
             self.assertFalse(summary["vetoed"])
-            self.assertTrue(summary["approval_required"])
+            self.assertFalse(summary["approval_required"])
             self.assertFalse(summary["approved"])
             self.assertEqual(summary["candidates"][0]["symbol"], "1306.T")
             self.assertEqual(summary["candidates"][0]["asset_type"], "ETF")
@@ -150,7 +150,7 @@ class GenerateDecisionTest(unittest.TestCase):
             self.assertEqual(Path(summary["approval_latest_path"]).name, "latest.yml")
             approval_text = Path(summary["approval_path"]).read_text(encoding="utf-8")
             self.assertIn(f"decision_id: {summary['decision_id']}", approval_text)
-            self.assertIn("approval_required: true", approval_text)
+            self.assertIn("approval_required: false", approval_text)
             self.assertIn("approved: false", approval_text)
             self.assertIn('approval_reason: ""', approval_text)
 
@@ -159,7 +159,7 @@ class GenerateDecisionTest(unittest.TestCase):
             decision = con.execute("SELECT * FROM decision_log WHERE decision_id=?", (summary["decision_id"],)).fetchone()
             self.assertIsNotNone(decision)
             self.assertEqual(decision["approved"], 0)
-            self.assertIn('"approval_required":true', decision["candidate_json"])
+            self.assertIn('"approval_required":false', decision["candidate_json"])
             self.assertIn('"asset_type":"ETF"', decision["candidate_json"])
             self.assertEqual(con.execute("SELECT COUNT(*) FROM weekly_signal").fetchone()[0], 1)
             reason = con.execute("SELECT reason_json FROM weekly_signal").fetchone()[0]

@@ -63,7 +63,10 @@ func HandleRevenueOpportunities(store RevenueStore) http.HandlerFunc {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			writeJSON(w, http.StatusCreated, map[string]any{"opportunity": created, "human_approval_required_for_publish": true})
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"opportunity": created, "human_approval_required_for_publish": false,
+				"execution_policy_evaluated_at_action": true,
+			})
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}

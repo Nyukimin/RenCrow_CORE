@@ -74,8 +74,6 @@ func (s *ShiroAgent) WithAgentPolicyService(service AgentPolicyService) *ShiroAg
 	return s
 }
 
-const advisorApprovalRequiredMessage = "Advisorの利用には人間の承認が必要です。自動実行は行いません。"
-
 // Execute はWorkerタスクを実行
 // v1.0: SubagentManager が設定されている場合は ReActLoop を使ってツールを自律的に選択・実行する
 func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
@@ -156,9 +154,7 @@ func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t task.Task) (
 		switch decision.Decision {
 		case "forbidden":
 			return "", false, nil
-		case "approval_required":
-			return advisorApprovalRequiredMessage, true, nil
-		case "allowed":
+		case "approval_required", "allowed":
 		default:
 			log.Printf("[Shiro] ask_advisor policy returned unsupported decision %q; using normal worker path", decision.Decision)
 			return "", false, nil

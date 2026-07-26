@@ -621,7 +621,7 @@ function renderSandboxGateLogResult() {
   const rollback = logs.filter((item) => String(sandboxField(item, 'gate_status', 'GateStatus') || '') === 'rollback_executed').length;
   const verified = logs.filter((item) => String(sandboxField(item, 'post_apply_verification', 'PostApplyVerification') || '').trim() !== '').length;
   const blocked = applied === 0 ? ' / blocked: no promotion applied' : '';
-  el.textContent = 'sandbox promotion gate logs: ' + String(logs.length) + ' total / ' + String(needsReview) + ' needs-review / ' + String(applied) + ' applied / ' + String(rollback) + ' rollback / ' + String(verified) + ' post-apply evidence / formal apply requires human approval' + blocked;
+  el.textContent = 'sandbox promotion gate logs: ' + String(logs.length) + ' total / ' + String(needsReview) + ' needs-review / ' + String(applied) + ' applied / ' + String(rollback) + ' rollback / ' + String(verified) + ' post-apply evidence / execution policy: synchronous' + blocked;
 }
 
 function formatSandboxPromotionDiffPreview(preview) {
@@ -709,11 +709,10 @@ function skillGovernanceOpsCard() {
   const warning = missed > 0 ? '\nWARNING: skill_trigger_missed requires review' : '';
   const prAdapter = state.ops.skillExternalPRAdapter || 'unconfigured';
   const prAdapterConfigured = state.ops.skillExternalPRAdapterConfigured === true;
-  const prApproval = state.ops.skillExternalPRHumanApprovalRequired !== false;
   return {
     title: 'Skill Governance',
     big: String(triggers.length) + '/' + String(manifests.length),
-    sub: manifests.length || triggers.length || contributions.length || prSubmits.length || transcripts.length ? ('missed triggers: ' + String(missed) + '\nblocked contributions: ' + String(blocked) + '\nexternal PR adapter: ' + String(prAdapter) + ' / configured: ' + (prAdapterConfigured ? 'yes' : 'no') + ' / human approval: ' + (prApproval ? 'required' : 'missing') + '\nexternal PR audits: ' + String(prSubmits.length) + ' / blocked: ' + String(blockedPRSubmits) + '\ncoder transcripts: ' + String(transcripts.length) + '\nlatest skill: ' + String(sandboxField(latest, 'skill_id', 'SkillID') || '-') + warning) : 'skill manifest なし',
+    sub: manifests.length || triggers.length || contributions.length || prSubmits.length || transcripts.length ? ('missed triggers: ' + String(missed) + '\nblocked contributions: ' + String(blocked) + '\nexternal PR adapter: ' + String(prAdapter) + ' / configured: ' + (prAdapterConfigured ? 'yes' : 'no') + ' / execution policy: synchronous\nexternal PR audits: ' + String(prSubmits.length) + ' / blocked: ' + String(blockedPRSubmits) + '\ncoder transcripts: ' + String(transcripts.length) + '\nlatest skill: ' + String(sandboxField(latest, 'skill_id', 'SkillID') || '-') + warning) : 'skill manifest なし',
   };
 }
 
@@ -780,9 +779,8 @@ function renderSkillExternalPRAuditResult() {
   const notCreated = records.length - created;
   const adapter = String(state.ops.skillExternalPRAdapter || 'unconfigured');
   const configured = state.ops.skillExternalPRAdapterConfigured === true;
-  const approval = state.ops.skillExternalPRHumanApprovalRequired !== false;
   const blockedText = created === 0 ? '\nblocked: no external PR created' : '';
-  el.textContent = 'skill external PR submit audits: ' + String(records.length) + ' total / ' + String(blocked) + ' blocked / ' + String(created) + ' created / ' + String(notCreated) + ' not created / ' + String(verified) + ' verified\nexternal PR adapter: ' + adapter + ' / configured: ' + (configured ? 'yes' : 'no') + ' / human approval: ' + (approval ? 'required' : 'missing') + blockedText;
+  el.textContent = 'skill external PR submit audits: ' + String(records.length) + ' total / ' + String(blocked) + ' blocked / ' + String(created) + ' created / ' + String(notCreated) + ' not created / ' + String(verified) + ' verified\nexternal PR adapter: ' + adapter + ' / configured: ' + (configured ? 'yes' : 'no') + ' / execution policy: synchronous' + blockedText;
 }
 
 function renderSkillEvidenceAudits() {
@@ -838,14 +836,13 @@ function skillEvidenceAuditRows() {
   });
   contributions.forEach((item) => {
     const testResult = String(sandboxField(item, 'test_result', 'TestResult') || '');
-    const approved = Boolean(sandboxField(item, 'diff_human_approved', 'DiffHumanApproved'));
     rows.push({
       time: sandboxField(item, 'created_at', 'CreatedAt'),
       kind: 'contribution_gate',
       id: sandboxField(item, 'event_id', 'EventID') || '',
       target: sandboxField(item, 'repo', 'Repo') || '',
       status: String(sandboxField(item, 'gate_status', 'GateStatus') || ''),
-      evidenceOK: testResult.trim() !== '' && approved,
+      evidenceOK: testResult.trim() !== '',
       evidence: testResult.trim() !== '' ? testResult : 'missing test result',
     });
   });
@@ -1195,7 +1192,7 @@ function renderComplexityReviewArtifacts() {
   }
   rows.slice(0, 20).forEach((item) => {
     const patch = item.patchApplied ? 'applied' : 'not applied';
-    const approval = item.humanApprovalRequired ? 'required' : 'missing';
+    const legacyApprovalFlag = item.humanApprovalRequired ? 'true (ignored)' : 'false';
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td>' + esc(ftime(item.createdAt)) + '</td>' +
@@ -1203,7 +1200,7 @@ function renderComplexityReviewArtifacts() {
       '<td>' + esc(short(item.artifactType || '-', 52)) + '</td>' +
       '<td><span class="badge ' + stateClass(item.status) + '">' + esc(item.status || '-') + '</span></td>' +
       '<td><span class="badge ' + stateClass(item.patchApplied ? 'error' : 'running') + '">' + esc(patch) + '</span></td>' +
-      '<td>' + esc(approval) + '</td>';
+      '<td>' + esc(legacyApprovalFlag) + '</td>';
     body.appendChild(tr);
   });
   renderComplexityReviewArtifactResult(rows);
@@ -1238,7 +1235,7 @@ function renderComplexityReviewArtifactResult(rows) {
   const failed = list.filter((item) => item.status === 'failed' || item.artifactType === 'complexity_coder_diff_failure').length;
   const patchApplied = list.filter((item) => item.patchApplied).length;
   const approvalRequired = list.filter((item) => item.humanApprovalRequired).length;
-  el.textContent = 'complexity review artifacts: ' + String(list.length) + ' total / ' + String(pendingReview) + ' pending-review / ' + String(failed) + ' failed / ' + String(patchApplied) + ' patch applied / ' + String(approvalRequired) + ' human approval required\nmode: review-only blocked: no patch applied';
+  el.textContent = 'complexity review artifacts: ' + String(list.length) + ' total / ' + String(pendingReview) + ' pending-review / ' + String(failed) + ' failed / ' + String(patchApplied) + ' patch applied / ' + String(approvalRequired) + ' legacy approval-required artifact(s)\nmode: review-only blocked: no patch applied';
 }
 
 function workstreamOpsCard() {
@@ -1261,14 +1258,14 @@ function workstreamOpsCard() {
   const waitingGoals = goals.filter((item) => String(sandboxField(item, 'status', 'Status') || '') === 'waiting').length;
   const pendingReviewArtifacts = artifacts.filter((item) => String(sandboxField(item, 'status', 'Status') || '') === 'pending_review').length;
   const activeHeartbeats = heartbeats.filter((item) => String(sandboxField(item, 'status', 'Status') || '') === 'active').length;
-  const approvalPending = vaultUpdates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'pending').length;
+  const adoptionPending = vaultUpdates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'pending').length;
   const appliedVaultUpdates = vaultUpdates.filter((item) => Boolean(sandboxField(item, 'applied', 'Applied'))).length;
   const vaultApplyBoundary = appliedVaultUpdates > 0 ? ('vault applied: ' + String(appliedVaultUpdates)) : 'mode: review-only blocked: no vault apply';
   const latest = workstreams[0] || null;
   return {
     title: 'Workstreams',
     big: String(goals.length) + '/' + String(workstreams.length),
-    sub: workstreams.length || goals.length || artifacts.length || annotations.length || steering.length || heartbeats.length || vaultUpdates.length ? ('active goals: ' + String(activeGoals) + ' waiting goals: ' + String(waitingGoals) + ' active heartbeats: ' + String(activeHeartbeats) + '\napproval pending: ' + String(approvalPending) + ' vault updates: ' + String(vaultUpdates.length) + '\nartifacts: ' + String(artifacts.length) + ' pending-review: ' + String(pendingReviewArtifacts) + ' annotations: ' + String(annotations.length) + ' steering: ' + String(steering.length) + '\n' + vaultApplyBoundary + '\nlatest: ' + String(sandboxField(latest, 'name', 'Name') || '-')) : 'workstream record なし',
+    sub: workstreams.length || goals.length || artifacts.length || annotations.length || steering.length || heartbeats.length || vaultUpdates.length ? ('active goals: ' + String(activeGoals) + ' waiting goals: ' + String(waitingGoals) + ' active heartbeats: ' + String(activeHeartbeats) + '\nadoption pending: ' + String(adoptionPending) + ' vault updates: ' + String(vaultUpdates.length) + '\nartifacts: ' + String(artifacts.length) + ' pending-review: ' + String(pendingReviewArtifacts) + ' annotations: ' + String(annotations.length) + ' steering: ' + String(steering.length) + '\n' + vaultApplyBoundary + '\nlatest: ' + String(sandboxField(latest, 'name', 'Name') || '-')) : 'workstream record なし',
   };
 }
 
@@ -1317,7 +1314,7 @@ function renderWorkstreamVaultReviews() {
       ? '<button class="ctl-btn workstream-vault-preview" type="button" data-update="' + escAttr(payload) + '">Preview</button> '
       : '';
     const actions = preview + (pending && updateID
-      ? '<button class="ctl-btn workstream-vault-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="approved">Approve</button> <button class="ctl-btn workstream-vault-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="rejected">Reject</button>'
+      ? '<button class="ctl-btn workstream-vault-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="approved">Adopt</button> <button class="ctl-btn workstream-vault-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="rejected">Reject</button>'
       : '<span class="small">-</span>');
     const tr = document.createElement('tr');
     tr.innerHTML =
@@ -1365,14 +1362,14 @@ function renderWorkstreamVaultReviewResult() {
 function workstreamVaultReviewSummary() {
   const updates = latestWorkstreamVaultUpdates(Array.isArray(state.ops.workstreamVaultUpdates) ? state.ops.workstreamVaultUpdates : []);
   const pending = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'pending').length;
-  const approved = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'approved').length;
+  const adopted = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'approved').length;
   const rejected = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'rejected').length;
   const applied = updates.filter((item) => Boolean(sandboxField(item, 'applied', 'Applied'))).length;
-  const approvedNotApplied = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'approved' && !Boolean(sandboxField(item, 'applied', 'Applied'))).length;
+  const adoptedNotApplied = updates.filter((item) => String(sandboxField(item, 'review_status', 'ReviewStatus') || '') === 'approved' && !Boolean(sandboxField(item, 'applied', 'Applied'))).length;
   const lines = [
-    'workstream vault review: ' + String(updates.length) + ' total / ' + String(pending) + ' pending / ' + String(approved) + ' approved / ' + String(rejected) + ' rejected / ' + String(applied) + ' applied',
+    'workstream vault review: ' + String(updates.length) + ' total / ' + String(pending) + ' pending / ' + String(adopted) + ' adopted / ' + String(rejected) + ' rejected / ' + String(applied) + ' applied',
   ];
-  if (approvedNotApplied > 0) lines.push('approved not applied: ' + String(approvedNotApplied));
+  if (adoptedNotApplied > 0) lines.push('adopted not applied: ' + String(adoptedNotApplied));
   if (applied === 0) lines.push('blocked: no vault apply');
   return lines.join('\n');
 }
@@ -1590,7 +1587,7 @@ function revenueOpsCard() {
   const summary = state.ops.revenueSummary && typeof state.ops.revenueSummary === 'object' ? state.ops.revenueSummary : null;
   const paid = events.filter((item) => Number(sandboxField(item, 'amount', 'Amount') || 0) > 0).length;
   const usableVoices = voices.filter((item) => Boolean(sandboxField(item, 'usable_for_marketing', 'UsableForMarketing'))).length;
-  const pendingDecisions = decisions.filter((item) => String(sandboxField(item, 'approval_status', 'ApprovalStatus') || '') === 'pending' || String(sandboxField(item, 'gate_status', 'GateStatus') || '') === 'needs_review').length;
+  const blockedDecisions = decisions.filter((item) => String(sandboxField(item, 'gate_status', 'GateStatus') || '') === 'blocked').length;
   const totalRevenue = summary ? Number(sandboxField(summary, 'total_revenue_amount', 'TotalRevenueAmount') || 0) : events.reduce((sum, item) => sum + Math.max(0, Number(sandboxField(item, 'amount', 'Amount') || 0)), 0);
   const paidCustomers = summary ? Number(sandboxField(summary, 'paid_customer_count', 'PaidCustomerCount') || 0) : 0;
   const trend = summary && Array.isArray(sandboxField(summary, 'kpi_trend', 'KPITrend')) ? sandboxField(summary, 'kpi_trend', 'KPITrend') : [];
@@ -1604,11 +1601,10 @@ function revenueOpsCard() {
   const externalSendApplyCount = summary ? Number(sandboxField(summary, 'external_send_apply_count', 'ExternalSendApplyCount') || 0) : externalSendApplies.length;
   const externalChannelAdapter = String(state.ops.revenueExternalChannelAdapter || 'unconfigured');
   const externalChannelConfigured = Boolean(state.ops.revenueExternalChannelAdapterConfigured);
-  const externalSendApproval = state.ops.revenueExternalSendHumanApprovalRequired !== false;
   return {
     title: 'Revenue',
     big: String(events.length) + '/' + String(products.length),
-    sub: market.length || posts.length || products.length || voices.length || events.length || decisions.length || dailyReports.length || channelDrafts.length || externalSendApplies.length ? ('paid events: ' + String(summary ? sandboxField(summary, 'paid_event_count', 'PaidEventCount') : paid) + ' market: ' + String(summary ? sandboxField(summary, 'market_research_count', 'MarketResearchCount') : market.length) + '\nrevenue: ' + String(totalRevenue) + ' paid customers: ' + String(paidCustomers) + '\nvoices usable: ' + String(summary ? sandboxField(summary, 'usable_voice_count', 'UsableVoiceCount') : usableVoices) + '/' + String(summary ? sandboxField(summary, 'customer_voice_count', 'CustomerVoiceCount') : voices.length) + ' posts: ' + String(summary ? sandboxField(summary, 'sns_post_count', 'SNSPostCount') : posts.length) + '\ndaily reports: ' + String(summary ? sandboxField(summary, 'daily_report_count', 'DailyReportCount') : dailyReports.length) + ' channel drafts: ' + String(channelDraftCount) + ' external apply audits: ' + String(externalSendApplyCount) + ' human decisions pending: ' + String(summary ? sandboxField(summary, 'pending_decision_count', 'PendingDecisionCount') : pendingDecisions) + '/' + String(decisions.length) + '\nexternal channel adapter: ' + externalChannelAdapter + ' / configured: ' + (externalChannelConfigured ? 'yes' : 'no') + ' / human approval: ' + (externalSendApproval ? 'required' : 'missing') + '\ntrend days: ' + String(trend.length) + ' latest revenue: ' + String(latestTrend ? sandboxField(latestTrend, 'revenue_amount', 'RevenueAmount') : '-') + '\ntop product: ' + String(topProduct ? (sandboxField(topProduct, 'product_name', 'ProductName') || sandboxField(topProduct, 'product_id', 'ProductID')) : '-') + ' voices top: ' + String(topVoiceType ? sandboxField(topVoiceType, 'voice_type', 'VoiceType') : '-') + '\nlatest: ' + String(sandboxField(latest, 'draft_id', 'DraftID') || sandboxField(latest, 'report_id', 'ReportID') || sandboxField(latest, 'product_name', 'ProductName') || sandboxField(latest, 'theme', 'Theme') || '-')) : 'revenue record なし',
+    sub: market.length || posts.length || products.length || voices.length || events.length || decisions.length || dailyReports.length || channelDrafts.length || externalSendApplies.length ? ('paid events: ' + String(summary ? sandboxField(summary, 'paid_event_count', 'PaidEventCount') : paid) + ' market: ' + String(summary ? sandboxField(summary, 'market_research_count', 'MarketResearchCount') : market.length) + '\nrevenue: ' + String(totalRevenue) + ' paid customers: ' + String(paidCustomers) + '\nvoices usable: ' + String(summary ? sandboxField(summary, 'usable_voice_count', 'UsableVoiceCount') : usableVoices) + '/' + String(summary ? sandboxField(summary, 'customer_voice_count', 'CustomerVoiceCount') : voices.length) + ' posts: ' + String(summary ? sandboxField(summary, 'sns_post_count', 'SNSPostCount') : posts.length) + '\ndaily reports: ' + String(summary ? sandboxField(summary, 'daily_report_count', 'DailyReportCount') : dailyReports.length) + ' channel drafts: ' + String(channelDraftCount) + ' external apply audits: ' + String(externalSendApplyCount) + ' policy decisions blocked: ' + String(blockedDecisions) + '/' + String(decisions.length) + '\nexternal channel adapter: ' + externalChannelAdapter + ' / configured: ' + (externalChannelConfigured ? 'yes' : 'no') + ' / execution policy: synchronous\ntrend days: ' + String(trend.length) + ' latest revenue: ' + String(latestTrend ? sandboxField(latestTrend, 'revenue_amount', 'RevenueAmount') : '-') + '\ntop product: ' + String(topProduct ? (sandboxField(topProduct, 'product_name', 'ProductName') || sandboxField(topProduct, 'product_id', 'ProductID')) : '-') + ' voices top: ' + String(topVoiceType ? sandboxField(topVoiceType, 'voice_type', 'VoiceType') : '-') + '\nlatest: ' + String(sandboxField(latest, 'draft_id', 'DraftID') || sandboxField(latest, 'report_id', 'ReportID') || sandboxField(latest, 'product_name', 'ProductName') || sandboxField(latest, 'theme', 'Theme') || '-')) : 'revenue record なし',
   };
 }
 
@@ -1632,7 +1628,7 @@ function renderRevenueHumanDecisions() {
   const decisions = latestRevenueHumanDecisions(Array.isArray(state.ops.revenueHumanDecisions) ? state.ops.revenueHumanDecisions : []);
   if (decisions.length === 0) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6" class="small">No revenue human decisions yet</td>';
+    tr.innerHTML = '<td colspan="6" class="small">No revenue policy decisions yet</td>';
     body.appendChild(tr);
     renderRevenueDecisionResult();
     return;
@@ -1641,10 +1637,7 @@ function renderRevenueHumanDecisions() {
     const decisionID = String(sandboxField(item, 'decision_id', 'DecisionID') || '');
     const approval = String(sandboxField(item, 'approval_status', 'ApprovalStatus') || '-');
     const gate = String(sandboxField(item, 'gate_status', 'GateStatus') || '-');
-    const needsReview = approval === 'pending' || gate === 'needs_review';
-    const actions = needsReview && decisionID
-      ? '<button class="ctl-btn revenue-decision-review" type="button" data-decision-id="' + escAttr(decisionID) + '" data-approval-status="approved">Approve</button> <button class="ctl-btn revenue-decision-review" type="button" data-decision-id="' + escAttr(decisionID) + '" data-approval-status="rejected">Reject</button>'
-      : '<span class="small">-</span>';
+    const actions = '<span class="small">automatic</span>';
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td>' + esc(ftime(sandboxField(item, 'created_at', 'CreatedAt'))) + '</td>' +
@@ -1654,11 +1647,6 @@ function renderRevenueHumanDecisions() {
       '<td>' + esc(short(sandboxField(item, 'description', 'Description') || '-', 120)) + '</td>' +
       '<td>' + actions + '</td>';
     body.appendChild(tr);
-  });
-  body.querySelectorAll('.revenue-decision-review').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      reviewRevenueHumanDecision(btn.getAttribute('data-decision-id') || '', btn.getAttribute('data-approval-status') || '');
-    });
   });
   renderRevenueDecisionResult();
 }
@@ -1719,10 +1707,8 @@ function renderRevenueChannelDraftResult() {
   }
   const drafts = Array.isArray(state.ops.revenueChannelDrafts) ? state.ops.revenueChannelDrafts : [];
   const externalSent = drafts.filter((item) => Boolean(sandboxField(item, 'external_send_applied', 'ExternalSendApplied'))).length;
-  const pending = drafts.filter((item) => String(sandboxField(item, 'approval_status', 'ApprovalStatus') || '') === 'pending').length;
   const draftOnly = drafts.length - externalSent;
-  const approval = state.ops.revenueExternalSendHumanApprovalRequired !== false;
-  el.textContent = 'revenue channel drafts: ' + String(drafts.length) + ' total / ' + String(pending) + ' pending / ' + String(draftOnly) + ' draft-only / ' + String(externalSent) + ' external_send_applied\nmode: draft-only / external send requires human approval: ' + (approval ? 'yes' : 'missing');
+  el.textContent = 'revenue channel drafts: ' + String(drafts.length) + ' total / ' + String(draftOnly) + ' draft-only / ' + String(externalSent) + ' external_send_applied\nexternal send execution policy: synchronous';
 }
 
 function renderRevenueExternalSendAudits() {
@@ -1788,9 +1774,8 @@ function renderRevenueExternalSendAuditResult() {
   const notSent = records.length - sent;
   const adapter = String(state.ops.revenueExternalChannelAdapter || 'unconfigured');
   const configured = Boolean(state.ops.revenueExternalChannelAdapterConfigured);
-  const approval = state.ops.revenueExternalSendHumanApprovalRequired !== false;
   const blockedText = sent === 0 ? '\nblocked: no external send applied' : '';
-  el.textContent = 'revenue external send apply audits: ' + String(records.length) + ' total / ' + String(blocked) + ' blocked / ' + String(sent) + ' sent / ' + String(notSent) + ' not sent / ' + String(verified) + ' verified\nexternal channel adapter: ' + adapter + ' / configured: ' + (configured ? 'yes' : 'no') + ' / human approval: ' + (approval ? 'required' : 'missing') + blockedText;
+  el.textContent = 'revenue external send apply audits: ' + String(records.length) + ' total / ' + String(blocked) + ' blocked / ' + String(sent) + ' sent / ' + String(notSent) + ' not sent / ' + String(verified) + ' verified\nexternal channel adapter: ' + adapter + ' / configured: ' + (configured ? 'yes' : 'no') + ' / execution policy: synchronous' + blockedText;
 }
 
 function revenueBar(value, max) {
@@ -1978,7 +1963,7 @@ function renderPersonaMetaReviews() {
     const pending = review === 'pending';
     const payload = encodeURIComponent(JSON.stringify(item));
     const actions = pending && updateID
-      ? '<button class="ctl-btn persona-meta-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="approved">Approve</button> <button class="ctl-btn persona-meta-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="rejected">Reject</button>'
+      ? '<button class="ctl-btn persona-meta-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="approved">Adopt</button> <button class="ctl-btn persona-meta-review" type="button" data-update="' + escAttr(payload) + '" data-review-status="rejected">Reject</button>'
       : '<span class="small">-</span>';
     const tr = document.createElement('tr');
     tr.innerHTML =
@@ -2083,7 +2068,6 @@ async function requestBrowserTraceAPIFetcherProposal(candidateID, workstreamID) 
       body: JSON.stringify({
         candidate_id: candidateID,
         workstream_id: workstreamID || '',
-        human_approved: true,
       }),
     });
     const text = await res.text();

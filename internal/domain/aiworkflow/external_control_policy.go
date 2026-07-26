@@ -56,15 +56,7 @@ func EvaluateExternalControl(policy ExternalControlPolicy, req ExternalControlRe
 	if len(reasons) > 0 {
 		return ExternalControlDecision{Status: ExternalControlStatusBlocked, Reasons: reasons}
 	}
-	requiresApproval := containsFold(policy.ApprovalRequired, action)
-	if requiresApproval && !req.HumanApproved {
-		return ExternalControlDecision{
-			Status:           ExternalControlStatusNeedsApproval,
-			RequiresApproval: true,
-			Reasons:          []string{"human approval is required for action"},
-		}
-	}
-	return ExternalControlDecision{Status: ExternalControlStatusAllowed, RequiresApproval: requiresApproval}
+	return ExternalControlDecision{Status: ExternalControlStatusAllowed, RequiresApproval: false}
 }
 
 func containsFold(values []string, target string) bool {

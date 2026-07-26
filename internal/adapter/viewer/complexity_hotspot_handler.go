@@ -343,7 +343,7 @@ func HandleComplexityHotspotProposalWithSandbox(store ComplexityHotspotLister, w
 			ArtifactID:   artifactID,
 			WorkstreamID: req.WorkstreamID,
 			Type:         "complexity_patch_proposal_request",
-			Title:        "Complexity proposal approval: " + hotspot.FilePath,
+			Title:        "Complexity proposal policy check: " + hotspot.FilePath,
 			Status:       "pending_review",
 			CreatedAt:    now,
 		}
@@ -393,7 +393,7 @@ func HandleComplexityHotspotProposalWithSandbox(store ComplexityHotspotLister, w
 			"artifact":                artifact,
 			"proposal_artifact":       proposalArtifact,
 			"coder_diff_request":      coderDiffArtifact,
-			"human_approval_required": true,
+			"human_approval_required": false,
 			"patch_applied":           false,
 		}
 		if isHighRiskComplexityHotspot(hotspot) {
@@ -505,7 +505,7 @@ func HandleComplexityHotspotConcreteDiffWithSandbox(store ComplexityHotspotStore
 		response := map[string]any{
 			"hotspot":                 hotspot,
 			"concrete_diff_artifact":  report,
-			"human_approval_required": true,
+			"human_approval_required": false,
 			"patch_applied":           false,
 		}
 		if workstreamSink != nil && strings.TrimSpace(req.WorkstreamID) != "" {
@@ -638,7 +638,7 @@ func HandleComplexityHotspotCoderDiffWithSandbox(store ComplexityHotspotStore, g
 			"hotspot":                 hotspot,
 			"coder_result":            result,
 			"concrete_diff_artifact":  report,
-			"human_approval_required": true,
+			"human_approval_required": false,
 			"patch_applied":           false,
 		}
 		if workstreamArtifact != nil {
@@ -681,7 +681,7 @@ func buildComplexityCoderDiffFailureArtifact(req ComplexityCoderDiffRequest, hot
 		"Failure reason: `" + strings.TrimSpace(reason) + "`",
 		"",
 		"Patch applied: `false`",
-		"Human approval required: `true` before any generated diff can be applied.",
+		"Execution policy and post-apply verification are required before any generated diff can be applied.",
 		"",
 		"This is a failure audit only. No review diff, Workstream apply artifact, Sandbox Promotion Request, or external PR was created.",
 	}, "\n")
@@ -803,12 +803,12 @@ func buildHighRiskComplexityReviewGoal(workstreamID string, hotspot domaincomple
 			"対象 hotspot だけを扱う別 Goal / PR として分離する",
 			"具体 diff 生成前にリスク、挙動互換性、rollback plan を明文化する",
 			"DB/API/cache/concurrency などの高リスク変更を低リスク refactor と混ぜない",
-			"Sandbox Promotion Gate で diff / test / rollback / Human approval を満たすまで approve しない",
+			"Sandbox Promotion Gate で diff / test / rollback / post-apply verification を満たすまで適用しない",
 		},
 		Verification: append([]string{
 			"High-risk review checklist",
 			"Sandbox Promotion Gate decision",
-			"Human approval",
+			"Execution policy decision",
 		}, hotspot.RequiredTests...),
 		Status:    domainworkstream.StatusWaiting,
 		CreatedAt: now,
@@ -837,7 +837,7 @@ func buildComplexitySandboxPromotionRequest(req ComplexityHotspotProposalRequest
 	}
 	humanApproval := strings.TrimSpace(req.HumanApprovalStatus)
 	if humanApproval == "" {
-		humanApproval = domainsandbox.ApprovalPending
+		humanApproval = domainsandbox.ApprovalNotRequired
 	}
 	reason := strings.TrimSpace("Complexity hotspot proposal for " + hotspot.HotspotType + ": " + hotspot.Summary)
 	if reason == "Complexity hotspot proposal for :" {
@@ -872,7 +872,7 @@ func buildComplexityConcreteDiffSandboxPromotionRequest(req ComplexityConcreteDi
 	}
 	humanApproval := strings.TrimSpace(req.HumanApprovalStatus)
 	if humanApproval == "" {
-		humanApproval = domainsandbox.ApprovalPending
+		humanApproval = domainsandbox.ApprovalNotRequired
 	}
 	return domainsandbox.PromotionRequest{
 		PromotionID:               promotionID,
@@ -932,7 +932,7 @@ func complexityProposalSuccessCriteria(hotspot domaincomplexity.Hotspot) []strin
 	criteria := []string{
 		"対象 hotspot 以外の無関係な変更を混ぜない",
 		"挙動互換性を維持する",
-		"Human approval なしに patch を適用しない",
+		"実行policyと事後検証を満たさずpatchを適用しない",
 	}
 	if hotspot.EstimatedComplexity != "" && hotspot.EstimatedAfter != "" {
 		criteria = append(criteria, "複雑性見積もりを "+hotspot.EstimatedComplexity+" から "+hotspot.EstimatedAfter+" へ改善する案を説明する")

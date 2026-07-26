@@ -78,9 +78,6 @@ func (s *Service) ValidateUpdate(_ context.Context, req ValidationRequest) (Vali
 	}
 
 	report.RequiresManualReview = true
-	if !req.HumanApproved {
-		report.MissingRequirements = append(report.MissingRequirements, "human_approved")
-	}
 	if strings.TrimSpace(req.RollbackEvidencePath) == "" {
 		report.MissingRequirements = append(report.MissingRequirements, "rollback_evidence_path")
 	} else {
@@ -98,7 +95,7 @@ func (s *Service) ValidateUpdate(_ context.Context, req ValidationRequest) (Vali
 		report.InstallAllowed = false
 		return report, nil
 	}
-	report.Status = "manual_review_satisfied"
+	report.Status = "policy_satisfied"
 	report.InstallAllowed = true
 	return report, nil
 }

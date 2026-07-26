@@ -143,25 +143,25 @@ func TestValidateChannelDraft(t *testing.T) {
 	}
 }
 
-func TestEvaluateHumanDecisionGateRequiresApprovalForHighTicketOffer(t *testing.T) {
+func TestEvaluateHumanDecisionGateAllowsHighTicketOfferWithoutApprovalWait(t *testing.T) {
 	result := EvaluateHumanDecisionGate(HumanDecisionGateRequest{
 		DecisionType: "high_ticket_offer",
 		Description:  "30万円の導入支援を案内する",
 	})
 
-	if result.Status != "needs_review" || !result.RequiresApproval {
+	if result.Status != "allowed" || result.RequiresApproval {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }
 
-func TestEvaluateHumanDecisionGateBlocksRejectedApproval(t *testing.T) {
+func TestEvaluateHumanDecisionGateIgnoresLegacyRejectedApproval(t *testing.T) {
 	result := EvaluateHumanDecisionGate(HumanDecisionGateRequest{
 		DecisionType:   "customer_voice_publication",
 		Description:    "購入者の声を販売ページへ掲載する",
 		ApprovalStatus: "rejected",
 	})
 
-	if result.Status != "blocked" {
+	if result.Status != "allowed" || result.RequiresApproval {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }
@@ -173,7 +173,7 @@ func TestEvaluateHumanDecisionGateAllowsApprovedDecision(t *testing.T) {
 		ApprovalStatus: "approved",
 	})
 
-	if result.Status != "approved" || !result.RequiresApproval {
+	if result.Status != "allowed" || result.RequiresApproval {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }
@@ -191,7 +191,7 @@ func TestEvaluateHumanDecisionGateBlocksProhibitedClaim(t *testing.T) {
 
 func TestEvaluateHumanDecisionGateBlocksMissingTypeAndApprovesSafeInternalDecision(t *testing.T) {
 	missing := EvaluateHumanDecisionGate(HumanDecisionGateRequest{Description: "通常の内部メモ"})
-	if missing.Status != "blocked" || !missing.RequiresApproval || len(missing.Reasons) == 0 {
+	if missing.Status != "blocked" || missing.RequiresApproval || len(missing.Reasons) == 0 {
 		t.Fatalf("unexpected missing type result: %#v", missing)
 	}
 
@@ -199,12 +199,12 @@ func TestEvaluateHumanDecisionGateBlocksMissingTypeAndApprovesSafeInternalDecisi
 		DecisionType: "internal_note",
 		Description:  "次回の商品改善メモを作る",
 	})
-	if safe.Status != "approved" || safe.RequiresApproval {
+	if safe.Status != "allowed" || safe.RequiresApproval {
 		t.Fatalf("unexpected safe result: %#v", safe)
 	}
 }
 
-func TestBuildHumanDecisionGateRecordDefaultsPendingApproval(t *testing.T) {
+func TestBuildHumanDecisionGateRecordDefaultsToNoApprovalRequired(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	record := BuildHumanDecisionGateRecord(HumanDecisionGateRequest{
 		DecisionID:   "dec_1",
@@ -213,7 +213,7 @@ func TestBuildHumanDecisionGateRecordDefaultsPendingApproval(t *testing.T) {
 		CreatedAt:    now,
 	})
 
-	if record.ApprovalStatus != "pending" || record.GateStatus != "needs_review" || !record.RequiresApproval {
+	if record.ApprovalStatus != "not_required" || record.GateStatus != "allowed" || record.RequiresApproval {
 		t.Fatalf("unexpected record: %#v", record)
 	}
 	if err := ValidateHumanDecisionGateRecord(record); err != nil {
@@ -254,15 +254,14 @@ func TestValidateHumanDecisionGateRecordRequiredFields(t *testing.T) {
 	}
 }
 
-func TestValidateExternalSendApplyRecordRequiresApprovedHumanDecision(t *testing.T) {
+func TestValidateExternalSendApplyRecordDoesNotRequireHumanDecision(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	record := ExternalSendApplyRecord{
 		ApplyID:             "apply_1",
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",
-		ApprovalStatus:      "approved",
-		HumanApproved:       true,
+		ApprovalStatus:      "not_required",
 		ApplyStatus:         "blocked",
 		SendResult:          "not_sent",
 		FailureReason:       "external channel adapter is not configured",
@@ -273,16 +272,11 @@ func TestValidateExternalSendApplyRecordRequiresApprovedHumanDecision(t *testing
 		t.Fatalf("record should be valid: %v", err)
 	}
 
-	record.HumanApproved = false
-	if err := ValidateExternalSendApplyRecord(record); err == nil {
-		t.Fatal("expected missing human approval to fail")
-	}
-	record.HumanApproved = true
 	record.ApprovalStatus = "pending"
-	if err := ValidateExternalSendApplyRecord(record); err == nil {
-		t.Fatal("expected unapproved decision to fail")
+	if err := ValidateExternalSendApplyRecord(record); err != nil {
+		t.Fatalf("legacy pending approval must not block: %v", err)
 	}
-	record.ApprovalStatus = "approved"
+	record.ApprovalStatus = "not_required"
 	record.ExternalSendApplied = true
 	if err := ValidateExternalSendApplyRecord(record); err == nil {
 		t.Fatal("expected externally applied non-sent record to fail")
@@ -311,12 +305,12 @@ func TestValidateDeliveryRequiresStableTraceAndProtectsExternalCompletion(t *tes
 	completed := valid
 	completed.Status = "completed"
 	if err := ValidateDelivery(completed); err == nil {
-		t.Fatal("completed external delivery without approval/evidence must be rejected")
+		t.Fatal("completed external delivery without policy decision/evidence must be rejected")
 	}
-	completed.ApprovalID = "approval_1"
+	completed.PolicyDecisionID = "policy_1"
 	completed.Evidence = "receipt_1"
 	if err := ValidateDelivery(completed); err != nil {
-		t.Fatalf("approved and evidenced delivery rejected: %v", err)
+		t.Fatalf("policy-allowed and evidenced delivery rejected: %v", err)
 	}
 }
 

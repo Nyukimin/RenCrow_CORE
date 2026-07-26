@@ -140,7 +140,7 @@ func TestHandleSkillGovernanceRecent(t *testing.T) {
 	if len(body.Transcripts) != 1 || body.Transcripts[0].EventID != "evt_coder_transcript_1" {
 		t.Fatalf("transcripts=%#v", body.Transcripts)
 	}
-	if body.PRAdapter != "unconfigured" || body.PRConfigured || !body.PRApproval {
+	if body.PRAdapter != "unconfigured" || body.PRConfigured || body.PRApproval {
 		t.Fatalf("external PR readiness adapter=%q configured=%t approval=%t", body.PRAdapter, body.PRConfigured, body.PRApproval)
 	}
 }
@@ -546,7 +546,7 @@ func TestHandleSkillGovernanceSkillChangeEvalRejectsUnsafeEvidencePath(t *testin
 	}
 }
 
-func TestHandleSkillGovernanceExternalPRSubmitRequiresHumanApproval(t *testing.T) {
+func TestHandleSkillGovernanceExternalPRSubmitDoesNotRequireHumanApproval(t *testing.T) {
 	store := &stubSkillGovernanceLister{
 		contributions: []domainskill.ContributionGateLog{{
 			EventID:             "evt_contrib_1",
@@ -572,11 +572,11 @@ func TestHandleSkillGovernanceExternalPRSubmitRequiresHumanApproval(t *testing.T
 
 	HandleSkillGovernanceExternalPRSubmit(store).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.prSubmits) != 0 {
-		t.Fatalf("pr submits should not be saved=%#v", store.prSubmits)
+	if len(store.prSubmits) != 1 || store.prSubmits[0].HumanApproved || store.prSubmits[0].ApprovalStatus != "not_required" {
+		t.Fatalf("pr submit audit=%#v", store.prSubmits)
 	}
 }
 

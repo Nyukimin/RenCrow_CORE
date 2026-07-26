@@ -259,7 +259,7 @@ func HandleRevenueStatus(store RevenueLister, economicSettings ...RevenueEconomi
 			"economic_reflections":                      economicReflections,
 			"external_channel_adapter":                  "unconfigured",
 			"external_channel_adapter_configured":       false,
-			"human_approval_required_for_external_send": true,
+			"human_approval_required_for_external_send": false,
 			"summary":                                   buildRevenueDashboardSummary(market, posts, products, voices, events, decisions, dailyReports, channelDrafts, externalSendApplyRecords),
 			"economic_objective":                        buildRevenueEconomicObjectiveSummary(settings, opportunities, economicTasks, economicReflections),
 		})
@@ -722,7 +722,7 @@ func HandleRevenueChannelDraftCreate(store RevenueStore) http.HandlerFunc {
 			return
 		}
 		if item.ApprovalStatus == "" {
-			item.ApprovalStatus = "pending"
+			item.ApprovalStatus = "not_required"
 		}
 		item.ExternalSendApplied = false
 		if item.CreatedAt.IsZero() {
@@ -744,7 +744,7 @@ func HandleRevenueChannelDraftCreate(store RevenueStore) http.HandlerFunc {
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"channel_draft":                                   item,
 			"external_actions_applied":                        false,
-			"human_approval_required_for_external_send_apply": true,
+			"human_approval_required_for_external_send_apply": false,
 		})
 	}
 }
@@ -767,11 +767,6 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			http.Error(w, "decision_id is required", http.StatusBadRequest)
 			return
 		}
-		if !req.HumanApproved {
-			http.Error(w, "human_approved is required", http.StatusForbidden)
-			return
-		}
-
 		drafts, err := store.ListChannelDrafts(r.Context(), 500)
 		if err != nil {
 			http.Error(w, "failed to load channel drafts", http.StatusInternalServerError)
@@ -805,8 +800,12 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			http.Error(w, "human decision gate record not found", http.StatusNotFound)
 			return
 		}
-		if decision.DecisionType != "closed_channel_send" || decision.SubjectID != draft.DraftID || decision.ApprovalStatus != "approved" || decision.GateStatus != "approved" {
-			http.Error(w, "approved closed_channel_send decision for draft is required", http.StatusConflict)
+		policyResult := domainrevenue.EvaluateHumanDecisionGate(domainrevenue.HumanDecisionGateRequest{
+			DecisionType: decision.DecisionType,
+			Description:  decision.Description,
+		})
+		if decision.DecisionType != "closed_channel_send" || decision.SubjectID != draft.DraftID || policyResult.Status != "allowed" {
+			http.Error(w, "allowed closed_channel_send policy decision for draft is required", http.StatusConflict)
 			return
 		}
 
@@ -830,17 +829,17 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 		}
 		now := time.Now().UTC()
 		delivery := domainrevenue.Delivery{
-			DeliveryID:     deliveryID,
-			TraceID:        traceID,
-			OpportunityID:  strings.TrimSpace(req.OpportunityID),
-			WorkstreamID:   draft.WorkstreamID,
-			ApprovalID:     decision.DecisionID,
-			DeliveryKind:   "external_send",
-			Status:         "blocked",
-			Target:         strings.TrimSpace(req.Destination),
-			Result:         "not_sent",
-			ExternalAction: true,
-			CreatedAt:      now,
+			DeliveryID:       deliveryID,
+			TraceID:          traceID,
+			OpportunityID:    strings.TrimSpace(req.OpportunityID),
+			WorkstreamID:     draft.WorkstreamID,
+			PolicyDecisionID: decision.DecisionID,
+			DeliveryKind:     "external_send",
+			Status:           "blocked",
+			Target:           strings.TrimSpace(req.Destination),
+			Result:           "not_sent",
+			ExternalAction:   true,
+			CreatedAt:        now,
 		}
 		delivery, err = revenueapp.NewEconomicService(store, time.Now).RecordDelivery(r.Context(), delivery)
 		if err != nil {
@@ -860,8 +859,8 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			Channel:             draft.Channel,
 			Destination:         strings.TrimSpace(req.Destination),
 			ChannelAdapter:      "unconfigured",
-			ApprovalStatus:      decision.ApprovalStatus,
-			HumanApproved:       req.HumanApproved,
+			ApprovalStatus:      "not_required",
+			HumanApproved:       false,
 			ApplyStatus:         "blocked",
 			SendResult:          "not_sent",
 			FailureReason:       "external channel adapter is not configured",
@@ -878,7 +877,7 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			"delivery":                               delivery,
 			"external_actions_applied":               false,
 			"post_send_verified":                     false,
-			"human_approval_required_for_retry":      true,
+			"human_approval_required_for_retry":      false,
 			"external_channel_adapter_configuration": "required",
 			"failure_reason":                         record.FailureReason,
 		})

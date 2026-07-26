@@ -111,7 +111,7 @@ const message = process.env.PHASE25_BROWSER_MESSAGE;
       return text.includes('sandbox promotion gate logs:') &&
         text.includes('needs-review') &&
         text.includes('post-apply evidence') &&
-        text.includes('formal apply requires human approval') &&
+        text.includes('execution policy: synchronous') &&
         text.includes('blocked: no promotion applied');
     }, { timeout: 10000 });
     await page.waitForFunction(() => {
@@ -144,7 +144,7 @@ const message = process.env.PHASE25_BROWSER_MESSAGE;
         text.includes('skill external PR submit audits:') &&
         text.includes('not created') &&
         text.includes('external PR adapter: unconfigured') &&
-        text.includes('human approval: required') &&
+        text.includes('execution policy: synchronous') &&
         text.includes('blocked: no external PR created') &&
         text.includes('created') &&
         text.includes('verified');
@@ -237,11 +237,11 @@ const message = process.env.PHASE25_BROWSER_MESSAGE;
         text.includes('Revenue Channel Drafts') &&
         text.includes('revenue channel drafts:') &&
         text.includes('draft-only') &&
-        text.includes('external send requires human approval: yes') &&
+        text.includes('external send execution policy: synchronous') &&
         text.includes('revenue external send apply audits:') &&
         text.includes('not sent') &&
         text.includes('external channel adapter: unconfigured') &&
-        text.includes('human approval: required') &&
+        text.includes('execution policy: synchronous') &&
         text.includes('blocked: no external send applied') &&
         text.includes('sent') &&
         text.includes('verified');

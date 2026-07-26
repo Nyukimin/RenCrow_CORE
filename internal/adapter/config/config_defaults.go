@@ -330,7 +330,7 @@ func (c *Config) setDefaults() {
 			RequireReason:                true,
 			RequireTestResult:            true,
 			RequireRollbackPlan:          true,
-			RequireHumanApproval:         true,
+			RequireHumanApproval:         false,
 			RequirePostApplyVerification: true,
 		}
 	}
@@ -470,7 +470,7 @@ func (c *Config) setDefaults() {
 			RequireOpenClosedPRSearch: true,
 			RequireRealProblem:        true,
 			RequireCompleteDiffReview: true,
-			RequireHumanApproval:      true,
+			RequireHumanApproval:      false,
 			OneProblemPerPR:           true,
 		}
 	}
@@ -506,8 +506,6 @@ func (c *Config) setDefaults() {
 		!c.Revenue.HighTicketOfferRequiresApproval {
 		c.Revenue.ProhibitSuccessGuarantee = true
 		c.Revenue.RequireCustomerVoicePermission = true
-		c.Revenue.ExternalPublishRequiresApproval = true
-		c.Revenue.HighTicketOfferRequiresApproval = true
 	}
 	if c.PersonaArchitecture.LogPath == "" {
 		c.PersonaArchitecture.LogPath = c.WorkspaceDir + "/logs/persona"
@@ -570,7 +568,6 @@ func (c *Config) setDefaults() {
 		!c.BrowserTraceToAPI.GenerateCoverageReport {
 		c.BrowserTraceToAPI.ReadOnlyOnly = true
 		c.BrowserTraceToAPI.RequireTermsReview = true
-		c.BrowserTraceToAPI.RequireHumanApprovalPromote = true
 		c.BrowserTraceToAPI.GenerateOpenAPI = true
 		c.BrowserTraceToAPI.GenerateCoverageReport = true
 	}
@@ -593,7 +590,6 @@ func (c *Config) setDefaults() {
 		c.ComplexityHotspot.ExcludeDirs = []string{"node_modules", ".venv", "venv", "dist", "build", "coverage", ".git"}
 	}
 	if !c.ComplexityHotspot.RequireHumanApprovalForPatch && !c.ComplexityHotspot.OneHotspotPerPR {
-		c.ComplexityHotspot.RequireHumanApprovalForPatch = true
 		c.ComplexityHotspot.OneHotspotPerPR = true
 	}
 	if c.SuperAgentHarness.LogPath == "" {
@@ -627,7 +623,6 @@ func (c *Config) setDefaults() {
 		c.SuperAgentHarness.RequireTerminationCondition = true
 		c.SuperAgentHarness.ReturnSummaryOnly = true
 		c.SuperAgentHarness.PromotionGateRequired = true
-		c.SuperAgentHarness.ExternalSendRequiresApproval = true
 		c.SuperAgentHarness.TraceAgentRun = true
 	}
 	if c.AIWorkflow.LogPath == "" {
@@ -656,9 +651,6 @@ func (c *Config) setDefaults() {
 	}
 	if len(c.AIWorkflow.ExternalControlAllowedActions) == 0 {
 		c.AIWorkflow.ExternalControlAllowedActions = []string{"promotion_request", "promotion_apply", "promotion_rollback", "artifact_review", "status_read"}
-	}
-	if len(c.AIWorkflow.ExternalControlApprovalRequired) == 0 {
-		c.AIWorkflow.ExternalControlApprovalRequired = []string{"promotion_apply", "promotion_rollback", "external_send"}
 	}
 	if c.AIWorkflow.ContextBudgetWarnRatio <= 0 {
 		c.AIWorkflow.ContextBudgetWarnRatio = 0.8

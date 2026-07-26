@@ -349,12 +349,12 @@ func GoalFromOpportunity(item revenuedomain.Opportunity, workstreamID string, no
 		Title:        item.Title,
 		Description:  item.Summary,
 		SuccessCriteria: []string{
-			"human approval is recorded before publish/send/billing",
+			"execution policy decision is recorded before publish/send/billing",
 			fmt.Sprintf("expected_profit >= %d", item.ExpectedProfit),
 		},
 		Verification: []string{
 			"artifact exists",
-			"approval gate checked",
+			"execution policy checked",
 			"revenue/reflection event recorded after delivery",
 		},
 		Status:    workstreamdomain.StatusDraft,
@@ -386,8 +386,8 @@ func ApprovalFromOpportunityArtifact(item revenuedomain.Opportunity, artifact wo
 		TraceID:        item.TraceID,
 		DecisionType:   "economic_opportunity_execution",
 		SubjectID:      artifact.ArtifactID,
-		Description:    "Review the economic opportunity artifact before any external action",
-		ApprovalStatus: "pending",
+		Description:    "Evaluate the economic opportunity artifact against the execution policy",
+		ApprovalStatus: "not_required",
 		CreatedAt:      now.UTC(),
 	})
 }

@@ -273,7 +273,7 @@ func TestHandleSandboxPromotionRequest(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.promotions) != 1 || store.promotions[0].HumanApprovalStatus != domainsandbox.ApprovalPending {
+	if len(store.promotions) != 1 || store.promotions[0].HumanApprovalStatus != domainsandbox.ApprovalNotRequired {
 		t.Fatalf("promotions = %#v", store.promotions)
 	}
 	if len(store.gateLogs) != 1 || store.gateLogs[0].GateStatus != domainsandbox.GateStatusNeedsMoreTest {
@@ -557,7 +557,7 @@ func TestHandleSandboxPromotionApplyAppliesDiffBeforeVerification(t *testing.T) 
 	}
 }
 
-func TestHandleSandboxPromotionApplyDoesNotApplyDiffWithoutHumanApproval(t *testing.T) {
+func TestHandleSandboxPromotionApplyDoesNotRequireHumanApproval(t *testing.T) {
 	store := &stubSandboxPromotionStore{}
 	applier := &stubPromotionDiffApplier{}
 	body := []byte(`{
@@ -579,14 +579,14 @@ func TestHandleSandboxPromotionApplyDoesNotApplyDiffWithoutHumanApproval(t *test
 
 	HandleSandboxPromotionApplyWithVerifierAndApplier(store, nil, applier).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if applier.called {
-		t.Fatal("diff applier must not run before approval gate passes")
+	if !applier.called {
+		t.Fatal("diff applier must run after policy checks pass")
 	}
-	if len(store.gateLogs) != 0 || len(store.artifacts) != 0 {
-		t.Fatalf("unexpected writes logs=%#v artifacts=%#v", store.gateLogs, store.artifacts)
+	if len(store.gateLogs) != 1 || len(store.artifacts) != 1 {
+		t.Fatalf("missing audit writes logs=%#v artifacts=%#v", store.gateLogs, store.artifacts)
 	}
 }
 
@@ -708,7 +708,7 @@ func TestHandleSandboxPromotionRollbackRunsReverseDiffAndRecordsLog(t *testing.T
 	}
 }
 
-func TestHandleSandboxPromotionRollbackDoesNotRunWithoutHumanApproval(t *testing.T) {
+func TestHandleSandboxPromotionRollbackDoesNotRequireHumanApproval(t *testing.T) {
 	store := &stubSandboxPromotionStore{}
 	rollbacker := &stubPromotionDiffApplier{}
 	body := []byte(`{
@@ -730,14 +730,14 @@ func TestHandleSandboxPromotionRollbackDoesNotRunWithoutHumanApproval(t *testing
 
 	HandleSandboxPromotionRollback(store, rollbacker).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if rollbacker.called {
-		t.Fatal("rollbacker must not run before approval gate passes")
+	if !rollbacker.called {
+		t.Fatal("rollbacker must run after policy checks pass")
 	}
-	if len(store.gateLogs) != 0 || len(store.artifacts) != 0 {
-		t.Fatalf("unexpected writes logs=%#v artifacts=%#v", store.gateLogs, store.artifacts)
+	if len(store.gateLogs) != 1 || len(store.artifacts) != 1 {
+		t.Fatalf("missing audit writes logs=%#v artifacts=%#v", store.gateLogs, store.artifacts)
 	}
 }
 
@@ -769,7 +769,7 @@ func TestHandleSandboxPromotionDiffPreview(t *testing.T) {
 	}
 }
 
-func TestHandleSandboxPromotionApplyRejectsWithoutHumanApproval(t *testing.T) {
+func TestHandleSandboxPromotionApplyWithoutHumanApprovalRecordsAudit(t *testing.T) {
 	store := &stubSandboxPromotionStore{}
 	body := []byte(`{
 		"promotion":{
@@ -790,16 +790,16 @@ func TestHandleSandboxPromotionApplyRejectsWithoutHumanApproval(t *testing.T) {
 
 	HandleSandboxPromotionApply(store).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.gateLogs) != 0 || len(store.artifacts) != 0 {
-		t.Fatalf("unexpected writes logs=%#v artifacts=%#v", store.gateLogs, store.artifacts)
+	if len(store.gateLogs) != 1 || len(store.artifacts) != 1 {
+		t.Fatalf("missing audit writes logs=%#v artifacts=%#v", store.gateLogs, store.artifacts)
 	}
 }
 
-func TestHandleSandboxWorktreeCreateRequiresHumanApproval(t *testing.T) {
-	creator := &stubSandboxWorktreeCreator{createErr: errors.New("human_approved=true is required to create a worktree sandbox")}
+func TestHandleSandboxWorktreeCreateSurfacesPolicyErrorWithoutApprovalField(t *testing.T) {
+	creator := &stubSandboxWorktreeCreator{createErr: errors.New("protected branch is not allowed")}
 	body := []byte(`{"branch":"feature/sandbox","human_approved":false}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/sandbox/worktrees/create", bytes.NewReader(body))
 	rec := httptest.NewRecorder()

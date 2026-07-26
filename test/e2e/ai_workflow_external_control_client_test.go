@@ -14,7 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
-func TestE2E_AIWorkflowExternalControlClientRequiresApproval(t *testing.T) {
+func TestE2E_AIWorkflowExternalControlClientUsesSynchronousPolicy(t *testing.T) {
 	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
 		t.Skip("set RENCROW_LIVE_E2E=1 to verify live AI Workflow external control client")
 	}
@@ -36,8 +36,8 @@ func TestE2E_AIWorkflowExternalControlClientRequiresApproval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckExternalControl() live call failed at %s: %v", baseURL, err)
 	}
-	if resp.Decision.Status != "needs_approval" || !resp.Decision.RequiresApproval {
-		t.Fatalf("external control decision = %+v, want needs_approval with requires_approval=true", resp.Decision)
+	if resp.Decision.Status != "allowed" || resp.Decision.RequiresApproval {
+		t.Fatalf("external control decision = %+v, want allowed with requires_approval=false", resp.Decision)
 	}
 
 	statusResp, err := http.Get(baseURL + "/viewer/ai-workflow?limit=20")
@@ -58,11 +58,11 @@ func TestE2E_AIWorkflowExternalControlClientRequiresApproval(t *testing.T) {
 		t.Fatalf("decode live AI Workflow status: %v", err)
 	}
 	for _, event := range body.WorkflowEvents {
-		if event.EventType == "external_control_policy_checked" && event.Status == "needs_approval" {
+		if event.EventType == "external_control_policy_checked" && event.Status == "allowed" {
 			return
 		}
 	}
-	t.Fatalf("live AI Workflow status did not include recent external_control_policy_checked needs_approval event")
+	t.Fatalf("live AI Workflow status did not include recent external_control_policy_checked allowed event")
 }
 
 func TestE2E_AIWorkflowCommandContextAndSuperAgentTraceSameRun(t *testing.T) {
@@ -202,7 +202,7 @@ func TestE2E_AIWorkflowCommandContextAndSuperAgentTraceSameRun(t *testing.T) {
 	}
 }
 
-func TestE2E_AIWorkflowPromotionWorkflowRequiresHumanApprovalBeforeApply(t *testing.T) {
+func TestE2E_AIWorkflowPromotionWorkflowSupportsExplicitPreviewOnly(t *testing.T) {
 	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
 		t.Skip("set RENCROW_LIVE_E2E=1 to verify live AI Workflow promotion workflow client")
 	}
@@ -231,13 +231,13 @@ func TestE2E_AIWorkflowPromotionWorkflowRequiresHumanApprovalBeforeApply(t *test
 			TargetPath:                "internal/example.go",
 			DiffPath:                  "sandbox/live-e2e/diff.patch",
 			TestResultPath:            "sandbox/live-e2e/test.log",
-			Reason:                    "live E2E: verify promotion workflow stops before apply without final human approval",
+			Reason:                    "live E2E: verify promotion workflow can remain preview-only without an approval wait",
 			RollbackPlanPath:          "sandbox/live-e2e/rollback.md",
 			PostApplyVerificationPath: "sandbox/live-e2e/post-apply.md",
 			HumanApprovalStatus:       "granted",
 			CreatedAt:                 time.Now().UTC(),
 		},
-		ApplyAfterApproval:        true,
+		ApplyAfterApproval:        false,
 		AppliedBy:                 "Worker",
 		PostApplyVerificationPath: "sandbox/live-e2e/post-apply.md",
 		HumanApproved:             false,
@@ -254,8 +254,8 @@ func TestE2E_AIWorkflowPromotionWorkflowRequiresHumanApprovalBeforeApply(t *test
 	if resp.PromotionResponse.Decision.Status != "approve" {
 		t.Fatalf("promotion gate decision = %+v, want approve", resp.PromotionResponse.Decision)
 	}
-	if resp.Applied || resp.ApplyResponse != nil || resp.SkippedReason != "human approval is required before apply" {
-		t.Fatalf("promotion workflow response=%+v, want skipped before apply for missing human approval", resp)
+	if resp.Applied || resp.ApplyResponse != nil || resp.SkippedReason != "apply_after_approval is false" {
+		t.Fatalf("promotion workflow response=%+v, want explicit preview-only result", resp)
 	}
 
 	status, err := client.SandboxStatus(ctx, 100)
@@ -289,7 +289,7 @@ func TestE2E_AIWorkflowPromotionWorkflowRequiresHumanApprovalBeforeApply(t *test
 		t.Fatalf("live Sandbox status did not include approve gate log for promotion %q", promotionID)
 	}
 	if foundAppliedLog {
-		t.Fatalf("live Sandbox status included promotion_applied log for promotion %q despite missing final human approval", promotionID)
+		t.Fatalf("live Sandbox status included promotion_applied log for preview-only promotion %q", promotionID)
 	}
 	foundRollbackArtifact := false
 	foundPostApplyArtifact := false

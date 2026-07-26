@@ -388,7 +388,7 @@ rencrow-data-risk:
 	if [ $$status -eq 0 ] || [ $$status -eq 3 ]; then exit 0; fi; \
 	exit $$status
 
-## rencrow-data-decision: Generate a human-approved weekly decision candidate
+## rencrow-data-decision: Generate a policy-evaluated weekly decision candidate
 rencrow-data-decision:
 	@PYTHONPATH=$(PYTHONPATH) $(PYTHON) rencrow-data/src/11_generate_decision.py --db $(DATA_DB) --snapshot latest --strategy $(DATA_STRATEGY) --output-dir $(DATA_APPROVAL_DIR)
 
@@ -400,7 +400,7 @@ rencrow-data-llm-report:
 rencrow-data-audit-report:
 	@PYTHONPATH=$(PYTHONPATH) $(PYTHON) rencrow-data/src/14_audit_report.py --db $(DATA_DB) --snapshot latest --decision latest --paper-latest --output-dir $(DATA_REPORT_DIR)
 
-## rencrow-data-paper-trade: Record a paper trade only after explicit human approval
+## rencrow-data-paper-trade: Record a paper trade after synchronous policy and risk checks
 rencrow-data-paper-trade:
 	@PYTHONPATH=$(PYTHONPATH) $(PYTHON) rencrow-data/src/12_paper_trade.py --db $(DATA_DB) --decision latest --approval-file $(DATA_APPROVAL_FILE) --capital $(DATA_PAPER_CAPITAL)
 

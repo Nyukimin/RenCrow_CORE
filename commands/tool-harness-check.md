@@ -13,7 +13,7 @@ core.tool-harness-check
 - 対象 tool call
 - 対象 tool schema
 - 実行予定の環境
-- Human approval の有無
+- requester scope、allowlist、credential、risk policy
 
 ## Steps
 1. validate-then-repair の対象か確認する。
@@ -28,6 +28,6 @@ core.tool-harness-check
 理由:
 修復可否:
 Safety Gate:
-Human approval:
+Policy decision:
 次アクション:
 ```

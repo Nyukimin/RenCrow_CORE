@@ -48,7 +48,7 @@ func TestBuildAPIArtifactsCreatesOpenAPICoverageInventoryAndRisk(t *testing.T) {
 	if artifacts[2].Type != "endpoint_inventory" || !strings.Contains(artifacts[2].Content, `"candidate_id": "api_cand_1"`) {
 		t.Fatalf("endpoint inventory artifact=%#v", artifacts[2])
 	}
-	if artifacts[3].Type != "risk_assessment" || !strings.Contains(artifacts[3].Content, "validator and human approval") {
+	if artifacts[3].Type != "risk_assessment" || !strings.Contains(artifacts[3].Content, "validator and synchronous execution policy") {
 		t.Fatalf("risk artifact=%#v", artifacts[3])
 	}
 	if artifacts[4].Type != "fetcher_plan" || !strings.Contains(artifacts[4].Content, "blocked until validator issues are resolved") {
@@ -92,10 +92,10 @@ func TestBuildAPIArtifactsWithValidationsAllowsFetcherPlanForValidatedCandidate(
 		CreatedAt:    now,
 	}})
 
-	if !strings.Contains(artifacts[4].Content, "proposal allowed after human approval") {
+	if !strings.Contains(artifacts[4].Content, "proposal allowed by synchronous execution policy") {
 		t.Fatalf("fetcher plan artifact=%#v", artifacts[4])
 	}
-	if !strings.Contains(artifacts[5].Content, "fetchAllowedAfterHumanApproval: true") {
+	if !strings.Contains(artifacts[5].Content, "fetchAllowedByPolicy: true") {
 		t.Fatalf("client draft artifact=%#v", artifacts[5])
 	}
 }

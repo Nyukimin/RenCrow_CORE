@@ -128,7 +128,7 @@ Chat、Worker、Coder、Advisor、Toolの契約は `docs/02_機能仕様.md` と
 - production data、Memory、Knowledge、Source Registryへのwrite
 - service restart、外部公開、送信、課金
 
-secretをsource、config sample、test、docs、logへ埋め込みません。破壊的操作、外部side effect、approvalの契約は `docs/07_安全・承認・データ方針.md` に従います。
+secretをsource、config sample、test、docs、logへ埋め込みません。破壊的操作、外部side effect、同期実行policyの契約は `docs/07_安全・承認・データ方針.md` に従います。
 
 ## 7. serviceとhealth
 

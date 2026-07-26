@@ -105,7 +105,7 @@ func (s *DailyRoutineService) RunDailyRoutine(ctx context.Context, req DailyRout
 		Mode:                                    ModeDraftReportOnly,
 		Report:                                  report,
 		ExternalActionsApplied:                  false,
-		HumanApprovalRequiredForExternalActions: true,
+		HumanApprovalRequiredForExternalActions: false,
 	}, nil
 }
 

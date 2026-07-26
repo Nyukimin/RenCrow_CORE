@@ -81,8 +81,8 @@ func TestDailyRoutineServiceCreatesRevenueAgentDraftOnlyReport(t *testing.T) {
 	if result.Agent != AgentRevenue || result.Mode != ModeDraftReportOnly {
 		t.Fatalf("unexpected routine metadata: %#v", result)
 	}
-	if result.ExternalActionsApplied || !result.HumanApprovalRequiredForExternalActions {
-		t.Fatalf("expected draft-only external action gate: %#v", result)
+	if result.ExternalActionsApplied || result.HumanApprovalRequiredForExternalActions {
+		t.Fatalf("expected draft-only report without approval wait: %#v", result)
 	}
 	if len(store.reports) != 1 {
 		t.Fatalf("expected one saved report, got %#v", store.reports)

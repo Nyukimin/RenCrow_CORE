@@ -143,7 +143,7 @@ func TestHandleAIWorkflowEventCreate(t *testing.T) {
 	}
 }
 
-func TestHandleAIWorkflowExternalControlCheckRequiresApproval(t *testing.T) {
+func TestHandleAIWorkflowExternalControlCheckDoesNotWaitForApproval(t *testing.T) {
 	store := &stubAIWorkflowStore{}
 	rec := httptest.NewRecorder()
 	body := `{"actor":"Worker","channel_id":"viewer","action":"promotion_apply","human_approved":false}`
@@ -156,10 +156,10 @@ func TestHandleAIWorkflowExternalControlCheckRequiresApproval(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"status":"needs_approval"`) {
+	if !strings.Contains(rec.Body.String(), `"status":"allowed"`) || !strings.Contains(rec.Body.String(), `"requires_approval":false`) {
 		t.Fatalf("body=%s", rec.Body.String())
 	}
-	if len(store.events) != 1 || store.events[0].EventType != "external_control_policy_checked" || store.events[0].Status != domainai.ExternalControlStatusNeedsApproval {
+	if len(store.events) != 1 || store.events[0].EventType != "external_control_policy_checked" || store.events[0].Status != domainai.ExternalControlStatusAllowed {
 		t.Fatalf("events=%#v", store.events)
 	}
 }
@@ -523,34 +523,34 @@ func TestHandleAIWorkflowProjectInit(t *testing.T) {
 	}
 }
 
-func TestHandleAIWorkflowWorktreeCreateRequiresHumanApproval(t *testing.T) {
+func TestHandleAIWorkflowWorktreeCreateStillRejectsProtectedBranchWithoutApprovalField(t *testing.T) {
 	store := &stubAIWorkflowStore{}
 	manager := aiworkflowapp.NewWorktreeManager(store)
 	rec := httptest.NewRecorder()
-	body := `{"repo_root":".","branch":"feature/no-approval"}`
+	body := `{"repo_root":".","branch":"main"}`
 
 	HandleAIWorkflowWorktreeCreateRuntime(manager, "../worktrees").ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/viewer/ai-workflow/worktrees/create", strings.NewReader(body)))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "human_approved=true") {
-		t.Fatalf("expected human approval error, got %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "protected branch") {
+		t.Fatalf("expected policy error, got %s", rec.Body.String())
 	}
 }
 
-func TestHandleAIWorkflowWorktreeCloseRequiresHumanApproval(t *testing.T) {
+func TestHandleAIWorkflowWorktreeCloseStillRejectsOutsidePathWithoutApprovalField(t *testing.T) {
 	store := &stubAIWorkflowStore{}
 	manager := aiworkflowapp.NewWorktreeManager(store)
 	rec := httptest.NewRecorder()
-	body := `{"repo_root":".","worktree_path":"../worktrees/example","branch":"feature/no-approval"}`
+	body := `{"repo_root":".","worktree_path":"/tmp/outside","branch":"feature/no-approval"}`
 
 	HandleAIWorkflowWorktreeCloseRuntime(manager, "../worktrees").ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/viewer/ai-workflow/worktrees/close", strings.NewReader(body)))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "human_approved=true") {
-		t.Fatalf("expected human approval error, got %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "must stay under base_dir") {
+		t.Fatalf("expected policy error, got %s", rec.Body.String())
 	}
 }

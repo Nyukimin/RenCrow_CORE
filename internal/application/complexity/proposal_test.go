@@ -55,7 +55,7 @@ func TestBuildConcreteDiffProposalMarkdownIsReviewOnly(t *testing.T) {
 	for _, want := range []string{
 		"Complexity Concrete Diff Proposal",
 		"Patch applied: `false`",
-		"Human approval required: `true`",
+		"Human approval required: `false`",
 		"```diff",
 		"Sandbox Promotion Gate",
 		"External PR Review Checklist",

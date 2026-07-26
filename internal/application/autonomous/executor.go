@@ -225,7 +225,7 @@ func classifyApplyError(err error) string {
 	lower := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(lower, "approval required"):
-		return "approval_required"
+		return "policy_blocked"
 	case strings.Contains(lower, "proposal_empty"), strings.Contains(lower, "proposal_missing"), strings.Contains(lower, "proposal_invalid"):
 		return "proposal_invalid"
 	case strings.Contains(lower, "command not found"), strings.Contains(lower, "exit status 127"), strings.Contains(lower, "not found"):

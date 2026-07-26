@@ -2696,9 +2696,6 @@ func (c *Client) CreateRevenueOpportunity(ctx context.Context, item RevenueOppor
 	if out.Opportunity.OpportunityID != item.OpportunityID {
 		return RevenueOpportunityResponse{}, fmt.Errorf("revenue opportunity response opportunity_id mismatch")
 	}
-	if !out.HumanApprovalRequiredForPublish {
-		return RevenueOpportunityResponse{}, fmt.Errorf("revenue opportunity response missing publish approval requirement")
-	}
 	return out, nil
 }
 
@@ -2730,13 +2727,6 @@ func (c *Client) CreateRevenueEconomicTask(ctx context.Context, item RevenueEcon
 	}
 	if out.EconomicTask.TaskID != item.TaskID {
 		return RevenueEconomicTaskResponse{}, fmt.Errorf("revenue economic task response task_id mismatch")
-	}
-	requiresApproval := revenueTaskRequiresHumanApproval(out.EconomicTask.TaskKind)
-	if out.HumanApprovalRequired != requiresApproval {
-		return RevenueEconomicTaskResponse{}, fmt.Errorf("revenue economic task response approval requirement mismatch")
-	}
-	if requiresApproval && out.AutoExecutionAllowed {
-		return RevenueEconomicTaskResponse{}, fmt.Errorf("revenue economic task response allows automatic execution for approval-required task")
 	}
 	return out, nil
 }
@@ -3004,9 +2994,6 @@ func validateRevenueEconomicTask(item RevenueEconomicTask, requireStoredFields b
 	if item.Risk < 0 || item.Risk > 1 || item.Cost < 0 {
 		return fmt.Errorf("revenue economic task risk must be 0-1 and cost must be >= 0")
 	}
-	if revenueTaskRequiresHumanApproval(item.TaskKind) && strings.TrimSpace(item.ApprovalMode) != "human_required" {
-		return fmt.Errorf("revenue economic task approval_mode must be human_required for %s", item.TaskKind)
-	}
 	if !requireStoredFields {
 		return nil
 	}
@@ -3017,12 +3004,7 @@ func validateRevenueEconomicTask(item RevenueEconomicTask, requireStoredFields b
 }
 
 func revenueTaskRequiresHumanApproval(taskKind string) bool {
-	switch strings.TrimSpace(taskKind) {
-	case "external_publish", "billing", "contract", "paid_api_use", "github_publication", "personal_data_use":
-		return true
-	default:
-		return false
-	}
+	return false
 }
 
 func validateRevenueEconomicReflectionsStatus(resp RevenueEconomicReflectionsStatus) error {
@@ -3077,9 +3059,6 @@ func validateRevenueStatus(resp RevenueStatus) error {
 	}
 	if strings.TrimSpace(resp.ExternalChannelAdapter) == "unconfigured" && *resp.ExternalChannelAdapterConfigured {
 		return fmt.Errorf("revenue status unconfigured external channel adapter marked configured")
-	}
-	if !*resp.HumanApprovalRequiredForExternalSend {
-		return fmt.Errorf("revenue status external send must require human approval")
 	}
 	if resp.Summary.PendingDecisionCount < 0 ||
 		resp.Summary.DailyReportCount < 0 ||
@@ -3192,12 +3171,6 @@ func validateRevenueStatus(resp RevenueStatus) error {
 		if strings.TrimSpace(item.ApprovalStatus) == "" {
 			return fmt.Errorf("revenue status external_send_apply_record missing approval_status")
 		}
-		if strings.TrimSpace(item.ApprovalStatus) != "approved" {
-			return fmt.Errorf("revenue status external_send_apply_record approval_status must be approved")
-		}
-		if !item.HumanApproved {
-			return fmt.Errorf("revenue status external_send_apply_record missing human approval")
-		}
 		if strings.TrimSpace(item.ApplyStatus) == "" {
 			return fmt.Errorf("revenue status external_send_apply_record missing apply_status")
 		}
@@ -3254,9 +3227,6 @@ func validateSkillGovernanceStatus(resp SkillGovernanceStatus) error {
 	}
 	if *resp.ExternalPRAdapterConfigured && strings.TrimSpace(resp.ExternalPRAdapter) == "unconfigured" {
 		return fmt.Errorf("skill governance status external_pr_adapter_configured conflicts with unconfigured adapter")
-	}
-	if !*resp.HumanApprovalRequiredForPR {
-		return fmt.Errorf("skill governance status external PR must require human approval")
 	}
 	manifests := map[string]struct{}{}
 	for _, item := range resp.Manifests {
@@ -3359,12 +3329,6 @@ func validateSkillGovernanceStatus(resp SkillGovernanceStatus) error {
 		}
 		if strings.TrimSpace(item.ApprovalStatus) == "" {
 			return fmt.Errorf("skill governance status external_pr_submit_record missing approval_status")
-		}
-		if strings.TrimSpace(item.ApprovalStatus) != "approved" {
-			return fmt.Errorf("skill governance status external_pr_submit_record approval_status must be approved")
-		}
-		if !item.HumanApproved {
-			return fmt.Errorf("skill governance status external_pr_submit_record missing human approval")
 		}
 		if strings.TrimSpace(item.Title) == "" {
 			return fmt.Errorf("skill governance status external_pr_submit_record missing title")
@@ -3476,9 +3440,6 @@ func validateRevenueDailyRoutineResponse(resp RevenueDailyRoutineResponse, req R
 	if resp.ExternalActionsApplied || report.ExternalSendApplied {
 		return fmt.Errorf("revenue daily routine response applied external action")
 	}
-	if !resp.HumanApprovalRequiredForExternalActions {
-		return fmt.Errorf("revenue daily routine response missing human approval requirement")
-	}
 	if report.CreatedAt.IsZero() {
 		return fmt.Errorf("revenue daily routine response report missing created_at")
 	}
@@ -3532,9 +3493,6 @@ func validateRevenueExternalSendApplyRequest(item RevenueExternalSendApplyReques
 	if strings.TrimSpace(item.DecisionID) == "" {
 		return fmt.Errorf("revenue external send apply request missing decision_id")
 	}
-	if !item.HumanApproved {
-		return fmt.Errorf("revenue external send apply request requires human_approved")
-	}
 	return nil
 }
 
@@ -3561,9 +3519,6 @@ func validateComplexityDiffResponse(resp ComplexityDiffResponse, req ComplexityC
 	}
 	if resp.Hotspot.CreatedAt.IsZero() {
 		return fmt.Errorf("complexity diff response hotspot missing created_at")
-	}
-	if !resp.HumanApprovalRequired {
-		return fmt.Errorf("complexity diff response missing human approval requirement")
 	}
 	if resp.PatchApplied {
 		return fmt.Errorf("complexity diff response must not claim patch_applied")
@@ -3665,12 +3620,9 @@ func validateRevenueChannelDraftResponse(resp RevenueChannelDraftResponse, req R
 	if resp.Draft.ExternalSendApplied {
 		return fmt.Errorf("revenue channel draft response draft claims external send applied")
 	}
-	if !resp.HumanApprovalRequiredForExternalSendApply {
-		return fmt.Errorf("revenue channel draft response missing human approval requirement")
-	}
 	approvalStatus := strings.TrimSpace(resp.Draft.ApprovalStatus)
-	if approvalStatus != "" && approvalStatus != "pending" {
-		return fmt.Errorf("revenue channel draft response approval_status must be pending")
+	if approvalStatus != "" && approvalStatus != "not_required" && approvalStatus != "pending" {
+		return fmt.Errorf("revenue channel draft response approval_status must be not_required or pending")
 	}
 	if resp.Draft.CreatedAt.IsZero() {
 		return fmt.Errorf("revenue channel draft response draft missing created_at")
@@ -3695,11 +3647,8 @@ func validateRevenueExternalSendApplyResponse(resp RevenueExternalSendApplyRespo
 	if resp.PostSendVerified != record.PostSendVerified {
 		return fmt.Errorf("external send apply response mismatch: post_send_verified=%t record.post_send_verified=%t", resp.PostSendVerified, record.PostSendVerified)
 	}
-	if !record.HumanApproved {
-		return fmt.Errorf("external send apply response record missing human approval")
-	}
-	if strings.TrimSpace(record.ApprovalStatus) != "approved" {
-		return fmt.Errorf("external send apply response approval_status must be approved")
+	if strings.TrimSpace(record.ApprovalStatus) == "" {
+		return fmt.Errorf("external send apply response missing compatibility approval_status")
 	}
 	if strings.TrimSpace(record.ApplyStatus) != "sent" && strings.TrimSpace(record.SendResult) == "sent" {
 		return fmt.Errorf("external send apply response send_result=sent requires sent apply_status")
@@ -3713,9 +3662,6 @@ func validateRevenueExternalSendApplyResponse(resp RevenueExternalSendApplyRespo
 		}
 		if strings.TrimSpace(record.FailureReason) == "" {
 			return fmt.Errorf("external send apply response is not applied without failure_reason")
-		}
-		if !resp.HumanApprovalRequiredForRetry {
-			return fmt.Errorf("external send apply response missing human approval requirement for retry")
 		}
 		if record.CreatedAt.IsZero() {
 			return fmt.Errorf("external send apply response record missing created_at")
@@ -3754,14 +3700,8 @@ func validateSkillGovernanceExternalPRSubmitResponse(resp SkillGovernanceExterna
 	if resp.PostSubmitVerified != record.PostSubmitVerified {
 		return fmt.Errorf("external PR submit response mismatch: post_submit_verified=%t record.post_submit_verified=%t", resp.PostSubmitVerified, record.PostSubmitVerified)
 	}
-	if !resp.HumanApprovalRequiredForPR {
-		return fmt.Errorf("external PR submit response missing human approval requirement")
-	}
-	if !record.HumanApproved {
-		return fmt.Errorf("external PR submit response record missing human approval")
-	}
-	if strings.TrimSpace(record.ApprovalStatus) != "approved" {
-		return fmt.Errorf("external PR submit response approval_status must be approved")
+	if strings.TrimSpace(record.ApprovalStatus) == "" {
+		return fmt.Errorf("external PR submit response missing compatibility approval_status")
 	}
 	if !resp.ExternalPRCreated && strings.TrimSpace(resp.ExternalPRAdapterConfiguration) == "required" && recordAdapterConfigured(record.PRAdapter) {
 		return fmt.Errorf("external PR submit response pr_adapter conflicts with required external PR adapter configuration")
@@ -3810,9 +3750,6 @@ func validateSkillGovernanceExternalPRSubmitRequest(item SkillGovernanceExternal
 	}
 	if strings.TrimSpace(item.Title) == "" {
 		return fmt.Errorf("external PR submit request missing title")
-	}
-	if !item.HumanApproved {
-		return fmt.Errorf("external PR submit request requires human_approved")
 	}
 	return nil
 }
@@ -5353,9 +5290,6 @@ func validateBrowserTraceAPIFetcherProposalRequest(req BrowserTraceAPIFetcherPro
 	if strings.TrimSpace(req.CandidateID) == "" {
 		return fmt.Errorf("browser trace api fetcher proposal request missing candidate_id")
 	}
-	if !req.HumanApproved {
-		return fmt.Errorf("browser trace api fetcher proposal request requires human_approved")
-	}
 	return nil
 }
 
@@ -5391,7 +5325,7 @@ func validateBrowserTraceAPIValidationReviewResponse(resp BrowserTraceAPIValidat
 	if err := validateBrowserTraceAPIValidation(resp.Validation, "browser trace api validation review response"); err != nil {
 		return err
 	}
-	if req.HumanApproved && req.TermsReviewed && req.OfficialAPIReviewed && req.PIIReviewed && req.SchemaReviewed && req.RiskReviewed {
+	if req.TermsReviewed && req.OfficialAPIReviewed && req.PIIReviewed && req.SchemaReviewed && req.RiskReviewed {
 		if !resp.Validation.Passed || resp.Validation.Status != "validated" {
 			return fmt.Errorf("browser trace api validation review response expected validated result")
 		}
@@ -5793,9 +5727,6 @@ func validateComplexityReportReviewBoundary(report ComplexityReportArtifact) err
 		if !strings.Contains(content, "Patch applied: `false`") {
 			return fmt.Errorf("complexity status report %s concrete diff must not claim patch applied", artifactID)
 		}
-		if !strings.Contains(content, "Human approval required: `true`") {
-			return fmt.Errorf("complexity status report %s concrete diff missing human approval requirement", artifactID)
-		}
 	}
 	return nil
 }
@@ -5940,13 +5871,11 @@ func validateExternalControlResponse(resp ExternalControlResponse, req ExternalC
 	status := strings.TrimSpace(resp.Decision.Status)
 	switch status {
 	case "allowed":
-		if resp.Decision.RequiresApproval && !req.HumanApproved {
-			return fmt.Errorf("external control response allowed approval-required action without human approval")
+		if resp.Decision.RequiresApproval {
+			return fmt.Errorf("external control response allowed action but requires_approval is true")
 		}
 	case "needs_approval":
-		if !resp.Decision.RequiresApproval {
-			return fmt.Errorf("external control response needs_approval without requires_approval")
-		}
+		return fmt.Errorf("external control response returned retired needs_approval status")
 	case "blocked":
 		if len(resp.Decision.Reasons) == 0 {
 			return fmt.Errorf("external control response blocked without reasons")
@@ -6523,9 +6452,8 @@ func validateRevenueHumanDecisionResponse(resp RevenueHumanDecisionResponse, req
 	if strings.TrimSpace(resp.Result.Status) != strings.TrimSpace(resp.Record.GateStatus) {
 		return fmt.Errorf("revenue human decision response status mismatch")
 	}
-	if resp.Result.RequiresApproval != resp.Record.RequiresApproval {
-		return fmt.Errorf("revenue human decision response requires_approval mismatch")
-	}
+	// requires_approval is retained only for compatibility with old servers and
+	// records. Execution is governed by the synchronous gate status above.
 	expectedApprovalStatus = strings.TrimSpace(expectedApprovalStatus)
 	if expectedApprovalStatus != "" && strings.TrimSpace(resp.Record.ApprovalStatus) != expectedApprovalStatus {
 		return fmt.Errorf("revenue human decision response approval_status mismatch")
@@ -6533,8 +6461,8 @@ func validateRevenueHumanDecisionResponse(resp RevenueHumanDecisionResponse, req
 	if strings.TrimSpace(resp.Record.GateStatus) == "blocked" && len(resp.Record.Reasons) == 0 && len(resp.Result.Reasons) == 0 {
 		return fmt.Errorf("revenue human decision response blocked without reasons")
 	}
-	if strings.TrimSpace(resp.Record.GateStatus) == "needs_review" && !resp.Record.RequiresApproval {
-		return fmt.Errorf("revenue human decision response needs_review without approval requirement")
+	if strings.TrimSpace(resp.Record.GateStatus) == "needs_review" {
+		return fmt.Errorf("revenue human decision response returned retired needs_review status")
 	}
 	if resp.Record.CreatedAt.IsZero() {
 		return fmt.Errorf("revenue human decision response record missing created_at")
@@ -6714,15 +6642,9 @@ func validateSandboxStatus(resp SandboxStatus) error {
 		}
 		seenGateLogs[eventID] = struct{}{}
 		if status == "promotion_applied" || status == "rollback_executed" {
-			if strings.TrimSpace(log.HumanApprovalStatus) != "granted" {
-				return fmt.Errorf("sandbox status %s gate_log requires human approval", status)
-			}
 			promotion, ok := promotionsByID[strings.TrimSpace(log.PromotionID)]
 			if !ok {
 				return fmt.Errorf("sandbox status %s missing promotion record", status)
-			}
-			if strings.TrimSpace(promotion.HumanApprovalStatus) != "granted" {
-				return fmt.Errorf("sandbox status %s promotion requires human approval", status)
 			}
 			switch status {
 			case "promotion_applied":
@@ -6836,10 +6758,6 @@ func (c *Client) SubmitPromotionWorkflow(ctx context.Context, req PromotionWorkf
 		resp.SkippedReason = "apply_after_approval is false"
 		return resp, nil
 	}
-	if !req.HumanApproved || strings.TrimSpace(req.Promotion.HumanApprovalStatus) != "granted" {
-		resp.SkippedReason = "human approval is required before apply"
-		return resp, nil
-	}
 	if strings.TrimSpace(req.PostApplyVerificationPath) == "" {
 		resp.SkippedReason = "post_apply_verification_path is required before apply"
 		return resp, nil
@@ -6886,9 +6804,6 @@ func validatePromotionApplyRequest(req PromotionApplyRequest) error {
 	if err := validatePromotionRequest(req.Promotion); err != nil {
 		return err
 	}
-	if !req.HumanApproved || strings.TrimSpace(req.Promotion.HumanApprovalStatus) != "granted" {
-		return fmt.Errorf("promotion apply request requires human approval")
-	}
 	if strings.TrimSpace(req.Promotion.DiffPath) == "" {
 		return fmt.Errorf("promotion apply request missing diff_path")
 	}
@@ -6901,9 +6816,6 @@ func validatePromotionApplyRequest(req PromotionApplyRequest) error {
 func validatePromotionRollbackRequest(req PromotionApplyRequest) error {
 	if err := validatePromotionRequest(req.Promotion); err != nil {
 		return err
-	}
-	if !req.HumanApproved || strings.TrimSpace(req.Promotion.HumanApprovalStatus) != "granted" {
-		return fmt.Errorf("promotion rollback request requires human approval")
 	}
 	if strings.TrimSpace(req.Promotion.RollbackPlanPath) == "" {
 		return fmt.Errorf("promotion rollback request missing rollback_plan_path")

@@ -83,9 +83,6 @@ func (m *WorktreeSandboxManager) Create(ctx context.Context, opts WorktreeSandbo
 	if m.store == nil {
 		return WorktreeSandboxCreateResult{}, fmt.Errorf("sandbox store unavailable")
 	}
-	if !opts.HumanApproved {
-		return WorktreeSandboxCreateResult{}, fmt.Errorf("human_approved=true is required to create a worktree sandbox")
-	}
 	worktreeResult, err := m.worktrees.Create(ctx, aiworkflowapp.WorktreeCreateOptions{
 		RepoRoot:      opts.RepoRoot,
 		BaseDir:       opts.BaseDir,
@@ -134,9 +131,6 @@ func (m *WorktreeSandboxManager) Close(ctx context.Context, opts WorktreeSandbox
 	}
 	if m.store == nil {
 		return WorktreeSandboxCloseResult{}, fmt.Errorf("sandbox store unavailable")
-	}
-	if !opts.HumanApproved {
-		return WorktreeSandboxCloseResult{}, fmt.Errorf("human_approved=true is required to close a worktree sandbox")
 	}
 	worktreeResult, err := m.worktrees.Close(ctx, aiworkflowapp.WorktreeCloseOptions{
 		RepoRoot:      opts.RepoRoot,

@@ -199,9 +199,9 @@ func TestExecuteProposal_BlocksSelfServiceRestartBeforeAnyCommandRuns(t *testing
 
 	_, err := service.ExecuteProposal(context.Background(), task.NewJobID(), proposal.NewProposal("blocked", patchJSON, "", ""))
 	if err == nil {
-		t.Fatal("expected self lifecycle command to require approval")
+		t.Fatal("expected self lifecycle command to be blocked by policy")
 	}
-	if !strings.Contains(err.Error(), "approval required") || !strings.Contains(err.Error(), "rencrow.service lifecycle change") {
+	if !strings.Contains(err.Error(), "policy blocked") || !strings.Contains(err.Error(), "rencrow.service lifecycle change") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, statErr := os.Stat(markerPath); !os.IsNotExist(statErr) {
@@ -222,9 +222,9 @@ func TestExecuteProposal_BlocksSelfInstallCommands(t *testing.T) {
 
 	_, err := service.ExecuteProposal(context.Background(), task.NewJobID(), proposal.NewProposal("blocked", patchJSON, "", ""))
 	if err == nil {
-		t.Fatal("expected live binary install command to require approval")
+		t.Fatal("expected live binary install command to be blocked by policy")
 	}
-	if !strings.Contains(err.Error(), "approval required") || !strings.Contains(err.Error(), "RenCrow live binary install") {
+	if !strings.Contains(err.Error(), "policy blocked") || !strings.Contains(err.Error(), "RenCrow live binary install") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -24,4 +24,4 @@
 - 認証、課金、決済、削除処理
 - エラーハンドリングの挙動変更
 
-High risk は Report-only に留め、修正する場合は別 Goal Contract と Human approval を要求する。
+High risk は Report-only に留め、修正する場合は別 Goal Contract、同期policy判定、rollback evidence、実行後検証を要求する。

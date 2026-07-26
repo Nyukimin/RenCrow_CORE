@@ -35,10 +35,9 @@ are present or missing for each paper decision.
 With `--paper-latest`, it audits the latest paper-traded decision for the
 snapshot before falling back to the latest decision candidate.
 
-Paper trading requires an explicit approval file and does not place broker orders:
+Paper trading uses the generated decision policy file and does not place broker orders:
 
 ```bash
-# Edit latest.yml and set approved, approver, approved_at, and approval_reason first.
 make rencrow-data-paper-trade DATA_APPROVAL_FILE=rencrow-data/approvals/latest.yml
 ```
 

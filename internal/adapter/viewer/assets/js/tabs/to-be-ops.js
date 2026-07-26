@@ -86,35 +86,17 @@
     return details;
   }
 
-  function pendingEconomicTasks(tasks) {
-    return arrayValue(field(tasks, 'economic_tasks', 'EconomicTasks')).filter((item) => {
-      const approvalMode = textValue(field(item, 'approval_mode', 'ApprovalMode')).toLowerCase();
-      const status = textValue(field(item, 'status', 'Status')).toLowerCase();
-      return approvalMode === 'human_required' && status !== 'completed' && status !== 'rejected';
-    });
+  function policyDecisions(revenue) {
+    return arrayValue(field(revenue, 'human_decisions', 'HumanDecisions'));
   }
 
-  function pendingHumanDecisions(revenue) {
-    return arrayValue(field(revenue, 'human_decisions', 'HumanDecisions')).filter((item) => {
-      const approval = textValue(field(item, 'approval_status', 'ApprovalStatus')).toLowerCase();
-      const gate = textValue(field(item, 'gate_status', 'GateStatus')).toLowerCase();
-      return approval === 'pending' || gate === 'needs_review';
-    });
-  }
-
-  function safeApprovalDetails(tasks, revenue) {
-    const details = pendingEconomicTasks(tasks).slice(0, 3).map((item) => {
-      return 'task ' + textValue(field(item, 'task_id', 'TaskID'), '-') +
-        ' · target ' + textValue(field(item, 'opportunity_id', 'OpportunityID'), '-') +
-        ' · ' + textValue(field(item, 'task_kind', 'TaskKind'), 'unknown') + ' · human_required';
-    });
-    for (const item of pendingHumanDecisions(revenue).slice(0, 2)) {
-      details.push('decision ' + textValue(field(item, 'decision_id', 'DecisionID'), '-') +
+  function safePolicyDetails(revenue) {
+    return policyDecisions(revenue).slice(0, 5).map((item) => {
+      return 'decision ' + textValue(field(item, 'decision_id', 'DecisionID'), '-') +
         ' · target ' + textValue(field(item, 'subject_id', 'SubjectID'), '-') +
         ' · ' + textValue(field(item, 'decision_type', 'DecisionType'), 'unknown') +
-        ' · ' + textValue(field(item, 'approval_status', 'ApprovalStatus'), 'pending'));
-    }
-    return details;
+        ' · ' + textValue(field(item, 'gate_status', 'GateStatus'), 'unknown');
+    });
   }
 
   function traceSummary(traces) {
@@ -172,10 +154,11 @@
       Boolean(errors.opportunities || errors.tasks || errors.reflections || errors.revenue),
     );
     if (field(economic, 'enabled', 'Enabled') === false && economicStatus !== 'unavailable') economicStatus = 'warning';
-    const pendingTasks = pendingEconomicTasks(tasks);
-    const pendingDecisions = pendingHumanDecisions(revenue);
-    let approvalStatus = economicStatus;
-    if (pendingTasks.length + pendingDecisions.length > 0 && approvalStatus === 'ok') approvalStatus = 'warning';
+    const decisions = policyDecisions(revenue);
+    const blockedDecisions = decisions.filter((item) => textValue(field(item, 'gate_status', 'GateStatus')).toLowerCase() === 'blocked');
+    const allowedDecisions = decisions.filter((item) => textValue(field(item, 'gate_status', 'GateStatus')).toLowerCase() === 'allowed');
+    let policyStatus = economicStatus;
+    if (blockedDecisions.length > 0 && policyStatus !== 'unavailable') policyStatus = 'blocked';
 
     const traces = objectValue(data.traces);
     const recentTrace = traceSummary(traces);
@@ -218,15 +201,15 @@
         detailsLabel: 'Draft economic records', details: safeEconomicDetails(opportunities, tasks, reflections), emptyDetail: 'No draft economic records.',
       },
       {
-        key: 'approval-queue', title: 'Approval Queue', status: approvalStatus,
+        key: 'policy-decisions', title: 'Policy Decisions', status: policyStatus,
         metrics: [
-          metric('Pending total', pendingTasks.length + pendingDecisions.length),
-          metric('Economic tasks', pendingTasks.length),
-          metric('Human decisions', pendingDecisions.length),
-          metric('Approval mode', 'human'),
-          metric('External action', 'blocked'),
+          metric('Decisions', decisions.length),
+          metric('Allowed', allowedDecisions.length),
+          metric('Blocked', blockedDecisions.length),
+          metric('Approval wait', 'disabled'),
+          metric('Evaluation', 'synchronous'),
         ],
-        detailsLabel: 'Pending approval IDs', details: safeApprovalDetails(tasks, revenue), emptyDetail: 'No pending approvals.',
+        detailsLabel: 'Policy decision IDs', details: safePolicyDetails(revenue), emptyDetail: 'No policy decisions.',
       },
       {
         key: 'recent-trace', title: 'Recent Trace', status: traceStatus,

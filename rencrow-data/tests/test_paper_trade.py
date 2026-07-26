@@ -111,7 +111,7 @@ def prepare_decision(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
 
 
 class PaperTradeTest(unittest.TestCase):
-    def test_paper_trade_requires_approved_file(self) -> None:
+    def test_paper_trade_uses_generated_policy_file_without_approval(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             data_root, db_path, decision = prepare_decision(Path(td))
             result = run_script(
@@ -125,21 +125,15 @@ class PaperTradeTest(unittest.TestCase):
                 "--json",
                 check=False,
             )
-            self.assertEqual(result.returncode, 3)
+            self.assertEqual(result.returncode, 0, result.stderr)
             con = sqlite3.connect(db_path)
-            self.assertEqual(con.execute("SELECT COUNT(*) FROM paper_trade_log").fetchone()[0], 0)
+            self.assertGreater(con.execute("SELECT COUNT(*) FROM paper_trade_log").fetchone()[0], 0)
 
-    def test_paper_trade_records_simulated_fill_after_approval(self) -> None:
+    def test_paper_trade_records_simulated_fill_without_approval(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             data_root, db_path, decision = prepare_decision(Path(td))
             approval_path = Path(decision["approval_path"])
             approval = approval_path.read_text(encoding="utf-8")
-            approval = approval.replace("approved: false", "approved: true")
-            approval = approval.replace('approver: ""', "approver: unit-test")
-            approval = approval.replace('approved_at: ""', "approved_at: 2026-05-16T00:00:00+00:00")
-            approval = approval.replace('approval_reason: ""', "approval_reason: weekly paper approval")
-            approval_path.write_text(approval, encoding="utf-8")
-
             result = run_script(
                 "12_paper_trade.py",
                 "--db",
@@ -194,10 +188,10 @@ class PaperTradeTest(unittest.TestCase):
                 "SELECT approved, approver, approved_at, approval_reason FROM decision_log WHERE decision_id=?",
                 (decision["decision_id"],),
             ).fetchone()
-            self.assertEqual(decision_row[0], 1)
-            self.assertEqual(decision_row[1], "unit-test")
-            self.assertEqual(decision_row[2], "2026-05-16T00:00:00+00:00")
-            self.assertEqual(decision_row[3], "weekly paper approval")
+            self.assertEqual(decision_row[0], 0)
+            self.assertEqual(decision_row[1] or "", "")
+            self.assertEqual(decision_row[2] or "", "")
+            self.assertEqual(decision_row[3] or "", "")
             lot = con.execute("SELECT account_scope, quantity, acquisition_price FROM tax_lot_log").fetchone()
             self.assertEqual(lot[0], "taxable")
             self.assertGreater(lot[1], 0)
@@ -433,7 +427,7 @@ class PaperTradeTest(unittest.TestCase):
             self.assertEqual(row[2], "vetoed")
             self.assertEqual(row[3], "close_next_week")
 
-    def test_paper_trade_requires_approval_metadata(self) -> None:
+    def test_paper_trade_does_not_require_approval_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             data_root, db_path, decision = prepare_decision(Path(td))
             approval_path = data_root / "approvals" / "missing_reason.yml"
@@ -461,8 +455,7 @@ class PaperTradeTest(unittest.TestCase):
                 "--json",
                 check=False,
             )
-            self.assertEqual(result.returncode, 3)
-            self.assertIn("approval_reason", result.stderr)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_paper_trade_rejects_approval_scope_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as td:

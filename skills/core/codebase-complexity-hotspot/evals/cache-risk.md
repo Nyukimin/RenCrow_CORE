@@ -8,4 +8,4 @@ hotspot 改善案として cache 導入が考えられる。
 
 - risk を medium 以上にする。
 - stale data、invalidate、memory growth、concurrency の確認を要求する。
-- Human approval なしに cache patch を作成しない。
+- 同期policy判定、invalidate設計、rollback evidenceなしに cache patch を作成しない。

@@ -557,7 +557,7 @@ class AuditReportTest(unittest.TestCase):
             self.assertIn("status: preferred_ready", text)
             self.assertIn("preferred_required_span_days: 77", text)
 
-    def test_audit_report_rejects_missing_approval_evidence(self) -> None:
+    def test_audit_report_does_not_require_legacy_approval_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tmp_path = Path(td)
             db_path = tmp_path / "rencrow.db"
@@ -656,10 +656,10 @@ class AuditReportTest(unittest.TestCase):
             summary = json.loads(result.stdout)
             first_week = summary["paper_gate"]["weeks"][0]
             self.assertEqual(summary["paper_gate"]["status"], "not_ready")
-            self.assertEqual(summary["paper_gate"]["missing_approval_evidence_rows"], 1)
-            self.assertIn("missing_approval_evidence", summary["paper_gate"]["gate_failures"])
-            self.assertFalse(first_week["approval"])
-            self.assertIn("approval", first_week["missing"])
+            self.assertEqual(summary["paper_gate"]["missing_approval_evidence_rows"], 0)
+            self.assertNotIn("missing_approval_evidence", summary["paper_gate"]["gate_failures"])
+            self.assertTrue(first_week["approval"])
+            self.assertNotIn("approval", first_week["missing"])
 
     def test_audit_report_rejects_missing_decision_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:

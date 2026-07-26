@@ -422,7 +422,7 @@ func TestHandleComplexityHotspotProposalCreatesGoalAndPendingArtifact(t *testing
 	if store.reports[1].Type != "complexity_coder_diff_request" || store.reports[1].Status != "pending_review" {
 		t.Fatalf("coder diff request=%#v", store.reports[1])
 	}
-	for _, want := range []string{"Complexity Patch Proposal", "Human approval is required", "Map lookup", "External PR Review Checklist", "Migration / High-risk Review Checklist", "one PR to one hotspot"} {
+	for _, want := range []string{"Complexity Patch Proposal", "execution policy and verification requirements", "Map lookup", "External PR Review Checklist", "Migration / High-risk Review Checklist", "one PR to one hotspot"} {
 		if !bytes.Contains([]byte(store.reports[0].Content), []byte(want)) {
 			t.Fatalf("proposal report missing %q:\n%s", want, store.reports[0].Content)
 		}
@@ -436,7 +436,7 @@ func TestHandleComplexityHotspotProposalCreatesGoalAndPendingArtifact(t *testing
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body["patch_applied"] != false || body["human_approval_required"] != true {
+	if body["patch_applied"] != false || body["human_approval_required"] != false {
 		t.Fatalf("body=%#v", body)
 	}
 	if body["proposal_artifact"] == nil {
@@ -577,7 +577,7 @@ func TestHandleComplexityHotspotProposalCreatesNeedsReviewSandboxPromotionWhenDi
 	if len(sandboxSink.promotions) != 1 || len(sandboxSink.gateLogs) != 1 {
 		t.Fatalf("promotions=%#v gateLogs=%#v", sandboxSink.promotions, sandboxSink.gateLogs)
 	}
-	if sandboxSink.promotions[0].HumanApprovalStatus != domainsandbox.ApprovalPending {
+	if sandboxSink.promotions[0].HumanApprovalStatus != domainsandbox.ApprovalNotRequired {
 		t.Fatalf("promotion=%#v", sandboxSink.promotions[0])
 	}
 	if sandboxSink.gateLogs[0].GateStatus != domainsandbox.GateStatusNeedsMoreTest {
@@ -589,7 +589,7 @@ func TestHandleComplexityHotspotProposalCreatesNeedsReviewSandboxPromotionWhenDi
 	}
 	decision := body["sandbox_decision"].(map[string]any)
 	missing := decision["missing_requirements"].([]any)
-	for _, want := range []string{"diff_path", "test_result_path", "rollback_plan_path", "human_approval"} {
+	for _, want := range []string{"diff_path", "test_result_path", "rollback_plan_path"} {
 		found := false
 		for _, got := range missing {
 			if got == want {
@@ -659,7 +659,7 @@ func TestHandleComplexityHotspotConcreteDiffStoresReviewOnlyArtifact(t *testing.
 	if report.Type != "complexity_concrete_diff_proposal" || report.Status != "pending_review" {
 		t.Fatalf("report=%#v", report)
 	}
-	for _, want := range []string{"Complexity Concrete Diff Proposal", "Patch applied: `false`", "Human approval required: `true`", "```diff", "Sandbox Promotion Gate"} {
+	for _, want := range []string{"Complexity Concrete Diff Proposal", "Patch applied: `false`", "Human approval required: `false`", "```diff", "Sandbox Promotion Gate"} {
 		if !bytes.Contains([]byte(report.Content), []byte(want)) {
 			t.Fatalf("report missing %q:\n%s", want, report.Content)
 		}
@@ -671,7 +671,7 @@ func TestHandleComplexityHotspotConcreteDiffStoresReviewOnlyArtifact(t *testing.
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body["patch_applied"] != false || body["human_approval_required"] != true || body["concrete_diff_artifact"] == nil {
+	if body["patch_applied"] != false || body["human_approval_required"] != false || body["concrete_diff_artifact"] == nil {
 		t.Fatalf("body=%#v", body)
 	}
 }
@@ -831,7 +831,7 @@ func TestHandleComplexityHotspotCoderDiffGeneratesReviewOnlyArtifact(t *testing.
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("json decode: %v", err)
 	}
-	if body["patch_applied"] != false || body["human_approval_required"] != true || body["coder_result"] == nil {
+	if body["patch_applied"] != false || body["human_approval_required"] != false || body["coder_result"] == nil {
 		t.Fatalf("unexpected response=%#v", body)
 	}
 }

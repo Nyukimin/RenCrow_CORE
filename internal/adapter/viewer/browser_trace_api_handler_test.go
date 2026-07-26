@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -470,7 +471,7 @@ func TestHandleBrowserTraceAPIFetcherProposalRejectsUnvalidatedCandidate(t *test
 	}
 }
 
-func TestHandleBrowserTraceAPIFetcherProposalRequiresHumanApproval(t *testing.T) {
+func TestHandleBrowserTraceAPIFetcherProposalDoesNotRequireHumanApproval(t *testing.T) {
 	store := &stubBrowserTraceAPIStore{}
 	body := []byte(`{"candidate_id":"api_cand_1","human_approved":false}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/browser-trace-api/fetcher-proposals", bytes.NewReader(body))
@@ -478,7 +479,7 @@ func TestHandleBrowserTraceAPIFetcherProposalRequiresHumanApproval(t *testing.T)
 
 	HandleBrowserTraceAPIFetcherProposal(store, nil).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "human_approved") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

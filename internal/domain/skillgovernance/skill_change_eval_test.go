@@ -10,7 +10,6 @@ func TestRunSkillChangeEvalPassesThreeBeforeAfterCases(t *testing.T) {
 		SkillID:                "core.pr-readiness",
 		ChangeReason:           "PR gate wording update",
 		ExpectedBehaviorChange: "stop low-quality PR",
-		HumanApprovalStatus:    HumanApprovalGranted,
 		Cases: []SkillChangeEvalCase{
 			{
 				Name:             "duplicate_pr_found",
@@ -165,7 +164,6 @@ func TestRunSkillChangeEvalBlocksMissingRequiredRequestFields(t *testing.T) {
 		"skill_id is required",
 		"change_reason is required",
 		"expected_behavior_change is required",
-		"human approval is required",
 	}
 	if result.Status != SkillChangeEvalStatusBlocked {
 		t.Fatalf("status=%s reasons=%v", result.Status, result.StopReasons)

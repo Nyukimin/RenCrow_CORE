@@ -37,7 +37,7 @@ func (w *workerExecutionService) validateCommandsBeforeExecution(commands []patc
 		switch cmd.Type {
 		case patch.TypeShellCommand:
 			if reason := blockedSelfLifecycleCommandReason(cmd.Target); reason != "" {
-				return fmt.Errorf("approval required: command %d modifies RenCrow runtime lifecycle or live binary (%s): %s", index+1, reason, cmd.Target)
+				return fmt.Errorf("policy blocked: command %d modifies RenCrow runtime lifecycle or live binary (%s): %s", index+1, reason, cmd.Target)
 			}
 		case patch.TypeFileEdit:
 			if err := w.validateFileEditBeforeExecution(index, cmd); err != nil {

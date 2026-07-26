@@ -113,7 +113,7 @@ func TestRunExecutorApplyFailureAndVerifyErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("approval required does not retry", func(t *testing.T) {
+	t.Run("legacy approval error becomes policy blocked", func(t *testing.T) {
 		attempts := 0
 		result, err := RunExecutor(context.Background(), ExecuteRequest{
 			Contract:  testContract(),
@@ -133,8 +133,8 @@ func TestRunExecutorApplyFailureAndVerifyErrorPaths(t *testing.T) {
 		if attempts != 1 {
 			t.Fatalf("approval-required failure should not retry, attempts=%d", attempts)
 		}
-		if result.Report.RepairCount != 0 || result.Report.ErrorKind != "approval_required" {
-			t.Fatalf("unexpected approval-required report: %#v", result.Report)
+		if result.Report.RepairCount != 0 || result.Report.ErrorKind != "policy_blocked" {
+			t.Fatalf("unexpected policy-blocked report: %#v", result.Report)
 		}
 	})
 
@@ -200,7 +200,7 @@ func TestExecutorHelpers(t *testing.T) {
 		"dependency module unavailable": "dependency_missing",
 		"no such file or path":          "path_mismatch",
 		"ollama model unavailable":      "provider_unavailable",
-		"approval required":             "approval_required",
+		"approval required":             "policy_blocked",
 		"other failure":                 "apply",
 	}
 	for msg, want := range tests {
@@ -220,8 +220,8 @@ func TestExecutorHelpers(t *testing.T) {
 	if retryableFailureKind("permission_denied") {
 		t.Fatal("permission_denied should not be retryable")
 	}
-	if retryableFailureKind("approval_required") {
-		t.Fatal("approval_required should not be retryable")
+	if retryableFailureKind("policy_blocked") {
+		t.Fatal("policy_blocked should not be retryable")
 	}
 }
 

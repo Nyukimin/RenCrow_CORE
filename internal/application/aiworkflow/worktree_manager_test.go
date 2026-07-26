@@ -26,14 +26,20 @@ func (s *memoryWorktreeStore) SaveWorkflowEvent(_ context.Context, item domainai
 	return nil
 }
 
-func TestWorktreeManagerRequiresHumanApproval(t *testing.T) {
+func TestWorktreeManagerDoesNotRequireHumanApproval(t *testing.T) {
+	repo := initGitRepo(t)
 	manager := NewWorktreeManager(nil)
 
-	if _, err := manager.Create(context.Background(), WorktreeCreateOptions{
-		RepoRoot: "repo",
+	result, err := manager.Create(context.Background(), WorktreeCreateOptions{
+		RepoRoot: repo,
+		BaseDir:  filepath.Join(t.TempDir(), "worktrees"),
 		Branch:   "feature/test",
-	}); err == nil {
-		t.Fatal("expected missing human approval to fail")
+	})
+	if err != nil {
+		t.Fatalf("missing legacy human approval must not block: %v", err)
+	}
+	if result.Worktree.Status != "active" {
+		t.Fatalf("unexpected result: %#v", result)
 	}
 }
 

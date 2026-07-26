@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	ApprovalPending  = "pending"
-	ApprovalGranted  = "granted"
-	ApprovalRejected = "rejected"
+	ApprovalPending     = "pending"
+	ApprovalGranted     = "granted"
+	ApprovalRejected    = "rejected"
+	ApprovalNotRequired = "not_required"
 
 	GateStatusApproved      = "approve"
 	GateStatusRejected      = "reject"
@@ -80,12 +81,6 @@ func EvaluatePromotionRequest(req PromotionRequest) PromotionGateDecision {
 			MissingRequirements: missing,
 		}
 	}
-	if req.HumanApprovalStatus == ApprovalRejected {
-		return PromotionGateDecision{
-			Status: GateStatusRejected,
-			Reason: "human approval rejected",
-		}
-	}
 	return PromotionGateDecision{
 		Status: GateStatusApproved,
 		Reason: "promotion requirements satisfied",
@@ -102,9 +97,6 @@ func EvaluatePromotionApplyRequest(req PromotionApplyRequest) PromotionApplyDeci
 		}
 	}
 	var missing []string
-	if !req.HumanApproved {
-		missing = append(missing, "human_approved")
-	}
 	if strings.TrimSpace(req.PostApplyVerificationPath) == "" {
 		missing = append(missing, "post_apply_verification_path")
 	}
@@ -154,9 +146,6 @@ func missingPromotionRequirements(req PromotionRequest) []string {
 	}
 	if strings.TrimSpace(req.RollbackPlanPath) == "" {
 		missing = append(missing, "rollback_plan_path")
-	}
-	if strings.TrimSpace(req.HumanApprovalStatus) != ApprovalGranted && strings.TrimSpace(req.HumanApprovalStatus) != ApprovalRejected {
-		missing = append(missing, "human_approval")
 	}
 	return missing
 }

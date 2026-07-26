@@ -48,14 +48,15 @@ func (s *fakeWorktreeSandboxStore) SaveSandbox(_ context.Context, record domains
 	return s.err
 }
 
-func TestWorktreeSandboxManagerRequiresHumanApproval(t *testing.T) {
-	manager := NewWorktreeSandboxManager(&fakeWorktreeCreator{}, &fakeWorktreeSandboxStore{})
+func TestWorktreeSandboxManagerDoesNotRequireHumanApproval(t *testing.T) {
+	creator := &fakeWorktreeCreator{}
+	manager := NewWorktreeSandboxManager(creator, &fakeWorktreeSandboxStore{})
 
 	_, err := manager.Create(context.Background(), WorktreeSandboxCreateOptions{
 		Branch: "feature/sandbox",
 	})
-	if err == nil {
-		t.Fatal("expected human approval error")
+	if err != nil {
+		t.Fatalf("missing legacy human approval must not block: %v", err)
 	}
 }
 
@@ -132,14 +133,14 @@ func TestWorktreeSandboxManagerSurfacesRegistryFailure(t *testing.T) {
 	}
 }
 
-func TestWorktreeSandboxManagerCloseRequiresHumanApproval(t *testing.T) {
+func TestWorktreeSandboxManagerCloseDoesNotRequireHumanApproval(t *testing.T) {
 	manager := NewWorktreeSandboxManager(&fakeWorktreeCreator{}, &fakeWorktreeSandboxStore{})
 
 	_, err := manager.Close(context.Background(), WorktreeSandboxCloseOptions{
 		WorktreePath: "/tmp/worktrees/repo-feature-sandbox",
 	})
-	if err == nil {
-		t.Fatal("expected human approval error")
+	if err != nil {
+		t.Fatalf("missing legacy human approval must not block: %v", err)
 	}
 }
 

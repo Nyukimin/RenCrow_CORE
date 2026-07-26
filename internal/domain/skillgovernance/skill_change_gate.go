@@ -40,10 +40,6 @@ func EvaluateSkillChangeGate(log SkillChangeLog) SkillChangeGateDecision {
 		reasons = append(reasons, "eval_result is required")
 		actions = append(actions, "before / after 評価結果を記録する")
 	}
-	if strings.TrimSpace(log.HumanApprovalStatus) != HumanApprovalGranted {
-		reasons = append(reasons, "human approval is required")
-		actions = append(actions, "Human approval を granted にする")
-	}
 	if len(reasons) > 0 {
 		return SkillChangeGateDecision{
 			Status:       ChangeGateStatusBlocked,

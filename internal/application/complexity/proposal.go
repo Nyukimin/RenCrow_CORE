@@ -51,7 +51,7 @@ func BuildPatchProposalMarkdown(hotspot domaincomplexity.Hotspot) string {
 	fmt.Fprintf(&b, "\n## Patch Boundary\n\n")
 	fmt.Fprintf(&b, "- Do not apply automatically.\n")
 	fmt.Fprintf(&b, "- Do not change unrelated hotspots in the same patch.\n")
-	fmt.Fprintf(&b, "- Human approval is required before Coder generates or Worker applies a concrete diff.\n")
+	fmt.Fprintf(&b, "- Worker applies a concrete diff only after execution policy and verification requirements pass.\n")
 	writeExternalPRReviewChecklist(&b, hotspot)
 	writeMigrationReviewChecklist(&b, hotspot)
 	return b.String()
@@ -92,7 +92,7 @@ func BuildCoderDiffRequestMarkdown(hotspot domaincomplexity.Hotspot) string {
 		}
 	}
 	fmt.Fprintf(&b, "\n## Promotion Rule\n\n")
-	fmt.Fprintf(&b, "The generated diff must enter Sandbox Promotion Gate with diff, test result, rollback plan, and Human approval. A missing item is a failure, not success.\n")
+	fmt.Fprintf(&b, "The generated diff must enter Sandbox Promotion Gate with diff, test result, rollback plan, and post-apply verification. A missing item is a failure, not success.\n")
 	writeExternalPRReviewChecklist(&b, hotspot)
 	writeMigrationReviewChecklist(&b, hotspot)
 	return b.String()
@@ -108,7 +108,7 @@ func BuildConcreteDiffProposalMarkdown(hotspot domaincomplexity.Hotspot, concret
 	fmt.Fprintf(&b, "- Risk: `%s`\n\n", hotspot.RiskLevel)
 	fmt.Fprintf(&b, "## Review State\n\n")
 	fmt.Fprintf(&b, "- Patch applied: `false`\n")
-	fmt.Fprintf(&b, "- Human approval required: `true`\n")
+	fmt.Fprintf(&b, "- Human approval required: `false`\n")
 	if strings.TrimSpace(testResultPath) != "" {
 		fmt.Fprintf(&b, "- Test result path: `%s`\n", strings.TrimSpace(testResultPath))
 	}
@@ -118,7 +118,7 @@ func BuildConcreteDiffProposalMarkdown(hotspot domaincomplexity.Hotspot, concret
 	fmt.Fprintf(&b, "\n## Concrete Diff\n\n")
 	fmt.Fprintf(&b, "```diff\n%s\n```\n\n", strings.TrimSpace(concreteDiff))
 	fmt.Fprintf(&b, "## Promotion Rule\n\n")
-	fmt.Fprintf(&b, "This diff is a review artifact only. Worker must not apply it until Sandbox Promotion Gate has diff path, test result, rollback plan, and Human approval.\n")
+	fmt.Fprintf(&b, "This diff is a review artifact only. Worker must not apply it until Sandbox Promotion Gate has diff path, test result, rollback plan, and post-apply verification.\n")
 	writeExternalPRReviewChecklist(&b, hotspot)
 	writeMigrationReviewChecklist(&b, hotspot)
 	return b.String()

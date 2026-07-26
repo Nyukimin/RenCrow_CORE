@@ -18,7 +18,7 @@ func TestEvaluateContributionGateBlocksMissingRequiredChecks(t *testing.T) {
 	if decision.Status != GateStatusBlocked || decision.CanContribute {
 		t.Fatalf("decision=%#v", decision)
 	}
-	if len(decision.StopReasons) != 2 {
+	if len(decision.StopReasons) != 1 {
 		t.Fatalf("reasons=%#v", decision.StopReasons)
 	}
 }
@@ -34,7 +34,6 @@ func TestEvaluateContributionGateBlocksAllMissingInputs(t *testing.T) {
 		"existing PRs were not checked",
 		"real problem is not verified",
 		"core change fit is not verified",
-		"complete diff was not human-approved",
 		"test result is required",
 	}
 	if len(decision.StopReasons) != len(wantReasons) || len(decision.NextActions) != len(wantReasons) {

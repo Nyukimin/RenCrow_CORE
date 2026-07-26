@@ -6,16 +6,19 @@ import (
 	"time"
 )
 
-func TestNewBlockedExternalPRSubmitRecordRequiresHumanApproval(t *testing.T) {
-	_, err := NewBlockedExternalPRSubmitRecord(ExternalPRSubmitRecord{
+func TestNewBlockedExternalPRSubmitRecordDoesNotRequireHumanApproval(t *testing.T) {
+	record, err := NewBlockedExternalPRSubmitRecord(ExternalPRSubmitRecord{
 		SubmitID:            "submit_1",
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
 		HumanApproved:       false,
 	}, time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC))
-	if err == nil || !strings.Contains(err.Error(), "human approval") {
+	if err != nil {
 		t.Fatalf("err=%v", err)
+	}
+	if record.ApprovalStatus != "not_required" {
+		t.Fatalf("approval_status=%q", record.ApprovalStatus)
 	}
 }
 
@@ -67,8 +70,6 @@ func TestValidateExternalPRSubmitRecordRejectsMissingRequiredFieldsAndInvalidSta
 		{name: "missing contribution event id", mutate: func(record *ExternalPRSubmitRecord) { record.ContributionEventID = "" }, want: "contribution_event_id"},
 		{name: "missing repo", mutate: func(record *ExternalPRSubmitRecord) { record.Repo = "" }, want: "repo"},
 		{name: "missing title", mutate: func(record *ExternalPRSubmitRecord) { record.Title = "" }, want: "title"},
-		{name: "missing human approval", mutate: func(record *ExternalPRSubmitRecord) { record.HumanApproved = false }, want: "human approval"},
-		{name: "pending approval status", mutate: func(record *ExternalPRSubmitRecord) { record.ApprovalStatus = "pending" }, want: "approval_status"},
 		{name: "missing submit status", mutate: func(record *ExternalPRSubmitRecord) { record.SubmitStatus = "" }, want: "submit_status"},
 		{name: "invalid submit status", mutate: func(record *ExternalPRSubmitRecord) { record.SubmitStatus = "queued" }, want: "submit_status"},
 		{name: "missing failure reason", mutate: func(record *ExternalPRSubmitRecord) { record.FailureReason = "" }, want: "failure_reason"},

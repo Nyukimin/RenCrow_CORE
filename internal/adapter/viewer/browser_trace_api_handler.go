@@ -321,9 +321,6 @@ func browserTraceValidationReviewIssues(req BrowserTraceAPIValidationReviewReque
 	add := func(code, message, severity string) {
 		issues = append(issues, domaintrace.APIValidationIssue{Code: code, Message: message, Severity: severity})
 	}
-	if !req.HumanApproved {
-		add("human_approval_required", "human approval is required before marking an API candidate validated", "high")
-	}
 	if !req.TermsReviewed {
 		add("terms_review_required", "terms, robots, API policy, and rate limit review must be recorded", "high")
 	}
@@ -360,10 +357,6 @@ func HandleBrowserTraceAPIFetcherProposal(store BrowserTraceAPIStore, workstream
 		}
 		if req.CandidateID == "" {
 			http.Error(w, "candidate_id is required", http.StatusBadRequest)
-			return
-		}
-		if !req.HumanApproved {
-			http.Error(w, "human_approved=true is required before fetcher proposal", http.StatusBadRequest)
 			return
 		}
 		candidates, err := store.ListAPICandidates(r.Context(), 500)

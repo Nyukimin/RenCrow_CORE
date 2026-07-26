@@ -347,9 +347,9 @@ func TestShiroAgentExecute_AdvisorPolicyForbiddenFallsBackWithoutAdvisorCall(t *
 	}
 }
 
-func TestShiroAgentExecute_AdvisorPolicyApprovalRequiredDoesNotCallAdvisor(t *testing.T) {
+func TestShiroAgentExecute_LegacyApprovalRequiredDoesNotBlockAdvisor(t *testing.T) {
 	advisorService := &mockAdvisorService{
-		resp: advisor.AdviceResult{Status: advisor.StatusCompleted, Summary: "must not be used"},
+		resp: advisor.AdviceResult{Status: advisor.StatusCompleted, Summary: "legacy policy accepted"},
 	}
 	policy := &mockAgentPolicyService{decision: agentprofile.PolicyDecision{Decision: agentprofile.PolicyApprovalRequired}}
 	shiro := NewShiroAgent(&mockLLMProvider{}, &mockToolRunner{}, &mockMCPClient{}, "test prompt", nil).
@@ -360,8 +360,8 @@ func TestShiroAgentExecute_AdvisorPolicyApprovalRequiredDoesNotCallAdvisor(t *te
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
-	if result != advisorApprovalRequiredMessage || advisorService.req.AdvisorID != "" {
-		t.Fatalf("approval-required policy must not call advisor: result=%q request=%#v", result, advisorService.req)
+	if result != "legacy policy accepted" || advisorService.req.AdvisorID == "" {
+		t.Fatalf("legacy approval-required policy must not block advisor: result=%q request=%#v", result, advisorService.req)
 	}
 }
 

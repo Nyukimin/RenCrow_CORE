@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestValidateUpdateBlocksPackagePathsWithoutApprovalAndRollback(t *testing.T) {
+func TestValidateUpdateBlocksPackagePathsWithoutRollback(t *testing.T) {
 	root := t.TempDir()
 	service := NewService(root)
 
@@ -23,12 +23,12 @@ func TestValidateUpdateBlocksPackagePathsWithoutApprovalAndRollback(t *testing.T
 	if len(report.PackagePaths) != 1 || report.PackagePaths[0] != "go.mod" {
 		t.Fatalf("package paths = %#v", report.PackagePaths)
 	}
-	if !containsString(report.MissingRequirements, "human_approved") || !containsString(report.MissingRequirements, "rollback_evidence_path") {
+	if containsString(report.MissingRequirements, "human_approved") || !containsString(report.MissingRequirements, "rollback_evidence_path") {
 		t.Fatalf("missing requirements = %#v", report.MissingRequirements)
 	}
 }
 
-func TestValidateUpdateAllowsPackagePathWithApprovalAndRollbackEvidence(t *testing.T) {
+func TestValidateUpdateAllowsPackagePathWithRollbackEvidence(t *testing.T) {
 	root := t.TempDir()
 	rollback := filepath.Join(root, "reports", "rollback.md")
 	if err := os.MkdirAll(filepath.Dir(rollback), 0o755); err != nil {
@@ -42,12 +42,11 @@ func TestValidateUpdateAllowsPackagePathWithApprovalAndRollbackEvidence(t *testi
 	report, err := service.ValidateUpdate(context.Background(), ValidationRequest{
 		Paths:                []string{"pyproject.toml"},
 		RollbackEvidencePath: "reports/rollback.md",
-		HumanApproved:        true,
 	})
 	if err != nil {
 		t.Fatalf("ValidateUpdate() error = %v", err)
 	}
-	if report.Status != "manual_review_satisfied" || !report.InstallAllowed || !report.RequiresManualReview {
+	if report.Status != "policy_satisfied" || !report.InstallAllowed || !report.RequiresManualReview {
 		t.Fatalf("unexpected report: %#v", report)
 	}
 	if report.RollbackEvidencePath != "reports/rollback.md" {

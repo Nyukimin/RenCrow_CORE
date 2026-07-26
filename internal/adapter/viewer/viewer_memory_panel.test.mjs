@@ -302,7 +302,7 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(opsJs, /function latestWorkstreamVaultUpdates/);
   assert.match(opsJs, /function renderWorkstreamVaultReviews/);
   assert.match(opsJs, /function workstreamVaultReviewSummary/);
-  assert.match(opsJs, /approved not applied/);
+  assert.match(opsJs, /adopted not applied/);
   assert.match(opsJs, /function reviewWorkstreamVaultUpdate/);
   assert.match(opsJs, /function formatWorkstreamVaultPreview/);
   assert.match(opsJs, /preview side-by-side/);
@@ -453,8 +453,8 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.ok(viewer.includes('revenueDecisionReviewResult'));
   assert.ok(viewer.includes('function reviewRevenueHumanDecision'));
   assert.ok(viewer.includes('paid events'));
-  assert.ok(viewer.includes('human decisions pending'));
-  assert.ok(viewer.includes('Revenue Human Decision Gate'));
+  assert.ok(viewer.includes('policy decisions blocked'));
+  assert.ok(viewer.includes('Revenue Policy Decisions'));
   assert.ok(viewer.includes('/viewer/persona-observation'));
   assert.ok(viewer.includes('personaObservationLogs'));
   assert.ok(viewer.includes('personaMetaProfileUpdates'));
@@ -503,7 +503,7 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.ok(viewer.includes('knowledgePersonalArchive'));
   assert.ok(viewer.includes('Knowledge Memory'));
   assert.ok(viewer.includes('vault updates'));
-  assert.ok(viewer.includes('approval pending'));
+  assert.ok(viewer.includes('adoption pending'));
   assert.ok(viewer.includes('artifacts'));
   assert.ok(viewer.includes('gate_logs'));
   assert.ok(viewer.includes('/viewer/memory/state'));
@@ -701,8 +701,8 @@ globalThis.__complexityArtifactResult = document.getElementById('complexityRevie
   assert.match(context.__complexityArtifacts, /complexity_concrete_diff_proposal/);
   assert.match(context.__complexityArtifacts, /pending_review/);
   assert.match(context.__complexityArtifacts, /not applied/);
-  assert.match(context.__complexityArtifacts, /required/);
-  assert.match(context.__complexityArtifactResult, /1 total \/ 1 pending-review \/ 0 failed \/ 0 patch applied \/ 1 human approval required/);
+  assert.match(context.__complexityArtifacts, /true \(ignored\)/);
+  assert.match(context.__complexityArtifactResult, /1 total \/ 1 pending-review \/ 0 failed \/ 0 patch applied \/ 1 legacy approval-required artifact\(s\)/);
   assert.match(context.__complexityArtifactResult, /mode: review-only blocked: no patch applied/);
 });
 
@@ -749,7 +749,7 @@ globalThis.__complexityArtifactResult = document.getElementById('complexityRevie
   assert.match(context.__complexityArtifacts, /complexity_coder_diff_failure/);
   assert.match(context.__complexityArtifacts, /failed/);
   assert.match(context.__complexityArtifacts, /not applied/);
-  assert.match(context.__complexityArtifactResult, /1 total \/ 0 pending-review \/ 1 failed \/ 0 patch applied \/ 1 human approval required/);
+  assert.match(context.__complexityArtifactResult, /1 total \/ 0 pending-review \/ 1 failed \/ 0 patch applied \/ 1 legacy approval-required artifact\(s\)/);
   assert.match(context.__complexityArtifactResult, /mode: review-only blocked: no patch applied/);
 });
 
@@ -993,7 +993,7 @@ globalThis.__result = document.getElementById('workstreamVaultReviewResult').tex
   const context = vm.createContext({document, encodeURIComponent, JSON});
   vm.runInContext(source, context);
 
-  assert.match(context.__summary, /1 total \/ 1 pending \/ 0 approved \/ 0 rejected \/ 0 applied/);
+  assert.match(context.__summary, /1 total \/ 1 pending \/ 0 adopted \/ 0 rejected \/ 0 applied/);
   assert.match(context.__summary, /blocked: no vault apply/);
   assert.match(context.__body, /vu_1/);
   assert.match(context.__body, /not applied/);
@@ -2423,14 +2423,14 @@ globalThis.__externalSendAuditResult = document.getElementById('revenueExternalS
   assert.match(context.__drilldown, /blocker/);
   assert.match(context.__drilldown, /Decision drilldown/);
   assert.match(context.__drilldown, /dec_1/);
-  assert.match(context.__channelDraftResult, /1 total \/ 1 pending \/ 1 draft-only \/ 0 external_send_applied/);
-  assert.match(context.__channelDraftResult, /mode: draft-only \/ external send requires human approval: yes/);
+  assert.match(context.__channelDraftResult, /1 total \/ 1 draft-only \/ 0 external_send_applied/);
+  assert.match(context.__channelDraftResult, /external send execution policy: synchronous/);
   assert.match(context.__externalSendAudits, /apply_1/);
   assert.match(context.__externalSendAudits, /blocked/);
   assert.match(context.__externalSendAudits, /not_sent/);
   assert.match(context.__externalSendAudits, /unconfigured/);
   assert.match(context.__externalSendAuditResult, /1 total \/ 1 blocked \/ 0 sent \/ 1 not sent \/ 0 verified/);
-  assert.match(context.__externalSendAuditResult, /external channel adapter: unconfigured \/ configured: no \/ human approval: required/);
+  assert.match(context.__externalSendAuditResult, /external channel adapter: unconfigured \/ configured: no \/ execution policy: synchronous/);
   assert.match(context.__externalSendAuditResult, /blocked: no external send applied/);
 });
 
@@ -3206,7 +3206,7 @@ globalThis.__skillPRAuditResult = document.getElementById('skillExternalPRAuditR
   assert.match(context.__skillPRAudits, /unconfigured/);
   assert.match(context.__skillPRAudits, /not created/);
   assert.match(context.__skillPRAuditResult, /1 total \/ 1 blocked \/ 0 created \/ 1 not created \/ 0 verified/);
-  assert.match(context.__skillPRAuditResult, /external PR adapter: unconfigured \/ configured: no \/ human approval: required/);
+  assert.match(context.__skillPRAuditResult, /external PR adapter: unconfigured \/ configured: no \/ execution policy: synchronous/);
   assert.match(context.__skillPRAuditResult, /blocked: no external PR created/);
 });
 
@@ -3664,7 +3664,7 @@ globalThis.__sandboxGateLogResult = document.getElementById('sandboxGateLogResul
   assert.match(context.__sandboxGateLogs, /pending/);
   assert.match(context.__sandboxGateLogs, /human approval missing/);
   assert.match(context.__sandboxGateLogResult, /1 total \/ 1 needs-review \/ 0 applied \/ 0 rollback \/ 0 post-apply evidence/);
-  assert.match(context.__sandboxGateLogResult, /formal apply requires human approval/);
+  assert.match(context.__sandboxGateLogResult, /execution policy: synchronous/);
   assert.match(context.__sandboxGateLogResult, /blocked: no promotion applied/);
 });
 

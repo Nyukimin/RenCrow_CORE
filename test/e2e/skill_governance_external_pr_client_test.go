@@ -6,14 +6,13 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
-func TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubmit(t *testing.T) {
+func TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit(t *testing.T) {
 	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
 		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Skill Governance external PR client")
 	}
@@ -39,7 +38,7 @@ func TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubm
 		RealProblemVerified: true,
 		CoreChangeVerified:  true,
 		DiffHumanApproved:   true,
-		TestResult:          "RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e -run TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubmit",
+		TestResult:          "RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e -run TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit",
 	})
 	if err != nil {
 		t.Fatalf("EvaluateSkillGovernanceContributionGate() live call failed at %s: %v", baseURL, err)
@@ -48,25 +47,14 @@ func TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubm
 		t.Fatalf("contribution gate=%+v, want passed event_id=%s", gate, contributionEventID)
 	}
 
-	_, err = client.SubmitSkillGovernanceExternalPR(ctx, rencrowclient.SkillGovernanceExternalPRSubmitRequest{
-		SubmitID:            submitID + "_noapproval",
-		ContributionEventID: contributionEventID,
-		Repo:                "example/repo",
-		Title:               "Live client E2E audit boundary",
-		HumanApproved:       false,
-	})
-	if err == nil || !strings.Contains(err.Error(), "requires human_approved") {
-		t.Fatalf("SubmitSkillGovernanceExternalPR() without approval err=%v, want client-side human_approved validation", err)
-	}
-
 	resp, err := client.SubmitSkillGovernanceExternalPR(ctx, rencrowclient.SkillGovernanceExternalPRSubmitRequest{
 		SubmitID:            submitID,
 		ContributionEventID: contributionEventID,
 		Repo:                "example/repo",
 		Title:               "Live client E2E audit boundary",
 		DiffPath:            "workspace/logs/skill_governance/coder_evidence/e2e/skill_diff.md",
-		TestResult:          "RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e -run TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubmit",
-		HumanApproved:       true,
+		TestResult:          "RENCROW_LIVE_E2E=1 go test -tags=e2e ./test/e2e -run TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit",
+		HumanApproved:       false,
 	})
 	if err != nil {
 		t.Fatalf("SubmitSkillGovernanceExternalPR() live call failed at %s: %v", baseURL, err)
@@ -82,7 +70,7 @@ func TestE2E_SkillGovernanceExternalPRClientRequiresApprovalAndAuditsBlockedSubm
 	if err != nil {
 		t.Fatalf("SkillGovernanceStatus() live call failed at %s: %v", baseURL, err)
 	}
-	if status.ExternalPRAdapter != "unconfigured" || status.ExternalPRAdapterConfigured == nil || *status.ExternalPRAdapterConfigured || status.HumanApprovalRequiredForPR == nil || !*status.HumanApprovalRequiredForPR {
+	if status.ExternalPRAdapter != "unconfigured" || status.ExternalPRAdapterConfigured == nil || *status.ExternalPRAdapterConfigured || status.HumanApprovalRequiredForPR == nil || *status.HumanApprovalRequiredForPR {
 		t.Fatalf("live Skill Governance external PR readiness=%+v", status)
 	}
 	for _, record := range status.ExternalPRSubmitRecords {

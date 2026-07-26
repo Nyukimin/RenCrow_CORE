@@ -375,8 +375,8 @@ session:
 	if cfg.Sandbox.SQLitePath != cfg.WorkspaceDir+"/logs/sandbox.db" {
 		t.Errorf("Expected Sandbox SQLitePath under workspace, got '%s'", cfg.Sandbox.SQLitePath)
 	}
-	if !cfg.Sandbox.Promotion.RequireDiff || !cfg.Sandbox.Promotion.RequireHumanApproval || !cfg.Sandbox.Promotion.RequireRollbackPlan {
-		t.Errorf("Expected Sandbox promotion gate defaults to require diff, approval, and rollback: %+v", cfg.Sandbox.Promotion)
+	if !cfg.Sandbox.Promotion.RequireDiff || cfg.Sandbox.Promotion.RequireHumanApproval || !cfg.Sandbox.Promotion.RequireRollbackPlan {
+		t.Errorf("Expected Sandbox promotion gate defaults to require diff and rollback without human approval: %+v", cfg.Sandbox.Promotion)
 	}
 	if !cfg.ToolHarness.IsEnabled() {
 		t.Error("ToolHarness should be enabled by default")
@@ -426,7 +426,7 @@ session:
 	if !cfg.SkillGovernance.RequiredForCoder || !cfg.SkillGovernance.RequiredForWorker || !cfg.SkillGovernance.WarnIfSkillNotUsed {
 		t.Errorf("unexpected SkillGovernance bootstrap defaults: %+v", cfg.SkillGovernance)
 	}
-	if !cfg.SkillGovernance.ContributionGate.Enabled || !cfg.SkillGovernance.ContributionGate.RequireHumanApproval {
+	if !cfg.SkillGovernance.ContributionGate.Enabled || cfg.SkillGovernance.ContributionGate.RequireHumanApproval {
 		t.Errorf("unexpected SkillGovernance contribution defaults: %+v", cfg.SkillGovernance.ContributionGate)
 	}
 	if !cfg.Workstream.IsEnabled() {
@@ -459,7 +459,7 @@ session:
 	if cfg.Revenue.SQLitePath != cfg.WorkspaceDir+"/logs/revenue.db" {
 		t.Errorf("Expected Revenue SQLitePath under workspace, got '%s'", cfg.Revenue.SQLitePath)
 	}
-	if !cfg.Revenue.ProhibitSuccessGuarantee || !cfg.Revenue.RequireCustomerVoicePermission || !cfg.Revenue.ExternalPublishRequiresApproval {
+	if !cfg.Revenue.ProhibitSuccessGuarantee || !cfg.Revenue.RequireCustomerVoicePermission || cfg.Revenue.ExternalPublishRequiresApproval || cfg.Revenue.HighTicketOfferRequiresApproval {
 		t.Errorf("unexpected Revenue defaults: %+v", cfg.Revenue)
 	}
 	if !cfg.PersonaArchitecture.IsEnabled() {
@@ -498,7 +498,7 @@ session:
 	}
 	if !cfg.BrowserTraceToAPI.ReadOnlyOnly ||
 		!cfg.BrowserTraceToAPI.RequireTermsReview ||
-		!cfg.BrowserTraceToAPI.RequireHumanApprovalPromote ||
+		cfg.BrowserTraceToAPI.RequireHumanApprovalPromote ||
 		len(cfg.BrowserTraceToAPI.DenyMethods) != 3 {
 		t.Errorf("unexpected BrowserTraceToAPI defaults: %+v", cfg.BrowserTraceToAPI)
 	}
@@ -517,7 +517,7 @@ session:
 	if cfg.ComplexityHotspot.DefaultMode != "report_only" ||
 		cfg.ComplexityHotspot.MaxHotspots != 20 ||
 		cfg.ComplexityHotspot.AutoApply ||
-		!cfg.ComplexityHotspot.RequireHumanApprovalForPatch ||
+		cfg.ComplexityHotspot.RequireHumanApprovalForPatch ||
 		!cfg.ComplexityHotspot.OneHotspotPerPR {
 		t.Errorf("unexpected ComplexityHotspot defaults: %+v", cfg.ComplexityHotspot)
 	}
@@ -542,7 +542,7 @@ session:
 		!cfg.SuperAgentHarness.RequireTerminationCondition ||
 		!cfg.SuperAgentHarness.ReturnSummaryOnly ||
 		!cfg.SuperAgentHarness.PromotionGateRequired ||
-		!cfg.SuperAgentHarness.ExternalSendRequiresApproval ||
+		cfg.SuperAgentHarness.ExternalSendRequiresApproval ||
 		!cfg.SuperAgentHarness.TraceAgentRun {
 		t.Errorf("unexpected SuperAgentHarness defaults: %+v", cfg.SuperAgentHarness)
 	}

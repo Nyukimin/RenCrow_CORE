@@ -604,7 +604,7 @@ func (s *HeartbeatService) RunBacklogIntake(ctx context.Context, now time.Time) 
 		Verification: []string{
 			"対象範囲の unit / integration test または代替検証を実行する",
 			"必要な場合は live Viewer / API で実動作を確認する",
-			"ユーザー承認が必要な変更は Sandbox / AI Workflow gate を通す",
+			"変更は Sandbox / AI Workflow の実行policyと検証条件を通す",
 		},
 		Status:    domainworkstream.StatusWaiting,
 		CreatedAt: now.UTC(),

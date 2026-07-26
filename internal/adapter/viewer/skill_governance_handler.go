@@ -112,7 +112,7 @@ func HandleSkillGovernanceRecent(store SkillGovernanceLister) http.HandlerFunc {
 			"external_pr_submit_records":     externalPRSubmits,
 			"external_pr_adapter":            "unconfigured",
 			"external_pr_adapter_configured": false,
-			"human_approval_required_for_pr": true,
+			"human_approval_required_for_pr": false,
 			"coder_transcripts":              transcripts,
 		})
 	}
@@ -258,10 +258,6 @@ func HandleSkillGovernanceExternalPRSubmit(store SkillGovernanceStore) http.Hand
 			http.Error(w, "invalid external PR submit payload", http.StatusBadRequest)
 			return
 		}
-		if !req.HumanApproved {
-			http.Error(w, "human approval is required before external PR submit", http.StatusForbidden)
-			return
-		}
 		gate, ok, err := findPassedContributionGate(r.Context(), store, req.ContributionEventID, req.Repo)
 		if err != nil {
 			http.Error(w, "failed to load contribution gate logs", http.StatusInternalServerError)
@@ -288,7 +284,7 @@ func HandleSkillGovernanceExternalPRSubmit(store SkillGovernanceStore) http.Hand
 			"external_pr_submit_record":         record,
 			"external_pr_created":               false,
 			"post_submit_verified":              false,
-			"human_approval_required_for_pr":    true,
+			"human_approval_required_for_pr":    false,
 			"external_pr_adapter_configuration": "required",
 			"message":                           "external PR adapter is not configured; no PR was created",
 		})

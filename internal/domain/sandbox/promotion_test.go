@@ -4,14 +4,13 @@ import "testing"
 
 func TestEvaluatePromotionRequestApprovesOnlyCompleteRequest(t *testing.T) {
 	decision := EvaluatePromotionRequest(PromotionRequest{
-		PromotionID:         "prom_1",
-		SandboxID:           "sbx_1",
-		TargetPath:          "docs/example.md",
-		DiffPath:            "sandbox/sbx_1/diff/changes.patch",
-		Reason:              "仕様に基づく文書更新",
-		TestResultPath:      "sandbox/sbx_1/reports/test.txt",
-		RollbackPlanPath:    "sandbox/sbx_1/reports/rollback.md",
-		HumanApprovalStatus: ApprovalGranted,
+		PromotionID:      "prom_1",
+		SandboxID:        "sbx_1",
+		TargetPath:       "docs/example.md",
+		DiffPath:         "sandbox/sbx_1/diff/changes.patch",
+		Reason:           "仕様に基づく文書更新",
+		TestResultPath:   "sandbox/sbx_1/reports/test.txt",
+		RollbackPlanPath: "sandbox/sbx_1/reports/rollback.md",
 	})
 
 	if decision.Status != GateStatusApproved {
@@ -30,14 +29,14 @@ func TestEvaluatePromotionRequestRejectsMissingChecklist(t *testing.T) {
 	if decision.Status != GateStatusNeedsMoreTest {
 		t.Fatalf("status = %s", decision.Status)
 	}
-	for _, want := range []string{"diff_path", "test_result_path", "rollback_plan_path", "human_approval"} {
+	for _, want := range []string{"diff_path", "test_result_path", "rollback_plan_path"} {
 		if !contains(decision.MissingRequirements, want) {
 			t.Fatalf("missing requirements %v does not contain %s", decision.MissingRequirements, want)
 		}
 	}
 }
 
-func TestEvaluatePromotionRequestRejectsHumanRejectedRequest(t *testing.T) {
+func TestEvaluatePromotionRequestIgnoresLegacyHumanRejection(t *testing.T) {
 	decision := EvaluatePromotionRequest(PromotionRequest{
 		PromotionID:         "prom_1",
 		SandboxID:           "sbx_1",
@@ -49,7 +48,7 @@ func TestEvaluatePromotionRequestRejectsHumanRejectedRequest(t *testing.T) {
 		HumanApprovalStatus: ApprovalRejected,
 	})
 
-	if decision.Status != GateStatusRejected {
+	if decision.Status != GateStatusApproved {
 		t.Fatalf("status = %s", decision.Status)
 	}
 }
@@ -61,7 +60,7 @@ func TestEvaluatePromotionApplyRequestRequiresApplyCheckpoint(t *testing.T) {
 	if decision.Status != GateStatusNeedsReview {
 		t.Fatalf("status = %s reason=%s", decision.Status, decision.Reason)
 	}
-	for _, want := range []string{"human_approved", "post_apply_verification_path"} {
+	for _, want := range []string{"post_apply_verification_path"} {
 		if !contains(decision.MissingRequirements, want) {
 			t.Fatalf("missing requirements %v does not contain %s", decision.MissingRequirements, want)
 		}
@@ -71,7 +70,6 @@ func TestEvaluatePromotionApplyRequestRequiresApplyCheckpoint(t *testing.T) {
 func TestEvaluatePromotionApplyRequestRecordsAppliedCheckpoint(t *testing.T) {
 	decision := EvaluatePromotionApplyRequest(PromotionApplyRequest{
 		Promotion:                 completePromotionRequest(),
-		HumanApproved:             true,
 		PostApplyVerificationPath: "sandbox/sbx_1/reports/post_apply.txt",
 	})
 	if decision.Status != GateStatusApplied {
@@ -85,7 +83,6 @@ func TestEvaluatePromotionApplyRequestPropagatesGateDecision(t *testing.T) {
 			PromotionID: "prom_1",
 			SandboxID:   "sbx_1",
 		},
-		HumanApproved:             true,
 		PostApplyVerificationPath: "sandbox/sbx_1/reports/post_apply.txt",
 	})
 	if decision.Status != GateStatusNeedsMoreTest {
@@ -99,7 +96,6 @@ func TestEvaluatePromotionApplyRequestPropagatesGateDecision(t *testing.T) {
 func TestEvaluatePromotionRollbackRequest(t *testing.T) {
 	applied := EvaluatePromotionRollbackRequest(PromotionApplyRequest{
 		Promotion:                 completePromotionRequest(),
-		HumanApproved:             true,
 		PostApplyVerificationPath: "sandbox/sbx_1/reports/post_apply.txt",
 	})
 	if applied.Status != GateStatusRolledBack {
@@ -116,13 +112,12 @@ func TestEvaluatePromotionRollbackRequest(t *testing.T) {
 
 func completePromotionRequest() PromotionRequest {
 	return PromotionRequest{
-		PromotionID:         "prom_1",
-		SandboxID:           "sbx_1",
-		TargetPath:          "docs/example.md",
-		DiffPath:            "sandbox/sbx_1/diff/changes.patch",
-		Reason:              "仕様に基づく文書更新",
-		TestResultPath:      "sandbox/sbx_1/reports/test.txt",
-		RollbackPlanPath:    "sandbox/sbx_1/reports/rollback.md",
-		HumanApprovalStatus: ApprovalGranted,
+		PromotionID:      "prom_1",
+		SandboxID:        "sbx_1",
+		TargetPath:       "docs/example.md",
+		DiffPath:         "sandbox/sbx_1/diff/changes.patch",
+		Reason:           "仕様に基づく文書更新",
+		TestResultPath:   "sandbox/sbx_1/reports/test.txt",
+		RollbackPlanPath: "sandbox/sbx_1/reports/rollback.md",
 	}
 }
