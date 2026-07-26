@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -241,7 +242,7 @@ func (t *SSHTransport) getHostKeyCallback() (ssh.HostKeyCallback, error) {
 		return nil, fmt.Errorf("get home dir: %w", err)
 	}
 
-	knownHostsPath := home + "/.ssh/known_hosts"
+	knownHostsPath := filepath.Join(home, ".ssh", "known_hosts")
 	if _, err := os.Stat(knownHostsPath); os.IsNotExist(err) {
 		if t.strictHostKey {
 			return nil, fmt.Errorf("known_hosts not found at %s (strict_host_key=true)", knownHostsPath)

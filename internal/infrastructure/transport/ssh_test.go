@@ -398,6 +398,11 @@ func TestSSHTransport_StrictHostKey_NoKnownHosts(t *testing.T) {
 	if !strings.Contains(err.Error(), "strict_host_key=true") {
 		t.Errorf("Error should mention strict_host_key, got: %v", err)
 	}
+	// known_hosts のパスはホストOSの区切り文字で組み立てる
+	wantPath := filepath.Join(tmpHome, ".ssh", "known_hosts")
+	if !strings.Contains(err.Error(), wantPath) {
+		t.Errorf("Error should contain %q, got: %v", wantPath, err)
+	}
 }
 
 func TestSSHTransport_StrictHostKey_WithKnownHosts(t *testing.T) {
