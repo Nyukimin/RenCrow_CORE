@@ -282,8 +282,7 @@ func ensureGitRepo(path string) error {
 
 func rejectWorktreeBase(absBase string) error {
 	clean := filepath.Clean(absBase)
-	switch clean {
-	case "/", "/home", "/tmp", "/var", "/etc", "/usr", "/System", "/Applications":
+	if isBroadOrSystemRoot(clean) {
 		return fmt.Errorf("refusing broad or system worktree base: %s", clean)
 	}
 	return nil

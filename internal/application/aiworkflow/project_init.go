@@ -71,7 +71,7 @@ func (s *ProjectScanner) Run(ctx context.Context, opts ProjectInitOptions) (Proj
 	if memoryRoot == "" {
 		memoryRoot = ".ai"
 	}
-	if filepath.IsAbs(memoryRoot) || strings.Contains(memoryRoot, "..") {
+	if isCallerAbsPath(memoryRoot) || strings.Contains(memoryRoot, "..") {
 		return ProjectInitResult{}, fmt.Errorf("project_memory_root must be a relative path inside repo")
 	}
 	outputRoot := filepath.Join(absRoot, memoryRoot)
@@ -143,11 +143,7 @@ func (s *ProjectScanner) Run(ctx context.Context, opts ProjectInitOptions) (Proj
 
 func rejectProjectInitUnsafeRoot(absRoot string) error {
 	clean := filepath.Clean(absRoot)
-	if filepath.Dir(clean) == clean {
-		return fmt.Errorf("refusing to project-init broad or system root: %s", clean)
-	}
-	switch clean {
-	case "/", "/home", "/tmp", "/var", "/etc", "/usr", "/System", "/Applications":
+	if filepath.Dir(clean) == clean || isBroadOrSystemRoot(clean) {
 		return fmt.Errorf("refusing to project-init broad or system root: %s", clean)
 	}
 	if strings.HasSuffix(clean, string(filepath.Separator)+".git") {
