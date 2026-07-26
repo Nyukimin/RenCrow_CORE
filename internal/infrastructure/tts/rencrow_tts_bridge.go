@@ -21,7 +21,7 @@ type RenCrowTTSBridgeConfig struct {
 	Speed              float64
 	TLSSkipVerify      bool
 	RequestTimeout     time.Duration
-	ProviderParams     map[string]any
+	DownloadAudio      bool
 	Sink               AudioSink
 	OnChunkReady       func(sessionID, responseID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string)
 	OnSessionCompleted func(sessionID, characterID string)
@@ -45,11 +45,9 @@ func NewRenCrowTTSBridge(cfg RenCrowTTSBridgeConfig) *RenCrowTTSBridge {
 	defaults := moduletts.ApplyRenCrowBridgeConfigDefaults(moduletts.RenCrowBridgeConfigDefaultsInput{
 		VoiceID:        cfg.VoiceID,
 		RequestTimeout: cfg.RequestTimeout,
-		ProviderParams: cfg.ProviderParams,
 	})
 	cfg.VoiceID = defaults.VoiceID
 	cfg.RequestTimeout = defaults.RequestTimeout
-	cfg.ProviderParams = defaults.ProviderParams
 	transport := &http.Transport{}
 	if cfg.TLSSkipVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
@@ -112,7 +110,6 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 			DefaultVoiceID: voiceID,
 			Speed:          b.cfg.Speed,
 			Emotion:        emotion,
-			ProviderParams: b.cfg.ProviderParams,
 		})
 		if err != nil {
 			return invalidRequestError(err.Error())
@@ -127,34 +124,39 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 			return err
 		}
 
-		var out struct {
-			RequestID string `json:"request_id"`
-			AudioPath string `json:"audio_path"`
-			AudioURL  string `json:"audio_url"`
-		}
-		if err := json.Unmarshal(body, &out); err != nil {
-			return fmt.Errorf("decode /synthesis response: %w", err)
-		}
-		if !moduletts.HasRenCrowSynthesisAudioOutput(out.AudioPath, out.AudioURL) {
-			return fmt.Errorf("/synthesis response missing audio_path/audio_url")
+		out, err := decodeGatewaySynthesisResponse(body)
+		if err != nil {
+			return err
 		}
 
-		audioPath := localAudioPathForViewer(b.cfg.OutputDir, out.AudioPath)
-		audioURL := resolveAudioURL(mediaBaseURL(b.cfg.HTTPBaseURL), out.AudioPath, out.AudioURL)
-		if strings.TrimSpace(out.AudioURL) == "" && audioPath != strings.TrimSpace(out.AudioPath) {
-			audioURL = ""
+		audioPath := strings.TrimSpace(out.AudioPath)
+		audioURL, err := resolveGatewayRelayURL(b.cfg.HTTPBaseURL, audioPath)
+		if err != nil {
+			return err
+		}
+		sinkAudioPath := audioPath
+		if b.cfg.DownloadAudio {
+			sinkAudioPath, audioURL, err = downloadGatewayAudio(ctx, b.client, b.cfg.HTTPBaseURL, audioPath, b.cfg.OutputDir, "viewer-tts")
+			if err != nil {
+				return err
+			}
+			if rel, ok := moduletts.LocalAudioRelPath(b.cfg.OutputDir, sinkAudioPath); ok {
+				audioPath = rel
+			} else {
+				audioPath = sinkAudioPath
+			}
 		}
 		ch := audioChunk{
 			ChunkIndex: session.nextChunk,
 			Text:       speechText,
-			AudioPath:  audioPath,
+			AudioPath:  sinkAudioPath,
 			AudioURL:   audioURL,
 			PauseAfter: chunkPauseForText(speechText),
 		}
 		session.nextChunk++
 
 		if b.cfg.OnChunkReady != nil {
-			b.cfg.OnChunkReady(sessionID, responseID, ch.ChunkIndex, characterID, speechText, strings.TrimSpace(item.DisplayText), ch.AudioPath, ch.AudioURL)
+			b.cfg.OnChunkReady(sessionID, responseID, ch.ChunkIndex, characterID, speechText, strings.TrimSpace(item.DisplayText), audioPath, ch.AudioURL)
 		}
 		if b.cfg.Sink != nil {
 			if err := b.cfg.Sink.SubmitChunk(ctx, sessionID, ch); err != nil {

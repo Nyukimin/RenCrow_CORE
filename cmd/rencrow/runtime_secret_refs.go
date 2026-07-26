@@ -41,8 +41,6 @@ func buildSecretRefsFromConfig(cfg *config.Config) []viewer.SecretRefRuntimeConf
 	add("provider", "coder2.api_key", "Coder2 provider API key", cfg.Coder2.APIKey)
 	add("provider", "coder3.api_key", "Coder3 provider API key", cfg.Coder3.APIKey)
 	add("provider", "coder4.api_key", "Coder4 provider API key", cfg.Coder4.APIKey)
-	add("tts", "tts.azure.api_key", "Azure TTS API key", cfg.TTS.Azure.APIKey)
-	add("tts", "tts.eleven.api_key", "ElevenLabs TTS API key", cfg.TTS.Eleven.APIKey)
 	addEnv("local_llm", "LLM_OPS_TOKEN", "LLM Ops proxy token")
 
 	return refs

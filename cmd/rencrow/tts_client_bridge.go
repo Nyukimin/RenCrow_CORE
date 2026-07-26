@@ -31,7 +31,7 @@ func buildTTSClientBridge(
 		log.Printf("TTS browser-only mode enabled (local playback disabled)")
 	} else {
 		player := ttsinfra.NewCommandPlayer(cmds)
-		sink = ttsinfra.NewAsyncAudioSink(ttsinfra.NewPlaybackAudioSink(player, cfg.TTS.AudioPathRoot))
+		sink = ttsinfra.NewAsyncAudioSink(ttsinfra.NewPlaybackAudioSink(player, ""))
 	}
 	onChunkFn := func(sessionID, responseID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string) {
 		if isStaleTTSPublicSession(sessionID) {
@@ -126,29 +126,19 @@ func buildTTSClientBridge(
 			onSessionCompleted(payload.SessionID, payload.CharacterID)
 		}
 	}
-	if sel, ok := buildPrimaryTTSProvider(cfg); ok {
-		logTTSProviderSelection(sel)
-		return ttsinfra.NewProviderTTSBridge(ttsinfra.ProviderTTSBridgeConfig{
-			Provider:           sel.Provider,
-			Sink:               sink,
-			OutputDir:          cfg.TTS.OutputDir,
-			HTTPBaseURL:        cfg.TTS.HTTPBaseURL,
-			OnChunkReady:       onChunkFn,
-			OnSessionCompleted: onSessionDoneFn,
-		})
-	}
+	gatewayBaseURL := cfg.TTS.GatewayURL()
 	bridge := ttsinfra.NewRenCrowTTSBridge(ttsinfra.RenCrowTTSBridgeConfig{
-		HTTPBaseURL:        cfg.TTS.HTTPBaseURL,
+		HTTPBaseURL:        gatewayBaseURL,
 		OutputDir:          cfg.TTS.OutputDir,
 		VoiceID:            cfg.TTS.VoiceID,
 		Speed:              cfg.TTS.Speed,
 		TLSSkipVerify:      cfg.TTS.TLSSkipVerify,
 		RequestTimeout:     time.Duration(cfg.TTS.TimeoutMS) * time.Millisecond,
-		ProviderParams:     cfg.TTS.ProviderParams,
+		DownloadAudio:      len(cmds) > 0,
 		Sink:               sink,
 		OnChunkReady:       onChunkFn,
 		OnSessionCompleted: onSessionDoneFn,
 	})
-	log.Printf("TTS RenCrow bridge enabled (/synthesis base=%s)", cfg.TTS.HTTPBaseURL)
+	log.Printf("TTS RenCrow_TTS Gateway bridge enabled (/api/tts base=%s)", gatewayBaseURL)
 	return bridge
 }

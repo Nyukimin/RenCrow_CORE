@@ -3,9 +3,6 @@
 Owns the RenCrow_CORE side of text-to-speech integration boundaries.
 RenCrow_TTS owns the public TTS API and concrete synthesis gateway; synthesis
 engine and model implementation remain outside CORE.
-Provider-specific URLs and payload rules listed below are
-legacy/development compatibility inside CORE; they do not redefine the
-production RenCrow_TTS boundary.
 
 Responsibilities:
 
@@ -24,9 +21,7 @@ Responsibilities:
 - Timeout consumption matching for public session routes.
 - TTS bridge audio chunk/session-completed event payloads and Viewer/IdleChat playback event routing.
 - Shared non-empty selection and trimmed equality helpers used by TTS provider policies.
-- Runtime provider priority, provider-plan enumeration/first-selection, provider selection log policy, playback command normalization, voice selection, and Irodori provider option planning.
-- Irodori defaults, voice/style resolution, synthesis endpoint URL, simple synthesis payload, Gradio run-generation/uploaded-audio payload, audio URL parsing, and loopback file URL rewrite rules.
-- SBV2 voice alias, voice URL, editor API URL, editor request payload, punctuation, and audio prefix rules.
+- Gateway synthesis payload, response marker, request ID, retry, and relayed audio rules.
 - Local audio path, relative path, and Viewer audio URL rules.
 - RenCrow synthesis payload construction, provider parameter validation, voice fallback, and request ID header rules.
 - RenCrow bridge defaults, session start normalization, speech text validation, and synthesis audio-output validation.
@@ -48,7 +43,7 @@ Current high-impact areas:
 
 Boundary note:
 
-TTS provider code owns synthesis and audio chunk payloads. The module also owns reusable playback/session state rules such as speech filtering, emotion planning, provider-facing emotion reason metadata, emotion prefixing, text chunking, streaming chunk state, playback state snapshot/health/report construction, playback state endpoint messages, active audio owner, public session routing, pending playback store, timeout consumption matching, ACK normalization, ACK receipt construction, bridge event payload/route construction, IdleChat TTS plan construction, shared string-selection helpers, route-based TTS session metadata planning, runtime provider priority and plan enumeration, provider selection log policy, Irodori defaults/URL/payload/response rules, SBV2 editor request payload rules, local audio path/URL rules, RenCrow bridge defaults/session/text/output rules, RenCrow synthesis payload validation, and RenCrow synthesis retry policy. Composition/orchestration code owns HTTP decoding, runtime wiring, concrete provider construction, bridge calls, file serving, and cross-state cleanup application.
+TTS code owns Gateway synthesis and audio chunk payloads. The module also owns reusable playback/session state rules such as speech filtering, emotion planning, emotion prefixing, text chunking, streaming chunk state, playback state snapshot/health/report construction, playback state endpoint messages, active audio owner, public session routing, pending playback store, timeout consumption matching, ACK normalization, ACK receipt construction, bridge event payload/route construction, IdleChat TTS plan construction, route-based TTS session metadata planning, local audio path/URL rules, RenCrow bridge defaults/session/text/output rules, and Gateway retry policy. Composition/orchestration code owns HTTP decoding, runtime wiring, the single Gateway provider, bridge calls, file serving, and cross-state cleanup application.
 
 Design references:
 

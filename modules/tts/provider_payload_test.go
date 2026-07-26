@@ -46,35 +46,6 @@ func TestBuildSynthesisPayloadUsesExplicitSpeedOverride(t *testing.T) {
 	}
 }
 
-func TestFilterProviderParamsNormalizesAllowedValues(t *testing.T) {
-	got, err := FilterProviderParams(map[string]any{
-		"language":   " ja ",
-		"line_split": "yes",
-		"length":     1.2,
-		"speaker_id": "mio",
-	})
-	if err != nil {
-		t.Fatalf("FilterProviderParams() error = %v", err)
-	}
-	if got["language"] != "ja" || got["line_split"] != true || got["length"] != 1.2 || got["speaker_id"] != "mio" {
-		t.Fatalf("FilterProviderParams() = %#v", got)
-	}
-}
-
-func TestFilterProviderParamsRejectsUnknownKey(t *testing.T) {
-	_, err := FilterProviderParams(map[string]any{"bad": true})
-	if err == nil || err.Error() != "unknown provider_params key: bad" {
-		t.Fatalf("FilterProviderParams() error = %v", err)
-	}
-}
-
-func TestFilterProviderParamsRejectsInvalidLength(t *testing.T) {
-	_, err := FilterProviderParams(map[string]any{"length": 0})
-	if err == nil || err.Error() != "provider_params.length must be > 0" {
-		t.Fatalf("FilterProviderParams() error = %v", err)
-	}
-}
-
 func TestBuildRequestIDHeaderSanitizesPrefix(t *testing.T) {
 	if got := BuildRequestIDHeader(" idle/日本語_01 ", 3); got != "idle_01-0003" {
 		t.Fatalf("BuildRequestIDHeader() = %q", got)

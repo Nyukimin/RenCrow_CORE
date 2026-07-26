@@ -617,21 +617,6 @@ func TestTTSInfrastructureUsesModuleStringSelectionHelpers(t *testing.T) {
 		forbidden []string
 	}{
 		{
-			path: filepath.Join("..", "internal", "infrastructure", "tts", "sbv2_provider.go"),
-			want: "moduletts.ChooseNonEmpty",
-			forbidden: []string{
-				"func chooseNonEmpty",
-				"func equalFoldTrim",
-			},
-		},
-		{
-			path: filepath.Join("..", "internal", "infrastructure", "tts", "irodori_provider.go"),
-			want: "moduletts.ChooseNonEmpty",
-			forbidden: []string{
-				"func chooseNonEmpty",
-			},
-		},
-		{
 			path: filepath.Join("..", "internal", "infrastructure", "tts", "rencrow_tts_bridge.go"),
 			want: "moduletts.ChooseNonEmpty",
 			forbidden: []string{
@@ -657,7 +642,7 @@ func TestTTSInfrastructureUsesModuleStringSelectionHelpers(t *testing.T) {
 	}
 }
 
-func TestCompositionRuntimeUsesModuleTTSProviderPlanEnumeration(t *testing.T) {
+func TestCompositionRuntimeUsesRenCrowTTSGatewayOnly(t *testing.T) {
 	path := filepath.Join("..", "cmd", "rencrow", "tts_runtime_factory.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -665,41 +650,41 @@ func TestCompositionRuntimeUsesModuleTTSProviderPlanEnumeration(t *testing.T) {
 	}
 	text := string(content)
 	for _, want := range []string{
-		"FirstRuntimeProviderPlan",
-		"BuildRuntimeProviderPlans",
+		"NewGatewayProvider",
+		"cfg.TTS.GatewayURL()",
 	} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("%s must delegate TTS provider plan enumeration to modules/tts via %q", path, want)
+			t.Fatalf("%s must construct the RenCrow_TTS Gateway route via %q", path, want)
 		}
 	}
 	for _, forbidden := range []string{
-		"func ttsProviderPriority",
-		"RuntimeProviderPriority(",
-		"for _, name := range",
+		"Irodori",
+		"SBV2",
+		"ProviderPriority",
+		"BuildRuntimeProviderPlans",
 	} {
 		if strings.Contains(text, forbidden) {
-			t.Fatalf("%s owns TTS provider priority enumeration containing %q; keep it in modules/tts", path, forbidden)
+			t.Fatalf("%s must not select a physical TTS provider via %q", path, forbidden)
 		}
 	}
 }
 
-func TestCompositionRuntimeUsesModuleTTSSelectionLogPolicy(t *testing.T) {
+func TestCompositionRuntimeOptionsDoNotSelectPhysicalTTSProvider(t *testing.T) {
 	path := filepath.Join("..", "cmd", "rencrow", "tts_runtime_options.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	text := string(content)
-	if !strings.Contains(text, "RuntimeProviderSelectionLogMessage") {
-		t.Fatalf("%s must delegate TTS provider selection log policy to modules/tts", path)
-	}
 	for _, forbidden := range []string{
 		`"irodori"`,
+		`"sbv2"`,
 		"TTS Irodori bridge enabled",
 		"switch sel.Name",
+		"ProviderPriority",
 	} {
 		if strings.Contains(text, forbidden) {
-			t.Fatalf("%s owns TTS provider selection log policy containing %q; keep it in modules/tts", path, forbidden)
+			t.Fatalf("%s must not own physical TTS provider selection containing %q", path, forbidden)
 		}
 	}
 }
@@ -1081,45 +1066,6 @@ func TestExtractedPoliciesAreNotReimplementedInCompatibilityLayers(t *testing.T)
 				"no_reasoning",
 				"want me to",
 				"need to respond",
-			},
-		},
-		{
-			name: "irodori defaults",
-			path: filepath.Join("..", "internal", "infrastructure", "tts", "irodori_defaults.go"),
-			forbidden: []string{
-				"Aratako/Irodori-TTS-500M-v2",
-				`"mps"`,
-				`"fp32"`,
-				`"independent"`,
-				`"male_01"`,
-				`"female_01"`,
-			},
-		},
-		{
-			name: "irodori synthesis payload",
-			path: filepath.Join("..", "internal", "infrastructure", "tts", "irodori_provider.go"),
-			forbidden: []string{
-				`"voice"`,
-				`"style"`,
-				`"text"`,
-			},
-		},
-		{
-			name: "irodori uploaded audio file data",
-			path: filepath.Join("..", "internal", "infrastructure", "tts", "irodori_reference_audio.go"),
-			forbidden: []string{
-				`"path": referenceAudio`,
-				`"meta": map[string]any`,
-				`"gradio.FileData"`,
-			},
-		},
-		{
-			name: "sbv2 editor request payload",
-			path: filepath.Join("..", "internal", "infrastructure", "tts", "sbv2_provider.go"),
-			forbidden: []string{
-				`"modelFile"`,
-				`"moraToneList"`,
-				`map[string]any{"text": text}`,
 			},
 		},
 		{

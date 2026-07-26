@@ -14,24 +14,27 @@ type VerificationConfig struct {
 	ReportPath   string `yaml:"report_path"`
 }
 
-// TTSConfig configures provider fallback and playback verification.
+// TTSConfig configures the single RenCrow_TTS Gateway route and playback.
 type TTSConfig struct {
 	Enabled            bool                        `yaml:"enabled"`
 	OutputDir          string                      `yaml:"output_dir"`
-	AudioPathRoot      string                      `yaml:"audio_path_root"`
-	HTTPBaseURL        string                      `yaml:"http_base_url"`
+	GatewayBaseURL     string                      `yaml:"gateway_base_url"`
+	HTTPBaseURL        string                      `yaml:"http_base_url"` // Deprecated: use gateway_base_url.
 	TLSSkipVerify      bool                        `yaml:"tls_skip_verify"`
 	TimeoutMS          int                         `yaml:"timeout_ms"`
 	VoiceID            string                      `yaml:"voice_id"`
 	Speed              float64                     `yaml:"speed"`
-	ProviderParams     map[string]any              `yaml:"provider_params"`
-	ProviderPriority   []string                    `yaml:"provider_priority"` // e.g. irodori
 	PlaybackCommands   []TTSCommandConfig          `yaml:"playback_commands"`
-	SBV2               TTSSBV2Config               `yaml:"sbv2"`
-	Irodori            TTSIrodoriConfig            `yaml:"irodori"`
 	PronunciationCheck TTSPronunciationCheckConfig `yaml:"pronunciation_check"`
-	Azure              TTSAzureConfig              `yaml:"azure"`
-	Eleven             TTSElevenLabsConfig         `yaml:"eleven"`
+}
+
+// GatewayURL returns the canonical RenCrow_TTS Gateway URL. HTTPBaseURL is
+// retained only so existing local config can be migrated without an outage.
+func (c TTSConfig) GatewayURL() string {
+	if c.GatewayBaseURL != "" {
+		return c.GatewayBaseURL
+	}
+	return c.HTTPBaseURL
 }
 
 type TTSPronunciationCheckConfig struct {
@@ -76,62 +79,6 @@ type STTExternalConfig struct {
 type TTSCommandConfig struct {
 	Name string   `yaml:"name"`
 	Args []string `yaml:"args"`
-}
-
-type TTSSBV2Config struct {
-	Enabled    bool   `yaml:"enabled"`
-	BaseURL    string `yaml:"base_url"`
-	VoiceID    string `yaml:"voice_id"`
-	TimeoutSec int    `yaml:"timeout_sec"`
-}
-
-type TTSIrodoriConfig struct {
-	Enabled               bool    `yaml:"enabled"`
-	BaseURL               string  `yaml:"base_url"`
-	EndpointPath          string  `yaml:"endpoint_path"`
-	VoiceID               string  `yaml:"voice_id"`
-	VoiceName             string  `yaml:"voice_name"`
-	ReferenceAudio        string  `yaml:"reference_audio"`
-	ReferenceAudioURL     string  `yaml:"reference_audio_url"`
-	TimeoutSec            int     `yaml:"timeout_sec"`
-	Checkpoint            string  `yaml:"checkpoint"`
-	ModelDevice           string  `yaml:"model_device"`
-	ModelPrecision        string  `yaml:"model_precision"`
-	CodecDevice           string  `yaml:"codec_device"`
-	CodecPrecision        string  `yaml:"codec_precision"`
-	EnableWatermark       bool    `yaml:"enable_watermark"`
-	NumSteps              int     `yaml:"num_steps"`
-	NumCandidates         int     `yaml:"num_candidates"`
-	SeedRaw               string  `yaml:"seed_raw"`
-	CFGGuidanceMode       string  `yaml:"cfg_guidance_mode"`
-	CFGScaleText          float64 `yaml:"cfg_scale_text"`
-	CFGScaleSpeaker       float64 `yaml:"cfg_scale_speaker"`
-	CFGScaleRaw           string  `yaml:"cfg_scale_raw"`
-	CFGMinT               float64 `yaml:"cfg_min_t"`
-	CFGMaxT               float64 `yaml:"cfg_max_t"`
-	ContextKVCache        bool    `yaml:"context_kv_cache"`
-	TruncationFactorRaw   string  `yaml:"truncation_factor_raw"`
-	RescaleKRaw           string  `yaml:"rescale_k_raw"`
-	RescaleSigmaRaw       string  `yaml:"rescale_sigma_raw"`
-	SpeakerKVScaleRaw     string  `yaml:"speaker_kv_scale_raw"`
-	SpeakerKVMinTRaw      string  `yaml:"speaker_kv_min_t_raw"`
-	SpeakerKVMaxLayersRaw string  `yaml:"speaker_kv_max_layers_raw"`
-}
-
-type TTSAzureConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	Endpoint   string `yaml:"endpoint"`
-	APIKey     string `yaml:"api_key"`
-	VoiceName  string `yaml:"voice_name"`
-	TimeoutSec int    `yaml:"timeout_sec"`
-}
-
-type TTSElevenLabsConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	APIKey     string `yaml:"api_key"`
-	VoiceID    string `yaml:"voice_id"`
-	ModelID    string `yaml:"model_id"`
-	TimeoutSec int    `yaml:"timeout_sec"`
 }
 
 // VTuberConfig configures VTube Studio emotion event delivery.

@@ -353,7 +353,7 @@ heartbeat:
   channel: "line"         # 通知先: line / telegram / discord / slack
   chat_id: "${RENCROW_HEARTBEAT_CHAT_ID}"  # 各チャネルの送信先ID
 
-# TTS実行能力（OpenClaw parity）
+# TTS実行能力
 # 音声サーバメモ:
 # - RenCrow_STTはMac、RenCrow_TTSはRTX機で分離する
 # - STT Health: https://192.168.1.31:8443/health
@@ -366,29 +366,13 @@ heartbeat:
 tts:
   enabled: true
   output_dir: "./workspace/tts"
-  # Optional: map relative audio_path (e.g. cache\\xxx.wav) to local playable path.
-  # Example on Linux with mounted Windows drive: /mnt/e/GenerativeAI/Style-Bert-VITS2
-  audio_path_root: ""
-  http_base_url: "http://192.168.1.205:7870"
-  ws_url: ""
-  connect_timeout_ms: 3000
-  receive_timeout_ms: 15000
-  chunk_gap_timeout_ms: 3000
+  gateway_base_url: "http://192.168.1.205:7870"
+  timeout_ms: 120000
+  tls_skip_verify: false
   voice_id: "mio"
-  speech_mode: "conversational"
-  provider_priority:
-    - "irodori"
+  speed: 1.2
   # Viewerが /viewer/tts/audio から再生するため、サーバ側のffplay再生は使わない。
   playback_commands: []
-  irodori:
-    enabled: true
-    base_url: "http://192.168.1.205:7870"
-    endpoint_path: "/api/tts"
-    voice_id: "mio"
-    voice_name: "Mio"
-    # New Irodori API: client sends only voice/style/text.
-    # Voice profiles, reference audio, seed and generation parameters are managed server-side.
-    timeout_sec: 120
   # CORE Scheduler owns execution timing. The cron expression is UTC (19:30 UTC = 04:30 JST).
   pronunciation_check:
     enabled: true
@@ -401,18 +385,6 @@ tts:
     sample_interval_seconds: 2
     retry_interval_seconds: 300
     timeout_minutes: 45
-  azure:
-    enabled: false
-    endpoint: "${AZURE_TTS_ENDPOINT}"
-    api_key: "${AZURE_TTS_API_KEY}"
-    voice_name: "ja-JP-NanamiNeural"
-    timeout_sec: 20
-  eleven:
-    enabled: false
-    api_key: "${ELEVENLABS_API_KEY}"
-    voice_id: ""
-    model_id: "eleven_multilingual_v2"
-    timeout_sec: 20
 
 # STT基本機能
 # 本番の音声入力入口は HTTPS Viewer です。

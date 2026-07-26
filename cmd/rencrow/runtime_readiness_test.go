@@ -17,10 +17,8 @@ func TestBuildRuntimeDependencyReadinessRequiresCredentialPairs(t *testing.T) {
 	t.Setenv("TELEGRAM_BOT_TOKEN", "telegram-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
 	t.Setenv("STT_GATEWAY_URL", "wss://127.0.0.1:8443/stt/stream")
-	t.Setenv("TTS_PROVIDER_URL", "")
-	t.Setenv("TTS_PROVIDER", "")
-	t.Setenv("IRODORI_BASE_URL", "")
-	t.Setenv("SBV2_BASE_URL", "")
+	t.Setenv("RENCROW_TTS_GATEWAY_URL", "")
+	t.Setenv("TTS_GATEWAY_URL", "")
 
 	readiness := buildRuntimeDependencyReadiness(&config.Config{}, nil)
 	if readiness.SlackCredentialsPresent {
@@ -42,14 +40,14 @@ func TestBuildRuntimeDependencyReadinessRequiresCredentialPairs(t *testing.T) {
 
 func TestBuildRuntimeDependencyReadinessAcceptsAlternateAudioEnv(t *testing.T) {
 	t.Setenv("RENCROW_STT_URL", "wss://127.0.0.1:8443/stt/stream")
-	t.Setenv("IRODORI_BASE_URL", "http://127.0.0.1:7870")
+	t.Setenv("RENCROW_TTS_GATEWAY_URL", "http://127.0.0.1:7870")
 
 	readiness := buildRuntimeDependencyReadiness(&config.Config{}, nil)
 	if !readiness.STTGatewayEnvPresent {
 		t.Fatal("stt gateway readiness should accept RENCROW_STT_URL")
 	}
 	if !readiness.TTSProviderEnvPresent {
-		t.Fatal("tts provider readiness should accept IRODORI_BASE_URL")
+		t.Fatal("tts provider readiness should accept RENCROW_TTS_GATEWAY_URL")
 	}
 }
 

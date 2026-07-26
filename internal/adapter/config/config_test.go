@@ -2179,31 +2179,13 @@ session:
 tts:
   enabled: true
   output_dir: "./workspace/tts"
-  http_base_url: "https://127.0.0.1:8770"
+  gateway_base_url: "https://127.0.0.1:7870"
   tls_skip_verify: true
   timeout_ms: 15000
   voice_id: "mio"
-  provider_params:
-    style: "Neutral"
-    style_weight: 2.8
-  provider_priority: ["irodori", "sbv2", "azure", "eleven"]
   playback_commands:
     - name: "ffplay"
       args: ["-autoexit", "{audio}"]
-  irodori:
-    enabled: true
-    base_url: "http://127.0.0.1:7870"
-    endpoint_path: "/api/tts"
-    voice_id: "mio"
-    timeout_sec: 120
-    checkpoint: "Aratako/Irodori-TTS-500M-v2"
-    model_device: "mps"
-    codec_device: "mps"
-  sbv2:
-    enabled: true
-    base_url: "http://127.0.0.1:5000/synthesis"
-    voice_id: "mio"
-    timeout_sec: 20
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
@@ -2216,20 +2198,11 @@ tts:
 	if !cfg.TTS.Enabled {
 		t.Fatal("expected tts enabled")
 	}
-	if got := cfg.TTS.SBV2.BaseURL; got != "http://127.0.0.1:5000/synthesis" {
-		t.Fatalf("unexpected sbv2 base url: %s", got)
-	}
-	if got := cfg.TTS.Irodori.BaseURL; got != "http://127.0.0.1:7870" {
-		t.Fatalf("unexpected irodori base url: %s", got)
-	}
-	if cfg.TTS.Irodori.EndpointPath != "/api/tts" || cfg.TTS.Irodori.Checkpoint != "Aratako/Irodori-TTS-500M-v2" || cfg.TTS.Irodori.NumSteps != 16 {
-		t.Fatalf("unexpected irodori defaults: %+v", cfg.TTS.Irodori)
-	}
 	if len(cfg.TTS.PlaybackCommands) != 1 || cfg.TTS.PlaybackCommands[0].Name != "ffplay" {
 		t.Fatalf("unexpected playback commands: %+v", cfg.TTS.PlaybackCommands)
 	}
-	if cfg.TTS.HTTPBaseURL == "" {
-		t.Fatalf("expected tts http_base_url to be set")
+	if cfg.TTS.GatewayURL() != "https://127.0.0.1:7870" {
+		t.Fatalf("unexpected tts gateway_base_url: %s", cfg.TTS.GatewayURL())
 	}
 	if cfg.TTS.TimeoutMS != 15000 {
 		t.Fatalf("unexpected tts timeout: %d", cfg.TTS.TimeoutMS)
@@ -2240,8 +2213,21 @@ tts:
 	if !cfg.TTS.TLSSkipVerify {
 		t.Fatal("expected tts tls_skip_verify=true")
 	}
-	if cfg.TTS.ProviderParams["style"] != "Neutral" {
-		t.Fatalf("unexpected provider_params: %+v", cfg.TTS.ProviderParams)
+}
+
+func TestTTSGatewayValidationRejectsPhysicalTargetStyleURL(t *testing.T) {
+	cfg := &Config{
+		Server:  ServerConfig{Port: 8080},
+		Ollama:  OllamaConfig{BaseURL: "http://127.0.0.1:11434", Model: "test"},
+		Session: SessionConfig{StorageDir: "./sessions"},
+		TTS: TTSConfig{
+			Enabled:        true,
+			GatewayBaseURL: "127.0.0.1:7880",
+			TimeoutMS:      120000,
+		},
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "tts.gateway_base_url") {
+		t.Fatalf("Validate error = %v, want tts.gateway_base_url", err)
 	}
 }
 
@@ -2351,6 +2337,9 @@ tts:
 	}
 	if !cfg.TTS.TLSSkipVerify {
 		t.Fatal("expected tls_skip_verify to auto-enable for local https")
+	}
+	if cfg.TTS.GatewayURL() != "https://127.0.0.1:8770" {
+		t.Fatalf("legacy http_base_url was not migrated to GatewayURL: %q", cfg.TTS.GatewayURL())
 	}
 	if cfg.TTS.Speed != 1.2 {
 		t.Fatalf("unexpected tts speed: %v", cfg.TTS.Speed)

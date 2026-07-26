@@ -195,7 +195,7 @@ func registerSTTAndAudioRoutes(mux *http.ServeMux, cfg *config.Config, sttRuntim
 		},
 		STT: sttfeature.Dependencies{Routes: sttRoutes},
 		TTS: ttsfeature.Dependencies{Routes: ttsfeature.Routes{
-			Audio:       handleTTSAudio(cfg.TTS.OutputDir, cfg.TTS.HTTPBaseURL),
+			Audio:       handleTTSAudio(cfg.TTS.OutputDir, cfg.TTS.GatewayURL()),
 			PlaybackAck: handleTTSPlaybackAck(),
 		}},
 	})

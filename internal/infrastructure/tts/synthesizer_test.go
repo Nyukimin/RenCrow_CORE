@@ -20,7 +20,7 @@ func (s synthProviderStub) Synthesize(_ context.Context, _ SynthesisInput) (Synt
 
 func TestFallbackSynthesizer_UsesFirstSuccess(t *testing.T) {
 	s := NewFallbackSynthesizer(
-		synthProviderStub{name: "sbv2", err: ErrProviderUnavailable},
+		synthProviderStub{name: "first", err: ErrProviderUnavailable},
 		synthProviderStub{name: "azure", out: SynthesisOutput{Provider: "azure", AudioFilePath: "/tmp/a.wav"}},
 		synthProviderStub{name: "eleven", out: SynthesisOutput{Provider: "eleven", AudioFilePath: "/tmp/b.wav"}},
 	)
@@ -35,7 +35,7 @@ func TestFallbackSynthesizer_UsesFirstSuccess(t *testing.T) {
 
 func TestFallbackSynthesizer_AllFailed(t *testing.T) {
 	s := NewFallbackSynthesizer(
-		synthProviderStub{name: "sbv2", err: ErrProviderUnavailable},
+		synthProviderStub{name: "first", err: ErrProviderUnavailable},
 		synthProviderStub{name: "azure", err: errors.New("boom")},
 	)
 	_, err := s.Synthesize(context.Background(), SynthesisInput{Text: "hello"})

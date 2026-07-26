@@ -707,84 +707,26 @@ func (c *Config) setDefaults() {
 	if !c.ViewerLog.Enabled {
 		c.ViewerLog.Enabled = true
 	}
-	if len(c.TTS.ProviderPriority) == 0 {
-		c.TTS.ProviderPriority = []string{"irodori"}
-	}
 	if c.TTS.OutputDir == "" {
 		c.TTS.OutputDir = "./workspace/tts"
 	}
-	if c.TTS.HTTPBaseURL == "" {
-		c.TTS.HTTPBaseURL = "https://127.0.0.1:8770"
-		c.TTS.TLSSkipVerify = true
+	if c.TTS.GatewayBaseURL == "" {
+		c.TTS.GatewayBaseURL = c.TTS.HTTPBaseURL
 	}
-	if shouldEnableLocalTLSSkipVerify(c.TTS.HTTPBaseURL) {
+	if c.TTS.GatewayBaseURL == "" {
+		c.TTS.GatewayBaseURL = "http://127.0.0.1:7870"
+	}
+	if shouldEnableLocalTLSSkipVerify(c.TTS.GatewayBaseURL) {
 		c.TTS.TLSSkipVerify = true
 	}
 	if c.TTS.TimeoutMS <= 0 {
-		c.TTS.TimeoutMS = 15000
+		c.TTS.TimeoutMS = 120000
 	}
 	if c.TTS.VoiceID == "" {
 		c.TTS.VoiceID = "mio"
 	}
 	if c.TTS.Speed <= 0 {
 		c.TTS.Speed = 1.2
-	}
-	if c.TTS.Irodori.VoiceID == "" {
-		c.TTS.Irodori.VoiceID = c.TTS.VoiceID
-	}
-	if c.TTS.Irodori.VoiceName == "" && (strings.EqualFold(c.TTS.Irodori.VoiceID, "mio") || strings.EqualFold(c.TTS.Irodori.VoiceID, "female_01")) {
-		c.TTS.Irodori.VoiceName = "Mio"
-	}
-	if c.TTS.Irodori.VoiceName == "" && (strings.EqualFold(c.TTS.Irodori.VoiceID, "shiro") || strings.EqualFold(c.TTS.Irodori.VoiceID, "male_01")) {
-		c.TTS.Irodori.VoiceName = "Shiro"
-	}
-	if c.TTS.Irodori.EndpointPath == "" {
-		c.TTS.Irodori.EndpointPath = "/api/tts"
-	}
-	if c.TTS.Irodori.TimeoutSec <= 0 {
-		c.TTS.Irodori.TimeoutSec = 120
-	}
-	if c.TTS.Irodori.Checkpoint == "" {
-		c.TTS.Irodori.Checkpoint = "Aratako/Irodori-TTS-500M-v2"
-	}
-	if c.TTS.Irodori.ModelDevice == "" {
-		c.TTS.Irodori.ModelDevice = "mps"
-	}
-	if c.TTS.Irodori.ModelPrecision == "" {
-		c.TTS.Irodori.ModelPrecision = "fp32"
-	}
-	if c.TTS.Irodori.CodecDevice == "" {
-		c.TTS.Irodori.CodecDevice = "mps"
-	}
-	if c.TTS.Irodori.CodecPrecision == "" {
-		c.TTS.Irodori.CodecPrecision = "fp32"
-	}
-	if c.TTS.Irodori.NumSteps <= 0 {
-		c.TTS.Irodori.NumSteps = 16
-	}
-	if c.TTS.Irodori.NumCandidates <= 0 {
-		c.TTS.Irodori.NumCandidates = 1
-	}
-	if c.TTS.Irodori.CFGGuidanceMode == "" {
-		c.TTS.Irodori.CFGGuidanceMode = "independent"
-	}
-	if c.TTS.Irodori.CFGScaleText == 0 {
-		c.TTS.Irodori.CFGScaleText = 3.0
-	}
-	if c.TTS.Irodori.CFGScaleSpeaker == 0 {
-		c.TTS.Irodori.CFGScaleSpeaker = 5.0
-	}
-	if c.TTS.Irodori.CFGMinT == 0 {
-		c.TTS.Irodori.CFGMinT = 0.5
-	}
-	if c.TTS.Irodori.CFGMaxT == 0 {
-		c.TTS.Irodori.CFGMaxT = 1.0
-	}
-	if !c.TTS.Irodori.ContextKVCache {
-		c.TTS.Irodori.ContextKVCache = true
-	}
-	if c.TTS.ProviderParams == nil {
-		c.TTS.ProviderParams = map[string]any{}
 	}
 	if c.TTS.PronunciationCheck.ToolBaseURL == "" {
 		c.TTS.PronunciationCheck.ToolBaseURL = "http://127.0.0.1:7892"

@@ -7,23 +7,13 @@ import (
 )
 
 func TestApplyRenCrowBridgeConfigDefaults(t *testing.T) {
-	params := map[string]any{"style": "happy"}
 	got := ApplyRenCrowBridgeConfigDefaults(RenCrowBridgeConfigDefaultsInput{
 		VoiceID:        " ",
 		RequestTimeout: 0,
-		ProviderParams: params,
 	})
 	if got.VoiceID != DefaultRenCrowVoiceID || got.RequestTimeout != DefaultRenCrowSynthesisTimeout {
 		t.Fatalf("defaults = %+v", got)
 	}
-	if got.ProviderParams["style"] != "happy" {
-		t.Fatalf("provider params not copied: %+v", got.ProviderParams)
-	}
-	params["style"] = "changed"
-	if got.ProviderParams["style"] != "happy" {
-		t.Fatalf("provider params should copy map header: %+v", got.ProviderParams)
-	}
-
 	got = ApplyRenCrowBridgeConfigDefaults(RenCrowBridgeConfigDefaultsInput{
 		VoiceID:        " male_01 ",
 		RequestTimeout: 2 * time.Second,

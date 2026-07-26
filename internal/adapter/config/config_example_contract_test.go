@@ -1,7 +1,9 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +20,19 @@ func TestConfigExampleLoadsForPhase25E2E(t *testing.T) {
 	}
 	if cfg.STT.StreamURL == "" {
 		t.Fatal("config.yaml.example should expose stt.stream_url for Viewer STT contract")
+	}
+	if cfg.TTS.GatewayBaseURL == "" {
+		t.Fatal("config.yaml.example should use RenCrow_TTS Gateway as the production path")
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "config", "config.yaml.example"))
+	if err != nil {
+		t.Fatalf("read config.yaml.example: %v", err)
+	}
+	text := string(raw)
+	for _, forbidden := range []string{"provider_priority:", "provider_params:", "irodori:", "sbv2:", "azure:", "eleven:"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("config.yaml.example must not expose CORE-owned direct TTS setting %q", forbidden)
+		}
 	}
 	if _, ok := cfg.VTuber.Characters["shiro"]; !ok {
 		t.Fatal("config.yaml.example should keep vtuber.characters.shiro separate from audio_router.device_map")

@@ -103,7 +103,7 @@ func TestTTSClientBridgeIdleChatChunkPayloadIncludesCanonicalSpeechFields(t *tes
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"audio_path":"/audio/idle.wav"}`)
+		fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/idle.wav"}`)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -167,7 +167,7 @@ func TestTTSClientBridgeIdleChatChunkPayloadIncludesCanonicalSpeechFields(t *tes
 func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"audio_path":"/audio/chat.wav"}`)
+		fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/chat.wav"}`)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -216,7 +216,7 @@ func TestTTSClientBridgeTopicPayloadIncludesBrightTopicPrefix(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"audio_path":"/audio/topic.wav"}`)
+		fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/topic.wav"}`)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -376,24 +376,21 @@ func TestBuildTTSClientBridge_UsesRenCrowBridge(t *testing.T) {
 	}
 }
 
-func TestBuildTTSClientBridge_UsesIrodoriDirectBridge(t *testing.T) {
+func TestBuildTTSClientBridge_UsesGatewayOnly(t *testing.T) {
 	cfg := &config.Config{
 		TTS: config.TTSConfig{
-			Enabled:   true,
-			OutputDir: t.TempDir(),
-			Irodori: config.TTSIrodoriConfig{
-				Enabled: true,
-				BaseURL: "http://127.0.0.1:7870",
-				VoiceID: "mio",
-			},
+			Enabled:        true,
+			OutputDir:      t.TempDir(),
+			GatewayBaseURL: "http://127.0.0.1:7870",
+			VoiceID:        "mio",
 		},
 	}
 	got := buildTTSClientBridge(cfg, nil, nil, nil)
 	if got == nil {
 		t.Fatal("expected non-nil bridge")
 	}
-	if _, ok := got.(*ttsinfra.ProviderTTSBridge); !ok {
-		t.Fatalf("expected generic direct TTS bridge, got %T", got)
+	if _, ok := got.(*ttsinfra.RenCrowTTSBridge); !ok {
+		t.Fatalf("expected RenCrow_TTS Gateway bridge, got %T", got)
 	}
 }
 

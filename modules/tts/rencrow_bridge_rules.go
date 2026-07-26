@@ -16,13 +16,11 @@ const (
 type RenCrowBridgeConfigDefaultsInput struct {
 	VoiceID        string
 	RequestTimeout time.Duration
-	ProviderParams map[string]any
 }
 
 type RenCrowBridgeConfigDefaults struct {
 	VoiceID        string
 	RequestTimeout time.Duration
-	ProviderParams map[string]any
 }
 
 type RenCrowSessionStartInput struct {
@@ -49,14 +47,9 @@ func ApplyRenCrowBridgeConfigDefaults(input RenCrowBridgeConfigDefaultsInput) Re
 	if timeout <= 0 {
 		timeout = DefaultRenCrowSynthesisTimeout
 	}
-	params := map[string]any{}
-	for key, value := range input.ProviderParams {
-		params[key] = value
-	}
 	return RenCrowBridgeConfigDefaults{
 		VoiceID:        voiceID,
 		RequestTimeout: timeout,
-		ProviderParams: params,
 	}
 }
 

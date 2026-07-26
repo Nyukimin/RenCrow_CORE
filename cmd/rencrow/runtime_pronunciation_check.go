@@ -73,7 +73,7 @@ func ensurePronunciationCheckJob(ctx context.Context, store viewer.SchedulerStor
 		job.Schedule = schedule
 		job.Target = pronunciationapp.ScheduledTarget
 		job.Name = "TTS pronunciation daily check"
-		job.Description = "Run one-sentence Irodori pronunciation checks after RTX 5060 Ti becomes idle"
+		job.Description = "Run one-sentence TTS pronunciation checks after the configured GPU becomes idle"
 		job.UpdatedAt = time.Now().UTC()
 		if job.Enabled {
 			next, nextErr := domainscheduler.NextRunAfter(schedule, job.UpdatedAt)
@@ -89,7 +89,7 @@ func ensurePronunciationCheckJob(ctx context.Context, store viewer.SchedulerStor
 		Name:        "TTS pronunciation daily check",
 		Schedule:    schedule,
 		Target:      pronunciationapp.ScheduledTarget,
-		Description: "Run one-sentence Irodori pronunciation checks after RTX 5060 Ti becomes idle",
+		Description: "Run one-sentence TTS pronunciation checks after the configured GPU becomes idle",
 	})
 	return err
 }

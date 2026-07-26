@@ -156,7 +156,7 @@ func TestIdleChatViewerDisconnectClearsPlaybackWaits(t *testing.T) {
 func TestEmitIdleChatTTSCompletesNormallyOnPushFailure(t *testing.T) {
 	clearAllIdleChatTTSPending()
 	t.Cleanup(clearAllIdleChatTTSPending)
-	bridge := &idleChatMockTTSBridge{pushErr: errors.New("irodori unavailable")}
+	bridge := &idleChatMockTTSBridge{pushErr: errors.New("tts gateway unavailable")}
 
 	waitCh, ok := emitIdleChatTTS(context.Background(), bridge, idlechat.TimelineEvent{
 		Type:      "idlechat.message",

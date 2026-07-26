@@ -18,14 +18,10 @@ func TestBuildSecretRefsFromConfigUsesReferencesWithoutChannelCredentials(t *tes
 		GoogleSearchChat:   config.GoogleSearchConfig{APIKey: "google-chat-secret"},
 		GoogleSearchWorker: config.GoogleSearchConfig{APIKey: ""},
 		Coder1:             config.CoderConfig{APIKey: "coder1-secret"},
-		TTS: config.TTSConfig{
-			Azure:  config.TTSAzureConfig{APIKey: "azure-secret"},
-			Eleven: config.TTSElevenLabsConfig{APIKey: "eleven-secret"},
-		},
-		Line:     config.LineConfig{ChannelSecret: "line-secret", AccessToken: "line-token"},
-		Telegram: config.TelegramConfig{BotToken: "telegram-token", WebhookSecret: "telegram-secret"},
-		Discord:  config.DiscordConfig{BotToken: "discord-token", PublicKey: "discord-public"},
-		Slack:    config.SlackConfig{BotToken: "slack-token", SigningSecret: "slack-secret"},
+		Line:               config.LineConfig{ChannelSecret: "line-secret", AccessToken: "line-token"},
+		Telegram:           config.TelegramConfig{BotToken: "telegram-token", WebhookSecret: "telegram-secret"},
+		Discord:            config.DiscordConfig{BotToken: "discord-token", PublicKey: "discord-public"},
+		Slack:              config.SlackConfig{BotToken: "slack-token", SigningSecret: "slack-secret"},
 	}
 
 	refs := buildSecretRefsFromConfig(cfg)
@@ -46,8 +42,6 @@ func TestBuildSecretRefsFromConfigUsesReferencesWithoutChannelCredentials(t *tes
 		"config:openai.api_key",
 		"config:google_search_chat.api_key",
 		"config:coder1.api_key",
-		"config:tts.azure.api_key",
-		"config:tts.eleven.api_key",
 		"env:LLM_OPS_TOKEN",
 	} {
 		if !byRef[want] {

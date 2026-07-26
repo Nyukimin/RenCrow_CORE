@@ -91,6 +91,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("llm_ops.base_url is required when llm_ops.enabled=true")
 		}
 	}
+	if c.TTS.Enabled {
+		gatewayURL, err := url.Parse(strings.TrimSpace(c.TTS.GatewayURL()))
+		if err != nil || gatewayURL.Host == "" || (gatewayURL.Scheme != "http" && gatewayURL.Scheme != "https") {
+			return fmt.Errorf("tts.gateway_base_url must be an absolute HTTP URL when enabled=true")
+		}
+		if c.TTS.TimeoutMS < 1 {
+			return fmt.Errorf("tts.timeout_ms must be >= 1")
+		}
+	}
 	if c.TTS.PronunciationCheck.Enabled {
 		parsed, err := url.Parse(c.TTS.PronunciationCheck.ToolBaseURL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {

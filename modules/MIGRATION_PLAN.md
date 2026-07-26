@@ -69,9 +69,7 @@ Current deliverable:
 - `cmd/rencrow` wires module contract providers into runtime state.
 - `modules/llm` owns standard runtime role names, role provider map construction, and module generate response construction.
 - `modules/tts` owns module synthesis result construction from provider audio output.
-- `modules/tts` owns runtime TTS provider priority, playback command normalization, voice selection, and Irodori provider option planning; `cmd/rencrow` keeps concrete provider construction.
-- `modules/tts` owns Irodori defaults, voice/style resolution, synthesis endpoint URL construction, Gradio run-generation payload ordering, audio URL parsing, download URL resolution, and loopback file URL rewrite rules; `internal/infrastructure/tts` keeps HTTP execution and thin adapter code.
-- `modules/tts` owns SBV2 voice alias resolution, voice URL construction, editor API URL construction, TTS punctuation, and audio prefix sanitization rules; `internal/infrastructure/tts` keeps HTTP execution and thin adapter code.
+- TTS runtime is migrated to the single RenCrow_TTS Gateway route. Physical target selection and engine rules no longer live in CORE.
 - `modules/stt` owns transcription result construction, segment duration normalization, and STT provider health report normalization.
 - `modules/stt` owns runtime STT provider option planning and defaults for provider, model, language, timeout, busy policy, and external HTTP URL; `cmd/rencrow` keeps concrete provider construction.
 - `modules/llm` owns the generic health-checked provider wrapper used by runtime diagnostics.
@@ -191,11 +189,9 @@ Current deliverable:
 - `modules/tts` owns route-based TTS session metadata planning for message and distributed orchestrator lifecycles; `internal/application/orchestrator` converts route decisions into module inputs and applies the plan to the existing bridge contract.
 - `modules/tts` owns TTS text chunking rules and streaming chunk pending/emitted state; `internal/application/orchestrator` asks the module chunker for chunks before applying them to TTS and VTuber bridges.
 - `modules/tts` owns speech text filtering, emotion planning, emotion state/context types, and emotion prefix policy; the legacy app-layer wrapper has been retired.
-- `modules/tts` owns TTS runtime provider priority, playback command normalization, voice selection, and Irodori provider option planning; `cmd/rencrow` converts app config into module DTOs and applies the returned plan to concrete provider construction.
-- `modules/tts` owns Irodori defaults, voice/style resolution, synthesis endpoint URL construction, Gradio run-generation payload ordering, audio URL parsing, download URL resolution, and loopback file URL rewrite rules; `internal/infrastructure/tts` keeps HTTP execution and thin adapter code.
-- `modules/tts` owns SBV2 voice alias resolution, voice URL construction, editor API URL construction, TTS punctuation, and audio prefix sanitization rules; `internal/infrastructure/tts` keeps HTTP execution and thin adapter code.
+- TTS runtime provider migration is complete: CORE constructs one RenCrow_TTS Gateway provider and owns no physical target adapter.
 - `modules/tts` owns local audio path normalization, output-dir containment checks, and Viewer audio URL construction; `cmd/rencrow` keeps HTTP file serving and concrete runtime wiring.
-- `modules/tts` owns RenCrow synthesis request payload construction, provider_params validation, emotion voice fallback, and request ID header construction; `internal/infrastructure/tts` keeps HTTP calls and thin adapter code while provider extraction continues.
+- `modules/tts` owns RenCrow_TTS Gateway request payload construction, emotion voice fallback, and request ID header construction; `internal/infrastructure/tts` keeps HTTP calls and thin adapter code.
 - `modules/tts` owns RenCrow synthesis error parsing, retry decisions, transport retry classification, and retry backoff; `internal/infrastructure/tts` keeps HTTP calls and context-aware sleep while provider extraction continues.
 - `modules/tts` owns the synthesis diagnostics policy; `cmd/rencrow` only exposes it over HTTP.
 - `/viewer/modules/tts/diagnostics` exposes TTS provider health and synthesis contract metadata without synthesizing audio.

@@ -51,7 +51,7 @@ func buildRuntimeDependencyReadiness(cfg *config.Config, dependencies *Dependenc
 		TelegramWebhookRegistered:    telegramWebhookRegistered,
 		TelegramFilePayloadPipeline:  telegramWebhookRegistered,
 		STTGatewayEnvPresent:         envPresent("STT_GATEWAY_URL") || envPresent("RENCROW_STT_URL"),
-		TTSProviderEnvPresent:        envPresent("TTS_PROVIDER_URL") || envPresent("TTS_PROVIDER") || envPresent("IRODORI_BASE_URL") || envPresent("SBV2_BASE_URL"),
+		TTSProviderEnvPresent:        envPresent("RENCROW_TTS_GATEWAY_URL") || envPresent("TTS_GATEWAY_URL"),
 		DistributedEnabled:           distributedEnabled,
 		DistributedTransportsPresent: distributedTransportsPresent,
 		DistributedSSHConfigured:     distributedSSHConfigured,

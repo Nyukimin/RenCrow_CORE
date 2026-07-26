@@ -7,8 +7,8 @@ import (
 )
 
 func TestBuildProviderHealth(t *testing.T) {
-	got := BuildProviderHealth(ProviderHealthSnapshot{Provider: "irodori", Ready: true})
-	if got.Module != "tts" || got.Status != core.HealthLive || !got.Ready || got.Metadata["provider"] != "irodori" {
+	got := BuildProviderHealth(ProviderHealthSnapshot{Provider: "tts-gateway", Ready: true})
+	if got.Module != "tts" || got.Status != core.HealthLive || !got.Ready || got.Metadata["provider"] != "tts-gateway" {
 		t.Fatalf("unexpected ready health: %+v", got)
 	}
 

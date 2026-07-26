@@ -157,13 +157,7 @@ func inferTTSDebugBaseURLFromConfig(cfg *config.Config) string {
 	if cfg == nil {
 		return ""
 	}
-	if cfg.TTS.Irodori.Enabled && strings.TrimSpace(cfg.TTS.Irodori.BaseURL) != "" {
-		return strings.TrimSpace(cfg.TTS.Irodori.BaseURL)
-	}
-	if cfg.TTS.SBV2.Enabled && strings.TrimSpace(cfg.TTS.SBV2.BaseURL) != "" {
-		return strings.TrimSpace(cfg.TTS.SBV2.BaseURL)
-	}
-	return strings.TrimSpace(cfg.TTS.HTTPBaseURL)
+	return strings.TrimSpace(cfg.TTS.GatewayURL())
 }
 
 func inferTTSDebugHealthPathFromConfig(cfg *config.Config) string {

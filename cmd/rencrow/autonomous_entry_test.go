@@ -58,9 +58,9 @@ func TestProcessEntryRequest_TTSUsesAutonomousAndWritesReport(t *testing.T) {
 	runtime := ttsEntryRuntime{
 		synthesizer: synthStub{
 			out: ttsinfra.SynthesisOutput{
-				Provider:      "sbv2",
+				Provider:      "tts-gateway",
 				VoiceID:       "mio",
-				AudioFilePath: "/tmp/sbv2.wav",
+				AudioFilePath: "/tmp/tts-gateway.wav",
 				DurationMS:    1200,
 			},
 		},
@@ -93,7 +93,7 @@ func TestProcessEntryRequest_TTSUsesAutonomousAndWritesReport(t *testing.T) {
 	if !strings.Contains(string(b), `"status":"passed"`) {
 		t.Fatalf("expected passed report, got: %s", string(b))
 	}
-	if !strings.Contains(string(b), `"tts_provider":"sbv2"`) {
+	if !strings.Contains(string(b), `"tts_provider":"tts-gateway"`) {
 		t.Fatalf("expected tts provider evidence, got: %s", string(b))
 	}
 	if !strings.Contains(string(b), `"playback_exit_code":0`) {
@@ -119,15 +119,15 @@ func TestProcessEntryRequest_TTSPlaybackFailure(t *testing.T) {
 	runtime := ttsEntryRuntime{
 		synthesizer: synthStub{
 			out: ttsinfra.SynthesisOutput{
-				Provider:      "sbv2",
+				Provider:      "tts-gateway",
 				VoiceID:       "mio",
-				AudioFilePath: "/tmp/sbv2.wav",
+				AudioFilePath: "/tmp/tts-gateway.wav",
 				DurationMS:    1200,
 			},
 		},
 		player: playStub{
 			out: ttsinfra.PlaybackResult{
-				Command:  "play /tmp/sbv2.wav",
+				Command:  "play /tmp/tts-gateway.wav",
 				ExitCode: 1,
 			},
 			err: fmt.Errorf("failed"),
@@ -172,13 +172,9 @@ func TestBuildTTSEntryRuntime_Configured(t *testing.T) {
 	cfg := &config.Config{
 		TTS: config.TTSConfig{
 			Enabled:          true,
-			ProviderPriority: []string{"irodori"},
+			GatewayBaseURL:   "http://127.0.0.1:7870",
 			PlaybackCommands: []config.TTSCommandConfig{{Name: "sh", Args: []string{"-c", "exit 0"}}},
-			Irodori: config.TTSIrodoriConfig{
-				Enabled: true,
-				BaseURL: "http://127.0.0.1:7870",
-				VoiceID: "mio",
-			},
+			VoiceID:          "mio",
 		},
 	}
 	rt := buildTTSEntryRuntime(cfg)

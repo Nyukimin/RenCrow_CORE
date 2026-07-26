@@ -20,16 +20,20 @@ func normalizeSynthesisURL(base string) string {
 	if base == "" {
 		return ""
 	}
-	if strings.HasSuffix(strings.ToLower(base), "/synthesis") {
+	lower := strings.ToLower(base)
+	if strings.HasSuffix(lower, "/api/tts") || strings.HasSuffix(lower, "/synthesis") || strings.HasSuffix(lower, "/synthesize") {
 		return base
 	}
-	return base + "/synthesis"
+	return base + "/api/tts"
 }
 
 func mediaBaseURL(base string) string {
 	base = strings.TrimRight(strings.TrimSpace(base), "/")
-	if strings.HasSuffix(strings.ToLower(base), "/synthesis") {
-		return strings.TrimSuffix(base, "/synthesis")
+	lower := strings.ToLower(base)
+	for _, suffix := range []string{"/api/tts", "/synthesis", "/synthesize"} {
+		if strings.HasSuffix(lower, suffix) {
+			return base[:len(base)-len(suffix)]
+		}
 	}
 	return base
 }

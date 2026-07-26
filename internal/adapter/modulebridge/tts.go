@@ -35,9 +35,14 @@ func (a *TTSProviderAdapter) Name() string {
 	return a.provider.Name()
 }
 
-func (a *TTSProviderAdapter) Health(context.Context) core.HealthReport {
+func (a *TTSProviderAdapter) Health(ctx context.Context) core.HealthReport {
 	if a == nil || a.provider == nil {
 		return moduletts.BuildProviderHealth(moduletts.ProviderHealthSnapshot{})
+	}
+	if provider, ok := a.provider.(interface {
+		Health(context.Context) core.HealthReport
+	}); ok {
+		return provider.Health(ctx)
 	}
 	return moduletts.BuildProviderHealth(moduletts.ProviderHealthSnapshot{Provider: a.provider.Name(), Ready: true})
 }

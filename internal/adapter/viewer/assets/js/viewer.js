@@ -4146,11 +4146,6 @@ function createChatAudioSync() {
     const mode = isIdleChatSessionId(sessionId) ? 'idlechat' : 'chat';
     url = resolveTTSPlaybackURL(url, audioPath);
 
-    // Rewrite known remote URL patterns to browser-fetchable paths.
-    const cacheMatch = url.match(/^http:\/\/192\.168\.1\.36:(8765|8766)\/cache-(?:a|b)\/([^/?#]+\.wav)$/i);
-    if (cacheMatch) {
-      url = `http://192.168.1.36:${cacheMatch[1]}/audio/${cacheMatch[2]}`;
-    }
     return {
       eventType: 'chunk',
       url,
