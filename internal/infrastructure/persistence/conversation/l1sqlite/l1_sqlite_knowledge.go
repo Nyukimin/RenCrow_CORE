@@ -45,7 +45,7 @@ FROM l1_knowledge_item`
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY updated_at DESC LIMIT ?"
+	query += " ORDER BY updated_at DESC, rowid DESC LIMIT ?"
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -71,7 +71,7 @@ SELECT id, staging_id, domain, title, source_id, source_url, raw_text, raw_hash,
        summary_draft, keywords_json, license_note, meta_json, created_at, updated_at
 FROM l1_knowledge_item
 WHERE domain = ?
-ORDER BY updated_at DESC
+ORDER BY updated_at DESC, rowid DESC
 LIMIT ?
 `, domain, limit)
 	if err != nil {
@@ -105,7 +105,7 @@ WHERE (
 	OR f.keywords_text LIKE ?
 )
   AND f.domain = ?
-ORDER BY k.updated_at DESC
+ORDER BY k.updated_at DESC, k.rowid DESC
 LIMIT ?
 `, LikeQuery(query), LikeQuery(query), LikeQuery(query), LikeQuery(query), domain, limit)
 	if err != nil {
@@ -139,7 +139,7 @@ FROM l1_knowledge_item_fts f
 JOIN l1_knowledge_item k ON k.id = f.id
 WHERE (`+strings.Join(clauses, " OR ")+`)
   AND f.domain = ?
-ORDER BY k.updated_at DESC
+ORDER BY k.updated_at DESC, k.rowid DESC
 LIMIT ?
 `, args...)
 	if err != nil {

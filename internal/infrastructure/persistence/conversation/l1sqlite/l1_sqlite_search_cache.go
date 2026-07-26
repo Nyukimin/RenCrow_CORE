@@ -128,7 +128,7 @@ SELECT query_hash, normalized_query, provider, raw_query, results_json, source_u
        retrieved_at, expires_at, created_at, updated_at
 FROM l1_search_cache
 WHERE provider = ? AND expires_at > ?
-ORDER BY retrieved_at DESC, updated_at DESC
+ORDER BY retrieved_at DESC, updated_at DESC, rowid DESC
 LIMIT 50
 `, provider, now.UTC())
 	if err != nil {
@@ -195,7 +195,7 @@ func (s *L1SQLiteStore) RecentSearchCache(ctx context.Context, limit int) ([]L1S
 SELECT query_hash, normalized_query, provider, raw_query, results_json, source_urls_json,
        retrieved_at, expires_at, created_at, updated_at
 FROM l1_search_cache
-ORDER BY retrieved_at DESC, updated_at DESC
+ORDER BY retrieved_at DESC, updated_at DESC, rowid DESC
 LIMIT ?
 `, limit)
 	if err != nil {

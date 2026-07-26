@@ -112,14 +112,14 @@ func (s *L1SQLiteStore) RecentRecallTraces(ctx context.Context, sessionID string
 SELECT payload_json, created_at
 FROM l1_event_log
 WHERE event_type = 'recall.trace'
-ORDER BY created_at DESC
+ORDER BY created_at DESC, rowid DESC
 LIMIT ?`, limit)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
 SELECT payload_json, created_at
 FROM l1_event_log
 WHERE event_type = 'recall.trace' AND session_id = ?
-ORDER BY created_at DESC
+ORDER BY created_at DESC, rowid DESC
 LIMIT ?`, strings.TrimSpace(sessionID), limit)
 	}
 	if err != nil {
@@ -169,14 +169,14 @@ func (s *L1SQLiteStore) recentRecallTracesFromTables(ctx context.Context, sessio
 		rows, err = s.db.QueryContext(ctx, `
 SELECT trace_id, turn_id, chat_id, persona, created_at
 FROM recall_trace
-ORDER BY created_at DESC
+ORDER BY created_at DESC, rowid DESC
 LIMIT ?`, limit)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
 SELECT trace_id, turn_id, chat_id, persona, created_at
 FROM recall_trace
 WHERE chat_id = ?
-ORDER BY created_at DESC
+ORDER BY created_at DESC, rowid DESC
 LIMIT ?`, strings.TrimSpace(sessionID), limit)
 	}
 	if err != nil {

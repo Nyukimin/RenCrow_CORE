@@ -71,7 +71,7 @@ func (d *ArchiveSQLiteStore) GetSessionHistory(ctx context.Context, sessionID st
 	       keywords, embedding, is_novel
 	FROM session_thread
 	WHERE session_id = ?
-	ORDER BY ts_start DESC
+	ORDER BY ts_start DESC, rowid DESC
 	LIMIT ?
 	`
 
@@ -128,7 +128,7 @@ func (d *ArchiveSQLiteStore) SearchByDomain(ctx context.Context, domain string, 
 	       keywords, embedding, is_novel
 	FROM session_thread
 	WHERE domain = ?
-	ORDER BY ts_start DESC
+	ORDER BY ts_start DESC, rowid DESC
 	LIMIT ?
 	`
 

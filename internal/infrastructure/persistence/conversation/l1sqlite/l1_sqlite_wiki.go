@@ -84,7 +84,7 @@ WHERE (
 	OR f.related_text LIKE ?
 )
   AND w.status NOT IN (?, ?)
-ORDER BY w.updated_at DESC
+ORDER BY w.updated_at DESC, w.rowid DESC
 LIMIT ?
 `, LikeQuery(query), LikeQuery(query), LikeQuery(query), LikeQuery(query), LikeQuery(query), LikeQuery(query),
 		WikiPageStatusArchived, WikiPageStatusDeprecated, limit)
@@ -119,7 +119,7 @@ FROM wiki_page_index_fts f
 JOIN wiki_page_index w ON w.page_id = f.page_id
 WHERE (`+strings.Join(clauses, " OR ")+`)
   AND w.status NOT IN (?, ?)
-ORDER BY w.updated_at DESC
+ORDER BY w.updated_at DESC, w.rowid DESC
 LIMIT ?
 `, args...)
 	if err != nil {

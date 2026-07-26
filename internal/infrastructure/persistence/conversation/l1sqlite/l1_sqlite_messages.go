@@ -260,7 +260,7 @@ SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE `+whereClause+`
-ORDER BY created_at DESC
+ORDER BY created_at DESC, rowid DESC
 LIMIT ?
 `, queryArgs...)
 	if err != nil {

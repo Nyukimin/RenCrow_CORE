@@ -128,7 +128,7 @@ SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE namespace = ?
-ORDER BY created_at DESC
+ORDER BY created_at DESC, rowid DESC
 LIMIT ?
 `, namespace, limit)
 	} else {
@@ -137,7 +137,7 @@ SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE namespace = ? AND memory_state = ?
-ORDER BY created_at DESC
+ORDER BY created_at DESC, rowid DESC
 LIMIT ?
 `, namespace, state, limit)
 	}

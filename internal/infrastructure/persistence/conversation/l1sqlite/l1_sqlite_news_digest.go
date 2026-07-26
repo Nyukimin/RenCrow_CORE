@@ -27,7 +27,7 @@ FROM l1_news_item
 		query += "WHERE category = ?\n"
 		args = append(args, category)
 	}
-	query += "ORDER BY COALESCE(published_at, fetched_at) DESC, created_at DESC\nLIMIT ?"
+	query += "ORDER BY COALESCE(published_at, fetched_at) DESC, created_at DESC, rowid DESC\nLIMIT ?"
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -74,7 +74,7 @@ WHERE category = ?
 		args = append(args, startHour, endHour)
 	}
 	query += `
-ORDER BY COALESCE(published_at, fetched_at) DESC, created_at DESC
+ORDER BY COALESCE(published_at, fetched_at) DESC, created_at DESC, rowid DESC
 LIMIT ?
 `
 	args = append(args, limit)
@@ -166,7 +166,7 @@ FROM l1_daily_digest
 		query += "WHERE category = ?\n"
 		args = append(args, category)
 	}
-	query += "ORDER BY digest_date DESC, created_at DESC\nLIMIT ?"
+	query += "ORDER BY digest_date DESC, created_at DESC, rowid DESC\nLIMIT ?"
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

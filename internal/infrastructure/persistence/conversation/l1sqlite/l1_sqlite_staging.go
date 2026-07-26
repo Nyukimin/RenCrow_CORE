@@ -130,7 +130,7 @@ SELECT id, kind, namespace, event_id, source_id, source_url, fetched_at, publish
        validation_status, meta_json, created_at, updated_at
 FROM l1_staging_item
 WHERE validation_status = ?
-ORDER BY created_at DESC
+ORDER BY created_at DESC, rowid DESC
 LIMIT ?
 `, validationStatus, limit)
 	if err != nil {

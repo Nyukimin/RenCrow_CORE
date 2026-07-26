@@ -156,7 +156,7 @@ WHERE id IN (
 		WHERE p.evidence_event_id = l1_memory_event.id
 		  AND p.state <> ?
 	  )
-	ORDER BY created_at ASC
+	ORDER BY created_at ASC, rowid ASC
 	LIMIT ?
 )`, MemoryStateObserved, cutoff.UTC(), domainmemory.ProfilePromotionCompleted, limit)
 	if err != nil {
@@ -182,7 +182,7 @@ func (s *L1SQLiteStore) queueUserMemoryCandidateReview(ctx context.Context, now 
 WHERE namespace LIKE 'user:%'
   AND memory_state = ?
   AND created_at < ?
-ORDER BY created_at ASC
+ORDER BY created_at ASC, rowid ASC
 LIMIT ?`, MemoryStateCandidate, cutoff.UTC(), limit)
 	if err != nil {
 		return 0, err
@@ -286,7 +286,7 @@ func (s *L1SQLiteStore) queueThreadSummaryMonthlySeeds(ctx context.Context, now 
 WHERE layer = ?
   AND (source = ? OR json_extract(meta_json, '$.kind') = ?)
   AND updated_at < ?
-ORDER BY updated_at ASC
+ORDER BY updated_at ASC, rowid ASC
 LIMIT ?`, "L2", "thread_summary", "thread_summary", cutoff.UTC(), limit)
 	if err != nil {
 		return 0, err
@@ -316,7 +316,7 @@ func (s *L1SQLiteStore) markDecayedUserMemories(ctx context.Context, now time.Ti
 	events, err := s.userMemoryEventsForLifecycle(ctx, `
 WHERE namespace LIKE 'user:%'
   AND memory_state = ?
-ORDER BY updated_at ASC
+ORDER BY updated_at ASC, rowid ASC
 LIMIT ?`, MemoryStateConfirmed, limit)
 	if err != nil {
 		return 0, err
@@ -354,7 +354,7 @@ LIMIT ?`, MemoryStateConfirmed, limit)
 func (s *L1SQLiteStore) queueVectorCleanup(ctx context.Context, now time.Time, limit int) (int, error) {
 	events, err := s.userMemoryEventsForLifecycle(ctx, `
 WHERE namespace LIKE 'user:%'
-ORDER BY updated_at ASC
+ORDER BY updated_at ASC, rowid ASC
 LIMIT ?`, limit)
 	if err != nil {
 		return 0, err
@@ -393,7 +393,7 @@ func (s *L1SQLiteStore) executeQueuedVectorCleanup(ctx context.Context, now time
 	}
 	events, err := s.userMemoryEventsForLifecycle(ctx, `
 WHERE namespace LIKE 'user:%'
-ORDER BY updated_at ASC
+ORDER BY updated_at ASC, rowid ASC
 LIMIT ?`, limit)
 	if err != nil {
 		return 0, err

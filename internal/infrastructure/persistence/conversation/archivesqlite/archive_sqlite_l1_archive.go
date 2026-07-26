@@ -114,7 +114,7 @@ WHERE (
 	OR f.keywords_text LIKE ?
 )
   AND f.domain = ?
-ORDER BY k.updated_at DESC
+ORDER BY k.updated_at DESC, k.rowid DESC
 LIMIT ?
 `, l1sqlite.LikeQuery(query), l1sqlite.LikeQuery(query), l1sqlite.LikeQuery(query), l1sqlite.LikeQuery(query), domain, limit)
 	if err != nil {

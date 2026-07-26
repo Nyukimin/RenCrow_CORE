@@ -140,7 +140,7 @@ func (s *L1SQLiteStore) RelatedKnowledgeRelations(ctx context.Context, srcItemID
 SELECT src_item_id, dst_item_id, relation_type, score, evidence, created_at, updated_at
 FROM l1_knowledge_item_relation
 WHERE src_item_id = ?
-ORDER BY score DESC, updated_at DESC
+ORDER BY score DESC, updated_at DESC, rowid DESC
 LIMIT ?
 `, srcItemID, limit)
 	if err != nil {
