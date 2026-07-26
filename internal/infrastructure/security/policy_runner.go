@@ -47,9 +47,10 @@ func (r *PolicyRunner) ExecuteV2(ctx context.Context, toolName string, args map[
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
 
+	jobID, actionID := nextExecutionIdentifiers()
 	action := domainexecution.Action{
-		JobID:       fmt.Sprintf("job-%d", time.Now().UnixNano()),
-		ActionID:    fmt.Sprintf("act-%d", time.Now().UnixNano()),
+		JobID:       jobID,
+		ActionID:    actionID,
 		Tool:        toolName,
 		Arguments:   args,
 		RequestedBy: r.requestedBy,
