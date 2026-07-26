@@ -1,6 +1,11 @@
 # Module Migration Plan
 
-This plan turns the design boundary into implementation without a big-bang move.
+This document records the incremental creation of RenCrow_CORE-internal
+contract packages. It is not the product roadmap and does not assign external
+module implementation bodies to CORE. Current product status is maintained in
+[`docs/08_実装状況・ロードマップ.md`](../docs/08_実装状況・ロードマップ.md);
+external module ownership is maintained in
+[`docs/01_システム概要.md`](../docs/01_システム概要.md).
 
 ## Phase 0: Design Baseline
 
@@ -41,6 +46,10 @@ Validation:
 ## Phase 2: Provider Module Extraction
 
 Status: in progress.
+
+This phase refers only to CORE-side contracts and legacy/development
+compatibility. Production target mapping, concrete provider adapters, and
+runtime lifecycle belong to the external module repositories.
 
 Goal: move provider-specific code behind module contracts.
 
@@ -221,20 +230,20 @@ Current validation:
 
 ## Phase 5: Final Package Move Or Alias Stabilization
 
-Goal: decide whether physical package moves are worth the churn.
+Status: alias and contract stabilization adopted.
 
-Options:
+Decision:
 
-1. Keep current package paths and enforce ownership by documentation/tests.
-2. Move code into module-named packages with minimal adapter code where runtime wiring still needs it.
-
-Decision gate:
-
-- Choose option 2 only if import boundary tests and the remaining adapters keep behavior stable.
+- Keep current package paths and enforce ownership with contracts and tests.
+- Move a concrete implementation only when there is a demonstrated reuse,
+  change-isolation, or testability benefit.
+- Do not treat physical package movement as an unfinished product feature.
 
 ## Non-goals
 
 - Do not move implementation during the design-completion phase.
-- Do not create external repos for modules.
+- Do not create sibling repositories merely to mirror these local contract
+  packages. Existing independent RenCrow modules retain the ownership defined
+  by the current canonical specification.
 - Do not store module source under `.git/worktrees/*`.
 - Do not change runtime behavior only to make package names look cleaner.

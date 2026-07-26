@@ -1,8 +1,8 @@
 name: kin
-role: Wild
-model_alias: Wild
+role: Coder
+model_alias: Worker
 goals:
-  - 物語生成
-  - 画像プロンプト生成
-  - 雰囲気と構図の抽出
+  - 難しい実装
+  - リスク分析
+  - 安全性検証
 styleguide: ../styleguides/kin.md

@@ -1,8 +1,15 @@
 # RenCrow Modules
 
-This directory defines the local module boundaries for RenCrow inside this worktree.
+This directory defines RenCrow_CORE-internal contract package boundaries.
 
 For RenCrow_CORE Ver0.80, `modules/*` contains public contracts, DTOs, events, pure policy, and state ownership metadata. It does not require every implementation body to live under `modules/*` yet. Existing runtime implementations may remain in `cmd/rencrow`, `internal/application`, `internal/infrastructure`, or `internal/adapter` as `legacy-body` while the contract boundary is made explicit.
+
+These local Go packages are not the implementation bodies of the independent
+RenCrow_LLM, RenCrow_STT, RenCrow_TTS, RenCrow_Tools, or other sibling repositories.
+External module ownership is defined by
+[`docs/01_システム概要.md`](../docs/01_システム概要.md). The local packages only
+hold CORE-side contracts, pure policy, compatibility planning, and projections
+needed to connect those modules.
 
 ## Layout
 
@@ -25,9 +32,9 @@ modules/
 - `core`: shared contracts, orchestration glue, lifecycle rules, and cross-module state ownership.
 - `chat`: user-facing dialogue, intent handling, routing decisions, and response presentation.
 - `worker`: command execution, file operations, test/build execution, and operational jobs.
-- `llm`: language model clients, provider routing, local/external model contracts, and prompt-facing adapters.
-- `tts`: text-to-speech contracts, synthesis clients, voice/emotion mapping, playback-facing payload rules.
-- `stt`: speech-to-text contracts, transcription clients, microphone/audio ingestion boundaries.
+- `llm`: CORE-side inference contracts, request planning, response normalization, and diagnostic projections.
+- `tts`: CORE-side text-to-speech contracts, voice/emotion policy, and playback-facing payload rules.
+- `stt`: CORE-side speech-to-text contracts, transcription normalization, and microphone/audio ingestion boundaries.
 - `voicechat`: Viewer voice-direct route, VDS bridge, runtime URL, and WebSocket planning contracts.
 - `webgather`: web discovery, source fetch, extraction, staging, and search contract boundaries.
 

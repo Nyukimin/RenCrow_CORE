@@ -310,7 +310,7 @@ func (c *Config) Validate() error {
 	// v4.0 IdleChat設定検証
 	if c.IdleChat.Enabled {
 		validAgents := map[string]bool{
-			"mio": true, "shiro": true, "aka": true, "ao": true, "gin": true,
+			"mio": true, "shiro": true, "aka": true, "ao": true, "kin": true, "gin": true,
 		}
 		for _, p := range c.IdleChat.Participants {
 			if !validAgents[p] {
@@ -732,18 +732,22 @@ func (c *Config) Validate() error {
 
 	// v4.1 Coder スロット検証
 	coders := []struct {
-		name   string
-		config *CoderConfig
+		name         string
+		expectedName string
+		config       *CoderConfig
 	}{
-		{"coder1", &c.Coder1},
-		{"coder2", &c.Coder2},
-		{"coder3", &c.Coder3},
-		{"coder4", &c.Coder4},
+		{"coder1", "aka", &c.Coder1},
+		{"coder2", "ao", &c.Coder2},
+		{"coder3", "kin", &c.Coder3},
+		{"coder4", "gin", &c.Coder4},
 	}
 
 	for _, coder := range coders {
 		if err := validateCoderConfig(coder.name, coder.config); err != nil {
 			return err
+		}
+		if coder.config.Name != coder.expectedName {
+			return fmt.Errorf("%s.name must be %q, got %q", coder.name, coder.expectedName, coder.config.Name)
 		}
 	}
 

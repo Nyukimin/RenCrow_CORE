@@ -11,7 +11,9 @@ core.architecture-review
 
 ## Required Context
 - `AGENTS.md`
-- `docs/01_正本仕様/実装仕様.md`
+- `docs/README.md`
+- 対象領域に対応する `docs/01_システム概要.md` から
+  `docs/09_運用ログ・panic保存仕様.md` の現行正本
 - 対象仕様
 - 関連 production code
 - 必要なら `git diff`

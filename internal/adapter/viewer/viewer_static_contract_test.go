@@ -6,6 +6,29 @@ import (
 	"testing"
 )
 
+func TestViewerStaticContractCoderIdentityMapping(t *testing.T) {
+	data, err := os.ReadFile("assets/js/viewer.js")
+	if err != nil {
+		t.Fatalf("read viewer.js: %v", err)
+	}
+	js := string(data)
+	required := []string{
+		`coder1: {c:'#fb923c', l:'あか',  en:'Aka'`,
+		`coder2: {c:'#818cf8', l:'あお',  en:'Ao'`,
+		`coder3: {c:'#facc15', l:'きん',  en:'Kin'`,
+		`coder4: {c:'#a78bfa', l:'ぎん',  en:'Gin'`,
+		`if (raw === 'aka') return 'coder1';`,
+		`if (raw === 'ao') return 'coder2';`,
+		`if (raw === 'kin') return 'coder3';`,
+		`if (raw === 'gin') return 'coder4';`,
+	}
+	for _, needle := range required {
+		if !strings.Contains(js, needle) {
+			t.Fatalf("viewer.js missing Coder identity contract %q", needle)
+		}
+	}
+}
+
 func TestViewerStaticContractSeparatesDisplayAudioLipsyncAndLogs(t *testing.T) {
 	data, err := os.ReadFile("viewer.html")
 	if err != nil {

@@ -1,6 +1,11 @@
 # TTS Module
 
-Owns text-to-speech integration boundaries.
+Owns the RenCrow_CORE side of text-to-speech integration boundaries.
+RenCrow_TTS owns the public TTS API and concrete synthesis gateway; synthesis
+engine and model implementation remain outside CORE.
+Provider-specific URLs and payload rules listed below are
+legacy/development compatibility inside CORE; they do not redefine the
+production RenCrow_TTS boundary.
 
 Responsibilities:
 

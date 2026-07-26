@@ -7,8 +7,8 @@ const A = {
   kuro:   {c:'#64748b', l:'くろ',  en:'Kuro',  e:'K'},
   midori: {c:'#34d399', l:'みどり', en:'Midori', e:'M'},
   worker: {c:'#38bdf8', l:'Worker', en:'Worker', e:'W'},
-  coder1: {c:'#818cf8', l:'あお',  en:'AO',    e:'\u{1f535}'},
-  coder2: {c:'#fb923c', l:'あか',  en:'Aka',   e:'\u{1f534}'},
+  coder1: {c:'#fb923c', l:'あか',  en:'Aka',   e:'\u{1f534}'},
+  coder2: {c:'#818cf8', l:'あお',  en:'Ao',    e:'\u{1f535}'},
   coder3: {c:'#facc15', l:'きん',  en:'Kin',   e:'\u{1f7e1}'},
   coder4: {c:'#a78bfa', l:'ぎん',  en:'Gin',   e:'\u{1f7e3}'},
   gemma4: {c:'#34d399', l:'Gemma4', en:'Gemma4', e:'G4'},
@@ -17,7 +17,7 @@ const A = {
 };
 const RC = {
   CHAT:'#f472b6', OPS:'#22d3ee', CODE:'#818cf8',
-  CODE1:'#818cf8', CODE2:'#fb923c', CODE3:'#facc15', CODE4:'#a78bfa',
+  CODE1:'#fb923c', CODE2:'#818cf8', CODE3:'#facc15', CODE4:'#a78bfa',
   PLAN:'#4ade80', ANALYZE:'#fbbf24', RESEARCH:'#34d399',
   IDLECHAT:'#a78bfa',
 };
@@ -3926,8 +3926,8 @@ function jobNotificationKey(n) {
 function normalizeJobNotificationAssignee(n) {
   const raw = String((n && n.assignee) || '').trim().toLowerCase();
   if (!raw || raw === 'worker' || raw === 'heavy') return 'shiro';
-  if (raw === 'ao') return 'coder1';
-  if (raw === 'aka') return 'coder2';
+  if (raw === 'aka') return 'coder1';
+  if (raw === 'ao') return 'coder2';
   if (raw === 'kin') return 'coder3';
   if (raw === 'gin') return 'coder4';
   return raw;

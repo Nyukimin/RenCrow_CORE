@@ -28,7 +28,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if rg -n '/home/[^/<[:space:]]+|C:\\Users\\[^\\<[:space:]]+|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' README.md ROADMAP.md CONTRIBUTING.md SECURITY.md docs; then
+          if rg -n '/home/[^/<[:space:]]+|C:\\Users\\[^\\<[:space:]]+|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' README.md README.ja.md README.zh.md ROADMAP.md CONTRIBUTING.md SECURITY.md docs; then
             echo "Machine-local path or private network address found in public docs" >&2
             exit 1
           fi
@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if rg -n --pcre2 '(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*\S{20,}' README.md ROADMAP.md CONTRIBUTING.md SECURITY.md docs; then
+          if rg -n --pcre2 '(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*(?!"?\$\{)\S{20,}' README.md README.ja.md README.zh.md ROADMAP.md CONTRIBUTING.md SECURITY.md docs; then
             echo "Likely embedded secret found in public docs" >&2
             exit 1
           fi
@@ -44,8 +44,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          retired='docs/(00_ドキュメント分類一覧|02_正本仕様|02_OpenClaw移植詳細仕様|02_v2統合分割仕様|03_設計文書|04_実装仕様_機能拡張|05_LLM運用プロンプト設計|06_実装ガイド進行管理|LLM運用|コーディング|refs|tooling)(/|\.md|`)'
-          if rg -n "$retired" AGENTS.md CLAUDE.md rules; then
+          retired='docs/(00_ドキュメント分類一覧|01_正本仕様|02_正本仕様|02_OpenClaw移植詳細仕様|02_v2統合分割仕様|03_設計文書|04_実装仕様_機能拡張|05_LLM運用プロンプト設計|06_実装ガイド進行管理|10_新仕様|LLM運用|コーディング|refs|tooling)(/|\.md|`)'
+          if rg -n "$retired" AGENTS.md CLAUDE.md rules commands scripts .agents/skills; then
             echo "Active instructions must reference docs/README.md and docs/01-09 only" >&2
             exit 1
           fi
@@ -60,6 +60,8 @@ jobs:
           }
           sources = [Path("AGENTS.md"), Path("CLAUDE.md")]
           sources.extend(Path("rules").rglob("*.md"))
+          sources.extend(Path("commands").glob("*.md"))
+          sources.extend(Path("scripts").glob("*.md"))
           failures = []
           for source in sources:
               text = source.read_text(encoding="utf-8")
@@ -80,14 +82,22 @@ jobs:
 
           roots = [
               Path("README.md"),
+              Path("README.ja.md"),
+              Path("README.zh.md"),
               Path("ROADMAP.md"),
               Path("CONTRIBUTING.md"),
               Path("SECURITY.md"),
               Path("AGENTS.md"),
               Path("CLAUDE.md"),
+              Path("DESIGN.md"),
+              Path("TOOL_CONTRACT.md"),
           ]
           roots.extend(Path("docs").glob("*.md"))
           roots.extend(Path("rules").rglob("*.md"))
+          roots.extend(Path("commands").glob("*.md"))
+          roots.extend(Path("scripts").glob("*.md"))
+          roots.extend(Path("modules").rglob("*.md"))
+          roots.extend(Path("prompts").glob("README.md"))
           failures = []
           for source in roots:
               text = source.read_text(encoding="utf-8")

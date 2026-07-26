@@ -27,7 +27,8 @@ description: |
 4. Goal に設定する予定の作業手順書
 5. 関連する repo ルール:
    - `AGENTS.md`
-   - `docs/01_正本仕様/実装仕様.md`
+   - `docs/README.md`
+   - `docs/README.md`から選んだ対象領域の現行正本
    - 必要に応じて `rules/common/rules_testing.md`
    - 必要に応じて `rules/common/rules_observation_verification.md`
 

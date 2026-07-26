@@ -4,7 +4,11 @@
 **対象プロジェクト**: RenCrow_CORE  
 **目的**: 既存仕様を壊さず、技術的負債を減らし、今後変更しやすい状態にする
 
-> [WARN] L番号定義の正本は `docs/refs/01_正本仕様/18_Memory_Lifecycle_Recall_Context.md` である。L0〜L4 は保存媒体ではなく lifecycle 上の位置で定義する。本書は 2026-06-12 時点の履歴文書であり、本文中の Redis / SQLite / DuckDB / Qdrant を L0〜L3 に割り当てる記述は旧定義として扱う。
+> [WARN]
+> 本書は2026-06-12時点の履歴文書であり、現行の作業指示またはbacklogではない。
+> 本文中の削除済み`docs/01_正本仕様`、`docs/refs`、旧Agent名、旧実装状態を
+> 現行判断に使用しない。現在の製品仕様は`docs/README.md`から選んだ`docs/01`〜`09`、
+> 現在状態はproduction wiringとtestを参照する。
 
 ---
 
@@ -33,7 +37,7 @@ RenCrow は Go 言語で実装された超軽量パーソナル AI アシスタ�
 **主要特徴**:
 - メモリ使用量 <10MB で動作
 - マルチ LLM ルーティング（Ollama、Claude、DeepSeek、OpenAI）
-- Chat（Mio）/ Worker（Shiro）/ Coder（Aka/Ao/Gin/Kin）の役割分離
+- Chat（Mio）/ Worker（Shiro）/ Coder（Aka/Ao/Kin/Gin）の役割分離
 - Clean Architecture 4層構造（Domain → Application → Infrastructure → Adapter）
 - テストカバレッジ 83.6%（Domain層 93.5%）
 - 「記憶OS」構想：L0（短期）/ L1（hot store）/ L2（中期）/ L3（長期）の4層記憶システム
@@ -202,7 +206,7 @@ make run
 1. **責務の三分割**（設計原則 §2.1）:
    - Chat（Mio）: 対話・ルーティング判断
    - Worker（Shiro）: 実行・自己拡張判断
-   - Coder（Aka/Ao/Gin/Kin）: plan/patch 生成（直接実行しない）
+   - Coder（Aka/Ao/Kin/Gin）: plan/patch 生成（直接実行しない）
 
 2. **指揮命令系統**（設計原則 §2.2）:
    - Mio は Coder に直接指示しない
@@ -1190,7 +1194,7 @@ Phase X+1 に進む / 質問がある / 承認待ち
 
 2. **ルミナ/クラリス/ノクス への命名変更**: 
    - **不要**（人間の回答: これは古い仕様）
-   - 現行の Mio/Shiro/Aka/Ao/Gin/Kin を維持
+   - 現行の Mio/Shiro/Aka/Ao/Kin/Gin を維持
 
 3. **その他の部分実装項目**:
    - **別タスク**（人間の回答: 別途実装仕様を作成）

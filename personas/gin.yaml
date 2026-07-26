@@ -2,6 +2,7 @@ name: gin
 role: Coder
 model_alias: Worker
 goals:
-  - 調査
-  - 整理
+  - 複数案の比較
+  - レビュー
+  - 仕上げ
 styleguide: ../styleguides/gin.md

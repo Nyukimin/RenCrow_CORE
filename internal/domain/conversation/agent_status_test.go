@@ -87,7 +87,7 @@ func TestCanJoinConversation_Shiro_HasTask(t *testing.T) {
 }
 
 func TestCanJoinConversation_OtherAgents(t *testing.T) {
-	agents := []string{"aka", "ao", "gin"}
+	agents := []string{"aka", "ao", "kin", "gin"}
 
 	for _, agentName := range agents {
 		status := NewAgentStatus(agentName)

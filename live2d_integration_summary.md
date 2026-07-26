@@ -4,6 +4,12 @@
 **実装者**: Claude Sonnet 4.5  
 **要件**: ChatとIdleChatで感情表現、mode=liveで大き目キャラクター、モバイル対応
 
+> [WARN]
+> 本書は2026-06-12時点の実装snapshotであり、現行仕様・実装状況の正本ではない。
+> 現在のViewer契約は`docs/02_機能仕様.md`と`docs/06_Public_API仕様.md`を参照する。
+> 本書の`mode=live`はLive2D描画用parameterであり、廃止済みの
+> `/viewer?mode=live`とは別契約である。本文中の将来計画と完了表は当時の記録として扱う。
+
 ---
 
 ## ✅ 実装完了内容
@@ -264,4 +270,3 @@ const data = await response.json();
 
 **実装完了日**: 2026-06-12  
 **次のステップ**: LLMサービスとの統合（IdleChat連携）
-

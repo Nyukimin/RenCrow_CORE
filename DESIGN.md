@@ -15,7 +15,8 @@ Related implementation rules:
 
 - `rules/rules_viewer_ui.md`
 - `rules/common/rules_frontend.md`
-- `docs/09_Viewer/Viewer仕様.md`
+- `docs/02_機能仕様.md`
+- `docs/06_Public_API仕様.md`
 
 ## 1. Visual Theme & Atmosphere
 

@@ -1116,13 +1116,13 @@ coder2:
   base_url: ${module:RenCraw_LLM.endpoints.coder2}
 coder3:
   enabled: true
-  name: gin
+  name: kin
   provider: local_openai
   model: Coder3
   base_url: ${module:RenCraw_LLM.endpoints.coder3}
 coder4:
   enabled: true
-  name: kin
+  name: gin
   provider: local_openai
   model: Coder4
   base_url: ${module:RenCraw_LLM.endpoints.coder4}
@@ -2452,8 +2452,8 @@ func TestConfig_Validate(t *testing.T) {
 					RetentionDays:     14,
 					GCIntervalMinutes: 60,
 				},
-				Coder1: CoderConfig{Name: "ao"},
-				Coder2: CoderConfig{Name: "aka"},
+				Coder1: CoderConfig{Name: "aka"},
+				Coder2: CoderConfig{Name: "ao"},
 				Coder3: CoderConfig{Name: "kin"},
 				Coder4: CoderConfig{Name: "gin"},
 			},
@@ -2491,8 +2491,8 @@ func TestConfig_Validate(t *testing.T) {
 						Path:    "logs/execution_audit.jsonl",
 					},
 				},
-				Coder1: CoderConfig{Name: "ao"},
-				Coder2: CoderConfig{Name: "aka"},
+				Coder1: CoderConfig{Name: "aka"},
+				Coder2: CoderConfig{Name: "ao"},
 				Coder3: CoderConfig{Name: "kin"},
 				Coder4: CoderConfig{Name: "gin"},
 			},
@@ -2589,8 +2589,8 @@ func TestConfig_Validate(t *testing.T) {
 					ModelConcurrency:  1,
 				},
 				Session: SessionConfig{StorageDir: "./data/sessions"},
-				Coder1:  CoderConfig{Name: "ao"},
-				Coder2:  CoderConfig{Name: "aka"},
+				Coder1:  CoderConfig{Name: "aka"},
+				Coder2:  CoderConfig{Name: "ao"},
 				Coder3:  CoderConfig{Name: "kin"},
 				Coder4:  CoderConfig{Name: "gin"},
 			},
@@ -2635,8 +2635,8 @@ func TestConfig_Validate_Distributed(t *testing.T) {
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		// Coder1-4 の最小限の設定（バリデーションを通すため）
-		cfg.Coder1.Name = "ao"
-		cfg.Coder2.Name = "aka"
+		cfg.Coder1.Name = "aka"
+		cfg.Coder2.Name = "ao"
 		cfg.Coder3.Name = "kin"
 		cfg.Coder4.Name = "gin"
 		return cfg
@@ -2693,8 +2693,8 @@ func TestConfig_Validate_IdleChat(t *testing.T) {
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		// Coder1-4 の最小限の設定（バリデーションを通すため）
-		cfg.Coder1.Name = "ao"
-		cfg.Coder2.Name = "aka"
+		cfg.Coder1.Name = "aka"
+		cfg.Coder2.Name = "ao"
 		cfg.Coder3.Name = "kin"
 		cfg.Coder4.Name = "gin"
 		return cfg
@@ -2727,7 +2727,7 @@ func TestConfig_Validate_IdleChat(t *testing.T) {
 	t.Run("IdleChat valid config", func(t *testing.T) {
 		cfg := base()
 		cfg.IdleChat.Enabled = true
-		cfg.IdleChat.Participants = []string{"mio", "shiro"}
+		cfg.IdleChat.Participants = []string{"mio", "shiro", "aka", "ao", "kin", "gin"}
 		cfg.IdleChat.IntervalMin = 5
 		cfg.IdleChat.MaxTurns = 10
 		cfg.IdleChat.Temperature = 0.8
@@ -3171,11 +3171,11 @@ session:
 	if cfg.Coder1.Model != "deepseek-coder" {
 		t.Errorf("Coder1.Model: expected 'deepseek-coder', got '%s'", cfg.Coder1.Model)
 	}
-	if cfg.Coder1.Name != "ao" {
-		t.Errorf("Coder1.Name: expected 'ao', got '%s'", cfg.Coder1.Name)
+	if cfg.Coder1.Name != "aka" {
+		t.Errorf("Coder1.Name: expected 'aka', got '%s'", cfg.Coder1.Name)
 	}
-	if cfg.Coder1.DisplayName != "青" {
-		t.Errorf("Coder1.DisplayName: expected '青', got '%s'", cfg.Coder1.DisplayName)
+	if cfg.Coder1.DisplayName != "赤" {
+		t.Errorf("Coder1.DisplayName: expected '赤', got '%s'", cfg.Coder1.DisplayName)
 	}
 	if cfg.Coder1.LightMemory.MaxTurns != 3 {
 		t.Errorf("Coder1.LightMemory.MaxTurns: expected 3, got %d", cfg.Coder1.LightMemory.MaxTurns)
@@ -3188,11 +3188,11 @@ session:
 	if cfg.Coder2.Model != "gpt-4-turbo" {
 		t.Errorf("Coder2.Model: expected 'gpt-4-turbo', got '%s'", cfg.Coder2.Model)
 	}
-	if cfg.Coder2.Name != "aka" {
-		t.Errorf("Coder2.Name: expected 'aka', got '%s'", cfg.Coder2.Name)
+	if cfg.Coder2.Name != "ao" {
+		t.Errorf("Coder2.Name: expected 'ao', got '%s'", cfg.Coder2.Name)
 	}
-	if cfg.Coder2.DisplayName != "赤" {
-		t.Errorf("Coder2.DisplayName: expected '赤', got '%s'", cfg.Coder2.DisplayName)
+	if cfg.Coder2.DisplayName != "青" {
+		t.Errorf("Coder2.DisplayName: expected '青', got '%s'", cfg.Coder2.DisplayName)
 	}
 
 	// Coder3 デフォルト値検証
@@ -3224,6 +3224,21 @@ session:
 	}
 }
 
+func TestConfigValidateRejectsCoderIdentityDrift(t *testing.T) {
+	cfg := &Config{
+		Server:  ServerConfig{Port: 8080},
+		Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
+		Session: SessionConfig{StorageDir: "./data"},
+	}
+	cfg.setDefaults()
+	cfg.Coder3.Name = "gin"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `coder3.name must be "kin"`) {
+		t.Fatalf("Validate() error = %v, want fixed Coder3 identity error", err)
+	}
+}
+
 // TestCoderConfig_CustomValues はカスタム値が正しく読み込まれることを検証
 func TestCoderConfig_CustomValues(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -3241,7 +3256,7 @@ session:
   storage_dir: "./data/sessions"
 
 coder1:
-  name: "custom_ao"
+  name: "aka"
   display_name: "カスタム青"
   provider: "deepseek"
   model: "deepseek-custom"
@@ -3254,7 +3269,7 @@ coder1:
   enabled: true
 
 coder4:
-  name: "custom_gin"
+  name: "gin"
   display_name: "カスタム銀"
   provider: "gemini"
   model: "gemini-pro"
@@ -3278,8 +3293,8 @@ coder4:
 	}
 
 	// Coder1 カスタム値検証
-	if cfg.Coder1.Name != "custom_ao" {
-		t.Errorf("Coder1.Name: expected 'custom_ao', got '%s'", cfg.Coder1.Name)
+	if cfg.Coder1.Name != "aka" {
+		t.Errorf("Coder1.Name: expected 'aka', got '%s'", cfg.Coder1.Name)
 	}
 	if cfg.Coder1.DisplayName != "カスタム青" {
 		t.Errorf("Coder1.DisplayName: expected 'カスタム青', got '%s'", cfg.Coder1.DisplayName)
@@ -3307,8 +3322,8 @@ coder4:
 	}
 
 	// Coder4 カスタム値検証
-	if cfg.Coder4.Name != "custom_gin" {
-		t.Errorf("Coder4.Name: expected 'custom_gin', got '%s'", cfg.Coder4.Name)
+	if cfg.Coder4.Name != "gin" {
+		t.Errorf("Coder4.Name: expected 'gin', got '%s'", cfg.Coder4.Name)
 	}
 	if cfg.Coder4.DisplayName != "カスタム銀" {
 		t.Errorf("Coder4.DisplayName: expected 'カスタム銀', got '%s'", cfg.Coder4.DisplayName)
@@ -3475,8 +3490,8 @@ func TestConfig_Validate_LLMOps(t *testing.T) {
 			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
-		cfg.Coder1.Name = "ao"
-		cfg.Coder2.Name = "aka"
+		cfg.Coder1.Name = "aka"
+		cfg.Coder2.Name = "ao"
 		cfg.Coder3.Name = "kin"
 		cfg.Coder4.Name = "gin"
 		return cfg
@@ -3505,8 +3520,8 @@ func TestConfig_Validate_BrowserActor(t *testing.T) {
 			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
-		cfg.Coder1.Name = "ao"
-		cfg.Coder2.Name = "aka"
+		cfg.Coder1.Name = "aka"
+		cfg.Coder2.Name = "ao"
 		cfg.Coder3.Name = "kin"
 		cfg.Coder4.Name = "gin"
 		cfg.setDefaults()
@@ -3549,8 +3564,8 @@ func TestConfig_Validate_Codex(t *testing.T) {
 			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
-		cfg.Coder1.Name = "ao"
-		cfg.Coder2.Name = "aka"
+		cfg.Coder1.Name = "aka"
+		cfg.Coder2.Name = "ao"
 		cfg.Coder3.Name = "kin"
 		cfg.Coder4.Name = "gin"
 		cfg.setDefaults()
@@ -3587,7 +3602,7 @@ func TestConfig_Validate_Codex(t *testing.T) {
 func TestLLMGatewayDefaultsAndValidation(t *testing.T) {
 	cfg := &Config{Server: ServerConfig{Port: 18790}, Ollama: OllamaConfig{BaseURL: "http://127.0.0.1:11434"}, LLMGateway: LLMGatewayConfig{Enabled: true, BaseURL: "http://127.0.0.1:8090"}}
 	cfg.Session.StorageDir = "./data"
-	cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "ao", "aka", "kin", "gin"
+	cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "aka", "ao", "kin", "gin"
 	cfg.setDefaults()
 	if cfg.LLMGateway.TimeoutSec != 600 {
 		t.Fatalf("timeout_sec=%d, want 600", cfg.LLMGateway.TimeoutSec)
@@ -3611,8 +3626,8 @@ func TestConfig_Validate_AdvisorPersistence(t *testing.T) {
 		Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 		Session: SessionConfig{StorageDir: "./data"},
 	}
-	cfg.Coder1.Name = "ao"
-	cfg.Coder2.Name = "aka"
+	cfg.Coder1.Name = "aka"
+	cfg.Coder2.Name = "ao"
 	cfg.Coder3.Name = "kin"
 	cfg.Coder4.Name = "gin"
 	cfg.setDefaults()
@@ -3633,7 +3648,7 @@ func TestConfig_Validate_KnowledgeRelationDefaultsAndGuards(t *testing.T) {
 		Server: ServerConfig{Port: 8080}, Ollama: OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 		Session: SessionConfig{StorageDir: "./data"},
 	}
-	cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "ao", "aka", "kin", "gin"
+	cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "aka", "ao", "kin", "gin"
 	cfg.setDefaults()
 	if cfg.KnowledgeRelation.MaxHops != 2 || cfg.KnowledgeRelation.MinimumScore != 4 || cfg.KnowledgeRelation.Enabled {
 		t.Fatalf("knowledge relation defaults=%+v", cfg.KnowledgeRelation)
@@ -3658,7 +3673,7 @@ func TestConfig_Validate_EconomicObjectiveDefaultsAndGuards(t *testing.T) {
 			Server: ServerConfig{Port: 8080}, Ollama: OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
-		cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "ao", "aka", "kin", "gin"
+		cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "aka", "ao", "kin", "gin"
 		cfg.setDefaults()
 		return cfg
 	}

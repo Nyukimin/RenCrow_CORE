@@ -10,6 +10,31 @@ func TestStaticCatalogListsEightAgents(t *testing.T) {
 	}
 }
 
+func TestStaticCatalogCoderIdentityMapping(t *testing.T) {
+	catalog := NewStaticCatalog()
+	tests := []struct {
+		id   string
+		role string
+	}{
+		{id: "aka", role: "Coder1 / architecture"},
+		{id: "ao", role: "Coder2 / implementation"},
+		{id: "kin", role: "Coder3 / risk and hard implementation"},
+		{id: "gin", role: "Coder4 / comparison and finish"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			profile, err := catalog.MustGet(tt.id)
+			if err != nil {
+				t.Fatalf("MustGet(%q) failed: %v", tt.id, err)
+			}
+			if profile.Role != tt.role {
+				t.Fatalf("%s role = %q, want %q", tt.id, profile.Role, tt.role)
+			}
+		})
+	}
+}
+
 func TestStaticCatalogShiroCanAskAdvisorButRequiresApprovalForGitPush(t *testing.T) {
 	catalog := NewStaticCatalog()
 	shiro, err := catalog.MustGet("shiro")

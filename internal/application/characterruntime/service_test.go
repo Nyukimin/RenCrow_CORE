@@ -15,9 +15,10 @@ func TestRunRoundIncludesAllSixCharacters(t *testing.T) {
 	if result.Mode != "six_character_round" || len(result.Participants) != 6 || len(result.Turns) != 6 {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	want := []string{"mio", "shiro", "ao", "aka", "kin", "gin"}
+	want := []string{"mio", "shiro", "aka", "ao", "kin", "gin"}
+	wantRoles := []string{"chat_facilitator", "coder_executor", "coder1_architecture", "coder2_implementation", "coder3_risk", "coder4_finish"}
 	for i, id := range want {
-		if result.Turns[i].CharacterID != id || result.Turns[i].TurnIndex != i+1 {
+		if result.Turns[i].CharacterID != id || result.Turns[i].Role != wantRoles[i] || result.Turns[i].TurnIndex != i+1 {
 			t.Fatalf("turn %d = %#v", i, result.Turns[i])
 		}
 	}

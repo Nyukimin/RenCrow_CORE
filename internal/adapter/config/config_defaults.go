@@ -871,10 +871,10 @@ func (c *Config) setDefaults() {
 		c.Coder1.Model = "deepseek-coder"
 	}
 	if c.Coder1.Name == "" {
-		c.Coder1.Name = "ao"
+		c.Coder1.Name = "aka"
 	}
 	if c.Coder1.DisplayName == "" {
-		c.Coder1.DisplayName = "青"
+		c.Coder1.DisplayName = "赤"
 	}
 	if c.Coder1.LightMemory.MaxTurns == 0 {
 		c.Coder1.LightMemory.MaxTurns = 3
@@ -887,10 +887,10 @@ func (c *Config) setDefaults() {
 		c.Coder2.Model = "gpt-4-turbo"
 	}
 	if c.Coder2.Name == "" {
-		c.Coder2.Name = "aka"
+		c.Coder2.Name = "ao"
 	}
 	if c.Coder2.DisplayName == "" {
-		c.Coder2.DisplayName = "赤"
+		c.Coder2.DisplayName = "青"
 	}
 	if c.Coder2.LightMemory.MaxTurns == 0 {
 		c.Coder2.LightMemory.MaxTurns = 3

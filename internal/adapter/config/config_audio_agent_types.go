@@ -174,7 +174,7 @@ type GoogleSearchConfig struct {
 
 // CoderConfig は Coder 個別設定（v4.1: 4体化 + Agent Persona）
 type CoderConfig struct {
-	Name        string            `yaml:"name"`         // 任意の名前（aka, ao, gin, kin 等）
+	Name        string            `yaml:"name"`         // 固定identity（coder1=aka, coder2=ao, coder3=kin, coder4=gin）
 	DisplayName string            `yaml:"display_name"` // 表示名（赤, 青, 銀, 金 等）
 	Provider    string            `yaml:"provider"`     // deepseek/openai/claude/gemini
 	Model       string            `yaml:"model"`

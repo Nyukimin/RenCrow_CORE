@@ -1,12 +1,15 @@
 # LLM Module
 
-Owns language model integration boundaries.
+Owns the RenCrow_CORE side of language-model integration boundaries. The
+RenCrow_LLM repository owns the central Gateway, Host Node, physical target
+mapping, capacity, and concrete runtime adapter implementation.
 
 Responsibilities:
 
-- Local and external LLM provider contracts.
-- Local LLM role/alias runtime resolution for provider kind, base URL, model, timeout, concurrency, and Ollama `num_ctx`.
-- Primary Chat/Worker/Heavy/Wild provider plan construction, including local-vs-legacy mode, legacy Ollama worker fallback, role `num_ctx`, and warmup timeout selection.
+- CORE-side request/response contracts for RenCrow_LLM.
+- Request metadata for Agent, Execution Role, alias, trace, and cancellation.
+- Legacy/development-only local provider planning for provider kind, base URL,
+  model, timeout, concurrency, Ollama `num_ctx`, fallback, and warmup.
 - Conversation summary and embedding provider plan construction.
 - Coder provider validation/planning for provider kind, required credentials, required base URLs, and local OpenAI timeout.
 - OpenAI-compatible ThinkingBridge request flags, provider-option filtering, and leaked-reasoning cleanup policy.
@@ -30,7 +33,12 @@ Current high-impact areas:
 
 Boundary note:
 
-`modules/llm` owns role/alias selection rules, primary provider planning, role `num_ctx`, conversation summary/embedder provider planning, Coder provider validation/planning, local health-check policy, ThinkingBridge request/response cleanup policy, request copy semantics, and provider-facing request/response contracts. Runtime code still owns concrete provider construction, API keys, middleware wrapping, warmup execution, and process wiring.
+`modules/llm` owns CORE-side request/response contracts, request metadata,
+normalization, and diagnostics. Production Agent execution sends only the
+logical Execution Role/alias to RenCrow_LLM. Local provider selection,
+`num_ctx`, concrete base URLs, warmup, and direct provider construction are
+legacy/development compatibility and must not become the production mapping
+source of truth.
 
 Design references:
 

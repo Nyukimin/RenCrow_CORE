@@ -1,7 +1,7 @@
 # RenCrow_LLM PR-L1 デプロイ手順（VDS audio session）
 
-> **Mac 用正本仕様**: [`RenCrow_LLM/docs/VDS_audio_session_Macデプロイ仕様.md`](../../RenCrow_LLM/docs/VDS_audio_session_Macデプロイ仕様.md)  
-> **索引**: [`docs/10_新仕様/76_RenCrow_LLM_VDS_Macデプロイ仕様.md`](../docs/10_新仕様/76_RenCrow_LLM_VDS_Macデプロイ仕様.md)
+> **Mac 用正本仕様**: [`RenCrow_LLM/docs/VDS_audio_session_Macデプロイ仕様.md`](https://github.com/Nyukimin/RenCrow_LLM/blob/main/docs/VDS_audio_session_Mac%E3%83%87%E3%83%97%E3%83%AD%E3%82%A4%E4%BB%95%E6%A7%98.md)
+> **状態**: 過去のPR-L1導入手順。実行前にRenCrow_LLM側の現行正本とdeployment設定を確認すること。
 
 本ファイルは Linux（rencrow）側の切り替え手順。Mac 作業は正本を参照。
 

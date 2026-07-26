@@ -1,21 +1,31 @@
 # RenCrow Module Design
 
-Status: design complete for module boundaries. This document defines the target module split and the rules for migrating existing code without moving implementation in this step.
+Status: active design for RenCrow_CORE-internal contract packages. Product-level
+module ownership is defined by `docs/01_システム概要.md` and takes precedence.
 
 ## 1. Goal
 
-RenCrow is organized around six local modules:
+RenCrow_CORE currently exposes the following local contract packages:
 
 ```text
+browseractor
 core
 chat
 worker
 llm
 tts
 stt
+voicechat
+webgather
 ```
 
-The module design does not create separate repositories. All modules live inside this repository/worktree and must remain compatible with the existing Clean Architecture layout:
+These packages do not replace the independent RenCrow_LLM, RenCrow_STT,
+RenCrow_TTS, RenCrow_Tools, and other sibling repositories. They contain the
+CORE-facing DTOs, events, pure policy, compatibility planning, and state
+projections needed by this repository. External module implementation bodies
+remain in their owning repositories.
+
+The local contract packages remain compatible with the existing CORE layout:
 
 ```text
 internal/domain
@@ -25,7 +35,11 @@ internal/adapter
 cmd/rencrow
 ```
 
-`modules/` is the design and ownership boundary. Actual Go packages may stay in the existing `internal/...` tree until a dedicated migration phase moves or wraps them.
+`modules/` is a stable contract and pure-policy boundary inside CORE. Concrete
+HTTP clients, process wiring, secrets, and external runtime lifecycle do not
+move here merely to mirror the sibling repository names. Existing CORE
+compatibility implementations may stay in `internal/...` until a specific
+change-isolation or reuse benefit justifies movement.
 
 ## 2. Dependency Direction
 
@@ -109,18 +123,21 @@ Examples:
 
 ### llm
 
-Owns LLM provider contracts and routing adapters.
+Owns CORE-side LLM contracts and pure request/response policy.
 
 Examples:
 
-- local/external LLM provider factories
-- OpenAI-compatible client contracts
+- request plans targeting RenCrow_LLM execution aliases
+- compatibility contracts for legacy/development providers
 - response normalization before Chat display
 - provider health/capability interpretation
 
+RenCrow_LLM owns the central Gateway, Host Node, physical target mapping,
+capacity, and provider adapter implementation.
+
 ### tts
 
-Owns text-to-speech integration contracts.
+Owns CORE-side text-to-speech integration contracts.
 
 Examples:
 
@@ -130,10 +147,12 @@ Examples:
 - audio chunk payloads for Viewer playback
 
 TTS does not own playback ACK completion or IdleChat pending state. Those remain Chat/Core integration concerns.
+RenCrow_TTS owns the public TTS API and concrete synthesis gateway; engine and
+model implementation remain outside CORE.
 
 ### stt
 
-Owns speech-to-text integration contracts.
+Owns CORE-side speech-to-text integration contracts.
 
 Examples:
 
@@ -143,6 +162,7 @@ Examples:
 - local/remote STT provider adapters
 
 STT does not own Viewer microphone UI state or Chat input routing after final transcript delivery.
+RenCrow_STT owns concrete transcription processing and runtime operation.
 
 ## 4. State Ownership
 
@@ -170,7 +190,9 @@ Composition root responsibilities:
 - expose HTTP routes
 - start/stop runtime services
 
-If runtime code grows module-specific policy, move that policy into the corresponding module package and keep `cmd/rencrow` as wiring.
+If CORE runtime code grows reusable pure policy, move that policy into the
+corresponding local contract package when doing so reduces retest scope.
+External runtime implementation still belongs to its sibling repository.
 
 ## 6. Migration Policy
 
@@ -195,4 +217,6 @@ The module design is complete when the repository contains:
 - migration plan with validation gates
 - README files for all modules
 
-Implementation migration is a separate goal.
+Further physical package movement is not a product backlog by itself. It is
+performed only when a concrete reuse, change-isolation, or testability benefit
+exists.

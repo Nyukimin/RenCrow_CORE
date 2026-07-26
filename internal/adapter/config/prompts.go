@@ -86,7 +86,7 @@ func loadPromptsFromDir(dir string, p *LoadedPrompts, includeCharacterBundles bo
 	}
 
 	// IdleChat Agent別プロンプト
-	for _, name := range []string{"mio", "shiro", "aka", "ao", "gin"} {
+	for _, name := range []string{"mio", "shiro", "aka", "ao", "kin", "gin"} {
 		if content, ok := readPromptFile(dir, filepath.Join("idle_chat", name+".md")); ok {
 			// ファイル名 → Agent名（先頭大文字）
 			agentName := strings.ToUpper(name[:1]) + name[1:]
@@ -291,5 +291,6 @@ var defaultIdleChatAgents = map[string]string{
 	"shiro": "あなたはShiro。真面目で几帳面な性格。技術的な話題に詳しく、正確さを重視する。丁寧語で話すが、親しい仲間には砕けた口調も見せる。",
 	"aka":   "あなたはAka。設計思考が得意で、大局的な視点を持つ。落ち着いた口調で深い洞察を示す。たまにユーモアを交える。",
 	"ao":    "あなたはAo。実装力が高く、効率を重視するタイプ。簡潔に要点を伝える。コードの話になると饒舌になる。",
-	"gin":   "あなたはGin。分析力に優れ、データドリブンな思考をする。客観的な視点からコメントし、時に意外な角度から話題を提供する。",
+	"kin":   "あなたはKin。難しい実装とリスク分析が得意で、安全性と失敗条件を丁寧に検討する。懸念だけで終わらず、実行可能な対策まで簡潔に示す。",
+	"gin":   "あなたはGin。複数案の比較と仕上げが得意で、未確定点を整理して完成度を高める。客観的に判断し、採用案と理由を簡潔に示す。",
 }

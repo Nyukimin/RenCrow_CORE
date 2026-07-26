@@ -40,7 +40,7 @@ func (c *Catalog) List() []agentprofile.Profile {
 	if c == nil {
 		return nil
 	}
-	ids := []string{"mio", "shiro", "aka", "ao", "gin", "kin", "kuro", "midori"}
+	ids := []string{"mio", "shiro", "aka", "ao", "kin", "gin", "kuro", "midori"}
 	out := make([]agentprofile.Profile, 0, len(ids))
 	for _, id := range ids {
 		if profile, ok := c.Get(id); ok {
@@ -111,8 +111,8 @@ func staticProfiles() []agentprofile.Profile {
 		},
 		codeProfile("aka", "Aka", "Coder1 / architecture", "architecture", "dependency"),
 		codeProfile("ao", "Ao", "Coder2 / implementation", "implementation", "go"),
-		codeProfile("gin", "Gin", "Coder3 / risk and hard implementation", "risk", "safety"),
-		codeProfile("kin", "Kin", "Coder4 / comparison and finish", "review", "polish"),
+		codeProfile("kin", "Kin", "Coder3 / risk and hard implementation", "risk", "safety"),
+		codeProfile("gin", "Gin", "Coder4 / comparison and finish", "review", "polish"),
 		{
 			ID:          "kuro",
 			DisplayName: "Kuro",

@@ -29,7 +29,7 @@ func TestLoadPromptsLoadsCharacterBundlesFromWorkspace(t *testing.T) {
 	writeCharacterBundle(t, workspaceDir, "midori", map[string]string{
 		"00_system.md": "midori system",
 	})
-	for _, name := range []string{"aka", "ao", "gin", "kin"} {
+	for _, name := range []string{"aka", "ao", "kin", "gin"} {
 		writeCharacterBundle(t, workspaceDir, name, map[string]string{
 			"00_system.md": name + " system",
 		})
@@ -52,9 +52,31 @@ func TestLoadPromptsLoadsCharacterBundlesFromWorkspace(t *testing.T) {
 	if got := p.CharacterPrompts["mio"]; !strings.Contains(got, "mio routing") {
 		t.Fatalf("CharacterPrompts[mio] missing bundle content:\n%s", got)
 	}
-	for _, name := range []string{"aka", "ao", "gin", "kin"} {
+	for _, name := range []string{"aka", "ao", "kin", "gin"} {
 		if got := p.CharacterPrompts[name]; !strings.Contains(got, name+" system") {
 			t.Fatalf("CharacterPrompts[%s] missing bundle content:\n%s", name, got)
+		}
+	}
+}
+
+func TestLoadPromptsLoadsIdleChatCorrectionsForAllFourCoders(t *testing.T) {
+	baseDir := t.TempDir()
+	idleChatDir := filepath.Join(baseDir, "idle_chat")
+	if err := os.MkdirAll(idleChatDir, 0o755); err != nil {
+		t.Fatalf("mkdir idle_chat: %v", err)
+	}
+	for _, name := range []string{"aka", "ao", "kin", "gin"} {
+		content := name + " idle correction"
+		if err := os.WriteFile(filepath.Join(idleChatDir, name+".md"), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s idle correction: %v", name, err)
+		}
+	}
+
+	p := LoadPrompts(baseDir, "")
+
+	for _, name := range []string{"Aka", "Ao", "Kin", "Gin"} {
+		if got := p.IdleChatAgents[name]; got != strings.ToLower(name)+" idle correction" {
+			t.Fatalf("IdleChatAgents[%s] = %q", name, got)
 		}
 	}
 }

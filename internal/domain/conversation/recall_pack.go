@@ -540,7 +540,7 @@ func normalizeRecallRole(role string) string {
 		return "chat"
 	case "shiro":
 		return "worker"
-	case "aka", "ao", "gin", "kin":
+	case "aka", "ao", "kin", "gin":
 		return "coder"
 	case "kuro":
 		return "heavy"

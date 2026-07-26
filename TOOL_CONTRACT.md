@@ -1,9 +1,14 @@
 # TOOL_CONTRACT.md -- RenCrow ツール契約
 
 **作成日**: 2026-03-05
-**バージョン**: 1.0
-**ステータス**: 正本（ツール設計・受領判断の一次参照）
-**配置**: リポジトリルート直下（唯一の正）
+**バージョン**: 1.1
+**ステータス**: RenCrow_CORE統合Toolの補助contract
+**配置**: リポジトリルート直下
+
+製品仕様の唯一の現行正本は`docs/README.md`と、そこに列挙された`01`〜`09`です。
+本書はその製品仕様を再定義せず、COREへ統合するToolの入出力、安全、受領条件だけを
+具体化します。横断的に再利用するTool、browser sidecar、data converter、validation
+CLIの実装本体はRenCrow_Toolsが所有します。
 
 ---
 
@@ -23,6 +28,9 @@
 ---
 
 ## 0. この文書の位置づけ
+
+対象はCOREのToolRunner／ToolRegistryへ密結合するToolと、その互換contractです。
+新しい横断Toolの配置先をRenCrow_COREへ変更する根拠にはなりません。
 
 ### 0.1 なぜ先にルールを置くのか
 
@@ -303,7 +311,7 @@ Worker: 登録
 
 ```
 RenCrow_CORE/
-├── TOOL_CONTRACT.md              # <-- この文書（根本ルール。唯一の正）
+├── TOOL_CONTRACT.md              # CORE統合Toolの補助contract
 ├── templates/
 │   └── tool/                     # ツール雛形（契約埋め込み済み）
 │       ├── main.go.tmpl
@@ -319,21 +327,22 @@ RenCrow_CORE/
 │   └── skills/                   # SKILL.md（各ツールの運用スキル）
 │       ├── web_search.md
 │       └── ...
-└── docs/
-    └── tooling/                  # 詳細ドキュメント（補助）
-        ├── SECURITY.md           # セキュリティ詳細
-        └── EXAMPLES.md           # 入出力サンプル集
 ```
 
-### 7.1 正本と参照の役割分担
+横断的に再利用する新規Toolは`RenCrow_Tools`へ置きます。上記の
+`internal/infrastructure/tools`はCOREのToolRunnerに密結合する実装、
+`workspace/skills`はCORE runtimeが利用する運用Skillに限定します。
+
+### 7.1 製品正本と補助contractの役割分担
 
 | 場所 | 役割 | 内容 |
 |------|------|------|
-| `TOOL_CONTRACT.md`（リポジトリルート） | **正本** | 根本ルール。入出力・安全・DoD |
+| `docs/README.md`と`docs/01`〜`09` | 製品仕様正本 | Toolの責務、権限、approval、module境界 |
+| `TOOL_CONTRACT.md`（リポジトリルート） | 補助contract | CORE統合Toolの入出力・安全・DoD |
 | `workspace/skills/` | 運用スキル | 各ツールの SKILL.md |
 | `templates/tool/` | 雛形 | 契約を埋め込んだテンプレート |
-| `docs/tooling/` | 補助 | セキュリティ詳細、サンプル集 |
-| Obsidian（外部） | 参照コピー | 閲覧・ナレッジ検索用（正本は Git） |
+| `RenCrow_Tools` | 外部module | 横断Toolの実装本体 |
+| Obsidian（外部） | 参照コピー | 閲覧・Knowledge検索用 |
 
 ---
 
@@ -428,6 +437,6 @@ replaced_by: null
 
 ---
 
-**最終更新**: 2026-03-05
-**バージョン**: 1.0
+**最終更新**: 2026-07-26
+**バージョン**: 1.1
 **メンテナンス**: ツール種別の追加・ルール変更時は必ずこの文書を更新すること

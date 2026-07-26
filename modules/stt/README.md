@@ -1,6 +1,10 @@
 # STT Module
 
-Owns speech-to-text integration boundaries.
+Owns the RenCrow_CORE side of speech-to-text integration boundaries.
+RenCrow_STT owns concrete transcription processing and runtime operation.
+Provider URL inference, direct HTTP/WebSocket handling, and provider-specific
+payload rules listed below are legacy/development compatibility inside CORE;
+the production boundary is the RenCrow_STT public contract.
 
 Responsibilities:
 
