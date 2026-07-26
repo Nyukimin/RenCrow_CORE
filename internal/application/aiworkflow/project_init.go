@@ -98,7 +98,11 @@ func (s *ProjectScanner) Run(ctx context.Context, opts ProjectInitOptions) (Proj
 		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 			return ProjectInitResult{}, err
 		}
+		// ID と FilePath は JSONL 永続化される論理パスなので、OSの区切り文字を
+		// 持ち込まない。filepath.Rel の戻り値をそのまま使うと Windows と Linux で
+		// 同じ生成物のIDが分裂する
 		rel, _ := filepath.Rel(absRoot, path)
+		rel = filepath.ToSlash(rel)
 		generated = append(generated, rel)
 		idx := domainai.ProjectMemoryIndex{
 			ID:         "project_init:" + rel,

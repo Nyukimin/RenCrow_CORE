@@ -60,6 +60,50 @@ func TestProjectScannerGeneratesInitPackAndIndexes(t *testing.T) {
 	assertFileContains(t, filepath.Join(root, ".ai", "source_map.md"), "cmd/")
 }
 
+// TestProjectScannerPersistsOSIndependentIdentifiers は永続化される ID と
+// FilePath が OS に依存しないことを確認する
+//
+// ProjectMemoryIndex は json タグ付きで JSONL 永続化されるため、
+// filepath.Rel の戻り値をそのまま使うと Windows では ".ai\project_profile.md"、
+// Linux では ".ai/project_profile.md" となり、同じ生成物の ID が OS ごとに
+// 分裂して重複レコードになる。
+func TestProjectScannerPersistsOSIndependentIdentifiers(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "go.mod"), "module example.test\n")
+	store := &memoryProjectInitStore{}
+	scanner := NewProjectScanner(store)
+
+	result, err := scanner.Run(context.Background(), ProjectInitOptions{
+		RepoRoot:          root,
+		ProjectMemoryRoot: ".ai",
+		RepoName:          "example",
+		Now:               func() time.Time { return time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	for _, idx := range store.indexes {
+		if strings.Contains(idx.ID, "\\") {
+			t.Errorf("ProjectMemoryIndex.ID contains a backslash: %q", idx.ID)
+		}
+		if strings.Contains(idx.FilePath, "\\") {
+			t.Errorf("ProjectMemoryIndex.FilePath contains a backslash: %q", idx.FilePath)
+		}
+		if want := "project_init:" + idx.FilePath; idx.ID != want {
+			t.Errorf("ID = %q, want %q", idx.ID, want)
+		}
+	}
+	for _, generated := range result.GeneratedFiles {
+		if strings.Contains(generated, "\\") {
+			t.Errorf("GeneratedFiles entry contains a backslash: %q", generated)
+		}
+	}
+	if len(store.indexes) == 0 {
+		t.Fatal("expected project memory indexes")
+	}
+}
+
 func TestProjectScannerRejectsUnsafeProjectMemoryRoot(t *testing.T) {
 	root := t.TempDir()
 	scanner := NewProjectScanner(nil)
