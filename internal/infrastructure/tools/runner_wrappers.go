@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -29,12 +30,17 @@ func classifyV1Error(err error) *tool.ToolResponse {
 		return tool.NewError(te.Code, te.Message, te.Details)
 	}
 
-	// context.DeadlineExceeded → TIMEOUT
-	if errors.Is(err, context.DeadlineExceeded) {
+	// sentinel error による分類
+	// OSごとにエラー文言が異なる（Windows は "Access is denied." /
+	// "The system cannot find the file specified." 等）ため、文字列マッチより
+	// 前に errors.Is で判定する
+	switch {
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, os.ErrDeadlineExceeded):
 		return tool.NewError(tool.ErrTimeout, err.Error(), nil)
-	}
-	if errors.Is(err, os.ErrNotExist) {
+	case errors.Is(err, fs.ErrNotExist):
 		return tool.NewError(tool.ErrNotFound, err.Error(), nil)
+	case errors.Is(err, fs.ErrPermission):
+		return tool.NewError(tool.ErrPermissionDenied, err.Error(), nil)
 	}
 
 	// エラーメッセージによる分類
