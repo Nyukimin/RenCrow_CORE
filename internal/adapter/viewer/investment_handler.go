@@ -318,7 +318,7 @@ func querySnapshots(ctx context.Context, db *sql.DB) (*investmentSnapshot, []inv
 SELECT snapshot_date, COALESCE(snapshot_path, ''), COALESCE(db_hash, ''), COALESCE(features_hash, ''),
        COALESCE(data_start_date, ''), COALESCE(data_end_date, ''), COALESCE(missing_rate, 0), COALESCE(status, ''), COALESCE(notes, ''), COALESCE(created_at, '')
   FROM snapshot_registry
- ORDER BY COALESCE(created_at, snapshot_date) DESC
+ ORDER BY COALESCE(created_at, snapshot_date) DESC, rowid DESC
  LIMIT 5`)
 	if err != nil {
 		return nil, nil, err
@@ -346,7 +346,7 @@ func querySourceHealth(ctx context.Context, db *sql.DB, activeSources map[string
 	rows, err := db.QueryContext(ctx, `
 SELECT source_name, status, COALESCE(requested_at, ''), COALESCE(finished_at, ''), COALESCE(rows_fetched, 0), COALESCE(error_message, '')
   FROM source_fetch_log
- ORDER BY COALESCE(finished_at, requested_at) DESC
+ ORDER BY COALESCE(finished_at, requested_at) DESC, rowid DESC
  LIMIT 300`)
 	if err != nil {
 		return nil, sourceHealthSummary{}, err
@@ -473,7 +473,7 @@ func queryEvents(ctx context.Context, db *sql.DB) ([]investmentEventRow, eventSu
 	rows, err := db.QueryContext(ctx, `
 SELECT COALESCE(event_ts, ''), COALESCE(level, ''), COALESCE(scope, ''), COALESCE(reason, ''), event_risk_score, COALESCE(resolved_at, '')
   FROM event_log
- ORDER BY COALESCE(event_ts, '') DESC
+ ORDER BY COALESCE(event_ts, '') DESC, rowid DESC
  LIMIT 20`)
 	if err != nil {
 		return nil, eventSummary{}, err

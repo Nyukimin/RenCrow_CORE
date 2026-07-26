@@ -395,7 +395,7 @@ SELECT event_id, movie_id, COALESCE(original_title, ''), COALESCE(watched_at, ''
        COALESCE(source, ''), COALESCE(source_batch_id, ''), COALESCE(note, ''), COALESCE(created_at, '')
 FROM movie_watch_events
 WHERE movie_id = ?
-ORDER BY watched_at DESC, created_at DESC
+ORDER BY watched_at DESC, created_at DESC, rowid DESC
 LIMIT ?`, movieID, limit)
 	if err != nil {
 		return nil, err

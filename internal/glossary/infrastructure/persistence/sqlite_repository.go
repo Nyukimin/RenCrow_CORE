@@ -71,7 +71,7 @@ func (r *SQLiteGlossaryRepository) FindByTerm(ctx context.Context, term string) 
 
 func (r *SQLiteGlossaryRepository) FindRecent(ctx context.Context, limit int) ([]*entity.GlossaryItem, error) {
 	query := `SELECT id, term, explanation, source, category, created_at, updated_at 
-	          FROM glossary_items ORDER BY created_at DESC LIMIT ?`
+	          FROM glossary_items ORDER BY created_at DESC, rowid DESC LIMIT ?`
 	rows, err := r.db.QueryContext(ctx, query, limit)
 	if err != nil {
 		return nil, err
@@ -83,7 +83,7 @@ func (r *SQLiteGlossaryRepository) FindRecent(ctx context.Context, limit int) ([
 
 func (r *SQLiteGlossaryRepository) FindByCategory(ctx context.Context, category string, limit int) ([]*entity.GlossaryItem, error) {
 	query := `SELECT id, term, explanation, source, category, created_at, updated_at 
-	          FROM glossary_items WHERE category = ? ORDER BY created_at DESC LIMIT ?`
+	          FROM glossary_items WHERE category = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`
 	rows, err := r.db.QueryContext(ctx, query, category, limit)
 	if err != nil {
 		return nil, err
