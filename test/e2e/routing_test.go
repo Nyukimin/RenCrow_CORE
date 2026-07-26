@@ -120,9 +120,9 @@ func TestE2E_Routing_ChromeKeywords_CODE3(t *testing.T) {
 	}
 }
 
-// TestE2E_Routing_FallbackChain_Coder1ToCoder2 はCODEルートでCoder1がnil時に
-// Coder2（OpenAI）にフォールバックすることを検証する。
-func TestE2E_Routing_FallbackChain_Coder1ToCoder2(t *testing.T) {
+// TestE2E_Routing_ImplementationRequestToCoder2 は自然言語の実装要求が
+// CODE2 に分類され、Coder2 (OpenAI) に到達することを検証する。
+func TestE2E_Routing_ImplementationRequestToCoder2(t *testing.T) {
 	cfg := getConfig(t)
 	if cfg.OpenAI.APIKey == "" {
 		t.Skip("OpenAI API key not configured")
@@ -139,7 +139,7 @@ func TestE2E_Routing_FallbackChain_Coder1ToCoder2(t *testing.T) {
 	mcpClient := mcp.NewMCPClient()
 	mioAgent := agent.NewMioAgent(ollamaProvider, classifier, ruleDictionary, chatToolRunner, mcpClient, nil)
 
-	// Coder2 (OpenAI) のみ設定、Coder1 = nil
+	// 期待routeのCoder2 (OpenAI) だけを構成する。
 	op := openai.NewOpenAIProvider(cfg.OpenAI.APIKey, cfg.OpenAI.Model)
 	dc := agent.NewCoderAgent(op, nil, nil, cfg.Prompts.CoderProposal)
 	coder2 := &coderAdapter{domainCoder: dc}
@@ -149,7 +149,7 @@ func TestE2E_Routing_FallbackChain_Coder1ToCoder2(t *testing.T) {
 
 	orch := orchestrator.NewMessageOrchestrator(
 		sessionRepo, mioAgent, nil,
-		nil, coder2, nil, nil, // coder1=nil → coder2にフォールバック
+		nil, coder2, nil, nil,
 		workerExec,
 	)
 
@@ -157,7 +157,7 @@ func TestE2E_Routing_FallbackChain_Coder1ToCoder2(t *testing.T) {
 	defer cancel()
 
 	resp, err := orch.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
-		SessionID:   "e2e-test-fallback",
+		SessionID:   "e2e-test-implementation-code2",
 		Channel:     "test",
 		ChatID:      "e2e-user",
 		UserMessage: "GoでHello Worldを実装して",
@@ -166,19 +166,18 @@ func TestE2E_Routing_FallbackChain_Coder1ToCoder2(t *testing.T) {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
 
-	if resp.Route != routing.RouteCODE {
-		t.Errorf("route: want CODE, got %s", resp.Route)
+	if resp.Route != routing.RouteCODE2 {
+		t.Errorf("route: want CODE2, got %s", resp.Route)
 	}
 	if resp.Response == "" {
-		t.Error("expected non-empty response from Coder2 (fallback)")
+		t.Error("expected non-empty response from Coder2")
 	}
 	t.Logf("Route: %s (confidence: %.2f)", resp.Route, resp.Confidence)
 	t.Logf("Response (first 500 chars): %.500s", resp.Response)
 }
 
-// TestE2E_Routing_Code_NaturalLanguage は自然言語でルーター（ルール辞書）を通し、
-// CODE ルートに分類されて Coder1 (DeepSeek) が応答することを検証する。
-func TestE2E_Routing_Code_NaturalLanguage(t *testing.T) {
+// TestE2E_Routing_ExplicitCoder1 は /code1 が Coder1 (DeepSeek) に到達することを検証する。
+func TestE2E_Routing_ExplicitCoder1(t *testing.T) {
 	cfg := getConfig(t)
 	if cfg.DeepSeek.APIKey == "" {
 		t.Skip("DeepSeek API key not configured")
@@ -190,20 +189,20 @@ func TestE2E_Routing_Code_NaturalLanguage(t *testing.T) {
 	defer cancel()
 
 	resp, err := orch.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
-		SessionID:   "e2e-test-code-natural",
+		SessionID:   "e2e-test-explicit-code1",
 		Channel:     "test",
 		ChatID:      "e2e-user",
-		UserMessage: "Goでfizzbuzzの関数を作って、テストを追加して",
+		UserMessage: "/code1 Goでfizzbuzzの関数を作って、テストを追加して",
 	})
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
 
-	if resp.Route != routing.RouteCODE {
-		t.Errorf("route: want CODE, got %s", resp.Route)
+	if resp.Route != routing.RouteCODE1 {
+		t.Errorf("route: want CODE1, got %s", resp.Route)
 	}
 	if resp.Response == "" {
-		t.Error("expected non-empty response from Coder")
+		t.Error("expected non-empty response from Coder1")
 	}
 	t.Logf("Route: %s (confidence: %.2f)", resp.Route, resp.Confidence)
 	t.Logf("Response (first 500 chars): %.500s", resp.Response)
