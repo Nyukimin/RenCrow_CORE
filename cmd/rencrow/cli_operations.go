@@ -41,7 +41,7 @@ Commands:
   doctor    Diagnose config and runtime prerequisites
   config    Read validated runtime configuration
   resilience  Inspect/reconcile restart and self-repair incidents
-  channels  List/probe channel adapters
+  channels  List/probe channel adapters or send a configured notification
   gateway   Gateway status/restart operations
   ollama    Ollama status/restart operations
   logs      Show logs (use --follow to stream)

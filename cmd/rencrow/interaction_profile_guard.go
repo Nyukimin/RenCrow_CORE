@@ -42,7 +42,8 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 		client: "RenCrow_ASSISTANT",
 		allow: func(method, path string) bool {
 			return (method == http.MethodGet && path == "/viewer/events") ||
-				(method == http.MethodPost && path == "/viewer/send")
+				(method == http.MethodPost &&
+					(path == "/viewer/send" || path == "/internal/assistant/notifications/line"))
 		},
 	},
 }
@@ -54,6 +55,11 @@ func withInteractionProfileGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		client := strings.TrimSpace(r.Header.Get("X-RenCrow-Client"))
 		profile := strings.ToLower(strings.TrimSpace(r.Header.Get(interactionProfileHeader)))
+		if r.URL.Path == "/internal/assistant/notifications/line" &&
+			(client != "RenCrow_ASSISTANT" || profile != "assistant-core") {
+			http.Error(w, "interaction profileでは許可されていない操作です", http.StatusForbidden)
+			return
+		}
 		if client == "" && profile == "" {
 			next.ServeHTTP(w, r)
 			return

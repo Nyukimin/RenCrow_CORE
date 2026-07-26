@@ -98,6 +98,79 @@ func TestHandler_WebhookEndpoint_ValidMessage(t *testing.T) {
 	}
 }
 
+func TestHandler_WebhookEndpoint_LineAliasAcceptsSignedPost(t *testing.T) {
+	handler := NewHandler(&mockOrchestrator{
+		response: orchestrator.ProcessMessageResponse{
+			Response: "ok",
+			Route:    routing.RouteCHAT,
+		},
+	}, "test-secret", "test-token")
+
+	body := []byte(`{"events":[]}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
+	req.Header.Set("X-Line-Signature", generateSignature(body, "test-secret"))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestHandler_WebhookEndpoint_RecordsSignedDirectUserTarget(t *testing.T) {
+	store := NewDirectUserTargetStore(t.TempDir())
+	reqCh := make(chan orchestrator.ProcessMessageRequest, 1)
+	handler := NewHandler(&mockOrchestrator{
+		response: orchestrator.ProcessMessageResponse{
+			Response: "ok",
+			Route:    routing.RouteCHAT,
+		},
+		reqCh: reqCh,
+	}, "test-secret", "test-token")
+	handler.SetDirectUserTargetRecorder(store)
+
+	userID := "U0123456789abcdef0123456789abcdef"
+	payload := map[string]interface{}{
+		"events": []map[string]interface{}{
+			{
+				"type": "message",
+				"message": map[string]interface{}{
+					"type": "text",
+					"text": "通知先登録",
+				},
+				"source": map[string]interface{}{
+					"type":   "user",
+					"userId": userID,
+				},
+				"replyToken": "test-reply-token",
+			},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
+	req.Header.Set("X-Line-Signature", generateSignature(body, "test-secret"))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	got, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if got != userID {
+		t.Fatalf("recorded target = %q, want %q", got, userID)
+	}
+	select {
+	case <-reqCh:
+		t.Fatal("enrollment command must not enter CHAT or send a LINE reply")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestHandler_WebhookEndpoint_LineFileMessageBecomesAttachment(t *testing.T) {
 	reqCh := make(chan orchestrator.ProcessMessageRequest, 1)
 	orch := &mockOrchestrator{

@@ -14,6 +14,9 @@ import (
 func buildChannelRuntimeHandlers(cfg *config.Config, deps *Dependencies, proc messageProcessor) {
 	lineHandler := line.NewHandler(proc, cfg.Line.ChannelSecret, cfg.Line.AccessToken)
 	lineHandler.SetAttachmentSaver(attachmentapp.NewStore(cfg.WorkspaceDir))
+	if needsLineTargetEnrollment(cfg) {
+		lineHandler.SetDirectUserTargetRecorder(line.NewDirectUserTargetStore(cfg.WorkspaceDir))
+	}
 	applyLineChannelPolicy(lineHandler, cfg.Line)
 	deps.lineHandler = lineHandler
 	if strings.TrimSpace(cfg.Telegram.BotToken) != "" {

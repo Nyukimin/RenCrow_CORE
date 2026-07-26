@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"strings"
 	"time"
 
 	adapterchannels "github.com/Nyukimin/RenCrow_CORE/internal/adapter/channels"
@@ -28,18 +27,15 @@ type idleChatSequenceMonitorAdapter struct {
 }
 
 func buildHeartbeatNotificationSender(cfg *config.Config) heartbeat.NotificationSender {
-	channel := strings.ToLower(strings.TrimSpace(cfg.Heartbeat.Channel))
-	chatID := strings.TrimSpace(cfg.Heartbeat.ChatID)
-	if channel == "" && chatID != "" {
-		channel = "line"
-	}
-	if channel == "" && chatID == "" {
+	destination, err := resolveNotificationDestination(cfg)
+	if err != nil {
+		log.Printf("[Heartbeat] notification disabled: %v", err)
 		return nil
 	}
 	return &channelNotificationSender{
 		registry: buildOutboundChannelRegistry(cfg),
-		channel:  channel,
-		chatID:   chatID,
+		channel:  destination.Channel,
+		chatID:   destination.ChatID,
 	}
 }
 

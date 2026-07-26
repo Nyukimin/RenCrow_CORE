@@ -15,14 +15,15 @@ type Dependencies struct {
 // Handler implementations stay in legacy adapter/cmd packages during Ver0.80
 // migration; this registrar owns only route registration and dependency handoff.
 type Routes struct {
-	Webhook            http.Handler
-	TelegramWebhook    http.Handler
-	DiscordWebhook     http.Handler
-	SlackWebhook       http.Handler
-	Entry              http.HandlerFunc
-	ChromeBridge       http.HandlerFunc
-	ChromeBridgeStatus http.HandlerFunc
-	ChromeBridgeEvents http.HandlerFunc
+	Webhook                   http.Handler
+	TelegramWebhook           http.Handler
+	DiscordWebhook            http.Handler
+	SlackWebhook              http.Handler
+	Entry                     http.HandlerFunc
+	ChromeBridge              http.HandlerFunc
+	ChromeBridgeStatus        http.HandlerFunc
+	ChromeBridgeEvents        http.HandlerFunc
+	AssistantLineNotification http.HandlerFunc
 }
 
 // RegisterRoutes reserves the feature route boundary. Existing routes remain in
@@ -30,6 +31,7 @@ type Routes struct {
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
 	registerHandlerOrUnavailable(mux, "/webhook", routes.Webhook, "line webhook unavailable")
+	registerHandlerOrUnavailable(mux, "/webhook/line", routes.Webhook, "line webhook unavailable")
 	registerHandlerOrUnavailable(mux, "/webhook/telegram", routes.TelegramWebhook, "telegram webhook unavailable")
 	registerHandlerOrUnavailable(mux, "/webhook/discord", routes.DiscordWebhook, "discord webhook unavailable")
 	registerHandlerOrUnavailable(mux, "/webhook/slack", routes.SlackWebhook, "slack webhook unavailable")
@@ -37,6 +39,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/chrome/bridge", routes.ChromeBridge)
 	registerRoute(mux, "/chrome/bridge/status", routes.ChromeBridgeStatus)
 	registerRoute(mux, "/chrome/bridge/events", routes.ChromeBridgeEvents)
+	registerRoute(mux, "/internal/assistant/notifications/line", routes.AssistantLineNotification)
 }
 
 // StartBackground reserves the feature background-job boundary.

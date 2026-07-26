@@ -84,6 +84,20 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "assistant core profile can deliver LINE notification",
+			client:  "RenCrow_ASSISTANT",
+			profile: "assistant-core",
+			method:  http.MethodPost,
+			path:    "/internal/assistant/notifications/line",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:   "assistant LINE notification requires profile headers",
+			method: http.MethodPost,
+			path:   "/internal/assistant/notifications/line",
+			want:   http.StatusForbidden,
+		},
+		{
 			name:   "core debug viewer remains internal",
 			method: http.MethodPost,
 			path:   "/viewer/send",

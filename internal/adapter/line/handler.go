@@ -23,6 +23,10 @@ type AttachmentSaver interface {
 	SaveAll(ctx context.Context, files []appattachment.IncomingFile) ([]domainattachment.Attachment, error)
 }
 
+type DirectUserTargetRecorder interface {
+	Record(userID string) (bool, error)
+}
+
 // Handler はLINE webhookハンドラー
 type Handler struct {
 	orchestrator    orchestrator.Orchestrator
@@ -32,6 +36,7 @@ type Handler struct {
 	attachmentSaver AttachmentSaver
 	channelPolicy   *domainsecurity.ChannelPolicy
 	botUserID       string // Bot's LINE user ID for mention detection
+	targetRecorder  DirectUserTargetRecorder
 }
 
 // Name returns channel name.
@@ -101,6 +106,11 @@ func (h *Handler) SetAttachmentSaver(saver AttachmentSaver) {
 	h.attachmentSaver = saver
 }
 
+// SetDirectUserTargetRecorder enables first-DM notification enrollment.
+func (h *Handler) SetDirectUserTargetRecorder(recorder DirectUserTargetRecorder) {
+	h.targetRecorder = recorder
+}
+
 // SetChannelPolicy enables channel-level DM/group/sender authorization.
 func (h *Handler) SetChannelPolicy(policy domainsecurity.ChannelPolicy) {
 	h.channelPolicy = &policy
@@ -114,7 +124,7 @@ func (h *Handler) ChannelPolicyConfigured() bool {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[HTTP] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 
-	if r.URL.Path == "/webhook" && r.Method == http.MethodPost {
+	if (r.URL.Path == "/webhook" || r.URL.Path == "/webhook/line") && r.Method == http.MethodPost {
 		h.handleWebhook(w, r)
 		return
 	}
@@ -172,6 +182,18 @@ func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		if !h.authorizeEvent(event) {
 			continue
+		}
+		if h.targetRecorder != nil && event.Source.Type == "user" && strings.TrimSpace(event.Source.UserID) != "" {
+			recorded, recordErr := h.targetRecorder.Record(event.Source.UserID)
+			if recordErr != nil {
+				log.Printf("[Webhook] LINE direct notification target enrollment failed: %v", recordErr)
+			} else if recorded {
+				log.Printf("[Webhook] LINE direct notification target enrolled: target=%s type=user",
+					MaskTargetID(event.Source.UserID))
+			}
+			if strings.TrimSpace(event.Message.Text) == "通知先登録" {
+				continue
+			}
 		}
 
 		// Group/Room chatの場合、Bot mentionチェック

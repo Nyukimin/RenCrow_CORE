@@ -36,16 +36,17 @@ import (
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
-func registerChannelRoutes(mux *http.ServeMux, dependencies *Dependencies) {
+func registerChannelRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dependencies) {
 	channelsfeature.RegisterRoutes(mux, channelsfeature.Dependencies{Routes: channelsfeature.Routes{
-		Webhook:            dependencies.lineHandler,
-		TelegramWebhook:    dependencies.telegramHandler,
-		DiscordWebhook:     dependencies.discordHandler,
-		SlackWebhook:       dependencies.slackHandler,
-		Entry:              dependencies.entryHandler,
-		ChromeBridge:       dependencies.chromeBridge,
-		ChromeBridgeStatus: dependencies.chromeBridgeStatus,
-		ChromeBridgeEvents: dependencies.chromeBridgeEvents,
+		Webhook:                   dependencies.lineHandler,
+		TelegramWebhook:           dependencies.telegramHandler,
+		DiscordWebhook:            dependencies.discordHandler,
+		SlackWebhook:              dependencies.slackHandler,
+		Entry:                     dependencies.entryHandler,
+		ChromeBridge:              dependencies.chromeBridge,
+		ChromeBridgeStatus:        dependencies.chromeBridgeStatus,
+		ChromeBridgeEvents:        dependencies.chromeBridgeEvents,
+		AssistantLineNotification: localOnlyHandler(buildAssistantLineNotificationHandler(cfg)),
 	}})
 }
 

@@ -15,7 +15,7 @@ func registerFeatureRoutes(
 	voiceChatRuntime voiceChatRuntime,
 	debugSystemOpts viewer.DebugSystemOptions,
 ) {
-	registerChannelRoutes(mux, dependencies)
+	registerChannelRoutes(mux, cfg, dependencies)
 	registerViewerBaseRoutes(mux, cfg, dependencies, debugSystemOpts)
 	registerLLMOpsRoutes(mux, cfg, dependencies, &debugSystemOpts)
 	registerOpsRoutes(mux, cfg, dependencies)

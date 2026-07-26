@@ -10,7 +10,7 @@ func withTailscaleViewerOnlyGuard(next http.Handler) http.Handler {
 		return http.NotFoundHandler()
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isTailscaleViewerHost(r) && !isAllowedTailscaleViewerPath(r.URL.Path) {
+		if isTailscaleViewerHost(r) && !isAllowedTailscaleRequest(r) {
 			http.NotFound(w, r)
 			return
 		}
@@ -33,7 +33,21 @@ func isTailscaleViewerHost(r *http.Request) bool {
 	return strings.HasSuffix(host, ".ts.net")
 }
 
-func isAllowedTailscaleViewerPath(path string) bool {
+func isAllowedTailscaleRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.Method == http.MethodPost && r.URL.Path == "/webhook/line" {
+		return true
+	}
+	// tailscaled marks internet-originated Funnel requests. Keep every Viewer,
+	// Debug, Ops, and voice route private even though port 443 must be placed in
+	// Funnel mode for LINE. Tailnet Serve traffic is not marked and retains the
+	// existing allowlist below, including access from tagged devices.
+	if strings.TrimSpace(r.Header.Get("Tailscale-Funnel-Request")) != "" {
+		return false
+	}
+	path := r.URL.Path
 	if path == "/viewer" || strings.HasPrefix(path, "/viewer/") {
 		return true
 	}

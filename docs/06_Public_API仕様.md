@@ -36,6 +36,9 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/movie-catalog/preference` | 映画・俳優の認知・好み評価を保存 |
 | `/viewer/active-control`, `/viewer/tts/*`, `/viewer/stt/*` | audio/control bridge |
 | `POST /viewer/recipient-selection` | client-localなchat recipient選択の通知event |
+| `POST /webhook/line` | LINE Messaging API Webhook。署名必須の正規path |
+| `POST /webhook` | LINE Webhookの旧互換path |
+| `POST /internal/assistant/notifications/line` | localhostのRenCrow_ASSISTANT専用LINE push transport |
 | `/viewer/ai-workflow/*` | AI engineering workflow の experimental API |
 | `/viewer/games/*` | RenCrow_GAMES bridge（status/decision/result/sessions/events/launch/observer proxy） |
 
@@ -65,6 +68,15 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
   upstream 到達不能は 503、upstream エラーは status code を透過する。
 
 実際に有効な endpoint は build と config に依存します。process supervisorは`/health/live`だけを再起動判定に使います。利用者向け機能の確認では`/health`と`/viewer/status`も確認し、featureがunavailable/degradedの場合は成功として扱わないでください。
+
+LINE WebhookはPOSTだけを受け付けます。Tailscale公開guardはtailscaledが`Tailscale-Funnel-Request`を付けたinternet trafficでは`POST /webhook/line`だけを追加許可し、旧`/webhook`とViewer／Debug／Ops pathを404にします。tailnet内のServe trafficは従来のViewer系allowlistを維持します。`GET /webhook/line`の404、署名なしPOSTの401は故障判定に使いません。LINE Developersへ登録するendpointはdeployment時点の公開hostを確認して`https://<current-host>/webhook/line`とし、旧hostを仕様へ固定しません。外部到達確認ではMessaging APIのWebhook testを使い、署名検証済みeventが200になることを確認します。
+
+`POST /internal/assistant/notifications/line`はloopback remote addressだけを許可します。
+`assistant-core` profileと`RenCrow_ASSISTANT` client headerの組み合わせが必要で、Tailscale、
+LAN、Funnel向けAPIではありません。requestは`delivery_id`、`trace_id`、ASSISTANTの
+`user_id`、`title`、`body`を必須とします。`200`は送信済み、`409`は送信結果不明、
+`503`はchannel／credential／送信先の準備不足、`502`は外部送信失敗を表します。
+remote配置へ拡張する場合は相互認証を別途仕様化するまでこのendpointを公開しません。
 
 Scheduler run logの`status`は`completed`、`failed`に加えて`deferred`を返す場合があります。`deferred`はGPUなどの実行資源が使用中で、ジョブの`next_run_at`を近い再試行時刻へ更新した状態です。
 

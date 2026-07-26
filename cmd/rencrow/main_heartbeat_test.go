@@ -115,7 +115,7 @@ func TestBuildHeartbeatNotificationSender(t *testing.T) {
 			name: "legacy chat id defaults to line",
 			cfg: &config.Config{
 				Line:      config.LineConfig{AccessToken: "token"},
-				Heartbeat: config.HeartbeatConfig{ChatID: "U123"},
+				Heartbeat: config.HeartbeatConfig{ChatID: "U0123456789abcdef0123456789abcdef"},
 			},
 		},
 	}
@@ -138,7 +138,7 @@ func TestBuildOutboundChannelRegistryIncludesLineWithAccessTokenOnly(t *testing.
 		Telegram:  config.TelegramConfig{BotToken: "tg-token"},
 		Discord:   config.DiscordConfig{BotToken: "dc-token"},
 		Slack:     config.SlackConfig{BotToken: "sl-token"},
-		Heartbeat: config.HeartbeatConfig{Channel: "line", ChatID: "U123"},
+		Heartbeat: config.HeartbeatConfig{Channel: "line", ChatID: "U0123456789abcdef0123456789abcdef"},
 	}
 
 	registry := buildOutboundChannelRegistry(cfg)

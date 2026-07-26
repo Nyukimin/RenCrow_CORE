@@ -27,7 +27,19 @@ func cmdChannels() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 	registry := buildChannelRegistry(cfg)
-	code := runChannelsCommand(os.Args[2:], registry, os.Stdout, os.Stderr, func() time.Time { return time.Now().UTC() })
+	if len(os.Args) > 2 && strings.EqualFold(strings.TrimSpace(os.Args[2]), "send") {
+		registry = buildOutboundChannelRegistry(cfg)
+	}
+	destination, destinationErr := resolveNotificationDestination(cfg)
+	code := runChannelsCommandWithDestination(
+		os.Args[2:],
+		registry,
+		destination,
+		destinationErr,
+		os.Stdout,
+		os.Stderr,
+		func() time.Time { return time.Now().UTC() },
+	)
 	if code != 0 {
 		os.Exit(code)
 	}
@@ -72,7 +84,38 @@ type channelRegistry interface {
 	ProbeAll(ctx context.Context) map[string]error
 }
 
-func runChannelsCommand(args []string, registry channelRegistry, out io.Writer, errOut io.Writer, now func() time.Time) int {
+type outboundChannelRegistry interface {
+	channelRegistry
+	Get(name string) (adapterchannels.Adapter, bool)
+}
+
+func runChannelsCommand(
+	args []string,
+	registry channelRegistry,
+	out io.Writer,
+	errOut io.Writer,
+	now func() time.Time,
+) int {
+	return runChannelsCommandWithDestination(
+		args,
+		registry,
+		notificationDestination{},
+		fmt.Errorf("notification destination is unavailable"),
+		out,
+		errOut,
+		now,
+	)
+}
+
+func runChannelsCommandWithDestination(
+	args []string,
+	registry channelRegistry,
+	destination notificationDestination,
+	destinationErr error,
+	out io.Writer,
+	errOut io.Writer,
+	now func() time.Time,
+) int {
 	subcmd := "list"
 	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
 		subcmd = strings.ToLower(strings.TrimSpace(args[0]))
@@ -162,9 +205,89 @@ func runChannelsCommand(args []string, registry channelRegistry, out io.Writer, 
 			return 1
 		}
 		return 0
+	case "send":
+		message, ok := channelFlagValue(args[1:], "--message")
+		message = strings.TrimSpace(message)
+		if !ok || message == "" {
+			fmt.Fprintln(errOut, "channels send requires a non-empty --message")
+			return 1
+		}
+		if destinationErr != nil {
+			fmt.Fprintf(errOut, "notification destination unavailable: %v\n", destinationErr)
+			return 1
+		}
+		outboundRegistry, ok := registry.(outboundChannelRegistry)
+		if !ok {
+			fmt.Fprintln(errOut, "notification channel registry does not support sending")
+			return 1
+		}
+		adapter, ok := outboundRegistry.Get(destination.Channel)
+		if !ok {
+			fmt.Fprintf(errOut, "notification channel adapter is not configured: %s\n", destination.Channel)
+			return 1
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := adapter.Probe(ctx); err != nil {
+			fmt.Fprintf(errOut, "notification channel probe failed: %v\n", err)
+			return 1
+		}
+		maskedTarget := line.MaskTargetID(destination.ChatID)
+		fmt.Fprintf(
+			errOut,
+			"notification target=%s type=%s channel=%s source=%s\n",
+			maskedTarget,
+			destination.TargetType,
+			destination.Channel,
+			destination.Source,
+		)
+		dryRun := hasFlag(args, "--dry-run")
+		if !dryRun {
+			if err := adapter.Send(ctx, destination.ChatID, message); err != nil {
+				fmt.Fprintf(errOut, "notification send failed: %v\n", err)
+				return 1
+			}
+		}
+		status := "sent"
+		if dryRun {
+			status = "dry_run"
+		}
+		if jsonOut {
+			writeJSONCLI(out, map[string]any{
+				"ok":        true,
+				"timestamp": now().Format(time.RFC3339),
+				"component": "channels",
+				"status":    status,
+				"details": map[string]any{
+					"channel":     destination.Channel,
+					"target":      maskedTarget,
+					"target_type": destination.TargetType,
+					"source":      destination.Source,
+				},
+			}, true)
+			return 0
+		}
+		if dryRun {
+			fmt.Fprintf(out, "Notification dry-run passed: %s %s\n", destination.Channel, maskedTarget)
+		} else {
+			fmt.Fprintf(out, "Notification sent: %s %s\n", destination.Channel, maskedTarget)
+		}
+		return 0
 	default:
 		fmt.Fprintf(errOut, "unknown channels subcommand: %s\n", subcmd)
-		fmt.Fprintln(errOut, "usage: rencrow channels [list|probe]")
+		fmt.Fprintln(errOut, "usage: rencrow channels [list|probe|send --message TEXT [--dry-run] [--json]]")
 		return 1
 	}
+}
+
+func channelFlagValue(args []string, name string) (string, bool) {
+	for i, arg := range args {
+		if arg == name && i+1 < len(args) {
+			return args[i+1], true
+		}
+		if strings.HasPrefix(arg, name+"=") {
+			return strings.TrimPrefix(arg, name+"="), true
+		}
+	}
+	return "", false
 }

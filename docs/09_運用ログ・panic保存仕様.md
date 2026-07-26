@@ -156,6 +156,42 @@ rencrow resilience status
 ls -lh ~/.rencrow/logs/archive/
 ```
 
+## LINE通知deploymentとrollback
+
+LINE通知のproduction反映では、実際のunit、WorkingDirectory、ExecStart、EnvironmentFilesを`systemctl --user show`で確認します。旧unit名や旧portを推測で再起動しません。binaryを置き換える前に現在のExecStart先をtimestamp付きで退避し、repositoryのtestとbuildを通してからatomicなinstallを行います。
+
+```bash
+systemctl --user show rencrow.service \
+  --property=Environment --property=EnvironmentFiles \
+  --property=ExecStart --property=WorkingDirectory
+cp "$HOME/.local/bin/rencrow" \
+  "$HOME/.local/bin/rencrow.before-line-notify-$(date -u +%Y%m%d_%H%M%SZ)"
+make install
+systemctl --user daemon-reload
+systemctl --user restart rencrow.service
+curl -fsS http://127.0.0.1:18790/health/live
+```
+
+外部Webhook URLは`tailscale serve status`と`tailscale funnel status`で現在のhostと転送先を確認してから、LINE Developersへ`https://<current-host>/webhook/line`を登録します。LINEから到達させる443番はFunnelを使います。同じportのFunnelはpath単位ではなくport全体をpublic扱いにするため、CORE側guardはtailscaledの`Tailscale-Funnel-Request`があるtrafficを`POST /webhook/line`だけに制限します。tailnet内のServe trafficは従来のViewer系allowlistを維持します。更新前のURLも記録し、rollback時に戻せるようにします。秘密値と完全なLINE IDはshell history、journal、調査文書へ出しません。
+
+rollbackは新binaryを停止して退避binaryへ戻し、serviceを起動します。通知先fallbackを今回の登録前へ戻す必要がある場合だけ、CORE停止中に`workspace_dir/state/line_notification_target`を別名へ退避します。削除はしません。
+
+```bash
+systemctl --user stop rencrow.service
+cp "$HOME/.local/bin/rencrow.before-line-notify-<UTC timestamp>" \
+  "$HOME/.local/bin/.rencrow.rollback"
+chmod +x "$HOME/.local/bin/.rencrow.rollback"
+mv "$HOME/.local/bin/.rencrow.rollback" "$HOME/.local/bin/rencrow"
+systemctl --user start rencrow.service
+```
+
+Funnelだけをrollbackする場合は、LINE DevelopersのWebhook URLを直前の値へ戻してから次を実行します。
+
+```bash
+tailscale funnel --https=443 off
+tailscale serve --https=443 --bg --yes http://127.0.0.1:18790
+```
+
 `10-panic-stack.conf`は`rencrow.service`のdrop-inとして導入されます。drop-in反映にはCORE再起動が必要です。
 
 ## 障害調査の最小手順
