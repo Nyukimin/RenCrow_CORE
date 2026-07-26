@@ -74,7 +74,7 @@ func (s *DirectUserTargetStore) Load() (string, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return "", fmt.Errorf("LINE notification target must be a regular file")
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if !secretFilePermOK(info) {
 		return "", fmt.Errorf("LINE notification target permissions must be 0600")
 	}
 	data, err := os.ReadFile(s.path)

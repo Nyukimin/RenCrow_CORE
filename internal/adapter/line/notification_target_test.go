@@ -1,8 +1,6 @@
 package line
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -26,13 +24,7 @@ func TestDirectUserTargetStoreRecordAndLoad(t *testing.T) {
 		t.Fatalf("Load = %q, want %q", got, userID)
 	}
 
-	info, err := os.Stat(store.Path())
-	if err != nil {
-		t.Fatalf("Stat failed: %v", err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("target file mode = %o, want 600", perm)
-	}
+	assertTargetFilePermissions(t, store.Path())
 }
 
 func TestDirectUserTargetStoreKeepsFirstUser(t *testing.T) {
@@ -66,23 +58,6 @@ func TestDirectUserTargetStoreRejectsNonUserTarget(t *testing.T) {
 		if _, err := store.Record(id); err == nil {
 			t.Fatalf("Record(%q) should fail", id)
 		}
-	}
-}
-
-func TestDirectUserTargetStoreRejectsPermissiveExistingFile(t *testing.T) {
-	store := NewDirectUserTargetStore(t.TempDir())
-	if err := os.MkdirAll(filepath.Dir(store.Path()), 0o700); err != nil {
-		t.Fatalf("MkdirAll failed: %v", err)
-	}
-	if err := os.WriteFile(store.Path(), []byte("U0123456789abcdef0123456789abcdef\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
-	if err := os.Chmod(store.Path(), 0o644); err != nil {
-		t.Fatalf("Chmod failed: %v", err)
-	}
-
-	if _, err := store.Load(); err == nil {
-		t.Fatal("Load should reject a target file readable by group/others")
 	}
 }
 

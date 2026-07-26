@@ -148,7 +148,7 @@ func (s *AssistantPushReceiptStore) append(receipt assistantPushReceipt) error {
 	if err != nil {
 		return fmt.Errorf("stat assistant LINE push receipt file: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+	if !info.Mode().IsRegular() || !secretFilePermOK(info) {
 		return fmt.Errorf("assistant LINE push receipt file must be regular with 0600 permissions")
 	}
 	data, err := json.Marshal(receipt)
