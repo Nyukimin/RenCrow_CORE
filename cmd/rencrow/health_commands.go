@@ -6,7 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
-	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -225,7 +225,9 @@ func runDoctorCommand(
 			}
 		}
 		if cfg.Security.Audit.Enabled {
-			auditDir := path.Dir(cfg.Security.Audit.Path)
+			// path.Dir はスラッシュ専用のため、Windows のパスでは "." を返して
+			// 書込可否チェックが無効化される。ローカルFSのパスは filepath を使う
+			auditDir := filepath.Dir(cfg.Security.Audit.Path)
 			if strings.TrimSpace(auditDir) == "" {
 				auditDir = "."
 			}

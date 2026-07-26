@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -47,6 +48,49 @@ func TestRunDoctorCommand_JSONNoIssue(t *testing.T) {
 	}
 	if !payload.OK || payload.Component != "doctor" || payload.Status != "ok" {
 		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
+// TestRunDoctorCommand_AuditDirUsesHostPathSeparator は監査ディレクトリの
+// 判定がホストOSの区切り文字を正しく扱うことを確認する
+//
+// path.Dir はスラッシュ専用であり、Windows の "C:\logs\audit.jsonl" に対して
+// "." を返す。その結果 ensureDir(".") が常に成功し、監査ディレクトリの
+// 書込可否チェックが無効化される。
+func TestRunDoctorCommand_AuditDirUsesHostPathSeparator(t *testing.T) {
+	auditPath := filepath.Join("C:", "rencrow-logs", "audit.jsonl")
+	wantDir := filepath.Dir(auditPath)
+
+	cfg := &config.Config{
+		Security: config.SecurityConfig{
+			Enabled:    true,
+			PolicyMode: "strict",
+			Audit: config.SecurityAuditConfig{
+				Enabled: true,
+				Path:    auditPath,
+			},
+		},
+	}
+	var out, errOut bytes.Buffer
+	var gotDir string
+
+	runDoctorCommand(
+		[]string{"--json"},
+		cfg,
+		&fakeDoctorHealthChecker{status: domainhealth.StatusOK},
+		true,
+		func(_ string) error { return nil },
+		func(dir string) error {
+			gotDir = dir
+			return nil
+		},
+		&out,
+		&errOut,
+		fixedNow,
+	)
+
+	if gotDir != wantDir {
+		t.Fatalf("ensureDir received %q, want %q", gotDir, wantDir)
 	}
 }
 
