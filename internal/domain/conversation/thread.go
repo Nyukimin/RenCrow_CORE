@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -80,7 +81,24 @@ func (t *Thread) Close() {
 	t.Status = ThreadClosed
 }
 
-// generateThreadID はユニークなThread IDを生成（簡易実装）
+// lastThreadID は生成済みThread IDの最大値を保持する
+var lastThreadID atomic.Int64
+
+// generateThreadID はユニークなThread IDを生成する
+//
+// time.Now().UnixNano() だけでは、クロック粒度が粗い環境（Windowsでは
+// 100ns〜1ms程度）で連続生成したIDが衝突する。単調増加を保証することで、
+// 時刻順序を維持したまま一意性を担保する。
 func generateThreadID() int64 {
-	return time.Now().UnixNano()
+	now := time.Now().UnixNano()
+	for {
+		last := lastThreadID.Load()
+		next := now
+		if next <= last {
+			next = last + 1
+		}
+		if lastThreadID.CompareAndSwap(last, next) {
+			return next
+		}
+	}
 }
