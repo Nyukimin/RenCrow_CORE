@@ -13,7 +13,12 @@ func TestClassifyExecutionFailureMetadata(t *testing.T) {
 		{name: "patch parse", errText: "patch parse error: bad hunk", wantKind: "patch_parse_failed", retryable: true},
 		{name: "unsafe operation", errText: "security error: protected file", wantKind: "unsafe_operation", retryable: false},
 		{name: "missing command", output: "sh: pip: command not found", wantKind: "missing_command", retryable: true},
+		{name: "missing command on windows", output: "'pip' is not recognized as an internal or external command", wantKind: "missing_command", retryable: true},
+		{name: "missing command exit code 9009", errText: "exit status 9009", wantKind: "missing_command", retryable: true},
 		{name: "missing dependency", output: "No module named pytest", wantKind: "missing_dependency", retryable: true},
+		// 素の "not found" を missing_command として扱うと、この行が
+		// missing_command に吸われて missing_dependency へ到達しない
+		{name: "missing dependency reaches its own kind", output: "module not found: example.com/pkg", wantKind: "missing_dependency", retryable: true},
 		{name: "verification failed", output: "test failed: assert equal", wantKind: "verification_failed", retryable: true},
 		{name: "spec missing", errText: "missing required field", wantKind: "spec_missing", retryable: true},
 		{name: "unknown", errText: "boom", wantKind: "unknown", retryable: false},

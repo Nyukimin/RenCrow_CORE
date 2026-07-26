@@ -3,6 +3,8 @@ package worker
 import (
 	"fmt"
 	"strings"
+
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -63,7 +65,7 @@ func ClassifyExecutorFailure(err error) string {
 	switch {
 	case strings.Contains(lower, "proposal"):
 		return FailureProposalInvalid
-	case strings.Contains(lower, "not found"), strings.Contains(lower, "exit status 127"):
+	case core.IsMissingCommandText(lower):
 		return FailureCommandMissing
 	case strings.Contains(lower, "provider"), strings.Contains(lower, "model"), strings.Contains(lower, "ollama"):
 		return FailureProviderUnavailable

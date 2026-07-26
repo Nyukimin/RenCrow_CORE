@@ -1,6 +1,10 @@
 package worker
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 type ExecutionFailureClassification struct {
 	Kind      string
@@ -15,7 +19,7 @@ func ClassifyExecutionFailure(errText, output string) ExecutionFailureClassifica
 		return ExecutionFailureClassification{Kind: "patch_parse_failed", Reason: strings.TrimSpace(errText), Retryable: true}
 	case strings.Contains(text, "security error"), strings.Contains(text, "protected file"):
 		return ExecutionFailureClassification{Kind: "unsafe_operation", Reason: strings.TrimSpace(errText), Retryable: false}
-	case strings.Contains(text, "command not found"), strings.Contains(text, "not found"), strings.Contains(text, "exit status 127"):
+	case core.IsMissingCommandText(text):
 		return ExecutionFailureClassification{Kind: "missing_command", Reason: strings.TrimSpace(errText), Retryable: true}
 	case strings.Contains(text, "no module named"), strings.Contains(text, "module not found"), strings.Contains(text, "cannot find package"), strings.Contains(text, "missing dependency"):
 		return ExecutionFailureClassification{Kind: "missing_dependency", Reason: strings.TrimSpace(errText), Retryable: true}

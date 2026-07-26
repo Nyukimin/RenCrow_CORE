@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func ShouldRetrySynthesis(code string, attempt int) bool {
@@ -52,8 +54,5 @@ func ShouldRetrySynthesisTransportError(message string, attempt int) bool {
 	if msg == "" {
 		return false
 	}
-	return strings.Contains(msg, "connection reset by peer") ||
-		strings.Contains(msg, "connection refused") ||
-		strings.Contains(msg, "client.timeout exceeded") ||
-		strings.Contains(msg, "timeout")
+	return core.IsTransientNetworkText(msg) || strings.Contains(msg, "timeout")
 }

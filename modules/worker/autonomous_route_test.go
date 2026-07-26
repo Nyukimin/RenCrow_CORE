@@ -45,7 +45,10 @@ func TestClassifyExecutorFailure(t *testing.T) {
 		want string
 	}{
 		{errors.New("proposal is invalid"), FailureProposalInvalid},
-		{errors.New("binary not found"), FailureCommandMissing},
+		// 素の "not found" は広すぎるため判定に含めない（"module not found" 等を
+		// コマンド不在と誤分類する）。実際の os/exec の文言で検証する
+		{errors.New(`exec: "binary": executable file not found in $PATH`), FailureCommandMissing},
+		{errors.New(`'binary' is not recognized as an internal or external command`), FailureCommandMissing},
 		{errors.New("ollama model unavailable"), FailureProviderUnavailable},
 		{errors.New("patch failed"), FailureApply},
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func nextCoderRetryRequest(userMessage string, proposal *domaintransport.ProposalPayload, shiroResult domaintransport.Message, attempt int) (string, bool) {
@@ -38,7 +39,7 @@ func classifyDistributedExecutionError(err error) (string, string, bool) {
 		return agent.ProposalFailureDisallowedCommand, text, false
 	case strings.Contains(lower, "patch parse error"):
 		return "patch_parse_failed", text, true
-	case strings.Contains(lower, "command not found"), strings.Contains(lower, "exit status 127"), strings.Contains(lower, "not found"):
+	case modulecore.IsMissingCommandText(lower):
 		return "missing_command", text, true
 	case strings.Contains(lower, "security error"), strings.Contains(lower, "protected file"):
 		return "unsafe_operation", text, false

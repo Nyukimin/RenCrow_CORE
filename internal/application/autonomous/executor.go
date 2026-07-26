@@ -8,6 +8,7 @@ import (
 
 	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type CapabilityPack string
@@ -226,11 +227,11 @@ func classifyApplyError(err error) string {
 	switch {
 	case strings.Contains(lower, "proposal_empty"), strings.Contains(lower, "proposal_missing"), strings.Contains(lower, "proposal_invalid"):
 		return "proposal_invalid"
-	case strings.Contains(lower, "command not found"), strings.Contains(lower, "exit status 127"), strings.Contains(lower, "not found"):
+	case modulecore.IsMissingCommandText(lower):
 		return "command_missing"
 	case strings.Contains(lower, "dependency"), strings.Contains(lower, "module"), strings.Contains(lower, "package"):
 		return "dependency_missing"
-	case strings.Contains(lower, "path"), strings.Contains(lower, "no such file"):
+	case strings.Contains(lower, "path"), modulecore.IsMissingPathText(lower):
 		return "path_mismatch"
 	case strings.Contains(lower, "provider"), strings.Contains(lower, "ollama"), strings.Contains(lower, "model"):
 		return "provider_unavailable"
