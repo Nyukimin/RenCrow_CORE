@@ -6,18 +6,20 @@
 
 ## When to Use
 
-- `docs/株式`、`rencrow-data`、投資研究基盤、market universe、paper trade、approval audit に関する作業。
+- `rencrow-data`、投資研究基盤、market universe、paper trade、approval audit に関する作業。
 - daily / weekly refresh、source expansion、active source filtering、Viewer investment status を確認する。
 
 ## Required Context
 
 - repo root: `/home/nyukimi/RenCrow/RenCrow_CORE`
 - data workflow: `rencrow-data/`
-- key docs: `docs/株式/`
+- product config: `docs/05_設定リファレンス.md`
+- safety and approval: `docs/07_安全・承認・データ方針.md`
+- workflow runbook: `rencrow-data/README.md`
 
 ## Procedure
 
-1. 対象仕様を `docs/株式/` と `rencrow-data/README.md` から確認する。
+1. 製品契約を `docs/05_設定リファレンス.md`、`docs/07_安全・承認・データ方針.md`から、具体的なworkflowを`rencrow-data/README.md`から確認する。
 2. `make -n` で daily / weekly / manual-stop target の形を確認する。
 3. universe 変更では config だけでなく fetch / feature logic の両方を確認する。
 4. snapshot_id、approval_reason、paper_trade_log、cli_run_log、exit_code が保持されるか確認する。
@@ -36,4 +38,3 @@
 - 実投資判断として扱わない。
 - paper operation の 8-12 週相当の経過要件を短縮完了扱いしない。
 - approval metadata なしに paper trade を進めない。
-

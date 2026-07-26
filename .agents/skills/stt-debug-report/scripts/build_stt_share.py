@@ -295,25 +295,22 @@ def main():
         lines.append("---")
         lines.append("")
 
-    # --- 比較コマンド ---
-    lines.append("## 比較コマンド（再実行用）")
+    # --- 再現・送付条件 ---
+    lines.append("## 再現・送付条件")
     lines.append("")
-    log_arg = f"tmp/{server_logs[0].name}" if server_logs else "tmp/voice_bridge_YYYYMMDD_HHMMSS_HHMMSS.log"
-    lines.append("```bash")
-    lines.append("python3 docs/STT_TTS/tools/compare_stt_logs.py \\")
-    lines.append('  --client-log "tmp/client_stt_log.txt" \\')
-    lines.append(f'  --server-log "{log_arg}" \\')
-    lines.append('  --output "tmp/stt_compare_report_latest.md"')
-    lines.append("```")
+    lines.append("- このreportに`session_id`、発生時刻、client/server双方の結果、再現手順を含める。")
+    lines.append("- 削除済みの旧比較CLIや依頼テンプレートには依存しない。")
+    if server_logs:
+        lines.append(f"- 収集済みサーバーログ: `tmp/{server_logs[0].name}`")
     lines.append("")
     lines.append("---")
     lines.append("")
 
-    # --- 依頼文リンク ---
-    lines.append("## 依頼文リンク")
+    # --- 現行契約 ---
+    lines.append("## 現行契約")
     lines.append("")
-    lines.append("- サーバーログ出力依頼（パス非依存版）: `docs/STT_TTS/AUDIO_Client仕様/STT/stt_server_logging_request_path_agnostic_2026-04-13.md`")
-    lines.append("- session_id 問題 証拠付き問い合わせ: `docs/STT_TTS/AUDIO_Client仕様/STT/stt_server_inquiry_with_proof_2026-04-13.md`")
+    lines.append("- CORE: repository rootの`docs/06_Public_API仕様.md`")
+    lines.append("- STT gateway: [RenCrow_STT README](https://github.com/Nyukimin/RenCrow_STT)")
     lines.append("")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -44,8 +44,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          retired='docs/(00_ドキュメント分類一覧|01_正本仕様|02_正本仕様|02_OpenClaw移植詳細仕様|02_v2統合分割仕様|03_設計文書|04_実装仕様_機能拡張|05_LLM運用プロンプト設計|06_実装ガイド進行管理|10_新仕様|LLM運用|コーディング|refs|tooling)(/|\.md|`)'
-          if rg -n "$retired" AGENTS.md CLAUDE.md rules commands scripts .agents/skills; then
+          retired='docs/(00_ドキュメント分類一覧|01_正本仕様|02_正本仕様|02_OpenClaw移植詳細仕様|02_v2統合分割仕様|03_設計文書|04_実装仕様_機能拡張|05_LLM運用プロンプト設計|06_実装ガイド進行管理|10_新仕様|LLM運用|コーディング|refs|tooling|株式|STT_TTS)(/|\.md|`)'
+          if rg -n "$retired" AGENTS.md CLAUDE.md rules commands scripts skills/core workspace config rencrow-data .agents/skills/stt-debug-report .claude/skills/stt-debug-report; then
             echo "Active instructions must reference docs/README.md and docs/01-09 only" >&2
             exit 1
           fi
@@ -62,6 +62,13 @@ jobs:
           sources.extend(Path("rules").rglob("*.md"))
           sources.extend(Path("commands").glob("*.md"))
           sources.extend(Path("scripts").glob("*.md"))
+          sources.extend(Path("skills/core").rglob("*.md"))
+          sources.extend(Path("workspace").glob("*.md"))
+          sources.extend(Path("workspace/skills/log-ops").rglob("*.md"))
+          sources.extend(Path("config").glob("*.md"))
+          sources.append(Path("rencrow-data/README.md"))
+          sources.extend(Path(".agents/skills/stt-debug-report").rglob("*.md"))
+          sources.extend(Path(".claude/skills/stt-debug-report").rglob("*.md"))
           failures = []
           for source in sources:
               text = source.read_text(encoding="utf-8")
@@ -98,6 +105,13 @@ jobs:
           roots.extend(Path("scripts").glob("*.md"))
           roots.extend(Path("modules").rglob("*.md"))
           roots.extend(Path("prompts").glob("README.md"))
+          roots.extend(Path("skills/core").rglob("*.md"))
+          roots.extend(Path("workspace").glob("*.md"))
+          roots.extend(Path("workspace/skills/log-ops").rglob("*.md"))
+          roots.extend(Path("config").glob("*.md"))
+          roots.append(Path("rencrow-data/README.md"))
+          roots.extend(Path(".agents/skills/stt-debug-report").rglob("*.md"))
+          roots.extend(Path(".claude/skills/stt-debug-report").rglob("*.md"))
           failures = []
           for source in roots:
               text = source.read_text(encoding="utf-8")

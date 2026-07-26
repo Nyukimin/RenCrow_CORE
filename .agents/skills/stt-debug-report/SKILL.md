@@ -22,10 +22,10 @@ tmp/stt_server_analysis_latest.md
 
 ## 実行コマンド
 
-プロジェクトルート（`/home/nyukimi/RenCrow_CORE`）から:
+RenCrow_COREのrepository rootから:
 
 ```bash
-python3 /home/nyukimi/.Codex/skills/stt-debug-report/scripts/build_stt_share.py \
+python3 .agents/skills/stt-debug-report/scripts/build_stt_share.py \
   [--tmp-dir tmp] \
   [--output tmp/stt_share_for_server.md]
 ```
@@ -53,12 +53,13 @@ python3 /home/nyukimi/.Codex/skills/stt-debug-report/scripts/build_stt_share.py 
 | `voice_bridge_*.log` | サーバーログ切り出し（最新1件） |
 | `stt_inputs/*.wav` | アーカイブ WAV 一覧 |
 
-## 送付先ドキュメント（依頼文）
+## 送付時の参照先
 
-生成後に以下のテンプレートと合わせてサーバー担当へ送付する:
+生成したreport自体を証跡として使用し、削除済みの旧依頼テンプレートへ依存しない。
 
-- **依頼文**: `docs/STT_TTS/AUDIO_Client仕様/STT/stt_server_logging_request_path_agnostic_2026-04-13.md`
-- **session_id 問い合わせ**: `docs/STT_TTS/AUDIO_Client仕様/STT/stt_server_inquiry_with_proof_2026-04-13.md`
+- CORE側の成功条件: [Public API仕様](../../../docs/06_Public_API仕様.md)
+- STT gateway側の現行契約: [RenCrow_STT README](https://github.com/Nyukimin/RenCrow_STT)
+- 問い合わせには`session_id`、発生時刻、client/server双方の結果、再現手順を含める。
 
 ## 注意
 

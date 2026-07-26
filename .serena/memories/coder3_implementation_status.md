@@ -1,5 +1,12 @@
 # Coder3（Gin）実装状況
 
+> [WARN]
+> 本書は2026-03-02時点の履歴snapshotであり、現在のAgent identity、provider、
+> production wiring、実装状況、backlogの判断には使用しない。
+> 現在の固定identityは`Coder1=Aka、Coder2=Ao、Coder3=Kin、Coder4=Gin`である。
+> 製品契約は`docs/03_キャラクター・エージェント仕様.md`と
+> `docs/05_設定リファレンス.md`、現在状態はproduction wiringとtestを参照する。
+
 **最終更新**: 2026-03-02
 
 ---

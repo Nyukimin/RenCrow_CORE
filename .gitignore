@@ -30,6 +30,7 @@ workspace/skills/*
 
 # Secrets & Config (keep templates, ignore actual secrets)
 .env
+/config.yaml
 rencrow-data/data/
 rencrow-data/logs/
 rencrow-data/approvals/

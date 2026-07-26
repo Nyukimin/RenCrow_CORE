@@ -1,5 +1,11 @@
 # Refactor Investigation Report
 
+> [WARN]
+> This is a historical investigation snapshot from 2026-06-12, not the current
+> specification or backlog. Its DuckDB, migration-guide, file, and test references
+> may describe paths that no longer exist. Use `docs/README.md` and the current
+> production wiring and tests for present decisions.
+
 Date: 2026-06-12
 
 ## Baseline

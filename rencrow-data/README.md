@@ -1,7 +1,10 @@
 # RenCrow Data Foundation
 
-This directory contains the stock/ETF/crypto learning data foundation described in
-`docs/株式/学習基盤_実装仕様書.md`.
+This directory contains the repository-local workflow for stock, ETF, and crypto
+research data. It is an implementation runbook, not an additional product source of
+truth. Runtime database placement follows
+[the configuration reference](../docs/05_設定リファレンス.md), and any approval or
+external action follows [the safety policy](../docs/07_安全・承認・データ方針.md).
 
 MVP commands:
 

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -77,6 +78,24 @@ func TestLoadPromptsLoadsIdleChatCorrectionsForAllFourCoders(t *testing.T) {
 	for _, name := range []string{"Aka", "Ao", "Kin", "Gin"} {
 		if got := p.IdleChatAgents[name]; got != strings.ToLower(name)+" idle correction" {
 			t.Fatalf("IdleChatAgents[%s] = %q", name, got)
+		}
+	}
+}
+
+func TestRepositoryGinIdleChatPromptMatchesCoder4Responsibility(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test file path")
+	}
+	promptPath := filepath.Join(filepath.Dir(testFile), "..", "..", "..", "prompts", "idle_chat", "gin.md")
+	content, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read Gin idle chat prompt: %v", err)
+	}
+	got := string(content)
+	for _, required := range []string{"Gin", "Coder4", "比較", "レビュー", "仕上げ"} {
+		if !strings.Contains(got, required) {
+			t.Fatalf("Gin idle chat prompt must contain %q:\n%s", required, got)
 		}
 	}
 }
