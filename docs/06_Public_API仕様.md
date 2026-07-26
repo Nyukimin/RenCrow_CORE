@@ -186,7 +186,34 @@ capabilityで制限します。
 | `RenCrow_PORTAL` | `portal-idlechat` | IdleChatの読み取り |
 | `RenCrow_CMD` | `cmd-chat` | Chat送信とevent購読 |
 | `RenCrow_CMD` | `cmd-idlechat` | IdleChat status／event／start／stop |
+| `RenCrow_CMD` | `cmd-diagnostics` | 診断・状態取得の読み取り専用 |
+| `RenCrow_CMD` | `cmd-control` | process制御とrepair実行 |
 | `RenCrow_ASSISTANT` | `assistant-core` | COREへのChat送信とevent購読 |
+
+`cmd-diagnostics`と`cmd-control`は、CMDが実装本体を持たずCORE Public API経由で
+診断・運用を行うためのprofileです。影響の大きい操作を分離するため、状態を変更しない
+読み取りと、process制御・repair実行を別profileにしています。
+
+`cmd-diagnostics`が許可するのはGETのみで、対象は次のpathです。
+
+```text
+/health、/health/live、/ready
+/viewer/status、/viewer/logs
+/viewer/evidence/{recent,detail,summary}
+/viewer/llm-ops/{health,status}
+/viewer/source-registry、/viewer/knowledge-memory
+/viewer/debug/system
+```
+
+`cmd-control`が許可するのは次のpathです。制御結果の確認に必要な読み取りだけを併せて
+許可し、対話系（`/viewer/send`、`/viewer/events`、IdleChat）は対象外とします。
+
+```text
+POST /viewer/llm-ops/{start,stop,restart}
+POST /viewer/repair/run
+POST /viewer/source-registry
+GET  /health、/health/live、/ready、/viewer/status、/viewer/llm-ops/{health,status}
+```
 
 COREは既知clientのprofile欠落、client/profile不一致、profile外method/pathを403で拒否します。
 profile headerは認証credentialではなく、既存のendpoint allowlist、TLS、network境界、
