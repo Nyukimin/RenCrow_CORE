@@ -182,6 +182,10 @@ chmod 600 "$RENCROW_HOME/.env"
 echo ""
 echo "  ✓ $RENCROW_HOME/.env (chmod 600)"
 
+touch "$RENCROW_HOME/llm_ops.env"
+chmod 600 "$RENCROW_HOME/llm_ops.env"
+echo "  ✓ $RENCROW_HOME/llm_ops.env (optional, chmod 600)"
+
 # API キー設定状況
 if [ -n "$anthropic_key" ]; then
     echo "  ✓ Anthropic API キー設定済み"
@@ -202,30 +206,7 @@ echo ""
 echo "[6/7] systemd サービスの設定..."
 
 # rencrow.service
-cat > "$SYSTEMD_USER_DIR/rencrow.service" <<EOF
-[Unit]
-Description=RenCrow - Ultra-Lightweight AI Assistant
-After=network-online.target
-Wants=network-online.target
-StartLimitIntervalSec=0
-
-[Service]
-Type=simple
-WorkingDirectory=$HOME/RenCrow_CORE
-ExecStart=$RENCROW_BIN/rencrow
-EnvironmentFile=$RENCROW_HOME/.env
-Environment="RENCROW_CONFIG=$RENCROW_HOME/config.yaml"
-Environment=GOTRACEBACK=all
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-LogRateLimitIntervalSec=0
-LogRateLimitBurst=0
-
-[Install]
-WantedBy=default.target
-EOF
+install -m 0644 systemd/user/rencrow.service "$SYSTEMD_USER_DIR/rencrow.service"
 
 echo "  ✓ $SYSTEMD_USER_DIR/rencrow.service"
 

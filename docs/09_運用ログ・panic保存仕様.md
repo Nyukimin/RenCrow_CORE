@@ -31,6 +31,8 @@ Redis、Qdrant、mount、圧縮、checksum、復元検証のどれかが失敗�
 
 Linuxのsystemd常用環境では、`rencrow.service`のstdoutとstderrをsystemd journalへ送ります。
 
+repository内の `systemd/user/rencrow.service` をproduction unitの正本とします。`install.sh` はこのunitを `~/.config/systemd/user/rencrow.service` へコピーし、inline生成しません。正本unitは portable install path として `WorkingDirectory=%h/.rencrow`、`ExecStart=%h/.local/bin/rencrow run`、`EnvironmentFile=%h/.rencrow/.env`、`EnvironmentFile=-%h/.rencrow/llm_ops.env`、`RENCROW_CONFIG=%h/.rencrow/config.yaml` を使います。再起動契約は `Restart=always`、`RestartSec=5`、`StartLimitIntervalSec=0` です。journal契約は `StandardOutput=journal`、`StandardError=journal`、`LogRateLimitIntervalSec=0`、`LogRateLimitBurst=0` です。`llm_ops.env` は任意のproduction環境ファイルで、存在しない場合もCORE起動を妨げません。
+
 ```bash
 journalctl --user -u rencrow.service --since "1 hour ago"
 journalctl --user -u rencrow.service -f
