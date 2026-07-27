@@ -4,11 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
@@ -21,18 +18,27 @@ type RawLogProvider struct {
 
 var (
 	chatRawOnce   sync.Once
-	chatRawFile   *os.File
+	chatRawFile   rawLogSink
 	chatRawErr    error
 	chatRawMu     sync.Mutex
 	workerRawOnce sync.Once
-	workerRawFile *os.File
+	workerRawFile rawLogSink
 	workerRawErr  error
 	workerRawMu   sync.Mutex
 	idleRawOnce   sync.Once
-	idleRawFile   *os.File
+	idleRawFile   rawLogSink
 	idleRawErr    error
 	idleRawMu     sync.Mutex
 )
+
+// rawLogSink は生応答ログの書き出し先
+//
+// RotatingWriter を受けるためのインターフェース。上限に達すると世代交代する。
+type rawLogSink interface {
+	Write(p []byte) (int, error)
+	Sync() error
+	Close() error
+}
 
 func NewRawLogProvider(inner domainllm.LLMProvider, name string) *RawLogProvider {
 	return &RawLogProvider{
@@ -102,25 +108,9 @@ func writeChatRaw(kind, provider, finish string, maxTokens int, msgCount int, co
 	chatRawMu.Lock()
 	defer chatRawMu.Unlock()
 
-	ts := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := f.WriteString(
-		fmt.Sprintf("ts=%s kind=%s provider=%s finish=%s max_tokens=%d msgs=%d\n", ts, kind, provider, finish, maxTokens, msgCount),
-	); err != nil {
-		log.Printf("[LLM][raw] chat raw write header failed: %v", err)
-		return
-	}
-	if _, err := f.WriteString(content); err != nil {
-		log.Printf("[LLM][raw] chat raw write content failed: %v", err)
-		return
-	}
-	if !strings.HasSuffix(content, "\n") {
-		if _, err := f.WriteString("\n"); err != nil {
-			log.Printf("[LLM][raw] chat raw write newline failed: %v", err)
-			return
-		}
-	}
-	if _, err := f.WriteString("----\n"); err != nil {
-		log.Printf("[LLM][raw] chat raw write separator failed: %v", err)
+	// 1エントリを1回で書く。分割するとローテーション境界でログが分断される
+	if _, err := f.Write([]byte(buildRawLogEntry(kind, provider, finish, maxTokens, msgCount, content))); err != nil {
+		log.Printf("[LLM][raw] chat raw write failed: %v", err)
 		return
 	}
 	if err := f.Sync(); err != nil {
@@ -136,25 +126,9 @@ func writeWorkerRaw(kind, provider, finish string, maxTokens int, msgCount int, 
 	workerRawMu.Lock()
 	defer workerRawMu.Unlock()
 
-	ts := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := f.WriteString(
-		fmt.Sprintf("ts=%s kind=%s provider=%s finish=%s max_tokens=%d msgs=%d\n", ts, kind, provider, finish, maxTokens, msgCount),
-	); err != nil {
-		log.Printf("[LLM][raw] worker raw write header failed: %v", err)
-		return
-	}
-	if _, err := f.WriteString(content); err != nil {
-		log.Printf("[LLM][raw] worker raw write content failed: %v", err)
-		return
-	}
-	if !strings.HasSuffix(content, "\n") {
-		if _, err := f.WriteString("\n"); err != nil {
-			log.Printf("[LLM][raw] worker raw write newline failed: %v", err)
-			return
-		}
-	}
-	if _, err := f.WriteString("----\n"); err != nil {
-		log.Printf("[LLM][raw] worker raw write separator failed: %v", err)
+	// 1エントリを1回で書く。分割するとローテーション境界でログが分断される
+	if _, err := f.Write([]byte(buildRawLogEntry(kind, provider, finish, maxTokens, msgCount, content))); err != nil {
+		log.Printf("[LLM][raw] worker raw write failed: %v", err)
 		return
 	}
 	if err := f.Sync(); err != nil {
@@ -162,26 +136,9 @@ func writeWorkerRaw(kind, provider, finish string, maxTokens int, msgCount int, 
 	}
 }
 
-func openChatRawFile() *os.File {
+func openChatRawFile() rawLogSink {
 	chatRawOnce.Do(func() {
-		path := strings.TrimSpace(os.Getenv("RENCROW_CHAT_RAW_LOG"))
-		if path == "" {
-			path = "/home/nyukimi/.rencrow/logs/chat_raw.log"
-		}
-		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			chatRawErr = err
-			log.Printf("[LLM][raw] chat raw mkdir failed: %v", err)
-			return
-		}
-		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			chatRawErr = err
-			log.Printf("[LLM][raw] chat raw open failed: %v", err)
-			return
-		}
-		chatRawFile = f
-		log.Printf("[LLM][raw] chat raw file enabled: %s", path)
+		chatRawFile, chatRawErr = openRawLogSink("RENCROW_CHAT_RAW_LOG", "chat_raw.log", "chat")
 	})
 	if chatRawErr != nil {
 		return nil
@@ -189,26 +146,9 @@ func openChatRawFile() *os.File {
 	return chatRawFile
 }
 
-func openWorkerRawFile() *os.File {
+func openWorkerRawFile() rawLogSink {
 	workerRawOnce.Do(func() {
-		path := strings.TrimSpace(os.Getenv("RENCROW_WORKER_RAW_LOG"))
-		if path == "" {
-			path = "/home/nyukimi/.rencrow/logs/worker_raw.log"
-		}
-		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			workerRawErr = err
-			log.Printf("[LLM][raw] worker raw mkdir failed: %v", err)
-			return
-		}
-		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			workerRawErr = err
-			log.Printf("[LLM][raw] worker raw open failed: %v", err)
-			return
-		}
-		workerRawFile = f
-		log.Printf("[LLM][raw] worker raw file enabled: %s", path)
+		workerRawFile, workerRawErr = openRawLogSink("RENCROW_WORKER_RAW_LOG", "worker_raw.log", "worker")
 	})
 	if workerRawErr != nil {
 		return nil
@@ -224,25 +164,11 @@ func writeIdleChatRaw(speaker, kind, provider, finish string, maxTokens int, msg
 	idleRawMu.Lock()
 	defer idleRawMu.Unlock()
 
-	ts := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := f.WriteString(
-		fmt.Sprintf("ts=%s speaker=%s kind=%s provider=%s finish=%s max_tokens=%d msgs=%d\n", ts, speaker, kind, provider, finish, maxTokens, msgCount),
-	); err != nil {
-		log.Printf("[LLM][raw] idle raw write header failed: %v", err)
-		return
-	}
-	if _, err := f.WriteString(content); err != nil {
-		log.Printf("[LLM][raw] idle raw write content failed: %v", err)
-		return
-	}
-	if !strings.HasSuffix(content, "\n") {
-		if _, err := f.WriteString("\n"); err != nil {
-			log.Printf("[LLM][raw] idle raw write newline failed: %v", err)
-			return
-		}
-	}
-	if _, err := f.WriteString("----\n"); err != nil {
-		log.Printf("[LLM][raw] idle raw write separator failed: %v", err)
+	// 1エントリを1回で書く。分割するとローテーション境界でログが分断される
+	entry := buildRawLogEntry(kind, provider, finish, maxTokens, msgCount, content)
+	entry = strings.Replace(entry, " kind=", " speaker="+speaker+" kind=", 1)
+	if _, err := f.Write([]byte(entry)); err != nil {
+		log.Printf("[LLM][raw] idle raw write failed: %v", err)
 		return
 	}
 	if err := f.Sync(); err != nil {
@@ -250,26 +176,9 @@ func writeIdleChatRaw(speaker, kind, provider, finish string, maxTokens int, msg
 	}
 }
 
-func openIdleChatRawFile() *os.File {
+func openIdleChatRawFile() rawLogSink {
 	idleRawOnce.Do(func() {
-		path := strings.TrimSpace(os.Getenv("RENCROW_IDLECHAT_RAW_LOG"))
-		if path == "" {
-			path = "/home/nyukimi/.rencrow/logs/IdleChat_raw.log"
-		}
-		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			idleRawErr = err
-			log.Printf("[LLM][raw] idle raw mkdir failed: %v", err)
-			return
-		}
-		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			idleRawErr = err
-			log.Printf("[LLM][raw] idle raw open failed: %v", err)
-			return
-		}
-		idleRawFile = f
-		log.Printf("[LLM][raw] idle raw file enabled: %s", path)
+		idleRawFile, idleRawErr = openRawLogSink("RENCROW_IDLECHAT_RAW_LOG", "IdleChat_raw.log", "idlechat")
 	})
 	if idleRawErr != nil {
 		return nil
