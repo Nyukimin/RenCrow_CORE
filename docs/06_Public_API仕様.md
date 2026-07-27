@@ -19,7 +19,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /health` | COREと設定済み依存serviceの総合health |
 | `GET /ready` | request受付可否 |
 | `/viewer/api/chat` | Viewer chat request と response |
-| `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage送信とSSE event購読 |
+| `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読 |
 | `GET/POST /viewer/character-runtime` | Character一覧、複数Character Roundと会話ID |
 | `/viewer/status`, `/viewer/agents` | runtime と agent の状態 |
 | `GET /viewer/idlechat/status` | IdleChat状態と読み取り専用の`forecast_stock` snapshot |
@@ -131,6 +131,27 @@ renameを移行要件にしません。
 `POST /viewer/recipient-selection`は`viewer_client_id`と`recipient`を受け、`viewer.recipient_selected`を観測eventとして発行します。選択状態はclient-localであり、COREのglobal stateにはせず、実際の送信先は`POST /viewer/send`の`to`を正とします。
 
 `POST /viewer/send`は`message`、`to`に加えて、clientを追跡できる場合は`viewer_client_id`、`input_source`（`text | stt | unknown`）、`user_id`、`device_name`を受けます。`input_source`の未知値は400で拒否します。`user_id`と`device_name`は観測用metadataであり、認証・認可には使用しません。PORTALに利用者認証がない現行構成では`user_id=viewer-user`、`device_name`はブラウザが公開するOS／platform名であり、端末hostnameではありません。
+
+画像・動画を送る場合、`POST /viewer/send`は`multipart/form-data`を使い、
+`attachments`または`attachments[]`にfileを入れます。clientはRenCrow_VisionやWildのURLを
+指定せず、COREだけへ送信します。COREは添付を保存し、画像・動画を
+`CORE -> RenCrow_Vision -> Wild backend -> RenCrow_Vision -> CORE`の順で処理します。
+利用者の`to`は会話recipientであり、Visionの解析providerを変更しません。
+
+COREからRenCrow_Visionへの内部requestは`POST /v1/vision/analyze`の
+`multipart/form-data`とし、`file`を必須、`prompt`、`kind`、`request_id`、
+`session_id`、`language`、`max_frames`、`output_format`を任意fieldとします。
+COREはroot `trace_id`を`request_id`として送り、RenCrow_Visionは同じ値をresponseとlogへ
+保持します。成功responseは`ok=true`と`request_id`、`provider`、`model`、`kind`、
+`summary`、`text`、`segments`、`metadata`を返し、productionでは
+`provider=openai_compatible`、`model=Wild`です。
+
+失敗responseは`ok=false`、`request_id`、`error_code`、`message`を返します。
+COREは`VISION_PROVIDER_UNAVAILABLE`、`VISION_MODEL_NOT_READY`、
+`VISION_UNSUPPORTED_MEDIA`、`VISION_FILE_TOO_LARGE`、`VISION_VIDEO_TOO_LONG`、
+`VISION_DECODE_FAILED`、`VISION_INFERENCE_TIMEOUT`、`VISION_EMPTY_RESULT`を
+通常Chat成功へ変換せず、同じ`trace_id`の終端errorとしてclientへ通知します。
+Vision失敗時にCOREがraw mediaをWildや別LLMへ直接送るfallbackは禁止します。
 
 COREは受付時に`job_id`、root `trace_id`、利用者発話の`message_id`を発行します。`POST /viewer/send`の受付responseは`job_id`、`trace_id`、`message_id`、`viewer_client_id`、`recipient`を返します。現行のroot `trace_id`は`job_id`と同じopaque値です。同じ処理から発行する`message.received`、`agent.response`、error eventは同じ`trace_id`を持ち、`message.received.message_id`は受付responseの`message_id`と一致します。Agent発話は利用者発話とは別の`message_id`を持ちます。
 
