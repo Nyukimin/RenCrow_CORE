@@ -6,7 +6,7 @@
 
 このファイルはRenCrow_CORE固有のAI実装ルールです。製品仕様の正本ではありません。
 
-- 製品仕様の唯一の正本: `docs/README.md` と、そこに列挙された9つの仕様書
+- 製品仕様の唯一の正本: `docs/README.md` と、そこに列挙された10の仕様書
 - 常時必要な作業ルール: `AGENTS.md`
 - 共通実装ルール: `rules/common/`
 - path固有制約: `rules/rules_path_scoped_constraints.md`

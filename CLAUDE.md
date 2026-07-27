@@ -6,7 +6,7 @@
 
 このファイルは、Claude Codeまたは同等のAI開発環境がRenCrow_COREで作業するための短い入口です。製品仕様の正本ではありません。
 
-製品仕様の唯一の正本は `docs/README.md` と、そこに列挙された9つの仕様書です。仕様、実装、設定、運用の判断でこのファイルと現行正本が衝突した場合は、現行正本を優先します。
+製品仕様の唯一の正本は `docs/README.md` と、そこに列挙された10の仕様書です。仕様、実装、設定、運用の判断でこのファイルと現行正本が衝突した場合は、現行正本を優先します。
 
 `AGENTS.md` と `rules/` は作業者向けの実行制約です。製品仕様を再定義せず、現行正本の契約を安全に実装・検証するために使います。
 
@@ -31,7 +31,8 @@
 | `docs/06_Public_API仕様.md` | health、Viewer、PORTAL、client契約 |
 | `docs/07_安全・自動実行・データ方針.md` | 同期policy、secret、Memory、degraded state |
 | `docs/08_実装状況・ロードマップ.md` | 実装済み、未実装、deployment依存、旧構想 |
-| `docs/09_運用ログ・panic保存仕様.md` | logging、panic、restart、self-repair、retention |
+| `docs/09_運用ログ・panic保存仕様.md` | logging運用、panic、restart、self-repair、retention |
+| `docs/10_ログ仕様.md` | ログ形式、相関ID、記録と配信の分離、保持上限、モジュール別責務 |
 
 ## 作業上の不変条件
 

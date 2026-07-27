@@ -14,6 +14,8 @@ RenCrow_COREを止めたままにせず、異常停止、応答停止、再起�
 
 COREプロセス自身だけに再起動責務を持たせません。panicやデッドロック後はプロセス内コードを実行できないため、外部supervisorを必須とします。
 
+本書は journal集約、日別アーカイブ、事故台帳、自己修復といった**運用面**を規定します。アプリケーションが**何をどの形式で出力するか**は `10_ログ仕様.md` を正本とします。本書の手順はLinuxのsystemd環境を前提としており、Windows／macOSでの収集手段は異なります。アプリケーション側の実装をsystemd前提にしないでください。
+
 ## Backupの運用記録
 
 `rencrow-storage-backup.service`のstdout／stderrはjournalへ記録します。各実行は少なくともCORE停止・再開、snapshot検証結果、保存先、Knowledge mirror結果を出力します。

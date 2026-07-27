@@ -3,7 +3,7 @@
 ## このファイルの役割
 
 このファイルは、RenCrow_CORE で作業する AI エージェント向けの最小実務ルールです。
-製品仕様の唯一の正本は `docs/README.md` と、そこに列挙された9つの仕様書です。`CLAUDE.md` と `rules/` は作業制約であり、製品仕様を再定義しません。
+製品仕様の唯一の正本は `docs/README.md` と、そこに列挙された10の仕様書です。`CLAUDE.md` と `rules/` は作業制約であり、製品仕様を再定義しません。
 
 このファイルは常時必要な判断基準だけを置く。path 固有の制約は `rules/`、再利用手順は `skills/`、機械的に止めるべき危険操作は hooks / permissions へ分離する。
 指示配置は `rules/rules_instruction_placement.md`、path 固有制約は `rules/rules_path_scoped_constraints.md` に従う。
@@ -395,6 +395,7 @@ Worker は実行主体である。
 - `docs/07_安全・自動実行・データ方針.md`
 - `docs/08_実装状況・ロードマップ.md`
 - `docs/09_運用ログ・panic保存仕様.md`
+- `docs/10_ログ仕様.md`
 - `DESIGN.md`
 - `TOOL_CONTRACT.md`
 
