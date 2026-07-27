@@ -64,9 +64,6 @@ type Config struct {
 	// === Draft-only economic objective discovery ===
 	EconomicObjective EconomicObjectiveConfig `yaml:"economic_objective"`
 
-	// === ComfyUI image generation backend ===
-	ComfyUI ComfyUIConfig `yaml:"comfyui"`
-
 	// === v5.1 プロンプト外部ファイル ===
 	PromptsDir         string                `yaml:"prompts_dir"`          // プロンプトファイルのベースディレクトリ（デフォルト）
 	WorkspaceDir       string                `yaml:"workspace_dir"`        // ユーザーカスタマイズ領域（オーバーライド）

@@ -197,14 +197,6 @@ func boolValueOrDefault(value *bool, def bool) bool {
 	return *value
 }
 
-// ComfyUIConfig is the Wild-owned image generation backend.
-type ComfyUIConfig struct {
-	BaseURL         string `yaml:"base_url"`
-	ClientID        string `yaml:"client_id"`
-	PollIntervalSec int    `yaml:"poll_interval_sec"`
-	TimeoutSec      int    `yaml:"timeout_sec"`
-}
-
 // GamesConfig は RenCrow_GAMES 連携の設定（マルチペルソナ WP6）。
 type GamesConfig struct {
 	AutoPlay GamesAutoPlayConfig `yaml:"auto_play"`

@@ -68,37 +68,6 @@ log:
 	}
 }
 
-func TestLoadConfig_ComfyUIDefaults(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.yaml")
-	configContent := `
-server:
-  port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-session:
-  storage_dir: "./data/sessions"
-`
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write test config: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	if cfg.ComfyUI.BaseURL != "http://100.83.207.6:8188" {
-		t.Fatalf("ComfyUI base_url = %q", cfg.ComfyUI.BaseURL)
-	}
-	if cfg.ComfyUI.ClientID != "rencrow-server" {
-		t.Fatalf("ComfyUI client_id = %q", cfg.ComfyUI.ClientID)
-	}
-	if cfg.ComfyUI.PollIntervalSec != 3 || cfg.ComfyUI.TimeoutSec != 300 {
-		t.Fatalf("ComfyUI timing = poll %d timeout %d", cfg.ComfyUI.PollIntervalSec, cfg.ComfyUI.TimeoutSec)
-	}
-}
-
 func TestLoadConfig_LineChannelPolicy(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")

@@ -183,7 +183,7 @@ RenCrow では、入力を以下のカテゴリへ分類する。
 
 除外：
 - 画像検索は `WILD` とする。画像検索は創作・生成・視覚参照の前処理であり、通常の外部情報調査 `RESEARCH` と混同しない。
-- ComfyUI を利用する処理は必ず `WILD` とする。画像生成、画像編集、ControlNet、detailer、workflow 操作を Worker / Coder / Research に流さない。
+- 通常の画像生成で RenCrow_Image を利用する処理は必ず `WILD` とする。画像生成、画像編集、ControlNet、detailer、workflow 操作を Worker / Coder / Research に流さない。
 - 画像解析、画像分析、添付画像・写真・スクショの内容理解は必ず `WILD` とする。視覚入力の解析は Worker の RAG / 要約とは分ける。
 
 担当：
@@ -274,7 +274,7 @@ RenCrow では、入力を以下のカテゴリへ分類する。
 - 画像解析
 - 画像分析
 - 画像プロンプト
-- ComfyUI を利用する処理
+- RenCrow_Image を利用する通常の画像生成処理
 - 雰囲気抽出
 - 構図・衣装・質感などの視覚解釈
 
@@ -282,10 +282,11 @@ RenCrow では、入力を以下のカテゴリへ分類する。
 - Wild
 
 実行方針：
-- ComfyUI 利用エージェントは Wild 固定とする。
+- RenCrow_Image を利用する通常の画像生成エージェントは Wild 固定とする。
 - 画像解析・画像分析も Wild 固定とし、Worker / ANALYZE / RESEARCH へ流さない。
-- 画像生成は ComfyUI を既定 backend とする。
-- 任意 workflow JSON をそのまま ComfyUI に渡さず、RenCrow 側で検証済み workflow template を使う。
+- 通常の画像生成は`CORE -> RenCrow_Image -> ForgeNeo / Z-Image`とし、COREからForgeNeo、ComfyUI、その他の画像生成backendを直接呼び出さない。
+- backend endpoint、workflow、model、LoRA、生成parameterはRenCrow_Imageが所有する。
+- Mio、Shiro、Midori、Kuroが文章生成工程の一部としてCodexExe経由のImageGenを利用する場合だけ例外とする。この例外を通常の画像生成routeへ流用しない。
 
 例：
 - 「参考画像を検索して」

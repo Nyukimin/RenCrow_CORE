@@ -4,27 +4,18 @@ import (
 	"context"
 	"log"
 	"path/filepath"
-	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	comfyuiinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/comfyui"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 )
-
-func durationSeconds(sec int) time.Duration {
-	if sec <= 0 {
-		return 0
-	}
-	return time.Duration(sec) * time.Second
-}
 
 type agentRuntime struct {
 	Mio       *agent.MioAgent
@@ -118,12 +109,6 @@ func buildAgentRuntime(
 	}
 	heavyAgent := agent.NewHeavyAgent(heavyProvider, cfg.Prompts.Heavy)
 	wildAgent := agent.NewWildAgent(wildProvider, cfg.Prompts.Wild)
-	wildAgent.WithImageGenerator(comfyuiinfra.NewClient(comfyuiinfra.Config{
-		BaseURL:      cfg.ComfyUI.BaseURL,
-		ClientID:     cfg.ComfyUI.ClientID,
-		PollInterval: durationSeconds(cfg.ComfyUI.PollIntervalSec),
-		Timeout:      durationSeconds(cfg.ComfyUI.TimeoutSec),
-	}))
 	if convEngine != nil {
 		shiroAgent.WithConversationEngine(convEngine)
 		heavyAgent.WithConversationEngine(convEngine)

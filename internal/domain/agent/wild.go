@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 
@@ -10,9 +11,11 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
+var ErrImageGeneratorUnavailable = errors.New("RenCrow_Image interface is unavailable")
+
 const defaultWildSystemPrompt = `You are Wild, a creative LLM for RenCrow.
 Focus on story generation, image search, image generation, image analysis, image prompts, mood, composition, clothing, texture, and visual interpretation.
-When image generation is requested, assume RenCrow uses the local ComfyUI API as the generation backend unless the user explicitly says otherwise.
+When image generation is requested, use only the RenCrow_Image interface. Never call ForgeNeo, ComfyUI, or another image backend directly.
 Answer naturally and concretely in the user's language.`
 
 // WildAgent は創作Wild用のLLM呼び出しを担当する。
@@ -38,11 +41,11 @@ func (r ImageGenerationResult) FormatForUser() string {
 	promptID := strings.TrimSpace(r.PromptID)
 	switch {
 	case imageURL != "" && promptID != "":
-		return "ComfyUI image generated.\n\nprompt_id: " + promptID + "\nimage_url: " + imageURL + "\n\n![generated image](" + imageURL + ")"
+		return "RenCrow_Image generation completed.\n\nprompt_id: " + promptID + "\nimage_url: " + imageURL + "\n\n![generated image](" + imageURL + ")"
 	case imageURL != "":
-		return "ComfyUI image generated.\n\nimage_url: " + imageURL + "\n\n![generated image](" + imageURL + ")"
+		return "RenCrow_Image generation completed.\n\nimage_url: " + imageURL + "\n\n![generated image](" + imageURL + ")"
 	default:
-		return "ComfyUI image generation completed."
+		return "RenCrow_Image generation completed."
 	}
 }
 
@@ -65,7 +68,10 @@ func (w *WildAgent) WithImageGenerator(generator ImageGenerator) *WildAgent {
 
 func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 	userMessage := stripWildCommand(t.UserMessage())
-	if w.imageGenerator != nil && isComfyUIImageGenerationRequest(userMessage) {
+	if isImageGenerationRequest(userMessage) {
+		if w.imageGenerator == nil {
+			return "", ErrImageGeneratorUnavailable
+		}
 		result, err := w.imageGenerator.GenerateImage(ctx, userMessage)
 		if err != nil {
 			return "", err
@@ -110,7 +116,7 @@ func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 	return response, nil
 }
 
-func isComfyUIImageGenerationRequest(message string) bool {
+func isImageGenerationRequest(message string) bool {
 	msg := strings.ToLower(strings.TrimSpace(message))
 	if msg == "" {
 		return false
@@ -126,7 +132,14 @@ func isComfyUIImageGenerationRequest(message string) bool {
 		"generate image",
 		"text-to-image",
 	}
-	hasImageContext := strings.Contains(msg, "画像") || strings.Contains(msg, "絵") || strings.Contains(msg, "image") || strings.Contains(msg, "comfyui")
+	hasImageContext := strings.Contains(msg, "画像") ||
+		strings.Contains(msg, "絵") ||
+		strings.Contains(msg, "image") ||
+		strings.Contains(msg, "rencrow_image") ||
+		strings.Contains(msg, "rencrowimage") ||
+		strings.Contains(msg, "comfyui") ||
+		strings.Contains(msg, "forge neo") ||
+		strings.Contains(msg, "forgeneo")
 	for _, keyword := range generationKeywords {
 		if strings.Contains(msg, keyword) && hasImageContext {
 			return true

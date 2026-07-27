@@ -75,7 +75,7 @@ func TestImageGenerationResultFormatForUserVariants(t *testing.T) {
 	}
 
 	empty := ImageGenerationResult{PromptID: " prompt-without-url "}
-	if got := empty.FormatForUser(); got != "ComfyUI image generation completed." {
+	if got := empty.FormatForUser(); got != "RenCrow_Image generation completed." {
 		t.Fatalf("empty image URL should return completion message, got %q", got)
 	}
 }
@@ -160,19 +160,19 @@ func TestWildAgentGenerateSharesMemoryAndFiltersExternalRecallByRole(t *testing.
 func TestWildAgentGenerateUsesImageGeneratorForImageGeneration(t *testing.T) {
 	provider := &mockLLMProvider{
 		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
-			t.Fatal("LLM provider should not be called for ComfyUI image generation")
+			t.Fatal("LLM provider should not be called for RenCrow_Image generation")
 			return llm.GenerateResponse{}, nil
 		},
 	}
 	imageTool := &mockWildImageGenerator{
 		result: ImageGenerationResult{
 			PromptID: "prompt-1",
-			ImageURL: "http://comfy.local/view?filename=out.png&type=output",
+			ImageURL: "http://image.local/output/out.png",
 		},
 	}
 	wild := NewWildAgent(provider, "creative system").WithImageGenerator(imageTool)
 
-	resp, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild ComfyUIでMioの画像生成をして", "viewer", "viewer-user"))
+	resp, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild RenCrow_ImageでMioの画像生成をして", "viewer", "viewer-user"))
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -182,8 +182,22 @@ func TestWildAgentGenerateUsesImageGeneratorForImageGeneration(t *testing.T) {
 	if !strings.Contains(imageTool.prompt, "Mio") {
 		t.Fatalf("image generator prompt should preserve user request, got %q", imageTool.prompt)
 	}
-	if !strings.Contains(resp, "prompt-1") || !strings.Contains(resp, "http://comfy.local/view?filename=out.png&type=output") {
+	if !strings.Contains(resp, "prompt-1") || !strings.Contains(resp, "http://image.local/output/out.png") {
 		t.Fatalf("unexpected response: %q", resp)
+	}
+}
+
+func TestWildAgentImageGenerationRequiresRenCrowImage(t *testing.T) {
+	provider := &mockLLMProvider{
+		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+			return llm.GenerateResponse{}, errors.New("llm fallback called")
+		},
+	}
+	wild := NewWildAgent(provider, "creative system")
+
+	_, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild Mioの画像を生成して", "viewer", "viewer-user"))
+	if !errors.Is(err, ErrImageGeneratorUnavailable) {
+		t.Fatalf("error = %v, want RenCrow_Image unavailable error", err)
 	}
 }
 
@@ -194,14 +208,14 @@ func TestWildAgentGenerateReturnsImageGeneratorError(t *testing.T) {
 			return llm.GenerateResponse{}, nil
 		},
 	}
-	imageTool := &mockWildImageGenerator{err: errors.New("comfyui unavailable")}
+	imageTool := &mockWildImageGenerator{err: errors.New("rencrow image unavailable")}
 	wild := NewWildAgent(provider, "creative system").WithImageGenerator(imageTool)
 
-	_, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild ComfyUIで画像生成して", "viewer", "viewer-user"))
+	_, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild RenCrow_Imageで画像生成して", "viewer", "viewer-user"))
 	if err == nil {
 		t.Fatal("expected image generator error")
 	}
-	if err.Error() != "comfyui unavailable" {
+	if err.Error() != "rencrow image unavailable" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -232,7 +246,7 @@ func TestWildAgentGenerateFallsBackToLLMForImagePromptOnly(t *testing.T) {
 	}
 }
 
-func TestWildAgentGenerateFallsBackToLLMForComfyUIDocumentQuestion(t *testing.T) {
+func TestWildAgentGenerateFallsBackToLLMForImageInterfaceDocumentQuestion(t *testing.T) {
 	var called bool
 	provider := &mockLLMProvider{
 		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
@@ -243,15 +257,15 @@ func TestWildAgentGenerateFallsBackToLLMForComfyUIDocumentQuestion(t *testing.T)
 	imageTool := &mockWildImageGenerator{}
 	wild := NewWildAgent(provider, "creative system").WithImageGenerator(imageTool)
 
-	resp, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild ComfyUI仕様を説明して", "viewer", "viewer-user"))
+	resp, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild RenCrow_Imageの仕様を説明して", "viewer", "viewer-user"))
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
 	if !called {
-		t.Fatal("LLM provider should be called for ComfyUI documentation question")
+		t.Fatal("LLM provider should be called for RenCrow_Image documentation question")
 	}
 	if imageTool.called {
-		t.Fatal("image generator should not be called for ComfyUI documentation question")
+		t.Fatal("image generator should not be called for RenCrow_Image documentation question")
 	}
 	if resp != "spec summary" {
 		t.Fatalf("response = %q", resp)

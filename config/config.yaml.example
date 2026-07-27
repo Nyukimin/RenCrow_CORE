@@ -73,13 +73,6 @@ google_search_worker:
 web_gather:
   searxng_base_url: ""
 
-# ComfyUI 画像生成 backend。ComfyUI 利用と画像解析/生成系は Wild 固定。
-comfyui:
-  base_url: "http://100.83.207.6:8188"
-  client_id: "rencrow-server"
-  poll_interval_sec: 3
-  timeout_sec: 300
-
 # Webwright は RenCrow_Tools に分離した任意のブラウザ取得補助ツール。
 # uvx_from は外部取得を伴うため、使う場合だけ明示する。
 # runner_path / config_path 未指定時は RENCROW_TOOLS_ROOT、または $HOME/RenCrow/RenCrow_Tools から解決する。
