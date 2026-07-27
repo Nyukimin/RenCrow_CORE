@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
@@ -120,6 +121,10 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		RepairRun:         viewer.HandleRepairRunWithRunner(dependencies.eventRelay, dependencies.repairRunner),
 		Backlog:           viewer.HandleBacklog(dependencies.backlogStore),
 		Scheduler:         dependencies.schedulerStatus,
+		// CMD が CORE Public API 経由で診断するための読み取り専用 route
+		ChannelsList:    handleViewerChannelsList(buildChannelRegistry(cfg), time.Now),
+		ChannelsProbe:   handleViewerChannelsProbe(buildChannelRegistry(cfg), time.Now),
+		WebGatherDoctor: handleViewerWebGatherDoctor(dependencies.webGatherDeps),
 	}})
 	workstreamfeature.RegisterRoutes(mux, workstreamfeature.Dependencies{Routes: workstreamfeature.Routes{
 		Status: dependencies.workstreamStatus, Goals: dependencies.workstreamGoal,

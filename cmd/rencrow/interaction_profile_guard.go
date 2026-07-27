@@ -103,7 +103,10 @@ func cmdDiagnosticsInteractionAllowed(method, path string) bool {
 		"/viewer/llm-ops/status",
 		"/viewer/source-registry",
 		"/viewer/knowledge-memory",
-		"/viewer/debug/system":
+		"/viewer/debug/system",
+		"/viewer/channels",
+		"/viewer/channels/probe",
+		"/viewer/web-gather/doctor":
 		return true
 	default:
 		return false

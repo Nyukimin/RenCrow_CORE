@@ -28,6 +28,12 @@ type Routes struct {
 	RepairRun         http.HandlerFunc
 	Backlog           http.HandlerFunc
 	Scheduler         http.HandlerFunc
+
+	// CMD が CORE Public API 経由で診断するための読み取り専用 route。
+	// 送信やフェッチなど副作用のある操作は含めない。
+	ChannelsList    http.HandlerFunc
+	ChannelsProbe   http.HandlerFunc
+	WebGatherDoctor http.HandlerFunc
 }
 
 // RegisterRoutes reserves the feature route boundary. Existing routes remain in
@@ -47,6 +53,9 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/repair/run", routes.RepairRun)
 	registerRoute(mux, "/viewer/backlog", routes.Backlog)
 	registerRoute(mux, "/viewer/scheduler", routes.Scheduler)
+	registerRoute(mux, "/viewer/channels", routes.ChannelsList)
+	registerRoute(mux, "/viewer/channels/probe", routes.ChannelsProbe)
+	registerRoute(mux, "/viewer/web-gather/doctor", routes.WebGatherDoctor)
 }
 
 // StartBackground reserves the feature background-job boundary.

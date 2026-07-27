@@ -203,7 +203,17 @@ capabilityで制限します。
 /viewer/llm-ops/{health,status}
 /viewer/source-registry、/viewer/knowledge-memory
 /viewer/debug/system
+/viewer/channels、/viewer/channels/probe
+/viewer/web-gather/doctor
 ```
+
+`GET /viewer/channels`は設定済みchannelの一覧、`GET /viewer/channels/probe`は各channelの
+疎通結果、`GET /viewer/web-gather/doctor`はweb-gatherの依存構成の診断結果を返します。
+いずれも読み取り専用です。
+
+web-gatherのurl／search／webwright-fetchとimport系はPublic APIへ公開しません。外部への
+HTTPアクセスを伴う操作を公開するとCOREが任意URL取得の踏み台になり、import系はCOREホスト上の
+パスに依存する設計になるためです。これらはCOREのCLIから実行します。
 
 `cmd-control`が許可するのは次のpathです。制御結果の確認に必要な読み取りだけを併せて
 許可し、対話系（`/viewer/send`、`/viewer/events`、IdleChat）は対象外とします。

@@ -264,6 +264,7 @@ type Dependencies struct {
 	moduleWorkerExecutor           moduleworker.Executor                       // module contract view of Worker executor
 	moduleHealth                   http.HandlerFunc                            // module boundary health API
 	llmBusyTracker                 *llmBusyTracker                             // runtime LLM execution tracker for IdleChat gating
+	webGatherDeps                  func() webGatherCLIDeps                     // web-gather diagnostics dependencies for the Public API
 }
 
 type idleChatStartGate interface {
@@ -425,6 +426,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	reportPath := defaultExecutionReportPath(cfg.WorkspaceDir)
 	gameDecisionProvider := selectChatConversationProvider(llmRuntime.ChatWorker, llmRuntime.Chat)
 	buildViewerRuntimeHandlers(cfg, deps, conversationRuntime.L1Store, conversationRuntime.Manager, reportPath, gameDecisionProvider)
+	deps.webGatherDeps = newWebGatherDiagnosticsDeps(cfg, conversationRuntime.L1Store)
 	deps.advisorScoreCancel = startAdvisorScoreJob(
 		advisorRuntime.Store,
 		advisorRuntime.Profiles,

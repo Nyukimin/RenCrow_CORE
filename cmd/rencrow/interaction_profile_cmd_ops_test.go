@@ -32,6 +32,9 @@ func TestCmdDiagnosticsProfileAllowsReadOnlyOps(t *testing.T) {
 		{http.MethodGet, "/viewer/source-registry"},
 		{http.MethodGet, "/viewer/knowledge-memory"},
 		{http.MethodGet, "/viewer/debug/system"},
+		{http.MethodGet, "/viewer/channels"},
+		{http.MethodGet, "/viewer/channels/probe"},
+		{http.MethodGet, "/viewer/web-gather/doctor"},
 	}
 	for _, tc := range allowed {
 		if got := profileRequestStatus(handler, "RenCrow_CMD", "cmd-diagnostics", tc.method, tc.path); got != http.StatusNoContent {
