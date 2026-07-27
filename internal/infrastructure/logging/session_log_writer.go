@@ -3,6 +3,7 @@ package logging
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -70,19 +71,28 @@ func (w *SessionLogWriter) WriteAssistantWithIdentity(sessionID, channel, route,
 	})
 }
 
+// write は1件を追記する
+//
+// docs/10_ログ仕様.md: 記録パスは書き込み失敗を無言で握りつぶさず error として
+// 出力する。従来は MkdirAll と OpenFile の失敗を素の return で捨てており、
+// 会話ログが1行も残らなくても気づけなかった。
 func (w *SessionLogWriter) write(entry SessionLogEntry) {
 	path := w.pathFor(entry.SessionID)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		log.Printf("ERROR: session log directory create failed path=%s session_id=%s err=%v", filepath.Dir(path), entry.SessionID, err)
 		return
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
+		log.Printf("ERROR: session log open failed path=%s session_id=%s err=%v", path, entry.SessionID, err)
 		return
 	}
 	defer f.Close()
-	_ = json.NewEncoder(f).Encode(entry)
+	if err := json.NewEncoder(f).Encode(entry); err != nil {
+		log.Printf("ERROR: session log write failed path=%s session_id=%s err=%v", path, entry.SessionID, err)
+	}
 }
 
 func (w *SessionLogWriter) pathFor(sessionID string) string {
