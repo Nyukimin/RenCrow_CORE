@@ -99,18 +99,6 @@ func (c *Config) setDefaults() {
 		}
 		c.WebwrightFetch.ResponsesEndpoint = workerBase + "/v1/responses"
 	}
-	if strings.TrimSpace(c.ComfyUI.BaseURL) == "" {
-		c.ComfyUI.BaseURL = "http://100.83.207.6:8188"
-	}
-	if strings.TrimSpace(c.ComfyUI.ClientID) == "" {
-		c.ComfyUI.ClientID = "rencrow-server"
-	}
-	if c.ComfyUI.PollIntervalSec <= 0 {
-		c.ComfyUI.PollIntervalSec = 3
-	}
-	if c.ComfyUI.TimeoutSec <= 0 {
-		c.ComfyUI.TimeoutSec = 300
-	}
 	if c.WebwrightFetch.Model == "" {
 		c.WebwrightFetch.Model = "Coder1"
 	}
