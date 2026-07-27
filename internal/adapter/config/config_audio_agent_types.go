@@ -76,6 +76,17 @@ type STTExternalConfig struct {
 	StreamURL string `yaml:"stream_url"`
 }
 
+// VisionConfig configures the RenCrow_Vision service boundary.
+// Wild/provider settings intentionally belong to RenCrow_Vision, not CORE.
+type VisionConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	BaseURL       string `yaml:"base_url"`
+	TimeoutMS     int    `yaml:"timeout_ms"`
+	MaxImageBytes int64  `yaml:"max_image_bytes"`
+	MaxVideoBytes int64  `yaml:"max_video_bytes"`
+	MaxFrames     int    `yaml:"max_frames"`
+}
+
 type TTSCommandConfig struct {
 	Name string   `yaml:"name"`
 	Args []string `yaml:"args"`

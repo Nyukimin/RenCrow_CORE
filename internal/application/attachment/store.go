@@ -79,16 +79,13 @@ func (s *Store) SaveAll(ctx context.Context, files []IncomingFile) ([]domainatta
 		if closer, ok := f.Reader.(io.Closer); ok {
 			defer closer.Close()
 		}
-		data, err := io.ReadAll(io.LimitReader(f.Reader, limits.MaxFileBytes+1))
+		readLimit := attachmentReadLimit(f, limits)
+		data, err := io.ReadAll(io.LimitReader(f.Reader, readLimit+1))
 		if err != nil {
 			return nil, fmt.Errorf("read attachment %q: %w", f.Filename, err)
 		}
-		if int64(len(data)) > limits.MaxFileBytes {
+		if int64(len(data)) > readLimit {
 			return nil, fmt.Errorf("attachment %q exceeds max file size", f.Filename)
-		}
-		total += int64(len(data))
-		if total > limits.MaxTotalBytes {
-			return nil, fmt.Errorf("attachments exceed max total size")
 		}
 
 		contentType := strings.TrimSpace(f.ContentType)
@@ -102,6 +99,14 @@ func (s *Store) SaveAll(ctx context.Context, files []IncomingFile) ([]domainatta
 			} else {
 				return nil, fmt.Errorf("unsupported attachment content type %q", contentType)
 			}
+		}
+		kindLimit := attachmentKindLimit(kind, limits)
+		if int64(len(data)) > kindLimit {
+			return nil, fmt.Errorf("attachment %q exceeds %s size limit", f.Filename, kind)
+		}
+		total += int64(len(data))
+		if total > limits.MaxTotalBytes {
+			return nil, fmt.Errorf("attachments exceed max total size")
 		}
 
 		id := strings.TrimSpace(newID())
@@ -136,6 +141,38 @@ func (s *Store) SaveAll(ctx context.Context, files []IncomingFile) ([]domainatta
 		})
 	}
 	return out, nil
+}
+
+func attachmentReadLimit(file IncomingFile, limits domainattachment.Limits) int64 {
+	kind, ok := domainattachment.KindFromContentType(file.ContentType)
+	if !ok {
+		kind, ok = domainattachment.KindFromFilename(file.Filename)
+	}
+	if ok {
+		return attachmentKindLimit(kind, limits)
+	}
+	limit := limits.MaxFileBytes
+	if limits.MaxImageBytes > limit {
+		limit = limits.MaxImageBytes
+	}
+	if limits.MaxVideoBytes > limit {
+		limit = limits.MaxVideoBytes
+	}
+	return limit
+}
+
+func attachmentKindLimit(kind domainattachment.Kind, limits domainattachment.Limits) int64 {
+	switch kind {
+	case domainattachment.KindImage:
+		if limits.MaxImageBytes > 0 {
+			return limits.MaxImageBytes
+		}
+	case domainattachment.KindVideo:
+		if limits.MaxVideoBytes > 0 {
+			return limits.MaxVideoBytes
+		}
+	}
+	return limits.MaxFileBytes
 }
 
 func randomID() string {

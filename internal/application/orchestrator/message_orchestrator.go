@@ -24,6 +24,7 @@ import (
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
+	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
 )
 
 // ProcessMessageRequest はメッセージ処理リクエスト
@@ -198,6 +199,7 @@ type MessageOrchestrator struct {
 	ttsLifecycle         *messageTTSLifecycle
 	events               *messageEventPort
 	taskContexts         *messageTaskContextBuilder
+	visionRequests       *visionRequestProcessor
 }
 
 // SetMaxRepair は自律実行のリペア上限を設定する（デフォルト: 1）
@@ -323,6 +325,11 @@ func (o *MessageOrchestrator) SetWildAgent(wild WildAgent) {
 	if o.routeDispatcher != nil {
 		o.routeDispatcher.SetWildAgent(wild)
 	}
+}
+
+// SetVisionAnalyzer installs the only raw image/video recognition path used by CORE.
+func (o *MessageOrchestrator) SetVisionAnalyzer(analyzer domainvision.Analyzer, options VisionOptions) {
+	o.visionRequests = newVisionRequestProcessor(analyzer, options)
 }
 
 func (o *MessageOrchestrator) SetHeavyAgent(heavy HeavyAgent) {
@@ -469,6 +476,13 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, err
 	} else if handled {
 		req = expandedReq
+	}
+	if o.visionRequests != nil {
+		processed, err := o.visionRequests.Process(ctx, req, o.events.Emit)
+		if err != nil {
+			return ProcessMessageResponse{}, err
+		}
+		req = processed
 	}
 
 	t, jobID, ttsSessionID := o.taskContexts.BuildWithJobID(req, jobID)

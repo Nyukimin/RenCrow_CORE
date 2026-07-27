@@ -59,6 +59,7 @@ type DistributedOrchestrator struct {
 	codeExecution           *distributedCodeExecutionCoordinator
 	coderSelector           *distributedCoderSelection
 	attribution             *distributedAttributionGuard
+	visionRequests          *visionRequestProcessor
 }
 
 type ReportStore interface {

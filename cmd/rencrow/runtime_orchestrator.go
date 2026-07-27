@@ -29,6 +29,10 @@ func buildOrchestratorRuntime(
 	bridges viewerBridgeFactories,
 	verificationRuntime verificationRuntime,
 ) {
+	visionAnalyzer, visionOptions, err := buildVisionRuntime(cfg)
+	if err != nil {
+		log.Fatalf("Failed to configure RenCrow_Vision: %v", err)
+	}
 	if cfg.Distributed.Enabled {
 		log.Println("=== v4 Distributed Mode ===")
 		deps.buildDistributedMode(
@@ -49,6 +53,7 @@ func buildOrchestratorRuntime(
 			vtuberBridge,
 			nodeCaps,
 		)
+		deps.distOrch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
 		deps.distOrch.SetShiroChatAgent(agents.ShiroChat)
 		deps.moduleChatService = modulebridge.NewRuntimeChatService(deps.distOrch, agents.Mio)
 		deps.live2DChatResponder = &live2DOrchestratorResponder{orch: deps.distOrch}
@@ -71,6 +76,7 @@ func buildOrchestratorRuntime(
 		llmRuntime.Coder4,
 		workerExecutionService,
 	)
+	orch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
 	if coderCaps := buildCoderCapabilities(nodeCaps, cfg); coderCaps != nil {
 		orch.SetCoderCapabilities(coderCaps)
 		log.Printf("Coder capability metadata loaded (%d coders); CODE uses only local coder1 unless an explicit CODE route is requested", len(coderCaps))

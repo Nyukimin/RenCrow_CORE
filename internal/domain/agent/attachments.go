@@ -26,23 +26,9 @@ func userMessageWithAttachments(message string, attachments []domainattachment.A
 
 	parts := []llm.MessagePart{{Type: llm.MessagePartText, Text: b.String()}}
 	for _, att := range attachments {
-		if att.Kind == domainattachment.KindImage && len(att.Data) > 0 {
-			parts = append(parts, llm.MessagePart{
-				Type:     llm.MessagePartImage,
-				MimeType: att.ContentType,
-				Data:     append([]byte(nil), att.Data...),
-			})
-		}
 		if att.Kind == domainattachment.KindAudio && len(att.Data) > 0 {
 			parts = append(parts, llm.MessagePart{
 				Type:     llm.MessagePartAudio,
-				MimeType: att.ContentType,
-				Data:     append([]byte(nil), att.Data...),
-			})
-		}
-		if att.Kind == domainattachment.KindVideo && len(att.Data) > 0 {
-			parts = append(parts, llm.MessagePart{
-				Type:     llm.MessagePartVideo,
 				MimeType: att.ContentType,
 				Data:     append([]byte(nil), att.Data...),
 			})

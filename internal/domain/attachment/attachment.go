@@ -36,12 +36,16 @@ type Attachment struct {
 type Limits struct {
 	MaxFileBytes  int64
 	MaxTotalBytes int64
+	MaxImageBytes int64
+	MaxVideoBytes int64
 }
 
 // DefaultLimits keeps Viewer uploads bounded for local operation.
 var DefaultLimits = Limits{
 	MaxFileBytes:  10 << 20,
-	MaxTotalBytes: 30 << 20,
+	MaxTotalBytes: 120 << 20,
+	MaxImageBytes: 20 << 20,
+	MaxVideoBytes: 100 << 20,
 }
 
 // KindFromContentType maps a MIME type to a supported attachment kind.

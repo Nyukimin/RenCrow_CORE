@@ -21,3 +21,27 @@ func TestUserMessageWithAttachmentsIncludesAudioPart(t *testing.T) {
 		t.Fatalf("unexpected audio part: %#v", msg.Parts[1])
 	}
 }
+
+func TestUserMessageWithAttachmentsDoesNotForwardRawVisualMedia(t *testing.T) {
+	msg := userMessageWithAttachments("この画像と動画を確認して", []domainattachment.Attachment{
+		{
+			Kind:        domainattachment.KindImage,
+			Filename:    "photo.png",
+			ContentType: "image/png",
+			Data:        []byte("raw-image"),
+		},
+		{
+			Kind:        domainattachment.KindVideo,
+			Filename:    "clip.mp4",
+			ContentType: "video/mp4",
+			Data:        []byte("raw-video"),
+		},
+	})
+
+	if len(msg.Parts) != 1 {
+		t.Fatalf("parts = %d, want text-only message", len(msg.Parts))
+	}
+	if msg.Parts[0].Type != llm.MessagePartText {
+		t.Fatalf("unexpected part: %#v", msg.Parts[0])
+	}
+}

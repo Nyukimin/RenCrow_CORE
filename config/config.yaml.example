@@ -399,6 +399,16 @@ stt:
     url: "https://192.168.1.31:8443/stt/file" # 旧 STT_PROVIDER_URL 互換の外部Provider URL
     stream_url: "wss://192.168.1.31:8443/stt/stream"
 
+# 画像・動画認識は必ず RenCrow_Vision を経由する。
+# Wild backend のURL・model・認証は RenCrow_Vision 側で管理し、COREには置かない。
+vision:
+  enabled: true
+  base_url: "http://127.0.0.1:8770"
+  timeout_ms: 120000
+  max_image_bytes: 20971520
+  max_video_bytes: 104857600
+  max_frames: 8
+
 vtuber:
   enabled: false
   tick_interval_ms: 100

@@ -115,6 +115,24 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("tts.pronunciation_check.idle_samples must be between 1 and 30")
 		}
 	}
+	if c.Vision.Enabled {
+		visionURL, err := url.Parse(strings.TrimSpace(c.Vision.BaseURL))
+		if err != nil || visionURL.Host == "" || (visionURL.Scheme != "http" && visionURL.Scheme != "https") {
+			return fmt.Errorf("vision.base_url must be an absolute HTTP URL when enabled=true")
+		}
+		if c.Vision.TimeoutMS < 1 {
+			return fmt.Errorf("vision.timeout_ms must be >= 1")
+		}
+		if c.Vision.MaxImageBytes < 1 {
+			return fmt.Errorf("vision.max_image_bytes must be >= 1")
+		}
+		if c.Vision.MaxVideoBytes < 1 {
+			return fmt.Errorf("vision.max_video_bytes must be >= 1")
+		}
+		if c.Vision.MaxFrames < 1 {
+			return fmt.Errorf("vision.max_frames must be >= 1")
+		}
+	}
 	if c.WebwrightFetch.Enabled {
 		if strings.TrimSpace(c.WebwrightFetch.RunnerPath) == "" {
 			return fmt.Errorf("webwright_fetch.runner_path is required when webwright_fetch.enabled=true")

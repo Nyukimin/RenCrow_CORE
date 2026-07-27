@@ -10,7 +10,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	entryadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/entry"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
-	attachmentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
@@ -27,7 +26,7 @@ func buildViewerBridgeHandlers(
 	ttsRuntime ttsEntryRuntime,
 ) viewerBridgeFactories {
 	viewerSendFromOrch := func(proc messageProcessor) http.HandlerFunc {
-		attachmentStore := attachmentapp.NewStore(cfg.WorkspaceDir)
+		attachmentStore := newRuntimeAttachmentStore(cfg)
 		return viewer.HandleSendWithAttachments(func(ctx context.Context, req viewer.SendRequest) (string, error) {
 			log.Printf("[main] viewerSendFromOrch: start job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachments=%d %s", req.JobID, req.TraceID, req.MessageID, req.ViewerClientID, req.To, len(req.Attachments), req.Provenance.LogFields())
 			resp, err := proc.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{

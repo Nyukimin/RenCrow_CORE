@@ -24,6 +24,9 @@ func TestConfigExampleLoadsForPhase25E2E(t *testing.T) {
 	if cfg.TTS.GatewayBaseURL == "" {
 		t.Fatal("config.yaml.example should use RenCrow_TTS Gateway as the production path")
 	}
+	if !cfg.Vision.Enabled || cfg.Vision.BaseURL == "" {
+		t.Fatal("config.yaml.example should use RenCrow_Vision as the production image recognition path")
+	}
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "config", "config.yaml.example"))
 	if err != nil {
 		t.Fatalf("read config.yaml.example: %v", err)

@@ -133,6 +133,9 @@ type Config struct {
 	// === STT / HTTPS Viewer voice input ===
 	STT STTConfig `yaml:"stt"`
 
+	// === Vision / image and video recognition ===
+	Vision VisionConfig `yaml:"vision"`
+
 	// === VTuber / VTube Studio integration ===
 	VTuber VTuberConfig `yaml:"vtuber"`
 

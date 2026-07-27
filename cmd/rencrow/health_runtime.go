@@ -55,37 +55,42 @@ func loadEvidenceSummary(cfg *config.Config) (map[string]map[string]int, error) 
 }
 
 func buildHealthService(cfg *config.Config) *healthapp.HealthService {
+	var checks []domainhealth.Check
 	if cfg.LLMGateway.Enabled {
 		apiKey := ""
 		if cfg.LLMGateway.APIKeyEnv != "" {
 			apiKey = strings.TrimSpace(os.Getenv(cfg.LLMGateway.APIKeyEnv))
 		}
 		timeout := time.Duration(cfg.LLMGateway.TimeoutSec) * time.Second
-		checks := []domainhealth.Check{}
 		for _, agentID := range []string{"mio", "worker", "shiro", "kuro", "midori"} {
 			checks = append(checks, infrahealth.NewOpenAICompatibleChatCheck("gateway_"+agentID, cfg.LLMGateway.BaseURL, agentID, apiKey, timeout))
 		}
-		return healthapp.NewHealthService(checks...)
-	}
-	if cfg.LocalLLM.Enabled && cfg.LocalLLM.Provider == "local_openai" {
-		checks := buildLocalLLMHealthChecks(cfg)
-		return healthapp.NewHealthService(checks...)
-	}
+	} else if cfg.LocalLLM.Enabled && cfg.LocalLLM.Provider == "local_openai" {
+		checks = buildLocalLLMHealthChecks(cfg)
+	} else {
+		checks = []domainhealth.Check{
+			infrahealth.NewOllamaCheck(cfg.Ollama.BaseURL),
+		}
+		requirements := collectOllamaHealthRequirements(cfg)
+		for _, req := range requirements {
+			checks = append(checks, infrahealth.NewOllamaModelCheck(cfg.Ollama.BaseURL, req.Name))
+		}
 
-	checks := []domainhealth.Check{
-		infrahealth.NewOllamaCheck(cfg.Ollama.BaseURL),
+		// 常駐モデルのコンテキスト長チェック（max_context が設定されている場合のみ）
+		if cfg.Ollama.MaxContext > 0 {
+			checks = append(checks, infrahealth.NewOllamaModelsCheck(
+				cfg.Ollama.BaseURL,
+				requirements,
+			))
+		}
 	}
-	requirements := collectOllamaHealthRequirements(cfg)
-	for _, req := range requirements {
-		checks = append(checks, infrahealth.NewOllamaModelCheck(cfg.Ollama.BaseURL, req.Name))
-	}
-
-	// 常駐モデルのコンテキスト長チェック（max_context が設定されている場合のみ）
-	if cfg.Ollama.MaxContext > 0 {
-		checks = append(checks, infrahealth.NewOllamaModelsCheck(
-			cfg.Ollama.BaseURL,
-			requirements,
-		))
+	if cfg.Vision.Enabled {
+		analyzer, _, err := buildVisionRuntime(cfg)
+		if err != nil {
+			checks = append(checks, infrahealth.NewVisionCheck(nil))
+		} else {
+			checks = append(checks, infrahealth.NewVisionCheck(analyzer))
+		}
 	}
 
 	return healthapp.NewHealthService(checks...)

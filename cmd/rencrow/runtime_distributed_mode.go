@@ -9,7 +9,6 @@ import (
 	telegramadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/channels/telegram"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/line"
-	attachmentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
@@ -181,7 +180,7 @@ func (d *Dependencies) buildDistributedMode(
 		distOrch.SetEventListener(d.eventRelay)
 	}
 	lineHandler := line.NewHandler(distOrch, cfg.Line.ChannelSecret, cfg.Line.AccessToken)
-	lineHandler.SetAttachmentSaver(attachmentapp.NewStore(cfg.WorkspaceDir))
+	lineHandler.SetAttachmentSaver(newRuntimeAttachmentStore(cfg))
 	if needsLineTargetEnrollment(cfg) {
 		lineHandler.SetDirectUserTargetRecorder(line.NewDirectUserTargetStore(cfg.WorkspaceDir))
 	}
@@ -190,18 +189,18 @@ func (d *Dependencies) buildDistributedMode(
 	if strings.TrimSpace(cfg.Telegram.BotToken) != "" {
 		tg := telegramadapter.NewAdapter(cfg.Telegram.BotToken, distOrch)
 		tg.SetWebhookSecret(cfg.Telegram.WebhookSecret)
-		tg.SetAttachmentSaver(attachmentapp.NewStore(cfg.WorkspaceDir))
+		tg.SetAttachmentSaver(newRuntimeAttachmentStore(cfg))
 		d.telegramHandler = tg
 	}
 	if strings.TrimSpace(cfg.Discord.BotToken) != "" {
 		dc := discordadapter.NewAdapter(cfg.Discord.BotToken, distOrch)
 		dc.SetPublicKeyHex(cfg.Discord.PublicKey)
-		dc.SetAttachmentSaver(attachmentapp.NewStore(cfg.WorkspaceDir))
+		dc.SetAttachmentSaver(newRuntimeAttachmentStore(cfg))
 		d.discordHandler = dc
 	}
 	if strings.TrimSpace(cfg.Slack.BotToken) != "" {
 		sl := slackadapter.NewAdapter(cfg.Slack.BotToken, cfg.Slack.SigningSecret, distOrch)
-		sl.SetAttachmentSaver(attachmentapp.NewStore(cfg.WorkspaceDir))
+		sl.SetAttachmentSaver(newRuntimeAttachmentStore(cfg))
 		d.slackHandler = sl
 	}
 

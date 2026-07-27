@@ -41,9 +41,18 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	} else if handled {
 		req = expandedReq
 	}
+	if o.visionRequests != nil {
+		processed, err := o.visionRequests.Process(ctx, req, o.events.Emit)
+		if err != nil {
+			return ProcessMessageResponse{}, err
+		}
+		req = processed
+	}
 
 	// 2. タスクを作成
-	t := task.NewTask(jobID, req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(normalizeProcessViewerRecipient(req.To))
+	t := task.NewTask(jobID, req.UserMessage, req.Channel, req.ChatID).
+		WithViewerRecipient(normalizeProcessViewerRecipient(req.To)).
+		WithAttachments(req.Attachments)
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {

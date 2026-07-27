@@ -755,6 +755,21 @@ func (c *Config) setDefaults() {
 	if c.STT.StreamURL == "" {
 		c.STT.StreamURL = c.STT.ExternalHTTP.StreamURL
 	}
+	if strings.TrimSpace(c.Vision.BaseURL) == "" {
+		c.Vision.BaseURL = "http://127.0.0.1:8770"
+	}
+	if c.Vision.TimeoutMS <= 0 {
+		c.Vision.TimeoutMS = 120000
+	}
+	if c.Vision.MaxImageBytes <= 0 {
+		c.Vision.MaxImageBytes = 20 << 20
+	}
+	if c.Vision.MaxVideoBytes <= 0 {
+		c.Vision.MaxVideoBytes = 100 << 20
+	}
+	if c.Vision.MaxFrames <= 0 {
+		c.Vision.MaxFrames = 8
+	}
 	if c.VTuber.TickIntervalMS <= 0 {
 		c.VTuber.TickIntervalMS = 100
 	}
