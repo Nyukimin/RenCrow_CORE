@@ -1,5 +1,15 @@
 # AGENTS.md
 
+## Model Roles
+
+- GPT-5.6 sol is the orchestrator. It plans, delegates, monitors progress, reviews results, and coordinates the work.
+- GPT-5.5 is the executor. It performs implementation, modification, testing, and other hands-on tasks.
+
+## Branch Policy
+
+- ユーザーが明示的に指示しない限り、新しい Git ブランチを作成してはいけない。
+- 作業は現在のブランチで継続する。
+
 ## このファイルの役割
 
 このファイルは、RenCrow_CORE で作業する AI エージェント向けの最小実務ルールです。
