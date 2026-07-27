@@ -317,6 +317,11 @@ func (d *Dependencies) Shutdown() {
 			log.Printf("Failed to close ToolRegistry: %v", err)
 		}
 	}
+	// 記録パスの排出は最後に行う。ここまでの停止処理が出したイベントも
+	// 取りこぼさずに永続化するため（docs/10_ログ仕様.md）。
+	if d.eventRelay != nil {
+		d.eventRelay.Close()
+	}
 	log.Println("Shutdown complete")
 }
 

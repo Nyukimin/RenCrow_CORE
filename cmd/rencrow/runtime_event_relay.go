@@ -3,12 +3,10 @@ package main
 import (
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
-	"github.com/Nyukimin/RenCrow_CORE/internal/application/voiceinput"
 )
 
 type idleAwareEventListener struct {
@@ -18,8 +16,8 @@ type idleAwareEventListener struct {
 	mu       sync.RWMutex
 	idleChat *idlechat.IdleChatOrchestrator
 
-	sideEffectsOnce sync.Once
-	sideEffects     *voiceinput.SideEffects
+	recorderOnce sync.Once
+	recorder     *eventRecorder
 }
 
 func (l *idleAwareEventListener) SetIdleChat(idle *idlechat.IdleChatOrchestrator) {
@@ -46,20 +44,27 @@ func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) {
 	l.enqueueRecordEvent(ev)
 }
 
+// enqueueRecordEvent は記録パスへイベントを渡す
+//
+// docs/10_ログ仕様.md「記録と配信の分離」に従い、配信用の SideEffects キュー
+// （満杯時に破棄する）とは別経路にする。以前は同じキューを共有していたため、
+// 配信のための drop がアーカイブへの永続化そのものを欠落させていた。
 func (l *idleAwareEventListener) enqueueRecordEvent(ev orchestrator.OrchestratorEvent) {
-	l.sideEffectsOnce.Do(func() {
-		l.sideEffects = voiceinput.NewSideEffects(256, 3*time.Second)
+	l.recorderOnce.Do(func() {
+		l.recorder = newEventRecorder(l.recordEventSync, 256)
 	})
-	if l.sideEffects == nil {
+	if l.recorder == nil {
 		return
 	}
-	l.sideEffects.Enqueue(voiceinput.SideEffect{
-		Name:      "viewer_event",
-		SessionID: ev.SessionID,
-		Run: func() error {
-			return l.recordEventSync(ev)
-		},
-	})
+	l.recorder.Record(ev)
+}
+
+// Close は記録キューを排出してから停止する
+func (l *idleAwareEventListener) Close() {
+	if l == nil || l.recorder == nil {
+		return
+	}
+	l.recorder.Close()
 }
 
 func (l *idleAwareEventListener) recordEventSync(ev orchestrator.OrchestratorEvent) error {
