@@ -118,40 +118,6 @@ func TestTTSPlaybackAckOnlyReleasesActiveAudioViewer(t *testing.T) {
 	}
 }
 
-func TestTTSPlaybackFallbackAckIsNormalizedToErrorWithoutReleasingPending(t *testing.T) {
-	resetActiveViewerControlForTest()
-	ch := registerIdleChatTTSPending("idle-fallback-tts", "response-fallback-1")
-
-	reqBody, _ := json.Marshal(ttsPlaybackAckRequest{
-		ResponseID:     "response-fallback-1",
-		SessionID:      "idle-fallback-tts",
-		ViewerClientID: "pc-viewer",
-		Status:         "fallback",
-	})
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/viewer/tts/playback-ack", bytes.NewReader(reqBody))
-	handleTTSPlaybackAck()(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("fallback ack got HTTP %d", rec.Code)
-	}
-	var resp map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got := resp["status"]; got != "error" {
-		t.Fatalf("fallback ack should be normalized to error, got %#v", got)
-	}
-	if got := resp["error_code"]; got != "TTS_FALLBACK_ACK_REJECTED" {
-		t.Fatalf("fallback ack should expose error_code, got %#v", got)
-	}
-	select {
-	case <-ch:
-		t.Fatal("normalized fallback error ack from non-active viewer must not release idlechat TTS pending")
-	default:
-	}
-	clearAllIdleChatTTSPending()
-}
-
 func TestTTSPlaybackErrorAckDoesNotReleaseWhenNoActiveAudioViewer(t *testing.T) {
 	resetActiveViewerControlForTest()
 	ch := registerIdleChatTTSPending("idle-error-tts", "response-error-1")

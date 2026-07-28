@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
@@ -17,7 +18,11 @@ func registerFeatureRoutes(
 ) {
 	registerChannelRoutes(mux, cfg, dependencies)
 	registerViewerBaseRoutes(mux, cfg, dependencies, debugSystemOpts)
-	registerLLMOpsRoutes(mux, cfg, dependencies, &debugSystemOpts)
+	dependencies.aiWorkflowHeavyRuntime = viewer.HandleAIWorkflowHeavyWorkerRuntimeDiagnostics(viewer.HeavyWorkerRuntimeDiagnosticsOptions{
+		GatewayConfigured: strings.TrimSpace(debugSystemOpts.LLMGateway.BaseURL) != "",
+		GatewayBaseURL:    debugSystemOpts.LLMGateway.BaseURL,
+		LogicalAlias:      "kuro",
+	})
 	registerOpsRoutes(mux, cfg, dependencies)
 	registerSTTAndAudioRoutes(mux, cfg, sttRuntime, voiceChatRuntime, dependencies)
 	registerWebRoutes(mux, dependencies)

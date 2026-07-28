@@ -13,7 +13,6 @@ type Dependencies struct {
 // the /viewer/games route boundary.
 type Routes struct {
 	Status        http.HandlerFunc
-	Decision      http.HandlerFunc
 	Result        http.HandlerFunc
 	Sessions      http.HandlerFunc
 	Events        http.HandlerFunc
@@ -26,7 +25,6 @@ type Routes struct {
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
 	registerRoute(mux, "/viewer/games/status", routes.Status)
-	registerRoute(mux, "/viewer/games/decision", routes.Decision)
 	registerRoute(mux, "/viewer/games/result", routes.Result)
 	registerRoute(mux, "/viewer/games/sessions", routes.Sessions)
 	registerRoute(mux, "/viewer/games/events", routes.Events)

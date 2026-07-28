@@ -20,7 +20,7 @@
 ## 🧪 Test Environment & Hardware
 - **Hardware:** [e.g. Raspberry Pi 5, Orange Pi, PC]
 - **OS:** [e.g. Debian 12, Ubuntu 22.04]
-- **Model/Provider:** [e.g. OpenAI GPT-4o, Kimi k2, DeepSeek-V3]
+- **Model/Provider:** [RenCrow_LLM logical alias]
 - **Channels:** [e.g. Discord, Telegram, Feishu, ...]
 
 

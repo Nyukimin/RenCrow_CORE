@@ -45,9 +45,6 @@ type DebugSystemOptions struct {
 	STTStreamURL               string
 	TTSBaseURL                 string
 	TTSHealthPath              string
-	LLMOpsConfigured           bool
-	LLMOpsEnabled              bool
-	LLMOpsBaseURL              string
 	LLMGateway                 LLMGatewayRuntimeConfig
 	WebwrightFetch             WebwrightFetchRuntimeConfig
 	WebGather                  WebGatherRuntimeConfig
@@ -65,9 +62,6 @@ type RuntimeConfig struct {
 	STTBaseURL         string                      `json:"stt_base_url,omitempty"`
 	TTSBaseURL         string                      `json:"tts_base_url,omitempty"`
 	TTSHealthPath      string                      `json:"tts_health_path,omitempty"`
-	LLMOpsConfigured   bool                        `json:"llm_ops_configured"`
-	LLMOpsEnabled      bool                        `json:"llm_ops_enabled"`
-	LLMOpsBaseURL      string                      `json:"llm_ops_base_url,omitempty"`
 	LLMGateway         LLMGatewayRuntimeConfig     `json:"llm_gateway"`
 	WebwrightFetch     WebwrightFetchRuntimeConfig `json:"webwright_fetch,omitempty"`
 	WebGather          WebGatherRuntimeConfig      `json:"web_gather,omitempty"`
@@ -96,7 +90,6 @@ type RuntimeDependencyReadiness struct {
 	TelegramCredentialsPresent   bool `json:"telegram_credentials_present"`
 	TelegramWebhookRegistered    bool `json:"telegram_webhook_registered"`
 	TelegramFilePayloadPipeline  bool `json:"telegram_file_payload_pipeline"`
-	STTGatewayEnvPresent         bool `json:"stt_gateway_env_present"`
 	STTGatewayConfigPresent      bool `json:"stt_gateway_config_present"`
 	TTSProviderEnvPresent        bool `json:"tts_provider_env_present"`
 	TTSProviderConfigPresent     bool `json:"tts_provider_config_present"`
@@ -182,9 +175,6 @@ func HandleRuntimeConfig(opts DebugSystemOptions) http.HandlerFunc {
 			STTBaseURL:         strings.TrimRight(strings.TrimSpace(opts.STTBaseURL), "/"),
 			TTSBaseURL:         strings.TrimRight(strings.TrimSpace(opts.TTSBaseURL), "/"),
 			TTSHealthPath:      strings.TrimSpace(opts.TTSHealthPath),
-			LLMOpsConfigured:   opts.LLMOpsConfigured,
-			LLMOpsEnabled:      opts.LLMOpsEnabled,
-			LLMOpsBaseURL:      strings.TrimRight(strings.TrimSpace(opts.LLMOpsBaseURL), "/"),
 			LLMGateway:         normalizeLLMGatewayRuntimeConfig(opts.LLMGateway),
 			WebwrightFetch:     normalizeWebwrightFetchRuntimeConfig(opts.WebwrightFetch),
 			WebGather:          normalizeWebGatherRuntimeConfig(opts.WebGather),
@@ -558,11 +548,11 @@ func processCommandHint(pid int) string {
 func classifyGPUProcess(name, hint string) string {
 	text := strings.ToLower(strings.TrimSpace(name + " " + hint))
 	switch {
-	case strings.Contains(text, "ollama"), strings.Contains(text, "llama"), strings.Contains(text, "deepseek"), strings.Contains(text, "openai"), strings.Contains(text, "claude"):
+	case strings.Contains(text, "rencrow_llm"), strings.Contains(text, "rencrow-llm"), strings.Contains(text, "llm-gateway"), strings.Contains(text, "model-server"):
 		return "llm"
 	case strings.Contains(text, "whisper"), strings.Contains(text, "stt"), strings.Contains(text, "speech-to-text"):
 		return "stt"
-	case strings.Contains(text, "tts"), strings.Contains(text, "vits"), strings.Contains(text, "sbv2"), strings.Contains(text, "style-bert"), strings.Contains(text, "voicevox"):
+	case strings.Contains(text, "tts"), strings.Contains(text, "speech-synthesis"):
 		return "tts"
 	default:
 		return "other"

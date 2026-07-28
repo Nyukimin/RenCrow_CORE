@@ -171,7 +171,6 @@ RenCrow では、入力を以下のカテゴリへ分類する。
 例：
 - 「テストを回して」
 - 「この patch を適用して」
-- 「Ollama の状態を確認して」
 
 ### RESEARCH
 対象：
@@ -284,7 +283,7 @@ RenCrow では、入力を以下のカテゴリへ分類する。
 実行方針：
 - RenCrow_Image を利用する通常の画像生成エージェントは Wild 固定とする。
 - 画像解析・画像分析も Wild 固定とし、Worker / ANALYZE / RESEARCH へ流さない。
-- 通常の画像生成は`CORE -> RenCrow_Image -> ForgeNeo / Z-Image`とし、COREからForgeNeo、ComfyUI、その他の画像生成backendを直接呼び出さない。
+- 通常の画像生成は`CORE -> RenCrow_Image -> ForgeNeo / Z-Image`とする。
 - backend endpoint、workflow、model、LoRA、生成parameterはRenCrow_Imageが所有する。
 - Mio、Shiro、Midori、Kuroが文章生成工程の一部としてCodexExe経由のImageGenを利用する場合だけ例外とする。この例外を通常の画像生成routeへ流用しない。
 

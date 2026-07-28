@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 )
 
@@ -158,7 +158,7 @@ func initManager(cfg *config.Config) (*conversationpersistence.RealConversationM
 
 	mgr, err := conversationpersistence.NewRealConversationManager(
 		cfg.Conversation.RedisURL,
-		cfg.Conversation.ArchiveSQLitePath,
+		cfg.Storage.Databases.ConversationArchive,
 		cfg.Conversation.VectorDBURL,
 	)
 	if err != nil {
@@ -171,7 +171,7 @@ func initManager(cfg *config.Config) (*conversationpersistence.RealConversationM
 		if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
 			apiKey = strings.TrimSpace(os.Getenv(envName))
 		}
-		embedder := openai.NewOpenAIEmbedderWithOptions(
+		embedder := rencrowllm.NewGatewayEmbedderWithOptions(
 			apiKey,
 			cfg.Conversation.EmbedModel,
 			cfg.LLMGateway.BaseURL,

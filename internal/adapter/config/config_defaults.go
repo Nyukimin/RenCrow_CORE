@@ -12,20 +12,7 @@ func (c *Config) setDefaults() {
 		c.Server.Host = "0.0.0.0"
 	}
 
-	if c.Claude.Model == "" {
-		c.Claude.Model = "claude-sonnet-4-20250514"
-	}
-
-	if c.DeepSeek.Model == "" {
-		c.DeepSeek.Model = "deepseek-chat"
-	}
-
-	if c.OpenAI.Model == "" {
-		c.OpenAI.Model = "gpt-4o-mini"
-	}
-
-	// RenCrow_LLM is mandatory. "enabled" remains readable for compatibility,
-	// but it can no longer disable the only supported LLM route.
+	// RenCrow_LLM is mandatory.
 	c.LLMGateway.Enabled = true
 	if strings.TrimSpace(c.LLMGateway.BaseURL) == "" {
 		c.LLMGateway.BaseURL = "http://127.0.0.1:8090"
@@ -54,8 +41,7 @@ func (c *Config) setDefaults() {
 	if c.WebwrightFetch.StagingOutputDir == "" {
 		c.WebwrightFetch.StagingOutputDir = "tmp/webwright_staging"
 	}
-	// Webwright also enters RenCrow_LLM. Ignore legacy physical endpoints from
-	// older local YAML files.
+	// Webwright also enters RenCrow_LLM.
 	c.WebwrightFetch.ResponsesEndpoint = strings.TrimRight(c.LLMGateway.BaseURL, "/") + "/v1/responses"
 	if c.WebwrightFetch.Model == "" {
 		c.WebwrightFetch.Model = "coder1"
@@ -193,12 +179,8 @@ func (c *Config) setDefaults() {
 	if c.Conversation.RedisURL == "" {
 		c.Conversation.RedisURL = "redis://localhost:6379"
 	}
-	if c.Conversation.ArchiveSQLitePath == "" {
-		if c.Conversation.DeprecatedArchivePath != "" {
-			c.Conversation.ArchiveSQLitePath = archiveSQLitePathFromLegacy(c.Conversation.DeprecatedArchivePath)
-		} else {
-			c.Conversation.ArchiveSQLitePath = "/var/lib/rencrow/memory_archive.db"
-		}
+	if c.Storage.Databases.ConversationArchive == "" {
+		c.Storage.Databases.ConversationArchive = "/var/lib/rencrow/memory_archive.db"
 	}
 	if c.Conversation.VectorDBURL == "" {
 		c.Conversation.VectorDBURL = "localhost:6334"
@@ -631,9 +613,14 @@ func (c *Config) setDefaults() {
 		c.KnowledgeMemory.DreamRequiresReview = true
 		c.KnowledgeMemory.DailyIntakePromoteToStaging = true
 	}
-	if c.OperationMemoryDir == "" {
-		c.OperationMemoryDir = DefaultOperationMemoryDir()
+	if c.Storage.Memory.SessionDir == "" {
+		c.Storage.Memory.SessionDir = "./data/sessions"
 	}
+	c.Session.StorageDir = c.Storage.Memory.SessionDir
+	if c.Storage.Memory.OperationMemoryDir == "" {
+		c.Storage.Memory.OperationMemoryDir = DefaultOperationMemoryDir()
+	}
+	c.OperationMemoryDir = c.Storage.Memory.OperationMemoryDir
 	if c.Verification.ReportPath == "" {
 		c.Verification.ReportPath = c.WorkspaceDir + "/verification_report.jsonl"
 	}
@@ -642,9 +629,6 @@ func (c *Config) setDefaults() {
 	}
 	if c.TTS.OutputDir == "" {
 		c.TTS.OutputDir = "./workspace/tts"
-	}
-	if c.TTS.GatewayBaseURL == "" {
-		c.TTS.GatewayBaseURL = c.TTS.HTTPBaseURL
 	}
 	if c.TTS.GatewayBaseURL == "" {
 		c.TTS.GatewayBaseURL = "http://127.0.0.1:7870"
@@ -744,12 +728,6 @@ func (c *Config) setDefaults() {
 	}
 
 	// Coder スロットのデフォルト値（v4.1）
-	if c.Coder1.Provider == "" {
-		c.Coder1.Provider = "deepseek"
-	}
-	if c.Coder1.Model == "" {
-		c.Coder1.Model = "deepseek-coder"
-	}
 	if c.Coder1.Name == "" {
 		c.Coder1.Name = "aka"
 	}
@@ -760,12 +738,6 @@ func (c *Config) setDefaults() {
 		c.Coder1.LightMemory.MaxTurns = 3
 	}
 
-	if c.Coder2.Provider == "" {
-		c.Coder2.Provider = "openai"
-	}
-	if c.Coder2.Model == "" {
-		c.Coder2.Model = "gpt-4-turbo"
-	}
 	if c.Coder2.Name == "" {
 		c.Coder2.Name = "ao"
 	}
@@ -776,12 +748,6 @@ func (c *Config) setDefaults() {
 		c.Coder2.LightMemory.MaxTurns = 3
 	}
 
-	if c.Coder3.Provider == "" {
-		c.Coder3.Provider = "claude"
-	}
-	if c.Coder3.Model == "" {
-		c.Coder3.Model = "claude-sonnet-4"
-	}
 	if c.Coder3.Name == "" {
 		c.Coder3.Name = "kin"
 	}
@@ -792,12 +758,6 @@ func (c *Config) setDefaults() {
 		c.Coder3.LightMemory.MaxTurns = 3
 	}
 
-	if c.Coder4.Provider == "" {
-		c.Coder4.Provider = "gemini"
-	}
-	if c.Coder4.Model == "" {
-		c.Coder4.Model = "gemini-2.0-flash-exp"
-	}
 	if c.Coder4.Name == "" {
 		c.Coder4.Name = "gin"
 	}
@@ -807,18 +767,6 @@ func (c *Config) setDefaults() {
 	if c.Coder4.LightMemory.MaxTurns == 0 {
 		c.Coder4.LightMemory.MaxTurns = 3
 	}
-}
-
-func archiveSQLitePathFromLegacy(legacyPath string) string {
-	legacyPath = strings.TrimSpace(legacyPath)
-	if legacyPath == "" || legacyPath == ":memory:" {
-		return legacyPath
-	}
-	cleaned := filepath.Clean(legacyPath)
-	if strings.EqualFold(filepath.Ext(cleaned), ".duckdb") {
-		return filepath.ToSlash(strings.TrimSuffix(cleaned, filepath.Ext(cleaned)) + "_archive.db")
-	}
-	return filepath.ToSlash(cleaned)
 }
 
 func boolConfigPtr(value bool) *bool {

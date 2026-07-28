@@ -284,6 +284,9 @@ func (o *IdleChatOrchestrator) ActiveSessionTranscript(limit int) (string, []Act
 			continue
 		}
 		messageID, turnIndex := idleChatMessageMetadata(msg, len(out)+1)
+		if messageID == "" {
+			continue
+		}
 		timestamp := strings.TrimSpace(msg.Timestamp)
 		if timestamp == "" && !entry.Timestamp.IsZero() {
 			timestamp = entry.Timestamp.In(jst).Format(time.RFC3339)
@@ -329,7 +332,7 @@ func idleChatMessageMetadata(msg domaintransport.Message, fallbackIndex int) (st
 			return strings.TrimSpace(id), turnIndex
 		}
 	}
-	return legacyIdleChatMessageID(msg.SessionID, turnIndex), turnIndex
+	return "", turnIndex
 }
 
 func (o *IdleChatOrchestrator) getHistoricalTitleThemes(limit int) []string {

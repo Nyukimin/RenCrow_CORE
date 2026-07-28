@@ -15,7 +15,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	modulevoicechat "github.com/Nyukimin/RenCrow_CORE/modules/voicechat"
 	"golang.org/x/net/websocket"
 )
@@ -231,7 +231,7 @@ func postVoiceChatInputAudio(ctx context.Context, baseURL string, settings voice
 	if settings.Stream {
 		request.OnToken = func(string) {}
 	}
-	provider := openai.NewOpenAIProviderWithModelContext(settings.APIKey, settings.Model, baseURL, settings.Timeout, settings.ModelContext)
+	provider := rencrowllm.NewGatewayProviderWithModelContext(settings.APIKey, settings.Model, baseURL, settings.Timeout, settings.ModelContext)
 	resp, err := provider.Generate(ctx, request)
 	if err != nil {
 		return "", fmt.Errorf("RenCrow LLM input_audio failed: %w", err)

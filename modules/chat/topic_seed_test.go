@@ -21,7 +21,6 @@ func TestSelectExternalTopicSeedUsesWikipediaMaterial(t *testing.T) {
 
 func TestSelectNewsTopicSeedPrefersStructuredSeeds(t *testing.T) {
 	cache := &DailySeedCache{
-		NewsSeeds: []string{"legacy"},
 		NewsSeedItems: []NewsSeed{
 			{Title: "新しい医療制度の検討が始まる", Category: "domestic", Source: "NHK"},
 		},
@@ -38,14 +37,6 @@ func TestSelectNewsTopicSeedPrefersStructuredSeeds(t *testing.T) {
 	}
 }
 
-func TestSelectNewsTopicSeedKeepsLegacyTitles(t *testing.T) {
-	cache := &DailySeedCache{NewsSeeds: []string{"新しい医療制度の検討が始まる"}}
-	seed, ok := SelectNewsTopicSeed(cache, 0)
-	if !ok || seed.News == nil || seed.News.Title != "新しい医療制度の検討が始まる" {
-		t.Fatalf("legacy news seed mismatch: ok=%v seed=%+v", ok, seed)
-	}
-}
-
 func TestNewsSeedLabelsTitlesAndSummary(t *testing.T) {
 	seeds := []NewsSeed{
 		{Title: " A ", Category: "tech", Source: "ITmedia"},
@@ -57,7 +48,7 @@ func TestNewsSeedLabelsTitlesAndSummary(t *testing.T) {
 		t.Fatalf("label = %q", got)
 	}
 	if got := NewsSeedSourceLabel(seeds[3]); got != "News:C" {
-		t.Fatalf("legacy label = %q", got)
+		t.Fatalf("label = %q", got)
 	}
 	if got := strings.Join(NewsSeedTitles(seeds), ","); got != "A,B,C" {
 		t.Fatalf("titles = %q", got)

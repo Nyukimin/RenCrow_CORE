@@ -159,9 +159,10 @@ func (o *IdleChatOrchestrator) generateForecastTopic(domain ForecastDomain, seed
 	}
 	o.mu.Lock()
 	topicGenerationConfig := o.topicGenerationConfig
-	dedicatedShiroProvider := o.forecastTopicProvider != nil
 	o.mu.Unlock()
-	topicGenerationConfig = forecastTopicGenerationConfigForProvider(topicGenerationConfig, dedicatedShiroProvider)
+	if topicGenerationConfig.CandidatesPerAttempt > 3 {
+		topicGenerationConfig.CandidatesPerAttempt = 3
+	}
 	topicGenerationConfig.ProviderName = providerLabel
 	generator := NewTopicGenerator(provider, topicGenerationConfig)
 	result, err := generator.GenerateInterestingTopic(o.idleRunContext(), TopicCategoryForecast, seed, recent)
@@ -174,14 +175,6 @@ func (o *IdleChatOrchestrator) generateForecastTopic(domain ForecastDomain, seed
 	}
 	logForecastLLMError("topic", domain.Name, providerLabel, err)
 	return "", newForecastTopicFailure("topic", domain.Name, providerLabel, err)
-}
-
-func forecastTopicGenerationConfigForProvider(config TopicGenerationConfig, dedicatedShiroProvider bool) TopicGenerationConfig {
-	const shiroCandidatesPerAttempt = 3
-	if dedicatedShiroProvider && config.CandidatesPerAttempt > shiroCandidatesPerAttempt {
-		config.CandidatesPerAttempt = shiroCandidatesPerAttempt
-	}
-	return config
 }
 
 // extractForecastKeyword はNHKヘッドラインからドメインに関連する注目キーワードを1つ抽出する。
@@ -256,7 +249,7 @@ func (o *IdleChatOrchestrator) forecastTopicLLMInfo() (llm.LLMProvider, string) 
 		}
 		return provider, label
 	}
-	return o.forecastPrimaryLLMInfo()
+	return nil, "Shiro"
 }
 
 func logForecastLLMError(phase, domainName, providerLabel string, err error) {

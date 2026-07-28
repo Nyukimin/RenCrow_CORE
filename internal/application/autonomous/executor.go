@@ -233,7 +233,7 @@ func classifyApplyError(err error) string {
 		return "dependency_missing"
 	case strings.Contains(lower, "path"), modulecore.IsMissingPathText(lower):
 		return "path_mismatch"
-	case strings.Contains(lower, "provider"), strings.Contains(lower, "ollama"), strings.Contains(lower, "model"):
+	case strings.Contains(lower, "provider"), strings.Contains(lower, "gateway"), strings.Contains(lower, "model"):
 		return "provider_unavailable"
 	default:
 		return "apply"

@@ -28,8 +28,7 @@ func (fakeSTTViewerInputObserver) Snapshot(context.Context) (modulestt.ViewerInp
 
 func TestNewSTTViewerInputObserver(t *testing.T) {
 	observer := newSTTViewerInputObserver(sttRuntime{
-		ProviderURL: "http://127.0.0.1:8766/stt/file",
-		GatewayURL:  "ws://127.0.0.1:8766/stt",
+		GatewayHTTPURL: "http://127.0.0.1:8766/stt/file",
 		DebugOptions: viewer.DebugSystemOptions{
 			STTBaseURL:   "http://127.0.0.1:8766/",
 			STTStreamURL: "ws://127.0.0.1:8766/stt",
@@ -42,7 +41,7 @@ func TestNewSTTViewerInputObserver(t *testing.T) {
 	if snapshot.BaseURL != "http://127.0.0.1:8766" || snapshot.StreamURL != "ws://127.0.0.1:8766/stt" {
 		t.Fatalf("urls were not normalized: %+v", snapshot)
 	}
-	if !snapshot.ProviderConfigured || !snapshot.GatewayConfigured || !snapshot.WebSocketConfigured {
+	if !snapshot.GatewayHTTPConfigured || !snapshot.GatewayConfigured || !snapshot.WebSocketConfigured {
 		t.Fatalf("configured flags were not set: %+v", snapshot)
 	}
 	if snapshot.TranscriptInjectPath != "/stt/chat-input" || snapshot.TranscriptSource != "local_stt" {

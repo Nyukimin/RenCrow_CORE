@@ -12,7 +12,6 @@
 
 - COREはrole、agent、request context、response、health projectionを扱う。
 - backendごとのmodel process、KV session、sampling、management runtimeはRenCrow_LLM側の責務とする。
-- Ollama、llama.cpp、MLXなど特定backendの常駐方法、context上限、management commandをCOREの固定要件にしない。
 - inference endpointとmanagement endpointを混同しない。
 - configで選択したroleやruntimeが利用不能な場合、別roleへ黙ってfallbackしない。
 - model固有のsecretをsource、sample config、test、logへ保存しない。
@@ -41,7 +40,7 @@
 
 ## 4. PORTAL、Debug Viewer、音声
 
-- RenCrow_PORTALは外部向けview/live/lab、COREはDebug Viewerを所有する。
+- RenCrow_PORTALは外部向けChat／IdleChatを所有し、COREはDebug Viewerを所有する。
 - PORTALからDebug、Ops、Repair、LLM管理、設定変更APIを透過公開しない。
 - 表示本文、TTS音声生成、音声取得、browser再生、口パクを別の成功条件として扱う。
 - STT録音状態と認識結果の投入先を分離する。

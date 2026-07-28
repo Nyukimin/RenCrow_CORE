@@ -42,7 +42,7 @@ func (c fakeHealthCheck) Run(context.Context) HealthCheckResult {
 
 func TestHealthCheckedProviderReflectsBackendDown(t *testing.T) {
 	provider := NewHealthCheckedProvider(fakeHealthCheckedProvider{name: "worker-provider"}, fakeHealthCheck{
-		name: "local_llm_worker",
+		name: "gateway_worker",
 		result: HealthCheckResult{
 			Status:   core.HealthDown,
 			Ready:    false,
@@ -55,14 +55,14 @@ func TestHealthCheckedProviderReflectsBackendDown(t *testing.T) {
 	if got.Status != core.HealthDown || got.Ready {
 		t.Fatalf("backend down was not reflected: %+v", got)
 	}
-	if got.Detail != "connection failed" || got.Metadata["check"] != "local_llm_worker" {
+	if got.Detail != "connection failed" || got.Metadata["check"] != "gateway_worker" {
 		t.Fatalf("health detail/metadata missing: %+v", got)
 	}
 }
 
 func TestHealthCheckedProviderReflectsBackendOK(t *testing.T) {
 	provider := NewHealthCheckedProvider(fakeHealthCheckedProvider{name: "chat-provider"}, fakeHealthCheck{
-		name: "local_llm_chat",
+		name: "gateway_mio",
 		result: HealthCheckResult{
 			Status: core.HealthLive,
 			Ready:  true,
@@ -99,24 +99,10 @@ func TestNormalizeExternalHealthCheckResult(t *testing.T) {
 	}
 }
 
-func TestShouldUseLocalHealthChecks(t *testing.T) {
-	if !ShouldUseLocalHealthChecks(LocalHealthCheckRuntimeConfig{Enabled: true, Provider: " local_openai "}) {
-		t.Fatal("local_openai runtime should use local health checks")
-	}
-	if ShouldUseLocalHealthChecks(LocalHealthCheckRuntimeConfig{Enabled: false, Provider: "local_openai"}) {
-		t.Fatal("disabled local runtime should not use local health checks")
-	}
-	if ShouldUseLocalHealthChecks(LocalHealthCheckRuntimeConfig{Enabled: true, Provider: "ollama"}) {
-		t.Fatal("non local_openai runtime should not use local health checks")
-	}
-}
-
 func TestRoleFromHealthCheckName(t *testing.T) {
 	tests := map[string]string{
 		"rencrow_llm_chat":   "chat",
 		" rencrow_llm_Wild ": "wild",
-		"local_llm_chat":     "chat",
-		" local_llm_Worker ": "worker",
 		"heavy":              "heavy",
 		"":                   "",
 	}
@@ -128,8 +114,8 @@ func TestRoleFromHealthCheckName(t *testing.T) {
 }
 
 func TestBuildProviderHealth(t *testing.T) {
-	got := BuildProviderHealth(ProviderHealthSnapshot{Provider: "local-openai", Ready: true})
-	if got.Module != "llm" || got.Status != core.HealthLive || !got.Ready || got.Metadata["provider"] != "local-openai" {
+	got := BuildProviderHealth(ProviderHealthSnapshot{Provider: "rencrow_llm", Ready: true})
+	if got.Module != "llm" || got.Status != core.HealthLive || !got.Ready || got.Metadata["provider"] != "rencrow_llm" {
 		t.Fatalf("unexpected ready health: %+v", got)
 	}
 

@@ -132,9 +132,11 @@ func TestActiveSessionTranscriptReturnsCurrentIdleSessionInOrder(t *testing.T) {
 	memory.RecordMessage(old)
 	first := domaintransport.NewMessage("mio", "shiro", "idle-current", "", "最初はMioです。")
 	first.Type = domaintransport.MessageTypeIdleChat
+	first.Context = map[string]interface{}{"message_id": "idle-current:msg:0001", "turn_index": 1}
 	memory.RecordMessage(first)
 	second := domaintransport.NewMessage("shiro", "mio", "idle-current", "", "次はShiroです。")
 	second.Type = domaintransport.MessageTypeIdleChat
+	second.Context = map[string]interface{}{"message_id": "idle-current:msg:0002", "turn_index": 2}
 	memory.RecordMessage(second)
 
 	sessionID, transcript := o.ActiveSessionTranscript(10)

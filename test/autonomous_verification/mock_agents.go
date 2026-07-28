@@ -17,8 +17,8 @@ import (
 
 // MockMioAgent は MioAgent の mock 実装
 type MockMioAgent struct {
-	DecideActionFunc     func(ctx context.Context, t task.Task) (routing.Decision, error)
-	ChatFunc             func(ctx context.Context, t task.Task) (string, error)
+	DecideActionFunc      func(ctx context.Context, t task.Task) (routing.Decision, error)
+	ChatFunc              func(ctx context.Context, t task.Task) (string, error)
 	HandleChatCommandFunc func(ctx context.Context, sessionID string, message string) (agent.ChatCommandResult, error)
 }
 

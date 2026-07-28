@@ -23,16 +23,6 @@ func (f *fakeContextTraceLister) ListRecent(ctx context.Context, limit int) ([]d
 	return f.traces, nil
 }
 
-type fakeTraceLister struct {
-	limit  int
-	traces []domaindci.SearchTrace
-}
-
-func (f *fakeTraceLister) ListRecent(limit int) ([]domaindci.SearchTrace, error) {
-	f.limit = limit
-	return f.traces, nil
-}
-
 func TestDeriveCandidatePatternsFromDCITraces(t *testing.T) {
 	source := &fakeContextTraceLister{
 		traces: []domaindci.SearchTrace{
@@ -60,20 +50,6 @@ func TestDeriveCandidatePatternsFromDCITraces(t *testing.T) {
 	assertContainsPattern(t, got, "analyzer")
 	assertMissingPattern(t, got, "ignored_candidate")
 	assertMissingPattern(t, got, "complexity")
-}
-
-func TestDeriveCandidatePatternsSupportsLegacyTraceListerAndLimitCap(t *testing.T) {
-	source := &fakeTraceLister{traces: []domaindci.SearchTrace{{UserQuery: "movie catalog"}}}
-
-	got, err := DeriveCandidatePatterns(context.Background(), source, 99)
-	if err != nil {
-		t.Fatalf("DeriveCandidatePatterns failed: %v", err)
-	}
-	if source.limit != 20 {
-		t.Fatalf("limit should be capped at 20, got %d", source.limit)
-	}
-	assertContainsPattern(t, got, "movie")
-	assertContainsPattern(t, got, "catalog")
 }
 
 func TestDeriveCandidatePatternsHandlesUnsupportedSourceAndErrors(t *testing.T) {

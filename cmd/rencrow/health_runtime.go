@@ -68,7 +68,7 @@ func buildHealthService(cfg *config.Config) *healthapp.HealthService {
 		baseURL = "http://127.0.0.1:8090"
 	}
 	for _, agentID := range []string{"mio", "worker", "shiro", "kuro", "midori"} {
-		checks = append(checks, infrahealth.NewOpenAICompatibleChatCheck("gateway_"+agentID, baseURL, agentID, apiKey, timeout))
+		checks = append(checks, infrahealth.NewGatewayAliasCheck("gateway_"+agentID, baseURL, agentID, apiKey, timeout))
 	}
 	if cfg.Vision.Enabled {
 		analyzer, _, err := buildVisionRuntime(cfg)

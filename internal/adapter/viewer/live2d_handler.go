@@ -1,8 +1,6 @@
 package viewer
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -37,11 +35,6 @@ func HandleLive2DCharacter(w http.ResponseWriter, r *http.Request) {
 		characterID = "mio" // default to Mio
 	}
 
-	mode := r.URL.Query().Get("mode")
-	if mode == "" {
-		mode = "normal"
-	}
-
 	// Map character IDs to file paths
 	var htmlPath string
 	switch strings.ToLower(characterID) {
@@ -70,7 +63,7 @@ func HandleLive2DCharacter(w http.ResponseWriter, r *http.Request) {
 	// Check if UI should be hidden
 	hideUI := r.URL.Query().Get("hide_ui") == "true"
 
-	// Inject mode-specific styles
+	// Inject Viewer embed styles
 	htmlStr := string(content)
 
 	// Replace original .stage style - complete replacement
@@ -85,15 +78,7 @@ func HandleLive2DCharacter(w http.ResponseWriter, r *http.Request) {
 		"  .scene{\n    position:relative;\n    width:100%;height:100%;\n    aspect-ratio:auto;",
 		1)
 
-	if mode == "live" {
-		// Large mode for live display
-		htmlStr = injectLive2DStyle(htmlStr, `
-body { margin: 0; padding: 0; overflow: hidden; }
-canvas { width: 100vw !important; height: 100vh !important; }
-`)
-	} else {
-		// Normal mode - responsive, centered, full width
-		htmlStr = injectLive2DStyle(htmlStr, `
+	htmlStr = injectLive2DStyle(htmlStr, `
 body {
 	margin: 0;
 	padding: 0;
@@ -142,7 +127,6 @@ canvas {
 	object-fit: contain;
 }
 `)
-	}
 
 	// Inject UI hiding style if requested
 	if hideUI {
@@ -209,8 +193,6 @@ func HandleLive2DCharacterEmbed(w http.ResponseWriter, r *http.Request) {
 		emotion = "normal"
 	}
 
-	mode := r.URL.Query().Get("mode")
-
 	// Get Live2D state for emotion
 	emotionType := EmotionType(emotion)
 	state, ok := Live2DEmotionMapping[emotionType]
@@ -264,7 +246,7 @@ func HandleLive2DCharacterEmbed(w http.ResponseWriter, r *http.Request) {
 </head>
 <body>
 	<div id="live2d-container">
-		<iframe id="live2d-frame" src="/viewer/live2d/character?character_id=%s&mode=%s&emotion=%s&hide_ui=true" allowtransparency="true"></iframe>
+		<iframe id="live2d-frame" src="/viewer/live2d/character?character_id=%s&emotion=%s&hide_ui=true" allowtransparency="true"></iframe>
 	</div>
 	<script>
 		var currentEmotion = '%s';
@@ -311,7 +293,7 @@ func HandleLive2DCharacterEmbed(w http.ResponseWriter, r *http.Request) {
 		console.log('[Live2D Embed] Initialized with emotion:', currentEmotion);
 	</script>
 </body>
-</html>`, strings.ToUpper(string(characterID[0]))+characterID[1:], emotion, getModeStyle(mode), characterID, mode, emotion, emotion, toJSON(state))
+</html>`, strings.ToUpper(string(characterID[0]))+characterID[1:], emotion, getEmbedStyle(), characterID, emotion, emotion, toJSON(state))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(html))
@@ -368,23 +350,7 @@ func injectLive2DScript(html, script string) string {
 	return html + script
 }
 
-func getModeStyle(mode string) string {
-	if mode == "live" {
-		return `
-#live2d-container {
-	position: fixed;
-	top: 0;
-	left: 0;
-	width: 100vw;
-	height: 100vh;
-	z-index: 1000;
-}
-iframe {
-	width: 100%;
-	height: 100%;
-}
-`
-	}
+func getEmbedStyle() string {
 	return `
 #live2d-container {
 	width: 100%;
@@ -397,71 +363,4 @@ iframe {
 	}
 }
 `
-}
-
-// HandleLive2DChat serves the Live2D chat UI
-func HandleLive2DChat(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	htmlPath := "internal/adapter/viewer/assets/live2d_chat.html"
-	content, err := os.ReadFile(htmlPath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read chat UI: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(content)
-}
-
-// HandleLive2DChatAPI handles chat API requests with emotion detection
-func HandleLive2DChatAPI(w http.ResponseWriter, r *http.Request) {
-	HandleLive2DChatAPIWithResponder(nil)(w, r)
-}
-
-type Live2DChatResponder interface {
-	RespondLive2DChat(ctx context.Context, sessionID string, characterID string, message string) (string, error)
-}
-
-func HandleLive2DChatAPIWithResponder(responder Live2DChatResponder) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		var req struct {
-			Message     string `json:"message"`
-			CharacterID string `json:"character_id"`
-			Mode        string `json:"mode"`
-			SessionID   string `json:"session_id"`
-		}
-
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-
-		if req.CharacterID == "" {
-			req.CharacterID = "mio"
-		}
-
-		responseMessage := ""
-		if responder != nil {
-			if message, err := responder.RespondLive2DChat(r.Context(), req.SessionID, req.CharacterID, req.Message); err == nil {
-				responseMessage = strings.TrimSpace(message)
-			}
-		}
-		if responseMessage == "" {
-			responseMessage = fmt.Sprintf("ご質問ありがとうございます。「%s」について考えてみますね。", req.Message)
-		}
-
-		resp := BuildChatResponse(responseMessage, req.CharacterID, req.Mode)
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}
 }

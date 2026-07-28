@@ -110,10 +110,10 @@ func TestTTSClientBridgeIdleChatChunkPayloadIncludesCanonicalSpeechFields(t *tes
 	var chunks []orchestrator.OrchestratorEvent
 	bridge := buildTTSClientBridge(&config.Config{
 		TTS: config.TTSConfig{
-			Enabled:     true,
-			HTTPBaseURL: srv.URL,
-			VoiceID:     "mio",
-			TimeoutMS:   15000,
+			Enabled:        true,
+			GatewayBaseURL: srv.URL,
+			VoiceID:        "mio",
+			TimeoutMS:      15000,
 		},
 	}, func(ev orchestrator.OrchestratorEvent) {
 		chunks = append(chunks, ev)
@@ -173,7 +173,7 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 
 	var events []orchestrator.OrchestratorEvent
 	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
-		Enabled: true, HTTPBaseURL: srv.URL, VoiceID: "mio", TimeoutMS: 15000,
+		Enabled: true, GatewayBaseURL: srv.URL, VoiceID: "mio", TimeoutMS: 15000,
 	}}, func(event orchestrator.OrchestratorEvent) {
 		events = append(events, event)
 	}, nil, nil)
@@ -223,10 +223,10 @@ func TestTTSClientBridgeTopicPayloadIncludesBrightTopicPrefix(t *testing.T) {
 	var chunks []orchestrator.OrchestratorEvent
 	bridge := buildTTSClientBridge(&config.Config{
 		TTS: config.TTSConfig{
-			Enabled:     true,
-			HTTPBaseURL: srv.URL,
-			VoiceID:     "mio",
-			TimeoutMS:   15000,
+			Enabled:        true,
+			GatewayBaseURL: srv.URL,
+			VoiceID:        "mio",
+			TimeoutMS:      15000,
 		},
 	}, func(ev orchestrator.OrchestratorEvent) {
 		chunks = append(chunks, ev)
@@ -347,10 +347,10 @@ func TestResetIdleChatTTSQueueClosesPendingPlaybackWaits(t *testing.T) {
 func TestBuildTTSClientBridge_Enabled(t *testing.T) {
 	cfg := &config.Config{
 		TTS: config.TTSConfig{
-			Enabled:     true,
-			HTTPBaseURL: "http://127.0.0.1:8765",
-			VoiceID:     "female_01",
-			TimeoutMS:   15000,
+			Enabled:        true,
+			GatewayBaseURL: "http://127.0.0.1:8765",
+			VoiceID:        "female_01",
+			TimeoutMS:      15000,
 		},
 	}
 	if got := buildTTSClientBridge(cfg, nil, nil, nil); got == nil {
@@ -361,10 +361,10 @@ func TestBuildTTSClientBridge_Enabled(t *testing.T) {
 func TestBuildTTSClientBridge_UsesRenCrowBridge(t *testing.T) {
 	cfg := &config.Config{
 		TTS: config.TTSConfig{
-			Enabled:     true,
-			HTTPBaseURL: "http://127.0.0.1:8765",
-			VoiceID:     "female_01",
-			TimeoutMS:   15000,
+			Enabled:        true,
+			GatewayBaseURL: "http://127.0.0.1:8765",
+			VoiceID:        "female_01",
+			TimeoutMS:      15000,
 		},
 	}
 	got := buildTTSClientBridge(cfg, nil, nil, nil)
@@ -397,10 +397,10 @@ func TestBuildTTSClientBridge_UsesGatewayOnly(t *testing.T) {
 func TestBuildTTSClientBridge_WithoutPlaybackCommands(t *testing.T) {
 	cfg := &config.Config{
 		TTS: config.TTSConfig{
-			Enabled:     true,
-			HTTPBaseURL: "http://127.0.0.1:8765",
-			VoiceID:     "female_01",
-			TimeoutMS:   15000,
+			Enabled:        true,
+			GatewayBaseURL: "http://127.0.0.1:8765",
+			VoiceID:        "female_01",
+			TimeoutMS:      15000,
 		},
 	}
 

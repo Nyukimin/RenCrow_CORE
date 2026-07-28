@@ -10,7 +10,7 @@ import (
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	llmmiddleware "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/middleware"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 )
 
 type primaryLLMProviders struct {
@@ -39,7 +39,7 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 		apiKey = strings.TrimSpace(os.Getenv(envName))
 	}
 	provider := func(role, alias, agentID string) llm.LLMProvider {
-		raw := openai.NewOpenAIProviderWithOptions(apiKey, alias, baseURL, timeout).
+		raw := rencrowllm.NewGatewayProviderWithOptions(apiKey, alias, baseURL, timeout).
 			WithRenCrowExecution(agentID, role, alias)
 		return wrapPrimaryLLMProvider(cfg, role, enforceThinkingPolicyForRole(role, raw), recorder)
 	}

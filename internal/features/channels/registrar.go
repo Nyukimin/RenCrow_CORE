@@ -12,8 +12,7 @@ type Dependencies struct {
 }
 
 // Routes groups channel and entry route handlers supplied by cmd/rencrow.
-// Handler implementations stay in legacy adapter/cmd packages during Ver0.80
-// migration; this registrar owns only route registration and dependency handoff.
+// Handler implementations are supplied by their owning adapter and command packages.
 type Routes struct {
 	Webhook                   http.Handler
 	TelegramWebhook           http.Handler
@@ -26,11 +25,9 @@ type Routes struct {
 	AssistantLineNotification http.HandlerFunc
 }
 
-// RegisterRoutes reserves the feature route boundary. Existing routes remain in
-// their legacy packages until a phase migrates them through this registrar.
+// RegisterRoutes registers handlers at the feature route boundary.
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
-	registerHandlerOrUnavailable(mux, "/webhook", routes.Webhook, "line webhook unavailable")
 	registerHandlerOrUnavailable(mux, "/webhook/line", routes.Webhook, "line webhook unavailable")
 	registerHandlerOrUnavailable(mux, "/webhook/telegram", routes.TelegramWebhook, "telegram webhook unavailable")
 	registerHandlerOrUnavailable(mux, "/webhook/discord", routes.DiscordWebhook, "discord webhook unavailable")

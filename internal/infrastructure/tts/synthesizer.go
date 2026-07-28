@@ -2,8 +2,6 @@ package tts
 
 import (
 	"context"
-	"fmt"
-	"strings"
 )
 
 type EmotionState struct {
@@ -39,37 +37,4 @@ type SynthesisOutput struct {
 type Provider interface {
 	Name() string
 	Synthesize(ctx context.Context, in SynthesisInput) (SynthesisOutput, error)
-}
-
-type FallbackSynthesizer struct {
-	providers []Provider
-}
-
-func NewFallbackSynthesizer(providers ...Provider) *FallbackSynthesizer {
-	return &FallbackSynthesizer{providers: providers}
-}
-
-func (s *FallbackSynthesizer) Synthesize(ctx context.Context, in SynthesisInput) (SynthesisOutput, error) {
-	text := strings.TrimSpace(in.Text)
-	if text == "" {
-		return SynthesisOutput{}, fmt.Errorf("%w: text is empty", ErrSynthesisFailed)
-	}
-	var lastErr error
-	for _, p := range s.providers {
-		if p == nil {
-			continue
-		}
-		out, err := p.Synthesize(ctx, in)
-		if err == nil {
-			if strings.TrimSpace(out.Provider) == "" {
-				out.Provider = p.Name()
-			}
-			return out, nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = ErrProviderUnavailable
-	}
-	return SynthesisOutput{}, fmt.Errorf("%w: %v", ErrSynthesisFailed, lastErr)
 }

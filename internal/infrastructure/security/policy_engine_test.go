@@ -43,7 +43,7 @@ func TestPolicyEngine_Evaluate_StrictNetworkAllowlist(t *testing.T) {
 	engine := NewPolicyEngine(PolicyConfig{
 		Mode:           "strict",
 		NetworkScope:   "allowlist",
-		NetworkAllowed: []string{"api.openai.com"},
+		NetworkAllowed: []string{"api.example.com"},
 	})
 
 	deny := execution.Action{
@@ -60,7 +60,7 @@ func TestPolicyEngine_Evaluate_StrictNetworkAllowlist(t *testing.T) {
 
 	allow := execution.Action{
 		Tool:      "web_search",
-		Arguments: map[string]any{"url": "https://api.openai.com/v1/models"},
+		Arguments: map[string]any{"url": "https://api.example.com/v1/models"},
 	}
 	if d := engine.Evaluate(allow); d.Decision != execution.DecisionAllow {
 		t.Fatalf("expected allow for allowlisted host, got %s", d.Decision)

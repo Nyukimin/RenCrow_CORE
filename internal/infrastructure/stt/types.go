@@ -10,9 +10,7 @@ import (
 )
 
 const (
-	ProviderExternalHTTP = "external_http"
-	ProviderOpenAIAPI    = "openai-api"
-	ProviderMock         = "mock"
+	ProviderMock = "mock"
 
 	ErrorNoSpeechDetected = "NO_SPEECH_DETECTED"
 	ErrorInvalidAudio     = "INVALID_AUDIO"
@@ -34,9 +32,9 @@ type Config struct {
 	SaveAudio  bool
 	BusyPolicy string
 
-	ExternalHTTPURL string
-	HelperCommand   string
-	HelperArgs      []string
+	GatewayHTTPURL string
+	HelperCommand  string
+	HelperArgs     []string
 }
 
 func (c Config) WithDefaults() Config {

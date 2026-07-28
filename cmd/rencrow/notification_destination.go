@@ -21,9 +21,6 @@ func resolveNotificationDestination(cfg *config.Config) (notificationDestination
 	}
 	channel := strings.ToLower(strings.TrimSpace(cfg.Heartbeat.Channel))
 	chatID := strings.TrimSpace(cfg.Heartbeat.ChatID)
-	if channel == "" && chatID != "" && !isUnresolvedEnvironmentReference(chatID) {
-		channel = "line"
-	}
 
 	if chatID == "" || isUnresolvedEnvironmentReference(chatID) {
 		if channel != "" && channel != "line" {

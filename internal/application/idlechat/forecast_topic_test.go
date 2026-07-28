@@ -311,7 +311,7 @@ func TestForecastLLMErrorCodeClassifiesQuotaAndRateLimit(t *testing.T) {
 		err  error
 		want string
 	}{
-		{name: "quota", err: errors.New("openai error: insufficient_quota"), want: "insufficient_quota"},
+		{name: "quota", err: errors.New("gateway error: insufficient_quota"), want: "insufficient_quota"},
 		{name: "429", err: errors.New("provider returned status 429"), want: "rate_limited"},
 		{name: "timeout", err: errors.New("request timeout"), want: "timeout"},
 		{name: "generic", err: errors.New("boom"), want: "provider_error"},
@@ -325,9 +325,9 @@ func TestForecastLLMErrorCodeClassifiesQuotaAndRateLimit(t *testing.T) {
 	}
 }
 
-func TestGenerateForecastTopicReturnsFailureInsteadOfFallbackTopic(t *testing.T) {
+func TestGenerateForecastTopicReturnsGenerationFailure(t *testing.T) {
 	o := NewIdleChatOrchestrator(
-		failingForecastProvider{err: errors.New("openai error: insufficient_quota")},
+		failingForecastProvider{err: errors.New("gateway error: insufficient_quota")},
 		session.NewCentralMemory(),
 		[]string{"mio", "shiro"},
 		5,
@@ -336,7 +336,7 @@ func TestGenerateForecastTopicReturnsFailureInsteadOfFallbackTopic(t *testing.T)
 		nil,
 		"",
 	)
-	o.SetForecastProviderWithLabel(failingForecastProvider{err: errors.New("openai error: insufficient_quota")}, "Coder2 openai (gpt-4o-mini)")
+	o.SetForecastTopicProviderWithLabel(failingForecastProvider{err: errors.New("gateway error: insufficient_quota")}, "Shiro")
 
 	topic, failure := o.generateForecastTopic(ForecastDomain{Name: "AI技術"}, []string{"生成AI規制の新指針"})
 	if topic != "" {
@@ -349,7 +349,7 @@ func TestGenerateForecastTopicReturnsFailureInsteadOfFallbackTopic(t *testing.T)
 		t.Fatalf("unexpected error_code: %+v", failure)
 	}
 	display := formatForecastTopicError(ForecastDomain{Name: "AI技術"}, failure)
-	for _, want := range []string{"FORECAST_TOPIC_GENERATION_FAILED", "error_code=insufficient_quota", "phase=topic", "domain=AI技術", "provider=Coder2 openai (gpt-4o-mini)"} {
+	for _, want := range []string{"FORECAST_TOPIC_GENERATION_FAILED", "error_code=insufficient_quota", "phase=topic", "domain=AI技術", "provider=Shiro"} {
 		if !strings.Contains(display, want) {
 			t.Fatalf("display error missing %q: %s", want, display)
 		}
@@ -374,7 +374,7 @@ func TestGenerateForecastTopicUsesInterestingJudge(t *testing.T) {
 		nil,
 		"",
 	)
-	o.SetForecastProviderWithLabel(provider, "Coder1 local_openai (Worker)")
+	o.SetForecastTopicProviderWithLabel(provider, "Shiro")
 
 	topic, failure := o.generateForecastTopic(ForecastDomain{Name: "AI技術"}, []string{"生成AI規制の新指針"})
 	if failure != nil {
@@ -413,7 +413,7 @@ func TestGenerateForecastTopicUsesDedicatedShiroProvider(t *testing.T) {
 		nil,
 		"",
 	)
-	o.SetForecastProviderWithLabel(coder, "Coder1 local_openai (Coder1)")
+	o.SetForecastProviderWithLabel(coder, "Coder1 via RenCrow_LLM")
 	o.SetForecastTopicProviderWithLabel(shiro, "Shiro")
 
 	topic, failure := o.generateForecastTopic(ForecastDomain{Name: "AI技術"}, []string{"生成AI規制の新指針"})
@@ -428,18 +428,6 @@ func TestGenerateForecastTopicUsesDedicatedShiroProvider(t *testing.T) {
 	}
 	if coder.requests != 0 {
 		t.Fatalf("Coder provider must not generate stock topics, requests = %d", coder.requests)
-	}
-}
-
-func TestForecastTopicGenerationConfigCapsDedicatedShiroCandidates(t *testing.T) {
-	base := TopicGenerationConfig{CandidatesPerAttempt: 5}
-	shiro := forecastTopicGenerationConfigForProvider(base, true)
-	if shiro.CandidatesPerAttempt != 3 {
-		t.Fatalf("Shiro forecast candidates = %d, want 3", shiro.CandidatesPerAttempt)
-	}
-	legacy := forecastTopicGenerationConfigForProvider(base, false)
-	if legacy.CandidatesPerAttempt != 5 {
-		t.Fatalf("legacy forecast candidates = %d, want configured 5", legacy.CandidatesPerAttempt)
 	}
 }
 
@@ -464,14 +452,10 @@ func TestExtractForecastKeywordReturnsFailureWithoutDomainFallback(t *testing.T)
 	}
 }
 
-func TestForecastLLMReturnsPrimaryErrorWithoutExternalRetry(t *testing.T) {
+func TestForecastLLMReturnsShiroProviderError(t *testing.T) {
 	primary := &queuedForecastProvider{
 		errs: []error{errors.New("primary failed")},
 		name: "primary",
-	}
-	external := &queuedForecastProvider{
-		responses: []string{"外部LLMの一回だけの結果"},
-		name:      "external",
 	}
 	o := NewIdleChatOrchestrator(
 		primary,
@@ -483,7 +467,7 @@ func TestForecastLLMReturnsPrimaryErrorWithoutExternalRetry(t *testing.T) {
 		nil,
 		"",
 	)
-	o.SetForecastProviderWithLabel(primary, "Coder1 local_openai (Worker)")
+	o.SetForecastTopicProviderWithLabel(primary, "Shiro")
 
 	resp, label, err := o.generateForecastLLM("topic", "AI技術", llm.GenerateRequest{
 		Messages: []llm.Message{{Role: "user", Content: "topic"}},
@@ -494,24 +478,21 @@ func TestForecastLLMReturnsPrimaryErrorWithoutExternalRetry(t *testing.T) {
 	if resp.Content != "" {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
-	if label != "Coder1 local_openai (Worker)" {
+	if label != "Shiro" {
 		t.Fatalf("unexpected provider label: %q", label)
 	}
 	if primary.requests != 1 {
 		t.Fatalf("primary requests = %d, want 1", primary.requests)
 	}
-	if external.requests != 0 {
-		t.Fatalf("external requests = %d, want 0", external.requests)
-	}
 }
 
-func TestForecastLLMExplicitExternalProviderIsPrimary(t *testing.T) {
-	external := &queuedForecastProvider{
-		responses: []string{"明示された外部LLMの結果"},
-		name:      "external",
+func TestForecastLLMUsesDedicatedShiroProvider(t *testing.T) {
+	shiro := &queuedForecastProvider{
+		responses: []string{"Shiroの結果"},
+		name:      "shiro",
 	}
 	o := NewIdleChatOrchestrator(
-		external,
+		shiro,
 		session.NewCentralMemory(),
 		[]string{"mio", "shiro"},
 		5,
@@ -520,7 +501,7 @@ func TestForecastLLMExplicitExternalProviderIsPrimary(t *testing.T) {
 		nil,
 		"",
 	)
-	o.SetForecastProviderWithLabel(external, "Coder2 openai (gpt-4o-mini)")
+	o.SetForecastTopicProviderWithLabel(shiro, "Shiro")
 
 	resp, label, err := o.generateForecastLLM("topic", "AI技術", llm.GenerateRequest{
 		Messages: []llm.Message{{Role: "user", Content: "topic"}},
@@ -528,13 +509,13 @@ func TestForecastLLMExplicitExternalProviderIsPrimary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generateForecastLLM failed: %v", err)
 	}
-	if resp.Content != "明示された外部LLMの結果" {
+	if resp.Content != "Shiroの結果" {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
-	if label != "Coder2 openai (gpt-4o-mini)" {
+	if label != "Shiro" {
 		t.Fatalf("unexpected provider label: %q", label)
 	}
-	if external.requests != 1 {
-		t.Fatalf("external requests = %d, want 1", external.requests)
+	if shiro.requests != 1 {
+		t.Fatalf("Shiro requests = %d, want 1", shiro.requests)
 	}
 }

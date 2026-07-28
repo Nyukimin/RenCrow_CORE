@@ -14,9 +14,8 @@ func (d *Dependencies) buildHealthHandler(cfg *config.Config) *healthadapter.Han
 	return healthadapter.NewHandler(buildHealthService(cfg))
 }
 
-// resolveSubagentProvider はサブエージェント用のToolCallingProviderを設定に基づいて選択する
-func resolveSubagentProvider(cfg *config.Config, fallback llm.ToolCallingProvider) llm.ToolCallingProvider {
-	_ = cfg // legacy provider/model fields are intentionally ignored
+// resolveSubagentProvider はRenCrow_LLM WorkerのToolCallingProviderを使用する。
+func resolveSubagentProvider(_ *config.Config, fallback llm.ToolCallingProvider) llm.ToolCallingProvider {
 	return fallback
 }
 

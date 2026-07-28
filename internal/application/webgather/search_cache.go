@@ -3,10 +3,12 @@ package webgather
 import (
 	"context"
 	"encoding/json"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
-	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
+	"fmt"
 	"strings"
 	"time"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
 )
 
 type L1SearchCacheStore interface {
@@ -113,25 +115,7 @@ func decodeSearchResults(raw string) ([]modulewebgather.SearchResult, error) {
 		}
 		return results, nil
 	}
-	var legacy []struct {
-		Title   string `json:"title"`
-		Link    string `json:"link"`
-		Snippet string `json:"snippet"`
-	}
-	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
-		return nil, err
-	}
-	results = make([]modulewebgather.SearchResult, 0, len(legacy))
-	for i, item := range legacy {
-		results = append(results, modulewebgather.SearchResult{
-			URL:          strings.TrimSpace(item.Link),
-			Title:        strings.TrimSpace(item.Title),
-			Snippet:      strings.TrimSpace(item.Snippet),
-			Rank:         i + 1,
-			SourceEngine: "legacy_web_search",
-		})
-	}
-	return results, nil
+	return nil, fmt.Errorf("search cache payload does not match SearchResult schema")
 }
 
 func hasSearchResultURL(results []modulewebgather.SearchResult) bool {

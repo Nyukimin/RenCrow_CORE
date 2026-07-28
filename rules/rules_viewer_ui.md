@@ -365,7 +365,7 @@ Playwright Chromium、通常の Chrome / Chromium、または同等の実ブラ�
 - PC の縦タブと mobile panel select の両方で、追加した画面へ移動できることを確認する
 - `elementFromPoint`、Playwright の実クリック、または同等の確認で、クリック位置の最前面要素が意図した対象であることを確認する
 - modal、drawer、details、accordion を開閉した後も、背後や下部の重要操作が永久に塞がれないことを確認する
-- live-mode、lipsync、固定入力バー、toast、overlay などクリック干渉しやすい UI は、見た目だけでなく computed style を確認する
+- lipsync、固定入力バー、toast、overlay などクリック干渉しやすい UI は、見た目だけでなく computed style を確認する
 - computed style では特に `pointer-events`、`z-index`、`position`、`background`、`border`、`box-shadow`、`backdrop-filter` を確認し、会話、入力、主要操作対象を妨げないことを検証する
 
 避けること:

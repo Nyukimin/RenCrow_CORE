@@ -56,15 +56,14 @@ test('viewer sends STT start control before streaming audio chunks', () => {
   assert.ok(sendChunk >= 0 && startControl > sendChunk, 'start control helper should be near chunk sender');
 });
 
-test('viewer voice chat sends final text only in normal timeline chat without stopping capture on idle view', () => {
+test('viewer voice chat sends final text only in timeline chat without stopping capture on idle view', () => {
   const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
   assert.match(js, /let activeViewerTab = 'home'/);
   const allowedStart = js.indexOf('function isVoiceChatAllowed()');
   const allowedEnd = js.indexOf('function normalizeVoiceInputMode', allowedStart);
   assert.ok(allowedStart >= 0 && allowedEnd > allowedStart, 'isVoiceChatAllowed block not found');
   const allowedSource = js.slice(allowedStart, allowedEnd);
-  assert.match(allowedSource, /if \(isLabInputSurfaceActive\(\)\) return true/);
-  assert.match(allowedSource, /return activeViewerTab === 'timeline' && !document\.body\.classList\.contains\('live-mode'\)/);
+  assert.match(allowedSource, /return activeViewerTab === 'timeline'/);
   assert.match(js, /function ensureVoiceChatForMobileControl\(\) \{/);
   assert.match(js, /switchTab\('timeline'\);/);
   const switchTabStart = js.indexOf('function switchTab(tab) {');
@@ -182,7 +181,7 @@ test('viewer sends STT stop control and waits for final or error before closing'
   assert.match(js, /const STT_FINAL_WAIT_TIMEOUT_MS = 90000/);
   assert.match(js, /}, STT_FINAL_WAIT_TIMEOUT_MS\)/);
   assert.match(js, /timed out waiting for final/);
-  assert.match(js, /function finalizeSTTLocalDraft\(reason\)/);
+  assert.doesNotMatch(js, /function finalizeSTTLocalDraft\(reason\)/);
   assert.match(js, /function completeSTTStop\(\)/);
 
   const stopStart = js.indexOf('function stopSTT()');
@@ -198,17 +197,17 @@ test('viewer sends STT stop control and waits for final or error before closing'
   assert.doesNotMatch(stopSource, /finalizeSTTLocalDraft/);
 
   const timeoutStart = js.indexOf('function scheduleSTTFinalWaitTimeout()');
-  const timeoutEnd = js.indexOf('function finalizeSTTLocalDraft(reason)', timeoutStart);
+  const timeoutEnd = js.indexOf('function handleSTTFinalText(text)', timeoutStart);
   assert.ok(timeoutStart >= 0 && timeoutEnd > timeoutStart, 'final wait timeout block not found');
   const timeoutSource = js.slice(timeoutStart, timeoutEnd);
-  assert.match(timeoutSource, /finalizeSTTLocalDraft\('timeout'\)/);
+  assert.doesNotMatch(timeoutSource, /finalizeSTTLocalDraft/);
+  assert.match(timeoutSource, /timed out waiting for final/);
 
   const finalStart = js.indexOf("} else if (msg.type === 'final') {");
   const finalEnd = js.indexOf("} else if (msg.type === 'reply_reset')", finalStart);
   assert.ok(finalStart >= 0 && finalEnd > finalStart, 'final message block not found');
   const finalSource = js.slice(finalStart, finalEnd);
-	assert.match(finalSource, /const finalInputText = formatSTTFinalInputText\(sttState\.lastRecognitionText, msg\)/);
-	assert.match(finalSource, /handleSTTFinalText\(finalInputText\)/);
+	assert.match(finalSource, /handleSTTFinalText\(sttState\.lastRecognitionText\)/);
   assert.match(finalSource, /sttState\.ws\.close\(\)/);
 });
 
@@ -277,7 +276,7 @@ test('viewer preserves received STT final when later stop or error arrives', () 
   const finalSource = js.slice(finalStart, finalEnd);
   assert.match(finalSource, /sttState\.finalReceived = true;/);
   assert.match(finalSource, /clearSTTFinalWaitTimer\(\);/);
-	assert.match(finalSource, /handleSTTFinalText\(finalInputText\)/);
+  assert.match(finalSource, /handleSTTFinalText\(sttState\.lastRecognitionText\)/);
 
   const errorStart = js.indexOf("} else if (msg.type === 'error') {");
   const errorEnd = js.indexOf('        }', errorStart);
@@ -299,17 +298,12 @@ test('viewer preserves received STT final when later stop or error arrives', () 
   assert.doesNotMatch(finalReceivedSource, /sendSTTStopControl\(\);/);
 });
 
-test('viewer marks provisional STT final before sending it to chat', () => {
+test('viewer sends only RenCrow_STT final text to chat', () => {
   const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
-  assert.match(js, /function formatSTTFinalInputText\(text, msg\)/);
-  assert.match(js, /msg && msg\.stt_fallback_required === true/);
-  assert.match(js, /\[音声入力: 暫定認識 \/ 要確認\]/);
-  assert.match(js, /const finalInputText = formatSTTFinalInputText\(sttState\.lastRecognitionText, msg\)/);
-  assert.match(js, /handleSTTFinalText\(finalInputText\)/);
+  assert.match(js, /handleSTTFinalText\(sttState\.lastRecognitionText\)/);
 });
 
-test('viewer STT message handling is not blocked by debug panel rendering', () => {
-  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+test('viewer STT message handling is not blocked by debug panel rendering', () => {  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
   assert.match(js, /function renderSTTDebugPanelsSafely\(\)/);
   assert.match(js, /try \{\s*renderDebugPanels\(\);/);
   assert.match(js, /console\.warn\('\[STT\] Debug panel render skipped:'/);
@@ -322,13 +316,11 @@ test('viewer STT message handling is not blocked by debug panel rendering', () =
   assert.doesNotMatch(preActionSource, /renderDebugPanels\(\);/);
 });
 
-test('viewer STT autotest uses runtime STT base URL for provider inference', () => {
+test('viewer STT autotest uses the same-origin RenCrow_STT websocket route', () => {
   const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
-  assert.match(js, /sttBaseURL:\s*''/);
-  assert.match(js, /cfg\.stt_base_url/);
-  assert.match(js, /function buildSTTProviderURLForAutoTest\(\)/);
-  assert.match(js, /base \+ '\/v1\/audio\/transcriptions'/);
-  assert.match(js, /provider_url: providerURL/);
+  assert.match(js, /function buildSTTWebSocketURLForAutoTest\(\)/);
+  assert.match(js, /location\.host \+ '\/stt'/);
+  assert.match(js, /ws_url: wsURL/);
 });
 
 test('viewer renders live microphone input level on the mic button', () => {
@@ -363,7 +355,7 @@ test('viewer exposes Ops test recording mode that trims silence and saves Latest
   assert.match(js, /await persistSTTRawWavToServer\(rawWav\)/);
   assert.match(js, /\/viewer\/stt\/wav\/raw/);
   assert.match(js, /await persistSTTWavToServer\(wav\)/);
-  assert.match(js, /await runSTTAutoTest\(\{ provider_rounds: 1, ws_rounds: 0 \}\)/);
+  assert.match(js, /await runSTTAutoTest\(\{ ws_rounds: 1 \}\)/);
   assert.match(js, /sttTestRecordState\.lastTranscript = transcript/);
   assert.match(js, /interruptChatOutputForUserInput\('stt_test_record'\)/);
   assert.match(js, /interruptIdleChatForUserInput\('stt_test_record'\)/);

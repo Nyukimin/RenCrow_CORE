@@ -74,7 +74,6 @@ func TestExternalPromptUsesWikipediaOnly(t *testing.T) {
 	withDailySeedCache(t, &DailySeedCache{
 		Date:           "2026-05-27",
 		WikipediaSeeds: []string{"地下鉄博物館"},
-		NewsSeeds:      []string{"政府が新制度を発表"},
 		FetchedAt:      time.Now(),
 	})
 
@@ -100,7 +99,6 @@ func TestNewsPromptUsesNewsSeedWithoutGenreMixing(t *testing.T) {
 	withDailySeedCache(t, &DailySeedCache{
 		Date:           "2026-05-27",
 		WikipediaSeeds: []string{"地下鉄博物館"},
-		NewsSeeds:      []string{"新しい医療制度の検討が始まる"},
 		NewsSeedItems: []NewsSeed{
 			{
 				Title:    "新しい医療制度の検討が始まる",
@@ -151,26 +149,6 @@ func TestNewsPromptTreatsSocialPostAsUnverifiedSignal(t *testing.T) {
 	}
 }
 
-func TestNewsPromptKeepsLegacyNewsSeedsCompatible(t *testing.T) {
-	withDailySeedCache(t, &DailySeedCache{
-		Date:           "2026-05-27",
-		WikipediaSeeds: []string{"地下鉄博物館"},
-		NewsSeeds:      []string{"新しい医療制度の検討が始まる"},
-		FetchedAt:      time.Now(),
-	})
-
-	prompt, source, ok := generateNewsPrompt()
-	if !ok {
-		t.Fatalf("news prompt unavailable: source=%q", source)
-	}
-	if source != "News:新しい医療制度の検討が始まる" {
-		t.Fatalf("legacy news source = %q", source)
-	}
-	if !strings.Contains(prompt, "ニュース見出し") || !strings.Contains(prompt, "新しい医療制度の検討が始まる") {
-		t.Fatalf("legacy news prompt does not focus on headline: %s", prompt)
-	}
-}
-
 func TestFetchNewsSeedsFromExtractsCategorySourceAndURL(t *testing.T) {
 	const rss = `<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0">
@@ -213,7 +191,6 @@ func TestNewsPromptUnavailableIsExplicit(t *testing.T) {
 	withDailySeedCache(t, &DailySeedCache{
 		Date:           "2026-05-27",
 		WikipediaSeeds: []string{"地下鉄博物館"},
-		NewsSeeds:      nil,
 		FetchedAt:      time.Now(),
 	})
 

@@ -153,7 +153,7 @@ Coder が行うのは次のみ：
    表示不具合では、開始から終了まで最低 1 セッションを追い、表示本文、イベントログ、境界、終了状態を照合する。目視できない場合は描画ログを取る。
 
 4. **Viewer は要約・到達性・非干渉を実ブラウザで確認する**  
-   Ops / System / Jobs など監視系タブでも、初期表示は 3 から 5 個程度の要約ブロックに絞り、監査ログ、生テーブル、長文エラーは初期表示せず `details` などへ分離する。Viewer UI 変更では desktop に加えて narrow / mobile 幅でも確認し、長文や URL がカードを押し広げないことを確認する。live-mode、lipsync、固定入力バー、toast、overlay などクリック干渉しやすい UI は、見た目だけでなく computed style の `pointer-events`、`z-index`、`position`、`background`、`border`、`box-shadow`、`backdrop-filter` を確認する。
+   Ops / System / Jobs など監視系タブでも、初期表示は 3 から 5 個程度の要約ブロックに絞り、監査ログ、生テーブル、長文エラーは初期表示せず `details` などへ分離する。Viewer UI 変更では desktop に加えて narrow / mobile 幅でも確認し、長文や URL がカードを押し広げないことを確認する。lipsync、固定入力バー、toast、overlay などクリック干渉しやすい UI は、見た目だけでなく computed style の `pointer-events`、`z-index`、`position`、`background`、`border`、`box-shadow`、`backdrop-filter` を確認する。
 
 5. **不具合リストを優先度で消さない**  
    観測された事象は番号付きで保持する。優先度は作業順のためだけに使い、品質判断では全事象の状態を追跡する。「代表例」だけで完了扱いしない。
@@ -436,8 +436,8 @@ Worker は実行主体である。
 - `rules/rules_domain.md`
 
 ### 旧 docs 参照ルール
-- archive branch、Knowledge、削除済みdocs、版付き旧仕様、引き継ぎ資料を現行正本として参照しない。
-- 現行正本に不足がある場合は、旧資料を補助正本にせず、実装・test・production wiringを確認して `docs/README.md` に列挙された該当文書を更新する。
+- 製品仕様は`docs/README.md`に列挙された文書だけを参照する。
+- 現行正本に不足がある場合は、実装・test・production wiringを確認して該当文書を更新する。
 
 ---
 

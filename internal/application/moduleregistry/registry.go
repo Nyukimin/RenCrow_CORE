@@ -79,7 +79,7 @@ func DefaultRegistry() *Registry {
 			Root:        path.Join(root, "RenCrow_LLM"),
 			Kind:        "mixed",
 			OwnerRoute:  "CODE",
-			Aliases:     []string{"rencrow_llm", "llm", "モデル", "provider", "mlx", "ollama", "openai互換", "model gateway"},
+			Aliases:     []string{"rencrow_llm", "llm", "モデル", "provider", "gateway", "model gateway"},
 		},
 		{
 			ID:          "vision",
@@ -95,7 +95,7 @@ func DefaultRegistry() *Registry {
 			Root:        path.Join(root, "RenCrow_Image"),
 			Kind:        "mixed",
 			OwnerRoute:  "CODE",
-			Aliases:     []string{"rencrow_image", "image", "画像生成", "comfyui", "image workflow"},
+			Aliases:     []string{"rencrow_image", "image", "画像生成", "image workflow"},
 		},
 		{
 			ID:          "tools",

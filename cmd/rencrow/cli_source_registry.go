@@ -303,9 +303,9 @@ func loadSourceRegistryStore(configPath string) (*l1sqlite.L1SQLiteStore, error)
 	if err != nil {
 		return nil, err
 	}
-	p := strings.TrimSpace(cfg.Conversation.L1SQLitePath)
+	p := strings.TrimSpace(cfg.Storage.Databases.ConversationL1)
 	if p == "" {
-		return nil, errors.New("conversation.l1_sqlite_path is required for source-registry CLI")
+		return nil, errors.New("storage.databases.conversation_l1 is required for source-registry CLI")
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return nil, err

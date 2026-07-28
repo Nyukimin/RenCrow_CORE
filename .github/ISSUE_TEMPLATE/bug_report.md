@@ -12,7 +12,7 @@ assignees: ''
 ##  Environment & Tools
 - **RenCrow Version:** (e.g., v0.1.2 or commit hash)
 - **Go Version:** (e.g., go 1.22)
-- **AI Model & Provider:** (e.g., GPT-4o via OpenAI / DeepSeek via SiliconFlow)
+- **AI Model & Provider:** logical alias and RenCrow module
 - **Operating System:** (e.g., Ubuntu 22.04 / macOS / Android Termux)
 - **Channels:** (e.g., Discord, Telegram, Feishu, ...)
 

@@ -520,10 +520,10 @@ func TestRecall_SkipsSQLiteArchiveWhenArchiveDisabled(t *testing.T) {
 	}
 }
 
-func TestOpenArchiveSQLiteStoreReturnsNilInterfaceForLegacyDatabase(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.duckdb")
-	if err := os.WriteFile(path, []byte("legacy non-sqlite database"), 0600); err != nil {
-		t.Fatalf("write legacy database: %v", err)
+func TestOpenArchiveSQLiteStoreRejectsInvalidDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "invalid.db")
+	if err := os.WriteFile(path, []byte("not a sqlite database"), 0600); err != nil {
+		t.Fatalf("write invalid database: %v", err)
 	}
 	store, err := openArchiveSQLiteStore(path)
 	if err == nil {

@@ -18,7 +18,6 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /health/live` | COREのHTTPイベントループ自身のliveness。外部依存を確認しない |
 | `GET /health` | COREと設定済み依存serviceの総合health |
 | `GET /ready` | request受付可否 |
-| `/viewer/api/chat` | Viewer chat request と response |
 | `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読 |
 | `GET/POST /viewer/character-runtime` | Character一覧、複数Character Roundと会話ID |
 | `/viewer/status`, `/viewer/agents` | runtime と agent の状態 |
@@ -39,12 +38,9 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewerの画像生成と結果表示 |
 | `POST /viewer/recipient-selection` | client-localなchat recipient選択の通知event |
 | `POST /webhook/line` | LINE Messaging API Webhook。署名必須の正規path |
-| `POST /webhook` | LINE Webhookの旧互換path |
 | `POST /internal/assistant/notifications/line` | localhostのRenCrow_ASSISTANT専用LINE push transport |
 | `/viewer/ai-workflow/*` | AI engineering workflow の experimental API |
-| `/viewer/games/*` | RenCrow_GAMES bridge（status/decision/result/sessions/events/launch/observer proxy） |
-
-`POST /viewer/api/chat`の`character_id`は`mio`、`shiro`、`kuro`、`midori`を受け付け、通常CHATのrecipientとしてorchestratorへ引き渡します。responseの`character_id`表示だけを切り替えて、実際のAgentをMioへ固定してはなりません。
+| `/viewer/games/*` | RenCrow_GAMES bridge（status/result/sessions/events/launch/observer proxy） |
 
 ### Game Launch（マルチペルソナ WP5）
 
@@ -57,17 +53,14 @@ Game lifecycleの向きは次で固定します。
 CORE Agent / LLM
   -> POST /viewer/games/launch
   -> RenCrow_GAMES Observer / title process
-  -> POST /viewer/games/decision
-  -> CORE -> RenCrow_LLM -> BrainDecision
-  -> GAMES deterministic execution
+  -> GAMES game execution
   -> ObserverFrame / POST /viewer/games/result
   -> CORE observer proxy / candidate memory
   -> user
 ```
 
-`GAMES -> /viewer/games/decision`は起動後のターン判断callbackです。ゲーム起動主体は
-COREのAgent／LLM、ゲーム状態と実行の正本はGAMESです。COREはworld stateを直接変更せず、
-GAMESは本番LLM providerへ直接接続しません。ユーザー向けの実行表示はGAMES Observerを
+ゲーム起動主体はCOREのAgent／LLM、ゲーム状態と実行の正本はGAMESです。
+ユーザー向けの実行表示はGAMES Observerを
 `/viewer/games/observer`と`/viewer/games/observer-api/*`でsame-origin proxyします。
 
 - Request: `{game_id, personas[], turns?, mode?, reason?}`。
@@ -90,7 +83,7 @@ GAMESは本番LLM providerへ直接接続しません。ユーザー向けの実
 
 実際に有効な endpoint は build と config に依存します。process supervisorは`/health/live`だけを再起動判定に使います。利用者向け機能の確認では`/health`と`/viewer/status`も確認し、featureがunavailable/degradedの場合は成功として扱わないでください。
 
-LINE WebhookはPOSTだけを受け付けます。Tailscale公開guardはtailscaledが`Tailscale-Funnel-Request`を付けたinternet trafficでは`POST /webhook/line`だけを追加許可し、旧`/webhook`とViewer／Debug／Ops pathを404にします。tailnet内のServe trafficは従来のViewer系allowlistを維持します。`GET /webhook/line`の404、署名なしPOSTの401は故障判定に使いません。LINE Developersへ登録するendpointはdeployment時点の公開hostを確認して`https://<current-host>/webhook/line`とし、旧hostを仕様へ固定しません。外部到達確認ではMessaging APIのWebhook testを使い、署名検証済みeventが200になることを確認します。
+LINE WebhookはPOSTだけを受け付けます。Tailscale公開guardはtailscaledが`Tailscale-Funnel-Request`を付けたinternet trafficでは`POST /webhook/line`だけを追加許可し、Viewer／Debug／Ops pathを404にします。tailnet内のServe trafficはViewer系allowlistを維持します。`GET /webhook/line`の404、署名なしPOSTの401は故障判定に使いません。LINE Developersへ登録するendpointはdeployment時点の公開hostを確認して`https://<current-host>/webhook/line`とします。外部到達確認ではMessaging APIのWebhook testを使い、署名検証済みeventが200になることを確認します。
 
 `POST /internal/assistant/notifications/line`はloopback remote addressだけを許可します。
 `assistant-core` profileと`RenCrow_ASSISTANT` client headerの組み合わせが必要で、Tailscale、
@@ -109,12 +102,10 @@ Viewer 通常 chat の宛先は次の値を使用します。
 mio | shiro | kuro | midori
 ```
 
-`model_alias` や旧 route alias は互換経路であり、新規 client の primary contract にしません。指定 recipient が利用不能な場合に別 recipient へ黙って fallback しません。
-
 recipientは物理ModelやExecution Roleの直接選択ではありません。COREがroute、Agent、
-Execution Roleを確定した後、RenCrow_LLM Gatewayへ現行互換の論理execution aliasを送ります。
+Execution Roleを確定した後、RenCrow_LLM Gatewayへ論理execution aliasを送ります。
 
-### 現行execution aliasの互換契約
+### execution alias契約
 
 | alias | 現在のAgent／Role binding | 備考 |
 | --- | --- | --- |
@@ -124,7 +115,7 @@ Execution Roleを確定した後、RenCrow_LLM Gatewayへ現行互換の論理ex
 | `midori` | Midori／Wild | Agent IDやModel名として再解釈しない |
 | `kuro` | Kuro／Heavy | Codex、Heavy、Model名そのものではない |
 
-これらはCOREからRenCrow_LLMへ送るopaqueな互換wire keyであり、Agent ID、Execution Role ID、
+これらはCOREからRenCrow_LLMへ送るopaqueなwire keyであり、Agent ID、Execution Role ID、
 物理Target名のいずれか一つを表す汎用fieldではありません。PORTAL、CMD、ASSISTANTはaliasを
 選択せず、COREへrecipient Agentを送ります。Agent／Role bindingが同じままTargetだけを
 変更する場合はaliasを変更しません。COREはGateway requestの`rencrow` metadataへ
@@ -138,7 +129,7 @@ renameを移行要件にしません。
 | --- | --- |
 | `agent_id` | COREが選んだAgent |
 | `execution_role` | COREが選んだRole |
-| `execution_alias` | Gatewayへ送った現行互換wire key |
+| `execution_alias` | Gatewayへ送った論理wire key |
 | `role_profile_revision` | Gatewayが解決したRole profileのrevision |
 | `target_id` | Gateway内部のTarget識別子 |
 | `provider` | local／外部API／Agent Runtimeのprovider |
@@ -164,24 +155,22 @@ COREからRenCrow_Visionへの内部requestは`POST /v1/vision/analyze`の
 `session_id`、`language`、`max_frames`、`output_format`を任意fieldとします。
 COREはroot `trace_id`を`request_id`として送り、RenCrow_Visionは同じ値をresponseとlogへ
 保持します。成功responseは`ok=true`と`request_id`、`provider`、`model`、`kind`、
-`summary`、`text`、`segments`、`metadata`を返し、productionでは
-`provider=openai_compatible`、`model=Wild`です。
+`summary`、`text`、`segments`、`metadata`を返します。認識backendとmodelは
+RenCrow_Vision内部の責務であり、COREのPublic APIへ公開しません。
 
 失敗responseは`ok=false`、`request_id`、`error_code`、`message`を返します。
 COREは`VISION_PROVIDER_UNAVAILABLE`、`VISION_MODEL_NOT_READY`、
 `VISION_UNSUPPORTED_MEDIA`、`VISION_FILE_TOO_LARGE`、`VISION_VIDEO_TOO_LONG`、
 `VISION_DECODE_FAILED`、`VISION_INFERENCE_TIMEOUT`、`VISION_EMPTY_RESULT`を
-通常Chat成功へ変換せず、同じ`trace_id`の終端errorとしてclientへ通知します。
-Vision失敗時にCOREがraw mediaをWildや別LLMへ直接送るfallbackは禁止します。
+同じ`trace_id`の終端errorとしてclientへ通知します。
 
 Debug Viewerの画像生成は`POST /viewer/image/generate`へ
 `{"prompt":"...", "negative_prompt":"", "seed":-1}`を送ります。
 COREは同じrequestをRenCrow_Imageの`POST /v1/images/generations`へ転送し、
 responseのopaqueなimage IDだけを保持して
 `GET /viewer/image/result?id=...`からPNGを中継します。
-ViewerとCOREはForgeNeo URL、checkpoint、text encoder、VAE、sampler、
-ADetailer等のbackend設定を指定しません。RenCrow_Imageがunavailableの場合は
-明示的な503を返し、ForgeNeoやComfyUIへ直接fallbackしません。
+ViewerとCOREはRenCrow_Imageへの接続とopaqueな生成IDを扱います。
+RenCrow_Imageがunavailableの場合は明示的な503を返します。
 
 COREは受付時に`job_id`、root `trace_id`、利用者発話の`message_id`を発行します。`POST /viewer/send`の受付responseは`job_id`、`trace_id`、`message_id`、`viewer_client_id`、`recipient`を返します。現行のroot `trace_id`は`job_id`と同じopaque値です。同じ処理から発行する`message.received`、`agent.response`、error eventは同じ`trace_id`を持ち、`message.received.message_id`は受付responseの`message_id`と一致します。Agent発話は利用者発話とは別の`message_id`を持ちます。
 
@@ -251,7 +240,6 @@ capabilityで制限します。
 /health、/health/live、/ready
 /viewer/status、/viewer/logs
 /viewer/evidence/{recent,detail,summary}
-/viewer/llm-ops/{health,status}
 /viewer/source-registry、/viewer/knowledge-memory
 /viewer/debug/system
 /viewer/channels、/viewer/channels/probe
@@ -270,10 +258,8 @@ HTTPアクセスを伴う操作を公開するとCOREが任意URL取得の踏み
 許可し、対話系（`/viewer/send`、`/viewer/events`、IdleChat）は対象外とします。
 
 ```text
-POST /viewer/llm-ops/{start,stop,restart}
 POST /viewer/repair/run
 POST /viewer/source-registry
-GET  /health、/health/live、/ready、/viewer/status、/viewer/llm-ops/{health,status}
 ```
 
 COREは既知clientのprofile欠落、client/profile不一致、profile外method/pathを403で拒否します。
@@ -296,7 +282,6 @@ server-side authorizationを置き換えません。共通SDKは実caller間の�
 - `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りだけを許可する。
 - `Chat`: IdleChatの読み取りに加え、chat、recipient通知、active audio/input ownership、TTS再生、STT入力に必要な公開契約だけをallowlistとする。
 - COREへのproxy requestはmodeに応じて`portal-chat`または`portal-idlechat` profileを付ける。
-- 旧`view`、`live`、`lab`のpage modeとAPI prefixは受理しない。
 - Debug、Ops、Repair、LLM管理、設定変更APIはPORTALから遮断する。
 - 新しい公開操作はCORE側のAPI追加だけで自動公開せず、PORTAL側でmethod/pathと契約テストを追加する。
 

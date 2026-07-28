@@ -17,7 +17,7 @@ RenCrow の module / directory 固有制約を、常時 `AGENTS.md` へ詰め込
 | `/home/nyukimi/RenCrow` | 管理 root。git root として扱わない。build / test / commit は具体 module で実行する。 | root `AGENTS.md` |
 | `RenCrow_STT/**` | STT owner。timing probe は送受信を同時に測る。audio fixture と secure context を区別する。 | `skills/core/stt-latency-debug` |
 | `RenCrow_TTS/**` | TTS owner。voice asset、engine boundary、latency measurement を分ける。 | module `AGENTS.md` |
-| `RenCrow_LLM/**` | local LLM owner。OpenAI-compatible endpoint、model context、provider config を runtime proof で確認する。 | module `AGENTS.md` |
+| `RenCrow_LLM/**` | LLM Gateway owner。role、context budget、Gateway config を runtime proof で確認する。 | module `AGENTS.md` |
 | `RenCrow_CMD/**` | CLI owner。server endpoint contract と audio-file input の互換性を壊さない。 | module `AGENTS.md` |
 | `RenCrow_Tools/**` | 横断 tool の正本。新規 browser sidecar、変換、検証 CLI はここを優先する。 | root `AGENTS.md` |
 | `modules/stt/**` | Core runtime 側の STT integration。STT engine 本体と混同しない。 | `skills/core/stt-latency-debug` |

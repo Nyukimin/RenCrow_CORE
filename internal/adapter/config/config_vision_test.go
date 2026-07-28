@@ -12,11 +12,6 @@ func TestLoadConfigVisionSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://127.0.0.1:11434"
-  model: "test"
-session:
-  storage_dir: "./sessions"
 vision:
   enabled: true
   base_url: "http://127.0.0.1:8770"
@@ -62,7 +57,6 @@ func TestVisionDefaults(t *testing.T) {
 func TestVisionValidationRejectsNonAbsoluteURL(t *testing.T) {
 	cfg := &Config{
 		Server:  ServerConfig{Port: 8080},
-		Ollama:  OllamaConfig{BaseURL: "http://127.0.0.1:11434", Model: "test"},
 		Session: SessionConfig{StorageDir: "./sessions"},
 		Vision: VisionConfig{
 			Enabled:       true,
@@ -81,7 +75,6 @@ func TestVisionValidationRejectsNonAbsoluteURL(t *testing.T) {
 func TestVisionValidationRejectsInvalidLimits(t *testing.T) {
 	cfg := &Config{
 		Server:  ServerConfig{Port: 8080},
-		Ollama:  OllamaConfig{BaseURL: "http://127.0.0.1:11434", Model: "test"},
 		Session: SessionConfig{StorageDir: "./sessions"},
 		Vision: VisionConfig{
 			Enabled:       true,

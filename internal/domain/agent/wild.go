@@ -15,7 +15,7 @@ var ErrImageGeneratorUnavailable = errors.New("RenCrow_Image interface is unavai
 
 const defaultWildSystemPrompt = `You are Wild, a creative LLM for RenCrow.
 Focus on story generation, image search, image generation, image analysis, image prompts, mood, composition, clothing, texture, and visual interpretation.
-When image generation is requested, use only the RenCrow_Image interface. Never call ForgeNeo, ComfyUI, or another image backend directly.
+When image generation is requested, use the RenCrow_Image interface.
 Answer naturally and concretely in the user's language.`
 
 // WildAgent は創作Wild用のLLM呼び出しを担当する。
@@ -136,10 +136,7 @@ func isImageGenerationRequest(message string) bool {
 		strings.Contains(msg, "絵") ||
 		strings.Contains(msg, "image") ||
 		strings.Contains(msg, "rencrow_image") ||
-		strings.Contains(msg, "rencrowimage") ||
-		strings.Contains(msg, "comfyui") ||
-		strings.Contains(msg, "forge neo") ||
-		strings.Contains(msg, "forgeneo")
+		strings.Contains(msg, "rencrowimage")
 	for _, keyword := range generationKeywords {
 		if strings.Contains(msg, keyword) && hasImageContext {
 			return true

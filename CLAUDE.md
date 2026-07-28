@@ -30,13 +30,12 @@
 | `docs/05_設定リファレンス.md` | config読込、主要section、外部endpoint |
 | `docs/06_Public_API仕様.md` | health、Viewer、PORTAL、client契約 |
 | `docs/07_安全・自動実行・データ方針.md` | 同期policy、secret、Memory、degraded state |
-| `docs/08_実装状況・ロードマップ.md` | 実装済み、未実装、deployment依存、旧構想 |
+| `docs/08_実装状況・ロードマップ.md` | 実装済み、未実装、deployment依存 |
 | `docs/09_運用ログ・panic保存仕様.md` | logging運用、panic、restart、self-repair、retention |
 | `docs/10_ログ仕様.md` | ログ形式、相関ID、記録と配信の分離、保持上限、モジュール別責務 |
 
 ## 作業上の不変条件
 
-- archive branch、Knowledge、削除済みdocs、版付き旧仕様を現行正本にしない。
 - 現行正本に不足がある場合は、実装・test・production wiringを照合し、`docs/README.md`に列挙された該当文書を更新する。別の正本を作らない。
 - CORE、PORTAL、CMD、LLM、STT、TTSなどのmodule所有境界は現行正本に従う。
 - providerやbackend固有のmodel、context、常駐、management方式をCOREの固定要件にしない。

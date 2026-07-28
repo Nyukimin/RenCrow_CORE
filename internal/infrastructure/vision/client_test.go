@@ -45,7 +45,7 @@ func TestClientAnalyzeUsesVisionMultipartContract(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"ok":true,"request_id":"trace-1","provider":"openai_compatible","model":"Wild","kind":"image","summary":"要約","text":"解析結果","segments":[],"metadata":{"width":1}}`)
+		fmt.Fprint(w, `{"ok":true,"request_id":"trace-1","provider":"rencrow_vision","model":"Wild","kind":"image","summary":"要約","text":"解析結果","segments":[],"metadata":{"width":1}}`)
 	}))
 	defer server.Close()
 
@@ -106,7 +106,7 @@ func TestClientHealthRequiresReadyModel(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true, "status": "ready", "service": "rencrow-vision",
-			"provider": "openai_compatible", "model": "Vision",
+			"provider": "rencrow_vision", "model": "Vision",
 			"ready": map[string]any{"model_loaded": true, "tmp_writable": true},
 		})
 	}))

@@ -54,7 +54,7 @@ func TestTriggerLevelAndEvidenceSourceValidity(t *testing.T) {
 		t.Fatal("screenshot must not be accepted as an evidence source type")
 	}
 	if !EvidenceSourceType("duckdb_archive").Valid() {
-		t.Fatal("persisted legacy archive evidence must remain readable")
+		t.Fatal("persisted archive evidence must remain readable")
 	}
 }
 

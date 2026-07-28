@@ -84,7 +84,7 @@ func TestResolveNotificationDestinationFallsBackToRecordedDirectUser(t *testing.
 		WorkspaceDir: workspaceDir,
 		Heartbeat: config.HeartbeatConfig{
 			Channel: "line",
-			ChatID:  "${PICOCLAW_HEARTBEAT_CHAT_ID}",
+			ChatID:  "${RENCROW_HEARTBEAT_CHAT_ID}",
 		},
 	}
 

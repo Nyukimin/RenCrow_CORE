@@ -299,7 +299,7 @@ func TestRuleDictionary_Match_WildKeywords(t *testing.T) {
 		},
 		{
 			name:    "画像生成",
-			message: "ComfyUIでMioの画像生成をして",
+			message: "RenCrow_ImageでMioの画像生成をして",
 		},
 		{
 			name:    "画像検索",

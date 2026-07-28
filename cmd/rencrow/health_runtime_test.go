@@ -18,7 +18,6 @@ func TestInferTTSDebugHealthPathFromConfigUsesGatewayHealthProbes(t *testing.T) 
 func TestInferTTSDebugBaseURLFromConfigUsesGatewayOnly(t *testing.T) {
 	cfg := &config.Config{TTS: config.TTSConfig{
 		GatewayBaseURL: "http://gateway.example:7870",
-		HTTPBaseURL:    "http://legacy.example:8770",
 	}}
 	if got := inferTTSDebugBaseURLFromConfig(cfg); got != "http://gateway.example:7870" {
 		t.Fatalf("base URL = %q", got)

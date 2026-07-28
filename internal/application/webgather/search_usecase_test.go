@@ -6,7 +6,6 @@ import (
 	modulewebgather "github.com/Nyukimin/RenCrow_CORE/modules/webgather"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 type fakeSearchProvider struct {
@@ -61,24 +60,5 @@ func TestSearchUseCaseUnconfiguredProviderFails(t *testing.T) {
 	}
 	if resp.Diagnostics["error"] == "" {
 		t.Fatalf("expected diagnostic error: %+v", resp)
-	}
-}
-
-func TestL1SearchCacheReadsLegacyWebSearchResults(t *testing.T) {
-	ctx := context.Background()
-	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
-	if err != nil {
-		t.Fatalf("NewL1SQLiteStore failed: %v", err)
-	}
-	defer store.Close()
-	if _, err := store.SaveSearchCache(ctx, "google", "RenCrow", `[{"title":"Example","link":"https://example.com","snippet":"RenCrow docs"}]`, []string{"https://example.com"}, time.Hour); err != nil {
-		t.Fatalf("SaveSearchCache failed: %v", err)
-	}
-	results, hit, err := NewL1SearchCache(store).SearchLocal(ctx, "RenCrow", 5, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("SearchLocal failed: %v", err)
-	}
-	if !hit || len(results) != 1 || results[0].URL != "https://example.com" || results[0].SourceEngine != "legacy_web_search" {
-		t.Fatalf("unexpected legacy results: hit=%t results=%+v", hit, results)
 	}
 }

@@ -90,7 +90,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--local-responses-endpoint",
         default="",
-        help="Append local worker profile and override openai_endpoint, e.g. http://192.168.1.207:8082/v1/responses.",
+        help="Set Webwright's openai_endpoint schema field to the RenCrow_LLM Gateway, e.g. http://192.168.1.207:8082/v1/responses.",
     )
     parser.add_argument("--local-model", default="Coder1", help="Model used with --local-responses-endpoint.")
     parser.add_argument("--local-api-key", default="dummy", help="API key value used with --local-responses-endpoint.")

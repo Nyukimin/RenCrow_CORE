@@ -16,7 +16,6 @@ func TestBuildRuntimeDependencyReadinessRequiresCredentialPairs(t *testing.T) {
 	t.Setenv("DISCORD_PUBLIC_KEY", "discord-public")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "telegram-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "telegram-secret")
-	t.Setenv("STT_GATEWAY_URL", "wss://127.0.0.1:8443/stt/stream")
 	t.Setenv("RENCROW_TTS_GATEWAY_URL", "")
 	t.Setenv("TTS_GATEWAY_URL", "")
 
@@ -30,22 +29,15 @@ func TestBuildRuntimeDependencyReadinessRequiresCredentialPairs(t *testing.T) {
 	if !readiness.TelegramCredentialsPresent {
 		t.Fatal("telegram readiness should be present when bot token and webhook secret are set")
 	}
-	if !readiness.STTGatewayEnvPresent {
-		t.Fatal("stt gateway readiness should be present when STT_GATEWAY_URL is set")
-	}
 	if readiness.TTSProviderEnvPresent {
 		t.Fatal("tts provider readiness should be false when provider envs are empty")
 	}
 }
 
-func TestBuildRuntimeDependencyReadinessAcceptsAlternateAudioEnv(t *testing.T) {
-	t.Setenv("RENCROW_STT_URL", "wss://127.0.0.1:8443/stt/stream")
+func TestBuildRuntimeDependencyReadinessAcceptsTTSGatewayEnv(t *testing.T) {
 	t.Setenv("RENCROW_TTS_GATEWAY_URL", "http://127.0.0.1:7870")
 
 	readiness := buildRuntimeDependencyReadiness(&config.Config{}, nil)
-	if !readiness.STTGatewayEnvPresent {
-		t.Fatal("stt gateway readiness should accept RENCROW_STT_URL")
-	}
 	if !readiness.TTSProviderEnvPresent {
 		t.Fatal("tts provider readiness should accept RENCROW_TTS_GATEWAY_URL")
 	}
@@ -65,9 +57,11 @@ func TestBuildRuntimeDependencyReadinessReportsSourceRegistryAvailability(t *tes
 	}
 
 	enabled := buildRuntimeDependencyReadiness(&config.Config{
-		Conversation: config.ConversationConfig{
-			Enabled:      true,
-			L1SQLitePath: "/home/nyukimi/.rencrow/l1_memory.db",
+		Conversation: config.ConversationConfig{Enabled: true},
+		Storage: config.StorageConfig{
+			Databases: config.DatabasePathsConfig{
+				ConversationL1: "/home/nyukimi/.rencrow/l1_memory.db",
+			},
 		},
 	}, &Dependencies{
 		viewerMemoryLayers:          http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),

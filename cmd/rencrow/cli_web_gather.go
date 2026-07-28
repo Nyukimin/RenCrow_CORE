@@ -1125,9 +1125,9 @@ func loadWebGatherStore(configPath string) (*config.Config, *l1sqlite.L1SQLiteSt
 	if err != nil {
 		return nil, nil, err
 	}
-	p := strings.TrimSpace(cfg.Conversation.L1SQLitePath)
+	p := strings.TrimSpace(cfg.Storage.Databases.ConversationL1)
 	if p == "" {
-		return nil, nil, errors.New("conversation.l1_sqlite_path is required for web-gather CLI")
+		return nil, nil, errors.New("storage.databases.conversation_l1 is required for web-gather CLI")
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return nil, nil, err

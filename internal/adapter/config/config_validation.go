@@ -51,11 +51,6 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("mio.generation.chat_template_kwargs.enable_thinking must be false: CHAT thinking is disabled by contract")
 	}
 
-	if c.LLMOps.Enabled {
-		if strings.TrimSpace(c.LLMOps.BaseURL) == "" {
-			return fmt.Errorf("llm_ops.base_url is required when llm_ops.enabled=true")
-		}
-	}
 	if c.TTS.Enabled {
 		gatewayURL, err := url.Parse(strings.TrimSpace(c.TTS.GatewayURL()))
 		if err != nil || gatewayURL.Host == "" || (gatewayURL.Scheme != "http" && gatewayURL.Scheme != "https") {
@@ -397,8 +392,8 @@ func (c *Config) Validate() error {
 		if c.Conversation.RedisURL == "" {
 			return fmt.Errorf("conversation.redis_url is required when conversation.enabled=true")
 		}
-		if c.Conversation.ArchiveSQLitePath == "" {
-			return fmt.Errorf("conversation.archive_sqlite_path is required when conversation.enabled=true")
+		if c.Storage.Databases.ConversationArchive == "" {
+			return fmt.Errorf("storage.databases.conversation_archive is required when conversation.enabled=true")
 		}
 		if c.Conversation.VectorDBURL == "" {
 			return fmt.Errorf("conversation.vectordb_url is required when conversation.enabled=true")
@@ -752,24 +747,6 @@ func (c *Config) Validate() error {
 
 // validateCoderConfig は単一 CoderConfig の妥当性を検証
 func validateCoderConfig(name string, cc *CoderConfig) error {
-	// Provider 検証
-	validProviders := map[string]bool{
-		"deepseek":     true,
-		"openai":       true,
-		"claude":       true,
-		"gemini":       true,
-		"ollama":       true,
-		"local_openai": true,
-	}
-	if cc.Provider != "" && !validProviders[cc.Provider] {
-		return fmt.Errorf("%s.provider must be one of [deepseek, openai, claude, gemini, ollama, local_openai], got '%s'", name, cc.Provider)
-	}
-
-	// Model 検証（Enabled=true の場合のみ必須）
-	if cc.Enabled && cc.Model == "" {
-		return fmt.Errorf("%s.model is required when enabled=true", name)
-	}
-
 	// Name 検証（識別子として使用されるため常に必須）
 	if cc.Name == "" {
 		return fmt.Errorf("%s.name is required", name)
@@ -783,20 +760,6 @@ func validateCoderConfig(name string, cc *CoderConfig) error {
 	// LightMemory.MaxTurns 検証
 	if cc.LightMemory.Enabled && (cc.LightMemory.MaxTurns < 1 || cc.LightMemory.MaxTurns > 20) {
 		return fmt.Errorf("%s.light_memory.max_turns must be between 1 and 20, got %d", name, cc.LightMemory.MaxTurns)
-	}
-
-	// APIKey/BaseURL 検証（provider 別、Enabled=true の場合のみ）
-	if cc.Enabled {
-		switch cc.Provider {
-		case "deepseek", "openai", "claude", "gemini":
-			if cc.APIKey == "" {
-				return fmt.Errorf("%s.api_key is required for provider '%s' when enabled=true", name, cc.Provider)
-			}
-		case "ollama", "local_openai":
-			if cc.BaseURL == "" {
-				return fmt.Errorf("%s.base_url is required for provider '%s' when enabled=true", name, cc.Provider)
-			}
-		}
 	}
 
 	return nil

@@ -5,9 +5,6 @@ import "strings"
 type CoderSlotConfig struct {
 	Name                string
 	DisplayName         string
-	Provider            string
-	Model               string
-	APIKey              string
 	Enabled             bool
 	LightMemoryEnabled  bool
 	LightMemoryMaxTurns int
@@ -30,8 +27,6 @@ type CoderSetupPlan struct {
 	Name                        string
 	Enabled                     bool
 	DisplayName                 string
-	Provider                    string
-	Model                       string
 	UseLightMemory              bool
 	InitializeSharedLightMemory bool
 	SharedLightMemoryMaxTurns   int
@@ -55,27 +50,6 @@ func CoderSlotIndex(name string) int {
 	return -1
 }
 
-func CoderProviderIsExternal(provider string) bool {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "local_openai", "ollama":
-		return false
-	default:
-		return true
-	}
-}
-
-func BuildExternalCoderPolicy(coders []CoderSlotConfig) map[string]bool {
-	policy := make(map[string]bool, len(coders))
-	for _, coder := range coders {
-		name := NormalizeCoderSlotName(coder.Name)
-		if name == "" {
-			continue
-		}
-		policy[name] = CoderProviderIsExternal(coder.Provider)
-	}
-	return policy
-}
-
 func NormalizeLightMemoryMaxTurns(maxTurns int) int {
 	if maxTurns <= 0 {
 		return DefaultLightMemoryMaxTurns
@@ -95,8 +69,6 @@ func BuildCoderSetupPlans(coders []CoderSlotConfig) []CoderSetupPlan {
 			Name:        name,
 			Enabled:     coder.Enabled,
 			DisplayName: strings.TrimSpace(coder.DisplayName),
-			Provider:    strings.TrimSpace(coder.Provider),
-			Model:       strings.TrimSpace(coder.Model),
 		}
 		if coder.Enabled && coder.LightMemoryEnabled {
 			plan.UseLightMemory = true
@@ -112,16 +84,14 @@ func BuildCoderSetupPlans(coders []CoderSlotConfig) []CoderSetupPlan {
 }
 
 func BuildCoderCapabilityPlans(llms []LLMCapability, coders []CoderSlotConfig, qualityOverrides map[string]int) []CoderCapabilityPlan {
-	detected := make(map[string]LLMCapability, len(llms))
+	detected := make(map[string]LLMCapability, len(llms)*2)
 	for _, llm := range llms {
-		detected[llm.ProviderName+"/"+llm.ModelName] = llm
-	}
-
-	providerDefault := map[string]int{
-		"claude":   5,
-		"openai":   4,
-		"deepseek": 3,
-		"ollama":   2,
+		if key := NormalizeCoderSlotName(llm.ProviderName); key != "" {
+			detected[key] = llm
+		}
+		if key := NormalizeCoderSlotName(llm.ModelName); key != "" {
+			detected[key] = llm
+		}
 	}
 
 	plans := make([]CoderCapabilityPlan, 0, len(coders))
@@ -129,15 +99,12 @@ func BuildCoderCapabilityPlans(llms []LLMCapability, coders []CoderSlotConfig, q
 	for _, coder := range coders {
 		var quality int
 		var available bool
-		if llm, ok := detected[coder.Provider+"/"+coder.Model]; ok {
+		name := NormalizeCoderSlotName(coder.Name)
+		if llm, ok := detected[name]; ok {
 			quality = llm.Quality
 			available = coder.Enabled && llm.Available
 		} else {
-			quality = qualityOverrides[coder.Model]
-			if quality == 0 {
-				quality = providerDefault[coder.Provider]
-			}
-			available = coder.Enabled && coder.APIKey != ""
+			quality = qualityOverrides[name]
 		}
 		if quality > 0 {
 			anyUsable = true

@@ -12,8 +12,8 @@ type Dependencies struct {
 }
 
 // BaseRoutes groups Viewer base/static route handlers supplied by cmd/rencrow.
-// Handler implementations remain in legacy adapter/cmd packages during Ver0.80
-// migration; this registrar owns only route registration and dependency handoff.
+// Handler implementations remain in adapter/cmd packages; this registrar owns
+// route registration and dependency handoff.
 type BaseRoutes struct {
 	Page                         http.HandlerFunc
 	Asset                        http.HandlerFunc
@@ -33,9 +33,7 @@ type BaseRoutes struct {
 	Live2DCharacter              http.HandlerFunc
 	Live2DCharacterEmbed         http.HandlerFunc
 	Live2DAsset                  http.HandlerFunc
-	Live2DChat                   http.HandlerFunc
 	Live2DEmotionControl         http.HandlerFunc
-	Live2DChatAPI                http.HandlerFunc
 	Events                       http.HandlerFunc
 	RecipientSelection           http.HandlerFunc
 	DebugSystem                  http.HandlerFunc
@@ -60,8 +58,7 @@ type BaseRoutes struct {
 	InvestmentNotify             http.HandlerFunc
 }
 
-// RegisterRoutes reserves the feature route boundary. Existing routes remain in
-// their legacy packages until a phase migrates them through this registrar.
+// RegisterRoutes reserves the feature route boundary.
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	RegisterBaseRoutes(mux, deps)
 }
@@ -88,9 +85,7 @@ func RegisterBaseRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/live2d/character", base.Live2DCharacter)
 	registerRoute(mux, "/viewer/live2d/embed", base.Live2DCharacterEmbed)
 	registerRoute(mux, "/viewer/live2d/asset", base.Live2DAsset)
-	registerRoute(mux, "/viewer/live2d/chat", base.Live2DChat)
 	registerRoute(mux, "/viewer/live2d/emotion", base.Live2DEmotionControl)
-	registerRoute(mux, "/viewer/api/chat", base.Live2DChatAPI)
 	registerRoute(mux, "/viewer/events", base.Events)
 	registerRoute(mux, "/viewer/recipient-selection", base.RecipientSelection)
 	registerRoute(mux, "/viewer/debug/system", base.DebugSystem)

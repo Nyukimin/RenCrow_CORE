@@ -2,15 +2,9 @@ package viewer
 
 import (
 	"net/http"
-	"strings"
 )
 
 func HandlePage(w http.ResponseWriter, r *http.Request) {
-	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode"))) {
-	case "view", "live", "lab":
-		http.NotFound(w, r)
-		return
-	}
 	data, err := viewerFS.ReadFile("viewer.html")
 	if err != nil {
 		http.Error(w, "viewer page not found", http.StatusInternalServerError)

@@ -250,7 +250,6 @@ tar \
   --xattrs \
   --numeric-owner \
   --exclude="${core_name}/.env" \
-  --exclude="${core_name}/llm_ops.env" \
   --exclude="${core_name}/ssl/*.key" \
   --exclude="${core_name}/bin" \
   --exclude="${core_name}/logs" \
@@ -289,7 +288,6 @@ printf '%s\n' \
   "redis_export=$([[ ${redis_enabled} == true ]] && printf 'external-memory/redis/dump.rdb' || printf 'disabled')" \
   "qdrant_export=$([[ ${qdrant_enabled} == true ]] && printf 'external-memory/qdrant/%s' "${qdrant_snapshot_name}" || printf 'disabled')" \
   "qdrant_sha256=$([[ ${qdrant_enabled} == true ]] && printf '%s' "${qdrant_snapshot_checksum}" || printf 'disabled')" \
-  'excluded=.env,llm_ops.env,ssl/*.key,bin,logs,locks,tmp' \
   'restore_format=tar.gz' \
   > "${candidate_dir}/manifest.txt"
 

@@ -12,11 +12,6 @@ func TestLoadConfigImageGatewaySettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://127.0.0.1:11434"
-  model: "test"
-session:
-  storage_dir: "./sessions"
 image:
   enabled: true
   base_url: "http://127.0.0.1:8780"
@@ -50,7 +45,6 @@ func TestImageGatewayDefaults(t *testing.T) {
 func TestImageGatewayValidationRejectsNonAbsoluteURL(t *testing.T) {
 	cfg := &Config{
 		Server:  ServerConfig{Port: 8080},
-		Ollama:  OllamaConfig{BaseURL: "http://127.0.0.1:11434", Model: "test"},
 		Session: SessionConfig{StorageDir: "./sessions"},
 		Image: ImageConfig{
 			Enabled:   true,

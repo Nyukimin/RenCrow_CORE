@@ -21,11 +21,9 @@ type sttLogSaveRequest struct {
 }
 
 type sttAutoTestRequest struct {
-	ProviderURL    string  `json:"provider_url"`
-	WSURL          string  `json:"ws_url"`
-	ProviderRounds int     `json:"provider_rounds"`
-	WSRounds       int     `json:"ws_rounds"`
-	WSWait         float64 `json:"ws_wait"`
+	WSURL    string  `json:"ws_url"`
+	WSRounds int     `json:"ws_rounds"`
+	WSWait   float64 `json:"ws_wait"`
 }
 
 func HandleSTTClientLogSave(logPath string) http.HandlerFunc {
@@ -133,14 +131,8 @@ func HandleSTTAutoTest(scriptPath, wavPath, outputPath string) http.HandlerFunc 
 		}
 
 		args := []string{scriptPath, "--wav", wavPath}
-		if strings.TrimSpace(req.ProviderURL) != "" {
-			args = append(args, "--provider-url", strings.TrimSpace(req.ProviderURL))
-		}
 		if strings.TrimSpace(req.WSURL) != "" {
 			args = append(args, "--ws-url", strings.TrimSpace(req.WSURL))
-		}
-		if req.ProviderRounds > 0 {
-			args = append(args, "--provider-rounds", strconv.Itoa(req.ProviderRounds))
 		}
 		if len(strings.TrimSpace(string(body))) > 0 {
 			args = append(args, "--ws-rounds", strconv.Itoa(req.WSRounds))

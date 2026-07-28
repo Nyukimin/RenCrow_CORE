@@ -17,15 +17,6 @@ import (
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 )
 
-func mapResponseBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
-	t.Helper()
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("invalid json: %v", err)
-	}
-	return body
-}
-
 func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 	received := make(chan SendRequest, 1)
 	h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {
@@ -55,11 +46,6 @@ func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid json: %v", err)
-	}
-	for _, key := range []string{"model_alias", "base_url", "model", "route_prefix"} {
-		if _, ok := body[key]; ok {
-			t.Fatalf("normal viewer send response must not include legacy %s: %#v", key, body)
-		}
 	}
 	jobID, _ := body["job_id"].(string)
 	if jobID == "" {
@@ -212,129 +198,6 @@ func TestHandleSendRejectsUnknownInputSource(t *testing.T) {
 	h(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHandleSendAppliesLegacyViewerLLMAlias(t *testing.T) {
-	received := make(chan string, 1)
-	h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {
-		received <- req.Message
-		return "ok", nil
-	}, nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{
-		"message":"この文章を要約して",
-		"model_alias":"Worker",
-		"base_url":"http://127.0.0.1:8082",
-		"model":"Worker",
-		"route_prefix":"/ops"
-	}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	h(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-	var body struct {
-		OK          bool   `json:"ok"`
-		ModelAlias  string `json:"model_alias"`
-		RoutePrefix string `json:"route_prefix"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("invalid json: %v", err)
-	}
-	if !body.OK || body.ModelAlias != "Worker" || body.RoutePrefix != "/ops" {
-		t.Fatalf("unexpected response: %+v", body)
-	}
-	for _, key := range []string{"base_url", "model"} {
-		if _, ok := mapResponseBody(t, rec)[key]; ok {
-			t.Fatalf("response exposed ignored physical LLM field %q: %s", key, rec.Body.String())
-		}
-	}
-
-	select {
-	case got := <-received:
-		if got != "/ops この文章を要約して" {
-			t.Fatalf("unexpected handler message: %q", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("handler was not called")
-	}
-}
-
-func TestHandleSendExplicitRouteWinsOverAlias(t *testing.T) {
-	received := make(chan string, 1)
-	h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {
-		received <- req.Message
-		return "ok", nil
-	}, nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{
-		"message":"/wild 物語にして",
-		"model_alias":"Worker"
-	}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	h(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-	select {
-	case got := <-received:
-		if got != "/wild 物語にして" {
-			t.Fatalf("unexpected handler message: %q", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("handler was not called")
-	}
-}
-
-func TestHandleSendIgnoresLegacyPhysicalRuntimeFields(t *testing.T) {
-	received := make(chan string, 1)
-	h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {
-		received <- req.Message
-		return "ok", nil
-	}, nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{
-		"message":"原因を調べて",
-		"model_alias":"Heavy",
-		"base_url":"http://192.168.1.31:18083",
-		"model":"HeavyRuntime",
-		"route_prefix":"/heavy"
-	}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	h(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-	var body struct {
-		ModelAlias  string `json:"model_alias"`
-		RoutePrefix string `json:"route_prefix"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("invalid json: %v", err)
-	}
-	if body.ModelAlias != "Heavy" || body.RoutePrefix != "/analyze" {
-		t.Fatalf("unexpected response: %+v", body)
-	}
-	for _, key := range []string{"base_url", "model"} {
-		if _, ok := mapResponseBody(t, rec)[key]; ok {
-			t.Fatalf("response exposed ignored physical LLM field %q: %s", key, rec.Body.String())
-		}
-	}
-
-	select {
-	case got := <-received:
-		if got != "/analyze 原因を調べて" {
-			t.Fatalf("unexpected handler message: %q", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("handler was not called")
 	}
 }
 

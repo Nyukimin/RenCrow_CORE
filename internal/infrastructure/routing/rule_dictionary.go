@@ -29,7 +29,7 @@ type rule struct {
 func NewRuleDictionary() *RuleDictionary {
 	return &RuleDictionary{
 		rules: []rule{
-			// WILD関連キーワード（創作・画像・ComfyUI・画像解析）
+			// WILD関連キーワード（創作・画像・画像解析）
 			{
 				keywords: []string{
 					"物語",
@@ -64,7 +64,6 @@ func NewRuleDictionary() *RuleDictionary {
 					"写真を分析",
 					"スクショを解析",
 					"スクショを分析",
-					"comfyui",
 					"創作用",
 					"雰囲気",
 					"構図",

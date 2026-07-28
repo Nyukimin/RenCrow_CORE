@@ -43,7 +43,7 @@ func TestRequestRepairUsesCodeRouteAndReturnsJobID(t *testing.T) {
 	}
 }
 
-func TestProbeOpenAIModelsAndRepairRoute(t *testing.T) {
+func TestProbeGatewayModelsAndRepairRoute(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
@@ -51,7 +51,7 @@ func TestProbeOpenAIModelsAndRepairRoute(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-	if err := probeOpenAIModels(server.URL, ""); err != nil {
+	if err := probeGatewayModels(server.URL, ""); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("RENCROW_RESILIENCE_REPAIR_ROUTE", "code4")

@@ -32,8 +32,7 @@ RENCROW_CONFIG=./config.yaml ./build/rencrow
 - [实现状态和路线图](docs/08_実装状況・ロードマップ.md)
 
 面向外部用户的 Chat 和 IdleChat 页面由 RenCrow_PORTAL 提供。RenCrow_CORE 的
-`/viewer` 仅用于调试和运行状态确认，不提供旧的
-`/viewer?mode=view|live|lab` 页面。
+`/viewer` 仅用于调试和运行状态确认。
 
 详细规范目前以日文维护；翻译与日文规范冲突时，以
 [docs/README.md](docs/README.md) 列出的当前规范为准。

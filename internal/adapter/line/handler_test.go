@@ -86,7 +86,7 @@ func TestHandler_WebhookEndpoint_ValidMessage(t *testing.T) {
 	// Generate valid signature
 	signature := generateSignature(body, "test-secret")
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Line-Signature", signature)
 
@@ -215,7 +215,7 @@ func TestHandler_WebhookEndpoint_LineFileMessageBecomesAttachment(t *testing.T) 
 		},
 	}
 	body, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Line-Signature", generateSignature(body, "test-secret"))
 	rec := httptest.NewRecorder()
@@ -284,7 +284,7 @@ func TestHandler_WebhookEndpoint_ChannelPolicyRejectsUnpairedGroup(t *testing.T)
 		},
 	}
 	body, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Line-Signature", generateSignature(body, "test-secret"))
 	rec := httptest.NewRecorder()
@@ -313,7 +313,7 @@ func TestHandler_WebhookEndpoint_InvalidJSON(t *testing.T) {
 	body := []byte("invalid json")
 	signature := generateSignature(body, "test-secret")
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Line-Signature", signature)
 
@@ -345,7 +345,7 @@ func TestHandler_WebhookEndpoint_NonMessageEvent(t *testing.T) {
 	body, _ := json.Marshal(payload)
 	signature := generateSignature(body, "test-secret")
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Line-Signature", signature)
 
@@ -383,7 +383,7 @@ func TestHandler_WebhookEndpoint_NonTextMessage(t *testing.T) {
 	body, _ := json.Marshal(payload)
 	signature := generateSignature(body, "test-secret")
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Line-Signature", signature)
 
@@ -490,7 +490,7 @@ func TestHandler_WebhookEndpoint_InvalidSignature(t *testing.T) {
 
 	body, _ := json.Marshal(payload)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Line-Signature", "invalid-signature")
 
@@ -560,7 +560,7 @@ func TestHandler_WebhookEndpoint_MissingSignature(t *testing.T) {
 
 	body, _ := json.Marshal(payload)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	// No X-Line-Signature header
 
@@ -622,7 +622,7 @@ func TestHandler_WebhookEndpoint_GroupChatWithBotMention(t *testing.T) {
 	body, _ := json.Marshal(payload)
 	signature := generateSignature(body, "test-secret")
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Line-Signature", signature)
 
@@ -662,7 +662,7 @@ func TestHandler_WebhookEndpoint_GroupChatWithoutBotMention(t *testing.T) {
 	body, _ := json.Marshal(payload)
 	signature := generateSignature(body, "test-secret")
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Line-Signature", signature)
 
@@ -708,7 +708,7 @@ func TestHandler_WebhookEndpoint_WithQuoteToken(t *testing.T) {
 	body, _ := json.Marshal(payload)
 	signature := generateSignature(body, "test-secret")
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Line-Signature", signature)
 

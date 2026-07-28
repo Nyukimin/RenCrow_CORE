@@ -10,7 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
@@ -35,7 +35,7 @@ func initHandler(agentType string, cfg *config.Config) (AgentHandler, error) {
 
 // initWorkerHandler はWorkerハンドラを初期化
 func initWorkerHandler(cfg *config.Config) (*workerHandler, error) {
-	gatewayProvider := openai.NewOpenAIProviderWithOptions(
+	gatewayProvider := rencrowllm.NewGatewayProviderWithOptions(
 		llmGatewayAPIKey(cfg),
 		"worker",
 		cfg.LLMGateway.BaseURL,
@@ -60,7 +60,6 @@ func initWorkerHandler(cfg *config.Config) (*workerHandler, error) {
 
 // initCoderHandler はCoderハンドラを初期化
 func initCoderHandler(agentName string, cfg *config.Config) (*coderHandler, error) {
-	// v4.1: Unified CoderConfig を使用
 	var coderCfg config.CoderConfig
 	switch agentName {
 	case "coder1":
@@ -79,7 +78,6 @@ func initCoderHandler(agentName string, cfg *config.Config) (*coderHandler, erro
 		return nil, fmt.Errorf("%s is not enabled in config", agentName)
 	}
 
-	// CoderConfig から Provider を作成
 	provider, err := createProviderFromConfig(cfg, agentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create provider for %s: %w", agentName, err)
@@ -106,7 +104,7 @@ func initCoderHandler(agentName string, cfg *config.Config) (*coderHandler, erro
 		log.Printf("[rencrow-agent] %s: Applied LightMemory (max_turns=%d)", agentName, coderCfg.LightMemory.MaxTurns)
 	}
 
-	log.Printf("[rencrow-agent] %s initialized: provider=%s, model=%s", agentName, coderCfg.Provider, coderCfg.Model)
+	log.Printf("[rencrow-agent] %s initialized via RenCrow_LLM", agentName)
 
 	return &coderHandler{
 		agentName:        agentName,

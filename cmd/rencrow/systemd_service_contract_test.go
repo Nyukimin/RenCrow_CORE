@@ -15,7 +15,6 @@ func TestRenCrowServiceUnitIsPortableProductionDefinition(t *testing.T) {
 		"WorkingDirectory=%h/.rencrow",
 		"ExecStart=%h/.local/bin/rencrow run",
 		"EnvironmentFile=%h/.rencrow/.env",
-		"EnvironmentFile=-%h/.rencrow/llm_ops.env",
 		"Environment=RENCROW_CONFIG=%h/.rencrow/config.yaml",
 		"Environment=GOTRACEBACK=all",
 		"Restart=always",
@@ -39,9 +38,7 @@ func TestRenCrowServiceUnitIsPortableProductionDefinition(t *testing.T) {
 func TestInstallScriptUsesServiceUnitSourceOfTruth(t *testing.T) {
 	script := readRepoText(t, "install.sh")
 	mustContainAll(t, script, []string{
-		"install -m 0644 systemd/user/rencrow.service \"$SYSTEMD_USER_DIR/rencrow.service\"",
-		"touch \"$RENCROW_HOME/llm_ops.env\"",
-		"chmod 600 \"$RENCROW_HOME/llm_ops.env\"",
+		"install -m 0644 \"systemd/user/rencrow.service\" \"${SYSTEMD_USER_DIR}/rencrow.service\"",
 	})
 	if strings.Contains(script, "cat > \"$SYSTEMD_USER_DIR/rencrow.service\"") {
 		t.Fatalf("install.sh must not inline-generate rencrow.service")
@@ -54,7 +51,6 @@ func TestOpsDocsNameServiceUnitSourceOfTruth(t *testing.T) {
 		"`systemd/user/rencrow.service`",
 		"`WorkingDirectory=%h/.rencrow`",
 		"`ExecStart=%h/.local/bin/rencrow run`",
-		"`EnvironmentFile=-%h/.rencrow/llm_ops.env`",
 		"`RENCROW_CONFIG=%h/.rencrow/config.yaml`",
 		"`StartLimitIntervalSec=0`",
 		"`LogRateLimitIntervalSec=0`",

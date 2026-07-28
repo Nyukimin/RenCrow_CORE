@@ -36,107 +36,6 @@
     </div>
   </div>
 </header>
-<div class="live-topic-bar" id="liveTopicBar">
-  <span class="live-topic-label">TOPIC</span>
-  <span class="live-topic-text" id="liveTopicText">-</span>
-</div>
-<div class="lab-stream-shell" aria-label="RenCrow Chat and IdleChat lab view">
-  <div class="lab-world" aria-hidden="true">
-    <div class="lab-window lab-window-left"></div>
-    <div class="lab-window lab-window-right"></div>
-    <div class="lab-ceiling-ring"></div>
-    <div class="lab-holo-circle"></div>
-    <div class="lab-crystal lab-crystal-left"></div>
-    <div class="lab-crystal lab-crystal-center"></div>
-    <div class="lab-console lab-console-left"></div>
-    <div class="lab-console lab-console-right"></div>
-  </div>
-  <section class="lab-brand-panel">
-    <div class="lab-logo-row">
-      <img src="/viewer/assets/images/rencrow-logo.png" alt="">
-      <div>
-        <strong>RenCrow</strong>
-        <span>IdleChat</span>
-      </div>
-    </div>
-  </section>
-  <section class="lab-mode-indicator" id="labModeIndicator" aria-label="Conversation mode and partner switcher">
-    <button class="lab-mode-chip lab-mode-chip-chat" id="labModeChatChip" type="button" data-lab-switch="chat" aria-current="true" aria-pressed="true">Chat</button>
-    <button class="lab-mode-chip lab-mode-chip-idle" id="labModeIdleChip" type="button" data-lab-switch="idle" aria-current="false" aria-pressed="false">IdleChat</button>
-    <button class="lab-mode-chip lab-mode-chip-mio" id="labModeMioChip" type="button" data-lab-switch="mio" aria-current="true" aria-pressed="true">Mio</button>
-    <div class="lab-partner-picker" id="labPartnerPicker">
-      <button class="lab-mode-chip lab-mode-chip-partner" id="labModePartnerChip" type="button" data-lab-partner-toggle aria-current="false" aria-pressed="false" aria-expanded="false">Shiro</button>
-      <div class="lab-partner-options" id="labPartnerOptions" hidden>
-        <button class="lab-mode-chip lab-partner-option" type="button" data-lab-partner-option="shiro">Shiro</button>
-        <button class="lab-mode-chip lab-partner-option" type="button" data-lab-partner-option="kuro">Kuro</button>
-        <button class="lab-mode-chip lab-partner-option" type="button" data-lab-partner-option="midori">Midori</button>
-      </div>
-    </div>
-  </section>
-  <time class="lab-datetime-panel" id="labDateTimePanel" datetime="" aria-label="現在日時">0000（令和00）00月00日（-）00:00:00</time>
-  <section class="lab-camera-live-preview" id="labCameraLivePreview" aria-label="Media live preview">
-    <div class="lab-camera-live-badge">LIVE</div>
-    <video id="labCameraLiveVideo" autoplay playsinline muted></video>
-  </section>
-  <footer class="lab-footer lab-input-footer">
-    <label class="lab-input-label" for="labInp">メッセージを入力</label>
-    <div class="lab-input-shell">
-      <textarea id="labInp" rows="1" placeholder="メッセージを入力..." autocomplete="off" aria-label="メッセージを入力"></textarea>
-    </div>
-    <div class="lab-footer-controls" aria-label="Audio controls">
-      <button class="lab-icon-btn lab-audio-toggle off" id="labAudioBtn" type="button" title="TTS_OFF" aria-label="TTS_OFF" aria-pressed="false" data-control-state="TTS_OFF">
-        <svg class="lab-control-icon lab-control-icon-on" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 9v6h4l5 4V5L8 9H4z"></path>
-          <path d="M16 8.5a5 5 0 0 1 0 7"></path>
-          <path d="M18.5 6a8 8 0 0 1 0 12"></path>
-        </svg>
-        <svg class="lab-control-icon lab-control-icon-off" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 9v6h4l5 4V5L8 9H4z"></path>
-          <path d="M19 5 5 19"></path>
-        </svg>
-      </button>
-      <button class="lab-icon-btn lab-mic-toggle off" id="labMicBtn" type="button" title="STT_OFF" aria-label="STT_OFF" aria-pressed="false" data-control-state="STT_OFF">
-        <svg class="lab-control-icon lab-control-icon-on" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"></path>
-          <path d="M5 11a7 7 0 0 0 14 0"></path>
-          <path d="M12 18v3"></path>
-          <path d="M8 21h8"></path>
-        </svg>
-        <svg class="lab-control-icon lab-control-icon-off" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"></path>
-          <path d="M5 11a7 7 0 0 0 14 0"></path>
-          <path d="M12 18v3"></path>
-          <path d="M8 21h8"></path>
-          <path d="M19 5 5 19"></path>
-        </svg>
-      </button>
-      <button class="lab-icon-btn lab-attach-toggle" id="labAttachBtn" type="button" title="Attach files" aria-label="Attach files">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l9.8-9.8a4 4 0 0 1 5.7 5.7l-9.8 9.8a2 2 0 0 1-2.8-2.8l9.3-9.3"></path>
-        </svg>
-      </button>
-      <button class="lab-icon-btn lab-screen-toggle" id="labScreenBtn" type="button" title="画面/タブ入力" aria-label="画面/タブ入力">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="12" rx="2"></rect>
-          <path d="M8 20h8"></path>
-          <path d="M12 16v4"></path>
-        </svg>
-      </button>
-      <button class="lab-icon-btn lab-camera-toggle" id="labCameraBtn" type="button" title="カメラ/マイク入力" aria-label="カメラ/マイク入力">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M14.5 4 16 7h3a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3l1.5-3h5z"></path>
-          <circle cx="12" cy="13" r="3.5"></circle>
-        </svg>
-      </button>
-    </div>
-  </footer>
-</div>
-<div class="lab-mio-portrait" aria-hidden="true">
-  <img src="/viewer/mio-portrait.png" alt="">
-</div>
-<div class="lab-shiro-portrait" aria-hidden="true">
-  <img src="/viewer/shiro-portrait.png" alt="">
-</div>
 <div class="app-shell">
   <div class="mobile-panel-switch" aria-label="Mobile panel navigation">
     <button id="mobilePanelPrev" class="mobile-panel-step" type="button" aria-label="前のパネル">&lt;</button>
@@ -241,7 +140,7 @@
       <aside class="desk-side image-side">
         <div class="desk-brand">
           <div class="desk-kicker">RenCrow Image</div>
-          <h2 class="daily-desk-title">Z-Imageで描く</h2>
+          <h2 class="daily-desk-title">RenCrow_Imageで描く</h2>
         </div>
         <div class="desk-character image-character">
           <div class="desk-character-mark">I</div>
@@ -507,7 +406,7 @@
           <thead><tr><th>time</th><th>submit</th><th>gate</th><th>repo</th><th>branch</th><th>status</th><th>adapter</th><th>PR</th><th>evidence</th></tr></thead>
           <tbody id="skillExternalPRAuditBody"></tbody>
         </table>
-        <pre id="skillExternalPRAuditResult" class="small llm-ops-raw">skill external PR submit audits: not created</pre>
+        <pre id="skillExternalPRAuditResult" class="small ops-raw">skill external PR submit audits: not created</pre>
       </div>
       <div class="debug-box">
         <h4>Skill Evidence Audits</h4>
@@ -516,7 +415,7 @@
           <thead><tr><th>time</th><th>kind</th><th>id</th><th>skill/repo</th><th>status</th><th>evidence</th></tr></thead>
           <tbody id="skillEvidenceAuditBody"></tbody>
         </table>
-        <pre id="skillEvidenceAuditResult" class="small llm-ops-raw">skill evidence audits: -</pre>
+        <pre id="skillEvidenceAuditResult" class="small ops-raw">skill evidence audits: -</pre>
       </div>
       <div class="debug-box">
         <h4>SuperAgent Terminal Audits</h4>
@@ -525,7 +424,7 @@
           <thead><tr><th>time</th><th>kind</th><th>id</th><th>run</th><th>status</th><th>evidence</th></tr></thead>
           <tbody id="superAgentTerminalAuditBody"></tbody>
         </table>
-        <pre id="superAgentTerminalAuditResult" class="small llm-ops-raw">superagent terminal audits: -</pre>
+        <pre id="superAgentTerminalAuditResult" class="small ops-raw">superagent terminal audits: -</pre>
       </div>
       <div class="debug-box">
         <h4>SuperAgent Resume Audits</h4>
@@ -534,7 +433,7 @@
           <thead><tr><th>time</th><th>queue</th><th>run</th><th>status</th><th>trace</th><th>runtime control</th><th>evidence</th></tr></thead>
           <tbody id="superAgentResumeAuditBody"></tbody>
         </table>
-        <pre id="superAgentResumeAuditResult" class="small llm-ops-raw">superagent resume audits: -</pre>
+        <pre id="superAgentResumeAuditResult" class="small ops-raw">superagent resume audits: -</pre>
       </div>
       <div class="debug-box">
         <h4>AI Workflow Run Evidence</h4>
@@ -543,7 +442,7 @@
           <thead><tr><th>run</th><th>workstream</th><th>command</th><th>context</th><th>trace</th><th>status</th></tr></thead>
           <tbody id="aiWorkflowRunEvidenceBody"></tbody>
         </table>
-        <pre id="aiWorkflowRunEvidenceResult" class="small llm-ops-raw">ai workflow run evidence: -</pre>
+        <pre id="aiWorkflowRunEvidenceResult" class="small ops-raw">ai workflow run evidence: -</pre>
       </div>
       <div class="debug-box">
         <h4>Complexity Review Artifacts</h4>
@@ -552,7 +451,7 @@
           <thead><tr><th>time</th><th>artifact</th><th>type</th><th>status</th><th>patch</th></tr></thead>
           <tbody id="complexityReviewArtifactBody"></tbody>
         </table>
-        <pre id="complexityReviewArtifactResult" class="small llm-ops-raw">complexity review artifacts: -</pre>
+        <pre id="complexityReviewArtifactResult" class="small ops-raw">complexity review artifacts: -</pre>
       </div>
       <div class="debug-box">
         <h4>Runtime Blocked Route Audits</h4>
@@ -561,7 +460,7 @@
           <thead><tr><th>route</th><th>status</th><th>result</th><th>body</th></tr></thead>
           <tbody id="runtimeBlockedRouteAuditBody"></tbody>
         </table>
-        <pre id="runtimeBlockedRouteAuditResult" class="small llm-ops-raw">runtime blocked route audits: -</pre>
+        <pre id="runtimeBlockedRouteAuditResult" class="small ops-raw">runtime blocked route audits: -</pre>
       </div>
       <div class="debug-box">
         <h4>Revenue Policy Decisions</h4>
@@ -570,7 +469,7 @@
           <thead><tr><th>time</th><th>decision</th><th>type</th><th>status</th><th>description</th></tr></thead>
           <tbody id="revenueDecisionBody"></tbody>
         </table>
-        <pre id="revenueDecisionResult" class="small llm-ops-raw">revenue policy decisions: -</pre>
+        <pre id="revenueDecisionResult" class="small ops-raw">revenue policy decisions: -</pre>
       </div>
       <div class="debug-box">
         <h4>Revenue Channel Drafts</h4>
@@ -579,7 +478,7 @@
           <thead><tr><th>time</th><th>draft</th><th>channel</th><th>source</th><th>body</th><th>send</th></tr></thead>
           <tbody id="revenueChannelDraftBody"></tbody>
         </table>
-        <pre id="revenueChannelDraftResult" class="small llm-ops-raw">revenue channel drafts: draft only / external send uses synchronous policy</pre>
+        <pre id="revenueChannelDraftResult" class="small ops-raw">revenue channel drafts: draft only / external send uses synchronous policy</pre>
       </div>
       <div class="debug-box">
         <h4>Revenue External Send Apply Audits</h4>
@@ -588,12 +487,12 @@
           <thead><tr><th>time</th><th>apply</th><th>draft</th><th>decision</th><th>channel</th><th>status</th><th>result</th><th>adapter</th><th>evidence</th></tr></thead>
           <tbody id="revenueExternalSendAuditBody"></tbody>
         </table>
-        <pre id="revenueExternalSendAuditResult" class="small llm-ops-raw">revenue external send apply audits: not sent</pre>
+        <pre id="revenueExternalSendAuditResult" class="small ops-raw">revenue external send apply audits: not sent</pre>
       </div>
       <div class="debug-box">
         <h4>Revenue Drilldown</h4>
         <div class="small" style="margin-bottom:8px">KPI 推移、商品別売上、顧客の声分類を確認します。これは分析表示であり、外部送信や販売操作は行いません。</div>
-        <pre id="revenueDrilldownResult" class="small llm-ops-raw">revenue drilldown: -</pre>
+        <pre id="revenueDrilldownResult" class="small ops-raw">revenue drilldown: -</pre>
       </div>
       <div class="debug-box">
         <h4>Workstream Vault Review</h4>
@@ -602,7 +501,7 @@
           <thead><tr><th>time</th><th>update</th><th>file</th><th>status</th><th>applied</th><th>applied path</th><th>proposal</th><th>action</th></tr></thead>
           <tbody id="workstreamVaultReviewBody"></tbody>
         </table>
-        <pre id="workstreamVaultReviewResult" class="small llm-ops-raw">workstream vault review: -</pre>
+        <pre id="workstreamVaultReviewResult" class="small ops-raw">workstream vault review: -</pre>
       </div>
       <div class="debug-box">
         <h4>Persona Meta Review</h4>
@@ -611,7 +510,7 @@
           <thead><tr><th>time</th><th>update</th><th>target</th><th>status</th><th>proposal</th><th>action</th></tr></thead>
           <tbody id="personaMetaReviewBody"></tbody>
         </table>
-        <pre id="personaMetaReviewResult" class="small llm-ops-raw">persona meta review: -</pre>
+        <pre id="personaMetaReviewResult" class="small ops-raw">persona meta review: -</pre>
       </div>
         </div>
       </details>
@@ -647,29 +546,13 @@
         <div id="sttTestRecordStatus" class="small">待機中</div>
         <div id="sttTestRecordTranscript" class="small">確定文: -</div>
       </div>
-      <div class="debug-box" id="llmOpsPanel">
-        <h4>MLX LLM 管理（Viewer 経由）</h4>
-        <div class="small" style="margin-bottom:8px">RenCrow が管理 API をプロキシします。トークンはサーバの LLM_OPS_TOKEN を使用してください。</div>
-        <div class="debug-actions">
-          <button id="llmOpsRefreshBtn" class="ctl-btn" type="button">状態取得</button>
-          <button id="llmOpsStopBtn" class="ctl-btn" type="button">停止 Chat+Worker</button>
-          <button id="llmOpsRestartBtn" class="ctl-btn" type="button">再起動（全ロール）</button>
-        </div>
-        <div id="llmOpsConfigState" class="small" style="margin-bottom:8px">checking...</div>
+      <div class="debug-box" id="runtimeGatewayPanel">
+        <h4>Runtime Gateways</h4>
+        <div class="small" style="margin-bottom:8px">COREから各RenCrowモジュールへの接続状態を表示します。</div>
         <div id="llmRuntimeConfigCards" class="llm-runtime-grid"></div>
         <div id="webGatherOpsCards" class="llm-runtime-grid"></div>
         <div id="runtimeReadinessCards" class="llm-runtime-grid"></div>
-        <div class="llm-memory-grid" id="llmMemoryCards">
-          <div class="llm-memory-card"><div class="ops-card-title">Total RAM</div><div class="ops-big">-</div></div>
-          <div class="llm-memory-card"><div class="ops-card-title">Used RAM</div><div class="ops-big">-</div></div>
-          <div class="llm-memory-card"><div class="ops-card-title">Free RAM</div><div class="ops-big">-</div></div>
-        </div>
-        <div id="llmMemorySystemBar" class="llm-memory-bar" aria-label="system memory usage"><span style="width:0%"></span></div>
-        <div id="llmMemoryProcessLists" class="llm-memory-process-grid"></div>
-        <div id="llmMemoryRoles" class="llm-role-memory-list"></div>
-        <pre id="llmOpsStatusPre" class="small llm-ops-raw">(llm_ops 未設定またはトークンなし)</pre>
-      </div>
-      <div class="debug-box">
+      </div>      <div class="debug-box">
         <h4>LLM Think（agent.thinking）</h4>
         <div id="debugThinkTrace" class="debug-list"></div>
       </div>
@@ -700,7 +583,7 @@
           <input id="dciSearchInput" type="text" placeholder="DCI query (docs/10_新仕様 など)" />
           <button id="dciSearchBtn" type="button">DCI Search</button>
         </div>
-        <pre id="dciSearchResult" class="small llm-ops-raw">DCI manual search result: -</pre>
+        <pre id="dciSearchResult" class="small ops-raw">DCI manual search result: -</pre>
         <table>
           <thead><tr><th>Time</th><th>Event</th><th>Query</th><th>Evidence</th><th>Status</th><th>Scope</th></tr></thead>
           <tbody id="dciTraceBody"></tbody>
@@ -711,14 +594,14 @@
           <thead><tr><th>Sandbox</th><th>Type</th><th>Status</th><th>Path</th><th>Promotion</th><th>Gate</th><th>Action</th></tr></thead>
           <tbody id="sandboxBody"></tbody>
         </table>
-        <pre id="sandboxPromotionPreviewResult" class="small llm-ops-raw">sandbox promotion diff preview: -</pre>
+        <pre id="sandboxPromotionPreviewResult" class="small ops-raw">sandbox promotion diff preview: -</pre>
       </div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Time</th><th>Event</th><th>Promotion</th><th>Gate</th><th>Post Apply</th><th>Reason</th></tr></thead>
           <tbody id="sandboxGateLogBody"></tbody>
         </table>
-        <pre id="sandboxGateLogResult" class="small llm-ops-raw">sandbox promotion gate logs: no apply evidence</pre>
+        <pre id="sandboxGateLogResult" class="small ops-raw">sandbox promotion gate logs: no apply evidence</pre>
       </div>
       <div class="table-wrap">
         <table>
@@ -797,7 +680,7 @@
           </div>
         </div>
         <div class="chat-character-portrait" aria-hidden="true">
-          <iframe id="chatLive2DMio" src="/viewer/live2d/embed?character_id=mio&emotion=normal&mode=normal&hide_ui=true"
+          <iframe id="chatLive2DMio" src="/viewer/live2d/embed?character_id=mio&emotion=normal&hide_ui=true"
                   style="position:absolute;top:0;left:0;z-index:100;width:100%;height:100%;border:none;background:transparent;" allowtransparency="true"></iframe>
         </div>
       </aside>
@@ -1389,9 +1272,9 @@
           </div>
         </div>
         <div class="idle-character-portrait" aria-hidden="true">
-          <iframe class="idle-live2d-frame mio" src="/viewer/live2d/embed?character_id=mio&emotion=normal&mode=normal&hide_ui=true"
+          <iframe class="idle-live2d-frame mio" src="/viewer/live2d/embed?character_id=mio&emotion=normal&hide_ui=true"
                   allowtransparency="true"></iframe>
-          <iframe class="idle-live2d-frame shiro" src="/viewer/live2d/embed?character_id=shiro&emotion=normal&mode=normal&hide_ui=true"
+          <iframe class="idle-live2d-frame shiro" src="/viewer/live2d/embed?character_id=shiro&emotion=normal&hide_ui=true"
                   allowtransparency="true"></iframe>
         </div>
         <div class="idle-status-board">
@@ -1534,8 +1417,6 @@
   <span class="label">Now Playing</span>
   <span id="ttsNowPlayingText" class="text"></span>
 </div>
-<button class="audio-btn live-audio-btn" id="liveAudioBtn" type="button" title="音声を有効化">🔊</button>
-
 <div class="input-bar">
   <div class="input-wrap">
     <div class="input-main">
@@ -1600,10 +1481,6 @@
 </button>
 <div class="toast" id="toast"></div>
 
-<!-- mode=live2d 用の全画面ステージ。src は initLive2DMode() が設定する -->
-<div id="live2dStage" hidden>
-  <iframe id="live2dStageFrame" title="Live2D Viewer"></iframe>
-</div>
 
 <script src="/viewer/assets/js/tabs/ops.js?v=20260702-game-bridge-card" defer></script>
 <script src="/viewer/assets/js/tabs/to-be-ops.js?v=20260714-to-be-summary" defer></script>

@@ -55,8 +55,7 @@ const message = process.env.PHASE25_BROWSER_MESSAGE;
     await page.waitForSelector('#runtimeReadinessCards', { state: 'visible', timeout: 10000 });
     await page.waitForFunction(() => {
       const text = document.querySelector('#runtimeReadinessCards')?.innerText || '';
-      return text.includes('LLM Ops') &&
-        text.includes('Runtime Health') &&
+      return text.includes('Runtime Health') &&
         text.includes('STT') &&
         text.includes('TTS') &&
         text.includes('Slack') &&
@@ -67,14 +66,10 @@ const message = process.env.PHASE25_BROWSER_MESSAGE;
         text.includes('Knowledge Memory') &&
         text.includes('Browser Trace API') &&
         text.includes('Sandbox') &&
-        text.includes('configured:present') &&
         text.includes('service:missing') &&
         text.includes('chat:missing') &&
         text.includes('worker:missing') &&
         text.includes('blocked:') &&
-        text.includes('proxy:present') &&
-        text.includes('live:missing') &&
-        text.includes('blocked: HTTP 502: upstream unreachable') &&
         text.includes('config:present') &&
         text.includes('credentials:missing') &&
         text.includes('webhook:missing') &&
@@ -171,8 +166,8 @@ const message = process.env.PHASE25_BROWSER_MESSAGE;
       const text = document.querySelector('#opsCards')?.innerText || '';
       return text.includes('Heavy Runtime') &&
         text.includes('route: ANALYZE') &&
-        text.includes('Worker') &&
-        text.includes('llm-ops GET /v1/status');
+        text.includes('alias: kuro') &&
+        text.includes('gateway:');
     }, { timeout: 10000 });
     await page.waitForFunction(() => {
       const text = document.querySelector('#panel-ops')?.innerText || '';
@@ -218,8 +213,7 @@ const message = process.env.PHASE25_BROWSER_MESSAGE;
         text.includes('source registry unavailable') &&
         text.includes('memory layers unavailable') &&
         text.includes('sandbox store unavailable') &&
-        text.includes('upstream unreachable') &&
-        text.includes('blocked: Source Registry staging, Memory Layers, Sandbox, and LLM Ops require their runtime dependencies');
+        text.includes('blocked: Source Registry staging, Memory Layers, and Sandbox require their runtime dependencies');
     }, { timeout: 10000 });
 	    await page.waitForFunction(() => {
 	      const text = document.querySelector('#opsCards')?.innerText || '';

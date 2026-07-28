@@ -11,13 +11,13 @@ import (
 	appconfig "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	"gopkg.in/yaml.v3"
 )
 
 func TestLiveIdleChatTenThemesDoNotUseFallback(t *testing.T) {
 	if os.Getenv("RENCROW_IDLECHAT_LIVE") != "1" {
-		t.Skip("set RENCROW_IDLECHAT_LIVE=1 to run against the real local LLM")
+		t.Skip("set RENCROW_IDLECHAT_LIVE=1 to run against the RenCrow_LLM Gateway")
 	}
 
 	cfgPath := os.Getenv("RENCROW_CONFIG")
@@ -140,6 +140,6 @@ func liveIdleChatProviders(t *testing.T, cfg *appconfig.Config) (llm.LLMProvider
 	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
 		apiKey = strings.TrimSpace(os.Getenv(envName))
 	}
-	return openai.NewOpenAIProviderWithOptions(apiKey, "mio", baseURL, timeout),
-		openai.NewOpenAIProviderWithOptions(apiKey, "shiro", baseURL, timeout)
+	return rencrowllm.NewGatewayProviderWithOptions(apiKey, "mio", baseURL, timeout),
+		rencrowllm.NewGatewayProviderWithOptions(apiKey, "shiro", baseURL, timeout)
 }

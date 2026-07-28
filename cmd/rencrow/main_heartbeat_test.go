@@ -111,13 +111,6 @@ func TestBuildHeartbeatNotificationSender(t *testing.T) {
 				Heartbeat: config.HeartbeatConfig{Channel: "telegram", ChatID: "123"},
 			},
 		},
-		{
-			name: "legacy chat id defaults to line",
-			cfg: &config.Config{
-				Line:      config.LineConfig{AccessToken: "token"},
-				Heartbeat: config.HeartbeatConfig{ChatID: "U0123456789abcdef0123456789abcdef"},
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

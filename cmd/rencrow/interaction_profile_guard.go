@@ -99,8 +99,6 @@ func cmdDiagnosticsInteractionAllowed(method, path string) bool {
 		"/viewer/evidence/recent",
 		"/viewer/evidence/detail",
 		"/viewer/evidence/summary",
-		"/viewer/llm-ops/health",
-		"/viewer/llm-ops/status",
 		"/viewer/source-registry",
 		"/viewer/knowledge-memory",
 		"/viewer/debug/system",
@@ -124,9 +122,7 @@ func cmdControlInteractionAllowed(method, path string) bool {
 		case "/health",
 			"/health/live",
 			"/ready",
-			"/viewer/status",
-			"/viewer/llm-ops/health",
-			"/viewer/llm-ops/status":
+			"/viewer/status":
 			return true
 		default:
 			return false
@@ -136,10 +132,7 @@ func cmdControlInteractionAllowed(method, path string) bool {
 		return false
 	}
 	switch path {
-	case "/viewer/llm-ops/start",
-		"/viewer/llm-ops/stop",
-		"/viewer/llm-ops/restart",
-		"/viewer/repair/run",
+	case "/viewer/repair/run",
 		"/viewer/source-registry":
 		return true
 	default:

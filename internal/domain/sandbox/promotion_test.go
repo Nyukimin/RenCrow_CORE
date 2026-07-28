@@ -36,7 +36,7 @@ func TestEvaluatePromotionRequestRejectsMissingChecklist(t *testing.T) {
 	}
 }
 
-func TestEvaluatePromotionRequestIgnoresLegacyHumanRejection(t *testing.T) {
+func TestEvaluatePromotionRequestPassesCompleteRequest(t *testing.T) {
 	decision := EvaluatePromotionRequest(PromotionRequest{
 		PromotionID:      "prom_1",
 		SandboxID:        "sbx_1",

@@ -85,7 +85,7 @@ func TestRunEconomicOpportunityDiscoveryRequiresDraftOnlyConditions(t *testing.T
 func TestRunEconomicOpportunityDiscoveryCreatesOnlyDraftsFromAllSources(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	store := &memoryEconomicDiscoveryStore{
-		market:   []domainrevenue.MarketResearchItem{{ItemID: "m1", Theme: "Local LLM guide", ObservedSignal: "repeat questions", CreatedAt: now.Add(-time.Hour)}},
+		market:   []domainrevenue.MarketResearchItem{{ItemID: "m1", Theme: "RenCrow_LLM guide", ObservedSignal: "repeat questions", CreatedAt: now.Add(-time.Hour)}},
 		products: []domainrevenue.Product{{ProductID: "p1", ProductName: "Template", Price: 3000, Target: "developers", Status: "draft", CreatedAt: now.Add(-2 * time.Hour)}},
 		voices:   []domainrevenue.CustomerVoice{{VoiceID: "v1", Summary: "setup is difficult", RawText: "private raw voice", PermissionStatus: "pending", CreatedAt: now.Add(-3 * time.Hour)}},
 		events:   []domainrevenue.RevenueEvent{{EventID: "r1", EventType: "purchase", Amount: 1200, Notes: "repeatable sale", CreatedAt: now.Add(-4 * time.Hour)}},

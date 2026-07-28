@@ -2,10 +2,10 @@ package worker
 
 import "testing"
 
-func TestBuildCoderCapabilityPlansUsesDetectedLLMQualityAndAvailability(t *testing.T) {
+func TestBuildCoderCapabilityPlansUsesDetectedAliasQualityAndAvailability(t *testing.T) {
 	got := BuildCoderCapabilityPlans(
-		[]LLMCapability{{ProviderName: "ollama", ModelName: "coder", Available: true, Quality: 4}},
-		[]CoderSlotConfig{{Name: "coder1", Provider: "ollama", Model: "coder", Enabled: true}},
+		[]LLMCapability{{ProviderName: "rencrow_llm", ModelName: "coder1", Available: true, Quality: 4}},
+		[]CoderSlotConfig{{Name: "coder1", Enabled: true}},
 		nil,
 	)
 	if len(got) != 1 {
@@ -31,46 +31,10 @@ func TestCoderSlotNamePolicy(t *testing.T) {
 	}
 }
 
-func TestCoderProviderIsExternal(t *testing.T) {
-	tests := []struct {
-		provider string
-		want     bool
-	}{
-		{provider: "local_openai", want: false},
-		{provider: "ollama", want: false},
-		{provider: "openai", want: true},
-		{provider: "claude", want: true},
-		{provider: "deepseek", want: true},
-	}
-	for _, tt := range tests {
-		if got := CoderProviderIsExternal(tt.provider); got != tt.want {
-			t.Fatalf("CoderProviderIsExternal(%q) = %t, want %t", tt.provider, got, tt.want)
-		}
-	}
-}
-
-func TestBuildExternalCoderPolicyNormalizesNames(t *testing.T) {
-	got := BuildExternalCoderPolicy([]CoderSlotConfig{
-		{Name: " Coder1 ", Provider: "local_openai"},
-		{Name: "Coder2", Provider: "openai"},
-		{Name: " ", Provider: "claude"},
-	})
-
-	if len(got) != 2 {
-		t.Fatalf("policy len = %d, want 2: %#v", len(got), got)
-	}
-	if got["coder1"] {
-		t.Fatalf("coder1 should be local: %#v", got)
-	}
-	if !got["coder2"] {
-		t.Fatalf("coder2 should be external: %#v", got)
-	}
-}
-
 func TestBuildCoderSetupPlansKeepsOrderAndDisabledEntries(t *testing.T) {
 	got := BuildCoderSetupPlans([]CoderSlotConfig{
-		{Name: " Coder1 ", Enabled: false, DisplayName: "赤", Provider: "local_openai", Model: "one"},
-		{Name: "Coder2", Enabled: true, DisplayName: "青", Provider: "openai", Model: "two"},
+		{Name: " Coder1 ", Enabled: false, DisplayName: "赤"},
+		{Name: "Coder2", Enabled: true, DisplayName: "青"},
 		{Name: " ", Enabled: true},
 	})
 
@@ -80,7 +44,7 @@ func TestBuildCoderSetupPlansKeepsOrderAndDisabledEntries(t *testing.T) {
 	if got[0].Name != "coder1" || got[0].Enabled || got[0].DisplayName != "赤" {
 		t.Fatalf("disabled plan = %#v", got[0])
 	}
-	if got[1].Name != "coder2" || !got[1].Enabled || got[1].Provider != "openai" || got[1].Model != "two" {
+	if got[1].Name != "coder2" || !got[1].Enabled || got[1].DisplayName != "青" {
 		t.Fatalf("enabled plan = %#v", got[1])
 	}
 }
@@ -106,25 +70,25 @@ func TestBuildCoderSetupPlansInitializesSharedLightMemoryOnce(t *testing.T) {
 	}
 }
 
-func TestBuildCoderCapabilityPlansUsesOverrideThenProviderDefault(t *testing.T) {
+func TestBuildCoderCapabilityPlansUsesSlotOverride(t *testing.T) {
 	got := BuildCoderCapabilityPlans(nil, []CoderSlotConfig{
-		{Name: "coder1", Provider: "openai", Model: "custom", APIKey: "key", Enabled: true},
-		{Name: "coder2", Provider: "deepseek", Model: "deepseek-coder", Enabled: true},
-	}, map[string]int{"custom": 5})
+		{Name: "coder1", Enabled: true},
+		{Name: "coder2", Enabled: true},
+	}, map[string]int{"coder1": 5})
 	if len(got) != 2 {
 		t.Fatalf("BuildCoderCapabilityPlans() len = %d, want 2", len(got))
 	}
-	if got[0].Quality != 5 || !got[0].Available {
+	if got[0].Quality != 5 || got[0].Available {
 		t.Fatalf("override coder plan = %#v", got[0])
 	}
-	if got[1].Quality != 3 || got[1].Available {
-		t.Fatalf("default coder plan = %#v", got[1])
+	if got[1].Quality != 0 || got[1].Available {
+		t.Fatalf("unknown coder plan = %#v", got[1])
 	}
 }
 
 func TestBuildCoderCapabilityPlansReturnsNilWhenNoQualityKnown(t *testing.T) {
 	got := BuildCoderCapabilityPlans(nil, []CoderSlotConfig{
-		{Name: "coder1", Provider: "unknown", Model: "unknown", APIKey: "key", Enabled: true},
+		{Name: "coder1", Enabled: true},
 	}, nil)
 	if got != nil {
 		t.Fatalf("BuildCoderCapabilityPlans() = %#v, want nil", got)

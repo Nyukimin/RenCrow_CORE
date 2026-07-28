@@ -173,13 +173,6 @@ func TestQueuedProviderQueueLatestSupersedesPendingRequest(t *testing.T) {
 	}
 }
 
-func TestNewProviderSupportsOpenAIAPIEngineName(t *testing.T) {
-	provider := NewProvider(Config{Enabled: true, Provider: ProviderOpenAIAPI, ExternalHTTPURL: "http://127.0.0.1:8766/v1/audio/transcriptions"})
-	if provider.Name() != ProviderOpenAIAPI {
-		t.Fatalf("provider.Name() = %q, want %q", provider.Name(), ProviderOpenAIAPI)
-	}
-}
-
 type blockingProvider struct {
 	release chan struct{}
 	mu      sync.Mutex

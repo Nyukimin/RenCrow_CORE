@@ -392,71 +392,30 @@ type HeavyWorkerRuntimeDiagnosticsOptions struct {
 	GatewayConfigured bool
 	GatewayBaseURL    string
 	LogicalAlias      string
-	LLMOpsConfigured  bool
-	LLMOpsEnabled     bool
-	LLMOpsBaseURL     string
-	LLMOps            LLMOpsProxyOptions
 }
 
 func HandleAIWorkflowHeavyWorkerRuntimeDiagnostics(opts HeavyWorkerRuntimeDiagnosticsOptions) http.HandlerFunc {
-	type llmOpsDiagnostics struct {
-		Configured    bool           `json:"configured"`
-		Enabled       bool           `json:"enabled"`
-		BaseURL       string         `json:"base_url,omitempty"`
-		LiveAvailable bool           `json:"live_available"`
-		RoleState     map[string]any `json:"role_state,omitempty"`
-		Memory        map[string]any `json:"memory,omitempty"`
-		Error         string         `json:"error,omitempty"`
-	}
 	type response struct {
-		Role           string            `json:"role"`
-		Route          string            `json:"route"`
-		RoutePrefix    string            `json:"route_prefix"`
-		Provider       string            `json:"provider,omitempty"`
-		Configured     bool              `json:"configured"`
-		BaseURL        string            `json:"base_url,omitempty"`
-		Model          string            `json:"model,omitempty"`
-		LLMOps         llmOpsDiagnostics `json:"llm_ops"`
-		FailureIsError bool              `json:"failure_is_error"`
+		Role           string `json:"role"`
+		Route          string `json:"route"`
+		Provider       string `json:"provider,omitempty"`
+		Configured     bool   `json:"configured"`
+		GatewayBaseURL string `json:"gateway_base_url,omitempty"`
+		LogicalAlias   string `json:"logical_alias,omitempty"`
+		FailureIsError bool   `json:"failure_is_error"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		diag := llmOpsDiagnostics{
-			Configured: opts.LLMOpsConfigured,
-			Enabled:    opts.LLMOpsEnabled,
-			BaseURL:    normalizeLLMOpsBase(firstNonEmptyString(opts.LLMOpsBaseURL, opts.LLMOps.BaseURL)),
-		}
-		if opts.LLMOpsEnabled && opts.LLMOps.ready() {
-			body, err := NewLLMOpsIdleChatGate(opts.LLMOps).do(r.Context(), http.MethodGet, "/v1/status", nil)
-			if err != nil {
-				diag.Error = err.Error()
-			} else {
-				var raw map[string]any
-				if err := json.Unmarshal(body, &raw); err != nil {
-					diag.Error = "llm-ops status decode: " + err.Error()
-				} else {
-					diag.LiveAvailable = true
-					diag.RoleState = nestedObject(raw, "roles", "Heavy")
-					diag.Memory = nestedObject(raw, "memory", "llm_by_role", "Heavy")
-				}
-			}
-		} else if opts.LLMOpsConfigured && strings.TrimSpace(opts.LLMOps.Token) == "" {
-			diag.Error = "LLM_OPS_TOKEN missing"
-		} else if !opts.LLMOpsConfigured {
-			diag.Error = "llm_ops disabled"
-		}
 		writeJSON(w, http.StatusOK, response{
 			Role:           "Heavy",
 			Route:          "ANALYZE",
-			RoutePrefix:    "/analyze",
 			Provider:       "rencrow_llm",
 			Configured:     opts.GatewayConfigured && strings.TrimSpace(opts.GatewayBaseURL) != "" && strings.TrimSpace(opts.LogicalAlias) != "",
-			BaseURL:        strings.TrimRight(strings.TrimSpace(opts.GatewayBaseURL), "/"),
-			Model:          strings.TrimSpace(opts.LogicalAlias),
-			LLMOps:         diag,
+			GatewayBaseURL: strings.TrimRight(strings.TrimSpace(opts.GatewayBaseURL), "/"),
+			LogicalAlias:   strings.TrimSpace(opts.LogicalAlias),
 			FailureIsError: true,
 		})
 	}
@@ -704,22 +663,6 @@ func latestRunStatesByScope(events []domainai.WorkflowEvent) map[string]string {
 		}
 	}
 	return out
-}
-
-func nestedObject(root map[string]any, path ...string) map[string]any {
-	var current any = root
-	for _, key := range path {
-		obj, ok := current.(map[string]any)
-		if !ok {
-			return nil
-		}
-		current = obj[key]
-	}
-	obj, _ := current.(map[string]any)
-	if obj == nil {
-		return nil
-	}
-	return obj
 }
 
 func saveAIWorkflowItem(store AIWorkflowStore, name string, save func(context.Context, AIWorkflowStore, *json.Decoder) error) http.HandlerFunc {

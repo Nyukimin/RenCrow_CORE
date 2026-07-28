@@ -14,6 +14,6 @@ func BuildServiceHealth(snapshot ServiceHealthSnapshot) core.HealthReport {
 		Module: "chat",
 		Status: core.HealthReady,
 		Ready:  true,
-		Detail: "legacy orchestrator processor configured",
+		Detail: "orchestrator processor configured",
 	}
 }

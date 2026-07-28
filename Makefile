@@ -1,4 +1,4 @@
-.PHONY: all build install uninstall clean help test install-watchdog enable-watchdog disable-watchdog watchdog-status watchdog-run-once test-watchdog-mock watchdog-kick install-log-retention enable-log-retention disable-log-retention log-retention-status log-retention-run-once test-log-retention install-resilience enable-resilience disable-resilience resilience-status resilience-run-once install-storage-backup enable-storage-backup disable-storage-backup storage-backup-status storage-backup-check storage-backup-run-once storage-restore-check test-storage-backup install-data-scheduler enable-data-scheduler disable-data-scheduler data-scheduler-status rencrow-data-init rencrow-data-market rencrow-data-market-online rencrow-data-macro rencrow-data-macro-online rencrow-data-features rencrow-data-events rencrow-data-snapshot rencrow-data-validate rencrow-data-backtest rencrow-data-risk rencrow-data-decision rencrow-data-llm-report rencrow-data-audit-report rencrow-data-paper-trade rencrow-data-manual-stop rencrow-data-daily-refresh rencrow-data-weekly-research rencrow-data-test rencrow-data-e2e rencrow-data-backfill rencrow-data-check
+.PHONY: all build install uninstall clean help test install-watchdog enable-watchdog disable-watchdog watchdog-status watchdog-run-once test-watchdog-mock install-log-retention enable-log-retention disable-log-retention log-retention-status log-retention-run-once test-log-retention install-resilience enable-resilience disable-resilience resilience-status resilience-run-once install-storage-backup enable-storage-backup disable-storage-backup storage-backup-status storage-backup-check storage-backup-run-once storage-restore-check test-storage-backup install-data-scheduler enable-data-scheduler disable-data-scheduler data-scheduler-status rencrow-data-init rencrow-data-market rencrow-data-market-online rencrow-data-macro rencrow-data-macro-online rencrow-data-features rencrow-data-events rencrow-data-snapshot rencrow-data-validate rencrow-data-backtest rencrow-data-risk rencrow-data-decision rencrow-data-llm-report rencrow-data-audit-report rencrow-data-paper-trade rencrow-data-manual-stop rencrow-data-daily-refresh rencrow-data-weekly-research rencrow-data-test rencrow-data-e2e rencrow-data-backfill rencrow-data-check
 
 # Build variables
 BINARY_NAME=rencrow
@@ -50,8 +50,6 @@ SYSTEMD_USER_DIR=$(HOME)/.config/systemd/user
 RENCROW_SHARE_DIR=$(INSTALL_PREFIX)/share/rencrow
 WATCHDOG_SCRIPT_SRC=$(CURDIR)/scripts/ops_watchdog.sh
 WATCHDOG_SCRIPT_DST=$(RENCROW_SHARE_DIR)/scripts/ops_watchdog.sh
-WATCHDOG_KICK_SCRIPT_SRC=$(CURDIR)/scripts/ops_watchdog_kick.sh
-WATCHDOG_KICK_SCRIPT_DST=$(RENCROW_SHARE_DIR)/scripts/ops_watchdog_kick.sh
 WATCHDOG_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-watchdog.service
 WATCHDOG_TIMER_SRC=$(CURDIR)/systemd/user/rencrow-watchdog.timer
 LOG_ROTATE_SCRIPT_SRC=$(CURDIR)/scripts/rencrow_log_rotate.sh
@@ -159,8 +157,6 @@ install-watchdog:
 	@mkdir -p $(SYSTEMD_USER_DIR)
 	@cp $(WATCHDOG_SCRIPT_SRC) $(WATCHDOG_SCRIPT_DST)
 	@chmod +x $(WATCHDOG_SCRIPT_DST)
-	@cp $(WATCHDOG_KICK_SCRIPT_SRC) $(WATCHDOG_KICK_SCRIPT_DST)
-	@chmod +x $(WATCHDOG_KICK_SCRIPT_DST)
 	@sed 's#%h/.local/share/rencrow/scripts/ops_watchdog.sh#$(WATCHDOG_SCRIPT_DST)#g' $(WATCHDOG_SERVICE_SRC) > $(SYSTEMD_USER_DIR)/rencrow-watchdog.service
 	@cp $(WATCHDOG_TIMER_SRC) $(SYSTEMD_USER_DIR)/rencrow-watchdog.timer
 	@systemctl --user daemon-reload
@@ -447,10 +443,6 @@ rencrow-data-backfill:
 	@$(MAKE) rencrow-data-market-online
 	@$(MAKE) rencrow-data-macro-online
 	@$(MAKE) rencrow-data-weekly-research
-
-## watchdog-kick: Obsolete; use make watchdog-run-once for Viewer Serve recovery
-watchdog-kick:
-	@bash "$(WATCHDOG_KICK_SCRIPT_DST)" "$(ACTION)" "$(SOURCE)" "$(TOKEN)"
 
 ## uninstall: Remove rencrow from system
 uninstall:

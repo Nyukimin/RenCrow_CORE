@@ -86,7 +86,7 @@ func makePayload(events ...map[string]interface{}) []byte {
 }
 
 func makeSignedRequest(body []byte, secret string) *http.Request {
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("X-Line-Signature", generateSignature(body, secret))
 	req.Header.Set("Content-Type", "application/json")
 	return req
@@ -118,7 +118,7 @@ func TestWebhookE2E_InvalidSignature_Returns401(t *testing.T) {
 	handler := line.NewHandler(orch, testSecret, testToken)
 
 	body := makePayload(makeTextEvent("U123", "hello", "reply001"))
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("X-Line-Signature", "invalid-signature")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -135,7 +135,7 @@ func TestWebhookE2E_MissingSignature_Returns401(t *testing.T) {
 	handler := line.NewHandler(orch, testSecret, testToken)
 
 	body := makePayload(makeTextEvent("U123", "hello", "reply001"))
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	// No signature header
 	rr := httptest.NewRecorder()
 
@@ -151,7 +151,7 @@ func TestWebhookE2E_EmptyBody_Returns400(t *testing.T) {
 	handler := line.NewHandler(orch, testSecret, testToken)
 
 	body := []byte("")
-	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/line", bytes.NewReader(body))
 	req.Header.Set("X-Line-Signature", generateSignature(body, testSecret))
 	rr := httptest.NewRecorder()
 

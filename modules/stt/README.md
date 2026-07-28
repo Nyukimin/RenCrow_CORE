@@ -2,11 +2,9 @@
 
 Owns the RenCrow_CORE side of speech-to-text integration boundaries.
 RenCrow_STT owns concrete transcription processing and runtime operation.
-Production uses only the RenCrow_STT Gateway base URL and its
+CORE uses the RenCrow_STT Gateway base URL and its
 `POST /v1/audio/transcriptions` contract. Viewer WebSocket input terminates at
-the CORE same-origin `/stt` route. Direct provider URL/WebSocket helpers that
-remain in this package are legacy test/development compatibility and are not
-wired from production config.
+the CORE same-origin `/stt` route.
 
 Responsibilities:
 
@@ -14,7 +12,7 @@ Responsibilities:
 - RenCrow_STT Gateway URL normalization and fixed transcription endpoint construction.
 - CORE-side timeout, busy policy, and debug planning.
 - Busy policy normalization and execution-mode planning.
-- WebSocket handler selection, compatibility route paths, and text/binary frame classification rules.
+- WebSocket handler selection, route paths, and text/binary frame classification rules.
 - WebSocket control-message parsing, PCM16/WAV payload normalization, silence detection, draft/final session rules, draft state update/reset rules, session event payloads, timeout error classification, and adaptive timeout/cooldown state rules.
 - Diagnostics snapshot policy and provider unavailable message.
 - Audio input and transcription request payloads.

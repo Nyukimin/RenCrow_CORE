@@ -111,10 +111,6 @@ func cmdRun() {
 	sttRuntime := buildSTTRuntime(cfg)
 	voiceChatRuntime := buildVoiceChatRuntime(cfg, dependencies.voiceDirectHandler, dependencies.idleChatOrch)
 	debugSystemOpts := sttRuntime.DebugOptions
-	llmOpsToken := strings.TrimSpace(os.Getenv("LLM_OPS_TOKEN"))
-	debugSystemOpts.LLMOpsConfigured = cfg.LLMOps.Enabled && strings.TrimSpace(cfg.LLMOps.BaseURL) != ""
-	debugSystemOpts.LLMOpsEnabled = debugSystemOpts.LLMOpsConfigured && llmOpsToken != ""
-	debugSystemOpts.LLMOpsBaseURL = cfg.LLMOps.BaseURL
 	debugSystemOpts.RuntimeReadiness = buildRuntimeDependencyReadiness(cfg, dependencies)
 	debugSystemOpts.LLMGateway = viewer.LLMGatewayRuntimeConfig{
 		BaseURL:            llmGatewayStatus.BaseURL,
@@ -163,9 +159,6 @@ func cmdRun() {
 	debugSystemOpts.VoiceChatEnabled = voiceChatOpts.VoiceChatEnabled
 	debugSystemOpts.VoiceChatGatewayConfigured = voiceChatOpts.VoiceChatGatewayConfigured
 	debugSystemOpts.VoiceInputMode = voiceChatOpts.VoiceInputMode
-	if cfg.LLMOps.Enabled && strings.TrimSpace(cfg.LLMOps.BaseURL) != "" && llmOpsToken == "" {
-		log.Printf("WARN: llm_ops is enabled in config but LLM_OPS_TOKEN is empty; Viewer MLX control API disabled")
-	}
 	registerFeatureRoutes(mux, cfg, dependencies, sttRuntime, voiceChatRuntime, debugSystemOpts)
 
 	server := &http.Server{

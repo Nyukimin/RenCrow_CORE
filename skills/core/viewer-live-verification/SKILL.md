@@ -23,7 +23,7 @@ RenCrow Viewer の UI / interaction / runtime 表示を、実ブラウザ、DOM�
 3. desktop viewport で対象 tab を開く。
 4. narrow / mobile viewport でも確認する。
 5. 初期表示が要約中心で、長文 error / URL / raw log が layout を押し広げないことを確認する。
-6. fixed input bar、toast、overlay、live-mode、lipsync 周辺は `pointer-events`、`z-index`、`position`、`background`、`border`、`box-shadow` を確認する。
+6. fixed input bar、toast、overlay、lipsync 周辺は `pointer-events`、`z-index`、`position`、`background`、`border`、`box-shadow` を確認する。
 7. 必要なら screenshot、console error、network error、DOM snapshot を保存する。
 
 ## Verification

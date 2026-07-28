@@ -14,15 +14,7 @@ function removeIdleLiveEmpty() {
   if (empty) empty.remove();
 }
 
-function isViewerLiveMode() {
-  return !!(document.body && document.body.classList.contains('live-mode'));
-}
-
 function idleLiveRenderTarget() {
-  // Rendering target only. This is not transcript truth, ACK truth, or session truth.
-  // live mode is the theater view and uses the central chat stream; the IdleChat tab log is
-  // for normal mode only and must not be used as the live-mode observation selector.
-  if (isViewerLiveMode() && chat) return chat;
   return idleLiveLog;
 }
 
@@ -98,22 +90,8 @@ function idlePendingQueue(sessionId) {
 
 function queueIdleMessageForTTS(ev) {
   if (!ev || (ev.type !== 'idlechat.message' && ev.type !== 'idlechat.topic')) return;
-  if (isIdleLiveHistoricalEvent(ev)) return;
   const sid = String(ev.session_id || ev.chat_id || '').trim() || 'idlechat';
   if (idleLiveIdentityConflict(ev)) return;
-  const liveMode = isViewerLiveMode();
-  if (liveMode && typeof isThisViewerActiveAudio === 'function' && !isThisViewerActiveAudio()) {
-    recordIdleLiveDiagnostic('pending_skipped', ev, {
-      error_code: 'NON_ACTIVE_AUDIO_VIEWER_PENDING_SKIPPED',
-      reason: 'Viewer is not the active audio owner; it did not arm an IdleChat TTS pending timeout.',
-      session_id: sid,
-      message_id: String(ev.message_id || '').trim(),
-      turn_index: idleTurnIndex(ev),
-      active_audio_viewer_id: String((typeof viewerControl !== 'undefined' && viewerControl && viewerControl.activeAudioViewerId) || '').trim(),
-      viewer_client_id: String((typeof viewerControl !== 'undefined' && viewerControl && viewerControl.clientId) || '').trim(),
-    });
-    return;
-  }
   if (isIdleTTSAudioDisabled()) {
     if (!isIdleSummarySpeechEvent(ev)) {
       appendIdleLiveMessageEvent(ev, {pending: false});
@@ -129,7 +107,7 @@ function queueIdleMessageForTTS(ev) {
   if (suppressDisplay && messageId) idleSuppressedTTSMessageIds.add(messageId);
   if (messageId && queue.some((item) => !item.consumed && item.messageId === messageId)) return;
   if (!messageId && turnIndex >= 0 && queue.some((item) => !item.consumed && item.turnIndex === turnIndex)) return;
-  const el = suppressDisplay ? null : (liveMode ? null : (existing || appendIdleLiveMessageEvent(ev, {pending: true})));
+  const el = suppressDisplay ? null : (existing || appendIdleLiveMessageEvent(ev, {pending: true}));
   const item = {
     ev,
     el,
@@ -170,36 +148,6 @@ function isIdleTTSAudioDisabled() {
   return typeof ttsPlayback !== 'undefined' && ttsPlayback && ttsPlayback.audioEnabled === false;
 }
 
-function clearIdleLivePendingForAudioOwnerTransfer(ownerId) {
-  if (!isViewerLiveMode() || !idlePendingMessages || idlePendingMessages.size === 0) return;
-  idlePendingMessages.forEach((queue, sid) => {
-    (queue || []).forEach((item) => {
-      if (!item || item.consumed) return;
-      item.consumed = true;
-      if (item.timer) clearTimeout(item.timer);
-      recordIdleLiveDiagnostic('pending_skipped', item.ev, {
-        error_code: 'NON_ACTIVE_AUDIO_VIEWER_PENDING_SKIPPED',
-        reason: 'Active audio owner changed before this Viewer rendered the pending IdleChat TTS chunk.',
-        session_id: String(sid || '').trim(),
-        message_id: String(item.messageId || '').trim(),
-        turn_index: Number.isFinite(item.turnIndex) ? item.turnIndex : -1,
-        active_audio_viewer_id: String(ownerId || '').trim(),
-        viewer_client_id: String((typeof viewerControl !== 'undefined' && viewerControl && viewerControl.clientId) || '').trim(),
-      });
-    });
-  });
-  idlePendingMessages.clear();
-}
-
-function isIdleLiveHistoricalEvent(ev) {
-  if (!isViewerLiveMode()) return false;
-  const raw = String((ev && ev.timestamp) || '').trim();
-  if (!raw) return false;
-  const eventMs = Date.parse(raw);
-  if (!Number.isFinite(eventMs)) return false;
-  return eventMs < idleLiveBootedAtMs - 2000;
-}
-
 function consumeIdlePendingMessage(sessionId, characterId, kind, messageId, turnIndex) {
   const sid = String(sessionId || '').trim() || 'idlechat';
   const queue = idlePendingMessages.get(sid);
@@ -238,37 +186,10 @@ function pruneIdlePendingQueue(sessionId) {
 function addIdleMsgToTimeline(ev) {
 		if (!idleLiveRenderTarget() || !ev || (ev.type !== 'idlechat.message' && ev.type !== 'idlechat.topic')) return;
 		clearIdleLiveTimelineForTopic(ev);
-		if (isIdleTopicEvent(ev) && document.body && document.body.classList.contains('live-mode')) return;
 	const sid = String(ev.session_id || ev.chat_id || '').trim();
 	if (!isIdleTopicEvent(ev) && idleLiveActiveSessionId && sid && sid !== idleLiveActiveSessionId) return;
 	queueIdleMessageForTTS(ev);
 }
-
-function hydrateIdleLiveTranscript(sessionId, transcript) {
-	const target = idleLiveRenderTarget();
-	if (!target || !(document.body && document.body.classList.contains('live-mode'))) return;
-	const sid = String(sessionId || '').trim();
-	if (!sid) return;
-	const rows = Array.isArray(transcript) ? transcript : [];
-	const key = idleTranscriptSnapshotKey(sid, rows);
-	if (key === idleLiveSnapshotKey) return;
-	const sessionChanged = idleLiveActiveSessionId && idleLiveActiveSessionId !== sid;
-	idleLiveSnapshotKey = key;
-	if (sessionChanged) {
-		idlePendingMessages.clear();
-		resetTTSSpeechBubble(idleTTSSpeech);
-		if (typeof target.replaceChildren === 'function') target.replaceChildren();
-		else {
-			target.innerHTML = '';
-			if (Array.isArray(target.children)) target.children.length = 0;
-		}
-	}
-	idleLiveActiveSessionId = sid;
-	rows.forEach((row) => {
-		if (!row || (row.type !== 'idlechat.message' && row.type !== 'idlechat.topic')) return;
-		queueIdleMessageForTTS(row);
-	});
-	}
 
 function idleTranscriptSnapshotKey(sessionId, rows) {
   const sid = String(sessionId || '').trim();
@@ -985,11 +906,6 @@ async function refreshIdleStatus() {
     }
     state.idleChat.currentTopic = d.current_topic || '';
 	state.idleChat.forecastStock = d.forecast_stock || null;
-    hydrateIdleLiveTranscript(d.active_session_id || '', d.active_transcript || []);
-    const applyLabStatus = typeof window !== 'undefined' && typeof window.applyLabConversationStatus === 'function'
-      ? window.applyLabConversationStatus
-      : (typeof applyLabConversationStatus === 'function' ? applyLabConversationStatus : null);
-    if (applyLabStatus) applyLabStatus(d);
     renderIdleChat();
   } catch (_) {
     idleStartBtn.disabled = true;
@@ -1030,11 +946,6 @@ async function refreshIdleLogs() {
     }
     state.idleChat.currentTopic = d.current_topic || '';
     state.idleChat.history = Array.isArray(d.history) ? d.history : [];
-    hydrateIdleLiveTranscript(d.active_session_id || '', d.active_transcript || []);
-    const applyLabStatus = typeof window !== 'undefined' && typeof window.applyLabConversationStatus === 'function'
-      ? window.applyLabConversationStatus
-      : (typeof applyLabConversationStatus === 'function' ? applyLabConversationStatus : null);
-    if (applyLabStatus) applyLabStatus(d);
     renderIdleChat();
   } catch (err) {
     state.idleChat.history = [];

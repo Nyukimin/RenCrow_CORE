@@ -8,7 +8,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 )
 
 func buildConversationTextProvider(cfg *config.Config, providers primaryLLMProviders) (llm.LLMProvider, string) {
@@ -34,7 +34,7 @@ func buildConversationEmbedder(cfg *config.Config) (conversation.EmbeddingProvid
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:8090"
 	}
-	return openai.NewOpenAIEmbedderWithOptions(
+	return rencrowllm.NewGatewayEmbedderWithOptions(
 		apiKey,
 		cfg.Conversation.EmbedModel,
 		baseURL,

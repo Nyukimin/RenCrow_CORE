@@ -1,4 +1,4 @@
-// Ops tab module: LLM runtime and memory management UI.
+// Ops tab module: runtime and operations diagnostics.
 function latestOpsEventBy(fn) {
   const list = Array.isArray(state.ops.persistedLogs) ? state.ops.persistedLogs : [];
   for (let i = 0; i < list.length; i++) {
@@ -59,16 +59,14 @@ function opsAudioTriage() {
 }
 
 function opsLLMTriage() {
-  if (state.ops.llmStatusError) {
-    return {value: 'blocked', detail: compactOpsDetail(state.ops.llmStatusError, 118), state: 'error'};
+  const gateway = state.ops.llmGateway || {};
+  if (state.ops.runtimeConfigFetchError) {
+    return {value: 'blocked', detail: compactOpsDetail(state.ops.runtimeConfigFetchError, 118), state: 'error'};
   }
-  if (state.ops.llmStatus) {
-    return {value: 'live', detail: state.ops.llmOpsBaseURL || 'LLM Ops status loaded', state: 'running'};
+  if (gateway.ready === true) {
+    return {value: 'ready', detail: gateway.base_url || 'RenCrow_LLM Gateway ready', state: 'running'};
   }
-  if (state.ops.llmOpsEnabled) {
-    return {value: 'checking', detail: state.ops.llmOpsBaseURL || 'LLM Ops proxy enabled', state: 'thinking'};
-  }
-  return {value: 'disabled', detail: state.ops.llmOpsConfigured ? 'LLM Ops token missing or proxy disabled' : 'LLM Ops not configured', state: 'offline'};
+  return {value: 'unavailable', detail: gateway.warning || gateway.base_url || 'RenCrow_LLM Gateway unavailable', state: 'error'};
 }
 
 function refreshOpsTriageFromState(summary) {
@@ -131,7 +129,6 @@ function gameBridgeOpsCard() {
   const latestSession = sessions[0] || null;
   const latestEvent = events[0] || null;
   const bridgeState = status.ok === true ? 'ok' : 'unavailable';
-  const decisionMode = gameBridgeField(latestSession, 'decision_mode') || status.decision_mode || '-';
   const resultMode = gameBridgeField(latestSession, 'result_mode') || status.result_mode || '-';
   const memoryMode = gameBridgeField(latestSession, 'memory_mode') || status.memory_mode || 'candidate_only';
   const latestGame = gameBridgeField(latestSession, 'game_id') || gameBridgeField(latestEvent, 'game_id') || '-';
@@ -141,7 +138,7 @@ function gameBridgeOpsCard() {
   const skipped = Number(state.ops.gameBridgeSkippedCount || 0);
   const lines = [
     'bridge: ' + bridgeState,
-    'decision: ' + String(decisionMode) + ' / result: ' + String(resultMode),
+    'result: ' + String(resultMode),
     'memory: ' + String(memoryMode),
     'recent sessions: ' + String(sessions.length) + ' / events: ' + String(events.length),
     'latest: ' + String(latestGame) + ' / ' + String(latestSessionID) + ' / turn ' + String(latestTurn),
@@ -838,16 +835,14 @@ function skillEvidenceAuditRows() {
   transcripts.forEach((item) => {
     const segment = String(sandboxField(item, 'segment', 'Segment') || '');
     const evidencePath = String(sandboxField(item, 'evidence_path', 'EvidencePath') || '');
-    const legacyDiffPath = String(sandboxField(item, 'skill_diff_path', 'SkillDiffPath') || sandboxField(item, 'diff_path', 'DiffPath') || '');
-    const legacyTranscriptPath = String(sandboxField(item, 'agent_transcript_path', 'AgentTranscriptPath') || sandboxField(item, 'transcript_path', 'TranscriptPath') || '');
     rows.push({
       time: sandboxField(item, 'created_at', 'CreatedAt'),
       kind: 'coder_transcript',
       id: sandboxField(item, 'event_id', 'EventID') || sandboxField(item, 'entry_id', 'EntryID') || sandboxField(item, 'job_id', 'JobID') || '',
       target: sandboxField(item, 'skill_id', 'SkillID') || sandboxField(item, 'job_id', 'JobID') || '',
       status: String(sandboxField(item, 'status', 'Status') || segment || 'recorded'),
-      evidenceOK: evidencePath.trim() !== '' || (legacyDiffPath.trim() !== '' && legacyTranscriptPath.trim() !== ''),
-      evidence: evidencePath || [legacyDiffPath || 'missing skill_diff_path', legacyTranscriptPath || 'missing agent_transcript_path'].join(' / '),
+      evidenceOK: evidencePath.trim() !== '',
+      evidence: evidencePath || 'missing evidence_path',
     });
   });
   return rows;
@@ -860,12 +855,10 @@ function countCoderTranscriptEvidencePairs(transcripts) {
     if (!key) return;
     const segment = String(sandboxField(item, 'segment', 'Segment') || '');
     const evidencePath = String(sandboxField(item, 'evidence_path', 'EvidencePath') || '');
-    const legacyDiffPath = String(sandboxField(item, 'skill_diff_path', 'SkillDiffPath') || sandboxField(item, 'diff_path', 'DiffPath') || '');
-    const legacyTranscriptPath = String(sandboxField(item, 'agent_transcript_path', 'AgentTranscriptPath') || sandboxField(item, 'transcript_path', 'TranscriptPath') || '');
     if (!groups.has(key)) groups.set(key, {diff: false, transcript: false});
     const group = groups.get(key);
-    if ((segment === 'patch_evidence' && evidencePath.trim() !== '') || legacyDiffPath.trim() !== '') group.diff = true;
-    if ((segment === 'transcript_evidence' && evidencePath.trim() !== '') || legacyTranscriptPath.trim() !== '') group.transcript = true;
+    if (segment === 'patch_evidence' && evidencePath.trim() !== '') group.diff = true;
+    if (segment === 'transcript_evidence' && evidencePath.trim() !== '') group.transcript = true;
   });
   let count = 0;
   groups.forEach((group) => {
@@ -2088,7 +2081,7 @@ function heavyWorkerRuntimeOpsCard() {
     return {
       title: 'Heavy Runtime',
       big: 'unavailable',
-      sub: 'heavy runtime diagnostics unavailable: ' + fetchError + '\nblocked: RouteANALYZE provider state unreadable\nblocked: LLM Ops live state unreadable',
+      sub: 'heavy runtime diagnostics unavailable: ' + fetchError + '\nblocked: RenCrow_LLM Gateway state unreadable',
     };
   }
   const diag = state.ops.heavyWorkerRuntimeDiagnostics || null;
@@ -2096,27 +2089,17 @@ function heavyWorkerRuntimeOpsCard() {
     return {
       title: 'Heavy Runtime',
       big: '-',
-      sub: 'runtime diagnostics 未取得',
+      sub: 'runtime diagnostics not loaded',
     };
   }
-  const ops = diag.llm_ops || {};
-  const live = ops.live_available ? 'live' : 'config';
-  const stateInfo = ops.role_state || {};
-  const memory = ops.memory || {};
-  const health = stateInfo.health_ok === true ? 'healthy' : (stateInfo.health_ok === false ? 'unhealthy' : live);
-  const model = memory.model || diag.model || '-';
-  const pid = memory.pid == null ? 'pid -' : ('pid ' + String(memory.pid));
-  const base = memory.port ? replaceURLPort(diag.base_url, memory.port) : (diag.base_url || '-');
-  const error = ops.error ? '\n' + String(ops.error) : '';
   return {
     title: 'Heavy Runtime',
-    big: health,
-    sub: 'route: ' + (diag.route || 'ANALYZE') + ' ' + (diag.route_prefix || '/analyze') +
-      '\n' + String(model) + ' · ' + pid +
-      '\n' + String(base) + error,
+    big: diag.configured ? 'configured' : 'unavailable',
+    sub: 'route: ' + (diag.route || 'ANALYZE') +
+      '\nalias: ' + String(diag.logical_alias || '-') +
+      '\ngateway: ' + String(diag.gateway_base_url || '-'),
   };
 }
-
 function knowledgeMemoryOpsCard() {
   const fetchError = String(state.ops.knowledgeMemoryFetchError || '');
   if (fetchError) {
@@ -2229,7 +2212,7 @@ function renderRuntimeBlockedRouteAuditResult() {
   const blocked = routes.filter((item) => !Boolean(item.ok)).length;
   const unavailable = routes.filter((item) => Number(item.status || 0) === 503).length;
   const available = routes.filter((item) => Boolean(item.ok)).length;
-  el.textContent = 'runtime blocked route audits: ' + String(routes.length) + ' checked / ' + String(blocked) + ' blocked / ' + String(unavailable) + ' unavailable / ' + String(available) + ' available\nblocked: Source Registry staging, Memory Layers, Sandbox, and LLM Ops require their runtime dependencies';
+  el.textContent = 'runtime blocked route audits: ' + String(routes.length) + ' checked / ' + String(blocked) + ' blocked / ' + String(unavailable) + ' unavailable / ' + String(available) + ' available\nblocked: Source Registry staging, Memory Layers, and Sandbox require their runtime dependencies';
 }
 
 function renderKnowledgeMemoryDetailFocus(focusBody) {
@@ -2334,29 +2317,10 @@ function bindDCISearchControls() {
   });
 }
 
-let llmOpsUIBound = false;
-function bindLLMOpsButtons() {
-  if (llmOpsUIBound) return;
-  llmOpsUIBound = true;
-  const refresh = document.getElementById('llmOpsRefreshBtn');
-  const stopBtn = document.getElementById('llmOpsStopBtn');
-  const restartBtn = document.getElementById('llmOpsRestartBtn');
-  if (refresh) refresh.addEventListener('click', refreshLlmOpsStatus);
-  if (stopBtn) stopBtn.addEventListener('click', llmOpsStopChatWorker);
-  if (restartBtn) restartBtn.addEventListener('click', llmOpsRestartAllRoles);
-}
-
-function syncLLMOpsPanel(cfg, fetchError) {
-  const panel = document.getElementById('llmOpsPanel');
-  if (!panel) return;
+function syncRuntimeConfigPanel(cfg, fetchError) {
   const runtimeConfigError = String(fetchError || '').trim();
-  const configured = Boolean(cfg && cfg.llm_ops_configured);
-  const enabled = Boolean(cfg && cfg.llm_ops_enabled);
-  const baseURL = cfg && cfg.llm_ops_base_url ? String(cfg.llm_ops_base_url) : '';
   state.ops.runtimeConfigFetchError = runtimeConfigError;
-  state.ops.llmOpsConfigured = configured;
-  state.ops.llmOpsBaseURL = baseURL;
-  state.ops.localLLM = cfg && cfg.local_llm ? cfg.local_llm : null;
+  state.ops.llmGateway = cfg && cfg.llm_gateway ? cfg.llm_gateway : null;
   state.ops.webGather = cfg && cfg.web_gather ? cfg.web_gather : null;
   state.ops.webwrightFetch = cfg && cfg.webwright_fetch ? cfg.webwright_fetch : null;
   state.ops.browserActor = cfg && cfg.browser_actor ? cfg.browser_actor : null;
@@ -2364,42 +2328,11 @@ function syncLLMOpsPanel(cfg, fetchError) {
   state.ops.runtimeSTTBaseURL = cfg && cfg.stt_base_url ? String(cfg.stt_base_url) : '';
   state.ops.runtimeSTTStreamURL = cfg && cfg.stt_stream_url ? String(cfg.stt_stream_url) : '';
   state.ops.runtimeTTSBaseURL = cfg && cfg.tts_base_url ? String(cfg.tts_base_url) : '';
-  if (typeof syncChatRouteAliasesFromRuntimeConfig === 'function') {
-    syncChatRouteAliasesFromRuntimeConfig(state.ops.localLLM);
-  }
-  state.ops.llmOpsEnabled = enabled;
-  bindLLMOpsButtons();
-  const configEl = document.getElementById('llmOpsConfigState');
-  const refresh = document.getElementById('llmOpsRefreshBtn');
-  const stopBtn = document.getElementById('llmOpsStopBtn');
-  const restartBtn = document.getElementById('llmOpsRestartBtn');
-  [refresh, stopBtn, restartBtn].forEach((btn) => {
-    if (btn) btn.disabled = !enabled;
-  });
-  if (configEl) {
-    if (runtimeConfigError) {
-      configEl.innerHTML = '<span class="badge state-error">unavailable</span> ' + esc('runtime config unavailable: ' + runtimeConfigError);
-    } else if (enabled) {
-      configEl.innerHTML = '<span class="badge state-running">enabled</span> ' + esc(baseURL || 'llm_ops configured');
-    } else if (configured) {
-      configEl.innerHTML = '<span class="badge state-error">token missing</span> ' + esc(baseURL || 'llm_ops configured') + '<div class="ops-sub">LLM_OPS_TOKEN が未設定のためViewerプロキシは無効です</div>';
-    } else {
-      configEl.innerHTML = '<span class="badge state-offline">disabled</span><div class="ops-sub">~/.rencrow/config.yaml に llm_ops.enabled/base_url がありません</div>';
-    }
-  }
-  renderLocalLLMRuntimeConfig();
+  renderLLMGatewayRuntimeConfig();
   renderWebGatherOpsStatus();
   renderRuntimeDependencyReadiness();
   refreshRuntimeHealthStatus();
-  if (enabled) refreshLlmOpsStatus();
-  else {
-    state.ops.llmStatus = null;
-    state.ops.llmStatusError = runtimeConfigError ? ('runtime config unavailable: ' + runtimeConfigError) : (configured ? 'LLM_OPS_TOKEN missing' : 'llm_ops disabled');
-    renderLlmMemoryStatus();
-    setLlmOpsStatusPre(state.ops.llmStatusError);
-  }
 }
-
 function syncRuntimeDebugSystem(snapshot, fetchError) {
   state.ops.runtimeDebugSystemFetchError = String(fetchError || '').trim();
   state.ops.runtimeDebugSystem = snapshot && typeof snapshot === 'object' ? snapshot : null;
@@ -2432,7 +2365,7 @@ function renderWebGatherOpsStatus() {
       state: 'configured',
       badge: 'thinking',
       big: ['local_cache', 'rss_atom', 'sitemap'].concat(wg.searxng_configured ? ['searxng'] : [], wg.yacy_configured ? ['yacy'] : []).join(' / '),
-      sub: [wg.searxng_base_url ? 'searxng=' + wg.searxng_base_url : '', wg.yacy_base_url ? 'yacy=' + wg.yacy_base_url : ''].filter(Boolean).join('\n') || 'local providers only',
+      sub: [wg.searxng_base_url ? 'searxng=' + wg.searxng_base_url : '', wg.yacy_base_url ? 'yacy=' + wg.yacy_base_url : ''].filter(Boolean).join('\n') || 'built-in discovery only',
     },
     {
       title: 'Webwright',
@@ -2455,41 +2388,24 @@ function renderWebGatherOpsStatus() {
   )).join('');
 }
 
-function renderLocalLLMRuntimeConfig() {
+function renderLLMGatewayRuntimeConfig() {
   const el = document.getElementById('llmRuntimeConfigCards');
   if (!el) return;
   if (state.ops.runtimeConfigFetchError) {
-    el.innerHTML = '<div class="debug-empty">local_llm runtime config unavailable: ' + esc(state.ops.runtimeConfigFetchError) + '</div>';
+    el.innerHTML = '<div class="debug-empty">RenCrow_LLM Gateway runtime config unavailable: ' + esc(state.ops.runtimeConfigFetchError) + '</div>';
     return;
   }
-  const localLLM = state.ops.localLLM || {};
-  const liveModels = localLLM.live_models || {};
-  if (!localLLM.enabled) {
-    el.innerHTML = '<div class="debug-empty">local_llm disabled</div>';
-    return;
-  }
-  const rows = [
-    llmRuntimeRoleRow('Chat', localLLM.chat_model, localLLM.chat_base_url, '', liveModels.chat),
-    llmRuntimeRoleRow('Worker', localLLM.worker_model, localLLM.worker_base_url, '', liveModels.worker),
-    llmRuntimeRoleRow('Heavy', localLLM.heavy_model, localLLM.heavy_base_url,
-      sameLocalLLMEndpoint(localLLM.heavy_base_url, localLLM.worker_base_url, localLLM.heavy_model, localLLM.worker_model) ? 'shared' : '', liveModels.heavy),
-    llmRuntimeRoleRow('Wild', localLLM.wild_model, localLLM.wild_base_url,
-      sameLocalLLMEndpoint(localLLM.wild_base_url, localLLM.chat_base_url, localLLM.wild_model, localLLM.chat_model) ? 'shared' : '', liveModels.wild),
-  ].filter((row) => row.model || row.url);
-  const params = [
-    localLLM.provider ? 'provider=' + localLLM.provider : '',
-    localLLM.timeout_sec ? 'timeout=' + localLLM.timeout_sec + 's' : '',
-    localLLM.global_concurrency ? 'global=' + localLLM.global_concurrency : '',
-    localLLM.model_concurrency ? 'model=' + localLLM.model_concurrency : '',
-  ].filter(Boolean).join(' · ');
-  el.innerHTML = rows.map((row) => (
+  const gateway = state.ops.llmGateway || {};
+  const ready = gateway.ready === true;
+  const stateLabel = ready ? 'ready' : 'unavailable';
+  const warning = String(gateway.warning || '').trim();
+  el.innerHTML =
     '<div class="llm-runtime-card">' +
-      '<div class="ops-card-title">' + esc(row.role) + '<span class="badge ' + stateClass(row.stateClass || row.state) + '">' + esc(row.state) + '</span></div>' +
-      '<div class="llm-runtime-model">' + esc(row.model || '-') + '</div>' +
-      '<div class="llm-runtime-url">' + esc(row.url || '-') + '/v1/chat/completions</div>' +
-      (row.meta ? '<div class="ops-sub">' + esc(row.meta) + '</div>' : '') +
-    '</div>'
-  )).join('') + (params ? '<div class="ops-sub">' + esc(params) + '</div>' : '');
+      '<div class="ops-card-title">RenCrow_LLM Gateway<span class="badge ' + stateClass(ready ? 'running' : 'error') + '">' + esc(stateLabel) + '</span></div>' +
+      '<div class="llm-runtime-model">logical aliases</div>' +
+      '<div class="llm-runtime-url">' + esc(gateway.base_url || '-') + '</div>' +
+      (warning ? '<div class="ops-sub">' + esc(warning) + '</div>' : '') +
+    '</div>';
 }
 
 function renderRuntimeDependencyReadiness() {
@@ -2532,8 +2448,8 @@ function renderRuntimeDependencyReadiness() {
   ].join('\n') : 'blocked: browser_actor disabled';
   const runtimeHealth = state.ops.runtimeHealth || null;
   const runtimeHealthChecks = runtimeHealthChecksByName(runtimeHealth);
-  const runtimeHealthChat = runtimeHealthChecks.local_llm_chat || runtimeHealthChecks.chat || null;
-  const runtimeHealthWorker = runtimeHealthChecks.local_llm_worker || runtimeHealthChecks.worker || null;
+  const runtimeHealthChat = runtimeHealthChecks.gateway_mio || null;
+  const runtimeHealthWorker = runtimeHealthChecks.gateway_worker || null;
   const runtimeHealthDetail = runtimeHealthDetailText(runtimeHealth, state.ops.runtimeHealthError);
   const rows = [
     runtimeConfigError ? runtimeReadinessCard('Runtime Config', [
@@ -2544,11 +2460,6 @@ function renderRuntimeDependencyReadiness() {
       runtimeReadinessItem('chat', runtimeHealthCheckOK(runtimeHealthChat)),
       runtimeReadinessItem('worker', runtimeHealthCheckOK(runtimeHealthWorker)),
     ], runtimeHealthDetail),
-    runtimeReadinessCard('LLM Ops', [
-      runtimeReadinessItem('configured', state.ops.llmOpsConfigured),
-      runtimeReadinessItem('proxy', state.ops.llmOpsEnabled),
-      runtimeReadinessItem('live', state.ops.llmStatus != null),
-    ], [state.ops.llmOpsBaseURL || '', state.ops.llmStatusError ? 'blocked: ' + String(state.ops.llmStatusError) : ''].filter(Boolean).join('\n')),
     runtimeReadinessCard('Slack', [
       runtimeReadinessItem('credentials', readiness.slack_credentials_present),
       runtimeReadinessItem('webhook', readiness.slack_webhook_registered),
@@ -2645,74 +2556,6 @@ function runtimeHealthDetailText(report, errorText) {
   }).join('; ');
 }
 
-function llmRuntimeRoleRow(role, configModel, configURL, configuredState, live) {
-  const status = state.ops.llmStatus || {};
-  const roleState = status.roles && status.roles[role] ? status.roles[role] : null;
-  const memoryRole = status.memory && status.memory.llm_by_role && status.memory.llm_by_role[role]
-    ? status.memory.llm_by_role[role]
-    : null;
-  const livePort = memoryRole && memoryRole.port != null ? Number(memoryRole.port) : null;
-  const liveURL = Number.isFinite(livePort) ? replaceURLPort(configURL, livePort) : '';
-  const liveModel = memoryRole && memoryRole.model ? String(memoryRole.model) : '';
-  const serverModel = liveLLMEffectiveModel(live);
-  const alias = live && live.alias ? String(live.alias) : String(configModel || '');
-  const pid = memoryRole && memoryRole.pid != null ? 'pid ' + String(memoryRole.pid) : '';
-  const liveState = liveLLMState(live);
-  let runtimeState = configuredState || 'configured';
-  let stateClassName = configuredState === 'shared' ? 'thinking' : 'offline';
-
-  if (roleState) {
-    if (roleState.halted) {
-      runtimeState = 'halted';
-      stateClassName = 'error';
-    } else if (roleState.health_ok === false) {
-      runtimeState = 'unhealthy';
-      stateClassName = 'error';
-    } else if (roleState.health_ok === true || pid) {
-      runtimeState = 'running';
-      stateClassName = 'running';
-    }
-  } else if (memoryRole && memoryRole.pid != null) {
-    runtimeState = 'running';
-    stateClassName = 'running';
-  } else if (liveState.state) {
-    runtimeState = liveState.state;
-    stateClassName = liveState.stateClass;
-  }
-
-  const meta = [
-    alias ? 'alias=' + alias : '',
-    serverModel && alias && serverModel !== alias ? 'server=' + serverModel : '',
-    live && live.default_model && live.default_model !== serverModel ? 'default=' + live.default_model : '',
-    pid,
-    live && live.error ? 'probe=' + live.error : '',
-  ].filter(Boolean).join('\n');
-
-  return {
-    role,
-    model: liveModel || serverModel || configModel,
-    url: liveURL || (live && live.base_url ? live.base_url : '') || configURL,
-    state: runtimeState,
-    stateClass: stateClassName,
-    meta,
-  };
-}
-
-function liveLLMEffectiveModel(live) {
-  if (!live || typeof live !== 'object') return '';
-  return String(live.backend_model || live.loaded_model || '').trim();
-}
-
-function liveLLMState(live) {
-  if (!live || typeof live !== 'object') return {state: '', stateClass: ''};
-  if (live.error && !live.backend_model && !live.loaded_model) return {state: 'probe error', stateClass: 'error'};
-  if (live.loaded === true) return {state: 'loaded', stateClass: 'running'};
-  if (live.loaded === false) return {state: 'not loaded', stateClass: 'offline'};
-  const status = String(live.status || '').toLowerCase();
-  if (status === 'healthy' || status === 'ok') return {state: 'healthy', stateClass: 'running'};
-  return {state: live.backend_model || live.loaded_model ? 'resolved' : '', stateClass: live.backend_model || live.loaded_model ? 'running' : ''};
-}
-
 function replaceURLPort(rawURL, port) {
   const text = String(rawURL || '').trim();
   if (!text) return 'http://127.0.0.1:' + String(port);
@@ -2723,303 +2566,6 @@ function replaceURLPort(rawURL, port) {
   } catch (_) {
     return text.replace(/:\d+(\/.*)?$/, ':' + String(port));
   }
-}
-
-function sameLocalLLMEndpoint(urlA, urlB, modelA, modelB) {
-  return String(urlA || '').replace(/\/+$/, '') === String(urlB || '').replace(/\/+$/, '') &&
-    String(modelA || '') === String(modelB || '');
-}
-
-function setLlmOpsStatusPre(text) {
-  const el = document.getElementById('llmOpsStatusPre');
-  if (el) el.textContent = text == null ? '' : String(text);
-}
-
-function llmRoleMemoryState(role, info) {
-  if (!info || info.pid == null || info.rss_mib == null) return 'offline';
-  const roleState = state.ops.llmStatus && state.ops.llmStatus.roles && state.ops.llmStatus.roles[role];
-  if (roleState && roleState.halted) return 'error';
-  if (roleState && roleState.health_ok === false) return 'error';
-  return 'running';
-}
-
-function renderLlmMemoryStatus() {
-  const cards = document.getElementById('llmMemoryCards');
-  const systemBar = document.getElementById('llmMemorySystemBar');
-  const processListsEl = document.getElementById('llmMemoryProcessLists');
-  const rolesEl = document.getElementById('llmMemoryRoles');
-  if (!cards || !systemBar || !rolesEl) return;
-
-  const status = state.ops.llmStatus || {};
-  const localLLM = state.ops.localLLM || {};
-  const memory = status.memory || {};
-  const system = memory.system || {};
-  const byRole = memory.llm_by_role || {};
-  const totalGiB = num(system.total_gib) || (num(system.total_bytes) / 1073741824);
-  const usedGiB = num(system.used_gib) || (num(system.used_bytes) / 1073741824);
-  const freeGiB = num(system.free_gib) || (num(system.free_bytes) / 1073741824);
-  const availableGiB = memoryGiB(system, ['available', 'available_for_llm', 'safe_available_for_llm']);
-  const swapUsedGiB = memoryGiB(system, ['swap_used', 'swap.used', 'swap_used_for_llm']);
-  const compressedGiB = memoryGiB(system, ['compressed', 'compressed_memory']);
-  const fileCacheGiB = memoryGiB(system, ['file_cache', 'cache', 'cached']);
-  const wiredGiB = memoryGiB(system, ['wired', 'wired_memory']);
-  const availableForLLMGiB = memoryGiB(system, ['available_for_llm']);
-  const usedForLLMGiB = memoryGiB(system, ['used_for_llm']);
-  const safeAvailableForLLMGiB = memoryGiB(system, ['safe_available_for_llm']);
-  const safetyMarginGiB = memoryGiB(system, ['llm_safety_margin']);
-  const usedPct = pct(usedGiB, totalGiB);
-  const freePct = pct(freeGiB, totalGiB);
-  const chatRSSMiB = roleRSSMiB(byRole.Chat);
-  const workerRSSMiB = roleRSSMiB(byRole.Worker);
-
-  cards.innerHTML = [
-    {title: 'Total RAM', big: fmtGiB(totalGiB), sub: system.total_bytes ? fmtBytesAsGiB(system.total_bytes) : 'memory.system.total_gib', indicator: memoryIndicator('none')},
-    {title: 'Used RAM', big: fmtGiB(usedGiB), sub: usedPct.toFixed(1) + '% used', indicator: memoryIndicatorForUsedPct(usedPct)},
-    {title: 'Free RAM', big: fmtGiB(freeGiB), sub: freePct.toFixed(1) + '% free', indicator: memoryIndicatorForFreePct(freePct)},
-    {title: 'Available RAM', big: fmtReportedGiB(availableGiB), sub: memorySourceLabel(system, ['available', 'available_for_llm', 'safe_available_for_llm']), indicator: memoryIndicatorForAvailable(availableGiB)},
-    {title: 'Swap Used', big: fmtReportedGiB(swapUsedGiB), sub: memorySourceLabel(system, ['swap_used', 'swap.used', 'swap_used_for_llm']), indicator: memoryIndicatorForSwap(swapUsedGiB)},
-    {title: 'Memory Pressure', big: fmtMemoryPressure(system), sub: memorySourceLabel(system, ['memory_pressure', 'pressure', 'memory_pressure_percent']), indicator: memoryIndicatorForPressure(system)},
-    {title: 'Compressed', big: fmtReportedGiB(compressedGiB), sub: memorySourceLabel(system, ['compressed', 'compressed_memory']), indicator: memoryIndicatorForCompressed(compressedGiB, totalGiB)},
-    {title: 'File Cache', big: fmtReportedGiB(fileCacheGiB), sub: memorySourceLabel(system, ['file_cache', 'cache', 'cached']), indicator: memoryIndicator('none')},
-    {title: 'Wired', big: fmtReportedGiB(wiredGiB), sub: memorySourceLabel(system, ['wired', 'wired_memory']), indicator: memoryIndicatorForWired(wiredGiB, totalGiB)},
-    {title: 'Available for LLM', big: fmtReportedGiB(availableForLLMGiB), sub: memorySourceLabel(system, ['available_for_llm']), indicator: memoryIndicatorForAvailable(availableForLLMGiB)},
-    {title: 'Used for LLM', big: fmtReportedGiB(usedForLLMGiB), sub: memorySourceLabel(system, ['used_for_llm']), indicator: memoryIndicatorForUsedPct(pct(usedForLLMGiB, totalGiB))},
-    {title: 'Safe Available', big: fmtReportedGiB(safeAvailableForLLMGiB), sub: memorySourceLabel(system, ['safe_available_for_llm']), indicator: memoryIndicatorForSafeAvailable(safeAvailableForLLMGiB)},
-    {title: 'Safety Margin', big: fmtReportedGiB(safetyMarginGiB), sub: memorySourceLabel(system, ['llm_safety_margin']), indicator: memoryIndicator('none')},
-    {title: 'Chat RSS', big: fmtGiBFromMiB(chatRSSMiB), sub: rolePIDLabel(byRole.Chat)},
-    {title: 'Worker RSS', big: fmtGiBFromMiB(workerRSSMiB), sub: rolePIDLabel(byRole.Worker)},
-  ].map((item) => (
-    '<div class="llm-memory-card">' +
-      '<div class="ops-card-title"><span>' + esc(item.title) + '</span>' + renderMemoryIndicator(item.indicator) + '</div>' +
-      '<div class="ops-big">' + esc(item.big) + '</div>' +
-      '<div class="ops-sub">' + esc(item.sub) + '</div>' +
-    '</div>'
-  )).join('');
-
-  const barFill = systemBar.querySelector('span');
-  if (barFill) barFill.style.width = usedPct.toFixed(1) + '%';
-  systemBar.title = 'Used ' + usedPct.toFixed(1) + '% / Free ' + freePct.toFixed(1) + '%';
-
-  if (processListsEl) {
-    processListsEl.innerHTML =
-      renderMemoryProcessList('Top Memory Processes', memoryList(memory, system, ['top_memory_processes', 'top_processes', 'processes'])) +
-      renderMemoryProcessList('Model Processes', memoryList(memory, system, ['model_processes', 'llm_processes', 'models']));
-  }
-
-  const roles = Object.keys(byRole).sort((a, b) => {
-    const order = {Chat: 0, Worker: 1};
-    return (order[a] ?? 50) - (order[b] ?? 50) || a.localeCompare(b);
-  });
-  if (roles.length === 0) {
-    const fallback = renderLocalLLMFallback(localLLM, state.ops.llmStatusError);
-    rolesEl.innerHTML = fallback || (state.ops.llmStatusError
-      ? '<div class="debug-empty">' + esc(state.ops.llmStatusError) + '</div>'
-      : '<div class="debug-empty">memory.llm_by_role is empty</div>');
-    return;
-  }
-  rolesEl.innerHTML = roles.map((role) => {
-    const info = byRole[role] || {};
-    const rssMiB = roleRSSMiB(info);
-    const rssPct = pct(rssMiB, totalGiB * 1024);
-    const st = llmRoleMemoryState(role, info);
-    const pid = info.pid == null ? 'stopped' : 'pid ' + String(info.pid);
-    return '<div class="llm-role-memory-item">' +
-      '<div class="llm-role-memory-head">' +
-        '<div><div class="llm-role-memory-title">' + esc(role) + '</div><div class="llm-role-memory-meta">' + esc(pid) + ' · ' + esc(fmtGiBFromMiB(rssMiB)) + ' RSS</div></div>' +
-        '<span class="badge ' + stateClass(st) + '">' + esc(st) + '</span>' +
-      '</div>' +
-      '<div class="llm-role-memory-bar" title="' + escAttr(rssPct.toFixed(2) + '% of system RAM') + '"><span style="width:' + escAttr(rssPct.toFixed(2)) + '%"></span></div>' +
-    '</div>';
-  }).join('');
-}
-
-function memoryField(obj, names) {
-  for (const name of names) {
-    const parts = String(name).split('.');
-    let cur = obj;
-    for (const part of parts) {
-      if (!cur || typeof cur !== 'object' || !(part in cur)) {
-        cur = undefined;
-        break;
-      }
-      cur = cur[part];
-    }
-    if (cur !== undefined && cur !== null && cur !== '') return {name, value: cur};
-  }
-  return {name: names[0], value: null};
-}
-
-function memoryGiB(system, bases) {
-  const gibNames = bases.map((base) => base + '_gib');
-  const byteNames = bases.map((base) => base + '_bytes');
-  const gib = memoryField(system, gibNames);
-  if (gib.value !== null) return num(gib.value);
-  const bytes = memoryField(system, byteNames);
-  if (bytes.value !== null) return num(bytes.value) / 1073741824;
-  return null;
-}
-
-function fmtReportedGiB(value) {
-  if (value === null || value === undefined || value === '') return '-';
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return '-';
-  return n.toFixed(n >= 10 ? 1 : 2) + ' GiB';
-}
-
-function memorySourceLabel(system, bases) {
-  const names = bases.flatMap((base) => [base + '_gib', base + '_bytes', base]);
-  const found = memoryField(system, names);
-  if (found.value === null) return 'not reported';
-  return 'memory.system.' + found.name;
-}
-
-function fmtMemoryPressure(system) {
-  const found = memoryField(system, ['memory_pressure', 'pressure', 'memory_pressure_percent']);
-  if (found.value === null) return '-';
-  if (typeof found.value === 'number') {
-    return found.name.endsWith('_percent') ? found.value.toFixed(1) + '%' : String(found.value);
-  }
-  return String(found.value);
-}
-
-function memoryIndicator(level, label) {
-  const normalized = level || 'unknown';
-  const labels = {ok: 'OK', warn: 'WARN', danger: 'DANGER', unknown: 'UNKNOWN', none: ''};
-  const classes = {ok: 'running', warn: 'thinking', danger: 'error', unknown: 'offline', none: ''};
-  return {level: normalized, label: label || labels[normalized] || 'UNKNOWN', state: classes[normalized] || 'offline'};
-}
-
-function renderMemoryIndicator(indicator) {
-  if (!indicator || indicator.level === 'none') return '';
-  return '<span class="llm-memory-indicator state-' + escAttr(indicator.state) + '">' + esc(indicator.label) + '</span>';
-}
-
-function memoryIndicatorForUsedPct(value) {
-  if (value == null || !Number.isFinite(Number(value))) return memoryIndicator('unknown');
-  if (value >= 95) return memoryIndicator('danger');
-  if (value >= 90) return memoryIndicator('warn');
-  return memoryIndicator('ok');
-}
-
-function memoryIndicatorForFreePct(value) {
-  if (value == null || !Number.isFinite(Number(value))) return memoryIndicator('unknown');
-  if (value <= 3) return memoryIndicator('danger');
-  if (value <= 8) return memoryIndicator('warn');
-  return memoryIndicator('ok');
-}
-
-function memoryIndicatorForAvailable(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return memoryIndicator('unknown');
-  if (n < 4) return memoryIndicator('danger');
-  if (n < 8) return memoryIndicator('warn');
-  return memoryIndicator('ok');
-}
-
-function memoryIndicatorForSafeAvailable(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return memoryIndicator('unknown');
-  if (n < 2) return memoryIndicator('danger');
-  if (n < 4) return memoryIndicator('warn');
-  return memoryIndicator('ok');
-}
-
-function memoryIndicatorForSwap(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return memoryIndicator('unknown');
-  if (n >= 4) return memoryIndicator('danger');
-  if (n >= 1) return memoryIndicator('warn');
-  return memoryIndicator('ok');
-}
-
-function memoryIndicatorForCompressed(value, totalGiB) {
-  const n = Number(value);
-  const total = Number(totalGiB);
-  if (!Number.isFinite(n) || !Number.isFinite(total) || total <= 0) return memoryIndicator('unknown');
-  const ratio = (n / total) * 100;
-  if (ratio >= 10) return memoryIndicator('danger');
-  if (ratio >= 5) return memoryIndicator('warn');
-  return memoryIndicator('ok');
-}
-
-function memoryIndicatorForWired(value, totalGiB) {
-  const n = Number(value);
-  const total = Number(totalGiB);
-  if (!Number.isFinite(n) || !Number.isFinite(total) || total <= 0) return memoryIndicator('unknown');
-  const ratio = (n / total) * 100;
-  if (ratio >= 50) return memoryIndicator('danger');
-  if (ratio >= 35) return memoryIndicator('warn');
-  return memoryIndicator('ok');
-}
-
-function memoryIndicatorForPressure(system) {
-  const text = String(memoryField(system, ['memory_pressure', 'pressure']).value || '').toLowerCase();
-  if (text.includes('critical')) return memoryIndicator('danger');
-  if (text.includes('warn')) return memoryIndicator('warn');
-  if (text.includes('normal') || text.includes('ok')) return memoryIndicator('ok');
-  const pctValue = memoryField(system, ['memory_pressure_percent']).value;
-  const n = Number(pctValue);
-  if (!Number.isFinite(n)) return memoryIndicator('unknown');
-  if (n >= 98) return memoryIndicator('danger');
-  if (n >= 90) return memoryIndicator('warn');
-  return memoryIndicator('ok');
-}
-
-function memoryList(memory, system, names) {
-  const fromMemory = memoryField(memory, names);
-  if (Array.isArray(fromMemory.value)) return fromMemory.value;
-  const fromSystem = memoryField(system, names);
-  if (Array.isArray(fromSystem.value)) return fromSystem.value;
-  return [];
-}
-
-function renderMemoryProcessList(title, rows) {
-  const items = Array.isArray(rows) ? rows : [];
-  const body = items.length ? items.slice(0, 8).map(renderMemoryProcessRow).join('') : '<div class="ops-sub">not reported</div>';
-  return '<div class="llm-memory-process-list">' +
-    '<div class="ops-card-title">' + esc(title) + '</div>' +
-    body +
-  '</div>';
-}
-
-function renderMemoryProcessRow(row) {
-  if (row == null || typeof row !== 'object') {
-    return '<div class="llm-memory-process-row"><span class="llm-memory-process-name">' + esc(String(row || '-')) + '</span><span class="llm-memory-process-meta">-</span></div>';
-  }
-  const name = row.name || row.command || row.process || row.model || row.role || ('pid ' + (row.pid == null ? '-' : row.pid));
-  const rss = row.rss_gib != null ? fmtGiB(row.rss_gib) : fmtGiBFromMiB(row.rss_mib != null ? row.rss_mib : (num(row.rss_bytes) / 1048576));
-  const pid = row.pid == null ? '' : 'pid ' + row.pid;
-  const meta = [rss, pid].filter((part) => part && part !== '-').join(' · ') || '-';
-  return '<div class="llm-memory-process-row"><span class="llm-memory-process-name">' + esc(name) + '</span><span class="llm-memory-process-meta">' + esc(meta) + '</span></div>';
-}
-
-function renderLocalLLMFallback(localLLM, errorText) {
-  if (!localLLM || !localLLM.enabled) return '';
-  const rows = [
-    {role: 'Chat', model: localLLM.chat_model, url: localLLM.chat_base_url},
-    {role: 'Worker', model: localLLM.worker_model, url: localLLM.worker_base_url},
-    {role: 'Wild', model: localLLM.wild_model, url: localLLM.wild_base_url},
-  ].filter((row) => row.model || row.url);
-  if (!rows.length) return '';
-  const note = errorText
-    ? '<div class="debug-empty">' + esc(errorText) + '<div class="ops-sub">Mac管理APIが未到達のため、メモリ値は取得できません。推論API設定のみ表示しています。</div></div>'
-    : '';
-  const params = [
-    localLLM.provider ? 'provider=' + localLLM.provider : '',
-    localLLM.timeout_sec ? 'timeout=' + localLLM.timeout_sec + 's' : '',
-    localLLM.global_concurrency ? 'global=' + localLLM.global_concurrency : '',
-    localLLM.model_concurrency ? 'model=' + localLLM.model_concurrency : '',
-  ].filter(Boolean).join(' · ');
-  return note + rows.map((row) => (
-    '<div class="llm-role-memory-item">' +
-      '<div class="llm-role-memory-head">' +
-        '<div><div class="llm-role-memory-title">' + esc(row.role) + '</div>' +
-        '<div class="llm-role-memory-meta">' + esc(row.model || '-') + '</div>' +
-        '<div class="ops-sub">' + esc(row.url || '-') + '</div></div>' +
-        '<span class="badge state-offline">ops api down</span>' +
-      '</div>' +
-    '</div>'
-  )).join('') + (params ? '<div class="ops-sub">' + esc(params) + '</div>' : '');
 }
 
 async function refreshRuntimeHealthStatus() {
@@ -3044,78 +2590,5 @@ async function refreshRuntimeHealthStatus() {
   } finally {
     if (timer) clearTimeout(timer);
     renderRuntimeDependencyReadiness();
-  }
-}
-
-function roleRSSMiB(info) {
-  if (!info) return 0;
-  return num(info.rss_mib) || (num(info.rss_bytes) / 1048576);
-}
-
-function rolePIDLabel(info) {
-  if (!info || info.pid == null) return 'stopped';
-  return 'pid ' + String(info.pid);
-}
-
-async function refreshLlmOpsStatus() {
-  try {
-    const res = await fetch('/viewer/llm-ops/status', { cache: 'no-store' });
-    const body = await res.text();
-    if (!res.ok) {
-      state.ops.llmStatusError = 'HTTP ' + res.status + (body ? ': ' + body.trim() : '');
-      setLlmOpsStatusPre('HTTP ' + res.status + '\n' + body);
-      renderLlmMemoryStatus();
-      renderRuntimeDependencyReadiness();
-      return;
-    }
-    try {
-      state.ops.llmStatus = JSON.parse(body);
-      state.ops.llmStatusError = '';
-      renderLlmMemoryStatus();
-      renderRuntimeDependencyReadiness();
-      setLlmOpsStatusPre(JSON.stringify(state.ops.llmStatus, null, 2));
-    } catch (parseErr) {
-      state.ops.llmStatusError = String(parseErr);
-      setLlmOpsStatusPre(body);
-      renderLlmMemoryStatus();
-      renderRuntimeDependencyReadiness();
-    }
-  } catch (err) {
-    state.ops.llmStatusError = String(err);
-    setLlmOpsStatusPre(String(err));
-    renderLlmMemoryStatus();
-    renderRuntimeDependencyReadiness();
-  }
-}
-
-async function llmOpsStopChatWorker() {
-  if (!confirm('MLX 上の Chat と Worker を停止しますか？（自動復旧しません／halted まで停止）')) return;
-  try {
-    const res = await fetch('/viewer/llm-ops/stop', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roles: ['Chat', 'Worker'] }),
-    });
-    const body = await res.text();
-    setLlmOpsStatusPre((res.ok ? '' : 'HTTP ' + res.status + '\n') + body);
-    await refreshLlmOpsStatus();
-  } catch (err) {
-    setLlmOpsStatusPre(String(err));
-  }
-}
-
-async function llmOpsRestartAllRoles() {
-  if (!confirm('管理対象ロールをすべて再起動しますか？')) return;
-  try {
-    const res = await fetch('/viewer/llm-ops/restart', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roles: 'all' }),
-    });
-    const body = await res.text();
-    setLlmOpsStatusPre((res.ok ? '' : 'HTTP ' + res.status + '\n') + body);
-    await refreshLlmOpsStatus();
-  } catch (err) {
-    setLlmOpsStatusPre(String(err));
   }
 }

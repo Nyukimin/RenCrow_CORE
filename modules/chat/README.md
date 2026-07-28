@@ -30,4 +30,3 @@ Design references:
 
 - [../DESIGN.md](../DESIGN.md)
 - [../CURRENT_MAP.md](../CURRENT_MAP.md)
-- [../MIGRATION_PLAN.md](../MIGRATION_PLAN.md)

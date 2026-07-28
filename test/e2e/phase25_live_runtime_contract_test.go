@@ -36,55 +36,6 @@ func TestE2E_Phase25LiveRuntimeHealth(t *testing.T) {
 	}
 }
 
-func TestE2E_Phase25LiveLLMOpsProxyClientBlockedOrLive(t *testing.T) {
-	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
-		t.Skip("set RENCROW_LIVE_E2E=1 to verify live LLM Ops status")
-	}
-
-	baseURL := phase25LiveBaseURL()
-	client, err := rencrowclient.New(baseURL, rencrowclient.WithHTTPClient(&http.Client{Timeout: 20 * time.Second}))
-	if err != nil {
-		t.Fatalf("create RenCrow client: %v", err)
-	}
-	healthCtx, healthCancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer healthCancel()
-	health, err := client.LLMOpsHealth(healthCtx)
-	if err == nil {
-		if health.Status == "" {
-			t.Fatalf("LLMOpsHealth() live response missing status: %+v", health)
-		}
-	} else {
-		assertLLMOpsUpstreamUnreachable(t, err)
-	}
-	statusCtx, statusCancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer statusCancel()
-	status, err := client.LLMOpsStatus(statusCtx)
-	if err == nil {
-		if len(status.Roles) == 0 {
-			t.Fatalf("LLMOpsStatus() live response missing roles: %+v", status)
-		}
-		return
-	}
-	assertLLMOpsUpstreamUnreachable(t, err)
-	controlCtx, controlCancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer controlCancel()
-	assertLLMOpsUpstreamUnreachable(t, client.StopLLMOps(controlCtx, []string{"Worker", "Wild"}))
-	controlCtx, controlCancel = context.WithTimeout(context.Background(), 20*time.Second)
-	defer controlCancel()
-	assertLLMOpsUpstreamUnreachable(t, client.StartLLMOps(controlCtx, "Worker"))
-	controlCtx, controlCancel = context.WithTimeout(context.Background(), 20*time.Second)
-	defer controlCancel()
-	assertLLMOpsUpstreamUnreachable(t, client.RestartLLMOps(controlCtx, "all"))
-}
-
-func assertLLMOpsUpstreamUnreachable(t *testing.T, err error) {
-	t.Helper()
-	var apiErr *rencrowclient.APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadGateway || !strings.Contains(apiErr.Body, "upstream unreachable") {
-		t.Fatalf("LLM Ops proxy live error = %v, want 502 upstream unreachable or valid response", err)
-	}
-}
-
 func TestE2E_Phase25LiveViewerRuntimeConfigClient(t *testing.T) {
 	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
 		t.Skip("set RENCROW_LIVE_E2E=1 to verify live Viewer runtime config")
@@ -101,8 +52,8 @@ func TestE2E_Phase25LiveViewerRuntimeConfigClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RuntimeConfig() live call failed at %s: %v", baseURL, err)
 	}
-	if !cfg.LocalLLM.Enabled {
-		t.Fatalf("runtime config must expose enabled local_llm separately from repo example: %+v", cfg.LocalLLM)
+	if strings.TrimSpace(cfg.LLMGateway.BaseURL) == "" {
+		t.Fatalf("runtime config must expose llm_gateway.base_url: %+v", cfg.LLMGateway)
 	}
 	if cfg.STTStreamURL == "" {
 		t.Fatalf("runtime config must expose stt_stream_url for Viewer STT contract: %+v", cfg)

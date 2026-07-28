@@ -49,7 +49,7 @@ func TestClassifyExecutorFailure(t *testing.T) {
 		// コマンド不在と誤分類する）。実際の os/exec の文言で検証する
 		{errors.New(`exec: "binary": executable file not found in $PATH`), FailureCommandMissing},
 		{errors.New(`'binary' is not recognized as an internal or external command`), FailureCommandMissing},
-		{errors.New("ollama model unavailable"), FailureProviderUnavailable},
+		{errors.New("gateway model unavailable"), FailureProviderUnavailable},
 		{errors.New("patch failed"), FailureApply},
 	}
 	for _, tt := range tests {

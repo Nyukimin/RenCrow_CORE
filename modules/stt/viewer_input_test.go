@@ -25,7 +25,7 @@ func TestBuildViewerInputSnapshotAppliesRuntimeDefaults(t *testing.T) {
 	got := BuildViewerInputSnapshot(ViewerInputRuntimeConfig{
 		BaseURL:            "http://127.0.0.1:8766/",
 		StreamURL:          " ws://127.0.0.1:8766/stt ",
-		ProviderURL:        " http://127.0.0.1:8766/stt/file ",
+		GatewayHTTPURL:     " http://127.0.0.1:8766/stt/file ",
 		GatewayURL:         " ws://127.0.0.1:8766/stt ",
 		WebSocketAvailable: true,
 	})
@@ -39,7 +39,7 @@ func TestBuildViewerInputSnapshotAppliesRuntimeDefaults(t *testing.T) {
 	if got.ClientLogPath == "" || got.LatestWAVPath == "" || got.AutoTestScriptPath == "" || got.AutoTestOutputPath == "" {
 		t.Fatalf("debug artifact defaults were not applied: %+v", got)
 	}
-	if !got.ProviderConfigured || !got.GatewayConfigured || !got.WebSocketConfigured {
+	if !got.GatewayHTTPConfigured || !got.GatewayConfigured || !got.WebSocketConfigured {
 		t.Fatalf("configured flags were not set: %+v", got)
 	}
 	if got.TranscriptSource != DefaultViewerTranscriptSource || got.TranscriptInputType != DefaultViewerTranscriptType {
@@ -49,11 +49,11 @@ func TestBuildViewerInputSnapshotAppliesRuntimeDefaults(t *testing.T) {
 
 func TestBuildViewerInputHealthReport(t *testing.T) {
 	ready := BuildViewerInputHealthReport(ViewerInputSnapshot{
-		ChatInputEndpoint:   "/stt/chat-input",
-		StreamURL:           "ws://127.0.0.1:8766/stt",
-		ProviderConfigured:  true,
-		WebSocketConfigured: true,
-		GatewayConfigured:   true,
+		ChatInputEndpoint:     "/stt/chat-input",
+		StreamURL:             "ws://127.0.0.1:8766/stt",
+		GatewayHTTPConfigured: true,
+		WebSocketConfigured:   true,
+		GatewayConfigured:     true,
 	})
 	if ready.Module != "stt.viewer_input" || ready.Status != "ready" || !ready.Ready {
 		t.Fatalf("ready health = %+v", ready)

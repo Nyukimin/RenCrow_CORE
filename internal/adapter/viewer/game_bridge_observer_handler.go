@@ -25,9 +25,6 @@ func HandleGameBridgeSessions(store *GameBridgeStore, opts GameBridgeStatusOptio
 			return
 		}
 		for i := range sessions {
-			if strings.TrimSpace(sessions[i].DecisionMode) == "" {
-				sessions[i].DecisionMode = defaultGameBridgeDecisionMode(opts)
-			}
 			if strings.TrimSpace(sessions[i].ResultMode) == "" {
 				sessions[i].ResultMode = defaultGameBridgeResultMode(opts)
 			}
@@ -104,13 +101,6 @@ func writeGameBridgeObserverError(w http.ResponseWriter, err error) {
 		"error":   code,
 		"message": message,
 	})
-}
-
-func defaultGameBridgeDecisionMode(opts GameBridgeStatusOptions) string {
-	if strings.TrimSpace(opts.DecisionMode) != "" {
-		return opts.DecisionMode
-	}
-	return "deterministic_stub"
 }
 
 func defaultGameBridgeResultMode(opts GameBridgeStatusOptions) string {

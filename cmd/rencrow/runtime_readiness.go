@@ -10,7 +10,7 @@ import (
 
 func buildRuntimeDependencyReadiness(cfg *config.Config, dependencies *Dependencies) viewer.RuntimeDependencyReadiness {
 	conversationEnabled := cfg != nil && cfg.Conversation.Enabled
-	l1SQLiteConfigPresent := cfg != nil && strings.TrimSpace(cfg.Conversation.L1SQLitePath) != ""
+	l1SQLiteConfigPresent := cfg != nil && strings.TrimSpace(cfg.Storage.Databases.ConversationL1) != ""
 	slackWebhookRegistered := dependencies != nil && dependencies.slackHandler != nil
 	discordWebhookRegistered := dependencies != nil && dependencies.discordHandler != nil
 	telegramWebhookRegistered := dependencies != nil && dependencies.telegramHandler != nil
@@ -50,7 +50,6 @@ func buildRuntimeDependencyReadiness(cfg *config.Config, dependencies *Dependenc
 		TelegramCredentialsPresent:   envPresent("TELEGRAM_BOT_TOKEN") && envPresent("TELEGRAM_WEBHOOK_SECRET"),
 		TelegramWebhookRegistered:    telegramWebhookRegistered,
 		TelegramFilePayloadPipeline:  telegramWebhookRegistered,
-		STTGatewayEnvPresent:         envPresent("STT_GATEWAY_URL") || envPresent("RENCROW_STT_URL"),
 		TTSProviderEnvPresent:        envPresent("RENCROW_TTS_GATEWAY_URL") || envPresent("TTS_GATEWAY_URL"),
 		DistributedEnabled:           distributedEnabled,
 		DistributedTransportsPresent: distributedTransportsPresent,

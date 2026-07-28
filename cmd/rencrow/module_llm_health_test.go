@@ -29,7 +29,7 @@ func (c fakeDomainHealthCheck) Run(context.Context) domainhealth.CheckResult {
 func TestHealthCheckedLLMProviderReflectsBackendDown(t *testing.T) {
 	provider := modulellm.NewHealthCheckedProvider(fakeModuleLLMProvider{name: "worker-provider"}, moduleLLMDomainHealthCheck{
 		check: fakeDomainHealthCheck{
-			name: "local_llm_worker",
+			name: "gateway_worker",
 			result: domainhealth.CheckResult{
 				Status:   domainhealth.StatusDown,
 				Message:  "connection failed",
@@ -42,7 +42,7 @@ func TestHealthCheckedLLMProviderReflectsBackendDown(t *testing.T) {
 	if got.Status != "down" || got.Ready {
 		t.Fatalf("backend down was not reflected: %+v", got)
 	}
-	if got.Detail != "connection failed" || got.Metadata["check"] != "local_llm_worker" {
+	if got.Detail != "connection failed" || got.Metadata["check"] != "gateway_worker" {
 		t.Fatalf("health detail/metadata missing: %+v", got)
 	}
 }
@@ -50,7 +50,7 @@ func TestHealthCheckedLLMProviderReflectsBackendDown(t *testing.T) {
 func TestHealthCheckedLLMProviderReflectsBackendOK(t *testing.T) {
 	provider := modulellm.NewHealthCheckedProvider(fakeModuleLLMProvider{name: "chat-provider"}, moduleLLMDomainHealthCheck{
 		check: fakeDomainHealthCheck{
-			name: "local_llm_chat",
+			name: "gateway_mio",
 			result: domainhealth.CheckResult{
 				Status:  domainhealth.StatusOK,
 				Message: "reachable",

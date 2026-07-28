@@ -35,7 +35,5 @@ func buildSecretRefsFromConfig(cfg *config.Config) []viewer.SecretRefRuntimeConf
 	}
 	add("external_api", "google_search_chat.api_key", "Google Search Chat API key", cfg.GoogleSearchChat.APIKey)
 	add("external_api", "google_search_worker.api_key", "Google Search Worker API key", cfg.GoogleSearchWorker.APIKey)
-	addEnv("llm_ops", "LLM_OPS_TOKEN", "LLM Ops proxy token")
-
 	return refs
 }

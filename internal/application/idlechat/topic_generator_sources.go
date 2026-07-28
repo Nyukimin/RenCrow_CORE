@@ -111,18 +111,15 @@ func refreshDailySeeds(sourceConfig NewsSourceConfig, scheduled bool) error {
 	}
 
 	newsSeedItems := mergeNewsSeeds(dailyNewsSeedLimit, rssSeedItems, redditSeedItems, xSeedItems)
-	newsSeeds := newsSeedTitles(newsSeedItems)
-
 	dailyCache = &DailySeedCache{
 		Date:             today,
 		WikipediaSeeds:   wikiSeeds,
-		NewsSeeds:        newsSeeds,
 		NewsSeedItems:    newsSeedItems,
 		FetchedAt:        time.Now(),
 		EnrichmentStatus: "pending",
 	}
 
-	log.Printf("[IdleChat] Daily seeds fetched: Wikipedia=%d, News=%d RSS=%d Reddit=%d X=%d categories=%s", len(wikiSeeds), len(newsSeeds), len(rssSeedItems), len(redditSeedItems), len(xSeedItems), newsSeedCategorySummary(newsSeedItems))
+	log.Printf("[IdleChat] Daily seeds fetched: Wikipedia=%d, News=%d RSS=%d Reddit=%d X=%d categories=%s", len(wikiSeeds), len(newsSeedItems), len(rssSeedItems), len(redditSeedItems), len(xSeedItems), newsSeedCategorySummary(newsSeedItems))
 	return nil
 }
 

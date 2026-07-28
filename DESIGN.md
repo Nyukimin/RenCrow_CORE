@@ -34,7 +34,7 @@ Design references by category:
 
 - Warp: dark terminal surface, command blocks, readable operational rhythm.
 - Linear: precise hierarchy, low-friction navigation, restrained accents.
-- Ollama / OpenCode: local-LLM, developer-native simplicity.
+- OpenCode: developer-native simplicity.
 - Sentry: incident clarity, dense diagnostics without losing scanability.
 - VoltAgent: terminal-native AI agent energy, emerald accent on dark surfaces.
 
@@ -52,7 +52,7 @@ Use a dark neutral base with restrained semantic accents.
 
 | Role | Token | Hex | Usage |
 | --- | --- | --- | --- |
-| App background | `--rc-bg` | `#090b10` | Page root, live-mode base |
+| App background | `--rc-bg` | `#090b10` | Page root |
 | Workbench surface | `--rc-surface` | `#10141d` | Main panels, primary tab content |
 | Elevated surface | `--rc-surface-raised` | `#171c28` | Cards, drawers, focused blocks |
 | Soft surface | `--rc-surface-soft` | `#1f2633` | Secondary blocks, code panes, inactive controls |
@@ -217,7 +217,7 @@ Do:
 - Make character presence visible where the screen is conversational.
 - Use real data labels and stable empty states.
 - Verify narrow viewport and text overflow.
-- Check computed CSS for live-mode, overlays, and lipsync when touched.
+- Check computed CSS for overlays and lipsync when touched.
 
 Don't:
 
@@ -266,4 +266,4 @@ Minimum review checklist:
 - No card-in-card layout.
 - Semantic color usage is consistent.
 - Narrow viewport `390x844` is coherent.
-- Live-mode/lipsync/overlay CSS is checked if touched.
+- Lipsync/overlay CSS is checked if touched.

@@ -117,24 +117,3 @@ func TestBuildViewerRuntimeHandlersRegistersHobbyDomainGraphSyncUnavailableHandl
 		t.Fatalf("body=%q", rec.Body.String())
 	}
 }
-
-func TestBuildViewerRuntimeHandlersEnablesGameBridgeLLMModeWhenProviderAvailable(t *testing.T) {
-	deps := &Dependencies{}
-	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), fakeConversationProvider{name: "chat-provider"})
-	if deps.viewerGamesStatus == nil {
-		t.Fatal("viewerGamesStatus handler is nil")
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/viewer/games/status", nil)
-	rec := httptest.NewRecorder()
-	deps.viewerGamesStatus.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), `"decision_mode":"llm"`) {
-		t.Fatalf("status should report llm decision mode: %s", rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), `"llm_router_enabled":true`) {
-		t.Fatalf("status should report llm router enabled: %s", rec.Body.String())
-	}
-}

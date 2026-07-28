@@ -25,7 +25,7 @@ func TestProviderHealthReportsNilProviderDown(t *testing.T) {
 func TestProviderHealthSetsModuleAndCheckedAt(t *testing.T) {
 	checkedAt := time.Date(2026, 5, 30, 1, 2, 3, 0, time.UTC)
 	got := ProviderHealth(context.Background(), "chat", fakeCoreHealthProvider{
-		report: HealthReport{Module: "legacy-chat", Status: HealthReady, Ready: true},
+		report: HealthReport{Module: "chat-module", Status: HealthReady, Ready: true},
 	}, checkedAt)
 	if got.Module != "chat" || got.CheckedAt != checkedAt || got.Status != HealthReady || !got.Ready {
 		t.Fatalf("unexpected provider health: %+v", got)

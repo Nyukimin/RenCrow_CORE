@@ -9,7 +9,6 @@ Type=simple
 WorkingDirectory=%h/.rencrow
 ExecStart=%h/.local/bin/rencrow run
 EnvironmentFile=%h/.rencrow/.env
-EnvironmentFile=-%h/.rencrow/llm_ops.env
 Environment=RENCROW_CONFIG=%h/.rencrow/config.yaml
 Environment=GOTRACEBACK=all
 Restart=always

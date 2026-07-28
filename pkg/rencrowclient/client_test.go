@@ -3,7 +3,6 @@ package rencrowclient
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -256,9 +255,6 @@ func TestRuntimeConfig(t *testing.T) {
 			STTBaseURL:       "https://127.0.0.1:8443",
 			TTSBaseURL:       "http://127.0.0.1:7860",
 			TTSHealthPath:    "/gradio_api/info",
-			LLMOpsConfigured: true,
-			LLMOpsEnabled:    true,
-			LLMOpsBaseURL:    "http://127.0.0.1:8079",
 			LLMGateway:       LLMGatewayRuntimeConfig{BaseURL: "http://127.0.0.1:8090", Ready: true},
 			RuntimeReadiness: fullRuntimeReadinessWithConfig(false, true, true),
 		})
@@ -275,7 +271,7 @@ func TestRuntimeConfig(t *testing.T) {
 	if gotPath != "/viewer/runtime-config" {
 		t.Fatalf("path=%s", gotPath)
 	}
-	if !cfg.LLMOpsEnabled || cfg.LLMGateway.BaseURL != "http://127.0.0.1:8090" || !cfg.LLMGateway.Ready || cfg.TTSHealthPath != "/gradio_api/info" {
+	if cfg.LLMGateway.BaseURL != "http://127.0.0.1:8090" || !cfg.LLMGateway.Ready || cfg.TTSHealthPath != "/gradio_api/info" {
 		t.Fatalf("runtime config=%#v", cfg)
 	}
 	if cfg.RuntimeReadiness.SlackCredentialsPresent == nil || *cfg.RuntimeReadiness.SlackCredentialsPresent {
@@ -365,8 +361,8 @@ func TestRuntimeHealth(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(RuntimeHealthReport{
 			Status: "down",
 			Checks: []RuntimeHealthCheck{
-				{Name: "local_llm_chat", Status: "down", Message: "connection refused", DurationMS: 7067},
-				{Name: "local_llm_worker", Status: "down", Message: "connection refused", DurationMS: 7071},
+				{Name: "gateway_mio", Status: "down", Message: "connection refused", DurationMS: 7067},
+				{Name: "gateway_worker", Status: "down", Message: "connection refused", DurationMS: 7071},
 			},
 			Timestamp: now,
 		})
@@ -389,7 +385,7 @@ func TestRuntimeHealthRejectsMalformedResponse(t *testing.T) {
 	valid := RuntimeHealthReport{
 		Status: "down",
 		Checks: []RuntimeHealthCheck{
-			{Name: "local_llm_chat", Status: "down", Message: "connection refused", DurationMS: 7067},
+			{Name: "gateway_mio", Status: "down", Message: "connection refused", DurationMS: 7067},
 		},
 		Timestamp: "2026-05-19T19:57:00Z",
 	}
@@ -402,7 +398,7 @@ func TestRuntimeHealthRejectsMalformedResponse(t *testing.T) {
 		{name: "down with http ok", httpStatus: http.StatusOK, want: "http status"},
 		{name: "ok with http unavailable", httpStatus: http.StatusServiceUnavailable, mutate: func(r *RuntimeHealthReport) {
 			r.Status = "ok"
-			r.Checks = []RuntimeHealthCheck{{Name: "local_llm_chat", Status: "ok", Message: "reachable", DurationMS: 12}}
+			r.Checks = []RuntimeHealthCheck{{Name: "gateway_mio", Status: "ok", Message: "reachable", DurationMS: 12}}
 		}, want: "http status"},
 		{name: "down without checks", httpStatus: http.StatusServiceUnavailable, mutate: func(r *RuntimeHealthReport) {
 			r.Checks = nil
@@ -448,307 +444,6 @@ func TestRuntimeHealthRejectsMalformedResponse(t *testing.T) {
 	}
 }
 
-func TestLLMOpsStatus(t *testing.T) {
-	var gotPath string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		if r.Method != http.MethodGet || r.URL.Path != "/viewer/llm-ops/status" {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		_ = json.NewEncoder(w).Encode(LLMOpsStatus{
-			Roles: map[string]LLMOpsRoleState{
-				"Chat":   {HealthOK: boolPtr(true)},
-				"Worker": {HealthOK: boolPtr(true)},
-			},
-			Memory: LLMOpsMemoryStatus{LLMByRole: map[string]LLMOpsMemoryRole{
-				"Chat": {Role: "Chat", Model: "chat", Port: 8081, PID: intPtr(1234), RSSMiB: 512.5},
-			}},
-		})
-	}))
-	defer server.Close()
-	client, err := New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	status, err := client.LLMOpsStatus(context.Background())
-	if err != nil {
-		t.Fatalf("LLMOpsStatus() error = %v", err)
-	}
-	if gotPath != "/viewer/llm-ops/status" || len(status.Roles) != 2 {
-		t.Fatalf("status=%#v path=%s", status, gotPath)
-	}
-}
-
-func TestLLMOpsStatusUnavailableKeepsAPIErrorEvidence(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/viewer/llm-ops/status" {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		http.Error(w, "upstream unreachable", http.StatusBadGateway)
-	}))
-	defer server.Close()
-	client, err := New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.LLMOpsStatus(context.Background())
-	var apiErr *APIError
-	if err == nil || !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadGateway || !strings.Contains(apiErr.Body, "upstream unreachable") {
-		t.Fatalf("LLMOpsStatus() error = %#v, want APIError 502 with body", err)
-	}
-}
-
-func TestLLMOpsHealth(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/viewer/llm-ops/health" {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		_ = json.NewEncoder(w).Encode(LLMOpsHealth{Status: "ok", Daemon: "llm-mgmt"})
-	}))
-	defer server.Close()
-	client, err := New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	health, err := client.LLMOpsHealth(context.Background())
-	if err != nil {
-		t.Fatalf("LLMOpsHealth() error = %v", err)
-	}
-	if health.Status != "ok" || health.Daemon != "llm-mgmt" {
-		t.Fatalf("health=%#v", health)
-	}
-}
-
-func TestLLMOpsHealthUnavailableKeepsAPIErrorEvidence(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/viewer/llm-ops/health" {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		http.Error(w, "upstream unreachable", http.StatusBadGateway)
-	}))
-	defer server.Close()
-	client, err := New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.LLMOpsHealth(context.Background())
-	var apiErr *APIError
-	if err == nil || !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadGateway || !strings.Contains(apiErr.Body, "upstream unreachable") {
-		t.Fatalf("LLMOpsHealth() error = %#v, want APIError 502 with body", err)
-	}
-}
-
-func TestLLMOpsHealthRejectsMalformedResponse(t *testing.T) {
-	tests := []struct {
-		name string
-		resp LLMOpsHealth
-		want string
-	}{
-		{name: "missing status", resp: LLMOpsHealth{Daemon: "llm-mgmt"}, want: "missing status"},
-		{name: "invalid status", resp: LLMOpsHealth{Status: "up", Daemon: "llm-mgmt"}, want: "invalid status"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/viewer/llm-ops/health" {
-					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-				}
-				_ = json.NewEncoder(w).Encode(tt.resp)
-			}))
-			defer server.Close()
-			client, err := New(server.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = client.LLMOpsHealth(context.Background())
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("LLMOpsHealth() error = %v, want %q", err, tt.want)
-			}
-		})
-	}
-}
-
-func TestLLMOpsControl(t *testing.T) {
-	tests := []struct {
-		name     string
-		call     func(context.Context, *Client) error
-		wantPath string
-		wantBody string
-	}{
-		{
-			name:     "stop",
-			call:     func(ctx context.Context, c *Client) error { return c.StopLLMOps(ctx, []string{"Worker", "Wild"}) },
-			wantPath: "/viewer/llm-ops/stop",
-			wantBody: `{"roles":["Worker","Wild"]}`,
-		},
-		{
-			name:     "start",
-			call:     func(ctx context.Context, c *Client) error { return c.StartLLMOps(ctx, "Heavy") },
-			wantPath: "/viewer/llm-ops/start",
-			wantBody: `{"selection":"Heavy"}`,
-		},
-		{
-			name:     "restart",
-			call:     func(ctx context.Context, c *Client) error { return c.RestartLLMOps(ctx, "all") },
-			wantPath: "/viewer/llm-ops/restart",
-			wantBody: `{"selection":"all"}`,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var gotPath string
-			var gotBody string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotPath = r.URL.Path
-				if r.Method != http.MethodPost {
-					t.Fatalf("unexpected method: %s", r.Method)
-				}
-				body, _ := io.ReadAll(r.Body)
-				gotBody = string(body)
-				w.WriteHeader(http.StatusNoContent)
-			}))
-			defer server.Close()
-			client, err := New(server.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := tt.call(context.Background(), client); err != nil {
-				t.Fatalf("control call error = %v", err)
-			}
-			if gotPath != tt.wantPath || gotBody != tt.wantBody {
-				t.Fatalf("request path=%s body=%s, want path=%s body=%s", gotPath, gotBody, tt.wantPath, tt.wantBody)
-			}
-		})
-	}
-}
-
-func TestLLMOpsControlUnavailableKeepsAPIErrorEvidence(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "upstream unreachable", http.StatusBadGateway)
-	}))
-	defer server.Close()
-	client, err := New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = client.RestartLLMOps(context.Background(), "all")
-	var apiErr *APIError
-	if err == nil || !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadGateway || !strings.Contains(apiErr.Body, "upstream unreachable") {
-		t.Fatalf("RestartLLMOps() error = %#v, want APIError 502 with body", err)
-	}
-}
-
-func TestLLMOpsControlRejectsInvalidRequest(t *testing.T) {
-	client, called, cleanup := newNoRequestClient(t)
-	defer cleanup()
-	tests := []struct {
-		name string
-		call func(context.Context, *Client) error
-		want string
-	}{
-		{name: "stop missing roles", call: func(ctx context.Context, c *Client) error {
-			return c.StopLLMOps(ctx, nil)
-		}, want: "roles are required"},
-		{name: "stop unknown role", call: func(ctx context.Context, c *Client) error {
-			return c.StopLLMOps(ctx, []string{"Coder"})
-		}, want: "invalid role"},
-		{name: "start missing selection", call: func(ctx context.Context, c *Client) error {
-			return c.StartLLMOps(ctx, "")
-		}, want: "selection is required"},
-		{name: "restart unknown selection", call: func(ctx context.Context, c *Client) error {
-			return c.RestartLLMOps(ctx, "Coder")
-		}, want: "invalid selection"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.call(context.Background(), client)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("control error = %v, want %q", err, tt.want)
-			}
-			if *called {
-				t.Fatalf("control sent request for invalid payload")
-			}
-		})
-	}
-}
-
-func TestLLMOpsStatusRejectsMalformedResponse(t *testing.T) {
-	valid := LLMOpsStatus{
-		Roles: map[string]LLMOpsRoleState{
-			"Chat": {HealthOK: boolPtr(true)},
-		},
-		Memory: LLMOpsMemoryStatus{LLMByRole: map[string]LLMOpsMemoryRole{
-			"Chat": {Role: "Chat", PID: intPtr(1234)},
-		}},
-	}
-	tests := []struct {
-		name   string
-		mutate func(*LLMOpsStatus)
-		want   string
-	}{
-		{name: "missing roles", mutate: func(s *LLMOpsStatus) {
-			s.Roles = nil
-		}, want: "missing roles"},
-		{name: "unknown role", mutate: func(s *LLMOpsStatus) {
-			s.Roles = map[string]LLMOpsRoleState{"Coder": {HealthOK: boolPtr(true)}}
-		}, want: "unknown role"},
-		{name: "missing health ok", mutate: func(s *LLMOpsStatus) {
-			s.Roles["Chat"] = LLMOpsRoleState{}
-		}, want: "missing health_ok"},
-		{name: "halted and healthy", mutate: func(s *LLMOpsStatus) {
-			s.Roles["Chat"] = LLMOpsRoleState{HealthOK: boolPtr(true), Halted: boolPtr(true)}
-		}, want: "halted but health_ok"},
-		{name: "halted with pid", mutate: func(s *LLMOpsStatus) {
-			s.Roles["Chat"] = LLMOpsRoleState{HealthOK: boolPtr(false), Halted: boolPtr(true)}
-			s.Memory.LLMByRole["Chat"] = LLMOpsMemoryRole{Role: "Chat", PID: intPtr(1234)}
-		}, want: "halted but pid"},
-		{name: "memory role without role state", mutate: func(s *LLMOpsStatus) {
-			s.Memory.LLMByRole["Worker"] = LLMOpsMemoryRole{Role: "Worker", PID: intPtr(1234)}
-		}, want: "memory role \"Worker\" missing role state"},
-		{name: "memory mismatched role", mutate: func(s *LLMOpsStatus) {
-			s.Memory.LLMByRole["Chat"] = LLMOpsMemoryRole{Role: "Worker", PID: intPtr(1234)}
-		}, want: "mismatched role"},
-		{name: "memory negative port", mutate: func(s *LLMOpsStatus) {
-			s.Memory.LLMByRole["Chat"] = LLMOpsMemoryRole{Role: "Chat", Port: -1}
-		}, want: "negative port"},
-		{name: "memory negative rss", mutate: func(s *LLMOpsStatus) {
-			s.Memory.LLMByRole["Chat"] = LLMOpsMemoryRole{Role: "Chat", RSSMiB: -1}
-		}, want: "negative rss_mib"},
-		{name: "memory negative pid", mutate: func(s *LLMOpsStatus) {
-			s.Memory.LLMByRole["Chat"] = LLMOpsMemoryRole{Role: "Chat", PID: intPtr(-1)}
-		}, want: "negative pid"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp := valid
-			resp.Roles = map[string]LLMOpsRoleState{}
-			for k, v := range valid.Roles {
-				resp.Roles[k] = v
-			}
-			resp.Memory.LLMByRole = map[string]LLMOpsMemoryRole{}
-			for k, v := range valid.Memory.LLMByRole {
-				resp.Memory.LLMByRole[k] = v
-			}
-			tt.mutate(&resp)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/viewer/llm-ops/status" {
-					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-				}
-				_ = json.NewEncoder(w).Encode(resp)
-			}))
-			defer server.Close()
-			client, err := New(server.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = client.LLMOpsStatus(context.Background())
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("LLMOpsStatus() error = %v, want %q", err, tt.want)
-			}
-		})
-	}
-}
-
 func TestRuntimeConfigRejectsMalformedResponse(t *testing.T) {
 	valid := RuntimeConfig{
 		STTStreamURL:     "wss://127.0.0.1:8443/stt/stream",
@@ -762,16 +457,6 @@ func TestRuntimeConfigRejectsMalformedResponse(t *testing.T) {
 		mutate func(*RuntimeConfig)
 		want   string
 	}{
-		{name: "enabled llm ops without configured", mutate: func(c *RuntimeConfig) {
-			c.LLMOpsEnabled = true
-			c.LLMOpsConfigured = false
-			c.LLMOpsBaseURL = "http://127.0.0.1:8079"
-		}, want: "llm_ops_enabled without llm_ops_configured"},
-		{name: "enabled llm ops without base", mutate: func(c *RuntimeConfig) {
-			c.LLMOpsEnabled = true
-			c.LLMOpsConfigured = true
-			c.LLMOpsBaseURL = ""
-		}, want: "llm_ops_enabled without llm_ops_base_url"},
 		{name: "missing llm gateway base", mutate: func(c *RuntimeConfig) {
 			c.LLMGateway.BaseURL = ""
 		}, want: "missing llm_gateway.base_url"},
@@ -1653,19 +1338,11 @@ func TestHeavyWorkerRuntimeDiagnostics(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(HeavyWorkerRuntimeDiagnostics{
 			Role:           "Heavy",
 			Route:          "ANALYZE",
-			RoutePrefix:    "/analyze",
-			Provider:       "ollama",
+			Provider:       "rencrow_llm",
 			Configured:     true,
-			BaseURL:        "http://127.0.0.1:11434",
-			Model:          "heavy-v1",
-			TimeoutSec:     60,
+			GatewayBaseURL: "http://127.0.0.1:8090",
+			LogicalAlias:   "kuro",
 			FailureIsError: true,
-			LLMOps: HeavyWorkerLLMOpsDiagnostic{
-				Configured:    true,
-				Enabled:       true,
-				BaseURL:       "http://127.0.0.1:8079",
-				LiveAvailable: true,
-			},
 		})
 	}))
 	defer server.Close()
@@ -1690,40 +1367,18 @@ func TestHeavyWorkerRuntimeDiagnosticsRejectsMalformedResponse(t *testing.T) {
 	}{
 		{
 			name: "wrong role",
-			resp: HeavyWorkerRuntimeDiagnostics{Role: "Worker", Route: "ANALYZE", RoutePrefix: "/analyze", FailureIsError: true},
+			resp: HeavyWorkerRuntimeDiagnostics{Role: "Worker", Route: "ANALYZE", FailureIsError: true},
 			want: "role mismatch",
 		},
 		{
-			name: "configured without model",
-			resp: HeavyWorkerRuntimeDiagnostics{Role: "Heavy", Route: "ANALYZE", RoutePrefix: "/analyze", Configured: true, BaseURL: "http://127.0.0.1:11434", FailureIsError: true},
-			want: "configured without base_url/model",
+			name: "configured without logical alias",
+			resp: HeavyWorkerRuntimeDiagnostics{Role: "Heavy", Route: "ANALYZE", Configured: true, GatewayBaseURL: "http://127.0.0.1:8090", FailureIsError: true},
+			want: "configured without gateway_base_url/logical_alias",
 		},
 		{
 			name: "failure not marked error",
-			resp: HeavyWorkerRuntimeDiagnostics{Role: "Heavy", Route: "ANALYZE", RoutePrefix: "/analyze"},
+			resp: HeavyWorkerRuntimeDiagnostics{Role: "Heavy", Route: "ANALYZE"},
 			want: "failure_is_error",
-		},
-		{
-			name: "llm ops unavailable without error",
-			resp: HeavyWorkerRuntimeDiagnostics{
-				Role:           "Heavy",
-				Route:          "ANALYZE",
-				RoutePrefix:    "/analyze",
-				FailureIsError: true,
-				LLMOps:         HeavyWorkerLLMOpsDiagnostic{Configured: true, Enabled: true},
-			},
-			want: "unavailable without error",
-		},
-		{
-			name: "llm ops live while disabled",
-			resp: HeavyWorkerRuntimeDiagnostics{
-				Role:           "Heavy",
-				Route:          "ANALYZE",
-				RoutePrefix:    "/analyze",
-				FailureIsError: true,
-				LLMOps:         HeavyWorkerLLMOpsDiagnostic{Configured: true, Enabled: false, LiveAvailable: true},
-			},
-			want: "live while disabled",
 		},
 	}
 	for _, tt := range tests {
@@ -8253,7 +7908,6 @@ func fullRuntimeReadinessWithConfig(value bool, sttConfig bool, ttsConfig bool) 
 		TelegramCredentialsPresent:   boolPtr(value),
 		TelegramWebhookRegistered:    boolPtr(value),
 		TelegramFilePayloadPipeline:  boolPtr(value),
-		STTGatewayEnvPresent:         boolPtr(value),
 		STTGatewayConfigPresent:      boolPtr(sttConfig),
 		TTSProviderEnvPresent:        boolPtr(value),
 		TTSProviderConfigPresent:     boolPtr(ttsConfig),

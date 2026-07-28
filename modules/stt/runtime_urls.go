@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	ProviderExternalHTTP = "external_http"
-	ProviderRenCrowSTT   = "rencrow_stt"
+	ProviderRenCrowSTT = "rencrow_stt"
 )
+
+var WebSocketRoutePaths = []string{"/stt"}
 
 func GatewayTranscriptionURL(baseURL string) string {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -20,24 +21,24 @@ func GatewayTranscriptionURL(baseURL string) string {
 }
 
 type RuntimeURLConfig struct {
-	Provider    string
-	ProviderURL string
-	StreamURL   string
-	TTSBaseURL  string
-	ServerHost  string
-	ServerPort  int
-	TLSEnabled  bool
+	Provider       string
+	GatewayHTTPURL string
+	StreamURL      string
+	TTSBaseURL     string
+	ServerHost     string
+	ServerPort     int
+	TLSEnabled     bool
 }
 
 func StreamURL(config RuntimeURLConfig) string {
 	if raw := strings.TrimSpace(config.StreamURL); raw != "" {
 		return raw
 	}
-	return InferStreamURLFromProviderURL(config.ProviderURL)
+	return InferStreamURLFromGatewayHTTPURL(config.GatewayHTTPURL)
 }
 
-func InferStreamURLFromProviderURL(providerURL string) string {
-	u, err := url.Parse(strings.TrimSpace(providerURL))
+func InferStreamURLFromGatewayHTTPURL(gatewayHTTPURL string) string {
+	u, err := url.Parse(strings.TrimSpace(gatewayHTTPURL))
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return ""
 	}
@@ -49,7 +50,7 @@ func InferStreamURLFromProviderURL(providerURL string) string {
 }
 
 func InferBaseURL(config RuntimeURLConfig) string {
-	if base := ExtractBaseFromProviderURL(config.ProviderURL); base != "" {
+	if base := ExtractBaseFromGatewayHTTPURL(config.GatewayHTTPURL); base != "" {
 		return base
 	}
 	if base := InferBaseURLFromTTS(config.TTSBaseURL); base != "" {
@@ -78,7 +79,7 @@ func InferBaseURLFromTTS(ttsBaseURL string) string {
 	return fmt.Sprintf("%s://%s:%d", u.Scheme, u.Hostname(), 8080)
 }
 
-func ExtractBaseFromProviderURL(raw string) string {
+func ExtractBaseFromGatewayHTTPURL(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return ""
@@ -86,11 +87,8 @@ func ExtractBaseFromProviderURL(raw string) string {
 	return fmt.Sprintf("%s://%s", u.Scheme, u.Host)
 }
 
-func InferProviderURL(config RuntimeURLConfig) string {
-	raw := strings.TrimSpace(config.ProviderURL)
-	if raw != "" && strings.EqualFold(strings.TrimSpace(config.Provider), ProviderExternalHTTP) {
-		return raw
-	}
+func InferGatewayHTTPURL(config RuntimeURLConfig) string {
+	raw := strings.TrimSpace(config.GatewayHTTPURL)
 	if raw != "" {
 		return raw
 	}
@@ -99,26 +97,4 @@ func InferProviderURL(config RuntimeURLConfig) string {
 		return ""
 	}
 	return strings.TrimRight(base, "/") + "/stt/file"
-}
-
-func InferLegacyInferenceProviderURL(ttsBaseURL, sttProviderURL string) string {
-	raw := strings.TrimSpace(sttProviderURL)
-	if raw != "" {
-		return raw
-	}
-	base := InferBaseURL(RuntimeURLConfig{
-		TTSBaseURL:  ttsBaseURL,
-		ProviderURL: sttProviderURL,
-	})
-	if base == "" {
-		return ""
-	}
-	return strings.TrimRight(base, "/") + "/inference"
-}
-
-func InferGatewayURL(sttGatewayURL, rencrowSTTURL string) string {
-	if v := strings.TrimSpace(sttGatewayURL); v != "" {
-		return v
-	}
-	return strings.TrimSpace(rencrowSTTURL)
 }

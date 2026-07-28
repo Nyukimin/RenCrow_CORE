@@ -42,7 +42,7 @@ func TestMetadataExtractorDeterministicallyExtractsAndDeduplicates(t *testing.T)
 		Domain:   "qiita",
 		Title:    "RenCrow_CORE uses MLX and MLX",
 		SourceID: "github:RenCrow_CORE",
-		Keywords: []string{"local_llm", "MLX", "local_llm"},
+		Keywords: []string{"model_runtime", "MLX", "model_runtime"},
 	})
 	if metadata.ItemID != "kb:qiita:1" || metadata.SourceType != "qiita" {
 		t.Fatalf("metadata=%#v", metadata)
@@ -50,8 +50,8 @@ func TestMetadataExtractorDeterministicallyExtractsAndDeduplicates(t *testing.T)
 	if countString(metadata.Entities, "mlx") != 1 {
 		t.Fatalf("entities should contain canonical MLX once: %#v", metadata.Entities)
 	}
-	if countString(metadata.Topics, "local_llm") != 1 {
-		t.Fatalf("topics should contain local_llm once: %#v", metadata.Topics)
+	if countString(metadata.Topics, "model_runtime") != 1 {
+		t.Fatalf("topics should contain model_runtime once: %#v", metadata.Topics)
 	}
 	if countString(metadata.Projects, "rencrow_core") != 1 {
 		t.Fatalf("projects should contain rencrow_core once: %#v", metadata.Projects)
@@ -60,8 +60,8 @@ func TestMetadataExtractorDeterministicallyExtractsAndDeduplicates(t *testing.T)
 
 func TestRelationBuildServiceDryRunReportsWithoutWriting(t *testing.T) {
 	store := &relationBuildStore{items: []l1sqlite.L1KnowledgeItem{
-		{ID: "a", Domain: "qiita", Title: "MLX local_llm", Keywords: []string{"MLX", "local_llm"}},
-		{ID: "b", Domain: "github", Title: "MLX local_llm", Keywords: []string{"MLX", "local_llm"}},
+		{ID: "a", Domain: "qiita", Title: "MLX model_runtime", Keywords: []string{"MLX", "model_runtime"}},
+		{ID: "b", Domain: "github", Title: "MLX model_runtime", Keywords: []string{"MLX", "model_runtime"}},
 	}}
 	service := NewRelationBuildService(store, NewMetadataExtractor(nil), domainrelation.DefaultScoringConfig())
 	report, err := service.BuildBatch(context.Background(), BatchQuery{Domain: "all", Limit: 100, DryRun: true})
@@ -78,11 +78,11 @@ func TestRelationBuildServiceDryRunReportsWithoutWriting(t *testing.T) {
 
 func TestRelationBuildServiceBuildForItemPersistsMetadataAndBidirectionalRelations(t *testing.T) {
 	store := &relationBuildStore{items: []l1sqlite.L1KnowledgeItem{
-		{ID: "existing", Domain: "github", Title: "MLX runtime", Keywords: []string{"MLX", "local_llm"}},
+		{ID: "existing", Domain: "github", Title: "MLX runtime", Keywords: []string{"MLX", "model_runtime"}},
 	}}
 	service := NewRelationBuildService(store, NewMetadataExtractor(nil), domainrelation.DefaultScoringConfig())
 	report, err := service.BuildForItem(context.Background(), l1sqlite.L1KnowledgeItem{
-		ID: "new", Domain: "qiita", Title: "MLX guide", Keywords: []string{"MLX", "local_llm"},
+		ID: "new", Domain: "qiita", Title: "MLX guide", Keywords: []string{"MLX", "model_runtime"},
 	})
 	if err != nil {
 		t.Fatalf("BuildForItem failed: %v", err)
@@ -98,7 +98,7 @@ func TestRelationBuildServiceBuildForItemPersistsMetadataAndBidirectionalRelatio
 func TestRelationBuildServiceBlocksOversizedRunBeforeWriting(t *testing.T) {
 	items := make([]l1sqlite.L1KnowledgeItem, 72)
 	for i := range items {
-		items[i] = l1sqlite.L1KnowledgeItem{ID: string(rune('a' + i)), Domain: "general", Title: "MLX", Keywords: []string{"MLX", "local_llm"}}
+		items[i] = l1sqlite.L1KnowledgeItem{ID: string(rune('a' + i)), Domain: "general", Title: "MLX", Keywords: []string{"MLX", "model_runtime"}}
 	}
 	store := &relationBuildStore{items: items}
 	service := NewRelationBuildService(store, NewMetadataExtractor(nil), domainrelation.DefaultScoringConfig())

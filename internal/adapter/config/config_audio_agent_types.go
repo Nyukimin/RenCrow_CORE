@@ -19,7 +19,6 @@ type TTSConfig struct {
 	Enabled            bool                        `yaml:"enabled"`
 	OutputDir          string                      `yaml:"output_dir"`
 	GatewayBaseURL     string                      `yaml:"gateway_base_url"`
-	HTTPBaseURL        string                      `yaml:"http_base_url"` // Deprecated: use gateway_base_url.
 	TLSSkipVerify      bool                        `yaml:"tls_skip_verify"`
 	TimeoutMS          int                         `yaml:"timeout_ms"`
 	VoiceID            string                      `yaml:"voice_id"`
@@ -28,13 +27,8 @@ type TTSConfig struct {
 	PronunciationCheck TTSPronunciationCheckConfig `yaml:"pronunciation_check"`
 }
 
-// GatewayURL returns the canonical RenCrow_TTS Gateway URL. HTTPBaseURL is
-// retained only so existing local config can be migrated without an outage.
 func (c TTSConfig) GatewayURL() string {
-	if c.GatewayBaseURL != "" {
-		return c.GatewayBaseURL
-	}
-	return c.HTTPBaseURL
+	return c.GatewayBaseURL
 }
 
 type TTSPronunciationCheckConfig struct {
@@ -130,10 +124,6 @@ type GoogleSearchConfig struct {
 type CoderConfig struct {
 	Name        string            `yaml:"name"`         // 固定identity（coder1=aka, coder2=ao, coder3=kin, coder4=gin）
 	DisplayName string            `yaml:"display_name"` // 表示名（赤, 青, 銀, 金 等）
-	Provider    string            `yaml:"provider"`     // deepseek/openai/claude/gemini
-	Model       string            `yaml:"model"`
-	APIKey      string            `yaml:"api_key"`      // 環境変数参照（${...}）
-	BaseURL     string            `yaml:"base_url"`     // オプション（DeepSeek 等）
 	PersonaFile string            `yaml:"persona_file"` // ペルソナファイル（workspace_dir からの相対パス）
 	Personality string            `yaml:"personality"`  // インラインペルソナ（persona_file がなければ使用）
 	Tone        string            `yaml:"tone"`         // 口調（TTS 連携用）

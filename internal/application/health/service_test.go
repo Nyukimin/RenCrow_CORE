@@ -44,7 +44,7 @@ func TestHealthService_RunChecks_AllOK(t *testing.T) {
 func TestHealthService_RunChecks_OneDown(t *testing.T) {
 	svc := NewHealthService(
 		&mockCheck{name: "db", status: domainhealth.StatusOK},
-		&mockCheck{name: "ollama", status: domainhealth.StatusDown, msg: "unreachable"},
+		&mockCheck{name: "runtime_dependency", status: domainhealth.StatusDown, msg: "unreachable"},
 	)
 
 	report := svc.RunChecks(context.Background())
@@ -66,7 +66,7 @@ func TestHealthService_IsReady_True(t *testing.T) {
 
 func TestHealthService_IsReady_False(t *testing.T) {
 	svc := NewHealthService(
-		&mockCheck{name: "ollama", status: domainhealth.StatusDown},
+		&mockCheck{name: "runtime_dependency", status: domainhealth.StatusDown},
 	)
 
 	if svc.IsReady(context.Background()) {

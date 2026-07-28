@@ -67,7 +67,7 @@ func ClassifyExecutorFailure(err error) string {
 		return FailureProposalInvalid
 	case core.IsMissingCommandText(lower):
 		return FailureCommandMissing
-	case strings.Contains(lower, "provider"), strings.Contains(lower, "model"), strings.Contains(lower, "ollama"):
+	case strings.Contains(lower, "provider"), strings.Contains(lower, "gateway"), strings.Contains(lower, "model"):
 		return FailureProviderUnavailable
 	default:
 		return FailureApply

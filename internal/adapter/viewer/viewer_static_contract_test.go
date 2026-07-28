@@ -54,7 +54,6 @@ func TestViewerStaticContractSeparatesDisplayAudioLipsyncAndLogs(t *testing.T) {
 		`id="micBtn"`:                    "normal chat voice input control",
 		`id="idleStart"`:                 "IdleChat control separated from mic input",
 		`id="audioBtn"`:                  "browser audio enable control",
-		`id="liveAudioBtn"`:              "live audio enable control",
 		`id="sourceRegistrySaveBtn"`:     "Source Registry save control",
 	}
 	for needle, purpose := range required {
@@ -280,70 +279,6 @@ func TestViewerStaticContractIdleChatStockUsesReadableInspectionLayout(t *testin
 	}
 }
 
-func TestViewerStaticContractLabLiveModeHidesTopGuidancePanels(t *testing.T) {
-	data, err := os.ReadFile("assets/css/viewer.css")
-	if err != nil {
-		t.Fatalf("read viewer.css: %v", err)
-	}
-	css := string(data)
-	required := []string{
-		`body.lab-mode.live-mode .chat-intent-strip{display:none !important}`,
-		`body.lab-mode.live-mode .lab-datetime-panel{`,
-		`background:transparent !important;`,
-		`border:0 !important;`,
-		`box-shadow:none !important;`,
-		`backdrop-filter:none !important;`,
-	}
-	for _, needle := range required {
-		if !strings.Contains(css, needle) {
-			t.Fatalf("Lab live mode top guidance cleanup missing %q", needle)
-		}
-	}
-}
-
-func TestViewerStaticContractLabModeIncludesAllChatRecipients(t *testing.T) {
-	htmlData, err := os.ReadFile("viewer.html")
-	if err != nil {
-		t.Fatalf("read viewer.html: %v", err)
-	}
-	jsData, err := os.ReadFile("assets/js/viewer.js")
-	if err != nil {
-		t.Fatalf("read viewer.js: %v", err)
-	}
-	html := string(htmlData)
-	js := string(jsData)
-	if !strings.Contains(html, `data-lab-switch="mio"`) {
-		t.Fatal("viewer.html missing independent Mio lab switch")
-	}
-	if !strings.Contains(html, `id="labModePartnerChip"`) {
-		t.Fatal("viewer.html missing lab partner chip")
-	}
-	if !strings.Contains(html, `id="labPartnerOptions"`) {
-		t.Fatal("viewer.html missing lab partner options")
-	}
-	if strings.Contains(html, `data-lab-switch="kuro"`) || strings.Contains(html, `data-lab-switch="midori"`) {
-		t.Fatal("viewer.html must not render Kuro/Midori as horizontal lab switches")
-	}
-	for _, actor := range []string{"shiro", "kuro", "midori"} {
-		if !strings.Contains(html, `data-lab-partner-option="`+actor+`"`) {
-			t.Fatalf("viewer.html missing lab partner option for %s", actor)
-		}
-	}
-	if !strings.Contains(js, `const LAB_CHAT_PARTNERS = ['shiro', 'kuro', 'midori'];`) {
-		t.Fatal("viewer.js missing picker lab chat partner list")
-	}
-	for _, needle := range []string{
-		`data-lab-partner-toggle`,
-		`data-lab-partner-option`,
-		`setLabPartnerMenuOpen`,
-		`syncLabPartnerPicker`,
-	} {
-		if !strings.Contains(js, needle) {
-			t.Fatalf("viewer.js missing lab partner picker wiring %q", needle)
-		}
-	}
-}
-
 func TestViewerStaticContractMovieDatabaseTabSwitchMapping(t *testing.T) {
 	data, err := os.ReadFile("assets/js/viewer.js")
 	if err != nil {
@@ -442,7 +377,7 @@ func TestViewerStaticContractNowPlayingFloatsAboveComposer(t *testing.T) {
 		}
 	}
 	if strings.Contains(css, `bottom:calc(96px + var(--safe-bottom));z-index:35;pointer-events:none;`) {
-		t.Fatal("legacy Now Playing offset must not remain after the composer overlap fix")
+		t.Fatal("Now Playing offset must stay clear of the composer")
 	}
 }
 

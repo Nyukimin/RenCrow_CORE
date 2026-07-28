@@ -40,7 +40,6 @@ type GameBridgeSessionSummary struct {
 	LatestEventID  string `json:"latest_event_id"`
 	CandidateCount int    `json:"candidate_count"`
 	UpdatedAt      string `json:"updated_at"`
-	DecisionMode   string `json:"decision_mode,omitempty"`
 	ResultMode     string `json:"result_mode,omitempty"`
 	MemoryMode     string `json:"memory_mode,omitempty"`
 }

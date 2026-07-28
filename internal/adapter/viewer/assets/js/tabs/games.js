@@ -34,7 +34,6 @@ function renderGamesStatusCard(data) {
   const mode = status.status || {};
   const lines = [
     gamesInfoTile('Bridge', bridge),
-    gamesInfoTile('Decision', mode.decision_mode || '-'),
     gamesInfoTile('Result', mode.result_mode || '-'),
     gamesInfoTile('Memory', mode.memory_mode || 'candidate_only'),
     gamesInfoTile('Sessions', String(status.sessions.length)),
@@ -102,15 +101,14 @@ function renderGamesSessions(data) {
       '<td class="code games-code">' + esc(gamesBridgeField(session, 'session_id') || '-') + '</td>' +
       '<td>' + esc(gamesBridgeField(session, 'persona') || '-') + '</td>' +
       '<td>' + esc(gamesBridgeField(session, 'latest_turn') || gamesBridgeField(session, 'turn') || '-') + '</td>' +
-      '<td>' + esc(gamesBridgeField(session, 'decision_mode') || '-') + '</td>' +
       '<td>' + esc(gamesBridgeField(session, 'result_mode') || '-') + '</td>' +
       '<td>' + esc(gamesBridgeField(session, 'memory_mode') || '-') + '</td>' +
     '</tr>'
   )).join('');
   target.innerHTML =
     '<h3>Recent Sessions</h3>' +
-    '<div class="table-wrap games-table-wrap"><table class="compact-table"><thead><tr><th>game</th><th>session</th><th>persona</th><th>turn</th><th>decision</th><th>result</th><th>memory</th></tr></thead><tbody>' +
-    (rows || '<tr><td colspan="7" class="small">session record なし</td></tr>') +
+    '<div class="table-wrap games-table-wrap"><table class="compact-table"><thead><tr><th>game</th><th>session</th><th>persona</th><th>turn</th><th>result</th><th>memory</th></tr></thead><tbody>' +
+    (rows || '<tr><td colspan="6" class="small">session record なし</td></tr>') +
     '</tbody></table></div>';
 }
 

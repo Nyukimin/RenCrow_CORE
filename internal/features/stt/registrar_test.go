@@ -33,8 +33,6 @@ func TestRegisterRoutesRegistersSTTPaths(t *testing.T) {
 		{path: "/stt/file", want: http.StatusAlreadyReported},
 		{path: "/stt/chat-input", want: http.StatusMultiStatus},
 		{path: "/stt", want: http.StatusIMUsed},
-		{path: "/stt-ws", want: http.StatusIMUsed},
-		{path: "/ws", want: http.StatusIMUsed},
 	}
 
 	for _, tt := range tests {

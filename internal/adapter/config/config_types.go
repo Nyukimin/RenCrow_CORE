@@ -3,15 +3,8 @@ package config
 import "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/agentcontrol"
 
 // Config はアプリケーション全体の設定
-// v3既存フィールドをそのまま維持し、v4.0で Distributed, IdleChat を追加
 type Config struct {
-	// === v3.0 既存フィールド ===
-	Server ServerConfig `yaml:"server"`
-	// Deprecated compatibility input. CORE does not use this configuration.
-	Ollama   OllamaConfig   `yaml:"ollama"`
-	Claude   ClaudeConfig   `yaml:"claude"`
-	DeepSeek DeepSeekConfig `yaml:"deepseek"`
-	OpenAI   OpenAIConfig   `yaml:"openai"`
+	Server   ServerConfig   `yaml:"server"`
 	Session  SessionConfig  `yaml:"session"`
 	Storage  StorageConfig  `yaml:"storage"`
 	Backup   BackupConfig   `yaml:"backup"`
@@ -29,10 +22,7 @@ type Config struct {
 	// === v5.0 追加フィールド ===
 	Conversation ConversationConfig `yaml:"conversation"`
 
-	// Deprecated compatibility input. Physical LLM routing belongs to RenCrow_LLM.
-	LocalLLM LocalLLMConfig `yaml:"local_llm"`
-
-	// === Mandatory production LLM Gateway client ===
+	// === RenCrow_LLM Gateway client ===
 	LLMGateway LLMGatewayConfig `yaml:"llm_gateway"`
 
 	// === Mio chat generation policy ===
@@ -66,12 +56,12 @@ type Config struct {
 	EconomicObjective EconomicObjectiveConfig `yaml:"economic_objective"`
 
 	// === v5.1 プロンプト外部ファイル ===
-	PromptsDir         string                `yaml:"prompts_dir"`          // プロンプトファイルのベースディレクトリ（デフォルト）
-	WorkspaceDir       string                `yaml:"workspace_dir"`        // ユーザーカスタマイズ領域（オーバーライド）
-	OperationMemoryDir string                `yaml:"operation_memory_dir"` // RenCrow operational memory の永続ディレクトリ
-	SelfSourceDir      string                `yaml:"self_source_dir"`      // RenCrow 自身のソースコードディレクトリ（デフォルト: cwd）
-	Prompts            *LoadedPrompts        `yaml:"-"`                    // 読み込み済みプロンプト（YAML非対象）
-	AgentControl       *agentcontrol.Control `yaml:"-"`                    // workspace/control の検証済み共通制御
+	PromptsDir         string                `yaml:"prompts_dir"`     // プロンプトファイルのベースディレクトリ（デフォルト）
+	WorkspaceDir       string                `yaml:"workspace_dir"`   // ユーザーカスタマイズ領域（オーバーライド）
+	OperationMemoryDir string                `yaml:"-"`               // storage.memoryから解決したruntime値
+	SelfSourceDir      string                `yaml:"self_source_dir"` // RenCrow 自身のソースコードディレクトリ（デフォルト: cwd）
+	Prompts            *LoadedPrompts        `yaml:"-"`               // 読み込み済みプロンプト（YAML非対象）
+	AgentControl       *agentcontrol.Control `yaml:"-"`               // workspace/control の検証済み共通制御
 
 	// === Heartbeat ===
 	Heartbeat HeartbeatConfig `yaml:"heartbeat"`
@@ -152,10 +142,6 @@ type Config struct {
 	// === Response verification pipeline ===
 	Verification VerificationConfig `yaml:"verification"`
 
-	// === Viewer → MLX 管理デーモン プロキシ（stop / restart / status）===
-	// トークンは環境変数 LLM_OPS_TOKEN のみ（YAML に平文保存しないこと）。
-	LLMOps LLMOpsConfig `yaml:"llm_ops"`
-
 	// === Agent Persona files (v4.2) ===
 	MioPersonaFile string `yaml:"mio_persona_file"` // workspace_dir からの相対パス
 
@@ -168,15 +154,13 @@ type Config struct {
 
 // SessionConfig はセッション設定
 type SessionConfig struct {
-	StorageDir string `yaml:"storage_dir"`
+	StorageDir string `yaml:"-"`
 }
 
 // StorageConfig はruntimeが使用するDBファイルの物理配置を一元管理する。
-// 各feature固有の旧path keyは読み取り互換として残すが、新規設定では本sectionを正本とする。
 type StorageConfig struct {
-	Databases       DatabasePathsConfig       `yaml:"databases"`
-	LegacyDatabases LegacyDatabasePathsConfig `yaml:"legacy_databases"`
-	Memory          MemoryStorageConfig       `yaml:"memory"`
+	Databases DatabasePathsConfig `yaml:"databases"`
+	Memory    MemoryStorageConfig `yaml:"memory"`
 }
 
 // MemoryStorageConfig はCOREが直接所有する記憶ファイルの物理配置を一元管理する。
@@ -206,12 +190,6 @@ type DatabasePathsConfig struct {
 	SuperAgentHarness   string `yaml:"super_agent_harness"`
 	AIWorkflow          string `yaml:"ai_workflow"`
 	KnowledgeMemory     string `yaml:"knowledge_memory"`
-}
-
-// LegacyDatabasePathsConfig はbackup対象として保持するがruntimeから開かない旧形式DBを記録する。
-type LegacyDatabasePathsConfig struct {
-	MemoryDuckDB       string `yaml:"memory_duckdb"`
-	ToolRegistryDuckDB string `yaml:"tool_registry_duckdb"`
 }
 
 // BackupConfig は外部backup runnerが参照する物理保存先と世代数を定義する。
@@ -331,18 +309,17 @@ type TransportConfig struct {
 
 // IdleChatConfig はAgent間雑談モードの設定
 type IdleChatConfig struct {
-	Enabled                 bool                                  `yaml:"enabled"`                   // 雑談モードの有効化（デフォルト: false）
-	Participants            []string                              `yaml:"participants"`              // 参加Agent名（デフォルト: ["mio", "shiro"]）
-	IntervalMin             int                                   `yaml:"interval_min"`              // 雑談開始までのアイドル時間・分（デフォルト: 5）
-	IntervalSec             int                                   `yaml:"interval_sec"`              // 雑談開始までのアイドル時間・秒（指定時は interval_min より優先）
-	MaxTurns                int                                   `yaml:"max_turns"`                 // 1回の雑談の最大ターン数（デフォルト: 10）
-	Temperature             float64                               `yaml:"temperature"`               // 雑談時の温度（デフォルト: 0.8）
-	StoryDataDir            string                                `yaml:"story_data_dir"`            // 物語データJSONディレクトリ（デフォルト: "data/story"）
-	ForecastExternalEnabled bool                                  `yaml:"forecast_external_enabled"` // true の場合のみ Forecast で外部 Coder API を明示利用する
-	NewsSources             IdleChatNewsSourcesConfig             `yaml:"news_sources"`              // IdleChatのお題に使うニュース・SNS取得先
-	TopicGeneration         IdleChatTopicGenerationConfig         `yaml:"topic_generation"`          // お題候補生成・Judge設定
-	DialogueInterestingness IdleChatDialogueInterestingnessConfig `yaml:"dialogue_interestingness"`  // 対話演出・品質判定設定
-	SpeakerLLMOptions       map[string]IdleChatLLMOptions         `yaml:"speaker_llm_options"`       // 話者別LLMオプション
+	Enabled                 bool                                  `yaml:"enabled"`                  // 雑談モードの有効化（デフォルト: false）
+	Participants            []string                              `yaml:"participants"`             // 参加Agent名（デフォルト: ["mio", "shiro"]）
+	IntervalMin             int                                   `yaml:"interval_min"`             // 雑談開始までのアイドル時間・分（デフォルト: 5）
+	IntervalSec             int                                   `yaml:"interval_sec"`             // 雑談開始までのアイドル時間・秒（指定時は interval_min より優先）
+	MaxTurns                int                                   `yaml:"max_turns"`                // 1回の雑談の最大ターン数（デフォルト: 10）
+	Temperature             float64                               `yaml:"temperature"`              // 雑談時の温度（デフォルト: 0.8）
+	StoryDataDir            string                                `yaml:"story_data_dir"`           // 物語データJSONディレクトリ（デフォルト: "data/story"）
+	NewsSources             IdleChatNewsSourcesConfig             `yaml:"news_sources"`             // IdleChatのお題に使うニュース・SNS取得先
+	TopicGeneration         IdleChatTopicGenerationConfig         `yaml:"topic_generation"`         // お題候補生成・Judge設定
+	DialogueInterestingness IdleChatDialogueInterestingnessConfig `yaml:"dialogue_interestingness"` // 対話演出・品質判定設定
+	SpeakerLLMOptions       map[string]IdleChatLLMOptions         `yaml:"speaker_llm_options"`      // 話者別LLMオプション
 }
 
 // IdleChatNewsSourcesConfig はIdleChatのお題に使うSNS取得先を定義する。
@@ -435,18 +412,12 @@ type IdleChatLLMOptions struct {
 
 // ConversationConfig は会話LLMの設定
 type ConversationConfig struct {
-	Enabled                          bool   `yaml:"enabled"`             // 会話LLM機能の有効化（デフォルト: false）
-	RedisURL                         string `yaml:"redis_url"`           // Redis接続先（例: "redis://localhost:6379"）
-	L1SQLitePath                     string `yaml:"l1_sqlite_path"`      // L1 hot store SQLite path（任意）
-	ArchiveSQLitePath                string `yaml:"archive_sqlite_path"` // L2 archive SQLite path（例: "/var/lib/rencrow/memory_archive.db"）
-	DeprecatedArchivePath            string `yaml:"duckdb_path"`         // 旧設定キーの読み取り互換。新規設定では使用しない
-	VectorDBURL                      string `yaml:"vectordb_url"`        // VectorDB gRPC接続先（例: "localhost:6334" for Qdrant）
-	VectorCollection                 string `yaml:"vector_collection"`   // 会話要約用Qdrant collection名。空の場合はrencrow_memory
-	VectorDimension                  int    `yaml:"vector_dimension"`    // 会話要約用embedding次元。0の場合は768
-	EmbedProvider                    string `yaml:"embed_provider"`      // Deprecated and ignored. Embeddings always use RenCrow_LLM.
-	EmbedBaseURL                     string `yaml:"embed_base_url"`      // Deprecated and ignored. Physical endpoints belong to RenCrow_LLM.
-	EmbedModel                       string `yaml:"embed_model"`         // RenCrow_LLM logical embedding alias. Empty disables embedding.
-	SummaryModel                     string `yaml:"summary_model"`       // Deprecated. Summaries always use the RenCrow_LLM Worker route.
+	Enabled                          bool   `yaml:"enabled"`           // 会話LLM機能の有効化（デフォルト: false）
+	RedisURL                         string `yaml:"redis_url"`         // Redis接続先（例: "redis://localhost:6379"）
+	VectorDBURL                      string `yaml:"vectordb_url"`      // VectorDB gRPC接続先（例: "localhost:6334" for Qdrant）
+	VectorCollection                 string `yaml:"vector_collection"` // 会話要約用Qdrant collection名。空の場合はrencrow_memory
+	VectorDimension                  int    `yaml:"vector_dimension"`  // 会話要約用embedding次元。0の場合は768
+	EmbedModel                       string `yaml:"embed_model"`       // RenCrow_LLM logical embedding alias. Empty disables embedding.
 	ProfilePromotionEnabled          *bool  `yaml:"profile_promotion_enabled"`
 	ProfilePromotionIdleGraceSeconds int    `yaml:"profile_promotion_idle_grace_seconds"`
 	ProfilePromotionTimeoutSeconds   int    `yaml:"profile_promotion_timeout_seconds"`
@@ -486,7 +457,7 @@ type HeartbeatConfig struct {
 
 type GlossaryConfig struct {
 	Enabled           bool     `yaml:"enabled"`
-	DBPath            string   `yaml:"db_path"`
+	DBPath            string   `yaml:"-"`
 	RefreshIntervalHr int      `yaml:"refresh_interval_hr"`
 	MaxEntries        int      `yaml:"max_entries"`
 	FeedURLs          []string `yaml:"feed_urls"`
@@ -494,10 +465,8 @@ type GlossaryConfig struct {
 
 // SubagentConfig はサブエージェントシステムの設定
 type SubagentConfig struct {
-	Enabled       bool   `yaml:"enabled"`            // サブエージェント有効化（デフォルト: false）
-	MaxIterations int    `yaml:"max_iterations"`     // ReActループ最大反復回数（デフォルト: 10）
-	Provider      string `yaml:"provider,omitempty"` // Deprecated and ignored. Subagents use RenCrow_LLM Worker.
-	Model         string `yaml:"model,omitempty"`    // Deprecated and ignored. Physical models belong to RenCrow_LLM.
+	Enabled       bool `yaml:"enabled"`        // サブエージェント有効化（デフォルト: false）
+	MaxIterations int  `yaml:"max_iterations"` // ReActループ最大反復回数（デフォルト: 10）
 }
 
 // CapabilityConfig はケイパビリティ適応システムの設定（v4.1）
@@ -507,7 +476,7 @@ type CapabilityConfig struct {
 	ProbeLLMs bool `yaml:"probe_llms"`
 
 	// ToolRegistryDB: ToolRegistry のSQLiteファイルパス（空の場合は ToolRegistry 無効）
-	ToolRegistryDB string `yaml:"tool_registry_db"`
+	ToolRegistryDB string `yaml:"-"`
 
 	// LLMQualityOverrides: モデル名 → 品質ランク（1〜5）の上書き設定
 	LLMQualityOverrides map[string]int `yaml:"llm_quality_overrides"`
@@ -535,7 +504,7 @@ type SandboxConfig struct {
 	Enabled                 bool                   `yaml:"enabled"`
 	Storage                 string                 `yaml:"storage"`
 	Root                    string                 `yaml:"root"`
-	SQLitePath              string                 `yaml:"sqlite_path"`
+	SQLitePath              string                 `yaml:"-"`
 	DenyOutsideSandboxWrite bool                   `yaml:"deny_outside_sandbox_write"`
 	Promotion               SandboxPromotionConfig `yaml:"promotion"`
 }
@@ -577,7 +546,7 @@ type DCIConfig struct {
 	Enabled             *bool                 `yaml:"enabled"`
 	Storage             string                `yaml:"storage"`
 	TracePath           string                `yaml:"trace_path"`
-	SQLitePath          string                `yaml:"sqlite_path"`
+	SQLitePath          string                `yaml:"-"`
 	CorpusAllowlist     []string              `yaml:"corpus_allowlist"`
 	CorpusDenylist      []string              `yaml:"corpus_denylist"`
 	KnowledgeFTSDomains []string              `yaml:"knowledge_fts_domains"`
@@ -599,7 +568,7 @@ type SkillGovernanceConfig struct {
 	Enabled            *bool                       `yaml:"enabled"`
 	Storage            string                      `yaml:"storage"`
 	RegistryPath       string                      `yaml:"registry_path"`
-	SQLitePath         string                      `yaml:"sqlite_path"`
+	SQLitePath         string                      `yaml:"-"`
 	SkillRoots         []string                    `yaml:"skill_roots"`
 	RequiredForCoder   bool                        `yaml:"required_for_coder"`
 	RequiredForWorker  bool                        `yaml:"required_for_worker"`
@@ -623,7 +592,7 @@ type WorkstreamConfig struct {
 	Enabled                  *bool  `yaml:"enabled"`
 	Storage                  string `yaml:"storage"`
 	LogPath                  string `yaml:"log_path"`
-	SQLitePath               string `yaml:"sqlite_path"`
+	SQLitePath               string `yaml:"-"`
 	VaultRoot                string `yaml:"vault_root"`
 	RequireSuccessCriteria   bool   `yaml:"require_success_criteria"`
 	RequireVerification      bool   `yaml:"require_verification"`
@@ -638,7 +607,7 @@ type RevenueConfig struct {
 	Enabled                        *bool  `yaml:"enabled"`
 	Storage                        string `yaml:"storage"`
 	LogPath                        string `yaml:"log_path"`
-	SQLitePath                     string `yaml:"sqlite_path"`
+	SQLitePath                     string `yaml:"-"`
 	ProhibitSuccessGuarantee       bool   `yaml:"prohibit_success_guarantee"`
 	RequireCustomerVoicePermission bool   `yaml:"require_customer_voice_permission"`
 }
@@ -651,7 +620,7 @@ type PersonaArchitectureConfig struct {
 	Enabled                        *bool  `yaml:"enabled"`
 	Storage                        string `yaml:"storage"`
 	LogPath                        string `yaml:"log_path"`
-	SQLitePath                     string `yaml:"sqlite_path"`
+	SQLitePath                     string `yaml:"-"`
 	CharacterRoot                  string `yaml:"character_root"`
 	TriggerCategoryPath            string `yaml:"trigger_category_path"`
 	CanonicalResponsePath          string `yaml:"canonical_response_path"`
@@ -672,7 +641,7 @@ type BrowserTraceToAPIConfig struct {
 	Enabled                *bool    `yaml:"enabled"`
 	Storage                string   `yaml:"storage"`
 	LogPath                string   `yaml:"log_path"`
-	SQLitePath             string   `yaml:"sqlite_path"`
+	SQLitePath             string   `yaml:"-"`
 	ReadOnlyOnly           bool     `yaml:"read_only_only"`
 	RequireTermsReview     bool     `yaml:"require_terms_review"`
 	GenerateOpenAPI        bool     `yaml:"generate_openapi"`
@@ -690,7 +659,7 @@ type ComplexityHotspotConfig struct {
 	Enabled         *bool    `yaml:"enabled"`
 	Storage         string   `yaml:"storage"`
 	LogPath         string   `yaml:"log_path"`
-	SQLitePath      string   `yaml:"sqlite_path"`
+	SQLitePath      string   `yaml:"-"`
 	DefaultMode     string   `yaml:"default_mode"`
 	MaxHotspots     int      `yaml:"max_hotspots"`
 	ExcludeDirs     []string `yaml:"exclude_dirs"`
@@ -706,7 +675,7 @@ type SuperAgentHarnessConfig struct {
 	Enabled                      *bool  `yaml:"enabled"`
 	Storage                      string `yaml:"storage"`
 	LogPath                      string `yaml:"log_path"`
-	SQLitePath                   string `yaml:"sqlite_path"`
+	SQLitePath                   string `yaml:"-"`
 	MaxParallelSubagents         int    `yaml:"max_parallel_subagents"`
 	MaxContextPackTokens         int    `yaml:"max_context_pack_tokens"`
 	RunQueueSchedulerEnabled     bool   `yaml:"run_queue_scheduler_enabled"`
@@ -727,7 +696,7 @@ type AIWorkflowConfig struct {
 	Enabled                        *bool    `yaml:"enabled"`
 	Storage                        string   `yaml:"storage"`
 	LogPath                        string   `yaml:"log_path"`
-	SQLitePath                     string   `yaml:"sqlite_path"`
+	SQLitePath                     string   `yaml:"-"`
 	ProjectMemoryRoot              string   `yaml:"project_memory_root"`
 	WorktreeBaseDir                string   `yaml:"worktree_base_dir"`
 	RequiredBeforeModify           bool     `yaml:"required_before_modify"`
@@ -755,7 +724,7 @@ type KnowledgeMemoryConfig struct {
 	Enabled                     *bool  `yaml:"enabled"`
 	Storage                     string `yaml:"storage"`
 	LogPath                     string `yaml:"log_path"`
-	SQLitePath                  string `yaml:"sqlite_path"`
+	SQLitePath                  string `yaml:"-"`
 	ProtectPersonalArchive      bool   `yaml:"protect_personal_archive"`
 	DreamRequiresReview         bool   `yaml:"dream_requires_review"`
 	DailyIntakePromoteToStaging bool   `yaml:"daily_intake_promote_to_staging"`

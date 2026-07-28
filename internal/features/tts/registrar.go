@@ -12,15 +12,13 @@ type Dependencies struct {
 }
 
 // Routes groups TTS route handlers supplied by cmd/rencrow.
-// Handler implementations stay in legacy adapter/cmd packages during Ver0.80
-// migration; this registrar owns only route registration and dependency handoff.
+// Handler implementations are supplied by their owning adapter and command packages.
 type Routes struct {
 	Audio       http.HandlerFunc
 	PlaybackAck http.HandlerFunc
 }
 
-// RegisterRoutes reserves the feature route boundary. Existing routes remain in
-// their legacy packages until a phase migrates them through this registrar.
+// RegisterRoutes registers handlers at the feature route boundary.
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
 	registerRoute(mux, "/viewer/tts/audio", routes.Audio)

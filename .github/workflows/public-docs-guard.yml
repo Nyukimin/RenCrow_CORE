@@ -44,11 +44,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          retired='docs/(00_ドキュメント分類一覧|01_正本仕様|02_正本仕様|02_OpenClaw移植詳細仕様|02_v2統合分割仕様|03_設計文書|04_実装仕様_機能拡張|05_LLM運用プロンプト設計|06_実装ガイド進行管理|10_新仕様|LLM運用|コーディング|refs|tooling|株式|STT_TTS)(/|\.md|`)'
-          if rg -n "$retired" AGENTS.md CLAUDE.md rules commands scripts skills/core workspace config rencrow-data .agents/skills/stt-debug-report .claude/skills/stt-debug-report; then
-            echo "Active instructions must reference docs/README.md and docs/01-09 only" >&2
-            exit 1
-          fi
           python3 - <<'PY'
           from pathlib import Path
           import re

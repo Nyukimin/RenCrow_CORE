@@ -485,13 +485,13 @@ func probeRepairBackend(route string) error {
 	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
 		apiKey = strings.TrimSpace(os.Getenv(envName))
 	}
-	if err := probeOpenAIModels(cfg.LLMGateway.BaseURL, apiKey); err != nil {
+	if err := probeGatewayModels(cfg.LLMGateway.BaseURL, apiKey); err != nil {
 		return fmt.Errorf("RenCrow_LLM unavailable for repair route %s: %w", route, err)
 	}
 	return nil
 }
 
-func probeOpenAIModels(baseURL, apiKey string) error {
+func probeGatewayModels(baseURL, apiKey string) error {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	modelsURL := baseURL + "/v1/models"
 	if strings.HasSuffix(baseURL, "/v1") {

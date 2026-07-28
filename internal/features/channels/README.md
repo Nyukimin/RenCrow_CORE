@@ -34,7 +34,6 @@ internal/adapter/line, internal/adapter/channels, internal/application/channel, 
 
 ## Current Route Boundary
 
-- `/webhook`
 - `/webhook/telegram`
 - `/webhook/discord`
 - `/webhook/slack`

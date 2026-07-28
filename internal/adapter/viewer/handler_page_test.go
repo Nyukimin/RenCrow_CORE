@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-func TestHandlePageRejectsLegacyExternalModes(t *testing.T) {
-	for _, path := range []string{
-		"/viewer?mode=lab",
-		"/viewer?mode=view",
-		"/viewer?mode=live",
-	} {
-		rec := httptest.NewRecorder()
-		HandlePage(rec, httptest.NewRequest(http.MethodGet, path, nil))
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("%s status=%d, want 404", path, rec.Code)
-		}
-	}
-}
-
 func TestHandlePageKeepsDebugViewerInCore(t *testing.T) {
 	rec := httptest.NewRecorder()
 	HandlePage(rec, httptest.NewRequest(http.MethodGet, "/viewer?tab=ops", nil))

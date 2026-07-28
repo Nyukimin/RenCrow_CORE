@@ -2,12 +2,11 @@ server:
   host: "0.0.0.0"
   port: 18790
 
-ollama:
-  base_url: "http://127.0.0.1:11434"
-  model: "rencrow-v1"
-
-session:
-  storage_dir: "./sessions"
+storage:
+  memory:
+    session_dir: "./sessions"
+    operation_memory_dir: "./memory"
+    cold_export_dir: "./exports/parquet"
 
 log:
   level: "info"

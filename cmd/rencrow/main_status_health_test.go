@@ -39,14 +39,9 @@ func TestBuildHealthService_UsesRenCrowLLMGatewayAliases(t *testing.T) {
 	if gatewayHits.Load() != 5 {
 		t.Fatalf("expected five logical alias probes, got %d", gatewayHits.Load())
 	}
-	for _, check := range report.Checks {
-		if strings.HasPrefix(check.Name, "ollama") {
-			t.Fatalf("RenCrow_LLM health must not include ollama check: %+v", report.Checks)
-		}
-	}
 }
 
-func TestBuildHealthService_IgnoresLegacyPhysicalTopology(t *testing.T) {
+func TestBuildHealthService_UsesGatewayForAllAliases(t *testing.T) {
 	var gatewayHits atomic.Int32
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
@@ -59,21 +54,6 @@ func TestBuildHealthService_IgnoresLegacyPhysicalTopology(t *testing.T) {
 
 	cfg := &config.Config{
 		LLMGateway: config.LLMGatewayConfig{Enabled: true, BaseURL: srv.URL, TimeoutSec: 1},
-		LocalLLM: config.LocalLLMConfig{
-			Enabled:         true,
-			Provider:        "local_openai",
-			BaseURL:         "http://127.0.0.1:1",
-			ChatBaseURL:     srv.URL + "/chat",
-			WorkerBaseURL:   srv.URL + "/worker",
-			HeavyBaseURL:    "http://127.0.0.1:1",
-			WildBaseURL:     "http://127.0.0.1:1",
-			ChatModel:       "Chat",
-			WorkerModel:     "Worker",
-			ChatWorkerModel: "ChatWorker",
-			HeavyModel:      "Heavy",
-			WildModel:       "Wild",
-			TimeoutSec:      1,
-		},
 	}
 
 	report := buildHealthService(cfg).RunChecks(context.Background())
@@ -81,7 +61,7 @@ func TestBuildHealthService_IgnoresLegacyPhysicalTopology(t *testing.T) {
 		t.Fatalf("status = %s, want ok; checks=%+v", report.Status, report.Checks)
 	}
 	if gatewayHits.Load() != 5 {
-		t.Fatalf("expected physical topology to be ignored; gateway hits=%d", gatewayHits.Load())
+		t.Fatalf("expected five Gateway alias probes; gateway hits=%d", gatewayHits.Load())
 	}
 }
 
@@ -98,7 +78,7 @@ func TestRunHealthCommand_JSONContract(t *testing.T) {
 		report: domainhealth.HealthReport{
 			Status: domainhealth.StatusOK,
 			Checks: []domainhealth.CheckResult{
-				{Name: "ollama", Status: domainhealth.StatusOK, Message: "ok", Duration: 5 * time.Millisecond},
+				{Name: "gateway_mio", Status: domainhealth.StatusOK, Message: "ok", Duration: 5 * time.Millisecond},
 			},
 		},
 	}
@@ -123,12 +103,11 @@ func TestRunHealthCommand_JSONContract(t *testing.T) {
 func TestRunStatusCommand_DeepUsageJSON(t *testing.T) {
 	cfg := &config.Config{
 		Server: config.ServerConfig{Host: "127.0.0.1", Port: 18790},
-		Ollama: config.OllamaConfig{BaseURL: "http://127.0.0.1:11434", Model: "qwen3:8b"},
 	}
 	checker := &fakeHealthChecker{report: domainhealth.HealthReport{
 		Status: domainhealth.StatusDegraded,
 		Checks: []domainhealth.CheckResult{
-			{Name: "ollama", Status: domainhealth.StatusDegraded, Message: "slow", Duration: 50 * time.Millisecond},
+			{Name: "rencrow_llm_chat", Status: domainhealth.StatusDegraded, Message: "slow", Duration: 50 * time.Millisecond},
 		},
 	}}
 	statsLoader := func(_ *config.Config) (map[domainexecution.Status]int, error) {
@@ -178,7 +157,6 @@ func TestRunStatusCommand_DeepUsageJSON(t *testing.T) {
 func TestRunStatusCommand_UsageErrorText(t *testing.T) {
 	cfg := &config.Config{
 		Server: config.ServerConfig{Host: "127.0.0.1", Port: 18790},
-		Ollama: config.OllamaConfig{BaseURL: "http://127.0.0.1:11434", Model: "qwen3:8b"},
 	}
 	checker := &fakeHealthChecker{report: domainhealth.HealthReport{Status: domainhealth.StatusOK}}
 	statsLoader := func(_ *config.Config) (map[domainexecution.Status]int, error) {

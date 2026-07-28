@@ -53,7 +53,7 @@ func TestDirectUserTargetStoreRejectsNonUserTarget(t *testing.T) {
 		"",
 		"C0123456789abcdef0123456789abcdef",
 		"R0123456789abcdef0123456789abcdef",
-		"${PICOCLAW_HEARTBEAT_CHAT_ID}",
+		"${RENCROW_HEARTBEAT_CHAT_ID}",
 	} {
 		if _, err := store.Record(id); err == nil {
 			t.Fatalf("Record(%q) should fail", id)

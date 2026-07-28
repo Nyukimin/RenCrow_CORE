@@ -18,7 +18,7 @@ func TestSweepDueSourcesStagesValidatesAndPromotesRSS(t *testing.T) {
 		w.Header().Set("Content-Type", "application/rss+xml")
 		_, _ = w.Write([]byte(`<?xml version="1.0"?>
 <rss version="2.0"><channel><title>Test</title>
-<item><title>AI Update</title><link>` + "https://example.com/ai-update" + `</link><description>Local LLM news</description><pubDate>Tue, 05 May 2026 10:00:00 GMT</pubDate></item>
+<item><title>AI Update</title><link>` + "https://example.com/ai-update" + `</link><description>RenCrow_LLM Gateway news</description><pubDate>Tue, 05 May 2026 10:00:00 GMT</pubDate></item>
 </channel></rss>`))
 	}))
 	defer srv.Close()

@@ -13,14 +13,14 @@ import (
 func TestRSSParserExtractFromItem(t *testing.T) {
 	parser := NewRSSParser([]string{"https://example.test/feed.xml"})
 	item := parser.extractFromItem(&gofeed.Item{
-		Title:       "OpenAI Company releases RenCrow update",
+		Title:       "AI Company releases RenCrow update",
 		Description: "RenCrow now stores glossary context.",
 	}, "https://example.test/feed.xml")
 
 	if item == nil {
 		t.Fatal("expected glossary item")
 	}
-	if item.Term != "OpenAI" {
+	if item.Term != "AI" {
 		t.Fatalf("expected first capitalized term, got %q", item.Term)
 	}
 	if item.Category != "organization" {

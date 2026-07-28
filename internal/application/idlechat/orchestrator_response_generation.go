@@ -28,7 +28,7 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 	latestOther := latestOtherUtterance(recentEntries, sessionID, speaker)
 	latestSelf := latestSelfUtterance(recentEntries, sessionID, speaker)
 
-	// OpenAI互換サーバによっては system message が先頭以外にあると拒否するため、
+	// Gateway contractではsystem messageを先頭へ置くため、
 	// 追加の system 文脈は履歴や user 指示より前に集約する。
 	o.mu.Lock()
 	sc := o.sessionContext

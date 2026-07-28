@@ -12,7 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	infraRouting "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
@@ -42,7 +42,7 @@ func main() {
 	if gatewayBaseURL == "" {
 		gatewayBaseURL = "http://127.0.0.1:8090"
 	}
-	gatewayProvider := openai.NewOpenAIProviderWithOptions(
+	gatewayProvider := rencrowllm.NewGatewayProviderWithOptions(
 		strings.TrimSpace(os.Getenv("RENCROW_LLM_API_KEY")),
 		"mio",
 		gatewayBaseURL,

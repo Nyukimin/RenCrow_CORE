@@ -8,27 +8,23 @@ import (
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
-func sttStreamURLFromConfig(cfg *config.Config) string {
-	return ""
+func sttGatewayStreamURLFromConfig(cfg *config.Config) string {
+	return inferSTTStreamURLFromGatewayHTTPURL(inferSTTGatewayHTTPURLFromConfig(cfg))
 }
 
-func inferSTTStreamURLFromProviderURL(providerURL string) string {
-	return modulestt.InferStreamURLFromProviderURL(providerURL)
+func inferSTTStreamURLFromGatewayHTTPURL(gatewayHTTPURL string) string {
+	return modulestt.InferStreamURLFromGatewayHTTPURL(gatewayHTTPURL)
 }
 
-func inferSTTBaseURL(ttsBaseURL, sttProviderURL string) string {
+func inferSTTBaseURL(ttsBaseURL, sttGatewayHTTPURL string) string {
 	return modulestt.InferBaseURL(modulestt.RuntimeURLConfig{
-		TTSBaseURL:  ttsBaseURL,
-		ProviderURL: sttProviderURL,
+		TTSBaseURL:     ttsBaseURL,
+		GatewayHTTPURL: sttGatewayHTTPURL,
 	})
 }
 
-func extractBaseFromProviderURL(raw string) string {
-	return modulestt.ExtractBaseFromProviderURL(raw)
-}
-
-func inferSTTProviderURL(ttsBaseURL, sttProviderURL string) string {
-	return modulestt.InferLegacyInferenceProviderURL(ttsBaseURL, sttProviderURL)
+func extractBaseFromGatewayHTTPURL(raw string) string {
+	return modulestt.ExtractBaseFromGatewayHTTPURL(raw)
 }
 
 func inferSTTBaseURLFromConfig(cfg *config.Config) string {
@@ -42,7 +38,7 @@ func inferSTTBaseURLFromConfig(cfg *config.Config) string {
 	return base
 }
 
-func inferSTTProviderURLFromConfig(cfg *config.Config) string {
+func inferSTTGatewayHTTPURLFromConfig(cfg *config.Config) string {
 	return modulestt.GatewayTranscriptionURL(inferSTTBaseURLFromConfig(cfg))
 }
 
@@ -52,20 +48,16 @@ func buildSTTProvider(cfg *config.Config) sttinfra.Provider {
 		return nil
 	}
 	providerCfg := sttinfra.Config{
-		Enabled:         plan.Enabled,
-		Provider:        plan.Provider,
-		Language:        plan.Language,
-		Model:           plan.Model,
-		Timeout:         plan.Timeout,
-		SaveAudio:       plan.SaveAudio,
-		BusyPolicy:      plan.BusyPolicy,
-		ExternalHTTPURL: plan.ExternalHTTPURL,
+		Enabled:        plan.Enabled,
+		Provider:       plan.Provider,
+		Language:       plan.Language,
+		Model:          plan.Model,
+		Timeout:        plan.Timeout,
+		SaveAudio:      plan.SaveAudio,
+		BusyPolicy:     plan.BusyPolicy,
+		GatewayHTTPURL: plan.GatewayHTTPURL,
 	}
 	return sttinfra.NewProvider(providerCfg)
-}
-
-func inferSTTGatewayURL(sttGatewayURL, rencrowSTTURL string) string {
-	return modulestt.InferGatewayURL(sttGatewayURL, rencrowSTTURL)
 }
 
 func sttRuntimeConfigFromAppConfig(cfg *config.Config) modulestt.RuntimeConfig {
@@ -78,7 +70,7 @@ func sttRuntimeConfigFromAppConfig(cfg *config.Config) modulestt.RuntimeConfig {
 		Language:       "ja",
 		TimeoutMS:      cfg.STT.TimeoutMS,
 		BusyPolicy:     cfg.STT.BusyPolicy,
-		ProviderURL:    inferSTTProviderURLFromConfig(cfg),
+		GatewayHTTPURL: inferSTTGatewayHTTPURLFromConfig(cfg),
 		SaveAudio:      cfg.STT.Debug.SaveAudio,
 		SaveTranscript: cfg.STT.Debug.SaveTranscript,
 	}
@@ -89,11 +81,11 @@ func sttRuntimeURLConfigFromAppConfig(cfg *config.Config, ttsBaseURL string) mod
 		return modulestt.RuntimeURLConfig{TTSBaseURL: ttsBaseURL}
 	}
 	return modulestt.RuntimeURLConfig{
-		Provider:    modulestt.ProviderRenCrowSTT,
-		ProviderURL: inferSTTProviderURLFromConfig(cfg),
-		TTSBaseURL:  ttsBaseURL,
-		ServerHost:  cfg.Server.Host,
-		ServerPort:  cfg.Server.Port,
-		TLSEnabled:  cfg.Server.TLS.Enabled,
+		Provider:       modulestt.ProviderRenCrowSTT,
+		GatewayHTTPURL: inferSTTGatewayHTTPURLFromConfig(cfg),
+		TTSBaseURL:     ttsBaseURL,
+		ServerHost:     cfg.Server.Host,
+		ServerPort:     cfg.Server.Port,
+		TLSEnabled:     cfg.Server.TLS.Enabled,
 	}
 }

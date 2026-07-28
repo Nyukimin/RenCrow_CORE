@@ -1,163 +1,16 @@
 // Chat Timeline tab module: normal chat message rendering.
-const DEFAULT_CHAT_ROUTE_ALIASES = {
-  worker: {label: 'Worker', baseURL: 'http://127.0.0.1:8082', model: 'Worker', routePrefix: '/ops'},
-  heavy: {label: 'Heavy', baseURL: 'http://127.0.0.1:8083', model: 'Heavy', routePrefix: '/analyze'},
-  wild: {label: 'Wild', baseURL: 'http://127.0.0.1:8084', model: 'Wild', routePrefix: '/wild'},
-};
-let CHAT_ROUTE_ALIASES = {...DEFAULT_CHAT_ROUTE_ALIASES};
-const CHAT_ROUTE_ALIAS_STORAGE_KEY = 'chatRouteAlias.selected';
-
-function syncChatRouteAliasesFromRuntimeConfig(localLLM) {
-  if (!localLLM || !localLLM.enabled) {
-    CHAT_ROUTE_ALIASES = {...DEFAULT_CHAT_ROUTE_ALIASES};
-    return;
-  }
-  CHAT_ROUTE_ALIASES = {
-    worker: {
-      ...DEFAULT_CHAT_ROUTE_ALIASES.worker,
-      baseURL: localLLM.worker_base_url || DEFAULT_CHAT_ROUTE_ALIASES.worker.baseURL,
-      model: localLLM.worker_model || DEFAULT_CHAT_ROUTE_ALIASES.worker.model,
-    },
-    heavy: {
-      ...DEFAULT_CHAT_ROUTE_ALIASES.heavy,
-      baseURL: localLLM.heavy_base_url || DEFAULT_CHAT_ROUTE_ALIASES.heavy.baseURL,
-      model: localLLM.heavy_model || DEFAULT_CHAT_ROUTE_ALIASES.heavy.model,
-    },
-    wild: {
-      ...DEFAULT_CHAT_ROUTE_ALIASES.wild,
-      baseURL: localLLM.wild_base_url || DEFAULT_CHAT_ROUTE_ALIASES.wild.baseURL,
-      model: localLLM.wild_model || DEFAULT_CHAT_ROUTE_ALIASES.wild.model,
-    },
-  };
-}
-
-function selectedChatRouteAlias() {
-  localStorage.removeItem(CHAT_ROUTE_ALIAS_STORAGE_KEY);
-  return '';
-}
-
 function isExplicitRouteMessage(message) {
   return /^\/(ops|wild|heavy|code|code1|code2|code3|code4|plan|analyze|research|chat)(\s|$)/.test(String(message || '').trim());
 }
 
-function selectChatRouteAlias(alias) {
-  localStorage.removeItem(CHAT_ROUTE_ALIAS_STORAGE_KEY);
-  syncChatRouteAliasButtons();
-}
-
-function syncChatRouteAliasButtons() {
-  const selected = selectedChatRouteAlias();
-  document.querySelectorAll('[data-chat-route]').forEach((btn) => {
-    const active = btn.dataset.chatRoute === selected;
-    btn.classList.toggle('active', active);
-    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-  });
-}
-
-function bindChatRouteAliasButtons() {
-  document.querySelectorAll('[data-chat-route]').forEach((btn) => {
-    btn.addEventListener('click', () => selectChatRouteAlias(btn.dataset.chatRoute || ''));
-  });
-  syncChatRouteAliasButtons();
-}
-
-function applyChatRouteAliasToMessage(message) {
-  const trimmed = String(message || '').trim();
-  if (!trimmed || isExplicitRouteMessage(trimmed)) return trimmed;
-  const selected = selectedChatRouteAlias();
-  const alias = selected ? CHAT_ROUTE_ALIASES[selected] : null;
-  return alias ? alias.routePrefix + ' ' + trimmed : trimmed;
-}
-
 function buildViewerSendRequest(message) {
   const trimmed = String(message || '').trim();
-  selectedChatRouteAlias();
   if (!trimmed) return {message: ''};
   if (isExplicitRouteMessage(trimmed)) return {message: trimmed};
 
   const recipient = typeof selectedViewerChatRecipient === 'function' ? selectedViewerChatRecipient() : 'mio';
   if (recipient) return {message: trimmed, to: recipient};
   return {message: applyRoleTargetToMessage(trimmed)};
-}
-
-function viewerLLMStartSelectionForRequest(req) {
-  const alias = String(req && req.model_alias ? req.model_alias : '').trim();
-  return alias === 'Worker' || alias === 'Heavy' || alias === 'Wild' ? alias : '';
-}
-
-function viewerLLMRoleInfo(status, role) {
-  if (!status || !role) return null;
-  if (status.roles && status.roles[role]) return status.roles[role];
-  return status[role] || null;
-}
-
-function viewerLLMRoleHealthy(status, role) {
-  const info = viewerLLMRoleInfo(status, role);
-  if (!info) return false;
-  if (info.halted === true) return false;
-  return info.health_ok === true || info.status === 'ok' || info.health === 'ok';
-}
-
-function viewerLLMSelectionReady(status, selection) {
-  return viewerLLMRoleHealthy(status, 'Chat') && viewerLLMRoleHealthy(status, selection);
-}
-
-function viewerLLMStopRolesBeforeStart(selection) {
-  if (selection === 'Wild') return ['Worker', 'Heavy'];
-  if (selection === 'Heavy') return ['Worker', 'Wild'];
-  if (selection === 'Worker') return ['Heavy', 'Wild'];
-  return [];
-}
-
-async function stopViewerLLMRolesBeforeStart(selection) {
-  const roles = viewerLLMStopRolesBeforeStart(selection);
-  if (!roles.length) return;
-  const stopRes = await fetch('/viewer/llm-ops/stop', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({roles}),
-  });
-  const body = await stopRes.text();
-  if (!stopRes.ok) {
-    throw new Error(formatViewerLLMOpsHTTPError('llm ops stop failed', stopRes.status, body));
-  }
-}
-
-function formatViewerLLMOpsHTTPError(prefix, status, body) {
-  const text = String(body || '').trim();
-  return prefix + ': HTTP ' + String(status) + (text ? ': ' + text : '');
-}
-
-async function ensureViewerLLMReadyForRequest(req) {
-  const selection = viewerLLMStartSelectionForRequest(req);
-  if (!selection) return;
-
-  const healthRes = await fetch('/viewer/llm-ops/health', {cache: 'no-store'});
-  if (!healthRes.ok) {
-    const body = await healthRes.text();
-    throw new Error(formatViewerLLMOpsHTTPError('llm ops health failed', healthRes.status, body));
-  }
-
-  const statusRes = await fetch('/viewer/llm-ops/status', {cache: 'no-store'});
-  if (!statusRes.ok) {
-    const body = await statusRes.text();
-    throw new Error(formatViewerLLMOpsHTTPError('llm ops status failed', statusRes.status, body));
-  }
-  const status = await statusRes.json();
-  if (viewerLLMSelectionReady(status, selection)) return;
-
-  await stopViewerLLMRolesBeforeStart(selection);
-
-  const startRes = await fetch('/viewer/llm-ops/start', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({selection}),
-  });
-  const body = await startRes.text();
-  if (!startRes.ok) {
-    throw new Error(formatViewerLLMOpsHTTPError('llm ops start failed', startRes.status, body));
-  }
-  if (typeof refreshLlmOpsStatus === 'function') refreshLlmOpsStatus();
 }
 
 const voiceDirectTimelineJobIDs = new Set();
@@ -291,5 +144,3 @@ function addJobNotificationToTimeline(ev) {
 function isViewerLocalFailureMessage(ev) {
   return String(ev && ev.content ? ev.content : '').startsWith('Viewer send unavailable:');
 }
-
-bindChatRouteAliasButtons();

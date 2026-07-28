@@ -25,7 +25,7 @@ func TestRunExecutorPassesAndSavesEvidence(t *testing.T) {
 				Response:      "done",
 				Steps:         []string{"generate"},
 				Verification:  []string{"audio file exists"},
-				TTSProvider:   "sbv2",
+				TTSProvider:   "rencrow-tts-gateway",
 				TTSVoiceID:    "mio",
 				TTSAudioFile:  "/tmp/out.wav",
 				TTSDurationMS: 1200,
@@ -53,7 +53,7 @@ func TestRunExecutorPassesAndSavesEvidence(t *testing.T) {
 	if store.calls != 1 || store.last.Status != string(StatusPassed) {
 		t.Fatalf("expected saved passed report, got calls=%d report=%#v", store.calls, store.last)
 	}
-	if store.last.TTSProvider != "sbv2" || store.last.TTSDuration != 1200 || store.last.PlaybackCode != 7 {
+	if store.last.TTSProvider != "rencrow-tts-gateway" || store.last.TTSDuration != 1200 || store.last.PlaybackCode != 7 {
 		t.Fatalf("TTS evidence was not propagated: %#v", store.last)
 	}
 	wantStages := []Stage{StageReceived, StageContractReady, StagePlanning, StageApplying, StageVerifying, StageCompleted}
@@ -174,7 +174,7 @@ func TestExecutorHelpers(t *testing.T) {
 		"command not found":             "command_missing",
 		"dependency module unavailable": "dependency_missing",
 		"no such file or path":          "path_mismatch",
-		"ollama model unavailable":      "provider_unavailable",
+		"gateway model unavailable":     "provider_unavailable",
 		"other failure":                 "apply",
 	}
 	for msg, want := range tests {

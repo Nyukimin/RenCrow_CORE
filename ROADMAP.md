@@ -1,6 +1,6 @@
 # RenCrow_CORE Roadmap
 
-RenCrow_COREの実装状態、採用済み・未実装項目、deployment依存項目、旧構想の区分は、
+RenCrow_COREの実装状態、採用済み・未実装項目、deployment依存項目は、
 [docs/08_実装状況・ロードマップ.md](docs/08_実装状況・ロードマップ.md)だけを
 現行正本とします。このファイルに別のbacklogや状態表を重複保持しません。
 

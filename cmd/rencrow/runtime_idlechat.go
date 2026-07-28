@@ -14,7 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	idlechatfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/idlechat"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
@@ -181,7 +181,7 @@ func selectForecastProviders(cfg *config.Config) (llm.LLMProvider, string) {
 	if cfg == nil {
 		return nil, ""
 	}
-	plans := modulechat.BuildForecastProviderPlans(forecastCoderCandidatesFromRuntime(cfg), cfg.IdleChat.ForecastExternalEnabled)
+	plans := modulechat.BuildForecastProviderPlans(forecastCoderCandidatesFromRuntime(cfg))
 	for _, plan := range plans {
 		provider, label := createForecastProvider(cfg, plan.Label, forecastCoderConfigByLabel(cfg, plan.Label))
 		if provider == nil {
@@ -210,10 +210,6 @@ func selectForecastTopicProvider(workerProvider llm.LLMProvider) (llm.LLMProvide
 	return workerProvider, modulechat.ForecastTopicGeneratorAgent
 }
 
-func coderProviderIsExternal(cc config.CoderConfig) bool {
-	return modulechat.CoderProviderIsExternal(cc.Provider)
-}
-
 func createForecastProvider(cfg *config.Config, label string, cc config.CoderConfig) (llm.LLMProvider, string) {
 	if !cc.Enabled {
 		return nil, ""
@@ -234,16 +230,12 @@ func createForecastProvider(cfg *config.Config, label string, cc config.CoderCon
 	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
 		apiKey = strings.TrimSpace(os.Getenv(envName))
 	}
-	provider := openai.NewOpenAIProviderWithOptions(apiKey, alias, baseURL, timeout)
+	provider := rencrowllm.NewGatewayProviderWithOptions(apiKey, alias, baseURL, timeout)
 	return provider, label + " via RenCrow_LLM"
 }
 
 func forecastProviderLogLabel(label string) string {
 	return modulechat.ForecastProviderLogLabel(label)
-}
-
-func forecastProviderModelLabel(model string) string {
-	return modulechat.ForecastProviderModelLabel(model)
 }
 
 func idleChatProviderOptionsFromConfig(options map[string]config.IdleChatLLMOptions) map[string]map[string]any {
@@ -252,9 +244,7 @@ func idleChatProviderOptionsFromConfig(options map[string]config.IdleChatLLMOpti
 
 func idleChatCoderProviderConfigFromRuntime(cc config.CoderConfig) modulechat.IdleChatCoderProviderConfig {
 	return modulechat.IdleChatCoderProviderConfig{
-		Enabled:  cc.Enabled,
-		Provider: cc.Provider,
-		Model:    cc.Model,
+		Enabled: cc.Enabled,
 	}
 }
 

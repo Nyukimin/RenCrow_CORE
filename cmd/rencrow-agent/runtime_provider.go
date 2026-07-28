@@ -8,7 +8,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 )
 
 // createProviderFromConfig creates a provider for a logical RenCrow_LLM alias.
@@ -17,7 +17,7 @@ func createProviderFromConfig(cfg *config.Config, alias string) (llm.LLMProvider
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
 	}
-	return openai.NewOpenAIProviderWithOptions(
+	return rencrowllm.NewGatewayProviderWithOptions(
 		llmGatewayAPIKey(cfg),
 		strings.TrimSpace(alias),
 		cfg.LLMGateway.BaseURL,

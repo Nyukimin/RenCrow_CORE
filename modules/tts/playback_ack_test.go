@@ -13,30 +13,6 @@ func TestNormalizePlaybackAckTrimsExplicitError(t *testing.T) {
 	}
 }
 
-func TestNormalizePlaybackAckConvertsDeprecatedFallbackToError(t *testing.T) {
-	got := NormalizePlaybackAck(PlaybackAckInput{Status: "fallback"})
-	if got.Status != PlaybackAckStatusError {
-		t.Fatalf("status = %q, want %q", got.Status, PlaybackAckStatusError)
-	}
-	if got.ErrorCode != DeprecatedFallbackAckErrorCode {
-		t.Fatalf("error code = %q, want %q", got.ErrorCode, DeprecatedFallbackAckErrorCode)
-	}
-	if got.Error != DeprecatedFallbackAckErrorText {
-		t.Fatalf("error text = %q, want %q", got.Error, DeprecatedFallbackAckErrorText)
-	}
-}
-
-func TestNormalizePlaybackAckKeepsFallbackErrorDetails(t *testing.T) {
-	got := NormalizePlaybackAck(PlaybackAckInput{
-		Status:    "fallback",
-		ErrorCode: "TTS_AUDIO_BLOCKED",
-		Error:     "browser blocked audio",
-	})
-	if got.Status != "error" || got.ErrorCode != "TTS_AUDIO_BLOCKED" || got.Error != "browser blocked audio" {
-		t.Fatalf("unexpected normalized ack: %+v", got)
-	}
-}
-
 func TestBuildPlaybackAckReceiptTrimsFieldsAndPreservesMatchState(t *testing.T) {
 	got := BuildPlaybackAckReceipt(PlaybackAckInput{
 		ResponseID:     " response-1 ",

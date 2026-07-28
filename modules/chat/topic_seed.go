@@ -13,7 +13,6 @@ import (
 type DailySeedCache struct {
 	Date               string     `json:"date"`
 	WikipediaSeeds     []string   `json:"wikipedia_seeds"`
-	NewsSeeds          []string   `json:"news_seeds"`
 	NewsSeedItems      []NewsSeed `json:"news_seed_items"`
 	FetchedAt          time.Time  `json:"fetched_at"`
 	EnrichmentStatus   string     `json:"enrichment_status,omitempty"`
@@ -52,21 +51,13 @@ func SelectExternalTopicSeed(cache *DailySeedCache, wikipediaIndex int, genre st
 }
 
 func SelectNewsTopicSeed(cache *DailySeedCache, newsIndex int) (TopicSeed, bool) {
-	if cache == nil || (len(cache.NewsSeedItems) == 0 && len(cache.NewsSeeds) == 0) {
+	if cache == nil || len(cache.NewsSeedItems) == 0 {
 		return TopicSeed{Category: TopicCategoryNews}, false
 	}
-	if len(cache.NewsSeedItems) > 0 {
-		seed := selectNewsSeedByIndex(cache.NewsSeedItems, newsIndex)
-		if strings.TrimSpace(seed.Title) == "" {
-			return TopicSeed{Category: TopicCategoryNews}, false
-		}
-		return TopicSeed{Category: TopicCategoryNews, News: &seed}, true
-	}
-	title := selectStringByIndex(cache.NewsSeeds, newsIndex)
-	if strings.TrimSpace(title) == "" {
+	seed := selectNewsSeedByIndex(cache.NewsSeedItems, newsIndex)
+	if strings.TrimSpace(seed.Title) == "" {
 		return TopicSeed{Category: TopicCategoryNews}, false
 	}
-	seed := NewsSeed{Title: strings.TrimSpace(title)}
 	return TopicSeed{Category: TopicCategoryNews, News: &seed}, true
 }
 

@@ -12,12 +12,12 @@ import (
 // ヘッダ・本文・区切りを個別に書く実装では、エントリの途中で世代交代が
 // 起きて1件のログが2ファイルに分断される。分断されると解析できない。
 func TestBuildRawLogEntryIsSingleWrite(t *testing.T) {
-	entry := buildRawLogEntry("resp", "ollama", "stop", 512, 3, "hello world")
+	entry := buildRawLogEntry("resp", "rencrow_llm", "stop", 512, 3, "hello world")
 
 	if !strings.HasPrefix(entry, "ts=") {
 		t.Fatalf("entry should start with ts=, got: %q", entry)
 	}
-	for _, want := range []string{"kind=resp", "provider=ollama", "finish=stop", "max_tokens=512", "msgs=3"} {
+	for _, want := range []string{"kind=resp", "provider=rencrow_llm", "finish=stop", "max_tokens=512", "msgs=3"} {
 		if !strings.Contains(entry, want) {
 			t.Errorf("entry should contain %q, got: %q", want, entry)
 		}

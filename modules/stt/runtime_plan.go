@@ -6,8 +6,7 @@ import (
 )
 
 const (
-	ProviderOpenAIAPI = "openai-api"
-	ProviderMock      = "mock"
+	ProviderMock = "mock"
 
 	DefaultProviderLanguage = "ja"
 	DefaultProviderTimeout  = 8 * time.Second
@@ -24,20 +23,20 @@ type RuntimeConfig struct {
 	Model          string
 	TimeoutMS      int
 	BusyPolicy     string
-	ProviderURL    string
+	GatewayHTTPURL string
 	SaveAudio      bool
 	SaveTranscript bool
 }
 
 type RuntimeProviderPlan struct {
-	Enabled         bool
-	Provider        string
-	Language        string
-	Model           string
-	Timeout         time.Duration
-	SaveAudio       bool
-	BusyPolicy      string
-	ExternalHTTPURL string
+	Enabled        bool
+	Provider       string
+	Language       string
+	Model          string
+	Timeout        time.Duration
+	SaveAudio      bool
+	BusyPolicy     string
+	GatewayHTTPURL string
 }
 
 type ProviderDefaultsConfig struct {
@@ -58,20 +57,20 @@ func BuildRuntimeProviderPlan(cfg RuntimeConfig) (RuntimeProviderPlan, bool) {
 		BusyPolicy: cfg.BusyPolicy,
 	})
 	return RuntimeProviderPlan{
-		Enabled:         cfg.Enabled,
-		Provider:        defaults.Provider,
-		Language:        defaults.Language,
-		Model:           strings.TrimSpace(cfg.Model),
-		Timeout:         defaults.Timeout,
-		SaveAudio:       cfg.SaveAudio,
-		BusyPolicy:      defaults.BusyPolicy,
-		ExternalHTTPURL: strings.TrimSpace(cfg.ProviderURL),
+		Enabled:        cfg.Enabled,
+		Provider:       defaults.Provider,
+		Language:       defaults.Language,
+		Model:          strings.TrimSpace(cfg.Model),
+		Timeout:        defaults.Timeout,
+		SaveAudio:      cfg.SaveAudio,
+		BusyPolicy:     defaults.BusyPolicy,
+		GatewayHTTPURL: strings.TrimSpace(cfg.GatewayHTTPURL),
 	}, true
 }
 
 func ApplyProviderDefaults(cfg ProviderDefaultsConfig) ProviderDefaultsConfig {
 	if strings.TrimSpace(cfg.Provider) == "" {
-		cfg.Provider = ProviderExternalHTTP
+		cfg.Provider = ProviderRenCrowSTT
 	} else {
 		cfg.Provider = strings.TrimSpace(cfg.Provider)
 	}

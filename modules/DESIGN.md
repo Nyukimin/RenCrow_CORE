@@ -21,11 +21,11 @@ webgather
 
 These packages do not replace the independent RenCrow_LLM, RenCrow_STT,
 RenCrow_TTS, RenCrow_Tools, and other sibling repositories. They contain the
-CORE-facing DTOs, events, pure policy, compatibility planning, and state
+CORE-facing DTOs, events, pure policy, request planning, and state
 projections needed by this repository. External module implementation bodies
 remain in their owning repositories.
 
-The local contract packages remain compatible with the existing CORE layout:
+The local contract packages use the CORE layout:
 
 ```text
 internal/domain
@@ -38,8 +38,8 @@ cmd/rencrow
 `modules/` is a stable contract and pure-policy boundary inside CORE. Concrete
 HTTP clients, process wiring, secrets, and external runtime lifecycle do not
 move here merely to mirror the sibling repository names. Existing CORE
-compatibility implementations may stay in `internal/...` until a specific
-change-isolation or reuse benefit justifies movement.
+implementations stay in `internal/...`; composition and process lifecycle stay
+in `cmd/rencrow`.
 
 ## 2. Dependency Direction
 
@@ -128,7 +128,7 @@ Owns CORE-side LLM contracts and pure request/response policy.
 Examples:
 
 - request plans targeting RenCrow_LLM execution aliases
-- compatibility contracts for legacy/development providers
+- RenCrow_LLM logical alias and request contracts
 - response normalization before Chat display
 - provider health/capability interpretation
 
@@ -194,19 +194,7 @@ If CORE runtime code grows reusable pure policy, move that policy into the
 corresponding local contract package when doing so reduces retest scope.
 External runtime implementation still belongs to its sibling repository.
 
-## 6. Migration Policy
-
-Module migration must be incremental:
-
-1. Add or update module-level contract/tests.
-2. Create thin adapter/wrapper packages if needed.
-3. Move implementation only when imports and ownership are clear.
-4. Run package-local tests plus impacted integration tests.
-5. Keep behavior and logs stable unless the migration explicitly changes them.
-
-Avoid big-bang file moves. Existing package paths are part of the current API surface for tests and runtime wiring.
-
-## 7. Completion Criteria For Design
+## 6. Completion Criteria For Design
 
 The module design is complete when the repository contains:
 
@@ -214,9 +202,7 @@ The module design is complete when the repository contains:
 - dependency direction rules
 - state ownership table
 - current-code ownership map
-- migration plan with validation gates
 - README files for all modules
 
-Further physical package movement is not a product backlog by itself. It is
-performed only when a concrete reuse, change-isolation, or testability benefit
-exists.
+Physical package movement is performed only when a concrete reuse,
+change-isolation, or testability benefit exists.

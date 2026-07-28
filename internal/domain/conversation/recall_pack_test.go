@@ -227,7 +227,7 @@ func TestRecallPack_ToPromptMessages_WithRelationSnippets(t *testing.T) {
 		RelationSnippets: []RelationSnippet{{
 			ItemID:       "github-mlx",
 			Title:        "mlx-lm",
-			Summary:      "MLX local LLM implementation",
+			Summary:      "RenCrow_LLM Gateway implementation",
 			SourceType:   "github",
 			RelationType: "same_entity",
 			Score:        3,
@@ -552,7 +552,7 @@ func TestRecallPack_FilterForRoleKeepsRelationForWorker(t *testing.T) {
 		RelationSnippets: []RelationSnippet{{
 			ItemID:       "qiita-mlx",
 			Title:        "MLXでLLM",
-			Summary:      "MLX local LLM",
+			Summary:      "RenCrow_LLM Gateway",
 			SourceType:   "qiita",
 			RelationType: "same_entity",
 			Score:        3,

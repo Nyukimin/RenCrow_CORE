@@ -55,7 +55,7 @@ func TestRecallPackToTraceItemsIncludesRelationSnippets(t *testing.T) {
 		RelationSnippets: []RelationSnippet{{
 			ItemID:       "github-mlx",
 			Title:        "mlx-lm",
-			Summary:      "MLX local LLM implementation",
+			Summary:      "RenCrow_LLM Gateway implementation",
 			SourceType:   "github",
 			RelationType: "same_entity",
 			Score:        3,

@@ -58,7 +58,7 @@ func (p MockProvider) Transcribe(_ context.Context, wav []byte) (Result, error) 
 	}, nil
 }
 
-type HTTPProvider struct {
+type GatewayProvider struct {
 	URL      string
 	Timeout  time.Duration
 	Provider string
@@ -66,18 +66,18 @@ type HTTPProvider struct {
 	Language string
 }
 
-func (p HTTPProvider) Name() string {
+func (p GatewayProvider) Name() string {
 	if strings.TrimSpace(p.Provider) != "" {
 		return strings.TrimSpace(p.Provider)
 	}
-	return ProviderExternalHTTP
+	return modulestt.ProviderRenCrowSTT
 }
 
-func (p HTTPProvider) Health(_ context.Context) Health {
-	return Health{Status: "ok", Provider: p.Name(), Model: strings.TrimSpace(p.Model), Device: "external_http", Ready: strings.TrimSpace(p.URL) != ""}
+func (p GatewayProvider) Health(_ context.Context) Health {
+	return Health{Status: "ok", Provider: p.Name(), Model: strings.TrimSpace(p.Model), Device: "rencrow_stt_gateway", Ready: strings.TrimSpace(p.URL) != ""}
 }
 
-func (p HTTPProvider) Transcribe(ctx context.Context, wav []byte) (Result, error) {
+func (p GatewayProvider) Transcribe(ctx context.Context, wav []byte) (Result, error) {
 	if !IsWAV(wav) {
 		return Result{}, NewError(ErrorInvalidAudio, "invalid wav", nil)
 	}
@@ -136,14 +136,10 @@ func NewProvider(cfg Config) Provider {
 	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
 	case ProviderMock:
 		provider = MockProvider{Text: "ルミナ、今日の予定を確認して。"}
-	case ProviderOpenAIAPI:
-		provider = HTTPProvider{URL: cfg.ExternalHTTPURL, Timeout: cfg.Timeout, Provider: ProviderOpenAIAPI, Model: cfg.Model, Language: cfg.Language}
-	case ProviderExternalHTTP:
-		provider = HTTPProvider{URL: cfg.ExternalHTTPURL, Timeout: cfg.Timeout, Provider: ProviderExternalHTTP, Model: cfg.Model, Language: cfg.Language}
 	case modulestt.ProviderRenCrowSTT:
-		provider = HTTPProvider{URL: cfg.ExternalHTTPURL, Timeout: cfg.Timeout, Provider: modulestt.ProviderRenCrowSTT, Language: cfg.Language}
+		provider = GatewayProvider{URL: cfg.GatewayHTTPURL, Timeout: cfg.Timeout, Provider: modulestt.ProviderRenCrowSTT, Language: cfg.Language}
 	default:
-		provider = HTTPProvider{URL: cfg.ExternalHTTPURL, Timeout: cfg.Timeout, Provider: ProviderExternalHTTP, Model: cfg.Model, Language: cfg.Language}
+		provider = GatewayProvider{URL: cfg.GatewayHTTPURL, Timeout: cfg.Timeout, Provider: modulestt.ProviderRenCrowSTT, Language: cfg.Language}
 	}
 	return NewBusyPolicyProvider(provider, cfg.BusyPolicy)
 }

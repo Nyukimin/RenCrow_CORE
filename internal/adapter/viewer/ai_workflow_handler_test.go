@@ -436,63 +436,24 @@ func TestHandleAIWorkflowHeavyWorkerEvaluateBlockedDoesNotSaveEvent(t *testing.T
 	}
 }
 
-func TestHandleAIWorkflowHeavyWorkerRuntimeDiagnosticsIncludesLiveHeavyState(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/status" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer tok" {
-			t.Fatalf("authorization=%q", got)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"roles":{"Heavy":{"health_ok":true,"halted":false}},"memory":{"llm_by_role":{"Heavy":{"role":"Heavy","model":"/models/qwen-heavy","port":8083,"pid":46923,"rss_mib":49971.38}}}}`))
-	}))
-	defer upstream.Close()
-
+func TestHandleAIWorkflowHeavyWorkerRuntimeDiagnosticsUsesGatewayContract(t *testing.T) {
 	rec := httptest.NewRecorder()
 	HandleAIWorkflowHeavyWorkerRuntimeDiagnostics(HeavyWorkerRuntimeDiagnosticsOptions{
 		GatewayConfigured: true,
 		GatewayBaseURL:    "http://127.0.0.1:8090/",
 		LogicalAlias:      "kuro",
-		LLMOpsConfigured:  true,
-		LLMOpsEnabled:     true,
-		LLMOpsBaseURL:     upstream.URL,
-		LLMOps:            LLMOpsProxyOptions{BaseURL: upstream.URL, Token: "tok"},
 	}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/viewer/ai-workflow/heavy-worker/runtime-diagnostics", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`"role":"Heavy"`, `"route":"ANALYZE"`, `"route_prefix":"/analyze"`, `"provider":"rencrow_llm"`, `"base_url":"http://127.0.0.1:8090"`, `"model":"kuro"`, `"live_available":true`, `"/models/qwen-heavy"`, `"pid":46923`, `"failure_is_error":true`} {
+	for _, want := range []string{`"role":"Heavy"`, `"route":"ANALYZE"`, `"provider":"rencrow_llm"`, `"gateway_base_url":"http://127.0.0.1:8090"`, `"logical_alias":"kuro"`, `"failure_is_error":true`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response missing %s: %s", want, body)
 		}
 	}
 }
-
-func TestHandleAIWorkflowHeavyWorkerRuntimeDiagnosticsSurfacesTokenMissingWithoutFailing(t *testing.T) {
-	rec := httptest.NewRecorder()
-	HandleAIWorkflowHeavyWorkerRuntimeDiagnostics(HeavyWorkerRuntimeDiagnosticsOptions{
-		GatewayConfigured: true,
-		GatewayBaseURL:    "http://127.0.0.1:8090/",
-		LogicalAlias:      "kuro",
-		LLMOpsConfigured:  true,
-		LLMOpsEnabled:     false,
-		LLMOpsBaseURL:     "http://127.0.0.1:8079/",
-	}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/viewer/ai-workflow/heavy-worker/runtime-diagnostics", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-	for _, want := range []string{`"configured":true`, `"live_available":false`, `"error":"LLM_OPS_TOKEN missing"`, `"base_url":"http://127.0.0.1:8090"`, `"model":"kuro"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("response missing %s: %s", want, body)
-		}
-	}
-}
-
 func TestHandleAIWorkflowProjectInit(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test\n"), 0644); err != nil {

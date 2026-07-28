@@ -24,7 +24,7 @@ func (s visionHealthStub) Health(context.Context) (domainvision.HealthReport, er
 
 func TestVisionCheckReportsReady(t *testing.T) {
 	check := NewVisionCheck(visionHealthStub{report: domainvision.HealthReport{
-		OK: true, Status: "ready", Provider: "openai_compatible", Model: "Vision",
+		OK: true, Status: "ready", Provider: "rencrow_vision", Model: "Vision",
 		Ready: domainvision.ReadyState{ModelLoaded: true},
 	}})
 	result := check.Run(context.Background())

@@ -24,7 +24,6 @@
 3. universe 変更では config だけでなく fetch / feature logic の両方を確認する。
 4. snapshot_id、policy_status、paper_trade_log、cli_run_log、exit_code が保持されるか確認する。
 5. Viewer status は active sources と audit history を分けて扱う。
-6. retired source failure を live operational noise として表示しない。
 
 ## Verification
 

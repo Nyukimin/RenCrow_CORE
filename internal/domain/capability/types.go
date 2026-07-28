@@ -23,8 +23,8 @@ type MemoryInfo struct {
 
 // LLMCapability は1つの LLM の能力情報
 type LLMCapability struct {
-	ProviderName string // "ollama" / "claude" / "openai" / "deepseek"
-	ModelName    string // 例: "gemma3:4b"
+	ProviderName string // "rencrow_llm"
+	ModelName    string // logical execution alias
 	MaxContext   int    // コンテキスト長（トークン数）
 	MaxMemoryMB  uint64 // このモデルの推定メモリ使用量
 	Available    bool   // 実際に疎通確認できたか

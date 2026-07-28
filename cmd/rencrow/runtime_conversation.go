@@ -39,16 +39,16 @@ func buildConversationRuntime(
 	var realMgr *conversationpersistence.RealConversationManager
 	var l1Store *l1sqlite.L1SQLiteStore
 	var profilePromotion *memorypromotionapp.Service
-	if cfg.Conversation.L1SQLitePath != "" {
-		if err := os.MkdirAll(filepath.Dir(cfg.Conversation.L1SQLitePath), 0755); err != nil {
+	if cfg.Storage.Databases.ConversationL1 != "" {
+		if err := os.MkdirAll(filepath.Dir(cfg.Storage.Databases.ConversationL1), 0755); err != nil {
 			log.Fatalf("Failed to create L1 SQLite directory: %v", err)
 		}
 		var err error
-		l1Store, err = l1sqlite.NewL1SQLiteStore(cfg.Conversation.L1SQLitePath)
+		l1Store, err = l1sqlite.NewL1SQLiteStore(cfg.Storage.Databases.ConversationL1)
 		if err != nil {
 			log.Fatalf("Failed to initialize L1 SQLite store: %v", err)
 		}
-		log.Printf("  L1 SQLite: %s", cfg.Conversation.L1SQLitePath)
+		log.Printf("  L1 SQLite: %s", cfg.Storage.Databases.ConversationL1)
 	}
 	if cfg.Conversation.Enabled {
 		var err error
@@ -62,7 +62,7 @@ func buildConversationRuntime(
 		}
 		realMgr, err = conversationpersistence.NewRealConversationManagerWithVectorOptions(
 			cfg.Conversation.RedisURL,
-			cfg.Conversation.ArchiveSQLitePath,
+			cfg.Storage.Databases.ConversationArchive,
 			cfg.Conversation.VectorDBURL,
 			vectorCollection,
 			uint64(vectorDimension),
@@ -135,7 +135,7 @@ func buildConversationRuntime(
 
 		log.Printf("ConversationEngine v5.1 enabled (RecallPack + Persona + async ProfilePromotion)")
 		log.Printf("  Redis: %s", cfg.Conversation.RedisURL)
-		log.Printf("  SQLite archive: %s", cfg.Conversation.ArchiveSQLitePath)
+		log.Printf("  SQLite archive: %s", cfg.Storage.Databases.ConversationArchive)
 		log.Printf("  VectorDB: %s", cfg.Conversation.VectorDBURL)
 	} else {
 		convEngine = nil

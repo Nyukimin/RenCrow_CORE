@@ -12,9 +12,7 @@ const (
 )
 
 type IdleChatCoderProviderConfig struct {
-	Enabled  bool
-	Provider string
-	Model    string
+	Enabled bool
 }
 
 type IdleChatLLMOptions struct {
@@ -34,10 +32,6 @@ type ForecastProviderPlan struct {
 	SkipReason    string
 }
 
-func CoderProviderIsExternal(provider string) bool {
-	return moduleworker.CoderProviderIsExternal(provider)
-}
-
 func ForecastCoderLabelIndex(label string) int {
 	return moduleworker.CoderSlotIndex(label)
 }
@@ -50,15 +44,7 @@ func ForecastCoderAlias(label string) string {
 	return "coder" + string(rune('1'+index))
 }
 
-func ForecastCoderProviderAllowed(coder IdleChatCoderProviderConfig, externalEnabled bool) bool {
-	_ = coder
-	_ = externalEnabled
-	// CORE always uses the logical Coder alias through RenCrow_LLM.
-	// Legacy physical provider fields cannot bypass the Gateway.
-	return true
-}
-
-func BuildForecastProviderPlans(candidates []ForecastCoderCandidate, externalEnabled bool) []ForecastProviderPlan {
+func BuildForecastProviderPlans(candidates []ForecastCoderCandidate) []ForecastProviderPlan {
 	plans := make([]ForecastProviderPlan, 0, len(candidates))
 	for _, candidate := range candidates {
 		label := strings.TrimSpace(candidate.Label)
@@ -69,7 +55,7 @@ func BuildForecastProviderPlans(candidates []ForecastCoderCandidate, externalEna
 		plan := ForecastProviderPlan{
 			Label:         label,
 			Coder:         coder,
-			ProviderLabel: BuildForecastProviderLabel(label, coder),
+			ProviderLabel: BuildForecastProviderLabel(label),
 			Allowed:       true,
 		}
 		plans = append(plans, plan)
@@ -85,16 +71,8 @@ func ForecastProviderLogLabel(label string) string {
 	return label
 }
 
-func ForecastProviderModelLabel(model string) string {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return "configured provider"
-	}
-	return model
-}
-
-func BuildForecastProviderLabel(label string, coder IdleChatCoderProviderConfig) string {
-	return strings.TrimSpace(label) + " " + strings.TrimSpace(coder.Provider) + " (" + ForecastProviderModelLabel(coder.Model) + ")"
+func BuildForecastProviderLabel(label string) string {
+	return strings.TrimSpace(label) + " via RenCrow_LLM"
 }
 
 func IdleChatProviderOptions(options map[string]IdleChatLLMOptions) map[string]map[string]any {

@@ -88,7 +88,7 @@ func TestSQLiteStoreSaveSearchResultStoresTraceStepsEvidenceAndTerms(t *testing.
 	}
 }
 
-func TestSQLiteStoreSaveSearchTraceMaintainsLegacyTraceContract(t *testing.T) {
+func TestSQLiteStoreSaveSearchTraceMaintainsTraceContract(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "dci.db"))
 	if err != nil {
 		t.Fatalf("NewSQLiteStore: %v", err)

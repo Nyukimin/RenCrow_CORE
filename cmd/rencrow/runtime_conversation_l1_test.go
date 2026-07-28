@@ -9,9 +9,11 @@ import (
 
 func TestBuildConversationRuntimeOpensL1ForViewerWithoutConversationEngine(t *testing.T) {
 	cfg := &config.Config{
-		Conversation: config.ConversationConfig{
-			Enabled:      false,
-			L1SQLitePath: filepath.Join(t.TempDir(), "l1.db"),
+		Conversation: config.ConversationConfig{Enabled: false},
+		Storage: config.StorageConfig{
+			Databases: config.DatabasePathsConfig{
+				ConversationL1: filepath.Join(t.TempDir(), "l1.db"),
+			},
 		},
 	}
 

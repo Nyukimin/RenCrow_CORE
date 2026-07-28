@@ -6,37 +6,7 @@ import time
 import wave
 from pathlib import Path
 
-import requests
 import websocket
-
-
-def run_inference_bench(provider_url: str, wav_path: Path, timeout_s: float, rounds: int):
-    out = []
-    for i in range(rounds):
-        t0 = time.time()
-        rec = {"i": i + 1, "ms": 0.0, "ok": False, "text": "", "err": ""}
-        try:
-            with wav_path.open("rb") as f:
-                resp = requests.post(
-                    provider_url,
-                    files={"file": (wav_path.name, f, "audio/wav")},
-                    timeout=timeout_s,
-                )
-            rec["ms"] = round((time.time() - t0) * 1000, 1)
-            if resp.ok:
-                try:
-                    txt = (resp.json().get("text", "") or "").strip()
-                except Exception:
-                    txt = resp.text.strip()
-                rec["text"] = txt[:140]
-                rec["ok"] = len(txt) > 0
-            else:
-                rec["err"] = f"status={resp.status_code} body={resp.text[:120]}"
-        except Exception as e:
-            rec["ms"] = round((time.time() - t0) * 1000, 1)
-            rec["err"] = str(e)
-        out.append(rec)
-    return out
 
 
 def load_pcm16_chunks(wav_path: Path, chunk_ms: int, tail_silence_ms: int = 0):
@@ -170,16 +140,10 @@ def count_ok(records):
     return sum(1 for x in records if x.get("ok"))
 
 
-def build_result(args, wav_path: Path, inf, chat, ws):
+def build_result(args, wav_path: Path, ws):
     return {
-        "provider_url": args.provider_url,
-        "chat_input_url": args.chat_input_url,
         "ws_url": args.ws_url,
         "wav": str(wav_path),
-        "inference": inf,
-        "inference_success": f"{count_ok(inf)}/{len(inf)}",
-        "chat_input": chat,
-        "chat_input_success": f"{count_ok(chat)}/{len(chat)}" if chat else "skipped",
         "ws": ws,
         "ws_success": f"{count_ok(ws)}/{len(ws)}",
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -189,39 +153,25 @@ def build_result(args, wav_path: Path, inf, chat, ws):
 def result_exit_code(args, result):
     if args.require_ws_final and count_ok(result["ws"]) != len(result["ws"]):
         return 2
-    if args.require_provider_text and count_ok(result["inference"]) != len(result["inference"]):
-        return 3
-    if args.chat_input_url and args.require_chat_input_text and count_ok(result["chat_input"]) != len(result["chat_input"]):
-        return 4
     return 0
 
 
 def main():
-    p = argparse.ArgumentParser(description="STT E2E probe for Go STT API/provider and /stt")
+    p = argparse.ArgumentParser(description="STT E2E probe for the CORE to RenCrow_STT WebSocket route")
     p.add_argument("--wav", default="tmp/client_stt_input_latest.wav", help="Path to WAV sample")
-    p.add_argument("--provider-url", default="http://127.0.0.1:8080/stt/file")
-    p.add_argument("--chat-input-url", default="", help="Optional /stt/chat-input URL")
     p.add_argument("--ws-url", default="ws://127.0.0.1:18790/stt")
-    p.add_argument("--provider-timeout", type=float, default=8.0)
-    p.add_argument("--provider-rounds", type=int, default=5)
     p.add_argument("--ws-rounds", type=int, default=3)
     p.add_argument("--ws-wait", type=float, default=10.0)
     p.add_argument("--ws-chunk-ms", type=int, default=200)
     p.add_argument("--ws-realtime", action="store_true", help="Sleep between WS chunks to mimic microphone streaming")
     p.add_argument("--ws-tail-silence-ms", type=int, default=0, help="Append this much PCM16 silence before stop")
     p.add_argument("--require-ws-final", action="store_true", help="Exit non-zero unless every WS round returns a final text")
-    p.add_argument("--require-provider-text", action="store_true", help="Exit non-zero unless every HTTP provider round returns text")
-    p.add_argument("--require-chat-input-text", action="store_true", help="Exit non-zero unless optional chat-input round returns text")
     args = p.parse_args()
 
     wav_path = Path(args.wav)
     if not wav_path.exists():
         raise SystemExit(f"wav not found: {wav_path}")
 
-    inf = run_inference_bench(args.provider_url, wav_path, args.provider_timeout, args.provider_rounds)
-    chat = []
-    if args.chat_input_url:
-        chat = run_inference_bench(args.chat_input_url, wav_path, args.provider_timeout, 1)
     ws = run_ws_bench(
         args.ws_url,
         wav_path,
@@ -231,7 +181,7 @@ def main():
         args.ws_realtime,
         args.ws_tail_silence_ms,
     ) if args.ws_rounds > 0 else []
-    result = build_result(args, wav_path, inf, chat, ws)
+    result = build_result(args, wav_path, ws)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     sys.exit(result_exit_code(args, result))
 

@@ -473,28 +473,6 @@ func TestModuleBridgeUsesModuleRequestCopySemantics(t *testing.T) {
 	}
 }
 
-func TestCompositionRuntimeUsesModuleSTTTimeoutPolicy(t *testing.T) {
-	path := filepath.Join("..", "cmd", "rencrow", "stt_runtime_http.go")
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	text := string(content)
-	if !strings.Contains(text, "modulestt.IsTimeoutError") {
-		t.Fatalf("%s must delegate STT timeout classification to modules/stt", path)
-	}
-	for _, forbidden := range []string{
-		"errors.As",
-		"net.Error",
-		"client.timeout exceeded",
-		"context deadline exceeded",
-	} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("%s owns STT timeout classification containing %q; keep it in modules/stt", path, forbidden)
-		}
-	}
-}
-
 func TestCompositionRuntimeUsesModuleSTTSessionRules(t *testing.T) {
 	path := filepath.Join("..", "cmd", "rencrow", "stt_runtime_websocket.go")
 	content, err := os.ReadFile(path)
@@ -508,9 +486,6 @@ func TestCompositionRuntimeUsesModuleSTTSessionRules(t *testing.T) {
 		"FinalTextAfterSilence",
 		"FinalTextOnProviderError",
 		"NormalizeTranscriptText",
-		"ApplyTimeoutFailure",
-		"ApplyInferenceSuccess",
-		"InferenceInCooldown",
 		"MarkVoiceObserved",
 		"MarkSpeechStarted",
 		"ApplyDraftTranscript",
@@ -518,7 +493,6 @@ func TestCompositionRuntimeUsesModuleSTTSessionRules(t *testing.T) {
 		"BuildFinalEvent",
 		"BuildDraftEvent",
 		"BuildSpeechStartEvent",
-		"BuildTimeoutStatusEvent",
 		"BuildSessionInfoEvent",
 		"BuildReadyEvent",
 		"BuildErrorEvent",
@@ -657,36 +631,6 @@ func TestCompositionRuntimeUsesRenCrowTTSGatewayOnly(t *testing.T) {
 			t.Fatalf("%s must construct the RenCrow_TTS Gateway route via %q", path, want)
 		}
 	}
-	for _, forbidden := range []string{
-		"Irodori",
-		"SBV2",
-		"ProviderPriority",
-		"BuildRuntimeProviderPlans",
-	} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("%s must not select a physical TTS provider via %q", path, forbidden)
-		}
-	}
-}
-
-func TestCompositionRuntimeOptionsDoNotSelectPhysicalTTSProvider(t *testing.T) {
-	path := filepath.Join("..", "cmd", "rencrow", "tts_runtime_options.go")
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	text := string(content)
-	for _, forbidden := range []string{
-		`"irodori"`,
-		`"sbv2"`,
-		"TTS Irodori bridge enabled",
-		"switch sel.Name",
-		"ProviderPriority",
-	} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("%s must not own physical TTS provider selection containing %q", path, forbidden)
-		}
-	}
 }
 
 func TestCompositionRuntimeUsesModuleChatForecastProviderPlans(t *testing.T) {
@@ -730,59 +674,6 @@ func TestCompositionRuntimeUsesOnlyRenCrowLLMGateway(t *testing.T) {
 	for _, want := range []string{"buildGatewayPrimaryLLMProviders", `"mio"`, `"worker"`, `"shiro"`, `"kuro"`, `"midori"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("%s must use RenCrow_LLM logical aliases via %q", path, want)
-		}
-	}
-	for _, forbidden := range []string{"cfg.LocalLLM", "cfg.Ollama", "NewOllamaProvider"} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("%s contains forbidden physical LLM route %q", path, forbidden)
-		}
-	}
-}
-
-func TestCompositionRuntimeDoesNotAttachPhysicalLLMHealthChecks(t *testing.T) {
-	path := filepath.Join("..", "cmd", "rencrow", "module_llm_health.go")
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	text := string(content)
-	for _, forbidden := range []string{
-		"cfg.LocalLLM",
-		"cfg.Ollama",
-		"NewOpenAICompatibleChatCheck",
-		"strings.ToLower(strings.TrimSpace(role))",
-	} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("%s owns LLM health-check policy containing %q; keep it in modules/llm", path, forbidden)
-		}
-	}
-}
-
-func TestCompositionRuntimeUsesModuleWorkerExternalCoderPolicy(t *testing.T) {
-	paths := []string{
-		filepath.Join("..", "cmd", "rencrow", "runtime_orchestrator.go"),
-		filepath.Join("..", "cmd", "rencrow", "runtime_coders.go"),
-	}
-	combined := ""
-	for _, path := range paths {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		combined += string(content)
-	}
-	if !strings.Contains(combined, "BuildExternalCoderPolicy") {
-		t.Fatalf("cmd/rencrow runtime must delegate external Coder policy to modules/worker")
-	}
-	for _, forbidden := range []string{
-		"SetExternalCoderPolicy(map[string]bool",
-		`"coder1": coderProviderIsExternal`,
-		`"coder2": coderProviderIsExternal`,
-		`"coder3": coderProviderIsExternal`,
-		`"coder4": coderProviderIsExternal`,
-	} {
-		if strings.Contains(combined, forbidden) {
-			t.Fatalf("cmd/rencrow owns external Coder policy containing %q; keep it in modules/worker", forbidden)
 		}
 	}
 }
@@ -1048,8 +939,8 @@ func TestExtractedPoliciesAreNotReimplementedInCompatibilityLayers(t *testing.T)
 			},
 		},
 		{
-			name: "openai thinking bridge cleanup",
-			path: filepath.Join("..", "internal", "infrastructure", "llm", "providers", "openai", "thinking_bridge.go"),
+			name: "Gateway thinking bridge cleanup",
+			path: filepath.Join("..", "internal", "infrastructure", "llm", "providers", "rencrowllm", "thinking_bridge.go"),
 			forbidden: []string{
 				"Final answer:",
 				"parse_reasoning",

@@ -83,7 +83,6 @@ type Dependencies struct {
 	viewerJobDetail                http.HandlerFunc                            // viewer job detail API
 	viewerSend                     http.HandlerFunc                            // viewer message sender
 	viewerGamesStatus              http.HandlerFunc                            // RenCrow_GAMES bridge status API
-	viewerGamesDecision            http.HandlerFunc                            // RenCrow_GAMES synchronous decision API
 	viewerGamesResult              http.HandlerFunc                            // RenCrow_GAMES result callback API
 	viewerGamesSessions            http.HandlerFunc                            // RenCrow_GAMES recent session observer API
 	viewerGamesEvents              http.HandlerFunc                            // RenCrow_GAMES candidate event observer API
@@ -91,7 +90,6 @@ type Dependencies struct {
 	viewerGamesLaunch              http.HandlerFunc                            // RenCrow_GAMES launch proxy (マルチペルソナ WP5)
 	gameAutoplay                   *viewer.GameAutoplayService                 // ペルソナ自発プレイランナー (マルチペルソナ WP6)
 	viewerGamesObserverProxy       http.HandlerFunc                            // RenCrow_GAMES live observer API proxy
-	live2DChatResponder            viewer.Live2DChatResponder                  // viewer Live2D chat -> orchestrator adapter
 	historyRepairJSONL             http.HandlerFunc                            // viewer JSONL history repair API
 	packageValidation              http.HandlerFunc                            // viewer package/update validation API
 	characterRuntime               http.HandlerFunc                            // viewer six-character conversation runtime API
@@ -249,7 +247,6 @@ type Dependencies struct {
 	router                         *transport.MessageRouter                    // v4 distributed mode
 	localTransports                map[string]*transport.LocalTransport        // v4 local transports
 	idleChatOrch                   *idlechat.IdleChatOrchestrator              // v4 idle chat
-	idleChatStartGate              idleChatStartGate                           // IdleChat 起動前の LLM Ops ガード
 	sshTransports                  map[string]domaintransport.Transport        // v4 SSH transports
 	heartbeatSvc                   *heartbeat.HeartbeatService                 // heartbeat service
 	advisorCloser                  interface{ Close() error }                  // advisor SQLite store, when configured
@@ -266,10 +263,6 @@ type Dependencies struct {
 	llmBusyTracker                 *llmBusyTracker                             // runtime LLM execution tracker for IdleChat gating
 	llmGatewayProcess              *os.Process                                 // local RenCrow_LLM process started by CORE
 	webGatherDeps                  func() webGatherCLIDeps                     // web-gather diagnostics dependencies for the Public API
-}
-
-type idleChatStartGate interface {
-	PrepareIdleChatStart(context.Context) error
 }
 
 // Shutdown はリソースを解放
@@ -435,8 +428,8 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		filepath.Join(cfg.WorkspaceDir, "logs", "artifact_cleanup.jsonl"),
 	))
 	reportPath := defaultExecutionReportPath(cfg.WorkspaceDir)
-	gameDecisionProvider := selectChatConversationProvider(llmRuntime.ChatWorker, llmRuntime.Chat)
-	buildViewerRuntimeHandlers(cfg, deps, conversationRuntime.L1Store, conversationRuntime.Manager, reportPath, gameDecisionProvider)
+	gamePlayProvider := selectChatConversationProvider(llmRuntime.ChatWorker, llmRuntime.Chat)
+	buildViewerRuntimeHandlers(cfg, deps, conversationRuntime.L1Store, conversationRuntime.Manager, reportPath, gamePlayProvider)
 	deps.webGatherDeps = newWebGatherDiagnosticsDeps(cfg, conversationRuntime.L1Store)
 	deps.advisorScoreCancel = startAdvisorScoreJob(
 		advisorRuntime.Store,

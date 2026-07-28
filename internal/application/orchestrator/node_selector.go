@@ -32,7 +32,7 @@ func (s *NodeSelector) Select(candidates []string, caps map[string]domainnode.Re
 	sort.Strings(matched)
 	for _, id := range matched {
 		if strings.EqualFold(id, "coder3") {
-			// Default preference: coder3(Claude) for broad coding tasks when available.
+			// Default preference: coder3 for broad coding tasks when available.
 			return id
 		}
 	}

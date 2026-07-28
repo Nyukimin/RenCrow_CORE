@@ -46,14 +46,12 @@ func TestLoadEvidenceStoreRequiresAuditPath(t *testing.T) {
   host: "127.0.0.1"
   port: 18080
 workspace_dir: "./workspace"
-session:
-  storage_dir: "./sessions"
+storage:
+  memory:
+    session_dir: "./sessions"
 line:
   channel_secret: ""
   access_token: ""
-ollama:
-  base_url: "http://127.0.0.1:11434"
-  model: "qwen2.5:7b"
 security:
   enabled: true
   audit:
@@ -80,7 +78,7 @@ func (b *testConfigBuilder) write() string {
 	td := b.t.TempDir()
 	cfgPath := filepath.Join(td, "config.yaml")
 	auditPath := filepath.Join(td, "execution_report.jsonl")
-	content := "server:\n  host: \"127.0.0.1\"\n  port: 18080\nworkspace_dir: \"./workspace\"\nsession:\n  storage_dir: \"./sessions\"\nline:\n  channel_secret: \"\"\n  access_token: \"\"\nollama:\n  base_url: \"http://127.0.0.1:11434\"\n  model: \"qwen2.5:7b\"\nsecurity:\n  enabled: true\n  audit:\n    enabled: true\n    backend: \"jsonl\"\n    path: " + strconv.Quote(auditPath) + "\n"
+	content := "server:\n  host: \"127.0.0.1\"\n  port: 18080\nworkspace_dir: \"./workspace\"\nsession:\n  storage_dir: \"./sessions\"\nline:\n  channel_secret: \"\"\n  access_token: \"\"\nsecurity:\n  enabled: true\n  audit:\n    enabled: true\n    backend: \"jsonl\"\n    path: " + strconv.Quote(auditPath) + "\n"
 	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
 		b.t.Fatalf("write config failed: %v", err)
 	}

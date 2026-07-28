@@ -35,7 +35,7 @@ curl http://127.0.0.1:18790/health
 
 API key や token はリポジトリへ保存せず、`${ENV_VAR}` 形式で環境変数から展開してください。
 
-外部利用者向けの`Chat`／`IdleChat`画面は独立した`RenCrow_PORTAL`が所有します。COREの`/viewer`はデバッグ・運用確認専用です。旧`/viewer?mode=view|live|lab`は削除済みで、PORTALへのredirectやCORE内互換画面は提供しません。
+外部利用者向けの`Chat`／`IdleChat`画面は独立した`RenCrow_PORTAL`が所有します。COREの`/viewer`はデバッグ・運用確認専用です。
 
 ## 運用ログ
 
@@ -61,8 +61,6 @@ panic調査では、journalと日別アーカイブの両方を確認します�
 公開仕様は [docs/README.md](docs/README.md) から読めます。実装状況は [docs/08_実装状況・ロードマップ.md](docs/08_実装状況・ロードマップ.md) に、公開 API の安定性区分は [docs/06_Public_API仕様.md](docs/06_Public_API仕様.md) に記載しています。
 
 IrodoriTTSの発音日次チェックは[feature README](internal/features/pronunciationcheck/README.md)を参照してください。実行時刻とGPU admissionはCOREが所有し、RenCrow_TTSはチェックTool APIだけを提供します。
-
-整理前の資料、旧仕様、解析データは保存用ブランチ [`archive/docs-classified-20260715`](https://github.com/Nyukimin/RenCrow_CORE/tree/archive/docs-classified-20260715) に残し、LLM 向けに人手で選別した Knowledge は [`knowledge/rencrow-core`](https://github.com/Nyukimin/RenCrow_CORE/tree/knowledge/rencrow-core) で管理します。これらは現在の公開仕様の正本ではありません。
 
 ## 開発と検証
 

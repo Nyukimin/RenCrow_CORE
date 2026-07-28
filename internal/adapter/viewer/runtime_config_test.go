@@ -87,11 +87,8 @@ func TestHandleRuntimeConfig_ReturnsSameOriginWSSForTailscaleHTTPS(t *testing.T)
 	}
 }
 
-func TestHandleRuntimeConfig_ReturnsLLMOpsEnabled(t *testing.T) {
+func TestHandleRuntimeConfig_ReturnsModuleGatewayStatus(t *testing.T) {
 	handler := HandleRuntimeConfig(DebugSystemOptions{
-		LLMOpsConfigured: true,
-		LLMOpsEnabled:    true,
-		LLMOpsBaseURL:    "http://192.168.1.31:8079/",
 		LLMGateway: LLMGatewayRuntimeConfig{
 			BaseURL: "http://192.168.1.31:8090/",
 			Ready:   true,
@@ -146,15 +143,6 @@ func TestHandleRuntimeConfig_ReturnsLLMOpsEnabled(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if !body.LLMOpsEnabled {
-		t.Fatalf("expected llm_ops_enabled: %+v", body)
-	}
-	if !body.LLMOpsConfigured {
-		t.Fatalf("expected llm_ops_configured: %+v", body)
-	}
-	if body.LLMOpsBaseURL != "http://192.168.1.31:8079" {
-		t.Fatalf("unexpected llm ops base url: %+v", body)
-	}
 	if !body.LLMGateway.Ready || body.LLMGateway.BaseURL != "http://192.168.1.31:8090" {
 		t.Fatalf("unexpected RenCrow_LLM Gateway runtime config: %+v", body.LLMGateway)
 	}
@@ -205,7 +193,6 @@ func TestHandleRuntimeConfig_ReturnsRuntimeReadinessWithoutSecretValues(t *testi
 			TelegramCredentialsPresent:   true,
 			TelegramWebhookRegistered:    true,
 			TelegramFilePayloadPipeline:  true,
-			STTGatewayEnvPresent:         true,
 			TTSProviderEnvPresent:        false,
 			DistributedEnabled:           true,
 			DistributedTransportsPresent: true,
@@ -238,7 +225,7 @@ func TestHandleRuntimeConfig_ReturnsRuntimeReadinessWithoutSecretValues(t *testi
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if !body.RuntimeReadiness.SlackCredentialsPresent || !body.RuntimeReadiness.SlackWebhookRegistered || !body.RuntimeReadiness.SlackFilePayloadPipeline || body.RuntimeReadiness.DiscordCredentialsPresent || body.RuntimeReadiness.DiscordWebhookRegistered || body.RuntimeReadiness.DiscordFilePayloadPipeline || !body.RuntimeReadiness.TelegramCredentialsPresent || !body.RuntimeReadiness.TelegramWebhookRegistered || !body.RuntimeReadiness.TelegramFilePayloadPipeline || !body.RuntimeReadiness.STTGatewayEnvPresent || !body.RuntimeReadiness.STTGatewayConfigPresent || body.RuntimeReadiness.TTSProviderEnvPresent || !body.RuntimeReadiness.TTSProviderConfigPresent || !body.RuntimeReadiness.DistributedEnabled || !body.RuntimeReadiness.DistributedTransportsPresent || !body.RuntimeReadiness.DistributedSSHConfigured || body.RuntimeReadiness.DistributedSSHConnected || !body.RuntimeReadiness.DistributedLocalTransport || !body.RuntimeReadiness.ConversationEnabled || !body.RuntimeReadiness.L1SQLiteConfigPresent || !body.RuntimeReadiness.MemoryLayersAvailable || !body.RuntimeReadiness.MemoryLayersStatus || !body.RuntimeReadiness.SourceRegistryAvailable || !body.RuntimeReadiness.SourceRegistryStatus || !body.RuntimeReadiness.DomainGraphAvailable || !body.RuntimeReadiness.DomainGraphStatus || !body.RuntimeReadiness.KnowledgeMemoryEnabled || !body.RuntimeReadiness.KnowledgeMemoryStatus || !body.RuntimeReadiness.BrowserTraceAPIEnabled || !body.RuntimeReadiness.BrowserTraceAPIStatus || !body.RuntimeReadiness.BrowserTraceAPIFetcher || body.RuntimeReadiness.SandboxEnabled || !body.RuntimeReadiness.SandboxStatusAvailable {
+	if !body.RuntimeReadiness.SlackCredentialsPresent || !body.RuntimeReadiness.SlackWebhookRegistered || !body.RuntimeReadiness.SlackFilePayloadPipeline || body.RuntimeReadiness.DiscordCredentialsPresent || body.RuntimeReadiness.DiscordWebhookRegistered || body.RuntimeReadiness.DiscordFilePayloadPipeline || !body.RuntimeReadiness.TelegramCredentialsPresent || !body.RuntimeReadiness.TelegramWebhookRegistered || !body.RuntimeReadiness.TelegramFilePayloadPipeline || !body.RuntimeReadiness.STTGatewayConfigPresent || body.RuntimeReadiness.TTSProviderEnvPresent || !body.RuntimeReadiness.TTSProviderConfigPresent || !body.RuntimeReadiness.DistributedEnabled || !body.RuntimeReadiness.DistributedTransportsPresent || !body.RuntimeReadiness.DistributedSSHConfigured || body.RuntimeReadiness.DistributedSSHConnected || !body.RuntimeReadiness.DistributedLocalTransport || !body.RuntimeReadiness.ConversationEnabled || !body.RuntimeReadiness.L1SQLiteConfigPresent || !body.RuntimeReadiness.MemoryLayersAvailable || !body.RuntimeReadiness.MemoryLayersStatus || !body.RuntimeReadiness.SourceRegistryAvailable || !body.RuntimeReadiness.SourceRegistryStatus || !body.RuntimeReadiness.DomainGraphAvailable || !body.RuntimeReadiness.DomainGraphStatus || !body.RuntimeReadiness.KnowledgeMemoryEnabled || !body.RuntimeReadiness.KnowledgeMemoryStatus || !body.RuntimeReadiness.BrowserTraceAPIEnabled || !body.RuntimeReadiness.BrowserTraceAPIStatus || !body.RuntimeReadiness.BrowserTraceAPIFetcher || body.RuntimeReadiness.SandboxEnabled || !body.RuntimeReadiness.SandboxStatusAvailable {
 		t.Fatalf("unexpected runtime readiness: %+v", body.RuntimeReadiness)
 	}
 	if strings.Contains(rec.Body.String(), "SLACK_BOT_TOKEN") || strings.Contains(rec.Body.String(), "TELEGRAM_BOT_TOKEN") {

@@ -52,7 +52,7 @@ func TestSimpleStoryTopicKeepsBaseAndTransform(t *testing.T) {
 	}
 }
 
-func TestRunSimpleStorySessionDoesNotDropGeneratedBodyWithLegacyValidationText(t *testing.T) {
+func TestRunSimpleStorySessionDoesNotDropGeneratedBodyWithValidationText(t *testing.T) {
 	provider := &queuedQualityProvider{responses: []string{
 		"【もしもの桃太郎】\nもし桃太郎がAIロボットだったら面白いです。",
 		"QUALITY: pass\nISSUES:\n- なし\nPROMPT_FIX: ",
@@ -71,7 +71,7 @@ func TestRunSimpleStorySessionDoesNotDropGeneratedBodyWithLegacyValidationText(t
 		t.Fatalf("history count=%d, want 1", len(history))
 	}
 	if history[0].LoopRestarted || history[0].LoopReason != "" {
-		t.Fatalf("legacy validation should not reject generated story body: %#v", history[0])
+		t.Fatalf("validation should not reject generated story body: %#v", history[0])
 	}
 	if history[0].StoryText == "" {
 		t.Fatal("generated story body should be stored")

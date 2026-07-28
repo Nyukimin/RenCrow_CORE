@@ -172,9 +172,6 @@ type RuntimeConfig struct {
 	STTBaseURL       string                     `json:"stt_base_url,omitempty"`
 	TTSBaseURL       string                     `json:"tts_base_url,omitempty"`
 	TTSHealthPath    string                     `json:"tts_health_path,omitempty"`
-	LLMOpsConfigured bool                       `json:"llm_ops_configured"`
-	LLMOpsEnabled    bool                       `json:"llm_ops_enabled"`
-	LLMOpsBaseURL    string                     `json:"llm_ops_base_url,omitempty"`
 	LLMGateway       LLMGatewayRuntimeConfig    `json:"llm_gateway"`
 	RuntimeReadiness RuntimeDependencyReadiness `json:"runtime_readiness,omitempty"`
 }
@@ -197,7 +194,6 @@ type RuntimeDependencyReadiness struct {
 	TelegramCredentialsPresent   *bool `json:"telegram_credentials_present"`
 	TelegramWebhookRegistered    *bool `json:"telegram_webhook_registered"`
 	TelegramFilePayloadPipeline  *bool `json:"telegram_file_payload_pipeline"`
-	STTGatewayEnvPresent         *bool `json:"stt_gateway_env_present"`
 	STTGatewayConfigPresent      *bool `json:"stt_gateway_config_present"`
 	TTSProviderEnvPresent        *bool `json:"tts_provider_env_present"`
 	TTSProviderConfigPresent     *bool `json:"tts_provider_config_present"`
@@ -234,16 +230,6 @@ type RuntimeHealthCheck struct {
 	Status     string  `json:"status"`
 	Message    string  `json:"message,omitempty"`
 	DurationMS float64 `json:"duration_ms"`
-}
-
-type LLMOpsStatus struct {
-	Roles  map[string]LLMOpsRoleState `json:"roles"`
-	Memory LLMOpsMemoryStatus         `json:"memory,omitempty"`
-}
-
-type LLMOpsHealth struct {
-	Status string `json:"status"`
-	Daemon string `json:"daemon,omitempty"`
 }
 
 // AdvisorsStatus is the safe, read-only Advisor and AgentProfile operations view.
@@ -427,31 +413,6 @@ type KnowledgeRelationsStatus struct {
 	Summary   KnowledgeRelationSummary `json:"summary"`
 	Items     []KnowledgeRelationItem  `json:"items,omitempty"`
 	Relations []KnowledgeRelation      `json:"relations,omitempty"`
-}
-
-type llmOpsStopRequest struct {
-	Roles []string `json:"roles"`
-}
-
-type llmOpsSelectionRequest struct {
-	Selection string `json:"selection"`
-}
-
-type LLMOpsRoleState struct {
-	HealthOK *bool `json:"health_ok,omitempty"`
-	Halted   *bool `json:"halted,omitempty"`
-}
-
-type LLMOpsMemoryStatus struct {
-	LLMByRole map[string]LLMOpsMemoryRole `json:"llm_by_role,omitempty"`
-}
-
-type LLMOpsMemoryRole struct {
-	Role   string  `json:"role,omitempty"`
-	Model  string  `json:"model,omitempty"`
-	Port   int     `json:"port,omitempty"`
-	PID    *int    `json:"pid,omitempty"`
-	RSSMiB float64 `json:"rss_mib,omitempty"`
 }
 
 type DebugSystemSnapshot struct {
@@ -1118,26 +1079,13 @@ type HeavyWorkerResponse struct {
 }
 
 type HeavyWorkerRuntimeDiagnostics struct {
-	Role           string                      `json:"role"`
-	Route          string                      `json:"route"`
-	RoutePrefix    string                      `json:"route_prefix"`
-	Provider       string                      `json:"provider,omitempty"`
-	Configured     bool                        `json:"configured"`
-	BaseURL        string                      `json:"base_url,omitempty"`
-	Model          string                      `json:"model,omitempty"`
-	TimeoutSec     int                         `json:"timeout_sec,omitempty"`
-	LLMOps         HeavyWorkerLLMOpsDiagnostic `json:"llm_ops"`
-	FailureIsError bool                        `json:"failure_is_error"`
-}
-
-type HeavyWorkerLLMOpsDiagnostic struct {
-	Configured    bool           `json:"configured"`
-	Enabled       bool           `json:"enabled"`
-	BaseURL       string         `json:"base_url,omitempty"`
-	LiveAvailable bool           `json:"live_available"`
-	RoleState     map[string]any `json:"role_state,omitempty"`
-	Memory        map[string]any `json:"memory,omitempty"`
-	Error         string         `json:"error,omitempty"`
+	Role           string `json:"role"`
+	Route          string `json:"route"`
+	Provider       string `json:"provider,omitempty"`
+	Configured     bool   `json:"configured"`
+	GatewayBaseURL string `json:"gateway_base_url,omitempty"`
+	LogicalAlias   string `json:"logical_alias,omitempty"`
+	FailureIsError bool   `json:"failure_is_error"`
 }
 
 type RunStateRequest struct {
@@ -1940,52 +1888,6 @@ func (c *Client) RuntimeHealth(ctx context.Context) (RuntimeHealthReport, error)
 		return RuntimeHealthReport{}, err
 	}
 	return out, nil
-}
-
-func (c *Client) LLMOpsStatus(ctx context.Context) (LLMOpsStatus, error) {
-	var out LLMOpsStatus
-	if err := c.do(ctx, http.MethodGet, "/viewer/llm-ops/status", nil, &out); err != nil {
-		return LLMOpsStatus{}, err
-	}
-	if err := validateLLMOpsStatus(out); err != nil {
-		return LLMOpsStatus{}, err
-	}
-	return out, nil
-}
-
-func (c *Client) LLMOpsHealth(ctx context.Context) (LLMOpsHealth, error) {
-	var out LLMOpsHealth
-	if err := c.do(ctx, http.MethodGet, "/viewer/llm-ops/health", nil, &out); err != nil {
-		return LLMOpsHealth{}, err
-	}
-	if err := validateLLMOpsHealth(out); err != nil {
-		return LLMOpsHealth{}, err
-	}
-	return out, nil
-}
-
-func (c *Client) StopLLMOps(ctx context.Context, roles []string) error {
-	normalized, err := normalizeLLMOpsRoles(roles)
-	if err != nil {
-		return err
-	}
-	return c.do(ctx, http.MethodPost, "/viewer/llm-ops/stop", llmOpsStopRequest{Roles: normalized}, nil)
-}
-
-func (c *Client) StartLLMOps(ctx context.Context, selection string) error {
-	selection, err := normalizeLLMOpsSelection(selection, false)
-	if err != nil {
-		return err
-	}
-	return c.do(ctx, http.MethodPost, "/viewer/llm-ops/start", llmOpsSelectionRequest{Selection: selection}, nil)
-}
-
-func (c *Client) RestartLLMOps(ctx context.Context, selection string) error {
-	selection, err := normalizeLLMOpsSelection(selection, true)
-	if err != nil {
-		return err
-	}
-	return c.do(ctx, http.MethodPost, "/viewer/llm-ops/restart", llmOpsSelectionRequest{Selection: selection}, nil)
 }
 
 func (c *Client) DebugSystemSnapshot(ctx context.Context) (DebugSystemSnapshot, error) {
@@ -5888,22 +5790,13 @@ func validateHeavyWorkerRuntimeDiagnostics(resp HeavyWorkerRuntimeDiagnostics) e
 	if strings.TrimSpace(resp.Route) != "ANALYZE" {
 		return fmt.Errorf("heavy worker diagnostics route mismatch: %q", resp.Route)
 	}
-	if strings.TrimSpace(resp.RoutePrefix) != "/analyze" {
-		return fmt.Errorf("heavy worker diagnostics route_prefix mismatch: %q", resp.RoutePrefix)
-	}
 	if !resp.FailureIsError {
 		return fmt.Errorf("heavy worker diagnostics must mark failure_is_error")
 	}
 	if resp.Configured {
-		if strings.TrimSpace(resp.BaseURL) == "" || strings.TrimSpace(resp.Model) == "" {
-			return fmt.Errorf("heavy worker diagnostics configured without base_url/model")
+		if strings.TrimSpace(resp.GatewayBaseURL) == "" || strings.TrimSpace(resp.LogicalAlias) == "" {
+			return fmt.Errorf("heavy worker diagnostics configured without gateway_base_url/logical_alias")
 		}
-	}
-	if resp.LLMOps.Configured && resp.LLMOps.Enabled && !resp.LLMOps.LiveAvailable && strings.TrimSpace(resp.LLMOps.Error) == "" {
-		return fmt.Errorf("heavy worker diagnostics llm_ops unavailable without error")
-	}
-	if resp.LLMOps.LiveAvailable && !resp.LLMOps.Enabled {
-		return fmt.Errorf("heavy worker diagnostics llm_ops live while disabled")
 	}
 	return nil
 }
@@ -6866,12 +6759,6 @@ func validatePromotionRollbackResponse(resp PromotionRollbackResponse, rollbackP
 }
 
 func validateRuntimeConfig(resp RuntimeConfig) error {
-	if resp.LLMOpsEnabled && !resp.LLMOpsConfigured {
-		return fmt.Errorf("runtime config has llm_ops_enabled without llm_ops_configured")
-	}
-	if resp.LLMOpsEnabled && strings.TrimSpace(resp.LLMOpsBaseURL) == "" {
-		return fmt.Errorf("runtime config has llm_ops_enabled without llm_ops_base_url")
-	}
 	if strings.TrimSpace(resp.LLMGateway.BaseURL) == "" {
 		return fmt.Errorf("runtime config missing llm_gateway.base_url")
 	}
@@ -6882,9 +6769,6 @@ func validateRuntimeConfig(resp RuntimeConfig) error {
 		return err
 	}
 	if err := validateOptionalRuntimeURL(resp.TTSBaseURL, "tts_base_url"); err != nil {
-		return err
-	}
-	if err := validateOptionalRuntimeURL(resp.LLMOpsBaseURL, "llm_ops_base_url"); err != nil {
 		return err
 	}
 	if strings.TrimSpace(resp.STTStreamURL) != "" {
@@ -6905,7 +6789,6 @@ func validateRuntimeConfig(resp RuntimeConfig) error {
 		resp.RuntimeReadiness.TelegramCredentialsPresent == nil ||
 		resp.RuntimeReadiness.TelegramWebhookRegistered == nil ||
 		resp.RuntimeReadiness.TelegramFilePayloadPipeline == nil ||
-		resp.RuntimeReadiness.STTGatewayEnvPresent == nil ||
 		resp.RuntimeReadiness.STTGatewayConfigPresent == nil ||
 		resp.RuntimeReadiness.TTSProviderEnvPresent == nil ||
 		resp.RuntimeReadiness.TTSProviderConfigPresent == nil ||
@@ -7029,100 +6912,6 @@ func validateRuntimeHealth(resp RuntimeHealthReport, httpStatus int) error {
 func isRuntimeHealthStatus(status string) bool {
 	switch status {
 	case "ok", "degraded", "down":
-		return true
-	default:
-		return false
-	}
-}
-
-func validateLLMOpsStatus(resp LLMOpsStatus) error {
-	if len(resp.Roles) == 0 {
-		return fmt.Errorf("llm ops status missing roles")
-	}
-	for role, state := range resp.Roles {
-		role = strings.TrimSpace(role)
-		if !isLLMOpsRole(role) {
-			return fmt.Errorf("llm ops status unknown role %q", role)
-		}
-		if state.HealthOK == nil {
-			return fmt.Errorf("llm ops status role %q missing health_ok", role)
-		}
-		if state.Halted != nil && *state.Halted && *state.HealthOK {
-			return fmt.Errorf("llm ops status role %q halted but health_ok", role)
-		}
-		if mem, ok := resp.Memory.LLMByRole[role]; ok {
-			if strings.TrimSpace(mem.Role) != "" && strings.TrimSpace(mem.Role) != role {
-				return fmt.Errorf("llm ops status memory role %q has mismatched role %q", role, mem.Role)
-			}
-			if mem.Port < 0 {
-				return fmt.Errorf("llm ops status memory role %q has negative port", role)
-			}
-			if mem.RSSMiB < 0 {
-				return fmt.Errorf("llm ops status memory role %q has negative rss_mib", role)
-			}
-			if mem.PID != nil && *mem.PID < 0 {
-				return fmt.Errorf("llm ops status memory role %q has negative pid", role)
-			}
-			if state.Halted != nil && *state.Halted && mem.PID != nil && *mem.PID > 0 {
-				return fmt.Errorf("llm ops status role %q halted but pid is present", role)
-			}
-		}
-	}
-	for role := range resp.Memory.LLMByRole {
-		trimmedRole := strings.TrimSpace(role)
-		if !isLLMOpsRole(trimmedRole) {
-			return fmt.Errorf("llm ops status memory unknown role %q", role)
-		}
-		if _, ok := resp.Roles[trimmedRole]; !ok {
-			return fmt.Errorf("llm ops status memory role %q missing role state", trimmedRole)
-		}
-	}
-	return nil
-}
-
-func validateLLMOpsHealth(resp LLMOpsHealth) error {
-	status := strings.TrimSpace(resp.Status)
-	if status == "" {
-		return fmt.Errorf("llm ops health missing status")
-	}
-	if !isRuntimeHealthStatus(status) {
-		return fmt.Errorf("llm ops health invalid status=%q", resp.Status)
-	}
-	return nil
-}
-
-func normalizeLLMOpsRoles(roles []string) ([]string, error) {
-	if len(roles) == 0 {
-		return nil, fmt.Errorf("llm ops control roles are required")
-	}
-	out := make([]string, 0, len(roles))
-	for _, role := range roles {
-		role = strings.TrimSpace(role)
-		if !isLLMOpsRole(role) {
-			return nil, fmt.Errorf("llm ops control invalid role %q", role)
-		}
-		out = append(out, role)
-	}
-	return out, nil
-}
-
-func normalizeLLMOpsSelection(selection string, allowAll bool) (string, error) {
-	selection = strings.TrimSpace(selection)
-	if selection == "" {
-		return "", fmt.Errorf("llm ops control selection is required")
-	}
-	if selection == "all" && allowAll {
-		return selection, nil
-	}
-	if !isLLMOpsRole(selection) {
-		return "", fmt.Errorf("llm ops control invalid selection %q", selection)
-	}
-	return selection, nil
-}
-
-func isLLMOpsRole(role string) bool {
-	switch role {
-	case "Chat", "Worker", "Heavy", "Wild":
 		return true
 	default:
 		return false

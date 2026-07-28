@@ -8,7 +8,7 @@ import (
 
 func TestBuildServiceHealth(t *testing.T) {
 	got := BuildServiceHealth(ServiceHealthSnapshot{Ready: true})
-	if got.Module != "chat" || got.Status != core.HealthReady || !got.Ready || got.Detail != "legacy orchestrator processor configured" {
+	if got.Module != "chat" || got.Status != core.HealthReady || !got.Ready || got.Detail != "orchestrator processor configured" {
 		t.Fatalf("unexpected ready health: %+v", got)
 	}
 

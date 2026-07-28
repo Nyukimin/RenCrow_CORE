@@ -50,12 +50,6 @@ func (e *RealConversationEngine) WithDetector(d domconv.ThreadBoundaryDetector) 
 	return e
 }
 
-// WithProfileExtractor is retained as a source-compatible no-op.
-// Profile extraction runs asynchronously from durable L1 raw events.
-func (e *RealConversationEngine) WithProfileExtractor(pe domconv.ProfileExtractor) *RealConversationEngine {
-	return e
-}
-
 func (e *RealConversationEngine) WithRecallTraceStore(store domconv.RecallTraceStore) *RealConversationEngine {
 	e.recallTraceStore = store
 	return e

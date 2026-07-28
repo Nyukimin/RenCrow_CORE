@@ -707,7 +707,6 @@ func cloneDailySeedCache(cache *DailySeedCache) *DailySeedCache {
 	}
 	cloned := *cache
 	cloned.WikipediaSeeds = append([]string(nil), cache.WikipediaSeeds...)
-	cloned.NewsSeeds = append([]string(nil), cache.NewsSeeds...)
 	cloned.NewsSeedItems = append([]NewsSeed(nil), cache.NewsSeedItems...)
 	for index := range cloned.NewsSeedItems {
 		cloned.NewsSeedItems[index].TermNotes = append([]modulechat.NewsTermNote(nil), cache.NewsSeedItems[index].TermNotes...)

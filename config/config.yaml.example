@@ -25,21 +25,6 @@ mio:
   input_audio:
     prompt: "音声の内容を理解し、日本語で短く自然に返答してください。"
 
-# DeepSeek API (Code1)
-deepseek:
-  api_key: "${DEEPSEEK_API_KEY}"
-  model: "deepseek-chat"
-
-# OpenAI API (Code2)
-openai:
-  api_key: "${OPENAI_API_KEY}"
-  model: "gpt-4o-mini"
-
-# Claude API (Code3)
-claude:
-  api_key: "${ANTHROPIC_API_KEY}"
-  model: "claude-sonnet-4-20250514"
-
 # LINE Messaging API
 line:
   channel_secret: "${LINE_CHANNEL_SECRET}"
@@ -84,7 +69,7 @@ webwright_fetch:
   staging_output_dir: "tmp/webwright_staging"
   uvx_from: ""
   python: ""
-  # RenCrow_LLM Gateway only. CORE ignores legacy physical endpoint values.
+  # RenCrow_LLM Gatewayの論理aliasを指定する。
   responses_endpoint: "http://127.0.0.1:8090/v1/responses"
   model: "coder1"
   api_key: "dummy"
@@ -132,7 +117,7 @@ codex:
   max_output_bytes: 1048576
   ephemeral: true
 
-# DB・記憶ファイルの物理配置の正本。feature固有の旧path keyではなく、ここへ集約する。
+# DB・記憶ファイルの物理配置の正本。
 storage:
   memory:
     session_dir: "${HOME}/.rencrow/sessions"
@@ -158,9 +143,6 @@ storage:
     super_agent_harness: "./workspace/logs/superagent_harness.db"
     ai_workflow: "./workspace/logs/ai_workflow.db"
     knowledge_memory: "./workspace/logs/knowledge_memory.db"
-  legacy_databases:
-    memory_duckdb: ""
-    tool_registry_duckdb: ""
 
 # backup runnerを使う環境では、次を絶対pathで設定する。
 # storage.databasesとstorage.memoryの各pathはcore_source配下に置くこと。
@@ -331,14 +313,11 @@ conversation:
   redis_url: "redis://localhost:6379"
   vectordb_url: "localhost:6334"
   embed_model: ""        # RenCrow_LLMの論理embedding alias。空ならembedding無効
-  summary_model: ""      # 互換キー。要約は常にRenCrow_LLM Workerを使用
 
 # サブエージェント設定（ReActループ）
 subagent:
   enabled: false
   max_iterations: 10     # ReActループ最大反復回数
-  provider: ""           # deprecated/ignored: RenCrow_LLM Workerを使用
-  model: ""              # deprecated/ignored: 物理modelはRenCrow_LLM側で管理
 
 # ハートビート（定期タスク）
 heartbeat:

@@ -122,11 +122,11 @@ func TestLoadPromptsIgnoresCharacterBundlesFromPromptsDir(t *testing.T) {
 	}
 }
 
-func TestLoadPromptsWorkspaceCharacterBundleOverridesLegacyPrompt(t *testing.T) {
+func TestLoadPromptsWorkspaceCharacterBundleOverridesCommonPrompt(t *testing.T) {
 	baseDir := t.TempDir()
 	workspaceDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspaceDir, "worker.md"), []byte("legacy worker"), 0o644); err != nil {
-		t.Fatalf("write legacy worker: %v", err)
+	if err := os.WriteFile(filepath.Join(workspaceDir, "worker.md"), []byte("common worker"), 0o644); err != nil {
+		t.Fatalf("write common worker: %v", err)
 	}
 	writeCharacterBundle(t, workspaceDir, "shiro", map[string]string{
 		"00_system.md": "character shiro",
@@ -134,8 +134,8 @@ func TestLoadPromptsWorkspaceCharacterBundleOverridesLegacyPrompt(t *testing.T) 
 
 	p := LoadPrompts(baseDir, workspaceDir)
 
-	if strings.Contains(p.Worker, "legacy worker") || !strings.Contains(p.Worker, "character shiro") {
-		t.Fatalf("workspace shiro bundle should override legacy worker prompt:\n%s", p.Worker)
+	if strings.Contains(p.Worker, "common worker") || !strings.Contains(p.Worker, "character shiro") {
+		t.Fatalf("workspace shiro bundle should override common worker prompt:\n%s", p.Worker)
 	}
 }
 

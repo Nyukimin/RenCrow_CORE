@@ -55,7 +55,6 @@ func buildOrchestratorRuntime(
 		deps.distOrch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
 		deps.distOrch.SetShiroChatAgent(agents.ShiroChat)
 		deps.moduleChatService = modulebridge.NewRuntimeChatService(deps.distOrch, agents.Mio)
-		deps.live2DChatResponder = &live2DOrchestratorResponder{orch: deps.distOrch}
 		deps.viewerSend = bridges.ViewerSendFromOrch(deps.distOrch)
 		deps.repairRunner = newAsyncRepairJobRunner(deps.distOrch, deps.eventRelay)
 		deps.entryHandler = bridges.EntryFromOrch(deps.distOrch)
@@ -80,7 +79,6 @@ func buildOrchestratorRuntime(
 		orch.SetCoderCapabilities(coderCaps)
 		log.Printf("Coder capability metadata loaded (%d coders); CODE uses only local coder1 unless an explicit CODE route is requested", len(coderCaps))
 	}
-	orch.SetExternalCoderPolicy(buildExternalCoderPolicyFromRuntime(cfg))
 	// 自己認識コンテキストをプロンプトに注入
 	if cfg.SelfSourceDir != "" {
 		injectSelfContext(cfg)
@@ -157,7 +155,6 @@ func buildOrchestratorRuntime(
 	}
 	buildChannelRuntimeHandlers(cfg, deps, orch)
 	deps.moduleChatService = modulebridge.NewRuntimeChatService(orch, agents.Mio)
-	deps.live2DChatResponder = &live2DOrchestratorResponder{orch: orch}
 	deps.viewerSend = bridges.ViewerSendFromOrch(orch)
 	deps.repairRunner = newAsyncRepairJobRunner(orch, deps.eventRelay)
 	deps.entryHandler = bridges.EntryFromOrch(orch)

@@ -351,25 +351,25 @@ func TestL1SQLiteStore_SearchCacheSimilarHitAndInvalidate(t *testing.T) {
 	}
 	defer store.Close()
 
-	entry, err := store.SaveSearchCache(ctx, "web", "RenCrow local LLM architecture", `[{"title":"arch"}]`, nil, time.Hour)
+	entry, err := store.SaveSearchCache(ctx, "web", "RenCrow_LLM Gateway architecture", `[{"title":"arch"}]`, nil, time.Hour)
 	if err != nil {
 		t.Fatalf("SaveSearchCache failed: %v", err)
 	}
-	hit, err := store.GetSimilarFreshSearchCache(ctx, "web", "local llm architecture rencrow", entry.RetrievedAt.Add(time.Minute), 0.75)
+	hit, err := store.GetSimilarFreshSearchCache(ctx, "web", "rencrow llm gateway architecture", entry.RetrievedAt.Add(time.Minute), 0.75)
 	if err != nil {
 		t.Fatalf("GetSimilarFreshSearchCache failed: %v", err)
 	}
 	if hit == nil || hit.QueryHash != entry.QueryHash {
 		t.Fatalf("expected similar cache hit, got %+v", hit)
 	}
-	invalidated, err := store.InvalidateSearchCache(ctx, "web", "RenCrow local LLM architecture")
+	invalidated, err := store.InvalidateSearchCache(ctx, "web", "RenCrow_LLM Gateway architecture")
 	if err != nil {
 		t.Fatalf("InvalidateSearchCache failed: %v", err)
 	}
 	if invalidated != 1 {
 		t.Fatalf("expected one invalidated row, got %d", invalidated)
 	}
-	hit, err = store.GetSimilarFreshSearchCache(ctx, "web", "local llm architecture rencrow", entry.RetrievedAt.Add(time.Minute), 0.75)
+	hit, err = store.GetSimilarFreshSearchCache(ctx, "web", "rencrow llm gateway architecture", entry.RetrievedAt.Add(time.Minute), 0.75)
 	if err != nil {
 		t.Fatalf("GetSimilarFreshSearchCache after invalidate failed: %v", err)
 	}

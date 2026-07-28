@@ -157,7 +157,7 @@ func buildTTSEntryRuntime(cfg *config.Config) ttsEntryRuntime {
 		return ttsEntryRuntime{}
 	}
 
-	synthesizer := buildFallbackTTSSynthesizer(cfg)
+	synthesizer := buildTTSSynthesizer(cfg)
 	if synthesizer == nil {
 		return ttsEntryRuntime{}
 	}

@@ -24,7 +24,6 @@ func TestRegisterRoutesRegistersChannelAndEntryPaths(t *testing.T) {
 		path string
 		want int
 	}{
-		{path: "/webhook", want: http.StatusOK},
 		{path: "/webhook/line", want: http.StatusOK},
 		{path: "/webhook/telegram", want: http.StatusCreated},
 		{path: "/webhook/discord", want: http.StatusAccepted},
@@ -51,7 +50,7 @@ func TestRegisterRoutesKeepsUnavailableWebhookRoutes(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{})
 
-	for _, path := range []string{"/webhook", "/webhook/line", "/webhook/telegram", "/webhook/discord", "/webhook/slack"} {
+	for _, path := range []string{"/webhook/line", "/webhook/telegram", "/webhook/discord", "/webhook/slack"} {
 		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))

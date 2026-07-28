@@ -12,7 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 )
 
 func main() {
@@ -45,7 +45,7 @@ func main() {
 	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
 		apiKey = strings.TrimSpace(os.Getenv(envName))
 	}
-	provider := openai.NewOpenAIProviderWithOptions(
+	provider := rencrowllm.NewGatewayProviderWithOptions(
 		apiKey,
 		alias,
 		cfg.LLMGateway.BaseURL,

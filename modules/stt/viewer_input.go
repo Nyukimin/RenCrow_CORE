@@ -32,27 +32,27 @@ const (
 )
 
 func BuildViewerInputSnapshot(config ViewerInputRuntimeConfig) ViewerInputSnapshot {
-	providerURL := strings.TrimSpace(config.ProviderURL)
+	gatewayHTTPURL := strings.TrimSpace(config.GatewayHTTPURL)
 	gatewayURL := strings.TrimSpace(config.GatewayURL)
 	streamURL := strings.TrimSpace(config.StreamURL)
 	chatInputEndpoint := defaultString(config.ChatInputEndpoint, DefaultViewerChatInputEndpoint)
 	return ViewerInputSnapshot{
-		BaseURL:              strings.TrimRight(strings.TrimSpace(config.BaseURL), "/"),
-		StreamURL:            streamURL,
-		ChatInputEndpoint:    chatInputEndpoint,
-		ClientLogPath:        defaultString(config.ClientLogPath, DefaultViewerClientLogPath),
-		LatestWAVPath:        defaultString(config.LatestWAVPath, DefaultViewerLatestWAVPath),
-		ArchiveDir:           defaultString(config.ArchiveDir, DefaultViewerArchiveDir),
-		AutoTestScriptPath:   defaultString(config.AutoTestScriptPath, DefaultViewerAutoTestScriptPath),
-		AutoTestOutputPath:   defaultString(config.AutoTestOutputPath, DefaultViewerAutoTestOutputPath),
-		ProviderURL:          providerURL,
-		GatewayURL:           gatewayURL,
-		ProviderConfigured:   providerURL != "" || config.ProviderAvailable,
-		GatewayConfigured:    gatewayURL != "",
-		WebSocketConfigured:  streamURL != "" || config.WebSocketAvailable,
-		TranscriptSource:     defaultString(config.TranscriptSource, DefaultViewerTranscriptSource),
-		TranscriptInputType:  defaultString(config.TranscriptInputType, DefaultViewerTranscriptType),
-		TranscriptInjectPath: chatInputEndpoint,
+		BaseURL:               strings.TrimRight(strings.TrimSpace(config.BaseURL), "/"),
+		StreamURL:             streamURL,
+		ChatInputEndpoint:     chatInputEndpoint,
+		ClientLogPath:         defaultString(config.ClientLogPath, DefaultViewerClientLogPath),
+		LatestWAVPath:         defaultString(config.LatestWAVPath, DefaultViewerLatestWAVPath),
+		ArchiveDir:            defaultString(config.ArchiveDir, DefaultViewerArchiveDir),
+		AutoTestScriptPath:    defaultString(config.AutoTestScriptPath, DefaultViewerAutoTestScriptPath),
+		AutoTestOutputPath:    defaultString(config.AutoTestOutputPath, DefaultViewerAutoTestOutputPath),
+		GatewayHTTPURL:        gatewayHTTPURL,
+		GatewayURL:            gatewayURL,
+		GatewayHTTPConfigured: gatewayHTTPURL != "" || config.GatewayHTTPAvailable,
+		GatewayConfigured:     gatewayURL != "",
+		WebSocketConfigured:   streamURL != "" || config.WebSocketAvailable,
+		TranscriptSource:      defaultString(config.TranscriptSource, DefaultViewerTranscriptSource),
+		TranscriptInputType:   defaultString(config.TranscriptInputType, DefaultViewerTranscriptType),
+		TranscriptInjectPath:  chatInputEndpoint,
 	}
 }
 
@@ -71,9 +71,9 @@ func BuildViewerInputReport(ctx context.Context, observer ViewerInputObserver, s
 func BuildViewerInputHealthReport(snapshot ViewerInputSnapshot) core.HealthReport {
 	status := core.HealthReady
 	detail := "viewer stt input configured"
-	if !snapshot.ProviderConfigured && !snapshot.WebSocketConfigured {
+	if !snapshot.GatewayHTTPConfigured && !snapshot.WebSocketConfigured {
 		status = core.HealthBlocked
-		detail = "viewer stt input has no provider or websocket"
+		detail = "viewer stt input has no Gateway HTTP or WebSocket"
 	}
 	return core.HealthReport{
 		Module: "stt.viewer_input",
@@ -81,10 +81,10 @@ func BuildViewerInputHealthReport(snapshot ViewerInputSnapshot) core.HealthRepor
 		Ready:  status == core.HealthReady,
 		Detail: detail,
 		Metadata: map[string]any{
-			"chat_input_endpoint": snapshot.ChatInputEndpoint,
-			"stream_url":          snapshot.StreamURL,
-			"provider_configured": snapshot.ProviderConfigured,
-			"gateway_configured":  snapshot.GatewayConfigured,
+			"chat_input_endpoint":     snapshot.ChatInputEndpoint,
+			"stream_url":              snapshot.StreamURL,
+			"gateway_http_configured": snapshot.GatewayHTTPConfigured,
+			"gateway_configured":      snapshot.GatewayConfigured,
 		},
 	}
 }

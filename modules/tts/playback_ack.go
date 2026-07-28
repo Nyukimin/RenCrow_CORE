@@ -2,13 +2,6 @@ package tts
 
 import "strings"
 
-const (
-	PlaybackAckStatusError = "error"
-
-	DeprecatedFallbackAckErrorCode = "TTS_FALLBACK_ACK_REJECTED"
-	DeprecatedFallbackAckErrorText = "Viewer sent deprecated fallback playback ACK; treat as explicit TTS playback error"
-)
-
 type PlaybackAckInput struct {
 	ResponseID     string
 	SessionID      string
@@ -42,15 +35,6 @@ func NormalizePlaybackAck(input PlaybackAckInput) PlaybackAckDecision {
 	status := strings.TrimSpace(input.Status)
 	errorCode := strings.TrimSpace(input.ErrorCode)
 	errorText := strings.TrimSpace(input.Error)
-	if status == "fallback" {
-		status = PlaybackAckStatusError
-		if errorCode == "" {
-			errorCode = DeprecatedFallbackAckErrorCode
-		}
-		if errorText == "" {
-			errorText = DeprecatedFallbackAckErrorText
-		}
-	}
 	return PlaybackAckDecision{
 		Status:    status,
 		ErrorCode: errorCode,

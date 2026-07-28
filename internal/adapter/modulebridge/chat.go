@@ -68,7 +68,7 @@ func (a *ChatServiceAdapter) DecideRoute(ctx context.Context, input chat.Input) 
 	}
 	return chat.RouteDecision{
 		Route:  chat.RouteChat,
-		Reason: "legacy orchestrator decides the concrete route during Respond",
+		Reason: "message orchestrator decides the concrete route during Respond",
 	}, nil
 }
 

@@ -36,7 +36,7 @@ func TestVisionRequestProcessorReplacesRawVisualMediaWithNormalizedContext(t *te
 	analyzer := &visionAnalyzerStub{result: domainvision.AnalyzeResult{
 		OK:        true,
 		RequestID: "trace-1",
-		Provider:  "openai_compatible",
+		Provider:  "rencrow_vision",
 		Model:     "Wild",
 		Kind:      "image",
 		Summary:   "机の上の写真です。",

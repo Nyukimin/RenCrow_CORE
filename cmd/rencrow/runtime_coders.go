@@ -13,7 +13,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
@@ -67,9 +67,6 @@ func coderSlotConfigFromAppConfig(name string, cfg config.CoderConfig) modulewor
 	return moduleworker.CoderSlotConfig{
 		Name:                name,
 		DisplayName:         cfg.DisplayName,
-		Provider:            cfg.Provider,
-		Model:               cfg.Model,
-		APIKey:              cfg.APIKey,
 		Enabled:             cfg.Enabled,
 		LightMemoryEnabled:  cfg.LightMemory.Enabled,
 		LightMemoryMaxTurns: cfg.LightMemory.MaxTurns,
@@ -86,10 +83,6 @@ func coderSlotConfigsFromRuntime(cfg *config.Config) []moduleworker.CoderSlotCon
 		coderSlotConfigFromAppConfig("coder3", cfg.Coder3),
 		coderSlotConfigFromAppConfig("coder4", cfg.Coder4),
 	}
-}
-
-func buildExternalCoderPolicyFromRuntime(cfg *config.Config) map[string]bool {
-	return moduleworker.BuildExternalCoderPolicy(coderSlotConfigsFromRuntime(cfg))
 }
 
 func coderConfigBySlotName(cfg *config.Config, name string) config.CoderConfig {
@@ -154,7 +147,7 @@ func setupCoders(cfg *config.Config, busyTracker *llmBusyTracker) (coder1, coder
 		if timeout <= 0 {
 			timeout = 10 * time.Minute
 		}
-		var provider llm.LLMProvider = openai.NewOpenAIProviderWithOptions(
+		var provider llm.LLMProvider = rencrowllm.NewGatewayProviderWithOptions(
 			apiKey,
 			strings.ToLower(plan.Name),
 			baseURL,
@@ -196,8 +189,8 @@ func setupCoders(cfg *config.Config, busyTracker *llmBusyTracker) (coder1, coder
 
 		// coderAdapter 作成
 		*out = &coderAdapter{domainCoder: domainCoder}
-		log.Printf("[setupCoders] %s (%s) enabled: provider=%s model=%s",
-			plan.Name, cc.DisplayName, cc.Provider, cc.Model)
+		log.Printf("[setupCoders] %s (%s) enabled via RenCrow_LLM",
+			plan.Name, cc.DisplayName)
 	}
 
 	return

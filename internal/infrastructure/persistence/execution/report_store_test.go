@@ -123,11 +123,11 @@ func TestJSONLReportStore_SaveWithTTSEvidence(t *testing.T) {
 		JobID:        "tts-job",
 		Goal:         "TTS実装して",
 		Status:       "passed",
-		TTSProvider:  "sbv2",
+		TTSProvider:  "rencrow-tts-gateway",
 		TTSVoiceID:   "mio",
-		TTSAudioFile: "/tmp/sbv2.wav",
+		TTSAudioFile: "/tmp/tts-gateway.wav",
 		TTSDuration:  1234,
-		PlaybackCmd:  "ffplay -autoexit -nodisp /tmp/sbv2.wav",
+		PlaybackCmd:  "ffplay -autoexit -nodisp /tmp/tts-gateway.wav",
 		PlaybackCode: 0,
 		CreatedAt:    time.Now().UTC(),
 		FinishedAt:   time.Now().UTC(),
@@ -140,7 +140,7 @@ func TestJSONLReportStore_SaveWithTTSEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByJobID failed: %v", err)
 	}
-	if got.TTSProvider != "sbv2" || got.PlaybackCode != 0 {
+	if got.TTSProvider != "rencrow-tts-gateway" || got.PlaybackCode != 0 {
 		t.Fatalf("unexpected tts evidence: %+v", got)
 	}
 }

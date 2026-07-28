@@ -14,30 +14,9 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func resolveSTTWebSocketHandler(sttProviderURL, sttGatewayURL string) http.Handler {
-	plan := modulestt.BuildWebSocketHandlerPlan(false, sttProviderURL, sttGatewayURL)
-	if plan.Mode == modulestt.WebSocketModeGateway {
-		return handleSTTWebSocketBridge(plan.GatewayURL, sttProviderURL)
-	}
-	return handleSTTWebSocket(plan.ProviderURL)
-}
-
-func resolveSTTWebSocketHandlerWithProvider(provider sttinfra.Provider, sttProviderURL, sttGatewayURL string) http.Handler {
-	plan := modulestt.BuildWebSocketHandlerPlan(provider != nil, sttProviderURL, sttGatewayURL)
-	switch plan.Mode {
-	case modulestt.WebSocketModeGateway:
-		return handleSTTWebSocketBridge(plan.GatewayURL, sttProviderURL)
-	case modulestt.WebSocketModeProvider:
-		return handleSTTWebSocketProvider(provider)
-	default:
-		return handleSTTWebSocket(plan.ProviderURL)
-	}
-}
-
-// handleSTTWebSocketBridge は /stt で Viewer と RenCrow_STT を中継する。
-// STT_GATEWAY_URL または RENCROW_STT_URL に RenCrow_STT の WebSocket URL を設定すると有効になる。
-// 例: RENCROW_STT_URL=ws://192.168.1.36:8090/stt
-func handleSTTWebSocketBridge(gatewayURL, providerURL string) http.Handler {
+// handleSTTWebSocketBridge は /stt で Viewer と、CORE設定から解決した
+// RenCrow_STT Gatewayを中継する。
+func handleSTTWebSocketBridge(gatewayURL string) http.Handler {
 	return websocket.Handler(func(conn *websocket.Conn) {
 		defer conn.Close()
 		origin := "http://localhost/"
@@ -188,14 +167,6 @@ func transformSTTGatewayTextFrame(payload []byte) (string, bool) {
 		return "", false
 	}
 
-	if evType == modulestt.WebSocketEventTypeFinal && sttFallbackStatus(ev) == "used" {
-		if text == "" {
-			return mustJSON(modulestt.BuildErrorEvent(modulestt.ProviderTranscriptErrorMessage)), true
-		}
-		ev["text"] = text
-		return mustJSON(ev), true
-	}
-
 	if evType == modulestt.WebSocketEventTypeFinal && text == "" {
 		return mustJSON(modulestt.BuildErrorEvent(modulestt.ProviderTranscriptErrorMessage)), true
 	}
@@ -205,14 +176,6 @@ func transformSTTGatewayTextFrame(payload []byte) (string, bool) {
 	}
 	ev["text"] = text
 	return mustJSON(ev), true
-}
-
-func sttFallbackStatus(ev map[string]any) string {
-	if ev == nil {
-		return ""
-	}
-	raw, _ := ev["stt_fallback_status"].(string)
-	return strings.TrimSpace(raw)
 }
 
 func mustJSON(v any) string {
@@ -225,123 +188,6 @@ func mustJSON(v any) string {
 
 func isSTTTextFramePayload(payload []byte) bool {
 	return modulestt.IsWebSocketTextFramePayload(payload)
-}
-
-func handleSTTWebSocket(sttProviderURL string) http.Handler {
-	return websocket.Handler(func(conn *websocket.Conn) {
-		defer conn.Close()
-		if strings.TrimSpace(sttProviderURL) == "" {
-			_ = sendSTTError(conn, "stt provider url is not configured")
-			return
-		}
-		sendSTTSessionReady(conn, "http")
-
-		autoFinalTimeout := sttFinalTimeoutFromEnv()
-		silenceThreshold := sttSilenceAbsThresholdFromEnv()
-		draftState := modulestt.DraftState{}
-		adaptiveState := modulestt.AdaptiveTimeoutState{
-			Timeout: sttHTTPTimeoutFromEnv(),
-		}
-		trace := newSTTTimingTrace("direct")
-		for {
-			_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-			var payload []byte
-			if err := websocket.Message.Receive(conn, &payload); err != nil {
-				if ne, ok := err.(net.Error); ok && ne.Timeout() {
-					if finalText, ok := modulestt.FinalTextAfterDraftTimeout(draftState, time.Now(), autoFinalTimeout); ok {
-						if sendErr := sendSTTEvent(conn, modulestt.BuildFinalEvent(finalText)); sendErr == nil {
-							trace.logFinal("direct_timeout", "draft_timeout", finalText)
-						}
-						draftState = modulestt.ResetDraftAfterFinal(draftState, false)
-					}
-					continue
-				}
-				return
-			}
-			if len(payload) == 0 {
-				continue
-			}
-
-			control, isControl := parseSTTControlMessage(payload)
-			if isControl {
-				if isSTTFinalControl(control) {
-					if finalText, ok := modulestt.FinalTextForPending(draftState); ok {
-						if sendErr := sendSTTEvent(conn, modulestt.BuildFinalEvent(finalText)); sendErr == nil {
-							trace.logFinal("direct_pending", control, finalText)
-						}
-						draftState = modulestt.ResetDraftAfterFinal(draftState, false)
-					}
-				}
-				continue
-			}
-			audioPayload := normalizeSTTAudioPayload(payload)
-			now := time.Now()
-			trace.markAudio(now)
-			if !isLikelySilentWAV(audioPayload, silenceThreshold) {
-				trace.markVoice(now)
-			}
-			if isLikelySilentWAV(audioPayload, silenceThreshold) {
-				if finalText, ok := modulestt.FinalTextAfterSilence(draftState, time.Now(), autoFinalTimeout); ok {
-					if sendErr := sendSTTEvent(conn, modulestt.BuildFinalEvent(finalText)); sendErr == nil {
-						trace.logFinal("direct_silence", "silence_timeout", finalText)
-					}
-					draftState = modulestt.ResetDraftAfterFinal(draftState, true)
-				}
-				continue
-			}
-			draftState = modulestt.MarkVoiceObserved(draftState, now)
-			if modulestt.InferenceInCooldown(adaptiveState, time.Now()) {
-				continue
-			}
-			var started bool
-			draftState, started = modulestt.MarkSpeechStarted(draftState)
-			if started {
-				_ = sendSTTEvent(conn, modulestt.BuildSpeechStartEvent())
-			}
-
-			text, err := sttInferViaHTTP(sttProviderURL, audioPayload, adaptiveState.Timeout)
-			if err != nil {
-				if isSTTTimeoutErr(err) {
-					update := modulestt.ApplyTimeoutFailure(adaptiveState, time.Now(), 1200*time.Millisecond, 3200*time.Millisecond)
-					adaptiveState = update.State
-					if finalText, ok := modulestt.FinalTextOnProviderError(draftState); ok {
-						// Fail-open: if provider stalls, finalize with the latest draft so UX does not hang.
-						if sendErr := sendSTTEvent(conn, modulestt.BuildFinalEvent(finalText)); sendErr == nil {
-							trace.logFinal("direct_timeout", "provider_timeout", finalText)
-						}
-						draftState = modulestt.ResetDraftAfterFinal(draftState, true)
-					}
-					// Keep UI informative without error spam when provider stalls.
-					if update.ShouldSendNotice {
-						_ = sendSTTEvent(conn, modulestt.BuildTimeoutStatusEvent())
-					}
-					continue
-				}
-				if finalText, ok := modulestt.FinalTextOnProviderError(draftState); ok {
-					// Fail-open: if provider stalls, finalize with the latest draft so UX does not hang.
-					if sendErr := sendSTTEvent(conn, modulestt.BuildFinalEvent(finalText)); sendErr == nil {
-						trace.logFinal("direct_error", "provider_error", finalText)
-					}
-					draftState = modulestt.ResetDraftAfterFinal(draftState, true)
-					continue
-				}
-				_ = sendSTTError(conn, "stt inference failed: "+err.Error())
-				continue
-			}
-			if modulestt.IsProviderErrorTranscriptText(text) {
-				_ = sendSTTError(conn, modulestt.ProviderTranscriptErrorMessage)
-				continue
-			}
-			normalized := modulestt.NormalizeTranscriptText(text)
-			if normalized == "" {
-				continue
-			}
-			adaptiveState = modulestt.ApplyInferenceSuccess(adaptiveState, time.Now(), 1200*time.Millisecond, 3200*time.Millisecond)
-			draftState = modulestt.ApplyDraftTranscript(draftState, normalized, time.Now())
-			trace.markProvisional(time.Now())
-			_ = sendSTTEvent(conn, modulestt.BuildDraftEvent(normalized))
-		}
-	})
 }
 
 func handleSTTWebSocketProvider(provider sttinfra.Provider) http.Handler {

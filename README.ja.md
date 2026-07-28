@@ -27,4 +27,4 @@ RENCROW_CONFIG=./config.yaml ./build/rencrow
 - [実装状況・ロードマップ](docs/08_実装状況・ロードマップ.md)
 
 外部利用者向けのChat／IdleChat画面はRenCrow_PORTALが所有します。COREの`/viewer`は
-Debug Viewer専用で、旧`/viewer?mode=view|live|lab`は提供しません。
+Debug Viewer専用です。

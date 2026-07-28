@@ -131,12 +131,7 @@ function loadAudioHarness(options = {}) {
   assert.ok(start > 0, 'ttsPlayback block not found');
   assert.ok(end > start, 'audio handler block end not found');
   const audioBlock = js.slice(start, end);
-  const labDateTimeInitStart = audioBlock.indexOf('refreshLabDateTimePanel();');
-  const audioButtonBindingStart = audioBlock.indexOf('bindTTSAudioButton(audioBtn);');
-  assert.ok(labDateTimeInitStart >= 0, 'lab date time init not found');
-  assert.ok(audioButtonBindingStart > labDateTimeInitStart, 'audio button binding not found');
-  const audioHarnessSource = audioBlock.slice(0, labDateTimeInitStart) + audioBlock.slice(audioButtonBindingStart);
-  const source = timelineJs + '\n' + idleJs + '\n' + audioHarnessSource + `
+  const source = timelineJs + '\n' + idleJs + '\n' + audioBlock + `
 	globalThis.__viewerAudioHarness = {
 	  state,
 	  ttsPlayback,
@@ -147,9 +142,7 @@ function loadAudioHarness(options = {}) {
   setCentralTTSSpeechText,
   addIdleMsgToTimeline,
   addIdleSummaryToTimeline,
-  hydrateIdleLiveTranscript,
   idleLiveRenderTarget,
-  clearIdleLivePendingForAudioOwnerTransfer,
   chatAudioSync,
   resolveTTSPlaybackURL,
   handleViewerActiveControlEvent,
@@ -172,7 +165,6 @@ function loadAudioHarness(options = {}) {
     querySelector: (selector) => selector === 'main' ? main : new FakeElement(selector),
     querySelectorAll: () => [],
   };
-  body.className = options.liveMode ? 'live-mode' : '';
   const timers = [];
   const localStore = new Map();
   const context = {
@@ -257,15 +249,6 @@ function loadAudioHarness(options = {}) {
 function liveTimestamp(offsetMs = 0) {
   return new Date(Date.now() + offsetMs).toISOString();
 }
-
-test('idlechat live render target is central chat only in live mode', () => {
-  const normal = loadAudioHarness();
-  assert.equal(normal.harness.idleLiveRenderTarget(), normal.elements.get('idleLiveLog'));
-
-  const live = loadAudioHarness({liveMode: true});
-  assert.equal(live.harness.idleLiveRenderTarget(), live.elements.get('chat'));
-  assert.notEqual(live.harness.idleLiveRenderTarget(), live.elements.get('idleLiveLog'));
-});
 
 test('tts playback url uses same-origin proxy for absolute audio urls', () => {
   const {harness} = loadAudioHarness();
@@ -661,468 +644,6 @@ test('idlechat keeps appending chunks after audio end before the next chunk of t
   assert.equal(rendered._mc.innerHTML.includes('イベント本文のままです。 イベント本文のままです。'), false);
 });
 
-test('live mode keeps pending idlechat messages hidden until tts reveals display chunk text', () => {
-  const {harness, elements} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'mio',
-    to: 'shiro',
-    content: 'ライブ画面では空の待機吹き出しを出しません。',
-    session_id: 'idle-live-hidden-1',
-    message_id: 'idle-live-hidden-1:msg:0001',
-    turn_index: 1,
-    timestamp: liveTimestamp(1000),
-  });
-
-  assert.equal(chat.children.length, 0);
-
-  harness.setCentralTTSSpeechText('mio', '断片です。', 'idle-live-hidden-1', 0, 'idle-live-hidden-1:msg:0001:utt:0000', 'idle-live-hidden-1:0000', 'idle-live-hidden-1:msg:0001', 1);
-
-  assert.equal(chat.children.length, 1);
-  assert.equal(chat.children[0]._mc.textContent, '断片です。');
-  assert.equal(chat.children[0]._mc.textContent.includes('ライブ画面では空の待機吹き出しを出しません。'), false);
-  assert.equal(chat.children[0].classList.contains('idle-pending-tts'), false);
-});
-
-test('summary tts does not duplicate an already rendered idlechat summary', () => {
-  const {harness, elements} = loadAudioHarness();
-  const idleLiveLog = elements.get('idleLiveLog');
-
-  harness.addIdleSummaryToTimeline({
-    type: 'idlechat.summary',
-    from: 'shiro',
-    to: 'user',
-    content: '今回のまとめです。\nMioとShiroは表示契約を確認しました。',
-    session_id: 'idle-summary-suppress',
-    message_id: 'idle-summary-suppress:summary',
-    timestamp: '2026-05-09T00:00:00+09:00',
-  });
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'shiro',
-    to: 'user',
-    content: '今回のまとめです。\nMioとShiroは表示契約を確認しました。',
-    session_id: 'idle-summary-suppress',
-    message_id: 'idle-summary-suppress:summary:tts',
-    turn_index: 99,
-    timestamp: '2026-05-09T00:00:01+09:00',
-  });
-
-  harness.setCentralTTSSpeechText('shiro', '今回のまとめです。', 'idle-summary-suppress', 0, 'idle-summary-suppress:summary:tts:utt:0000', 'idle-summary-suppress:summary:tts', 'idle-summary-suppress:summary:tts', 99);
-
-  assert.equal(idleLiveLog.children.length, 1);
-  assert.equal(idleLiveLog.children[0].classList.contains('idle-kind-summary'), true);
-  assert.ok(idleLiveLog.children[0]._mc.textContent.includes('今回のまとめです。'));
-  assert.ok(harness.idleLiveRenderedLog.some((item) =>
-    item.kind === 'speech_tts_suppressed' &&
-    item.message_id === 'idle-summary-suppress:summary:tts'
-  ));
-});
-
-test('live mode does not consume idlechat pending message without stable tts identity', () => {
-  const {harness, elements} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'mio',
-    to: 'shiro',
-    content: 'IDがある待機発話です。',
-    session_id: 'idle-live-strict-id',
-    message_id: 'idle-live-strict-id:msg:0001',
-    turn_index: 1,
-    timestamp: liveTimestamp(1000),
-  });
-
-  harness.setCentralTTSSpeechText('mio', 'IDなしTTS断片です。', 'idle-live-strict-id', 0, 'idle-live-strict-id:utt:orphan', 'idle-live-strict-id:0000');
-
-  assert.equal(chat.children.length, 1);
-  assert.ok(chat.children[0]._mc.innerHTML.includes('TTS_IDENTITY_MISSING'));
-  assert.equal(chat.children[0]._mc.innerHTML.includes('IDなしTTS断片です。'), false);
-  assert.equal(chat.children[0].dataset.messageId || '', '');
-  assert.ok(harness.idleLiveRenderedLog.some((item) => item.kind === 'tts_identity_error' && item.content.includes('TTS_IDENTITY_MISSING')));
-});
-
-test('idlechat audio playback reveals the message matching the tts message id', async () => {
-  const {harness, elements} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'mio',
-    to: 'shiro',
-    content: '1番目の発言全文です。',
-    session_id: 'idle-audio-match',
-    message_id: 'idle-audio-match:msg:0001',
-    turn_index: 1,
-    timestamp: liveTimestamp(1000),
-  });
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'mio',
-    to: 'shiro',
-    content: '2番目の発言全文です。',
-    session_id: 'idle-audio-match',
-    message_id: 'idle-audio-match:msg:0002',
-    turn_index: 2,
-    timestamp: liveTimestamp(2000),
-  });
-
-  harness.chatAudioSync.handleEvent({
-    type: 'tts.audio_chunk',
-    content: JSON.stringify({
-      session_id: 'idle-audio-match',
-      response_id: 'idle-audio-match:0002',
-      message_id: 'idle-audio-match:msg:0002',
-      turn_index: 2,
-      utterance_id: 'idle-audio-match:msg:0002:utt:0000',
-      chunk_index: 0,
-      character_id: 'mio',
-      text: '2番目のチャンクです。',
-      display_text: '2番目のチャンクです。',
-      audio_url: '/audio/idle-audio-match-2.wav',
-    }),
-  });
-  harness.chatAudioSync.markSessionCompleted('idle-audio-match', 'idle-audio-match:0002');
-  await Promise.resolve();
-
-  assert.equal(chat.children.length, 1);
-  assert.equal(chat.children[0].dataset.messageId, 'idle-audio-match:msg:0002');
-  assert.equal(chat.children[0]._mc.textContent, '2番目のチャンクです。');
-});
-
-test('idlechat audio end clears the active tts marker from the spoken message', async () => {
-  const {harness, elements} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'shiro',
-    to: 'mio',
-    content: '音声終了後に再生中表示を残しません。',
-    session_id: 'idle-clear-current',
-    message_id: 'idle-clear-current:msg:0001',
-    turn_index: 1,
-    timestamp: liveTimestamp(1000),
-  });
-  harness.chatAudioSync.handleEvent({
-    type: 'tts.audio_chunk',
-    content: JSON.stringify({
-      session_id: 'idle-clear-current',
-      response_id: 'idle-clear-current:0001',
-      message_id: 'idle-clear-current:msg:0001',
-      turn_index: 1,
-      utterance_id: 'idle-clear-current:msg:0001:utt:0000',
-      chunk_index: 0,
-      character_id: 'shiro',
-      text: '再生中の断片です。',
-      display_text: '再生中の断片です。',
-      audio_url: '/audio/idle-clear-current.wav',
-    }),
-  });
-  harness.chatAudioSync.markSessionCompleted('idle-clear-current', 'idle-clear-current:0001');
-  await Promise.resolve();
-
-  assert.equal(chat.children.length, 1);
-  assert.equal(chat.children[0].classList.contains('tts-current'), true);
-
-  harness.ttsPlayback.audio.listeners.ended();
-
-  assert.equal(chat.children[0].classList.contains('tts-current'), false);
-  assert.equal(chat.children[0]._mc.textContent, '再生中の断片です。');
-});
-
-test('live mode does not render idlechat topic tts in the central chat window', () => {
-  const {harness, elements} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.setCentralTTSSpeechText('user', '今日のお題：中央に出さない話題です。', 'idle-live-topic-1', 0, 'topic-0', 'idle-live-topic-1:topic');
-
-  assert.equal(chat.children.length, 0);
-});
-
-test('live mode does not render active transcript without tts chunks', () => {
-  const {harness, elements} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.hydrateIdleLiveTranscript('idle-current', [
-    {type: 'idlechat.message', from: 'mio', to: 'shiro', content: 'Mioが先に話します。', session_id: 'idle-current', message_id: 'idle-current:msg:0001', turn_index: 1, timestamp: liveTimestamp()},
-    {type: 'idlechat.message', from: 'shiro', to: 'mio', content: 'Shiroが次に返します。', session_id: 'idle-current', message_id: 'idle-current:msg:0002', turn_index: 2, timestamp: liveTimestamp(1000)},
-  ]);
-
-  assert.equal(chat.children.length, 0);
-
-  harness.setCentralTTSSpeechText('mio', 'MioのTTS断片です。', 'idle-current', 0, 'idle-current:msg:0001:utt:0000', 'idle-current:0001', 'idle-current:msg:0001', 1);
-
-  assert.equal(chat.children.length, 1);
-  assert.equal(chat.children[0]._mc.textContent, 'MioのTTS断片です。');
-});
-
-test('message id match does not authorize tts chunk text rendering without a display event', () => {
-  const {harness, elements} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.setCentralTTSSpeechText(
-    'mio',
-    'TTSだけから本文を作ってはいけません。',
-    'idle-no-display-source',
-    0,
-    'idle-no-display-source:msg:0001:utt:0000',
-    'idle-no-display-source:0001',
-    'idle-no-display-source:msg:0001',
-    1
-  );
-
-  assert.equal(chat.children.length, 1);
-  assert.ok(chat.children[0]._mc.innerHTML.includes('TTS_DISPLAY_SOURCE_MISSING'));
-  assert.equal(chat.children[0]._mc.innerHTML.includes('TTSだけから本文を作ってはいけません。'), false);
-  assert.ok(harness.idleLiveRenderedLog.some((item) =>
-    item.kind === 'tts_playback_error' &&
-    item.message_id === 'idle-no-display-source:msg:0001' &&
-    item.content.includes('TTS_DISPLAY_SOURCE_MISSING')
-  ));
-});
-
-test('live mode sorts idlechat messages by turn index even when events arrive out of order', () => {
-  const {harness, elements} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'shiro',
-    to: 'mio',
-    content: '2番目のShiroです。',
-    session_id: 'idle-order-id',
-    message_id: 'idle-order-id:msg:0002',
-    turn_index: 2,
-    timestamp: liveTimestamp(2000),
-  });
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'mio',
-    to: 'shiro',
-    content: '1番目のMioです。',
-    session_id: 'idle-order-id',
-    message_id: 'idle-order-id:msg:0001',
-    turn_index: 1,
-    timestamp: liveTimestamp(1000),
-  });
-
-  assert.equal(chat.children.length, 0);
-  harness.setCentralTTSSpeechText('shiro', '断片2', 'idle-order-id', 0, 'idle-order-id:msg:0002:utt:0000', 'idle-order-id:0002', 'idle-order-id:msg:0002', 2);
-  harness.setCentralTTSSpeechText('mio', '断片1', 'idle-order-id', 0, 'idle-order-id:msg:0001:utt:0000', 'idle-order-id:0001', 'idle-order-id:msg:0001', 1);
-
-  assert.equal(chat.children.length, 2);
-  assert.equal(chat.children[0]._mc.textContent, '断片1');
-  assert.equal(chat.children[1]._mc.textContent, '断片2');
-});
-
-test('live mode deduplicates hydrate, idlechat event, and synced tts for the same message id', () => {
-  const {harness, elements} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.hydrateIdleLiveTranscript('idle-dedupe', [
-    {
-      type: 'idlechat.message',
-      from: 'mio',
-      to: 'shiro',
-      content: '一度だけ表示される発言です。',
-      session_id: 'idle-dedupe',
-      message_id: 'idle-dedupe:msg:0001',
-      turn_index: 1,
-      timestamp: liveTimestamp(1000),
-    },
-  ]);
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'mio',
-    to: 'shiro',
-    content: '一度だけ表示される発言です。',
-    session_id: 'idle-dedupe',
-    message_id: 'idle-dedupe:msg:0001',
-    turn_index: 1,
-    timestamp: liveTimestamp(1000),
-  });
-  harness.setCentralTTSSpeechText('mio', 'TTS断片です。', 'idle-dedupe', 0, 'idle-dedupe:msg:0001:utt:0000', 'idle-dedupe:0001', 'idle-dedupe:msg:0001', 1);
-
-  assert.equal(chat.children.length, 1);
-  assert.equal(chat.children[0]._mc.textContent, 'TTS断片です。');
-});
-
-test('live mode pending tts timeout renders traceable error instead of full response fallback', () => {
-  const {harness, elements, timers} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'mio',
-    to: 'shiro',
-    content: 'fallbackで丸ごと再表示してはいけない本文です。',
-    session_id: 'idle-live-no-fallback',
-    message_id: 'idle-live-no-fallback:msg:0001',
-    turn_index: 1,
-    timestamp: liveTimestamp(1000),
-  });
-
-  assert.equal(chat.children.length, 0);
-  assert.equal(timers.at(-1).ms, 60000);
-
-  timers.at(-1)();
-
-  assert.equal(chat.children.length, 1);
-  assert.ok(chat.children[0]._mc.innerHTML.includes('TTS_CHUNK_TIMEOUT'));
-  assert.ok(chat.children[0]._mc.innerHTML.includes('idle-live-no-fallback:msg:0001'));
-  assert.equal(chat.children[0]._mc.innerHTML.includes('fallbackで丸ごと再表示してはいけない本文です。'), false);
-  assert.equal(harness.idleLiveRenderedLog.some((item) => item.kind === 'speech_fallback' && item.message_id === 'idle-live-no-fallback:msg:0001'), false);
-  assert.ok(harness.idleLiveRenderedLog.some((item) => item.kind === 'speech_tts_error' && item.message_id === 'idle-live-no-fallback:msg:0001' && item.content.includes('TTS_CHUNK_TIMEOUT')));
-});
-
-test('live mode non-active audio viewer does not arm idlechat pending timeout', () => {
-  const {harness, elements, timers} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-  harness.viewerControl.activeAudioViewerId = 'viewer-tab-other';
-
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'mio',
-    to: 'shiro',
-    content: '非active viewerではpendingを作りません。',
-    session_id: 'idle-non-active-owner',
-    message_id: 'idle-non-active-owner:msg:0001',
-    turn_index: 1,
-    timestamp: liveTimestamp(1000),
-  });
-
-  assert.equal(chat.children.length, 0);
-  assert.equal(timers.length, 0);
-  assert.ok(harness.idleLiveRenderedLog.some((item) =>
-    item.kind === 'pending_skipped' &&
-    item.message_id === 'idle-non-active-owner:msg:0001' &&
-    item.content.includes('NON_ACTIVE_AUDIO_VIEWER_PENDING_SKIPPED')
-  ));
-});
-
-test('live mode owner transfer clears old pending without timeout fallback display', () => {
-  const {harness, elements, timers} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
-
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'shiro',
-    to: 'mio',
-    content: 'ownerを失ったらtimeout表示しません。',
-    session_id: 'idle-owner-transfer',
-    message_id: 'idle-owner-transfer:msg:0001',
-    turn_index: 1,
-    timestamp: liveTimestamp(1000),
-  });
-  assert.equal(timers.length, 1);
-
-  harness.handleViewerActiveControlEvent({
-    type: 'viewer.active_control',
-    content: JSON.stringify({
-      kind: 'audio',
-      action: 'claim',
-      viewer_client_id: 'viewer-tab-new-owner',
-      active_audio_viewer_id: 'viewer-tab-new-owner',
-      active_input_viewer_id: '',
-    }),
-  });
-  timers[0]();
-
-  assert.equal(chat.children.length, 0);
-  assert.ok(harness.idleLiveRenderedLog.some((item) =>
-    item.kind === 'pending_skipped' &&
-    item.message_id === 'idle-owner-transfer:msg:0001' &&
-    item.content.includes('NON_ACTIVE_AUDIO_VIEWER_PENDING_SKIPPED')
-  ));
-});
-
-test('live mode ignores historical idlechat messages instead of arming pending tts timeout', () => {
-  const {harness, elements, timers} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'mio',
-    to: 'shiro',
-    content: '履歴から再送された発話です。',
-    session_id: 'idle-history-replay',
-    message_id: 'idle-history-replay:msg:0001',
-    turn_index: 1,
-    timestamp: '2026-05-09T00:00:01Z',
-  });
-
-  assert.equal(chat.children.length, 0);
-  assert.equal(timers.length, 0);
-  assert.equal(harness.idleLiveRenderedLog.some((item) => item.message_id === 'idle-history-replay:msg:0001'), false);
-});
-
-test('live mode rejects conflicting idlechat identity instead of overwriting an existing message', () => {
-  const {harness, elements} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.hydrateIdleLiveTranscript('idle-conflict', [
-    {
-      type: 'idlechat.message',
-      from: 'mio',
-      to: 'shiro',
-      content: '正しい1番目です。',
-      session_id: 'idle-conflict',
-      message_id: 'idle-conflict:msg:0001',
-      turn_index: 1,
-      timestamp: liveTimestamp(1000),
-    },
-  ]);
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'mio',
-    to: 'shiro',
-    content: '正しい1番目です。',
-    session_id: 'idle-conflict',
-    message_id: 'idle-conflict:msg:0001',
-    turn_index: 1,
-    timestamp: liveTimestamp(1000),
-  });
-  harness.setCentralTTSSpeechText('mio', '正しいTTS断片です。', 'idle-conflict', 0, 'idle-conflict:msg:0001:utt:0000', 'idle-conflict:0001', 'idle-conflict:msg:0001', 1);
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.message',
-    from: 'shiro',
-    to: 'mio',
-    content: '同じturnに別messageを混ぜようとしています。',
-    session_id: 'idle-conflict',
-    message_id: 'idle-conflict:msg:9999',
-    turn_index: 1,
-    timestamp: liveTimestamp(2000),
-  });
-
-  assert.equal(chat.children.length, 1);
-  assert.ok(chat.children[0]._mc.textContent.includes('正しいTTS断片です。'));
-  assert.ok(!chat.children[0]._mc.textContent.includes('別message'));
-  assert.ok(harness.idleLiveRenderedLog.some((item) => item.kind === 'identity_error'));
-});
-
-test('idlechat.topic is a topic boundary and is not rendered in live central chat', () => {
-  const {harness, elements} = loadAudioHarness({liveMode: true});
-  const chat = elements.get('chat');
-
-  harness.addIdleMsgToTimeline({
-    type: 'idlechat.topic',
-    from: 'user',
-    to: 'mio',
-    content: '今日のお題（external）: 記憶と風景の関係',
-    session_id: 'idle-topic-type',
-    message_id: 'idle-topic-type:topic',
-    turn_index: 0,
-    timestamp: '2026-05-09T00:00:00Z',
-  });
-
-  assert.equal(chat.children.length, 0);
-});
-
 test('idlechat tts from an older session is ignored after a new topic starts', () => {
   const {harness, elements} = loadAudioHarness();
   const idleLiveLog = elements.get('idleLiveLog');
@@ -1155,7 +676,7 @@ test('idlechat tts from an older session is ignored after a new topic starts', (
   assert.equal(harness.ttsPlayback.queue.length, 0);
 });
 
-test('idlechat live timeline switches to a new topic instead of mixing topics', () => {
+test('idlechat timeline switches to a new topic instead of mixing topics', () => {
   const {harness, elements} = loadAudioHarness();
   const idleLiveLog = elements.get('idleLiveLog');
 
@@ -1228,24 +749,6 @@ test('idlechat forecast topic event is treated as topic boundary', () => {
   assert.equal(idleLiveLog.children[0].classList.contains('idle-pending-tts'), true);
 });
 
-test('live mode audio button mirrors state and unlocks audio', async () => {
-  const {harness, elements} = loadAudioHarness();
-  const audioBtn = elements.get('audioBtn');
-  const liveAudioBtn = elements.get('liveAudioBtn');
-
-  harness.updateAudioButton();
-  assert.equal(audioBtn.getAttribute('aria-label'), '音声を有効化');
-  assert.equal(liveAudioBtn.getAttribute('aria-label'), '音声を有効化');
-
-  await liveAudioBtn.click();
-
-  assert.equal(harness.ttsPlayback.audioEnabled, true);
-  assert.equal(harness.ttsPlayback.unlocked, true);
-  assert.equal(audioBtn.getAttribute('aria-label'), '音声は有効です');
-  assert.equal(liveAudioBtn.getAttribute('aria-label'), '音声は有効です');
-  assert.ok(liveAudioBtn.classList.contains('ready'));
-});
-
 test('viewer audio element is prepared for inline mobile playback', async () => {
   const {harness} = loadAudioHarness();
 
@@ -1266,39 +769,7 @@ test('tts chunk is shown when audio play resolves even if media events are misse
   assert.equal(elements.get('chat').children.at(-1)._mc.textContent, '末尾の表示です。');
 });
 
-test('idlechat starts first chunk immediately and preloads following chunks', async () => {
-  const {harness, elements} = loadAudioHarness();
 
-  harness.enqueueTTSAudio('/audio/idle-0.wav', 'mio', 'idle-session-1', 'default', 0, '最初です。', '最初です。', '', 'idle-0');
-  await Promise.resolve();
-
-  assert.equal(harness.ttsPlayback.playing, true);
-  assert.equal(harness.ttsPlayback.queue.length, 0);
-  assert.equal(elements.get('idleLiveLog').children.at(-1)._mc.textContent, '最初です。');
-
-  harness.enqueueTTSAudio('/audio/idle-1.wav', 'mio', 'idle-session-1', 'default', 1, '次です。', '次です。', '', 'idle-1');
-  await Promise.resolve();
-
-  assert.equal(harness.ttsPlayback.playing, true);
-  assert.equal(harness.ttsPlayback.queue.length, 1);
-  assert.ok(FakeAudio.instances.find((audio) => audio !== harness.ttsPlayback.audio && audio.src === '/audio/idle-1.wav'));
-  assert.equal(elements.get('idleLiveLog').children.at(-1)._mc.textContent, '最初です。');
-});
-
-test('idlechat starts a single chunk before session completed', async () => {
-  const {harness, elements} = loadAudioHarness();
-
-  harness.enqueueTTSAudio('/audio/idle-only.wav', 'shiro', 'idle-session-done', 'default', 0, '一つだけです。', '一つだけです。', '', 'idle-only');
-  await Promise.resolve();
-  assert.equal(harness.ttsPlayback.playing, true);
-  assert.equal(elements.get('idleLiveLog').children.at(-1)._mc.textContent, '一つだけです。');
-
-  harness.chatAudioSync.markSessionCompleted('idle-session-done');
-  await Promise.resolve();
-
-  assert.equal(harness.ttsPlayback.playing, true);
-  assert.equal(elements.get('idleLiveLog').children.at(-1)._mc.textContent, '一つだけです。');
-});
 
 test('idlechat session completed without an observed chunk does not ack playback', async () => {
   const fetchCalls = [];
@@ -1614,19 +1085,6 @@ test('central chat keeps same speaker speech chunks in one bubble after audio cl
   assert.equal(chat.children[0]._mc.textContent, '前半です。 後半です。');
 });
 
-test('central chat splits same speaker speech when response id changes', () => {
-  const {harness, elements} = loadAudioHarness();
-  const chat = elements.get('chat');
-
-  harness.setCentralTTSSpeechText('mio', 'ひとつめです。', 'idle-response-boundary', 0, 'chunk-0', 'idle-response-boundary:0000');
-  harness.setCentralTTSSpeechText('', '');
-  harness.setCentralTTSSpeechText('mio', 'ふたつめです。', 'idle-response-boundary', 1, 'chunk-1', 'idle-response-boundary:0001');
-
-  assert.equal(chat.children.length, 0);
-  assert.equal(elements.get('idleLiveLog').children.length, 2);
-  assert.equal(elements.get('idleLiveLog').children[0]._mc.textContent, 'ひとつめです。');
-  assert.equal(elements.get('idleLiveLog').children[1]._mc.textContent, 'ふたつめです。');
-});
 
 test('central chat splits when speaker changes even inside chunk sequence', () => {
   const {harness, elements} = loadAudioHarness();
@@ -1651,20 +1109,4 @@ test('central chat keeps topic announcement chunks in one bubble after audio cle
   assert.equal(elements.get('chat').children.length, 0);
   assert.equal(idleLiveLog.children.length, 1);
   assert.equal(idleLiveLog.children[0]._mc.textContent, '今日のお題です、記憶と風景の関係です！');
-});
-
-test('central chat starts speech bubble after topic announcement completes', () => {
-  const {harness, elements} = loadAudioHarness();
-  const idleLiveLog = elements.get('idleLiveLog');
-
-  harness.setCentralTTSSpeechText('mio', '今日のお題です、', 'idle-topic-1', 0, 'topic-0');
-  harness.setCentralTTSSpeechText('', '');
-  harness.setCentralTTSSpeechText('mio', '記憶と風景の関係です！', 'idle-topic-1', 1, 'topic-1');
-  harness.setCentralTTSSpeechText('', '');
-  harness.setCentralTTSSpeechText('mio', 'それ、少し切ない入口だね。', 'idle-topic-1', 0, 'speech-0');
-
-  assert.equal(elements.get('chat').children.length, 0);
-  assert.equal(idleLiveLog.children.length, 2);
-  assert.equal(idleLiveLog.children[0]._mc.textContent, '今日のお題です、記憶と風景の関係です！');
-  assert.equal(idleLiveLog.children[1]._mc.textContent, 'それ、少し切ない入口だね。');
 });

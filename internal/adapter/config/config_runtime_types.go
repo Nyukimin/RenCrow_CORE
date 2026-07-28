@@ -13,59 +13,6 @@ type TLSConfig struct {
 	KeyFile  string `yaml:"key_file"`
 }
 
-// OllamaConfig はOllama設定
-// v4.0で旧 chat_model/worker_model を統合し、単一の Model に変更
-// 全Agent（mio/shiro/IdleChat参加Agent）が同一モデルを共用する
-type OllamaConfig struct {
-	BaseURL    string `yaml:"base_url"`
-	Model      string `yaml:"model"`       // v4: 共通モデル（例: "rencrow-v1"）
-	MaxContext int    `yaml:"max_context"` // 常駐モデルの最大コンテキスト長（超過はNG）
-}
-
-// ClaudeConfig はClaude API設定
-type ClaudeConfig struct {
-	APIKey string `yaml:"api_key"` // 環境変数から読み込み推奨
-	Model  string `yaml:"model"`
-}
-
-// DeepSeekConfig はDeepSeek API設定
-type DeepSeekConfig struct {
-	APIKey string `yaml:"api_key"` // 環境変数から読み込み推奨
-	Model  string `yaml:"model"`
-}
-
-// OpenAIConfig はOpenAI API設定
-type OpenAIConfig struct {
-	APIKey string `yaml:"api_key"` // 環境変数から読み込み推奨
-	Model  string `yaml:"model"`
-}
-
-// LocalLLMConfig is the primary local inference runtime for Chat / Worker / Heavy / Wild.
-// It is intended for OpenAI-compatible local servers such as MLX.
-type LocalLLMConfig struct {
-	Enabled           bool   `yaml:"enabled"`
-	Provider          string `yaml:"provider"` // local_openai (default) or ollama
-	BaseURL           string `yaml:"base_url"`
-	ChatBaseURL       string `yaml:"chat_base_url"`
-	WorkerBaseURL     string `yaml:"worker_base_url"`
-	ChatWorkerBaseURL string `yaml:"chat_worker_base_url"`
-	HeavyBaseURL      string `yaml:"heavy_base_url"`
-	WildBaseURL       string `yaml:"wild_base_url"`
-	APIKey            string `yaml:"api_key"`
-	ChatModel         string `yaml:"chat_model"`
-	WorkerModel       string `yaml:"worker_model"`
-	ChatWorkerModel   string `yaml:"chat_worker_model"`
-	HeavyModel        string `yaml:"heavy_model"`
-	WildModel         string `yaml:"wild_model"`
-	TimeoutSec        int    `yaml:"timeout_sec"`
-	ChatTimeoutSec    int    `yaml:"chat_timeout_sec"`
-	Warmup            *bool  `yaml:"warmup"`
-	GlobalConcurrency int    `yaml:"global_concurrency"`
-	ModelConcurrency  int    `yaml:"model_concurrency"`
-	ModelContext      int    `yaml:"model_context"`
-	ChatModelContext  int    `yaml:"chat_model_context"`
-}
-
 // LLMGatewayConfig connects CORE to RenCrow_LLM using logical Agent IDs only.
 type LLMGatewayConfig struct {
 	Enabled    bool   `yaml:"enabled"`
@@ -92,7 +39,7 @@ type MioGenerationConfig struct {
 	ChatTemplateKwargs MioChatTemplateKwargs `yaml:"chat_template_kwargs"`
 }
 
-// MioInputAudioConfig controls the text instruction paired with direct WAV input.
+// MioInputAudioConfig controls the text instruction paired with WAV input.
 type MioInputAudioConfig struct {
 	Prompt string `yaml:"prompt"`
 }
@@ -100,13 +47,6 @@ type MioInputAudioConfig struct {
 // MioChatTemplateKwargs contains llama.cpp chat-template switches for Mio.
 type MioChatTemplateKwargs struct {
 	EnableThinking *bool `yaml:"enable_thinking"`
-}
-
-// LLMOpsConfig は MLX 運用デーモン（8079 番管理 API）への Viewer 経由プロキシ用。
-// Bearer は LLM_OPS_TOKEN 環境変数から読む。
-type LLMOpsConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	BaseURL string `yaml:"base_url"` // 例: http://192.168.1.31:8079
 }
 
 // WebwrightFetchConfig は RenCrow 本体から分離された Webwright 取得 bridge 設定。
@@ -183,7 +123,7 @@ type CodexConfig struct {
 type AdvisorConfig struct {
 	Storage    string `yaml:"storage"`
 	LogPath    string `yaml:"log_path"`
-	SQLitePath string `yaml:"sqlite_path"`
+	SQLitePath string `yaml:"-"`
 }
 
 func (c CodexConfig) EphemeralEnabled() bool {

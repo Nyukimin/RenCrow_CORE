@@ -4,9 +4,9 @@ import "testing"
 
 func TestBuildRelationsKeepsOnlyScoreAtOrAboveThreshold(t *testing.T) {
 	items := []ItemMetadata{
-		{ItemID: "qiita-1", Entities: []string{"MLX"}, Topics: []string{"local_llm"}},
+		{ItemID: "qiita-1", Entities: []string{"MLX"}, Topics: []string{"model_runtime"}},
 		{ItemID: "github-1", Entities: []string{"MLX"}, Topics: []string{"release"}},
-		{ItemID: "note-1", Entities: []string{"CUDA"}, Topics: []string{"local_llm"}},
+		{ItemID: "note-1", Entities: []string{"CUDA"}, Topics: []string{"model_runtime"}},
 	}
 	relations := BuildRelations(items, DefaultScoringConfig())
 	if len(relations) != 0 {
@@ -25,7 +25,7 @@ func TestBuildRelationsKeepsOnlyScoreAtOrAboveThreshold(t *testing.T) {
 
 func TestBuildPairRelationsSameProjectPassesDefaultThreshold(t *testing.T) {
 	src := ItemMetadata{ItemID: "x-1", Projects: []string{"RenCrow_LLM"}, Entities: []string{"MLX"}}
-	dst := ItemMetadata{ItemID: "note-1", Projects: []string{"RenCrow_LLM"}, Entities: []string{"Ollama"}}
+	dst := ItemMetadata{ItemID: "note-1", Projects: []string{"RenCrow_LLM"}, Entities: []string{"ModelGateway"}}
 	cfg := DefaultScoringConfig()
 	cfg.MinimumScore = 3
 	relations := BuildPairRelations(src, dst, cfg)

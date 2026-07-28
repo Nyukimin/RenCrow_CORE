@@ -51,22 +51,22 @@ func TestSandboxGuard_IsSafeSandboxWritePath(t *testing.T) {
 
 func TestSandboxGuard_IsHostAllowed(t *testing.T) {
 	g := NewSandboxGuard()
-	if !g.IsHostAllowed("api.openai.com", []string{"api.openai.com"}) {
+	if !g.IsHostAllowed("api.example.com", []string{"api.example.com"}) {
 		t.Fatal("expected exact host to be allowed")
 	}
 	if !g.IsHostAllowed("sub.example.com", []string{".example.com"}) {
 		t.Fatal("expected suffix host to be allowed")
 	}
-	if g.IsHostAllowed("evil.com", []string{"api.openai.com"}) {
+	if g.IsHostAllowed("evil.com", []string{"api.example.com"}) {
 		t.Fatal("expected non-allowlisted host to be denied")
 	}
 }
 
 func TestSandboxGuard_ExtractNetworkHost(t *testing.T) {
 	g := NewSandboxGuard()
-	host, ok := g.ExtractNetworkHost(map[string]any{"url": "https://api.openai.com/v1/models"})
-	if !ok || host != "api.openai.com" {
-		t.Fatalf("expected host api.openai.com, got ok=%v host=%q", ok, host)
+	host, ok := g.ExtractNetworkHost(map[string]any{"url": "https://api.example.com/v1/models"})
+	if !ok || host != "api.example.com" {
+		t.Fatalf("expected host api.example.com, got ok=%v host=%q", ok, host)
 	}
 	host, ok = g.ExtractNetworkHost(map[string]any{"host": "localhost:8080"})
 	if !ok || host != "localhost" {

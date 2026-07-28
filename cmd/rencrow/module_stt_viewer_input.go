@@ -15,12 +15,12 @@ type sttViewerInputObserver struct {
 
 func newSTTViewerInputObserver(rt sttRuntime) sttViewerInputObserver {
 	return sttViewerInputObserver{snapshot: modulestt.BuildViewerInputSnapshot(modulestt.ViewerInputRuntimeConfig{
-		BaseURL:            rt.DebugOptions.STTBaseURL,
-		StreamURL:          rt.DebugOptions.STTStreamURL,
-		ProviderURL:        rt.ProviderURL,
-		GatewayURL:         rt.GatewayURL,
-		ProviderAvailable:  rt.Provider != nil,
-		WebSocketAvailable: rt.WSHandler != nil,
+		BaseURL:              rt.DebugOptions.STTBaseURL,
+		StreamURL:            rt.DebugOptions.STTStreamURL,
+		GatewayHTTPURL:       rt.GatewayHTTPURL,
+		GatewayURL:           rt.DebugOptions.STTStreamURL,
+		GatewayHTTPAvailable: rt.Provider != nil,
+		WebSocketAvailable:   rt.WSHandler != nil,
 	})}
 }
 

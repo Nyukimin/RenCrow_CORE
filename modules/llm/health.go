@@ -21,19 +21,10 @@ type ProviderHealthSnapshot struct {
 	Ready    bool
 }
 
-type LocalHealthCheckRuntimeConfig struct {
-	Enabled  bool
-	Provider string
-}
-
 const (
 	ExternalHealthStatusOK       = "ok"
 	ExternalHealthStatusDegraded = "degraded"
 )
-
-func ShouldUseLocalHealthChecks(cfg LocalHealthCheckRuntimeConfig) bool {
-	return cfg.Enabled && strings.EqualFold(strings.TrimSpace(cfg.Provider), CoderProviderLocalOpenAI)
-}
 
 func NormalizeExternalHealthCheckResult(name string, status string, ready bool, detail string, duration time.Duration) HealthCheckResult {
 	out := HealthCheckResult{
@@ -61,7 +52,6 @@ func NormalizeExternalHealthCheckResult(name string, status string, ready bool, 
 func RoleFromHealthCheckName(name string) string {
 	role := strings.TrimSpace(name)
 	role = strings.TrimPrefix(role, "rencrow_llm_")
-	role = strings.TrimPrefix(role, "local_llm_")
 	role = strings.ToLower(strings.TrimSpace(role))
 	return role
 }

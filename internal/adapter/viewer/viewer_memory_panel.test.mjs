@@ -98,13 +98,9 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(html, /id="domainGraphRefreshBtn"/);
   assert.match(html, /id="memoryBody"/);
   assert.match(html, /id="newsPackBody"/);
-  assert.match(html, /id="llmMemoryCards"/);
-  assert.match(html, /id="llmMemorySystemBar"/);
-  assert.match(html, /id="llmMemoryProcessLists"/);
-  assert.match(html, /id="llmMemoryRoles"/);
+  assert.match(html, /id="runtimeGatewayPanel"/);
   assert.match(html, /id="llmRuntimeConfigCards"/);
   assert.match(html, /id="runtimeReadinessCards"/);
-  assert.match(html, /id="llmOpsConfigState"/);
   assert.match(html, /id="toolHarnessBody"/);
   assert.match(html, /id="dciTraceBody"/);
   assert.match(html, /id="sandboxGateLogBody"/);
@@ -164,10 +160,8 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(js, /sessionStorage\.setItem\(tabKey, id\)/);
   assert.match(js, /function switchAdjacentPanel/);
   assert.match(js, /mobilePanelSelect\.addEventListener\('change'/);
-  assert.match(idleChatJs, /function isViewerLiveMode\(\) \{/);
   assert.match(idleChatJs, /function idleLiveRenderTarget\(\) \{/);
-  assert.match(idleChatJs, /live mode is the theater view and uses the central chat stream/);
-  assert.match(idleChatJs, /if \(isViewerLiveMode\(\) && chat\) return chat/);
+  assert.match(idleChatJs, /return idleLiveLog;/);
   assert.match(idleChatJs, /const target = idleLiveRenderTarget\(\);[\s\S]*target\.appendChild\(el\);/);
   assert.match(idleChatJs, /function consumeIdlePendingMessage\(sessionId, characterId, kind, messageId, turnIndex\)/);
   assert.match(idleChatJs, /expectedKind === 'topic'[\s\S]*isIdleTopicEvent\(item\.ev\)/);
@@ -179,18 +173,6 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(js, /const target = typeof idleLiveRenderTarget === 'function' \? idleLiveRenderTarget\(\) : idleLiveLog;/);
   assert.match(js, /consumeIdlePendingMessage\(sid, id, bubbleKind, messageId, turnIndex\)/);
   assert.match(js, /\^\(今日のお題\|きょうのおだい\)\(です\)\?\[、。:：！？!\?\]\?/);
-  assert.match(css, /body\.live-mode header\{display:none\}/);
-  assert.match(css, /body\.live-mode \.mobile-panel-switch\{display:none !important\}/);
-  assert.match(css, /body\.live-mode \.live-audio-btn\{[\s\S]*z-index:80/);
-  assert.match(css, /body\.live-mode \.lipsync-stage\{[\s\S]*background:transparent;border:0;box-shadow:none;backdrop-filter:none;pointer-events:none/);
-  assert.match(css, /body\.live-mode \.chat-character-pane,\s*body\.live-mode \.chat-desk-head\{\s*display:none !important;/);
-  assert.match(css, /body\.live-mode \.chat-main-pane\{[\s\S]*align-items:flex-start;[\s\S]*justify-content:center;/);
-  assert.match(css, /body\.live-mode \.chat-main-pane\{[\s\S]*backdrop-filter:none/);
-  assert.match(css, /body\.live-mode \.chat-empty > \*\{display:none !important\}/);
-  assert.match(css, /body\.live-mode #chat\{[\s\S]*max-width:min\(1040px, calc\(100vw - 420px\)\)/);
-  assert.match(css, /body\.live-mode #chat\.chat-conversation\{[\s\S]*max-height:calc\(100dvh - 156px\);[\s\S]*overflow-y:auto/);
-  assert.match(css, /body\.live-mode #chat\.chat-conversation\{[\s\S]*overscroll-behavior:contain/);
-  assert.match(css, /body\.live-mode #chat\.chat-conversation\{[\s\S]*-webkit-overflow-scrolling:touch/);
   assert.match(css, /\.audio-btn\{[\s\S]*touch-action:manipulation/);
   assert.match(css, /\.chat-desk-panel\{[\s\S]*height:calc\(100dvh - var\(--header-h\) - var\(--input-h\) - 54px - var\(--safe-bottom\)\)/);
   assert.match(css, /\.chat-desk-shell\{[\s\S]*align-items:start/);
@@ -218,19 +200,8 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(html, /assets\/js\/tabs\/timeline\.js/);
   assert.match(html, /assets\/js\/tabs\/idlechat\.js/);
   assert.match(timelineJs, /function addMsgToTimeline/);
-  assert.match(timelineJs, /function applyChatRouteAliasToMessage/);
   assert.match(timelineJs, /function buildViewerSendRequest/);
-  assert.match(timelineJs, /function ensureViewerLLMReadyForRequest/);
-  assert.match(timelineJs, /function viewerLLMStopRolesBeforeStart/);
-  assert.match(timelineJs, /\/viewer\/llm-ops\/health/);
-  assert.match(timelineJs, /\/viewer\/llm-ops\/stop/);
-  assert.match(timelineJs, /\/viewer\/llm-ops\/start/);
-  assert.match(timelineJs, /worker: \{label: 'Worker', baseURL: 'http:\/\/127\.0\.0\.1:8082', model: 'Worker', routePrefix: '\/ops'\}/);
-  assert.match(timelineJs, /heavy: \{label: 'Heavy', baseURL: 'http:\/\/127\.0\.0\.1:8083', model: 'Heavy', routePrefix: '\/analyze'\}/);
-  assert.match(timelineJs, /wild: \{label: 'Wild', baseURL: 'http:\/\/127\.0\.0\.1:8084', model: 'Wild', routePrefix: '\/wild'\}/);
-  assert.match(timelineJs, /function syncChatRouteAliasesFromRuntimeConfig/);
   assert.match(js, /const body = buildViewerSendRequest\(message\)/);
-  assert.match(js, /await ensureViewerLLMReadyForRequest\(body\)/);
   assert.doesNotMatch(timelineJs, /function addIdleMsgToTimeline/);
   assert.match(idleChatJs, /function addIdleMsgToTimeline/);
   assert.match(idleChatJs, /function appendIdleLiveMessageEvent/);
@@ -246,22 +217,7 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(js, /setInterval\(\(\) => \{/);
   assert.match(js, /scheduleViewerEventReconnect\(\);/);
   assert.doesNotMatch(sourceBetween(js, 'es.onerror = () => {', '};\n}'), /es\.close\(\);\s*setTimeout\(connect, 3000\)/);
-  assert.match(opsJs, /function renderLlmMemoryStatus/);
-  assert.match(opsJs, /Available RAM/);
-  assert.match(opsJs, /Swap Used/);
-  assert.match(opsJs, /Memory Pressure/);
-  assert.match(opsJs, /Compressed/);
-  assert.match(opsJs, /File Cache/);
-  assert.match(opsJs, /Wired/);
-  assert.match(opsJs, /Top Memory Processes/);
-  assert.match(opsJs, /Model Processes/);
-  assert.match(opsJs, /Available for LLM/);
-  assert.match(opsJs, /Used for LLM/);
-  assert.match(opsJs, /Safe Available/);
-  assert.match(opsJs, /Safety Margin/);
-  assert.match(opsJs, /function memoryGiB/);
-  assert.match(opsJs, /function renderMemoryProcessList/);
-  assert.match(opsJs, /function renderLocalLLMRuntimeConfig/);
+  assert.match(opsJs, /function renderLLMGatewayRuntimeConfig/);
   assert.match(opsJs, /function renderToolHarnessEvents/);
   assert.match(opsJs, /function toolHarnessOpsCard/);
   assert.match(opsJs, /provider protocol recovery not verified/);
@@ -345,9 +301,8 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(css, /\.panel\{[^}]*max-width:100%/);
   assert.match(opsCss, /#panel-ops,#panel-ops \*\{min-width:0\}/);
   assert.match(opsCss, /#panel-ops \.debug-table\{[^}]*display:block;[^}]*max-width:100%;[^}]*overflow-x:auto/);
-  assert.match(opsCss, /\.llm-ops-raw\{[^}]*max-width:100%;[^}]*white-space:pre-wrap;word-break:break-word/);
-  assert.match(opsCss, /#llmOpsPanel \.debug-actions\{display:grid;grid-template-columns:1fr;gap:6px\}/);
-  assert.match(opsCss, /\.ops-grid,\.llm-memory-grid,\.llm-memory-process-grid,\.llm-runtime-grid\{grid-template-columns:minmax\(0,1fr\)\}/);
+  assert.match(opsCss, /\.ops-raw\{[^}]*max-width:100%;[^}]*white-space:pre-wrap;word-break:break-word/);
+  assert.match(opsCss, /\.ops-grid,\.llm-runtime-grid\{grid-template-columns:minmax\(0,1fr\)\}/);
   assert.match(viewer, /id="opsTriageCards"/);
   assert.match(viewer, /id="opsSecondaryCards"/);
   assert.match(viewer, /id="opsDetailsRuntime"/);
@@ -356,13 +311,7 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(opsCss, /\.ops-triage-grid/);
   assert.match(opsCss, /\.ops-details/);
   assert.match(opsJs, /function refreshOpsTriageFromState/);
-  assert.match(viewer, /\/v1\/chat\/completions/);
-  assert.match(viewer, /llm_ops_configured/);
-  assert.match(opsJs, /LLM Ops/);
   assert.match(opsJs, /blocked: /);
-  assert.match(viewer, /LLM_OPS_TOKEN missing/);
-  assert.match(viewer, /memory\.system/);
-  assert.match(viewer, /memory\.llm_by_role/);
   assert.match(memoryJs, /function refreshSourceRegistry/);
   assert.match(memoryJs, /function runSourceRegistryEntry/);
   assert.match(memoryJs, /function renderSourceRegistryRunStatus/);
@@ -1049,76 +998,6 @@ globalThis.__result = document.getElementById('workstreamVaultReviewResult').tex
   assert.doesNotMatch(context.__body, /stale_vault/);
   assert.match(context.__result, /workstream vault review unavailable: HTTP 500: workstream store unavailable/);
   assert.match(context.__result, /blocked: vault apply state unreadable/);
-});
-
-test('viewer renders expanded llm ops memory fields', () => {
-  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
-  const opsJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/ops.js', 'utf8');
-  const elements = new Map();
-  const document = {
-    getElementById(id) {
-      if (!elements.has(id)) elements.set(id, new FakeElement(id));
-      return elements.get(id);
-    },
-    createElement() {
-      return new FakeElement();
-    },
-  };
-  const source = `
-function esc(s) { return String(s || ''); }
-function escAttr(s) { return String(s || ''); }
-const state = {
-  ops: {
-    llmStatus: {
-      memory: {
-        system: {
-          total_gib: 64,
-          used_gib: 40,
-          free_gib: 8,
-          available_gib: 16,
-          swap_used_gib: 0,
-          memory_pressure: 'normal',
-          compressed_gib: 0,
-          file_cache_gib: 10,
-          wired_gib: 7,
-          available_for_llm_gib: 11.5,
-          used_for_llm_gib: 116.5,
-          safe_available_for_llm_gib: 3.5,
-          llm_safety_margin_gib: 8,
-        },
-        llm_by_role: {
-          Chat: {pid: 111, rss_mib: 2048},
-          Worker: {pid: 222, rss_mib: 4096},
-        },
-        top_memory_processes: [{name: 'python', pid: 123, rss_mib: 1024}],
-        model_processes: [{role: 'Chat', model: 'qwen', pid: 111, rss_mib: 2048}],
-      },
-      roles: {Chat: {health_ok: true}, Worker: {health_ok: true}},
-    },
-    localLLM: {},
-    llmStatusError: '',
-  },
-};
-` + sourceBetween(js, 'function normState', 'function fmt') +
-sourceBetween(js, 'function stateClass', 'function bump') +
-sourceBetween(opsJs, 'function llmRoleMemoryState', 'async function refreshLlmOpsStatus') + `
-renderLlmMemoryStatus();
-globalThis.__cards = document.getElementById('llmMemoryCards').innerHTML;
-globalThis.__processes = document.getElementById('llmMemoryProcessLists').innerHTML;
-`;
-  const context = vm.createContext({document});
-  vm.runInContext(source, context);
-
-  for (const label of ['Total RAM', 'Used RAM', 'Free RAM', 'Available RAM', 'Swap Used', 'Memory Pressure', 'Compressed', 'File Cache', 'Wired', 'Available for LLM', 'Used for LLM', 'Safe Available', 'Safety Margin']) {
-    assert.ok(context.__cards.includes(label), `${label} should render`);
-  }
-  assert.ok(context.__cards.includes('0.00 GiB'), 'reported zero memory values should render as 0.00 GiB');
-  assert.ok(context.__cards.includes('llm-memory-indicator state-running'), 'healthy memory metrics should render OK indicators');
-  assert.ok(context.__cards.includes('OK'), 'healthy memory metrics should show OK status text');
-  assert.ok(context.__processes.includes('Top Memory Processes'));
-  assert.ok(context.__processes.includes('Model Processes'));
-  assert.ok(context.__processes.includes('python'));
-  assert.ok(context.__processes.includes('qwen'));
 });
 
 test('viewer renders knowledge memory ledger inside memory tab', () => {
@@ -2506,7 +2385,7 @@ const state = {ops: {
   dciLastResult: {pack: {query: 'stale query'}, trace: {status: 'completed'}, Pack: {Evidence: [{FilePath: 'stale.go'}]}},
 }};
 ` + sourceBetween(opsJs, 'function renderDCISearchResult', 'function sandboxField') + `
-` + sourceBetween(opsJs, 'let dciSearchBound', 'let llmOpsUIBound') + `
+` + sourceBetween(opsJs, 'let dciSearchBound', 'function syncRuntimeConfigPanel') + `
 globalThis.__getDCIResult = () => state.ops.dciLastResult;
 `;
   const context = vm.createContext({
@@ -2988,7 +2867,6 @@ const state = {ops: {
     {label: 'Source Registry staging', path: '/viewer/source-registry?action=staging&limit=3', status: 503, ok: false, body: 'source registry unavailable'},
     {label: 'Memory Layers', path: '/viewer/memory/layers', status: 503, ok: false, body: 'memory layers unavailable'},
     {label: 'Sandbox status', path: '/viewer/sandbox?limit=1&viewer_optional=1', status: 503, ok: false, body: 'sandbox store unavailable'},
-    {label: 'LLM Ops status', path: '/viewer/llm-ops/status', status: 502, ok: false, body: 'upstream unreachable'},
   ],
 }};
 ` + sourceBetween(opsJs, 'function knowledgeMemoryOpsCard', 'function renderKnowledgeMemoryDetailFocus') + `
@@ -3006,9 +2884,8 @@ globalThis.__result = document.getElementById('runtimeBlockedRouteAuditResult').
   assert.match(context.__body, /source registry unavailable/);
   assert.match(context.__body, /memory layers unavailable/);
   assert.match(context.__body, /sandbox store unavailable/);
-  assert.match(context.__body, /upstream unreachable/);
-  assert.match(context.__result, /4 checked \/ 4 blocked \/ 3 unavailable \/ 0 available/);
-  assert.match(context.__result, /blocked: Source Registry staging, Memory Layers, Sandbox, and LLM Ops require their runtime dependencies/);
+  assert.match(context.__result, /3 checked \/ 3 blocked \/ 3 unavailable \/ 0 available/);
+  assert.match(context.__result, /blocked: Source Registry staging, Memory Layers, and Sandbox require their runtime dependencies/);
 });
 
 test('viewer renders knowledge memory detail fetch errors as visible state', async () => {
@@ -3073,32 +2950,18 @@ globalThis.__getKnowledgeMemoryDetail = () => state.ops.knowledgeMemoryDetail;
   assert.equal(context.__getKnowledgeMemoryDetail().error, 'HTTP 500: knowledge memory detail store unavailable');
 });
 
-test('viewer renders heavy runtime llm-ops unavailable diagnostics', () => {
+test('viewer renders heavy runtime Gateway diagnostics', () => {
   const opsJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/ops.js', 'utf8');
   const source = `
-function sandboxField(obj, snake, pascal) {
-  if (!obj) return undefined;
-  if (Object.prototype.hasOwnProperty.call(obj, snake)) return obj[snake];
-  if (Object.prototype.hasOwnProperty.call(obj, pascal)) return obj[pascal];
-  return undefined;
-}
-function replaceURLPort(raw, port) { return String(raw || '').replace(/:[0-9]+$/, ':' + String(port)); }
 const state = {ops: {
   heavyWorkerRuntimeDiagnostics: {
     role: 'Heavy',
     route: 'ANALYZE',
-    route_prefix: '/analyze',
-    provider: 'local_openai',
+    provider: 'rencrow_llm',
     configured: true,
-    base_url: 'http://192.168.1.13:8082',
-    model: 'Worker',
+    gateway_base_url: 'http://192.168.1.13:8090',
+    logical_alias: 'kuro',
     failure_is_error: true,
-    llm_ops: {
-      configured: true,
-      enabled: true,
-      live_available: false,
-      error: 'llm-ops GET /v1/status: context deadline exceeded',
-    },
   },
 }};
 ` + sourceBetween(opsJs, 'function heavyWorkerRuntimeOpsCard', 'function knowledgeMemoryOpsCard') + `
@@ -3108,31 +2971,22 @@ globalThis.__card = heavyWorkerRuntimeOpsCard();
   vm.runInContext(source, context);
 
   assert.equal(context.__card.title, 'Heavy Runtime');
-  assert.equal(context.__card.big, 'config');
-  assert.match(context.__card.sub, /route: ANALYZE \/analyze/);
-  assert.match(context.__card.sub, /Worker/);
-  assert.match(context.__card.sub, /http:\/\/192\.168\.1\.13:8082/);
-  assert.match(context.__card.sub, /llm-ops GET \/v1\/status/);
+  assert.equal(context.__card.big, 'configured');
+  assert.match(context.__card.sub, /route: ANALYZE/);
+  assert.match(context.__card.sub, /alias: kuro/);
+  assert.match(context.__card.sub, /gateway: http:\/\/192\.168\.1\.13:8090/);
 });
 
 test('viewer renders heavy runtime diagnostics fetch errors as blocked state', () => {
   const opsJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/ops.js', 'utf8');
   const source = `
-function sandboxField(obj, snake, pascal) {
-  if (!obj) return undefined;
-  if (Object.prototype.hasOwnProperty.call(obj, snake)) return obj[snake];
-  if (Object.prototype.hasOwnProperty.call(obj, pascal)) return obj[pascal];
-  return undefined;
-}
-function replaceURLPort(raw, port) { return String(raw || '').replace(/:[0-9]+$/, ':' + String(port)); }
 const state = {ops: {
   heavyWorkerRuntimeDiagnosticsFetchError: 'HTTP 500: heavy runtime store unavailable',
   heavyWorkerRuntimeDiagnostics: {
     role: 'Heavy',
     route: 'ANALYZE',
-    base_url: 'http://stale.example:8082',
-    model: 'stale-model',
-    llm_ops: {live_available: true},
+    gateway_base_url: 'http://stale.example:8090',
+    logical_alias: 'stale-alias',
   },
 }};
 ` + sourceBetween(opsJs, 'function heavyWorkerRuntimeOpsCard', 'function knowledgeMemoryOpsCard') + `
@@ -3144,12 +2998,10 @@ globalThis.__card = heavyWorkerRuntimeOpsCard();
   assert.equal(context.__card.title, 'Heavy Runtime');
   assert.equal(context.__card.big, 'unavailable');
   assert.match(context.__card.sub, /heavy runtime diagnostics unavailable: HTTP 500: heavy runtime store unavailable/);
-  assert.match(context.__card.sub, /blocked: RouteANALYZE provider state unreadable/);
-  assert.match(context.__card.sub, /blocked: LLM Ops live state unreadable/);
-  assert.doesNotMatch(context.__card.sub, /stale-model/);
+  assert.match(context.__card.sub, /blocked: RenCrow_LLM Gateway state unreadable/);
+  assert.doesNotMatch(context.__card.sub, /stale-alias/);
   assert.doesNotMatch(context.__card.sub, /stale\.example/);
 });
-
 test('viewer renders skill external PR blocked audit details', () => {
   const opsJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/ops.js', 'utf8');
   const elements = new Map();
@@ -3380,7 +3232,7 @@ const state = {ops: {
     run_id: 'run_1',
     status: 'failed',
     completed_at: '2026-05-19T21:16:26Z',
-    summary: 'local LLM connection refused',
+    summary: 'RenCrow_LLM Gateway connection refused',
   }],
   superAgentRunQueue: [{
     queue_id: 'rq_1',
@@ -3402,7 +3254,7 @@ globalThis.__superAgentTerminalResult = document.getElementById('superAgentTermi
   assert.match(context.__superAgentTerminal, /run_queue/);
   assert.match(context.__superAgentTerminal, /run_1/);
   assert.match(context.__superAgentTerminal, /rq_1/);
-  assert.match(context.__superAgentTerminal, /local LLM connection refused/);
+  assert.match(context.__superAgentTerminal, /RenCrow_LLM Gateway connection refused/);
   assert.match(context.__superAgentTerminal, /scheduler processor failed/);
   assert.match(context.__superAgentTerminalResult, /1 terminal runs \/ 1 terminal queue \/ 1 failed runs \/ 1 failed queue \/ missing evidence: 0/);
 });
@@ -3759,8 +3611,7 @@ globalThis.__refreshSandboxData = refreshSandboxData;
   assert.deepEqual(consoleErrors, []);
 });
 
-test('viewer runtime cards prefer live llm ops status over local config labels', () => {
-  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+test('viewer renders RenCrow_LLM Gateway runtime config', () => {
   const opsJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/ops.js', 'utf8');
   const elements = new Map();
   const document = {
@@ -3768,196 +3619,30 @@ test('viewer runtime cards prefer live llm ops status over local config labels',
       if (!elements.has(id)) elements.set(id, new FakeElement(id));
       return elements.get(id);
     },
-    createElement() {
-      return new FakeElement();
-    },
-  };
-  const source = `
-function esc(s) { return String(s || ''); }
-function escAttr(s) { return String(s || ''); }
-function stateClass(s) { return 'state-' + s; }
-var state = {
-  ops: {
-    localLLM: {
-      enabled: true,
-      provider: 'local_openai',
-      chat_base_url: 'http://192.168.1.31:8081',
-      worker_base_url: 'http://192.168.1.31:8082',
-      heavy_base_url: 'http://192.168.1.31:8082',
-      wild_base_url: 'http://192.168.1.31:8081',
-      chat_model: 'Chat',
-      worker_model: 'Worker',
-      heavy_model: 'Worker',
-      wild_model: 'Chat',
-    },
-    llmOpsConfigured: true,
-    llmOpsEnabled: true,
-    llmOpsBaseURL: 'http://192.168.1.13:8079',
-    runtimeReadiness: {
-      slack_credentials_present: false,
-      slack_webhook_registered: false,
-      slack_file_payload_pipeline: false,
-      discord_credentials_present: false,
-      discord_webhook_registered: false,
-      discord_file_payload_pipeline: false,
-      telegram_credentials_present: false,
-      telegram_webhook_registered: false,
-      telegram_file_payload_pipeline: false,
-      stt_gateway_env_present: true,
-      stt_gateway_config_present: true,
-      tts_provider_env_present: false,
-      tts_provider_config_present: true,
-      distributed_enabled: false,
-      distributed_transports_present: false,
-      distributed_ssh_configured: false,
-      distributed_ssh_connected: false,
-      distributed_local_transport: false,
-      conversation_enabled: false,
-      l1_sqlite_config_present: false,
-      memory_layers_available: false,
-      memory_layers_status_available: true,
-      source_registry_available: false,
-      source_registry_status_available: true,
-      knowledge_memory_enabled: true,
-      knowledge_memory_status_available: true,
-      browser_trace_api_enabled: true,
-      browser_trace_api_status_available: true,
-      browser_trace_api_fetcher_available: true,
-      sandbox_enabled: false,
-      sandbox_status_available: true,
-    },
-    runtimeSTTBaseURL: 'http://192.168.1.33:8766',
-    runtimeSTTStreamURL: 'wss://fujitsu-ubunts.tailb07d8d.ts.net/stt',
-    runtimeTTSBaseURL: 'http://192.168.1.13:7870',
-    runtimeHealth: {
-      status: 'down',
-      checks: [
-        {name: 'local_llm_chat', status: 'down', message: 'connection refused'},
-        {name: 'local_llm_worker', status: 'down', message: 'connection refused'},
-      ],
-      timestamp: '2026-05-19T20:45:00Z',
-    },
-    runtimeHealthError: '',
-    runtimeDebugSystem: {
-      audio: {
-        stt_base_url: 'http://192.168.1.33:8766',
-        tts_base_url: 'http://192.168.1.13:7870',
-        stt_ok: false,
-        tts_live_ok: false,
-        tts_ready_ok: false,
-        last_error: 'stt:context deadline exceeded; tts_live:context deadline exceeded',
-      },
-    },
-    llmStatus: {
-      roles: {
-        Chat: {health_ok: true, halted: false},
-        Worker: {health_ok: false, halted: true},
-        Heavy: {health_ok: true, halted: false},
-        Wild: {health_ok: false, halted: true},
-      },
-      memory: {
-        llm_by_role: {
-          Chat: {role: 'Chat', model: '/models/gemma', port: 8081, pid: 30289, rss_mib: 707.47},
-          Worker: {role: 'Worker', model: '/models/qwen-vl', port: 8082, pid: null, rss_mib: null},
-          Heavy: {role: 'Heavy', model: '/models/qwen-heavy', port: 8083, pid: 46923, rss_mib: 49971.38},
-          Wild: {role: 'Wild', model: '/models/qwen-wild', port: 8084, pid: null, rss_mib: null},
-        },
-      },
-    },
-  },
-};
-` + sourceBetween(js, 'function normState', 'function fmt') +
-sourceBetween(opsJs, 'function renderLocalLLMRuntimeConfig', 'function setLlmOpsStatusPre') + `
-renderLocalLLMRuntimeConfig();
-renderRuntimeDependencyReadiness();
-globalThis.__runtime = document.getElementById('llmRuntimeConfigCards').innerHTML;
-globalThis.__readiness = document.getElementById('runtimeReadinessCards').innerHTML;
-`;
-  const context = vm.createContext({document});
-  vm.runInContext(source, context);
-
-  assert.ok(context.__runtime.includes('Worker'));
-  assert.ok(context.__runtime.includes('Heavy'));
-  assert.ok(context.__runtime.includes('halted'), 'Worker should not be shown as running when llm-ops marks it halted');
-  assert.ok(context.__runtime.includes('/models/qwen-heavy'), 'Heavy should use live status model, not stale local config label');
-  assert.ok(context.__runtime.includes('http://192.168.1.31:8083'), 'Heavy should use live status port');
-  assert.ok(context.__readiness.includes('LLM Ops'));
-  assert.ok(context.__readiness.includes('Runtime Health'));
-  assert.ok(context.__readiness.includes('service:missing'));
-  assert.ok(context.__readiness.includes('chat:missing'));
-  assert.ok(context.__readiness.includes('worker:missing'));
-  assert.ok(context.__readiness.includes('local_llm_chat: connection refused'));
-  assert.ok(context.__readiness.includes('configured:present'));
-  assert.ok(context.__readiness.includes('proxy:present'));
-  assert.ok(context.__readiness.includes('STT'));
-  assert.ok(context.__readiness.includes('env:present'));
-  assert.ok(context.__readiness.includes('config:present'));
-  assert.ok(context.__readiness.includes('health:missing'));
-  assert.ok(context.__readiness.includes('live:missing'));
-  assert.ok(context.__readiness.includes('ready:missing'));
-  assert.ok(context.__readiness.includes('blocked: stt:context deadline exceeded'));
-  assert.ok(context.__readiness.includes('blocked: real microphone STT E2E not verified'));
-  assert.ok(context.__readiness.includes('blocked: browser audio playback/lip sync E2E not verified'));
-  assert.ok(context.__readiness.includes('Distributed'));
-  assert.ok(context.__readiness.includes('enabled:missing'));
-  assert.ok(context.__readiness.includes('ssh-connected:missing'));
-  assert.ok(context.__readiness.includes('blocked: distributed disabled'));
-  assert.ok(context.__readiness.includes('credentials:missing'));
-  assert.ok(context.__readiness.includes('webhook:missing'));
-  assert.ok(context.__readiness.includes('file:missing'));
-  assert.ok(context.__readiness.includes('blocked: real external API file event E2E not verified'));
-  assert.ok(context.__readiness.includes('blocked: Wild SSH/multi-machine E2E not verified'));
-  assert.ok(context.__readiness.includes('Source Registry'));
-  assert.ok(context.__readiness.includes('memory-layers:missing'));
-  assert.ok(context.__readiness.includes('memory-route:present'));
-  assert.ok(context.__readiness.includes('source:missing'));
-  assert.ok(context.__readiness.includes('source-route:present'));
-  assert.ok(context.__readiness.includes('blocked: conversation L1 disabled'));
-  assert.ok(context.__readiness.includes('Knowledge Memory'));
-  assert.ok(context.__readiness.includes('/viewer/knowledge-memory'));
-  assert.ok(context.__readiness.includes('Browser Trace API'));
-  assert.ok(context.__readiness.includes('fetcher:present'));
-  assert.ok(context.__readiness.includes('review-only: discover and fetcher proposal require evidence'));
-  assert.ok(context.__readiness.includes('Sandbox'));
-  assert.ok(context.__readiness.includes('status:present'));
-  assert.ok(context.__readiness.includes('blocked: sandbox disabled'));
-  assert.ok(context.__readiness.includes('http://192.168.1.13:7870'));
-});
-
-test('viewer renders llm ops upstream failure as blocked readiness', () => {
-  const opsJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/ops.js', 'utf8');
-  const els = new Map();
-  const document = {
-    getElementById(id) {
-      if (!els.has(id)) els.set(id, new FakeElement());
-      return els.get(id);
-    },
   };
   const source = `
 function esc(s) { return String(s || ''); }
 function stateClass(s) { return 'state-' + s; }
 var state = {ops: {
-  llmOpsConfigured: true,
-  llmOpsEnabled: true,
-  llmOpsBaseURL: 'http://192.168.1.13:8079',
-  llmStatus: null,
-  llmStatusError: 'HTTP 502: upstream unreachable',
-  runtimeReadiness: {},
+  runtimeConfigFetchError: '',
+  llmGateway: {
+    ready: true,
+    base_url: 'http://192.168.1.13:8080/v1/responses',
+    warning: '',
+  },
 }};
-` + sourceBetween(opsJs, 'function renderRuntimeDependencyReadiness', 'function llmRuntimeRoleRow') + `
-renderRuntimeDependencyReadiness();
-globalThis.__readiness = document.getElementById('runtimeReadinessCards').innerHTML;
+` + sourceBetween(opsJs, 'function renderLLMGatewayRuntimeConfig', 'function renderRuntimeDependencyReadiness') + `
+renderLLMGatewayRuntimeConfig();
+globalThis.__runtime = document.getElementById('llmRuntimeConfigCards').innerHTML;
 `;
   const context = vm.createContext({document});
   vm.runInContext(source, context);
 
-  assert.ok(context.__readiness.includes('LLM Ops'));
-  assert.ok(context.__readiness.includes('configured:present'));
-  assert.ok(context.__readiness.includes('proxy:present'));
-  assert.ok(context.__readiness.includes('live:missing'));
-  assert.ok(context.__readiness.includes('blocked: HTTP 502: upstream unreachable'));
+  assert.ok(context.__runtime.includes('RenCrow_LLM Gateway'));
+  assert.ok(context.__runtime.includes('ready'));
+  assert.ok(context.__runtime.includes('logical aliases'));
+  assert.ok(context.__runtime.includes('http://192.168.1.13:8080/v1/responses'));
 });
-
 test('viewer renders runtime config and debug snapshot fetch failures as blocked readiness', () => {
   const opsJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/ops.js', 'utf8');
   const els = new Map();
@@ -3973,7 +3658,7 @@ function stateClass(s) { return 'state-' + s; }
 var state = {ops: {
   runtimeConfigFetchError: 'HTTP 503: runtime config store unavailable',
   runtimeDebugSystemFetchError: 'HTTP 502: debug system unavailable',
-  localLLM: {enabled: true, chat_model: 'stale-chat', chat_base_url: 'http://stale:8081'},
+  llmGateway: {ready: true, base_url: 'http://stale-gateway/v1/responses'},
   runtimeReadiness: {
     stt_gateway_env_present: true,
     stt_gateway_config_present: true,
@@ -3983,16 +3668,13 @@ var state = {ops: {
   runtimeSTTBaseURL: 'http://192.168.1.33:8766',
   runtimeTTSBaseURL: 'http://192.168.1.13:7870',
   runtimeDebugSystem: null,
-  llmOpsConfigured: false,
-  llmOpsEnabled: false,
-  llmOpsBaseURL: '',
   llmStatus: null,
   llmStatusError: '',
   runtimeHealth: null,
   runtimeHealthError: '',
 }};
-` + sourceBetween(opsJs, 'function renderLocalLLMRuntimeConfig', 'function setLlmOpsStatusPre') + `
-renderLocalLLMRuntimeConfig();
+` + sourceBetween(opsJs, 'function renderLLMGatewayRuntimeConfig', 'function replaceURLPort') + `
+renderLLMGatewayRuntimeConfig();
 renderRuntimeDependencyReadiness();
 globalThis.__runtime = document.getElementById('llmRuntimeConfigCards').innerHTML;
 globalThis.__readiness = document.getElementById('runtimeReadinessCards').innerHTML;
@@ -4000,8 +3682,8 @@ globalThis.__readiness = document.getElementById('runtimeReadinessCards').innerH
   const context = vm.createContext({document});
   vm.runInContext(source, context);
 
-  assert.ok(context.__runtime.includes('local_llm runtime config unavailable: HTTP 503: runtime config store unavailable'));
-  assert.ok(!context.__runtime.includes('stale-chat'), 'stale local LLM config should not be displayed when runtime config fetch failed');
+  assert.ok(context.__runtime.includes('RenCrow_LLM Gateway runtime config unavailable: HTTP 503: runtime config store unavailable'));
+  assert.ok(!context.__runtime.includes('stale-gateway'), 'stale Gateway config should not be displayed when runtime config fetch failed');
   assert.ok(context.__readiness.includes('Runtime Config'));
   assert.ok(context.__readiness.includes('config:missing'));
   assert.ok(context.__readiness.includes('blocked: HTTP 503: runtime config store unavailable'));
@@ -4385,7 +4067,7 @@ globalThis.__wsInstances = wsInstances;
   assert.equal(sessionState.title, 'Session: stt_session_3 / STT websocket unavailable: socket refused');
 });
 
-test('viewer sends STT stop before locally finalizing latest partial on timeout', async () => {
+test('viewer reports STT timeout without promoting the latest partial', async () => {
   const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
   const source = `
 var wsInstances = [];
@@ -4448,7 +4130,7 @@ var document = {
   }
 };
 function isVoiceChatAllowed() {
-  return activeViewerTab === 'timeline' && !document.body.classList.contains('live-mode');
+  return activeViewerTab === 'timeline';
 }
 function autoResize() { globalThis.__autoResizeCalled = true; }
 function send() { globalThis.__sendCalled = true; }
@@ -4496,20 +4178,16 @@ globalThis.__sttState = sttState;
 	  context.__scheduledTimeout();
 	  await new Promise((resolve) => setImmediate(resolve));
 
-	  assert.equal(context.__input.value, 'テスト');
-	  assert.equal(context.__input.focused, true);
-	  assert.equal(context.__autoResizeCalled, true);
-	  assert.equal(context.__sendCalled, true);
-	  assert.equal(context.__sttState.finalReceived, true);
+	  assert.equal(context.__input.value, '');
+	  assert.equal(context.__input.focused, undefined);
+	  assert.equal(context.__autoResizeCalled, false);
+	  assert.equal(context.__sendCalled, false);
+	  assert.equal(context.__sttState.finalReceived, false);
 	  assert.equal(ws.closed, true);
 	  const recognitionCapture = context.__capture
-	    .filter((item) => item.type === 'partial' || item.type === 'final' || item.type === 'final_fallback')
+	    .filter((item) => item.type === 'partial' || item.type === 'final')
 	    .map((item) => ({type: item.type, payload: item.payload}));
-	  assert.deepEqual(recognitionCapture, [
-	    {type: 'partial', payload: 'テスト'},
-	    {type: 'final', payload: 'テスト'},
-	    {type: 'final_fallback', payload: 'timeout'},
-	  ]);
+  assert.deepEqual(recognitionCapture.map((item) => item.type), ['partial']);
 	});
 
 test('viewer renders home send failures as visible desk state', async () => {
@@ -4587,7 +4265,6 @@ const cameraBtn = null;
 function renderAttachmentTray() {}
 function autoResize() {}
 function buildViewerSendRequest(message) { return {message}; }
-async function ensureViewerLLMReadyForRequest() {}
 function addMsgToTimeline(ev) { globalThis.__timelineEvents.push(ev); }
 ` + sourceBetween(viewerJs, 'function send()', 'function buildViewerStatusSnapshot') + `
 globalThis.__send = send;
@@ -4645,7 +4322,7 @@ function rememberVoiceDirectTimelineJob() {}
 function isVoiceDirectTimelineResponse() { return false; }
 function addJobNotificationToTimeline() {}
 function addCoordinationTraceToTimeline() {}
-` + sourceBetween(timelineJs, 'function addMsgToTimeline', 'bindChatRouteAliasButtons();') + `
+` + sourceBetween(timelineJs, 'function addMsgToTimeline', 'function isCoordinationTraceEvent') + `
 globalThis.__addMsgToTimeline = addMsgToTimeline;
 `;
   const context = vm.createContext({
@@ -4673,7 +4350,7 @@ globalThis.__addMsgToTimeline = addMsgToTimeline;
     from: 'mio',
     to: 'user',
     timestamp: '2026-05-20T09:21:00Z',
-    content: 'Viewer send unavailable: llm ops health failed: HTTP 503: llm ops health unavailable live',
+    content: 'Viewer send unavailable: HTTP 503: RenCrow_LLM Gateway unavailable',
   });
   context.__addMsgToTimeline({
     type: 'agent.response',
@@ -4684,7 +4361,7 @@ globalThis.__addMsgToTimeline = addMsgToTimeline;
   });
 
   assert.equal(chatNode.children.length, 1);
-  assert.match(chatNode.children[0].innerHTML, /Viewer send unavailable: llm ops health failed: HTTP 503: llm ops health unavailable live/);
+  assert.match(chatNode.children[0].innerHTML, /Viewer send unavailable: HTTP 503: RenCrow_LLM Gateway unavailable/);
   assert.doesNotMatch(chatNode.children[0].innerHTML, /normal tts-synced response/);
 });
 
@@ -4708,9 +4385,10 @@ function removeThinking() {}
 function addThinkingStart() {}
 function addThinking() {}
 function isTTSSyncedSpeaker() { return true; }
+function isViewerLocalFailureMessage(ev) { return String(ev && ev.content || '').startsWith('Viewer send unavailable:'); }
 function trimTimelineNodes() {}
 function bump() {}
-` + sourceBetween(timelineJs, 'const voiceDirectTimelineJobIDs', 'bindChatRouteAliasButtons();') + `
+` + sourceBetween(timelineJs, 'const voiceDirectTimelineJobIDs', 'function matchesCoordinationTraceFilters') + `
 globalThis.__addMsgToTimeline = addMsgToTimeline;
 `;
   const context = vm.createContext({
@@ -4761,73 +4439,6 @@ globalThis.__addMsgToTimeline = addMsgToTimeline;
   assert.equal(chatNode.children.length, 1);
   assert.match(chatNode.children[0].innerHTML, /承知いたしました。/);
   assert.doesNotMatch(chatNode.children[0].innerHTML, /voice_direct/);
-});
-
-test('viewer llm ops readiness failures keep response bodies', async () => {
-  const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
-  const requested = [];
-  const source = `
-const CHAT_ROUTE_ALIASES = {
-  worker: {label: 'Worker', baseURL: 'http://127.0.0.1:8082', model: 'Worker', routePrefix: '/ops'},
-};
-function refreshLlmOpsStatus() {}
-` + sourceBetween(timelineJs, 'function viewerLLMStartSelectionForRequest', 'function addMsgToTimeline') + `
-globalThis.__ensure = ensureViewerLLMReadyForRequest;
-`;
-  const responses = [
-    {ok: false, status: 503, body: 'llm ops health unavailable'},
-    {ok: true, status: 200, body: '{}'},
-    {ok: false, status: 502, body: 'llm ops status unavailable'},
-    {ok: true, status: 200, body: '{}'},
-    {ok: true, status: 200, body: '{"roles":{"Chat":{"health_ok":true},"Worker":{"health_ok":false}}}'},
-    {ok: false, status: 409, body: 'llm ops stop refused'},
-    {ok: true, status: 200, body: '{}'},
-    {ok: true, status: 200, body: '{"roles":{"Chat":{"health_ok":true},"Worker":{"health_ok":false}}}'},
-    {ok: true, status: 200, body: 'stopped'},
-    {ok: false, status: 503, body: 'llm ops start unavailable'},
-  ];
-  const context = vm.createContext({
-    fetch(url) {
-      requested.push(url);
-      const next = responses.shift();
-      return Promise.resolve({
-        ok: next.ok,
-        status: next.status,
-        text: () => Promise.resolve(next.body),
-        json: () => Promise.resolve(JSON.parse(next.body)),
-      });
-    },
-  });
-  vm.runInContext(source, context);
-
-  await assert.rejects(
-    () => context.__ensure({model_alias: 'Worker'}),
-    /llm ops health failed: HTTP 503: llm ops health unavailable/,
-  );
-  await assert.rejects(
-    () => context.__ensure({model_alias: 'Worker'}),
-    /llm ops status failed: HTTP 502: llm ops status unavailable/,
-  );
-  await assert.rejects(
-    () => context.__ensure({model_alias: 'Worker'}),
-    /llm ops stop failed: HTTP 409: llm ops stop refused/,
-  );
-  await assert.rejects(
-    () => context.__ensure({model_alias: 'Worker'}),
-    /llm ops start failed: HTTP 503: llm ops start unavailable/,
-  );
-  assert.deepEqual(requested, [
-    '/viewer/llm-ops/health',
-    '/viewer/llm-ops/health',
-    '/viewer/llm-ops/status',
-    '/viewer/llm-ops/health',
-    '/viewer/llm-ops/status',
-    '/viewer/llm-ops/stop',
-    '/viewer/llm-ops/health',
-    '/viewer/llm-ops/status',
-    '/viewer/llm-ops/stop',
-    '/viewer/llm-ops/start',
-  ]);
 });
 
 test('viewer stt artifact persistence errors keep response bodies', async () => {
@@ -5065,147 +4676,6 @@ globalThis.__refreshIdleLogs = refreshIdleLogs;
   assert.doesNotMatch(body, /stale summary/);
 });
 
-test('viewer live mode renders idlechat topic fetch failures', async () => {
-  const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
-  const requested = [];
-  let intervalCallback = null;
-  const elements = new Map();
-  const document = {
-    body: {classList: {add() {}}},
-    getElementById(id) {
-      if (!elements.has(id)) elements.set(id, new FakeElement(id));
-      return elements.get(id);
-    },
-  };
-  const source = `
-const panels = {timeline: true};
-function switchTab(tab) { globalThis.__switchedTab = tab; }
-` + sourceBetween(viewerJs, 'function initLiveMode', 'function initEvidenceFromQuery') + `
-globalThis.__initLiveMode = initLiveMode;
-`;
-  const context = vm.createContext({
-    document,
-    window: {location: {href: 'http://127.0.0.1:18790/viewer?mode=live'}},
-    URL,
-    setInterval(fn) {
-      intervalCallback = fn;
-      return 1;
-    },
-    fetch(url) {
-      requested.push(url);
-      return Promise.resolve({
-        ok: false,
-        status: 503,
-        text: () => Promise.resolve('idlechat status unavailable'),
-      });
-    },
-  });
-  vm.runInContext(source, context);
-  assert.equal(context.__initLiveMode(), true);
-  await intervalCallback();
-
-  assert.equal(context.__switchedTab, 'timeline');
-  assert.deepEqual(requested, ['/viewer/idlechat/status']);
-  assert.match(document.getElementById('liveTopicText').textContent, /IdleChat status unavailable: HTTP 503: idlechat status unavailable/);
-});
-
-test('viewer live mode does not start optional hidden panel refreshes', () => {
-  const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
-  const requested = [];
-  const intervals = [];
-  const elements = new Map();
-  const bodyClasses = new Set();
-  const bodyClassList = {
-    add(name) { bodyClasses.add(name); },
-    remove(name) { bodyClasses.delete(name); },
-    contains(name) { return bodyClasses.has(name); },
-  };
-  const document = {
-    body: {classList: bodyClassList},
-    getElementById(id) {
-      if (!elements.has(id)) elements.set(id, new FakeElement(id));
-      return elements.get(id);
-    },
-  };
-  const optionalNames = [
-    'refreshOpsData',
-    'refreshToolHarnessData',
-    'refreshDCIData',
-    'refreshSandboxData',
-    'refreshSkillGovernanceData',
-    'refreshWorkstreamData',
-    'refreshRevenueData',
-    'refreshPersonaObservationData',
-    'refreshBrowserTraceAPIData',
-    'refreshComplexityHotspotData',
-    'refreshAIWorkflowData',
-    'refreshSuperAgentData',
-    'refreshHeavyWorkerRuntimeDiagnostics',
-    'refreshKnowledgeMemoryData',
-    'refreshRuntimeBlockedRouteData',
-    'refreshEvidence',
-    'refreshEvidenceSummary',
-    'refreshVerification',
-    'refreshVerificationSummary',
-    'refreshMemorySnapshot',
-    'refreshRecallTraces',
-  ];
-  const optionalStubs = optionalNames.map((name) => `
-function ${name}() { fetch('/optional/${name}'); }
-`).join('\n');
-  const source = `
-let derivedDirty = false;
-const state = {idleChat: {selectedMode: 'manual', selectedView: 'live'}};
-const panels = {timeline: true};
-${optionalStubs}
-function switchTab(tab) { globalThis.__switchedTab = tab; }
-function refreshDerivedViews() {}
-function bindHomeDeskControls() {}
-function bindDevelopDeskControls() {}
-function bindInstructionsDeskControls() {}
-function bindReportsDeskControls() {}
-function renderIdleChat() {}
-function setIdleSelectedMode() {}
-function setIdleSelectedView() {}
-function refreshIdleStatus() { fetch('/viewer/idlechat/status'); }
-function refreshIdleLogs() { fetch('/viewer/idlechat/logs?limit=20'); }
-function refreshViewerStatus() { fetch('/viewer/status'); }
-function refreshDebugSystem() { fetch('/viewer/debug/system'); }
-function registerWebMCPTools() {}
-function connect() {}
-function refreshLlmOpsStatus() {}
-` + sourceBetween(viewerJs, 'function initLiveMode', 'function initEvidenceFromQuery') + `
-globalThis.__initLiveMode = initLiveMode;
-globalThis.__refreshOptionalPanelData = refreshOptionalPanelData;
-globalThis.__setOptionalPanelRefreshIntervals = setOptionalPanelRefreshIntervals;
-`;
-  const context = vm.createContext({
-    document,
-    window: {location: {href: 'http://127.0.0.1:18790/viewer?mode=live'}},
-    URL,
-    setInterval(fn, ms) {
-      intervals.push({fn: fn.name || 'anonymous', ms});
-      return intervals.length;
-    },
-    fetch(url) {
-      requested.push(String(url));
-      return Promise.resolve({ok: true, json: () => Promise.resolve({ok: true})});
-    },
-    console: {error() {}, info() {}},
-  });
-
-  vm.runInContext(source, context);
-  assert.equal(context.__initLiveMode(), true);
-  context.__refreshOptionalPanelData();
-  context.__setOptionalPanelRefreshIntervals();
-
-  assert.equal(context.__switchedTab, 'timeline');
-  assert.equal(bodyClassList.contains('live-mode'), true);
-  assert.deepEqual(requested, []);
-  assert.equal(requested.some((url) => url.startsWith('/optional/')), false);
-  assert.equal(intervals.some((item) => optionalNames.includes(item.fn)), false);
-});
-
 test('viewer home tab does not start sandbox or verification diagnostics refreshes', () => {
   const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
   const requested = [];
@@ -5267,58 +4737,6 @@ globalThis.__refreshOptionalPanelData = refreshOptionalPanelData;
   assert.ok(requested.includes('/optional/evidence'));
 });
 
-test('viewer chat send ignores stale route alias and leaves routing to orchestrator', () => {
-  const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
-  const store = new Map();
-  const context = vm.createContext({
-    document: {querySelectorAll: () => []},
-    localStorage: {
-      getItem: (key) => store.get(key) || null,
-      setItem: (key, value) => store.set(key, String(value)),
-      removeItem: (key) => store.delete(key),
-    },
-    applyRoleTargetToMessage: (message) => message,
-  });
-  vm.runInContext(timelineJs, context);
-
-  vm.runInContext("localStorage.setItem('chatRouteAlias.selected', 'heavy')", context);
-  const heavyReq = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('原因を調べて'))", context));
-  assert.deepEqual(heavyReq, {message: '原因を調べて', to: 'mio'});
-  assert.equal(store.has('chatRouteAlias.selected'), false);
-
-  const explicitReq = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('/wild 物語にして'))", context));
-  assert.deepEqual(explicitReq, {message: '/wild 物語にして'});
-});
-
-test('viewer chat send ignores runtime route aliases and leaves routing to orchestrator', () => {
-  const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
-  const store = new Map();
-  const context = vm.createContext({
-    document: {querySelectorAll: () => []},
-    localStorage: {
-      getItem: (key) => store.get(key) || null,
-      setItem: (key, value) => store.set(key, String(value)),
-      removeItem: (key) => store.delete(key),
-    },
-    applyRoleTargetToMessage: (message) => message,
-  });
-  vm.runInContext(timelineJs, context);
-
-  vm.runInContext(`syncChatRouteAliasesFromRuntimeConfig({
-    enabled: true,
-    worker_base_url: 'http://192.168.1.31:8082',
-    worker_model: 'WorkerRuntime',
-    heavy_base_url: 'http://192.168.1.31:8083',
-    heavy_model: 'HeavyRuntime',
-    wild_base_url: 'http://192.168.1.31:8084',
-    wild_model: 'WildRuntime'
-  })`, context);
-  vm.runInContext("localStorage.setItem('chatRouteAlias.selected', 'heavy')", context);
-  const heavyReq = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('原因を調べて'))", context));
-  assert.deepEqual(heavyReq, {message: '原因を調べて', to: 'mio'});
-  assert.equal(store.has('chatRouteAlias.selected'), false);
-});
-
 test('viewer chat send uses Shiro and Midori recipient contracts', () => {
   const rolesJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/roles.js', 'utf8');
   const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
@@ -5338,8 +4756,6 @@ test('viewer chat send uses Shiro and Midori recipient contracts', () => {
 
   const req = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('作業手順を相談したい'))", context));
   assert.deepEqual(req, {message: '作業手順を相談したい', to: 'shiro'});
-  assert.equal(Object.hasOwn(req, 'model_alias'), false);
-  assert.equal(Object.hasOwn(req, 'route_prefix'), false);
   assert.equal(req.message.startsWith('/ops '), false);
 
   store.set('roleSelector.selectedTarget', 'midori');
@@ -5347,7 +4763,7 @@ test('viewer chat send uses Shiro and Midori recipient contracts', () => {
   assert.deepEqual(midoriReq, {message: '物語を相談したい', to: 'midori'});
 });
 
-test('viewer chat legacy coder role target remains explicit route command', () => {
+test('viewer chat coder role target remains an explicit route command', () => {
   const rolesJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/roles.js', 'utf8');
   const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
   const store = new Map([['roleSelector.selectedTarget', 'coder1']]);
@@ -5367,100 +4783,4 @@ test('viewer chat legacy coder role target remains explicit route command', () =
   const req = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('実装方針を出して'))", context));
   assert.deepEqual(req, {message: '/code1 実装方針を出して'});
   assert.equal(Object.hasOwn(req, 'to'), false);
-  assert.equal(Object.hasOwn(req, 'model_alias'), false);
-  assert.equal(Object.hasOwn(req, 'route_prefix'), false);
-});
-
-test('viewer starts selected llm before sending alias request', async () => {
-  const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
-  const calls = [];
-  const context = vm.createContext({
-    document: {querySelectorAll: () => []},
-    localStorage: {getItem: () => null, setItem: () => {}, removeItem: () => {}},
-    fetch: async (url, opts = {}) => {
-      calls.push({url, opts});
-      if (url === '/viewer/llm-ops/health') {
-        return {
-          ok: true,
-          json: async () => ({status: 'ok', daemon: 'llm-mgmt'}),
-          text: async () => '{"status":"ok","daemon":"llm-mgmt"}',
-        };
-      }
-      if (url === '/viewer/llm-ops/status') {
-        return {
-          ok: true,
-          json: async () => ({roles: {Chat: {health_ok: true}, Heavy: {health_ok: false}}}),
-        };
-      }
-      if (url === '/viewer/llm-ops/stop') {
-        return {ok: true, text: async () => '{"stopped":["Worker","Wild"],"halted":true}'};
-      }
-      if (url === '/viewer/llm-ops/start') {
-        return {ok: true, text: async () => '{"ok_all":true}'};
-      }
-      throw new Error('unexpected fetch: ' + url);
-    },
-    refreshLlmOpsStatus: () => {},
-  });
-  vm.runInContext(timelineJs, context);
-
-  await vm.runInContext(`ensureViewerLLMReadyForRequest({
-    message: '原因を調べて',
-    model_alias: 'Heavy',
-    base_url: 'http://127.0.0.1:8083',
-    model: 'Heavy',
-    route_prefix: '/analyze'
-  })`, context);
-
-  assert.equal(calls.length, 4);
-  assert.equal(calls[0].url, '/viewer/llm-ops/health');
-  assert.equal(calls[1].url, '/viewer/llm-ops/status');
-  assert.equal(calls[2].url, '/viewer/llm-ops/stop');
-  assert.equal(calls[2].opts.method, 'POST');
-  assert.deepEqual(JSON.parse(calls[2].opts.body), {roles: ['Worker', 'Wild']});
-  assert.equal(calls[3].url, '/viewer/llm-ops/start');
-  assert.equal(calls[3].opts.method, 'POST');
-  assert.deepEqual(JSON.parse(calls[3].opts.body), {selection: 'Heavy'});
-});
-
-test('viewer stops Worker and Heavy before starting Wild', async () => {
-  const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
-  const calls = [];
-  const context = vm.createContext({
-    document: {querySelectorAll: () => []},
-    localStorage: {getItem: () => null, setItem: () => {}, removeItem: () => {}},
-    fetch: async (url, opts = {}) => {
-      calls.push({url, opts});
-      if (url === '/viewer/llm-ops/health') {
-        return {ok: true, json: async () => ({status: 'ok'}), text: async () => '{"status":"ok"}'};
-      }
-      if (url === '/viewer/llm-ops/status') {
-        return {ok: true, json: async () => ({roles: {Chat: {health_ok: true}, Worker: {health_ok: true}, Heavy: {health_ok: false}, Wild: {health_ok: false}}})};
-      }
-      if (url === '/viewer/llm-ops/stop') {
-        return {ok: true, text: async () => '{"stopped":["Worker","Heavy"],"halted":true}'};
-      }
-      if (url === '/viewer/llm-ops/start') {
-        return {ok: true, text: async () => '{"ok_all":true}'};
-      }
-      throw new Error('unexpected fetch: ' + url);
-    },
-    refreshLlmOpsStatus: () => {},
-  });
-  vm.runInContext(timelineJs, context);
-
-  await vm.runInContext(`ensureViewerLLMReadyForRequest({
-    message: '物語にして',
-    model_alias: 'Wild',
-    base_url: 'http://127.0.0.1:8084',
-    model: 'Wild',
-    route_prefix: '/wild'
-  })`, context);
-
-  assert.equal(calls[0].url, '/viewer/llm-ops/health');
-  assert.equal(calls[1].url, '/viewer/llm-ops/status');
-  assert.equal(calls[2].url, '/viewer/llm-ops/stop');
-  assert.deepEqual(JSON.parse(calls[2].opts.body), {roles: ['Worker', 'Heavy']});
-  assert.equal(calls[3].url, '/viewer/llm-ops/start');
-  assert.deepEqual(JSON.parse(calls[3].opts.body), {selection: 'Wild'});
 });

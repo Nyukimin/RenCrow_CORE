@@ -4,16 +4,14 @@ server:
   tls:
     enabled: false
 
-ollama:
-  base_url: "http://127.0.0.1:9"
-  model: "browser-e2e-disabled"
-  max_context: 8192
-
-local_llm:
-  enabled: false
-
-session:
-  storage_dir: "${RENCROW_E2E_RUNTIME}/sessions"
+storage:
+  memory:
+    session_dir: "${RENCROW_E2E_RUNTIME}/sessions"
+    operation_memory_dir: "${RENCROW_E2E_RUNTIME}/memory"
+    cold_export_dir: "${RENCROW_E2E_RUNTIME}/exports/parquet"
+  databases:
+    advisor: "${RENCROW_E2E_RUNTIME}/workspace/logs/advisor.db"
+    revenue: "${RENCROW_E2E_RUNTIME}/workspace/revenue.db"
 
 worker:
   auto_commit: false
@@ -28,7 +26,6 @@ worker:
 
 prompts_dir: "${RENCROW_E2E_REPO}/prompts"
 workspace_dir: "${RENCROW_E2E_RUNTIME}/workspace"
-operation_memory_dir: "${RENCROW_E2E_RUNTIME}/memory"
 self_source_dir: "${RENCROW_E2E_REPO}"
 
 viewer_log:
@@ -41,7 +38,9 @@ idle_chat:
   enabled: false
 conversation:
   enabled: false
-  l1_sqlite_path: "${RENCROW_E2E_RUNTIME}/workspace/l1.db"
+storage:
+  databases:
+    conversation_l1: "${RENCROW_E2E_RUNTIME}/workspace/l1.db"
 heartbeat:
   enabled: false
 distributed:
@@ -85,7 +84,6 @@ knowledge_memory:
 advisor:
   storage: "jsonl"
   log_path: "${RENCROW_E2E_RUNTIME}/workspace/logs/advisor"
-  sqlite_path: "${RENCROW_E2E_RUNTIME}/workspace/logs/advisor.db"
 
 knowledge_relation:
   enabled: true
@@ -103,6 +101,5 @@ revenue:
   enabled: true
   storage: "jsonl"
   log_path: "${RENCROW_E2E_RUNTIME}/workspace/logs/revenue"
-  sqlite_path: "${RENCROW_E2E_RUNTIME}/workspace/revenue.db"
   prohibit_success_guarantee: true
   require_customer_voice_permission: true

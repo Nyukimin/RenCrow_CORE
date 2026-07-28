@@ -2,13 +2,15 @@
 
 This directory defines RenCrow_CORE-internal contract package boundaries.
 
-For RenCrow_CORE Ver0.80, `modules/*` contains public contracts, DTOs, events, pure policy, and state ownership metadata. It does not require every implementation body to live under `modules/*` yet. Existing runtime implementations may remain in `cmd/rencrow`, `internal/application`, `internal/infrastructure`, or `internal/adapter` as `legacy-body` while the contract boundary is made explicit.
+`modules/*` contains public contracts, DTOs, events, pure policy, and state
+ownership metadata. Concrete composition remains in `cmd/rencrow`, with
+application, infrastructure, and adapter implementations under `internal/*`.
 
 These local Go packages are not the implementation bodies of the independent
 RenCrow_LLM, RenCrow_STT, RenCrow_TTS, RenCrow_Tools, or other sibling repositories.
 External module ownership is defined by
 [`docs/01_システム概要.md`](../docs/01_システム概要.md). The local packages only
-hold CORE-side contracts, pure policy, compatibility planning, and projections
+hold CORE-side contracts, pure policy, request planning, and projections
 needed to connect those modules.
 
 ## Layout
@@ -47,13 +49,13 @@ Do not place source under `.git/worktrees/*`; that path is Git metadata, not a t
 - [DESIGN.md](DESIGN.md): module goal, ownership, dependency direction, and state ownership.
 - [CURRENT_MAP.md](CURRENT_MAP.md): current code ownership map from existing `internal/...` and `cmd/...` packages.
 - [DEPENDENCY_RULES.md](DEPENDENCY_RULES.md): allowed and forbidden module dependencies.
-- [MIGRATION_PLAN.md](MIGRATION_PLAN.md): incremental migration phases and validation gates.
 
 ## Implementation Status
 
 This directory now contains module contract packages for `core`, `chat`, `worker`, `llm`, `tts`, `stt`, `voicechat`, `browseractor`, and `webgather`.
 `modules/core.CurrentModuleDescriptors()` also exposes virtual state-observer descriptors such as `tts.playback` and `stt.viewer_input`; those are manifest entries, not separate source directories.
-The first compatibility adapters live in `internal/adapter/modulebridge` so existing Chat orchestration, providers, and Worker execution can be exercised through the module contracts without a big-bang move.
+`internal/adapter/modulebridge` connects Chat orchestration, module providers,
+and Worker execution to these contracts.
 Runtime module metadata is exposed at `/viewer/modules/manifest`.
 Runtime module health is exposed at `/viewer/modules/health` and includes a core aggregate `status`/`ready` result plus per-module reports.
 LLM provider role diagnostics are exposed at `/viewer/modules/llm/diagnostics` without executing generation.
@@ -61,10 +63,10 @@ Worker execution contract diagnostics are exposed at `/viewer/modules/worker/dia
 TTS provider diagnostics are exposed at `/viewer/modules/tts/diagnostics` without executing synthesis.
 STT provider diagnostics are exposed at `/viewer/modules/stt/diagnostics` without executing transcription.
 
-Feature HTTP route registration now enters through `internal/features/*/registrar.go` for the Ver0.80 feature groups. This registrar layer is a dependency-handoff boundary only; the existing module contracts, adapter bridges, handler bodies, providers, CLI commands, and runtime jobs are not moved by that handoff.
-
-This does not mean every implementation file has moved into module-named packages.
-Implementation migration remains incremental so behavior, logs, Viewer/TTS/STT state, and tests can remain stable.
+Feature HTTP route registration enters through
+`internal/features/*/registrar.go`. This registrar layer is the HTTP
+dependency-handoff boundary; module contracts, adapter bridges, handlers, CLI
+commands, and runtime jobs keep their owners listed in `CURRENT_MAP.md`.
 
 ## RenCrow_CORE Ver0.80 Public Seed Notes
 

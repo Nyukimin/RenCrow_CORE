@@ -37,7 +37,7 @@ func LoadPrompts(baseDir, workspaceDir string) *LoadedPrompts {
 		IdleChatAgents:   copyMap(defaultIdleChatAgents),
 	}
 
-	// Step 1: prompts/ から legacy prompt files を読み込む。
+	// Step 1: prompts/ から共通prompt filesを読み込む。
 	// character bundle は運用中の workspace Mio だけを正本にするため、
 	// repo 側 prompts/characters は読まない。
 	loadPromptsFromDir(baseDir, p, false, nil)
@@ -265,9 +265,9 @@ var defaultClassifier = `あなたはタスク分類器です。ユーザーの�
 - OPS: 運用操作、実行、デプロイ、ビルド
 - RESEARCH: 情報収集、ドキュメント検索、リサーチ
 - CODE: 汎用コーディング（実装、修正、リファクタリング）
-- CODE1: 仕様設計向けコーディング（DeepSeek等）
-- CODE2: 実装向けコーディング（OpenAI等）
-- CODE3: 高品質コーディング/推論（Claude API専用）
+- CODE1: 仕様設計向けコーディング
+- CODE2: 実装向けコーディング
+- CODE3: 高品質コーディング/推論
 
 補足:
 - 依存不足、PATH不整合、インストール、ビルド失敗、実行環境調整は原則として OPS

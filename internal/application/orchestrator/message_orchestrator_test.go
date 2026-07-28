@@ -1109,7 +1109,7 @@ func TestMessageOrchestrator_ProcessMessage_ChatError(t *testing.T) {
 	mio := &mockMioAgent{
 		decision: routing.NewDecision(routing.RouteCHAT, 1.0, "Chat"),
 		chatFunc: func(ctx context.Context, t task.Task) (string, error) {
-			return "", fmt.Errorf("Ollama unavailable")
+			return "", fmt.Errorf("RenCrow_LLM Gateway unavailable")
 		},
 	}
 
@@ -1118,7 +1118,7 @@ func TestMessageOrchestrator_ProcessMessage_ChatError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for chat failure")
 	}
-	if !strings.Contains(err.Error(), "Ollama unavailable") {
+	if !strings.Contains(err.Error(), "RenCrow_LLM Gateway unavailable") {
 		t.Errorf("error should contain root cause, got: %v", err)
 	}
 }

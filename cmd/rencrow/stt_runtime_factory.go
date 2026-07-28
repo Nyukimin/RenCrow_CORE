@@ -16,31 +16,28 @@ import (
 // registration here so the main server does not depend on STT wiring details.
 
 type sttRuntime struct {
-	Provider     sttinfra.Provider
-	Handler      *sttinfra.Handler
-	ProviderURL  string
-	GatewayURL   string
-	WSHandler    http.Handler
-	DebugOptions viewer.DebugSystemOptions
-	Module       modulestt.Provider
+	Provider       sttinfra.Provider
+	Handler        *sttinfra.Handler
+	GatewayHTTPURL string
+	WSHandler      http.Handler
+	DebugOptions   viewer.DebugSystemOptions
+	Module         modulestt.Provider
 }
 
 func buildSTTRuntime(cfg *config.Config) sttRuntime {
 	provider := buildSTTProvider(cfg)
-	providerURL := inferSTTProviderURLFromConfig(cfg)
-	gatewayURL := inferSTTBaseURLFromConfig(cfg)
+	gatewayHTTPURL := inferSTTGatewayHTTPURLFromConfig(cfg)
 	return sttRuntime{
-		Provider:    provider,
-		Handler:     sttinfra.NewHandler(provider),
-		ProviderURL: providerURL,
-		GatewayURL:  gatewayURL,
-		WSHandler:   resolveSTTWebSocketHandlerWithProvider(provider, providerURL, ""),
-		Module:      modulebridge.NewRuntimeSTTProviderAdapter(provider),
+		Provider:       provider,
+		Handler:        sttinfra.NewHandler(provider),
+		GatewayHTTPURL: gatewayHTTPURL,
+		WSHandler:      handleSTTWebSocketBridge(sttGatewayStreamURLFromConfig(cfg)),
+		Module:         modulebridge.NewRuntimeSTTProviderAdapter(provider),
 		DebugOptions: viewer.DebugSystemOptions{
 			TTSBaseURL:    inferTTSDebugBaseURLFromConfig(cfg),
 			TTSHealthPath: inferTTSDebugHealthPathFromConfig(cfg),
 			STTBaseURL:    inferSTTBaseURLFromConfig(cfg),
-			STTStreamURL:  sttStreamURLFromConfig(cfg),
+			STTStreamURL:  "/stt",
 		},
 	}
 }

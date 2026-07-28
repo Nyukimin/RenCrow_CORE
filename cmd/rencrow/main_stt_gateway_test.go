@@ -15,29 +15,6 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func TestInferSTTGatewayURL_PrioritizesExplicitGateway(t *testing.T) {
-	got := inferSTTGatewayURL(" ws://192.168.1.36:8090/stt ", "ws://192.168.1.36:8090/stt-ws")
-	want := "ws://192.168.1.36:8090/stt"
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestInferSTTGatewayURL_FallsBackToRencrowSTTURL(t *testing.T) {
-	got := inferSTTGatewayURL("", " ws://192.168.1.36:8090/stt ")
-	want := "ws://192.168.1.36:8090/stt"
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestInferSTTGatewayURL_EmptyWhenBothUnset(t *testing.T) {
-	got := inferSTTGatewayURL(" ", " ")
-	if got != "" {
-		t.Fatalf("expected empty gateway url, got %q", got)
-	}
-}
-
 func TestRegisterSTTRoutes_RegistersPrimaryAndCompatiblePaths(t *testing.T) {
 	mux := http.NewServeMux()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -46,7 +23,7 @@ func TestRegisterSTTRoutes_RegistersPrimaryAndCompatiblePaths(t *testing.T) {
 
 	registerSTTRoutes(mux, handler)
 
-	for _, path := range []string{"/stt", "/stt-ws", "/ws"} {
+	for _, path := range []string{"/stt"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -56,34 +33,35 @@ func TestRegisterSTTRoutes_RegistersPrimaryAndCompatiblePaths(t *testing.T) {
 	}
 }
 
-func TestInferSTTProviderURLFromConfig_UsesRenCrowSTTGateway(t *testing.T) {
+func TestInferSTTGatewayHTTPURLFromConfig_UsesRenCrowSTTGateway(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.STT.GatewayBaseURL = "http://192.168.1.33:8766/"
 
-	got := inferSTTProviderURLFromConfig(cfg)
+	got := inferSTTGatewayHTTPURLFromConfig(cfg)
 	want := "http://192.168.1.33:8766/v1/audio/transcriptions"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
 
-func TestInferSTTProviderURLFromConfig_UsesDefaultGateway(t *testing.T) {
+func TestInferSTTGatewayHTTPURLFromConfig_UsesDefaultGateway(t *testing.T) {
 	cfg := &config.Config{}
 
-	got := inferSTTProviderURLFromConfig(cfg)
+	got := inferSTTGatewayHTTPURLFromConfig(cfg)
 	want := "http://127.0.0.1:8766/v1/audio/transcriptions"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
 
-func TestSTTStreamURLFromConfig_DoesNotExposeBackendStreaming(t *testing.T) {
+func TestSTTGatewayStreamURLFromConfig_UsesRenCrowSTTGateway(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.STT.GatewayBaseURL = "http://192.168.1.33:8766"
 
-	got := sttStreamURLFromConfig(cfg)
-	if got != "" {
-		t.Fatalf("CORE should expose only its same-origin /stt route, got external stream %q", got)
+	got := sttGatewayStreamURLFromConfig(cfg)
+	want := "ws://192.168.1.33:8766/ws/transcribe"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
 
@@ -146,7 +124,7 @@ func TestSTTWebSocketBridgeE2E_RelaysStartStopTextAndPCM16Binary(t *testing.T) {
 
 	mux := http.NewServeMux()
 	gatewayURL := "ws" + strings.TrimPrefix(gateway.URL, "http")
-	registerSTTRoutes(mux, handleSTTWebSocketBridge(gatewayURL, ""))
+	registerSTTRoutes(mux, handleSTTWebSocketBridge(gatewayURL))
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 
@@ -178,7 +156,7 @@ func TestSTTWebSocketBridgeE2E_RelaysStartStopTextAndPCM16Binary(t *testing.T) {
 	}
 }
 
-func TestSTTWebSocketBridgeE2E_ConvertsGatewayFinalNoiseToErrorWithoutHTTPFallback(t *testing.T) {
+func TestSTTWebSocketBridgeE2E_ConvertsGatewayFinalNoiseToError(t *testing.T) {
 	pcm := rawPCM16Chunk()
 	gatewayDone := make(chan error, 1)
 	gateway := httptest.NewServer(websocket.Handler(func(conn *websocket.Conn) {
@@ -218,22 +196,9 @@ func TestSTTWebSocketBridgeE2E_ConvertsGatewayFinalNoiseToErrorWithoutHTTPFallba
 	}))
 	defer gateway.Close()
 
-	providerCalled := make(chan struct{}, 1)
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		providerCalled <- struct{}{}
-		if err := r.ParseMultipartForm(16 << 20); err != nil {
-			t.Fatalf("parse multipart: %v", err)
-		}
-		if _, _, err := r.FormFile("file"); err != nil {
-			t.Fatalf("file missing: %v", err)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"text": "切手"})
-	}))
-	defer provider.Close()
-
 	mux := http.NewServeMux()
 	gatewayURL := "ws" + strings.TrimPrefix(gateway.URL, "http")
-	registerSTTRoutes(mux, handleSTTWebSocketBridge(gatewayURL, provider.URL))
+	registerSTTRoutes(mux, handleSTTWebSocketBridge(gatewayURL))
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 
@@ -259,11 +224,6 @@ func TestSTTWebSocketBridgeE2E_ConvertsGatewayFinalNoiseToErrorWithoutHTTPFallba
 	}
 	if !strings.Contains(final, `"type":"error"`) || !strings.Contains(final, modulestt.ProviderTranscriptErrorMessage) {
 		t.Fatalf("unexpected bridge error event: %s", final)
-	}
-	select {
-	case <-providerCalled:
-		t.Fatal("bridge should not call HTTP fallback for gateway final noise")
-	default:
 	}
 	if err := <-gatewayDone; err != nil {
 		t.Fatalf("gateway relay: %v", err)
@@ -306,16 +266,9 @@ func TestSTTWebSocketBridgeE2E_WaitsForRenCrowSTTFinalAfterStop(t *testing.T) {
 	}))
 	defer gateway.Close()
 
-	providerCalled := make(chan struct{}, 1)
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		providerCalled <- struct{}{}
-		_ = json.NewEncoder(w).Encode(map[string]string{"text": "bridge fallback should not be used"})
-	}))
-	defer provider.Close()
-
 	mux := http.NewServeMux()
 	gatewayURL := "ws" + strings.TrimPrefix(gateway.URL, "http")
-	registerSTTRoutes(mux, handleSTTWebSocketBridge(gatewayURL, provider.URL))
+	registerSTTRoutes(mux, handleSTTWebSocketBridge(gatewayURL))
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 
@@ -346,17 +299,12 @@ func TestSTTWebSocketBridgeE2E_WaitsForRenCrowSTTFinalAfterStop(t *testing.T) {
 	if !strings.Contains(final, `"type":"final"`) || !strings.Contains(final, `"text":"RenCrow_STT final"`) {
 		t.Fatalf("unexpected final event: %s", final)
 	}
-	select {
-	case <-providerCalled:
-		t.Fatal("bridge should not use HTTP fallback while waiting for RenCrow_STT final")
-	default:
-	}
 	if err := <-gatewayDone; err != nil {
 		t.Fatalf("gateway relay: %v", err)
 	}
 }
 
-func TestSTTWebSocketBridgeE2E_DoesNotPromoteCachedPartialOnStop(t *testing.T) {
+func TestSTTWebSocketBridgeE2E_ForwardsRenCrowSTTFinalAfterPartial(t *testing.T) {
 	pcm := rawPCM16Chunk()
 	gatewayDone := make(chan error, 1)
 	gateway := httptest.NewServer(websocket.Handler(func(conn *websocket.Conn) {
@@ -401,16 +349,9 @@ func TestSTTWebSocketBridgeE2E_DoesNotPromoteCachedPartialOnStop(t *testing.T) {
 	}))
 	defer gateway.Close()
 
-	providerCalled := make(chan struct{}, 1)
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		providerCalled <- struct{}{}
-		_ = json.NewEncoder(w).Encode(map[string]string{"text": "HTTP fallback should not be used"})
-	}))
-	defer provider.Close()
-
 	mux := http.NewServeMux()
 	gatewayURL := "ws" + strings.TrimPrefix(gateway.URL, "http")
-	registerSTTRoutes(mux, handleSTTWebSocketBridge(gatewayURL, provider.URL))
+	registerSTTRoutes(mux, handleSTTWebSocketBridge(gatewayURL))
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 
@@ -453,14 +394,6 @@ func TestSTTWebSocketBridgeE2E_DoesNotPromoteCachedPartialOnStop(t *testing.T) {
 	}
 	if ev["type"] != "final" || ev["text"] != "RenCrow_STT owns final" {
 		t.Fatalf("unexpected final event: %+v", ev)
-	}
-	if ev["stt_fallback_required"] == true || ev["source"] == "cached_partial" || ev["fallback_reason"] == "partial_fast_path" {
-		t.Fatalf("bridge should not emit provisional final metadata, got %+v", ev)
-	}
-	select {
-	case <-providerCalled:
-		t.Fatal("bridge should not call HTTP fallback when RenCrow_STT owns finalization")
-	default:
 	}
 	if err := <-gatewayDone; err != nil {
 		t.Fatalf("gateway relay: %v", err)

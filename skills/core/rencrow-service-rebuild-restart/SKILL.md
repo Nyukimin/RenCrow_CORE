@@ -28,7 +28,7 @@
 7. `make install` を実行する。
 8. `systemctl --user start rencrow.service` を実行する。
 9. `systemctl --user status rencrow.service --no-pager` と `/health` を確認する。
-10. 必要に応じて `/viewer/runtime-config`、`/viewer/llm-ops/status`、対象 Viewer route を確認する。
+10. 必要に応じて `/viewer/runtime-config`、対象 Viewer route を確認する。
 
 ## Verification
 

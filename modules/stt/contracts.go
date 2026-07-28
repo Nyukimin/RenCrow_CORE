@@ -67,39 +67,39 @@ type ProviderHealthSnapshot struct {
 }
 
 type ViewerInputSnapshot struct {
-	BaseURL              string `json:"base_url,omitempty"`
-	StreamURL            string `json:"stream_url,omitempty"`
-	ChatInputEndpoint    string `json:"chat_input_endpoint,omitempty"`
-	ClientLogPath        string `json:"client_log_path,omitempty"`
-	LatestWAVPath        string `json:"latest_wav_path,omitempty"`
-	ArchiveDir           string `json:"archive_dir,omitempty"`
-	AutoTestScriptPath   string `json:"autotest_script_path,omitempty"`
-	AutoTestOutputPath   string `json:"autotest_output_path,omitempty"`
-	ProviderURL          string `json:"provider_url,omitempty"`
-	GatewayURL           string `json:"gateway_url,omitempty"`
-	ProviderConfigured   bool   `json:"provider_configured"`
-	GatewayConfigured    bool   `json:"gateway_configured"`
-	WebSocketConfigured  bool   `json:"websocket_configured"`
-	TranscriptSource     string `json:"transcript_source,omitempty"`
-	TranscriptInputType  string `json:"transcript_input_type,omitempty"`
-	TranscriptInjectPath string `json:"transcript_inject_path,omitempty"`
+	BaseURL               string `json:"base_url,omitempty"`
+	StreamURL             string `json:"stream_url,omitempty"`
+	ChatInputEndpoint     string `json:"chat_input_endpoint,omitempty"`
+	ClientLogPath         string `json:"client_log_path,omitempty"`
+	LatestWAVPath         string `json:"latest_wav_path,omitempty"`
+	ArchiveDir            string `json:"archive_dir,omitempty"`
+	AutoTestScriptPath    string `json:"autotest_script_path,omitempty"`
+	AutoTestOutputPath    string `json:"autotest_output_path,omitempty"`
+	GatewayHTTPURL        string `json:"gateway_http_url,omitempty"`
+	GatewayURL            string `json:"gateway_url,omitempty"`
+	GatewayHTTPConfigured bool   `json:"gateway_http_configured"`
+	GatewayConfigured     bool   `json:"gateway_configured"`
+	WebSocketConfigured   bool   `json:"websocket_configured"`
+	TranscriptSource      string `json:"transcript_source,omitempty"`
+	TranscriptInputType   string `json:"transcript_input_type,omitempty"`
+	TranscriptInjectPath  string `json:"transcript_inject_path,omitempty"`
 }
 
 type ViewerInputRuntimeConfig struct {
-	BaseURL             string
-	StreamURL           string
-	ProviderURL         string
-	GatewayURL          string
-	ProviderAvailable   bool
-	WebSocketAvailable  bool
-	ChatInputEndpoint   string
-	ClientLogPath       string
-	LatestWAVPath       string
-	ArchiveDir          string
-	AutoTestScriptPath  string
-	AutoTestOutputPath  string
-	TranscriptSource    string
-	TranscriptInputType string
+	BaseURL              string
+	StreamURL            string
+	GatewayHTTPURL       string
+	GatewayURL           string
+	GatewayHTTPAvailable bool
+	WebSocketAvailable   bool
+	ChatInputEndpoint    string
+	ClientLogPath        string
+	LatestWAVPath        string
+	ArchiveDir           string
+	AutoTestScriptPath   string
+	AutoTestOutputPath   string
+	TranscriptSource     string
+	TranscriptInputType  string
 }
 
 type ViewerInputObserver interface {

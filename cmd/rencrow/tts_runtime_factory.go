@@ -44,10 +44,10 @@ func buildPrimaryTTSProvider(cfg *config.Config) (ttsProviderSelection, bool) {
 	}.withModule(cfg.TTS.OutputDir), true
 }
 
-func buildFallbackTTSSynthesizer(cfg *config.Config) *ttsinfra.FallbackSynthesizer {
+func buildTTSSynthesizer(cfg *config.Config) ttsinfra.Provider {
 	selection, ok := buildPrimaryTTSProvider(cfg)
 	if !ok {
 		return nil
 	}
-	return ttsinfra.NewFallbackSynthesizer(selection.Provider)
+	return selection.Provider
 }

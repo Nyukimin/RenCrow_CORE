@@ -26,7 +26,7 @@ func defaultMioGenerationOptions() MioGenerationOptions {
 	}
 }
 
-// WithGenerationOptions replaces Mio's generation policy while preserving legacy defaults.
+// WithGenerationOptions replaces Mio's generation policy while preserving configured defaults.
 func (m *MioAgent) WithGenerationOptions(options MioGenerationOptions) *MioAgent {
 	if options.MaxTokens <= 0 {
 		options.MaxTokens = defaultMioMaxTokens

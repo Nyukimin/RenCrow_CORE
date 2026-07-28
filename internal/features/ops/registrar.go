@@ -12,8 +12,7 @@ type Dependencies struct {
 }
 
 // Routes groups cross-cutting Ops, job, backlog, and scheduler handlers.
-// supplied by cmd/rencrow. Handler implementations remain in legacy packages
-// during Ver0.80 migration; this registrar owns only route registration.
+// The handlers are supplied by cmd/rencrow.
 type Routes struct {
 	Status            http.HandlerFunc
 	Agents            http.HandlerFunc
@@ -36,8 +35,7 @@ type Routes struct {
 	WebGatherDoctor http.HandlerFunc
 }
 
-// RegisterRoutes reserves the feature route boundary. Existing routes remain in
-// their legacy packages until a phase migrates them through this registrar.
+// RegisterRoutes registers handlers at the feature route boundary.
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
 	registerRoute(mux, "/viewer/status", routes.Status)

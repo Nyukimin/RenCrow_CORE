@@ -43,8 +43,6 @@ modules/stt, internal/infrastructure/stt, cmd/rencrow/stt_runtime_*.go
 - `/stt/file`
 - `/stt/chat-input`
 - `/stt`
-- `/stt-ws`
-- `/ws`
 
 ## Migration Boundary
 

@@ -25,12 +25,6 @@ server:
   port: 8080
   host: "0.0.0.0"
 
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-
-session:
-  storage_dir: "./data/sessions"
 
 log:
   level: "info"
@@ -55,14 +49,6 @@ log:
 		t.Errorf("Expected host '0.0.0.0', got '%s'", cfg.Server.Host)
 	}
 
-	if cfg.Ollama.BaseURL != "http://localhost:11434" {
-		t.Errorf("Expected Ollama base URL, got '%s'", cfg.Ollama.BaseURL)
-	}
-
-	if cfg.Ollama.Model != "rencrow-v1" {
-		t.Errorf("Expected deprecated Ollama model to remain readable, got '%s'", cfg.Ollama.Model)
-	}
-
 	if cfg.Session.StorageDir != "./data/sessions" {
 		t.Errorf("Expected session storage dir, got '%s'", cfg.Session.StorageDir)
 	}
@@ -75,10 +61,6 @@ func TestLoadConfig_LineChannelPolicy(t *testing.T) {
 	configContent := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-session:
-  storage_dir: "./data/sessions"
 line:
   channel_secret: "secret"
   access_token: "token"
@@ -148,92 +130,6 @@ func TestResolveChannelPolicyConfigDisabled(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_OllamaLegacyModelFieldsAreIgnored(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.yaml")
-
-	configContent := `
-server:
-  port: 8080
-
-ollama:
-  base_url: "http://localhost:11434"
-  chat_model: "Chat"
-  worker_model: "Worker"
-
-session:
-  storage_dir: "./data/sessions"
-`
-
-	os.WriteFile(configPath, []byte(configContent), 0644)
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	if cfg.Ollama.Model != "" {
-		t.Errorf("Expected legacy ollama model fields to be ignored, got '%s'", cfg.Ollama.Model)
-	}
-}
-
-func TestLoadConfig_WithEnvVars(t *testing.T) {
-	os.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
-	os.Setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
-	os.Setenv("OPENAI_API_KEY", "test-openai-key")
-	defer func() {
-		os.Unsetenv("ANTHROPIC_API_KEY")
-		os.Unsetenv("DEEPSEEK_API_KEY")
-		os.Unsetenv("OPENAI_API_KEY")
-	}()
-
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.yaml")
-
-	configContent := `
-server:
-  port: 8080
-
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-
-claude:
-  api_key: "${ANTHROPIC_API_KEY}"
-
-deepseek:
-  api_key: "${DEEPSEEK_API_KEY}"
-
-openai:
-  api_key: "${OPENAI_API_KEY}"
-
-session:
-  storage_dir: "./data/sessions"
-
-log:
-  level: "info"
-`
-
-	os.WriteFile(configPath, []byte(configContent), 0644)
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	if cfg.Claude.APIKey != "test-anthropic-key" {
-		t.Errorf("Expected Anthropic API key from env, got '%s'", cfg.Claude.APIKey)
-	}
-
-	if cfg.DeepSeek.APIKey != "test-deepseek-key" {
-		t.Errorf("Expected DeepSeek API key from env, got '%s'", cfg.DeepSeek.APIKey)
-	}
-
-	if cfg.OpenAI.APIKey != "test-openai-key" {
-		t.Errorf("Expected OpenAI API key from env, got '%s'", cfg.OpenAI.APIKey)
-	}
-}
-
 func TestLoadConfig_FileNotFound(t *testing.T) {
 	_, err := LoadConfig("/nonexistent/config.yaml")
 	if err == nil {
@@ -268,11 +164,6 @@ func TestLoadConfig_DefaultValues(t *testing.T) {
 server:
   port: 8080
 
-ollama:
-  base_url: "http://localhost:11434"
-
-session:
-  storage_dir: "./data/sessions"
 `
 
 	os.WriteFile(configPath, []byte(minimalContent), 0644)
@@ -280,11 +171,6 @@ session:
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	// Deprecated Ollama settings receive no runtime defaults.
-	if cfg.Ollama.Model != "" {
-		t.Errorf("Expected Ollama model to remain unset, got '%s'", cfg.Ollama.Model)
 	}
 
 	if cfg.Log.Level == "" {
@@ -571,11 +457,6 @@ func TestLoadConfig_ToolHarnessOverride(t *testing.T) {
 server:
   port: 8080
 
-ollama:
-  base_url: "http://localhost:11434"
-
-session:
-  storage_dir: "./data/sessions"
 
 workspace_dir: "./workspace"
 
@@ -614,11 +495,6 @@ func TestLoadConfig_ToolHarnessInvalidMode(t *testing.T) {
 server:
   port: 8080
 
-ollama:
-  base_url: "http://localhost:11434"
-
-session:
-  storage_dir: "./data/sessions"
 
 tool_harness:
   mode: unsafe
@@ -639,17 +515,14 @@ func TestLoadConfig_DCIOverride(t *testing.T) {
 server:
   port: 8080
 
-ollama:
-  base_url: "http://localhost:11434"
-
-session:
-  storage_dir: "./data/sessions"
+storage:
+  databases:
+    dci: "./data/custom_dci.db"
 
 dci:
   enabled: false
   storage: sqlite
   trace_path: "./logs/custom_dci.jsonl"
-  sqlite_path: "./data/custom_dci.db"
   corpus_allowlist:
     - "docs/10_新仕様"
   corpus_denylist:
@@ -700,10 +573,6 @@ func TestLoadConfig_DCIInvalidStorage(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-session:
-  storage_dir: "./data/sessions"
 dci:
   storage: memory
 `
@@ -722,16 +591,14 @@ func TestLoadConfig_ConversationSQLitePaths(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-session:
-  storage_dir: "./data/sessions"
 conversation:
   enabled: true
   redis_url: "redis://localhost:6379"
-  l1_sqlite_path: "./data/l1_memory.db"
-  archive_sqlite_path: "./data/memory_archive.db"
   vectordb_url: "localhost:6334"
+storage:
+  databases:
+    conversation_l1: "./data/l1_memory.db"
+    conversation_archive: "./data/memory_archive.db"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -740,70 +607,11 @@ conversation:
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
-	if cfg.Conversation.L1SQLitePath != "./data/l1_memory.db" {
-		t.Fatalf("unexpected l1 sqlite path: %s", cfg.Conversation.L1SQLitePath)
+	if cfg.Storage.Databases.ConversationL1 != "./data/l1_memory.db" {
+		t.Fatalf("unexpected l1 sqlite path: %s", cfg.Storage.Databases.ConversationL1)
 	}
-	if cfg.Conversation.ArchiveSQLitePath != "./data/memory_archive.db" {
-		t.Fatalf("unexpected archive sqlite path: %s", cfg.Conversation.ArchiveSQLitePath)
-	}
-}
-
-func TestLoadConfig_ConversationLegacyArchiveSQLitePathUsesSafeSQLiteArchivePath(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "conversation_legacy_archive.yaml")
-
-	content := `
-server:
-  port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-session:
-  storage_dir: "./data/sessions"
-conversation:
-  enabled: true
-  redis_url: "redis://localhost:6379"
-  duckdb_path: "./data/memory.duckdb"
-  vectordb_url: "localhost:6334"
-`
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-	if cfg.Conversation.ArchiveSQLitePath != "data/memory_archive.db" {
-		t.Fatalf("legacy DuckDB path must not be opened as SQLite: %s", cfg.Conversation.ArchiveSQLitePath)
-	}
-}
-
-func TestLoadConfig_ConversationArchiveSQLitePathTakesPrecedenceOverLegacyKey(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "conversation_archive_precedence.yaml")
-
-	content := `
-server:
-  port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-session:
-  storage_dir: "./data/sessions"
-conversation:
-  enabled: true
-  redis_url: "redis://localhost:6379"
-  archive_sqlite_path: "./data/chosen_archive.db"
-  duckdb_path: "./data/legacy.duckdb"
-  vectordb_url: "localhost:6334"
-`
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-	if cfg.Conversation.ArchiveSQLitePath != "./data/chosen_archive.db" {
-		t.Fatalf("archive_sqlite_path must take precedence: %s", cfg.Conversation.ArchiveSQLitePath)
+	if cfg.Storage.Databases.ConversationArchive != "./data/memory_archive.db" {
+		t.Fatalf("unexpected archive sqlite path: %s", cfg.Storage.Databases.ConversationArchive)
 	}
 }
 
@@ -814,10 +622,6 @@ func TestLoadConfig_OperationMemoryDirDefault(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-session:
-  storage_dir: "./data/sessions"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -844,11 +648,10 @@ func TestLoadConfig_OperationMemoryDirOverride(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-session:
-  storage_dir: "./data/sessions"
-operation_memory_dir: "/tmp/rencrow-operation-memory"
+storage:
+  memory:
+    session_dir: "./data/sessions"
+    operation_memory_dir: "/tmp/rencrow-operation-memory"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -863,38 +666,6 @@ operation_memory_dir: "/tmp/rencrow-operation-memory"
 	}
 }
 
-func TestLoadConfig_LocalLLMDefaults(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "local_llm.yaml")
-
-	content := `
-server:
-  port: 8080
-session:
-  storage_dir: "./data/sessions"
-local_llm:
-  enabled: true
-  base_url: "http://127.0.0.1:8080"
-`
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-	if !cfg.LocalLLM.Enabled {
-		t.Fatal("expected local_llm enabled")
-	}
-	if cfg.LocalLLM.Provider != "" || cfg.LocalLLM.ChatModel != "" || cfg.LocalLLM.WorkerModel != "" || cfg.LocalLLM.TimeoutSec != 0 {
-		t.Fatalf("deprecated local_llm settings must not receive runtime defaults: %+v", cfg.LocalLLM)
-	}
-	if cfg.LocalLLMWarmupEnabled() {
-		t.Fatal("deprecated local_llm warmup must remain disabled")
-	}
-}
-
 func TestLoadConfig_MioGeneration(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "mio_generation.yaml")
@@ -902,11 +673,6 @@ func TestLoadConfig_MioGeneration(t *testing.T) {
 	content := `
 server:
   port: 8080
-session:
-  storage_dir: "./data/sessions"
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
 mio:
   input_audio:
     prompt: "音声の内容を理解し、日本語で短く自然に返答してください。"
@@ -953,11 +719,6 @@ func TestLoadConfig_RejectsMioChatThinkingEnabled(t *testing.T) {
 	content := `
 server:
   port: 8080
-session:
-  storage_dir: "./data/sessions"
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
 mio:
   generation:
     chat_template_kwargs:
@@ -980,11 +741,6 @@ func TestLoadConfig_WebwrightFetchDefaultsToRenCrowLLMGateway(t *testing.T) {
 	content := `
 server:
   port: 8080
-session:
-  storage_dir: "./data/sessions"
-local_llm:
-  enabled: true
-  worker_base_url: "http://192.168.1.207:8082"
 webwright_fetch:
   enabled: true
 `
@@ -1017,111 +773,6 @@ webwright_fetch:
 	}
 }
 
-func TestLoadConfig_RuntimeTopologyModuleReferences(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "runtime_topology_refs.yaml")
-
-	content := `
-server:
-  port: 8080
-session:
-  storage_dir: "./data/sessions"
-runtime_topology:
-  modules:
-    RenCraw_LLM:
-      roles:
-        mgmt:
-          url: http://192.168.1.6:8079
-        chat:
-          url: http://192.168.1.6:8081
-        worker:
-          url: http://192.168.1.6:8082
-        chatworker:
-          url: http://192.168.1.6:8082
-        coder1:
-          url: http://192.168.1.6:8082
-        coder2:
-          url: http://192.168.1.72:18082
-        coder3:
-          url: http://192.168.1.6:8082
-        coder4:
-          url: http://192.168.1.6:8082
-local_llm:
-  enabled: true
-  provider: local_openai
-  base_url: ${module:RenCraw_LLM.endpoints.chat}
-  chat_base_url: ${module:RenCraw_LLM.endpoints.chat}
-  worker_base_url: ${module:RenCraw_LLM.endpoints.worker}
-  chat_worker_base_url: ${module:RenCraw_LLM.endpoints.chatworker}
-webwright_fetch:
-  enabled: true
-  responses_endpoint: ${module:RenCraw_LLM.endpoints.worker}/v1/responses
-llm_ops:
-  enabled: true
-  base_url: ${module:RenCraw_LLM.endpoints.mgmt}
-coder1:
-  enabled: true
-  name: aka
-  provider: local_openai
-  model: Coder1
-  base_url: ${module:RenCraw_LLM.endpoints.coder1}
-coder2:
-  enabled: true
-  name: ao
-  provider: local_openai
-  model: Coder2
-  base_url: ${module:RenCraw_LLM.endpoints.coder2}
-coder3:
-  enabled: true
-  name: kin
-  provider: local_openai
-  model: Coder3
-  base_url: ${module:RenCraw_LLM.endpoints.coder3}
-coder4:
-  enabled: true
-  name: gin
-  provider: local_openai
-  model: Coder4
-  base_url: ${module:RenCraw_LLM.endpoints.coder4}
-`
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	if cfg.LocalLLM.ChatBaseURL != "http://192.168.1.6:8081" {
-		t.Fatalf("unexpected chat base URL: %s", cfg.LocalLLM.ChatBaseURL)
-	}
-	if cfg.LocalLLM.WorkerBaseURL != "http://192.168.1.6:8082" {
-		t.Fatalf("unexpected worker base URL: %s", cfg.LocalLLM.WorkerBaseURL)
-	}
-	if cfg.LocalLLM.ChatWorkerBaseURL != "http://192.168.1.6:8082" {
-		t.Fatalf("unexpected chatworker base URL: %s", cfg.LocalLLM.ChatWorkerBaseURL)
-	}
-	if cfg.LLMOps.BaseURL != "http://192.168.1.6:8079" {
-		t.Fatalf("unexpected llm_ops base URL: %s", cfg.LLMOps.BaseURL)
-	}
-	if cfg.WebwrightFetch.ResponsesEndpoint != "http://127.0.0.1:8090/v1/responses" {
-		t.Fatalf("unexpected webwright responses endpoint: %s", cfg.WebwrightFetch.ResponsesEndpoint)
-	}
-	for name, got := range map[string]string{
-		"coder1": cfg.Coder1.BaseURL,
-		"coder3": cfg.Coder3.BaseURL,
-		"coder4": cfg.Coder4.BaseURL,
-	} {
-		if got != "http://192.168.1.6:8082" {
-			t.Fatalf("%s base URL = %s", name, got)
-		}
-	}
-	if cfg.Coder2.BaseURL != "http://192.168.1.72:18082" {
-		t.Fatalf("coder2 role override was not applied: %s", cfg.Coder2.BaseURL)
-	}
-}
-
 func TestLoadConfig_WebwrightFetchKeepsExplicitUvxFrom(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "webwright_fetch_uvx.yaml")
@@ -1129,11 +780,6 @@ func TestLoadConfig_WebwrightFetchKeepsExplicitUvxFrom(t *testing.T) {
 	content := `
 server:
   port: 8080
-session:
-  storage_dir: "./data/sessions"
-local_llm:
-  enabled: true
-  worker_base_url: "http://192.168.1.207:8082"
 webwright_fetch:
   enabled: true
   uvx_from: "git+https://github.com/microsoft/Webwright.git"
@@ -1158,17 +804,6 @@ func TestLoadConfig_WebGatherSearXNGBaseURL(t *testing.T) {
 	content := `
 server:
   port: 8080
-session:
-  storage_dir: "./data/sessions"
-local_llm:
-  enabled: true
-  provider: local_openai
-  base_url: "http://127.0.0.1:8081"
-  chat_model: Chat
-  worker_model: Worker
-  heavy_model: Heavy
-  wild_model: Wild
-  timeout_sec: 30
 web_gather:
   searxng_base_url: "http://127.0.0.1:8888"
 `
@@ -1192,17 +827,6 @@ func TestLoadConfig_WebGatherRejectsInvalidSearXNGBaseURL(t *testing.T) {
 	content := `
 server:
   port: 8080
-session:
-  storage_dir: "./data/sessions"
-local_llm:
-  enabled: true
-  provider: local_openai
-  base_url: "http://127.0.0.1:8081"
-  chat_model: Chat
-  worker_model: Worker
-  heavy_model: Heavy
-  wild_model: Wild
-  timeout_sec: 30
 web_gather:
   searxng_base_url: "127.0.0.1:8888"
 `
@@ -1221,10 +845,6 @@ func TestLoadConfig_AudioRouterValidation(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-session:
-  storage_dir: "./data/sessions"
 audio_router:
   enabled: true
   sse_url: "http://127.0.0.1:18790/audio-router/events"
@@ -1251,17 +871,12 @@ func TestLoadConfig_SecurityNetworkSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
 security:
   enabled: true
   policy_mode: "strict"
   network_scope: "allowlist"
   network_allowlist:
-    - "api.openai.com"
+    - "api.example.com"
   audit:
     backend: "jsonl"
     path: "logs/execution_audit.jsonl"
@@ -1277,7 +892,7 @@ security:
 	if cfg.Security.NetworkScope != "allowlist" {
 		t.Fatalf("expected network_scope allowlist, got %s", cfg.Security.NetworkScope)
 	}
-	if len(cfg.Security.NetworkAllowlist) != 1 || cfg.Security.NetworkAllowlist[0] != "api.openai.com" {
+	if len(cfg.Security.NetworkAllowlist) != 1 || cfg.Security.NetworkAllowlist[0] != "api.example.com" {
 		t.Fatalf("unexpected network_allowlist: %+v", cfg.Security.NetworkAllowlist)
 	}
 }
@@ -1288,18 +903,15 @@ func TestLoadConfig_SandboxSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
+storage:
+  databases:
+    sandbox: "./logs/sandbox.db"
 security:
   enabled: true
 sandbox:
   enabled: true
   storage: "sqlite"
   root: "sandbox/workstreams"
-  sqlite_path: "./logs/sandbox.db"
   deny_outside_sandbox_write: true
   promotion:
     require_diff: true
@@ -1343,16 +955,13 @@ func TestLoadConfig_SkillGovernanceSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
+storage:
+  databases:
+    skill_governance: "./logs/skills.db"
 skill_governance:
   enabled: true
   storage: "sqlite"
   registry_path: "./logs/skills"
-  sqlite_path: "./logs/skills.db"
   skill_roots:
     - "skills"
     - "workspace/skills"
@@ -1428,16 +1037,13 @@ func TestLoadConfig_WorkstreamSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
+storage:
+  databases:
+    workstream: "./logs/workstream.db"
 workstream:
   enabled: true
   storage: "sqlite"
   log_path: "./logs/workstream"
-  sqlite_path: "./logs/workstream.db"
   vault_root: "./vault/workstreams"
   require_success_criteria: true
   require_verification: true
@@ -1499,16 +1105,13 @@ func TestLoadConfig_RevenueSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
+storage:
+  databases:
+    revenue: "./logs/revenue.db"
 revenue:
   enabled: true
   storage: "sqlite"
   log_path: "./logs/revenue"
-  sqlite_path: "./logs/revenue.db"
   prohibit_success_guarantee: true
   require_customer_voice_permission: true
 `
@@ -1565,16 +1168,13 @@ func TestLoadConfig_PersonaArchitectureSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
+storage:
+  databases:
+    persona_architecture: "./logs/persona.db"
 persona_architecture:
   enabled: true
   storage: "sqlite"
   log_path: "./logs/persona"
-  sqlite_path: "./logs/persona.db"
   character_root: "./persona"
   trigger_category_path: "persona_triggers"
   canonical_response_path: "persona_canonicals"
@@ -1666,16 +1266,13 @@ func TestLoadConfig_BrowserTraceToAPISettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
+storage:
+  databases:
+    browser_trace_to_api: "./data/browser_trace_to_api.db"
 browser_trace_to_api:
   enabled: true
   storage: sqlite
   log_path: "./logs/browser_trace_to_api"
-  sqlite_path: "./data/browser_trace_to_api.db"
   read_only_only: true
   require_terms_review: true
   generate_openapi: true
@@ -1767,16 +1364,13 @@ func TestLoadConfig_ComplexityHotspotSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
+storage:
+  databases:
+    complexity_hotspot: "./data/complexity.db"
 complexity_hotspot:
   enabled: true
   storage: "sqlite"
   log_path: "./logs/complexity"
-  sqlite_path: "./data/complexity.db"
   default_mode: "report_only"
   max_hotspots: 12
   exclude_dirs:
@@ -1836,16 +1430,13 @@ func TestLoadConfig_SuperAgentHarnessSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
+storage:
+  databases:
+    super_agent_harness: "./data/superagent.db"
 superagent_harness:
   enabled: true
   storage: "sqlite"
   log_path: "./logs/superagent"
-  sqlite_path: "./data/superagent.db"
   max_parallel_subagents: 3
   max_context_pack_tokens: 2500
   run_queue_scheduler_enabled: true
@@ -1913,16 +1504,13 @@ func TestLoadConfig_AIWorkflowSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
+storage:
+  databases:
+    ai_workflow: "./data/ai_workflow.db"
 ai_workflow:
   enabled: true
   storage: "sqlite"
   log_path: "./logs/ai_workflow"
-  sqlite_path: "./data/ai_workflow.db"
   project_memory_root: ".project-ai"
   worktree_base_dir: "../ai-worktrees"
   required_before_modify: true
@@ -2118,11 +1706,6 @@ func TestLoadConfig_TTSSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
 tts:
   enabled: true
   output_dir: "./workspace/tts"
@@ -2165,7 +1748,6 @@ tts:
 func TestTTSGatewayValidationRejectsPhysicalTargetStyleURL(t *testing.T) {
 	cfg := &Config{
 		Server:  ServerConfig{Port: 8080},
-		Ollama:  OllamaConfig{BaseURL: "http://127.0.0.1:11434", Model: "test"},
 		Session: SessionConfig{StorageDir: "./sessions"},
 		TTS: TTSConfig{
 			Enabled:        true,
@@ -2188,11 +1770,6 @@ server:
     enabled: true
     cert_file: "./certs/dev.crt"
     key_file: "./certs/dev.key"
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
 stt:
   enabled: true
   gateway_base_url: "http://127.0.0.1:8766"
@@ -2225,46 +1802,15 @@ stt:
 	}
 }
 
-func TestLoadConfig_STTProviderURLEnvironmentDoesNotBypassGateway(t *testing.T) {
-	t.Setenv("STT_PROVIDER_URL", "http://127.0.0.1:8080/inference")
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "stt_env.yaml")
-	content := `
-server:
-  port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
-`
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-	if cfg.STT.GatewayBaseURL != "http://127.0.0.1:8766" {
-		t.Fatalf("STT_PROVIDER_URL must not bypass RenCrow_STT Gateway, got %+v", cfg.STT)
-	}
-}
-
 func TestLoadConfig_TTSLocalHTTPSDefaultsToTLSSkipVerify(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "tts_local_https.yaml")
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-session:
-  storage_dir: "./data/sessions"
 tts:
   enabled: true
-  http_base_url: "https://127.0.0.1:8770"
+  gateway_base_url: "https://127.0.0.1:8770"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
@@ -2277,7 +1823,7 @@ tts:
 		t.Fatal("expected tls_skip_verify to auto-enable for local https")
 	}
 	if cfg.TTS.GatewayURL() != "https://127.0.0.1:8770" {
-		t.Fatalf("legacy http_base_url was not migrated to GatewayURL: %q", cfg.TTS.GatewayURL())
+		t.Fatalf("unexpected GatewayURL: %q", cfg.TTS.GatewayURL())
 	}
 	if cfg.TTS.Speed != 1.2 {
 		t.Fatalf("unexpected tts speed: %v", cfg.TTS.Speed)
@@ -2304,10 +1850,6 @@ func TestLoadConfig_VTuberSettings(t *testing.T) {
 	content := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-session:
-  storage_dir: "./data/sessions"
 vtuber:
   enabled: true
   tick_interval_ms: 100
@@ -2366,10 +1908,6 @@ func TestConfig_Validate(t *testing.T) {
 					Port: 8080,
 					Host: "0.0.0.0",
 				},
-				Ollama: OllamaConfig{
-					BaseURL: "http://localhost:11434",
-					Model:   "rencrow-v1",
-				},
 				Session: SessionConfig{
 					StorageDir: "./data/sessions",
 				},
@@ -2390,7 +1928,6 @@ func TestConfig_Validate(t *testing.T) {
 			name: "Invalid security network_scope",
 			config: &Config{
 				Server:  ServerConfig{Port: 8080},
-				Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 				Session: SessionConfig{StorageDir: "./data/sessions"},
 				Security: SecurityConfig{
 					Enabled:      true,
@@ -2408,7 +1945,6 @@ func TestConfig_Validate(t *testing.T) {
 			name: "Valid security policy_mode dev",
 			config: &Config{
 				Server:  ServerConfig{Port: 8080},
-				Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 				Session: SessionConfig{StorageDir: "./data/sessions"},
 				Security: SecurityConfig{
 					Enabled:    true,
@@ -2447,7 +1983,6 @@ func TestConfig_Validate(t *testing.T) {
 			name: "Invalid viewer log retention",
 			config: &Config{
 				Server:  ServerConfig{Port: 8080},
-				Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 				Session: SessionConfig{StorageDir: "./data/sessions"},
 				ViewerLog: ViewerLogConfig{
 					Enabled:           true,
@@ -2459,86 +1994,14 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "Missing Ollama base URL",
-			config: &Config{
-				Server: ServerConfig{
-					Port: 8080,
-				},
-				Ollama: OllamaConfig{
-					BaseURL: "",
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "Missing Ollama model",
-			config: &Config{
-				Server: ServerConfig{
-					Port: 8080,
-				},
-				Ollama: OllamaConfig{
-					BaseURL: "http://localhost:11434",
-					Model:   "",
-				},
-			},
-			wantErr: true,
-		},
-		{
 			name: "Missing session storage dir",
 			config: &Config{
 				Server: ServerConfig{
 					Port: 8080,
 				},
-				Ollama: OllamaConfig{
-					BaseURL: "http://localhost:11434",
-					Model:   "rencrow-v1",
-				},
 				Session: SessionConfig{
 					StorageDir: "",
 				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "Valid local LLM without Ollama",
-			config: &Config{
-				Server: ServerConfig{Port: 8080},
-				LocalLLM: LocalLLMConfig{
-					Enabled:           true,
-					Provider:          "local_openai",
-					BaseURL:           "http://127.0.0.1:8080",
-					ChatModel:         "Chat",
-					WorkerModel:       "Worker",
-					HeavyModel:        "Heavy",
-					WildModel:         "Wild",
-					TimeoutSec:        120,
-					GlobalConcurrency: 2,
-					ModelConcurrency:  1,
-				},
-				Session: SessionConfig{StorageDir: "./data/sessions"},
-				Coder1:  CoderConfig{Name: "aka"},
-				Coder2:  CoderConfig{Name: "ao"},
-				Coder3:  CoderConfig{Name: "kin"},
-				Coder4:  CoderConfig{Name: "gin"},
-			},
-			wantErr: false,
-		},
-		{
-			name: "Local LLM missing base URL",
-			config: &Config{
-				Server: ServerConfig{Port: 8080},
-				LocalLLM: LocalLLMConfig{
-					Enabled:           true,
-					Provider:          "local_openai",
-					ChatModel:         "Chat",
-					WorkerModel:       "Worker",
-					HeavyModel:        "Heavy",
-					WildModel:         "Wild",
-					TimeoutSec:        120,
-					GlobalConcurrency: 2,
-					ModelConcurrency:  1,
-				},
-				Session: SessionConfig{StorageDir: "./data/sessions"},
 			},
 			wantErr: true,
 		},
@@ -2558,7 +2021,6 @@ func TestConfig_Validate_Distributed(t *testing.T) {
 	base := func() *Config {
 		cfg := &Config{
 			Server:  ServerConfig{Port: 8080},
-			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		// Coder1-4 の最小限の設定（バリデーションを通すため）
@@ -2616,7 +2078,6 @@ func TestConfig_Validate_IdleChat(t *testing.T) {
 	base := func() *Config {
 		cfg := &Config{
 			Server:  ServerConfig{Port: 8080},
-			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		// Coder1-4 の最小限の設定（バリデーションを通すため）
@@ -2672,12 +2133,6 @@ func TestLoadConfig_IdleChatDefaults(t *testing.T) {
 server:
   port: 8080
 
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-
-session:
-  storage_dir: "./data/sessions"
 
 idle_chat:
   enabled: true
@@ -2762,11 +2217,6 @@ func TestLoadConfig_IdleChatXSourceRequiresConfiguredToken(t *testing.T) {
 	configContent := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "Chat"
-session:
-  storage_dir: "./data"
 idle_chat:
   enabled: true
   news_sources:
@@ -2806,12 +2256,6 @@ func TestLoadConfig_IdleChatOtherSpeakersDefaultThinkTrue(t *testing.T) {
 server:
   port: 8080
 
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-
-session:
-  storage_dir: "./data/sessions"
 
 idle_chat:
   enabled: true
@@ -2839,11 +2283,6 @@ func TestConversationConfig_DefaultValues(t *testing.T) {
 	configContent := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "Chat"
-session:
-  storage_dir: "./data"
 `
 	os.WriteFile(configPath, []byte(configContent), 0644)
 	cfg, err := LoadConfig(configPath)
@@ -2873,11 +2312,6 @@ func TestConversationConfig_ProfilePromotionCanBeDisabled(t *testing.T) {
 	configContent := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "Chat"
-session:
-  storage_dir: "./data"
 conversation:
   profile_promotion_enabled: false
 `
@@ -2891,28 +2325,20 @@ conversation:
 	}
 }
 
-func TestConversationConfig_EmbedAndSummaryModel(t *testing.T) {
+func TestConversationConfig_EmbedModel(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
 
 	configContent := `
 server:
   port: 8080
-ollama:
-  base_url: "http://localhost:11434"
-  model: "Chat"
-session:
-  storage_dir: "./data"
 conversation:
   enabled: true
   redis_url: "redis://localhost:6379"
   vectordb_url: "localhost:6334"
   vector_collection: "rencrow_memory_3584"
   vector_dimension: 3584
-  embed_provider: "ollama"
-  embed_base_url: "http://localhost:11434"
   embed_model: "nomic-embed-text"
-  summary_model: "Chat"
 `
 	os.WriteFile(configPath, []byte(configContent), 0644)
 	cfg, err := LoadConfig(configPath)
@@ -2929,15 +2355,6 @@ conversation:
 	if cfg.Conversation.VectorDimension != 3584 {
 		t.Errorf("expected VectorDimension 3584, got %d", cfg.Conversation.VectorDimension)
 	}
-	if cfg.Conversation.EmbedProvider != "ollama" {
-		t.Errorf("expected EmbedProvider 'ollama', got %q", cfg.Conversation.EmbedProvider)
-	}
-	if cfg.Conversation.EmbedBaseURL != "http://localhost:11434" {
-		t.Errorf("expected EmbedBaseURL 'http://localhost:11434', got %q", cfg.Conversation.EmbedBaseURL)
-	}
-	if cfg.Conversation.SummaryModel != "Chat" {
-		t.Errorf("expected SummaryModel 'Chat', got %q", cfg.Conversation.SummaryModel)
-	}
 }
 
 // TestGlossaryConfig_DefaultValues はGlossaryConfigのデフォルト値を検証
@@ -2950,12 +2367,6 @@ func TestGlossaryConfig_DefaultValues(t *testing.T) {
 server:
   port: 8080
 
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-
-session:
-  storage_dir: "./data/sessions"
 `
 
 	err := os.WriteFile(configPath, []byte(minimalContent), 0644)
@@ -3011,16 +2422,12 @@ func TestGlossaryConfig_CustomValues(t *testing.T) {
 server:
   port: 8080
 
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-
-session:
-  storage_dir: "./data/sessions"
+storage:
+  databases:
+    glossary: "/custom/path/glossary.db"
 
 glossary:
   enabled: true
-  db_path: "/custom/path/glossary.db"
   refresh_interval_hr: 12
   max_entries: 20
   feed_urls:
@@ -3073,12 +2480,6 @@ func TestCoderConfig_DefaultValues(t *testing.T) {
 server:
   port: 8080
 
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-
-session:
-  storage_dir: "./data/sessions"
 `
 
 	err := os.WriteFile(configPath, []byte(minimalContent), 0644)
@@ -3092,12 +2493,6 @@ session:
 	}
 
 	// Coder1 デフォルト値検証
-	if cfg.Coder1.Provider != "deepseek" {
-		t.Errorf("Coder1.Provider: expected 'deepseek', got '%s'", cfg.Coder1.Provider)
-	}
-	if cfg.Coder1.Model != "deepseek-coder" {
-		t.Errorf("Coder1.Model: expected 'deepseek-coder', got '%s'", cfg.Coder1.Model)
-	}
 	if cfg.Coder1.Name != "aka" {
 		t.Errorf("Coder1.Name: expected 'aka', got '%s'", cfg.Coder1.Name)
 	}
@@ -3109,12 +2504,6 @@ session:
 	}
 
 	// Coder2 デフォルト値検証
-	if cfg.Coder2.Provider != "openai" {
-		t.Errorf("Coder2.Provider: expected 'openai', got '%s'", cfg.Coder2.Provider)
-	}
-	if cfg.Coder2.Model != "gpt-4-turbo" {
-		t.Errorf("Coder2.Model: expected 'gpt-4-turbo', got '%s'", cfg.Coder2.Model)
-	}
 	if cfg.Coder2.Name != "ao" {
 		t.Errorf("Coder2.Name: expected 'ao', got '%s'", cfg.Coder2.Name)
 	}
@@ -3123,12 +2512,6 @@ session:
 	}
 
 	// Coder3 デフォルト値検証
-	if cfg.Coder3.Provider != "claude" {
-		t.Errorf("Coder3.Provider: expected 'claude', got '%s'", cfg.Coder3.Provider)
-	}
-	if cfg.Coder3.Model != "claude-sonnet-4" {
-		t.Errorf("Coder3.Model: expected 'claude-sonnet-4', got '%s'", cfg.Coder3.Model)
-	}
 	if cfg.Coder3.Name != "kin" {
 		t.Errorf("Coder3.Name: expected 'kin', got '%s'", cfg.Coder3.Name)
 	}
@@ -3137,12 +2520,6 @@ session:
 	}
 
 	// Coder4 デフォルト値検証
-	if cfg.Coder4.Provider != "gemini" {
-		t.Errorf("Coder4.Provider: expected 'gemini', got '%s'", cfg.Coder4.Provider)
-	}
-	if cfg.Coder4.Model != "gemini-2.0-flash-exp" {
-		t.Errorf("Coder4.Model: expected 'gemini-2.0-flash-exp', got '%s'", cfg.Coder4.Model)
-	}
 	if cfg.Coder4.Name != "gin" {
 		t.Errorf("Coder4.Name: expected 'gin', got '%s'", cfg.Coder4.Name)
 	}
@@ -3154,7 +2531,6 @@ session:
 func TestConfigValidateRejectsCoderIdentityDrift(t *testing.T) {
 	cfg := &Config{
 		Server:  ServerConfig{Port: 8080},
-		Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 		Session: SessionConfig{StorageDir: "./data"},
 	}
 	cfg.setDefaults()
@@ -3175,19 +2551,10 @@ func TestCoderConfig_CustomValues(t *testing.T) {
 server:
   port: 8080
 
-ollama:
-  base_url: "http://localhost:11434"
-  model: "rencrow-v1"
-
-session:
-  storage_dir: "./data/sessions"
 
 coder1:
   name: "aka"
   display_name: "カスタム青"
-  provider: "deepseek"
-  model: "deepseek-custom"
-  api_key: "test-key-1"
   personality: "あなたはカスタム青。設計思考が得意。"
   tone: "analytical"
   light_memory:
@@ -3198,9 +2565,6 @@ coder1:
 coder4:
   name: "gin"
   display_name: "カスタム銀"
-  provider: "gemini"
-  model: "gemini-pro"
-  api_key: "test-key-4"
   personality: "あなたはカスタム銀。"
   tone: "fast"
   light_memory:
@@ -3226,12 +2590,6 @@ coder4:
 	if cfg.Coder1.DisplayName != "カスタム青" {
 		t.Errorf("Coder1.DisplayName: expected 'カスタム青', got '%s'", cfg.Coder1.DisplayName)
 	}
-	if cfg.Coder1.Model != "deepseek-custom" {
-		t.Errorf("Coder1.Model: expected 'deepseek-custom', got '%s'", cfg.Coder1.Model)
-	}
-	if cfg.Coder1.APIKey != "test-key-1" {
-		t.Errorf("Coder1.APIKey: expected 'test-key-1', got '%s'", cfg.Coder1.APIKey)
-	}
 	if cfg.Coder1.Personality != "あなたはカスタム青。設計思考が得意。" {
 		t.Errorf("Coder1.Personality: unexpected value '%s'", cfg.Coder1.Personality)
 	}
@@ -3255,15 +2613,6 @@ coder4:
 	if cfg.Coder4.DisplayName != "カスタム銀" {
 		t.Errorf("Coder4.DisplayName: expected 'カスタム銀', got '%s'", cfg.Coder4.DisplayName)
 	}
-	if cfg.Coder4.Provider != "gemini" {
-		t.Errorf("Coder4.Provider: expected 'gemini', got '%s'", cfg.Coder4.Provider)
-	}
-	if cfg.Coder4.Model != "gemini-pro" {
-		t.Errorf("Coder4.Model: expected 'gemini-pro', got '%s'", cfg.Coder4.Model)
-	}
-	if cfg.Coder4.APIKey != "test-key-4" {
-		t.Errorf("Coder4.APIKey: expected 'test-key-4', got '%s'", cfg.Coder4.APIKey)
-	}
 	if cfg.Coder4.LightMemory.MaxTurns != 10 {
 		t.Errorf("Coder4.LightMemory.MaxTurns: expected 10, got %d", cfg.Coder4.LightMemory.MaxTurns)
 	}
@@ -3280,80 +2629,24 @@ func TestValidateCoderConfig(t *testing.T) {
 		{
 			name: "有効な設定",
 			config: CoderConfig{
-				Name:     "test",
-				Provider: "deepseek",
-				Model:    "test-model",
-				APIKey:   "test-key",
-				Enabled:  true,
+				Name:    "test",
+				Enabled: true,
 			},
 			wantErr: false,
 		},
 		{
-			name: "無効な provider",
-			config: CoderConfig{
-				Name:     "test",
-				Provider: "invalid-provider",
-				Model:    "test-model",
-				Enabled:  true,
-			},
-			wantErr: true,
-			errMsg:  "provider must be one of",
-		},
-		{
 			name: "name が空",
 			config: CoderConfig{
-				Name:     "",
-				Provider: "deepseek",
-				Model:    "test-model",
-				APIKey:   "test-key",
-				Enabled:  true,
+				Name:    "",
+				Enabled: true,
 			},
 			wantErr: true,
 			errMsg:  "name is required",
 		},
 		{
-			name: "enabled=true だが model が空",
-			config: CoderConfig{
-				Name:     "test",
-				Provider: "deepseek",
-				Model:    "",
-				APIKey:   "test-key",
-				Enabled:  true,
-			},
-			wantErr: true,
-			errMsg:  "model is required",
-		},
-		{
-			name: "enabled=true だが api_key が空（deepseek）",
-			config: CoderConfig{
-				Name:     "test",
-				Provider: "deepseek",
-				Model:    "test-model",
-				APIKey:   "",
-				Enabled:  true,
-			},
-			wantErr: true,
-			errMsg:  "api_key is required",
-		},
-		{
-			name: "enabled=true だが base_url が空（ollama）",
-			config: CoderConfig{
-				Name:     "test",
-				Provider: "ollama",
-				Model:    "test-model",
-				BaseURL:  "",
-				Enabled:  true,
-			},
-			wantErr: true,
-			errMsg:  "base_url is required",
-		},
-		{
 			name: "light_memory max_turns が範囲外（大きすぎ）",
 			config: CoderConfig{
-				Name:     "test",
-				Provider: "deepseek",
-				Model:    "test-model",
-				APIKey:   "test-key",
+				Name: "test",
 				LightMemory: LightMemoryConfig{
 					Enabled:  true,
 					MaxTurns: 100,
@@ -3366,10 +2659,7 @@ func TestValidateCoderConfig(t *testing.T) {
 		{
 			name: "light_memory max_turns が範囲外（0）",
 			config: CoderConfig{
-				Name:     "test",
-				Provider: "deepseek",
-				Model:    "test-model",
-				APIKey:   "test-key",
+				Name: "test",
 				LightMemory: LightMemoryConfig{
 					Enabled:  true,
 					MaxTurns: 0,
@@ -3378,17 +2668,6 @@ func TestValidateCoderConfig(t *testing.T) {
 			},
 			wantErr: true,
 			errMsg:  "max_turns must be between 1 and 20",
-		},
-		{
-			name: "enabled=false の場合は api_key なしでも OK",
-			config: CoderConfig{
-				Name:     "test",
-				Provider: "deepseek",
-				Model:    "test-model",
-				APIKey:   "",
-				Enabled:  false,
-			},
-			wantErr: false,
 		},
 	}
 
@@ -3410,41 +2689,10 @@ func TestValidateCoderConfig(t *testing.T) {
 	}
 }
 
-func TestConfig_Validate_LLMOps(t *testing.T) {
-	base := func() *Config {
-		cfg := &Config{
-			Server:  ServerConfig{Port: 8080},
-			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
-			Session: SessionConfig{StorageDir: "./data"},
-		}
-		cfg.Coder1.Name = "aka"
-		cfg.Coder2.Name = "ao"
-		cfg.Coder3.Name = "kin"
-		cfg.Coder4.Name = "gin"
-		return cfg
-	}
-	t.Run("enabled without base_url", func(t *testing.T) {
-		cfg := base()
-		cfg.LLMOps.Enabled = true
-		if err := cfg.Validate(); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("enabled with base_url", func(t *testing.T) {
-		cfg := base()
-		cfg.LLMOps.Enabled = true
-		cfg.LLMOps.BaseURL = "http://192.168.1.31:8079"
-		if err := cfg.Validate(); err != nil {
-			t.Fatal(err)
-		}
-	})
-}
-
 func TestConfig_Validate_BrowserActor(t *testing.T) {
 	base := func() *Config {
 		cfg := &Config{
 			Server:  ServerConfig{Port: 8080},
-			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		cfg.Coder1.Name = "aka"
@@ -3488,7 +2736,6 @@ func TestConfig_Validate_Codex(t *testing.T) {
 	base := func() *Config {
 		cfg := &Config{
 			Server:  ServerConfig{Port: 8080},
-			Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		cfg.Coder1.Name = "aka"
@@ -3527,7 +2774,7 @@ func TestConfig_Validate_Codex(t *testing.T) {
 }
 
 func TestLLMGatewayDefaultsAndValidation(t *testing.T) {
-	cfg := &Config{Server: ServerConfig{Port: 18790}, Ollama: OllamaConfig{BaseURL: "http://127.0.0.1:11434"}, LLMGateway: LLMGatewayConfig{Enabled: true, BaseURL: "http://127.0.0.1:8090"}}
+	cfg := &Config{Server: ServerConfig{Port: 18790}, LLMGateway: LLMGatewayConfig{Enabled: true, BaseURL: "http://127.0.0.1:8090"}}
 	cfg.Session.StorageDir = "./data"
 	cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "aka", "ao", "kin", "gin"
 	cfg.setDefaults()
@@ -3540,7 +2787,7 @@ func TestLLMGatewayDefaultsAndValidation(t *testing.T) {
 }
 
 func TestLLMGatewayRejectsMissingAbsoluteBaseURL(t *testing.T) {
-	cfg := &Config{Server: ServerConfig{Port: 18790}, Ollama: OllamaConfig{BaseURL: "http://127.0.0.1:11434"}, LLMGateway: LLMGatewayConfig{Enabled: true, BaseURL: "localhost:8090", TimeoutSec: 60}}
+	cfg := &Config{Server: ServerConfig{Port: 18790}, LLMGateway: LLMGatewayConfig{Enabled: true, BaseURL: "localhost:8090", TimeoutSec: 60}}
 	cfg.Session.StorageDir = "./data"
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "llm_gateway.base_url") {
 		t.Fatalf("Validate() error=%v", err)
@@ -3550,7 +2797,6 @@ func TestLLMGatewayRejectsMissingAbsoluteBaseURL(t *testing.T) {
 func TestConfig_Validate_AdvisorPersistence(t *testing.T) {
 	cfg := &Config{
 		Server:  ServerConfig{Port: 8080},
-		Ollama:  OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
 		Session: SessionConfig{StorageDir: "./data"},
 	}
 	cfg.Coder1.Name = "aka"
@@ -3572,7 +2818,7 @@ func TestConfig_Validate_AdvisorPersistence(t *testing.T) {
 
 func TestConfig_Validate_KnowledgeRelationDefaultsAndGuards(t *testing.T) {
 	cfg := &Config{
-		Server: ServerConfig{Port: 8080}, Ollama: OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
+		Server:  ServerConfig{Port: 8080},
 		Session: SessionConfig{StorageDir: "./data"},
 	}
 	cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "aka", "ao", "kin", "gin"
@@ -3597,7 +2843,7 @@ func TestConfig_Validate_KnowledgeRelationDefaultsAndGuards(t *testing.T) {
 func TestConfig_Validate_EconomicObjectiveDefaultsAndGuards(t *testing.T) {
 	base := func() *Config {
 		cfg := &Config{
-			Server: ServerConfig{Port: 8080}, Ollama: OllamaConfig{BaseURL: "http://localhost:11434", Model: "rencrow-v1"},
+			Server:  ServerConfig{Port: 8080},
 			Session: SessionConfig{StorageDir: "./data"},
 		}
 		cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "aka", "ao", "kin", "gin"

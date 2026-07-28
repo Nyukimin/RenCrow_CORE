@@ -21,7 +21,6 @@ import (
 	idlechatfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/idlechat"
 	imagefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/image"
 	knowledgefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/knowledge"
-	llmfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/llm"
 	memoryfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/memory"
 	opsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/ops"
 	reportsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/reports"
@@ -74,9 +73,7 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		Live2DCharacter:              viewer.HandleLive2DCharacter,
 		Live2DCharacterEmbed:         viewer.HandleLive2DCharacterEmbed,
 		Live2DAsset:                  viewer.HandleLive2DAsset,
-		Live2DChat:                   viewer.HandleLive2DChat,
 		Live2DEmotionControl:         viewer.HandleLive2DEmotionControl,
-		Live2DChatAPI:                viewer.HandleLive2DChatAPIWithResponder(newLive2DOrchestratorResponder(dependencies)),
 		Events:                       dependencies.eventHub.HandleSSE,
 		RecipientSelection:           viewer.HandleRecipientSelection(dependencies.eventHub.OnEvent),
 		DebugSystem:                  viewer.HandleDebugSystemSnapshot(debugSystemOpts),
@@ -152,36 +149,6 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		AdvisorScores: dependencies.advisorScores, Profiles: dependencies.agentProfiles,
 		PolicyDecisions: dependencies.agentPolicyDecisions,
 	}})
-}
-
-func registerLLMOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dependencies, debugSystemOpts *viewer.DebugSystemOptions) {
-	llmOpsOpts := viewer.LLMOpsProxyOptions{
-		BaseURL: cfg.LLMOps.BaseURL,
-		Token:   strings.TrimSpace(os.Getenv("LLM_OPS_TOKEN")),
-	}
-	if debugSystemOpts != nil {
-		dependencies.aiWorkflowHeavyRuntime = viewer.HandleAIWorkflowHeavyWorkerRuntimeDiagnostics(viewer.HeavyWorkerRuntimeDiagnosticsOptions{
-			GatewayConfigured: strings.TrimSpace(debugSystemOpts.LLMGateway.BaseURL) != "",
-			GatewayBaseURL:    debugSystemOpts.LLMGateway.BaseURL,
-			LogicalAlias:      "kuro",
-			LLMOpsConfigured:  debugSystemOpts.LLMOpsConfigured,
-			LLMOpsEnabled:     debugSystemOpts.LLMOpsEnabled,
-			LLMOpsBaseURL:     debugSystemOpts.LLMOpsBaseURL,
-			LLMOps:            llmOpsOpts,
-		})
-	}
-	if debugSystemOpts == nil || !debugSystemOpts.LLMOpsEnabled {
-		return
-	}
-	dependencies.idleChatStartGate = viewer.NewLLMOpsIdleChatGate(llmOpsOpts)
-	llmfeature.RegisterRoutes(mux, llmfeature.Dependencies{LLMOps: llmfeature.LLMOpsRoutes{
-		Health:  viewer.HandleLLMOpsHealth(llmOpsOpts),
-		Status:  viewer.HandleLLMOpsStatus(llmOpsOpts),
-		Start:   viewer.HandleLLMOpsStart(llmOpsOpts),
-		Stop:    viewer.HandleLLMOpsStop(llmOpsOpts),
-		Restart: viewer.HandleLLMOpsRestart(llmOpsOpts),
-	}})
-	log.Printf("Viewer: MLX llm-ops proxy -> %s", strings.TrimRight(strings.TrimSpace(cfg.LLMOps.BaseURL), "/"))
 }
 
 func registerSTTAndAudioRoutes(mux *http.ServeMux, cfg *config.Config, sttRuntime sttRuntime, voiceChatRuntime voiceChatRuntime, dependencies *Dependencies) {
@@ -334,7 +301,6 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 	}})
 	gamesfeature.RegisterRoutes(mux, gamesfeature.Dependencies{Routes: gamesfeature.Routes{
 		Status:        dependencies.viewerGamesStatus,
-		Decision:      dependencies.viewerGamesDecision,
 		Result:        dependencies.viewerGamesResult,
 		Sessions:      dependencies.viewerGamesSessions,
 		Events:        dependencies.viewerGamesEvents,

@@ -124,7 +124,7 @@ func (h *Handler) ChannelPolicyConfigured() bool {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[HTTP] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 
-	if (r.URL.Path == "/webhook" || r.URL.Path == "/webhook/line") && r.Method == http.MethodPost {
+	if r.URL.Path == "/webhook/line" && r.Method == http.MethodPost {
 		h.handleWebhook(w, r)
 		return
 	}

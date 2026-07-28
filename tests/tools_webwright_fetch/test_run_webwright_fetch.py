@@ -113,7 +113,8 @@ class RunWebwrightFetchTest(unittest.TestCase):
             )
 
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertIn(f"-c {LOCAL_PROFILE}", proc.stdout)
+            self.assertIn("-c", proc.stdout)
+            self.assertIn(str(LOCAL_PROFILE), proc.stdout)
             override = Path(td) / "_webwright_local_responses_override.yaml"
             self.assertTrue(override.exists())
             override_text = override.read_text(encoding="utf-8")

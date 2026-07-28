@@ -64,8 +64,6 @@ func TestTailscaleViewerOnlyGuardBlocksNonViewerRoutesOnTailscaleHost(t *testing
 		{method: http.MethodGet, path: "/"},
 		{method: http.MethodGet, path: "/health"},
 		{method: http.MethodGet, path: "/ready"},
-		{method: http.MethodGet, path: "/webhook"},
-		{method: http.MethodPost, path: "/webhook"},
 		{method: http.MethodGet, path: "/webhook/line"},
 		{method: http.MethodGet, path: "/stt/health"},
 	}

@@ -13,8 +13,7 @@ type Dependencies struct {
 }
 
 // Routes groups IdleChat Viewer route handlers supplied by cmd/rencrow.
-// Handler implementations remain in legacy cmd/application packages during
-// Ver0.80 migration; this registrar owns only route registration.
+// Handler implementations are supplied by the IdleChat application runtime.
 type Routes struct {
 	Start       http.HandlerFunc
 	Stop        http.HandlerFunc
@@ -32,8 +31,7 @@ type Background interface {
 	Start()
 }
 
-// RegisterRoutes reserves the feature route boundary. Existing routes remain in
-// their legacy packages until a phase migrates them through this registrar.
+// RegisterRoutes registers handlers at the feature route boundary.
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
 	registerRoute(mux, "/viewer/idlechat/start", routes.Start)

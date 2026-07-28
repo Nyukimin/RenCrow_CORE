@@ -9,10 +9,6 @@ import (
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 )
 
-type DCITraceLister interface {
-	ListRecent(limit int) ([]domaindci.SearchTrace, error)
-}
-
 type DCITraceContextLister interface {
 	ListRecent(ctx context.Context, limit int) ([]domaindci.SearchTrace, error)
 }
@@ -29,8 +25,6 @@ func DeriveCandidatePatterns(ctx context.Context, dciTraces any, limit int) ([]s
 	switch store := dciTraces.(type) {
 	case DCITraceContextLister:
 		traces, err = store.ListRecent(ctx, limit)
-	case DCITraceLister:
-		traces, err = store.ListRecent(limit)
 	default:
 		return nil, nil
 	}

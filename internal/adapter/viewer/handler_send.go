@@ -47,74 +47,6 @@ type viewerSendRequest struct {
 	DeviceName     string `json:"device_name,omitempty"`
 	Message        string `json:"message"`
 	To             string `json:"to,omitempty"`
-	ModelAlias     string `json:"model_alias,omitempty"`
-	// Deprecated compatibility fields. CORE never uses caller-supplied physical
-	// LLM endpoints, models, or route overrides.
-	BaseURL     string `json:"base_url,omitempty"`
-	Model       string `json:"model,omitempty"`
-	RoutePrefix string `json:"route_prefix,omitempty"`
-}
-
-type viewerLLMAliasSpec struct {
-	ModelAlias  string `json:"model_alias"`
-	RoutePrefix string `json:"route_prefix"`
-}
-
-var viewerLLMAliasSpecs = map[string]viewerLLMAliasSpec{
-	"worker": {
-		ModelAlias:  "Worker",
-		RoutePrefix: "/ops",
-	},
-	"coder": {
-		ModelAlias:  "Coder",
-		RoutePrefix: "/code2",
-	},
-	"heavy": {
-		ModelAlias:  "Heavy",
-		RoutePrefix: "/analyze",
-	},
-	"wild": {
-		ModelAlias:  "Wild",
-		RoutePrefix: "/wild",
-	},
-}
-
-func viewerSendAliasSpec(req viewerSendRequest) (viewerLLMAliasSpec, bool) {
-	key := strings.ToLower(strings.TrimSpace(req.ModelAlias))
-	if key == "" {
-		key = strings.ToLower(strings.TrimSpace(req.Model))
-	}
-	spec, ok := viewerLLMAliasSpecs[key]
-	if !ok {
-		return viewerLLMAliasSpec{}, false
-	}
-	return spec, ok
-}
-
-func viewerSendHasExplicitRoute(message string) bool {
-	trimmed := strings.TrimSpace(message)
-	if trimmed == "" || trimmed[0] != '/' {
-		return false
-	}
-	head := strings.Fields(trimmed)
-	if len(head) == 0 {
-		return false
-	}
-	switch head[0] {
-	case "/ops", "/wild", "/heavy", "/code", "/code1", "/code2", "/code3", "/code4", "/plan", "/analyze", "/research", "/chat":
-		return true
-	default:
-		return false
-	}
-}
-
-func viewerEffectiveMessage(req viewerSendRequest) (string, viewerLLMAliasSpec, bool) {
-	message := strings.TrimSpace(req.Message)
-	spec, ok := viewerSendAliasSpec(req)
-	if !ok || viewerSendHasExplicitRoute(message) {
-		return message, viewerLLMAliasSpec{}, false
-	}
-	return spec.RoutePrefix + " " + message, spec, true
 }
 
 // HandleSend creates an HTTP handler that receives messages from the viewer input.
@@ -171,19 +103,14 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			Attachments:    attachments,
 		}
 
-		effectiveMessage, aliasSpec, aliasApplied := viewerEffectiveMessage(req)
+		effectiveMessage := strings.TrimSpace(req.Message)
 		if strings.TrimSpace(effectiveMessage) == "" && len(attachments) > 0 {
 			effectiveMessage = defaultAttachmentMessage(attachments)
 		}
 		sendReq.Message = effectiveMessage
 		log.Printf("[Viewer] HandleSend: accepted job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachment_count=%d message_len=%d %s",
 			jobID, jobID, messageID, req.ViewerClientID, recipient, len(attachments), len([]rune(effectiveMessage)), provenance.LogFields())
-		if aliasApplied {
-			log.Printf("[Viewer] HandleSend: message received: %q alias=%s route_prefix=%s",
-				req.Message, aliasSpec.ModelAlias, aliasSpec.RoutePrefix)
-		} else {
-			log.Printf("[Viewer] HandleSend: message received: %q", req.Message)
-		}
+		log.Printf("[Viewer] HandleSend: message received: %q", req.Message)
 
 		// Process asynchronously — events flow back via SSE.
 		go func() {
@@ -202,52 +129,25 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 		}()
 
 		w.Header().Set("Content-Type", "application/json")
-		if aliasApplied {
-			resp := struct {
-				OK             bool   `json:"ok"`
-				JobID          string `json:"job_id"`
-				MessageID      string `json:"message_id"`
-				TraceID        string `json:"trace_id"`
-				ViewerClientID string `json:"viewer_client_id,omitempty"`
-				Recipient      string `json:"recipient"`
-				ModelAlias     string `json:"model_alias"`
-				RoutePrefix    string `json:"route_prefix"`
-				Attachments    int    `json:"attachment_count"`
-			}{
-				OK:             true,
-				JobID:          jobID,
-				MessageID:      messageID,
-				TraceID:        jobID,
-				ViewerClientID: req.ViewerClientID,
-				Recipient:      string(recipient),
-				ModelAlias:     aliasSpec.ModelAlias,
-				RoutePrefix:    aliasSpec.RoutePrefix,
-				Attachments:    len(attachments),
-			}
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				log.Printf("[Viewer] HandleSend: response encode error: %v", err)
-			}
-		} else {
-			resp := struct {
-				OK             bool   `json:"ok"`
-				JobID          string `json:"job_id"`
-				MessageID      string `json:"message_id"`
-				TraceID        string `json:"trace_id"`
-				ViewerClientID string `json:"viewer_client_id,omitempty"`
-				Recipient      string `json:"recipient"`
-				Attachments    int    `json:"attachment_count"`
-			}{
-				OK:             true,
-				JobID:          jobID,
-				MessageID:      messageID,
-				TraceID:        jobID,
-				ViewerClientID: req.ViewerClientID,
-				Recipient:      string(recipient),
-				Attachments:    len(attachments),
-			}
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				log.Printf("[Viewer] HandleSend: response encode error: %v", err)
-			}
+		resp := struct {
+			OK             bool   `json:"ok"`
+			JobID          string `json:"job_id"`
+			MessageID      string `json:"message_id"`
+			TraceID        string `json:"trace_id"`
+			ViewerClientID string `json:"viewer_client_id,omitempty"`
+			Recipient      string `json:"recipient"`
+			Attachments    int    `json:"attachment_count"`
+		}{
+			OK:             true,
+			JobID:          jobID,
+			MessageID:      messageID,
+			TraceID:        jobID,
+			ViewerClientID: req.ViewerClientID,
+			Recipient:      string(recipient),
+			Attachments:    len(attachments),
+		}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			log.Printf("[Viewer] HandleSend: response encode error: %v", err)
 		}
 		log.Printf("[Viewer] HandleSend: sent OK response")
 	}
@@ -293,10 +193,6 @@ func parseViewerMultipartSendRequest(r *http.Request, saver AttachmentSaver) (vi
 		DeviceName:     r.FormValue("device_name"),
 		Message:        r.FormValue("message"),
 		To:             r.FormValue("to"),
-		ModelAlias:     r.FormValue("model_alias"),
-		BaseURL:        r.FormValue("base_url"),
-		Model:          r.FormValue("model"),
-		RoutePrefix:    r.FormValue("route_prefix"),
 	}
 
 	files, err := incomingViewerFiles(r.MultipartForm)

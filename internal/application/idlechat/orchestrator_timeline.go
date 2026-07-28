@@ -108,19 +108,6 @@ func newIdleChatMessageID() string {
 	return string(modulecore.NewMessageID())
 }
 
-// legacyIdleChatMessageID is read compatibility for persisted IdleChat rows
-// created before message_id became a UUID contract. New messages must not use it.
-func legacyIdleChatMessageID(sessionID string, turnIndex int) string {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		sessionID = "idlechat"
-	}
-	if turnIndex < 0 {
-		turnIndex = 0
-	}
-	return fmt.Sprintf("%s:msg:%04d", sessionID, turnIndex)
-}
-
 func idleChatMessageContext(messageID string, turnIndex int) map[string]any {
 	return map[string]any{
 		"message_id": strings.TrimSpace(messageID),

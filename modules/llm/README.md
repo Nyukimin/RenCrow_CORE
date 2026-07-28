@@ -8,15 +8,13 @@ Responsibilities:
 
 - CORE-side request/response contracts for RenCrow_LLM.
 - Request metadata for Agent, Execution Role, alias, trace, and cancellation.
-- Legacy/development-only local provider planning for provider kind, base URL,
-  model, timeout, concurrency, Ollama `num_ctx`, fallback, and warmup.
-- Conversation summary and embedding provider plan construction.
-- Coder provider validation/planning for provider kind, required credentials, required base URLs, and local OpenAI timeout.
-- OpenAI-compatible ThinkingBridge request flags, provider-option filtering, and leaked-reasoning cleanup policy.
+- Conversation summary and embedding logical alias planning.
+- Coder logical alias and capability planning.
+- RenCrow_LLM Gateway ThinkingBridge request flags, option filtering, and leaked-reasoning cleanup policy.
 - Model routing policy adapters.
 - Prompt-facing request/response normalization.
 - Request copy semantics for mutable provider-facing fields such as message parts and provider options.
-- Health and capability interpretation for LLM providers, including local health-check enablement and role-name normalization.
+- Health and capability interpretation for RenCrow_LLM roles.
 
 Non-responsibilities:
 
@@ -34,11 +32,9 @@ Current high-impact areas:
 Boundary note:
 
 `modules/llm` owns CORE-side request/response contracts, request metadata,
-normalization, and diagnostics. Production Agent execution sends only the
-logical Execution Role/alias to RenCrow_LLM. Local provider selection,
-`num_ctx`, concrete base URLs, warmup, and direct provider construction are
-legacy/development compatibility and must not become the production mapping
-source of truth.
+normalization, and diagnostics. Agent execution sends the logical Execution
+Role/alias to RenCrow_LLM. RenCrow_LLM owns provider selection, physical model
+configuration, process lifecycle, and backend health.
 
 Design references:
 

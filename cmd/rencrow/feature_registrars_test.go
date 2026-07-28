@@ -22,9 +22,6 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		viewerGamesStatus: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),
-		viewerGamesDecision: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusCreated)
-		}),
 		viewerGamesResult: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		}),
@@ -117,7 +114,7 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		path   string
 		want   int
 	}{
-		{name: "channel webhook", method: http.MethodGet, path: "/webhook", want: http.StatusNoContent},
+		{name: "channel webhook", method: http.MethodGet, path: "/webhook/line", want: http.StatusNoContent},
 		{name: "viewer page", method: http.MethodGet, path: "/viewer", want: http.StatusOK},
 		{name: "viewer runtime config", method: http.MethodGet, path: "/viewer/runtime-config", want: http.StatusOK},
 		{name: "viewer backlog", method: http.MethodGet, path: "/viewer/backlog", want: http.StatusOK},
@@ -129,7 +126,6 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		{name: "viewer revenue", method: http.MethodGet, path: "/viewer/revenue", want: http.StatusNoContent},
 		{name: "viewer dynamic send", method: http.MethodGet, path: "/viewer/send", want: http.StatusAccepted},
 		{name: "viewer games status", method: http.MethodGet, path: "/viewer/games/status", want: http.StatusOK},
-		{name: "viewer games decision", method: http.MethodGet, path: "/viewer/games/decision", want: http.StatusCreated},
 		{name: "viewer games result", method: http.MethodGet, path: "/viewer/games/result", want: http.StatusNoContent},
 		{name: "viewer games sessions", method: http.MethodGet, path: "/viewer/games/sessions", want: http.StatusPartialContent},
 		{name: "viewer games events", method: http.MethodGet, path: "/viewer/games/events", want: http.StatusResetContent},
