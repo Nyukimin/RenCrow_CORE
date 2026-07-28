@@ -51,29 +51,17 @@ type TTSPronunciationCheckConfig struct {
 }
 
 type STTConfig struct {
-	Enabled        bool              `yaml:"enabled"`
-	Provider       string            `yaml:"provider"`
-	Language       string            `yaml:"language"`
-	Model          string            `yaml:"model"`
-	TimeoutMS      int               `yaml:"timeout_ms"`
-	BusyPolicy     string            `yaml:"busy_policy"`
-	VAD            bool              `yaml:"vad"`
-	EndpointPath   string            `yaml:"endpoint_path"`
-	ProviderURL    string            `yaml:"provider_url"`
-	StreamURL      string            `yaml:"stream_url"`
-	ProviderParams map[string]any    `yaml:"provider_params"`
-	Debug          STTDebugConfig    `yaml:"debug"`
-	ExternalHTTP   STTExternalConfig `yaml:"external_http"`
+	Enabled        bool           `yaml:"enabled"`
+	GatewayBaseURL string         `yaml:"gateway_base_url"`
+	TimeoutMS      int            `yaml:"timeout_ms"`
+	BusyPolicy     string         `yaml:"busy_policy"`
+	EndpointPath   string         `yaml:"endpoint_path"`
+	Debug          STTDebugConfig `yaml:"debug"`
 }
 
 type STTDebugConfig struct {
 	SaveAudio      bool `yaml:"save_audio"`
 	SaveTranscript bool `yaml:"save_transcript"`
-}
-
-type STTExternalConfig struct {
-	URL       string `yaml:"url"`
-	StreamURL string `yaml:"stream_url"`
 }
 
 // VisionConfig configures the RenCrow_Vision service boundary.

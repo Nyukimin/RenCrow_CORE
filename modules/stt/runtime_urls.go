@@ -6,7 +6,18 @@ import (
 	"strings"
 )
 
-const ProviderExternalHTTP = "external_http"
+const (
+	ProviderExternalHTTP = "external_http"
+	ProviderRenCrowSTT   = "rencrow_stt"
+)
+
+func GatewayTranscriptionURL(baseURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		base = "http://127.0.0.1:8766"
+	}
+	return base + "/v1/audio/transcriptions"
+}
 
 type RuntimeURLConfig struct {
 	Provider    string

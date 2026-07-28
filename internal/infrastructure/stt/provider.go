@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
 var eventSeq atomic.Uint64
@@ -138,6 +140,8 @@ func NewProvider(cfg Config) Provider {
 		provider = HTTPProvider{URL: cfg.ExternalHTTPURL, Timeout: cfg.Timeout, Provider: ProviderOpenAIAPI, Model: cfg.Model, Language: cfg.Language}
 	case ProviderExternalHTTP:
 		provider = HTTPProvider{URL: cfg.ExternalHTTPURL, Timeout: cfg.Timeout, Provider: ProviderExternalHTTP, Model: cfg.Model, Language: cfg.Language}
+	case modulestt.ProviderRenCrowSTT:
+		provider = HTTPProvider{URL: cfg.ExternalHTTPURL, Timeout: cfg.Timeout, Provider: modulestt.ProviderRenCrowSTT, Language: cfg.Language}
 	default:
 		provider = HTTPProvider{URL: cfg.ExternalHTTPURL, Timeout: cfg.Timeout, Provider: ProviderExternalHTTP, Model: cfg.Model, Language: cfg.Language}
 	}

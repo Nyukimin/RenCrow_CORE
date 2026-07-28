@@ -2,15 +2,17 @@
 
 Owns the RenCrow_CORE side of speech-to-text integration boundaries.
 RenCrow_STT owns concrete transcription processing and runtime operation.
-Provider URL inference, direct HTTP/WebSocket handling, and provider-specific
-payload rules listed below are legacy/development compatibility inside CORE;
-the production boundary is the RenCrow_STT public contract.
+Production uses only the RenCrow_STT Gateway base URL and its
+`POST /v1/audio/transcriptions` contract. Viewer WebSocket input terminates at
+the CORE same-origin `/stt` route. Direct provider URL/WebSocket helpers that
+remain in this package are legacy test/development compatibility and are not
+wired from production config.
 
 Responsibilities:
 
 - STT provider contracts.
-- Runtime URL inference for provider, base, gateway, and WebSocket stream endpoints.
-- Runtime provider option planning and defaults for provider, model, language, timeout, busy policy, and external HTTP URL.
+- RenCrow_STT Gateway URL normalization and fixed transcription endpoint construction.
+- CORE-side timeout, busy policy, and debug planning.
 - Busy policy normalization and execution-mode planning.
 - WebSocket handler selection, compatibility route paths, and text/binary frame classification rules.
 - WebSocket control-message parsing, PCM16/WAV payload normalization, silence detection, draft/final session rules, draft state update/reset rules, session event payloads, timeout error classification, and adaptive timeout/cooldown state rules.
@@ -37,7 +39,14 @@ Current high-impact areas:
 
 Boundary note:
 
-STT owns transcription provider readiness, runtime URL inference, runtime provider option planning/defaults, busy policy planning, WebSocket routing policy, audio/control-message normalization rules, draft/final session rules, draft state update/reset rules, session event payloads, timeout error classification, adaptive timeout/cooldown state rules, request copy semantics for audio buffers, normalized results, HTTP result/envelope policy, and reusable Viewer input health/reporting rules and endpoint messages. Chat/Viewer integration owns microphone UI rendering, final transcript injection, concrete provider construction, provider process wiring, concrete HTTP/WebSocket handlers, environment variables, channel/goroutine execution details, and filesystem writes.
+STT owns Gateway readiness, Gateway URL normalization, busy policy planning,
+CORE same-origin WebSocket input policy, audio/control-message normalization
+rules, draft/final session rules, request copy semantics, normalized results,
+HTTP result/envelope policy, and reusable Viewer input health/reporting rules.
+RenCrow_STT owns target selection and target-specific provider configuration.
+Chat/Viewer integration owns microphone UI rendering, final transcript
+injection, concrete handler wiring, channel/goroutine execution details, and
+filesystem writes.
 
 Design references:
 

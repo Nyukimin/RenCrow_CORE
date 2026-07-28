@@ -14,7 +14,7 @@ transcript draft/final, viewer-input snapshot, diagnostics, chat input envelope
 
 ## Side Effects
 
-provider HTTP/WebSocket calls and debug artifact writes through existing runtime code
+RenCrow_STT Gateway HTTP calls and debug artifact writes through existing runtime code
 
 ## Persistence
 

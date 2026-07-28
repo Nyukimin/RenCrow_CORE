@@ -2,7 +2,6 @@ package main
 
 import (
 	"net/http"
-	"os"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/modulebridge"
@@ -29,13 +28,13 @@ type sttRuntime struct {
 func buildSTTRuntime(cfg *config.Config) sttRuntime {
 	provider := buildSTTProvider(cfg)
 	providerURL := inferSTTProviderURLFromConfig(cfg)
-	gatewayURL := inferSTTGatewayURL(os.Getenv("STT_GATEWAY_URL"), os.Getenv("RENCROW_STT_URL"))
+	gatewayURL := inferSTTBaseURLFromConfig(cfg)
 	return sttRuntime{
 		Provider:    provider,
 		Handler:     sttinfra.NewHandler(provider),
 		ProviderURL: providerURL,
 		GatewayURL:  gatewayURL,
-		WSHandler:   resolveSTTWebSocketHandlerWithProvider(provider, providerURL, gatewayURL),
+		WSHandler:   resolveSTTWebSocketHandlerWithProvider(provider, providerURL, ""),
 		Module:      modulebridge.NewRuntimeSTTProviderAdapter(provider),
 		DebugOptions: viewer.DebugSystemOptions{
 			TTSBaseURL:    inferTTSDebugBaseURLFromConfig(cfg),

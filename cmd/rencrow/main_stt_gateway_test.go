@@ -56,50 +56,34 @@ func TestRegisterSTTRoutes_RegistersPrimaryAndCompatiblePaths(t *testing.T) {
 	}
 }
 
-func TestInferSTTProviderURLFromConfig_UsesGoSTTFileByDefault(t *testing.T) {
+func TestInferSTTProviderURLFromConfig_UsesRenCrowSTTGateway(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Server.Host = "127.0.0.1"
-	cfg.Server.Port = 8443
-	cfg.Server.TLS.Enabled = true
-	cfg.STT.Provider = "external_http"
+	cfg.STT.GatewayBaseURL = "http://192.168.1.33:8766/"
 
 	got := inferSTTProviderURLFromConfig(cfg)
-	want := "https://127.0.0.1:8443/stt/file"
+	want := "http://192.168.1.33:8766/v1/audio/transcriptions"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
 
-func TestInferSTTProviderURLFromConfig_UsesExternalProviderCompatibility(t *testing.T) {
+func TestInferSTTProviderURLFromConfig_UsesDefaultGateway(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.STT.Provider = "external_http"
-	cfg.STT.ProviderURL = "http://127.0.0.1:8080/inference"
 
 	got := inferSTTProviderURLFromConfig(cfg)
-	if got != cfg.STT.ProviderURL {
-		t.Fatalf("expected external provider url, got %q", got)
-	}
-}
-
-func TestSTTStreamURLFromConfig_InfersRealtimeEndpointFromProviderURL(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.STT.ProviderURL = "http://192.168.1.33:8766/v1/audio/transcriptions"
-
-	got := sttStreamURLFromConfig(cfg)
-	want := "ws://192.168.1.33:8766/ws/transcribe"
+	want := "http://127.0.0.1:8766/v1/audio/transcriptions"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
 
-func TestSTTStreamURLFromConfig_UsesExplicitStreamURL(t *testing.T) {
+func TestSTTStreamURLFromConfig_DoesNotExposeBackendStreaming(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.STT.ProviderURL = "http://192.168.1.33:8766/v1/audio/transcriptions"
-	cfg.STT.StreamURL = "wss://stt.local/ws/transcribe"
+	cfg.STT.GatewayBaseURL = "http://192.168.1.33:8766"
 
 	got := sttStreamURLFromConfig(cfg)
-	if got != cfg.STT.StreamURL {
-		t.Fatalf("expected explicit stream url, got %q", got)
+	if got != "" {
+		t.Fatalf("CORE should expose only its same-origin /stt route, got external stream %q", got)
 	}
 }
 

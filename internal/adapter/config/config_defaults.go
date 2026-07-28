@@ -727,11 +727,8 @@ func (c *Config) setDefaults() {
 	if c.TTS.PronunciationCheck.TimeoutMinutes <= 0 {
 		c.TTS.PronunciationCheck.TimeoutMinutes = 45
 	}
-	if c.STT.Provider == "" {
-		c.STT.Provider = "external_http"
-	}
-	if c.STT.Language == "" {
-		c.STT.Language = "ja"
+	if strings.TrimSpace(c.STT.GatewayBaseURL) == "" {
+		c.STT.GatewayBaseURL = "http://127.0.0.1:8766"
 	}
 	if c.STT.TimeoutMS <= 0 {
 		c.STT.TimeoutMS = 8000
@@ -741,19 +738,6 @@ func (c *Config) setDefaults() {
 	}
 	if c.STT.EndpointPath == "" {
 		c.STT.EndpointPath = "/stt"
-	}
-	if c.STT.ProviderParams == nil {
-		c.STT.ProviderParams = map[string]any{}
-	}
-	if envURL := strings.TrimSpace(os.Getenv("STT_PROVIDER_URL")); envURL != "" && c.STT.ProviderURL == "" && c.STT.ExternalHTTP.URL == "" {
-		c.STT.Provider = "external_http"
-		c.STT.ProviderURL = envURL
-	}
-	if c.STT.ProviderURL == "" {
-		c.STT.ProviderURL = c.STT.ExternalHTTP.URL
-	}
-	if c.STT.StreamURL == "" {
-		c.STT.StreamURL = c.STT.ExternalHTTP.StreamURL
 	}
 	if strings.TrimSpace(c.Vision.BaseURL) == "" {
 		c.Vision.BaseURL = "http://127.0.0.1:8770"

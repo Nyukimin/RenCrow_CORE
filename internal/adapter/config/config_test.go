@@ -2204,19 +2204,13 @@ session:
   storage_dir: "./data/sessions"
 stt:
   enabled: true
-  provider: "external_http"
-  language: "ja"
-  model: "remote-stt"
+  gateway_base_url: "http://127.0.0.1:8766"
   timeout_ms: 9000
   busy_policy: "queue_latest"
   endpoint_path: "/stt"
-  vad: true
   debug:
     save_audio: false
     save_transcript: true
-  external_http:
-    url: "http://127.0.0.1:8080/inference"
-    stream_url: "wss://127.0.0.1:8443/stt/stream"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write config: %v", err)
@@ -2229,21 +2223,18 @@ stt:
 	if !cfg.Server.TLS.Enabled || cfg.Server.TLS.CertFile == "" || cfg.Server.TLS.KeyFile == "" {
 		t.Fatalf("expected TLS settings: %+v", cfg.Server.TLS)
 	}
-	if !cfg.STT.Enabled || cfg.STT.Provider != "external_http" || cfg.STT.Language != "ja" {
+	if !cfg.STT.Enabled || cfg.STT.GatewayBaseURL != "http://127.0.0.1:8766" {
 		t.Fatalf("unexpected stt config: %+v", cfg.STT)
 	}
-	if cfg.STT.TimeoutMS != 9000 || cfg.STT.ProviderURL != "http://127.0.0.1:8080/inference" {
-		t.Fatalf("unexpected stt timeout/provider url: %+v", cfg.STT)
+	if cfg.STT.TimeoutMS != 9000 {
+		t.Fatalf("unexpected stt timeout: %+v", cfg.STT)
 	}
 	if cfg.STT.BusyPolicy != "queue_latest" {
 		t.Fatalf("unexpected stt busy policy: %+v", cfg.STT)
 	}
-	if cfg.STT.StreamURL != "wss://127.0.0.1:8443/stt/stream" {
-		t.Fatalf("unexpected stt stream url: %+v", cfg.STT)
-	}
 }
 
-func TestLoadConfig_STTProviderURLBackwardCompatibility(t *testing.T) {
+func TestLoadConfig_STTProviderURLEnvironmentDoesNotBypassGateway(t *testing.T) {
 	t.Setenv("STT_PROVIDER_URL", "http://127.0.0.1:8080/inference")
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "stt_env.yaml")
@@ -2264,8 +2255,8 @@ session:
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
-	if cfg.STT.Provider != "external_http" || cfg.STT.ProviderURL != "http://127.0.0.1:8080/inference" {
-		t.Fatalf("expected STT_PROVIDER_URL compatibility, got %+v", cfg.STT)
+	if cfg.STT.GatewayBaseURL != "http://127.0.0.1:8766" {
+		t.Fatalf("STT_PROVIDER_URL must not bypass RenCrow_STT Gateway, got %+v", cfg.STT)
 	}
 }
 

@@ -35,6 +35,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /viewer/movie-catalog` | 映画・俳優catalogと利用者評価の一覧・詳細 |
 | `POST /viewer/movie-catalog/preference` | 映画・俳優の認知・好み評価を保存 |
 | `/viewer/active-control`, `/viewer/tts/*`, `/viewer/stt/*` | audio/control bridge |
+| `WS /stt` | Viewerの同一origin音声入力。COREが音声chunkをRenCrow_STTのHTTP公開APIへ中継する |
 | `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewerの画像生成と結果表示 |
 | `POST /viewer/recipient-selection` | client-localなchat recipient選択の通知event |
 | `POST /webhook/line` | LINE Messaging API Webhook。署名必須の正規path |

@@ -100,6 +100,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("tts.timeout_ms must be >= 1")
 		}
 	}
+	if c.STT.Enabled {
+		gatewayURL, err := url.Parse(strings.TrimSpace(c.STT.GatewayBaseURL))
+		if err != nil || gatewayURL.Host == "" || (gatewayURL.Scheme != "http" && gatewayURL.Scheme != "https") {
+			return fmt.Errorf("stt.gateway_base_url must be an absolute HTTP URL when enabled=true")
+		}
+		if c.STT.TimeoutMS < 1 {
+			return fmt.Errorf("stt.timeout_ms must be >= 1")
+		}
+	}
 	if c.TTS.PronunciationCheck.Enabled {
 		parsed, err := url.Parse(c.TTS.PronunciationCheck.ToolBaseURL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {

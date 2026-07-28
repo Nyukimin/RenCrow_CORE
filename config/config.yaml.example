@@ -348,11 +348,8 @@ heartbeat:
 
 # TTS実行能力
 # 音声サーバメモ:
-# - RenCrow_STTはMac、RenCrow_TTSはRTX機で分離する
-# - STT Health: https://192.168.1.31:8443/health
-# - STT Stream: wss://192.168.1.31:8443/stt/stream
-# - STT File:   https://192.168.1.31:8443/stt/file
-# - STT Chat:   https://192.168.1.31:8443/stt/chat-input
+# - COREはRenCrow_STT / RenCrow_TTSの各Gatewayだけを参照する
+# - STT外部target、model、language、stream方式はRenCrow_STT側で管理する
 # - TTS Go Gateway: http://192.168.1.205:7870/api/tts
 # - Irodori targetはGatewayから接続し、COREから直接参照しない
 # - 自己署名証明書のため curl は -k を付ける
@@ -381,23 +378,17 @@ tts:
 
 # STT基本機能
 # 本番の音声入力入口は HTTPS Viewer です。
-# Viewer は secure context でマイクを取得し、Mac STT の wss://192.168.1.31:8443/stt/stream にPCM chunkを送ります。
+# Viewerはsecure contextでマイクを取得し、CORE同一originの /stt にPCM chunkを送ります。
+# COREはRenCrow_STTのPOST /v1/audio/transcriptionsだけを呼び出します。
 stt:
   enabled: true
-  provider: "external_http"    # external_http | mock
-  language: "ja"
-  model: "large-v3-v20240930_turbo"
-  timeout_ms: 600000           # WhisperKit初回モデル準備を考慮。運用安定後は短縮可
+  gateway_base_url: "http://127.0.0.1:8766"
+  timeout_ms: 120000
+  busy_policy: "queue_latest"
   endpoint_path: "/stt"
-  stream_url: "wss://192.168.1.31:8443/stt/stream"
-  vad: true
   debug:
     save_audio: false
     save_transcript: true
-  external_http:
-    # Mac上のrencrow-sttをHTTPS reverse proxy越しに使う場合:
-    url: "https://192.168.1.31:8443/stt/file" # 旧 STT_PROVIDER_URL 互換の外部Provider URL
-    stream_url: "wss://192.168.1.31:8443/stt/stream"
 
 # 画像・動画認識は必ず RenCrow_Vision を経由する。
 # Wild backend のURL・model・認証は RenCrow_Vision 側で管理し、COREには置かない。

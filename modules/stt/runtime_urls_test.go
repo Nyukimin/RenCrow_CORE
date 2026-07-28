@@ -2,6 +2,12 @@ package stt
 
 import "testing"
 
+func TestGatewayTranscriptionURLUsesRenCrowSTTPublicContract(t *testing.T) {
+	if got := GatewayTranscriptionURL(" http://127.0.0.1:8766/ "); got != "http://127.0.0.1:8766/v1/audio/transcriptions" {
+		t.Fatalf("GatewayTranscriptionURL() = %q", got)
+	}
+}
+
 func TestInferGatewayURL(t *testing.T) {
 	if got := InferGatewayURL(" ws://192.168.1.36:8090/stt ", "ws://fallback"); got != "ws://192.168.1.36:8090/stt" {
 		t.Fatalf("explicit gateway = %q", got)

@@ -1,13 +1,15 @@
 package main
 
 import (
+	"strings"
+
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	sttinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/stt"
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
 func sttStreamURLFromConfig(cfg *config.Config) string {
-	return modulestt.StreamURL(sttRuntimeURLConfigFromAppConfig(cfg, ""))
+	return ""
 }
 
 func inferSTTStreamURLFromProviderURL(providerURL string) string {
@@ -30,11 +32,18 @@ func inferSTTProviderURL(ttsBaseURL, sttProviderURL string) string {
 }
 
 func inferSTTBaseURLFromConfig(cfg *config.Config) string {
-	return modulestt.InferBaseURL(sttRuntimeURLConfigFromAppConfig(cfg, ""))
+	if cfg == nil {
+		return "http://127.0.0.1:8766"
+	}
+	base := strings.TrimRight(strings.TrimSpace(cfg.STT.GatewayBaseURL), "/")
+	if base == "" {
+		return "http://127.0.0.1:8766"
+	}
+	return base
 }
 
 func inferSTTProviderURLFromConfig(cfg *config.Config) string {
-	return modulestt.InferProviderURL(sttRuntimeURLConfigFromAppConfig(cfg, ""))
+	return modulestt.GatewayTranscriptionURL(inferSTTBaseURLFromConfig(cfg))
 }
 
 func buildSTTProvider(cfg *config.Config) sttinfra.Provider {
@@ -65,12 +74,11 @@ func sttRuntimeConfigFromAppConfig(cfg *config.Config) modulestt.RuntimeConfig {
 	}
 	return modulestt.RuntimeConfig{
 		Enabled:        cfg.STT.Enabled,
-		Provider:       cfg.STT.Provider,
-		Language:       cfg.STT.Language,
-		Model:          cfg.STT.Model,
+		Provider:       modulestt.ProviderRenCrowSTT,
+		Language:       "ja",
 		TimeoutMS:      cfg.STT.TimeoutMS,
 		BusyPolicy:     cfg.STT.BusyPolicy,
-		ProviderURL:    cfg.STT.ProviderURL,
+		ProviderURL:    inferSTTProviderURLFromConfig(cfg),
 		SaveAudio:      cfg.STT.Debug.SaveAudio,
 		SaveTranscript: cfg.STT.Debug.SaveTranscript,
 	}
@@ -81,9 +89,8 @@ func sttRuntimeURLConfigFromAppConfig(cfg *config.Config, ttsBaseURL string) mod
 		return modulestt.RuntimeURLConfig{TTSBaseURL: ttsBaseURL}
 	}
 	return modulestt.RuntimeURLConfig{
-		Provider:    cfg.STT.Provider,
-		ProviderURL: cfg.STT.ProviderURL,
-		StreamURL:   cfg.STT.StreamURL,
+		Provider:    modulestt.ProviderRenCrowSTT,
+		ProviderURL: inferSTTProviderURLFromConfig(cfg),
 		TTSBaseURL:  ttsBaseURL,
 		ServerHost:  cfg.Server.Host,
 		ServerPort:  cfg.Server.Port,
