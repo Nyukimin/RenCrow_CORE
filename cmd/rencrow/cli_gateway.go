@@ -60,7 +60,7 @@ func runGatewayCommand(
 				writeJSONCLI(out, map[string]any{
 					"ok": false, "timestamp": now().Format(time.RFC3339), "component": "gateway",
 					"status": "down", "code": "E_GATEWAY_UNREACHABLE",
-					"hint": "rencrow gateway restart を実行",
+					"hint":    "rencrow gateway restart を実行",
 					"details": map[string]any{"url": url, "error": err.Error()},
 				}, true)
 			} else {
@@ -83,7 +83,7 @@ func runGatewayCommand(
 			writeJSONCLI(out, map[string]any{
 				"ok": false, "timestamp": now().Format(time.RFC3339), "component": "gateway",
 				"status": "down", "code": "E_GATEWAY_UNHEALTHY",
-				"hint": "health endpoint と logs を確認",
+				"hint":    "health endpoint と logs を確認",
 				"details": map[string]any{"url": url, "status_code": code},
 			}, true)
 		} else {
@@ -96,7 +96,7 @@ func runGatewayCommand(
 				writeJSONCLI(out, map[string]any{
 					"ok": false, "timestamp": now().Format(time.RFC3339), "component": "gateway",
 					"status": "down", "code": "E_GATEWAY_RESTART_FAILED",
-					"hint": "systemctl権限とサービス名を確認",
+					"hint":    "systemctl権限とサービス名を確認",
 					"details": map[string]any{"error": err.Error()},
 				}, true)
 			} else {

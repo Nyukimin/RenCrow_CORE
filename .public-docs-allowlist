@@ -4,10 +4,12 @@ docs/03_キャラクター・エージェント仕様.md
 docs/04_アーキテクチャ概要.md
 docs/05_設定リファレンス.md
 docs/06_Public_API仕様.md
-docs/07_安全・承認・データ方針.md
+docs/07_安全・自動実行・データ方針.md
 docs/08_実装状況・ロードマップ.md
 docs/09_運用ログ・panic保存仕様.md
+docs/10_ログ仕様.md
 docs/README.md
 docs/調査/20260722_120200_Mio応答遅延とtoken-rate誤計測.md
 docs/調査/20260724_231313_character_chat_SystemPrompt反映不整合.md
 docs/調査/20260725_150652_main実装状況とdocsドリフト再調査.md
+docs/調査/20260726_175258_CODEルーティングE2E期待値不整合.md
