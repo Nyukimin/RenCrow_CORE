@@ -19,6 +19,15 @@ go test ./...
 go vet ./...
 ```
 
+ローカルWindowsでは、カスペルスキーがGoの一時テスト実行ファイルを検知するため
+`go test`を実行しません。Push前はUbuntu環境で上記テストを実行し、Native Windows
+検証はGitHub Actionsの`Go Test` workflowで同じテストを実行します。Push済みの
+現在commitをWindowsから手動検証する場合は、次を実行してください。
+
+```powershell
+.\scripts\test-windows-ci.ps1
+```
+
 ローカル設定、token、API key、ログ、DB、生成物、個人データは commit しないでください。公開資料の追加・改名は `.public-docs-allowlist` も同時に更新し、仕様・実装仕様・解析データ・旧仕様を混在させないでください。
 
 セキュリティ問題は公開 Issue に詳細を書かず、[SECURITY.md](SECURITY.md) の報告方法を利用してください。

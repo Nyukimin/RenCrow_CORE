@@ -10,6 +10,14 @@
 - ユーザーが明示的に指示しない限り、新しい Git ブランチを作成してはいけない。
 - 作業は現在のブランチで継続する。
 
+## Windows Go Test Policy
+
+- カスペルスキーがGoの一時テスト実行ファイルを検知するため、ローカルWindowsでは`go test`を実行しない。
+- Windows固有のテストは`.github/workflows/go-test.yml`のGitHub管理`windows-latest` runnerで実行する。
+- workflowではテストコマンド、対象package、assertionを弱めたりskipしたりせず、Linux jobと同じ内容を実行する。
+- ローカルWindowsでは`go vet`を実行し、Push前の同一テストはUbuntu環境で実行する。Windows CIが未実施または失敗ならWindows側は未検証と報告する。
+- カスペルスキーの停止、除外設定、検知回避用の一時実行ファイル生成は行わない。
+
 ## このファイルの役割
 
 このファイルは、RenCrow_CORE で作業する AI エージェント向けの最小実務ルールです。

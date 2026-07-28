@@ -306,15 +306,23 @@ fork/exec C:\...\Temp\go-build.../pkg.test.exe: Access is denied.
 - 一時的に通ったことをもって「対策できた」と結論しない。発生は断続的であり、
   1回の成功は再現性の証拠にならない
 
-**取るべき対応**
+**標準の実行方法**
 
-- ブロックされたpackageは「未検証」として、理由とともに報告する
-- `go vet` は実行ファイルを生成しないため、型チェックの確認には使える。
-  ただし「vet が通った」ことは「テストが通った」ことの代わりにはならない
-- 実際のコンパイルエラーとブロックを区別する。`[build failed]` の表示だけでは
-  判別できないため、`go vet` の結果で切り分ける
-- 恒久対策はセキュリティソフト側のプロセス除外設定であり、コード側では解決
-  できない。設定変更は利用者の判断に委ね、こちらから実行しない
+- ローカルWindowsでは`go test`を実行しない
+- Native Windows検証は`.github/workflows/go-test.yml`のGitHub管理
+  `windows-latest` runnerで行う
+- Windows jobとLinux jobは、同じテストコマンド、対象package、assertionを使う。
+  セキュリティソフト対策を理由にテストをskip、削除、弱体化しない
+- Push前はUbuntu環境で同じテストを実行し、ローカルWindowsでは`go vet`で
+  コンパイル・型チェックを確認する。`go vet`はテスト通過の代替にはしない
+- Push後はWindows jobの成功を確認する。未実施、失敗、cancelの場合はWindows側を
+  「未検証」と報告する
+- Windowsからの手動実行には`scripts/test-windows-ci.ps1`を使う。このscriptは
+  作業ツリーと`origin`が同一commitであることを確認してからworkflowを起動する
+- カスペルスキーの停止、除外設定追加、検知対象ファイルの名前や生成場所を変える
+  迂回は行わない
+- 実際のコンパイルエラーとローカルブロックを区別する。`[build failed]`の表示だけ
+  では判別できないため、`go vet`とCI結果で切り分ける
 
 **なお、テストのファイル操作を減らすこと自体は正しい**
 
