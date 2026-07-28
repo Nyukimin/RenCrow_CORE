@@ -51,6 +51,25 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 `POST /viewer/games/launch` は、ペルソナが「遊びたい時に自分で起動する」
 ための起動口（上位方針: `RenCrow_GAMES/docs/09_マルチペルソナプレイ仕様.md`）。
 
+Game lifecycleの向きは次で固定します。
+
+```text
+CORE Agent / LLM
+  -> POST /viewer/games/launch
+  -> RenCrow_GAMES Observer / title process
+  -> POST /viewer/games/decision
+  -> CORE -> RenCrow_LLM -> BrainDecision
+  -> GAMES deterministic execution
+  -> ObserverFrame / POST /viewer/games/result
+  -> CORE observer proxy / candidate memory
+  -> user
+```
+
+`GAMES -> /viewer/games/decision`は起動後のターン判断callbackです。ゲーム起動主体は
+COREのAgent／LLM、ゲーム状態と実行の正本はGAMESです。COREはworld stateを直接変更せず、
+GAMESは本番LLM providerへ直接接続しません。ユーザー向けの実行表示はGAMES Observerを
+`/viewer/games/observer`と`/viewer/games/observer-api/*`でsame-origin proxyします。
+
 - Request: `{game_id, personas[], turns?, mode?, reason?}`。
   CORE 側の検証は `game_id` 必須のみ。タイトル・人数の capability 検証は
   observer 側 launcher が正本であり、その 400 をそのまま透過する
