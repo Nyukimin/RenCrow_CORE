@@ -87,6 +87,14 @@ type VisionConfig struct {
 	MaxFrames     int    `yaml:"max_frames"`
 }
 
+// ImageConfig configures the RenCrow_Image service boundary.
+// ForgeNeo, model and generation settings intentionally belong to RenCrow_Image.
+type ImageConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	BaseURL   string `yaml:"base_url"`
+	TimeoutMS int    `yaml:"timeout_ms"`
+}
+
 type TTSCommandConfig struct {
 	Name string   `yaml:"name"`
 	Args []string `yaml:"args"`

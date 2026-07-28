@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260511-memory-desk">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260723-movie-assessment-grid-2">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20260728-image-mvp">
 </head>
 <body class="theme-modern">
 <header>
@@ -143,6 +144,7 @@
     <select id="mobilePanelSelect" class="mobile-panel-select">
       <option value="home">Home</option>
       <option value="timeline">Chat</option>
+      <option value="image">Image</option>
       <option value="develop">Develop</option>
       <option value="instructions">Instructions</option>
       <option value="backlog">Backlog</option>
@@ -167,6 +169,7 @@
   <nav class="tabs" aria-label="Viewer navigation">
     <button class="tab-btn active" data-tab="home">Home</button>
     <button class="tab-btn" data-tab="timeline">Chat</button>
+    <button class="tab-btn" data-tab="image">Image</button>
     <button class="tab-btn" data-tab="develop">Develop</button>
     <button class="tab-btn" data-tab="instructions">Instructions</button>
     <button class="tab-btn" data-tab="backlog">Backlog</button>
@@ -229,6 +232,52 @@
             <button id="homeSendBtn" class="desk-primary-btn" type="button">Send</button>
           </div>
         </section>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-image" class="panel">
+    <div class="desk-screen desk-workspace image-workspace">
+      <aside class="desk-side image-side">
+        <div class="desk-brand">
+          <div class="desk-kicker">RenCrow Image</div>
+          <h2 class="daily-desk-title">Z-Imageで描く</h2>
+        </div>
+        <div class="desk-character image-character">
+          <div class="desk-character-mark">I</div>
+          <div class="desk-character-name">Image Gateway</div>
+          <div class="daily-desk-muted">プロンプトから1枚生成し、ここへ表示します。</div>
+        </div>
+        <div id="imageStatus" class="desk-status-pill">ready</div>
+        <section class="daily-desk-card image-prompt-card">
+          <label for="imagePrompt">Prompt</label>
+          <textarea id="imagePrompt" class="daily-desk-input image-prompt" rows="6" maxlength="8000" placeholder="描きたい画像を入力"></textarea>
+          <details class="image-options">
+            <summary>追加指定</summary>
+            <label for="imageNegativePrompt">Negative prompt</label>
+            <textarea id="imageNegativePrompt" class="daily-desk-input" rows="2" maxlength="8000"></textarea>
+            <label for="imageSeed">Seed</label>
+            <input id="imageSeed" class="desk-input" type="number" value="-1" step="1">
+          </details>
+          <button id="imageGenerateBtn" class="desk-primary-btn" type="button">Generate</button>
+        </section>
+      </aside>
+      <section class="desk-main image-main">
+        <div class="desk-head compact">
+          <div>
+            <div class="desk-kicker">Generated image</div>
+            <h3 id="imageResultTitle">生成結果</h3>
+          </div>
+          <div id="imageResultMeta" class="daily-desk-muted"></div>
+        </div>
+        <div id="imageResultEmpty" class="daily-desk-card image-empty">
+          プロンプトを書いてGenerateを押すと、生成画像をここに表示します。
+        </div>
+        <figure id="imageResultFigure" class="image-result" hidden>
+          <img id="imageResult" alt="RenCrow_Imageで生成した画像">
+          <figcaption id="imageResultPrompt"></figcaption>
+        </figure>
+        <div id="imageError" class="daily-desk-card image-error" hidden></div>
       </section>
     </div>
   </section>
@@ -1577,6 +1626,7 @@
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
 <script src="/viewer/assets/js/tabs/jobs.js?v=20260510-tabs-jobs" defer></script>
 <script src="/viewer/assets/js/tabs/games.js?v=20260702-games-tab" defer></script>
+<script src="/viewer/assets/js/tabs/image.js?v=20260728-image-mvp" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
 <script src="/viewer/assets/js/viewer.js?v=20260702-games-tab" defer></script>
 <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>

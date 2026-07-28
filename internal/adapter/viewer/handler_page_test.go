@@ -31,3 +31,23 @@ func TestHandlePageKeepsDebugViewerInCore(t *testing.T) {
 		t.Fatal("debug Viewer HTML was not served")
 	}
 }
+
+func TestHandlePageIncludesImageGenerationTab(t *testing.T) {
+	rec := httptest.NewRecorder()
+	HandlePage(rec, httptest.NewRequest(http.MethodGet, "/viewer", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, expected := range []string{
+		`data-tab="image"`,
+		`id="panel-image"`,
+		`id="imagePrompt"`,
+		`id="imageGenerateBtn"`,
+		`/viewer/assets/js/tabs/image.js`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("Viewer HTML missing %q", expected)
+		}
+	}
+}

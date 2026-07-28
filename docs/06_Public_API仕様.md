@@ -35,6 +35,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /viewer/movie-catalog` | 映画・俳優catalogと利用者評価の一覧・詳細 |
 | `POST /viewer/movie-catalog/preference` | 映画・俳優の認知・好み評価を保存 |
 | `/viewer/active-control`, `/viewer/tts/*`, `/viewer/stt/*` | audio/control bridge |
+| `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewerの画像生成と結果表示 |
 | `POST /viewer/recipient-selection` | client-localなchat recipient選択の通知event |
 | `POST /webhook/line` | LINE Messaging API Webhook。署名必須の正規path |
 | `POST /webhook` | LINE Webhookの旧互換path |
@@ -152,6 +153,15 @@ COREは`VISION_PROVIDER_UNAVAILABLE`、`VISION_MODEL_NOT_READY`、
 `VISION_DECODE_FAILED`、`VISION_INFERENCE_TIMEOUT`、`VISION_EMPTY_RESULT`を
 通常Chat成功へ変換せず、同じ`trace_id`の終端errorとしてclientへ通知します。
 Vision失敗時にCOREがraw mediaをWildや別LLMへ直接送るfallbackは禁止します。
+
+Debug Viewerの画像生成は`POST /viewer/image/generate`へ
+`{"prompt":"...", "negative_prompt":"", "seed":-1}`を送ります。
+COREは同じrequestをRenCrow_Imageの`POST /v1/images/generations`へ転送し、
+responseのopaqueなimage IDだけを保持して
+`GET /viewer/image/result?id=...`からPNGを中継します。
+ViewerとCOREはForgeNeo URL、checkpoint、text encoder、VAE、sampler、
+ADetailer等のbackend設定を指定しません。RenCrow_Imageがunavailableの場合は
+明示的な503を返し、ForgeNeoやComfyUIへ直接fallbackしません。
 
 COREは受付時に`job_id`、root `trace_id`、利用者発話の`message_id`を発行します。`POST /viewer/send`の受付responseは`job_id`、`trace_id`、`message_id`、`viewer_client_id`、`recipient`を返します。現行のroot `trace_id`は`job_id`と同じopaque値です。同じ処理から発行する`message.received`、`agent.response`、error eventは同じ`trace_id`を持ち、`message.received.message_id`は受付responseの`message_id`と一致します。Agent発話は利用者発話とは別の`message_id`を持ちます。
 

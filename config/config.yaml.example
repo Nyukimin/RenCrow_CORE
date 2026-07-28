@@ -409,6 +409,13 @@ vision:
   max_video_bytes: 104857600
   max_frames: 8
 
+# 画像生成は必ず RenCrow_Image を経由する。
+# ForgeNeo、Z-Image、model、VAE、sampler等は RenCrow_Image 側で管理する。
+image:
+  enabled: true
+  base_url: "http://127.0.0.1:8780"
+  timeout_ms: 600000
+
 vtuber:
   enabled: false
   tick_interval_ms: 100

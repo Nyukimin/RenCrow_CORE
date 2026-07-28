@@ -1206,6 +1206,7 @@ const mobilePanelPrev = document.getElementById('mobilePanelPrev');
 const mobilePanelNext = document.getElementById('mobilePanelNext');
 const panels = {
   home: document.getElementById('panel-home'),
+  image: document.getElementById('panel-image'),
   develop: document.getElementById('panel-develop'),
   instructions: document.getElementById('panel-instructions'),
   backlog: document.getElementById('panel-backlog'),

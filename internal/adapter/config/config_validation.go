@@ -133,6 +133,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("vision.max_frames must be >= 1")
 		}
 	}
+	if c.Image.Enabled {
+		imageURL, err := url.Parse(strings.TrimSpace(c.Image.BaseURL))
+		if err != nil || imageURL.Host == "" || (imageURL.Scheme != "http" && imageURL.Scheme != "https") {
+			return fmt.Errorf("image.base_url must be an absolute HTTP URL when enabled=true")
+		}
+		if c.Image.TimeoutMS < 1 {
+			return fmt.Errorf("image.timeout_ms must be >= 1")
+		}
+	}
 	if c.WebwrightFetch.Enabled {
 		if strings.TrimSpace(c.WebwrightFetch.RunnerPath) == "" {
 			return fmt.Errorf("webwright_fetch.runner_path is required when webwright_fetch.enabled=true")

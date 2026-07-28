@@ -19,6 +19,7 @@ import (
 	gamesfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/games"
 	governancefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/governance"
 	idlechatfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/idlechat"
+	imagefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/image"
 	knowledgefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/knowledge"
 	llmfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/llm"
 	memoryfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/memory"
@@ -34,6 +35,7 @@ import (
 	voicefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/voice"
 	webfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/web"
 	workstreamfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/workstream"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/imagegateway"
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
@@ -342,6 +344,26 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 		ObserverPage:  dependencies.viewerGamesObserverPage,
 		ObserverProxy: dependencies.viewerGamesObserverProxy,
 	}})
+}
+
+func registerImageRoutes(mux *http.ServeMux, cfg *config.Config) {
+	var gateway viewer.ImageGateway
+	if cfg.Image.Enabled {
+		client, err := imagegateway.NewClient(
+			cfg.Image.BaseURL,
+			time.Duration(cfg.Image.TimeoutMS)*time.Millisecond,
+		)
+		if err != nil {
+			log.Printf("RenCrow_Image client unavailable: %v", err)
+		} else {
+			gateway = client
+			log.Printf("RenCrow_Image Gateway -> %s", strings.TrimRight(cfg.Image.BaseURL, "/"))
+		}
+	}
+	imagefeature.RegisterRoutes(mux, imagefeature.Routes{
+		Generate: viewer.HandleImageGenerate(gateway),
+		Result:   viewer.HandleImageResult(gateway),
+	})
 }
 
 type configuredViewerDatabasePaths struct {

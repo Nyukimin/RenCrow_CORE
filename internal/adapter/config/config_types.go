@@ -136,6 +136,9 @@ type Config struct {
 	// === Vision / image and video recognition ===
 	Vision VisionConfig `yaml:"vision"`
 
+	// === Image generation through RenCrow_Image ===
+	Image ImageConfig `yaml:"image"`
+
 	// === VTuber / VTube Studio integration ===
 	VTuber VTuberConfig `yaml:"vtuber"`
 

@@ -770,6 +770,12 @@ func (c *Config) setDefaults() {
 	if c.Vision.MaxFrames <= 0 {
 		c.Vision.MaxFrames = 8
 	}
+	if strings.TrimSpace(c.Image.BaseURL) == "" {
+		c.Image.BaseURL = "http://127.0.0.1:8780"
+	}
+	if c.Image.TimeoutMS <= 0 {
+		c.Image.TimeoutMS = 600000
+	}
 	if c.VTuber.TickIntervalMS <= 0 {
 		c.VTuber.TickIntervalMS = 100
 	}

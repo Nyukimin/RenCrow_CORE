@@ -23,6 +23,7 @@ func registerFeatureRoutes(
 	registerWebRoutes(mux, dependencies)
 	registerKnowledgeMemorySourceRoutes(mux, dependencies)
 	registerGovernanceSecurityReportRoutes(mux, dependencies)
+	registerImageRoutes(mux, cfg)
 	registerViewerDynamicRoutes(mux, dependencies)
 	registerIdleChatRoutes(mux, dependencies)
 	registerHealthRoutes(mux, dependencies, cfg)
