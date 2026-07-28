@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 )
 
@@ -167,9 +167,18 @@ func initManager(cfg *config.Config) (*conversationpersistence.RealConversationM
 
 	// Embedder 注入（embed_model が設定されている場合）
 	if cfg.Conversation.EmbedModel != "" {
-		embedder := ollama.NewOllamaEmbedder(cfg.Ollama.BaseURL, cfg.Conversation.EmbedModel)
+		apiKey := ""
+		if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
+			apiKey = strings.TrimSpace(os.Getenv(envName))
+		}
+		embedder := openai.NewOpenAIEmbedderWithOptions(
+			apiKey,
+			cfg.Conversation.EmbedModel,
+			cfg.LLMGateway.BaseURL,
+			time.Duration(cfg.LLMGateway.TimeoutSec)*time.Second,
+		)
 		mgr.WithEmbedder(embedder)
-		log.Printf("KB-Admin: Embedder injected (model: %s)", cfg.Conversation.EmbedModel)
+		log.Printf("KB-Admin: RenCrow_LLM embedder injected (alias: %s)", cfg.Conversation.EmbedModel)
 	} else {
 		log.Println("Warning: No embed_model configured - KB search may not work correctly")
 	}

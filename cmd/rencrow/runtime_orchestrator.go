@@ -47,7 +47,6 @@ func buildOrchestratorRuntime(
 			llmRuntime.Coder3,
 			llmRuntime.Coder4,
 			workerExecutionService,
-			llmRuntime.Chat,
 			centralMemory,
 			ttsBridge,
 			vtuberBridge,

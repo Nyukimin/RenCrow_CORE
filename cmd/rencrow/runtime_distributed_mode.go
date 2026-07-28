@@ -14,7 +14,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
@@ -33,7 +32,6 @@ func (d *Dependencies) buildDistributedMode(
 	coder3Adapter *coderAdapter,
 	coder4Adapter *coderAdapter,
 	workerExecution service.WorkerExecutionService,
-	ollamaProvider llm.LLMProvider,
 	centralMemory *domainsession.CentralMemory,
 	ttsBridge orchestrator.TTSBridge,
 	vtuberBridge orchestrator.VTuberBridge,

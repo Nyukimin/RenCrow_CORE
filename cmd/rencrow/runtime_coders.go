@@ -13,7 +13,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
-	llmfactory "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/factory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
@@ -143,26 +142,24 @@ func setupCoders(cfg *config.Config, busyTracker *llmBusyTracker) (coder1, coder
 		}
 
 		// LLM Provider 生成
-		var provider llm.LLMProvider
-		var err error
-		if cfg.LLMGateway.Enabled {
-			apiKey := ""
-			if cfg.LLMGateway.APIKeyEnv != "" {
-				apiKey = strings.TrimSpace(os.Getenv(cfg.LLMGateway.APIKeyEnv))
-			}
-			provider = openai.NewOpenAIProviderWithOptions(
-				apiKey,
-				strings.ToLower(plan.Name),
-				strings.TrimRight(cfg.LLMGateway.BaseURL, "/"),
-				time.Duration(cfg.LLMGateway.TimeoutSec)*time.Second,
-			).WithRenCrowExecution(strings.ToLower(plan.Name), "coder", strings.ToLower(plan.Name))
-		} else {
-			provider, err = llmfactory.CreateProvider(cc)
+		apiKey := ""
+		if cfg.LLMGateway.APIKeyEnv != "" {
+			apiKey = strings.TrimSpace(os.Getenv(cfg.LLMGateway.APIKeyEnv))
 		}
-		if err != nil {
-			log.Printf("[setupCoders] %s (%s) provider creation failed: %v", plan.Name, cc.Name, err)
-			continue
+		baseURL := strings.TrimRight(strings.TrimSpace(cfg.LLMGateway.BaseURL), "/")
+		if baseURL == "" {
+			baseURL = "http://127.0.0.1:8090"
 		}
+		timeout := time.Duration(cfg.LLMGateway.TimeoutSec) * time.Second
+		if timeout <= 0 {
+			timeout = 10 * time.Minute
+		}
+		var provider llm.LLMProvider = openai.NewOpenAIProviderWithOptions(
+			apiKey,
+			strings.ToLower(plan.Name),
+			baseURL,
+			timeout,
+		).WithRenCrowExecution(strings.ToLower(plan.Name), "coder", strings.ToLower(plan.Name))
 		if provider == nil {
 			log.Printf("[setupCoders] %s (%s) provider is nil (Enabled=false or error)", plan.Name, cc.Name)
 			continue

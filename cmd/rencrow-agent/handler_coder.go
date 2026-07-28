@@ -29,46 +29,31 @@ func (h *coderHandler) HandleMessage(ctx context.Context, msg domaintransport.Me
 
 	t := task.NewTask(jobID, msg.Content, "standalone", "agent")
 
-	// v4.1: Message.Context から CoderConfig を抽出して動的に Provider 作成
-	activeAgent := h.coderAgent // デフォルトはローカル設定の Agent
+	// Message.Context の物理 provider/model 指定は互換入力としてのみ受け取り、
+	// 起動時に構成した RenCrow_LLM Gateway agent を必ず使用する。
+	activeAgent := h.coderAgent
 	if msg.Context != nil {
 		if coderCfgRaw, ok := msg.Context["coder_config"]; ok {
-			// CoderConfig を復元
 			coderCfg, err := extractCoderConfig(coderCfgRaw)
 			if err != nil {
 				log.Printf("[coderHandler] Failed to extract CoderConfig from Context: %v", err)
 			} else {
-				// CoderConfig から Provider を動的作成
-				provider, err := createProviderFromConfig(coderCfg)
-				if err != nil {
-					log.Printf("[coderHandler] Failed to create provider from CoderConfig: %v", err)
-				} else {
-					// 一時的な CoderAgent を作成
-					tempAgent := agent.NewCoderAgent(provider, nil, nil, h.proposalPrompt)
-
-					// Persona 適用
-					if personality := coderPersonalityFromCharacters(coderCfg, h.characterPrompts); personality != "" {
-						persona := agent.AgentPersona{
-							Name:        coderCfg.Name,
-							Personality: personality,
-							Tone:        coderCfg.Tone,
-						}
-						tempAgent.WithPersona(persona)
-						log.Printf("[coderHandler] Applied Persona: %s", coderCfg.Name)
-					}
-
-					// LightMemory 適用（SSH 経由では共有インスタンス再利用）
-					if coderCfg.LightMemory.Enabled {
-						if h.globalMemory == nil {
-							h.globalMemory = agent.NewLightMemory(coderCfg.LightMemory.MaxTurns)
-						}
-						tempAgent.WithLightMemory(h.globalMemory)
-						log.Printf("[coderHandler] Applied LightMemory: max_turns=%d", coderCfg.LightMemory.MaxTurns)
-					}
-
-					activeAgent = tempAgent
-					log.Printf("[coderHandler] Using remote CoderConfig: provider=%s, model=%s", coderCfg.Provider, coderCfg.Model)
+				if personality := coderPersonalityFromCharacters(coderCfg, h.characterPrompts); personality != "" {
+					activeAgent.WithPersona(agent.AgentPersona{
+						Name:        coderCfg.Name,
+						Personality: personality,
+						Tone:        coderCfg.Tone,
+					})
+					log.Printf("[coderHandler] Applied Persona: %s", coderCfg.Name)
 				}
+				if coderCfg.LightMemory.Enabled {
+					if h.globalMemory == nil {
+						h.globalMemory = agent.NewLightMemory(coderCfg.LightMemory.MaxTurns)
+					}
+					activeAgent.WithLightMemory(h.globalMemory)
+					log.Printf("[coderHandler] Applied LightMemory: max_turns=%d", coderCfg.LightMemory.MaxTurns)
+				}
+				log.Printf("[coderHandler] Ignored physical CoderConfig provider/model; using RenCrow_LLM alias=%s", h.agentName)
 			}
 		}
 	}

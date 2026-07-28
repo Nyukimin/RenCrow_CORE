@@ -6,7 +6,7 @@
 model:
   model_class: openai
   model_name: Coder1
-  openai_endpoint: http://127.0.0.1:8082/v1/responses
+  openai_endpoint: http://127.0.0.1:8090/v1/responses
   openai_api_key: dummy
   request_timeout_seconds: 120
   max_output_tokens: 1800

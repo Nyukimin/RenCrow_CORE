@@ -259,14 +259,7 @@ func TestRuntimeConfig(t *testing.T) {
 			LLMOpsConfigured: true,
 			LLMOpsEnabled:    true,
 			LLMOpsBaseURL:    "http://127.0.0.1:8079",
-			LocalLLM: LocalLLMRuntimeConfig{
-				Enabled:       true,
-				Provider:      "local_openai",
-				ChatBaseURL:   "http://127.0.0.1:8081",
-				WorkerBaseURL: "http://127.0.0.1:8082",
-				ChatModel:     "Chat",
-				WorkerModel:   "Worker",
-			},
+			LLMGateway:       LLMGatewayRuntimeConfig{BaseURL: "http://127.0.0.1:8090", Ready: true},
 			RuntimeReadiness: fullRuntimeReadinessWithConfig(false, true, true),
 		})
 	}))
@@ -282,7 +275,7 @@ func TestRuntimeConfig(t *testing.T) {
 	if gotPath != "/viewer/runtime-config" {
 		t.Fatalf("path=%s", gotPath)
 	}
-	if !cfg.LLMOpsEnabled || cfg.LocalLLM.ChatBaseURL != "http://127.0.0.1:8081" || cfg.TTSHealthPath != "/gradio_api/info" {
+	if !cfg.LLMOpsEnabled || cfg.LLMGateway.BaseURL != "http://127.0.0.1:8090" || !cfg.LLMGateway.Ready || cfg.TTSHealthPath != "/gradio_api/info" {
 		t.Fatalf("runtime config=%#v", cfg)
 	}
 	if cfg.RuntimeReadiness.SlackCredentialsPresent == nil || *cfg.RuntimeReadiness.SlackCredentialsPresent {
@@ -758,15 +751,10 @@ func TestLLMOpsStatusRejectsMalformedResponse(t *testing.T) {
 
 func TestRuntimeConfigRejectsMalformedResponse(t *testing.T) {
 	valid := RuntimeConfig{
-		STTStreamURL: "wss://127.0.0.1:8443/stt/stream",
-		STTBaseURL:   "https://127.0.0.1:8443",
-		TTSBaseURL:   "http://127.0.0.1:7860",
-		LocalLLM: LocalLLMRuntimeConfig{
-			Enabled:       true,
-			Provider:      "local_openai",
-			ChatBaseURL:   "http://127.0.0.1:8081",
-			WorkerBaseURL: "http://127.0.0.1:8082",
-		},
+		STTStreamURL:     "wss://127.0.0.1:8443/stt/stream",
+		STTBaseURL:       "https://127.0.0.1:8443",
+		TTSBaseURL:       "http://127.0.0.1:7860",
+		LLMGateway:       LLMGatewayRuntimeConfig{BaseURL: "http://127.0.0.1:8090", Ready: true},
 		RuntimeReadiness: fullRuntimeReadinessWithConfig(false, true, true),
 	}
 	tests := []struct {
@@ -784,12 +772,9 @@ func TestRuntimeConfigRejectsMalformedResponse(t *testing.T) {
 			c.LLMOpsConfigured = true
 			c.LLMOpsBaseURL = ""
 		}, want: "llm_ops_enabled without llm_ops_base_url"},
-		{name: "local llm missing provider", mutate: func(c *RuntimeConfig) {
-			c.LocalLLM.Provider = ""
-		}, want: "missing provider"},
-		{name: "local llm missing chat base", mutate: func(c *RuntimeConfig) {
-			c.LocalLLM.ChatBaseURL = ""
-		}, want: "missing chat_base_url"},
+		{name: "missing llm gateway base", mutate: func(c *RuntimeConfig) {
+			c.LLMGateway.BaseURL = ""
+		}, want: "missing llm_gateway.base_url"},
 		{name: "invalid stt stream", mutate: func(c *RuntimeConfig) {
 			c.STTStreamURL = "http://127.0.0.1:8443/stt/stream"
 		}, want: "invalid stt_stream_url"},

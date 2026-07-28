@@ -4,60 +4,43 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/claude"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/deepseek"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 )
 
-// createProviderFromConfig は CoderConfig から LLM Provider を作成
-func createProviderFromConfig(cfg config.CoderConfig) (llm.LLMProvider, error) {
-	// APIKey が環境変数参照形式（${...}）の場合は展開
-	apiKey := os.ExpandEnv(cfg.APIKey)
-
-	switch cfg.Provider {
-	case "deepseek":
-		if apiKey == "" {
-			return nil, fmt.Errorf("DeepSeek provider requires API key")
-		}
-		model := cfg.Model
-		if model == "" {
-			model = "deepseek-chat"
-		}
-		return deepseek.NewDeepSeekProvider(apiKey, model), nil
-
-	case "openai":
-		if apiKey == "" {
-			return nil, fmt.Errorf("OpenAI provider requires API key")
-		}
-		model := cfg.Model
-		if model == "" {
-			model = "gpt-4"
-		}
-		return openai.NewOpenAIProvider(apiKey, model), nil
-
-	case "claude":
-		if apiKey == "" {
-			return nil, fmt.Errorf("Claude provider requires API key")
-		}
-		model := cfg.Model
-		if model == "" {
-			model = "claude-3-5-sonnet-20241022"
-		}
-		return claude.NewClaudeProvider(apiKey, model), nil
-
-	default:
-		return nil, fmt.Errorf("unsupported provider: %s", cfg.Provider)
+// createProviderFromConfig creates a provider for a logical RenCrow_LLM alias.
+// Physical provider and model settings remain owned by RenCrow_LLM.
+func createProviderFromConfig(cfg *config.Config, alias string) (llm.LLMProvider, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
 	}
+	return openai.NewOpenAIProviderWithOptions(
+		llmGatewayAPIKey(cfg),
+		strings.TrimSpace(alias),
+		cfg.LLMGateway.BaseURL,
+		time.Duration(cfg.LLMGateway.TimeoutSec)*time.Second,
+	), nil
 }
 
-// loadDotEnv は指定パスの.envファイルを読み込み、未設定の環境変数をセット
+func llmGatewayAPIKey(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv)
+	if envName == "" {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv(envName))
+}
+
+// loadDotEnv loads a simple KEY=VALUE file without overwriting existing values.
 func loadDotEnv(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return // ファイルがなければスキップ
+		return
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -70,8 +53,8 @@ func loadDotEnv(path string) {
 		}
 		key := strings.TrimSpace(parts[0])
 		val := strings.TrimSpace(parts[1])
-		if os.Getenv(key) == "" { // 既存の環境変数を上書きしない
-			os.Setenv(key, val)
+		if os.Getenv(key) == "" {
+			_ = os.Setenv(key, val)
 		}
 	}
 }

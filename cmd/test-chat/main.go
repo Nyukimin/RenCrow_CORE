@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
@@ -36,7 +38,16 @@ func main() {
 	ctx := context.Background()
 
 	// LLMプロバイダー
-	ollamaProvider := ollama.NewOllamaProvider(cfg.Ollama.BaseURL, cfg.Ollama.Model)
+	apiKey := ""
+	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
+		apiKey = strings.TrimSpace(os.Getenv(envName))
+	}
+	gatewayProvider := openai.NewOpenAIProviderWithOptions(
+		apiKey,
+		"mio",
+		cfg.LLMGateway.BaseURL,
+		time.Duration(cfg.LLMGateway.TimeoutSec)*time.Second,
+	)
 
 	// ToolRunner（Google Search API設定込み）
 	toolConfig := tools.ToolRunnerConfig{
@@ -56,10 +67,10 @@ func main() {
 
 	// ルーティング
 	ruleDictionary := routing.NewRuleDictionary()
-	classifier := routing.NewLLMClassifier(ollamaProvider, prompts.Classifier)
+	classifier := routing.NewLLMClassifier(gatewayProvider, prompts.Classifier)
 
 	// Mio（Chat Agent）
-	mio := agent.NewMioAgent(ollamaProvider, classifier, ruleDictionary, toolRunner, mcpClient, nil) // conversationEngine=nil（テスト環境）
+	mio := agent.NewMioAgent(gatewayProvider, classifier, ruleDictionary, toolRunner, mcpClient, nil) // conversationEngine=nil（テスト環境）
 
 	// WorkerExecutionService
 	workerService := service.NewWorkerExecutionService(cfg.Worker)

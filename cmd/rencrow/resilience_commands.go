@@ -478,11 +478,15 @@ func probeRepairBackend(route string) error {
 	default:
 		coder = cfg.Coder2
 	}
-	if !coder.Enabled || strings.TrimSpace(coder.BaseURL) == "" {
+	if !coder.Enabled {
 		return fmt.Errorf("repair backend %s is not configured", route)
 	}
-	if err := probeOpenAIModels(coder.BaseURL, coder.APIKey); err != nil {
-		return fmt.Errorf("repair backend %s unavailable: %w", route, err)
+	apiKey := ""
+	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
+		apiKey = strings.TrimSpace(os.Getenv(envName))
+	}
+	if err := probeOpenAIModels(cfg.LLMGateway.BaseURL, apiKey); err != nil {
+		return fmt.Errorf("RenCrow_LLM unavailable for repair route %s: %w", route, err)
 	}
 	return nil
 }

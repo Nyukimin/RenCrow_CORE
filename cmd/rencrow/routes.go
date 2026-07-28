@@ -161,15 +161,13 @@ func registerLLMOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *
 	}
 	if debugSystemOpts != nil {
 		dependencies.aiWorkflowHeavyRuntime = viewer.HandleAIWorkflowHeavyWorkerRuntimeDiagnostics(viewer.HeavyWorkerRuntimeDiagnosticsOptions{
-			LocalLLMEnabled:  debugSystemOpts.LocalLLM.Enabled,
-			Provider:         debugSystemOpts.LocalLLM.Provider,
-			EffectiveBaseURL: debugSystemOpts.LocalLLM.HeavyBaseURL,
-			EffectiveModel:   debugSystemOpts.LocalLLM.HeavyModel,
-			TimeoutSec:       debugSystemOpts.LocalLLM.TimeoutSec,
-			LLMOpsConfigured: debugSystemOpts.LLMOpsConfigured,
-			LLMOpsEnabled:    debugSystemOpts.LLMOpsEnabled,
-			LLMOpsBaseURL:    debugSystemOpts.LLMOpsBaseURL,
-			LLMOps:           llmOpsOpts,
+			GatewayConfigured: strings.TrimSpace(debugSystemOpts.LLMGateway.BaseURL) != "",
+			GatewayBaseURL:    debugSystemOpts.LLMGateway.BaseURL,
+			LogicalAlias:      "kuro",
+			LLMOpsConfigured:  debugSystemOpts.LLMOpsConfigured,
+			LLMOpsEnabled:     debugSystemOpts.LLMOpsEnabled,
+			LLMOpsBaseURL:     debugSystemOpts.LLMOpsBaseURL,
+			LLMOps:            llmOpsOpts,
 		})
 	}
 	if debugSystemOpts == nil || !debugSystemOpts.LLMOpsEnabled {

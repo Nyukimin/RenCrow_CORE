@@ -389,15 +389,13 @@ func HandleAIWorkflowHeavyWorkerEvaluate(store AIWorkflowStore, policy domainai.
 }
 
 type HeavyWorkerRuntimeDiagnosticsOptions struct {
-	LocalLLMEnabled  bool
-	Provider         string
-	EffectiveBaseURL string
-	EffectiveModel   string
-	TimeoutSec       int
-	LLMOpsConfigured bool
-	LLMOpsEnabled    bool
-	LLMOpsBaseURL    string
-	LLMOps           LLMOpsProxyOptions
+	GatewayConfigured bool
+	GatewayBaseURL    string
+	LogicalAlias      string
+	LLMOpsConfigured  bool
+	LLMOpsEnabled     bool
+	LLMOpsBaseURL     string
+	LLMOps            LLMOpsProxyOptions
 }
 
 func HandleAIWorkflowHeavyWorkerRuntimeDiagnostics(opts HeavyWorkerRuntimeDiagnosticsOptions) http.HandlerFunc {
@@ -418,7 +416,6 @@ func HandleAIWorkflowHeavyWorkerRuntimeDiagnostics(opts HeavyWorkerRuntimeDiagno
 		Configured     bool              `json:"configured"`
 		BaseURL        string            `json:"base_url,omitempty"`
 		Model          string            `json:"model,omitempty"`
-		TimeoutSec     int               `json:"timeout_sec,omitempty"`
 		LLMOps         llmOpsDiagnostics `json:"llm_ops"`
 		FailureIsError bool              `json:"failure_is_error"`
 	}
@@ -455,11 +452,10 @@ func HandleAIWorkflowHeavyWorkerRuntimeDiagnostics(opts HeavyWorkerRuntimeDiagno
 			Role:           "Heavy",
 			Route:          "ANALYZE",
 			RoutePrefix:    "/analyze",
-			Provider:       strings.TrimSpace(opts.Provider),
-			Configured:     opts.LocalLLMEnabled && strings.TrimSpace(opts.EffectiveBaseURL) != "" && strings.TrimSpace(opts.EffectiveModel) != "",
-			BaseURL:        strings.TrimRight(strings.TrimSpace(opts.EffectiveBaseURL), "/"),
-			Model:          strings.TrimSpace(opts.EffectiveModel),
-			TimeoutSec:     opts.TimeoutSec,
+			Provider:       "rencrow_llm",
+			Configured:     opts.GatewayConfigured && strings.TrimSpace(opts.GatewayBaseURL) != "" && strings.TrimSpace(opts.LogicalAlias) != "",
+			BaseURL:        strings.TrimRight(strings.TrimSpace(opts.GatewayBaseURL), "/"),
+			Model:          strings.TrimSpace(opts.LogicalAlias),
 			LLMOps:         diag,
 			FailureIsError: true,
 		})

@@ -13,37 +13,8 @@ type moduleLLMDomainHealthCheck struct {
 }
 
 func wrapModuleLLMProvidersWithHealthChecks(cfg *config.Config, providers map[string]modulellm.Provider) map[string]modulellm.Provider {
-	if len(providers) == 0 {
-		return providers
-	}
-	checks := localLLMHealthChecksByRole(cfg)
-	if len(checks) == 0 {
-		return providers
-	}
-	wrapped := make(map[string]modulellm.Provider, len(providers))
-	for role, provider := range providers {
-		if check := checks[modulellm.NormalizeRoleName(role)]; check != nil {
-			wrapped[role] = modulellm.NewHealthCheckedProvider(provider, moduleLLMDomainHealthCheck{check: check})
-			continue
-		}
-		wrapped[role] = provider
-	}
-	return wrapped
-}
-
-func localLLMHealthChecksByRole(cfg *config.Config) map[string]domainhealth.Check {
-	if cfg == nil || !modulellm.ShouldUseLocalHealthChecks(modulellm.LocalHealthCheckRuntimeConfig{Enabled: cfg.LocalLLM.Enabled, Provider: cfg.LocalLLM.Provider}) {
-		return nil
-	}
-	checks := buildLocalLLMHealthChecks(cfg)
-	out := make(map[string]domainhealth.Check, len(checks))
-	for _, check := range checks {
-		role := modulellm.RoleFromHealthCheckName(check.Name())
-		if role != "" {
-			out[role] = check
-		}
-	}
-	return out
+	_ = cfg
+	return providers
 }
 
 func (c moduleLLMDomainHealthCheck) Name() string {

@@ -7,21 +7,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
-	llmfactory "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/factory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 )
 
 func main() {
 	// コマンドライン引数でCoderタイプとタスクを受け取る
 	if len(os.Args) < 3 {
 		fmt.Println("Usage: test-coder <coder-type> <task-description>")
-		fmt.Println("Example: test-coder deepseek 'hello.goにHello World関数を追加'")
-		fmt.Println("Example: test-coder openai 'main.goにロギング機能を追加'")
-		fmt.Println("Example: test-coder claude 'pkg/test/にユニットテストを追加'")
-		fmt.Println("Example: test-coder gemini 'CLIツールのプロトタイプを提案'")
+		fmt.Println("Example: test-coder coder1 'hello.goにHello World関数を追加'")
+		fmt.Println("Example: test-coder coder2 'main.goにロギング機能を追加'")
+		fmt.Println("Example: test-coder coder3 'pkg/test/にユニットテストを追加'")
+		fmt.Println("Example: test-coder coder4 'CLIツールのプロトタイプを提案'")
 		os.Exit(1)
 	}
 	coderType := os.Args[1]
@@ -36,14 +37,20 @@ func main() {
 	ctx := context.Background()
 
 	// Coderタイプに応じてプロバイダー選択
-	coderCfg, coderName, err := resolveCoderConfig(cfg, coderType)
+	alias, coderName, err := resolveCoderAlias(coderType)
 	if err != nil {
 		log.Fatal(err)
 	}
-	provider, err := llmfactory.CreateProvider(coderCfg)
-	if err != nil {
-		log.Fatalf("Failed to create provider for %s: %v", coderName, err)
+	apiKey := ""
+	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
+		apiKey = strings.TrimSpace(os.Getenv(envName))
 	}
+	provider := openai.NewOpenAIProviderWithOptions(
+		apiKey,
+		alias,
+		cfg.LLMGateway.BaseURL,
+		time.Duration(cfg.LLMGateway.TimeoutSec)*time.Second,
+	)
 	coder := agent.NewCoderAgent(provider, nil, nil, cfg.Prompts.CoderProposal)
 
 	// Task作成
@@ -126,49 +133,21 @@ func loadEnvFile(path string) {
 	}
 }
 
-func resolveCoderConfig(cfg *config.Config, coderType string) (config.CoderConfig, string, error) {
+func resolveCoderAlias(coderType string) (string, string, error) {
 	switch coderType {
-	case "deepseek", "coder1":
-		cc := cfg.Coder1
-		cc.Provider = firstNonEmpty(cc.Provider, "deepseek")
-		cc.Model = firstNonEmpty(cc.Model, cfg.DeepSeek.Model)
-		cc.APIKey = firstNonEmpty(os.Getenv("DEEPSEEK_API_KEY"), cc.APIKey, cfg.DeepSeek.APIKey)
-		cc.Enabled = true
-		return cc, "Coder1 (DeepSeek)", nil
+	case "coder1":
+		return "coder1", "Coder1 / Aka", nil
 
-	case "openai", "coder2":
-		cc := cfg.Coder2
-		cc.Provider = firstNonEmpty(cc.Provider, "openai")
-		cc.Model = firstNonEmpty(cc.Model, cfg.OpenAI.Model)
-		cc.APIKey = firstNonEmpty(os.Getenv("OPENAI_API_KEY"), cc.APIKey, cfg.OpenAI.APIKey)
-		cc.Enabled = true
-		return cc, "Coder2 (OpenAI)", nil
+	case "coder2":
+		return "coder2", "Coder2 / Ao", nil
 
-	case "claude", "coder3":
-		cc := cfg.Coder3
-		cc.Provider = firstNonEmpty(cc.Provider, "claude")
-		cc.Model = firstNonEmpty(cc.Model, cfg.Claude.Model)
-		cc.APIKey = firstNonEmpty(os.Getenv("ANTHROPIC_API_KEY"), cc.APIKey, cfg.Claude.APIKey)
-		cc.Enabled = true
-		return cc, "Coder3 (Claude)", nil
+	case "coder3":
+		return "coder3", "Coder3 / Kin", nil
 
-	case "gemini", "google", "coder4":
-		cc := cfg.Coder4
-		cc.Provider = firstNonEmpty(cc.Provider, "gemini")
-		cc.APIKey = firstNonEmpty(os.Getenv("GEMINI_API_KEY"), os.Getenv("GOOGLE_API_KEY"), cc.APIKey)
-		cc.Enabled = true
-		return cc, "Coder4 (Gemini)", nil
+	case "coder4":
+		return "coder4", "Coder4 / Gin", nil
 
 	default:
-		return config.CoderConfig{}, "", fmt.Errorf("unknown coder type: %s (use: deepseek/coder1, openai/coder2, claude/coder3, gemini/coder4)", coderType)
+		return "", "", fmt.Errorf("unknown coder type: %s (use coder1, coder2, coder3, or coder4)", coderType)
 	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

@@ -80,13 +80,13 @@ func TestSplitVoiceChatStructuredFinalKeepsUserTextForServer(t *testing.T) {
 	}
 }
 
-func TestInferVoiceChatGatewayURL_FallsBackToChatBaseURL(t *testing.T) {
+func TestInferVoiceChatGatewayURL_DoesNotUseLegacyPhysicalChatBaseURL(t *testing.T) {
 	t.Setenv("VOICE_CHAT_GATEWAY_URL", "")
 	t.Setenv("RENCROW_LLM_CHAT_WS", "")
 	cfg := &config.Config{}
 	cfg.LocalLLM.ChatBaseURL = "http://192.168.1.207:8081"
 	got := inferVoiceChatGatewayURL(cfg)
-	want := "ws://192.168.1.207:8081/v1/chat/audio/sessions"
+	want := ""
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}

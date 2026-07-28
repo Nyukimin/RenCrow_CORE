@@ -18,7 +18,7 @@ func TestConfigExampleLoadsForPhase25E2E(t *testing.T) {
 	if cfg.LocalLLM.Enabled {
 		t.Fatal("config.yaml.example must not expose the legacy physical local_llm route")
 	}
-	if !cfg.STT.Enabled || cfg.STT.GatewayBaseURL != "http://127.0.0.1:8766" {
+	if !cfg.STT.Enabled || cfg.STT.GatewayBaseURL != "http://192.168.1.205:8766" {
 		t.Fatal("config.yaml.example should use RenCrow_STT Gateway as the production path")
 	}
 	if cfg.TTS.GatewayBaseURL == "" {

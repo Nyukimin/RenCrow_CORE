@@ -12,10 +12,6 @@ func (c *Config) setDefaults() {
 		c.Server.Host = "0.0.0.0"
 	}
 
-	if c.Ollama.Model == "" {
-		c.Ollama.Model = "rencrow-v1"
-	}
-
 	if c.Claude.Model == "" {
 		c.Claude.Model = "claude-sonnet-4-20250514"
 	}
@@ -28,45 +24,14 @@ func (c *Config) setDefaults() {
 		c.OpenAI.Model = "gpt-4o-mini"
 	}
 
-	if c.LocalLLM.Provider == "" {
-		c.LocalLLM.Provider = "local_openai"
+	// RenCrow_LLM is mandatory. "enabled" remains readable for compatibility,
+	// but it can no longer disable the only supported LLM route.
+	c.LLMGateway.Enabled = true
+	if strings.TrimSpace(c.LLMGateway.BaseURL) == "" {
+		c.LLMGateway.BaseURL = "http://127.0.0.1:8090"
 	}
 	if c.LLMGateway.TimeoutSec <= 0 {
 		c.LLMGateway.TimeoutSec = 600
-	}
-	if c.LocalLLM.ChatModel == "" {
-		c.LocalLLM.ChatModel = "Chat"
-	}
-	if c.LocalLLM.WorkerModel == "" {
-		c.LocalLLM.WorkerModel = "Worker"
-	}
-	if c.LocalLLM.ChatWorkerModel == "" {
-		c.LocalLLM.ChatWorkerModel = "ChatWorker"
-	}
-	if c.LocalLLM.HeavyModel == "" {
-		c.LocalLLM.HeavyModel = "Heavy"
-	}
-	if c.LocalLLM.WildModel == "" {
-		c.LocalLLM.WildModel = "Wild"
-	}
-	if c.LocalLLM.TimeoutSec <= 0 {
-		c.LocalLLM.TimeoutSec = 120
-	}
-	if c.LocalLLM.Warmup == nil {
-		v := true
-		c.LocalLLM.Warmup = &v
-	}
-	if c.LocalLLM.GlobalConcurrency <= 0 {
-		c.LocalLLM.GlobalConcurrency = 2
-	}
-	if c.LocalLLM.ModelConcurrency <= 0 {
-		c.LocalLLM.ModelConcurrency = 1
-	}
-	if c.Ollama.MaxContext <= 0 {
-		c.Ollama.MaxContext = 131072
-	}
-	if c.LocalLLM.ModelContext <= 0 {
-		c.LocalLLM.ModelContext = 131072
 	}
 	if c.Mio.Generation.MaxTokens <= 0 {
 		c.Mio.Generation.MaxTokens = 512
@@ -89,18 +54,14 @@ func (c *Config) setDefaults() {
 	if c.WebwrightFetch.StagingOutputDir == "" {
 		c.WebwrightFetch.StagingOutputDir = "tmp/webwright_staging"
 	}
-	if c.WebwrightFetch.ResponsesEndpoint == "" {
-		workerBase := strings.TrimRight(strings.TrimSpace(c.LocalLLM.WorkerBaseURL), "/")
-		if workerBase == "" {
-			workerBase = strings.TrimRight(strings.TrimSpace(c.LocalLLM.BaseURL), "/")
-		}
-		if workerBase == "" {
-			workerBase = "http://127.0.0.1:8082"
-		}
-		c.WebwrightFetch.ResponsesEndpoint = workerBase + "/v1/responses"
-	}
+	// Webwright also enters RenCrow_LLM. Ignore legacy physical endpoints from
+	// older local YAML files.
+	c.WebwrightFetch.ResponsesEndpoint = strings.TrimRight(c.LLMGateway.BaseURL, "/") + "/v1/responses"
 	if c.WebwrightFetch.Model == "" {
-		c.WebwrightFetch.Model = "Coder1"
+		c.WebwrightFetch.Model = "coder1"
+	}
+	if envName := strings.TrimSpace(c.LLMGateway.APIKeyEnv); envName != "" {
+		c.WebwrightFetch.APIKey = strings.TrimSpace(os.Getenv(envName))
 	}
 	if c.WebwrightFetch.APIKey == "" {
 		c.WebwrightFetch.APIKey = "dummy"

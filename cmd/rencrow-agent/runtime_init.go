@@ -5,11 +5,12 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
@@ -34,18 +35,19 @@ func initHandler(agentType string, cfg *config.Config) (AgentHandler, error) {
 
 // initWorkerHandler はWorkerハンドラを初期化
 func initWorkerHandler(cfg *config.Config) (*workerHandler, error) {
-	model := strings.TrimSpace(cfg.Ollama.Model)
-	if model == "" {
-		model = cfg.Ollama.Model
-	}
-	ollamaProvider := ollama.NewOllamaProviderWithNumCtx(cfg.Ollama.BaseURL, model, 16384)
+	gatewayProvider := openai.NewOpenAIProviderWithOptions(
+		llmGatewayAPIKey(cfg),
+		"worker",
+		cfg.LLMGateway.BaseURL,
+		time.Duration(cfg.LLMGateway.TimeoutSec)*time.Second,
+	)
 	toolRunnerCfg := tools.ToolRunnerConfig{
 		GoogleAPIKey:         os.Getenv("GOOGLE_API_KEY_WORKER"),
 		GoogleSearchEngineID: os.Getenv("GOOGLE_SEARCH_ENGINE_ID_WORKER"),
 	}
 	toolRunner := tools.NewToolRunner(toolRunnerCfg)
 	mcpClient := mcp.NewMCPClient()
-	shiroAgent := agent.NewShiroAgent(ollamaProvider, toolRunner, mcpClient, cfg.Prompts.Worker, nil)
+	shiroAgent := agent.NewShiroAgent(gatewayProvider, toolRunner, mcpClient, cfg.Prompts.Worker, nil)
 	executionService := service.NewWorkerExecutionService(cfg.Worker)
 
 	log.Printf("[rencrow-agent] Worker initialized (workspace=%s)", cfg.Worker.Workspace)
@@ -78,7 +80,7 @@ func initCoderHandler(agentName string, cfg *config.Config) (*coderHandler, erro
 	}
 
 	// CoderConfig から Provider を作成
-	provider, err := createProviderFromConfig(coderCfg)
+	provider, err := createProviderFromConfig(cfg, agentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create provider for %s: %w", agentName, err)
 	}

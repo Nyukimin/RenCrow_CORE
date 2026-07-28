@@ -9,7 +9,9 @@ import (
 
 func TestBuildSecretRefsFromConfigUsesReferencesWithoutChannelCredentials(t *testing.T) {
 	t.Setenv("LLM_OPS_TOKEN", "ops-secret")
+	t.Setenv("RENCROW_LLM_API_KEY", "gateway-secret")
 	cfg := &config.Config{
+		LLMGateway:         config.LLMGatewayConfig{APIKeyEnv: "RENCROW_LLM_API_KEY"},
 		LocalLLM:           config.LocalLLMConfig{APIKey: "local-secret"},
 		WebwrightFetch:     config.WebwrightFetchConfig{APIKey: "webwright-secret"},
 		Claude:             config.ClaudeConfig{APIKey: "claude-secret"},
@@ -36,12 +38,8 @@ func TestBuildSecretRefsFromConfigUsesReferencesWithoutChannelCredentials(t *tes
 		byRef[ref.Ref] = ref.Configured
 	}
 	for _, want := range []string{
-		"config:local_llm.api_key",
-		"config:webwright_fetch.api_key",
-		"config:claude.api_key",
-		"config:openai.api_key",
+		"env:RENCROW_LLM_API_KEY",
 		"config:google_search_chat.api_key",
-		"config:coder1.api_key",
 		"env:LLM_OPS_TOKEN",
 	} {
 		if !byRef[want] {

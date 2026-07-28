@@ -720,44 +720,36 @@ func TestCompositionRuntimeUsesModuleChatForecastProviderPlans(t *testing.T) {
 	}
 }
 
-func TestCompositionRuntimeUsesModuleLLMNumCtxPlans(t *testing.T) {
-	for _, path := range []string{
-		filepath.Join("..", "cmd", "rencrow", "llm_runtime_factory.go"),
-		filepath.Join("..", "cmd", "rencrow", "llm_local_alias.go"),
-	} {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+func TestCompositionRuntimeUsesOnlyRenCrowLLMGateway(t *testing.T) {
+	path := filepath.Join("..", "cmd", "rencrow", "llm_runtime_factory.go")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	text := string(content)
+	for _, want := range []string{"buildGatewayPrimaryLLMProviders", `"mio"`, `"worker"`, `"shiro"`, `"kuro"`, `"midori"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("%s must use RenCrow_LLM logical aliases via %q", path, want)
 		}
-		text := string(content)
-		if !strings.Contains(text, ".NumCtx") {
-			t.Fatalf("%s must apply module-owned LLM num_ctx plan values", path)
-		}
-		for _, forbidden := range []string{"32768", "16384"} {
-			if strings.Contains(text, forbidden) {
-				t.Fatalf("%s owns LLM num_ctx constant %q; keep it in modules/llm", path, forbidden)
-			}
+	}
+	for _, forbidden := range []string{"cfg.LocalLLM", "cfg.Ollama", "NewOllamaProvider"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("%s contains forbidden physical LLM route %q", path, forbidden)
 		}
 	}
 }
 
-func TestCompositionRuntimeUsesModuleLLMHealthCheckPolicy(t *testing.T) {
+func TestCompositionRuntimeDoesNotAttachPhysicalLLMHealthChecks(t *testing.T) {
 	path := filepath.Join("..", "cmd", "rencrow", "module_llm_health.go")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	text := string(content)
-	for _, want := range []string{
-		"ShouldUseLocalHealthChecks",
-		"NormalizeRoleName",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("%s must delegate LLM health-check policy to modules/llm via %q", path, want)
-		}
-	}
 	for _, forbidden := range []string{
-		`cfg.LocalLLM.Provider != "local_openai"`,
+		"cfg.LocalLLM",
+		"cfg.Ollama",
+		"NewOpenAICompatibleChatCheck",
 		"strings.ToLower(strings.TrimSpace(role))",
 	} {
 		if strings.Contains(text, forbidden) {

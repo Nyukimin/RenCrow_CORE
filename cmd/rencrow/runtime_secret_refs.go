@@ -30,18 +30,12 @@ func buildSecretRefsFromConfig(cfg *config.Config) []viewer.SecretRefRuntimeConf
 		})
 	}
 
-	add("local_llm", "local_llm.api_key", "Local LLM API key", cfg.LocalLLM.APIKey)
-	add("tool", "webwright_fetch.api_key", "Webwright Fetch local API key", cfg.WebwrightFetch.APIKey)
-	add("provider", "claude.api_key", "Claude provider API key", cfg.Claude.APIKey)
-	add("provider", "deepseek.api_key", "DeepSeek provider API key", cfg.DeepSeek.APIKey)
-	add("provider", "openai.api_key", "OpenAI provider API key", cfg.OpenAI.APIKey)
+	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
+		addEnv("rencrow_llm", envName, "RenCrow_LLM Gateway API key")
+	}
 	add("external_api", "google_search_chat.api_key", "Google Search Chat API key", cfg.GoogleSearchChat.APIKey)
 	add("external_api", "google_search_worker.api_key", "Google Search Worker API key", cfg.GoogleSearchWorker.APIKey)
-	add("provider", "coder1.api_key", "Coder1 provider API key", cfg.Coder1.APIKey)
-	add("provider", "coder2.api_key", "Coder2 provider API key", cfg.Coder2.APIKey)
-	add("provider", "coder3.api_key", "Coder3 provider API key", cfg.Coder3.APIKey)
-	add("provider", "coder4.api_key", "Coder4 provider API key", cfg.Coder4.APIKey)
-	addEnv("local_llm", "LLM_OPS_TOKEN", "LLM Ops proxy token")
+	addEnv("llm_ops", "LLM_OPS_TOKEN", "LLM Ops proxy token")
 
 	return refs
 }

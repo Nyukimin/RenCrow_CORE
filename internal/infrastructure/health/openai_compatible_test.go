@@ -26,7 +26,7 @@ func TestOpenAICompatibleChatCheck_UsesModelsReadinessPath(t *testing.T) {
 	if result.Status != domainhealth.StatusOK {
 		t.Fatalf("status = %s, want ok; message=%s", result.Status, result.Message)
 	}
-	if result.Name != "local_llm_chat" {
+	if result.Name != "rencrow_llm_chat" {
 		t.Fatalf("name = %q", result.Name)
 	}
 	if len(paths) != 1 || paths[0] != "/v1/models" {

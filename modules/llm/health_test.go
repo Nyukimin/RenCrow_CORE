@@ -113,6 +113,8 @@ func TestShouldUseLocalHealthChecks(t *testing.T) {
 
 func TestRoleFromHealthCheckName(t *testing.T) {
 	tests := map[string]string{
+		"rencrow_llm_chat":   "chat",
+		" rencrow_llm_Wild ": "wild",
 		"local_llm_chat":     "chat",
 		" local_llm_Worker ": "worker",
 		"heavy":              "heavy",

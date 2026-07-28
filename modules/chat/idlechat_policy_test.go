@@ -32,22 +32,31 @@ func TestForecastCoderLabelIndex(t *testing.T) {
 	}
 }
 
-func TestForecastCoderProviderAllowedRequiresExplicitExternal(t *testing.T) {
+func TestForecastCoderAlias(t *testing.T) {
+	if got := ForecastCoderAlias(" Coder4 "); got != "coder4" {
+		t.Fatalf("ForecastCoderAlias(Coder4) = %q", got)
+	}
+	if got := ForecastCoderAlias("Coder5"); got != "" {
+		t.Fatalf("ForecastCoderAlias(Coder5) = %q", got)
+	}
+}
+
+func TestForecastCoderProviderSettingsCannotBypassGateway(t *testing.T) {
 	local := IdleChatCoderProviderConfig{Provider: "local_openai"}
 	external := IdleChatCoderProviderConfig{Provider: "openai"}
 
 	if !ForecastCoderProviderAllowed(local, false) {
 		t.Fatal("local forecast coder should be allowed")
 	}
-	if ForecastCoderProviderAllowed(external, false) {
-		t.Fatal("external forecast coder should require explicit enablement")
+	if !ForecastCoderProviderAllowed(external, false) {
+		t.Fatal("physical provider setting must be ignored in favor of RenCrow_LLM")
 	}
 	if !ForecastCoderProviderAllowed(external, true) {
 		t.Fatal("external forecast coder should be allowed when explicitly enabled")
 	}
 }
 
-func TestBuildForecastProviderPlansKeepsEnabledPriorityAndSkipsExternalWithoutOptIn(t *testing.T) {
+func TestBuildForecastProviderPlansKeepsEnabledPriorityAndIgnoresPhysicalProvider(t *testing.T) {
 	plans := BuildForecastProviderPlans([]ForecastCoderCandidate{
 		{Label: "Coder1", Coder: IdleChatCoderProviderConfig{Enabled: false, Provider: "local_openai", Model: "disabled"}},
 		{Label: "Coder2", Coder: IdleChatCoderProviderConfig{Enabled: true, Provider: "openai", Model: "gpt-4o-mini"}},
@@ -57,8 +66,8 @@ func TestBuildForecastProviderPlansKeepsEnabledPriorityAndSkipsExternalWithoutOp
 	if len(plans) != 2 {
 		t.Fatalf("plans len = %d, want 2: %#v", len(plans), plans)
 	}
-	if plans[0].Label != "Coder2" || plans[0].Allowed || plans[0].SkipReason == "" {
-		t.Fatalf("first plan should preserve priority and skip external: %#v", plans[0])
+	if plans[0].Label != "Coder2" || !plans[0].Allowed || plans[0].SkipReason != "" {
+		t.Fatalf("first plan should preserve priority through RenCrow_LLM: %#v", plans[0])
 	}
 	if plans[1].Label != "Coder3" || !plans[1].Allowed {
 		t.Fatalf("second plan should be allowed local coder: %#v", plans[1])

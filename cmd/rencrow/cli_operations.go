@@ -43,7 +43,6 @@ Commands:
   resilience  Inspect/reconcile restart and self-repair incidents
   channels  List/probe channel adapters or send a configured notification
   gateway   Gateway status/restart operations
-  ollama    Ollama status/restart operations
   logs      Show logs (use --follow to stream)
   chat      Chat with the running RenCrow server from the terminal
   evidence  List/show/summarize execution evidence

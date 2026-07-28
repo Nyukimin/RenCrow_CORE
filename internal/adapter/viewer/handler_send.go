@@ -48,41 +48,33 @@ type viewerSendRequest struct {
 	Message        string `json:"message"`
 	To             string `json:"to,omitempty"`
 	ModelAlias     string `json:"model_alias,omitempty"`
-	BaseURL        string `json:"base_url,omitempty"`
-	Model          string `json:"model,omitempty"`
-	RoutePrefix    string `json:"route_prefix,omitempty"`
+	// Deprecated compatibility fields. CORE never uses caller-supplied physical
+	// LLM endpoints, models, or route overrides.
+	BaseURL     string `json:"base_url,omitempty"`
+	Model       string `json:"model,omitempty"`
+	RoutePrefix string `json:"route_prefix,omitempty"`
 }
 
 type viewerLLMAliasSpec struct {
 	ModelAlias  string `json:"model_alias"`
-	BaseURL     string `json:"base_url"`
-	Model       string `json:"model"`
 	RoutePrefix string `json:"route_prefix"`
 }
 
 var viewerLLMAliasSpecs = map[string]viewerLLMAliasSpec{
 	"worker": {
 		ModelAlias:  "Worker",
-		BaseURL:     "http://127.0.0.1:8082",
-		Model:       "Worker",
 		RoutePrefix: "/ops",
 	},
 	"coder": {
 		ModelAlias:  "Coder",
-		BaseURL:     "http://127.0.0.1:8082",
-		Model:       "Coder",
 		RoutePrefix: "/code2",
 	},
 	"heavy": {
 		ModelAlias:  "Heavy",
-		BaseURL:     "http://127.0.0.1:8083",
-		Model:       "Heavy",
 		RoutePrefix: "/analyze",
 	},
 	"wild": {
 		ModelAlias:  "Wild",
-		BaseURL:     "http://127.0.0.1:8084",
-		Model:       "Wild",
 		RoutePrefix: "/wild",
 	},
 }
@@ -96,25 +88,7 @@ func viewerSendAliasSpec(req viewerSendRequest) (viewerLLMAliasSpec, bool) {
 	if !ok {
 		return viewerLLMAliasSpec{}, false
 	}
-	if v := strings.TrimSpace(req.BaseURL); v != "" {
-		spec.BaseURL = v
-	}
-	if v := strings.TrimSpace(req.Model); v != "" {
-		spec.Model = v
-	}
-	if v := strings.TrimSpace(req.RoutePrefix); validViewerRoutePrefix(v) {
-		spec.RoutePrefix = v
-	}
 	return spec, ok
-}
-
-func validViewerRoutePrefix(prefix string) bool {
-	switch strings.TrimSpace(prefix) {
-	case "/ops", "/wild", "/heavy", "/code", "/code1", "/code2", "/code3", "/code4", "/plan", "/analyze", "/research", "/chat":
-		return true
-	default:
-		return false
-	}
 }
 
 func viewerSendHasExplicitRoute(message string) bool {
@@ -205,8 +179,8 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 		log.Printf("[Viewer] HandleSend: accepted job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachment_count=%d message_len=%d %s",
 			jobID, jobID, messageID, req.ViewerClientID, recipient, len(attachments), len([]rune(effectiveMessage)), provenance.LogFields())
 		if aliasApplied {
-			log.Printf("[Viewer] HandleSend: message received: %q alias=%s base_url=%s model=%s route_prefix=%s",
-				req.Message, aliasSpec.ModelAlias, aliasSpec.BaseURL, aliasSpec.Model, aliasSpec.RoutePrefix)
+			log.Printf("[Viewer] HandleSend: message received: %q alias=%s route_prefix=%s",
+				req.Message, aliasSpec.ModelAlias, aliasSpec.RoutePrefix)
 		} else {
 			log.Printf("[Viewer] HandleSend: message received: %q", req.Message)
 		}
@@ -237,8 +211,6 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 				ViewerClientID string `json:"viewer_client_id,omitempty"`
 				Recipient      string `json:"recipient"`
 				ModelAlias     string `json:"model_alias"`
-				BaseURL        string `json:"base_url"`
-				Model          string `json:"model"`
 				RoutePrefix    string `json:"route_prefix"`
 				Attachments    int    `json:"attachment_count"`
 			}{
@@ -249,8 +221,6 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 				ViewerClientID: req.ViewerClientID,
 				Recipient:      string(recipient),
 				ModelAlias:     aliasSpec.ModelAlias,
-				BaseURL:        aliasSpec.BaseURL,
-				Model:          aliasSpec.Model,
 				RoutePrefix:    aliasSpec.RoutePrefix,
 				Attachments:    len(attachments),
 			}

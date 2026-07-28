@@ -59,3 +59,12 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 func selectChatConversationProvider(chatWorkerProvider, chatProvider llm.LLMProvider) llm.LLMProvider {
 	return firstNonNilLLMProvider(chatProvider, chatWorkerProvider)
 }
+
+func firstNonNilLLMProvider(providers ...llm.LLMProvider) llm.LLMProvider {
+	for _, provider := range providers {
+		if provider != nil {
+			return provider
+		}
+	}
+	return nil
+}

@@ -14,7 +14,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
-	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 )
 
 // Version 情報（go build -ldflags で注入）
@@ -49,8 +48,6 @@ func main() {
 		cmdChannels()
 	case "gateway":
 		cmdGateway()
-	case "ollama":
-		cmdOllama()
 	case "logs":
 		cmdLogs()
 	case "chat":
@@ -88,7 +85,9 @@ func cmdRun() {
 	log.Printf("RenCrow %s (commit: %s, built: %s)", Version, Commit, BuildDate)
 	log.Printf("Loaded config from: %s", configPath)
 
+	llmGatewayStatus := ensureLLMGateway(cfg)
 	dependencies := buildDependencies(cfg)
+	dependencies.llmGatewayProcess = llmGatewayStatus.Process
 
 	// Graceful shutdown用シグナル
 	sigCh := make(chan os.Signal, 1)
@@ -117,25 +116,14 @@ func cmdRun() {
 	debugSystemOpts.LLMOpsEnabled = debugSystemOpts.LLMOpsConfigured && llmOpsToken != ""
 	debugSystemOpts.LLMOpsBaseURL = cfg.LLMOps.BaseURL
 	debugSystemOpts.RuntimeReadiness = buildRuntimeDependencyReadiness(cfg, dependencies)
-	debugSystemOpts.SecretRefs = buildSecretRefsFromConfig(cfg)
-	debugSystemOpts.LocalLLM = viewer.LocalLLMRuntimeConfig{
-		Enabled:           cfg.LocalLLM.Enabled,
-		Provider:          cfg.LocalLLM.Provider,
-		ChatBaseURL:       modulellm.LocalBaseURLForAlias(localRuntimeConfigFromAppConfig(cfg), "chat"),
-		WorkerBaseURL:     modulellm.LocalBaseURLForAlias(localRuntimeConfigFromAppConfig(cfg), "worker"),
-		ChatWorkerBaseURL: modulellm.LocalBaseURLForAlias(localRuntimeConfigFromAppConfig(cfg), "chatworker"),
-		HeavyBaseURL:      modulellm.LocalBaseURLForAlias(localRuntimeConfigFromAppConfig(cfg), "heavy"),
-		WildBaseURL:       modulellm.LocalBaseURLForAlias(localRuntimeConfigFromAppConfig(cfg), "wild"),
-		ChatModel:         cfg.LocalLLM.ChatModel,
-		WorkerModel:       cfg.LocalLLM.WorkerModel,
-		ChatWorkerModel:   modulellm.LocalModelForAlias(localRuntimeConfigFromAppConfig(cfg), "chatworker"),
-		HeavyModel:        modulellm.LocalModelForAlias(localRuntimeConfigFromAppConfig(cfg), "heavy"),
-		WildModel:         cfg.LocalLLM.WildModel,
-		TimeoutSec:        cfg.LocalLLM.TimeoutSec,
-		GlobalConcurrency: cfg.LocalLLM.GlobalConcurrency,
-		ModelConcurrency:  cfg.LocalLLM.ModelConcurrency,
-		ModelContext:      cfg.LocalLLM.ModelContext,
+	debugSystemOpts.LLMGateway = viewer.LLMGatewayRuntimeConfig{
+		BaseURL:            llmGatewayStatus.BaseURL,
+		Ready:              llmGatewayStatus.Ready,
+		AutoStartAttempted: llmGatewayStatus.AutoStartAttempted,
+		AutoStarted:        llmGatewayStatus.AutoStarted,
+		Warning:            llmGatewayStatus.Warning,
 	}
+	debugSystemOpts.SecretRefs = buildSecretRefsFromConfig(cfg)
 	debugSystemOpts.WebwrightFetch = viewer.WebwrightFetchRuntimeConfig{
 		Enabled:           cfg.WebwrightFetch.Enabled,
 		RunnerPath:        cfg.WebwrightFetch.RunnerPath,

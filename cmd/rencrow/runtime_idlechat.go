@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
@@ -13,7 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	idlechatfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/idlechat"
-	llmfactory "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/factory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
@@ -182,12 +183,7 @@ func selectForecastProviders(cfg *config.Config) (llm.LLMProvider, string) {
 	}
 	plans := modulechat.BuildForecastProviderPlans(forecastCoderCandidatesFromRuntime(cfg), cfg.IdleChat.ForecastExternalEnabled)
 	for _, plan := range plans {
-		cc := forecastCoderConfigByLabel(cfg, plan.Label)
-		if !plan.Allowed {
-			log.Printf("IdleChat forecast provider skipped: %s provider=%s model=%s: %s", plan.Label, plan.Coder.Provider, plan.Coder.Model, plan.SkipReason)
-			continue
-		}
-		provider, label := createForecastProvider(plan.Label, cc)
+		provider, label := createForecastProvider(cfg, plan.Label, forecastCoderConfigByLabel(cfg, plan.Label))
 		if provider == nil {
 			continue
 		}
@@ -218,19 +214,28 @@ func coderProviderIsExternal(cc config.CoderConfig) bool {
 	return modulechat.CoderProviderIsExternal(cc.Provider)
 }
 
-func createForecastProvider(label string, cc config.CoderConfig) (llm.LLMProvider, string) {
+func createForecastProvider(cfg *config.Config, label string, cc config.CoderConfig) (llm.LLMProvider, string) {
 	if !cc.Enabled {
 		return nil, ""
 	}
-	provider, err := llmfactory.CreateProvider(cc)
-	if err != nil {
-		log.Printf("WARN: IdleChat forecast provider skipped: %s provider=%s model=%s: %v", label, cc.Provider, cc.Model, err)
+	alias := modulechat.ForecastCoderAlias(label)
+	if cfg == nil || alias == "" {
 		return nil, ""
 	}
-	if provider == nil {
-		return nil, ""
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.LLMGateway.BaseURL), "/")
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:8090"
 	}
-	return provider, modulechat.BuildForecastProviderLabel(label, idleChatCoderProviderConfigFromRuntime(cc))
+	timeout := time.Duration(cfg.LLMGateway.TimeoutSec) * time.Second
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	apiKey := ""
+	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
+		apiKey = strings.TrimSpace(os.Getenv(envName))
+	}
+	provider := openai.NewOpenAIProviderWithOptions(apiKey, alias, baseURL, timeout)
+	return provider, label + " via RenCrow_LLM"
 }
 
 func forecastProviderLogLabel(label string) string {

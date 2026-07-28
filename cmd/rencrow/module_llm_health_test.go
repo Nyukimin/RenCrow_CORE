@@ -67,33 +67,18 @@ func TestHealthCheckedLLMProviderReflectsBackendOK(t *testing.T) {
 	}
 }
 
-func TestWrapModuleLLMProvidersWithHealthChecksOnlyForLocalOpenAI(t *testing.T) {
+func TestWrapModuleLLMProvidersDoesNotAddPhysicalBackendChecks(t *testing.T) {
 	providers := map[string]modulellm.Provider{
 		"chat":   fakeModuleLLMProvider{name: "chat-provider"},
 		"worker": fakeModuleLLMProvider{name: "worker-provider"},
 	}
-	cfg := &config.Config{
-		LocalLLM: config.LocalLLMConfig{
-			Enabled:       true,
-			Provider:      "local_openai",
-			ChatBaseURL:   "http://127.0.0.1:1",
-			WorkerBaseURL: "http://127.0.0.1:1",
-			ChatModel:     "chat-model",
-			WorkerModel:   "worker-model",
-			TimeoutSec:    1,
-		},
-	}
+	cfg := &config.Config{LLMGateway: config.LLMGatewayConfig{Enabled: true, BaseURL: "http://127.0.0.1:8090"}}
 
 	wrapped := wrapModuleLLMProvidersWithHealthChecks(cfg, providers)
-	if _, ok := wrapped["chat"].(modulellm.HealthCheckedProvider); !ok {
-		t.Fatalf("chat provider was not health-wrapped: %#v", wrapped["chat"])
+	if _, ok := wrapped["chat"].(modulellm.HealthCheckedProvider); ok {
+		t.Fatalf("chat provider must not be wrapped with a physical backend check")
 	}
-	if _, ok := wrapped["worker"].(modulellm.HealthCheckedProvider); !ok {
-		t.Fatalf("worker provider was not health-wrapped: %#v", wrapped["worker"])
-	}
-
-	plain := wrapModuleLLMProvidersWithHealthChecks(&config.Config{}, providers)
-	if _, ok := plain["chat"].(modulellm.HealthCheckedProvider); ok {
-		t.Fatalf("non-local-openai provider should not be health-wrapped")
+	if _, ok := wrapped["worker"].(modulellm.HealthCheckedProvider); ok {
+		t.Fatalf("worker provider must not be wrapped with a physical backend check")
 	}
 }

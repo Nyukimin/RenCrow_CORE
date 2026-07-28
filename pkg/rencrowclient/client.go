@@ -175,25 +175,16 @@ type RuntimeConfig struct {
 	LLMOpsConfigured bool                       `json:"llm_ops_configured"`
 	LLMOpsEnabled    bool                       `json:"llm_ops_enabled"`
 	LLMOpsBaseURL    string                     `json:"llm_ops_base_url,omitempty"`
-	LocalLLM         LocalLLMRuntimeConfig      `json:"local_llm,omitempty"`
+	LLMGateway       LLMGatewayRuntimeConfig    `json:"llm_gateway"`
 	RuntimeReadiness RuntimeDependencyReadiness `json:"runtime_readiness,omitempty"`
 }
 
-type LocalLLMRuntimeConfig struct {
-	Enabled           bool   `json:"enabled"`
-	Provider          string `json:"provider,omitempty"`
-	ChatBaseURL       string `json:"chat_base_url,omitempty"`
-	WorkerBaseURL     string `json:"worker_base_url,omitempty"`
-	ChatWorkerBaseURL string `json:"chat_worker_base_url,omitempty"`
-	HeavyBaseURL      string `json:"heavy_base_url,omitempty"`
-	WildBaseURL       string `json:"wild_base_url,omitempty"`
-	ChatModel         string `json:"chat_model,omitempty"`
-	WorkerModel       string `json:"worker_model,omitempty"`
-	HeavyModel        string `json:"heavy_model,omitempty"`
-	WildModel         string `json:"wild_model,omitempty"`
-	TimeoutSec        int    `json:"timeout_sec,omitempty"`
-	GlobalConcurrency int    `json:"global_concurrency,omitempty"`
-	ModelConcurrency  int    `json:"model_concurrency,omitempty"`
+type LLMGatewayRuntimeConfig struct {
+	BaseURL            string `json:"base_url"`
+	Ready              bool   `json:"ready"`
+	AutoStartAttempted bool   `json:"auto_start_attempted"`
+	AutoStarted        bool   `json:"auto_started"`
+	Warning            string `json:"warning,omitempty"`
 }
 
 type RuntimeDependencyReadiness struct {
@@ -6881,16 +6872,11 @@ func validateRuntimeConfig(resp RuntimeConfig) error {
 	if resp.LLMOpsEnabled && strings.TrimSpace(resp.LLMOpsBaseURL) == "" {
 		return fmt.Errorf("runtime config has llm_ops_enabled without llm_ops_base_url")
 	}
-	if resp.LocalLLM.Enabled {
-		if strings.TrimSpace(resp.LocalLLM.Provider) == "" {
-			return fmt.Errorf("runtime config local_llm enabled missing provider")
-		}
-		if strings.TrimSpace(resp.LocalLLM.ChatBaseURL) == "" {
-			return fmt.Errorf("runtime config local_llm enabled missing chat_base_url")
-		}
-		if strings.TrimSpace(resp.LocalLLM.WorkerBaseURL) == "" {
-			return fmt.Errorf("runtime config local_llm enabled missing worker_base_url")
-		}
+	if strings.TrimSpace(resp.LLMGateway.BaseURL) == "" {
+		return fmt.Errorf("runtime config missing llm_gateway.base_url")
+	}
+	if err := validateOptionalRuntimeURL(resp.LLMGateway.BaseURL, "llm_gateway.base_url"); err != nil {
+		return err
 	}
 	if err := validateOptionalRuntimeURL(resp.STTBaseURL, "stt_base_url"); err != nil {
 		return err

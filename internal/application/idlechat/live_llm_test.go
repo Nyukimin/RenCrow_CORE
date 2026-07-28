@@ -11,7 +11,6 @@ import (
 	appconfig "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 	"gopkg.in/yaml.v3"
 )
@@ -90,17 +89,11 @@ func loadLiveIdleChatConfig(t *testing.T, cfgPath string) *appconfig.Config {
 	if err := yaml.Unmarshal([]byte(os.ExpandEnv(string(data))), &cfg); err != nil {
 		t.Fatalf("parse config %s: %v", cfgPath, err)
 	}
-	if cfg.LocalLLM.Provider == "" {
-		cfg.LocalLLM.Provider = "local_openai"
+	if cfg.LLMGateway.BaseURL == "" {
+		cfg.LLMGateway.BaseURL = "http://127.0.0.1:8090"
 	}
-	if cfg.LocalLLM.ChatModel == "" {
-		cfg.LocalLLM.ChatModel = "Chat"
-	}
-	if cfg.LocalLLM.WorkerModel == "" {
-		cfg.LocalLLM.WorkerModel = "Worker"
-	}
-	if cfg.LocalLLM.TimeoutSec <= 0 {
-		cfg.LocalLLM.TimeoutSec = 120
+	if cfg.LLMGateway.TimeoutSec <= 0 {
+		cfg.LLMGateway.TimeoutSec = 600
 	}
 	if len(cfg.IdleChat.Participants) == 0 {
 		cfg.IdleChat.Participants = []string{"mio", "shiro"}
@@ -135,43 +128,18 @@ func probeLiveIdleChatProvider(t *testing.T, name string, provider llm.LLMProvid
 
 func liveIdleChatProviders(t *testing.T, cfg *appconfig.Config) (llm.LLMProvider, llm.LLMProvider) {
 	t.Helper()
-	timeout := time.Duration(cfg.LocalLLM.TimeoutSec) * time.Second
+	timeout := time.Duration(cfg.LLMGateway.TimeoutSec) * time.Second
 	if timeout <= 0 {
-		timeout = 120 * time.Second
+		timeout = 10 * time.Minute
 	}
-	if cfg.LocalLLM.Enabled {
-		switch strings.TrimSpace(cfg.LocalLLM.Provider) {
-		case "", "local_openai":
-			chatBase := firstNonEmpty(cfg.LocalLLM.ChatBaseURL, cfg.LocalLLM.BaseURL)
-			workerBase := firstNonEmpty(cfg.LocalLLM.WorkerBaseURL, cfg.LocalLLM.BaseURL, chatBase)
-			if chatBase == "" || workerBase == "" {
-				t.Fatalf("local_llm base URLs are required for live IdleChat test")
-			}
-			return openai.NewOpenAIProviderWithOptions(cfg.LocalLLM.APIKey, cfg.LocalLLM.ChatModel, chatBase, timeout),
-				openai.NewOpenAIProviderWithOptions(cfg.LocalLLM.APIKey, cfg.LocalLLM.WorkerModel, workerBase, timeout)
-		case "ollama":
-			base := firstNonEmpty(cfg.LocalLLM.BaseURL, cfg.Ollama.BaseURL)
-			if base == "" {
-				t.Fatalf("local_llm.base_url or ollama.base_url is required for live IdleChat test")
-			}
-			return ollama.NewOllamaProvider(base, cfg.LocalLLM.ChatModel),
-				ollama.NewOllamaProvider(base, cfg.LocalLLM.WorkerModel)
-		default:
-			t.Fatalf("unsupported local_llm.provider for live IdleChat test: %s", cfg.LocalLLM.Provider)
-		}
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.LLMGateway.BaseURL), "/")
+	if baseURL == "" {
+		t.Fatal("llm_gateway.base_url is required for live IdleChat test")
 	}
-	if cfg.Ollama.BaseURL == "" || cfg.Ollama.Model == "" {
-		t.Fatalf("ollama.base_url and ollama.model are required when local_llm is disabled")
+	apiKey := ""
+	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
+		apiKey = strings.TrimSpace(os.Getenv(envName))
 	}
-	provider := ollama.NewOllamaProviderWithNumCtx(cfg.Ollama.BaseURL, cfg.Ollama.Model, cfg.Ollama.MaxContext)
-	return provider, provider
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
+	return openai.NewOpenAIProviderWithOptions(apiKey, "mio", baseURL, timeout),
+		openai.NewOpenAIProviderWithOptions(apiKey, "shiro", baseURL, timeout)
 }

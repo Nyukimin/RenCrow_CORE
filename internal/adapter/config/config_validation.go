@@ -22,49 +22,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid server port: %d (must be 1-65535)", c.Server.Port)
 	}
 
-	if c.LocalLLM.Enabled {
-		if c.LocalLLM.Provider != "local_openai" && c.LocalLLM.Provider != "ollama" {
-			return fmt.Errorf("local_llm.provider must be one of [local_openai, ollama], got '%s'", c.LocalLLM.Provider)
-		}
-		if c.LocalLLM.BaseURL == "" && c.LocalLLM.ChatBaseURL == "" && c.LocalLLM.WorkerBaseURL == "" && c.LocalLLM.HeavyBaseURL == "" && c.LocalLLM.WildBaseURL == "" {
-			return fmt.Errorf("local_llm base_url or role-specific base_url is required when enabled=true")
-		}
-		if c.LocalLLM.ChatModel == "" {
-			return fmt.Errorf("local_llm chat_model is required when enabled=true")
-		}
-		if c.LocalLLM.WorkerModel == "" {
-			return fmt.Errorf("local_llm worker_model is required when enabled=true")
-		}
-		if c.LocalLLM.HeavyModel == "" {
-			return fmt.Errorf("local_llm heavy_model is required when enabled=true")
-		}
-		if c.LocalLLM.WildModel == "" {
-			return fmt.Errorf("local_llm wild_model is required when enabled=true")
-		}
-		if c.LocalLLM.TimeoutSec < 1 {
-			return fmt.Errorf("local_llm timeout_sec must be >= 1")
-		}
-		if c.LocalLLM.GlobalConcurrency < 1 {
-			return fmt.Errorf("local_llm global_concurrency must be >= 1")
-		}
-		if c.LocalLLM.ModelConcurrency < 1 {
-			return fmt.Errorf("local_llm model_concurrency must be >= 1")
-		}
-		if c.LocalLLM.ChatTimeoutSec < 0 {
-			return fmt.Errorf("local_llm chat_timeout_sec must be >= 0")
-		}
-		if c.LocalLLM.ChatModelContext < 0 {
-			return fmt.Errorf("local_llm chat_model_context must be >= 0")
+	if baseURL := strings.TrimSpace(c.LLMGateway.BaseURL); baseURL != "" {
+		gatewayURL, err := url.Parse(baseURL)
+		if err != nil || gatewayURL.Host == "" || (gatewayURL.Scheme != "http" && gatewayURL.Scheme != "https") {
+			return fmt.Errorf("llm_gateway.base_url must be an absolute HTTP URL")
 		}
 	}
-	if c.LLMGateway.Enabled {
-		gatewayURL, err := url.Parse(strings.TrimSpace(c.LLMGateway.BaseURL))
-		if err != nil || gatewayURL.Host == "" || (gatewayURL.Scheme != "http" && gatewayURL.Scheme != "https") {
-			return fmt.Errorf("llm_gateway.base_url must be an absolute HTTP URL when enabled=true")
-		}
-		if c.LLMGateway.TimeoutSec < 1 {
-			return fmt.Errorf("llm_gateway.timeout_sec must be >= 1")
-		}
+	if strings.TrimSpace(c.LLMGateway.BaseURL) != "" && c.LLMGateway.TimeoutSec < 1 {
+		return fmt.Errorf("llm_gateway.timeout_sec must be >= 1")
 	}
 
 	if c.Mio.Generation.MaxTokens < 0 {
@@ -251,17 +216,6 @@ func (c *Config) Validate() error {
 	}
 	if c.EconomicObjective.HeartbeatDiscoveryEnabled && !c.EconomicObjective.DraftOnlyEnabled() {
 		return fmt.Errorf("economic_objective.heartbeat_discovery_enabled requires draft_only=true")
-	}
-
-	if !c.LocalLLM.Enabled && !c.LLMGateway.Enabled {
-		// Ollama設定検証
-		if c.Ollama.BaseURL == "" {
-			return fmt.Errorf("ollama base_url is required")
-		}
-
-		if c.Ollama.Model == "" {
-			return fmt.Errorf("ollama model is required")
-		}
 	}
 
 	// セッション設定検証

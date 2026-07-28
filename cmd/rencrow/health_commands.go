@@ -96,9 +96,8 @@ func runStatusCommand(
 				"host": cfg.Server.Host,
 				"port": cfg.Server.Port,
 			},
-			"ollama": map[string]any{
-				"base_url": cfg.Ollama.BaseURL,
-				"model":    cfg.Ollama.Model,
+			"llm_gateway": map[string]any{
+				"base_url": cfg.LLMGateway.BaseURL,
 			},
 		}
 		if deep {
@@ -133,7 +132,7 @@ func runStatusCommand(
 		return 0
 	}
 	fmt.Fprintf(out, "RenCrow %s\n", Version)
-	fmt.Fprintf(out, "Ollama: %s (model: %s)\n", cfg.Ollama.BaseURL, cfg.Ollama.Model)
+	fmt.Fprintf(out, "RenCrow_LLM: %s\n", cfg.LLMGateway.BaseURL)
 	fmt.Fprintf(out, "Server: %s:%d\n", cfg.Server.Host, cfg.Server.Port)
 	fmt.Fprintln(out)
 
@@ -245,7 +244,7 @@ func runDoctorCommand(
 		findings = append(findings, doctorFinding{
 			Level: "WARN",
 			Msg:   "health checks report DOWN",
-			Hint:  "verify ollama base_url/model settings",
+			Hint:  "verify RenCrow_LLM Gateway status and llm_gateway settings",
 		})
 	}
 

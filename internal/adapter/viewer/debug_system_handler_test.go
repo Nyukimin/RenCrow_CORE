@@ -1,7 +1,6 @@
 package viewer
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -78,30 +77,5 @@ func TestCollectAudioSnapshotRecordsTimeoutAsBlockedSignal(t *testing.T) {
 	}
 	if elapsed > 2500*time.Millisecond {
 		t.Fatalf("audio snapshot took %s, want bounded timeout", elapsed)
-	}
-}
-
-func TestFetchLocalLLMLiveModelTreatsMissingHealthAsOptionalWhenModelsWork(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/models":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"Worker","backend_model":"gpt-oss:120b"}]}`))
-		case "/v1/models/status":
-			http.NotFound(w, r)
-		case "/health":
-			http.NotFound(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	live := fetchLocalLLMLiveModel(context.Background(), server.Client(), "Worker", "Worker", server.URL)
-	if live.Error != "" {
-		t.Fatalf("health 404 should not mark model unavailable when /v1/models works: %+v", live)
-	}
-	if live.BackendModel != "gpt-oss:120b" || live.Status != "models_available" {
-		t.Fatalf("unexpected live model: %+v", live)
 	}
 }

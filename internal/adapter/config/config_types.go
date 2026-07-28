@@ -6,7 +6,8 @@ import "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/agentcontrol"
 // v3既存フィールドをそのまま維持し、v4.0で Distributed, IdleChat を追加
 type Config struct {
 	// === v3.0 既存フィールド ===
-	Server   ServerConfig   `yaml:"server"`
+	Server ServerConfig `yaml:"server"`
+	// Deprecated compatibility input. CORE does not use this configuration.
 	Ollama   OllamaConfig   `yaml:"ollama"`
 	Claude   ClaudeConfig   `yaml:"claude"`
 	DeepSeek DeepSeekConfig `yaml:"deepseek"`
@@ -28,7 +29,7 @@ type Config struct {
 	// === v5.0 追加フィールド ===
 	Conversation ConversationConfig `yaml:"conversation"`
 
-	// === MLX / local OpenAI-compatible LLM runtime ===
+	// Deprecated compatibility input. Physical LLM routing belongs to RenCrow_LLM.
 	LocalLLM LocalLLMConfig `yaml:"local_llm"`
 
 	// === Mandatory production LLM Gateway client ===
@@ -442,10 +443,10 @@ type ConversationConfig struct {
 	VectorDBURL                      string `yaml:"vectordb_url"`        // VectorDB gRPC接続先（例: "localhost:6334" for Qdrant）
 	VectorCollection                 string `yaml:"vector_collection"`   // 会話要約用Qdrant collection名。空の場合はrencrow_memory
 	VectorDimension                  int    `yaml:"vector_dimension"`    // 会話要約用embedding次元。0の場合は768
-	EmbedProvider                    string `yaml:"embed_provider"`      // Embedding provider（"ollama" または "openai"）。空の場合は従来の自動選択
-	EmbedBaseURL                     string `yaml:"embed_base_url"`      // Embedding専用Base URL。空の場合はprovider既定URLを使用
-	EmbedModel                       string `yaml:"embed_model"`         // Embedding用モデル（例: "nomic-embed-text"）。空の場合はembedding無効
-	SummaryModel                     string `yaml:"summary_model"`       // 要約用モデル（例: "Chat"）。空の場合はOllama chatモデルを使用
+	EmbedProvider                    string `yaml:"embed_provider"`      // Deprecated and ignored. Embeddings always use RenCrow_LLM.
+	EmbedBaseURL                     string `yaml:"embed_base_url"`      // Deprecated and ignored. Physical endpoints belong to RenCrow_LLM.
+	EmbedModel                       string `yaml:"embed_model"`         // RenCrow_LLM logical embedding alias. Empty disables embedding.
+	SummaryModel                     string `yaml:"summary_model"`       // Deprecated. Summaries always use the RenCrow_LLM Worker route.
 	ProfilePromotionEnabled          *bool  `yaml:"profile_promotion_enabled"`
 	ProfilePromotionIdleGraceSeconds int    `yaml:"profile_promotion_idle_grace_seconds"`
 	ProfilePromotionTimeoutSeconds   int    `yaml:"profile_promotion_timeout_seconds"`
@@ -495,8 +496,8 @@ type GlossaryConfig struct {
 type SubagentConfig struct {
 	Enabled       bool   `yaml:"enabled"`            // サブエージェント有効化（デフォルト: false）
 	MaxIterations int    `yaml:"max_iterations"`     // ReActループ最大反復回数（デフォルト: 10）
-	Provider      string `yaml:"provider,omitempty"` // LLMプロバイダー: "ollama"(default), "claude", "openai", "deepseek"
-	Model         string `yaml:"model,omitempty"`    // 使用モデル（空=各プロバイダーのデフォルトモデルを使用）
+	Provider      string `yaml:"provider,omitempty"` // Deprecated and ignored. Subagents use RenCrow_LLM Worker.
+	Model         string `yaml:"model,omitempty"`    // Deprecated and ignored. Physical models belong to RenCrow_LLM.
 }
 
 // CapabilityConfig はケイパビリティ適応システムの設定（v4.1）

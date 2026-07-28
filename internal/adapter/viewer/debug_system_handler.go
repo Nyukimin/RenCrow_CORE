@@ -48,7 +48,7 @@ type DebugSystemOptions struct {
 	LLMOpsConfigured           bool
 	LLMOpsEnabled              bool
 	LLMOpsBaseURL              string
-	LocalLLM                   LocalLLMRuntimeConfig
+	LLMGateway                 LLMGatewayRuntimeConfig
 	WebwrightFetch             WebwrightFetchRuntimeConfig
 	WebGather                  WebGatherRuntimeConfig
 	BrowserActor               BrowserActorRuntimeConfig
@@ -68,7 +68,7 @@ type RuntimeConfig struct {
 	LLMOpsConfigured   bool                        `json:"llm_ops_configured"`
 	LLMOpsEnabled      bool                        `json:"llm_ops_enabled"`
 	LLMOpsBaseURL      string                      `json:"llm_ops_base_url,omitempty"`
-	LocalLLM           LocalLLMRuntimeConfig       `json:"local_llm,omitempty"`
+	LLMGateway         LLMGatewayRuntimeConfig     `json:"llm_gateway"`
 	WebwrightFetch     WebwrightFetchRuntimeConfig `json:"webwright_fetch,omitempty"`
 	WebGather          WebGatherRuntimeConfig      `json:"web_gather,omitempty"`
 	BrowserActor       BrowserActorRuntimeConfig   `json:"browser_actor,omitempty"`
@@ -122,36 +122,12 @@ type RuntimeDependencyReadiness struct {
 	SandboxStatusAvailable       bool `json:"sandbox_status_available"`
 }
 
-type LocalLLMRuntimeConfig struct {
-	Enabled           bool                         `json:"enabled"`
-	Provider          string                       `json:"provider,omitempty"`
-	ChatBaseURL       string                       `json:"chat_base_url,omitempty"`
-	WorkerBaseURL     string                       `json:"worker_base_url,omitempty"`
-	ChatWorkerBaseURL string                       `json:"chat_worker_base_url,omitempty"`
-	HeavyBaseURL      string                       `json:"heavy_base_url,omitempty"`
-	WildBaseURL       string                       `json:"wild_base_url,omitempty"`
-	ChatModel         string                       `json:"chat_model,omitempty"`
-	WorkerModel       string                       `json:"worker_model,omitempty"`
-	ChatWorkerModel   string                       `json:"chat_worker_model,omitempty"`
-	HeavyModel        string                       `json:"heavy_model,omitempty"`
-	WildModel         string                       `json:"wild_model,omitempty"`
-	TimeoutSec        int                          `json:"timeout_sec,omitempty"`
-	GlobalConcurrency int                          `json:"global_concurrency,omitempty"`
-	ModelConcurrency  int                          `json:"model_concurrency,omitempty"`
-	ModelContext      int                          `json:"model_context,omitempty"`
-	LiveModels        map[string]LocalLLMLiveModel `json:"live_models,omitempty"`
-}
-
-type LocalLLMLiveModel struct {
-	Role         string `json:"role,omitempty"`
-	Alias        string `json:"alias,omitempty"`
-	BaseURL      string `json:"base_url,omitempty"`
-	BackendModel string `json:"backend_model,omitempty"`
-	LoadedModel  string `json:"loaded_model,omitempty"`
-	DefaultModel string `json:"default_model,omitempty"`
-	Status       string `json:"status,omitempty"`
-	Loaded       *bool  `json:"loaded,omitempty"`
-	Error        string `json:"error,omitempty"`
+type LLMGatewayRuntimeConfig struct {
+	BaseURL            string `json:"base_url"`
+	Ready              bool   `json:"ready"`
+	AutoStartAttempted bool   `json:"auto_start_attempted"`
+	AutoStarted        bool   `json:"auto_started"`
+	Warning            string `json:"warning,omitempty"`
 }
 
 type WebwrightFetchRuntimeConfig struct {
@@ -209,7 +185,7 @@ func HandleRuntimeConfig(opts DebugSystemOptions) http.HandlerFunc {
 			LLMOpsConfigured:   opts.LLMOpsConfigured,
 			LLMOpsEnabled:      opts.LLMOpsEnabled,
 			LLMOpsBaseURL:      strings.TrimRight(strings.TrimSpace(opts.LLMOpsBaseURL), "/"),
-			LocalLLM:           runtimeLocalLLMConfig(r.Context(), opts.LocalLLM),
+			LLMGateway:         normalizeLLMGatewayRuntimeConfig(opts.LLMGateway),
 			WebwrightFetch:     normalizeWebwrightFetchRuntimeConfig(opts.WebwrightFetch),
 			WebGather:          normalizeWebGatherRuntimeConfig(opts.WebGather),
 			BrowserActor:       normalizeBrowserActorRuntimeConfig(opts.BrowserActor),
@@ -220,6 +196,12 @@ func HandleRuntimeConfig(opts DebugSystemOptions) http.HandlerFunc {
 			VoiceInputMode:     normalizeVoiceInputMode(opts.VoiceInputMode),
 		})
 	}
+}
+
+func normalizeLLMGatewayRuntimeConfig(in LLMGatewayRuntimeConfig) LLMGatewayRuntimeConfig {
+	in.BaseURL = strings.TrimRight(strings.TrimSpace(in.BaseURL), "/")
+	in.Warning = strings.TrimSpace(in.Warning)
+	return in
 }
 
 func browserFacingSTTStreamURL(r *http.Request, configured string) string {
@@ -326,196 +308,6 @@ func normalizeSecretRefs(in []SecretRefRuntimeConfig) []SecretRefRuntimeConfig {
 		out = append(out, item)
 	}
 	return out
-}
-
-func normalizeLocalLLMRuntimeConfig(in LocalLLMRuntimeConfig) LocalLLMRuntimeConfig {
-	in.Provider = strings.TrimSpace(in.Provider)
-	in.ChatBaseURL = strings.TrimRight(strings.TrimSpace(in.ChatBaseURL), "/")
-	in.WorkerBaseURL = strings.TrimRight(strings.TrimSpace(in.WorkerBaseURL), "/")
-	in.ChatWorkerBaseURL = strings.TrimRight(strings.TrimSpace(in.ChatWorkerBaseURL), "/")
-	in.HeavyBaseURL = strings.TrimRight(strings.TrimSpace(in.HeavyBaseURL), "/")
-	in.WildBaseURL = strings.TrimRight(strings.TrimSpace(in.WildBaseURL), "/")
-	in.ChatModel = strings.TrimSpace(in.ChatModel)
-	in.WorkerModel = strings.TrimSpace(in.WorkerModel)
-	in.ChatWorkerModel = strings.TrimSpace(in.ChatWorkerModel)
-	in.HeavyModel = strings.TrimSpace(in.HeavyModel)
-	in.WildModel = strings.TrimSpace(in.WildModel)
-	return in
-}
-
-func runtimeLocalLLMConfig(ctx context.Context, in LocalLLMRuntimeConfig) LocalLLMRuntimeConfig {
-	in = normalizeLocalLLMRuntimeConfig(in)
-	if !in.Enabled {
-		return in
-	}
-	in.LiveModels = fetchLocalLLMLiveModels(ctx, in)
-	return in
-}
-
-func fetchLocalLLMLiveModels(ctx context.Context, cfg LocalLLMRuntimeConfig) map[string]LocalLLMLiveModel {
-	roles := []struct {
-		key   string
-		role  string
-		alias string
-		base  string
-	}{
-		{key: "chat", role: "Chat", alias: cfg.ChatModel, base: cfg.ChatBaseURL},
-		{key: "worker", role: "Worker", alias: cfg.WorkerModel, base: cfg.WorkerBaseURL},
-		{key: "chatworker", role: "ChatWorker", alias: cfg.ChatWorkerModel, base: firstNonEmpty(cfg.ChatWorkerBaseURL, cfg.WorkerBaseURL)},
-	}
-	out := make(map[string]LocalLLMLiveModel, len(roles))
-	client := &http.Client{Timeout: 1500 * time.Millisecond}
-	for _, role := range roles {
-		if strings.TrimSpace(role.alias) == "" && strings.TrimSpace(role.base) == "" {
-			continue
-		}
-		out[role.key] = fetchLocalLLMLiveModel(ctx, client, role.role, role.alias, role.base)
-	}
-	return out
-}
-
-func fetchLocalLLMLiveModel(ctx context.Context, client *http.Client, role, alias, baseURL string) LocalLLMLiveModel {
-	live := LocalLLMLiveModel{
-		Role:    strings.TrimSpace(role),
-		Alias:   strings.TrimSpace(alias),
-		BaseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-	}
-	if live.BaseURL == "" {
-		live.Error = "local llm base url missing"
-		return live
-	}
-	if err := fillLocalLLMModelList(ctx, client, &live); err != nil {
-		live.Error = joinRuntimeErrors(live.Error, err.Error())
-	}
-	if err := fillLocalLLMModelStatus(ctx, client, &live); err != nil {
-		if !strings.Contains(err.Error(), "HTTP 404") {
-			live.Error = joinRuntimeErrors(live.Error, err.Error())
-		}
-	}
-	if err := fillLocalLLMHealth(ctx, client, &live); err != nil {
-		if localLLMHealthProbeOptional(err, live) {
-			if live.Status == "" {
-				live.Status = "models_available"
-			}
-			return live
-		}
-		live.Error = joinRuntimeErrors(live.Error, err.Error())
-	}
-	return live
-}
-
-func localLLMHealthProbeOptional(err error, live LocalLLMLiveModel) bool {
-	if err == nil {
-		return false
-	}
-	if !strings.Contains(err.Error(), "HTTP 404") {
-		return false
-	}
-	return strings.TrimSpace(live.BackendModel) != "" ||
-		strings.TrimSpace(live.LoadedModel) != "" ||
-		(live.Loaded != nil && *live.Loaded)
-}
-
-func fillLocalLLMModelList(ctx context.Context, client *http.Client, live *LocalLLMLiveModel) error {
-	var body struct {
-		Data []struct {
-			ID           string `json:"id"`
-			BackendModel string `json:"backend_model"`
-		} `json:"data"`
-	}
-	if err := getLocalLLMJSON(ctx, client, live.BaseURL+"/v1/models", &body); err != nil {
-		return fmt.Errorf("v1/models: %w", err)
-	}
-	for _, item := range body.Data {
-		if strings.EqualFold(strings.TrimSpace(item.ID), live.Alias) {
-			live.BackendModel = strings.TrimSpace(item.BackendModel)
-			return nil
-		}
-	}
-	return fmt.Errorf("alias %q not found", live.Alias)
-}
-
-func fillLocalLLMModelStatus(ctx context.Context, client *http.Client, live *LocalLLMLiveModel) error {
-	var body struct {
-		Models []struct {
-			ID        string `json:"id"`
-			ModelPath string `json:"model_path"`
-			Loaded    bool   `json:"loaded"`
-		} `json:"models"`
-	}
-	if err := getLocalLLMJSON(ctx, client, live.BaseURL+"/v1/models/status", &body); err != nil {
-		return fmt.Errorf("v1/models/status: %w", err)
-	}
-	target := firstNonEmptyString(live.BackendModel, live.Alias)
-	for _, item := range body.Models {
-		if localLLMModelMatches(target, item.ID, item.ModelPath) {
-			loaded := item.Loaded
-			live.Loaded = &loaded
-			if live.LoadedModel == "" && item.ModelPath != "" {
-				live.LoadedModel = strings.TrimSpace(item.ModelPath)
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("model %q not found in status", target)
-}
-
-func fillLocalLLMHealth(ctx context.Context, client *http.Client, live *LocalLLMLiveModel) error {
-	var body struct {
-		Status       string `json:"status"`
-		LoadedModel  string `json:"loaded_model"`
-		DefaultModel string `json:"default_model"`
-	}
-	if err := getLocalLLMJSON(ctx, client, live.BaseURL+"/health", &body); err != nil {
-		return fmt.Errorf("health: %w", err)
-	}
-	live.Status = strings.TrimSpace(body.Status)
-	if live.LoadedModel == "" {
-		live.LoadedModel = strings.TrimSpace(body.LoadedModel)
-	}
-	live.DefaultModel = strings.TrimSpace(body.DefaultModel)
-	return nil
-}
-
-func getLocalLLMJSON(ctx context.Context, client *http.Client, url string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
-		return err
-	}
-	return nil
-}
-
-func localLLMModelMatches(target, id, path string) bool {
-	target = strings.TrimSpace(target)
-	id = strings.TrimSpace(id)
-	path = strings.TrimSpace(path)
-	if target == "" {
-		return false
-	}
-	return target == id || target == path || strings.HasSuffix(strings.TrimRight(path, "/"), "/"+target)
-}
-
-func joinRuntimeErrors(current, next string) string {
-	next = strings.TrimSpace(next)
-	if next == "" {
-		return current
-	}
-	if current == "" {
-		return next
-	}
-	return current + "; " + next
 }
 
 func normalizeWebwrightFetchRuntimeConfig(in WebwrightFetchRuntimeConfig) WebwrightFetchRuntimeConfig {

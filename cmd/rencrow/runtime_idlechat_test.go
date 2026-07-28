@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -141,12 +140,12 @@ func TestSelectForecastProviderPrefersCoderPriorityOverWorker(t *testing.T) {
 	if provider == nil || provider == worker || provider == chat {
 		t.Fatalf("expected Coder1 provider, got %#v", provider)
 	}
-	if !strings.Contains(label, "Coder1") || !strings.Contains(label, "local_openai") {
+	if label != "Coder1 via RenCrow_LLM" {
 		t.Fatalf("unexpected label: %q", label)
 	}
 }
 
-func TestSelectForecastProviderSkipsBrokenCoderAndUsesNextLocalCoder(t *testing.T) {
+func TestSelectForecastProviderIgnoresPhysicalCoderSettings(t *testing.T) {
 	primary, primaryLabel := selectForecastProviders(&config.Config{
 		Coder1: config.CoderConfig{
 			Enabled:  true,
@@ -164,12 +163,12 @@ func TestSelectForecastProviderSkipsBrokenCoderAndUsesNextLocalCoder(t *testing.
 	if primary == nil {
 		t.Fatal("expected Coder2 local provider")
 	}
-	if !strings.Contains(primaryLabel, "Coder2") {
+	if primaryLabel != "Coder1 via RenCrow_LLM" {
 		t.Fatalf("unexpected primary label: %q", primaryLabel)
 	}
 }
 
-func TestSelectForecastProviderSkipsOpenAIByDefault(t *testing.T) {
+func TestSelectForecastProviderRoutesOpenAIConfigThroughGateway(t *testing.T) {
 	primary, primaryLabel := selectForecastProviders(&config.Config{
 		Coder1: config.CoderConfig{
 			Enabled:  true,
@@ -184,12 +183,12 @@ func TestSelectForecastProviderSkipsOpenAIByDefault(t *testing.T) {
 		},
 	})
 
-	if primary != nil || primaryLabel != "" {
-		t.Fatalf("OpenAI explicit use disabled by default; got provider=%#v label=%q", primary, primaryLabel)
+	if primary == nil || primaryLabel != "Coder1 via RenCrow_LLM" {
+		t.Fatalf("physical provider settings must be ignored; got provider=%#v label=%q", primary, primaryLabel)
 	}
 }
 
-func TestSelectForecastProviderUsesOpenAIOnlyWhenExternalEnabled(t *testing.T) {
+func TestSelectForecastProviderExternalFlagDoesNotBypassGateway(t *testing.T) {
 	primary, primaryLabel := selectForecastProviders(&config.Config{
 		IdleChat: config.IdleChatConfig{
 			ForecastExternalEnabled: true,
@@ -208,9 +207,9 @@ func TestSelectForecastProviderUsesOpenAIOnlyWhenExternalEnabled(t *testing.T) {
 	})
 
 	if primary == nil {
-		t.Fatal("expected Coder2 OpenAI provider when external use is explicitly enabled")
+		t.Fatal("expected logical Coder1 Gateway provider")
 	}
-	if !strings.Contains(primaryLabel, "Coder2 openai") || !strings.Contains(primaryLabel, "gpt-4o-mini") {
+	if primaryLabel != "Coder1 via RenCrow_LLM" {
 		t.Fatalf("unexpected primary label: %q", primaryLabel)
 	}
 }
@@ -232,7 +231,7 @@ func TestSelectForecastProviderDoesNotUseChatWhenNoCoderAvailable(t *testing.T) 
 	}
 }
 
-func TestSelectForecastProviderUsesWorkerWhenNoLocalCoderAvailableAtRuntime(t *testing.T) {
+func TestSelectForecastProviderUsesConfiguredCoderThroughGateway(t *testing.T) {
 	worker := fakeConversationProvider{name: "worker-provider"}
 	chat := fakeConversationProvider{name: "chat-provider"}
 	provider, label := selectForecastProvider(&config.Config{
@@ -244,8 +243,19 @@ func TestSelectForecastProviderUsesWorkerWhenNoLocalCoderAvailableAtRuntime(t *t
 		},
 	}, chat, worker, nil)
 
+	if provider == nil || provider.Name() != "openai-coder2" {
+		t.Fatalf("expected logical Coder2 Gateway provider, got %#v", provider)
+	}
+	if label != "Coder2 via RenCrow_LLM" {
+		t.Fatalf("unexpected label: %q", label)
+	}
+}
+
+func TestSelectForecastProviderFallsBackToGatewayWorker(t *testing.T) {
+	worker := fakeConversationProvider{name: "worker-provider"}
+	provider, label := selectForecastProvider(&config.Config{}, nil, worker, nil)
 	if provider != worker {
-		t.Fatalf("expected Worker local provider, got %#v", provider)
+		t.Fatalf("expected initialized Gateway Worker provider, got %#v", provider)
 	}
 	if label != modulechat.ForecastWorkerFallbackLabel {
 		t.Fatalf("unexpected label: %q", label)

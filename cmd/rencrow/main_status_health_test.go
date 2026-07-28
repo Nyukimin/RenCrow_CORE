@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,117 +17,48 @@ import (
 	domainhealth "github.com/Nyukimin/RenCrow_CORE/internal/domain/health"
 )
 
-func TestCollectOllamaHealthRequirements_UsesSingleModel(t *testing.T) {
-	cfg := &config.Config{
-		Ollama: config.OllamaConfig{
-			BaseURL:    "http://127.0.0.1:11434",
-			Model:      "Chat",
-			MaxContext: 4096,
-		},
-	}
-
-	got := collectOllamaHealthRequirements(cfg)
-	if len(got) != 1 {
-		t.Fatalf("expected 1 requirement, got %d: %#v", len(got), got)
-	}
-	if got[0].Name != "Chat" {
-		t.Fatalf("unexpected requirements: %#v", got)
-	}
-	if got[0].MaxContext != 4096 {
-		t.Fatalf("expected max context to propagate, got %#v", got)
-	}
-}
-
-func TestCollectOllamaHealthRequirements_SkipsEmptyModel(t *testing.T) {
-	cfg := &config.Config{
-		Ollama: config.OllamaConfig{
-			MaxContext: 4096,
-		},
-	}
-
-	got := collectOllamaHealthRequirements(cfg)
-	if len(got) != 0 {
-		t.Fatalf("expected no requirements, got %#v", got)
-	}
-}
-
-func TestBuildHealthService_LocalLLMUsesOpenAICompatibleChecks(t *testing.T) {
-	var chatHits, workerHits int
+func TestBuildHealthService_UsesRenCrowLLMGatewayAliases(t *testing.T) {
+	var gatewayHits atomic.Int32
 	mux := http.NewServeMux()
-	mux.HandleFunc("/chat/v1/models", func(w http.ResponseWriter, r *http.Request) {
-		chatHits++
+	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		gatewayHits.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"Chat"}]}`))
-	})
-	mux.HandleFunc("/worker/v1/models", func(w http.ResponseWriter, r *http.Request) {
-		workerHits++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"Worker"},{"id":"ChatWorker"}]}`))
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"mio"},{"id":"worker"},{"id":"shiro"},{"id":"kuro"},{"id":"midori"}]}`))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	cfg := &config.Config{
-		LocalLLM: config.LocalLLMConfig{
-			Enabled:         true,
-			Provider:        "local_openai",
-			BaseURL:         "http://127.0.0.1:1",
-			ChatBaseURL:     srv.URL + "/chat",
-			WorkerBaseURL:   srv.URL + "/worker",
-			WildBaseURL:     "http://127.0.0.1:1",
-			ChatModel:       "Chat",
-			WorkerModel:     "Worker",
-			ChatWorkerModel: "ChatWorker",
-			WildModel:       "Wild",
-			TimeoutSec:      1,
-		},
-		Ollama: config.OllamaConfig{BaseURL: "http://127.0.0.1:1", Model: "Chat"},
+		LLMGateway: config.LLMGatewayConfig{Enabled: true, BaseURL: srv.URL, TimeoutSec: 1},
 	}
-	warmup := false
-	cfg.LocalLLM.Warmup = &warmup
 
 	report := buildHealthService(cfg).RunChecks(context.Background())
 	if report.Status != domainhealth.StatusOK {
 		t.Fatalf("status = %s, want ok; checks=%+v", report.Status, report.Checks)
 	}
-	if chatHits != 1 || workerHits != 2 {
-		t.Fatalf("expected chat/worker hits, got chat=%d worker=%d", chatHits, workerHits)
+	if gatewayHits.Load() != 5 {
+		t.Fatalf("expected five logical alias probes, got %d", gatewayHits.Load())
 	}
 	for _, check := range report.Checks {
 		if strings.HasPrefix(check.Name, "ollama") {
-			t.Fatalf("local_llm health should not include ollama check: %+v", report.Checks)
+			t.Fatalf("RenCrow_LLM health must not include ollama check: %+v", report.Checks)
 		}
 	}
 }
 
-func TestBuildHealthService_SkipsDisabledRuntimeTopologyRoles(t *testing.T) {
-	var chatHits, workerHits int
+func TestBuildHealthService_IgnoresLegacyPhysicalTopology(t *testing.T) {
+	var gatewayHits atomic.Int32
 	mux := http.NewServeMux()
-	mux.HandleFunc("/chat/v1/models", func(w http.ResponseWriter, r *http.Request) {
-		chatHits++
+	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		gatewayHits.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"Chat"}]}`))
-	})
-	mux.HandleFunc("/worker/v1/models", func(w http.ResponseWriter, r *http.Request) {
-		workerHits++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"Worker"},{"id":"ChatWorker"}]}`))
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"mio"},{"id":"worker"},{"id":"shiro"},{"id":"kuro"},{"id":"midori"}]}`))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	disabled := false
 	cfg := &config.Config{
-		RuntimeTopology: config.RuntimeTopologyConfig{
-			Modules: map[string]config.RuntimeTopologyModuleConfig{
-				"RenCraw_LLM": {
-					Roles: map[string]config.RuntimeTopologyRoleConfig{
-						"heavy": {Enabled: &disabled},
-						"wild":  {Enabled: &disabled},
-					},
-				},
-			},
-		},
+		LLMGateway: config.LLMGatewayConfig{Enabled: true, BaseURL: srv.URL, TimeoutSec: 1},
 		LocalLLM: config.LocalLLMConfig{
 			Enabled:         true,
 			Provider:        "local_openai",
@@ -143,15 +75,13 @@ func TestBuildHealthService_SkipsDisabledRuntimeTopologyRoles(t *testing.T) {
 			TimeoutSec:      1,
 		},
 	}
-	warmup := true
-	cfg.LocalLLM.Warmup = &warmup
 
 	report := buildHealthService(cfg).RunChecks(context.Background())
 	if report.Status != domainhealth.StatusOK {
 		t.Fatalf("status = %s, want ok; checks=%+v", report.Status, report.Checks)
 	}
-	if chatHits != 1 || workerHits != 2 {
-		t.Fatalf("expected only chat/worker hits, got chat=%d worker=%d", chatHits, workerHits)
+	if gatewayHits.Load() != 5 {
+		t.Fatalf("expected physical topology to be ignored; gateway hits=%d", gatewayHits.Load())
 	}
 }
 

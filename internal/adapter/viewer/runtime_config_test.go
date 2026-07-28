@@ -92,22 +92,9 @@ func TestHandleRuntimeConfig_ReturnsLLMOpsEnabled(t *testing.T) {
 		LLMOpsConfigured: true,
 		LLMOpsEnabled:    true,
 		LLMOpsBaseURL:    "http://192.168.1.31:8079/",
-		LocalLLM: LocalLLMRuntimeConfig{
-			Enabled:           true,
-			Provider:          "local_openai",
-			ChatBaseURL:       "http://192.168.1.31:8081/",
-			WorkerBaseURL:     "http://192.168.1.31:8082/",
-			HeavyBaseURL:      "http://192.168.1.31:8083/",
-			WildBaseURL:       "http://192.168.1.31:8084/",
-			ChatModel:         "Chat",
-			WorkerModel:       "Worker",
-			ChatWorkerModel:   "ChatWorker",
-			HeavyModel:        "Heavy",
-			WildModel:         "Wild",
-			TimeoutSec:        120,
-			GlobalConcurrency: 1,
-			ModelConcurrency:  1,
-			ModelContext:      131072,
+		LLMGateway: LLMGatewayRuntimeConfig{
+			BaseURL: "http://192.168.1.31:8090/",
+			Ready:   true,
 		},
 		WebwrightFetch: WebwrightFetchRuntimeConfig{
 			Enabled:           true,
@@ -116,7 +103,7 @@ func TestHandleRuntimeConfig_ReturnsLLMOpsEnabled(t *testing.T) {
 			OutputDir:         "tmp/webwright_runs",
 			StagingOutputDir:  "tmp/webwright_staging",
 			UvxFrom:           "git+https://github.com/microsoft/Webwright.git",
-			ResponsesEndpoint: "http://192.168.1.31:8082/v1/responses/",
+			ResponsesEndpoint: "http://192.168.1.31:8090/v1/responses/",
 			Model:             "Coder1",
 			APIKeyConfigured:  true,
 		},
@@ -144,9 +131,9 @@ func TestHandleRuntimeConfig_ReturnsLLMOpsEnabled(t *testing.T) {
 			MaskSecrets:        true,
 		},
 		SecretRefs: []SecretRefRuntimeConfig{
-			{Ref: " config:local_llm.api_key ", Label: " Local LLM API key ", Scope: " local_llm ", Configured: true},
+			{Ref: " env:RENCROW_LLM_API_KEY ", Label: " RenCrow LLM Gateway API key ", Scope: " llm_gateway ", Configured: true},
 			{Ref: "config:webwright_fetch.api_key", Label: "Webwright Fetch local API key", Scope: "tool", Configured: true},
-			{Ref: "config:local_llm.api_key", Label: "duplicate", Scope: "local_llm", Configured: true},
+			{Ref: "env:RENCROW_LLM_API_KEY", Label: "duplicate", Scope: "llm_gateway", Configured: true},
 			{Ref: "", Label: "ignored", Scope: "provider", Configured: true},
 		},
 	})
@@ -168,10 +155,10 @@ func TestHandleRuntimeConfig_ReturnsLLMOpsEnabled(t *testing.T) {
 	if body.LLMOpsBaseURL != "http://192.168.1.31:8079" {
 		t.Fatalf("unexpected llm ops base url: %+v", body)
 	}
-	if !body.LocalLLM.Enabled || body.LocalLLM.ChatBaseURL != "http://192.168.1.31:8081" || body.LocalLLM.WorkerModel != "Worker" || body.LocalLLM.ChatWorkerModel != "ChatWorker" || body.LocalLLM.HeavyBaseURL != "http://192.168.1.31:8083" || body.LocalLLM.HeavyModel != "Heavy" || body.LocalLLM.ModelContext != 131072 {
-		t.Fatalf("unexpected local llm runtime config: %+v", body.LocalLLM)
+	if !body.LLMGateway.Ready || body.LLMGateway.BaseURL != "http://192.168.1.31:8090" {
+		t.Fatalf("unexpected RenCrow_LLM Gateway runtime config: %+v", body.LLMGateway)
 	}
-	if !body.WebwrightFetch.Enabled || body.WebwrightFetch.ResponsesEndpoint != "http://192.168.1.31:8082/v1/responses" || body.WebwrightFetch.Model != "Coder1" {
+	if !body.WebwrightFetch.Enabled || body.WebwrightFetch.ResponsesEndpoint != "http://192.168.1.31:8090/v1/responses" || body.WebwrightFetch.Model != "Coder1" {
 		t.Fatalf("unexpected webwright fetch runtime config: %+v", body.WebwrightFetch)
 	}
 	if !body.WebwrightFetch.APIKeyConfigured {
@@ -192,8 +179,8 @@ func TestHandleRuntimeConfig_ReturnsLLMOpsEnabled(t *testing.T) {
 	if len(body.SecretRefs) != 2 {
 		t.Fatalf("expected normalized secret refs without duplicates: %+v", body.SecretRefs)
 	}
-	if body.SecretRefs[0].Ref != "config:local_llm.api_key" || body.SecretRefs[0].Label != "Local LLM API key" || body.SecretRefs[0].Scope != "local_llm" || !body.SecretRefs[0].Configured {
-		t.Fatalf("unexpected local llm secret ref: %+v", body.SecretRefs)
+	if body.SecretRefs[0].Ref != "env:RENCROW_LLM_API_KEY" || body.SecretRefs[0].Label != "RenCrow LLM Gateway API key" || body.SecretRefs[0].Scope != "llm_gateway" || !body.SecretRefs[0].Configured {
+		t.Fatalf("unexpected RenCrow_LLM Gateway secret ref: %+v", body.SecretRefs)
 	}
 	if body.SecretRefs[1].Ref != "config:webwright_fetch.api_key" || body.SecretRefs[1].Scope != "tool" || !body.SecretRefs[1].Configured {
 		t.Fatalf("unexpected webwright secret ref: %+v", body.SecretRefs)

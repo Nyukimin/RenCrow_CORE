@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
-	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 	modulevoicechat "github.com/Nyukimin/RenCrow_CORE/modules/voicechat"
 )
 
@@ -21,14 +21,10 @@ func voiceInputModeFromEnv() string {
 }
 
 func inferVoiceChatGatewayURL(cfg *config.Config) string {
-	chatBaseURL := ""
-	if cfg != nil {
-		chatBaseURL = modulellm.LocalBaseURLForAlias(localRuntimeConfigFromAppConfig(cfg), modulellm.RoleChat)
-	}
 	return modulevoicechat.InferGatewayURL(
 		strings.TrimSpace(os.Getenv("VOICE_CHAT_GATEWAY_URL")),
 		strings.TrimSpace(os.Getenv("RENCROW_LLM_CHAT_WS")),
-		chatBaseURL,
+		"",
 	)
 }
 
@@ -36,12 +32,15 @@ func voiceChatInputAudioSettingsFromConfig(cfg *config.Config) voiceChatInputAud
 	if cfg == nil {
 		return voiceChatInputAudioSettings{}
 	}
-	local := localRuntimeConfigFromAppConfig(cfg)
+	apiKey := ""
+	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
+		apiKey = strings.TrimSpace(os.Getenv(envName))
+	}
 	return voiceChatInputAudioSettings{
-		Model:          modulellm.LocalModelForAlias(local, modulellm.RoleChat),
-		APIKey:         cfg.LocalLLM.APIKey,
-		Timeout:        modulellm.LocalTimeoutForAlias(local, modulellm.RoleChat),
-		ModelContext:   modulellm.LocalModelContextForAlias(local, modulellm.RoleChat),
+		Model:          "mio",
+		APIKey:         apiKey,
+		Timeout:        time.Duration(cfg.LLMGateway.TimeoutSec) * time.Second,
+		ModelContext:   0,
 		Stream:         cfg.Mio.Generation.Stream,
 		MaxTokens:      cfg.Mio.Generation.MaxTokens,
 		Temperature:    cfg.Mio.Generation.Temperature,

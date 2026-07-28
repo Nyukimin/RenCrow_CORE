@@ -16,7 +16,7 @@ type fakeConversationProvider struct {
 	name string
 }
 
-func TestBuildConversationEmbedderUsesLocalOpenAIWhenLocalLLMEnabled(t *testing.T) {
+func TestBuildConversationEmbedderUsesRenCrowLLMGateway(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/embeddings" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
@@ -35,18 +35,13 @@ func TestBuildConversationEmbedderUsesLocalOpenAIWhenLocalLLMEnabled(t *testing.
 	defer srv.Close()
 
 	embedder, label := buildConversationEmbedder(&config.Config{
-		LocalLLM: config.LocalLLMConfig{
-			Enabled:    true,
-			Provider:   "local_openai",
-			BaseURL:    srv.URL,
-			TimeoutSec: 1,
-		},
+		LLMGateway:   config.LLMGatewayConfig{BaseURL: srv.URL, TimeoutSec: 1},
 		Conversation: config.ConversationConfig{EmbedModel: "Embed"},
 	})
 	if embedder == nil {
 		t.Fatal("expected embedder")
 	}
-	if !strings.Contains(label, "local_llm embedding") {
+	if !strings.Contains(label, "RenCrow_LLM embedding alias") {
 		t.Fatalf("unexpected label: %s", label)
 	}
 	got, err := embedder.Embed(context.Background(), "hello")
@@ -58,9 +53,9 @@ func TestBuildConversationEmbedderUsesLocalOpenAIWhenLocalLLMEnabled(t *testing.
 	}
 }
 
-func TestBuildConversationEmbedderUsesExplicitOllamaProvider(t *testing.T) {
+func TestBuildConversationEmbedderIgnoresLegacyPhysicalProviderSettings(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/embeddings" {
+		if r.URL.Path != "/v1/embeddings" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		var req map[string]any
@@ -71,12 +66,13 @@ func TestBuildConversationEmbedderUsesExplicitOllamaProvider(t *testing.T) {
 			t.Fatalf("unexpected model: %v", req["model"])
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"embedding": []float64{0.3, 0.4, 0.5},
+			"data": []map[string]any{{"embedding": []float64{0.3, 0.4, 0.5}}},
 		})
 	}))
 	defer srv.Close()
 
 	embedder, label := buildConversationEmbedder(&config.Config{
+		LLMGateway: config.LLMGatewayConfig{BaseURL: srv.URL, TimeoutSec: 1},
 		LocalLLM: config.LocalLLMConfig{
 			Enabled:    true,
 			Provider:   "local_openai",
@@ -85,14 +81,14 @@ func TestBuildConversationEmbedderUsesExplicitOllamaProvider(t *testing.T) {
 		},
 		Conversation: config.ConversationConfig{
 			EmbedProvider: "ollama",
-			EmbedBaseURL:  srv.URL,
+			EmbedBaseURL:  "http://physical-ollama.invalid",
 			EmbedModel:    "Embed",
 		},
 	})
 	if embedder == nil {
 		t.Fatal("expected embedder")
 	}
-	if !strings.Contains(label, "conversation embedding ollama") {
+	if !strings.Contains(label, "RenCrow_LLM embedding alias") {
 		t.Fatalf("unexpected label: %s", label)
 	}
 	got, err := embedder.Embed(context.Background(), "hello")
@@ -112,7 +108,7 @@ func (f fakeConversationProvider) Name() string {
 	return f.name
 }
 
-func TestBuildConversationTextProviderUsesLocalWorkerWhenLocalLLMEnabled(t *testing.T) {
+func TestBuildConversationTextProviderUsesRenCrowLLMWorker(t *testing.T) {
 	worker := fakeConversationProvider{name: "worker-provider"}
 	provider, label := buildConversationTextProvider(&config.Config{
 		LocalLLM: config.LocalLLMConfig{Enabled: true},
@@ -121,7 +117,7 @@ func TestBuildConversationTextProviderUsesLocalWorkerWhenLocalLLMEnabled(t *test
 	if provider != worker {
 		t.Fatalf("expected local Worker provider, got %#v", provider)
 	}
-	if label != "primary Worker" {
+	if label != "RenCrow_LLM worker" {
 		t.Fatalf("unexpected label: %s", label)
 	}
 }

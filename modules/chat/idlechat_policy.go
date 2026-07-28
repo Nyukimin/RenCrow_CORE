@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	ForecastWorkerFallbackLabel = "Worker local"
+	ForecastWorkerFallbackLabel = "Worker via RenCrow_LLM"
 	ForecastTopicGeneratorAgent = "Shiro"
 )
 
@@ -42,11 +42,20 @@ func ForecastCoderLabelIndex(label string) int {
 	return moduleworker.CoderSlotIndex(label)
 }
 
-func ForecastCoderProviderAllowed(coder IdleChatCoderProviderConfig, externalEnabled bool) bool {
-	if externalEnabled {
-		return true
+func ForecastCoderAlias(label string) string {
+	index := ForecastCoderLabelIndex(label)
+	if index < 0 {
+		return ""
 	}
-	return !CoderProviderIsExternal(coder.Provider)
+	return "coder" + string(rune('1'+index))
+}
+
+func ForecastCoderProviderAllowed(coder IdleChatCoderProviderConfig, externalEnabled bool) bool {
+	_ = coder
+	_ = externalEnabled
+	// CORE always uses the logical Coder alias through RenCrow_LLM.
+	// Legacy physical provider fields cannot bypass the Gateway.
+	return true
 }
 
 func BuildForecastProviderPlans(candidates []ForecastCoderCandidate, externalEnabled bool) []ForecastProviderPlan {
@@ -62,10 +71,6 @@ func BuildForecastProviderPlans(candidates []ForecastCoderCandidate, externalEna
 			Coder:         coder,
 			ProviderLabel: BuildForecastProviderLabel(label, coder),
 			Allowed:       true,
-		}
-		if !ForecastCoderProviderAllowed(coder, externalEnabled) {
-			plan.Allowed = false
-			plan.SkipReason = "external provider not explicitly enabled"
 		}
 		plans = append(plans, plan)
 	}

@@ -42,7 +42,7 @@ func (c *OpenAICompatibleChatCheck) Name() string {
 	if role == "" {
 		role = "llm"
 	}
-	return fmt.Sprintf("local_llm_%s", role)
+	return fmt.Sprintf("rencrow_llm_%s", role)
 }
 
 func (c *OpenAICompatibleChatCheck) Run(ctx context.Context) domainhealth.CheckResult {

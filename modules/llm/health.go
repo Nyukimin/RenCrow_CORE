@@ -59,7 +59,9 @@ func NormalizeExternalHealthCheckResult(name string, status string, ready bool, 
 }
 
 func RoleFromHealthCheckName(name string) string {
-	role := strings.TrimPrefix(strings.TrimSpace(name), "local_llm_")
+	role := strings.TrimSpace(name)
+	role = strings.TrimPrefix(role, "rencrow_llm_")
+	role = strings.TrimPrefix(role, "local_llm_")
 	role = strings.ToLower(strings.TrimSpace(role))
 	return role
 }

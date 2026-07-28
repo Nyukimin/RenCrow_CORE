@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/ollama"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/openai"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	infraRouting "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
@@ -35,25 +37,26 @@ func main() {
 	availableTools, _ := toolRunner.List(context.Background())
 	fmt.Printf("Available tools: %v\n\n", availableTools)
 
-	// 2. LLM Provider（Ollama）
-	ollamaBaseURL := os.Getenv("OLLAMA_BASE_URL")
-	if ollamaBaseURL == "" {
-		ollamaBaseURL = "http://localhost:11434"
+	// 2. LLM Provider (RenCrow_LLM logical alias)
+	gatewayBaseURL := strings.TrimSpace(os.Getenv("RENCROW_LLM_URL"))
+	if gatewayBaseURL == "" {
+		gatewayBaseURL = "http://127.0.0.1:8090"
 	}
-	ollamaModel := os.Getenv("OLLAMA_MODEL")
-	if ollamaModel == "" {
-		ollamaModel = "Chat"
-	}
-	ollamaProvider := ollama.NewOllamaProvider(ollamaBaseURL, ollamaModel)
+	gatewayProvider := openai.NewOpenAIProviderWithOptions(
+		strings.TrimSpace(os.Getenv("RENCROW_LLM_API_KEY")),
+		"mio",
+		gatewayBaseURL,
+		10*time.Minute,
+	)
 
 	// 3. MioAgent作成
 	prompts := config.LoadPrompts("", "")
-	classifier := infraRouting.NewLLMClassifier(ollamaProvider, prompts.Classifier)
+	classifier := infraRouting.NewLLMClassifier(gatewayProvider, prompts.Classifier)
 	ruleDictionary := infraRouting.NewRuleDictionary()
 	mcpClient := mcp.NewMCPClient()
 
 	mioAgent := agent.NewMioAgent(
-		ollamaProvider,
+		gatewayProvider,
 		classifier,
 		ruleDictionary,
 		toolRunner,

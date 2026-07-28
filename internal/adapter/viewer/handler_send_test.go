@@ -17,6 +17,15 @@ import (
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 )
 
+func mapResponseBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	return body
+}
+
 func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 	received := make(chan SendRequest, 1)
 	h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {
@@ -230,15 +239,18 @@ func TestHandleSendAppliesLegacyViewerLLMAlias(t *testing.T) {
 	var body struct {
 		OK          bool   `json:"ok"`
 		ModelAlias  string `json:"model_alias"`
-		BaseURL     string `json:"base_url"`
-		Model       string `json:"model"`
 		RoutePrefix string `json:"route_prefix"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if !body.OK || body.ModelAlias != "Worker" || body.BaseURL != "http://127.0.0.1:8082" || body.Model != "Worker" || body.RoutePrefix != "/ops" {
+	if !body.OK || body.ModelAlias != "Worker" || body.RoutePrefix != "/ops" {
 		t.Fatalf("unexpected response: %+v", body)
+	}
+	for _, key := range []string{"base_url", "model"} {
+		if _, ok := mapResponseBody(t, rec)[key]; ok {
+			t.Fatalf("response exposed ignored physical LLM field %q: %s", key, rec.Body.String())
+		}
 	}
 
 	select {
@@ -279,7 +291,7 @@ func TestHandleSendExplicitRouteWinsOverAlias(t *testing.T) {
 	}
 }
 
-func TestHandleSendUsesLegacyRuntimeAliasFields(t *testing.T) {
+func TestHandleSendIgnoresLegacyPhysicalRuntimeFields(t *testing.T) {
 	received := make(chan string, 1)
 	h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {
 		received <- req.Message
@@ -302,20 +314,23 @@ func TestHandleSendUsesLegacyRuntimeAliasFields(t *testing.T) {
 	}
 	var body struct {
 		ModelAlias  string `json:"model_alias"`
-		BaseURL     string `json:"base_url"`
-		Model       string `json:"model"`
 		RoutePrefix string `json:"route_prefix"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if body.ModelAlias != "Heavy" || body.BaseURL != "http://192.168.1.31:18083" || body.Model != "HeavyRuntime" || body.RoutePrefix != "/heavy" {
+	if body.ModelAlias != "Heavy" || body.RoutePrefix != "/analyze" {
 		t.Fatalf("unexpected response: %+v", body)
+	}
+	for _, key := range []string{"base_url", "model"} {
+		if _, ok := mapResponseBody(t, rec)[key]; ok {
+			t.Fatalf("response exposed ignored physical LLM field %q: %s", key, rec.Body.String())
+		}
 	}
 
 	select {
 	case got := <-received:
-		if got != "/heavy 原因を調べて" {
+		if got != "/analyze 原因を調べて" {
 			t.Fatalf("unexpected handler message: %q", got)
 		}
 	case <-time.After(time.Second):

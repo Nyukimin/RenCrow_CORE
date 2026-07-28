@@ -60,7 +60,7 @@ log:
 	}
 
 	if cfg.Ollama.Model != "rencrow-v1" {
-		t.Errorf("Expected Ollama model 'rencrow-v1', got '%s'", cfg.Ollama.Model)
+		t.Errorf("Expected deprecated Ollama model to remain readable, got '%s'", cfg.Ollama.Model)
 	}
 
 	if cfg.Session.StorageDir != "./data/sessions" {
@@ -172,8 +172,8 @@ session:
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	if cfg.Ollama.Model != "rencrow-v1" {
-		t.Errorf("Expected legacy ollama fields to be ignored and default model to be used, got '%s'", cfg.Ollama.Model)
+	if cfg.Ollama.Model != "" {
+		t.Errorf("Expected legacy ollama model fields to be ignored, got '%s'", cfg.Ollama.Model)
 	}
 }
 
@@ -282,9 +282,9 @@ session:
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	// Ollamaモデルデフォルト
-	if cfg.Ollama.Model != "rencrow-v1" {
-		t.Errorf("Expected Ollama model 'rencrow-v1', got '%s'", cfg.Ollama.Model)
+	// Deprecated Ollama settings receive no runtime defaults.
+	if cfg.Ollama.Model != "" {
+		t.Errorf("Expected Ollama model to remain unset, got '%s'", cfg.Ollama.Model)
 	}
 
 	if cfg.Log.Level == "" {
@@ -887,20 +887,11 @@ local_llm:
 	if !cfg.LocalLLM.Enabled {
 		t.Fatal("expected local_llm enabled")
 	}
-	if cfg.LocalLLM.Provider != "local_openai" {
-		t.Fatalf("unexpected local_llm provider: %s", cfg.LocalLLM.Provider)
+	if cfg.LocalLLM.Provider != "" || cfg.LocalLLM.ChatModel != "" || cfg.LocalLLM.WorkerModel != "" || cfg.LocalLLM.TimeoutSec != 0 {
+		t.Fatalf("deprecated local_llm settings must not receive runtime defaults: %+v", cfg.LocalLLM)
 	}
-	if cfg.LocalLLM.ChatModel != "Chat" || cfg.LocalLLM.WorkerModel != "Worker" || cfg.LocalLLM.ChatWorkerModel != "ChatWorker" || cfg.LocalLLM.HeavyModel != "Heavy" || cfg.LocalLLM.WildModel != "Wild" {
-		t.Fatalf("unexpected model aliases: %+v", cfg.LocalLLM)
-	}
-	if cfg.LocalLLM.TimeoutSec != 120 {
-		t.Fatalf("unexpected timeout_sec: %d", cfg.LocalLLM.TimeoutSec)
-	}
-	if cfg.LocalLLM.GlobalConcurrency != 2 || cfg.LocalLLM.ModelConcurrency != 1 {
-		t.Fatalf("unexpected concurrency defaults: %+v", cfg.LocalLLM)
-	}
-	if !cfg.LocalLLMWarmupEnabled() {
-		t.Fatal("expected local_llm warmup enabled by default")
+	if cfg.LocalLLMWarmupEnabled() {
+		t.Fatal("deprecated local_llm warmup must remain disabled")
 	}
 }
 
@@ -982,7 +973,7 @@ mio:
 	}
 }
 
-func TestLoadConfig_WebwrightFetchDefaultsFromLocalWorker(t *testing.T) {
+func TestLoadConfig_WebwrightFetchDefaultsToRenCrowLLMGateway(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "webwright_fetch.yaml")
 
@@ -1015,14 +1006,14 @@ webwright_fetch:
 	if cfg.WebwrightFetch.ConfigPath != filepath.Join(wantToolsRoot, "tools", "webwright_fetch", "config_local_worker.yaml") {
 		t.Fatalf("unexpected config path: %s", cfg.WebwrightFetch.ConfigPath)
 	}
-	if cfg.WebwrightFetch.ResponsesEndpoint != "http://192.168.1.207:8082/v1/responses" {
+	if cfg.WebwrightFetch.ResponsesEndpoint != "http://127.0.0.1:8090/v1/responses" {
 		t.Fatalf("unexpected responses endpoint: %s", cfg.WebwrightFetch.ResponsesEndpoint)
 	}
 	if cfg.WebwrightFetch.UvxFrom != "" {
 		t.Fatalf("uvx_from must be opt-in, got %s", cfg.WebwrightFetch.UvxFrom)
 	}
-	if cfg.WebwrightFetch.Model != "Coder1" || cfg.WebwrightFetch.APIKey != "dummy" {
-		t.Fatalf("unexpected local webwright model/key defaults: %+v", cfg.WebwrightFetch)
+	if cfg.WebwrightFetch.Model != "coder1" || cfg.WebwrightFetch.APIKey != "dummy" {
+		t.Fatalf("unexpected RenCrow_LLM webwright model/key defaults: %+v", cfg.WebwrightFetch)
 	}
 }
 
@@ -1114,7 +1105,7 @@ coder4:
 	if cfg.LLMOps.BaseURL != "http://192.168.1.6:8079" {
 		t.Fatalf("unexpected llm_ops base URL: %s", cfg.LLMOps.BaseURL)
 	}
-	if cfg.WebwrightFetch.ResponsesEndpoint != "http://192.168.1.6:8082/v1/responses" {
+	if cfg.WebwrightFetch.ResponsesEndpoint != "http://127.0.0.1:8090/v1/responses" {
 		t.Fatalf("unexpected webwright responses endpoint: %s", cfg.WebwrightFetch.ResponsesEndpoint)
 	}
 	for name, got := range map[string]string{

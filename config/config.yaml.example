@@ -84,8 +84,9 @@ webwright_fetch:
   staging_output_dir: "tmp/webwright_staging"
   uvx_from: ""
   python: ""
-  responses_endpoint: "http://127.0.0.1:8082/v1/responses"
-  model: "Coder1"
+  # RenCrow_LLM Gateway only. CORE ignores legacy physical endpoint values.
+  responses_endpoint: "http://127.0.0.1:8090/v1/responses"
+  model: "coder1"
   api_key: "dummy"
 
 # Browser Actor は RenCrow_Tools に分離した任意のブラウザ操作 sidecar。
@@ -329,15 +330,15 @@ conversation:
   enabled: false
   redis_url: "redis://localhost:6379"
   vectordb_url: "localhost:6334"
-  embed_model: "nomic-embed-text"
-  summary_model: ""      # 空の場合はOllama chatモデルを使用
+  embed_model: ""        # RenCrow_LLMの論理embedding alias。空ならembedding無効
+  summary_model: ""      # 互換キー。要約は常にRenCrow_LLM Workerを使用
 
 # サブエージェント設定（ReActループ）
 subagent:
   enabled: false
   max_iterations: 10     # ReActループ最大反復回数
-  provider: ""           # "ollama"(default), "claude", "openai", "deepseek"
-  model: ""              # 空の場合は各プロバイダーのデフォルトモデルを使用
+  provider: ""           # deprecated/ignored: RenCrow_LLM Workerを使用
+  model: ""              # deprecated/ignored: 物理modelはRenCrow_LLM側で管理
 
 # ハートビート（定期タスク）
 heartbeat:
@@ -382,7 +383,8 @@ tts:
 # COREはRenCrow_STTのPOST /v1/audio/transcriptionsだけを呼び出します。
 stt:
   enabled: true
-  gateway_base_url: "http://127.0.0.1:8766"
+  # RTX 4060 / RTX 5060同居ホスト上のRenCrow_STT Gateway。
+  gateway_base_url: "http://192.168.1.205:8766"
   timeout_ms: 120000
   busy_policy: "queue_latest"
   endpoint_path: "/stt"

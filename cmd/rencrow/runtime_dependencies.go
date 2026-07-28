@@ -264,6 +264,7 @@ type Dependencies struct {
 	moduleWorkerExecutor           moduleworker.Executor                       // module contract view of Worker executor
 	moduleHealth                   http.HandlerFunc                            // module boundary health API
 	llmBusyTracker                 *llmBusyTracker                             // runtime LLM execution tracker for IdleChat gating
+	llmGatewayProcess              *os.Process                                 // local RenCrow_LLM process started by CORE
 	webGatherDeps                  func() webGatherCLIDeps                     // web-gather diagnostics dependencies for the Public API
 }
 
@@ -273,6 +274,11 @@ type idleChatStartGate interface {
 
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
+	if d.llmGatewayProcess != nil {
+		if err := d.llmGatewayProcess.Kill(); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already finished") {
+			log.Printf("Failed to stop CORE-started RenCrow_LLM Gateway: %v", err)
+		}
+	}
 	if d.memoryPromotionCancel != nil {
 		d.memoryPromotionCancel()
 	}
