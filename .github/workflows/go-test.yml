@@ -21,6 +21,9 @@ jobs:
           - ubuntu-latest
           - windows-latest
     steps:
+      - name: Preserve repository line endings
+        run: git config --global core.autocrlf false
+
       - name: Checkout
         uses: actions/checkout@v4
 
