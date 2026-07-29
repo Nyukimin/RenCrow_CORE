@@ -25,5 +25,5 @@ RenCrow の module / directory 固有制約を、常時 `AGENTS.md` へ詰め込
 | `rencrow-data/**` | market data workflow。snapshot_id、policy_status、paper_trade_log、CLI audit を保つ。 | `skills/core/rencrow-data-refresh-audit` |
 | `systemd/**` | live service deployment。restart 前に service stop、残 process、port、health down を確認する。 | `skills/core/rencrow-service-rebuild-restart` |
 | `internal/infrastructure/persistence/**` | DB / JSONL persistence。schema、audit trail、migration、direct write boundary を確認する。 | `rules/common/rules_state_management.md` |
-| `docs/README.md` | 現行正本の索引、範囲、優先順位。正本追加ではなく既存 `01` から `09` へ収束させる。 | `docs/README.md` |
+| `docs/README.md` | 現行正本の索引、範囲、優先順位。正本追加ではなく既存 `01` から `10` へ収束させる。 | `docs/README.md` |
 | docs直下の現行仕様 | 唯一の現行製品仕様。対象はallowlistで固定し、仕様変更時は実装・test・production wiringと同時に確認する。 | `docs/README.md` |

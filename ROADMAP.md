@@ -13,4 +13,4 @@ RenCrow_COREの実装状態、採用済み・未実装項目、deployment依存�
 - RenCrow_CMDは各Public APIを操作するCLI facadeである。
 
 変更計画を追加する場合は、状態をこのファイルへ複製せず、採用済み契約と実装状態を
-`docs/01`から`docs/09`の該当正本へ反映してください。
+`docs/01`から`docs/10`の該当正本へ反映してください。

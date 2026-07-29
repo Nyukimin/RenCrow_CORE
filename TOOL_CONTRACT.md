@@ -5,7 +5,7 @@
 **ステータス**: RenCrow_CORE統合Toolの補助contract
 **配置**: リポジトリルート直下
 
-製品仕様の唯一の現行正本は`docs/README.md`と、そこに列挙された`01`〜`09`です。
+製品仕様の唯一の現行正本は`docs/README.md`と、そこに列挙された`01`〜`10`です。
 本書はその製品仕様を再定義せず、COREへ統合するToolの入出力、安全、受領条件だけを
 具体化します。横断的に再利用するTool、browser sidecar、data converter、validation
 CLIの実装本体はRenCrow_Toolsが所有します。
@@ -337,7 +337,7 @@ RenCrow_CORE/
 
 | 場所 | 役割 | 内容 |
 |------|------|------|
-| `docs/README.md`と`docs/01`〜`09` | 製品仕様正本 | Toolの責務、権限、同期policy、module境界 |
+| `docs/README.md`と`docs/01`〜`10` | 製品仕様正本 | Toolの責務、権限、同期policy、module境界 |
 | `TOOL_CONTRACT.md`（リポジトリルート） | 補助contract | CORE統合Toolの入出力・安全・DoD |
 | `workspace/skills/` | 運用スキル | 各ツールの SKILL.md |
 | `templates/tool/` | 雛形 | 契約を埋め込んだテンプレート |
