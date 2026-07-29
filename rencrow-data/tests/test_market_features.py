@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
+import sqlite_test_tempfile as tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path

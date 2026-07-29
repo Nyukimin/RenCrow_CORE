@@ -17,7 +17,10 @@ var broadRootNames = []string{
 // 取りこぼす。ドライブルート（"C:\"）と UNC 共有ルート（"\\\\host\\share"）も
 // 広範囲として拒否する。
 func isBroadOrSystemRoot(clean string) bool {
-	slash := filepath.ToSlash(clean)
+	// filepath.ToSlash only rewrites the current host OS separator. Normalize
+	// Windows separators explicitly so Windows roots are still recognized when
+	// validation runs on Linux or macOS.
+	slash := strings.ReplaceAll(filepath.ToSlash(clean), `\`, "/")
 	trimmed := strings.TrimSuffix(slash, "/")
 	for _, name := range broadRootNames {
 		if slash == name || (trimmed != "" && trimmed == name) {
@@ -28,7 +31,7 @@ func isBroadOrSystemRoot(clean string) bool {
 	if len(slash) >= 2 && slash[1] == ':' {
 		drive := slash[0]
 		isLetter := (drive >= 'a' && drive <= 'z') || (drive >= 'A' && drive <= 'Z')
-		if isLetter && (len(slash) == 2 || slash == string(drive)+":/") {
+		if isLetter && strings.Trim(slash[2:], "/") == "" {
 			return true
 		}
 	}

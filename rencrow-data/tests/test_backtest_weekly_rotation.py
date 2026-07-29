@@ -5,7 +5,7 @@ import os
 import sqlite3
 import subprocess
 import sys
-import tempfile
+import sqlite_test_tempfile as tempfile
 import unittest
 import csv
 from datetime import date, timedelta
@@ -90,6 +90,8 @@ class WeeklyRotationBacktestTest(unittest.TestCase):
             self.assertGreater(summary["weeks"], 0)
             self.assertTrue(Path(summary["equity_curve_path"]).exists())
             self.assertTrue(Path(summary["trades_path"]).exists())
+            self.assertNotIn(":", Path(summary["equity_curve_path"]).name)
+            self.assertNotIn(":", Path(summary["trades_path"]).name)
             with Path(summary["equity_curve_path"]).open(encoding="utf-8", newline="") as f:
                 curve_rows = list(csv.DictReader(f))
             self.assertEqual(curve_rows[0]["symbol"], "")

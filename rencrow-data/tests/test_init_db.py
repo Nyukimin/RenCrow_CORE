@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
-import tempfile
+import sqlite_test_tempfile as tempfile
 import unittest
 from pathlib import Path
 

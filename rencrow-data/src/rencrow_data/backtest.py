@@ -401,9 +401,10 @@ def run_weekly_rotation_backtest(con, options: BacktestOptions) -> dict[str, obj
     split_metrics = _split_metrics(returns, equity_curve, trades, options.mode == "walk_forward")
     split_metrics["full"] = metrics
     backtest_id = unique_id("backtest")
+    filename_id = backtest_id.replace(":", "-")
     output_dir = options.output_dir or Path("rencrow-data/data/backtests")
-    equity_path = output_dir / f"{backtest_id}_equity.csv"
-    trades_path = output_dir / f"{backtest_id}_trades.csv"
+    equity_path = output_dir / f"{filename_id}_equity.csv"
+    trades_path = output_dir / f"{filename_id}_trades.csv"
     _write_csv(equity_path, equity_curve, ["week_end", "symbol", "signal_symbol", "event_vetoed", "period_return", "equity"])
     _write_csv(trades_path, trades, ["week_end", "from_symbol", "to_symbol", "cost_rate"])
     result = {

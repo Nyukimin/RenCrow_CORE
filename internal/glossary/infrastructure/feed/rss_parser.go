@@ -67,7 +67,8 @@ func (p *RSSParser) extractPotentialTerms(text string) []string {
 
 	for i := 0; i < len(words); i++ {
 		word := strings.Trim(words[i], ".,!?;:\"'()[]{}")
-		if len(word) > 2 && strings.ToUpper(word[:1]) == word[:1] {
+		isUppercaseAcronym := len(word) >= 2 && word == strings.ToUpper(word)
+		if len(word) > 2 && strings.ToUpper(word[:1]) == word[:1] || isUppercaseAcronym {
 			terms = append(terms, word)
 		}
 	}

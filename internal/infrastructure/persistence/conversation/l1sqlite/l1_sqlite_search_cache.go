@@ -248,6 +248,7 @@ func scanL1SearchCacheEntry(row l1SearchCacheRow) (*L1SearchCacheEntry, error) {
 }
 
 func normalizeSearchQuery(query string) string {
+	query = strings.NewReplacer("_", " ", "-", " ").Replace(query)
 	return strings.Join(strings.Fields(strings.ToLower(query)), " ")
 }
 

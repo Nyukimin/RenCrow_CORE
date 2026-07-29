@@ -5,7 +5,7 @@ import os
 import sqlite3
 import subprocess
 import sys
-import tempfile
+import sqlite_test_tempfile as tempfile
 import unittest
 from datetime import date
 from pathlib import Path
