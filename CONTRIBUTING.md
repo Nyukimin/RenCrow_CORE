@@ -19,10 +19,16 @@ go test ./...
 go vet ./...
 ```
 
-ローカルWindowsでは、カスペルスキーがGoの一時テスト実行ファイルを検知するため
-`go test`を実行しません。Push前はUbuntu環境で上記テストを実行し、Native Windows
-検証はGitHub Actionsの`Go Test` workflowで同じテストを実行します。Push済みの
-現在commitをWindowsから手動検証する場合は、次を実行してください。
+ローカルWindowsでは、test生成物をrepository内の`Tmp/test-runtime/`へ限定する
+runnerを使います。
+
+```powershell
+.\scripts\test-local.ps1 go -- test ./...
+```
+
+Push前はUbuntu環境でも上記テストを実行し、Native Windows CIはGitHub Actionsの
+`Go Test` workflowで同じテストを実行します。Push済みの現在commitをWindowsから
+CI検証する場合は、次を実行してください。
 
 ```powershell
 .\scripts\test-windows-ci.ps1

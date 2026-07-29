@@ -279,56 +279,58 @@ tests/
 
 ## 9.2 セキュリティソフトによるテスト実行のブロック
 
-Windows 環境では、セキュリティソフトが `go test` の生成する一時実行ファイルを
-断続的にブロックすることがある。
+Windows環境では、`go test`、pytest、Node test、test fixtureがsystem tempや
+user profileのcacheへ多数のfileを書き込むと、security softwareの監視対象が
+RenCrow repository外へ広がり、test失敗と環境側のblockを切り分けにくくなる。
 
 ```text
 open C:\...\Temp\go-build.../pkg.test.exe: Access is denied.
 fork/exec C:\...\Temp\go-build.../pkg.test.exe: Access is denied.
 ```
 
-前者はリンカがバイナリを書き出す時、後者は実行する時に発生する。
-
-**事実として確認済みの性質**
-
-- テスト内容とは無関係に発生する。ファイル操作を一切含まないpackageでも再現する
-- 発生するpackageは実行ごとに変わる。同じpackageが連続で失敗することもある
-- `GOTMPDIR` を変更しても回避できない
-
-**禁止事項**
-
-- `go test -c -o <一時ディレクトリ>/x.exe` で別パスへ生成して実行する回避を行わない。
-  一時領域への実行ファイル生成と即時実行はマルウェアの典型的な挙動であり、
-  検知されて当然の操作である。検知を迂回する行為は、セキュリティソフトの
-  判断を無効化することと同じである
-- ブロックされた結果を「通過」と報告しない
-- 一時的に通ったことをもって「対策できた」と結論しない。発生は断続的であり、
-  1回の成功は再現性の証拠にならない
+test内容やassertionを変えず、testが生成する一時fileとcacheの書き込み先だけを
+各repositoryの`Tmp/test-runtime/`へ閉じ込める。
 
 **標準の実行方法**
 
-- ローカルWindowsでは`go test`を実行しない
-- Native Windows検証は`.github/workflows/go-test.yml`のGitHub管理
-  `windows-latest` runnerで行う
+- ローカルWindowsではrepository rootから次を実行する。
+
+```powershell
+.\scripts\test-local.ps1 go -- test ./...
+```
+
+- runnerは`TEMP`、`TMP`、`TMPDIR`、`GOTMPDIR`、`GOCACHE`、
+  `PYTHONPYCACHEPREFIX`、pytest／uv／pip／npm／XDG cacheを
+  `Tmp/test-runtime/`へ向ける
+- 実行ごとの一時領域は終了時に削除し、build cacheだけを同じGit管理外領域へ残す
+- `-KeepRuntime`は失敗artifactを調査する必要がある場合だけ使う
+- Python、Node、shell testも同じrunnerを入口にする
+- `Tmp/`は`.gitignore`へ入れ、test artifactをcommitしない
+- repository-local化は実行fileの内容検査を無効にしない。repo内`Tmp`でも
+  `Access is denied`になった場合は同じcommandをUbuntuまたはWindows CIで実行する
+- Native Windows CIは`.github/workflows/go-test.yml`のGitHub管理
+  `windows-latest` runnerでも継続して行う
 - Windows jobとLinux jobは、同じテストコマンド、対象package、assertionを使う。
   セキュリティソフト対策を理由にテストをskip、削除、弱体化しない
-- Push前はUbuntu環境で同じテストを実行し、ローカルWindowsでは`go vet`で
-  コンパイル・型チェックを確認する。`go vet`はテスト通過の代替にはしない
+- Push前はUbuntu環境でも同じテストを実行する
 - Push後はWindows jobの成功を確認する。未実施、失敗、cancelの場合はWindows側を
-  「未検証」と報告する
-- Windowsからの手動実行には`scripts/test-windows-ci.ps1`を使う。このscriptは
+  「CI未検証」と報告する
+- Push済みcommitのCI確認には`scripts/test-windows-ci.ps1`を使う。このscriptは
   作業ツリーと`origin`が同一commitであることを確認してからworkflowを起動する
-- カスペルスキーの停止、除外設定追加、検知対象ファイルの名前や生成場所を変える
-  迂回は行わない
-- 実際のコンパイルエラーとローカルブロックを区別する。`[build failed]`の表示だけ
-  では判別できないため、`go vet`とCI結果で切り分ける
 
-**なお、テストのファイル操作を減らすこと自体は正しい**
+**禁止事項**
 
-高頻度の作成・改名・削除を伴うテストは、振る舞いとしてランサムウェアと区別が
-つかない。純粋ロジックを I/O から切り離し、ファイル操作を最小限にするのは
-テスト設計として妥当である。ただしこれをセキュリティソフト対策として位置づけ
-ない。上記のとおり、ファイル操作の有無はブロックの発生と関係しない。
+- カスペルスキーや他のsecurity softwareを停止しない
+- repositoryやtest executableを検査除外へ追加しない
+- `go test -c`、難読化、名称変更などで検知を避けない
+- testをskip、削除、弱体化しない
+- blockされた結果を「通過」と報告しない
+- 一度通っただけでsecurity softwareとの相性問題が完全解消したと断定しない
+
+repository-local化は検査を回避するためではなく、testの正当な書き込み範囲を
+明示してsystem近傍への不要なI/Oを防ぐために行う。security softwareによる検査は
+引き続き有効であり、repo内で実際にblockされた場合はpath、検知名、hash、
+実行commandを記録して原因を切り分ける。
 
 ---
 

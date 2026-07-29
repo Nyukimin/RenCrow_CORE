@@ -10,13 +10,18 @@
 - ユーザーが明示的に指示しない限り、新しい Git ブランチを作成してはいけない。
 - 作業は現在のブランチで継続する。
 
-## Windows Go Test Policy
+## Repository-local test runtime
 
-- カスペルスキーがGoの一時テスト実行ファイルを検知するため、ローカルWindowsでは`go test`を実行しない。
-- Windows固有のテストは`.github/workflows/go-test.yml`のGitHub管理`windows-latest` runnerで実行する。
-- workflowではテストコマンド、対象package、assertionを弱めたりskipしたりせず、Linux jobと同じ内容を実行する。
-- ローカルWindowsでは`go vet`を実行し、Push前の同一テストはUbuntu環境で実行する。Windows CIが未実施または失敗ならWindows側は未検証と報告する。
-- カスペルスキーの停止、除外設定、検知回避用の一時実行ファイル生成は行わない。
+- ローカルWindowsでtestを実行するときは、必ず
+  `.\scripts\test-local.ps1 go -- test ./...`を入口にする。
+- runnerは`TEMP`、`TMP`、`TMPDIR`、`GOTMPDIR`、Go／Python／Nodeのcacheを
+  repo内の`Tmp/test-runtime/`へ向ける。`t.TempDir()`やcompilerの一時実行fileも
+  この配下に置く。
+- `Tmp/`はGit管理外とし、system tempやuser profileのcacheへtest生成物を書かない。
+- security softwareの停止、除外設定、testのskip・削除・弱体化は行わない。
+  検査を有効なまま、testの書き込み範囲だけをrepo内へ限定する。
+- repo内`Tmp`でもblockされた場合は、errorを記録してUbuntuまたはWindows CIへ切り替える。
+- GitHub ActionsのWindows／Linux jobは独立したcross-platform検証として維持する。
 
 ## このファイルの役割
 
