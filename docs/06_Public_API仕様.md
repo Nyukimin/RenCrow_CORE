@@ -45,7 +45,10 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 ### Game Launch（マルチペルソナ WP5）
 
 `POST /viewer/games/launch` は、ペルソナが「遊びたい時に自分で起動する」
-ための起動口（上位方針: `RenCrow_GAMES/docs/09_マルチペルソナプレイ仕様.md`）。
+ためのCORE側起動口です。CORE Public API、Agent起動判断、candidate memory、
+autoplay設定の正本は本書と`docs/05_設定リファレンス.md`です。
+タイトル固有の人数制約、world、rules、game loop、Observer contractは
+RenCrow_GAMES側の仕様を参照します。
 
 Game lifecycleの向きは次で固定します。
 
