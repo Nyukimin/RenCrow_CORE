@@ -25,7 +25,8 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 		client: "RenCrow_CMD",
 		allow: func(method, path string) bool {
 			return (method == http.MethodGet && path == "/viewer/events") ||
-				(method == http.MethodPost && path == "/viewer/send")
+				(method == http.MethodPost &&
+					(path == "/viewer/send" || path == "/stt/chat-input"))
 		},
 	},
 	"cmd-idlechat": {

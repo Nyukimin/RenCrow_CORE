@@ -60,6 +60,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "cmd chat can transcribe audio through CORE",
+			client:  "RenCrow_CMD",
+			profile: "cmd-chat",
+			method:  http.MethodPost,
+			path:    "/stt/chat-input",
+			want:    http.StatusNoContent,
+		},
+		{
 			name:    "cmd idlechat can stop",
 			client:  "RenCrow_CMD",
 			profile: "cmd-idlechat",

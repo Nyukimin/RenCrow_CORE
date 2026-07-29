@@ -44,7 +44,6 @@ Commands:
   channels  List/probe channel adapters or send a configured notification
   gateway   Gateway status/restart operations
   logs      Show logs (use --follow to stream)
-  chat      Chat with the running RenCrow server from the terminal
   evidence  List/show/summarize execution evidence
   jobs      Manage Mio parallel jobs and interrupt notifications
   source-registry  List/register L1 source registry entries

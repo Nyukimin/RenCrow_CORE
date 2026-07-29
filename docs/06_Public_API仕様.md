@@ -35,6 +35,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/movie-catalog/preference` | 映画・俳優の認知・好み評価を保存 |
 | `/viewer/active-control`, `/viewer/tts/*`, `/viewer/stt/*` | audio/control bridge |
 | `WS /stt` | Viewerの同一origin音声入力。COREが音声chunkをRenCrow_STTのHTTP公開APIへ中継する |
+| `POST /stt/chat-input` | CMD等が送るWAVをRenCrow_STT経由で文字起こしし、Chat入力用envelopeを返す |
 | `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewerの画像生成と結果表示 |
 | `POST /viewer/recipient-selection` | client-localなchat recipient選択の通知event |
 | `POST /webhook/line` | LINE Messaging API Webhook。署名必須の正規path |
@@ -251,7 +252,7 @@ capabilityで制限します。
 | --- | --- | --- |
 | `RenCrow_PORTAL` | `portal-chat` | PORTAL Chat allowlist |
 | `RenCrow_PORTAL` | `portal-idlechat` | IdleChatの読み取り |
-| `RenCrow_CMD` | `cmd-chat` | Chat送信とevent購読 |
+| `RenCrow_CMD` | `cmd-chat` | Chat送信、event購読、CORE経由のWAV文字起こし |
 | `RenCrow_CMD` | `cmd-idlechat` | IdleChat status／event／start／stop |
 | `RenCrow_CMD` | `cmd-diagnostics` | 診断・状態取得の読み取り専用 |
 | `RenCrow_CMD` | `cmd-control` | process制御とrepair実行 |
@@ -293,6 +294,12 @@ COREは既知clientのprofile欠落、client/profile不一致、profile外method
 profile headerは認証credentialではなく、既存のendpoint allowlist、TLS、network境界、
 server-side authorizationを置き換えません。共通SDKは実caller間の重複が確認されるまで
 先行作成しません。
+
+terminal Chat clientの正本はRenCrow_CMDの`rencrowctl chat`です。COREの`rencrow`
+server binaryはChat client commandを持ちません。`rencrowctl chat --audio`は
+`cmd-chat` profileで`POST /stt/chat-input`を呼び、転写結果を`POST /viewer/send`へ
+送ります。`--audio-direct`はWAVを`/viewer/send`の添付としてCOREの
+`input_audio`経路へ渡します。
 
 ## Client の注意
 

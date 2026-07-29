@@ -50,8 +50,6 @@ func main() {
 		cmdGateway()
 	case "logs":
 		cmdLogs()
-	case "chat":
-		cmdChat()
 	case "evidence":
 		cmdEvidence()
 	case "jobs":
