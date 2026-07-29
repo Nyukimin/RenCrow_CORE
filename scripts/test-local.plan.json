@@ -5,34 +5,104 @@
       "name": "go",
       "workingDirectory": ".",
       "filePath": "go",
-      "arguments": ["test", "./..."]
+      "arguments": ["test", "./..."],
+      "testFiles": ["*_test.go", "test/*.go"]
     },
     {
       "name": "rencrow-data",
       "workingDirectory": ".",
       "filePath": "python",
       "arguments": ["-m", "unittest", "discover", "-s", "rencrow-data/tests", "-p", "test_*.py", "-v"],
+      "testFiles": ["rencrow-data/tests/*.py"],
       "environment": {
         "PYTHONPATH": "rencrow-data/src"
       }
     },
     {
+      "name": "viewer-node",
+      "workingDirectory": ".",
+      "filePath": "node",
+      "arguments": [
+        "--test",
+        "internal/adapter/viewer/stt_test_record_utils.test.mjs",
+        "internal/adapter/viewer/viewer_audio_button.test.mjs",
+        "internal/adapter/viewer/viewer_idle_mode_buttons.test.mjs",
+        "internal/adapter/viewer/viewer_memory_panel.test.mjs",
+        "internal/adapter/viewer/viewer_stt_https.test.mjs",
+        "internal/adapter/viewer/viewer_to_be_ops.test.mjs",
+        "internal/adapter/viewer/viewer_vds_https.test.mjs"
+      ],
+      "testFiles": ["internal/adapter/viewer/*.test.mjs"]
+    },
+    {
+      "name": "latency-script-node",
+      "workingDirectory": ".",
+      "filePath": "node",
+      "arguments": [
+        "--test",
+        "scripts/measure_llm_voice_e2e_test.mjs",
+        "scripts/verify_llm_voice_latency_test.mjs"
+      ],
+      "testFiles": ["scripts/*_test.mjs"]
+    },
+    {
+      "name": "probe-python",
+      "workingDirectory": ".",
+      "filePath": "python",
+      "arguments": ["-m", "unittest", "scripts.stt_e2e_probe_test", "scripts.vds_e2e_probe_test", "-v"],
+      "testFiles": ["scripts/*_test.py"]
+    },
+    {
+      "name": "core-tools-eiga",
+      "workingDirectory": ".",
+      "filePath": "python",
+      "arguments": ["-m", "unittest", "discover", "-s", "tests/tools_eiga_catalog", "-p", "test_*.py", "-v"],
+      "testFiles": ["tests/tools_eiga_catalog/test_*.py"]
+    },
+    {
+      "name": "core-tools-webwright",
+      "workingDirectory": ".",
+      "filePath": "python",
+      "arguments": ["-m", "unittest", "discover", "-s", "tests/tools_webwright_fetch", "-p", "test_*.py", "-v"],
+      "testFiles": ["tests/tools_webwright_fetch/test_*.py"]
+    },
+    {
+      "name": "browser-actor-node",
+      "workingDirectory": ".",
+      "filePath": "node",
+      "arguments": ["tools/browser_actor/test_browser_actor.mjs"],
+      "testFiles": ["tools/browser_actor/test_browser_actor.mjs"]
+    },
+    {
+      "name": "viewer-browser-e2e",
+      "workingDirectory": ".",
+      "filePath": "npm",
+      "arguments": ["run", "test:e2e:viewer:to-be"],
+      "testFiles": [
+        "test/e2e/browser/*.mjs",
+        "test/e2e/browser/*.sh"
+      ]
+    },
+    {
       "name": "log-retention",
       "workingDirectory": ".",
       "filePath": "bash",
-      "arguments": ["scripts/tests/log_retention_test.sh"]
+      "arguments": ["scripts/tests/log_retention_test.sh"],
+      "testFiles": ["scripts/tests/log_retention_test.sh"]
     },
     {
       "name": "storage-backup",
       "workingDirectory": ".",
       "filePath": "bash",
-      "arguments": ["scripts/tests/storage_backup_contract_test.sh"]
+      "arguments": ["scripts/tests/storage_backup_contract_test.sh"],
+      "testFiles": ["scripts/tests/storage_backup_contract_test.sh"]
     },
     {
       "name": "watchdog",
       "workingDirectory": ".",
       "filePath": "bash",
-      "arguments": ["scripts/tests/watchdog_mock_test.sh"]
+      "arguments": ["scripts/tests/watchdog_mock_test.sh"],
+      "testFiles": ["scripts/tests/watchdog_mock_test.sh"]
     }
   ]
 }

@@ -12,6 +12,7 @@ storage:
   databases:
     advisor: "${RENCROW_E2E_RUNTIME}/workspace/logs/advisor.db"
     revenue: "${RENCROW_E2E_RUNTIME}/workspace/revenue.db"
+    conversation_l1: "${RENCROW_E2E_RUNTIME}/workspace/l1.db"
 
 worker:
   auto_commit: false
@@ -38,9 +39,6 @@ idle_chat:
   enabled: false
 conversation:
   enabled: false
-storage:
-  databases:
-    conversation_l1: "${RENCROW_E2E_RUNTIME}/workspace/l1.db"
 heartbeat:
   enabled: false
 distributed:

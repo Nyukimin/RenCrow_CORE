@@ -125,7 +125,7 @@ async function verifyViewport(browser, viewport, fixture) {
       return summary?.getAttribute('aria-busy') === 'false' && summary.querySelectorAll('[data-to-be-block]').length === 5;
     }, null, {timeout: 15000});
 
-    const ui = await page.evaluate(({opportunityID, taskID, width}) => {
+    const ui = await page.evaluate(({opportunityID, taskID, decisionID, width}) => {
       const summary = document.getElementById('toBeOpsSummary');
       const blocks = Array.from(summary.querySelectorAll('[data-to-be-block]'));
       const details = Array.from(summary.querySelectorAll('details'));
@@ -177,7 +177,7 @@ async function verifyViewport(browser, viewport, fixture) {
       ? ['ok', 'ok', 'ok', 'ok', 'ok']
       : ['warning', 'unavailable', 'ok', 'ok', 'unavailable'];
     assert.deepEqual(ui.statuses, expectedStatuses);
-    assert.deepEqual(ui.metricCounts, [5, 5, 5, 5, 5]);
+    assert.deepEqual(ui.metricCounts, [5, 5, 5, 4, 5]);
     assert.equal(ui.detailsCount, 5);
     assert.equal(ui.openDetails, 0);
     assert.equal(ui.tableCount, 0);

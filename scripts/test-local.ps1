@@ -65,6 +65,39 @@ function Resolve-TestExecutable([string]$Candidate) {
     return $Candidate
 }
 
+function Test-IsTrackedTestFile([string]$RelativePath) {
+    $normalizedPath = $RelativePath.Replace("\", "/")
+    $fileName = [IO.Path]::GetFileName($RelativePath)
+    $isTestDirectoryCode = (
+        $normalizedPath -match "(^|/)(test|tests|scripts/tests)/" -and
+        $fileName -match "\.(go|py|[cm]?js|sh)$"
+    )
+    return (
+        $isTestDirectoryCode -or
+        $fileName -match "_test\.go$" -or
+        $fileName -match "^test_.*\.py$" -or
+        $fileName -match "_test\.py$" -or
+        $fileName -match "^test_.*\.[cm]?js$" -or
+        $fileName -match "(\.test|_test)\.[cm]?js$" -or
+        $fileName -match "_test\.sh$" -or
+        $fileName -match "^test[-_].*\.sh$"
+    )
+}
+
+function Test-MatchesTestFilePattern([string]$RelativePath, [string]$Pattern) {
+    $normalizedPattern = $Pattern.Replace("\", "/")
+    $wildcardOptions = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        [Management.Automation.WildcardOptions]::IgnoreCase
+    } else {
+        [Management.Automation.WildcardOptions]::None
+    }
+    $wildcard = [Management.Automation.WildcardPattern]::new(
+        $normalizedPattern,
+        $wildcardOptions
+    )
+    return $wildcard.IsMatch($RelativePath.Replace("\", "/"))
+}
+
 if ($SelfTest -and -not [string]::IsNullOrWhiteSpace($FilePath)) {
     throw "SelfTest cannot run a command. Put -- between FilePath and command arguments."
 }
@@ -73,6 +106,8 @@ if ($Step.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($FilePath)) {
 }
 
 $commands = @()
+$testFilePatterns = @()
+$trackedTestFiles = @()
 if ([string]::IsNullOrWhiteSpace($FilePath)) {
     if (-not (Test-Path -LiteralPath $planPath -PathType Leaf)) {
         throw "Canonical test plan does not exist: $planPath"
@@ -91,6 +126,20 @@ if ([string]::IsNullOrWhiteSpace($FilePath)) {
             throw "Canonical test step names must be unique: $name"
         }
         $allStepNames += $name
+
+        if ($planStep.PSObject.Properties.Name -contains "testFiles") {
+            foreach ($patternValue in @($planStep.testFiles)) {
+                $pattern = ([string]$patternValue).Replace("\", "/")
+                if ([string]::IsNullOrWhiteSpace($pattern)) {
+                    throw "Canonical test step '$name' contains an empty testFiles pattern."
+                }
+                if ([IO.Path]::IsPathRooted($pattern) -or $pattern -match "(^|/)\.\.(/|$)") {
+                    throw "Canonical test step '$name' contains an unsafe testFiles pattern: $pattern"
+                }
+                $testFilePatterns += $pattern
+            }
+        }
+
         if ($Step.Count -gt 0 -and $Step -notcontains $name) {
             continue
         }
@@ -125,6 +174,33 @@ if ([string]::IsNullOrWhiteSpace($FilePath)) {
     if ($commands.Count -eq 0) {
         throw "Canonical test plan contains no selected steps: $planPath"
     }
+
+    $trackedFiles = @(git -C $repoRoot -c core.quotepath=false ls-files --cached --others --exclude-standard)
+    if ($LASTEXITCODE -ne 0) {
+        throw "git ls-files failed while checking canonical test coverage."
+    }
+    $trackedTestFiles = @($trackedFiles | ForEach-Object { $_.Replace("\", "/") } | Where-Object {
+        (Test-Path -LiteralPath (Join-Path $repoRoot $_) -PathType Leaf) -and
+        (Test-IsTrackedTestFile $_)
+    })
+    $uncoveredTestFiles = @($trackedTestFiles | Where-Object {
+        $relativePath = $_
+        -not ($testFilePatterns | Where-Object {
+            Test-MatchesTestFilePattern $relativePath $_
+        } | Select-Object -First 1)
+    })
+    if ($uncoveredTestFiles.Count -gt 0) {
+        throw "Canonical test plan does not cover tracked test files: $($uncoveredTestFiles -join ', ')"
+    }
+    $unusedTestFilePatterns = @($testFilePatterns | Where-Object {
+        $pattern = $_
+        -not ($trackedTestFiles | Where-Object {
+            Test-MatchesTestFilePattern $_ $pattern
+        } | Select-Object -First 1)
+    })
+    if ($unusedTestFilePatterns.Count -gt 0) {
+        throw "Canonical test plan contains testFiles patterns that match no tracked test: $($unusedTestFilePatterns -join ', ')"
+    }
 } else {
     $commands += [pscustomobject]@{
         Name             = "explicit"
@@ -141,11 +217,14 @@ $paths = @{
     TMPDIR                = $runRoot
     GOTMPDIR              = (Join-Path $runRoot "go-build")
     GOCACHE               = (Join-Path $cacheRoot "go-build")
+    GOMODCACHE            = (Join-Path $cacheRoot "go-mod")
     PYTHONPYCACHEPREFIX   = (Join-Path $cacheRoot "python-bytecode")
     PYTEST_DEBUG_TEMPROOT = (Join-Path $runRoot "pytest")
     UV_CACHE_DIR          = (Join-Path $cacheRoot "uv")
     PIP_CACHE_DIR         = (Join-Path $cacheRoot "pip")
     npm_config_cache      = (Join-Path $cacheRoot "npm")
+    NODE_COMPILE_CACHE    = (Join-Path $cacheRoot "node-compile")
+    PLAYWRIGHT_BROWSERS_PATH = (Join-Path $cacheRoot "playwright")
     XDG_CACHE_HOME        = (Join-Path $cacheRoot "xdg")
 }
 
@@ -167,6 +246,15 @@ foreach ($name in $paths.Keys) {
     $previous[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
     New-Item -ItemType Directory -Force -Path $paths[$name] | Out-Null
     [Environment]::SetEnvironmentVariable($name, $paths[$name], "Process")
+}
+$previousTestPython = [Environment]::GetEnvironmentVariable("RENCROW_TEST_PYTHON", "Process")
+$pythonCommand = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -ne $pythonCommand) {
+    $testPython = $pythonCommand.Source
+    if ([IO.Path]::DirectorySeparatorChar -eq '\') {
+        $testPython = $testPython.Replace('\', '/')
+    }
+    [Environment]::SetEnvironmentVariable("RENCROW_TEST_PYTHON", $testPython, "Process")
 }
 
 try {
@@ -200,6 +288,7 @@ try {
         }
         Write-Host "[test-local] plan: $planPath"
         Write-Host "[test-local] steps: $($commands.Name -join ', ')"
+        Write-Host "[test-local] tracked tests: $($trackedTestFiles.Count)"
         Write-Host "[OK] Repository-local test runtime and canonical plan contract passed"
         return
     }
@@ -208,6 +297,20 @@ try {
         $workingPath = Resolve-WorkingPath $command.WorkingDirectory
         $executable = Resolve-TestExecutable $command.FilePath
         $stepPrevious = @{}
+        $stepPathWasAdjusted = $false
+        $stepPathPrevious = [Environment]::GetEnvironmentVariable("PATH", "Process")
+        if ([IO.Path]::GetFileNameWithoutExtension($executable) -eq "bash") {
+            $bashDirectory = Split-Path -Parent $executable
+            $pathParts = @($stepPathPrevious -split [Regex]::Escape([IO.Path]::PathSeparator))
+            if ($pathParts.Count -eq 0 -or -not $pathParts[0].Equals($bashDirectory, $comparison)) {
+                [Environment]::SetEnvironmentVariable(
+                    "PATH",
+                    $bashDirectory + [IO.Path]::PathSeparator + $stepPathPrevious,
+                    "Process"
+                )
+                $stepPathWasAdjusted = $true
+            }
+        }
         foreach ($name in $command.Environment.Keys) {
             $stepPrevious[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
             [Environment]::SetEnvironmentVariable($name, $command.Environment[$name], "Process")
@@ -227,9 +330,13 @@ try {
             foreach ($name in $command.Environment.Keys) {
                 [Environment]::SetEnvironmentVariable($name, $stepPrevious[$name], "Process")
             }
+            if ($stepPathWasAdjusted) {
+                [Environment]::SetEnvironmentVariable("PATH", $stepPathPrevious, "Process")
+            }
         }
     }
 } finally {
+    [Environment]::SetEnvironmentVariable("RENCROW_TEST_PYTHON", $previousTestPython, "Process")
     foreach ($name in $paths.Keys) {
         [Environment]::SetEnvironmentVariable($name, $previous[$name], "Process")
     }

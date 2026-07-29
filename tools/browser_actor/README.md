@@ -14,13 +14,13 @@ stdout is JSON only. stderr is for logs.
 
 ## Test
 
-```bash
-node tools/browser_actor/test_browser_actor.mjs
+```powershell
+.\scripts\test-local.ps1 -Step browser-actor-node
 ```
 
 ## Safety
 
 - Cookie, Authorization, Set-Cookie, password, token-like values are masked before artifact writes.
 - Submit-like actions are blocked before execution in Phase 1.
-- Artifact paths are restricted to `workspace/browser_runs`, `tmp/browser_runs`, `output/playwright`, or system temp directories for tests.
+- Test artifacts are written under the repository-local `Tmp/test-runtime/` through the canonical test runner.
 - Raw request and response bodies are not saved.

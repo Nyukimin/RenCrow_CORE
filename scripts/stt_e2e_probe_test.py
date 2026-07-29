@@ -31,10 +31,11 @@ class STTE2EProbeTest(unittest.TestCase):
             samples = [0, 1000, -1000, 2000, -2000, 3000, -3000, 0]
             self.write_wav(path, 1, 2, 16000, samples)
 
-            sample_rate, channels, chunks = probe.load_pcm16_chunks(path, 1)
+            sample_rate, channels, chunks, silence_start_index = probe.load_pcm16_chunks(path, 1)
 
             self.assertEqual(sample_rate, 16000)
             self.assertEqual(channels, 1)
+            self.assertEqual(silence_start_index, len(chunks))
             self.assertEqual(b"".join(chunks), b"".join(struct.pack("<h", s) for s in samples))
             self.assertNotIn(b"RIFF", b"".join(chunks))
 
@@ -44,10 +45,15 @@ class STTE2EProbeTest(unittest.TestCase):
             samples = [1000, -1000]
             self.write_wav(path, 1, 2, 1000, samples)
 
-            sample_rate, channels, chunks = probe.load_pcm16_chunks(path, 1, tail_silence_ms=2)
+            sample_rate, channels, chunks, silence_start_index = probe.load_pcm16_chunks(
+                path,
+                1,
+                tail_silence_ms=2,
+            )
 
             self.assertEqual(sample_rate, 1000)
             self.assertEqual(channels, 1)
+            self.assertEqual(silence_start_index, 2)
             self.assertEqual(b"".join(chunks), b"".join(struct.pack("<h", s) for s in samples) + b"\x00\x00\x00\x00")
 
     def test_load_pcm16_chunks_rejects_non_mono_or_non_pcm16_wav(self):

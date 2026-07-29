@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
+python_bin=${RENCROW_TEST_PYTHON:-python3}
 umask 077
 
 snapshot_dir=${1:-}
@@ -45,7 +47,7 @@ fi
 )
 gzip -t "${archive}"
 
-tar -tzf "${archive}" | python3 -c '
+tar -tzf "${archive}" | "${python_bin}" -c '
 import sys
 for raw in sys.stdin:
     name = raw.strip()
@@ -79,7 +81,7 @@ for relative in "${session_relative}" "${operation_memory_relative}" "${cold_exp
   fi
 done
 
-python3 - "${core_restore}/${conversation_l1_relative}" "${core_restore}/${conversation_archive_relative}" <<'PY'
+"${python_bin}" - "${core_restore}/${conversation_l1_relative}" "${core_restore}/${conversation_archive_relative}" <<'PY'
 import sqlite3
 import sys
 

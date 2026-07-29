@@ -27,6 +27,7 @@ SERVE_TARGET="${RENCROW_WATCHDOG_SERVE_TARGET:-${REN_CROW_URL}}"
 LOCAL_TIMEOUT_SEC="${RENCROW_WATCHDOG_LOCAL_TIMEOUT_SEC:-3}"
 EXTERNAL_TIMEOUT_SEC="${RENCROW_WATCHDOG_EXTERNAL_TIMEOUT_SEC:-8}"
 CHECK_INTERVAL_SEC="${RENCROW_WATCHDOG_INTERVAL_SEC:-60}"
+PYTHON_BIN="${RENCROW_TEST_PYTHON:-python3}"
 
 mkdir -p "$LOG_DIR"
 touch "$LOG_FILE"
@@ -69,7 +70,7 @@ check_rencrow_health() {
 
 serve_status_has_target() {
   local status_json="$1"
-  STATUS_JSON="$status_json" python3 - "$SERVE_TARGET" <<'PY'
+  STATUS_JSON="$status_json" "${PYTHON_BIN}" - "$SERVE_TARGET" <<'PY'
 import json
 import os
 import sys
@@ -127,7 +128,7 @@ check_tailscale_serve() {
 run_once() {
   require_cmd curl || return 127
   require_cmd tailscale || return 127
-  require_cmd python3 || return 127
+  require_cmd "${PYTHON_BIN}" || return 127
 
   log "INFO" "watchdog" "OK" "start" "interval=${CHECK_INTERVAL_SEC}s"
   check_rencrow_health || return 1

@@ -18,7 +18,7 @@ mkdir -p \
   "${test_root}/source/external-memory/qdrant" \
   "${test_root}/snapshot"
 
-python3 - "${test_root}/source/state/l1.db" "${test_root}/source/state/l2.db" <<'PY'
+"${RENCROW_TEST_PYTHON:-python3}" - "${test_root}/source/state/l1.db" "${test_root}/source/state/l2.db" <<'PY'
 import sqlite3
 import sys
 

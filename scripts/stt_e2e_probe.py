@@ -6,9 +6,6 @@ import time
 import wave
 from pathlib import Path
 
-import websocket
-
-
 def load_pcm16_chunks(wav_path: Path, chunk_ms: int, tail_silence_ms: int = 0):
     if chunk_ms <= 0:
         raise ValueError("chunk_ms must be positive")
@@ -37,6 +34,8 @@ def load_pcm16_chunks(wav_path: Path, chunk_ms: int, tail_silence_ms: int = 0):
 
 
 def run_ws_bench(ws_url: str, wav_path: Path, rounds: int, wait_s: float, chunk_ms: int, realtime: bool, tail_silence_ms: int):
+    import websocket
+
     sample_rate, channels, chunks, silence_start_index = load_pcm16_chunks(wav_path, chunk_ms, tail_silence_ms)
     out = []
     for i in range(rounds):

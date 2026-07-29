@@ -12,10 +12,6 @@ import wave
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import requests
-import websocket
-
-
 DEFAULT_WAV = Path("tmp/stt_inputs/client_stt_input_20260609_140311.wav")
 DEFAULT_WS_URL = "ws://127.0.0.1:18790/voice-chat"
 DEFAULT_BASE_URL = "http://127.0.0.1:18790"
@@ -202,6 +198,8 @@ class SSECollector:
         return len(self.events)
 
     def _run(self) -> None:
+        import requests
+
         url = f"{self.base_url}/viewer/events"
         headers = {"Last-Event-ID": "9223372036854775807"}
         try:
@@ -256,6 +254,8 @@ def run_vds_ws_bench(
     prompt: str,
     sse_collector: SSECollector | None = None,
 ) -> list[VDSRoundResult]:
+    import websocket
+
     sample_rate, channels, chunks = load_pcm16_chunks(wav_path, chunk_ms, tail_silence_ms)
     out: list[VDSRoundResult] = []
     for i in range(rounds):

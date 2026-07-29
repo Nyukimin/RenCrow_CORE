@@ -4,8 +4,6 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { chromium } from 'playwright';
-
 const DEFAULT_URL = 'http://127.0.0.1:18790/viewer?tab=timeline';
 const DEFAULT_WAV = 'tmp/stt_inputs/client_stt_input_20260609_140311.wav';
 const DEFAULT_TARGET_BYTES = 820000;
@@ -197,6 +195,7 @@ async function installPageHooks(page) {
 }
 
 export async function runMeasurement(args) {
+  const { chromium } = await import('playwright');
   const repo = process.cwd();
   const wavPath = path.resolve(repo, args.wav);
   if (!existsSync(wavPath)) {
