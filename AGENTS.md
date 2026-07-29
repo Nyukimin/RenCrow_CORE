@@ -13,7 +13,7 @@
 ## Repository-local test runtime
 
 - ローカルWindowsでtestを実行するときは、必ず
-  `.\scripts\test-local.ps1 go -- test ./...`を入口にする。
+  `.\scripts\test-local.ps1`を入口にする。
 - runnerは`TEMP`、`TMP`、`TMPDIR`、`GOTMPDIR`、Go／Python／Nodeのcacheを
   repo内の`Tmp/test-runtime/`へ向ける。`t.TempDir()`やcompilerの一時実行fileも
   この配下に置く。

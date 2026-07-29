@@ -296,7 +296,7 @@ test内容やassertionを変えず、testが生成する一時fileとcacheの書
 - ローカルWindowsではrepository rootから次を実行する。
 
 ```powershell
-.\scripts\test-local.ps1 go -- test ./...
+.\scripts\test-local.ps1
 ```
 
 - runnerは`TEMP`、`TMP`、`TMPDIR`、`GOTMPDIR`、`GOCACHE`、
@@ -304,7 +304,11 @@ test内容やassertionを変えず、testが生成する一時fileとcacheの書
   `Tmp/test-runtime/`へ向ける
 - 実行ごとの一時領域は終了時に削除し、build cacheだけを同じGit管理外領域へ残す
 - `-KeepRuntime`は失敗artifactを調査する必要がある場合だけ使う
+- 各repositoryの正規test suiteは`scripts/test-local.plan.json`で定義する
+- 個別suiteだけを実行するときは`.\scripts\test-local.ps1 -Step <name>`を使う
 - Python、Node、shell testも同じrunnerを入口にする
+- RenCrow全repositoryの一括実行はCORE repositoryから
+  `.\scripts\test-rencrow-system.ps1`を使う
 - `Tmp/`は`.gitignore`へ入れ、test artifactをcommitしない
 - repository-local化は実行fileの内容検査を無効にしない。repo内`Tmp`でも
   `Access is denied`になった場合は同じcommandをUbuntuまたはWindows CIで実行する

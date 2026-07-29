@@ -23,7 +23,7 @@ go vet ./...
 runnerを使います。
 
 ```powershell
-.\scripts\test-local.ps1 go -- test ./...
+.\scripts\test-local.ps1
 ```
 
 Push前はUbuntu環境でも上記テストを実行し、Native Windows CIはGitHub Actionsの

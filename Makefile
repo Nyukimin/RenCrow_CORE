@@ -203,7 +203,11 @@ log-retention-run-once:
 
 ## test-log-retention: Run log retention regression tests
 test-log-retention:
+ifeq ($(OS),Windows_NT)
+	@powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-local.ps1 -Step log-retention
+else
 	@bash scripts/tests/log_retention_test.sh
+endif
 
 ## install-resilience: Install CORE restart, incident ledger, and self-repair units
 install-resilience: install
@@ -270,7 +274,11 @@ storage-restore-check:
 	@$(STORAGE_RESTORE_CHECK_SCRIPT_DST) "$(SNAPSHOT_DIR)"
 
 test-storage-backup:
+ifeq ($(OS),Windows_NT)
+	@powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-local.ps1 -Step storage-backup
+else
 	@bash scripts/tests/storage_backup_contract_test.sh
+endif
 
 ## install-data-scheduler: Install daily and weekly data scheduler units
 install-data-scheduler:
@@ -332,7 +340,11 @@ watchdog-run-once:
 
 ## test-watchdog-mock: Run mock-based watchdog regression tests
 test-watchdog-mock:
+ifeq ($(OS),Windows_NT)
+	@powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-local.ps1 -Step watchdog
+else
 	@bash scripts/tests/watchdog_mock_test.sh
+endif
 
 ## rencrow-data-init: Initialize the stock/ETF learning foundation SQLite schema
 rencrow-data-init:
@@ -425,7 +437,11 @@ rencrow-data-weekly-research:
 
 ## rencrow-data-test: Run the Python foundation unit tests
 rencrow-data-test:
+ifeq ($(OS),Windows_NT)
+	@powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-local.ps1 -Step rencrow-data
+else
 	@PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m unittest discover -s rencrow-data/tests -p 'test_*.py' -v
+endif
 
 ## rencrow-data-e2e: Run the full offline ingest -> feature -> event -> snapshot flow
 rencrow-data-e2e: rencrow-data-test

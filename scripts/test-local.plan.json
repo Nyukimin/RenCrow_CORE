@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "steps": [
+    {
+      "name": "go",
+      "workingDirectory": ".",
+      "filePath": "go",
+      "arguments": ["test", "./..."]
+    },
+    {
+      "name": "rencrow-data",
+      "workingDirectory": ".",
+      "filePath": "python",
+      "arguments": ["-m", "unittest", "discover", "-s", "rencrow-data/tests", "-p", "test_*.py", "-v"],
+      "environment": {
+        "PYTHONPATH": "rencrow-data/src"
+      }
+    },
+    {
+      "name": "log-retention",
+      "workingDirectory": ".",
+      "filePath": "bash",
+      "arguments": ["scripts/tests/log_retention_test.sh"]
+    },
+    {
+      "name": "storage-backup",
+      "workingDirectory": ".",
+      "filePath": "bash",
+      "arguments": ["scripts/tests/storage_backup_contract_test.sh"]
+    },
+    {
+      "name": "watchdog",
+      "workingDirectory": ".",
+      "filePath": "bash",
+      "arguments": ["scripts/tests/watchdog_mock_test.sh"]
+    }
+  ]
+}
