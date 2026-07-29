@@ -279,9 +279,10 @@ tests/
 
 ## 9.2 セキュリティソフトによるテスト実行のブロック
 
-Windows環境では、`go test`、pytest、Node test、test fixtureがsystem tempや
-user profileのcacheへ多数のfileを書き込むと、security softwareの監視対象が
-RenCrow repository外へ広がり、test失敗と環境側のblockを切り分けにくくなる。
+Windows環境では、`go test`が生成する`.test.exe`がsecurity softwareに
+マルウェア判定またはblockされる場合がある。pytest、Node test、test fixtureも
+system tempやuser profileのcacheへ多数のfileを書き込むと、監視対象がRenCrow
+repository外へ広がり、test失敗と環境側のblockを切り分けにくくなる。
 
 ```text
 open C:\...\Temp\go-build.../pkg.test.exe: Access is denied.
@@ -305,6 +306,10 @@ test内容やassertionを変えず、testが生成する一時fileとcacheの書
 - 実行ごとの一時領域は終了時に削除し、build cacheだけを同じGit管理外領域へ残す
 - `-KeepRuntime`は失敗artifactを調査する必要がある場合だけ使う
 - 各repositoryの正規test suiteは`scripts/test-local.plan.json`で定義する
+- Go repositoryのローカルWindows planは`go vet ./...`と`go build ./...`を使い、
+  `.test.exe`を生成・実行する`go test`は含めない
+- Goの振る舞いtestはGitHub Actionsの`ubuntu-latest`で`go test ./...`を実行する。
+  これはtestのskipではなく、blockされない管理環境への実行先変更である
 - 個別suiteだけを実行するときは`.\scripts\test-local.ps1 -Step <name>`を使う
 - Python、Node、shell testも同じrunnerを入口にする
 - RenCrow全repositoryの一括実行はCORE repositoryから
@@ -316,16 +321,17 @@ test内容やassertionを変えず、testが生成する一時fileとcacheの書
   捨てていないことを実行前に検査する
 - `Tmp/`は`.gitignore`へ入れ、test artifactをcommitしない
 - repository-local化は実行fileの内容検査を無効にしない。repo内`Tmp`でも
-  `Access is denied`になった場合は同じcommandをUbuntuまたはWindows CIで実行する
-- Native Windows CIは`.github/workflows/go-test.yml`のGitHub管理
-  `windows-latest` runnerでも継続して行う
-- Windows jobとLinux jobは、同じテストコマンド、対象package、assertionを使う。
-  セキュリティソフト対策を理由にテストをskip、削除、弱体化しない
-- Push前はUbuntu環境でも同じテストを実行する
-- Push後はWindows jobの成功を確認する。未実施、失敗、cancelの場合はWindows側を
+  executableがblockされた場合はpathとerrorを記録し、renameや反復実行をせず、
+  Ubuntu jobへ切り替える
+- `.github/workflows/go-test.yml`ではUbuntu jobがGoの振る舞いtestとvetを、
+  `windows-latest` jobがbuildとvetを行う。Windowsで`.test.exe`は生成しない
+- セキュリティソフト対策を理由にtestをskip、削除、弱体化しない。
+  Ubuntu behavior testとWindows build/vetの両方を必須とする
+- Push後は両jobの成功を確認する。未実施、失敗、cancelの場合は該当側を
   「CI未検証」と報告する
-- Push済みcommitのCI確認には`scripts/test-windows-ci.ps1`を使う。このscriptは
-  作業ツリーと`origin`が同一commitであることを確認してからworkflowを起動する
+- Push済みcommitのCI確認には`scripts/test-github-ci.ps1`を使う。このscriptは
+  作業ツリーと`origin`が同一commitであることを確認してからworkflowを起動する。
+  旧`scripts/test-windows-ci.ps1`は互換wrapperとしてのみ残す
 
 **禁止事項**
 

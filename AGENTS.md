@@ -12,16 +12,18 @@
 
 ## Repository-local test runtime
 
-- ローカルWindowsでtestを実行するときは、必ず
-  `.\scripts\test-local.ps1`を入口にする。
+- ローカルWindowsでは必ず`.\scripts\test-local.ps1`を入口にする。
+  Goは`go vet ./...`と`go build ./...`だけを実行し、`.test.exe`を生成・実行する
+  `go test`は使わない。Python／Node／shell suiteはplanどおり維持する。
 - runnerは`TEMP`、`TMP`、`TMPDIR`、`GOTMPDIR`、Go／Python／Nodeのcacheを
   repo内の`Tmp/test-runtime/`へ向ける。`t.TempDir()`やcompilerの一時実行fileも
   この配下に置く。
 - `Tmp/`はGit管理外とし、system tempやuser profileのcacheへtest生成物を書かない。
 - security softwareの停止、除外設定、testのskip・削除・弱体化は行わない。
   検査を有効なまま、testの書き込み範囲だけをrepo内へ限定する。
-- repo内`Tmp`でもblockされた場合は、errorを記録してUbuntuまたはWindows CIへ切り替える。
-- GitHub ActionsのWindows／Linux jobは独立したcross-platform検証として維持する。
+- repo内`Tmp`でもblockされた場合は、errorとpathを記録し、renameや再実行をせず、
+  GitHub ActionsのUbuntu testへ切り替える。
+- GitHub ActionsではUbuntuのGo behavior testとWindows build/vetを独立して維持する。
 
 ## このファイルの役割
 

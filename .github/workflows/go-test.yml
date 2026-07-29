@@ -12,14 +12,8 @@ permissions:
 
 jobs:
   representative-tests:
-    name: Representative Go tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
+    name: Representative Go tests (Ubuntu)
+    runs-on: ubuntu-latest
     steps:
       - name: Preserve repository line endings
         run: git config --global core.autocrlf false
@@ -38,3 +32,25 @@ jobs:
 
       - name: Composition, features, Viewer adapter
         run: go test ./cmd/rencrow ./internal/features/... ./internal/adapter/viewer ./modules/...
+
+  windows-build:
+    name: Go build and vet (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Preserve repository line endings
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...

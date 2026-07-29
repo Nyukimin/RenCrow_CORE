@@ -19,19 +19,18 @@ go test ./...
 go vet ./...
 ```
 
-ローカルWindowsでは、test生成物をrepository内の`Tmp/test-runtime/`へ限定する
-runnerを使います。
+ローカルWindowsでは`.test.exe`を生成する`go test`を使わず、repository-local
+runnerで`go vet ./...`と`go build ./...`を実行します。
 
 ```powershell
 .\scripts\test-local.ps1
 ```
 
-Push前はUbuntu環境でも上記テストを実行し、Native Windows CIはGitHub Actionsの
-`Go Test` workflowで同じテストを実行します。Push済みの現在commitをWindowsから
-CI検証する場合は、次を実行してください。
+Goの振る舞いtestはGitHub ActionsのUbuntu jobで実行し、Windows jobはbuild/vetを
+実行します。Push済みの現在commitをCI検証する場合は、次を実行してください。
 
 ```powershell
-.\scripts\test-windows-ci.ps1
+.\scripts\test-github-ci.ps1
 ```
 
 ローカル設定、token、API key、ログ、DB、生成物、個人データは commit しないでください。公開資料の追加・改名は `.public-docs-allowlist` も同時に更新し、仕様・実装仕様・解析データ・旧仕様を混在させないでください。

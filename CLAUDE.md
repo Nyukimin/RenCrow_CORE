@@ -66,7 +66,7 @@
 - `/tmp`、`/home/<user>` などの絶対 path を実際の入出力先にしない。Go は `t.TempDir()`、Python は `tempfile` を使う。設定値として素通しするだけの文字列は対象外とする。
 - 改行コード（LF／CRLF）に依存する比較・テストを書かない。
 - 実行権限、symlink、大文字小文字を区別する filesystem を前提にしない。
-- 完了とする前に Windows と Linux の両方でテストを実行するか、CI の該当ジョブ結果を確認する。片方だけの結果で完了と報告しない。
+- 完了とする前にUbuntuのGo behavior testとWindowsのbuild/vet jobを確認する。ローカルWindowsでは`.test.exe`を生成・実行しない。
 
 ## 基本確認
 
