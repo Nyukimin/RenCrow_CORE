@@ -57,7 +57,7 @@ func NewGatewayProviderWithModelContext(apiKey, model, baseURL string, timeout t
 	if timeout <= 0 {
 		timeout = 120 * time.Second
 	}
-	return &GatewayProvider{
+	provider := &GatewayProvider{
 		apiKey:         apiKey,
 		model:          model,
 		baseURL:        baseURL,
@@ -66,6 +66,29 @@ func NewGatewayProviderWithModelContext(apiKey, model, baseURL string, timeout t
 		client: &http.Client{
 			Timeout: timeout,
 		},
+	}
+	if agentID, executionRole, ok := canonicalExecutionForAlias(model); ok {
+		provider.WithRenCrowExecution(agentID, executionRole, strings.TrimSpace(model))
+	}
+	return provider
+}
+
+func canonicalExecutionForAlias(alias string) (agentID, executionRole string, ok bool) {
+	switch normalized := strings.ToLower(strings.TrimSpace(alias)); normalized {
+	case "mio":
+		return "mio", "chat", true
+	case "shiro":
+		return "shiro", "chatworker", true
+	case "worker":
+		return "shiro", "worker", true
+	case "midori":
+		return "midori", "wild", true
+	case "kuro":
+		return "kuro", "heavy", true
+	case "coder1", "coder2", "coder3", "coder4":
+		return normalized, "coder", true
+	default:
+		return "", "", false
 	}
 }
 
