@@ -147,7 +147,7 @@ func (s *ProjectScanner) Run(ctx context.Context, opts ProjectInitOptions) (Proj
 
 func rejectProjectInitUnsafeRoot(absRoot string) error {
 	clean := filepath.Clean(absRoot)
-	if filepath.Dir(clean) == clean || isBroadOrSystemRoot(clean) {
+	if filepath.Dir(clean) == clean || isBroadOrSystemRoot(absRoot) {
 		return fmt.Errorf("refusing to project-init broad or system root: %s", clean)
 	}
 	if strings.HasSuffix(clean, string(filepath.Separator)+".git") {

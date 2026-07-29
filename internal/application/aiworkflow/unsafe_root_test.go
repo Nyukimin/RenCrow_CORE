@@ -1,15 +1,14 @@
 package aiworkflow
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // broadRootCases はホストOSに関係なく広範囲ルートとして拒否すべき入力を列挙する
 //
-// filepath.Clean を経た絶対パスを渡す前提。Windows では filepath.Abs("/") が
-// "C:\" に解決されるため、POSIX 名の文字列比較だけでは取りこぼす。
+// ホストOSに依存する filepath.Clean より前の表記を渡し、Windows / POSIX / UNC
+// の各形式をどのOSでも同じように判定する。
 var broadRootCases = []string{
 	"/",
 	"/home",
@@ -37,7 +36,7 @@ var safeRootCases = []string{
 
 func TestIsBroadOrSystemRootRejectsBroadRoots(t *testing.T) {
 	for _, in := range broadRootCases {
-		if !isBroadOrSystemRoot(filepath.Clean(in)) {
+		if !isBroadOrSystemRoot(in) {
 			t.Errorf("isBroadOrSystemRoot(%q) = false, want true", in)
 		}
 	}
@@ -45,7 +44,7 @@ func TestIsBroadOrSystemRootRejectsBroadRoots(t *testing.T) {
 
 func TestIsBroadOrSystemRootAcceptsSpecificPaths(t *testing.T) {
 	for _, in := range safeRootCases {
-		if isBroadOrSystemRoot(filepath.Clean(in)) {
+		if isBroadOrSystemRoot(in) {
 			t.Errorf("isBroadOrSystemRoot(%q) = true, want false", in)
 		}
 	}

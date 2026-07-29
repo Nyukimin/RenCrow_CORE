@@ -12,15 +12,14 @@ var broadRootNames = []string{
 
 // isBroadOrSystemRoot は、対象パスがシステム全体または広範囲を指すルートかを判定する
 //
-// filepath.Clean 済みの絶対パスを前提とする。Windows では "/" が "C:\" のように
-// ドライブ付きへ解決されるため、POSIX 名の文字列比較だけではドライブルートを
-// 取りこぼす。ドライブルート（"C:\"）と UNC 共有ルート（"\\\\host\\share"）も
-// 広範囲として拒否する。
-func isBroadOrSystemRoot(clean string) bool {
+// OS固有の filepath.Clean は Linux 上で UNC の先頭 "//" を失うため、未加工の
+// 入力を受け取って両形式を先に正規化する。ドライブルート（"C:\"）と UNC
+// 共有ルート（"\\\\host\\share"）も広範囲として拒否する。
+func isBroadOrSystemRoot(candidate string) bool {
 	// filepath.ToSlash only rewrites the current host OS separator. Normalize
 	// Windows separators explicitly so Windows roots are still recognized when
 	// validation runs on Linux or macOS.
-	slash := strings.ReplaceAll(filepath.ToSlash(clean), `\`, "/")
+	slash := strings.ReplaceAll(filepath.ToSlash(candidate), `\`, "/")
 	trimmed := strings.TrimSuffix(slash, "/")
 	for _, name := range broadRootNames {
 		if slash == name || (trimmed != "" && trimmed == name) {
