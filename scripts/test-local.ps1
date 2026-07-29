@@ -14,9 +14,9 @@ Set-StrictMode -Version Latest
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $runtimeRoot = Join-Path $repoRoot "Tmp\test-runtime"
-$runsRoot = Join-Path $runtimeRoot "runs"
+$runsRoot = Join-Path $runtimeRoot "r"
 $cacheRoot = Join-Path $runtimeRoot "cache"
-$runName = "{0:yyyyMMdd-HHmmss}-{1}-{2}" -f (Get-Date), $PID, ([Guid]::NewGuid().ToString("N"))
+$runName = "{0}-{1}" -f $PID, ([Guid]::NewGuid().ToString("N").Substring(0, 8))
 $runRoot = Join-Path $runsRoot $runName
 
 $comparison = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
@@ -182,6 +182,22 @@ try {
     Write-Host "[test-local] cache: $cacheRoot"
 
     if ($SelfTest) {
+        $hostExecutable = (Get-Process -Id $PID).Path
+        $quotedNames = @($protectedEnvironmentNames | ForEach-Object {
+            '"{0}"' -f $_.Replace('"', '""')
+        })
+        $probeCode = '$names=@({0}); foreach ($name in $names) {{ [Console]::WriteLine([Environment]::GetEnvironmentVariable($name, "Process")) }}' -f ($quotedNames -join ",")
+        $encodedProbe = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probeCode))
+        $childValues = @(& $hostExecutable -NoProfile -NonInteractive -EncodedCommand $encodedProbe)
+        if ($LASTEXITCODE -ne 0 -or $childValues.Count -ne $protectedEnvironmentNames.Count) {
+            throw "Child-process environment probe failed."
+        }
+        for ($index = 0; $index -lt $protectedEnvironmentNames.Count; $index++) {
+            $name = $protectedEnvironmentNames[$index]
+            if ([IO.Path]::GetFullPath($childValues[$index]) -ne [IO.Path]::GetFullPath($paths[$name])) {
+                throw "Child process did not inherit repository-local $name."
+            }
+        }
         Write-Host "[test-local] plan: $planPath"
         Write-Host "[test-local] steps: $($commands.Name -join ', ')"
         Write-Host "[OK] Repository-local test runtime and canonical plan contract passed"

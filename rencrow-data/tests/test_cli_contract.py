@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -16,17 +17,17 @@ SRC = ROOT / "src"
 
 def run_script(script: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(SRC / script), *args]
-    return subprocess.run(cmd, cwd=REPO, text=True, capture_output=True, check=check, env={"PYTHONPATH": str(SRC)})
+    return subprocess.run(cmd, cwd=REPO, text=True, capture_output=True, check=check, env={**os.environ, "PYTHONPATH": str(SRC)})
 
 
 def run_data_dir_script(script: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(ROOT / "src" / script), *args]
-    return subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=check, env={"PYTHONPATH": str(SRC)})
+    return subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=check, env={**os.environ, "PYTHONPATH": str(SRC)})
 
 
 def run_script_in_data_dir(cwd: Path, script: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(ROOT / "src" / script), *args]
-    return subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=check, env={"PYTHONPATH": str(SRC)})
+    return subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=check, env={**os.environ, "PYTHONPATH": str(SRC)})
 
 
 class CLIContractTest(unittest.TestCase):

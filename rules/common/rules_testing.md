@@ -309,6 +309,11 @@ test内容やassertionを変えず、testが生成する一時fileとcacheの書
 - Python、Node、shell testも同じrunnerを入口にする
 - RenCrow全repositoryの一括実行はCORE repositoryから
   `.\scripts\test-rencrow-system.ps1`を使う
+- test内の子processは親environmentを置換せずmergeし、`TEMP`、`TMP`、`TMPDIR`、
+  `GOTMPDIR`と各cacheを継承する。Pythonは`{**os.environ, ...}`、Goは
+  `append(os.Environ(), ...)`、Nodeは`{...process.env, ...}`を使う
+- 全体入口は`scripts/check-test-child-env.ps1`で、test codeが親environmentを
+  捨てていないことを実行前に検査する
 - `Tmp/`は`.gitignore`へ入れ、test artifactをcommitしない
 - repository-local化は実行fileの内容検査を無効にしない。repo内`Tmp`でも
   `Access is denied`になった場合は同じcommandをUbuntuまたはWindows CIで実行する

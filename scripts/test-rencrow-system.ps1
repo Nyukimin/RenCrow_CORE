@@ -34,6 +34,9 @@ $selectedRepositories = if ($Repository.Count -eq 0) {
     }
 }
 
+$childEnvironmentContract = Join-Path $PSScriptRoot "check-test-child-env.ps1"
+& $childEnvironmentContract -WorkspaceRoot $workspaceRoot
+
 $passed = @()
 $failed = @()
 foreach ($name in $selectedRepositories) {

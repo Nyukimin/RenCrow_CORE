@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -17,7 +18,7 @@ SRC = ROOT / "src"
 
 def run_script(script: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(SRC / script), *args]
-    return subprocess.run(cmd, cwd=REPO, text=True, capture_output=True, check=check, env={"PYTHONPATH": str(SRC)})
+    return subprocess.run(cmd, cwd=REPO, text=True, capture_output=True, check=check, env={**os.environ, "PYTHONPATH": str(SRC)})
 
 
 class LLMReportTest(unittest.TestCase):

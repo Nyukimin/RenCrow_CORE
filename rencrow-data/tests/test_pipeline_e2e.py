@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -17,7 +18,7 @@ SRC = ROOT / "src"
 
 def run_script(script: str, *args: str) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(SRC / script), *args]
-    return subprocess.run(cmd, cwd=REPO, text=True, capture_output=True, check=True, env={"PYTHONPATH": str(SRC)})
+    return subprocess.run(cmd, cwd=REPO, text=True, capture_output=True, check=True, env={**os.environ, "PYTHONPATH": str(SRC)})
 
 
 def write_fixture_tree(tmp_path: Path) -> tuple[Path, Path, Path]:

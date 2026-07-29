@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -73,7 +74,7 @@ class UniverseSyncTest(unittest.TestCase):
                 "--mode",
                 "fixture",
             ]
-            result = subprocess.run(cmd, cwd=ROOT.parents[1], text=True, capture_output=True, check=True, env={"PYTHONPATH": str(SRC)})
+            result = subprocess.run(cmd, cwd=ROOT.parents[1], text=True, capture_output=True, check=True, env={**os.environ, "PYTHONPATH": str(SRC)})
             self.assertIn("universe_sync rounds=", result.stdout)
             config = json.loads((config_root / "instruments.yml").read_text(encoding="utf-8"))
             symbols = {item["symbol"] for item in config["instruments"]}
@@ -105,7 +106,7 @@ class UniverseSyncTest(unittest.TestCase):
                 "unknown",
                 "--json",
             ]
-            result = subprocess.run(cmd, cwd=ROOT.parents[1], text=True, capture_output=True, check=False, env={"PYTHONPATH": str(SRC)})
+            result = subprocess.run(cmd, cwd=ROOT.parents[1], text=True, capture_output=True, check=False, env={**os.environ, "PYTHONPATH": str(SRC)})
 
             self.assertEqual(result.returncode, 4)
             self.assertIn("unknown preset", result.stderr)
