@@ -149,7 +149,7 @@ type GamesAutoPlayConfig struct {
 	// Enabled が false（既定）の間、ランナーは起動しない。
 	Enabled bool `yaml:"enabled"`
 	// Personas は自発プレイに常時参加できるペルソナ。空なら既定
-	// (mio, shiro, midori)。
+	// (mio, shiro, kuro, midori)。
 	Personas []string `yaml:"personas"`
 	// MaxSessionsPerDay は 1 日の自発起動上限。0 以下は既定 8。
 	MaxSessionsPerDay int `yaml:"max_sessions_per_day"`

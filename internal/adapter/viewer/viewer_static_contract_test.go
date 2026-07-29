@@ -499,10 +499,89 @@ func TestViewerStaticContractGameBridgeOpsCard(t *testing.T) {
 	if !strings.Contains(page, "ops.js?v=20260702-game-bridge-card") {
 		t.Fatal("viewer.html missing Game Bridge Ops cache buster")
 	}
-	if !strings.Contains(page, "games.js?v=20260702-games-tab") {
+	if !strings.Contains(page, "games.js?v=20260729-agent-launch") {
 		t.Fatal("viewer.html missing Games tab cache buster")
 	}
 	if !strings.Contains(page, "viewer.js?v=20260702-games-tab") {
 		t.Fatal("viewer.html missing Game Bridge viewer cache buster")
+	}
+}
+
+func TestViewerStaticContractGamesAgentOwnedLaunchDesk(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	gamesData, err := os.ReadFile("assets/js/tabs/games.js")
+	if err != nil {
+		t.Fatalf("read games.js: %v", err)
+	}
+	cssData, err := os.ReadFile("assets/css/tabs/desk.css")
+	if err != nil {
+		t.Fatalf("read desk.css: %v", err)
+	}
+
+	html := string(htmlData)
+	games := string(gamesData)
+	css := strings.ReplaceAll(string(cssData), "\r\n", "\n")
+
+	for needle, purpose := range map[string]string{
+		`id="gamesLaunchForm"`:    "Agent-owned launch form",
+		`id="gamesLaunchGame"`:    "game_id selector",
+		`id="gamesPersonaMio"`:    "Mio participant control",
+		`id="gamesPersonaShiro"`:  "Shiro participant control",
+		`id="gamesPersonaKuro"`:   "Kuro participant control",
+		`id="gamesPersonaMidori"`: "Midori participant control",
+		`id="gamesLaunchReason"`:  "optional launch reason",
+		`id="gamesLaunchTurns"`:   "optional turn limit",
+		`id="gamesLaunchMode"`:    "optional game mode",
+		`id="gamesLaunchBtn"`:     "launch action",
+		`id="gamesLaunchResult"`:  "launch success or upstream error feedback",
+		`aria-label="参加ペルソナ"`:     "participant group label",
+	} {
+		if !strings.Contains(html, needle) {
+			t.Fatalf("viewer.html missing %s (%s)", needle, purpose)
+		}
+	}
+
+	for _, needle := range []string{
+		"function submitGamesLaunch",
+		"fetch('/viewer/games/launch'",
+		"method: 'POST'",
+		"'Content-Type': 'application/json'",
+		"personas: personas",
+		"/viewer/games/observer?session=",
+		"response.session_id",
+		"gamesLaunchResult",
+		"if (!response.ok || data.ok === false)",
+		"data.message || data.error",
+		"renderGamesLaunchResult('error'",
+	} {
+		if !strings.Contains(games, needle) {
+			t.Fatalf("games.js missing Agent-owned launch contract %q", needle)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"launchPersonaLimits",
+		"personaLimits",
+	} {
+		if strings.Contains(games, forbidden) {
+			t.Fatalf("games.js must leave title-specific persona limits to RenCrow_GAMES: found %q", forbidden)
+		}
+	}
+
+	for _, needle := range []string{
+		".games-launch-form {",
+		".games-launch-control {",
+		"min-height: 40px;",
+		".games-launch-personas {",
+		".games-launch-result {",
+		"overflow-wrap: anywhere;",
+		"@media (max-width: 900px), (max-aspect-ratio: 21/20)",
+	} {
+		if !strings.Contains(css, needle) {
+			t.Fatalf("desk.css missing Games launch desk contract %q", needle)
+		}
 	}
 }

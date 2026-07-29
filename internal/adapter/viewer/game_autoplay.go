@@ -32,7 +32,7 @@ const (
 	gameAutoplayRecentSessionLimit    = 5
 )
 
-var gameAutoplayDefaultPersonas = []string{"mio", "shiro", "midori"}
+var gameAutoplayDefaultPersonas = []string{"mio", "shiro", "kuro", "midori"}
 
 // GameBridgeSessionLister は autoplay のプロンプト材料（直近セッション要約）。
 type GameBridgeSessionLister interface {

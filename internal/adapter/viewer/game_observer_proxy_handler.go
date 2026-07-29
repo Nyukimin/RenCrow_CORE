@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -28,12 +27,16 @@ type GameObserverProxyOptions struct {
 // RenCrow's reachable Viewer port, rewriting its live endpoint to the
 // same-origin proxy path.
 func HandleGameObserverPage(opts GameObserverProxyOptions) http.HandlerFunc {
+	client := opts.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		htmlBytes, err := os.ReadFile(gameObserverUIPath(opts.UIPath))
+		htmlBytes, err := loadGameObserverUI(r, opts, client)
 		if err != nil {
 			http.Error(w, "game observer ui unavailable", http.StatusServiceUnavailable)
 			return
@@ -46,6 +49,33 @@ func HandleGameObserverPage(opts GameObserverProxyOptions) http.HandlerFunc {
 		}
 		_, _ = w.Write([]byte(rewriteGameObserverHTML(string(htmlBytes))))
 	}
+}
+
+func loadGameObserverUI(r *http.Request, opts GameObserverProxyOptions, client *http.Client) ([]byte, error) {
+	if uiPath := gameObserverUIPath(opts.UIPath); uiPath != "" {
+		return os.ReadFile(uiPath)
+	}
+	baseURL, err := parseGameObserverBaseURL(opts.ObserverBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	upstream := *baseURL
+	upstream.Path = joinURLPath(baseURL.Path, "/")
+	upstream.RawQuery = ""
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstream.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/html")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, &url.Error{Op: "get", URL: upstream.String(), Err: errGameObserverUIUnavailable{}}
+	}
+	return io.ReadAll(resp.Body)
 }
 
 // HandleGameObserverProxy exposes the local RenCrow_GAMES observer API under
@@ -67,7 +97,7 @@ func HandleGameObserverProxy(opts GameObserverProxyOptions) http.HandlerFunc {
 			return
 		}
 		upstreamPath := strings.TrimPrefix(r.URL.Path, gameObserverProxyPrefix)
-		if !strings.HasPrefix(upstreamPath, "/games/") {
+		if !strings.HasPrefix(upstreamPath, "/games/") && !strings.HasPrefix(upstreamPath, "/assets/") {
 			http.NotFound(w, r)
 			return
 		}
@@ -137,17 +167,7 @@ func gameObserverUIPath(configured string) string {
 	if env := strings.TrimSpace(os.Getenv("RENCROW_GAMES_OBSERVER_UI")); env != "" {
 		return env
 	}
-	candidates := []string{
-		filepath.Join("..", "RenCrow_GAMES", "ui", "observer", "index.html"),
-		filepath.Join("RenCrow_GAMES", "ui", "observer", "index.html"),
-		"/home/nyukimi/RenCrow/RenCrow_GAMES/ui/observer/index.html",
-	}
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	return candidates[0]
+	return ""
 }
 
 func rewriteGameObserverHTML(html string) string {
@@ -161,7 +181,18 @@ func rewriteGameObserverHTML(html string) string {
 	if strings.Contains(html, "rencrowAutoLoadLiveObserver") {
 		return html
 	}
-	injection := `<script>
+	headInjection := `<base href="` + gameObserverAPIBase + `/">
+  <script>
+    window.RenCrowGameObserverLiveBase = "` + gameObserverAPIBase + `";
+  </script>`
+	if strings.Contains(html, "<head>") {
+		html = strings.Replace(html, "<head>", "<head>\n  "+headInjection, 1)
+	} else if strings.Contains(html, "</head>") {
+		html = strings.Replace(html, "</head>", headInjection+"\n</head>", 1)
+	} else {
+		html = headInjection + "\n" + html
+	}
+	bodyInjection := `<script>
     window.RenCrowGameObserverLiveBase = "` + gameObserverAPIBase + `";
     window.addEventListener("DOMContentLoaded", () => {
       window.setTimeout(() => {
@@ -171,9 +202,9 @@ func rewriteGameObserverHTML(html string) string {
     window.rencrowAutoLoadLiveObserver = true;
   </script>`
 	if strings.Contains(html, "</body>") {
-		return strings.Replace(html, "</body>", injection+"\n</body>", 1)
+		return strings.Replace(html, "</body>", bodyInjection+"\n</body>", 1)
 	}
-	return html + "\n" + injection
+	return html + "\n" + bodyInjection
 }
 
 func joinURLPath(basePath string, requestPath string) string {
@@ -189,4 +220,10 @@ type errInvalidGameObserverBaseURL struct{}
 
 func (errInvalidGameObserverBaseURL) Error() string {
 	return "invalid game observer base url"
+}
+
+type errGameObserverUIUnavailable struct{}
+
+func (errGameObserverUIUnavailable) Error() string {
+	return "game observer ui unavailable"
 }

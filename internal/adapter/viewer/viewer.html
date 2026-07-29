@@ -6,7 +6,7 @@
 <title>RenCrow Live</title>
 <link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260718-idle-stock-reader">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260511-memory-desk">
-<link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260723-movie-assessment-grid-2">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20260728-image-mvp">
 </head>
@@ -351,6 +351,51 @@
         <button id="gamesRefreshBtn" class="desk-primary-btn" type="button">Refresh</button>
       </aside>
       <section class="desk-main">
+        <section class="daily-desk-card games-launch-card" aria-labelledby="gamesLaunchTitle">
+          <div class="games-launch-head">
+            <div>
+              <div class="desk-kicker">Agent-owned session</div>
+              <h3 id="gamesLaunchTitle">Launch Desk</h3>
+            </div>
+            <div class="daily-desk-muted">人数とタイトル固有の条件は RenCrow_GAMES が判定します。</div>
+          </div>
+          <form id="gamesLaunchForm" class="games-launch-form">
+            <label class="games-launch-field">
+              <span>Game</span>
+              <select id="gamesLaunchGame" class="games-launch-control" required>
+                <option value="survival_garden">SurvivalGarden</option>
+                <option value="territory_commander">TerritoryCommander</option>
+                <option value="nethack">NetHack</option>
+                <option value="herzog_zwei">HerzogZwei</option>
+              </select>
+            </label>
+            <fieldset class="games-launch-field games-launch-persona-field" aria-label="参加ペルソナ">
+              <legend>Personas</legend>
+              <div class="games-launch-personas">
+                <label class="games-launch-persona"><input id="gamesPersonaMio" type="checkbox" value="mio" checked><span>Mio</span></label>
+                <label class="games-launch-persona"><input id="gamesPersonaShiro" type="checkbox" value="shiro"><span>Shiro</span></label>
+                <label class="games-launch-persona"><input id="gamesPersonaKuro" type="checkbox" value="kuro"><span>Kuro</span></label>
+                <label class="games-launch-persona"><input id="gamesPersonaMidori" type="checkbox" value="midori"><span>Midori</span></label>
+              </div>
+            </fieldset>
+            <label class="games-launch-field games-launch-reason">
+              <span>Reason <small>optional</small></span>
+              <textarea id="gamesLaunchReason" class="games-launch-control" rows="2" placeholder="遊びたい理由や、誘うきっかけ"></textarea>
+            </label>
+            <label class="games-launch-field">
+              <span>Turns <small>optional</small></span>
+              <input id="gamesLaunchTurns" class="games-launch-control" type="number" min="1" step="1" inputmode="numeric" placeholder="GAMES default">
+            </label>
+            <label class="games-launch-field">
+              <span>Mode <small>optional</small></span>
+              <input id="gamesLaunchMode" class="games-launch-control" type="text" placeholder="auto / realtime">
+            </label>
+            <div class="games-launch-actions">
+              <button id="gamesLaunchBtn" class="desk-primary-btn games-launch-submit" type="submit">Launch</button>
+              <div id="gamesLaunchResult" class="games-launch-result" role="status" aria-live="polite"></div>
+            </div>
+          </form>
+        </section>
         <div id="gamesBridgeStatusCard" class="daily-desk-card"></div>
         <div class="desk-two-col">
           <div id="gamesLatestSessionCard" class="daily-desk-card"></div>
@@ -1502,7 +1547,7 @@
 <script src="/viewer/assets/js/tabs/idlechat.js?v=20260718-idle-stock-reader" defer></script>
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
 <script src="/viewer/assets/js/tabs/jobs.js?v=20260510-tabs-jobs" defer></script>
-<script src="/viewer/assets/js/tabs/games.js?v=20260702-games-tab" defer></script>
+<script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
 <script src="/viewer/assets/js/tabs/image.js?v=20260728-image-mvp" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
 <script src="/viewer/assets/js/viewer.js?v=20260702-games-tab" defer></script>

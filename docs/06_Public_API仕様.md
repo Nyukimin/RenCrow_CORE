@@ -84,6 +84,30 @@ CORE Agent / LLM
 - Response: `{ok, game_id, session_id, status, motive_recorded}`。
   upstream 到達不能は 503、upstream エラーは status code を透過する。
 
+### Game Bridge status／candidate event契約
+
+`GET /viewer/games/status`の既定`supported_games`は
+`herzog_zwei`、`territory_commander`、`survival_garden`、`nethack`です。
+autoplayの既定ロースターは`mio`、`shiro`、`kuro`、`midori`の4人です。
+
+`POST /viewer/games/result`で保存するcandidate eventの重複排除キーは
+`(game_id, session_id, turn, persona)`です。event IDは次の形式です。
+
+```text
+game:<game_id>:<session_id>:turn_<turn>:persona_<persona>
+```
+
+例:
+
+```text
+game:survival_garden:sg_shared_turn:turn_7:persona_mio
+game:survival_garden:sg_shared_turn:turn_7:persona_shiro
+```
+
+同じturnでもpersonaが異なれば別eventとして全件保存します。同じ4要素を持つ
+同一personaのretryは既存eventを返し、新しい行を追加しません。
+candidate memory IDはevent IDへ`:candidate`を付けた値です。
+
 実際に有効な endpoint は build と config に依存します。process supervisorは`/health/live`だけを再起動判定に使います。利用者向け機能の確認では`/health`と`/viewer/status`も確認し、featureがunavailable/degradedの場合は成功として扱わないでください。
 
 LINE WebhookはPOSTだけを受け付けます。Tailscale公開guardはtailscaledが`Tailscale-Funnel-Request`を付けたinternet trafficでは`POST /webhook/line`だけを追加許可し、Viewer／Debug／Ops pathを404にします。tailnet内のServe trafficはViewer系allowlistを維持します。`GET /webhook/line`の404、署名なしPOSTの401は故障判定に使いません。LINE Developersへ登録するendpointはdeployment時点の公開hostを確認して`https://<current-host>/webhook/line`とします。外部到達確認ではMessaging APIのWebhook testを使い、署名検証済みeventが200になることを確認します。

@@ -65,6 +65,24 @@ func autoplayServiceForTest(t *testing.T, provider llm.LLMProvider, observerURL 
 	return service
 }
 
+func TestGameAutoplayDefaultRosterIncludesAllFourPublicPersonas(t *testing.T) {
+	service := NewGameAutoplayService(GameAutoplayOptions{
+		Provider: &fakeAutoplayProvider{content: `{"play":false,"game_id":"","personas":[],"reason":"","next_check_minutes":60}`},
+	})
+	if service == nil {
+		t.Fatal("service must not be nil")
+	}
+	want := []string{"mio", "shiro", "kuro", "midori"}
+	if len(service.personas) != len(want) {
+		t.Fatalf("default personas=%v want=%v", service.personas, want)
+	}
+	for i := range want {
+		if service.personas[i] != want[i] {
+			t.Fatalf("default personas[%d]=%q want=%q", i, service.personas[i], want[i])
+		}
+	}
+}
+
 func TestGameAutoplayPlayFalseSchedulesLLMChosenDelay(t *testing.T) {
 	observer, launches := fakeAutoplayObserver(t, "completed")
 	provider := &fakeAutoplayProvider{content: `{"play":false,"game_id":"","personas":[],"reason":"","next_check_minutes":120}`}
@@ -125,7 +143,7 @@ func TestGameAutoplayBrokenJSONFallsBackToDefault(t *testing.T) {
 
 func TestGameAutoplayFiltersPersonasToRoster(t *testing.T) {
 	observer, launches := fakeAutoplayObserver(t, "completed")
-	// kuro はロースター外 (docs/10: 常時使えるのは mio/shiro/midori)。
+	// 明示ロースターに含まれない kuro は起動対象にしない。
 	provider := &fakeAutoplayProvider{content: `{"play":true,"game_id":"nethack","personas":["kuro"],"reason":"x","next_check_minutes":30}`}
 	service := autoplayServiceForTest(t, provider, observer.URL)
 	service.RunOnce(context.Background())

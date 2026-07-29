@@ -41,6 +41,71 @@ func TestGameBridgeStoreDeduplicatesEventID(t *testing.T) {
 	}
 }
 
+func TestGameBridgeStoreKeepsEachPersonaPerTurnAndDeduplicatesPersonaRetry(t *testing.T) {
+	store := NewGameBridgeStore(filepath.Join(t.TempDir(), "game_bridge_events.jsonl"))
+	base := GameResultRequest{
+		GameID:          "survival_garden",
+		SessionID:       "sg_shared_turn",
+		Turn:            7,
+		ExecutedActions: []string{"rest"},
+		Result:          map[string]any{"success": true, "event": "rested"},
+	}
+	mioRequest := base
+	mioRequest.Persona = "mio"
+	shiroRequest := base
+	shiroRequest.Persona = "shiro"
+	kuroRequest := base
+	kuroRequest.Persona = "kuro"
+	midoriRequest := base
+	midoriRequest.Persona = "midori"
+
+	mio, err := store.SaveGameBridgeResult(context.Background(), mioRequest)
+	if err != nil {
+		t.Fatalf("save mio result: %v", err)
+	}
+	shiro, err := store.SaveGameBridgeResult(context.Background(), shiroRequest)
+	if err != nil {
+		t.Fatalf("save shiro result: %v", err)
+	}
+	if _, err := store.SaveGameBridgeResult(context.Background(), kuroRequest); err != nil {
+		t.Fatalf("save kuro result: %v", err)
+	}
+	if _, err := store.SaveGameBridgeResult(context.Background(), midoriRequest); err != nil {
+		t.Fatalf("save midori result: %v", err)
+	}
+	mioRetry := mioRequest
+	mioRetry.Result = map[string]any{"success": true, "event": "retry_must_not_append"}
+	retried, err := store.SaveGameBridgeResult(context.Background(), mioRetry)
+	if err != nil {
+		t.Fatalf("retry mio result: %v", err)
+	}
+
+	if mio.EventID != "game:survival_garden:sg_shared_turn:turn_7:persona_mio" {
+		t.Fatalf("mio event_id=%q", mio.EventID)
+	}
+	if shiro.EventID != "game:survival_garden:sg_shared_turn:turn_7:persona_shiro" {
+		t.Fatalf("shiro event_id=%q", shiro.EventID)
+	}
+	if retried.EventID != mio.EventID || retried.CreatedAt != mio.CreatedAt {
+		t.Fatalf("same-persona retry must return the existing event\nfirst=%+v\nretry=%+v", mio, retried)
+	}
+
+	events, err := store.RecentGameBridgeEvents(context.Background(), "survival_garden", "sg_shared_turn", 10)
+	if err != nil {
+		t.Fatalf("RecentGameBridgeEvents returned error: %v", err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("events=%d want 4: %+v", len(events), events)
+	}
+	seen := map[string]bool{}
+	for _, event := range events {
+		seen[event.Persona] = true
+	}
+	if !seen["mio"] || !seen["shiro"] || !seen["kuro"] || !seen["midori"] {
+		t.Fatalf("same-turn persona events missing: %+v", events)
+	}
+}
+
 func TestGameBridgeStoreBuildsSessionSummaries(t *testing.T) {
 	store := NewGameBridgeStore(filepath.Join(t.TempDir(), "game_bridge_events.jsonl"))
 	for _, req := range []GameResultRequest{
@@ -97,8 +162,8 @@ func TestGameBridgeStoreFiltersEventViewsAndCountsMalformedLines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "game_bridge_events.jsonl")
 	valid := GameBridgeEvent{
-		EventID:           "game:survival_garden:sg_test:turn_1",
-		CandidateMemoryID: "game:survival_garden:sg_test:turn_1:candidate",
+		EventID:           "game:survival_garden:sg_test:turn_1:persona_mio",
+		CandidateMemoryID: "game:survival_garden:sg_test:turn_1:persona_mio:candidate",
 		GameID:            "survival_garden",
 		SessionID:         "sg_test",
 		Turn:              1,

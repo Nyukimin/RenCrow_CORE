@@ -91,7 +91,7 @@ func (s *GameBridgeStore) SaveGameBridgeResult(_ context.Context, req GameResult
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	eventID := gameBridgeEventID(req.GameID, req.SessionID, req.Turn)
+	eventID := gameBridgeEventID(req.GameID, req.SessionID, req.Turn, req.Persona)
 	if existing, ok, err := s.findByEventIDLocked(eventID); err != nil {
 		return GameBridgeEvent{}, err
 	} else if ok {

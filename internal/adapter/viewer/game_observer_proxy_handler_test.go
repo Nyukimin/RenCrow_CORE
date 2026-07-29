@@ -12,7 +12,7 @@ import (
 
 func TestHandleGameObserverPageRewritesLiveEndpoint(t *testing.T) {
 	uiPath := filepath.Join(t.TempDir(), "index.html")
-	html := `<!doctype html><html><body><input id="liveBase" value="http://127.0.0.1:18791"></body></html>`
+	html := `<!doctype html><html><head><style>.tile{background:url("assets/tile.png")}</style></head><body><input id="liveBase" value="http://127.0.0.1:18791"></body></html>`
 	if err := os.WriteFile(uiPath, []byte(html), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -34,8 +34,42 @@ func TestHandleGameObserverPageRewritesLiveEndpoint(t *testing.T) {
 	if !strings.Contains(body, `window.RenCrowGameObserverLiveBase = "/viewer/games/observer-api"`) {
 		t.Fatalf("observer page did not inject same-origin observer base: %s", body)
 	}
+	if !strings.Contains(body, `<base href="/viewer/games/observer-api/">`) {
+		t.Fatalf("observer page did not route relative assets through the same-origin proxy: %s", body)
+	}
+	if strings.Index(body, `<base href="/viewer/games/observer-api/">`) > strings.Index(body, "<style>") {
+		t.Fatalf("observer base must precede inline asset references: %s", body)
+	}
 	if !strings.Contains(body, `window.dispatchEvent(new Event("rencrow-observer-load-live"))`) {
 		t.Fatalf("observer page did not inject live load event: %s", body)
+	}
+}
+
+func TestHandleGameObserverPageLoadsEmbeddedUIFromObserver(t *testing.T) {
+	t.Setenv("RENCROW_GAMES_OBSERVER_UI", "")
+	var upstreamPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamPath = r.URL.Path
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html><html><body><input id="liveBase" value="http://127.0.0.1:18791"></body></html>`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/viewer/games/observer", nil)
+	HandleGameObserverPage(GameObserverProxyOptions{
+		ObserverBaseURL: upstream.URL,
+		HTTPClient:      upstream.Client(),
+	}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if upstreamPath != "/" {
+		t.Fatalf("upstream path=%q", upstreamPath)
+	}
+	if !strings.Contains(rec.Body.String(), `value="/viewer/games/observer-api"`) {
+		t.Fatalf("observer page did not rewrite live endpoint: %s", rec.Body.String())
 	}
 }
 
@@ -64,6 +98,33 @@ func TestHandleGameObserverProxyForwardsReadOnlyGameAPI(t *testing.T) {
 	}
 	if strings.TrimSpace(rec.Body.String()) != `{"ok":true}` {
 		t.Fatalf("body=%q", rec.Body.String())
+	}
+}
+
+func TestHandleGameObserverProxyForwardsObserverAssets(t *testing.T) {
+	var upstreamPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamPath = r.URL.Path
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("png"))
+	}))
+	t.Cleanup(upstream.Close)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/viewer/games/observer-api/assets/herzogzwei/tiles/plain.png", nil)
+	HandleGameObserverProxy(GameObserverProxyOptions{
+		ObserverBaseURL: upstream.URL,
+		HTTPClient:      upstream.Client(),
+	}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if upstreamPath != "/assets/herzogzwei/tiles/plain.png" {
+		t.Fatalf("upstream path=%q", upstreamPath)
+	}
+	if rec.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("content-type=%q", rec.Header().Get("Content-Type"))
 	}
 }
 

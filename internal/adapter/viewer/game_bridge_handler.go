@@ -57,7 +57,7 @@ func HandleGameBridgeStatus(opts GameBridgeStatusOptions) http.HandlerFunc {
 		opts.MemoryMode = "candidate_only"
 	}
 	if len(opts.SupportedGames) == 0 {
-		opts.SupportedGames = []string{"survival_garden", "territory_commander"}
+		opts.SupportedGames = []string{"herzog_zwei", "territory_commander", "survival_garden", "nethack"}
 	}
 	if strings.TrimSpace(opts.DefaultPersona) == "" {
 		opts.DefaultPersona = "mio"
@@ -107,7 +107,7 @@ func HandleGameBridgeResult(writers ...GameBridgeResultWriter) http.HandlerFunc 
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		eventID := gameBridgeEventID(req.GameID, req.SessionID, req.Turn)
+		eventID := gameBridgeEventID(req.GameID, req.SessionID, req.Turn, req.Persona)
 		candidateMemoryIDs := []string{eventID + ":candidate"}
 		if writer != nil {
 			event, err := writer.SaveGameBridgeResult(r.Context(), req)
@@ -169,8 +169,14 @@ func gameResultBool(result map[string]any, key string) (bool, bool) {
 	return v, ok
 }
 
-func gameBridgeEventID(gameID, sessionID string, turn int) string {
-	return fmt.Sprintf("game:%s:%s:turn_%d", sanitizeGameBridgeID(gameID), sanitizeGameBridgeID(sessionID), turn)
+func gameBridgeEventID(gameID, sessionID string, turn int, persona string) string {
+	return fmt.Sprintf(
+		"game:%s:%s:turn_%d:persona_%s",
+		sanitizeGameBridgeID(gameID),
+		sanitizeGameBridgeID(sessionID),
+		turn,
+		sanitizeGameBridgeID(persona),
+	)
 }
 
 func sanitizeGameBridgeID(value string) string {

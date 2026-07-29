@@ -29,6 +29,19 @@ func TestHandleGameBridgeStatus(t *testing.T) {
 	if got["conversation_engine_enabled"] != true || got["l1_store_enabled"] != true {
 		t.Fatalf("runtime flags not reflected: %+v", got)
 	}
+	supported, ok := got["supported_games"].([]any)
+	if !ok {
+		t.Fatalf("supported_games=%T want array: %+v", got["supported_games"], got)
+	}
+	wantGames := []string{"herzog_zwei", "territory_commander", "survival_garden", "nethack"}
+	if len(supported) != len(wantGames) {
+		t.Fatalf("supported_games=%v want=%v", supported, wantGames)
+	}
+	for i, want := range wantGames {
+		if supported[i] != want {
+			t.Fatalf("supported_games[%d]=%v want=%q", i, supported[i], want)
+		}
+	}
 }
 
 func TestGameActionStepUsesCommonArgsKey(t *testing.T) {

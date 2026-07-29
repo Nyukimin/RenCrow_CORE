@@ -133,6 +133,90 @@ function renderGamesEvents(data) {
     '</tbody></table></div>';
 }
 
+function gamesLaunchPersonas(form) {
+  if (!form) return [];
+  return Array.from(form.querySelectorAll('.games-launch-personas input[type="checkbox"]:checked'))
+    .map((input) => String(input.value || '').trim())
+    .filter(Boolean);
+}
+
+function renderGamesLaunchResult(kind, message, sessionID) {
+  const target = document.getElementById('gamesLaunchResult');
+  if (!target) return;
+  target.className = 'games-launch-result status-' + kind;
+  target.replaceChildren();
+
+  const text = document.createElement('span');
+  text.textContent = message;
+  target.appendChild(text);
+
+  if (kind === 'success' && sessionID) {
+    const link = document.createElement('a');
+    link.href = '/viewer/games/observer?session=' + encodeURIComponent(sessionID);
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = 'Observer を開く';
+    target.appendChild(link);
+  }
+}
+
+async function gamesLaunchResponse(response) {
+  const body = await response.text();
+  let data = {};
+  if (body) {
+    try {
+      data = JSON.parse(body);
+    } catch (err) {
+      if (response.ok) throw new Error('Launch response is not valid JSON.');
+    }
+  }
+  if (!data || typeof data !== 'object') data = {};
+  if (!response.ok || data.ok === false) {
+    const detail = data.message || data.error || body || response.statusText || 'game launch failed';
+    throw new Error('HTTP ' + String(response.status) + ': ' + String(detail));
+  }
+  return data;
+}
+
+async function submitGamesLaunch(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = document.getElementById('gamesLaunchBtn');
+  const gameID = String(document.getElementById('gamesLaunchGame').value || '').trim();
+  const personas = gamesLaunchPersonas(form);
+  const reason = String(document.getElementById('gamesLaunchReason').value || '').trim();
+  const turnsValue = String(document.getElementById('gamesLaunchTurns').value || '').trim();
+  const mode = String(document.getElementById('gamesLaunchMode').value || '').trim();
+  const payload = {
+    game_id: gameID,
+    personas: personas,
+  };
+  if (reason) payload.reason = reason;
+  if (turnsValue) payload.turns = Number.parseInt(turnsValue, 10);
+  if (mode) payload.mode = mode;
+
+  if (button) button.disabled = true;
+  renderGamesLaunchResult('pending', '起動リクエストを送信しています。', '');
+  try {
+    const response = await fetch('/viewer/games/launch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    }).then(gamesLaunchResponse);
+    if (!response.session_id) throw new Error('Launch response did not include session_id.');
+    renderGamesLaunchResult(
+      'success',
+      'Session ' + String(response.session_id) + ' を起動しました。',
+      response.session_id
+    );
+    if (typeof refreshGameBridgeData === 'function') refreshGameBridgeData();
+  } catch (err) {
+    renderGamesLaunchResult('error', String(err && err.message ? err.message : err), '');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function bindGamesDeskControls() {
   const refresh = document.getElementById('gamesRefreshBtn');
   if (refresh && refresh.dataset.bound !== '1') {
@@ -141,6 +225,11 @@ function bindGamesDeskControls() {
       if (typeof refreshGameBridgeData === 'function') refreshGameBridgeData();
       renderGamesDesk();
     });
+  }
+  const launchForm = document.getElementById('gamesLaunchForm');
+  if (launchForm && launchForm.dataset.bound !== '1') {
+    launchForm.dataset.bound = '1';
+    launchForm.addEventListener('submit', submitGamesLaunch);
   }
 }
 
