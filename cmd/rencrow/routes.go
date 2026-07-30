@@ -304,6 +304,7 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 		Result:        dependencies.viewerGamesResult,
 		Sessions:      dependencies.viewerGamesSessions,
 		Events:        dependencies.viewerGamesEvents,
+		Decision:      dependencies.viewerGamesDecision,
 		Launch:        dependencies.viewerGamesLaunch,
 		ObserverPage:  dependencies.viewerGamesObserverPage,
 		ObserverProxy: dependencies.viewerGamesObserverProxy,

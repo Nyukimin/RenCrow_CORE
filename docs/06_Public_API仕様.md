@@ -41,7 +41,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /webhook/line` | LINE Messaging API Webhook。署名必須の正規path |
 | `POST /internal/assistant/notifications/line` | localhostのRenCrow_ASSISTANT専用LINE push transport |
 | `/viewer/ai-workflow/*` | AI engineering workflow の experimental API |
-| `/viewer/games/*` | RenCrow_GAMES bridge（status/result/sessions/events/launch/observer proxy） |
+| `/viewer/games/*` | RenCrow_GAMES bridge（status/decision/result/sessions/events/launch/observer proxy） |
 
 ### Game Launch（マルチペルソナ WP5）
 
@@ -54,16 +54,20 @@ RenCrow_GAMES側の仕様を参照します。
 Game lifecycleの向きは次で固定します。
 
 ```text
-CORE Agent / LLM
+CORE Agent
   -> POST /viewer/games/launch
   -> RenCrow_GAMES Observer / title process
-  -> GAMES game execution
+  -> POST /viewer/games/decision
+  -> CORE Agent decision
+  -> GAMES validation / game execution
   -> ObserverFrame / POST /viewer/games/result
   -> CORE observer proxy / candidate memory
   -> user
 ```
 
-ゲーム起動主体はCOREのAgent／LLM、ゲーム状態と実行の正本はGAMESです。
+ゲーム起動とターン判断の主体はCOREのAgent、ゲーム状態と実行の正本はGAMESです。
+LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実行機構であり、
+プレイヤーそのものではありません。
 ユーザー向けの実行表示はGAMES Observerを
 `/viewer/games/observer`と`/viewer/games/observer-api/*`でsame-origin proxyします。
 
@@ -85,10 +89,30 @@ CORE Agent / LLM
 - Response: `{ok, game_id, session_id, status, motive_recorded}`。
   upstream 到達不能は 503、upstream エラーは status code を透過する。
 
+### Game Agent decision
+
+`POST /viewer/games/decision`は、Agent所有sessionでGAMESが作成した
+`ObservationRequest`を対象のCORE Agentへ渡すturn判断口です。
+
+- Requestは`game_id`、`session_id`、非負の`turn`、`persona`、
+  `observation`、`available_actions`、`request`を持つ。
+- COREは`persona`から実Agentを解決し、Agent固有のPersona／Execution Role／
+  推論Target経路でstrict JSONの`BrainDecision`を生成する。
+- Responseは`agent_id`を必須とし、`agent_id`と`persona`はrequestの`persona`に
+  一致しなければならない。
+- GAMESは`intent`と`action_plan[].action`を`available_actions`に対して再検証して
+  からExecutorへ渡す。COREはworld stateを直接変更しない。
+- Agentが利用不能、応答が不正、またはCOREへ到達不能の場合はturnを失敗させる。
+  `RuleBasedBrain`や`DummyBrain`へfallbackしてAgent判断として記録しない。
+
+`GET /viewer/games/status`はこの経路が配線済みのとき
+`decision_mode: "agent"`と`/viewer/games/decision`を返す。
+
 ### Game Bridge status／candidate event契約
 
-`GET /viewer/games/status`の既定`supported_games`は
-`herzog_zwei`、`territory_commander`、`survival_garden`、`nethack`です。
+`GET /viewer/games/status`の`supported_games`は、Agent decision E2Eへ移行済みの
+titleだけを示します。現在は`nethack`です。GAMESのlocal simulation対応title一覧とは
+別のcapabilityです。
 autoplayの既定ロースターは`mio`、`shiro`、`kuro`、`midori`の4人です。
 
 `POST /viewer/games/result`で保存するcandidate eventの重複排除キーは

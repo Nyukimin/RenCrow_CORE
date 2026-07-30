@@ -31,6 +31,9 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		viewerGamesEvents: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusResetContent)
 		}),
+		viewerGamesDecision: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}),
 		viewerGamesLaunch: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusAlreadyReported)
 		}),
@@ -129,6 +132,7 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		{name: "viewer games result", method: http.MethodGet, path: "/viewer/games/result", want: http.StatusNoContent},
 		{name: "viewer games sessions", method: http.MethodGet, path: "/viewer/games/sessions", want: http.StatusPartialContent},
 		{name: "viewer games events", method: http.MethodGet, path: "/viewer/games/events", want: http.StatusResetContent},
+		{name: "viewer games decision", method: http.MethodPost, path: "/viewer/games/decision", want: http.StatusCreated},
 		{name: "viewer games launch", method: http.MethodGet, path: "/viewer/games/launch", want: http.StatusAlreadyReported},
 		{name: "viewer games observer", method: http.MethodGet, path: "/viewer/games/observer", want: http.StatusTeapot},
 		{name: "viewer games observer proxy", method: http.MethodGet, path: "/viewer/games/observer-api/games/status", want: http.StatusBadGateway},

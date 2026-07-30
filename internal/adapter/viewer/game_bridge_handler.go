@@ -13,6 +13,7 @@ const gameBridgeMaxBodyBytes int64 = 64 * 1024
 type GameBridgeStatusOptions struct {
 	ResultMode                string
 	MemoryMode                string
+	DecisionMode              string
 	ConversationEngineEnabled bool
 	L1StoreEnabled            bool
 	SupportedGames            []string
@@ -28,6 +29,7 @@ type GameActionStep struct {
 
 // GameBrainDecision is the bridge decision response.
 type GameBrainDecision struct {
+	AgentID    string           `json:"agent_id,omitempty"`
 	Persona    string           `json:"persona"`
 	Intent     string           `json:"intent"`
 	Reason     string           `json:"reason"`
@@ -56,6 +58,9 @@ func HandleGameBridgeStatus(opts GameBridgeStatusOptions) http.HandlerFunc {
 	if strings.TrimSpace(opts.MemoryMode) == "" {
 		opts.MemoryMode = "candidate_only"
 	}
+	if strings.TrimSpace(opts.DecisionMode) == "" {
+		opts.DecisionMode = "unavailable"
+	}
 	if len(opts.SupportedGames) == 0 {
 		opts.SupportedGames = []string{"herzog_zwei", "territory_commander", "survival_garden", "nethack"}
 	}
@@ -76,8 +81,10 @@ func HandleGameBridgeStatus(opts GameBridgeStatusOptions) http.HandlerFunc {
 			"default_persona":             opts.DefaultPersona,
 			"result_mode":                 opts.ResultMode,
 			"memory_mode":                 opts.MemoryMode,
+			"decision_mode":               opts.DecisionMode,
 			"endpoints": []string{
 				"/viewer/games/status",
+				"/viewer/games/decision",
 				"/viewer/games/result",
 				"/viewer/games/sessions",
 				"/viewer/games/events",

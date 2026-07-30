@@ -22,6 +22,7 @@ func buildViewerRuntimeHandlers(
 	realMgr *conversationpersistence.RealConversationManager,
 	reportPath string,
 	gamePlayProvider llm.LLMProvider,
+	gameDecisionProvider viewer.GameAgentDecisionProvider,
 ) {
 	databasePaths := viewerDatabasePaths(cfg)
 	movieOptions := viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}
@@ -65,11 +66,14 @@ func buildViewerRuntimeHandlers(
 		ConversationEngineEnabled: realMgr != nil,
 		L1StoreEnabled:            l1Store != nil,
 		ResultMode:                gameBridgeResultMode,
+		DecisionMode:              "agent",
+		SupportedGames:            []string{"nethack"},
 	}
 	deps.viewerGamesStatus = viewer.HandleGameBridgeStatus(gameBridgeStatusOptions)
 	deps.viewerGamesResult = viewer.HandleGameBridgeResult(gameBridgeStore)
 	deps.viewerGamesSessions = viewer.HandleGameBridgeSessions(gameBridgeStore, gameBridgeStatusOptions)
 	deps.viewerGamesEvents = viewer.HandleGameBridgeEvents(gameBridgeStore)
+	deps.viewerGamesDecision = viewer.HandleGameAgentDecision(gameDecisionProvider)
 	gameObserverProxyOptions := viewer.GameObserverProxyOptions{}
 	deps.viewerGamesObserverPage = viewer.HandleGameObserverPage(gameObserverProxyOptions)
 	deps.viewerGamesObserverProxy = viewer.HandleGameObserverProxy(gameObserverProxyOptions)

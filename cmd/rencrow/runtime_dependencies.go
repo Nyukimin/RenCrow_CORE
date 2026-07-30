@@ -86,6 +86,7 @@ type Dependencies struct {
 	viewerGamesResult              http.HandlerFunc                            // RenCrow_GAMES result callback API
 	viewerGamesSessions            http.HandlerFunc                            // RenCrow_GAMES recent session observer API
 	viewerGamesEvents              http.HandlerFunc                            // RenCrow_GAMES candidate event observer API
+	viewerGamesDecision            http.HandlerFunc                            // Agent-owned game turn decision API
 	viewerGamesObserverPage        http.HandlerFunc                            // RenCrow_GAMES live observer UI proxy page
 	viewerGamesLaunch              http.HandlerFunc                            // RenCrow_GAMES launch proxy (マルチペルソナ WP5)
 	gameAutoplay                   *viewer.GameAutoplayService                 // ペルソナ自発プレイランナー (マルチペルソナ WP6)
@@ -429,7 +430,15 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	))
 	reportPath := defaultExecutionReportPath(cfg.WorkspaceDir)
 	gamePlayProvider := selectChatConversationProvider(llmRuntime.ChatWorker, llmRuntime.Chat)
-	buildViewerRuntimeHandlers(cfg, deps, conversationRuntime.L1Store, conversationRuntime.Manager, reportPath, gamePlayProvider)
+	buildViewerRuntimeHandlers(
+		cfg,
+		deps,
+		conversationRuntime.L1Store,
+		conversationRuntime.Manager,
+		reportPath,
+		gamePlayProvider,
+		newGameAgentDecisionService(agents),
+	)
 	deps.webGatherDeps = newWebGatherDiagnosticsDeps(cfg, conversationRuntime.L1Store)
 	deps.advisorScoreCancel = startAdvisorScoreJob(
 		advisorRuntime.Store,

@@ -12,7 +12,7 @@ import (
 
 func TestBuildViewerRuntimeHandlersRegistersSourceRegistryUnavailableHandler(t *testing.T) {
 	deps := &Dependencies{}
-	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil)
+	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil, nil)
 	if deps.viewerSourceRegistry == nil {
 		t.Fatal("viewerSourceRegistry handler is nil")
 	}
@@ -30,7 +30,7 @@ func TestBuildViewerRuntimeHandlersRegistersSourceRegistryUnavailableHandler(t *
 
 func TestBuildViewerRuntimeHandlersRegistersMemoryLayersUnavailableHandler(t *testing.T) {
 	deps := &Dependencies{}
-	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil)
+	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil, nil)
 	if deps.viewerMemoryLayers == nil {
 		t.Fatal("viewerMemoryLayers handler is nil")
 	}
@@ -48,7 +48,7 @@ func TestBuildViewerRuntimeHandlersRegistersMemoryLayersUnavailableHandler(t *te
 
 func TestBuildViewerRuntimeHandlersRegistersRecallTraceUnavailableHandler(t *testing.T) {
 	deps := &Dependencies{}
-	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil)
+	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil, nil)
 	if deps.viewerRecallTraces == nil {
 		t.Fatal("viewerRecallTraces handler is nil")
 	}
@@ -66,7 +66,7 @@ func TestBuildViewerRuntimeHandlersRegistersRecallTraceUnavailableHandler(t *tes
 
 func TestBuildViewerRuntimeHandlersRegistersDomainGraphUnavailableHandler(t *testing.T) {
 	deps := &Dependencies{}
-	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil)
+	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil, nil)
 	if deps.viewerDomainGraphAssertions == nil {
 		t.Fatal("viewerDomainGraphAssertions handler is nil")
 	}
@@ -84,7 +84,7 @@ func TestBuildViewerRuntimeHandlersRegistersDomainGraphUnavailableHandler(t *tes
 
 func TestBuildViewerRuntimeHandlersRegistersMovieDomainGraphSyncUnavailableHandler(t *testing.T) {
 	deps := &Dependencies{}
-	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil)
+	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil, nil)
 	if deps.viewerMovieDomainGraphSync == nil {
 		t.Fatal("viewerMovieDomainGraphSync handler is nil")
 	}
@@ -102,7 +102,7 @@ func TestBuildViewerRuntimeHandlersRegistersMovieDomainGraphSyncUnavailableHandl
 
 func TestBuildViewerRuntimeHandlersRegistersHobbyDomainGraphSyncUnavailableHandler(t *testing.T) {
 	deps := &Dependencies{}
-	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil)
+	buildViewerRuntimeHandlers(&config.Config{}, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil, nil)
 	if deps.viewerHobbyDomainGraphSync == nil {
 		t.Fatal("viewerHobbyDomainGraphSync handler is nil")
 	}
