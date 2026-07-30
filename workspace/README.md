@@ -2,8 +2,9 @@
 
 このdirectoryは`workspace_dir`の既定配置と互換入口です。CORE repositoryが管理する
 portable character bundleの正本ではありません。共有可能なcharacter promptと
-`control/`の宣言元は独立した`RenCrow_Workspace` repository、実行時copyは各deploymentの
-`workspace_dir`です。
+`control/`の実行時正本は各deploymentの`workspace_dir`で、productionの正規pathは
+`~/.rencrow/workspace`です。独立した`RenCrow_Workspace` repositoryは、そのportableな
+非secret要素を保存するbackup／復旧用snapshotです。
 
 ## COREが読み込むもの
 
@@ -23,6 +24,7 @@ bootstrap pathではなく、Mio personaは`persona/mio.md`です。
 
 - CORE repositoryの`prompts/`はfallback／互換promptとIdleChat補正です。
 - `workspace_dir`のcharacter bundleはfallback promptを上書きします。
+- COREは`workspace_dir`を読み込み、RenCrow_Workspace repositoryのcheckoutへ直接接続しません。
 - このdirectoryでGit管理するのはREADMEと明示的に採用した互換Skillだけです。
 - `.gitignore`対象のローカルworkspace内容を、portable正本や配布物として扱いません。
 - OperationMemory、DB、logs、sessions等のruntime stateはrepositoryへ保存しません。

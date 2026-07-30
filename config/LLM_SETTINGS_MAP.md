@@ -17,7 +17,9 @@
 
 - `prompts/`はCORE同梱の既定promptとIdleChat補正です。
 - `workspace_dir/prompts/characters/`のbundleが存在する場合は、character promptを上書きします。
-- portableなcharacter bundleとshared controlの宣言元は独立した`RenCrow_Workspace`です。
+- portableなcharacter bundleとshared controlの実行時正本は`workspace_dir`です。
+  productionでは`~/.rencrow/workspace`を使い、独立した`RenCrow_Workspace` repositoryは
+  そのportableな非secret snapshotとしてbackup／復旧に利用します。
 - 読込順と責務は[`prompts/README.md`](../prompts/README.md)を参照してください。
 
 ## Code references

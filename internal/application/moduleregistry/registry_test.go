@@ -15,6 +15,8 @@ func TestDefaultRegistryResolveExplicitModules(t *testing.T) {
 		{name: "cli", msg: "RenCrow_CMD の rencrowctl chat を修正して", want: "cli"},
 		{name: "portal", msg: "RenCrow_PORTAL のChat画面を修正して", want: "portal"},
 		{name: "games", msg: "RenCrow_GAMES のObserverを修正して", want: "games"},
+		{name: "image", msg: "RenCrow_Image の生成APIを修正して", want: "image"},
+		{name: "workspace", msg: "RenCrow_Workspace のsnapshotを更新して", want: "workspace"},
 		{name: "chat", msg: "rencrow.service の Worker を直して", want: "chat"},
 		{name: "tools", msg: "RenCrow_Tools に検証ツールを追加して", want: "tools"},
 	}
@@ -39,16 +41,19 @@ func TestDefaultRegistryCommandMetadata(t *testing.T) {
 	modules := make(map[string]struct {
 		install string
 		root    string
+		kind    string
 		aliases []string
 	})
 	for _, module := range reg.Modules() {
 		modules[module.ID] = struct {
 			install string
 			root    string
+			kind    string
 			aliases []string
 		}{
 			install: module.InstallCommand,
 			root:    module.Root,
+			kind:    module.Kind,
 			aliases: module.Aliases,
 		}
 	}
@@ -67,6 +72,14 @@ func TestDefaultRegistryCommandMetadata(t *testing.T) {
 	}
 	if got := modules["games"].root; got != "/home/nyukimi/RenCrow/RenCrow_GAMES" {
 		t.Fatalf("games root = %q", got)
+	}
+	if got := modules["workspace"].kind; got != "snapshot" {
+		t.Fatalf("workspace kind = %q, want snapshot", got)
+	}
+	for _, alias := range modules["workspace"].aliases {
+		if alias == "config" {
+			t.Fatal("workspace keeps CORE-owned runtime config alias")
+		}
 	}
 }
 

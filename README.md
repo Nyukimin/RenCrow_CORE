@@ -4,6 +4,9 @@ RenCrow_CORE は、人格を持つ会話、複数エージェントへのルー�
 
 CORE は外部モジュールの実装本体を抱え込まず、契約、ルーティング、状態、同期policy、監査、UI projection を所有します。LLM、STT、TTS、Vision、画像生成、ゲーム世界、横断ツールは、それぞれ独立した RenCrow モジュールが担当します。
 
+RenCrow_Workspaceは外部runtime moduleではなく、実行時の正本
+`~/.rencrow/workspace`をbackup／復旧するためのportableな非secret snapshotです。
+
 ## 主な機能
 
 - Mio、Shiro、Kuro、Midori を使い分ける会話とルーティング

@@ -132,9 +132,9 @@ func DefaultRegistry() *Registry {
 			ID:          "workspace",
 			DisplayName: "RenCrow_Workspace",
 			Root:        path.Join(root, "RenCrow_Workspace"),
-			Kind:        "config",
+			Kind:        "snapshot",
 			OwnerRoute:  "OPS",
-			Aliases:     []string{"rencrow_workspace", "workspace", "config", "成果物", "共有作業領域"},
+			Aliases:     []string{"rencrow_workspace", "workspace snapshot", "workspace repository", "workspace backup repository"},
 		},
 	})
 }
