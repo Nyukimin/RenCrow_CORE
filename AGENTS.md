@@ -141,6 +141,32 @@ Coder が行うのは次のみ：
 
 判断に迷う場合は Safe Build Mode に倒す。Tool Build Mode でも、既存本体、DB、設定、運用、Source Registry、memory、validator に踏み込む場合は Safe Build Mode として扱う。
 
+### 正規runtime経路の復旧
+
+- 正規のmodule経路が動かない場合は、config、credential、process、network、
+  RenCrow LLM Runtime、
+  Backend readiness、logを確認し、その同じ経路を復旧する。
+- E2Eを通す目的で、backend直結、local代替、fake server、test double、別model、
+  module省略経路を独断で作成・起動しない。
+- 代替topologyは、正規経路の失敗箇所と影響を報告したうえで、れんがその例外を
+  明示承認した場合だけ使用できる。
+- 安全な範囲で復旧を試みても正規経路が動かない場合は、失敗境界と観測証拠を報告して
+  停止する。代替経路の結果を正規runtimeまたはAgent-owned E2E成功として扱わない。
+
+### CORE / RenCrow_LLM責務境界
+
+- 製品契約の正本は`docs/04_アーキテクチャ概要.md`の
+  「CORE / RenCrow_LLM Chat境界」とする。
+- COREはModel、provider、Backend、decoder、chat template、token、stop条件、
+  コードフェンス等のモデル固有出力を認識しない。
+- 正式経路は`CORE -> RenCrow LLM Gateway -> RenCrow LLM Runtime -> Backend -> Model`とする。
+- RenCrow LLM RuntimeはCOREに対してユーザーChatと同等の論理message／assistant入出力を
+  保つため、モデル／provider／decoder固有差をBackend／Model adapterと
+  response-normalization境界で吸収する。
+- 構造化出力時のモデル固有外装をCOREのparserやhandlerで補正しない。RenCrow_LLMを修正し、
+  COREにはdomain contractの厳密検証だけを残す。
+- 通常ChatのMarkdownを一律に除去せず、構造化出力contractに基づく正規化と区別する。
+
 ---
 
 ## 絶対に守る検証・状態管理ルール

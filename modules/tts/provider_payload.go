@@ -30,6 +30,11 @@ func BuildSynthesisPayload(input SynthesisPayloadInput) (map[string]any, error) 
 }
 
 func FallbackVoiceID(defaultVoiceID string, emotion *EmotionState) string {
+	trimmedVoiceID := strings.TrimSpace(defaultVoiceID)
+	switch strings.ToLower(trimmedVoiceID) {
+	case "mio", "shiro", "midori", "kuro":
+		return trimmedVoiceID
+	}
 	if emotion != nil {
 		switch strings.ToLower(strings.TrimSpace(emotion.ReasonTrace.VoiceProfile)) {
 		case "lumina_male":
@@ -38,7 +43,7 @@ func FallbackVoiceID(defaultVoiceID string, emotion *EmotionState) string {
 			return "female_01"
 		}
 	}
-	return defaultVoiceID
+	return trimmedVoiceID
 }
 
 func SpeechSpeed(speed float64, emotion *EmotionState) (float64, bool) {

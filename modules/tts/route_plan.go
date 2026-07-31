@@ -23,6 +23,7 @@ type RouteTTSPlanInput struct {
 	Route                 string
 	SessionID             string
 	ResponseID            string
+	ChatCharacterID       string
 	Urgency               string
 	UserAttentionRequired bool
 	Now                   time.Time
@@ -51,6 +52,13 @@ func BuildRouteTTSPlan(input RouteTTSPlanInput) (RouteTTSPlan, bool) {
 	route := normalizeRouteName(input.Route)
 	speaker := SpeakerForRoute(route)
 	voiceID, voiceProfile := RouteVoiceForSpeaker(speaker)
+	if route == "CHAT" {
+		if characterID, chatVoiceID, chatVoiceProfile, ok := ChatVoiceForCharacter(input.ChatCharacterID); ok {
+			speaker = characterID
+			voiceID = chatVoiceID
+			voiceProfile = chatVoiceProfile
+		}
+	}
 	ctx := BuildRouteTTSContext(route, input.Urgency, input.UserAttentionRequired, input.Now)
 	return RouteTTSPlan{
 		SessionID:             sessionID,
@@ -123,6 +131,21 @@ func RouteVoiceForSpeaker(speaker string) (voiceID, voiceProfile string) {
 		return RouteTTSMaleVoiceID, RouteTTSMaleVoiceProfile
 	default:
 		return RouteTTSDefaultVoiceID, RouteTTSDefaultVoiceProfile
+	}
+}
+
+// ChatVoiceForCharacter returns the Gateway voice identity for a public CHAT Agent.
+// Only the four CORE-managed Agent identities are accepted here.
+func ChatVoiceForCharacter(characterID string) (normalizedID, voiceID, voiceProfile string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(characterID)) {
+	case "mio", "midori":
+		normalizedID = strings.ToLower(strings.TrimSpace(characterID))
+		return normalizedID, normalizedID, RouteTTSDefaultVoiceProfile, true
+	case "shiro", "kuro":
+		normalizedID = strings.ToLower(strings.TrimSpace(characterID))
+		return normalizedID, normalizedID, RouteTTSMaleVoiceProfile, true
+	default:
+		return "", "", "", false
 	}
 }
 

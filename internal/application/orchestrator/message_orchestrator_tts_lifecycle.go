@@ -37,10 +37,11 @@ func (l *messageTTSLifecycle) StartSessionForRoute(ctx context.Context, req Proc
 		return
 	}
 	plan, ok := moduletts.BuildRouteTTSPlan(moduletts.RouteTTSPlanInput{
-		Route:      string(decision.Route),
-		SessionID:  ttsSessionID,
-		ResponseID: jobID.String(),
-		Urgency:    "normal",
+		Route:           string(decision.Route),
+		SessionID:       ttsSessionID,
+		ResponseID:      jobID.String(),
+		ChatCharacterID: chatTTSCharacterForRequest(req, decision.Route),
+		Urgency:         "normal",
 	})
 	if !ok {
 		return
@@ -61,6 +62,13 @@ func (l *messageTTSLifecycle) StartSessionForRoute(ctx context.Context, req Proc
 	if err := l.ttsBridge.StartSession(ctx, startReq); err != nil {
 		log.Printf("[MessageOrch] TTS route update degraded: %v", err)
 	}
+}
+
+func chatTTSCharacterForRequest(req ProcessMessageRequest, route routing.Route) string {
+	if route != routing.RouteCHAT {
+		return ""
+	}
+	return normalizeProcessViewerRecipient(req.To)
 }
 
 func (l *messageTTSLifecycle) EndSession(ctx context.Context, ttsSessionID string) {

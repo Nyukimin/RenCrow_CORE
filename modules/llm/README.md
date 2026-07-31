@@ -1,8 +1,8 @@
 # LLM Module
 
 Owns the RenCrow_CORE side of language-model integration boundaries. The
-RenCrow_LLM repository owns the central Gateway, Host Node, physical target
-mapping, capacity, and concrete runtime adapter implementation.
+RenCrow_LLM repository owns RenCrow LLM Gateway, RenCrow LLM Runtime,
+Backend/Model mapping, capacity, and concrete runtime adapter implementation.
 
 Responsibilities:
 

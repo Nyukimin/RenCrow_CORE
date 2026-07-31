@@ -76,7 +76,8 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
   observer 側 launcher が正本であり、その 400 をそのまま透過する
   （二重管理によるドリフト防止）。
 - 共有 observer の `POST /games/launch` へ転送する（base URL は observer
-  proxy と同じ解決順: 設定 > `RENCROW_GAMES_OBSERVER_URL` > 既定。
+  proxy と同じ解決順: 設定 > `RENCROW_GAMES_OBSERVER_URL` >
+  既定`http://127.0.0.1:18796`。
   Linux 常駐では `systemd/user/rencrow.service.d/30-games-observer.conf`
   で設定する）。
 - `reason`（動機）があれば起動成功時に**参加ペルソナ全員**の candidate

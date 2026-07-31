@@ -20,6 +20,26 @@ func TestBuildSynthesisPayloadUsesEmotionVoiceAndProsody(t *testing.T) {
 	}
 }
 
+func TestBuildSynthesisPayloadKeepsExplicitAgentVoice(t *testing.T) {
+	for _, voiceID := range []string{"mio", "shiro", "midori", "kuro"} {
+		t.Run(voiceID, func(t *testing.T) {
+			got, err := BuildSynthesisPayload(SynthesisPayloadInput{
+				Text:           "hello",
+				DefaultVoiceID: voiceID,
+				Emotion: &EmotionState{
+					ReasonTrace: ReasonTrace{VoiceProfile: "lumina_female"},
+				},
+			})
+			if err != nil {
+				t.Fatalf("BuildSynthesisPayload() error = %v", err)
+			}
+			if got["voice_id"] != voiceID {
+				t.Fatalf("voice_id = %q, want explicit Agent voice %q", got["voice_id"], voiceID)
+			}
+		})
+	}
+}
+
 func TestBuildSynthesisPayloadRejectsInvalidSpeed(t *testing.T) {
 	_, err := BuildSynthesisPayload(SynthesisPayloadInput{
 		Text:           "hello",

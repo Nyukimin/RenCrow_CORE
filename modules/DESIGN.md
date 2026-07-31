@@ -132,8 +132,8 @@ Examples:
 - response normalization before Chat display
 - provider health/capability interpretation
 
-RenCrow_LLM owns the central Gateway, Host Node, physical target mapping,
-capacity, and provider adapter implementation.
+RenCrow_LLM owns RenCrow LLM Gateway, RenCrow LLM Runtime, Backend/Model
+mapping, capacity, and provider adapter implementation.
 
 ### tts
 
