@@ -258,6 +258,36 @@ func TestGatewayProviderGenerate_LocalCompatibleMergesProviderOptions(t *testing
 	}
 }
 
+func TestGatewayProviderGenerate_SendsJSONObjectResponseFormat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		responseFormat, ok := reqBody["response_format"].(map[string]interface{})
+		if !ok || responseFormat["type"] != "json_object" {
+			t.Fatalf("response_format = %#v, want json_object", reqBody["response_format"])
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message":       map[string]interface{}{"role": "assistant", "content": `{"intent":"search"}`},
+					"finish_reason": "stop",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	provider := NewGatewayProviderWithOptions("", "Mio", server.URL, 0)
+	if _, err := provider.Generate(context.Background(), llm.GenerateRequest{
+		Messages:       []llm.Message{{Role: "user", Content: "choose one action"}},
+		ResponseFormat: llm.ResponseFormatJSONObject,
+	}); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+}
+
 func TestGatewayProviderGenerate_LocalCompatibleSendsModelContext(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var reqBody map[string]interface{}

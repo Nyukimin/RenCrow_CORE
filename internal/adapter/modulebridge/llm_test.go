@@ -43,9 +43,10 @@ func TestLLMProviderAdapterGenerate(t *testing.T) {
 				},
 			},
 		},
-		MaxTokens:    99,
-		Temperature:  0.3,
-		SystemPrompt: "system",
+		MaxTokens:      99,
+		Temperature:    0.3,
+		SystemPrompt:   "system",
+		ResponseFormat: modulellm.ResponseFormatJSONObject,
 		OnToken: func(token string) {
 			streamed = append(streamed, token)
 		},
@@ -58,6 +59,9 @@ func TestLLMProviderAdapterGenerate(t *testing.T) {
 	}
 	if provider.req.MaxTokens != 99 || provider.req.Temperature != 0.3 || provider.req.SystemPrompt != "system" {
 		t.Fatalf("request fields were not mapped: %+v", provider.req)
+	}
+	if provider.req.ResponseFormat != domainllm.ResponseFormatJSONObject {
+		t.Fatalf("response format was not mapped: %+v", provider.req)
 	}
 	if len(provider.req.Messages) != 1 || len(provider.req.Messages[0].Parts) != 1 {
 		t.Fatalf("message parts were not mapped: %+v", provider.req.Messages)

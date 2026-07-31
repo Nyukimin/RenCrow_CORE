@@ -27,9 +27,15 @@ func TestBuildGameAgentTurnPromptCarriesObservationAndStrictContract(t *testing.
 	}
 }
 
-func TestDecodeAgentGameDecisionRejectsMarkdown(t *testing.T) {
+func TestDecodeAgentGameDecisionRejectsJSONFence(t *testing.T) {
 	if _, err := decodeAgentGameDecision("```json\n{\"intent\":\"search\"}\n```"); err == nil {
-		t.Fatal("expected fenced response to be rejected")
+		t.Fatal("CORE must reject decoder-specific JSON fences")
+	}
+}
+
+func TestDecodeAgentGameDecisionRejectsNonJSONMarkdown(t *testing.T) {
+	if _, err := decodeAgentGameDecision("result:\n```json\n{\"intent\":\"search\"}\n```"); err == nil {
+		t.Fatal("expected prose outside the JSON fence to be rejected")
 	}
 }
 

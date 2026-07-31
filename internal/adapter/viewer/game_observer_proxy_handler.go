@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	defaultGameObserverLiveBase = "http://127.0.0.1:18791"
+	defaultGameObserverLiveBase = "http://127.0.0.1:18796"
 	gameObserverAPIBase         = "/viewer/games/observer-api"
 	gameObserverProxyPrefix     = "/viewer/games/observer-api"
 )
@@ -174,17 +174,17 @@ func rewriteGameObserverHTML(html string) string {
 	replacements := map[string]string{
 		`value="http://127.0.0.1:18791"`: `value="` + gameObserverAPIBase + `"`,
 		`value='http://127.0.0.1:18791'`: `value='` + gameObserverAPIBase + `'`,
+		`value="http://127.0.0.1:18796"`: `value="` + gameObserverAPIBase + `"`,
+		`value='http://127.0.0.1:18796'`: `value='` + gameObserverAPIBase + `'`,
 	}
 	for old, replacement := range replacements {
 		html = strings.Replace(html, old, replacement, 1)
 	}
-	if strings.Contains(html, "rencrowAutoLoadLiveObserver") {
+	if strings.Contains(html, `name="rencrow-game-observer-base"`) {
 		return html
 	}
 	headInjection := `<base href="` + gameObserverAPIBase + `/">
-  <script>
-    window.RenCrowGameObserverLiveBase = "` + gameObserverAPIBase + `";
-  </script>`
+  <meta name="rencrow-game-observer-base" content="` + gameObserverAPIBase + `">`
 	if strings.Contains(html, "<head>") {
 		html = strings.Replace(html, "<head>", "<head>\n  "+headInjection, 1)
 	} else if strings.Contains(html, "</head>") {
@@ -192,19 +192,7 @@ func rewriteGameObserverHTML(html string) string {
 	} else {
 		html = headInjection + "\n" + html
 	}
-	bodyInjection := `<script>
-    window.RenCrowGameObserverLiveBase = "` + gameObserverAPIBase + `";
-    window.addEventListener("DOMContentLoaded", () => {
-      window.setTimeout(() => {
-        window.dispatchEvent(new Event("rencrow-observer-load-live"));
-      }, 50);
-    }, { once: true });
-    window.rencrowAutoLoadLiveObserver = true;
-  </script>`
-	if strings.Contains(html, "</body>") {
-		return strings.Replace(html, "</body>", bodyInjection+"\n</body>", 1)
-	}
-	return html + "\n" + bodyInjection
+	return html
 }
 
 func joinURLPath(basePath string, requestPath string) string {

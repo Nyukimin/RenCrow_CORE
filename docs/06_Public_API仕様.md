@@ -98,6 +98,9 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
   `observation`、`available_actions`、`request`を持つ。
 - COREは`persona`から実Agentを解決し、Agent固有のPersona／Execution Role／
   推論Target経路でstrict JSONの`BrainDecision`を生成する。
+- Game turnのLLM requestは`ResponseFormatJSONObject`を指定し、non-streamで実行する。
+  RenCrow LLM Runtimeが`response_format.type=json_object`に基づいてModel固有の外装を
+  正規化し、COREはコードフェンスを受理せずstrict JSONだけをdomain検証する。
 - Responseは`agent_id`を必須とし、`agent_id`と`persona`はrequestの`persona`に
   一致しなければならない。
 - GAMESは`intent`と`action_plan[].action`を`available_actions`に対して再検証して
@@ -276,6 +279,7 @@ capabilityで制限します。
 | --- | --- | --- |
 | `RenCrow_PORTAL` | `portal-chat` | PORTAL Chat allowlist |
 | `RenCrow_PORTAL` | `portal-idlechat` | IdleChatの読み取り |
+| `RenCrow_PORTAL` | `portal-games` | Agent-owned gameの選択、起動、観戦、session lifecycle |
 | `RenCrow_CMD` | `cmd-chat` | Chat送信、event購読、CORE経由のWAV文字起こし |
 | `RenCrow_CMD` | `cmd-idlechat` | IdleChat status／event／start／stop |
 | `RenCrow_CMD` | `cmd-diagnostics` | 診断・状態取得の読み取り専用 |
@@ -339,9 +343,30 @@ server binaryはChat client commandを持ちません。`rencrowctl chat --audio
 
 - `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りだけを許可する。
 - `Chat`: IdleChatの読み取りに加え、chat、recipient通知、active audio/input ownership、TTS再生、STT入力に必要な公開契約だけをallowlistとする。
-- COREへのproxy requestはmodeに応じて`portal-chat`または`portal-idlechat` profileを付ける。
+- `Games`: 下記のGames allowlistだけを許可し、Agent decision／result callbackを公開しない。
+- COREへのproxy requestはmodeに応じて`portal-chat`、`portal-idlechat`、`portal-games` profileを付ける。
 - Debug、Ops、Repair、LLM管理、設定変更APIはPORTALから遮断する。
 - 新しい公開操作はCORE側のAPI追加だけで自動公開せず、PORTAL側でmethod/pathと契約テストを追加する。
+
+`portal-games`のallowlistは次を正とします。
+
+```text
+GET|HEAD /health
+GET|HEAD /viewer/games/status
+GET|HEAD /viewer/games/sessions
+GET|HEAD /viewer/games/events
+GET|HEAD /viewer/games/observer
+GET|HEAD /viewer/games/observer-api/*
+POST     /viewer/games/launch
+POST     /viewer/games/observer-api/games/sessions/{opaque_session_id}/retry
+POST     /viewer/games/observer-api/games/sessions/{opaque_session_id}/start_over
+```
+
+`POST /viewer/games/decision`、`POST /viewer/games/result`、Observer APIの
+`/games/launch`、frame／summary ingest、Debug／Admin APIは許可しません。
+`retry`と`start_over`はGAMESのsession lifecycle操作であり、turnのActionIntentでは
+ありません。browserからのPOSTはsame-originを必須とし、`session_id`は解析せず
+path segmentとしてURL encodeします。
 
 ## ASSISTANT連携境界
 

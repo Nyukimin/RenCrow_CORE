@@ -25,7 +25,10 @@ func (m *MioAgent) DecideGameTurn(ctx context.Context, prompt string, recipient 
 		llm.Message{Role: "system", Content: gameTurnBoundaryPrompt},
 		llm.Message{Role: "user", Content: prompt},
 	)
-	resp, err := m.llmProvider.Generate(ctx, m.generationRequest(messages, nil))
+	request := m.generationRequest(messages, nil)
+	request.ResponseFormat = llm.ResponseFormatJSONObject
+	request.OnToken = nil
+	resp, err := m.llmProvider.Generate(ctx, request)
 	if err != nil {
 		return "", err
 	}
@@ -37,10 +40,11 @@ func (h *HeavyAgent) DecideGameTurn(ctx context.Context, prompt string) (string,
 		return "", fmt.Errorf("Agent is unavailable")
 	}
 	resp, err := h.llmProvider.Generate(ctx, llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
-		SystemPrompt: h.systemPrompt + "\n" + gameTurnBoundaryPrompt,
-		Messages:     []llm.Message{{Role: "user", Content: prompt}},
-		MaxTokens:    gameTurnMaxTokens,
-		Temperature:  0.3,
+		SystemPrompt:   h.systemPrompt + "\n" + gameTurnBoundaryPrompt,
+		Messages:       []llm.Message{{Role: "user", Content: prompt}},
+		MaxTokens:      gameTurnMaxTokens,
+		Temperature:    0.3,
+		ResponseFormat: llm.ResponseFormatJSONObject,
 	}))
 	if err != nil {
 		return "", err
@@ -53,10 +57,11 @@ func (w *WildAgent) DecideGameTurn(ctx context.Context, prompt string) (string, 
 		return "", fmt.Errorf("Agent is unavailable")
 	}
 	resp, err := w.llmProvider.Generate(ctx, llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
-		SystemPrompt: w.systemPrompt + "\n" + gameTurnBoundaryPrompt,
-		Messages:     []llm.Message{{Role: "user", Content: prompt}},
-		MaxTokens:    gameTurnMaxTokens,
-		Temperature:  0.4,
+		SystemPrompt:   w.systemPrompt + "\n" + gameTurnBoundaryPrompt,
+		Messages:       []llm.Message{{Role: "user", Content: prompt}},
+		MaxTokens:      gameTurnMaxTokens,
+		Temperature:    0.4,
+		ResponseFormat: llm.ResponseFormatJSONObject,
 	}))
 	if err != nil {
 		return "", err

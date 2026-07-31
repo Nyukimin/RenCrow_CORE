@@ -37,12 +37,22 @@ type GenerationMetrics struct {
 
 type GenerationMetricsCallback func(metrics GenerationMetrics)
 
+// ResponseFormat declares the logical assistant output contract.
+// Provider and Model-specific enforcement stays behind the RenCrow_LLM boundary.
+type ResponseFormat string
+
+const (
+	ResponseFormatText       ResponseFormat = ""
+	ResponseFormatJSONObject ResponseFormat = "json_object"
+)
+
 // GenerateRequest はLLM生成リクエスト
 type GenerateRequest struct {
 	Messages        []Message
 	MaxTokens       int
 	Temperature     float64
 	SystemPrompt    string
+	ResponseFormat  ResponseFormat
 	ProviderOptions map[string]any
 	OnToken         StreamCallback // nil = 非ストリーミング
 	OnMetrics       GenerationMetricsCallback

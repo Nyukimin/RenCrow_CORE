@@ -31,11 +31,19 @@ type Message struct {
 
 type StreamCallback func(token string)
 
+type ResponseFormat string
+
+const (
+	ResponseFormatText       ResponseFormat = ""
+	ResponseFormatJSONObject ResponseFormat = "json_object"
+)
+
 type GenerateRequest struct {
 	Messages        []Message      `json:"messages"`
 	MaxTokens       int            `json:"max_tokens,omitempty"`
 	Temperature     float64        `json:"temperature,omitempty"`
 	SystemPrompt    string         `json:"system_prompt,omitempty"`
+	ResponseFormat  ResponseFormat `json:"response_format,omitempty"`
 	ProviderOptions map[string]any `json:"provider_options,omitempty"`
 	OnToken         StreamCallback `json:"-"`
 }

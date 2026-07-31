@@ -46,6 +46,7 @@ func (a *LLMProviderAdapter) Generate(ctx context.Context, req modulellm.Generat
 		MaxTokens:       req.MaxTokens,
 		Temperature:     req.Temperature,
 		SystemPrompt:    req.SystemPrompt,
+		ResponseFormat:  domainllm.ResponseFormat(req.ResponseFormat),
 		ProviderOptions: req.ProviderOptions,
 		OnToken:         domainllm.StreamCallback(req.OnToken),
 	})

@@ -110,6 +110,9 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	p.addProviderOptions(gatewayReq, req.ProviderOptions)
 	p.addModelContextOption(gatewayReq)
 	p.addRenCrowExecutionMetadata(gatewayReq)
+	if err := addResponseFormat(gatewayReq, req.ResponseFormat); err != nil {
+		return llm.GenerateResponse{}, err
+	}
 	if streaming {
 		gatewayReq["stream_options"] = map[string]any{"include_usage": true}
 	}
@@ -190,6 +193,18 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 		TokensUsed:   gatewayResp.Usage.TotalTokens,
 		FinishReason: finishReason,
 	}, nil
+}
+
+func addResponseFormat(payload map[string]interface{}, format llm.ResponseFormat) error {
+	switch format {
+	case llm.ResponseFormatText:
+		return nil
+	case llm.ResponseFormatJSONObject:
+		payload["response_format"] = map[string]any{"type": string(format)}
+		return nil
+	default:
+		return fmt.Errorf("unsupported response format %q", format)
+	}
 }
 
 // Name はプロバイダー名を返す

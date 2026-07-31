@@ -21,6 +21,10 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 		client: "RenCrow_PORTAL",
 		allow:  portalIdleChatInteractionAllowed,
 	},
+	"portal-games": {
+		client: "RenCrow_PORTAL",
+		allow:  portalGamesInteractionAllowed,
+	},
 	"cmd-chat": {
 		client: "RenCrow_CMD",
 		allow: func(method, path string) bool {
@@ -178,4 +182,41 @@ func portalChatInteractionAllowed(method, path string) bool {
 	default:
 		return false
 	}
+}
+
+// portalGamesInteractionAllowed は利用者向けGames画面に必要な公開契約だけを
+// 許可する。Agentのturn判断とresult callbackはGAMESとの内部bridgeであり、
+// PORTALから直接呼び出させない。
+func portalGamesInteractionAllowed(method, path string) bool {
+	if method == http.MethodGet || method == http.MethodHead {
+		switch path {
+		case "/health",
+			"/viewer/games/status",
+			"/viewer/games/sessions",
+			"/viewer/games/events",
+			"/viewer/games/observer":
+			return true
+		default:
+			return strings.HasPrefix(path, "/viewer/games/observer-api/")
+		}
+	}
+	if method != http.MethodPost {
+		return false
+	}
+	if path == "/viewer/games/launch" {
+		return true
+	}
+	return portalGamesSessionActionAllowed(path)
+}
+
+func portalGamesSessionActionAllowed(path string) bool {
+	const prefix = "/viewer/games/observer-api/games/sessions/"
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(path, prefix), "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+		return false
+	}
+	return parts[1] == "retry" || parts[1] == "start_over"
 }

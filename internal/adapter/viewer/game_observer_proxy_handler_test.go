@@ -28,11 +28,8 @@ func TestHandleGameObserverPageRewritesLiveEndpoint(t *testing.T) {
 	if !strings.Contains(body, `value="/viewer/games/observer-api"`) {
 		t.Fatalf("observer page did not rewrite live endpoint: %s", body)
 	}
-	if !strings.Contains(body, "rencrowAutoLoadLiveObserver") {
-		t.Fatalf("observer page did not inject live autoload script: %s", body)
-	}
-	if !strings.Contains(body, `window.RenCrowGameObserverLiveBase = "/viewer/games/observer-api"`) {
-		t.Fatalf("observer page did not inject same-origin observer base: %s", body)
+	if !strings.Contains(body, `<meta name="rencrow-game-observer-base" content="/viewer/games/observer-api">`) {
+		t.Fatalf("observer page did not inject declarative same-origin observer base: %s", body)
 	}
 	if !strings.Contains(body, `<base href="/viewer/games/observer-api/">`) {
 		t.Fatalf("observer page did not route relative assets through the same-origin proxy: %s", body)
@@ -40,8 +37,8 @@ func TestHandleGameObserverPageRewritesLiveEndpoint(t *testing.T) {
 	if strings.Index(body, `<base href="/viewer/games/observer-api/">`) > strings.Index(body, "<style>") {
 		t.Fatalf("observer base must precede inline asset references: %s", body)
 	}
-	if !strings.Contains(body, `window.dispatchEvent(new Event("rencrow-observer-load-live"))`) {
-		t.Fatalf("observer page did not inject live load event: %s", body)
+	if strings.Contains(body, `<script>`) {
+		t.Fatalf("observer rewrite must not inject inline script: %s", body)
 	}
 }
 
