@@ -45,9 +45,9 @@ Browser Actor、Webwright、`rencrow-data`はoptional sidecar／運用機能で�
 ブラウザJavaScriptはブラウザで実行します。
 
 映画カタログのdomain、DB、検索、評価、Public API、importはCOREが所有します。外部サイトの
-巡回CrawlerはRenCrow_Tools sidecarへ分離し、COREからPythonを直接起動しません。Go配布の
-全体方針とVision／Imageの残る実装待ち項目はEcoSystemの[Go distribution](../RenCrow_EcoSystem/docs/go-distribution.md)
-を参照してください。
+巡回CrawlerはRenCrow_Toolsのoptional Go sidecarへ分離し、COREからPythonを直接起動しません。
+Vision／Imageを含む標準配布対象と外部computeの正本は
+[標準Go配布境界](docs/04_アーキテクチャ概要.md#標準go配布境界)を参照してください。
 
 外部利用者向けの`Chat`／`IdleChat`画面は独立した`RenCrow_PORTAL`が所有します。COREの`/viewer`はデバッグ・運用確認専用です。
 

@@ -6,6 +6,16 @@ truth. Runtime database placement follows
 [the configuration reference](../docs/05_設定リファレンス.md), and any external
 action follows [the automatic execution and safety policy](../docs/07_安全・自動実行・データ方針.md).
 
+## Optional Python operation
+
+This workflow is an optional data/operations capability. It is not part of the
+standard Go runtime or standard installer, and CORE can run without Python when
+this capability is not selected. A host that enables the scheduled data jobs
+must provide the documented Python environment explicitly. Missing Python or a
+disabled scheduler remains unavailable and does not trigger automatic runtime
+installation. The canonical system-wide classification is
+[the standard Go distribution boundary](../docs/04_アーキテクチャ概要.md#標準go配布境界).
+
 MVP commands:
 
 ```bash
