@@ -38,6 +38,17 @@ curl http://127.0.0.1:18790/health
 
 API key や token はリポジトリへ保存せず、`${ENV_VAR}` 形式で環境変数から展開してください。
 
+## Go配布境界
+
+標準配布はCOREのGo binaryと設定を基本とし、Python／Node.jsを必須runtimeにしません。
+Browser Actor、Webwright、`rencrow-data`はoptional sidecar／運用機能です。PORTAL／GAMESの
+ブラウザJavaScriptはブラウザで実行します。
+
+映画カタログのdomain、DB、検索、評価、Public API、importはCOREが所有します。外部サイトの
+巡回CrawlerはRenCrow_Tools sidecarへ分離し、COREからPythonを直接起動しません。Go配布の
+全体方針とVision／Imageの残る実装待ち項目はEcoSystemの[Go distribution](../RenCrow_EcoSystem/docs/go-distribution.md)
+を参照してください。
+
 外部利用者向けの`Chat`／`IdleChat`画面は独立した`RenCrow_PORTAL`が所有します。COREの`/viewer`はデバッグ・運用確認専用です。
 
 ## 運用ログ
