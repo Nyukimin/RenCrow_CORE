@@ -462,6 +462,26 @@ func TestHandleMovieCatalogFetchNoCandidatesReturnsStructuredHint(t *testing.T) 
 	}
 }
 
+func TestHandleMovieCatalogFetchReportsCrawlerUnavailable(t *testing.T) {
+	dbPath := seedMovieCatalogTestDB(t)
+	t.Setenv("RENCROW_MOVIE_CATALOG_CRAWLER_URL", "")
+	h := HandleMovieCatalogFetch(MovieCatalogOptions{DBPath: dbPath})
+
+	req := httptest.NewRequest(http.MethodPost, "/viewer/movie-catalog/fetch", strings.NewReader(`{"kind":"movie","url":"https://eiga.com/movie/57573/","max_pages":1}`))
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out movieCatalogFetchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if out.Status != "unavailable" || out.ErrorCode != "MOVIE_CATALOG_CRAWLER_UNAVAILABLE" {
+		t.Fatalf("unexpected unavailable response: %+v", out)
+	}
+}
+
 func TestResolveMovieCatalogFetchTargetRejectsKindMismatch(t *testing.T) {
 	dbPath := seedMovieCatalogTestDB(t)
 	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")

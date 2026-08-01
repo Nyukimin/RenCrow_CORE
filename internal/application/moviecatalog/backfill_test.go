@@ -3,6 +3,7 @@ package moviecatalog
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -48,46 +49,29 @@ func TestNextBackfillTargetUsesPersonAfterMoviesAreFetched(t *testing.T) {
 func TestRunOnceInvokesCrawlerForOneTarget(t *testing.T) {
 	path, db := seedBackfillDBPath(t)
 	db.Close()
-	var gotArgs []string
 	svc := NewBackfillService(BackfillOptions{
 		DBPath:       path,
-		WorkspaceDir: "/repo",
 		InitialDelay: -1,
 		Timeout:      time.Second,
-		Runner: func(ctx context.Context, workspaceDir string, args []string, timeout time.Duration) ([]byte, error) {
-			if workspaceDir != "/repo" {
-				t.Fatalf("unexpected workspace dir: %s", workspaceDir)
+		Crawler: crawlerFunc(func(ctx context.Context, request CrawlerRequest) (CrawlResult, error) {
+			artifact := filepath.Join(request.ArtifactDir, "crawler-result.jsonl")
+			if err := os.WriteFile(artifact, []byte(`{"kind":"movie","movie_id":"200","title":"Fetched Movie","url":"https://eiga.com/movie/200/","synopsis":"summary"}
+`), 0o644); err != nil {
+				return CrawlResult{}, err
 			}
-			gotArgs = append([]string(nil), args...)
-			return []byte("ok 1/1"), nil
-		},
+			return CrawlResult{JobID: "job-1", Output: "ok 1/1", ArtifactPath: artifact}, nil
+		}),
 	})
-
-	toolsRoot := filepath.Join(t.TempDir(), "RenCrow_Tools")
-	t.Setenv("RENCROW_TOOLS_ROOT", toolsRoot)
 
 	result, err := svc.RunOnce(context.Background())
 	if err != nil {
 		t.Fatalf("run once: %v", err)
 	}
-	if result.Status != "fetched" || result.Target.Kind != "movie" {
+	if result.Status != "fetched" || result.Target.Kind != "movie" || result.JobID != "job-1" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	want := []string{
-		filepath.Join(toolsRoot, "tools", "eiga_catalog", "eiga_catalog.py"),
-		"--seed-url", "https://eiga.com/movie/200/",
-		"--max-pages", "1",
-		"--delay", "2",
-		"--db", path,
-		"--jsonl", filepath.Join(filepath.Dir(path), "eiga_catalog.jsonl"),
-	}
-	if len(gotArgs) != len(want) {
-		t.Fatalf("args length mismatch\n got: %+v\nwant: %+v", gotArgs, want)
-	}
-	for i := range want {
-		if gotArgs[i] != want[i] {
-			t.Fatalf("arg[%d] = %q, want %q\nall args: %+v", i, gotArgs[i], want[i], gotArgs)
-		}
+	if result.ImportedMovies != 1 {
+		t.Fatalf("expected one imported movie: %+v", result)
 	}
 }
 
@@ -121,6 +105,12 @@ var errTestBackfill = backfillTestError{}
 type backfillTestError struct{}
 
 func (backfillTestError) Error() string { return "backfill test error" }
+
+type crawlerFunc func(context.Context, CrawlerRequest) (CrawlResult, error)
+
+func (f crawlerFunc) Crawl(ctx context.Context, request CrawlerRequest) (CrawlResult, error) {
+	return f(ctx, request)
+}
 
 func seedBackfillDB(t *testing.T) *sql.DB {
 	t.Helper()

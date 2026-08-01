@@ -10,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -26,7 +25,8 @@ const maxMovieCatalogLimit = 50
 const maxMovieCatalogFetchPages = 20
 
 type MovieCatalogOptions struct {
-	DBPath string
+	DBPath  string
+	Crawler moviecatalog.Crawler
 }
 
 type movieCatalogResponse struct {
@@ -126,16 +126,25 @@ type movieCatalogFetchCandidate struct {
 }
 
 type movieCatalogFetchResponse struct {
-	Available  bool                         `json:"available"`
-	DBPath     string                       `json:"db_path"`
-	Status     string                       `json:"status"`
-	Kind       string                       `json:"kind,omitempty"`
-	Query      string                       `json:"query,omitempty"`
-	URL        string                       `json:"url,omitempty"`
+	Available      bool   `json:"available"`
+	DBPath         string `json:"db_path"`
+	Status         string `json:"status"`
+	Kind           string `json:"kind,omitempty"`
+	Query          string `json:"query,omitempty"`
+	URL            string `json:"url,omitempty"`
+	JobID          string `json:"job_id,omitempty"`
+	ArtifactSHA256 string `json:"artifact_sha256,omitempty"`
+	ArtifactBytes  int64  `json:"artifact_bytes,omitempty"`
+	ImportedMovies int    `json:"imported_movies,omitempty"`
+	ImportedPeople int    `json:"imported_people,omitempty"`
+	ImportedEdges  int    `json:"imported_edges,omitempty"`
+	// Deprecated compatibility fields. CORE no longer exposes a local Python
+	// command; sidecar metadata is returned through job_id/artifact fields.
 	Command    []string                     `json:"command,omitempty"`
 	Stdout     string                       `json:"stdout,omitempty"`
 	Stderr     string                       `json:"stderr,omitempty"`
 	Candidates []movieCatalogFetchCandidate `json:"candidates,omitempty"`
+	ErrorCode  string                       `json:"error_code,omitempty"`
 	Error      string                       `json:"error,omitempty"`
 }
 
@@ -256,27 +265,76 @@ func HandleMovieCatalogFetch(opts MovieCatalogOptions) http.HandlerFunc {
 			return
 		}
 
-		cmdArgs := movieCatalogFetchCommandArgs(targetURL, dbPath, maxPages, req.FollowLinks, req.IncludePersonFilmography)
 		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(maxPages*8+20)*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "python3", cmdArgs...)
-		cmd.Dir = "."
-		out, runErr := cmd.CombinedOutput()
+		crawler := opts.Crawler
+		if crawler == nil {
+			crawler = moviecatalog.NewConfiguredCrawler(time.Duration(maxPages*8+20) * time.Second)
+		}
+		crawlResult, runErr := crawler.Crawl(ctx, moviecatalog.CrawlerRequest{
+			RequestID:                strings.TrimSpace(req.Kind + ":" + targetURL),
+			Kind:                     req.Kind,
+			URL:                      targetURL,
+			MaxPages:                 maxPages,
+			FollowLinks:              req.FollowLinks,
+			IncludePersonFilmography: req.IncludePersonFilmography,
+			Delay:                    2 * time.Second,
+			ArtifactDir:              filepath.Dir(dbPath),
+		})
 		resp := movieCatalogFetchResponse{
-			Available: true,
-			DBPath:    dbPath,
-			URL:       targetURL,
-			Command:   append([]string{"python3"}, cmdArgs...),
-			Stdout:    string(out),
-			Status:    "ok",
+			Available:      true,
+			DBPath:         dbPath,
+			URL:            targetURL,
+			Status:         "ok",
+			JobID:          crawlResult.JobID,
+			Stdout:         crawlResult.Output,
+			ArtifactSHA256: crawlResult.ArtifactSHA256,
+			ArtifactBytes:  crawlResult.ArtifactBytes,
 		}
 		if runErr != nil {
 			resp.Status = "error"
+			status := http.StatusInternalServerError
+			if errors.Is(runErr, moviecatalog.ErrCrawlerUnavailable) {
+				resp.Status = "unavailable"
+				resp.ErrorCode = "MOVIE_CATALOG_CRAWLER_UNAVAILABLE"
+				status = http.StatusServiceUnavailable
+			} else {
+				var serviceErr *moviecatalog.CrawlerServiceError
+				if errors.As(runErr, &serviceErr) {
+					resp.ErrorCode = serviceErr.CrawlerErrorCode()
+					if serviceErr.StatusCode == http.StatusBadGateway || serviceErr.StatusCode == http.StatusServiceUnavailable || serviceErr.StatusCode == http.StatusGatewayTimeout {
+						resp.Status = "unavailable"
+						if resp.ErrorCode == "" {
+							resp.ErrorCode = "MOVIE_CATALOG_CRAWLER_UNAVAILABLE"
+						}
+						status = http.StatusServiceUnavailable
+					}
+				}
+			}
 			resp.Error = runErr.Error()
-			log.Printf("[MovieCatalog] fetch failed url=%s max_pages=%d err=%v output=%s", targetURL, maxPages, runErr, strings.TrimSpace(string(out)))
-			writeMovieCatalogFetchJSONStatus(w, http.StatusInternalServerError, resp)
+			log.Printf("[MovieCatalog] fetch failed url=%s max_pages=%d err=%v output=%s", targetURL, maxPages, runErr, strings.TrimSpace(resp.Stdout))
+			writeMovieCatalogFetchJSONStatus(w, status, resp)
 			return
 		}
+		if strings.TrimSpace(crawlResult.ArtifactPath) == "" {
+			resp.Status = "error"
+			resp.ErrorCode = "MOVIE_CATALOG_ARTIFACT_MISSING"
+			resp.Error = "crawler returned no staged artifact"
+			writeMovieCatalogFetchJSONStatus(w, http.StatusBadGateway, resp)
+			return
+		}
+		defer os.Remove(crawlResult.ArtifactPath)
+		imported, importErr := moviecatalog.ImportJSONLFile(ctx, db, crawlResult.ArtifactPath, targetURL)
+		if importErr != nil {
+			resp.Status = "error"
+			resp.ErrorCode = "MOVIE_CATALOG_IMPORT_FAILED"
+			resp.Error = importErr.Error()
+			writeMovieCatalogFetchJSONStatus(w, http.StatusBadGateway, resp)
+			return
+		}
+		resp.ImportedMovies = imported.Movies
+		resp.ImportedPeople = imported.People
+		resp.ImportedEdges = imported.Edges
 		writeMovieCatalogFetchJSON(w, resp)
 	}
 }
@@ -537,40 +595,6 @@ LIMIT ?`, like, like, query, limit)
 		out = append(out, item)
 	}
 	return out, rows.Err()
-}
-
-func movieCatalogFetchCommandArgs(targetURL string, dbPath string, maxPages int, followLinks bool, includeFilmography bool) []string {
-	outDir := filepath.Dir(dbPath)
-	jsonlPath := filepath.Join(outDir, "eiga_catalog.jsonl")
-	args := []string{
-		defaultRenCrowToolsPath("tools", "eiga_catalog", "eiga_catalog.py"),
-		"--seed-url", targetURL,
-		"--max-pages", strconv.Itoa(maxPages),
-		"--delay", "2",
-		"--db", dbPath,
-		"--jsonl", jsonlPath,
-	}
-	if followLinks {
-		args = append(args, "--follow-links")
-	}
-	if includeFilmography {
-		args = append(args, "--include-person-filmography")
-	}
-	return args
-}
-
-func defaultRenCrowToolsPath(parts ...string) string {
-	root := strings.TrimSpace(os.Getenv("RENCROW_TOOLS_ROOT"))
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err == nil && strings.TrimSpace(home) != "" {
-			root = filepath.Join(home, "RenCrow", "RenCrow_Tools")
-		}
-	}
-	if root == "" {
-		root = filepath.Join("RenCrow", "RenCrow_Tools")
-	}
-	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 func actionOrDefault(action string) string {

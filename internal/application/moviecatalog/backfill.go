@@ -3,12 +3,11 @@ package moviecatalog
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -25,26 +24,22 @@ const (
 
 type BackfillOptions struct {
 	DBPath       string
-	WorkspaceDir string
 	Interval     time.Duration
 	InitialDelay time.Duration
 	Timeout      time.Duration
 	MaxPages     int
 	CrawlerDelay time.Duration
-	Runner       CommandRunner
+	Crawler      Crawler
 }
-
-type CommandRunner func(ctx context.Context, workspaceDir string, args []string, timeout time.Duration) ([]byte, error)
 
 type BackfillService struct {
 	dbPath       string
-	workspaceDir string
 	interval     time.Duration
 	initialDelay time.Duration
 	timeout      time.Duration
 	maxPages     int
 	crawlerDelay time.Duration
-	runner       CommandRunner
+	crawler      Crawler
 }
 
 type BackfillTarget struct {
@@ -55,9 +50,13 @@ type BackfillTarget struct {
 }
 
 type BackfillResult struct {
-	Status string
-	Target BackfillTarget
-	Output string
+	Status         string
+	Target         BackfillTarget
+	Output         string
+	JobID          string
+	ImportedMovies int
+	ImportedPeople int
+	ImportedEdges  int
 }
 
 func NewBackfillService(opts BackfillOptions) *BackfillService {
@@ -81,22 +80,17 @@ func NewBackfillService(opts BackfillOptions) *BackfillService {
 	if opts.CrawlerDelay <= 0 {
 		opts.CrawlerDelay = defaultCrawlerDelaySec * time.Second
 	}
-	if opts.Runner == nil {
-		opts.Runner = RunCrawlerCommand
-	}
-	workspaceDir := strings.TrimSpace(opts.WorkspaceDir)
-	if workspaceDir == "" {
-		workspaceDir = "."
+	if opts.Crawler == nil {
+		opts.Crawler = NewConfiguredCrawler(opts.Timeout)
 	}
 	return &BackfillService{
 		dbPath:       strings.TrimSpace(opts.DBPath),
-		workspaceDir: workspaceDir,
 		interval:     opts.Interval,
 		initialDelay: opts.InitialDelay,
 		timeout:      opts.Timeout,
 		maxPages:     opts.MaxPages,
 		crawlerDelay: opts.CrawlerDelay,
-		runner:       opts.Runner,
+		crawler:      opts.Crawler,
 	}
 }
 
@@ -131,7 +125,9 @@ func (s *BackfillService) Start(ctx context.Context) <-chan BackfillResult {
 func (s *BackfillService) runAndPublish(ctx context.Context, results chan<- BackfillResult) {
 	result, err := s.RunOnce(ctx)
 	if err != nil {
-		result.Status = "error"
+		if result.Status == "" {
+			result.Status = "error"
+		}
 		result.Output = joinErrorOutput(result.Output, err)
 	}
 	select {
@@ -161,17 +157,36 @@ func (s *BackfillService) RunOnce(ctx context.Context) (BackfillResult, error) {
 	if err := os.MkdirAll(filepath.Dir(s.dbPath), 0o755); err != nil {
 		return BackfillResult{Status: "error", Target: target}, err
 	}
-	args := crawlerArgs(target.URL, s.dbPath, s.maxPages, s.crawlerDelay)
-	output, err := s.runner(ctx, s.workspaceDir, args, s.timeout)
-	result := BackfillResult{
-		Status: "fetched",
-		Target: target,
-		Output: strings.TrimSpace(string(output)),
+	result := BackfillResult{Status: "fetched", Target: target}
+	crawlResult, err := s.crawler.Crawl(ctx, CrawlerRequest{
+		RequestID:   strings.TrimSpace(target.Kind + ":" + target.ID),
+		Kind:        target.Kind,
+		URL:         target.URL,
+		MaxPages:    s.maxPages,
+		Delay:       s.crawlerDelay,
+		ArtifactDir: filepath.Dir(s.dbPath),
+	})
+	if err != nil {
+		if errors.Is(err, ErrCrawlerUnavailable) {
+			result.Status = "unavailable"
+		}
+		return result, err
 	}
+	result.JobID = crawlResult.JobID
+	result.Output = strings.TrimSpace(crawlResult.Output)
+	if strings.TrimSpace(crawlResult.ArtifactPath) == "" {
+		return result, fmt.Errorf("%w: crawler returned no staged artifact", ErrCrawlerProtocol)
+	}
+	defer os.Remove(crawlResult.ArtifactPath)
+	imported, err := ImportJSONLFile(ctx, db, crawlResult.ArtifactPath, target.URL)
 	if err != nil {
 		result.Status = "error"
 		return result, err
 	}
+	result.ImportedMovies = imported.Movies
+	result.ImportedPeople = imported.People
+	result.ImportedEdges = imported.Edges
+	result.Output = joinImportOutput(result.Output, imported)
 	return result, nil
 }
 
@@ -221,48 +236,6 @@ func scanBackfillTarget(row *sql.Row, kind string) (BackfillTarget, bool, error)
 	return target, true, nil
 }
 
-func crawlerArgs(targetURL string, dbPath string, maxPages int, crawlerDelay time.Duration) []string {
-	outDir := filepath.Dir(dbPath)
-	delaySec := strconv.FormatFloat(crawlerDelay.Seconds(), 'f', -1, 64)
-	return []string{
-		defaultRenCrowToolsPath("tools", "eiga_catalog", "eiga_catalog.py"),
-		"--seed-url", targetURL,
-		"--max-pages", strconv.Itoa(maxPages),
-		"--delay", delaySec,
-		"--db", dbPath,
-		"--jsonl", filepath.Join(outDir, "eiga_catalog.jsonl"),
-	}
-}
-
-func defaultRenCrowToolsPath(parts ...string) string {
-	root := strings.TrimSpace(os.Getenv("RENCROW_TOOLS_ROOT"))
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err == nil && strings.TrimSpace(home) != "" {
-			root = filepath.Join(home, "RenCrow", "RenCrow_Tools")
-		}
-	}
-	if root == "" {
-		root = filepath.Join("RenCrow", "RenCrow_Tools")
-	}
-	return filepath.Join(append([]string{root}, parts...)...)
-}
-
-func RunCrawlerCommand(ctx context.Context, workspaceDir string, args []string, timeout time.Duration) ([]byte, error) {
-	if timeout <= 0 {
-		timeout = defaultBackfillTimeout
-	}
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	cmd := exec.CommandContext(runCtx, "python3", args...)
-	cmd.Dir = workspaceDir
-	out, err := cmd.CombinedOutput()
-	if runCtx.Err() == context.DeadlineExceeded {
-		return out, fmt.Errorf("movie catalog crawler timed out after %s", timeout)
-	}
-	return out, err
-}
-
 func joinErrorOutput(output string, err error) string {
 	if err == nil {
 		return strings.TrimSpace(output)
@@ -272,6 +245,14 @@ func joinErrorOutput(output string, err error) string {
 		return err.Error()
 	}
 	return output + "\n" + err.Error()
+}
+
+func joinImportOutput(output string, imported CatalogImportResult) string {
+	line := fmt.Sprintf("imported movies=%d people=%d edges=%d", imported.Movies, imported.People, imported.Edges)
+	if output = strings.TrimSpace(output); output != "" {
+		return output + "\n" + line
+	}
+	return line
 }
 
 func LogBackfillResult(prefix string, result BackfillResult) {

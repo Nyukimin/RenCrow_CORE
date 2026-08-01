@@ -364,6 +364,11 @@ func startMovieCatalogBackfillJob(cfg *config.Config, reporter backgroundJobFail
 		log.Printf("[MovieCatalogBackfill] skipped: movie catalog DB not found")
 		return
 	}
+	crawlerURL := moviecatalogapp.ResolveCrawlerBaseURL()
+	if crawlerURL == "" {
+		log.Printf("[MovieCatalogBackfill] skipped: RENCROW_MOVIE_CATALOG_CRAWLER_URL is not configured")
+		return
+	}
 	interval := movieCatalogBackfillDurationEnv("RENCROW_MOVIE_CATALOG_BACKFILL_INTERVAL_SEC", 5*time.Minute, time.Minute)
 	initialDelay := movieCatalogBackfillDurationEnv("RENCROW_MOVIE_CATALOG_BACKFILL_INITIAL_DELAY_SEC", 10*time.Second, 0)
 	timeout := movieCatalogBackfillDurationEnv("RENCROW_MOVIE_CATALOG_BACKFILL_TIMEOUT_SEC", 90*time.Second, 10*time.Second)
@@ -372,12 +377,12 @@ func startMovieCatalogBackfillJob(cfg *config.Config, reporter backgroundJobFail
 
 	job := moviecatalogapp.NewBackfillService(moviecatalogapp.BackfillOptions{
 		DBPath:       dbPath,
-		WorkspaceDir: ".",
 		Interval:     interval,
 		InitialDelay: initialDelay,
 		Timeout:      timeout,
 		MaxPages:     maxPages,
 		CrawlerDelay: crawlerDelay,
+		Crawler:      moviecatalogapp.NewHTTPCrawler(crawlerURL, timeout),
 	})
 	go func() {
 		for result := range job.Start(context.Background()) {
