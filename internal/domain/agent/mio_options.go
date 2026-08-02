@@ -40,6 +40,24 @@ func (m *MioAgent) WithSystemPrompt(prompt string) *MioAgent {
 	return m
 }
 
+// WithAgentContractsPrompt injects the validated, bounded Agent Registry
+// contract index used by Mio for routing and result integration. Persona text
+// is intentionally kept separate from this runtime context.
+func (m *MioAgent) WithAgentContractsPrompt(prompt string) *MioAgent {
+	m.agentContractsPrompt = strings.TrimSpace(prompt)
+	return m
+}
+
+// WithRecentExpressionHistory seeds the bounded wording history used for
+// nearby repetition avoidance. It does not change factual conversation
+// memory.
+func (m *MioAgent) WithRecentExpressionHistory(history MioExpressionHistory) *MioAgent {
+	m.expressionHistoryMu.Lock()
+	m.expressionHistory = history.normalized()
+	m.expressionHistoryMu.Unlock()
+	return m
+}
+
 func (m *MioAgent) WithViewerRecipientPrompts(prompts map[string]string) *MioAgent {
 	m.viewerPrompts = make(map[string]string, len(prompts))
 	for name, prompt := range prompts {

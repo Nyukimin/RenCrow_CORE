@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -48,20 +49,23 @@ type WebSearchResult struct {
 
 // MioAgent は Chat（会話・意思決定）を担当するエンティティ
 type MioAgent struct {
-	llmProvider        llm.LLMProvider
-	classifier         Classifier
-	ruleDictionary     RuleDictionary
-	toolRunner         ToolRunner
-	mcpClient          MCPClient
-	conversationEngine conversation.ConversationEngine // v5.1: 会話エンジン（nilを許容）
-	kbManager          KBManager                       // Phase 4.2: KB自動保存用（nilを許容）
-	searchCacheManager SearchCacheManager              // L1 Search Cache連携（nilを許容）
-	userMemoryManager  UserMemoryManager               // Memory v0.1: user:<uid> 操作用（nilを許容）
-	personaEditor      PersonaEditor                   // ペルソナ自己編集用（nilを許容）
-	recentContext      func(context.Context, int) (string, error)
-	systemPrompt       string
-	viewerPrompts      map[string]string
-	generation         MioGenerationOptions
+	llmProvider          llm.LLMProvider
+	classifier           Classifier
+	ruleDictionary       RuleDictionary
+	toolRunner           ToolRunner
+	mcpClient            MCPClient
+	conversationEngine   conversation.ConversationEngine // v5.1: 会話エンジン（nilを許容）
+	kbManager            KBManager                       // Phase 4.2: KB自動保存用（nilを許容）
+	searchCacheManager   SearchCacheManager              // L1 Search Cache連携（nilを許容）
+	userMemoryManager    UserMemoryManager               // Memory v0.1: user:<uid> 操作用（nilを許容）
+	personaEditor        PersonaEditor                   // ペルソナ自己編集用（nilを許容）
+	recentContext        func(context.Context, int) (string, error)
+	systemPrompt         string
+	viewerPrompts        map[string]string
+	agentContractsPrompt string
+	expressionHistoryMu  sync.RWMutex
+	expressionHistory    MioExpressionHistory
+	generation           MioGenerationOptions
 }
 
 // NewMioAgent は新しいMioAgentを作成
@@ -84,6 +88,7 @@ func NewMioAgent(
 		searchCacheManager: nil, // WithSearchCacheManager() でセット
 		userMemoryManager:  nil, // WithUserMemoryManager() でセット
 		generation:         defaultMioGenerationOptions(),
+		expressionHistory:  MioExpressionHistory{},
 	}
 }
 
@@ -222,6 +227,12 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 			Content: prompt,
 		})
 	}
+	if prompt := m.runtimeMioPromptContext(t); prompt != "" {
+		messages = append(messages, llm.Message{
+			Role:    "system",
+			Content: prompt,
+		})
+	}
 
 	// ペルソナ調整意図を検出 → 自己編集
 	if m.personaEditor != nil && detectPersonaEditIntent(userMessage) {
@@ -236,16 +247,20 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 					fmt.Printf("WARN: EndTurn failed: %v\n", err)
 				}
 			}
+			m.rememberExpression(result)
 			return result, nil
 		}
 	}
 
-	// Google API quota保護のため、Web検索は明示的な検索/調査指示がある時だけ使う。
+	// Google API quota保護のため、通常は明示的な検索/調査指示がある時だけ使う。
+	// 朝刊キャッシュ未準備時のニュース収集は、Mioではなく専用Workerが担当し、
+	// 収集済みの構造化結果だけをcontext経由で受け取る。
+	searchQuery := userMessage
 	needsSearch := needsWebSearch(userMessage)
 
 	// Web検索を実行してコンテキストに追加
 	if needsSearch && m.toolRunner != nil {
-		searchResult, err := m.executeWebSearch(ctx, userMessage)
+		searchResult, err := m.executeWebSearch(ctx, searchQuery)
 		if err == nil && searchResult != "" {
 			messages = append(messages, llm.Message{
 				Role:    "system",
@@ -278,6 +293,12 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 			})
 		}
 	}
+	if brief, ok := dailyNewsBriefFromContext(ctx); ok {
+		messages = append(messages, llm.Message{
+			Role:    "system",
+			Content: dailyNewsBriefSystemPrompt(brief),
+		})
+	}
 
 	// ユーザーメッセージを最後に追加
 	messages = append(messages, userMessageWithAttachments(userMessage, t.Attachments()))
@@ -303,6 +324,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 			finalGeneration = retryResp
 		}
 	}
+	m.rememberExpression(response)
 	if onMetrics := llm.GenerationMetricsCallbackFromContext(ctx); onMetrics != nil && (finalGeneration.TokensUsed > 0 || finalGeneration.TokensPerSecond > 0) {
 		onMetrics(llm.GenerationMetrics{
 			CompletionTokens: finalGeneration.TokensUsed,

@@ -22,7 +22,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET/POST /viewer/character-runtime` | Character一覧、複数Character Roundと会話ID |
 | `/viewer/status`, `/viewer/agents` | runtime と agent の状態 |
 | `GET /viewer/idlechat/status` | IdleChat状態と読み取り専用の`forecast_stock` snapshot |
-| `GET /viewer/idlechat/collection` | IdleChat日次収集cache、次回04:00 JST、取得元、利用toolの読み取り専用snapshot |
+| `GET /viewer/idlechat/collection` | 日次収集の入力cache、次回04:00 JST、取得元、利用toolの読み取り専用snapshot。ユーザー向けニュース取得のAPIではない |
 | `POST /viewer/idlechat/start`, `POST /viewer/idlechat/stop` | IdleChatの開始・停止。認可されたwrite clientだけが利用する |
 | `/viewer/jobs`, `/viewer/logs` | job と監査可能な log |
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
@@ -264,6 +264,19 @@ Python crawlerや別endpointへfallbackしません。このViewer write APIもP
 Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCOREが生成します。EconomicTask、Delivery、RevenueEvent、Reflectionの作成では、参照元Opportunityまたは上流entityの`trace_id`を引き継ぎ、別の値へ黙って付け替えません。`POST /viewer/revenue/deliveries`は`delivery_id`、`trace_id`、`delivery_kind`、`status`、任意の上流IDとtarget/evidenceを受けます。`external_action=true`かつ`status=completed`では、許可された`policy_decision_id`と`evidence`が必須です。
 
 `POST /viewer/revenue/opportunities/workstream-goal`は`opportunity_id`と`workstream_id`を受け、draft Goal、pending-review Artifact、`decision_type=economic_opportunity_execution`のPolicy Decisionを同じ`trace_id`で保存して返します。既存Opportunityに`trace_id`がない場合は、このuse caseが生成してOpportunityへ保存します。responseの`external_actions_applied`は`false`であり、このAPI自体は外部side effectを実行しません。後続の実行requestは同期policy判定で許可または拒否します。
+
+## ニュースIntent contract
+
+ニュース要求は、IdleChatの入力やViewerのcollection endpointを経由させず、Chatの前段Intentとして扱います。
+
+| Intent | 代表的な入力 | 最初に読むデータ | 第一応答者 | 外部検索 |
+| --- | --- | --- | --- | --- |
+| `daily_news_brief` | 「今朝のニュースを教えて」「朝のニュースは？」 | 当日04:00 JSTの`DailyNewsBrief` | Mio | cacheが空、未準備、または古い場合のみ |
+| `live_news_search` | 「最新のニュース」「速報」「今のニュース」 | `LiveNewsSearch` | Mio | 必須 |
+
+`daily_news_brief`は`ready`または`partial`の準備済み項目を番号付きリストで返し、追加入力の「2番を詳しく」は同じbriefのitem IDを参照します。`pending`、`enriching`、`fallback`、空cacheでは確認不能な内容を推測せず、`LiveNewsSearch`へフォールバックしたか、朝刊が未準備であることを回答へ明記します。Mioが利用できない場合に限り、Shiroが同じ準備済みデータを要約できます。`DailyNewsBrief`の対象日・取得時刻と、`LiveNewsSearch`の検索時刻は必ず区別して返します。
+
+`GET /viewer/idlechat/collection`は観測専用snapshotであり、Chatがユーザー向けニュースを取得する経路ではありません。ChatはCORE内部の`DailyNewsBriefReader`を介して`DailyNewsBrief`を読み取ります。
 
 ## Interaction client共通意味論
 

@@ -33,6 +33,23 @@ func TestLoadReadsAndRendersSharedAgentControl(t *testing.T) {
 			t.Fatalf("Mio control prompt missing %q:\n%s", want, mioPrompt)
 		}
 	}
+	mioContracts := control.PromptForMio()
+	for _, want := range []string{
+		"Mio Agent Contract Index",
+		"shiro",
+		"aka",
+		"ao",
+		"gin",
+		"kuro",
+		"midori",
+		"delegatable_work",
+		"expected_output",
+		"return_to_mio",
+	} {
+		if !strings.Contains(mioContracts, want) {
+			t.Fatalf("Mio contract index missing %q:\n%s", want, mioContracts)
+		}
+	}
 
 	midoriPrompt := control.PromptFor("midori")
 	for _, want := range []string{"RenCrow_Image", "Forge Neo", "codex.run", "ImageGen", "automatic_fallback: false"} {
@@ -128,6 +145,22 @@ agents:
     role: wild
     capabilities: [visual_creation]
     non_goals: [route_destination_selection]
+  aka:
+    role: coder1
+    capabilities: [primary_implementation]
+    non_goals: [patch_application]
+  ao:
+    role: coder2
+    capabilities: [supporting_implementation]
+    non_goals: [patch_application]
+  kin:
+    role: coder3
+    capabilities: [security_review]
+    non_goals: [patch_application]
+  gin:
+    role: coder4
+    capabilities: [integration_review]
+    non_goals: [patch_application]
 `,
 		"routing.yaml": `version: 1
 fallback: CHAT
@@ -186,6 +219,14 @@ agents:
         preferred: RenCrow_Image / Forge Neo
         alternatives: [codex.run / ImageGen]
         automatic_fallback: false
+  aka:
+    access: proposal_only
+  ao:
+    access: proposal_only
+  kin:
+    access: proposal_only
+  gin:
+    access: proposal_only
 `,
 	}
 	for name, content := range files {

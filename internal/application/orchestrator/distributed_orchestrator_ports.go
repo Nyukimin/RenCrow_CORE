@@ -76,6 +76,7 @@ func (o *DistributedOrchestrator) SetHeavyAgent(heavy HeavyAgent) {
 }
 
 func (o *DistributedOrchestrator) SetShiroChatAgent(chat MioAgent) {
+	o.shiroChat = chat
 	if o.routes != nil {
 		o.routes.SetShiroChatAgent(chat)
 	}

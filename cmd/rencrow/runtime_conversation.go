@@ -165,24 +165,35 @@ func buildConversationRuntime(
 			webGatherUseCase.WithFetchProvider("webwright", webgatherinfra.NewWebwrightFetcher(webwrightFetcherConfigFromRuntime(cfg.WebwrightFetch)))
 		}
 		dailySourceFetcher = webGatherUseCase
-		if l1Store == nil {
-			log.Printf("Daily source brief direct URL fetch enabled without L1 staging")
-		} else {
-			webGatherProviders := map[string]modulewebgather.SearchProvider{}
-			webGatherProviders["rss_atom"] = webgatherinfra.NewFeedDiscoveryProvider()
-			webGatherProviders["sitemap"] = webgatherinfra.NewFeedDiscoveryProvider()
-			if searxngBaseURL := strings.TrimSpace(cfg.WebGather.SearXNGBaseURL); searxngBaseURL != "" {
-				webGatherProviders["searxng"] = webgatherinfra.NewSearXNGProvider(searxngBaseURL)
-			}
-			if yacyBaseURL := strings.TrimSpace(cfg.WebGather.YaCyBaseURL); yacyBaseURL != "" {
-				webGatherProviders["yacy"] = webgatherinfra.NewYaCyProvider(yacyBaseURL)
-			}
-			webGatherSearchUseCase := webgatherapp.NewSearchUseCase(webgatherapp.NewL1SearchCache(l1Store), webGatherProviders)
+		webGatherProviders := map[string]modulewebgather.SearchProvider{}
+		webGatherProviders["rss_atom"] = webgatherinfra.NewFeedDiscoveryProvider()
+		webGatherProviders["sitemap"] = webgatherinfra.NewFeedDiscoveryProvider()
+		if searxngBaseURL := strings.TrimSpace(cfg.WebGather.SearXNGBaseURL); searxngBaseURL != "" {
+			webGatherProviders["searxng"] = webgatherinfra.NewSearXNGProvider(searxngBaseURL)
+		}
+		if yacyBaseURL := strings.TrimSpace(cfg.WebGather.YaCyBaseURL); yacyBaseURL != "" {
+			webGatherProviders["yacy"] = webgatherinfra.NewYaCyProvider(yacyBaseURL)
+		}
+		var webGatherSearchCache webgatherapp.SearchCache
+		if l1Store != nil {
+			webGatherSearchCache = webgatherapp.NewL1SearchCache(l1Store)
+		}
+		// Search tools do not require Conversation L1 when an explicit remote
+		// provider is configured. L1 remains an optional cache/staging layer.
+		searchProviderConfigured := len(webGatherProviders) > 2 || webGatherSearchCache != nil
+		if searchProviderConfigured {
+			webGatherSearchUseCase := webgatherapp.NewSearchUseCase(webGatherSearchCache, webGatherProviders)
 			webGatherSearchAndFetchUseCase := webgatherapp.NewSearchAndFetchUseCase(webGatherSearchUseCase, webGatherUseCase)
 			workerToolRunnerV2.WithWebGatherFetcher(webGatherUseCase)
 			workerToolRunnerV2.WithWebGatherSearcher(webGatherSearchUseCase)
 			workerToolRunnerV2.WithWebGatherSearchAndFetcher(webGatherSearchAndFetchUseCase)
-			log.Printf("ToolRunner web_gather.fetch/search/search_and_fetch enabled via Conversation L1")
+			if l1Store == nil {
+				log.Printf("ToolRunner web_gather.fetch/search/search_and_fetch enabled without Conversation L1 (external provider)")
+			} else {
+				log.Printf("ToolRunner web_gather.fetch/search/search_and_fetch enabled via Conversation L1")
+			}
+		} else {
+			log.Printf("Daily source brief direct URL fetch enabled without L1 staging; web_gather search disabled because no provider is configured")
 		}
 	}
 	return conversationRuntime{

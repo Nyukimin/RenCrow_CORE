@@ -795,26 +795,18 @@ func TestSystemPromptKeepsOutputContractWithoutToneContract(t *testing.T) {
 	}
 }
 
-func TestMioSystemPromptForcesIdleChatGalStyle(t *testing.T) {
+func TestMioSystemPromptUsesNaturalHighToneWithoutFixedSlang(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
 	got := o.getSystemPrompt("mio")
 
 	for _, want := range []string{
 		"Mio IdleChat話し方契約",
 		"最優先",
-		"濃いギャル口調",
-		"文頭を固定しない",
-		"同じ開始表現を連続で使わず",
-		"おけ",
-		"それな",
-		"ガチで",
-		"めっちゃ",
-		"〜じゃん",
-		"〜っぽい",
-		"出力前に本文だけを書き直す",
-		"気がする",
-		"かしら",
-		"は禁止",
+		"ギャルっぽさは反応の速さ",
+		"スラングを毎回入れる条件にはしない",
+		"同じ書き出し、評価語、接続、締め方を避け",
+		"自然な日本語本文だけ",
+		"重い話題や不確かな話では",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("mio system prompt does not contain %q:\n%s", want, got)
@@ -822,7 +814,7 @@ func TestMioSystemPromptForcesIdleChatGalStyle(t *testing.T) {
 	}
 
 	shiro := o.getSystemPrompt("shiro")
-	if strings.Contains(shiro, "Mio IdleChat話し方契約") || strings.Contains(shiro, "濃いギャル口調") {
+	if strings.Contains(shiro, "Mio IdleChat話し方契約") || strings.Contains(shiro, "ギャルっぽさは反応の速さ") {
 		t.Fatalf("shiro system prompt should not include Mio gal style contract:\n%s", shiro)
 	}
 	if strings.Contains(got, "文頭を「おけ、」「それな、」「ガチで」「めっちゃ」「やば、」「まじで」のいずれかにする") {

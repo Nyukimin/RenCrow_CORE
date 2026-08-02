@@ -206,16 +206,25 @@ func TestApplyAgentControlAppendsValidatedSharedControlToCharacterPrompts(t *tes
 	ApplyAgentControl(p, control)
 
 	for name, prompt := range p.CharacterPrompts {
+		if name == "mio" {
+			if strings.Contains(prompt, "Shared Agent Control") {
+				t.Fatalf("Mio character prompt should keep fixed persona separate from runtime control:\n%s", prompt)
+			}
+			continue
+		}
 		if !strings.Contains(prompt, "Shared Agent Control") {
 			t.Fatalf("%s prompt did not receive shared control:\n%s", name, prompt)
 		}
 	}
 	for name, prompt := range map[string]string{
-		"mio": p.MioPersona, "shiro": p.Worker, "kuro": p.Heavy, "midori": p.Wild,
+		"shiro": p.Worker, "kuro": p.Heavy, "midori": p.Wild,
 	} {
 		if !strings.Contains(prompt, "Shared Agent Control") {
 			t.Fatalf("%s runtime prompt did not receive shared control:\n%s", name, prompt)
 		}
+	}
+	if strings.Contains(p.MioPersona, "Shared Agent Control") {
+		t.Fatalf("Mio runtime prompt should keep Agent Registry control in a separate context:\n%s", p.MioPersona)
 	}
 }
 

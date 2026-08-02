@@ -16,6 +16,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
+	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -189,17 +190,20 @@ type MessageOrchestrator struct {
 	maxRepair                 int // 0以下は1とみなす
 	sessionTurnLogger         SessionTurnLogger
 
-	sessions             *messageSessionLifecycle
-	responses            messageResponseAssembler
-	preRoutingCommands   *preRoutingCommandHandler
-	routeDecisions       *routeDecisionCoordinator
-	idleBusyGuards       *idleBusyGuardFactory
-	autonomousExecutions *autonomousExecutionCoordinator
-	routeDispatcher      *messageRouteDispatcher
-	ttsLifecycle         *messageTTSLifecycle
-	events               *messageEventPort
-	taskContexts         *messageTaskContextBuilder
-	visionRequests       *visionRequestProcessor
+	sessions                *messageSessionLifecycle
+	responses               messageResponseAssembler
+	preRoutingCommands      *preRoutingCommandHandler
+	dailyNewsBriefReader    domainnews.DailyNewsBriefReader
+	dailyNewsBriefCollector domainnews.DailyNewsBriefCollector
+	shiroChat               MioAgent
+	routeDecisions          *routeDecisionCoordinator
+	idleBusyGuards          *idleBusyGuardFactory
+	autonomousExecutions    *autonomousExecutionCoordinator
+	routeDispatcher         *messageRouteDispatcher
+	ttsLifecycle            *messageTTSLifecycle
+	events                  *messageEventPort
+	taskContexts            *messageTaskContextBuilder
+	visionRequests          *visionRequestProcessor
 }
 
 // SetMaxRepair は自律実行のリペア上限を設定する（デフォルト: 1）
@@ -341,6 +345,7 @@ func (o *MessageOrchestrator) SetHeavyAgent(heavy HeavyAgent) {
 
 // SetShiroChatAgent selects the ChatWorker-backed conversational Shiro.
 func (o *MessageOrchestrator) SetShiroChatAgent(chat MioAgent) {
+	o.shiroChat = chat
 	if o.routeDispatcher != nil {
 		o.routeDispatcher.SetShiroChatAgent(chat)
 	}
@@ -486,6 +491,13 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 
 	t, jobID, ttsSessionID := o.taskContexts.BuildWithJobID(req, jobID)
+	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, t, jobID, ttsSessionID); err != nil {
+		return ProcessMessageResponse{}, err
+	} else if handled {
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID)
+		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
+		return resp, nil
+	}
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t.WithRoute(routing.RouteRESEARCH), jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {

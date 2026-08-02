@@ -18,11 +18,12 @@ import (
 )
 
 type agentRuntime struct {
-	Mio       *agent.MioAgent
-	ShiroChat *agent.MioAgent
-	Shiro     *agent.ShiroAgent
-	Heavy     *agent.HeavyAgent
-	Wild      *agent.WildAgent
+	Mio         *agent.MioAgent
+	ShiroChat   *agent.MioAgent
+	Shiro       *agent.ShiroAgent
+	Heavy       *agent.HeavyAgent
+	Wild        *agent.WildAgent
+	WorkerTools agent.ToolRunner
 }
 
 func buildAgentRuntime(
@@ -58,6 +59,10 @@ func buildAgentRuntime(
 			Seed:           cfg.Mio.Generation.Seed,
 			EnableThinking: cfg.Mio.Generation.ChatTemplateKwargs.EnableThinking,
 		})
+	if cfg.AgentControl != nil {
+		mioAgent = mioAgent.WithAgentContractsPrompt(cfg.AgentControl.PromptForMio())
+		log.Printf("Mio: Agent Registry contract index injected")
+	}
 	shiroChatAgent := agent.NewMioAgent(chatWorkerProvider, classifier, ruleDictionary, nil, mcpClient, convEngine).
 		WithSystemPrompt(cfg.Prompts.MioPersona).
 		WithViewerRecipientPrompts(cfg.Prompts.CharacterPrompts).
@@ -129,5 +134,5 @@ func buildAgentRuntime(
 		shiroAgent.WithLightMemory(agent.NewLightMemory(cfg.Worker.LightMemory.MaxTurns))
 		log.Printf("Shiro: LightMemory enabled (max_turns=%d)", cfg.Worker.LightMemory.MaxTurns)
 	}
-	return agentRuntime{Mio: mioAgent, ShiroChat: shiroChatAgent, Shiro: shiroAgent, Heavy: heavyAgent, Wild: wildAgent}
+	return agentRuntime{Mio: mioAgent, ShiroChat: shiroChatAgent, Shiro: shiroAgent, Heavy: heavyAgent, Wild: wildAgent, WorkerTools: workerToolRunner}
 }

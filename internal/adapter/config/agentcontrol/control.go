@@ -50,9 +50,12 @@ type Control struct {
 
 // Agent describes stable character scope. It does not grant runtime access.
 type Agent struct {
-	Role         string   `yaml:"role"`
-	Capabilities []string `yaml:"capabilities"`
-	NonGoals     []string `yaml:"non_goals"`
+	Role            string   `yaml:"role"`
+	Capabilities    []string `yaml:"capabilities"`
+	NonGoals        []string `yaml:"non_goals"`
+	DelegatableWork []string `yaml:"delegatable_work"`
+	ExpectedOutput  []string `yaml:"expected_output"`
+	ReturnToMio     []string `yaml:"return_to_mio"`
 }
 
 // Routing maps CORE route categories to their canonical execution owner.
@@ -308,6 +311,57 @@ func (c *Control) PromptFor(agentName string) string {
 			writeList(&b, "selection."+capability+".alternatives", selection.Alternatives)
 			fmt.Fprintf(&b, "- selection.%s.automatic_fallback: %t\n", capability, selection.AutomaticFallback)
 		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// PromptForMio renders the small Agent contract index that Mio needs for
+// routing and result integration. It deliberately contains contracts, not
+// the characters' long persona text. Missing optional fields remain useful:
+// CORE capabilities and non_goals are still exposed, while the shared
+// handoff contract supplies the minimum result fields.
+func (c *Control) PromptForMio() string {
+	if c == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("# Mio Agent Contract Index\n\n")
+	b.WriteString("この一覧はAgent Registryから実行時に注入された契約です。人格全文や推測した能力ではなく、ここにあるrole、capability、制約、成果物を使って委譲先を判断してください。\n\n")
+	for _, name := range sortedKeys(c.Agents) {
+		profile := c.Agents[name]
+		fmt.Fprintf(&b, "## %s\n- role: %s\n", name, profile.Role)
+		writeList(&b, "capabilities", profile.Capabilities)
+		writeList(&b, "cannot_execute", profile.NonGoals)
+		delegatable := profile.DelegatableWork
+		if len(delegatable) == 0 {
+			delegatable = profile.Capabilities
+		}
+		writeList(&b, "delegatable_work", delegatable)
+		expected := profile.ExpectedOutput
+		if len(expected) == 0 {
+			expected = []string{"実行可否または提案", "根拠・証拠", "未完了事項と次の境界"}
+		}
+		writeList(&b, "expected_output", expected)
+		returned := profile.ReturnToMio
+		if len(returned) == 0 {
+			returned = c.Handoff.RequiredFields
+		}
+		writeList(&b, "return_to_mio", returned)
+	}
+
+	b.WriteString("\n## Routing and Handoff\n\n")
+	for _, route := range sortedKeys(c.Routing.Routes) {
+		fmt.Fprintf(&b, "- %s -> %s\n", route, c.Routing.Routes[route].Primary)
+	}
+	fmt.Fprintf(&b, "- fallback: %s\n- handoff_owner: %s\n", c.Routing.Fallback, c.Handoff.DestinationOwner)
+	writeList(&b, "handoff_required_fields", c.Handoff.RequiredFields)
+	b.WriteString("- 担当外の実行を自分が済ませたことにせず、必要能力と返却情報をOrchestratorへ渡す。\n")
+	if policy, ok := c.Tools.Agents["mio"]; ok {
+		b.WriteString("\n## Mio Tool Boundary\n\n")
+		fmt.Fprintf(&b, "- access: %s\n", policy.Access)
+		writeList(&b, "rules", policy.Rules)
+		b.WriteString("- 書き込み、実装、外部副作用はMioが直接行わず、必要能力としてOrchestratorへ返す。\n")
 	}
 	return strings.TrimSpace(b.String())
 }

@@ -59,7 +59,8 @@ workspace_dir/
 
 各directoryの`manifest.txt`に、読み込むMarkdownファイルを順番に列挙します。
 portableなrouting、handoff、Tool選択姿勢は`workspace_dir/control/`のversioned setを
-使用し、character固有promptへ重複して持たせません。
+使用し、character固有promptへ重複して持たせません。MioのAgent Contract indexは
+Chat request時にCOREがboundedなruntime system contextとして注入します。
 
 ## 注意事項
 

@@ -2,7 +2,9 @@ package main
 
 import (
 	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -45,14 +47,14 @@ func buildToolRuntime(
 	}
 	toolMediationRecorder := buildToolMediationRecorder(cfg)
 	chatToolRunnerCfg := tools.ToolRunnerConfig{
-		GoogleAPIKey:         cfg.GoogleSearchChat.APIKey,
-		GoogleSearchEngineID: cfg.GoogleSearchChat.SearchEngineID,
+		GoogleAPIKey:         googleSearchValue(cfg.GoogleSearchChat.APIKey, "GOOGLE_API_KEY_CHAT"),
+		GoogleSearchEngineID: googleSearchValue(cfg.GoogleSearchChat.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_CHAT"),
 		AllowedWritePaths:    personaWritePaths,
 		DisableToolHarness:   true,
 	}
 	workerToolRunnerCfg := tools.ToolRunnerConfig{
-		GoogleAPIKey:         cfg.GoogleSearchWorker.APIKey,
-		GoogleSearchEngineID: cfg.GoogleSearchWorker.SearchEngineID,
+		GoogleAPIKey:         googleSearchValue(cfg.GoogleSearchWorker.APIKey, "GOOGLE_API_KEY_WORKER"),
+		GoogleSearchEngineID: googleSearchValue(cfg.GoogleSearchWorker.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_WORKER"),
 		ToolRegistry:         runtimeToolRegistry,
 		WorkspaceDir:         cfg.WorkspaceDir,
 		DisableToolHarness:   true,
@@ -188,6 +190,16 @@ func buildToolRuntime(
 		SubagentMgr:           subagentMgr,
 		ToolMediationRecorder: toolMediationRecorder,
 	}
+}
+
+// googleSearchValue keeps the config file authoritative while allowing
+// deployment environments (including the Windows E2E launcher) to provide
+// secrets through the documented environment variables.
+func googleSearchValue(configValue, envName string) string {
+	if value := strings.TrimSpace(configValue); value != "" {
+		return value
+	}
+	return strings.TrimSpace(os.Getenv(envName))
 }
 
 func buildToolMediationRecorder(cfg *config.Config) *toolharnesspersistence.JSONLRecorder {

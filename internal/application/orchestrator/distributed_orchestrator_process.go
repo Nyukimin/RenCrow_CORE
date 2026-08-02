@@ -53,6 +53,11 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	t := task.NewTask(jobID, req.UserMessage, req.Channel, req.ChatID).
 		WithViewerRecipient(normalizeProcessViewerRecipient(req.To)).
 		WithAttachments(req.Attachments)
+	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, t, jobID); err != nil {
+		return ProcessMessageResponse{}, err
+	} else if handled {
+		return ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID), nil
+	}
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {

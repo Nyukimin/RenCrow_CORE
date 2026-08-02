@@ -11,7 +11,7 @@ portable character bundleの正本ではありません。共有可能なcharact
 | path | 読み込み側 | 用途 |
 | --- | --- | --- |
 | `prompts/characters/<character>/manifest.txt` | `LoadPrompts()` | character bundleによるprompt上書き |
-| `control/agents.yaml`等4ファイル | agent control loader | role、routing、handoff、Tool選択姿勢 |
+| `control/agents.yaml`等4ファイル | agent control loader | role、routing、handoff、Tool選択姿勢。MioにはChat時に契約indexを注入 |
 | `persona/mio.md` | context builder | CHAT用のMio persona |
 | `SOUL.md`、`PrimerMessage.md` | context builder | CHAT用bootstrap context |
 | `AGENT.md`、`IDENTITY.md`、`USER.md` | context builder | 共通bootstrap context |

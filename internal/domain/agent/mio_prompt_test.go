@@ -1,0 +1,130 @@
+package agent
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+)
+
+func TestMioAgentChatInjectsRuntimePromptContext(t *testing.T) {
+	var captured llm.GenerateRequest
+	provider := &mockLLMProvider{generateFunc: func(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+		captured = req
+		return llm.GenerateResponse{Content: "確認しました。"}, nil
+	}}
+	mio := NewMioAgent(provider, nil, nil, nil, nil, nil).
+		WithSystemPrompt("Mio fixed persona").
+		WithAgentContractsPrompt("## Agent Contract Index\n- shiro: execution and evidence\n- kuro: root cause analysis").
+		WithRecentExpressionHistory(MioExpressionHistory{
+			Openings:    []string{"前回の書き出し"},
+			Evaluations: []string{"かなり自然"},
+			Connectors:  []string{"そのうえで"},
+			Closings:    []string{"ここまで確認できます"},
+		})
+
+	request := task.NewTask(task.NewJobID(), "実行結果を確認して", "viewer", "chat-1").WithRoute(routing.RouteOPS)
+	if _, err := mio.Chat(context.Background(), request); err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	joined := joinPromptMessages(captured.Messages)
+	for _, want := range []string{
+		"Mio fixed persona",
+		"Agent Contract Index",
+		"tone: LOW",
+		"前回の書き出し",
+		"最近の表現履歴",
+		"実行していない処理を完了と表現しない",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("runtime prompt missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestMioAgentChatRemembersExpressionHistoryForNextTurn(t *testing.T) {
+	call := 0
+	provider := &mockLLMProvider{generateFunc: func(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+		call++
+		if call == 1 {
+			return llm.GenerateResponse{Content: "ここから見ます。前提がつながりました。"}, nil
+		}
+		if !strings.Contains(joinPromptMessages(req.Messages), "ここから見ます") {
+			t.Fatalf("second turn did not receive recent expression history:\n%s", joinPromptMessages(req.Messages))
+		}
+		return llm.GenerateResponse{Content: "今回は別の入り方にします。"}, nil
+	}}
+	mio := NewMioAgent(provider, nil, nil, nil, nil, nil).WithSystemPrompt("persona")
+	for i, message := range []string{"最初の相談", "次の相談"} {
+		if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), message, "viewer", "chat-1")); err != nil {
+			t.Fatalf("turn %d Chat() error = %v", i+1, err)
+		}
+	}
+}
+
+func TestMioExpressionHistoryPromptIsSmallAndCapped(t *testing.T) {
+	history := MioExpressionHistory{}
+	for i := 0; i < 8; i++ {
+		history.Openings = append(history.Openings, "opening")
+		history.Evaluations = append(history.Evaluations, "evaluation")
+		history.Connectors = append(history.Connectors, "connector")
+		history.Closings = append(history.Closings, "closing")
+	}
+	prompt := history.Prompt()
+	if strings.Count(prompt, "opening") != 3 || strings.Count(prompt, "evaluation") != 3 || strings.Count(prompt, "connector") != 3 || strings.Count(prompt, "closing") != 3 {
+		t.Fatalf("history should be capped at three entries per category:\n%s", prompt)
+	}
+	if len([]rune(prompt)) > 900 {
+		t.Fatalf("history prompt is too large: %d runes", len([]rune(prompt)))
+	}
+}
+
+func TestMioToneTracksConversationRisk(t *testing.T) {
+	cases := []struct {
+		name string
+		task task.Task
+		want string
+	}{
+		{name: "normal chat", task: task.NewTask(task.NewJobID(), "設計を相談したい", "viewer", "chat-1"), want: "MEDIUM"},
+		{name: "ops", task: task.NewTask(task.NewJobID(), "再起動を確認して", "viewer", "chat-1").WithRoute(routing.RouteOPS), want: "LOW"},
+		{name: "security", task: task.NewTask(task.NewJobID(), "認証情報の扱いを相談したい", "viewer", "chat-1"), want: "LOW"},
+		{name: "idle", task: task.NewTask(task.NewJobID(), "最近気になること", "idlechat", "idle-1"), want: "HIGH"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mioToneForTask(tc.task); got != tc.want {
+				t.Fatalf("mioToneForTask() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMioRuntimeContextIsNotInjectedForAnotherViewerRecipient(t *testing.T) {
+	provider := &mockLLMProvider{generateFunc: func(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+		for _, message := range req.Messages {
+			if strings.Contains(message.Content, "Runtime-injected Mio context") {
+				t.Fatalf("Mio context leaked into another recipient: %#v", req.Messages)
+			}
+		}
+		return llm.GenerateResponse{Content: "Shiroです"}, nil
+	}}
+	mio := NewMioAgent(provider, nil, nil, nil, nil, nil).
+		WithSystemPrompt("Mio fixed persona").
+		WithViewerRecipientPrompts(map[string]string{"shiro": "Shiro fixed persona"})
+	request := task.NewTask(task.NewJobID(), "確認して", "viewer", "chat-1").WithViewerRecipient("shiro")
+	if _, err := mio.Chat(context.Background(), request); err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+}
+
+func joinPromptMessages(messages []llm.Message) string {
+	parts := make([]string, 0, len(messages))
+	for _, message := range messages {
+		parts = append(parts, message.Content)
+	}
+	return strings.Join(parts, "\n\n")
+}

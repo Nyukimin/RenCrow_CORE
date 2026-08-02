@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/modulebridge"
+	appnewsbrief "github.com/Nyukimin/RenCrow_CORE/internal/application/newsbrief"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
@@ -29,6 +31,7 @@ func buildOrchestratorRuntime(
 	bridges viewerBridgeFactories,
 	verificationRuntime verificationRuntime,
 ) {
+	newsCollector := appnewsbrief.NewToolCollectorWithProvider(agents.WorkerTools, configuredNewsSearchProvider(cfg))
 	visionAnalyzer, visionOptions, err := buildVisionRuntime(cfg)
 	if err != nil {
 		log.Fatalf("Failed to configure RenCrow_Vision: %v", err)
@@ -54,6 +57,14 @@ func buildOrchestratorRuntime(
 		)
 		deps.distOrch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
 		deps.distOrch.SetShiroChatAgent(agents.ShiroChat)
+		if deps.idleChatOrch != nil {
+			deps.distOrch.SetDailyNewsBriefReader(deps.idleChatOrch)
+			log.Printf("DailyNewsBrief reader integrated with DistributedOrchestrator")
+		}
+		if newsCollector != nil {
+			deps.distOrch.SetDailyNewsBriefCollector(newsCollector)
+			log.Printf("LiveNewsSearch collector integrated with DistributedOrchestrator via Worker tools")
+		}
 		deps.moduleChatService = modulebridge.NewRuntimeChatService(deps.distOrch, agents.Mio)
 		deps.viewerSend = bridges.ViewerSendFromOrch(deps.distOrch)
 		deps.repairRunner = newAsyncRepairJobRunner(deps.distOrch, deps.eventRelay)
@@ -151,7 +162,13 @@ func buildOrchestratorRuntime(
 	}
 	if deps.idleChatOrch != nil {
 		orch.SetIdleNotifier(deps.idleChatOrch)
+		orch.SetDailyNewsBriefReader(deps.idleChatOrch)
 		log.Printf("IdleChat integrated with MessageOrchestrator")
+		log.Printf("DailyNewsBrief reader integrated with MessageOrchestrator")
+	}
+	if newsCollector != nil {
+		orch.SetDailyNewsBriefCollector(newsCollector)
+		log.Printf("LiveNewsSearch collector integrated with MessageOrchestrator via Worker tools")
 	}
 	buildChannelRuntimeHandlers(cfg, deps, orch)
 	deps.moduleChatService = modulebridge.NewRuntimeChatService(orch, agents.Mio)
@@ -161,6 +178,19 @@ func buildOrchestratorRuntime(
 	deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(orch)
 	deps.voiceDirectHandler = orch
 	startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, newBackgroundJobFailureReporter(deps.eventRelay))
+}
+
+func configuredNewsSearchProvider(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	if strings.TrimSpace(cfg.WebGather.SearXNGBaseURL) != "" {
+		return "searxng"
+	}
+	if strings.TrimSpace(cfg.WebGather.YaCyBaseURL) != "" {
+		return "yacy"
+	}
+	return ""
 }
 
 // injectSelfContext は RenCrow 自身のソースディレクトリに関する自己認識コンテキストを

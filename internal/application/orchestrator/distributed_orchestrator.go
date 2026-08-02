@@ -7,6 +7,7 @@ import (
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	domainnode "github.com/Nyukimin/RenCrow_CORE/internal/domain/node"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
@@ -24,6 +25,9 @@ const (
 type DistributedOrchestrator struct {
 	sessionRepo             SessionRepository
 	mio                     MioAgent
+	shiroChat               MioAgent
+	dailyNewsBriefReader    domainnews.DailyNewsBriefReader
+	dailyNewsBriefCollector domainnews.DailyNewsBriefCollector
 	wild                    WildAgent
 	heavy                   HeavyAgent
 	router                  *transport.MessageRouter
