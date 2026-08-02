@@ -44,7 +44,7 @@ func (m *MioAgent) WithSystemPrompt(prompt string) *MioAgent {
 // contract index used by Mio for routing and result integration. Persona text
 // is intentionally kept separate from this runtime context.
 func (m *MioAgent) WithAgentContractsPrompt(prompt string) *MioAgent {
-	m.agentContractsPrompt = strings.TrimSpace(prompt)
+	m.agentContractsPrompt = truncateMioExpression(strings.TrimSpace(prompt), 6000)
 	return m
 }
 
