@@ -187,6 +187,7 @@ func classifierEvidence(decision routing.Decision) []routing.DecisionEvidence {
 // Chat は会話を実行（v5.1: ConversationEngine + 明示指示時のみWeb検索）
 func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 	userMessage := t.UserMessage()
+	currentSpeaker := conversationSpeakerForViewerRecipient(t.ViewerRecipient(), conversation.SpeakerMio)
 
 	// === v5.1: ConversationEngine による RecallPack 生成 ===
 	var messages []llm.Message
@@ -206,20 +207,36 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 				filtered = filtered.WithoutPersonaSystemPrompt()
 			}
 			recallPack = &filtered
-			if err := recordRecallTrace(ctx, m.conversationEngine, t.ChatID(), t.JobID().String(), "chat", filtered); err != nil {
+			if err := recordRecallTrace(ctx, m.conversationEngine, t.ChatID(), t.JobID().String(), string(currentSpeaker), filtered); err != nil {
 				log.Printf("[Mio] RecordRecallTrace failed: %v", err)
 			}
 			// RecallPack からプロンプトメッセージを生成（system prompt + 過去文脈 + 会話履歴）
+			messages = appendSharedConversationContinuityPrompt(messages, recallPack)
 			messages = append(messages, recallPack.ToPromptMessages()...)
 		}
 	}
-	if userMemoryPrompt, err := m.userMemoryPrompt(ctx); err != nil {
-		log.Printf("[Mio] user memory recall failed: %v", err)
-	} else if userMemoryPrompt != "" {
-		messages = append(messages, llm.Message{
-			Role:    "system",
-			Content: userMemoryPrompt,
-		})
+	if response, ok := exactSharedRecallAnswer(userMessage, recallPack); ok {
+		if onToken := llm.StreamCallbackFromContext(ctx); onToken != nil {
+			onToken(response)
+		}
+		m.rememberExpression(response)
+		if m.conversationEngine != nil {
+			if err := endConversationTurnAs(ctx, m.conversationEngine, t.ChatID(), userMessage, response, currentSpeaker); err != nil {
+				fmt.Printf("WARN: EndTurn failed: %v\n", err)
+			}
+		}
+		return response, nil
+	}
+	userMemoryInRecall := recallPack != nil && (len(recallPack.UserProfile.Facts) > 0 || len(recallPack.UserProfile.Preferences) > 0)
+	if !userMemoryInRecall {
+		if userMemoryPrompt, err := m.userMemoryPrompt(ctx); err != nil {
+			log.Printf("[Mio] user memory recall failed: %v", err)
+		} else if userMemoryPrompt != "" {
+			messages = append(messages, llm.Message{
+				Role:    "system",
+				Content: userMemoryPrompt,
+			})
+		}
 	}
 	if prompt := viewerRecipientSystemPrompt(t.ViewerRecipient(), userMessage); prompt != "" {
 		messages = append(messages, llm.Message{
@@ -243,7 +260,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		} else {
 			// EndTurn で会話履歴に記録
 			if m.conversationEngine != nil {
-				if err := m.conversationEngine.EndTurn(ctx, t.ChatID(), userMessage, result); err != nil {
+				if err := endConversationTurnAs(ctx, m.conversationEngine, t.ChatID(), userMessage, result, currentSpeaker); err != nil {
 					fmt.Printf("WARN: EndTurn failed: %v\n", err)
 				}
 			}
@@ -271,12 +288,13 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 
 	latestOther := ""
 	if recallPack != nil {
-		selfCtx, otherCtx := buildAttributionContextsFromShort(recallPack.ShortContext, conversation.SpeakerMio, 5)
-		latestOther = latestOtherMessageFromShort(recallPack.ShortContext, conversation.SpeakerMio)
+		selfCtx, otherCtx := buildAttributionContextsFromShort(recallPack.ShortContext, currentSpeaker, 5)
+		latestOther = latestOtherMessageFromShort(recallPack.ShortContext, currentSpeaker)
 		messages = append(messages, llm.Message{
 			Role: "user",
 			Content: fmt.Sprintf(
-				"発言帰属ガード:\n- あなたはmio。\n- 自分の過去発言(要約): %s\n- 他者の発言(要約): %s\n要件: 他者の発言を自分の新規アイデアとして扱わない。既出アイデアに触れる場合は発言者を明示する。",
+				"発言帰属ガード:\n- 現在のAgentは%s。\n- 自分の過去発言(要約): %s\n- 他者の発言(要約): %s\n要件: 他者の発言を自分の新規アイデアとして扱わない。既出アイデアに触れる場合は発言者を明示する。",
+				currentSpeaker,
 				strings.Join(selfCtx, " / "),
 				strings.Join(otherCtx, " / "),
 			),
@@ -324,6 +342,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 			finalGeneration = retryResp
 		}
 	}
+	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
 	m.rememberExpression(response)
 	if onMetrics := llm.GenerationMetricsCallbackFromContext(ctx); onMetrics != nil && (finalGeneration.TokensUsed > 0 || finalGeneration.TokensPerSecond > 0) {
 		onMetrics(llm.GenerationMetrics{
@@ -334,7 +353,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 
 	// === v5.1: EndTurn（Store） ===
 	if m.conversationEngine != nil {
-		if err := m.conversationEngine.EndTurn(ctx, t.ChatID(), userMessage, response); err != nil {
+		if err := endConversationTurnAs(ctx, m.conversationEngine, t.ChatID(), userMessage, response, currentSpeaker); err != nil {
 			fmt.Printf("WARN: EndTurn failed: %v\n", err)
 		}
 	}

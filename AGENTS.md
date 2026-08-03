@@ -2,8 +2,8 @@
 
 ## Model Roles
 
-- GPT-5.6 sol is the orchestrator. It plans, delegates, monitors progress, reviews results, and coordinates the work.
-- GPT-5.5 is the executor. It performs implementation, modification, testing, and other hands-on tasks.
+- GPT-5.6 sol (max reasoning effort) is the orchestrator. It plans, delegates, monitors progress, reviews results, and coordinates the work.
+- GPT Luna (max reasoning effort) is the executor. It performs implementation, modification, testing, and other hands-on tasks.
 
 ## Branch Policy
 

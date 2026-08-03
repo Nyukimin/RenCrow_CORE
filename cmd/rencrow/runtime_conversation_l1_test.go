@@ -7,7 +7,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 )
 
-func TestBuildConversationRuntimeOpensL1ForViewerWithoutConversationEngine(t *testing.T) {
+func TestBuildConversationRuntimeUsesL1ConversationEngineWithoutAdvancedRuntime(t *testing.T) {
 	cfg := &config.Config{
 		Conversation: config.ConversationConfig{Enabled: false},
 		Storage: config.StorageConfig{
@@ -22,7 +22,10 @@ func TestBuildConversationRuntimeOpensL1ForViewerWithoutConversationEngine(t *te
 		t.Fatal("L1Store is nil; configured Viewer read store must not depend on Conversation engine")
 	}
 	defer runtime.L1Store.Close()
-	if runtime.Engine != nil || runtime.Manager != nil {
-		t.Fatalf("conversation runtime unexpectedly enabled: engine=%v manager=%v", runtime.Engine, runtime.Manager)
+	if runtime.Engine == nil {
+		t.Fatal("L1 conversation engine is nil; shared Agent context must not depend on advanced conversation runtime")
+	}
+	if runtime.Manager != nil {
+		t.Fatalf("advanced conversation manager unexpectedly enabled: %v", runtime.Manager)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
 
 // === Mocks ===
@@ -19,6 +20,8 @@ type mockManager struct {
 	getActiveThreadFunc func(ctx context.Context, sessionID string) (*domconv.Thread, error)
 	flushThreadFunc     func(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error)
 	createThreadFunc    func(ctx context.Context, sessionID, domain string) (*domconv.Thread, error)
+	userMemories        []domainmemory.UserMemory
+	userMemoryErr       error
 }
 
 func (m *mockManager) Recall(ctx context.Context, sessionID, query string, topK int) ([]domconv.Message, error) {
@@ -66,6 +69,10 @@ func (m *mockManager) GetAgentStatus(ctx context.Context, agentName string) (*do
 
 func (m *mockManager) UpdateAgentStatus(ctx context.Context, status *domconv.AgentStatus) error {
 	return nil
+}
+
+func (m *mockManager) ListUserMemories(context.Context, string, string, bool, int) ([]domainmemory.UserMemory, error) {
+	return append([]domainmemory.UserMemory(nil), m.userMemories...), m.userMemoryErr
 }
 
 type mockDetector struct {
@@ -225,6 +232,96 @@ func TestBeginTurn_WithShortContext(t *testing.T) {
 	}
 	if pack.ShortContext[0].Msg != "prev question" {
 		t.Errorf("ShortContext[0]: want 'prev question', got %q", pack.ShortContext[0].Msg)
+	}
+}
+
+func TestBeginTurn_SharesAllCharacterMessagesAsShortContext(t *testing.T) {
+	want := []domconv.Message{
+		{Speaker: domconv.SpeakerUser, Msg: "合言葉は青い水路"},
+		{Speaker: domconv.SpeakerMio, Msg: "覚えたよ"},
+		{Speaker: domconv.SpeakerShiro, Msg: "確認しました"},
+		{Speaker: domconv.SpeakerKuro, Msg: "関連を分析した"},
+		{Speaker: domconv.SpeakerMidori, Msg: "物語にも使えるね"},
+	}
+	mgr := &mockManager{
+		recallFunc: func(context.Context, string, string, int) ([]domconv.Message, error) {
+			return append([]domconv.Message(nil), want...), nil
+		},
+	}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})
+
+	pack, err := engine.BeginTurn(context.Background(), "shared-session", "合言葉は？")
+	if err != nil {
+		t.Fatalf("BeginTurn failed: %v", err)
+	}
+	if len(pack.ShortContext) != len(want) {
+		t.Fatalf("ShortContext=%#v, want all %d messages", pack.ShortContext, len(want))
+	}
+	for i := range want {
+		if pack.ShortContext[i].Speaker != want[i].Speaker || pack.ShortContext[i].Msg != want[i].Msg {
+			t.Fatalf("ShortContext[%d]=%#v, want %#v", i, pack.ShortContext[i], want[i])
+		}
+	}
+}
+
+func TestBeginTurn_NormalizesLegacyWildAndHeavySpeakers(t *testing.T) {
+	mgr := &mockManager{recallFunc: func(context.Context, string, string, int) ([]domconv.Message, error) {
+		return []domconv.Message{
+			{Speaker: domconv.Speaker("heavy"), Msg: "旧Kuro発言"},
+			{Speaker: domconv.Speaker("wild"), Msg: "旧Midori発言"},
+		}, nil
+	}}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})
+
+	pack, err := engine.BeginTurn(context.Background(), "shared-session", "前回の続き")
+	if err != nil {
+		t.Fatalf("BeginTurn failed: %v", err)
+	}
+	if len(pack.ShortContext) != 2 || pack.ShortContext[0].Speaker != domconv.SpeakerKuro || pack.ShortContext[1].Speaker != domconv.SpeakerMidori {
+		t.Fatalf("legacy speakers were not normalized: %#v", pack.ShortContext)
+	}
+}
+
+func TestEndTurnAsStoresFromToAttribution(t *testing.T) {
+	var stored []domconv.Message
+	mgr := &mockManager{storeFunc: func(_ context.Context, _ string, msg domconv.Message) error {
+		stored = append(stored, msg)
+		return nil
+	}}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})
+
+	if err := engine.EndTurnAs(context.Background(), "shared-session", "前回の続き", "Kuroの返答", domconv.SpeakerKuro); err != nil {
+		t.Fatalf("EndTurnAs failed: %v", err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("stored=%#v, want user and Agent messages", stored)
+	}
+	if stored[0].Meta["from"] != "user" || stored[0].Meta["to"] != "kuro" {
+		t.Fatalf("user attribution=%#v", stored[0].Meta)
+	}
+	if stored[1].Meta["from"] != "kuro" || stored[1].Meta["to"] != "user" {
+		t.Fatalf("Agent attribution=%#v", stored[1].Meta)
+	}
+}
+
+func TestBeginTurn_LoadsConfirmedAndPinnedUserMemoryForAllCharacters(t *testing.T) {
+	mgr := &mockManager{userMemories: []domainmemory.UserMemory{
+		{Statement: "れんは青が好き", State: domainmemory.MemoryStateConfirmed, Scope: "mio_only", Active: true, Sensitivity: "normal"},
+		{Statement: "合言葉は青い水路", State: domainmemory.MemoryStatePinned, Scope: "midori_only", Active: true, Sensitivity: "normal"},
+		{Statement: "未確認候補", State: domainmemory.MemoryStateCandidate, Scope: "all", Active: true, Sensitivity: "normal"},
+	}}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren")
+
+	pack, err := engine.BeginTurn(context.Background(), "shared-session", "覚えている？")
+	if err != nil {
+		t.Fatalf("BeginTurn failed: %v", err)
+	}
+	got := strings.Join(pack.UserProfile.Facts, " / ")
+	if !strings.Contains(got, "れんは青が好き") || !strings.Contains(got, "[優先] 合言葉は青い水路") {
+		t.Fatalf("shared UserMemory missing: %q", got)
+	}
+	if strings.Contains(got, "未確認候補") {
+		t.Fatalf("candidate UserMemory must not be injected: %q", got)
 	}
 }
 

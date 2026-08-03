@@ -252,19 +252,25 @@ func TestRecallPack_ToPromptMessages_ShortContextRoles(t *testing.T) {
 		ShortContext: []Message{
 			{Speaker: SpeakerUser, Msg: "hello"},
 			{Speaker: SpeakerMio, Msg: "hi there"},
+			{Speaker: SpeakerShiro, Msg: "checked it"},
+			{Speaker: SpeakerKuro, Msg: "analyzed it"},
+			{Speaker: SpeakerMidori, Msg: "imagined it"},
 			{Speaker: SpeakerSystem, Msg: "tool result"},
 		},
 	}
 	msgs := rp.ToPromptMessages()
-	if len(msgs) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	if len(msgs) != 6 {
+		t.Fatalf("expected 6 messages, got %d", len(msgs))
 	}
 	expected := []struct {
 		role    string
 		content string
 	}{
 		{"user", "hello"},
-		{"assistant", "hi there"},
+		{"assistant", "[mio] hi there"},
+		{"assistant", "[shiro] checked it"},
+		{"assistant", "[kuro] analyzed it"},
+		{"assistant", "[midori] imagined it"},
 		{"system", "tool result"},
 	}
 	for i, e := range expected {

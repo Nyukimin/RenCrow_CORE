@@ -55,6 +55,8 @@ func TestSpeakerConstants(t *testing.T) {
 		SpeakerUser,
 		SpeakerMio,
 		SpeakerShiro,
+		SpeakerKuro,
+		SpeakerMidori,
 		SpeakerAka,
 		SpeakerAo,
 		SpeakerGin,
@@ -67,6 +69,8 @@ func TestSpeakerConstants(t *testing.T) {
 		"user",
 		"mio",
 		"shiro",
+		"kuro",
+		"midori",
 		"aka",
 		"ao",
 		"gin",
@@ -78,6 +82,36 @@ func TestSpeakerConstants(t *testing.T) {
 	for i, speaker := range speakers {
 		if string(speaker) != expected[i] {
 			t.Errorf("Expected speaker %s, got %s", expected[i], speaker)
+		}
+	}
+}
+
+func TestIsChatAgentSpeaker(t *testing.T) {
+	for _, speaker := range []Speaker{SpeakerMio, SpeakerShiro, SpeakerKuro, SpeakerMidori} {
+		if !IsChatAgentSpeaker(speaker) {
+			t.Fatalf("%s must be a chat Agent speaker", speaker)
+		}
+	}
+	for _, speaker := range []Speaker{SpeakerUser, SpeakerSystem, SpeakerTool, SpeakerMemory} {
+		if IsChatAgentSpeaker(speaker) {
+			t.Fatalf("%s must not be a chat Agent speaker", speaker)
+		}
+	}
+}
+
+func TestCanonicalChatAgentSpeakerNormalizesLegacyExecutionRoles(t *testing.T) {
+	for _, tt := range []struct {
+		in   Speaker
+		want Speaker
+	}{
+		{in: SpeakerMio, want: SpeakerMio},
+		{in: SpeakerShiro, want: SpeakerShiro},
+		{in: Speaker("heavy"), want: SpeakerKuro},
+		{in: Speaker("wild"), want: SpeakerMidori},
+	} {
+		got, ok := CanonicalChatAgentSpeaker(tt.in)
+		if !ok || got != tt.want {
+			t.Fatalf("CanonicalChatAgentSpeaker(%q)=(%q,%v), want (%q,true)", tt.in, got, ok, tt.want)
 		}
 	}
 }

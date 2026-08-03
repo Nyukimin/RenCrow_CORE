@@ -429,6 +429,7 @@ func TestMioAgentChat_UsesFullShiroPromptForShiroChat(t *testing.T) {
 type mockConversationEngine struct {
 	beginTurnFunc func(ctx context.Context, sessionID string, userMessage string) (*conversation.RecallPack, error)
 	endTurnFunc   func(ctx context.Context, sessionID string, userMessage string, response string) error
+	endTurnAsFunc func(ctx context.Context, sessionID string, userMessage string, response string, speaker conversation.Speaker) error
 	flushFunc     func(ctx context.Context, sessionID string) error
 	statusFunc    func(ctx context.Context, sessionID string) (*conversation.ConversationStatus, error)
 	resetFunc     func(ctx context.Context, sessionID string) error
@@ -447,6 +448,13 @@ func (m *mockConversationEngine) EndTurn(ctx context.Context, sessionID string, 
 		return m.endTurnFunc(ctx, sessionID, userMessage, response)
 	}
 	return nil
+}
+
+func (m *mockConversationEngine) EndTurnAs(ctx context.Context, sessionID string, userMessage string, response string, speaker conversation.Speaker) error {
+	if m.endTurnAsFunc != nil {
+		return m.endTurnAsFunc(ctx, sessionID, userMessage, response, speaker)
+	}
+	return m.EndTurn(ctx, sessionID, userMessage, response)
 }
 
 func (m *mockConversationEngine) GetPersona() conversation.PersonaState { return m.persona }
@@ -521,6 +529,73 @@ func TestMioAgent_Chat_WithConversationEngine(t *testing.T) {
 	}
 	if capturedReq.Messages[0].Role != "system" {
 		t.Errorf("msg[0] role: want 'system', got %q", capturedReq.Messages[0].Role)
+	}
+}
+
+func TestMioAgent_Chat_StoresSelectedViewerRecipientSpeaker(t *testing.T) {
+	for _, tt := range []struct {
+		recipient string
+		want      conversation.Speaker
+	}{
+		{recipient: "", want: conversation.SpeakerMio},
+		{recipient: "mio", want: conversation.SpeakerMio},
+		{recipient: "shiro", want: conversation.SpeakerShiro},
+	} {
+		t.Run(tt.recipient, func(t *testing.T) {
+			var stored conversation.Speaker
+			engine := &mockConversationEngine{
+				endTurnAsFunc: func(_ context.Context, _, _, _ string, speaker conversation.Speaker) error {
+					stored = speaker
+					return nil
+				},
+			}
+			provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+				return llm.GenerateResponse{Content: "response"}, nil
+			}}
+			agent := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
+			chatTask := task.NewTask(task.NewJobID(), "hello", "viewer", "viewer-user").WithViewerRecipient(tt.recipient)
+			if _, err := agent.Chat(context.Background(), chatTask); err != nil {
+				t.Fatalf("Chat failed: %v", err)
+			}
+			if stored != tt.want {
+				t.Fatalf("stored speaker=%q, want %q", stored, tt.want)
+			}
+		})
+	}
+}
+
+func TestMioAgentChatReturnsExactSharedRecallWithoutModelRewrite(t *testing.T) {
+	const token = "RC_CTX_20260803_1328_L1S4"
+	var storedResponse string
+	engine := &mockConversationEngine{
+		beginTurnFunc: func(context.Context, string, string) (*conversation.RecallPack, error) {
+			return &conversation.RecallPack{ShortContext: []conversation.Message{{
+				Speaker: conversation.SpeakerMidori,
+				Msg:     token,
+			}}}, nil
+		},
+		endTurnAsFunc: func(_ context.Context, _, _, response string, _ conversation.Speaker) error {
+			storedResponse = response
+			return nil
+		},
+	}
+	calls := 0
+	provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+		calls++
+		return llm.GenerateResponse{Content: "must not rewrite exact L1 recall"}, nil
+	}}
+	agent := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
+	chatTask := task.NewTask(task.NewJobID(), "/chat 合言葉を英数字だけでそのまま教えて。", "viewer", "viewer-user")
+
+	got, err := agent.Chat(context.Background(), chatTask)
+	if err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("provider calls=%d, exact L1 recall must not be rewritten", calls)
+	}
+	if got != token || storedResponse != token {
+		t.Fatalf("exact shared recall response=%q stored=%q", got, storedResponse)
 	}
 }
 

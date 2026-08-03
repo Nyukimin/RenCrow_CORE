@@ -62,7 +62,7 @@ func (s *LLMSummarizer) ExtractKeywords(ctx context.Context, thread *domconv.Thr
 // buildSummarizePrompt は要約用プロンプトを構築する
 func buildSummarizePrompt(thread *domconv.Thread) string {
 	var sb strings.Builder
-	sb.WriteString("以下の会話を1〜2文で簡潔に要約してください。\n\n")
+	sb.WriteString("以下の会話を1〜2文で簡潔に要約してください。Mio、Shiro、Kuro、Midoriの誰が発言した内容かを保持し、別のAgentへ帰属させないでください。\n\n")
 	for _, msg := range thread.Turns {
 		sb.WriteString(fmt.Sprintf("[%s] %s\n", msg.Speaker, msg.Msg))
 	}

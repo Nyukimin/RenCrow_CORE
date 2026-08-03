@@ -36,17 +36,31 @@ func (h *HeavyAgent) WithConversationEngine(engine conversation.ConversationEngi
 func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 	userMessage := stripHeavyCommand(t.UserMessage())
 	messages := []llm.Message{}
+	var recallPack *conversation.RecallPack
 	if h.conversationEngine != nil {
-		recallPack, err := h.conversationEngine.BeginTurn(ctx, t.ChatID(), userMessage)
+		pack, err := h.conversationEngine.BeginTurn(ctx, t.ChatID(), userMessage)
 		if err != nil {
 			log.Printf("[Heavy] BeginTurn failed: %v", err)
-		} else if recallPack != nil {
-			filtered := recallPack.FilterForRole("heavy").WithoutPersonaSystemPrompt()
-			if err := recordRecallTrace(ctx, h.conversationEngine, t.ChatID(), t.JobID().String(), "heavy", filtered); err != nil {
+		} else if pack != nil {
+			filtered := pack.FilterForRole("heavy").WithoutPersonaSystemPrompt()
+			recallPack = &filtered
+			if err := recordRecallTrace(ctx, h.conversationEngine, t.ChatID(), t.JobID().String(), string(conversation.SpeakerKuro), filtered); err != nil {
 				log.Printf("[Heavy] RecordRecallTrace failed: %v", err)
 			}
+			messages = appendSharedConversationContinuityPrompt(messages, &filtered)
 			messages = append(messages, filtered.ToPromptMessages()...)
 		}
+	}
+	if response, ok := exactSharedRecallAnswer(userMessage, recallPack); ok {
+		if onToken := llm.StreamCallbackFromContext(ctx); onToken != nil {
+			onToken(response)
+		}
+		if h.conversationEngine != nil {
+			if err := endConversationTurnAs(ctx, h.conversationEngine, t.ChatID(), userMessage, response, conversation.SpeakerKuro); err != nil {
+				log.Printf("[Heavy] EndTurn failed: %v", err)
+			}
+		}
+		return response, nil
 	}
 	messages = append(messages, userMessageWithAttachments(userMessage, t.Attachments()))
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
@@ -60,8 +74,9 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 		return "", err
 	}
 	response := strings.TrimSpace(resp.Content)
+	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
 	if h.conversationEngine != nil {
-		if err := endConversationTurnAs(ctx, h.conversationEngine, t.ChatID(), userMessage, response, conversation.Speaker("heavy")); err != nil {
+		if err := endConversationTurnAs(ctx, h.conversationEngine, t.ChatID(), userMessage, response, conversation.SpeakerKuro); err != nil {
 			log.Printf("[Heavy] EndTurn failed: %v", err)
 		}
 	}

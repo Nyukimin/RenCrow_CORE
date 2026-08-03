@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"strings"
@@ -19,6 +20,8 @@ type RealConversationEngine struct {
 	recallTraceStore         domconv.RecallTraceStore
 	knowledgeRelationEnabled bool
 	knowledgeRelationMaxHops int
+	userMemoryStore          conversationEngineUserMemoryStore
+	userID                   string
 }
 
 type conversationEngineExternalRecall interface {
@@ -31,6 +34,10 @@ type conversationEngineExternalRecall interface {
 
 type conversationEngineRecallTraceRecorder interface {
 	SaveRecallTrace(ctx context.Context, trace domconv.RecallTrace) error
+}
+
+type conversationEngineUserMemoryStore interface {
+	ListUserMemories(ctx context.Context, userID string, state string, includeInactive bool, limit int) ([]domainmemory.UserMemory, error)
 }
 
 // NewRealConversationEngine は新しい ConversationEngine を作成
@@ -55,6 +62,12 @@ func (e *RealConversationEngine) WithRecallTraceStore(store domconv.RecallTraceS
 	return e
 }
 
+func (e *RealConversationEngine) WithUserMemoryStore(store conversationEngineUserMemoryStore, userID string) *RealConversationEngine {
+	e.userMemoryStore = store
+	e.userID = strings.TrimSpace(userID)
+	return e
+}
+
 func (e *RealConversationEngine) WithKnowledgeRelationRecall(maxHops int) *RealConversationEngine {
 	if maxHops < 1 {
 		maxHops = 1
@@ -73,6 +86,9 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 		Persona:     e.persona,
 		Constraints: domconv.DefaultConstraints(),
 	}
+	if err := e.loadSharedUserMemory(ctx, pack); err != nil {
+		log.Printf("[ConversationEngine] WARN: UserMemory recall failed: %v", err)
+	}
 
 	// Recall（想起）
 	recallMessages, err := e.manager.Recall(ctx, sessionID, userMessage, 3)
@@ -83,8 +99,13 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 
 	// Recall 結果を RecallPack に分類
 	for _, msg := range recallMessages {
+		if speaker, ok := domconv.CanonicalChatAgentSpeaker(msg.Speaker); ok {
+			msg.Speaker = speaker
+			pack.ShortContext = append(pack.ShortContext, msg)
+			continue
+		}
 		switch {
-		case msg.Speaker == domconv.SpeakerUser || msg.Speaker == domconv.SpeakerMio:
+		case msg.Speaker == domconv.SpeakerUser:
 			// 短期記憶（Thread.Turns）: そのまま ShortContext に
 			pack.ShortContext = append(pack.ShortContext, msg)
 
@@ -187,6 +208,43 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 	budgeted := pack.ApplyRecallBudget(pack.Constraints.MaxTotalTokens, pack.Constraints.RecallBudgetRatio)
 	e.saveBeginTurnRecallTrace(ctx, sessionID, userMessage, &budgeted, "completed")
 	return &budgeted, nil
+}
+
+func (e *RealConversationEngine) loadSharedUserMemory(ctx context.Context, pack *domconv.RecallPack) error {
+	if e.userMemoryStore == nil || pack == nil || e.userID == "" {
+		return nil
+	}
+	items, err := e.userMemoryStore.ListUserMemories(ctx, e.userID, "", false, 12)
+	if err != nil {
+		return err
+	}
+	profile := domconv.NewUserProfile(e.userID)
+	for _, item := range items {
+		if !isSharedUserMemoryPromptInjectable(item) {
+			continue
+		}
+		statement := strings.TrimSpace(item.Statement)
+		if statement == "" {
+			continue
+		}
+		if item.State == domainmemory.MemoryStatePinned {
+			statement = "[優先] " + statement
+		}
+		profile.Facts = append(profile.Facts, statement)
+	}
+	if len(profile.Facts) > 0 {
+		pack.UserProfile = profile
+	}
+	return nil
+}
+
+func isSharedUserMemoryPromptInjectable(item domainmemory.UserMemory) bool {
+	for _, persona := range []string{"mio", "shiro", "kuro", "midori"} {
+		if domainmemory.IsUserMemoryPromptInjectable(item, persona) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *RealConversationEngine) expandKnowledgeRelations(ctx context.Context, recall conversationEngineExternalRecall, seeds []l1sqlite.L1KnowledgeItem, pack *domconv.RecallPack) {
@@ -360,6 +418,11 @@ func (e *RealConversationEngine) EndTurn(ctx context.Context, sessionID string, 
 }
 
 func (e *RealConversationEngine) EndTurnAs(ctx context.Context, sessionID string, userMessage string, response string, speaker domconv.Speaker) error {
+	if strings.TrimSpace(string(speaker)) == "" {
+		speaker = domconv.SpeakerMio
+	} else if canonical, ok := domconv.CanonicalChatAgentSpeaker(speaker); ok {
+		speaker = canonical
+	}
 	// スレッド境界検出（detector が設定されている場合）
 	if e.detector != nil {
 		thread, err := e.manager.GetActiveThread(ctx, sessionID)
@@ -378,16 +441,19 @@ func (e *RealConversationEngine) EndTurnAs(ctx context.Context, sessionID string
 	}
 
 	// ユーザーメッセージを記憶
-	userMsg := domconv.NewMessage(domconv.SpeakerUser, userMessage, nil)
+	userMsg := domconv.NewMessage(domconv.SpeakerUser, userMessage, map[string]interface{}{
+		"from": string(domconv.SpeakerUser),
+		"to":   string(speaker),
+	})
 	if err := e.manager.Store(ctx, sessionID, userMsg); err != nil {
 		log.Printf("[ConversationEngine] WARN: Store (user) failed: %v", err)
 	}
 
 	// Agent の応答を記憶
-	if strings.TrimSpace(string(speaker)) == "" {
-		speaker = domconv.SpeakerMio
-	}
-	agentMsg := domconv.NewMessage(speaker, response, nil)
+	agentMsg := domconv.NewMessage(speaker, response, map[string]interface{}{
+		"from": string(speaker),
+		"to":   string(domconv.SpeakerUser),
+	})
 	if err := e.manager.Store(ctx, sessionID, agentMsg); err != nil {
 		log.Printf("[ConversationEngine] WARN: Store (%s) failed: %v", speaker, err)
 	}

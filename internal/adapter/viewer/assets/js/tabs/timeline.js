@@ -6,9 +6,10 @@ function isExplicitRouteMessage(message) {
 function buildViewerSendRequest(message) {
   const trimmed = String(message || '').trim();
   if (!trimmed) return {message: ''};
+  const recipient = typeof selectedViewerChatRecipient === 'function' ? selectedViewerChatRecipient() : 'mio';
+  if (/^\/chat(\s|$)/.test(trimmed) && recipient) return {message: trimmed, to: recipient};
   if (isExplicitRouteMessage(trimmed)) return {message: trimmed};
 
-  const recipient = typeof selectedViewerChatRecipient === 'function' ? selectedViewerChatRecipient() : 'mio';
   if (recipient) return {message: trimmed, to: recipient};
   return {message: applyRoleTargetToMessage(trimmed)};
 }

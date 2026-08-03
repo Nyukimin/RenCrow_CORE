@@ -191,17 +191,21 @@ func (rp *RecallPack) ToPromptMessages() []llm.Message {
 	// 3. 直近の会話履歴（ShortContext）
 	for _, msg := range rp.ShortContext {
 		role := "user"
-		switch msg.Speaker {
-		case SpeakerMio:
+		content := msg.Msg
+		if speaker, ok := CanonicalChatAgentSpeaker(msg.Speaker); ok {
 			role = "assistant"
-		case SpeakerUser:
-			role = "user"
-		default:
-			role = "system"
+			content = fmt.Sprintf("[%s] %s", speaker, msg.Msg)
+		} else {
+			switch msg.Speaker {
+			case SpeakerUser:
+				role = "user"
+			default:
+				role = "system"
+			}
 		}
 		messages = append(messages, llm.Message{
 			Role:    role,
-			Content: msg.Msg,
+			Content: content,
 		})
 	}
 

@@ -4763,6 +4763,27 @@ test('viewer chat send uses Shiro and Midori recipient contracts', () => {
   assert.deepEqual(midoriReq, {message: '物語を相談したい', to: 'midori'});
 });
 
+test('viewer explicit chat keeps the selected Kuro recipient', () => {
+  const rolesJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/roles.js', 'utf8');
+  const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
+  const store = new Map([['roleSelector.selectedTarget', 'kuro']]);
+  const context = vm.createContext({
+    document: {querySelectorAll: () => []},
+    localStorage: {
+      getItem: (key) => store.get(key) || null,
+      setItem: (key, value) => store.set(key, String(value)),
+      removeItem: (key) => store.delete(key),
+    },
+    renderRoleSelector: () => {},
+    ROLE_TARGETS: [{id: 'mio'}, {id: 'shiro'}, {id: 'kuro'}, {id: 'midori'}],
+  });
+  vm.runInContext(rolesJs, context);
+  vm.runInContext(timelineJs, context);
+
+  const req = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('/chat recall the token'))", context));
+  assert.deepEqual(req, {message: '/chat recall the token', to: 'kuro'});
+});
+
 test('viewer chat coder role target remains an explicit route command', () => {
   const rolesJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/roles.js', 'utf8');
   const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');

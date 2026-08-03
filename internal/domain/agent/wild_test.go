@@ -114,6 +114,7 @@ func TestWildAgentBuilderOptionsAndCommandStrip(t *testing.T) {
 }
 
 func TestWildAgentGenerateSharesMemoryAndFiltersExternalRecallByRole(t *testing.T) {
+	var storedSpeaker conversation.Speaker
 	engine := &mockConversationEngine{
 		beginTurnFunc: func(ctx context.Context, sessionID, msg string) (*conversation.RecallPack, error) {
 			return &conversation.RecallPack{
@@ -126,6 +127,10 @@ func TestWildAgentGenerateSharesMemoryAndFiltersExternalRecallByRole(t *testing.
 					{Query: "worker report", Roles: []string{"worker"}},
 				},
 			}, nil
+		},
+		endTurnAsFunc: func(_ context.Context, _, _, _ string, speaker conversation.Speaker) error {
+			storedSpeaker = speaker
+			return nil
 		},
 	}
 	var captured llm.GenerateRequest
@@ -149,11 +154,17 @@ func TestWildAgentGenerateSharesMemoryAndFiltersExternalRecallByRole(t *testing.
 	if !strings.Contains(got, "wild mood board") || !strings.Contains(got, "worker plan") {
 		t.Fatalf("all conversation memory should be shared with Wild, got:\n%s", got)
 	}
+	if !strings.Contains(got, "Mio, Shiro, Kuro, and Midori") {
+		t.Fatalf("shared conversation continuity contract is missing, got:\n%s", got)
+	}
 	if strings.Contains(got, "worker report") {
 		t.Fatalf("worker external search context should be filtered for Wild, got:\n%s", got)
 	}
 	if strings.Contains(got, "Mio recall persona") {
 		t.Fatalf("Mio recall persona leaked into Wild system context:\n%s", got)
+	}
+	if storedSpeaker != conversation.SpeakerMidori {
+		t.Fatalf("stored speaker=%q, want midori", storedSpeaker)
 	}
 }
 

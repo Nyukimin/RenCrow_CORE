@@ -490,6 +490,75 @@ func TestRecall_UsesL1WhenRedisThreadMissing(t *testing.T) {
 	}
 }
 
+func TestRecall_RestoresAllCharacterMessagesFromL1AfterRestart(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "l1-memory.db")
+	store, err := l1sqlite.NewL1SQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	first := newTestManager(nil, nil)
+	first.WithL1Store(store)
+	want := []domconv.Message{
+		domconv.NewMessage(domconv.SpeakerUser, "合言葉は青い水路", nil),
+		domconv.NewMessage(domconv.SpeakerMio, "覚えたよ", nil),
+		domconv.NewMessage(domconv.SpeakerShiro, "確認しました", nil),
+		domconv.NewMessage(domconv.SpeakerKuro, "分析しました", nil),
+		domconv.NewMessage(domconv.SpeakerMidori, "物語にしました", nil),
+	}
+	for _, msg := range want {
+		if err := first.Store(ctx, "shared-restart", msg); err != nil {
+			t.Fatalf("Store(%s) failed: %v", msg.Speaker, err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close first L1 store: %v", err)
+	}
+
+	reopened, err := l1sqlite.NewL1SQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("reopen L1 store: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	second := newTestManager(nil, nil)
+	second.WithL1Store(reopened)
+
+	got, err := second.Recall(ctx, "shared-restart", "合言葉は？", len(want))
+	if err != nil {
+		t.Fatalf("Recall after restart failed: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Recall after restart=%#v, want %d messages", got, len(want))
+	}
+	for i := range want {
+		if got[i].Speaker != want[i].Speaker || got[i].Msg != want[i].Msg {
+			t.Fatalf("recalled[%d]=%#v, want speaker=%s msg=%q", i, got[i], want[i].Speaker, want[i].Msg)
+		}
+	}
+}
+
+func TestGenerateSimpleSummaryPreservesCharacterAttribution(t *testing.T) {
+	thread := domconv.NewThread("shared", "general")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "合言葉は青い水路", nil))
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerMidori, "物語にしました", nil))
+
+	summary := generateSimpleSummary(thread)
+	if !strings.Contains(summary, "Start [user]") || !strings.Contains(summary, "End [midori]") {
+		t.Fatalf("simple summary lost attribution: %q", summary)
+	}
+}
+
+func TestL1EventsToMessagesNormalizesLegacyCharacterSpeakers(t *testing.T) {
+	events := []l1sqlite.L1MemoryEvent{
+		{Speaker: domconv.Speaker("heavy"), Message: "旧Kuro発言", CreatedAt: time.Now()},
+		{Speaker: domconv.Speaker("wild"), Message: "旧Midori発言", CreatedAt: time.Now().Add(time.Second)},
+	}
+	got := l1EventsToMessages(events)
+	if len(got) != 2 || got[0].Speaker != domconv.SpeakerKuro || got[1].Speaker != domconv.SpeakerMidori {
+		t.Fatalf("legacy L1 speakers were not normalized: %#v", got)
+	}
+}
+
 func TestRecall_SkipsSQLiteArchiveWhenArchiveDisabled(t *testing.T) {
 	embedder := &mockEmbeddingProvider{vec: []float32{0.1, 0.2, 0.3}}
 	vdb := &mockVectorDBStore{mockScore: 0.42}

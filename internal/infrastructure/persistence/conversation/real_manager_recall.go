@@ -106,8 +106,12 @@ func l1EventsToMessages(events []l1sqlite.L1MemoryEvent) []domconv.Message {
 				meta[k] = v
 			}
 		}
+		speaker := ev.Speaker
+		if canonical, ok := domconv.CanonicalChatAgentSpeaker(speaker); ok {
+			speaker = canonical
+		}
 		messages = append(messages, domconv.Message{
-			Speaker:   ev.Speaker,
+			Speaker:   speaker,
 			Msg:       ev.Message,
 			Timestamp: ev.CreatedAt,
 			Meta:      meta,

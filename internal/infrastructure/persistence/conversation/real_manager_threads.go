@@ -234,13 +234,15 @@ func generateSimpleSummary(thread *domconv.Thread) string {
 	if len(thread.Turns) == 0 {
 		return "Empty thread"
 	}
-	first := thread.Turns[0].Msg
-	last := thread.Turns[len(thread.Turns)-1].Msg
+	firstMessage := thread.Turns[0]
+	lastMessage := thread.Turns[len(thread.Turns)-1]
+	first := firstMessage.Msg
+	last := lastMessage.Msg
 	if len(first) > 50 {
 		first = first[:50] + "..."
 	}
 	if len(last) > 50 {
 		last = last[:50] + "..."
 	}
-	return fmt.Sprintf("Start: %s ... End: %s (%d turns)", first, last, len(thread.Turns))
+	return fmt.Sprintf("Start [%s]: %s ... End [%s]: %s (%d turns)", firstMessage.Speaker, first, lastMessage.Speaker, last, len(thread.Turns))
 }

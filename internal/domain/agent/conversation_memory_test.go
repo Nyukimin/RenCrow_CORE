@@ -71,3 +71,26 @@ func TestConversationMemoryOptionalInterfaceErrors(t *testing.T) {
 		t.Fatalf("expected end error, got %v", err)
 	}
 }
+
+func TestEnforceExactSharedRecallAnswer(t *testing.T) {
+	pack := &conversation.RecallPack{ShortContext: []conversation.Message{
+		{Speaker: conversation.SpeakerUser, Msg: "この会話固有の合言葉は RC_CTX_20260803_1328_L1S4 です"},
+		{Speaker: conversation.SpeakerMidori, Msg: "覚えました"},
+	}}
+
+	got := enforceExactSharedRecallAnswer("合言葉を英数字だけでそのまま教えて", "履歴が見つかりません", pack)
+	if got != "RC_CTX_20260803_1328_L1S4" {
+		t.Fatalf("exact recall answer=%q", got)
+	}
+	if got := enforceExactSharedRecallAnswer("前の話を要約して", "通常応答", pack); got != "通常応答" {
+		t.Fatalf("non-exact request must keep model response, got %q", got)
+	}
+
+	ambiguous := &conversation.RecallPack{ShortContext: []conversation.Message{{
+		Speaker: conversation.SpeakerUser,
+		Msg:     "候補は RC_CTX_20260803_1328_L1S4 と RC_CTX_20260803_1328_OTHER9",
+	}}}
+	if got := enforceExactSharedRecallAnswer("合言葉をそのまま教えて", "確認が必要です", ambiguous); got != "確認が必要です" {
+		t.Fatalf("ambiguous literals must keep model response, got %q", got)
+	}
+}

@@ -76,10 +76,13 @@ func TestHeavyAgentGenerateWithConversationEngine(t *testing.T) {
 				ShortContext: []conversation.Message{{Speaker: conversation.SpeakerUser, Msg: "before"}},
 			}, nil
 		},
-		endTurnFunc: func(ctx context.Context, sessionID, userMessage, response string) error {
+		endTurnAsFunc: func(ctx context.Context, sessionID, userMessage, response string, speaker conversation.Speaker) error {
 			endCalled = true
 			if response != "heavy response" {
 				t.Fatalf("response=%q", response)
+			}
+			if speaker != conversation.SpeakerKuro {
+				t.Fatalf("speaker=%q, want kuro", speaker)
 			}
 			return nil
 		},
@@ -95,6 +98,9 @@ func TestHeavyAgentGenerateWithConversationEngine(t *testing.T) {
 	}
 	if len(gotReq.Messages) < 2 {
 		t.Fatalf("expected recall and user messages: %#v", gotReq.Messages)
+	}
+	if gotReq.Messages[0].Role != "system" || !strings.Contains(gotReq.Messages[0].Content, "Mio, Shiro, Kuro, and Midori") {
+		t.Fatalf("missing shared conversation continuity contract: %#v", gotReq.Messages)
 	}
 	for _, message := range gotReq.Messages {
 		if strings.Contains(message.Content, "Mio recall persona") {

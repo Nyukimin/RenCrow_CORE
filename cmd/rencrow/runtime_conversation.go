@@ -116,6 +116,7 @@ func buildConversationRuntime(
 		).WithDetector(detector)
 		if l1Store != nil {
 			engine = engine.WithRecallTraceStore(l1Store)
+			engine = engine.WithUserMemoryStore(l1Store, "ren")
 			if cfg.KnowledgeRelation.Enabled {
 				engine = engine.WithKnowledgeRelationRecall(cfg.KnowledgeRelation.MaxHops)
 				log.Printf("  Knowledge Relation recall: enabled (max_hops=%d)", cfg.KnowledgeRelation.MaxHops)
@@ -138,8 +139,18 @@ func buildConversationRuntime(
 		log.Printf("  SQLite archive: %s", cfg.Storage.Databases.ConversationArchive)
 		log.Printf("  VectorDB: %s", cfg.Conversation.VectorDBURL)
 	} else {
-		convEngine = nil
-		log.Printf("Conversation LLM disabled (v3/v4 mode)")
+		if l1Store != nil {
+			l1Manager := conversationpersistence.NewL1ConversationManager(l1Store)
+			convEngine = conversationpersistence.NewRealConversationEngine(
+				l1Manager,
+				conversation.NewMioPersona(cfg.Prompts.MioPersona),
+			).WithRecallTraceStore(l1Store).WithUserMemoryStore(l1Store, "ren")
+			log.Printf("ConversationEngine L1-only enabled (shared Mio/Shiro/Kuro/Midori context)")
+		} else {
+			convEngine = nil
+			log.Printf("Conversation memory disabled: L1 SQLite is not configured")
+		}
+		log.Printf("Advanced Conversation LLM disabled (Redis/archive/vector recall unavailable)")
 	}
 	if realMgr != nil {
 		webSearchCache := newConversationWebSearchCacheAdapter(realMgr)

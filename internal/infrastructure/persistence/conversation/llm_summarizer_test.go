@@ -74,6 +74,22 @@ func TestLLMSummarizer_Summarize_EmptyThread(t *testing.T) {
 	}
 }
 
+func TestBuildSummarizePromptPreservesCharacterAttribution(t *testing.T) {
+	thread := domconv.NewThread("shared", "general")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "合言葉は青い水路", nil))
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerMio, "覚えたよ", nil))
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerShiro, "確認しました", nil))
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerKuro, "分析しました", nil))
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerMidori, "物語にしました", nil))
+
+	prompt := buildSummarizePrompt(thread)
+	for _, marker := range []string{"[mio]", "[shiro]", "[kuro]", "[midori]", "別のAgentへ帰属させない"} {
+		if !strings.Contains(prompt, marker) {
+			t.Fatalf("summary prompt missing %q: %s", marker, prompt)
+		}
+	}
+}
+
 // --- ExtractKeywords テスト ---
 
 func TestLLMSummarizer_ExtractKeywords_Success(t *testing.T) {
