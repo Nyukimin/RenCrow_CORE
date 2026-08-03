@@ -12,6 +12,11 @@
 
 ## Repository-local test runtime
 
+- Test validation belongs to implementation, not to the Push operation itself. Do not rerun a relevant check during Push when the exact same content has already passed it.
+- A temporary clean worktree is for isolating a diff and creating a commit. When its `git diff` or hashes match content already validated in the primary worktree, do not repeat cold-cache tests there.
+- Rerun a relevant check only when relevant files changed after validation, no successful result exists, or Ren explicitly requests it.
+- When a test command reaches its timeout, do not automatically retry the same step with a longer timeout. Stop residual processes, diagnose the stalled boundary, and report the incomplete check or defer it to GitHub Actions.
+
 - ローカルWindowsでは必ず`.\scripts\test-local.ps1`を入口にする。
   Goは`go vet ./...`と`go build ./...`だけを実行し、`.test.exe`を生成・実行する
   `go test`は使わない。Python／Node／shell suiteはplanどおり維持する。
