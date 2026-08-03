@@ -39,6 +39,10 @@ func buildConversationRuntime(
 	var realMgr *conversationpersistence.RealConversationManager
 	var l1Store *l1sqlite.L1SQLiteStore
 	var profilePromotion *memorypromotionapp.Service
+	mioPersona := conversation.DefaultMioPersona()
+	if cfg.Prompts != nil {
+		mioPersona = conversation.NewMioPersona(cfg.Prompts.MioPersona)
+	}
 	if cfg.Storage.Databases.ConversationL1 != "" {
 		if err := os.MkdirAll(filepath.Dir(cfg.Storage.Databases.ConversationL1), 0755); err != nil {
 			log.Fatalf("Failed to create L1 SQLite directory: %v", err)
@@ -112,7 +116,7 @@ func buildConversationRuntime(
 
 		engine := conversationpersistence.NewRealConversationEngine(
 			realMgr,
-			conversation.NewMioPersona(cfg.Prompts.MioPersona),
+			mioPersona,
 		).WithDetector(detector)
 		if l1Store != nil {
 			engine = engine.WithRecallTraceStore(l1Store)
@@ -143,7 +147,7 @@ func buildConversationRuntime(
 			l1Manager := conversationpersistence.NewL1ConversationManager(l1Store)
 			convEngine = conversationpersistence.NewRealConversationEngine(
 				l1Manager,
-				conversation.NewMioPersona(cfg.Prompts.MioPersona),
+				mioPersona,
 			).WithRecallTraceStore(l1Store).WithUserMemoryStore(l1Store, "ren")
 			log.Printf("ConversationEngine L1-only enabled (shared Mio/Shiro/Kuro/Midori context)")
 		} else {
