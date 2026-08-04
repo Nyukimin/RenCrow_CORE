@@ -27,6 +27,7 @@ func (o *IdleChatOrchestrator) Start() {
 		o.enrichCurrentDailySeeds()
 	}()
 	o.startDailySeedRefreshScheduler(newsSourceConfig)
+	o.RefillStoryEpisodesAsync("bootstrap")
 
 	o.wg.Add(1)
 	go o.monitorLoop()

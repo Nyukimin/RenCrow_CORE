@@ -252,10 +252,12 @@ PORTALは`turn_index`順に音声chunkを再生し、browserの`ended`でlocal q
 下限を割った場合は`buffering`を表示し、字幕だけを次発話へ進めません。
 
 `GET /viewer/idlechat/episodes`はepisode在庫の読み取り専用snapshotです。各episodeの
-`episode_id`、revision、category、topic、source参照、`generator=codex_exe`、`generation_id`、
+`episode_id`、revision、`episode_kind=dialogue|story_reading`、category、topic、source参照、`generator=codex_exe`、`generation_id`、
 `character_revision`、`input_hash`、制作状態、再生状態、生成日時、有効期限、発話数、品質判定、
 固定prefix長、`repair_from_turn`、suffix再生成回数、
 現在の再生位置、buffer秒数、先読み発話数、最終TTS error、最終ACK時刻を返します。
+storyではreader、listener、`transformation_axis`、genre、`interest_direction`、`interest_contract`、
+物語台帳revision、検出済み整合性error、補充生成jobとの相関も返します。
 台本本文は明示した`episode_id`の詳細要求でだけ返し、一覧へ全件展開しません。このGETはepisodeの
 生成、検証、expire、再生、TTS合成を開始しません。
 
@@ -263,23 +265,32 @@ PORTALは`turn_index`順に音声chunkを再生し、browserの`ended`でlocal q
 準備jobを登録して`job_id`を返します。`count`は1から10までとし、空の場合はConfigの不足数を使います。
 HTTP request内で台本生成完了を待たず、既存の同一準備jobと重複する要求は冪等に同じ実行へ集約します。
 前景Chatまたは明示Workerが始まった場合、jobは失敗ではなく`deferred`となり、次回Idleへ延期します。
+生成または検証がNGのepisodeは`needs_repair`として保持し、ready数へ含めません。prepare jobはその
+修復や破棄判断を待たず、別`episode_id`で不足数を追加生成します。元episodeと補充episodeは
+`replacement_for_episode_id`またはjob相関で追跡し、本文やidentityを共有しません。
 
 `POST /viewer/idlechat/episodes/validate`は`episode_id`を受け、台本の全発話、speaker帰属、順序、
 話題重複、発話反復、Persona、category固有禁止、品質判定、source鮮度、本文hashを検証します。
+storyでは固定reader、listenerの合いの手頻度と長さ、面白さ契約、entity関係、時系列、場所、
+所有物、世界規則、造語、表示表記、TTS読みも検証します。
 検証はepisode本文を変更せず、`valid`、turn別状態、`first_invalid_turn`、NG理由、固定可能なprefix長、
-`repair_required`を返します。NG理由は`schema_violation`、`speaker_confusion`、`repetition`、
+`repair_required`、`replacement_requested`、補充job IDを返します。NG理由は`schema_violation`、`speaker_confusion`、`repetition`、
 `topic_violation`、`persona_violation`、`factual_violation`、`meta_leak`、`quality_violation`、
-`content_mode_violation`です。episodeおよび検証結果は`content_mode=serious|assertive|free`と
+`content_mode_violation`、`lexical_corruption`、`entity_relation_violation`、
+`continuity_violation`、`world_rule_violation`、`reading_violation`、
+`interest_contract_violation`、`story_performance_violation`です。episodeおよび検証結果は`content_mode=serious|assertive|free`と
 判定理由を返し、戦争・武力衝突・災害等を`serious`、それ以外の政治・思想を`assertive`、
 その他を`free`として扱います。複数条件では`serious`を優先します。
 prepare job内の自動修復は最小の`first_invalid_turn=k`を起点に`turn k`以降を破棄し、固定prefixと
 NG理由をCodexExeへ渡して最終turnまで再生成します。prefixの`message_id`は維持し、suffixへは
-新しい`message_id`を発行します。`max_suffix_regenerations`到達時はepisodeを`failed`にします。
+新しい`message_id`を発行します。NG判定時点から当該episodeはready在庫へ含めず、修復とは別に
+補充episodeを生成します。`max_suffix_regenerations`到達時はepisodeを`failed`にしますが、
+自動削除は行いません。
 `POST /viewer/idlechat/episodes/expire`は`episode_id`を受け、再生中でないepisodeを`expired`へ遷移させます。
 再生中のepisodeはHTTP 409と`IDLECHAT_EPISODE_PLAYING`を返し、暗黙に中断しません。これらは
 Debug Viewer／localhost運用CLI向けのadmin APIであり、RenCrow_PORTALからproxyしません。
 
-`GET /viewer/idlechat/status`の`forecast_stock`は、`enabled`、`total`、`capacity`、`missing`、`filling`、最終生成状態と、6ドメインの`topics`を返します。`episode_stock`は`ready`件数、target、不足数、準備中job、最終失敗phaseを返し、`playback_buffer`はepisode ID、再生状態、現在turn、buffer秒数、先読み発話数、最終ACK時刻を返します。これは観測用snapshotであり、GETによって生成・消費・補充・再生・TTS合成を開始しません。
+`GET /viewer/idlechat/status`の`forecast_stock`は、`enabled`、`total`、`capacity`、`missing`、`filling`、最終生成状態と、6ドメインの`topics`を返します。`episode_stock`は`ready`件数、target、不足数、`needs_repair`件数、準備中job、補充生成job、最終失敗phaseと試行数を返し、`playback_buffer`はepisode ID、再生状態、現在turn、buffer秒数、先読み発話数、最終ACK時刻を返します。これは観測用snapshotであり、GETによって生成・消費・補充・再生・TTS合成を開始しません。
 
 `GET /viewer/idlechat/collection`は、`status`、`skill_id`（`core.build-daily-source-brief`）、`schedule`、`timezone`、`fetched_at`、`next_run_at`、ニュース件数、Wikipedia件数、カテゴリ／source別件数、`items`、`sources`、`tools`、`word_pool`を返します。`word_pool`は固定語数、当日最新語数、合計数、上限、当日最新語とその`source_type`を返します。分析全体の状態は`enrichment_status`（`pending`、`enriching`、`ready`、`partial`、`fallback`）、`enrichment_provider`、`enrichment_error`、`enriched_at`で確認できます。収集後の分析は`Worker`が記事を1件ずつ完了させ、`enriching`中も完了済みまたは工程失敗が確定した記事を順次snapshotへ反映します。`ChatWorker`は使用しません。
 

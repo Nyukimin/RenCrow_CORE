@@ -24,6 +24,7 @@ func (o *IdleChatOrchestrator) monitorLoop() {
 			return
 		case <-ticker.C:
 			o.RefillForecastTopicStockIfIdle("idle")
+			o.RefillStoryEpisodesAsync("idle")
 			go o.checkAndStartChat()
 		}
 	}
@@ -64,7 +65,7 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 			o.runForecastDomainSession(*plan.domain)
 		}
 	case "story-simple":
-		o.RunSimpleStorySession()
+		o.RunPreparedStorySession()
 	default:
 		o.runChatSession(plan.strategy)
 	}

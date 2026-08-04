@@ -15,16 +15,19 @@ type Dependencies struct {
 // Routes groups IdleChat Viewer route handlers supplied by cmd/rencrow.
 // Handler implementations are supplied by the IdleChat application runtime.
 type Routes struct {
-	Start           http.HandlerFunc
-	Stop            http.HandlerFunc
-	SurfacePresence http.HandlerFunc
-	Interrupt       http.HandlerFunc
-	Status          http.HandlerFunc
-	Collection      http.HandlerFunc
-	Logs            http.HandlerFunc
-	Forecast        http.HandlerFunc
-	Story           http.HandlerFunc
-	StorySimple     http.HandlerFunc
+	Start            http.HandlerFunc
+	Stop             http.HandlerFunc
+	SurfacePresence  http.HandlerFunc
+	Interrupt        http.HandlerFunc
+	Status           http.HandlerFunc
+	Collection       http.HandlerFunc
+	Logs             http.HandlerFunc
+	Forecast         http.HandlerFunc
+	Story            http.HandlerFunc
+	StorySimple      http.HandlerFunc
+	Episodes         http.HandlerFunc
+	EpisodesPrepare  http.HandlerFunc
+	EpisodesValidate http.HandlerFunc
 }
 
 // Background is the minimum IdleChat runtime start boundary.
@@ -45,6 +48,9 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/idlechat/forecast", routes.Forecast)
 	registerRoute(mux, "/viewer/idlechat/story", routes.Story)
 	registerRoute(mux, "/viewer/idlechat/story-simple", routes.StorySimple)
+	registerRoute(mux, "/viewer/idlechat/episodes", routes.Episodes)
+	registerRoute(mux, "/viewer/idlechat/episodes/prepare", routes.EpisodesPrepare)
+	registerRoute(mux, "/viewer/idlechat/episodes/validate", routes.EpisodesValidate)
 }
 
 // StartBackground reserves the feature background-job boundary.

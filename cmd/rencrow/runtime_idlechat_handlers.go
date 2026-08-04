@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -212,6 +213,7 @@ func (d *Dependencies) handleIdleChatStatus() http.HandlerFunc {
 			"active_transcript": activeTranscript,
 			"watchdog":          d.idleChatOrch.WatchdogSnapshot(time.Now().UTC()),
 			"forecast_stock":    d.idleChatOrch.ForecastTopicStockSnapshot(),
+			"episode_stock":     d.idleChatOrch.StoryEpisodeStockSnapshot(),
 			"llm_busy":          d.snapshotLLMBusy(),
 			"tts_pending":       snapshotIdleChatTTSPending(),
 			"tts_public":        snapshotTTSPublicSessions(),
@@ -283,6 +285,11 @@ func (d *Dependencies) handleIdleChatStory() http.HandlerFunc {
 			http.Error(w, "idlechat not enabled", http.StatusNotFound)
 			return
 		}
+		if stock := d.idleChatOrch.StoryEpisodeStockSnapshot(); stock.Enabled && stock.Ready == 0 {
+			d.idleChatOrch.RefillStoryEpisodesAsync("viewer_story_request")
+			writeJSONStatus(w, http.StatusAccepted, map[string]any{"ok": true, "state": "preparing", "episode_stock": stock})
+			return
+		}
 		if err := d.idleChatOrch.StartStoryMode(); err != nil {
 			status := http.StatusBadRequest
 			if strings.Contains(err.Error(), "already active") {
@@ -313,6 +320,11 @@ func (d *Dependencies) handleIdleChatStorySimple() http.HandlerFunc {
 			http.Error(w, "idlechat not enabled", http.StatusNotFound)
 			return
 		}
+		if stock := d.idleChatOrch.StoryEpisodeStockSnapshot(); stock.Enabled && stock.Ready == 0 {
+			d.idleChatOrch.RefillStoryEpisodesAsync("viewer_story_simple_request")
+			writeJSONStatus(w, http.StatusAccepted, map[string]any{"ok": true, "state": "preparing", "episode_stock": stock})
+			return
+		}
 		if err := d.idleChatOrch.StartSimpleStoryMode(); err != nil {
 			status := http.StatusBadRequest
 			if strings.Contains(err.Error(), "already active") {
@@ -327,6 +339,109 @@ func (d *Dependencies) handleIdleChatStorySimple() http.HandlerFunc {
 			"mode":        d.idleChatOrch.CurrentMode(),
 			"disabled":    d.idleChatOrch.IsDisabled(),
 			"chat_active": d.idleChatOrch.IsChatActive(),
+		})
+	}
+}
+
+func (d *Dependencies) handleIdleChatEpisodes() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if d.idleChatOrch == nil {
+			http.Error(w, "idlechat not enabled", http.StatusNotFound)
+			return
+		}
+		if episodeID := strings.TrimSpace(r.URL.Query().Get("episode_id")); episodeID != "" {
+			episode, ok := d.idleChatOrch.StoryEpisode(episodeID)
+			if !ok {
+				http.Error(w, "episode not found", http.StatusNotFound)
+				return
+			}
+			writeJSON(w, map[string]any{"ok": true, "episode": episode})
+			return
+		}
+		snapshot := d.idleChatOrch.StoryEpisodeStockSnapshot()
+		episodes := make([]map[string]any, 0, len(snapshot.Episodes))
+		for _, episode := range snapshot.Episodes {
+			episodes = append(episodes, map[string]any{
+				"episode_id": episode.EpisodeID, "revision": episode.Revision,
+				"episode_kind": episode.EpisodeKind, "generation_id": episode.GenerationID,
+				"replacement_for_episode_id": episode.ReplacementForEpisodeID,
+				"source":                     episode.Source, "reader": episode.Reader, "listener": episode.Listener,
+				"story_contract": episode.Contract, "production_status": episode.ProductionStatus,
+				"validation": episode.Validation, "utterance_count": len(episode.Turns),
+				"fixed_prefix_length": episode.FixedPrefixLength, "repair_from_turn": episode.RepairFromTurn,
+				"suffix_regenerations": episode.SuffixRegenerations,
+				"play_count":           episode.PlayCount, "last_played_at": episode.LastPlayedAt,
+				"created_at": episode.CreatedAt, "updated_at": episode.UpdatedAt,
+			})
+		}
+		writeJSON(w, map[string]any{
+			"ok": true, "ready": snapshot.Ready, "target": snapshot.Target, "missing": snapshot.Missing,
+			"needs_repair": snapshot.NeedsRepair, "failed": snapshot.Failed, "filling": snapshot.Filling,
+			"generation_attempts": snapshot.GenerationAttempts, "last_failure_phase": snapshot.LastFailurePhase,
+			"last_error": snapshot.LastError, "episodes": episodes,
+		})
+	}
+}
+
+func (d *Dependencies) handleIdleChatEpisodesPrepare() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if d.idleChatOrch == nil {
+			http.Error(w, "idlechat not enabled", http.StatusNotFound)
+			return
+		}
+		var request struct {
+			Count int `json:"count"`
+		}
+		if r.Body != nil && r.ContentLength != 0 {
+			if err := json.NewDecoder(io.LimitReader(r.Body, 16*1024)).Decode(&request); err != nil {
+				http.Error(w, "invalid JSON", http.StatusBadRequest)
+				return
+			}
+		}
+		if request.Count < 0 || request.Count > 10 {
+			http.Error(w, "count must be between 1 and 10", http.StatusBadRequest)
+			return
+		}
+		jobID := fmt.Sprintf("story-prepare-%d", time.Now().UTC().UnixNano())
+		d.idleChatOrch.PrepareStoryEpisodeCountAsync(request.Count, jobID)
+		writeJSONStatus(w, http.StatusAccepted, map[string]any{"ok": true, "job_id": jobID, "state": "queued", "episode_stock": d.idleChatOrch.StoryEpisodeStockSnapshot()})
+	}
+}
+
+func (d *Dependencies) handleIdleChatEpisodesValidate() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if d.idleChatOrch == nil {
+			http.Error(w, "idlechat not enabled", http.StatusNotFound)
+			return
+		}
+		var request struct {
+			EpisodeID string `json:"episode_id"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 16*1024)).Decode(&request); err != nil || strings.TrimSpace(request.EpisodeID) == "" {
+			http.Error(w, "episode_id is required", http.StatusBadRequest)
+			return
+		}
+		episode, ok := d.idleChatOrch.StoryEpisode(request.EpisodeID)
+		if !ok {
+			http.Error(w, "episode not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"ok": true, "episode_id": episode.EpisodeID, "valid": episode.Validation.Valid,
+			"first_invalid_turn": episode.Validation.FirstInvalidTurn, "errors": episode.Validation.Errors,
+			"repair_required": !episode.Validation.Valid, "replacement_requested": !episode.Validation.Valid,
 		})
 	}
 }
@@ -363,5 +478,11 @@ func (d *Dependencies) handleIdleChatLogs() http.HandlerFunc {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeJSONStatus(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }

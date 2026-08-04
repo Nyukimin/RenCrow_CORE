@@ -50,14 +50,15 @@ func NewIdleChatOrchestrator(
 			LogJudgeScores:       true,
 			ProviderName:         "chatworker",
 		}),
-		dialogueConfig:      DefaultDialogueInterestingnessConfig(),
-		lastActivity:        time.Now(),
-		history:             make([]SessionSummary, 0, 32),
-		ctx:                 ctx,
-		cancel:              cancel,
-		runCtx:              ctx,
-		interruptedSessions: make(map[string]struct{}),
-		messageIDs:          make(map[string]string),
+		dialogueConfig:         DefaultDialogueInterestingnessConfig(),
+		lastActivity:           time.Now(),
+		history:                make([]SessionSummary, 0, 32),
+		ctx:                    ctx,
+		cancel:                 cancel,
+		runCtx:                 ctx,
+		interruptedSessions:    make(map[string]struct{}),
+		messageIDs:             make(map[string]string),
+		storyTTSPrefetchWindow: storyTTSPrefetchWindow,
 	}
 }
 

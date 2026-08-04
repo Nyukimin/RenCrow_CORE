@@ -54,6 +54,38 @@ log:
 	}
 }
 
+func TestLoadConfigIdleChatEpisodePreparationDefaults(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("server:\n  port: 8080\nidle_chat:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	p := cfg.IdleChat.EpisodePreparation
+	if !p.EnabledValue() || p.Generator != "codex_exe" || p.ReadyTarget != 3 || p.NoReadyBehavior != "preparing" || p.MaxSuffixRegenerations != 3 {
+		t.Fatalf("episode preparation defaults=%+v", p)
+	}
+	if p.CodexExe.Sandbox != "read-only" || !p.CodexExe.EphemeralValue() {
+		t.Fatalf("CodexExe safety defaults=%+v", p.CodexExe)
+	}
+	if cfg.IdleChat.TTSPrefetch.LookaheadUtterances != 3 || cfg.IdleChat.TTSPrefetch.TargetBufferSeconds != 30 {
+		t.Fatalf("TTS prefetch defaults=%+v", cfg.IdleChat.TTSPrefetch)
+	}
+}
+
+func TestLoadConfigRejectsWritableIdleChatStoryCodexExe(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := "server:\n  port: 8080\nidle_chat:\n  enabled: true\n  episode_preparation:\n    codex_exe:\n      sandbox: workspace-write\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "sandbox must be read-only") {
+		t.Fatalf("LoadConfig error=%v", err)
+	}
+}
+
 func TestLoadConfig_LineChannelPolicy(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")

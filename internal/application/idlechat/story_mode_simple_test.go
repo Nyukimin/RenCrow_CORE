@@ -99,7 +99,7 @@ func (p *blockingStoryProvider) Name() string {
 	return "blocking-story"
 }
 
-func TestRunSimpleStorySessionEmitsIntroBeforeGenerationCompletes(t *testing.T) {
+func TestRunSimpleStorySessionDoesNotPublishBeforeGenerationCompletes(t *testing.T) {
 	provider := &blockingStoryProvider{
 		started: make(chan struct{}),
 		release: make(chan struct{}),
@@ -119,28 +119,30 @@ func TestRunSimpleStorySessionEmitsIntroBeforeGenerationCompletes(t *testing.T) 
 	}()
 
 	select {
+	case <-provider.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("story generation did not start")
+	}
+
+	select {
 	case ev := <-events:
-		if ev.Type != "idlechat.viewer" {
-			t.Fatalf("first event type = %q, want idlechat.viewer", ev.Type)
-		}
-		if ev.Content == "" {
-			t.Fatal("intro event content is empty")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no viewer intro emitted before generation completed")
+		t.Fatalf("partial story event published before generation completed: type=%q content=%q", ev.Type, ev.Content)
+	case <-time.After(100 * time.Millisecond):
 	}
 
 	if got := o.CurrentTopic(); got == "" {
 		t.Fatal("current topic is empty while story generation is active")
 	}
 
-	select {
-	case <-provider.started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("story generation did not start after intro")
-	}
-
 	close(provider.release)
+	select {
+	case ev := <-events:
+		if ev.Content == "" {
+			t.Fatal("first completed story event content is empty")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("completed story was not published")
+	}
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):

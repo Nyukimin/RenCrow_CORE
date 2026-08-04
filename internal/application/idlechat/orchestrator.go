@@ -159,6 +159,8 @@ type IdleChatOrchestrator struct {
 	reportTTSTimeout          func(TTSTimeoutEvent)
 	topicStore                *TopicStore
 	topicStockBuf             *forecastTopicStock // 未来展望お題ストック
+	storyEpisodeService       *StoryEpisodeService
+	storyTTSPrefetchWindow    int
 	forecastTopicGenerator    func(ForecastDomain) (string, []string, *forecastTopicFailure)
 	recentTopics              func(context.Context, int) ([]string, error)
 	personaRuntime            PersonaRuntimeRecorder

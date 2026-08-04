@@ -10,16 +10,19 @@ import (
 func TestRegisterRoutesKeepsIdleChatViewerPaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
-		Start:           statusHandler(http.StatusAccepted),
-		Stop:            statusHandler(http.StatusNoContent),
-		SurfacePresence: statusHandler(http.StatusOK),
-		Interrupt:       statusHandler(http.StatusResetContent),
-		Status:          statusHandler(http.StatusOK),
-		Collection:      statusHandler(http.StatusNonAuthoritativeInfo),
-		Logs:            statusHandler(http.StatusPartialContent),
-		Forecast:        statusHandler(http.StatusCreated),
-		Story:           statusHandler(http.StatusConflict),
-		StorySimple:     statusHandler(http.StatusAlreadyReported),
+		Start:            statusHandler(http.StatusAccepted),
+		Stop:             statusHandler(http.StatusNoContent),
+		SurfacePresence:  statusHandler(http.StatusOK),
+		Interrupt:        statusHandler(http.StatusResetContent),
+		Status:           statusHandler(http.StatusOK),
+		Collection:       statusHandler(http.StatusNonAuthoritativeInfo),
+		Logs:             statusHandler(http.StatusPartialContent),
+		Forecast:         statusHandler(http.StatusCreated),
+		Story:            statusHandler(http.StatusConflict),
+		StorySimple:      statusHandler(http.StatusAlreadyReported),
+		Episodes:         statusHandler(http.StatusOK),
+		EpisodesPrepare:  statusHandler(http.StatusAccepted),
+		EpisodesValidate: statusHandler(http.StatusUnprocessableEntity),
 	}})
 
 	tests := []struct {
@@ -36,6 +39,9 @@ func TestRegisterRoutesKeepsIdleChatViewerPaths(t *testing.T) {
 		{path: "/viewer/idlechat/forecast", want: http.StatusCreated},
 		{path: "/viewer/idlechat/story", want: http.StatusConflict},
 		{path: "/viewer/idlechat/story-simple", want: http.StatusAlreadyReported},
+		{path: "/viewer/idlechat/episodes", want: http.StatusOK},
+		{path: "/viewer/idlechat/episodes/prepare", want: http.StatusAccepted},
+		{path: "/viewer/idlechat/episodes/validate", want: http.StatusUnprocessableEntity},
 	}
 
 	for _, tt := range tests {

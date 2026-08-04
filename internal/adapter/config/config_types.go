@@ -320,6 +320,37 @@ type IdleChatConfig struct {
 	TopicGeneration         IdleChatTopicGenerationConfig         `yaml:"topic_generation"`         // お題候補生成・Judge設定
 	DialogueInterestingness IdleChatDialogueInterestingnessConfig `yaml:"dialogue_interestingness"` // 対話演出・品質判定設定
 	SpeakerLLMOptions       map[string]IdleChatLLMOptions         `yaml:"speaker_llm_options"`      // 話者別LLMオプション
+	EpisodePreparation      IdleChatEpisodePreparationConfig      `yaml:"episode_preparation"`      // CodexExe完成台本ストック
+	TTSPrefetch             IdleChatTTSPrefetchConfig             `yaml:"tts_prefetch"`             // 完成台本の音声先読み
+}
+
+type IdleChatEpisodePreparationConfig struct {
+	Enabled                *bool                         `yaml:"enabled"`
+	Generator              string                        `yaml:"generator"`
+	ReadyTarget            int                           `yaml:"ready_target"`
+	NoReadyBehavior        string                        `yaml:"no_ready_behavior"`
+	MaxSuffixRegenerations int                           `yaml:"max_suffix_regenerations"`
+	CodexExe               IdleChatEpisodeCodexExeConfig `yaml:"codex_exe"`
+}
+
+type IdleChatEpisodeCodexExeConfig struct {
+	Sandbox   string `yaml:"sandbox"`
+	Ephemeral *bool  `yaml:"ephemeral"`
+}
+
+type IdleChatTTSPrefetchConfig struct {
+	InitialUtterances   int `yaml:"initial_utterances"`
+	LookaheadUtterances int `yaml:"lookahead_utterances"`
+	LowWatermarkSeconds int `yaml:"low_watermark_seconds"`
+	TargetBufferSeconds int `yaml:"target_buffer_seconds"`
+}
+
+func (c IdleChatEpisodePreparationConfig) EnabledValue() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+func (c IdleChatEpisodeCodexExeConfig) EphemeralValue() bool {
+	return c.Ephemeral == nil || *c.Ephemeral
 }
 
 // IdleChatNewsSourcesConfig はIdleChatのお題に使うSNS取得先を定義する。

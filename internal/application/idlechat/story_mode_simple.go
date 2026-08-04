@@ -93,6 +93,13 @@ func (o *IdleChatOrchestrator) StartSimpleStoryMode() error {
 // RunSimpleStorySession はCoder2（forecastProvider）を使った簡易版物語生成セッション。
 // ワンプロンプトで昔話の主人公改変物語を生成し、Viewer に段落単位で配信する。
 func (o *IdleChatOrchestrator) RunSimpleStorySession() {
+	o.mu.Lock()
+	prepared := o.storyEpisodeService != nil
+	o.mu.Unlock()
+	if prepared {
+		o.RunPreparedStorySession()
+		return
+	}
 	sessionID := fmt.Sprintf("story-simple-%d", time.Now().Unix())
 	startedAt := time.Now().In(jst)
 
@@ -131,11 +138,10 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	o.currentTopicResult = &copiedStoryTopic
 	o.mu.Unlock()
 
-	// LLM生成が長くても、Viewer には開始直後に状態を見せる。
+	// 全文生成が完了するまではViewer/TTSへ部分公開しない。
 	intro := fmt.Sprintf("今夜の物語です。『%s』を、主人公を%sに置き換えたら——", tale.title, protagonist)
 	transcript := []string{"mio: " + intro}
 	storyUtteranceSeq := 0
-	o.emitStoryParagraph(sessionID, intro, &storyUtteranceSeq)
 
 	messages := []llm.Message{
 		{Role: "system", Content: simpleStorySystemPrompt},
@@ -165,6 +171,7 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 		o.saveSimpleStoryReview(sessionID, storyTopic, tale.title, protagonist, "", "", transcript, startedAt, "invalid_response")
 		return
 	}
+	o.emitStoryParagraph(sessionID, intro, &storyUtteranceSeq)
 
 	// タイトル行と本文を分離
 	titleLine := ""

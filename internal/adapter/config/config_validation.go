@@ -385,6 +385,28 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("idle_chat.dialogue_interestingness.utterance rune bounds are invalid")
 			}
 		}
+		p := c.IdleChat.EpisodePreparation
+		episodePreparationConfigured := p.Enabled != nil || p.Generator != "" || p.ReadyTarget != 0 || p.NoReadyBehavior != "" || p.MaxSuffixRegenerations != 0 || p.CodexExe.Sandbox != "" || p.CodexExe.Ephemeral != nil
+		if episodePreparationConfigured && p.EnabledValue() {
+			if p.Generator != "codex_exe" {
+				return fmt.Errorf("idle_chat.episode_preparation.generator must be codex_exe")
+			}
+			if p.ReadyTarget < 1 {
+				return fmt.Errorf("idle_chat.episode_preparation.ready_target must be >= 1")
+			}
+			if p.NoReadyBehavior != "preparing" {
+				return fmt.Errorf("idle_chat.episode_preparation.no_ready_behavior must be preparing")
+			}
+			if p.MaxSuffixRegenerations < 1 {
+				return fmt.Errorf("idle_chat.episode_preparation.max_suffix_regenerations must be >= 1")
+			}
+			if p.CodexExe.Sandbox != "read-only" {
+				return fmt.Errorf("idle_chat.episode_preparation.codex_exe.sandbox must be read-only")
+			}
+			if !p.CodexExe.EphemeralValue() {
+				return fmt.Errorf("idle_chat.episode_preparation.codex_exe.ephemeral must be true")
+			}
+		}
 	}
 
 	// v5.0 Conversation設定検証

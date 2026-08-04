@@ -15,6 +15,7 @@ import (
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	idlechatfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/idlechat"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
@@ -68,6 +69,32 @@ func buildIdleChatRuntime(
 	idleChatOrch.SetDailySourceBriefResearch(dailySourceBriefResearch)
 	idleChatOrch.SetTopicGenerationConfig(idleChatTopicGenerationConfigFromRuntime(cfg.IdleChat.TopicGeneration))
 	idleChatOrch.SetDialogueInterestingnessConfig(idleChatDialogueInterestingnessConfigFromRuntime(cfg.IdleChat.DialogueInterestingness))
+	if cfg.IdleChat.EpisodePreparation.EnabledValue() {
+		workingDir := strings.TrimSpace(cfg.SelfSourceDir)
+		if workingDir == "" {
+			workingDir = "."
+		}
+		storyRunner := tools.NewCodexExecRunner(
+			"codex",
+			workingDir,
+			"read-only",
+			"",
+			10*time.Minute,
+			0,
+			0,
+			true,
+		)
+		storyService := idlechat.NewPersistentStoryEpisodeService(
+			filepath.Join(cfg.Session.StorageDir, "idlechat_story_episodes.jsonl"),
+			cfg.IdleChat.EpisodePreparation.ReadyTarget,
+			storyCodexExeGenerator{runner: storyRunner},
+			config.BuildIdleChatAgentPrompts(cfg.Prompts),
+		)
+		storyService.SetMaxSuffixRegenerations(cfg.IdleChat.EpisodePreparation.MaxSuffixRegenerations)
+		idleChatOrch.SetStoryEpisodeService(storyService)
+		idleChatOrch.SetStoryTTSPrefetchWindow(cfg.IdleChat.TTSPrefetch.LookaheadUtterances)
+		log.Printf("IdleChat story producer enabled (generator=codex_exe sandbox=read-only ephemeral=true target=%d)", cfg.IdleChat.EpisodePreparation.ReadyTarget)
+	}
 	if topicProvider, label := selectForecastTopicProvider(workerProvider); topicProvider != nil {
 		idleChatOrch.SetForecastTopicProviderWithLabel(topicProvider, label)
 		idleChatOrch.InitForecastTopicStock(filepath.Join(cfg.Session.StorageDir, "forecast_topic_stock.json"))

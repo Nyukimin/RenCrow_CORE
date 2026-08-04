@@ -172,6 +172,7 @@ func (c *Config) setDefaults() {
 		c.applyIdleChatDialogueInterestingnessDefaults()
 		c.applyIdleChatSpeakerLLMDefaults()
 		c.applyIdleChatNewsSourceDefaults()
+		c.applyIdleChatEpisodePreparationDefaults()
 	}
 
 	// v5.0 Conversation デフォルト
@@ -766,6 +767,46 @@ func (c *Config) setDefaults() {
 	}
 	if c.Coder4.LightMemory.MaxTurns == 0 {
 		c.Coder4.LightMemory.MaxTurns = 3
+	}
+}
+
+func (c *Config) applyIdleChatEpisodePreparationDefaults() {
+	p := &c.IdleChat.EpisodePreparation
+	if p.Enabled == nil {
+		enabled := true
+		p.Enabled = &enabled
+	}
+	if p.Generator == "" {
+		p.Generator = "codex_exe"
+	}
+	if p.ReadyTarget == 0 {
+		p.ReadyTarget = 3
+	}
+	if p.NoReadyBehavior == "" {
+		p.NoReadyBehavior = "preparing"
+	}
+	if p.MaxSuffixRegenerations == 0 {
+		p.MaxSuffixRegenerations = 3
+	}
+	if p.CodexExe.Sandbox == "" {
+		p.CodexExe.Sandbox = "read-only"
+	}
+	if p.CodexExe.Ephemeral == nil {
+		ephemeral := true
+		p.CodexExe.Ephemeral = &ephemeral
+	}
+	tts := &c.IdleChat.TTSPrefetch
+	if tts.InitialUtterances == 0 {
+		tts.InitialUtterances = 2
+	}
+	if tts.LookaheadUtterances == 0 {
+		tts.LookaheadUtterances = 3
+	}
+	if tts.LowWatermarkSeconds == 0 {
+		tts.LowWatermarkSeconds = 15
+	}
+	if tts.TargetBufferSeconds == 0 {
+		tts.TargetBufferSeconds = 30
 	}
 }
 
