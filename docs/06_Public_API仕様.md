@@ -24,6 +24,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /viewer/idlechat/status` | IdleChat状態と読み取り専用の`forecast_stock` snapshot |
 | `GET /viewer/idlechat/collection` | 日次収集の入力cache、次回04:00 JST、取得元、利用toolの読み取り専用snapshot。ユーザー向けニュース取得のAPIではない |
 | `POST /viewer/idlechat/start`, `POST /viewer/idlechat/stop` | IdleChatの開始・停止。認可されたwrite clientだけが利用する |
+| `POST /viewer/surface-presence` | PORTAL Chat／IdleChat画面の期限付き在席を通知し、COREが排他的な有効modeを決定する |
 | `/viewer/jobs`, `/viewer/logs` | job と監査可能な log |
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
 | `/viewer/workstreams/*` | goal、artifact、annotation、heartbeat、review |
@@ -285,7 +286,7 @@ PORTAL、CMD、ASSISTANTは、COREとのInteractionで次の意味論を共有�
 | 能力 | contract |
 | --- | --- |
 | Chat | requestごとに利用者scopeと明示recipientを持ち、別recipientへ黙ってfallbackしない |
-| IdleChat | status／event購読と開始／停止を分け、write権限のないclientから操作しない |
+| IdleChat | status／event購読、明示的な開始／停止、PORTALのsurface在席による排他制御を分ける |
 | recipient | UI選択通知は観測event、実送信先はmessage requestの`to`を正とする |
 | event | reconnectと重複を前提に、event IDまたは相関IDで二重処理を防ぐ |
 | session | request、response、Task、audio、外部deliveryへ追跡可能な相関を保つ |
@@ -301,8 +302,8 @@ capabilityで制限します。
 
 | `X-RenCrow-Client` | `X-RenCrow-Interaction-Profile` | 許可する主な能力 |
 | --- | --- | --- |
-| `RenCrow_PORTAL` | `portal-chat` | PORTAL Chat allowlist |
-| `RenCrow_PORTAL` | `portal-idlechat` | IdleChatの読み取り |
+| `RenCrow_PORTAL` | `portal-chat` | PORTAL Chat allowlistとChat surface在席通知 |
+| `RenCrow_PORTAL` | `portal-idlechat` | IdleChatの読み取りとIdleChat surface在席通知 |
 | `RenCrow_PORTAL` | `portal-games` | Agent-owned gameの選択、起動、観戦、session lifecycle |
 | `RenCrow_CMD` | `cmd-chat` | Chat送信、event購読、CORE経由のWAV文字起こし |
 | `RenCrow_CMD` | `cmd-idlechat` | IdleChat status／event／start／stop |
@@ -353,6 +354,60 @@ server binaryはChat client commandを持ちません。`rencrowctl chat --audio
 送ります。`--audio-direct`はWAVを`/viewer/send`の添付としてCOREの
 `input_audio`経路へ渡します。
 
+## PORTAL surface在席API
+
+`POST /viewer/surface-presence`はPORTALの画面表示をIdleChat runtimeへ反映する専用APIです。
+browserからCOREへ直接送らず、PORTAL serverがmodeに対応するInteraction profileを付けて
+中継します。
+
+request:
+
+```json
+{
+  "viewer_client_id": "tab-scoped-opaque-id",
+  "surface": "chat",
+  "action": "claim"
+}
+```
+
+| field | contract |
+| --- | --- |
+| `viewer_client_id` | 必須。browser tabごとに生成し、同じtabの再送で維持する不透明ID |
+| `surface` | `chat`または`idlechat`。`portal-chat`は`chat`、`portal-idlechat`は`idlechat`だけを送信可能 |
+| `action` | `claim`、`heartbeat`、`release`のいずれか |
+
+`claim`と`heartbeat`は受理時点から30秒のleaseを作成または更新します。可視状態のclientは
+10秒ごとに`heartbeat`を送り、`visibilitychange`でhiddenになった時と`pagehide`時に
+`release`を送ります。COREはlease失効をreleaseと同じに扱います。未知fieldは互換性のため
+無視できますが、必須field不足、未知の値、profileとsurfaceの不一致は400または403で拒否します。
+
+response:
+
+```json
+{
+  "ok": true,
+  "surface": "chat",
+  "action": "claim",
+  "effective_mode": "chat",
+  "idlechat_active": false,
+  "chat_presence_count": 1,
+  "idlechat_presence_count": 0,
+  "lease_expires_at": "2026-08-04T00:00:30Z"
+}
+```
+
+`release`では`lease_expires_at`を省略できます。countは有効leaseの集約値です。状態遷移は
+CORE内で原子的に行い、同一requestの再送で二重開始／停止しません。優先順位は次を正とします。
+
+1. 有効な`chat`在席が1件以上ならIdleChatを停止し、`effective_mode=chat`とする。
+2. `chat`在席が0件で`idlechat`在席が1件以上ならIdleChatを開始し、`effective_mode=idlechat`とする。
+3. 両方0件ならPORTALを理由にIdleChatを開始せず、`effective_mode=none`とする。
+
+Chat在席による停止はIdleChatの自動再開より優先し、未送信のIdleChat TTS queueも取り消します。
+明示的な`POST /viewer/idlechat/start|stop`は`cmd-idlechat`等の認可client用として維持し、
+PORTALは使用しません。`portal-idlechat`は利用者操作としては引き続き読み取り専用であり、
+このsurface在席APIだけをstate-changingな例外として許可します。
+
 ## Client の注意
 
 - method、status code、content type を確認する。
@@ -365,12 +420,19 @@ server binaryはChat client commandを持ちません。`rencrowctl chat --audio
 
 `RenCrow_PORTAL`はCOREの全APIを透過公開しません。
 
-- `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りだけを許可する。
-- `Chat`: IdleChatの読み取りに加え、chat、recipient通知、active audio/input ownership、TTS再生、STT入力に必要な公開契約だけをallowlistとする。
+- `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りと、`POST /viewer/surface-presence`の`surface=idlechat`だけを許可する。手動の開始／停止は許可しない。
+- `Chat`: chat、recipient通知、active audio/input ownership、TTS再生、STT入力と、`POST /viewer/surface-presence`の`surface=chat`だけをallowlistとする。IdleChatの手動開始／停止は許可しない。
 - `Games`: 下記のGames allowlistだけを許可し、Agent decision／result callbackを公開しない。
 - COREへのproxy requestはmodeに応じて`portal-chat`、`portal-idlechat`、`portal-games` profileを付ける。
 - Debug、Ops、Repair、LLM管理、設定変更APIはPORTALから遮断する。
 - 新しい公開操作はCORE側のAPI追加だけで自動公開せず、PORTAL側でmethod/pathと契約テストを追加する。
+
+`GET /viewer/events`の会話表示filterはmodeごとに固定します。Chatは
+`message.received`、利用者向け`agent.response`、既存契約で公開対象の
+`agent.progress`／`agent.acknowledge`を会話欄へ表示し、
+`idlechat.message`とIdleChat TTSを表示・再生しません。IdleChatは`idlechat.message`だけを
+会話欄へ表示し、通常ChatのmessageとTTSを表示・再生しません。SSE再接続で過去eventを
+受信した場合も、現在のmodeを基準に同じfilterを適用します。
 
 `portal-games`のallowlistは次を正とします。
 

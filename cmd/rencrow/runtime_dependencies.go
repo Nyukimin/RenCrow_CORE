@@ -248,6 +248,7 @@ type Dependencies struct {
 	router                         *transport.MessageRouter                    // v4 distributed mode
 	localTransports                map[string]*transport.LocalTransport        // v4 local transports
 	idleChatOrch                   *idlechat.IdleChatOrchestrator              // v4 idle chat
+	idleChatSurfacePresence        *idleChatSurfacePresenceController          // PORTAL Chat/IdleChat surface lease arbitration
 	sshTransports                  map[string]domaintransport.Transport        // v4 SSH transports
 	heartbeatSvc                   *heartbeat.HeartbeatService                 // heartbeat service
 	advisorCloser                  interface{ Close() error }                  // advisor SQLite store, when configured
@@ -297,6 +298,9 @@ func (d *Dependencies) Shutdown() {
 		}
 	}
 	if d.idleChatOrch != nil {
+		if d.idleChatSurfacePresence != nil {
+			d.idleChatSurfacePresence.Close()
+		}
 		d.idleChatOrch.Stop()
 	}
 	for name, t := range d.sshTransports {

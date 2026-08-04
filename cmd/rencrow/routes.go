@@ -361,15 +361,16 @@ func registerIdleChatRoutes(mux *http.ServeMux, dependencies *Dependencies) {
 		return
 	}
 	idlechatfeature.RegisterRoutes(mux, idlechatfeature.Dependencies{Routes: idlechatfeature.Routes{
-		Start:       dependencies.handleIdleChatStart(),
-		Stop:        dependencies.handleIdleChatStop(),
-		Interrupt:   dependencies.handleIdleChatInterrupt(),
-		Status:      dependencies.handleIdleChatStatus(),
-		Collection:  dependencies.handleIdleChatCollection(),
-		Logs:        dependencies.handleIdleChatLogs(),
-		Forecast:    dependencies.handleIdleChatForecast(),
-		Story:       dependencies.handleIdleChatStory(),
-		StorySimple: dependencies.handleIdleChatStorySimple(),
+		Start:           dependencies.handleIdleChatStart(),
+		Stop:            dependencies.handleIdleChatStop(),
+		SurfacePresence: dependencies.handleSurfacePresence(),
+		Interrupt:       dependencies.handleIdleChatInterrupt(),
+		Status:          dependencies.handleIdleChatStatus(),
+		Collection:      dependencies.handleIdleChatCollection(),
+		Logs:            dependencies.handleIdleChatLogs(),
+		Forecast:        dependencies.handleIdleChatForecast(),
+		Story:           dependencies.handleIdleChatStory(),
+		StorySimple:     dependencies.handleIdleChatStorySimple(),
 	}})
 }
 

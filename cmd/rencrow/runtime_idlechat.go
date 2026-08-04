@@ -149,6 +149,7 @@ func buildIdleChatRuntime(
 		log.Printf("WARN: idlechat background start failed: %v", err)
 	}
 	deps.idleChatOrch = idleChatOrch
+	deps.idleChatSurfacePresence = newIdleChatSurfacePresenceController(idleChatOrch, idleChatSurfacePresenceTTL, resetIdleChatTTSQueue)
 	log.Printf("IdleChat enabled (participants=%v)", cfg.IdleChat.Participants)
 }
 

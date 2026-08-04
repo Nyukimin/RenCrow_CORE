@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,10 +20,20 @@ func (d *Dependencies) handleIdleChatStart() http.HandlerFunc {
 			http.Error(w, "idlechat not enabled", http.StatusNotFound)
 			return
 		}
-		if !d.idleChatOrch.IsChatActive() {
-			resetIdleChatTTSQueue()
+		var err error
+		if d.idleChatSurfacePresence != nil {
+			err = d.idleChatSurfacePresence.StartExplicit()
+		} else {
+			if !d.idleChatOrch.IsChatActive() {
+				resetIdleChatTTSQueue()
+			}
+			err = d.idleChatOrch.StartManualMode()
 		}
-		if err := d.idleChatOrch.StartManualMode(); err != nil {
+		if err != nil {
+			if errors.Is(err, errChatSurfacePresent) {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -46,8 +58,12 @@ func (d *Dependencies) handleIdleChatStop() http.HandlerFunc {
 			http.Error(w, "idlechat not enabled", http.StatusNotFound)
 			return
 		}
-		d.idleChatOrch.StopManualMode()
-		resetIdleChatTTSQueue()
+		if d.idleChatSurfacePresence != nil {
+			d.idleChatSurfacePresence.StopExplicit()
+		} else {
+			d.idleChatOrch.StopManualMode()
+			resetIdleChatTTSQueue()
+		}
 		writeJSON(w, map[string]any{
 			"ok":            true,
 			"mode":          d.idleChatOrch.CurrentMode(),
@@ -55,6 +71,82 @@ func (d *Dependencies) handleIdleChatStop() http.HandlerFunc {
 			"disabled":      d.idleChatOrch.IsDisabled(),
 			"chat_active":   d.idleChatOrch.IsChatActive(),
 			"current_topic": d.idleChatOrch.CurrentTopic(),
+		})
+	}
+}
+
+type surfacePresenceRequest struct {
+	ViewerClientID string `json:"viewer_client_id"`
+	Surface        string `json:"surface"`
+	Action         string `json:"action"`
+}
+
+func (d *Dependencies) handleSurfacePresence() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if strings.TrimSpace(r.Header.Get("X-RenCrow-Client")) != "RenCrow_PORTAL" {
+			http.Error(w, "surface presence requires RenCrow_PORTAL", http.StatusForbidden)
+			return
+		}
+		profile := strings.ToLower(strings.TrimSpace(r.Header.Get(interactionProfileHeader)))
+		if profile != "portal-chat" && profile != "portal-idlechat" {
+			http.Error(w, "surface presence profile is not allowed", http.StatusForbidden)
+			return
+		}
+		if d.idleChatSurfacePresence == nil {
+			http.Error(w, "idlechat surface presence is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		var req surfacePresenceRequest
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&req); err != nil {
+			http.Error(w, "invalid surface presence request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			http.Error(w, "invalid surface presence request", http.StatusBadRequest)
+			return
+		}
+		req.ViewerClientID = strings.TrimSpace(req.ViewerClientID)
+		req.Surface = strings.ToLower(strings.TrimSpace(req.Surface))
+		req.Action = strings.ToLower(strings.TrimSpace(req.Action))
+		if !validSurfacePresenceViewerClientID(req.ViewerClientID) {
+			http.Error(w, "viewer_client_id is required and must be at most 256 bytes", http.StatusBadRequest)
+			return
+		}
+		if req.Surface != "chat" && req.Surface != "idlechat" {
+			http.Error(w, "surface must be chat or idlechat", http.StatusBadRequest)
+			return
+		}
+		if req.Action != "claim" && req.Action != "heartbeat" && req.Action != "release" {
+			http.Error(w, "action must be claim, heartbeat, or release", http.StatusBadRequest)
+			return
+		}
+		expectedSurface := strings.TrimPrefix(profile, "portal-")
+		if req.Surface != expectedSurface {
+			http.Error(w, "interaction profile does not match surface", http.StatusForbidden)
+			return
+		}
+
+		snapshot, err := d.idleChatSurfacePresence.Update(req.ViewerClientID, req.Surface, req.Action)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"ok":                      true,
+			"surface":                 req.Surface,
+			"action":                  req.Action,
+			"effective_mode":          snapshot.EffectiveMode,
+			"idlechat_active":         snapshot.IdleChatActive,
+			"chat_presence_count":     snapshot.ChatPresenceCount,
+			"idlechat_presence_count": snapshot.IdleChatPresenceCount,
+			"lease_expires_at":        snapshot.LeaseExpiresAt,
 		})
 	}
 }
