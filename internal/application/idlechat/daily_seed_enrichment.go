@@ -24,6 +24,13 @@ const (
 	dailySourceBodyMaxRunes      = 12000
 	dailyDefinitionMaxRunes      = 2400
 	dailyTranslationMaxRunes     = 18000
+
+	dailyProcessingPending              = "pending"
+	dailyProcessingReady                = "ready"
+	dailyProcessingSourceUnavailable    = "source_unavailable"
+	dailyProcessingTranslationFailed    = "translation_failed"
+	dailyProcessingTermExtractionFailed = "term_extraction_failed"
+	dailyProcessingBriefFailed          = "brief_failed"
 )
 
 // DailySourceDocument は特定URLから直接取得・抽出した本文である。
@@ -153,13 +160,15 @@ func (o *IdleChatOrchestrator) enrichCurrentDailySeeds() {
 			research,
 			append([]NewsSeed(nil), rawItems[start:end]...),
 		)
+		if len(enriched) > 0 {
+			copy(items[start:end], enriched)
+			publishDailySeedEnrichmentItems(cache.FetchedAt, start, enriched, providerName)
+		}
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("batch %d-%d: %v", start, end-1, err))
 			log.Printf("[IdleChat] Daily source brief failed skill=%s batch=%d-%d provider=%s: %v", dailySourceBriefSkillID, start, end-1, providerName, err)
 			continue
 		}
-		copy(items[start:end], enriched)
-		publishDailySeedEnrichmentItems(cache.FetchedAt, start, enriched, providerName)
 		successfulBatches++
 	}
 
@@ -281,6 +290,8 @@ func buildDailySourceBriefBatch(ctx context.Context, provider llm.LLMProvider, r
 		}
 		seed.SourceReadStatus = "ready"
 		seed.SourceReadURL = firstDailyBriefValue(strings.TrimSpace(doc.URL), rawURL)
+		seed.ProcessingStatus = dailyProcessingPending
+		seed.ProcessingError = ""
 		inputIndex := len(inputs)
 		inputs = append(inputs, dailySourceBriefInput{
 			Index: inputIndex, Title: strings.TrimSpace(seed.Title), Category: strings.TrimSpace(seed.Category),
@@ -294,7 +305,10 @@ func buildDailySourceBriefBatch(ctx context.Context, provider llm.LLMProvider, r
 	}
 	translations, err := translateDailySourceBodies(ctx, provider, inputs)
 	if err != nil {
-		return nil, err
+		for _, seedIndex := range inputToSeed {
+			markDailyTranslationFailed(&out[seedIndex])
+		}
+		return out, err
 	}
 	for _, translation := range translations {
 		out[inputToSeed[translation.Index]].TranslatedBody = translation.TranslatedBody
@@ -302,7 +316,10 @@ func buildDailySourceBriefBatch(ctx context.Context, provider llm.LLMProvider, r
 
 	extracted, err := extractDailyTerms(ctx, provider, inputs)
 	if err != nil {
-		return nil, err
+		for _, seedIndex := range inputToSeed {
+			markDailyTermExtractionFailed(&out[seedIndex])
+		}
+		return out, err
 	}
 	for _, item := range extracted {
 		seed := &out[inputToSeed[item.Index]]
@@ -375,12 +392,17 @@ func buildDailySourceBriefBatch(ctx context.Context, provider llm.LLMProvider, r
 	}
 	briefs, err := createDailyBriefs(ctx, provider, briefInputs)
 	if err != nil {
-		return nil, err
+		for _, seedIndex := range inputToSeed {
+			markDailyBriefFailed(&out[seedIndex])
+		}
+		return out, err
 	}
 	for _, brief := range briefs {
 		seed := &out[inputToSeed[brief.Index]]
 		seed.Summary = brief.Summary
 		seed.Perspective = brief.Perspective
+		seed.ProcessingStatus = dailyProcessingReady
+		seed.ProcessingError = ""
 	}
 	return out, nil
 }
@@ -632,6 +654,8 @@ func firstDailyTermCandidate(results []DailyTermSearchResult) (DailyTermSearchRe
 func markDailySourceUnavailable(seed *NewsSeed) {
 	seed.SourceReadStatus = "unavailable"
 	seed.SourceReadURL = strings.TrimSpace(seed.URL)
+	seed.ProcessingStatus = dailyProcessingSourceUnavailable
+	seed.ProcessingError = "元URLから原文を取得できませんでした。"
 	seed.TermNotes = []modulechat.NewsTermNote{{
 		Term: "本文取得", Explanation: "元URLの本文を取得できなかったため、用語の意味を確認できませんでした。",
 		SourceKind: "article_context", SourceURL: strings.TrimSpace(seed.URL), Status: "unavailable",
@@ -639,6 +663,30 @@ func markDailySourceUnavailable(seed *NewsSeed) {
 	seed.TranslatedBody = "原文を取得できなかったため、翻訳できませんでした。"
 	seed.Summary = "本文を取得できませんでした。見出しやフィード要約から内容を推測していません。"
 	seed.Perspective = "Shiroの見解: 本文を確認できるまで評価を保留します。"
+}
+
+func markDailyTranslationFailed(seed *NewsSeed) {
+	seed.ProcessingStatus = dailyProcessingTranslationFailed
+	seed.ProcessingError = "原文翻訳のLLM応答を完了できませんでした。"
+	seed.TermNotes = nil
+	seed.TranslatedBody = "原文の取得は完了しましたが、翻訳に失敗しました。"
+	seed.Summary = "原文翻訳に失敗したため、本文に基づくサマリを作成できませんでした。"
+	seed.Perspective = "Shiroの見解: 原文翻訳が完了するまで評価を保留します。"
+}
+
+func markDailyTermExtractionFailed(seed *NewsSeed) {
+	seed.ProcessingStatus = dailyProcessingTermExtractionFailed
+	seed.ProcessingError = "原文翻訳後の用語抽出を完了できませんでした。"
+	seed.TermNotes = nil
+	seed.Summary = "用語抽出に失敗したため、サマリを作成できませんでした。"
+	seed.Perspective = "Shiroの見解: 用語の確認が完了するまで評価を保留します。"
+}
+
+func markDailyBriefFailed(seed *NewsSeed) {
+	seed.ProcessingStatus = dailyProcessingBriefFailed
+	seed.ProcessingError = "サマリとShiroの見解の生成を完了できませんでした。"
+	seed.Summary = "サマリと見解の生成に失敗しました。"
+	seed.Perspective = "Shiroの見解: 生成に失敗したため、見解を提示できません。"
 }
 
 func containsJapanese(value string) bool {
@@ -739,14 +787,16 @@ func applyFallbackNewsSeedAnnotations(seeds []NewsSeed) []NewsSeed {
 		if strings.TrimSpace(seed.SourceReadStatus) == "" {
 			seed.SourceReadStatus = "unprocessed"
 			seed.SourceReadURL = strings.TrimSpace(seed.URL)
-			seed.TermNotes = []modulechat.NewsTermNote{{
-				Term: "処理状態", Explanation: "本文取得、用語補足、サマリ作成の一連の処理を完了できませんでした。",
-				SourceKind: "article_context", SourceURL: strings.TrimSpace(seed.URL), Status: "unavailable",
-			}}
-			seed.TranslatedBody = "原文翻訳を完了できませんでした。"
-			seed.Summary = "本文に基づく処理を完了できませんでした。見出しやフィード要約から内容を推測していません。"
-			seed.Perspective = "Shiroの見解: 本文と用語補足を確認できるまで評価を保留します。"
 		}
+		if strings.TrimSpace(seed.ProcessingStatus) != "" {
+			continue
+		}
+		seed.ProcessingStatus = dailyProcessingPending
+		seed.ProcessingError = ""
+		seed.TermNotes = nil
+		seed.TranslatedBody = "原文取得・翻訳はまだ開始していません。"
+		seed.Summary = "本文に基づく処理はまだ開始していません。"
+		seed.Perspective = "Shiroの見解: 本文処理の完了後に作成します。"
 	}
 	return out
 }

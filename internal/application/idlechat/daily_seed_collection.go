@@ -27,8 +27,10 @@ type DailySeedCollectionItem struct {
 	Source           string                    `json:"source,omitempty"`
 	SourceType       string                    `json:"source_type,omitempty"`
 	URL              string                    `json:"url,omitempty"`
-	SourceReadStatus string                    `json:"source_read_status,omitempty"`
+	SourceReadStatus string                    `json:"source_read_status"`
 	SourceReadURL    string                    `json:"source_read_url,omitempty"`
+	ProcessingStatus string                    `json:"processing_status"`
+	ProcessingError  string                    `json:"processing_error"`
 	TranslatedBody   string                    `json:"translated_body"`
 	Summary          string                    `json:"summary"`
 	Perspective      string                    `json:"perspective"`
@@ -64,39 +66,43 @@ type DailyTopicWordPoolSnapshot struct {
 // DailySeedCollectionSnapshot is a detached observation snapshot of the in-process
 // IdleChat daily seed cache. Reading it never starts collection or mutates the cache.
 type DailySeedCollectionSnapshot struct {
-	Status             string                      `json:"status"`
-	SkillID            string                      `json:"skill_id"`
-	Schedule           string                      `json:"schedule"`
-	Timezone           string                      `json:"timezone"`
-	FetchedAt          *time.Time                  `json:"fetched_at,omitempty"`
-	EnrichmentStatus   string                      `json:"enrichment_status,omitempty"`
-	EnrichmentProvider string                      `json:"enrichment_provider,omitempty"`
-	EnrichmentError    string                      `json:"enrichment_error,omitempty"`
-	EnrichedAt         *time.Time                  `json:"enriched_at,omitempty"`
-	NextRunAt          time.Time                   `json:"next_run_at"`
-	Total              int                         `json:"total"`
-	WikipediaCount     int                         `json:"wikipedia_count"`
-	CategoryCounts     map[string]int              `json:"category_counts"`
-	SourceCounts       map[string]int              `json:"source_counts"`
-	Items              []DailySeedCollectionItem   `json:"items"`
-	Sources            []DailySeedCollectionSource `json:"sources"`
-	Tools              []string                    `json:"tools"`
-	WordPool           DailyTopicWordPoolSnapshot  `json:"word_pool"`
+	Status                 string                      `json:"status"`
+	SkillID                string                      `json:"skill_id"`
+	Schedule               string                      `json:"schedule"`
+	Timezone               string                      `json:"timezone"`
+	FetchedAt              *time.Time                  `json:"fetched_at,omitempty"`
+	EnrichmentStatus       string                      `json:"enrichment_status,omitempty"`
+	EnrichmentProvider     string                      `json:"enrichment_provider,omitempty"`
+	EnrichmentError        string                      `json:"enrichment_error,omitempty"`
+	EnrichedAt             *time.Time                  `json:"enriched_at,omitempty"`
+	NextRunAt              time.Time                   `json:"next_run_at"`
+	Total                  int                         `json:"total"`
+	WikipediaCount         int                         `json:"wikipedia_count"`
+	CategoryCounts         map[string]int              `json:"category_counts"`
+	SourceCounts           map[string]int              `json:"source_counts"`
+	SourceReadStatusCounts map[string]int              `json:"source_read_status_counts"`
+	ProcessingStatusCounts map[string]int              `json:"processing_status_counts"`
+	Items                  []DailySeedCollectionItem   `json:"items"`
+	Sources                []DailySeedCollectionSource `json:"sources"`
+	Tools                  []string                    `json:"tools"`
+	WordPool               DailyTopicWordPoolSnapshot  `json:"word_pool"`
 }
 
 // DailySeedCollectionSnapshot returns the current collection data and configured
 // source catalog. Credentials are intentionally omitted.
 func (o *IdleChatOrchestrator) DailySeedCollectionSnapshot(now time.Time) DailySeedCollectionSnapshot {
 	snapshot := DailySeedCollectionSnapshot{
-		Status:         "empty",
-		SkillID:        dailySourceBriefSkillID,
-		Schedule:       "04:00",
-		Timezone:       "JST",
-		NextRunAt:      nextDailySeedRefreshAt(now),
-		CategoryCounts: make(map[string]int),
-		SourceCounts:   make(map[string]int),
-		Items:          []DailySeedCollectionItem{},
-		Tools:          append([]string(nil), dailySeedCollectionTools...),
+		Status:                 "empty",
+		SkillID:                dailySourceBriefSkillID,
+		Schedule:               "04:00",
+		Timezone:               "JST",
+		NextRunAt:              nextDailySeedRefreshAt(now),
+		CategoryCounts:         make(map[string]int),
+		SourceCounts:           make(map[string]int),
+		SourceReadStatusCounts: make(map[string]int),
+		ProcessingStatusCounts: make(map[string]int),
+		Items:                  []DailySeedCollectionItem{},
+		Tools:                  append([]string(nil), dailySeedCollectionTools...),
 		WordPool: DailyTopicWordPoolSnapshot{
 			StaticCount: len(staticTopicWords),
 			Total:       len(staticTopicWords),
@@ -134,18 +140,23 @@ func (o *IdleChatOrchestrator) DailySeedCollectionSnapshot(now time.Time) DailyS
 			snapshot.EnrichedAt = &enrichedAt
 		}
 		snapshot.WikipediaCount = len(dailyCache.WikipediaSeeds)
-		snapshot.Items = make([]DailySeedCollectionItem, 0, len(dailyCache.NewsSeedItems))
-		for _, item := range dailyCache.NewsSeedItems {
+		collectionItems := applyFallbackNewsSeedAnnotations(dailyCache.NewsSeedItems)
+		snapshot.Items = make([]DailySeedCollectionItem, 0, len(collectionItems))
+		for _, item := range collectionItems {
 			category := fallbackCollectionValue(item.Category, "unknown")
 			source := fallbackCollectionValue(item.Source, "unknown")
+			sourceReadStatus := fallbackCollectionValue(item.SourceReadStatus, "unprocessed")
+			processingStatus := fallbackCollectionValue(item.ProcessingStatus, dailyProcessingPending)
 			snapshot.Items = append(snapshot.Items, DailySeedCollectionItem{
 				Title:            strings.TrimSpace(item.Title),
 				Category:         category,
 				Source:           source,
 				SourceType:       strings.TrimSpace(item.SourceType),
 				URL:              strings.TrimSpace(item.URL),
-				SourceReadStatus: strings.TrimSpace(item.SourceReadStatus),
+				SourceReadStatus: sourceReadStatus,
 				SourceReadURL:    strings.TrimSpace(item.SourceReadURL),
+				ProcessingStatus: processingStatus,
+				ProcessingError:  strings.TrimSpace(item.ProcessingError),
 				TranslatedBody:   strings.TrimSpace(item.TranslatedBody),
 				Summary:          strings.TrimSpace(item.Summary),
 				Perspective:      strings.TrimSpace(item.Perspective),
@@ -153,6 +164,8 @@ func (o *IdleChatOrchestrator) DailySeedCollectionSnapshot(now time.Time) DailyS
 			})
 			snapshot.CategoryCounts[category]++
 			snapshot.SourceCounts[source]++
+			snapshot.SourceReadStatusCounts[sourceReadStatus]++
+			snapshot.ProcessingStatusCounts[processingStatus]++
 		}
 	}
 	cacheMu.RUnlock()

@@ -15,7 +15,7 @@ func TestDailySeedCollectionSnapshotExposesCachedItemsAndConfiguredSources(t *te
 		Date:           "2026-07-21",
 		WikipediaSeeds: []string{"項目A", "項目B"},
 		NewsSeedItems: []NewsSeed{
-			{Title: "AIニュース", Category: "ai_frontier", Source: "OpenAI News", SourceType: "rss", URL: "https://example.com/ai", SourceReadStatus: "ready", SourceReadURL: "https://example.com/ai", TranslatedBody: "原文の日本語訳", Summary: "要点", Perspective: "Shiroの見解: 見解", TermNotes: []modulechat.NewsTermNote{{Term: "LLM", Explanation: "大規模言語モデルです。", SourceKind: "article_context", Status: "contextual"}}},
+			{Title: "AIニュース", Category: "ai_frontier", Source: "OpenAI News", SourceType: "rss", URL: "https://example.com/ai", SourceReadStatus: "ready", SourceReadURL: "https://example.com/ai", ProcessingStatus: "ready", TranslatedBody: "原文の日本語訳", Summary: "要点", Perspective: "Shiroの見解: 見解", TermNotes: []modulechat.NewsTermNote{{Term: "LLM", Explanation: "大規模言語モデルです。", SourceKind: "article_context", Status: "contextual"}}},
 			{Title: "世間の反応", Category: "social", Source: "Reddit r/technology", SourceType: "reddit", URL: "https://example.com/reddit"},
 		},
 		FetchedAt:          fetchedAt,
@@ -54,11 +54,23 @@ func TestDailySeedCollectionSnapshotExposesCachedItemsAndConfiguredSources(t *te
 	if got.CategoryCounts["ai_frontier"] != 1 || got.SourceCounts["Reddit r/technology"] != 1 {
 		t.Fatalf("summaries = categories:%v sources:%v", got.CategoryCounts, got.SourceCounts)
 	}
+	if got.SourceReadStatusCounts["ready"] != 1 || got.SourceReadStatusCounts["unprocessed"] != 1 {
+		t.Fatalf("source read status counts = %v", got.SourceReadStatusCounts)
+	}
+	if got.ProcessingStatusCounts["ready"] != 1 || got.ProcessingStatusCounts["pending"] != 1 {
+		t.Fatalf("processing status counts = %v", got.ProcessingStatusCounts)
+	}
+	if got.Total != len(got.Items) {
+		t.Fatalf("all collected items must remain observable: total=%d items=%d", got.Total, len(got.Items))
+	}
 	if len(got.Items) != 2 || got.Items[0].URL != "https://example.com/ai" {
 		t.Fatalf("items = %+v", got.Items)
 	}
 	if got.Items[0].TranslatedBody != "原文の日本語訳" || got.Items[0].Summary != "要点" || got.Items[0].Perspective != "Shiroの見解: 見解" || len(got.Items[0].TermNotes) != 1 {
 		t.Fatalf("annotations = %+v", got.Items[0])
+	}
+	if got.Items[0].SourceReadStatus != "ready" || got.Items[0].ProcessingStatus != "ready" || got.Items[0].ProcessingError != "" {
+		t.Fatalf("item status = %+v", got.Items[0])
 	}
 	if got.EnrichmentStatus != "ready" || got.EnrichmentProvider != "ChatWorker" || got.EnrichedAt == nil {
 		t.Fatalf("enrichment snapshot = %+v", got)
@@ -92,6 +104,9 @@ func TestDailySeedCollectionSnapshotExposesCachedItemsAndConfiguredSources(t *te
 	if strings.Contains(string(encoded), "must-not-leak") {
 		t.Fatal("collection snapshot must not expose credentials")
 	}
+	if !strings.Contains(string(encoded), `"processing_status":"ready"`) || !strings.Contains(string(encoded), `"processing_error":""`) || !strings.Contains(string(encoded), `"processing_status_counts"`) {
+		t.Fatalf("collection JSON must always expose explicit item processing state: %s", encoded)
+	}
 
 	got.Items[0].Title = "changed"
 	cache := getDailyCache()
@@ -108,6 +123,33 @@ func TestDailySeedCollectionSnapshotReportsEmptyCache(t *testing.T) {
 
 	if got.Status != "empty" || got.FetchedAt != nil || got.Total != 0 || got.WordPool.Total != staticTopicWordLimit {
 		t.Fatalf("empty snapshot = %+v", got)
+	}
+}
+
+func TestDailySeedCollectionSnapshotDoesNotExposeRawFeedSummaryAsCompletedAnalysis(t *testing.T) {
+	withDailySeedCache(t, &DailySeedCache{
+		Date: "2026-07-21",
+		NewsSeedItems: []NewsSeed{{
+			Title: "未着手の記事", URL: "https://example.com/pending", Summary: "Raw feed summary must not look analyzed.",
+		}},
+		FetchedAt: time.Now(), EnrichmentStatus: "pending",
+	})
+	orch := NewIdleChatOrchestrator(nil, nil, nil, 5, 10, 0.7, nil, "")
+
+	got := orch.DailySeedCollectionSnapshot(time.Now())
+
+	if len(got.Items) != 1 {
+		t.Fatalf("items = %+v", got.Items)
+	}
+	item := got.Items[0]
+	if item.SourceReadStatus != "unprocessed" || item.ProcessingStatus != "pending" || item.ProcessingError != "" {
+		t.Fatalf("pending item status = %+v", item)
+	}
+	if item.TranslatedBody != "原文取得・翻訳はまだ開始していません。" || item.Summary != "本文に基づく処理はまだ開始していません。" {
+		t.Fatalf("snapshot must replace raw feed fields with pending labels: %+v", item)
+	}
+	if getDailyCache().NewsSeedItems[0].Summary != "Raw feed summary must not look analyzed." {
+		t.Fatal("snapshot normalization must not mutate the collection cache")
 	}
 }
 

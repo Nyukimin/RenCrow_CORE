@@ -88,6 +88,108 @@
   gap: 7px;
 }
 
+.collection-phase-board {
+  background: rgba(8, 12, 20, 0.34);
+  border: 1px solid var(--desk-border);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.collection-phase-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.collection-phase-chip {
+  align-items: center;
+  background: rgba(139, 216, 255, 0.08);
+  border: 1px solid var(--desk-border);
+  border-radius: 999px;
+  color: var(--desk-soft);
+  display: inline-flex;
+  font-size: 10px;
+  gap: 7px;
+  padding: 6px 9px;
+}
+
+.collection-phase-chip b {
+  color: var(--collection-accent);
+  font-size: 12px;
+}
+
+.collection-phase-collected {
+  background: rgba(134, 239, 172, 0.1);
+}
+
+.collection-phase-collected b {
+  color: var(--collection-green);
+}
+
+.collection-ledger-note {
+  color: var(--desk-muted);
+  font-size: 11px;
+  margin: -2px 0 8px;
+}
+
+.collection-ledger-wrap {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.collection-ledger {
+  min-width: 980px;
+}
+
+.collection-ledger th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.collection-ledger td {
+  vertical-align: top;
+}
+
+.collection-ledger-title {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+  max-width: 440px;
+}
+
+.collection-ledger-title a {
+  color: var(--desk-text);
+}
+
+.collection-ledger td small {
+  color: var(--desk-muted);
+  display: block;
+  margin-top: 4px;
+}
+
+.collection-ledger-status {
+  background: rgba(134, 239, 172, 0.1);
+  border-radius: 999px;
+  color: var(--collection-green);
+  display: inline-block;
+  font-size: 10px;
+  padding: 4px 7px;
+  white-space: nowrap;
+}
+
+.collection-ledger-status.warn {
+  background: rgba(255, 143, 154, 0.12);
+  color: var(--desk-danger);
+}
+
+.collection-ledger-reason {
+  color: var(--desk-soft);
+  font-size: 11px;
+  line-height: 1.5;
+  min-width: 180px;
+}
+
 .collection-category-chip {
   align-items: center;
   background: rgba(139, 216, 255, 0.08);
@@ -167,9 +269,29 @@
   padding: 4px 7px;
 }
 
+.collection-item-meta .collection-item-state {
+  background: rgba(134, 239, 172, 0.1);
+  color: var(--collection-green);
+}
+
+.collection-item-meta .collection-item-state.warn {
+  background: rgba(255, 143, 154, 0.12);
+  color: var(--desk-danger);
+}
+
 .collection-item-source {
   color: var(--desk-muted);
   font-size: 11px;
+}
+
+.collection-item-error {
+  background: rgba(255, 143, 154, 0.09);
+  border: 1px solid rgba(255, 143, 154, 0.3);
+  border-radius: 8px;
+  color: var(--desk-danger);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 7px 9px;
 }
 
 .collection-annotation {

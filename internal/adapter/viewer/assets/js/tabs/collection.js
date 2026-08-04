@@ -56,6 +56,56 @@ function collectionStatusLabel(value) {
   return labels[String(value || '')] || String(value || '未収集');
 }
 
+function collectionSourceReadStatusLabel(value) {
+  const labels = {
+    unprocessed: '原文未処理', ready: '原文取得済み', unavailable: '原文取得失敗',
+  };
+  return labels[String(value || '')] || String(value || '原文未処理');
+}
+
+function collectionProcessingStatusLabel(value) {
+  const labels = {
+    pending: '処理未着手', ready: '処理完了', source_unavailable: '原文取得失敗',
+    translation_failed: '翻訳失敗', term_extraction_failed: '用語抽出失敗', brief_failed: '考察生成失敗',
+  };
+  return labels[String(value || '')] || String(value || '処理未着手');
+}
+
+function collectionPhaseSummaryHTML(counts, labeler) {
+  return Object.entries(counts || {})
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([status, count]) => '<span class="collection-phase-chip"><strong>' + collectionEscape(labeler(status)) + '</strong><b>' + Number(count || 0) + '</b></span>')
+    .join('');
+}
+
+function renderCollectionLedgerRows(items) {
+  if (!items.length) {
+    return '<tr><td colspan="6" class="daily-desk-muted">収集済み項目はありません。</td></tr>';
+  }
+  return items.map((item, index) => {
+    const url = collectionSafeURL(item.url);
+    const title = collectionEscape(item.title || '無題');
+    const linkedTitle = url
+      ? '<a href="' + collectionEscape(url) + '" target="_blank" rel="noopener noreferrer">' + title + '</a>'
+      : title;
+    const sourceStatus = String(item.source_read_status || 'unprocessed');
+    const processingStatus = String(item.processing_status || 'pending');
+    const sourceClass = sourceStatus === 'unavailable' ? ' warn' : '';
+    const processingClass = ['pending', 'ready'].includes(processingStatus) ? '' : ' warn';
+    const progressReason = item.processing_error || (processingStatus === 'pending'
+      ? '本文取得以降は未着手です。'
+      : processingStatus === 'ready' ? '翻訳・用語補足・サマリ・見解まで完了しました。' : 'この工程で停止しました。');
+    return '<tr>' +
+      '<td>' + (index + 1) + '</td>' +
+      '<td><div class="collection-ledger-title">' + linkedTitle + '</div><small>' + collectionEscape(item.source || '取得元不明') + ' · ' + collectionEscape(item.category || '未分類') + '</small></td>' +
+      '<td><span class="collection-ledger-status">取得済み</span></td>' +
+      '<td><span class="collection-ledger-status' + sourceClass + '">' + collectionEscape(collectionSourceReadStatusLabel(sourceStatus)) + '</span></td>' +
+      '<td><span class="collection-ledger-status' + processingClass + '">' + collectionEscape(collectionProcessingStatusLabel(processingStatus)) + '</span></td>' +
+      '<td class="collection-ledger-reason">' + collectionEscape(progressReason) + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
 function renderCollectionData() {
   const collection = collectionViewState.collection || {
     status: 'empty', enrichment_status: '', items: [], sources: [], tools: [], category_counts: {}, source_counts: {},
@@ -72,7 +122,7 @@ function renderCollectionData() {
     if (!query) return true;
     const termText = (Array.isArray(item.term_notes) ? item.term_notes : [])
       .map((note) => String(note.term || '') + ' ' + String(note.explanation || '')).join(' ');
-    return [item.title, item.source, item.source_type, item.category, item.translated_body, item.summary, item.perspective, termText]
+    return [item.title, item.source, item.source_type, item.category, item.source_read_status, item.processing_status, item.processing_error, item.translated_body, item.summary, item.perspective, termText]
       .some((value) => String(value || '').toLowerCase().includes(query));
   });
 
@@ -91,7 +141,18 @@ function renderCollectionData() {
   collectionSetText('collectionCategoryCount', categoryEntries.length);
   collectionSetText('collectionSourceCount', sources.filter((source) => source.enabled).length);
   collectionSetText('collectionVisibleCount', String(visibleItems.length) + '件表示');
+	collectionSetText('collectionAllItemsCount', '全' + String(items.length) + '件');
 	collectionSetText('collectionSkillID', collection.skill_id || '-');
+
+  const phaseSummary = document.getElementById('collectionPhaseSummary');
+  if (phaseSummary) {
+    phaseSummary.innerHTML = '<span class="collection-phase-chip collection-phase-collected"><strong>収集済み</strong><b>' + items.length + '</b></span>' +
+      collectionPhaseSummaryHTML(collection.source_read_status_counts, collectionSourceReadStatusLabel) +
+      collectionPhaseSummaryHTML(collection.processing_status_counts, collectionProcessingStatusLabel);
+  }
+
+  const allItemsBody = document.getElementById('collectionAllItemsBody');
+  if (allItemsBody) allItemsBody.innerHTML = renderCollectionLedgerRows(items);
 
   if (categoryFilter) {
     const selected = categoryFilter.value;
@@ -120,6 +181,9 @@ function renderCollectionData() {
       const url = collectionSafeURL(item.url);
       const title = collectionEscape(item.title || '無題');
 		const termNotes = Array.isArray(item.term_notes) ? item.term_notes : [];
+		const processingStatus = String(item.processing_status || 'pending');
+		const processingFailed = !['pending', 'ready'].includes(processingStatus);
+		const sourceReadFailed = String(item.source_read_status || 'unprocessed') === 'unavailable';
 		const termNotesHTML = termNotes.length
 		  ? '<ul class="collection-term-notes">' + termNotes.map((note) => {
 		    const sourceURL = collectionSafeURL(note.source_url);
@@ -131,14 +195,20 @@ function renderCollectionData() {
 		      : note.status === 'unresolved' ? '未解決' : '確認不能';
 		    return '<li><strong>' + collectionEscape(note.term || '用語') + '</strong><span>' + collectionEscape(note.explanation || '説明はありません。') + '</span><small>' + statusLabel + source + '</small></li>';
 		  }).join('') + '</ul>'
-		  : '<p>補足が必要な用語はありません。</p>';
+		  : '<p>' + (processingStatus === 'pending' ? '用語抽出はまだ開始していません。' : processingStatus === 'ready' ? '補足が必要な用語はありません。' : '用語補足は作成されていません。') + '</p>';
+		const processingErrorHTML = item.processing_error
+		  ? '<div class="collection-item-error">' + collectionEscape(item.processing_error) + '</div>'
+		  : '';
       const linkedTitle = url
         ? '<a href="' + collectionEscape(url) + '" target="_blank" rel="noopener noreferrer">' + title + '</a>'
         : title;
       return '<article class="collection-item">' +
-        '<div class="collection-item-meta"><span>' + collectionEscape(item.category || '未分類') + '</span><span>' + collectionEscape(item.source_type || '種別不明') + '</span></div>' +
+        '<div class="collection-item-meta"><span>' + collectionEscape(item.category || '未分類') + '</span><span>' + collectionEscape(item.source_type || '種別不明') + '</span>' +
+		'<span class="collection-item-state' + (sourceReadFailed ? ' warn' : '') + '">' + collectionEscape(collectionSourceReadStatusLabel(item.source_read_status)) + '</span>' +
+		'<span class="collection-item-state' + (processingFailed ? ' warn' : '') + '">' + collectionEscape(collectionProcessingStatusLabel(item.processing_status)) + '</span></div>' +
         '<h4>' + linkedTitle + '</h4>' +
 		'<div class="collection-item-source">' + collectionEscape(item.source || '取得元不明') + '</div>' +
+		processingErrorHTML +
 		'<section class="collection-annotation collection-translation"><strong>原文翻訳</strong><p>' + collectionEscape(item.translated_body || '原文翻訳はまだありません。') + '</p></section>' +
         '<section class="collection-annotation collection-summary"><strong>サマリ</strong><p>' + collectionEscape(item.summary || 'サマリはまだありません。') + '</p></section>' +
 		'<section class="collection-annotation collection-perspective"><strong>Shiroの見解</strong><p>' + collectionEscape(item.perspective || '見解はまだありません。') + '</p></section>' +

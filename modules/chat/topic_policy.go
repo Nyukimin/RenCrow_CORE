@@ -74,6 +74,8 @@ type NewsSeed struct {
 	URL              string         `json:"url,omitempty"`
 	SourceReadStatus string         `json:"source_read_status,omitempty"`
 	SourceReadURL    string         `json:"source_read_url,omitempty"`
+	ProcessingStatus string         `json:"processing_status,omitempty"`
+	ProcessingError  string         `json:"processing_error,omitempty"`
 	TranslatedBody   string         `json:"translated_body,omitempty"`
 	Summary          string         `json:"summary,omitempty"`
 	Perspective      string         `json:"perspective,omitempty"`

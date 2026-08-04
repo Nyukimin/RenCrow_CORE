@@ -121,7 +121,7 @@ func TestEnrichCurrentDailySeedsPublishesJapaneseSkillOutput(t *testing.T) {
 		t.Fatalf("日次情報収集でChatWorkerを呼んではなりません: %d", chatWorker.requests)
 	}
 	item := got.NewsSeedItems[0]
-	if item.SourceReadStatus != "ready" || len(item.TermNotes) != 2 || item.Summary == "" || item.Perspective == "" {
+	if item.SourceReadStatus != "ready" || item.ProcessingStatus != "ready" || len(item.TermNotes) != 2 || item.Summary == "" || item.Perspective == "" {
 		t.Fatalf("enriched item = %+v", item)
 	}
 }
@@ -155,8 +155,30 @@ func TestEnrichCurrentDailySeedsKeepsSafeFallbackOnProviderFailure(t *testing.T)
 		t.Fatalf("fallback state = %+v", got)
 	}
 	item := got.NewsSeedItems[0]
-	if item.SourceReadStatus != "unprocessed" || !strings.Contains(item.Summary, "処理を完了できませんでした") || len(item.TermNotes) == 0 || item.Perspective == "" {
-		t.Fatalf("fallback annotations must never guess or be blank: %+v", item)
+	if item.SourceReadStatus != "ready" || item.ProcessingStatus != "translation_failed" || item.ProcessingError == "" {
+		t.Fatalf("provider failure after source read must preserve source success and identify translation failure: %+v", item)
+	}
+	if item.TranslatedBody != "原文の取得は完了しましたが、翻訳に失敗しました。" || len(item.TermNotes) != 0 {
+		t.Fatalf("原文取得失敗と翻訳失敗を区別する必要があります: %+v", item)
+	}
+}
+
+func TestEnrichCurrentDailySeedsKeepsUnstartedItemsPendingWhenDependencyIsUnavailable(t *testing.T) {
+	withDailySeedCache(t, &DailySeedCache{
+		Date:          "2026-07-21",
+		NewsSeedItems: []NewsSeed{{Title: "未着手の記事", URL: "https://example.com/pending", Summary: "RSSの未検証feed要約"}},
+		FetchedAt:     time.Now(), EnrichmentStatus: "pending",
+	})
+	orch := NewIdleChatOrchestrator(nil, nil, nil, 5, 10, 0.7, nil, "")
+
+	orch.enrichCurrentDailySeeds()
+
+	item := getDailyCache().NewsSeedItems[0]
+	if item.SourceReadStatus != "unprocessed" || item.ProcessingStatus != "pending" || item.ProcessingError != "" {
+		t.Fatalf("未着手項目はpendingとして残す必要があります: %+v", item)
+	}
+	if item.TranslatedBody != "原文取得・翻訳はまだ開始していません。" || item.Summary != "本文に基づく処理はまだ開始していません。" || len(item.TermNotes) != 0 {
+		t.Fatalf("未着手を失敗文言や確認不能の用語で埋めてはいけません: %+v", item)
 	}
 }
 
@@ -197,8 +219,8 @@ func TestEnrichCurrentDailySeedsCompletesAndPublishesOneArticleBeforeStartingNex
 	if got.NewsSeedItems[0].SourceReadStatus != "ready" || got.NewsSeedItems[0].TranslatedBody == "" {
 		t.Fatalf("1件目の完了結果を保持する必要があります: %+v", got.NewsSeedItems[0])
 	}
-	if got.NewsSeedItems[1].SourceReadStatus != "unprocessed" {
-		t.Fatalf("失敗した2件目だけfallbackにする必要があります: %+v", got.NewsSeedItems[1])
+	if got.NewsSeedItems[1].SourceReadStatus != "ready" || got.NewsSeedItems[1].ProcessingStatus != "translation_failed" {
+		t.Fatalf("失敗した2件目も原文取得成功と翻訳失敗を分離する必要があります: %+v", got.NewsSeedItems[1])
 	}
 }
 

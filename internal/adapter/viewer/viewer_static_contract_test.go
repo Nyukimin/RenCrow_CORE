@@ -145,6 +145,9 @@ func TestViewerStaticContractInformationCollectionTab(t *testing.T) {
 		`id="collectionStatus"`,
 		`id="collectionCategoryFilter"`,
 		`id="collectionSourceFilter"`,
+		`id="collectionPhaseSummary"`,
+		`id="collectionAllItemsCount"`,
+		`id="collectionAllItemsBody"`,
 		`id="collectionItems"`,
 		`id="collectionSources"`,
 		`/viewer/assets/css/tabs/collection.css`,
@@ -163,10 +166,17 @@ func TestViewerStaticContractInformationCollectionTab(t *testing.T) {
 		"/viewer/idlechat/collection",
 		"function refreshCollectionData()",
 		"function renderCollectionData()",
+		"function renderCollectionLedgerRows(items)",
+		"renderCollectionLedgerRows(items)",
 		"collection.category_counts",
+		"collection.source_read_status_counts",
+		"collection.processing_status_counts",
 		"collection.sources",
 		"collection.enrichment_status",
 		"collection.skill_id",
+		"item.source_read_status",
+		"item.processing_status",
+		"item.processing_error",
 		"item.translated_body",
 		"item.summary",
 		"item.term_notes",
@@ -175,6 +185,18 @@ func TestViewerStaticContractInformationCollectionTab(t *testing.T) {
 		if !strings.Contains(collectionJS, needle) {
 			t.Fatalf("collection.js contract missing %q", needle)
 		}
+	}
+	ledgerStart := strings.Index(collectionJS, "function renderCollectionLedgerRows(items)")
+	if ledgerStart < 0 {
+		t.Fatal("collection ledger renderer must remain a separate pure projection")
+	}
+	ledgerEnd := strings.Index(collectionJS[ledgerStart:], "function renderCollectionData()")
+	if ledgerEnd < 0 {
+		t.Fatal("collection ledger renderer must remain a separate pure projection")
+	}
+	ledgerRenderer := collectionJS[ledgerStart : ledgerStart+ledgerEnd]
+	if !strings.Contains(ledgerRenderer, "return items.map((item, index)") || strings.Contains(ledgerRenderer, "visibleItems") {
+		t.Fatal("collection ledger must render every collected item independently from detail filters")
 	}
 	translationIndex := strings.Index(collectionJS, "<strong>原文翻訳</strong>")
 	termNotesIndex := strings.Index(collectionJS, "<strong>用語補足</strong>")

@@ -1239,10 +1239,30 @@
 		  <div class="daily-desk-card"><span>取得先</span><strong id="collectionSourceCount">0</strong><small>設定済み対象</small></div>
         </div>
 		<div id="collectionCategorySummary" class="collection-category-summary" aria-label="カテゴリ別件数"></div>
+		<section class="collection-phase-board" aria-label="フェーズ別件数">
+		  <div class="collection-section-head">
+			<h3>フェーズ別の到達状況</h3>
+			<span class="daily-desk-muted">収集後の全項目を集計</span>
+		  </div>
+		  <div id="collectionPhaseSummary" class="collection-phase-summary"></div>
+		</section>
         <div id="collectionError" class="collection-error" hidden></div>
+		<section>
+		  <div class="collection-section-head">
+			<h3>収集済み全件台帳</h3>
+			<span id="collectionAllItemsCount" class="desk-pill">全0件</span>
+		  </div>
+		  <p class="collection-ledger-note">検索・カテゴリ絞り込みに関係なく、取得できた見出しとURLを全件表示します。</p>
+		  <div class="table-wrap collection-ledger-wrap">
+			<table class="collection-ledger">
+			  <thead><tr><th>#</th><th>見出し・取得元</th><th>収集</th><th>原文取得</th><th>後続処理</th><th>理由・現在地</th></tr></thead>
+			  <tbody id="collectionAllItemsBody"></tbody>
+			</table>
+		  </div>
+		</section>
         <section>
           <div class="collection-section-head">
-			<h3>収集項目</h3>
+			<h3>項目詳細（絞り込み対象）</h3>
 			<span id="collectionVisibleCount" class="desk-pill">0件表示</span>
           </div>
           <div id="collectionItems" class="collection-items"></div>

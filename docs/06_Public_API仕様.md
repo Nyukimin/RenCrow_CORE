@@ -246,9 +246,41 @@ streaming生成では、COREはRenCrow_LLMから受けた本文deltaを`agent.th
 TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`response_id`を持ちます。clientは全chunkの再生終了とsession完了の両方を確認してから、response単位で`POST /viewer/tts/playback-ack`を1回だけ送ります。
 `GET /viewer/tts/audio?url=...`が取得できるremote音声は、COREのTTS設定にあるbase URLと同一hostのものだけです。
 
-`GET /viewer/idlechat/status`の`forecast_stock`は、`enabled`、`total`、`capacity`、`missing`、`filling`、最終生成状態と、6ドメインの`topics`を返します。これは観測用snapshotであり、GETによって生成・消費・補充を開始しません。
+IdleChat episodeのTTS先読みでは、`playback-ack`は再生結果、再生位置、cache解放の観測に使います。
+同じepisodeの次発話をTTSへ送る条件にはせず、ACK欠落を理由に先読みqueueを直列停止しません。
+PORTALは`turn_index`順に音声chunkを再生し、browserの`ended`でlocal queueを進めます。bufferが
+下限を割った場合は`buffering`を表示し、字幕だけを次発話へ進めません。
 
-`GET /viewer/idlechat/collection`は、`status`、`skill_id`（`core.build-daily-source-brief`）、`schedule`、`timezone`、`fetched_at`、`next_run_at`、ニュース件数、Wikipedia件数、カテゴリ／source別件数、`items`、`sources`、`tools`、`word_pool`を返します。`word_pool`は固定語数、当日最新語数、合計数、上限、当日最新語とその`source_type`を返します。分析状態は`enrichment_status`（`pending`、`enriching`、`ready`、`partial`、`fallback`）、`enrichment_provider`、`enrichment_error`、`enriched_at`で確認できます。収集後の分析は`Worker`が記事を1件ずつ完了させ、`enriching`中も完了済み記事を順次snapshotへ反映します。`ChatWorker`は使用しません。`items`はtitle、category、source、`source_type`、元URL、`source_read_status`（`ready`／`unavailable`／`unprocessed`）、`source_read_url`、原文の日本語訳`translated_body`、`summary`、事実と分離したShiroの`perspective`、`term_notes`を持ちます。`term_notes`は用語、説明、確認方法、確認元URL、`contextual`／`confirmed`／`unresolved`／`unavailable`の状態を返します。表示順は「原文翻訳 → サマリ → Shiroの見解 → 用語補足」です。`sources`はcredentialを除いた取得先設定を持ちます。このGETは現在のプロセス内cacheをコピーして返す観測用snapshotであり、収集、分析、再収集、cache消費、Memory昇格を開始しません。
+`GET /viewer/idlechat/episodes`はepisode在庫の読み取り専用snapshotです。各episodeの
+`episode_id`、revision、category、topic、source参照、`generator=codex_exe`、`generation_id`、
+`character_revision`、`input_hash`、制作状態、再生状態、生成日時、有効期限、発話数、品質判定、
+固定prefix長、`repair_from_turn`、suffix再生成回数、
+現在の再生位置、buffer秒数、先読み発話数、最終TTS error、最終ACK時刻を返します。
+台本本文は明示した`episode_id`の詳細要求でだけ返し、一覧へ全件展開しません。このGETはepisodeの
+生成、検証、expire、再生、TTS合成を開始しません。
+
+`POST /viewer/idlechat/episodes/prepare`は`count`と任意の`categories`を受け、低優先度のepisode
+準備jobを登録して`job_id`を返します。`count`は1から10までとし、空の場合はConfigの不足数を使います。
+HTTP request内で台本生成完了を待たず、既存の同一準備jobと重複する要求は冪等に同じ実行へ集約します。
+前景Chatまたは明示Workerが始まった場合、jobは失敗ではなく`deferred`となり、次回Idleへ延期します。
+
+`POST /viewer/idlechat/episodes/validate`は`episode_id`を受け、台本の全発話、speaker帰属、順序、
+話題重複、発話反復、Persona、category固有禁止、品質判定、source鮮度、本文hashを検証します。
+検証はepisode本文を変更せず、`valid`、turn別状態、`first_invalid_turn`、NG理由、固定可能なprefix長、
+`repair_required`を返します。NG理由は`schema_violation`、`speaker_confusion`、`repetition`、
+`topic_violation`、`persona_violation`、`factual_violation`、`meta_leak`、`quality_violation`です。
+prepare job内の自動修復は最小の`first_invalid_turn=k`を起点に`turn k`以降を破棄し、固定prefixと
+NG理由をCodexExeへ渡して最終turnまで再生成します。prefixの`message_id`は維持し、suffixへは
+新しい`message_id`を発行します。`max_suffix_regenerations`到達時はepisodeを`failed`にします。
+`POST /viewer/idlechat/episodes/expire`は`episode_id`を受け、再生中でないepisodeを`expired`へ遷移させます。
+再生中のepisodeはHTTP 409と`IDLECHAT_EPISODE_PLAYING`を返し、暗黙に中断しません。これらは
+Debug Viewer／localhost運用CLI向けのadmin APIであり、RenCrow_PORTALからproxyしません。
+
+`GET /viewer/idlechat/status`の`forecast_stock`は、`enabled`、`total`、`capacity`、`missing`、`filling`、最終生成状態と、6ドメインの`topics`を返します。`episode_stock`は`ready`件数、target、不足数、準備中job、最終失敗phaseを返し、`playback_buffer`はepisode ID、再生状態、現在turn、buffer秒数、先読み発話数、最終ACK時刻を返します。これは観測用snapshotであり、GETによって生成・消費・補充・再生・TTS合成を開始しません。
+
+`GET /viewer/idlechat/collection`は、`status`、`skill_id`（`core.build-daily-source-brief`）、`schedule`、`timezone`、`fetched_at`、`next_run_at`、ニュース件数、Wikipedia件数、カテゴリ／source別件数、`items`、`sources`、`tools`、`word_pool`を返します。`word_pool`は固定語数、当日最新語数、合計数、上限、当日最新語とその`source_type`を返します。分析全体の状態は`enrichment_status`（`pending`、`enriching`、`ready`、`partial`、`fallback`）、`enrichment_provider`、`enrichment_error`、`enriched_at`で確認できます。収集後の分析は`Worker`が記事を1件ずつ完了させ、`enriching`中も完了済みまたは工程失敗が確定した記事を順次snapshotへ反映します。`ChatWorker`は使用しません。
+
+`items`はtitle、category、source、`source_type`、元URL、`source_read_status`、`source_read_url`、`processing_status`、`processing_error`、原文の日本語訳`translated_body`、`summary`、事実と分離したShiroの`perspective`、`term_notes`を持ちます。収集phaseで見出しとURLを取得した項目は後続工程が未着手または失敗でも`items`から除外せず、`total`は常に`len(items)`と一致します。`source_read_status_counts`と`processing_status_counts`は全`items`の状態別件数を返します。`source_read_status`は原文取得だけを表し、`unprocessed`は未着手、`ready`は取得済み、`unavailable`は取得失敗です。`processing_status`は後続処理を表し、値は`pending`、`ready`、`source_unavailable`、`translation_failed`、`term_extraction_failed`、`brief_failed`です。`pending`は未着手であり失敗ではありません。`processing_error`は空、または利用者へ表示可能な工程別の日本語理由であり、providerやbackendの生errorを含みません。原文取得後に翻訳が失敗した項目は`source_read_status=ready`と`processing_status=translation_failed`を返します。用語抽出またはサマリ・見解生成が失敗した場合も、それ以前の工程で完成した値を保持します。`term_notes`は用語、説明、確認方法、確認元URL、`contextual`／`confirmed`／`unresolved`／`unavailable`の状態を返します。表示順は「原文翻訳 → サマリ → Shiroの見解 → 用語補足」です。`sources`はcredentialを除いた取得先設定を持ちます。このGETは現在のプロセス内cacheをコピーして返す観測用snapshotであり、収集、分析、再収集、cache消費、Memory昇格を開始しません。
 
 `GET /viewer/movie-catalog?action=movies|people`は一覧項目に`familiarity`、`sentiment`、`assessed`を返します。映画の`familiarity`は`seen | unseen | ""`、俳優の`familiarity`は`known | unknown | ""`、`sentiment`は共通で`like | dislike | ""`です。`POST /viewer/movie-catalog/preference`へ`kind`（`movie | person`）、`target_id`、`target_label`、`dimension`（`familiarity | sentiment`）、`value`、`generated_by`を送ると一方のdimensionだけを更新し、他方を維持します。空の`value`はそのdimensionを明示的な未選択へ戻します。Viewer内部のwrite APIであり、PORTALへ自動公開しません。
 
