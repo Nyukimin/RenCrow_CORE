@@ -248,7 +248,7 @@ TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`respon
 
 `GET /viewer/idlechat/status`の`forecast_stock`は、`enabled`、`total`、`capacity`、`missing`、`filling`、最終生成状態と、6ドメインの`topics`を返します。これは観測用snapshotであり、GETによって生成・消費・補充を開始しません。
 
-`GET /viewer/idlechat/collection`は、`status`、`skill_id`（`core.build-daily-source-brief`）、`schedule`、`timezone`、`fetched_at`、`next_run_at`、ニュース件数、Wikipedia件数、カテゴリ／source別件数、`items`、`sources`、`tools`を返します。分析状態は`enrichment_status`（`pending`、`enriching`、`ready`、`partial`、`fallback`）、`enrichment_provider`、`enrichment_error`、`enriched_at`で確認できます。収集後の分析は`Worker`が記事を1件ずつ完了させ、`enriching`中も完了済み記事を順次snapshotへ反映します。`ChatWorker`は使用しません。`items`はtitle、category、source、`source_type`、元URL、`source_read_status`（`ready`／`unavailable`／`unprocessed`）、`source_read_url`、原文の日本語訳`translated_body`、`summary`、事実と分離したShiroの`perspective`、`term_notes`を持ちます。`term_notes`は用語、説明、確認方法、確認元URL、`contextual`／`confirmed`／`unresolved`／`unavailable`の状態を返します。表示順は「原文翻訳 → サマリ → Shiroの見解 → 用語補足」です。`sources`はcredentialを除いた取得先設定を持ちます。このGETは現在のプロセス内cacheをコピーして返す観測用snapshotであり、収集、分析、再収集、cache消費、Memory昇格を開始しません。
+`GET /viewer/idlechat/collection`は、`status`、`skill_id`（`core.build-daily-source-brief`）、`schedule`、`timezone`、`fetched_at`、`next_run_at`、ニュース件数、Wikipedia件数、カテゴリ／source別件数、`items`、`sources`、`tools`、`word_pool`を返します。`word_pool`は固定語数、当日最新語数、合計数、上限、当日最新語とその`source_type`を返します。分析状態は`enrichment_status`（`pending`、`enriching`、`ready`、`partial`、`fallback`）、`enrichment_provider`、`enrichment_error`、`enriched_at`で確認できます。収集後の分析は`Worker`が記事を1件ずつ完了させ、`enriching`中も完了済み記事を順次snapshotへ反映します。`ChatWorker`は使用しません。`items`はtitle、category、source、`source_type`、元URL、`source_read_status`（`ready`／`unavailable`／`unprocessed`）、`source_read_url`、原文の日本語訳`translated_body`、`summary`、事実と分離したShiroの`perspective`、`term_notes`を持ちます。`term_notes`は用語、説明、確認方法、確認元URL、`contextual`／`confirmed`／`unresolved`／`unavailable`の状態を返します。表示順は「原文翻訳 → サマリ → Shiroの見解 → 用語補足」です。`sources`はcredentialを除いた取得先設定を持ちます。このGETは現在のプロセス内cacheをコピーして返す観測用snapshotであり、収集、分析、再収集、cache消費、Memory昇格を開始しません。
 
 `GET /viewer/movie-catalog?action=movies|people`は一覧項目に`familiarity`、`sentiment`、`assessed`を返します。映画の`familiarity`は`seen | unseen | ""`、俳優の`familiarity`は`known | unknown | ""`、`sentiment`は共通で`like | dislike | ""`です。`POST /viewer/movie-catalog/preference`へ`kind`（`movie | person`）、`target_id`、`target_label`、`dimension`（`familiarity | sentiment`）、`value`、`generated_by`を送ると一方のdimensionだけを更新し、他方を維持します。空の`value`はそのdimensionを明示的な未選択へ戻します。Viewer内部のwrite APIであり、PORTALへ自動公開しません。
 
@@ -278,6 +278,12 @@ Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCORE�
 `daily_news_brief`は`ready`または`partial`の準備済み項目を番号付きリストで返し、追加入力の「2番を詳しく」は同じbriefのitem IDを参照します。`pending`、`enriching`、`fallback`、空cacheでは確認不能な内容を推測せず、`LiveNewsSearch`へフォールバックしたか、朝刊が未準備であることを回答へ明記します。Mioが利用できない場合に限り、Shiroが同じ準備済みデータを要約できます。`DailyNewsBrief`の対象日・取得時刻と、`LiveNewsSearch`の検索時刻は必ず区別して返します。
 
 `GET /viewer/idlechat/collection`は観測専用snapshotであり、Chatがユーザー向けニュースを取得する経路ではありません。ChatはCORE内部の`DailyNewsBriefReader`を介して`DailyNewsBrief`を読み取ります。
+
+## ニュースartifact API境界
+
+`NewsCollectionArtifact`と`NewsAnalysisArtifact`のschema、意味、hash系譜はCOREが所有しますが、現行Public APIには収集または考察を起動する専用endpointを公開していません。`GET /viewer/idlechat/collection`のresponseを収集artifactとして保存したり、そのGETでjobが起動すると仮定したりしてはいけません。
+
+採用済みの`RenCrow_Tools` CLI `rencrow-news analyze`は、実装時にCORE所有の考察portへ接続します。具体的なHTTP method、path、interaction profile、request／response、非同期job相関を追加する場合は、CLI実装より先にこのPublic API正本へ記載します。それまではCLIを任意のLLM、RenCrow_LLM Gateway、物理Backendへ直接接続して代替しません。`RenCrow_CMD`にはニュース専用commandを追加しません。
 
 ## Interaction client共通意味論
 

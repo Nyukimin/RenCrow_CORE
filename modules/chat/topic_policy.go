@@ -38,8 +38,12 @@ var (
 type TopicSeed struct {
 	Category TopicCategory `json:"category"`
 
-	Genre1 string `json:"genre_1,omitempty"`
-	Genre2 string `json:"genre_2,omitempty"`
+	Genre1        string `json:"genre_1,omitempty"`
+	Genre2        string `json:"genre_2,omitempty"`
+	Genre1Kind    string `json:"genre_1_kind,omitempty"`
+	Genre2Kind    string `json:"genre_2_kind,omitempty"`
+	Genre1Context string `json:"genre_1_context,omitempty"`
+	Genre2Context string `json:"genre_2_context,omitempty"`
 
 	ExternalMaterial *ExternalMaterialSeed `json:"external_material,omitempty"`
 
@@ -116,6 +120,7 @@ type TopicJudgeScore struct {
 	AxisStrength          int    `json:"axis_strength"`
 	Novelty               int    `json:"novelty"`
 	Safety                int    `json:"safety"`
+	PresentDayRelevance   int    `json:"present_day_relevance"`
 	Total                 int    `json:"total"`
 	Reason                string `json:"reason"`
 }
@@ -158,6 +163,7 @@ const (
 	MinJudgeTotal                  = 24
 	MinCategoryFit                 = 4
 	MinSafety                      = 4
+	MinPresentDayRelevance         = 4
 	RecentTopicSimilarityThreshold = 0.82
 )
 
@@ -381,8 +387,21 @@ func ValidateJudgeResultWithThresholds(judge TopicJudgeResult, candidates []Topi
 	return TopicCandidate{}, TopicJudgeScore{}, ErrTopicJudgeWinnerMissing
 }
 
+// ValidateJudgeResultForCategory applies the shared score thresholds and the
+// present-day relevance contract required by single and double topic pools.
+func ValidateJudgeResultForCategory(category TopicCategory, judge TopicJudgeResult, candidates []TopicCandidate, minTotal, minCategoryFit, minSafety int) (TopicCandidate, TopicJudgeScore, error) {
+	winner, score, err := ValidateJudgeResultWithThresholds(judge, candidates, minTotal, minCategoryFit, minSafety)
+	if err != nil {
+		return TopicCandidate{}, score, err
+	}
+	if (category == TopicCategorySingle || category == TopicCategoryDouble) && score.PresentDayRelevance < MinPresentDayRelevance {
+		return TopicCandidate{}, score, ErrTopicJudgeLowScore
+	}
+	return winner, score, nil
+}
+
 func NormalizeJudgeScoreTotal(score TopicJudgeScore) TopicJudgeScore {
-	score.Total = score.CategoryFit + score.Concreteness + score.Curiosity + score.ConversationPotential + score.AxisStrength + score.Novelty + score.Safety
+	score.Total = score.CategoryFit + score.Concreteness + score.Curiosity + score.ConversationPotential + score.AxisStrength + score.Novelty + score.Safety + score.PresentDayRelevance
 	return score
 }
 

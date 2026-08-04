@@ -207,7 +207,7 @@ func topicCandidatesJSON(topic, axis string) string {
 }
 
 func topicJudgeJSON(topic string) string {
-	return fmt.Sprintf(`{"winner_topic":%q,"scores":[{"topic":%q,"category_fit":5,"concreteness":5,"curiosity":5,"conversation_potential":5,"axis_strength":5,"novelty":5,"safety":5,"total":35,"reason":"会話が続く"}],"reject_reason_summary":""}`, topic, topic)
+	return fmt.Sprintf(`{"winner_topic":%q,"scores":[{"topic":%q,"category_fit":5,"concreteness":5,"curiosity":5,"conversation_potential":5,"axis_strength":5,"novelty":5,"safety":5,"present_day_relevance":5,"total":40,"reason":"会話が続く"}],"reject_reason_summary":""}`, topic, topic)
 }
 
 func containsRequestSystemPrompt(requests []llm.GenerateRequest, text string) bool {

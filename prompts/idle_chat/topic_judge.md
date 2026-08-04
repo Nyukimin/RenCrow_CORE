@@ -18,6 +18,9 @@
 5. axis_strength: single=観察、double=接続、external=偶然の意味化、movie=共同妄想、news=現実の影響、forecast=変化の分岐、story=視点反転。
 6. novelty: recent_topics と似すぎていないか。
 7. safety: 契約違反がないか。
+8. present_day_relevance: 現在の生活、技術、仕事、社会との具体的な接点があるか。singleとdoubleでは、懐古的な情景だけで閉じる候補を3以下にする。
+
+スコアは各0〜5。totalは8項目の単純合計にしてください。
 
 入力:
 category: {category}
@@ -44,6 +47,7 @@ candidates:
       "axis_strength": 0,
       "novelty": 0,
       "safety": 0,
+      "present_day_relevance": 0,
       "total": 0,
       "reason": "短く"
     }

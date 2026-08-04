@@ -39,7 +39,7 @@ func TestBuildTopicJudgePromptIncludesCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildTopicJudgePrompt error: %v", err)
 	}
-	for _, want := range []string{"topic judge", "winner_topic", "雨上がりの映写室", "movie=共同妄想"} {
+	for _, want := range []string{"topic judge", "winner_topic", "雨上がりの映写室", "movie=共同妄想", "present_day_relevance"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("judge prompt missing %q:\n%s", want, prompt)
 		}

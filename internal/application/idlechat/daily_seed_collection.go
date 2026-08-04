@@ -46,6 +46,21 @@ type DailySeedCollectionSource struct {
 	Enabled  bool   `json:"enabled"`
 }
 
+// DailyTopicWordPoolItem is one current word projected from the daily cache.
+type DailyTopicWordPoolItem struct {
+	Word       string `json:"word"`
+	SourceType string `json:"source_type"`
+}
+
+// DailyTopicWordPoolSnapshot exposes compact-pool counts without triggering collection.
+type DailyTopicWordPoolSnapshot struct {
+	StaticCount int                      `json:"static_count"`
+	FreshCount  int                      `json:"fresh_count"`
+	Total       int                      `json:"total"`
+	Limit       int                      `json:"limit"`
+	FreshWords  []DailyTopicWordPoolItem `json:"fresh_words"`
+}
+
 // DailySeedCollectionSnapshot is a detached observation snapshot of the in-process
 // IdleChat daily seed cache. Reading it never starts collection or mutates the cache.
 type DailySeedCollectionSnapshot struct {
@@ -66,6 +81,7 @@ type DailySeedCollectionSnapshot struct {
 	Items              []DailySeedCollectionItem   `json:"items"`
 	Sources            []DailySeedCollectionSource `json:"sources"`
 	Tools              []string                    `json:"tools"`
+	WordPool           DailyTopicWordPoolSnapshot  `json:"word_pool"`
 }
 
 // DailySeedCollectionSnapshot returns the current collection data and configured
@@ -81,6 +97,12 @@ func (o *IdleChatOrchestrator) DailySeedCollectionSnapshot(now time.Time) DailyS
 		SourceCounts:   make(map[string]int),
 		Items:          []DailySeedCollectionItem{},
 		Tools:          append([]string(nil), dailySeedCollectionTools...),
+		WordPool: DailyTopicWordPoolSnapshot{
+			StaticCount: len(staticTopicWords),
+			Total:       len(staticTopicWords),
+			Limit:       topicWordPoolLimit,
+			FreshWords:  []DailyTopicWordPoolItem{},
+		},
 	}
 
 	var sourceConfig NewsSourceConfig
@@ -95,6 +117,13 @@ func (o *IdleChatOrchestrator) DailySeedCollectionSnapshot(now time.Time) DailyS
 
 	cacheMu.RLock()
 	if dailyCache != nil {
+		freshWords := buildFreshTopicWords(dailyCache, now)
+		snapshot.WordPool.FreshCount = len(freshWords)
+		snapshot.WordPool.Total = len(staticTopicWords) + len(freshWords)
+		snapshot.WordPool.FreshWords = make([]DailyTopicWordPoolItem, 0, len(freshWords))
+		for _, word := range freshWords {
+			snapshot.WordPool.FreshWords = append(snapshot.WordPool.FreshWords, DailyTopicWordPoolItem{Word: word.Value, SourceType: word.SourceType})
+		}
 		fetchedAt := dailyCache.FetchedAt
 		snapshot.FetchedAt = &fetchedAt
 		snapshot.EnrichmentStatus = strings.TrimSpace(dailyCache.EnrichmentStatus)

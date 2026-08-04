@@ -97,10 +97,11 @@ func BuildTopicJudgePrompt(category TopicCategory, seed TopicSeed, recent []Rece
 3. curiosity: 聞いた瞬間に「どういうこと？」が生まれるか。
 4. conversation_potential: Mio と Shiro の見方が分かれ、12ターン程度で自然に展開できそうか。
 5. axis_strength: single=観察、double=接続、external=偶然の意味化、movie=共同妄想、news=現実の影響、forecast=変化の分岐、story=視点反転。
-6. novelty: recent_topics と似すぎていないか。
-7. safety: 契約違反がないか。
+	6. novelty: recent_topics と似すぎていないか。
+	7. safety: 契約違反がないか。
+	8. present_day_relevance: 現在の生活、技術、仕事、社会との具体的な接点があるか。singleとdoubleでは、懐古的な情景だけで閉じる候補を3以下にする。
 
-スコアは各0〜5。total は7項目の単純合計。
+	スコアは各0〜5。total は8項目の単純合計。
 
 category: %s
 
@@ -124,9 +125,10 @@ candidates:
       "curiosity": 0,
       "conversation_potential": 0,
       "axis_strength": 0,
-      "novelty": 0,
-      "safety": 0,
-      "total": 0,
+	      "novelty": 0,
+	      "safety": 0,
+	      "present_day_relevance": 0,
+	      "total": 0,
       "reason": "短く"
     }
   ],
@@ -138,19 +140,23 @@ func TopicCategoryGenerationRules(category TopicCategory) string {
 	switch category {
 	case TopicCategorySingle:
 		return `category = single
-面白さ: 観察。ひとつのジャンルを、具体的な人物・物・場所・場面から深掘りする。
-必須:
-- seed.genre_1 を中心にする。
-- 1ジャンルだけを扱う。
-- 人物、物、場所、場面のうち2つ以上を入れる。
-- 大きな社会論ではなく、小さな場面から始まる題にする。`
+	面白さ: 観察。ひとつのジャンルを、具体的な人物・物・場所・場面から深掘りする。
+	必須:
+	- seed.genre_1 を中心にする。
+	- 1ジャンルだけを扱う。
+	- 人物、物、場所、場面のうち2つ以上を入れる。
+	- 大きな社会論ではなく、小さな場面から始まる題にする。
+	- 現在の生活、技術、仕事、社会のどれかへ具体的に接続する。
+	- 古書店、手紙、古道具などの懐古的な情景へ自動的に寄せない。`
 	case TopicCategoryDouble:
 		return `category = double
 面白さ: 接続。一見離れた2領域の間に、同じ構造・制約・悩みを見つける。
 必須:
-- seed.genre_1 と seed.genre_2 の両方を使う。
-- 表面的な共通点ではなく、共通する仕組みが見える題にする。
-- 「AとB」だけで終わらせず、「何が共通するのか」まで題名に含める。`
+	- seed.genre_1 と seed.genre_2 の両方を使う。
+	- 表面的な共通点ではなく、共通する仕組みが見える題にする。
+	- 「AとB」だけで終わらせず、「何が共通するのか」まで題名に含める。
+	- 少なくとも一方の入力語が持つ現在の生活、技術、仕事、社会との接点を題名に残す。
+	- 懐古的な情景だけで二つをつながない。`
 	case TopicCategoryExternal:
 		return `category = external
 面白さ: 偶然の意味化。外から来た素材とジャンルを自然に接続する。

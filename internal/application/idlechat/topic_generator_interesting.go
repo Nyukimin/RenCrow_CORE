@@ -230,7 +230,7 @@ func (g *TopicGenerator) JudgeCandidates(ctx context.Context, category TopicCate
 	if err != nil {
 		return TopicCandidate{}, nil, err
 	}
-	winner, score, err := modulechat.ValidateJudgeResultWithThresholds(judge, candidates, g.config.MinJudgeTotal, g.config.MinCategoryFit, g.config.MinSafety)
+	winner, score, err := modulechat.ValidateJudgeResultForCategory(category, judge, candidates, g.config.MinJudgeTotal, g.config.MinCategoryFit, g.config.MinSafety)
 	if err != nil {
 		logTopicDiagnostic(TopicGenerationDiagnostic{
 			Category:     string(category),

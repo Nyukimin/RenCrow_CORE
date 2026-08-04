@@ -76,6 +76,9 @@ func TestHandleIdleChatCollectionReturnsReadOnlySnapshot(t *testing.T) {
 	if !payload.OK || payload.Collection.Schedule != "04:00" || payload.Collection.Timezone != "JST" {
 		t.Fatalf("collection payload = %+v", payload)
 	}
+	if payload.Collection.WordPool.StaticCount != 48 || payload.Collection.WordPool.Total != 48 || payload.Collection.WordPool.Limit != 80 {
+		t.Fatalf("collection word pool = %+v", payload.Collection.WordPool)
+	}
 
 	postRecorder := httptest.NewRecorder()
 	deps.handleIdleChatCollection().ServeHTTP(postRecorder, httptest.NewRequest(http.MethodPost, "/viewer/idlechat/collection", nil))

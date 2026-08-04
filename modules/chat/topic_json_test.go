@@ -31,13 +31,13 @@ func TestParseTopicCandidatesAcceptsTopicStringArray(t *testing.T) {
 }
 
 func TestParseTopicJudgeResultNormalizesTotal(t *testing.T) {
-	raw := `{"winner_topic":"盆栽と都市計画に共通する、成長を待つための設計","scores":[{"topic":"盆栽と都市計画に共通する、成長を待つための設計","category_fit":4,"concreteness":4,"curiosity":4,"conversation_potential":4,"axis_strength":4,"novelty":4,"safety":4,"total":0}]}`
+	raw := `{"winner_topic":"生成AIと都市計画に共通する、更新を待つための設計","scores":[{"topic":"生成AIと都市計画に共通する、更新を待つための設計","category_fit":4,"concreteness":4,"curiosity":4,"conversation_potential":4,"axis_strength":4,"novelty":4,"safety":4,"present_day_relevance":4,"total":0}]}`
 	judge, err := ParseTopicJudgeResult(raw)
 	if err != nil {
 		t.Fatalf("ParseTopicJudgeResult error: %v", err)
 	}
-	if judge.Scores[0].Total != 28 {
-		t.Fatalf("total = %d, want 28", judge.Scores[0].Total)
+	if judge.Scores[0].Total != 32 {
+		t.Fatalf("total = %d, want 32", judge.Scores[0].Total)
 	}
 }
 

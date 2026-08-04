@@ -134,6 +134,8 @@ type IdleChatOrchestrator struct {
 	newsSourceConfig           NewsSourceConfig
 	dailySourceBriefResearch   DailySourceBriefResearch
 	currentTopicResult         *TopicGenerationResult
+	recentTopicWords           []string
+	lastTopicUsedClassic       bool
 	currentDialoguePlan        *DialogueArcPlan
 	currentDialogueState       *DialogueArcState
 	lastDialogueQuality        DialogueQualityResult

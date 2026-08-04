@@ -63,6 +63,12 @@ func TestDailySeedCollectionSnapshotExposesCachedItemsAndConfiguredSources(t *te
 	if got.EnrichmentStatus != "ready" || got.EnrichmentProvider != "ChatWorker" || got.EnrichedAt == nil {
 		t.Fatalf("enrichment snapshot = %+v", got)
 	}
+	if got.WordPool.StaticCount != staticTopicWordLimit || got.WordPool.FreshCount != 1 || got.WordPool.Total != staticTopicWordLimit+1 || got.WordPool.Limit != topicWordPoolLimit {
+		t.Fatalf("word pool snapshot = %+v", got.WordPool)
+	}
+	if len(got.WordPool.FreshWords) != 1 || got.WordPool.FreshWords[0].Word != "LLM" || got.WordPool.FreshWords[0].SourceType != "rss" {
+		t.Fatalf("fresh word snapshot = %+v", got.WordPool.FreshWords)
+	}
 	if !collectionHasSource(got.Sources, "OpenAI News", "rss_or_atom", true) {
 		t.Fatalf("missing default RSS source: %+v", got.Sources)
 	}
@@ -100,7 +106,7 @@ func TestDailySeedCollectionSnapshotReportsEmptyCache(t *testing.T) {
 
 	got := orch.DailySeedCollectionSnapshot(time.Date(2026, 7, 21, 3, 0, 0, 0, jst))
 
-	if got.Status != "empty" || got.FetchedAt != nil || got.Total != 0 {
+	if got.Status != "empty" || got.FetchedAt != nil || got.Total != 0 || got.WordPool.Total != staticTopicWordLimit {
 		t.Fatalf("empty snapshot = %+v", got)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"log"
 	"math/rand"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -19,7 +20,7 @@ func (o *IdleChatOrchestrator) generateTopicFromChat(sessionID string, strategy 
 
 	var logInfo string
 	var diagnosticTopic string
-	seed, promptReady := buildTopicSeedForStrategy(strategy)
+	seed, promptReady := o.buildTopicSeedForStrategy(strategy)
 
 	switch strategy {
 	case StrategySingleGenre:
@@ -106,20 +107,54 @@ func (o *IdleChatOrchestrator) generateTopicFromChat(sessionID string, strategy 
 }
 
 func buildTopicSeedForStrategy(strategy TopicStrategy) (TopicSeed, bool) {
+	return buildTopicSeedForStrategyWithWords(strategy, nil)
+}
+
+func (o *IdleChatOrchestrator) buildTopicSeedForStrategy(strategy TopicStrategy) (TopicSeed, bool) {
+	if strategy != StrategySingleGenre && strategy != StrategyDoubleGenre {
+		return buildTopicSeedForStrategy(strategy)
+	}
+	fresh := buildFreshTopicWords(getDailyCache(), time.Now())
+	o.mu.Lock()
+	selected := chooseTopicWords(strategy, staticTopicWords, fresh, o.recentTopicWords, o.lastTopicUsedClassic, nil)
+	if len(selected) > 0 {
+		o.recentTopicWords = appendRecentTopicWords(o.recentTopicWords, selected, recentTopicWordLimit)
+		o.lastTopicUsedClassic = topicWordsUseClassic(selected)
+	}
+	o.mu.Unlock()
+	return buildTopicSeedForStrategyWithWords(strategy, selected)
+}
+
+func buildTopicSeedForStrategyWithWords(strategy TopicStrategy, selected []topicWord) (TopicSeed, bool) {
 	switch strategy {
 	case StrategySingleGenre:
-		genres := pickRandom(genrePool, 1)
-		return TopicSeed{Category: TopicCategorySingle, Genre1: genres[0]}, true
+		if len(selected) == 0 {
+			selected = chooseTopicWords(strategy, staticTopicWords, buildFreshTopicWords(getDailyCache(), time.Now()), nil, false, nil)
+		}
+		if len(selected) != 1 {
+			return TopicSeed{Category: TopicCategorySingle}, false
+		}
+		return TopicSeed{Category: TopicCategorySingle, Genre1: selected[0].Value, Genre1Kind: selected[0].Kind, Genre1Context: selected[0].Context}, true
 	case StrategyDoubleGenre:
-		genres := pickRandom(genrePool, 2)
-		return TopicSeed{Category: TopicCategoryDouble, Genre1: genres[0], Genre2: genres[1]}, true
+		if len(selected) == 0 {
+			selected = chooseTopicWords(strategy, staticTopicWords, buildFreshTopicWords(getDailyCache(), time.Now()), nil, false, nil)
+		}
+		if len(selected) != 2 {
+			return TopicSeed{Category: TopicCategoryDouble}, false
+		}
+		return TopicSeed{
+			Category: TopicCategoryDouble,
+			Genre1:   selected[0].Value, Genre2: selected[1].Value,
+			Genre1Kind: selected[0].Kind, Genre2Kind: selected[1].Kind,
+			Genre1Context: selected[0].Context, Genre2Context: selected[1].Context,
+		}, true
 	case StrategyExternalStimulus:
 		cache := getDailyCache()
-		genre := pickRandom(genrePool, 1)[0]
+		genre := staticTopicWords[rand.Intn(len(staticTopicWords))].Value
 		return modulechat.SelectExternalTopicSeed(cache, rand.Int(), genre)
 	case StrategyMovie:
-		genres := pickRandom(genrePool, 1)
-		return TopicSeed{Category: TopicCategoryMovie, Genre1: genres[0]}, true
+		word := staticTopicWords[rand.Intn(len(staticTopicWords))]
+		return TopicSeed{Category: TopicCategoryMovie, Genre1: word.Value, Genre1Kind: word.Kind}, true
 	case StrategyNews:
 		cache := getDailyCache()
 		return modulechat.SelectNewsTopicSeed(cache, rand.Int())
@@ -138,6 +173,16 @@ func recentTopicRecords(topics []string) []RecentTopic {
 
 func formatTopicGenerationContext(result TopicGenerationResult) string {
 	var parts []string
+	var wordContexts []string
+	if contextText := strings.TrimSpace(result.Seed.Genre1Context); contextText != "" {
+		wordContexts = append(wordContexts, result.Seed.Genre1+": "+contextText)
+	}
+	if contextText := strings.TrimSpace(result.Seed.Genre2Context); contextText != "" {
+		wordContexts = append(wordContexts, result.Seed.Genre2+": "+contextText)
+	}
+	if len(wordContexts) > 0 {
+		parts = append(parts, "【最新語の取得済み補足】\n"+strings.Join(wordContexts, "\n")+"\n補足にない事実を推測で追加しない。")
+	}
 	if axis := strings.TrimSpace(result.InterestingnessAxis); axis != "" {
 		parts = append(parts, "【このtopicの面白さの軸】\n"+axis)
 	}

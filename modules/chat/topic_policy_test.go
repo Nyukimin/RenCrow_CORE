@@ -114,6 +114,24 @@ func TestJudgeUsesConfiguredThresholds(t *testing.T) {
 	}
 }
 
+func TestSingleAndDoubleJudgeRequirePresentDayRelevance(t *testing.T) {
+	candidates := []TopicCandidate{{Topic: "AIエージェントと防災訓練に共通する、判断を引き継ぐ仕組み"}}
+	judge := TopicJudgeResult{
+		WinnerTopic: candidates[0].Topic,
+		Scores: []TopicJudgeScore{{
+			Topic: candidates[0].Topic, CategoryFit: 5, Concreteness: 5, Curiosity: 5,
+			ConversationPotential: 5, AxisStrength: 5, Novelty: 5, Safety: 5, PresentDayRelevance: 3,
+		}},
+	}
+	if _, _, err := ValidateJudgeResultForCategory(TopicCategoryDouble, judge, candidates, 24, 4, 4); !errors.Is(err, ErrTopicJudgeLowScore) {
+		t.Fatalf("expected low present-day relevance rejection, got %v", err)
+	}
+	judge.Scores[0].PresentDayRelevance = MinPresentDayRelevance
+	if _, _, err := ValidateJudgeResultForCategory(TopicCategoryDouble, judge, candidates, 24, 4, 4); err != nil {
+		t.Fatalf("expected present-day relevant topic to pass, got %v", err)
+	}
+}
+
 func TestRecentTopicSimilarityRejectsDuplicate(t *testing.T) {
 	recent := []RecentTopic{{Topic: "潮汐と郵便制度に共通する、遅れて届くものの設計"}}
 	err := CheckRecentTopicSimilarity("潮汐と郵便制度に共通する、遅れて届くものの設計", recent, RecentTopicSimilarityThreshold)
