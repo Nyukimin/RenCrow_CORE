@@ -8,6 +8,10 @@ import (
 )
 
 func buildIdleCompactRetryMessages(speaker, topic, latestOther, purpose string) []llm.Message {
+	return buildIdleCompactRetryMessagesWithPolicy(speaker, topic, latestOther, purpose, ClassifyDialogueContentPolicy(TopicGenerationResult{Topic: topic}))
+}
+
+func buildIdleCompactRetryMessagesWithPolicy(speaker, topic, latestOther, purpose string, policy DialogueContentPolicy) []llm.Message {
 	topic = strings.TrimSpace(topic)
 	if topic == "" {
 		topic = "この会話の現在のお題"
@@ -22,7 +26,7 @@ func buildIdleCompactRetryMessages(speaker, topic, latestOther, purpose string) 
 	} else if strings.EqualFold(strings.TrimSpace(speaker), "shiro") {
 		style += " Shiroとして落ち着いた常体寄りで、整理だけで終えず小さな未決点を残す。"
 	}
-	content := fmt.Sprintf("%sとして、話題「%s」について会話本文を作ってください。\n直前の相手発言: %s\n%s", speaker, topic, other, style)
+	content := fmt.Sprintf("%sとして、話題「%s」について会話本文を作ってください。\n直前の相手発言: %s\ncontent_mode: %s\n%s\n%s", speaker, topic, other, normalizeDialogueContentPolicy(policy).Mode, dialogueContentPolicyInstruction(policy), style)
 	if strings.TrimSpace(purpose) != "" {
 		content += "\n狙い: " + strings.TrimSpace(purpose)
 	}

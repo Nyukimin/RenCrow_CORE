@@ -108,6 +108,11 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 			InterestingnessAxis: modulechat.ExpectedAxisByCategory[TopicCategoryForecast],
 			OpeningHook:         "現在の兆しを生活・仕事・創作・制度のどれかに置く",
 			Avoid:               "未来を断定せず、複数の分岐として扱う",
+			Seed: TopicSeed{
+				Category:       TopicCategoryForecast,
+				ForecastDomain: domain.Name,
+				TrendKeywords:  append([]string(nil), seeds...),
+			},
 		}
 		dialogueConfig := o.dialogueConfig
 		o.mu.Unlock()

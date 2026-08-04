@@ -268,7 +268,10 @@ HTTP request内で台本生成完了を待たず、既存の同一準備jobと�
 話題重複、発話反復、Persona、category固有禁止、品質判定、source鮮度、本文hashを検証します。
 検証はepisode本文を変更せず、`valid`、turn別状態、`first_invalid_turn`、NG理由、固定可能なprefix長、
 `repair_required`を返します。NG理由は`schema_violation`、`speaker_confusion`、`repetition`、
-`topic_violation`、`persona_violation`、`factual_violation`、`meta_leak`、`quality_violation`です。
+`topic_violation`、`persona_violation`、`factual_violation`、`meta_leak`、`quality_violation`、
+`content_mode_violation`です。episodeおよび検証結果は`content_mode=serious|assertive|free`と
+判定理由を返し、戦争・武力衝突・災害等を`serious`、それ以外の政治・思想を`assertive`、
+その他を`free`として扱います。複数条件では`serious`を優先します。
 prepare job内の自動修復は最小の`first_invalid_turn=k`を起点に`turn k`以降を破棄し、固定prefixと
 NG理由をCodexExeへ渡して最終turnまで再生成します。prefixの`message_id`は維持し、suffixへは
 新しい`message_id`を発行します。`max_suffix_regenerations`到達時はepisodeを`failed`にします。

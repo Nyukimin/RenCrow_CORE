@@ -32,7 +32,7 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 	// 追加の system 文脈は履歴や user 指示より前に集約する。
 	o.mu.Lock()
 	sc := o.sessionContext
-	dialoguePrompt, dialoguePlan, dialogueState, dialogueConfig := o.dialoguePromptContextLocked(topic, speaker, latestOther, latestSelf, turn)
+	dialoguePrompt, dialoguePlan, dialogueState, dialogueConfig, contentPolicy := o.dialoguePromptContextLocked(topic, speaker, latestOther, latestSelf, turn)
 	o.mu.Unlock()
 	if sc != "" {
 		messages[0].Content += "\n\n" + sc
@@ -80,12 +80,12 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 	if turn == 0 {
 		messages = append(messages, llm.Message{
 			Role:    "user",
-			Content: buildIdleTurnPrompt(topic, speaker, "", "", turn, segmentTurns, true),
+			Content: buildIdleTurnPromptWithPolicy(topic, speaker, "", "", turn, segmentTurns, true, contentPolicy),
 		})
 	} else {
 		messages = append(messages, llm.Message{
 			Role:    "user",
-			Content: buildIdleTurnPrompt(topic, speaker, latestOther, latestSelf, turn, segmentTurns, false),
+			Content: buildIdleTurnPromptWithPolicy(topic, speaker, latestOther, latestSelf, turn, segmentTurns, false, contentPolicy),
 		})
 	}
 
@@ -136,7 +136,7 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 		log.Printf("[IdleChat] shiro dialogue rejected without fallback (turn=%d): raw=%q sanitized=%q", turn, truncate(firstRaw, 180), truncate(first, 180))
 		return "", firstRaw, fmt.Errorf("%w: speaker=%s turn=%d", errIdleInvalidResponse, speaker, turn)
 	}
-	if shouldGenerateIdleFunCandidate(speaker) && !firstTruncated && !unusableIdleResponse(firstRaw, first) {
+	if shouldGenerateIdleAlternativeCandidate(speaker, contentPolicy) && !firstTruncated && !unusableIdleResponse(firstRaw, first) {
 		secondMessages := append([]llm.Message{}, messages...)
 		secondMessages = append(secondMessages, llm.Message{
 			Role:    "assistant",
@@ -144,7 +144,7 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 		})
 		secondMessages = append(secondMessages, llm.Message{
 			Role:    "user",
-			Content: "今の発話とは別候補を1つだけ出してください。前候補と同じ書き出し・同じ比喩・同じ結論を避け、読者の楽しさが上がるように、具体物・選択・秘密・感情の反転のどれかを一つだけ入れてください。英語だけの応答、英語の見出し、英語での説明は禁止です。候補番号、評価文、説明、ルール確認は書かず、発話として読める自然な日本語だけを1-2文で返してください。",
+			Content: idleAlternativeCandidateInstruction(contentPolicy),
 		})
 		respSecond, errSecond := o.generateIdleLLM(provider, llm.GenerateRequest{
 			Messages:    secondMessages,
@@ -152,17 +152,17 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 			Temperature: temp,
 		})
 		if errSecond != nil {
-			log.Printf("[IdleChat] fun candidate B failed (%s turn=%d): %v", speaker, turn, errSecond)
+			log.Printf("[IdleChat] alternative candidate B failed (%s turn=%d mode=%s): %v", speaker, turn, contentPolicy.Mode, errSecond)
 		} else {
 			logIdleRaw(fmt.Sprintf("dialogue.candidate_b speaker=%s turn=%d", speaker, turn), respSecond.Content)
 			secondRaw := strings.TrimSpace(respSecond.Content)
 			second := sanitizeIdleResponseForSpeaker(respSecond.Content, topic, speaker)
 			if finishReasonLooksTruncated(respSecond.FinishReason) || unusableIdleResponse(secondRaw, second) {
-				log.Printf("[IdleChat] fun candidate B unusable (%s turn=%d): raw=%q sanitized=%q", speaker, turn, truncate(secondRaw, 180), truncate(second, 180))
+				log.Printf("[IdleChat] alternative candidate B unusable (%s turn=%d mode=%s): raw=%q sanitized=%q", speaker, turn, contentPolicy.Mode, truncate(secondRaw, 180), truncate(second, 180))
 			} else {
-				firstScore := idleFunScorePercent(first, latestOther, latestSelf, topic)
-				secondScore := idleFunScorePercent(second, latestOther, latestSelf, topic)
-				log.Printf("[IdleChat] fun candidate scores (%s turn=%d): A=%d%% B=%d%%", speaker, turn, firstScore, secondScore)
+				firstScore := idleAlternativeScorePercent(first, latestOther, latestSelf, topic, contentPolicy)
+				secondScore := idleAlternativeScorePercent(second, latestOther, latestSelf, topic, contentPolicy)
+				log.Printf("[IdleChat] alternative candidate scores (%s turn=%d mode=%s): A=%d%% B=%d%%", speaker, turn, contentPolicy.Mode, firstScore, secondScore)
 				if secondScore > firstScore {
 					firstRaw = secondRaw
 					first = second
@@ -172,7 +172,7 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 		}
 	}
 	if firstTruncated || unusableIdleResponse(firstRaw, first) {
-		retryInvalid := buildIdleCompactRetryMessages(speaker, topic, latestOther, firstTurnLabel(turn))
+		retryInvalid := buildIdleCompactRetryMessagesWithPolicy(speaker, topic, latestOther, firstTurnLabel(turn), contentPolicy)
 		respInvalid, errInvalid := o.generateIdleLLM(provider, llm.GenerateRequest{
 			Messages:    retryInvalid,
 			MaxTokens:   idleMaxTokensForSpeaker(speaker, idleChatRetryMaxTokens),
@@ -192,7 +192,7 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 		retryStyle := append([]llm.Message{}, messages...)
 		retryStyle = append(retryStyle, llm.Message{
 			Role:    "user",
-			Content: "評価や言い直し宣言は書かず、別の手で自然な日本語だけで返してください。英語だけの応答、英語の見出し、英語での説明は禁止です。直前の言い回しをなぞらず、1文目で相手の論点に反応し、2文目で具体物・選択・秘密・感情の反転のどれかを一つだけ足してください。",
+			Content: "評価や言い直し宣言は書かず、別の手で自然な日本語だけで返してください。英語だけの応答、英語の見出し、英語での説明は禁止です。直前の言い回しをなぞらず、1文目で相手の論点に反応し、2文目で具体物・選択・秘密・感情の反転のどれかを一つだけ足してください。" + dialogueContentPolicyInstruction(contentPolicy),
 		})
 		respStyle, errStyle := o.generateIdleLLM(provider, llm.GenerateRequest{
 			Messages:    retryStyle,
@@ -217,7 +217,7 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 		}
 	}
 	if hasPromptLeak(firstRaw) || hasPromptLeak(first) || hasInternalReasoningLeak(firstRaw) || hasInternalReasoningLeak(first) {
-		retryLeak := buildIdleCompactRetryMessages(speaker, topic, latestOther, "内部推論を出さずに本文だけで再生成")
+		retryLeak := buildIdleCompactRetryMessagesWithPolicy(speaker, topic, latestOther, "内部推論を出さずに本文だけで再生成", contentPolicy)
 		respLeak, errLeak := o.generateIdleLLM(provider, llm.GenerateRequest{
 			Messages:    retryLeak,
 			MaxTokens:   idleMaxTokensForSpeaker(speaker, idleChatRetryMaxTokens),
@@ -237,7 +237,7 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 		retry := append([]llm.Message{}, messages...)
 		retry = append(retry, llm.Message{
 			Role:    "user",
-			Content: "発言帰属が曖昧です。相手の案を受けてから、自分の新しい具体物・選択・秘密・感情の反転を一つだけ足し、自然な日本語1-2文で言い直してください。英語だけの応答、英語の見出し、英語での説明は禁止です。",
+			Content: "発言帰属が曖昧です。相手の案を受けてから、自分の新しい具体物・選択・秘密・感情の反転を一つだけ足し、自然な日本語1-2文で言い直してください。英語だけの応答、英語の見出し、英語での説明は禁止です。" + dialogueContentPolicyInstruction(contentPolicy),
 		})
 		resp2, err2 := o.generateIdleLLM(provider, llm.GenerateRequest{
 			Messages:    retry,
@@ -255,10 +255,9 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 				log.Printf("[IdleChat] retryAttribution unusable (%s turn=%d): raw=%q sanitized=%q", speaker, turn, truncate(candidateRaw, 180), truncate(candidate, 180))
 				return "", candidateRaw, fmt.Errorf("idlechat dialogue retry_attribution unusable: speaker=%s turn=%d", speaker, turn)
 			}
-			if canonical := o.applyPersonaCanonicalResponse(speaker, sessionID, messageID, candidate); canonical != "" {
-				return canonical, candidateRaw, nil
-			}
-			return candidate, candidateRaw, nil
+			first = candidate
+			firstRaw = candidateRaw
+			firstTruncated = false
 		}
 	}
 
@@ -279,13 +278,14 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 	return first, firstRaw, nil
 }
 
-func (o *IdleChatOrchestrator) dialoguePromptContextLocked(topic, speaker, latestOther, latestSelf string, turn int) (string, *DialogueTurnPlan, *DialogueArcState, DialogueInterestingnessConfig) {
+func (o *IdleChatOrchestrator) dialoguePromptContextLocked(topic, speaker, latestOther, latestSelf string, turn int) (string, *DialogueTurnPlan, *DialogueArcState, DialogueInterestingnessConfig, DialogueContentPolicy) {
 	config := normalizeDialogueInterestingnessConfig(o.dialogueConfig)
 	if !config.Enabled || o.currentDialoguePlan == nil || o.currentDialogueState == nil {
-		return "", nil, nil, config
+		return "", nil, nil, config, ClassifyDialogueContentPolicy(TopicGenerationResult{Topic: topic})
 	}
 	plan := *o.currentDialoguePlan
 	state := *o.currentDialogueState
+	contentPolicy := normalizeDialogueContentPolicy(DialogueContentPolicy{Mode: plan.ContentMode, Reasons: plan.ContentModeReasons})
 	topicResult := TopicGenerationResult{
 		Topic:               topic,
 		Category:            plan.Category,
@@ -305,13 +305,14 @@ func (o *IdleChatOrchestrator) dialoguePromptContextLocked(topic, speaker, lates
 		PreviousUtterances: []string{latestOther, latestSelf},
 		Config:             config,
 	})
-	return prompt, &turnPlan, &state, config
+	return prompt, &turnPlan, &state, config, contentPolicy
 }
 
 func (o *IdleChatOrchestrator) ensureDialogueQuality(provider llm.LLMProvider, baseMessages []llm.Message, speaker, sessionID string, turn int, topic, latestOther, latestSelf, candidate, candidateRaw string, plan DialogueTurnPlan, state DialogueArcState, config DialogueInterestingnessConfig, temp float64) (string, string, error) {
 	checker := NewDialogueQualityChecker(config)
 	quality := checker.Check(DialogueQualityInput{
 		Category:    state.Category,
+		ContentMode: state.ContentMode,
 		Utterance:   candidate,
 		LatestOther: latestOther,
 		LatestSelf:  latestSelf,
@@ -326,10 +327,10 @@ func (o *IdleChatOrchestrator) ensureDialogueQuality(provider llm.LLMProvider, b
 			maxRetries = 1
 		}
 		for retryAttempt := 1; retryAttempt <= maxRetries && !quality.OK; retryAttempt++ {
-			logDialogueTurnRetry(sessionID, speaker, state.Category, quality, retryAttempt)
+			logDialogueTurnRetry(sessionID, speaker, state.Category, state.ContentMode, quality, retryAttempt)
 			retryMessages := append([]llm.Message{}, baseMessages...)
 			retryMessages = append(retryMessages, llm.Message{Role: "assistant", Content: candidate})
-			retryMessages = append(retryMessages, llm.Message{Role: "user", Content: BuildDialogueRetryPrompt(plan, quality)})
+			retryMessages = append(retryMessages, llm.Message{Role: "user", Content: buildDialogueRetryPromptWithPolicy(plan, quality, DialogueContentPolicy{Mode: state.ContentMode, Reasons: state.ContentModeReasons})})
 			resp, err := o.generateIdleLLM(provider, llm.GenerateRequest{
 				Messages:    retryMessages,
 				MaxTokens:   idleMaxTokensForSpeaker(speaker, idleChatRetryMaxTokens),
@@ -346,6 +347,7 @@ func (o *IdleChatOrchestrator) ensureDialogueQuality(provider llm.LLMProvider, b
 			}
 			retryQuality := checker.Check(DialogueQualityInput{
 				Category:    state.Category,
+				ContentMode: state.ContentMode,
 				Utterance:   retry,
 				LatestOther: latestOther,
 				LatestSelf:  latestSelf,
@@ -361,7 +363,7 @@ func (o *IdleChatOrchestrator) ensureDialogueQuality(provider llm.LLMProvider, b
 			}
 		}
 	}
-	logDialogueTurnQuality(sessionID, speaker, state.Category, plan, quality, retryCount)
+	logDialogueTurnQuality(sessionID, speaker, state.Category, state.ContentMode, plan, quality, retryCount)
 	o.mu.Lock()
 	o.lastDialogueQuality = quality
 	o.mu.Unlock()
@@ -384,8 +386,17 @@ func dialogueTurnPlanForIndex(plan DialogueArcPlan, zeroBasedTurn int) DialogueT
 	return plan.TurnPlans[zeroBasedTurn]
 }
 
-func shouldGenerateIdleFunCandidate(speaker string) bool {
-	return !strings.EqualFold(strings.TrimSpace(speaker), "shiro")
+func shouldGenerateIdleAlternativeCandidate(speaker string, policy DialogueContentPolicy) bool {
+	return normalizeDialogueContentPolicy(policy).Mode != DialogueContentModeSerious &&
+		!strings.EqualFold(strings.TrimSpace(speaker), "shiro")
+}
+
+func idleAlternativeCandidateInstruction(policy DialogueContentPolicy) string {
+	base := "今の発話とは別候補を1つだけ出してください。前候補と同じ書き出し・同じ比喩・同じ結論を避け、具体物・選択・秘密・感情の反転のどれかを一つだけ入れてください。英語だけの応答、英語の見出し、英語での説明は禁止です。候補番号、評価文、説明、ルール確認は書かず、発話として読める自然な日本語だけを1-2文で返してください。"
+	if normalizeDialogueContentPolicy(policy).Mode == DialogueContentModeAssertive {
+		return base + " 政治・思想への意見を人工的に中立化せず、前候補より立場と論点を率直にしてください。"
+	}
+	return base + " 読者の楽しさが上がる別の入口にしてください。"
 }
 
 func shouldRejectShiroDialogueImmediately(speaker, raw, sanitized string) bool {

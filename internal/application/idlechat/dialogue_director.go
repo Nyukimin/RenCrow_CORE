@@ -23,6 +23,7 @@ func (d *DialogueDirector) BuildArcPlan(result TopicGenerationResult) DialogueAr
 		category, _ = modulechat.NormalizeTopicCategory(result.Strategy)
 	}
 	spec := dialogueCategorySpec(category)
+	contentPolicy := ClassifyDialogueContentPolicy(result)
 	turnCount := d.config.MaxTurnsPerTopic
 	if turnCount <= 0 {
 		turnCount = maxTurnsPerTopic
@@ -34,6 +35,8 @@ func (d *DialogueDirector) BuildArcPlan(result TopicGenerationResult) DialogueAr
 		Topic:               result.Topic,
 		Category:            category,
 		Strategy:            result.Strategy,
+		ContentMode:         contentPolicy.Mode,
+		ContentModeReasons:  append([]string(nil), contentPolicy.Reasons...),
 		InterestingnessAxis: result.InterestingnessAxis,
 		CoreQuestion:        spec.CoreQuestion,
 		OpeningMove:         spec.OpeningMove,
@@ -55,10 +58,12 @@ func (d *DialogueDirector) BuildArcPlan(result TopicGenerationResult) DialogueAr
 
 func (d *DialogueDirector) NewArcState(sessionID string, result TopicGenerationResult, plan DialogueArcPlan) DialogueArcState {
 	return DialogueArcState{
-		SessionID: sessionID,
-		Topic:     result.Topic,
-		Category:  plan.Category,
-		Phase:     "opening",
+		SessionID:          sessionID,
+		Topic:              result.Topic,
+		Category:           plan.Category,
+		ContentMode:        plan.ContentMode,
+		ContentModeReasons: append([]string(nil), plan.ContentModeReasons...),
+		Phase:              "opening",
 	}
 }
 
@@ -90,6 +95,8 @@ func (d *DialogueDirector) LogArcCreated(sessionID string, plan DialogueArcPlan)
 		"topic":                plan.Topic,
 		"category":             plan.Category,
 		"strategy":             plan.Strategy,
+		"content_mode":         plan.ContentMode,
+		"content_mode_reasons": plan.ContentModeReasons,
 		"interestingness_axis": plan.InterestingnessAxis,
 		"opening_move":         plan.OpeningMove,
 		"turn_count":           len(plan.TurnPlans),

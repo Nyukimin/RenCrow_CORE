@@ -19,13 +19,20 @@ type DialoguePromptInput struct {
 
 func BuildDialoguePrompt(input DialoguePromptInput) string {
 	config := normalizeDialogueInterestingnessConfig(input.Config)
+	contentPolicy := normalizeDialogueContentPolicy(DialogueContentPolicy{
+		Mode:    input.Plan.ContentMode,
+		Reasons: input.Plan.ContentModeReasons,
+	})
 	template := readDialoguePromptTemplate(config.PromptPaths.Common, defaultDialogueCommonPrompt())
 	categoryTemplate := readDialoguePromptTemplate(dialoguePromptPathForCategory(config.PromptPaths, input.Plan.Category), dialogueCategoryPromptText(input.Plan.Category))
 	stateJSON, _ := json.MarshalIndent(input.State, "", "  ")
 	values := map[string]string{
-		"topic":                          input.Result.Topic,
-		"category_for_internal_use_only": string(input.Plan.Category),
-		"interestingness_axis_for_internal_use_only": input.Plan.InterestingnessAxis,
+		"topic":                                          input.Result.Topic,
+		"category_for_internal_use_only":                 string(input.Plan.Category),
+		"content_mode_for_internal_use_only":             string(contentPolicy.Mode),
+		"content_mode_reasons_for_internal_use_only":     strings.Join(contentPolicy.Reasons, ","),
+		"content_mode_instruction_for_internal_use_only": dialogueContentPolicyInstruction(contentPolicy),
+		"interestingness_axis_for_internal_use_only":     input.Plan.InterestingnessAxis,
 		"phase":                              input.TurnPlan.Phase,
 		"required_move":                      input.TurnPlan.RequiredMove,
 		"opening_hook_for_internal_use_only": input.Result.OpeningHook,
@@ -38,11 +45,15 @@ func BuildDialoguePrompt(input DialoguePromptInput) string {
 }
 
 func BuildDialogueRetryPrompt(plan DialogueTurnPlan, quality DialogueQualityResult) string {
+	return buildDialogueRetryPromptWithPolicy(plan, quality, DialogueContentPolicy{Mode: DialogueContentModeFree})
+}
+
+func buildDialogueRetryPromptWithPolicy(plan DialogueTurnPlan, quality DialogueQualityResult, policy DialogueContentPolicy) string {
 	reasons := make([]string, 0, len(quality.Reasons))
 	for _, reason := range quality.Reasons {
 		reasons = append(reasons, string(reason))
 	}
-	return fmt.Sprintf("自然な会話文で言い直してください。\n直前発話を必ず受け、このターンでは「%s」だけを足してください。\n内部メタや説明文は出さないでください。\n失敗理由: %s", strings.TrimSpace(plan.RequiredMove), strings.Join(reasons, ","))
+	return fmt.Sprintf("自然な会話文で言い直してください。\n直前発話を必ず受け、このターンでは「%s」だけを足してください。\n%s\n内部メタや説明文は出さないでください。\n失敗理由: %s", strings.TrimSpace(plan.RequiredMove), dialogueContentPolicyInstruction(policy), strings.Join(reasons, ","))
 }
 
 func readDialoguePromptTemplate(path, fallback string) string {
@@ -100,6 +111,9 @@ Mio と Shiro が、採用済み topic について自然に会話します。
 入力:
 topic: {topic}
 category: {category_for_internal_use_only}
+content_mode: {content_mode_for_internal_use_only}
+content_mode_reasons: {content_mode_reasons_for_internal_use_only}
+content_mode_instruction: {content_mode_instruction_for_internal_use_only}
 interestingness_axis: {interestingness_axis_for_internal_use_only}
 phase: {phase}
 required_move: {required_move}

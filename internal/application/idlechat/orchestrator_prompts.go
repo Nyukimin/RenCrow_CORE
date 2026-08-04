@@ -19,36 +19,57 @@ func buildIdleResponseGuardPrompt(speaker string, selfCtx, otherCtx []string) st
 }
 
 func buildIdleTurnPrompt(topic, speakerOrTarget, latestOther, latestSelf string, turn int, segmentTurns int, firstTurn bool) string {
+	return buildIdleTurnPromptWithPolicy(topic, speakerOrTarget, latestOther, latestSelf, turn, segmentTurns, firstTurn, ClassifyDialogueContentPolicy(TopicGenerationResult{Topic: topic}))
+}
+
+func buildIdleTurnPromptWithPolicy(topic, speakerOrTarget, latestOther, latestSelf string, turn int, segmentTurns int, firstTurn bool, policy DialogueContentPolicy) string {
+	policy = normalizeDialogueContentPolicy(policy)
 	movieMode := isMovieTopicPrompt(topic)
 	interest := idleInterestProfileForTopic(topic)
 	closingMode := !firstTurn && turnsLeftInTopic(segmentTurns) <= 2
 	finalTurn := !firstTurn && turnsLeftInTopic(segmentTurns) <= 1
 	move := idleTurnMove(speakerOrTarget, turn, firstTurn, movieMode, closingMode, finalTurn)
 	audience := idleAudienceAngleForProfile(turn, movieMode, closingMode, finalTurn, interest)
+	audienceContract := idleAudienceContractForContentPolicy(policy, audience)
 	shiftHint := idleShiftHint(latestOther, latestSelf)
 	if firstTurn {
 		return fmt.Sprintf(
-			"話題: %s\n%sとして、会話の最初の発話を1〜2文で返してください。自然な日本語だけにし、話者名、mio:、shiro:、相手の台詞、台本形式、英語や説明は書かないでください。%s %s。読者の楽しみは「%s」です。具体物か小さな問いを一つ入れ、相手が次に返しやすい未決点を残してください。",
+			"話題: %s\ncontent_mode: %s\n%s\n%sとして、会話の最初の発話を1〜2文で返してください。自然な日本語だけにし、話者名、mio:、shiro:、相手の台詞、台本形式、英語や説明は書かないでください。%s %s。%s 具体物か小さな問いを一つ入れ、相手が次に返しやすい未決点を残してください。",
 			topic,
+			policy.Mode,
+			dialogueContentPolicyInstruction(policy),
 			speakerOrTarget,
 			idlePromptOutputGuard(),
 			move,
-			audience,
+			audienceContract,
 		)
 	}
 	return fmt.Sprintf(
-		"話題: %s\n直前の相手発言: %s\n自分の直前発言: %s\n%sとして、直前の相手発言を受けて1〜2文で返してください。自然な日本語だけにし、話者名、mio:、shiro:、相手の台詞、台本形式、英語や説明は書かないでください。%s %s。読者の楽しみは「%s」です。%s %s %s",
+		"話題: %s\ncontent_mode: %s\n%s\n直前の相手発言: %s\n自分の直前発言: %s\n%sとして、直前の相手発言を受けて1〜2文で返してください。自然な日本語だけにし、話者名、mio:、shiro:、相手の台詞、台本形式、英語や説明は書かないでください。%s %s。%s %s %s %s",
 		topic,
+		policy.Mode,
+		dialogueContentPolicyInstruction(policy),
 		quoteOrDash(latestOther),
 		quoteOrDash(latestSelf),
 		speakerOrTarget,
 		idlePromptOutputGuard(),
 		move,
-		audience,
+		audienceContract,
 		idleTurnAdditionHint(finalTurn),
 		shiftHint,
 		idleClosingHint(closingMode, movieMode, finalTurn),
 	)
+}
+
+func idleAudienceContractForContentPolicy(policy DialogueContentPolicy, audience string) string {
+	switch normalizeDialogueContentPolicy(policy).Mode {
+	case DialogueContentModeSerious:
+		return "聞き手に必要なのは「被害や影響を茶化さず、確認できたことと不明点が分かれること」です。"
+	case DialogueContentModeAssertive:
+		return "聞き手に届ける価値は「争点と立場が見え、MioとShiroが率直に意見できること」です。"
+	default:
+		return fmt.Sprintf("読者の楽しみは「%s」です。", audience)
+	}
 }
 
 func idlePromptOutputGuard() string {

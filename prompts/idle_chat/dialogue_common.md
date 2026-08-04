@@ -16,6 +16,9 @@ Mio と Shiro が、採用済み topic について自然に会話します。
 入力:
 topic: {topic}
 category: {category_for_internal_use_only}
+content_mode: {content_mode_for_internal_use_only}
+content_mode_reasons: {content_mode_reasons_for_internal_use_only}
+content_mode_instruction: {content_mode_instruction_for_internal_use_only}
 interestingness_axis: {interestingness_axis_for_internal_use_only}
 phase: {phase}
 required_move: {required_move}

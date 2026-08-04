@@ -274,6 +274,12 @@ func (o *IdleChatOrchestrator) dialogueSummaryContext() string {
 	state := *o.currentDialogueState
 	plan := *o.currentDialoguePlan
 	var parts []string
+	if plan.ContentMode != "" {
+		parts = append(parts, "content_mode="+string(plan.ContentMode))
+	}
+	if len(plan.ContentModeReasons) > 0 {
+		parts = append(parts, "content_mode_reasons="+strings.Join(plan.ContentModeReasons, " / "))
+	}
 	if plan.InterestingnessAxis != "" {
 		parts = append(parts, "interestingness_axis="+plan.InterestingnessAxis)
 	}

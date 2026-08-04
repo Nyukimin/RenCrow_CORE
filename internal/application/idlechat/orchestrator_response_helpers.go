@@ -77,6 +77,55 @@ func idleFunScorePercent(response, latestOther, latestSelf, topic string) int {
 	return score
 }
 
+func idleAlternativeScorePercent(response, latestOther, latestSelf, topic string, policy DialogueContentPolicy) int {
+	if normalizeDialogueContentPolicy(policy).Mode != DialogueContentModeAssertive {
+		return idleFunScorePercent(response, latestOther, latestSelf, topic)
+	}
+	return idleAssertiveScorePercent(response, latestOther, latestSelf, topic)
+}
+
+func idleAssertiveScorePercent(response, latestOther, latestSelf, topic string) int {
+	s := strings.TrimSpace(response)
+	if s == "" {
+		return 0
+	}
+	score := 45
+	runeLen := utf8.RuneCountInString(s)
+	if runeLen >= 24 && runeLen <= 140 {
+		score += 10
+	} else if runeLen > 180 {
+		score -= 15
+	}
+	if containsAny(s, "賛成", "反対", "支持", "批判", "問題だ", "変えるべき", "守るべき", "許せない", "だと思う", "私は") {
+		score += 24
+	}
+	if containsAny(s, "理由", "根拠", "事実", "推測", "意見", "制度", "政策", "影響") {
+		score += 12
+	}
+	if dialogueContentModeViolation(DialogueContentModeAssertive, s) {
+		score -= 50
+	}
+	if latestOther != "" && textSimilarity(s, latestOther) >= 0.72 {
+		score -= 15
+	}
+	if latestSelf != "" && textSimilarity(s, latestSelf) >= 0.72 {
+		score -= 15
+	}
+	if topic != "" && mentionsTopicToken(s, topic) {
+		score += 5
+	}
+	if englishDominantIdleText(s) || hasInternalReasoningLeak(s) || hasPromptLeak(s) {
+		score -= 40
+	}
+	if score < 0 {
+		return 0
+	}
+	if score > 100 {
+		return 100
+	}
+	return score
+}
+
 func extractIdleTopicText(content string) string {
 	s := strings.TrimSpace(content)
 	if s == "" {

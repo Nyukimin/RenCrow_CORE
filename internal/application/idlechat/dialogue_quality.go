@@ -13,13 +13,14 @@ import (
 type IdleDialogueQualityReason string
 
 const (
-	DialogueNoUptake            IdleDialogueQualityReason = "dialogue_no_uptake"
-	DialogueNoNewContribution   IdleDialogueQualityReason = "dialogue_no_new_contribution"
-	DialogueTooGeneric          IdleDialogueQualityReason = "dialogue_too_generic"
-	DialogueCategoryAxisMissing IdleDialogueQualityReason = "dialogue_category_axis_missing"
-	DialogueOverExplained       IdleDialogueQualityReason = "dialogue_over_explained"
-	DialogueMetaLeak            IdleDialogueQualityReason = "dialogue_meta_leak"
-	DialogueTurnMoveMissing     IdleDialogueQualityReason = "dialogue_turn_move_missing"
+	DialogueNoUptake             IdleDialogueQualityReason = "dialogue_no_uptake"
+	DialogueNoNewContribution    IdleDialogueQualityReason = "dialogue_no_new_contribution"
+	DialogueTooGeneric           IdleDialogueQualityReason = "dialogue_too_generic"
+	DialogueCategoryAxisMissing  IdleDialogueQualityReason = "dialogue_category_axis_missing"
+	DialogueOverExplained        IdleDialogueQualityReason = "dialogue_over_explained"
+	DialogueMetaLeak             IdleDialogueQualityReason = "dialogue_meta_leak"
+	DialogueTurnMoveMissing      IdleDialogueQualityReason = "dialogue_turn_move_missing"
+	DialogueContentModeViolation IdleDialogueQualityReason = "content_mode_violation"
 )
 
 type DialogueQualityResult struct {
@@ -31,6 +32,7 @@ type DialogueQualityResult struct {
 
 type DialogueQualityInput struct {
 	Category    TopicCategory
+	ContentMode DialogueContentMode
 	Utterance   string
 	LatestOther string
 	LatestSelf  string
@@ -63,6 +65,10 @@ func (c *DialogueQualityChecker) Check(input DialogueQualityInput) DialogueQuali
 		reasons = append(reasons, DialogueMetaLeak)
 		score -= 20
 	}
+	if dialogueContentModeViolation(input.ContentMode, utterance) {
+		reasons = append(reasons, DialogueContentModeViolation)
+		score -= 60
+	}
 	if config.EnforcePreviousUptake && strings.TrimSpace(input.LatestOther) != "" && !hasDialogueUptake(utterance, input.LatestOther) {
 		reasons = append(reasons, DialogueNoUptake)
 		score -= 20
@@ -93,7 +99,9 @@ func (c *DialogueQualityChecker) Check(input DialogueQualityInput) DialogueQuali
 	if score < 0 {
 		score = 0
 	}
-	ok := score >= config.MinQualityScore && !containsDialogueReason(reasons, DialogueMetaLeak)
+	ok := score >= config.MinQualityScore &&
+		!containsDialogueReason(reasons, DialogueMetaLeak) &&
+		!containsDialogueReason(reasons, DialogueContentModeViolation)
 	return DialogueQualityResult{OK: ok, Score: score, Reasons: uniqueDialogueReasons(reasons)}
 }
 
@@ -139,13 +147,14 @@ func dialogueQualityError(result DialogueQualityResult) error {
 	return fmt.Errorf("%w: dialogue_quality_failed %s", errIdleInvalidResponse, payload)
 }
 
-func logDialogueTurnQuality(sessionID, speaker string, category TopicCategory, plan DialogueTurnPlan, result DialogueQualityResult, retryCount int) {
+func logDialogueTurnQuality(sessionID, speaker string, category TopicCategory, contentMode DialogueContentMode, plan DialogueTurnPlan, result DialogueQualityResult, retryCount int) {
 	payload, _ := json.Marshal(map[string]any{
 		"event":         "idlechat.dialogue.turn_quality",
 		"session_id":    sessionID,
 		"turn_index":    plan.TurnIndex,
 		"speaker":       speaker,
 		"category":      category,
+		"content_mode":  contentMode,
 		"phase":         plan.Phase,
 		"required_move": plan.RequiredMove,
 		"score":         result.Score,
@@ -155,15 +164,16 @@ func logDialogueTurnQuality(sessionID, speaker string, category TopicCategory, p
 	log.Printf("[IdleChat] %s", payload)
 }
 
-func logDialogueTurnRetry(sessionID, speaker string, category TopicCategory, result DialogueQualityResult, retryCount int) {
+func logDialogueTurnRetry(sessionID, speaker string, category TopicCategory, contentMode DialogueContentMode, result DialogueQualityResult, retryCount int) {
 	payload, _ := json.Marshal(map[string]any{
-		"event":       "idlechat.dialogue.turn_retry",
-		"session_id":  sessionID,
-		"speaker":     speaker,
-		"category":    category,
-		"score":       result.Score,
-		"reasons":     result.Reasons,
-		"retry_count": retryCount,
+		"event":        "idlechat.dialogue.turn_retry",
+		"session_id":   sessionID,
+		"speaker":      speaker,
+		"category":     category,
+		"content_mode": contentMode,
+		"score":        result.Score,
+		"reasons":      result.Reasons,
+		"retry_count":  retryCount,
 	})
 	log.Printf("[IdleChat] %s", payload)
 }

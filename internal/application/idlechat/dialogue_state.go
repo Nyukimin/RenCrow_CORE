@@ -19,6 +19,8 @@ type DialogueArcPlan struct {
 	Topic               string                         `json:"topic"`
 	Category            TopicCategory                  `json:"category"`
 	Strategy            string                         `json:"strategy"`
+	ContentMode         DialogueContentMode            `json:"content_mode"`
+	ContentModeReasons  []string                       `json:"content_mode_reasons"`
 	InterestingnessAxis string                         `json:"interestingness_axis"`
 	CoreQuestion        string                         `json:"core_question"`
 	OpeningMove         string                         `json:"opening_move"`
@@ -31,15 +33,17 @@ type DialogueArcPlan struct {
 }
 
 type DialogueArcState struct {
-	SessionID        string        `json:"session_id"`
-	Topic            string        `json:"topic"`
-	Category         TopicCategory `json:"category"`
-	TurnIndex        int           `json:"turn_index"`
-	Phase            string        `json:"phase"`
-	EstablishedFacts []string      `json:"established_facts,omitempty"`
-	OpenQuestions    []string      `json:"open_questions,omitempty"`
-	TensionPoints    []string      `json:"tension_points,omitempty"`
-	ConcreteAnchors  []string      `json:"concrete_anchors,omitempty"`
-	UsedMoves        []string      `json:"used_moves,omitempty"`
-	DullnessWarnings []string      `json:"dullness_warnings,omitempty"`
+	SessionID          string              `json:"session_id"`
+	Topic              string              `json:"topic"`
+	Category           TopicCategory       `json:"category"`
+	ContentMode        DialogueContentMode `json:"content_mode"`
+	ContentModeReasons []string            `json:"content_mode_reasons"`
+	TurnIndex          int                 `json:"turn_index"`
+	Phase              string              `json:"phase"`
+	EstablishedFacts   []string            `json:"established_facts,omitempty"`
+	OpenQuestions      []string            `json:"open_questions,omitempty"`
+	TensionPoints      []string            `json:"tension_points,omitempty"`
+	ConcreteAnchors    []string            `json:"concrete_anchors,omitempty"`
+	UsedMoves          []string            `json:"used_moves,omitempty"`
+	DullnessWarnings   []string            `json:"dullness_warnings,omitempty"`
 }
