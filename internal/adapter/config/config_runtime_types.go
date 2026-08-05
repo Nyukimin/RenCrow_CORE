@@ -67,8 +67,18 @@ type WebwrightFetchConfig struct {
 // WebGatherConfig は公開 Web 情報収集ツールの任意 provider 設定。
 // SearXNG は self-hosted endpoint を明示した場合だけ有効化する。
 type WebGatherConfig struct {
-	SearXNGBaseURL string `yaml:"searxng_base_url"`
-	YaCyBaseURL    string `yaml:"yacy_base_url"`
+	SearXNGBaseURL string              `yaml:"searxng_base_url"`
+	YaCyBaseURL    string              `yaml:"yacy_base_url"`
+	ArticleReader  ArticleReaderConfig `yaml:"article_reader"`
+}
+
+// ArticleReaderConfig controls the explicitly enabled third-party fallback
+// used only after a linked article is blocked by the direct HTTP boundary.
+type ArticleReaderConfig struct {
+	Enabled            bool     `yaml:"enabled"`
+	EndpointPrefix     string   `yaml:"endpoint_prefix"`
+	AllowedSourceHosts []string `yaml:"allowed_source_hosts"`
+	TimeoutMS          int      `yaml:"timeout_ms"`
 }
 
 // BrowserActorConfig は headless browser 操作 sidecar 設定。

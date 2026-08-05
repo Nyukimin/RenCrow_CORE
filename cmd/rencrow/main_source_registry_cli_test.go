@@ -56,7 +56,7 @@ func TestRunSourceRegistryCommand_Sweep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecentNewsItems failed: %v", err)
 	}
-	if len(news) != 1 || news[0].SummaryDraft != "AI Update" {
+	if len(news) != 1 || news[0].SummaryDraft != "RenCrow_LLM Gateway news" || news[0].RawText != "AI Update\nRenCrow_LLM Gateway news" {
 		t.Fatalf("unexpected news items: %+v", news)
 	}
 }

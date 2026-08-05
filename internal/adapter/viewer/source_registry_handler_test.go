@@ -56,7 +56,7 @@ func TestHandleSourceRegistry_RunSelectedSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecentNewsItems failed: %v", err)
 	}
-	if len(news) != 1 || news[0].SummaryDraft != "Viewer Run" {
+	if len(news) != 1 || news[0].SummaryDraft != "Viewer body" || news[0].Meta["feed_item_title"] != "Viewer Run" {
 		t.Fatalf("unexpected promoted news: %+v", news)
 	}
 }

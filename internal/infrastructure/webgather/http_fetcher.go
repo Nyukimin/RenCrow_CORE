@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"time"
@@ -33,6 +34,15 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, rawURL string, policy moduleweb
 	}
 	copied := *client
 	copied.Timeout = policy.RequestTimeout
+	requestURL := rawURL
+	if isNHKNewsArticleURL(rawURL) {
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			return modulewebgather.FetchArtifact{}, modulewebgather.WrapError(modulewebgather.ErrFetchFailed, "failed to initialize NHK article session", err)
+		}
+		copied.Jar = jar
+		requestURL = nhkArticleAuthorizationURL(rawURL)
+	}
 	copied.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= policy.MaxRedirects {
 			return fmt.Errorf("stopped after %d redirects", policy.MaxRedirects)
@@ -43,7 +53,7 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, rawURL string, policy moduleweb
 		redirects = append(redirects, req.URL.String())
 		return nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return modulewebgather.FetchArtifact{}, modulewebgather.WrapError(modulewebgather.ErrInvalidURL, "failed to build request", err)
 	}
@@ -101,16 +111,40 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, rawURL string, policy moduleweb
 	return artifact, nil
 }
 
+func isNHKNewsArticleURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return parsed.Scheme == "https" && strings.EqualFold(parsed.Hostname(), "news.web.nhk") && strings.HasPrefix(parsed.EscapedPath(), "/newsweb/na/na-")
+}
+
+func nhkArticleAuthorizationURL(articleURL string) string {
+	query := url.Values{
+		"idp":          {"d-alaz"},
+		"profileType":  {"emergency"},
+		"redirect_uri": {articleURL},
+		"entity":       {"none"},
+	}
+	return "https://news.web.nhk/tix/build_authorize?" + query.Encode()
+}
+
 func looksLikeBotChallenge(contentType string, body []byte) bool {
 	if !strings.Contains(contentType, "html") || len(body) == 0 {
 		return false
 	}
 	text := strings.ToLower(string(body))
-	markers := []string{"captcha", "bot challenge", "cloudflare", "verify you are human"}
+	markers := []string{
+		"/cdn-cgi/challenge-platform/",
+		"cf-chl-",
+		"<title>just a moment",
+		"attention required! | cloudflare",
+		"enable javascript and cookies to continue",
+	}
 	for _, marker := range markers {
 		if strings.Contains(text, marker) {
 			return true
 		}
 	}
-	return false
+	return len(body) <= 64*1024 && strings.Contains(text, "verify you are human") && strings.Contains(text, "captcha")
 }

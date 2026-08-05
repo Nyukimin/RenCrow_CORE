@@ -871,6 +871,72 @@ web_gather:
 	}
 }
 
+func TestLoadConfig_WebGatherArticleReaderExplicitlyEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "article_reader.yaml")
+	content := `
+server:
+  port: 8080
+web_gather:
+  article_reader:
+    enabled: true
+    endpoint_prefix: "https://r.jina.ai/http://"
+    allowed_source_hosts: ["openai.com"]
+    timeout_ms: 15000
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	reader := cfg.WebGather.ArticleReader
+	if !reader.Enabled || reader.EndpointPrefix != "https://r.jina.ai/http://" || reader.TimeoutMS != 15000 || len(reader.AllowedSourceHosts) != 1 || reader.AllowedSourceHosts[0] != "openai.com" {
+		t.Fatalf("unexpected article reader config: %+v", reader)
+	}
+}
+
+func TestLoadConfig_WebGatherArticleReaderDefaultsDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "article_reader_default.yaml")
+	if err := os.WriteFile(configPath, []byte("server:\n  port: 8080\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.WebGather.ArticleReader.Enabled || cfg.WebGather.ArticleReader.TimeoutMS != 30000 {
+		t.Fatalf("article reader must default to disabled with a bounded timeout: %+v", cfg.WebGather.ArticleReader)
+	}
+}
+
+func TestLoadConfig_WebGatherArticleReaderRejectsUnsafeConfiguration(t *testing.T) {
+	tests := []struct {
+		name    string
+		reader  string
+		wantErr string
+	}{
+		{name: "missing endpoint", reader: "enabled: true\n    allowed_source_hosts: [\"openai.com\"]", wantErr: "endpoint_prefix"},
+		{name: "non https endpoint", reader: "enabled: true\n    endpoint_prefix: \"http://r.jina.ai/http://\"\n    allowed_source_hosts: [\"openai.com\"]", wantErr: "must use https"},
+		{name: "empty allowlist", reader: "enabled: true\n    endpoint_prefix: \"https://r.jina.ai/http://\"", wantErr: "allowed_source_hosts"},
+		{name: "wildcard source", reader: "enabled: true\n    endpoint_prefix: \"https://r.jina.ai/http://\"\n    allowed_source_hosts: [\"*.openai.com\"]", wantErr: "plain public host"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "invalid_article_reader.yaml")
+			content := "server:\n  port: 8080\nweb_gather:\n  article_reader:\n    " + tc.reader + "\n"
+			if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected %q validation error, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_AudioRouterValidation(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "audio_router.yaml")

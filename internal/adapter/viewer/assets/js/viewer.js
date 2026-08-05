@@ -161,6 +161,7 @@ const state = {
   pendingEvidenceJobID: '',
   memory: {
     snapshot: {memory: [], news: [], digests: [], knowledge: []},
+    newsPackSnapshot: {news: [], digests: []},
     memorySnapshotFetchError: '',
     layers: {l0: [], l1: [], l2: [], l3: []},
     recallPack: {items: []},
@@ -1280,6 +1281,7 @@ function switchTab(tab) {
   if (tab === 'timeline' && timelineAutoFollow) scrollToBottom(true);
   if (tab === 'investment' && typeof refreshInvestmentData === 'function') refreshInvestmentData();
   if (tab === 'collection' && typeof refreshCollectionData === 'function') refreshCollectionData();
+  if (tab === 'news-pack' && typeof refreshNewsPack === 'function') refreshNewsPack();
   if (tab === 'backlog' && typeof refreshBacklog === 'function') refreshBacklog();
   if (tab === 'ops') {
     refreshSandboxData();

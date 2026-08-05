@@ -12,10 +12,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainrouting "github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 )
+
+func TestSourceRegistrySweepOptionsWiresArticleReaderOnlyWhenExplicitlyEnabled(t *testing.T) {
+	if got := sourceRegistrySweepOptions(&config.Config{}); got.ArticleFallback != nil {
+		t.Fatal("article reader fallback must remain disabled by default")
+	}
+	cfg := &config.Config{WebGather: config.WebGatherConfig{ArticleReader: config.ArticleReaderConfig{
+		Enabled: true, EndpointPrefix: "https://r.jina.ai/http://", AllowedSourceHosts: []string{"openai.com"}, TimeoutMS: 30000,
+	}}}
+	if got := sourceRegistrySweepOptions(cfg); got.ArticleFallback == nil {
+		t.Fatal("enabled article reader was not wired into the source registry sweep")
+	}
+}
 
 func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T) {
 	processor := &captureSuperAgentRunQueueProcessor{

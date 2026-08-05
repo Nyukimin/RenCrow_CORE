@@ -37,6 +37,90 @@ FROM l1_news_item
 	return scanL1NewsItems(rows)
 }
 
+// RecentNewsItemsSince returns every non-sports news item in the requested
+// rolling time window. The time boundary, rather than an item count, limits
+// NewsPack output.
+func (s *L1SQLiteStore) RecentNewsItemsSince(ctx context.Context, category string, since time.Time) ([]L1NewsItem, error) {
+	category = NormalizeNewsCategory(category)
+	if since.IsZero() {
+		return nil, errors.New("news cutoff time is required")
+	}
+	query := `
+WITH windowed_news AS (
+	SELECT id, staging_id, category, source_id, source_url, published_at, fetched_at,
+	       raw_text, raw_hash, summary_draft, keywords_json, license_note, meta_json,
+	       created_at, updated_at,
+	       ROW_NUMBER() OVER (
+	           PARTITION BY CASE WHEN TRIM(source_url) <> '' THEN source_url ELSE id END
+	           ORDER BY COALESCE(published_at, fetched_at) DESC, updated_at DESC, created_at DESC, rowid DESC
+	       ) AS url_rank
+	FROM l1_news_item
+	WHERE COALESCE(published_at, fetched_at) >= ?
+	  AND category <> ?
+`
+	args := []interface{}{since.UTC(), "sports"}
+	if category != "" {
+		query += "\t  AND category = ?\n"
+		args = append(args, category)
+	}
+	query += `)
+SELECT id, staging_id, category, source_id, source_url, published_at, fetched_at,
+       raw_text, raw_hash, summary_draft, keywords_json, license_note, meta_json,
+       created_at, updated_at
+FROM windowed_news
+WHERE url_rank = 1
+ORDER BY COALESCE(published_at, fetched_at) DESC, created_at DESC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query time-windowed l1 news items: %w", err)
+	}
+	defer rows.Close()
+	return scanL1NewsItems(rows)
+}
+
+// RecentNewsItemsBySource returns recent news without allowing high-volume
+// sources to crowd every other source out of the NewsPack list.
+func (s *L1SQLiteStore) RecentNewsItemsBySource(ctx context.Context, category string, perSource int, limit int) ([]L1NewsItem, error) {
+	category = NormalizeNewsCategory(category)
+	if perSource <= 0 {
+		perSource = 5
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	query := `
+WITH ranked_news AS (
+	SELECT id, staging_id, category, source_id, source_url, published_at, fetched_at,
+	       raw_text, raw_hash, summary_draft, keywords_json, license_note, meta_json,
+	       created_at, updated_at,
+	       ROW_NUMBER() OVER (
+		   PARTITION BY source_id
+		   ORDER BY COALESCE(published_at, fetched_at) DESC, created_at DESC
+	       ) AS source_rank
+	FROM l1_news_item
+`
+	var args []interface{}
+	if category != "" {
+		query += "\tWHERE category = ?\n"
+		args = append(args, category)
+	}
+	query += `)
+SELECT id, staging_id, category, source_id, source_url, published_at, fetched_at,
+       raw_text, raw_hash, summary_draft, keywords_json, license_note, meta_json,
+       created_at, updated_at
+FROM ranked_news
+WHERE source_rank <= ?
+ORDER BY COALESCE(published_at, fetched_at) DESC, created_at DESC
+LIMIT ?`
+	args = append(args, perSource, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query source-balanced l1 news items: %w", err)
+	}
+	defer rows.Close()
+	return scanL1NewsItems(rows)
+}
+
 func (s *L1SQLiteStore) BuildDailyDigest(ctx context.Context, digestDate time.Time, category string, limit int) (*L1DailyDigest, error) {
 	return s.BuildDailyDigestForSlot(ctx, digestDate, category, L1DailyDigestSlotDay, limit)
 }

@@ -135,6 +135,41 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("web_gather.searxng_base_url must start with http:// or https://")
 		}
 	}
+	if c.WebGather.ArticleReader.Enabled {
+		reader := c.WebGather.ArticleReader
+		prefix := strings.TrimSpace(reader.EndpointPrefix)
+		if prefix == "" {
+			return fmt.Errorf("web_gather.article_reader.endpoint_prefix is required when enabled=true")
+		}
+		endpoint, err := url.Parse(prefix)
+		if err != nil || endpoint.Host == "" {
+			return fmt.Errorf("web_gather.article_reader.endpoint_prefix must be an absolute URL")
+		}
+		if endpoint.Scheme != "https" {
+			return fmt.Errorf("web_gather.article_reader.endpoint_prefix must use https")
+		}
+		if !strings.EqualFold(endpoint.Hostname(), "r.jina.ai") || !strings.HasSuffix(prefix, "/http://") {
+			return fmt.Errorf("web_gather.article_reader.endpoint_prefix must be the approved Jina Reader prefix ending in /http://")
+		}
+		if len(reader.AllowedSourceHosts) == 0 {
+			return fmt.Errorf("web_gather.article_reader.allowed_source_hosts is required when enabled=true")
+		}
+		seenHosts := map[string]struct{}{}
+		for _, rawHost := range reader.AllowedSourceHosts {
+			host := strings.ToLower(strings.TrimSpace(rawHost))
+			parsed, err := url.Parse("https://" + host)
+			if err != nil || host == "" || strings.ContainsAny(host, "*/:@?#[]") || parsed.Hostname() != host || parsed.Port() != "" || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+				return fmt.Errorf("web_gather.article_reader.allowed_source_hosts must contain plain public host names")
+			}
+			if _, exists := seenHosts[host]; exists {
+				return fmt.Errorf("web_gather.article_reader.allowed_source_hosts must not contain duplicates")
+			}
+			seenHosts[host] = struct{}{}
+		}
+		if reader.TimeoutMS < 1000 || reader.TimeoutMS > 120000 {
+			return fmt.Errorf("web_gather.article_reader.timeout_ms must be between 1000 and 120000")
+		}
+	}
 	if c.BrowserActor.Enabled {
 		if strings.TrimSpace(c.BrowserActor.RunnerPath) == "" {
 			return fmt.Errorf("browser_actor.runner_path is required when browser_actor.enabled=true")

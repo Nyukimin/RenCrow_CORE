@@ -52,6 +52,9 @@ func (c *Config) setDefaults() {
 	if c.WebwrightFetch.APIKey == "" {
 		c.WebwrightFetch.APIKey = "dummy"
 	}
+	if c.WebGather.ArticleReader.TimeoutMS <= 0 {
+		c.WebGather.ArticleReader.TimeoutMS = 30000
+	}
 	if c.BrowserActor.RunnerPath == "" {
 		c.BrowserActor.RunnerPath = defaultRenCrowToolsPath("tools", "browser_actor", "run_browser_actor.mjs")
 	}

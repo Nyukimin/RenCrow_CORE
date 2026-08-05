@@ -1,11 +1,11 @@
 // News Pack tab module: news source inspection and recall usage links.
 function newsItems() {
-  const snap = state.memory.snapshot || {};
+  const snap = state.memory.newsPackSnapshot || {};
   return Array.isArray(snap.news) ? snap.news : [];
 }
 
 function newsDigests() {
-  const snap = state.memory.snapshot || {};
+  const snap = state.memory.newsPackSnapshot || {};
   return Array.isArray(snap.digests) ? snap.digests : [];
 }
 
@@ -17,8 +17,51 @@ function newsSourceID(item) {
   return String((item && (item.SourceID || item.source_id)) || '').trim();
 }
 
+function newsMeta(item) {
+  const meta = item && (item.Meta || item.meta);
+  return meta && typeof meta === 'object' ? meta : {};
+}
+
+function newsTitle(item) {
+  const meta = newsMeta(item);
+  const title = String(meta.feed_item_title || meta.FeedItemTitle || '').trim();
+  if (title) return title;
+  const summary = String((item && (item.SummaryDraft || item.summary_draft)) || '').trim();
+  if (summary) return summary;
+  const raw = String((item && (item.RawText || item.raw_text)) || '').trim();
+  return raw.split(/\r?\n/, 1)[0].trim() || '-';
+}
+
+function newsContent(item) {
+  const title = newsTitle(item);
+  const raw = String((item && (item.RawText || item.raw_text)) || '').trim();
+  if (raw) {
+    const lines = raw.split(/\r?\n/);
+    if (lines.length > 1 && lines[0].trim() === title) lines.shift();
+    const content = lines.join('\n').trim();
+    if (content && content !== title) return content;
+  }
+  const summary = String((item && (item.SummaryDraft || item.summary_draft)) || '').trim();
+  return summary && summary !== title ? summary : '-';
+}
+
 function newsSummary(item) {
-  return String((item && (item.SummaryDraft || item.summary_draft || item.RawText || item.raw_text)) || '-');
+  const meta = newsMeta(item);
+  const articleStatus = String(meta.article_fetch_status || meta.ArticleFetchStatus || '').trim();
+  if (articleStatus === 'ready') return newsContent(item);
+  const title = newsTitle(item);
+  const summary = String((item && (item.SummaryDraft || item.summary_draft)) || '').trim();
+  return summary && summary !== title ? summary : newsContent(item);
+}
+
+function newsArticleStatus(item) {
+  const meta = newsMeta(item);
+  return String(meta.article_fetch_status || meta.ArticleFetchStatus || 'not_attempted').trim();
+}
+
+function firstReadyNewsIndex(items) {
+  const idx = items.findIndex((item) => newsArticleStatus(item) === 'ready' && newsContent(item) !== '-');
+  return idx >= 0 ? idx : 0;
 }
 
 function newsKeywords(item) {
@@ -117,7 +160,7 @@ function renderNewsPackPanel() {
           '<td>' + esc(fdt(item.PublishedAt || item.published_at || item.FetchedAt || item.fetched_at)) + '</td>' +
           '<td>' + esc(item.Category || item.category || '-') + '</td>' +
           '<td class="code">' + esc(short(source, 90)) + '</td>' +
-          '<td>' + esc(short(newsSummary(item), 220)) + '</td>' +
+          '<td class="news-pack-list-title" title="' + esc(newsTitle(item)) + '">' + esc(newsTitle(item)) + '</td>' +
           '<td><button class="ctl-btn" onclick="selectNewsPackItem(' + idx + ')">' + esc(String(newsUsageCount(item))) + '</button></td>';
         tr.addEventListener('click', (evt) => {
           if (evt.target && evt.target.tagName === 'BUTTON') return;
@@ -135,14 +178,22 @@ function renderNewsPackPanel() {
       const url = newsSourceURL(selected);
       const source = url || newsSourceID(selected) || '-';
       const link = url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(short(url, 130)) + '</a>' : esc(source);
+      const articleStatus = newsArticleStatus(selected);
+      const fullArticle = articleStatus === 'ready'
+        ? '<div class="news-pack-full-text" role="document" aria-label="Full article text">' + esc(newsContent(selected)) + '</div>'
+        : '<div class="news-pack-full-text news-pack-full-text-pending" role="status" aria-label="Full article unavailable">' +
+            '<strong>本文取得待ち</strong>\n\nRSS概要は全文ではないため、全文欄には表示していません。取得処理は自動で再試行します。' +
+          '</div>';
       detail.innerHTML =
-        '<h4>' + esc(short(newsSummary(selected), 90)) + '</h4>' +
-        '<div class="row"><span>Category</span><span>' + esc(selected.Category || selected.category || '-') + '</span></div>' +
-        '<div class="row"><span>Source</span><span class="code">' + link + '</span></div>' +
-        '<div class="row"><span>Published</span><span>' + esc(fdt(selected.PublishedAt || selected.published_at || selected.FetchedAt || selected.fetched_at)) + '</span></div>' +
-        '<div class="row"><span>Source ID</span><span class="code">' + esc(newsSourceID(selected) || '-') + '</span></div>' +
-        '<div class="row"><span>Keywords</span><span>' + esc(newsKeywords(selected).join(', ') || '-') + '</span></div>' +
-        '<div class="ops-sub">' + esc(newsSummary(selected)) + '</div>';
+        '<div class="news-pack-detail-head">' +
+          '<h4>' + esc(newsTitle(selected)) + '</h4>' +
+          '<div class="row"><span>Category</span><span>' + esc(selected.Category || selected.category || '-') + '</span></div>' +
+          '<div class="row"><span>Source</span><span class="code">' + link + '</span></div>' +
+          '<div class="row"><span>Full article</span><span>' + esc(articleStatus) + '</span></div>' +
+          '<div class="row"><span>Published</span><span>' + esc(fdt(selected.PublishedAt || selected.published_at || selected.FetchedAt || selected.fetched_at)) + '</span></div>' +
+          '<div class="row"><span>Source ID</span><span class="code">' + esc(newsSourceID(selected) || '-') + '</span></div>' +
+          '<div class="row"><span>Keywords</span><span>' + esc(newsKeywords(selected).join(', ') || '-') + '</span></div>' +
+        '</div>' + fullArticle;
     }
   }
 
@@ -211,7 +262,7 @@ function refreshNewsPack() {
     memoryCategory.value = newsPackCategory.value.trim();
   }
   const params = new URLSearchParams();
-  params.set('limit', '30');
+  params.set('news_window_hours', '24');
   if (newsPackCategory && newsPackCategory.value.trim()) params.set('category', newsPackCategory.value.trim());
   fetch('/viewer/memory/snapshot?' + params.toString())
     .then((r) => {
@@ -224,14 +275,14 @@ function refreshNewsPack() {
     })
     .then((data) => {
       state.memory.newsPackFetchError = '';
-      state.memory.snapshot = data || {};
-      renderMemorySnapshot();
+      state.memory.newsPackSnapshot = data || {};
+      state.memory.selectedNewsIndex = firstReadyNewsIndex(newsItems());
       renderNewsPackPanel();
       refreshRecallTraces();
     })
     .catch((err) => {
       state.memory.newsPackFetchError = String(err && err.message ? err.message : err);
-      state.memory.snapshot = Object.assign({}, state.memory.snapshot || {}, {news: [], digests: []});
+      state.memory.newsPackSnapshot = {news: [], digests: []};
       renderNewsPackPanel();
       console.error(err);
     });

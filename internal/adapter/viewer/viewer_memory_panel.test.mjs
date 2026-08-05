@@ -112,6 +112,13 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(html, /data-tab="news-pack"/);
   assert.match(html, /id="panel-news-pack"/);
   assert.match(html, /id="newsPackDetail"/);
+  assert.match(html, /class="grid news-pack-main-grid"/);
+  assert.match(html, /class="table-wrap news-pack-list-frame"/);
+  assert.match(html, /class="news-pack-items-table"/);
+  assert.match(html, /<th>Title<\/th>/);
+  assert.match(css, /#panel-news-pack \.news-pack-main-grid/);
+  assert.match(css, /#panel-news-pack \.news-pack-items-table/);
+  assert.match(css, /#panel-news-pack \.news-pack-full-text/);
   assert.match(html, /id="newsUsageBody"/);
   assert.match(html, /id="recallTraceBody"/);
   assert.match(html, /<th>Status<\/th>/);
@@ -130,6 +137,9 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(html, /Related Staging/);
   assert.match(html, /<th>Knowledge<\/th>/);
   assert.match(newsPackJs, /function refreshNewsPack/);
+  assert.ok(newsPackJs.includes("params.set('news_window_hours', '24')"));
+  assert.ok(!newsPackJs.includes("params.set('per_source'"));
+  assert.ok(js.includes("tab === 'news-pack' && typeof refreshNewsPack === 'function'"));
   assert.match(newsPackJs, /function renderNewsPackPanel/);
   assert.match(newsPackJs, /function newsUsageCount/);
   assert.match(newsPackJs, /function newsRelatedMemoryMatches/);
@@ -538,6 +548,10 @@ function renderMemorySnapshot() {}
 function refreshRecallTraces() {}
 const state = {memory: {
   snapshot: {
+    news: [{SourceID: 'memory_news', SummaryDraft: 'memory snapshot headline'}],
+    digests: [{DigestText: 'memory snapshot digest'}],
+  },
+  newsPackSnapshot: {
     news: [{SourceID: 'stale_news', SummaryDraft: 'stale headline', Category: 'tech'}],
     digests: [{DigestText: 'stale digest', Category: 'tech'}],
   },
@@ -569,6 +583,7 @@ globalThis.__state = state;
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.match(requested[0], /category=tech/);
+  assert.match(requested[0], /news_window_hours=24/);
   assert.equal(get('memoryCategory').value, 'tech');
   assert.equal(get('newsPackPanelCount').textContent, '0');
   assert.equal(get('newsDigestPanelCount').textContent, '0');
@@ -578,8 +593,140 @@ globalThis.__state = state;
   assert.match(get('newsPackDetail').innerHTML, /News Pack unavailable: HTTP 500: invalid news snapshot: digest missing created_at/);
   assert.doesNotMatch(get('newsPackPanelBody').innerHTML, /stale headline/);
   assert.doesNotMatch(get('newsDigestPanelBody').innerHTML, /stale digest/);
-  assert.equal(context.__state.memory.snapshot.news.length, 0);
-  assert.equal(context.__state.memory.snapshot.digests.length, 0);
+  assert.equal(context.__state.memory.newsPackSnapshot.news.length, 0);
+  assert.equal(context.__state.memory.newsPackSnapshot.digests.length, 0);
+  assert.equal(context.__state.memory.snapshot.news.length, 1);
+  assert.equal(context.__state.memory.snapshot.digests.length, 1);
+});
+
+test('viewer renders RSS content separately from the headline for current and legacy news items', () => {
+  const newsPackJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/news-pack.js', 'utf8');
+  const elements = new Map();
+  const get = (id) => {
+    if (!elements.has(id)) elements.set(id, new FakeElement(id));
+    return elements.get(id);
+  };
+  const document = {
+    getElementById: get,
+    createElement() {
+      return new FakeElement();
+    },
+  };
+  const source = `
+function esc(s) { return String(s || ''); }
+function short(s, n) { const v = String(s || ''); return v.length > n ? v.slice(0, n) + '...' : v; }
+function fdt(s) { return String(s || ''); }
+const state = {memory: {
+  newsPackSnapshot: {news: [{
+    SourceID: 'rss:current',
+    Category: 'tech',
+    SummaryDraft: 'RSS description with useful context…',
+    RawText: 'Current headline\\nFull linked article content with a complete final sentence.',
+    Meta: {feed_item_title: 'Current headline', article_fetch_status: 'ready'},
+  }, {
+    SourceID: 'rss:legacy',
+    Category: 'tech',
+    SummaryDraft: 'Legacy headline',
+    RawText: 'Legacy headline\\nLegacy RSS description',
+    Meta: {title: 'Legacy feed source name'},
+  }], digests: []},
+  traces: [],
+  selectedNewsIndex: 0,
+  newsPackFetchError: '',
+}};
+` + newsPackJs + `
+globalThis.__render = renderNewsPackPanel;
+globalThis.__select = selectNewsPackItem;
+`;
+  const context = vm.createContext({document});
+  vm.runInContext(source, context);
+
+  context.__render();
+  assert.match(get('newsPackPanelBody').innerHTML, /Current headline/);
+  assert.doesNotMatch(get('newsPackPanelBody').innerHTML, /Full linked article content with a complete final sentence/);
+  assert.doesNotMatch(get('newsPackPanelBody').innerHTML, /RSS description with useful context…/);
+  assert.match(get('newsPackDetail').innerHTML, /<div class="news-pack-detail-head"><h4>Current headline<\/h4>/);
+  assert.match(get('newsPackDetail').innerHTML, /class="news-pack-full-text"/);
+  assert.match(get('newsPackDetail').innerHTML, /Full linked article content with a complete final sentence/);
+
+  context.__select(1);
+  assert.match(get('newsPackDetail').innerHTML, /<h4>Legacy headline<\/h4>/);
+  assert.match(get('newsPackDetail').innerHTML, /本文取得待ち/);
+  assert.doesNotMatch(get('newsPackDetail').innerHTML, /Legacy RSS description/);
+});
+
+test('news pack refresh selects a fetched full article without hiding newer pending items', async () => {
+  const newsPackJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/news-pack.js', 'utf8');
+  const elements = new Map();
+  const get = (id) => {
+    if (!elements.has(id)) elements.set(id, new FakeElement(id));
+    return elements.get(id);
+  };
+  const document = {
+    getElementById: get,
+    createElement() {
+      return new FakeElement();
+    },
+  };
+  const response = {
+    news: [{
+      SourceID: 'rss:pending',
+      SummaryDraft: '途中で切れたRSS概要…',
+      RawText: 'Pending headline\n途中で切れたRSS概要…',
+      Meta: {feed_item_title: 'Pending headline', article_fetch_status: 'unavailable'},
+    }, {
+      SourceID: 'rss:ready',
+      RawText: 'Ready headline\n取得済みの完全な本文。末尾まであります。',
+      Meta: {feed_item_title: 'Ready headline', article_fetch_status: 'ready'},
+    }],
+    digests: [],
+  };
+  const source = `
+function esc(s) { return String(s || ''); }
+function short(s, n) { const v = String(s || ''); return v.length > n ? v.slice(0, n) + '...' : v; }
+function fdt(s) { return String(s || ''); }
+function renderMemorySnapshot() {}
+function refreshRecallTraces() {}
+const state = {memory: {
+  snapshot: {news: [], digests: []},
+  newsPackSnapshot: {news: [], digests: []},
+  traces: [],
+  selectedNewsIndex: 0,
+  newsPackFetchError: '',
+}};
+const newsPackCategory = null;
+const memoryCategory = null;
+` + newsPackJs + `
+globalThis.__refresh = refreshNewsPack;
+globalThis.__render = renderNewsPackPanel;
+globalThis.__state = state;
+`;
+  const context = vm.createContext({
+    document,
+    console: {error() {}},
+    URLSearchParams,
+    fetch() {
+      return Promise.resolve({ok: true, json: () => Promise.resolve(response)});
+    },
+  });
+  vm.runInContext(source, context);
+  context.__refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(context.__state.memory.newsPackSnapshot.news.length, 2);
+  assert.equal(context.__state.memory.selectedNewsIndex, 1);
+  assert.match(get('newsPackPanelBody').innerHTML, /Pending headline/);
+  assert.match(get('newsPackPanelBody').innerHTML, /Ready headline/);
+  assert.match(get('newsPackDetail').innerHTML, /取得済みの完全な本文。末尾まであります。/);
+  assert.doesNotMatch(get('newsPackDetail').innerHTML, /途中で切れたRSS概要…/);
+
+  context.__state.memory.snapshot = {
+    news: Array.from({length: 20}, (_, index) => ({SourceID: 'memory-' + String(index)})),
+    digests: [],
+  };
+  context.__render();
+  assert.equal(get('newsPackPanelCount').textContent, '2');
+  assert.equal(context.__state.memory.newsPackSnapshot.news.length, 2);
 });
 
 test('viewer renders complexity review-only blocked state in ops card', () => {

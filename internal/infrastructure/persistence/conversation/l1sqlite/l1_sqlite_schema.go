@@ -153,6 +153,27 @@ CREATE TABLE IF NOT EXISTS l1_news_item (
 CREATE INDEX IF NOT EXISTS idx_l1_news_category_published ON l1_news_item(category, published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_news_source_published ON l1_news_item(source_id, published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_news_raw_hash ON l1_news_item(raw_hash);
+CREATE TABLE IF NOT EXISTS l1_news_article_fetch (
+	normalized_url TEXT PRIMARY KEY,
+	status TEXT NOT NULL,
+	final_url TEXT NOT NULL DEFAULT '',
+	fetch_url TEXT NOT NULL DEFAULT '',
+	content_type TEXT NOT NULL DEFAULT '',
+	fetch_provider TEXT NOT NULL DEFAULT '',
+	extractor TEXT NOT NULL DEFAULT '',
+	raw_bytes INTEGER NOT NULL DEFAULT 0,
+	article_text TEXT NOT NULL DEFAULT '',
+	content_sha256 TEXT NOT NULL DEFAULT '',
+	error_code TEXT NOT NULL DEFAULT '',
+	attempt_count INTEGER NOT NULL DEFAULT 0,
+	lease_expires_at TIMESTAMP,
+	next_attempt_at TIMESTAMP,
+	completed_at TIMESTAMP,
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_l1_news_article_fetch_retry
+	ON l1_news_article_fetch(status, next_attempt_at, lease_expires_at);
 CREATE TABLE IF NOT EXISTS l1_daily_digest (
 	id TEXT PRIMARY KEY,
 	digest_date TEXT NOT NULL,
@@ -354,6 +375,14 @@ CREATE INDEX IF NOT EXISTS idx_prompt_injection_event_trace ON prompt_injection_
 	} {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return fmt.Errorf("failed to migrate l1 source registry fetch status: %w", err)
+		}
+	}
+	for _, stmt := range []string{
+		`ALTER TABLE l1_news_article_fetch ADD COLUMN fetch_url TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE l1_news_article_fetch ADD COLUMN content_sha256 TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("failed to migrate l1 news article provenance: %w", err)
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, `

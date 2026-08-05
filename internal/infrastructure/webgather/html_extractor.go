@@ -47,7 +47,7 @@ func extractHTML(artifact modulewebgather.FetchArtifact, requestedExtractor stri
 	if err != nil {
 		return modulewebgather.ExtractedDocument{}, modulewebgather.WrapError(modulewebgather.ErrExtractFailed, "failed to parse HTML", err)
 	}
-	doc.Find("script,style,noscript,svg,canvas,iframe").Each(func(_ int, s *goquery.Selection) {
+	doc.Find("script,style,noscript,svg,canvas,iframe,header,footer,nav,aside,form,button").Each(func(_ int, s *goquery.Selection) {
 		s.Remove()
 	})
 	title := strings.TrimSpace(doc.Find("title").First().Text())
@@ -58,18 +58,21 @@ func extractHTML(artifact modulewebgather.FetchArtifact, requestedExtractor stri
 	canonical := firstNonEmpty(attrHref(doc, `link[rel="canonical"]`), artifact.FinalURL)
 	published := firstNonEmpty(attrContent(doc, `meta[property="article:published_time"]`), attrContent(doc, `meta[name="date"]`))
 	siteName := attrContent(doc, `meta[property="og:site_name"]`)
-	text := selectionText(doc.Find("article").First())
-	if text == "" {
-		text = selectionText(doc.Find("main").First())
+	isNHKArticle := strings.HasPrefix(artifact.FinalURL, "https://news.web.nhk/newsweb/na/")
+	text := ""
+	if isNHKArticle {
+		text = extractNHKArticleText(doc)
+	} else {
+		text = extractBestHTMLContent(doc)
+		text = normalizeSpace(text)
 	}
-	if text == "" {
-		text = selectionText(doc.Find("body").First())
-	}
-	text = normalizeSpace(text)
 	if text == "" {
 		return modulewebgather.ExtractedDocument{}, modulewebgather.NewError(modulewebgather.ErrEmptyContent, "HTML extracted text is empty")
 	}
 	extractor := "html_basic"
+	if isNHKArticle {
+		extractor = "nhk_news_article"
+	}
 	if requestedExtractor == "go_readability" {
 		extractor = "html_basic"
 	}
@@ -89,6 +92,59 @@ func extractHTML(artifact modulewebgather.FetchArtifact, requestedExtractor stri
 	}, nil
 }
 
+func extractBestHTMLContent(doc *goquery.Document) string {
+	semantic := longestSelectionText(doc, "[itemprop='articleBody'],.article-body,.post-content,.entry-content,.blog-content,article")
+	if len([]rune(semantic)) >= 200 {
+		return semantic
+	}
+	mainText := longestSelectionText(doc, "main,[role='main']")
+	if len([]rune(mainText)) > 2*len([]rune(semantic)) {
+		return mainText
+	}
+	if semantic != "" {
+		return semantic
+	}
+	if mainText != "" {
+		return mainText
+	}
+	return selectionText(doc.Find("body").First())
+}
+
+func longestSelectionText(doc *goquery.Document, selector string) string {
+	best := ""
+	doc.Find(selector).Each(func(_ int, candidate *goquery.Selection) {
+		text := selectionText(candidate)
+		if len([]rune(text)) > len([]rune(best)) {
+			best = text
+		}
+	})
+	return best
+}
+
+func extractNHKArticleText(doc *goquery.Document) string {
+	articleParagraphClasses := map[string]struct{}{}
+	doc.Find("main p").Each(func(_ int, paragraph *goquery.Selection) {
+		if paragraph.Find(".c-part").Length() == 0 && paragraph.Closest(".c-part").Length() == 0 {
+			return
+		}
+		if className := strings.TrimSpace(paragraph.AttrOr("class", "")); className != "" {
+			articleParagraphClasses[className] = struct{}{}
+		}
+	})
+	parts := []string{}
+	doc.Find("main p").Each(func(_ int, paragraph *goquery.Selection) {
+		isMarkedArticlePart := paragraph.Find(".c-part").Length() > 0 || paragraph.Closest(".c-part").Length() > 0
+		_, sharesArticleClass := articleParagraphClasses[strings.TrimSpace(paragraph.AttrOr("class", ""))]
+		if !isMarkedArticlePart && !sharesArticleClass {
+			return
+		}
+		if text := normalizeSpace(paragraph.Text()); text != "" {
+			parts = append(parts, text)
+		}
+	})
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+}
+
 func extractPlain(artifact modulewebgather.FetchArtifact, extractor string) (modulewebgather.ExtractedDocument, error) {
 	reader, err := charset.NewReader(bytes.NewReader(artifact.Body), artifact.ContentType)
 	if err != nil {
@@ -99,6 +155,10 @@ func extractPlain(artifact modulewebgather.FetchArtifact, extractor string) (mod
 		return modulewebgather.ExtractedDocument{}, modulewebgather.WrapError(modulewebgather.ErrExtractFailed, "failed to read text", err)
 	}
 	text := normalizeSpace(buf.String())
+	if artifact.ProviderName == ArticleReaderProviderName {
+		text = normalizeArticleReaderParagraphs(buf.String())
+		extractor = "jina_reader_markdown"
+	}
 	if text == "" {
 		return modulewebgather.ExtractedDocument{}, modulewebgather.NewError(modulewebgather.ErrEmptyContent, "plain text is empty")
 	}
@@ -109,6 +169,19 @@ func extractPlain(artifact modulewebgather.FetchArtifact, extractor string) (mod
 		Extractor: extractor,
 		Meta:      map[string]any{},
 	}, nil
+}
+
+func normalizeArticleReaderParagraphs(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	paragraphs := strings.Split(text, "\n\n")
+	cleaned := make([]string, 0, len(paragraphs))
+	for _, paragraph := range paragraphs {
+		if paragraph = normalizeSpace(paragraph); paragraph != "" {
+			cleaned = append(cleaned, paragraph)
+		}
+	}
+	return strings.TrimSpace(strings.Join(cleaned, "\n\n"))
 }
 
 func extractJSON(artifact modulewebgather.FetchArtifact) (modulewebgather.ExtractedDocument, error) {

@@ -57,6 +57,37 @@ type L1WebGatherRateState struct {
 	UpdatedAt   time.Time
 }
 
+type L1NewsArticleFetch struct {
+	NormalizedURL  string
+	Status         string
+	FinalURL       string
+	FetchURL       string
+	ContentType    string
+	FetchProvider  string
+	Extractor      string
+	RawBytes       int64
+	ArticleText    string
+	ContentSHA256  string
+	ErrorCode      string
+	AttemptCount   int
+	LeaseExpiresAt time.Time
+	NextAttemptAt  time.Time
+	CompletedAt    time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type L1NewsArticleFetchCompletion struct {
+	FinalURL      string
+	FetchURL      string
+	ContentType   string
+	FetchProvider string
+	Extractor     string
+	RawBytes      int64
+	ArticleText   string
+	ContentSHA256 string
+}
+
 type L1EventLogEntry struct {
 	ID        string
 	EventType string

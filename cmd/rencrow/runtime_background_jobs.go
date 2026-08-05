@@ -20,6 +20,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/sourcefetcher"
 	superagentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	webgatherinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/webgather"
 )
 
 type backgroundJobFailureReporter struct {
@@ -111,7 +112,7 @@ func backgroundJobFailureNotification(job string, errorText string, detail strin
 func startConversationBackgroundJobs(cfg *config.Config, runtime conversationRuntime, listener orchestrator.EventListener) {
 	reporter := newBackgroundJobFailureReporter(listener)
 	if runtime.L1Store != nil {
-		startSourceRegistrySweeper(runtime.L1Store, reporter)
+		startSourceRegistrySweeper(cfg, runtime.L1Store, reporter)
 		startMemoryLifecycleJob(runtime.L1Store, reporter)
 	}
 	if runtime.Manager != nil {
@@ -119,20 +120,26 @@ func startConversationBackgroundJobs(cfg *config.Config, runtime conversationRun
 	}
 }
 
-func startSourceRegistrySweeper(store *l1sqlite.L1SQLiteStore, reporter backgroundJobFailureReporter) {
+func startSourceRegistrySweeper(cfg *config.Config, store *l1sqlite.L1SQLiteStore, reporter backgroundJobFailureReporter) {
 	sweep := func() {
-		result, err := sourcefetcher.SweepDueSources(context.Background(), store, time.Now().UTC(), sourcefetcher.SweepOptions{
-			LimitPerSource:    10,
-			MinimumTrustScore: 0.5,
-		})
+		now := time.Now().UTC()
+		opts := sourceRegistrySweepOptions(cfg)
+		result, err := sourcefetcher.SweepAllFeedSources(context.Background(), store, now, opts)
 		if err != nil {
-			log.Printf("WARN: source registry sweep failed: %v", err)
-			reporter.Failed("source_registry_sweep", err, "limit_per_source=10 minimum_trust_score=0.5")
-			return
+			log.Printf("WARN: all-feed source registry sweep failed: %v", err)
+			reporter.Failed("source_registry_all_feed_sweep", err, "limit_per_source=10 minimum_trust_score=0.5")
+		} else if result.Sources > 0 || result.Staged > 0 || result.Failed > 0 {
+			log.Printf("All-feed source registry sweep complete: sources=%d staged=%d validated=%d promoted_news=%d article_fetched=%d article_reused=%d article_deferred=%d skipped_existing=%d failed=%d",
+				result.Sources, result.Staged, result.Validated, result.PromotedNews, result.ArticleFetched, result.ArticleReused, result.ArticleDeferred, result.SkippedExisting, result.Failed)
 		}
-		if result.Sources > 0 || result.Staged > 0 || result.Failed > 0 {
-			log.Printf("Source registry sweep complete: sources=%d staged=%d validated=%d promoted_news=%d failed=%d",
-				result.Sources, result.Staged, result.Validated, result.PromotedNews, result.Failed)
+
+		dueResult, dueErr := sourcefetcher.SweepDueSources(context.Background(), store, now, opts)
+		if dueErr != nil {
+			log.Printf("WARN: due source registry sweep failed: %v", dueErr)
+			reporter.Failed("source_registry_due_sweep", dueErr, "limit_per_source=10 minimum_trust_score=0.5")
+		} else if dueResult.Sources > 0 || dueResult.Staged > 0 || dueResult.Failed > 0 {
+			log.Printf("Due source registry sweep complete: sources=%d staged=%d validated=%d promoted_news=%d failed=%d",
+				dueResult.Sources, dueResult.Staged, dueResult.Validated, dueResult.PromotedNews, dueResult.Failed)
 		}
 	}
 	go func() {
@@ -143,6 +150,21 @@ func startSourceRegistrySweeper(store *l1sqlite.L1SQLiteStore, reporter backgrou
 			sweep()
 		}
 	}()
+}
+
+func sourceRegistrySweepOptions(cfg *config.Config) sourcefetcher.SweepOptions {
+	opts := sourcefetcher.SweepOptions{
+		LimitPerSource:    10,
+		MinimumTrustScore: 0.5,
+	}
+	if cfg != nil && cfg.WebGather.ArticleReader.Enabled {
+		reader := cfg.WebGather.ArticleReader
+		opts.ArticleFallback = webgatherinfra.NewArticleReaderFetcher(webgatherinfra.ArticleReaderFetcherConfig{
+			Enabled: reader.Enabled, EndpointPrefix: reader.EndpointPrefix,
+			AllowedSourceHosts: append([]string(nil), reader.AllowedSourceHosts...), TimeoutMS: reader.TimeoutMS,
+		})
+	}
+	return opts
 }
 
 func startMemoryLifecycleJob(store *l1sqlite.L1SQLiteStore, reporter backgroundJobFailureReporter) {
