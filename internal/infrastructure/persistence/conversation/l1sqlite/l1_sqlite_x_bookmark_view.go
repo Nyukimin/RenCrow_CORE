@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	domainworkflow "github.com/Nyukimin/RenCrow_CORE/internal/domain/xbookmarkworkflow"
 )
 
 const (
@@ -35,6 +37,118 @@ type L1XBookmarkViewPage struct {
 	Limit   int
 	Offset  int
 	Summary L1XBookmarkViewSummary
+}
+
+// XBookmarkWorkflowSource returns one immutable staging projection for an
+// explicitly requested utilization workflow. It never validates or promotes it.
+func (s *L1SQLiteStore) XBookmarkWorkflowSource(ctx context.Context, id string) (domainworkflow.SourceRecord, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return domainworkflow.SourceRecord{}, domainworkflow.ErrSourceNotFound
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, kind, namespace, event_id, source_id, source_url, fetched_at, published_at,
+       raw_text, raw_hash, summary_draft, keywords_json, license_note,
+       validation_status, meta_json, created_at, updated_at
+FROM l1_staging_item
+WHERE id = ? AND json_extract(meta_json, '$.collection') = 'x_bookmark'
+LIMIT 1
+`, id)
+	if err != nil {
+		return domainworkflow.SourceRecord{}, fmt.Errorf("query x bookmark workflow source: %w", err)
+	}
+	items, scanErr := scanL1StagingItems(rows)
+	rows.Close()
+	if scanErr != nil {
+		return domainworkflow.SourceRecord{}, scanErr
+	}
+	if len(items) == 0 {
+		return domainworkflow.SourceRecord{}, domainworkflow.ErrSourceNotFound
+	}
+	item := items[0]
+	title := workflowMetaString(item.Meta, "title")
+	if title == "" {
+		title = firstNonEmptyLine(item.SummaryDraft, item.RawText)
+	}
+	author, _ := item.Meta["author"].(map[string]interface{})
+	return domainworkflow.SourceRecord{
+		ID: item.ID, Title: title, SourceURL: item.SourceURL, RawText: item.RawText,
+		AuthorName: workflowMapString(author, "name"), AuthorUsername: workflowMapString(author, "username"),
+		Media: workflowMedia(item.Meta["media"]), References: workflowReferences(item.Meta["references"]),
+	}, nil
+}
+
+func workflowMedia(raw interface{}) []domainworkflow.Media {
+	values, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]domainworkflow.Media, 0, len(values))
+	for _, rawValue := range values {
+		value, ok := rawValue.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		media := domainworkflow.Media{
+			Type: workflowMapString(value, "type"), URL: workflowMapString(value, "url"),
+			Alt: workflowMapString(value, "alt"), Poster: workflowMapString(value, "poster"),
+		}
+		if media.URL != "" {
+			result = append(result, media)
+		}
+	}
+	return result
+}
+
+func workflowReferences(raw interface{}) []map[string]string {
+	values, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	keys := []string{"kind", "url", "resolved_url", "status_url", "capture_status", "display_text", "preview_text", "page_title", "page_description", "body_text", "text"}
+	result := make([]map[string]string, 0, len(values))
+	for _, rawValue := range values {
+		value, ok := rawValue.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		projected := map[string]string{}
+		for _, key := range keys {
+			if text := workflowMapString(value, key); text != "" {
+				projected[key] = text
+			}
+		}
+		if len(projected) > 0 {
+			result = append(result, projected)
+		}
+	}
+	return result
+}
+
+func workflowMetaString(meta map[string]interface{}, key string) string {
+	return workflowMapString(meta, key)
+}
+
+func workflowMapString(values map[string]interface{}, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, _ := values[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func firstNonEmptyLine(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if index := strings.IndexByte(value, '\n'); index >= 0 {
+			value = value[:index]
+		}
+		return strings.TrimSpace(strings.TrimLeft(value, "# "))
+	}
+	return ""
 }
 
 // XBookmarkStagingPage projects imported X Bookmark staging records for the

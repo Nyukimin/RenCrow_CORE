@@ -100,6 +100,13 @@ type sourceRegistryXBookmarkReferenceDTO struct {
 	AuthorUsername  string `json:"author_username,omitempty"`
 }
 
+type sourceRegistryXBookmarkMediaDTO struct {
+	Type   string `json:"type"`
+	URL    string `json:"url"`
+	Alt    string `json:"alt,omitempty"`
+	Poster string `json:"poster,omitempty"`
+}
+
 type sourceRegistryXBookmarkItemDTO struct {
 	ID               string                                `json:"id"`
 	Title            string                                `json:"title"`
@@ -112,6 +119,7 @@ type sourceRegistryXBookmarkItemDTO struct {
 	AuthorName       string                                `json:"author_name,omitempty"`
 	AuthorUsername   string                                `json:"author_username,omitempty"`
 	MediaCount       int                                   `json:"media_count"`
+	Media            []sourceRegistryXBookmarkMediaDTO     `json:"media"`
 	ReferenceCount   int                                   `json:"reference_count"`
 	References       []sourceRegistryXBookmarkReferenceDTO `json:"references"`
 	UpdatedAt        string                                `json:"updated_at,omitempty"`

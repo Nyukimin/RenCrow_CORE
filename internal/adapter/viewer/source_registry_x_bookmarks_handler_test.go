@@ -33,6 +33,9 @@ func TestHandleSourceRegistry_XBookmarksIsReadOnlyAndExposesClassification(t *te
 				"major": "creative", "minor": "image_prompt", "confidence": 0.97, "method": "rules", "evidence": []string{"text:prompt"},
 			}},
 			"classification": map[string]interface{}{"method": "rules", "needs_review": false},
+			"media": []map[string]interface{}{{
+				"type": "image", "url": "https://pbs.twimg.com/media/prompt.jpg", "alt": "青い図書館", "poster": "",
+			}},
 			"references": []map[string]interface{}{{
 				"kind": "external_url", "url": "https://example.com/source", "resolved_url": "https://example.com/article",
 				"capture_status": "content_fetched", "page_title": "取得済み記事", "page_description": "記事の説明",
@@ -68,6 +71,9 @@ func TestHandleSourceRegistry_XBookmarksIsReadOnlyAndExposesClassification(t *te
 	}
 	if item.ReferenceCount != 1 || len(item.References) != 1 {
 		t.Fatalf("reference projection missing: %+v", item)
+	}
+	if item.MediaCount != 1 || len(item.Media) != 1 || item.Media[0].Alt != "青い図書館" {
+		t.Fatalf("media projection missing: %+v", item)
 	}
 	reference := item.References[0]
 	if reference.Kind != "external_url" || reference.PageTitle != "取得済み記事" || reference.BodyText != "外部リンク本文" || reference.ResolvedURL != "https://example.com/article" {

@@ -221,6 +221,7 @@ func registerKnowledgeMemorySourceRoutes(mux *http.ServeMux, dependencies *Depen
 	}})
 	sourcefeature.RegisterRoutes(mux, sourcefeature.Dependencies{Routes: sourcefeature.Routes{
 		Registry:              dependencies.viewerSourceRegistry,
+		XBookmarkWorkflows:    dependencies.viewerXBookmarkWorkflow,
 		DomainGraphAssertions: dependencies.viewerDomainGraphAssertions,
 		MovieDomainGraphSync:  dependencies.viewerMovieDomainGraphSync,
 		HobbyDomainGraphSync:  dependencies.viewerHobbyDomainGraphSync,

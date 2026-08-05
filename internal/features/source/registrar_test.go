@@ -10,6 +10,7 @@ func TestRegisterRoutesRegistersSourcePaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
 		Registry:              statusHandler(http.StatusOK),
+		XBookmarkWorkflows:    statusHandler(http.StatusNonAuthoritativeInfo),
 		DomainGraphAssertions: statusHandler(http.StatusCreated),
 		MovieDomainGraphSync:  statusHandler(http.StatusAccepted),
 		HobbyDomainGraphSync:  statusHandler(http.StatusNoContent),
@@ -20,6 +21,8 @@ func TestRegisterRoutesRegistersSourcePaths(t *testing.T) {
 		want int
 	}{
 		{path: "/viewer/source-registry", want: http.StatusOK},
+		{path: "/viewer/x-bookmarks/workflows", want: http.StatusNonAuthoritativeInfo},
+		{path: "/viewer/x-bookmarks/workflows/run", want: http.StatusNonAuthoritativeInfo},
 		{path: "/viewer/domain-graph/assertions", want: http.StatusCreated},
 		{path: "/viewer/movie-catalog/domain-graph-sync", want: http.StatusAccepted},
 		{path: "/viewer/hobby-graph/domain-graph-sync", want: http.StatusNoContent},

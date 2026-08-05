@@ -230,6 +230,12 @@ responseのopaqueなimage IDだけを保持して
 ViewerとCOREはRenCrow_Imageへの接続とopaqueな生成IDを扱います。
 RenCrow_Imageがunavailableの場合は明示的な503を返します。
 
+`POST /viewer/send`で`to=midori`を指定した画像生成依頼も、同じCORE-to-RenCrow_Image contractを
+使用します。成功時はMidoriの利用者向け`agent.response`へ
+`/viewer/image/result?id=<opaque-image-id>`を含め、Viewerは検証済みのこの内部URLだけを同じ
+Chat吹き出し内のPNGとして表示します。Chat経路で新しい画像配信APIを増やさず、既存の
+`GET /viewer/image/result`を再利用します。
+
 COREは受付時に`job_id`、root `trace_id`、利用者発話の`message_id`を発行します。`POST /viewer/send`の受付responseは`job_id`、`trace_id`、`message_id`、`viewer_client_id`、`recipient`を返します。現行のroot `trace_id`は`job_id`と同じopaque値です。同じ処理から発行する`message.received`、`agent.response`、error eventは同じ`trace_id`を持ち、`message.received.message_id`は受付responseの`message_id`と一致します。Agent発話は利用者発話とは別の`message_id`を持ちます。
 
 `message_id`は`msg_` prefix付きUUIDのopaque値です。clientは形式を解析せず、SSE再接続・再送時の重複排除と、同じ発話に由来する表示・保存の対応付けに使用します。`turn_index`は表示順の補助であり、IDの代替にしません。受付・開始・完了・errorログには同じ`trace_id`と`job_id`を、会話本文を持つlogには対応する`message_id`を記録します。TTS eventはmessage確定後なら同じ`message_id`を持ち、stream開始時に未確定なら従来どおり`response_id`で応答へ対応付けます。

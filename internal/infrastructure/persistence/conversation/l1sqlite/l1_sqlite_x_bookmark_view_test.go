@@ -101,3 +101,40 @@ func TestL1SQLiteStore_XBookmarkStagingPageRejectsInvalidQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestL1SQLiteStore_XBookmarkWorkflowSourceReturnsStructuredSourceWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+	staged, err := store.SaveStagingItem(ctx, L1StagingItem{
+		Kind: L1StagingKindExternalFetch, Namespace: "kb:general", EventID: "workflow-source",
+		SourceID: "x:bookmarks_browser", SourceURL: "https://x.com/example/status/123", RawText: "prompt body",
+		Meta: map[string]interface{}{
+			"collection": "x_bookmark", "title": "prompt title",
+			"author":     map[string]interface{}{"name": "Alice", "username": "alice"},
+			"media":      []map[string]interface{}{{"type": "image", "url": "https://pbs.twimg.com/media/one.jpg", "alt": "青い空"}},
+			"references": []map[string]interface{}{{"kind": "external_url", "url": "https://example.com/article", "page_title": "一次資料"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveStagingItem failed: %v", err)
+	}
+
+	source, err := store.XBookmarkWorkflowSource(ctx, staged.ID)
+	if err != nil {
+		t.Fatalf("XBookmarkWorkflowSource failed: %v", err)
+	}
+	if source.ID != staged.ID || source.Title != "prompt title" || source.AuthorUsername != "alice" {
+		t.Fatalf("unexpected source: %+v", source)
+	}
+	if len(source.Media) != 1 || source.Media[0].Alt != "青い空" || len(source.References) != 1 || source.References[0]["page_title"] != "一次資料" {
+		t.Fatalf("structured source projection missing: %+v", source)
+	}
+	remaining, err := store.RecentStagingItems(ctx, L1StagingStatusPending, 10)
+	if err != nil || len(remaining) != 1 || remaining[0].ID != staged.ID {
+		t.Fatalf("workflow source read mutated staging: items=%+v err=%v", remaining, err)
+	}
+}

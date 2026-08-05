@@ -196,7 +196,7 @@ func normalizeBacklogStatus(v string, checkOK bool) string {
 		return "ok"
 	}
 	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "open", "implementing", "testing", "fixing", "blocked", "rejected", "ok":
+	case domainbacklog.StatusProposalReview, "open", "implementing", "testing", "fixing", "blocked", "rejected", "ok":
 		return strings.ToLower(strings.TrimSpace(v))
 	default:
 		return "open"

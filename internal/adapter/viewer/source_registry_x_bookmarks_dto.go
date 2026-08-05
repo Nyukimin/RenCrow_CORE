@@ -47,10 +47,34 @@ func sourceRegistryXBookmarkItemToDTO(item l1sqlite.L1StagingItem) sourceRegistr
 		AuthorName:       xBookmarkMapString(author, "name"),
 		AuthorUsername:   xBookmarkMapString(author, "username"),
 		MediaCount:       xBookmarkSliceLength(item.Meta["media"]),
+		Media:            xBookmarkMediaDTOs(item.Meta["media"]),
 		ReferenceCount:   xBookmarkSliceLength(item.Meta["references"]),
 		References:       xBookmarkReferenceDTOs(item.Meta["references"]),
 		UpdatedAt:        xBookmarkTime(item.UpdatedAt),
 	}
+}
+
+func xBookmarkMediaDTOs(raw interface{}) []sourceRegistryXBookmarkMediaDTO {
+	values, ok := raw.([]interface{})
+	if !ok {
+		return []sourceRegistryXBookmarkMediaDTO{}
+	}
+	result := make([]sourceRegistryXBookmarkMediaDTO, 0, len(values))
+	for _, value := range values {
+		media, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		url := xBookmarkMapString(media, "url")
+		if url == "" {
+			continue
+		}
+		result = append(result, sourceRegistryXBookmarkMediaDTO{
+			Type: xBookmarkMapString(media, "type"), URL: url,
+			Alt: xBookmarkMapString(media, "alt"), Poster: xBookmarkMapString(media, "poster"),
+		})
+	}
+	return result
 }
 
 func xBookmarkReferenceDTOs(raw interface{}) []sourceRegistryXBookmarkReferenceDTO {

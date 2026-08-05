@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 )
 
 func TestBacklogStoreSaveListLatest(t *testing.T) {
@@ -43,6 +45,13 @@ func TestBacklogStoreSaveListLatest(t *testing.T) {
 	}
 	if !items[0].CheckOK || items[0].Status != "ok" || items[0].TestResult != "passed" {
 		t.Fatalf("latest item not returned: %+v", items[0])
+	}
+}
+
+func TestNormalizeBacklogItemPreservesProposalReview(t *testing.T) {
+	item := normalizeBacklogItem(BacklogItem{ItemID: "proposal", Title: "候補", Status: domainbacklog.StatusProposalReview})
+	if item.Status != domainbacklog.StatusProposalReview {
+		t.Fatalf("proposal review must not become executable open state: %+v", item)
 	}
 }
 

@@ -1,10 +1,12 @@
-// Read-only X Bookmark projection within the Information Collection tab.
+// X Bookmark source projection plus explicit, one-record utilization workflows.
 const xBookmarkViewState = {
   page: null,
   loading: false,
   limit: 12,
   offset: 0,
   searchTimer: null,
+  workflowResults: new Map(),
+  workflowRunning: new Set(),
 };
 
 const xBookmarkMajorLabels = {
@@ -125,6 +127,55 @@ function xBookmarkReferences(item) {
     '<div class="collection-x-bookmark-reference-list">' + references.map(xBookmarkReferenceCard).join('') + '</div></details>';
 }
 
+function xBookmarkMedia(item) {
+  const media = Array.isArray(item.media) ? item.media : [];
+  if (!media.length) return '';
+  return '<div class="collection-x-bookmark-media">' + media.map((entry, index) => {
+    const url = xBookmarkSafeURL(entry && (entry.url || entry.poster));
+    if (!url) return '';
+    const alt = String(entry && entry.alt || 'Alt未設定');
+    return '<figure><img src="' + xBookmarkEscape(url) + '" alt="' + xBookmarkEscape(alt) + '" loading="lazy">' +
+      '<figcaption>画像 ' + Number(index + 1) + ': ' + xBookmarkEscape(alt) + '</figcaption></figure>';
+  }).join('') + '</div>';
+}
+
+function xBookmarkHasTag(item, minor) {
+  return (Array.isArray(item.use_case_tags) ? item.use_case_tags : []).some((tag) => tag && tag.minor === minor);
+}
+
+function xBookmarkWorkflowResult(item) {
+  const results = xBookmarkViewState.workflowResults.get(String(item.id || '')) || [];
+  if (!results.length) return '';
+  return '<div class="collection-x-bookmark-workflow-results">' + results.map((result) => {
+    const status = xBookmarkEscape(result.status || 'unknown');
+    if (result.workflow === 'image_prompt_draw') {
+      const imageURL = result.image_id ? '/viewer/image/result?id=' + encodeURIComponent(result.image_id) : '';
+      return '<section><div><strong>Prompt・描画</strong><span>' + status + '</span></div>' +
+        (result.prompt ? '<pre class="collection-x-bookmark-prompt">' + xBookmarkEscape(result.prompt) + '</pre><button type="button" data-x-bookmark-copy-prompt="' + xBookmarkEscape(item.id) + '">PromptをCopy</button>' : '') +
+        (result.reason ? '<p>' + xBookmarkEscape(result.reason) + '</p>' : '') +
+        (imageURL ? '<img src="' + xBookmarkEscape(imageURL) + '" alt="Bookmark promptから生成した画像" loading="lazy">' : '') +
+        (result.error ? '<p class="warn">' + xBookmarkEscape(result.error) + '</p>' : '') + '</section>';
+    }
+    return '<section><div><strong>RenCrow適合性</strong><span>' + status + ' / ' + xBookmarkEscape(result.decision || '-') + '</span></div>' +
+      (result.summary ? '<p>' + xBookmarkEscape(result.summary) + '</p>' : '') +
+      (result.improvement ? '<p><b>改善案:</b> ' + xBookmarkEscape(result.improvement) + '</p>' : '') +
+      (result.backlog_item_id ? '<p>実装リスト: ' + xBookmarkEscape(result.backlog_item_id) + '（レビュー待ち）</p>' : '') +
+      (result.error ? '<p class="warn">' + xBookmarkEscape(result.error) + '</p>' : '') + '</section>';
+  }).join('') + '</div>';
+}
+
+function xBookmarkWorkflowActions(item) {
+  const actions = [];
+  if (xBookmarkHasTag(item, 'image_prompt')) actions.push(['image_prompt_draw', 'プロンプト取得＋描画']);
+  if (xBookmarkHasTag(item, 'ai_tip')) actions.push(['ai_tip_rencrow_evaluation', 'RenCrow適合性を評価']);
+  if (!actions.length) return '';
+  return '<div class="collection-x-bookmark-actions">' + actions.map(([workflow, label]) => {
+    const key = workflow + ':' + item.id;
+    const disabled = xBookmarkViewState.workflowRunning.has(key) ? ' disabled' : '';
+    return '<button type="button" data-x-bookmark-workflow="' + workflow + '" data-source-record-id="' + xBookmarkEscape(item.id) + '"' + disabled + '>' + xBookmarkEscape(disabled ? '処理中…' : label) + '</button>';
+  }).join('') + '</div>';
+}
+
 function xBookmarkCard(item) {
   const sourceURL = xBookmarkSafeURL(item.source_url);
   const title = xBookmarkEscape(item.title || '無題');
@@ -151,6 +202,9 @@ function xBookmarkCard(item) {
     '<h4>' + titleHTML + '</h4>' +
     '<div class="collection-x-bookmark-tags">' + tagHTML + '</div>' +
     evidenceHTML +
+    xBookmarkMedia(item) +
+    xBookmarkWorkflowActions(item) +
+    xBookmarkWorkflowResult(item) +
     xBookmarkReferences(item) +
     '<details class="collection-item-details"><summary>本文を表示</summary><pre>' + xBookmarkEscape(item.raw_text || '本文はありません。') + '</pre></details>' +
     '<div class="collection-x-bookmark-foot"><span>画像・メディア ' + Number(item.media_count || 0) + '件</span>' +
@@ -174,6 +228,7 @@ function renderXBookmarkData() {
     list.innerHTML = items.length
       ? items.map(xBookmarkCard).join('')
       : '<div class="daily-desk-card daily-desk-muted">該当するX Bookmarkはありません。</div>';
+    bindXBookmarkWorkflowActions(list);
   }
   const limit = Number(page.limit || xBookmarkViewState.limit);
   const offset = Number(page.offset || 0);
@@ -185,6 +240,66 @@ function renderXBookmarkData() {
   const next = document.getElementById('collectionXBookmarkNext');
   if (prev) prev.disabled = xBookmarkViewState.loading || offset <= 0;
   if (next) next.disabled = xBookmarkViewState.loading || offset + limit >= total;
+}
+
+function bindXBookmarkWorkflowActions(root) {
+  root.querySelectorAll('[data-x-bookmark-workflow]').forEach((button) => {
+    button.addEventListener('click', () => runXBookmarkWorkflow(button));
+  });
+  root.querySelectorAll('[data-x-bookmark-copy-prompt]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const results = xBookmarkViewState.workflowResults.get(button.dataset.xBookmarkCopyPrompt || '') || [];
+      const result = results.find((entry) => entry.workflow === 'image_prompt_draw' && entry.prompt);
+      if (result && navigator.clipboard) await navigator.clipboard.writeText(result.prompt);
+    });
+  });
+}
+
+async function refreshXBookmarkWorkflowResults() {
+  try {
+    const response = await fetch('/viewer/x-bookmarks/workflows?limit=200', {cache: 'no-store'});
+    if (!response.ok) return;
+    const payload = await response.json();
+    const grouped = new Map();
+    (Array.isArray(payload.results) ? payload.results : []).forEach((result) => {
+      const id = String(result.source_record_id || '');
+      if (!grouped.has(id)) grouped.set(id, []);
+      grouped.get(id).push(result);
+    });
+    xBookmarkViewState.workflowResults = grouped;
+    renderXBookmarkData();
+  } catch (_) {
+    // Source cards remain readable when derived-result loading fails.
+  }
+}
+
+async function runXBookmarkWorkflow(button) {
+  const workflow = String(button.dataset.xBookmarkWorkflow || '');
+  const sourceRecordID = String(button.dataset.sourceRecordId || '');
+  const key = workflow + ':' + sourceRecordID;
+  if (!workflow || !sourceRecordID || xBookmarkViewState.workflowRunning.has(key)) return;
+  xBookmarkViewState.workflowRunning.add(key);
+  renderXBookmarkData();
+  try {
+    const response = await fetch('/viewer/x-bookmarks/workflows/run', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({workflow, source_record_id: sourceRecordID, idempotency_key: key}),
+    });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const payload = await response.json();
+    const current = (xBookmarkViewState.workflowResults.get(sourceRecordID) || []).filter((entry) => entry.workflow !== workflow);
+    current.unshift(payload.result || {});
+    xBookmarkViewState.workflowResults.set(sourceRecordID, current);
+  } catch (error) {
+    const target = document.getElementById('collectionXBookmarkError');
+    if (target) {
+      target.textContent = 'Bookmark利用処理に失敗しました: ' + String(error && error.message || error);
+      target.hidden = false;
+    }
+  } finally {
+    xBookmarkViewState.workflowRunning.delete(key);
+    renderXBookmarkData();
+  }
 }
 
 function refreshXBookmarkData(options) {
@@ -209,7 +324,7 @@ function refreshXBookmarkData(options) {
       if (!response.ok) throw new Error('HTTP ' + response.status + ' ' + response.statusText);
       return response.json();
     })
-    .then((payload) => { xBookmarkViewState.page = payload; })
+    .then((payload) => { xBookmarkViewState.page = payload; return refreshXBookmarkWorkflowResults(); })
     .catch((requestError) => {
       if (error) {
         error.textContent = 'X Bookmarkを取得できません: ' + String(requestError && requestError.message || requestError);

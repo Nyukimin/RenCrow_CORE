@@ -2,7 +2,7 @@
 let backlogItems = [];
 let backlogFetchError = '';
 
-const BACKLOG_STATUSES = ['open', 'implementing', 'testing', 'fixing', 'blocked', 'ok', 'rejected'];
+const BACKLOG_STATUSES = ['proposal_review', 'open', 'implementing', 'testing', 'fixing', 'blocked', 'ok', 'rejected'];
 
 function backlogEl(id) {
   return document.getElementById(id);
@@ -70,6 +70,7 @@ function renderBacklogRow(item) {
     '<td>' + esc(short(item.test_result || '-', 90)) + '</td>' +
     '<td>' + (item.check_ok ? esc(item.checked_by || 'OK') : '-') + '</td>' +
     '<td><div class="desk-action-row backlog-actions">' +
+      renderBacklogAction(item, 'open', '採用') +
       renderBacklogAction(item, 'implementing', '実装') +
       renderBacklogAction(item, 'testing', 'テスト') +
       renderBacklogAction(item, 'fixing', '修正') +

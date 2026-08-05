@@ -219,6 +219,22 @@ a { color: inherit; }
 .collection-x-bookmark-tag small { color: var(--bookmark-muted); }
 .collection-x-bookmark-evidence { color: var(--bookmark-muted); display: grid; font-size: 11px; gap: 3px; line-height: 1.5; overflow-wrap: anywhere; }
 
+.collection-x-bookmark-media { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.collection-x-bookmark-media figure { background: #090b10; border: 1px solid var(--bookmark-border); border-radius: 6px; margin: 0; overflow: hidden; }
+.collection-x-bookmark-media img { aspect-ratio: 1 / 1; display: block; height: auto; object-fit: contain; width: 100%; }
+.collection-x-bookmark-media figcaption { color: var(--bookmark-muted); font-size: 10px; line-height: 1.4; padding: 7px; }
+.collection-x-bookmark-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.collection-x-bookmark-actions button,
+.collection-x-bookmark-workflow-results button { background: rgba(77,216,255,.11); border: 1px solid rgba(77,216,255,.34); border-radius: 5px; color: var(--bookmark-text); cursor: pointer; min-height: 38px; padding: 7px 10px; }
+.collection-x-bookmark-actions button:disabled { cursor: wait; opacity: .55; }
+.collection-x-bookmark-workflow-results { display: grid; gap: 8px; }
+.collection-x-bookmark-workflow-results section { background: #0c1018; border: 1px solid var(--bookmark-border); border-left: 3px solid var(--bookmark-accent); border-radius: 6px; display: grid; gap: 8px; padding: 10px; }
+.collection-x-bookmark-workflow-results section > div { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; }
+.collection-x-bookmark-workflow-results p { color: var(--bookmark-muted); font-size: 11px; line-height: 1.5; margin: 0; overflow-wrap: anywhere; }
+.collection-x-bookmark-workflow-results .warn { color: #ffc857; }
+.collection-x-bookmark-workflow-results img { border-radius: 6px; height: auto; max-width: 100%; }
+.collection-x-bookmark-prompt { max-height: 240px !important; }
+
 .collection-x-bookmark-references {
   border-top: 1px solid var(--bookmark-border);
   padding-top: 8px;
@@ -306,4 +322,5 @@ a { color: inherit; }
   .x-bookmark-workbench { padding: 18px 12px 28px; }
   .x-bookmark-heading h1 { font-size: 21px; }
   .x-bookmark-filters { grid-template-columns: 1fr; position: static; }
+  .collection-x-bookmark-media { grid-template-columns: 1fr; }
 }

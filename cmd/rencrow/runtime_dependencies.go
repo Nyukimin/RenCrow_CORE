@@ -28,6 +28,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	skillapp "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
 	superagentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
+	xbookmarkworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/xbookmarkworkflow"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
@@ -49,6 +50,7 @@ import (
 	skillpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/skillgovernance"
 	superagentpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/superagent"
 	workstreampersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/workstream"
+	xbookmarkworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/xbookmarkworkflow"
 	personainfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
@@ -116,6 +118,7 @@ type Dependencies struct {
 	viewerMemoryProfilePromotions  http.HandlerFunc                            // async ProfilePromotion job API
 	viewerRecallTraces             http.HandlerFunc                            // viewer recall trace API
 	viewerSourceRegistry           http.HandlerFunc                            // viewer source registry API
+	viewerXBookmarkWorkflow        http.HandlerFunc                            // explicit X Bookmark utilization workflows
 	viewerDomainGraphAssertions    http.HandlerFunc                            // viewer domain graph assertion API
 	viewerMovieDomainGraphSync     http.HandlerFunc                            // viewer movie domain graph sync API
 	viewerHobbyDomainGraphSync     http.HandlerFunc                            // viewer hobby domain graph sync API
@@ -420,6 +423,19 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.glossaryRecent = glossaryRuntime.RecentHandler
 	deps.toolRegistry = runtimeToolRegistry
 	deps.backlogStore = viewer.NewBacklogStore(filepath.Join(cfg.WorkspaceDir, "logs", "backlog.jsonl"))
+	workflowResults := xbookmarkworkflowpersistence.NewJSONLStore(filepath.Join(cfg.WorkspaceDir, "logs", "x_bookmark_workflows.jsonl"))
+	if conversationRuntime.L1Store == nil {
+		deps.viewerXBookmarkWorkflow = viewer.HandleXBookmarkWorkflow(nil)
+	} else {
+		workflowService := xbookmarkworkflowapp.NewService(
+			conversationRuntime.L1Store,
+			workflowResults,
+			llmRuntime.Worker,
+			newConfiguredImageGateway(cfg),
+			deps.backlogStore,
+		)
+		deps.viewerXBookmarkWorkflow = viewer.HandleXBookmarkWorkflow(workflowService)
+	}
 	deps.schedulerStore = schedulerpersistence.NewJSONLStore(filepath.Join(cfg.WorkspaceDir, "logs", "scheduler"))
 	deps.schedulerStatus = viewer.HandleScheduler(deps.schedulerStore)
 	deps.historyRepairJSONL = viewer.HandleHistoryRepairJSONL(historyrepairapp.NewJSONLRepairService(

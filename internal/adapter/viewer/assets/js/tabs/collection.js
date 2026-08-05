@@ -240,6 +240,7 @@ function renderCollectionData() {
 }
 
 function refreshCollectionData() {
+  if (typeof refreshXBookmarkData === 'function') refreshXBookmarkData();
   if (collectionViewState.loading) return;
   collectionViewState.loading = true;
   const error = document.getElementById('collectionError');

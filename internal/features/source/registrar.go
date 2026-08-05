@@ -15,6 +15,7 @@ type Dependencies struct {
 // Handler implementations are supplied by their owning adapter and command packages.
 type Routes struct {
 	Registry              http.HandlerFunc
+	XBookmarkWorkflows    http.HandlerFunc
 	DomainGraphAssertions http.HandlerFunc
 	MovieDomainGraphSync  http.HandlerFunc
 	HobbyDomainGraphSync  http.HandlerFunc
@@ -24,6 +25,8 @@ type Routes struct {
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
 	registerRoute(mux, "/viewer/source-registry", routes.Registry)
+	registerRoute(mux, "/viewer/x-bookmarks/workflows", routes.XBookmarkWorkflows)
+	registerRoute(mux, "/viewer/x-bookmarks/workflows/run", routes.XBookmarkWorkflows)
 	registerRoute(mux, "/viewer/domain-graph/assertions", routes.DomainGraphAssertions)
 	registerRoute(mux, "/viewer/movie-catalog/domain-graph-sync", routes.MovieDomainGraphSync)
 	registerRoute(mux, "/viewer/hobby-graph/domain-graph-sync", routes.HobbyDomainGraphSync)

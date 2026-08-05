@@ -1,5 +1,7 @@
 package backlog
 
+const StatusProposalReview = "proposal_review"
+
 type Item struct {
 	ItemID         string   `json:"item_id"`
 	Kind           string   `json:"kind"`
