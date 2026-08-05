@@ -480,10 +480,32 @@ func (c EconomicObjectiveConfig) DraftOnlyEnabled() bool {
 
 // HeartbeatConfig はハートビート（定期タスク）の設定
 type HeartbeatConfig struct {
-	Enabled  bool   `yaml:"enabled"`  // ハートビートの有効化（デフォルト: false）
-	Interval int    `yaml:"interval"` // チェック間隔（分）、最小5分（デフォルト: 30）
-	Channel  string `yaml:"channel"`  // 通知先チャネル（line, telegram, discord, slack）
-	ChatID   string `yaml:"chat_id"`  // 通知先ID（LINE user ID / Telegram chat ID / Discord channel ID / Slack channel ID）
+	Enabled    bool                     `yaml:"enabled"`  // ハートビートの有効化（デフォルト: false）
+	Interval   int                      `yaml:"interval"` // チェック間隔（分）、最小5分（デフォルト: 30）
+	Channel    string                   `yaml:"channel"`  // 通知先チャネル（line, telegram, discord, slack）
+	ChatID     string                   `yaml:"chat_id"`  // 通知先ID（LINE user ID / Telegram chat ID / Discord channel ID / Slack channel ID）
+	XBookmarks XBookmarkHeartbeatConfig `yaml:"x_bookmarks"`
+}
+
+type XBookmarkHeartbeatConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	IntervalMinutes int    `yaml:"interval_minutes"`
+	TimeoutMinutes  int    `yaml:"timeout_minutes"`
+	RunOnStart      *bool  `yaml:"run_on_start"`
+	Command         string `yaml:"command"`
+	OutputRoot      string `yaml:"output_root"`
+	MaxScrolls      *int   `yaml:"max_scrolls"`
+}
+
+func (c XBookmarkHeartbeatConfig) RunOnStartEnabled() bool {
+	return c.RunOnStart == nil || *c.RunOnStart
+}
+
+func (c XBookmarkHeartbeatConfig) MaxScrollsValue() int {
+	if c.MaxScrolls == nil {
+		return 100
+	}
+	return *c.MaxScrolls
 }
 
 type GlossaryConfig struct {

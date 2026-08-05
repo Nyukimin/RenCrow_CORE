@@ -203,6 +203,22 @@ func (c *Config) setDefaults() {
 	if c.Heartbeat.Interval == 0 {
 		c.Heartbeat.Interval = 30
 	}
+	if c.Heartbeat.XBookmarks.IntervalMinutes == 0 {
+		c.Heartbeat.XBookmarks.IntervalMinutes = 360
+	}
+	if c.Heartbeat.XBookmarks.TimeoutMinutes == 0 {
+		c.Heartbeat.XBookmarks.TimeoutMinutes = 90
+	}
+	if c.Heartbeat.XBookmarks.RunOnStart == nil {
+		c.Heartbeat.XBookmarks.RunOnStart = boolConfigPtr(true)
+	}
+	if strings.TrimSpace(c.Heartbeat.XBookmarks.Command) == "" {
+		c.Heartbeat.XBookmarks.Command = "rencrow-x-bookmarks"
+	}
+	if c.Heartbeat.XBookmarks.MaxScrolls == nil {
+		maxScrolls := 100
+		c.Heartbeat.XBookmarks.MaxScrolls = &maxScrolls
+	}
 
 	if c.Glossary.DBPath == "" {
 		c.Glossary.DBPath = "./workspace/glossary.db"

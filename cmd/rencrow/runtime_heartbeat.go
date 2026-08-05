@@ -10,6 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/heartbeat"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	memorypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/memory"
 )
 
@@ -96,6 +97,7 @@ func buildHeartbeatRuntime(
 	deps *Dependencies,
 	shiroAgent *agent.ShiroAgent,
 	memStore *memorypersistence.FileStore,
+	l1Store *l1sqlite.L1SQLiteStore,
 ) {
 	if !cfg.Heartbeat.Enabled {
 		return
@@ -108,6 +110,24 @@ func buildHeartbeatRuntime(
 	)
 	heartbeatSvc.WithMemoryStore(memStore)
 	heartbeatSvc.WithEventListener(deps.eventRelay)
+	if xConfig := cfg.Heartbeat.XBookmarks; xConfig.Enabled {
+		if l1Store == nil {
+			log.Printf("[Heartbeat] X Bookmark collection unavailable: Conversation L1 staging store is not configured")
+		} else {
+			heartbeatSvc.WithXBookmarkCollection(
+				newXBookmarkHeartbeatRunner(
+					newXBookmarkCLIProcess(xConfig.Command, xConfig.MaxScrollsValue()),
+					l1Store,
+					xConfig.OutputRoot,
+				),
+				time.Duration(xConfig.IntervalMinutes)*time.Minute,
+				time.Duration(xConfig.TimeoutMinutes)*time.Minute,
+				xConfig.RunOnStartEnabled(),
+			)
+			log.Printf("[Heartbeat] X Bookmark collection enabled (interval: %dm, timeout: %dm, run_on_start: %t)",
+				xConfig.IntervalMinutes, xConfig.TimeoutMinutes, xConfig.RunOnStartEnabled())
+		}
+	}
 	if deps.idleChatOrch != nil {
 		heartbeatSvc.WithIdleChatSequenceMonitor(idleChatSequenceMonitorAdapter{orch: deps.idleChatOrch})
 	}

@@ -325,6 +325,14 @@ heartbeat:
   interval: 30            # チェック間隔（分）、最小5分
   channel: "line"         # 通知先: line / telegram / discord / slack
   chat_id: "${RENCROW_HEARTBEAT_CHAT_ID}"  # 各チャネルの送信先ID
+  x_bookmarks:
+    enabled: false        # optional Node/Playwright sidecar。true時だけ定期収集
+    interval_minutes: 360 # 60〜10080分（既定6時間）
+    timeout_minutes: 90   # 1 run全体の上限
+    run_on_start: true    # CORE起動直後に1回収集
+    command: "rencrow-x-bookmarks"
+    output_root: "/home/<user>/.local/share/rencrow/x_bookmarks/heartbeat_exports"
+    max_scrolls: 100
 
 # TTS実行能力
 # 音声サーバメモ:

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -211,6 +212,27 @@ func (c *Config) Validate() error {
 	}
 	if c.EconomicObjective.HeartbeatDiscoveryEnabled && !c.EconomicObjective.DraftOnlyEnabled() {
 		return fmt.Errorf("economic_objective.heartbeat_discovery_enabled requires draft_only=true")
+	}
+	if c.Heartbeat.XBookmarks.Enabled {
+		x := c.Heartbeat.XBookmarks
+		if !c.Heartbeat.Enabled {
+			return fmt.Errorf("heartbeat.x_bookmarks.enabled requires heartbeat.enabled=true")
+		}
+		if x.IntervalMinutes < 60 || x.IntervalMinutes > 10080 {
+			return fmt.Errorf("heartbeat.x_bookmarks.interval_minutes must be between 60 and 10080")
+		}
+		if x.TimeoutMinutes < 1 || x.TimeoutMinutes > 180 {
+			return fmt.Errorf("heartbeat.x_bookmarks.timeout_minutes must be between 1 and 180")
+		}
+		if strings.TrimSpace(x.Command) == "" {
+			return fmt.Errorf("heartbeat.x_bookmarks.command is required when enabled=true")
+		}
+		if strings.TrimSpace(x.OutputRoot) == "" || !filepath.IsAbs(x.OutputRoot) {
+			return fmt.Errorf("heartbeat.x_bookmarks.output_root must be an absolute path")
+		}
+		if x.MaxScrollsValue() < 0 || x.MaxScrollsValue() > 1000 {
+			return fmt.Errorf("heartbeat.x_bookmarks.max_scrolls must be between 0 and 1000")
+		}
 	}
 
 	// セッション設定検証

@@ -899,7 +899,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		bridges,
 		verificationRuntime,
 	)
-	buildHeartbeatRuntime(cfg, deps, agents.Shiro, sessionRuntime.MemoryStore)
+	buildHeartbeatRuntime(cfg, deps, agents.Shiro, sessionRuntime.MemoryStore, conversationRuntime.L1Store)
 	buildPronunciationCheckRuntime(cfg, deps)
 	deps.extensionHealth = buildExtensionHealthHandler(cfg, deps)
 

@@ -71,24 +71,32 @@ type IdleChatSequenceCheck struct {
 
 // HeartbeatService はHEARTBEAT.mdを定期的に読み込み、エージェントに処理させるサービス
 type HeartbeatService struct {
-	workerAgent       WorkerAgent
-	sender            NotificationSender
-	workspaceDir      string
-	contextBuilder    *ctxbuilder.Builder
-	listener          orchestrator.EventListener
-	workstreamStore   WorkstreamHeartbeatStore
-	backlogStore      BacklogStore
-	revenueStore      RevenueDailyRoutineStore
-	revenueRoutine    *revenueapp.DailyRoutineService
-	economicDiscovery *EconomicObjectiveDiscoveryService
-	skills            *skillbootstrap.BootstrapService
-	idleChatMonitor   IdleChatSequenceMonitor
-	interval          time.Duration
-	idleChatInterval  time.Duration
-	stopCh            chan struct{}
-	done              chan struct{}
-	mu                sync.Mutex
-	running           bool
+	workerAgent         WorkerAgent
+	sender              NotificationSender
+	workspaceDir        string
+	contextBuilder      *ctxbuilder.Builder
+	listener            orchestrator.EventListener
+	workstreamStore     WorkstreamHeartbeatStore
+	backlogStore        BacklogStore
+	revenueStore        RevenueDailyRoutineStore
+	revenueRoutine      *revenueapp.DailyRoutineService
+	economicDiscovery   *EconomicObjectiveDiscoveryService
+	skills              *skillbootstrap.BootstrapService
+	idleChatMonitor     IdleChatSequenceMonitor
+	interval            time.Duration
+	idleChatInterval    time.Duration
+	xBookmarkCollector  XBookmarkCollector
+	xBookmarkInterval   time.Duration
+	xBookmarkTimeout    time.Duration
+	xBookmarkRunOnStart bool
+	xBookmarkMu         sync.Mutex
+	xBookmarkRunning    bool
+	xBookmarkCancel     context.CancelFunc
+	xBookmarkWG         sync.WaitGroup
+	stopCh              chan struct{}
+	done                chan struct{}
+	mu                  sync.Mutex
+	running             bool
 }
 
 // NewHeartbeatService は新しいHeartbeatServiceを作成
@@ -209,12 +217,25 @@ func (s *HeartbeatService) loop() {
 	defer ticker.Stop()
 	idleChatTicker := time.NewTicker(s.idleChatInterval)
 	defer idleChatTicker.Stop()
+	var xBookmarkTicker *time.Ticker
+	var xBookmarkTick <-chan time.Time
+	if s.xBookmarkCollector != nil {
+		xBookmarkTicker = time.NewTicker(s.xBookmarkInterval)
+		xBookmarkTick = xBookmarkTicker.C
+		defer xBookmarkTicker.Stop()
+		if s.xBookmarkRunOnStart {
+			s.startXBookmarkCollection()
+		}
+	}
 	s.runScheduledBacklogIntake(context.Background(), time.Now().UTC())
 
 	for {
 		select {
 		case <-s.stopCh:
+			s.stopXBookmarkCollection()
 			return
+		case <-xBookmarkTick:
+			s.startXBookmarkCollection()
 		case <-idleChatTicker.C:
 			s.runIdleChatSequenceCheck(context.Background(), time.Now().UTC())
 		case <-ticker.C:
