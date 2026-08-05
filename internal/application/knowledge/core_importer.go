@@ -21,6 +21,14 @@ type ImportOptions struct {
 
 type ImportResult struct {
 	Imported int
+	Items    []ImportedItem
+}
+
+type ImportedItem struct {
+	EventID   string
+	StagingID string
+	Domain    string
+	Status    string
 }
 
 type coreRecord struct {
@@ -66,10 +74,20 @@ func ImportKnowledgeCoreJSONL(ctx context.Context, store StagingStore, r io.Read
 		if err != nil {
 			return result, fmt.Errorf("invalid knowledge core record at line %d: %w", lineNo, err)
 		}
-		if _, err := store.SaveStagingItem(ctx, item); err != nil {
+		saved, err := store.SaveStagingItem(ctx, item)
+		if err != nil {
 			return result, fmt.Errorf("failed to save knowledge core staging at line %d: %w", lineNo, err)
 		}
+		if saved == nil {
+			return result, fmt.Errorf("failed to save knowledge core staging at line %d: store returned no item", lineNo)
+		}
 		result.Imported++
+		result.Items = append(result.Items, ImportedItem{
+			EventID:   saved.EventID,
+			StagingID: saved.ID,
+			Domain:    strings.TrimPrefix(saved.Namespace, "kb:"),
+			Status:    saved.ValidationStatus,
+		})
 	}
 	if err := scanner.Err(); err != nil {
 		return result, fmt.Errorf("failed to read knowledge core jsonl: %w", err)
@@ -82,7 +100,7 @@ func stagingItemFromCoreRecord(rec coreRecord, full map[string]interface{}, now 
 	rec.ID = strings.TrimSpace(rec.ID)
 	rec.Title = strings.TrimSpace(rec.Title)
 	if rec.Domain == "" {
-		return l1sqlite.L1StagingItem{}, fmt.Errorf("domain is required")
+		rec.Domain = "general"
 	}
 	if rec.ID == "" {
 		if rec.Title == "" {

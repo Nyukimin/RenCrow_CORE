@@ -45,3 +45,21 @@ func TestImportKnowledgeCoreJSONLToStaging(t *testing.T) {
 		t.Fatalf("unexpected first keywords/license: %+v", first)
 	}
 }
+
+func TestImportKnowledgeCoreJSONLDefaultsMissingDomainToGeneral(t *testing.T) {
+	store := &fakeKnowledgeStagingStore{}
+	input := strings.NewReader(`{"id":"bookmark:test","title":"Test Bookmark","summary":"ブックマークのメモ","source_id":"vault:windows"}`)
+
+	result, err := ImportKnowledgeCoreJSONL(context.Background(), store, input, ImportOptions{
+		Now: func() time.Time { return time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("ImportKnowledgeCoreJSONL failed: %v", err)
+	}
+	if result.Imported != 1 || len(result.Items) != 1 || len(store.items) != 1 {
+		t.Fatalf("unexpected import result=%+v items=%+v", result, store.items)
+	}
+	if item := store.items[0]; item.Namespace != "kb:general" || item.Meta["domain"] != "general" || item.ValidationStatus != l1sqlite.L1StagingStatusPending {
+		t.Fatalf("missing domain must remain pending in general: %+v", item)
+	}
+}
