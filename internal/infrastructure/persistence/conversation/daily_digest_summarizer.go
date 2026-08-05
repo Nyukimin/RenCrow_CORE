@@ -25,7 +25,10 @@ func (s *LLMDailyDigestSummarizer) SummarizeDailyDigest(ctx context.Context, dig
 	if len(news) == 0 {
 		return "", fmt.Errorf("daily digest requires news items")
 	}
-	resp, err := s.provider.Generate(ctx, llm.GenerateRequest{
+	requestCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+		Initiator: "shiro", Caller: "news_pack.daily_digest", Purpose: "summarize_daily_digest",
+	})
+	resp, err := s.provider.Generate(requestCtx, llm.GenerateRequest{
 		Messages:    []llm.Message{{Role: "user", Content: buildDailyDigestPrompt(digestDate, category, slot, news)}},
 		MaxTokens:   256,
 		Temperature: 0.2,

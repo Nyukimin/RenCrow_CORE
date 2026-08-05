@@ -16,6 +16,7 @@ import (
 	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	ctxbuilder "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
@@ -335,7 +336,11 @@ func (s *HeartbeatService) tick(ctx context.Context) error {
 	jobID := task.NewJobID()
 	t := newHeartbeatWorkerTask(jobID, message, "heartbeat", "heartbeat")
 
-	response, err := s.workerAgent.Execute(ctx, t)
+	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+		RequestID: jobID.String(), TraceID: jobID.String(), JobID: jobID.String(),
+		Initiator: "shiro", Caller: "heartbeat.tasks", Purpose: "process_heartbeat_file",
+	})
+	response, err := s.workerAgent.Execute(workerCtx, t)
 	if err != nil {
 		s.logHeartbeat("ERROR", fmt.Sprintf("worker failed: %v", err))
 		s.emitEvent("heartbeat.error", fmt.Sprintf("worker failed: %v", err))
@@ -710,7 +715,11 @@ func (s *HeartbeatService) RunBacklogRunner(ctx context.Context, now time.Time) 
 	jobID := task.NewJobID()
 	t := newHeartbeatWorkerTask(jobID, backlogRunnerMessage(item), "backlog-runner", "heartbeat")
 	s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s", item.ItemID, jobID.String()))
-	if _, err := s.workerAgent.Execute(ctx, t); err != nil {
+	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+		RequestID: jobID.String(), TraceID: jobID.String(), JobID: jobID.String(),
+		Initiator: "shiro", Caller: "heartbeat.backlog", Purpose: "process_backlog_item",
+	})
+	if _, err := s.workerAgent.Execute(workerCtx, t); err != nil {
 		item.Status = "blocked"
 		item.TestResult = fmt.Sprintf("Backlog Runner failed to start job_id=%s: %v", jobID.String(), err)
 		item.Implementation = appendBacklogImplementation(item.Implementation, item.TestResult)
@@ -789,7 +798,11 @@ func (s *HeartbeatService) runWorkstreamHeartbeat(ctx context.Context, schedule 
 	)
 	jobID := task.NewJobID()
 	t := newHeartbeatWorkerTask(jobID, message, "workstream-heartbeat", "heartbeat")
-	response, err := s.workerAgent.Execute(ctx, t)
+	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+		RequestID: jobID.String(), TraceID: jobID.String(), JobID: jobID.String(),
+		Initiator: "shiro", Caller: "heartbeat.workstream", Purpose: "draft_workstream_report",
+	})
+	response, err := s.workerAgent.Execute(workerCtx, t)
 	if err != nil {
 		return fmt.Errorf("workstream heartbeat %s worker failed: %w", schedule.HeartbeatID, err)
 	}

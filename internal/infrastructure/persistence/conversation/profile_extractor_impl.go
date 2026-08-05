@@ -93,7 +93,10 @@ JSON形式で出力してください。
 		Temperature: e.temperature,
 	}
 
-	resp, err := e.provider.Generate(ctx, req)
+	requestCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+		SessionID: thread.SessionID, Initiator: "shiro", Caller: "memory.profile_promotion", Purpose: "extract_profile_candidates",
+	})
+	resp, err := e.provider.Generate(requestCtx, req)
 	if err != nil {
 		log.Printf("[ProfileExtractor] LLM call failed: %v", err)
 		return nil, fmt.Errorf("profile extractor LLM call failed: %w", err)

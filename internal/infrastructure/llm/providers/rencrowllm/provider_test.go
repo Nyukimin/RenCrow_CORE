@@ -37,7 +37,16 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 
 	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second).
 		WithRenCrowExecution("shiro", "worker", "worker")
-	_, err := provider.Generate(context.Background(), llm.GenerateRequest{
+	ctx := llm.WithExecutionObservation(context.Background(), llm.ExecutionObservation{
+		RequestID: "request-1",
+		TraceID:   "trace-1",
+		JobID:     "job-1",
+		SessionID: "session-1",
+		Initiator: "shiro",
+		Caller:    "orchestrator.ops",
+		Purpose:   "execute_task",
+	})
+	_, err := provider.Generate(ctx, llm.GenerateRequest{
 		Messages: []llm.Message{{Role: "user", Content: "run"}},
 	})
 	if err != nil {
@@ -48,6 +57,49 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 		"agent_id":        "shiro",
 		"execution_role":  "worker",
 		"execution_alias": "worker",
+		"request_id":      "request-1",
+		"trace_id":        "trace-1",
+		"job_id":          "job-1",
+		"session_id":      "session-1",
+		"initiator":       "shiro",
+		"caller":          "orchestrator.ops",
+		"purpose":         "execute_task",
+	} {
+		if metadata[key] != want {
+			t.Errorf("rencrow.%s=%#v want %q", key, metadata[key], want)
+		}
+	}
+}
+
+func TestGatewayProviderChatSendsExecutionObservation(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second)
+	ctx := llm.WithExecutionObservation(context.Background(), llm.ExecutionObservation{
+		RequestID: "request-chat",
+		Initiator: "shiro",
+		Caller:    "heartbeat.backlog",
+		Purpose:   "process_backlog_item",
+	})
+	if _, err := provider.Chat(ctx, llm.ChatRequest{
+		Messages: []llm.ChatMessage{{Role: "user", Content: "run"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	metadata, _ := payload["rencrow"].(map[string]any)
+	for key, want := range map[string]string{
+		"request_id": "request-chat",
+		"initiator":  "shiro",
+		"caller":     "heartbeat.backlog",
+		"purpose":    "process_backlog_item",
 	} {
 		if metadata[key] != want {
 			t.Errorf("rencrow.%s=%#v want %q", key, metadata[key], want)
@@ -77,10 +129,17 @@ func TestGatewayProviderAddsCanonicalMetadataForKnownAlias(t *testing.T) {
 		"agent_id":        "shiro",
 		"execution_role":  "worker",
 		"execution_alias": "worker",
+		"initiator":       "shiro",
+		"caller":          "core.unattributed",
+		"purpose":         "unattributed",
 	} {
 		if metadata[key] != want {
 			t.Errorf("rencrow.%s=%#v want %q", key, metadata[key], want)
 		}
+	}
+	requestID, _ := metadata["request_id"].(string)
+	if !strings.HasPrefix(requestID, "llmreq_") {
+		t.Fatalf("rencrow.request_id=%q want generated llmreq_ id", requestID)
 	}
 }
 

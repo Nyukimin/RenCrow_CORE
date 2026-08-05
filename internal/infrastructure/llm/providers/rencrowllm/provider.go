@@ -109,7 +109,7 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	p.addThinkingBridgeFields(gatewayReq, streaming)
 	p.addProviderOptions(gatewayReq, req.ProviderOptions)
 	p.addModelContextOption(gatewayReq)
-	p.addRenCrowExecutionMetadata(gatewayReq)
+	p.addRenCrowExecutionMetadata(ctx, gatewayReq)
 	if err := addResponseFormat(gatewayReq, req.ResponseFormat); err != nil {
 		return llm.GenerateResponse{}, err
 	}
@@ -227,7 +227,7 @@ func (p *GatewayProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Ch
 	}
 	p.addThinkingBridgeFields(gatewayReq, false)
 	p.addModelContextOption(gatewayReq)
-	p.addRenCrowExecutionMetadata(gatewayReq)
+	p.addRenCrowExecutionMetadata(ctx, gatewayReq)
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]interface{}, 0, len(req.Tools))
 		for _, td := range req.Tools {
@@ -274,13 +274,33 @@ func (p *GatewayProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Ch
 	return p.parseChatResponse(resp.Body)
 }
 
-func (p *GatewayProvider) addRenCrowExecutionMetadata(payload map[string]interface{}) {
+func (p *GatewayProvider) addRenCrowExecutionMetadata(ctx context.Context, payload map[string]interface{}) {
 	if p.agentID == "" || p.executionRole == "" || p.executionAlias == "" {
 		return
 	}
-	payload["rencrow"] = map[string]any{
+	metadata := map[string]any{
 		"agent_id":        p.agentID,
 		"execution_role":  p.executionRole,
 		"execution_alias": p.executionAlias,
+	}
+	observationCtx := llm.WithExecutionObservationDefaults(ctx, llm.ExecutionObservation{
+		Initiator: p.agentID,
+		Caller:    "core.unattributed",
+		Purpose:   "unattributed",
+	})
+	observation, _ := llm.ExecutionObservationFromContext(observationCtx)
+	addNonEmptyMetadata(metadata, "request_id", observation.RequestID)
+	addNonEmptyMetadata(metadata, "trace_id", observation.TraceID)
+	addNonEmptyMetadata(metadata, "job_id", observation.JobID)
+	addNonEmptyMetadata(metadata, "session_id", observation.SessionID)
+	addNonEmptyMetadata(metadata, "initiator", observation.Initiator)
+	addNonEmptyMetadata(metadata, "caller", observation.Caller)
+	addNonEmptyMetadata(metadata, "purpose", observation.Purpose)
+	payload["rencrow"] = metadata
+}
+
+func addNonEmptyMetadata(metadata map[string]any, key, value string) {
+	if value = strings.TrimSpace(value); value != "" {
+		metadata[key] = value
 	}
 }

@@ -29,7 +29,10 @@ func (s *LLMSummarizer) Summarize(ctx context.Context, thread *domconv.Thread) (
 	}
 
 	prompt := buildSummarizePrompt(thread)
-	resp, err := s.provider.Generate(ctx, llm.GenerateRequest{
+	requestCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+		SessionID: thread.SessionID, Initiator: "shiro", Caller: "conversation.thread", Purpose: "summarize",
+	})
+	resp, err := s.provider.Generate(requestCtx, llm.GenerateRequest{
 		Messages:    []llm.Message{{Role: "user", Content: prompt}},
 		MaxTokens:   256,
 		Temperature: 0.3,
@@ -47,7 +50,10 @@ func (s *LLMSummarizer) ExtractKeywords(ctx context.Context, thread *domconv.Thr
 	}
 
 	prompt := buildKeywordsPrompt(thread)
-	resp, err := s.provider.Generate(ctx, llm.GenerateRequest{
+	requestCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+		SessionID: thread.SessionID, Initiator: "shiro", Caller: "conversation.thread", Purpose: "extract_keywords",
+	})
+	resp, err := s.provider.Generate(requestCtx, llm.GenerateRequest{
 		Messages:    []llm.Message{{Role: "user", Content: prompt}},
 		MaxTokens:   64,
 		Temperature: 0.1,

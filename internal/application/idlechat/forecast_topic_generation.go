@@ -222,7 +222,10 @@ func (o *IdleChatOrchestrator) extractForecastKeyword(domain ForecastDomain, hea
 func (o *IdleChatOrchestrator) generateForecastLLM(phase, domainName string, req llm.GenerateRequest) (llm.GenerateResponse, string, error) {
 	provider, providerLabel := o.forecastTopicLLMInfo()
 	if provider != nil {
-		resp, err := provider.Generate(o.idleRunContext(), req)
+		requestCtx := llm.WithExecutionObservation(o.idleRunContext(), llm.ExecutionObservation{
+			Initiator: "shiro", Caller: "idlechat.forecast_topic", Purpose: phase,
+		})
+		resp, err := provider.Generate(requestCtx, req)
 		if err == nil {
 			return resp, providerLabel, nil
 		}

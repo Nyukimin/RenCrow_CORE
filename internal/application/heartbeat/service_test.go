@@ -11,6 +11,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
@@ -27,6 +28,7 @@ type mockWorkerAgent struct {
 	executed   bool
 	lastMsg    string
 	lastTask   task.Task
+	lastCtx    context.Context
 }
 
 func (m *mockWorkerAgent) Chat(ctx context.Context, t task.Task) (string, error) {
@@ -37,6 +39,7 @@ func (m *mockWorkerAgent) Chat(ctx context.Context, t task.Task) (string, error)
 
 func (m *mockWorkerAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	m.executed = true
+	m.lastCtx = ctx
 	m.recordCall(t)
 	return m.response, m.err
 }
@@ -517,6 +520,10 @@ func TestRunBacklogRunnerStartsActiveItemOnce(t *testing.T) {
 	}
 	if !agent.called || !strings.Contains(agent.lastMsg, "/code2 Backlog item active") || !strings.Contains(agent.lastMsg, "status=ok") {
 		t.Fatalf("runner did not send code2 backlog prompt: %q", agent.lastMsg)
+	}
+	observation, ok := llm.ExecutionObservationFromContext(agent.lastCtx)
+	if !ok || observation.Caller != "heartbeat.backlog" || observation.Purpose != "process_backlog_item" || observation.JobID == "" || observation.RequestID != observation.JobID {
+		t.Fatalf("unexpected backlog LLM observation: %+v ok=%v", observation, ok)
 	}
 	if len(backlogStore.saved) != 1 || !strings.Contains(backlogStore.saved[0].Implementation, backlogRunnerStartedMarker) {
 		t.Fatalf("runner start not persisted: %+v", backlogStore.saved)
