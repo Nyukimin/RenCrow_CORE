@@ -56,6 +56,7 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 	databasePaths := viewerDatabasePaths(cfg)
 	viewerfeature.RegisterBaseRoutes(mux, viewerfeature.Dependencies{Base: viewerfeature.BaseRoutes{
 		Page:                         viewer.HandlePage,
+		XBookmarksPage:               viewer.HandleXBookmarksPage,
 		Asset:                        viewer.HandleAsset,
 		RuntimeConfig:                viewer.HandleRuntimeConfig(debugSystemOpts),
 		Logo:                         viewer.HandleLogo,

@@ -119,6 +119,7 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 	}{
 		{name: "channel webhook", method: http.MethodGet, path: "/webhook/line", want: http.StatusNoContent},
 		{name: "viewer page", method: http.MethodGet, path: "/viewer", want: http.StatusOK},
+		{name: "X Bookmark page", method: http.MethodGet, path: "/viewer/x-bookmarks", want: http.StatusOK},
 		{name: "viewer runtime config", method: http.MethodGet, path: "/viewer/runtime-config", want: http.StatusOK},
 		{name: "viewer backlog", method: http.MethodGet, path: "/viewer/backlog", want: http.StatusOK},
 		{name: "viewer scheduler", method: http.MethodGet, path: "/viewer/scheduler", want: http.StatusResetContent},

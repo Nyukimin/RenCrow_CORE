@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>X Bookmark | RenCrow</title>
+  <link rel="stylesheet" href="/viewer/assets/css/x-bookmarks.css?v=20260805-dedicated-view">
+</head>
+<body data-x-bookmark-autoload="true">
+  <header class="x-bookmark-topbar">
+    <a class="x-bookmark-back" href="/viewer">RenCrow Viewerへ戻る</a>
+    <div class="x-bookmark-topbar-title">X Bookmark</div>
+    <span id="collectionXBookmarkStatus" class="x-bookmark-status">読込待ち</span>
+  </header>
+  <main class="x-bookmark-layout">
+    <aside class="x-bookmark-sidebar">
+      <div class="x-bookmark-character" aria-label="Shiro 情報整理担当">
+        <img src="/viewer/assets/images/shiro/parts/expressions/shiro_normal.png" alt="Shiro">
+        <div>
+          <span>Shiro / 情報整理</span>
+          <strong>保存した情報を、使える形で探す。</strong>
+        </div>
+      </div>
+      <div class="x-bookmark-summary" aria-label="Bookmark概要">
+        <div><span>Bookmark総数</span><strong id="collectionXBookmarkTotal">0</strong><small>移行・収集済み</small></div>
+        <div><span>要確認</span><strong id="collectionXBookmarkReviewCount">0</strong><small>確認候補</small></div>
+        <div><span>現在の表示</span><strong id="collectionXBookmarkVisibleCount">0</strong><small>このページ</small></div>
+      </div>
+      <p class="x-bookmark-readonly">読み取り専用です。閲覧や検索で分類・検証・Knowledge昇格は行いません。</p>
+    </aside>
+    <section class="x-bookmark-workbench" aria-labelledby="xBookmarkHeading">
+      <div class="x-bookmark-heading">
+        <div>
+          <span>Saved knowledge source</span>
+          <h1 id="xBookmarkHeading">保存したBookmarkを使う</h1>
+          <p>大分類・中分類・確認状態・本文から、必要な資料を絞り込めます。</p>
+        </div>
+      </div>
+      <div class="collection-x-bookmark-filters x-bookmark-filters" aria-label="Bookmark絞り込み">
+        <input id="collectionXBookmarkSearch" type="search" maxlength="200" placeholder="本文・見出し・URLを検索" aria-label="Bookmarkを検索">
+        <select id="collectionXBookmarkMajorFilter" aria-label="Bookmark大分類"><option value="">すべての大分類</option></select>
+        <select id="collectionXBookmarkMinorFilter" aria-label="Bookmark中分類"><option value="">すべての中分類</option></select>
+        <select id="collectionXBookmarkReviewFilter" aria-label="Bookmark確認状態">
+          <option value="">すべての確認状態</option>
+          <option value="needs_review">要確認</option>
+          <option value="classified">分類済み</option>
+        </select>
+      </div>
+      <div id="collectionXBookmarkError" class="collection-error" hidden></div>
+      <div id="collectionXBookmarkItems" class="collection-x-bookmark-items" aria-live="polite"></div>
+      <nav class="collection-x-bookmark-pagination" aria-label="Bookmarkページ送り">
+        <button id="collectionXBookmarkPrev" type="button">前へ</button>
+        <span id="collectionXBookmarkPage">0 / 0</span>
+        <button id="collectionXBookmarkNext" type="button">次へ</button>
+      </nav>
+    </section>
+  </main>
+  <script src="/viewer/assets/js/tabs/collection-x-bookmarks.js?v=20260805-dedicated-view" defer></script>
+</body>
+</html>

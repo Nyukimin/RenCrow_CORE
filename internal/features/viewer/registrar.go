@@ -16,6 +16,7 @@ type Dependencies struct {
 // route registration and dependency handoff.
 type BaseRoutes struct {
 	Page                         http.HandlerFunc
+	XBookmarksPage               http.HandlerFunc
 	Asset                        http.HandlerFunc
 	RuntimeConfig                http.HandlerFunc
 	Logo                         http.HandlerFunc
@@ -68,6 +69,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 func RegisterBaseRoutes(mux *http.ServeMux, deps Dependencies) {
 	base := deps.Base
 	registerRoute(mux, "/viewer", base.Page)
+	registerRoute(mux, "/viewer/x-bookmarks", base.XBookmarksPage)
 	registerRoute(mux, "/viewer/assets/", base.Asset)
 	registerRoute(mux, "/viewer/runtime-config", base.RuntimeConfig)
 	registerRoute(mux, "/viewer/logo.png", base.Logo)

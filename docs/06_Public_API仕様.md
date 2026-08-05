@@ -422,6 +422,9 @@ Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCORE�
 
 ## X Bookmark Viewer API
 
+`GET /viewer/x-bookmarks`はX Bookmark専用の読み取り専用HTML画面です。Debug Viewerの
+左端ナビゲーションから開き、下記API以外の収集・分類・昇格処理を開始しません。
+
 `GET /viewer/source-registry?action=x-bookmarks`は、COREの
 `l1_staging_item.meta.collection=x_bookmark`だけをViewer用に投影する読み取り専用APIです。
 収集、再分類、validation、promotionは行いません。
@@ -431,7 +434,10 @@ queryは`major`、`minor`、`review=needs_review|classified`、`q`、`limit`、`
 `items`、`total`、`limit`、`offset`と、全X Bookmarkを母数にした`summary.total`、
 `summary.needs_review`、`summary.major_counts`、`summary.minor_counts`を返します。各itemは`id`、
 `title`、`source_url`、`raw_text`、`validation_status`、`needs_review`、分類method、
-`use_case_tags`、投稿者、画像・参照リンク件数、更新時刻だけを公開します。credential、物理LLM route、
+`use_case_tags`、投稿者、画像・参照リンク件数、更新時刻に加え、`references`を公開します。
+各referenceは`kind`、`url`、`resolved_url`、`status_url`、`capture_status`、`display_text`、
+`preview_text`、`page_title`、`page_description`、`body_text`、`body_char_count`、`body_truncated`、
+`fetched_at`、`fetch_error`、X投稿参照用の`text`とauthor表示名・usernameを持ちます。credential、物理LLM route、
 分類に不要な内部metaは返しません。
 
 ## Interaction client共通意味論

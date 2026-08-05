@@ -52,6 +52,7 @@
       <option value="movie-db">映画・俳優</option>
       <option value="news-pack">News Pack</option>
 	  <option value="collection">情報収集</option>
+	  <option value="x-bookmarks">X Bookmark</option>
       <option value="investment">Investment</option>
       <option value="idlechat">IdleChat</option>
       <option value="ops">Ops</option>
@@ -77,6 +78,7 @@
     <button class="tab-btn" data-tab="movie-db">映画・俳優</button>
     <button class="tab-btn" data-tab="news-pack">News Pack</button>
 	<button class="tab-btn" data-tab="collection">情報収集</button>
+	<a class="tab-btn tab-link" href="/viewer/x-bookmarks">X Bookmark</a>
     <button class="tab-btn" data-tab="investment">Investment</button>
     <button class="tab-btn" data-tab="idlechat">IdleChat</button>
     <button class="tab-btn" data-tab="ops">Ops</button>
@@ -1267,38 +1269,6 @@
           </div>
           <div id="collectionItems" class="collection-items"></div>
         </section>
-		<section class="collection-x-bookmarks" aria-labelledby="collectionXBookmarkHeading">
-		  <div class="collection-section-head collection-x-bookmark-head">
-			<div>
-			  <div class="desk-kicker">X Bookmark / pending staging</div>
-			  <h3 id="collectionXBookmarkHeading">保存したBookmarkを使う</h3>
-			</div>
-			<span id="collectionXBookmarkStatus" class="desk-pill">読込待ち</span>
-		  </div>
-		  <p class="collection-ledger-note">分類済みの原資料を読み取り専用で表示します。ここでの閲覧や絞り込みは検証・Knowledge昇格を行いません。</p>
-		  <div class="collection-x-bookmark-summary">
-			<div class="daily-desk-card"><span>Bookmark総数</span><strong id="collectionXBookmarkTotal">0</strong><small>移行・収集済み原資料</small></div>
-			<div class="daily-desk-card"><span>要確認</span><strong id="collectionXBookmarkReviewCount">0</strong><small>LLM補完・人手確認候補</small></div>
-			<div class="daily-desk-card"><span>現在の表示</span><strong id="collectionXBookmarkVisibleCount">0</strong><small>絞り込み後のページ</small></div>
-		  </div>
-		  <div class="collection-x-bookmark-filters">
-			<select id="collectionXBookmarkMajorFilter" aria-label="Bookmark大分類"><option value="">すべての大分類</option></select>
-			<select id="collectionXBookmarkMinorFilter" aria-label="Bookmark中分類"><option value="">すべての中分類</option></select>
-			<select id="collectionXBookmarkReviewFilter" aria-label="Bookmark確認状態">
-			  <option value="">すべての確認状態</option>
-			  <option value="needs_review">要確認</option>
-			  <option value="classified">分類済み</option>
-			</select>
-			<input id="collectionXBookmarkSearch" type="search" maxlength="200" placeholder="本文・見出し・URLを検索" aria-label="Bookmarkを検索">
-		  </div>
-		  <div id="collectionXBookmarkError" class="collection-error" hidden></div>
-		  <div id="collectionXBookmarkItems" class="collection-x-bookmark-items"></div>
-		  <div class="collection-x-bookmark-pagination" aria-label="Bookmarkページ送り">
-			<button id="collectionXBookmarkPrev" class="ctl-btn" type="button">前へ</button>
-			<span id="collectionXBookmarkPage">0 / 0</span>
-			<button id="collectionXBookmarkNext" class="ctl-btn" type="button">次へ</button>
-		  </div>
-		</section>
         <details class="collection-details">
           <summary>取得先・利用ツールを確認</summary>
 		  <div class="collection-tool-row"><strong>利用ツール</strong><div id="collectionTools" class="collection-tools"></div></div>
@@ -1617,7 +1587,6 @@
 <script src="/viewer/assets/js/tabs/movie-db.js?v=20260723-assessment-grid-2" defer></script>
 <script src="/viewer/assets/js/tabs/news-pack.js?v=20260510-tabs-memory" defer></script>
 <script src="/viewer/assets/js/tabs/collection.js?v=20260721-daily-collection" defer></script>
-<script src="/viewer/assets/js/tabs/collection-x-bookmarks.js?v=20260804-x-bookmark-view" defer></script>
 <script src="/viewer/assets/js/tabs/investment.js?v=20260616-investment-desk" defer></script>
 <script src="/viewer/assets/js/tabs/roles.js?v=20260510-tabs-roles" defer></script>
 <script src="/viewer/assets/js/tabs/progress.js?v=20260510-tabs-progress" defer></script>

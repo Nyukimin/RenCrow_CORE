@@ -5,9 +5,18 @@ import (
 )
 
 func HandlePage(w http.ResponseWriter, r *http.Request) {
-	data, err := viewerFS.ReadFile("viewer.html")
+	serveEmbeddedPage(w, "viewer.html", "viewer page not found")
+}
+
+// HandleXBookmarksPage serves the dedicated read-only X Bookmark workbench.
+func HandleXBookmarksPage(w http.ResponseWriter, r *http.Request) {
+	serveEmbeddedPage(w, "x_bookmarks.html", "X Bookmark page not found")
+}
+
+func serveEmbeddedPage(w http.ResponseWriter, name, errorMessage string) {
+	data, err := viewerFS.ReadFile(name)
 	if err != nil {
-		http.Error(w, "viewer page not found", http.StatusInternalServerError)
+		http.Error(w, errorMessage, http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

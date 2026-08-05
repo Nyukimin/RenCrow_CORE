@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"io"
 	"net/http"
@@ -26,6 +27,10 @@ type SourceRegistryStagingStore interface {
 	PromoteValidatedStagingItemToNews(ctx context.Context, id string, category string) (*l1sqlite.L1NewsItem, error)
 	PromoteValidatedStagingItemToKnowledge(ctx context.Context, id string, domain string) (*l1sqlite.L1KnowledgeItem, error)
 	PromoteValidatedStagingItemToDomainGraph(ctx context.Context, id string, domain string, entityType string, entityID string, relationType string, confidence float64) (*l1sqlite.L1DomainGraphAssertion, error)
+}
+
+type SourceRegistryXBookmarkStore interface {
+	XBookmarkStagingPage(ctx context.Context, query l1sqlite.L1XBookmarkViewQuery) (*l1sqlite.L1XBookmarkViewPage, error)
 }
 
 type sourceRegistryEntryDTO struct {
@@ -67,6 +72,66 @@ type sourceRegistryStagingItemDTO struct {
 	UpdatedAt        string         `json:"updated_at,omitempty"`
 }
 
+type sourceRegistryXBookmarkTagDTO struct {
+	Major      string   `json:"major"`
+	Minor      string   `json:"minor"`
+	Confidence float64  `json:"confidence"`
+	Method     string   `json:"method,omitempty"`
+	Evidence   []string `json:"evidence,omitempty"`
+}
+
+type sourceRegistryXBookmarkReferenceDTO struct {
+	Kind            string `json:"kind"`
+	URL             string `json:"url,omitempty"`
+	ResolvedURL     string `json:"resolved_url,omitempty"`
+	StatusURL       string `json:"status_url,omitempty"`
+	CaptureStatus   string `json:"capture_status,omitempty"`
+	DisplayText     string `json:"display_text,omitempty"`
+	PreviewText     string `json:"preview_text,omitempty"`
+	PageTitle       string `json:"page_title,omitempty"`
+	PageDescription string `json:"page_description,omitempty"`
+	BodyText        string `json:"body_text,omitempty"`
+	BodyCharCount   int    `json:"body_char_count,omitempty"`
+	BodyTruncated   bool   `json:"body_truncated,omitempty"`
+	FetchedAt       string `json:"fetched_at,omitempty"`
+	FetchError      string `json:"fetch_error,omitempty"`
+	Text            string `json:"text,omitempty"`
+	AuthorName      string `json:"author_name,omitempty"`
+	AuthorUsername  string `json:"author_username,omitempty"`
+}
+
+type sourceRegistryXBookmarkItemDTO struct {
+	ID               string                                `json:"id"`
+	Title            string                                `json:"title"`
+	SourceURL        string                                `json:"source_url"`
+	RawText          string                                `json:"raw_text"`
+	ValidationStatus string                                `json:"validation_status"`
+	NeedsReview      bool                                  `json:"needs_review"`
+	Classification   string                                `json:"classification_method,omitempty"`
+	UseCaseTags      []sourceRegistryXBookmarkTagDTO       `json:"use_case_tags"`
+	AuthorName       string                                `json:"author_name,omitempty"`
+	AuthorUsername   string                                `json:"author_username,omitempty"`
+	MediaCount       int                                   `json:"media_count"`
+	ReferenceCount   int                                   `json:"reference_count"`
+	References       []sourceRegistryXBookmarkReferenceDTO `json:"references"`
+	UpdatedAt        string                                `json:"updated_at,omitempty"`
+}
+
+type sourceRegistryXBookmarkSummaryDTO struct {
+	Total       int            `json:"total"`
+	NeedsReview int            `json:"needs_review"`
+	MajorCounts map[string]int `json:"major_counts"`
+	MinorCounts map[string]int `json:"minor_counts"`
+}
+
+type sourceRegistryXBookmarkPageDTO struct {
+	Items   []sourceRegistryXBookmarkItemDTO  `json:"items"`
+	Total   int                               `json:"total"`
+	Limit   int                               `json:"limit"`
+	Offset  int                               `json:"offset"`
+	Summary sourceRegistryXBookmarkSummaryDTO `json:"summary"`
+}
+
 func HandleSourceRegistry(store SourceRegistryStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if store == nil {
@@ -75,8 +140,13 @@ func HandleSourceRegistry(store SourceRegistryStore) http.HandlerFunc {
 		}
 		switch r.Method {
 		case http.MethodGet:
-			if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("action")), "staging") {
+			action := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("action")))
+			if action == "staging" {
 				handleSourceRegistryStagingList(w, r, store)
+				return
+			}
+			if action == "x-bookmarks" {
+				handleSourceRegistryXBookmarks(w, r, store)
 				return
 			}
 			handleSourceRegistryList(w, r, store)
@@ -97,6 +167,57 @@ func HandleSourceRegistry(store SourceRegistryStore) http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	}
+}
+
+func handleSourceRegistryXBookmarks(w http.ResponseWriter, r *http.Request, store SourceRegistryStore) {
+	xStore, ok := store.(SourceRegistryXBookmarkStore)
+	if !ok {
+		http.Error(w, "x bookmark staging view unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	limit, err := sourceRegistryPositiveInt(r.URL.Query().Get("limit"), 12)
+	if err != nil || limit > 50 {
+		http.Error(w, "invalid x bookmark view limit", http.StatusBadRequest)
+		return
+	}
+	offset, err := sourceRegistryNonNegativeInt(r.URL.Query().Get("offset"), 0)
+	if err != nil {
+		http.Error(w, "invalid x bookmark view offset", http.StatusBadRequest)
+		return
+	}
+	page, err := xStore.XBookmarkStagingPage(r.Context(), l1sqlite.L1XBookmarkViewQuery{
+		Major: strings.TrimSpace(r.URL.Query().Get("major")), Minor: strings.TrimSpace(r.URL.Query().Get("minor")),
+		Review: strings.TrimSpace(r.URL.Query().Get("review")), Search: strings.TrimSpace(r.URL.Query().Get("q")),
+		Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		http.Error(w, "failed to list x bookmark staging items", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(sourceRegistryXBookmarkPageToDTO(page))
+}
+
+func sourceRegistryPositiveInt(raw string, fallback int) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return 0, errors.New("value must be positive")
+	}
+	return value, nil
+}
+
+func sourceRegistryNonNegativeInt(raw string, fallback int) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < 0 {
+		return 0, errors.New("value must not be negative")
+	}
+	return value, nil
 }
 
 func handleSourceRegistryStagingList(w http.ResponseWriter, r *http.Request, store SourceRegistryStore) {

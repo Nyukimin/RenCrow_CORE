@@ -1166,7 +1166,7 @@ let derivedDirty = false;
 let activeViewerTab = 'home';
 let sttControlsReady = false;
 
-const tabs = Array.from(document.querySelectorAll('.tab-btn'));
+const tabs = Array.from(document.querySelectorAll('.tab-btn[data-tab]'));
 const themeButtons = Array.from(document.querySelectorAll('.theme-btn'));
 const mobilePanelSelect = document.getElementById('mobilePanelSelect');
 const mobilePanelPrev = document.getElementById('mobilePanelPrev');
@@ -1307,7 +1307,13 @@ function switchAdjacentPanel(delta) {
 }
 
 if (mobilePanelSelect) {
-  mobilePanelSelect.addEventListener('change', () => switchTab(mobilePanelSelect.value));
+  mobilePanelSelect.addEventListener('change', () => {
+    if (mobilePanelSelect.value === 'x-bookmarks') {
+      window.location.href = '/viewer/x-bookmarks';
+      return;
+    }
+    switchTab(mobilePanelSelect.value);
+  });
   mobilePanelSelect.value = activeViewerTab;
 }
 if (mobilePanelPrev) mobilePanelPrev.addEventListener('click', () => switchAdjacentPanel(-1));
