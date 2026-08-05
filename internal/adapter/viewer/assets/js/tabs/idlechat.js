@@ -584,11 +584,12 @@ function normalizeViewerDisplayText(text) {
 }
 
 function setIdleSelectedView(view) {
-	const next = (view === 'stock' || view === 'summary' || view === 'history') ? view : 'live';
+	const next = (view === 'stock' || view === 'episodes' || view === 'summary' || view === 'history') ? view : 'live';
   state.idleChat.selectedView = next;
   localStorage.setItem('idlechat.selectedView', next);
 	const deskShell = document.querySelector('.idle-desk-shell');
 	if (deskShell) deskShell.classList.toggle('stock-view', next === 'stock');
+	if (deskShell) deskShell.classList.toggle('episodes-view', next === 'episodes');
   idleSubtabs.forEach((btn) => {
     const active = btn.dataset.idleView === next;
     btn.classList.toggle('active', active);
@@ -599,6 +600,7 @@ function setIdleSelectedView(view) {
     const expectedID = 'idleView' + next.charAt(0).toUpperCase() + next.slice(1);
     viewEl.classList.toggle('active', viewEl.id === expectedID);
   });
+	if (next === 'episodes') refreshIdleEpisodes();
 }
 
 function renderIdleChat() {
@@ -610,8 +612,9 @@ function renderIdleChat() {
 
   setBadge(manualEl, state.idleChat.manualMode);
   setBadge(activeEl, state.idleChat.chatActive);
-  topicEl.textContent = stripIdleTopicCategory(state.idleChat.currentTopic) || '-';
+	topicEl.textContent = stripIdleTopicCategory(state.idleChat.currentTopic) || '-';
 	renderIdleForecastStock();
+	renderIdleEpisodes();
 
   body.innerHTML = '';
   const rows = state.idleChat.history || [];
@@ -763,6 +766,229 @@ function formatIdleStockTime(value) {
   const raw = String(value || '').trim();
   if (!raw || raw.startsWith('0001-01-01')) return '-';
   return fdt(raw);
+}
+
+function idleEpisodeStatusLabel(status) {
+  const labels = {
+    ready: '完成',
+    needs_repair: '要修復',
+    failed: '失敗',
+    repairing: '修復中',
+    validating: '検証中',
+    generating: '生成中',
+    draft: '下書き',
+    expired: '期限切れ',
+  };
+  return labels[String(status || '')] || String(status || '不明');
+}
+
+function idleEpisodeStatusClass(status) {
+  return 'status-' + String(status || 'unknown').replace(/_/g, '-').replace(/[^a-z0-9-]/g, '');
+}
+
+function idleEpisodeTitle(episode) {
+  const source = episode && episode.source ? episode.source : {};
+  return String(episode && episode.story_title || source.title || episode && episode.topic || episode && episode.episode_id || '名称未設定');
+}
+
+function sortedIdleEpisodes() {
+  const rank = {failed: 0, needs_repair: 1, repairing: 2, validating: 3, generating: 4, draft: 5, ready: 6, expired: 7};
+  return (Array.isArray(state.idleChat.episodes) ? state.idleChat.episodes.slice() : []).sort((a, b) => {
+    const statusA = String(a && a.production_status || '');
+    const statusB = String(b && b.production_status || '');
+    const statusDiff = (rank[statusA] ?? 99) - (rank[statusB] ?? 99);
+    if (statusDiff !== 0) return statusDiff;
+    return String(b && b.updated_at || b && b.created_at || '').localeCompare(String(a && a.updated_at || a && a.created_at || ''));
+  });
+}
+
+function selectIdleEpisode(episodeID) {
+  const nextID = String(episodeID || '').trim();
+  if (!nextID || nextID === state.idleChat.selectedEpisodeID) return;
+  state.idleChat.selectedEpisodeID = nextID;
+  localStorage.setItem('idlechat.selectedEpisodeID', nextID);
+  state.idleChat.episodeDetailError = '';
+  renderIdleEpisodes();
+  refreshIdleEpisodeDetail(nextID);
+}
+
+function renderIdleEpisodes() {
+  const overview = document.getElementById('idleEpisodeOverview');
+  const select = document.getElementById('idleEpisodeSelect');
+  const list = document.getElementById('idleEpisodeList');
+  const detail = document.getElementById('idleEpisodeDetail');
+  const notice = document.getElementById('idleEpisodeNotice');
+  const refreshButton = document.getElementById('idleEpisodeRefresh');
+  if (!overview || !select || !list || !detail || !notice) return;
+
+  const stock = state.idleChat.episodeStock || {};
+  const episodes = sortedIdleEpisodes();
+  const total = episodes.length;
+  overview.innerHTML = [
+    ['全件', total],
+    ['完成', Number(stock.ready || 0)],
+    ['要修復', Number(stock.needs_repair || 0)],
+    ['失敗', Number(stock.failed || 0)],
+    ['タイトル待ち', Number(stock.untitled_ready || 0)],
+    ['準備中', stock.filling ? 'はい' : 'いいえ'],
+  ].map((item) => '<div><span>' + idleEsc(item[0]) + '</span><strong>' + idleEsc(String(item[1])) + '</strong></div>').join('');
+
+  const errors = [state.idleChat.episodeFetchError, state.idleChat.episodeDetailError]
+    .map((value) => String(value || '').trim()).filter(Boolean);
+  notice.textContent = errors.join(' / ');
+  if (refreshButton) {
+    refreshButton.disabled = !!state.idleChat.episodeDetailLoading;
+    refreshButton.onclick = () => refreshIdleEpisodes(true);
+  }
+
+  if (episodes.length === 0) {
+    select.innerHTML = '<option value="">保存済みepisodeはありません</option>';
+    select.disabled = true;
+    list.innerHTML = '<div class="idle-empty">保存済みepisodeはありません</div>';
+    if (!state.idleChat.episodeDetail) detail.innerHTML = '<div class="idle-empty">物語を選択してください</div>';
+    return;
+  }
+
+  select.disabled = false;
+  if (!episodes.some((episode) => String(episode.episode_id || '') === state.idleChat.selectedEpisodeID)) {
+    state.idleChat.selectedEpisodeID = String(episodes[0].episode_id || '');
+    localStorage.setItem('idlechat.selectedEpisodeID', state.idleChat.selectedEpisodeID);
+  }
+  select.innerHTML = episodes.map((episode) => {
+    const id = String(episode && episode.episode_id || '');
+    const selected = id === state.idleChat.selectedEpisodeID ? ' selected' : '';
+    const label = idleEpisodeStatusLabel(episode && episode.production_status) + '｜' + idleEpisodeTitle(episode) + '｜rev.' + String(episode && episode.revision || 0);
+    return '<option value="' + idleEsc(id) + '"' + selected + '>' + idleEsc(label) + '</option>';
+  }).join('');
+  select.onchange = () => selectIdleEpisode(select.value);
+
+  list.innerHTML = episodes.map((episode) => {
+    const id = String(episode && episode.episode_id || '');
+    const status = String(episode && episode.production_status || 'unknown');
+    const validation = episode && episode.validation ? episode.validation : {};
+    const firstInvalid = Number(validation.first_invalid_turn || 0);
+    return '<button type="button" class="idle-episode-item ' + idleEpisodeStatusClass(status) + (id === state.idleChat.selectedEpisodeID ? ' active' : '') + '" data-episode-id="' + idleEsc(id) + '">' +
+      '<span class="idle-episode-item-title">' + idleEsc(idleEpisodeTitle(episode)) + '</span>' +
+      '<span class="idle-episode-item-meta"><span>' + idleEsc(idleEpisodeStatusLabel(status)) + '</span><span>rev.' + idleEsc(String(episode && episode.revision || 0)) + '</span>' +
+      '<span>' + idleEsc(String(episode && episode.reader || '-')) + ' → ' + idleEsc(String(episode && episode.listener || '-')) + '</span><span>' + idleEsc(String(episode && episode.utterance_count || 0)) + ' turn</span>' +
+      (firstInvalid > 0 ? '<span>最初のNG: turn ' + idleEsc(String(firstInvalid)) + '</span>' : '') + '</span></button>';
+  }).join('');
+  list.querySelectorAll('[data-episode-id]').forEach((button) => {
+    button.addEventListener('click', () => selectIdleEpisode(button.dataset.episodeId || ''));
+  });
+
+  renderIdleEpisodeDetail();
+}
+
+function renderIdleEpisodeDetail() {
+  const root = document.getElementById('idleEpisodeDetail');
+  if (!root) return;
+  const episode = state.idleChat.episodeDetail;
+  if (!episode || String(episode.episode_id || '') !== state.idleChat.selectedEpisodeID) {
+    root.innerHTML = '<div class="idle-empty">' + (state.idleChat.episodeDetailLoading ? '台本全文を読み込み中…' : '物語を選択してください') + '</div>';
+    return;
+  }
+
+  const source = episode.source || {};
+  const contract = episode.story_contract || {};
+  const validation = episode.validation || {};
+  const validationErrors = Array.isArray(validation.errors) ? validation.errors : [];
+  const firstInvalidTurn = Number(validation.first_invalid_turn || 0);
+  const turns = Array.isArray(episode.turns) ? episode.turns : [];
+  const status = String(episode.production_status || 'unknown');
+  const errorSummary = validationErrors.length > 0
+    ? '<div class="idle-episode-errors">' + validationErrors.map((error) => {
+      const turnIndex = Number(error && error.turn_index || 0);
+      return '<div class="idle-episode-error"><strong>' + (turnIndex > 0 ? 'turn ' + idleEsc(String(turnIndex)) : '全体') + ' / <code>' + idleEsc(String(error && error.code || 'validation_error')) + '</code></strong><br>' +
+        'field: ' + idleEsc(String(error && error.field || '-')) + '<br>' + idleEsc(String(error && error.evidence || '根拠なし')) + '</div>';
+    }).join('') + '</div>'
+    : '';
+  const contractRows = [
+    ['元話', source.title || '-'],
+    ['改変軸', contract.transformation_axis || '-'],
+    ['ジャンル', contract.genre || '-'],
+    ['面白さの方向', contract.interest_direction || '-'],
+    ['内容モード', contract.content_mode || '-'],
+    ['成立条件', Array.isArray(contract.interest_contract) ? contract.interest_contract.join(' / ') : '-'],
+    ['生成ID', episode.generation_id || '-'],
+  ];
+  const turnRows = turns.map((turn) => {
+    const turnIndex = Number(turn && turn.turn_index || 0);
+    const turnErrors = validationErrors.filter((error) => Number(error && error.turn_index || 0) === turnIndex);
+    const invalid = turnErrors.length > 0;
+    const repairSuffix = !invalid && firstInvalidTurn > 0 && turnIndex >= firstInvalidTurn;
+    const stateClass = invalid ? ' is-invalid' : (repairSuffix ? ' is-repair-suffix' : '');
+    const stateLabel = invalid ? '<span class="idle-episode-turn-state">NG箇所</span>' : (repairSuffix ? '<span class="idle-episode-turn-state">再生成対象</span>' : '');
+    const inlineErrors = turnErrors.map((error) => '<div class="idle-episode-error"><strong><code>' + idleEsc(String(error && error.code || 'validation_error')) + '</code></strong> / field: ' + idleEsc(String(error && error.field || '-')) + '<br>' + idleEsc(String(error && error.evidence || '根拠なし')) + '</div>').join('');
+    return '<section class="idle-episode-turn' + stateClass + '">' +
+      '<div class="idle-episode-turn-head"><div><strong>turn ' + idleEsc(String(turnIndex || '-')) + '</strong><span>' + idleEsc(String(turn && turn.speaker || '-')) + '</span><span>' + idleEsc(String(turn && turn.utterance_role || '-')) + '</span></div>' + stateLabel + '</div>' +
+      '<p>' + idleEsc(String(turn && turn.display_text || '-')) + '</p>' + inlineErrors +
+      '<details><summary>TTS本文を表示</summary><div class="idle-episode-speech">' + idleEsc(String(turn && turn.speech_text || '-')) + '</div></details>' +
+    '</section>';
+  }).join('');
+  const ledger = episode.story_ledger
+    ? '<details class="idle-episode-ledger"><summary>物語台帳を表示</summary><pre>' + idleEsc(JSON.stringify(episode.story_ledger, null, 2)) + '</pre></details>'
+    : '';
+
+  root.innerHTML = '<header class="idle-episode-detail-head"><div><h4>' + idleEsc(idleEpisodeTitle(episode)) + '</h4><p>' + idleEsc(String(source.synopsis || '-')) + '</p></div>' +
+    '<div class="idle-episode-badges"><span class="idle-episode-badge ' + idleEpisodeStatusClass(status) + '">' + idleEsc(idleEpisodeStatusLabel(status)) + '</span><span class="idle-episode-badge">rev.' + idleEsc(String(episode.revision || 0)) + '</span><span class="idle-episode-badge">' + idleEsc(String(episode.reader || '-')) + ' → ' + idleEsc(String(episode.listener || '-')) + '</span></div></header>' +
+    '<div class="idle-episode-contract">' + contractRows.map((row) => '<div><span>' + idleEsc(row[0]) + '</span><strong>' + idleEsc(String(row[1])) + '</strong></div>').join('') + '</div>' +
+    '<div class="idle-episode-validation' + (validation.valid ? '' : ' has-errors') + '">' + (validation.valid ? '検証済み: 全turn合格' : '検証NG: ' + idleEsc(String(validationErrors.length)) + '件' + (firstInvalidTurn > 0 ? ' / turn ' + idleEsc(String(firstInvalidTurn)) + '以降を再生成' : '')) + '</div>' +
+    errorSummary + '<div class="idle-episode-turns">' + (turnRows || '<div class="idle-empty">発話本文はありません</div>') + '</div>' + ledger;
+}
+
+async function refreshIdleEpisodeDetail(episodeID) {
+  const id = String(episodeID || '').trim();
+  if (!id) return;
+  const requestToken = Number(state.idleChat.episodeRequestToken || 0) + 1;
+  state.idleChat.episodeRequestToken = requestToken;
+  state.idleChat.episodeDetailLoading = true;
+  renderIdleEpisodes();
+  try {
+    const response = await fetch('/viewer/idlechat/episodes?episode_id=' + encodeURIComponent(id));
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error('詳細取得 HTTP ' + String(response.status) + ': ' + (text || response.statusText || 'episode detail unavailable'));
+    }
+    const payload = await response.json();
+    if (state.idleChat.episodeRequestToken !== requestToken || state.idleChat.selectedEpisodeID !== id) return;
+    state.idleChat.episodeDetail = payload && payload.episode ? payload.episode : null;
+    state.idleChat.episodeDetailError = state.idleChat.episodeDetail ? '' : '詳細取得: episode本文がありません';
+  } catch (error) {
+    if (state.idleChat.episodeRequestToken !== requestToken) return;
+    state.idleChat.episodeDetailError = String(error && error.message ? error.message : error);
+  } finally {
+    if (state.idleChat.episodeRequestToken === requestToken) state.idleChat.episodeDetailLoading = false;
+    renderIdleEpisodes();
+  }
+}
+
+async function refreshIdleEpisodes() {
+  const forceDetail = !!arguments[0];
+  try {
+    const response = await fetch('/viewer/idlechat/episodes');
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error('一覧取得 HTTP ' + String(response.status) + ': ' + (text || response.statusText || 'episode inventory unavailable'));
+    }
+    const payload = await response.json();
+    state.idleChat.episodeFetchError = '';
+    state.idleChat.episodes = Array.isArray(payload.episodes) ? payload.episodes : [];
+    state.idleChat.episodeStock = payload || {};
+    const episodes = sortedIdleEpisodes();
+    if (!episodes.some((episode) => String(episode && episode.episode_id || '') === state.idleChat.selectedEpisodeID)) {
+      state.idleChat.selectedEpisodeID = episodes.length > 0 ? String(episodes[0].episode_id || '') : '';
+      localStorage.setItem('idlechat.selectedEpisodeID', state.idleChat.selectedEpisodeID);
+    }
+    renderIdleEpisodes();
+    const selectedSummary = episodes.find((episode) => String(episode && episode.episode_id || '') === state.idleChat.selectedEpisodeID);
+    const detail = state.idleChat.episodeDetail;
+    const detailIsStale = !detail || String(detail.episode_id || '') !== state.idleChat.selectedEpisodeID || Number(detail.revision || 0) !== Number(selectedSummary && selectedSummary.revision || 0);
+    if (state.idleChat.selectedEpisodeID && (forceDetail || detailIsStale)) refreshIdleEpisodeDetail(state.idleChat.selectedEpisodeID);
+  } catch (error) {
+    state.idleChat.episodeFetchError = String(error && error.message ? error.message : error);
+    renderIdleEpisodes();
+  }
 }
 
 function renderIdleSummaryReview(rows) {

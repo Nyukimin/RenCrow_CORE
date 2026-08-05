@@ -223,6 +223,14 @@ const state = {
     history: [],
     openIndex: -1,
     selectedSummaryIndex: 0,
+    episodes: [],
+    episodeStock: null,
+    selectedEpisodeID: localStorage.getItem('idlechat.selectedEpisodeID') || '',
+    episodeDetail: null,
+    episodeFetchError: '',
+    episodeDetailError: '',
+    episodeDetailLoading: false,
+    episodeRequestToken: 0,
   },
   openTasks: {},
   progressOpenJobs: {},
@@ -5485,6 +5493,7 @@ setIdleSelectedMode(state.idleChat.selectedMode);
 setIdleSelectedView(state.idleChat.selectedView);
 refreshIdleStatus();
 refreshIdleLogs();
+refreshIdleEpisodes();
 initTabFromQuery();
 initEvidenceFromQuery();
 refreshOptionalPanelData();
@@ -5499,6 +5508,7 @@ setInterval(refreshViewerStatus, 5000);
 setInterval(refreshJobNotifications, 3000);
 setInterval(refreshIdleStatus, 3000);
 setInterval(refreshIdleLogs, 5000);
+setInterval(refreshIdleEpisodes, 10000);
 setOptionalPanelRefreshIntervals();
 setInterval(refreshDebugSystem, 5000);
 refreshDebugSystem();

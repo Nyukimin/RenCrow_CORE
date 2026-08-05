@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>RenCrow Live</title>
-<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260718-idle-stock-reader">
+<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-story-title">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260511-memory-desk">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
@@ -1267,6 +1267,38 @@
           </div>
           <div id="collectionItems" class="collection-items"></div>
         </section>
+		<section class="collection-x-bookmarks" aria-labelledby="collectionXBookmarkHeading">
+		  <div class="collection-section-head collection-x-bookmark-head">
+			<div>
+			  <div class="desk-kicker">X Bookmark / pending staging</div>
+			  <h3 id="collectionXBookmarkHeading">保存したBookmarkを使う</h3>
+			</div>
+			<span id="collectionXBookmarkStatus" class="desk-pill">読込待ち</span>
+		  </div>
+		  <p class="collection-ledger-note">分類済みの原資料を読み取り専用で表示します。ここでの閲覧や絞り込みは検証・Knowledge昇格を行いません。</p>
+		  <div class="collection-x-bookmark-summary">
+			<div class="daily-desk-card"><span>Bookmark総数</span><strong id="collectionXBookmarkTotal">0</strong><small>移行・収集済み原資料</small></div>
+			<div class="daily-desk-card"><span>要確認</span><strong id="collectionXBookmarkReviewCount">0</strong><small>LLM補完・人手確認候補</small></div>
+			<div class="daily-desk-card"><span>現在の表示</span><strong id="collectionXBookmarkVisibleCount">0</strong><small>絞り込み後のページ</small></div>
+		  </div>
+		  <div class="collection-x-bookmark-filters">
+			<select id="collectionXBookmarkMajorFilter" aria-label="Bookmark大分類"><option value="">すべての大分類</option></select>
+			<select id="collectionXBookmarkMinorFilter" aria-label="Bookmark中分類"><option value="">すべての中分類</option></select>
+			<select id="collectionXBookmarkReviewFilter" aria-label="Bookmark確認状態">
+			  <option value="">すべての確認状態</option>
+			  <option value="needs_review">要確認</option>
+			  <option value="classified">分類済み</option>
+			</select>
+			<input id="collectionXBookmarkSearch" type="search" maxlength="200" placeholder="本文・見出し・URLを検索" aria-label="Bookmarkを検索">
+		  </div>
+		  <div id="collectionXBookmarkError" class="collection-error" hidden></div>
+		  <div id="collectionXBookmarkItems" class="collection-x-bookmark-items"></div>
+		  <div class="collection-x-bookmark-pagination" aria-label="Bookmarkページ送り">
+			<button id="collectionXBookmarkPrev" class="ctl-btn" type="button">前へ</button>
+			<span id="collectionXBookmarkPage">0 / 0</span>
+			<button id="collectionXBookmarkNext" class="ctl-btn" type="button">次へ</button>
+		  </div>
+		</section>
         <details class="collection-details">
           <summary>取得先・利用ツールを確認</summary>
 		  <div class="collection-tool-row"><strong>利用ツール</strong><div id="collectionTools" class="collection-tools"></div></div>
@@ -1365,7 +1397,8 @@
           </div>
           <div class="idle-subtabs" role="tablist" aria-label="IdleChat views">
             <button class="idle-subtab active" data-idle-view="live" type="button" role="tab" aria-controls="idleViewLive">Live</button>
-            <button class="idle-subtab" data-idle-view="stock" type="button" role="tab" aria-controls="idleViewStock">Stock</button>
+            <button class="idle-subtab" data-idle-view="stock" type="button" role="tab" aria-controls="idleViewStock">Topic Stock</button>
+            <button class="idle-subtab" data-idle-view="episodes" type="button" role="tab" aria-controls="idleViewEpisodes">Story Stock</button>
             <button class="idle-subtab" data-idle-view="summary" type="button" role="tab" aria-controls="idleViewSummary">Review</button>
             <button class="idle-subtab" data-idle-view="history" type="button" role="tab" aria-controls="idleViewHistory">History</button>
           </div>
@@ -1386,6 +1419,30 @@
           </div>
           <div id="idleForecastStock" class="idle-forecast-stock" aria-live="polite">
             <div class="idle-empty">Forecast stock snapshot is unavailable</div>
+          </div>
+        </div>
+        <div id="idleViewEpisodes" class="idle-subview" role="tabpanel">
+          <div class="panel-head idle-panel-head idle-episode-head">
+            <div>
+              <h3>物語ストック</h3>
+              <div class="sub">完成・要修復・失敗を含む全episode。選択すると台本全文とNG箇所を表示します。</div>
+            </div>
+            <button class="ctl-btn" id="idleEpisodeRefresh" type="button">再読込</button>
+          </div>
+          <div id="idleEpisodeOverview" class="idle-episode-overview" aria-live="polite"></div>
+          <div class="idle-episode-toolbar">
+            <label for="idleEpisodeSelect">物語を選択</label>
+            <select id="idleEpisodeSelect" aria-label="IdleChat episodeを選択"></select>
+          </div>
+          <div id="idleEpisodeNotice" class="idle-episode-notice" role="status" aria-live="polite"></div>
+          <div class="idle-episode-browser">
+            <section class="idle-episode-list-column" aria-labelledby="idleEpisodeListTitle">
+              <h4 id="idleEpisodeListTitle" class="idle-episode-list-head">物語専用リスト</h4>
+              <div id="idleEpisodeList" class="idle-episode-list" aria-label="物語ストック一覧"></div>
+            </section>
+            <article id="idleEpisodeDetail" class="idle-episode-detail" aria-live="polite">
+              <div class="idle-empty">物語を選択してください</div>
+            </article>
           </div>
         </div>
         <div id="idleViewSummary" class="idle-subview" role="tabpanel">
@@ -1560,11 +1617,12 @@
 <script src="/viewer/assets/js/tabs/movie-db.js?v=20260723-assessment-grid-2" defer></script>
 <script src="/viewer/assets/js/tabs/news-pack.js?v=20260510-tabs-memory" defer></script>
 <script src="/viewer/assets/js/tabs/collection.js?v=20260721-daily-collection" defer></script>
+<script src="/viewer/assets/js/tabs/collection-x-bookmarks.js?v=20260804-x-bookmark-view" defer></script>
 <script src="/viewer/assets/js/tabs/investment.js?v=20260616-investment-desk" defer></script>
 <script src="/viewer/assets/js/tabs/roles.js?v=20260510-tabs-roles" defer></script>
 <script src="/viewer/assets/js/tabs/progress.js?v=20260510-tabs-progress" defer></script>
 <script src="/viewer/assets/js/tabs/timeline.js?v=20260618-job-interrupt" defer></script>
-<script src="/viewer/assets/js/tabs/idlechat.js?v=20260718-idle-stock-reader" defer></script>
+<script src="/viewer/assets/js/tabs/idlechat.js?v=20260805-idle-story-title" defer></script>
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
 <script src="/viewer/assets/js/tabs/jobs.js?v=20260510-tabs-jobs" defer></script>
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>

@@ -16,6 +16,7 @@ var storySemanticValidationCodes = map[string]struct{}{
 	"interest_contract_violation": {},
 	"story_performance_violation": {},
 	"quality_violation":           {},
+	"title_violation":             {},
 }
 
 // ValidateStoryEpisode combines deterministic checks with a separate semantic
@@ -31,6 +32,9 @@ func ValidateStoryEpisode(artifact StoryEpisodeArtifact, semantic StorySemanticR
 	}
 	if strings.TrimSpace(artifact.EpisodeKind) != StoryEpisodeKind {
 		add("schema_violation", 0, "episode_kind", "story_reading is required")
+	}
+	if evidence := storyTitleValidationEvidence(artifact); evidence != "" {
+		add("title_violation", 0, "story_title", evidence)
 	}
 	reader := normalizeStoryAgent(artifact.Reader)
 	listener := normalizeStoryAgent(artifact.Listener)
@@ -133,6 +137,35 @@ func ValidateStoryEpisode(artifact StoryEpisodeArtifact, semantic StorySemanticR
 		}
 	}
 	return result
+}
+
+func storyTitleValidationEvidence(artifact StoryEpisodeArtifact) string {
+	title := strings.TrimSpace(artifact.StoryTitle)
+	if title == "" {
+		return "completed story title is required"
+	}
+	titleRunes := utf8.RuneCountInString(title)
+	if titleRunes < 2 || titleRunes > 40 {
+		return "story title must contain 2 to 40 runes"
+	}
+	if hasBrokenStoryText(title) {
+		return "story title contains a replacement or invalid control character"
+	}
+	titleKey := normalizeStoryTitleKey(title)
+	sourceKey := normalizeStoryTitleKey(artifact.Source.Title)
+	if sourceKey != "" && (titleKey == sourceKey || titleKey == "新"+sourceKey || titleKey == sourceKey+"sf版" || titleKey == sourceKey+"版") {
+		return "story title must not copy or mechanically relabel the source title"
+	}
+	return ""
+}
+
+func normalizeStoryTitleKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	replacer := strings.NewReplacer(
+		" ", "", "　", "", "・", "", "･", "", "-", "", "—", "", "―", "",
+		"『", "", "』", "", "「", "", "」", "", "【", "", "】", "", "。", "",
+	)
+	return replacer.Replace(value)
 }
 
 func validateStoryContract(contract StoryEpisodeContract, add func(string, int, string, string)) {

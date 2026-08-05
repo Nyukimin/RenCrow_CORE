@@ -20,6 +20,7 @@ type StoryEpisodeArtifact struct {
 	Revision                int                   `json:"revision"`
 	EpisodeKind             string                `json:"episode_kind"`
 	GenerationID            string                `json:"generation_id"`
+	StoryTitle              string                `json:"story_title,omitempty"`
 	ReplacementForEpisodeID string                `json:"replacement_for_episode_id,omitempty"`
 	Source                  StoryEpisodeSource    `json:"source"`
 	Reader                  string                `json:"reader"`
@@ -112,6 +113,7 @@ type StoryEpisodeStockSnapshot struct {
 	Missing            int                    `json:"missing"`
 	NeedsRepair        int                    `json:"needs_repair"`
 	Failed             int                    `json:"failed"`
+	UntitledReady      int                    `json:"untitled_ready"`
 	Filling            bool                   `json:"filling"`
 	GenerationAttempts int                    `json:"generation_attempts"`
 	LastFailurePhase   string                 `json:"last_failure_phase,omitempty"`

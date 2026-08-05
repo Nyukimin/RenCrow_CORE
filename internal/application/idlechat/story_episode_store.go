@@ -110,6 +110,9 @@ func (s *storyEpisodeStore) snapshot() StoryEpisodeStockSnapshot {
 		case StoryProductionReady:
 			if artifact.Validation.Valid {
 				snapshot.Ready++
+				if strings.TrimSpace(artifact.StoryTitle) == "" {
+					snapshot.UntitledReady++
+				}
 			}
 		case StoryProductionNeedsRepair:
 			snapshot.NeedsRepair++

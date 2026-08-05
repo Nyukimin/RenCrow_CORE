@@ -71,3 +71,19 @@ func TestStoryEpisodeStoreSelectsLeastPlayedReadyWithoutDeleting(t *testing.T) {
 		t.Fatalf("played episode must remain ready: %+v", snapshot)
 	}
 }
+
+func TestStoryEpisodeStoreCountsLegacyReadyWithoutStoryTitle(t *testing.T) {
+	store := newStoryEpisodeStore(filepath.Join(t.TempDir(), "story_episodes.jsonl"), 1)
+	legacy := validStoryEpisodeFixture()
+	legacy.StoryTitle = ""
+	legacy.ProductionStatus = StoryProductionReady
+	legacy.Validation = StoryValidationResult{Valid: true}
+	if err := store.append(legacy); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := store.snapshot()
+	if snapshot.Ready != 1 || snapshot.UntitledReady != 1 {
+		t.Fatalf("snapshot=%+v, legacy ready must remain playable and request title backfill", snapshot)
+	}
+}

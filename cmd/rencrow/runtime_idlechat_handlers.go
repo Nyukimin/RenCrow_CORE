@@ -368,6 +368,7 @@ func (d *Dependencies) handleIdleChatEpisodes() http.HandlerFunc {
 			episodes = append(episodes, map[string]any{
 				"episode_id": episode.EpisodeID, "revision": episode.Revision,
 				"episode_kind": episode.EpisodeKind, "generation_id": episode.GenerationID,
+				"story_title":                episode.StoryTitle,
 				"replacement_for_episode_id": episode.ReplacementForEpisodeID,
 				"source":                     episode.Source, "reader": episode.Reader, "listener": episode.Listener,
 				"story_contract": episode.Contract, "production_status": episode.ProductionStatus,
@@ -380,7 +381,7 @@ func (d *Dependencies) handleIdleChatEpisodes() http.HandlerFunc {
 		}
 		writeJSON(w, map[string]any{
 			"ok": true, "ready": snapshot.Ready, "target": snapshot.Target, "missing": snapshot.Missing,
-			"needs_repair": snapshot.NeedsRepair, "failed": snapshot.Failed, "filling": snapshot.Filling,
+			"needs_repair": snapshot.NeedsRepair, "failed": snapshot.Failed, "untitled_ready": snapshot.UntitledReady, "filling": snapshot.Filling,
 			"generation_attempts": snapshot.GenerationAttempts, "last_failure_phase": snapshot.LastFailurePhase,
 			"last_error": snapshot.LastError, "episodes": episodes,
 		})

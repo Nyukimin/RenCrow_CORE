@@ -13,6 +13,20 @@ func TestValidateStoryEpisodeAcceptsReaderAndListenerPerformance(t *testing.T) {
 	}
 }
 
+func TestValidateStoryEpisodeRejectsMissingOrSourceCopiedStoryTitle(t *testing.T) {
+	for name, title := range map[string]string{
+		"missing":       "",
+		"source copied": "桃太郎",
+	} {
+		t.Run(name, func(t *testing.T) {
+			artifact := validStoryEpisodeFixture()
+			artifact.StoryTitle = title
+			got := ValidateStoryEpisode(artifact, StorySemanticReview{Valid: true})
+			assertStoryValidationCode(t, got, "title_violation")
+		})
+	}
+}
+
 func TestValidateStoryEpisodeRejectsReaderSwap(t *testing.T) {
 	artifact := validStoryEpisodeFixture()
 	artifact.Turns[2].Speaker = artifact.Listener
@@ -67,6 +81,7 @@ func validStoryEpisodeFixture() StoryEpisodeArtifact {
 		Revision:      1,
 		EpisodeKind:   StoryEpisodeKind,
 		GenerationID:  "generation-1",
+		StoryTitle:    "鬼ヶ島、採用面接中",
 		Source:        StoryEpisodeSource{Title: "桃太郎", Synopsis: "桃から生まれた子が仲間と鬼ヶ島へ向かう"},
 		Reader:        "mio",
 		Listener:      "shiro",

@@ -260,6 +260,70 @@ func TestViewerStaticContractIdleChatRendersForecastStockSnapshot(t *testing.T) 
 	}
 }
 
+func TestViewerStaticContractIdleChatEpisodeInventoryIsSelectableAndShowsFailures(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	jsData, err := os.ReadFile("assets/js/tabs/idlechat.js")
+	if err != nil {
+		t.Fatalf("read idlechat.js: %v", err)
+	}
+	cssData, err := os.ReadFile("assets/css/viewer.css")
+	if err != nil {
+		t.Fatalf("read viewer.css: %v", err)
+	}
+
+	html := string(htmlData)
+	for _, needle := range []string{
+		`data-idle-view="stock" type="button" role="tab" aria-controls="idleViewStock">Topic Stock</button>`,
+		`data-idle-view="episodes" type="button" role="tab" aria-controls="idleViewEpisodes">Story Stock</button>`,
+		`id="idleViewEpisodes"`,
+		`<h3>物語ストック</h3>`,
+		`class="idle-episode-list-head">物語専用リスト</h4>`,
+		`id="idleEpisodeOverview"`,
+		`id="idleEpisodeSelect"`,
+		`id="idleEpisodeRefresh"`,
+		`id="idleEpisodeList" class="idle-episode-list" aria-label="物語ストック一覧"`,
+		`id="idleEpisodeDetail"`,
+	} {
+		if !strings.Contains(html, needle) {
+			t.Fatalf("IdleChat episode selection UI missing %q", needle)
+		}
+	}
+
+	js := string(jsData)
+	for _, needle := range []string{
+		"function refreshIdleEpisodes()",
+		"function renderIdleEpisodes()",
+		"function renderIdleEpisodeDetail()",
+		"/viewer/idlechat/episodes",
+		"first_invalid_turn",
+		"validation.errors",
+		"is-invalid",
+		"is-repair-suffix",
+		"needs_repair",
+		"failed",
+		"episode.story_title",
+		"stock.untitled_ready",
+	} {
+		if !strings.Contains(js, needle) {
+			t.Fatalf("IdleChat episode failure render contract missing %q", needle)
+		}
+	}
+
+	css := string(cssData)
+	for _, needle := range []string{
+		".idle-episode-browser",
+		".idle-episode-turn.is-invalid",
+		".idle-episode-turn.is-repair-suffix",
+	} {
+		if !strings.Contains(css, needle) {
+			t.Fatalf("IdleChat episode failure style missing %q", needle)
+		}
+	}
+}
+
 func TestViewerStaticContractIdleChatStockUsesReadableInspectionLayout(t *testing.T) {
 	cssData, err := os.ReadFile("assets/css/viewer.css")
 	if err != nil {
@@ -296,7 +360,7 @@ func TestViewerStaticContractIdleChatStockUsesReadableInspectionLayout(t *testin
 			t.Fatalf("IdleChat stock readable layout render contract missing %q", needle)
 		}
 	}
-	if !strings.Contains(html, "viewer.css?v=20260718-idle-stock-reader") {
+	if !strings.Contains(html, "viewer.css?v=20260805-idle-story-title") {
 		t.Fatal("IdleChat stock layout must invalidate the Viewer CSS cache")
 	}
 }

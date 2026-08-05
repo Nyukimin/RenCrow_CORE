@@ -84,10 +84,15 @@ func (o *IdleChatOrchestrator) RefillStoryEpisodesAsync(reason string) {
 	if service != nil {
 		stock = service.Snapshot()
 	}
-	if service == nil || (stock.Missing == 0 && stock.NeedsRepair == 0) || stock.Filling {
+	if service == nil || (stock.Missing == 0 && stock.NeedsRepair == 0 && stock.UntitledReady == 0) || stock.Filling {
 		return
 	}
 	go func() {
+		if stock.UntitledReady > 0 {
+			if err := service.BackfillReadyTitles(ctx); err != nil {
+				log.Printf("[Story] ready title backfill incomplete: reason=%s error=%v", strings.TrimSpace(reason), err)
+			}
+		}
 		if service.Snapshot().Missing > 0 {
 			if err := service.PrepareToTarget(ctx); err != nil {
 				log.Printf("[Story] ready stock refill incomplete: reason=%s error=%v", strings.TrimSpace(reason), err)
@@ -123,7 +128,7 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession() {
 	o.sessionMode = "story"
 	generation := o.beginIdleRunLocked()
 	o.activeSessionID = sessionID
-	o.currentTopic = artifact.Source.Title
+	o.currentTopic = storyEpisodeDisplayTitle(artifact)
 	o.mu.Unlock()
 	defer func() {
 		o.mu.Lock()
@@ -216,14 +221,14 @@ func (o *IdleChatOrchestrator) savePreparedStoryReview(artifact StoryEpisodeArti
 	endedAt := time.Now().In(jst)
 	record := SessionSummary{
 		SessionID:       sessionID,
-		Title:           artifact.Source.Title,
-		Topic:           artifact.Source.Title,
+		Title:           storyEpisodeDisplayTitle(artifact),
+		Topic:           storyEpisodeDisplayTitle(artifact),
 		Category:        TopicCategoryStory,
 		Strategy:        TopicStrategy("story"),
 		Summary:         fmt.Sprintf("%sが読み手、%sが合いの手の事前生成物語。", artifact.Reader, artifact.Listener),
 		SourceTitle:     artifact.Source.Title,
 		RewriteStyle:    artifact.Contract.TransformationAxis,
-		StoryTitle:      artifact.Source.Title,
+		StoryTitle:      storyEpisodeDisplayTitle(artifact),
 		StartedAt:       startedAt.Format(time.RFC3339),
 		EndedAt:         endedAt.Format(time.RFC3339),
 		Turns:           len(transcript),
@@ -240,4 +245,11 @@ func (o *IdleChatOrchestrator) savePreparedStoryReview(artifact StoryEpisodeArti
 			log.Printf("[Story] topic store append failed: %v", err)
 		}
 	}
+}
+
+func storyEpisodeDisplayTitle(artifact StoryEpisodeArtifact) string {
+	if title := strings.TrimSpace(artifact.StoryTitle); title != "" {
+		return title
+	}
+	return strings.TrimSpace(artifact.Source.Title)
 }

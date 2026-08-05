@@ -79,8 +79,95 @@ func TestStoryEpisodeServiceKeepsInvalidAndGeneratesReplacement(t *testing.T) {
 	if len(generator.prompts) != 4 || !strings.Contains(generator.prompts[0], "Mio character context") || !strings.Contains(generator.prompts[0], "Shiro character context") {
 		t.Fatalf("prompts do not contain both character contexts: %#v", generator.prompts)
 	}
+	for _, required := range []string{"story_title", "作品タイトル", "funny", "moving", "thrilling", "scary", "thought_provoking", "固定テンプレート"} {
+		if !strings.Contains(generator.prompts[0], required) {
+			t.Fatalf("generation prompt must require title variation %q: %q", required, generator.prompts[0])
+		}
+	}
 	if !strings.Contains(generator.prompts[1], "意味検査") {
 		t.Fatalf("second call must be semantic review: %q", generator.prompts[1])
+	}
+}
+
+func TestStoryEpisodeServiceBackfillsReadyTitleWithoutChangingTurns(t *testing.T) {
+	artifact := validStoryEpisodeFixture()
+	artifact.StoryTitle = ""
+	artifact.ProductionStatus = StoryProductionReady
+	artifact.Validation = StoryValidationResult{Valid: true}
+	originalTurns, err := json.Marshal(artifact.Turns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generator := &queuedStoryCodexGenerator{responses: []string{`{"story_title":"きびだんごは経費になりますか"}`}}
+	store := newStoryEpisodeStore(filepath.Join(t.TempDir(), "story_episodes.jsonl"), 1)
+	if err := store.append(artifact); err != nil {
+		t.Fatal(err)
+	}
+	service := NewStoryEpisodeService(store, generator, nil)
+
+	if err := service.BackfillReadyTitles(context.Background()); err != nil {
+		t.Fatalf("backfill title: %v", err)
+	}
+	got, ok := service.Episode(artifact.EpisodeID)
+	if !ok {
+		t.Fatal("backfilled episode not found")
+	}
+	if got.StoryTitle != "きびだんごは経費になりますか" || got.Revision != artifact.Revision+1 || got.ProductionStatus != StoryProductionReady || !got.Validation.Valid {
+		t.Fatalf("backfilled episode=%+v", got)
+	}
+	gotTurns, err := json.Marshal(got.Turns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotTurns) != string(originalTurns) {
+		t.Fatalf("title backfill changed turns\nbefore=%s\nafter=%s", originalTurns, gotTurns)
+	}
+	if len(generator.prompts) != 1 || !strings.Contains(generator.prompts[0], "funny") || !strings.Contains(generator.prompts[0], "元話名の丸写し") {
+		t.Fatalf("title prompt does not carry mood contract: %#v", generator.prompts)
+	}
+}
+
+func TestStoryEpisodeServiceRepairsOnlyTitleWithoutRegeneratingTurns(t *testing.T) {
+	artifact := validStoryEpisodeFixture()
+	artifact.StoryTitle = artifact.Source.Title
+	artifact.ProductionStatus = StoryProductionNeedsRepair
+	artifact.Validation = StoryValidationResult{Valid: false, Errors: []StoryValidationError{{
+		Code: "title_violation", Field: "story_title", Evidence: "source title was copied",
+	}}}
+	for i := range artifact.Turns {
+		artifact.Turns[i].MessageID = "keep-title-repair-" + string(rune('a'+i))
+	}
+	originalTurns, err := json.Marshal(artifact.Turns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goodReview, _ := json.Marshal(StorySemanticReview{Valid: true})
+	generator := &queuedStoryCodexGenerator{responses: []string{
+		`{"story_title":"鬼ヶ島、ただいま棚卸し中"}`,
+		string(goodReview),
+	}}
+	store := newStoryEpisodeStore(filepath.Join(t.TempDir(), "story_episodes.jsonl"), 1)
+	if err := store.append(artifact); err != nil {
+		t.Fatal(err)
+	}
+	service := NewStoryEpisodeService(store, generator, nil)
+
+	if err := service.RepairNeedsRepair(context.Background()); err != nil {
+		t.Fatalf("repair title: %v", err)
+	}
+	got, ok := service.Episode(artifact.EpisodeID)
+	if !ok || got.StoryTitle != "鬼ヶ島、ただいま棚卸し中" || got.ProductionStatus != StoryProductionReady {
+		t.Fatalf("repaired episode=%+v ok=%t", got, ok)
+	}
+	gotTurns, err := json.Marshal(got.Turns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotTurns) != string(originalTurns) {
+		t.Fatalf("title-only repair changed turns\nbefore=%s\nafter=%s", originalTurns, gotTurns)
+	}
+	if len(generator.prompts) != 2 || strings.Contains(generator.prompts[0], "suffix修復") {
+		t.Fatalf("title-only repair must not invoke suffix generation: %#v", generator.prompts)
 	}
 }
 

@@ -252,14 +252,61 @@ PORTALは`turn_index`順に音声chunkを再生し、browserの`ended`でlocal q
 下限を割った場合は`buffering`を表示し、字幕だけを次発話へ進めません。
 
 `GET /viewer/idlechat/episodes`はepisode在庫の読み取り専用snapshotです。各episodeの
-`episode_id`、revision、`episode_kind=dialogue|story_reading`、category、topic、source参照、`generator=codex_exe`、`generation_id`、
+`episode_id`、revision、`episode_kind=dialogue|story_reading`、category、topic、source参照、完成作品名`story_title`、`generator=codex_exe`、`generation_id`、
 `character_revision`、`input_hash`、制作状態、再生状態、生成日時、有効期限、発話数、品質判定、
 固定prefix長、`repair_from_turn`、suffix再生成回数、
 現在の再生位置、buffer秒数、先読み発話数、最終TTS error、最終ACK時刻を返します。
-storyではreader、listener、`transformation_axis`、genre、`interest_direction`、`interest_contract`、
+storyでは元話名`source.title`と完成作品名`story_title`を分離し、reader、listener、`transformation_axis`、genre、`interest_direction`、`interest_contract`、
 物語台帳revision、検出済み整合性error、補充生成jobとの相関も返します。
 台本本文は明示した`episode_id`の詳細要求でだけ返し、一覧へ全件展開しません。このGETはepisodeの
 生成、検証、expire、再生、TTS合成を開始しません。
+
+`story_reading`一覧snapshotの最小形は次です。`episodes`はreadyだけへfilterせず、storeに残る現在revisionを
+返します。`untitled_ready`は旧ready artifactのタイトル補完待ち件数であり、ready件数から除外しません。
+
+```json
+{
+  "ok": true,
+  "ready": 3,
+  "target": 3,
+  "missing": 0,
+  "needs_repair": 6,
+  "failed": 0,
+  "untitled_ready": 0,
+  "filling": false,
+  "episodes": [
+    {
+      "episode_id": "story-...",
+      "revision": 3,
+      "episode_kind": "story_reading",
+      "story_title": "報酬欄を読む犬",
+      "source": {"title": "桃太郎", "synopsis": "..."},
+      "reader": "mio",
+      "listener": "shiro",
+      "story_contract": {"genre": "near_future_sf", "interest_direction": "funny"},
+      "production_status": "ready",
+      "validation": {"valid": true},
+      "utterance_count": 12
+    }
+  ]
+}
+```
+
+`GET /viewer/idlechat/episodes?episode_id=<id>`は`{"ok":true,"episode":{...}}`を返します。
+`episode`には一覧fieldに加え、`story_ledger`と全`turns`を含みます。Viewerは一覧のrevisionより保持中詳細の
+revisionが古い場合、利用者が別episodeを選んだ場合、または明示的に再読込した場合にこの詳細GETを行います。
+同revisionの定期一覧更新だけでは詳細GETを繰り返しません。古い選択のresponseを
+現在選択中の詳細へ適用しません。`episode_id`が存在しない場合は404、一覧または詳細の取得失敗は生成失敗や
+検証失敗へ読み替えません。
+
+Debug Viewerでは、お題在庫を`Topic Stock`、episode化した物語在庫を`Story Stock`として分離します。
+`Story Stock`の物語専用リストは、`ready`だけでなく`needs_repair`と`failed`を含むsnapshot内の
+全episodeを表示し、状態によって行を暗黙に除外しません。利用者が一覧または選択欄からepisodeを
+選んだ時だけ`episode_id`付きの詳細GETを行い、全発話、story contract、物語台帳、検証結果を読み取り
+専用で表示します。検証NGのepisodeでは`validation.errors`のcode、`turn_index`、field、evidenceを
+本文と対応付け、直接NGと判定されたturnを明示します。さらに`first_invalid_turn`以降をsuffix再生成対象
+として直接NGとは別の表示にし、turnを持たない全体errorも隠しません。一覧取得失敗または詳細取得失敗
+では直前に取得済みの内容を消去せず、取得工程とHTTP状態を画面へ表示します。
 
 `POST /viewer/idlechat/episodes/prepare`は`count`と任意の`categories`を受け、低優先度のepisode
 準備jobを登録して`job_id`を返します。`count`は1から10までとし、空の場合はConfigの不足数を使います。
@@ -276,7 +323,7 @@ storyでは固定reader、listenerの合いの手頻度と長さ、面白さ契�
 検証はepisode本文を変更せず、`valid`、turn別状態、`first_invalid_turn`、NG理由、固定可能なprefix長、
 `repair_required`、`replacement_requested`、補充job IDを返します。NG理由は`schema_violation`、`speaker_confusion`、`repetition`、
 `topic_violation`、`persona_violation`、`factual_violation`、`meta_leak`、`quality_violation`、
-`content_mode_violation`、`lexical_corruption`、`entity_relation_violation`、
+`content_mode_violation`、`title_violation`、`lexical_corruption`、`entity_relation_violation`、
 `continuity_violation`、`world_rule_violation`、`reading_violation`、
 `interest_contract_violation`、`story_performance_violation`です。episodeおよび検証結果は`content_mode=serious|assertive|free`と
 判定理由を返し、戦争・武力衝突・災害等を`serious`、それ以外の政治・思想を`assertive`、
@@ -286,11 +333,12 @@ NG理由をCodexExeへ渡して最終turnまで再生成します。prefixの`me
 新しい`message_id`を発行します。NG判定時点から当該episodeはready在庫へ含めず、修復とは別に
 補充episodeを生成します。`max_suffix_regenerations`到達時はepisodeを`failed`にしますが、
 自動削除は行いません。
+旧ready episodeに`story_title`がない場合は、本文とmessage IDを保持したままタイトルだけをCodexExeで補完し、revisionを増やして追記します。補完失敗は旧ready状態を壊さず`title_generation`として観測し、GETによる一覧・詳細表示自体では補完を開始しません。
 `POST /viewer/idlechat/episodes/expire`は`episode_id`を受け、再生中でないepisodeを`expired`へ遷移させます。
 再生中のepisodeはHTTP 409と`IDLECHAT_EPISODE_PLAYING`を返し、暗黙に中断しません。これらは
 Debug Viewer／localhost運用CLI向けのadmin APIであり、RenCrow_PORTALからproxyしません。
 
-`GET /viewer/idlechat/status`の`forecast_stock`は、`enabled`、`total`、`capacity`、`missing`、`filling`、最終生成状態と、6ドメインの`topics`を返します。`episode_stock`は`ready`件数、target、不足数、`needs_repair`件数、準備中job、補充生成job、最終失敗phaseと試行数を返し、`playback_buffer`はepisode ID、再生状態、現在turn、buffer秒数、先読み発話数、最終ACK時刻を返します。これは観測用snapshotであり、GETによって生成・消費・補充・再生・TTS合成を開始しません。
+`GET /viewer/idlechat/status`の`forecast_stock`は、`enabled`、`total`、`capacity`、`missing`、`filling`、最終生成状態と、6ドメインの`topics`を返します。`episode_stock`は`ready`件数、target、不足数、`needs_repair`件数、`untitled_ready`件数、準備中job、補充生成job、最終失敗phaseと試行数を返し、`playback_buffer`はepisode ID、再生状態、現在turn、buffer秒数、先読み発話数、最終ACK時刻を返します。これは観測用snapshotであり、GETによって生成・タイトル補完・消費・補充・再生・TTS合成を開始しません。
 
 `GET /viewer/idlechat/collection`は、`status`、`skill_id`（`core.build-daily-source-brief`）、`schedule`、`timezone`、`fetched_at`、`next_run_at`、ニュース件数、Wikipedia件数、カテゴリ／source別件数、`items`、`sources`、`tools`、`word_pool`を返します。`word_pool`は固定語数、当日最新語数、合計数、上限、当日最新語とその`source_type`を返します。分析全体の状態は`enrichment_status`（`pending`、`enriching`、`ready`、`partial`、`fallback`）、`enrichment_provider`、`enrichment_error`、`enriched_at`で確認できます。収集後の分析は`Worker`が記事を1件ずつ完了させ、`enriching`中も完了済みまたは工程失敗が確定した記事を順次snapshotへ反映します。`ChatWorker`は使用しません。
 
@@ -330,6 +378,20 @@ Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCORE�
 `NewsCollectionArtifact`と`NewsAnalysisArtifact`のschema、意味、hash系譜はCOREが所有しますが、現行Public APIには収集または考察を起動する専用endpointを公開していません。`GET /viewer/idlechat/collection`のresponseを収集artifactとして保存したり、そのGETでjobが起動すると仮定したりしてはいけません。
 
 採用済みの`RenCrow_Tools` CLI `rencrow-news analyze`は、実装時にCORE所有の考察portへ接続します。具体的なHTTP method、path、interaction profile、request／response、非同期job相関を追加する場合は、CLI実装より先にこのPublic API正本へ記載します。それまではCLIを任意のLLM、RenCrow_LLM Gateway、物理Backendへ直接接続して代替しません。`RenCrow_CMD`にはニュース専用commandを追加しません。
+
+## X Bookmark Viewer API
+
+`GET /viewer/source-registry?action=x-bookmarks`は、COREの
+`l1_staging_item.meta.collection=x_bookmark`だけをViewer用に投影する読み取り専用APIです。
+収集、再分類、validation、promotionは行いません。
+
+queryは`major`、`minor`、`review=needs_review|classified`、`q`、`limit`、`offset`です。
+`limit`の既定値は12、上限は50、`offset`は0以上、`q`は200文字以下です。responseは絞り込み後の
+`items`、`total`、`limit`、`offset`と、全X Bookmarkを母数にした`summary.total`、
+`summary.needs_review`、`summary.major_counts`、`summary.minor_counts`を返します。各itemは`id`、
+`title`、`source_url`、`raw_text`、`validation_status`、`needs_review`、分類method、
+`use_case_tags`、投稿者、画像・参照リンク件数、更新時刻だけを公開します。credential、物理LLM route、
+分類に不要な内部metaは返しません。
 
 ## Interaction client共通意味論
 
