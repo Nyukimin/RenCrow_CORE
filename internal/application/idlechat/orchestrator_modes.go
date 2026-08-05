@@ -49,6 +49,7 @@ func (o *IdleChatOrchestrator) SetIntervalSeconds(seconds int) {
 
 func (o *IdleChatOrchestrator) Stop() {
 	o.cancel()
+	o.cancelTopicProduction("stop")
 	o.cancelIdleRun()
 	o.wg.Wait()
 	log.Println("[IdleChat] Stopped")
@@ -99,6 +100,7 @@ func (o *IdleChatOrchestrator) Interrupt(reason string) {
 }
 
 func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
+	o.cancelTopicProduction(reason)
 	o.mu.Lock()
 	cancel := o.runCancel
 	dailyEnrichmentCancel := o.dailyEnrichmentCancel
@@ -147,6 +149,10 @@ func (o *IdleChatOrchestrator) stopAndDisable(reason string) {
 }
 
 func (o *IdleChatOrchestrator) beginIdleRunLocked() uint64 {
+	// Every conversation path eventually begins here. Foreground dialogue owns
+	// CodexExe priority, so background Stock generation yields immediately and
+	// keeps its durable checkpoint for the next idle refill.
+	o.cancelTopicProduction("conversation_start")
 	if o.runCancel != nil {
 		o.runCancel()
 	}

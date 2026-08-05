@@ -121,6 +121,7 @@ func (r *CodexExecRunner) Run(ctx context.Context, req CodexRunRequest) (CodexRu
 	args = append(args, req.Prompt)
 
 	cmd := exec.CommandContext(runCtx, r.Command, args...)
+	configureCodexCommandCancellation(cmd)
 	stdout := &limitedBuffer{limit: r.MaxOutputBytes}
 	stderr := &limitedBuffer{limit: r.MaxOutputBytes / 4}
 	cmd.Stdout = stdout

@@ -17,6 +17,10 @@ var missedTurnLineRe = regexp.MustCompile(`(?i)^\s*(?:[-*・]\s*)?(?:MISSED_TURN
 var lengthControlLineRe = regexp.MustCompile(`(?i)^\s*(?:[-*・]\s*)?(?:LENGTH_CONTROL|length_control|長さ制御)\s*[:：]\s*(.+)$`)
 
 func (o *IdleChatOrchestrator) reviewSessionEnd(topic, mode string, transcript []string, summary, loopReason string) (string, string) {
+	return o.reviewSessionEndWithProvider(o.providerForSpeaker("shiro"), topic, mode, transcript, summary, loopReason)
+}
+
+func (o *IdleChatOrchestrator) reviewSessionEndWithProvider(provider llm.LLMProvider, topic, mode string, transcript []string, summary, loopReason string) (string, string) {
 	body := strings.TrimSpace(strings.Join(transcript, "\n"))
 	if body == "" {
 		return "", ""
@@ -57,7 +61,11 @@ LENGTH_CONTROL: 2文以内、または最大120字など、短くする制約を
 %s`, mode, topic, loopReasonForPrompt, strings.TrimSpace(summary), body)},
 	}
 
-	resp, err := o.providerForSpeaker("shiro").Generate(o.idleRunContext(), llm.GenerateRequest{
+	if provider == nil {
+		log.Printf("[IdleChat] quality review provider unavailable")
+		return fallbackReview, fallbackGuide
+	}
+	resp, err := provider.Generate(o.idleRunContext(), llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   idleChatQualityReviewMaxTokens,
 		Temperature: 0.2,

@@ -1,7 +1,6 @@
 package idlechat
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -23,6 +22,7 @@ func (o *IdleChatOrchestrator) monitorLoop() {
 		case <-o.ctx.Done():
 			return
 		case <-ticker.C:
+			o.RefillWordTopicStockIfIdle("idle")
 			o.RefillForecastTopicStockIfIdle("idle")
 			o.RefillStoryEpisodesAsync("idle")
 			go o.checkAndStartChat()
@@ -45,7 +45,8 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 		externalLLMBusy = o.externalLLMBusy()
 	}
 	stock := o.topicStockBuf
-	stockFilling := stock != nil && stock.anyFilling()
+	wordStock := o.wordTopicStock
+	stockFilling := (stock != nil && stock.anyFilling()) || (wordStock != nil && wordStock.anyFilling()) || o.topicProductionBusy()
 	if disabled || externalLLMBusy || stockFilling || o.chatActive || chatBusy || workerBusy || (!nextTopicAt.IsZero() && now.Before(nextTopicAt)) || (!manualMode && idleDuration < threshold) {
 		o.mu.Unlock()
 		return
@@ -82,7 +83,7 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 	o.cancelIdleRunIfGeneration(generation)
 }
 
-func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
+func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared ...TopicGenerationResult) {
 	sessionID := fmt.Sprintf("idle-%d", time.Now().Unix())
 	startedAt := time.Now().In(jst)
 	turnLimit := o.idleChatTurnLimit()
@@ -90,7 +91,25 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
 	generation := o.activateIdleSession(segmentID)
 	o.markWatchdogStage("session_start", fmt.Sprintf("strategy=%s", strategy), TimelineEvent{SessionID: segmentID})
 	o.markWatchdogStage("topic_generation", fmt.Sprintf("strategy=%s", strategy), TimelineEvent{SessionID: segmentID})
-	topic, strategy := o.generateTopicFromChat(segmentID, strategy)
+	var topic string
+	if len(prepared) > 0 && strings.TrimSpace(prepared[0].Topic) != "" {
+		result := prepared[0]
+		topic = strings.TrimSpace(result.Topic)
+		if result.Strategy != "" {
+			strategy = TopicStrategy(result.Strategy)
+		}
+		o.mu.Lock()
+		o.sessionContext = formatTopicGenerationContext(result)
+		o.currentTopicResult = &result
+		o.mu.Unlock()
+	} else {
+		topic, strategy = o.generateTopicFromChat(segmentID, strategy)
+	}
+	if isWordTopicGenerationError(topic) {
+		o.recordGenerationErrorToTimeline("shiro", "mio", segmentID, topic, 0)
+		log.Printf("[IdleChat] Session stopped before playback: session=%s topic_error=%s", segmentID, topic)
+		return
+	}
 	if !o.isIdleSessionActive(segmentID, generation) {
 		log.Printf("[IdleChat] Topic generation discarded after interrupt: session=%s", segmentID)
 		return
@@ -110,6 +129,12 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
 	o.currentDialogueState = &arcState
 	o.mu.Unlock()
 	log.Printf("[IdleChat] Topic: %s (%s, session=%s)", topic, strategy, segmentID)
+	dialogueEpisode, err := o.prepareDialogueEpisode(segmentID, topicResult, turnLimit)
+	if err != nil {
+		o.recordGenerationErrorToTimeline("shiro", "mio", segmentID, "dialogue_episode_generation_failed", 0)
+		log.Printf("[IdleChat] Session stopped before playback: session=%s dialogue_error=%v", segmentID, err)
+		return
+	}
 	ttsDrain := make([]<-chan struct{}, 0, turnLimit+2)
 	if ttsDone := o.emitTopicToTimeline(segmentID, topic, strategy); ttsDone != nil {
 		ttsDrain = append(ttsDrain, ttsDone)
@@ -119,11 +144,8 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
 	loopReason := ""
 	loopWarningReason := ""
 	sessionInterrupted := false
-	generationFailed := false
 	transcript := make([]string, 0, turnLimit)
-	currentSpeaker := o.chatSpeakerIndex()
-
-	for turn := 0; turn < turnLimit; turn++ {
+	for turn, preparedTurn := range dialogueEpisode.Turns {
 		select {
 		case <-o.idleRunContext().Done():
 			return
@@ -140,8 +162,8 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
 		}
 		o.mu.Unlock()
 
-		speaker := o.participants[currentSpeaker]
-		nextSpeaker := o.participants[(currentSpeaker+1)%len(o.participants)]
+		speaker := preparedTurn.Speaker
+		nextSpeaker := dialogueEpisode.Participants[(turn+1)%len(dialogueEpisode.Participants)]
 
 		o.markWatchdogStage("response_generation", fmt.Sprintf("%s->%s turn=%d", speaker, nextSpeaker, turn+1), TimelineEvent{
 			From:      speaker,
@@ -149,18 +171,8 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
 			SessionID: segmentID,
 			TurnIndex: turn + 1,
 		})
-		response, rawResponse, err := o.generateResponseWithRaw(speaker, nextSpeaker, segmentID, turn, segmentTurns, topic)
-		if err != nil {
-			log.Printf("[IdleChat] Generation error: %v", err)
-			generationFailed = true
-			if errors.Is(err, errIdleInvalidResponse) {
-				loopReason = "invalid_response"
-			} else {
-				loopReason = "generation_error"
-			}
-			o.recordGenerationErrorToTimeline(speaker, nextSpeaker, segmentID, loopReason, turn+1)
-			break
-		}
+		response := preparedTurn.DisplayText
+		rawResponse := preparedTurn.DisplayText
 		if !o.isIdleSessionActive(segmentID, generation) {
 			log.Printf("[IdleChat] Response discarded after interrupt: session=%s turn=%d", segmentID, turn)
 			sessionInterrupted = true
@@ -173,9 +185,7 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
 		}
 
 		response = ensureTrailingPeriod(response)
-		o.mu.Lock()
-		currentQuality := o.lastDialogueQuality
-		o.mu.Unlock()
+		currentQuality := DialogueQualityResult{OK: true, Score: 100}
 		turnPlan := dialogueTurnPlanForIndex(arcPlan, turn)
 		arcState = director.UpdateArcState(arcState, response, turnPlan, currentQuality)
 		o.mu.Lock()
@@ -184,7 +194,7 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
 		o.mu.Unlock()
 
 		turnIndex := turn + 1
-		messageID := o.idleChatMessageID(segmentID, turnIndex)
+		messageID := preparedTurn.MessageID
 		o.markWatchdogStage("message_record", fmt.Sprintf("%s->%s turn=%d", speaker, nextSpeaker, turnIndex), TimelineEvent{
 			From:      speaker,
 			To:        nextSpeaker,
@@ -235,7 +245,6 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
 			loopWarningReason = reason
 			log.Printf("[IdleChat] Loop/repetition warning, continuing current session topic: session=%s turn=%d reason=%s", segmentID, turn, reason)
 		}
-		currentSpeaker = (currentSpeaker + 1) % len(o.participants)
 	}
 
 	endedAt := time.Now().In(jst)
@@ -244,7 +253,7 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
 			log.Printf("[IdleChat] Session %s reached summary after loop warning: reason=%s turns=%d", segmentID, loopWarningReason, segmentTurns)
 		}
 		displayStrategy := TopicStrategy(fmt.Sprintf("%s: %s", strategy, truncate(topic, 30)))
-		endedEarly := sessionInterrupted || generationFailed
+		endedEarly := sessionInterrupted
 		o.markWatchdogStage("summary_generation", fmt.Sprintf("turns=%d ended_early=%t", segmentTurns, endedEarly), TimelineEvent{SessionID: segmentID})
 		summary := o.saveSummary(segmentID, topic, displayStrategy, transcript, startedAt, endedAt, segmentTurns, endedEarly, loopReason)
 		o.markWatchdogStage("summary_tts", fmt.Sprintf("turns=%d", segmentTurns), TimelineEvent{SessionID: segmentID})
@@ -255,7 +264,7 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy) {
 	o.markWatchdogStage("session_drain", fmt.Sprintf("channels=%d", len(ttsDrain)), TimelineEvent{SessionID: segmentID})
 	o.waitForTTSSessionDrain(segmentID, ttsDrain)
 	cooldown := topicBreak
-	if sessionInterrupted || generationFailed {
+	if sessionInterrupted {
 		idleCooldown := o.interval
 		if idleCooldown > cooldown {
 			cooldown = idleCooldown

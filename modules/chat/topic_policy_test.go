@@ -132,6 +132,28 @@ func TestSingleAndDoubleJudgeRequirePresentDayRelevance(t *testing.T) {
 	}
 }
 
+func TestValidateSingleTopicRequiresSelectedWord(t *testing.T) {
+	seed := TopicSeed{Category: TopicCategorySingle, Genre1: "防災"}
+	candidate := TopicCandidate{Topic: "駅前の店で見落としがちな決済端末の選び方", InterestingnessAxis: ExpectedAxisByCategory[TopicCategorySingle]}
+	if err := ValidateTopicCandidate(TopicCategorySingle, seed, candidate); !errors.Is(err, ErrTopicContractViolation) {
+		t.Fatalf("single topic without selected word must fail: %v", err)
+	}
+	candidate.Topic = "防災設備を店頭に入れるとき誰が最後の判断を持つか"
+	if err := ValidateTopicCandidate(TopicCategorySingle, seed, candidate); err != nil {
+		t.Fatalf("single topic with selected word must pass: %v", err)
+	}
+}
+
+func TestValidateDoubleSeedRejectsSameOrReversedPair(t *testing.T) {
+	same := TopicSeed{Category: TopicCategoryDouble, Genre1: "防災", Genre2: "　防災 "}
+	if err := ValidateSeedForCategory(TopicCategoryDouble, same); !errors.Is(err, ErrTopicSeedUnavailable) {
+		t.Fatalf("double seed with same word must fail: %v", err)
+	}
+	if got := CanonicalDoubleSeedKey(TopicSeed{Genre1: "防災", Genre2: "生成AI"}); got != CanonicalDoubleSeedKey(TopicSeed{Genre1: "生成AI", Genre2: "防災"}) {
+		t.Fatalf("reversed double seed must have the same canonical key")
+	}
+}
+
 func TestRecentTopicSimilarityRejectsDuplicate(t *testing.T) {
 	recent := []RecentTopic{{Topic: "潮汐と郵便制度に共通する、遅れて届くものの設計"}}
 	err := CheckRecentTopicSimilarity("潮汐と郵便制度に共通する、遅れて届くものの設計", recent, RecentTopicSimilarityThreshold)

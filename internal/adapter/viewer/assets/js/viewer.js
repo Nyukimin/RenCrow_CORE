@@ -220,7 +220,10 @@ const state = {
     interruptedAt: 0,
     interruptedSessionId: '',
     currentTopic: '',
+    wordTopicStock: null,
     forecastStock: null,
+    topicStockPlayback: null,
+    selectedTopicPlaybackID: localStorage.getItem('idlechat.selectedTopicPlaybackID') || '',
     history: [],
     openIndex: -1,
     selectedSummaryIndex: 0,
@@ -1249,6 +1252,9 @@ const idleModeNormalBtn = document.getElementById('idleModeNormal');
 const idleModeForecastBtn = document.getElementById('idleModeForecast');
 const idleModeStorySimpleBtn = document.getElementById('idleModeStorySimple');
 const idleStopBtn = document.getElementById('idleStop');
+const idlePlaybackPlayBtn = document.getElementById('idlePlaybackPlay');
+const idlePlaybackNextBtn = document.getElementById('idlePlaybackNext');
+const idlePlaybackPreviousBtn = document.getElementById('idlePlaybackPrevious');
 const idleStateEl = document.getElementById('idleState');
 const idleSubtabs = Array.from(document.querySelectorAll('.idle-subtab'));
 const idleSubviews = Array.from(document.querySelectorAll('.idle-subview'));
@@ -1387,14 +1393,9 @@ if (newsPackRefreshBtn) newsPackRefreshBtn.addEventListener('click', refreshNews
 if (newsPackCategory) newsPackCategory.addEventListener('keydown', (e) => { if (e.key === 'Enter') refreshNewsPack(); });
 
 
-idleStartBtn.addEventListener('click', () => {
-  const path = state.idleChat.selectedMode === 'forecast'
-    ? '/viewer/idlechat/forecast'
-    : (state.idleChat.selectedMode === 'story-simple'
-      ? '/viewer/idlechat/story-simple'
-      : '/viewer/idlechat/start');
-  controlIdle(path);
-});
+if (idlePlaybackPlayBtn) idlePlaybackPlayBtn.addEventListener('click', () => controlIdlePlayback('play'));
+if (idlePlaybackNextBtn) idlePlaybackNextBtn.addEventListener('click', () => controlIdlePlayback('next'));
+if (idlePlaybackPreviousBtn) idlePlaybackPreviousBtn.addEventListener('click', () => controlIdlePlayback('previous'));
 if (idleModeNormalBtn) idleModeNormalBtn.addEventListener('click', () => setIdleSelectedMode('manual'));
 if (idleModeForecastBtn) idleModeForecastBtn.addEventListener('click', () => setIdleSelectedMode('forecast'));
 if (idleModeStorySimpleBtn) idleModeStorySimpleBtn.addEventListener('click', () => setIdleSelectedMode('story-simple'));

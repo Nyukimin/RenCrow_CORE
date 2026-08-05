@@ -159,7 +159,18 @@ type IdleChatOrchestrator struct {
 	reportTTSTimeout          func(TTSTimeoutEvent)
 	topicStore                *TopicStore
 	topicStockBuf             *forecastTopicStock // 未来展望お題ストック
+	wordTopicStock            *wordTopicStock     // 1ワード／2ワードお題ストック
+	topicCodexGenerator       IdleChatCodexGenerator
+	topicProducerMu           sync.Mutex
+	topicProducerBusy         bool
+	topicProducerCtx          context.Context
+	topicProducerCancel       context.CancelFunc
+	generationCheckpoints     *GenerationCheckpointStore
+	topicPlaybackMu           sync.Mutex
+	topicPlaybackHistory      []TopicStockPlaybackItem
+	topicPlaybackIndex        int
 	storyEpisodeService       *StoryEpisodeService
+	dialogueEpisodeService    *DialogueEpisodeService
 	storyTTSPrefetchWindow    int
 	forecastTopicGenerator    func(ForecastDomain) (string, []string, *forecastTopicFailure)
 	recentTopics              func(context.Context, int) ([]string, error)

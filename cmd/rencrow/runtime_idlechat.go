@@ -69,40 +69,50 @@ func buildIdleChatRuntime(
 	idleChatOrch.SetDailySourceBriefResearch(dailySourceBriefResearch)
 	idleChatOrch.SetTopicGenerationConfig(idleChatTopicGenerationConfigFromRuntime(cfg.IdleChat.TopicGeneration))
 	idleChatOrch.SetDialogueInterestingnessConfig(idleChatDialogueInterestingnessConfigFromRuntime(cfg.IdleChat.DialogueInterestingness))
+	workingDir := strings.TrimSpace(cfg.SelfSourceDir)
+	if workingDir == "" {
+		workingDir = "."
+	}
+	idleChatCodexRunner := tools.NewCodexExecRunner(
+		"codex",
+		workingDir,
+		"read-only",
+		"",
+		10*time.Minute,
+		0,
+		0,
+		true,
+	)
+	idleChatCodexGenerator := idleChatCodexExeGenerator{runner: idleChatCodexRunner}
+	idleChatOrch.SetTopicCodexGenerator(idleChatCodexGenerator)
+	generationCheckpoints := idlechat.NewGenerationCheckpointStore(filepath.Join(cfg.Session.StorageDir, "idlechat_generation_checkpoints.json"))
+	if err := generationCheckpoints.LoadError(); err != nil {
+		log.Printf("WARN: IdleChat generation resume disabled until checkpoint file is repaired: %v", err)
+	}
+	idleChatOrch.SetGenerationCheckpointStore(generationCheckpoints)
+	dialogueService := idlechat.NewPersistentDialogueEpisodeService(
+		filepath.Join(cfg.Session.StorageDir, "idlechat_dialogue_episodes.jsonl"),
+		idleChatCodexGenerator,
+		config.BuildIdleChatAgentPrompts(cfg.Prompts),
+		idleChatDialogueInterestingnessConfigFromRuntime(cfg.IdleChat.DialogueInterestingness),
+	)
+	dialogueService.SetMaxSuffixRegenerations(cfg.IdleChat.EpisodePreparation.MaxSuffixRegenerations)
+	idleChatOrch.SetDialogueEpisodeService(dialogueService)
+	idleChatOrch.InitWordTopicStock(filepath.Join(cfg.Session.StorageDir, "word_topic_stock.json"))
+	idleChatOrch.InitForecastTopicStock(filepath.Join(cfg.Session.StorageDir, "forecast_topic_stock.json"))
+	log.Printf("IdleChat topic/dialogue producers enabled (generator=codex_exe sandbox=read-only ephemeral=true)")
 	if cfg.IdleChat.EpisodePreparation.EnabledValue() {
-		workingDir := strings.TrimSpace(cfg.SelfSourceDir)
-		if workingDir == "" {
-			workingDir = "."
-		}
-		storyRunner := tools.NewCodexExecRunner(
-			"codex",
-			workingDir,
-			"read-only",
-			"",
-			10*time.Minute,
-			0,
-			0,
-			true,
-		)
 		storyService := idlechat.NewPersistentStoryEpisodeService(
 			filepath.Join(cfg.Session.StorageDir, "idlechat_story_episodes.jsonl"),
 			cfg.IdleChat.EpisodePreparation.ReadyTarget,
-			storyCodexExeGenerator{runner: storyRunner},
+			idleChatCodexGenerator,
 			config.BuildIdleChatAgentPrompts(cfg.Prompts),
 		)
 		storyService.SetMaxSuffixRegenerations(cfg.IdleChat.EpisodePreparation.MaxSuffixRegenerations)
+		storyService.SetGenerationCheckpointStore(generationCheckpoints)
 		idleChatOrch.SetStoryEpisodeService(storyService)
 		idleChatOrch.SetStoryTTSPrefetchWindow(cfg.IdleChat.TTSPrefetch.LookaheadUtterances)
 		log.Printf("IdleChat story producer enabled (generator=codex_exe sandbox=read-only ephemeral=true target=%d)", cfg.IdleChat.EpisodePreparation.ReadyTarget)
-	}
-	if topicProvider, label := selectForecastTopicProvider(workerProvider); topicProvider != nil {
-		idleChatOrch.SetForecastTopicProviderWithLabel(topicProvider, label)
-		idleChatOrch.InitForecastTopicStock(filepath.Join(cfg.Session.StorageDir, "forecast_topic_stock.json"))
-		log.Printf("IdleChat: Forecast topic generator set to %s, topic stock bootstrap/idle/heartbeat refill enabled", label)
-	}
-	if forecastProvider, label := selectForecastProviderForRuntime(cfg, workerProvider); forecastProvider != nil {
-		idleChatOrch.SetForecastProviderWithLabel(forecastProvider, label)
-		log.Printf("IdleChat: Forecast session provider set to %s", forecastProviderLogLabel(label))
 	}
 	if recentGlossaryTopics != nil {
 		idleChatOrch.SetRecentTopicProvider(recentGlossaryTopics)
@@ -327,7 +337,7 @@ func idleChatTopicGenerationConfigFromRuntime(cfg config.IdleChatTopicGeneration
 		RecentSimilarity:     cfg.RecentSimilarityThreshold,
 		LogCandidates:        cfg.LogCandidates,
 		LogJudgeScores:       cfg.LogJudgeScores,
-		ProviderName:         "chatworker",
+		ProviderName:         "CodexExe",
 		PromptPaths: idlechat.TopicGenerationPromptPaths{
 			Common:   cfg.Prompts.Common,
 			Single:   cfg.Prompts.Single,

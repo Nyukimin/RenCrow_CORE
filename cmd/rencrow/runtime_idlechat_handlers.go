@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	idlechat "github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
 )
 
 func (d *Dependencies) handleIdleChatStart() http.HandlerFunc {
@@ -203,20 +205,71 @@ func (d *Dependencies) handleIdleChatStatus() http.HandlerFunc {
 		}
 		activeSessionID, activeTranscript := d.idleChatOrch.ActiveSessionTranscript(100)
 		writeJSON(w, map[string]any{
-			"ok":                true,
-			"mode":              d.idleChatOrch.CurrentMode(),
-			"manual_mode":       d.idleChatOrch.IsManualMode(),
-			"disabled":          d.idleChatOrch.IsDisabled(),
-			"chat_active":       d.idleChatOrch.IsChatActive(),
-			"current_topic":     d.idleChatOrch.CurrentTopic(),
-			"active_session_id": activeSessionID,
-			"active_transcript": activeTranscript,
-			"watchdog":          d.idleChatOrch.WatchdogSnapshot(time.Now().UTC()),
-			"forecast_stock":    d.idleChatOrch.ForecastTopicStockSnapshot(),
-			"episode_stock":     d.idleChatOrch.StoryEpisodeStockSnapshot(),
-			"llm_busy":          d.snapshotLLMBusy(),
-			"tts_pending":       snapshotIdleChatTTSPending(),
-			"tts_public":        snapshotTTSPublicSessions(),
+			"ok":                   true,
+			"mode":                 d.idleChatOrch.CurrentMode(),
+			"manual_mode":          d.idleChatOrch.IsManualMode(),
+			"disabled":             d.idleChatOrch.IsDisabled(),
+			"chat_active":          d.idleChatOrch.IsChatActive(),
+			"current_topic":        d.idleChatOrch.CurrentTopic(),
+			"topic_stock_playback": d.idleChatOrch.TopicStockPlaybackSnapshot(),
+			"active_session_id":    activeSessionID,
+			"active_transcript":    activeTranscript,
+			"watchdog":             d.idleChatOrch.WatchdogSnapshot(time.Now().UTC()),
+			"word_topic_stock":     d.idleChatOrch.WordTopicStockSnapshot(),
+			"forecast_stock":       d.idleChatOrch.ForecastTopicStockSnapshot(),
+			"episode_stock":        d.idleChatOrch.StoryEpisodeStockSnapshot(),
+			"llm_busy":             d.snapshotLLMBusy(),
+			"tts_pending":          snapshotIdleChatTTSPending(),
+			"tts_public":           snapshotTTSPublicSessions(),
+		})
+	}
+}
+
+type idleChatPlaybackRequest struct {
+	Action string `json:"action"`
+	ItemID string `json:"item_id"`
+}
+
+func (d *Dependencies) handleIdleChatPlayback() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if d.idleChatOrch == nil {
+			http.Error(w, "idlechat not enabled", http.StatusNotFound)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		var req idleChatPlaybackRequest
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&req); err != nil {
+			http.Error(w, "invalid playback request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			http.Error(w, "invalid playback request", http.StatusBadRequest)
+			return
+		}
+		action := strings.ToLower(strings.TrimSpace(req.Action))
+		if action != "play" && action != "next" && action != "previous" {
+			http.Error(w, "action must be play, next, or previous", http.StatusBadRequest)
+			return
+		}
+		resetIdleChatTTSQueue()
+		snapshot, err := d.idleChatOrch.StartTopicStockPlayback(action, strings.TrimSpace(req.ItemID))
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, idlechat.ErrTopicStockEmpty) || errors.Is(err, idlechat.ErrTopicStockNotFound) || errors.Is(err, idlechat.ErrTopicStockNoPrevious) {
+				status = http.StatusConflict
+			}
+			http.Error(w, err.Error(), status)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"ok": true, "playback": snapshot,
+			"mode": d.idleChatOrch.CurrentMode(), "chat_active": d.idleChatOrch.IsChatActive(),
+			"current_topic": d.idleChatOrch.CurrentTopic(),
 		})
 	}
 }

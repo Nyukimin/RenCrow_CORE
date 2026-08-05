@@ -147,7 +147,7 @@ func cmdControlInteractionAllowed(method, path string) bool {
 
 func portalIdleChatInteractionAllowed(method, path string) bool {
 	if method == http.MethodPost {
-		return path == "/viewer/surface-presence"
+		return path == "/viewer/surface-presence" || path == "/viewer/idlechat/playback"
 	}
 	if method != http.MethodGet {
 		return false
@@ -165,6 +165,9 @@ func portalIdleChatInteractionAllowed(method, path string) bool {
 }
 
 func portalChatInteractionAllowed(method, path string) bool {
+	if method == http.MethodPost && path == "/viewer/idlechat/playback" {
+		return false
+	}
 	if portalIdleChatInteractionAllowed(method, path) {
 		return true
 	}

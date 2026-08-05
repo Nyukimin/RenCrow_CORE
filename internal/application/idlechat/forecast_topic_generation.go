@@ -1,6 +1,7 @@
 package idlechat
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -38,6 +39,39 @@ func (o *IdleChatOrchestrator) generateForecastTopicInline(domain ForecastDomain
 	return topic, seeds, nil
 }
 
+func (o *IdleChatOrchestrator) generateForecastTopicInlineForStock(ctx context.Context, domain ForecastDomain, checkpoint *GenerationCheckpoint) (string, []string, *forecastTopicFailure) {
+	if checkpoint == nil {
+		return "", nil, newForecastTopicFailure("checkpoint", domain.Name, "CodexExe", errors.New("forecast checkpoint is nil"))
+	}
+	checkpointStore := o.generationCheckpointStore()
+	if len(checkpoint.ForecastSeeds) == 0 {
+		trendSeeds := fetchTrendSeeds(domain)
+		nhkSeeds := fetchDomainSeeds(domain, 10)
+		allHeadlines := rankForecastSeeds(domain, append(trendSeeds, nhkSeeds...))
+		keyword := strings.TrimSpace(checkpoint.ForecastKeyword)
+		if keyword == "" {
+			var failure *forecastTopicFailure
+			keyword, failure = o.extractForecastKeywordWithContext(ctx, domain, allHeadlines)
+			if failure != nil {
+				return "", allHeadlines, failure
+			}
+			checkpoint.ForecastKeyword = keyword
+			checkpoint.Stage = "keyword"
+			if err := checkpointStore.Put(*checkpoint); err != nil {
+				return "", allHeadlines, newForecastTopicFailure("checkpoint", domain.Name, "CodexExe", err)
+			}
+		}
+		deepSeeds := fetchGoogleNewsSeeds(keyword, 5)
+		checkpoint.ForecastSeeds = rankForecastSeeds(domain, append(allHeadlines, deepSeeds...))
+		checkpoint.Stage = "seeds"
+		if err := checkpointStore.Put(*checkpoint); err != nil {
+			return "", checkpoint.ForecastSeeds, newForecastTopicFailure("checkpoint", domain.Name, "CodexExe", err)
+		}
+	}
+	topic, failure := o.generateForecastTopicWithCheckpoint(ctx, domain, checkpoint)
+	return topic, append([]string(nil), checkpoint.ForecastSeeds...), failure
+}
+
 // fetchDomainSeeds は指定ドメインのRSSからシードを取得する。
 func fetchDomainSeeds(domain ForecastDomain, limit int) []string {
 	var all []string
@@ -67,6 +101,7 @@ func fetchDomainSeeds(domain ForecastDomain, limit int) []string {
 
 // generateForecastTopicPrompt はドメインとニュースシードから未来展望トピックのプロンプトを生成する。
 func generateForecastTopicPrompt(domain ForecastDomain, seeds []string, avoidThemes []string) string {
+	horizon := forecastHorizonForDomain(domain.Name)
 	seedSection := ""
 	if len(seeds) > 0 {
 		picked := seeds
@@ -88,7 +123,7 @@ func generateForecastTopicPrompt(domain ForecastDomain, seeds []string, avoidThe
 	return fmt.Sprintf(`あなたは「%s」分野の未来を展望する議論のお題を1つ提案してください。%s%s
 
 要件:
-- 現在の動向・ニュースから3〜10年後の社会への影響を考えさせるお題
+- 現在の動向・ニュースから%s後の社会への影響を考えさせるお題
 - 具体的な論点が含まれ、賛否両論が生まれるもの
 - 「もし〜だったら」形式は使わない
 - 楽観/悲観の両面から議論できるもの
@@ -100,7 +135,7 @@ func generateForecastTopicPrompt(domain ForecastDomain, seeds []string, avoidThe
 - 質問文・感想文は禁止
 - 「%sの未来:」のような接頭辞は不要
 - 体言止め、または「〜を考える」「〜の行方」のような題名調にする
-- 50文字以内を目安に簡潔にする`, domain.Name, seedSection, avoidSection, angle, domain.Name)
+- 50文字以内を目安に簡潔にする`, domain.Name, seedSection, avoidSection, horizon, angle, domain.Name)
 }
 
 // buildForecastLLMTopic は LLM に渡す詳細版トピックを構築する。
@@ -122,12 +157,25 @@ func buildForecastLLMTopic(domain ForecastDomain, displayTopic string, seeds []s
 		}
 		sb.WriteString("\n")
 	}
-	sb.WriteString(`議論の方向性:
-- 上記の最新動向を踏まえ、3〜10年後の社会への具体的な影響を議論する
+	sb.WriteString(fmt.Sprintf(`議論の方向性:
+- 上記の最新動向を踏まえ、%s後の社会への具体的な影響を議論する
 - 楽観/悲観の両面から、根拠のある主張を展開する
 - 抽象論ではなく、具体的な事例・数字・影響を挙げる
-- 過去の類似事例との比較や、国際的な視点も取り入れる`)
+- 過去の類似事例との比較や、国際的な視点も取り入れる`, forecastHorizonForDomain(domain.Name)))
 	return sb.String()
+}
+
+func forecastHorizonForDomain(domainName string) string {
+	switch strings.TrimSpace(domainName) {
+	case "AI技術":
+		return "1〜2年"
+	case "その他技術":
+		return "2〜3年"
+	case "医療", "社会保障", "政治", "経済":
+		return "3〜5年"
+	default:
+		return "2〜3年"
+	}
 }
 
 func normalizeForecastDisplayTopic(domain ForecastDomain, topic string) string {
@@ -152,10 +200,17 @@ func (o *IdleChatOrchestrator) generateForecastTopic(domain ForecastDomain, seed
 		return "", newForecastTopicFailure("topic", domain.Name, providerLabel, err)
 	}
 	recent := recentTopicRecords(append(recentTopics, pastTitleThemes...))
+	o.mu.Lock()
+	wordStock := o.wordTopicStock
+	o.mu.Unlock()
+	if wordStock != nil {
+		recent = append(recent, wordStock.topics()...)
+	}
 	seed := TopicSeed{
-		Category:       TopicCategoryForecast,
-		ForecastDomain: domain.Name,
-		TrendKeywords:  append([]string(nil), seeds...),
+		Category:        TopicCategoryForecast,
+		ForecastDomain:  domain.Name,
+		ForecastHorizon: forecastHorizonForDomain(domain.Name),
+		TrendKeywords:   append([]string(nil), seeds...),
 	}
 	o.mu.Lock()
 	topicGenerationConfig := o.topicGenerationConfig
@@ -177,8 +232,64 @@ func (o *IdleChatOrchestrator) generateForecastTopic(domain ForecastDomain, seed
 	return "", newForecastTopicFailure("topic", domain.Name, providerLabel, err)
 }
 
+func (o *IdleChatOrchestrator) generateForecastTopicWithCheckpoint(ctx context.Context, domain ForecastDomain, checkpoint *GenerationCheckpoint) (string, *forecastTopicFailure) {
+	provider, providerLabel := o.forecastTopicLLMInfo()
+	if provider == nil {
+		err := errors.New("forecast primary LLM provider unavailable")
+		return "", newForecastTopicFailure("topic", domain.Name, providerLabel, err)
+	}
+	if len(checkpoint.Recent) == 0 {
+		recentTopics := o.getRecentTopics(12)
+		pastTitleThemes := o.getHistoricalTitleThemes(500)
+		checkpoint.Recent = recentTopicRecords(append(recentTopics, pastTitleThemes...))
+		o.mu.Lock()
+		wordStock := o.wordTopicStock
+		o.mu.Unlock()
+		if wordStock != nil {
+			checkpoint.Recent = append(checkpoint.Recent, wordStock.topics()...)
+		}
+		checkpoint.Seed = TopicSeed{
+			Category: TopicCategoryForecast, ForecastDomain: domain.Name,
+			ForecastHorizon: forecastHorizonForDomain(domain.Name), TrendKeywords: append([]string(nil), checkpoint.ForecastSeeds...),
+		}
+		if err := o.generationCheckpointStore().Put(*checkpoint); err != nil {
+			return "", newForecastTopicFailure("checkpoint", domain.Name, providerLabel, err)
+		}
+	}
+	o.mu.Lock()
+	config := o.topicGenerationConfig
+	o.mu.Unlock()
+	if config.CandidatesPerAttempt > 3 {
+		config.CandidatesPerAttempt = 3
+	}
+	config.ProviderName = providerLabel
+	resume := TopicGenerationResumeState{Attempt: checkpoint.Attempt, Candidates: checkpoint.Candidates, Result: checkpoint.Result}
+	result, err := NewTopicGenerator(provider, config).GenerateInterestingTopicResumable(ctx, TopicCategoryForecast, checkpoint.Seed, checkpoint.Recent, resume, func(state TopicGenerationResumeState) error {
+		checkpoint.Attempt = state.Attempt
+		checkpoint.Candidates = append([]TopicCandidate(nil), state.Candidates...)
+		checkpoint.Result = state.Result
+		if state.Result == nil {
+			checkpoint.Stage = "candidates"
+		} else {
+			checkpoint.Stage = "result"
+		}
+		return o.generationCheckpointStore().Put(*checkpoint)
+	})
+	if err != nil {
+		return "", newForecastTopicFailure("topic", domain.Name, providerLabel, err)
+	}
+	if result == nil || strings.TrimSpace(result.Topic) == "" {
+		return "", newForecastTopicFailure("topic", domain.Name, providerLabel, errors.New("forecast topic generation produced no acceptable topic"))
+	}
+	return normalizeForecastDisplayTopic(domain, result.Topic), nil
+}
+
 // extractForecastKeyword はNHKヘッドラインからドメインに関連する注目キーワードを1つ抽出する。
 func (o *IdleChatOrchestrator) extractForecastKeyword(domain ForecastDomain, headlines []string) (string, *forecastTopicFailure) {
+	return o.extractForecastKeywordWithContext(o.idleRunContext(), domain, headlines)
+}
+
+func (o *IdleChatOrchestrator) extractForecastKeywordWithContext(ctx context.Context, domain ForecastDomain, headlines []string) (string, *forecastTopicFailure) {
 	if len(headlines) == 0 {
 		err := errors.New("forecast keyword extraction has no seed headlines")
 		logForecastLLMError("keyword", domain.Name, "", err)
@@ -197,7 +308,7 @@ func (o *IdleChatOrchestrator) extractForecastKeyword(domain ForecastDomain, hea
 		{Role: "system", Content: "あなたはニュース分析の専門家です。"},
 		{Role: "user", Content: prompt},
 	}
-	resp, providerLabel, err := o.generateForecastLLM("keyword", domain.Name, llm.GenerateRequest{
+	resp, providerLabel, err := o.generateForecastLLMWithContext(ctx, "keyword", domain.Name, llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   30,
 		Temperature: 0.5,
@@ -220,9 +331,13 @@ func (o *IdleChatOrchestrator) extractForecastKeyword(domain ForecastDomain, hea
 }
 
 func (o *IdleChatOrchestrator) generateForecastLLM(phase, domainName string, req llm.GenerateRequest) (llm.GenerateResponse, string, error) {
+	return o.generateForecastLLMWithContext(o.idleRunContext(), phase, domainName, req)
+}
+
+func (o *IdleChatOrchestrator) generateForecastLLMWithContext(ctx context.Context, phase, domainName string, req llm.GenerateRequest) (llm.GenerateResponse, string, error) {
 	provider, providerLabel := o.forecastTopicLLMInfo()
 	if provider != nil {
-		requestCtx := llm.WithExecutionObservation(o.idleRunContext(), llm.ExecutionObservation{
+		requestCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
 			Initiator: "shiro", Caller: "idlechat.forecast_topic", Purpose: phase,
 		})
 		resp, err := provider.Generate(requestCtx, req)
@@ -295,6 +410,10 @@ func formatForecastTopicError(domain ForecastDomain, failure *forecastTopicFailu
 		parts = append(parts, "detail="+detail)
 	}
 	return strings.Join(parts, " ")
+}
+
+func isForecastTopicGenerationError(topic string) bool {
+	return strings.HasPrefix(strings.TrimSpace(topic), "FORECAST_TOPIC_GENERATION_FAILED ")
 }
 
 func forecastLLMErrorCode(err error) string {

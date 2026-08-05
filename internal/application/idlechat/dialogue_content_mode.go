@@ -76,6 +76,7 @@ func dialogueContentEvidence(result TopicGenerationResult) string {
 		result.Seed.Genre1Context,
 		result.Seed.Genre2Context,
 		result.Seed.ForecastDomain,
+		result.Seed.ForecastHorizon,
 		strings.Join(result.Seed.TrendKeywords, " "),
 		result.Seed.StoryBase,
 		result.Seed.StoryTransform,

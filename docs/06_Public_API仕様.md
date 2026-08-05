@@ -21,7 +21,8 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読 |
 | `GET/POST /viewer/character-runtime` | Character一覧、複数Character Roundと会話ID |
 | `/viewer/status`, `/viewer/agents` | runtime と agent の状態 |
-| `GET /viewer/idlechat/status` | IdleChat状態と読み取り専用の`forecast_stock` snapshot |
+| `GET /viewer/idlechat/status` | IdleChat状態と読み取り専用の`word_topic_stock`、`forecast_stock`、`episode_stock`、`topic_stock_playback` snapshot |
+| `POST /viewer/idlechat/playback` | Topic Stockを`play`、`next`、`previous`で再生。任意選択時だけ`item_id`を指定する |
 | `GET /viewer/idlechat/collection` | 日次収集の入力cache、次回04:00 JST、取得元、利用toolの読み取り専用snapshot。ユーザー向けニュース取得のAPIではない |
 | `POST /viewer/idlechat/start`, `POST /viewer/idlechat/stop` | IdleChatの開始・停止。認可されたwrite clientだけが利用する |
 | `POST /viewer/surface-presence` | PORTAL Chat／IdleChat画面の期限付き在席を通知し、COREが排他的な有効modeを決定する |
@@ -379,7 +380,9 @@ NG理由をCodexExeへ渡して最終turnまで再生成します。prefixの`me
 再生中のepisodeはHTTP 409と`IDLECHAT_EPISODE_PLAYING`を返し、暗黙に中断しません。これらは
 Debug Viewer／localhost運用CLI向けのadmin APIであり、RenCrow_PORTALからproxyしません。
 
-`GET /viewer/idlechat/status`の`forecast_stock`は、`enabled`、`total`、`capacity`、`missing`、`filling`、最終生成状態と、6ドメインの`topics`を返します。`episode_stock`は`ready`件数、target、不足数、`needs_repair`件数、`untitled_ready`件数、準備中job、補充生成job、最終失敗phaseと試行数を返し、`playback_buffer`はepisode ID、再生状態、現在turn、buffer秒数、先読み発話数、最終ACK時刻を返します。これは観測用snapshotであり、GETによって生成・タイトル補完・消費・補充・再生・TTS合成を開始しません。
+`GET /viewer/idlechat/status`の`word_topic_stock`は1ワード／2ワード、`forecast_stock`は6ドメインの準備済みお題を返します。`episode_stock`は完成、要修復、失敗などの物語在庫を返します。`topic_stock_playback`は現在項目、履歴位置、`can_previous`、`can_next`を返します。これは観測用snapshotであり、GETによって生成・消費・補充・再生・TTS合成を開始しません。
+
+`POST /viewer/idlechat/playback`は`{"action":"play|next|previous","item_id":"..."}`を受け付けます。`play`の`item_id`省略時は現在項目を再生し、現在項目がなければ未再生Stockの先頭を使います。`next`は未再生の次項目を消費し、`previous`はCORE内の再生履歴を使って完成物を再生し直します。`previous`で項目をStockへ戻さないため、補充や生成の重複を起こしません。
 
 `GET /viewer/idlechat/collection`は、`status`、`skill_id`（`core.build-daily-source-brief`）、`schedule`、`timezone`、`fetched_at`、`next_run_at`、ニュース件数、Wikipedia件数、カテゴリ／source別件数、`items`、`sources`、`tools`、`word_pool`を返します。`word_pool`は固定語数、当日最新語数、合計数、上限、当日最新語とその`source_type`を返します。分析全体の状態は`enrichment_status`（`pending`、`enriching`、`ready`、`partial`、`fallback`）、`enrichment_provider`、`enrichment_error`、`enriched_at`で確認できます。収集後の分析は`Worker`が記事を1件ずつ完了させ、`enriching`中も完了済みまたは工程失敗が確定した記事を順次snapshotへ反映します。`ChatWorker`は使用しません。
 
@@ -581,7 +584,7 @@ PORTALは使用しません。`portal-idlechat`は利用者操作としては引
 
 `RenCrow_PORTAL`はCOREの全APIを透過公開しません。
 
-- `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りと、`POST /viewer/surface-presence`の`surface=idlechat`だけを許可する。手動の開始／停止は許可しない。
+- `IdleChat`: `GET /viewer/events`、`GET /viewer/idlechat/status`などの読み取りと、`POST /viewer/surface-presence`の`surface=idlechat`、`POST /viewer/idlechat/playback`だけを許可する。手動の開始／停止は許可しない。
 - `Chat`: chat、recipient通知、active audio/input ownership、TTS再生、STT入力と、`POST /viewer/surface-presence`の`surface=chat`だけをallowlistとする。IdleChatの手動開始／停止は許可しない。
 - `Games`: 下記のGames allowlistだけを許可し、Agent decision／result callbackを公開しない。
 - COREへのproxy requestはmodeに応じて`portal-chat`、`portal-idlechat`、`portal-games` profileを付ける。

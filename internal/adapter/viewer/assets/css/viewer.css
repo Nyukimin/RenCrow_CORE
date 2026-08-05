@@ -493,7 +493,7 @@ tr.evi-selected td{background:rgba(34,211,238,.08)}
 .idle-stock-domain{min-width:0;display:grid;grid-template-columns:minmax(130px,180px) minmax(0,1fr);gap:12px;border:1px solid var(--border);border-radius:8px;background:rgba(9,18,36,.46);padding:11px}
 .idle-stock-domain>header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding-right:12px;border-right:1px solid var(--border-muted)}
 .idle-stock-domain>header>div>span{display:block;margin-bottom:4px;color:var(--t3);font-size:10px;font-weight:700}.idle-stock-domain h4{margin:0;color:var(--t1);font-size:15px}.idle-stock-domain .badge{white-space:nowrap}
-.idle-stock-topic-grid{min-width:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.idle-stock-topic{min-width:0;display:grid;align-content:start;gap:7px;padding:10px 12px;border:1px solid rgba(132,164,215,.2);border-radius:6px;background:rgba(255,255,255,.025)}
+.idle-stock-topic-grid{min-width:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.idle-stock-topic{min-width:0;display:grid;align-content:start;gap:7px;padding:10px 12px;border:1px solid rgba(132,164,215,.2);border-radius:6px;background:rgba(255,255,255,.025);color:inherit;text-align:left}.idle-stock-topic[data-playback-id]{cursor:pointer}.idle-stock-topic[data-playback-id]:hover{border-color:rgba(34,211,238,.46);background:rgba(34,211,238,.06)}.idle-stock-topic.is-selected{border-color:rgba(34,211,238,.72);box-shadow:0 0 0 2px rgba(34,211,238,.14) inset;background:rgba(34,211,238,.09)}
 .idle-stock-topic-head{display:flex;justify-content:space-between;gap:8px;color:var(--t3);font-size:10px}.idle-stock-topic p{margin:0;color:var(--t1);font-size:14px;font-weight:650;line-height:1.55;overflow-wrap:anywhere}.idle-stock-topic small{color:var(--t3);font-size:10px;line-height:1.4}.idle-stock-topic.is-empty{border-style:dashed;background:transparent}.idle-stock-topic.is-empty p{color:var(--t2);font-weight:600}
 .idle-stock-seeds{font-size:11px;color:var(--t2)}.idle-stock-seeds summary{cursor:pointer;color:var(--t2)}.idle-stock-seeds ul{margin:7px 0 0;padding-left:18px;display:grid;gap:4px}.idle-stock-seeds li{overflow-wrap:anywhere}
 .idle-stock-empty{font-size:11px;color:var(--t3);padding:10px;text-align:center}
@@ -512,7 +512,7 @@ tr.evi-selected td{background:rgba(34,211,238,.08)}
 .idle-episode-list,.idle-episode-detail{min-height:0;overflow:auto;border:1px solid var(--border);border-radius:12px;background:rgba(9,18,36,.46);box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
 .idle-episode-list{flex:1;display:flex;flex-direction:column;gap:7px;padding:9px}
 .idle-episode-item{width:100%;display:grid;gap:5px;padding:10px;text-align:left;border:1px solid var(--border);border-left:4px solid var(--ok);border-radius:8px;background:rgba(255,255,255,.025);color:var(--t1);cursor:pointer}
-.idle-episode-item:hover,.idle-episode-item.active{border-color:rgba(128,230,255,.48);background:rgba(128,230,255,.08)}
+.idle-episode-item:hover,.idle-episode-item.active{border-color:rgba(128,230,255,.48);background:rgba(128,230,255,.08)}.idle-episode-item.is-playback-selected{box-shadow:0 0 0 2px rgba(34,211,238,.18) inset;border-color:rgba(34,211,238,.72)}
 .idle-episode-item.status-needs-repair{border-left-color:var(--warn)}.idle-episode-item.status-failed{border-left-color:var(--err)}
 .idle-episode-item-title{font-size:13px;font-weight:760;line-height:1.4;overflow-wrap:anywhere}.idle-episode-item-meta{display:flex;flex-wrap:wrap;gap:5px 9px;color:var(--t3);font-size:10px}
 .idle-episode-detail{padding:13px 14px 160px;scroll-padding-bottom:160px}
@@ -690,6 +690,7 @@ main::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:3px}
 .input-audio-controls,.input-status-row{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
 .input-compose{display:flex;align-items:flex-end;gap:10px;min-width:0}
 .idle-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.idle-tools .idle-playback-primary{color:#dffbff;border-color:rgba(34,211,238,.5);background:rgba(34,211,238,.14)}
 body:not([data-viewer-tab="idlechat"]) .idle-tools{display:none}
 .audio-btn{
   --mic-level-pct:0%;

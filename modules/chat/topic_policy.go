@@ -49,8 +49,9 @@ type TopicSeed struct {
 
 	News *NewsSeed `json:"news,omitempty"`
 
-	ForecastDomain string   `json:"forecast_domain,omitempty"`
-	TrendKeywords  []string `json:"trend_keywords,omitempty"`
+	ForecastDomain  string   `json:"forecast_domain,omitempty"`
+	ForecastHorizon string   `json:"forecast_horizon,omitempty"`
+	TrendKeywords   []string `json:"trend_keywords,omitempty"`
 
 	StoryBase      string `json:"story_base,omitempty"`
 	StoryTransform string `json:"story_transform,omitempty"`
@@ -140,6 +141,7 @@ type TopicGenerationResult struct {
 	Candidates []TopicCandidate  `json:"candidates,omitempty"`
 	Judge      *TopicJudgeResult `json:"judge,omitempty"`
 	Provider   string            `json:"provider"`
+	Initiator  string            `json:"initiator,omitempty"`
 }
 
 type TopicGenerationDiagnostic struct {
@@ -233,6 +235,9 @@ func ValidateSeedForCategory(category TopicCategory, seed TopicSeed) error {
 		if strings.TrimSpace(seed.Genre1) == "" || strings.TrimSpace(seed.Genre2) == "" {
 			return fmt.Errorf("%w: genre_1 and genre_2 are required", ErrTopicSeedUnavailable)
 		}
+		if NormalizeTopicForSimilarity(seed.Genre1) == NormalizeTopicForSimilarity(seed.Genre2) {
+			return fmt.Errorf("%w: genre_1 and genre_2 must differ", ErrTopicSeedUnavailable)
+		}
 	case TopicCategoryExternal:
 		if strings.TrimSpace(seed.Genre1) == "" || seed.ExternalMaterial == nil || strings.TrimSpace(seed.ExternalMaterial.Title) == "" {
 			return fmt.Errorf("%w: external material title and genre_1 are required", ErrTopicSeedUnavailable)
@@ -259,7 +264,14 @@ func ValidateSeedForCategory(category TopicCategory, seed TopicSeed) error {
 
 func ValidateTopicCandidate(category TopicCategory, seed TopicSeed, candidate TopicCandidate) error {
 	topic := strings.TrimSpace(candidate.Topic)
-	if err := ValidateCommonTopic(topic); err != nil {
+	allowedMetaTerms := []string(nil)
+	if category == TopicCategorySingle || category == TopicCategoryDouble {
+		allowedMetaTerms = append(allowedMetaTerms, strings.TrimSpace(seed.Genre1))
+	}
+	if category == TopicCategoryDouble {
+		allowedMetaTerms = append(allowedMetaTerms, strings.TrimSpace(seed.Genre2))
+	}
+	if err := validateCommonTopic(topic, allowedMetaTerms); err != nil {
 		return err
 	}
 	expectedAxis := ExpectedAxisByCategory[category]
@@ -268,6 +280,9 @@ func ValidateTopicCandidate(category TopicCategory, seed TopicSeed, candidate To
 	}
 	switch category {
 	case TopicCategorySingle:
+		if !containsAny(topic, strings.TrimSpace(seed.Genre1)) {
+			return fmt.Errorf("%w: single topic must contain genre_1", ErrTopicContractViolation)
+		}
 		return nil
 	case TopicCategoryDouble:
 		if !containsAny(topic, strings.TrimSpace(seed.Genre1)) || !containsAny(topic, strings.TrimSpace(seed.Genre2)) {
@@ -324,7 +339,22 @@ func ValidateTopicCandidate(category TopicCategory, seed TopicSeed, candidate To
 	return nil
 }
 
+// CanonicalDoubleSeedKey returns an order-independent key for a double topic
+// seed so reversed pairs cannot be stocked as separate inputs.
+func CanonicalDoubleSeedKey(seed TopicSeed) string {
+	words := []string{
+		NormalizeTopicForSimilarity(seed.Genre1),
+		NormalizeTopicForSimilarity(seed.Genre2),
+	}
+	sort.Strings(words)
+	return strings.Join(words, "\x00")
+}
+
 func ValidateCommonTopic(topic string) error {
+	return validateCommonTopic(topic, nil)
+}
+
+func validateCommonTopic(topic string, allowedMetaTerms []string) error {
 	topic = strings.TrimSpace(topic)
 	if topic == "" {
 		return fmt.Errorf("%w: empty topic", ErrTopicContractViolation)
@@ -339,8 +369,14 @@ func ValidateCommonTopic(topic string) error {
 	if strings.HasPrefix(topic, "{") || strings.HasPrefix(topic, "[") || strings.Contains(topic, "\":") {
 		return fmt.Errorf("%w: topic looks like json", ErrTopicContractViolation)
 	}
+	metaScanTarget := topic
+	for _, allowed := range allowedMetaTerms {
+		if allowed = strings.TrimSpace(allowed); allowed != "" {
+			metaScanTarget = strings.ReplaceAll(metaScanTarget, allowed, "")
+		}
+	}
 	for _, term := range CommonForbiddenMetaTerms {
-		if ContainsTopicTerm(topic, term) {
+		if ContainsTopicTerm(metaScanTarget, term) {
 			return fmt.Errorf("%w: topic leaks meta term %q", ErrTopicContractViolation, term)
 		}
 	}

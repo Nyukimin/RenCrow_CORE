@@ -613,8 +613,9 @@ function renderIdleChat() {
   setBadge(manualEl, state.idleChat.manualMode);
   setBadge(activeEl, state.idleChat.chatActive);
 	topicEl.textContent = stripIdleTopicCategory(state.idleChat.currentTopic) || '-';
-	renderIdleForecastStock();
+	renderIdleTopicStocks();
 	renderIdleEpisodes();
+	updateIdlePlaybackControls();
 
   body.innerHTML = '';
   const rows = state.idleChat.history || [];
@@ -698,12 +699,43 @@ function renderIdleChat() {
   });
 }
 
-function renderIdleForecastStock() {
+function renderIdleWordTopicStock(stock) {
+  if (!stock || !stock.enabled) {
+    return '<section class="idle-stock-domain"><header><div><span>Topic Stock</span><h4>1ワード / 2ワード</h4></div></header><div class="idle-stock-empty">Word Topic Stock is not enabled</div></section>';
+  }
+  const categories = Array.isArray(stock.categories) ? stock.categories : [];
+  return categories.map((category) => {
+    const topics = Array.isArray(category && category.topics) ? category.topics : [];
+    const rows = topics.map((item, index) => {
+      const seed = item && item.seed ? item.seed : {};
+      const selected = [seed.genre_1, seed.genre_2].filter(Boolean).join(' × ');
+      const playbackID = 'word:' + String(item && item.generation_id || '');
+      const selectedClass = playbackID === state.idleChat.selectedTopicPlaybackID ? ' is-selected' : '';
+      return '<button type="button" class="idle-stock-topic' + selectedClass + '" data-playback-id="' + esc(playbackID) + '">' +
+        '<div class="idle-stock-topic-head"><span>' + esc(selected || ('お題 ' + String(index + 1))) + '</span><time>' + esc(fdt(item && item.created)) + '</time></div>' +
+        '<p>' + esc(String(item && item.topic || '-')) + '</p>' +
+        '<small>axis: ' + esc(String(item && item.interestingness_axis || '-')) + ' / mode: ' + esc(String(item && item.content_mode || '-')) + '</small>' +
+      '</button>';
+    }).join('');
+    const count = Number(category && category.count || 0);
+    const capacity = Number(category && category.capacity || 0);
+    return '<section class="idle-stock-domain">' +
+      '<header><div><span>Topic Stock</span><h4>' + esc(String(category && category.label || category && category.name || '-')) + '</h4></div>' +
+      '<span class="badge ' + (category && category.filling ? 'state-running' : (count >= capacity ? 'state-idle' : 'state-thinking')) + '">' + esc(String(count)) + ' / ' + esc(String(capacity)) + (category && category.filling ? ' 生成中' : '') + '</span></header>' +
+      '<div class="idle-stock-topic-grid">' + (rows || '<div class="idle-stock-empty">補充待ち</div>') + '</div>' +
+    '</section>';
+  }).join('');
+}
+
+function renderIdleTopicStocks() {
   const root = document.getElementById('idleForecastStock');
   if (!root) return;
+  const wordStock = state.idleChat.wordTopicStock;
   const forecastStock = state.idleChat.forecastStock;
   if (!forecastStock || !forecastStock.enabled) {
-    root.innerHTML = '<div class="idle-empty">Forecast provider or topic stock is not enabled</div>';
+    root.innerHTML = '<div class="idle-stock-domains">' + renderIdleWordTopicStock(wordStock) + '</div>' +
+      '<div class="idle-empty">Forecast provider or topic stock is not enabled</div>';
+	bindIdleTopicPlaybackItems(root);
     return;
   }
 
@@ -735,10 +767,12 @@ function renderIdleForecastStock() {
         ? '<details class="idle-stock-seeds"><summary>Seeds ' + esc(String(seeds.length)) + '</summary><ul>' +
           seeds.map((seed) => '<li>' + esc(String(seed || '-')) + '</li>').join('') + '</ul></details>'
         : '';
-      return '<article class="idle-stock-topic">' +
+      const playbackID = 'forecast:' + String(item && item.generation_id || '');
+      const selectedClass = playbackID === state.idleChat.selectedTopicPlaybackID ? ' is-selected' : '';
+      return '<button type="button" class="idle-stock-topic' + selectedClass + '" data-playback-id="' + esc(playbackID) + '">' +
         '<div class="idle-stock-topic-head"><span>お題 ' + esc(String(index + 1)) + '</span><time>' + esc(fdt(item && item.created)) + '</time></div>' +
         '<p>' + esc(String(item && item.topic || '-')) + '</p>' + seedDetails +
-      '</article>';
+      '</button>';
     }).join('');
     return '<section class="idle-stock-domain">' +
       '<header><div><span>ドメイン</span><h4>' + esc(String(domain && domain.name || '-')) + '</h4></div>' +
@@ -748,7 +782,8 @@ function renderIdleForecastStock() {
     '</section>';
   }).join('');
 
-  root.innerHTML =
+  root.innerHTML = '<div class="idle-stock-domains">' + renderIdleWordTopicStock(wordStock) + '</div>' +
+    '<h3>Forecast</h3>' +
     '<div class="idle-stock-overview">' +
       '<div><span>準備済み</span><strong>' + esc(String(total)) + ' / ' + esc(String(capacity)) + '</strong></div>' +
       '<div><span>不足</span><strong>' + esc(String(missing)) + '件</strong></div>' +
@@ -760,6 +795,29 @@ function renderIdleForecastStock() {
       '<span>成功 <strong>' + esc(formatIdleStockTime(forecastStock.last_success_at)) + '</strong></span>' +
     '</div>' + errorBlock +
     '<div class="idle-stock-domains">' + domainCards + '</div>';
+  bindIdleTopicPlaybackItems(root);
+}
+
+function bindIdleTopicPlaybackItems(root) {
+  if (!root) return;
+  root.querySelectorAll('[data-playback-id]').forEach((button) => {
+    button.addEventListener('click', () => selectIdleTopicPlayback(button.dataset.playbackId || ''));
+  });
+}
+
+function selectIdleTopicPlayback(itemID) {
+  const next = String(itemID || '').trim();
+  if (!next) return;
+  state.idleChat.selectedTopicPlaybackID = next;
+  localStorage.setItem('idlechat.selectedTopicPlaybackID', next);
+  renderIdleTopicStocks();
+  renderIdleEpisodes();
+  updateIdlePlaybackControls();
+}
+
+// Compatibility entrypoint retained for existing Viewer contracts.
+function renderIdleForecastStock() {
+  renderIdleTopicStocks();
 }
 
 function formatIdleStockTime(value) {
@@ -804,12 +862,16 @@ function sortedIdleEpisodes() {
 
 function selectIdleEpisode(episodeID) {
   const nextID = String(episodeID || '').trim();
-  if (!nextID || nextID === state.idleChat.selectedEpisodeID) return;
+  if (!nextID) return;
+  const sameEpisode = nextID === state.idleChat.selectedEpisodeID;
   state.idleChat.selectedEpisodeID = nextID;
+  state.idleChat.selectedTopicPlaybackID = 'story:' + nextID;
+  localStorage.setItem('idlechat.selectedTopicPlaybackID', state.idleChat.selectedTopicPlaybackID);
   localStorage.setItem('idlechat.selectedEpisodeID', nextID);
   state.idleChat.episodeDetailError = '';
   renderIdleEpisodes();
-  refreshIdleEpisodeDetail(nextID);
+  updateIdlePlaybackControls();
+  if (!sameEpisode) refreshIdleEpisodeDetail(nextID);
 }
 
 function renderIdleEpisodes() {
@@ -867,7 +929,8 @@ function renderIdleEpisodes() {
     const status = String(episode && episode.production_status || 'unknown');
     const validation = episode && episode.validation ? episode.validation : {};
     const firstInvalid = Number(validation.first_invalid_turn || 0);
-    return '<button type="button" class="idle-episode-item ' + idleEpisodeStatusClass(status) + (id === state.idleChat.selectedEpisodeID ? ' active' : '') + '" data-episode-id="' + idleEsc(id) + '">' +
+    const playbackSelected = state.idleChat.selectedTopicPlaybackID === 'story:' + id ? ' is-playback-selected' : '';
+    return '<button type="button" class="idle-episode-item ' + idleEpisodeStatusClass(status) + (id === state.idleChat.selectedEpisodeID ? ' active' : '') + playbackSelected + '" data-episode-id="' + idleEsc(id) + '">' +
       '<span class="idle-episode-item-title">' + idleEsc(idleEpisodeTitle(episode)) + '</span>' +
       '<span class="idle-episode-item-meta"><span>' + idleEsc(idleEpisodeStatusLabel(status)) + '</span><span>rev.' + idleEsc(String(episode && episode.revision || 0)) + '</span>' +
       '<span>' + idleEsc(String(episode && episode.reader || '-')) + ' → ' + idleEsc(String(episode && episode.listener || '-')) + '</span><span>' + idleEsc(String(episode && episode.utterance_count || 0)) + ' turn</span>' +
@@ -1099,16 +1162,19 @@ async function refreshIdleStatus() {
     const r = await fetch('/viewer/idlechat/status');
     if (!r.ok) {
       const text = await r.text();
-      idleStartBtn.disabled = true;
+      if (idleStartBtn) idleStartBtn.disabled = true;
       if (idleModeNormalBtn) idleModeNormalBtn.disabled = true;
       if (idleModeForecastBtn) idleModeForecastBtn.disabled = true;
       if (idleModeStorySimpleBtn) idleModeStorySimpleBtn.disabled = true;
-      idleStopBtn.disabled = true;
+      if (idleStopBtn) idleStopBtn.disabled = true;
+	  state.idleChat.topicStockPlayback = null;
+	  updateIdlePlaybackControls(true);
       setIdleState('', false, false);
       state.idleChat.mode = '';
       state.idleChat.manualMode = false;
       state.idleChat.chatActive = false;
       state.idleChat.currentTopic = '';
+	  state.idleChat.wordTopicStock = null;
 	  state.idleChat.forecastStock = null;
       state.idleChat.history = [];
       state.idleChat.statusError = 'IdleChat status unavailable: HTTP ' + String(r.status) + ': ' + (text || r.statusText || 'idlechat status unavailable');
@@ -1118,11 +1184,11 @@ async function refreshIdleStatus() {
     const d = await r.json();
     state.idleChat.statusError = '';
     setIdleState(d.mode || '', !!d.manual_mode, !!d.chat_active);
-    idleStartBtn.disabled = !!d.manual_mode || !!d.chat_active;
+    if (idleStartBtn) idleStartBtn.disabled = !!d.manual_mode || !!d.chat_active;
     if (idleModeNormalBtn) idleModeNormalBtn.disabled = !!d.chat_active;
     if (idleModeForecastBtn) idleModeForecastBtn.disabled = !!d.chat_active;
     if (idleModeStorySimpleBtn) idleModeStorySimpleBtn.disabled = !!d.chat_active;
-    idleStopBtn.disabled = !d.manual_mode && !d.chat_active;
+    if (idleStopBtn) idleStopBtn.disabled = !d.manual_mode && !d.chat_active;
     state.idleChat.mode = d.mode || '';
     state.idleChat.manualMode = !!d.manual_mode;
     state.idleChat.chatActive = !!d.chat_active;
@@ -1131,19 +1197,27 @@ async function refreshIdleStatus() {
       state.idleChat.interruptedSessionId = '';
     }
     state.idleChat.currentTopic = d.current_topic || '';
+	state.idleChat.wordTopicStock = d.word_topic_stock || null;
 	state.idleChat.forecastStock = d.forecast_stock || null;
+	state.idleChat.topicStockPlayback = d.topic_stock_playback || null;
+	if (!state.idleChat.selectedTopicPlaybackID && state.idleChat.topicStockPlayback && state.idleChat.topicStockPlayback.current) {
+	  state.idleChat.selectedTopicPlaybackID = String(state.idleChat.topicStockPlayback.current.id || '');
+	}
     renderIdleChat();
   } catch (_) {
-    idleStartBtn.disabled = true;
+    if (idleStartBtn) idleStartBtn.disabled = true;
     if (idleModeNormalBtn) idleModeNormalBtn.disabled = true;
     if (idleModeForecastBtn) idleModeForecastBtn.disabled = true;
     if (idleModeStorySimpleBtn) idleModeStorySimpleBtn.disabled = true;
-    idleStopBtn.disabled = true;
+    if (idleStopBtn) idleStopBtn.disabled = true;
+	state.idleChat.topicStockPlayback = null;
+	updateIdlePlaybackControls(true);
     setIdleState('', false, false);
     state.idleChat.mode = '';
     state.idleChat.manualMode = false;
     state.idleChat.chatActive = false;
     state.idleChat.currentTopic = '';
+	state.idleChat.wordTopicStock = null;
 	state.idleChat.forecastStock = null;
     state.idleChat.history = [];
     state.idleChat.statusError = 'IdleChat status unavailable: ' + String(_ && _.message ? _.message : _);
@@ -1192,6 +1266,47 @@ async function controlIdle(path) {
     state.idleChat.controlError = '';
   } catch (err) {
     state.idleChat.controlError = 'IdleChat control unavailable: ' + String(err && err.message ? err.message : err);
+    console.error(err);
+  } finally {
+    await refreshIdleStatus();
+  }
+}
+
+function updateIdlePlaybackControls(forceDisabled) {
+  const playback = state.idleChat.topicStockPlayback || {};
+  const current = playback.current || null;
+  const selected = String(state.idleChat.selectedTopicPlaybackID || '').trim();
+  const disabled = !!forceDisabled;
+  if (idlePlaybackPlayBtn) idlePlaybackPlayBtn.disabled = disabled || (!selected && !current && !playback.can_next);
+  if (idlePlaybackNextBtn) idlePlaybackNextBtn.disabled = disabled || !playback.can_next;
+  if (idlePlaybackPreviousBtn) idlePlaybackPreviousBtn.disabled = disabled || !playback.can_previous;
+}
+
+async function controlIdlePlayback(action) {
+  const buttons = [idlePlaybackPlayBtn, idlePlaybackNextBtn, idlePlaybackPreviousBtn].filter(Boolean);
+  buttons.forEach((button) => { button.disabled = true; });
+  try {
+    const payload = {action: String(action || '')};
+    if (payload.action === 'play') payload.item_id = String(state.idleChat.selectedTopicPlaybackID || '');
+    const response = await fetch('/viewer/idlechat/playback', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error('HTTP ' + String(response.status) + ': ' + (text || response.statusText || 'topic playback failed'));
+    }
+    const result = await response.json();
+    state.idleChat.topicStockPlayback = result.playback || null;
+    const current = state.idleChat.topicStockPlayback && state.idleChat.topicStockPlayback.current;
+    if (current && current.id) {
+      state.idleChat.selectedTopicPlaybackID = String(current.id);
+      localStorage.setItem('idlechat.selectedTopicPlaybackID', state.idleChat.selectedTopicPlaybackID);
+    }
+    state.idleChat.controlError = '';
+  } catch (err) {
+    state.idleChat.controlError = 'Topic Stock playback unavailable: ' + String(err && err.message ? err.message : err);
     console.error(err);
   } finally {
     await refreshIdleStatus();

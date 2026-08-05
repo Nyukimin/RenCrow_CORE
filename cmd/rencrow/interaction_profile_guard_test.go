@@ -60,6 +60,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "portal idlechat can control topic stock playback",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-idlechat",
+			method:  http.MethodPost,
+			path:    "/viewer/idlechat/playback",
+			want:    http.StatusNoContent,
+		},
+		{
 			name:    "portal chat can report surface presence",
 			client:  "RenCrow_PORTAL",
 			profile: "portal-chat",
@@ -73,6 +81,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			profile: "portal-chat",
 			method:  http.MethodPost,
 			path:    "/viewer/idlechat/start",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "portal chat cannot control topic stock playback",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-chat",
+			method:  http.MethodPost,
+			path:    "/viewer/idlechat/playback",
 			want:    http.StatusForbidden,
 		},
 		{

@@ -60,12 +60,13 @@ func (o *IdleChatOrchestrator) PrepareStoryEpisodes(ctx context.Context) error {
 func (o *IdleChatOrchestrator) PrepareStoryEpisodeCountAsync(count int, reason string) {
 	o.mu.Lock()
 	service := o.storyEpisodeService
-	ctx := o.ctx
 	o.mu.Unlock()
-	if service == nil {
+	if service == nil || !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
 		return
 	}
 	go func() {
+		defer o.endTopicProduction()
+		ctx := o.topicProductionContext()
 		if err := service.PrepareAdditional(ctx, count); err != nil {
 			log.Printf("[Story] explicit prepare incomplete: reason=%s count=%d error=%v", strings.TrimSpace(reason), count, err)
 		}
@@ -78,16 +79,17 @@ func (o *IdleChatOrchestrator) PrepareStoryEpisodeCountAsync(count int, reason s
 func (o *IdleChatOrchestrator) RefillStoryEpisodesAsync(reason string) {
 	o.mu.Lock()
 	service := o.storyEpisodeService
-	ctx := o.ctx
 	o.mu.Unlock()
 	stock := StoryEpisodeStockSnapshot{}
 	if service != nil {
 		stock = service.Snapshot()
 	}
-	if service == nil || (stock.Missing == 0 && stock.NeedsRepair == 0 && stock.UntitledReady == 0) || stock.Filling {
+	if service == nil || (stock.Missing == 0 && stock.NeedsRepair == 0 && stock.UntitledReady == 0) || stock.Filling || !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
 		return
 	}
 	go func() {
+		defer o.endTopicProduction()
+		ctx := o.topicProductionContext()
 		if stock.UntitledReady > 0 {
 			if err := service.BackfillReadyTitles(ctx); err != nil {
 				log.Printf("[Story] ready title backfill incomplete: reason=%s error=%v", strings.TrimSpace(reason), err)
@@ -106,7 +108,7 @@ func (o *IdleChatOrchestrator) RefillStoryEpisodesAsync(reason string) {
 
 // RunPreparedStorySession only plays a fully generated, validated ready item.
 // It never falls back to live generation while the listener is waiting.
-func (o *IdleChatOrchestrator) RunPreparedStorySession() {
+func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeArtifact) {
 	o.mu.Lock()
 	service := o.storyEpisodeService
 	o.mu.Unlock()
@@ -114,7 +116,13 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession() {
 		log.Printf("[Story] prepared story service is not configured")
 		return
 	}
-	artifact, ok := service.NextReady()
+	artifact, ok := StoryEpisodeArtifact{}, false
+	if len(prepared) > 0 {
+		artifact = cloneStoryEpisode(prepared[0])
+		ok = artifact.ProductionStatus == StoryProductionReady && artifact.Validation.Valid
+	} else {
+		artifact, ok = service.NextReady()
+	}
 	if !ok {
 		log.Printf("[Story] no ready episode; refill requested")
 		o.RefillStoryEpisodesAsync("playback_empty")
@@ -124,9 +132,14 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession() {
 	sessionID := "story-episode-" + artifact.EpisodeID
 	startedAt := time.Now().In(jst)
 	o.mu.Lock()
-	o.chatActive = true
+	if !o.chatActive {
+		o.chatActive = true
+	}
 	o.sessionMode = "story"
-	generation := o.beginIdleRunLocked()
+	generation := o.activeGeneration
+	if o.runCancel == nil {
+		generation = o.beginIdleRunLocked()
+	}
 	o.activeSessionID = sessionID
 	o.currentTopic = storyEpisodeDisplayTitle(artifact)
 	o.mu.Unlock()

@@ -186,6 +186,7 @@ func TopicCategoryGenerationRules(category TopicCategory) string {
 面白さ: 変化の分岐。未来を断定せず、現在の兆しから変化の筋道を考える。
 必須:
 - seed.forecast_domain を中心にする。
+- seed.forecast_horizon の年数範囲だけを扱い、それより遠い未来へ広げない。
 - 「何が、何を、どう変えるか」が分かる問いにする。
 - 便利になる／危険になるだけの単純な題にしない。
 - 予言ではなく、考察の入口にする。`

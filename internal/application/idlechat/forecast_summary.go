@@ -10,12 +10,13 @@ import (
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
-// saveForecastSummary は Coder2 で要約+継続考察テーマを生成して保存する。
+// saveForecastSummary は CodexExe で要約+継続考察テーマを生成して保存する。
 func (o *IdleChatOrchestrator) saveForecastSummary(sessionID string, domain ForecastDomain, topic string, transcript []string, startedAt, endedAt time.Time, turns int, loopRestarted bool, loopReason string) string {
 	summary := o.summarizeByForecastLLM(domain, topic, transcript)
 	summary = annotateLoopSummary(summary, loopRestarted, loopReason)
 	fullTopic := fmt.Sprintf("[%s] %s", domain.Name, topic)
-	qualityReview, promptGuidance := o.reviewSessionEnd(fullTopic, fmt.Sprintf("forecast/%s", domain.Name), transcript, summary, loopReason)
+	forecastProvider, _ := o.forecastPrimaryLLMInfo()
+	qualityReview, promptGuidance := o.reviewSessionEndWithProvider(forecastProvider, fullTopic, fmt.Sprintf("forecast/%s", domain.Name), transcript, summary, loopReason)
 	title := fmt.Sprintf("%d月%d日の%sの話題まとめ", endedAt.Month(), endedAt.Day(), truncate(fullTopic, 24))
 	record := SessionSummary{
 		SessionID:       sessionID,
@@ -32,7 +33,7 @@ func (o *IdleChatOrchestrator) saveForecastSummary(sessionID string, domain Fore
 		LoopRestarted:   loopRestarted,
 		LoopReason:      loopReason,
 		TopicProvider:   "forecast",
-		SummaryProvider: "shiro",
+		SummaryProvider: "CodexExe (initiator=shiro)",
 		Transcript:      append([]string(nil), transcript...),
 	}
 	o.mu.Lock()
@@ -68,7 +69,7 @@ func (o *IdleChatOrchestrator) saveForecastSummary(sessionID string, domain Fore
 	return summary
 }
 
-// summarizeByForecastLLM は Coder2 で未来展望ディスカッションを要約し、継続考察テーマを付与する。
+// summarizeByForecastLLM は CodexExe で未来展望ディスカッションを要約し、継続考察テーマを付与する。
 func (o *IdleChatOrchestrator) summarizeByForecastLLM(domain ForecastDomain, topic string, transcript []string) string {
 	if len(transcript) == 0 {
 		return "会話ログがありません。"
@@ -97,9 +98,14 @@ func (o *IdleChatOrchestrator) summarizeByForecastLLM(domain ForecastDomain, top
 3. （テーマ名）: 一行説明`, domain.Name, topic, body)},
 	}
 	req := llm.GenerateRequest{Messages: messages, MaxTokens: idleChatShiroSummaryMaxTokens, Temperature: 0.4}
-	resp, err := o.providerForSpeaker("shiro").Generate(o.idleRunContext(), req)
+	provider, _ := o.forecastPrimaryLLMInfo()
+	if provider == nil {
+		log.Printf("[Forecast] Summary generation failed: CodexExe provider unavailable")
+		return "要約生成エラー: CodexExeを利用できません。"
+	}
+	resp, err := provider.Generate(o.idleRunContext(), req)
 	if err != nil || strings.TrimSpace(resp.Content) == "" {
-		log.Printf("[Forecast] Summary generation failed (worker): %v", err)
+		log.Printf("[Forecast] Summary generation failed (CodexExe): %v", err)
 		if err == nil {
 			logIdleRaw("forecast.summary.generate", resp.Content)
 		}
@@ -146,13 +152,18 @@ func (o *IdleChatOrchestrator) extractCoveredThemes(domain ForecastDomain, topic
 - 最大5項目
 - 箇条書き（「- 」始まり）のみ出力、それ以外の文は不要`, domain.Name, len(window), topic, existingSection, body)},
 	}
-	resp, err := o.providerForSpeaker("shiro").Generate(o.idleRunContext(), llm.GenerateRequest{
+	provider, _ := o.forecastPrimaryLLMInfo()
+	if provider == nil {
+		log.Printf("[Forecast] Theme extraction failed: CodexExe provider unavailable")
+		return nil
+	}
+	resp, err := provider.Generate(o.idleRunContext(), llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   idleChatQualityReviewMaxTokens,
 		Temperature: 0.3,
 	})
 	if err != nil {
-		log.Printf("[Forecast] Theme extraction failed (worker): %v", err)
+		log.Printf("[Forecast] Theme extraction failed (CodexExe): %v", err)
 		return nil
 	}
 	logIdleRaw("forecast.theme_extract.generate", resp.Content)
@@ -191,7 +202,8 @@ func (o *IdleChatOrchestrator) updateForecastSessionContext(domain ForecastDomai
 	o.mu.Unlock()
 }
 
-// forecastLLM は未来展望セッション用の LLM を返す。forecastProvider があればそれを、なければ mio を使う。
+// forecastLLM is retained for SimpleStory compatibility. Forecast production
+// paths use forecastPrimaryLLMInfo directly and never fall back from CodexExe.
 func (o *IdleChatOrchestrator) forecastLLM() llm.LLMProvider {
 	p, _ := o.forecastLLMInfo()
 	return p

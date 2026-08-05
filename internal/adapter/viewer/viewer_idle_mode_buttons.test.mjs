@@ -75,12 +75,15 @@ function loadIdleModeHarness() {
   const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
   const idleJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/idlechat.js', 'utf8');
   const source = `
-const state = { idleChat: { selectedMode: 'manual', mode: '', manualMode: false, chatActive: false, currentTopic: '', history: [] } };
+const state = { idleChat: { selectedMode: 'manual', mode: '', manualMode: false, chatActive: false, currentTopic: '', history: [], selectedTopicPlaybackID: 'word:item-1', topicStockPlayback: {can_next: true, can_previous: false} } };
 const idleStartBtn = document.getElementById('idleStart');
 const idleModeNormalBtn = document.getElementById('idleModeNormal');
 const idleModeForecastBtn = document.getElementById('idleModeForecast');
 const idleModeStorySimpleBtn = document.getElementById('idleModeStorySimple');
 const idleStopBtn = document.getElementById('idleStop');
+const idlePlaybackPlayBtn = document.getElementById('idlePlaybackPlay');
+const idlePlaybackNextBtn = document.getElementById('idlePlaybackNext');
+const idlePlaybackPreviousBtn = document.getElementById('idlePlaybackPrevious');
 const idleStateEl = document.getElementById('idleState');
 const chat = document.getElementById('chat');
 const idleLiveLog = document.getElementById('idleLiveLog');
@@ -95,7 +98,7 @@ const idleViewSummary = document.getElementById('idleViewSummary');
 const idleViewHistory = document.getElementById('idleViewHistory');
 const idleSubtabs = [idleLiveTab, idleSummaryTab, idleHistoryTab];
 const idleSubviews = [idleViewLive, idleViewSummary, idleViewHistory];
-` + idleJs + sourceBetween(js, 'idleStartBtn.addEventListener', 'function stateClass') + `
+` + idleJs + sourceBetween(js, "if (idlePlaybackPlayBtn) idlePlaybackPlayBtn.addEventListener", 'function stateClass') + `
 globalThis.__idleHarness = {
   state,
   setIdleSelectedMode,
@@ -106,6 +109,9 @@ globalThis.__idleHarness = {
   idleModeForecastBtn,
   idleModeStorySimpleBtn,
   idleStopBtn,
+  idlePlaybackPlayBtn,
+  idlePlaybackNextBtn,
+  idlePlaybackPreviousBtn,
   idleLiveTab,
   idleSummaryTab,
   idleHistoryTab,
@@ -132,10 +138,11 @@ globalThis.__idleHarness = {
       setItem: (key, value) => localStore.set(key, String(value)),
     },
     fetch: async (path, init = {}) => {
-      fetchCalls.push({path: String(path), method: init.method || 'GET'});
+      fetchCalls.push({path: String(path), method: init.method || 'GET', body: init.body || ''});
       return {
         ok: true,
-        json: async () => ({ok: true, mode: '', manual_mode: false, chat_active: false, current_topic: ''}),
+        json: async () => ({ok: true, mode: '', manual_mode: false, chat_active: false, current_topic: '', topic_stock_playback: {current: {id: 'word:item-1'}, can_next: true, can_previous: false}}),
+		text: async () => '',
       };
     },
     console: {error() {}},
@@ -158,30 +165,38 @@ globalThis.__idleHarness = {
   return {harness: context.__idleHarness, fetchCalls, localStore};
 }
 
-test('idle mode buttons select forecast and simple story start endpoints', async () => {
-  const {harness, fetchCalls, localStore} = loadIdleModeHarness();
+test('idle playback buttons post play, next, and previous actions', async () => {
+  const {harness, fetchCalls} = loadIdleModeHarness();
 
-  harness.setIdleSelectedMode('story');
-  assert.equal(harness.state.idleChat.selectedMode, 'manual');
-  assert.equal(localStore.get('idlechat.selectedMode'), 'manual');
+  await harness.idlePlaybackPlayBtn.click();
+  await tick();
+  await tick();
+  let call = fetchCalls.filter((c) => c.method === 'POST').at(-1);
+  assert.equal(call.path, '/viewer/idlechat/playback');
+  assert.deepEqual(JSON.parse(call.body), {action: 'play', item_id: 'word:item-1'});
 
-  harness.idleModeForecastBtn.click();
-  assert.equal(harness.state.idleChat.selectedMode, 'forecast');
-  assert.equal(localStore.get('idlechat.selectedMode'), 'forecast');
-  assert.equal(harness.idleModeForecastBtn.classList.contains('is-selected'), true);
-  await harness.idleStartBtn.click();
+  harness.idlePlaybackNextBtn.disabled = false;
+  await harness.idlePlaybackNextBtn.click();
   await tick();
   await tick();
-  assert.deepEqual(fetchCalls.filter((c) => c.method === 'POST').at(-1), {path: '/viewer/idlechat/forecast', method: 'POST'});
+  call = fetchCalls.filter((c) => c.method === 'POST').at(-1);
+  assert.deepEqual(JSON.parse(call.body), {action: 'next'});
 
-  harness.idleModeStorySimpleBtn.click();
-  assert.equal(harness.state.idleChat.selectedMode, 'story-simple');
-  assert.equal(localStore.get('idlechat.selectedMode'), 'story-simple');
-  assert.equal(harness.idleModeStorySimpleBtn.classList.contains('is-selected'), true);
-  await harness.idleStartBtn.click();
+  harness.idlePlaybackPreviousBtn.disabled = false;
+  await harness.idlePlaybackPreviousBtn.click();
   await tick();
   await tick();
-  assert.deepEqual(fetchCalls.filter((c) => c.method === 'POST').at(-1), {path: '/viewer/idlechat/story-simple', method: 'POST'});
+  call = fetchCalls.filter((c) => c.method === 'POST').at(-1);
+  assert.deepEqual(JSON.parse(call.body), {action: 'previous'});
+});
+
+test('idle bottom controls contain exactly the requested three playback buttons', () => {
+  const html = fs.readFileSync('internal/adapter/viewer/viewer.html', 'utf8');
+  const controls = sourceBetween(html, '<div class="idle-tools">', '<span id="idleState"');
+  assert.equal((controls.match(/<button/g) || []).length, 3);
+  assert.match(controls, />前の話題<\/button>/);
+  assert.match(controls, />再生<\/button>/);
+  assert.match(controls, />スキップ（次の話題）<\/button>/);
 });
 
 test('idle chat history renders full topic without ellipsis truncation', () => {

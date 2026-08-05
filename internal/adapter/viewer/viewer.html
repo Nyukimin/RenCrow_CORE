@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>RenCrow Live</title>
-<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-story-title-news-pack-split-frame">
+<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-news-pack-split-frame">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260511-memory-desk">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
@@ -1542,11 +1542,9 @@
     </div>
     <div class="attachment-tray" id="attachmentTray" aria-live="polite"></div>
     <div class="idle-tools">
-      <button id="idleModeNormal" class="ctl-btn" title="通常のIdleChat会話を選択">通常Chat</button>
-      <button id="idleModeForecast" class="ctl-btn mode-forecast" title="未来展望セッション（6ドメイン×100ターン）を選択">未来展望</button>
-      <button id="idleModeStorySimple" class="ctl-btn mode-story-simple" title="昔話の主人公改変ワンプロンプト物語（Coder2生成）">物語</button>
-      <button id="idleStart" class="ctl-btn" title="選択中のモードを開始">IdleChat開始</button>
-      <button id="idleStop" class="ctl-btn" title="IdleChatモードを停止">IdleChat停止</button>
+      <button id="idlePlaybackPlay" class="ctl-btn idle-playback-primary" type="button" title="選択中のStockを再生する">再生</button>
+      <button id="idlePlaybackNext" class="ctl-btn" type="button" title="現在の再生を止めて次の話題へ進む">スキップ（次の話題）</button>
+      <button id="idlePlaybackPrevious" class="ctl-btn" type="button" title="一つ前に再生した話題へ戻る">前の話題</button>
       <span id="idleState" class="idle-off">IdleChat: off</span>
     </div>
   </div>
@@ -1591,7 +1589,7 @@
 <script src="/viewer/assets/js/tabs/roles.js?v=20260510-tabs-roles" defer></script>
 <script src="/viewer/assets/js/tabs/progress.js?v=20260510-tabs-progress" defer></script>
 <script src="/viewer/assets/js/tabs/timeline.js?v=20260618-job-interrupt" defer></script>
-<script src="/viewer/assets/js/tabs/idlechat.js?v=20260805-idle-story-title" defer></script>
+<script src="/viewer/assets/js/tabs/idlechat.js?v=20260805-idle-topic-playback" defer></script>
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
 <script src="/viewer/assets/js/tabs/jobs.js?v=20260510-tabs-jobs" defer></script>
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>

@@ -88,6 +88,7 @@ func (m idleChatSequenceMonitorAdapter) CheckIdleChatSequence(ctx context.Contex
 		report.AgeSeconds = recovery.Before.AgeSeconds
 		report.Action = recovery.Action + "_and_reset_tts_queue"
 	}
+	m.orch.RefillWordTopicStockIfIdle("heartbeat")
 	m.orch.RefillForecastTopicStockIfIdle("heartbeat")
 	return report
 }

@@ -179,6 +179,20 @@ func (s *storyEpisodeStore) get(episodeID string) (StoryEpisodeArtifact, bool) {
 	return cloneStoryEpisode(artifact), ok
 }
 
+func (s *storyEpisodeStore) hasGenerationID(generationID string) bool {
+	if s == nil || strings.TrimSpace(generationID) == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, artifact := range s.episodes {
+		if artifact.GenerationID == generationID {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *storyEpisodeStore) markPlayed(episodeID string, playedAt time.Time) error {
 	if s == nil {
 		return errors.New("story episode store is nil")

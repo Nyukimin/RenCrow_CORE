@@ -366,6 +366,7 @@ func registerIdleChatRoutes(mux *http.ServeMux, dependencies *Dependencies) {
 		Stop:             dependencies.handleIdleChatStop(),
 		SurfacePresence:  dependencies.handleSurfacePresence(),
 		Interrupt:        dependencies.handleIdleChatInterrupt(),
+		Playback:         dependencies.handleIdleChatPlayback(),
 		Status:           dependencies.handleIdleChatStatus(),
 		Collection:       dependencies.handleIdleChatCollection(),
 		Logs:             dependencies.handleIdleChatLogs(),

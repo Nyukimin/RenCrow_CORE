@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
-func TestHandleIdleChatStatusIncludesForecastStockSnapshot(t *testing.T) {
+func TestHandleIdleChatStatusIncludesWordAndForecastStockSnapshots(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
 	data, err := json.Marshal(map[string]any{"stock": map[string]any{
 		"AI技術": []map[string]any{{
@@ -31,6 +32,20 @@ func TestHandleIdleChatStatusIncludesForecastStockSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	orch := idlechat.NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	wordPath := filepath.Join(t.TempDir(), "word_topic_stock.json")
+	wordData, err := json.Marshal(map[string]any{"stock": map[string]any{
+		"single": []map[string]any{{
+			"category": "single", "topic": "防災設備を店頭に入れるとき誰が最後の判断を持つか",
+			"seed": map[string]any{"category": "single", "genre_1": "防災"}, "interestingness_axis": "観察", "created": time.Now().UTC(),
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wordPath, wordData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orch.InitWordTopicStock(wordPath)
 	orch.InitForecastTopicStock(path)
 	deps := &Dependencies{idleChatOrch: orch}
 	recorder := httptest.NewRecorder()
@@ -42,7 +57,9 @@ func TestHandleIdleChatStatusIncludesForecastStockSnapshot(t *testing.T) {
 		t.Fatalf("status code = %d, body=%s", recorder.Code, recorder.Body.String())
 	}
 	var payload struct {
+		WordStock     idlechat.WordTopicStockSnapshot     `json:"word_topic_stock"`
 		ForecastStock idlechat.ForecastTopicStockSnapshot `json:"forecast_stock"`
+		Playback      idlechat.TopicStockPlaybackSnapshot `json:"topic_stock_playback"`
 	}
 	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
@@ -50,8 +67,33 @@ func TestHandleIdleChatStatusIncludesForecastStockSnapshot(t *testing.T) {
 	if !payload.ForecastStock.Enabled || payload.ForecastStock.Total != 1 {
 		t.Fatalf("forecast stock snapshot = %+v", payload.ForecastStock)
 	}
+	if !payload.WordStock.Enabled || payload.WordStock.Total != 1 || payload.WordStock.Categories[0].Label != "1ワード" {
+		t.Fatalf("word topic stock snapshot = %+v", payload.WordStock)
+	}
 	if got := payload.ForecastStock.Domains[0].Topics[0].Topic; got != "保存済みのAI技術お題" {
 		t.Fatalf("forecast topic = %q", got)
+	}
+	if !payload.Playback.CanNext {
+		t.Fatalf("playback snapshot = %+v", payload.Playback)
+	}
+}
+
+func TestHandleIdleChatPlaybackValidatesMethodAndAction(t *testing.T) {
+	orch := idlechat.NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	deps := &Dependencies{idleChatOrch: orch}
+
+	getRecorder := httptest.NewRecorder()
+	deps.handleIdleChatPlayback().ServeHTTP(getRecorder, httptest.NewRequest(http.MethodGet, "/viewer/idlechat/playback", nil))
+	if getRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status=%d", getRecorder.Code)
+	}
+
+	badRecorder := httptest.NewRecorder()
+	badRequest := httptest.NewRequest(http.MethodPost, "/viewer/idlechat/playback", strings.NewReader(`{"action":"stop"}`))
+	badRequest.Header.Set("Content-Type", "application/json")
+	deps.handleIdleChatPlayback().ServeHTTP(badRecorder, badRequest)
+	if badRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("bad action status=%d body=%s", badRecorder.Code, badRecorder.Body.String())
 	}
 }
 

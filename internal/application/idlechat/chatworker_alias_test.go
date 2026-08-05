@@ -63,7 +63,7 @@ func TestChatWorkerDefaultsToNonThinking(t *testing.T) {
 	}
 }
 
-func TestGenerateTopicFromChatUsesChatWorkerProvider(t *testing.T) {
+func TestGenerateTopicFromChatConsumesWordStockWithoutWorkerProvider(t *testing.T) {
 	chatProvider := &idlechatTopicProvider{name: "Chat", responses: []string{
 		topicCandidatesJSON("Chatが使われた場合のお題", "観察"),
 		topicJudgeJSON("Chatが使われた場合のお題"),
@@ -77,6 +77,16 @@ func TestGenerateTopicFromChatUsesChatWorkerProvider(t *testing.T) {
 		"mio":        chatProvider,
 		"chatworker": workerProvider,
 	})
+	stock := newWordTopicStock("")
+	if !stock.push(WordPreparedTopic{
+		Category: TopicCategorySingle,
+		Topic:    "郵便と古書店に残る、宛先不明の手紙の扱い方",
+		Seed:     TopicSeed{Category: TopicCategorySingle, Genre1: "郵便"},
+		Axis:     "観察",
+	}) {
+		t.Fatal("failed to prepare word topic stock")
+	}
+	orch.wordTopicStock = stock
 
 	topic, strategy := orch.generateTopicFromChat("idle-topic-worker", StrategySingleGenre)
 	if strategy != StrategySingleGenre {
@@ -88,11 +98,11 @@ func TestGenerateTopicFromChatUsesChatWorkerProvider(t *testing.T) {
 	if got := countTopicGenerationRequests(chatProvider.requests); got != 0 {
 		t.Fatalf("chat topic generation requests = %d, want 0", got)
 	}
-	if got := countTopicGenerationRequests(workerProvider.requests); got != 1 {
-		t.Fatalf("worker topic generation requests = %d, want 1", got)
+	if got := countTopicGenerationRequests(workerProvider.requests); got != 0 {
+		t.Fatalf("worker topic generation requests = %d, want 0", got)
 	}
-	if orch.currentTopicResult == nil || orch.currentTopicResult.Provider != "chatworker" {
-		t.Fatalf("topic provider = %#v, want chatworker", orch.currentTopicResult)
+	if orch.currentTopicResult == nil || orch.currentTopicResult.Provider != "CodexExe" {
+		t.Fatalf("topic provider = %#v, want CodexExe", orch.currentTopicResult)
 	}
 }
 

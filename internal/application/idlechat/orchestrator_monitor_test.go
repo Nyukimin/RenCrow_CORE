@@ -1,6 +1,7 @@
 package idlechat
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,23 +11,68 @@ import (
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
+func attachPreparedWordDialogue(t *testing.T, o *IdleChatOrchestrator, topic, seedWord string, turns int) *queuedIdleChatCodexGenerator {
+	t.Helper()
+	stock := newWordTopicStock("")
+	if !stock.push(WordPreparedTopic{
+		Category:    TopicCategorySingle,
+		Topic:       topic,
+		Seed:        TopicSeed{Category: TopicCategorySingle, Genre1: seedWord},
+		Axis:        "観察",
+		OpeningHook: "店内の具体物から始める",
+		Avoid:       "一般論だけで終わる",
+	}) {
+		t.Fatal("failed to prepare word topic")
+	}
+	o.wordTopicStock = stock
+	utterances := []string{
+		"店の赤い印を最初に見た人が黙った場面から、判断の難しさが見えるね。",
+		"その赤い印を棚の記録と照合すれば、誰が判断を先送りしたか分かります。",
+		"ただ、その記録だけでは夜の店員が迷った理由までは決められないね。",
+		"一方、その迷いを引き継ぐ欄があれば、次の担当者は別の判断を選べます。",
+		"その欄に時刻だけでなく店内の音も残すと、小さな違和感を拾えそう。",
+		"今の音という手がかりなら、機械の警告と人の判断を分けて記録できます。",
+		"その分け方で見ると、棚の前で止まった時間にも店員の意図が表れるね。",
+		"ただ、その停止時間を責任追及だけに使うと、店で報告しにくくなります。",
+		"その怖さを減らすには、失敗を責めず判断材料として共有する場面が要るね。",
+		"一方、その共有に期限を設ければ、古い判断が店のルールとして残りません。",
+		"その期限を越えた記録は消すのでなく、棚の変化と一緒に見直したいね。",
+		"今の見直し方なら、赤い印は警告ではなく判断を更新する合図になります。",
+	}
+	if turns > len(utterances) {
+		t.Fatalf("test dialogue turns=%d exceeds fixtures", turns)
+	}
+	prepared := make([]DialogueEpisodeTurn, 0, turns)
+	for i := 0; i < turns; i++ {
+		speaker := "mio"
+		if i%2 == 1 {
+			speaker = "shiro"
+		}
+		prepared = append(prepared, DialogueEpisodeTurn{Speaker: speaker, DisplayText: utterances[i], SpeechText: utterances[i]})
+	}
+	payload, err := json.Marshal(map[string]any{"turns": prepared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generator := &queuedIdleChatCodexGenerator{responses: []string{string(payload)}}
+	config := DefaultDialogueInterestingnessConfig()
+	config.MaxTurnsPerTopic = turns
+	o.SetDialogueInterestingnessConfig(config)
+	o.SetDialogueEpisodeService(NewPersistentDialogueEpisodeService("", generator, map[string]string{"mio": "Mio canonical", "shiro": "Shiro canonical"}, config))
+	return generator
+}
+
 func TestRunChatSessionDoesNotSwitchTopicWithinSingleIdleSession(t *testing.T) {
 	responses := []string{
-		topicCandidatesJSON("郵便と古書店に残る、宛先不明の手紙の扱い方", "観察"),
-		topicJudgeJSON("郵便と古書店に残る、宛先不明の手紙の扱い方"),
-	}
-	for i := 0; i < maxTurnsPerTopic*2; i++ {
-		responses = append(responses, fmt.Sprintf("古書店の棚に残った手紙を手がかりに、二人が同じ謎を少しずつ見る返答です。番号%dの具体物で話を前に進めます。", i+1))
-	}
-	responses = append(responses,
 		"一番面白かったのは、古書店の棚に残った手紙を同じ謎として追えた点です。二人が手紙の意味を少しずつ具体化したことで話が前に進みました。次は差出人の選択へ広げられます。",
 		"QUALITY: pass\nBORING_CAUSE: 大きな損耗は検出されませんでした。\nINTEREST_HOOK: 古書店の棚に残った手紙\nMISSED_TURN: 手紙を誰が置いたかに絞る余地がありました。\nPROMPT_FIX: INTEREST_HOOKを一つ選び、場面・選択・秘密へ変換する。\nLENGTH_CONTROL: 2文以内。",
-	)
+	}
 	provider := &capturingIdleProvider{
 		response:  "追加の話題へ切り替えないための既定応答です。",
 		responses: responses,
 	}
-	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, maxTurnsPerTopic+1, 0.7, nil, "")
+	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 4, 0.7, nil, "")
+	dialogueGenerator := attachPreparedWordDialogue(t, o, "郵便と古書店に残る、宛先不明の手紙の扱い方", "郵便", 4)
 	o.mu.Lock()
 	o.chatActive = true
 	o.beginIdleRunLocked()
@@ -40,33 +86,25 @@ func TestRunChatSessionDoesNotSwitchTopicWithinSingleIdleSession(t *testing.T) {
 	if strings.Contains(o.history[0].SessionID, "topic-01") {
 		t.Fatalf("single idle session switched topic: %s", o.history[0].SessionID)
 	}
-	if got := countTopicGenerationRequests(provider.requests); got != 1 {
-		t.Fatalf("topic generation requests = %d, want 1", got)
+	if got := countTopicGenerationRequests(provider.requests); got != 0 {
+		t.Fatalf("Worker topic generation requests = %d, want 0", got)
 	}
-	if !containsRequestSystemPrompt(provider.requests, "【最初に拾うべき面白さ】") ||
-		!containsRequestSystemPrompt(provider.requests, "【避ける退屈な展開】") {
-		t.Fatalf("topic internal guidance was not injected into dialogue prompt: %+v", provider.requests)
+	if len(dialogueGenerator.requests) != 1 || !strings.Contains(dialogueGenerator.requests[0], "店内の具体物から始める") || !strings.Contains(dialogueGenerator.requests[0], "一般論だけで終わる") {
+		t.Fatalf("topic guidance was not injected into CodexExe dialogue prompt: %+v", dialogueGenerator.requests)
 	}
 }
 
-func TestRunChatSessionContinuesToTurnLimitAfterLoopWarning(t *testing.T) {
+func TestRunChatSessionPlaysValidatedEpisodeToTurnLimit(t *testing.T) {
 	responses := []string{
-		topicCandidatesJSON("映画館に残った鍵の使い道", "観察"),
-		topicJudgeJSON("映画館に残った鍵の使い道"),
-	}
-	for i := 0; i < maxTurnsPerTopic*2; i++ {
-		responses = append(responses, fmt.Sprintf("もし鍵が古い映写機を開ける合図だったら、二人は暗い客席で同じ場面をもう一度見ることになります。番号%dの手がかりが次へ進みます。", i+1))
-	}
-	responses = append(responses,
 		"一番面白かったのは、映画館に残った鍵を最後まで同じ話題として追えた点です。二人が客席と映写機の手がかりを順に重ねました。",
 		"QUALITY: pass\nBORING_CAUSE: 大きな損耗は検出されませんでした。\nINTEREST_HOOK: 映画館に残った鍵\nMISSED_TURN: なし\nPROMPT_FIX: \nLENGTH_CONTROL: 2文以内。",
-	)
+	}
 	provider := &capturingIdleProvider{
 		response:  "もし鍵が古い映写機を開ける合図だったら、二人は暗い客席で同じ場面をもう一度見ることになります。",
 		responses: responses,
 	}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, maxTurnsPerTopic, 0.7, nil, "")
-	o.SetDialogueInterestingnessConfig(DialogueInterestingnessConfig{Enabled: false})
+	attachPreparedWordDialogue(t, o, "映画館に残った鍵の使い道", "鍵", maxTurnsPerTopic)
 	o.mu.Lock()
 	o.chatActive = true
 	o.beginIdleRunLocked()
@@ -82,7 +120,7 @@ func TestRunChatSessionContinuesToTurnLimitAfterLoopWarning(t *testing.T) {
 		t.Fatalf("turns = %d, want %d", got, maxTurnsPerTopic)
 	}
 	if o.history[0].LoopRestarted {
-		t.Fatalf("loop warning should not mark a completed session as restarted: reason=%q", o.history[0].LoopReason)
+		t.Fatalf("validated episode should not be marked as restarted: reason=%q", o.history[0].LoopReason)
 	}
 }
 

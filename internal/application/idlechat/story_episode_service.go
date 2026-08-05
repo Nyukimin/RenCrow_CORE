@@ -14,11 +14,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// StoryCodexGenerator is the narrow application boundary for one ephemeral
-// CodexExe execution. Generation and semantic review use separate executions.
-type StoryCodexGenerator interface {
-	Generate(ctx context.Context, prompt string) (string, error)
-}
+// StoryCodexGenerator is retained as the story-specific compatibility name.
+// Topic and dialogue producers share the same read-only CodexExe boundary.
+type StoryCodexGenerator = IdleChatCodexGenerator
 
 type StoryEpisodeService struct {
 	store                  *storyEpisodeStore
@@ -27,6 +25,16 @@ type StoryEpisodeService struct {
 	maxAttempts            int
 	maxSuffixRegenerations int
 	prepareMu              sync.Mutex
+	checkpoints            *GenerationCheckpointStore
+}
+
+func (s *StoryEpisodeService) SetGenerationCheckpointStore(store *GenerationCheckpointStore) {
+	if s == nil {
+		return
+	}
+	s.prepareMu.Lock()
+	s.checkpoints = store
+	s.prepareMu.Unlock()
 }
 
 type storyGenerationSeed struct {
@@ -198,21 +206,69 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		s.store.recordGenerationAttempt()
-		seed := s.seedForAttempt(attempt, replacementFor)
-		artifact, err := s.generateArtifact(ctx, seed)
-		if err != nil {
-			lastErr = err
-			s.store.recordFailure("generation", err)
-			log.Printf("[Story] generation attempt failed: attempt=%d/%d error=%v", attempt+1, attemptLimit, err)
+		checkpointKey := "story:prepare"
+		checkpoint, found := s.checkpoints.Get(checkpointKey)
+		if found && checkpoint.StoryArtifact != nil && s.store.hasGenerationID(checkpoint.StoryArtifact.GenerationID) {
+			_ = s.checkpoints.Delete(checkpointKey)
 			continue
 		}
-		review, err := s.reviewArtifact(ctx, artifact)
+		if !found {
+			s.store.recordGenerationAttempt()
+			seed := s.seedForAttempt(attempt, replacementFor)
+			checkpoint = GenerationCheckpoint{
+				Key: checkpointKey, Kind: "story", GenerationID: "story-job-" + uuid.NewString(), Stage: "seed", StorySeed: &seed,
+			}
+			if err := s.checkpoints.Put(checkpoint); err != nil {
+				return err
+			}
+		}
+		var artifact StoryEpisodeArtifact
+		if checkpoint.StoryArtifact != nil {
+			artifact = cloneStoryEpisode(*checkpoint.StoryArtifact)
+		} else {
+			if checkpoint.StorySeed == nil {
+				_ = s.checkpoints.Delete(checkpointKey)
+				lastErr = errors.New("story checkpoint seed is missing")
+				continue
+			}
+			var err error
+			artifact, err = s.generateArtifact(ctx, *checkpoint.StorySeed)
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				lastErr = err
+				s.store.recordFailure("generation", err)
+				log.Printf("[Story] generation attempt failed: attempt=%d/%d error=%v", attempt+1, attemptLimit, err)
+				continue
+			}
+			checkpoint.StoryArtifact = &artifact
+			checkpoint.Stage = "artifact"
+			if err := s.checkpoints.Put(checkpoint); err != nil {
+				return err
+			}
+		}
+		var review StorySemanticReview
+		var err error
+		if checkpoint.StoryReview != nil {
+			review = *checkpoint.StoryReview
+		} else {
+			review, err = s.reviewArtifact(ctx, artifact)
+		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			lastErr = err
 			s.store.recordFailure("semantic_review", err)
 			log.Printf("[Story] semantic review failed: episode=%s error=%v", artifact.EpisodeID, err)
 			review = StorySemanticReview{Valid: false, Errors: []StoryValidationError{{Code: "quality_violation", Field: "semantic_review", Evidence: err.Error()}}}
+		} else if checkpoint.StoryReview == nil {
+			checkpoint.StoryReview = &review
+			checkpoint.Stage = "review"
+			if err := s.checkpoints.Put(checkpoint); err != nil {
+				return err
+			}
 		}
 		artifact.Validation = ValidateStoryEpisode(artifact, review)
 		if artifact.Validation.Valid {
@@ -224,6 +280,9 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 			lastErr = err
 			s.store.recordFailure("storage", err)
 			continue
+		}
+		if err := s.checkpoints.Delete(checkpointKey); err != nil {
+			log.Printf("[Story] checkpoint cleanup deferred: episode=%s error=%v", artifact.EpisodeID, err)
 		}
 		if artifact.Validation.Valid {
 			replacementFor = ""

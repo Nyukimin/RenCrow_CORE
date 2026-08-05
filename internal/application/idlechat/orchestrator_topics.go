@@ -15,6 +15,20 @@ import (
 
 func (o *IdleChatOrchestrator) generateTopicFromChat(sessionID string, strategy TopicStrategy) (string, TopicStrategy) {
 	movieMode := strategy == StrategyMovie
+	if strategy == StrategySingleGenre || strategy == StrategyDoubleGenre {
+		result, err := o.takeWordTopic(strategy)
+		if err != nil {
+			log.Printf("[IdleChat] Word topic unavailable: strategy=%s error=%v", strategy, err)
+			return wordTopicGenerationError(strategy, err), strategy
+		}
+		o.mu.Lock()
+		o.sessionContext = formatTopicGenerationContext(*result)
+		copied := *result
+		o.currentTopicResult = &copied
+		o.mu.Unlock()
+		log.Printf("[IdleChat] Word topic popped: strategy=%s topic=%s", strategy, result.Topic)
+		return result.Topic, strategy
+	}
 	recentTopics := o.getRecentTopics(12)
 	recent := recentTopicRecords(recentTopics)
 

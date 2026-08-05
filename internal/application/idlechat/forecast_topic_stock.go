@@ -10,14 +10,18 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // PreparedTopic は事前生成済みのお題。
 type PreparedTopic struct {
-	Domain  ForecastDomain `json:"domain"`
-	Topic   string         `json:"topic"`
-	Seeds   []string       `json:"seeds"`
-	Created time.Time      `json:"created"`
+	Domain       ForecastDomain `json:"domain"`
+	Topic        string         `json:"topic"`
+	Seeds        []string       `json:"seeds"`
+	GenerationID string         `json:"generation_id"`
+	InitiatedBy  string         `json:"initiated_by,omitempty"`
+	Created      time.Time      `json:"created"`
 }
 
 // forecastTopicStock はドメインごとのお題バッファ（ファイル永続化付き）。
@@ -97,6 +101,7 @@ func (s *forecastTopicStock) load() {
 	cleaned := make(map[string][]PreparedTopic, len(forecastDomains))
 	seen := make(map[string]struct{})
 	discarded := 0
+	normalized := false
 	for _, domain := range forecastDomains {
 		for _, item := range f.Stock[domain.Name] {
 			topic := strings.TrimSpace(item.Topic)
@@ -116,6 +121,10 @@ func (s *forecastTopicStock) load() {
 			seen[key] = struct{}{}
 			item.Domain = domain
 			item.Topic = topic
+			if strings.TrimSpace(item.GenerationID) == "" {
+				item.GenerationID = uuid.NewString()
+				normalized = true
+			}
 			cleaned[domain.Name] = append(cleaned[domain.Name], item)
 		}
 	}
@@ -127,7 +136,7 @@ func (s *forecastTopicStock) load() {
 	s.stock = cleaned
 	total := s.totalLocked()
 	log.Printf("[Forecast] Stock loaded from file: %d topics across %d domains", total, len(f.Stock))
-	if discarded > 0 {
+	if discarded > 0 || normalized {
 		log.Printf("[Forecast] Stock validation discarded %d invalid, duplicate, overflow, or unknown records", discarded)
 		s.saveLocked()
 	}
@@ -206,12 +215,54 @@ func (s *forecastTopicStock) pop(domain string) *PreparedTopic {
 	return &item
 }
 
+func (s *forecastTopicStock) takeByGenerationID(generationID string) *PreparedTopic {
+	if s == nil || strings.TrimSpace(generationID) == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, domain := range forecastDomains {
+		items := s.stock[domain.Name]
+		for index, item := range items {
+			if item.GenerationID != generationID {
+				continue
+			}
+			s.stock[domain.Name] = append(append([]PreparedTopic(nil), items[:index]...), items[index+1:]...)
+			s.saveLocked()
+			return &item
+		}
+	}
+	return nil
+}
+
+func (s *forecastTopicStock) hasGenerationID(generationID string) bool {
+	if s == nil || strings.TrimSpace(generationID) == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, items := range s.stock {
+		for _, item := range items {
+			if item.GenerationID == generationID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // push はドメインのストックに追加する（上限 forecastTopicStockSize）。
 func (s *forecastTopicStock) push(domain string, item PreparedTopic) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if strings.TrimSpace(item.Topic) == "" {
 		return false
+	}
+	if strings.TrimSpace(item.InitiatedBy) == "" {
+		item.InitiatedBy = "shiro"
+	}
+	if strings.TrimSpace(item.GenerationID) == "" {
+		item.GenerationID = uuid.NewString()
 	}
 	items := s.stock[domain]
 	itemKey := normalizeLoopText(item.Topic)
@@ -390,11 +441,12 @@ func (o *IdleChatOrchestrator) ForecastTopicStockSnapshot() ForecastTopicStockSn
 func (o *IdleChatOrchestrator) bootstrapForecastTopicStockAsync(stock *forecastTopicStock) {
 	go func() {
 		for _, domain := range forecastDomains {
-			if !o.forecastTopicRefillAvailable() {
+			if !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
 				log.Printf("[Forecast] Startup bootstrap deferred because generation resources are busy")
 				return
 			}
 			if !stock.reserveDomain(domain.Name, 1, "startup") {
+				o.endTopicProduction()
 				continue
 			}
 			o.fillForecastTopicStock(stock, domain, "startup")
@@ -405,17 +457,19 @@ func (o *IdleChatOrchestrator) bootstrapForecastTopicStockAsync(stock *forecastT
 // RefillForecastTopicStockIfIdle starts at most one missing topic generation.
 // It is safe to call from both the Idle monitor and Heartbeat; the stock enforces global single-flight.
 func (o *IdleChatOrchestrator) RefillForecastTopicStockIfIdle(trigger string) bool {
-	if o == nil || !o.forecastTopicRefillAvailable() {
+	if o == nil || !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
 		return false
 	}
 	o.mu.Lock()
 	stock := o.topicStockBuf
 	o.mu.Unlock()
 	if stock == nil {
+		o.endTopicProduction()
 		return false
 	}
 	domain, ok := stock.reserveNextDomain(forecastTopicStockSize, trigger)
 	if !ok {
+		o.endTopicProduction()
 		return false
 	}
 	go o.fillForecastTopicStock(stock, domain, trigger)
@@ -427,12 +481,35 @@ func (o *IdleChatOrchestrator) forecastTopicRefillAvailable() bool {
 	defer o.mu.Unlock()
 	externalBusy := o.externalLLMBusy != nil && o.externalLLMBusy()
 	now := time.Now()
-	autoChatDue := time.Since(o.lastActivity) >= o.interval && (o.nextTopicAt.IsZero() || !now.Before(o.nextTopicAt))
-	return !o.disabled && !o.manualMode && !o.chatActive && !o.chatBusy && !o.workerBusy && !externalBusy && !autoChatDue
+	autoChatDue := !o.disabled && time.Since(o.lastActivity) >= o.interval && (o.nextTopicAt.IsZero() || !now.Before(o.nextTopicAt))
+	return !o.manualMode && !o.chatActive && !o.chatBusy && !o.workerBusy && !externalBusy && !autoChatDue
 }
 
 func (o *IdleChatOrchestrator) fillForecastTopicStock(stock *forecastTopicStock, domain ForecastDomain, trigger string) {
-	topic, seeds, failure := o.generateForecastTopicForStock(domain)
+	defer o.endTopicProduction()
+	checkpointKey := "forecast:" + domain.Name
+	checkpointStore := o.generationCheckpointStore()
+	checkpoint, found := checkpointStore.Get(checkpointKey)
+	if found && checkpoint.Domain.Name != domain.Name {
+		_ = checkpointStore.Delete(checkpointKey)
+		found = false
+	}
+	if found && stock.hasGenerationID(checkpoint.GenerationID) {
+		_ = checkpointStore.Delete(checkpointKey)
+		stock.doneFilling(domain.Name, nil)
+		return
+	}
+	if !found {
+		checkpoint = GenerationCheckpoint{
+			Key: checkpointKey, Kind: "forecast", GenerationID: uuid.NewString(), Stage: "created",
+			Category: TopicCategoryForecast, Domain: domain,
+		}
+		if err := checkpointStore.Put(checkpoint); err != nil {
+			stock.doneFilling(domain.Name, err)
+			return
+		}
+	}
+	topic, seeds, failure := o.generateForecastTopicForStock(domain, &checkpoint)
 	if failure != nil {
 		err := fmt.Errorf("%s: %s", failure.ErrorCode, failure.Error)
 		stock.doneFilling(domain.Name, err)
@@ -446,24 +523,33 @@ func (o *IdleChatOrchestrator) fillForecastTopicStock(stock *forecastTopicStock,
 		log.Printf("[Forecast] Stock refill skipped: trigger=%s domain=%s error_code=empty_topic", trigger, domain.Name)
 		return
 	}
-	if !stock.push(domain.Name, PreparedTopic{Domain: domain, Topic: topic, Seeds: seeds, Created: time.Now().UTC()}) {
+	if !stock.push(domain.Name, PreparedTopic{Domain: domain, Topic: topic, Seeds: seeds, GenerationID: checkpoint.GenerationID, InitiatedBy: "shiro", Created: time.Now().UTC()}) {
+		if stock.hasGenerationID(checkpoint.GenerationID) {
+			_ = checkpointStore.Delete(checkpointKey)
+			stock.doneFilling(domain.Name, nil)
+			return
+		}
+		_ = checkpointStore.Delete(checkpointKey)
 		err := errors.New("duplicate_or_full: generated topic was not added")
 		stock.doneFilling(domain.Name, err)
 		log.Printf("[Forecast] Stock refill discarded: trigger=%s domain=%s reason=duplicate_or_full", trigger, domain.Name)
 		return
 	}
+	if err := checkpointStore.Delete(checkpointKey); err != nil {
+		log.Printf("[Forecast] Checkpoint cleanup deferred: domain=%s error=%v", domain.Name, err)
+	}
 	stock.doneFilling(domain.Name, nil)
 	log.Printf("[Forecast] Stock refilled: trigger=%s domain=%s count=%d", trigger, domain.Name, stock.count(domain.Name))
 }
 
-func (o *IdleChatOrchestrator) generateForecastTopicForStock(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
+func (o *IdleChatOrchestrator) generateForecastTopicForStock(domain ForecastDomain, checkpoint *GenerationCheckpoint) (string, []string, *forecastTopicFailure) {
 	o.mu.Lock()
 	generator := o.forecastTopicGenerator
 	o.mu.Unlock()
 	if generator != nil {
 		return generator(domain)
 	}
-	return o.generateForecastTopicInline(domain)
+	return o.generateForecastTopicInlineForStock(o.topicProductionContext(), domain, checkpoint)
 }
 
 // popForecastTopic はストックからお題を取得する。不足補充はIdle／Heartbeat契機に分離する。

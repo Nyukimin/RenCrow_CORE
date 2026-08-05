@@ -9,13 +9,17 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
-type storyCodexExeGenerator struct {
+type idleChatCodexExeGenerator struct {
 	runner *tools.CodexExecRunner
 }
 
-func (g storyCodexExeGenerator) Generate(ctx context.Context, prompt string) (string, error) {
+// storyCodexExeGenerator remains as a compatibility alias for existing story
+// adapter tests; production Topic, Dialogue, and Story share one boundary.
+type storyCodexExeGenerator = idleChatCodexExeGenerator
+
+func (g idleChatCodexExeGenerator) Generate(ctx context.Context, prompt string) (string, error) {
 	if g.runner == nil {
-		return "", errors.New("CodexExe story runner is not configured")
+		return "", errors.New("IdleChat CodexExe runner is not configured")
 	}
 	response, err := g.runner.Run(ctx, tools.CodexRunRequest{
 		Prompt:    prompt,
