@@ -30,16 +30,17 @@ import (
 
 // ProcessMessageRequest はメッセージ処理リクエスト
 type ProcessMessageRequest struct {
-	JobID           string
-	MessageID       string
-	TraceID         string
-	SessionID       string
-	Channel         string
-	ChatID          string
-	UserMessage     string
-	To              string
-	OperationSource string
-	Attachments     []attachment.Attachment
+	JobID               string
+	MessageID           string
+	TraceID             string
+	SessionID           string
+	Channel             string
+	ChatID              string
+	UserMessage         string
+	To                  string
+	OperationSource     string
+	Attachments         []attachment.Attachment
+	originalUserMessage string
 }
 
 // ProcessMessageResponse はメッセージ処理レスポンス
@@ -453,6 +454,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
 	ensureProcessRequestIdentity(&req, jobID.String())
+	preserveOriginalUserMessage(&req)
 	log.Printf("[MessageOrch] ProcessMessage START: jobID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
 		jobID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
 

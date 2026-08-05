@@ -199,7 +199,7 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 }
 
 func TestDistributedOrchestrator_ProcessMessage_ViewerRecipientBecomesChatSpeaker(t *testing.T) {
-	mockMio := &distMockMioAgent{chatResponse: "RC_midori_contract、発想を広げたよ。"}
+	mockMio := &distMockMioAgent{chatResponse: "RC_midori_contract、発想を広げたよ。", routeResponse: "WILD"}
 	mockRepo := &distMockSessionRepo{}
 	router := transport.NewMessageRouter()
 	defer router.Stop()
@@ -221,6 +221,9 @@ func TestDistributedOrchestrator_ProcessMessage_ViewerRecipientBecomesChatSpeake
 	}
 	if resp.Response != "RC_midori_contract、発想を広げたよ。" {
 		t.Fatalf("response = %q", resp.Response)
+	}
+	if resp.Route != routing.RouteCHAT {
+		t.Fatalf("route = %s, want CHAT for selected Midori", resp.Route)
 	}
 	if mockMio.lastChatInput != "" {
 		t.Fatalf("Midori CHAT fell back to Mio: %q", mockMio.lastChatInput)

@@ -33,6 +33,25 @@ function isVoiceDirectTimelineResponse(ev) {
   return !!(jobID && voiceDirectTimelineJobIDs.has(jobID));
 }
 
+function renderTrustedGeneratedImages(message) {
+  const source = String(message || '');
+  const imagePattern = /!\[generated image\]\(\/viewer\/image\/result\?id=(img_[0-9A-Za-z_-]+)\)/g;
+  let output = '';
+  let cursor = 0;
+  let match;
+  while ((match = imagePattern.exec(source)) !== null) {
+    output += fmt(source.slice(cursor, match.index));
+    const imagePath = '/viewer/image/result?id=' + encodeURIComponent(match[1]);
+    output += '<figure class="generated-chat-image">' +
+      '<a href="' + imagePath + '" target="_blank" rel="noopener noreferrer">' +
+      '<img src="' + imagePath + '" alt="MidoriがRenCrow_Imageで生成した画像" loading="lazy">' +
+      '</a></figure>';
+    cursor = match.index + match[0].length;
+  }
+  output += fmt(source.slice(cursor));
+  return output;
+}
+
 function addMsgToTimeline(ev) {
   if (ev.type === 'job.notification') { addJobNotificationToTimeline(ev); return; }
   if (ev.type === 'agent.response') removeThinking(ev.job_id);
@@ -44,7 +63,8 @@ function addMsgToTimeline(ev) {
   if (!matchesFilters(ev)) return;
   if (ev.type === 'idlechat.summary') return;
   if (ev.type === 'idlechat.message') return;
-  if (ev.type !== 'message.received' && ev.type !== 'idlechat.message' && (ev.from || '').toLowerCase() !== 'mio') return;
+  const isUserFacingAgentResponse = ev.type === 'agent.response' && (ev.to || '').toLowerCase() === 'user';
+  if (ev.type !== 'message.received' && ev.type !== 'idlechat.message' && (ev.from || '').toLowerCase() !== 'mio' && !isUserFacingAgentResponse) return;
 
   const em = document.getElementById('empty');
   if (em) em.remove();
@@ -71,7 +91,7 @@ function addMsgToTimeline(ev) {
       '<span class="an" style="color:' + f.c + '">' + f.l + '</span>' + dir +
       '<span class="tm">' + ftime(ev.timestamp) + '</span>' +
     '</div><button class="cp" onclick="copyMsg(this)">Copy</button>' +
-    '<div class="mc">' + fmt(displayContent) + '</div></div>';
+    '<div class="mc">' + renderTrustedGeneratedImages(displayContent) + '</div></div>';
   el.querySelector('.mc').dataset.raw = ev.content || '';
   chat.appendChild(el);
   trimTimelineNodes();

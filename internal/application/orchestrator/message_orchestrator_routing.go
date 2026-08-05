@@ -37,11 +37,49 @@ func (c *routeDecisionCoordinator) Decide(ctx context.Context, t task.Task, req 
 	if err != nil {
 		return routing.Decision{}, fmt.Errorf("routing decision failed: %w", err)
 	}
+	decision, pinnedViewerRecipient := pinSelectedViewerRecipientDecision(decision, req)
 	c.emit("routing.decision", "mio", "",
 		fmt.Sprintf("confidence %.0f%% evidence=%s", decision.Confidence*100, routeDecisionEvidenceSummary(decision.Evidence)),
 		string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID)
+	if pinnedViewerRecipient {
+		return decision, nil
+	}
 	decision = c.applyHeavyWorkerPolicy(ctx, decision, req, jobID)
 	return decision, nil
+}
+
+func shouldPinSelectedViewerRecipientToChat(req ProcessMessageRequest) bool {
+	if !strings.EqualFold(strings.TrimSpace(req.Channel), "viewer") || normalizeProcessViewerRecipient(req.To) != "midori" {
+		return false
+	}
+	originalMessage := req.originalUserMessage
+	if originalMessage == "" {
+		originalMessage = req.UserMessage
+	}
+	return !strings.HasPrefix(strings.TrimSpace(originalMessage), "/")
+}
+
+func pinSelectedViewerRecipientDecision(decision routing.Decision, req ProcessMessageRequest) (routing.Decision, bool) {
+	if !shouldPinSelectedViewerRecipientToChat(req) {
+		return decision, false
+	}
+	decision.Route = routing.RouteCHAT
+	decision.Confidence = 1
+	decision.Reason = "selected Midori owns the direct Viewer Chat response"
+	decision.Evidence = append(decision.Evidence, routing.DecisionEvidence{
+		Source:     "viewer_recipient",
+		Matched:    true,
+		Route:      routing.RouteCHAT,
+		Confidence: 1,
+		Reason:     "explicit Midori Viewer recipient without a route command",
+	})
+	return decision, true
+}
+
+func preserveOriginalUserMessage(req *ProcessMessageRequest) {
+	if req != nil && req.originalUserMessage == "" {
+		req.originalUserMessage = req.UserMessage
+	}
 }
 
 func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, decision routing.Decision, req ProcessMessageRequest, jobID task.JobID) routing.Decision {

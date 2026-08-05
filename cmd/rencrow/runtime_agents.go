@@ -113,11 +113,15 @@ func buildAgentRuntime(
 		log.Printf("Shiro: AgentProfile policy enabled")
 	}
 	heavyAgent := agent.NewHeavyAgent(heavyProvider, cfg.Prompts.Heavy)
-	wildAgent := agent.NewWildAgent(wildProvider, cfg.Prompts.Wild)
+	wildAgent := buildWildAgent(
+		wildProvider,
+		cfg.Prompts.Wild,
+		convEngine,
+		newWildImageGenerator(newConfiguredImageGateway(cfg)),
+	)
 	if convEngine != nil {
 		shiroAgent.WithConversationEngine(convEngine)
 		heavyAgent.WithConversationEngine(convEngine)
-		wildAgent.WithConversationEngine(convEngine)
 	}
 	if cfg.Worker.PersonaFile != "" {
 		if content, ok := config.LoadPersonaFile(cfg.WorkspaceDir, cfg.Worker.PersonaFile); ok {

@@ -77,6 +77,76 @@ func TestViewerStaticContractSeparatesDisplayAudioLipsyncAndLogs(t *testing.T) {
 	}
 }
 
+func TestViewerStaticContractRendersOnlyTrustedGeneratedPNGInMidoriChat(t *testing.T) {
+	timelineData, err := os.ReadFile("assets/js/tabs/timeline.js")
+	if err != nil {
+		t.Fatalf("read timeline.js: %v", err)
+	}
+	timeline := string(timelineData)
+	for _, needle := range []string{
+		`function renderTrustedGeneratedImages`,
+		`/viewer/image/result?id=`,
+		`generated-chat-image`,
+		`ev.type === 'agent.response' && (ev.to || '').toLowerCase() === 'user'`,
+	} {
+		if !strings.Contains(timeline, needle) {
+			t.Fatalf("timeline.js missing trusted Midori image contract %q", needle)
+		}
+	}
+	for _, forbidden := range []string{
+		`<img src="' + url`,
+		`<img src="${url}`,
+	} {
+		if strings.Contains(timeline, forbidden) {
+			t.Fatalf("timeline.js must not interpolate an arbitrary image URL: %q", forbidden)
+		}
+	}
+
+	cssData, err := os.ReadFile("assets/css/viewer.css")
+	if err != nil {
+		t.Fatalf("read viewer.css: %v", err)
+	}
+	css := string(cssData)
+	for _, needle := range []string{
+		`.generated-chat-image`,
+		`max-width:100%`,
+		`height:auto`,
+	} {
+		if !strings.Contains(css, needle) {
+			t.Fatalf("viewer.css missing generated image layout contract %q", needle)
+		}
+	}
+}
+
+func TestViewerStaticContractChatRecipientLabelFollowsRoleSelection(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	html := string(htmlData)
+	for _, needle := range []string{`id="chatRecipientTitle"`, `id="inp"`} {
+		if !strings.Contains(html, needle) {
+			t.Fatalf("viewer.html missing selected chat recipient display contract %q", needle)
+		}
+	}
+
+	rolesData, err := os.ReadFile("assets/js/tabs/roles.js")
+	if err != nil {
+		t.Fatalf("read roles.js: %v", err)
+	}
+	roles := string(rolesData)
+	for _, needle := range []string{
+		`function renderSelectedViewerChatRecipient`,
+		`chatRecipientTitle`,
+		`midori: 'Midori'`,
+		`label + ' にメッセージを送る...'`,
+	} {
+		if !strings.Contains(roles, needle) {
+			t.Fatalf("roles.js missing selected chat recipient display contract %q", needle)
+		}
+	}
+}
+
 func TestViewerStaticContractDailyDeskTabs(t *testing.T) {
 	data, err := os.ReadFile("viewer.html")
 	if err != nil {

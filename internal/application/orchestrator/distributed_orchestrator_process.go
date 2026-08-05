@@ -19,6 +19,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
 	ensureProcessRequestIdentity(&req, jobID.String())
+	preserveOriginalUserMessage(&req)
 	log.Printf("[DistributedOrch] ProcessMessage START: jobID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
 		jobID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
 	startedAt := time.Now().UTC()
@@ -70,13 +71,14 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		o.saveExecutionReport(ctx, jobID.String(), req.UserMessage, "", startedAt, time.Now().UTC(), err)
 		return ProcessMessageResponse{}, fmt.Errorf("routing decision failed: %w", err)
 	}
+	decision, pinnedViewerRecipient := pinSelectedViewerRecipientDecision(decision, req)
 	log.Printf("[DistributedOrch] routing decision: route=%s confidence=%.2f reason=%q",
 		decision.Route, decision.Confidence, decision.Reason)
 
 	o.emit("routing.decision", "mio", "",
-		fmt.Sprintf("confidence %.0f%%", decision.Confidence*100),
+		fmt.Sprintf("confidence %.0f%% evidence=%s", decision.Confidence*100, routeDecisionEvidenceSummary(decision.Evidence)),
 		string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID)
-	if canHeavyPolicyElevate(decision.Route) {
+	if !pinnedViewerRecipient && canHeavyPolicyElevate(decision.Route) {
 		heavyReq := heavyWorkerRequestFromMessage(jobID.String(), req.UserMessage)
 		if heavyReq.UserRequestedDeepDive {
 			evaluated := domainai.EvaluateHeavyWorker(heavyReq, o.heavyPolicy)

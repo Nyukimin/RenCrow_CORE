@@ -313,23 +313,26 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 }
 
 func registerImageRoutes(mux *http.ServeMux, cfg *config.Config) {
-	var gateway viewer.ImageGateway
-	if cfg.Image.Enabled {
-		client, err := imagegateway.NewClient(
-			cfg.Image.BaseURL,
-			time.Duration(cfg.Image.TimeoutMS)*time.Millisecond,
-		)
-		if err != nil {
-			log.Printf("RenCrow_Image client unavailable: %v", err)
-		} else {
-			gateway = client
-			log.Printf("RenCrow_Image Gateway -> %s", strings.TrimRight(cfg.Image.BaseURL, "/"))
-		}
+	gateway := newConfiguredImageGateway(cfg)
+	if gateway != nil {
+		log.Printf("RenCrow_Image Gateway -> %s", strings.TrimRight(cfg.Image.BaseURL, "/"))
 	}
 	imagefeature.RegisterRoutes(mux, imagefeature.Routes{
 		Generate: viewer.HandleImageGenerate(gateway),
 		Result:   viewer.HandleImageResult(gateway),
 	})
+}
+
+func newConfiguredImageGateway(cfg *config.Config) viewer.ImageGateway {
+	if cfg == nil || !cfg.Image.Enabled {
+		return nil
+	}
+	client, err := imagegateway.NewClient(cfg.Image.BaseURL, time.Duration(cfg.Image.TimeoutMS)*time.Millisecond)
+	if err != nil {
+		log.Printf("RenCrow_Image client unavailable: %v", err)
+		return nil
+	}
+	return client
 }
 
 type configuredViewerDatabasePaths struct {

@@ -413,6 +413,12 @@ tr.evi-selected td{background:rgba(34,211,238,.08)}
   border-radius:15px;padding:10px 12px;font-size:13px;line-height:1.62;max-height:300px;
   background:rgba(22,33,56,.78);
 }
+.chat-conversation .generated-chat-image{margin:10px 0 0}
+.chat-conversation .generated-chat-image a{display:block;line-height:0}
+.chat-conversation .generated-chat-image img{
+  display:block;max-width:100%;height:auto;max-height:min(68vh,720px);object-fit:contain;
+  border:1px solid rgba(174,202,255,.28);border-radius:12px;background:rgba(4,9,20,.72);
+}
 .chat-conversation .msg.user .mc{background:rgba(34,48,80,.82)}
 .chat-conversation .mh{gap:7px;margin-bottom:3px}
 .chat-conversation .an{font-size:12px}

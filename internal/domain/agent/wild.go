@@ -144,11 +144,16 @@ func isImageGenerationRequest(message string) bool {
 		"画像を生成",
 		"絵を生成",
 		"生成して",
+		"描いて",
+		"描画して",
+		"イラストにして",
 		"generate image",
 		"text-to-image",
 	}
 	hasImageContext := strings.Contains(msg, "画像") ||
 		strings.Contains(msg, "絵") ||
+		strings.Contains(msg, "背景画") ||
+		strings.Contains(msg, "イラスト") ||
 		strings.Contains(msg, "image") ||
 		strings.Contains(msg, "rencrow_image") ||
 		strings.Contains(msg, "rencrowimage")

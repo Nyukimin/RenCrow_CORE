@@ -198,6 +198,43 @@ func TestWildAgentGenerateUsesImageGeneratorForImageGeneration(t *testing.T) {
 	}
 }
 
+func TestIsImageGenerationRequestRecognizesNaturalJapaneseRequests(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    bool
+	}{
+		{
+			name:    "background art",
+			message: "青い海に立つ白い灯台、夏空、爽やかなアニメ背景画を生成して",
+			want:    true,
+		},
+		{
+			name:    "draw illustration",
+			message: "白い灯台のイラストを描いて",
+			want:    true,
+		},
+		{
+			name:    "prompt only",
+			message: "白い灯台の画像プロンプトを作って",
+			want:    false,
+		},
+		{
+			name:    "generic generation without visual context",
+			message: "旅行計画を生成して",
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isImageGenerationRequest(tt.message); got != tt.want {
+				t.Fatalf("isImageGenerationRequest(%q) = %v, want %v", tt.message, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestWildAgentImageGenerationRequiresRenCrowImage(t *testing.T) {
 	provider := &mockLLMProvider{
 		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {

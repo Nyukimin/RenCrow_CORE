@@ -5,10 +5,17 @@ function selectedRoleTargetID() {
 
 function selectRoleTarget(id) {
   localStorage.setItem('roleSelector.selectedTarget', String(id || ''));
+  renderSelectedViewerChatRecipient();
   renderRoleSelector();
 }
 
 const VIEWER_CHAT_RECIPIENT_TARGETS = ['mio', 'shiro', 'kuro', 'midori'];
+const VIEWER_CHAT_RECIPIENT_LABELS = {
+  mio: 'Mio',
+  shiro: 'Shiro',
+  kuro: 'Kuro',
+  midori: 'Midori',
+};
 
 function viewerChatRecipientForTarget(id) {
   const normalized = String(id || '').trim().toLowerCase();
@@ -18,6 +25,15 @@ function viewerChatRecipientForTarget(id) {
 
 function selectedViewerChatRecipient() {
   return viewerChatRecipientForTarget(selectedRoleTargetID());
+}
+
+function renderSelectedViewerChatRecipient() {
+  const recipient = selectedViewerChatRecipient() || 'mio';
+  const label = VIEWER_CHAT_RECIPIENT_LABELS[recipient] || 'Mio';
+  const title = document.getElementById('chatRecipientTitle');
+  const input = document.getElementById('inp');
+  if (title) title.textContent = label + ' / Chat';
+  if (input) input.placeholder = label + ' にメッセージを送る...';
 }
 
 function applyRoleTargetToMessage(message) {
@@ -104,3 +120,5 @@ function renderRoleSelector() {
     '<div class="row"><span>Job</span><span class="code">' + esc(agent.jobID || '-') + '</span></div>' +
     '<div class="ops-sub">' + esc(selected.use) + '</div>';
 }
+
+renderSelectedViewerChatRecipient();
