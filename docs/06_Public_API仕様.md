@@ -299,6 +299,46 @@ revisionが古い場合、利用者が別episodeを選んだ場合、または�
 現在選択中の詳細へ適用しません。`episode_id`が存在しない場合は404、一覧または詳細の取得失敗は生成失敗や
 検証失敗へ読み替えません。
 
+`story_ledger.entities`は人物の同一性と本文上の呼称を分離します。`id`と
+`semantic_role`はepisode内の関係、時系列、所有物、登場turnを結ぶ安定参照です。
+`proper_name`は作品上必要な場合だけ設定し、空文字を許可します。`primary_label`と
+`aliases`は語りの表面呼称であり、同じentityへの別参照です。entity IDを姓名や役割名から
+派生させないため、呼称が人物関係の変化に応じて変わっても同一人物として追跡できます。
+
+```json
+{
+  "id": "gatekeeper_01",
+  "semantic_role": "入口を管理し主人公を止める人物",
+  "proper_name": "",
+  "primary_label": {
+    "surface": "入域審査官",
+    "reading": "にゅういきしんさかん"
+  },
+  "aliases": [
+    {
+      "surface": "制服の人",
+      "reading": "せいふくのひと",
+      "valid_from_turn": 1,
+      "valid_to_turn": 3,
+      "perspective_entity_id": "hero",
+      "reason": "主人公がまだ役職を知らない"
+    }
+  ]
+}
+```
+
+`primary_label.surface`と`primary_label.reading`は必須です。aliasは必要な場合だけ追加し、
+`surface`、`reading`、1始まりの`valid_from_turn`、任意の`valid_to_turn`、任意の
+`perspective_entity_id`、`reason`を持ちます。`valid_to_turn`省略時はepisode終了まで有効です。
+人物の知識や関係が変化していない場合に無制限なaliasを追加しません。同一場面で複数entityへ
+解決できる呼称は不正です。`display_text`の表記と`speech_text`の読みは、当該turnで有効な
+`primary_label`またはaliasへ一致させます。
+
+作品間の呼称多様性は詳細APIの永続fieldではなく生成入力の`recent_naming_context`で管理します。
+COREは直近の完成story episodeから主呼称、姓名構文、役割名の傾向を抽出し、CodexExeへ渡します。
+このcontextは同じ語を決定的に禁止するblacklistではなく、時代、genre、視点、人物関係が異なる作品で
+同じ姓名templateや役割名セットを機械的に反復しないための参考情報です。
+
 Debug Viewerでは、お題在庫を`Topic Stock`、episode化した物語在庫を`Story Stock`として分離します。
 `Story Stock`の物語専用リストは、`ready`だけでなく`needs_repair`と`failed`を含むsnapshot内の
 全episodeを表示し、状態によって行を暗黙に除外しません。利用者が一覧または選択欄からepisodeを
@@ -319,11 +359,12 @@ HTTP request内で台本生成完了を待たず、既存の同一準備jobと�
 `POST /viewer/idlechat/episodes/validate`は`episode_id`を受け、台本の全発話、speaker帰属、順序、
 話題重複、発話反復、Persona、category固有禁止、品質判定、source鮮度、本文hashを検証します。
 storyでは固定reader、listenerの合いの手頻度と長さ、面白さ契約、entity関係、時系列、場所、
-所有物、世界規則、造語、表示表記、TTS読みも検証します。
+所有物、世界規則、造語、主呼称とaliasのentity解決、aliasの適用turnと視点、表示表記、TTS読みも検証します。
 検証はepisode本文を変更せず、`valid`、turn別状態、`first_invalid_turn`、NG理由、固定可能なprefix長、
 `repair_required`、`replacement_requested`、補充job IDを返します。NG理由は`schema_violation`、`speaker_confusion`、`repetition`、
 `topic_violation`、`persona_violation`、`factual_violation`、`meta_leak`、`quality_violation`、
 `content_mode_violation`、`title_violation`、`lexical_corruption`、`entity_relation_violation`、
+`entity_reference_violation`、`entity_naming_violation`、
 `continuity_violation`、`world_rule_violation`、`reading_violation`、
 `interest_contract_violation`、`story_performance_violation`です。episodeおよび検証結果は`content_mode=serious|assertive|free`と
 判定理由を返し、戦争・武力衝突・災害等を`serious`、それ以外の政治・思想を`assertive`、
