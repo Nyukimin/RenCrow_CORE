@@ -196,6 +196,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "cmd control can explicitly record a shadow outcome review",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/viewer/trade/shadow/outcomes/reviews",
+			want:    http.StatusNoContent,
+		},
+		{
 			name:    "cmd control can read a shadow outcome report",
 			client:  "RenCrow_CMD",
 			profile: "cmd-control",

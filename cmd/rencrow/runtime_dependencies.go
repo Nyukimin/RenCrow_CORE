@@ -102,6 +102,7 @@ type Dependencies struct {
 	viewerTradeShadowObservation   http.HandlerFunc                            // RenCrow_TRADE immutable Shadow observation record
 	viewerTradeShadowOutcome       http.HandlerFunc                            // RenCrow_TRADE immutable Shadow outcome record
 	viewerTradeShadowOutcomeReport http.HandlerFunc                            // RenCrow_TRADE read-only Shadow outcome report
+	viewerTradeShadowReview        http.HandlerFunc                            // RenCrow_TRADE immutable Shadow outcome review record
 	historyRepairJSONL             http.HandlerFunc                            // viewer JSONL history repair API
 	packageValidation              http.HandlerFunc                            // viewer package/update validation API
 	characterRuntime               http.HandlerFunc                            // viewer six-character conversation runtime API
@@ -430,6 +431,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.viewerTradeShadowObservation = newTradeShadowObservationHandler(cfg, deps.globalPolicyStore, deps.globalPolicyDecisionStore)
 	deps.viewerTradeShadowOutcome = newTradeShadowOutcomeHandler(cfg, deps.globalPolicyStore, deps.globalPolicyDecisionStore)
 	deps.viewerTradeShadowOutcomeReport = newTradeShadowOutcomeReportHandler(cfg)
+	deps.viewerTradeShadowReview = newTradeShadowReviewHandler(cfg, deps.globalPolicyStore, deps.globalPolicyDecisionStore)
 	log.Printf(
 		"Global Policy Bundle state=%s contract=%s revision=%s",
 		globalPolicy.State,

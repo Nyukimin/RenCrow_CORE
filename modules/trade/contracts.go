@@ -397,6 +397,55 @@ type PrivateShadowOutcomeReport struct {
 	Report                      ShadowOutcomeReport `json:"report"`
 }
 
+const ShadowReviewContractVersion = "shadow-outcome-review/v1"
+
+type ShadowReviewInput struct {
+	IdempotencyKey               string   `json:"idempotency_key"`
+	StudyID                      string   `json:"study_id"`
+	OutcomeReportSHA256          string   `json:"outcome_report_sha256"`
+	OutcomeReportLatestEventHash string   `json:"outcome_report_latest_event_hash"`
+	ReviewerID                   string   `json:"reviewer_id"`
+	ReviewerType                 string   `json:"reviewer_type"`
+	ReviewDecision               string   `json:"review_decision"`
+	ReviewedAt                   string   `json:"reviewed_at"`
+	ReviewReasonCodes            []string `json:"review_reason_codes"`
+	ReviewEvidenceRefs           []string `json:"review_evidence_refs"`
+}
+
+type ShadowReviewRequest struct {
+	ContractVersion string                  `json:"contract_version"`
+	RequestID       string                  `json:"request_id"`
+	Review          ShadowReviewInput       `json:"review"`
+	Policy          PolicyEvaluationRequest `json:"policy"`
+}
+
+type ShadowReviewEvent struct {
+	EventVersion int    `json:"event_version"`
+	EventID      string `json:"event_id"`
+	Sequence     int64  `json:"sequence"`
+	RecordedAt   string `json:"recorded_at"`
+	Type         string `json:"type"`
+	ShadowReviewInput
+	PreviousHash string `json:"previous_hash"`
+	EventHash    string `json:"event_hash"`
+}
+
+type PrivateShadowReview struct {
+	ContractVersion             string            `json:"contract_version"`
+	ServiceStatus               string            `json:"service_status"`
+	CorrelationID               string            `json:"correlation_id"`
+	ExecutionMode               string            `json:"execution_mode"`
+	LearningMode                string            `json:"learning_mode"`
+	RequestID                   string            `json:"request_id"`
+	Environment                 string            `json:"environment"`
+	AuthorizesExternalExecution bool              `json:"authorizes_external_execution"`
+	PortfolioMutated            bool              `json:"portfolio_mutated"`
+	KnowledgePromoted           bool              `json:"knowledge_promoted"`
+	IdempotentReplay            bool              `json:"idempotent_replay"`
+	PolicyDecision              PolicyDecision    `json:"policy_decision"`
+	Event                       ShadowReviewEvent `json:"event"`
+}
+
 var policySHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var eventSHA256Pattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -777,6 +826,80 @@ func (response PrivateShadowOutcomeReport) Validate(studyID string) error {
 	}
 	if report.ReviewState != "pending_outcomes" && report.ReviewState != "review_required" {
 		return fmt.Errorf("TRADE shadow outcome report review state is invalid")
+	}
+	return nil
+}
+
+func (input ShadowReviewInput) Validate() error {
+	for name, value := range map[string]string{
+		"idempotency_key": input.IdempotencyKey, "study_id": input.StudyID, "outcome_report_sha256": input.OutcomeReportSHA256,
+		"outcome_report_latest_event_hash": input.OutcomeReportLatestEventHash, "reviewer_id": input.ReviewerID,
+		"reviewer_type": input.ReviewerType, "review_decision": input.ReviewDecision, "reviewed_at": input.ReviewedAt,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("shadow review %s is required", name)
+		}
+	}
+	switch input.ReviewerType {
+	case "independent", "owner_confirmation":
+	default:
+		return fmt.Errorf("shadow review reviewer_type is invalid")
+	}
+	switch input.ReviewDecision {
+	case "accept", "reject", "defer":
+	default:
+		return fmt.Errorf("shadow review decision is invalid")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, input.ReviewedAt); err != nil {
+		return fmt.Errorf("shadow review reviewed_at is invalid")
+	}
+	if !policySHA256Pattern.MatchString(input.OutcomeReportSHA256) || !eventSHA256Pattern.MatchString(input.OutcomeReportLatestEventHash) {
+		return fmt.Errorf("shadow review hashes are invalid")
+	}
+	if len(input.ReviewReasonCodes) == 0 || len(input.ReviewEvidenceRefs) == 0 {
+		return fmt.Errorf("shadow review reasons and evidence are required")
+	}
+	return nil
+}
+
+func (request ShadowReviewRequest) Validate() error {
+	if request.ContractVersion != ShadowReviewContractVersion || strings.TrimSpace(request.RequestID) == "" {
+		return fmt.Errorf("TRADE shadow review envelope is invalid")
+	}
+	if err := request.Review.Validate(); err != nil {
+		return err
+	}
+	if err := request.Policy.Validate(); err != nil {
+		return err
+	}
+	if request.Policy.RequestID != request.RequestID || request.Policy.Capability != "shadow_outcome_review_record" ||
+		request.Policy.RequestScope.Revision != "shadow-review/sha256:"+request.Review.OutcomeReportSHA256 {
+		return fmt.Errorf("TRADE shadow review policy binding is invalid")
+	}
+	return nil
+}
+
+func (response PrivateShadowReview) Validate(request ShadowReviewRequest) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
+		response.Environment != "SHADOW" || response.AuthorizesExternalExecution || response.PortfolioMutated || response.KnowledgePromoted {
+		return fmt.Errorf("TRADE shadow review safety envelope is invalid")
+	}
+	if response.PolicyDecision.Capability != "shadow_outcome_review_record" || response.PolicyDecision.Status != "allowed" {
+		return fmt.Errorf("TRADE shadow review policy decision is invalid")
+	}
+	event := response.Event
+	if event.EventVersion != 1 || event.Sequence < 1 || event.Type != "shadow_outcome_reviewed" ||
+		event.IdempotencyKey != request.Review.IdempotencyKey || event.StudyID != request.Review.StudyID ||
+		event.OutcomeReportSHA256 != request.Review.OutcomeReportSHA256 || event.ReviewerID != request.Review.ReviewerID ||
+		event.ReviewerType != request.Review.ReviewerType || event.ReviewDecision != request.Review.ReviewDecision ||
+		event.EventID != "shadow-review-event/"+event.EventHash || !eventSHA256Pattern.MatchString(event.EventHash) {
+		return fmt.Errorf("TRADE shadow review event is invalid")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, event.RecordedAt); err != nil {
+		return fmt.Errorf("TRADE shadow review recorded_at is invalid")
 	}
 	return nil
 }

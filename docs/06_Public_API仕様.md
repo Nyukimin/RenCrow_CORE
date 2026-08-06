@@ -51,6 +51,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/trade/shadow/observations` | Outcome開示前の無発注判断、context hash、採点契約hashを追記専用Shadow台帳へ固定 |
 | `POST /viewer/trade/shadow/outcomes` | 固定済みOutcome Label Contractに従う結果を観測の後続eventとして追記 |
 | `GET /viewer/trade/shadow/outcomes/report?study_id=<id>` | Shadow Outcome台帳を検証して読み取り専用集計を返す |
+| `POST /viewer/trade/shadow/outcomes/reviews` | Outcome reportのhashとlatest event hashを束縛した独立reviewを別台帳へ追記。promotion／Portfolio変更／外部実行は行わない |
 
 ### Trade status
 
@@ -97,6 +98,12 @@ Outcome待ち、label別件数、return／benchmark／excess returnを再計算�
 `review_required`を返しても採点完了、knowledge promotion、Portfolio更新、実行許可を意味しません。
 `environment=SHADOW`、`authorizes_external_execution=false`、`portfolio_mutated=false`、
 `knowledge_promoted=false`を返します。
+
+`POST /viewer/trade/shadow/outcomes/reviews`は明示bool `allow_record=true`、Outcome reportのcanonical
+SHA-256、reportのlatest event hash、reviewer、decision、reason、evidenceを必須にします。TRADEは
+reportを再計算してstale／改ざんを拒否し、Outcome台帳とは分離したreview hash-chainへ冪等追記します。
+review成功後も`authorizes_external_execution=false`、`portfolio_mutated=false`、
+`knowledge_promoted=false`であり、reviewはpromotionや注文の承認ではありません。
 
 ### Game Launch（マルチペルソナ WP5）
 

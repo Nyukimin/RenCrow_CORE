@@ -322,6 +322,7 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 		ShadowObservation:   dependencies.viewerTradeShadowObservation,
 		ShadowOutcome:       dependencies.viewerTradeShadowOutcome,
 		ShadowOutcomeReport: dependencies.viewerTradeShadowOutcomeReport,
+		ShadowReview:        dependencies.viewerTradeShadowReview,
 	})
 }
 

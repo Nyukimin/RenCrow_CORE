@@ -13,6 +13,7 @@ import (
 	applicationshadow "github.com/Nyukimin/RenCrow_CORE/internal/application/tradeshadowobservation"
 	applicationshadowoutcome "github.com/Nyukimin/RenCrow_CORE/internal/application/tradeshadowoutcome"
 	applicationshadowoutcomereport "github.com/Nyukimin/RenCrow_CORE/internal/application/tradeshadowoutcomereport"
+	applicationshadowreview "github.com/Nyukimin/RenCrow_CORE/internal/application/tradeshadowreview"
 	applicationcommit "github.com/Nyukimin/RenCrow_CORE/internal/application/tradesimulationcommit"
 	policydecisionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/policydecision"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tradeclient"
@@ -197,4 +198,31 @@ func newTradeShadowOutcomeReportHandler(cfg *config.Config) http.HandlerFunc {
 	}
 	log.Printf("RenCrow_TRADE read-only Shadow outcome report enabled")
 	return viewer.HandleTradeShadowOutcomeReport(viewer.TradeShadowOutcomeReportOptions{Enabled: true, Runner: service})
+}
+
+func newTradeShadowReviewHandler(cfg *config.Config, snapshots *configpolicy.Store, decisions *policydecisionpersistence.JSONLStore) http.HandlerFunc {
+	if cfg == nil || !cfg.Trade.Enabled {
+		return viewer.HandleTradeShadowReview(viewer.TradeShadowReviewOptions{})
+	}
+	if snapshots == nil || decisions == nil {
+		log.Printf("RenCrow_TRADE Shadow review unavailable: policy snapshot or evidence store is unavailable")
+		return viewer.HandleTradeShadowReview(viewer.TradeShadowReviewOptions{Enabled: true})
+	}
+	client, err := tradeclient.NewClient(cfg.Trade.BaseURL, cfg.Trade.AuthTokenFile, time.Duration(cfg.Trade.TimeoutMS)*time.Millisecond)
+	if err != nil {
+		log.Printf("RenCrow_TRADE Shadow review unavailable: %v", err)
+		return viewer.HandleTradeShadowReview(viewer.TradeShadowReviewOptions{Enabled: true})
+	}
+	policyService, err := applicationtradepolicy.NewService(applicationtradepolicy.Options{Snapshots: snapshots, Evaluator: client, Decisions: decisions})
+	if err != nil {
+		log.Printf("RenCrow_TRADE Shadow review policy unavailable: %v", err)
+		return viewer.HandleTradeShadowReview(viewer.TradeShadowReviewOptions{Enabled: true})
+	}
+	service, err := applicationshadowreview.NewService(policyService, client)
+	if err != nil {
+		log.Printf("RenCrow_TRADE Shadow review unavailable: %v", err)
+		return viewer.HandleTradeShadowReview(viewer.TradeShadowReviewOptions{Enabled: true})
+	}
+	log.Printf("RenCrow_TRADE immutable Shadow outcome review record enabled")
+	return viewer.HandleTradeShadowReview(viewer.TradeShadowReviewOptions{Enabled: true, Runner: service})
 }
