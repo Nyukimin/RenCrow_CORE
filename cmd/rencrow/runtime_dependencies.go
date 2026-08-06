@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	configpolicy "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/policybundle"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/modulebridge"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	aiworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/aiworkflow"
@@ -126,6 +127,7 @@ type Dependencies struct {
 	verificationDetail             http.HandlerFunc                            // viewer verification detail API
 	verificationSummary            http.HandlerFunc                            // viewer verification summary API
 	toolHarnessRecent              http.HandlerFunc                            // viewer tool harness mediation API
+	globalPolicyStatus             http.HandlerFunc                            // read-only Global Policy Bundle status API
 	dciRecent                      http.HandlerFunc                            // viewer DCI trace API
 	dciSearch                      http.HandlerFunc                            // viewer DCI manual search API
 	dciSearcher                    orchestrator.DCISearcher                    // message orchestrator explicit DCI trigger
@@ -400,6 +402,14 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 
 	deps := &Dependencies{}
+	globalPolicy := configpolicy.LoadWorkspace(cfg.WorkspaceDir)
+	deps.globalPolicyStatus = viewer.HandleGlobalPolicyStatus(globalPolicy)
+	log.Printf(
+		"Global Policy Bundle state=%s contract=%s revision=%s",
+		globalPolicy.State,
+		globalPolicy.ContractRevision,
+		globalPolicy.BundleRevision,
+	)
 	deps.advisorCloser = advisorRuntime.Closer
 	deps.advisorStatus = viewer.HandleAdvisorsStatus(viewer.AdvisorStatusOptions{
 		Store: advisorRuntime.Store, AdvisorProfiles: advisorRuntime.Profiles, AgentProfiles: advisorRuntime.AgentProfiles,

@@ -238,6 +238,7 @@ func registerGovernanceSecurityReportRoutes(mux *http.ServeMux, dependencies *De
 		VerificationSummary: dependencies.verificationSummary,
 	}})
 	governancefeature.RegisterRoutes(mux, governancefeature.Dependencies{Routes: governancefeature.Routes{
+		GlobalPolicyStatus:          dependencies.globalPolicyStatus,
 		ToolHarnessRecent:           dependencies.toolHarnessRecent,
 		DCIRecent:                   dependencies.dciRecent,
 		DCISearch:                   dependencies.dciSearch,

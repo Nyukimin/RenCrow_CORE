@@ -14,6 +14,7 @@ type Dependencies struct {
 // Routes groups Governance route handlers supplied by cmd/rencrow.
 // Handler implementations are supplied by their owning adapter and command packages.
 type Routes struct {
+	GlobalPolicyStatus          http.HandlerFunc
 	ToolHarnessRecent           http.HandlerFunc
 	DCIRecent                   http.HandlerFunc
 	DCISearch                   http.HandlerFunc
@@ -37,6 +38,7 @@ type Routes struct {
 // RegisterRoutes registers handlers at the feature route boundary.
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
+	registerRoute(mux, "/viewer/policy/status", routes.GlobalPolicyStatus)
 	registerRoute(mux, "/viewer/tool-harness/recent", routes.ToolHarnessRecent)
 	registerRoute(mux, "/viewer/dci/recent", routes.DCIRecent)
 	registerRoute(mux, "/viewer/dci/search", routes.DCISearch)

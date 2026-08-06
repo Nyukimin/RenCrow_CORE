@@ -35,6 +35,10 @@
 このファイルは、RenCrow_CORE で作業する AI エージェント向けの最小実務ルールです。
 製品仕様の唯一の正本は `docs/README.md` と、そこに列挙された10の仕様書です。`CLAUDE.md` と `rules/` は作業制約であり、製品仕様を再定義しません。
 
+全project共通の開発判断はworkspace rootから参照する共通Skillを正本とする。
+`rules/common/`は既存参照を維持するCORE-local補足であり、他moduleへcopyしない。
+rule所有権の詳細は`rules/README.md`を参照する。
+
 このファイルは常時必要な判断基準だけを置く。path 固有の制約は `rules/`、再利用手順は `skills/`、機械的に止めるべき危険操作は hooks / permissions へ分離する。
 指示配置は `rules/rules_instruction_placement.md`、path 固有制約は `rules/rules_path_scoped_constraints.md` に従う。
 
