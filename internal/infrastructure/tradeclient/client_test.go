@@ -302,3 +302,29 @@ func TestClientRecordShadowOutcomeUsesAuthenticatedPrivateRoute(t *testing.T) {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 }
+
+func TestClientShadowOutcomeReportUsesAuthenticatedReadOnlyRoute(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/shadow/outcomes/report" || request.URL.Query().Get("study_id") != "study-1" || request.Method != http.MethodGet {
+			http.NotFound(writer, request)
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer "+testToken || request.Header.Get("X-Correlation-ID") != "report-1" {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(moduletrade.PrivateShadowOutcomeReport{
+			ContractVersion: moduletrade.PrivateContractVersion, ServiceStatus: "ready", CorrelationID: "report-1", ExecutionMode: "DISABLED", Environment: "SHADOW",
+			Report: moduletrade.ShadowOutcomeReport{SchemaVersion: 1, ContractVersion: moduletrade.ShadowOutcomeReportContractVersion, StudyID: "study-1", Environment: "SHADOW", ObservationCount: 2, OutcomeCount: 1, PendingOutcomeCount: 1, LabelCounts: map[string]int64{"success": 1, "failure": 0, "neutral": 0, "inconclusive": 0}, ReviewState: "review_required"},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, writeToken(t), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.ShadowOutcomeReport(context.Background(), "report-1", "study-1")
+	if err != nil || result.Report.StudyID != "study-1" || result.Report.ReviewState != "review_required" || result.AuthorizesExternalExecution || result.PortfolioMutated || result.KnowledgePromoted {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}

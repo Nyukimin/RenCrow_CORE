@@ -9,12 +9,13 @@ import (
 func TestRegisterRoutes(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Routes{
-		Status:            func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) },
-		PolicyEvaluate:    func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusAccepted) },
-		RiskPreview:       func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusCreated) },
-		SimulationCommit:  func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusOK) },
-		ShadowObservation: func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusPartialContent) },
-		ShadowOutcome:     func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusResetContent) },
+		Status:              func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) },
+		PolicyEvaluate:      func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusAccepted) },
+		RiskPreview:         func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusCreated) },
+		SimulationCommit:    func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusOK) },
+		ShadowObservation:   func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusPartialContent) },
+		ShadowOutcome:       func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusResetContent) },
+		ShadowOutcomeReport: func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusOK) },
 	})
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/viewer/trade/status", nil))
@@ -45,5 +46,10 @@ func TestRegisterRoutes(t *testing.T) {
 	mux.ServeHTTP(outcomeResponse, httptest.NewRequest(http.MethodPost, "/viewer/trade/shadow/outcomes", nil))
 	if outcomeResponse.Code != http.StatusResetContent {
 		t.Fatalf("shadow outcome status=%d", outcomeResponse.Code)
+	}
+	reportResponse := httptest.NewRecorder()
+	mux.ServeHTTP(reportResponse, httptest.NewRequest(http.MethodGet, "/viewer/trade/shadow/outcomes/report?study_id=study-1", nil))
+	if reportResponse.Code != http.StatusOK {
+		t.Fatalf("outcome report status=%d", reportResponse.Code)
 	}
 }

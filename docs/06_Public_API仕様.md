@@ -50,6 +50,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/trade/simulation-commit` | Preview済みの仮想buyを失効検査して100万円Simulatorへ一度だけ反映。外部注文ではない |
 | `POST /viewer/trade/shadow/observations` | Outcome開示前の無発注判断、context hash、採点契約hashを追記専用Shadow台帳へ固定 |
 | `POST /viewer/trade/shadow/outcomes` | 固定済みOutcome Label Contractに従う結果を観測の後続eventとして追記 |
+| `GET /viewer/trade/shadow/outcomes/report?study_id=<id>` | Shadow Outcome台帳を検証して読み取り専用集計を返す |
 
 ### Trade status
 
@@ -91,6 +92,9 @@ SHA-256へPolicy request scopeを固定します。成功responseは`environment
 `POST /viewer/trade/shadow/outcomes`は`allow_record=true`、既存`decision_id`、Outcome label、
 Outcome observed time、Outcome data hash、元観測と一致する採点契約hashを必須にします。同じdecisionへ
 二つ目のOutcomeは拒否し、同じpayloadの再送だけを冪等に処理します。成功responseも
+`GET /viewer/trade/shadow/outcomes/report`は`study_id`を一つだけ受け取り、hash-chainを再検証して
+Outcome待ち、label別件数、return／benchmark／excess returnを再計算します。これは読み取り専用で、
+`review_required`を返しても採点完了、knowledge promotion、Portfolio更新、実行許可を意味しません。
 `environment=SHADOW`、`authorizes_external_execution=false`、`portfolio_mutated=false`、
 `knowledge_promoted=false`を返します。
 

@@ -128,7 +128,8 @@ func cmdControlInteractionAllowed(method, path string) bool {
 		case "/health",
 			"/health/live",
 			"/ready",
-			"/viewer/status":
+			"/viewer/status",
+			"/viewer/trade/shadow/outcomes/report":
 			return true
 		default:
 			return false

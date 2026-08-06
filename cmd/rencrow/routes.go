@@ -315,12 +315,13 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 		ObserverProxy: dependencies.viewerGamesObserverProxy,
 	}})
 	tradefeature.RegisterRoutes(mux, tradefeature.Routes{
-		Status:            dependencies.viewerTradeStatus,
-		PolicyEvaluate:    dependencies.viewerTradePolicyEvaluation,
-		RiskPreview:       dependencies.viewerTradeRiskPreview,
-		SimulationCommit:  dependencies.viewerTradeSimulationCommit,
-		ShadowObservation: dependencies.viewerTradeShadowObservation,
-		ShadowOutcome:     dependencies.viewerTradeShadowOutcome,
+		Status:              dependencies.viewerTradeStatus,
+		PolicyEvaluate:      dependencies.viewerTradePolicyEvaluation,
+		RiskPreview:         dependencies.viewerTradeRiskPreview,
+		SimulationCommit:    dependencies.viewerTradeSimulationCommit,
+		ShadowObservation:   dependencies.viewerTradeShadowObservation,
+		ShadowOutcome:       dependencies.viewerTradeShadowOutcome,
+		ShadowOutcomeReport: dependencies.viewerTradeShadowOutcomeReport,
 	})
 }
 

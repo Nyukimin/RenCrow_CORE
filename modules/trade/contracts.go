@@ -356,6 +356,47 @@ type PrivateShadowOutcome struct {
 	Event                       ShadowOutcomeEvent `json:"event"`
 }
 
+const ShadowOutcomeReportContractVersion = "shadow-outcome-report/v1"
+
+type ShadowOutcomeReport struct {
+	SchemaVersion               int              `json:"schema_version"`
+	ContractVersion             string           `json:"contract_version"`
+	StudyID                     string           `json:"study_id"`
+	Environment                 string           `json:"environment"`
+	ObservationCount            int64            `json:"observation_count"`
+	OutcomeCount                int64            `json:"outcome_count"`
+	PendingOutcomeCount         int64            `json:"pending_outcome_count"`
+	LabelCounts                 map[string]int64 `json:"label_counts"`
+	ReturnCount                 int64            `json:"return_count"`
+	ReturnSumBPS                int64            `json:"return_sum_bps"`
+	ReturnMeanBPS               *float64         `json:"return_mean_bps"`
+	BenchmarkReturnCount        int64            `json:"benchmark_return_count"`
+	BenchmarkReturnSumBPS       int64            `json:"benchmark_return_sum_bps"`
+	BenchmarkReturnMeanBPS      *float64         `json:"benchmark_return_mean_bps"`
+	ExcessReturnCount           int64            `json:"excess_return_count"`
+	ExcessReturnSumBPS          int64            `json:"excess_return_sum_bps"`
+	ExcessReturnMeanBPS         *float64         `json:"excess_return_mean_bps"`
+	LabelContractSHA256         []string         `json:"label_contract_sha256"`
+	ReviewState                 string           `json:"review_state"`
+	LatestEventHash             string           `json:"latest_event_hash"`
+	AuthorizesExternalExecution bool             `json:"authorizes_external_execution"`
+	PortfolioMutated            bool             `json:"portfolio_mutated"`
+	KnowledgePromoted           bool             `json:"knowledge_promoted"`
+}
+
+type PrivateShadowOutcomeReport struct {
+	ContractVersion             string              `json:"contract_version"`
+	ServiceStatus               string              `json:"service_status"`
+	CorrelationID               string              `json:"correlation_id"`
+	ExecutionMode               string              `json:"execution_mode"`
+	LearningMode                string              `json:"learning_mode"`
+	Environment                 string              `json:"environment"`
+	AuthorizesExternalExecution bool                `json:"authorizes_external_execution"`
+	PortfolioMutated            bool                `json:"portfolio_mutated"`
+	KnowledgePromoted           bool                `json:"knowledge_promoted"`
+	Report                      ShadowOutcomeReport `json:"report"`
+}
+
 var policySHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var eventSHA256Pattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -714,6 +755,28 @@ func (response PrivateShadowOutcome) Validate(request ShadowOutcomeRequest) erro
 	}
 	if _, err := time.Parse(time.RFC3339Nano, event.RecordedAt); err != nil {
 		return fmt.Errorf("TRADE shadow outcome recorded_at is invalid")
+	}
+	return nil
+}
+
+func (response PrivateShadowOutcomeReport) Validate(studyID string) error {
+	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" ||
+		response.Environment != "SHADOW" || response.AuthorizesExternalExecution || response.PortfolioMutated || response.KnowledgePromoted {
+		return fmt.Errorf("TRADE shadow outcome report safety envelope is invalid")
+	}
+	report := response.Report
+	if report.SchemaVersion != 1 || report.ContractVersion != ShadowOutcomeReportContractVersion || report.StudyID != studyID || report.Environment != "SHADOW" ||
+		report.ObservationCount < 0 || report.OutcomeCount < 0 || report.OutcomeCount > report.ObservationCount ||
+		report.PendingOutcomeCount != report.ObservationCount-report.OutcomeCount {
+		return fmt.Errorf("TRADE shadow outcome report counts are invalid")
+	}
+	for _, label := range []string{"success", "failure", "neutral", "inconclusive"} {
+		if report.LabelCounts[label] < 0 {
+			return fmt.Errorf("TRADE shadow outcome report label count is invalid")
+		}
+	}
+	if report.ReviewState != "pending_outcomes" && report.ReviewState != "review_required" {
+		return fmt.Errorf("TRADE shadow outcome report review state is invalid")
 	}
 	return nil
 }

@@ -196,6 +196,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "cmd control can read a shadow outcome report",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodGet,
+			path:    "/viewer/trade/shadow/outcomes/report?study_id=study-1",
+			want:    http.StatusNoContent,
+		},
+		{
 			name:    "client profile pair must match",
 			client:  "RenCrow_CMD",
 			profile: "portal-chat",

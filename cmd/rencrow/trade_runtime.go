@@ -12,6 +12,7 @@ import (
 	applicationpreview "github.com/Nyukimin/RenCrow_CORE/internal/application/traderiskpreview"
 	applicationshadow "github.com/Nyukimin/RenCrow_CORE/internal/application/tradeshadowobservation"
 	applicationshadowoutcome "github.com/Nyukimin/RenCrow_CORE/internal/application/tradeshadowoutcome"
+	applicationshadowoutcomereport "github.com/Nyukimin/RenCrow_CORE/internal/application/tradeshadowoutcomereport"
 	applicationcommit "github.com/Nyukimin/RenCrow_CORE/internal/application/tradesimulationcommit"
 	policydecisionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/policydecision"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tradeclient"
@@ -178,4 +179,22 @@ func newTradeShadowOutcomeHandler(cfg *config.Config, snapshots *configpolicy.St
 	}
 	log.Printf("RenCrow_TRADE immutable Shadow outcome record enabled")
 	return viewer.HandleTradeShadowOutcome(viewer.TradeShadowOutcomeOptions{Enabled: true, Runner: service})
+}
+
+func newTradeShadowOutcomeReportHandler(cfg *config.Config) http.HandlerFunc {
+	if cfg == nil || !cfg.Trade.Enabled {
+		return viewer.HandleTradeShadowOutcomeReport(viewer.TradeShadowOutcomeReportOptions{})
+	}
+	client, err := tradeclient.NewClient(cfg.Trade.BaseURL, cfg.Trade.AuthTokenFile, time.Duration(cfg.Trade.TimeoutMS)*time.Millisecond)
+	if err != nil {
+		log.Printf("RenCrow_TRADE Shadow outcome report unavailable: %v", err)
+		return viewer.HandleTradeShadowOutcomeReport(viewer.TradeShadowOutcomeReportOptions{Enabled: true})
+	}
+	service, err := applicationshadowoutcomereport.NewService(client)
+	if err != nil {
+		log.Printf("RenCrow_TRADE Shadow outcome report unavailable: %v", err)
+		return viewer.HandleTradeShadowOutcomeReport(viewer.TradeShadowOutcomeReportOptions{Enabled: true})
+	}
+	log.Printf("RenCrow_TRADE read-only Shadow outcome report enabled")
+	return viewer.HandleTradeShadowOutcomeReport(viewer.TradeShadowOutcomeReportOptions{Enabled: true, Runner: service})
 }
