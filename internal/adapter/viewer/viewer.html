@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>RenCrow Live</title>
 <link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-midori-image-chat">
-<link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260511-memory-desk">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260806-prompt-debug-colors">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20260728-image-mvp">
@@ -652,10 +652,37 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Time</th><th>Type</th><th>Actor</th><th>Job</th><th>Route</th><th>Content</th></tr></thead>
+          <thead><tr><th>Time</th><th>Level</th><th>Type</th><th>Actor</th><th>Job</th><th>Route</th><th>Content</th></tr></thead>
           <tbody id="opsFeedBody"></tbody>
         </table>
       </div>
+      <section class="prompt-debug-panel" aria-labelledby="promptDebugTitle">
+        <div class="ops-section-title">
+          <span id="promptDebugTitle">LLM Prompt Boundary</span>
+          <small>受信 → 実体送信 / SystemPrompt 10行ブロック</small>
+        </div>
+        <div class="prompt-debug-toolbar">
+          <button id="promptDebugRefreshBtn" type="button" class="ctl-btn">Promptログ更新</button>
+          <span id="promptDebugStatus" class="small" aria-live="polite">未取得</span>
+        </div>
+        <div class="prompt-debug-legend" aria-label="Prompt log color legend">
+          <span class="prompt-legend-label">SystemPrompt</span>
+          <span class="prompt-legend-block prompt-block-00">00</span>
+          <span class="prompt-legend-block prompt-block-10">10</span>
+          <span class="prompt-legend-block prompt-block-20">20</span>
+          <span class="prompt-legend-label">経過時間</span>
+          <span class="prompt-legend-age age-recent">5分以内</span>
+          <span class="prompt-legend-age age-hour">1時間以内</span>
+          <span class="prompt-legend-age age-day">24時間以内</span>
+          <span class="prompt-legend-age age-old">それ以前</span>
+          <span class="prompt-legend-label">レベル</span>
+          <span class="prompt-legend-level level-debug">debug</span>
+          <span class="prompt-legend-level level-info">info</span>
+          <span class="prompt-legend-level level-warn">warn</span>
+          <span class="prompt-legend-level level-error">error</span>
+        </div>
+        <div id="promptDebugList" class="prompt-debug-list" aria-live="polite" aria-busy="false"></div>
+      </section>
         </div>
       </details>
     </div>
@@ -1572,7 +1599,7 @@
 <div class="toast" id="toast"></div>
 
 
-<script src="/viewer/assets/js/tabs/ops.js?v=20260702-game-bridge-card" defer></script>
+<script src="/viewer/assets/js/tabs/ops.js?v=20260806-prompt-debug-colors" defer></script>
 <script src="/viewer/assets/js/tabs/to-be-ops.js?v=20260714-to-be-summary" defer></script>
 <script src="/viewer/assets/js/tabs/home.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/develop.js?v=20260517-desk-regenerated" defer></script>
@@ -1595,7 +1622,7 @@
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
 <script src="/viewer/assets/js/tabs/image.js?v=20260728-image-mvp" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
-<script src="/viewer/assets/js/viewer.js?v=20260805-news-pack-snapshot" defer></script>
+<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-debug-colors" defer></script>
 <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
 </body>
 </html>

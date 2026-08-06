@@ -241,6 +241,10 @@ const state = {
   ops: {
     persistedLogs: [],
     opsLogsFetchError: '',
+    promptDebugRecords: [],
+    promptDebugFetchError: '',
+    promptDebugAvailable: false,
+    promptDebugSource: '',
     toolHarnessEvents: [],
     toolHarnessFetchError: '',
     dciTraces: [],
@@ -1399,7 +1403,7 @@ if (idlePlaybackPreviousBtn) idlePlaybackPreviousBtn.addEventListener('click', (
 if (idleModeNormalBtn) idleModeNormalBtn.addEventListener('click', () => setIdleSelectedMode('manual'));
 if (idleModeForecastBtn) idleModeForecastBtn.addEventListener('click', () => setIdleSelectedMode('forecast'));
 if (idleModeStorySimpleBtn) idleModeStorySimpleBtn.addEventListener('click', () => setIdleSelectedMode('story-simple'));
-idleStopBtn.addEventListener('click', () => controlIdle('/viewer/idlechat/stop'));
+if (idleStopBtn) idleStopBtn.addEventListener('click', () => controlIdle('/viewer/idlechat/stop'));
 idleSubtabs.forEach((btn) => {
   btn.addEventListener('click', () => setIdleSelectedView(btn.dataset.idleView || 'live'));
 });
@@ -2309,6 +2313,7 @@ function renderDeskViews() {
 }
 
 function refreshOpsData() {
+  refreshPromptDebugData();
   fetch('/viewer/logs?scope=persisted&limit=40')
     .then((r) => {
       if (!r.ok) {
@@ -2341,6 +2346,32 @@ function refreshOpsData() {
       state.ops.latestError = null;
       renderOps();
       renderDeskViews();
+      console.error(err);
+    });
+}
+
+function refreshPromptDebugData() {
+  fetch('/viewer/prompt-debug?limit=40', {cache: 'no-store'})
+    .then((r) => {
+      if (!r.ok) {
+        return r.text().then((text) => {
+          throw new Error('HTTP ' + String(r.status) + ': ' + (text || r.statusText || 'prompt debug unavailable'));
+        });
+      }
+      return r.json();
+    })
+    .then((data) => {
+      state.ops.promptDebugFetchError = '';
+      state.ops.promptDebugRecords = Array.isArray(data.items) ? data.items : [];
+      state.ops.promptDebugAvailable = data.available !== false;
+      state.ops.promptDebugSource = String(data.source || '');
+      if (typeof renderPromptDebug === 'function') renderPromptDebug();
+    })
+    .catch((err) => {
+      state.ops.promptDebugFetchError = String(err && err.message ? err.message : err);
+      state.ops.promptDebugRecords = [];
+      state.ops.promptDebugAvailable = false;
+      if (typeof renderPromptDebug === 'function') renderPromptDebug();
       console.error(err);
     });
 }

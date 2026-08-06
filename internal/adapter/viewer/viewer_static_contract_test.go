@@ -654,14 +654,70 @@ func TestViewerStaticContractGameBridgeOpsCard(t *testing.T) {
 			t.Fatalf("viewer.js missing Games tab wiring: %s", required)
 		}
 	}
-	if !strings.Contains(page, "ops.js?v=20260702-game-bridge-card") {
-		t.Fatal("viewer.html missing Game Bridge Ops cache buster")
+	if !strings.Contains(page, "ops.js?v=20260806-prompt-debug-colors") {
+		t.Fatal("viewer.html missing Prompt Debug Ops cache buster")
 	}
 	if !strings.Contains(page, "games.js?v=20260729-agent-launch") {
 		t.Fatal("viewer.html missing Games tab cache buster")
 	}
-	if !strings.Contains(page, "viewer.js?v=20260805-news-pack-snapshot") {
-		t.Fatal("viewer.html missing Game Bridge viewer cache buster")
+	if !strings.Contains(page, "viewer.js?v=20260806-prompt-debug-colors") {
+		t.Fatal("viewer.html missing Prompt Debug viewer cache buster")
+	}
+}
+
+func TestViewerStaticContractPromptDebugLogPresentation(t *testing.T) {
+	page, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opsJS, err := os.ReadFile("assets/js/tabs/ops.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opsCSS, err := os.ReadFile("assets/css/tabs/ops.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"promptDebugRefreshBtn",
+		"promptDebugList",
+		"prompt-legend-block prompt-block-00",
+		"prompt-legend-age age-recent",
+		"prompt-legend-level level-error",
+		"<th>Level</th>",
+	} {
+		if !strings.Contains(string(page), required) {
+			t.Fatalf("viewer.html missing Prompt Debug log contract: %s", required)
+		}
+	}
+	viewerJS, err := os.ReadFile("assets/js/viewer.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(viewerJS), "/viewer/prompt-debug?limit=40") {
+		t.Fatal("viewer.js missing Prompt Debug API fetch contract")
+	}
+	for _, required := range []string{
+		"function renderPromptDebug()",
+		"function promptDebugAgeClass",
+		"function opsEventLevel",
+		"prompt-debug-block",
+		"送信Payload全文",
+	} {
+		if !strings.Contains(string(opsJS), required) {
+			t.Fatalf("ops.js missing Prompt Debug log contract: %s", required)
+		}
+	}
+	for _, required := range []string{
+		".prompt-debug-block-00",
+		".prompt-debug-block-10",
+		".prompt-debug-block-20",
+		".ops-log-row.age-hour",
+		".ops-log-row.level-error",
+	} {
+		if !strings.Contains(string(opsCSS), required) {
+			t.Fatalf("ops.css missing Prompt Debug log color contract: %s", required)
+		}
 	}
 }
 

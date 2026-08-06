@@ -104,6 +104,7 @@ func buildViewerRuntimeHandlers(
 	hub := viewer.NewEventHub(200)
 	deps.eventHub = hub
 	deps.characterRuntime = avatarfeature.HandleCharacterRuntime(characterruntimeapp.NewService(), hub)
+	deps.viewerPromptDebug = viewer.HandlePromptDebugLogs(viewer.PromptDebugLogOptions{})
 	setIdleChatViewerClientCount(hub.ClientCount)
 	hub.SetClientCountListener(handleIdleChatViewerClientCountChanged)
 	if cfg.ViewerLog.Enabled {

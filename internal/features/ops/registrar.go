@@ -22,6 +22,7 @@ type Routes struct {
 	ParallelJobDetail http.HandlerFunc
 	JobNotifications  http.HandlerFunc
 	Logs              http.HandlerFunc
+	PromptDebug       http.HandlerFunc
 	AuditSummary      http.HandlerFunc
 	JobDetail         http.HandlerFunc
 	RepairRun         http.HandlerFunc
@@ -46,6 +47,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/parallel-job/detail", routes.ParallelJobDetail)
 	registerRoute(mux, "/viewer/job-notifications", routes.JobNotifications)
 	registerRoute(mux, "/viewer/logs", routes.Logs)
+	registerRoute(mux, "/viewer/prompt-debug", routes.PromptDebug)
 	registerRoute(mux, "/viewer/audit/summary", routes.AuditSummary)
 	registerRoute(mux, "/viewer/job/detail", routes.JobDetail)
 	registerRoute(mux, "/viewer/repair/run", routes.RepairRun)

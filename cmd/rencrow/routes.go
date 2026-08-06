@@ -117,6 +117,7 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		ParallelJobDetail: dependencies.parallelJobDetail,
 		JobNotifications:  dependencies.jobNotifications,
 		Logs:              dependencies.viewerLogs,
+		PromptDebug:       dependencies.viewerPromptDebug,
 		AuditSummary:      dependencies.viewerAuditSummary,
 		JobDetail:         dependencies.viewerJobDetail,
 		RepairRun:         viewer.HandleRepairRunWithRunner(dependencies.eventRelay, dependencies.repairRunner),

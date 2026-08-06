@@ -83,6 +83,7 @@ type Dependencies struct {
 	parallelJobDetail              http.HandlerFunc                            // Mio parallel job detail API
 	jobNotifications               http.HandlerFunc                            // Mio parallel job interrupt notification API
 	viewerLogs                     http.HandlerFunc                            // viewer logs API
+	viewerPromptDebug              http.HandlerFunc                            // LLM prompt boundary debug API
 	viewerAuditSummary             http.HandlerFunc                            // viewer audit summary API
 	viewerJobDetail                http.HandlerFunc                            // viewer job detail API
 	viewerSend                     http.HandlerFunc                            // viewer message sender

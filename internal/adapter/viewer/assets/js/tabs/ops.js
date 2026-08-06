@@ -247,20 +247,25 @@ function renderOps() {
   }).slice(0, 20);
   if (logsFetchError) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6" class="small">Ops logs unavailable: ' + esc(logsFetchError) + '</td>';
+    tr.innerHTML = '<td colspan="7" class="small">Ops logs unavailable: ' + esc(logsFetchError) + '</td>';
     feedBody.appendChild(tr);
     return;
   }
   if (feed.length === 0) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6" class="small">No operator events yet</td>';
+    tr.innerHTML = '<td colspan="7" class="small">No operator events yet</td>';
     feedBody.appendChild(tr);
     return;
   }
   feed.forEach((ev) => {
     const tr = document.createElement('tr');
+    const level = opsEventLevel(ev);
+    const levelClass = promptDebugLevelClass({level: level});
+    const ageClass = promptDebugAgeClass(ev.timestamp);
+    tr.className = 'ops-log-row ' + levelClass + ' ' + ageClass;
     tr.innerHTML =
       '<td>' + esc(ftime(ev.timestamp)) + '</td>' +
+      '<td><span class="prompt-debug-level ' + levelClass + '">' + esc(level) + '</span></td>' +
       '<td>' + esc(ev.type || '-') + '</td>' +
       '<td>' + esc(agName(ev.from || '-')) + ' → ' + esc(agName(ev.to || '-')) + '</td>' +
       '<td class="code">' + esc(ev.job_id || '-') + '</td>' +
@@ -285,6 +290,122 @@ function renderOps() {
   renderRevenueExternalSendAudits();
   renderRevenueDrilldown();
   renderPersonaMetaReviews();
+  renderPromptDebug();
+}
+
+function promptDebugAgeClass(createdAt) {
+  const timestamp = Date.parse(String(createdAt || ''));
+  if (!Number.isFinite(timestamp)) return 'age-old';
+  const age = Math.max(0, Date.now() - timestamp);
+  if (age <= 5 * 60 * 1000) return 'age-recent';
+  if (age <= 60 * 60 * 1000) return 'age-hour';
+  if (age <= 24 * 60 * 60 * 1000) return 'age-day';
+  return 'age-old';
+}
+
+function promptDebugLevelClass(item) {
+  const level = String(item && item.level || '').toLowerCase();
+  if (level === 'error' || level === 'critical' || level === 'fatal') return 'level-error';
+  if (level === 'warn' || level === 'warning') return 'level-warn';
+  if (level === 'debug' || level === 'trace') return 'level-debug';
+  return 'level-info';
+}
+
+function opsEventLevel(event) {
+  const type = String(event && event.type || '').toLowerCase();
+  if (type.includes('error') || type.includes('failure') || type.includes('blocked')) return 'error';
+  if (type.includes('waiting') || type.includes('warning') || type.includes('retry')) return 'warn';
+  if (type.includes('thinking') || type.includes('debug') || type.includes('trace')) return 'debug';
+  return 'info';
+}
+
+function promptDebugBlockClass(label) {
+  const normalized = String(label || '').replace(/[^0-9]/g, '');
+  const value = Number(normalized);
+  const palette = ['00', '10', '20', '30', '40', '50', '60', '70', '80', '90'];
+  const key = Number.isFinite(value) ? String(value - (value % 10)).padStart(2, '0') : '00';
+  return 'prompt-block-' + (palette.indexOf(key) >= 0 ? key : '00');
+}
+
+function promptDebugMeta(item) {
+  const metadata = item && item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+  return [
+    item && item.request_id ? 'request: ' + item.request_id : '',
+    metadata.agent_id ? 'agent: ' + metadata.agent_id : '',
+    metadata.caller ? 'caller: ' + metadata.caller : '',
+    metadata.target_id ? 'target: ' + metadata.target_id : '',
+  ].filter(Boolean).join(' · ');
+}
+
+function renderPromptDebug() {
+  const target = document.getElementById('promptDebugList');
+  const status = document.getElementById('promptDebugStatus');
+  if (!target) return;
+  bindPromptDebugControls();
+  target.innerHTML = '';
+  const fetchError = String(state.ops.promptDebugFetchError || '').trim();
+  const records = Array.isArray(state.ops.promptDebugRecords) ? state.ops.promptDebugRecords : [];
+  if (status) {
+    status.textContent = fetchError ? '取得失敗: ' + fetchError : (!state.ops.promptDebugAvailable ? 'ログ未作成' : (records.length ? records.length + ' records' : '記録なし'));
+  }
+  if (fetchError) {
+    target.innerHTML = '<div class="prompt-debug-empty level-error">Prompt debug unavailable: ' + esc(fetchError) + '</div>';
+    return;
+  }
+  if (!state.ops.promptDebugAvailable) {
+    target.innerHTML = '<div class="prompt-debug-empty age-old">Prompt debug log is not available. Capture is disabled or the file has not been created.</div>';
+    return;
+  }
+  if (!records.length) {
+    target.innerHTML = '<div class="prompt-debug-empty age-old">No prompt-boundary records yet.</div>';
+    return;
+  }
+  const groups = new Map();
+  records.forEach((item) => {
+    const key = String(item && (item.request_id || (item.metadata && item.metadata.request_id)) || 'unknown');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  });
+  Array.from(groups.entries()).forEach(([requestID, items]) => {
+    const latest = items[0] || {};
+    const card = document.createElement('article');
+    card.className = 'prompt-debug-record ' + promptDebugAgeClass(latest.created_at) + ' ' + promptDebugLevelClass(latest);
+    const header = '<header class="prompt-debug-record-head">' +
+      '<div><strong>' + esc(requestID) + '</strong><div class="small">' + esc(promptDebugMeta(latest)) + '</div></div>' +
+      '<div class="prompt-debug-badges"><span class="prompt-debug-age ' + promptDebugAgeClass(latest.created_at) + '">' + esc(promptDebugAgeClass(latest.created_at).replace('age-', '')) + '</span><span class="prompt-debug-level ' + promptDebugLevelClass(latest) + '">' + esc(latest.level || 'info') + '</span></div>' +
+      '</header>';
+    const body = document.createElement('div');
+    body.className = 'prompt-debug-record-body';
+    body.innerHTML = header;
+    items.forEach((item) => {
+      const stage = document.createElement('section');
+      const ageClass = promptDebugAgeClass(item.created_at);
+      const levelClass = promptDebugLevelClass(item);
+      stage.className = 'prompt-debug-stage ' + ageClass + ' ' + levelClass;
+      const blocks = Array.isArray(item.system_prompt_blocks) ? item.system_prompt_blocks : [];
+      const blockHTML = blocks.length ? '<div class="prompt-debug-blocks">' + blocks.map((block) =>
+        '<div class="prompt-debug-block ' + promptDebugBlockClass(block.label) + '"><div class="prompt-debug-block-label">' + esc(block.label || '-') + ' <span>lines ' + esc(String(block.start_line || '-')) + '–' + esc(String(block.end_line || '-')) + '</span></div><pre>' + esc(block.text || '') + '</pre></div>'
+      ).join('') + '</div>' : '<div class="small prompt-debug-no-system">SystemPromptを抽出できませんでした（非JSONまたはsystem messageなし）</div>';
+      stage.innerHTML =
+        '<div class="prompt-debug-stage-head"><span class="prompt-debug-stage-name">' + esc(item.stage || '-') + '</span><span>' + esc(fdt(item.created_at)) + '</span><span class="prompt-debug-stage-badge ' + levelClass + '">' + esc(item.level || 'info') + '</span></div>' +
+        '<div class="small prompt-debug-stage-meta">' + esc(promptDebugMeta(item)) + ' · ' + esc(String(item.payload_bytes || 0)) + ' bytes · sha256 ' + esc(short(item.payload_sha256 || '-', 20)) + '</div>' +
+        blockHTML +
+        '<details class="prompt-debug-raw"><summary>送信Payload全文</summary><pre>' + esc(item.payload_text || '') + '</pre></details>';
+      body.appendChild(stage);
+    });
+    card.appendChild(body);
+    target.appendChild(card);
+  });
+}
+
+function bindPromptDebugControls() {
+  const button = document.getElementById('promptDebugRefreshBtn');
+  if (!button || button.dataset.bound === 'true') return;
+  button.dataset.bound = 'true';
+  button.addEventListener('click', () => {
+    button.disabled = true;
+    Promise.resolve(typeof refreshPromptDebugData === 'function' ? refreshPromptDebugData() : null).finally(() => { button.disabled = false; });
+  });
 }
 
 function toolHarnessField(ev, snake, pascal) {
