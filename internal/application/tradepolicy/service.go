@@ -64,9 +64,10 @@ type Request struct {
 }
 
 type Result struct {
-	AuthorizesExecution bool                       `json:"authorizes_execution"`
-	Decision            moduletrade.PolicyDecision `json:"decision,omitempty"`
-	Evidence            domaindecision.Record      `json:"evidence"`
+	AuthorizesExecution bool                                `json:"authorizes_execution"`
+	Decision            moduletrade.PolicyDecision          `json:"decision,omitempty"`
+	Evidence            domaindecision.Record               `json:"evidence"`
+	EvaluationInput     moduletrade.PolicyEvaluationRequest `json:"-"`
 }
 
 func NewService(options Options) (*Service, error) {
@@ -159,7 +160,7 @@ func (service *Service) Evaluate(ctx context.Context, request Request) (Result, 
 	if err := service.decisions.Save(ctx, record); err != nil {
 		return Result{}, fmt.Errorf("%w: %v", ErrEvidenceUnavailable, err)
 	}
-	return Result{Decision: response.Decision, Evidence: record}, nil
+	return Result{Decision: response.Decision, Evidence: record, EvaluationInput: moduleRequest}, nil
 }
 
 func (service *Service) saveUnavailable(ctx context.Context, request Request, globalRevision, deploymentRevision, binaryRevision, moduleRevision, reason string, input any) (domaindecision.Record, error) {

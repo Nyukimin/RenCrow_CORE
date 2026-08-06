@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -193,7 +194,7 @@ func TestClientPreviewRiskUsesAuthenticatedNonMutatingRoute(t *testing.T) {
 			ContractVersion: moduletrade.PrivateContractVersion,
 			ServiceStatus:   "ready", CorrelationID: input.RequestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE",
 			RequestID: input.RequestID, PortfolioID: "main-sim", PortfolioEventCount: 1,
-			PortfolioLatestEventHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			PortfolioLatestEventHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			Decision: moduletrade.RiskPreviewDecision{
 				ContractVersion: moduletrade.RiskPreviewPlanContractVersion,
 				PlanID:          input.Plan.PlanID, PolicyRevision: input.Plan.PolicyRevision, AsOf: input.Plan.AsOf, InstrumentID: input.Plan.Proposal.InstrumentID,
@@ -212,5 +213,64 @@ func TestClientPreviewRiskUsesAuthenticatedNonMutatingRoute(t *testing.T) {
 	}
 	if result.Decision.Status != "pass" || result.Decision.AuthorizesExecution || result.Decision.MutatesPortfolio {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestClientCommitSimulationUsesAuthenticatedPrivateRoute(t *testing.T) {
+	inputHash := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	input := moduletrade.SimulationCommitRequest{
+		ContractVersion: moduletrade.SimulationCommitContractVersion, RequestID: "sim-1", IdempotencyKey: "key-1",
+		ExpectedPortfolioEventCount: 1, ExpectedPortfolioLatestEventHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ExpectedInputSnapshotSHA256: inputHash,
+		Plan:   moduletrade.RiskPreviewPlan{ContractVersion: moduletrade.RiskPreviewPlanContractVersion, PlanID: "plan-1", PolicyRevision: "2026-08-06.1", AsOf: "2026-08-06T00:00:00Z", Selection: moduletrade.RiskPreviewSelection{InstrumentID: "JP-TEST"}, Proposal: moduletrade.RiskPreviewBuyProposal{InstrumentID: "JP-TEST"}, ExitContract: moduletrade.RiskPreviewExitContract{ContractID: "exit-1", InstrumentID: "JP-TEST"}},
+		Policy: moduletrade.PolicyEvaluationRequest{ContractVersion: moduletrade.PolicyEvaluationContractVersion, RequestID: "sim-1", Capability: "portfolio_simulation_commit", GlobalPolicy: moduletrade.GlobalPolicyInput{ContractRevision: "global-policy/v1", BundleRevision: "2026-08-06.1", ContentSHA256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", Allowed: true}, Deployment: moduletrade.PolicyLayerInput{Revision: "deployment-1", Allowed: true}, RequestScope: moduletrade.PolicyLayerInput{Revision: "simulation-commit/sha256:" + inputHash, Allowed: true}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/portfolio/simulation-commit" || request.Header.Get("Authorization") != "Bearer "+testToken {
+			http.NotFound(writer, request)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(moduletrade.PrivateSimulationCommit{
+			ContractVersion: moduletrade.PrivateContractVersion, ServiceStatus: "ready", CorrelationID: "sim-1", ExecutionMode: "DISABLED", RequestID: "sim-1",
+			PortfolioID: "main-sim", Mode: "SIMULATION", PortfolioMutated: true, PreviousPortfolioEventCount: 1, PreviousPortfolioLatestHash: input.ExpectedPortfolioLatestEventHash,
+			PolicyDecision: moduletrade.PolicyDecision{Capability: "portfolio_simulation_commit", Status: "allowed"}, RiskDecision: &moduletrade.RiskPreviewDecision{Status: "pass"}, Snapshot: moduletrade.PortfolioSnapshot{PortfolioID: "main-sim", Mode: "SIMULATION", EventCount: 2},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, writeToken(t), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.CommitSimulation(context.Background(), "sim-1", input)
+	if err != nil || !result.PortfolioMutated || result.AuthorizesExternalExecution {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+func TestClientRecordShadowObservationUsesAuthenticatedPrivateRoute(t *testing.T) {
+	contextHash := strings.Repeat("a", 64)
+	input := moduletrade.ShadowObservationRequest{
+		ContractVersion: moduletrade.ShadowObservationContractVersion, RequestID: "shadow-1",
+		Observation: moduletrade.ShadowObservationInput{IdempotencyKey: "key-1", StudyID: "study-1", DecisionID: "decision-1", ActorID: "mio", InstrumentID: "JP-TEST", DecisionKind: "select", MarketObservedAt: "2026-08-06T12:00:00Z", ContextSnapshotSHA256: contextHash, OutcomeLabelContractSHA256: strings.Repeat("b", 64), ReasonCodes: []string{"ELIGIBLE"}, EvidenceRefs: []string{"source/official-1"}},
+		Policy:      moduletrade.PolicyEvaluationRequest{ContractVersion: moduletrade.PolicyEvaluationContractVersion, RequestID: "shadow-1", Capability: "shadow_observation_record", GlobalPolicy: moduletrade.GlobalPolicyInput{ContractRevision: "global-policy/v1", BundleRevision: "2026-08-06.1", ContentSHA256: strings.Repeat("c", 64), Allowed: true}, Deployment: moduletrade.PolicyLayerInput{Revision: "deployment-1", Allowed: true}, RequestScope: moduletrade.PolicyLayerInput{Revision: "shadow-observation/sha256:" + contextHash, Allowed: true}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/shadow/observations" || request.Header.Get("Authorization") != "Bearer "+testToken {
+			http.NotFound(writer, request)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(moduletrade.PrivateShadowObservation{
+			ContractVersion: moduletrade.PrivateContractVersion, ServiceStatus: "ready", CorrelationID: "shadow-1", ExecutionMode: "DISABLED", RequestID: "shadow-1", Environment: "SHADOW",
+			PolicyDecision: moduletrade.PolicyDecision{Capability: "shadow_observation_record", Status: "allowed"},
+			Event:          moduletrade.ShadowObservationEvent{EventVersion: 1, EventID: "shadow-event/sha256:" + strings.Repeat("d", 64), Sequence: 1, RecordedAt: "2026-08-06T12:01:00Z", Type: "shadow_observation_recorded", ShadowObservationInput: input.Observation, EventHash: "sha256:" + strings.Repeat("d", 64)},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, writeToken(t), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.RecordShadowObservation(context.Background(), "shadow-1", input)
+	if err != nil || result.Environment != "SHADOW" || result.AuthorizesExternalExecution || result.PortfolioMutated || result.KnowledgePromoted {
+		t.Fatalf("result=%+v err=%v", result, err)
 	}
 }

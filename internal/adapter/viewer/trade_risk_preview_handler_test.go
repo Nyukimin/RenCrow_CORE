@@ -46,7 +46,7 @@ func riskPreviewRequestBody(t *testing.T) []byte {
 func TestHandleTradeRiskPreviewReturnsEvidenceWithoutExecutionAuthority(t *testing.T) {
 	preview := moduletrade.PrivateRiskPreview{
 		PortfolioID: "main-sim", PortfolioEventCount: 1,
-		PortfolioLatestEventHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		PortfolioLatestEventHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Decision:                 moduletrade.RiskPreviewDecision{Status: "pass"},
 	}
 	runner := &tradeRiskPreviewRunnerStub{result: applicationpreview.Result{

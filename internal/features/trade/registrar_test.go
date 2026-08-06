@@ -9,9 +9,11 @@ import (
 func TestRegisterRoutes(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Routes{
-		Status:         func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) },
-		PolicyEvaluate: func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusAccepted) },
-		RiskPreview:    func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusCreated) },
+		Status:            func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) },
+		PolicyEvaluate:    func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusAccepted) },
+		RiskPreview:       func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusCreated) },
+		SimulationCommit:  func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusOK) },
+		ShadowObservation: func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusPartialContent) },
 	})
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/viewer/trade/status", nil))
@@ -27,5 +29,15 @@ func TestRegisterRoutes(t *testing.T) {
 	mux.ServeHTTP(riskResponse, httptest.NewRequest(http.MethodPost, "/viewer/trade/risk-preview", nil))
 	if riskResponse.Code != http.StatusCreated {
 		t.Fatalf("risk preview status=%d", riskResponse.Code)
+	}
+	commitResponse := httptest.NewRecorder()
+	mux.ServeHTTP(commitResponse, httptest.NewRequest(http.MethodPost, "/viewer/trade/simulation-commit", nil))
+	if commitResponse.Code != http.StatusOK {
+		t.Fatalf("simulation commit status=%d", commitResponse.Code)
+	}
+	shadowResponse := httptest.NewRecorder()
+	mux.ServeHTTP(shadowResponse, httptest.NewRequest(http.MethodPost, "/viewer/trade/shadow/observations", nil))
+	if shadowResponse.Code != http.StatusPartialContent {
+		t.Fatalf("shadow observation status=%d", shadowResponse.Code)
 	}
 }

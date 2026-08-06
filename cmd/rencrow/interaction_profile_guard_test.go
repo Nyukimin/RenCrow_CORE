@@ -172,6 +172,22 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "cmd control can explicitly commit a simulation-only fill",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/viewer/trade/simulation-commit",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "cmd control can explicitly record a shadow observation",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/viewer/trade/shadow/observations",
+			want:    http.StatusNoContent,
+		},
+		{
 			name:    "client profile pair must match",
 			client:  "RenCrow_CMD",
 			profile: "portal-chat",

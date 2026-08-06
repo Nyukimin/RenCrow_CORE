@@ -177,6 +177,96 @@ func (client *Client) PreviewRisk(ctx context.Context, correlationID string, inp
 	return result, nil
 }
 
+func (client *Client) CommitSimulation(ctx context.Context, correlationID string, input moduletrade.SimulationCommitRequest) (moduletrade.PrivateSimulationCommit, error) {
+	if err := input.Validate(); err != nil {
+		return moduletrade.PrivateSimulationCommit{}, fmt.Errorf("validate TRADE simulation commit request: %w", err)
+	}
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return moduletrade.PrivateSimulationCommit{}, fmt.Errorf("encode TRADE simulation commit request: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/portfolio/simulation-commit", bytes.NewReader(payload))
+	if err != nil {
+		return moduletrade.PrivateSimulationCommit{}, fmt.Errorf("create TRADE simulation commit request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+client.token)
+	if strings.TrimSpace(correlationID) != "" {
+		request.Header.Set("X-Correlation-ID", correlationID)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.PrivateSimulationCommit{}, fmt.Errorf("TRADE simulation commit request failed: %w", err)
+	}
+	defer response.Body.Close()
+	responsePayload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	if err != nil || len(responsePayload) > maxResponseBytes {
+		return moduletrade.PrivateSimulationCommit{}, fmt.Errorf("read TRADE simulation commit response")
+	}
+	if response.StatusCode != http.StatusOK {
+		return moduletrade.PrivateSimulationCommit{}, &ServiceError{StatusCode: response.StatusCode}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(responsePayload))
+	decoder.DisallowUnknownFields()
+	var result moduletrade.PrivateSimulationCommit
+	if err := decoder.Decode(&result); err != nil {
+		return moduletrade.PrivateSimulationCommit{}, fmt.Errorf("decode TRADE simulation commit response: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return moduletrade.PrivateSimulationCommit{}, fmt.Errorf("decode TRADE simulation commit response: trailing JSON value")
+	}
+	if err := result.Validate(input); err != nil {
+		return moduletrade.PrivateSimulationCommit{}, fmt.Errorf("validate TRADE simulation commit response: %w", err)
+	}
+	return result, nil
+}
+
+func (client *Client) RecordShadowObservation(ctx context.Context, correlationID string, input moduletrade.ShadowObservationRequest) (moduletrade.PrivateShadowObservation, error) {
+	if err := input.Validate(); err != nil {
+		return moduletrade.PrivateShadowObservation{}, fmt.Errorf("validate TRADE Shadow observation request: %w", err)
+	}
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return moduletrade.PrivateShadowObservation{}, fmt.Errorf("encode TRADE Shadow observation request: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/shadow/observations", bytes.NewReader(payload))
+	if err != nil {
+		return moduletrade.PrivateShadowObservation{}, fmt.Errorf("create TRADE Shadow observation request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+client.token)
+	if strings.TrimSpace(correlationID) != "" {
+		request.Header.Set("X-Correlation-ID", correlationID)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.PrivateShadowObservation{}, fmt.Errorf("TRADE Shadow observation request failed: %w", err)
+	}
+	defer response.Body.Close()
+	responsePayload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	if err != nil || len(responsePayload) > maxResponseBytes {
+		return moduletrade.PrivateShadowObservation{}, fmt.Errorf("read TRADE Shadow observation response")
+	}
+	if response.StatusCode != http.StatusOK {
+		return moduletrade.PrivateShadowObservation{}, &ServiceError{StatusCode: response.StatusCode}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(responsePayload))
+	decoder.DisallowUnknownFields()
+	var result moduletrade.PrivateShadowObservation
+	if err := decoder.Decode(&result); err != nil {
+		return moduletrade.PrivateShadowObservation{}, fmt.Errorf("decode TRADE Shadow observation response: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return moduletrade.PrivateShadowObservation{}, fmt.Errorf("decode TRADE Shadow observation response: trailing JSON value")
+	}
+	if err := result.Validate(input); err != nil {
+		return moduletrade.PrivateShadowObservation{}, fmt.Errorf("validate TRADE Shadow observation response: %w", err)
+	}
+	return result, nil
+}
+
 func readTokenFile(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {

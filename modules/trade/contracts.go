@@ -2,14 +2,18 @@ package trade
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const PrivateContractVersion = "trade-private/v1"
 const PolicyEvaluationContractVersion = "trade-policy-evaluation/v1"
 const RiskPreviewRequestContractVersion = "trade-risk-preview/v1"
 const RiskPreviewPlanContractVersion = "risk-preview-plan/v1"
+const SimulationCommitContractVersion = "trade-simulation-commit/v1"
+const ShadowObservationContractVersion = "shadow-observation/v1"
 
 type PolicyStatus struct {
 	SchemaVersion          int             `json:"schema_version"`
@@ -213,7 +217,86 @@ type PrivateRiskPreview struct {
 	Decision                 RiskPreviewDecision `json:"decision"`
 }
 
+type SimulationCommitRequest struct {
+	ContractVersion                  string                  `json:"contract_version"`
+	RequestID                        string                  `json:"request_id"`
+	IdempotencyKey                   string                  `json:"idempotency_key"`
+	ExpectedPortfolioEventCount      int64                   `json:"expected_portfolio_event_count"`
+	ExpectedPortfolioLatestEventHash string                  `json:"expected_portfolio_latest_event_hash"`
+	ExpectedInputSnapshotSHA256      string                  `json:"expected_input_snapshot_sha256"`
+	Plan                             RiskPreviewPlan         `json:"plan"`
+	Policy                           PolicyEvaluationRequest `json:"policy"`
+}
+
+type PrivateSimulationCommit struct {
+	ContractVersion             string               `json:"contract_version"`
+	ServiceStatus               string               `json:"service_status"`
+	CorrelationID               string               `json:"correlation_id"`
+	ExecutionMode               string               `json:"execution_mode"`
+	LearningMode                string               `json:"learning_mode"`
+	RequestID                   string               `json:"request_id"`
+	PortfolioID                 string               `json:"portfolio_id"`
+	Mode                        string               `json:"mode"`
+	AuthorizesExternalExecution bool                 `json:"authorizes_external_execution"`
+	PortfolioMutated            bool                 `json:"portfolio_mutated"`
+	IdempotentReplay            bool                 `json:"idempotent_replay"`
+	PreviousPortfolioEventCount int64                `json:"previous_portfolio_event_count"`
+	PreviousPortfolioLatestHash string               `json:"previous_portfolio_latest_event_hash"`
+	PolicyDecision              PolicyDecision       `json:"policy_decision"`
+	RiskDecision                *RiskPreviewDecision `json:"risk_decision,omitempty"`
+	Snapshot                    PortfolioSnapshot    `json:"snapshot"`
+}
+
+type ShadowObservationInput struct {
+	IdempotencyKey             string   `json:"idempotency_key"`
+	StudyID                    string   `json:"study_id"`
+	DecisionID                 string   `json:"decision_id"`
+	ActorID                    string   `json:"actor_id"`
+	InstrumentID               string   `json:"instrument_id"`
+	DecisionKind               string   `json:"decision_kind"`
+	MarketObservedAt           string   `json:"market_observed_at"`
+	ContextSnapshotSHA256      string   `json:"context_snapshot_sha256"`
+	OutcomeLabelContractSHA256 string   `json:"outcome_label_contract_sha256"`
+	ReasonCodes                []string `json:"reason_codes"`
+	EvidenceRefs               []string `json:"evidence_refs"`
+}
+
+type ShadowObservationRequest struct {
+	ContractVersion string                  `json:"contract_version"`
+	RequestID       string                  `json:"request_id"`
+	Observation     ShadowObservationInput  `json:"observation"`
+	Policy          PolicyEvaluationRequest `json:"policy"`
+}
+
+type ShadowObservationEvent struct {
+	EventVersion int    `json:"event_version"`
+	EventID      string `json:"event_id"`
+	Sequence     int64  `json:"sequence"`
+	RecordedAt   string `json:"recorded_at"`
+	Type         string `json:"type"`
+	ShadowObservationInput
+	PreviousHash string `json:"previous_hash"`
+	EventHash    string `json:"event_hash"`
+}
+
+type PrivateShadowObservation struct {
+	ContractVersion             string                 `json:"contract_version"`
+	ServiceStatus               string                 `json:"service_status"`
+	CorrelationID               string                 `json:"correlation_id"`
+	ExecutionMode               string                 `json:"execution_mode"`
+	LearningMode                string                 `json:"learning_mode"`
+	RequestID                   string                 `json:"request_id"`
+	Environment                 string                 `json:"environment"`
+	AuthorizesExternalExecution bool                   `json:"authorizes_external_execution"`
+	PortfolioMutated            bool                   `json:"portfolio_mutated"`
+	KnowledgePromoted           bool                   `json:"knowledge_promoted"`
+	IdempotentReplay            bool                   `json:"idempotent_replay"`
+	PolicyDecision              PolicyDecision         `json:"policy_decision"`
+	Event                       ShadowObservationEvent `json:"event"`
+}
+
 var policySHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var eventSHA256Pattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 func (status PrivateStatus) ValidateDisabledFoundation() error {
 	if status.ContractVersion != PrivateContractVersion {
@@ -376,7 +459,7 @@ func (response PrivateRiskPreview) Validate(request RiskPreviewRequest) error {
 	if response.ContractVersion != PrivateContractVersion || strings.TrimSpace(response.ServiceStatus) == "" || strings.TrimSpace(response.CorrelationID) == "" {
 		return fmt.Errorf("TRADE risk preview envelope is invalid")
 	}
-	if response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID || strings.TrimSpace(response.PortfolioID) == "" || response.PortfolioEventCount < 1 || !policySHA256Pattern.MatchString(response.PortfolioLatestEventHash) {
+	if response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID || strings.TrimSpace(response.PortfolioID) == "" || response.PortfolioEventCount < 1 || !eventSHA256Pattern.MatchString(response.PortfolioLatestEventHash) {
 		return fmt.Errorf("TRADE risk preview portfolio evidence is invalid")
 	}
 	decision := response.Decision
@@ -391,6 +474,108 @@ func (response PrivateRiskPreview) Validate(request RiskPreviewRequest) error {
 	}
 	if (decision.Status == "pass") != (len(decision.ReasonCodes) == 0) {
 		return fmt.Errorf("TRADE risk preview status and reason codes are inconsistent")
+	}
+	return nil
+}
+
+func (request SimulationCommitRequest) Validate() error {
+	if request.ContractVersion != SimulationCommitContractVersion || strings.TrimSpace(request.IdempotencyKey) == "" || request.ExpectedPortfolioEventCount < 1 ||
+		!eventSHA256Pattern.MatchString(request.ExpectedPortfolioLatestEventHash) || !policySHA256Pattern.MatchString(request.ExpectedInputSnapshotSHA256) {
+		return fmt.Errorf("TRADE simulation commit envelope is invalid")
+	}
+	preview := RiskPreviewRequest{ContractVersion: RiskPreviewRequestContractVersion, RequestID: request.RequestID, Plan: request.Plan}
+	if err := preview.Validate(); err != nil {
+		return err
+	}
+	if err := request.Policy.Validate(); err != nil {
+		return err
+	}
+	if request.Policy.RequestID != request.RequestID || request.Policy.Capability != "portfolio_simulation_commit" ||
+		request.Policy.GlobalPolicy.BundleRevision != request.Plan.PolicyRevision || request.Policy.RequestScope.Revision != "simulation-commit/sha256:"+request.ExpectedInputSnapshotSHA256 {
+		return fmt.Errorf("TRADE simulation commit policy binding is invalid")
+	}
+	return nil
+}
+
+func (response PrivateSimulationCommit) Validate(request SimulationCommitRequest) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
+		response.PortfolioID == "" || response.Mode != "SIMULATION" || response.AuthorizesExternalExecution || response.PreviousPortfolioEventCount != request.ExpectedPortfolioEventCount ||
+		response.PreviousPortfolioLatestHash != request.ExpectedPortfolioLatestEventHash || response.Snapshot.PortfolioID != response.PortfolioID || response.Snapshot.Mode != "SIMULATION" || response.Snapshot.Guaranteed {
+		return fmt.Errorf("TRADE simulation commit response is invalid")
+	}
+	if response.IdempotentReplay == response.PortfolioMutated || (!response.IdempotentReplay && response.RiskDecision == nil) {
+		return fmt.Errorf("TRADE simulation commit mutation evidence is invalid")
+	}
+	if response.PolicyDecision.Capability != "portfolio_simulation_commit" || response.PolicyDecision.Status != "allowed" {
+		return fmt.Errorf("TRADE simulation commit policy decision is invalid")
+	}
+	return nil
+}
+
+func (input ShadowObservationInput) Validate() error {
+	for name, value := range map[string]string{
+		"idempotency_key": input.IdempotencyKey, "study_id": input.StudyID, "decision_id": input.DecisionID,
+		"actor_id": input.ActorID, "instrument_id": input.InstrumentID,
+	} {
+		if strings.TrimSpace(value) == "" || len(value) > 128 {
+			return fmt.Errorf("shadow observation %s is invalid", name)
+		}
+	}
+	switch input.DecisionKind {
+	case "select", "exclude", "abstain", "hold", "exit":
+	default:
+		return fmt.Errorf("shadow observation decision_kind is invalid")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, input.MarketObservedAt); err != nil {
+		return fmt.Errorf("shadow observation market_observed_at is invalid")
+	}
+	if !policySHA256Pattern.MatchString(input.ContextSnapshotSHA256) || !policySHA256Pattern.MatchString(input.OutcomeLabelContractSHA256) {
+		return fmt.Errorf("shadow observation hashes are invalid")
+	}
+	if len(input.ReasonCodes) == 0 || len(input.EvidenceRefs) == 0 {
+		return fmt.Errorf("shadow observation reasons and evidence are required")
+	}
+	return nil
+}
+
+func (request ShadowObservationRequest) Validate() error {
+	if request.ContractVersion != ShadowObservationContractVersion || strings.TrimSpace(request.RequestID) == "" {
+		return fmt.Errorf("TRADE shadow observation envelope is invalid")
+	}
+	if err := request.Observation.Validate(); err != nil {
+		return err
+	}
+	if err := request.Policy.Validate(); err != nil {
+		return err
+	}
+	if request.Policy.RequestID != request.RequestID || request.Policy.Capability != "shadow_observation_record" ||
+		request.Policy.RequestScope.Revision != "shadow-observation/sha256:"+request.Observation.ContextSnapshotSHA256 {
+		return fmt.Errorf("TRADE shadow observation policy binding is invalid")
+	}
+	return nil
+}
+
+func (response PrivateShadowObservation) Validate(request ShadowObservationRequest) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
+		response.Environment != "SHADOW" || response.AuthorizesExternalExecution || response.PortfolioMutated || response.KnowledgePromoted {
+		return fmt.Errorf("TRADE shadow observation safety envelope is invalid")
+	}
+	if response.PolicyDecision.Capability != "shadow_observation_record" || response.PolicyDecision.Status != "allowed" {
+		return fmt.Errorf("TRADE shadow observation policy decision is invalid")
+	}
+	event := response.Event
+	if event.EventVersion != 1 || event.Sequence < 1 || event.Type != "shadow_observation_recorded" || !reflect.DeepEqual(event.ShadowObservationInput, request.Observation) ||
+		!eventSHA256Pattern.MatchString(event.EventHash) || event.EventID != "shadow-event/"+event.EventHash {
+		return fmt.Errorf("TRADE shadow observation event is invalid")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, event.RecordedAt); err != nil {
+		return fmt.Errorf("TRADE shadow observation recorded_at is invalid")
 	}
 	return nil
 }

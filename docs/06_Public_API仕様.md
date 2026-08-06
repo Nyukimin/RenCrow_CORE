@@ -47,6 +47,8 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /viewer/trade/status` | RenCrow_TRADEのread-only状態projection。Broker／注文APIではない |
 | `POST /viewer/trade/policy/evaluate` | Global PolicyとTRADE policyの純粋な診断評価。実行許可や注文APIではない |
 | `POST /viewer/trade/risk-preview` | Global Policyに束縛した100万円Simulator購入前Risk Preview。Portfolio更新や注文APIではない |
+| `POST /viewer/trade/simulation-commit` | Preview済みの仮想buyを失効検査して100万円Simulatorへ一度だけ反映。外部注文ではない |
+| `POST /viewer/trade/shadow/observations` | Outcome開示前の無発注判断、context hash、採点契約hashを追記専用Shadow台帳へ固定 |
 
 ### Trade status
 
@@ -72,6 +74,18 @@ Policyが`allowed`で、planの`policy_revision`がactive Bundle revisionと一�
 返しますが、`authorizes_execution=false`、`mutates_portfolio=false`です。Portfolio未設定／破損、
 policy block、stale revision、TRADE contract不一致ではfail closedにし、別のPortfolioや旧workflowへ
 fallbackしません。
+
+`POST /viewer/trade/simulation-commit`は明示bool `allow_commit=true`、idempotency key、直前Previewの
+Portfolio event count/hash、input snapshot SHA-256、同じplanを必須にします。COREとTRADEの両方で
+`portfolio_simulation_commit` Policyを評価し、active Bundle revision、request scope、current snapshot、
+再計算したRisk Previewが全て一致して`pass`の場合だけ`SIMULATION`台帳へappendします。成功しても
+`authorizes_external_execution=false`であり、Broker、Paper、LIVE、注文artifactを作りません。
+
+`POST /viewer/trade/shadow/observations`は明示bool `allow_record=true`を必須にします。選択、除外、
+見送り、保有継続、撤退判断を同じschemaで受け取り、context snapshot SHA-256とOutcome Label Contract
+SHA-256へPolicy request scopeを固定します。成功responseは`environment=SHADOW`、
+`authorizes_external_execution=false`、`portfolio_mutated=false`、`knowledge_promoted=false`です。
+既存判断の更新・削除、Outcome付与、採点、promotionはこのv1 routeに含めません。
 
 ### Game Launch（マルチペルソナ WP5）
 

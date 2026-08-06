@@ -10,6 +10,8 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	applicationtradepolicy "github.com/Nyukimin/RenCrow_CORE/internal/application/tradepolicy"
 	applicationpreview "github.com/Nyukimin/RenCrow_CORE/internal/application/traderiskpreview"
+	applicationshadow "github.com/Nyukimin/RenCrow_CORE/internal/application/tradeshadowobservation"
+	applicationcommit "github.com/Nyukimin/RenCrow_CORE/internal/application/tradesimulationcommit"
 	policydecisionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/policydecision"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tradeclient"
 )
@@ -94,4 +96,58 @@ func newTradeRiskPreviewHandler(cfg *config.Config, snapshots *configpolicy.Stor
 	}
 	log.Printf("RenCrow_TRADE non-mutating portfolio risk preview enabled")
 	return viewer.HandleTradeRiskPreview(viewer.TradeRiskPreviewOptions{Enabled: true, Runner: service})
+}
+
+func newTradeSimulationCommitHandler(cfg *config.Config, snapshots *configpolicy.Store, decisions *policydecisionpersistence.JSONLStore) http.HandlerFunc {
+	if cfg == nil || !cfg.Trade.Enabled {
+		return viewer.HandleTradeSimulationCommit(viewer.TradeSimulationCommitOptions{})
+	}
+	if snapshots == nil || decisions == nil {
+		log.Printf("RenCrow_TRADE simulation commit unavailable: policy snapshot or evidence store is unavailable")
+		return viewer.HandleTradeSimulationCommit(viewer.TradeSimulationCommitOptions{Enabled: true})
+	}
+	client, err := tradeclient.NewClient(cfg.Trade.BaseURL, cfg.Trade.AuthTokenFile, time.Duration(cfg.Trade.TimeoutMS)*time.Millisecond)
+	if err != nil {
+		log.Printf("RenCrow_TRADE simulation commit unavailable: %v", err)
+		return viewer.HandleTradeSimulationCommit(viewer.TradeSimulationCommitOptions{Enabled: true})
+	}
+	policyService, err := applicationtradepolicy.NewService(applicationtradepolicy.Options{Snapshots: snapshots, Evaluator: client, Decisions: decisions})
+	if err != nil {
+		log.Printf("RenCrow_TRADE simulation commit policy unavailable: %v", err)
+		return viewer.HandleTradeSimulationCommit(viewer.TradeSimulationCommitOptions{Enabled: true})
+	}
+	service, err := applicationcommit.NewService(policyService, client)
+	if err != nil {
+		log.Printf("RenCrow_TRADE simulation commit unavailable: %v", err)
+		return viewer.HandleTradeSimulationCommit(viewer.TradeSimulationCommitOptions{Enabled: true})
+	}
+	log.Printf("RenCrow_TRADE simulation-only portfolio commit enabled")
+	return viewer.HandleTradeSimulationCommit(viewer.TradeSimulationCommitOptions{Enabled: true, Runner: service})
+}
+
+func newTradeShadowObservationHandler(cfg *config.Config, snapshots *configpolicy.Store, decisions *policydecisionpersistence.JSONLStore) http.HandlerFunc {
+	if cfg == nil || !cfg.Trade.Enabled {
+		return viewer.HandleTradeShadowObservation(viewer.TradeShadowObservationOptions{})
+	}
+	if snapshots == nil || decisions == nil {
+		log.Printf("RenCrow_TRADE Shadow observation unavailable: policy snapshot or evidence store is unavailable")
+		return viewer.HandleTradeShadowObservation(viewer.TradeShadowObservationOptions{Enabled: true})
+	}
+	client, err := tradeclient.NewClient(cfg.Trade.BaseURL, cfg.Trade.AuthTokenFile, time.Duration(cfg.Trade.TimeoutMS)*time.Millisecond)
+	if err != nil {
+		log.Printf("RenCrow_TRADE Shadow observation unavailable: %v", err)
+		return viewer.HandleTradeShadowObservation(viewer.TradeShadowObservationOptions{Enabled: true})
+	}
+	policyService, err := applicationtradepolicy.NewService(applicationtradepolicy.Options{Snapshots: snapshots, Evaluator: client, Decisions: decisions})
+	if err != nil {
+		log.Printf("RenCrow_TRADE Shadow observation policy unavailable: %v", err)
+		return viewer.HandleTradeShadowObservation(viewer.TradeShadowObservationOptions{Enabled: true})
+	}
+	service, err := applicationshadow.NewService(policyService, client)
+	if err != nil {
+		log.Printf("RenCrow_TRADE Shadow observation unavailable: %v", err)
+		return viewer.HandleTradeShadowObservation(viewer.TradeShadowObservationOptions{Enabled: true})
+	}
+	log.Printf("RenCrow_TRADE immutable Shadow observation record enabled")
+	return viewer.HandleTradeShadowObservation(viewer.TradeShadowObservationOptions{Enabled: true, Runner: service})
 }
