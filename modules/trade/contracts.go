@@ -2,10 +2,12 @@ package trade
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
 const PrivateContractVersion = "trade-private/v1"
+const PolicyEvaluationContractVersion = "trade-policy-evaluation/v1"
 
 type PolicyStatus struct {
 	SchemaVersion          int             `json:"schema_version"`
@@ -69,6 +71,51 @@ type PortfolioPosition struct {
 	UnrealizedPnLJPY *int64 `json:"unrealized_pnl_jpy,omitempty"`
 }
 
+type GlobalPolicyInput struct {
+	ContractRevision string `json:"contract_revision"`
+	BundleRevision   string `json:"bundle_revision"`
+	ContentSHA256    string `json:"content_sha256"`
+	Allowed          bool   `json:"allowed"`
+}
+
+type PolicyLayerInput struct {
+	Revision string `json:"revision"`
+	Allowed  bool   `json:"allowed"`
+}
+
+type PolicyEvaluationRequest struct {
+	ContractVersion string            `json:"contract_version"`
+	RequestID       string            `json:"request_id"`
+	Capability      string            `json:"capability"`
+	GlobalPolicy    GlobalPolicyInput `json:"global_policy"`
+	Deployment      PolicyLayerInput  `json:"deployment"`
+	RequestScope    PolicyLayerInput  `json:"request_scope"`
+}
+
+type PolicyDecision struct {
+	Capability             string `json:"capability"`
+	Status                 string `json:"status"`
+	ReasonCode             string `json:"reason_code"`
+	Reason                 string `json:"reason"`
+	BinaryContractRevision string `json:"binary_contract_revision"`
+	ModulePolicyRevision   string `json:"module_policy_revision"`
+	PolicyID               string `json:"policy_id"`
+	GlobalBundleRevision   string `json:"global_bundle_revision"`
+	DeploymentRevision     string `json:"deployment_revision"`
+	RequestScopeRevision   string `json:"request_scope_revision"`
+}
+
+type PrivatePolicyEvaluation struct {
+	ContractVersion string         `json:"contract_version"`
+	ServiceStatus   string         `json:"service_status"`
+	CorrelationID   string         `json:"correlation_id"`
+	ExecutionMode   string         `json:"execution_mode"`
+	LearningMode    string         `json:"learning_mode"`
+	Decision        PolicyDecision `json:"decision"`
+}
+
+var policySHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 func (status PrivateStatus) ValidateDisabledFoundation() error {
 	if status.ContractVersion != PrivateContractVersion {
 		return fmt.Errorf("unsupported TRADE contract version %q", status.ContractVersion)
@@ -102,6 +149,95 @@ func (status PrivateStatus) ValidateDisabledFoundation() error {
 		}
 	default:
 		return fmt.Errorf("TRADE portfolio status is invalid")
+	}
+	return nil
+}
+
+func (request PolicyEvaluationRequest) Validate() error {
+	if request.ContractVersion != PolicyEvaluationContractVersion {
+		return fmt.Errorf("unsupported TRADE policy evaluation contract version %q", request.ContractVersion)
+	}
+	for name, value := range map[string]string{
+		"request_id":                    request.RequestID,
+		"capability":                    request.Capability,
+		"global_policy.bundle_revision": request.GlobalPolicy.BundleRevision,
+		"deployment.revision":           request.Deployment.Revision,
+		"request_scope.revision":        request.RequestScope.Revision,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s is required", name)
+		}
+	}
+	if len(request.RequestID) > 128 {
+		return fmt.Errorf("request_id must not exceed 128 bytes")
+	}
+	if request.GlobalPolicy.ContractRevision != "global-policy/v1" {
+		return fmt.Errorf("unsupported Global Policy contract revision %q", request.GlobalPolicy.ContractRevision)
+	}
+	if !policySHA256Pattern.MatchString(request.GlobalPolicy.ContentSHA256) {
+		return fmt.Errorf("global_policy.content_sha256 must be lowercase SHA-256")
+	}
+	return nil
+}
+
+func (response PrivatePolicyEvaluation) Validate(request PolicyEvaluationRequest) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	if response.ContractVersion != PrivateContractVersion {
+		return fmt.Errorf("unsupported TRADE contract version %q", response.ContractVersion)
+	}
+	if strings.TrimSpace(response.ServiceStatus) == "" || strings.TrimSpace(response.CorrelationID) == "" {
+		return fmt.Errorf("TRADE policy evaluation envelope is incomplete")
+	}
+	if response.ExecutionMode != "DISABLED" {
+		return fmt.Errorf("TRADE execution mode is not DISABLED")
+	}
+	decision := response.Decision
+	if decision.Capability != request.Capability || decision.GlobalBundleRevision != request.GlobalPolicy.BundleRevision || decision.DeploymentRevision != request.Deployment.Revision || decision.RequestScopeRevision != request.RequestScope.Revision {
+		return fmt.Errorf("TRADE policy evaluation revisions do not match the request")
+	}
+	for name, value := range map[string]string{
+		"reason_code":              decision.ReasonCode,
+		"reason":                   decision.Reason,
+		"binary_contract_revision": decision.BinaryContractRevision,
+		"module_policy_revision":   decision.ModulePolicyRevision,
+		"policy_id":                decision.PolicyID,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("TRADE policy decision %s is required", name)
+		}
+	}
+	if decision.Status != "allowed" && decision.Status != "blocked" {
+		return fmt.Errorf("TRADE policy decision status is invalid")
+	}
+	validReasonCode := map[string]bool{
+		"UNKNOWN_CAPABILITY":        true,
+		"BINARY_HARD_LIMIT_BLOCKED": true,
+		"MODULE_POLICY_BLOCKED":     true,
+		"GLOBAL_POLICY_BLOCKED":     true,
+		"DEPLOYMENT_BLOCKED":        true,
+		"REQUEST_SCOPE_BLOCKED":     true,
+		"ALL_POLICY_LAYERS_ALLOWED": true,
+	}
+	if !validReasonCode[decision.ReasonCode] {
+		return fmt.Errorf("TRADE policy decision reason code is invalid")
+	}
+	if (decision.Status == "allowed") != (decision.ReasonCode == "ALL_POLICY_LAYERS_ALLOWED") {
+		return fmt.Errorf("TRADE policy decision status and reason code are inconsistent")
+	}
+	if decision.Status == "allowed" {
+		switch decision.Capability {
+		case "broker_network", "knowledge_auto_promotion", "live_order", "paper_order":
+			return fmt.Errorf("TRADE binary-blocked capability was reported allowed")
+		}
+	} else {
+		switch decision.Capability {
+		case "broker_network", "knowledge_auto_promotion", "live_order", "paper_order":
+			if decision.ReasonCode != "BINARY_HARD_LIMIT_BLOCKED" {
+				return fmt.Errorf("TRADE binary hard-limit reason is missing")
+			}
+		}
 	}
 	return nil
 }

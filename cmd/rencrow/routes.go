@@ -314,7 +314,10 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 		ObserverPage:  dependencies.viewerGamesObserverPage,
 		ObserverProxy: dependencies.viewerGamesObserverProxy,
 	}})
-	tradefeature.RegisterRoutes(mux, tradefeature.Routes{Status: dependencies.viewerTradeStatus})
+	tradefeature.RegisterRoutes(mux, tradefeature.Routes{
+		Status:         dependencies.viewerTradeStatus,
+		PolicyEvaluate: dependencies.viewerTradePolicyEvaluation,
+	})
 }
 
 func registerImageRoutes(mux *http.ServeMux, cfg *config.Config) {

@@ -1,6 +1,7 @@
 package tradeclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -81,6 +82,49 @@ func (client *Client) Status(ctx context.Context, correlationID string) (modulet
 		return moduletrade.PrivateStatus{}, fmt.Errorf("validate TRADE status response: %w", err)
 	}
 	return status, nil
+}
+
+func (client *Client) Evaluate(ctx context.Context, correlationID string, input moduletrade.PolicyEvaluationRequest) (moduletrade.PrivatePolicyEvaluation, error) {
+	if err := input.Validate(); err != nil {
+		return moduletrade.PrivatePolicyEvaluation{}, fmt.Errorf("validate TRADE policy evaluation request: %w", err)
+	}
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return moduletrade.PrivatePolicyEvaluation{}, fmt.Errorf("encode TRADE policy evaluation request: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.baseURL+"/v1/policy/evaluate", bytes.NewReader(payload))
+	if err != nil {
+		return moduletrade.PrivatePolicyEvaluation{}, fmt.Errorf("create TRADE policy evaluation request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+client.token)
+	if strings.TrimSpace(correlationID) != "" {
+		request.Header.Set("X-Correlation-ID", correlationID)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.PrivatePolicyEvaluation{}, fmt.Errorf("TRADE policy evaluation request failed: %w", err)
+	}
+	defer response.Body.Close()
+	responsePayload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	if err != nil {
+		return moduletrade.PrivatePolicyEvaluation{}, fmt.Errorf("read TRADE policy evaluation response: %w", err)
+	}
+	if len(responsePayload) > maxResponseBytes {
+		return moduletrade.PrivatePolicyEvaluation{}, fmt.Errorf("TRADE policy evaluation response exceeds %d bytes", maxResponseBytes)
+	}
+	if response.StatusCode != http.StatusOK {
+		return moduletrade.PrivatePolicyEvaluation{}, &ServiceError{StatusCode: response.StatusCode}
+	}
+	var result moduletrade.PrivatePolicyEvaluation
+	if err := json.Unmarshal(responsePayload, &result); err != nil {
+		return moduletrade.PrivatePolicyEvaluation{}, fmt.Errorf("decode TRADE policy evaluation response: %w", err)
+	}
+	if err := result.Validate(input); err != nil {
+		return moduletrade.PrivatePolicyEvaluation{}, fmt.Errorf("validate TRADE policy evaluation response: %w", err)
+	}
+	return result, nil
 }
 
 func readTokenFile(path string) (string, error) {

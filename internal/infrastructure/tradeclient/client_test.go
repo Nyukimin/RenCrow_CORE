@@ -99,3 +99,64 @@ func TestNewClientRejectsLooseTokenPermissions(t *testing.T) {
 		t.Fatal("expected token permissions rejection")
 	}
 }
+
+func TestClientEvaluateUsesAuthenticatedPurePolicyRoute(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/policy/evaluate" || request.Method != http.MethodPost {
+			http.NotFound(writer, request)
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer "+testToken || request.Header.Get("X-Correlation-ID") != "core-policy-1" {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var input moduletrade.PolicyEvaluationRequest
+		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(writer).Encode(moduletrade.PrivatePolicyEvaluation{
+			ContractVersion: moduletrade.PrivateContractVersion,
+			ServiceStatus:   "ready",
+			CorrelationID:   "core-policy-1",
+			ExecutionMode:   "DISABLED",
+			LearningMode:    "OFFLINE_AVAILABLE",
+			Decision: moduletrade.PolicyDecision{
+				Capability:             input.Capability,
+				Status:                 "blocked",
+				ReasonCode:             "BINARY_HARD_LIMIT_BLOCKED",
+				Reason:                 "binary hard limit blocks capability",
+				BinaryContractRevision: "trade-binary/v1",
+				ModulePolicyRevision:   "sha256:module",
+				PolicyID:               "trade-disabled",
+				GlobalBundleRevision:   input.GlobalPolicy.BundleRevision,
+				DeploymentRevision:     input.Deployment.Revision,
+				RequestScopeRevision:   input.RequestScope.Revision,
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, writeToken(t), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := moduletrade.PolicyEvaluationRequest{
+		ContractVersion: moduletrade.PolicyEvaluationContractVersion,
+		RequestID:       "core-policy-1",
+		Capability:      "live_order",
+		GlobalPolicy: moduletrade.GlobalPolicyInput{
+			ContractRevision: "global-policy/v1",
+			BundleRevision:   "2026-08-06.1",
+			ContentSHA256:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			Allowed:          true,
+		},
+		Deployment:   moduletrade.PolicyLayerInput{Revision: "deployment-1", Allowed: true},
+		RequestScope: moduletrade.PolicyLayerInput{Revision: "scope-1", Allowed: true},
+	}
+	response, err := client.Evaluate(context.Background(), "core-policy-1", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Decision.ReasonCode != "BINARY_HARD_LIMIT_BLOCKED" {
+		t.Fatalf("response=%+v", response)
+	}
+}

@@ -96,6 +96,7 @@ type Dependencies struct {
 	gameAutoplay                   *viewer.GameAutoplayService                 // ペルソナ自発プレイランナー (マルチペルソナ WP6)
 	viewerGamesObserverProxy       http.HandlerFunc                            // RenCrow_GAMES live observer API proxy
 	viewerTradeStatus              http.HandlerFunc                            // RenCrow_TRADE read-only status projection
+	viewerTradePolicyEvaluation    http.HandlerFunc                            // RenCrow_TRADE pure policy diagnostic evaluation
 	historyRepairJSONL             http.HandlerFunc                            // viewer JSONL history repair API
 	packageValidation              http.HandlerFunc                            // viewer package/update validation API
 	characterRuntime               http.HandlerFunc                            // viewer six-character conversation runtime API
@@ -407,7 +408,6 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 
 	deps := &Dependencies{}
-	deps.viewerTradeStatus = newTradeStatusHandler(cfg)
 	deps.globalPolicyStore = configpolicy.NewStore(cfg.WorkspaceDir)
 	globalPolicy := deps.globalPolicyStore.Status()
 	deps.globalPolicyStatus = viewer.HandleGlobalPolicyStatus(deps.globalPolicyStore)
@@ -418,6 +418,8 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.globalPolicyDecisionStore = policyDecisionStore
 		deps.globalPolicyDecisions = viewer.HandlePolicyDecisions(policyDecisionStore)
 	}
+	deps.viewerTradeStatus = newTradeStatusHandler(cfg)
+	deps.viewerTradePolicyEvaluation = newTradePolicyEvaluationHandler(cfg, deps.globalPolicyStore, deps.globalPolicyDecisionStore)
 	log.Printf(
 		"Global Policy Bundle state=%s contract=%s revision=%s",
 		globalPolicy.State,

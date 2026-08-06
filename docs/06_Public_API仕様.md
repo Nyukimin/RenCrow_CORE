@@ -45,6 +45,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `/viewer/ai-workflow/*` | AI engineering workflow の experimental API |
 | `/viewer/games/*` | RenCrow_GAMES bridge（status/decision/result/sessions/events/launch/observer proxy） |
 | `GET /viewer/trade/status` | RenCrow_TRADEのread-only状態projection。Broker／注文APIではない |
+| `POST /viewer/trade/policy/evaluate` | Global PolicyとTRADE policyの純粋な診断評価。実行許可や注文APIではない |
 
 ### Trade status
 
@@ -54,6 +55,13 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 Market Data、policy revisionを区別して表示します。COREはtoken、TRADE base URL、内部error本文を
 応答へ含めません。TRADEが100万円Simulatorを設定した場合は`portfolio.status`と検証済みの
 cash、position、NAV snapshotも含みます。このrouteは状態変更、注文、Paper／LIVE実行を提供しません。
+
+`POST /viewer/trade/policy/evaluate`は`request_id`、`capability`、
+`request_scope_revision`、`request_allowed`を受けます。COREはactive Global Policy snapshotから
+Global capabilityとdeployment制限を解決し、認証済みprivate routeでTRADEへ評価を依頼します。
+未知field、欠落値、inactive Global Policy、TRADE不通、contract不一致、証跡保存失敗はfail closedです。
+結果は共通Policy Decision storeへappendされますが、`authorizes_execution=false`であり、
+このAPIは外部I/O、Portfolio更新、Proposal、Intent、本人承認artifact、Orderを一切作りません。
 
 ### Game Launch（マルチペルソナ WP5）
 
