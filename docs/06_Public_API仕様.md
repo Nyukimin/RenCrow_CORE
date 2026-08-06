@@ -46,6 +46,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `/viewer/games/*` | RenCrow_GAMES bridge（status/decision/result/sessions/events/launch/observer proxy） |
 | `GET /viewer/trade/status` | RenCrow_TRADEのread-only状態projection。Broker／注文APIではない |
 | `POST /viewer/trade/policy/evaluate` | Global PolicyとTRADE policyの純粋な診断評価。実行許可や注文APIではない |
+| `POST /viewer/trade/risk-preview` | Global Policyに束縛した100万円Simulator購入前Risk Preview。Portfolio更新や注文APIではない |
 
 ### Trade status
 
@@ -62,6 +63,15 @@ Global capabilityとdeployment制限を解決し、認証済みprivate routeでT
 未知field、欠落値、inactive Global Policy、TRADE不通、contract不一致、証跡保存失敗はfail closedです。
 結果は共通Policy Decision storeへappendされますが、`authorizes_execution=false`であり、
 このAPIは外部I/O、Portfolio更新、Proposal、Intent、本人承認artifact、Orderを一切作りません。
+
+`POST /viewer/trade/risk-preview`は`request_id`、明示boolの`request_allowed`、
+`risk-preview-plan/v1`を受けます。COREは未知fieldと1 MiB超過を拒否し、planのcanonical JSON
+SHA-256をrequest scopeへ束縛して`portfolio_risk_preview`をactive Global Policyで評価します。
+Policyが`allowed`で、planの`policy_revision`がactive Bundle revisionと一致する場合だけ、
+認証済みTRADE private APIを呼びます。responseはPolicy Decision evidenceとRisk Preview decisionを
+返しますが、`authorizes_execution=false`、`mutates_portfolio=false`です。Portfolio未設定／破損、
+policy block、stale revision、TRADE contract不一致ではfail closedにし、別のPortfolioや旧workflowへ
+fallbackしません。
 
 ### Game Launch（マルチペルソナ WP5）
 

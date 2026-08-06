@@ -317,6 +317,7 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 	tradefeature.RegisterRoutes(mux, tradefeature.Routes{
 		Status:         dependencies.viewerTradeStatus,
 		PolicyEvaluate: dependencies.viewerTradePolicyEvaluation,
+		RiskPreview:    dependencies.viewerTradeRiskPreview,
 	})
 }
 

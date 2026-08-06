@@ -11,6 +11,7 @@ func TestRegisterRoutes(t *testing.T) {
 	RegisterRoutes(mux, Routes{
 		Status:         func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) },
 		PolicyEvaluate: func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusAccepted) },
+		RiskPreview:    func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusCreated) },
 	})
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/viewer/trade/status", nil))
@@ -21,5 +22,10 @@ func TestRegisterRoutes(t *testing.T) {
 	mux.ServeHTTP(policyResponse, httptest.NewRequest(http.MethodPost, "/viewer/trade/policy/evaluate", nil))
 	if policyResponse.Code != http.StatusAccepted {
 		t.Fatalf("policy status=%d", policyResponse.Code)
+	}
+	riskResponse := httptest.NewRecorder()
+	mux.ServeHTTP(riskResponse, httptest.NewRequest(http.MethodPost, "/viewer/trade/risk-preview", nil))
+	if riskResponse.Code != http.StatusCreated {
+		t.Fatalf("risk preview status=%d", riskResponse.Code)
 	}
 }

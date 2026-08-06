@@ -5,6 +5,7 @@ import "net/http"
 type Routes struct {
 	Status         http.HandlerFunc
 	PolicyEvaluate http.HandlerFunc
+	RiskPreview    http.HandlerFunc
 }
 
 func RegisterRoutes(mux *http.ServeMux, routes Routes) {
@@ -16,5 +17,8 @@ func RegisterRoutes(mux *http.ServeMux, routes Routes) {
 	}
 	if routes.PolicyEvaluate != nil {
 		mux.HandleFunc("/viewer/trade/policy/evaluate", routes.PolicyEvaluate)
+	}
+	if routes.RiskPreview != nil {
+		mux.HandleFunc("/viewer/trade/risk-preview", routes.RiskPreview)
 	}
 }

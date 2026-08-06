@@ -8,6 +8,8 @@ import (
 
 const PrivateContractVersion = "trade-private/v1"
 const PolicyEvaluationContractVersion = "trade-policy-evaluation/v1"
+const RiskPreviewRequestContractVersion = "trade-risk-preview/v1"
+const RiskPreviewPlanContractVersion = "risk-preview-plan/v1"
 
 type PolicyStatus struct {
 	SchemaVersion          int             `json:"schema_version"`
@@ -112,6 +114,103 @@ type PrivatePolicyEvaluation struct {
 	ExecutionMode   string         `json:"execution_mode"`
 	LearningMode    string         `json:"learning_mode"`
 	Decision        PolicyDecision `json:"decision"`
+}
+
+type RiskPreviewRequest struct {
+	ContractVersion string          `json:"contract_version"`
+	RequestID       string          `json:"request_id"`
+	Plan            RiskPreviewPlan `json:"plan"`
+}
+
+type RiskPreviewPlan struct {
+	ContractVersion string                  `json:"contract_version"`
+	PlanID          string                  `json:"plan_id"`
+	PolicyRevision  string                  `json:"policy_revision"`
+	AsOf            string                  `json:"as_of"`
+	Selection       RiskPreviewSelection    `json:"selection"`
+	Proposal        RiskPreviewBuyProposal  `json:"proposal"`
+	ExitContract    RiskPreviewExitContract `json:"exit_contract"`
+	Limits          RiskPreviewLimits       `json:"limits"`
+}
+
+type RiskPreviewSelection struct {
+	InstrumentID     string   `json:"instrument_id"`
+	Status           string   `json:"status"`
+	EvidenceRefs     []string `json:"evidence_refs"`
+	KnownMissingData []string `json:"known_missing_data"`
+}
+
+type RiskPreviewBuyProposal struct {
+	InstrumentID         string `json:"instrument_id"`
+	Side                 string `json:"side"`
+	Quantity             int64  `json:"quantity"`
+	EntryPriceJPY        int64  `json:"entry_price_jpy"`
+	GrossJPY             int64  `json:"gross_jpy"`
+	EntryFeesJPY         int64  `json:"entry_fees_jpy"`
+	EstimatedExitFeesJPY int64  `json:"estimated_exit_fees_jpy"`
+}
+
+type RiskPreviewExitContract struct {
+	ContractID                   string   `json:"exit_contract_id"`
+	Revision                     string   `json:"revision"`
+	InstrumentID                 string   `json:"instrument_id"`
+	StopTriggerPriceJPY          int64    `json:"stop_trigger_price_jpy"`
+	WorstCaseExitPriceJPY        int64    `json:"worst_case_exit_price_jpy"`
+	GapSlippageBufferJPY         int64    `json:"gap_slippage_buffer_jpy"`
+	TimeDeadline                 string   `json:"time_deadline"`
+	ThesisInvalidationConditions []string `json:"thesis_invalidation_conditions"`
+	EventConditions              []string `json:"event_conditions"`
+	LiquidityConditions          []string `json:"liquidity_conditions"`
+	PortfolioConditions          []string `json:"portfolio_conditions"`
+	DataConditions               []string `json:"data_conditions"`
+	OperationalConditions        []string `json:"operational_conditions"`
+}
+
+type RiskPreviewLimits struct {
+	MaxLossJPY     int64 `json:"max_loss_jpy"`
+	MaxPositionBPS int64 `json:"max_position_bps"`
+	MaxInvestedBPS int64 `json:"max_invested_bps"`
+	MinCashBPS     int64 `json:"min_cash_bps"`
+	MaxPositions   int64 `json:"max_positions"`
+}
+
+type RiskPreviewMetrics struct {
+	PreTradeNAVJPY         int64 `json:"pre_trade_nav_jpy"`
+	PostTradeCashJPY       int64 `json:"post_trade_cash_jpy"`
+	ProspectivePositionJPY int64 `json:"prospective_position_jpy"`
+	ProspectiveInvestedJPY int64 `json:"prospective_invested_jpy"`
+	ConservativeLossJPY    int64 `json:"conservative_loss_jpy"`
+	PositionBPS            int64 `json:"position_bps"`
+	InvestedBPS            int64 `json:"invested_bps"`
+	CashBPS                int64 `json:"cash_bps"`
+	PositionCount          int64 `json:"position_count"`
+}
+
+type RiskPreviewDecision struct {
+	ContractVersion     string             `json:"contract_version"`
+	PlanID              string             `json:"plan_id"`
+	PolicyRevision      string             `json:"policy_revision"`
+	AsOf                string             `json:"as_of"`
+	InstrumentID        string             `json:"instrument_id"`
+	Status              string             `json:"status"`
+	ReasonCodes         []string           `json:"reason_codes"`
+	Metrics             RiskPreviewMetrics `json:"metrics"`
+	InputSnapshotSHA256 string             `json:"input_snapshot_sha256"`
+	AuthorizesExecution bool               `json:"authorizes_execution"`
+	MutatesPortfolio    bool               `json:"mutates_portfolio"`
+}
+
+type PrivateRiskPreview struct {
+	ContractVersion          string              `json:"contract_version"`
+	ServiceStatus            string              `json:"service_status"`
+	CorrelationID            string              `json:"correlation_id"`
+	ExecutionMode            string              `json:"execution_mode"`
+	LearningMode             string              `json:"learning_mode"`
+	RequestID                string              `json:"request_id"`
+	PortfolioID              string              `json:"portfolio_id"`
+	PortfolioEventCount      int64               `json:"portfolio_event_count"`
+	PortfolioLatestEventHash string              `json:"portfolio_latest_event_hash"`
+	Decision                 RiskPreviewDecision `json:"decision"`
 }
 
 var policySHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -238,6 +337,60 @@ func (response PrivatePolicyEvaluation) Validate(request PolicyEvaluationRequest
 				return fmt.Errorf("TRADE binary hard-limit reason is missing")
 			}
 		}
+	}
+	return nil
+}
+
+func (request RiskPreviewRequest) Validate() error {
+	if request.ContractVersion != RiskPreviewRequestContractVersion {
+		return fmt.Errorf("unsupported TRADE risk preview request contract version %q", request.ContractVersion)
+	}
+	if strings.TrimSpace(request.RequestID) == "" || len(request.RequestID) > 128 {
+		return fmt.Errorf("risk preview request_id is invalid")
+	}
+	plan := request.Plan
+	if plan.ContractVersion != RiskPreviewPlanContractVersion {
+		return fmt.Errorf("unsupported risk preview plan contract version %q", plan.ContractVersion)
+	}
+	for name, value := range map[string]string{
+		"plan_id": plan.PlanID, "policy_revision": plan.PolicyRevision, "as_of": plan.AsOf,
+		"selection.instrument_id":        plan.Selection.InstrumentID,
+		"proposal.instrument_id":         plan.Proposal.InstrumentID,
+		"exit_contract.exit_contract_id": plan.ExitContract.ContractID,
+		"exit_contract.instrument_id":    plan.ExitContract.InstrumentID,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("risk preview %s is required", name)
+		}
+	}
+	if plan.Selection.InstrumentID != plan.Proposal.InstrumentID || plan.ExitContract.InstrumentID != plan.Proposal.InstrumentID {
+		return fmt.Errorf("risk preview instrument IDs do not match")
+	}
+	return nil
+}
+
+func (response PrivateRiskPreview) Validate(request RiskPreviewRequest) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	if response.ContractVersion != PrivateContractVersion || strings.TrimSpace(response.ServiceStatus) == "" || strings.TrimSpace(response.CorrelationID) == "" {
+		return fmt.Errorf("TRADE risk preview envelope is invalid")
+	}
+	if response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID || strings.TrimSpace(response.PortfolioID) == "" || response.PortfolioEventCount < 1 || !policySHA256Pattern.MatchString(response.PortfolioLatestEventHash) {
+		return fmt.Errorf("TRADE risk preview portfolio evidence is invalid")
+	}
+	decision := response.Decision
+	if decision.ContractVersion != RiskPreviewPlanContractVersion || decision.PlanID != request.Plan.PlanID || decision.PolicyRevision != request.Plan.PolicyRevision || decision.AsOf != request.Plan.AsOf || decision.InstrumentID != request.Plan.Proposal.InstrumentID {
+		return fmt.Errorf("TRADE risk preview decision does not match request")
+	}
+	if decision.AuthorizesExecution || decision.MutatesPortfolio || !policySHA256Pattern.MatchString(decision.InputSnapshotSHA256) {
+		return fmt.Errorf("TRADE risk preview safety contract is invalid")
+	}
+	if decision.Status != "pass" && decision.Status != "block" {
+		return fmt.Errorf("TRADE risk preview status is invalid")
+	}
+	if (decision.Status == "pass") != (len(decision.ReasonCodes) == 0) {
+		return fmt.Errorf("TRADE risk preview status and reason codes are inconsistent")
 	}
 	return nil
 }

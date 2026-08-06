@@ -160,3 +160,57 @@ func TestClientEvaluateUsesAuthenticatedPurePolicyRoute(t *testing.T) {
 		t.Fatalf("response=%+v", response)
 	}
 }
+
+func TestClientPreviewRiskUsesAuthenticatedNonMutatingRoute(t *testing.T) {
+	input := moduletrade.RiskPreviewRequest{
+		ContractVersion: moduletrade.RiskPreviewRequestContractVersion,
+		RequestID:       "core-risk-1",
+		Plan: moduletrade.RiskPreviewPlan{
+			ContractVersion: moduletrade.RiskPreviewPlanContractVersion,
+			PlanID:          "plan-1", PolicyRevision: "2026-08-06.1", AsOf: "2026-08-06T00:00:00Z",
+			Selection:    moduletrade.RiskPreviewSelection{InstrumentID: "JP-TEST", Status: "selected", EvidenceRefs: []string{"source:1"}, KnownMissingData: []string{}},
+			Proposal:     moduletrade.RiskPreviewBuyProposal{InstrumentID: "JP-TEST", Side: "buy", Quantity: 100, EntryPriceJPY: 1000, GrossJPY: 100000},
+			ExitContract: moduletrade.RiskPreviewExitContract{ContractID: "exit-1", Revision: "v1", InstrumentID: "JP-TEST"},
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/portfolio/risk-preview" || request.Method != http.MethodPost {
+			http.NotFound(writer, request)
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer "+testToken || request.Header.Get("X-Correlation-ID") != input.RequestID {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var got moduletrade.RiskPreviewRequest
+		if err := json.NewDecoder(request.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got.RequestID != input.RequestID || got.Plan.PlanID != input.Plan.PlanID {
+			t.Fatalf("request=%+v", got)
+		}
+		_ = json.NewEncoder(writer).Encode(moduletrade.PrivateRiskPreview{
+			ContractVersion: moduletrade.PrivateContractVersion,
+			ServiceStatus:   "ready", CorrelationID: input.RequestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE",
+			RequestID: input.RequestID, PortfolioID: "main-sim", PortfolioEventCount: 1,
+			PortfolioLatestEventHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			Decision: moduletrade.RiskPreviewDecision{
+				ContractVersion: moduletrade.RiskPreviewPlanContractVersion,
+				PlanID:          input.Plan.PlanID, PolicyRevision: input.Plan.PolicyRevision, AsOf: input.Plan.AsOf, InstrumentID: input.Plan.Proposal.InstrumentID,
+				Status: "pass", ReasonCodes: []string{}, InputSnapshotSHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, writeToken(t), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.PreviewRisk(context.Background(), input.RequestID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision.Status != "pass" || result.Decision.AuthorizesExecution || result.Decision.MutatesPortfolio {
+		t.Fatalf("result=%+v", result)
+	}
+}

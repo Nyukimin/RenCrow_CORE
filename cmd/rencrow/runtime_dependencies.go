@@ -97,6 +97,7 @@ type Dependencies struct {
 	viewerGamesObserverProxy       http.HandlerFunc                            // RenCrow_GAMES live observer API proxy
 	viewerTradeStatus              http.HandlerFunc                            // RenCrow_TRADE read-only status projection
 	viewerTradePolicyEvaluation    http.HandlerFunc                            // RenCrow_TRADE pure policy diagnostic evaluation
+	viewerTradeRiskPreview         http.HandlerFunc                            // RenCrow_TRADE non-mutating portfolio risk preview
 	historyRepairJSONL             http.HandlerFunc                            // viewer JSONL history repair API
 	packageValidation              http.HandlerFunc                            // viewer package/update validation API
 	characterRuntime               http.HandlerFunc                            // viewer six-character conversation runtime API
@@ -420,6 +421,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 	deps.viewerTradeStatus = newTradeStatusHandler(cfg)
 	deps.viewerTradePolicyEvaluation = newTradePolicyEvaluationHandler(cfg, deps.globalPolicyStore, deps.globalPolicyDecisionStore)
+	deps.viewerTradeRiskPreview = newTradeRiskPreviewHandler(cfg, deps.globalPolicyStore, deps.globalPolicyDecisionStore)
 	log.Printf(
 		"Global Policy Bundle state=%s contract=%s revision=%s",
 		globalPolicy.State,
