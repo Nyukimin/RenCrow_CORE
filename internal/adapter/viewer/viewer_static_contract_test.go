@@ -52,7 +52,9 @@ func TestViewerStaticContractSeparatesDisplayAudioLipsyncAndLogs(t *testing.T) {
 		`id="sourceRegistryStagingBody"`: "Source Registry staging review panel",
 		`id="memoryLayerBody"`:           "Memory layer panel",
 		`id="micBtn"`:                    "normal chat voice input control",
-		`id="idleStart"`:                 "IdleChat control separated from mic input",
+		`id="idlePlaybackPlay"`:          "IdleChat playback control separated from mic input",
+		`id="idlePlaybackNext"`:          "IdleChat next-topic playback control",
+		`id="idlePlaybackPrevious"`:      "IdleChat previous-topic playback control",
 		`id="audioBtn"`:                  "browser audio enable control",
 		`id="sourceRegistrySaveBtn"`:     "Source Registry save control",
 	}
@@ -63,11 +65,11 @@ func TestViewerStaticContractSeparatesDisplayAudioLipsyncAndLogs(t *testing.T) {
 	}
 
 	micIndex := strings.Index(html, `id="micBtn"`)
-	idleIndex := strings.Index(html, `id="idleStart"`)
+	idleIndex := strings.Index(html, `id="idlePlaybackPlay"`)
 	headerEnd := strings.Index(html, `</header>`)
 	lipsyncIndex := strings.Index(html, `class="lipsync-stage"`)
 	if micIndex < 0 || idleIndex < 0 {
-		t.Fatal("mic and IdleChat controls must both be present")
+		t.Fatal("mic and IdleChat playback controls must both be present")
 	}
 	if micIndex > idleIndex {
 		t.Fatal("normal chat mic control should be in the normal input controls before IdleChat controls")
@@ -430,7 +432,7 @@ func TestViewerStaticContractIdleChatStockUsesReadableInspectionLayout(t *testin
 			t.Fatalf("IdleChat stock readable layout render contract missing %q", needle)
 		}
 	}
-	if !strings.Contains(html, "viewer.css?v=20260805-idle-story-title") {
+	if !strings.Contains(html, "viewer.css?v=20260805-idle-topic-playback") {
 		t.Fatal("IdleChat stock layout must invalidate the Viewer CSS cache")
 	}
 }
