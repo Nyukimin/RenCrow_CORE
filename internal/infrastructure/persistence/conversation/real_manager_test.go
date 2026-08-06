@@ -1055,7 +1055,7 @@ func TestStore_BackgroundSummaryTimeoutPersistsSimpleFallback(t *testing.T) {
 	mgr.waitForBackgroundJobs()
 
 	archive := mgr.archiveStore.(*mockArchiveSQLiteStore)
-	if len(archive.saved) != 1 || !strings.HasPrefix(archive.saved[0].Summary, "Start:") {
+	if len(archive.saved) != 1 || !strings.HasPrefix(archive.saved[0].Summary, "Start [") {
 		t.Fatalf("simple fallback was not archived: %#v", archive.saved)
 	}
 	if _, err := mgr.redisStore.GetThread(ctx, thread.ID); err != domconv.ErrThreadNotFound {

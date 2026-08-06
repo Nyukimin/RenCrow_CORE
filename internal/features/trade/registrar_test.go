@@ -17,6 +17,7 @@ func TestRegisterRoutes(t *testing.T) {
 		ShadowOutcome:       func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusResetContent) },
 		ShadowOutcomeReport: func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusOK) },
 		ShadowReview:        func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusCreated) },
+		ShadowReviewReport:  func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusOK) },
 	})
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/viewer/trade/status", nil))
@@ -57,5 +58,10 @@ func TestRegisterRoutes(t *testing.T) {
 	mux.ServeHTTP(reviewResponse, httptest.NewRequest(http.MethodPost, "/viewer/trade/shadow/outcomes/reviews", nil))
 	if reviewResponse.Code != http.StatusCreated {
 		t.Fatalf("shadow review status=%d", reviewResponse.Code)
+	}
+	reviewReportResponse := httptest.NewRecorder()
+	mux.ServeHTTP(reviewReportResponse, httptest.NewRequest(http.MethodGet, "/viewer/trade/shadow/outcomes/reviews/report?study_id=study-1", nil))
+	if reviewReportResponse.Code != http.StatusOK {
+		t.Fatalf("shadow review report status=%d", reviewReportResponse.Code)
 	}
 }

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -69,13 +70,13 @@ func TestMioAgentChatRemembersExpressionHistoryForNextTurn(t *testing.T) {
 func TestMioExpressionHistoryPromptIsSmallAndCapped(t *testing.T) {
 	history := MioExpressionHistory{}
 	for i := 0; i < 8; i++ {
-		history.Openings = append(history.Openings, "opening")
-		history.Evaluations = append(history.Evaluations, "evaluation")
-		history.Connectors = append(history.Connectors, "connector")
-		history.Closings = append(history.Closings, "closing")
+		history.Openings = append(history.Openings, fmt.Sprintf("opening-%d", i))
+		history.Evaluations = append(history.Evaluations, fmt.Sprintf("evaluation-%d", i))
+		history.Connectors = append(history.Connectors, fmt.Sprintf("connector-%d", i))
+		history.Closings = append(history.Closings, fmt.Sprintf("closing-%d", i))
 	}
 	prompt := history.Prompt()
-	if strings.Count(prompt, "opening") != 3 || strings.Count(prompt, "evaluation") != 3 || strings.Count(prompt, "connector") != 3 || strings.Count(prompt, "closing") != 3 {
+	if strings.Count(prompt, "opening-") != 3 || strings.Count(prompt, "evaluation-") != 3 || strings.Count(prompt, "connector-") != 3 || strings.Count(prompt, "closing-") != 3 {
 		t.Fatalf("history should be capped at three entries per category:\n%s", prompt)
 	}
 	if len([]rune(prompt)) > 900 {

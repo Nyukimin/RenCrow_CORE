@@ -26,8 +26,8 @@ func TestDefaultMioPersona(t *testing.T) {
 	if p.Name != "ミオ" {
 		t.Errorf("Name: want 'ミオ', got %q", p.Name)
 	}
-	if !strings.Contains(p.SystemPrompt, "ミオ（澪）") {
-		t.Error("default persona should contain 'ミオ（澪）'")
+	if !strings.Contains(p.SystemPrompt, "Mio（澪）") {
+		t.Error("default persona should contain 'Mio（澪）'")
 	}
 	if !strings.Contains(p.SystemPrompt, "Chat Agent") {
 		t.Error("default persona should identify Mio as a Chat Agent")

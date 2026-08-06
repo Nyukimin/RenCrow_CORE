@@ -11,6 +11,7 @@ type Routes struct {
 	ShadowOutcome       http.HandlerFunc
 	ShadowOutcomeReport http.HandlerFunc
 	ShadowReview        http.HandlerFunc
+	ShadowReviewReport  http.HandlerFunc
 }
 
 func RegisterRoutes(mux *http.ServeMux, routes Routes) {
@@ -40,5 +41,8 @@ func RegisterRoutes(mux *http.ServeMux, routes Routes) {
 	}
 	if routes.ShadowReview != nil {
 		mux.HandleFunc("/viewer/trade/shadow/outcomes/reviews", routes.ShadowReview)
+	}
+	if routes.ShadowReviewReport != nil {
+		mux.HandleFunc("/viewer/trade/shadow/outcomes/reviews/report", routes.ShadowReviewReport)
 	}
 }

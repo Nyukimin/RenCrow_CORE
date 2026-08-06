@@ -15,6 +15,7 @@ const RiskPreviewPlanContractVersion = "risk-preview-plan/v1"
 const SimulationCommitContractVersion = "trade-simulation-commit/v1"
 const ShadowObservationContractVersion = "shadow-observation/v1"
 const ShadowOutcomeContractVersion = "shadow-outcome/v1"
+const ShadowReviewReportContractVersion = "shadow-review-report/v1"
 
 type PolicyStatus struct {
 	SchemaVersion          int             `json:"schema_version"`
@@ -395,6 +396,35 @@ type PrivateShadowOutcomeReport struct {
 	PortfolioMutated            bool                `json:"portfolio_mutated"`
 	KnowledgePromoted           bool                `json:"knowledge_promoted"`
 	Report                      ShadowOutcomeReport `json:"report"`
+}
+
+type ShadowReviewReport struct {
+	SchemaVersion               int    `json:"schema_version"`
+	ContractVersion             string `json:"contract_version"`
+	StudyID                     string `json:"study_id"`
+	Environment                 string `json:"environment"`
+	ReviewCount                 int64  `json:"review_count"`
+	IndependentReviewCount      int64  `json:"independent_review_count"`
+	LatestReviewDecision        string `json:"latest_review_decision,omitempty"`
+	LatestReviewerType          string `json:"latest_reviewer_type,omitempty"`
+	LatestReviewEventHash       string `json:"latest_review_event_hash,omitempty"`
+	ReviewState                 string `json:"review_state"`
+	AuthorizesExternalExecution bool   `json:"authorizes_external_execution"`
+	PortfolioMutated            bool   `json:"portfolio_mutated"`
+	KnowledgePromoted           bool   `json:"knowledge_promoted"`
+}
+
+type PrivateShadowReviewReport struct {
+	ContractVersion             string             `json:"contract_version"`
+	ServiceStatus               string             `json:"service_status"`
+	CorrelationID               string             `json:"correlation_id"`
+	ExecutionMode               string             `json:"execution_mode"`
+	LearningMode                string             `json:"learning_mode"`
+	Environment                 string             `json:"environment"`
+	AuthorizesExternalExecution bool               `json:"authorizes_external_execution"`
+	PortfolioMutated            bool               `json:"portfolio_mutated"`
+	KnowledgePromoted           bool               `json:"knowledge_promoted"`
+	Report                      ShadowReviewReport `json:"report"`
 }
 
 const ShadowReviewContractVersion = "shadow-outcome-review/v1"
@@ -826,6 +856,26 @@ func (response PrivateShadowOutcomeReport) Validate(studyID string) error {
 	}
 	if report.ReviewState != "pending_outcomes" && report.ReviewState != "review_required" {
 		return fmt.Errorf("TRADE shadow outcome report review state is invalid")
+	}
+	return nil
+}
+
+func (response PrivateShadowReviewReport) Validate(studyID string) error {
+	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" || response.Environment != "SHADOW" || response.AuthorizesExternalExecution || response.PortfolioMutated || response.KnowledgePromoted {
+		return fmt.Errorf("TRADE shadow review report safety envelope is invalid")
+	}
+	report := response.Report
+	if report.SchemaVersion != 1 || report.ContractVersion != ShadowReviewReportContractVersion || report.StudyID != studyID || report.Environment != "SHADOW" || report.ReviewCount < 0 || report.IndependentReviewCount < 0 || report.IndependentReviewCount > report.ReviewCount {
+		return fmt.Errorf("TRADE shadow review report counts are invalid")
+	}
+	if report.ReviewState != "pending_review" && report.ReviewState != "review_required" && report.ReviewState != "independently_reviewed" {
+		return fmt.Errorf("TRADE shadow review report state is invalid")
+	}
+	if report.ReviewCount == 0 && report.ReviewState != "pending_review" || report.ReviewCount > 0 && report.ReviewState == "pending_review" {
+		return fmt.Errorf("TRADE shadow review report state is inconsistent")
+	}
+	if report.LatestReviewEventHash != "" && !eventSHA256Pattern.MatchString(report.LatestReviewEventHash) {
+		return fmt.Errorf("TRADE shadow review report latest event hash is invalid")
 	}
 	return nil
 }

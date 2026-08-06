@@ -52,6 +52,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/trade/shadow/outcomes` | 固定済みOutcome Label Contractに従う結果を観測の後続eventとして追記 |
 | `GET /viewer/trade/shadow/outcomes/report?study_id=<id>` | Shadow Outcome台帳を検証して読み取り専用集計を返す |
 | `POST /viewer/trade/shadow/outcomes/reviews` | Outcome reportのhashとlatest event hashを束縛した独立reviewを別台帳へ追記。promotion／Portfolio変更／外部実行は行わない |
+| `GET /viewer/trade/shadow/outcomes/reviews/report?study_id=<id>` | Review ledgerを検証し、独立reviewの有無を返す読み取り専用projection |
 
 ### Trade status
 
@@ -104,6 +105,10 @@ SHA-256、reportのlatest event hash、reviewer、decision、reason、evidence�
 reportを再計算してstale／改ざんを拒否し、Outcome台帳とは分離したreview hash-chainへ冪等追記します。
 review成功後も`authorizes_external_execution=false`、`portfolio_mutated=false`、
 `knowledge_promoted=false`であり、reviewはpromotionや注文の承認ではありません。
+
+`GET /viewer/trade/shadow/outcomes/reviews/report`はOutcome ledgerとreview ledgerを再検証し、
+`pending_review`、`review_required`、`independently_reviewed`の状態を返します。独立review済みでも
+学習昇格、Portfolio変更、Broker／Paper／LIVE実行の許可にはなりません。
 
 ### Game Launch（マルチペルソナ WP5）
 

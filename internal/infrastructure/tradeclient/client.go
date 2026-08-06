@@ -398,6 +398,47 @@ func (client *Client) ShadowOutcomeReport(ctx context.Context, correlationID, st
 	return result, nil
 }
 
+func (client *Client) ShadowReviewReport(ctx context.Context, correlationID, studyID string) (moduletrade.PrivateShadowReviewReport, error) {
+	if strings.TrimSpace(studyID) == "" {
+		return moduletrade.PrivateShadowReviewReport{}, fmt.Errorf("TRADE Shadow review report study ID is required")
+	}
+	requestURL := client.baseURL + "/v1/shadow/outcomes/reviews/report?study_id=" + url.QueryEscape(studyID)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return moduletrade.PrivateShadowReviewReport{}, fmt.Errorf("create TRADE Shadow review report request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+client.token)
+	if strings.TrimSpace(correlationID) != "" {
+		request.Header.Set("X-Correlation-ID", correlationID)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.PrivateShadowReviewReport{}, fmt.Errorf("TRADE Shadow review report request failed: %w", err)
+	}
+	defer response.Body.Close()
+	responsePayload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	if err != nil || len(responsePayload) > maxResponseBytes {
+		return moduletrade.PrivateShadowReviewReport{}, fmt.Errorf("read TRADE Shadow review report response")
+	}
+	if response.StatusCode != http.StatusOK {
+		return moduletrade.PrivateShadowReviewReport{}, &ServiceError{StatusCode: response.StatusCode}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(responsePayload))
+	decoder.DisallowUnknownFields()
+	var result moduletrade.PrivateShadowReviewReport
+	if err := decoder.Decode(&result); err != nil {
+		return moduletrade.PrivateShadowReviewReport{}, fmt.Errorf("decode TRADE Shadow review report response: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return moduletrade.PrivateShadowReviewReport{}, fmt.Errorf("decode TRADE Shadow review report response: trailing JSON value")
+	}
+	if err := result.Validate(studyID); err != nil {
+		return moduletrade.PrivateShadowReviewReport{}, fmt.Errorf("validate TRADE Shadow review report response: %w", err)
+	}
+	return result, nil
+}
+
 func readTokenFile(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {

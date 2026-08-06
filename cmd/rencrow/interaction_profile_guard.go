@@ -129,7 +129,8 @@ func cmdControlInteractionAllowed(method, path string) bool {
 			"/health/live",
 			"/ready",
 			"/viewer/status",
-			"/viewer/trade/shadow/outcomes/report":
+			"/viewer/trade/shadow/outcomes/report",
+			"/viewer/trade/shadow/outcomes/reviews/report":
 			return true
 		default:
 			return false
