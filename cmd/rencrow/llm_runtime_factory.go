@@ -74,5 +74,8 @@ func wrapPrimaryLLMProvider(cfg *config.Config, name string, provider llm.LLMPro
 		}
 	}
 	budgeted := llmmiddleware.NewContextBudgetProvider(provider, name, policy, contextBudgetRecorder)
-	return llmmiddleware.NewRawLogProvider(llmmiddleware.NewDateTimeProvider(budgeted), name)
+	// Prompt receipt is inside DateTimeProvider so it observes the exact
+	// messages after the request-time JST instruction has been injected.
+	receipt := llmmiddleware.NewPromptReceiptProvider(budgeted, name)
+	return llmmiddleware.NewRawLogProvider(llmmiddleware.NewDateTimeProvider(receipt), name)
 }
