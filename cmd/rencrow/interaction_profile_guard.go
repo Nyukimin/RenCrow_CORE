@@ -143,7 +143,8 @@ func cmdControlInteractionAllowed(method, path string) bool {
 		"/viewer/trade/policy/evaluate",
 		"/viewer/trade/risk-preview",
 		"/viewer/trade/simulation-commit",
-		"/viewer/trade/shadow/observations":
+		"/viewer/trade/shadow/observations",
+		"/viewer/trade/shadow/outcomes":
 		return true
 	default:
 		return false

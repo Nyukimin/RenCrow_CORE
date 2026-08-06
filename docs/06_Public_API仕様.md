@@ -49,6 +49,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/trade/risk-preview` | Global Policyに束縛した100万円Simulator購入前Risk Preview。Portfolio更新や注文APIではない |
 | `POST /viewer/trade/simulation-commit` | Preview済みの仮想buyを失効検査して100万円Simulatorへ一度だけ反映。外部注文ではない |
 | `POST /viewer/trade/shadow/observations` | Outcome開示前の無発注判断、context hash、採点契約hashを追記専用Shadow台帳へ固定 |
+| `POST /viewer/trade/shadow/outcomes` | 固定済みOutcome Label Contractに従う結果を観測の後続eventとして追記 |
 
 ### Trade status
 
@@ -86,6 +87,12 @@ Portfolio event count/hash、input snapshot SHA-256、同じplanを必須にし�
 SHA-256へPolicy request scopeを固定します。成功responseは`environment=SHADOW`、
 `authorizes_external_execution=false`、`portfolio_mutated=false`、`knowledge_promoted=false`です。
 既存判断の更新・削除、Outcome付与、採点、promotionはこのv1 routeに含めません。
+
+`POST /viewer/trade/shadow/outcomes`は`allow_record=true`、既存`decision_id`、Outcome label、
+Outcome observed time、Outcome data hash、元観測と一致する採点契約hashを必須にします。同じdecisionへ
+二つ目のOutcomeは拒否し、同じpayloadの再送だけを冪等に処理します。成功responseも
+`environment=SHADOW`、`authorizes_external_execution=false`、`portfolio_mutated=false`、
+`knowledge_promoted=false`を返します。
 
 ### Game Launch（マルチペルソナ WP5）
 

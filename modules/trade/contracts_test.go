@@ -56,6 +56,34 @@ func TestPrivateShadowObservationValidatesNoExecutionMutationOrPromotion(t *test
 	}
 }
 
+func TestPrivateShadowOutcomeValidatesFixedLabelContractAndSafety(t *testing.T) {
+	request := ShadowOutcomeRequest{
+		ContractVersion: ShadowOutcomeContractVersion, RequestID: "outcome-1",
+		Outcome: ShadowOutcomeInput{
+			IdempotencyKey: "outcome-key-1", StudyID: "study-1", DecisionID: "decision-1", MarketObservedAt: "2026-08-06T12:00:00Z",
+			OutcomeLabel: "success", OutcomeObservedAt: "2026-08-07T12:00:00Z", OutcomeSnapshotSHA256: strings.Repeat("c", 64),
+			OutcomeReasonCodes: []string{"THESIS_CONFIRMED"}, OutcomeEvidenceRefs: []string{"source/outcome-1"}, OutcomeLabelContractSHA256: strings.Repeat("b", 64),
+		},
+		Policy: PolicyEvaluationRequest{
+			ContractVersion: PolicyEvaluationContractVersion, RequestID: "outcome-1", Capability: "shadow_outcome_record",
+			GlobalPolicy: GlobalPolicyInput{ContractRevision: "global-policy/v1", BundleRevision: "2026-08-06.1", ContentSHA256: strings.Repeat("d", 64), Allowed: true},
+			Deployment:   PolicyLayerInput{Revision: "deployment-1", Allowed: true}, RequestScope: PolicyLayerInput{Revision: "shadow-outcome/sha256:" + strings.Repeat("c", 64), Allowed: true},
+		},
+	}
+	response := PrivateShadowOutcome{
+		ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: "outcome-1", ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE",
+		RequestID: "outcome-1", Environment: "SHADOW", PolicyDecision: PolicyDecision{Capability: "shadow_outcome_record", Status: "allowed"},
+		Event: ShadowOutcomeEvent{EventVersion: 1, EventID: "shadow-event/sha256:" + strings.Repeat("e", 64), Sequence: 2, RecordedAt: "2026-08-07T12:01:00Z", Type: "shadow_outcome_recorded", IdempotencyKey: "outcome-key-1", StudyID: "study-1", DecisionID: "decision-1", MarketObservedAt: "2026-08-06T12:00:00Z", OutcomeLabel: "success", OutcomeObservedAt: "2026-08-07T12:00:00Z", OutcomeSnapshotSHA256: strings.Repeat("c", 64), OutcomeReasonCodes: []string{"THESIS_CONFIRMED"}, OutcomeEvidenceRefs: []string{"source/outcome-1"}, OutcomeLabelContractSHA256: strings.Repeat("b", 64), EventHash: "sha256:" + strings.Repeat("e", 64)},
+	}
+	if err := response.Validate(request); err != nil {
+		t.Fatal(err)
+	}
+	response.PortfolioMutated = true
+	if err := response.Validate(request); err == nil {
+		t.Fatal("portfolio mutation must invalidate Shadow outcome response")
+	}
+}
+
 func TestPrivateStatusValidateDisabledFoundation(t *testing.T) {
 	status := validDisabledStatus()
 	if err := status.ValidateDisabledFoundation(); err != nil {

@@ -100,6 +100,7 @@ type Dependencies struct {
 	viewerTradeRiskPreview         http.HandlerFunc                            // RenCrow_TRADE non-mutating portfolio risk preview
 	viewerTradeSimulationCommit    http.HandlerFunc                            // RenCrow_TRADE simulation-only atomic portfolio commit
 	viewerTradeShadowObservation   http.HandlerFunc                            // RenCrow_TRADE immutable Shadow observation record
+	viewerTradeShadowOutcome       http.HandlerFunc                            // RenCrow_TRADE immutable Shadow outcome record
 	historyRepairJSONL             http.HandlerFunc                            // viewer JSONL history repair API
 	packageValidation              http.HandlerFunc                            // viewer package/update validation API
 	characterRuntime               http.HandlerFunc                            // viewer six-character conversation runtime API
@@ -426,6 +427,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.viewerTradeRiskPreview = newTradeRiskPreviewHandler(cfg, deps.globalPolicyStore, deps.globalPolicyDecisionStore)
 	deps.viewerTradeSimulationCommit = newTradeSimulationCommitHandler(cfg, deps.globalPolicyStore, deps.globalPolicyDecisionStore)
 	deps.viewerTradeShadowObservation = newTradeShadowObservationHandler(cfg, deps.globalPolicyStore, deps.globalPolicyDecisionStore)
+	deps.viewerTradeShadowOutcome = newTradeShadowOutcomeHandler(cfg, deps.globalPolicyStore, deps.globalPolicyDecisionStore)
 	log.Printf(
 		"Global Policy Bundle state=%s contract=%s revision=%s",
 		globalPolicy.State,

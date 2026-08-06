@@ -8,6 +8,7 @@ type Routes struct {
 	RiskPreview       http.HandlerFunc
 	SimulationCommit  http.HandlerFunc
 	ShadowObservation http.HandlerFunc
+	ShadowOutcome     http.HandlerFunc
 }
 
 func RegisterRoutes(mux *http.ServeMux, routes Routes) {
@@ -28,5 +29,8 @@ func RegisterRoutes(mux *http.ServeMux, routes Routes) {
 	}
 	if routes.ShadowObservation != nil {
 		mux.HandleFunc("/viewer/trade/shadow/observations", routes.ShadowObservation)
+	}
+	if routes.ShadowOutcome != nil {
+		mux.HandleFunc("/viewer/trade/shadow/outcomes", routes.ShadowOutcome)
 	}
 }

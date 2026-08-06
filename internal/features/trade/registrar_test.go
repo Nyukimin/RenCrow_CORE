@@ -14,6 +14,7 @@ func TestRegisterRoutes(t *testing.T) {
 		RiskPreview:       func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusCreated) },
 		SimulationCommit:  func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusOK) },
 		ShadowObservation: func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusPartialContent) },
+		ShadowOutcome:     func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusResetContent) },
 	})
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/viewer/trade/status", nil))
@@ -39,5 +40,10 @@ func TestRegisterRoutes(t *testing.T) {
 	mux.ServeHTTP(shadowResponse, httptest.NewRequest(http.MethodPost, "/viewer/trade/shadow/observations", nil))
 	if shadowResponse.Code != http.StatusPartialContent {
 		t.Fatalf("shadow observation status=%d", shadowResponse.Code)
+	}
+	outcomeResponse := httptest.NewRecorder()
+	mux.ServeHTTP(outcomeResponse, httptest.NewRequest(http.MethodPost, "/viewer/trade/shadow/outcomes", nil))
+	if outcomeResponse.Code != http.StatusResetContent {
+		t.Fatalf("shadow outcome status=%d", outcomeResponse.Code)
 	}
 }

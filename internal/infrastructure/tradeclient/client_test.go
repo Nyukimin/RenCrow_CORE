@@ -274,3 +274,31 @@ func TestClientRecordShadowObservationUsesAuthenticatedPrivateRoute(t *testing.T
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 }
+
+func TestClientRecordShadowOutcomeUsesAuthenticatedPrivateRoute(t *testing.T) {
+	input := moduletrade.ShadowOutcomeRequest{
+		ContractVersion: moduletrade.ShadowOutcomeContractVersion, RequestID: "outcome-1",
+		Outcome: moduletrade.ShadowOutcomeInput{IdempotencyKey: "outcome-key-1", StudyID: "study-1", DecisionID: "decision-1", MarketObservedAt: "2026-08-06T12:00:00Z", OutcomeLabel: "success", OutcomeObservedAt: "2026-08-07T12:00:00Z", OutcomeSnapshotSHA256: strings.Repeat("c", 64), OutcomeReasonCodes: []string{"THESIS_CONFIRMED"}, OutcomeEvidenceRefs: []string{"source/outcome-1"}, OutcomeLabelContractSHA256: strings.Repeat("b", 64)},
+		Policy:  moduletrade.PolicyEvaluationRequest{ContractVersion: moduletrade.PolicyEvaluationContractVersion, RequestID: "outcome-1", Capability: "shadow_outcome_record", GlobalPolicy: moduletrade.GlobalPolicyInput{ContractRevision: "global-policy/v1", BundleRevision: "2026-08-06.1", ContentSHA256: strings.Repeat("d", 64), Allowed: true}, Deployment: moduletrade.PolicyLayerInput{Revision: "deployment-1", Allowed: true}, RequestScope: moduletrade.PolicyLayerInput{Revision: "shadow-outcome/sha256:" + strings.Repeat("c", 64), Allowed: true}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/shadow/outcomes" || request.Header.Get("Authorization") != "Bearer "+testToken {
+			http.NotFound(writer, request)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(moduletrade.PrivateShadowOutcome{
+			ContractVersion: moduletrade.PrivateContractVersion, ServiceStatus: "ready", CorrelationID: "outcome-1", ExecutionMode: "DISABLED", RequestID: "outcome-1", Environment: "SHADOW",
+			PolicyDecision: moduletrade.PolicyDecision{Capability: "shadow_outcome_record", Status: "allowed"},
+			Event:          moduletrade.ShadowOutcomeEvent{EventVersion: 1, EventID: "shadow-event/sha256:" + strings.Repeat("e", 64), Sequence: 2, RecordedAt: "2026-08-07T12:01:00Z", Type: "shadow_outcome_recorded", IdempotencyKey: "outcome-key-1", StudyID: "study-1", DecisionID: "decision-1", MarketObservedAt: "2026-08-06T12:00:00Z", OutcomeLabel: "success", OutcomeObservedAt: "2026-08-07T12:00:00Z", OutcomeSnapshotSHA256: strings.Repeat("c", 64), OutcomeReasonCodes: []string{"THESIS_CONFIRMED"}, OutcomeEvidenceRefs: []string{"source/outcome-1"}, OutcomeLabelContractSHA256: strings.Repeat("b", 64), EventHash: "sha256:" + strings.Repeat("e", 64)},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, writeToken(t), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.RecordShadowOutcome(context.Background(), "outcome-1", input)
+	if err != nil || result.Environment != "SHADOW" || result.AuthorizesExternalExecution || result.PortfolioMutated || result.KnowledgePromoted {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}

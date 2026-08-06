@@ -14,6 +14,7 @@ const RiskPreviewRequestContractVersion = "trade-risk-preview/v1"
 const RiskPreviewPlanContractVersion = "risk-preview-plan/v1"
 const SimulationCommitContractVersion = "trade-simulation-commit/v1"
 const ShadowObservationContractVersion = "shadow-observation/v1"
+const ShadowOutcomeContractVersion = "shadow-outcome/v1"
 
 type PolicyStatus struct {
 	SchemaVersion          int             `json:"schema_version"`
@@ -293,6 +294,66 @@ type PrivateShadowObservation struct {
 	IdempotentReplay            bool                   `json:"idempotent_replay"`
 	PolicyDecision              PolicyDecision         `json:"policy_decision"`
 	Event                       ShadowObservationEvent `json:"event"`
+}
+
+type ShadowOutcomeInput struct {
+	IdempotencyKey             string   `json:"idempotency_key"`
+	StudyID                    string   `json:"study_id"`
+	DecisionID                 string   `json:"decision_id"`
+	OutcomeLabel               string   `json:"outcome_label"`
+	OutcomeObservedAt          string   `json:"outcome_observed_at"`
+	OutcomeSnapshotSHA256      string   `json:"outcome_snapshot_sha256"`
+	OutcomeReasonCodes         []string `json:"outcome_reason_codes"`
+	OutcomeEvidenceRefs        []string `json:"outcome_evidence_refs"`
+	OutcomeReturnBPS           *int64   `json:"outcome_return_bps,omitempty"`
+	BenchmarkReturnBPS         *int64   `json:"benchmark_return_bps,omitempty"`
+	OutcomeLabelContractSHA256 string   `json:"outcome_label_contract_sha256"`
+	MarketObservedAt           string   `json:"market_observed_at"`
+}
+
+type ShadowOutcomeRequest struct {
+	ContractVersion string                  `json:"contract_version"`
+	RequestID       string                  `json:"request_id"`
+	Outcome         ShadowOutcomeInput      `json:"outcome"`
+	Policy          PolicyEvaluationRequest `json:"policy"`
+}
+
+type ShadowOutcomeEvent struct {
+	EventVersion               int      `json:"event_version"`
+	EventID                    string   `json:"event_id"`
+	Sequence                   int64    `json:"sequence"`
+	RecordedAt                 string   `json:"recorded_at"`
+	Type                       string   `json:"type"`
+	IdempotencyKey             string   `json:"idempotency_key"`
+	StudyID                    string   `json:"study_id"`
+	DecisionID                 string   `json:"decision_id"`
+	MarketObservedAt           string   `json:"market_observed_at"`
+	OutcomeLabel               string   `json:"outcome_label"`
+	OutcomeObservedAt          string   `json:"outcome_observed_at"`
+	OutcomeSnapshotSHA256      string   `json:"outcome_snapshot_sha256"`
+	OutcomeReasonCodes         []string `json:"outcome_reason_codes"`
+	OutcomeEvidenceRefs        []string `json:"outcome_evidence_refs"`
+	OutcomeReturnBPS           *int64   `json:"outcome_return_bps,omitempty"`
+	BenchmarkReturnBPS         *int64   `json:"benchmark_return_bps,omitempty"`
+	OutcomeLabelContractSHA256 string   `json:"outcome_label_contract_sha256"`
+	PreviousHash               string   `json:"previous_hash"`
+	EventHash                  string   `json:"event_hash"`
+}
+
+type PrivateShadowOutcome struct {
+	ContractVersion             string             `json:"contract_version"`
+	ServiceStatus               string             `json:"service_status"`
+	CorrelationID               string             `json:"correlation_id"`
+	ExecutionMode               string             `json:"execution_mode"`
+	LearningMode                string             `json:"learning_mode"`
+	RequestID                   string             `json:"request_id"`
+	Environment                 string             `json:"environment"`
+	AuthorizesExternalExecution bool               `json:"authorizes_external_execution"`
+	PortfolioMutated            bool               `json:"portfolio_mutated"`
+	KnowledgePromoted           bool               `json:"knowledge_promoted"`
+	IdempotentReplay            bool               `json:"idempotent_replay"`
+	PolicyDecision              PolicyDecision     `json:"policy_decision"`
+	Event                       ShadowOutcomeEvent `json:"event"`
 }
 
 var policySHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -576,6 +637,83 @@ func (response PrivateShadowObservation) Validate(request ShadowObservationReque
 	}
 	if _, err := time.Parse(time.RFC3339Nano, event.RecordedAt); err != nil {
 		return fmt.Errorf("TRADE shadow observation recorded_at is invalid")
+	}
+	return nil
+}
+
+func (input ShadowOutcomeInput) Validate() error {
+	for name, value := range map[string]string{
+		"idempotency_key": input.IdempotencyKey, "study_id": input.StudyID, "decision_id": input.DecisionID,
+		"outcome_label": input.OutcomeLabel, "outcome_observed_at": input.OutcomeObservedAt,
+		"outcome_snapshot_sha256": input.OutcomeSnapshotSHA256, "outcome_label_contract_sha256": input.OutcomeLabelContractSHA256,
+		"market_observed_at": input.MarketObservedAt,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("shadow outcome %s is required", name)
+		}
+	}
+	switch input.OutcomeLabel {
+	case "success", "failure", "neutral", "inconclusive":
+	default:
+		return fmt.Errorf("shadow outcome label is invalid")
+	}
+	marketAt, err := time.Parse(time.RFC3339Nano, input.MarketObservedAt)
+	if err != nil {
+		return fmt.Errorf("shadow outcome market_observed_at is invalid")
+	}
+	outcomeAt, err := time.Parse(time.RFC3339Nano, input.OutcomeObservedAt)
+	if err != nil || !outcomeAt.After(marketAt) {
+		return fmt.Errorf("shadow outcome observed_at must be after market_observed_at")
+	}
+	if !policySHA256Pattern.MatchString(input.OutcomeSnapshotSHA256) || !policySHA256Pattern.MatchString(input.OutcomeLabelContractSHA256) {
+		return fmt.Errorf("shadow outcome hashes are invalid")
+	}
+	if len(input.OutcomeReasonCodes) == 0 || len(input.OutcomeEvidenceRefs) == 0 {
+		return fmt.Errorf("shadow outcome reasons and evidence are required")
+	}
+	return nil
+}
+
+func (request ShadowOutcomeRequest) Validate() error {
+	if request.ContractVersion != ShadowOutcomeContractVersion || strings.TrimSpace(request.RequestID) == "" {
+		return fmt.Errorf("TRADE shadow outcome envelope is invalid")
+	}
+	if err := request.Outcome.Validate(); err != nil {
+		return err
+	}
+	if err := request.Policy.Validate(); err != nil {
+		return err
+	}
+	if request.Policy.RequestID != request.RequestID || request.Policy.Capability != "shadow_outcome_record" ||
+		request.Policy.RequestScope.Revision != "shadow-outcome/sha256:"+request.Outcome.OutcomeSnapshotSHA256 {
+		return fmt.Errorf("TRADE shadow outcome policy binding is invalid")
+	}
+	return nil
+}
+
+func (response PrivateShadowOutcome) Validate(request ShadowOutcomeRequest) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
+		response.Environment != "SHADOW" || response.AuthorizesExternalExecution || response.PortfolioMutated || response.KnowledgePromoted {
+		return fmt.Errorf("TRADE shadow outcome safety envelope is invalid")
+	}
+	if response.PolicyDecision.Capability != "shadow_outcome_record" || response.PolicyDecision.Status != "allowed" {
+		return fmt.Errorf("TRADE shadow outcome policy decision is invalid")
+	}
+	event := response.Event
+	if event.EventVersion != 1 || event.Sequence < 2 || event.Type != "shadow_outcome_recorded" ||
+		event.IdempotencyKey != request.Outcome.IdempotencyKey || event.StudyID != request.Outcome.StudyID || event.DecisionID != request.Outcome.DecisionID ||
+		event.MarketObservedAt != request.Outcome.MarketObservedAt || event.OutcomeLabel != request.Outcome.OutcomeLabel || event.OutcomeObservedAt != request.Outcome.OutcomeObservedAt ||
+		event.OutcomeSnapshotSHA256 != request.Outcome.OutcomeSnapshotSHA256 || !reflect.DeepEqual(event.OutcomeReasonCodes, request.Outcome.OutcomeReasonCodes) ||
+		!reflect.DeepEqual(event.OutcomeEvidenceRefs, request.Outcome.OutcomeEvidenceRefs) || !reflect.DeepEqual(event.OutcomeReturnBPS, request.Outcome.OutcomeReturnBPS) ||
+		!reflect.DeepEqual(event.BenchmarkReturnBPS, request.Outcome.BenchmarkReturnBPS) || event.OutcomeLabelContractSHA256 != request.Outcome.OutcomeLabelContractSHA256 ||
+		!eventSHA256Pattern.MatchString(event.EventHash) || event.EventID != "shadow-event/"+event.EventHash {
+		return fmt.Errorf("TRADE shadow outcome event is invalid")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, event.RecordedAt); err != nil {
+		return fmt.Errorf("TRADE shadow outcome recorded_at is invalid")
 	}
 	return nil
 }
