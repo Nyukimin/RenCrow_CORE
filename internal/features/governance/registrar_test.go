@@ -10,6 +10,7 @@ func TestRegisterRoutesRegistersGovernancePaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
 		GlobalPolicyStatus:          statusHandler(http.StatusNonAuthoritativeInfo),
+		GlobalPolicyDecisions:       statusHandler(http.StatusAccepted),
 		ToolHarnessRecent:           statusHandler(http.StatusOK),
 		DCIRecent:                   statusHandler(http.StatusCreated),
 		DCISearch:                   statusHandler(http.StatusAccepted),
@@ -35,6 +36,7 @@ func TestRegisterRoutesRegistersGovernancePaths(t *testing.T) {
 		want int
 	}{
 		{path: "/viewer/policy/status", want: http.StatusNonAuthoritativeInfo},
+		{path: "/viewer/policy/decisions", want: http.StatusAccepted},
 		{path: "/viewer/tool-harness/recent", want: http.StatusOK},
 		{path: "/viewer/dci/recent", want: http.StatusCreated},
 		{path: "/viewer/dci/search", want: http.StatusAccepted},

@@ -45,6 +45,7 @@ import (
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
 	knowledgememorypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/knowledgememory"
 	personapersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/persona"
+	policydecisionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/policydecision"
 	revenuepersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/revenue"
 	sandboxpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/sandbox"
 	schedulerpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/scheduler"
@@ -94,6 +95,7 @@ type Dependencies struct {
 	viewerGamesLaunch              http.HandlerFunc                            // RenCrow_GAMES launch proxy (マルチペルソナ WP5)
 	gameAutoplay                   *viewer.GameAutoplayService                 // ペルソナ自発プレイランナー (マルチペルソナ WP6)
 	viewerGamesObserverProxy       http.HandlerFunc                            // RenCrow_GAMES live observer API proxy
+	viewerTradeStatus              http.HandlerFunc                            // RenCrow_TRADE read-only status projection
 	historyRepairJSONL             http.HandlerFunc                            // viewer JSONL history repair API
 	packageValidation              http.HandlerFunc                            // viewer package/update validation API
 	characterRuntime               http.HandlerFunc                            // viewer six-character conversation runtime API
@@ -128,6 +130,9 @@ type Dependencies struct {
 	verificationSummary            http.HandlerFunc                            // viewer verification summary API
 	toolHarnessRecent              http.HandlerFunc                            // viewer tool harness mediation API
 	globalPolicyStatus             http.HandlerFunc                            // read-only Global Policy Bundle status API
+	globalPolicyStore              *configpolicy.Store                         // immutable active policy snapshot and reload state
+	globalPolicyDecisions          http.HandlerFunc                            // read-only common policy decision evidence API
+	globalPolicyDecisionStore      *policydecisionpersistence.JSONLStore       // append-only common policy decision evidence store
 	dciRecent                      http.HandlerFunc                            // viewer DCI trace API
 	dciSearch                      http.HandlerFunc                            // viewer DCI manual search API
 	dciSearcher                    orchestrator.DCISearcher                    // message orchestrator explicit DCI trigger
@@ -402,8 +407,17 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 
 	deps := &Dependencies{}
-	globalPolicy := configpolicy.LoadWorkspace(cfg.WorkspaceDir)
-	deps.globalPolicyStatus = viewer.HandleGlobalPolicyStatus(globalPolicy)
+	deps.viewerTradeStatus = newTradeStatusHandler(cfg)
+	deps.globalPolicyStore = configpolicy.NewStore(cfg.WorkspaceDir)
+	globalPolicy := deps.globalPolicyStore.Status()
+	deps.globalPolicyStatus = viewer.HandleGlobalPolicyStatus(deps.globalPolicyStore)
+	policyDecisionStore, err := policydecisionpersistence.NewJSONLStore(filepath.Join(cfg.WorkspaceDir, "logs", "policy_decisions.jsonl"))
+	if err != nil {
+		log.Printf("Global policy decision store unavailable: %v", err)
+	} else {
+		deps.globalPolicyDecisionStore = policyDecisionStore
+		deps.globalPolicyDecisions = viewer.HandlePolicyDecisions(policyDecisionStore)
+	}
 	log.Printf(
 		"Global Policy Bundle state=%s contract=%s revision=%s",
 		globalPolicy.State,

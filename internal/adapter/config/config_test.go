@@ -2892,6 +2892,43 @@ func TestLLMGatewayRejectsMissingAbsoluteBaseURL(t *testing.T) {
 	}
 }
 
+func TestTradeConfigDefaultsAndValidation(t *testing.T) {
+	cfg := &Config{Server: ServerConfig{Port: 18790}}
+	cfg.Session.StorageDir = "./data"
+	cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "aka", "ao", "kin", "gin"
+	cfg.setDefaults()
+	if cfg.Trade.Enabled || cfg.Trade.BaseURL != "http://127.0.0.1:8766" || cfg.Trade.TimeoutMS != 3000 {
+		t.Fatalf("unexpected trade defaults: %+v", cfg.Trade)
+	}
+	cfg.Trade.Enabled = true
+	cfg.Trade.AuthTokenFile = filepath.Join(t.TempDir(), "trade-control.token")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error=%v", err)
+	}
+}
+
+func TestTradeConfigRejectsNonLoopbackAndRelativeToken(t *testing.T) {
+	base := func() *Config {
+		cfg := &Config{Server: ServerConfig{Port: 18790}}
+		cfg.Session.StorageDir = "./data"
+		cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "aka", "ao", "kin", "gin"
+		cfg.setDefaults()
+		cfg.Trade.Enabled = true
+		cfg.Trade.AuthTokenFile = filepath.Join(t.TempDir(), "trade-control.token")
+		return cfg
+	}
+	cfg := base()
+	cfg.Trade.BaseURL = "http://192.168.1.20:8766"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("expected loopback validation error, got %v", err)
+	}
+	cfg = base()
+	cfg.Trade.AuthTokenFile = "trade-control.token"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "auth_token_file") {
+		t.Fatalf("expected token path validation error, got %v", err)
+	}
+}
+
 func TestConfig_Validate_AdvisorPersistence(t *testing.T) {
 	cfg := &Config{
 		Server:  ServerConfig{Port: 8080},

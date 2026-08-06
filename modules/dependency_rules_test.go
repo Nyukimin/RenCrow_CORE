@@ -18,6 +18,7 @@ var allowedModuleImports = map[string]map[string]bool{
 	"llm":          {"core": true},
 	"tts":          {"core": true},
 	"stt":          {"core": true},
+	"trade":        {},
 	"voicechat":    {},
 	"webgather":    {},
 	"worker":       {"core": true, "llm": true},

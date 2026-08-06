@@ -29,6 +29,7 @@ import (
 	sourcefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/source"
 	sttfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/stt"
 	superagentfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/superagent"
+	tradefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/trade"
 	ttsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/tts"
 	viewerfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/viewer"
 	voicefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/voice"
@@ -239,6 +240,7 @@ func registerGovernanceSecurityReportRoutes(mux *http.ServeMux, dependencies *De
 	}})
 	governancefeature.RegisterRoutes(mux, governancefeature.Dependencies{Routes: governancefeature.Routes{
 		GlobalPolicyStatus:          dependencies.globalPolicyStatus,
+		GlobalPolicyDecisions:       dependencies.globalPolicyDecisions,
 		ToolHarnessRecent:           dependencies.toolHarnessRecent,
 		DCIRecent:                   dependencies.dciRecent,
 		DCISearch:                   dependencies.dciSearch,
@@ -312,6 +314,7 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 		ObserverPage:  dependencies.viewerGamesObserverPage,
 		ObserverProxy: dependencies.viewerGamesObserverProxy,
 	}})
+	tradefeature.RegisterRoutes(mux, tradefeature.Routes{Status: dependencies.viewerTradeStatus})
 }
 
 func registerImageRoutes(mux *http.ServeMux, cfg *config.Config) {

@@ -20,6 +20,12 @@ func (c *Config) setDefaults() {
 	if c.LLMGateway.TimeoutSec <= 0 {
 		c.LLMGateway.TimeoutSec = 600
 	}
+	if strings.TrimSpace(c.Trade.BaseURL) == "" {
+		c.Trade.BaseURL = "http://127.0.0.1:8766"
+	}
+	if c.Trade.TimeoutMS <= 0 {
+		c.Trade.TimeoutMS = 3000
+	}
 	if c.Mio.Generation.MaxTokens <= 0 {
 		c.Mio.Generation.MaxTokens = 512
 	}

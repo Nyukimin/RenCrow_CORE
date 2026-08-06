@@ -109,7 +109,8 @@ func cmdDiagnosticsInteractionAllowed(method, path string) bool {
 		"/viewer/debug/system",
 		"/viewer/channels",
 		"/viewer/channels/probe",
-		"/viewer/web-gather/doctor":
+		"/viewer/web-gather/doctor",
+		"/viewer/trade/status":
 		return true
 	default:
 		return false

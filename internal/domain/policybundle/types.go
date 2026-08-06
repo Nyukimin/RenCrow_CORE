@@ -14,16 +14,30 @@ const (
 )
 
 type Status struct {
-	State                State    `json:"state"`
-	PolicyRoot           string   `json:"policy_root"`
-	ContractRevision     string   `json:"contract_revision"`
-	BundleID             string   `json:"bundle_id,omitempty"`
-	BundleRevision       string   `json:"bundle_revision,omitempty"`
-	ContentSHA256        string   `json:"content_sha256,omitempty"`
-	MinimumCoreContract  string   `json:"minimum_core_contract,omitempty"`
-	DeploymentProfile    string   `json:"deployment_profile"`
-	DisabledCapabilities []string `json:"disabled_capabilities"`
-	Error                string   `json:"error,omitempty"`
+	State                   State    `json:"state"`
+	PolicyRoot              string   `json:"policy_root"`
+	ContractRevision        string   `json:"contract_revision"`
+	BundleID                string   `json:"bundle_id,omitempty"`
+	BundleRevision          string   `json:"bundle_revision,omitempty"`
+	ContentSHA256           string   `json:"content_sha256,omitempty"`
+	MinimumCoreContract     string   `json:"minimum_core_contract,omitempty"`
+	DeploymentProfile       string   `json:"deployment_profile"`
+	DisabledCapabilities    []string `json:"disabled_capabilities"`
+	Error                   string   `json:"error,omitempty"`
+	LastReloadState         State    `json:"last_reload_state"`
+	LastReloadAt            string   `json:"last_reload_at,omitempty"`
+	LastSuccessfulLoadAt    string   `json:"last_successful_load_at,omitempty"`
+	LastReloadError         string   `json:"last_reload_error,omitempty"`
+	ActiveRevisionPreserved bool     `json:"active_revision_preserved"`
+}
+
+type Snapshot struct {
+	BundleID           string
+	BundleRevision     string
+	ContentSHA256      string
+	Capabilities       map[string]bool
+	ExternalActions    map[string]string
+	ProductionDisabled map[string]bool
 }
 
 type Manifest struct {

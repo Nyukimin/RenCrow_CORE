@@ -35,6 +35,7 @@ internal/application/skillgovernance, internal/domain/skillgovernance, internal/
 ## Current Route Boundary
 
 - `/viewer/policy/status`
+- `/viewer/policy/decisions`
 - `/viewer/tool-harness/recent`
 - `/viewer/dci/recent`
 - `/viewer/dci/search`

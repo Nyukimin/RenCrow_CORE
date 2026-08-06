@@ -10,12 +10,13 @@ import (
 )
 
 func TestHandleGlobalPolicyStatus(t *testing.T) {
-	handler := HandleGlobalPolicyStatus(domainpolicy.Status{
+	provider := globalPolicyStatusStub{status: domainpolicy.Status{
 		State:                domainpolicy.StateInvalid,
 		ContractRevision:     domainpolicy.ContractRevision,
 		DisabledCapabilities: []string{"financial_order"},
 		Error:                "bundle content hash mismatch",
-	})
+	}}
+	handler := HandleGlobalPolicyStatus(provider)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/viewer/policy/status", nil))
 	if recorder.Code != http.StatusOK {
@@ -31,10 +32,16 @@ func TestHandleGlobalPolicyStatus(t *testing.T) {
 }
 
 func TestHandleGlobalPolicyStatusRejectsNonGET(t *testing.T) {
-	handler := HandleGlobalPolicyStatus(domainpolicy.Status{})
+	handler := HandleGlobalPolicyStatus(globalPolicyStatusStub{})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/viewer/policy/status", nil))
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status=%d", recorder.Code)
 	}
 }
+
+type globalPolicyStatusStub struct {
+	status domainpolicy.Status
+}
+
+func (s globalPolicyStatusStub) Status() domainpolicy.Status { return s.status }

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -31,6 +32,23 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.LLMGateway.BaseURL) != "" && c.LLMGateway.TimeoutSec < 1 {
 		return fmt.Errorf("llm_gateway.timeout_sec must be >= 1")
+	}
+	if c.Trade.Enabled {
+		tradeURL, err := url.Parse(strings.TrimSpace(c.Trade.BaseURL))
+		if err != nil || tradeURL.Host == "" || tradeURL.Scheme != "http" || tradeURL.User != nil || tradeURL.RawQuery != "" || tradeURL.Fragment != "" || (tradeURL.Path != "" && tradeURL.Path != "/") {
+			return fmt.Errorf("trade.base_url must be a loopback absolute HTTP origin when enabled=true")
+		}
+		hostname := tradeURL.Hostname()
+		ip := net.ParseIP(hostname)
+		if !strings.EqualFold(hostname, "localhost") && (ip == nil || !ip.IsLoopback()) {
+			return fmt.Errorf("trade.base_url must use a loopback host when enabled=true")
+		}
+		if !filepath.IsAbs(strings.TrimSpace(c.Trade.AuthTokenFile)) {
+			return fmt.Errorf("trade.auth_token_file must be an absolute path when enabled=true")
+		}
+		if c.Trade.TimeoutMS < 1 || c.Trade.TimeoutMS > 30000 {
+			return fmt.Errorf("trade.timeout_ms must be between 1 and 30000 when enabled=true")
+		}
 	}
 
 	if c.Mio.Generation.MaxTokens < 0 {

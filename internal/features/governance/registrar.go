@@ -15,6 +15,7 @@ type Dependencies struct {
 // Handler implementations are supplied by their owning adapter and command packages.
 type Routes struct {
 	GlobalPolicyStatus          http.HandlerFunc
+	GlobalPolicyDecisions       http.HandlerFunc
 	ToolHarnessRecent           http.HandlerFunc
 	DCIRecent                   http.HandlerFunc
 	DCISearch                   http.HandlerFunc
@@ -39,6 +40,7 @@ type Routes struct {
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
 	registerRoute(mux, "/viewer/policy/status", routes.GlobalPolicyStatus)
+	registerRoute(mux, "/viewer/policy/decisions", routes.GlobalPolicyDecisions)
 	registerRoute(mux, "/viewer/tool-harness/recent", routes.ToolHarnessRecent)
 	registerRoute(mux, "/viewer/dci/recent", routes.DCIRecent)
 	registerRoute(mux, "/viewer/dci/search", routes.DCISearch)

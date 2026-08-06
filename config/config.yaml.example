@@ -379,6 +379,14 @@ stt:
     save_audio: false
     save_transcript: true
 
+# RenCrow_TRADE read-only control API。既定disabled。
+# token fileはrepository外のowner-only fileを絶対pathで指定する。
+trade:
+  enabled: false
+  base_url: "http://127.0.0.1:8766"
+  auth_token_file: "/absolute/runtime/path/trade-control.token"
+  timeout_ms: 3000
+
 # 画像・動画認識は必ず RenCrow_Vision を経由する。
 # Wild backend のURL・model・認証は RenCrow_Vision 側で管理し、COREには置かない。
 vision:

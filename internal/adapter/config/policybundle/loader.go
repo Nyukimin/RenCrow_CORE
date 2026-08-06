@@ -26,7 +26,20 @@ var requiredPolicyPaths = []string{
 	"global.yaml",
 }
 
+type loadResult struct {
+	status   domainpolicy.Status
+	snapshot domainpolicy.Snapshot
+}
+
 func LoadWorkspace(workspaceDir string) domainpolicy.Status {
+	result, status, _ := loadWorkspace(workspaceDir)
+	if result.status.State != "" {
+		return result.status
+	}
+	return status
+}
+
+func loadWorkspace(workspaceDir string) (loadResult, domainpolicy.Status, error) {
 	root := filepath.Join(workspaceDir, "policies")
 	status := domainpolicy.Status{
 		State:                domainpolicy.StateMissing,
@@ -38,67 +51,72 @@ func LoadWorkspace(workspaceDir string) domainpolicy.Status {
 	rootInfo, err := os.Lstat(root)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return status
+			status.LastReloadState = domainpolicy.StateMissing
+			return loadResult{}, status, fmt.Errorf("policy bundle is missing")
 		}
 		status.State = domainpolicy.StateInvalid
 		status.Error = fmt.Sprintf("cannot inspect policy root: %v", err)
-		return status
+		status.LastReloadState = domainpolicy.StateInvalid
+		return loadResult{}, status, fmt.Errorf("%s", status.Error)
 	}
 	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
 		status.State = domainpolicy.StateInvalid
 		status.Error = "policy root must be a real directory, not a symlink"
-		return status
+		status.LastReloadState = domainpolicy.StateInvalid
+		return loadResult{}, status, fmt.Errorf("%s", status.Error)
 	}
 
 	loaded, err := load(root)
 	if err != nil {
 		status.State = domainpolicy.StateInvalid
 		status.Error = err.Error()
-		return status
+		status.LastReloadState = domainpolicy.StateInvalid
+		return loadResult{}, status, err
 	}
-	return loaded
+	loaded.status.LastReloadState = domainpolicy.StateActive
+	return loaded, loaded.status, nil
 }
 
-func load(root string) (domainpolicy.Status, error) {
+func load(root string) (loadResult, error) {
 	manifestPath := filepath.Join(root, "manifest.yaml")
 	manifestBytes, err := readRegularPolicyFile(root, "manifest.yaml")
 	if err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 	var manifest domainpolicy.Manifest
 	if err := decodeStrict(manifestPath, manifestBytes, &manifest); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 	if err := validateManifest(manifest); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 
 	entries := make(map[string]domainpolicy.FileEntry, len(manifest.Files))
 	for _, entry := range manifest.Files {
 		if err := validateRelativePath(entry.Path); err != nil {
-			return domainpolicy.Status{}, fmt.Errorf("manifest file path %q: %w", entry.Path, err)
+			return loadResult{}, fmt.Errorf("manifest file path %q: %w", entry.Path, err)
 		}
 		if _, exists := entries[entry.Path]; exists {
-			return domainpolicy.Status{}, fmt.Errorf("duplicate manifest file path: %s", entry.Path)
+			return loadResult{}, fmt.Errorf("duplicate manifest file path: %s", entry.Path)
 		}
 		entries[entry.Path] = entry
 	}
 	if err := validateRequiredPaths(entries); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 	if got := contentHash(manifest.Files); got != strings.ToLower(manifest.ContentSHA256) {
-		return domainpolicy.Status{}, fmt.Errorf("bundle content hash mismatch")
+		return loadResult{}, fmt.Errorf("bundle content hash mismatch")
 	}
 
 	contents := make(map[string][]byte, len(entries))
 	for path, entry := range entries {
 		data, err := readRegularPolicyFile(root, path)
 		if err != nil {
-			return domainpolicy.Status{}, err
+			return loadResult{}, err
 		}
 		got := fmt.Sprintf("%x", sha256.Sum256(data))
 		if got != strings.ToLower(entry.SHA256) {
-			return domainpolicy.Status{}, fmt.Errorf("policy file hash mismatch: %s", path)
+			return loadResult{}, fmt.Errorf("policy file hash mismatch: %s", path)
 		}
 		contents[path] = data
 	}
@@ -117,52 +135,52 @@ func load(root string) (domainpolicy.Status, error) {
 
 	var global domainpolicy.GlobalPolicy
 	if err := decodePolicy(contents, "global.yaml", &global); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 	if global.DefaultSideEffect != "blocked" {
-		return domainpolicy.Status{}, fmt.Errorf("global.yaml default_side_effect must be blocked")
+		return loadResult{}, fmt.Errorf("global.yaml default_side_effect must be blocked")
 	}
 	if err := registerID("global.yaml", global.PolicyID); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 
 	var capabilities domainpolicy.CapabilityPolicy
 	if err := decodePolicy(contents, "capabilities.yaml", &capabilities); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 	if err := registerID("capabilities.yaml", capabilities.PolicyID); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 
 	var authorizations domainpolicy.AuthorizationPolicy
 	if err := decodePolicy(contents, "authorizations.yaml", &authorizations); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 	if err := registerID("authorizations.yaml", authorizations.PolicyID); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 	if err := validateAuthorizations(authorizations.Authorizations); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 
 	var dataHandling domainpolicy.DataHandlingPolicy
 	if err := decodePolicy(contents, "data-handling.yaml", &dataHandling); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 	if err := registerID("data-handling.yaml", dataHandling.PolicyID); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 
 	var external domainpolicy.ExternalActionPolicy
 	if err := decodePolicy(contents, "external-actions.yaml", &external); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 	if err := registerID("external-actions.yaml", external.PolicyID); err != nil {
-		return domainpolicy.Status{}, err
+		return loadResult{}, err
 	}
 	for action, decision := range external.Actions {
 		if strings.TrimSpace(action) == "" || (decision != "blocked" && decision != "explicit_authorization") {
-			return domainpolicy.Status{}, fmt.Errorf("external-actions.yaml action %q has invalid decision", action)
+			return loadResult{}, fmt.Errorf("external-actions.yaml action %q has invalid decision", action)
 		}
 	}
 
@@ -171,13 +189,13 @@ func load(root string) (domainpolicy.Status, error) {
 		path := "deployment/" + profile + ".yaml"
 		var deployment domainpolicy.DeploymentPolicy
 		if err := decodePolicy(contents, path, &deployment); err != nil {
-			return domainpolicy.Status{}, err
+			return loadResult{}, err
 		}
 		if deployment.Profile != profile {
-			return domainpolicy.Status{}, fmt.Errorf("%s profile must be %s", path, profile)
+			return loadResult{}, fmt.Errorf("%s profile must be %s", path, profile)
 		}
 		if err := registerID(path, deployment.PolicyID); err != nil {
-			return domainpolicy.Status{}, err
+			return loadResult{}, err
 		}
 		deployments[profile] = deployment
 	}
@@ -185,7 +203,7 @@ func load(root string) (domainpolicy.Status, error) {
 	disabled := map[string]struct{}{}
 	for capability, allowed := range capabilities.Capabilities {
 		if strings.TrimSpace(capability) == "" {
-			return domainpolicy.Status{}, fmt.Errorf("capabilities.yaml has empty capability")
+			return loadResult{}, fmt.Errorf("capabilities.yaml has empty capability")
 		}
 		if !allowed {
 			disabled[capability] = struct{}{}
@@ -193,7 +211,7 @@ func load(root string) (domainpolicy.Status, error) {
 	}
 	for _, capability := range deployments["production"].DisabledCapabilities {
 		if strings.TrimSpace(capability) == "" {
-			return domainpolicy.Status{}, fmt.Errorf("production disabled capability must be non-empty")
+			return loadResult{}, fmt.Errorf("production disabled capability must be non-empty")
 		}
 		disabled[capability] = struct{}{}
 	}
@@ -203,7 +221,7 @@ func load(root string) (domainpolicy.Status, error) {
 	}
 	sort.Strings(disabledList)
 
-	return domainpolicy.Status{
+	status := domainpolicy.Status{
 		State:                domainpolicy.StateActive,
 		PolicyRoot:           root,
 		ContractRevision:     domainpolicy.ContractRevision,
@@ -213,7 +231,42 @@ func load(root string) (domainpolicy.Status, error) {
 		MinimumCoreContract:  manifest.MinimumCoreContract,
 		DeploymentProfile:    "production",
 		DisabledCapabilities: disabledList,
+	}
+	return loadResult{
+		status: status,
+		snapshot: domainpolicy.Snapshot{
+			BundleID:           manifest.BundleID,
+			BundleRevision:     manifest.Revision,
+			ContentSHA256:      strings.ToLower(manifest.ContentSHA256),
+			Capabilities:       cloneBoolMap(capabilities.Capabilities),
+			ExternalActions:    cloneStringMap(external.Actions),
+			ProductionDisabled: boolSet(deployments["production"].DisabledCapabilities),
+		},
 	}, nil
+}
+
+func cloneBoolMap(source map[string]bool) map[string]bool {
+	cloned := make(map[string]bool, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func boolSet(values []string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
 }
 
 func validateManifest(manifest domainpolicy.Manifest) error {

@@ -34,6 +34,9 @@ type Config struct {
 	// === RenCrow_GAMES 連携 (マルチペルソナ WP6) ===
 	Games GamesConfig `yaml:"games"`
 
+	// === RenCrow_TRADE read-only status bridge ===
+	Trade TradeConfig `yaml:"trade"`
+
 	// === Optional Webwright browser-backed fetch bridge ===
 	WebwrightFetch WebwrightFetchConfig `yaml:"webwright_fetch"`
 

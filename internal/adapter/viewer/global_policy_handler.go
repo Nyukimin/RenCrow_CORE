@@ -6,12 +6,20 @@ import (
 	domainpolicy "github.com/Nyukimin/RenCrow_CORE/internal/domain/policybundle"
 )
 
-func HandleGlobalPolicyStatus(status domainpolicy.Status) http.HandlerFunc {
+type GlobalPolicyStatusProvider interface {
+	Status() domainpolicy.Status
+}
+
+func HandleGlobalPolicyStatus(provider GlobalPolicyStatusProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		writeJSON(w, http.StatusOK, status)
+		if provider == nil {
+			http.Error(w, "global policy status unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(w, http.StatusOK, provider.Status())
 	}
 }

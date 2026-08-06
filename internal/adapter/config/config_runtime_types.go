@@ -152,6 +152,14 @@ type GamesConfig struct {
 	AutoPlay GamesAutoPlayConfig `yaml:"auto_play"`
 }
 
+// TradeConfig connects CORE only to RenCrow_TRADE's authenticated read-only control API.
+type TradeConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	BaseURL       string `yaml:"base_url"`
+	AuthTokenFile string `yaml:"auth_token_file"`
+	TimeoutMS     int    `yaml:"timeout_ms"`
+}
+
 // GamesAutoPlayConfig はペルソナの自発プレイ（autoplay ランナー）の設定。
 // ペースは固定間隔ではなく LLM 自身が next_check_minutes で決める
 // （RenCrow_GAMES/docs/10_RenCrow自発プレイ仕様.md）。
