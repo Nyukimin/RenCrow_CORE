@@ -34,7 +34,7 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 		var chunk struct {
 			Error *struct {
 				Code    json.RawMessage `json:"code"`
-				Message string `json:"message"`
+				Message string          `json:"message"`
 			} `json:"error,omitempty"`
 			Choices []struct {
 				Delta struct {

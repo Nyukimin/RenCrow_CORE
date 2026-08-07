@@ -30,7 +30,7 @@ func TestCollectAudioSnapshotProbesSTTAndTTSConcurrently(t *testing.T) {
 	if !snapshot.STTOK || !snapshot.TTSLiveOK || !snapshot.TTSReadyOK {
 		t.Fatalf("snapshot=%#v, want all probes ok", snapshot)
 	}
-	if !strings.Contains(snapshot.STTHealth, `"ready":true`) || snapshot.TTSLive != "/health/live" || snapshot.TTSReady != "/health/ready" {
+	if !strings.Contains(snapshot.STTHealth, `"ready":true`) || snapshot.TTSLive != "/health/live" || !strings.Contains(snapshot.TTSReady, `"ready":true`) {
 		t.Fatalf("snapshot bodies=%#v", snapshot)
 	}
 	if elapsed > 350*time.Millisecond {
