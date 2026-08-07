@@ -27,8 +27,7 @@ func TestHeavyAgentGenerateUsesHeavyPromptAndStripsCommand(t *testing.T) {
 	if resp != "heavy response" {
 		t.Fatalf("response: want heavy response, got %q", resp)
 	}
-	if !strings.HasPrefix(gotReq.SystemPrompt, "kuro system\n\n現在時刻（JST）: ") ||
-		!strings.HasSuffix(gotReq.SystemPrompt, " JST") {
+	if gotReq.SystemPrompt != "kuro system" || len(gotReq.Messages) < 2 || gotReq.Messages[len(gotReq.Messages)-2].Type != llm.PromptContextVariable {
 		t.Fatalf("system prompt: want kuro system, got %q", gotReq.SystemPrompt)
 	}
 	if len(gotReq.Messages) == 0 || gotReq.Messages[len(gotReq.Messages)-1].Content != "原因を調べて" {

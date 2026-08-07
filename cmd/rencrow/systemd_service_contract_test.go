@@ -12,10 +12,11 @@ func TestRenCrowServiceUnitIsPortableProductionDefinition(t *testing.T) {
 	mustContainAll(t, unit, []string{
 		"Description=RenCrow CORE",
 		"StartLimitIntervalSec=0",
-		"WorkingDirectory=%h/.rencrow",
+		"WorkingDirectory=%h/.local/share/rencrow",
 		"ExecStart=%h/.local/bin/rencrow run",
 		"EnvironmentFile=%h/.rencrow/.env",
-		"Environment=RENCROW_CONFIG=%h/.rencrow/config.yaml",
+		"EnvironmentFile=-%h/.rencrow/llm_ops.env",
+		"Environment=RENCROW_CONFIG=%h/.rencrow/config/core.yaml",
 		"Environment=GOTRACEBACK=all",
 		"Restart=always",
 		"RestartSec=5",
@@ -49,11 +50,39 @@ func TestOpsDocsNameServiceUnitSourceOfTruth(t *testing.T) {
 	doc := readRepoText(t, "docs", "09_運用ログ・panic保存仕様.md")
 	mustContainAll(t, doc, []string{
 		"`systemd/user/rencrow.service`",
-		"`WorkingDirectory=%h/.rencrow`",
+		"`WorkingDirectory=%h/.local/share/rencrow`",
 		"`ExecStart=%h/.local/bin/rencrow run`",
-		"`RENCROW_CONFIG=%h/.rencrow/config.yaml`",
+		"`RENCROW_CONFIG=%h/.rencrow/config/core.yaml`",
 		"`StartLimitIntervalSec=0`",
 		"`LogRateLimitIntervalSec=0`",
+	})
+}
+
+func TestInstallEntrypointsCopyRuntimePromptAssets(t *testing.T) {
+	makefile := readRepoText(t, "Makefile")
+	installScript := readRepoText(t, "install.sh")
+	mustContainAll(t, makefile, []string{
+		"mkdir -p $(RENCROW_SHARE_DIR)/prompts",
+		"cp -R prompts/. $(RENCROW_SHARE_DIR)/prompts/",
+	})
+	mustContainAll(t, installScript, []string{
+		"mkdir -p \"${RENCROW_SHARE_DIR}/prompts\"",
+		"cp -R prompts/. \"${RENCROW_SHARE_DIR}/prompts/\"",
+	})
+}
+
+func TestConfigDocsNameCanonicalRuntimeLayout(t *testing.T) {
+	doc := readRepoText(t, "docs", "05_設定リファレンス.md")
+	mustContainAll(t, doc, []string{
+		"`~/.rencrow/config/core.yaml`",
+		"`~/.rencrow/config/llm.json`",
+		"`~/.rencrow/config/stt.json`",
+		"`~/.rencrow/config/tts.json`",
+		"`~/.rencrow/config/vision.yaml`",
+		"`~/.rencrow/config/image.json`",
+		"`~/.rencrow/config/portal.json`",
+		"`~/.rencrow/config/trade/learning-plan.json`",
+		"`~/.config/systemd/user/`",
 	})
 }
 

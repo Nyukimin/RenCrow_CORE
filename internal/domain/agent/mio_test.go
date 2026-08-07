@@ -325,8 +325,7 @@ func TestMioAgentChat_UsesSystemPrompt(t *testing.T) {
 		t.Fatal("expected messages")
 	}
 	if gotMessages[0].Role != "system" ||
-		!strings.HasPrefix(gotMessages[0].Content, "Mio system prompt\n\n現在時刻（JST）: ") ||
-		!strings.HasSuffix(gotMessages[0].Content, " JST") {
+		gotMessages[0].Content != "Mio system prompt" || gotMessages[0].Type != llm.PromptContextCharacter {
 		t.Fatalf("expected system prompt first, got %#v", gotMessages[0])
 	}
 }
@@ -410,8 +409,7 @@ func TestMioAgentChat_UsesFullShiroPromptForShiroChat(t *testing.T) {
 	}
 	if len(gotReq.Messages) == 0 ||
 		gotReq.Messages[0].Role != "system" ||
-		!strings.HasPrefix(gotReq.Messages[0].Content, "Shiro full prompt\n\n現在時刻（JST）: ") ||
-		!strings.HasSuffix(gotReq.Messages[0].Content, " JST") {
+		gotReq.Messages[0].Content != "Shiro full prompt" || gotReq.Messages[0].Type != llm.PromptContextCharacter {
 		t.Fatalf("expected full Shiro prompt first, got %#v", gotReq.Messages)
 	}
 	for _, msg := range gotReq.Messages {
@@ -529,6 +527,11 @@ func TestMioAgent_Chat_WithConversationEngine(t *testing.T) {
 	}
 	if capturedReq.Messages[0].Role != "system" {
 		t.Errorf("msg[0] role: want 'system', got %q", capturedReq.Messages[0].Role)
+	}
+	for _, message := range capturedReq.Messages {
+		if strings.Contains(message.Content, "You are Mio.") {
+			t.Fatalf("RecallPack Persona SystemPrompt was reinjected: %#v", capturedReq.Messages)
+		}
 	}
 }
 

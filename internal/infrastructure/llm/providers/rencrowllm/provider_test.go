@@ -698,39 +698,52 @@ func TestGatewayProviderGenerate_WithSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestConvertMessagesAggregatesSystemMessagesAtHead(t *testing.T) {
+func TestConvertMessagesPreservesTypedPromptContextOrder(t *testing.T) {
 	provider := NewGatewayProvider("test-api-key", "gpt-4")
 
 	got := provider.convertMessages(llm.GenerateRequest{
-		SystemPrompt: "base system",
 		Messages: []llm.Message{
-			{Role: "user", Content: "first user"},
-			{Role: "system", Content: "late system"},
-			{Role: "assistant", Content: "assistant context"},
-			{Role: "system", Content: "another late system"},
-			{Role: "user", Content: "second user"},
+			{Role: "system", Content: "character", Type: llm.PromptContextCharacter, Metadata: map[string]string{"character_prompt_block": "00_system.md"}},
+			{Role: "system", Content: "stable", Type: llm.PromptContextStable},
+			{Role: "system", Content: "recall", Type: llm.PromptContextRecall},
+			{Role: "system", Content: "variable", Type: llm.PromptContextVariable},
+			{Role: "user", Content: "current user", Type: llm.PromptContextUser},
 		},
 	})
 
-	if len(got) != 4 {
-		t.Fatalf("messages length = %d, want 4: %#v", len(got), got)
+	if len(got) != 5 {
+		t.Fatalf("messages length = %d, want 5: %#v", len(got), got)
 	}
-	if got[0]["role"] != "system" {
-		t.Fatalf("first message role = %v, want system: %#v", got[0]["role"], got)
-	}
-	content, _ := got[0]["content"].(string)
-	for _, want := range []string{"base system", "late system", "another late system"} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("aggregated system content missing %q:\n%s", want, content)
+	for index, want := range []string{"character_system_prompt", "stable_runtime_context", "recall_pack", "variable_runtime_context", "user_message"} {
+		if _, exists := got[index]["metadata"]; exists {
+			t.Fatalf("message %d leaked CORE metadata to target payload: %#v", index, got[index])
+		}
+		blocks := promptContextBlockMetadata(llm.GenerateRequest{Messages: []llm.Message{{Type: llm.PromptContextType(want)}}})
+		if len(blocks) != 1 || blocks[0]["type"] != want {
+			t.Fatalf("rencrow prompt block metadata missing type %q: %#v", want, blocks)
 		}
 	}
-	for i := 1; i < len(got); i++ {
-		if got[i]["role"] == "system" {
-			t.Fatalf("message %d should not remain system: %#v", i, got)
+}
+
+func TestConvertChatMessagesKeepsPromptMetadataGatewayOnly(t *testing.T) {
+	provider := NewGatewayProvider("test-api-key", "gpt-4")
+	request := llm.ChatRequest{Messages: []llm.ChatMessage{
+		{Role: "system", Content: "character", Type: llm.PromptContextCharacter, Metadata: map[string]string{"character_prompt_block": "00_system.md"}},
+		{Role: "system", Content: "time", Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "time"}},
+		{Role: "user", Content: "hello", Type: llm.PromptContextUser},
+	}}
+	got := provider.convertChatMessages(request.Messages)
+	if len(got) != 3 {
+		t.Fatalf("chat messages = %d, want 3: %#v", len(got), got)
+	}
+	for index, message := range got {
+		if _, exists := message["metadata"]; exists {
+			t.Fatalf("chat message %d leaked metadata to target: %#v", index, message)
 		}
 	}
-	if got[1]["role"] != "user" || got[2]["role"] != "assistant" || got[3]["role"] != "user" {
-		t.Fatalf("non-system message order changed: %#v", got)
+	blocks := promptContextBlockMetadataFromChat(request)
+	if len(blocks) != 3 || blocks[0]["character_prompt_block"] != "00_system.md" || blocks[1]["type"] != "variable_runtime_context" {
+		t.Fatalf("gateway-only chat metadata = %#v", blocks)
 	}
 }
 

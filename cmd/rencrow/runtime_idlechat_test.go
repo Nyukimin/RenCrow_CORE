@@ -16,6 +16,53 @@ import (
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
+func TestIdleChatCodexWorkingDirPrefersCodexConfig(t *testing.T) {
+	cfg := &config.Config{
+		SelfSourceDir: "/srv/rencrow-assets",
+		Codex: config.CodexConfig{
+			WorkingDir: "/src/RenCrow_CORE",
+		},
+	}
+
+	if got := idleChatCodexWorkingDir(cfg); got != "/src/RenCrow_CORE" {
+		t.Fatalf("working dir = %q, want configured Codex working dir", got)
+	}
+}
+
+func TestIdleChatCodexWorkingDirFallsBackToSelfSourceDir(t *testing.T) {
+	cfg := &config.Config{SelfSourceDir: "/src/RenCrow_CORE"}
+
+	if got := idleChatCodexWorkingDir(cfg); got != "/src/RenCrow_CORE" {
+		t.Fatalf("working dir = %q, want self source fallback", got)
+	}
+}
+
+func TestNewIdleChatCodexRunnerUsesCodexConfig(t *testing.T) {
+	cfg := &config.Config{
+		SelfSourceDir: "/srv/rencrow-assets",
+		Codex: config.CodexConfig{
+			Command:        "/opt/codex/bin/codex",
+			WorkingDir:     "/src/RenCrow_CORE",
+			Sandbox:        "read-only",
+			Model:          "configured-model",
+			TimeoutMS:      42000,
+			MaxPromptBytes: 262144,
+			MaxOutputBytes: 2097152,
+		},
+	}
+
+	runner := newIdleChatCodexRunner(cfg)
+	if runner.Command != cfg.Codex.Command || runner.WorkingDir != cfg.Codex.WorkingDir {
+		t.Fatalf("runner command/working dir = %q/%q", runner.Command, runner.WorkingDir)
+	}
+	if runner.Sandbox != cfg.Codex.Sandbox || runner.Model != cfg.Codex.Model {
+		t.Fatalf("runner sandbox/model = %q/%q", runner.Sandbox, runner.Model)
+	}
+	if runner.Timeout != 42*time.Second || runner.MaxPromptBytes != 262144 || runner.MaxOutputBytes != 2097152 {
+		t.Fatalf("runner limits = timeout:%s prompt:%d output:%d", runner.Timeout, runner.MaxPromptBytes, runner.MaxOutputBytes)
+	}
+}
+
 func TestHandleIdleChatStatusIncludesWordAndForecastStockSnapshots(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
 	data, err := json.Marshal(map[string]any{"stock": map[string]any{

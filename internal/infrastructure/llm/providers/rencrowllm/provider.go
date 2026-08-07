@@ -109,7 +109,7 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	p.addThinkingBridgeFields(gatewayReq, streaming)
 	p.addProviderOptions(gatewayReq, req.ProviderOptions)
 	p.addModelContextOption(gatewayReq)
-	p.addRenCrowExecutionMetadata(ctx, gatewayReq)
+	p.addRenCrowExecutionMetadata(ctx, gatewayReq, promptContextBlockMetadata(req))
 	if err := addResponseFormat(gatewayReq, req.ResponseFormat); err != nil {
 		return llm.GenerateResponse{}, err
 	}
@@ -227,7 +227,7 @@ func (p *GatewayProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Ch
 	}
 	p.addThinkingBridgeFields(gatewayReq, false)
 	p.addModelContextOption(gatewayReq)
-	p.addRenCrowExecutionMetadata(ctx, gatewayReq)
+	p.addRenCrowExecutionMetadata(ctx, gatewayReq, promptContextBlockMetadataFromChat(req))
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]interface{}, 0, len(req.Tools))
 		for _, td := range req.Tools {
@@ -274,15 +274,11 @@ func (p *GatewayProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Ch
 	return p.parseChatResponse(resp.Body)
 }
 
-func (p *GatewayProvider) addRenCrowExecutionMetadata(ctx context.Context, payload map[string]interface{}) {
-	if p.agentID == "" || p.executionRole == "" || p.executionAlias == "" {
-		return
-	}
-	metadata := map[string]any{
-		"agent_id":        p.agentID,
-		"execution_role":  p.executionRole,
-		"execution_alias": p.executionAlias,
-	}
+func (p *GatewayProvider) addRenCrowExecutionMetadata(ctx context.Context, payload map[string]interface{}, blocks []map[string]any) {
+	metadata := map[string]any{}
+	addNonEmptyMetadata(metadata, "agent_id", p.agentID)
+	addNonEmptyMetadata(metadata, "execution_role", p.executionRole)
+	addNonEmptyMetadata(metadata, "execution_alias", p.executionAlias)
 	observationCtx := llm.WithExecutionObservationDefaults(ctx, llm.ExecutionObservation{
 		Initiator: p.agentID,
 		Caller:    "core.unattributed",
@@ -296,7 +292,47 @@ func (p *GatewayProvider) addRenCrowExecutionMetadata(ctx context.Context, paylo
 	addNonEmptyMetadata(metadata, "initiator", observation.Initiator)
 	addNonEmptyMetadata(metadata, "caller", observation.Caller)
 	addNonEmptyMetadata(metadata, "purpose", observation.Purpose)
+	if len(blocks) > 0 {
+		metadata["prompt_context_blocks"] = blocks
+	}
+	if len(metadata) == 0 {
+		return
+	}
 	payload["rencrow"] = metadata
+}
+
+func promptContextBlockMetadataFromChat(request llm.ChatRequest) []map[string]any {
+	blocks := make([]map[string]any, 0, len(request.Messages))
+	for messageIndex, message := range request.Messages {
+		if message.Type == "" && len(message.Metadata) == 0 {
+			continue
+		}
+		block := map[string]any{"message_index": messageIndex, "type": string(message.Type)}
+		for key, value := range message.Metadata {
+			block[key] = value
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks
+}
+
+func promptContextBlockMetadata(request llm.GenerateRequest) []map[string]any {
+	blocks := make([]map[string]any, 0, len(request.Messages))
+	messageIndex := 0
+	if request.SystemPrompt != "" {
+		messageIndex++
+	}
+	for _, message := range request.Messages {
+		if message.Type != "" || len(message.Metadata) > 0 {
+			block := map[string]any{"message_index": messageIndex, "type": string(message.Type)}
+			for key, value := range message.Metadata {
+				block[key] = value
+			}
+			blocks = append(blocks, block)
+		}
+		messageIndex++
+	}
+	return blocks
 }
 
 func addNonEmptyMetadata(metadata map[string]any, key, value string) {

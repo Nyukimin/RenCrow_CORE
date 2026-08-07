@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir=/var/lib/ubuntu-shutdown-audit
+report_dir="$state_dir/reports"
+umask 077
+install -d -m 0750 "$report_dir"
+
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+report="$report_dir/$ts.env"
+previous_id="$(journalctl --list-boots --no-pager 2>/dev/null | awk '$1 == "-1" { print $2; exit }')"
+current_id="$(journalctl --list-boots --no-pager 2>/dev/null | awk '$1 == "0" { print $2; exit }')"
+
+{
+  printf 'report_version=1\n'
+  printf 'observed_at_utc=%s\n' "$ts"
+  printf 'host=%q\n' "$(hostname)"
+  printf 'current_boot_id=%q\n' "$current_id"
+  printf 'previous_boot_id=%q\n' "$previous_id"
+} >"$report"
+
+if [[ -z "$previous_id" ]]; then
+  printf 'classification=evidence_missing\nreason=no_previous_journal_boot\n' >>"$report"
+  exit 0
+fi
+
+previous_log="$(mktemp)"
+trap 'rm -f "$previous_log"' EXIT
+journalctl -b -1 --no-pager 2>/dev/null >"$previous_log" || true
+
+has_poweroff=0
+has_reboot=0
+has_shutdown=0
+grep -Eq 'Reached target System Power Off|Finished System Power Off' "$previous_log" && has_poweroff=1 || true
+grep -Eq 'Reached target System Reboot|Finished System Reboot' "$previous_log" && has_reboot=1 || true
+grep -Eq 'systemd-shutdown\[[0-9]+\]:|Journal stopped' "$previous_log" && has_shutdown=1 || true
+
+if [[ "$has_shutdown" -eq 1 && ( "$has_poweroff" -eq 1 || "$has_reboot" -eq 1 ) ]]; then
+  classification=normal_shutdown
+else
+  classification=unexpected_termination
+fi
+printf 'classification=%s\n' "$classification" >>"$report"
+printf 'has_poweroff_marker=%s\n' "$has_poweroff" >>"$report"
+printf 'has_reboot_marker=%s\n' "$has_reboot" >>"$report"
+printf 'has_shutdown_marker=%s\n' "$has_shutdown" >>"$report"
+printf 'previous_last_line=%q\n' "$(tail -n 1 "$previous_log")" >>"$report"
+
+flags="$report_dir/$ts.kernel.log"
+grep -Ei 'thermal|temperature|overheat|critical|watchdog|oom|out of memory|panic|mce|hardware error|edac|gpu|i915|amdgpu|nvidia|nvme|ata[0-9].*(error|failed|timeout)|I/O error|ext4-fs error' "$previous_log" | tail -n 200 >"$flags" || :
+chmod 0600 "$report" "$flags"
+printf 'kernel_evidence=%q\n' "$flags" >>"$report"

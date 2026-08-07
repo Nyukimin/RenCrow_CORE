@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>RenCrow Live</title>
 <link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-midori-image-chat">
-<link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260806-prompt-debug-colors">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260806-prompt-logs-panel">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/prompt-logs.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20260728-image-mvp">
@@ -55,6 +56,7 @@
 	  <option value="x-bookmarks">X Bookmark</option>
       <option value="investment">Investment</option>
       <option value="idlechat">IdleChat</option>
+      <option value="prompt-logs">Character Latest Prompt</option>
       <option value="ops">Ops</option>
       <option value="games">Games</option>
       <option value="overview">Overview</option>
@@ -81,6 +83,7 @@
 	<a class="tab-btn tab-link" href="/viewer/x-bookmarks">X Bookmark</a>
     <button class="tab-btn" data-tab="investment">Investment</button>
     <button class="tab-btn" data-tab="idlechat">IdleChat</button>
+    <button class="tab-btn" data-tab="prompt-logs">Character Latest Prompt</button>
     <button class="tab-btn" data-tab="ops">Ops</button>
     <button class="tab-btn" data-tab="games">Games</button>
     <button class="tab-btn" data-tab="overview">Overview</button>
@@ -409,6 +412,48 @@
     </div>
   </section>
 
+  <section id="panel-prompt-logs" class="panel prompt-logs-panel">
+    <header class="prompt-logs-head">
+      <div>
+        <div class="ops-kicker">LLM / Prompt Inspector</div>
+        <h2>Character Latest Prompt</h2>
+        <p>キャラクターごとの最新対話1対を保持し、内部Worker呼び出しとは分離して表示します。</p>
+      </div>
+    </header>
+    <section class="prompt-debug-panel" aria-labelledby="promptDebugTitle">
+      <div class="ops-section-title">
+        <span id="promptDebugTitle">Character Latest Prompt</span>
+        <small>Mio / Shiro / Kuro / Midori の最新対話1対</small>
+      </div>
+      <div class="prompt-debug-toolbar">
+        <button id="promptDebugRefreshBtn" type="button" class="ctl-btn">Promptログ更新</button>
+        <span id="promptDebugStatus" class="small" aria-live="polite">未取得</span>
+      </div>
+      <div class="prompt-debug-legend" aria-label="Prompt log color legend">
+        <span class="prompt-legend-label">SystemPrompt</span>
+        <span class="prompt-legend-block prompt-block-00">00</span>
+        <span class="prompt-legend-block prompt-block-10">10</span>
+        <span class="prompt-legend-block prompt-block-20">20</span>
+        <span class="prompt-legend-label">経過時間</span>
+        <span class="prompt-legend-age age-recent">5分以内</span>
+        <span class="prompt-legend-age age-hour">1時間以内</span>
+        <span class="prompt-legend-age age-day">24時間以内</span>
+        <span class="prompt-legend-age age-old">それ以前</span>
+        <span class="prompt-legend-label">レベル</span>
+        <span class="prompt-legend-level level-debug">debug</span>
+        <span class="prompt-legend-level level-info">info</span>
+        <span class="prompt-legend-level level-warn">warn</span>
+        <span class="prompt-legend-level level-error">error</span>
+      </div>
+      <div id="promptDebugCharacterList" class="prompt-debug-list prompt-debug-character-list" aria-live="polite" aria-busy="false"></div>
+      <details class="prompt-debug-internal-details">
+        <summary>Internal / Worker Raw Details</summary>
+        <div class="small prompt-debug-internal-copy"><code>execution_role=worker</code>など、内部処理・再呼び出しをキャラクター最新ログから分離しています。</div>
+        <div id="promptDebugInternalList" class="prompt-debug-list" aria-live="polite" aria-busy="false"></div>
+      </details>
+    </section>
+  </section>
+
   <section id="panel-ops" class="panel ops-panel">
     <div class="ops-cockpit">
       <header class="ops-hero">
@@ -656,33 +701,6 @@
           <tbody id="opsFeedBody"></tbody>
         </table>
       </div>
-      <section class="prompt-debug-panel" aria-labelledby="promptDebugTitle">
-        <div class="ops-section-title">
-          <span id="promptDebugTitle">LLM Prompt Boundary</span>
-          <small>受信 → 実体送信 / SystemPrompt 10行ブロック</small>
-        </div>
-        <div class="prompt-debug-toolbar">
-          <button id="promptDebugRefreshBtn" type="button" class="ctl-btn">Promptログ更新</button>
-          <span id="promptDebugStatus" class="small" aria-live="polite">未取得</span>
-        </div>
-        <div class="prompt-debug-legend" aria-label="Prompt log color legend">
-          <span class="prompt-legend-label">SystemPrompt</span>
-          <span class="prompt-legend-block prompt-block-00">00</span>
-          <span class="prompt-legend-block prompt-block-10">10</span>
-          <span class="prompt-legend-block prompt-block-20">20</span>
-          <span class="prompt-legend-label">経過時間</span>
-          <span class="prompt-legend-age age-recent">5分以内</span>
-          <span class="prompt-legend-age age-hour">1時間以内</span>
-          <span class="prompt-legend-age age-day">24時間以内</span>
-          <span class="prompt-legend-age age-old">それ以前</span>
-          <span class="prompt-legend-label">レベル</span>
-          <span class="prompt-legend-level level-debug">debug</span>
-          <span class="prompt-legend-level level-info">info</span>
-          <span class="prompt-legend-level level-warn">warn</span>
-          <span class="prompt-legend-level level-error">error</span>
-        </div>
-        <div id="promptDebugList" class="prompt-debug-list" aria-live="polite" aria-busy="false"></div>
-      </section>
         </div>
       </details>
     </div>
@@ -1599,7 +1617,8 @@
 <div class="toast" id="toast"></div>
 
 
-<script src="/viewer/assets/js/tabs/ops.js?v=20260806-prompt-debug-colors" defer></script>
+<script src="/viewer/assets/js/tabs/prompt-logs.js?v=20260806-prompt-logs-panel" defer></script>
+<script src="/viewer/assets/js/tabs/ops.js?v=20260806-prompt-logs-panel" defer></script>
 <script src="/viewer/assets/js/tabs/to-be-ops.js?v=20260714-to-be-summary" defer></script>
 <script src="/viewer/assets/js/tabs/home.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/develop.js?v=20260517-desk-regenerated" defer></script>
@@ -1622,7 +1641,7 @@
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
 <script src="/viewer/assets/js/tabs/image.js?v=20260728-image-mvp" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
-<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-debug-colors" defer></script>
+<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel" defer></script>
 <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
 </body>
 </html>

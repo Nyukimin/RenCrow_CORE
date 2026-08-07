@@ -23,8 +23,12 @@
 - 標準Go配布、Ubuntu／Windows／macOS共通契約、外部system、optional sidecar、
   Python／Node.js依存、CUDA用WSLの扱いは
   [アーキテクチャ概要の「標準Go配布境界」](04_アーキテクチャ概要.md#標準go配布境界)を正本とします。
+- Character SystemPrompt、Stable RuntimeContext、RecallPack、Variable RuntimeContext、
+  User Messageの責務、順序、AI使用境界、KVキャッシュ、Viewer表示、必須検証は
+  [アーキテクチャ概要の「Prompt Context Assembly」](04_アーキテクチャ概要.md#prompt-context-assembly)を
+  唯一の現行正本とし、実装、ログ、test、兄弟moduleのdocsで別構造を再定義しません。
 - 実装、production wiring、test、config は現在状態を確認する証拠です。正本と差異が見つかった場合は事実を照合し、採用する契約をこの正本へ反映してから実装を合わせます。
 - 実装済み、未実装、deployment依存を区別します。
 - 現行正本に必要な情報が不足している場合は、該当する `01` から `10` の文書を更新します。別の正本ディレクトリ、版付き正本、補助正本を追加しません。
 
-最終整理日: 2026-08-05
+最終整理日: 2026-08-07

@@ -43,16 +43,15 @@ func TestDateTimeProviderKeepsStableGeneratePrefix(t *testing.T) {
 	}
 
 	got := inner.generateRequest.Messages
-	if len(got) != len(original) {
-		t.Fatalf("message count changed: got %d want %d", len(got), len(original))
+	if len(got) != len(original)+1 {
+		t.Fatalf("message count: got %d want %d", len(got), len(original)+1)
 	}
 	if got[0].Role != original[0].Role || got[0].Content != original[0].Content ||
 		got[1].Role != original[1].Role || got[1].Content != original[1].Content {
 		t.Fatalf("stable prompt prefix changed: got %#v", got[:2])
 	}
-	if !strings.Contains(got[2].Content, "現在時刻（JST）: 2026-07-24 22:45:12 JST") ||
-		!strings.Contains(got[2].Content, original[2].Content) {
-		t.Fatalf("latest user message must retain content and receive datetime: %q", got[2].Content)
+	if got[2].Type != domainllm.PromptContextVariable || !strings.Contains(got[2].Content, "現在時刻（JST）: 2026-07-24 22:45:12 JST") || got[3].Content != original[2].Content {
+		t.Fatalf("time and user message must remain separate: %#v", got[2:])
 	}
 }
 
@@ -73,16 +72,15 @@ func TestDateTimeProviderKeepsStableChatPrefix(t *testing.T) {
 	}
 
 	got := inner.chatRequest.Messages
-	if len(got) != len(original) {
-		t.Fatalf("message count changed: got %d want %d", len(got), len(original))
+	if len(got) != len(original)+1 {
+		t.Fatalf("message count: got %d want %d", len(got), len(original)+1)
 	}
 	if got[0].Role != original[0].Role || got[0].Content != original[0].Content ||
 		got[1].Role != original[1].Role || got[1].Content != original[1].Content {
 		t.Fatalf("stable chat prefix changed: got %#v", got[:2])
 	}
-	if !strings.Contains(got[2].Content, "現在時刻（JST）: 2026-07-24 22:45:12 JST") ||
-		!strings.Contains(got[2].Content, original[2].Content) {
-		t.Fatalf("latest user message must retain content and receive datetime: %q", got[2].Content)
+	if got[2].Type != domainllm.PromptContextVariable || !strings.Contains(got[2].Content, "現在時刻（JST）: 2026-07-24 22:45:12 JST") || got[3].Content != original[2].Content {
+		t.Fatalf("time and user message must remain separate: %#v", got[2:])
 	}
 }
 

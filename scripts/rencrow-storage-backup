@@ -8,7 +8,7 @@ if [[ ${mode} != config && ${mode} != check && ${mode} != run ]]; then
   exit 2
 fi
 
-config_file=${RENCROW_CONFIG:-/home/nyukimi/.rencrow/config.yaml}
+config_file=${RENCROW_CONFIG:-${HOME}/.rencrow/config/core.yaml}
 rencrow_binary=${RENCROW_BINARY:-/home/nyukimi/.local/bin/rencrow}
 restore_checker=${RENCROW_RESTORE_CHECKER:-/home/nyukimi/.local/bin/rencrow-storage-restore-check}
 if [[ ! -f ${config_file} ]]; then

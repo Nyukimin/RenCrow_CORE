@@ -54,11 +54,33 @@ func TestLoadCharacterBundlesFromDirSupportsRepoAndWorkspaceRoots(t *testing.T) 
 	for _, bundle := range bundles {
 		got[bundle.Name] = bundle.Content
 	}
-	if got["mio"] != "repo mio" {
+	if !strings.Contains(got["mio"], "repo mio 00_system.md") {
 		t.Fatalf("repo-style characters root was not loaded: %#v", got)
 	}
-	if got["shiro"] != "workspace shiro" {
+	if !strings.Contains(got["shiro"], "workspace shiro 00_system.md") {
 		t.Fatalf("workspace-style prompts/characters root was not loaded: %#v", got)
+	}
+}
+
+func TestReadCharacterBundleRejectsNonCanonicalManifest(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		manifest string
+	}{
+		{name: "missing", manifest: "00_system.md\n10_policy.md\n20_scope.md\n"},
+		{name: "duplicate", manifest: "00_system.md\n10_policy.md\n20_scope.md\n20_scope.md\n"},
+		{name: "reordered", manifest: "10_policy.md\n00_system.md\n20_scope.md\n30_knowledge.md\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, "manifest.txt", tc.manifest)
+			for _, name := range CharacterManifest {
+				writeFile(t, dir, name, name+" content")
+			}
+			if content, ok := ReadCharacterBundle(dir); ok {
+				t.Fatalf("invalid character manifest loaded: %q", content)
+			}
+		})
 	}
 }
 
@@ -67,8 +89,10 @@ func writeBundle(t *testing.T, dir, content string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir bundle: %v", err)
 	}
-	writeFile(t, dir, "manifest.txt", "00_system.md\n")
-	writeFile(t, dir, "00_system.md", content)
+	writeFile(t, dir, "manifest.txt", strings.Join(CharacterManifest, "\n")+"\n")
+	for _, name := range CharacterManifest {
+		writeFile(t, dir, name, content+" "+name)
+	}
 }
 
 func writeFile(t *testing.T, dir, name, content string) {

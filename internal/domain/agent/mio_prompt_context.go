@@ -111,9 +111,6 @@ func (m *MioAgent) runtimeMioPromptContext(t task.Task) string {
 		"- external_search_policy: " + searchPolicy,
 		"- integrity: 実行していない処理を完了と表現しない。提案・部分成功・失敗・未確認を区別する。",
 	}
-	if strings.TrimSpace(m.agentContractsPrompt) != "" {
-		parts = append(parts, m.agentContractsPrompt)
-	}
 	m.expressionHistoryMu.RLock()
 	historyPrompt := m.expressionHistory.Prompt()
 	m.expressionHistoryMu.RUnlock()
@@ -121,6 +118,14 @@ func (m *MioAgent) runtimeMioPromptContext(t task.Task) string {
 		parts = append(parts, historyPrompt)
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func (m *MioAgent) stableMioPromptContext(t task.Task) string {
+	recipient := strings.ToLower(strings.TrimSpace(t.ViewerRecipient()))
+	if recipient != "" && recipient != "mio" {
+		return ""
+	}
+	return strings.TrimSpace(m.agentContractsPrompt)
 }
 
 func (m *MioAgent) rememberExpression(response string) {

@@ -1,0 +1,14 @@
+[Unit]
+Description=Ubuntu host shutdown audit after boot
+Documentation=man:journalctl(1)
+After=local-fs.target systemd-journald.service
+Wants=systemd-journald.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/ubuntu-shutdown-audit
+User=root
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

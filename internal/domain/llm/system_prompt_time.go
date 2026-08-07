@@ -29,25 +29,38 @@ func AppendNowJST(prompt string) string {
 	return AppendCurrentJSTTime(prompt, time.Now())
 }
 
-// WithCurrentJSTTime appends JST time to the canonical system prompt without
-// mutating the caller's message slice.
+// WithCurrentJSTTime adds JST time as Variable RuntimeContext without mutating
+// the fixed Character SystemPrompt or the caller's message slice.
 func WithCurrentJSTTime(req GenerateRequest, now time.Time) GenerateRequest {
-	if strings.TrimSpace(req.SystemPrompt) != "" {
-		req.SystemPrompt = AppendCurrentJSTTime(req.SystemPrompt, now)
-		return req
+	for _, message := range req.Messages {
+		if message.Type == PromptContextVariable && strings.Contains(message.Content, CurrentJSTTimePrefix) {
+			return req
+		}
 	}
-
-	for i, message := range req.Messages {
-		if strings.EqualFold(strings.TrimSpace(message.Role), "system") {
-			req.Messages = append([]Message(nil), req.Messages...)
-			req.Messages[i].Content = AppendCurrentJSTTime(message.Content, now)
+	timeMessage := Message{
+		Role:    "system",
+		Content: AppendCurrentJSTTime("", now),
+		Type:    PromptContextVariable,
+		Metadata: map[string]string{
+			"runtime_context_kind": "time",
+		},
+	}
+	insertAt := len(req.Messages)
+	for index := len(req.Messages) - 1; index >= 0; index-- {
+		if req.Messages[index].Type == PromptContextUser || strings.EqualFold(strings.TrimSpace(req.Messages[index].Role), "user") {
+			insertAt = index
 			break
 		}
 	}
+	result := make([]Message, 0, len(req.Messages)+1)
+	result = append(result, req.Messages[:insertAt]...)
+	result = append(result, timeMessage)
+	result = append(result, req.Messages[insertAt:]...)
+	req.Messages = result
 	return req
 }
 
-// WithCurrentJSTTimeNow appends the current JST time to the canonical system prompt.
+// WithCurrentJSTTimeNow adds current JST time as Variable RuntimeContext.
 func WithCurrentJSTTimeNow(req GenerateRequest) GenerateRequest {
 	return WithCurrentJSTTime(req, time.Now())
 }

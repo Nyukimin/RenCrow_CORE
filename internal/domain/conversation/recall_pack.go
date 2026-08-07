@@ -122,72 +122,77 @@ func (rp *RecallPack) HasContext() bool {
 		len(rp.RelationSnippets) > 0
 }
 
-// ToPromptMessages は RecallPack を llm.Message のスライスに変換
+// ToPromptMessages は RecallPack の記憶だけを llm.Message のスライスに変換する。
+// 保存済み Persona は監査用 snapshot であり、現在の人格として再注入しない。
 // userMessage は含めない（呼び出し側で追加する）
 func (rp *RecallPack) ToPromptMessages() []llm.Message {
 	var messages []llm.Message
 
-	// 1. システムプロンプト（Persona + UserProfile）
-	systemPrompt := rp.Persona.SystemPrompt
+	// 1. 確定済み UserProfile
+	systemPrompt := ""
 	if profileText := rp.UserProfile.ToPromptText(); profileText != "" {
-		systemPrompt += "\n\n" + profileText
+		systemPrompt = profileText
 	}
 	if systemPrompt != "" {
 		messages = append(messages, llm.Message{
-			Role:    "system",
-			Content: systemPrompt,
+			Role:     "system",
+			Content:  systemPrompt,
+			Type:     llm.PromptContextRecall,
+			Metadata: map[string]string{"recall_section": "user_profile"},
 		})
 	}
 
-	// 2. 過去文脈（L2中期記憶 + L3長期記憶 + KB）
-	contextText := ""
+	appendRecall := func(section, text string) {
+		if strings.TrimSpace(text) == "" {
+			return
+		}
+		messages = append(messages, llm.Message{Role: "system", Content: text, Type: llm.PromptContextRecall, Metadata: map[string]string{"recall_section": section}})
+	}
+
 	if strings.TrimSpace(rp.RollingSummary) != "" {
-		contextText += "【L0 現在会話 / rolling summary】\n"
-		contextText += "- " + strings.TrimSpace(rp.RollingSummary) + "\n"
+		appendRecall("l0", "【L0 現在会話 / rolling summary】\n- "+strings.TrimSpace(rp.RollingSummary)+"\n")
 	}
 	if len(rp.MidSummaries) > 0 {
-		contextText += "【L2 中期記憶 / 過去の会話から思い出したこと】\n"
+		contextText := "【L2 中期記憶 / 過去の会話から思い出したこと】\n"
 		for _, s := range rp.MidSummaries {
 			contextText += "- " + s.Summary + "\n"
 		}
+		appendRecall("l2", contextText)
 	}
 	if len(rp.LongFacts) > 0 {
-		contextText += "【L3 長期記憶 / 過去の会話から思い出したこと】\n"
+		contextText := "【L3 長期記憶 / 過去の会話から思い出したこと】\n"
 		for _, f := range rp.LongFacts {
 			contextText += "- " + f + "\n"
 		}
+		appendRecall("l3", contextText)
 	}
+	knowledgeText := ""
 	if len(rp.KBSnippets) > 0 {
-		contextText += "【Knowledge DB / 参考知識】\n"
+		knowledgeText += "【Knowledge DB / 参考知識】\n"
 		for _, kb := range rp.KBSnippets {
-			contextText += kb + "\n"
+			knowledgeText += kb + "\n"
 		}
 	}
 	if len(rp.WikiSnippets) > 0 {
-		contextText += "【RenCrow Knowledge Wiki / 仕様地図】\n"
+		knowledgeText += "【RenCrow Knowledge Wiki / 仕様地図】\n"
 		for _, wiki := range rp.WikiSnippets {
-			contextText += "- " + wiki.ToPromptText() + "\n"
+			knowledgeText += "- " + wiki.ToPromptText() + "\n"
 		}
 	}
 	if len(rp.SearchCacheSnippets) > 0 {
-		contextText += "【L1 Search Cache / 検索キャッシュ】\n"
+		contextText := "【L1 Search Cache / 検索キャッシュ】\n"
 		for _, cache := range rp.SearchCacheSnippets {
 			contextText += "- " + cache.ToPromptText() + "\n"
 		}
+		appendRecall("l1", contextText)
 	}
 	if len(rp.RelationSnippets) > 0 {
-		contextText += "【Knowledge Relation / 関連知識】\n"
+		knowledgeText += "【Knowledge Relation / 関連知識】\n"
 		for _, relation := range rp.RelationSnippets {
-			contextText += "- " + relation.ToPromptText() + "\n"
+			knowledgeText += "- " + relation.ToPromptText() + "\n"
 		}
 	}
-	if contextText != "" {
-		messages = append(messages, llm.Message{
-			Role:    "system",
-			Content: contextText,
-		})
-	}
-
+	appendRecall("knowledge", knowledgeText)
 	// 3. 直近の会話履歴（ShortContext）
 	for _, msg := range rp.ShortContext {
 		role := "user"
@@ -204,12 +209,22 @@ func (rp *RecallPack) ToPromptMessages() []llm.Message {
 			}
 		}
 		messages = append(messages, llm.Message{
-			Role:    role,
-			Content: content,
+			Role:     role,
+			Content:  content,
+			Type:     llm.PromptContextRecall,
+			Metadata: map[string]string{"recall_section": "l0"},
 		})
 	}
+	ordered := make([]llm.Message, 0, len(messages))
+	for _, section := range []string{"l0", "l1", "l2", "l3", "user_profile", "knowledge"} {
+		for _, message := range messages {
+			if message.Metadata["recall_section"] == section {
+				ordered = append(ordered, message)
+			}
+		}
+	}
 
-	return messages
+	return ordered
 }
 
 func (rp *RecallPack) ApplyRecallBudget(maxContextTokens int, ratio float64) RecallPack {

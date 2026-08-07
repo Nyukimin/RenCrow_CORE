@@ -28,12 +28,11 @@ func TestWildAgentGenerateUsesWildPromptAndStripsCommand(t *testing.T) {
 	if resp != "vivid prompt" {
 		t.Fatalf("response should be trimmed, got %q", resp)
 	}
-	if !strings.HasPrefix(captured.SystemPrompt, "creative system\n\n現在時刻（JST）: ") ||
-		!strings.HasSuffix(captured.SystemPrompt, " JST") {
+	if captured.SystemPrompt != "creative system" || len(captured.Messages) < 2 || captured.Messages[len(captured.Messages)-2].Type != llm.PromptContextVariable {
 		t.Fatalf("SystemPrompt: want custom prompt, got %q", captured.SystemPrompt)
 	}
-	if len(captured.Messages) != 1 || captured.Messages[0].Role != "user" {
-		t.Fatalf("expected one user message, got %#v", captured.Messages)
+	if captured.Messages[len(captured.Messages)-1].Role != "user" {
+		t.Fatalf("expected final user message, got %#v", captured.Messages)
 	}
 	if strings.Contains(captured.Messages[0].Content, "/wild") {
 		t.Fatalf("wild command should be stripped, got %q", captured.Messages[0].Content)

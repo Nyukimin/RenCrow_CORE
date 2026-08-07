@@ -80,14 +80,8 @@ func TestRecallPack_ToPromptMessages_PersonaOnly(t *testing.T) {
 		Persona: PersonaState{SystemPrompt: "You are Mio."},
 	}
 	msgs := rp.ToPromptMessages()
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 message (system prompt), got %d", len(msgs))
-	}
-	if msgs[0].Role != "system" {
-		t.Errorf("expected role 'system', got %q", msgs[0].Role)
-	}
-	if msgs[0].Content != "You are Mio." {
-		t.Errorf("expected content 'You are Mio.', got %q", msgs[0].Content)
+	if len(msgs) != 0 {
+		t.Fatalf("stored persona must not be injected, got %#v", msgs)
 	}
 }
 
@@ -106,9 +100,8 @@ func TestRecallPack_ToPromptMessages_WithUserProfile(t *testing.T) {
 	if msgs[0].Role != "system" {
 		t.Errorf("expected role 'system', got %q", msgs[0].Role)
 	}
-	// SystemPrompt + UserProfile
-	if !contains(msgs[0].Content, "You are Mio.") {
-		t.Error("system prompt should contain persona")
+	if contains(msgs[0].Content, "You are Mio.") {
+		t.Error("stored persona must not be injected")
 	}
 	if !contains(msgs[0].Content, "lang: Go") {
 		t.Error("system prompt should contain user profile preferences")
@@ -298,42 +291,24 @@ func TestRecallPack_ToPromptMessages_FullPack(t *testing.T) {
 		},
 	}
 	msgs := rp.ToPromptMessages()
-	// Expected: system(persona+profile), system(context), user(shortcontext)
-	if len(msgs) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	// Expected: system(profile), system(context), user(shortcontext)
+	if len(msgs) != 6 {
+		t.Fatalf("expected 6 typed recall messages, got %d: %#v", len(msgs), msgs)
 	}
-	// First: persona system prompt
-	if msgs[0].Role != "system" {
-		t.Errorf("msg[0] role: want 'system', got %q", msgs[0].Role)
+	// Confirmed user profile is kept after L3 and before Knowledge.
+	if msgs[4].Role != "system" {
+		t.Errorf("msg[4] role: want 'system', got %q", msgs[4].Role)
 	}
-	if !contains(msgs[0].Content, "You are Mio.") {
-		t.Error("msg[0] should contain persona")
+	if contains(msgs[4].Content, "You are Mio.") {
+		t.Error("msg[4] must not contain stored persona")
 	}
-	if !contains(msgs[0].Content, "theme: dark") {
-		t.Error("msg[0] should contain user profile")
+	if !contains(msgs[4].Content, "theme: dark") {
+		t.Error("msg[4] should contain user profile")
 	}
-	// Second: context block
-	if msgs[1].Role != "system" {
-		t.Errorf("msg[1] role: want 'system', got %q", msgs[1].Role)
-	}
-	if !contains(msgs[1].Content, "Past topic") {
-		t.Error("msg[1] should contain mid summary")
-	}
-	if !contains(msgs[1].Content, "Long fact") {
-		t.Error("msg[1] should contain long fact")
-	}
-	if !contains(msgs[1].Content, "KB info") {
-		t.Error("msg[1] should contain KB snippet")
-	}
-	if !contains(msgs[1].Content, "cached topic") {
-		t.Error("msg[1] should contain search cache snippet")
-	}
-	// Third: short context
-	if msgs[2].Role != "user" {
-		t.Errorf("msg[2] role: want 'user', got %q", msgs[2].Role)
-	}
-	if msgs[2].Content != "recent msg" {
-		t.Errorf("msg[2] content: want 'recent msg', got %q", msgs[2].Content)
+	for index, section := range []string{"l0", "l1", "l2", "l3", "user_profile", "knowledge"} {
+		if msgs[index].Metadata["recall_section"] != section {
+			t.Fatalf("msg[%d] recall section = %q, want %q", index, msgs[index].Metadata["recall_section"], section)
+		}
 	}
 }
 
@@ -343,8 +318,8 @@ func TestRecallPack_ToPromptMessages_MidAndLongMergedInSameBlock(t *testing.T) {
 		LongFacts:    []string{"long1"},
 	}
 	msgs := rp.ToPromptMessages()
-	if len(msgs) != 1 {
-		t.Fatalf("expected 1 context message, got %d", len(msgs))
+	if len(msgs) != 2 {
+		t.Fatalf("expected separate L2/L3 messages, got %d", len(msgs))
 	}
 	// Both mid summaries and long facts under same header
 	if !contains(msgs[0].Content, "過去の会話から思い出したこと") {
@@ -353,13 +328,13 @@ func TestRecallPack_ToPromptMessages_MidAndLongMergedInSameBlock(t *testing.T) {
 	if !contains(msgs[0].Content, "L2 中期記憶") {
 		t.Error("should contain L2 layer label")
 	}
-	if !contains(msgs[0].Content, "L3 長期記憶") {
+	if !contains(msgs[1].Content, "L3 長期記憶") {
 		t.Error("should contain L3 layer label")
 	}
 	if !contains(msgs[0].Content, "mid1") {
 		t.Error("should contain mid summary")
 	}
-	if !contains(msgs[0].Content, "long1") {
+	if !contains(msgs[1].Content, "long1") {
 		t.Error("should contain long fact")
 	}
 }

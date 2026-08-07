@@ -4,10 +4,24 @@ import "context"
 
 // Message はLLMメッセージを表す
 type Message struct {
-	Role    string // "user", "assistant", "system"
-	Content string
-	Parts   []MessagePart
+	Role     string // "user", "assistant", "system"
+	Content  string
+	Parts    []MessagePart
+	Type     PromptContextType
+	Metadata map[string]string
 }
+
+// PromptContextType identifies a prompt block by responsibility rather than
+// by its position in the final message list.
+type PromptContextType string
+
+const (
+	PromptContextCharacter PromptContextType = "character_system_prompt"
+	PromptContextStable    PromptContextType = "stable_runtime_context"
+	PromptContextRecall    PromptContextType = "recall_pack"
+	PromptContextVariable  PromptContextType = "variable_runtime_context"
+	PromptContextUser      PromptContextType = "user_message"
+)
 
 // MessagePartType identifies a multimodal message part.
 type MessagePartType string
@@ -80,6 +94,8 @@ type ChatMessage struct {
 	Content    string
 	ToolCalls  []ToolCall // role="assistant" 時のツール呼び出し
 	ToolCallID string     // role="tool" 時の対応ID
+	Type       PromptContextType
+	Metadata   map[string]string
 }
 
 // ToolCall はLLMが返すツール呼び出し

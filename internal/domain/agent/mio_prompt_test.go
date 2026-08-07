@@ -45,6 +45,24 @@ func TestMioAgentChatInjectsRuntimePromptContext(t *testing.T) {
 			t.Fatalf("runtime prompt missing %q:\n%s", want, joined)
 		}
 	}
+	lastRank := -1
+	ranks := map[llm.PromptContextType]int{
+		llm.PromptContextCharacter: 0,
+		llm.PromptContextStable:    1,
+		llm.PromptContextRecall:    2,
+		llm.PromptContextVariable:  3,
+		llm.PromptContextUser:      4,
+	}
+	for index, message := range captured.Messages {
+		rank, ok := ranks[message.Type]
+		if !ok {
+			t.Fatalf("message %d lacks prompt context type: %#v", index, message)
+		}
+		if rank < lastRank {
+			t.Fatalf("prompt context order regressed at %d: %#v", index, captured.Messages)
+		}
+		lastRank = rank
+	}
 }
 
 func TestMioAgentChatRemembersExpressionHistoryForNextTurn(t *testing.T) {

@@ -77,28 +77,46 @@ func chatRequestHasCurrentJSTTime(req domainllm.ChatRequest) bool {
 
 func injectGenerateDateTime(messages []domainllm.Message, instruction string) []domainllm.Message {
 	result := append([]domainllm.Message(nil), messages...)
+	insertAt := len(result)
 	for i := len(result) - 1; i >= 0; i-- {
-		if result[i].Role != "user" {
-			continue
+		if result[i].Type == domainllm.PromptContextUser || result[i].Role == "user" {
+			insertAt = i
+			break
 		}
-		if len(result[i].Parts) > 0 {
-			result[i].Parts = append([]domainllm.MessagePart(nil), result[i].Parts...)
-			result[i].Parts = append([]domainllm.MessagePart{{Type: domainllm.MessagePartText, Text: instruction}}, result[i].Parts...)
-		} else {
-			result[i].Content = instruction + "\n\n" + result[i].Content
-		}
-		return result
 	}
-	return append(result, domainllm.Message{Role: "user", Content: instruction})
+	timeMessage := domainllm.Message{
+		Role:    "system",
+		Content: instruction,
+		Type:    domainllm.PromptContextVariable,
+		Metadata: map[string]string{
+			"runtime_context_kind": "time",
+		},
+	}
+	result = append(result, domainllm.Message{})
+	copy(result[insertAt+1:], result[insertAt:])
+	result[insertAt] = timeMessage
+	return result
 }
 
 func injectChatDateTime(messages []domainllm.ChatMessage, instruction string) []domainllm.ChatMessage {
 	result := append([]domainllm.ChatMessage(nil), messages...)
+	insertAt := len(result)
 	for i := len(result) - 1; i >= 0; i-- {
-		if result[i].Role == "user" {
-			result[i].Content = instruction + "\n\n" + result[i].Content
-			return result
+		if result[i].Type == domainllm.PromptContextUser || result[i].Role == "user" {
+			insertAt = i
+			break
 		}
 	}
-	return append(result, domainllm.ChatMessage{Role: "user", Content: instruction})
+	timeMessage := domainllm.ChatMessage{
+		Role:    "system",
+		Content: instruction,
+		Type:    domainllm.PromptContextVariable,
+		Metadata: map[string]string{
+			"runtime_context_kind": "time",
+		},
+	}
+	result = append(result, domainllm.ChatMessage{})
+	copy(result[insertAt+1:], result[insertAt:])
+	result[insertAt] = timeMessage
+	return result
 }

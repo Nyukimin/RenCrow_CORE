@@ -17,7 +17,7 @@ func TestLoadPromptsLoadsCharacterBundlesFromWorkspace(t *testing.T) {
 	writeCharacterBundle(t, workspaceDir, "mio", map[string]string{
 		"00_system.md":    "mio system",
 		"10_policy.md":    "mio policy",
-		"20_routing.md":   "mio routing",
+		"20_scope.md":     "mio routing",
 		"30_knowledge.md": "mio knowledge",
 	})
 	writeCharacterBundle(t, workspaceDir, "shiro", map[string]string{
@@ -239,14 +239,17 @@ func writeCharacterBundleAtRoot(t *testing.T, root, name string, files map[strin
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir character bundle: %v", err)
 	}
-	manifest := make([]string, 0, len(files))
-	for filename, content := range files {
+	canonical := []string{"00_system.md", "10_policy.md", "20_scope.md", "30_knowledge.md"}
+	for _, filename := range canonical {
+		content := files[filename]
+		if content == "" {
+			content = name + " " + filename
+		}
 		if err := os.WriteFile(filepath.Join(dir, filename), []byte(content), 0o644); err != nil {
 			t.Fatalf("write %s: %v", filename, err)
 		}
-		manifest = append(manifest, filename)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "manifest.txt"), []byte(strings.Join(manifest, "\n")), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "manifest.txt"), []byte(strings.Join(canonical, "\n")), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 }

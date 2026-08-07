@@ -654,19 +654,27 @@ func TestViewerStaticContractGameBridgeOpsCard(t *testing.T) {
 			t.Fatalf("viewer.js missing Games tab wiring: %s", required)
 		}
 	}
-	if !strings.Contains(page, "ops.js?v=20260806-prompt-debug-colors") {
+	if !strings.Contains(page, "ops.js?v=20260806-prompt-logs-panel") {
 		t.Fatal("viewer.html missing Prompt Debug Ops cache buster")
 	}
 	if !strings.Contains(page, "games.js?v=20260729-agent-launch") {
 		t.Fatal("viewer.html missing Games tab cache buster")
 	}
-	if !strings.Contains(page, "viewer.js?v=20260806-prompt-debug-colors") {
+	if !strings.Contains(page, "viewer.js?v=20260806-prompt-logs-panel") {
 		t.Fatal("viewer.html missing Prompt Debug viewer cache buster")
 	}
 }
 
 func TestViewerStaticContractPromptDebugLogPresentation(t *testing.T) {
 	page, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	promptJS, err := os.ReadFile("assets/js/tabs/prompt-logs.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	promptCSS, err := os.ReadFile("assets/css/tabs/prompt-logs.css")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -679,8 +687,14 @@ func TestViewerStaticContractPromptDebugLogPresentation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, required := range []string{
+		`<option value="prompt-logs">Character Latest Prompt</option>`,
+		`data-tab="prompt-logs"`,
+		`id="panel-prompt-logs"`,
 		"promptDebugRefreshBtn",
-		"promptDebugList",
+		"promptDebugCharacterList",
+		"promptDebugInternalList",
+		"Character Latest Prompt",
+		"Internal / Worker Raw Details",
 		"prompt-legend-block prompt-block-00",
 		"prompt-legend-age age-recent",
 		"prompt-legend-level level-error",
@@ -690,34 +704,66 @@ func TestViewerStaticContractPromptDebugLogPresentation(t *testing.T) {
 			t.Fatalf("viewer.html missing Prompt Debug log contract: %s", required)
 		}
 	}
+	if strings.Count(string(page), `id="promptDebugCharacterList"`) != 1 {
+		t.Fatal("viewer.html must contain exactly one independent Character Latest Prompt list")
+	}
+	for _, required := range []string{
+		`prompt-logs.css?v=20260806-prompt-logs-panel`,
+		`prompt-logs.js?v=20260806-prompt-logs-panel`,
+	} {
+		if !strings.Contains(string(page), required) {
+			t.Fatalf("viewer.html missing Prompt Debug independent asset: %s", required)
+		}
+	}
 	viewerJS, err := os.ReadFile("assets/js/viewer.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(viewerJS), "/viewer/prompt-debug?limit=40") {
-		t.Fatal("viewer.js missing Prompt Debug API fetch contract")
+	for _, required := range []string{
+		"/viewer/prompt-debug?limit=40",
+		`'prompt-logs': document.getElementById('panel-prompt-logs')`,
+		"shouldRefreshPromptLogsPanel",
+		"promptDebugRenderSignature",
+	} {
+		if !strings.Contains(string(viewerJS), required) {
+			t.Fatalf("viewer.js missing Prompt Debug tab wiring: %s", required)
+		}
 	}
 	for _, required := range []string{
 		"function renderPromptDebug()",
+		"function promptDebugProjectionSignature()",
+		"function capturePromptDebugViewState()",
+		"function restorePromptDebugViewState(viewState)",
+		"function promptDebugExchangeCard",
+		"function promptDebugEmptyCharacterCard",
 		"function promptDebugAgeClass",
-		"function opsEventLevel",
 		"prompt-debug-block",
 		"送信Payload全文",
 	} {
-		if !strings.Contains(string(opsJS), required) {
-			t.Fatalf("ops.js missing Prompt Debug log contract: %s", required)
+		if !strings.Contains(string(promptJS), required) {
+			t.Fatalf("prompt-logs.js missing Prompt Debug log contract: %s", required)
 		}
 	}
 	for _, required := range []string{
 		".prompt-debug-block-00",
 		".prompt-debug-block-10",
 		".prompt-debug-block-20",
+	} {
+		if !strings.Contains(string(promptCSS), required) {
+			t.Fatalf("prompt-logs.css missing Prompt Debug log color contract: %s", required)
+		}
+	}
+	for _, required := range []string{
 		".ops-log-row.age-hour",
 		".ops-log-row.level-error",
+		".ops-log-level.level-error",
 	} {
 		if !strings.Contains(string(opsCSS), required) {
-			t.Fatalf("ops.css missing Prompt Debug log color contract: %s", required)
+			t.Fatalf("ops.css missing Ops event log color contract: %s", required)
 		}
+	}
+	if strings.Contains(string(opsJS), "renderPromptDebug") {
+		t.Fatal("ops.js must not own the independent Prompt Debug renderer")
 	}
 }
 

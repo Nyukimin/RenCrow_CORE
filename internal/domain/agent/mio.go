@@ -192,8 +192,9 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 	// === v5.1: ConversationEngine による RecallPack 生成 ===
 	var messages []llm.Message
 	if systemPrompt := m.systemPromptForViewerRecipient(t.ViewerRecipient()); systemPrompt != "" {
-		messages = append(messages, llm.Message{Role: "system", Content: systemPrompt})
+		messages = append(messages, characterPromptMessages(systemPrompt)...)
 	}
+	messages = append(messages, stableRuntimeContextMessage(m.stableMioPromptContext(t))...)
 	var recallPack *conversation.RecallPack
 	if m.conversationEngine != nil {
 		var err error
@@ -203,9 +204,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		}
 		if recallPack != nil {
 			filtered := recallPack.FilterForRole("chat")
-			if recipient := strings.ToLower(strings.TrimSpace(t.ViewerRecipient())); recipient != "" && recipient != "mio" {
-				filtered = filtered.WithoutPersonaSystemPrompt()
-			}
+			filtered = filtered.WithoutPersonaSystemPrompt()
 			recallPack = &filtered
 			if err := recordRecallTrace(ctx, m.conversationEngine, t.ChatID(), t.JobID().String(), string(currentSpeaker), filtered); err != nil {
 				log.Printf("[Mio] RecordRecallTrace failed: %v", err)
@@ -235,20 +234,9 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 			messages = append(messages, llm.Message{
 				Role:    "system",
 				Content: userMemoryPrompt,
+				Type:    llm.PromptContextRecall,
 			})
 		}
-	}
-	if prompt := viewerRecipientSystemPrompt(t.ViewerRecipient(), userMessage); prompt != "" {
-		messages = append(messages, llm.Message{
-			Role:    "system",
-			Content: prompt,
-		})
-	}
-	if prompt := m.runtimeMioPromptContext(t); prompt != "" {
-		messages = append(messages, llm.Message{
-			Role:    "system",
-			Content: prompt,
-		})
 	}
 
 	// ペルソナ調整意図を検出 → 自己編集
@@ -282,23 +270,22 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 			messages = append(messages, llm.Message{
 				Role:    "system",
 				Content: "以下はWeb検索の結果です。この情報を参考にして質問に答えてください:\n\n" + searchResult,
+				Type:    llm.PromptContextRecall,
 			})
 		}
 	}
 
 	latestOther := ""
+	attributionPrompt := ""
 	if recallPack != nil {
 		selfCtx, otherCtx := buildAttributionContextsFromShort(recallPack.ShortContext, currentSpeaker, 5)
 		latestOther = latestOtherMessageFromShort(recallPack.ShortContext, currentSpeaker)
-		messages = append(messages, llm.Message{
-			Role: "user",
-			Content: fmt.Sprintf(
-				"発言帰属ガード:\n- 現在のAgentは%s。\n- 自分の過去発言(要約): %s\n- 他者の発言(要約): %s\n要件: 他者の発言を自分の新規アイデアとして扱わない。既出アイデアに触れる場合は発言者を明示する。",
-				currentSpeaker,
-				strings.Join(selfCtx, " / "),
-				strings.Join(otherCtx, " / "),
-			),
-		})
+		attributionPrompt = fmt.Sprintf(
+			"発言帰属ガード:\n- 現在のAgentは%s。\n- 自分の過去発言(要約): %s\n- 他者の発言(要約): %s\n要件: 他者の発言を自分の新規アイデアとして扱わない。既出アイデアに触れる場合は発言者を明示する。",
+			currentSpeaker,
+			strings.Join(selfCtx, " / "),
+			strings.Join(otherCtx, " / "),
+		)
 	}
 
 	if m.recentContext != nil {
@@ -308,6 +295,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 			messages = append(messages, llm.Message{
 				Role:    "system",
 				Content: glossaryContext + "\n最近の語彙は、断定せず軽い補足として扱ってください。",
+				Type:    llm.PromptContextRecall,
 			})
 		}
 	}
@@ -315,11 +303,23 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		messages = append(messages, llm.Message{
 			Role:    "system",
 			Content: dailyNewsBriefSystemPrompt(brief),
+			Type:    llm.PromptContextRecall,
 		})
+	}
+	if prompt := viewerRecipientSystemPrompt(t.ViewerRecipient(), userMessage); prompt != "" {
+		messages = append(messages, llm.Message{Role: "system", Content: prompt, Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "recipient_contract"}})
+	}
+	if prompt := m.runtimeMioPromptContext(t); prompt != "" {
+		messages = append(messages, llm.Message{Role: "system", Content: prompt, Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "runtime_state"}})
+	}
+	if attributionPrompt != "" {
+		messages = append(messages, llm.Message{Role: "system", Content: attributionPrompt, Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "attribution_state"}})
 	}
 
 	// ユーザーメッセージを最後に追加
-	messages = append(messages, userMessageWithAttachments(userMessage, t.Attachments()))
+	currentUserMessage := userMessageWithAttachments(userMessage, t.Attachments())
+	currentUserMessage.Type = llm.PromptContextUser
+	messages = append(messages, currentUserMessage)
 
 	req := m.generationRequest(messages, llm.StreamCallbackFromContext(ctx))
 

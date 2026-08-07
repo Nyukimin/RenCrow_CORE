@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=@RENCROW_REPO_DIR@
-Environment=RENCROW_CONFIG=%h/.rencrow/config.yaml
+Environment=RENCROW_CONFIG=%h/.rencrow/config/core.yaml
 Environment=RENCROW_RESILIENCE_BASE_URL=http://127.0.0.1:18790
 Environment=RENCROW_RESILIENCE_REPO_DIR=@RENCROW_REPO_DIR@
 Environment=RENCROW_RESILIENCE_AUTO_REPAIR=true

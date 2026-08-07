@@ -16,6 +16,84 @@ COREプロセス自身だけに再起動責務を持たせません。panicや�
 
 本書は journal集約、日別アーカイブ、事故台帳、自己修復といった**運用面**を規定します。アプリケーションが**何をどの形式で出力するか**は `10_ログ仕様.md` を正本とします。本書の手順はLinuxのsystemd環境を前提としており、Windows／macOSでの収集手段は異なります。アプリケーション側の実装をsystemd前提にしないでください。
 
+## Ubuntuホストのフリーズ復旧補足
+
+これはRenCrowプロセスの監視とは別の、Ubuntuホスト自身の復旧要件です。CORE、PORTAL、LLM、Toolsのいずれかが停止していても動作し、RenCrowのHTTP endpoint、ユーザーservice、repository内の設定には依存しません。Ubuntuのsystemd system unitとkernel sysctlだけを使います。
+
+### 目的と限界
+
+次の順序を実現します。
+
+```text
+kernel soft/hard lockup検知
+  -> kernel panic
+  -> 設定した待機時間
+  -> 自動reboot
+  -> 次回bootで前回bootの終了形とkernel証拠を検証
+```
+
+これはCPUがlockupを検知できる場合に限って有効です。電源断、ACアダプター／バッテリー瞬断、基板・RAM故障、GPU完全停止、ファームウェア停止ではkernelが処理を続けられず、自動rebootも証拠保存もできないことがあります。データ書き込み中の再起動による破損リスクがあるため、導入前に重要データの検証済みbackupを作成します。
+
+### 構成要件
+
+- `/etc/sysctl.d/99-rencrow-host-recovery.conf` で `kernel.watchdog=1`、`kernel.softlockup_panic=1`、`kernel.hardlockup_panic=1`、`kernel.panic=10` を設定する。
+- systemd system service `ubuntu-shutdown-audit.service` をboot後に一度実行し、`journalctl --list-boots` と前回bootのshutdown markerを突合する。
+- 検証結果はRenCrowのworkspaceやrepositoryではなく、`/var/lib/ubuntu-shutdown-audit/` に保存する。
+- 前回bootが `Reached target System Power Off` または `Reached target System Reboot` と `systemd-shutdown` を持つ場合だけ `normal_shutdown` とする。それ以外は `unexpected_termination` とし、原因を断定しない。
+- 前回bootのkernel error、panic、OOM、watchdog、MCE、GPU、storage、thermalの該当行を、次回bootのreportに保存する。秘密値やユーザー会話本文は保存しない。
+- `/dev/watchdog` が存在し、機種のhardware watchdogを検証できる場合だけ追加採用する。存在しない機種へ無理にkernel moduleを挿入しない。
+
+### 導入手順
+
+導入はroot権限で行い、変更前の値とunitを退避します。設定反映後に意図的なpanic試験は行わず、次回の自然な事象で検証します。
+
+```bash
+UBUNTU_AUDIT_SRC=/path/to/RenCrow_CORE/docs/ubuntu-host-recovery
+sudo install -d -m 0750 /var/lib/ubuntu-shutdown-audit/reports
+sudo install -d -m 0755 /usr/local/libexec
+sudo install -m 0644 "$UBUNTU_AUDIT_SRC/99-rencrow-host-recovery.conf" /etc/sysctl.d/99-rencrow-host-recovery.conf
+sudo install -m 0755 "$UBUNTU_AUDIT_SRC/ubuntu-shutdown-audit" /usr/local/libexec/ubuntu-shutdown-audit
+sudo install -m 0644 "$UBUNTU_AUDIT_SRC/ubuntu-shutdown-audit.service" /etc/systemd/system/ubuntu-shutdown-audit.service
+sudo sysctl --system
+sudo systemctl daemon-reload
+sudo systemctl enable --now ubuntu-shutdown-audit.service
+```
+
+`docs/ubuntu-host-recovery/` は再現可能なinstall sourceを置く場所であり、実行時にRenCrowをimport、起動、監視するものではありません。`UBUNTU_AUDIT_SRC` は実際に取得したsource directoryへ置き換えます。
+
+確認条件は次のとおりです。
+
+```bash
+sysctl kernel.watchdog kernel.softlockup_panic kernel.hardlockup_panic kernel.panic
+systemctl is-enabled ubuntu-shutdown-audit.service
+systemctl status ubuntu-shutdown-audit.service --no-pager
+sudo find /var/lib/ubuntu-shutdown-audit -maxdepth 2 -type f -ls
+```
+
+`kernel.panic=10` はpanic後10秒でrebootする値です。画面にpanicが表示されても、再起動までの10秒間に電源断を行わないでください。通常の手動shutdownを異常扱いしないため、導入直後に一度通常のrebootを行い、reportが `normal_shutdown` になることを確認します。
+
+### 次回異常停止後の検証
+
+```bash
+sudo ls -lt /var/lib/ubuntu-shutdown-audit/reports
+sudo sed -n '1,220p' /var/lib/ubuntu-shutdown-audit/reports/<latest>.env
+journalctl --list-boots --no-pager
+journalctl -b -1 -k -p warning..alert --no-pager
+```
+
+`unexpected_termination` は「ログが正常終了markerなしに途切れた」という事実を示すだけで、kernel、電源、ハードウェアのどれかを自動確定しません。画面写真、電源状態、SMART、memtestの結果と組み合わせて判定します。
+
+### 無効化とrollback
+
+自動rebootが業務上危険、または誤検知が疑われる場合は、まずpanic設定を戻してからunitを停止します。
+
+```bash
+sudo sysctl -w kernel.softlockup_panic=0 kernel.hardlockup_panic=0 kernel.panic=0
+sudo systemctl disable --now ubuntu-shutdown-audit.service
+```
+
+再導入前に、`/etc/sysctl.d/99-rencrow-host-recovery.conf` と `/etc/systemd/system/ubuntu-shutdown-audit.service` の退避版との差分を確認します。収集済みreportは原因確認が終わるまで削除しません。
+
 ## Backupの運用記録
 
 `rencrow-storage-backup.service`のstdout／stderrはjournalへ記録します。各実行は少なくともCORE停止・再開、snapshot検証結果、保存先、Knowledge mirror結果を出力します。
@@ -31,7 +109,7 @@ Redis、Qdrant、mount、圧縮、checksum、復元検証のどれかが失敗�
 
 Linuxのsystemd常用環境では、`rencrow.service`のstdoutとstderrをsystemd journalへ送ります。
 
-repository内の `systemd/user/rencrow.service` をproduction unitの正本とします。`install.sh` はこのunitを `~/.config/systemd/user/rencrow.service` へコピーし、inline生成しません。正本unitは portable install path として `WorkingDirectory=%h/.rencrow`、`ExecStart=%h/.local/bin/rencrow run`、`EnvironmentFile=%h/.rencrow/.env`、`RENCROW_CONFIG=%h/.rencrow/config.yaml` を使います。再起動契約は `Restart=always`、`RestartSec=5`、`StartLimitIntervalSec=0` です。journal契約は `StandardOutput=journal`、`StandardError=journal`、`LogRateLimitIntervalSec=0`、`LogRateLimitBurst=0` です。
+repository内の `systemd/user/rencrow.service` をproduction unitの正本とします。`install.sh` はこのunitを `~/.config/systemd/user/rencrow.service` へコピーし、inline生成しません。CORE同梱promptはinstall時に`%h/.local/share/rencrow/prompts`へcopyし、正本unitはportable install pathとして`WorkingDirectory=%h/.local/share/rencrow`、`ExecStart=%h/.local/bin/rencrow run`、`EnvironmentFile=%h/.rencrow/.env`、optionalな`EnvironmentFile=-%h/.rencrow/llm_ops.env`、`RENCROW_CONFIG=%h/.rencrow/config/core.yaml`を使います。再起動契約は`Restart=always`、`RestartSec=5`、`StartLimitIntervalSec=0`です。journal契約は`StandardOutput=journal`、`StandardError=journal`、`LogRateLimitIntervalSec=0`、`LogRateLimitBurst=0`です。
 
 ```bash
 journalctl --user -u rencrow.service --since "1 hour ago"

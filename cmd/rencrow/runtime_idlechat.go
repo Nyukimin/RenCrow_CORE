@@ -69,20 +69,7 @@ func buildIdleChatRuntime(
 	idleChatOrch.SetDailySourceBriefResearch(dailySourceBriefResearch)
 	idleChatOrch.SetTopicGenerationConfig(idleChatTopicGenerationConfigFromRuntime(cfg.IdleChat.TopicGeneration))
 	idleChatOrch.SetDialogueInterestingnessConfig(idleChatDialogueInterestingnessConfigFromRuntime(cfg.IdleChat.DialogueInterestingness))
-	workingDir := strings.TrimSpace(cfg.SelfSourceDir)
-	if workingDir == "" {
-		workingDir = "."
-	}
-	idleChatCodexRunner := tools.NewCodexExecRunner(
-		"codex",
-		workingDir,
-		"read-only",
-		"",
-		10*time.Minute,
-		0,
-		0,
-		true,
-	)
+	idleChatCodexRunner := newIdleChatCodexRunner(cfg)
 	idleChatCodexGenerator := idleChatCodexExeGenerator{runner: idleChatCodexRunner}
 	idleChatOrch.SetTopicCodexGenerator(idleChatCodexGenerator)
 	generationCheckpoints := idlechat.NewGenerationCheckpointStore(filepath.Join(cfg.Session.StorageDir, "idlechat_generation_checkpoints.json"))
@@ -188,6 +175,35 @@ func buildIdleChatRuntime(
 	deps.idleChatOrch = idleChatOrch
 	deps.idleChatSurfacePresence = newIdleChatSurfacePresenceController(idleChatOrch, idleChatSurfacePresenceTTL, resetIdleChatTTSQueue)
 	log.Printf("IdleChat enabled (participants=%v)", cfg.IdleChat.Participants)
+}
+
+func idleChatCodexWorkingDir(cfg *config.Config) string {
+	if cfg == nil {
+		return "."
+	}
+	if workingDir := strings.TrimSpace(cfg.Codex.WorkingDir); workingDir != "" {
+		return workingDir
+	}
+	if workingDir := strings.TrimSpace(cfg.SelfSourceDir); workingDir != "" {
+		return workingDir
+	}
+	return "."
+}
+
+func newIdleChatCodexRunner(cfg *config.Config) *tools.CodexExecRunner {
+	if cfg == nil {
+		return tools.NewCodexExecRunner("codex", ".", "read-only", "", 10*time.Minute, 0, 0, true)
+	}
+	return tools.NewCodexExecRunner(
+		cfg.Codex.Command,
+		idleChatCodexWorkingDir(cfg),
+		cfg.Codex.Sandbox,
+		cfg.Codex.Model,
+		time.Duration(cfg.Codex.TimeoutMS)*time.Millisecond,
+		cfg.Codex.MaxPromptBytes,
+		cfg.Codex.MaxOutputBytes,
+		cfg.Codex.EphemeralEnabled(),
+	)
 }
 
 func idleChatNewsSourceConfigFromRuntime(cfg config.IdleChatNewsSourcesConfig) idlechat.NewsSourceConfig {

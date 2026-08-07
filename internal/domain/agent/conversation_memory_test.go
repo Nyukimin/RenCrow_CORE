@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 type traceAwareConversationEngine struct {
@@ -20,6 +21,14 @@ type traceAwareConversationEngine struct {
 	endAs struct {
 		sessionID string
 		speaker   conversation.Speaker
+	}
+}
+
+func TestSharedConversationContinuityIsTypedRecallL0(t *testing.T) {
+	pack := &conversation.RecallPack{ShortContext: []conversation.Message{{Speaker: conversation.SpeakerUser, Msg: "previous"}}}
+	messages := appendSharedConversationContinuityPrompt(nil, pack)
+	if len(messages) != 1 || messages[0].Type != llm.PromptContextRecall || messages[0].Metadata["recall_section"] != "l0" {
+		t.Fatalf("continuity prompt must be typed RecallPack L0: %#v", messages)
 	}
 }
 

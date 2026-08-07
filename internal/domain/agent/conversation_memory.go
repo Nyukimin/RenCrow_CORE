@@ -20,7 +20,12 @@ func appendSharedConversationContinuityPrompt(messages []llm.Message, pack *conv
 	if pack == nil || !pack.HasContext() {
 		return messages
 	}
-	return append(messages, llm.Message{Role: "system", Content: sharedAgentConversationContinuityPrompt})
+	return append(messages, llm.Message{
+		Role:     "system",
+		Content:  sharedAgentConversationContinuityPrompt,
+		Type:     llm.PromptContextRecall,
+		Metadata: map[string]string{"recall_section": "l0"},
+	})
 }
 
 // enforceExactSharedRecallAnswer keeps an explicit exact-token recall request

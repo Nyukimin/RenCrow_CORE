@@ -50,12 +50,11 @@ func TestCoderAgentBuilderOptionsAndGenerateWithContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateWithContext failed: %v", err)
 	}
-	if resp != "context response" || len(gotReq.Messages) != 2 || gotReq.MaxTokens != 8192 || gotReq.Temperature != 0.5 {
+	if resp != "context response" || len(gotReq.Messages) != 3 || gotReq.MaxTokens != 8192 || gotReq.Temperature != 0.5 {
 		t.Fatalf("resp=%q req=%#v", resp, gotReq)
 	}
-	if !strings.HasPrefix(gotReq.Messages[0].Content, "loop system\n\n現在時刻（JST）: ") ||
-		!strings.HasSuffix(gotReq.Messages[0].Content, " JST") {
-		t.Fatalf("system prompt missing current JST time: %q", gotReq.Messages[0].Content)
+	if gotReq.Messages[0].Content != "loop system" || gotReq.Messages[1].Type != llm.PromptContextVariable || !strings.Contains(gotReq.Messages[1].Content, "現在時刻（JST）: ") {
+		t.Fatalf("time must be separate variable context: %#v", gotReq.Messages)
 	}
 
 	llmProvider.generateFunc = func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
@@ -458,8 +457,7 @@ func TestCoderAgentGenerateWithPrompt(t *testing.T) {
 		t.Errorf("Expected 'Generated code response', got '%s'", result)
 	}
 
-	if !strings.HasPrefix(capturedPrompt, "You are a specification design assistant.\n\n現在時刻（JST）: ") ||
-		!strings.HasSuffix(capturedPrompt, " JST") {
+	if capturedPrompt != "You are a specification design assistant." {
 		t.Errorf("Expected system prompt to be passed through, got '%s'", capturedPrompt)
 	}
 }
@@ -481,12 +479,12 @@ func TestCoderAgentGenerateWithPromptUsesLightMemory(t *testing.T) {
 		t.Fatalf("GenerateWithPrompt failed: %v", err)
 	}
 
-	if len(captured) != 4 {
+	if len(captured) != 5 {
 		t.Fatalf("messages=%#v", captured)
 	}
 	if captured[1].Role != "user" || captured[1].Content != "first user" ||
 		captured[2].Role != "assistant" || captured[2].Content != "first assistant" ||
-		captured[3].Content != "second user" {
+		captured[3].Type != llm.PromptContextVariable || captured[4].Content != "second user" {
 		t.Fatalf("LightMemory messages not injected in order: %#v", captured)
 	}
 	recent := memory.RecentMessages("U123")

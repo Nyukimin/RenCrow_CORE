@@ -10,13 +10,8 @@ import (
 
 // convertChatMessages はChatMessageをRenCrow_LLM Gateway APIフォーマットに変換
 func (p *GatewayProvider) convertChatMessages(msgs []llm.ChatMessage) []map[string]interface{} {
-	systemParts := make([]string, 0, 2)
 	messages := make([]map[string]interface{}, 0, len(msgs))
 	for _, m := range msgs {
-		if strings.EqualFold(strings.TrimSpace(m.Role), "system") && strings.TrimSpace(m.Content) != "" && len(m.ToolCalls) == 0 && strings.TrimSpace(m.ToolCallID) == "" {
-			systemParts = append(systemParts, strings.TrimSpace(m.Content))
-			continue
-		}
 		msg := map[string]interface{}{
 			"role": m.Role,
 		}
@@ -43,35 +38,20 @@ func (p *GatewayProvider) convertChatMessages(msgs []llm.ChatMessage) []map[stri
 		}
 		messages = append(messages, msg)
 	}
-	if len(systemParts) > 0 {
-		messages = append([]map[string]interface{}{
-			{
-				"role":    "system",
-				"content": strings.Join(systemParts, "\n\n"),
-			},
-		}, messages...)
-	}
 	return messages
 }
 
 // convertMessages はドメインメッセージをRenCrow_LLM Gateway APIフォーマットに変換
 func (p *GatewayProvider) convertMessages(req llm.GenerateRequest) []map[string]interface{} {
 	messages := make([]map[string]interface{}, 0)
-	systemParts := make([]string, 0, 2)
 
 	// システムプロンプトを最初に追加
 	if req.SystemPrompt != "" {
-		systemParts = append(systemParts, req.SystemPrompt)
+		messages = append(messages, map[string]interface{}{"role": "system", "content": req.SystemPrompt})
 	}
 
 	// ユーザーメッセージを追加
 	for _, msg := range req.Messages {
-		if msg.Role == "system" && len(msg.Parts) == 0 {
-			if strings.TrimSpace(msg.Content) != "" {
-				systemParts = append(systemParts, msg.Content)
-			}
-			continue
-		}
 		content := any(msg.Content)
 		if len(msg.Parts) > 0 {
 			parts := make([]map[string]interface{}, 0, len(msg.Parts))
@@ -123,18 +103,11 @@ func (p *GatewayProvider) convertMessages(req llm.GenerateRequest) []map[string]
 				content = parts
 			}
 		}
-		messages = append(messages, map[string]interface{}{
+		converted := map[string]interface{}{
 			"role":    msg.Role,
 			"content": content,
-		})
-	}
-
-	if len(systemParts) > 0 {
-		systemMessage := map[string]interface{}{
-			"role":    "system",
-			"content": strings.Join(systemParts, "\n\n"),
 		}
-		messages = append([]map[string]interface{}{systemMessage}, messages...)
+		messages = append(messages, converted)
 	}
 
 	return messages

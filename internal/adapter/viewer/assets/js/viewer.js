@@ -242,9 +242,12 @@ const state = {
     persistedLogs: [],
     opsLogsFetchError: '',
     promptDebugRecords: [],
+    promptDebugCharacterLatest: [],
+    promptDebugInternalExchanges: [],
     promptDebugFetchError: '',
     promptDebugAvailable: false,
     promptDebugSource: '',
+    promptDebugRenderSignature: '',
     toolHarnessEvents: [],
     toolHarnessFetchError: '',
     dciTraces: [],
@@ -1186,6 +1189,7 @@ const panels = {
   instructions: document.getElementById('panel-instructions'),
   backlog: document.getElementById('panel-backlog'),
   reports: document.getElementById('panel-reports'),
+  'prompt-logs': document.getElementById('panel-prompt-logs'),
   ops: document.getElementById('panel-ops'),
   games: document.getElementById('panel-games'),
   overview: document.getElementById('panel-overview'),
@@ -1293,6 +1297,9 @@ function switchTab(tab) {
   if (tab === 'collection' && typeof refreshCollectionData === 'function') refreshCollectionData();
   if (tab === 'news-pack' && typeof refreshNewsPack === 'function') refreshNewsPack();
   if (tab === 'backlog' && typeof refreshBacklog === 'function') refreshBacklog();
+  if (tab === 'prompt-logs') {
+    refreshPromptDebugData();
+  }
   if (tab === 'ops') {
     refreshSandboxData();
     refreshRuntimeBlockedRouteData();
@@ -2313,7 +2320,6 @@ function renderDeskViews() {
 }
 
 function refreshOpsData() {
-  refreshPromptDebugData();
   fetch('/viewer/logs?scope=persisted&limit=40')
     .then((r) => {
       if (!r.ok) {
@@ -2351,7 +2357,7 @@ function refreshOpsData() {
 }
 
 function refreshPromptDebugData() {
-  fetch('/viewer/prompt-debug?limit=40', {cache: 'no-store'})
+  return fetch('/viewer/prompt-debug?limit=40', {cache: 'no-store'})
     .then((r) => {
       if (!r.ok) {
         return r.text().then((text) => {
@@ -2363,6 +2369,8 @@ function refreshPromptDebugData() {
     .then((data) => {
       state.ops.promptDebugFetchError = '';
       state.ops.promptDebugRecords = Array.isArray(data.items) ? data.items : [];
+      state.ops.promptDebugCharacterLatest = Array.isArray(data.character_latest) ? data.character_latest : [];
+      state.ops.promptDebugInternalExchanges = Array.isArray(data.internal_exchanges) ? data.internal_exchanges : [];
       state.ops.promptDebugAvailable = data.available !== false;
       state.ops.promptDebugSource = String(data.source || '');
       if (typeof renderPromptDebug === 'function') renderPromptDebug();
@@ -2370,7 +2378,10 @@ function refreshPromptDebugData() {
     .catch((err) => {
       state.ops.promptDebugFetchError = String(err && err.message ? err.message : err);
       state.ops.promptDebugRecords = [];
+      state.ops.promptDebugCharacterLatest = [];
+      state.ops.promptDebugInternalExchanges = [];
       state.ops.promptDebugAvailable = false;
+      state.ops.promptDebugSource = '';
       if (typeof renderPromptDebug === 'function') renderPromptDebug();
       console.error(err);
     });
@@ -3321,6 +3332,10 @@ function shouldRefreshOpsPanelDiagnostics() {
   return shouldRefreshOptionalPanels() && activeViewerTab === 'ops';
 }
 
+function shouldRefreshPromptLogsPanel() {
+  return shouldRefreshOptionalPanels() && activeViewerTab === 'prompt-logs';
+}
+
 function shouldRefreshEvidencePanelDiagnostics() {
   return shouldRefreshOptionalPanels() && activeViewerTab === 'jobs';
 }
@@ -3347,6 +3362,9 @@ function refreshOptionalPanelData() {
   refreshEvidenceSummary();
   refreshMemorySnapshot();
   refreshRecallTraces();
+  if (shouldRefreshPromptLogsPanel()) {
+    refreshPromptDebugData();
+  }
   if (shouldRefreshOpsPanelDiagnostics()) {
     refreshSandboxData();
     refreshRuntimeBlockedRouteData();
@@ -3365,6 +3383,7 @@ function setOptionalPanelRefreshIntervals() {
   setInterval(refreshToolHarnessData, 5000);
   setInterval(refreshDCIData, 5000);
   setInterval(() => { if (typeof refreshGameBridgeData === 'function') refreshGameBridgeData(); }, 5000);
+  setInterval(() => { if (shouldRefreshPromptLogsPanel()) refreshPromptDebugData(); }, 5000);
   setInterval(() => { if (shouldRefreshOpsPanelDiagnostics()) refreshSandboxData(); }, 5000);
   setInterval(refreshSkillGovernanceData, 5000);
   setInterval(refreshWorkstreamData, 5000);

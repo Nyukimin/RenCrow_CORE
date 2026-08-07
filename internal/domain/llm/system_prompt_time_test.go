@@ -17,14 +17,14 @@ func TestAppendCurrentJSTTimeAddsConvertedTimeAtPromptEnd(t *testing.T) {
 	}
 }
 
-func TestWithCurrentJSTTimeAddsTimeToCanonicalSystemPrompt(t *testing.T) {
+func TestWithCurrentJSTTimeAddsVariableContextBeforeUserMessage(t *testing.T) {
 	now := time.Date(2026, time.July, 24, 13, 45, 12, 0, time.UTC)
 	originalMessages := []Message{
 		{Role: "system", Content: "message system"},
 		{Role: "user", Content: "hello"},
 	}
 
-	t.Run("SystemPrompt field takes precedence", func(t *testing.T) {
+	t.Run("SystemPrompt field remains stable", func(t *testing.T) {
 		req := GenerateRequest{
 			SystemPrompt: "field system",
 			Messages:     originalMessages,
@@ -32,21 +32,21 @@ func TestWithCurrentJSTTimeAddsTimeToCanonicalSystemPrompt(t *testing.T) {
 
 		got := WithCurrentJSTTime(req, now)
 
-		if !strings.HasSuffix(got.SystemPrompt, "現在時刻（JST）: 2026-07-24 22:45:12 JST") {
+		if got.SystemPrompt != "field system" {
 			t.Fatalf("SystemPrompt = %q", got.SystemPrompt)
 		}
-		if got.Messages[0].Content != "message system" {
-			t.Fatalf("message system prompt should remain unchanged, got %q", got.Messages[0].Content)
+		if len(got.Messages) != 3 || got.Messages[1].Type != PromptContextVariable || !strings.Contains(got.Messages[1].Content, "現在時刻（JST）: 2026-07-24 22:45:12 JST") {
+			t.Fatalf("variable time context missing: %#v", got.Messages)
 		}
 	})
 
-	t.Run("first system message is used when field is empty", func(t *testing.T) {
+	t.Run("character system message remains unchanged", func(t *testing.T) {
 		req := GenerateRequest{Messages: originalMessages}
 
 		got := WithCurrentJSTTime(req, now)
 
-		if !strings.HasSuffix(got.Messages[0].Content, "現在時刻（JST）: 2026-07-24 22:45:12 JST") {
-			t.Fatalf("system message = %q", got.Messages[0].Content)
+		if got.Messages[0].Content != "message system" || got.Messages[1].Type != PromptContextVariable {
+			t.Fatalf("prompt context order = %#v", got.Messages)
 		}
 		if originalMessages[0].Content != "message system" {
 			t.Fatalf("input messages mutated: %q", originalMessages[0].Content)

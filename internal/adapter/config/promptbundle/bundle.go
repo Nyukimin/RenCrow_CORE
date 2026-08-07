@@ -9,6 +9,8 @@ import (
 
 const Separator = "\n\n---\n\n"
 
+var CharacterManifest = []string{"00_system.md", "10_policy.md", "20_scope.md", "30_knowledge.md"}
+
 // Bundle is a manifest-based prompt bundle loaded from disk.
 type Bundle struct {
 	Name    string
@@ -60,6 +62,38 @@ func ReadBundle(dir string) (string, bool) {
 	return strings.Join(parts, Separator), true
 }
 
+// ReadCharacterBundle accepts only the canonical four-file character
+// manifest. Missing, duplicate, additional, or reordered entries fail load.
+func ReadCharacterBundle(dir string) (string, bool) {
+	data, err := os.ReadFile(filepath.Join(dir, "manifest.txt"))
+	if err != nil {
+		return "", false
+	}
+	entries := make([]string, 0, len(CharacterManifest))
+	for _, rawLine := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		entries = append(entries, line)
+	}
+	if len(entries) != len(CharacterManifest) {
+		return "", false
+	}
+	parts := make([]string, 0, len(entries))
+	for index, entry := range entries {
+		if entry != CharacterManifest[index] {
+			return "", false
+		}
+		content, ok := ReadFile(dir, entry)
+		if !ok {
+			return "", false
+		}
+		parts = append(parts, content)
+	}
+	return strings.Join(parts, Separator), true
+}
+
 // LoadCharacterBundlesFromDir loads character bundles from supported roots.
 func LoadCharacterBundlesFromDir(dir string) []Bundle {
 	var bundles []Bundle
@@ -78,7 +112,7 @@ func LoadCharacterBundlesFromDir(dir string) []Bundle {
 				continue
 			}
 			bundleDir := filepath.Join(root, name)
-			content, ok := ReadBundle(bundleDir)
+			content, ok := ReadCharacterBundle(bundleDir)
 			if !ok {
 				continue
 			}

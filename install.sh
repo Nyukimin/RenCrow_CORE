@@ -2,6 +2,7 @@
 set -euo pipefail
 
 RENCROW_HOME="${HOME}/.rencrow"
+RENCROW_CONFIG_DIR="${RENCROW_HOME}/config"
 RENCROW_BIN="${HOME}/.local/bin"
 SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
 RENCROW_SHARE_DIR="${HOME}/.local/share/rencrow"
@@ -14,17 +15,24 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "${RENCROW_HOME}/logs" "${RENCROW_HOME}/data/sessions"
+mkdir -p "${RENCROW_HOME}/logs" "${RENCROW_HOME}/data/sessions" "${RENCROW_CONFIG_DIR}"
 mkdir -p "${RENCROW_BIN}" "${SYSTEMD_USER_DIR}" "${RENCROW_SHARE_DIR}/scripts"
+mkdir -p "${RENCROW_SHARE_DIR}/prompts"
 
 cd "${REPO_DIR}"
 go build -o rencrow ./cmd/rencrow
 install -m 0755 rencrow "${RENCROW_BIN}/rencrow"
+cp -R prompts/. "${RENCROW_SHARE_DIR}/prompts/"
 
-if [ ! -f "${RENCROW_HOME}/config.yaml" ]; then
-  cp config/config.yaml.example "${RENCROW_HOME}/config.yaml"
-  sed -i "s|./data/sessions|${RENCROW_HOME}/data/sessions|g" "${RENCROW_HOME}/config.yaml"
-  sed -i "s|./workspace|${RENCROW_HOME}/workspace|g" "${RENCROW_HOME}/config.yaml"
+if [ ! -f "${RENCROW_CONFIG_DIR}/core.yaml" ]; then
+  if [ -f "${RENCROW_HOME}/config.yaml" ]; then
+    install -m 0600 "${RENCROW_HOME}/config.yaml" "${RENCROW_CONFIG_DIR}/core.yaml"
+    echo "Migrated existing CORE config to ${RENCROW_CONFIG_DIR}/core.yaml (legacy source retained)."
+  else
+    install -m 0600 config/config.yaml.example "${RENCROW_CONFIG_DIR}/core.yaml"
+    sed -i "s|./data/sessions|${RENCROW_HOME}/data/sessions|g" "${RENCROW_CONFIG_DIR}/core.yaml"
+    sed -i "s|./workspace|${RENCROW_HOME}/workspace|g" "${RENCROW_CONFIG_DIR}/core.yaml"
+  fi
 fi
 
 if [ ! -f "${RENCROW_HOME}/.env" ]; then
@@ -58,7 +66,7 @@ systemctl --user enable --now rencrow-log-rotate.timer
 systemctl --user enable --now rencrow-resilience.timer
 
 echo "Installed RenCrow_CORE."
-echo "Configure llm_gateway in ${RENCROW_HOME}/config.yaml for RenCrow_LLM."
+echo "Configure llm_gateway in ${RENCROW_CONFIG_DIR}/core.yaml for RenCrow_LLM."
 echo "Start: systemctl --user start rencrow"
 echo "Logs:  journalctl --user -u rencrow -f"
 echo "LINE webhook: https://<current-host>/webhook/line"

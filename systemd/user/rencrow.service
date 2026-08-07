@@ -6,10 +6,11 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory=%h/.rencrow
+WorkingDirectory=%h/.local/share/rencrow
 ExecStart=%h/.local/bin/rencrow run
 EnvironmentFile=%h/.rencrow/.env
-Environment=RENCROW_CONFIG=%h/.rencrow/config.yaml
+EnvironmentFile=-%h/.rencrow/llm_ops.env
+Environment=RENCROW_CONFIG=%h/.rencrow/config/core.yaml
 Environment=GOTRACEBACK=all
 Restart=always
 RestartSec=5
