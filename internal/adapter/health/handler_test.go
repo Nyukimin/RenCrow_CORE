@@ -94,7 +94,7 @@ func TestHandleLive_DoesNotRunDependencyChecks(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
 		t.Fatalf("liveness handler ran dependency checks: %s", elapsed)
 	}
-	if got := w.Body.String(); got != "{\"alive\":true}\n" {
+	if got := w.Body.String(); got != "{\"alive\":true,\"ok\":true,\"runtime\":\"go\",\"service\":\"rencrow-core\",\"status\":\"live\"}\n" {
 		t.Fatalf("unexpected body: %q", got)
 	}
 }
@@ -136,6 +136,9 @@ func TestHandleReady_True(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
+	if got := w.Body.String(); got != `{"ok":true,"status":"ready","service":"rencrow-core","runtime":"go","ready":true}` {
+		t.Fatalf("unexpected body: %s", got)
+	}
 }
 
 func TestHandleReady_False(t *testing.T) {
@@ -146,6 +149,9 @@ func TestHandleReady_False(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503, got %d", w.Code)
+	}
+	if got := w.Body.String(); got != `{"ok":false,"status":"unavailable","service":"rencrow-core","runtime":"go","ready":false,"error_code":"CORE_NOT_READY"}` {
+		t.Fatalf("unexpected body: %s", got)
 	}
 }
 

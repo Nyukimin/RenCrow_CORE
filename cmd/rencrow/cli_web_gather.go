@@ -171,6 +171,8 @@ func runWebGatherCommand(args []string, deps webGatherCLIDeps, out io.Writer, er
 			return 2
 		}
 		providers := map[string]modulewebgather.SearchProvider{}
+		providers["bing_rss"] = webgatherinfra.NewBingRSSSearchProvider()
+		providers["bing_news_rss"] = webgatherinfra.NewBingNewsRSSSearchProvider()
 		providers["rss_atom"] = webgatherinfra.NewFeedDiscoveryProvider()
 		providers["sitemap"] = webgatherinfra.NewFeedDiscoveryProvider()
 		if strings.TrimSpace(searxngURL) != "" {
@@ -226,6 +228,8 @@ func runWebGatherCommand(args []string, deps webGatherCLIDeps, out io.Writer, er
 			return 1
 		}
 		providers := map[string]modulewebgather.SearchProvider{}
+		providers["bing_rss"] = webgatherinfra.NewBingRSSSearchProvider()
+		providers["bing_news_rss"] = webgatherinfra.NewBingNewsRSSSearchProvider()
 		providers["rss_atom"] = webgatherinfra.NewFeedDiscoveryProvider()
 		providers["sitemap"] = webgatherinfra.NewFeedDiscoveryProvider()
 		if strings.TrimSpace(searxngURL) != "" {
@@ -637,7 +641,7 @@ func parseWebGatherSearchAndFetchArgs(args []string) (modulewebgather.SearchAndF
 
 func isAllowedWebGatherSearchProvider(value string) bool {
 	switch strings.TrimSpace(value) {
-	case "local_cache", "searxng", "rss_atom", "sitemap", "yacy":
+	case "bing_rss", "bing_news_rss", "local_cache", "searxng", "rss_atom", "sitemap", "yacy":
 		return true
 	default:
 		return false

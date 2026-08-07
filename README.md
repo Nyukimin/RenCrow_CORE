@@ -12,6 +12,7 @@ RenCrow_Workspaceは外部runtime moduleではなく、実行時の正本
 - Mio、Shiro、Kuro、Midori を使い分ける会話とルーティング
 - Worker、Coder、Advisor、Tool の責務分離
 - 会話履歴、RecallPack、Knowledge Relation、provenance
+- Go HTTP/XMLによるWeb検索・ニュース検索、14既定sourceの日次ニュースSQLite
 - Policy Decision、安全gate、Workstream、Scheduler、Heartbeat
 - Opportunity、EconomicTask、RevenueEvent、Reflection の安全な管理
 - Viewer REST/SSE、状態表示、ログ、ジョブ・エージェント観測
@@ -43,6 +44,16 @@ API key や token はリポジトリへ保存せず、`${ENV_VAR}` 形式で環�
 標準配布はCOREのGo binaryと設定を基本とし、Python／Node.jsを必須runtimeにしません。
 Browser Actor、Webwright、`rencrow-data`はoptional sidecar／運用機能です。PORTAL／GAMESの
 ブラウザJavaScriptはブラウザで実行します。
+
+COREと各moduleのnative Go process、公開contract、Config、health、errorの意味はUbuntu、
+Windows、macOSで共通にします。外部systemは所有moduleの境界外へ隔離し、未配置時は対象機能だけを
+`disabled`または`unavailable`にします。WindowsのCUDA用WSLはGPU外部computeだけの特例であり、
+CORE、database、news収集、一般sidecarをWSLへ移しません。
+
+標準検索はcredential不要の`bing_rss`、速報検索は`bing_news_rss`をGo binary内で扱います。
+検索結果の上位URLは同じ`web_gather.search_and_fetch`契約で本文取得します。日次ニュースは
+既定14 sourceを既存設定を上書きせずL1 source registryへ登録し、検証済み項目を
+`l1_memory.db`へ永続化します。SearXNG／YaCyは明示設定時だけ使う代替providerです。
 
 映画カタログのdomain、DB、検索、評価、Public API、importはCOREが所有します。外部サイトの
 巡回CrawlerはRenCrow_Toolsのoptional Go sidecarへ分離し、COREからPythonを直接起動しません。

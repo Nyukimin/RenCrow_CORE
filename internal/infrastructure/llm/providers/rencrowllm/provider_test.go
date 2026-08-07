@@ -153,6 +153,16 @@ func TestStreamingGatewayErrorIsNotAnEmptySuccess(t *testing.T) {
 	}
 }
 
+func TestStreamingGatewayNumericErrorCodeIsDecoded(t *testing.T) {
+	provider := NewGatewayProviderWithOptions("", "mio", "http://gateway.invalid", time.Second)
+	stream := strings.NewReader("data: {\"error\":{\"code\":503,\"message\":\"backend unavailable\"}}\n\ndata: [DONE]\n\n")
+
+	_, err := provider.readChatCompletionsStream(stream, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "gateway stream error 503: backend unavailable") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestGatewayProviderGenerate_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {

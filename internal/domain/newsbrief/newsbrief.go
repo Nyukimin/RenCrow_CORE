@@ -9,6 +9,7 @@ const (
 	SlotMorning       = "morning"
 	TimezoneJST       = "JST"
 	SourceScheduled   = "scheduled_daily_cache"
+	SourcePersistent  = "persistent_news_db"
 	SourceLiveSearch  = "live_news_search"
 	StatusEmpty       = "empty"
 	StatusPending     = "pending"
@@ -101,7 +102,7 @@ func ExpectedMorningDate(now time.Time) string {
 // IsUsable reports whether the brief has completed prepared content for the
 // morning slot expected at now.
 func (b DailyNewsBrief) IsUsable(now time.Time) bool {
-	if b.Source != SourceScheduled || b.Date != ExpectedMorningDate(now) || len(b.Items) == 0 {
+	if (b.Source != SourceScheduled && b.Source != SourcePersistent) || b.Date != ExpectedMorningDate(now) || len(b.Items) == 0 {
 		return false
 	}
 	return b.EnrichmentStatus == EnrichmentReady || b.EnrichmentStatus == EnrichmentPartial

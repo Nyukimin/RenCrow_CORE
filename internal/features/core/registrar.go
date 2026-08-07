@@ -35,6 +35,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	}
 	registerRoute(mux, "/health/live", deps.Routes.Live)
 	registerRoute(mux, "/health", deps.Routes.Health)
+	registerRoute(mux, "/health/ready", deps.Routes.Ready)
 	registerRoute(mux, "/ready", deps.Routes.Ready)
 	registerRoute(mux, modulecore.ModuleManifestEndpoint, deps.Routes.ModuleManifest)
 	registerRoute(mux, modulecore.ModuleHealthEndpoint, deps.Routes.ModuleHealth)

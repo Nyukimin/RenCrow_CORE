@@ -98,6 +98,7 @@ func cmdDiagnosticsInteractionAllowed(method, path string) bool {
 	switch path {
 	case "/health",
 		"/health/live",
+		"/health/ready",
 		"/ready",
 		"/viewer/status",
 		"/viewer/logs",
@@ -127,6 +128,7 @@ func cmdControlInteractionAllowed(method, path string) bool {
 		switch path {
 		case "/health",
 			"/health/live",
+			"/health/ready",
 			"/ready",
 			"/viewer/status",
 			"/viewer/trade/shadow/outcomes/report",
@@ -163,6 +165,7 @@ func portalIdleChatInteractionAllowed(method, path string) bool {
 	}
 	switch path {
 	case "/health",
+		"/health/ready",
 		"/viewer/events",
 		"/viewer/idlechat/status",
 		"/viewer/runtime-config",
@@ -204,6 +207,7 @@ func portalGamesInteractionAllowed(method, path string) bool {
 	if method == http.MethodGet || method == http.MethodHead {
 		switch path {
 		case "/health",
+			"/health/ready",
 			"/viewer/games/status",
 			"/viewer/games/sessions",
 			"/viewer/games/events",

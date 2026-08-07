@@ -19,7 +19,7 @@ func TestHandleSTTRestartPostsRestartAndWaitsForReadyHealth(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"ok":true,"status":"restarting","service":"stt-gateway"}`))
-		case "/health":
+		case "/health/ready":
 			healthCalls++
 			w.WriteHeader(http.StatusOK)
 			if healthCalls == 1 {
@@ -63,7 +63,7 @@ func TestHandleSTTRestartTimesOutWhenModelDoesNotLoad(t *testing.T) {
 		case "/admin/restart":
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"ok":true,"status":"restarting","service":"stt-gateway"}`))
-		case "/health":
+		case "/health/ready":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"ok":true,"status":"ready","ready":{"model_loaded":false}}`))
 		default:
@@ -90,6 +90,12 @@ func TestHandleSTTRestartTimesOutWhenModelDoesNotLoad(t *testing.T) {
 }
 
 func TestIsSTTHealthReadyRequiresReadyStatusAndModelLoaded(t *testing.T) {
+	if !isSTTHealthReady(`{"ok":true,"status":"ready","ready":true}`) {
+		t.Fatal("expected standard ready health accepted")
+	}
+	if !isSTTHealthReady(`{"ready":true,"service":"rencrow-stt"}`) {
+		t.Fatal("expected rolling-upgrade legacy ready health accepted")
+	}
 	if !isSTTHealthReady(`{"ok":true,"status":"ready","ready":{"model_loaded":true}}`) {
 		t.Fatal("expected ready health accepted")
 	}

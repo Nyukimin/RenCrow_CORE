@@ -39,7 +39,9 @@ func NewHandlerWithTimeout(service CheckRunner, timeout time.Duration) *Handler 
 func (h *Handler) HandleLive(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]bool{"alive": true})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok": true, "status": "live", "service": "rencrow-core", "runtime": "go", "alive": true,
+	})
 }
 
 // HandleHealth は /health エンドポイント（全チェック結果を返す）
@@ -57,13 +59,19 @@ func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		DurationMs float64 `json:"duration_ms"`
 	}
 	type reportJSON struct {
+		OK        bool        `json:"ok"`
 		Status    string      `json:"status"`
+		Service   string      `json:"service"`
+		Runtime   string      `json:"runtime"`
 		Checks    []checkJSON `json:"checks"`
 		Timestamp string      `json:"timestamp"`
 	}
 
 	out := reportJSON{
+		OK:        report.Status != domainhealth.StatusDown,
 		Status:    string(report.Status),
+		Service:   "rencrow-core",
+		Runtime:   "go",
 		Timestamp: report.Timestamp.Format(time.RFC3339),
 	}
 	for _, c := range report.Checks {
@@ -89,11 +97,12 @@ func (h *Handler) HandleReady(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
 	defer cancel()
 
+	w.Header().Set("Content-Type", "application/json")
 	if h.service.IsReady(ctx) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"ready":true}`))
+		_, _ = w.Write([]byte(`{"ok":true,"status":"ready","service":"rencrow-core","runtime":"go","ready":true}`))
 	} else {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"ready":false}`))
+		_, _ = w.Write([]byte(`{"ok":false,"status":"unavailable","service":"rencrow-core","runtime":"go","ready":false,"error_code":"CORE_NOT_READY"}`))
 	}
 }

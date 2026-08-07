@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -139,9 +141,12 @@ func TestCodeExecutor_CODE2_WithProposal_ExecutesPatch(t *testing.T) {
 }
 
 func TestCodeExecutor_ModuleRegistryInjectsContextAndWorkspace(t *testing.T) {
+	workspaceRoot := "/workspace/RenCrow"
+	t.Setenv("RENCROW_WORKSPACE_ROOT", workspaceRoot)
+	sttRoot := filepath.Join(workspaceRoot, "RenCrow_STT")
 	testProposal := proposal.NewProposal(
 		"Fix STT",
-		`[{"type": "file_edit", "action": "create", "target": "/home/nyukimi/RenCrow/RenCrow_STT/README.md", "content": "done"}]`,
+		fmt.Sprintf(`[{"type": "file_edit", "action": "create", "target": %q, "content": "done"}]`, filepath.Join(sttRoot, "README.md")),
 		"Low risk",
 		"Low cost",
 	)
@@ -171,7 +176,7 @@ func TestCodeExecutor_ModuleRegistryInjectsContextAndWorkspace(t *testing.T) {
 	}
 	if !strings.Contains(coder2.lastProposalInput, "RenCrow module context") ||
 		!strings.Contains(coder2.lastProposalInput, "module_id: stt") ||
-		!strings.Contains(coder2.lastProposalInput, "root: /home/nyukimi/RenCrow/RenCrow_STT") {
+		!strings.Contains(coder2.lastProposalInput, "root: "+sttRoot) {
 		t.Fatalf("coder did not receive module context: %s", coder2.lastProposalInput)
 	}
 	if strings.Contains(coder2.lastProposalInput, "install_command:") ||
@@ -182,7 +187,7 @@ func TestCodeExecutor_ModuleRegistryInjectsContextAndWorkspace(t *testing.T) {
 	if !strings.Contains(coder2.lastProposalInput, "operator-run deployment steps") {
 		t.Fatalf("coder did not receive manual-only lifecycle rule: %s", coder2.lastProposalInput)
 	}
-	if workerService.workspace != "/home/nyukimi/RenCrow/RenCrow_STT" {
+	if workerService.workspace != sttRoot {
 		t.Fatalf("worker workspace=%q, want RenCrow_STT root", workerService.workspace)
 	}
 	if _, ok := findCodeExecutorEvent(events, "module.selected", "mio", "shiro"); !ok {

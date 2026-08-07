@@ -38,7 +38,7 @@ func appendModuleContextToCodeRequest(message string, resolved domainmodule.Reso
 	if m.HealthCheck != "" {
 		b.WriteString(fmt.Sprintf("- health_check: %s\n", m.HealthCheck))
 	}
-	b.WriteString("- rule: do not use /home/nyukimi/RenCrow as the edit root; edit, test, and build from the selected module root.\n")
+	b.WriteString("- rule: do not use the workspace parent as the edit root; edit, test, and build from the selected module root.\n")
 	b.WriteString("- rule: do not include service restart, service stop/start, make install, or live binary overwrite commands in Worker-executable patches; mention them only as operator-run deployment steps.\n")
 	return b.String()
 }

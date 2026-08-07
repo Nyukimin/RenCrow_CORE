@@ -33,7 +33,7 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 		}
 		var chunk struct {
 			Error *struct {
-				Code    string `json:"code"`
+				Code    json.RawMessage `json:"code"`
 				Message string `json:"message"`
 			} `json:"error,omitempty"`
 			Choices []struct {
@@ -53,7 +53,7 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 			return llm.GenerateResponse{}, fmt.Errorf("failed to decode stream chunk: %w", err)
 		}
 		if chunk.Error != nil {
-			return llm.GenerateResponse{}, fmt.Errorf("gateway stream error %s: %s", chunk.Error.Code, chunk.Error.Message)
+			return llm.GenerateResponse{}, fmt.Errorf("gateway stream error %s: %s", streamErrorCodeText(chunk.Error.Code), chunk.Error.Message)
 		}
 		if chunk.Usage.CompletionTokens > 0 {
 			completionTokens = chunk.Usage.CompletionTokens
@@ -117,6 +117,17 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 		TokensPerSecond: tokensPerSecond,
 		FinishReason:    finishReason,
 	}, nil
+}
+
+func streamErrorCodeText(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "UNKNOWN"
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil && strings.TrimSpace(text) != "" {
+		return strings.TrimSpace(text)
+	}
+	return strings.Trim(strings.TrimSpace(string(raw)), `"`)
 }
 
 func potentialUntaggedReasoningPrefix(content string) bool {

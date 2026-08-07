@@ -21,6 +21,7 @@ func TestRegisterRoutesOwnsHealthPaths(t *testing.T) {
 	}{
 		{path: "/health/live", want: http.StatusNoContent},
 		{path: "/health", want: http.StatusOK},
+		{path: "/health/ready", want: http.StatusAccepted},
 		{path: "/ready", want: http.StatusAccepted},
 		{path: "/viewer/modules/manifest", want: http.StatusCreated},
 	} {

@@ -1,6 +1,7 @@
 package moduleregistry
 
 import (
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -31,98 +32,102 @@ func NewRegistry(modules []domain.Module) *Registry {
 }
 
 func DefaultRegistry() *Registry {
-	const root = "/home/nyukimi/RenCrow"
+	root := defaultWorkspaceRoot()
 	return NewRegistry([]domain.Module{
 		{
-			ID:             "chat",
-			DisplayName:    "RenCrow_CORE",
-			Root:           path.Join(root, "RenCrow_CORE"),
-			Kind:           "go",
-			BuildCommand:   "make build",
-			TestCommand:    "go test ./...",
-			InstallCommand: "cp build/rencrow-linux-amd64 ~/.local/bin/rencrow",
-			RestartTarget:  "rencrow.service",
-			HealthCheck:    "systemctl --user status rencrow.service --no-pager",
-			OwnerRoute:     "CODE",
-			Aliases:        []string{"chat", "chat本体", "orchestrator", "viewer", "worker", "rencrow_core", "rencrow.service", "本体"},
+			ID:           "chat",
+			DisplayName:  "RenCrow_CORE",
+			Root:         filepath.Join(root, "RenCrow_CORE"),
+			Kind:         "go",
+			BuildCommand: "go build ./...",
+			TestCommand:  "go vet ./...",
+			OwnerRoute:   "CODE",
+			Aliases:      []string{"chat", "chat本体", "orchestrator", "viewer", "worker", "rencrow_core", "rencrow.service", "本体"},
 		},
 		{
-			ID:             "cli",
-			DisplayName:    "RenCrow_CMD",
-			Root:           path.Join(root, "RenCrow_CMD"),
-			Kind:           "go",
-			BuildCommand:   "make build",
-			TestCommand:    "go test ./...",
-			InstallCommand: "cp build/rencrowctl-linux-amd64 ~/.local/bin/rencrowctl",
-			OwnerRoute:     "CODE",
-			Aliases:        []string{"rencrow_cmd", "rencrowctl", "rencrowctl chat", "cli", "command facade", "入口"},
+			ID:           "cli",
+			DisplayName:  "RenCrow_CMD",
+			Root:         filepath.Join(root, "RenCrow_CMD"),
+			Kind:         "go",
+			BuildCommand: "go build ./...",
+			TestCommand:  "go vet ./...",
+			OwnerRoute:   "CODE",
+			Aliases:      []string{"rencrow_cmd", "rencrowctl", "rencrowctl chat", "cli", "command facade", "入口"},
 		},
 		{
-			ID:             "portal",
-			DisplayName:    "RenCrow_PORTAL",
-			Root:           path.Join(root, "RenCrow_PORTAL"),
-			Kind:           "go",
-			BuildCommand:   "make build",
-			TestCommand:    "make test",
-			InstallCommand: "make install",
-			RestartTarget:  "rencrow-portal.service",
-			HealthCheck:    "systemctl --user status rencrow-portal.service --no-pager",
-			OwnerRoute:     "CODE",
-			Aliases:        []string{"rencrow_portal", "portal", "chat portal", "idlechat portal", "web portal", "外部ポータル"},
+			ID:           "portal",
+			DisplayName:  "RenCrow_PORTAL",
+			Root:         filepath.Join(root, "RenCrow_PORTAL"),
+			Kind:         "go",
+			BuildCommand: "go build ./...",
+			TestCommand:  "go vet ./...",
+			OwnerRoute:   "CODE",
+			Aliases:      []string{"rencrow_portal", "portal", "chat portal", "idlechat portal", "web portal", "外部ポータル"},
 		},
 		{
-			ID:          "games",
-			DisplayName: "RenCrow_GAMES",
-			Root:        path.Join(root, "RenCrow_GAMES"),
-			Kind:        "go",
-			TestCommand: "go test ./...",
-			OwnerRoute:  "CODE",
-			Aliases:     []string{"rencrow_games", "games", "game", "ゲーム", "observer", "game world"},
+			ID:           "games",
+			DisplayName:  "RenCrow_GAMES",
+			Root:         filepath.Join(root, "RenCrow_GAMES"),
+			Kind:         "go",
+			BuildCommand: "go build ./...",
+			TestCommand:  "go vet ./...",
+			OwnerRoute:   "CODE",
+			Aliases:      []string{"rencrow_games", "games", "game", "ゲーム", "observer", "game world"},
 		},
 		{
-			ID:          "stt",
-			DisplayName: "RenCrow_STT",
-			Root:        path.Join(root, "RenCrow_STT"),
-			Kind:        "mixed",
-			OwnerRoute:  "CODE",
-			Aliases:     []string{"rencrow_stt", "stt", "音声認識", "音声入力", "streaming transcript", "字幕"},
+			ID:           "stt",
+			DisplayName:  "RenCrow_STT",
+			Root:         filepath.Join(root, "RenCrow_STT"),
+			Kind:         "go",
+			BuildCommand: "go -C gateway build ./...",
+			TestCommand:  "go -C gateway vet ./...",
+			OwnerRoute:   "CODE",
+			Aliases:      []string{"rencrow_stt", "stt", "音声認識", "音声入力", "streaming transcript", "字幕"},
 		},
 		{
-			ID:          "tts",
-			DisplayName: "RenCrow_TTS",
-			Root:        path.Join(root, "RenCrow_TTS"),
-			Kind:        "mixed",
-			OwnerRoute:  "CODE",
-			Aliases:     []string{"rencrow_tts", "tts", "音声合成", "読み上げ", "口パク", "lipsync"},
+			ID:           "tts",
+			DisplayName:  "RenCrow_TTS",
+			Root:         filepath.Join(root, "RenCrow_TTS"),
+			Kind:         "go",
+			BuildCommand: "go -C gateway build ./...",
+			TestCommand:  "go -C gateway vet ./...",
+			OwnerRoute:   "CODE",
+			Aliases:      []string{"rencrow_tts", "tts", "音声合成", "読み上げ", "口パク", "lipsync"},
 		},
 		{
-			ID:          "llm",
-			DisplayName: "RenCrow_LLM",
-			Root:        path.Join(root, "RenCrow_LLM"),
-			Kind:        "mixed",
-			OwnerRoute:  "CODE",
-			Aliases:     []string{"rencrow_llm", "llm", "モデル", "provider", "gateway", "model gateway"},
+			ID:           "llm",
+			DisplayName:  "RenCrow_LLM",
+			Root:         filepath.Join(root, "RenCrow_LLM"),
+			Kind:         "go",
+			BuildCommand: "go -C gateway build ./...",
+			TestCommand:  "go -C gateway vet ./...",
+			OwnerRoute:   "CODE",
+			Aliases:      []string{"rencrow_llm", "llm", "モデル", "provider", "gateway", "model gateway"},
 		},
 		{
-			ID:          "vision",
-			DisplayName: "RenCrow_Vision",
-			Root:        path.Join(root, "RenCrow_Vision"),
-			Kind:        "mixed",
-			OwnerRoute:  "CODE",
-			Aliases:     []string{"rencrow_vision", "vision", "画像認識", "動画認識", "vision analysis"},
+			ID:           "vision",
+			DisplayName:  "RenCrow_Vision",
+			Root:         filepath.Join(root, "RenCrow_Vision"),
+			Kind:         "go",
+			BuildCommand: "go build ./...",
+			TestCommand:  "go vet ./...",
+			OwnerRoute:   "CODE",
+			Aliases:      []string{"rencrow_vision", "vision", "画像認識", "動画認識", "vision analysis"},
 		},
 		{
-			ID:          "image",
-			DisplayName: "RenCrow_Image",
-			Root:        path.Join(root, "RenCrow_Image"),
-			Kind:        "mixed",
-			OwnerRoute:  "CODE",
-			Aliases:     []string{"rencrow_image", "image", "画像生成", "image workflow"},
+			ID:           "image",
+			DisplayName:  "RenCrow_Image",
+			Root:         filepath.Join(root, "RenCrow_Image"),
+			Kind:         "go",
+			BuildCommand: "go build ./...",
+			TestCommand:  "go vet ./...",
+			OwnerRoute:   "CODE",
+			Aliases:      []string{"rencrow_image", "image", "画像生成", "image workflow"},
 		},
 		{
 			ID:          "tools",
 			DisplayName: "RenCrow_Tools",
-			Root:        path.Join(root, "RenCrow_Tools"),
+			Root:        filepath.Join(root, "RenCrow_Tools"),
 			Kind:        "mixed",
 			TestCommand: "make test",
 			OwnerRoute:  "CODE",
@@ -131,12 +136,49 @@ func DefaultRegistry() *Registry {
 		{
 			ID:          "workspace",
 			DisplayName: "RenCrow_Workspace",
-			Root:        path.Join(root, "RenCrow_Workspace"),
+			Root:        filepath.Join(root, "RenCrow_Workspace"),
 			Kind:        "snapshot",
 			OwnerRoute:  "OPS",
 			Aliases:     []string{"rencrow_workspace", "workspace snapshot", "workspace repository", "workspace backup repository"},
 		},
 	})
+}
+
+func defaultWorkspaceRoot() string {
+	if configured := strings.TrimSpace(os.Getenv("RENCROW_WORKSPACE_ROOT")); configured != "" {
+		return filepath.Clean(configured)
+	}
+	if current, err := os.Getwd(); err == nil {
+		for candidate := filepath.Clean(current); ; candidate = filepath.Dir(candidate) {
+			if strings.EqualFold(filepath.Base(candidate), "RenCrow_CORE") {
+				return filepath.Dir(candidate)
+			}
+			if directoryExists(filepath.Join(candidate, "RenCrow_CORE")) {
+				return candidate
+			}
+			parent := filepath.Dir(candidate)
+			if parent == candidate {
+				break
+			}
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, candidate := range []string{
+			filepath.Join(home, "RenCrow"),
+			filepath.Join(home, "Documents", "GenerativeAI", "RenCrow"),
+		} {
+			if directoryExists(filepath.Join(candidate, "RenCrow_CORE")) {
+				return candidate
+			}
+		}
+		return filepath.Join(home, "RenCrow")
+	}
+	return filepath.Clean("RenCrow")
+}
+
+func directoryExists(target string) bool {
+	info, err := os.Stat(target)
+	return err == nil && info.IsDir()
 }
 
 func cleanModuleRoot(root string) string {
@@ -192,8 +234,11 @@ func (r *Registry) Resolve(message string) domain.Resolution {
 		}
 	}
 	if len(matches) == 0 {
-		if strings.Contains(normalized, normalize("/home/nyukimi/RenCrow")) {
-			return domain.Resolution{MatchedBy: "/home/nyukimi/RenCrow", Ambiguous: true, Confidence: 0.1}
+		for _, module := range r.modules {
+			workspaceRoot := filepath.Dir(module.Root)
+			if workspaceRoot != "." && strings.Contains(normalized, normalize(workspaceRoot)) {
+				return domain.Resolution{MatchedBy: workspaceRoot, Ambiguous: true, Confidence: 0.1}
+			}
 		}
 		return domain.Resolution{}
 	}
@@ -208,5 +253,6 @@ func normalize(s string) string {
 	s = strings.ReplaceAll(s, "＿", "_")
 	s = strings.ReplaceAll(s, "-", "_")
 	s = strings.ReplaceAll(s, " ", "")
+	s = strings.ReplaceAll(s, `\`, "/")
 	return s
 }

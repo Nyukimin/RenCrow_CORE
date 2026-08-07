@@ -97,6 +97,12 @@ func RunDailyIntakeSweep(ctx context.Context, rules DailyIntakeRuleStore, regist
 		}
 		result.SourcesEnabled++
 	}
+	// The general Source Registry owns its own immediate and five-minute
+	// sweeper. With no reviewed daily-intake URL, sweeping here would race that
+	// job and fetch unrelated news sources twice during startup.
+	if result.SourcesEnabled == 0 {
+		return result, nil
+	}
 	sweep, err := registry.SweepDueSources(ctx, now, SourceRegistrySweepOptions{
 		LimitPerSource:    opts.SourceLimit,
 		MinimumTrustScore: opts.MinimumTrustScore,

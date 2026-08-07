@@ -104,7 +104,7 @@ func llmGatewayHealthy(baseURL string) bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/health", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/health/ready", nil)
 	if err != nil {
 		return false
 	}
@@ -117,12 +117,13 @@ func llmGatewayHealthy(baseURL string) bool {
 		return false
 	}
 	var body struct {
+		OK     bool   `json:"ok"`
 		Status string `json:"status"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(body.Status), "ok")
+	return body.OK && strings.EqualFold(strings.TrimSpace(body.Status), "ready")
 }
 
 func isLoopbackLLMHost(host string) bool {

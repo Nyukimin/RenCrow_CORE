@@ -10,7 +10,7 @@ const (
 	DefaultToolName          = "rencrow-web-gather"
 	DefaultToolVersion       = "v0.1"
 	DefaultLicenseNote       = "review source terms before promotion"
-	DefaultSearchProvider    = "local_cache"
+	DefaultSearchProvider    = "bing_rss"
 	DefaultSearchLimit       = 5
 	DefaultMaxFetches        = 3
 	DefaultSearchLanguage    = "ja"

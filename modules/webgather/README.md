@@ -9,6 +9,9 @@ Responsibilities:
 - Provider interfaces for fetch, extract, search, and staging writes.
 - Fetch response status, error, and diagnostics fields.
 - Search result and staging record contracts.
+- Zero-credential `bing_rss` and `bing_news_rss` are the standard live providers;
+  configured SearXNG and YaCy remain supported alternatives.
+- `local_cache` remains an explicit offline/cache-only provider.
 
 Non-responsibilities:
 

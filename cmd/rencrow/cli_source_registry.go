@@ -37,13 +37,15 @@ type sourceRegistryCLIStore interface {
 
 func runSourceRegistryCommand(args []string, store sourceRegistryCLIStore, out io.Writer, errOut io.Writer) int {
 	subcmd := "list"
+	subargs := []string{}
 	if len(args) > 0 {
 		subcmd = strings.ToLower(strings.TrimSpace(args[0]))
+		subargs = args[1:]
 	}
 	switch subcmd {
 	case "list":
-		jsonOut := hasFlag(args[1:], "--json")
-		enabledOnly := hasFlag(args[1:], "--enabled-only")
+		jsonOut := hasFlag(subargs, "--json")
+		enabledOnly := hasFlag(subargs, "--enabled-only")
 		entries, err := store.ListSourceRegistryEntries(context.Background(), enabledOnly)
 		if err != nil {
 			fmt.Fprintf(errOut, "failed to list source registry: %v\n", err)
@@ -62,7 +64,7 @@ func runSourceRegistryCommand(args []string, store sourceRegistryCLIStore, out i
 		}
 		return 0
 	case "save":
-		entry, jsonOut, err := parseSourceRegistrySaveArgs(args[1:])
+		entry, jsonOut, err := parseSourceRegistrySaveArgs(subargs)
 		if err != nil {
 			fmt.Fprintf(errOut, "%v\n", err)
 			return 1
@@ -79,7 +81,7 @@ func runSourceRegistryCommand(args []string, store sourceRegistryCLIStore, out i
 		fmt.Fprintf(out, "saved source registry entry: %s\n", saved.SourceID)
 		return 0
 	case "disable":
-		sourceID, jsonOut, err := parseSourceRegistryDisableArgs(args[1:])
+		sourceID, jsonOut, err := parseSourceRegistryDisableArgs(subargs)
 		if err != nil {
 			fmt.Fprintf(errOut, "%v\n", err)
 			return 1
@@ -118,7 +120,7 @@ func runSourceRegistryCommand(args []string, store sourceRegistryCLIStore, out i
 			fmt.Fprintln(errOut, "source registry store does not support sweep")
 			return 1
 		}
-		opts, jsonOut, err := parseSourceRegistrySweepArgs(args[1:])
+		opts, jsonOut, err := parseSourceRegistrySweepArgs(subargs)
 		if err != nil {
 			fmt.Fprintf(errOut, "%v\n", err)
 			return 1

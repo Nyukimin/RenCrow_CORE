@@ -335,7 +335,7 @@ func dailyNewsBriefObservation(brief domainnews.DailyNewsBrief) string {
 	if !brief.FetchedAt.IsZero() {
 		fetchedAt = brief.FetchedAt.Format(time.RFC3339)
 	}
-	return fmt.Sprintf("intent=%s date=%s fetched_at=%s status=%s enrichment=%s items=%d", dailyNewsBriefIntent, brief.Date, fetchedAt, brief.Status, brief.EnrichmentStatus, len(brief.Items))
+	return fmt.Sprintf("intent=%s source=%s date=%s fetched_at=%s status=%s enrichment=%s items=%d", dailyNewsBriefIntent, brief.Source, brief.Date, fetchedAt, brief.Status, brief.EnrichmentStatus, len(brief.Items))
 }
 
 func dailyNewsBriefFallbackReason(brief domainnews.DailyNewsBrief, readerErr error) string {
@@ -352,12 +352,16 @@ func dailyNewsBriefFallbackReason(brief domainnews.DailyNewsBrief, readerErr err
 }
 
 func dailyNewsBriefResponseObservation(brief domainnews.DailyNewsBrief, usable bool, now time.Time) string {
-	if usable || brief.Source == domainnews.SourceScheduled {
+	if usable || brief.Source == domainnews.SourceScheduled || brief.Source == domainnews.SourcePersistent {
 		fetchedAt := ""
 		if !brief.FetchedAt.IsZero() {
 			fetchedAt = brief.FetchedAt.Format(time.RFC3339)
 		}
-		return fmt.Sprintf("intent=%s source=%s date=%s fetched_at=%s items=%d", dailyNewsBriefIntent, domainnews.SourceScheduled, brief.Date, fetchedAt, len(brief.Items))
+		source := brief.Source
+		if source == "" {
+			source = domainnews.SourceScheduled
+		}
+		return fmt.Sprintf("intent=%s source=%s date=%s fetched_at=%s items=%d", dailyNewsBriefIntent, source, brief.Date, fetchedAt, len(brief.Items))
 	}
 	return fmt.Sprintf("intent=%s source=live_news_search searched_at=%s brief_date=%s items=%d", dailyNewsBriefIntent, now.Format(time.RFC3339), brief.Date, len(brief.Items))
 }

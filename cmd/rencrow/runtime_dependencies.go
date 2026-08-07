@@ -22,6 +22,7 @@ import (
 	historyrepairapp "github.com/Nyukimin/RenCrow_CORE/internal/application/historyrepair"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
 	knowledgememoryapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
+	newsbriefapp "github.com/Nyukimin/RenCrow_CORE/internal/application/newsbrief"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	otelexportapp "github.com/Nyukimin/RenCrow_CORE/internal/application/otelexport"
 	packagevalidationapp "github.com/Nyukimin/RenCrow_CORE/internal/application/packagevalidation"
@@ -34,6 +35,7 @@ import (
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
+	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
@@ -268,6 +270,7 @@ type Dependencies struct {
 	localTransports                map[string]*transport.LocalTransport        // v4 local transports
 	idleChatOrch                   *idlechat.IdleChatOrchestrator              // v4 idle chat
 	idleChatSurfacePresence        *idleChatSurfacePresenceController          // PORTAL Chat/IdleChat surface lease arbitration
+	dailyNewsBriefReader           domainnews.DailyNewsBriefReader             // scheduled cache with persistent L1 fallback
 	sshTransports                  map[string]domaintransport.Transport        // v4 SSH transports
 	heartbeatSvc                   *heartbeat.HeartbeatService                 // heartbeat service
 	advisorCloser                  interface{ Close() error }                  // advisor SQLite store, when configured
@@ -941,6 +944,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		newRuntimeDailySourceBriefResearch(conversationRuntime.WebGatherFetcher, toolRuntime.WorkerRuntimeRunnerV2),
 		ttsBridge,
 	)
+	var persistentNewsReader domainnews.DailyNewsBriefReader
+	if conversationRuntime.L1Store != nil {
+		persistentNewsReader = newsbriefapp.NewL1Reader(conversationRuntime.L1Store)
+	}
+	deps.dailyNewsBriefReader = newsbriefapp.NewFallbackReader(deps.idleChatOrch, persistentNewsReader)
 	startMovieCatalogBackfillJob(cfg, newBackgroundJobFailureReporter(deps.eventRelay))
 	buildOrchestratorRuntime(
 		cfg,

@@ -12,8 +12,8 @@ func TestCollectAudioSnapshotProbesSTTAndTTSConcurrently(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(150 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
-		if r.URL.Path == "/health" {
-			_, _ = w.Write([]byte(`{"ok":true,"status":"ready","ready":{"model_loaded":true},"provider":{"model_loaded":true}}`))
+		if r.URL.Path == "/health/ready" {
+			_, _ = w.Write([]byte(`{"ok":true,"status":"ready","ready":true}`))
 			return
 		}
 		_, _ = w.Write([]byte(r.URL.Path))
@@ -30,7 +30,7 @@ func TestCollectAudioSnapshotProbesSTTAndTTSConcurrently(t *testing.T) {
 	if !snapshot.STTOK || !snapshot.TTSLiveOK || !snapshot.TTSReadyOK {
 		t.Fatalf("snapshot=%#v, want all probes ok", snapshot)
 	}
-	if !strings.Contains(snapshot.STTHealth, `"model_loaded":true`) || snapshot.TTSLive != "/health/live" || snapshot.TTSReady != "/health/ready" {
+	if !strings.Contains(snapshot.STTHealth, `"ready":true`) || snapshot.TTSLive != "/health/live" || snapshot.TTSReady != "/health/ready" {
 		t.Fatalf("snapshot bodies=%#v", snapshot)
 	}
 	if elapsed > 350*time.Millisecond {

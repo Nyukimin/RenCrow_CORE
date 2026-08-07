@@ -6,7 +6,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 
 | 区分 | 対象 | 互換性方針 |
 | --- | --- | --- |
-| Core | `/health/live`, `/health`, `/ready`, Viewer entry、通常 chat recipient | 破壊的変更を避ける |
+| Core | `/health/live`, `/health/ready`, `/health`, `/ready`, Viewer entry、通常 chat recipient | 破壊的変更を避ける |
 | Feature | status、jobs、workstreams、memory、advisor、revenue 等 | feature 単位で拡張し、既存 field を維持する |
 | Operational | repair、LLM management、debug、admin action | local/authorized 利用を前提とし、明示 policy を必要とする |
 | Experimental | AI workflow、研究・候補 feature | schema が変わる可能性を明示する |
@@ -16,6 +16,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | endpoint / prefix | 用途 |
 | --- | --- |
 | `GET /health/live` | COREのHTTPイベントループ自身のliveness。外部依存を確認しない |
+| `GET /health/ready` | CORE capabilityのreadiness。未ready時は503と`status=unavailable`を返す |
 | `GET /health` | COREと設定済み依存serviceの総合health |
 | `GET /ready` | request受付可否 |
 | `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読 |

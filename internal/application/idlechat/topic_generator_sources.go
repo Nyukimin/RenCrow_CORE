@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	appnewsbrief "github.com/Nyukimin/RenCrow_CORE/internal/application/newsbrief"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
@@ -21,22 +22,7 @@ type NewsSeed = modulechat.NewsSeed
 // NewsSeedSource は1つのニュースRSS取得先を表す。
 type NewsSeedSource = modulechat.NewsSeedSource
 
-var defaultNewsSeedSources = []NewsSeedSource{
-	{Category: "ai_frontier", Name: "OpenAI News", URL: "https://openai.com/news/rss.xml", Limit: 4},
-	{Category: "ai_frontier", Name: "Google DeepMind", URL: "https://deepmind.google/blog/rss.xml", Limit: 4},
-	{Category: "ai_open_source", Name: "Hugging Face Blog", URL: "https://huggingface.co/blog/feed.xml", Limit: 5},
-	{Category: "ai_research", Name: "Microsoft Research", URL: "https://www.microsoft.com/en-us/research/feed/", Limit: 4},
-	{Category: "ai_research", Name: "Google Research", URL: "https://research.google/blog/rss/", Limit: 4},
-	{Category: "ai_infrastructure", Name: "NVIDIA Generative AI", URL: "https://blogs.nvidia.com/blog/category/generative-ai/feed/", Limit: 4},
-	{Category: "ai_research", Name: "arXiv AI Research", URL: "https://export.arxiv.org/api/query?search_query=cat%3Acs.AI%20OR%20cat%3Acs.LG%20OR%20cat%3Acs.CL%20OR%20cat%3Acs.CV%20OR%20cat%3Acs.RO&start=0&max_results=8&sortBy=submittedDate&sortOrder=descending", Limit: 8},
-	{Category: "general", Name: "NHK Top", URL: "https://www.nhk.or.jp/rss/news/cat0.xml", Limit: 4},
-	{Category: "culture", Name: "NHK Science/Culture", URL: "https://www.nhk.or.jp/rss/news/cat3.xml", Limit: 3},
-	{Category: "business", Name: "NHK Business", URL: "https://www.nhk.or.jp/rss/news/cat5.xml", Limit: 3},
-	{Category: "world", Name: "NHK World", URL: "https://www.nhk.or.jp/rss/news/cat6.xml", Limit: 3},
-	{Category: "sports", Name: "NHK Sports", URL: "https://www.nhk.or.jp/rss/news/cat7.xml", Limit: 3},
-	{Category: "tech", Name: "ITmedia NEWS Technology", URL: "https://rss.itmedia.co.jp/rss/2.0/news_technology.xml", Limit: 4},
-	{Category: "business", Name: "ITmedia Business", URL: "https://rss.itmedia.co.jp/rss/2.0/business.xml", Limit: 3},
-}
+var defaultNewsSeedSources = appnewsbrief.DefaultNewsSeedSources()
 
 const (
 	dailyRSSSeedLimit  = 64

@@ -33,6 +33,7 @@ type SearchResult struct {
 	URL          string `json:"url"`
 	Title        string `json:"title"`
 	Snippet      string `json:"snippet"`
+	PublishedAt  string `json:"published_at,omitempty"`
 	Rank         int    `json:"rank"`
 	SourceEngine string `json:"source_engine"`
 }

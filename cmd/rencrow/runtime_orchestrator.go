@@ -57,8 +57,8 @@ func buildOrchestratorRuntime(
 		)
 		deps.distOrch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
 		deps.distOrch.SetShiroChatAgent(agents.ShiroChat)
-		if deps.idleChatOrch != nil {
-			deps.distOrch.SetDailyNewsBriefReader(deps.idleChatOrch)
+		if deps.dailyNewsBriefReader != nil {
+			deps.distOrch.SetDailyNewsBriefReader(deps.dailyNewsBriefReader)
 			log.Printf("DailyNewsBrief reader integrated with DistributedOrchestrator")
 		}
 		if newsCollector != nil {
@@ -162,8 +162,10 @@ func buildOrchestratorRuntime(
 	}
 	if deps.idleChatOrch != nil {
 		orch.SetIdleNotifier(deps.idleChatOrch)
-		orch.SetDailyNewsBriefReader(deps.idleChatOrch)
 		log.Printf("IdleChat integrated with MessageOrchestrator")
+	}
+	if deps.dailyNewsBriefReader != nil {
+		orch.SetDailyNewsBriefReader(deps.dailyNewsBriefReader)
 		log.Printf("DailyNewsBrief reader integrated with MessageOrchestrator")
 	}
 	if newsCollector != nil {
@@ -182,7 +184,7 @@ func buildOrchestratorRuntime(
 
 func configuredNewsSearchProvider(cfg *config.Config) string {
 	if cfg == nil {
-		return ""
+		return "bing_news_rss"
 	}
 	if strings.TrimSpace(cfg.WebGather.SearXNGBaseURL) != "" {
 		return "searxng"
@@ -190,7 +192,7 @@ func configuredNewsSearchProvider(cfg *config.Config) string {
 	if strings.TrimSpace(cfg.WebGather.YaCyBaseURL) != "" {
 		return "yacy"
 	}
-	return ""
+	return "bing_news_rss"
 }
 
 // injectSelfContext は RenCrow 自身のソースディレクトリに関する自己認識コンテキストを

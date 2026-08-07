@@ -21,11 +21,9 @@ type STTAdminOptions struct {
 }
 
 type sttHealthPayload struct {
-	OK     bool   `json:"ok"`
-	Status string `json:"status"`
-	Ready  struct {
-		ModelLoaded bool `json:"model_loaded"`
-	} `json:"ready"`
+	OK     bool            `json:"ok"`
+	Status string          `json:"status"`
+	Ready  json.RawMessage `json:"ready"`
 }
 
 func HandleSTTRestart(opts STTAdminOptions) http.HandlerFunc {
@@ -123,7 +121,7 @@ func waitSTTReady(ctx context.Context, client *http.Client, baseURL string, poll
 	deadline := time.Now().Add(maxWait)
 	var lastErr string
 	for {
-		body, ok, err := fetchSTTHealth(client, baseURL+"/health")
+		body, ok, err := fetchSTTHealth(client, baseURL+"/health/ready")
 		if err == nil && ok {
 			return body, nil
 		}
@@ -161,5 +159,19 @@ func isSTTHealthReady(body string) bool {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &payload); err != nil {
 		return false
 	}
-	return payload.OK && strings.EqualFold(strings.TrimSpace(payload.Status), "ready") && payload.Ready.ModelLoaded
+	var ready bool
+	if err := json.Unmarshal(payload.Ready, &ready); err == nil {
+		if payload.OK && strings.EqualFold(strings.TrimSpace(payload.Status), "ready") {
+			return ready
+		}
+		// Compatibility for pre-contract RenCrow_STT responses during rolling upgrades.
+		return strings.TrimSpace(payload.Status) == "" && ready
+	}
+	var detailed struct {
+		ModelLoaded bool `json:"model_loaded"`
+	}
+	if err := json.Unmarshal(payload.Ready, &detailed); err != nil {
+		return false
+	}
+	return payload.OK && strings.EqualFold(strings.TrimSpace(payload.Status), "ready") && detailed.ModelLoaded
 }

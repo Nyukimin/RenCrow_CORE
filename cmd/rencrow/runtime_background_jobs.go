@@ -16,6 +16,7 @@ import (
 	archiveapp "github.com/Nyukimin/RenCrow_CORE/internal/application/archive"
 	knowledgememoryapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
 	moviecatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moviecatalog"
+	newsbriefapp "github.com/Nyukimin/RenCrow_CORE/internal/application/newsbrief"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/sourcefetcher"
 	superagentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
@@ -112,12 +113,23 @@ func backgroundJobFailureNotification(job string, errorText string, detail strin
 func startConversationBackgroundJobs(cfg *config.Config, runtime conversationRuntime, listener orchestrator.EventListener) {
 	reporter := newBackgroundJobFailureReporter(listener)
 	if runtime.L1Store != nil {
+		bootstrapDefaultNewsSources(runtime.L1Store, reporter)
 		startSourceRegistrySweeper(cfg, runtime.L1Store, reporter)
 		startMemoryLifecycleJob(runtime.L1Store, reporter)
 	}
 	if runtime.Manager != nil {
 		startParquetExportJob(cfg.Storage.Memory.ColdExportDir, runtime.Manager, reporter)
 	}
+}
+
+func bootstrapDefaultNewsSources(store newsbriefapp.DefaultSourceRegistry, reporter backgroundJobFailureReporter) {
+	result, err := newsbriefapp.BootstrapDefaultSources(context.Background(), store)
+	if err != nil {
+		log.Printf("WARN: default news source bootstrap partially failed: added=%d existing=%d failed=%d error=%v", result.Added, result.Existing, result.Failed, err)
+		reporter.Failed("default_news_source_bootstrap", err, fmt.Sprintf("added=%d existing=%d failed=%d", result.Added, result.Existing, result.Failed))
+		return
+	}
+	log.Printf("Default news sources ready: added=%d existing=%d", result.Added, result.Existing)
 }
 
 func startSourceRegistrySweeper(cfg *config.Config, store *l1sqlite.L1SQLiteStore, reporter backgroundJobFailureReporter) {

@@ -1,8 +1,19 @@
 package moduleregistry
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
+
+const testWorkspaceRoot = "/workspace/RenCrow"
+
+func useTestWorkspace(t *testing.T) {
+	t.Helper()
+	t.Setenv("RENCROW_WORKSPACE_ROOT", testWorkspaceRoot)
+}
 
 func TestDefaultRegistryResolveExplicitModules(t *testing.T) {
+	useTestWorkspace(t)
 	reg := DefaultRegistry()
 	tests := []struct {
 		name string
@@ -29,7 +40,7 @@ func TestDefaultRegistryResolveExplicitModules(t *testing.T) {
 			if got.Module.ID != tt.want {
 				t.Fatalf("module=%s, want %s; resolution=%+v", got.Module.ID, tt.want, got)
 			}
-			if got.Module.Root == "/home/nyukimi/RenCrow" {
+			if got.Module.Root == filepath.Clean(testWorkspaceRoot) {
 				t.Fatalf("parent root must not be selected as edit root")
 			}
 		})
@@ -37,6 +48,7 @@ func TestDefaultRegistryResolveExplicitModules(t *testing.T) {
 }
 
 func TestDefaultRegistryCommandMetadata(t *testing.T) {
+	useTestWorkspace(t)
 	reg := DefaultRegistry()
 	modules := make(map[string]struct {
 		install string
@@ -58,8 +70,8 @@ func TestDefaultRegistryCommandMetadata(t *testing.T) {
 		}
 	}
 
-	if got := modules["cli"].install; got != "cp build/rencrowctl-linux-amd64 ~/.local/bin/rencrowctl" {
-		t.Fatalf("cli install command = %q", got)
+	if got := modules["cli"].install; got != "" {
+		t.Fatalf("cli install command must be OS-specific operator policy, got %q", got)
 	}
 	for _, alias := range modules["cli"].aliases {
 		switch alias {
@@ -67,10 +79,10 @@ func TestDefaultRegistryCommandMetadata(t *testing.T) {
 			t.Fatalf("cli keeps retired alias %q", alias)
 		}
 	}
-	if got := modules["portal"].root; got != "/home/nyukimi/RenCrow/RenCrow_PORTAL" {
+	if got := modules["portal"].root; got != filepath.Join(testWorkspaceRoot, "RenCrow_PORTAL") {
 		t.Fatalf("portal root = %q", got)
 	}
-	if got := modules["games"].root; got != "/home/nyukimi/RenCrow/RenCrow_GAMES" {
+	if got := modules["games"].root; got != filepath.Join(testWorkspaceRoot, "RenCrow_GAMES") {
 		t.Fatalf("games root = %q", got)
 	}
 	if got := modules["workspace"].kind; got != "snapshot" {
@@ -84,7 +96,8 @@ func TestDefaultRegistryCommandMetadata(t *testing.T) {
 }
 
 func TestDefaultRegistryParentRootIsAmbiguous(t *testing.T) {
-	got := DefaultRegistry().Resolve("/home/nyukimi/RenCrow を使って直して")
+	useTestWorkspace(t)
+	got := DefaultRegistry().Resolve(testWorkspaceRoot + " を使って直して")
 	if got.Found() {
 		t.Fatalf("parent root should not resolve to editable module: %+v", got)
 	}

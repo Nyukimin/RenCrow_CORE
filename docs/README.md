@@ -20,7 +20,8 @@
 - `main` のこの11ファイルだけを、Public向けか内部向けかを問わない現行の製品仕様正本とします。
 - `AGENTS.md`、`CLAUDE.md`、`rules/` は作業者向けの実行制約です。製品仕様を再定義せず、この正本を参照します。
 - COREと兄弟モジュールの連携境界、入出力の意味、責務分担はこの正本で定義します。兄弟モジュールのdocsは各モジュール内部の実装詳細を補足できますが、この正本を上書きしません。差異がある場合はこの正本を基準に兄弟モジュール側を更新します。
-- 標準Go配布、外部compute、optional sidecar、Python／Node.js依存の扱いは
+- 標準Go配布、Ubuntu／Windows／macOS共通契約、外部system、optional sidecar、
+  Python／Node.js依存、CUDA用WSLの扱いは
   [アーキテクチャ概要の「標準Go配布境界」](04_アーキテクチャ概要.md#標準go配布境界)を正本とします。
 - 実装、production wiring、test、config は現在状態を確認する証拠です。正本と差異が見つかった場合は事実を照合し、採用する契約をこの正本へ反映してから実装を合わせます。
 - 実装済み、未実装、deployment依存を区別します。

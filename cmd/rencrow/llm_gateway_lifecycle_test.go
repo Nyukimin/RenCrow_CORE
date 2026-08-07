@@ -10,9 +10,12 @@ import (
 )
 
 func TestEnsureLLMGatewayAcceptsHealthyGateway(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health/ready" {
+			t.Fatalf("health path=%q, want /health/ready", r.URL.Path)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"ok":true,"status":"ready"}`))
 	}))
 	defer server.Close()
 
@@ -21,6 +24,21 @@ func TestEnsureLLMGatewayAcceptsHealthyGateway(t *testing.T) {
 	})
 	if !status.Ready || status.AutoStartAttempted || status.Warning != "" {
 		t.Fatalf("unexpected status: %+v", status)
+	}
+}
+
+func TestLLMGatewayLivenessIsNotReadiness(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health/ready" {
+			t.Fatalf("health path=%q, want /health/ready", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"status":"live"}`))
+	}))
+	defer server.Close()
+
+	if llmGatewayHealthy(server.URL) {
+		t.Fatal("liveness response must not be accepted as readiness")
 	}
 }
 

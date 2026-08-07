@@ -181,6 +181,8 @@ func buildConversationRuntime(
 		}
 		dailySourceFetcher = webGatherUseCase
 		webGatherProviders := map[string]modulewebgather.SearchProvider{}
+		webGatherProviders["bing_rss"] = webgatherinfra.NewBingRSSSearchProvider()
+		webGatherProviders["bing_news_rss"] = webgatherinfra.NewBingNewsRSSSearchProvider()
 		webGatherProviders["rss_atom"] = webgatherinfra.NewFeedDiscoveryProvider()
 		webGatherProviders["sitemap"] = webgatherinfra.NewFeedDiscoveryProvider()
 		if searxngBaseURL := strings.TrimSpace(cfg.WebGather.SearXNGBaseURL); searxngBaseURL != "" {
@@ -195,7 +197,7 @@ func buildConversationRuntime(
 		}
 		// Search tools do not require Conversation L1 when an explicit remote
 		// provider is configured. L1 remains an optional cache/staging layer.
-		searchProviderConfigured := len(webGatherProviders) > 2 || webGatherSearchCache != nil
+		searchProviderConfigured := len(webGatherProviders) > 0 || webGatherSearchCache != nil
 		if searchProviderConfigured {
 			webGatherSearchUseCase := webgatherapp.NewSearchUseCase(webGatherSearchCache, webGatherProviders)
 			webGatherSearchAndFetchUseCase := webgatherapp.NewSearchAndFetchUseCase(webGatherSearchUseCase, webGatherUseCase)

@@ -338,13 +338,13 @@ heartbeat:
 # 音声サーバメモ:
 # - COREはRenCrow_STT / RenCrow_TTSの各Gatewayだけを参照する
 # - STT外部target、model、language、stream方式はRenCrow_STT側で管理する
-# - TTS Go Gateway: http://192.168.1.205:7870/api/tts
+# - TTS Go Gateway: http://127.0.0.1:7870/api/tts
 # - Irodori targetはGatewayから接続し、COREから直接参照しない
 # - 自己署名証明書のため curl は -k を付ける
 tts:
   enabled: true
   output_dir: "./workspace/tts"
-  gateway_base_url: "http://192.168.1.205:7870"
+  gateway_base_url: "http://127.0.0.1:7870"
   timeout_ms: 120000
   tls_skip_verify: false
   voice_id: "mio"
@@ -354,7 +354,7 @@ tts:
   # CORE Scheduler owns execution timing. The cron expression is UTC (19:30 UTC = 04:30 JST).
   pronunciation_check:
     enabled: true
-    tool_base_url: "http://192.168.1.205:7892"
+    tool_base_url: "http://127.0.0.1:7892"
     schedule: "cron 30 19 * * *"
     gpu_match: "RTX 5060 Ti"
     min_free_mb: 768
@@ -370,8 +370,8 @@ tts:
 # COREはRenCrow_STTのPOST /v1/audio/transcriptionsだけを呼び出します。
 stt:
   enabled: true
-  # RTX 4060 / RTX 5060同居ホスト上のRenCrow_STT Gateway。
-  gateway_base_url: "http://192.168.1.205:8766"
+  # 同一host上のRenCrow_STT Gateway。別hostへ置く場合もmodule URLだけを変更する。
+  gateway_base_url: "http://127.0.0.1:8766"
   timeout_ms: 120000
   busy_policy: "queue_latest"
   endpoint_path: "/stt"

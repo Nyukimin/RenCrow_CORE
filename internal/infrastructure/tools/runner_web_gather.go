@@ -210,7 +210,7 @@ func webGatherSearchRequestFromArgs(args map[string]any) (modulewebgather.Search
 	if value, ok := args["provider"].(string); ok && strings.TrimSpace(value) != "" {
 		req.Provider = strings.TrimSpace(value)
 	}
-	if req.Provider != "local_cache" && req.Provider != "searxng" && req.Provider != "rss_atom" && req.Provider != "sitemap" && req.Provider != "yacy" {
+	if req.Provider != "bing_rss" && req.Provider != "bing_news_rss" && req.Provider != "local_cache" && req.Provider != "searxng" && req.Provider != "rss_atom" && req.Provider != "sitemap" && req.Provider != "yacy" {
 		return req, fmt.Errorf("unsupported search provider: %s", req.Provider)
 	}
 	if n, ok := int64Arg(args["limit"]); ok && n > 0 {

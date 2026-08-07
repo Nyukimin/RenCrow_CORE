@@ -373,7 +373,7 @@ func collectAudioSnapshot(opts DebugSystemOptions) DebugAudioSnapshot {
 	}
 	probes := map[string]string{}
 	if out.STTBaseURL != "" {
-		probes["stt"] = out.STTBaseURL + "/health"
+		probes["stt"] = out.STTBaseURL + "/health/ready"
 	}
 	if out.TTSBaseURL != "" {
 		if strings.TrimSpace(opts.TTSHealthPath) != "" {

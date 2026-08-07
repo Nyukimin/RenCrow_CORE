@@ -20,6 +20,7 @@ type memoryDailyIntakeRegistryStore struct {
 	entries     []SourceRegistryEntry
 	sweepOpts   SourceRegistrySweepOptions
 	sweepResult SourceRegistrySweepResult
+	sweepCalls  int
 }
 
 func (s *memoryDailyIntakeRegistryStore) SaveSourceRegistryEntry(_ context.Context, entry SourceRegistryEntry) (*SourceRegistryEntry, error) {
@@ -28,6 +29,7 @@ func (s *memoryDailyIntakeRegistryStore) SaveSourceRegistryEntry(_ context.Conte
 }
 
 func (s *memoryDailyIntakeRegistryStore) SweepDueSources(_ context.Context, _ time.Time, opts SourceRegistrySweepOptions) (SourceRegistrySweepResult, error) {
+	s.sweepCalls++
 	s.sweepOpts = opts
 	return s.sweepResult, nil
 }
@@ -82,5 +84,8 @@ func TestRunDailyIntakeSweepSkipsPendingOrNonURLRules(t *testing.T) {
 	}
 	if len(registry.entries) != 0 {
 		t.Fatalf("entries = %#v", registry.entries)
+	}
+	if registry.sweepCalls != 0 {
+		t.Fatalf("unrelated source registry was swept %d time(s)", registry.sweepCalls)
 	}
 }

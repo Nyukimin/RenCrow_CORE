@@ -16,6 +16,15 @@ type sourceRegistryCLIStoreStub struct {
 	entries []l1sqlite.L1SourceRegistryEntry
 }
 
+func TestRunSourceRegistryCommand_NoArgsDefaultsToList(t *testing.T) {
+	store := &sourceRegistryCLIStoreStub{entries: []l1sqlite.L1SourceRegistryEntry{{SourceID: "rss:test", Kind: "rss", URL: "https://example.com/feed.xml", Enabled: true}}}
+	var out, errOut bytes.Buffer
+	code := runSourceRegistryCommand(nil, store, &out, &errOut)
+	if code != 0 || !strings.Contains(out.String(), "rss:test") {
+		t.Fatalf("default list failed: code=%d out=%q err=%q", code, out.String(), errOut.String())
+	}
+}
+
 func TestRunSourceRegistryCommand_Sweep(t *testing.T) {
 	ctx := context.Background()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
