@@ -75,8 +75,8 @@ Replayなどは生成したmoduleが所有します。
 RenCrow_WorkspaceのGit snapshotはこのlive dataやbackupの代替ではありません。
 
 新しいdata種別だけを理由にDBを増やしません。新しい物理store、外部database、privacy／retention／
-復旧単位の追加はStorage Proposal、Orchestrator審査、System Owner（Ren）の明示承認を必要とします。
-既存store再利用条件、承認class、Durable Store Manifest、CI gateも上記正本で定義します。
+復旧単位の追加はStorage Proposal、Orchestrator審査、System Owner（Ren）による採否確定を必要とします。
+既存store再利用条件、判断class、Durable Store Manifest、CI gateも上記正本で定義します。
 
 外部利用者向けの`Chat`／`IdleChat`画面は独立した`RenCrow_PORTAL`が所有します。COREの`/viewer`はデバッグ・運用確認専用です。
 

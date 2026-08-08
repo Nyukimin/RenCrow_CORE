@@ -27,7 +27,7 @@
   User Messageの責務、順序、AI使用境界、KVキャッシュ、Viewer表示、必須検証は
   [アーキテクチャ概要の「Prompt Context Assembly」](04_アーキテクチャ概要.md#prompt-context-assembly)を
   唯一の現行正本とし、実装、ログ、test、兄弟moduleのdocsで別構造を再定義しません。
-- Durable Data Storeの媒体role、mount、module別subtree、CORE DB path、追加判断主体、承認class、
+- Durable Data Storeの媒体role、mount、module別subtree、CORE DB path、追加判断主体、判断class、
   Storage Proposal、Manifest、lifecycle、backup／restore契約は
   [設定リファレンスの「DB物理配置とbackup」](05_設定リファレンス.md#db物理配置とbackup)を
   唯一の現行正本とします。兄弟moduleのREADMEは所有subtreeと設定入口だけを補足します。
