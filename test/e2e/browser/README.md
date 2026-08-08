@@ -21,7 +21,7 @@ npm run test:e2e:viewer:to-be:firefox
 通常は `127.0.0.1:18791` から空きポートを探索する。先頭ポートが競合する場合は変更できる。
 
 ```bash
-RENCROW_E2E_PORT=28791 npm run test:e2e:viewer:to-be
+RENCROW_E2E_UNAVAILABLE_PORT=28791 RENCROW_E2E_POPULATED_PORT=28792 npm run test:e2e:viewer:to-be
 ```
 
 ## テスト行列
