@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -8,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/moviecatalog"
 )
 
 func TestHandleMovieCatalogMoviesSearchAndLimit(t *testing.T) {
@@ -37,6 +40,116 @@ func TestHandleMovieCatalogMoviesSearchAndLimit(t *testing.T) {
 	}
 	if out.Total != 1 || len(out.Items) != 1 || out.Items[0].Title != "マージン・コール" {
 		t.Fatalf("unexpected movie search result: %+v", out)
+	}
+}
+
+func TestHandleMovieCatalogCardsReturnsD0AndDirectD1(t *testing.T) {
+	dbPath := seedMovieCatalogTestDB(t)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE movie_catalog_assessments(
+  kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  target_label TEXT NOT NULL,
+  familiarity TEXT NOT NULL DEFAULT '',
+  sentiment TEXT NOT NULL DEFAULT '',
+  updated_by TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(kind, target_id)
+);
+CREATE TABLE movie_related_credits(
+  credit_id TEXT PRIMARY KEY,
+  movie_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_id TEXT,
+  target_label TEXT NOT NULL,
+  target_url TEXT,
+  relation_type TEXT NOT NULL,
+  source TEXT NOT NULL,
+  validation_state TEXT NOT NULL,
+  provenance_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO movie_catalog_assessments(kind,target_id,target_label,familiarity,sentiment,updated_by)
+VALUES('movie','57573','マージン・コール','seen','','viewer');
+INSERT INTO movie_related_credits(credit_id,movie_id,target_kind,target_id,target_label,target_url,relation_type,source,validation_state,provenance_json)
+VALUES('credit_music','57573','music','music-1','主題歌','https://example.test/music/1','theme_song','eiga','validated','["https://eiga.com/movie/57573/"]');
+`); err != nil {
+		db.Close()
+		t.Fatalf("seed card tables: %v", err)
+	}
+	db.Close()
+
+	h := HandleMovieCatalog(MovieCatalogOptions{DBPath: dbPath})
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/viewer/movie-catalog?action=cards&limit=25", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Total int                 `json:"total"`
+		Items []moviecatalog.Card `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("invalid cards json: %v", err)
+	}
+	if out.Total != 3 || len(out.Items) != 3 {
+		t.Fatalf("expected one D0 and two direct D1 cards, got total=%d items=%+v", out.Total, out.Items)
+	}
+	depths := map[string]int{}
+	for _, item := range out.Items {
+		depths[item.Kind+":"+item.TargetID] = item.Depth
+	}
+	if depths["movie:57573"] != 0 || depths["person:30003"] != 1 || depths["music:music-1"] != 1 {
+		t.Fatalf("unexpected D0/D1 projection depths: %+v", depths)
+	}
+}
+
+func TestHandleMovieCatalogFetchQueryUsesCrawlerForEmptyDBAndCardsStaySoftEmpty(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "new-catalog.sqlite")
+	var got moviecatalog.CrawlerRequest
+	h := HandleMovieCatalogFetch(MovieCatalogOptions{
+		DBPath: dbPath,
+		Crawler: movieCatalogCrawlerFunc(func(_ context.Context, req moviecatalog.CrawlerRequest) (moviecatalog.CrawlResult, error) {
+			got = req
+			return moviecatalog.CrawlResult{}, &moviecatalog.CrawlerServiceError{
+				StatusCode: http.StatusConflict,
+				Code:       "D0_RESOLUTION_AMBIGUOUS",
+				Message:    "候補を選択してください",
+				Candidates: []moviecatalog.CrawlerCandidate{{Kind: "movie", Label: "候補", URL: "https://eiga.com/movie/101/"}},
+			}
+		}),
+	})
+
+	fetchRec := httptest.NewRecorder()
+	h(fetchRec, httptest.NewRequest(http.MethodPost, "/viewer/movie-catalog/fetch", strings.NewReader(`{"kind":"movie","query":"未初期化作品","max_pages":1}`)))
+	if fetchRec.Code != http.StatusConflict {
+		t.Fatalf("expected resolver candidates, got %d: %s", fetchRec.Code, fetchRec.Body.String())
+	}
+	if got.URL != "" || got.Query != "未初期化作品" {
+		t.Fatalf("empty catalog query must reach crawler as query-only request: %+v", got)
+	}
+
+	read := HandleMovieCatalog(MovieCatalogOptions{DBPath: dbPath})
+	cardsRec := httptest.NewRecorder()
+	read(cardsRec, httptest.NewRequest(http.MethodGet, "/viewer/movie-catalog?action=cards", nil))
+	if cardsRec.Code != http.StatusOK {
+		t.Fatalf("empty catalog cards should be soft-empty, got %d: %s", cardsRec.Code, cardsRec.Body.String())
+	}
+	var cards struct {
+		Available bool                `json:"available"`
+		Total     int                 `json:"total"`
+		Items     []moviecatalog.Card `json:"items"`
+	}
+	if err := json.Unmarshal(cardsRec.Body.Bytes(), &cards); err != nil {
+		t.Fatalf("invalid empty cards response: %v", err)
+	}
+	if !cards.Available || cards.Total != 0 || len(cards.Items) != 0 {
+		t.Fatalf("unexpected empty cards response: %+v", cards)
 	}
 }
 
@@ -394,7 +507,7 @@ func TestHandleMovieCatalogMissingDBIsSoftUnavailable(t *testing.T) {
 	}
 }
 
-func TestResolveMovieCatalogFetchTargetByMovieName(t *testing.T) {
+func TestResolveMovieCatalogFetchTargetKeepsMovieNameAsQuery(t *testing.T) {
 	dbPath := seedMovieCatalogTestDB(t)
 	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
@@ -406,11 +519,11 @@ func TestResolveMovieCatalogFetchTargetByMovieName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve target: %v", err)
 	}
-	if url != "https://eiga.com/movie/57573/" {
-		t.Fatalf("unexpected url: %s", url)
+	if url != "" {
+		t.Fatalf("name query must not become a local seed URL: %s", url)
 	}
-	if len(candidates) != 1 || candidates[0].Title != "マージン・コール" {
-		t.Fatalf("unexpected candidates: %+v", candidates)
+	if len(candidates) != 0 {
+		t.Fatalf("name query must not produce local candidates: %+v", candidates)
 	}
 }
 
@@ -432,19 +545,37 @@ VALUES('103262','30003','出演','person_filmography','爆弾','ケビン・ス�
 	if err != nil {
 		t.Fatalf("resolve target: %v", err)
 	}
-	if url != "https://eiga.com/movie/103262/" {
-		t.Fatalf("unexpected url: %s", url)
+	if url != "" {
+		t.Fatalf("unfetched edge must not be selected as local seed: %s", url)
 	}
-	if len(candidates) != 1 || candidates[0].Title != "爆弾" {
-		t.Fatalf("unexpected candidates: %+v", candidates)
+	if len(candidates) != 0 {
+		t.Fatalf("unfetched edge must be resolved by external query, got candidates: %+v", candidates)
 	}
 }
 
-func TestHandleMovieCatalogFetchNoCandidatesReturnsStructuredHint(t *testing.T) {
+func TestHandleMovieCatalogFetchPassesQueryAndPreservesCrawlerCandidates(t *testing.T) {
 	dbPath := seedMovieCatalogTestDB(t)
-	h := HandleMovieCatalogFetch(MovieCatalogOptions{DBPath: dbPath})
+	var got moviecatalog.CrawlerRequest
+	h := HandleMovieCatalogFetch(MovieCatalogOptions{
+		DBPath: dbPath,
+		Crawler: movieCatalogCrawlerFunc(func(_ context.Context, req moviecatalog.CrawlerRequest) (moviecatalog.CrawlResult, error) {
+			got = req
+			return moviecatalog.CrawlResult{}, &moviecatalog.CrawlerServiceError{
+				StatusCode: http.StatusConflict,
+				Code:       "D0_RESOLUTION_AMBIGUOUS",
+				Message:    "複数候補があります",
+				Candidates: []moviecatalog.CrawlerCandidate{{
+					ID:    "101",
+					Kind:  "movie",
+					Label: "候補作品",
+					Title: "候補作品",
+					URL:   "https://eiga.com/movie/101/",
+				}},
+			}
+		}),
+	})
 
-	req := httptest.NewRequest(http.MethodPost, "/viewer/movie-catalog/fetch", strings.NewReader(`{"kind":"movie","query":"爆弾","max_pages":1}`))
+	req := httptest.NewRequest(http.MethodPost, "/viewer/movie-catalog/fetch", strings.NewReader(`{"kind":"movie","query":"マージン・コール","max_pages":1}`))
 	rec := httptest.NewRecorder()
 	h(rec, req)
 	if rec.Code != http.StatusConflict {
@@ -454,11 +585,53 @@ func TestHandleMovieCatalogFetchNoCandidatesReturnsStructuredHint(t *testing.T) 
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if out.Status != "candidates" || out.Kind != "movie" || out.Query != "爆弾" {
+	if out.Status != "candidates" || out.Kind != "movie" || out.Query != "マージン・コール" {
 		t.Fatalf("unexpected structured hint response: %+v", out)
 	}
-	if len(out.Candidates) != 0 {
-		t.Fatalf("expected no local candidates, got %+v", out.Candidates)
+	if got.URL != "" || got.Query != "マージン・コール" {
+		t.Fatalf("query must be passed to external resolver as query-only request: %+v", got)
+	}
+	if len(out.Candidates) != 1 || out.Candidates[0].Label != "候補作品" || out.Candidates[0].Title != "候補作品" {
+		t.Fatalf("expected crawler candidates to be preserved, got %+v", out.Candidates)
+	}
+	if out.ErrorCode != "D0_RESOLUTION_AMBIGUOUS" {
+		t.Fatalf("expected ambiguity error code, got %+v", out)
+	}
+}
+
+func TestHandleMovieCatalogFetchUsesURLSeedAndRejectsMixedInput(t *testing.T) {
+	dbPath := seedMovieCatalogTestDB(t)
+	var got moviecatalog.CrawlerRequest
+	called := 0
+	h := HandleMovieCatalogFetch(MovieCatalogOptions{
+		DBPath: dbPath,
+		Crawler: movieCatalogCrawlerFunc(func(_ context.Context, req moviecatalog.CrawlerRequest) (moviecatalog.CrawlResult, error) {
+			called++
+			got = req
+			return moviecatalog.CrawlResult{}, moviecatalog.ErrCrawlerUnavailable
+		}),
+	})
+
+	urlRec := httptest.NewRecorder()
+	h(urlRec, httptest.NewRequest(http.MethodPost, "/viewer/movie-catalog/fetch", strings.NewReader(`{"kind":"movie","url":"http://eiga.com/movie/57573/","max_pages":1}`)))
+	if urlRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for fake unavailable crawler, got %d: %s", urlRec.Code, urlRec.Body.String())
+	}
+	if got.URL != "https://eiga.com/movie/57573/" || got.Query != "" {
+		t.Fatalf("URL request must remain URL-only seed: %+v", got)
+	}
+
+	mixedRec := httptest.NewRecorder()
+	h(mixedRec, httptest.NewRequest(http.MethodPost, "/viewer/movie-catalog/fetch", strings.NewReader(`{"kind":"movie","url":"https://eiga.com/movie/57573/","query":"別名"}`)))
+	if mixedRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for query/url conflict, got %d: %s", mixedRec.Code, mixedRec.Body.String())
+	}
+	var mixed movieCatalogFetchResponse
+	if err := json.Unmarshal(mixedRec.Body.Bytes(), &mixed); err != nil {
+		t.Fatalf("invalid mixed input json: %v", err)
+	}
+	if mixed.ErrorCode != "D0_INPUT_CONFLICT" || called != 1 {
+		t.Fatalf("unexpected mixed input response/crawler calls: %+v calls=%d", mixed, called)
 	}
 }
 
@@ -528,4 +701,10 @@ INSERT INTO fetch_log(url,status) VALUES('https://eiga.com/movie/57573/','ok');
 		t.Fatalf("seed sqlite: %v", err)
 	}
 	return path
+}
+
+type movieCatalogCrawlerFunc func(context.Context, moviecatalog.CrawlerRequest) (moviecatalog.CrawlResult, error)
+
+func (f movieCatalogCrawlerFunc) Crawl(ctx context.Context, req moviecatalog.CrawlerRequest) (moviecatalog.CrawlResult, error) {
+	return f(ctx, req)
 }

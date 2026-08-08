@@ -7,6 +7,7 @@ const movieDbState = {
   limit: 25,
   offset: 0,
   total: 0,
+  cardsTotal: 0,
   selectedID: '',
   history: [],
   historyIndex: -1,
@@ -67,6 +68,59 @@ function movieDbRefreshStats() {
       const status = movieDbEl('movieDbStatus');
       if (status) status.textContent = '映画データベースを読み込めません: ' + String(err && err.message ? err.message : err);
     });
+}
+
+function movieDbRefreshCards() {
+  const target = movieDbEl('movieDbCards');
+  const status = movieDbEl('movieDbCardsStatus');
+  if (target) target.innerHTML = '<div class="daily-desk-muted">loading...</div>';
+  if (status) status.textContent = '読み込み中...';
+  fetch('/viewer/movie-catalog?action=cards&limit=50&offset=0', {cache: 'no-store'})
+    .then((r) => {
+      if (!r.ok) return r.text().then((text) => { throw new Error(text || ('HTTP ' + String(r.status))); });
+      return r.json();
+    })
+    .then((data) => {
+      if (!data || !data.available) throw new Error(data && data.error ? data.error : 'movie catalog unavailable');
+      const items = Array.isArray(data.items) ? data.items : [];
+      movieDbState.cardsTotal = Number(data.total || items.length);
+      movieDbRenderCards(items, movieDbState.cardsTotal);
+    })
+    .catch((err) => {
+      movieDbState.cardsTotal = 0;
+      if (status) status.textContent = 'カードを読み込めません';
+      if (target) target.innerHTML = '<div class="daily-desk-muted">' + esc(String(err && err.message ? err.message : err)) + '</div>';
+    });
+}
+
+function movieDbRenderCards(items, total) {
+  const target = movieDbEl('movieDbCards');
+  const status = movieDbEl('movieDbCardsStatus');
+  if (status) status.textContent = String(total || 0) + '件';
+  if (!target) return;
+  if (!items.length) {
+    target.innerHTML = '<div class="daily-desk-muted">D0/D1カードはありません。映画・人物を評価すると表示されます。</div>';
+    return;
+  }
+  target.innerHTML = items.map((card) => {
+    const kind = String(card && card.kind ? card.kind : 'item');
+    const label = String(card && card.target_label ? card.target_label : card && card.target_id ? card.target_id : '-');
+    const depth = Number(card && card.depth) === 0 ? 0 : 1;
+    const relation = card && card.relation_type ? String(card.relation_type) : (depth === 0 ? '評価されたroot' : '直接関係');
+    const source = card && card.relation_source ? String(card.relation_source) : '';
+    const state = card && card.validation_state ? String(card.validation_state) : '';
+    const rootIDs = Array.isArray(card && card.root_ids) ? card.root_ids.filter(Boolean).join(', ') : '';
+    const targetURL = card && card.target_url ? String(card.target_url) : '';
+    const link = /^https?:\/\//i.test(targetURL)
+      ? '<a class="movie-db-external" href="' + escAttr(targetURL) + '" target="_blank" rel="noreferrer">出典</a>'
+      : '';
+    return '<article class="movie-db-card">' +
+      '<div class="movie-db-card-head"><span class="movie-db-card-depth d' + String(depth) + '">D' + String(depth) + '</span><span class="desk-pill">' + esc(kind) + '</span>' + link + '</div>' +
+      '<h4>' + esc(label) + '</h4>' +
+      '<p>' + esc(relation) + (source ? ' / ' + esc(source) : '') + (state ? ' / ' + esc(state) : '') + '</p>' +
+      (rootIDs ? '<small>root: ' + esc(rootIDs) + '</small>' : '') +
+      '</article>';
+  }).join('');
 }
 
 function movieDbRefreshList() {
@@ -228,6 +282,7 @@ function movieDbSetAssessment(control) {
         item.checked = savedValue !== '' && item.dataset.value === savedValue;
       });
       movieDbSetSaveStatus('保存済み', 'ok');
+      movieDbRefreshCards();
       if (movieDbState.selectedID === targetID) {
         window.setTimeout(() => movieDbOpenDetail(targetID, {skipHistory: true}), 80);
       }
@@ -300,6 +355,7 @@ function movieDbSetPersonFavorite(control) {
     .then(() => {
       movieDbRefreshStats();
       movieDbRefreshList();
+      movieDbRefreshCards();
       if (movieDbState.mode === 'people' && movieDbState.selectedID === personID) {
         window.setTimeout(() => movieDbOpenDetail(personID, {skipHistory: true}), 80);
       }
@@ -609,6 +665,7 @@ function movieDbBind() {
   if (refresh) refresh.addEventListener('click', () => {
     movieDbRefreshStats();
     movieDbRefreshList();
+    movieDbRefreshCards();
   });
   const firstPage = () => {
     movieDbState.offset = 0;
@@ -645,17 +702,21 @@ function movieDbBind() {
     candidates.addEventListener('click', (evt) => {
       const btn = evt.target && evt.target.closest ? evt.target.closest('.movie-db-fetch-candidate') : null;
       if (!btn) return;
-      movieDbFetchFromWindow(btn.dataset.url || '');
+      const url = btn.dataset.url || '';
+      if (!url) return;
+      movieDbFetchFromWindow(url);
     });
   }
   document.querySelectorAll('[data-tab="movie-db"]').forEach((btn) => {
     btn.addEventListener('click', () => {
       movieDbRefreshStats();
       movieDbRefreshList();
+      movieDbRefreshCards();
     });
   });
   movieDbRefreshStats();
   movieDbRefreshList();
+  movieDbRefreshCards();
 }
 
 document.addEventListener('DOMContentLoaded', movieDbBind);
@@ -705,6 +766,7 @@ function movieDbFetchFromWindow(forcedURL) {
       movieDbSetFetchStatus('取得完了: ' + (lines[lines.length - 1] || data.url || '-'), 'ok');
       movieDbRefreshStats();
       movieDbRefreshList();
+      movieDbRefreshCards();
       if (movieDbState.selectedID) window.setTimeout(() => movieDbOpenDetail(movieDbState.selectedID), 250);
     })
     .catch((err) => {
@@ -724,7 +786,7 @@ function movieDbRenderFetchFailure(data, statusCode) {
     return;
   }
   if (data && data.status === 'candidates') {
-    movieDbSetFetchStatus('ローカル候補がありません。映画.comの作品URLまたは人物URLを貼って取得してください。', 'err');
+    movieDbSetFetchStatus('候補を確認して、取得する項目を明示的に選んでください。', 'err');
     movieDbRenderFetchURLHint(data);
     return;
   }
@@ -735,14 +797,8 @@ function movieDbRenderFetchFailure(data, statusCode) {
 function movieDbRenderFetchURLHint(data) {
   const target = movieDbEl('movieDbFetchCandidates');
   if (!target) return;
-  const query = data && data.query ? String(data.query) : '';
-  const searchURL = query ? 'https://eiga.com/search/' + encodeURIComponent(query) + '/' : '';
-  const searchLink = searchURL
-    ? '<a class="movie-db-external" href="' + escAttr(searchURL) + '" target="_blank" rel="noreferrer">映画.comで検索を開く</a>'
-    : '';
   target.innerHTML = '<div class="movie-db-fetch-hint">' +
-    '<div>URL例: https://eiga.com/movie/103262/</div>' +
-    (searchLink ? '<div>' + searchLink + '</div>' : '') +
+    '<div>候補を自動確定しません。明示URLを入力する場合の例: https://eiga.com/movie/103262/</div>' +
     '</div>';
 }
 
@@ -750,10 +806,12 @@ function movieDbRenderFetchCandidates(items) {
   const target = movieDbEl('movieDbFetchCandidates');
   if (!target) return;
   target.innerHTML = items.map((item) => {
-    const label = item.kind === 'person' ? (item.name || '-') : (item.title || '-');
-    const meta = item.kind + ' / ' + (item.id || '-');
-    return '<button class="ctl-btn movie-db-fetch-candidate" type="button" data-url="' + escAttr(item.url || '') + '">' +
-      esc(label) + '<br><span class="daily-desk-muted">' + esc(meta) + '</span></button>';
+    const label = item.label || (item.kind === 'person' ? item.name : item.title) || '-';
+    const meta = [item.kind, item.id, item.url].filter(Boolean).join(' / ') || '-';
+    const url = item.url || '';
+    const disabled = url ? '' : ' disabled';
+    return '<button class="ctl-btn movie-db-fetch-candidate" type="button" data-url="' + escAttr(url) + '"' + disabled + '>' +
+      esc(label) + '<br><span class="daily-desk-muted">' + esc(meta) + (url ? '' : ' / URL未確認') + '</span></button>';
   }).join('');
 }
 

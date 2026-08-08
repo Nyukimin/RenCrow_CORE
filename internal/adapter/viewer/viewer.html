@@ -1130,11 +1130,18 @@
             <input id="movieDbFetchMaxPages" class="movie-db-search" type="number" min="1" max="20" value="5" aria-label="max fetch pages">
             <button id="movieDbFetchBtn" class="ctl-btn" type="button">取得</button>
           </div>
-          <div id="movieDbFetchStatus" class="movie-db-fetch-status daily-desk-muted">名前は既存DB候補から解決します。未登録なら映画.com URLを貼ってください。</div>
+          <div id="movieDbFetchStatus" class="movie-db-fetch-status daily-desk-muted">名前は常にresolverへqueryとして渡します。取得する候補は明示的に選択してください。</div>
           <div id="movieDbFetchCandidates" class="movie-db-fetch-candidates"></div>
         </details>
       </section>
       <section class="movie-db-main">
+        <section class="movie-db-cards" aria-labelledby="movieDbCardsTitle">
+          <div class="movie-db-cards-head">
+            <h3 id="movieDbCardsTitle">D0 / D1カード</h3>
+            <span id="movieDbCardsStatus" class="desk-pill" aria-live="polite">読み込み前</span>
+          </div>
+          <div id="movieDbCards" class="movie-db-cards-grid"></div>
+        </section>
         <div class="movie-db-toolbar">
           <div class="movie-db-mode" role="tablist" aria-label="Movie catalog mode">
             <button id="movieDbModeMovies" class="movie-db-mode-btn active" type="button">映画</button>
@@ -1628,7 +1635,7 @@
 <script src="/viewer/assets/js/tabs/overview.js?v=20260510-tabs-overview" defer></script>
 <script src="/viewer/assets/js/tabs/system.js?v=20260510-tabs-system" defer></script>
 <script src="/viewer/assets/js/tabs/memory.js?v=20260518-knowledge-relations" defer></script>
-<script src="/viewer/assets/js/tabs/movie-db.js?v=20260723-assessment-grid-2" defer></script>
+<script src="/viewer/assets/js/tabs/movie-db.js?v=20260808-d0-d1-cards-1" defer></script>
 <script src="/viewer/assets/js/tabs/news-pack.js?v=20260805-news-pack-snapshot" defer></script>
 <script src="/viewer/assets/js/tabs/collection.js?v=20260721-daily-collection" defer></script>
 <script src="/viewer/assets/js/tabs/investment.js?v=20260616-investment-desk" defer></script>

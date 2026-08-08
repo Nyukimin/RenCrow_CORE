@@ -1,9 +1,10 @@
 package moviecatalog
 
 import (
-	"bufio"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,16 @@ type CatalogImportResult struct {
 	People  int
 	Edges   int
 	Records int
+}
+
+// ArtifactReceipt is the staged sidecar boundary between the crawler and the
+// DB import.  Hash/size are optional for legacy callers, but when supplied
+// they are verified before ImportJSONLFile can mutate the catalog.
+type ArtifactReceipt struct {
+	Path      string
+	SourceURL string
+	SHA256    string
+	Bytes     int64
 }
 
 type catalogContextExecer interface {
@@ -65,6 +76,62 @@ func ImportJSONLFile(ctx context.Context, db *sql.DB, path string, sourceURL str
 	return ImportJSONL(ctx, db, file, sourceURL)
 }
 
+// ImportArtifact verifies a staged crawler receipt and then imports it through
+// the existing transactional JSONL entry point.  A receipt mismatch returns
+// before schema writes or import transaction work begins.
+func ImportArtifact(ctx context.Context, db *sql.DB, receipt ArtifactReceipt) (CatalogImportResult, error) {
+	path := strings.TrimSpace(receipt.Path)
+	if path == "" {
+		return CatalogImportResult{}, fmt.Errorf("movie catalog artifact path is required")
+	}
+	if receipt.Bytes < 0 {
+		return CatalogImportResult{}, fmt.Errorf("movie catalog artifact byte count must not be negative")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return CatalogImportResult{}, fmt.Errorf("stat movie catalog artifact: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return CatalogImportResult{}, fmt.Errorf("movie catalog artifact is not a regular file")
+	}
+	if receipt.Bytes > 0 && info.Size() != receipt.Bytes {
+		return CatalogImportResult{}, fmt.Errorf("movie catalog artifact size mismatch (expected=%d actual=%d)", receipt.Bytes, info.Size())
+	}
+	if expected := strings.ToLower(strings.TrimSpace(receipt.SHA256)); expected != "" {
+		file, err := os.Open(path)
+		if err != nil {
+			return CatalogImportResult{}, fmt.Errorf("open movie catalog artifact for hash: %w", err)
+		}
+		hash := sha256.New()
+		_, copyErr := io.Copy(hash, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return CatalogImportResult{}, fmt.Errorf("hash movie catalog artifact: %w", copyErr)
+		}
+		if closeErr != nil {
+			return CatalogImportResult{}, fmt.Errorf("close movie catalog artifact after hash: %w", closeErr)
+		}
+		actual := hex.EncodeToString(hash.Sum(nil))
+		if expected != actual {
+			return CatalogImportResult{}, fmt.Errorf("movie catalog artifact sha256 mismatch (expected=%s actual=%s)", expected, actual)
+		}
+	}
+	return ImportJSONLFile(ctx, db, path, receipt.SourceURL)
+}
+
+// ImportCrawlArtifact is the crawler-facing adapter.  CrawlResult already
+// contains the response-verified hash and byte count; keeping this call in the
+// application layer makes the receipt check and DB transaction one import
+// contract without changing the HTTP adapter.
+func ImportCrawlArtifact(ctx context.Context, db *sql.DB, result CrawlResult, sourceURL string) (CatalogImportResult, error) {
+	return ImportArtifact(ctx, db, ArtifactReceipt{
+		Path:      result.ArtifactPath,
+		SourceURL: strings.TrimSpace(sourceURL),
+		SHA256:    result.ArtifactSHA256,
+		Bytes:     result.ArtifactBytes,
+	})
+}
+
 func ImportJSONL(ctx context.Context, db *sql.DB, reader io.Reader, sourceURL string) (CatalogImportResult, error) {
 	if db == nil {
 		return CatalogImportResult{}, fmt.Errorf("movie catalog database is nil")
@@ -74,6 +141,16 @@ func ImportJSONL(ctx context.Context, db *sql.DB, reader io.Reader, sourceURL st
 	}
 	if err := ensureCatalogImportSchema(ctx, db); err != nil {
 		return CatalogImportResult{}, err
+	}
+	lines, err := readMovieArtifactLines(reader)
+	if err != nil {
+		return CatalogImportResult{}, err
+	}
+	if len(lines) == 0 {
+		return CatalogImportResult{}, fmt.Errorf("movie catalog artifact contains no records")
+	}
+	if movieArtifactIsV2(lines) {
+		return importMovieCatalogGraphV2(ctx, db, lines, sourceURL)
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -86,29 +163,23 @@ func ImportJSONL(ctx context.Context, db *sql.DB, reader io.Reader, sourceURL st
 		}
 	}()
 	result := CatalogImportResult{}
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 64<<10), 4<<20)
-	for lineNo := 1; scanner.Scan(); lineNo++ {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
+	for _, line := range lines {
 		var record movieArtifactRecord
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			return CatalogImportResult{}, fmt.Errorf("decode movie catalog artifact line %d: %w", lineNo, err)
+		if err := json.Unmarshal(line.raw, &record); err != nil {
+			return CatalogImportResult{}, fmt.Errorf("decode movie catalog artifact line %d: %w", line.lineNo, err)
 		}
 		switch strings.ToLower(strings.TrimSpace(record.Kind)) {
 		case "movie":
 			count, err := importMovieRecord(ctx, tx, record)
 			if err != nil {
-				return CatalogImportResult{}, fmt.Errorf("import movie catalog line %d: %w", lineNo, err)
+				return CatalogImportResult{}, fmt.Errorf("import movie catalog line %d: %w", line.lineNo, err)
 			}
 			result.Movies++
 			result.Edges += count
 		case "person":
 			count, err := importPersonRecord(ctx, tx, record)
 			if err != nil {
-				return CatalogImportResult{}, fmt.Errorf("import movie catalog line %d: %w", lineNo, err)
+				return CatalogImportResult{}, fmt.Errorf("import movie catalog line %d: %w", line.lineNo, err)
 			}
 			result.People++
 			result.Edges += count
@@ -116,12 +187,6 @@ func ImportJSONL(ctx context.Context, db *sql.DB, reader io.Reader, sourceURL st
 			return CatalogImportResult{}, fmt.Errorf("unsupported artifact kind %q", record.Kind)
 		}
 		result.Records++
-	}
-	if err := scanner.Err(); err != nil {
-		return CatalogImportResult{}, fmt.Errorf("read movie catalog artifact: %w", err)
-	}
-	if result.Records == 0 {
-		return CatalogImportResult{}, fmt.Errorf("movie catalog artifact contains no records")
 	}
 	if sourceURL = strings.TrimSpace(sourceURL); sourceURL != "" {
 		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO fetch_log(url,status,error) VALUES(?,?,?)`, sourceURL, "ok", ""); err != nil {
@@ -189,8 +254,14 @@ func importPersonRecord(ctx context.Context, tx *sql.Tx, record movieArtifactRec
 			movie.MovieID = strings.TrimSpace(movie.MovieID)
 			movie.Title = strings.TrimSpace(movie.Title)
 			movie.URL = strings.TrimSpace(movie.URL)
-			if movie.MovieID == "" || movie.Title == "" || movie.URL == "" {
-				return 0, fmt.Errorf("person edge requires movie_id, title and url")
+			// v1 person artifacts may contain an incomplete filmography item
+			// (for example a movie URL with no title).  Keep every explicit
+			// field as a partial edge without deriving the missing values.  A
+			// completely empty item has no D1 identity or evidence and is the
+			// only case that is skipped; the validated person root still
+			// commits successfully.
+			if movie.MovieID == "" && movie.Title == "" && movie.URL == "" {
+				continue
 			}
 			role := strings.TrimSpace(movie.Role)
 			if role == "" {
@@ -257,6 +328,33 @@ CREATE TABLE IF NOT EXISTS fetch_log (
   status TEXT NOT NULL,
   fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
   error TEXT
+);
+CREATE TABLE IF NOT EXISTS movie_catalog_roots (
+  root_id TEXT PRIMARY KEY,
+  manifest_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  target_label TEXT NOT NULL,
+  target_url TEXT NOT NULL,
+  validation_state TEXT NOT NULL,
+  provenance_json TEXT NOT NULL DEFAULT '[]',
+  source_url TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS movie_related_credits (
+  credit_id TEXT PRIMARY KEY,
+  movie_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_id TEXT,
+  target_label TEXT NOT NULL,
+  target_url TEXT NOT NULL DEFAULT '',
+  relation_type TEXT NOT NULL,
+  source TEXT NOT NULL,
+  validation_state TEXT NOT NULL DEFAULT 'validated',
+  provenance_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`)
 	return err
 }

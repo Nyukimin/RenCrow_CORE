@@ -35,11 +35,24 @@ type CrawlerRequest struct {
 	RequestID                string
 	Kind                     string
 	URL                      string
+	Query                    string
 	MaxPages                 int
 	FollowLinks              bool
 	IncludePersonFilmography bool
 	Delay                    time.Duration
 	ArtifactDir              string
+}
+
+// CrawlerCandidate is a sidecar-provided target candidate for an ambiguous
+// name query. CORE keeps the candidate opaque enough for the Viewer to present
+// it and does not select one implicitly.
+type CrawlerCandidate struct {
+	ID    string `json:"id,omitempty"`
+	Kind  string `json:"kind,omitempty"`
+	Label string `json:"label,omitempty"`
+	Title string `json:"title,omitempty"`
+	Name  string `json:"name,omitempty"`
+	URL   string `json:"url,omitempty"`
 }
 
 type CrawlResult struct {
@@ -60,6 +73,7 @@ type CrawlerServiceError struct {
 	StatusCode int
 	Code       string
 	Message    string
+	Candidates []CrawlerCandidate
 }
 
 func (e *CrawlerServiceError) Error() string {
@@ -103,7 +117,8 @@ func NewConfiguredCrawler(timeout time.Duration) Crawler {
 type crawlerRequestPayload struct {
 	RequestID                string  `json:"request_id,omitempty"`
 	Kind                     string  `json:"kind"`
-	SeedURL                  string  `json:"seed_url"`
+	SeedURL                  string  `json:"seed_url,omitempty"`
+	Query                    string  `json:"query,omitempty"`
 	MaxPages                 int     `json:"max_pages"`
 	FollowLinks              bool    `json:"follow_links"`
 	IncludePersonFilmography bool    `json:"include_person_filmography"`
@@ -111,24 +126,30 @@ type crawlerRequestPayload struct {
 }
 
 type crawlerResponsePayload struct {
-	JobID          string `json:"job_id"`
-	State          string `json:"state"`
-	Status         string `json:"status"`
-	StatusURL      string `json:"status_url"`
-	ArtifactURL    string `json:"artifact_url"`
-	ArtifactSHA256 string `json:"artifact_sha256"`
-	ArtifactBytes  int64  `json:"artifact_bytes"`
-	Output         string `json:"output"`
-	ErrorCode      string `json:"error_code"`
-	Message        string `json:"message"`
+	JobID          string             `json:"job_id"`
+	State          string             `json:"state"`
+	Status         string             `json:"status"`
+	StatusURL      string             `json:"status_url"`
+	ArtifactURL    string             `json:"artifact_url"`
+	ArtifactSHA256 string             `json:"artifact_sha256"`
+	ArtifactBytes  int64              `json:"artifact_bytes"`
+	Output         string             `json:"output"`
+	ErrorCode      string             `json:"error_code"`
+	Message        string             `json:"message"`
+	Candidates     []CrawlerCandidate `json:"candidates,omitempty"`
 }
 
 func (c *HTTPCrawler) Crawl(ctx context.Context, request CrawlerRequest) (CrawlResult, error) {
 	if c == nil || strings.TrimSpace(c.baseURL) == "" {
 		return CrawlResult{}, fmt.Errorf("%w: set RENCROW_MOVIE_CATALOG_CRAWLER_URL", ErrCrawlerUnavailable)
 	}
-	if strings.TrimSpace(request.URL) == "" {
-		return CrawlResult{}, fmt.Errorf("%w: seed URL is required", ErrCrawlerProtocol)
+	seedURL := strings.TrimSpace(request.URL)
+	query := strings.TrimSpace(request.Query)
+	if seedURL == "" && query == "" {
+		return CrawlResult{}, fmt.Errorf("%w: seed URL or query is required", ErrCrawlerProtocol)
+	}
+	if seedURL != "" && query != "" {
+		return CrawlResult{}, fmt.Errorf("%w: seed URL and query are mutually exclusive", ErrCrawlerProtocol)
 	}
 	artifactDir := strings.TrimSpace(request.ArtifactDir)
 	if artifactDir == "" {
@@ -144,7 +165,8 @@ func (c *HTTPCrawler) Crawl(ctx context.Context, request CrawlerRequest) (CrawlR
 	payload := crawlerRequestPayload{
 		RequestID:                strings.TrimSpace(request.RequestID),
 		Kind:                     strings.TrimSpace(request.Kind),
-		SeedURL:                  strings.TrimSpace(request.URL),
+		SeedURL:                  seedURL,
+		Query:                    query,
 		MaxPages:                 request.MaxPages,
 		FollowLinks:              request.FollowLinks,
 		IncludePersonFilmography: request.IncludePersonFilmography,
@@ -168,7 +190,7 @@ func (c *HTTPCrawler) Crawl(ctx context.Context, request CrawlerRequest) (CrawlR
 	state := strings.ToLower(strings.TrimSpace(result.State))
 	status := strings.ToLower(strings.TrimSpace(result.Status))
 	if state == "failed" || status == "failed" || status == "error" {
-		return CrawlResult{}, &CrawlerServiceError{StatusCode: response.StatusCode, Code: result.ErrorCode, Message: result.Message}
+		return CrawlResult{}, &CrawlerServiceError{StatusCode: response.StatusCode, Code: result.ErrorCode, Message: result.Message, Candidates: result.Candidates}
 	}
 	if state != "" && state != "succeeded" && state != "completed" || status != "" && status != "ok" && status != "succeeded" && status != "completed" {
 		return CrawlResult{}, fmt.Errorf("%w: state=%q status=%q", ErrCrawlerProtocol, result.State, result.Status)
@@ -227,7 +249,7 @@ func (c *HTTPCrawler) post(ctx context.Context, endpoint string, body []byte) (*
 		}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return response, result, &CrawlerServiceError{StatusCode: response.StatusCode, Code: result.ErrorCode, Message: result.Message}
+		return response, result, &CrawlerServiceError{StatusCode: response.StatusCode, Code: result.ErrorCode, Message: result.Message, Candidates: result.Candidates}
 	}
 	return response, result, nil
 }
@@ -245,7 +267,7 @@ func (c *HTTPCrawler) wait(ctx context.Context, initial crawlerResponsePayload) 
 			state := strings.ToLower(strings.TrimSpace(result.State))
 			status := strings.ToLower(strings.TrimSpace(result.Status))
 			if state == "failed" || status == "failed" || status == "error" {
-				return crawlerResponsePayload{}, &CrawlerServiceError{StatusCode: http.StatusBadGateway, Code: result.ErrorCode, Message: result.Message}
+				return crawlerResponsePayload{}, &CrawlerServiceError{StatusCode: http.StatusBadGateway, Code: result.ErrorCode, Message: result.Message, Candidates: result.Candidates}
 			}
 			return result, nil
 		}
@@ -269,6 +291,15 @@ func (c *HTTPCrawler) wait(ctx context.Context, initial crawlerResponsePayload) 
 			return crawlerResponsePayload{}, fmt.Errorf("read crawler status response: %w", readErr)
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			var serviceResult crawlerResponsePayload
+			if err := json.Unmarshal(payload, &serviceResult); err == nil {
+				return crawlerResponsePayload{}, &CrawlerServiceError{
+					StatusCode: response.StatusCode,
+					Code:       serviceResult.ErrorCode,
+					Message:    serviceResult.Message,
+					Candidates: serviceResult.Candidates,
+				}
+			}
 			return crawlerResponsePayload{}, &CrawlerServiceError{StatusCode: response.StatusCode, Message: strings.TrimSpace(string(payload))}
 		}
 		if err := json.Unmarshal(payload, &result); err != nil {

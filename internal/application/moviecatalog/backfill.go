@@ -178,7 +178,7 @@ func (s *BackfillService) RunOnce(ctx context.Context) (BackfillResult, error) {
 		return result, fmt.Errorf("%w: crawler returned no staged artifact", ErrCrawlerProtocol)
 	}
 	defer os.Remove(crawlResult.ArtifactPath)
-	imported, err := ImportJSONLFile(ctx, db, crawlResult.ArtifactPath, target.URL)
+	imported, err := ImportCrawlArtifact(ctx, db, crawlResult, target.URL)
 	if err != nil {
 		result.Status = "error"
 		return result, err

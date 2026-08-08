@@ -461,6 +461,8 @@ Debug Viewer／localhost運用CLI向けのadmin APIであり、RenCrow_PORTALか
 
 `items`はtitle、category、source、`source_type`、元URL、`source_read_status`、`source_read_url`、`processing_status`、`processing_error`、原文の日本語訳`translated_body`、`summary`、事実と分離したShiroの`perspective`、`term_notes`を持ちます。収集phaseで見出しとURLを取得した項目は後続工程が未着手または失敗でも`items`から除外せず、`total`は常に`len(items)`と一致します。`source_read_status_counts`と`processing_status_counts`は全`items`の状態別件数を返します。`source_read_status`は原文取得だけを表し、`unprocessed`は未着手、`ready`は取得済み、`unavailable`は取得失敗です。`processing_status`は後続処理を表し、値は`pending`、`ready`、`source_unavailable`、`translation_failed`、`term_extraction_failed`、`brief_failed`です。`pending`は未着手であり失敗ではありません。`processing_error`は空、または利用者へ表示可能な工程別の日本語理由であり、providerやbackendの生errorを含みません。原文取得後に翻訳が失敗した項目は`source_read_status=ready`と`processing_status=translation_failed`を返します。用語抽出またはサマリ・見解生成が失敗した場合も、それ以前の工程で完成した値を保持します。`term_notes`は用語、説明、確認方法、確認元URL、`contextual`／`confirmed`／`unresolved`／`unavailable`の状態を返します。表示順は「原文翻訳 → サマリ → Shiroの見解 → 用語補足」です。`sources`はcredentialを除いた取得先設定を持ちます。このGETは現在のプロセス内cacheをコピーして返す観測用snapshotであり、収集、分析、再収集、cache消費、Memory昇格を開始しません。
 
+### Movie Catalog API実装契約
+
 `GET /viewer/movie-catalog?action=movies|people`は一覧項目に`familiarity`、`sentiment`、`assessed`を返します。映画の`familiarity`は`seen | unseen | ""`、俳優の`familiarity`は`known | unknown | ""`、`sentiment`は共通で`like | dislike | ""`です。`POST /viewer/movie-catalog/preference`へ`kind`（`movie | person`）、`target_id`、`target_label`、`dimension`（`familiarity | sentiment`）、`value`、`generated_by`を送ると一方のdimensionだけを更新し、他方を維持します。空の`value`はそのdimensionを明示的な未選択へ戻します。Viewer内部のwrite APIであり、PORTALへ自動公開しません。
 
 `GET /viewer/movie-catalog?action=cards`は映画catalogからD0/D1カードを派生して返します。D0は映画の`seen`または`like`、俳優の`known`または`like`、および成功した明示映画名／人物名／URL取得対象です。D0のroot `kind`は現段階では`movie`または`person`だけです。`unseen`、`unknown`、`dislike`単独はD0にしません。明示assessmentの行が存在しない場合だけ、映画のwatch eventを`seen`、人物の正のfavorite signalを`like`としてfallbackします。responseの各itemは少なくとも`kind`、`target_id`、`target_label`、`target_url`、`depth`、`root_ids`、`relation_type`、`relation_source`、`validation_state`、`provenance_urls`を持ち、`kind`は少なくとも`movie | person | music | source_work`を許容します。D0は`depth=0`、D1はD0のvalidated direct relationだけを`depth=1`として返します。D1には出演・監督・脚本・音楽担当・原作者等の`person`、映画.comが作品名を明示した音楽作品・主題歌・劇伴・サウンドトラック等の`music`、小説・漫画・舞台・ゲーム等の原作・参照作品の`source_work`を含めます。D1から先は展開せず、validated cardは同じ`kind`と`target_id`の一件にまとめ、`target_id`のない`partial`または`unresolved` cardは正規化label、relation、provenanceで一件にまとめます。複数rootでは最小`depth`を返します。汎用work cardは`hobby_graph`のvalidated itemを正本とし、映画側credit／relationのprovenanceは`movie_catalog`から返します。文字列だけでitemへ確定できない場合は`target_id`を空にした`partial`または`unresolved` cardとしてlabelとprovenanceを返し、推測で補完しません。`depth`、root経路、D1カードは派生値であり、Memory L1へ保存しません。個人評価やroot状態を通常会話のCategoryRecallへ渡さず、公開catalog projectionとの境界を維持します。
@@ -477,6 +479,57 @@ Python crawlerや別endpointへfallbackしません。名前queryが複数候補
 COREは対象を勝手に確定しません。利用者が候補または正規化されたURLを明示選択し、取得、artifact検証、
 importが成功した対象だけをD0 rootとして記録します。映画.comの`/search` queryを取得経路にせず、
 robots.txt、rate limit、その他のアクセス制約を迂回しません。このViewer write APIもPORTALへ自動公開しません。
+
+`query`と`url`はtrim後に必ず一方だけを選びます。sidecarが入力を検証する場合、両方空は
+`400 D0_INPUT_REQUIRED`、両方指定は`400 D0_INPUT_CONFLICT`です。`url`を選んだ場合は既存の正規化済み
+`https://eiga.com/movie/{id}/`または`https://eiga.com/person/{id}/`を`seed_url`として送信し、既存の
+URL contractを変更しません。`query`を選んだ場合だけsidecar requestへ`query`を入れ、`seed_url`を
+空にします。COREはqueryをURLへ変換せず、sidecarの候補・robots・rate limit判定を迂回しません。
+
+queryが一意に解決できず、利用者の明示選択が必要な場合は次の形で`409`を返します。候補の表示名やURL
+を見てCOREが自動選択してはなりません。
+
+```json
+{
+  "available": true,
+  "status": "candidates",
+  "kind": "movie",
+  "query": "作品名",
+  "error_code": "D0_RESOLUTION_AMBIGUOUS",
+  "candidates": [{"kind":"movie","label":"候補作品","url":"https://eiga.com/movie/101/"}]
+}
+```
+
+候補はsidecarの`url`、`kind`、`label`をresponseから保持します。既存local候補との互換のため
+`id`、`title`、`name`が存在する場合も破棄せず、`CrawlerServiceError`も
+HTTP status、upstream error code、message、候補配列を一体で保持し、handlerが候補を落としません。
+既存のURL取得と旧sidecar responseは同じendpoint、job、artifact、hash、size fieldで処理します。
+`candidates`と`query`は後方互換な追加fieldです。旧sidecarがqueryを理解しないときは、COREはURLや
+候補を推測せず、明示的なunsupported／upstream errorとして返し、旧Python crawlerへfallbackしません。
+
+実装で固定するerror codeとHTTP statusは次のとおりです。sidecarの`D0_*` codeは`message`と
+`CrawlerServiceError.Code`へ保持し、CORE adapterで別の意味へ変換しません。COREのViewer handlerが
+surface固有codeを返す場合も、upstream codeと候補配列を失わないことを別contractで検証します。
+
+| error code | HTTP | owner | 意味 |
+| --- | ---: | --- | --- |
+| `D0_INPUT_REQUIRED` | 400 | sidecar | `query`と`url`のどちらもない |
+| `D0_INPUT_CONFLICT` | 400 | sidecar | `query`と`url`を同時指定した |
+| `D0_RESOLUTION_AMBIGUOUS` | 409 | sidecar | queryが複数候補で、候補選択が必要 |
+| `D0_RESOLUTION_NOT_FOUND` | 404 | sidecar | queryに一致する検証済み候補がない |
+| `MOVIE_CATALOG_CRAWLER_UNAVAILABLE` | 503 | CORE | sidecar未設定または到達不能 |
+| `MOVIE_CATALOG_IMPORT_FAILED` | 502 | CORE | artifact importのtransaction失敗 |
+| `MOVIE_CATALOG_ARTIFACT_MISSING` | 502 | CORE | sidecarがartifactを返さない |
+| `D1_OUTBOUND_FORBIDDEN` | 422 | sidecar／CORE | D1から先のedgeまたはoutboundを検出 |
+
+sidecar artifactはv1のmovie／person JSONLを受け付け続け、v2では`rencrow.movie_catalog.v2`の
+`manifest`、`node`、`edge` recordを一つのroot import transactionで検証・取り込みます。v2 nodeの
+`node_kind`は公開item kindとして`movie | person | music | source_work`、rootは`movie | person`だけです。公開cardsの
+`depth`、`root_ids`、D1 itemは保存値ではなく、assessmentまたは成功した明示取得rootからvalidated
+direct edgeを最大1回だけ評価する派生値です。複数rootは最小depthへまとめ、D1から別のedgeを辿りません。
+artifact nodeの`depth`はsidecar取得境界の検証metadataであり、公開Card `depth`へコピーしません。
+`partial`／`unresolved`は明示labelとprovenanceを返しますが、空のtarget IDを推測で埋めません。
+汎用work cardの正本は`hobby_graph`、映画側のcredit／relation／provenanceは`movie_catalog`です。
 
 Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCOREが生成します。EconomicTask、Delivery、RevenueEvent、Reflectionの作成では、参照元Opportunityまたは上流entityの`trace_id`を引き継ぎ、別の値へ黙って付け替えません。`POST /viewer/revenue/deliveries`は`delivery_id`、`trace_id`、`delivery_kind`、`status`、任意の上流IDとtarget/evidenceを受けます。`external_action=true`かつ`status=completed`では、許可された`policy_decision_id`と`evidence`が必須です。
 

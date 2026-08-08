@@ -120,6 +120,7 @@ type movieCatalogPreferenceRequest struct {
 type movieCatalogFetchCandidate struct {
 	ID    string `json:"id"`
 	Kind  string `json:"kind"`
+	Label string `json:"label,omitempty"`
 	Title string `json:"title"`
 	Name  string `json:"name"`
 	URL   string `json:"url"`
@@ -190,6 +191,13 @@ func HandleMovieCatalog(opts MovieCatalogOptions) http.HandlerFunc {
 			resp.Total, resp.Items, err = moviecatalog.Movies(db, params, limit, offset)
 		case "people":
 			resp.Total, resp.Items, err = moviecatalog.People(db, params, limit, offset)
+		case "cards":
+			if !movieCatalogTableExists(db, "movies") || !movieCatalogTableExists(db, "people") {
+				resp.Total = 0
+				resp.Items = []moviecatalog.Card{}
+			} else {
+				resp.Total, resp.Items, err = moviecatalog.Cards(db, limit, offset)
+			}
 		case "movie":
 			resp.Detail, err = moviecatalog.MovieDetail(db, r.URL.Query().Get("id"))
 		case "person":
@@ -222,6 +230,32 @@ func HandleMovieCatalogFetch(opts MovieCatalogOptions) http.HandlerFunc {
 			http.Error(w, "kind must be movie or person", http.StatusBadRequest)
 			return
 		}
+		req.Query = strings.TrimSpace(req.Query)
+		req.URL = strings.TrimSpace(req.URL)
+		if req.Query != "" && req.URL != "" {
+			writeMovieCatalogFetchJSONStatus(w, http.StatusBadRequest, movieCatalogFetchResponse{
+				Available: true,
+				DBPath:    strings.TrimSpace(opts.DBPath),
+				Status:    "error",
+				Kind:      req.Kind,
+				Query:     req.Query,
+				URL:       req.URL,
+				ErrorCode: "D0_INPUT_CONFLICT",
+				Error:     "query and url are mutually exclusive",
+			})
+			return
+		}
+		if req.Query == "" && req.URL == "" {
+			writeMovieCatalogFetchJSONStatus(w, http.StatusBadRequest, movieCatalogFetchResponse{
+				Available: true,
+				DBPath:    strings.TrimSpace(opts.DBPath),
+				Status:    "error",
+				Kind:      req.Kind,
+				ErrorCode: "D0_INPUT_REQUIRED",
+				Error:     "query or url is required",
+			})
+			return
+		}
 		maxPages := req.MaxPages
 		if maxPages <= 0 {
 			maxPages = 5
@@ -241,28 +275,31 @@ func HandleMovieCatalogFetch(opts MovieCatalogOptions) http.HandlerFunc {
 			return
 		}
 		defer db.Close()
+		if err := db.Ping(); err != nil {
+			http.Error(w, "failed to initialize movie catalog", http.StatusInternalServerError)
+			return
+		}
 
 		targetURL, candidates, err := resolveMovieCatalogFetchTarget(db, req)
 		if err != nil {
 			status := http.StatusBadRequest
-			if errors.Is(err, errMovieCatalogFetchCandidates) {
-				status = http.StatusConflict
-			}
+			responseStatus := "error"
 			log.Printf("[MovieCatalog] fetch target unresolved kind=%s query=%q candidates=%d err=%v", req.Kind, strings.TrimSpace(req.Query), len(candidates), err)
 			writeMovieCatalogFetchJSONStatus(w, status, movieCatalogFetchResponse{
 				Available:  true,
 				DBPath:     dbPath,
-				Status:     "candidates",
+				Status:     responseStatus,
 				Kind:       req.Kind,
-				Query:      strings.TrimSpace(req.Query),
+				Query:      req.Query,
+				URL:        req.URL,
 				Candidates: candidates,
 				Error:      err.Error(),
 			})
 			return
 		}
+		crawlQuery := ""
 		if targetURL == "" {
-			http.Error(w, "url or name query is required", http.StatusBadRequest)
-			return
+			crawlQuery = req.Query
 		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(maxPages*8+20)*time.Second)
@@ -271,10 +308,15 @@ func HandleMovieCatalogFetch(opts MovieCatalogOptions) http.HandlerFunc {
 		if crawler == nil {
 			crawler = moviecatalog.NewConfiguredCrawler(time.Duration(maxPages*8+20) * time.Second)
 		}
+		requestTarget := targetURL
+		if requestTarget == "" {
+			requestTarget = crawlQuery
+		}
 		crawlResult, runErr := crawler.Crawl(ctx, moviecatalog.CrawlerRequest{
-			RequestID:                strings.TrimSpace(req.Kind + ":" + targetURL),
+			RequestID:                strings.TrimSpace(req.Kind + ":" + requestTarget),
 			Kind:                     req.Kind,
 			URL:                      targetURL,
+			Query:                    crawlQuery,
 			MaxPages:                 maxPages,
 			FollowLinks:              req.FollowLinks,
 			IncludePersonFilmography: req.IncludePersonFilmography,
@@ -284,7 +326,9 @@ func HandleMovieCatalogFetch(opts MovieCatalogOptions) http.HandlerFunc {
 		resp := movieCatalogFetchResponse{
 			Available:      true,
 			DBPath:         dbPath,
+			Kind:           req.Kind,
 			URL:            targetURL,
+			Query:          crawlQuery,
 			Status:         "ok",
 			JobID:          crawlResult.JobID,
 			Stdout:         crawlResult.Output,
@@ -302,17 +346,26 @@ func HandleMovieCatalogFetch(opts MovieCatalogOptions) http.HandlerFunc {
 				var serviceErr *moviecatalog.CrawlerServiceError
 				if errors.As(runErr, &serviceErr) {
 					resp.ErrorCode = serviceErr.CrawlerErrorCode()
-					if serviceErr.StatusCode == http.StatusBadGateway || serviceErr.StatusCode == http.StatusServiceUnavailable || serviceErr.StatusCode == http.StatusGatewayTimeout {
+					resp.Candidates = movieCatalogFetchCandidatesFromCrawler(serviceErr.Candidates)
+					if serviceErr.StatusCode == http.StatusConflict || resp.ErrorCode == "D0_RESOLUTION_AMBIGUOUS" {
+						resp.Status = "candidates"
+						if resp.ErrorCode == "" {
+							resp.ErrorCode = "D0_RESOLUTION_AMBIGUOUS"
+						}
+						status = http.StatusConflict
+					} else if serviceErr.StatusCode == http.StatusBadGateway || serviceErr.StatusCode == http.StatusServiceUnavailable || serviceErr.StatusCode == http.StatusGatewayTimeout {
 						resp.Status = "unavailable"
 						if resp.ErrorCode == "" {
 							resp.ErrorCode = "MOVIE_CATALOG_CRAWLER_UNAVAILABLE"
 						}
 						status = http.StatusServiceUnavailable
+					} else if serviceErr.StatusCode >= 400 && serviceErr.StatusCode < 600 {
+						status = serviceErr.StatusCode
 					}
 				}
 			}
 			resp.Error = runErr.Error()
-			log.Printf("[MovieCatalog] fetch failed url=%s max_pages=%d err=%v output=%s", targetURL, maxPages, runErr, strings.TrimSpace(resp.Stdout))
+			log.Printf("[MovieCatalog] fetch failed target=%s max_pages=%d err=%v output=%s", requestTarget, maxPages, runErr, strings.TrimSpace(resp.Stdout))
 			writeMovieCatalogFetchJSONStatus(w, status, resp)
 			return
 		}
@@ -481,8 +534,7 @@ func resolveMovieCatalogWritableDBPath(configured string) string {
 }
 
 var (
-	errMovieCatalogFetchCandidates = errors.New("local candidates are ambiguous or unavailable; choose a candidate or paste a movie/person URL")
-	movieCatalogURLPattern         = regexp.MustCompile(`^https://eiga\.com/(movie|person)/(\d+)/?$`)
+	movieCatalogURLPattern = regexp.MustCompile(`^https://eiga\.com/(movie|person)/(\d+)/?$`)
 )
 
 func normalizeMovieCatalogKind(kind string) string {
@@ -496,8 +548,11 @@ func normalizeMovieCatalogKind(kind string) string {
 	}
 }
 
-func resolveMovieCatalogFetchTarget(db *sql.DB, req movieCatalogFetchRequest) (string, []movieCatalogFetchCandidate, error) {
+func resolveMovieCatalogFetchTarget(_ *sql.DB, req movieCatalogFetchRequest) (string, []movieCatalogFetchCandidate, error) {
 	if rawURL := strings.TrimSpace(req.URL); rawURL != "" {
+		if strings.TrimSpace(req.Query) != "" {
+			return "", nil, fmt.Errorf("query and url are mutually exclusive")
+		}
 		url := normalizeMovieCatalogFetchURL(rawURL)
 		if url == "" {
 			return "", nil, fmt.Errorf("only https://eiga.com/movie/{id}/ or https://eiga.com/person/{id}/ URLs are supported")
@@ -507,18 +562,13 @@ func resolveMovieCatalogFetchTarget(db *sql.DB, req movieCatalogFetchRequest) (s
 		}
 		return url, nil, nil
 	}
-	query := strings.TrimSpace(req.Query)
-	if query == "" {
+	if strings.TrimSpace(req.Query) == "" {
 		return "", nil, fmt.Errorf("url or name query is required")
 	}
-	candidates, err := movieCatalogFetchCandidates(db, req.Kind, query, 10)
-	if err != nil {
-		return "", nil, err
-	}
-	if len(candidates) != 1 {
-		return "", candidates, errMovieCatalogFetchCandidates
-	}
-	return candidates[0].URL, candidates, nil
+	// CORE never resolves a name query to a local URL. The original query must
+	// reach the crawler resolver so its candidate, robots, and provenance rules
+	// remain authoritative.
+	return "", nil, nil
 }
 
 func normalizeMovieCatalogFetchURL(raw string) string {
@@ -533,68 +583,36 @@ func normalizeMovieCatalogFetchURL(raw string) string {
 	return fmt.Sprintf("https://eiga.com/%s/%s/", match[1], match[2])
 }
 
-func movieCatalogFetchCandidates(db *sql.DB, kind string, query string, limit int) ([]movieCatalogFetchCandidate, error) {
-	like := "%" + query + "%"
-	if kind == "movie" {
-		rows, err := db.Query(`
-SELECT movie_id, title, url
-FROM (
-  SELECT movie_id, title, url, MAX(fetched) AS fetched
-  FROM (
-    SELECT movie_id, title, url, 1 AS fetched FROM movies WHERE title LIKE ?
-    UNION ALL
-    SELECT movie_id, movie_title AS title, movie_url AS url, 0 AS fetched
-    FROM movie_people
-    WHERE movie_title LIKE ? AND COALESCE(movie_url, '') != ''
-  )
-  GROUP BY movie_id, title, url
-)
-ORDER BY CASE WHEN title = ? THEN 0 ELSE 1 END, fetched DESC, title
-LIMIT ?`, like, like, query, limit)
-		if err != nil {
-			return nil, err
+func movieCatalogFetchCandidatesFromCrawler(items []moviecatalog.CrawlerCandidate) []movieCatalogFetchCandidate {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]movieCatalogFetchCandidate, 0, len(items))
+	for _, item := range items {
+		candidate := movieCatalogFetchCandidate{
+			ID:    strings.TrimSpace(item.ID),
+			Kind:  strings.TrimSpace(item.Kind),
+			Label: strings.TrimSpace(item.Label),
+			Title: strings.TrimSpace(item.Title),
+			Name:  strings.TrimSpace(item.Name),
+			URL:   strings.TrimSpace(item.URL),
 		}
-		defer rows.Close()
-		out := []movieCatalogFetchCandidate{}
-		for rows.Next() {
-			var item movieCatalogFetchCandidate
-			item.Kind = "movie"
-			if err := rows.Scan(&item.ID, &item.Title, &item.URL); err != nil {
-				return nil, err
+		if candidate.Label == "" {
+			if candidate.Kind == "person" {
+				candidate.Label = candidate.Name
+			} else {
+				candidate.Label = candidate.Title
 			}
-			out = append(out, item)
 		}
-		return out, rows.Err()
-	}
-	rows, err := db.Query(`
-SELECT person_id, name, url
-FROM (
-  SELECT person_id, name, url, MAX(fetched) AS fetched
-  FROM (
-    SELECT person_id, name, url, 1 AS fetched FROM people WHERE name LIKE ?
-    UNION ALL
-    SELECT person_id, person_name AS name, person_url AS url, 0 AS fetched
-    FROM movie_people
-    WHERE person_name LIKE ? AND COALESCE(person_url, '') != ''
-  )
-  GROUP BY person_id, name, url
-)
-ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END, fetched DESC, name
-LIMIT ?`, like, like, query, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []movieCatalogFetchCandidate{}
-	for rows.Next() {
-		var item movieCatalogFetchCandidate
-		item.Kind = "person"
-		if err := rows.Scan(&item.ID, &item.Name, &item.URL); err != nil {
-			return nil, err
+		if candidate.Kind == "person" && candidate.Name == "" {
+			candidate.Name = candidate.Label
 		}
-		out = append(out, item)
+		if candidate.Kind == "movie" && candidate.Title == "" {
+			candidate.Title = candidate.Label
+		}
+		out = append(out, candidate)
 	}
-	return out, rows.Err()
+	return out
 }
 
 func actionOrDefault(action string) string {

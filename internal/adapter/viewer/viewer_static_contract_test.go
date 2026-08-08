@@ -486,6 +486,42 @@ func TestViewerStaticContractMovieAssessmentGrid(t *testing.T) {
 	}
 }
 
+func TestViewerStaticContractMovieD0D1CardsAndResolverCandidates(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	jsData, err := os.ReadFile("assets/js/tabs/movie-db.js")
+	if err != nil {
+		t.Fatalf("read movie-db.js: %v", err)
+	}
+	html := string(htmlData)
+	js := string(jsData)
+	for _, needle := range []string{
+		`id="movieDbCardsTitle"`,
+		`id="movieDbCardsStatus"`,
+		`id="movieDbCards"`,
+		`movieDbRefreshCards`,
+		`/viewer/movie-catalog?action=cards`,
+		`D0`,
+		`D1`,
+		`item.label`,
+		`data-url`,
+	} {
+		if !strings.Contains(html, needle) && !strings.Contains(js, needle) {
+			t.Fatalf("movie D0/D1 card contract missing %q", needle)
+		}
+	}
+	for _, forbidden := range []string{
+		`eiga.com/search`,
+		`映画.comで検索`,
+	} {
+		if strings.Contains(html, forbidden) || strings.Contains(js, forbidden) {
+			t.Fatalf("movie Viewer must not generate search links: %q", forbidden)
+		}
+	}
+}
+
 func TestViewerStaticContractInvestmentTabSwitchMapping(t *testing.T) {
 	data, err := os.ReadFile("assets/js/viewer.js")
 	if err != nil {
