@@ -83,5 +83,5 @@ Ren は、OpenAI 記事への直接取得が拒否された場合に限り Jina 
    全文枠は `overflow-y:auto`、本文高3051px、表示高274pxで、最終段落までDOMに存在した。
 6. Firefox による実ブラウザ確認では console error は0件だった。
 
-稼働設定は `/home/nyukimi/.rencrow/config.yaml` で明示的に enabled とした。コード既定値は
+稼働設定は `${HOME}/.rencrow/config.yaml` で明示的に enabled とした。コード既定値は
 disabled のままであり、第三者 Reader は標準 profile の必須構成ではない。

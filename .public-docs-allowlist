@@ -9,6 +9,9 @@ docs/08_実装状況・ロードマップ.md
 docs/09_運用ログ・panic保存仕様.md
 docs/10_ログ仕様.md
 docs/README.md
+docs/ubuntu-host-recovery/99-rencrow-host-recovery.conf
+docs/ubuntu-host-recovery/ubuntu-shutdown-audit
+docs/ubuntu-host-recovery/ubuntu-shutdown-audit.service
 docs/調査/20260805_135512_news_pack_full_article_truncation.md
 docs/調査/20260805_143200_news_pack_24h_window.md
 docs/調査/20260805_145246_news_pack_snapshot_overwrite.md
