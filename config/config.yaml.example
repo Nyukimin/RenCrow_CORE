@@ -145,6 +145,12 @@ storage:
     super_agent_harness: "./workspace/logs/superagent_harness.db"
     ai_workflow: "./workspace/logs/ai_workflow.db"
     knowledge_memory: "./workspace/logs/knowledge_memory.db"
+    # Chat起点Durable Store workflowを有効にする場合は、外部HDD配下の絶対pathを指定する。
+    durable_store_workflow: ""
+
+durable_store:
+  enabled: false
+  manifest_path: "config/durable-stores.json"
 
 # backup runnerを使う環境では、次を絶対pathで設定する。
 # Ubuntu productionの基準はlive=/srv/rencrow/db/core、backup=/srv/rencrow/backup。

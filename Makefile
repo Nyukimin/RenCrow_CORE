@@ -142,12 +142,15 @@ install: build
 	@echo "Installing $(BINARY_NAME)..."
 	@mkdir -p $(INSTALL_BIN_DIR)
 	@mkdir -p $(RENCROW_SHARE_DIR)/prompts
+	@mkdir -p $(RENCROW_SHARE_DIR)/config
 	@cp -R prompts/. $(RENCROW_SHARE_DIR)/prompts/
+	@cp config/durable-stores.json $(RENCROW_SHARE_DIR)/config/durable-stores.json
 	@cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_BIN_DIR)/.$(BINARY_NAME).new
 	@chmod +x $(INSTALL_BIN_DIR)/.$(BINARY_NAME).new
 	@mv -f $(INSTALL_BIN_DIR)/.$(BINARY_NAME).new $(INSTALL_BIN_DIR)/$(BINARY_NAME)
 	@echo "Installed binary to $(INSTALL_BIN_DIR)/$(BINARY_NAME)"
 	@echo "Installed prompt assets to $(RENCROW_SHARE_DIR)/prompts"
+	@echo "Installed durable store manifest to $(RENCROW_SHARE_DIR)/config/durable-stores.json"
 	@echo "Installation complete!"
 	@echo "Tip: run 'make install-log-retention enable-log-retention' to retain CORE logs for seven days."
 	@echo "Tip: run 'make install-resilience enable-resilience' to enable restart and self-repair."

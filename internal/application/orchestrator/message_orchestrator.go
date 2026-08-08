@@ -16,6 +16,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
+	domaindurablestore "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
@@ -45,13 +46,15 @@ type ProcessMessageRequest struct {
 
 // ProcessMessageResponse はメッセージ処理レスポンス
 type ProcessMessageResponse struct {
-	Response     string
-	Route        routing.Route
-	Confidence   float64
-	JobID        string
-	MessageID    string                                 `json:"message_id,omitempty"`
-	TraceID      string                                 `json:"trace_id,omitempty"`
-	Verification *domainverification.VerificationReport `json:"verification,omitempty"`
+	Response        string
+	Route           routing.Route
+	Confidence      float64
+	JobID           string
+	MessageID       string                                 `json:"message_id,omitempty"`
+	TraceID         string                                 `json:"trace_id,omitempty"`
+	Verification    *domainverification.VerificationReport `json:"verification,omitempty"`
+	Capability      string                                 `json:"capability,omitempty"`
+	StorageWorkflow *domaindurablestore.WorkflowResult     `json:"storage_workflow,omitempty"`
 }
 
 // Orchestrator は MessageOrchestrator と DistributedOrchestrator の共通インターフェース。
@@ -205,6 +208,7 @@ type MessageOrchestrator struct {
 	events                  *messageEventPort
 	taskContexts            *messageTaskContextBuilder
 	visionRequests          *visionRequestProcessor
+	durableStoreWorkflow    DurableStoreWorkflow
 }
 
 // SetMaxRepair は自律実行のリペア上限を設定する（デフォルト: 1）
@@ -501,6 +505,13 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return resp, nil
 	}
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t.WithRoute(routing.RouteRESEARCH), jobID); err != nil {
+		return ProcessMessageResponse{}, err
+	} else if handled {
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID)
+		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
+		return resp, nil
+	}
+	if resp, handled, err := o.handleDurableStore(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
 		resp = ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID)

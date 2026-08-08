@@ -64,6 +64,7 @@ type DistributedOrchestrator struct {
 	coderSelector           *distributedCoderSelection
 	attribution             *distributedAttributionGuard
 	visionRequests          *visionRequestProcessor
+	durableStoreWorkflow    DurableStoreWorkflow
 }
 
 type ReportStore interface {

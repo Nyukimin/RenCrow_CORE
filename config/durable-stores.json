@@ -1,0 +1,62 @@
+{
+  "contract_version": "rencrow-durable-stores/v1",
+  "module_id": "RenCrow_CORE",
+  "stores": [
+    {
+      "store_id": "core.conversation_l1",
+      "owner_module": "RenCrow_CORE",
+      "store_kind": "sqlite",
+      "durability_class": "durable",
+      "data_classes": [
+        "conversation",
+        "user_memory",
+        "knowledge_candidate",
+        "x_bookmark"
+      ],
+      "canonical_config_keys": ["storage.databases.conversation_l1"],
+      "production_root_template": "/srv/rencrow/db/core",
+      "authoritative_writer": "rencrow-core",
+      "readers": ["RenCrow_CORE"],
+      "schema_revision": "conversation-l1/v1",
+      "migration_owner": "RenCrow_CORE",
+      "retention_policy": "data-class lifecycle policy",
+      "backup_profile": "core-snapshot/v1",
+      "restore_check": "sqlite-integrity/v1",
+      "rpo": "PT6H",
+      "rto": "PT1H",
+      "sensitivity": "private",
+      "fallback_policy": "fail_closed",
+      "change_class": "S1",
+      "proposal_revision": 1,
+      "changed_dimensions": ["storage_plan", "recovery_plan"],
+      "lifecycle_status": "active"
+    },
+    {
+      "store_id": "core.durable_store_workflow",
+      "owner_module": "RenCrow_CORE",
+      "store_kind": "sqlite",
+      "durability_class": "durable",
+      "data_classes": [
+        "storage_requirement",
+        "storage_workflow_result"
+      ],
+      "canonical_config_keys": ["storage.databases.durable_store_workflow"],
+      "production_root_template": "/srv/rencrow/db/core",
+      "authoritative_writer": "rencrow-core",
+      "readers": ["RenCrow_CORE"],
+      "schema_revision": "durable-store-workflow/v1",
+      "migration_owner": "RenCrow_CORE",
+      "retention_policy": "retain workflow decisions with operational evidence",
+      "backup_profile": "core-snapshot/v1",
+      "restore_check": "sqlite-integrity/v1",
+      "rpo": "PT6H",
+      "rto": "PT1H",
+      "sensitivity": "private",
+      "fallback_policy": "fail_closed",
+      "change_class": "S1",
+      "proposal_revision": 1,
+      "changed_dimensions": ["storage_plan", "recovery_plan"],
+      "lifecycle_status": "implemented"
+    }
+  ]
+}

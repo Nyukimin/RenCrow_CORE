@@ -56,6 +56,7 @@ func buildOrchestratorRuntime(
 			nodeCaps,
 		)
 		deps.distOrch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
+		deps.distOrch.SetDurableStoreWorkflow(deps.durableStoreWorkflow)
 		deps.distOrch.SetShiroChatAgent(agents.ShiroChat)
 		if deps.dailyNewsBriefReader != nil {
 			deps.distOrch.SetDailyNewsBriefReader(deps.dailyNewsBriefReader)
@@ -86,6 +87,7 @@ func buildOrchestratorRuntime(
 		workerExecutionService,
 	)
 	orch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
+	orch.SetDurableStoreWorkflow(deps.durableStoreWorkflow)
 	if coderCaps := buildCoderCapabilities(nodeCaps, cfg); coderCaps != nil {
 		orch.SetCoderCapabilities(coderCaps)
 		log.Printf("Coder capability metadata loaded (%d coders); CODE uses only local coder1 unless an explicit CODE route is requested", len(coderCaps))

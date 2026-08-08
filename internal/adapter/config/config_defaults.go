@@ -8,6 +8,9 @@ import (
 
 // setDefaults はデフォルト値を設定
 func (c *Config) setDefaults() {
+	if c.DurableStore.Enabled && strings.TrimSpace(c.DurableStore.ManifestPath) == "" {
+		c.DurableStore.ManifestPath = "config/durable-stores.json"
+	}
 	if c.Server.Host == "" {
 		c.Server.Host = "0.0.0.0"
 	}

@@ -274,6 +274,8 @@ type Dependencies struct {
 	sshTransports                  map[string]domaintransport.Transport        // v4 SSH transports
 	heartbeatSvc                   *heartbeat.HeartbeatService                 // heartbeat service
 	advisorCloser                  interface{ Close() error }                  // advisor SQLite store, when configured
+	durableStoreWorkflow           orchestrator.DurableStoreWorkflow           // Chat起点の永続Store判定
+	durableStoreCloser             interface{ Close() error }                  // workflow decision SQLite store
 	advisorScoreCancel             context.CancelFunc                          // Advisor daily score job
 	memoryPromotionCancel          context.CancelFunc                          // async ProfilePromotion worker
 	toolRegistry                   capdomain.ToolRegistry                      // Phase 4: Shiro ツール共有用 ToolRegistry
@@ -317,6 +319,11 @@ func (d *Dependencies) Shutdown() {
 	if d.advisorCloser != nil {
 		if err := d.advisorCloser.Close(); err != nil {
 			log.Printf("Failed to close advisor store: %v", err)
+		}
+	}
+	if d.durableStoreCloser != nil {
+		if err := d.durableStoreCloser.Close(); err != nil {
+			log.Printf("Failed to close durable store workflow registry: %v", err)
 		}
 	}
 	if d.idleChatOrch != nil {
@@ -419,6 +426,12 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 
 	deps := &Dependencies{}
+	durableStoreWorkflow, durableStoreCloser, err := buildDurableStoreRuntime(cfg)
+	if err != nil {
+		log.Fatalf("Failed to initialize durable store workflow: %v", err)
+	}
+	deps.durableStoreWorkflow = durableStoreWorkflow
+	deps.durableStoreCloser = durableStoreCloser
 	deps.globalPolicyStore = configpolicy.NewStore(cfg.WorkspaceDir)
 	globalPolicy := deps.globalPolicyStore.Status()
 	deps.globalPolicyStatus = viewer.HandleGlobalPolicyStatus(deps.globalPolicyStore)

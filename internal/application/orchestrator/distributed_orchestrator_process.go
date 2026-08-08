@@ -64,6 +64,11 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	} else if handled {
 		return ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID), nil
 	}
+	if resp, handled, err := o.handleDurableStore(ctx, req, sess, t, jobID); err != nil {
+		return ProcessMessageResponse{}, err
+	} else if handled {
+		return ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID), nil
+	}
 
 	// 3. mio がルーティング決定
 	decision, err := o.mio.DecideAction(ctx, t)

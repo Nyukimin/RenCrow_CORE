@@ -4,16 +4,17 @@ import "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/agentcontrol"
 
 // Config はアプリケーション全体の設定
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Session  SessionConfig  `yaml:"session"`
-	Storage  StorageConfig  `yaml:"storage"`
-	Backup   BackupConfig   `yaml:"backup"`
-	Worker   WorkerConfig   `yaml:"worker"`
-	Line     LineConfig     `yaml:"line"`
-	Telegram TelegramConfig `yaml:"telegram"`
-	Discord  DiscordConfig  `yaml:"discord"`
-	Slack    SlackConfig    `yaml:"slack"`
-	Log      LogConfig      `yaml:"log"`
+	Server       ServerConfig       `yaml:"server"`
+	Session      SessionConfig      `yaml:"session"`
+	Storage      StorageConfig      `yaml:"storage"`
+	DurableStore DurableStoreConfig `yaml:"durable_store"`
+	Backup       BackupConfig       `yaml:"backup"`
+	Worker       WorkerConfig       `yaml:"worker"`
+	Line         LineConfig         `yaml:"line"`
+	Telegram     TelegramConfig     `yaml:"telegram"`
+	Discord      DiscordConfig      `yaml:"discord"`
+	Slack        SlackConfig        `yaml:"slack"`
+	Log          LogConfig          `yaml:"log"`
 
 	// === v4.0 追加フィールド ===
 	Distributed DistributedConfig `yaml:"distributed"`
@@ -166,6 +167,13 @@ type StorageConfig struct {
 	Memory    MemoryStorageConfig `yaml:"memory"`
 }
 
+// DurableStoreConfig はChat起点の永続Store判定経路を明示的に有効化する。
+// 実体DBの配置は storage.databases が正本であり、ここには重複して持たない。
+type DurableStoreConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	ManifestPath string `yaml:"manifest_path"`
+}
+
 // MemoryStorageConfig はCOREが直接所有する記憶ファイルの物理配置を一元管理する。
 type MemoryStorageConfig struct {
 	SessionDir         string `yaml:"session_dir"`
@@ -174,25 +182,26 @@ type MemoryStorageConfig struct {
 }
 
 type DatabasePathsConfig struct {
-	ConversationL1      string `yaml:"conversation_l1"`
-	ConversationArchive string `yaml:"conversation_archive"`
-	ToolRegistry        string `yaml:"tool_registry"`
-	Glossary            string `yaml:"glossary"`
-	MovieCatalog        string `yaml:"movie_catalog"`
-	HobbyGraph          string `yaml:"hobby_graph"`
-	Investment          string `yaml:"investment"`
-	Advisor             string `yaml:"advisor"`
-	Sandbox             string `yaml:"sandbox"`
-	DCI                 string `yaml:"dci"`
-	SkillGovernance     string `yaml:"skill_governance"`
-	Workstream          string `yaml:"workstream"`
-	Revenue             string `yaml:"revenue"`
-	PersonaArchitecture string `yaml:"persona_architecture"`
-	BrowserTraceToAPI   string `yaml:"browser_trace_to_api"`
-	ComplexityHotspot   string `yaml:"complexity_hotspot"`
-	SuperAgentHarness   string `yaml:"super_agent_harness"`
-	AIWorkflow          string `yaml:"ai_workflow"`
-	KnowledgeMemory     string `yaml:"knowledge_memory"`
+	ConversationL1       string `yaml:"conversation_l1"`
+	ConversationArchive  string `yaml:"conversation_archive"`
+	ToolRegistry         string `yaml:"tool_registry"`
+	Glossary             string `yaml:"glossary"`
+	MovieCatalog         string `yaml:"movie_catalog"`
+	HobbyGraph           string `yaml:"hobby_graph"`
+	Investment           string `yaml:"investment"`
+	Advisor              string `yaml:"advisor"`
+	Sandbox              string `yaml:"sandbox"`
+	DCI                  string `yaml:"dci"`
+	SkillGovernance      string `yaml:"skill_governance"`
+	Workstream           string `yaml:"workstream"`
+	Revenue              string `yaml:"revenue"`
+	PersonaArchitecture  string `yaml:"persona_architecture"`
+	BrowserTraceToAPI    string `yaml:"browser_trace_to_api"`
+	ComplexityHotspot    string `yaml:"complexity_hotspot"`
+	SuperAgentHarness    string `yaml:"super_agent_harness"`
+	AIWorkflow           string `yaml:"ai_workflow"`
+	KnowledgeMemory      string `yaml:"knowledge_memory"`
+	DurableStoreWorkflow string `yaml:"durable_store_workflow"`
 }
 
 // BackupConfig は外部backup runnerが参照する物理保存先と世代数を定義する。

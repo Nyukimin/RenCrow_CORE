@@ -208,6 +208,7 @@ func (c *Config) validateBackupConfig() error {
 		{"storage.databases.super_agent_harness", c.Storage.Databases.SuperAgentHarness},
 		{"storage.databases.ai_workflow", c.Storage.Databases.AIWorkflow},
 		{"storage.databases.knowledge_memory", c.Storage.Databases.KnowledgeMemory},
+		{"storage.databases.durable_store_workflow", c.Storage.Databases.DurableStoreWorkflow},
 	}
 	for _, configuredPath := range storagePaths {
 		storagePath := strings.TrimSpace(configuredPath.value)

@@ -18,6 +18,18 @@ func (c *Config) Validate() error {
 	if err := c.validateBackupConfig(); err != nil {
 		return err
 	}
+	if c.DurableStore.Enabled {
+		if strings.TrimSpace(c.DurableStore.ManifestPath) == "" {
+			return fmt.Errorf("durable_store.manifest_path is required when enabled=true")
+		}
+		workflowPath := strings.TrimSpace(c.Storage.Databases.DurableStoreWorkflow)
+		if workflowPath == "" {
+			return fmt.Errorf("storage.databases.durable_store_workflow is required when durable_store.enabled=true")
+		}
+		if !configPathIsAbs(workflowPath) {
+			return fmt.Errorf("storage.databases.durable_store_workflow must be an absolute path when durable_store.enabled=true")
+		}
+	}
 
 	// サーバー設定検証
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
