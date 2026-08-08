@@ -239,7 +239,10 @@ tests/
 
 ### 8.2 隔離と安全
 
-- 実行ごとに空きport、temporary HOME、workspace、session、DB、log、outputを分離する
+- process内で閉じるunit／integration fixtureは実行ごとにOSのephemeral portを分離できる
+- RenCrowの実service、sidecar、Backend、E2E harnessを起動するtestはtest profileの
+  `task_id`と予約PORTを明示し、空きport scanや自動再割り当てを行わない
+- temporary HOME、workspace、session、DB、log、outputは実行ごとに分離する
 - 既存の `rencrow.service`、利用者browser、共有port、本番DBを停止・削除・上書きしない
 - browser context と子processは成功・失敗を問わず終了処理する
 - 外部送信、課金、production write は fake / local server へ差し替え、実行しない
