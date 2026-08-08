@@ -99,7 +99,7 @@ func (rp *RecallPack) ToTraceItems() []RecallTraceItem {
 	if rp == nil {
 		return nil
 	}
-	items := make([]RecallTraceItem, 0, len(rp.ShortContext)+len(rp.MidSummaries)+len(rp.LongFacts)+len(rp.KBSnippets)+len(rp.WikiSnippets)+len(rp.SearchCacheSnippets)+len(rp.RelationSnippets)+len(rp.RejectedTraceItems)+1)
+	items := make([]RecallTraceItem, 0, len(rp.ShortContext)+len(rp.MidSummaries)+len(rp.LongFacts)+len(rp.KBSnippets)+len(rp.WikiSnippets)+len(rp.SearchCacheSnippets)+len(rp.RelationSnippets)+len(rp.CategorySnippets)+len(rp.CategoryFailures)+len(rp.RejectedTraceItems)+1)
 	if rp.RollingSummary != "" {
 		items = append(items, RecallTraceItem{
 			Layer:         "L0",
@@ -216,6 +216,25 @@ func (rp *RecallPack) ToTraceItems() []RecallTraceItem {
 			TokenCount:    estimateRecallTokens(promptText),
 			Reason:        "Knowledge Relation snippet selected for prompt",
 			PromptIndex:   len(items),
+		})
+	}
+	for _, snippet := range rp.CategorySnippets {
+		promptText := snippet.ToPromptText()
+		items = append(items, RecallTraceItem{
+			Layer: "L1", Kind: "category_snippet", MemoryID: snippet.RecordID,
+			SourceID: snippet.SourceID, SourceType: snippet.Category, Summary: promptText,
+			SourceURLs: append([]string(nil), snippet.ProvenanceURLs...), RetrievedAt: snippet.RetrievedAt,
+			Score: float32(snippet.Score), Decision: "included", Status: TraceStatusInjected,
+			PromptSection: PromptSectionKnowledge, TokenCount: estimateRecallTokens(promptText),
+			Reason: "validated category record selected for prompt", PromptIndex: len(items),
+		})
+	}
+	for _, failure := range rp.CategoryFailures {
+		items = append(items, RecallTraceItem{
+			Layer: "L1", Kind: "category_recall_failure", MemoryID: failure.RecordID,
+			SourceID: failure.SourceID, SourceType: failure.Category, Summary: failure.Reason,
+			Decision: "rejected", Status: failure.Code, PromptSection: PromptSectionKnowledge,
+			Reason: failure.Reason, RetrievedAt: failure.ObservedAt, PromptIndex: -1,
 		})
 	}
 	items = append(items, rp.RejectedTraceItems...)

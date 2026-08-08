@@ -1,6 +1,9 @@
 package conversation
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	TraceStatusRetrieved           = "retrieved"
@@ -27,21 +30,25 @@ const (
 )
 
 type RecallCandidate struct {
-	Layer       string
-	Kind        string
-	MemoryID    string
-	SourceID    string
-	SourceType  string
-	Summary     string
-	Score       float64
-	Relevance   float64
-	Recency     float64
-	Confidence  float64
-	SourceTrust float64
-	State       string
-	Sensitivity string
-	Scope       string
-	Roles       []string
+	Layer          string
+	Kind           string
+	MemoryID       string
+	SourceID       string
+	SourceType     string
+	Summary        string
+	Score          float64
+	Relevance      float64
+	Recency        float64
+	Confidence     float64
+	SourceTrust    float64
+	State          string
+	Sensitivity    string
+	Scope          string
+	Roles          []string
+	ProvenanceURLs []string
+	RetrievedAt    time.Time
+	ValidatedAt    time.Time
+	FreshUntil     time.Time
 }
 
 type InjectionDecision struct {
@@ -68,6 +75,11 @@ func (p InjectionPolicy) Decide(candidate RecallCandidate) InjectionDecision {
 	rolePolicy := NewInjectionPolicy(role).recallRolePolicy()
 	if strings.TrimSpace(candidate.SourceType) == "runtime_log" {
 		return InjectionDecision{Status: TraceStatusFilteredStatus, PromptSection: sectionForCandidate(candidate), Reason: "runtime logs are never directly injected", Score: candidate.Score}
+	}
+	if isCategoryCandidate(candidate) {
+		if decision, ok := decideCategoryCandidate(candidate, role); ok {
+			return decision
+		}
 	}
 	sharedMemory := isSharedMemoryCandidate(candidate)
 	if !sharedMemory && !recallRolesMatch(candidate.Roles, role) {
@@ -122,15 +134,17 @@ func (p InjectionPolicy) recallRolePolicy() RecallRolePolicy {
 	role := normalizeRecallRole(p.Role)
 	switch role {
 	case "chat":
-		return RecallRolePolicy{Role: "chat", AllowKnowledge: true, AllowSearchCache: true, RequireExplicit: true}
+		return RecallRolePolicy{Role: "chat", AllowKnowledge: true, AllowSearchCache: true, AllowCategory: true, RequireExplicit: true}
 	case "worker":
-		return RecallRolePolicy{Role: "worker", AllowKnowledge: true, AllowSearchCache: true}
+		return RecallRolePolicy{Role: "worker", AllowKnowledge: true, AllowSearchCache: true, AllowCategory: true}
 	case "coder", "code":
-		return RecallRolePolicy{Role: "coder", AllowKnowledge: true, AllowSearchCache: true}
-	case "heavy", "wild":
-		return RecallRolePolicy{Role: role, AllowKnowledge: true, AllowSearchCache: false}
+		return RecallRolePolicy{Role: "coder", AllowKnowledge: true, AllowSearchCache: true, AllowCategory: false}
+	case "heavy":
+		return RecallRolePolicy{Role: "heavy", AllowKnowledge: true, AllowSearchCache: false, AllowCategory: true}
+	case "wild", "ops":
+		return RecallRolePolicy{Role: role, AllowKnowledge: role == "wild", AllowSearchCache: false, AllowCategory: false}
 	case "creative":
-		return RecallRolePolicy{Role: "creative", AllowKnowledge: true, AllowSearchCache: false}
+		return RecallRolePolicy{Role: "creative", AllowKnowledge: true, AllowSearchCache: false, AllowCategory: true}
 	default:
 		return RecallRolePolicy{Role: role, AllowKnowledge: false, AllowSearchCache: false}
 	}
@@ -193,6 +207,35 @@ func isWikiCandidate(candidate RecallCandidate) bool {
 func isSearchCacheCandidate(candidate RecallCandidate) bool {
 	kind := strings.ToLower(strings.TrimSpace(candidate.Kind))
 	return kind == "search_cache"
+}
+
+func isCategoryCandidate(candidate RecallCandidate) bool {
+	kind := strings.ToLower(strings.TrimSpace(candidate.Kind))
+	return kind == "category_snippet" || kind == "category" || strings.HasPrefix(kind, "category_")
+}
+
+func decideCategoryCandidate(candidate RecallCandidate, role string) (InjectionDecision, bool) {
+	rolePolicy := NewInjectionPolicy(role).recallRolePolicy()
+	if !rolePolicy.AllowCategory {
+		return InjectionDecision{Status: TraceStatusFilteredScope, PromptSection: PromptSectionKnowledge, Reason: CategoryRecallFailureRoleDenied}, true
+	}
+	if !recallRolesMatch(candidate.Roles, role) {
+		return InjectionDecision{Status: TraceStatusFilteredScope, PromptSection: PromptSectionKnowledge, Reason: "category record roles do not match role " + role}, true
+	}
+	scope := strings.ToLower(strings.TrimSpace(candidate.Scope))
+	if scope != "" && scope != "public" && scope != "all" && scope != "all_personas" && scope != role && scope != role+"_only" {
+		return InjectionDecision{Status: TraceStatusFilteredScope, PromptSection: PromptSectionKnowledge, Reason: CategoryRecallFailureScopeDenied}, true
+	}
+	if sensitivity := strings.ToLower(strings.TrimSpace(candidate.Sensitivity)); sensitivity != "" && sensitivity != "normal" {
+		return InjectionDecision{Status: TraceStatusFilteredSensitivity, PromptSection: PromptSectionKnowledge, Reason: "category record sensitivity is not normal"}, true
+	}
+	if len(candidate.ProvenanceURLs) == 0 {
+		return InjectionDecision{Status: TraceStatusFilteredStatus, PromptSection: PromptSectionKnowledge, Reason: CategoryRecallFailureMissingProvenance}, true
+	}
+	if !categoryRecordStateInjectable(candidate.State) {
+		return InjectionDecision{Status: TraceStatusFilteredStatus, PromptSection: PromptSectionKnowledge, Reason: CategoryRecallFailureInvalid}, true
+	}
+	return InjectionDecision{Status: TraceStatusInjected, PromptSection: PromptSectionKnowledge, Reason: "category record passed injection policy", Score: candidate.Score}, true
 }
 
 func isExplicitKnowledgeSnippet(snippet string) bool {

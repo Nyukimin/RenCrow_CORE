@@ -52,6 +52,12 @@ type RecallPack struct {
 	// RelationSnippets: Knowledge Relation layer から 1-2 hop で辿った関連知識
 	RelationSnippets []RelationSnippet
 
+	// CategorySnippets: 映画、趣味、ニュース等の検証済み意味データのprompt projection
+	CategorySnippets []CategorySnippet
+
+	// CategoryFailures: source unavailableやvalidation除外のmachine-readable trace
+	CategoryFailures []CategoryRecallFailure
+
 	// RejectedTraceItems: role filterやbudget制御でプロンプト採用されなかった候補のtrace
 	RejectedTraceItems []RecallTraceItem
 
@@ -119,7 +125,8 @@ func (rp *RecallPack) HasContext() bool {
 		len(rp.KBSnippets) > 0 ||
 		len(rp.WikiSnippets) > 0 ||
 		len(rp.SearchCacheSnippets) > 0 ||
-		len(rp.RelationSnippets) > 0
+		len(rp.RelationSnippets) > 0 ||
+		len(rp.CategorySnippets) > 0
 }
 
 // ToPromptMessages は RecallPack の記憶だけを llm.Message のスライスに変換する。
@@ -192,6 +199,13 @@ func (rp *RecallPack) ToPromptMessages() []llm.Message {
 			knowledgeText += "- " + relation.ToPromptText() + "\n"
 		}
 	}
+	if len(rp.CategorySnippets) > 0 {
+		contextText := "【Category Recall / 検証済み意味データ】\n"
+		for _, category := range rp.CategorySnippets {
+			contextText += "- " + category.ToPromptText() + "\n"
+		}
+		appendRecall("category", contextText)
+	}
 	appendRecall("knowledge", knowledgeText)
 	// 3. 直近の会話履歴（ShortContext）
 	for _, msg := range rp.ShortContext {
@@ -216,7 +230,7 @@ func (rp *RecallPack) ToPromptMessages() []llm.Message {
 		})
 	}
 	ordered := make([]llm.Message, 0, len(messages))
-	for _, section := range []string{"l0", "l1", "l2", "l3", "user_profile", "knowledge"} {
+	for _, section := range []string{"l0", "l1", "l2", "l3", "user_profile", "category", "knowledge"} {
 		for _, message := range messages {
 			if message.Metadata["recall_section"] == section {
 				ordered = append(ordered, message)
@@ -249,6 +263,7 @@ func (rp *RecallPack) ApplyRecallBudgetWithEstimator(maxContextTokens int, ratio
 	trimmed.WikiSnippets = nil
 	trimmed.SearchCacheSnippets = nil
 	trimmed.RelationSnippets = nil
+	trimmed.CategorySnippets = nil
 	used := 0
 	canAdd := func(text string) (bool, int) {
 		cost := estimateWithFallback(estimator, text)
@@ -324,6 +339,17 @@ func (rp *RecallPack) ApplyRecallBudgetWithEstimator(maxContextTokens int, ratio
 			trimmed.RejectedTraceItems = append(trimmed.RejectedTraceItems, trace)
 		}
 	}
+	for _, category := range rp.CategorySnippets {
+		promptText := category.ToPromptText()
+		if ok, _ := canAdd(promptText); ok {
+			trimmed.CategorySnippets = append(trimmed.CategorySnippets, category)
+		} else {
+			trace := rejectedCategoryTrace(category, "token budget dropped category recall snippet")
+			trace.Status = TraceStatusBudgetDropped
+			trace.TokenCount = estimateWithFallback(estimator, promptText)
+			trimmed.RejectedTraceItems = append(trimmed.RejectedTraceItems, trace)
+		}
+	}
 	return trimmed
 }
 
@@ -352,6 +378,7 @@ func (rp *RecallPack) FilterForRole(role string) RecallPack {
 	filtered.WikiSnippets = nil
 	filtered.SearchCacheSnippets = nil
 	filtered.RelationSnippets = nil
+	filtered.CategorySnippets = nil
 	filtered.RejectedTraceItems = append([]RecallTraceItem(nil), rp.RejectedTraceItems...)
 	for _, snippet := range rp.KBSnippets {
 		if policyAllowsKnowledgeSnippet(policy, snippet) {
@@ -392,6 +419,14 @@ func (rp *RecallPack) FilterForRole(role string) RecallPack {
 			reason = "role " + role + " does not match relation snippet roles"
 		}
 		filtered.RejectedTraceItems = append(filtered.RejectedTraceItems, rejectedRelationTrace(snippet, reason))
+	}
+	for _, snippet := range rp.CategorySnippets {
+		decision := NewInjectionPolicy(role).Decide(categoryRecallCandidate(snippet))
+		if decision.Status == TraceStatusInjected {
+			filtered.CategorySnippets = append(filtered.CategorySnippets, snippet)
+			continue
+		}
+		filtered.RejectedTraceItems = append(filtered.RejectedTraceItems, rejectedCategoryTrace(snippet, decision.Reason))
 	}
 	return filtered
 }
@@ -485,10 +520,47 @@ func rejectedRelationTrace(snippet RelationSnippet, reason string) RecallTraceIt
 	}
 }
 
+func rejectedCategoryTrace(snippet CategorySnippet, reason string) RecallTraceItem {
+	status := TraceStatusFilteredStatus
+	if reason == CategoryRecallFailureStale {
+		status = CategoryRecallFailureStale
+	} else if reason == CategoryRecallFailureMissingProvenance {
+		status = CategoryRecallFailureMissingProvenance
+	} else if reason == CategoryRecallFailureInvalid {
+		status = CategoryRecallFailureInvalid
+	} else if reason == CategoryRecallFailureScopeDenied {
+		status = CategoryRecallFailureScopeDenied
+	} else if reason == CategoryRecallFailureRoleDenied {
+		status = CategoryRecallFailureRoleDenied
+	}
+	return RecallTraceItem{
+		Layer: "L1", Kind: "category_snippet", MemoryID: snippet.RecordID,
+		SourceID: snippet.SourceID, SourceType: snippet.Category,
+		Summary: snippet.ToPromptText(), SourceURLs: append([]string(nil), snippet.ProvenanceURLs...),
+		RetrievedAt: snippet.RetrievedAt, Score: float32(snippet.Score), Decision: "rejected",
+		Status: status, PromptSection: PromptSectionKnowledge,
+		TokenCount: estimateRecallTokens(snippet.ToPromptText()), Reason: reason, PromptIndex: -1,
+	}
+}
+
+func categoryRecallCandidate(snippet CategorySnippet) RecallCandidate {
+	return RecallCandidate{
+		Layer: "L1", Kind: "category_snippet", MemoryID: snippet.RecordID,
+		SourceID: snippet.SourceID, SourceType: snippet.Category, Summary: snippet.ToPromptText(),
+		Score: snippet.Score, State: snippet.State, Sensitivity: snippet.Sensitivity,
+		Scope: snippet.Scope, Roles: append([]string(nil), snippet.Roles...),
+		RetrievedAt: snippet.RetrievedAt, ValidatedAt: snippet.ValidatedAt,
+		// CategorySnippet is produced only after Registry freshness validation.
+		// Role filtering must not re-evaluate it against a later wall clock.
+		FreshUntil: time.Time{}, ProvenanceURLs: append([]string(nil), snippet.ProvenanceURLs...),
+	}
+}
+
 type RecallRolePolicy struct {
 	Role             string
 	AllowKnowledge   bool
 	AllowSearchCache bool
+	AllowCategory    bool
 	RequireExplicit  bool
 }
 

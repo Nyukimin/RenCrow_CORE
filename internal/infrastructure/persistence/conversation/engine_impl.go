@@ -22,6 +22,8 @@ type RealConversationEngine struct {
 	knowledgeRelationMaxHops int
 	userMemoryStore          conversationEngineUserMemoryStore
 	userID                   string
+	categoryRecallRegistry   domconv.CategoryRecallRegistry
+	categoryRecallScope      string
 }
 
 type conversationEngineExternalRecall interface {
@@ -68,6 +70,18 @@ func (e *RealConversationEngine) WithUserMemoryStore(store conversationEngineUse
 	return e
 }
 
+// WithCategoryRecallRegistry wires deterministic category source selection into
+// every normal conversation turn. It does not write recall results to history.
+func (e *RealConversationEngine) WithCategoryRecallRegistry(registry domconv.CategoryRecallRegistry) *RealConversationEngine {
+	e.categoryRecallRegistry = registry
+	return e
+}
+
+func (e *RealConversationEngine) WithCategoryRecallScope(scope string) *RealConversationEngine {
+	e.categoryRecallScope = strings.TrimSpace(scope)
+	return e
+}
+
 func (e *RealConversationEngine) WithKnowledgeRelationRecall(maxHops int) *RealConversationEngine {
 	if maxHops < 1 {
 		maxHops = 1
@@ -94,38 +108,80 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 	recallMessages, err := e.manager.Recall(ctx, sessionID, userMessage, 3)
 	if err != nil {
 		log.Printf("[ConversationEngine] WARN: Recall failed: %v", err)
-		return pack, nil
+	} else {
+		// Recall 結果を RecallPack に分類
+		for _, msg := range recallMessages {
+			if speaker, ok := domconv.CanonicalChatAgentSpeaker(msg.Speaker); ok {
+				msg.Speaker = speaker
+				pack.ShortContext = append(pack.ShortContext, msg)
+				continue
+			}
+			switch {
+			case msg.Speaker == domconv.SpeakerUser:
+				// 短期記憶（Thread.Turns）: そのまま ShortContext に
+				pack.ShortContext = append(pack.ShortContext, msg)
+
+			case msg.Speaker == domconv.SpeakerSystem && strings.HasPrefix(msg.Msg, "[Summary]"):
+				// 中期記憶（SQLite archive ThreadSummary）: MidSummaries に変換
+				summary := strings.TrimPrefix(msg.Msg, "[Summary] ")
+				pack.MidSummaries = append(pack.MidSummaries, domconv.ThreadSummary{
+					Summary: summary,
+				})
+
+			case msg.Speaker == domconv.SpeakerSystem && strings.HasPrefix(msg.Msg, "[LongTermMemory]"):
+				// 長期記憶（VectorDB）: LongFacts に変換
+				fact := strings.TrimPrefix(msg.Msg, "[LongTermMemory] ")
+				pack.LongFacts = append(pack.LongFacts, fact)
+
+			default:
+				// その他のシステムメッセージは LongFacts に
+				if msg.Msg != "" {
+					pack.LongFacts = append(pack.LongFacts, msg.Msg)
+				}
+			}
+		}
 	}
 
-	// Recall 結果を RecallPack に分類
-	for _, msg := range recallMessages {
-		if speaker, ok := domconv.CanonicalChatAgentSpeaker(msg.Speaker); ok {
-			msg.Speaker = speaker
-			pack.ShortContext = append(pack.ShortContext, msg)
-			continue
+	activeDomain := ""
+	if thread, threadErr := e.manager.GetActiveThread(ctx, sessionID); threadErr == nil && thread != nil {
+		activeDomain = strings.TrimSpace(thread.Domain)
+	}
+	categoryL1KnowledgeRecordIDs := map[string]struct{}{}
+	categoryL1KnowledgeSummaries := map[string]struct{}{}
+	if e.categoryRecallRegistry != nil {
+		scope := strings.TrimSpace(e.categoryRecallScope)
+		if scope == "" {
+			scope = strings.TrimSpace(e.userID)
 		}
-		switch {
-		case msg.Speaker == domconv.SpeakerUser:
-			// 短期記憶（Thread.Turns）: そのまま ShortContext に
-			pack.ShortContext = append(pack.ShortContext, msg)
-
-		case msg.Speaker == domconv.SpeakerSystem && strings.HasPrefix(msg.Msg, "[Summary]"):
-			// 中期記憶（SQLite archive ThreadSummary）: MidSummaries に変換
-			summary := strings.TrimPrefix(msg.Msg, "[Summary] ")
-			pack.MidSummaries = append(pack.MidSummaries, domconv.ThreadSummary{
-				Summary: summary,
+		if scope == "" {
+			scope = "public"
+		}
+		categoryResult, categoryErr := e.categoryRecallRegistry.Recall(ctx, domconv.CategoryRecallQuery{
+			Message: userMessage, ActiveDomain: activeDomain, UserScope: scope, Time: timeNowUTC(), Limit: 3,
+		})
+		if categoryErr != nil {
+			log.Printf("[ConversationEngine] WARN: Category recall failed: %v", categoryErr)
+			pack.CategoryFailures = append(pack.CategoryFailures, domconv.CategoryRecallFailure{
+				SourceID:   "category_registry",
+				Code:       domconv.CategoryRecallFailureSourceUnavailable,
+				State:      "unavailable",
+				Reason:     categoryErr.Error(),
+				Retryable:  true,
+				ObservedAt: timeNowUTC(),
 			})
-
-		case msg.Speaker == domconv.SpeakerSystem && strings.HasPrefix(msg.Msg, "[LongTermMemory]"):
-			// 長期記憶（VectorDB）: LongFacts に変換
-			fact := strings.TrimPrefix(msg.Msg, "[LongTermMemory] ")
-			pack.LongFacts = append(pack.LongFacts, fact)
-
-		default:
-			// その他のシステムメッセージは LongFacts に
-			if msg.Msg != "" {
-				pack.LongFacts = append(pack.LongFacts, msg.Msg)
+		} else {
+			for _, record := range categoryResult.Records {
+				snippet := domconv.CategorySnippetFromRecord(record)
+				pack.CategorySnippets = append(pack.CategorySnippets, snippet)
+				if strings.EqualFold(strings.TrimSpace(snippet.SourceID), "knowledge_l1") {
+					if recordID := strings.TrimSpace(snippet.RecordID); recordID != "" {
+						categoryL1KnowledgeRecordIDs[recordID] = struct{}{}
+					} else if summary := strings.TrimSpace(snippet.Summary); summary != "" {
+						categoryL1KnowledgeSummaries[summary] = struct{}{}
+					}
+				}
 			}
+			pack.CategoryFailures = append(pack.CategoryFailures, categoryResult.Failures...)
 		}
 	}
 
@@ -145,10 +201,10 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 			})
 		}
 
-		// 現在のドメインを取得
-		domain := "general"
-		if thread, err := e.manager.GetActiveThread(ctx, sessionID); err == nil && thread != nil {
-			domain = thread.Domain
+		// 現在のドメインを取得（CategoryRecallと共有）
+		domain := activeDomain
+		if domain == "" {
+			domain = "general"
 		}
 
 		items, err := externalRecall.SearchKnowledgeItemsFTS(ctx, domain, userMessage, 3)
@@ -160,7 +216,7 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 				if snippet == "" {
 					snippet = strings.TrimSpace(item.RawText)
 				}
-				if snippet != "" {
+				if snippet != "" && !isAdoptedCategoryL1Knowledge(item, categoryL1KnowledgeRecordIDs, categoryL1KnowledgeSummaries) {
 					pack.KBSnippets = append(pack.KBSnippets, "[L1KB] "+snippet)
 				}
 			}
@@ -206,8 +262,29 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 
 	applyL0RollingSummary(pack, 6)
 	budgeted := pack.ApplyRecallBudget(pack.Constraints.MaxTotalTokens, pack.Constraints.RecallBudgetRatio)
-	e.saveBeginTurnRecallTrace(ctx, sessionID, userMessage, &budgeted, "completed")
+	traceStatus := "completed"
+	if len(budgeted.CategoryFailures) > 0 {
+		traceStatus = domconv.CategoryRecallStatusPartial
+	}
+	e.saveBeginTurnRecallTrace(ctx, sessionID, userMessage, &budgeted, traceStatus)
 	return &budgeted, nil
+}
+
+func isAdoptedCategoryL1Knowledge(item l1sqlite.L1KnowledgeItem, recordIDs map[string]struct{}, summaries map[string]struct{}) bool {
+	// Record IDs are the authoritative deduplication key. Summaries are only a
+	// fallback for legacy category records that have no RecordID.
+	if _, ok := recordIDs[strings.TrimSpace(item.ID)]; ok && strings.TrimSpace(item.ID) != "" {
+		return true
+	}
+	summary := strings.TrimSpace(item.SummaryDraft)
+	if summary == "" {
+		summary = strings.TrimSpace(item.RawText)
+	}
+	if summary == "" {
+		return false
+	}
+	_, ok := summaries[summary]
+	return ok
 }
 
 func (e *RealConversationEngine) loadSharedUserMemory(ctx context.Context, pack *domconv.RecallPack) error {

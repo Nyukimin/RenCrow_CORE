@@ -15,6 +15,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainrelation "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgerelation"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
+	categoryrecallinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/categoryrecall"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	webgatherinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/webgather"
@@ -54,6 +55,7 @@ func buildConversationRuntime(
 		}
 		log.Printf("  L1 SQLite: %s", cfg.Storage.Databases.ConversationL1)
 	}
+	categoryRecallRegistry := buildCategoryRecallRegistry(context.Background(), cfg, l1Store)
 	if cfg.Conversation.Enabled {
 		var err error
 		vectorCollection := cfg.Conversation.VectorCollection
@@ -118,6 +120,10 @@ func buildConversationRuntime(
 			realMgr,
 			mioPersona,
 		).WithDetector(detector)
+		if categoryRecallRegistry != nil {
+			engine = engine.WithCategoryRecallRegistry(categoryRecallRegistry).WithCategoryRecallScope("public")
+			log.Printf("  Category Recall Registry: enabled")
+		}
 		if l1Store != nil {
 			engine = engine.WithRecallTraceStore(l1Store)
 			engine = engine.WithUserMemoryStore(l1Store, "ren")
@@ -145,10 +151,15 @@ func buildConversationRuntime(
 	} else {
 		if l1Store != nil {
 			l1Manager := conversationpersistence.NewL1ConversationManager(l1Store)
-			convEngine = conversationpersistence.NewRealConversationEngine(
+			engine := conversationpersistence.NewRealConversationEngine(
 				l1Manager,
 				mioPersona,
 			).WithRecallTraceStore(l1Store).WithUserMemoryStore(l1Store, "ren")
+			if categoryRecallRegistry != nil {
+				engine = engine.WithCategoryRecallRegistry(categoryRecallRegistry).WithCategoryRecallScope("public")
+				log.Printf("  Category Recall Registry: enabled")
+			}
+			convEngine = engine
 			log.Printf("ConversationEngine L1-only enabled (shared Mio/Shiro/Kuro/Midori context)")
 		} else {
 			convEngine = nil
@@ -220,4 +231,79 @@ func buildConversationRuntime(
 		WebGatherFetcher: dailySourceFetcher,
 		ProfilePromotion: profilePromotion,
 	}
+}
+
+// buildCategoryRecallRegistry wires only the category sources that CORE is
+// allowed to read. L1 knowledge is the generic validated source; movie and
+// hobby databases are optional public read-only catalogs. Other module-owned
+// databases are intentionally not opened here. A missing optional database is
+// retained as an unavailable source so a related turn records a partial trace
+// instead of making runtime startup fatal.
+func buildCategoryRecallRegistry(ctx context.Context, cfg *config.Config, l1Store *l1sqlite.L1SQLiteStore) *conversation.DeterministicCategoryRecallRegistry {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	registry := conversation.NewCategoryRecallRegistry()
+	hints := map[string][]string{}
+	sourceCount := 0
+	if l1Store != nil {
+		registry.Register(categoryrecallinfra.NewL1KnowledgeSource(l1Store))
+		sourceCount++
+	}
+	if cfg != nil {
+		if path := strings.TrimSpace(cfg.Storage.Databases.MovieCatalog); path != "" {
+			source := categoryrecallinfra.NewMovieCatalogSource(path)
+			registry.Register(source)
+			sourceCount++
+			mergeCategoryRecallHints(hints, sourceStartupEntityHints(ctx, source, source.ID()))
+		}
+		if path := strings.TrimSpace(cfg.Storage.Databases.HobbyGraph); path != "" {
+			source := categoryrecallinfra.NewHobbyGraphSource(path)
+			registry.Register(source)
+			sourceCount++
+			mergeCategoryRecallHints(hints, sourceStartupEntityHints(ctx, source, source.ID()))
+		}
+	}
+	if sourceCount == 0 {
+		return nil
+	}
+	registry.SetEntityHints(hints)
+	return registry
+}
+
+type categoryRecallEntityHintSource interface {
+	StartupEntityHints(context.Context) (map[string][]string, error)
+}
+
+func sourceStartupEntityHints(ctx context.Context, source categoryRecallEntityHintSource, sourceID string) map[string][]string {
+	if source == nil {
+		return nil
+	}
+	hints, err := source.StartupEntityHints(ctx)
+	if err != nil {
+		log.Printf("[CategoryRecall] WARN: startup entity hints unavailable source=%s: %v", sourceID, err)
+		return nil
+	}
+	return hints
+}
+
+func mergeCategoryRecallHints(dst map[string][]string, src map[string][]string) {
+	for category, values := range src {
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value == "" || containsCategoryRecallHint(dst[category], value) {
+				continue
+			}
+			dst[category] = append(dst[category], value)
+		}
+	}
+}
+
+func containsCategoryRecallHint(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

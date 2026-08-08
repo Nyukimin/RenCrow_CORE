@@ -97,6 +97,17 @@ type mockExternalRecallManager struct {
 	vectorErr error
 }
 
+type categoryRecallRegistryStub struct {
+	result  domconv.CategoryRecallResult
+	err     error
+	queries []domconv.CategoryRecallQuery
+}
+
+func (s *categoryRecallRegistryStub) Recall(_ context.Context, query domconv.CategoryRecallQuery) (domconv.CategoryRecallResult, error) {
+	s.queries = append(s.queries, query)
+	return s.result, s.err
+}
+
 func (m *mockExternalRecallManager) GetFreshSearchCache(context.Context, string, string, time.Time) (*l1sqlite.L1SearchCacheEntry, error) {
 	return nil, nil
 }
@@ -153,6 +164,100 @@ func TestBeginTurn_EmptyRecall(t *testing.T) {
 	}
 	if len(pack.ShortContext) != 0 {
 		t.Errorf("ShortContext should be empty, got %d", len(pack.ShortContext))
+	}
+}
+
+func TestBeginTurn_CategoryRecallRunsForRelatedNormalUtterance(t *testing.T) {
+	registry := &categoryRecallRegistryStub{result: domconv.CategoryRecallResult{Records: []domconv.CategoryRecallRecord{{
+		Category: "movie", SourceID: "movie_catalog", RecordID: "m1", Title: "マトリックス", Summary: "公開概要",
+		ProvenanceURLs: []string{"https://example.test/m1"}, State: domconv.CategoryRecordStateValidated,
+		Roles: []string{"chat", "worker", "heavy", "creative"},
+	}}}}
+	mgr := &mockManager{}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithCategoryRecallRegistry(registry).WithCategoryRecallScope("ren")
+	pack, err := engine.BeginTurn(context.Background(), "s1", "映画マトリックスの話をしよう")
+	if err != nil {
+		t.Fatalf("BeginTurn failed: %v", err)
+	}
+	if len(registry.queries) != 1 || registry.queries[0].Message == "" || registry.queries[0].UserScope != "ren" {
+		t.Fatalf("category query=%#v", registry.queries)
+	}
+	if len(pack.CategorySnippets) != 1 || pack.CategorySnippets[0].RecordID != "m1" {
+		t.Fatalf("category snippets=%#v", pack.CategorySnippets)
+	}
+	if len(mgr.userMemories) != 0 {
+		t.Fatalf("category recall must not store history: %#v", mgr.userMemories)
+	}
+}
+
+func TestBeginTurn_CategoryRecallFailureIsPartialTrace(t *testing.T) {
+	registry := &categoryRecallRegistryStub{result: domconv.CategoryRecallResult{Failures: []domconv.CategoryRecallFailure{{
+		Category: "movie", SourceID: "movie_catalog", Code: domconv.CategoryRecallFailureSourceUnavailable,
+		State: "unavailable", Reason: "missing DB", Retryable: true,
+	}}}}
+	traceStore := &mockRecallTraceStore{}
+	engine := NewRealConversationEngine(&mockManager{}, domconv.PersonaState{}).
+		WithCategoryRecallRegistry(registry).WithRecallTraceStore(traceStore)
+	pack, err := engine.BeginTurn(context.Background(), "s1", "映画の話")
+	if err != nil {
+		t.Fatalf("BeginTurn failed: %v", err)
+	}
+	if len(pack.CategoryFailures) != 1 || len(traceStore.started) != 1 || traceStore.started[0].Status != domconv.CategoryRecallStatusPartial {
+		t.Fatalf("partial category trace pack=%#v traces=%#v", pack.CategoryFailures, traceStore.started)
+	}
+	found := false
+	for _, item := range traceStore.items {
+		if item.Kind == "category_recall_failure" && item.Status == domconv.CategoryRecallFailureSourceUnavailable {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("category failure was not traced: %#v", traceStore.items)
+	}
+}
+
+func TestBeginTurn_DoesNotDuplicateL1KnowledgeAfterCategoryRecall(t *testing.T) {
+	registry := &categoryRecallRegistryStub{result: domconv.CategoryRecallResult{Records: []domconv.CategoryRecallRecord{{
+		Category: "movie", SourceID: "knowledge_l1", RecordID: "kb-movie", Title: "Movie fact", Summary: "Validated movie fact",
+		ProvenanceURLs: []string{"https://example.test/kb-movie"}, State: domconv.CategoryRecordStateValidated,
+	}}}}
+	mgr := &mockExternalRecallManager{
+		mockManager: &mockManager{},
+		items: []l1sqlite.L1KnowledgeItem{{
+			ID: "kb-movie", Domain: "movie", Title: "Movie fact", SummaryDraft: "Validated movie fact",
+		}},
+	}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithCategoryRecallRegistry(registry)
+	pack, err := engine.BeginTurn(context.Background(), "s1", "映画を検索して")
+	if err != nil {
+		t.Fatalf("BeginTurn failed: %v", err)
+	}
+	if len(pack.CategorySnippets) != 1 || pack.CategorySnippets[0].SourceID != "knowledge_l1" {
+		t.Fatalf("expected adopted L1 category snippet: %#v", pack.CategorySnippets)
+	}
+	if len(pack.KBSnippets) != 0 {
+		t.Fatalf("L1 KBSnippet duplicated adopted category recall: %#v", pack.KBSnippets)
+	}
+}
+
+func TestBeginTurn_KeepsDifferentL1KnowledgeAfterCategoryRecall(t *testing.T) {
+	registry := &categoryRecallRegistryStub{result: domconv.CategoryRecallResult{Records: []domconv.CategoryRecallRecord{{
+		Category: "movie", SourceID: "knowledge_l1", RecordID: "kb-category", Title: "Category fact", Summary: "Validated category fact",
+		ProvenanceURLs: []string{"https://example.test/kb-category"}, State: domconv.CategoryRecordStateValidated,
+	}}}}
+	mgr := &mockExternalRecallManager{
+		mockManager: &mockManager{},
+		items: []l1sqlite.L1KnowledgeItem{{
+			ID: "kb-other", Domain: "movie", Title: "Other fact", SummaryDraft: "Different L1 fact",
+		}},
+	}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithCategoryRecallRegistry(registry)
+	pack, err := engine.BeginTurn(context.Background(), "s1", "映画を検索して")
+	if err != nil {
+		t.Fatalf("BeginTurn failed: %v", err)
+	}
+	if len(pack.KBSnippets) != 1 || !strings.Contains(pack.KBSnippets[0], "Different L1 fact") {
+		t.Fatalf("different external L1 record should remain: %#v", pack.KBSnippets)
 	}
 }
 
