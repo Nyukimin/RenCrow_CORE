@@ -117,14 +117,18 @@ func TestOPSRoute_WithoutSubagentManager_UsesFallback(t *testing.T) {
 		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
 			llmGenerateCalled = true
 
-			// システムプロンプトの確認
-			if len(req.Messages) > 0 && req.Messages[0].Role == "system" {
-				if !strings.Contains(req.Messages[0].Content, "You are a worker") {
-					t.Errorf("Expected system prompt to contain 'You are a worker', got '%s'", req.Messages[0].Content)
+			if len(req.Messages) == 0 || req.Messages[0].Role != "system" || req.Messages[0].Type != llm.PromptContextCharacter || !strings.Contains(req.Messages[0].Content, "You are a worker") {
+				t.Errorf("Expected Character SystemPrompt to contain 'You are a worker', got %#v", req.Messages)
+			}
+			japaneseGuardFound := false
+			for _, message := range req.Messages {
+				if message.Type == llm.PromptContextVariable && strings.Contains(message.Content, "必ず自然な日本語で応答") {
+					japaneseGuardFound = true
+					break
 				}
-				if !strings.Contains(req.Messages[0].Content, "必ず自然な日本語で応答") {
-					t.Errorf("Expected system prompt to require Japanese response, got '%s'", req.Messages[0].Content)
-				}
+			}
+			if !japaneseGuardFound {
+				t.Errorf("Expected variable runtime context to require Japanese response, got %#v", req.Messages)
 			}
 
 			return llm.GenerateResponse{Content: "Fallback: file list retrieved"}, nil

@@ -51,9 +51,13 @@ func TestGenerateResponseFirstTurnUsesActualSpeaker(t *testing.T) {
 	if len(provider.requests) != 2 {
 		t.Fatalf("requests = %d, want 2", len(provider.requests))
 	}
-	system := provider.requests[0].Messages[0].Content
-	if !strings.Contains(system, "\n\n現在時刻（JST）: ") || !strings.HasSuffix(system, " JST") {
-		t.Fatalf("IdleChat system prompt should end with current JST time:\n%s", system)
+	requestMessages := provider.requests[0].Messages
+	system := requestMessages[0].Content
+	if strings.Contains(system, llm.CurrentJSTTimePrefix) {
+		t.Fatalf("IdleChat fixed system prompt should not contain variable JST time:\n%s", system)
+	}
+	if !hasIdlePromptContextMessage(requestMessages, llm.PromptContextVariable, llm.CurrentJSTTimePrefix) {
+		t.Fatalf("IdleChat request should contain current JST time as variable context: %+v", requestMessages)
 	}
 	last := provider.requests[0].Messages[len(provider.requests[0].Messages)-1].Content
 	if !strings.Contains(last, "mioとして、会話の最初の発話を1〜2文") {
@@ -140,12 +144,32 @@ func TestGenerateResponseSelectsMoreFunCandidate(t *testing.T) {
 	if !strings.Contains(secondPrompt, "英語だけの応答") {
 		t.Fatalf("second candidate prompt does not ban English-only responses:\n%s", secondPrompt)
 	}
-	if len(provider.requests[1].Messages) < 2 || provider.requests[1].Messages[len(provider.requests[1].Messages)-2].Role != "assistant" {
+	secondMessages := provider.requests[1].Messages
+	firstCandidateIndex := -1
+	timeContextIndex := -1
+	for index, message := range secondMessages {
+		if message.Role == "assistant" && message.Content == "その話題は構造を考えると面白いですね。もう少し整理できそうです。" {
+			firstCandidateIndex = index
+		}
+		if message.Type == llm.PromptContextVariable && strings.Contains(message.Content, llm.CurrentJSTTimePrefix) {
+			timeContextIndex = index
+		}
+	}
+	if firstCandidateIndex < 0 || timeContextIndex <= firstCandidateIndex || timeContextIndex >= len(secondMessages)-1 {
 		t.Fatalf("second candidate request should include first candidate as assistant context: %+v", provider.requests[1].Messages)
 	}
 	if !strings.Contains(got, "宛先不明の手紙") || !strings.Contains(got, "封筒を開ける") {
 		t.Fatalf("more fun candidate was not selected: %q", got)
 	}
+}
+
+func hasIdlePromptContextMessage(messages []llm.Message, kind llm.PromptContextType, content string) bool {
+	for _, message := range messages {
+		if message.Type == kind && strings.Contains(message.Content, content) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGenerateResponseWithRawReturnsUneditedSelectedOutput(t *testing.T) {
@@ -839,7 +863,7 @@ func TestGetSystemPromptPutsRuntimePolicyBeforeCommonPrompt(t *testing.T) {
 	}
 }
 
-func TestGenerateResponseKeepsOnlyFirstMessageAsSystem(t *testing.T) {
+func TestGenerateResponseKeepsPersistentContextInFirstSystem(t *testing.T) {
 	provider := &capturingIdleProvider{responses: []string{
 		"古書店の棚から宛先不明の手紙が落ちるなら、まず隠した人の癖が見えます。封筒を開ける前に、誰の字かだけ決めたいですね。",
 		"雨でにじんだ宛名だけ先に読めるなら、隠した人より受け取るはずだった人が気になります。そこを一人に絞ると話が動きますね。",
@@ -860,6 +884,7 @@ func TestGenerateResponseKeepsOnlyFirstMessageAsSystem(t *testing.T) {
 		t.Fatalf("requests = %d, want 1", len(provider.requests))
 	}
 	for reqIndex, req := range provider.requests {
+		variableTimeFound := false
 		for msgIndex, msg := range req.Messages {
 			if msgIndex == 0 {
 				if msg.Role != "system" {
@@ -873,9 +898,15 @@ func TestGenerateResponseKeepsOnlyFirstMessageAsSystem(t *testing.T) {
 				}
 				continue
 			}
-			if msg.Role == "system" {
-				t.Fatalf("request %d message %d should not be system: %#v", reqIndex, msgIndex, msg)
+			if msg.Role == "system" && msg.Type != llm.PromptContextVariable {
+				t.Fatalf("request %d message %d should only use system role for typed variable context: %#v", reqIndex, msgIndex, msg)
 			}
+			if msg.Type == llm.PromptContextVariable && strings.Contains(msg.Content, llm.CurrentJSTTimePrefix) {
+				variableTimeFound = true
+			}
+		}
+		if !variableTimeFound {
+			t.Fatalf("request %d should contain current JST time as variable context: %+v", reqIndex, req.Messages)
 		}
 	}
 }

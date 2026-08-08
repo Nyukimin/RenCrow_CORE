@@ -21,3 +21,4 @@ docs/調査/20260806_073101_core_test_failures.md
 docs/調査/20260808_135025_Midori_Wild64K無応答.md
 docs/調査/20260808_173823_Midori応答遅延とPrefix_Cache不成立.md
 docs/調査/20260808_183028_MLX_Wild64K_alias直送によるbackend停止.md
+docs/調査/20260808_221625_IdleChat_OPSテスト3失敗.md
