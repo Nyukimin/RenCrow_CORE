@@ -35,6 +35,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET/POST /viewer/revenue/deliveries` | trace付き汎用Deliveryの一覧・draft/状態record作成 |
 | `/viewer/memory/*` | memory event、Recall、ProfilePromotion job の観測 |
 | `GET /viewer/movie-catalog` | 映画・俳優catalogと利用者評価の一覧・詳細 |
+| `GET /viewer/movie-catalog?action=cards` | 映画・人物ViewerのD0/D1派生カード投影 |
 | `POST /viewer/movie-catalog/preference` | 映画・俳優の認知・好み評価を保存 |
 | `/viewer/active-control`, `/viewer/tts/*`, `/viewer/stt/*` | audio/control bridge |
 | `WS /stt` | Viewerの同一origin音声入力。COREが音声chunkをRenCrow_STTのHTTP公開APIへ中継する |
@@ -462,6 +463,8 @@ Debug Viewer／localhost運用CLI向けのadmin APIであり、RenCrow_PORTALか
 
 `GET /viewer/movie-catalog?action=movies|people`は一覧項目に`familiarity`、`sentiment`、`assessed`を返します。映画の`familiarity`は`seen | unseen | ""`、俳優の`familiarity`は`known | unknown | ""`、`sentiment`は共通で`like | dislike | ""`です。`POST /viewer/movie-catalog/preference`へ`kind`（`movie | person`）、`target_id`、`target_label`、`dimension`（`familiarity | sentiment`）、`value`、`generated_by`を送ると一方のdimensionだけを更新し、他方を維持します。空の`value`はそのdimensionを明示的な未選択へ戻します。Viewer内部のwrite APIであり、PORTALへ自動公開しません。
 
+`GET /viewer/movie-catalog?action=cards`は映画catalogからD0/D1カードを派生して返します。D0は映画の`seen`または`like`、俳優の`known`または`like`、および成功した明示映画名／人物名／URL取得対象です。D0のroot `kind`は現段階では`movie`または`person`だけです。`unseen`、`unknown`、`dislike`単独はD0にしません。明示assessmentの行が存在しない場合だけ、映画のwatch eventを`seen`、人物の正のfavorite signalを`like`としてfallbackします。responseの各itemは少なくとも`kind`、`target_id`、`target_label`、`target_url`、`depth`、`root_ids`、`relation_type`、`relation_source`、`validation_state`、`provenance_urls`を持ち、`kind`は少なくとも`movie | person | music | source_work`を許容します。D0は`depth=0`、D1はD0のvalidated direct relationだけを`depth=1`として返します。D1には出演・監督・脚本・音楽担当・原作者等の`person`、映画.comが作品名を明示した音楽作品・主題歌・劇伴・サウンドトラック等の`music`、小説・漫画・舞台・ゲーム等の原作・参照作品の`source_work`を含めます。D1から先は展開せず、validated cardは同じ`kind`と`target_id`の一件にまとめ、`target_id`のない`partial`または`unresolved` cardは正規化label、relation、provenanceで一件にまとめます。複数rootでは最小`depth`を返します。汎用work cardは`hobby_graph`のvalidated itemを正本とし、映画側credit／relationのprovenanceは`movie_catalog`から返します。文字列だけでitemへ確定できない場合は`target_id`を空にした`partial`または`unresolved` cardとしてlabelとprovenanceを返し、推測で補完しません。`depth`、root経路、D1カードは派生値であり、Memory L1へ保存しません。個人評価やroot状態を通常会話のCategoryRecallへ渡さず、公開catalog projectionとの境界を維持します。
+
 `POST /viewer/movie-catalog/fetch`は`kind`、`query`または`url`、`max_pages`、
 `follow_links`、`include_person_filmography`を受けます。COREは
 `RENCROW_MOVIE_CATALOG_CRAWLER_URL`のRenCrow_Tools Go sidecarへ
@@ -470,7 +473,10 @@ Debug Viewer／localhost運用CLI向けのadmin APIであり、RenCrow_PORTALか
 不正record、空artifact、hash／size不一致では全体を失敗させます。sidecarはCOREのSQLiteへ
 直接書きません。sidecar未設定または利用不能時はHTTP 503、
 `status=unavailable`、`error_code=MOVIE_CATALOG_CRAWLER_UNAVAILABLE`を返し、
-Python crawlerや別endpointへfallbackしません。このViewer write APIもPORTALへ自動公開しません。
+Python crawlerや別endpointへfallbackしません。名前queryが複数候補に一致した場合は候補を返すだけで、
+COREは対象を勝手に確定しません。利用者が候補または正規化されたURLを明示選択し、取得、artifact検証、
+importが成功した対象だけをD0 rootとして記録します。映画.comの`/search` queryを取得経路にせず、
+robots.txt、rate limit、その他のアクセス制約を迂回しません。このViewer write APIもPORTALへ自動公開しません。
 
 Economic APIで新しいOpportunityを作ると、未指定の`trace_id`はCOREが生成します。EconomicTask、Delivery、RevenueEvent、Reflectionの作成では、参照元Opportunityまたは上流entityの`trace_id`を引き継ぎ、別の値へ黙って付け替えません。`POST /viewer/revenue/deliveries`は`delivery_id`、`trace_id`、`delivery_kind`、`status`、任意の上流IDとtarget/evidenceを受けます。`external_action=true`かつ`status=completed`では、許可された`policy_decision_id`と`evidence`が必須です。
 
