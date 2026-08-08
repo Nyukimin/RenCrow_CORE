@@ -60,6 +60,20 @@ CORE、database、news収集、一般sidecarをWSLへ移しません。
 Vision／Imageを含む標準配布対象と外部computeの正本は
 [標準Go配布境界](docs/04_アーキテクチャ概要.md#標準go配布境界)を参照してください。
 
+## 永続データ配置
+
+Ubuntuの基準配置では、稼働データを`/srv/rencrow/db`、別媒体のbackupを
+`/srv/rencrow/backup`へ分離します。COREは`/srv/rencrow/db/core`、TRADE、Image、GAMES、
+Toolsはそれぞれ同名のmodule subtreeだけを所有します。映画・趣味catalog、会話Memory、
+COREが採用した生成物のdomain metadataはCOREの所有範囲ですが、外部取得artifact、画像object、
+Replayなどは生成したmoduleが所有します。
+
+`/srv/rencrow/db`が利用できないproduction起動でrepository内、`~/.rencrow`、一時directoryへ
+暗黙fallbackしてはいけません。Windows／macOSでは同じ論理構造を設定済み絶対pathへ配置します。
+媒体format、mount、module別subtree、backup整合性の正本は
+[設定リファレンスの「DB物理配置とbackup」](docs/05_設定リファレンス.md#db物理配置とbackup)です。
+RenCrow_WorkspaceのGit snapshotはこのlive dataやbackupの代替ではありません。
+
 外部利用者向けの`Chat`／`IdleChat`画面は独立した`RenCrow_PORTAL`が所有します。COREの`/viewer`はデバッグ・運用確認専用です。
 
 ## 運用ログ

@@ -118,6 +118,8 @@ codex:
   ephemeral: true
 
 # DB・記憶ファイルの物理配置の正本。
+# 次のrelative pathはdevelopment例。Ubuntu productionではdocs/05に従い、
+# /srv/rencrow/db/core配下の絶対pathへ置き換える。
 storage:
   memory:
     session_dir: "${HOME}/.rencrow/sessions"
@@ -145,13 +147,14 @@ storage:
     knowledge_memory: "./workspace/logs/knowledge_memory.db"
 
 # backup runnerを使う環境では、次を絶対pathで設定する。
+# Ubuntu productionの基準はlive=/srv/rencrow/db/core、backup=/srv/rencrow/backup。
 # storage.databasesとstorage.memoryの各pathはcore_source配下に置くこと。
 # backup:
-#   core_source: "/home/user/.rencrow"
-#   core_snapshot_root: "/srv/rencrow/backup-local/RenCrow/core-snapshots"
-#   knowledge_source: "/srv/rencrow/knowledge/RenCrowKnowledge"
-#   knowledge_mirror: "/srv/rencrow/backup-moca/RenCrow/knowledge"
-#   knowledge_versions: "/srv/rencrow/backup-moca/RenCrow/knowledge-versions"
+#   core_source: "/srv/rencrow/db/core"
+#   core_snapshot_root: "/srv/rencrow/backup/snapshots/core"
+#   knowledge_source: "/srv/rencrow/db/core/knowledge"
+#   knowledge_mirror: "/srv/rencrow/backup/knowledge/current"
+#   knowledge_versions: "/srv/rencrow/backup/knowledge/versions"
 #   recent_keep: 28
 #   daily_keep: 14
 #   weekly_keep: 8
