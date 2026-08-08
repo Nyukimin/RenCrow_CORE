@@ -120,12 +120,12 @@ func (m *MioAgent) runtimeMioPromptContext(t task.Task) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func (m *MioAgent) stableMioPromptContext(t task.Task) string {
+func (m *MioAgent) stablePromptContext(t task.Task) string {
 	recipient := strings.ToLower(strings.TrimSpace(t.ViewerRecipient()))
-	if recipient != "" && recipient != "mio" {
-		return ""
+	if recipient == "" {
+		recipient = "mio"
 	}
-	return strings.TrimSpace(m.agentContractsPrompt)
+	return strings.TrimSpace(m.stableRuntimeContexts[recipient])
 }
 
 func (m *MioAgent) rememberExpression(response string) {

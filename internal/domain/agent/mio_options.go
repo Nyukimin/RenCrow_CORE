@@ -44,7 +44,24 @@ func (m *MioAgent) WithSystemPrompt(prompt string) *MioAgent {
 // contract index used by Mio for routing and result integration. Persona text
 // is intentionally kept separate from this runtime context.
 func (m *MioAgent) WithAgentContractsPrompt(prompt string) *MioAgent {
-	m.agentContractsPrompt = truncateMioExpression(strings.TrimSpace(prompt), 6000)
+	if m.stableRuntimeContexts == nil {
+		m.stableRuntimeContexts = map[string]string{}
+	}
+	m.stableRuntimeContexts["mio"] = truncateMioExpression(strings.TrimSpace(prompt), 6000)
+	return m
+}
+
+// WithStableRuntimeContexts injects Registry-derived contracts independently
+// from each character's canonical SystemPrompt bundle.
+func (m *MioAgent) WithStableRuntimeContexts(contexts map[string]string) *MioAgent {
+	m.stableRuntimeContexts = make(map[string]string, len(contexts))
+	for name, prompt := range contexts {
+		name = strings.ToLower(strings.TrimSpace(name))
+		prompt = strings.TrimSpace(prompt)
+		if name != "" && prompt != "" {
+			m.stableRuntimeContexts[name] = prompt
+		}
+	}
 	return m
 }
 

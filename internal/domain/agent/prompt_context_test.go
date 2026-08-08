@@ -53,3 +53,42 @@ func TestStableRuntimeContextSplitsCanonicalContracts(t *testing.T) {
 		}
 	}
 }
+
+func TestStableRuntimeContextSplitsSharedAgentControl(t *testing.T) {
+	content := "# Shared Agent Control\n\n## Agent Profile\nagent\n\n## Routing\nroutes\n\n## Handoff\nhandoff\n\n## Tools\ntools"
+	messages := stableRuntimeContextMessage(content)
+	if len(messages) != 3 {
+		t.Fatalf("stable blocks = %d, want 3: %#v", len(messages), messages)
+	}
+	for index, want := range []string{"agent_contract", "interaction_contract", "tool_boundary"} {
+		if got := messages[index].Metadata["runtime_context_kind"]; got != want {
+			t.Fatalf("stable block %d kind = %q, want %q", index, got, want)
+		}
+	}
+	if !strings.Contains(messages[1].Content, "## Handoff") {
+		t.Fatalf("interaction contract lost Handoff: %#v", messages[1])
+	}
+}
+
+func TestAssemblePromptContextUsesCanonicalOrderAndSingleCharacterBlocks(t *testing.T) {
+	character := strings.Join([]string{"identity", "policy", "scope", "knowledge"}, "\n\n---\n\n")
+	stable := "# Shared Agent Control\nagent\n\n## Routing\nroute\n\n## Handoff\nhandoff\n\n## Tools\ntools"
+	dynamic := []llm.Message{
+		{Role: "system", Content: "runtime", Type: llm.PromptContextVariable},
+		{Role: "assistant", Content: "recall", Type: llm.PromptContextRecall},
+	}
+	messages := assemblePromptContext(character, stable, dynamic, llm.Message{Role: "user", Content: "now"})
+	wantTypes := []llm.PromptContextType{
+		llm.PromptContextCharacter, llm.PromptContextCharacter, llm.PromptContextCharacter, llm.PromptContextCharacter,
+		llm.PromptContextStable, llm.PromptContextStable, llm.PromptContextStable,
+		llm.PromptContextRecall, llm.PromptContextVariable, llm.PromptContextUser,
+	}
+	if len(messages) != len(wantTypes) {
+		t.Fatalf("messages = %d, want %d: %#v", len(messages), len(wantTypes), messages)
+	}
+	for index, want := range wantTypes {
+		if messages[index].Type != want {
+			t.Fatalf("message %d type = %q, want %q", index, messages[index].Type, want)
+		}
+	}
+}

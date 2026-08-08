@@ -20,10 +20,11 @@ Answer naturally and concretely in the user's language.`
 
 // WildAgent は創作Wild用のLLM呼び出しを担当する。
 type WildAgent struct {
-	llmProvider        llm.LLMProvider
-	systemPrompt       string
-	conversationEngine conversation.ConversationEngine
-	imageGenerator     ImageGenerator
+	llmProvider          llm.LLMProvider
+	systemPrompt         string
+	stableRuntimeContext string
+	conversationEngine   conversation.ConversationEngine
+	imageGenerator       ImageGenerator
 }
 
 type ImageGenerator interface {
@@ -58,6 +59,11 @@ func NewWildAgent(llmProvider llm.LLMProvider, systemPrompt string) *WildAgent {
 
 func (w *WildAgent) WithConversationEngine(engine conversation.ConversationEngine) *WildAgent {
 	w.conversationEngine = engine
+	return w
+}
+
+func (w *WildAgent) WithStableRuntimeContext(content string) *WildAgent {
+	w.stableRuntimeContext = strings.TrimSpace(content)
 	return w
 }
 
@@ -105,17 +111,16 @@ func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 		}
 		return response, nil
 	}
-	messages = append(messages, userMessageWithAttachments(userMessage, t.Attachments()))
+	messages = assemblePromptContext(w.systemPrompt, w.stableRuntimeContext, messages, userMessageWithAttachments(userMessage, t.Attachments()))
 	onToken := llm.StreamCallbackFromContext(ctx)
 	if onToken == nil {
 		onToken = func(string) {}
 	}
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
-		SystemPrompt: w.systemPrompt,
-		Messages:     messages,
-		MaxTokens:    2048,
-		Temperature:  0.8,
-		OnToken:      onToken,
+		Messages:    messages,
+		MaxTokens:   2048,
+		Temperature: 0.8,
+		OnToken:     onToken,
 	})
 	resp, err := w.llmProvider.Generate(ctx, req)
 	if err != nil {

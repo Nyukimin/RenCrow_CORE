@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -33,7 +34,7 @@ func TestHandlePromptDebugLogsExtractsSystemPromptBlocks(t *testing.T) {
 		"schema_version": 1,
 		"created_at":     "2026-08-06T10:00:00Z",
 		"stage":          "gateway_received",
-		"metadata":       map[string]any{"request_id": "req-1", "agent_id": "mio", "execution_role": "chat", "target_id": "mio_chat"},
+		"metadata":       map[string]any{"request_id": "req-1", "agent_id": "mio", "execution_role": "chat", "target_id": "mio_chat", "caller": "core.unattributed"},
 		"payload_bytes":  len(payload),
 		"payload_sha256": "abc",
 		"payload_text":   string(payload),
@@ -172,8 +173,8 @@ func TestPromptDebugProjectionSeparatesCharacterLatestFromInternalWorker(t *test
 	dir := t.TempDir()
 	path := filepath.Join(dir, "prompt.jsonl")
 	rows := []map[string]any{
-		promptDebugTestRow("2026-08-06T10:00:00Z", "chat-mio", "gateway_received", "mio", "chat", "mio_chat", "viewer.chat"),
-		promptDebugTestRow("2026-08-06T10:00:01Z", "chat-mio", "target_sent", "mio", "chat", "mio_chat", "viewer.chat"),
+		promptDebugTestRow("2026-08-06T10:00:00Z", "chat-mio", "gateway_received", "mio", "chat", "mio_chat", "core.unattributed"),
+		promptDebugTestRow("2026-08-06T10:00:01Z", "chat-mio", "target_sent", "mio", "chat", "mio_chat", "core.unattributed"),
 		promptDebugTestRow("2026-08-06T10:01:00Z", "shared-id", "gateway_received", "shiro", "worker", "shiro_worker", "idlechat.daily_source_brief"),
 		promptDebugTestRow("2026-08-06T10:01:01Z", "shared-id", "target_sent", "shiro", "worker", "shiro_worker", "idlechat.daily_source_brief"),
 		promptDebugTestRow("2026-08-06T10:02:00Z", "shared-id", "gateway_received", "shiro", "worker", "shiro_worker", "memory.profile_promotion"),
@@ -211,7 +212,7 @@ func TestPromptDebugProjectionSeparatesCharacterLatestFromInternalWorker(t *test
 }
 
 func promptDebugTestRow(createdAt, requestID, stage, agentID, role, targetID, caller string) map[string]any {
-	payload := `{"messages":[{"role":"system","content":"system"},{"role":"user","content":"hello"}]}`
+	payload := `{"messages":[{"role":"system","content":"system"},{"role":"user","content":"hello"}],"rencrow":{"prompt_context_blocks":[{"message_index":0,"type":"character_system_prompt","character_prompt_block":"00_system.md"}]}}`
 	return map[string]any{
 		"schema_version": 1,
 		"created_at":     createdAt,
@@ -226,6 +227,39 @@ func promptDebugTestRow(createdAt, requestID, stage, agentID, role, targetID, ca
 		"payload_bytes":  len(payload),
 		"payload_sha256": "abc",
 		"payload_text":   payload,
+	}
+}
+
+func TestPromptDebugClassifierRequestDoesNotReplaceLatestCharacterPrompt(t *testing.T) {
+	character := promptDebugTestRow("2026-08-08T05:00:00Z", "chat", "gateway_received", "mio", "chat", "mio_chat", "core.unattributed")
+	classifier := promptDebugTestRow("2026-08-08T05:01:00Z", "classifier", "gateway_received", "mio", "chat", "mio_chat", "core.unattributed")
+	classifierPayload := `{"messages":[{"role":"system","content":"classifier"},{"role":"user","content":"classify"}],"rencrow":{"prompt_context_blocks":[{"message_index":0,"type":"variable_runtime_context","runtime_context_kind":"time"}]}}`
+	classifier["payload_text"] = classifierPayload
+	classifier["payload_bytes"] = len(classifierPayload)
+
+	rows := make([]promptDebugRecord, 0, 2)
+	for _, source := range []map[string]any{character, classifier} {
+		encoded, err := json.Marshal(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var row promptDebugRecord
+		if err := json.Unmarshal(encoded, &row); err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, row)
+	}
+	exchanges := buildPromptDebugExchanges(rows)
+	sort.SliceStable(exchanges, func(i, j int) bool { return exchanges[i].CreatedAt > exchanges[j].CreatedAt })
+	var latest promptDebugExchange
+	for _, exchange := range exchanges {
+		if isCharacterPromptExchange(exchange) {
+			latest = exchange
+			break
+		}
+	}
+	if latest.RequestID != "chat" {
+		t.Fatalf("latest character request = %q, want chat", latest.RequestID)
 	}
 }
 

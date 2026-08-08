@@ -49,6 +49,7 @@ func buildAgentRuntime(
 	mioAgent := agent.NewMioAgent(chatProvider, classifier, ruleDictionary, chatToolRunner, mcpClient, convEngine).
 		WithSystemPrompt(cfg.Prompts.MioPersona).
 		WithViewerRecipientPrompts(cfg.Prompts.CharacterPrompts).
+		WithStableRuntimeContexts(cfg.Prompts.StableRuntimeContexts).
 		WithGenerationOptions(agent.MioGenerationOptions{
 			Stream:         cfg.Mio.Generation.Stream,
 			MaxTokens:      cfg.Mio.Generation.MaxTokens,
@@ -59,13 +60,10 @@ func buildAgentRuntime(
 			Seed:           cfg.Mio.Generation.Seed,
 			EnableThinking: cfg.Mio.Generation.ChatTemplateKwargs.EnableThinking,
 		})
-	if cfg.AgentControl != nil {
-		mioAgent = mioAgent.WithAgentContractsPrompt(cfg.AgentControl.PromptForMio())
-		log.Printf("Mio: Agent Registry contract index injected")
-	}
 	shiroChatAgent := agent.NewMioAgent(chatWorkerProvider, classifier, ruleDictionary, nil, mcpClient, convEngine).
 		WithSystemPrompt(cfg.Prompts.MioPersona).
 		WithViewerRecipientPrompts(cfg.Prompts.CharacterPrompts).
+		WithStableRuntimeContexts(cfg.Prompts.StableRuntimeContexts).
 		WithGenerationOptions(agent.MioGenerationOptions{
 			Stream:         cfg.Mio.Generation.Stream,
 			MaxTokens:      cfg.Mio.Generation.MaxTokens,
@@ -103,7 +101,8 @@ func buildAgentRuntime(
 	if subagentMgr != nil {
 		shiroSubagentManager = subagentMgr
 	}
-	shiroAgent := agent.NewShiroAgent(workerProvider, workerToolRunner, mcpClient, cfg.Prompts.Worker, shiroSubagentManager)
+	shiroAgent := agent.NewShiroAgent(workerProvider, workerToolRunner, mcpClient, cfg.Prompts.Worker, shiroSubagentManager).
+		WithStableRuntimeContext(cfg.Prompts.StableRuntimeContexts["shiro"])
 	if advisorService != nil {
 		shiroAgent.WithAdvisorService(advisorService)
 		log.Printf("Shiro: AdvisorService enabled (advisor=codex)")
@@ -112,13 +111,15 @@ func buildAgentRuntime(
 		shiroAgent.WithAgentPolicyService(agentPolicy)
 		log.Printf("Shiro: AgentProfile policy enabled")
 	}
-	heavyAgent := agent.NewHeavyAgent(heavyProvider, cfg.Prompts.Heavy)
+	heavyAgent := agent.NewHeavyAgent(heavyProvider, cfg.Prompts.Heavy).
+		WithStableRuntimeContext(cfg.Prompts.StableRuntimeContexts["kuro"])
 	wildAgent := buildWildAgent(
 		wildProvider,
 		cfg.Prompts.Wild,
 		convEngine,
 		newWildImageGenerator(newConfiguredImageGateway(cfg)),
 	)
+	wildAgent.WithStableRuntimeContext(cfg.Prompts.StableRuntimeContexts["midori"])
 	if convEngine != nil {
 		shiroAgent.WithConversationEngine(convEngine)
 		heavyAgent.WithConversationEngine(convEngine)

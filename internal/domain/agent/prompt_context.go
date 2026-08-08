@@ -47,13 +47,31 @@ func stableRuntimeContextMessage(content string) []llm.Message {
 	if content == "" {
 		return nil
 	}
-	headings := []struct {
+	type heading struct {
 		marker string
 		kind   string
-	}{
-		{marker: "# Mio Agent Contract Index", kind: "agent_contract"},
-		{marker: "## Routing and Handoff", kind: "interaction_contract"},
-		{marker: "## Mio Tool Boundary", kind: "tool_boundary"},
+	}
+	layouts := [][]heading{
+		{
+			{marker: "# Mio Agent Contract Index", kind: "agent_contract"},
+			{marker: "## Routing and Handoff", kind: "interaction_contract"},
+			{marker: "## Mio Tool Boundary", kind: "tool_boundary"},
+		},
+		{
+			{marker: "# Shared Agent Control", kind: "agent_contract"},
+			{marker: "## Routing", kind: "interaction_contract"},
+			{marker: "## Tools", kind: "tool_boundary"},
+		},
+	}
+	var headings []heading
+	for _, layout := range layouts {
+		if strings.HasPrefix(content, layout[0].marker) {
+			headings = layout
+			break
+		}
+	}
+	if len(headings) == 0 {
+		return []llm.Message{{Role: "system", Content: content, Type: llm.PromptContextStable, Metadata: map[string]string{"runtime_context_kind": "agent_contract"}}}
 	}
 	starts := make([]int, len(headings))
 	for index, heading := range headings {
@@ -78,6 +96,42 @@ func stableRuntimeContextMessage(content string) []llm.Message {
 		})
 	}
 	return messages
+}
+
+// assemblePromptContext is the single deterministic assembly path shared by
+// every conversational character. Dynamic messages are grouped by semantic
+// type; the current user message is always last.
+func assemblePromptContext(characterPrompt, stableRuntimeContext string, dynamic []llm.Message, user llm.Message) []llm.Message {
+	messages := make([]llm.Message, 0, 8+len(dynamic))
+	messages = append(messages, characterPromptMessages(characterPrompt)...)
+	messages = append(messages, stableRuntimeContextMessage(stableRuntimeContext)...)
+	for _, message := range dynamic {
+		if message.Type == llm.PromptContextVariable {
+			continue
+		}
+		if message.Type == "" {
+			message.Type = llm.PromptContextRecall
+		}
+		messages = append(messages, message)
+	}
+	for _, message := range dynamic {
+		if message.Type == llm.PromptContextVariable {
+			messages = append(messages, message)
+		}
+	}
+	user.Type = llm.PromptContextUser
+	messages = append(messages, user)
+	return messages
+}
+
+func renderSystemMessages(messages []llm.Message) string {
+	parts := make([]string, 0, len(messages))
+	for _, message := range messages {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "system") && strings.TrimSpace(message.Content) != "" {
+			parts = append(parts, strings.TrimSpace(message.Content))
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func staticPromptHash(messages []llm.Message) string {

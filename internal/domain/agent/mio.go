@@ -49,23 +49,23 @@ type WebSearchResult struct {
 
 // MioAgent は Chat（会話・意思決定）を担当するエンティティ
 type MioAgent struct {
-	llmProvider          llm.LLMProvider
-	classifier           Classifier
-	ruleDictionary       RuleDictionary
-	toolRunner           ToolRunner
-	mcpClient            MCPClient
-	conversationEngine   conversation.ConversationEngine // v5.1: 会話エンジン（nilを許容）
-	kbManager            KBManager                       // Phase 4.2: KB自動保存用（nilを許容）
-	searchCacheManager   SearchCacheManager              // L1 Search Cache連携（nilを許容）
-	userMemoryManager    UserMemoryManager               // Memory v0.1: user:<uid> 操作用（nilを許容）
-	personaEditor        PersonaEditor                   // ペルソナ自己編集用（nilを許容）
-	recentContext        func(context.Context, int) (string, error)
-	systemPrompt         string
-	viewerPrompts        map[string]string
-	agentContractsPrompt string
-	expressionHistoryMu  sync.RWMutex
-	expressionHistory    MioExpressionHistory
-	generation           MioGenerationOptions
+	llmProvider           llm.LLMProvider
+	classifier            Classifier
+	ruleDictionary        RuleDictionary
+	toolRunner            ToolRunner
+	mcpClient             MCPClient
+	conversationEngine    conversation.ConversationEngine // v5.1: 会話エンジン（nilを許容）
+	kbManager             KBManager                       // Phase 4.2: KB自動保存用（nilを許容）
+	searchCacheManager    SearchCacheManager              // L1 Search Cache連携（nilを許容）
+	userMemoryManager     UserMemoryManager               // Memory v0.1: user:<uid> 操作用（nilを許容）
+	personaEditor         PersonaEditor                   // ペルソナ自己編集用（nilを許容）
+	recentContext         func(context.Context, int) (string, error)
+	systemPrompt          string
+	viewerPrompts         map[string]string
+	stableRuntimeContexts map[string]string
+	expressionHistoryMu   sync.RWMutex
+	expressionHistory     MioExpressionHistory
+	generation            MioGenerationOptions
 }
 
 // NewMioAgent は新しいMioAgentを作成
@@ -191,10 +191,6 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 
 	// === v5.1: ConversationEngine による RecallPack 生成 ===
 	var messages []llm.Message
-	if systemPrompt := m.systemPromptForViewerRecipient(t.ViewerRecipient()); systemPrompt != "" {
-		messages = append(messages, characterPromptMessages(systemPrompt)...)
-	}
-	messages = append(messages, stableRuntimeContextMessage(m.stableMioPromptContext(t))...)
 	var recallPack *conversation.RecallPack
 	if m.conversationEngine != nil {
 		var err error
@@ -318,8 +314,12 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 
 	// ユーザーメッセージを最後に追加
 	currentUserMessage := userMessageWithAttachments(userMessage, t.Attachments())
-	currentUserMessage.Type = llm.PromptContextUser
-	messages = append(messages, currentUserMessage)
+	messages = assemblePromptContext(
+		m.systemPromptForViewerRecipient(t.ViewerRecipient()),
+		m.stablePromptContext(t),
+		messages,
+		currentUserMessage,
+	)
 
 	req := m.generationRequest(messages, llm.StreamCallbackFromContext(ctx))
 

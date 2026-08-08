@@ -18,16 +18,17 @@ const shiroMaxTokens = 4096
 
 // ShiroAgent は Worker（実行・道具係）を担当するエンティティ
 type ShiroAgent struct {
-	llmProvider     llm.LLMProvider
-	toolRunner      ToolRunner
-	mcpClient       MCPClient
-	systemPrompt    string
-	subagentManager SubagentManager // v1.0: ReActループ統合
-	advisorService  AdvisorService
-	agentPolicy     AgentPolicyService
-	persona         *AgentPersona // v4.2: Optional Agent Persona
-	lightMemory     *LightMemory  // Optional: short-term memory
-	conversation    conversation.ConversationEngine
+	llmProvider          llm.LLMProvider
+	toolRunner           ToolRunner
+	mcpClient            MCPClient
+	systemPrompt         string
+	stableRuntimeContext string
+	subagentManager      SubagentManager // v1.0: ReActループ統合
+	advisorService       AdvisorService
+	agentPolicy          AgentPolicyService
+	persona              *AgentPersona // v4.2: Optional Agent Persona
+	lightMemory          *LightMemory  // Optional: short-term memory
+	conversation         conversation.ConversationEngine
 }
 
 // NewShiroAgent は新しいShiroAgentを作成
@@ -64,6 +65,11 @@ func (s *ShiroAgent) WithConversationEngine(engine conversation.ConversationEngi
 	return s
 }
 
+func (s *ShiroAgent) WithStableRuntimeContext(content string) *ShiroAgent {
+	s.stableRuntimeContext = strings.TrimSpace(content)
+	return s
+}
+
 func (s *ShiroAgent) WithAdvisorService(service AdvisorService) *ShiroAgent {
 	s.advisorService = service
 	return s
@@ -82,19 +88,28 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 		RequestID: jobID, TraceID: jobID, JobID: jobID,
 		Initiator: "shiro", Caller: "agent.shiro", Purpose: "execute_ops_task",
 	})
-	systemPrompt := s.systemPrompt
+	characterPrompt := s.systemPrompt
 	if s.persona != nil {
-		systemPrompt = s.persona.BuildSystemPrompt(s.systemPrompt)
+		// Legacy persona input is dynamic compatibility context; the workspace
+		// character bundle remains the canonical Character SystemPrompt.
+		characterPrompt = s.systemPrompt
 	}
-	systemPrompt = ensureShiroJapaneseResponsePrompt(systemPrompt)
+	dynamic := []llm.Message{{
+		Role: "system", Content: ensureShiroJapaneseResponsePrompt(""),
+		Type:     llm.PromptContextVariable,
+		Metadata: map[string]string{"runtime_context_kind": "response_language"},
+	}}
+	if s.persona != nil {
+		dynamic = append(dynamic, llm.Message{Role: "system", Content: s.persona.BuildSystemPrompt(""), Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "legacy_persona"}})
+	}
 
 	if resp, ok, err := s.tryExecuteCodexWorkPath(ctx, t); ok || err != nil {
 		return resp, err
 	}
-	systemPrompt = llm.AppendNowJST(systemPrompt)
-
 	// SubagentManager が設定されている場合は ReActLoop を使用
 	if s.subagentManager != nil {
+		assembled := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{Messages: assemblePromptContext(characterPrompt, s.stableRuntimeContext, dynamic, llm.Message{Role: "user", Content: t.UserMessage()})})
+		systemPrompt := renderSystemMessages(assembled.Messages)
 		result, err := s.runSubagentSafely(ctx, SubagentTask{
 			AgentName:    "shiro",
 			Instruction:  t.UserMessage(),
@@ -106,7 +121,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 		return result.Output, nil
 	}
 
-	messages := []llm.Message{{Role: "system", Content: systemPrompt}}
+	messages := dynamic
 	if s.conversation != nil {
 		recallPack, err := s.conversation.BeginTurn(ctx, t.ChatID(), t.UserMessage())
 		if err != nil {
@@ -122,12 +137,12 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	if s.lightMemory != nil {
 		messages = append(messages, s.lightMemory.RecentMessages(t.ChatID())...)
 	}
-	messages = append(messages, userMessageWithAttachments(t.UserMessage(), t.Attachments()))
-	req := llm.GenerateRequest{
+	messages = assemblePromptContext(characterPrompt, s.stableRuntimeContext, messages, userMessageWithAttachments(t.UserMessage(), t.Attachments()))
+	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   shiroMaxTokens,
 		Temperature: 0.3, // Workerは確実性重視
-	}
+	})
 
 	resp, err := s.llmProvider.Generate(ctx, req)
 	if err != nil {

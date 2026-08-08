@@ -28,8 +28,8 @@ func TestWildAgentGenerateUsesWildPromptAndStripsCommand(t *testing.T) {
 	if resp != "vivid prompt" {
 		t.Fatalf("response should be trimmed, got %q", resp)
 	}
-	if captured.SystemPrompt != "creative system" || len(captured.Messages) < 2 || captured.Messages[len(captured.Messages)-2].Type != llm.PromptContextVariable {
-		t.Fatalf("SystemPrompt: want custom prompt, got %q", captured.SystemPrompt)
+	if captured.SystemPrompt != "" || len(captured.Messages) < 3 || captured.Messages[0].Content != "creative system" || captured.Messages[0].Type != llm.PromptContextCharacter || captured.Messages[len(captured.Messages)-2].Type != llm.PromptContextVariable {
+		t.Fatalf("canonical prompt context not assembled: %#v", captured)
 	}
 	if captured.Messages[len(captured.Messages)-1].Role != "user" {
 		t.Fatalf("expected final user message, got %#v", captured.Messages)

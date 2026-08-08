@@ -171,7 +171,7 @@ func TestBuildIdleChatAgentPromptsLayersCharacterBundleThenIdleCorrection(t *tes
 	}
 }
 
-func TestApplyAgentControlAppendsValidatedSharedControlToCharacterPrompts(t *testing.T) {
+func TestApplyAgentControlKeepsCharacterPromptsCanonicalAndBuildsStableRuntimeContexts(t *testing.T) {
 	p := &LoadedPrompts{
 		MioPersona:       "mio system",
 		Worker:           "shiro system",
@@ -206,25 +206,22 @@ func TestApplyAgentControlAppendsValidatedSharedControlToCharacterPrompts(t *tes
 	ApplyAgentControl(p, control)
 
 	for name, prompt := range p.CharacterPrompts {
-		if name == "mio" {
-			if strings.Contains(prompt, "Shared Agent Control") {
-				t.Fatalf("Mio character prompt should keep fixed persona separate from runtime control:\n%s", prompt)
-			}
+		if !strings.Contains(prompt, "Shared Agent Control") {
 			continue
 		}
-		if !strings.Contains(prompt, "Shared Agent Control") {
-			t.Fatalf("%s prompt did not receive shared control:\n%s", name, prompt)
-		}
+		t.Fatalf("%s character prompt was contaminated by runtime control:\n%s", name, prompt)
 	}
 	for name, prompt := range map[string]string{
-		"shiro": p.Worker, "kuro": p.Heavy, "midori": p.Wild,
+		"mio": p.MioPersona, "shiro": p.Worker, "kuro": p.Heavy, "midori": p.Wild,
 	} {
-		if !strings.Contains(prompt, "Shared Agent Control") {
-			t.Fatalf("%s runtime prompt did not receive shared control:\n%s", name, prompt)
+		if strings.Contains(prompt, "Shared Agent Control") || strings.Contains(prompt, "Agent Contract Index") {
+			t.Fatalf("%s character runtime prompt was contaminated by stable context:\n%s", name, prompt)
 		}
 	}
-	if strings.Contains(p.MioPersona, "Shared Agent Control") {
-		t.Fatalf("Mio runtime prompt should keep Agent Registry control in a separate context:\n%s", p.MioPersona)
+	for _, name := range []string{"mio", "shiro", "kuro", "midori"} {
+		if strings.TrimSpace(p.StableRuntimeContexts[name]) == "" {
+			t.Fatalf("%s stable runtime context was not built", name)
+		}
 	}
 }
 

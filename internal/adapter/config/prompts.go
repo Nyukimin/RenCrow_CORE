@@ -11,30 +11,32 @@ import (
 
 // LoadedPrompts は外部ファイルから読み込まれたプロンプト群
 type LoadedPrompts struct {
-	MioPersona       string            // Mio会話ペルソナ
-	CoderProposal    string            // Coder proposal生成（1ショット）
-	CoderLoop        string            // Coder Codex-likeループ（多ターン）
-	Classifier       string            // タスク分類器
-	Worker           string            // Shiro Worker
-	Heavy            string            // Kuro Heavy
-	Wild             string            // Midori Wild
-	CharacterPrompts map[string]string // character名 → manifest結合済みプロンプト
-	IdleChatAgents   map[string]string // IdleChat Agent名 → プロンプト
-	SelfContext      string            // 自己認識コンテキスト（全エージェント共通）
+	MioPersona            string            // Mio会話ペルソナ
+	CoderProposal         string            // Coder proposal生成（1ショット）
+	CoderLoop             string            // Coder Codex-likeループ（多ターン）
+	Classifier            string            // タスク分類器
+	Worker                string            // Shiro Worker
+	Heavy                 string            // Kuro Heavy
+	Wild                  string            // Midori Wild
+	CharacterPrompts      map[string]string // character名 → manifest結合済みプロンプト
+	StableRuntimeContexts map[string]string // character名 → Registry由来の安定runtime契約
+	IdleChatAgents        map[string]string // IdleChat Agent名 → プロンプト
+	SelfContext           string            // 自己認識コンテキスト（全エージェント共通）
 }
 
 // LoadPrompts は prompts_dir からプロンプトファイルを読み込む
 // ファイルが存在しない場合はフォールバック値を使用
 func LoadPrompts(baseDir, workspaceDir string) *LoadedPrompts {
 	p := &LoadedPrompts{
-		MioPersona:       defaultMioPersona,
-		CoderProposal:    defaultCoderProposal,
-		Classifier:       defaultClassifier,
-		Worker:           defaultWorker,
-		Heavy:            "",
-		Wild:             "",
-		CharacterPrompts: map[string]string{},
-		IdleChatAgents:   copyMap(defaultIdleChatAgents),
+		MioPersona:            defaultMioPersona,
+		CoderProposal:         defaultCoderProposal,
+		Classifier:            defaultClassifier,
+		Worker:                defaultWorker,
+		Heavy:                 "",
+		Wild:                  "",
+		CharacterPrompts:      map[string]string{},
+		StableRuntimeContexts: map[string]string{},
+		IdleChatAgents:        copyMap(defaultIdleChatAgents),
 	}
 
 	// Step 1: prompts/ から共通prompt filesを読み込む。
@@ -136,28 +138,26 @@ func applyCharacterPrompt(name, content string, p *LoadedPrompts) {
 	}
 }
 
-// ApplyAgentControl appends the validated shared control slice to execution
-// character prompts and refreshes the runtime role prompts derived from them.
-// Mio receives its contract index separately at Chat runtime so the fixed
-// persona remains distinct from current Agent Registry context.
+// ApplyAgentControl materializes validated Registry contracts as Stable
+// RuntimeContext. Character SystemPrompt is the immutable workspace bundle and
+// must never be extended with runtime contracts.
 func ApplyAgentControl(p *LoadedPrompts, control *agentcontrol.Control) {
 	if p == nil || control == nil {
 		return
 	}
-	for name, characterPrompt := range p.CharacterPrompts {
-		// Mio receives the Agent contract index as a separate runtime system
-		// context. Keeping the shared control block out of the fixed persona
-		// avoids duplicating every Agent's tool policy in each Chat turn.
-		if strings.EqualFold(strings.TrimSpace(name), "mio") {
-			continue
+	if p.StableRuntimeContexts == nil {
+		p.StableRuntimeContexts = map[string]string{}
+	}
+	for name := range p.CharacterPrompts {
+		key := strings.ToLower(strings.TrimSpace(name))
+		controlPrompt := control.PromptFor(key)
+		if key == "mio" {
+			controlPrompt = control.PromptForMio()
 		}
-		controlPrompt := control.PromptFor(name)
 		if strings.TrimSpace(controlPrompt) == "" {
 			continue
 		}
-		content := strings.TrimSpace(characterPrompt) + promptbundle.Separator + controlPrompt
-		p.CharacterPrompts[name] = content
-		applyCharacterPrompt(name, content, p)
+		p.StableRuntimeContexts[key] = strings.TrimSpace(controlPrompt)
 	}
 }
 

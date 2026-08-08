@@ -27,8 +27,8 @@ func TestHeavyAgentGenerateUsesHeavyPromptAndStripsCommand(t *testing.T) {
 	if resp != "heavy response" {
 		t.Fatalf("response: want heavy response, got %q", resp)
 	}
-	if gotReq.SystemPrompt != "kuro system" || len(gotReq.Messages) < 2 || gotReq.Messages[len(gotReq.Messages)-2].Type != llm.PromptContextVariable {
-		t.Fatalf("system prompt: want kuro system, got %q", gotReq.SystemPrompt)
+	if gotReq.SystemPrompt != "" || len(gotReq.Messages) < 3 || gotReq.Messages[0].Content != "kuro system" || gotReq.Messages[0].Type != llm.PromptContextCharacter || gotReq.Messages[len(gotReq.Messages)-2].Type != llm.PromptContextVariable {
+		t.Fatalf("canonical prompt context not assembled: %#v", gotReq)
 	}
 	if len(gotReq.Messages) == 0 || gotReq.Messages[len(gotReq.Messages)-1].Content != "原因を調べて" {
 		t.Fatalf("expected stripped user message, got %#v", gotReq.Messages)
@@ -49,8 +49,8 @@ func TestHeavyAgentDefaultPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
-	if !strings.Contains(gotReq.SystemPrompt, "Heavy") {
-		t.Fatalf("expected default Heavy prompt, got %q", gotReq.SystemPrompt)
+	if len(gotReq.Messages) == 0 || !strings.Contains(gotReq.Messages[0].Content, "Heavy") {
+		t.Fatalf("expected default Heavy prompt, got %#v", gotReq.Messages)
 	}
 }
 
@@ -98,7 +98,7 @@ func TestHeavyAgentGenerateWithConversationEngine(t *testing.T) {
 	if len(gotReq.Messages) < 2 {
 		t.Fatalf("expected recall and user messages: %#v", gotReq.Messages)
 	}
-	if gotReq.Messages[0].Role != "system" || !strings.Contains(gotReq.Messages[0].Content, "Mio, Shiro, Kuro, and Midori") {
+	if gotReq.Messages[1].Role != "system" || !strings.Contains(gotReq.Messages[1].Content, "Mio, Shiro, Kuro, and Midori") {
 		t.Fatalf("missing shared conversation continuity contract: %#v", gotReq.Messages)
 	}
 	for _, message := range gotReq.Messages {

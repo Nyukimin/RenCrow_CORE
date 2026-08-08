@@ -148,18 +148,14 @@ func TestShiroAgentWithLightMemory(t *testing.T) {
 func TestShiroAgentExecute(t *testing.T) {
 	llmProvider := &mockLLMProvider{
 		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
-			// システムプロンプトが注入されているか確認
-			if len(req.Messages) > 0 && req.Messages[0].Role == "system" {
-				if !strings.Contains(req.Messages[0].Content, "test prompt") {
-					t.Errorf("Unexpected system prompt: %s", req.Messages[0].Content)
-				}
-				if !strings.Contains(req.Messages[0].Content, "必ず自然な日本語で応答") {
-					t.Errorf("Shiro system prompt should force Japanese response: %s", req.Messages[0].Content)
-				}
-				if !strings.Contains(req.Messages[0].Content, "\n\n現在時刻（JST）: ") ||
-					!strings.HasSuffix(req.Messages[0].Content, " JST") {
-					t.Errorf("Shiro system prompt should end with current JST time: %s", req.Messages[0].Content)
-				}
+			if len(req.Messages) == 0 || req.Messages[0].Content != "test prompt" || req.Messages[0].Type != llm.PromptContextCharacter {
+				t.Errorf("unexpected Character SystemPrompt: %#v", req.Messages)
+			}
+			if !hasPromptContextMessage(req.Messages, llm.PromptContextVariable, "必ず自然な日本語で応答") {
+				t.Errorf("Shiro variable context should force Japanese response: %#v", req.Messages)
+			}
+			if !hasPromptContextMessage(req.Messages, llm.PromptContextVariable, "現在時刻（JST）: ") {
+				t.Errorf("Shiro variable context should contain current JST time: %#v", req.Messages)
 			}
 
 			return llm.GenerateResponse{
@@ -363,18 +359,27 @@ func TestShiroAgentExecuteUsesLightMemory(t *testing.T) {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
-	if len(captured) != 4 {
+	if len(captured) != 6 {
 		t.Fatalf("messages=%#v", captured)
 	}
 	if captured[1].Role != "user" || captured[1].Content != "first worker task" ||
 		captured[2].Role != "assistant" || captured[2].Content != "first worker response" ||
-		captured[3].Content != "second worker task" {
+		captured[len(captured)-1].Content != "second worker task" {
 		t.Fatalf("LightMemory messages not injected in order: %#v", captured)
 	}
 	recent := memory.RecentMessages("U123")
 	if len(recent) != 4 || recent[3].Content != "second worker response" {
 		t.Fatalf("LightMemory did not record response: %#v", recent)
 	}
+}
+
+func hasPromptContextMessage(messages []llm.Message, kind llm.PromptContextType, content string) bool {
+	for _, message := range messages {
+		if message.Type == kind && strings.Contains(message.Content, content) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestShiroAgentExecuteSharesAllConversationMemory(t *testing.T) {

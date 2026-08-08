@@ -262,9 +262,23 @@ func promptDebugExchangeID(requestID, createdAt string, rowIndex int) string {
 }
 
 func isCharacterPromptExchange(exchange promptDebugExchange) bool {
-	role := strings.ToLower(strings.TrimSpace(exchange.ExecutionRole))
-	targetID := strings.ToLower(strings.TrimSpace(exchange.TargetID))
-	return role == "chat" || strings.HasSuffix(targetID, "_chat")
+	agentID := strings.ToLower(strings.TrimSpace(exchange.AgentID))
+	if exchange.Caller != "core.unattributed" || (agentID != "mio" && agentID != "shiro" && agentID != "kuro" && agentID != "midori") {
+		return false
+	}
+	for _, item := range exchange.Items {
+		canonical := map[string]bool{}
+		for _, block := range item.SystemPromptBlock {
+			if block.Type == "character_system_prompt" {
+				return true
+			}
+			canonical[block.Label] = true
+		}
+		if canonical["00_system.md"] && canonical["10_policy.md"] && canonical["20_scope.md"] && canonical["30_knowledge.md"] {
+			return true
+		}
+	}
+	return false
 }
 
 func promptDebugLevel(stage string, metadata map[string]any) string {

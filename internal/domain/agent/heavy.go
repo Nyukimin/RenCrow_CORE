@@ -16,9 +16,10 @@ Answer naturally and concretely in the user's language.`
 
 // HeavyAgent は深い分析・診断用のLLM呼び出しを担当する。
 type HeavyAgent struct {
-	llmProvider        llm.LLMProvider
-	systemPrompt       string
-	conversationEngine conversation.ConversationEngine
+	llmProvider          llm.LLMProvider
+	systemPrompt         string
+	stableRuntimeContext string
+	conversationEngine   conversation.ConversationEngine
 }
 
 func NewHeavyAgent(llmProvider llm.LLMProvider, systemPrompt string) *HeavyAgent {
@@ -30,6 +31,11 @@ func NewHeavyAgent(llmProvider llm.LLMProvider, systemPrompt string) *HeavyAgent
 
 func (h *HeavyAgent) WithConversationEngine(engine conversation.ConversationEngine) *HeavyAgent {
 	h.conversationEngine = engine
+	return h
+}
+
+func (h *HeavyAgent) WithStableRuntimeContext(content string) *HeavyAgent {
+	h.stableRuntimeContext = strings.TrimSpace(content)
 	return h
 }
 
@@ -62,12 +68,11 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 		}
 		return response, nil
 	}
-	messages = append(messages, userMessageWithAttachments(userMessage, t.Attachments()))
+	messages = assemblePromptContext(h.systemPrompt, h.stableRuntimeContext, messages, userMessageWithAttachments(userMessage, t.Attachments()))
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
-		SystemPrompt: h.systemPrompt,
-		Messages:     messages,
-		MaxTokens:    2048,
-		Temperature:  0.4,
+		Messages:    messages,
+		MaxTokens:   2048,
+		Temperature: 0.4,
 	})
 	resp, err := h.llmProvider.Generate(ctx, req)
 	if err != nil {
