@@ -6,7 +6,7 @@ Revenue
 
 ## Inputs
 
-daily routine trigger, source data, human decision
+daily routine trigger, source data, machine policy decision
 
 ## Outputs
 

@@ -68,6 +68,10 @@ Toolsはそれぞれ同名のmodule subtreeだけを所有します。映画・�
 COREが採用した生成物のdomain metadataはCOREの所有範囲ですが、外部取得artifact、画像object、
 Replayなどは生成したmoduleが所有します。
 
+RenCrow runtimeは人の判断待ちを持ちません。確定済みpolicyを同期評価して即時に実行、`rejected`、
+`blocked`を確定し、rejectされた案は前提・設計・思想を再考した新revisionとして再検証します。
+Codexが変更を行う際のユーザー権限境界は、このRenCrow製品内のNo-Human-Gateとは別契約です。
+
 `/srv/rencrow/db`が利用できないproduction起動でrepository内、`~/.rencrow`、一時directoryへ
 暗黙fallbackしてはいけません。Windows／macOSでは同じ論理構造を設定済み絶対pathへ配置します。
 媒体format、mount、module別subtree、backup整合性の正本は

@@ -88,6 +88,13 @@ AI エージェントは、実装や調査の成果をその場限りの回答�
 - 共有のための文書化は重くしすぎず、短いメモ、実例、検証済みコマンド、失敗時の見方から始める。
 - ただし、安全制約、責務境界、検証条件はプロンプトだけに閉じず、コード、テスト、ログ、ルールへ落とす。
 
+### Codex User Authorization / RenCrow No-Human-Gate
+
+- Codexがrepository、runtime、host、外部systemを変更するには、ユーザーの明示指示を作業scopeの根拠にする。これはCodexの実行権限境界である。
+- RenCrow runtimeへCodexの権限境界を移植しない。RenCrowは人の判断待ちを作らない。確定済みのCORE正本、machine-readable policy、認証済みrequest scopeを同期評価し、直ちに実行、`rejected`、`blocked`のいずれかを確定する。
+- RenCrowのAgent、workflow、API、DBへ、人の返答を待つstatus、grant、reference、queueを追加しない。利用者の発話は新しい目的・制約・事実を与えるrequestであり、待機中artifactを解除するための判子として扱わない。
+- RenCrow内で案が`rejected`になった場合は、理由を読み、前提、証拠、分解、route、設計、必要なら思想そのものを再考して新revisionを作る。同じ案の言い換え、安全制約の弱体化、無限再試行を行わない。
+
 ---
 
 ## プロジェクト概要
@@ -157,8 +164,8 @@ Coder が行うのは次のみ：
   Backend readiness、logを確認し、その同じ経路を復旧する。
 - E2Eを通す目的で、backend直結、local代替、fake server、test double、別model、
   module省略経路を独断で作成・起動しない。
-- 代替topologyは、正規経路の失敗箇所と影響を報告したうえで、れんがその例外を
-  明示承認した場合だけ使用できる。
+- Codexが代替topologyを作成・起動する場合は、正規経路の失敗箇所と影響を報告したうえで、
+  ユーザーがその例外実行を明示指示した場合だけ使用できる。
 - 安全な範囲で復旧を試みても正規経路が動かない場合は、失敗境界と観測証拠を報告して
   停止する。代替経路の結果を正規runtimeまたはAgent-owned E2E成功として扱わない。
 

@@ -69,7 +69,7 @@ cash、position、NAV snapshotも含みます。このrouteは状態変更、注
 Global capabilityとdeployment制限を解決し、認証済みprivate routeでTRADEへ評価を依頼します。
 未知field、欠落値、inactive Global Policy、TRADE不通、contract不一致、証跡保存失敗はfail closedです。
 結果は共通Policy Decision storeへappendされますが、`authorizes_execution=false`であり、
-このAPIは外部I/O、Portfolio更新、Proposal、Intent、本人承認artifact、Orderを一切作りません。
+このAPIは外部I/O、Portfolio更新、Proposal、Intent、追加の人間判断artifact、Orderを一切作りません。
 
 `POST /viewer/trade/risk-preview`は`request_id`、明示boolの`request_allowed`、
 `risk-preview-plan/v1`を受けます。COREは未知fieldと1 MiB超過を拒否し、planのcanonical JSON
@@ -105,7 +105,7 @@ Outcome待ち、label別件数、return／benchmark／excess returnを再計算�
 SHA-256、reportのlatest event hash、reviewer、decision、reason、evidenceを必須にします。TRADEは
 reportを再計算してstale／改ざんを拒否し、Outcome台帳とは分離したreview hash-chainへ冪等追記します。
 review成功後も`authorizes_external_execution=false`、`portfolio_mutated=false`、
-`knowledge_promoted=false`であり、reviewはpromotionや注文の承認ではありません。
+`knowledge_promoted=false`であり、reviewはpromotionや注文の実行条件ではありません。
 
 `GET /viewer/trade/shadow/outcomes/reviews/report`はOutcome ledgerとreview ledgerを再検証し、
 `pending_review`、`review_required`、`independently_reviewed`の状態を返します。独立review済みでも

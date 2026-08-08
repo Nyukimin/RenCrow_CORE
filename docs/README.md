@@ -20,6 +20,9 @@
 - `main` のこの11ファイルだけを、Public向けか内部向けかを問わない現行の製品仕様正本とします。
 - `AGENTS.md`、`CLAUDE.md`、`rules/` は作業者向けの実行制約です。製品仕様を再定義せず、この正本を参照します。
 - COREと兄弟モジュールの連携境界、入出力の意味、責務分担はこの正本で定義します。兄弟モジュールのdocsは各モジュール内部の実装詳細を補足できますが、この正本を上書きしません。差異がある場合はこの正本を基準に兄弟モジュール側を更新します。
+- 全moduleは[システム概要のNo-Human-Gate](01_システム概要.md#no-human-gateとreject再考)と
+  [安全方針のReject-Driven Revision](07_安全・自動実行・データ方針.md#reject-driven-revision)に従います。
+  人の判断待ちを製品workflowへ追加せず、reject時は前提・設計・思想を再考した新revisionを検証します。
 - 標準Go配布、Ubuntu／Windows／macOS共通契約、外部system、optional sidecar、
   Python／Node.js依存、CUDA用WSLの扱いは
   [アーキテクチャ概要の「標準Go配布境界」](04_アーキテクチャ概要.md#標準go配布境界)を正本とします。
@@ -27,7 +30,7 @@
   User Messageの責務、順序、AI使用境界、KVキャッシュ、Viewer表示、必須検証は
   [アーキテクチャ概要の「Prompt Context Assembly」](04_アーキテクチャ概要.md#prompt-context-assembly)を
   唯一の現行正本とし、実装、ログ、test、兄弟moduleのdocsで別構造を再定義しません。
-- Durable Data Storeの媒体role、mount、module別subtree、CORE DB path、追加判断主体、判断class、
+- Durable Data Storeの媒体role、mount、module別subtree、CORE DB path、追加判断主体、impact class、
   Storage Proposal、Manifest、lifecycle、backup／restore契約は
   [設定リファレンスの「DB物理配置とbackup」](05_設定リファレンス.md#db物理配置とbackup)を
   唯一の現行正本とします。兄弟moduleのREADMEは所有subtreeと設定入口だけを補足します。
