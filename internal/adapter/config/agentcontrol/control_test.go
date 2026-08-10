@@ -28,6 +28,8 @@ func TestLoadReadsAndRendersSharedAgentControl(t *testing.T) {
 		"destination_owner: orchestrator",
 		"required_capability",
 		"core_toolrunner",
+		"selection_principles",
+		"Tool、Skill、MCP",
 	} {
 		if !strings.Contains(mioPrompt, want) {
 			t.Fatalf("Mio control prompt missing %q:\n%s", want, mioPrompt)
@@ -45,6 +47,8 @@ func TestLoadReadsAndRendersSharedAgentControl(t *testing.T) {
 		"delegatable_work",
 		"expected_output",
 		"return_to_mio",
+		"selection_principles",
+		"Tool、Skill、MCP",
 	} {
 		if !strings.Contains(mioContracts, want) {
 			t.Fatalf("Mio contract index missing %q:\n%s", want, mioContracts)
@@ -117,6 +121,44 @@ func TestLoadRejectsAutomaticToolFallback(t *testing.T) {
 
 	if _, err := Load(workspaceDir); err == nil || !strings.Contains(err.Error(), "automatic_fallback") {
 		t.Fatalf("Load() error = %v, want automatic_fallback rejection", err)
+	}
+}
+
+func TestLoadRejectsMissingEmptyOrBlankSelectionPrinciples(t *testing.T) {
+	const principles = `selection_principles:
+  - CORE metadataと注入済み能力一覧から利用可能なTool、Skill、MCPを把握する
+  - 目的、必要な証拠、副作用、再現性に合う最小の組合せを選び、単一手段への思い込みを避ける
+  - 読み取りや検証に適切な能力がある場合は推測だけで済ませず、その能力で事実を確認する
+  - 未提供・利用不能な能力を使ったふりをせず、必要能力と根拠をOrchestratorへ返す
+`
+	cases := []struct {
+		name    string
+		replace string
+		with    string
+	}{
+		{name: "missing", replace: principles, with: ""},
+		{name: "empty", replace: principles, with: "selection_principles: []\n"},
+		{name: "blank", replace: "  - CORE metadataと注入済み能力一覧から利用可能なTool、Skill、MCPを把握する\n", with: "  - \"   \"\n"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			workspaceDir := t.TempDir()
+			writeControlFixture(t, workspaceDir)
+			path := filepath.Join(workspaceDir, "control", "tools.yaml")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = []byte(strings.Replace(string(data), tc.replace, tc.with, 1))
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := Load(workspaceDir); err == nil || !strings.Contains(err.Error(), "tools selection_principles") {
+				t.Fatalf("Load() error = %v, want tools selection_principles rejection", err)
+			}
+		})
 	}
 }
 
@@ -201,6 +243,11 @@ required_fields:
 		"tools.yaml": `version: 1
 metadata_source: core_toolrunner
 availability_required: true
+selection_principles:
+  - CORE metadataと注入済み能力一覧から利用可能なTool、Skill、MCPを把握する
+  - 目的、必要な証拠、副作用、再現性に合う最小の組合せを選び、単一手段への思い込みを避ける
+  - 読み取りや検証に適切な能力がある場合は推測だけで済ませず、その能力で事実を確認する
+  - 未提供・利用不能な能力を使ったふりをせず、必要能力と根拠をOrchestratorへ返す
 agents:
   mio:
     access: chat_read_only

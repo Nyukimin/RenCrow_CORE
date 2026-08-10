@@ -81,6 +81,7 @@ type Handoff struct {
 type Tools struct {
 	MetadataSource       string                `yaml:"metadata_source"`
 	AvailabilityRequired bool                  `yaml:"availability_required"`
+	SelectionPrinciples  []string              `yaml:"selection_principles"`
 	Agents               map[string]AgentTools `yaml:"agents"`
 }
 
@@ -239,6 +240,14 @@ func (c *Control) validate(versions map[string]int) error {
 	if !c.Tools.AvailabilityRequired {
 		return fmt.Errorf("tools availability_required must be true")
 	}
+	if len(c.Tools.SelectionPrinciples) == 0 {
+		return fmt.Errorf("tools selection_principles must define at least one principle")
+	}
+	for index, principle := range c.Tools.SelectionPrinciples {
+		if strings.TrimSpace(principle) == "" {
+			return fmt.Errorf("tools selection_principles[%d] must not be blank", index)
+		}
+	}
 	for agentName := range c.Agents {
 		policy, ok := c.Tools.Agents[agentName]
 		if !ok || strings.TrimSpace(policy.Access) == "" {
@@ -302,6 +311,7 @@ func (c *Control) PromptFor(agentName string) string {
 		b.WriteString("\n## Tools\n\n")
 		fmt.Fprintf(&b, "- metadata_source: %s\n", c.Tools.MetadataSource)
 		fmt.Fprintf(&b, "- availability_required: %t\n", c.Tools.AvailabilityRequired)
+		writeList(&b, "selection_principles", c.Tools.SelectionPrinciples)
 		fmt.Fprintf(&b, "- access: %s\n", policy.Access)
 		writeList(&b, "rules", policy.Rules)
 		selections := sortedKeys(policy.Selections)
@@ -357,8 +367,9 @@ func (c *Control) PromptForMio() string {
 	fmt.Fprintf(&b, "- fallback: %s\n- handoff_owner: %s\n", c.Routing.Fallback, c.Handoff.DestinationOwner)
 	writeList(&b, "handoff_required_fields", c.Handoff.RequiredFields)
 	b.WriteString("- 担当外の実行を自分が済ませたことにせず、必要能力と返却情報をOrchestratorへ渡す。\n")
+	b.WriteString("\n## Mio Tool Boundary\n\n")
+	writeList(&b, "selection_principles", c.Tools.SelectionPrinciples)
 	if policy, ok := c.Tools.Agents["mio"]; ok {
-		b.WriteString("\n## Mio Tool Boundary\n\n")
 		fmt.Fprintf(&b, "- access: %s\n", policy.Access)
 		writeList(&b, "rules", policy.Rules)
 		b.WriteString("- 書き込み、実装、外部副作用はMioが直接行わず、必要能力としてOrchestratorへ返す。\n")
