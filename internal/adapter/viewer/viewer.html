@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>RenCrow Live</title>
-<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-midori-image-chat">
+<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-midori-image-chat-memory-db-accordion">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/prompt-logs.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2">
@@ -49,8 +49,14 @@
       <option value="instructions">Instructions</option>
       <option value="backlog">Backlog</option>
       <option value="reports">Reports</option>
-      <option value="memory">Memory</option>
-      <option value="movie-db">映画・俳優</option>
+      <optgroup label="Memory">
+        <option value="memory">会話 L1</option>
+        <option value="memory-archive">会話 Archive</option>
+        <option value="knowledge-memory">Knowledge Memory</option>
+        <option value="glossary-db">用語集</option>
+        <option value="movie-db">映画・人物</option>
+        <option value="tool-registry">Tool Registry</option>
+      </optgroup>
       <option value="news-pack">News Pack</option>
 	  <option value="collection">情報収集</option>
 	  <option value="x-bookmarks">X Bookmark</option>
@@ -76,8 +82,17 @@
     <button class="tab-btn" data-tab="instructions">Instructions</button>
     <button class="tab-btn" data-tab="backlog">Backlog</button>
     <button class="tab-btn" data-tab="reports">Reports</button>
-    <button class="tab-btn" data-tab="memory">Memory</button>
-    <button class="tab-btn" data-tab="movie-db">映画・俳優</button>
+    <button id="memoryNavToggle" class="tab-btn memory-nav-toggle" type="button" aria-expanded="false" aria-controls="memoryDbNav">
+      <span>Memory</span><span class="memory-nav-chevron" aria-hidden="true">›</span>
+    </button>
+    <div id="memoryDbNav" class="memory-db-nav" hidden>
+      <button class="tab-btn memory-db-tab" data-tab="memory" data-memory-db-tab="true" type="button">会話 L1</button>
+      <button class="tab-btn memory-db-tab" data-tab="memory-archive" data-memory-db-tab="true" type="button">会話 Archive</button>
+      <button class="tab-btn memory-db-tab" data-tab="knowledge-memory" data-memory-db-tab="true" type="button">Knowledge Memory</button>
+      <button class="tab-btn memory-db-tab" data-tab="glossary-db" data-memory-db-tab="true" type="button">用語集</button>
+      <button class="tab-btn memory-db-tab" data-tab="movie-db" data-memory-db-tab="true" type="button">映画・人物</button>
+      <button class="tab-btn memory-db-tab" data-tab="tool-registry" data-memory-db-tab="true" type="button">Tool Registry</button>
+    </div>
     <button class="tab-btn" data-tab="news-pack">News Pack</button>
 	<button class="tab-btn" data-tab="collection">情報収集</button>
 	<a class="tab-btn tab-link" href="/viewer/x-bookmarks">X Bookmark</a>
@@ -870,11 +885,11 @@
 
   <section id="panel-memory" class="panel">
     <div class="panel-head">
-      <h3>Memory Inspector</h3>
-      <div class="sub">L1 memory / News Pack / Knowledge</div>
+      <h3>Conversation L1 Database</h3>
+      <div class="sub">conversation_l1 DB のMemory / News Pack / L1 Knowledgeだけを表示します。</div>
     </div>
     <div class="filters">
-      <input id="memorySession" placeholder="session id for L0/L2">
+      <input id="memorySession" placeholder="session id for L0">
       <input id="memoryNamespace" placeholder="namespace: conv:... / user:... / char:... / kb:...">
       <input id="memoryCategory" placeholder="news category">
       <input id="memoryDomain" placeholder="kb domain">
@@ -891,17 +906,13 @@
       <div class="card"><h4>Memory</h4><div id="memoryCount" class="ops-big">0</div><div class="ops-sub">namespace filtered</div></div>
       <div class="card"><h4>News</h4><div id="newsPackCount" class="ops-big">0</div><div class="ops-sub">recent items</div></div>
       <div class="card"><h4>Digest</h4><div id="digestCount" class="ops-big">0</div><div class="ops-sub">daily slots</div></div>
-      <div class="card"><h4>Knowledge</h4><div id="knowledgeCount" class="ops-big">0</div><div class="ops-sub">domain filtered</div></div>
+      <div class="card"><h4>L1 Knowledge</h4><div id="knowledgeCount" class="ops-big">0</div><div class="ops-sub">domain filtered</div></div>
       <div class="card"><h4>L0</h4><div id="memoryL0Count" class="ops-big">0</div><div class="ops-sub">current session</div></div>
-      <div class="card"><h4>L2</h4><div id="memoryL2Count" class="ops-big">0</div><div class="ops-sub">thread summaries</div></div>
       <div class="card"><h4>L3</h4><div id="memoryL3Count" class="ops-big">0</div><div class="ops-sub">confirmed memory</div></div>
       <div class="card"><h4>思い出したこと</h4><div id="recallPackCount" class="ops-big">0</div><div class="ops-sub">recall pack</div></div>
       <div class="card"><h4>User Memory</h4><div id="userMemoryCount" class="ops-big">0</div><div class="ops-sub">user:ren</div></div>
       <div class="card"><h4>Events</h4><div id="memoryEventCount" class="ops-big">0</div><div class="ops-sub">L1 event log</div></div>
       <div class="card"><h4>Search Cache</h4><div id="searchCacheCount" class="ops-big">0</div><div class="ops-sub">fresh/recent cache</div></div>
-      <div class="card"><h4>Personal Archive</h4><div id="knowledgePersonalCount" class="ops-big">0</div><div class="ops-sub">protected originals</div></div>
-      <div class="card"><h4>Knowledge Sources</h4><div id="knowledgeSourceCount" class="ops-big">0</div><div class="ops-sub">creative / news / intake</div></div>
-      <div class="card"><h4>Dream Runs</h4><div id="knowledgeDreamCount" class="ops-big">0</div><div class="ops-sub">reviewed consolidation</div></div>
       <div class="card"><h4>Domain Graph</h4><div id="domainGraphAssertionCount" class="ops-big">0</div><div class="ops-sub">assertions</div></div>
       <div class="card"><h4>Graph Domains</h4><div id="domainGraphDomainCount" class="ops-big">0</div><div class="ops-sub">filtered domains</div></div>
       <div class="card"><h4>Graph Sources</h4><div id="domainGraphSourceCount" class="ops-big">0</div><div class="ops-sub">source ids</div></div>
@@ -924,45 +935,6 @@
       <table>
         <thead><tr><th>State</th><th>Type</th><th>Memory</th><th>Evidence</th><th>Updated</th><th>Action</th></tr></thead>
         <tbody id="userMemoryBody"></tbody>
-      </table>
-    </div>
-    <div class="panel-head" style="margin-top:12px">
-      <h3>Knowledge Memory Ledger</h3>
-      <div class="sub">Personal originals / creative knowledge / news sources / intake rules / temporal markers / dream consolidation</div>
-    </div>
-    <div class="filters" style="margin-bottom:8px">
-      <select id="knowledgeMemoryTypeFilter">
-        <option value="">all types</option>
-        <option value="personal_archive">personal archive</option>
-        <option value="creative_knowledge">creative knowledge</option>
-        <option value="news_knowledge">news knowledge</option>
-        <option value="daily_intake_rule">daily intake rule</option>
-        <option value="temporal_marker">temporal marker</option>
-        <option value="dream_run">dream run</option>
-      </select>
-      <select id="knowledgeMemoryReviewFilter">
-        <option value="">all review states</option>
-        <option value="pending">pending</option>
-        <option value="adopted">adopted</option>
-        <option value="rejected">rejected</option>
-        <option value="promoted">promoted</option>
-        <option value="protected">protected</option>
-        <option value="enabled">enabled</option>
-        <option value="disabled">disabled</option>
-      </select>
-      <select id="knowledgeMemoryFlagFilter">
-        <option value="">all flags</option>
-        <option value="original">original</option>
-        <option value="protected">protected</option>
-        <option value="compressed">compressed</option>
-        <option value="warning">warning</option>
-      </select>
-    </div>
-    <div id="knowledgeMemoryDetail" class="small" style="margin-bottom:8px"></div>
-    <div class="table-wrap" style="margin-bottom:12px">
-      <table>
-        <thead><tr><th>Type</th><th>ID</th><th>Title / Topic</th><th>Source</th><th>Status</th><th>Flags</th><th>Related Staging</th><th>Updated</th><th>Action</th></tr></thead>
-        <tbody id="knowledgeMemoryBody"></tbody>
       </table>
     </div>
     <div class="table-wrap" style="margin-bottom:12px">
@@ -1099,6 +1071,94 @@
     </div>
   </section>
 
+  <section id="panel-knowledge-memory" class="panel">
+    <div class="panel-head">
+      <h3>Knowledge Memory Database</h3>
+      <div class="sub">knowledge_memory.db のPersonal originals / sources / intake rules / dream consolidationだけを表示します。</div>
+    </div>
+    <div class="grid database-viewer-summary">
+      <div class="card"><h4>Personal Archive</h4><div id="knowledgePersonalCount" class="ops-big">0</div><div class="ops-sub">protected originals</div></div>
+      <div class="card"><h4>Knowledge Sources</h4><div id="knowledgeSourceCount" class="ops-big">0</div><div class="ops-sub">creative / news / intake</div></div>
+      <div class="card"><h4>Dream Runs</h4><div id="knowledgeDreamCount" class="ops-big">0</div><div class="ops-sub">reviewed consolidation</div></div>
+    </div>
+    <div class="filters" style="margin-bottom:8px">
+      <select id="knowledgeMemoryTypeFilter">
+        <option value="">all types</option>
+        <option value="personal_archive">personal archive</option>
+        <option value="creative_knowledge">creative knowledge</option>
+        <option value="news_knowledge">news knowledge</option>
+        <option value="daily_intake_rule">daily intake rule</option>
+        <option value="temporal_marker">temporal marker</option>
+        <option value="dream_run">dream run</option>
+      </select>
+      <select id="knowledgeMemoryReviewFilter">
+        <option value="">all review states</option>
+        <option value="pending">pending</option>
+        <option value="adopted">adopted</option>
+        <option value="rejected">rejected</option>
+        <option value="promoted">promoted</option>
+        <option value="protected">protected</option>
+        <option value="enabled">enabled</option>
+        <option value="disabled">disabled</option>
+      </select>
+      <select id="knowledgeMemoryFlagFilter">
+        <option value="">all flags</option>
+        <option value="original">original</option>
+        <option value="protected">protected</option>
+        <option value="compressed">compressed</option>
+        <option value="warning">warning</option>
+      </select>
+      <button id="knowledgeMemoryRefreshBtn" class="ctl-btn" type="button">Refresh</button>
+    </div>
+    <div id="knowledgeMemoryDetail" class="small" style="margin-bottom:8px"></div>
+    <div class="table-wrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>Type</th><th>ID</th><th>Title / Topic</th><th>Source</th><th>Status</th><th>Flags</th><th>Related Staging</th><th>Updated</th><th>Action</th></tr></thead>
+        <tbody id="knowledgeMemoryBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="panel-memory-archive" class="panel">
+    <div class="panel-head">
+      <h3>Conversation Archive</h3>
+      <div class="sub">memory_archive.db の会話要約だけを表示します。</div>
+    </div>
+    <div class="filters">
+      <input id="memoryArchiveSession" placeholder="session id">
+      <input id="memoryArchiveDomain" placeholder="domain: movie">
+      <button id="memoryArchiveRefreshBtn" class="ctl-btn" type="button">Refresh</button>
+    </div>
+    <div class="grid database-viewer-summary">
+      <div class="card"><h4>Archive summaries</h4><div id="memoryArchiveCount" class="ops-big">0</div><div id="memoryArchiveStatus" class="ops-sub" aria-live="polite">読み込み前</div></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Start</th><th>Session</th><th>Domain</th><th>Summary</th><th>Keywords</th><th>Novel</th></tr></thead>
+        <tbody id="memoryArchiveBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="panel-glossary-db" class="panel">
+    <div class="panel-head">
+      <h3>Glossary Database</h3>
+      <div class="sub">glossary.db の用語だけを表示します。</div>
+    </div>
+    <div class="filters">
+      <button id="glossaryDbRefreshBtn" class="ctl-btn" type="button">Refresh</button>
+    </div>
+    <div class="grid database-viewer-summary">
+      <div class="card"><h4>Glossary entries</h4><div id="glossaryDbCount" class="ops-big">0</div><div id="glossaryDbStatus" class="ops-sub" aria-live="polite">読み込み前</div></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Updated</th><th>Term</th><th>Category</th><th>Explanation</th><th>Source</th></tr></thead>
+        <tbody id="glossaryDbBody"></tbody>
+      </table>
+    </div>
+  </section>
+
   <section id="panel-movie-db" class="panel">
     <div class="movie-db-screen">
       <section class="movie-db-side">
@@ -1201,6 +1261,31 @@
           </section>
         </div>
       </section>
+    </div>
+  </section>
+
+  <section id="panel-tool-registry" class="panel">
+    <div class="panel-head">
+      <h3>Tool Registry Database</h3>
+      <div class="sub">tool_registry.db の登録Toolだけを表示します。</div>
+    </div>
+    <div class="filters">
+      <select id="toolRegistryPlatform" aria-label="platform filter">
+        <option value="">all platforms</option>
+        <option value="linux">linux</option>
+        <option value="windows">windows</option>
+        <option value="darwin">macOS</option>
+      </select>
+      <button id="toolRegistryRefreshBtn" class="ctl-btn" type="button">Refresh</button>
+    </div>
+    <div class="grid database-viewer-summary">
+      <div class="card"><h4>Registered tools</h4><div id="toolRegistryCount" class="ops-big">0</div><div id="toolRegistryStatus" class="ops-sub" aria-live="polite">読み込み前</div></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>Description</th><th>Platforms</th><th>Source</th><th>Created by</th><th>Created</th></tr></thead>
+        <tbody id="toolRegistryBody"></tbody>
+      </table>
     </div>
   </section>
 
@@ -1636,6 +1721,7 @@
 <script src="/viewer/assets/js/tabs/system.js?v=20260510-tabs-system" defer></script>
 <script src="/viewer/assets/js/tabs/memory.js?v=20260518-knowledge-relations" defer></script>
 <script src="/viewer/assets/js/tabs/movie-db.js?v=20260808-d0-d1-cards-1" defer></script>
+<script src="/viewer/assets/js/tabs/database-viewers.js?v=20260809-memory-db-accordion" defer></script>
 <script src="/viewer/assets/js/tabs/news-pack.js?v=20260805-news-pack-snapshot" defer></script>
 <script src="/viewer/assets/js/tabs/collection.js?v=20260721-daily-collection" defer></script>
 <script src="/viewer/assets/js/tabs/investment.js?v=20260616-investment-desk" defer></script>
@@ -1648,7 +1734,7 @@
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
 <script src="/viewer/assets/js/tabs/image.js?v=20260728-image-mvp" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
-<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel" defer></script>
+<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion" defer></script>
 <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
 </body>
 </html>

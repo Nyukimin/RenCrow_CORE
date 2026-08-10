@@ -87,6 +87,9 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		OTELExport:                   dependencies.otelExport,
 		ArtifactCleanup:              dependencies.artifactCleanup,
 		AssetsGitStatus:              viewer.HandleAssetsGitStatus(defaultAssetsGitRepoPath()),
+		ConversationArchiveDatabase:  viewer.HandleConversationArchiveDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.ConversationArchive}),
+		GlossaryDatabase:             viewer.HandleGlossaryDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.Glossary}),
+		ToolRegistryDatabase:         viewer.HandleToolRegistryDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.ToolRegistry}),
 		MovieCatalog:                 viewer.HandleMovieCatalog(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
 		MovieCatalogFetch:            viewer.HandleMovieCatalogFetch(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
 		MovieCatalogPreference:       viewer.HandleMovieCatalogPreference(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
@@ -352,18 +355,24 @@ func newConfiguredImageGateway(cfg *config.Config) viewer.ImageGateway {
 }
 
 type configuredViewerDatabasePaths struct {
-	MovieCatalog string
-	HobbyGraph   string
-	Investment   string
+	ConversationArchive string
+	Glossary            string
+	ToolRegistry        string
+	MovieCatalog        string
+	HobbyGraph          string
+	Investment          string
 }
 
 func viewerDatabasePaths(cfg *config.Config) configuredViewerDatabasePaths {
 	var paths configuredViewerDatabasePaths
 	if cfg != nil {
 		paths = configuredViewerDatabasePaths{
-			MovieCatalog: strings.TrimSpace(cfg.Storage.Databases.MovieCatalog),
-			HobbyGraph:   strings.TrimSpace(cfg.Storage.Databases.HobbyGraph),
-			Investment:   strings.TrimSpace(cfg.Storage.Databases.Investment),
+			ConversationArchive: strings.TrimSpace(cfg.Storage.Databases.ConversationArchive),
+			Glossary:            strings.TrimSpace(cfg.Storage.Databases.Glossary),
+			ToolRegistry:        strings.TrimSpace(cfg.Storage.Databases.ToolRegistry),
+			MovieCatalog:        strings.TrimSpace(cfg.Storage.Databases.MovieCatalog),
+			HobbyGraph:          strings.TrimSpace(cfg.Storage.Databases.HobbyGraph),
+			Investment:          strings.TrimSpace(cfg.Storage.Databases.Investment),
 		}
 	}
 	if paths.Investment == "" {

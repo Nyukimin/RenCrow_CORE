@@ -38,6 +38,7 @@ func HandleMemoryLayers(hot MemoryLayerHotStore, cold MemoryLayerColdStore) http
 		sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 		namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
 		domain := strings.TrimSpace(r.URL.Query().Get("domain"))
+		includeL2 := !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include_l2")), "false")
 
 		out := map[string]any{
 			"session_id": sessionID,
@@ -65,7 +66,7 @@ func HandleMemoryLayers(hot MemoryLayerHotStore, cold MemoryLayerColdStore) http
 			}
 			out["l1"] = memoryEventDTOsFromL1(l1)
 		}
-		if cold != nil {
+		if includeL2 && cold != nil {
 			var l2 []*domconv.ThreadSummary
 			if sessionID != "" {
 				history, err := cold.GetSessionHistory(r.Context(), sessionID, limit)

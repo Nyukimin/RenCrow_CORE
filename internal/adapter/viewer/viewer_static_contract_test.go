@@ -448,6 +448,170 @@ func TestViewerStaticContractMovieDatabaseTabSwitchMapping(t *testing.T) {
 	}
 }
 
+func TestViewerStaticContractMemoryDatabaseAccordionUsesLeftNavigationColumn(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	jsData, err := os.ReadFile("assets/js/viewer.js")
+	if err != nil {
+		t.Fatalf("read viewer.js: %v", err)
+	}
+	cssData, err := os.ReadFile("assets/css/viewer.css")
+	if err != nil {
+		t.Fatalf("read viewer.css: %v", err)
+	}
+	html := string(htmlData)
+	js := string(jsData)
+	css := string(cssData)
+
+	navStart := strings.Index(html, `<nav class="tabs"`)
+	navEnd := strings.Index(html[navStart:], `</nav>`)
+	if navStart < 0 || navEnd < 0 {
+		t.Fatal("Viewer left navigation is missing")
+	}
+	nav := html[navStart : navStart+navEnd]
+	for needle, purpose := range map[string]string{
+		`id="memoryNavToggle"`:                        "Memory accordion trigger",
+		`aria-expanded="false"`:                       "collapsed initial state",
+		`aria-controls="memoryDbNav"`:                 "accessible accordion relationship",
+		`id="memoryDbNav"`:                            "database entries in the same navigation column",
+		`class="memory-db-nav" hidden`:                "collapsed database list",
+		`data-tab="memory" data-memory-db-tab="true"`: "L1 database Viewer entry",
+		`data-tab="memory-archive"`:                   "conversation archive Viewer entry",
+		`data-tab="knowledge-memory"`:                 "Knowledge Memory Viewer entry",
+		`data-tab="glossary-db"`:                      "glossary Viewer entry",
+		`data-tab="movie-db"`:                         "movie database Viewer entry",
+		`data-tab="tool-registry"`:                    "Tool Registry Viewer entry",
+	} {
+		if !strings.Contains(nav, needle) {
+			t.Fatalf("left navigation missing %s (%s)", needle, purpose)
+		}
+	}
+	if strings.Count(nav, `data-tab="movie-db"`) != 1 {
+		t.Fatal("Movie Database must appear once, inside the Memory accordion")
+	}
+	if strings.Contains(html, `memory-db-secondary`) {
+		t.Fatal("database navigation must not introduce a second navigation column")
+	}
+	for _, needle := range []string{
+		`id="panel-memory-archive"`,
+		`id="panel-knowledge-memory"`,
+		`id="panel-glossary-db"`,
+		`id="panel-tool-registry"`,
+		`<optgroup label="Memory">`,
+	} {
+		if !strings.Contains(html, needle) {
+			t.Fatalf("Viewer missing database navigation contract %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		`const memoryNavToggle = document.getElementById('memoryNavToggle')`,
+		`const memoryDbNav = document.getElementById('memoryDbNav')`,
+		`'knowledge-memory'`,
+		`function setMemoryDatabaseNavigationExpanded(expanded)`,
+		`memoryDbTabs.has(tab)`,
+		`tab === 'knowledge-memory' && typeof refreshKnowledgeMemoryLedger === 'function'`,
+	} {
+		if !strings.Contains(js, needle) {
+			t.Fatalf("viewer.js missing Memory accordion behavior %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		`.memory-nav-toggle`,
+		`.memory-db-nav`,
+		`.memory-db-tab`,
+	} {
+		if !strings.Contains(css, needle) {
+			t.Fatalf("viewer.css missing Memory accordion styling %q", needle)
+		}
+	}
+}
+
+func TestViewerStaticContractDatabasePanelsDoNotMixConversationStores(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	memoryJSData, err := os.ReadFile("assets/js/tabs/memory.js")
+	if err != nil {
+		t.Fatalf("read memory.js: %v", err)
+	}
+	html := string(htmlData)
+	memoryJS := string(memoryJSData)
+
+	panel := func(id string) string {
+		start := strings.Index(html, `<section id="panel-`+id+`"`)
+		if start < 0 {
+			t.Fatalf("missing panel %s", id)
+		}
+		end := strings.Index(html[start:], `</section>`)
+		if end < 0 {
+			t.Fatalf("panel %s is not closed", id)
+		}
+		return html[start : start+end]
+	}
+
+	l1 := panel("memory")
+	archive := panel("memory-archive")
+	knowledge := panel("knowledge-memory")
+	for _, forbidden := range []string{"Knowledge Memory Ledger", `id="knowledgeMemoryBody"`, `id="knowledgeMemoryDetail"`, `id="memoryL2Count"`, `Archive L2`, `id="memoryArchiveBody"`} {
+		if strings.Contains(l1, forbidden) {
+			t.Fatalf("Conversation L1 panel mixes Archive/Knowledge content %q", forbidden)
+		}
+	}
+	if strings.Contains(archive, `id="knowledgeMemoryBody"`) || strings.Contains(archive, `id="knowledgeMemoryDetail"`) {
+		t.Fatal("Conversation Archive panel must not contain Knowledge Memory controls")
+	}
+	if strings.Contains(knowledge, `id="memoryArchiveBody"`) || strings.Contains(knowledge, `id="memoryArchiveSession"`) {
+		t.Fatal("Knowledge Memory panel must not contain Conversation Archive controls")
+	}
+
+	renderStart := strings.Index(memoryJS, "function renderMemoryLayers")
+	renderEnd := strings.Index(memoryJS, "function refreshMemoryLayers")
+	if renderStart < 0 || renderEnd <= renderStart {
+		t.Fatal("memory layer render functions are missing")
+	}
+	render := memoryJS[renderStart:renderEnd]
+	if strings.Contains(render, "l2") || strings.Contains(render, "L2") || strings.Contains(render, "memoryL2Count") {
+		t.Fatal("Conversation L1 renderer must not render Archive L2")
+	}
+	snapshotStart := strings.Index(memoryJS, "function refreshMemorySnapshot")
+	if snapshotStart < 0 {
+		t.Fatal("memory snapshot refresh function is missing")
+	}
+	snapshotEnd := strings.Index(memoryJS[snapshotStart:], "\nfunction postMemoryAction")
+	if snapshotEnd <= 0 {
+		t.Fatal("memory snapshot refresh boundary is missing")
+	}
+	snapshot := memoryJS[snapshotStart : snapshotStart+snapshotEnd]
+	if strings.Contains(snapshot, "refreshKnowledgeMemoryLedger();") {
+		t.Fatal("Conversation L1 refresh must not fetch Knowledge Memory")
+	}
+}
+
+func TestViewerStaticContractMobileMemoryDatabaseOptgroupMatchesDesktop(t *testing.T) {
+	data, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	html := string(data)
+	optgroupStart := strings.Index(html, `<optgroup label="Memory">`)
+	optgroupEnd := strings.Index(html[optgroupStart:], `</optgroup>`)
+	if optgroupStart < 0 || optgroupEnd < 0 {
+		t.Fatal("mobile Memory optgroup is missing")
+	}
+	optgroup := html[optgroupStart : optgroupStart+optgroupEnd]
+	for _, value := range []string{"memory", "memory-archive", "knowledge-memory", "glossary-db", "movie-db", "tool-registry"} {
+		if !strings.Contains(optgroup, `value="`+value+`"`) {
+			t.Fatalf("mobile Memory optgroup missing %q", value)
+		}
+	}
+	if strings.Contains(optgroup, `value="news-pack"`) || strings.Contains(optgroup, `value="collection"`) {
+		t.Fatal("mobile Memory optgroup must not absorb non-database tabs")
+	}
+}
+
 func TestViewerStaticContractMovieAssessmentGrid(t *testing.T) {
 	htmlData, err := os.ReadFile("viewer.html")
 	if err != nil {

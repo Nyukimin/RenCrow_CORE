@@ -30,6 +30,7 @@
       "filePath": "node",
       "arguments": [
         "--test",
+        "internal/adapter/viewer/database_viewers.test.mjs",
         "internal/adapter/viewer/stt_test_record_utils.test.mjs",
         "internal/adapter/viewer/viewer_audio_button.test.mjs",
         "internal/adapter/viewer/viewer_idle_mode_buttons.test.mjs",

@@ -34,6 +34,9 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `/viewer/revenue/*` | Opportunity、EconomicTask、RevenueEvent、Reflection、policy decision |
 | `GET/POST /viewer/revenue/deliveries` | trace付き汎用Deliveryの一覧・draft/状態record作成 |
 | `/viewer/memory/*` | memory event、Recall、ProfilePromotion job の観測 |
+| `GET /viewer/databases/conversation-archive` | Conversation Archive（`memory_archive.db`）の読み取り専用snapshot |
+| `GET /viewer/databases/glossary` | Glossary DBの読み取り専用snapshot |
+| `GET /viewer/databases/tool-registry` | Tool Registry DBの読み取り専用snapshot |
 | `GET /viewer/movie-catalog` | 映画・俳優catalogと利用者評価の一覧・詳細 |
 | `GET /viewer/movie-catalog?action=cards` | 映画・人物ViewerのD0/D1派生カード投影 |
 | `POST /viewer/movie-catalog/preference` | 映画・俳優の認知・好み評価を保存 |

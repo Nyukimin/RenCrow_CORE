@@ -133,6 +133,30 @@ func TestHandleMemoryLayersRequiresHotStore(t *testing.T) {
 	}
 }
 
+func TestHandleMemoryLayersCanExcludeArchiveL2ForConversationL1(t *testing.T) {
+	hot := &memoryLayerHotStoreStub{}
+	cold := &memoryLayerColdStoreStub{}
+	req := httptest.NewRequest(http.MethodGet, "/viewer/memory/layers?session_id=session-1&namespace=user:ren&domain=movie&include_l2=false", nil)
+	rec := httptest.NewRecorder()
+	HandleMemoryLayers(hot, cold).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if cold.sessionID != "" || cold.domain != "" || cold.kbDomain != "" {
+		t.Fatalf("Conversation L1 request must not touch archive/knowledge store: %+v", cold)
+	}
+	var out struct {
+		L2       []*domconv.ThreadSummary `json:"l2"`
+		L3Qdrant []*domconv.Document      `json:"l3_qdrant"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if len(out.L2) != 0 || len(out.L3Qdrant) != 0 {
+		t.Fatalf("Conversation L1 snapshot contains cold-store data: %+v", out)
+	}
+}
+
 func TestHandleMemoryLayersRejectsMalformedSnapshot(t *testing.T) {
 	now := time.Now().UTC()
 	tests := []struct {

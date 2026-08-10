@@ -9,11 +9,14 @@ import (
 func TestRegisterBaseRoutesRegistersViewerBasePaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterBaseRoutes(mux, Dependencies{Base: BaseRoutes{
-		Page:           statusHandler(http.StatusOK),
-		XBookmarksPage: statusHandler(http.StatusPartialContent),
-		Asset:          statusHandler(http.StatusCreated),
-		RuntimeConfig:  statusHandler(http.StatusAccepted),
-		Events:         statusHandler(http.StatusNoContent),
+		Page:                        statusHandler(http.StatusOK),
+		XBookmarksPage:              statusHandler(http.StatusPartialContent),
+		Asset:                       statusHandler(http.StatusCreated),
+		RuntimeConfig:               statusHandler(http.StatusAccepted),
+		Events:                      statusHandler(http.StatusNoContent),
+		ConversationArchiveDatabase: statusHandler(http.StatusNonAuthoritativeInfo),
+		GlossaryDatabase:            statusHandler(http.StatusMultiStatus),
+		ToolRegistryDatabase:        statusHandler(http.StatusAlreadyReported),
 	}})
 
 	tests := []struct {
@@ -25,6 +28,9 @@ func TestRegisterBaseRoutesRegistersViewerBasePaths(t *testing.T) {
 		{path: "/viewer/assets/js/viewer.js", want: http.StatusCreated},
 		{path: "/viewer/runtime-config", want: http.StatusAccepted},
 		{path: "/viewer/events", want: http.StatusNoContent},
+		{path: "/viewer/databases/conversation-archive", want: http.StatusNonAuthoritativeInfo},
+		{path: "/viewer/databases/glossary", want: http.StatusMultiStatus},
+		{path: "/viewer/databases/tool-registry", want: http.StatusAlreadyReported},
 	}
 
 	for _, tt := range tests {

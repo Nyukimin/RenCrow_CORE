@@ -46,6 +46,9 @@ type BaseRoutes struct {
 	OTELExport                   http.HandlerFunc
 	ArtifactCleanup              http.HandlerFunc
 	AssetsGitStatus              http.HandlerFunc
+	ConversationArchiveDatabase  http.HandlerFunc
+	GlossaryDatabase             http.HandlerFunc
+	ToolRegistryDatabase         http.HandlerFunc
 	MovieCatalog                 http.HandlerFunc
 	MovieCatalogFetch            http.HandlerFunc
 	MovieCatalogPreference       http.HandlerFunc
@@ -99,6 +102,9 @@ func RegisterBaseRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/otel/export", base.OTELExport)
 	registerRoute(mux, "/viewer/artifact-cleanup", base.ArtifactCleanup)
 	registerRoute(mux, "/viewer/assets-git/status", base.AssetsGitStatus)
+	registerRoute(mux, "/viewer/databases/conversation-archive", base.ConversationArchiveDatabase)
+	registerRoute(mux, "/viewer/databases/glossary", base.GlossaryDatabase)
+	registerRoute(mux, "/viewer/databases/tool-registry", base.ToolRegistryDatabase)
 	registerRoute(mux, "/viewer/movie-catalog", base.MovieCatalog)
 	registerRoute(mux, "/viewer/movie-catalog/fetch", base.MovieCatalogFetch)
 	registerRoute(mux, "/viewer/movie-catalog/preference", base.MovieCatalogPreference)

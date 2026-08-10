@@ -163,7 +163,7 @@ const state = {
     snapshot: {memory: [], news: [], digests: [], knowledge: []},
     newsPackSnapshot: {news: [], digests: []},
     memorySnapshotFetchError: '',
-    layers: {l0: [], l1: [], l2: [], l3: []},
+    layers: {l0: [], l1: [], l3: []},
     recallPack: {items: []},
     recallPackFetchError: '',
     userMemory: [],
@@ -1182,6 +1182,9 @@ const themeButtons = Array.from(document.querySelectorAll('.theme-btn'));
 const mobilePanelSelect = document.getElementById('mobilePanelSelect');
 const mobilePanelPrev = document.getElementById('mobilePanelPrev');
 const mobilePanelNext = document.getElementById('mobilePanelNext');
+const memoryNavToggle = document.getElementById('memoryNavToggle');
+const memoryDbNav = document.getElementById('memoryDbNav');
+const memoryDbTabs = new Set(['memory', 'memory-archive', 'knowledge-memory', 'glossary-db', 'movie-db', 'tool-registry']);
 const panels = {
   home: document.getElementById('panel-home'),
   image: document.getElementById('panel-image'),
@@ -1198,7 +1201,11 @@ const panels = {
   timeline: document.getElementById('panel-timeline'),
   system: document.getElementById('panel-system'),
   memory: document.getElementById('panel-memory'),
+  'memory-archive': document.getElementById('panel-memory-archive'),
+  'knowledge-memory': document.getElementById('panel-knowledge-memory'),
+  'glossary-db': document.getElementById('panel-glossary-db'),
   'movie-db': document.getElementById('panel-movie-db'),
+  'tool-registry': document.getElementById('panel-tool-registry'),
   'news-pack': document.getElementById('panel-news-pack'),
   collection: document.getElementById('panel-collection'),
   investment: document.getElementById('panel-investment'),
@@ -1276,12 +1283,21 @@ const eviCopy = document.getElementById('eviCopy');
 const eviCopySummary = document.getElementById('eviCopySummary');
 const eviSort = document.getElementById('eviSort');
 
+function setMemoryDatabaseNavigationExpanded(expanded) {
+  if (!memoryNavToggle || !memoryDbNav) return;
+  const next = Boolean(expanded);
+  memoryNavToggle.setAttribute('aria-expanded', next ? 'true' : 'false');
+  memoryDbNav.hidden = !next;
+}
+
 function switchTab(tab) {
   if (!panels[tab]) return;
   activeViewerTab = tab;
   document.body.dataset.viewerTab = tab;
   if (mainEl) mainEl.scrollTop = 0;
   tabs.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  if (memoryNavToggle) memoryNavToggle.classList.toggle('contains-active', memoryDbTabs.has(tab));
+  if (memoryDbTabs.has(tab)) setMemoryDatabaseNavigationExpanded(true);
   Object.keys(panels).forEach((k) => panels[k].classList.toggle('active', k === tab));
   if (mobilePanelSelect && mobilePanelSelect.value !== tab) mobilePanelSelect.value = tab;
   const activeTab = tabs.find((b) => b.dataset.tab === tab);
@@ -1296,6 +1312,10 @@ function switchTab(tab) {
   if (tab === 'investment' && typeof refreshInvestmentData === 'function') refreshInvestmentData();
   if (tab === 'collection' && typeof refreshCollectionData === 'function') refreshCollectionData();
   if (tab === 'news-pack' && typeof refreshNewsPack === 'function') refreshNewsPack();
+  if (tab === 'memory-archive' && typeof refreshMemoryArchiveDatabase === 'function') refreshMemoryArchiveDatabase();
+  if (tab === 'knowledge-memory' && typeof refreshKnowledgeMemoryLedger === 'function') refreshKnowledgeMemoryLedger();
+  if (tab === 'glossary-db' && typeof refreshGlossaryDatabase === 'function') refreshGlossaryDatabase();
+  if (tab === 'tool-registry' && typeof refreshToolRegistryDatabase === 'function') refreshToolRegistryDatabase();
   if (tab === 'backlog' && typeof refreshBacklog === 'function') refreshBacklog();
   if (tab === 'prompt-logs') {
     refreshPromptDebugData();
@@ -1315,6 +1335,11 @@ function switchTab(tab) {
   renderDeskViews();
 }
 tabs.forEach((btn) => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+if (memoryNavToggle) {
+  memoryNavToggle.addEventListener('click', () => {
+    setMemoryDatabaseNavigationExpanded(memoryNavToggle.getAttribute('aria-expanded') !== 'true');
+  });
+}
 document.body.dataset.viewerTab = activeViewerTab;
 
 function switchAdjacentPanel(delta) {
@@ -3395,6 +3420,9 @@ function setOptionalPanelRefreshIntervals() {
   setInterval(refreshSuperAgentData, 5000);
   setInterval(refreshHeavyWorkerRuntimeDiagnostics, 5000);
   setInterval(refreshKnowledgeMemoryData, 5000);
+  setInterval(() => {
+    if (activeViewerTab === 'knowledge-memory' && typeof refreshKnowledgeMemoryLedger === 'function') refreshKnowledgeMemoryLedger();
+  }, 15000);
   setInterval(() => { if (typeof refreshHobbyGraphOverviewData === 'function') refreshHobbyGraphOverviewData(); }, 5000);
   setInterval(() => { if (shouldRefreshOpsPanelDiagnostics()) refreshRuntimeBlockedRouteData(); }, 5000);
   setInterval(() => { if (shouldRefreshOpsPanelDiagnostics() && typeof refreshToBeOpsData === 'function') refreshToBeOpsData(); }, 15000);

@@ -23,14 +23,20 @@ func TestResolveMovieCatalogBackfillDBPathUsesConfiguredPath(t *testing.T) {
 func TestConfiguredViewerDatabasePaths(t *testing.T) {
 	cfg := &config.Config{
 		Storage: config.StorageConfig{Databases: config.DatabasePathsConfig{
-			MovieCatalog: "/state/movie.sqlite",
-			HobbyGraph:   "/state/hobby.sqlite",
-			Investment:   "/state/investment.db",
+			ConversationArchive: "/state/archive.db",
+			Glossary:            "/state/glossary.db",
+			ToolRegistry:        "/state/tools.db",
+			MovieCatalog:        "/state/movie.sqlite",
+			HobbyGraph:          "/state/hobby.sqlite",
+			Investment:          "/state/investment.db",
 		}},
 	}
 
 	got := viewerDatabasePaths(cfg)
-	if got.MovieCatalog != "/state/movie.sqlite" ||
+	if got.ConversationArchive != "/state/archive.db" ||
+		got.Glossary != "/state/glossary.db" ||
+		got.ToolRegistry != "/state/tools.db" ||
+		got.MovieCatalog != "/state/movie.sqlite" ||
 		got.HobbyGraph != "/state/hobby.sqlite" ||
 		got.Investment != "/state/investment.db" {
 		t.Fatalf("viewer database paths = %+v", got)

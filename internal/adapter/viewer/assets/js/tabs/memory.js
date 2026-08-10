@@ -92,14 +92,11 @@ function renderMemoryLayers() {
   const error = layers._error || '';
   const l0 = Array.isArray(layers.l0) ? layers.l0 : [];
   const l1 = Array.isArray(layers.l1) ? layers.l1 : [];
-  const l2 = Array.isArray(layers.l2) ? layers.l2 : [];
   const l3 = Array.isArray(layers.l3) ? layers.l3 : [];
   const body = document.getElementById('memoryLayerBody');
   const l0Count = document.getElementById('memoryL0Count');
-  const l2Count = document.getElementById('memoryL2Count');
   const l3Count = document.getElementById('memoryL3Count');
   if (l0Count) l0Count.textContent = String(l0.length);
-  if (l2Count) l2Count.textContent = String(l2.length);
   if (l3Count) l3Count.textContent = String(l3.length);
   if (!body) return;
   body.innerHTML = '';
@@ -119,16 +116,9 @@ function renderMemoryLayers() {
   };
   l0.forEach((item) => pushMemory('L0', item));
   l1.forEach((item) => pushMemory('L1', item));
-  l2.forEach((item) => rows.push({
-    layer: 'L2',
-    scope: item.Domain || item.domain || '-',
-    kind: 'thread_summary',
-    summary: item.Summary || item.summary || '-',
-    updated: item.EndTime || item.end_time || item.StartTime || item.start_time || '',
-  }));
   l3.forEach((item) => pushMemory('L3', item));
   if (rows.length === 0) {
-    body.innerHTML = '<tr><td colspan="5" class="small">No L0/L2/L3 memory layers</td></tr>';
+    body.innerHTML = '<tr><td colspan="5" class="small">No L0/L1/L3 memory layers</td></tr>';
     return;
   }
   rows.forEach((row) => {
@@ -146,6 +136,7 @@ function renderMemoryLayers() {
 function refreshMemoryLayers() {
   const params = new URLSearchParams();
   params.set('limit', '20');
+  params.set('include_l2', 'false');
   if (memorySession && memorySession.value.trim()) params.set('session_id', memorySession.value.trim());
   if (memoryNamespace && memoryNamespace.value.trim()) params.set('namespace', memoryNamespace.value.trim());
   if (memoryDomain && memoryDomain.value.trim()) params.set('domain', memoryDomain.value.trim());
@@ -159,11 +150,11 @@ function refreshMemoryLayers() {
       return r.json();
     })
     .then((data) => {
-      state.memory.layers = data || {l0: [], l1: [], l2: [], l3: []};
+      state.memory.layers = data || {l0: [], l1: [], l3: []};
       renderMemoryLayers();
     })
     .catch((err) => {
-      state.memory.layers = {l0: [], l1: [], l2: [], l3: [], l3_qdrant: [], _error: err && err.message ? err.message : String(err)};
+      state.memory.layers = {l0: [], l1: [], l3: [], _error: err && err.message ? err.message : String(err)};
       renderMemoryLayers();
       console.error(err);
     });
@@ -838,6 +829,9 @@ function refreshKnowledgeMemoryLedger() {
     });
 }
 
+const knowledgeMemoryRefreshBtn = document.getElementById('knowledgeMemoryRefreshBtn');
+if (knowledgeMemoryRefreshBtn) knowledgeMemoryRefreshBtn.addEventListener('click', refreshKnowledgeMemoryLedger);
+
 function fetchMemoryKnowledgeDetail(detailType, id) {
   const type = String(detailType || '').trim();
   const detailID = String(id || '').trim();
@@ -1388,7 +1382,6 @@ function refreshMemorySnapshot() {
       refreshMemoryEvents();
       refreshMemoryRecallPack();
       refreshUserMemory();
-      refreshKnowledgeMemoryLedger();
       refreshSourceRegistry();
       refreshDomainGraphAssertions();
     })
