@@ -7,6 +7,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=%h/.local/share/rencrow
+ExecStartPre=/usr/bin/mountpoint --quiet /srv/rencrow/db
 ExecStart=%h/.local/bin/rencrow run
 EnvironmentFile=%h/.rencrow/.env
 EnvironmentFile=-%h/.rencrow/llm_ops.env
