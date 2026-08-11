@@ -3014,3 +3014,12 @@ func TestConfig_Validate_EconomicObjectiveDefaultsAndGuards(t *testing.T) {
 		t.Fatalf("expected daily opportunity limit guard, got %v", err)
 	}
 }
+
+func TestBuiltInRuntimeTopologyPort_UsesCanonicalLLMModuleID(t *testing.T) {
+	if got := builtInRuntimeTopologyPort("RenCrow_LLM", "chat"); got != 8081 {
+		t.Fatalf("RenCrow_LLM chat port = %d, want 8081", got)
+	}
+	if got := builtInRuntimeTopologyPort("RenCraw_LLM", "chat"); got != 0 {
+		t.Fatalf("legacy typo RenCraw_LLM chat port = %d, want 0", got)
+	}
+}

@@ -271,7 +271,7 @@ func backendFallbackPortName(name string) string {
 }
 
 func builtInRuntimeTopologyPort(moduleID, portName string) int {
-	if moduleID != "RenCraw_LLM" {
+	if moduleID != "RenCrow_LLM" {
 		if portName == "http" {
 			switch moduleID {
 			case "rencrow":
