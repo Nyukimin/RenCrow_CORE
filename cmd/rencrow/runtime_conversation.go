@@ -255,7 +255,6 @@ func buildCategoryRecallRegistry(ctx context.Context, cfg *config.Config, l1Stor
 			source := categoryrecallinfra.NewMovieCatalogSource(path)
 			registry.Register(source)
 			sourceCount++
-			mergeCategoryRecallHints(hints, sourceStartupEntityHints(ctx, source, source.ID()))
 		}
 		if path := strings.TrimSpace(cfg.Storage.Databases.HobbyGraph); path != "" {
 			source := categoryrecallinfra.NewHobbyGraphSource(path)

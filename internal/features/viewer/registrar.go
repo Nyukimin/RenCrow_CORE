@@ -49,6 +49,7 @@ type BaseRoutes struct {
 	ConversationArchiveDatabase  http.HandlerFunc
 	GlossaryDatabase             http.HandlerFunc
 	ToolRegistryDatabase         http.HandlerFunc
+	DataCapabilityCatalog        http.HandlerFunc
 	MovieCatalog                 http.HandlerFunc
 	MovieCatalogFetch            http.HandlerFunc
 	MovieCatalogPreference       http.HandlerFunc
@@ -105,6 +106,7 @@ func RegisterBaseRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/databases/conversation-archive", base.ConversationArchiveDatabase)
 	registerRoute(mux, "/viewer/databases/glossary", base.GlossaryDatabase)
 	registerRoute(mux, "/viewer/databases/tool-registry", base.ToolRegistryDatabase)
+	registerRoute(mux, "/viewer/databases/catalog", base.DataCapabilityCatalog)
 	registerRoute(mux, "/viewer/movie-catalog", base.MovieCatalog)
 	registerRoute(mux, "/viewer/movie-catalog/fetch", base.MovieCatalogFetch)
 	registerRoute(mux, "/viewer/movie-catalog/preference", base.MovieCatalogPreference)

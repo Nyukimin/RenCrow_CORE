@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>RenCrow Live</title>
-<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-midori-image-chat-memory-db-accordion">
+<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-midori-image-chat-memory-db-accordion-db-capability-catalog">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/prompt-logs.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2">
@@ -53,6 +53,7 @@
         <option value="memory">会話 L1</option>
         <option value="memory-archive">会話 Archive</option>
         <option value="knowledge-memory">Knowledge Memory</option>
+        <option value="db-catalog">DB Catalog</option>
         <option value="glossary-db">用語集</option>
         <option value="movie-db">映画・人物</option>
         <option value="tool-registry">Tool Registry</option>
@@ -89,6 +90,7 @@
       <button class="tab-btn memory-db-tab" data-tab="memory" data-memory-db-tab="true" type="button">会話 L1</button>
       <button class="tab-btn memory-db-tab" data-tab="memory-archive" data-memory-db-tab="true" type="button">会話 Archive</button>
       <button class="tab-btn memory-db-tab" data-tab="knowledge-memory" data-memory-db-tab="true" type="button">Knowledge Memory</button>
+      <button class="tab-btn memory-db-tab" data-tab="db-catalog" data-memory-db-tab="true" type="button">DB Catalog</button>
       <button class="tab-btn memory-db-tab" data-tab="glossary-db" data-memory-db-tab="true" type="button">用語集</button>
       <button class="tab-btn memory-db-tab" data-tab="movie-db" data-memory-db-tab="true" type="button">映画・人物</button>
       <button class="tab-btn memory-db-tab" data-tab="tool-registry" data-memory-db-tab="true" type="button">Tool Registry</button>
@@ -1119,6 +1121,29 @@
     </div>
   </section>
 
+  <section id="panel-db-catalog" class="panel">
+    <div class="panel-head">
+      <h3>Database Capability Catalog</h3>
+      <div class="sub">RenCrowが認識するデータ能力と、安全な利用状態を表示します。DB内容やpathは表示しません。</div>
+    </div>
+    <div class="filters">
+      <button id="dbCatalogRefreshBtn" class="ctl-btn" type="button">Refresh</button>
+      <span id="dbCatalogStatus" class="ops-sub" aria-live="polite">読み込み前</span>
+    </div>
+    <div class="grid db-catalog-summary" aria-label="Database catalog status summary">
+      <div class="card"><h4>Available</h4><div id="dbCatalogAvailable" class="ops-big">0</div><div class="ops-sub">利用可能</div></div>
+      <div class="card"><h4>Unavailable</h4><div id="dbCatalogUnavailable" class="ops-big">0</div><div class="ops-sub">未利用</div></div>
+      <div class="card"><h4>Restricted</h4><div id="dbCatalogRestricted" class="ops-big">0</div><div class="ops-sub">所有service限定</div></div>
+      <div class="card"><h4>Blocked</h4><div id="dbCatalogBlocked" class="ops-big">0</div><div class="ops-sub">policyで停止</div></div>
+    </div>
+    <div class="table-wrap db-catalog-details">
+      <table>
+        <thead><tr><th>Name</th><th>Status</th><th>Owner</th><th>Categories</th><th>Safe operations</th><th>Tool</th><th>Sensitivity</th><th>Reason</th><th>Physical key</th></tr></thead>
+        <tbody id="dbCatalogBody"></tbody>
+      </table>
+    </div>
+  </section>
+
   <section id="panel-memory-archive" class="panel">
     <div class="panel-head">
       <h3>Conversation Archive</h3>
@@ -1164,7 +1189,7 @@
       <section class="movie-db-side">
         <div class="desk-brand">
           <div class="desk-kicker">Movie Check</div>
-          <h2 class="daily-desk-title">映画・俳優チェック</h2>
+          <h2 class="daily-desk-title">映画・人物チェック</h2>
         </div>
         <div class="movie-db-meter">
           <div><span id="movieDbMovieCount">0</span><small>Movies</small></div>
@@ -1205,13 +1230,13 @@
         <div class="movie-db-toolbar">
           <div class="movie-db-mode" role="tablist" aria-label="Movie catalog mode">
             <button id="movieDbModeMovies" class="movie-db-mode-btn active" type="button">映画</button>
-            <button id="movieDbModePeople" class="movie-db-mode-btn" type="button">俳優</button>
+            <button id="movieDbModePeople" class="movie-db-mode-btn" type="button">人物</button>
           </div>
           <div class="movie-db-history">
             <button id="movieDbBack" class="ctl-btn" type="button">戻る</button>
             <button id="movieDbForward" class="ctl-btn" type="button">進む</button>
           </div>
-          <input id="movieDbSearch" class="movie-db-search" placeholder="映画名または俳優名で検索">
+          <input id="movieDbSearch" class="movie-db-search" placeholder="映画名または人物名で検索">
           <select id="movieDbRoleFilter" class="movie-db-select" aria-label="role filter">
             <option value="">役割すべて</option>
             <option value="出演">出演</option>
@@ -1720,8 +1745,8 @@
 <script src="/viewer/assets/js/tabs/overview.js?v=20260510-tabs-overview" defer></script>
 <script src="/viewer/assets/js/tabs/system.js?v=20260510-tabs-system" defer></script>
 <script src="/viewer/assets/js/tabs/memory.js?v=20260518-knowledge-relations" defer></script>
-<script src="/viewer/assets/js/tabs/movie-db.js?v=20260808-d0-d1-cards-1" defer></script>
-<script src="/viewer/assets/js/tabs/database-viewers.js?v=20260809-memory-db-accordion" defer></script>
+<script src="/viewer/assets/js/tabs/movie-db.js?v=20260808-d0-d1-cards-1-simple-assessment" defer></script>
+<script src="/viewer/assets/js/tabs/database-viewers.js?v=20260811-db-capability-catalog" defer></script>
 <script src="/viewer/assets/js/tabs/news-pack.js?v=20260805-news-pack-snapshot" defer></script>
 <script src="/viewer/assets/js/tabs/collection.js?v=20260721-daily-collection" defer></script>
 <script src="/viewer/assets/js/tabs/investment.js?v=20260616-investment-desk" defer></script>
@@ -1734,7 +1759,7 @@
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
 <script src="/viewer/assets/js/tabs/image.js?v=20260728-image-mvp" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
-<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion" defer></script>
+<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion-db-capability-catalog" defer></script>
 <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
 </body>
 </html>

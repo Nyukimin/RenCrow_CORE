@@ -39,6 +39,20 @@ type WebGatherSearchAndFetcher interface {
 	SearchAndFetch(ctx context.Context, req modulewebgather.SearchAndFetchRequest) (modulewebgather.SearchAndFetchResponse, error)
 }
 
+// MovieCatalogLookup is the fixed CORE application boundary used by the
+// runtime Tool. It intentionally exposes no database path or SQL surface.
+type MovieCatalogLookup interface {
+	Lookup(ctx context.Context, kind string, name string, information string, limit int) (any, error)
+}
+
+type DataCapabilityCatalog interface {
+	Execute(operation string, name string) (any, error)
+}
+
+type GlossaryLookup interface {
+	Lookup(ctx context.Context, operation string, term string, category string, limit int) (any, error)
+}
+
 // ToolRunner はツール実行の実装（V1 + V2 対応）
 type ToolRunner struct {
 	tools    map[string]ToolFunc
@@ -67,10 +81,13 @@ type ToolRunnerConfig struct {
 	DisableToolHarness   bool                 // true = ToolRunner内の入力調停を無効化する
 
 	// Phase 4: Shiro ツール共有
-	ToolRegistry   capability.ToolRegistry // nil = register_tool 無効
-	WorkspaceDir   string                  // workspace/tools/<name>.sh のベースディレクトリ
-	SkillCatalog   *SkillCatalog           // nil/empty = skill.read 無効（Worker専用）
-	MCPToolCatalog *MCPToolCatalog         // nil/empty = observed MCP tools 無効（Worker専用）
+	ToolRegistry          capability.ToolRegistry // nil = register_tool 無効
+	WorkspaceDir          string                  // workspace/tools/<name>.sh のベースディレクトリ
+	SkillCatalog          *SkillCatalog           // nil/empty = skill.read 無効（Worker専用）
+	MCPToolCatalog        *MCPToolCatalog         // nil/empty = observed MCP tools 無効（Worker専用）
+	MovieCatalogLookup    MovieCatalogLookup      // nil = movie_catalog.lookup 無効
+	DataCapabilityCatalog DataCapabilityCatalog   // nil = data_capability.describe 無効
+	GlossaryLookup        GlossaryLookup          // nil = glossary.lookup 無効
 }
 
 // ToolFunc はツール実行関数の型

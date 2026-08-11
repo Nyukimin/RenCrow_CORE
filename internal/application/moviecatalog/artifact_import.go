@@ -142,6 +142,9 @@ func ImportJSONL(ctx context.Context, db *sql.DB, reader io.Reader, sourceURL st
 	if err := ensureCatalogImportSchema(ctx, db); err != nil {
 		return CatalogImportResult{}, err
 	}
+	if err := EnsureIndexedLookupSchema(ctx, db); err != nil {
+		return CatalogImportResult{}, err
+	}
 	lines, err := readMovieArtifactLines(reader)
 	if err != nil {
 		return CatalogImportResult{}, err
@@ -207,7 +210,7 @@ func importMovieRecord(ctx context.Context, tx *sql.Tx, record movieArtifactReco
 	if record.MovieID == "" || record.Title == "" || record.URL == "" {
 		return 0, fmt.Errorf("movie_id, title and url are required")
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO movies(movie_id,title,url,synopsis) VALUES(?,?,?,?)`, record.MovieID, record.Title, record.URL, record.Synopsis); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO movies(movie_id,title,title_lookup_key,url,synopsis) VALUES(?,?,?,?,?)`, record.MovieID, record.Title, NormalizeLookupKey(record.Title), record.URL, record.Synopsis); err != nil {
 		return 0, err
 	}
 	edges := 0
@@ -239,7 +242,7 @@ func importPersonRecord(ctx context.Context, tx *sql.Tx, record movieArtifactRec
 	if err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO people(person_id,name,url,profile_json,biography) VALUES(?,?,?,?,?)`, record.PersonID, record.Name, record.URL, string(profile), record.Biography); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO people(person_id,name,name_lookup_key,url,profile_json,biography) VALUES(?,?,?,?,?,?)`, record.PersonID, record.Name, NormalizeLookupKey(record.Name), record.URL, string(profile), record.Biography); err != nil {
 		return 0, err
 	}
 	edges := 0
@@ -300,6 +303,7 @@ func ensureCatalogImportSchema(ctx context.Context, execer catalogContextExecer)
 CREATE TABLE IF NOT EXISTS movies (
   movie_id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
+  title_lookup_key TEXT NOT NULL DEFAULT '',
   url TEXT NOT NULL,
   synopsis TEXT,
   fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -307,6 +311,7 @@ CREATE TABLE IF NOT EXISTS movies (
 CREATE TABLE IF NOT EXISTS people (
   person_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  name_lookup_key TEXT NOT NULL DEFAULT '',
   url TEXT NOT NULL,
   profile_json TEXT,
   biography TEXT,

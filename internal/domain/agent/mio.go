@@ -256,8 +256,20 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 	// Google API quota保護のため、通常は明示的な検索/調査指示がある時だけ使う。
 	// 朝刊キャッシュ未準備時のニュース収集は、Mioではなく専用Workerが担当し、
 	// 収集済みの構造化結果だけをcontext経由で受け取る。
+	movieCatalogMatched := false
+	if lookup, ok := parseMioMovieCatalogLookup(userMessage); ok {
+		movieCatalogMatched = true
+		messages = append(messages, m.movieCatalogLookupContext(ctx, lookup))
+	}
+	dataToolMatched := false
+	if !movieCatalogMatched {
+		if lookup, ok := parseMioDataToolLookup(userMessage); ok {
+			dataToolMatched = true
+			messages = append(messages, m.dataToolLookupContext(ctx, lookup))
+		}
+	}
 	searchQuery := userMessage
-	needsSearch := needsWebSearch(userMessage)
+	needsSearch := !movieCatalogMatched && !dataToolMatched && needsWebSearch(userMessage)
 
 	// Web検索を実行してコンテキストに追加
 	if needsSearch && m.toolRunner != nil {
@@ -321,7 +333,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		currentUserMessage,
 	)
 
-	req := m.generationRequest(messages, llm.StreamCallbackFromContext(ctx))
+	req := m.generationRequest(messages, filterLeadingAgentSelfLabel(llm.StreamCallbackFromContext(ctx), currentSpeaker))
 
 	resp, err := m.llmProvider.Generate(ctx, req)
 	if err != nil {
@@ -336,7 +348,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 			Role:    "user",
 			Content: "直前の返答は発言帰属が曖昧です。誰のアイデアかを明示して1回だけ言い直してください。",
 		})
-		retryResp, retryErr := m.llmProvider.Generate(ctx, m.generationRequest(retryMessages, llm.StreamCallbackFromContext(ctx)))
+		retryResp, retryErr := m.llmProvider.Generate(ctx, m.generationRequest(retryMessages, filterLeadingAgentSelfLabel(llm.StreamCallbackFromContext(ctx), currentSpeaker)))
 		if retryErr == nil && strings.TrimSpace(retryResp.Content) != "" {
 			response = stripLeadingAgentSelfLabel(retryResp.Content, currentSpeaker)
 			finalGeneration = retryResp
@@ -379,6 +391,52 @@ func stripLeadingAgentSelfLabel(content string, speaker conversation.Speaker) st
 		return trimmed
 	}
 	return strings.TrimSpace(strings.TrimLeft(trimmed[len(label):], ":："))
+}
+
+func filterLeadingAgentSelfLabel(next llm.StreamCallback, speaker conversation.Speaker) llm.StreamCallback {
+	if next == nil {
+		return nil
+	}
+	label := "[" + strings.TrimSpace(string(speaker)) + "]"
+	if label == "[]" {
+		return next
+	}
+	var pending string
+	decided := false
+	strippingSeparator := false
+	return func(token string) {
+		if decided {
+			next(token)
+			return
+		}
+		if strippingSeparator {
+			candidate := strings.TrimLeft(token, " \t\r\n:：")
+			if candidate == "" {
+				return
+			}
+			decided = true
+			next(candidate)
+			return
+		}
+		pending += token
+		candidate := strings.TrimLeft(pending, " \t\r\n")
+		if len(candidate) < len(label) && strings.HasPrefix(strings.ToLower(label), strings.ToLower(candidate)) {
+			return
+		}
+		if len(candidate) >= len(label) && strings.EqualFold(candidate[:len(label)], label) {
+			candidate = strings.TrimLeft(candidate[len(label):], " \t\r\n:：")
+			if candidate == "" {
+				pending = ""
+				strippingSeparator = true
+				return
+			}
+		}
+		decided = true
+		if candidate != "" {
+			next(candidate)
+		}
+		pending = ""
+	}
 }
 
 func (m *MioAgent) systemPromptForViewerRecipient(recipient string) string {

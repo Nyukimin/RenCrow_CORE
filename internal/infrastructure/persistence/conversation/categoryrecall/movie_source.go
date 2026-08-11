@@ -43,6 +43,9 @@ func (s *MovieCatalogSource) searchMovies(ctx context.Context, db *sql.DB, query
 	if !exists {
 		return domconv.CategoryRecallResult{}, errUnavailable("movies table is missing")
 	}
+	if err := requireMovieLookupSchema(db, "movies", "title_lookup_key", "idx_movies_title_lookup_key"); err != nil {
+		return domconv.CategoryRecallResult{}, err
+	}
 	hasFetchedAt, err := tableColumnExists(db, "movies", "fetched_at")
 	if err != nil {
 		return domconv.CategoryRecallResult{}, err
@@ -51,9 +54,11 @@ func (s *MovieCatalogSource) searchMovies(ctx context.Context, db *sql.DB, query
 	if hasFetchedAt {
 		fetchedAtExpr = "COALESCE(fetched_at, '')"
 	}
-	predicate, args := lexicalPredicate(query.Message, "title", "synopsis")
-	args = append(args, boundedLimit(query.Limit))
-	rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT movie_id, title, COALESCE(synopsis, ''), COALESCE(url, ''), %s FROM movies WHERE %s ORDER BY title LIMIT ?", fetchedAtExpr, predicate), args...)
+	lookupKey := strings.ToLower(strings.TrimSpace(query.Message))
+	if lookupKey == "" {
+		return domconv.CategoryRecallResult{}, nil
+	}
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT movie_id, title, COALESCE(synopsis, ''), COALESCE(url, ''), %s FROM movies INDEXED BY idx_movies_title_lookup_key WHERE title_lookup_key = ? ORDER BY movie_id LIMIT ?", fetchedAtExpr), lookupKey, boundedLimit(query.Limit))
 	if err != nil {
 		return domconv.CategoryRecallResult{}, errUnavailable("movies query failed: " + err.Error())
 	}
@@ -63,9 +68,6 @@ func (s *MovieCatalogSource) searchMovies(ctx context.Context, db *sql.DB, query
 		var id, title, summary, sourceURL, fetchedAt string
 		if err := rows.Scan(&id, &title, &summary, &sourceURL, &fetchedAt); err != nil {
 			return result, err
-		}
-		if !queryMatches(query.Message, title, summary) {
-			continue
 		}
 		title = strings.TrimSpace(title)
 		summary = strings.TrimSpace(summary)
@@ -94,6 +96,9 @@ func (s *MovieCatalogSource) searchPeople(ctx context.Context, db *sql.DB, query
 	if !exists {
 		return domconv.CategoryRecallResult{}, errUnavailable("people table is missing")
 	}
+	if err := requireMovieLookupSchema(db, "people", "name_lookup_key", "idx_people_name_lookup_key"); err != nil {
+		return domconv.CategoryRecallResult{}, err
+	}
 	hasFetchedAt, err := tableColumnExists(db, "people", "fetched_at")
 	if err != nil {
 		return domconv.CategoryRecallResult{}, err
@@ -102,9 +107,11 @@ func (s *MovieCatalogSource) searchPeople(ctx context.Context, db *sql.DB, query
 	if hasFetchedAt {
 		fetchedAtExpr = "COALESCE(fetched_at, '')"
 	}
-	predicate, args := lexicalPredicate(query.Message, "name", "biography")
-	args = append(args, boundedLimit(query.Limit))
-	rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT person_id, name, COALESCE(biography, ''), COALESCE(url, ''), %s FROM people WHERE %s ORDER BY name LIMIT ?", fetchedAtExpr, predicate), args...)
+	lookupKey := strings.ToLower(strings.TrimSpace(query.Message))
+	if lookupKey == "" {
+		return domconv.CategoryRecallResult{}, nil
+	}
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT person_id, name, COALESCE(biography, ''), COALESCE(url, ''), %s FROM people INDEXED BY idx_people_name_lookup_key WHERE name_lookup_key = ? ORDER BY person_id LIMIT ?", fetchedAtExpr), lookupKey, boundedLimit(query.Limit))
 	if err != nil {
 		return domconv.CategoryRecallResult{}, errUnavailable("people query failed: " + err.Error())
 	}
@@ -114,9 +121,6 @@ func (s *MovieCatalogSource) searchPeople(ctx context.Context, db *sql.DB, query
 		var id, name, biography, sourceURL, fetchedAt string
 		if err := rows.Scan(&id, &name, &biography, &sourceURL, &fetchedAt); err != nil {
 			return result, err
-		}
-		if !queryMatches(query.Message, name, biography) {
-			continue
 		}
 		name = strings.TrimSpace(name)
 		biography = strings.TrimSpace(biography)
@@ -137,50 +141,24 @@ func (s *MovieCatalogSource) searchPeople(ctx context.Context, db *sql.DB, query
 	return result, rows.Err()
 }
 
-func (s *MovieCatalogSource) StartupEntityHints(ctx context.Context) (map[string][]string, error) {
-	db, err := openReadOnlySQLite(s.path)
+func (s *MovieCatalogSource) StartupEntityHints(context.Context) (map[string][]string, error) {
+	return map[string][]string{}, nil
+}
+
+func requireMovieLookupSchema(db *sql.DB, table, column, index string) error {
+	exists, err := tableColumnExists(db, table, column)
 	if err != nil {
-		return nil, err
+		return errUnavailable("lookup column check failed: " + err.Error())
 	}
-	defer db.Close()
-	hints := map[string][]string{}
-	if exists, _ := tableExists(db, "movies"); exists {
-		rows, err := db.QueryContext(ctx, `SELECT title FROM movies WHERE TRIM(title) <> '' ORDER BY title`)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var title string
-			if err := rows.Scan(&title); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			hints["movie"] = append(hints["movie"], strings.TrimSpace(title))
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		rows.Close()
+	if !exists {
+		return errUnavailable(table + "." + column + " is missing")
 	}
-	if exists, _ := tableExists(db, "people"); exists {
-		rows, err := db.QueryContext(ctx, `SELECT name FROM people WHERE TRIM(name) <> '' ORDER BY name`)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var name string
-			if err := rows.Scan(&name); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			hints["person"] = append(hints["person"], strings.TrimSpace(name))
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		rows.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=? AND tbl_name=?`, index, table).Scan(&count); err != nil {
+		return errUnavailable("lookup index check failed: " + err.Error())
 	}
-	return hints, nil
+	if count != 1 {
+		return errUnavailable(index + " is missing")
+	}
+	return nil
 }

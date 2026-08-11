@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/datacapability"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	_ "modernc.org/sqlite"
 )
@@ -22,6 +23,57 @@ import (
 type DatabaseViewerOptions struct {
 	DBPath       string
 	RuntimeTools func(context.Context) ([]domaintool.ToolMetadata, error)
+}
+
+type DataCapabilityCatalogProvider func(context.Context) ([]datacapability.Entry, error)
+
+type dataCapabilitySummary struct {
+	Available   int `json:"available"`
+	Unavailable int `json:"unavailable"`
+	Restricted  int `json:"restricted"`
+	Blocked     int `json:"blocked"`
+}
+
+type dataCapabilityCatalogResponse struct {
+	Available bool                   `json:"available"`
+	Total     int                    `json:"total"`
+	Summary   dataCapabilitySummary  `json:"summary"`
+	Items     []datacapability.Entry `json:"items"`
+	Error     string                 `json:"error,omitempty"`
+}
+
+func HandleDataCapabilityCatalog(provider DataCapabilityCatalogProvider) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireViewerMethod(w, r, http.MethodGet) {
+			return
+		}
+		if provider == nil {
+			writeJSON(w, http.StatusOK, dataCapabilityCatalogResponse{Items: []datacapability.Entry{}, Error: "data capability catalog is unavailable"})
+			return
+		}
+		items, err := provider(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusOK, dataCapabilityCatalogResponse{Items: []datacapability.Entry{}, Error: "data capability catalog is unavailable"})
+			return
+		}
+		if items == nil {
+			items = []datacapability.Entry{}
+		}
+		summary := dataCapabilitySummary{}
+		for _, item := range items {
+			switch item.Status {
+			case "available":
+				summary.Available++
+			case "unavailable":
+				summary.Unavailable++
+			case "restricted":
+				summary.Restricted++
+			case "blocked":
+				summary.Blocked++
+			}
+		}
+		writeJSON(w, http.StatusOK, dataCapabilityCatalogResponse{Available: true, Total: len(items), Summary: summary, Items: items})
+	}
 }
 
 type databaseViewerResponse struct {

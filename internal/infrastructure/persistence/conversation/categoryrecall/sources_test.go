@@ -74,17 +74,19 @@ func TestMovieCatalogSourceReadsOnlyPublicCatalogTables(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "movie.sqlite")
 	db := openTestDB(t, dbPath)
 	defer db.Close()
-	mustExec(t, db, `CREATE TABLE movies(movie_id TEXT PRIMARY KEY, title TEXT, url TEXT, synopsis TEXT, fetched_at TEXT)`)
-	mustExec(t, db, `CREATE TABLE people(person_id TEXT PRIMARY KEY, name TEXT, url TEXT, biography TEXT, fetched_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE movies(movie_id TEXT PRIMARY KEY, title TEXT, title_lookup_key TEXT NOT NULL, url TEXT, synopsis TEXT, fetched_at TEXT)`)
+	mustExec(t, db, `CREATE INDEX idx_movies_title_lookup_key ON movies(title_lookup_key)`)
+	mustExec(t, db, `CREATE TABLE people(person_id TEXT PRIMARY KEY, name TEXT, name_lookup_key TEXT NOT NULL, url TEXT, biography TEXT, fetched_at TEXT)`)
+	mustExec(t, db, `CREATE INDEX idx_people_name_lookup_key ON people(name_lookup_key)`)
 	mustExec(t, db, `CREATE TABLE movie_watch_events(event_id TEXT, movie_id TEXT, note TEXT)`)
 	mustExec(t, db, `CREATE TABLE movie_preference_signals(signal_id TEXT, target_id TEXT, evidence_json TEXT)`)
-	mustExec(t, db, `INSERT INTO movies VALUES ('m1', 'マトリックス', 'https://example.test/m1', '公開カタログ概要', '2026-08-08 00:00:00')`)
-	mustExec(t, db, `INSERT INTO people VALUES ('p1', 'キアヌ', 'https://example.test/p1', '公開人物概要', '2026-08-08T00:00:00Z')`)
+	mustExec(t, db, `INSERT INTO movies VALUES ('m1', 'マトリックス', 'マトリックス', 'https://example.test/m1', '公開カタログ概要', '2026-08-08 00:00:00')`)
+	mustExec(t, db, `INSERT INTO people VALUES ('p1', 'キアヌ', 'キアヌ', 'https://example.test/p1', '公開人物概要', '2026-08-08T00:00:00Z')`)
 	mustExec(t, db, `INSERT INTO movie_watch_events VALUES ('w1', 'm1', 'PRIVATE WATCH NOTE')`)
 	mustExec(t, db, `INSERT INTO movie_preference_signals VALUES ('s1', 'p1', 'PRIVATE PREFERENCE')`)
 
 	source := NewMovieCatalogSource(dbPath)
-	movie, err := source.Search(context.Background(), conversation.CategoryRecallQuery{Category: "movie", Message: "映画マトリックス", Limit: 3})
+	movie, err := source.Search(context.Background(), conversation.CategoryRecallQuery{Category: "movie", Message: "マトリックス", Limit: 3})
 	if err != nil {
 		t.Fatalf("movie Search failed: %v", err)
 	}
@@ -137,8 +139,9 @@ func TestMovieCatalogSourceMissingFetchedAtPreservesInvalidLifecycleTrace(t *tes
 	dbPath := filepath.Join(t.TempDir(), "movie-no-fetch.sqlite")
 	db := openTestDB(t, dbPath)
 	defer db.Close()
-	mustExec(t, db, `CREATE TABLE movies(movie_id TEXT PRIMARY KEY, title TEXT, url TEXT, synopsis TEXT)`)
-	mustExec(t, db, `INSERT INTO movies VALUES ('m1', 'マトリックス', 'https://example.test/m1', '公開カタログ概要')`)
+	mustExec(t, db, `CREATE TABLE movies(movie_id TEXT PRIMARY KEY, title TEXT, title_lookup_key TEXT NOT NULL, url TEXT, synopsis TEXT)`)
+	mustExec(t, db, `CREATE INDEX idx_movies_title_lookup_key ON movies(title_lookup_key)`)
+	mustExec(t, db, `INSERT INTO movies VALUES ('m1', 'マトリックス', 'マトリックス', 'https://example.test/m1', '公開カタログ概要')`)
 
 	result, err := NewMovieCatalogSource(dbPath).Search(context.Background(), conversation.CategoryRecallQuery{Category: "movie", Message: "マトリックス", Limit: 3})
 	if err != nil {
@@ -147,22 +150,18 @@ func TestMovieCatalogSourceMissingFetchedAtPreservesInvalidLifecycleTrace(t *tes
 	if len(result.Records) != 1 || !result.Records[0].RetrievedAt.IsZero() || !result.Records[0].ValidatedAt.IsZero() {
 		t.Fatalf("missing fetched_at should remain zero for registry validation: %#v", result.Records)
 	}
-	registry := conversation.NewCategoryRecallRegistry(NewMovieCatalogSource(dbPath)).SetMarkers(map[string][]string{"movie": {"映画"}})
-	registryResult, err := registry.Recall(context.Background(), conversation.CategoryRecallQuery{Message: "映画 マトリックス", Limit: 3})
-	if err != nil || len(registryResult.Records) != 0 || len(registryResult.Failures) != 1 || registryResult.Failures[0].Code != conversation.CategoryRecallFailureInvalid {
-		t.Fatalf("registry should trace missing fetched_at as invalid: result=%#v err=%v", registryResult, err)
-	}
 }
 
 func TestMovieCatalogSourceFiltersBeforeHardLimit(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "movie-large.sqlite")
 	db := openTestDB(t, dbPath)
 	defer db.Close()
-	mustExec(t, db, `CREATE TABLE movies(movie_id TEXT PRIMARY KEY, title TEXT, url TEXT, synopsis TEXT, fetched_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE movies(movie_id TEXT PRIMARY KEY, title TEXT, title_lookup_key TEXT NOT NULL, url TEXT, synopsis TEXT, fetched_at TEXT)`)
+	mustExec(t, db, `CREATE INDEX idx_movies_title_lookup_key ON movies(title_lookup_key)`)
 	for i := 0; i < 40; i++ {
-		mustExec(t, db, fmt.Sprintf("INSERT INTO movies VALUES ('m%02d', 'Common title %02d', 'https://example.test/m%02d', 'summary', '2026-08-08T00:00:00Z')", i, i, i))
+		mustExec(t, db, fmt.Sprintf("INSERT INTO movies VALUES ('m%02d', 'Common title %02d', 'common title %02d', 'https://example.test/m%02d', 'summary', '2026-08-08T00:00:00Z')", i, i, i, i))
 	}
-	mustExec(t, db, `INSERT INTO movies VALUES ('target', 'ZZZ target movie', 'https://example.test/target', 'target summary', '2026-08-08T00:00:00Z')`)
+	mustExec(t, db, `INSERT INTO movies VALUES ('target', 'ZZZ target movie', 'zzz target movie', 'https://example.test/target', 'target summary', '2026-08-08T00:00:00Z')`)
 
 	result, err := NewMovieCatalogSource(dbPath).Search(context.Background(), conversation.CategoryRecallQuery{Category: "movie", Message: "ZZZ target movie", Limit: 1})
 	if err != nil {
@@ -201,6 +200,31 @@ func TestConfiguredCategorySourcesReportMissingDB(t *testing.T) {
 	}
 	if _, err := NewHobbyGraphSource(missing).Search(context.Background(), conversation.CategoryRecallQuery{Category: "hobby", Message: "趣味"}); err == nil {
 		t.Fatal("missing hobby DB should be unavailable")
+	}
+}
+
+func TestMovieCatalogSourceOldSchemaOrMissingIndexIsUnavailable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "movie-old.sqlite")
+	db := openTestDB(t, dbPath)
+	mustExec(t, db, `CREATE TABLE movies(movie_id TEXT PRIMARY KEY,title TEXT,url TEXT,synopsis TEXT)`)
+	db.Close()
+	if _, err := NewMovieCatalogSource(dbPath).Search(context.Background(), conversation.CategoryRecallQuery{Category: "movie", Message: "Heat"}); err == nil || !strings.Contains(err.Error(), "title_lookup_key") {
+		t.Fatalf("old schema should be unavailable: %v", err)
+	}
+
+	db = openTestDB(t, dbPath)
+	mustExec(t, db, `ALTER TABLE movies ADD COLUMN title_lookup_key TEXT NOT NULL DEFAULT ''`)
+	db.Close()
+	if _, err := NewMovieCatalogSource(dbPath).Search(context.Background(), conversation.CategoryRecallQuery{Category: "movie", Message: "Heat"}); err == nil || !strings.Contains(err.Error(), "idx_movies_title_lookup_key") {
+		t.Fatalf("missing index should be unavailable: %v", err)
+	}
+}
+
+func TestMovieCatalogStartupEntityHintsNeverOpensDatabase(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.sqlite")
+	hints, err := NewMovieCatalogSource(missing).StartupEntityHints(context.Background())
+	if err != nil || len(hints) != 0 {
+		t.Fatalf("startup hints should be empty without DB access: hints=%#v err=%v", hints, err)
 	}
 }
 

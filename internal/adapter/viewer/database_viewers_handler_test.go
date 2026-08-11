@@ -4,17 +4,68 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/datacapability"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	_ "modernc.org/sqlite"
 )
 
 func runtimeToolProvider(metas ...domaintool.ToolMetadata) func(context.Context) ([]domaintool.ToolMetadata, error) {
 	return func(context.Context) ([]domaintool.ToolMetadata, error) { return metas, nil }
+}
+
+func TestHandleDataCapabilityCatalogReturnsSummaryWithoutPathsOrRows(t *testing.T) {
+	items := make([]datacapability.Entry, 0, 20)
+	statuses := []string{"available", "unavailable", "restricted", "blocked"}
+	for i := 0; i < 20; i++ {
+		items = append(items, datacapability.Entry{Name: fmt.Sprintf("store-%02d", i), PhysicalKey: fmt.Sprintf("storage.databases.store_%02d", i), Status: statuses[i%len(statuses)], Owner: "CORE", Categories: []string{"metadata"}, SafeOperations: []string{"describe"}, Sensitivity: "internal", Reason: "policy"})
+	}
+	rec := httptest.NewRecorder()
+	HandleDataCapabilityCatalog(func(context.Context) ([]datacapability.Entry, error) { return items, nil }).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/viewer/databases/catalog", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Available bool                   `json:"available"`
+		Total     int                    `json:"total"`
+		Summary   dataCapabilitySummary  `json:"summary"`
+		Items     []datacapability.Entry `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Available || out.Total != 20 || out.Summary.Available != 5 || out.Summary.Unavailable != 5 || out.Summary.Restricted != 5 || out.Summary.Blocked != 5 {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+	if strings.Contains(rec.Body.String(), "/srv/") || strings.Contains(rec.Body.String(), "db_path") {
+		t.Fatalf("response leaked path field: %s", rec.Body.String())
+	}
+}
+
+func TestHandleDataCapabilityCatalogUnavailable(t *testing.T) {
+	for name, provider := range map[string]DataCapabilityCatalogProvider{"nil": nil, "error": func(context.Context) ([]datacapability.Entry, error) { return nil, errors.New("private detail") }} {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			HandleDataCapabilityCatalog(provider).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			if strings.Contains(rec.Body.String(), "private detail") {
+				t.Fatalf("internal error leaked: %s", rec.Body.String())
+			}
+			var out dataCapabilityCatalogResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatal(err)
+			}
+			if out.Available || out.Error == "" || len(out.Items) != 0 {
+				t.Fatalf("unexpected response: %+v", out)
+			}
+		})
+	}
 }
 
 func databaseViewerOptionsWithRuntimeTools(t *testing.T, dbPath string, metas ...domaintool.ToolMetadata) DatabaseViewerOptions {

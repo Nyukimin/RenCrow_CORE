@@ -122,14 +122,50 @@ function refreshToolRegistryDatabase() {
     });
 }
 
+function refreshDataCapabilityCatalog() {
+  const body = databaseViewerElement('dbCatalogBody');
+  const status = databaseViewerElement('dbCatalogStatus');
+  const countIDs = {available: 'dbCatalogAvailable', unavailable: 'dbCatalogUnavailable', restricted: 'dbCatalogRestricted', blocked: 'dbCatalogBlocked'};
+  if (status) status.textContent = '読み込み中...';
+  return databaseViewerRequest('/viewer/databases/catalog')
+    .then((data) => {
+      const items = data && Array.isArray(data.items) ? data.items : [];
+      const summary = data && data.summary ? data.summary : {};
+      Object.keys(countIDs).forEach((key) => {
+        const target = databaseViewerElement(countIDs[key]);
+        if (target) target.textContent = String(Number(summary[key] || 0));
+      });
+      if (status) status.textContent = data && data.available ? String(Number(data.total || 0)) + '件を読込済み' : (data && data.error ? data.error : 'Catalog unavailable');
+      if (!body) return;
+      body.innerHTML = items.length ? items.map((item) => (
+        '<tr><td>' + databaseViewerEscape(item.name || '-') + '</td>' +
+        '<td><span class="db-catalog-status db-catalog-status-' + databaseViewerEscape(item.status || 'unknown') + '">' + databaseViewerEscape(item.status || 'unknown') + '</span></td>' +
+        '<td>' + databaseViewerEscape(item.owner || '-') + '</td>' +
+        '<td>' + databaseViewerEscape(Array.isArray(item.categories) ? item.categories.join(', ') : '-') + '</td>' +
+        '<td>' + databaseViewerEscape(Array.isArray(item.safe_operations) ? item.safe_operations.join(', ') : '-') + '</td>' +
+        '<td>' + databaseViewerEscape(item.tool_id || '-') + '</td>' +
+        '<td>' + databaseViewerEscape(item.sensitivity || '-') + '</td>' +
+        '<td>' + databaseViewerEscape(item.reason || '-') + '</td>' +
+        '<td>' + databaseViewerEscape(item.physical_key || '-') + '</td></tr>'
+      )).join('') : '<tr><td colspan="9">Catalog項目はありません。</td></tr>';
+    })
+    .catch((error) => {
+      Object.values(countIDs).forEach((id) => { const target = databaseViewerElement(id); if (target) target.textContent = '0'; });
+      if (status) status.textContent = '読込失敗: ' + String(error && error.message ? error.message : error);
+      if (body) body.innerHTML = '<tr><td colspan="9">DB Catalogを読み込めません。</td></tr>';
+    });
+}
+
 function bindDatabaseViewerControls() {
   const archiveRefresh = databaseViewerElement('memoryArchiveRefreshBtn');
   const glossaryRefresh = databaseViewerElement('glossaryDbRefreshBtn');
   const toolRefresh = databaseViewerElement('toolRegistryRefreshBtn');
+  const catalogRefresh = databaseViewerElement('dbCatalogRefreshBtn');
   const toolPlatform = databaseViewerElement('toolRegistryPlatform');
   if (archiveRefresh) archiveRefresh.addEventListener('click', refreshMemoryArchiveDatabase);
   if (glossaryRefresh) glossaryRefresh.addEventListener('click', refreshGlossaryDatabase);
   if (toolRefresh) toolRefresh.addEventListener('click', refreshToolRegistryDatabase);
+  if (catalogRefresh) catalogRefresh.addEventListener('click', refreshDataCapabilityCatalog);
   if (toolPlatform) toolPlatform.addEventListener('change', refreshToolRegistryDatabase);
 }
 

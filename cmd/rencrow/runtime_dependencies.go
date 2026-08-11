@@ -69,6 +69,7 @@ import (
 
 // Dependencies はアプリケーション依存関係
 type Dependencies struct {
+	dataCapabilityCatalog          *runtimeDataCapabilityCatalog
 	lineHandler                    http.Handler
 	telegramHandler                http.Handler
 	discordHandler                 http.Handler
@@ -520,6 +521,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.glossaryRecent = glossaryRuntime.RecentHandler
 	deps.toolRegistry = runtimeToolRegistry
 	deps.workerToolRunner = toolRuntime.WorkerRuntimeRunnerV2
+	deps.dataCapabilityCatalog = toolRuntime.DataCapabilityCatalog
 	deps.backlogStore = viewer.NewBacklogStore(filepath.Join(cfg.WorkspaceDir, "logs", "backlog.jsonl"))
 	workflowResults := xbookmarkworkflowpersistence.NewJSONLStore(filepath.Join(cfg.WorkspaceDir, "logs", "x_bookmark_workflows.jsonl"))
 	if conversationRuntime.L1Store == nil {

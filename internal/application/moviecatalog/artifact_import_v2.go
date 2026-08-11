@@ -861,7 +861,7 @@ func persistMovieCatalogGraphV2(ctx context.Context, tx *sql.Tx, graph movieCata
 			if node.targetID == "" {
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO movies(movie_id,title,url,synopsis) VALUES(?,?,?,?)`, node.targetID, node.label, node.url, node.synopsis); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO movies(movie_id,title,title_lookup_key,url,synopsis) VALUES(?,?,?,?,?)`, node.targetID, node.label, NormalizeLookupKey(node.label), node.url, node.synopsis); err != nil {
 				return CatalogImportResult{}, err
 			}
 			result.Movies++
@@ -870,7 +870,7 @@ func persistMovieCatalogGraphV2(ctx context.Context, tx *sql.Tx, graph movieCata
 				continue
 			}
 			profile := "{}"
-			if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO people(person_id,name,url,profile_json,biography) VALUES(?,?,?,?,?)`, node.targetID, node.label, node.url, profile, node.biography); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO people(person_id,name,name_lookup_key,url,profile_json,biography) VALUES(?,?,?,?,?,?)`, node.targetID, node.label, NormalizeLookupKey(node.label), node.url, profile, node.biography); err != nil {
 				return CatalogImportResult{}, err
 			}
 			result.People++

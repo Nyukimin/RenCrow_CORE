@@ -496,6 +496,26 @@ func TestStripLeadingAgentSelfLabel(t *testing.T) {
 	}
 }
 
+func TestFilterLeadingAgentSelfLabel(t *testing.T) {
+	var got strings.Builder
+	callback := filterLeadingAgentSelfLabel(func(token string) { got.WriteString(token) }, conversation.SpeakerMio)
+	for _, token := range []string{" [", "mi", "o]", "：", " こん", "にちは"} {
+		callback(token)
+	}
+	if got.String() != "こんにちは" {
+		t.Fatalf("filtered stream = %q, want %q", got.String(), "こんにちは")
+	}
+
+	got.Reset()
+	callback = filterLeadingAgentSelfLabel(func(token string) { got.WriteString(token) }, conversation.SpeakerMio)
+	for _, token := range []string{"[shiro]", "からの報告"} {
+		callback(token)
+	}
+	if got.String() != "[shiro]からの報告" {
+		t.Fatalf("other speaker stream = %q", got.String())
+	}
+}
+
 // === Phase 1C: ConversationEngine integration tests ===
 
 func TestMioAgent_Chat_WithConversationEngine(t *testing.T) {

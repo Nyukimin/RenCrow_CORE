@@ -92,6 +92,7 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		ConversationArchiveDatabase:  viewer.HandleConversationArchiveDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.ConversationArchive}),
 		GlossaryDatabase:             viewer.HandleGlossaryDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.Glossary}),
 		ToolRegistryDatabase:         viewer.HandleToolRegistryDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.ToolRegistry, RuntimeTools: viewerRuntimeTools(dependencies)}),
+		DataCapabilityCatalog:        viewer.HandleDataCapabilityCatalog(viewerDataCapabilityProvider(dependencies)),
 		MovieCatalog:                 viewer.HandleMovieCatalog(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
 		MovieCatalogFetch:            viewer.HandleMovieCatalogFetch(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
 		MovieCatalogPreference:       viewer.HandleMovieCatalogPreference(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
@@ -107,6 +108,13 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 	avatarfeature.RegisterRoutes(mux, avatarfeature.Dependencies{Routes: avatarfeature.Routes{
 		CharacterRuntime: dependencies.characterRuntime,
 	}})
+}
+
+func viewerDataCapabilityProvider(dependencies *Dependencies) viewer.DataCapabilityCatalogProvider {
+	if dependencies == nil || dependencies.dataCapabilityCatalog == nil {
+		return nil
+	}
+	return dependencies.dataCapabilityCatalog.Entries
 }
 
 func viewerRuntimeTools(dependencies *Dependencies) func(context.Context) ([]domaintool.ToolMetadata, error) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -29,6 +30,7 @@ type toolRuntime struct {
 	WorkerRuntimeRunnerV2 domaintool.RunnerV2
 	SubagentMgr           *subagent.Manager
 	ToolMediationRecorder *toolharnesspersistence.JSONLRecorder
+	DataCapabilityCatalog *runtimeDataCapabilityCatalog
 }
 
 func buildToolRuntime(
@@ -69,20 +71,47 @@ func buildToolRuntimeWithCapabilities(
 		filepath.Join(cfg.WorkspaceDir, "persona", "kin.md"),
 	}
 	toolMediationRecorder := buildToolMediationRecorder(cfg)
+	movieCatalogPrepareCtx, cancelMovieCatalogPrepare := context.WithTimeout(context.Background(), 10*time.Second)
+	movieCatalogLookup, movieCatalogLookupErr := prepareRuntimeMovieCatalogLookup(
+		movieCatalogPrepareCtx, cfg.Storage.Databases.MovieCatalog,
+	)
+	cancelMovieCatalogPrepare()
+	if movieCatalogLookupErr != nil {
+		log.Printf("Movie catalog lookup Tool unavailable: %v", movieCatalogLookupErr)
+	} else {
+		log.Printf("Movie catalog lookup Tool ready (indexed read-only execution)")
+	}
+	glossaryLookup, glossaryLookupErr := prepareRuntimeGlossaryLookup(context.Background(), cfg.Storage.Databases.Glossary)
+	if glossaryLookupErr != nil {
+		log.Printf("Glossary lookup Tool unavailable")
+	} else {
+		log.Printf("Glossary lookup Tool ready (indexed read-only execution)")
+	}
+	dataCapabilityCatalog := buildRuntimeDataCapabilityCatalog(cfg, glossaryLookup != nil, movieCatalogLookup != nil)
 	chatToolRunnerCfg := tools.ToolRunnerConfig{
-		GoogleAPIKey:         googleSearchValue(cfg.GoogleSearchChat.APIKey, "GOOGLE_API_KEY_CHAT"),
-		GoogleSearchEngineID: googleSearchValue(cfg.GoogleSearchChat.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_CHAT"),
-		AllowedWritePaths:    personaWritePaths,
-		DisableToolHarness:   true,
+		GoogleAPIKey:          googleSearchValue(cfg.GoogleSearchChat.APIKey, "GOOGLE_API_KEY_CHAT"),
+		GoogleSearchEngineID:  googleSearchValue(cfg.GoogleSearchChat.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_CHAT"),
+		AllowedWritePaths:     personaWritePaths,
+		DisableToolHarness:    true,
+		DataCapabilityCatalog: dataCapabilityCatalog,
 	}
 	workerToolRunnerCfg := tools.ToolRunnerConfig{
-		GoogleAPIKey:         googleSearchValue(cfg.GoogleSearchWorker.APIKey, "GOOGLE_API_KEY_WORKER"),
-		GoogleSearchEngineID: googleSearchValue(cfg.GoogleSearchWorker.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_WORKER"),
-		ToolRegistry:         runtimeToolRegistry,
-		WorkspaceDir:         cfg.WorkspaceDir,
-		SkillCatalog:         workerSkillCatalog,
-		MCPToolCatalog:       mcpToolCatalog,
-		DisableToolHarness:   true,
+		GoogleAPIKey:          googleSearchValue(cfg.GoogleSearchWorker.APIKey, "GOOGLE_API_KEY_WORKER"),
+		GoogleSearchEngineID:  googleSearchValue(cfg.GoogleSearchWorker.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_WORKER"),
+		ToolRegistry:          runtimeToolRegistry,
+		WorkspaceDir:          cfg.WorkspaceDir,
+		SkillCatalog:          workerSkillCatalog,
+		MCPToolCatalog:        mcpToolCatalog,
+		DisableToolHarness:    true,
+		DataCapabilityCatalog: dataCapabilityCatalog,
+	}
+	if movieCatalogLookup != nil {
+		chatToolRunnerCfg.MovieCatalogLookup = movieCatalogLookup
+		workerToolRunnerCfg.MovieCatalogLookup = movieCatalogLookup
+	}
+	if glossaryLookup != nil {
+		chatToolRunnerCfg.GlossaryLookup = glossaryLookup
+		workerToolRunnerCfg.GlossaryLookup = glossaryLookup
 	}
 	if cfg.BrowserActor.Enabled {
 		workerToolRunnerCfg.BrowserActorRunner = browseractorinfra.NewRunner(browserActorConfigFromRuntime(cfg.BrowserActor))
@@ -214,6 +243,7 @@ func buildToolRuntimeWithCapabilities(
 		WorkerRuntimeRunnerV2: workerRunnerV2,
 		SubagentMgr:           subagentMgr,
 		ToolMediationRecorder: toolMediationRecorder,
+		DataCapabilityCatalog: dataCapabilityCatalog,
 	}
 }
 

@@ -92,6 +92,41 @@ test('Tool Registry Viewer renders effective tool origin and registry source', a
   assert.match(element('toolRegistryBody').innerHTML, /builtin/);
 });
 
+test('DB Catalog renders summary and escaped metadata in its own panel', async () => {
+  let requested = '';
+  const {context, element} = viewerContext((path) => {
+    requested = path;
+    return {
+      available: true,
+      total: 20,
+      summary: {available: 2, unavailable: 3, restricted: 14, blocked: 1},
+      items: [{name: '<catalog>', status: 'restricted', owner: 'CORE', categories: ['memory'], safe_operations: ['describe'], tool_id: '', sensitivity: 'private', reason: 'owner_service_only', physical_key: 'storage.databases.conversation_l1'}],
+    };
+  });
+  await context.refreshDataCapabilityCatalog();
+  assert.equal(requested, '/viewer/databases/catalog');
+  assert.equal(element('dbCatalogAvailable').textContent, '2');
+  assert.equal(element('dbCatalogUnavailable').textContent, '3');
+  assert.equal(element('dbCatalogRestricted').textContent, '14');
+  assert.equal(element('dbCatalogBlocked').textContent, '1');
+  assert.match(element('dbCatalogBody').innerHTML, /&lt;catalog&gt;/);
+  assert.match(element('dbCatalogBody').innerHTML, />restricted</);
+  assert.doesNotMatch(element('glossaryDbBody').innerHTML, /catalog/);
+});
+
+test('DB Catalog has separate desktop and mobile navigation with responsive summary', () => {
+  const html = fs.readFileSync('internal/adapter/viewer/viewer.html', 'utf8');
+  const viewerJS = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const css = fs.readFileSync('internal/adapter/viewer/assets/css/viewer.css', 'utf8');
+  assert.match(html, /<option value="db-catalog">DB Catalog<\/option>/);
+  assert.match(html, /data-tab="db-catalog"[^>]*>DB Catalog<\/button>/);
+  assert.match(html, /id="panel-db-catalog"/);
+  assert.match(viewerJS, /'db-catalog': document\.getElementById\('panel-db-catalog'\)/);
+  assert.match(viewerJS, /tab === 'db-catalog' && typeof refreshDataCapabilityCatalog === 'function'/);
+  assert.match(css, /\.db-catalog-summary\{grid-template-columns:repeat\(4/);
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*\.db-catalog-summary\{grid-template-columns:repeat\(2/);
+});
+
 test('Memory database panels keep Knowledge Memory and Archive out of Conversation L1', () => {
   const html = fs.readFileSync('internal/adapter/viewer/viewer.html', 'utf8');
   const viewerJS = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');

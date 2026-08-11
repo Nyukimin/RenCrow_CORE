@@ -17,6 +17,7 @@ func TestRegisterBaseRoutesRegistersViewerBasePaths(t *testing.T) {
 		ConversationArchiveDatabase: statusHandler(http.StatusNonAuthoritativeInfo),
 		GlossaryDatabase:            statusHandler(http.StatusMultiStatus),
 		ToolRegistryDatabase:        statusHandler(http.StatusAlreadyReported),
+		DataCapabilityCatalog:       statusHandler(http.StatusIMUsed),
 	}})
 
 	tests := []struct {
@@ -31,6 +32,7 @@ func TestRegisterBaseRoutesRegistersViewerBasePaths(t *testing.T) {
 		{path: "/viewer/databases/conversation-archive", want: http.StatusNonAuthoritativeInfo},
 		{path: "/viewer/databases/glossary", want: http.StatusMultiStatus},
 		{path: "/viewer/databases/tool-registry", want: http.StatusAlreadyReported},
+		{path: "/viewer/databases/catalog", want: http.StatusIMUsed},
 	}
 
 	for _, tt := range tests {

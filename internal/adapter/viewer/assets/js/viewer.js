@@ -1184,7 +1184,7 @@ const mobilePanelPrev = document.getElementById('mobilePanelPrev');
 const mobilePanelNext = document.getElementById('mobilePanelNext');
 const memoryNavToggle = document.getElementById('memoryNavToggle');
 const memoryDbNav = document.getElementById('memoryDbNav');
-const memoryDbTabs = new Set(['memory', 'memory-archive', 'knowledge-memory', 'glossary-db', 'movie-db', 'tool-registry']);
+const memoryDbTabs = new Set(['memory', 'memory-archive', 'knowledge-memory', 'db-catalog', 'glossary-db', 'movie-db', 'tool-registry']);
 const panels = {
   home: document.getElementById('panel-home'),
   image: document.getElementById('panel-image'),
@@ -1203,6 +1203,7 @@ const panels = {
   memory: document.getElementById('panel-memory'),
   'memory-archive': document.getElementById('panel-memory-archive'),
   'knowledge-memory': document.getElementById('panel-knowledge-memory'),
+  'db-catalog': document.getElementById('panel-db-catalog'),
   'glossary-db': document.getElementById('panel-glossary-db'),
   'movie-db': document.getElementById('panel-movie-db'),
   'tool-registry': document.getElementById('panel-tool-registry'),
@@ -1314,6 +1315,7 @@ function switchTab(tab) {
   if (tab === 'news-pack' && typeof refreshNewsPack === 'function') refreshNewsPack();
   if (tab === 'memory-archive' && typeof refreshMemoryArchiveDatabase === 'function') refreshMemoryArchiveDatabase();
   if (tab === 'knowledge-memory' && typeof refreshKnowledgeMemoryLedger === 'function') refreshKnowledgeMemoryLedger();
+  if (tab === 'db-catalog' && typeof refreshDataCapabilityCatalog === 'function') refreshDataCapabilityCatalog();
   if (tab === 'glossary-db' && typeof refreshGlossaryDatabase === 'function') refreshGlossaryDatabase();
   if (tab === 'tool-registry' && typeof refreshToolRegistryDatabase === 'function') refreshToolRegistryDatabase();
   if (tab === 'backlog' && typeof refreshBacklog === 'function') refreshBacklog();

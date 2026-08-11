@@ -47,8 +47,6 @@ function movieDbQueryParams(action) {
   if (movieDbState.mode === 'movies') {
     if (movieDbState.role) params.set('role', movieDbState.role);
     if (movieDbState.source) params.set('source', movieDbState.source);
-  } else {
-    params.set('role', '出演');
   }
   return params;
 }
@@ -127,7 +125,7 @@ function movieDbRefreshList() {
   const title = movieDbEl('movieDbListTitle');
   const rows = movieDbEl('movieDbRows');
   const detail = movieDbEl('movieDbDetail');
-  if (title) title.textContent = movieDbState.mode === 'people' ? '俳優' : '映画';
+  if (title) title.textContent = movieDbState.mode === 'people' ? '人物' : '映画';
   if (rows) rows.innerHTML = '<div class="daily-desk-muted">loading...</div>';
   if (detail && !movieDbState.selectedID) detail.textContent = '項目を選ぶと詳細を表示します。';
   const params = movieDbQueryParams(movieDbState.mode);
@@ -192,19 +190,17 @@ function movieDbRenderRows(items) {
 
 function movieDbTableHeadHTML() {
   if (movieDbState.mode === 'people') {
-    return '<tr><th>俳優</th><th>知ってる</th><th>知らない</th><th>好き</th><th>嫌い</th></tr>';
+    return '<tr><th>人物</th><th>みた</th><th>すき</th></tr>';
   }
-  return '<tr><th>映画</th><th>見た</th><th>見てない</th><th>好き</th><th>嫌い</th></tr>';
+  return '<tr><th>映画</th><th>みた</th><th>すき</th></tr>';
 }
 
 function movieDbMovieRowHTML(item) {
   const id = movieDbItemID(item);
   return '<tr class="movie-db-row' + (movieDbState.selectedID === id ? ' active' : '') + '" data-id="' + escAttr(id) + '">' +
     '<td class="movie-db-title-cell">' + esc(item.title || '-') + '</td>' +
-    '<td>' + movieDbAssessmentToggleHTML(item, 'familiarity', 'seen', '見た') + '</td>' +
-    '<td>' + movieDbAssessmentToggleHTML(item, 'familiarity', 'unseen', '見てない') + '</td>' +
-    '<td>' + movieDbAssessmentToggleHTML(item, 'sentiment', 'like', '好き') + '</td>' +
-    '<td>' + movieDbAssessmentToggleHTML(item, 'sentiment', 'dislike', '嫌い') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'familiarity', 'seen', 'みた') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'sentiment', 'like', 'すき') + '</td>' +
     '</tr>';
 }
 
@@ -212,10 +208,8 @@ function movieDbPersonRowHTML(item) {
   const id = movieDbItemID(item);
   return '<tr class="movie-db-row' + (movieDbState.selectedID === id ? ' active' : '') + '" data-id="' + escAttr(id) + '">' +
     '<td class="movie-db-title-cell">' + esc(item.name || '-') + '</td>' +
-    '<td>' + movieDbAssessmentToggleHTML(item, 'familiarity', 'known', '知ってる') + '</td>' +
-    '<td>' + movieDbAssessmentToggleHTML(item, 'familiarity', 'unknown', '知らない') + '</td>' +
-    '<td>' + movieDbAssessmentToggleHTML(item, 'sentiment', 'like', '好き') + '</td>' +
-    '<td>' + movieDbAssessmentToggleHTML(item, 'sentiment', 'dislike', '嫌い') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'familiarity', 'known', 'みた') + '</td>' +
+    '<td>' + movieDbAssessmentToggleHTML(item, 'sentiment', 'like', 'すき') + '</td>' +
     '</tr>';
 }
 

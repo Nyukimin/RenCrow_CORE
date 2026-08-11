@@ -37,6 +37,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /viewer/databases/conversation-archive` | Conversation Archive（`memory_archive.db`）の読み取り専用snapshot |
 | `GET /viewer/databases/glossary` | Glossary DBの読み取り専用snapshot |
 | `GET /viewer/databases/tool-registry` | production Worker runtimeとTool Registry DBを統合した有効Toolの読み取り専用snapshot |
+| `GET /viewer/databases/catalog` | 起動時にAgentへ供給した同一Data Capability Catalogの読み取り専用metadata projection |
 | `GET /viewer/capabilities` | Tool／Skill／MCPのRuntime Capability Snapshot読み取り |
 | `POST /viewer/capabilities/apply` | capability sourceを検証し、必要時だけCOREの再起動反映を予約 |
 | `GET /viewer/capabilities/apply/{request_id}` | apply receiptと再起動後の検証状態を読み取り |
@@ -68,6 +69,11 @@ metadataと、設定済みSQLite Tool Registryのplatform適合行を、名前�
 SQLite未設定でもruntime toolを返し、SQLite読込失敗時はruntime toolを隠さず`error`へ部分失敗を
 示します。全sourceが空の場合は`available=false`です。これは読み取りAPIであり、Tool登録、実行、
 権限付与、RenCrow_Tools配下の実行file探索を行いません。
+
+`GET /viewer/databases/catalog`は、起動時にChat／Workerへ供給した同一catalog instanceから、
+20件の設定DB key、owner、data category、status、safe operation、Tool ID、sensitivity、reasonを
+返します。絶対path、DB row、SQL、実DBのrow countは返さず、filesystem scanやTool実行も
+行いません。providerが利用できない場合は`available=false`を明示します。
 
 ### Capability Applyとstatus
 

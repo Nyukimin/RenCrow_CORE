@@ -634,19 +634,27 @@ func TestViewerStaticContractMovieAssessmentGrid(t *testing.T) {
 		}
 	}
 	for _, needle := range []string{
-		"見た",
-		"見てない",
-		"知ってる",
-		"知らない",
-		"好き",
-		"嫌い",
+		`return '<tr><th>人物</th><th>みた</th><th>すき</th></tr>'`,
+		`return '<tr><th>映画</th><th>みた</th><th>すき</th></tr>'`,
+		`movieDbAssessmentToggleHTML(item, 'familiarity', 'seen', 'みた')`,
+		`movieDbAssessmentToggleHTML(item, 'familiarity', 'known', 'みた')`,
+		`movieDbAssessmentToggleHTML(item, 'sentiment', 'like', 'すき')`,
 		"movie-db-assessment-toggle",
 		"dimension: dimension",
 		"value: value",
+		`const value = control.checked ? String(control.dataset.value || '') : '';`,
 	} {
 		if !strings.Contains(js, needle) {
 			t.Fatalf("movie assessment grid contract missing %q", needle)
 		}
+	}
+	for _, forbidden := range []string{"見てない", "嫌い", "知ってる", "知らない", `params.set('role', '出演')`} {
+		if strings.Contains(js, forbidden) {
+			t.Fatalf("movie assessment list retains forbidden control/filter %q", forbidden)
+		}
+	}
+	if !strings.Contains(html, `id="movieDbModePeople" class="movie-db-mode-btn" type="button">人物</button>`) {
+		t.Fatal("people selector must be displayed as 人物")
 	}
 }
 

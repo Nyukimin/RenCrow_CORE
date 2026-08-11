@@ -1,0 +1,52 @@
+package datacapability
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestCatalogContainsEveryKnownStoreWithoutPaths(t *testing.T) {
+	states := map[string]StoreState{"glossary": {Configured: true, Exists: true}, "movie_catalog": {Configured: true, Exists: true}}
+	catalog := Build(states)
+	all := catalog.All()
+	if len(all) != len(KnownStoreKeys()) {
+		t.Fatalf("entries=%d keys=%d", len(all), len(KnownStoreKeys()))
+	}
+	encoded, err := json.Marshal(all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "/srv/") || strings.Contains(string(encoded), ".db") {
+		t.Fatalf("catalog leaked a path: %s", encoded)
+	}
+	for _, key := range KnownStoreKeys() {
+		entry, err := catalog.Describe(key)
+		if err != nil || entry.PhysicalKey != "storage.databases."+key {
+			t.Fatalf("missing key %s: %#v err=%v", key, entry, err)
+		}
+	}
+	if entry, _ := catalog.Describe("glossary"); entry.Status != "available" || entry.ToolID != "glossary.lookup" {
+		t.Fatalf("glossary=%#v", entry)
+	}
+	if entry, _ := catalog.Describe("conversation_l1"); entry.Status != "restricted" {
+		t.Fatalf("conversation=%#v", entry)
+	}
+	if entry, _ := catalog.Describe("knowledge_memory"); entry.Status != "blocked" || entry.Reason != "full_scan_policy" {
+		t.Fatalf("knowledge=%#v", entry)
+	}
+}
+
+func TestCatalogMissingSemanticStoreIsUnavailable(t *testing.T) {
+	catalog := Build(map[string]StoreState{"glossary": {Configured: true, Exists: false}})
+	entry, err := catalog.Describe("glossary")
+	if err != nil || entry.Status != "unavailable" || entry.Reason != "database_unavailable" {
+		t.Fatalf("entry=%#v err=%v", entry, err)
+	}
+	if _, err := catalog.Describe(""); err == nil {
+		t.Fatal("expected blank-name error")
+	}
+	if _, err := catalog.Describe("unknown"); err == nil {
+		t.Fatal("expected unknown-name error")
+	}
+}

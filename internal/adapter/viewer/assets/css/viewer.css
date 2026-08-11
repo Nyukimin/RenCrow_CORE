@@ -85,6 +85,12 @@ header{
 .memory-db-nav[hidden]{display:none}
 .memory-db-tab{min-height:36px;padding:7px 9px;font-size:11px;font-weight:650}
 .database-viewer-summary{grid-template-columns:minmax(min(280px,100%),420px)}
+.db-catalog-summary{grid-template-columns:repeat(4,minmax(150px,1fr));margin-bottom:14px}
+.db-catalog-details td{max-width:280px;overflow-wrap:anywhere;vertical-align:top}
+.db-catalog-status{display:inline-block;padding:3px 8px;border:1px solid var(--border);border-radius:999px;font-weight:700;white-space:nowrap}
+.db-catalog-status-available{color:var(--ok)}
+.db-catalog-status-unavailable,.db-catalog-status-restricted{color:var(--warn)}
+.db-catalog-status-blocked{color:var(--err)}
 .mobile-panel-switch{display:none}
 
 main{min-width:0;width:100%;max-width:100vw;overflow-y:auto;overflow-x:hidden;padding:18px 0 calc(var(--input-h) + 24px + var(--safe-bottom));position:relative}
@@ -931,6 +937,8 @@ body.theme-compact .input-wrap textarea{min-height:38px;max-height:86px}
   #panel-news-pack #newsPackDetail{height:min(62dvh,620px);min-height:420px}
 }
 @media (max-width: 640px){
+  .db-catalog-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .db-catalog-summary .card{min-width:0}
   header{gap:8px}
   .logo span{display:none}
   .stat{font-size:12px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

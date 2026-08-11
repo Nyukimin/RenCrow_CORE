@@ -87,6 +87,15 @@ func (r *ToolRunner) registerOptionalTools() {
 	if r.config.MCPToolCatalog != nil && r.config.MCPToolCatalog.Len() > 0 {
 		r.registerMCPTools()
 	}
+	if r.config.MovieCatalogLookup != nil {
+		r.registerMovieCatalogLookupTool()
+	}
+	if r.config.DataCapabilityCatalog != nil {
+		r.registerDataCapabilityTool()
+	}
+	if r.config.GlossaryLookup != nil {
+		r.registerGlossaryTool()
+	}
 }
 
 func (r *ToolRunner) registerToolMetadata() {
@@ -297,6 +306,15 @@ func (r *ToolRunner) registerToolMetadata() {
 		for _, entry := range r.config.MCPToolCatalog.Entries() {
 			r.metadata[entry.ToolID] = mcpToolMetadata(entry)
 		}
+	}
+	if r.config.MovieCatalogLookup != nil {
+		r.metadata["movie_catalog.lookup"] = movieCatalogLookupMetadata()
+	}
+	if r.config.DataCapabilityCatalog != nil {
+		r.metadata["data_capability.describe"] = dataCapabilityMetadata()
+	}
+	if r.config.GlossaryLookup != nil {
+		r.metadata["glossary.lookup"] = glossaryMetadata()
 	}
 
 	if r.config.ToolRegistry != nil {
