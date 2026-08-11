@@ -328,7 +328,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		return "", err
 	}
 
-	response := strings.TrimSpace(resp.Content)
+	response := stripLeadingAgentSelfLabel(resp.Content, currentSpeaker)
 	finalGeneration := resp
 	if violatesAttributionInChat(response, latestOther) {
 		retryMessages := append([]llm.Message{}, messages...)
@@ -338,11 +338,12 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		})
 		retryResp, retryErr := m.llmProvider.Generate(ctx, m.generationRequest(retryMessages, llm.StreamCallbackFromContext(ctx)))
 		if retryErr == nil && strings.TrimSpace(retryResp.Content) != "" {
-			response = strings.TrimSpace(retryResp.Content)
+			response = stripLeadingAgentSelfLabel(retryResp.Content, currentSpeaker)
 			finalGeneration = retryResp
 		}
 	}
 	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
+	response = stripLeadingAgentSelfLabel(response, currentSpeaker)
 	m.rememberExpression(response)
 	if onMetrics := llm.GenerationMetricsCallbackFromContext(ctx); onMetrics != nil && (finalGeneration.TokensUsed > 0 || finalGeneration.TokensPerSecond > 0) {
 		onMetrics(llm.GenerationMetrics{
@@ -362,6 +363,22 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 	}
 
 	return response, nil
+}
+
+// stripLeadingAgentSelfLabel removes a model-generated speaker label from the
+// user-visible body. Speaker identity remains available through event and
+// conversation metadata, so duplicating it in text is unnecessary.
+func stripLeadingAgentSelfLabel(content string, speaker conversation.Speaker) string {
+	trimmed := strings.TrimSpace(content)
+	name := strings.TrimSpace(string(speaker))
+	if trimmed == "" || name == "" {
+		return trimmed
+	}
+	label := "[" + name + "]"
+	if len(trimmed) < len(label) || !strings.EqualFold(trimmed[:len(label)], label) {
+		return trimmed
+	}
+	return strings.TrimSpace(strings.TrimLeft(trimmed[len(label):], ":："))
 }
 
 func (m *MioAgent) systemPromptForViewerRecipient(recipient string) string {

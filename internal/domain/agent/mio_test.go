@@ -475,6 +475,27 @@ func (m *mockConversationEngine) ResetSession(ctx context.Context, sessionID str
 	return nil
 }
 
+func TestStripLeadingAgentSelfLabel(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		speaker conversation.Speaker
+		want    string
+	}{
+		{name: "plain label", content: "[mio] こんにちは", speaker: conversation.SpeakerMio, want: "こんにちは"},
+		{name: "case and colon", content: " [MIO]：こんにちは ", speaker: conversation.SpeakerMio, want: "こんにちは"},
+		{name: "other speaker is content", content: "[shiro]からの報告です", speaker: conversation.SpeakerMio, want: "[shiro]からの報告です"},
+		{name: "embedded label", content: "引用: [mio] こんにちは", speaker: conversation.SpeakerMio, want: "引用: [mio] こんにちは"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stripLeadingAgentSelfLabel(tt.content, tt.speaker); got != tt.want {
+				t.Fatalf("stripLeadingAgentSelfLabel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // === Phase 1C: ConversationEngine integration tests ===
 
 func TestMioAgent_Chat_WithConversationEngine(t *testing.T) {
