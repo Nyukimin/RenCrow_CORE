@@ -177,7 +177,7 @@ func (d *RuleDictionary) Match(t task.Task) (routing.Route, float64, bool) {
 	// ルールを順番にチェック
 	for _, rule := range d.rules {
 		for _, keyword := range rule.keywords {
-			if strings.Contains(message, strings.ToLower(keyword)) {
+			if containsActionableKeyword(message, strings.ToLower(keyword)) {
 				return rule.route, rule.confidence, true
 			}
 		}
@@ -190,6 +190,49 @@ func (d *RuleDictionary) Match(t task.Task) (routing.Route, float64, bool) {
 	}
 
 	return "", 0.0, false
+}
+
+// containsActionableKeyword scans every occurrence so a reportive use can be
+// skipped without hiding a later, separate work request in the same message.
+func containsActionableKeyword(message, keyword string) bool {
+	if keyword == "" {
+		return false
+	}
+	searchFrom := 0
+	for searchFrom <= len(message)-len(keyword) {
+		relativeIndex := strings.Index(message[searchFrom:], keyword)
+		if relativeIndex < 0 {
+			return false
+		}
+		matchStart := searchFrom + relativeIndex
+		suffix := message[matchStart+len(keyword):]
+		if !isReportiveKeywordOccurrence(keyword, suffix) {
+			return true
+		}
+		searchFrom = matchStart + len(keyword)
+	}
+	return false
+}
+
+func isReportiveKeywordOccurrence(keyword, suffix string) bool {
+	if strings.HasSuffix(keyword, "して") {
+		return hasAnyPrefix(suffix,
+			"みた", "みました",
+			"ある", "あります",
+			"おいた", "おきました",
+			"もらった", "いただいた",
+		)
+	}
+	return hasAnyPrefix(suffix, "した", "しました", "してみた", "済み", "完了")
+}
+
+func hasAnyPrefix(value string, prefixes ...string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func isObviousGreeting(message string) bool {
@@ -255,7 +298,7 @@ func isCodeEditRequest(message string) bool {
 		"変更", "修正", "追記", "編集", "更新", "実装", "追加", "削除", "書き換", "直して",
 	}
 	for _, hint := range editHints {
-		if strings.Contains(message, hint) {
+		if containsActionableKeyword(message, hint) {
 			return true
 		}
 	}

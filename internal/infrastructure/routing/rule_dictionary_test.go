@@ -247,6 +247,68 @@ func TestRuleDictionary_Match_CodeKeywords(t *testing.T) {
 	}
 }
 
+func TestRuleDictionary_ReportiveSyntaxDoesNotBecomeWorkRequest(t *testing.T) {
+	dict := NewRuleDictionary()
+	reportiveMessages := []string{
+		"SystemPrompt修正してみたよ",
+		"README.mdを修正してみたよ",
+		"設定を実装してみました。",
+		"設定は実装してあるよ",
+		"設定は実装してあります。",
+		"設定を実装しておいた",
+		"設定を実装しておきました。",
+		"設定を実装してもらったよ",
+		"設定を実装していただいた。",
+		"デプロイしたよ",
+		"デプロイしました。",
+		"デプロイ済みです",
+		"デプロイ完了です",
+		"テストを追加しました",
+		"テストを追加してみたよ",
+		"計画しました",
+		"ログを調査してみたよ",
+		"画像生成してみたよ",
+	}
+
+	for _, message := range reportiveMessages {
+		t.Run(message, func(t *testing.T) {
+			route, _, matched := dict.Match(task.NewTask(task.NewJobID(), message, "viewer", "viewer-user"))
+			if matched {
+				t.Fatalf("reportive message route = %s matched=true, want no rule match", route)
+			}
+		})
+	}
+}
+
+func TestRuleDictionary_ReportiveSyntaxPreservesCommands(t *testing.T) {
+	dict := NewRuleDictionary()
+	tests := []struct {
+		message string
+		route   routing.Route
+	}{
+		{message: "SystemPromptを修正して", route: routing.RouteCODE2},
+		{message: "修正してみたけど、おかしいから直して", route: routing.RouteCODE2},
+		{message: "修正してみて", route: routing.RouteCODE2},
+		{message: "修正してください", route: routing.RouteCODE2},
+		{message: "修正してほしい", route: routing.RouteCODE2},
+		{message: "修正しておいて", route: routing.RouteCODE2},
+		{message: "デプロイして", route: routing.RouteOPS},
+		{message: "テストを追加してください", route: routing.RouteCODE2},
+		{message: "計画して", route: routing.RoutePLAN},
+		{message: "ログを調査して", route: routing.RouteANALYZE},
+		{message: "画像生成して", route: routing.RouteWILD},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.message, func(t *testing.T) {
+			route, _, matched := dict.Match(task.NewTask(task.NewJobID(), tt.message, "viewer", "viewer-user"))
+			if !matched || route != tt.route {
+				t.Fatalf("command route = %s matched=%t, want %s", route, matched, tt.route)
+			}
+		})
+	}
+}
+
 func TestIsCodeEditRequest(t *testing.T) {
 	tests := []struct {
 		name    string
