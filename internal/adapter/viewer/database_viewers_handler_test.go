@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -8,8 +9,23 @@ import (
 	"path/filepath"
 	"testing"
 
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	_ "modernc.org/sqlite"
 )
+
+func runtimeToolProvider(metas ...domaintool.ToolMetadata) func(context.Context) ([]domaintool.ToolMetadata, error) {
+	return func(context.Context) ([]domaintool.ToolMetadata, error) { return metas, nil }
+}
+
+func databaseViewerOptionsWithRuntimeTools(t *testing.T, dbPath string, metas ...domaintool.ToolMetadata) DatabaseViewerOptions {
+	t.Helper()
+	return DatabaseViewerOptions{DBPath: dbPath, RuntimeTools: runtimeToolProvider(metas...)}
+}
+
+func runtimeToolMetadata(t *testing.T, id, description, origin string) domaintool.ToolMetadata {
+	t.Helper()
+	return domaintool.ToolMetadata{ToolID: id, Description: description, Origin: origin}
+}
 
 func TestHandleConversationArchiveDatabaseListsOnlyArchiveRows(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "memory_archive.db")
@@ -110,6 +126,81 @@ func TestHandleToolRegistryDatabaseListsRegistryRows(t *testing.T) {
 	}
 	if !out.Available || len(out.Items) != 1 || out.Items[0].Name != "movie-fetch" || len(out.Items[0].Platforms) != 2 {
 		t.Fatalf("unexpected tool registry response: %+v", out)
+	}
+}
+
+func TestHandleToolRegistryDatabaseListsRuntimeToolsWithoutDatabase(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/viewer/databases/tool-registry?limit=10", nil)
+	rec := httptest.NewRecorder()
+	HandleToolRegistryDatabase(databaseViewerOptionsWithRuntimeTools(t, "",
+		runtimeToolMetadata(t, "shell", "shell", ""),
+		runtimeToolMetadata(t, "browser.run", "browser", "rencrow_tools"),
+	)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Available bool `json:"available"`
+		Total     int  `json:"total"`
+		Items     []struct {
+			Name   string `json:"name"`
+			Origin string `json:"origin"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Available || out.Total != 2 || out.Items[0].Name != "browser.run" || out.Items[0].Origin != "rencrow_tools" || out.Items[1].Name != "shell" || out.Items[1].Origin != "core_runtime" {
+		t.Fatalf("unexpected runtime tools: %+v", out)
+	}
+}
+
+func TestHandleToolRegistryDatabaseMergesRuntimeAndDynamicWithRuntimePrecedence(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "tool_registry.db")
+	db := openDatabaseViewerTestDB(t, dbPath)
+	mustExecDatabaseViewerTest(t, db, `CREATE TABLE tool_registry (
+		name TEXT PRIMARY KEY, description TEXT, schema_json TEXT, platforms TEXT,
+		source TEXT, created_at DATETIME, created_by TEXT
+	)`)
+	mustExecDatabaseViewerTest(t, db, `INSERT INTO tool_registry VALUES
+		('alpha', 'dynamic collision', '{}', '["linux"]', 'shiro-generated', '2026-08-01T10:00:00Z', 'shiro'),
+		('zeta', 'dynamic only', '{}', '["linux"]', 'shiro-generated', '2026-08-01T10:00:00Z', 'shiro')`)
+	db.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/viewer/databases/tool-registry?platform=linux&limit=10", nil)
+	rec := httptest.NewRecorder()
+	HandleToolRegistryDatabase(databaseViewerOptionsWithRuntimeTools(t, dbPath,
+		runtimeToolMetadata(t, "alpha", "runtime collision", ""),
+	)).ServeHTTP(rec, req)
+	var out struct {
+		Items []struct {
+			Name, Description, Origin string
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 2 || out.Items[0].Name != "alpha" || out.Items[0].Description != "runtime collision" || out.Items[0].Origin != "core_runtime" || out.Items[1].Name != "zeta" || out.Items[1].Origin != "dynamic_registry" {
+		t.Fatalf("unexpected merged tools: %+v", out.Items)
+	}
+}
+
+func TestHandleToolRegistryDatabaseReturnsRuntimeToolsOnDatabaseError(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/viewer/databases/tool-registry", nil)
+	rec := httptest.NewRecorder()
+	HandleToolRegistryDatabase(databaseViewerOptionsWithRuntimeTools(t, t.TempDir(),
+		runtimeToolMetadata(t, "shell", "", ""),
+	)).ServeHTTP(rec, req)
+	var out struct {
+		Available bool   `json:"available"`
+		Total     int    `json:"total"`
+		Error     string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Available || out.Total != 1 || out.Error == "" {
+		t.Fatalf("unexpected partial response: %+v", out)
 	}
 }
 

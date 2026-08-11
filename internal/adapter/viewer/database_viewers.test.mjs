@@ -80,6 +80,18 @@ test('Glossary and Tool Registry Viewers keep their data in separate tables', as
   assert.match(element('toolRegistryBody').innerHTML, /登録Toolはありません/);
 });
 
+test('Tool Registry Viewer renders effective tool origin and registry source', async () => {
+  const {context, element} = viewerContext(() => ({
+    available: true,
+    total: 1,
+    items: [{name: 'browser.run', description: 'browser', origin: 'rencrow_tools', source: 'builtin'}],
+  }));
+  await context.refreshToolRegistryDatabase();
+  assert.equal(element('toolRegistryCount').textContent, '1');
+  assert.match(element('toolRegistryBody').innerHTML, /rencrow_tools/);
+  assert.match(element('toolRegistryBody').innerHTML, /builtin/);
+});
+
 test('Memory database panels keep Knowledge Memory and Archive out of Conversation L1', () => {
   const html = fs.readFileSync('internal/adapter/viewer/viewer.html', 'utf8');
   const viewerJS = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');

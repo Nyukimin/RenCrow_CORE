@@ -110,7 +110,7 @@ function refreshToolRegistryDatabase() {
         '<tr><td>' + databaseViewerEscape(item.name || '-') + '</td>' +
         '<td>' + databaseViewerEscape(item.description || '-') + '</td>' +
         '<td>' + databaseViewerEscape(Array.isArray(item.platforms) ? item.platforms.join(', ') : '-') + '</td>' +
-        '<td>' + databaseViewerEscape(item.source || '-') + '</td>' +
+        '<td>' + databaseViewerEscape(item.origin || '-') + (item.source ? ' / ' + databaseViewerEscape(item.source) : '') + '</td>' +
         '<td>' + databaseViewerEscape(item.created_by || '-') + '</td>' +
         '<td>' + databaseViewerEscape(item.created_at || '-') + '</td></tr>'
       )).join('') : '<tr><td colspan="6">登録Toolはありません。</td></tr>';

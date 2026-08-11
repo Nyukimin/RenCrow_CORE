@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -8,15 +9,19 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	_ "modernc.org/sqlite"
 )
 
 // DatabaseViewerOptions identifies one configured SQLite database exposed by a
 // read-only Viewer. Handlers never create, migrate, or modify the configured DB.
 type DatabaseViewerOptions struct {
-	DBPath string
+	DBPath       string
+	RuntimeTools func(context.Context) ([]domaintool.ToolMetadata, error)
 }
 
 type databaseViewerResponse struct {
@@ -56,6 +61,7 @@ type toolRegistryDatabaseViewerItem struct {
 	Source      string   `json:"source"`
 	CreatedAt   string   `json:"created_at"`
 	CreatedBy   string   `json:"created_by"`
+	Origin      string   `json:"origin"`
 }
 
 func HandleConversationArchiveDatabase(opts DatabaseViewerOptions) http.HandlerFunc {
@@ -182,78 +188,117 @@ func HandleToolRegistryDatabase(opts DatabaseViewerOptions) http.HandlerFunc {
 			http.Error(w, "invalid limit", http.StatusBadRequest)
 			return
 		}
-		db, path, ok := openViewerSQLiteReadOnly(w, opts.DBPath)
-		if !ok {
-			return
-		}
-		defer db.Close()
-
 		platform := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("platform")))
-		where := ""
-		args := make([]any, 0, 2)
-		if platform != "" {
-			where = " WHERE platforms LIKE ?"
-			args = append(args, "%\""+platform+"\"%")
+		itemsByName := map[string]toolRegistryDatabaseViewerItem{}
+		partialErrors := make([]string, 0, 2)
+		if opts.RuntimeTools != nil {
+			metas, runtimeErr := opts.RuntimeTools(r.Context())
+			if runtimeErr != nil {
+				partialErrors = append(partialErrors, "runtime tools unavailable")
+			} else {
+				for _, meta := range metas {
+					if platform != "" && platform != runtime.GOOS {
+						continue
+					}
+					name := strings.TrimSpace(meta.ToolID)
+					if name == "" {
+						continue
+					}
+					origin := strings.TrimSpace(meta.Origin)
+					if origin == "" {
+						origin = domaintool.OriginCoreRuntime
+					}
+					schemaJSON := "{}"
+					if len(meta.Parameters) > 0 {
+						if encoded, err := json.Marshal(meta.Parameters); err == nil {
+							schemaJSON = string(encoded)
+						}
+					}
+					itemsByName[name] = toolRegistryDatabaseViewerItem{Name: name, Description: meta.Description, SchemaJSON: schemaJSON, Platforms: []string{runtime.GOOS}, Source: "runtime", Origin: origin}
+				}
+			}
 		}
-		var total int
-		if err := db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM tool_registry"+where, args...).Scan(&total); err != nil {
-			http.Error(w, "failed to count Tool Registry", http.StatusInternalServerError)
-			return
-		}
-		queryArgs := append(append([]any{}, args...), limit)
-		rows, err := db.QueryContext(r.Context(), `
+
+		path := ""
+		databaseAvailable := false
+		if strings.TrimSpace(opts.DBPath) != "" {
+			db, resolvedPath, openErr := openViewerSQLiteReadOnlyResult(opts.DBPath)
+			path = resolvedPath
+			if openErr != nil {
+				partialErrors = append(partialErrors, openErr.Error())
+			} else {
+				databaseAvailable = true
+				defer db.Close()
+				where := ""
+				args := make([]any, 0, 2)
+				if platform != "" {
+					where = " WHERE platforms LIKE ?"
+					args = append(args, "%\""+platform+"\"%")
+				}
+				rows, queryErr := db.QueryContext(r.Context(), `
 			SELECT name, description, schema_json, platforms, source,
 			       CAST(created_at AS TEXT), created_by
-			FROM tool_registry`+where+` ORDER BY name LIMIT ?`, queryArgs...)
-		if err != nil {
-			http.Error(w, "failed to load Tool Registry", http.StatusInternalServerError)
-			return
+			FROM tool_registry`+where+` ORDER BY name LIMIT 300`, args...)
+				if queryErr != nil {
+					partialErrors = append(partialErrors, "failed to load Tool Registry")
+				} else {
+					for rows.Next() {
+						var item toolRegistryDatabaseViewerItem
+						var platformsJSON string
+						if err := rows.Scan(&item.Name, &item.Description, &item.SchemaJSON, &platformsJSON, &item.Source, &item.CreatedAt, &item.CreatedBy); err != nil {
+							partialErrors = append(partialErrors, "failed to scan Tool Registry")
+							break
+						}
+						if _, exists := itemsByName[item.Name]; exists {
+							continue
+						}
+						if err := json.Unmarshal([]byte(platformsJSON), &item.Platforms); err != nil {
+							item.Platforms = []string{}
+						}
+						item.Origin = domaintool.OriginDynamicRegistry
+						itemsByName[item.Name] = item
+					}
+					if err := rows.Err(); err != nil {
+						partialErrors = append(partialErrors, "failed to read Tool Registry")
+					}
+					rows.Close()
+				}
+			}
 		}
-		defer rows.Close()
-		items := make([]toolRegistryDatabaseViewerItem, 0, limit)
-		for rows.Next() {
-			var item toolRegistryDatabaseViewerItem
-			var platformsJSON string
-			if err := rows.Scan(&item.Name, &item.Description, &item.SchemaJSON, &platformsJSON, &item.Source, &item.CreatedAt, &item.CreatedBy); err != nil {
-				http.Error(w, "failed to scan Tool Registry", http.StatusInternalServerError)
-				return
-			}
-			if err := json.Unmarshal([]byte(platformsJSON), &item.Platforms); err != nil {
-				item.Platforms = []string{}
-			}
+
+		items := make([]toolRegistryDatabaseViewerItem, 0, len(itemsByName))
+		for _, item := range itemsByName {
 			items = append(items, item)
 		}
-		if err := rows.Err(); err != nil {
-			http.Error(w, "failed to read Tool Registry", http.StatusInternalServerError)
-			return
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+		total := len(items)
+		if len(items) > limit {
+			items = items[:limit]
 		}
-		writeJSON(w, http.StatusOK, databaseViewerResponse{Available: true, DBPath: path, Total: total, Items: items})
+		available := total > 0 || databaseAvailable
+		errorMessage := strings.Join(partialErrors, "; ")
+		if !available && errorMessage == "" {
+			errorMessage = "database is not configured"
+		}
+		writeJSON(w, http.StatusOK, databaseViewerResponse{Available: available, DBPath: path, Total: total, Items: items, Error: errorMessage})
 	}
 }
 
-func openViewerSQLiteReadOnly(w http.ResponseWriter, configuredPath string) (*sql.DB, string, bool) {
+func openViewerSQLiteReadOnlyResult(configuredPath string) (*sql.DB, string, error) {
 	path := strings.TrimSpace(configuredPath)
-	if path == "" {
-		writeJSON(w, http.StatusOK, databaseViewerResponse{Available: false, Total: 0, Items: []any{}, Error: "database is not configured"})
-		return nil, "", false
-	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		writeJSON(w, http.StatusOK, databaseViewerResponse{Available: false, DBPath: path, Total: 0, Items: []any{}, Error: "database path is invalid"})
-		return nil, path, false
+		return nil, path, fmt.Errorf("database path is invalid")
 	}
 	info, err := os.Stat(absPath)
 	if err != nil {
-		message := "database not found"
-		if !os.IsNotExist(err) {
-			message = "database stat failed"
+		if os.IsNotExist(err) {
+			return nil, absPath, fmt.Errorf("database not found")
 		}
-		writeJSON(w, http.StatusOK, databaseViewerResponse{Available: false, DBPath: absPath, Total: 0, Items: []any{}, Error: message})
-		return nil, absPath, false
+		return nil, absPath, fmt.Errorf("database stat failed")
 	}
 	if info.IsDir() {
-		writeJSON(w, http.StatusOK, databaseViewerResponse{Available: false, DBPath: absPath, Total: 0, Items: []any{}, Error: "database path is a directory"})
-		return nil, absPath, false
+		return nil, absPath, fmt.Errorf("database path is a directory")
 	}
 	dsnURL := &url.URL{Scheme: "file", Path: filepath.ToSlash(absPath)}
 	query := dsnURL.Query()
@@ -262,13 +307,25 @@ func openViewerSQLiteReadOnly(w http.ResponseWriter, configuredPath string) (*sq
 	dsnURL.RawQuery = query.Encode()
 	db, err := sql.Open("sqlite", dsnURL.String())
 	if err != nil {
-		writeJSON(w, http.StatusOK, databaseViewerResponse{Available: false, DBPath: absPath, Total: 0, Items: []any{}, Error: "database open failed"})
-		return nil, absPath, false
+		return nil, absPath, fmt.Errorf("database open failed")
 	}
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		writeJSON(w, http.StatusOK, databaseViewerResponse{Available: false, DBPath: absPath, Total: 0, Items: []any{}, Error: fmt.Sprintf("database ping failed: %v", err)})
-		return nil, absPath, false
+		return nil, absPath, fmt.Errorf("database ping failed: %v", err)
 	}
-	return db, absPath, true
+	return db, absPath, nil
+}
+
+func openViewerSQLiteReadOnly(w http.ResponseWriter, configuredPath string) (*sql.DB, string, bool) {
+	path := strings.TrimSpace(configuredPath)
+	if path == "" {
+		writeJSON(w, http.StatusOK, databaseViewerResponse{Available: false, Total: 0, Items: []any{}, Error: "database is not configured"})
+		return nil, "", false
+	}
+	db, resolvedPath, err := openViewerSQLiteReadOnlyResult(path)
+	if err != nil {
+		writeJSON(w, http.StatusOK, databaseViewerResponse{Available: false, DBPath: resolvedPath, Total: 0, Items: []any{}, Error: err.Error()})
+		return nil, resolvedPath, false
+	}
+	return db, resolvedPath, true
 }
