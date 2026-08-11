@@ -39,6 +39,7 @@ func buildViewerBridgeHandlers(
 				UserMessage:     req.Message,
 				To:              string(req.To),
 				OperationSource: req.Provenance.OperationSource,
+				AudioOutput:     orchestrator.AudioOutputIntent(req.AudioOutput),
 				Attachments:     req.Attachments,
 			})
 			if err != nil {

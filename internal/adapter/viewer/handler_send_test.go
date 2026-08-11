@@ -17,6 +17,103 @@ import (
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 )
 
+func TestHandleSendPreservesAudioOutputIntent(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		contentType string
+		body        func(t *testing.T) *bytes.Buffer
+		want        string
+	}{
+		{
+			name:        "json requested",
+			contentType: "application/json",
+			body: func(t *testing.T) *bytes.Buffer {
+				return bytes.NewBufferString(`{"message":"hello","audio_output":"requested"}`)
+			},
+			want: "requested",
+		},
+		{
+			name:        "json omitted",
+			contentType: "application/json",
+			body: func(t *testing.T) *bytes.Buffer {
+				return bytes.NewBufferString(`{"message":"hello"}`)
+			},
+			want: "",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			received := make(chan SendRequest, 1)
+			h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {
+				received <- req
+				return "ok", nil
+			}, nil)
+			body := tt.body(t)
+			req := httptest.NewRequest(http.MethodPost, "/viewer/send", body)
+			req.Header.Set("Content-Type", tt.contentType)
+			rec := httptest.NewRecorder()
+			h(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			select {
+			case got := <-received:
+				if actual := string(got.AudioOutput); actual != tt.want {
+					t.Fatalf("audio_output=%q want=%q", actual, tt.want)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("handler was not called")
+			}
+		})
+	}
+}
+
+func TestHandleSendPreservesMultipartAudioOutputIntent(t *testing.T) {
+	received := make(chan SendRequest, 1)
+	h := HandleSendWithAttachments(func(_ context.Context, req SendRequest) (string, error) {
+		received <- req
+		return "ok", nil
+	}, nil, &fakeAttachmentSaver{})
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("message", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("audio_output", "disabled"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case got := <-received:
+		if actual := string(got.AudioOutput); actual != "disabled" {
+			t.Fatalf("audio_output=%q want=disabled", actual)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("handler was not called")
+	}
+}
+
+func TestHandleSendRejectsUnknownAudioOutput(t *testing.T) {
+	h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {
+		return "ok", nil
+	}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","audio_output":"speaker"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want=400 body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 	received := make(chan SendRequest, 1)
 	h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {

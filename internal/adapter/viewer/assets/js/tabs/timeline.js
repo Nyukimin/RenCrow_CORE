@@ -5,13 +5,24 @@ function isExplicitRouteMessage(message) {
 
 function buildViewerSendRequest(message) {
   const trimmed = String(message || '').trim();
-  if (!trimmed) return {message: ''};
+  const audioOutput = typeof ttsPlayback !== 'undefined' && ttsPlayback && ttsPlayback.audioEnabled ? 'requested' : 'disabled';
+  const request = {message: trimmed, audio_output: audioOutput};
+  const viewerClientID = typeof viewerControl !== 'undefined' && viewerControl ? String(viewerControl.clientId || '').trim() : '';
+  if (viewerClientID) request.viewer_client_id = viewerClientID;
+  if (!trimmed) return request;
   const recipient = typeof selectedViewerChatRecipient === 'function' ? selectedViewerChatRecipient() : 'mio';
-  if (/^\/chat(\s|$)/.test(trimmed) && recipient) return {message: trimmed, to: recipient};
-  if (isExplicitRouteMessage(trimmed)) return {message: trimmed};
+  if (/^\/chat(\s|$)/.test(trimmed) && recipient) {
+    request.to = recipient;
+    return request;
+  }
+  if (isExplicitRouteMessage(trimmed)) return request;
 
-  if (recipient) return {message: trimmed, to: recipient};
-  return {message: applyRoleTargetToMessage(trimmed)};
+  if (recipient) {
+    request.to = recipient;
+    return request;
+  }
+  request.message = applyRoleTargetToMessage(trimmed);
+  return request;
 }
 
 const voiceDirectTimelineJobIDs = new Set();

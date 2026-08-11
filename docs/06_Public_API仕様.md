@@ -270,7 +270,7 @@ renameを移行要件にしません。
 
 `POST /viewer/recipient-selection`は`viewer_client_id`と`recipient`を受け、`viewer.recipient_selected`を観測eventとして発行します。選択状態はclient-localであり、COREのglobal stateにはせず、実際の送信先は`POST /viewer/send`の`to`を正とします。
 
-`POST /viewer/send`は`message`、`to`に加えて、clientを追跡できる場合は`viewer_client_id`、`input_source`（`text | stt | unknown`）、`user_id`、`device_name`を受けます。`input_source`の未知値は400で拒否します。`user_id`と`device_name`は観測用metadataであり、認証・認可には使用しません。PORTALに利用者認証がない現行構成では`user_id=viewer-user`、`device_name`はブラウザが公開するOS／platform名であり、端末hostnameではありません。
+`POST /viewer/send`は`message`、`to`に加えて、clientを追跡できる場合は`viewer_client_id`、`input_source`（`text | stt | unknown`）、`user_id`、`device_name`、`audio_output`（`requested | disabled`）をJSONと`multipart/form-data`の両方で受けます。`audio_output=disabled`は送信開始時点のsnapshotであり、そのrequestではTTS sessionを作成せず、合成を要求せず、TTS完了を待ちません。`requested`は従来のTTS処理を要求し、省略時も後方互換のため従来のTTS処理を維持します。未知の空でない`audio_output`と未知の`input_source`は400で拒否します。`user_id`と`device_name`は観測用metadataであり、認証・認可には使用しません。PORTALに利用者認証がない現行構成では`user_id=viewer-user`、`device_name`はブラウザが公開するOS／platform名であり、端末hostnameではありません。
 
 画像・動画を送る場合、`POST /viewer/send`は`multipart/form-data`を使い、
 `attachments`または`attachments[]`にfileを入れます。clientはRenCrow_VisionやWildのURLを

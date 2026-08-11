@@ -6,6 +6,27 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 )
 
+func TestPhase12TaskContextBuilderHonorsAudioOutputIntent(t *testing.T) {
+	builder := newMessageTaskContextBuilder(func(string, string, string, string, string, string, string, string, string) {}, func() bool { return true })
+	for _, tt := range []struct {
+		name      string
+		intent    string
+		wantEmpty bool
+	}{
+		{name: "disabled", intent: "disabled", wantEmpty: true},
+		{name: "requested", intent: "requested", wantEmpty: false},
+		{name: "omitted legacy", intent: "", wantEmpty: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ProcessMessageRequest{SessionID: "viewer", Channel: "viewer", ChatID: "viewer-user", UserMessage: "hello", AudioOutput: AudioOutputIntent(tt.intent)}
+			_, _, sessionID := builder.Build(req)
+			if (sessionID == "") != tt.wantEmpty {
+				t.Fatalf("sessionID=%q wantEmpty=%t", sessionID, tt.wantEmpty)
+			}
+		})
+	}
+}
+
 func TestPhase12TaskContextBuilderEmitsAttachmentEvent(t *testing.T) {
 	var events []OrchestratorEvent
 	builder := newMessageTaskContextBuilder(

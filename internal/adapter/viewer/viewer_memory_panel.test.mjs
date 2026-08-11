@@ -4902,12 +4902,28 @@ test('viewer chat send uses Shiro and Midori recipient contracts', () => {
   vm.runInContext(timelineJs, context);
 
   const req = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('作業手順を相談したい'))", context));
-  assert.deepEqual(req, {message: '作業手順を相談したい', to: 'shiro'});
+  assert.deepEqual(req, {message: '作業手順を相談したい', audio_output: 'disabled', to: 'shiro'});
   assert.equal(req.message.startsWith('/ops '), false);
 
   store.set('roleSelector.selectedTarget', 'midori');
   const midoriReq = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('物語を相談したい'))", context));
-  assert.deepEqual(midoriReq, {message: '物語を相談したい', to: 'midori'});
+  assert.deepEqual(midoriReq, {message: '物語を相談したい', audio_output: 'disabled', to: 'midori'});
+});
+
+test('viewer chat send snapshots audio output intent', () => {
+  const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
+  const context = vm.createContext({
+    selectedViewerChatRecipient: () => 'mio',
+    ttsPlayback: {audioEnabled: false},
+    viewerControl: {clientId: 'viewer-tab-a'},
+  });
+  vm.runInContext(timelineJs, context);
+  const disabled = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('hello'))", context));
+  assert.equal(disabled.audio_output, 'disabled');
+  assert.equal(disabled.viewer_client_id, 'viewer-tab-a');
+  context.ttsPlayback.audioEnabled = true;
+  const requested = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('hello'))", context));
+  assert.equal(requested.audio_output, 'requested');
 });
 
 test('viewer explicit chat keeps the selected Kuro recipient', () => {
@@ -4928,7 +4944,7 @@ test('viewer explicit chat keeps the selected Kuro recipient', () => {
   vm.runInContext(timelineJs, context);
 
   const req = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('/chat recall the token'))", context));
-  assert.deepEqual(req, {message: '/chat recall the token', to: 'kuro'});
+  assert.deepEqual(req, {message: '/chat recall the token', audio_output: 'disabled', to: 'kuro'});
 });
 
 test('viewer chat coder role target remains an explicit route command', () => {
@@ -4949,6 +4965,6 @@ test('viewer chat coder role target remains an explicit route command', () => {
   vm.runInContext(timelineJs, context);
 
   const req = JSON.parse(vm.runInContext("JSON.stringify(buildViewerSendRequest('実装方針を出して'))", context));
-  assert.deepEqual(req, {message: '/code1 実装方針を出して'});
+  assert.deepEqual(req, {message: '/code1 実装方針を出して', audio_output: 'disabled'});
   assert.equal(Object.hasOwn(req, 'to'), false);
 });

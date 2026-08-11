@@ -29,6 +29,13 @@ import (
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
 )
 
+type AudioOutputIntent string
+
+const (
+	AudioOutputRequested AudioOutputIntent = "requested"
+	AudioOutputDisabled  AudioOutputIntent = "disabled"
+)
+
 // ProcessMessageRequest はメッセージ処理リクエスト
 type ProcessMessageRequest struct {
 	JobID               string
@@ -40,6 +47,7 @@ type ProcessMessageRequest struct {
 	UserMessage         string
 	To                  string
 	OperationSource     string
+	AudioOutput         AudioOutputIntent
 	Attachments         []attachment.Attachment
 	originalUserMessage string
 }

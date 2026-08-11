@@ -21,6 +21,13 @@ import (
 type MessageHandler func(ctx context.Context, req SendRequest) (string, error)
 type MessageErrorHandler func(req SendRequest, err error)
 
+type AudioOutputIntent string
+
+const (
+	AudioOutputRequested AudioOutputIntent = "requested"
+	AudioOutputDisabled  AudioOutputIntent = "disabled"
+)
+
 // AttachmentSaver persists uploaded Viewer files before they enter orchestration.
 
 type AttachmentSaver interface {
@@ -34,6 +41,7 @@ type SendRequest struct {
 	MessageID      string
 	TraceID        string
 	ViewerClientID string
+	AudioOutput    AudioOutputIntent
 	Provenance     RequestProvenance
 	Message        string
 	To             modulechat.ViewerRecipient
@@ -42,6 +50,7 @@ type SendRequest struct {
 
 type viewerSendRequest struct {
 	ViewerClientID string `json:"viewer_client_id,omitempty"`
+	AudioOutput    string `json:"audio_output,omitempty"`
 	InputSource    string `json:"input_source,omitempty"`
 	UserID         string `json:"user_id,omitempty"`
 	DeviceName     string `json:"device_name,omitempty"`
@@ -85,6 +94,12 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 		}
 		req.To = string(recipient)
 		req.ViewerClientID = strings.TrimSpace(req.ViewerClientID)
+		audioOutput, err := normalizeAudioOutputIntent(req.AudioOutput)
+		if err != nil {
+			log.Printf("[Viewer] HandleSend: invalid audio output intent: %q", req.AudioOutput)
+			http.Error(w, "invalid audio_output", http.StatusBadRequest)
+			return
+		}
 		provenance, err := buildViewerRequestProvenance(r, req)
 		if err != nil {
 			log.Printf("[Viewer] HandleSend: invalid request provenance: %v", err)
@@ -98,6 +113,7 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			MessageID:      messageID,
 			TraceID:        jobID,
 			ViewerClientID: req.ViewerClientID,
+			AudioOutput:    audioOutput,
 			Provenance:     provenance,
 			To:             recipient,
 			Attachments:    attachments,
@@ -153,6 +169,16 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 	}
 }
 
+func normalizeAudioOutputIntent(raw string) (AudioOutputIntent, error) {
+	intent := AudioOutputIntent(strings.TrimSpace(raw))
+	switch intent {
+	case "", AudioOutputRequested, AudioOutputDisabled:
+		return intent, nil
+	default:
+		return "", fmt.Errorf("unknown audio_output %q", raw)
+	}
+}
+
 func defaultAttachmentMessage(attachments []domainattachment.Attachment) string {
 	for _, att := range attachments {
 		if att.Kind == domainattachment.KindVideo {
@@ -188,6 +214,7 @@ func parseViewerMultipartSendRequest(r *http.Request, saver AttachmentSaver) (vi
 	}
 	req := viewerSendRequest{
 		ViewerClientID: r.FormValue("viewer_client_id"),
+		AudioOutput:    r.FormValue("audio_output"),
 		InputSource:    r.FormValue("input_source"),
 		UserID:         r.FormValue("user_id"),
 		DeviceName:     r.FormValue("device_name"),
