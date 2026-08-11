@@ -196,6 +196,9 @@ func TestCompositeRunnerV2_ListTools_MergesBaseAndRegistry(t *testing.T) {
 	names := make(map[string]bool)
 	for _, m := range metas {
 		names[m.ToolID] = true
+		if m.ToolID == "custom_tool" && m.Origin != tool.OriginDynamicRegistry {
+			t.Fatalf("custom_tool origin=%q", m.Origin)
+		}
 	}
 	if !names["shell"] {
 		t.Error("expected 'shell' in ListTools")

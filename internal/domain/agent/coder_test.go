@@ -65,9 +65,50 @@ func TestCoderAgentBuilderOptionsAndGenerateWithContext(t *testing.T) {
 	}
 }
 
-func TestCoderAgentGenerateProposal(t *testing.T) {
+func TestCoderAgentStableRuntimeContextIsAddedWithoutChangingSystemPrompt(t *testing.T) {
+	var captured []llm.GenerateRequest
 	llmProvider := &mockLLMProvider{
 		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+			captured = append(captured, req)
+			return llm.GenerateResponse{Content: "context response"}, nil
+		},
+	}
+	stable := "## Runtime Capability Snapshot\n- 利用可能: shell"
+	coder := NewCoderAgent(llmProvider, nil, nil, "base prompt").WithStableRuntimeContext(stable)
+	testTask := task.NewTask(task.NewJobID(), "main.goを作成して", "line", "U123")
+
+	if _, err := coder.GenerateWithPrompt(context.Background(), testTask, "coder system"); err != nil {
+		t.Fatalf("GenerateWithPrompt failed: %v", err)
+	}
+	if len(captured) != 1 || len(captured[0].Messages) < 2 {
+		t.Fatalf("unexpected GenerateWithPrompt request: %#v", captured)
+	}
+	if captured[0].Messages[0].Content != "coder system" || captured[0].Messages[0].Type != llm.PromptContextCharacter {
+		t.Fatalf("system prompt changed: %#v", captured[0].Messages)
+	}
+	if captured[0].Messages[1].Content != stable || captured[0].Messages[1].Type != llm.PromptContextStable {
+		t.Fatalf("stable context missing after system prompt: %#v", captured[0].Messages)
+	}
+
+	if _, err := coder.GenerateWithContext(context.Background(), []llm.Message{
+		{Role: "system", Content: "loop system"},
+		{Role: "user", Content: "loop user"},
+	}); err != nil {
+		t.Fatalf("GenerateWithContext failed: %v", err)
+	}
+	if len(captured) != 2 || len(captured[1].Messages) < 3 {
+		t.Fatalf("unexpected GenerateWithContext request: %#v", captured)
+	}
+	if captured[1].Messages[0].Content != "loop system" || captured[1].Messages[1].Content != stable || captured[1].Messages[1].Type != llm.PromptContextStable {
+		t.Fatalf("GenerateWithContext omitted or misplaced stable context: %#v", captured[1].Messages)
+	}
+}
+
+func TestCoderAgentGenerateProposal(t *testing.T) {
+	var captured []llm.Message
+	llmProvider := &mockLLMProvider{
+		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+			captured = append([]llm.Message(nil), req.Messages...)
 			// システムプロンプトにCoder指示が含まれているか確認
 			if len(req.Messages) > 0 && req.Messages[0].Role == "system" {
 				if req.Messages[0].Content == "" {
@@ -98,7 +139,8 @@ Low risk - simple implementation
 		},
 	}
 
-	coder := NewCoderAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt")
+	coder := NewCoderAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt").
+		WithStableRuntimeContext("## Runtime Capability Snapshot\n- 利用可能: shell")
 
 	jobID := task.NewJobID()
 	testTask := task.NewTask(jobID, "main.goファイルを作成して", "line", "U123")
@@ -126,6 +168,9 @@ Low risk - simple implementation
 
 	if proposal.CostHint() == "" {
 		t.Error("CostHint should not be empty")
+	}
+	if len(captured) < 2 || captured[0].Type != llm.PromptContextCharacter || captured[1].Type != llm.PromptContextStable {
+		t.Fatalf("proposal request omitted stable context after system prompt: %#v", captured)
 	}
 }
 

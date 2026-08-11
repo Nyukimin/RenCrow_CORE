@@ -92,6 +92,7 @@ func (c *CompositeRunnerV2) ListTools(ctx context.Context) ([]tool.ToolMetadata,
 			Version:     "1.0.0",
 			Category:    "registered",
 			Description: e.Description,
+			Origin:      tool.OriginDynamicRegistry,
 		})
 	}
 	return result, nil

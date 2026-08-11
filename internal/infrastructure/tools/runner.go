@@ -67,8 +67,10 @@ type ToolRunnerConfig struct {
 	DisableToolHarness   bool                 // true = ToolRunner内の入力調停を無効化する
 
 	// Phase 4: Shiro ツール共有
-	ToolRegistry capability.ToolRegistry // nil = register_tool 無効
-	WorkspaceDir string                  // workspace/tools/<name>.sh のベースディレクトリ
+	ToolRegistry   capability.ToolRegistry // nil = register_tool 無効
+	WorkspaceDir   string                  // workspace/tools/<name>.sh のベースディレクトリ
+	SkillCatalog   *SkillCatalog           // nil/empty = skill.read 無効（Worker専用）
+	MCPToolCatalog *MCPToolCatalog         // nil/empty = observed MCP tools 無効（Worker専用）
 }
 
 // ToolFunc はツール実行関数の型

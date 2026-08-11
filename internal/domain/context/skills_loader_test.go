@@ -212,6 +212,10 @@ func TestSkillsLoader_LoadAllFromDirsSkipsBrokenSkillAndRemainsContextOnly(t *te
 	mustWriteSkill(t, filepath.Join(skillsDir, "broken"), `---
 name: broken
 description: missing closing frontmatter`)
+	mustWriteSkill(t, filepath.Join(skillsDir, "empty"), `---
+name: empty
+description: no instructions
+---`)
 	mustWriteSkill(t, filepath.Join(skillsDir, "write"), `---
 name: write
 description: Write files.
@@ -233,6 +237,72 @@ category: mutation
 	}
 	if skills[0].CanExecute {
 		t.Fatal("loaded skills are context only and must not grant execution permission")
+	}
+}
+
+func TestSkillsLoader_LoadAllFromDirsRecursesDeterministicallyAndPreservesRootPriority(t *testing.T) {
+	dir := t.TempDir()
+	primary := filepath.Join(dir, "primary")
+	secondary := filepath.Join(dir, "secondary")
+	mustWriteSkill(t, filepath.Join(primary, "nested", "first"), `---
+name: first
+description: primary first
+---
+
+# first`)
+	mustWriteSkill(t, filepath.Join(primary, "second"), `---
+name: second
+description: primary second
+---
+
+# second`)
+	mustWriteSkill(t, filepath.Join(secondary, "first"), `---
+name: first
+description: secondary first
+---
+
+# first`)
+	mustWriteSkill(t, filepath.Join(secondary, "third", "deep"), `---
+name: third
+description: secondary third
+---
+
+# third`)
+
+	loader := NewSkillsLoader(primary)
+	skills, err := loader.LoadAllFromDirs(primary, secondary)
+	if err != nil {
+		t.Fatalf("LoadAllFromDirs failed: %v", err)
+	}
+	if len(skills) != 3 {
+		t.Fatalf("skills=%#v, want three recursively discovered skills", skills)
+	}
+	if skills[0].Name != "first" || skills[0].Description != "primary first" {
+		t.Fatalf("primary recursive skill should win duplicate and appear first: %#v", skills)
+	}
+	if skills[1].Name != "second" || skills[2].Name != "third" {
+		t.Fatalf("skills should have deterministic lexical traversal order: %#v", skills)
+	}
+}
+
+func TestSkillsLoader_LoadAllFromDirsSkipsBrokenRootsAndFiles(t *testing.T) {
+	dir := t.TempDir()
+	validRoot := filepath.Join(dir, "valid")
+	mustWriteSkill(t, filepath.Join(validRoot, "valid"), `---
+name: valid
+description: valid skill
+---
+
+# valid`)
+	mustWriteSkill(t, filepath.Join(validRoot, "broken"), "---\nname: broken\nmissing closing marker")
+
+	loader := NewSkillsLoader(filepath.Join(dir, "missing"))
+	skills, err := loader.LoadAllFromDirs(filepath.Join(dir, "missing"), validRoot)
+	if err != nil {
+		t.Fatalf("broken roots should be isolated: %v", err)
+	}
+	if len(skills) != 1 || skills[0].Name != "valid" {
+		t.Fatalf("skills=%#v, want only valid skill", skills)
 	}
 }
 

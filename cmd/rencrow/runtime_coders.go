@@ -33,6 +33,19 @@ func (a *coderAdapter) GenerateWithContext(ctx context.Context, messages []llm.M
 	return a.domainCoder.GenerateWithContext(ctx, messages)
 }
 
+func (a *coderAdapter) WithStableRuntimeContext(content string) *coderAdapter {
+	if a != nil && a.domainCoder != nil {
+		a.domainCoder.WithStableRuntimeContext(content)
+	}
+	return a
+}
+
+func applyCoderStableRuntimeContext(content string, coders ...*coderAdapter) {
+	for _, coder := range coders {
+		coder.WithStableRuntimeContext(content)
+	}
+}
+
 // buildCoderCapabilities は NodeCapabilities と config から []CoderCapability を構築する（Phase 3）
 func buildCoderCapabilities(nodeCaps capdomain.NodeCapabilities, cfg *config.Config) []capdomain.CoderCapability {
 	if cfg == nil {

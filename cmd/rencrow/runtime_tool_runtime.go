@@ -36,6 +36,29 @@ func buildToolRuntime(
 	workerToolProvider llm.ToolCallingProvider,
 	runtimeToolRegistry capdomain.ToolRegistry,
 	contextBudgetRecorder tools.ContextBudgetUsageRecorder,
+	skillCatalog ...*tools.SkillCatalog,
+) toolRuntime {
+	var workerSkillCatalog *tools.SkillCatalog
+	if len(skillCatalog) > 0 {
+		workerSkillCatalog = skillCatalog[0]
+	}
+	return buildToolRuntimeWithCapabilities(
+		cfg,
+		workerToolProvider,
+		runtimeToolRegistry,
+		contextBudgetRecorder,
+		workerSkillCatalog,
+		nil,
+	)
+}
+
+func buildToolRuntimeWithCapabilities(
+	cfg *config.Config,
+	workerToolProvider llm.ToolCallingProvider,
+	runtimeToolRegistry capdomain.ToolRegistry,
+	contextBudgetRecorder tools.ContextBudgetUsageRecorder,
+	workerSkillCatalog *tools.SkillCatalog,
+	mcpToolCatalog *tools.MCPToolCatalog,
 ) toolRuntime {
 	personaWritePaths := []string{
 		filepath.Join(cfg.WorkspaceDir, "persona", "mio.md"),
@@ -57,6 +80,8 @@ func buildToolRuntime(
 		GoogleSearchEngineID: googleSearchValue(cfg.GoogleSearchWorker.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_WORKER"),
 		ToolRegistry:         runtimeToolRegistry,
 		WorkspaceDir:         cfg.WorkspaceDir,
+		SkillCatalog:         workerSkillCatalog,
+		MCPToolCatalog:       mcpToolCatalog,
 		DisableToolHarness:   true,
 	}
 	if cfg.BrowserActor.Enabled {

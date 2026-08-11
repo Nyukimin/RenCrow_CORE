@@ -81,6 +81,12 @@ func (r *ToolRunner) registerOptionalTools() {
 	if r.config.ToolRegistry != nil {
 		r.registerToolRegistryTool()
 	}
+	if r.config.SkillCatalog != nil && r.config.SkillCatalog.Len() > 0 {
+		r.registerSkillReadTool()
+	}
+	if r.config.MCPToolCatalog != nil && r.config.MCPToolCatalog.Len() > 0 {
+		r.registerMCPTools()
+	}
 }
 
 func (r *ToolRunner) registerToolMetadata() {
@@ -226,6 +232,7 @@ func (r *ToolRunner) registerToolMetadata() {
 	if r.config.BrowserActorRunner != nil {
 		r.metadata["browser.run"] = tool.ToolMetadata{
 			ToolID: "browser.run", Version: "0.1.0", Category: "query",
+			Origin:      tool.OriginRenCrowTools,
 			Description: "Headless browser 操作を 1 run として実行し、screenshot / snapshot / network / console artifact を保存する。",
 			Parameters: map[string]any{
 				"type": "object",
@@ -283,9 +290,49 @@ func (r *ToolRunner) registerToolMetadata() {
 	if len(r.config.Subagents) > 0 {
 		r.metadata["subagent"] = subagentToolMetadata()
 	}
+	if r.config.SkillCatalog != nil && r.config.SkillCatalog.Len() > 0 {
+		r.metadata["skill.read"] = skillReadMetadata()
+	}
+	if r.config.MCPToolCatalog != nil && r.config.MCPToolCatalog.Len() > 0 {
+		for _, entry := range r.config.MCPToolCatalog.Entries() {
+			r.metadata[entry.ToolID] = mcpToolMetadata(entry)
+		}
+	}
 
 	if r.config.ToolRegistry != nil {
 		r.metadata["register_tool"] = registerToolMetadata()
+	}
+}
+
+func skillReadMetadata() tool.ToolMetadata {
+	return tool.ToolMetadata{
+		ToolID:      "skill.read",
+		Version:     "1.0.0",
+		Category:    "query",
+		DryRun:      true,
+		Origin:      tool.OriginCoreRuntime,
+		Description: "起動時に読み込んだ既知のSkill指示本文を名前で取得する。ファイルパスは受け付けない。",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "読み込むSkillの完全一致名"},
+			},
+			"required": []any{"name"},
+		},
+	}
+}
+
+func mcpToolMetadata(entry MCPToolEntry) tool.ToolMetadata {
+	return tool.ToolMetadata{
+		ToolID:      entry.ToolID,
+		Version:     "1.0.0",
+		Category:    "query",
+		Origin:      tool.OriginCoreRuntime,
+		Description: "起動時に観測したSerena MCPツールをWorker Runner経由で呼び出す。",
+		Parameters: map[string]any{
+			"type":                 "object",
+			"additionalProperties": true,
+		},
 	}
 }
 

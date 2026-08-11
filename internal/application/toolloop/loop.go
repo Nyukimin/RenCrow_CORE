@@ -48,8 +48,9 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 		log.Printf("[ToolLoop] iteration=%d/%d messages=%d tools=%d", i+1, maxIter, len(messages), len(toolDefs))
 
 		resp, err := provider.Chat(ctx, llm.ChatRequest{
-			Messages: messages,
-			Tools:    toolDefs,
+			Messages:        messages,
+			Tools:           toolDefs,
+			ReasoningEffort: llm.ReasoningEffortLow,
 		})
 		if err != nil {
 			log.Printf("[ToolLoop] chat error iteration=%d err=%v", i+1, err)

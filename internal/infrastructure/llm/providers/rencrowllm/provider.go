@@ -224,8 +224,12 @@ func (p *GatewayProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Ch
 	gatewayReq := map[string]interface{}{
 		"model":    model,
 		"messages": messages,
+		"stream":   true,
 	}
 	p.addThinkingBridgeFields(gatewayReq, false)
+	if err := addChatReasoningEffort(gatewayReq, req.ReasoningEffort); err != nil {
+		return llm.ChatResponse{}, err
+	}
 	p.addModelContextOption(gatewayReq)
 	p.addRenCrowExecutionMetadata(ctx, gatewayReq, promptContextBlockMetadataFromChat(req))
 	if len(req.Tools) > 0 {
@@ -271,7 +275,27 @@ func (p *GatewayProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Ch
 		return llm.ChatResponse{}, fmt.Errorf("gateway chat API error: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	return p.parseChatResponse(resp.Body)
+	return readToolChatCompletionsStream(resp.Body)
+}
+
+func addChatReasoningEffort(payload map[string]interface{}, effort llm.ReasoningEffort) error {
+	switch effort {
+	case llm.ReasoningEffortUnspecified:
+		return nil
+	case llm.ReasoningEffortLow:
+		payload["think"] = "low"
+		payload["reasoning_effort"] = "low"
+		kwargs, _ := payload["chat_template_kwargs"].(map[string]any)
+		if kwargs == nil {
+			kwargs = map[string]any{}
+			payload["chat_template_kwargs"] = kwargs
+		}
+		kwargs["enable_thinking"] = true
+		kwargs["reasoning_effort"] = "low"
+		return nil
+	default:
+		return fmt.Errorf("unsupported chat reasoning effort %q", effort)
+	}
 }
 
 func (p *GatewayProvider) addRenCrowExecutionMetadata(ctx context.Context, payload map[string]interface{}, blocks []map[string]any) {

@@ -33,13 +33,14 @@ import (
 	xbookmarkworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/xbookmarkworkflow"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	domaincontext "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
-	mcpinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	aiworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/aiworkflow"
 	browsertracepersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/browsertrace"
 	complexitypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/complexity"
@@ -57,6 +58,7 @@ import (
 	xbookmarkworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/xbookmarkworkflow"
 	personainfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
+	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/userhome"
 	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
@@ -279,6 +281,8 @@ type Dependencies struct {
 	advisorScoreCancel             context.CancelFunc                          // Advisor daily score job
 	memoryPromotionCancel          context.CancelFunc                          // async ProfilePromotion worker
 	toolRegistry                   capdomain.ToolRegistry                      // Phase 4: Shiro ツール共有用 ToolRegistry
+	workerToolRunner               domaintool.RunnerV2                         // production Worker tool execution/listing boundary
+	serenaMCPClient                serenaMCPClient                             // lifecycle owner for the connected Serena MCP process
 	moduleChatService              chatModuleService                           // module contract view of Chat service
 	moduleLLMProviders             map[string]modulellm.Provider               // module contract view of LLM providers
 	moduleTTSProvider              moduletts.Provider                          // module contract view of primary TTS provider
@@ -297,6 +301,9 @@ func (d *Dependencies) Shutdown() {
 		if err := d.llmGatewayProcess.Kill(); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already finished") {
 			log.Printf("Failed to stop CORE-started RenCrow_LLM Gateway: %v", err)
 		}
+	}
+	if d.serenaMCPClient != nil {
+		d.serenaMCPClient.Stop()
 	}
 	if d.memoryPromotionCancel != nil {
 		d.memoryPromotionCancel()
@@ -367,7 +374,45 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	llmRuntime := buildLLMRuntimeProviders(cfg, aiWorkflowStore, llmBusyTracker)
 	classifier := routing.NewLLMClassifier(llmRuntime.Chat, cfg.Prompts.Classifier)
 	ruleDictionary := routing.NewRuleDictionary()
-	toolRuntime := buildToolRuntime(cfg, llmRuntime.WorkerToolProvider, runtimeToolRegistry, aiWorkflowStore)
+	skillLoader := domaincontext.NewSkillsLoader("")
+	runtimeSkillMetadata, skillLoadErr := skillLoader.LoadAllFromDirs(cfg.SkillGovernance.SkillRoots...)
+	if skillLoadErr != nil {
+		log.Printf("WARN: failed to load runtime skills: %v", skillLoadErr)
+		runtimeSkillMetadata = nil
+	}
+	if runtimeSkillMetadata == nil {
+		runtimeSkillMetadata = []domaincontext.SkillMetadata{}
+	}
+	runtimeSkillCatalog := toolsinfra.NewSkillCatalog(runtimeSkillMetadata)
+	// Skill manifests are retained for later Skill Governance persistence.
+	runtimeSkillManifests := loadSkillGovernanceManifests(cfg.SkillGovernance.SkillRoots)
+	serenaWorkspace := cfg.SelfSourceDir
+	if serenaWorkspace == "" {
+		if abs, err := filepath.Abs(cfg.Worker.Workspace); err == nil {
+			serenaWorkspace = abs
+		} else {
+			serenaWorkspace = cfg.Worker.Workspace
+		}
+	}
+	serenaRuntime := newSerenaMCPRuntime(
+		context.Background(),
+		envBool("RENCROW_ENABLE_SERENA_MCP"),
+		serenaWorkspace,
+		productionSerenaMCPClientFactory,
+	)
+	if serenaRuntime.state == serenaMCPStateAvailable {
+		log.Printf("Serena MCP ready: %d tools available", len(serenaRuntime.catalog.Entries()))
+	} else {
+		log.Printf("Serena MCP unavailable (%s): %s", serenaRuntime.state, serenaRuntime.reason)
+	}
+	toolRuntime := buildToolRuntimeWithCapabilities(
+		cfg,
+		llmRuntime.WorkerToolProvider,
+		runtimeToolRegistry,
+		aiWorkflowStore,
+		runtimeSkillCatalog,
+		serenaRuntime.catalog,
+	)
 	advisorRuntime, err := buildAdvisorRuntime(cfg, toolRuntime.WorkerRuntimeRunnerV2)
 	if err != nil {
 		log.Fatalf("Failed to initialize Advisor runtime: %v", err)
@@ -376,6 +421,22 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	log.Printf("MCPClient initialized with %d servers", len(mcpClient.ListServers()))
 	conversationRuntime := buildConversationRuntime(cfg, llmRuntime.Primary, toolRuntime.ChatRunnerV2, toolRuntime.WorkerRunnerV2)
 	glossaryRuntime := buildGlossaryRuntime(cfg)
+	// Conversation runtime may attach late-bound web_gather adapters to the
+	// production Worker runner. Build the Agent snapshot only after every
+	// runtime Tool has been registered so awareness and execution stay equal.
+	mcpObservations := append([]runtimeMCPObservation(nil), serenaRuntime.observations...)
+	mcpObservations = append(mcpObservations, observeGenericMCPClient(context.Background(), mcpClient)...)
+	runtimeCapabilityContext := runtimeCapabilityContextFromWorkerRunnerWithSkills(
+		context.Background(),
+		toolRuntime.WorkerRuntimeRunnerV2,
+		runtimeSkillMetadata,
+		runtimeSkillManifests,
+		mcpObservations,
+	)
+	if cfg.Prompts != nil {
+		appendRuntimeCapabilityContext(cfg.Prompts.StableRuntimeContexts, runtimeCapabilityContext)
+	}
+	applyCoderStableRuntimeContext(runtimeCapabilityContext, llmRuntime.Coder1, llmRuntime.Coder2, llmRuntime.Coder3, llmRuntime.Coder4)
 	agents := buildAgentRuntime(
 		cfg,
 		llmRuntime.Chat,
@@ -400,32 +461,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	workerExecutionService := service.NewWorkerExecutionService(cfg.Worker)
 	log.Printf("WorkerExecutionService initialized (Workspace: %s, Parallel: %v)",
 		cfg.Worker.Workspace, cfg.Worker.ParallelExecution)
-
-	if envBool("RENCROW_ENABLE_SERENA_MCP") {
-		// Serena MCP クライアントを起動してCoderLoopの観測アクションに接続
-		// SelfSourceDir（絶対パス）を渡す。未設定なら Worker.Workspace を絶対化して使う
-		serenaWorkspace := cfg.SelfSourceDir
-		if serenaWorkspace == "" {
-			if abs, err := filepath.Abs(cfg.Worker.Workspace); err == nil {
-				serenaWorkspace = abs
-			} else {
-				serenaWorkspace = cfg.Worker.Workspace
-			}
-		}
-		serenaClient := mcpinfra.NewSerenaClient(serenaWorkspace)
-		if err := serenaClient.Start(context.Background()); err != nil {
-			log.Printf("Serena MCP client failed to start (non-fatal): %v", err)
-		} else {
-			workerExecutionService.SetMCPToolCaller(serenaClient)
-			if tools, err := serenaClient.ListTools(context.Background()); err == nil {
-				log.Printf("Serena MCP ready: %d tools available (%v)", len(tools), tools[:min(5, len(tools))])
-			}
-		}
-	} else {
-		log.Printf("Serena MCP client disabled (set RENCROW_ENABLE_SERENA_MCP=true to enable)")
+	if serenaRuntime.client != nil {
+		workerExecutionService.SetMCPToolCaller(serenaRuntime.client)
 	}
 
-	deps := &Dependencies{}
+	deps := &Dependencies{serenaMCPClient: serenaRuntime.client}
 	durableStoreWorkflow, durableStoreCloser, err := buildDurableStoreRuntime(cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize durable store workflow: %v", err)
@@ -479,6 +519,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 	deps.glossaryRecent = glossaryRuntime.RecentHandler
 	deps.toolRegistry = runtimeToolRegistry
+	deps.workerToolRunner = toolRuntime.WorkerRuntimeRunnerV2
 	deps.backlogStore = viewer.NewBacklogStore(filepath.Join(cfg.WorkspaceDir, "logs", "backlog.jsonl"))
 	workflowResults := xbookmarkworkflowpersistence.NewJSONLStore(filepath.Join(cfg.WorkspaceDir, "logs", "x_bookmark_workflows.jsonl"))
 	if conversationRuntime.L1Store == nil {
@@ -553,7 +594,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		} else {
 			skillStore = skillpersistence.NewJSONLStore(cfg.SkillGovernance.RegistryPath)
 		}
-		for _, manifest := range loadSkillGovernanceManifests(cfg.SkillGovernance.SkillRoots) {
+		for _, manifest := range runtimeSkillManifests {
 			if err := skillStore.SaveSkillManifest(context.Background(), manifest); err != nil {
 				log.Printf("WARN: failed to record skill manifest %s: %v", manifest.SkillID, err)
 			}

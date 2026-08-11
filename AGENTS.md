@@ -146,6 +146,28 @@ Coder が行うのは次のみ：
 
 この責務境界を崩してはいけない。
 
+## Tool / Skill / MCP capability onboarding
+
+新しいTool、Skill、MCPを追加するときは、`Runtime Capability Snapshot`へ接続し、対象Agentの
+Stable RuntimeContextで認識でき、許可されたWorker経路で実行またはhandoffできることまでを
+同じ変更の完了条件とする。Snapshotに出ないproduction capabilityを追加しただけの変更は未完了
+として扱う。利用可能性は権限ではなく、Worker policyとAgentの役割境界を越えない。
+
+並行した静的なTool一覧をPrompt、Workspace `tools.yaml`、docs、configへ複製しない。
+`tools.yaml`は選択ガイダンスであり、runtimeの可用性・権限の正本ではない。次の既存経路を
+必ず使い、起動時のsource/list、runtime wiring、metadata、prompt注入、policy付き実行、失敗時の
+unavailable/fail-closed挙動を一続きで確認する。
+
+| 種別 | 必須の起点・配線 | 必須テスト境界 |
+| --- | --- | --- |
+| Tool | `internal/infrastructure/tools/runner_registration.go`の登録とproduction Worker `RunnerV2.ListTools` → `cmd/rencrow/runtime_capability_snapshot.go` → Stable RuntimeContext | `cmd/rencrow/runtime_capability_snapshot_test.go`と該当Runner testでmetadata・Snapshot・実行policyを契約検証 |
+| Skill | 設定済みrootの`internal/domain/context/skills_loader.go` → 起動時`SkillCatalog`／`skill.read`（Worker専用） → Snapshot | loader、`internal/infrastructure/tools/runner_skill_test.go`、snapshot testで名前・本文・無効状態を検証 |
+| MCP | `cmd/rencrow/runtime_mcp_capabilities.go`の接続／`tools/list`観測 → `internal/infrastructure/tools/runner_mcp.go`の名前空間付きWorker adapter → 同一clientのlifecycle | MCP Runner testとsnapshot testで観測名・Worker metadata・Snapshot・停止処理を検証 |
+
+directory scanによる実行能力の自動登録、未観測能力のavailable扱い、別providerへの自動fallback、
+Skill本文による権限拡大を追加してはならない。AgentがSnapshotから選べても、実行は許可された
+Workerまたは定義済みhandoffだけが担当する。
+
 ### コーディングAIの Safe / Tool Build Mode
 
 コーディング作業は、次の2形態を区別する。

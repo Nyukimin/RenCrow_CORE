@@ -123,12 +123,21 @@ type ToolFunctionDef struct {
 	Parameters  map[string]any // JSON Schema
 }
 
+// ReasoningEffort declares a provider-independent reasoning budget for tool calling.
+type ReasoningEffort string
+
+const (
+	ReasoningEffortUnspecified ReasoningEffort = ""
+	ReasoningEffortLow         ReasoningEffort = "low"
+)
+
 // ChatRequest はtool calling対応チャットリクエスト
 type ChatRequest struct {
-	Model       string
-	Messages    []ChatMessage
-	Tools       []ToolDefinition
-	Temperature float64
+	Model           string
+	Messages        []ChatMessage
+	Tools           []ToolDefinition
+	Temperature     float64
+	ReasoningEffort ReasoningEffort
 }
 
 // ChatResponse はtool calling対応チャットレスポンス

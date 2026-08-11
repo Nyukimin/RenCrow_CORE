@@ -55,12 +55,13 @@ func ProposalFailureInfo(err error) (kind, reason string, retryable bool, ok boo
 
 // CoderAgent は Coder（設計・実装）を担当するエンティティ
 type CoderAgent struct {
-	llmProvider    llm.LLMProvider
-	toolRunner     ToolRunner
-	mcpClient      MCPClient
-	proposalPrompt string
-	persona        *AgentPersona // Optional: v4.1 Agent Persona
-	lightMemory    *LightMemory  // Optional: v4.1 Short-term memory
+	llmProvider          llm.LLMProvider
+	toolRunner           ToolRunner
+	mcpClient            MCPClient
+	proposalPrompt       string
+	persona              *AgentPersona // Optional: v4.1 Agent Persona
+	lightMemory          *LightMemory  // Optional: v4.1 Short-term memory
+	stableRuntimeContext string        // Runtime capability awareness; does not grant execution
 }
 
 // NewCoderAgent は新しいCoderAgentを作成
@@ -90,6 +91,13 @@ func (c *CoderAgent) WithLightMemory(memory *LightMemory) *CoderAgent {
 	return c
 }
 
+// WithStableRuntimeContext adds a stable runtime awareness block without
+// changing the Coder's ToolRunner or MCP execution dependencies.
+func (c *CoderAgent) WithStableRuntimeContext(content string) *CoderAgent {
+	c.stableRuntimeContext = strings.TrimSpace(content)
+	return c
+}
+
 // GenerateProposal はplan/patchを生成
 func (c *CoderAgent) GenerateProposal(ctx context.Context, t task.Task) (*proposal.Proposal, error) {
 	log.Printf("[CoderAgent] proposal generate start provider=%s job=%s prompt_len=%d", c.llmProvider.Name(), t.JobID().String(), len(t.UserMessage()))
@@ -100,7 +108,7 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t task.Task) (*propos
 		systemPrompt = c.persona.BuildSystemPrompt(c.proposalPrompt)
 	}
 
-	messages := []llm.Message{{Role: "system", Content: systemPrompt}}
+	messages := c.coderSystemMessages(systemPrompt)
 	if c.lightMemory != nil {
 		messages = append(messages, c.lightMemory.RecentMessages(t.ChatID())...)
 	}
@@ -138,7 +146,7 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t task.Task) (*propos
 // GenerateWithContext は会話履歴を渡して LLM 応答を生成する（CoderLoop 多ターン用）
 func (c *CoderAgent) GenerateWithContext(ctx context.Context, messages []llm.Message) (string, error) {
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
-		Messages:    messages,
+		Messages:    appendCoderStableRuntimeContext(messages, c.stableRuntimeContext),
 		MaxTokens:   8192,
 		Temperature: 0.5,
 	})
@@ -157,7 +165,7 @@ func (c *CoderAgent) GenerateWithPrompt(ctx context.Context, t task.Task, system
 		finalSystemPrompt = c.persona.BuildSystemPrompt(systemPrompt)
 	}
 
-	messages := []llm.Message{{Role: "system", Content: finalSystemPrompt}}
+	messages := c.coderSystemMessages(finalSystemPrompt)
 	if c.lightMemory != nil {
 		messages = append(messages, c.lightMemory.RecentMessages(t.ChatID())...)
 	}
@@ -177,6 +185,60 @@ func (c *CoderAgent) GenerateWithPrompt(ctx context.Context, t task.Task, system
 	}
 
 	return resp.Content, nil
+}
+
+func (c *CoderAgent) coderSystemMessages(systemPrompt string) []llm.Message {
+	messages := []llm.Message{{
+		Role:    "system",
+		Content: systemPrompt,
+		Type:    llm.PromptContextCharacter,
+	}}
+	if c.stableRuntimeContext != "" {
+		messages = append(messages, llm.Message{
+			Role:    "system",
+			Content: c.stableRuntimeContext,
+			Type:    llm.PromptContextStable,
+			Metadata: map[string]string{
+				"runtime_context_kind": "capability_snapshot",
+			},
+		})
+	}
+	return messages
+}
+
+func appendCoderStableRuntimeContext(messages []llm.Message, content string) []llm.Message {
+	result := append([]llm.Message(nil), messages...)
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return result
+	}
+	for _, message := range result {
+		if message.Type == llm.PromptContextStable && strings.TrimSpace(message.Content) == content {
+			return result
+		}
+	}
+
+	insertAt := 0
+	for insertAt < len(result) {
+		message := result[insertAt]
+		if message.Type == llm.PromptContextCharacter || message.Type == llm.PromptContextStable || strings.EqualFold(strings.TrimSpace(message.Role), "system") {
+			insertAt++
+			continue
+		}
+		break
+	}
+	stable := llm.Message{
+		Role:    "system",
+		Content: content,
+		Type:    llm.PromptContextStable,
+		Metadata: map[string]string{
+			"runtime_context_kind": "capability_snapshot",
+		},
+	}
+	result = append(result, llm.Message{})
+	copy(result[insertAt+1:], result[insertAt:])
+	result[insertAt] = stable
+	return result
 }
 
 // extractProposal はLLM応答からProposalを抽出

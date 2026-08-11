@@ -4,8 +4,26 @@ import (
 	"context"
 	"testing"
 
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulebrowser "github.com/Nyukimin/RenCrow_CORE/modules/browseractor"
 )
+
+func TestToolRunnerBrowserRunMetadataHasRenCrowToolsOrigin(t *testing.T) {
+	runner := NewToolRunner(ToolRunnerConfig{BrowserActorRunner: &fakeBrowserActorToolRunner{}})
+	metas, err := runner.ListTools(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, meta := range metas {
+		if meta.ToolID == "browser.run" {
+			if meta.Origin != domaintool.OriginRenCrowTools {
+				t.Fatalf("origin=%q", meta.Origin)
+			}
+			return
+		}
+	}
+	t.Fatal("browser.run metadata is missing")
+}
 
 type fakeBrowserActorToolRunner struct {
 	req  modulebrowser.RunRequest

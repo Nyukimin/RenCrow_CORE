@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	agentfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/agent"
 	aiworkflowfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/aiworkflow"
 	avatarfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/avatar"
@@ -89,7 +91,7 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		AssetsGitStatus:              viewer.HandleAssetsGitStatus(defaultAssetsGitRepoPath()),
 		ConversationArchiveDatabase:  viewer.HandleConversationArchiveDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.ConversationArchive}),
 		GlossaryDatabase:             viewer.HandleGlossaryDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.Glossary}),
-		ToolRegistryDatabase:         viewer.HandleToolRegistryDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.ToolRegistry}),
+		ToolRegistryDatabase:         viewer.HandleToolRegistryDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.ToolRegistry, RuntimeTools: viewerRuntimeTools(dependencies)}),
 		MovieCatalog:                 viewer.HandleMovieCatalog(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
 		MovieCatalogFetch:            viewer.HandleMovieCatalogFetch(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
 		MovieCatalogPreference:       viewer.HandleMovieCatalogPreference(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
@@ -105,6 +107,15 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 	avatarfeature.RegisterRoutes(mux, avatarfeature.Dependencies{Routes: avatarfeature.Routes{
 		CharacterRuntime: dependencies.characterRuntime,
 	}})
+}
+
+func viewerRuntimeTools(dependencies *Dependencies) func(context.Context) ([]domaintool.ToolMetadata, error) {
+	return func(ctx context.Context) ([]domaintool.ToolMetadata, error) {
+		if dependencies == nil || dependencies.workerToolRunner == nil {
+			return nil, nil
+		}
+		return dependencies.workerToolRunner.ListTools(ctx)
+	}
 }
 
 func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dependencies) {

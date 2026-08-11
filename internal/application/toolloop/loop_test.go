@@ -14,6 +14,7 @@ import (
 type mockToolCallingProvider struct {
 	responses []llm.ChatResponse
 	callIndex int
+	requests  []llm.ChatRequest
 }
 
 func (m *mockToolCallingProvider) Generate(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
@@ -23,12 +24,33 @@ func (m *mockToolCallingProvider) Generate(ctx context.Context, req llm.Generate
 func (m *mockToolCallingProvider) Name() string { return "mock" }
 
 func (m *mockToolCallingProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.ChatResponse, error) {
+	m.requests = append(m.requests, req)
 	if m.callIndex >= len(m.responses) {
 		return llm.ChatResponse{}, fmt.Errorf("no more mock responses (called %d times)", m.callIndex+1)
 	}
 	resp := m.responses[m.callIndex]
 	m.callIndex++
 	return resp, nil
+}
+
+func TestRun_UsesLowReasoningOnEveryIteration(t *testing.T) {
+	provider := &mockToolCallingProvider{responses: []llm.ChatResponse{
+		{Message: llm.ChatMessage{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "call-1", Function: llm.ToolCallFunction{Name: "test", Arguments: map[string]any{}}}}}, FinishReason: "tool_calls"},
+		{Message: llm.ChatMessage{Role: "assistant", Content: "done"}, FinishReason: "stop"},
+	}}
+	runner := &mockRunnerV2{results: map[string]*tool.ToolResponse{"test": tool.NewSuccess("ok")}}
+
+	if _, err := Run(context.Background(), provider, runner, nil, []llm.ChatMessage{{Role: "user", Content: "run"}}, Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(provider.requests))
+	}
+	for i, request := range provider.requests {
+		if request.ReasoningEffort != llm.ReasoningEffortLow {
+			t.Errorf("request %d reasoning effort = %q, want %q", i, request.ReasoningEffort, llm.ReasoningEffortLow)
+		}
+	}
 }
 
 type mockRunnerV2 struct {

@@ -36,7 +36,10 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `/viewer/memory/*` | memory event、Recall、ProfilePromotion job の観測 |
 | `GET /viewer/databases/conversation-archive` | Conversation Archive（`memory_archive.db`）の読み取り専用snapshot |
 | `GET /viewer/databases/glossary` | Glossary DBの読み取り専用snapshot |
-| `GET /viewer/databases/tool-registry` | Tool Registry DBの読み取り専用snapshot |
+| `GET /viewer/databases/tool-registry` | production Worker runtimeとTool Registry DBを統合した有効Toolの読み取り専用snapshot |
+| `GET /viewer/capabilities` | Tool／Skill／MCPのRuntime Capability Snapshot読み取り |
+| `POST /viewer/capabilities/apply` | capability sourceを検証し、必要時だけCOREの再起動反映を予約 |
+| `GET /viewer/capabilities/apply/{request_id}` | apply receiptと再起動後の検証状態を読み取り |
 | `GET /viewer/movie-catalog` | 映画・俳優catalogと利用者評価の一覧・詳細 |
 | `GET /viewer/movie-catalog?action=cards` | 映画・人物ViewerのD0/D1派生カード投影 |
 | `POST /viewer/movie-catalog/preference` | 映画・俳優の認知・好み評価を保存 |
@@ -58,6 +61,115 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /viewer/trade/shadow/outcomes/report?study_id=<id>` | Shadow Outcome台帳を検証して読み取り専用集計を返す |
 | `POST /viewer/trade/shadow/outcomes/reviews` | Outcome reportのhashとlatest event hashを束縛した独立reviewを別台帳へ追記。promotion／Portfolio変更／外部実行は行わない |
 | `GET /viewer/trade/shadow/outcomes/reviews/report?study_id=<id>` | Review ledgerを検証し、独立reviewの有無を返す読み取り専用projection |
+
+`GET /viewer/databases/tool-registry`は、同じproduction Worker `RunnerV2`から得たruntime
+metadataと、設定済みSQLite Tool Registryのplatform適合行を、名前順・runtime優先で重複排除して
+返します。各itemの`origin`は`core_runtime | rencrow_tools | dynamic_registry`です。
+SQLite未設定でもruntime toolを返し、SQLite読込失敗時はruntime toolを隠さず`error`へ部分失敗を
+示します。全sourceが空の場合は`available=false`です。これは読み取りAPIであり、Tool登録、実行、
+権限付与、RenCrow_Tools配下の実行file探索を行いません。
+
+### Capability Applyとstatus
+
+`GET /viewer/capabilities`は、COREが同じ観測時点のproduction Worker metadata、検証済みSkill
+catalog、接続済みMCP `tools/list`から構築した`Runtime Capability Snapshot`を返します。responseは
+`snapshot_revision`、`snapshot_hash`、生成時刻、capabilityごとの`kind`（`tool | skill | mcp`）、
+canonical name、source revision、source hash、`available`、unavailable reasonを持ちます。
+このGETは認識用projectionであり、登録、権限付与、Skill本文の任意path読込、MCP接続、再起動を
+行いません。
+
+Agentが作成したToolはdynamic registryへ登録後、許可済みWorker経路で実行・一覧取得できる場合が
+あります。しかし稼働中AgentのStable RuntimeContextはstartup snapshotを保持するため、dynamic
+registryへの反映だけでこのAPIのSnapshotまたは全Agentの認識が更新されたとは扱いません。Skillの
+catalogとMCPの接続／一覧もstartup固定です。完全反映は以下のapply契約を使います。
+
+`POST /viewer/capabilities/apply`のrequestは次を必須とします。
+
+```json
+{
+  "request_id": "capreq_<opaque>",
+  "idempotency_key": "capapply_<opaque>",
+  "capability_expectations": [
+    {
+      "kind": "tool|skill|mcp",
+      "canonical_name": "tool-or-skill-or-mcp-name",
+      "source_revision": "source-revision",
+      "source_hash": "sha256"
+    }
+  ],
+  "current_snapshot_revision": "snapshot-revision",
+  "current_snapshot_hash": "sha256"
+}
+```
+
+`request_id`と`idempotency_key`はopaque値です。requesterとauthenticated scopeはbodyの自己申告を
+受け取らず、COREが認証済みHTTP／Agent execution contextから確定してreceiptへ記録します。COREは
+requestのscope、source/list、production wiring、Worker policy、deployment availability、current
+Snapshot revision／hashを同期検証します。
+requestへ任意unit、path、binary、command、PORT、provider、別Toolを指定するfieldはありません。
+Agentの発話やTool／Skill本文は認証scopeの代用にならず、Model／provider／Execution Roleはrequestの
+actorになりません。
+
+検証後のresponseとreceiptは、同期decisionと後段phaseを別fieldで表します。
+
+| decision | phase | 意味 |
+| --- | --- | --- |
+| `execute` | `validated` | source、policy、scope、requestの整合性を確認済み |
+| `execute` | `completed` | 期待する全capabilityが現行Snapshotへkind／name／source revision／hash一致で存在し、再起動不要 |
+| `execute` | `restart_scheduled`以降 | receiptをatomicに永続化し、応答返却後のCORE再起動と検証を予約 |
+| `rejected` | なし | request不正、stale Snapshot、policy不適合。人待ちへ遷移しない |
+| `blocked` | なし | source、依存、scheduler等が利用不能。人待ちや自動fallbackを作らない |
+
+再起動が必要なaccepted requestは、次のphaseだけを順に通ります。
+
+```text
+validated -> restart_scheduled -> stopping -> starting -> verifying -> completed | failed
+```
+
+COREが現在の応答を返す前にreceiptと`restart_scheduled`をatomicに確定し、CORE distributionの
+native Go supervisor worker／subcommandへrequest_idを渡します。supervisorは既知の
+`task_id=rencrow-core`だけを対象に、既存のReservedPort置換起動契約で旧instanceの停止、listener解放、
+同じPORTでの起動を行います。再起動後は新instanceのidentity、`/health/live`、`/health/ready`、
+期待capabilityのkind／canonical name／source revision／source hash、receiptに固定した最終Snapshot
+revision／hashを別processから検証します。終了したCORE自身が成功を自己証明してはいけません。
+
+同じ`idempotency_key`と同じcanonical requestは既存receiptを返し、二重再起動しません。異なるpayload
+で同じkeyを使う場合はconflictです。再接続後は`GET /viewer/capabilities/apply/{request_id}`または
+CLI statusでreceiptと新instanceの観測を再結合します。receiptが存在しないrequestは再起動を推測せず
+`CAPABILITY_REQUEST_NOT_FOUND`です。
+
+HTTPと安定error codeは次の通りです。
+
+| HTTP | error／decision | 条件 |
+| --- | --- | --- |
+| 400 | `CAPABILITY_INVALID_REQUEST`／`rejected` | 必須field、kind、canonical name、hash、scope形式の不正 |
+| 403 | `CAPABILITY_POLICY_REJECTED`／`rejected` | CORE／module／Worker policyの積集合が拒否 |
+| 409 | `CAPABILITY_SNAPSHOT_MISMATCH`／`rejected`、`CAPABILITY_IDEMPOTENCY_CONFLICT` | current Snapshotまたはidempotency payloadの不一致 |
+| 404 | `CAPABILITY_REQUEST_NOT_FOUND` | status対象のreceiptが存在しない |
+| 503 | `CAPABILITY_SOURCE_MISSING`／`CAPABILITY_DEPENDENCY_BLOCKED`／`CAPABILITY_SCHEDULE_FAILED`／`blocked` | source、依存、応答後supervisorへの引継ぎが利用不能 |
+| 200 | `completed`またはstatus取得 | 再起動不要、またはreceiptの最終状態を返す |
+| 202 | `restart_scheduled`等 | accepted requestをreceiptへ確定し、後段検証中 |
+
+accepted後の後段失敗はstatus responseを成功へ丸めず、receiptの`phase=failed`と次のerror codeで
+返します。応答後supervisorへの引継ぎ前に失敗した`CAPABILITY_SCHEDULE_FAILED`も同じ扱いです。
+`PORT_OWNERSHIP_CONFLICT`は所有不明または別TaskのPORTを停止しない場合、
+`PORT_RELEASE_TIMEOUT`は同一Taskの解放確認失敗、`TASK_START_FAILED`は新instance起動失敗、
+`CAPABILITY_READINESS_TIMEOUT`はreadiness期限超過、`CAPABILITY_SNAPSHOT_MISMATCH`は期待Snapshotの
+membershipまたはhash不一致です。いずれも別PORT、別unit、別provider、未観測能力へfallbackしません。
+
+RenCrow_CMDの正本CLIは次です。
+
+```text
+rencrowctl capability apply --request-id <id> --idempotency-key <key> \
+  --expect <kind>:<canonical-name>:<source-revision>:<source-sha256> \
+  --snapshot-revision <revision> --snapshot-hash <sha256>
+rencrowctl capability status <request_id>
+```
+
+CLIはCORE Public APIのfacadeであり、snapshot計算、policy判定、receipt管理、systemd／service／
+launchd操作を直接行いません。stdoutはmachine-readableなresponse／receipt、stderrは運用logに分離し、
+COREの`request_id`、`trace_id`、phase、error codeを利用者が追跡できる形で表示します。Agent-originated
+requestもCORE内の認証済みscopeを通る同じAPI／receipt経路を使い、Agentが任意commandを直接実行しません。
 
 ### Trade status
 
@@ -618,6 +730,7 @@ capabilityで制限します。
 ```text
 /health、/health/live、/ready
 /viewer/status、/viewer/logs
+/viewer/capabilities
 /viewer/evidence/{recent,detail,summary}
 /viewer/source-registry、/viewer/knowledge-memory
 /viewer/debug/system
@@ -639,6 +752,8 @@ HTTPアクセスを伴う操作を公開するとCOREが任意URL取得の踏み
 ```text
 POST /viewer/repair/run
 POST /viewer/source-registry
+POST /viewer/capabilities/apply
+GET  /viewer/capabilities/apply/{request_id}
 ```
 
 COREは既知clientのprofile欠落、client/profile不一致、profile外method/pathを403で拒否します。

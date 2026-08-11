@@ -13,6 +13,14 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
+func writeToolChatSSE(w http.ResponseWriter, chunks ...string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	for _, chunk := range chunks {
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+	}
+	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+}
+
 func TestNewGatewayProvider(t *testing.T) {
 	provider := NewGatewayProvider("test-api-key", "gpt-4")
 
@@ -77,7 +85,7 @@ func TestGatewayProviderChatSendsExecutionObservation(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatal(err)
 		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+		writeToolChatSSE(w, `{"choices":[{"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
 	}))
 	defer server.Close()
 
@@ -103,6 +111,56 @@ func TestGatewayProviderChatSendsExecutionObservation(t *testing.T) {
 	} {
 		if metadata[key] != want {
 			t.Errorf("rencrow.%s=%#v want %q", key, metadata[key], want)
+		}
+	}
+}
+
+func TestGatewayProviderChatSendsLowReasoningContract(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		writeToolChatSSE(w, `{"choices":[{"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second)
+	if _, err := provider.Chat(context.Background(), llm.ChatRequest{
+		Messages:        []llm.ChatMessage{{Role: "user", Content: "run"}},
+		ReasoningEffort: llm.ReasoningEffortLow,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if payload["think"] != "low" || payload["reasoning_effort"] != "low" {
+		t.Fatalf("low reasoning fields missing: %#v", payload)
+	}
+	kwargs, ok := payload["chat_template_kwargs"].(map[string]any)
+	if !ok || kwargs["enable_thinking"] != true || kwargs["reasoning_effort"] != "low" {
+		t.Fatalf("low chat template kwargs missing: %#v", payload)
+	}
+}
+
+func TestGatewayProviderChatOmitsReasoningContractWhenUnspecified(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		writeToolChatSSE(w, `{"choices":[{"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second)
+	if _, err := provider.Chat(context.Background(), llm.ChatRequest{Messages: []llm.ChatMessage{{Role: "user", Content: "run"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["reasoning_effort"]; exists {
+		t.Fatalf("unspecified reasoning effort changed existing payload: %#v", payload)
+	}
+	if kwargs, ok := payload["chat_template_kwargs"].(map[string]any); ok {
+		if _, exists := kwargs["reasoning_effort"]; exists {
+			t.Fatalf("unspecified reasoning effort leaked into chat template kwargs: %#v", payload)
 		}
 	}
 }
@@ -836,30 +894,10 @@ func TestChat_WithToolCalls(t *testing.T) {
 			t.Error("expected tools in request")
 		}
 
-		response := map[string]interface{}{
-			"choices": []map[string]interface{}{
-				{
-					"message": map[string]interface{}{
-						"role": "assistant",
-						"tool_calls": []map[string]interface{}{
-							{
-								"id":   "call_abc123",
-								"type": "function",
-								"function": map[string]interface{}{
-									"name":      "web_search",
-									"arguments": `{"query":"RenCrow"}`,
-								},
-							},
-						},
-					},
-					"finish_reason": "tool_calls",
-				},
-			},
-			"usage": map[string]interface{}{"total_tokens": 50},
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		writeToolChatSSE(w,
+			`{"choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_abc123","type":"function","function":{"name":"web_search","arguments":"{\"query\":"}}]}}]}`,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"RenCrow\"}"}}]},"finish_reason":"tool_calls"}]}`,
+		)
 	}))
 	defer server.Close()
 
@@ -905,19 +943,7 @@ func TestChat_WithToolCalls(t *testing.T) {
 
 func TestChat_WithoutToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := map[string]interface{}{
-			"choices": []map[string]interface{}{
-				{
-					"message": map[string]interface{}{
-						"role":    "assistant",
-						"content": "こんにちは！",
-					},
-					"finish_reason": "stop",
-				},
-			},
-			"usage": map[string]interface{}{"total_tokens": 10},
-		}
-		json.NewEncoder(w).Encode(response)
+		writeToolChatSSE(w, `{"choices":[{"delta":{"role":"assistant","content":"こんにちは！"},"finish_reason":"stop"}]}`)
 	}))
 	defer server.Close()
 
@@ -959,14 +985,7 @@ func TestChat_LocalCompatibleSendsThinkingBridgeFields(t *testing.T) {
 		if reqBody["separate_reasoning"] != true {
 			t.Fatalf("expected separate_reasoning=true, got %v", reqBody["separate_reasoning"])
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"choices": []map[string]interface{}{
-				{
-					"message":       map[string]interface{}{"role": "assistant", "content": "本文", "reasoning_content": "hidden"},
-					"finish_reason": "stop",
-				},
-			},
-		})
+		writeToolChatSSE(w, `{"choices":[{"delta":{"role":"assistant","content":"本文"},"finish_reason":"stop"}]}`)
 	}))
 	defer server.Close()
 
@@ -1002,19 +1021,7 @@ func TestChat_ToolResultRoundtrip(t *testing.T) {
 			t.Errorf("expected tool_call_id=call_1, got %v", toolMsg["tool_call_id"])
 		}
 
-		response := map[string]interface{}{
-			"choices": []map[string]interface{}{
-				{
-					"message": map[string]interface{}{
-						"role":    "assistant",
-						"content": "検索結果はこちらです。",
-					},
-					"finish_reason": "stop",
-				},
-			},
-			"usage": map[string]interface{}{"total_tokens": 30},
-		}
-		json.NewEncoder(w).Encode(response)
+		writeToolChatSSE(w, `{"choices":[{"delta":{"role":"assistant","content":"検索結果はこちらです。"},"finish_reason":"stop"}]}`)
 	}))
 	defer server.Close()
 

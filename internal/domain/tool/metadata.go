@@ -1,5 +1,11 @@
 package tool
 
+const (
+	OriginCoreRuntime     = "core_runtime"
+	OriginRenCrowTools    = "rencrow_tools"
+	OriginDynamicRegistry = "dynamic_registry"
+)
+
 // ToolMetadata はツールの識別情報と能力を記述する（TOOL_CONTRACT 4.1）
 type ToolMetadata struct {
 	ToolID      string         `json:"tool_id"`
@@ -11,4 +17,5 @@ type ToolMetadata struct {
 	Invariants  []string       `json:"invariants,omitempty"`
 	Description string         `json:"description,omitempty"` // ツール説明（tool calling用）
 	Parameters  map[string]any `json:"parameters,omitempty"`  // JSON Schema（tool calling用）
+	Origin      string         `json:"origin,omitempty"`
 }

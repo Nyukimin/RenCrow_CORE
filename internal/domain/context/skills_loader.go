@@ -28,28 +28,41 @@ func (l *SkillsLoader) LoadAllFromDirs(skillDirs ...string) ([]SkillMetadata, er
 	var skills []SkillMetadata
 	seen := make(map[string]bool)
 	for _, skillsDir := range skillDirs {
-		entries, err := os.ReadDir(skillsDir)
-		if err != nil {
-			return nil, err
+		if strings.TrimSpace(skillsDir) == "" {
+			continue
 		}
-
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
+		// WalkDir visits directory entries in lexical order. Keeping the outer
+		// loop ordered preserves configured root priority for duplicate names.
+		err := filepath.WalkDir(skillsDir, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				// A broken root or file must not hide valid skills from later roots.
+				return nil
 			}
-			skillFile := filepath.Join(skillsDir, entry.Name(), "SKILL.md")
-			data, err := os.ReadFile(skillFile)
-			if err != nil {
-				continue
+			if entry == nil || entry.IsDir() || entry.Name() != "SKILL.md" {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || strings.TrimSpace(string(data)) == "" {
+				return nil
 			}
 
-			meta := parseSkillFile(string(data), entry.Name())
-			if meta.Name == "" || seen[meta.Name] {
-				continue
+			dirName := filepath.Base(filepath.Dir(path))
+			meta := parseSkillFile(string(data), dirName)
+			if strings.TrimSpace(meta.Name) == "" || strings.TrimSpace(meta.BodyText) == "" {
+				return nil
+			}
+			key := strings.ToLower(strings.TrimSpace(meta.Name))
+			if seen[key] {
+				return nil
 			}
 			meta.CanExecute = false
-			seen[meta.Name] = true
+			seen[key] = true
 			skills = append(skills, meta)
+			return nil
+		})
+		if err != nil {
+			// WalkDir errors are intentionally isolated to this configured root.
+			continue
 		}
 	}
 	return skills, nil
@@ -80,6 +93,10 @@ func parseSkillFile(content string, dirName string) SkillMetadata {
 		meta.Name = dirName
 		meta.Description = strings.TrimPrefix(strings.TrimSpace(firstLine), "# ")
 		meta.BodyText = strings.TrimSpace(body)
+		if meta.BodyText == "" {
+			// 旧形式の1行Skillでは見出し自体が唯一の指示本文。
+			meta.BodyText = strings.TrimSpace(firstLine)
+		}
 		return meta
 	}
 

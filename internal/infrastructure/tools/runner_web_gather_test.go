@@ -40,6 +40,28 @@ func (f *fakeWebGatherToolFetcher) FetchURL(_ context.Context, req modulewebgath
 	return f.resp, f.err
 }
 
+func TestToolRunnerListToolsReflectsLateWebGatherRegistration(t *testing.T) {
+	runner := NewToolRunner(ToolRunnerConfig{})
+	runner.WithWebGatherFetcher(&fakeWebGatherToolFetcher{}).
+		WithWebGatherSearcher(&fakeWebGatherToolSearcher{}).
+		WithWebGatherSearchAndFetcher(&fakeWebGatherToolSearchAndFetcher{})
+	metas, err := runner.ListTools(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"web_gather.fetch": false, "web_gather.search": false, "web_gather.search_and_fetch": false}
+	for _, meta := range metas {
+		if _, ok := want[meta.ToolID]; ok {
+			want[meta.ToolID] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("late tool %q is missing", name)
+		}
+	}
+}
+
 func TestToolRunner_WebGatherFetchV2(t *testing.T) {
 	fetcher := &fakeWebGatherToolFetcher{resp: modulewebgather.FetchResponse{
 		Status:           "ok",

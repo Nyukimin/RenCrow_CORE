@@ -9,12 +9,66 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	domaincontext "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	aiworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/aiworkflow"
+	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
 type runtimeContextBudgetRecorderStub struct {
 	usages []domainai.ContextUsage
 	events []domainai.WorkflowEvent
+}
+
+func TestViewerRuntimeToolsUsesProductionWorkerRunner(t *testing.T) {
+	disabled := false
+	cfg := &config.Config{ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
+	runtime := buildToolRuntime(cfg, nil, nil, nil)
+	metas, err := viewerRuntimeTools(&Dependencies{workerToolRunner: runtime.WorkerRuntimeRunnerV2})(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, meta := range metas {
+		if meta.ToolID == "shell" {
+			return
+		}
+	}
+	t.Fatal("production Worker runner metadata is not reachable from Viewer")
+}
+
+func TestBuildToolRuntimeInstallsSkillReadOnlyForWorker(t *testing.T) {
+	disabled := false
+	cfg := &config.Config{ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
+	catalog := toolsinfra.NewSkillCatalog([]domaincontext.SkillMetadata{{Name: "review", BodyText: "trusted body"}})
+	runtime := buildToolRuntime(cfg, nil, nil, nil, catalog)
+
+	workerMetas, err := runtime.WorkerRunnerV2.ListTools(context.Background())
+	if err != nil {
+		t.Fatalf("Worker ListTools failed: %v", err)
+	}
+	chatMetas, err := runtime.ChatRunnerV2.ListTools(context.Background())
+	if err != nil {
+		t.Fatalf("Chat ListTools failed: %v", err)
+	}
+	if !hasToolMetadata(workerMetas, "skill.read") {
+		t.Fatalf("Worker metadata missing skill.read: %#v", workerMetas)
+	}
+	if hasToolMetadata(chatMetas, "skill.read") {
+		t.Fatalf("Chat runner must not receive skill.read: %#v", chatMetas)
+	}
+	resp, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(context.Background(), "skill.read", map[string]any{"name": "review"})
+	if err != nil || resp == nil || resp.IsError() || resp.String() != "trusted body" {
+		t.Fatalf("Worker skill.read failed: resp=%#v err=%v", resp, err)
+	}
+}
+
+func hasToolMetadata(metas []domaintool.ToolMetadata, name string) bool {
+	for _, metadata := range metas {
+		if metadata.ToolID == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *runtimeContextBudgetRecorderStub) SaveContextUsage(_ context.Context, item domainai.ContextUsage) error {
