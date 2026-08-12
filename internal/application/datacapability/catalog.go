@@ -31,7 +31,7 @@ var storeDefinitions = []Entry{
 	{Name: "tool_registry", Owner: "RenCrow_CORE Runtime Capability", Categories: []string{"tool_metadata"}, Status: "restricted", SafeOperations: []string{"runtime_snapshot"}, Sensitivity: "internal", Reason: "use_runtime_capability_snapshot"},
 	{Name: "glossary", Owner: "RenCrow_CORE Glossary", Categories: []string{"term", "definition"}, SafeOperations: []string{"define_term", "list_category"}, ToolID: "glossary.lookup", Sensitivity: "normal"},
 	{Name: "movie_catalog", Owner: "RenCrow_CORE Movie Catalog", Categories: []string{"movie", "person", "credit"}, SafeOperations: []string{"lookup"}, ToolID: "movie_catalog.lookup", Sensitivity: "normal"},
-	{Name: "hobby_graph", Owner: "RenCrow_CORE Hobby Graph", Categories: []string{"hobby", "item", "relation"}, Sensitivity: "mixed", Reason: "deployment_or_index_unavailable"},
+	{Name: "hobby_graph", Owner: "RenCrow_CORE Hobby Graph", Categories: []string{"drama", "award", "music", "anime", "novel", "manga"}, SafeOperations: []string{"person_related_lookup"}, ToolID: "person_related_catalog.lookup", Sensitivity: "mixed", Reason: "deployment_or_index_unavailable"},
 	{Name: "investment", Owner: "RenCrow_CORE Investment Projection", Categories: []string{"investment", "snapshot", "event"}, Sensitivity: "financial", Reason: "deployment_unavailable"},
 	{Name: "advisor", Owner: "RenCrow_CORE Advisor", Categories: []string{"advisor", "policy"}, Status: "restricted", Sensitivity: "internal", Reason: "owner_service_only"},
 	{Name: "sandbox", Owner: "RenCrow_CORE Sandbox", Categories: []string{"execution"}, Status: "restricted", Sensitivity: "internal", Reason: "owner_service_only"},
@@ -63,7 +63,7 @@ func Build(states map[string]StoreState) *Catalog {
 		entry.PhysicalKey = "storage.databases." + entry.Name
 		state := states[entry.Name]
 		if entry.Status == "" {
-			if state.Configured && state.Exists && (entry.Name == "glossary" || entry.Name == "movie_catalog") {
+			if state.Configured && state.Exists && (entry.Name == "glossary" || entry.Name == "movie_catalog" || entry.Name == "hobby_graph") {
 				entry.Status = "available"
 				entry.Reason = ""
 			} else {

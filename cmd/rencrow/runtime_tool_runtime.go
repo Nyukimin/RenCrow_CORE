@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	personrelatedcatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/personrelatedcatalog"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
@@ -81,13 +82,47 @@ func buildToolRuntimeWithCapabilities(
 	} else {
 		log.Printf("Movie catalog lookup Tool ready (indexed read-only execution)")
 	}
+	personRelatedPrepareCtx, cancelPersonRelatedPrepare := context.WithTimeout(context.Background(), 10*time.Second)
+	personRelatedCatalogLookup, personRelatedCatalogLookupErr := prepareRuntimePersonRelatedCatalogLookup(
+		personRelatedPrepareCtx,
+		cfg.Storage.Databases.MovieCatalog,
+		cfg.Storage.Databases.HobbyGraph,
+	)
+	cancelPersonRelatedPrepare()
+	if personRelatedCatalogLookupErr != nil {
+		log.Printf("Person related catalog lookup Tool unavailable: %v", personRelatedCatalogLookupErr)
+	} else {
+		log.Printf("Person related catalog lookup Tool ready (indexed read-only execution)")
+	}
+	var personRelatedCatalogCollector *runtimePersonRelatedCatalogCollector
+	if personRelatedCatalogLookup != nil {
+		providerURL := personrelatedcatalogapp.ResolveCollectionProviderBaseURL()
+		if strings.TrimSpace(providerURL) != "" {
+			personRelatedCollectPrepareCtx, cancelPersonRelatedCollectPrepare := context.WithTimeout(context.Background(), 10*time.Second)
+			var personRelatedCollectErr error
+			personRelatedCatalogCollector, personRelatedCollectErr = prepareRuntimePersonRelatedCatalogCollector(
+				personRelatedCollectPrepareCtx,
+				cfg.Storage.Databases.MovieCatalog,
+				cfg.Storage.Databases.HobbyGraph,
+				providerURL,
+			)
+			cancelPersonRelatedCollectPrepare()
+			if personRelatedCollectErr != nil {
+				log.Printf("Person related catalog collect Tool unavailable: %v", personRelatedCollectErr)
+			} else {
+				log.Printf("Person related catalog collect Tool ready (Worker-only provider collection)")
+			}
+		} else {
+			log.Printf("Person related catalog collect Tool unavailable: provider URL is not configured")
+		}
+	}
 	glossaryLookup, glossaryLookupErr := prepareRuntimeGlossaryLookup(context.Background(), cfg.Storage.Databases.Glossary)
 	if glossaryLookupErr != nil {
 		log.Printf("Glossary lookup Tool unavailable")
 	} else {
 		log.Printf("Glossary lookup Tool ready (indexed read-only execution)")
 	}
-	dataCapabilityCatalog := buildRuntimeDataCapabilityCatalog(cfg, glossaryLookup != nil, movieCatalogLookup != nil)
+	dataCapabilityCatalog := buildRuntimeDataCapabilityCatalog(cfg, glossaryLookup != nil, movieCatalogLookup != nil, personRelatedCatalogLookup != nil)
 	chatToolRunnerCfg := tools.ToolRunnerConfig{
 		GoogleAPIKey:          googleSearchValue(cfg.GoogleSearchChat.APIKey, "GOOGLE_API_KEY_CHAT"),
 		GoogleSearchEngineID:  googleSearchValue(cfg.GoogleSearchChat.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_CHAT"),
@@ -108,6 +143,13 @@ func buildToolRuntimeWithCapabilities(
 	if movieCatalogLookup != nil {
 		chatToolRunnerCfg.MovieCatalogLookup = movieCatalogLookup
 		workerToolRunnerCfg.MovieCatalogLookup = movieCatalogLookup
+	}
+	if personRelatedCatalogLookup != nil {
+		chatToolRunnerCfg.PersonRelatedCatalogLookup = personRelatedCatalogLookup
+		workerToolRunnerCfg.PersonRelatedCatalogLookup = personRelatedCatalogLookup
+	}
+	if personRelatedCatalogCollector != nil {
+		workerToolRunnerCfg.PersonRelatedCatalogCollector = personRelatedCatalogCollector
 	}
 	if glossaryLookup != nil {
 		chatToolRunnerCfg.GlossaryLookup = glossaryLookup

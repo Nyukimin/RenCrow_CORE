@@ -45,6 +45,44 @@ type MovieCatalogLookup interface {
 	Lookup(ctx context.Context, kind string, name string, information string, limit int) (any, error)
 }
 
+// PersonRelatedCatalogLookup is the fixed CORE application boundary used by
+// the indexed person-related catalog Tool. It intentionally exposes no
+// database path or SQL surface.
+type PersonRelatedCatalogLookup interface {
+	Lookup(ctx context.Context, personName string, category string, limit int) (any, error)
+}
+
+// PersonRelatedCatalogCollector is the Worker-only CORE application boundary
+// for one explicitly requested, provider-backed collection category.
+type PersonRelatedCatalogCollector interface {
+	Collect(ctx context.Context, personName string, category string) (any, error)
+}
+
+type PersonRelatedCatalogCandidate struct {
+	PersonID string `json:"person_id"`
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+}
+
+type PersonRelatedCatalogNotFoundError struct {
+	PersonName string
+}
+
+func (e *PersonRelatedCatalogNotFoundError) Error() string {
+	if e == nil || e.PersonName == "" {
+		return "person related catalog person was not found"
+	}
+	return fmt.Sprintf("person related catalog person %q was not found", e.PersonName)
+}
+
+type PersonRelatedCatalogAmbiguousError struct {
+	Candidates []PersonRelatedCatalogCandidate
+}
+
+func (e *PersonRelatedCatalogAmbiguousError) Error() string {
+	return "person related catalog person name is ambiguous"
+}
+
 type DataCapabilityCatalog interface {
 	Execute(operation string, name string) (any, error)
 }
@@ -81,13 +119,15 @@ type ToolRunnerConfig struct {
 	DisableToolHarness   bool                 // true = ToolRunner内の入力調停を無効化する
 
 	// Phase 4: Shiro ツール共有
-	ToolRegistry          capability.ToolRegistry // nil = register_tool 無効
-	WorkspaceDir          string                  // workspace/tools/<name>.sh のベースディレクトリ
-	SkillCatalog          *SkillCatalog           // nil/empty = skill.read 無効（Worker専用）
-	MCPToolCatalog        *MCPToolCatalog         // nil/empty = observed MCP tools 無効（Worker専用）
-	MovieCatalogLookup    MovieCatalogLookup      // nil = movie_catalog.lookup 無効
-	DataCapabilityCatalog DataCapabilityCatalog   // nil = data_capability.describe 無効
-	GlossaryLookup        GlossaryLookup          // nil = glossary.lookup 無効
+	ToolRegistry                  capability.ToolRegistry       // nil = register_tool 無効
+	WorkspaceDir                  string                        // workspace/tools/<name>.sh のベースディレクトリ
+	SkillCatalog                  *SkillCatalog                 // nil/empty = skill.read 無効（Worker専用）
+	MCPToolCatalog                *MCPToolCatalog               // nil/empty = observed MCP tools 無効（Worker専用）
+	MovieCatalogLookup            MovieCatalogLookup            // nil = movie_catalog.lookup 無効
+	PersonRelatedCatalogLookup    PersonRelatedCatalogLookup    // nil = person_related_catalog.lookup 無効
+	PersonRelatedCatalogCollector PersonRelatedCatalogCollector // nil = person_related_catalog.collect 無効
+	DataCapabilityCatalog         DataCapabilityCatalog         // nil = data_capability.describe 無効
+	GlossaryLookup                GlossaryLookup                // nil = glossary.lookup 無効
 }
 
 // ToolFunc はツール実行関数の型

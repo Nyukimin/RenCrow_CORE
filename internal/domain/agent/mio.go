@@ -261,15 +261,22 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		movieCatalogMatched = true
 		messages = append(messages, m.movieCatalogLookupContext(ctx, lookup))
 	}
-	dataToolMatched := false
+	personRelatedCatalogMatched := false
 	if !movieCatalogMatched {
+		if lookup, ok := parseMioPersonRelatedCatalogLookup(userMessage); ok {
+			personRelatedCatalogMatched = true
+			messages = append(messages, m.personRelatedCatalogLookupContext(ctx, lookup))
+		}
+	}
+	dataToolMatched := false
+	if !movieCatalogMatched && !personRelatedCatalogMatched {
 		if lookup, ok := parseMioDataToolLookup(userMessage); ok {
 			dataToolMatched = true
 			messages = append(messages, m.dataToolLookupContext(ctx, lookup))
 		}
 	}
 	searchQuery := userMessage
-	needsSearch := !movieCatalogMatched && !dataToolMatched && needsWebSearch(userMessage)
+	needsSearch := !movieCatalogMatched && !personRelatedCatalogMatched && !dataToolMatched && needsWebSearch(userMessage)
 
 	// Web検索を実行してコンテキストに追加
 	if needsSearch && m.toolRunner != nil {

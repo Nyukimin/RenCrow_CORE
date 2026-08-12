@@ -28,7 +28,7 @@ func (c *runtimeDataCapabilityCatalog) Execute(operation, name string) (any, err
 	return c.catalog.Describe(name)
 }
 
-func buildRuntimeDataCapabilityCatalog(cfg *config.Config, glossaryReady bool, movieReady bool) *runtimeDataCapabilityCatalog {
+func buildRuntimeDataCapabilityCatalog(cfg *config.Config, glossaryReady bool, movieReady bool, hobbyReady ...bool) *runtimeDataCapabilityCatalog {
 	paths := map[string]string{}
 	if cfg != nil {
 		d := cfg.Storage.Databases
@@ -54,6 +54,14 @@ func buildRuntimeDataCapabilityCatalog(cfg *config.Config, glossaryReady bool, m
 	if state := states["movie_catalog"]; state.Configured {
 		state.Exists = movieReady
 		states["movie_catalog"] = state
+	}
+	if state := states["hobby_graph"]; state.Configured {
+		ready := false
+		if len(hobbyReady) > 0 {
+			ready = hobbyReady[0]
+		}
+		state.Exists = ready
+		states["hobby_graph"] = state
 	}
 	return &runtimeDataCapabilityCatalog{catalog: datacapability.Build(states)}
 }
