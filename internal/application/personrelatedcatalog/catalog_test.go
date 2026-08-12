@@ -331,7 +331,7 @@ func TestImportRejectsSourceThatRequiresCredentialOrApplication(t *testing.T) {
 func TestContractFreeSourceAllowlistUsesOfficialOpenProviders(t *testing.T) {
 	allowed := map[string][]string{
 		CategoryDrama: {"jpsearch", "wikidata"},
-		CategoryAward: {"mediaarts_db", "japan_academy_prize"},
+		CategoryAward: {"mediaarts_db", "japan_academy_prize", "wikidata_award"},
 		CategoryMusic: {"musicbrainz", "jpsearch"},
 		CategoryAnime: {"mediaarts_db", "jpsearch"},
 		CategoryNovel: {"ndl_bibliography", "jpsearch"},
@@ -348,6 +348,9 @@ func TestContractFreeSourceAllowlistUsesOfficialOpenProviders(t *testing.T) {
 		if contractFreeSourceAllowed(CategoryManga, source) || contractFreeSourceAllowed(CategoryAnime, source) {
 			t.Fatalf("non-official or contract source %q must be rejected", source)
 		}
+	}
+	if contractFreeSourceAllowed(CategoryDrama, "wikidata_award") {
+		t.Fatal("award-specific source must not be accepted for drama")
 	}
 }
 

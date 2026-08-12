@@ -40,10 +40,12 @@ func (m *mockProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.ChatR
 }
 
 type mockRunner struct {
-	results map[string]*tool.ToolResponse
+	results  map[string]*tool.ToolResponse
+	contexts []context.Context
 }
 
 func (m *mockRunner) ExecuteV2(ctx context.Context, toolName string, args map[string]any) (*tool.ToolResponse, error) {
+	m.contexts = append(m.contexts, ctx)
 	if r, ok := m.results[toolName]; ok {
 		return r, nil
 	}
@@ -116,6 +118,45 @@ func TestRunSync_Success(t *testing.T) {
 	}
 	if result.Output != "検索完了しました" {
 		t.Errorf("expected output '検索完了しました', got '%s'", result.Output)
+	}
+}
+
+func TestRunSync_PreservesToolExecutionScopeThroughDelegation(t *testing.T) {
+	provider := &mockProvider{
+		responses: []llm.ChatResponse{
+			{
+				Message: llm.ChatMessage{Role: "assistant", ToolCalls: []llm.ToolCall{
+					{ID: "scope-1", Function: llm.ToolCallFunction{Name: "delegated_tool", Arguments: map[string]any{}}},
+				}},
+				FinishReason: "tool_calls",
+			},
+			{Message: llm.ChatMessage{Role: "assistant", Content: "delegated"}, FinishReason: "stop"},
+		},
+	}
+	runner := &mockRunner{results: map[string]*tool.ToolResponse{"delegated_tool": tool.NewSuccess("ok")}}
+	scope, err := tool.NewToolExecutionScope(
+		"delegated-request",
+		tool.ActorKindAgent,
+		"mio",
+		"user-a",
+		[]string{tool.DataScopeUser},
+		tool.AuthenticationSourceAgentOrchestrator,
+	)
+	if err != nil {
+		t.Fatalf("NewToolExecutionScope() error = %v", err)
+	}
+	mgr := NewManager(provider, runner, nil, toolloop.Config{MaxIterations: 3})
+	if _, err := mgr.RunSync(tool.WithToolExecutionScope(context.Background(), scope), agent.SubagentTask{
+		AgentName: "worker", Instruction: "delegated search",
+	}); err != nil {
+		t.Fatalf("RunSync() error = %v", err)
+	}
+	if len(runner.contexts) != 1 {
+		t.Fatalf("delegated tool contexts = %d, want 1", len(runner.contexts))
+	}
+	got, ok := tool.ToolExecutionScopeFromContext(runner.contexts[0])
+	if !ok || got.RequestID != scope.RequestID || got.AuthenticatedUserID != scope.AuthenticatedUserID || got.ActorID != scope.ActorID {
+		t.Fatalf("delegated scope = %#v, found=%t; want %#v", got, ok, scope)
 	}
 }
 

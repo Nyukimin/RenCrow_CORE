@@ -83,6 +83,11 @@ func (c *runtimePersonRelatedCatalogCollector) Collect(ctx context.Context, pers
 	if err != nil {
 		return nil, fmt.Errorf("resolve exact person identity for collection: %w", err)
 	}
+	if !identityDecision.Allowed {
+		if _, enqueueErr := personrelatedcatalogapp.EnsureIdentityJobForPerson(ctx, movieDB, hobbyDB, eligible.MovieCatalogPersonID, time.Now().UTC()); enqueueErr != nil {
+			return nil, fmt.Errorf("enqueue missing person identity resolution: %w", enqueueErr)
+		}
+	}
 	if (category == personrelatedcatalogapp.CategoryAward || category == personrelatedcatalogapp.CategoryNovel) && !identityDecision.Allowed {
 		return personrelatedcatalogapp.CollectionPlanResult{
 			PlanRevision: personrelatedcatalogapp.CollectionPlanRevision, PersonRefID: "eiga:" + eligible.MovieCatalogPersonID,

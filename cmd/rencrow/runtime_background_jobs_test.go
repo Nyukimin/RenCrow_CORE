@@ -185,6 +185,12 @@ func TestBackgroundJobFailureReporterEmitsShiroAndMioEvents(t *testing.T) {
 	}
 }
 
+func TestBackgroundJobFailureReporterIgnoresTypedNilListener(t *testing.T) {
+	var listener *idleAwareEventListener
+	reporter := newBackgroundJobFailureReporter(listener)
+	reporter.Failed("identity", errors.New("source unavailable"), "bounded failure")
+}
+
 func TestStartMemoryLifecycleJobReportsFailure(t *testing.T) {
 	runner := &failingMemoryLifecycleRunner{err: errors.New("maintenance failed")}
 	listener := &captureBackgroundJobEventListener{}

@@ -28,6 +28,15 @@ func buildViewerBridgeHandlers(
 	viewerSendFromOrch := func(proc messageProcessor) http.HandlerFunc {
 		attachmentStore := newRuntimeAttachmentStore(cfg)
 		return viewer.HandleSendWithAttachments(func(ctx context.Context, req viewer.SendRequest) (string, error) {
+			// Viewer metadata may identify a user for correlation, but it is not
+			// an authentication claim. The trusted orchestrator route therefore
+			// grants only reviewed public Knowledge projections here. A future
+			// authenticated ingress may add a user scope explicitly to ctx.
+			trustedCtx, scopeErr := withTrustedAgentPublicToolScope(ctx, req.TraceID, string(req.To))
+			if scopeErr != nil {
+				return "", scopeErr
+			}
+			ctx = trustedCtx
 			log.Printf("[main] viewerSendFromOrch: start job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachments=%d %s", req.JobID, req.TraceID, req.MessageID, req.ViewerClientID, req.To, len(req.Attachments), req.Provenance.LogFields())
 			resp, err := proc.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
 				JobID:           req.JobID,

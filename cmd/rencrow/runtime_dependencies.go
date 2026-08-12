@@ -280,9 +280,11 @@ type Dependencies struct {
 	advisorCloser                  interface{ Close() error }                  // advisor SQLite store, when configured
 	durableStoreWorkflow           orchestrator.DurableStoreWorkflow           // Chat起点の永続Store判定
 	durableStoreCloser             interface{ Close() error }                  // workflow decision SQLite store
+	knowledgeMemoryToolStore       interface{ Close() error }                  // indexed Tool search store
 	advisorScoreCancel             context.CancelFunc                          // Advisor daily score job
 	memoryPromotionCancel          context.CancelFunc                          // async ProfilePromotion worker
 	personRelatedSummaryCancel     context.CancelFunc                          // fixed-ID related-work summary worker
+	personRelatedIdentityCancel    context.CancelFunc                          // fixed-authority person identity worker
 	toolRegistry                   capdomain.ToolRegistry                      // Phase 4: Shiro ツール共有用 ToolRegistry
 	workerToolRunner               domaintool.RunnerV2                         // production Worker tool execution/listing boundary
 	personRelatedCatalogLookup     viewer.PersonRelatedCatalogProvider         // read-only Viewer projection over the startup lookup instance
@@ -316,6 +318,9 @@ func (d *Dependencies) Shutdown() {
 	if d.personRelatedSummaryCancel != nil {
 		d.personRelatedSummaryCancel()
 	}
+	if d.personRelatedIdentityCancel != nil {
+		d.personRelatedIdentityCancel()
+	}
 	if d.advisorScoreCancel != nil {
 		d.advisorScoreCancel()
 	}
@@ -339,6 +344,11 @@ func (d *Dependencies) Shutdown() {
 	if d.durableStoreCloser != nil {
 		if err := d.durableStoreCloser.Close(); err != nil {
 			log.Printf("Failed to close durable store workflow registry: %v", err)
+		}
+	}
+	if d.knowledgeMemoryToolStore != nil {
+		if err := d.knowledgeMemoryToolStore.Close(); err != nil {
+			log.Printf("Failed to close Knowledge Memory Tool store: %v", err)
 		}
 	}
 	if d.idleChatOrch != nil {
@@ -527,10 +537,17 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 	deps.glossaryRecent = glossaryRuntime.RecentHandler
 	deps.toolRegistry = runtimeToolRegistry
+	deps.knowledgeMemoryToolStore = toolRuntime.KnowledgeMemoryToolStore
 	deps.workerToolRunner = toolRuntime.WorkerRuntimeRunnerV2
 	if toolRuntime.PersonRelatedSummaryWorker != nil {
 		deps.personRelatedSummaryCancel = startRuntimePersonRelatedSummaryWorker(
 			toolRuntime.PersonRelatedSummaryWorker,
+			newBackgroundJobFailureReporter(deps.eventRelay),
+		)
+	}
+	if toolRuntime.PersonRelatedIdentityWorker != nil {
+		deps.personRelatedIdentityCancel = startRuntimePersonRelatedIdentityWorker(
+			toolRuntime.PersonRelatedIdentityWorker,
 			newBackgroundJobFailureReporter(deps.eventRelay),
 		)
 	}

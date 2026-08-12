@@ -33,8 +33,23 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("person_related_catalog.summary_worker.max_attempts must be between 1 and 3")
 		}
 	}
-	identityConfigured := c.PersonRelatedCatalog.IdentityMapping.Enabled != nil || c.PersonRelatedCatalog.IdentityMapping.BatchCategories != 0
+	identityConfigured := c.PersonRelatedCatalog.IdentityMapping.Enabled != nil || c.PersonRelatedCatalog.IdentityMapping.Interval != "" || c.PersonRelatedCatalog.IdentityMapping.BatchSize != 0 || c.PersonRelatedCatalog.IdentityMapping.Lease != "" || c.PersonRelatedCatalog.IdentityMapping.MaxAttempts != 0 || c.PersonRelatedCatalog.IdentityMapping.BatchCategories != 0
 	if identityConfigured && c.PersonRelatedCatalog.IdentityMapping.IsEnabled() {
+		identity := c.PersonRelatedCatalog.IdentityMapping
+		if identity.BatchSize < 1 || identity.BatchSize > 20 {
+			return fmt.Errorf("person_related_catalog.identity_mapping.batch_size must be between 1 and 20")
+		}
+		interval, err := time.ParseDuration(identity.Interval)
+		if err != nil || interval <= 0 {
+			return fmt.Errorf("person_related_catalog.identity_mapping.interval must be a positive duration")
+		}
+		lease, err := time.ParseDuration(identity.Lease)
+		if err != nil || lease < 30*time.Second || lease > 10*time.Minute {
+			return fmt.Errorf("person_related_catalog.identity_mapping.lease must be between 30s and 10m")
+		}
+		if identity.MaxAttempts < 1 || identity.MaxAttempts > 3 {
+			return fmt.Errorf("person_related_catalog.identity_mapping.max_attempts must be between 1 and 3")
+		}
 		categories := c.PersonRelatedCatalog.IdentityMapping.BatchCategories
 		if categories < 1 || categories > 7 {
 			return fmt.Errorf("person_related_catalog.identity_mapping.batch_categories must be between 1 and 7")

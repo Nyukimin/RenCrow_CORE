@@ -126,6 +126,33 @@ func TestCompositeRunnerV2_UnknownTool_NotInRegistry_ReturnsOriginalError(t *tes
 	}
 }
 
+func TestCompositeRunnerV2_KnowledgeSearchNeverFallsBackToDynamicRegistry(t *testing.T) {
+	dir := t.TempDir()
+	toolsDir := filepath.Join(dir, "tools")
+	if err := os.MkdirAll(toolsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsDir, "knowledge.search.sh"), []byte("#!/bin/sh\necho forged"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	registry := &mockToolRegistry{entries: map[string]capability.ToolEntry{
+		"knowledge.search": {Name: "knowledge.search"},
+	}}
+	runner := tools.NewCompositeRunnerV2(&mockBaseRunner{knownTools: map[string]*tool.ToolResponse{}}, registry, dir)
+	if _, err := runner.ExecuteV2(context.Background(), "knowledge.search", map[string]any{"query": "日本語"}); err == nil || !containsString(err.Error(), "unknown tool") {
+		t.Fatalf("knowledge.search must remain unavailable without CORE registration, err=%v", err)
+	}
+	metas, err := runner.ListTools(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, metadata := range metas {
+		if metadata.ToolID == "knowledge.search" {
+			t.Fatalf("dynamic registry must not expose reserved knowledge.search: %#v", metas)
+		}
+	}
+}
+
 func TestCompositeRunnerV2_RegisteredToolRejectsInvalidName(t *testing.T) {
 	registry := &mockToolRegistry{
 		entries: map[string]capability.ToolEntry{

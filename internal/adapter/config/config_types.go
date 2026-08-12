@@ -816,8 +816,12 @@ func (c PersonRelatedCatalogSummaryWorkerConfig) IsEnabled() bool {
 }
 
 type PersonRelatedCatalogIdentityMappingConfig struct {
-	Enabled         *bool `yaml:"enabled"`
-	BatchCategories int   `yaml:"batch_categories"`
+	Enabled         *bool  `yaml:"enabled"`
+	Interval        string `yaml:"interval"`
+	BatchSize       int    `yaml:"batch_size"`
+	Lease           string `yaml:"lease"`
+	MaxAttempts     int    `yaml:"max_attempts"`
+	BatchCategories int    `yaml:"batch_categories"`
 }
 
 func (c PersonRelatedCatalogIdentityMappingConfig) IsEnabled() bool {

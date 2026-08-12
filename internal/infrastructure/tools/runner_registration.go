@@ -102,6 +102,9 @@ func (r *ToolRunner) registerOptionalTools() {
 	if r.config.GlossaryLookup != nil {
 		r.registerGlossaryTool()
 	}
+	if r.config.KnowledgeMemorySearcher != nil && r.config.KnowledgeMemorySearchReady {
+		r.registerKnowledgeSearchTool()
+	}
 }
 
 func (r *ToolRunner) registerToolMetadata() {
@@ -327,6 +330,9 @@ func (r *ToolRunner) registerToolMetadata() {
 	}
 	if r.config.GlossaryLookup != nil {
 		r.metadata["glossary.lookup"] = glossaryMetadata()
+	}
+	if r.config.KnowledgeMemorySearcher != nil && r.config.KnowledgeMemorySearchReady {
+		r.metadata["knowledge.search"] = knowledgeSearchMetadata()
 	}
 
 	if r.config.ToolRegistry != nil {

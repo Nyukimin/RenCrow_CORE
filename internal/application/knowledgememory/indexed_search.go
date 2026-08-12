@@ -45,7 +45,11 @@ func (s SearchScope) Validate() error {
 type SearchRequest struct {
 	Scope SearchScope
 	Query string
-	Limit int
+	// RecordType is optional for the internal compatibility API (blank means
+	// both indexed public record types), but the knowledge.search Tool always
+	// supplies one of the fixed enum values.
+	RecordType string
+	Limit      int
 }
 
 func (r SearchRequest) Validate() error {
@@ -55,10 +59,22 @@ func (r SearchRequest) Validate() error {
 	if _, err := SearchTokens(r.Query); err != nil {
 		return err
 	}
+	if r.RecordType != "" && !isSearchRecordType(r.RecordType) {
+		return fmt.Errorf("unsupported search record type")
+	}
 	if r.Limit < 0 || r.Limit > maxSearchResults {
 		return fmt.Errorf("search limit must be 0 (default) or between 1 and %d", maxSearchResults)
 	}
 	return nil
+}
+
+func isSearchRecordType(recordType string) bool {
+	switch recordType {
+	case "creative_knowledge", "news_knowledge":
+		return true
+	default:
+		return false
+	}
 }
 
 // SearchResult is the safe projection returned by indexed lookup. It never

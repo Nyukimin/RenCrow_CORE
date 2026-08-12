@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,12 @@ type backgroundJobFailureReporter struct {
 }
 
 func newBackgroundJobFailureReporter(listener orchestrator.EventListener) backgroundJobFailureReporter {
+	if listener != nil {
+		value := reflect.ValueOf(listener)
+		if value.Kind() == reflect.Pointer && value.IsNil() {
+			listener = nil
+		}
+	}
 	return backgroundJobFailureReporter{listener: listener}
 }
 

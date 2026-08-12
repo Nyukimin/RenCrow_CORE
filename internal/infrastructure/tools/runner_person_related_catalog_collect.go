@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"log"
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -49,6 +50,7 @@ func (r *ToolRunner) executePersonRelatedCatalogCollectV2(ctx context.Context, a
 	}
 	result, err := r.config.PersonRelatedCatalogCollector.Collect(ctx, personName, category)
 	if err != nil {
+		log.Printf("person_related_catalog.collect failed category=%s: %v", category, err)
 		return tool.NewError(tool.ErrInternalError, "person related catalog collection failed", map[string]any{"category": category}), nil
 	}
 	return tool.NewSuccess(result), nil

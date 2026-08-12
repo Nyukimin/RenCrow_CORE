@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"time"
 
+	knowledgememoryapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/toolharness"
@@ -91,6 +92,12 @@ type GlossaryLookup interface {
 	Lookup(ctx context.Context, operation string, term string, category string, limit int) (any, error)
 }
 
+// KnowledgeMemorySearcher is the named-indexed Knowledge Memory boundary.
+// It intentionally exposes no database path, SQL, or raw payload surface.
+type KnowledgeMemorySearcher interface {
+	Search(ctx context.Context, request knowledgememoryapp.SearchRequest) ([]knowledgememoryapp.SearchResult, error)
+}
+
 // ToolRunner はツール実行の実装（V1 + V2 対応）
 type ToolRunner struct {
 	tools    map[string]ToolFunc
@@ -128,6 +135,8 @@ type ToolRunnerConfig struct {
 	PersonRelatedCatalogCollector PersonRelatedCatalogCollector // nil = person_related_catalog.collect 無効
 	DataCapabilityCatalog         DataCapabilityCatalog         // nil = data_capability.describe 無効
 	GlossaryLookup                GlossaryLookup                // nil = glossary.lookup 無効
+	KnowledgeMemorySearcher       KnowledgeMemorySearcher       // nil = knowledge.search 無効
+	KnowledgeMemorySearchReady    bool                          // schema/index/coverage/trusted wiring gate
 }
 
 // ToolFunc はツール実行関数の型

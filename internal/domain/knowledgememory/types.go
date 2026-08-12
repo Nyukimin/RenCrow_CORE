@@ -13,25 +13,29 @@ type PersonalArchiveEntry struct {
 
 type CreativeKnowledgeItem struct {
 	ItemID       string    `json:"item_id"`
+	UserID       string    `json:"user_id,omitempty"`
 	Title        string    `json:"title"`
 	CreatorNames []string  `json:"creator_names,omitempty"`
 	WorkType     string    `json:"work_type,omitempty"`
 	RelatedWorks []string  `json:"related_works,omitempty"`
 	ContentHints []string  `json:"content_hints,omitempty"`
 	Status       string    `json:"status"`
+	Visibility   string    `json:"visibility,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
 type NewsKnowledgeItem struct {
-	ItemID    string    `json:"item_id"`
-	Source    string    `json:"source"`
-	Topic     string    `json:"topic"`
-	EventDate string    `json:"event_date,omitempty"`
-	URL       string    `json:"url,omitempty"`
-	Summary   string    `json:"summary,omitempty"`
-	Durable   bool      `json:"durable"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ItemID     string    `json:"item_id"`
+	UserID     string    `json:"user_id,omitempty"`
+	Source     string    `json:"source"`
+	Topic      string    `json:"topic"`
+	EventDate  string    `json:"event_date,omitempty"`
+	URL        string    `json:"url,omitempty"`
+	Summary    string    `json:"summary,omitempty"`
+	Durable    bool      `json:"durable"`
+	Status     string    `json:"status"`
+	Visibility string    `json:"visibility,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type DailyIntakeRule struct {

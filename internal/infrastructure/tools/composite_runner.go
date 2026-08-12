@@ -52,6 +52,12 @@ func (c *CompositeRunnerV2) ExecuteV2(ctx context.Context, toolName string, args
 	if !isUnknownToolError(err) {
 		return nil, err
 	}
+	// knowledge.search is a CORE-owned bounded operation. If its indexed
+	// capability is unavailable, a dynamic registry entry must not turn the
+	// same name into an unscoped shell/database fallback.
+	if toolName == knowledgeSearchToolName {
+		return nil, err
+	}
 
 	return c.executeRegistered(ctx, toolName, args, err)
 }
@@ -84,6 +90,11 @@ func (c *CompositeRunnerV2) ListTools(ctx context.Context) ([]tool.ToolMetadata,
 	result := make([]tool.ToolMetadata, len(baseMetas))
 	copy(result, baseMetas)
 	for _, e := range entries {
+		if e.Name == knowledgeSearchToolName {
+			// Keep the CORE-owned name unavailable until its indexed scope gate
+			// is satisfied; never expose a dynamic replacement in the snapshot.
+			continue
+		}
 		if existing[e.Name] {
 			continue
 		}

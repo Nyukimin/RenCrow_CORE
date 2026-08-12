@@ -23,6 +23,18 @@ func (c *Config) setDefaults() {
 	if c.PersonRelatedCatalog.IdentityMapping.BatchCategories == 0 {
 		c.PersonRelatedCatalog.IdentityMapping.BatchCategories = 7
 	}
+	if c.PersonRelatedCatalog.IdentityMapping.Interval == "" {
+		c.PersonRelatedCatalog.IdentityMapping.Interval = "5m"
+	}
+	if c.PersonRelatedCatalog.IdentityMapping.BatchSize == 0 {
+		c.PersonRelatedCatalog.IdentityMapping.BatchSize = 20
+	}
+	if c.PersonRelatedCatalog.IdentityMapping.Lease == "" {
+		c.PersonRelatedCatalog.IdentityMapping.Lease = "2m"
+	}
+	if c.PersonRelatedCatalog.IdentityMapping.MaxAttempts == 0 {
+		c.PersonRelatedCatalog.IdentityMapping.MaxAttempts = 3
+	}
 	if c.DurableStore.Enabled && strings.TrimSpace(c.DurableStore.ManifestPath) == "" {
 		c.DurableStore.ManifestPath = "config/durable-stores.json"
 	}

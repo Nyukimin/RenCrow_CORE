@@ -172,3 +172,77 @@ func TestSQLiteStoreIndexedSearchPlanUsesNamedIndexesWithoutTargetScans(t *testi
 		t.Fatalf("target table scan found in plan: %s", joined)
 	}
 }
+
+func TestSQLiteStoreIndexedSearchSeparatesOwnersAndRecordTypes(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir() + "/knowledge_memory.db")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	items := []domainkm.CreativeKnowledgeItem{
+		{ItemID: "public", Title: "日本語 公開", Status: "reviewed", CreatedAt: now},
+		{ItemID: "owner-a", UserID: "user-a", Title: "日本語 A", Status: "reviewed", CreatedAt: now.Add(time.Minute)},
+		{ItemID: "owner-b", UserID: "user-b", Title: "日本語 B", Status: "reviewed", CreatedAt: now.Add(2 * time.Minute)},
+	}
+	for _, item := range items {
+		if err := store.SaveCreativeKnowledgeItem(context.Background(), item); err != nil {
+			t.Fatalf("SaveCreativeKnowledgeItem(%s) error = %v", item.ItemID, err)
+		}
+	}
+	publicResults, err := store.Search(context.Background(), appkm.SearchRequest{
+		Scope:      appkm.SearchScope{Scope: appkm.SearchScopePublic},
+		Query:      "日本語",
+		RecordType: "creative_knowledge",
+		Limit:      20,
+	})
+	if err != nil {
+		t.Fatalf("public Search() error = %v", err)
+	}
+	if len(publicResults) != 1 || publicResults[0].RecordID != "public" {
+		t.Fatalf("public results = %#v, want only public row", publicResults)
+	}
+
+	for _, owner := range []string{"user-a", "user-b"} {
+		results, searchErr := store.Search(context.Background(), appkm.SearchRequest{
+			Scope:      appkm.SearchScope{Scope: appkm.SearchScopeUser, UserID: owner},
+			Query:      "日本語",
+			RecordType: "creative_knowledge",
+			Limit:      20,
+		})
+		if searchErr != nil {
+			t.Fatalf("owner %s Search() error = %v", owner, searchErr)
+		}
+		if len(results) != 1 || results[0].UserID != owner || results[0].RecordID != "owner-"+string(owner[len(owner)-1]) {
+			t.Fatalf("owner %s results = %#v", owner, results)
+		}
+	}
+}
+
+func TestSQLiteStoreIndexedSearchRejectsPublicProjectionWithPrivateVisibility(t *testing.T) {
+	store, err := NewSQLiteStore(t.TempDir() + "/knowledge_memory.db")
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	if _, err := store.db.Exec(`INSERT INTO knowledge_memory_search_documents
+		(record_type, record_id, scope, user_id, title, summary, visibility, source_updated_at, indexed_at, content_sha256)
+		VALUES ('creative_knowledge', 'private-public-scope', 'public', '', '日本語', '', 'private', '2026-08-12T12:00:00Z', '2026-08-12T12:00:00Z', 'hash')`); err != nil {
+		t.Fatalf("insert private projection: %v", err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO knowledge_memory_search_terms
+		(scope, user_id, token, record_type, record_id) VALUES ('public', '', '日本', 'creative_knowledge', 'private-public-scope')`); err != nil {
+		t.Fatalf("insert private term: %v", err)
+	}
+	results, err := store.Search(context.Background(), appkm.SearchRequest{
+		Scope:      appkm.SearchScope{Scope: appkm.SearchScopePublic},
+		Query:      "日本",
+		RecordType: "creative_knowledge",
+	})
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("private visibility leaked to public scope: %#v", results)
+	}
+}

@@ -62,6 +62,65 @@ func TestBuildToolRuntimeInstallsSkillReadOnlyForWorker(t *testing.T) {
 	}
 }
 
+func TestBuildToolRuntimeRegistersKnowledgeSearchOnlyAfterSQLiteIndexGate(t *testing.T) {
+	disabled := false
+	workspace := t.TempDir()
+	dbPath := filepath.Join(workspace, "knowledge_memory.db")
+	cfg := &config.Config{
+		WorkspaceDir:    workspace,
+		Storage:         config.StorageConfig{Databases: config.DatabasePathsConfig{KnowledgeMemory: dbPath}},
+		KnowledgeMemory: config.KnowledgeMemoryConfig{Storage: "sqlite", SQLitePath: dbPath},
+		ToolHarness:     config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled},
+	}
+	runtime := buildToolRuntime(cfg, nil, nil, nil)
+	if runtime.KnowledgeMemoryToolStore == nil {
+		t.Fatal("SQLite Knowledge Memory Tool store was not initialized")
+	}
+	defer runtime.KnowledgeMemoryToolStore.Close()
+	publicScope, err := domaintool.NewToolExecutionScope(
+		"runtime-knowledge-test",
+		domaintool.ActorKindAgent,
+		"mio",
+		"",
+		[]string{domaintool.DataScopePublic},
+		domaintool.AuthenticationSourceAgentOrchestrator,
+	)
+	if err != nil {
+		t.Fatalf("NewToolExecutionScope() error = %v", err)
+	}
+	for name, runner := range map[string]domaintool.RunnerV2{
+		"chat":   runtime.ChatRuntimeRunnerV2,
+		"worker": runtime.WorkerRuntimeRunnerV2,
+	} {
+		metadata, listErr := runner.ListTools(context.Background())
+		if listErr != nil {
+			t.Fatalf("%s ListTools() error = %v", name, listErr)
+		}
+		if !hasToolMetadata(metadata, "knowledge.search") {
+			t.Fatalf("%s knowledge.search is not exposed after SQLite schema gate: %#v", name, metadata)
+		}
+		response, executeErr := runner.ExecuteV2(
+			domaintool.WithToolExecutionScope(context.Background(), publicScope),
+			"knowledge.search",
+			map[string]any{"query": "日本語", "record_type": "creative_knowledge"},
+		)
+		if executeErr != nil || response == nil || response.Error != nil {
+			t.Fatalf("%s knowledge.search E2E response=%#v err=%v", name, response, executeErr)
+		}
+	}
+	disabledMemory := false
+	disabledCfg := *cfg
+	disabledCfg.KnowledgeMemory.Enabled = &disabledMemory
+	disabledRuntime := buildToolRuntime(&disabledCfg, nil, nil, nil)
+	disabledMetadata, metadataErr := disabledRuntime.WorkerRuntimeRunnerV2.ListTools(context.Background())
+	if metadataErr != nil {
+		t.Fatalf("disabled Worker ListTools() error = %v", metadataErr)
+	}
+	if disabledRuntime.KnowledgeMemoryToolStore != nil || hasToolMetadata(disabledMetadata, "knowledge.search") {
+		t.Fatal("disabled Knowledge Memory must not initialize or expose knowledge.search")
+	}
+}
+
 func hasToolMetadata(metas []domaintool.ToolMetadata, name string) bool {
 	for _, metadata := range metas {
 		if metadata.ToolID == name {

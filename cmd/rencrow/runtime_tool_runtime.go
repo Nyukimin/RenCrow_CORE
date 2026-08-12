@@ -19,21 +19,24 @@ import (
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	browseractorinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/browseractor"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
+	knowledgememorypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/knowledgememory"
 	toolharnesspersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/toolharness"
 	securityinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
 type toolRuntime struct {
-	ChatRunnerV2               *tools.ToolRunner
-	WorkerRunnerV2             *tools.ToolRunner
-	ChatRuntimeRunnerV2        domaintool.RunnerV2
-	WorkerRuntimeRunnerV2      domaintool.RunnerV2
-	PersonRelatedCatalogLookup *runtimePersonRelatedCatalogLookup
-	PersonRelatedSummaryWorker *runtimePersonRelatedSummaryWorker
-	SubagentMgr                *subagent.Manager
-	ToolMediationRecorder      *toolharnesspersistence.JSONLRecorder
-	DataCapabilityCatalog      *runtimeDataCapabilityCatalog
+	ChatRunnerV2                *tools.ToolRunner
+	WorkerRunnerV2              *tools.ToolRunner
+	ChatRuntimeRunnerV2         domaintool.RunnerV2
+	WorkerRuntimeRunnerV2       domaintool.RunnerV2
+	PersonRelatedCatalogLookup  *runtimePersonRelatedCatalogLookup
+	PersonRelatedSummaryWorker  *runtimePersonRelatedSummaryWorker
+	PersonRelatedIdentityWorker *runtimePersonRelatedIdentityWorker
+	SubagentMgr                 *subagent.Manager
+	ToolMediationRecorder       *toolharnesspersistence.JSONLRecorder
+	DataCapabilityCatalog       *runtimeDataCapabilityCatalog
+	KnowledgeMemoryToolStore    interface{ Close() error }
 }
 
 func buildToolRuntime(
@@ -98,6 +101,7 @@ func buildToolRuntimeWithCapabilities(
 	}
 	var personRelatedCatalogCollector *runtimePersonRelatedCatalogCollector
 	var personRelatedSummaryWorker *runtimePersonRelatedSummaryWorker
+	var personRelatedIdentityWorker *runtimePersonRelatedIdentityWorker
 	if personRelatedCatalogLookup != nil {
 		providerURL := personrelatedcatalogapp.ResolveCollectionProviderBaseURL()
 		if strings.TrimSpace(providerURL) != "" {
@@ -137,29 +141,76 @@ func buildToolRuntimeWithCapabilities(
 			}
 		}
 	}
+	if personRelatedCatalogLookup != nil && cfg.PersonRelatedCatalog.IdentityMapping.IsEnabled() {
+		providerURL := personrelatedcatalogapp.ResolveCollectionProviderBaseURL()
+		if strings.TrimSpace(providerURL) != "" {
+			identityResolver := personrelatedcatalogapp.NewHTTPIdentityResolver(providerURL, 90*time.Second)
+			personRelatedIdentityWorker, personRelatedCatalogLookupErr = prepareRuntimePersonRelatedIdentityWorker(
+				cfg.Storage.Databases.MovieCatalog,
+				cfg.Storage.Databases.HobbyGraph,
+				identityResolver,
+				cfg.PersonRelatedCatalog.IdentityMapping,
+				time.Now,
+			)
+			if personRelatedCatalogLookupErr != nil {
+				log.Printf("Person related identity worker unavailable: %v", personRelatedCatalogLookupErr)
+				personRelatedIdentityWorker = nil
+			} else {
+				log.Printf("Person related identity worker ready (fixed-authority bounded resolver)")
+			}
+		} else {
+			log.Printf("Person related identity worker unavailable: provider URL is not configured")
+		}
+	}
 	glossaryLookup, glossaryLookupErr := prepareRuntimeGlossaryLookup(context.Background(), cfg.Storage.Databases.Glossary)
 	if glossaryLookupErr != nil {
 		log.Printf("Glossary lookup Tool unavailable")
 	} else {
 		log.Printf("Glossary lookup Tool ready (indexed read-only execution)")
 	}
+	var knowledgeMemorySearcher tools.KnowledgeMemorySearcher
+	var knowledgeMemoryToolStore interface{ Close() error }
+	knowledgeMemorySearchReady := false
+	if cfg != nil && cfg.KnowledgeMemory.IsEnabled() && strings.EqualFold(strings.TrimSpace(cfg.KnowledgeMemory.Storage), "sqlite") {
+		path := strings.TrimSpace(cfg.Storage.Databases.KnowledgeMemory)
+		if path == "" {
+			path = strings.TrimSpace(cfg.KnowledgeMemory.SQLitePath)
+		}
+		if path != "" {
+			store, err := knowledgememorypersistence.NewSQLiteStore(path)
+			if err != nil {
+				log.Printf("Knowledge Memory indexed Tool unavailable: %v", err)
+			} else {
+				knowledgeMemorySearcher = store
+				knowledgeMemoryToolStore = store
+				// NewSQLiteStore completes schema/index migration. The trusted
+				// execution scope remains a per-request gate in the Tool.
+				knowledgeMemorySearchReady = true
+				log.Printf("Knowledge Memory indexed Tool ready (SQLite named-index execution)")
+			}
+		}
+	}
 	dataCapabilityCatalog := buildRuntimeDataCapabilityCatalog(cfg, glossaryLookup != nil, movieCatalogLookup != nil, personRelatedCatalogLookup != nil)
 	chatToolRunnerCfg := tools.ToolRunnerConfig{
-		GoogleAPIKey:          googleSearchValue(cfg.GoogleSearchChat.APIKey, "GOOGLE_API_KEY_CHAT"),
-		GoogleSearchEngineID:  googleSearchValue(cfg.GoogleSearchChat.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_CHAT"),
-		AllowedWritePaths:     personaWritePaths,
-		DisableToolHarness:    true,
-		DataCapabilityCatalog: dataCapabilityCatalog,
+		GoogleAPIKey:               googleSearchValue(cfg.GoogleSearchChat.APIKey, "GOOGLE_API_KEY_CHAT"),
+		GoogleSearchEngineID:       googleSearchValue(cfg.GoogleSearchChat.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_CHAT"),
+		AllowedWritePaths:          personaWritePaths,
+		DisableToolHarness:         true,
+		DataCapabilityCatalog:      dataCapabilityCatalog,
+		KnowledgeMemorySearcher:    knowledgeMemorySearcher,
+		KnowledgeMemorySearchReady: knowledgeMemorySearchReady,
 	}
 	workerToolRunnerCfg := tools.ToolRunnerConfig{
-		GoogleAPIKey:          googleSearchValue(cfg.GoogleSearchWorker.APIKey, "GOOGLE_API_KEY_WORKER"),
-		GoogleSearchEngineID:  googleSearchValue(cfg.GoogleSearchWorker.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_WORKER"),
-		ToolRegistry:          runtimeToolRegistry,
-		WorkspaceDir:          cfg.WorkspaceDir,
-		SkillCatalog:          workerSkillCatalog,
-		MCPToolCatalog:        mcpToolCatalog,
-		DisableToolHarness:    true,
-		DataCapabilityCatalog: dataCapabilityCatalog,
+		GoogleAPIKey:               googleSearchValue(cfg.GoogleSearchWorker.APIKey, "GOOGLE_API_KEY_WORKER"),
+		GoogleSearchEngineID:       googleSearchValue(cfg.GoogleSearchWorker.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_WORKER"),
+		ToolRegistry:               runtimeToolRegistry,
+		WorkspaceDir:               cfg.WorkspaceDir,
+		SkillCatalog:               workerSkillCatalog,
+		MCPToolCatalog:             mcpToolCatalog,
+		DisableToolHarness:         true,
+		DataCapabilityCatalog:      dataCapabilityCatalog,
+		KnowledgeMemorySearcher:    knowledgeMemorySearcher,
+		KnowledgeMemorySearchReady: knowledgeMemorySearchReady,
 	}
 	if movieCatalogLookup != nil {
 		chatToolRunnerCfg.MovieCatalogLookup = movieCatalogLookup
@@ -300,15 +351,17 @@ func buildToolRuntimeWithCapabilities(
 	}
 
 	return toolRuntime{
-		ChatRunnerV2:               chatToolRunnerV2,
-		WorkerRunnerV2:             workerToolRunnerV2,
-		ChatRuntimeRunnerV2:        chatRunnerV2,
-		WorkerRuntimeRunnerV2:      workerRunnerV2,
-		PersonRelatedCatalogLookup: personRelatedCatalogLookup,
-		PersonRelatedSummaryWorker: personRelatedSummaryWorker,
-		SubagentMgr:                subagentMgr,
-		ToolMediationRecorder:      toolMediationRecorder,
-		DataCapabilityCatalog:      dataCapabilityCatalog,
+		ChatRunnerV2:                chatToolRunnerV2,
+		WorkerRunnerV2:              workerToolRunnerV2,
+		ChatRuntimeRunnerV2:         chatRunnerV2,
+		WorkerRuntimeRunnerV2:       workerRunnerV2,
+		PersonRelatedCatalogLookup:  personRelatedCatalogLookup,
+		PersonRelatedSummaryWorker:  personRelatedSummaryWorker,
+		PersonRelatedIdentityWorker: personRelatedIdentityWorker,
+		SubagentMgr:                 subagentMgr,
+		ToolMediationRecorder:       toolMediationRecorder,
+		DataCapabilityCatalog:       dataCapabilityCatalog,
+		KnowledgeMemoryToolStore:    knowledgeMemoryToolStore,
 	}
 }
 

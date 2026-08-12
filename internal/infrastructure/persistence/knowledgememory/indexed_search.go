@@ -90,12 +90,14 @@ func creativeSearchProjection(item domainkm.CreativeKnowledgeItem) *safeSearchPr
 		return nil
 	}
 	summary := strings.Join(nonEmptySearchStrings(append(append([]string{}, item.CreatorNames...), append([]string{item.WorkType}, item.RelatedWorks...)...)), " ")
-	return newSafeSearchProjection(
+	return newSafeSearchProjectionWithOwner(
 		creativeKnowledgeRecordType,
 		item.ItemID,
 		item.Title,
 		summary,
 		item.CreatedAt,
+		item.UserID,
+		item.Visibility,
 	)
 }
 
@@ -103,33 +105,54 @@ func newsSearchProjection(item domainkm.NewsKnowledgeItem) *safeSearchProjection
 	if !isSearchableKnowledgeStatus(item.Status) {
 		return nil
 	}
-	return newSafeSearchProjection(
+	return newSafeSearchProjectionWithOwner(
 		newsKnowledgeRecordType,
 		item.ItemID,
 		item.Topic,
 		item.Summary,
 		item.CreatedAt,
+		item.UserID,
+		item.Visibility,
 	)
 }
 
 func newSafeSearchProjection(recordType, recordID, title, summary string, sourceUpdatedAt time.Time) *safeSearchProjection {
+	return newSafeSearchProjectionWithOwner(recordType, recordID, title, summary, sourceUpdatedAt, "", "")
+}
+
+func newSafeSearchProjectionWithOwner(recordType, recordID, title, summary string, sourceUpdatedAt time.Time, userID, visibility string) *safeSearchProjection {
 	title = strings.TrimSpace(title)
 	summary = strings.TrimSpace(summary)
+	userID = strings.TrimSpace(userID)
+	visibility = strings.TrimSpace(visibility)
+	scope := appkm.SearchScopePublic
+	if userID != "" {
+		scope = appkm.SearchScopeUser
+		if visibility == "" {
+			visibility = "private"
+		}
+	} else if visibility == "" {
+		visibility = searchVisibilityPublic
+	}
+	if scope == appkm.SearchScopePublic && visibility != searchVisibilityPublic {
+		return nil
+	}
 	text := strings.TrimSpace(strings.Join([]string{title, summary}, " "))
 	tokens, err := appkm.IndexTokens(text)
 	if err != nil {
 		return nil
 	}
 	source := sourceUpdatedAt.UTC().Format(timeFormatRFC3339Nano)
-	hashInput := strings.Join([]string{recordType, recordID, title, summary, searchVisibilityPublic, source}, "\x00")
+	hashInput := strings.Join([]string{recordType, recordID, scope, userID, title, summary, visibility, source}, "\x00")
 	hash := sha256.Sum256([]byte(hashInput))
 	return &safeSearchProjection{
 		recordType:      recordType,
 		recordID:        strings.TrimSpace(recordID),
-		scope:           appkm.SearchScopePublic,
+		scope:           scope,
+		userID:          userID,
 		title:           title,
 		summary:         summary,
-		visibility:      searchVisibilityPublic,
+		visibility:      visibility,
 		sourceUpdatedAt: source,
 		contentSHA256:   hex.EncodeToString(hash[:]),
 		tokens:          tokens,
@@ -209,7 +232,7 @@ func (s *SQLiteStore) Search(ctx context.Context, request appkm.SearchRequest) (
 	if err != nil {
 		return nil, err
 	}
-	candidateSQL, candidateArgs := buildCandidateQuery(tokens, request.Scope)
+	candidateSQL, candidateArgs := buildCandidateQuery(tokens, request.Scope, request.RecordType)
 	candidates, err := s.queryCandidates(ctx, candidateSQL, candidateArgs)
 	if err != nil {
 		return nil, fmt.Errorf("knowledge memory search index unavailable: %w", err)
@@ -306,10 +329,11 @@ type searchCandidate struct {
 	recordID   string
 }
 
-func buildCandidateQuery(tokens []string, scope appkm.SearchScope) (string, []any) {
+func buildCandidateQuery(tokens []string, scope appkm.SearchScope, recordType string) (string, []any) {
 	var query strings.Builder
 	query.WriteString(`SELECT t0.record_type, t0.record_id
 		FROM knowledge_memory_search_terms AS t0 INDEXED BY idx_knowledge_memory_search_terms_lookup`)
+	recordTypes := searchRecordTypes(recordType)
 	args := make([]any, 0, len(tokens)*6)
 	for i := 1; i < len(tokens); i++ {
 		alias := fmt.Sprintf("t%d", i)
@@ -328,16 +352,57 @@ func buildCandidateQuery(tokens []string, scope appkm.SearchScope) (string, []an
 		query.WriteString(`.scope = ? AND `)
 		query.WriteString(alias)
 		query.WriteString(`.user_id = ? AND `)
-		query.WriteString(alias)
-		query.WriteString(`.record_type IN (?, ?) AND `)
+		appendRecordTypePredicate(&query, alias+`.record_type`, recordTypes)
+		query.WriteString(` AND `)
 		query.WriteString(alias)
 		query.WriteString(`.token = ?`)
-		args = append(args, scope.Scope, scope.UserID, searchableKnowledgeRecordTypes[0], searchableKnowledgeRecordTypes[1], tokens[i])
+		args = append(args, scope.Scope, scope.UserID)
+		args = append(args, recordTypeArgs(recordTypes)...)
+		args = append(args, tokens[i])
 	}
-	query.WriteString(` WHERE t0.scope = ? AND t0.user_id = ? AND t0.record_type IN (?, ?) AND t0.token = ?`)
-	args = append(args, scope.Scope, scope.UserID, searchableKnowledgeRecordTypes[0], searchableKnowledgeRecordTypes[1], tokens[0])
+	query.WriteString(` WHERE t0.scope = ? AND t0.user_id = ? AND `)
+	appendRecordTypePredicate(&query, "t0.record_type", recordTypes)
+	query.WriteString(` AND t0.token = ?`)
+	args = append(args, scope.Scope, scope.UserID)
+	args = append(args, recordTypeArgs(recordTypes)...)
+	args = append(args, tokens[0])
 	query.WriteString(fmt.Sprintf(` GROUP BY t0.record_type, t0.record_id LIMIT %d`, maxSearchCandidates))
 	return query.String(), args
+}
+
+func searchRecordTypes(recordType string) []string {
+	switch recordType {
+	case creativeKnowledgeRecordType:
+		return []string{creativeKnowledgeRecordType}
+	case newsKnowledgeRecordType:
+		return []string{newsKnowledgeRecordType}
+	default:
+		return searchableKnowledgeRecordTypes
+	}
+}
+
+func appendRecordTypePredicate(query *strings.Builder, column string, recordTypes []string) {
+	query.WriteString(column)
+	if len(recordTypes) == 1 {
+		query.WriteString(` = ?`)
+		return
+	}
+	query.WriteString(` IN (`)
+	for i := range recordTypes {
+		if i > 0 {
+			query.WriteString(`, `)
+		}
+		query.WriteString(`?`)
+	}
+	query.WriteString(`)`)
+}
+
+func recordTypeArgs(recordTypes []string) []any {
+	args := make([]any, len(recordTypes))
+	for i, recordType := range recordTypes {
+		args[i] = recordType
+	}
+	return args
 }
 
 func (s *SQLiteStore) queryCandidates(ctx context.Context, query string, args []any) ([]searchCandidate, error) {
@@ -368,8 +433,12 @@ func buildDocumentQuery(candidates []searchCandidate, scope appkm.SearchScope) (
 		if i > 0 {
 			query.WriteString(" OR ")
 		}
-		query.WriteString("(scope = ? AND user_id = ? AND record_type = ? AND record_id = ?)")
+		query.WriteString("(scope = ? AND user_id = ? AND record_type = ? AND record_id = ?")
 		args = append(args, scope.Scope, scope.UserID, candidate.recordType, candidate.recordID)
+		if scope.Scope == appkm.SearchScopePublic {
+			query.WriteString(" AND visibility = 'public'")
+		}
+		query.WriteString(")")
 	}
 	return query.String(), args
 }
@@ -382,7 +451,7 @@ func (s *SQLiteStore) explainIndexedSearch(ctx context.Context, request appkm.Se
 	if err != nil {
 		return nil, err
 	}
-	candidateSQL, candidateArgs := buildCandidateQuery(tokens, request.Scope)
+	candidateSQL, candidateArgs := buildCandidateQuery(tokens, request.Scope, request.RecordType)
 	plans, err := explainQuery(ctx, s.db, candidateSQL, candidateArgs)
 	if err != nil {
 		return nil, err

@@ -39,7 +39,7 @@ var validHobbyCategories = map[string]struct{}{
 
 var contractFreeSourcesByCategory = map[string]map[string]struct{}{
 	CategoryDrama: {"eiga.com": {}, "jpsearch": {}, "wikidata": {}, "official_public": {}},
-	CategoryAward: {"mediaarts_db": {}, "japan_academy_prize": {}, "wikidata": {}, "official_public": {}},
+	CategoryAward: {"mediaarts_db": {}, "japan_academy_prize": {}, "wikidata_award": {}, "wikidata": {}, "official_public": {}},
 	CategoryMusic: {"musicbrainz": {}, "jpsearch": {}, "wikidata": {}, "official_public": {}},
 	CategoryAnime: {"mediaarts_db": {}, "jpsearch": {}, "wikidata": {}, "official_public": {}},
 	CategoryNovel: {"ndl_bibliography": {}, "jpsearch": {}, "wikidata": {}, "official_public": {}},
@@ -226,9 +226,11 @@ const (
 	summaryJobsTable       = "hobby_summary_jobs"
 	personExternalIDsTable = "hobby_person_external_ids"
 	identityEvidenceTable  = "hobby_person_identity_evidence"
+	identityJobsTable      = "hobby_person_identity_jobs"
+	identityMigrationTable = "hobby_person_identity_migrations"
 )
 
-var ownTables = []string{personReferenceTable, relatedItemsTable, relationsTable, receiptsTable, attemptsTable, summariesTable, summaryJobsTable, personExternalIDsTable, identityEvidenceTable}
+var ownTables = []string{personReferenceTable, relatedItemsTable, relationsTable, receiptsTable, attemptsTable, summariesTable, summaryJobsTable, personExternalIDsTable, identityEvidenceTable, identityJobsTable, identityMigrationTable}
 
 var ownIndexes = []string{
 	"idx_hobby_person_references_movie_catalog_person_id",
@@ -243,6 +245,7 @@ var ownIndexes = []string{
 	"idx_hobby_person_external_ids_person",
 	"idx_hobby_person_identity_evidence_candidate",
 	"idx_hobby_person_identity_evidence_authority_candidate",
+	"idx_hobby_person_identity_jobs_due",
 }
 
 const (
@@ -545,6 +548,27 @@ func hobbySchemaStatements() []string {
 	  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	  CHECK(state IN ('confirmed','candidate','ambiguous','unresolved'))
 )`,
+		`CREATE TABLE IF NOT EXISTS hobby_person_identity_jobs (
+	  movie_catalog_person_id TEXT PRIMARY KEY,
+	  person_name TEXT NOT NULL,
+	  person_url TEXT NOT NULL,
+	  state TEXT NOT NULL,
+	  next_attempt_at TEXT NOT NULL,
+	  lease_token TEXT NOT NULL DEFAULT '',
+	  lease_until TEXT NOT NULL DEFAULT '',
+	  attempt_count INTEGER NOT NULL DEFAULT 0,
+	  last_reason TEXT NOT NULL DEFAULT '',
+	  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	  CHECK(state IN ('pending','leased','confirmed','ambiguous','unresolved','dead'))
+)`,
+		`CREATE TABLE IF NOT EXISTS hobby_person_identity_migrations (
+	  migration_name TEXT PRIMARY KEY,
+	  cursor_person_id TEXT NOT NULL DEFAULT '',
+	  completed INTEGER NOT NULL DEFAULT 0,
+	  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	  CHECK(completed IN (0,1))
+)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_person_references_movie_catalog_person_id
   ON hobby_person_references(movie_catalog_person_id, person_ref_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_related_items_category_item_id
@@ -571,6 +595,8 @@ func hobbySchemaStatements() []string {
 	  ON hobby_person_identity_evidence(person_id, authority, candidate_id, retrieved_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_person_identity_evidence_authority_candidate
 	  ON hobby_person_identity_evidence(authority, candidate_id, person_id, retrieved_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_hobby_person_identity_jobs_due
+	  ON hobby_person_identity_jobs(state, next_attempt_at, movie_catalog_person_id)`,
 	}
 }
 
@@ -885,7 +911,7 @@ ORDER BY source`, category, itemID)
 func summarySourceRank(category, source string) int {
 	orders := map[string][]string{
 		CategoryDrama: {"jpsearch", "official_public", "eiga.com"},
-		CategoryAward: {"mediaarts_db", "japan_academy_prize", "official_public"},
+		CategoryAward: {"mediaarts_db", "japan_academy_prize", "wikidata_award", "official_public"},
 		CategoryMusic: {"musicbrainz", "jpsearch"},
 		CategoryAnime: {"mediaarts_db", "jpsearch", "ndl_bibliography"},
 		CategoryNovel: {"ndl_bibliography", "jpsearch"},

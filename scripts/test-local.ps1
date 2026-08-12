@@ -14,8 +14,8 @@ Set-StrictMode -Version Latest
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $runtimeRoot = Join-Path $repoRoot "Tmp\test-runtime"
-$runsRoot = Join-Path $runtimeRoot "r"
-$cacheRoot = Join-Path $runtimeRoot "cache"
+$runsRoot = Join-Path $runtimeRoot "_runs"
+$cacheRoot = Join-Path $runtimeRoot "_cache"
 $runName = "{0}-{1}" -f $PID, ([Guid]::NewGuid().ToString("N").Substring(0, 8))
 $runRoot = Join-Path $runsRoot $runName
 
@@ -35,6 +35,38 @@ function Get-DirectoryPrefix([string]$Path) {
 $repoPrefix = Get-DirectoryPrefix $repoRoot
 $localTempPrefix = Get-DirectoryPrefix (Join-Path $repoRoot "Tmp")
 $planPath = Join-Path $PSScriptRoot "test-local.plan.json"
+
+function Assert-TestRuntimeLayout {
+    if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) {
+        return
+    }
+
+    # Go ignores directory names beginning with '_' or '.', so only a .go
+    # file below a normal-name runtime directory can become a package during
+    # `go list ./...`. Never remove an unknown stale tree here: fail closed
+    # and report the exact paths for an operator-owned cleanup decision.
+    $legacyGeneratedFiles = @(Get-ChildItem -LiteralPath $runtimeRoot -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object {
+        if ($_.Extension -ne ".go") {
+            return $false
+        }
+        $relative = $_.FullName.Substring($runtimeRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        $segments = $relative.Replace("\", "/").Split("/", [StringSplitOptions]::RemoveEmptyEntries)
+        -not ($segments | Where-Object { $_.StartsWith("_", [StringComparison]::Ordinal) -or $_.StartsWith(".", [StringComparison]::Ordinal) })
+    })
+    if ($legacyGeneratedFiles.Count -gt 0) {
+        $reported = @($legacyGeneratedFiles | Select-Object -First 20 | ForEach-Object {
+            $_.FullName.Substring($repoRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        })
+        $suffix = if ($legacyGeneratedFiles.Count -gt $reported.Count) {
+            " (and $($legacyGeneratedFiles.Count - $reported.Count) more)"
+        } else {
+            ""
+        }
+        throw "TEST_RUNTIME_LAYOUT_INVALID: generated .go exists below a traversable Tmp/test-runtime directory: $($reported -join ', ')$suffix"
+    }
+}
+
+Assert-TestRuntimeLayout
 
 function Resolve-WorkingPath([string]$Candidate) {
     $resolved = if ([IO.Path]::IsPathRooted($Candidate)) {
@@ -215,7 +247,7 @@ $paths = @{
     TEMP                  = $runRoot
     TMP                   = $runRoot
     TMPDIR                = $runRoot
-    GOTMPDIR              = (Join-Path $runRoot "go-build")
+    GOTMPDIR              = (Join-Path $runRoot "_go-build")
     GOCACHE               = (Join-Path $cacheRoot "go-build")
     GOMODCACHE            = (Join-Path $cacheRoot "go-mod")
     PYTHONPYCACHEPREFIX   = (Join-Path $cacheRoot "python-bytecode")
@@ -248,6 +280,10 @@ foreach ($name in $paths.Keys) {
     [Environment]::SetEnvironmentVariable($name, $paths[$name], "Process")
 }
 $previousTestPython = [Environment]::GetEnvironmentVariable("RENCROW_TEST_PYTHON", "Process")
+$sentinelName = "RENCROW_TEST_ENV_MERGE_SENTINEL"
+$previousSentinel = [Environment]::GetEnvironmentVariable($sentinelName, "Process")
+$sentinelValue = "preserved-{0}" -f ([Guid]::NewGuid().ToString("N"))
+[Environment]::SetEnvironmentVariable($sentinelName, $sentinelValue, "Process")
 $pythonCommand = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($null -ne $pythonCommand) {
     $testPython = $pythonCommand.Source
@@ -270,14 +306,20 @@ try {
     Write-Host "[test-local] cache: $cacheRoot"
 
     if ($SelfTest) {
+        if (-not (Split-Path -Leaf $runsRoot).StartsWith("_", [StringComparison]::Ordinal) -or
+            -not (Split-Path -Leaf $cacheRoot).StartsWith("_", [StringComparison]::Ordinal) -or
+            -not (Split-Path -Leaf $paths["GOTMPDIR"]).StartsWith("_", [StringComparison]::Ordinal)) {
+            throw "Repository-local test runtime paths must use underscore-prefixed Go-traversal-safe directories."
+        }
         $hostExecutable = (Get-Process -Id $PID).Path
-        $quotedNames = @($protectedEnvironmentNames | ForEach-Object {
+        $probeNames = @($protectedEnvironmentNames + $sentinelName)
+        $quotedNames = @($probeNames | ForEach-Object {
             '"{0}"' -f $_.Replace('"', '""')
         })
         $probeCode = '$names=@({0}); foreach ($name in $names) {{ [Console]::WriteLine([Environment]::GetEnvironmentVariable($name, "Process")) }}' -f ($quotedNames -join ",")
         $encodedProbe = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probeCode))
         $childValues = @(& $hostExecutable -NoProfile -NonInteractive -EncodedCommand $encodedProbe)
-        if ($LASTEXITCODE -ne 0 -or $childValues.Count -ne $protectedEnvironmentNames.Count) {
+        if ($LASTEXITCODE -ne 0 -or $childValues.Count -ne $probeNames.Count) {
             throw "Child-process environment probe failed."
         }
         for ($index = 0; $index -lt $protectedEnvironmentNames.Count; $index++) {
@@ -285,6 +327,9 @@ try {
             if ([IO.Path]::GetFullPath($childValues[$index]) -ne [IO.Path]::GetFullPath($paths[$name])) {
                 throw "Child process did not inherit repository-local $name."
             }
+        }
+        if ($childValues[$probeNames.Count - 1] -ne $sentinelValue) {
+            throw "Child process environment was replaced instead of merged."
         }
         Write-Host "[test-local] plan: $planPath"
         Write-Host "[test-local] steps: $($commands.Name -join ', ')"
@@ -336,6 +381,7 @@ try {
         }
     }
 } finally {
+    [Environment]::SetEnvironmentVariable($sentinelName, $previousSentinel, "Process")
     [Environment]::SetEnvironmentVariable("RENCROW_TEST_PYTHON", $previousTestPython, "Process")
     foreach ($name in $paths.Keys) {
         [Environment]::SetEnvironmentVariable($name, $previous[$name], "Process")

@@ -67,7 +67,8 @@ func TestLoadConfigPersonRelatedCatalogWorkerDefaults(t *testing.T) {
 	if !worker.IsEnabled() || worker.Interval != "5m" || worker.BatchSize != 20 || worker.Lease != "2m" || worker.MaxAttempts != 3 {
 		t.Fatalf("summary worker defaults=%+v", worker)
 	}
-	if !cfg.PersonRelatedCatalog.IdentityMapping.IsEnabled() || cfg.PersonRelatedCatalog.IdentityMapping.BatchCategories != 7 {
+	identity := cfg.PersonRelatedCatalog.IdentityMapping
+	if !identity.IsEnabled() || identity.Interval != "5m" || identity.BatchSize != 20 || identity.Lease != "2m" || identity.MaxAttempts != 3 || identity.BatchCategories != 7 {
 		t.Fatalf("identity mapping defaults=%+v", cfg.PersonRelatedCatalog.IdentityMapping)
 	}
 }
@@ -89,6 +90,30 @@ func TestConfigValidatePersonRelatedCatalogWorkerBounds(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := os.WriteFile(configPath, []byte(base+tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadConfig(configPath)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("LoadConfig error=%v, want %q", err, tc.want)
+			}
+		})
+	}
+	identityBase := "server:\n  port: 8080\nperson_related_catalog:\n  identity_mapping:\n    enabled: true\n"
+	identityCases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "identity batch negative", body: "    batch_size: -1\n", want: "identity_mapping.batch_size"},
+		{name: "identity batch too large", body: "    batch_size: 21\n", want: "identity_mapping.batch_size"},
+		{name: "identity lease too short", body: "    lease: 29s\n", want: "identity_mapping.lease"},
+		{name: "identity lease too long", body: "    lease: 11m\n", want: "identity_mapping.lease"},
+		{name: "identity attempts too large", body: "    max_attempts: 4\n", want: "identity_mapping.max_attempts"},
+		{name: "identity categories too large", body: "    batch_categories: 8\n", want: "identity_mapping.batch_categories"},
+	}
+	for _, tc := range identityCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(configPath, []byte(identityBase+tc.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			_, err := LoadConfig(configPath)
