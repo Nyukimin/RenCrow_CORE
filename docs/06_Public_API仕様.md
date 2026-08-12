@@ -41,9 +41,9 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /viewer/capabilities` | Tool／Skill／MCPのRuntime Capability Snapshot読み取り |
 | `POST /viewer/capabilities/apply` | capability sourceを検証し、必要時だけCOREの再起動反映を予約 |
 | `GET /viewer/capabilities/apply/{request_id}` | apply receiptと再起動後の検証状態を読み取り |
-| `GET /viewer/movie-catalog` | 映画・俳優catalogと利用者評価の一覧・詳細 |
+| `GET /viewer/movie-catalog` | 映画・人物catalogと利用者評価の一覧・詳細 |
 | `GET /viewer/movie-catalog?action=cards` | 映画・人物ViewerのD0/D1派生カード投影 |
-| `POST /viewer/movie-catalog/preference` | 映画・俳優の認知・好み評価を保存 |
+| `POST /viewer/movie-catalog/preference` | 映画・人物の認知・好み評価を保存 |
 | `/viewer/active-control`, `/viewer/tts/*`, `/viewer/stt/*` | audio/control bridge |
 | `WS /stt` | Viewerの同一origin音声入力。COREが音声chunkをRenCrow_STTのHTTP公開APIへ中継する |
 | `POST /stt/chat-input` | CMD等が送るWAVをRenCrow_STT経由で文字起こしし、Chat入力用envelopeを返す |
@@ -73,7 +73,9 @@ SQLite未設定でもruntime toolを返し、SQLite読込失敗時はruntime too
 `GET /viewer/databases/catalog`は、起動時にChat／Workerへ供給した同一catalog instanceから、
 20件の設定DB key、owner、data category、status、safe operation、Tool ID、sensitivity、reasonを
 返します。絶対path、DB row、SQL、実DBのrow countは返さず、filesystem scanやTool実行も
-行いません。providerが利用できない場合は`available=false`を明示します。
+行いません。成功responseは`available=true`、`total`、status別の`summary.available | unavailable |
+restricted | blocked`、名前順の`items`を持ちます。providerが利用できない場合はHTTP 200で
+`available=false`、空の`items`、一般化したerrorを返し、内部errorを公開しません。
 
 ### Capability Applyとstatus
 
@@ -584,9 +586,9 @@ Debug Viewer／localhost運用CLI向けのadmin APIであり、RenCrow_PORTALか
 
 ### Movie Catalog API実装契約
 
-`GET /viewer/movie-catalog?action=movies|people`は一覧項目に`familiarity`、`sentiment`、`assessed`を返します。映画の`familiarity`は`seen | unseen | ""`、俳優の`familiarity`は`known | unknown | ""`、`sentiment`は共通で`like | dislike | ""`です。`POST /viewer/movie-catalog/preference`へ`kind`（`movie | person`）、`target_id`、`target_label`、`dimension`（`familiarity | sentiment`）、`value`、`generated_by`を送ると一方のdimensionだけを更新し、他方を維持します。空の`value`はそのdimensionを明示的な未選択へ戻します。Viewer内部のwrite APIであり、PORTALへ自動公開しません。
+`GET /viewer/movie-catalog?action=movies|people`は一覧項目に`familiarity`、`sentiment`、`assessed`を返します。映画の`familiarity`は`seen | unseen | ""`、人物の`familiarity`は`known | unknown | ""`、`sentiment`は共通で`like | dislike | ""`です。`POST /viewer/movie-catalog/preference`へ`kind`（`movie | person`）、`target_id`、`target_label`、`dimension`（`familiarity | sentiment`）、`value`、`generated_by`を送ると一方のdimensionだけを更新し、他方を維持します。空の`value`はそのdimensionを明示的な未選択へ戻します。Viewerの通常一覧は映画／人物とも「みた」「すき」の2入力だけを表示し、人物の「みた」は`known`へmapします。Viewer内部のwrite APIであり、PORTALへ自動公開しません。
 
-`GET /viewer/movie-catalog?action=cards`は映画catalogからD0/D1カードを派生して返します。D0は映画の`seen`または`like`、俳優の`known`または`like`、および成功した明示映画名／人物名／URL取得対象です。D0のroot `kind`は現段階では`movie`または`person`だけです。`unseen`、`unknown`、`dislike`単独はD0にしません。明示assessmentの行が存在しない場合だけ、映画のwatch eventを`seen`、人物の正のfavorite signalを`like`としてfallbackします。responseの各itemは少なくとも`kind`、`target_id`、`target_label`、`target_url`、`depth`、`root_ids`、`relation_type`、`relation_source`、`validation_state`、`provenance_urls`を持ち、`kind`は少なくとも`movie | person | music | source_work`を許容します。D0は`depth=0`、D1はD0のvalidated direct relationだけを`depth=1`として返します。D1には出演・監督・脚本・音楽担当・原作者等の`person`、映画.comが作品名を明示した音楽作品・主題歌・劇伴・サウンドトラック等の`music`、小説・漫画・舞台・ゲーム等の原作・参照作品の`source_work`を含めます。D1から先は展開せず、validated cardは同じ`kind`と`target_id`の一件にまとめ、`target_id`のない`partial`または`unresolved` cardは正規化label、relation、provenanceで一件にまとめます。複数rootでは最小`depth`を返します。汎用work cardは`hobby_graph`のvalidated itemを正本とし、映画側credit／relationのprovenanceは`movie_catalog`から返します。文字列だけでitemへ確定できない場合は`target_id`を空にした`partial`または`unresolved` cardとしてlabelとprovenanceを返し、推測で補完しません。`depth`、root経路、D1カードは派生値であり、Memory L1へ保存しません。個人評価やroot状態を通常会話のCategoryRecallへ渡さず、公開catalog projectionとの境界を維持します。
+`GET /viewer/movie-catalog?action=cards`は映画catalogからD0/D1カードを派生して返します。D0は映画の`seen`または`like`、人物の`known`または`like`、および成功した明示映画名／人物名／URL取得対象です。D0のroot `kind`は現段階では`movie`または`person`だけです。`unseen`、`unknown`、`dislike`単独はD0にしません。明示assessmentの行が存在しない場合だけ、映画のwatch eventを`seen`、人物の正のfavorite signalを`like`としてfallbackします。responseの各itemは少なくとも`kind`、`target_id`、`target_label`、`target_url`、`depth`、`root_ids`、`relation_type`、`relation_source`、`validation_state`、`provenance_urls`を持ち、`kind`は少なくとも`movie | person | music | source_work`を許容します。D0は`depth=0`、D1はD0のvalidated direct relationだけを`depth=1`として返します。D1には出演・監督・脚本・音楽担当・原作者等の`person`、映画.comが作品名を明示した音楽作品・主題歌・劇伴・サウンドトラック等の`music`、小説・漫画・舞台・ゲーム等の原作・参照作品の`source_work`を含めます。D1から先は展開せず、validated cardは同じ`kind`と`target_id`の一件にまとめ、`target_id`のない`partial`または`unresolved` cardは正規化label、relation、provenanceで一件にまとめます。複数rootでは最小`depth`を返します。汎用work cardは`hobby_graph`のvalidated itemを正本とし、映画側credit／relationのprovenanceは`movie_catalog`から返します。文字列だけでitemへ確定できない場合は`target_id`を空にした`partial`または`unresolved` cardとしてlabelとprovenanceを返し、推測で補完しません。`depth`、root経路、D1カードは派生値であり、Memory L1へ保存しません。個人評価やroot状態を通常会話のCategoryRecallへ渡さず、公開catalog projectionとの境界を維持します。
 
 `POST /viewer/movie-catalog/fetch`は`kind`、`query`または`url`、`max_pages`、
 `follow_links`、`include_person_filmography`を受けます。COREは
