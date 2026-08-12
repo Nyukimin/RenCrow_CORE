@@ -4,7 +4,7 @@ const movieDbState = {
   q: '',
   role: '',
   source: '',
-  limit: 25,
+  limit: 50,
   offset: 0,
   total: 0,
   cardsTotal: 0,
@@ -13,6 +13,9 @@ const movieDbState = {
   historyIndex: -1,
   searchTimer: null,
   fetchBusy: false,
+  listLoading: false,
+  listEnd: false,
+  listRevision: 0,
 };
 
 function movieDbEl(id) {
@@ -25,14 +28,15 @@ function movieDbSetMode(mode) {
   movieDbState.selectedID = '';
   movieDbState.history = [];
   movieDbState.historyIndex = -1;
+  movieDbState.listEnd = false;
+  movieDbState.listRevision += 1;
   movieDbClearDetail();
   movieDbSetDetailOpen(false);
-  const moviesBtn = movieDbEl('movieDbModeMovies');
-  const peopleBtn = movieDbEl('movieDbModePeople');
   const role = movieDbEl('movieDbRoleFilter');
   const source = movieDbEl('movieDbSourceFilter');
-  if (moviesBtn) moviesBtn.classList.toggle('active', movieDbState.mode === 'movies');
-  if (peopleBtn) peopleBtn.classList.toggle('active', movieDbState.mode === 'people');
+  document.querySelectorAll('[data-movie-db-mode]').forEach((control) => {
+    control.classList.toggle('active', control.dataset.movieDbMode === movieDbState.mode);
+  });
   if (role) role.disabled = movieDbState.mode !== 'movies';
   if (source) source.disabled = movieDbState.mode !== 'movies';
   movieDbRefreshList();
@@ -121,13 +125,13 @@ function movieDbRenderCards(items, total) {
   }).join('');
 }
 
-function movieDbRefreshList() {
-  const title = movieDbEl('movieDbListTitle');
+function movieDbRefreshList(options) {
+  const opts = options || {};
+  if (movieDbState.listLoading) return;
   const rows = movieDbEl('movieDbRows');
-  const detail = movieDbEl('movieDbDetail');
-  if (title) title.textContent = movieDbState.mode === 'people' ? '人物' : '映画';
-  if (rows) rows.innerHTML = '<div class="daily-desk-muted">loading...</div>';
-  if (detail && !movieDbState.selectedID) detail.textContent = '項目を選ぶと詳細を表示します。';
+  if (!opts.append && rows) rows.innerHTML = '<div class="daily-desk-muted">loading...</div>';
+  movieDbState.listLoading = true;
+  const revision = movieDbState.listRevision;
   const params = movieDbQueryParams(movieDbState.mode);
   fetch('/viewer/movie-catalog?' + params.toString(), {cache: 'no-store'})
     .then((r) => {
@@ -135,20 +139,31 @@ function movieDbRefreshList() {
       return r.json();
     })
     .then((data) => {
+      if (revision !== movieDbState.listRevision) return;
       movieDbState.total = Number(data.total || 0);
       if (!data.available) {
         movieDbRenderUnavailable(data.error || 'movie catalog database not found');
         return;
       }
       const items = Array.isArray(data.items) ? data.items : [];
-      movieDbRenderRows(items);
-      movieDbRenderPageInfo();
-      movieDbUpdatePager();
-      movieDbUpdateHistoryButtons();
+      movieDbRenderRows(items, Boolean(opts.append));
+      movieDbState.listEnd = movieDbState.offset + items.length >= movieDbState.total;
     })
     .catch((err) => {
+      if (revision !== movieDbState.listRevision) return;
+      if (opts.append) movieDbState.offset = Math.max(0, movieDbState.offset - movieDbState.limit);
       movieDbRenderUnavailable(String(err && err.message ? err.message : err));
+    })
+    .finally(() => {
+      movieDbState.listLoading = false;
+      if (revision !== movieDbState.listRevision) movieDbRefreshList();
     });
+}
+
+function movieDbLoadNextPage() {
+  if (movieDbState.listLoading || movieDbState.listEnd) return;
+  movieDbState.offset += movieDbState.limit;
+  movieDbRefreshList({append: true});
 }
 
 function movieDbClearDetail() {
@@ -167,23 +182,27 @@ function movieDbRenderUnavailable(message) {
   movieDbUpdateHistoryButtons();
 }
 
-function movieDbRenderRows(items) {
+function movieDbRenderRows(items, append) {
   const rows = movieDbEl('movieDbRows');
   if (!rows) return;
-  if (!items.length) {
+  if (!items.length && !append) {
     rows.innerHTML = '<div class="daily-desk-muted">該当する項目はありません。</div>';
     return;
   }
-  rows.innerHTML = '<table class="movie-db-table"><thead>' + movieDbTableHeadHTML() + '</thead><tbody>' +
-    items.map((item) => movieDbState.mode === 'people' ? movieDbPersonRowHTML(item) : movieDbMovieRowHTML(item)).join('') +
-    '</tbody></table>';
-  rows.querySelectorAll('.movie-db-row').forEach((row) => {
-    row.addEventListener('click', () => movieDbOpenDetail(row.dataset.id || ''));
-  });
-  rows.querySelectorAll('.movie-db-assessment-choice').forEach((choice) => {
+  const rowHTML = items.map((item) => movieDbState.mode === 'people' ? movieDbPersonRowHTML(item) : movieDbMovieRowHTML(item)).join('');
+  if (append) {
+    const body = rows.querySelector('tbody');
+    if (body) body.insertAdjacentHTML('beforeend', rowHTML);
+  } else {
+    rows.innerHTML = '<table class="movie-db-table"><tbody>' + rowHTML + '</tbody></table>';
+  }
+  const unboundChoices = rows.querySelectorAll('.movie-db-assessment-choice:not([data-bound])');
+  unboundChoices.forEach((choice) => {
+    choice.dataset.bound = '1';
     choice.addEventListener('click', (ev) => ev.stopPropagation());
   });
-  rows.querySelectorAll('.movie-db-assessment-toggle').forEach((control) => {
+  rows.querySelectorAll('.movie-db-assessment-toggle:not([data-bound])').forEach((control) => {
+    control.dataset.bound = '1';
     control.addEventListener('change', () => movieDbSetAssessment(control));
   });
 }
@@ -276,7 +295,6 @@ function movieDbSetAssessment(control) {
         item.checked = savedValue !== '' && item.dataset.value === savedValue;
       });
       movieDbSetSaveStatus('保存済み', 'ok');
-      movieDbRefreshCards();
       if (movieDbState.selectedID === targetID) {
         window.setTimeout(() => movieDbOpenDetail(targetID, {skipHistory: true}), 80);
       }
@@ -458,12 +476,11 @@ function movieDbUpdateHistoryButtons() {
 }
 
 function movieDbSetModeControls() {
-  const moviesBtn = movieDbEl('movieDbModeMovies');
-  const peopleBtn = movieDbEl('movieDbModePeople');
   const role = movieDbEl('movieDbRoleFilter');
   const source = movieDbEl('movieDbSourceFilter');
-  if (moviesBtn) moviesBtn.classList.toggle('active', movieDbState.mode === 'movies');
-  if (peopleBtn) peopleBtn.classList.toggle('active', movieDbState.mode === 'people');
+  document.querySelectorAll('[data-movie-db-mode]').forEach((control) => {
+    control.classList.toggle('active', control.dataset.movieDbMode === movieDbState.mode);
+  });
   if (role) role.disabled = movieDbState.mode !== 'movies';
   if (source) source.disabled = movieDbState.mode !== 'movies';
 }
@@ -609,6 +626,7 @@ function movieDbBind() {
   const panel = movieDbEl('panel-movie-db');
   if (!panel || panel.dataset.bound === '1') return;
   panel.dataset.bound = '1';
+  const rows = movieDbEl('movieDbRows');
   const search = movieDbEl('movieDbSearch');
   const role = movieDbEl('movieDbRoleFilter');
   const source = movieDbEl('movieDbSourceFilter');
@@ -625,10 +643,11 @@ function movieDbBind() {
   const detailBack = movieDbEl('movieDbDetailBack');
   const detailClose = movieDbEl('movieDbDetailClose');
   const fetchBtn = movieDbEl('movieDbFetchBtn');
-  const movies = movieDbEl('movieDbModeMovies');
-  const people = movieDbEl('movieDbModePeople');
-  if (movies) movies.addEventListener('click', () => movieDbSetMode('movies'));
-  if (people) people.addEventListener('click', () => movieDbSetMode('people'));
+  if (rows) {
+    rows.addEventListener('scroll', () => {
+      if (rows.scrollTop + rows.clientHeight >= rows.scrollHeight - 80) movieDbLoadNextPage();
+    });
+  }
   if (search) search.addEventListener('input', () => {
     window.clearTimeout(movieDbState.searchTimer);
     movieDbState.searchTimer = window.setTimeout(() => {
@@ -701,16 +720,7 @@ function movieDbBind() {
       movieDbFetchFromWindow(url);
     });
   }
-  document.querySelectorAll('[data-tab="movie-db"]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      movieDbRefreshStats();
-      movieDbRefreshList();
-      movieDbRefreshCards();
-    });
-  });
-  movieDbRefreshStats();
   movieDbRefreshList();
-  movieDbRefreshCards();
 }
 
 document.addEventListener('DOMContentLoaded', movieDbBind);

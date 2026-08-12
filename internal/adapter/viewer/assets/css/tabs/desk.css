@@ -408,7 +408,7 @@ textarea.games-launch-control {
   color: var(--desk-text);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
   height: min(860px, calc(100vh - var(--input-h) - 36px));
   min-height: 0;
 }
@@ -439,10 +439,10 @@ body:has(.tts-now-playing:not(.hidden)) .movie-db-screen {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 10px 12px;
+  padding: 0;
   position: relative;
 }
 
@@ -586,9 +586,18 @@ body:has(.tts-now-playing:not(.hidden)) .movie-db-screen {
 
 .movie-db-cards-head {
   align-items: center;
+  cursor: pointer;
   display: flex;
   gap: 8px;
   justify-content: space-between;
+  list-style: none;
+}
+
+.movie-db-cards-head::-webkit-details-marker {
+  display: none;
+}
+
+.movie-db-cards[open] .movie-db-cards-head {
   margin-bottom: 7px;
 }
 
@@ -669,34 +678,7 @@ body:has(.tts-now-playing:not(.hidden)) .movie-db-screen {
   align-items: center;
   display: grid;
   gap: 8px;
-  grid-template-columns: auto auto minmax(240px, 1fr) minmax(116px, 150px) minmax(130px, 170px) minmax(82px, 96px) auto;
-}
-
-.movie-db-mode {
-  background: rgba(8, 12, 20, 0.54);
-  border: 1px solid var(--desk-border);
-  border-radius: 12px;
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-}
-
-.movie-db-mode-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  color: var(--desk-muted);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-  min-height: 30px;
-  padding: 6px 10px;
-}
-
-.movie-db-mode-btn.active {
-  background: rgba(143, 183, 255, 0.14);
-  border-color: var(--desk-border-strong);
-  color: var(--desk-text);
+  grid-template-columns: auto minmax(240px, 1fr) minmax(116px, 150px) minmax(130px, 170px) minmax(82px, 96px) auto;
 }
 
 .movie-db-history {
@@ -762,7 +744,7 @@ body:has(.tts-now-playing:not(.hidden)) .movie-db-screen {
   background: rgba(8, 12, 20, 0.36);
   border: 1px solid var(--desk-border);
   border-radius: 10px;
-  height: calc(100% - 50px);
+  height: 100%;
   overflow: auto;
   scrollbar-gutter: stable both-edges;
 }
@@ -789,7 +771,7 @@ body:has(.tts-now-playing:not(.hidden)) .movie-db-screen {
 .movie-db-table td {
   border-bottom: 1px solid rgba(143, 183, 255, 0.12);
   line-height: 1.45;
-  padding: 8px 10px;
+  padding: 10px 12px;
   text-align: left;
   vertical-align: top;
 }

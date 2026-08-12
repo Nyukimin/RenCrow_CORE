@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-midori-image-chat-memory-db-accordion-db-capability-catalog">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/prompt-logs.css?v=20260806-prompt-logs-panel">
-<link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2-movie-single-row-list">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20260728-image-mvp">
 </head>
@@ -55,7 +55,8 @@
         <option value="knowledge-memory">Knowledge Memory</option>
         <option value="db-catalog">DB Catalog</option>
         <option value="glossary-db">用語集</option>
-        <option value="movie-db">映画・人物</option>
+        <option value="movie-db-movies">映画リスト</option>
+        <option value="movie-db-people">人物リスト</option>
         <option value="tool-registry">Tool Registry</option>
       </optgroup>
       <option value="news-pack">News Pack</option>
@@ -92,7 +93,8 @@
       <button class="tab-btn memory-db-tab" data-tab="knowledge-memory" data-memory-db-tab="true" type="button">Knowledge Memory</button>
       <button class="tab-btn memory-db-tab" data-tab="db-catalog" data-memory-db-tab="true" type="button">DB Catalog</button>
       <button class="tab-btn memory-db-tab" data-tab="glossary-db" data-memory-db-tab="true" type="button">用語集</button>
-      <button class="tab-btn memory-db-tab" data-tab="movie-db" data-memory-db-tab="true" type="button">映画・人物</button>
+      <button class="tab-btn memory-db-tab" data-tab="movie-db-movies" data-movie-db-mode="movies" data-memory-db-tab="true" type="button">映画リスト</button>
+      <button class="tab-btn memory-db-tab" data-tab="movie-db-people" data-movie-db-mode="people" data-memory-db-tab="true" type="button">人物リスト</button>
       <button class="tab-btn memory-db-tab" data-tab="tool-registry" data-memory-db-tab="true" type="button">Tool Registry</button>
     </div>
     <button class="tab-btn" data-tab="news-pack">News Pack</button>
@@ -1186,103 +1188,10 @@
 
   <section id="panel-movie-db" class="panel">
     <div class="movie-db-screen">
-      <section class="movie-db-side">
-        <div class="desk-brand">
-          <div class="desk-kicker">Movie Check</div>
-          <h2 class="daily-desk-title">映画・人物チェック</h2>
-        </div>
-        <div class="movie-db-meter">
-          <div><span id="movieDbMovieCount">0</span><small>Movies</small></div>
-          <div><span id="movieDbPersonCount">0</span><small>People</small></div>
-          <div><span id="movieDbEdgeCount">0</span><small>Links</small></div>
-        </div>
-        <details class="movie-db-fetch-box">
-          <summary>
-            <span>情報取得</span>
-            <small id="movieDbStatus">loading</small>
-          </summary>
-          <h3>情報取得</h3>
-          <select id="movieDbFetchKind" class="movie-db-select" aria-label="fetch target kind">
-            <option value="movie">映画名</option>
-            <option value="person">人物名</option>
-          </select>
-          <input id="movieDbFetchQuery" class="movie-db-search" placeholder="映画名・人物名、または映画.com URL">
-          <div class="movie-db-fetch-options">
-            <label><input id="movieDbFetchFollow" type="checkbox" checked> 関連リンクも取得</label>
-            <label><input id="movieDbFetchFilmography" type="checkbox" checked> 人物の出演映画も取得</label>
-          </div>
-          <div class="movie-db-fetch-row">
-            <input id="movieDbFetchMaxPages" class="movie-db-search" type="number" min="1" max="20" value="5" aria-label="max fetch pages">
-            <button id="movieDbFetchBtn" class="ctl-btn" type="button">取得</button>
-          </div>
-          <div id="movieDbFetchStatus" class="movie-db-fetch-status daily-desk-muted">名前は常にresolverへqueryとして渡します。取得する候補は明示的に選択してください。</div>
-          <div id="movieDbFetchCandidates" class="movie-db-fetch-candidates"></div>
-        </details>
-      </section>
       <section class="movie-db-main">
-        <section class="movie-db-cards" aria-labelledby="movieDbCardsTitle">
-          <div class="movie-db-cards-head">
-            <h3 id="movieDbCardsTitle">D0 / D1カード</h3>
-            <span id="movieDbCardsStatus" class="desk-pill" aria-live="polite">読み込み前</span>
-          </div>
-          <div id="movieDbCards" class="movie-db-cards-grid"></div>
-        </section>
-        <div class="movie-db-toolbar">
-          <div class="movie-db-mode" role="tablist" aria-label="Movie catalog mode">
-            <button id="movieDbModeMovies" class="movie-db-mode-btn active" type="button">映画</button>
-            <button id="movieDbModePeople" class="movie-db-mode-btn" type="button">人物</button>
-          </div>
-          <div class="movie-db-history">
-            <button id="movieDbBack" class="ctl-btn" type="button">戻る</button>
-            <button id="movieDbForward" class="ctl-btn" type="button">進む</button>
-          </div>
-          <input id="movieDbSearch" class="movie-db-search" placeholder="映画名または人物名で検索">
-          <select id="movieDbRoleFilter" class="movie-db-select" aria-label="role filter">
-            <option value="">役割すべて</option>
-            <option value="出演">出演</option>
-            <option value="監督">監督</option>
-            <option value="脚本">脚本</option>
-            <option value="製作">製作</option>
-            <option value="製作総指揮">製作総指揮</option>
-          </select>
-          <select id="movieDbSourceFilter" class="movie-db-select" aria-label="source filter">
-            <option value="">取得元すべて</option>
-            <option value="movie_cast">映画キャスト</option>
-            <option value="movie_staff">映画スタッフ</option>
-            <option value="person_biography">人物略歴</option>
-            <option value="person_filmography">人物出演作</option>
-          </select>
-          <select id="movieDbLimit" class="movie-db-select" aria-label="items per page">
-            <option value="25">25件</option>
-            <option value="50">50件</option>
-          </select>
-          <button id="movieDbRefresh" class="ctl-btn" type="button">Refresh</button>
-        </div>
         <div class="movie-db-content">
           <section class="movie-db-list">
-            <div class="movie-db-list-head">
-              <h3 id="movieDbListTitle">映画</h3>
-              <span id="movieDbPageInfo" class="desk-pill">0 / 0</span>
-              <span id="movieDbSaveStatus" class="movie-db-save-status" aria-live="polite">変更は自動保存されます</span>
-              <div class="movie-db-pager movie-db-pager-top">
-                <button id="movieDbFirst" class="ctl-btn" type="button">First</button>
-                <button id="movieDbPrev" class="ctl-btn" type="button">Prev</button>
-                <button id="movieDbNext" class="ctl-btn" type="button">Next</button>
-              </div>
-            </div>
-            <div id="movieDbRows" class="movie-db-rows"></div>
-            <div class="movie-db-pager">
-              <button id="movieDbFirstBottom" class="ctl-btn" type="button">First</button>
-              <button id="movieDbPrevBottom" class="ctl-btn" type="button">Prev</button>
-              <button id="movieDbNextBottom" class="ctl-btn" type="button">Next</button>
-            </div>
-          </section>
-          <section class="movie-db-detail">
-            <div class="movie-db-detail-actions">
-              <button id="movieDbDetailBack" class="ctl-btn" type="button">戻る</button>
-              <button id="movieDbDetailClose" class="ctl-btn" type="button">閉じる</button>
-            </div>
-            <div id="movieDbDetail" class="movie-db-detail-inner">項目を選ぶと詳細を表示します。</div>
+            <div id="movieDbRows" class="movie-db-rows" aria-live="polite"></div>
           </section>
         </div>
       </section>
@@ -1745,7 +1654,7 @@
 <script src="/viewer/assets/js/tabs/overview.js?v=20260510-tabs-overview" defer></script>
 <script src="/viewer/assets/js/tabs/system.js?v=20260510-tabs-system" defer></script>
 <script src="/viewer/assets/js/tabs/memory.js?v=20260518-knowledge-relations" defer></script>
-<script src="/viewer/assets/js/tabs/movie-db.js?v=20260808-d0-d1-cards-1-simple-assessment" defer></script>
+<script src="/viewer/assets/js/tabs/movie-db.js?v=20260808-simple-assessment-single-row-list" defer></script>
 <script src="/viewer/assets/js/tabs/database-viewers.js?v=20260811-db-capability-catalog" defer></script>
 <script src="/viewer/assets/js/tabs/news-pack.js?v=20260805-news-pack-snapshot" defer></script>
 <script src="/viewer/assets/js/tabs/collection.js?v=20260721-daily-collection" defer></script>

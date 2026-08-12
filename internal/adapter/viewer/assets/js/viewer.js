@@ -1184,7 +1184,7 @@ const mobilePanelPrev = document.getElementById('mobilePanelPrev');
 const mobilePanelNext = document.getElementById('mobilePanelNext');
 const memoryNavToggle = document.getElementById('memoryNavToggle');
 const memoryDbNav = document.getElementById('memoryDbNav');
-const memoryDbTabs = new Set(['memory', 'memory-archive', 'knowledge-memory', 'db-catalog', 'glossary-db', 'movie-db', 'tool-registry']);
+const memoryDbTabs = new Set(['memory', 'memory-archive', 'knowledge-memory', 'db-catalog', 'glossary-db', 'movie-db-movies', 'movie-db-people', 'tool-registry']);
 const panels = {
   home: document.getElementById('panel-home'),
   image: document.getElementById('panel-image'),
@@ -1205,7 +1205,8 @@ const panels = {
   'knowledge-memory': document.getElementById('panel-knowledge-memory'),
   'db-catalog': document.getElementById('panel-db-catalog'),
   'glossary-db': document.getElementById('panel-glossary-db'),
-  'movie-db': document.getElementById('panel-movie-db'),
+  'movie-db-movies': document.getElementById('panel-movie-db'),
+  'movie-db-people': document.getElementById('panel-movie-db'),
   'tool-registry': document.getElementById('panel-tool-registry'),
   'news-pack': document.getElementById('panel-news-pack'),
   collection: document.getElementById('panel-collection'),
@@ -1299,7 +1300,8 @@ function switchTab(tab) {
   tabs.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   if (memoryNavToggle) memoryNavToggle.classList.toggle('contains-active', memoryDbTabs.has(tab));
   if (memoryDbTabs.has(tab)) setMemoryDatabaseNavigationExpanded(true);
-  Object.keys(panels).forEach((k) => panels[k].classList.toggle('active', k === tab));
+  const activePanel = panels[tab];
+  Object.values(panels).forEach((panel) => panel.classList.toggle('active', panel === activePanel));
   if (mobilePanelSelect && mobilePanelSelect.value !== tab) mobilePanelSelect.value = tab;
   const activeTab = tabs.find((b) => b.dataset.tab === tab);
   if (activeTab && typeof activeTab.scrollIntoView === 'function') {
@@ -1317,6 +1319,9 @@ function switchTab(tab) {
   if (tab === 'knowledge-memory' && typeof refreshKnowledgeMemoryLedger === 'function') refreshKnowledgeMemoryLedger();
   if (tab === 'db-catalog' && typeof refreshDataCapabilityCatalog === 'function') refreshDataCapabilityCatalog();
   if (tab === 'glossary-db' && typeof refreshGlossaryDatabase === 'function') refreshGlossaryDatabase();
+  if ((tab === 'movie-db-movies' || tab === 'movie-db-people') && typeof movieDbSetMode === 'function') {
+    movieDbSetMode(tab === 'movie-db-people' ? 'people' : 'movies');
+  }
   if (tab === 'tool-registry' && typeof refreshToolRegistryDatabase === 'function') refreshToolRegistryDatabase();
   if (tab === 'backlog' && typeof refreshBacklog === 'function') refreshBacklog();
   if (tab === 'prompt-logs') {

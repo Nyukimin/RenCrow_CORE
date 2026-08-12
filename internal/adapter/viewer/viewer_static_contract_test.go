@@ -161,7 +161,8 @@ func TestViewerStaticContractDailyDeskTabs(t *testing.T) {
 		`data-tab="develop"`:                     "Develop tab",
 		`data-tab="instructions"`:                "Instructions tab",
 		`data-tab="reports"`:                     "Reports tab",
-		`data-tab="movie-db"`:                    "Movie Database tab",
+		`data-tab="movie-db-movies"`:             "movie list tab",
+		`data-tab="movie-db-people"`:             "people list tab",
 		`data-tab="investment"`:                  "Investment tab",
 		`data-tab="games"`:                       "Games tab",
 		`id="panel-home" class="panel active"`:   "Home is the initial active panel",
@@ -173,9 +174,6 @@ func TestViewerStaticContractDailyDeskTabs(t *testing.T) {
 		`id="panel-games"`:                       "Games panel",
 		`id="gamesBridgeStatusCard"`:             "Games bridge status card",
 		`id="investmentRefreshBtn"`:              "Investment refresh action",
-		`id="movieDbFetchKind"`:                  "Movie Database fetch kind selector",
-		`id="movieDbFetchQuery"`:                 "Movie Database fetch query input",
-		`id="movieDbFetchBtn"`:                   "Movie Database fetch action",
 		`/viewer/assets/css/tabs/desk.css`:       "Daily Desk CSS",
 		`/viewer/assets/js/tabs/home.js`:         "Home tab JavaScript",
 		`/viewer/assets/js/tabs/develop.js`:      "Develop tab JavaScript",
@@ -443,8 +441,16 @@ func TestViewerStaticContractMovieDatabaseTabSwitchMapping(t *testing.T) {
 		t.Fatalf("read viewer.js: %v", err)
 	}
 	js := string(data)
-	if !strings.Contains(js, `'movie-db': document.getElementById('panel-movie-db')`) {
-		t.Fatal("viewer.js missing Movie Database panel switch mapping")
+	for _, route := range []string{"movie-db-movies", "movie-db-people"} {
+		if !strings.Contains(js, `'`+route+`': document.getElementById('panel-movie-db')`) {
+			t.Fatalf("viewer.js missing %s panel switch mapping", route)
+		}
+	}
+	if !strings.Contains(js, `const activePanel = panels[tab]`) {
+		t.Fatal("shared movie panel routes must activate the selected panel once")
+	}
+	if !strings.Contains(js, `movieDbSetMode(tab === 'movie-db-people' ? 'people' : 'movies')`) {
+		t.Fatal("movie list routes must select the matching catalog mode")
 	}
 }
 
@@ -481,15 +487,18 @@ func TestViewerStaticContractMemoryDatabaseAccordionUsesLeftNavigationColumn(t *
 		`data-tab="memory-archive"`:                   "conversation archive Viewer entry",
 		`data-tab="knowledge-memory"`:                 "Knowledge Memory Viewer entry",
 		`data-tab="glossary-db"`:                      "glossary Viewer entry",
-		`data-tab="movie-db"`:                         "movie database Viewer entry",
+		`data-tab="movie-db-movies"`:                  "movie list Viewer entry",
+		`data-tab="movie-db-people"`:                  "people list Viewer entry",
 		`data-tab="tool-registry"`:                    "Tool Registry Viewer entry",
 	} {
 		if !strings.Contains(nav, needle) {
 			t.Fatalf("left navigation missing %s (%s)", needle, purpose)
 		}
 	}
-	if strings.Count(nav, `data-tab="movie-db"`) != 1 {
-		t.Fatal("Movie Database must appear once, inside the Memory accordion")
+	for _, label := range []string{"映画リスト", "人物リスト"} {
+		if !strings.Contains(nav, `>`+label+`</button>`) {
+			t.Fatalf("left navigation missing %q", label)
+		}
 	}
 	if strings.Contains(html, `memory-db-secondary`) {
 		t.Fatal("database navigation must not introduce a second navigation column")
@@ -602,7 +611,7 @@ func TestViewerStaticContractMobileMemoryDatabaseOptgroupMatchesDesktop(t *testi
 		t.Fatal("mobile Memory optgroup is missing")
 	}
 	optgroup := html[optgroupStart : optgroupStart+optgroupEnd]
-	for _, value := range []string{"memory", "memory-archive", "knowledge-memory", "glossary-db", "movie-db", "tool-registry"} {
+	for _, value := range []string{"memory", "memory-archive", "knowledge-memory", "glossary-db", "movie-db-movies", "movie-db-people", "tool-registry"} {
 		if !strings.Contains(optgroup, `value="`+value+`"`) {
 			t.Fatalf("mobile Memory optgroup missing %q", value)
 		}
@@ -625,9 +634,9 @@ func TestViewerStaticContractMovieAssessmentGrid(t *testing.T) {
 	js := string(jsData)
 
 	for needle, purpose := range map[string]string{
-		`id="movieDbModeMovies"`: "movie screen selector",
-		`id="movieDbModePeople"`: "actor screen selector",
-		`id="movieDbSaveStatus"`: "assessment autosave status",
+		`data-tab="movie-db-movies" data-movie-db-mode="movies"`: "left movie list selector",
+		`data-tab="movie-db-people" data-movie-db-mode="people"`: "left people list selector",
+		`id="movieDbRows" class="movie-db-rows"`:                 "single list surface",
 	} {
 		if !strings.Contains(html, needle) {
 			t.Fatalf("viewer.html missing %s (%s)", needle, purpose)
@@ -653,8 +662,26 @@ func TestViewerStaticContractMovieAssessmentGrid(t *testing.T) {
 			t.Fatalf("movie assessment list retains forbidden control/filter %q", forbidden)
 		}
 	}
-	if !strings.Contains(html, `id="movieDbModePeople" class="movie-db-mode-btn" type="button">人物</button>`) {
-		t.Fatal("people selector must be displayed as 人物")
+	for _, forbidden := range []string{`id="movieDbModeMovies"`, `id="movieDbModePeople"`} {
+		if strings.Contains(html, forbidden) {
+			t.Fatalf("movie screen retains hidden in-panel selector %q", forbidden)
+		}
+	}
+	for _, forbidden := range []string{
+		`class="movie-db-side"`,
+		`class="movie-db-cards"`,
+		`class="movie-db-toolbar"`,
+		`class="movie-db-list-head"`,
+		`class="movie-db-detail"`,
+	} {
+		if strings.Contains(html, forbidden) || strings.Contains(js, forbidden) {
+			t.Fatalf("single-row list retains secondary surface %q", forbidden)
+		}
+	}
+	for _, needle := range []string{`limit: 50`, `movieDbLoadNextPage`, `rows.addEventListener('scroll'`, `'<table class="movie-db-table"><tbody>'`} {
+		if !strings.Contains(js, needle) {
+			t.Fatalf("single list infinite-scroll contract missing %q", needle)
+		}
 	}
 }
 
@@ -670,9 +697,6 @@ func TestViewerStaticContractMovieD0D1CardsAndResolverCandidates(t *testing.T) {
 	html := string(htmlData)
 	js := string(jsData)
 	for _, needle := range []string{
-		`id="movieDbCardsTitle"`,
-		`id="movieDbCardsStatus"`,
-		`id="movieDbCards"`,
 		`movieDbRefreshCards`,
 		`/viewer/movie-catalog?action=cards`,
 		`D0`,
