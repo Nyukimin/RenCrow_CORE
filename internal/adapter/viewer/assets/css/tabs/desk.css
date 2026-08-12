@@ -1407,3 +1407,60 @@ body:has(.tts-now-playing:not(.hidden)) .movie-db-screen {
     position: static;
   }
 }
+.person-related-catalog-controls {
+  align-items: center;
+}
+
+.movie-db-person-related-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.movie-db-person-related-tab.is-selected {
+  border-color: var(--desk-accent);
+  color: var(--desk-accent);
+}
+
+.movie-db-person-related-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.movie-db-person-related-item {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--desk-border);
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+}
+
+.movie-db-person-related-item h5 {
+  margin: 0 0 6px;
+}
+
+.movie-db-person-related-name-original,
+.movie-db-person-related-meta,
+.movie-db-person-related-coverage {
+  color: var(--desk-muted);
+  font-size: 12px;
+}
+
+.movie-db-person-related-meta,
+.movie-db-person-related-coverage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+@media (max-width: 640px) {
+  .movie-db-person-related-items {
+    grid-template-columns: 1fr;
+  }
+  .movie-db-person-related-tabs .ctl-btn {
+    flex: 1 1 calc(50% - 8px);
+  }
+}

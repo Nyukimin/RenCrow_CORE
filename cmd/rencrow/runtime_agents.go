@@ -47,6 +47,7 @@ func buildAgentRuntime(
 	agentPolicy agent.AgentPolicyService,
 ) agentRuntime {
 	mioAgent := agent.NewMioAgent(chatProvider, classifier, ruleDictionary, chatToolRunner, mcpClient, convEngine).
+		WithPersonRelatedCatalogCollector(workerToolRunner).
 		WithSystemPrompt(cfg.Prompts.MioPersona).
 		WithViewerRecipientPrompts(cfg.Prompts.CharacterPrompts).
 		WithStableRuntimeContexts(cfg.Prompts.StableRuntimeContexts).

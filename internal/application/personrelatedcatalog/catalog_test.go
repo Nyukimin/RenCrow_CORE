@@ -21,7 +21,7 @@ func TestEligiblePeopleUsesOnlyExplicitPositiveAssessment(t *testing.T) {
 		t.Fatalf("EnsureSchema: %v", err)
 	}
 
-	people, err := EligiblePeople(ctx, movieDB, 100)
+	people, err := EligiblePeople(ctx, movieDB, 1000)
 	if err != nil {
 		t.Fatalf("EligiblePeople: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestEligiblePeopleUsesOnlyExplicitPositiveAssessment(t *testing.T) {
 	if people[0].MovieCatalogPersonID != "p-known" || people[1].MovieCatalogPersonID != "p-like" {
 		t.Fatalf("eligible people = %#v, want p-known and p-like", people)
 	}
-	if _, err := EligiblePeople(ctx, movieDB, 101); !errors.Is(err, ErrInvalidLimit) {
+	if _, err := EligiblePeople(ctx, movieDB, 1001); !errors.Is(err, ErrInvalidLimit) {
 		t.Fatalf("EligiblePeople over limit error = %v, want ErrInvalidLimit", err)
 	}
 	person, found, err := EligiblePersonByID(ctx, movieDB, "p-known")
@@ -66,6 +66,7 @@ func TestImportAndLookupIsIdempotent(t *testing.T) {
 	if first.ItemCount != 1 || first.RelationCount != 1 || second.ItemCount != 1 || second.RelationCount != 1 {
 		t.Fatalf("import results = %#v / %#v", first, second)
 	}
+	hobbyDB.SetMaxOpenConns(1)
 
 	rows, err := Lookup(ctx, hobbyDB, "p-known", "drama", 50)
 	if err != nil {

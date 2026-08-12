@@ -57,6 +57,7 @@
         <option value="glossary-db">用語集</option>
         <option value="movie-db-movies">映画リスト</option>
         <option value="movie-db-people">人物リスト</option>
+        <option value="person-related-catalog">人物関連情報</option>
         <option value="tool-registry">Tool Registry</option>
       </optgroup>
       <option value="news-pack">News Pack</option>
@@ -95,6 +96,7 @@
       <button class="tab-btn memory-db-tab" data-tab="glossary-db" data-memory-db-tab="true" type="button">用語集</button>
       <button class="tab-btn memory-db-tab" data-tab="movie-db-movies" data-movie-db-mode="movies" data-memory-db-tab="true" type="button">映画リスト</button>
       <button class="tab-btn memory-db-tab" data-tab="movie-db-people" data-movie-db-mode="people" data-memory-db-tab="true" type="button">人物リスト</button>
+      <button class="tab-btn memory-db-tab" data-tab="person-related-catalog" data-memory-db-tab="true" type="button">人物関連情報</button>
       <button class="tab-btn memory-db-tab" data-tab="tool-registry" data-memory-db-tab="true" type="button">Tool Registry</button>
     </div>
     <button class="tab-btn" data-tab="news-pack">News Pack</button>
@@ -1198,6 +1200,22 @@
     </div>
   </section>
 
+  <section id="panel-person-related-catalog" class="panel">
+    <div class="panel-head">
+      <h3>人物関連情報</h3>
+      <div class="sub">「みた」または「すき」を設定した人物の、索引済み関連作品だけを表示します。</div>
+    </div>
+    <div class="filters person-related-catalog-controls">
+      <label for="personRelatedPersonSelect">人物</label>
+      <select id="personRelatedPersonSelect" aria-label="評価済み人物"><option value="">人物を選択</option></select>
+    </div>
+    <section id="movieDbPersonRelated" class="movie-db-person-related" aria-live="polite">
+      <div id="movieDbPersonRelatedTabs" class="movie-db-person-related-tabs" role="tablist" aria-label="人物関連作品カテゴリ"></div>
+      <div id="movieDbPersonRelatedStatus" class="daily-desk-muted" aria-live="polite">人物を選択してください。</div>
+      <div id="movieDbPersonRelatedItems"></div>
+    </section>
+  </section>
+
   <section id="panel-tool-registry" class="panel">
     <div class="panel-head">
       <h3>Tool Registry Database</h3>
@@ -1654,7 +1672,7 @@
 <script src="/viewer/assets/js/tabs/overview.js?v=20260510-tabs-overview" defer></script>
 <script src="/viewer/assets/js/tabs/system.js?v=20260510-tabs-system" defer></script>
 <script src="/viewer/assets/js/tabs/memory.js?v=20260518-knowledge-relations" defer></script>
-<script src="/viewer/assets/js/tabs/movie-db.js?v=20260808-simple-assessment-single-row-list" defer></script>
+<script src="/viewer/assets/js/tabs/movie-db.js?v=20260808-simple-assessment-single-row-list-person-related-v1" defer></script>
 <script src="/viewer/assets/js/tabs/database-viewers.js?v=20260811-db-capability-catalog" defer></script>
 <script src="/viewer/assets/js/tabs/news-pack.js?v=20260805-news-pack-snapshot" defer></script>
 <script src="/viewer/assets/js/tabs/collection.js?v=20260721-daily-collection" defer></script>

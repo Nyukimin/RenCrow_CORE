@@ -49,23 +49,24 @@ type WebSearchResult struct {
 
 // MioAgent は Chat（会話・意思決定）を担当するエンティティ
 type MioAgent struct {
-	llmProvider           llm.LLMProvider
-	classifier            Classifier
-	ruleDictionary        RuleDictionary
-	toolRunner            ToolRunner
-	mcpClient             MCPClient
-	conversationEngine    conversation.ConversationEngine // v5.1: 会話エンジン（nilを許容）
-	kbManager             KBManager                       // Phase 4.2: KB自動保存用（nilを許容）
-	searchCacheManager    SearchCacheManager              // L1 Search Cache連携（nilを許容）
-	userMemoryManager     UserMemoryManager               // Memory v0.1: user:<uid> 操作用（nilを許容）
-	personaEditor         PersonaEditor                   // ペルソナ自己編集用（nilを許容）
-	recentContext         func(context.Context, int) (string, error)
-	systemPrompt          string
-	viewerPrompts         map[string]string
-	stableRuntimeContexts map[string]string
-	expressionHistoryMu   sync.RWMutex
-	expressionHistory     MioExpressionHistory
-	generation            MioGenerationOptions
+	llmProvider            llm.LLMProvider
+	classifier             Classifier
+	ruleDictionary         RuleDictionary
+	toolRunner             ToolRunner
+	personCatalogCollector ToolRunner
+	mcpClient              MCPClient
+	conversationEngine     conversation.ConversationEngine // v5.1: 会話エンジン（nilを許容）
+	kbManager              KBManager                       // Phase 4.2: KB自動保存用（nilを許容）
+	searchCacheManager     SearchCacheManager              // L1 Search Cache連携（nilを許容）
+	userMemoryManager      UserMemoryManager               // Memory v0.1: user:<uid> 操作用（nilを許容）
+	personaEditor          PersonaEditor                   // ペルソナ自己編集用（nilを許容）
+	recentContext          func(context.Context, int) (string, error)
+	systemPrompt           string
+	viewerPrompts          map[string]string
+	stableRuntimeContexts  map[string]string
+	expressionHistoryMu    sync.RWMutex
+	expressionHistory      MioExpressionHistory
+	generation             MioGenerationOptions
 }
 
 // NewMioAgent は新しいMioAgentを作成
@@ -103,6 +104,20 @@ func (m *MioAgent) DecideAction(ctx context.Context, t task.Task) (routing.Decis
 				Route:      explicitRoute,
 				Confidence: 1.0,
 				Reason:     "explicit command matched",
+			},
+		), nil
+	}
+	// Indexed person-related catalog intents must stay on Mio's CHAT path so
+	// generic creative/knowledge routing cannot bypass the bounded local Tool
+	// contract and invent titles. Explicit slash commands still take priority.
+	if _, matched := parseMioPersonRelatedCatalogLookup(t.UserMessage()); matched {
+		return routing.NewDecisionWithEvidence(routing.RouteCHAT, 1.0, "Indexed person-related catalog intent",
+			routing.DecisionEvidence{
+				Source:     routing.EvidenceSourceRuleDictionary,
+				Matched:    true,
+				Route:      routing.RouteCHAT,
+				Confidence: 1.0,
+				Reason:     "bounded indexed person-related catalog intent matched",
 			},
 		), nil
 	}

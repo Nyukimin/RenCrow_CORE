@@ -124,6 +124,86 @@ func TestHTTPCollectorHonorsCancelledContext(t *testing.T) {
 	}
 }
 
+func TestHTTPCollectorReturnsSemanticNegativeWithoutArtifact(t *testing.T) {
+	providerCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCalls++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":              "unavailable",
+			"reason_code":         "no_match",
+			"retryable":           false,
+			"retry_after_seconds": 3600,
+			"retrieved_at":        "2026-08-12T00:00:00Z",
+			"source":              "jpsearch",
+			"candidates":          []string{"jp:1"},
+		})
+	}))
+	defer server.Close()
+	result, err := NewHTTPCollector(server.URL, time.Second).Collect(context.Background(), CollectionRequest{
+		MovieCatalogPersonID: "p1", PersonName: "Person", PersonURL: "https://example.test/p1",
+		Category: CategoryDrama, Source: "jpsearch",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != CollectionStatusUnavailable || result.ReasonCode != "no_match" || result.Artifact != nil || providerCalls != 1 {
+		t.Fatalf("semantic negative result=%#v calls=%d", result, providerCalls)
+	}
+}
+
+func TestHTTPCollectorRetriesOnlyTransientResponsesAndHonorsRetryAfter(t *testing.T) {
+	attempts := 0
+	var sleeps []time.Duration
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/artifact" {
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
+		attempts++
+		if attempts < 3 {
+			w.Header().Set("Retry-After", "7")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		artifact := []byte("ok")
+		sum := sha256.Sum256(artifact)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ready", "artifact_url": "/artifact", "artifact_sha256": hex.EncodeToString(sum[:]), "artifact_bytes": int64(len(artifact)),
+		})
+	}))
+	defer server.Close()
+	collector := NewHTTPCollectorWithOptions(server.URL, time.Second, HTTPCollectorOptions{
+		Sleep: func(ctx context.Context, delay time.Duration) error {
+			sleeps = append(sleeps, delay)
+			return nil
+		},
+	})
+	result, err := collector.Collect(context.Background(), CollectionRequest{MovieCatalogPersonID: "p1", PersonName: "Person", PersonURL: "https://example.test/p1", Category: CategoryDrama})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != CollectionStatusReady || attempts != 3 || len(sleeps) != 2 || sleeps[0] != 7*time.Second || sleeps[1] != 7*time.Second {
+		t.Fatalf("result=%#v attempts=%d sleeps=%v", result, attempts, sleeps)
+	}
+}
+
+func TestHTTPCollectorDoesNotRetrySemanticOrClientErrors(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"status":"rejected","reason_code":"rights"}`))
+	}))
+	defer server.Close()
+	collector := NewHTTPCollectorWithOptions(server.URL, time.Second, HTTPCollectorOptions{Sleep: func(context.Context, time.Duration) error { t.Fatal("unexpected retry"); return nil }})
+	if _, err := collector.Collect(context.Background(), CollectionRequest{MovieCatalogPersonID: "p1", PersonName: "Person", PersonURL: "https://example.test/p1", Category: CategoryDrama}); !errors.Is(err, ErrCollectorProtocol) {
+		t.Fatalf("error=%v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts=%d want=1", attempts)
+	}
+}
+
 func reflectExactCollectionRequest(got, want map[string]any) bool {
 	if len(got) != len(want) {
 		return false

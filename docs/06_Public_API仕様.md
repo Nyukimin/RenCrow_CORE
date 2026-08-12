@@ -38,10 +38,12 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /viewer/databases/glossary` | Glossary DBの読み取り専用snapshot |
 | `GET /viewer/databases/tool-registry` | production Worker runtimeとTool Registry DBを統合した有効Toolの読み取り専用snapshot |
 | `GET /viewer/databases/catalog` | 起動時にAgentへ供給した同一Data Capability Catalogの読み取り専用metadata projection |
-| `GET /viewer/capabilities` | Tool／Skill／MCPのRuntime Capability Snapshot読み取り |
+| `GET /viewer/capabilities` | production Worker Tool metadataのRuntime Capability Snapshot読み取り |
 | `POST /viewer/capabilities/apply` | capability sourceを検証し、必要時だけCOREの再起動反映を予約 |
 | `GET /viewer/capabilities/apply/{request_id}` | apply receiptと再起動後の検証状態を読み取り |
 | `GET /viewer/movie-catalog` | 映画・人物catalogと利用者評価の一覧・詳細 |
+| `GET /viewer/movie-catalog/person-related/people` | 明示評価済み人物の索引付き選択肢 |
+| `GET /viewer/movie-catalog/person-related` | 人物ID・カテゴリ指定の関連作品／日本語サマリprojection |
 | `GET /viewer/movie-catalog?action=cards` | 映画・人物ViewerのD0/D1派生カード投影 |
 | `POST /viewer/movie-catalog/preference` | 映画・人物の認知・好み評価を保存 |
 | `/viewer/active-control`, `/viewer/tts/*`, `/viewer/stt/*` | audio/control bridge |
@@ -77,14 +79,50 @@ SQLite未設定でもruntime toolを返し、SQLite読込失敗時はruntime too
 restricted | blocked`、名前順の`items`を持ちます。providerが利用できない場合はHTTP 200で
 `available=false`、空の`items`、一般化したerrorを返し、内部errorを公開しません。
 
+### 人物関連作品Viewer projection
+
+`GET /viewer/movie-catalog/person-related/people`は、映画カタログで`known`または`like`を
+明示設定した人物だけを名前順で返します。`limit`は既定100、1以上1000以下です。候補取得は
+assessment用named indexから始め、未評価人物、legacy favorite、DB path、内部errorを返しません。
+1000件上限は無制限一覧を避けながら現行deploymentの評価済み人物をViewerで選べるようにする
+bounded contractです。
+
+`GET /viewer/movie-catalog/person-related`は、必須`person_id`、必須`category`、任意`limit`を受けます。
+`category`は`movie | drama | award | music | anime | novel | manga`、`limit`は既定20、1以上50以下です。
+外部収集やTool実行は開始せず、startup時に固定したread-only lookupから、検証済み名称、原名、関係、
+sourceと`summary_state | summary_ja`、`summary_coverage`だけを返します。日本語名の根拠がない作品へ
+邦題を生成せず、説明がない場合は`summary_state=unavailable`として表示します。
+
 ### Capability Applyとstatus
 
-`GET /viewer/capabilities`は、COREが同じ観測時点のproduction Worker metadata、検証済みSkill
-catalog、接続済みMCP `tools/list`から構築した`Runtime Capability Snapshot`を返します。responseは
-`snapshot_revision`、`snapshot_hash`、生成時刻、capabilityごとの`kind`（`tool | skill | mcp`）、
-canonical name、source revision、source hash、`available`、unavailable reasonを持ちます。
-このGETは認識用projectionであり、登録、権限付与、Skill本文の任意path読込、MCP接続、再起動を
-行いません。
+`GET /viewer/capabilities`は、起動中のproduction Worker `RunnerV2`の`ListTools`を同じ
+観測時点で一度だけ読み取り、`Runtime Capability Snapshot`として投影します。成功responseは
+次の3項目だけを持ちます。
+
+```json
+{
+  "available": true,
+  "total": 1,
+  "items": [
+    {
+      "tool_id": "person_related_catalog.lookup",
+      "version": "1.0.0",
+      "category": "query",
+      "origin": "core_runtime",
+      "description": "人物関連作品catalogの読み取り",
+      "available": true
+    }
+  ]
+}
+```
+
+`items`は`tool_id`を主キーに名前順で安定ソートし、各itemは`tool_id`、`version`、`category`、
+`origin`、`description`、runtime時点の`available`だけを返します。Tool parameter schema、
+filesystem path、credential／secret、内部errorは返しません。Worker Runnerが未接続、または
+`ListTools`に失敗した場合もHTTP 200で`available=false`、`total=0`、空の`items`を返します。
+このGETは認識用の読み取りprojectionであり、Tool登録、Tool実行、権限付与、Skill本文の任意path
+読込、MCP接続、再起動を行いません。Skill／MCPを含む将来のSnapshot拡張とCapability Applyは
+別契約として扱います。
 
 Agentが作成したToolはdynamic registryへ登録後、許可済みWorker経路で実行・一覧取得できる場合が
 あります。しかし稼働中AgentのStable RuntimeContextはstartup snapshotを保持するため、dynamic

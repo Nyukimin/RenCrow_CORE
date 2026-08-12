@@ -156,6 +156,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "cmd diagnostics can read runtime capabilities",
+			client:  "RenCrow_CMD",
+			profile: "cmd-diagnostics",
+			method:  http.MethodGet,
+			path:    "/viewer/capabilities",
+			want:    http.StatusNoContent,
+		},
+		{
 			name:    "cmd control can evaluate trade policy without execution",
 			client:  "RenCrow_CMD",
 			profile: "cmd-control",

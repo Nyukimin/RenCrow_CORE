@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -14,6 +15,33 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	_ "modernc.org/sqlite"
 )
+
+func TestPrepareRuntimePersonRelatedCatalogLookupCreatesConfiguredHobbyDatabase(t *testing.T) {
+	moviePath := seedRuntimeEligibleMovieCatalog(t)
+	hobbyPath := filepath.Join(t.TempDir(), "hobby_graph.sqlite")
+	if _, err := os.Stat(hobbyPath); !os.IsNotExist(err) {
+		t.Fatalf("test requires an absent hobby database, err=%v", err)
+	}
+	lookup, err := prepareRuntimePersonRelatedCatalogLookup(context.Background(), moviePath, hobbyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lookup == nil {
+		t.Fatal("lookup is nil")
+	}
+	if info, err := os.Stat(hobbyPath); err != nil || info.IsDir() {
+		t.Fatalf("configured hobby database was not created: info=%v err=%v", info, err)
+	}
+	db, err := sql.Open("sqlite", hobbyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='hobby_collection_attempts'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("collection schema missing count=%d err=%v", count, err)
+	}
+}
 
 func seedRuntimeHobbyGraph(t *testing.T) string {
 	t.Helper()
@@ -214,7 +242,7 @@ func TestBuildToolRuntimeRegistersPersonRelatedCatalogForChatWorkerAndSnapshot(t
 	}
 }
 
-func TestBuildToolRuntimeLeavesPersonRelatedCatalogUnregisteredWithoutEitherDatabase(t *testing.T) {
+func TestBuildToolRuntimeCreatesMissingConfiguredHobbyDatabaseAndRegistersCatalog(t *testing.T) {
 	disabled := false
 	cfg := &config.Config{WorkspaceDir: t.TempDir(), ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
 	cfg.Storage.Databases.MovieCatalog = seedRuntimeMovieCatalog(t)
@@ -224,7 +252,10 @@ func TestBuildToolRuntimeLeavesPersonRelatedCatalogUnregisteredWithoutEitherData
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasToolMetadata(metadata, "person_related_catalog.lookup") {
-		t.Fatal("person related catalog Tool must be unregistered without hobby schema")
+	if !hasToolMetadata(metadata, "person_related_catalog.lookup") {
+		t.Fatal("person related catalog Tool must be registered after startup creates the configured hobby database")
+	}
+	if _, err := os.Stat(cfg.Storage.Databases.HobbyGraph); err != nil {
+		t.Fatalf("startup did not create configured hobby database: %v", err)
 	}
 }

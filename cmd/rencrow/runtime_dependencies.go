@@ -26,6 +26,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	otelexportapp "github.com/Nyukimin/RenCrow_CORE/internal/application/otelexport"
 	packagevalidationapp "github.com/Nyukimin/RenCrow_CORE/internal/application/packagevalidation"
+	personrelatedcatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/personrelatedcatalog"
 	sandboxapp "github.com/Nyukimin/RenCrow_CORE/internal/application/sandbox"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	skillapp "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
@@ -283,6 +284,8 @@ type Dependencies struct {
 	memoryPromotionCancel          context.CancelFunc                          // async ProfilePromotion worker
 	toolRegistry                   capdomain.ToolRegistry                      // Phase 4: Shiro ツール共有用 ToolRegistry
 	workerToolRunner               domaintool.RunnerV2                         // production Worker tool execution/listing boundary
+	personRelatedCatalogLookup     viewer.PersonRelatedCatalogProvider         // read-only Viewer projection over the startup lookup instance
+	personRelatedCatalogPeople     viewer.PersonRelatedCatalogPeopleProvider   // indexed explicitly assessed people projection
 	serenaMCPClient                serenaMCPClient                             // lifecycle owner for the connected Serena MCP process
 	moduleChatService              chatModuleService                           // module contract view of Chat service
 	moduleLLMProviders             map[string]modulellm.Provider               // module contract view of LLM providers
@@ -521,6 +524,16 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.glossaryRecent = glossaryRuntime.RecentHandler
 	deps.toolRegistry = runtimeToolRegistry
 	deps.workerToolRunner = toolRuntime.WorkerRuntimeRunnerV2
+	if toolRuntime.PersonRelatedCatalogLookup != nil {
+		lookup := toolRuntime.PersonRelatedCatalogLookup
+		deps.personRelatedCatalogLookup = func(ctx context.Context, personID, category string, limit int) (personrelatedcatalogapp.LookupResult, error) {
+			return lookup.LookupByPersonID(ctx, personID, category, limit)
+		}
+		deps.personRelatedCatalogPeople = lookup.EligiblePeople
+	} else {
+		deps.personRelatedCatalogLookup = nil
+		deps.personRelatedCatalogPeople = nil
+	}
 	deps.dataCapabilityCatalog = toolRuntime.DataCapabilityCatalog
 	deps.backlogStore = viewer.NewBacklogStore(filepath.Join(cfg.WorkspaceDir, "logs", "backlog.jsonl"))
 	workflowResults := xbookmarkworkflowpersistence.NewJSONLStore(filepath.Join(cfg.WorkspaceDir, "logs", "x_bookmark_workflows.jsonl"))

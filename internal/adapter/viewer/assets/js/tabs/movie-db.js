@@ -18,6 +18,22 @@ const movieDbState = {
   listRevision: 0,
 };
 
+const movieDbPersonRelatedCategories = [
+  {value: 'movie', label: '映画'},
+  {value: 'drama', label: 'ドラマ'},
+  {value: 'award', label: '受賞歴'},
+  {value: 'music', label: '音楽'},
+  {value: 'anime', label: 'アニメ'},
+  {value: 'novel', label: '小説'},
+  {value: 'manga', label: '漫画'},
+];
+const movieDbPersonRelatedState = {
+  personID: '',
+  category: 'movie',
+  requestRevision: 0,
+  initialized: false,
+};
+
 function movieDbEl(id) {
   return document.getElementById(id);
 }
@@ -510,6 +526,8 @@ function movieDbRenderDetail(detail) {
       '<h4>出演・関連映画</h4>' + movieDbPersonLinksHTML(links);
     return;
   }
+  movieDbPersonRelatedState.personID = '';
+  movieDbPersonRelatedState.category = 'movie';
   const movie = detail.movie || {};
   const links = Array.isArray(detail.links) ? detail.links : [];
   const watchEvents = Array.isArray(detail.watch_events) ? detail.watch_events : [];
@@ -518,6 +536,150 @@ function movieDbRenderDetail(detail) {
     movieDbWatchEventsHTML(watchEvents) +
     '<h4>あらすじ</h4><div class="daily-desk-body">' + esc(movie.synopsis || '-') + '</div>' +
     '<h4>キャスト・スタッフ</h4>' + movieDbMovieLinksHTML(links);
+}
+
+function movieDbPersonRelatedCategoryTabsHTML(personID, selectedCategory) {
+  const id = String(personID || '');
+  const selected = String(selectedCategory || 'movie');
+  return '<div id="movieDbPersonRelatedTabs" class="movie-db-person-related-tabs" role="tablist" aria-label="人物関連作品カテゴリ">' +
+    movieDbPersonRelatedCategories.map((category) => {
+      const active = category.value === selected;
+      return '<button class="ctl-btn movie-db-person-related-tab' + (active ? ' is-selected' : '') + '" type="button" role="tab"' +
+        ' data-person-id="' + escAttr(id) + '" data-person-related-category="' + escAttr(category.value) + '"' +
+        ' aria-selected="' + String(active) + '">' + esc(category.label) + '</button>';
+    }).join('') +
+    '</div>';
+}
+
+function movieDbRenderPersonRelatedItemsHTML(data) {
+  const payload = data || {};
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const coverage = payload.summary_coverage || {};
+  const coverageHTML = '<div class="movie-db-person-related-coverage">' +
+    '<span>サマリ: ' + esc(String(Number(coverage.ready || 0))) + '/' + esc(String(Number(coverage.total || items.length))) + '</span>' +
+    '<span>未取得: ' + esc(String(Number(coverage.unavailable || 0))) + '</span>' +
+    '</div>';
+  if (!items.length) {
+    return coverageHTML + '<div class="daily-desk-muted">このカテゴリの関連作品はありません。</div>';
+  }
+  return coverageHTML + '<div class="movie-db-person-related-items">' + items.map((item) => {
+    const displayName = item && item.display_name ? String(item.display_name) : '-';
+    const nameOriginal = item && item.name_original ? String(item.name_original) : '-';
+    const summary = item && item.summary_ja ? String(item.summary_ja) : '日本語サマリはありません。';
+    const summaryState = item && item.summary_state ? String(item.summary_state) : 'unavailable';
+    const relation = item && item.relation_type ? String(item.relation_type) : '-';
+    const source = item && item.source ? String(item.source) : '-';
+    return '<article class="movie-db-person-related-item">' +
+      '<h5>' + esc(displayName) + '</h5>' +
+      '<div class="movie-db-person-related-name-original">原名: ' + esc(nameOriginal) + '</div>' +
+      '<p>' + esc(summary) + '</p>' +
+      '<div class="movie-db-person-related-meta">' +
+        '<span>summary_state: ' + esc(summaryState) + '</span>' +
+        '<span>' + esc(relation) + ' / ' + esc(source) + '</span>' +
+      '</div>' +
+      '</article>';
+  }).join('') + '</div>';
+}
+
+function movieDbPersonRelatedShellHTML(personID, selectedCategory) {
+  return movieDbPersonRelatedCategoryTabsHTML(personID, selectedCategory) +
+    '<div id="movieDbPersonRelatedStatus" class="daily-desk-muted" aria-live="polite">読み込み中...</div>' +
+    '<div id="movieDbPersonRelatedItems"></div>';
+}
+
+function movieDbSetPersonRelatedTabs(personID, selectedCategory) {
+  const tabs = movieDbEl('movieDbPersonRelatedTabs');
+  if (!tabs) return;
+  tabs.innerHTML = movieDbPersonRelatedCategories.map((category) => {
+    const active = category.value === selectedCategory;
+    return '<button class="ctl-btn movie-db-person-related-tab' + (active ? ' is-selected' : '') + '" type="button" role="tab"' +
+      ' data-person-id="' + escAttr(personID) + '" data-person-related-category="' + escAttr(category.value) + '"' +
+      ' aria-selected="' + String(active) + '">' + esc(category.label) + '</button>';
+  }).join('');
+}
+
+function movieDbInitPersonRelatedPanel() {
+  movieDbBindPersonRelatedControls();
+  movieDbSetPersonRelatedTabs(movieDbPersonRelatedState.personID, movieDbPersonRelatedState.category);
+  if (movieDbPersonRelatedState.initialized) return;
+  movieDbPersonRelatedState.initialized = true;
+  const select = movieDbEl('personRelatedPersonSelect');
+  if (select && select.dataset.bound !== '1') {
+    select.dataset.bound = '1';
+    select.addEventListener('change', () => {
+      movieDbPersonRelatedState.personID = String(select.value || '');
+      movieDbPersonRelatedState.category = 'movie';
+      movieDbSetPersonRelatedTabs(movieDbPersonRelatedState.personID, 'movie');
+      if (movieDbPersonRelatedState.personID) movieDbLoadPersonRelated(movieDbPersonRelatedState.personID, 'movie');
+    });
+  }
+  fetch('/viewer/movie-catalog/person-related/people?limit=1000', {cache: 'no-store'})
+    .then((response) => {
+      if (!response.ok) throw new Error('HTTP ' + String(response.status));
+      return response.json();
+    })
+    .then((data) => {
+      if (!select) return;
+      const people = data && data.available && Array.isArray(data.items) ? data.items : [];
+      select.innerHTML = '<option value="">人物を選択</option>' + people.map((person) =>
+        '<option value="' + escAttr(person.movie_catalog_person_id || '') + '">' + esc(person.name || '-') + '</option>'
+      ).join('');
+      const status = movieDbEl('movieDbPersonRelatedStatus');
+      if (status) status.textContent = people.length ? '人物を選択してください。' : '評価済み人物はありません。';
+    })
+    .catch(() => {
+      const status = movieDbEl('movieDbPersonRelatedStatus');
+      if (status) status.textContent = '評価済み人物を読み込めません。';
+    });
+}
+
+function movieDbBindPersonRelatedControls() {
+  const target = movieDbEl('movieDbPersonRelated');
+  if (!target || target.dataset.bound === '1') return;
+  target.dataset.bound = '1';
+  target.addEventListener('click', (event) => {
+    const tab = event.target && event.target.closest ? event.target.closest('[data-person-related-category]') : null;
+    if (!tab) return;
+    const personID = String(tab.dataset.personId || movieDbPersonRelatedState.personID || '');
+    const category = String(tab.dataset.personRelatedCategory || '');
+    if (!personID || !movieDbPersonRelatedCategories.some((item) => item.value === category)) return;
+    movieDbPersonRelatedState.personID = personID;
+    movieDbPersonRelatedState.category = category;
+    movieDbSetPersonRelatedTabs(personID, category);
+    movieDbLoadPersonRelated(personID, category);
+  });
+}
+
+function movieDbLoadPersonRelated(personID, category) {
+  const status = movieDbEl('movieDbPersonRelatedStatus');
+  const itemsTarget = movieDbEl('movieDbPersonRelatedItems');
+  const revision = ++movieDbPersonRelatedState.requestRevision;
+  const params = new URLSearchParams();
+  params.set('person_id', String(personID || ''));
+  params.set('category', String(category || 'movie'));
+  params.set('limit', '20');
+  if (status) status.textContent = '読み込み中...';
+  if (itemsTarget) itemsTarget.innerHTML = '';
+  fetch('/viewer/movie-catalog/person-related?' + params.toString(), {cache: 'no-store'})
+    .then((response) => {
+      if (!response.ok) return response.text().then((text) => { throw new Error(text || ('HTTP ' + String(response.status))); });
+      return response.json();
+    })
+    .then((data) => {
+      if (revision !== movieDbPersonRelatedState.requestRevision) return;
+      if (!data || !data.available) {
+        if (status) status.textContent = 'このカテゴリは利用できません。';
+        if (itemsTarget) itemsTarget.innerHTML = '';
+        return;
+      }
+      if (status) status.textContent = String(data.category || category) + ' / ' + String(data.items && data.items.length ? data.items.length : 0) + '件';
+      if (itemsTarget) itemsTarget.innerHTML = movieDbRenderPersonRelatedItemsHTML(data);
+    })
+    .catch(() => {
+      if (revision !== movieDbPersonRelatedState.requestRevision) return;
+      if (status) status.textContent = '関連作品を読み込めません。';
+      if (itemsTarget) itemsTarget.innerHTML = '';
+    });
 }
 
 function movieDbExternalLink(url) {

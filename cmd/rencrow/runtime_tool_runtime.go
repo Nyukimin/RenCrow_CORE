@@ -25,13 +25,14 @@ import (
 )
 
 type toolRuntime struct {
-	ChatRunnerV2          *tools.ToolRunner
-	WorkerRunnerV2        *tools.ToolRunner
-	ChatRuntimeRunnerV2   domaintool.RunnerV2
-	WorkerRuntimeRunnerV2 domaintool.RunnerV2
-	SubagentMgr           *subagent.Manager
-	ToolMediationRecorder *toolharnesspersistence.JSONLRecorder
-	DataCapabilityCatalog *runtimeDataCapabilityCatalog
+	ChatRunnerV2               *tools.ToolRunner
+	WorkerRunnerV2             *tools.ToolRunner
+	ChatRuntimeRunnerV2        domaintool.RunnerV2
+	WorkerRuntimeRunnerV2      domaintool.RunnerV2
+	PersonRelatedCatalogLookup *runtimePersonRelatedCatalogLookup
+	SubagentMgr                *subagent.Manager
+	ToolMediationRecorder      *toolharnesspersistence.JSONLRecorder
+	DataCapabilityCatalog      *runtimeDataCapabilityCatalog
 }
 
 func buildToolRuntime(
@@ -279,13 +280,14 @@ func buildToolRuntimeWithCapabilities(
 	}
 
 	return toolRuntime{
-		ChatRunnerV2:          chatToolRunnerV2,
-		WorkerRunnerV2:        workerToolRunnerV2,
-		ChatRuntimeRunnerV2:   chatRunnerV2,
-		WorkerRuntimeRunnerV2: workerRunnerV2,
-		SubagentMgr:           subagentMgr,
-		ToolMediationRecorder: toolMediationRecorder,
-		DataCapabilityCatalog: dataCapabilityCatalog,
+		ChatRunnerV2:               chatToolRunnerV2,
+		WorkerRunnerV2:             workerToolRunnerV2,
+		ChatRuntimeRunnerV2:        chatRunnerV2,
+		WorkerRuntimeRunnerV2:      workerRunnerV2,
+		PersonRelatedCatalogLookup: personRelatedCatalogLookup,
+		SubagentMgr:                subagentMgr,
+		ToolMediationRecorder:      toolMediationRecorder,
+		DataCapabilityCatalog:      dataCapabilityCatalog,
 	}
 }
 

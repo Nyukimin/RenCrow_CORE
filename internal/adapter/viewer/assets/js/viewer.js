@@ -1184,7 +1184,7 @@ const mobilePanelPrev = document.getElementById('mobilePanelPrev');
 const mobilePanelNext = document.getElementById('mobilePanelNext');
 const memoryNavToggle = document.getElementById('memoryNavToggle');
 const memoryDbNav = document.getElementById('memoryDbNav');
-const memoryDbTabs = new Set(['memory', 'memory-archive', 'knowledge-memory', 'db-catalog', 'glossary-db', 'movie-db-movies', 'movie-db-people', 'tool-registry']);
+const memoryDbTabs = new Set(['memory', 'memory-archive', 'knowledge-memory', 'db-catalog', 'glossary-db', 'movie-db-movies', 'movie-db-people', 'person-related-catalog', 'tool-registry']);
 const panels = {
   home: document.getElementById('panel-home'),
   image: document.getElementById('panel-image'),
@@ -1207,6 +1207,7 @@ const panels = {
   'glossary-db': document.getElementById('panel-glossary-db'),
   'movie-db-movies': document.getElementById('panel-movie-db'),
   'movie-db-people': document.getElementById('panel-movie-db'),
+  'person-related-catalog': document.getElementById('panel-person-related-catalog'),
   'tool-registry': document.getElementById('panel-tool-registry'),
   'news-pack': document.getElementById('panel-news-pack'),
   collection: document.getElementById('panel-collection'),
@@ -1322,6 +1323,7 @@ function switchTab(tab) {
   if ((tab === 'movie-db-movies' || tab === 'movie-db-people') && typeof movieDbSetMode === 'function') {
     movieDbSetMode(tab === 'movie-db-people' ? 'people' : 'movies');
   }
+  if (tab === 'person-related-catalog' && typeof movieDbInitPersonRelatedPanel === 'function') movieDbInitPersonRelatedPanel();
   if (tab === 'tool-registry' && typeof refreshToolRegistryDatabase === 'function') refreshToolRegistryDatabase();
   if (tab === 'backlog' && typeof refreshBacklog === 'function') refreshBacklog();
   if (tab === 'prompt-logs') {

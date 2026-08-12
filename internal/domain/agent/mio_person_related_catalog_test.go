@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
@@ -45,6 +46,35 @@ func TestParseMioPersonRelatedCatalogLookup(t *testing.T) {
 				t.Fatalf("got=%+v ok=%t want name=%q category=%q ok=%t", got, ok, tt.name, tt.category, tt.ok)
 			}
 		})
+	}
+}
+
+func TestMioPersonRelatedCatalogIntentRoutesToChatBeforeGenericWildRules(t *testing.T) {
+	ruleCalled := false
+	classifierCalled := false
+	mio := NewMioAgent(
+		&mockLLMProvider{},
+		&mockClassifier{classifyFunc: func(context.Context, task.Task) (routing.Decision, error) {
+			classifierCalled = true
+			return routing.NewDecision(routing.RouteWILD, 0.99, "generic creative classification"), nil
+		}},
+		&mockRuleDictionary{matchFunc: func(task.Task) (routing.Route, float64, bool) {
+			ruleCalled = true
+			return routing.RouteWILD, 0.99, true
+		}},
+		&mockToolRunner{},
+		&mockMCPClient{},
+		nil,
+	)
+	decision, err := mio.DecideAction(context.Background(), task.NewTask(task.NewJobID(), "東野圭吾の小説を教えて", "viewer", "user"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Route != routing.RouteCHAT || decision.Confidence != 1 {
+		t.Fatalf("decision=%+v, want deterministic CHAT", decision)
+	}
+	if ruleCalled || classifierCalled {
+		t.Fatalf("generic routing must not run for indexed catalog intent: rule=%t classifier=%t", ruleCalled, classifierCalled)
 	}
 }
 
@@ -105,6 +135,66 @@ func TestMioPersonRelatedCatalogExecutesOnceAndInjectsIndexedContext(t *testing.
 		if !strings.Contains(strings.ToLower(contextMessage.Content), strings.ToLower(marker)) {
 			t.Fatalf("context marker %q missing: %s", marker, contextMessage.Content)
 		}
+	}
+}
+
+func TestMioPersonRelatedCatalogEmptyLookupCollectsThroughWorkerAndRequeries(t *testing.T) {
+	lookupCalls := 0
+	chatCollectCalls := 0
+	chatRunner := &mockToolRunner{
+		listFunc: func(context.Context) ([]tool.ToolMetadata, error) {
+			return []tool.ToolMetadata{{ToolID: "person_related_catalog.lookup"}}, nil
+		},
+		executeV2Func: func(_ context.Context, name string, _ map[string]any) (*tool.ToolResponse, error) {
+			if name == "person_related_catalog.collect" {
+				chatCollectCalls++
+			}
+			lookupCalls++
+			if lookupCalls == 1 {
+				return tool.NewSuccess(map[string]any{"items": []any{}, "summary_coverage": map[string]any{"total": 0}}), nil
+			}
+			return tool.NewSuccess(map[string]any{"items": []any{map[string]any{"display_name": "日本語ドラマ", "name_original": "Original Drama"}}}), nil
+		},
+	}
+	workerCalls := 0
+	var workerArgs map[string]any
+	workerRunner := &mockToolRunner{
+		listFunc: func(context.Context) ([]tool.ToolMetadata, error) {
+			return []tool.ToolMetadata{{ToolID: "person_related_catalog.collect"}}, nil
+		},
+		executeV2Func: func(_ context.Context, name string, args map[string]any) (*tool.ToolResponse, error) {
+			if name != "person_related_catalog.collect" {
+				t.Fatalf("worker executed unexpected tool %q", name)
+			}
+			workerCalls++
+			workerArgs = args
+			return tool.NewSuccess(map[string]any{"status": "ready", "stop_reason": "enough_validated_results"}), nil
+		},
+	}
+	var captured llm.GenerateRequest
+	provider := &mockLLMProvider{generateFunc: func(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+		captured = req
+		return llm.GenerateResponse{Content: "見つけたよ。"}, nil
+	}}
+	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, chatRunner, &mockMCPClient{}, nil).
+		WithPersonRelatedCatalogCollector(workerRunner)
+	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "役所広司のドラマ", "viewer", "user")); err != nil {
+		t.Fatal(err)
+	}
+	if lookupCalls != 2 || workerCalls != 1 || chatCollectCalls != 0 {
+		t.Fatalf("lookup=%d worker_collect=%d chat_collect=%d", lookupCalls, workerCalls, chatCollectCalls)
+	}
+	if !reflect.DeepEqual(workerArgs, map[string]any{"person_name": "役所広司", "category": "drama"}) {
+		t.Fatalf("worker args=%#v", workerArgs)
+	}
+	found := false
+	for _, message := range captured.Messages {
+		if message.Type == llm.PromptContextRecall && strings.Contains(message.Content, "日本語ドラマ") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("post-collection lookup context missing: %#v", captured.Messages)
 	}
 }
 

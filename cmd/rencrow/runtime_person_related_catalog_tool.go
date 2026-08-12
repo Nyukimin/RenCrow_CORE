@@ -20,6 +20,19 @@ type runtimePersonRelatedCatalogLookup struct {
 	hobbyGraphPath   string
 }
 
+func (l *runtimePersonRelatedCatalogLookup) EligiblePeople(ctx context.Context, limit int) ([]personrelatedcatalogapp.EligiblePerson, error) {
+	if l == nil || strings.TrimSpace(l.movieCatalogPath) == "" {
+		return nil, fmt.Errorf("person related catalog lookup is unavailable")
+	}
+	movieDB, err := openRuntimeMovieCatalogReadOnly(l.movieCatalogPath)
+	if err != nil {
+		return nil, fmt.Errorf("open movie catalog read-only for eligible people: %w", err)
+	}
+	defer movieDB.Close()
+	movieDB.SetMaxOpenConns(1)
+	return personrelatedcatalogapp.EligiblePeople(ctx, movieDB, limit)
+}
+
 // prepareRuntimePersonRelatedCatalogLookup is the startup-only migration
 // boundary. Both databases must be present and migratable before the unified
 // query-only Tool is exposed.
@@ -28,7 +41,7 @@ func prepareRuntimePersonRelatedCatalogLookup(ctx context.Context, movieCatalogP
 	if err != nil {
 		return nil, err
 	}
-	hobbyGraphPath, err = resolveRuntimePersonRelatedCatalogDatabasePath(hobbyGraphPath, "hobby graph")
+	hobbyGraphPath, err = resolveRuntimePersonRelatedCatalogWritableDatabasePath(hobbyGraphPath, "hobby graph")
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +135,10 @@ func (l *runtimePersonRelatedCatalogLookup) Lookup(ctx context.Context, personNa
 		return nil, fmt.Errorf("open hobby graph read-only: %w", err)
 	}
 	defer hobbyDB.Close()
-	hobbyDB.SetMaxOpenConns(1)
+	// LookupWithCoverage enriches each relation while its bounded relation
+	// cursor is open; retain read-only access but allow that nested query to
+	// use a second connection instead of waiting on the single cursor.
+	hobbyDB.SetMaxOpenConns(2)
 	if err := hobbyDB.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("connect hobby graph read-only: %w", err)
 	}
@@ -131,6 +147,87 @@ func (l *runtimePersonRelatedCatalogLookup) Lookup(ctx context.Context, personNa
 		return nil, fmt.Errorf("hobby graph indexed lookup: %w", err)
 	}
 	return items, nil
+}
+
+// LookupByPersonID is the read-only Viewer projection boundary. Unlike the
+// Tool-facing name lookup above, it never resolves a name or performs a
+// collection; the selected movie-catalog person ID is used exactly as given.
+func (l *runtimePersonRelatedCatalogLookup) LookupByPersonID(ctx context.Context, personID, category string, limit int) (personrelatedcatalogapp.LookupResult, error) {
+	if l == nil || strings.TrimSpace(l.movieCatalogPath) == "" || strings.TrimSpace(l.hobbyGraphPath) == "" {
+		return personrelatedcatalogapp.LookupResult{}, fmt.Errorf("person related catalog lookup is unavailable")
+	}
+	personID = strings.TrimSpace(personID)
+	if personID == "" {
+		return personrelatedcatalogapp.LookupResult{}, fmt.Errorf("person id is required")
+	}
+	if !validRuntimePersonRelatedCatalogCategory(category) {
+		return personrelatedcatalogapp.LookupResult{}, fmt.Errorf("person related catalog category %q is invalid", category)
+	}
+	if limit < 1 || limit > 50 {
+		return personrelatedcatalogapp.LookupResult{}, personrelatedcatalogapp.ErrInvalidLimit
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	movieDB, err := openRuntimeMovieCatalogReadOnly(l.movieCatalogPath)
+	if err != nil {
+		return personrelatedcatalogapp.LookupResult{}, fmt.Errorf("open movie catalog read-only: %w", err)
+	}
+	defer movieDB.Close()
+	movieDB.SetMaxOpenConns(1)
+	if err := movieDB.PingContext(ctx); err != nil {
+		return personrelatedcatalogapp.LookupResult{}, fmt.Errorf("connect movie catalog read-only: %w", err)
+	}
+	var personName, personURL string
+	if err := movieDB.QueryRowContext(ctx, `SELECT name, url FROM people WHERE person_id = ?`, personID).Scan(&personName, &personURL); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return personrelatedcatalogapp.LookupResult{}, &tools.PersonRelatedCatalogNotFoundError{PersonName: personID}
+		}
+		return personrelatedcatalogapp.LookupResult{}, fmt.Errorf("resolve movie catalog person: %w", err)
+	}
+	if category == personrelatedcatalogapp.CategoryMovie {
+		rows, err := movieDB.QueryContext(ctx, `
+SELECT mp.movie_id, COALESCE(mp.movie_title, m.title), COALESCE(mp.movie_url, m.url),
+       mp.role, mp.source, COALESCE(mp.person_name, ?), COALESCE(mp.person_url, ?)
+FROM movie_people AS mp
+LEFT JOIN movies AS m ON m.movie_id = mp.movie_id
+WHERE mp.person_id = ?
+ORDER BY COALESCE(mp.movie_title, m.title), mp.role, mp.source
+LIMIT ?`, personName, personURL, personID, limit)
+		if err != nil {
+			return personrelatedcatalogapp.LookupResult{}, fmt.Errorf("lookup movie catalog filmography: %w", err)
+		}
+		defer rows.Close()
+		links := make([]moviecatalogapp.EdgeItem, 0, limit)
+		for rows.Next() {
+			var edge moviecatalogapp.EdgeItem
+			if err := rows.Scan(&edge.MovieID, &edge.MovieTitle, &edge.MovieURL, &edge.Role, &edge.Source, &edge.PersonName, &edge.PersonURL); err != nil {
+				return personrelatedcatalogapp.LookupResult{}, fmt.Errorf("scan movie catalog filmography: %w", err)
+			}
+			edge.PersonID = personID
+			edge.MovieFetched = true
+			edge.PersonFetched = true
+			links = append(links, edge)
+		}
+		if err := rows.Err(); err != nil {
+			return personrelatedcatalogapp.LookupResult{}, fmt.Errorf("read movie catalog filmography: %w", err)
+		}
+		return runtimeMovieRelatedCatalogResult(ctx, movieDB, personID, moviecatalogapp.LookupResult{
+			Detail: map[string]any{"links": links},
+		})
+	}
+
+	hobbyDB, err := openRuntimePersonRelatedCatalogReadOnly(l.hobbyGraphPath)
+	if err != nil {
+		return personrelatedcatalogapp.LookupResult{}, fmt.Errorf("open hobby graph read-only: %w", err)
+	}
+	defer hobbyDB.Close()
+	hobbyDB.SetMaxOpenConns(1)
+	if err := hobbyDB.PingContext(ctx); err != nil {
+		return personrelatedcatalogapp.LookupResult{}, fmt.Errorf("connect hobby graph read-only: %w", err)
+	}
+	return personrelatedcatalogapp.LookupWithCoverage(ctx, hobbyDB, personID, category, limit)
 }
 
 func runtimePersonIDFromUniqueResult(personName string, result moviecatalogapp.LookupResult) (string, error) {
@@ -255,6 +352,35 @@ func resolveRuntimePersonRelatedCatalogDatabasePath(configuredPath, label string
 	}
 	if info.IsDir() {
 		return "", fmt.Errorf("%s database path is a directory", label)
+	}
+	return absPath, nil
+}
+
+func resolveRuntimePersonRelatedCatalogWritableDatabasePath(configuredPath, label string) (string, error) {
+	configuredPath = strings.TrimSpace(configuredPath)
+	if configuredPath == "" {
+		return "", fmt.Errorf("%s database path is not configured", label)
+	}
+	absPath, err := filepath.Abs(configuredPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s database path: %w", label, err)
+	}
+	info, err := os.Stat(absPath)
+	if err == nil {
+		if info.IsDir() {
+			return "", fmt.Errorf("%s database path is a directory", label)
+		}
+		return absPath, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat %s database: %w", label, err)
+	}
+	parentInfo, parentErr := os.Stat(filepath.Dir(absPath))
+	if parentErr != nil {
+		return "", fmt.Errorf("stat %s database parent: %w", label, parentErr)
+	}
+	if !parentInfo.IsDir() {
+		return "", fmt.Errorf("%s database parent is not a directory", label)
 	}
 	return absPath, nil
 }

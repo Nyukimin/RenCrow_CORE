@@ -145,6 +145,72 @@ func TestRuntimePersonRelatedCatalogCollectRejectsIneligibleBeforeProvider(t *te
 	}
 }
 
+func TestRuntimePersonRelatedCatalogCollectPlansSourceRecordsNegativeAndReusesTTL(t *testing.T) {
+	moviePath := seedRuntimeEligibleMovieCatalog(t)
+	hobbyPath := seedRuntimeHobbyGraph(t)
+	var sources []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/person-related-catalog/collections":
+			var request map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			source, _ := request["source"].(string)
+			sources = append(sources, source)
+			if source != "jpsearch" {
+				t.Fatalf("unexpected source: %q", source)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "unavailable", "source": source, "reason_code": "no_match"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if _, err := prepareRuntimePersonRelatedCatalogLookup(context.Background(), moviePath, hobbyPath); err != nil {
+		t.Fatal(err)
+	}
+	collector, err := prepareRuntimePersonRelatedCatalogCollector(context.Background(), moviePath, hobbyPath, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := collector.Collect(context.Background(), "Al Pacino", personrelatedcatalogapp.CategoryDrama)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := value.(personrelatedcatalogapp.CollectionPlanResult)
+	if !ok || result.StopReason != personrelatedcatalogapp.StopReasonAllSourcesTerminal || result.Status != personrelatedcatalogapp.CollectionStatusUnavailable || len(result.Attempts) != 1 {
+		t.Fatalf("unexpected plan result: %#v", value)
+	}
+	if strings.Join(sources, ",") != "jpsearch" {
+		t.Fatalf("sources=%v", sources)
+	}
+	db, err := sql.Open("sqlite", hobbyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var unavailable int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM hobby_collection_attempts WHERE movie_catalog_person_id='p1' AND category='drama' AND status='unavailable'`).Scan(&unavailable); err != nil {
+		t.Fatal(err)
+	}
+	if unavailable != 1 {
+		t.Fatalf("attempt receipts unavailable=%d", unavailable)
+	}
+	second, err := collector.Collect(context.Background(), "Al Pacino", personrelatedcatalogapp.CategoryDrama)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondResult, ok := second.(personrelatedcatalogapp.CollectionPlanResult)
+	if !ok || secondResult.StopReason != personrelatedcatalogapp.StopReasonAllSourcesTerminal {
+		t.Fatalf("fresh negative receipt was not reused: %#v", second)
+	}
+	if strings.Join(sources, ",") != "jpsearch" {
+		t.Fatalf("fresh negative receipt must suppress provider call, sources=%v", sources)
+	}
+}
+
 func TestBuildToolRuntimeRegistersCollectOnlyForWorkerWhenProviderConfigured(t *testing.T) {
 	disabled := false
 	server := httptest.NewServer(http.NotFoundHandler())
@@ -220,10 +286,10 @@ VALUES('person','35188','新海誠','known','like','live-e2e');`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collector.Collect(context.Background(), "新海誠", personrelatedcatalogapp.CategoryManga); err != nil {
+	if _, err := collector.Collect(context.Background(), "新海誠", personrelatedcatalogapp.CategoryAnime); err != nil {
 		t.Fatalf("live collect/import failed: %v", err)
 	}
-	value, err := lookup.Lookup(context.Background(), "新海誠", personrelatedcatalogapp.CategoryManga, 20)
+	value, err := lookup.Lookup(context.Background(), "新海誠", personrelatedcatalogapp.CategoryAnime, 20)
 	if err != nil {
 		t.Fatalf("live indexed lookup failed: %v", err)
 	}

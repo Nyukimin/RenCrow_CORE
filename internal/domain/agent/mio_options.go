@@ -5,6 +5,13 @@ import (
 	"strings"
 )
 
+// WithPersonRelatedCatalogCollector injects the Worker-only execution boundary
+// used after an indexed lookup proves that the requested category is empty.
+func (m *MioAgent) WithPersonRelatedCatalogCollector(runner ToolRunner) *MioAgent {
+	m.personCatalogCollector = runner
+	return m
+}
+
 // WithKBManager はKBManagerを設定（Phase 4.2 KB自動保存用）
 func (m *MioAgent) WithKBManager(mgr KBManager) *MioAgent {
 	m.kbManager = mgr

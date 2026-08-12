@@ -93,6 +93,9 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		GlossaryDatabase:             viewer.HandleGlossaryDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.Glossary}),
 		ToolRegistryDatabase:         viewer.HandleToolRegistryDatabase(viewer.DatabaseViewerOptions{DBPath: databasePaths.ToolRegistry, RuntimeTools: viewerRuntimeTools(dependencies)}),
 		DataCapabilityCatalog:        viewer.HandleDataCapabilityCatalog(viewerDataCapabilityProvider(dependencies)),
+		RuntimeCapabilities:          viewer.HandleRuntimeCapabilities(viewerRuntimeTools(dependencies)),
+		PersonRelatedCatalog:         viewer.HandlePersonRelatedCatalog(dependencies.personRelatedCatalogLookup),
+		PersonRelatedCatalogPeople:   viewer.HandlePersonRelatedCatalogPeople(dependencies.personRelatedCatalogPeople),
 		MovieCatalog:                 viewer.HandleMovieCatalog(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
 		MovieCatalogFetch:            viewer.HandleMovieCatalogFetch(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
 		MovieCatalogPreference:       viewer.HandleMovieCatalogPreference(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
@@ -118,10 +121,10 @@ func viewerDataCapabilityProvider(dependencies *Dependencies) viewer.DataCapabil
 }
 
 func viewerRuntimeTools(dependencies *Dependencies) func(context.Context) ([]domaintool.ToolMetadata, error) {
+	if dependencies == nil || dependencies.workerToolRunner == nil {
+		return nil
+	}
 	return func(ctx context.Context) ([]domaintool.ToolMetadata, error) {
-		if dependencies == nil || dependencies.workerToolRunner == nil {
-			return nil, nil
-		}
 		return dependencies.workerToolRunner.ListTools(ctx)
 	}
 }

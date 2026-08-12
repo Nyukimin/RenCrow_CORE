@@ -24,7 +24,7 @@ func prepareRuntimePersonRelatedCatalogCollector(ctx context.Context, movieCatal
 	if err != nil {
 		return nil, err
 	}
-	resolvedHobbyGraphPath, err := resolveRuntimePersonRelatedCatalogDatabasePath(hobbyGraphPath, "hobby graph")
+	resolvedHobbyGraphPath, err := resolveRuntimePersonRelatedCatalogWritableDatabasePath(hobbyGraphPath, "hobby graph")
 	if err != nil {
 		return nil, err
 	}
@@ -66,15 +66,6 @@ func (c *runtimePersonRelatedCatalogCollector) Collect(ctx context.Context, pers
 	if !found {
 		return nil, fmt.Errorf("person %q is not explicitly eligible for collection", personName)
 	}
-	collection, err := c.provider.Collect(ctx, personrelatedcatalogapp.CollectionRequest{
-		MovieCatalogPersonID: eligible.MovieCatalogPersonID,
-		PersonName:           eligible.Name,
-		PersonURL:            eligible.URL,
-		Category:             category,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("collect category %s from provider: %w", category, err)
-	}
 
 	hobbyDB, err := openRuntimePersonRelatedCatalogReadWrite(c.hobbyGraphPath)
 	if err != nil {
@@ -85,9 +76,95 @@ func (c *runtimePersonRelatedCatalogCollector) Collect(ctx context.Context, pers
 	if err := hobbyDB.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("connect hobby graph read-write for collection: %w", err)
 	}
-	result, err := personrelatedcatalogapp.Import(ctx, hobbyDB, collection.Artifact, collection.ArtifactSHA256, collection.ArtifactBytes)
+	if err := personrelatedcatalogapp.EnsureHobbySchema(ctx, hobbyDB); err != nil {
+		return nil, fmt.Errorf("prepare hobby graph collection schema: %w", err)
+	}
+	personRefID := "eiga:" + eligible.MovieCatalogPersonID
+	seedPlan, err := personrelatedcatalogapp.BuildCollectionPlan(personrelatedcatalogapp.PlanRequest{
+		PersonRefID: personRefID, MovieCatalogPersonID: eligible.MovieCatalogPersonID, Categories: []string{category},
+	})
 	if err != nil {
-		return result, fmt.Errorf("import collected category %s: %w", category, err)
+		return nil, fmt.Errorf("build initial collection plan: %w", err)
+	}
+	now := time.Now().UTC()
+	fresh := make([]personrelatedcatalogapp.CollectionAttempt, 0, len(seedPlan.Batches))
+	for _, batch := range seedPlan.Batches {
+		attempt, ok, lookupErr := personrelatedcatalogapp.LookupFreshCollectionAttempt(ctx, hobbyDB, personRefID, eligible.MovieCatalogPersonID, category, batch.Source, now)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("load collection attempt for %s: %w", batch.Source, lookupErr)
+		}
+		if ok {
+			fresh = append(fresh, attempt)
+		}
+	}
+	plan, err := personrelatedcatalogapp.BuildCollectionPlan(personrelatedcatalogapp.PlanRequest{
+		PersonRefID: personRefID, MovieCatalogPersonID: eligible.MovieCatalogPersonID, Categories: []string{category}, FreshAttempts: fresh, Now: now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build collection plan: %w", err)
+	}
+	result := personrelatedcatalogapp.CollectionPlanResult{
+		PlanRevision: plan.PlanRevision, PersonRefID: personRefID, MovieCatalogPersonID: eligible.MovieCatalogPersonID,
+		Category: category, StopReason: plan.StopReason, NextSource: plan.NextSource, Attempts: append([]personrelatedcatalogapp.CollectionAttempt(nil), plan.Attempts...),
+	}
+	if len(plan.Batches) == 0 {
+		if len(result.Attempts) > 0 {
+			last := result.Attempts[len(result.Attempts)-1]
+			result.Status, result.ReasonCode = last.Status, last.ReasonCode
+		}
+		return result, nil
+	}
+	for index, batch := range plan.Batches {
+		collection, collectErr := c.provider.Collect(ctx, personrelatedcatalogapp.CollectionRequest{
+			MovieCatalogPersonID: eligible.MovieCatalogPersonID, PersonName: eligible.Name, PersonURL: eligible.URL,
+			Category: category, Source: batch.Source,
+		})
+		if collectErr != nil {
+			return nil, fmt.Errorf("collect category %s from provider source %s: %w", category, batch.Source, collectErr)
+		}
+		if collection.Source != batch.Source {
+			return nil, fmt.Errorf("collect category %s: provider returned source %q for requested source %q", category, collection.Source, batch.Source)
+		}
+		retrievedAt := strings.TrimSpace(collection.RetrievedAt)
+		if retrievedAt == "" {
+			retrievedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		attempt := personrelatedcatalogapp.CollectionAttempt{
+			RunID: fmt.Sprintf("collect-%d-%s-%s", time.Now().UTC().UnixNano(), category, batch.Source), Source: batch.Source,
+			Category: category, PersonRefID: personRefID, MovieCatalogPersonID: eligible.MovieCatalogPersonID,
+			Status: collection.Status, ReasonCode: collection.ReasonCode, Retryable: collection.Retryable,
+			RetryAfterSeconds: int(collection.RetryAfter / time.Second), RetrievedAt: retrievedAt, PlanRevision: plan.PlanRevision,
+		}
+		if collection.Status == personrelatedcatalogapp.CollectionStatusReady {
+			imported, importErr := personrelatedcatalogapp.Import(ctx, hobbyDB, collection.Artifact, collection.ArtifactSHA256, collection.ArtifactBytes)
+			if importErr != nil {
+				return imported, fmt.Errorf("import collected category %s from %s: %w", category, batch.Source, importErr)
+			}
+			attempt.RunID = imported.RunID
+			attempt.ItemCount = imported.ItemCount
+			attempt.StopReason = personrelatedcatalogapp.StopReasonEnoughValidatedResults
+			result.Status = personrelatedcatalogapp.CollectionStatusReady
+			result.StopReason = personrelatedcatalogapp.StopReasonEnoughValidatedResults
+			result.NextSource = ""
+		} else if collection.Status == personrelatedcatalogapp.CollectionStatusAmbiguous {
+			attempt.StopReason = personrelatedcatalogapp.StopReasonIdentityAmbiguous
+			result.StopReason = personrelatedcatalogapp.StopReasonIdentityAmbiguous
+		} else if index+1 < len(plan.Batches) {
+			attempt.NextSource = plan.Batches[index+1].Source
+			result.NextSource = attempt.NextSource
+		} else {
+			attempt.StopReason = personrelatedcatalogapp.StopReasonAllSourcesTerminal
+			result.StopReason = personrelatedcatalogapp.StopReasonAllSourcesTerminal
+			result.NextSource = ""
+		}
+		if err := personrelatedcatalogapp.RecordCollectionAttempt(ctx, hobbyDB, attempt); err != nil {
+			return nil, fmt.Errorf("record collection attempt for %s: %w", batch.Source, err)
+		}
+		result.Attempts = append(result.Attempts, attempt)
+		result.Status, result.ReasonCode = attempt.Status, attempt.ReasonCode
+		if collection.Status == personrelatedcatalogapp.CollectionStatusReady || collection.Status == personrelatedcatalogapp.CollectionStatusAmbiguous {
+			return result, nil
+		}
 	}
 	return result, nil
 }

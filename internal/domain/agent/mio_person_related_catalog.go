@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -118,9 +119,54 @@ func (m *MioAgent) personRelatedCatalogLookupContext(ctx context.Context, lookup
 	if err != nil || response == nil || response.IsError() {
 		return unavailable("person_related_catalog.lookup execution failed")
 	}
+	if personRelatedCatalogResultEmpty(response.Result) && m.personCatalogCollector != nil {
+		metadata, listErr := m.personCatalogCollector.ListTools(ctx)
+		if listErr != nil {
+			return unavailable("Worker Tool list unavailable")
+		}
+		collectPresent := false
+		for _, item := range metadata {
+			if item.ToolID == "person_related_catalog.collect" {
+				collectPresent = true
+				break
+			}
+		}
+		if !collectPresent {
+			return unavailable("person_related_catalog.collect is not registered for Worker")
+		}
+		collected, collectErr := m.personCatalogCollector.ExecuteV2(ctx, "person_related_catalog.collect", map[string]any{
+			"person_name": lookup.Name,
+			"category":    lookup.Category,
+		})
+		if collectErr != nil || collected == nil || collected.IsError() {
+			return unavailable("person_related_catalog.collect execution failed")
+		}
+		response, err = m.toolRunner.ExecuteV2(ctx, "person_related_catalog.lookup", map[string]any{
+			"person_name": lookup.Name,
+			"category":    lookup.Category,
+			"limit":       20,
+		})
+		if err != nil || response == nil || response.IsError() {
+			return unavailable("person_related_catalog.lookup after collection failed")
+		}
+	}
 	return llm.Message{
 		Role:    "system",
 		Content: fmt.Sprintf("RenCrow indexed person-related catalog result; answer only from it (this indexed result). tool=person_related_catalog.lookup person_name=%s category=%s. Preserve display_name and name_original exactly; do not translate or generate title names. If the result is empty or information is unavailable, say so without web or external supplementation.\n%s", lookup.Name, lookup.Category, response.String()),
 		Type:    llm.PromptContextRecall,
 	}
+}
+
+func personRelatedCatalogResultEmpty(result any) bool {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return false
+	}
+	var projection struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(payload, &projection); err != nil {
+		return false
+	}
+	return len(projection.Items) == 0
 }

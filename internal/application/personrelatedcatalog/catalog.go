@@ -125,6 +125,25 @@ type LookupResult struct {
 	SummaryCoverage SummaryCoverage      `json:"summary_coverage"`
 }
 
+type SummaryPatch struct {
+	Category            string `json:"category"`
+	ItemID              string `json:"item_id"`
+	Source              string `json:"source"`
+	DescriptionOriginal string `json:"description_original"`
+	DescriptionLanguage string `json:"description_language"`
+	DescriptionJA       string `json:"description_ja"`
+	SourceStatus        string `json:"source_status"`
+	TranslationStatus   string `json:"translation_status"`
+	SourceRecordID      string `json:"source_record_id"`
+	CanonicalURL        string `json:"canonical_url"`
+	EvidenceURL         string `json:"evidence_url"`
+	RetrievedAt         string `json:"retrieved_at"`
+	ContentSHA256       string `json:"content_sha256"`
+	Rights              string `json:"rights"`
+	ExpiresAt           string `json:"expires_at"`
+	Reason              string `json:"reason,omitempty"`
+}
+
 type artifactManifest struct {
 	SchemaVersion        string `json:"schema_version"`
 	RecordType           string `json:"record_type"`
@@ -202,16 +221,34 @@ const (
 	relatedItemsTable    = "hobby_related_items"
 	relationsTable       = "hobby_person_relations"
 	receiptsTable        = "hobby_collection_receipts"
+	attemptsTable        = "hobby_collection_attempts"
+	summariesTable       = "hobby_item_summaries"
 )
 
-var ownTables = []string{personReferenceTable, relatedItemsTable, relationsTable, receiptsTable}
+var ownTables = []string{personReferenceTable, relatedItemsTable, relationsTable, receiptsTable, attemptsTable, summariesTable}
 
 var ownIndexes = []string{
 	"idx_hobby_person_references_movie_catalog_person_id",
 	"idx_hobby_related_items_category_item_id",
 	"idx_hobby_person_relations_person_category_relation",
 	"idx_hobby_collection_receipts_run_category",
+	"idx_hobby_collection_attempts_person_category_source",
+	"idx_hobby_item_summaries_category_item_source",
 }
+
+const (
+	SummarySourceReady             = "ready"
+	SummarySourceUnavailable       = "unavailable"
+	SummaryTranslationNotRequired  = "not_required"
+	SummaryTranslationReady        = "ready"
+	SummaryTranslationFailed       = "failed"
+	SummaryTranslationNotAttempted = "not_attempted"
+)
+
+var (
+	PositiveCollectionAttemptTTL = 24 * time.Hour
+	NegativeCollectionAttemptTTL = 24 * time.Hour
+)
 
 // EnsureSchema creates only this feature's tables and named indexes. The
 // existing assessment table is never created here; only its collection index
@@ -223,6 +260,35 @@ func EnsureSchema(ctx context.Context, movieDB, hobbyDB *sql.DB) error {
 	if movieDB == nil || hobbyDB == nil {
 		return fmt.Errorf("%w: database is nil", ErrUnavailable)
 	}
+	if err := EnsureHobbySchema(ctx, hobbyDB); err != nil {
+		return err
+	}
+
+	if exists, err := sqliteObjectExists(ctx, movieDB, "table", "movie_catalog_assessments"); err != nil {
+		return fmt.Errorf("check movie catalog assessment schema: %w", err)
+	} else if exists {
+		if _, err := movieDB.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_movie_catalog_assessments_collection_familiarity
+  ON movie_catalog_assessments(kind, familiarity, target_id);
+CREATE INDEX IF NOT EXISTS idx_movie_catalog_assessments_collection_sentiment
+  ON movie_catalog_assessments(kind, sentiment, target_id);
+CREATE INDEX IF NOT EXISTS idx_movie_catalog_assessments_eligible_target
+  ON movie_catalog_assessments(kind, target_id, familiarity, sentiment)`); err != nil {
+			return fmt.Errorf("create movie catalog collection index: %w", err)
+		}
+	}
+	return nil
+}
+
+// EnsureHobbySchema is the write-side migration boundary used by collection
+// workers. It does not touch the movie database, which may be opened read-only
+// during a collection request.
+func EnsureHobbySchema(ctx context.Context, hobbyDB *sql.DB) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if hobbyDB == nil {
+		return fmt.Errorf("%w: hobby database is nil", ErrUnavailable)
+	}
 	tx, err := hobbyDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin person related catalog schema: %w", err)
@@ -233,7 +299,20 @@ func EnsureSchema(ctx context.Context, movieDB, hobbyDB *sql.DB) error {
 			_ = tx.Rollback()
 		}
 	}()
-	statements := []string{
+	for _, statement := range hobbySchemaStatements() {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("create person related catalog schema: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit person related catalog schema: %w", err)
+	}
+	rollback = false
+	return nil
+}
+
+func hobbySchemaStatements() []string {
+	return []string{
 		`CREATE TABLE IF NOT EXISTS hobby_person_references (
   person_ref_id TEXT PRIMARY KEY,
   movie_catalog_person_id TEXT NOT NULL,
@@ -293,6 +372,47 @@ func EnsureSchema(ctx context.Context, movieDB, hobbyDB *sql.DB) error {
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(run_id, category, source)
 )`,
+		`CREATE TABLE IF NOT EXISTS hobby_collection_attempts (
+  run_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  category TEXT NOT NULL,
+  person_ref_id TEXT NOT NULL,
+  movie_catalog_person_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  reason_code TEXT NOT NULL DEFAULT '',
+  retryable INTEGER NOT NULL DEFAULT 0,
+  retry_after_seconds INTEGER NOT NULL DEFAULT 0,
+  retrieved_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  plan_revision TEXT NOT NULL,
+  stop_reason TEXT NOT NULL DEFAULT '',
+  next_source TEXT NOT NULL DEFAULT '',
+  item_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(run_id, source, category)
+)`,
+		`CREATE TABLE IF NOT EXISTS hobby_item_summaries (
+  category TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  description_original TEXT NOT NULL DEFAULT '',
+  description_language TEXT NOT NULL DEFAULT '',
+  description_ja TEXT NOT NULL DEFAULT '',
+  source_status TEXT NOT NULL,
+  translation_status TEXT NOT NULL,
+  source_record_id TEXT NOT NULL,
+  canonical_url TEXT NOT NULL,
+  evidence_url TEXT NOT NULL DEFAULT '',
+  retrieved_at TEXT NOT NULL,
+  content_sha256 TEXT NOT NULL DEFAULT '',
+  rights TEXT NOT NULL DEFAULT '',
+  expires_at TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(category, item_id, source)
+)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_person_references_movie_catalog_person_id
   ON hobby_person_references(movie_catalog_person_id, person_ref_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_related_items_category_item_id
@@ -301,30 +421,11 @@ func EnsureSchema(ctx context.Context, movieDB, hobbyDB *sql.DB) error {
   ON hobby_person_relations(person_ref_id, category, relation_type, target_item_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_collection_receipts_run_category
   ON hobby_collection_receipts(run_id, category, source)`,
+		`CREATE INDEX IF NOT EXISTS idx_hobby_collection_attempts_person_category_source
+  ON hobby_collection_attempts(person_ref_id, movie_catalog_person_id, category, source, expires_at, retrieved_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_hobby_item_summaries_category_item_source
+  ON hobby_item_summaries(category, item_id, source, source_status, translation_status)`,
 	}
-	for _, statement := range statements {
-		if _, err := tx.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("create person related catalog schema: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit person related catalog schema: %w", err)
-	}
-	rollback = false
-
-	if exists, err := sqliteObjectExists(ctx, movieDB, "table", "movie_catalog_assessments"); err != nil {
-		return fmt.Errorf("check movie catalog assessment schema: %w", err)
-	} else if exists {
-		if _, err := movieDB.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_movie_catalog_assessments_collection_familiarity
-  ON movie_catalog_assessments(kind, familiarity, target_id);
-CREATE INDEX IF NOT EXISTS idx_movie_catalog_assessments_collection_sentiment
-  ON movie_catalog_assessments(kind, sentiment, target_id);
-CREATE INDEX IF NOT EXISTS idx_movie_catalog_assessments_eligible_target
-  ON movie_catalog_assessments(kind, target_id, familiarity, sentiment)`); err != nil {
-			return fmt.Errorf("create movie catalog collection index: %w", err)
-		}
-	}
-	return nil
 }
 
 // EligiblePeople returns only people with an explicit positive assessment.
@@ -334,7 +435,7 @@ func EligiblePeople(ctx context.Context, movieDB *sql.DB, limit int) ([]Eligible
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if limit < 1 || limit > 100 {
+	if limit < 1 || limit > 1000 {
 		return nil, ErrInvalidLimit
 	}
 	if err := requireMovieSelectionSchema(ctx, movieDB); err != nil {
@@ -519,8 +620,11 @@ LIMIT ?`, movieCatalogPersonID, category, limit)
 	if err != nil {
 		return LookupResult{}, fmt.Errorf("lookup person related catalog: %w", err)
 	}
-	defer rows.Close()
+	type pendingSummary struct {
+		original, language, japanese, translation string
+	}
 	items := []RelatedCatalogItem{}
+	pending := []pendingSummary{}
 	for rows.Next() {
 		var item RelatedCatalogItem
 		var descriptionOriginal, descriptionLanguage, descriptionJA, descriptionTranslation string
@@ -535,13 +639,29 @@ LIMIT ?`, movieCatalogPersonID, category, limit)
 		); err != nil {
 			return LookupResult{}, fmt.Errorf("scan person related catalog: %w", err)
 		}
-		item.SummaryJA, item.SummaryState, item.SummarySourceURL = projectWorkSummary(
-			descriptionOriginal, descriptionLanguage, descriptionJA, descriptionTranslation, item.CanonicalURL,
-		)
 		items = append(items, item)
+		pending = append(pending, pendingSummary{descriptionOriginal, descriptionLanguage, descriptionJA, descriptionTranslation})
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
 		return LookupResult{}, fmt.Errorf("read person related catalog: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return LookupResult{}, fmt.Errorf("close person related catalog rows: %w", err)
+	}
+	for index := range items {
+		item := &items[index]
+		summary, found, err := lookupBestSummary(ctx, hobbyDB, item.Category, item.ItemID)
+		if err != nil {
+			return LookupResult{}, err
+		}
+		if found {
+			item.SummaryJA, item.SummaryState, item.SummarySourceURL = summary.SummaryJA, summary.SummaryState, summary.SummarySourceURL
+		} else {
+			item.SummaryJA, item.SummaryState, item.SummarySourceURL = projectWorkSummary(
+				pending[index].original, pending[index].language, pending[index].japanese, pending[index].translation, item.CanonicalURL,
+			)
+		}
 	}
 	return LookupResult{Items: items, SummaryCoverage: summarizeCoverage(items)}, nil
 }
@@ -563,6 +683,67 @@ func projectWorkSummary(original, language, summaryJA, translationState, sourceU
 	return "", "unavailable", ""
 }
 
+type summaryProjection struct {
+	SummaryJA        string
+	SummaryState     string
+	SummarySourceURL string
+}
+
+func lookupBestSummary(ctx context.Context, db *sql.DB, category, itemID string) (summaryProjection, bool, error) {
+	rows, err := db.QueryContext(ctx, `
+SELECT source,description_original,description_language,description_ja,translation_status,canonical_url
+FROM hobby_item_summaries INDEXED BY idx_hobby_item_summaries_category_item_source
+WHERE category=? AND item_id=?
+ORDER BY source`, category, itemID)
+	if err != nil {
+		return summaryProjection{}, false, fmt.Errorf("lookup item summaries: %w", err)
+	}
+	defer rows.Close()
+	found := false
+	bestRank := int(^uint(0) >> 1)
+	var best summaryProjection
+	for rows.Next() {
+		var source, original, language, summaryJA, translationStatus, canonicalURL string
+		if err := rows.Scan(&source, &original, &language, &summaryJA, &translationStatus, &canonicalURL); err != nil {
+			return summaryProjection{}, false, fmt.Errorf("scan item summary: %w", err)
+		}
+		found = true
+		projectedJA, projectedState, projectedURL := projectWorkSummary(original, language, summaryJA, translationStatus, canonicalURL)
+		if projectedState == "unavailable" {
+			continue
+		}
+		rank := summarySourceRank(category, source)
+		if rank < bestRank {
+			bestRank = rank
+			best = summaryProjection{SummaryJA: projectedJA, SummaryState: projectedState, SummarySourceURL: projectedURL}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return summaryProjection{}, false, fmt.Errorf("read item summaries: %w", err)
+	}
+	if bestRank == int(^uint(0)>>1) {
+		return summaryProjection{SummaryState: "unavailable"}, found, nil
+	}
+	return best, true, nil
+}
+
+func summarySourceRank(category, source string) int {
+	orders := map[string][]string{
+		CategoryDrama: {"jpsearch", "official_public", "eiga.com"},
+		CategoryAward: {"mediaarts_db", "japan_academy_prize", "official_public"},
+		CategoryMusic: {"musicbrainz", "jpsearch"},
+		CategoryAnime: {"mediaarts_db", "jpsearch", "ndl_bibliography"},
+		CategoryNovel: {"ndl_bibliography", "jpsearch"},
+		CategoryManga: {"mediaarts_db", "ndl_bibliography", "jpsearch"},
+	}
+	for index, candidate := range orders[category] {
+		if candidate == source {
+			return index
+		}
+	}
+	return 1000
+}
+
 func summarizeCoverage(items []RelatedCatalogItem) SummaryCoverage {
 	coverage := SummaryCoverage{Total: len(items)}
 	for _, item := range items {
@@ -573,6 +754,175 @@ func summarizeCoverage(items []RelatedCatalogItem) SummaryCoverage {
 		}
 	}
 	return coverage
+}
+
+// ApplySummaryPatch adds or replaces summaries for exact category/item IDs.
+// It has no fields for identity, names, or relations, so summary enrichment
+// cannot mutate the immutable relation anchor.
+func ApplySummaryPatch(ctx context.Context, db *sql.DB, patches []SummaryPatch) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(patches) == 0 {
+		return fmt.Errorf("%w: summary patch is empty", ErrInvalidArtifact)
+	}
+	if len(patches) > 40 {
+		return fmt.Errorf("%w: at most 40 summary patches are allowed", ErrInvalidLimit)
+	}
+	if err := requireHobbySchema(ctx, db); err != nil {
+		return err
+	}
+	uniqueTargets := make(map[string]struct{})
+	sourcesByTarget := make(map[string]map[string]struct{})
+	for index := range patches {
+		patch := &patches[index]
+		normalizeSummaryPatch(patch)
+		if err := validateSummaryPatch(*patch); err != nil {
+			return err
+		}
+		targetKey := patch.Category + "\x00" + patch.ItemID
+		uniqueTargets[targetKey] = struct{}{}
+		if len(uniqueTargets) > 20 {
+			return fmt.Errorf("%w: summary patch targets exceed 20", ErrInvalidLimit)
+		}
+		if sourcesByTarget[targetKey] == nil {
+			sourcesByTarget[targetKey] = make(map[string]struct{})
+		}
+		sourcesByTarget[targetKey][patch.Source] = struct{}{}
+		if len(sourcesByTarget[targetKey]) > 2 {
+			return fmt.Errorf("%w: summary patch sources exceed 2 for %s", ErrInvalidLimit, targetKey)
+		}
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin summary patch: %w", err)
+	}
+	rollback := true
+	defer func() {
+		if rollback {
+			_ = tx.Rollback()
+		}
+	}()
+	for _, patch := range patches {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM hobby_related_items INDEXED BY idx_hobby_related_items_category_item_id WHERE category=? AND item_id=? LIMIT 1`, patch.Category, patch.ItemID).Scan(&exists); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: summary target %s/%s does not exist", ErrInvalidArtifact, patch.Category, patch.ItemID)
+			}
+			return fmt.Errorf("check summary target: %w", err)
+		}
+		if err := upsertSummaryTx(ctx, tx, patch); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit summary patch: %w", err)
+	}
+	rollback = false
+	return nil
+}
+
+func ApplySummaryPatches(ctx context.Context, db *sql.DB, patches []SummaryPatch) error {
+	return ApplySummaryPatch(ctx, db, patches)
+}
+
+func validateSummaryPatch(patch SummaryPatch) error {
+	patch.Category = strings.ToLower(strings.TrimSpace(patch.Category))
+	patch.ItemID = strings.TrimSpace(patch.ItemID)
+	patch.Source = strings.ToLower(strings.TrimSpace(patch.Source))
+	if !validHobbyCategory(patch.Category) || patch.ItemID == "" || !contractFreeSourceAllowed(patch.Category, patch.Source) {
+		return fmt.Errorf("%w: summary patch target or source is invalid", ErrInvalidArtifact)
+	}
+	if strings.TrimSpace(patch.SourceRecordID) == "" || !validHTTPURL(patch.CanonicalURL) || !validHTTPURL(patch.EvidenceURL) {
+		return fmt.Errorf("%w: summary patch provenance is incomplete", ErrInvalidArtifact)
+	}
+	if strings.TrimSpace(patch.RetrievedAt) == "" {
+		return fmt.Errorf("%w: summary patch retrieved_at is required", ErrInvalidArtifact)
+	}
+	if _, err := time.Parse(time.RFC3339, patch.RetrievedAt); err != nil {
+		return fmt.Errorf("%w: summary patch retrieved_at must be RFC3339", ErrInvalidArtifact)
+	}
+	if patch.SourceStatus == "" {
+		patch.SourceStatus = SummarySourceReady
+	}
+	if patch.SourceStatus != SummarySourceReady && patch.SourceStatus != SummarySourceUnavailable {
+		return fmt.Errorf("%w: summary source_status is invalid", ErrInvalidArtifact)
+	}
+	if patch.TranslationStatus == "" {
+		patch.TranslationStatus = SummaryTranslationNotAttempted
+	}
+	if err := validateSummaryFields(patch.DescriptionOriginal, patch.DescriptionLanguage, patch.DescriptionJA, patch.TranslationStatus); err != nil {
+		return fmt.Errorf("%w: summary patch: %v", ErrInvalidArtifact, err)
+	}
+	if patch.SourceStatus == SummarySourceReady && strings.TrimSpace(patch.DescriptionOriginal) == "" {
+		return fmt.Errorf("%w: ready summary requires description_original", ErrInvalidArtifact)
+	}
+	if patch.ContentSHA256 != "" && len(strings.TrimSpace(patch.ContentSHA256)) != sha256.Size*2 {
+		return fmt.Errorf("%w: summary content hash is malformed", ErrInvalidArtifact)
+	}
+	return nil
+}
+
+func normalizeSummaryPatch(patch *SummaryPatch) {
+	patch.Category = strings.ToLower(strings.TrimSpace(patch.Category))
+	patch.ItemID = strings.TrimSpace(patch.ItemID)
+	patch.Source = strings.ToLower(strings.TrimSpace(patch.Source))
+	if patch.SourceStatus == "" {
+		if strings.TrimSpace(patch.DescriptionOriginal) == "" {
+			patch.SourceStatus = SummarySourceUnavailable
+		} else {
+			patch.SourceStatus = SummarySourceReady
+		}
+	}
+	if patch.TranslationStatus == "" {
+		patch.TranslationStatus = SummaryTranslationNotAttempted
+	}
+}
+
+func upsertSummaryTx(ctx context.Context, tx *sql.Tx, patch SummaryPatch) error {
+	if patch.ContentSHA256 == "" && strings.TrimSpace(patch.DescriptionOriginal) != "" {
+		sum := sha256.Sum256([]byte(patch.DescriptionOriginal))
+		patch.ContentSHA256 = hex.EncodeToString(sum[:])
+	}
+	if patch.ExpiresAt == "" {
+		retrieved, _ := time.Parse(time.RFC3339, patch.RetrievedAt)
+		patch.ExpiresAt = retrieved.Add(summaryTTL(patch.SourceStatus)).UTC().Format(time.RFC3339)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO hobby_item_summaries(
+  category,item_id,source,description_original,description_language,description_ja,
+  source_status,translation_status,source_record_id,canonical_url,evidence_url,retrieved_at,
+  content_sha256,rights,expires_at,reason,created_at,updated_at
+)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+ON CONFLICT(category,item_id,source) DO UPDATE SET
+  description_original=excluded.description_original,
+  description_language=excluded.description_language,
+  description_ja=excluded.description_ja,
+  source_status=excluded.source_status,
+  translation_status=excluded.translation_status,
+  source_record_id=excluded.source_record_id,
+  canonical_url=excluded.canonical_url,
+  evidence_url=excluded.evidence_url,
+  retrieved_at=excluded.retrieved_at,
+  content_sha256=excluded.content_sha256,
+  rights=excluded.rights,
+  expires_at=excluded.expires_at,
+  reason=excluded.reason,
+  updated_at=CURRENT_TIMESTAMP`,
+		patch.Category, patch.ItemID, patch.Source, patch.DescriptionOriginal, patch.DescriptionLanguage,
+		patch.DescriptionJA, patch.SourceStatus, patch.TranslationStatus, patch.SourceRecordID, patch.CanonicalURL,
+		patch.EvidenceURL, patch.RetrievedAt, patch.ContentSHA256, patch.Rights, patch.ExpiresAt, patch.Reason); err != nil {
+		return fmt.Errorf("upsert item summary: %w", err)
+	}
+	return nil
+}
+
+func summaryTTL(sourceStatus string) time.Duration {
+	if sourceStatus == SummarySourceReady {
+		return PositiveCollectionAttemptTTL
+	}
+	return NegativeCollectionAttemptTTL
 }
 
 func importParsed(ctx context.Context, db *sql.DB, artifact parsedArtifact, artifactSHA256 string, artifactBytes int64) error {
@@ -625,21 +975,8 @@ INSERT INTO hobby_related_items(
   description_language,description_ja,description_translation_state,created_at,updated_at
 )
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
-ON CONFLICT(category,item_id) DO UPDATE SET
-  item_type=excluded.item_type,
-  display_name=excluded.display_name,
-  name_original=excluded.name_original,
-  name_ja=excluded.name_ja,
-  name_state=excluded.name_state,
-  name_ja_source_url=excluded.name_ja_source_url,
-  source_record_id=excluded.source_record_id,
-  canonical_url=excluded.canonical_url,
-  source=excluded.source,
-  description_original=excluded.description_original,
-  description_language=excluded.description_language,
-  description_ja=excluded.description_ja,
-  description_translation_state=excluded.description_translation_state,
-  updated_at=CURRENT_TIMESTAMP`,
+
+ON CONFLICT(category,item_id) DO NOTHING`,
 			item.ItemID, item.Category, item.ItemType, item.DisplayName,
 			item.NameOriginal, nameJA, item.NameState, nullableString(item.NameJASourceURL),
 			item.SourceRecordID, item.CanonicalURL, effectiveItemSource(item.Source, artifact.Manifest.Source),
@@ -647,11 +984,21 @@ ON CONFLICT(category,item_id) DO UPDATE SET
 			nullableString(item.DescriptionJA), nullableString(item.DescriptionTranslation)); err != nil {
 			return fmt.Errorf("import related item %q: %w", item.ItemID, err)
 		}
+		if err := upsertImportedSummary(ctx, tx, item, artifact.Manifest); err != nil {
+			return err
+		}
 	}
 
 	for _, relation := range artifact.Relations {
 		if err := checkExistingRelation(ctx, tx, relation); err != nil {
 			return err
+		}
+		alreadyPresent, err := relationTupleExists(ctx, tx, relation)
+		if err != nil {
+			return err
+		}
+		if alreadyPresent {
+			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO hobby_person_relations(
@@ -706,6 +1053,38 @@ ON CONFLICT(run_id,category,source) DO UPDATE SET
 	return nil
 }
 
+func upsertImportedSummary(ctx context.Context, tx *sql.Tx, item artifactItem, manifest artifactManifest) error {
+	translationStatus := strings.TrimSpace(item.DescriptionTranslation)
+	if translationStatus == "" {
+		translationStatus = SummaryTranslationNotAttempted
+	}
+	sourceStatus := SummarySourceUnavailable
+	if strings.TrimSpace(item.DescriptionOriginal) != "" {
+		sourceStatus = SummarySourceReady
+	}
+	patch := SummaryPatch{
+		Category:            item.Category,
+		ItemID:              item.ItemID,
+		Source:              effectiveItemSource(item.Source, manifest.Source),
+		DescriptionOriginal: item.DescriptionOriginal,
+		DescriptionLanguage: item.DescriptionLanguage,
+		DescriptionJA:       item.DescriptionJA,
+		SourceStatus:        sourceStatus,
+		TranslationStatus:   translationStatus,
+		SourceRecordID:      item.SourceRecordID,
+		CanonicalURL:        item.CanonicalURL,
+		EvidenceURL:         item.CanonicalURL,
+		RetrievedAt:         manifest.RetrievedAt,
+	}
+	if err := validateSummaryPatch(patch); err != nil {
+		return fmt.Errorf("%w: imported item %q summary: %v", ErrInvalidArtifact, item.ItemID, err)
+	}
+	if err := upsertSummaryTx(ctx, tx, patch); err != nil {
+		return fmt.Errorf("import item %q summary: %w", item.ItemID, err)
+	}
+	return nil
+}
+
 func checkExistingPersonReference(ctx context.Context, tx *sql.Tx, artifact parsedArtifact, externalIDs string) error {
 	var moviePersonID, identityState, storedExternalIDs, evidenceURL string
 	err := tx.QueryRowContext(ctx, `SELECT movie_catalog_person_id,identity_state,external_ids_json,evidence_url FROM hobby_person_references WHERE person_ref_id=?`, artifact.Identity.PersonRefID).Scan(&moviePersonID, &identityState, &storedExternalIDs, &evidenceURL)
@@ -744,7 +1123,10 @@ FROM hobby_related_items WHERE category=? AND item_id=?`, item.Category, item.It
 	if item.NameJA != nil {
 		nameJA = *item.NameJA
 	}
-	if existing.ItemType != item.ItemType || existing.DisplayName != item.DisplayName || existing.NameOriginal != item.NameOriginal || existingNameJA != nameJA || existing.NameState != item.NameState || existing.NameJASourceURL != item.NameJASourceURL || existing.SourceRecordID != item.SourceRecordID || existing.CanonicalURL != item.CanonicalURL || existing.Source != effectiveItemSource(item.Source, manifestSource) || existing.DescriptionOriginal != item.DescriptionOriginal || existing.DescriptionLanguage != item.DescriptionLanguage || existing.DescriptionJA != item.DescriptionJA || existing.DescriptionTranslation != item.DescriptionTranslation {
+	// The base row is the immutable identity/name anchor. Source record IDs,
+	// canonical URLs, and descriptions belong to the per-source summary table
+	// and may legitimately differ during enrichment.
+	if existing.ItemType != item.ItemType || existing.DisplayName != item.DisplayName || existing.NameOriginal != item.NameOriginal || existingNameJA != nameJA || existing.NameState != item.NameState || existing.NameJASourceURL != item.NameJASourceURL {
 		return fmt.Errorf("%w: item %q", ErrConflict, item.ItemID)
 	}
 	return nil
@@ -766,7 +1148,8 @@ FROM hobby_person_relations WHERE relation_id=?`, relation.RelationID).Scan(
 		if err != nil {
 			return fmt.Errorf("check logical relation: %w", err)
 		}
-		return fmt.Errorf("%w: relation tuple already uses %q", ErrConflict, otherID)
+		_ = otherID
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("check relation: %w", err)
@@ -775,6 +1158,18 @@ FROM hobby_person_relations WHERE relation_id=?`, relation.RelationID).Scan(
 		return fmt.Errorf("%w: relation %q", ErrConflict, relation.RelationID)
 	}
 	return nil
+}
+
+func relationTupleExists(ctx context.Context, tx *sql.Tx, relation artifactRelation) (bool, error) {
+	var exists int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM hobby_person_relations WHERE person_ref_id=? AND category=? AND target_item_id=? AND relation_type=? LIMIT 1`, relation.PersonRefID, relation.Category, relation.TargetItemID, relation.RelationType).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check relation tuple: %w", err)
+	}
+	return exists == 1, nil
 }
 
 func checkExistingReceipt(ctx context.Context, tx *sql.Tx, manifest artifactManifest, artifactSHA256 string) error {
@@ -990,10 +1385,14 @@ func validateParsedArtifact(parsed *parsedArtifact, seenRelationTuples map[strin
 }
 
 func validateWorkSummary(item *artifactItem) error {
-	original := strings.TrimSpace(item.DescriptionOriginal)
-	language := strings.TrimSpace(item.DescriptionLanguage)
-	summaryJA := strings.TrimSpace(item.DescriptionJA)
-	translationState := strings.TrimSpace(item.DescriptionTranslation)
+	return validateSummaryFields(item.DescriptionOriginal, item.DescriptionLanguage, item.DescriptionJA, item.DescriptionTranslation)
+}
+
+func validateSummaryFields(descriptionOriginal, descriptionLanguage, descriptionJA, translationState string) error {
+	original := strings.TrimSpace(descriptionOriginal)
+	language := strings.TrimSpace(descriptionLanguage)
+	summaryJA := strings.TrimSpace(descriptionJA)
+	translationState = strings.TrimSpace(translationState)
 	if original == "" {
 		if language != "" || summaryJA != "" || (translationState != "" && translationState != "not_attempted") {
 			return errors.New("empty description_original requires empty language/ja and empty or not_attempted translation state")
