@@ -30,6 +30,7 @@ type toolRuntime struct {
 	ChatRuntimeRunnerV2        domaintool.RunnerV2
 	WorkerRuntimeRunnerV2      domaintool.RunnerV2
 	PersonRelatedCatalogLookup *runtimePersonRelatedCatalogLookup
+	PersonRelatedSummaryWorker *runtimePersonRelatedSummaryWorker
 	SubagentMgr                *subagent.Manager
 	ToolMediationRecorder      *toolharnesspersistence.JSONLRecorder
 	DataCapabilityCatalog      *runtimeDataCapabilityCatalog
@@ -96,6 +97,7 @@ func buildToolRuntimeWithCapabilities(
 		log.Printf("Person related catalog lookup Tool ready (indexed read-only execution)")
 	}
 	var personRelatedCatalogCollector *runtimePersonRelatedCatalogCollector
+	var personRelatedSummaryWorker *runtimePersonRelatedSummaryWorker
 	if personRelatedCatalogLookup != nil {
 		providerURL := personrelatedcatalogapp.ResolveCollectionProviderBaseURL()
 		if strings.TrimSpace(providerURL) != "" {
@@ -115,6 +117,24 @@ func buildToolRuntimeWithCapabilities(
 			}
 		} else {
 			log.Printf("Person related catalog collect Tool unavailable: provider URL is not configured")
+		}
+	}
+	if personRelatedCatalogLookup != nil && cfg.PersonRelatedCatalog.SummaryWorker.IsEnabled() {
+		providerURL := personrelatedcatalogapp.ResolveCollectionProviderBaseURL()
+		if strings.TrimSpace(providerURL) != "" {
+			personRelatedSummaryWorker, personRelatedCatalogLookupErr = prepareRuntimePersonRelatedSummaryWorker(
+				cfg.Storage.Databases.HobbyGraph,
+				personrelatedcatalogapp.NewHTTPSummaryCollector(providerURL, 90*time.Second),
+				cfg.PersonRelatedCatalog.SummaryWorker,
+				time.Now,
+			)
+			if personRelatedCatalogLookupErr != nil {
+				log.Printf("Person related summary worker unavailable: %v", personRelatedCatalogLookupErr)
+				personRelatedSummaryWorker = nil
+			} else {
+				personRelatedSummaryWorker.translator = runtimePersonRelatedSummaryTranslator{provider: workerToolProvider}
+				log.Printf("Person related summary worker ready (fixed-id bounded enrichment)")
+			}
 		}
 	}
 	glossaryLookup, glossaryLookupErr := prepareRuntimeGlossaryLookup(context.Background(), cfg.Storage.Databases.Glossary)
@@ -285,6 +305,7 @@ func buildToolRuntimeWithCapabilities(
 		ChatRuntimeRunnerV2:        chatRunnerV2,
 		WorkerRuntimeRunnerV2:      workerRunnerV2,
 		PersonRelatedCatalogLookup: personRelatedCatalogLookup,
+		PersonRelatedSummaryWorker: personRelatedSummaryWorker,
 		SubagentMgr:                subagentMgr,
 		ToolMediationRecorder:      toolMediationRecorder,
 		DataCapabilityCatalog:      dataCapabilityCatalog,

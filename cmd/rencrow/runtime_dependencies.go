@@ -282,6 +282,7 @@ type Dependencies struct {
 	durableStoreCloser             interface{ Close() error }                  // workflow decision SQLite store
 	advisorScoreCancel             context.CancelFunc                          // Advisor daily score job
 	memoryPromotionCancel          context.CancelFunc                          // async ProfilePromotion worker
+	personRelatedSummaryCancel     context.CancelFunc                          // fixed-ID related-work summary worker
 	toolRegistry                   capdomain.ToolRegistry                      // Phase 4: Shiro ツール共有用 ToolRegistry
 	workerToolRunner               domaintool.RunnerV2                         // production Worker tool execution/listing boundary
 	personRelatedCatalogLookup     viewer.PersonRelatedCatalogProvider         // read-only Viewer projection over the startup lookup instance
@@ -311,6 +312,9 @@ func (d *Dependencies) Shutdown() {
 	}
 	if d.memoryPromotionCancel != nil {
 		d.memoryPromotionCancel()
+	}
+	if d.personRelatedSummaryCancel != nil {
+		d.personRelatedSummaryCancel()
 	}
 	if d.advisorScoreCancel != nil {
 		d.advisorScoreCancel()
@@ -524,6 +528,12 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.glossaryRecent = glossaryRuntime.RecentHandler
 	deps.toolRegistry = runtimeToolRegistry
 	deps.workerToolRunner = toolRuntime.WorkerRuntimeRunnerV2
+	if toolRuntime.PersonRelatedSummaryWorker != nil {
+		deps.personRelatedSummaryCancel = startRuntimePersonRelatedSummaryWorker(
+			toolRuntime.PersonRelatedSummaryWorker,
+			newBackgroundJobFailureReporter(deps.eventRelay),
+		)
+	}
 	if toolRuntime.PersonRelatedCatalogLookup != nil {
 		lookup := toolRuntime.PersonRelatedCatalogLookup
 		deps.personRelatedCatalogLookup = func(ctx context.Context, personID, category string, limit int) (personrelatedcatalogapp.LookupResult, error) {

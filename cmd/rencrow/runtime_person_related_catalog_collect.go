@@ -79,6 +79,22 @@ func (c *runtimePersonRelatedCatalogCollector) Collect(ctx context.Context, pers
 	if err := personrelatedcatalogapp.EnsureHobbySchema(ctx, hobbyDB); err != nil {
 		return nil, fmt.Errorf("prepare hobby graph collection schema: %w", err)
 	}
+	identityDecision, err := personrelatedcatalogapp.IdentityScheduleDecision(ctx, hobbyDB, eligible.MovieCatalogPersonID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve exact person identity for collection: %w", err)
+	}
+	if (category == personrelatedcatalogapp.CategoryAward || category == personrelatedcatalogapp.CategoryNovel) && !identityDecision.Allowed {
+		return personrelatedcatalogapp.CollectionPlanResult{
+			PlanRevision: personrelatedcatalogapp.CollectionPlanRevision, PersonRefID: "eiga:" + eligible.MovieCatalogPersonID,
+			MovieCatalogPersonID: eligible.MovieCatalogPersonID, Category: category,
+			Status: personrelatedcatalogapp.CollectionStatusAmbiguous, ReasonCode: identityDecision.Reason,
+			StopReason: personrelatedcatalogapp.StopReasonIdentityAmbiguous,
+		}, nil
+	}
+	identityMappings, err := personrelatedcatalogapp.ListPersonIdentityMappings(ctx, hobbyDB, eligible.MovieCatalogPersonID, 20)
+	if err != nil {
+		return nil, fmt.Errorf("list exact person identities for collection: %w", err)
+	}
 	personRefID := "eiga:" + eligible.MovieCatalogPersonID
 	seedPlan, err := personrelatedcatalogapp.BuildCollectionPlan(personrelatedcatalogapp.PlanRequest{
 		PersonRefID: personRefID, MovieCatalogPersonID: eligible.MovieCatalogPersonID, Categories: []string{category},
@@ -115,9 +131,22 @@ func (c *runtimePersonRelatedCatalogCollector) Collect(ctx context.Context, pers
 		return result, nil
 	}
 	for index, batch := range plan.Batches {
+		var wikidataQID, wikidataURL, ndlAuthorityURI string
+		for _, mapping := range identityMappings {
+			if mapping.State != personrelatedcatalogapp.IdentityStatusConfirmed {
+				continue
+			}
+			switch mapping.Authority {
+			case "wikidata_qid":
+				wikidataQID, wikidataURL = mapping.ExternalID, mapping.CanonicalURL
+			case "ndl_authority_uri":
+				ndlAuthorityURI = mapping.ExternalID
+			}
+		}
 		collection, collectErr := c.provider.Collect(ctx, personrelatedcatalogapp.CollectionRequest{
 			MovieCatalogPersonID: eligible.MovieCatalogPersonID, PersonName: eligible.Name, PersonURL: eligible.URL,
-			Category: category, Source: batch.Source,
+			Category: category, Source: batch.Source, WikidataQID: wikidataQID,
+			WikidataCanonicalURL: wikidataURL, NDLAuthorityURI: ndlAuthorityURI,
 		})
 		if collectErr != nil {
 			return nil, fmt.Errorf("collect category %s from provider source %s: %w", category, batch.Source, collectErr)

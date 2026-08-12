@@ -15,6 +15,31 @@ import (
 
 // Validate は設定の妥当性を検証
 func (c *Config) Validate() error {
+	workerConfigured := c.PersonRelatedCatalog.SummaryWorker.Enabled != nil || c.PersonRelatedCatalog.SummaryWorker.Interval != "" || c.PersonRelatedCatalog.SummaryWorker.BatchSize != 0 || c.PersonRelatedCatalog.SummaryWorker.Lease != "" || c.PersonRelatedCatalog.SummaryWorker.MaxAttempts != 0
+	if workerConfigured && c.PersonRelatedCatalog.SummaryWorker.IsEnabled() {
+		worker := c.PersonRelatedCatalog.SummaryWorker
+		if worker.BatchSize < 1 || worker.BatchSize > 20 {
+			return fmt.Errorf("person_related_catalog.summary_worker.batch_size must be between 1 and 20")
+		}
+		interval, err := time.ParseDuration(worker.Interval)
+		if err != nil || interval <= 0 {
+			return fmt.Errorf("person_related_catalog.summary_worker.interval must be a positive duration")
+		}
+		lease, err := time.ParseDuration(worker.Lease)
+		if err != nil || lease < 30*time.Second || lease > 10*time.Minute {
+			return fmt.Errorf("person_related_catalog.summary_worker.lease must be between 30s and 10m")
+		}
+		if worker.MaxAttempts < 1 || worker.MaxAttempts > 3 {
+			return fmt.Errorf("person_related_catalog.summary_worker.max_attempts must be between 1 and 3")
+		}
+	}
+	identityConfigured := c.PersonRelatedCatalog.IdentityMapping.Enabled != nil || c.PersonRelatedCatalog.IdentityMapping.BatchCategories != 0
+	if identityConfigured && c.PersonRelatedCatalog.IdentityMapping.IsEnabled() {
+		categories := c.PersonRelatedCatalog.IdentityMapping.BatchCategories
+		if categories < 1 || categories > 7 {
+			return fmt.Errorf("person_related_catalog.identity_mapping.batch_categories must be between 1 and 7")
+		}
+	}
 	if err := c.validateBackupConfig(); err != nil {
 		return err
 	}

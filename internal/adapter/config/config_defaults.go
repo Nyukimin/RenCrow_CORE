@@ -8,6 +8,21 @@ import (
 
 // setDefaults はデフォルト値を設定
 func (c *Config) setDefaults() {
+	if c.PersonRelatedCatalog.SummaryWorker.Interval == "" {
+		c.PersonRelatedCatalog.SummaryWorker.Interval = "5m"
+	}
+	if c.PersonRelatedCatalog.SummaryWorker.BatchSize == 0 {
+		c.PersonRelatedCatalog.SummaryWorker.BatchSize = 20
+	}
+	if c.PersonRelatedCatalog.SummaryWorker.Lease == "" {
+		c.PersonRelatedCatalog.SummaryWorker.Lease = "2m"
+	}
+	if c.PersonRelatedCatalog.SummaryWorker.MaxAttempts == 0 {
+		c.PersonRelatedCatalog.SummaryWorker.MaxAttempts = 3
+	}
+	if c.PersonRelatedCatalog.IdentityMapping.BatchCategories == 0 {
+		c.PersonRelatedCatalog.IdentityMapping.BatchCategories = 7
+	}
 	if c.DurableStore.Enabled && strings.TrimSpace(c.DurableStore.ManifestPath) == "" {
 		c.DurableStore.ManifestPath = "config/durable-stores.json"
 	}

@@ -122,6 +122,9 @@ type Config struct {
 	// === Knowledge Memory Extension ===
 	KnowledgeMemory KnowledgeMemoryConfig `yaml:"knowledge_memory"`
 
+	// === Person Related Catalog background enrichment ===
+	PersonRelatedCatalog PersonRelatedCatalogConfig `yaml:"person_related_catalog"`
+
 	// === TTS / OpenClaw parity ===
 	TTS TTSConfig `yaml:"tts"`
 
@@ -793,6 +796,32 @@ type KnowledgeMemoryConfig struct {
 	ProtectPersonalArchive      bool   `yaml:"protect_personal_archive"`
 	DreamRequiresReview         bool   `yaml:"dream_requires_review"`
 	DailyIntakePromoteToStaging bool   `yaml:"daily_intake_promote_to_staging"`
+}
+
+type PersonRelatedCatalogConfig struct {
+	SummaryWorker   PersonRelatedCatalogSummaryWorkerConfig   `yaml:"summary_worker"`
+	IdentityMapping PersonRelatedCatalogIdentityMappingConfig `yaml:"identity_mapping"`
+}
+
+type PersonRelatedCatalogSummaryWorkerConfig struct {
+	Enabled     *bool  `yaml:"enabled"`
+	Interval    string `yaml:"interval"`
+	BatchSize   int    `yaml:"batch_size"`
+	Lease       string `yaml:"lease"`
+	MaxAttempts int    `yaml:"max_attempts"`
+}
+
+func (c PersonRelatedCatalogSummaryWorkerConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+type PersonRelatedCatalogIdentityMappingConfig struct {
+	Enabled         *bool `yaml:"enabled"`
+	BatchCategories int   `yaml:"batch_categories"`
+}
+
+func (c PersonRelatedCatalogIdentityMappingConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 func (c KnowledgeMemoryConfig) IsEnabled() bool {

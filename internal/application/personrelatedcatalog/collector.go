@@ -47,6 +47,9 @@ type CollectionRequest struct {
 	PersonURL            string
 	Category             string
 	Source               string
+	WikidataQID          string
+	WikidataCanonicalURL string
+	NDLAuthorityURI      string
 }
 
 type CollectionResult struct {
@@ -147,6 +150,9 @@ type collectionRequestPayload struct {
 	URL                  string `json:"url"`
 	Category             string `json:"category"`
 	Source               string `json:"source,omitempty"`
+	WikidataQID          string `json:"wikidata_qid,omitempty"`
+	WikidataCanonicalURL string `json:"wikidata_canonical_url,omitempty"`
+	NDLAuthorityURI      string `json:"ndl_authority_uri,omitempty"`
 }
 
 type collectionResponsePayload struct {
@@ -182,6 +188,9 @@ func (c *HTTPCollector) Collect(ctx context.Context, request CollectionRequest) 
 		URL:                  strings.TrimSpace(request.PersonURL),
 		Category:             request.Category,
 		Source:               strings.TrimSpace(request.Source),
+		WikidataQID:          strings.TrimSpace(request.WikidataQID),
+		WikidataCanonicalURL: strings.TrimSpace(request.WikidataCanonicalURL),
+		NDLAuthorityURI:      strings.TrimSpace(request.NDLAuthorityURI),
 	})
 	if err != nil {
 		return CollectionResult{}, fmt.Errorf("%w: encode collection request: %v", ErrCollectorProtocol, err)

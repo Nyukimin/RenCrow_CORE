@@ -217,15 +217,18 @@ type receiptContext struct {
 }
 
 const (
-	personReferenceTable = "hobby_person_references"
-	relatedItemsTable    = "hobby_related_items"
-	relationsTable       = "hobby_person_relations"
-	receiptsTable        = "hobby_collection_receipts"
-	attemptsTable        = "hobby_collection_attempts"
-	summariesTable       = "hobby_item_summaries"
+	personReferenceTable   = "hobby_person_references"
+	relatedItemsTable      = "hobby_related_items"
+	relationsTable         = "hobby_person_relations"
+	receiptsTable          = "hobby_collection_receipts"
+	attemptsTable          = "hobby_collection_attempts"
+	summariesTable         = "hobby_item_summaries"
+	summaryJobsTable       = "hobby_summary_jobs"
+	personExternalIDsTable = "hobby_person_external_ids"
+	identityEvidenceTable  = "hobby_person_identity_evidence"
 )
 
-var ownTables = []string{personReferenceTable, relatedItemsTable, relationsTable, receiptsTable, attemptsTable, summariesTable}
+var ownTables = []string{personReferenceTable, relatedItemsTable, relationsTable, receiptsTable, attemptsTable, summariesTable, summaryJobsTable, personExternalIDsTable, identityEvidenceTable}
 
 var ownIndexes = []string{
 	"idx_hobby_person_references_movie_catalog_person_id",
@@ -234,6 +237,12 @@ var ownIndexes = []string{
 	"idx_hobby_collection_receipts_run_category",
 	"idx_hobby_collection_attempts_person_category_source",
 	"idx_hobby_item_summaries_category_item_source",
+	"idx_hobby_summary_jobs_due",
+	"idx_hobby_item_summaries_expiry",
+	"idx_hobby_person_external_ids_authority_external",
+	"idx_hobby_person_external_ids_person",
+	"idx_hobby_person_identity_evidence_candidate",
+	"idx_hobby_person_identity_evidence_authority_candidate",
 }
 
 const (
@@ -300,6 +309,11 @@ func EnsureHobbySchema(ctx context.Context, hobbyDB *sql.DB) error {
 		}
 	}()
 	for _, statement := range hobbySchemaStatements() {
+		if strings.Contains(statement, "CREATE INDEX IF NOT EXISTS idx_hobby_summary_jobs_due") {
+			if err := ensureSummaryJobColumns(ctx, tx); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("create person related catalog schema: %w", err)
 		}
@@ -308,6 +322,75 @@ func EnsureHobbySchema(ctx context.Context, hobbyDB *sql.DB) error {
 		return fmt.Errorf("commit person related catalog schema: %w", err)
 	}
 	rollback = false
+	return nil
+}
+
+func ensureSummaryJobColumns(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(hobby_summary_jobs)`)
+	if err != nil {
+		return fmt.Errorf("inspect summary job schema: %w", err)
+	}
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan summary job schema: %w", err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("read summary job schema: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close summary job schema: %w", err)
+	}
+	missing := []struct {
+		name, definition string
+	}{
+		{"source_cursor", "TEXT NOT NULL DEFAULT ''"},
+		{"source_record_id", "TEXT NOT NULL DEFAULT ''"},
+		{"canonical_url", "TEXT NOT NULL DEFAULT ''"},
+		{"state", "TEXT NOT NULL DEFAULT 'pending'"},
+		{"next_attempt_at", "TEXT NOT NULL DEFAULT ''"},
+		{"lease_token", "TEXT NOT NULL DEFAULT ''"},
+		{"lease_until", "TEXT NOT NULL DEFAULT ''"},
+		{"attempt_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"last_reason", "TEXT NOT NULL DEFAULT ''"},
+		{"created_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"},
+		{"updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"},
+	}
+	for _, column := range missing {
+		if columns[column.name] {
+			continue
+		}
+		definition := column.definition
+		if strings.Contains(definition, "CURRENT_TIMESTAMP") {
+			definition = "TEXT NOT NULL DEFAULT ''"
+		}
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE hobby_summary_jobs ADD COLUMN `+column.name+` `+definition); err != nil {
+			return fmt.Errorf("add summary job column %s: %w", column.name, err)
+		}
+	}
+	if columns["source"] {
+		if _, err := tx.ExecContext(ctx, `UPDATE hobby_summary_jobs SET source_cursor=source WHERE source_cursor=''`); err != nil {
+			return fmt.Errorf("migrate summary job source cursor: %w", err)
+		}
+	}
+	if columns["available_at"] {
+		if _, err := tx.ExecContext(ctx, `UPDATE hobby_summary_jobs SET next_attempt_at=available_at WHERE next_attempt_at=''`); err != nil {
+			return fmt.Errorf("migrate summary job due time: %w", err)
+		}
+	}
+	if columns["reason"] {
+		if _, err := tx.ExecContext(ctx, `UPDATE hobby_summary_jobs SET last_reason=reason WHERE last_reason=''`); err != nil {
+			return fmt.Errorf("migrate summary job reason: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -413,6 +496,55 @@ func hobbySchemaStatements() []string {
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(category, item_id, source)
 )`,
+		`CREATE TABLE IF NOT EXISTS hobby_summary_jobs (
+	  category TEXT NOT NULL,
+	  item_id TEXT NOT NULL,
+	  source_cursor TEXT NOT NULL DEFAULT '',
+	  source_record_id TEXT NOT NULL DEFAULT '',
+	  canonical_url TEXT NOT NULL DEFAULT '',
+	  state TEXT NOT NULL,
+	  next_attempt_at TEXT NOT NULL,
+	  lease_token TEXT NOT NULL DEFAULT '',
+	  lease_until TEXT NOT NULL DEFAULT '',
+	  attempt_count INTEGER NOT NULL DEFAULT 0,
+	  last_reason TEXT NOT NULL DEFAULT '',
+	  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	  PRIMARY KEY(category, item_id),
+  CHECK(state IN ('pending','leased','ready','unavailable','dead'))
+)`,
+		`CREATE TABLE IF NOT EXISTS hobby_person_external_ids (
+	  person_id TEXT NOT NULL,
+	  authority TEXT NOT NULL,
+	  external_id TEXT NOT NULL,
+	  canonical_url TEXT NOT NULL,
+	  state TEXT NOT NULL,
+	  evidence_source TEXT NOT NULL,
+	  evidence_url TEXT NOT NULL,
+	  retrieved_at TEXT NOT NULL,
+	  reason TEXT NOT NULL DEFAULT '',
+	  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	  PRIMARY KEY(authority, external_id),
+	  CHECK(state IN ('confirmed','candidate','ambiguous','unresolved'))
+)`,
+		`CREATE TABLE IF NOT EXISTS hobby_person_identity_evidence (
+	  evidence_id TEXT PRIMARY KEY,
+	  person_id TEXT NOT NULL,
+	  authority TEXT NOT NULL,
+	  candidate_id TEXT NOT NULL DEFAULT '',
+	  normalized_name TEXT NOT NULL DEFAULT '',
+	  state TEXT NOT NULL,
+	  matched_fields_json TEXT NOT NULL DEFAULT '[]',
+	  conflicted_fields_json TEXT NOT NULL DEFAULT '[]',
+	  evidence_source TEXT NOT NULL,
+	  evidence_url TEXT NOT NULL,
+	  retrieved_at TEXT NOT NULL,
+	  reason TEXT NOT NULL DEFAULT '',
+	  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	  CHECK(state IN ('confirmed','candidate','ambiguous','unresolved'))
+)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_person_references_movie_catalog_person_id
   ON hobby_person_references(movie_catalog_person_id, person_ref_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_related_items_category_item_id
@@ -424,7 +556,21 @@ func hobbySchemaStatements() []string {
 		`CREATE INDEX IF NOT EXISTS idx_hobby_collection_attempts_person_category_source
   ON hobby_collection_attempts(person_ref_id, movie_catalog_person_id, category, source, expires_at, retrieved_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_item_summaries_category_item_source
-  ON hobby_item_summaries(category, item_id, source, source_status, translation_status)`,
+	  ON hobby_item_summaries(category, item_id, source, source_status, translation_status)`,
+		`DROP INDEX IF EXISTS idx_hobby_summary_jobs_due`,
+		`CREATE INDEX IF NOT EXISTS idx_hobby_summary_jobs_due
+	  ON hobby_summary_jobs(state, next_attempt_at, category, item_id)`,
+		`DROP INDEX IF EXISTS idx_hobby_item_summaries_expiry`,
+		`CREATE INDEX IF NOT EXISTS idx_hobby_item_summaries_expiry
+	  ON hobby_item_summaries(source_status, expires_at, category, item_id, source)`,
+		`CREATE INDEX IF NOT EXISTS idx_hobby_person_external_ids_authority_external
+	  ON hobby_person_external_ids(authority, external_id, person_id, state)`,
+		`CREATE INDEX IF NOT EXISTS idx_hobby_person_external_ids_person
+	  ON hobby_person_external_ids(person_id, authority, state, external_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_hobby_person_identity_evidence_candidate
+	  ON hobby_person_identity_evidence(person_id, authority, candidate_id, retrieved_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_hobby_person_identity_evidence_authority_candidate
+	  ON hobby_person_identity_evidence(authority, candidate_id, person_id, retrieved_at)`,
 	}
 }
 
@@ -599,6 +745,7 @@ func LookupWithCoverage(ctx context.Context, hobbyDB *sql.DB, movieCatalogPerson
 	if err := requireHobbySchema(ctx, hobbyDB); err != nil {
 		return LookupResult{}, err
 	}
+	now := time.Now().UTC()
 	rows, err := hobbyDB.QueryContext(ctx, `
 SELECT r.relation_id, r.person_ref_id, p.movie_catalog_person_id,
        r.category, r.relation_type, r.source, r.evidence_url,
@@ -651,7 +798,7 @@ LIMIT ?`, movieCatalogPersonID, category, limit)
 	}
 	for index := range items {
 		item := &items[index]
-		summary, found, err := lookupBestSummary(ctx, hobbyDB, item.Category, item.ItemID)
+		summary, found, err := lookupBestSummaryAt(ctx, hobbyDB, item.Category, item.ItemID, now)
 		if err != nil {
 			return LookupResult{}, err
 		}
@@ -690,8 +837,12 @@ type summaryProjection struct {
 }
 
 func lookupBestSummary(ctx context.Context, db *sql.DB, category, itemID string) (summaryProjection, bool, error) {
+	return lookupBestSummaryAt(ctx, db, category, itemID, time.Now().UTC())
+}
+
+func lookupBestSummaryAt(ctx context.Context, db *sql.DB, category, itemID string, now time.Time) (summaryProjection, bool, error) {
 	rows, err := db.QueryContext(ctx, `
-SELECT source,description_original,description_language,description_ja,translation_status,canonical_url
+SELECT source,description_original,description_language,description_ja,source_status,translation_status,canonical_url,expires_at
 FROM hobby_item_summaries INDEXED BY idx_hobby_item_summaries_category_item_source
 WHERE category=? AND item_id=?
 ORDER BY source`, category, itemID)
@@ -703,11 +854,15 @@ ORDER BY source`, category, itemID)
 	bestRank := int(^uint(0) >> 1)
 	var best summaryProjection
 	for rows.Next() {
-		var source, original, language, summaryJA, translationStatus, canonicalURL string
-		if err := rows.Scan(&source, &original, &language, &summaryJA, &translationStatus, &canonicalURL); err != nil {
+		var source, original, language, summaryJA, sourceStatus, translationStatus, canonicalURL, expiresAt string
+		if err := rows.Scan(&source, &original, &language, &summaryJA, &sourceStatus, &translationStatus, &canonicalURL, &expiresAt); err != nil {
 			return summaryProjection{}, false, fmt.Errorf("scan item summary: %w", err)
 		}
 		found = true
+		expires, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(expiresAt))
+		if parseErr != nil || !expires.After(now) || sourceStatus != SummarySourceReady {
+			continue
+		}
 		projectedJA, projectedState, projectedURL := projectWorkSummary(original, language, summaryJA, translationStatus, canonicalURL)
 		if projectedState == "unavailable" {
 			continue
@@ -760,6 +915,10 @@ func summarizeCoverage(items []RelatedCatalogItem) SummaryCoverage {
 // It has no fields for identity, names, or relations, so summary enrichment
 // cannot mutate the immutable relation anchor.
 func ApplySummaryPatch(ctx context.Context, db *sql.DB, patches []SummaryPatch) error {
+	return applySummaryPatches(ctx, db, patches, nil, time.Time{})
+}
+
+func applySummaryPatches(ctx context.Context, db *sql.DB, patches []SummaryPatch, leases map[string]string, now time.Time) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -804,6 +963,18 @@ func ApplySummaryPatch(ctx context.Context, db *sql.DB, patches []SummaryPatch) 
 		}
 	}()
 	for _, patch := range patches {
+		if leases != nil {
+			targetKey := patch.Category + "\x00" + patch.ItemID
+			leaseToken := strings.TrimSpace(leases[targetKey])
+			var owned int
+			err := tx.QueryRowContext(ctx, `SELECT 1 FROM hobby_summary_jobs WHERE category=? AND item_id=? AND state='leased' AND lease_token=? AND lease_until>? LIMIT 1`, patch.Category, patch.ItemID, leaseToken, now.UTC().Format(time.RFC3339)).Scan(&owned)
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrSummaryJobLeaseLost
+			}
+			if err != nil {
+				return fmt.Errorf("verify summary job lease: %w", err)
+			}
+		}
 		var exists int
 		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM hobby_related_items INDEXED BY idx_hobby_related_items_category_item_id WHERE category=? AND item_id=? LIMIT 1`, patch.Category, patch.ItemID).Scan(&exists); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -812,6 +983,9 @@ func ApplySummaryPatch(ctx context.Context, db *sql.DB, patches []SummaryPatch) 
 			return fmt.Errorf("check summary target: %w", err)
 		}
 		if err := upsertSummaryTx(ctx, tx, patch); err != nil {
+			return err
+		}
+		if err := syncSummaryJobTx(ctx, tx, patch); err != nil {
 			return err
 		}
 	}
@@ -885,8 +1059,11 @@ func upsertSummaryTx(ctx context.Context, tx *sql.Tx, patch SummaryPatch) error 
 		patch.ContentSHA256 = hex.EncodeToString(sum[:])
 	}
 	if patch.ExpiresAt == "" {
-		retrieved, _ := time.Parse(time.RFC3339, patch.RetrievedAt)
-		patch.ExpiresAt = retrieved.Add(summaryTTL(patch.SourceStatus)).UTC().Format(time.RFC3339)
+		expiresAt, err := summaryPatchExpiry(patch)
+		if err != nil {
+			return err
+		}
+		patch.ExpiresAt = expiresAt.Format(time.RFC3339)
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO hobby_item_summaries(
@@ -920,9 +1097,9 @@ ON CONFLICT(category,item_id,source) DO UPDATE SET
 
 func summaryTTL(sourceStatus string) time.Duration {
 	if sourceStatus == SummarySourceReady {
-		return PositiveCollectionAttemptTTL
+		return SummaryReadyTTL
 	}
-	return NegativeCollectionAttemptTTL
+	return SummaryUnavailableTTL
 }
 
 func importParsed(ctx context.Context, db *sql.DB, artifact parsedArtifact, artifactSHA256 string, artifactBytes int64) error {
@@ -943,6 +1120,9 @@ func importParsed(ctx context.Context, db *sql.DB, artifact parsedArtifact, arti
 	}
 	if err := checkExistingPersonReference(ctx, tx, artifact, string(externalIDs)); err != nil {
 		return err
+	}
+	if err := upsertImportedIdentityMappingsTx(ctx, tx, artifact); err != nil {
+		return fmt.Errorf("import normalized identity mappings: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO hobby_person_references(person_ref_id,movie_catalog_person_id,identity_state,external_ids_json,evidence_url,run_id,created_at,updated_at)
@@ -1082,7 +1262,33 @@ func upsertImportedSummary(ctx context.Context, tx *sql.Tx, item artifactItem, m
 	if err := upsertSummaryTx(ctx, tx, patch); err != nil {
 		return fmt.Errorf("import item %q summary: %w", item.ItemID, err)
 	}
+	if sourceStatus == SummarySourceUnavailable {
+		retrievedAt, err := parseRetrievedAt(manifest.RetrievedAt)
+		if err != nil {
+			return fmt.Errorf("parse imported summary retrieved_at: %w", err)
+		}
+		if err := enqueueSummaryJobTx(ctx, tx, SummaryJob{
+			Category:       item.Category,
+			ItemID:         item.ItemID,
+			Source:         effectiveItemSource(item.Source, manifest.Source),
+			SourceRecordID: item.SourceRecordID,
+			CanonicalURL:   item.CanonicalURL,
+			AvailableAt:    retrievedAt,
+		}); err != nil {
+			return fmt.Errorf("enqueue missing summary for item %q: %w", item.ItemID, err)
+		}
+	} else if err := syncSummaryJobTx(ctx, tx, patch); err != nil {
+		return fmt.Errorf("complete imported summary job for item %q: %w", item.ItemID, err)
+	}
 	return nil
+}
+
+func parseRetrievedAt(value string) (time.Time, error) {
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(value))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: retrieved_at must be RFC3339", ErrInvalidArtifact)
+	}
+	return parsed.UTC(), nil
 }
 
 func checkExistingPersonReference(ctx context.Context, tx *sql.Tx, artifact parsedArtifact, externalIDs string) error {

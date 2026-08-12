@@ -77,6 +77,34 @@ func (s *SQLiteStore) migrate() error {
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS knowledge_memory_search_documents (
+			record_type TEXT NOT NULL,
+			record_id TEXT NOT NULL,
+			scope TEXT NOT NULL,
+			user_id TEXT NOT NULL DEFAULT '',
+			title TEXT NOT NULL,
+			summary TEXT NOT NULL DEFAULT '',
+			visibility TEXT NOT NULL,
+			source_updated_at TEXT NOT NULL,
+			indexed_at TEXT NOT NULL,
+			content_sha256 TEXT NOT NULL,
+			PRIMARY KEY (record_type, record_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS knowledge_memory_search_terms (
+			scope TEXT NOT NULL,
+			user_id TEXT NOT NULL DEFAULT '',
+			token TEXT NOT NULL,
+			record_type TEXT NOT NULL,
+			record_id TEXT NOT NULL,
+			PRIMARY KEY (scope, user_id, token, record_type, record_id),
+			FOREIGN KEY (record_type, record_id)
+				REFERENCES knowledge_memory_search_documents(record_type, record_id)
+				ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_knowledge_memory_search_documents_lookup
+			ON knowledge_memory_search_documents(scope, user_id, record_type, record_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_knowledge_memory_search_terms_lookup
+			ON knowledge_memory_search_terms(scope, user_id, token, record_type, record_id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -101,7 +129,7 @@ func (s *SQLiteStore) SaveCreativeKnowledgeItem(ctx context.Context, item domain
 	if err := domainkm.ValidateCreativeKnowledgeItem(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "creative_knowledge", "item_id", item.ItemID, "", "", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.saveCreativeKnowledgeItem(ctx, item)
 }
 
 func (s *SQLiteStore) ListCreativeKnowledgeItems(ctx context.Context, limit int) ([]domainkm.CreativeKnowledgeItem, error) {
@@ -112,7 +140,7 @@ func (s *SQLiteStore) SaveNewsKnowledgeItem(ctx context.Context, item domainkm.N
 	if err := domainkm.ValidateNewsKnowledgeItem(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "news_knowledge", "item_id", item.ItemID, "", "", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.saveNewsKnowledgeItem(ctx, item)
 }
 
 func (s *SQLiteStore) ListNewsKnowledgeItems(ctx context.Context, limit int) ([]domainkm.NewsKnowledgeItem, error) {
