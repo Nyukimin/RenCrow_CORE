@@ -17,6 +17,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	domainsecurity "github.com/Nyukimin/RenCrow_CORE/internal/domain/security"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
 type AttachmentSaver interface {
@@ -208,14 +209,20 @@ func (h *Handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		go h.processEvent(event)
+		scope, scopeErr := toolExecutionScopeForEvent(event)
+		if scopeErr != nil {
+			log.Printf("[Webhook] LINE event rejected before orchestration: %v", scopeErr)
+			continue
+		}
+		go h.processEvent(event, scope)
 	}
 }
 
 // processEvent はイベントをバックグラウンドで処理（HTTPコンテキストから独立）
-func (h *Handler) processEvent(event WebhookEvent) {
+func (h *Handler) processEvent(event WebhookEvent, scope domaintool.ToolExecutionScope) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	ctx = domaintool.WithToolExecutionScope(ctx, scope)
 
 	// セッションID生成（仕様: ChatID = ユーザーID、SessionID = line:<user_id>）
 	chatID := lineChatID(event.Source)
@@ -263,6 +270,26 @@ func (h *Handler) processEvent(event WebhookEvent) {
 	} else {
 		log.Printf("[Webhook] Reply sent successfully for session %s", sessionID)
 	}
+}
+
+func toolExecutionScopeForEvent(event WebhookEvent) (domaintool.ToolExecutionScope, error) {
+	messageID := strings.TrimSpace(event.Message.ID)
+	if messageID == "" {
+		return domaintool.ToolExecutionScope{}, fmt.Errorf("signed LINE message id is required")
+	}
+	userID := strings.TrimSpace(event.Source.UserID)
+	if userID == "" {
+		return domaintool.ToolExecutionScope{}, fmt.Errorf("signed LINE source user id is required")
+	}
+	authenticatedUserID := "line:" + userID
+	return domaintool.NewToolExecutionScope(
+		"line:"+messageID,
+		domaintool.ActorKindUser,
+		authenticatedUserID,
+		authenticatedUserID,
+		[]string{domaintool.DataScopeUser},
+		domaintool.AuthenticationSourceHTTP,
+	)
 }
 
 // generateSessionID はセッションIDを生成

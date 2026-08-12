@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/datacapability"
 	personrelatedcatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/personrelatedcatalog"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
@@ -171,26 +172,44 @@ func buildToolRuntimeWithCapabilities(
 	var knowledgeMemorySearcher tools.KnowledgeMemorySearcher
 	var knowledgeMemoryToolStore interface{ Close() error }
 	knowledgeMemorySearchReady := false
+	knowledgeMemoryState := &datacapability.KnowledgeMemoryState{}
 	if cfg != nil && cfg.KnowledgeMemory.IsEnabled() && strings.EqualFold(strings.TrimSpace(cfg.KnowledgeMemory.Storage), "sqlite") {
+		knowledgeMemoryState.Configured = true
 		path := strings.TrimSpace(cfg.Storage.Databases.KnowledgeMemory)
 		if path == "" {
 			path = strings.TrimSpace(cfg.KnowledgeMemory.SQLitePath)
 		}
-		if path != "" {
-			store, err := knowledgememorypersistence.NewSQLiteStore(path)
+		if path == "" {
+			knowledgeMemoryState.Configured = false
+		} else {
+			store, err := knowledgememorypersistence.OpenSQLiteStore(path)
 			if err != nil {
 				log.Printf("Knowledge Memory indexed Tool unavailable: %v", err)
 			} else {
-				knowledgeMemorySearcher = store
-				knowledgeMemoryToolStore = store
-				// NewSQLiteStore completes schema/index migration. The trusted
-				// execution scope remains a per-request gate in the Tool.
-				knowledgeMemorySearchReady = true
-				log.Printf("Knowledge Memory indexed Tool ready (SQLite named-index execution)")
+				readiness, readinessErr := store.Readiness(context.Background())
+				knowledgeMemoryState.DatabaseAvailable = readiness.DatabaseAvailable
+				knowledgeMemoryState.SchemaReady = readiness.SchemaReady
+				knowledgeMemoryState.IndexReady = readiness.IndexReady
+				knowledgeMemoryState.CoverageState = readiness.Coverage.State
+				knowledgeMemoryState.IntegrityState = readiness.IntegrityState
+				if readinessErr != nil {
+					log.Printf("Knowledge Memory indexed Tool unavailable: readiness check failed: %v", readinessErr)
+					_ = store.Close()
+				} else if readiness.DatabaseAvailable && readiness.SchemaReady && readiness.IndexReady && readiness.Coverage.State == knowledgememorypersistence.KnowledgeMemoryCoverageReady && readiness.IntegrityState == knowledgememorypersistence.KnowledgeMemoryIntegrityReady {
+					knowledgeMemorySearcher = store
+					knowledgeMemoryToolStore = store
+					knowledgeMemorySearchReady = true
+					knowledgeMemoryState.ToolReady = true
+					knowledgeMemoryState.PrivateScopeReady = strings.TrimSpace(cfg.Line.ChannelSecret) != "" && strings.TrimSpace(cfg.Line.AccessToken) != ""
+					log.Printf("Knowledge Memory indexed Tool ready (SQLite named-index execution)")
+				} else {
+					_ = store.Close()
+					log.Printf("Knowledge Memory indexed Tool unavailable: promotion gate is not ready")
+				}
 			}
 		}
 	}
-	dataCapabilityCatalog := buildRuntimeDataCapabilityCatalog(cfg, glossaryLookup != nil, movieCatalogLookup != nil, personRelatedCatalogLookup != nil)
+	dataCapabilityCatalog := buildRuntimeDataCapabilityCatalogWithKnowledgeState(cfg, glossaryLookup != nil, movieCatalogLookup != nil, []bool{personRelatedCatalogLookup != nil}, knowledgeMemoryState)
 	chatToolRunnerCfg := tools.ToolRunnerConfig{
 		GoogleAPIKey:               googleSearchValue(cfg.GoogleSearchChat.APIKey, "GOOGLE_API_KEY_CHAT"),
 		GoogleSearchEngineID:       googleSearchValue(cfg.GoogleSearchChat.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_CHAT"),

@@ -7,9 +7,46 @@ import (
 )
 
 type StoreState struct {
-	Configured bool
-	Exists     bool
+	Configured      bool
+	Exists          bool
+	KnowledgeMemory *KnowledgeMemoryState
 }
+
+// KnowledgeMemoryState is the startup-only evidence used to promote the
+// knowledge memory capability. It deliberately carries no database path or
+// row data; those remain owned by the persistence boundary.
+type KnowledgeMemoryState struct {
+	Configured        bool
+	DatabaseAvailable bool
+	SchemaReady       bool
+	IndexReady        bool
+	CoverageState     string
+	IntegrityState    string
+	ToolReady         bool
+	PrivateScopeReady bool
+}
+
+const (
+	KnowledgeMemoryStatusAvailable   = "available"
+	KnowledgeMemoryStatusUnavailable = "unavailable"
+	KnowledgeMemoryStatusBlocked     = "blocked"
+
+	KnowledgeMemoryReasonDatabaseUnavailable = "database_unavailable"
+	KnowledgeMemoryReasonSchemaMissing       = "schema_missing"
+	KnowledgeMemoryReasonIndexing            = "indexing"
+	KnowledgeMemoryReasonIntegrityFailed     = "integrity_failed"
+	KnowledgeMemoryReasonScopeUnavailable    = "scope_unavailable"
+	KnowledgeMemoryReasonToolUnavailable     = "tool_unavailable"
+
+	KnowledgeMemoryCoverageIndexing = "indexing"
+	KnowledgeMemoryCoverageReady    = "ready"
+	KnowledgeMemoryIntegrityReady   = "ready"
+	KnowledgeMemoryIntegrityFailed  = "failed"
+
+	KnowledgeMemoryOperationPublicSearch      = "public_search"
+	KnowledgeMemoryOperationUserPrivateSearch = "user_private_search"
+	KnowledgeMemoryToolID                     = "knowledge.search"
+)
 
 type Entry struct {
 	Name           string   `json:"name"`
@@ -44,7 +81,7 @@ var storeDefinitions = []Entry{
 	{Name: "complexity_hotspot", Owner: "RenCrow_CORE Complexity", Categories: []string{"complexity", "evidence"}, Status: "restricted", Sensitivity: "internal", Reason: "owner_service_only"},
 	{Name: "super_agent_harness", Owner: "RenCrow_CORE SuperAgent Harness", Categories: []string{"agent_run", "trace"}, Status: "restricted", Sensitivity: "private", Reason: "owner_service_only"},
 	{Name: "ai_workflow", Owner: "RenCrow_CORE AI Workflow", Categories: []string{"workflow", "command", "worktree"}, Status: "restricted", Sensitivity: "internal", Reason: "owner_service_only"},
-	{Name: "knowledge_memory", Owner: "RenCrow_CORE Knowledge Memory", Categories: []string{"knowledge", "personal_archive"}, Status: "blocked", Sensitivity: "mixed", Reason: "full_scan_policy"},
+	{Name: "knowledge_memory", Owner: "RenCrow_CORE Knowledge Memory", Categories: []string{"knowledge", "personal_archive"}, Sensitivity: "mixed"},
 	{Name: "durable_store_workflow", Owner: "RenCrow_CORE Durable Store", Categories: []string{"workflow", "receipt"}, Status: "restricted", Sensitivity: "internal", Reason: "owner_service_only"},
 }
 
@@ -62,6 +99,11 @@ func Build(states map[string]StoreState) *Catalog {
 		entry := definition
 		entry.PhysicalKey = "storage.databases." + entry.Name
 		state := states[entry.Name]
+		if entry.Name == "knowledge_memory" {
+			applyKnowledgeMemoryState(&entry, state)
+			entries[entry.Name] = entry
+			continue
+		}
 		if entry.Status == "" {
 			if state.Configured && state.Exists && (entry.Name == "glossary" || entry.Name == "movie_catalog" || entry.Name == "hobby_graph") {
 				entry.Status = "available"
@@ -78,6 +120,57 @@ func Build(states map[string]StoreState) *Catalog {
 		entries[entry.Name] = entry
 	}
 	return &Catalog{entries: entries}
+}
+
+func applyKnowledgeMemoryState(entry *Entry, state StoreState) {
+	entry.Status = KnowledgeMemoryStatusUnavailable
+	entry.SafeOperations = nil
+	entry.ToolID = ""
+	entry.Reason = KnowledgeMemoryReasonDatabaseUnavailable
+	if state.KnowledgeMemory == nil {
+		if !state.Configured {
+			return
+		}
+		if !state.Exists {
+			return
+		}
+		entry.Status = KnowledgeMemoryStatusBlocked
+		entry.Reason = KnowledgeMemoryReasonSchemaMissing
+		return
+	}
+	capability := *state.KnowledgeMemory
+	if !capability.Configured || !capability.DatabaseAvailable {
+		return
+	}
+	if !capability.SchemaReady || !capability.IndexReady {
+		entry.Status = KnowledgeMemoryStatusBlocked
+		entry.Reason = KnowledgeMemoryReasonSchemaMissing
+		return
+	}
+	if capability.CoverageState != KnowledgeMemoryCoverageReady {
+		entry.Status = KnowledgeMemoryStatusBlocked
+		entry.Reason = KnowledgeMemoryReasonIndexing
+		return
+	}
+	if capability.IntegrityState != KnowledgeMemoryIntegrityReady {
+		entry.Status = KnowledgeMemoryStatusBlocked
+		entry.Reason = KnowledgeMemoryReasonIntegrityFailed
+		return
+	}
+	if !capability.ToolReady {
+		entry.Status = KnowledgeMemoryStatusBlocked
+		entry.Reason = KnowledgeMemoryReasonToolUnavailable
+		return
+	}
+	entry.Status = KnowledgeMemoryStatusAvailable
+	entry.ToolID = KnowledgeMemoryToolID
+	entry.SafeOperations = []string{KnowledgeMemoryOperationPublicSearch}
+	if capability.PrivateScopeReady {
+		entry.SafeOperations = append(entry.SafeOperations, KnowledgeMemoryOperationUserPrivateSearch)
+		entry.Reason = ""
+		return
+	}
+	entry.Reason = KnowledgeMemoryReasonScopeUnavailable
 }
 
 func (c *Catalog) ListAvailable() []Entry {

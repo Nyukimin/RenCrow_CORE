@@ -238,6 +238,43 @@ func TestConflictingExactEvidenceBecomesAmbiguousAndBlocksBothPersons(t *testing
 	assertSearchPlan(t, db, `SELECT person_id FROM hobby_person_identity_evidence INDEXED BY idx_hobby_person_identity_evidence_authority_candidate WHERE authority=? AND candidate_id=? ORDER BY person_id`, "wikidata", "Q999", "idx_hobby_person_identity_evidence_authority_candidate")
 }
 
+func TestNewerConfirmedEvidenceSupersedesOlderAmbiguousEvidenceForSameCandidate(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	if err := EnsureHobbySchema(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	base := IdentityEvidence{
+		PersonID: "p1", Authority: "wikidata", ExternalID: "Q999",
+		CanonicalURL: "https://www.wikidata.org/entity/Q999", EvidenceSource: "resolver",
+		EvidenceURL: "https://www.wikidata.org/wiki/Q999", MatchedFields: []string{"birth_date"},
+	}
+	older := base
+	older.State = IdentityStatusAmbiguous
+	older.RetrievedAt = "2026-08-12T00:00:00Z"
+	older.ConflictedFields = []string{"name"}
+	if _, err := UpsertIdentityEvidence(ctx, db, older); err != nil {
+		t.Fatal(err)
+	}
+	newer := base
+	newer.State = IdentityStatusConfirmed
+	newer.RetrievedAt = "2026-08-12T01:00:00Z"
+	result, err := UpsertIdentityEvidence(ctx, db, newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != IdentityStatusConfirmed {
+		t.Fatalf("newer exact evidence did not supersede stale ambiguity: %#v", result)
+	}
+	decision, err := IdentityScheduleDecision(ctx, db, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Allowed || decision.Status != IdentityStatusConfirmed {
+		t.Fatalf("decision=%#v", decision)
+	}
+}
+
 func TestIdentityResolutionRejectsUnboundedListAndMalformedEvidence(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

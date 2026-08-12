@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -94,9 +96,14 @@ func TestMioPersonRelatedCatalogExecutesOnceAndInjectsIndexedContext(t *testing.
 				gotCategory, _ = args["category"].(string)
 				gotLimit, _ = args["limit"].(int)
 				return tool.NewSuccess(map[string]any{
-					"display_name":  "ドラマ1",
-					"name_original": "Drama One",
-					"category":      "drama",
+					"items": []any{map[string]any{
+						"display_name":  "ドラマ1",
+						"name_original": "Drama One",
+						"name_state":    "source_ja",
+						"relation_type": "known_for",
+						"summary_state": "unavailable",
+					}},
+					"summary_coverage": map[string]any{"ready": 0, "unavailable": 1, "total": 1},
 				}), nil
 			case "movie_catalog.lookup":
 				movieCalls++
@@ -138,6 +145,103 @@ func TestMioPersonRelatedCatalogExecutesOnceAndInjectsIndexedContext(t *testing.
 	}
 }
 
+func TestMioPersonRelatedCatalogProjectsTwentyVerboseItemsWithoutInternalFields(t *testing.T) {
+	items := make([]any, 20)
+	for i := range items {
+		items[i] = map[string]any{
+			"relation_id":             fmt.Sprintf("internal-relation-%02d-%s", i, strings.Repeat("x", 320)),
+			"person_ref_id":           fmt.Sprintf("internal-person-%02d", i),
+			"movie_catalog_person_id": fmt.Sprintf("internal-movie-person-%02d", i),
+			"item_id":                 fmt.Sprintf("internal-item-%02d", i),
+			"source_record_id":        fmt.Sprintf("internal-source-%02d", i),
+			"canonical_url":           fmt.Sprintf("https://internal.example/canonical/%02d/%s", i, strings.Repeat("c", 240)),
+			"source":                  strings.Repeat("internal-source ", 100),
+			"validation_state":        "validated",
+			"item_type":               "book",
+			"name_ja_source_url":      fmt.Sprintf("https://internal.example/name/%02d", i),
+			"display_name":            fmt.Sprintf("日本語タイトル%02d", i),
+			"name_original":           fmt.Sprintf("Original Title %02d", i),
+			"name_ja":                 fmt.Sprintf("日本語タイトル%02d", i),
+			"name_state":              "source_ja",
+			"relation_type":           "known_for",
+			"summary_ja":              fmt.Sprintf("日本語サマリ%02d", i),
+			"summary_state":           "source_ja",
+			"summary_source_url":      fmt.Sprintf("https://public.example/summary/%02d", i),
+			"evidence_url":            fmt.Sprintf("https://public.example/evidence/%02d", i),
+		}
+	}
+	result := map[string]any{
+		"items":            items,
+		"summary_coverage": map[string]any{"ready": 20, "unavailable": 0, "total": 20},
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) <= mioPersonRelatedCatalogContextMaxBytes {
+		t.Fatalf("verbose fixture raw bytes=%d, want >%d", len(raw), mioPersonRelatedCatalogContextMaxBytes)
+	}
+	runner := &mockToolRunner{
+		listFunc: func(context.Context) ([]tool.ToolMetadata, error) {
+			return []tool.ToolMetadata{{ToolID: "person_related_catalog.lookup"}}, nil
+		},
+		executeV2Func: func(context.Context, string, map[string]any) (*tool.ToolResponse, error) {
+			return tool.NewSuccess(result), nil
+		},
+	}
+	mio := NewMioAgent(&mockLLMProvider{}, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
+	message := mio.personRelatedCatalogLookupContext(context.Background(), mioPersonRelatedCatalogLookup{Name: "役所広司", Category: "novel"})
+	if len(message.Content) > mioPersonRelatedCatalogContextMaxBytes {
+		t.Fatalf("compact context bytes=%d, want <=%d: %s", len(message.Content), mioPersonRelatedCatalogContextMaxBytes, message.Content)
+	}
+	for i := range items {
+		for _, exact := range []string{fmt.Sprintf("日本語タイトル%02d", i), fmt.Sprintf("Original Title %02d", i)} {
+			if !strings.Contains(message.Content, exact) {
+				t.Fatalf("exact title %q missing from compact context", exact)
+			}
+		}
+	}
+	for _, internal := range []string{
+		"relation_id", "person_ref_id", "movie_catalog_person_id", "item_id", "source_record_id",
+		"canonical_url", "validation_state", "item_type", "name_ja_source_url", "internal-relation-00",
+	} {
+		if strings.Contains(message.Content, internal) {
+			t.Fatalf("internal field/value %q leaked into compact context: %s", internal, message.Content)
+		}
+	}
+	for _, marker := range []string{"summary_coverage", "\"ready\":20", "\"unavailable\":0", "\"total\":20", "summary_source_url", "evidence_url"} {
+		if !strings.Contains(message.Content, marker) {
+			t.Fatalf("required projection marker %q missing: %s", marker, message.Content)
+		}
+	}
+}
+
+func TestMioPersonRelatedCatalogMalformedResultFailsClosedWithoutRawFallback(t *testing.T) {
+	malformed := map[string]any{
+		"items": []any{map[string]any{
+			"display_name": "表示すべきでないraw fallback",
+			"relation_id":  "secret-relation-id",
+		}},
+		"summary_coverage": map[string]any{"ready": 1, "unavailable": 0, "total": 1},
+	}
+	runner := &mockToolRunner{
+		listFunc: func(context.Context) ([]tool.ToolMetadata, error) {
+			return []tool.ToolMetadata{{ToolID: "person_related_catalog.lookup"}}, nil
+		},
+		executeV2Func: func(context.Context, string, map[string]any) (*tool.ToolResponse, error) {
+			return tool.NewSuccess(malformed), nil
+		},
+	}
+	mio := NewMioAgent(&mockLLMProvider{}, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
+	message := mio.personRelatedCatalogLookupContext(context.Background(), mioPersonRelatedCatalogLookup{Name: "役所広司", Category: "novel"})
+	if !strings.Contains(message.Content, "RenCrow indexed person-related catalog unavailable") {
+		t.Fatalf("malformed result did not fail closed: %s", message.Content)
+	}
+	if strings.Contains(message.Content, "表示すべきでないraw fallback") || strings.Contains(message.Content, "secret-relation-id") {
+		t.Fatalf("malformed raw result leaked into unavailable context: %s", message.Content)
+	}
+}
+
 func TestMioPersonRelatedCatalogEmptyLookupCollectsThroughWorkerAndRequeries(t *testing.T) {
 	lookupCalls := 0
 	chatCollectCalls := 0
@@ -153,7 +257,16 @@ func TestMioPersonRelatedCatalogEmptyLookupCollectsThroughWorkerAndRequeries(t *
 			if lookupCalls == 1 {
 				return tool.NewSuccess(map[string]any{"items": []any{}, "summary_coverage": map[string]any{"total": 0}}), nil
 			}
-			return tool.NewSuccess(map[string]any{"items": []any{map[string]any{"display_name": "日本語ドラマ", "name_original": "Original Drama"}}}), nil
+			return tool.NewSuccess(map[string]any{
+				"items": []any{map[string]any{
+					"display_name":  "日本語ドラマ",
+					"name_original": "Original Drama",
+					"name_state":    "source_ja",
+					"relation_type": "known_for",
+					"summary_state": "unavailable",
+				}},
+				"summary_coverage": map[string]any{"ready": 0, "unavailable": 1, "total": 1},
+			}), nil
 		},
 	}
 	workerCalls := 0

@@ -281,6 +281,7 @@ type Dependencies struct {
 	durableStoreWorkflow           orchestrator.DurableStoreWorkflow           // Chat起点の永続Store判定
 	durableStoreCloser             interface{ Close() error }                  // workflow decision SQLite store
 	knowledgeMemoryToolStore       interface{ Close() error }                  // indexed Tool search store
+	knowledgeMemoryViewerStore     interface{ Close() error }                  // writable Viewer store, when configured
 	advisorScoreCancel             context.CancelFunc                          // Advisor daily score job
 	memoryPromotionCancel          context.CancelFunc                          // async ProfilePromotion worker
 	personRelatedSummaryCancel     context.CancelFunc                          // fixed-ID related-work summary worker
@@ -349,6 +350,11 @@ func (d *Dependencies) Shutdown() {
 	if d.knowledgeMemoryToolStore != nil {
 		if err := d.knowledgeMemoryToolStore.Close(); err != nil {
 			log.Printf("Failed to close Knowledge Memory Tool store: %v", err)
+		}
+	}
+	if d.knowledgeMemoryViewerStore != nil {
+		if err := d.knowledgeMemoryViewerStore.Close(); err != nil {
+			log.Printf("Failed to close Knowledge Memory Viewer store: %v", err)
 		}
 	}
 	if d.idleChatOrch != nil {
@@ -967,28 +973,39 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if cfg.KnowledgeMemory.IsEnabled() {
 		var knowledgeMemoryStore viewer.KnowledgeMemoryStore
 		if cfg.KnowledgeMemory.Storage == "sqlite" {
-			store, err := knowledgememorypersistence.NewSQLiteStore(cfg.KnowledgeMemory.SQLitePath)
-			if err != nil {
-				log.Fatalf("Failed to initialize Knowledge Memory SQLite store: %v", err)
+			path := strings.TrimSpace(cfg.Storage.Databases.KnowledgeMemory)
+			if path == "" {
+				path = strings.TrimSpace(cfg.KnowledgeMemory.SQLitePath)
 			}
-			knowledgeMemoryStore = store
+			// Viewer writes use a separate existing-file read/write handle. It
+			// never creates or migrates a missing/partial database; Agent Tool
+			// queries use the read-only handle owned by toolRuntime.
+			store, err := knowledgememorypersistence.OpenSQLiteStoreWritable(path)
+			if err != nil {
+				log.Printf("Knowledge Memory SQLite Viewer unavailable: %v", err)
+			} else {
+				knowledgeMemoryStore = store
+				deps.knowledgeMemoryViewerStore = store
+			}
 		} else {
 			knowledgeMemoryStore = knowledgememorypersistence.NewJSONLStore(cfg.KnowledgeMemory.LogPath)
 		}
-		knowledgeMemoryStore = knowledgememorypersistence.WithL1Connection(knowledgeMemoryStore, conversationRuntime.L1Store)
-		if dailyRules, ok := knowledgeMemoryStore.(knowledgememoryapp.DailyIntakeRuleStore); ok && conversationRuntime.L1Store != nil {
-			startDailyIntakeSweeper(dailyRules, knowledgememorypersistence.NewDailyIntakeRegistryAdapter(conversationRuntime.L1Store), newBackgroundJobFailureReporter(deps.eventRelay))
+		if knowledgeMemoryStore != nil {
+			knowledgeMemoryStore = knowledgememorypersistence.WithL1Connection(knowledgeMemoryStore, conversationRuntime.L1Store)
+			if dailyRules, ok := knowledgeMemoryStore.(knowledgememoryapp.DailyIntakeRuleStore); ok && conversationRuntime.L1Store != nil {
+				startDailyIntakeSweeper(dailyRules, knowledgememorypersistence.NewDailyIntakeRegistryAdapter(conversationRuntime.L1Store), newBackgroundJobFailureReporter(deps.eventRelay))
+			}
+			deps.knowledgeMemoryStatus = viewer.HandleKnowledgeMemoryStatus(knowledgeMemoryStore)
+			deps.personalArchiveCreate = viewer.HandlePersonalArchiveCreate(knowledgeMemoryStore)
+			deps.creativeKnowledgeCreate = viewer.HandleCreativeKnowledgeCreate(knowledgeMemoryStore)
+			deps.newsKnowledgeCreate = viewer.HandleNewsKnowledgeCreate(knowledgeMemoryStore)
+			deps.dailyIntakeRuleCreate = viewer.HandleDailyIntakeRuleCreate(knowledgeMemoryStore)
+			deps.temporalMemoryCreate = viewer.HandleTemporalMemoryMarkerCreate(knowledgeMemoryStore)
+			deps.knowledgeMemoryReview = viewer.HandleKnowledgeMemoryReview(knowledgeMemoryStore)
+			deps.dreamConsolidationCreate = viewer.HandleDreamConsolidationRunCreate(knowledgeMemoryStore)
+			deps.dreamConsolidationProposal = viewer.HandleDreamConsolidationProposalCreate(knowledgeMemoryStore)
+			deps.dreamConsolidationReview = viewer.HandleDreamConsolidationReview(knowledgeMemoryStore)
 		}
-		deps.knowledgeMemoryStatus = viewer.HandleKnowledgeMemoryStatus(knowledgeMemoryStore)
-		deps.personalArchiveCreate = viewer.HandlePersonalArchiveCreate(knowledgeMemoryStore)
-		deps.creativeKnowledgeCreate = viewer.HandleCreativeKnowledgeCreate(knowledgeMemoryStore)
-		deps.newsKnowledgeCreate = viewer.HandleNewsKnowledgeCreate(knowledgeMemoryStore)
-		deps.dailyIntakeRuleCreate = viewer.HandleDailyIntakeRuleCreate(knowledgeMemoryStore)
-		deps.temporalMemoryCreate = viewer.HandleTemporalMemoryMarkerCreate(knowledgeMemoryStore)
-		deps.knowledgeMemoryReview = viewer.HandleKnowledgeMemoryReview(knowledgeMemoryStore)
-		deps.dreamConsolidationCreate = viewer.HandleDreamConsolidationRunCreate(knowledgeMemoryStore)
-		deps.dreamConsolidationProposal = viewer.HandleDreamConsolidationProposalCreate(knowledgeMemoryStore)
-		deps.dreamConsolidationReview = viewer.HandleDreamConsolidationReview(knowledgeMemoryStore)
 	}
 	deps.recallTraceStore = conversationRuntime.L1Store
 	verificationRuntime := buildVerificationRuntime(cfg, deps, conversationRuntime.L1Store)

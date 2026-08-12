@@ -29,6 +29,10 @@ func (c *runtimeDataCapabilityCatalog) Execute(operation, name string) (any, err
 }
 
 func buildRuntimeDataCapabilityCatalog(cfg *config.Config, glossaryReady bool, movieReady bool, hobbyReady ...bool) *runtimeDataCapabilityCatalog {
+	return buildRuntimeDataCapabilityCatalogWithKnowledgeState(cfg, glossaryReady, movieReady, hobbyReady, nil)
+}
+
+func buildRuntimeDataCapabilityCatalogWithKnowledgeState(cfg *config.Config, glossaryReady bool, movieReady bool, hobbyReady []bool, knowledgeState *datacapability.KnowledgeMemoryState) *runtimeDataCapabilityCatalog {
 	paths := map[string]string{}
 	if cfg != nil {
 		d := cfg.Storage.Databases
@@ -46,6 +50,11 @@ func buildRuntimeDataCapabilityCatalog(cfg *config.Config, glossaryReady bool, m
 			}
 		}
 		states[key] = datacapability.StoreState{Configured: path != "", Exists: exists}
+	}
+	if knowledgeState != nil {
+		state := states["knowledge_memory"]
+		state.KnowledgeMemory = knowledgeState
+		states["knowledge_memory"] = state
 	}
 	if state := states["glossary"]; state.Configured {
 		state.Exists = glossaryReady

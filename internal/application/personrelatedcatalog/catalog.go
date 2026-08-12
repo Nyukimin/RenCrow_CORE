@@ -1140,11 +1140,8 @@ func importParsed(ctx context.Context, db *sql.DB, artifact parsedArtifact, arti
 		}
 	}()
 
-	externalIDs, err := json.Marshal(artifact.Identity.ExternalIDs)
+	externalIDs, err := mergePersonReferenceExternalIDs(ctx, tx, artifact)
 	if err != nil {
-		return fmt.Errorf("encode identity external ids: %w", err)
-	}
-	if err := checkExistingPersonReference(ctx, tx, artifact, string(externalIDs)); err != nil {
 		return err
 	}
 	if err := upsertImportedIdentityMappingsTx(ctx, tx, artifact); err != nil {
@@ -1161,7 +1158,7 @@ ON CONFLICT(person_ref_id) DO UPDATE SET
   run_id=excluded.run_id,
   updated_at=CURRENT_TIMESTAMP`,
 		artifact.Identity.PersonRefID, artifact.Identity.MovieCatalogPersonID,
-		artifact.Identity.IdentityState, string(externalIDs), artifact.Identity.EvidenceURL,
+		artifact.Identity.IdentityState, externalIDs, artifact.Identity.EvidenceURL,
 		artifact.Manifest.RunID); err != nil {
 		return fmt.Errorf("import person reference: %w", err)
 	}
@@ -1317,19 +1314,75 @@ func parseRetrievedAt(value string) (time.Time, error) {
 	return parsed.UTC(), nil
 }
 
-func checkExistingPersonReference(ctx context.Context, tx *sql.Tx, artifact parsedArtifact, externalIDs string) error {
+func mergePersonReferenceExternalIDs(ctx context.Context, tx *sql.Tx, artifact parsedArtifact) (string, error) {
 	var moviePersonID, identityState, storedExternalIDs, evidenceURL string
 	err := tx.QueryRowContext(ctx, `SELECT movie_catalog_person_id,identity_state,external_ids_json,evidence_url FROM hobby_person_references WHERE person_ref_id=?`, artifact.Identity.PersonRefID).Scan(&moviePersonID, &identityState, &storedExternalIDs, &evidenceURL)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return encodeNormalizedExternalIDs(artifact.Identity.ExternalIDs)
 	}
 	if err != nil {
-		return fmt.Errorf("check person reference: %w", err)
+		return "", fmt.Errorf("check person reference: %w", err)
 	}
-	if moviePersonID != artifact.Identity.MovieCatalogPersonID || identityState != artifact.Identity.IdentityState || storedExternalIDs != externalIDs || evidenceURL != artifact.Identity.EvidenceURL {
-		return fmt.Errorf("%w: person_ref_id %q", ErrConflict, artifact.Identity.PersonRefID)
+	if moviePersonID != artifact.Identity.MovieCatalogPersonID || identityState != "confirmed" || artifact.Identity.IdentityState != "confirmed" {
+		return "", fmt.Errorf("%w: person_ref_id %q", ErrConflict, artifact.Identity.PersonRefID)
 	}
-	return nil
+	var storedIDs map[string]string
+	if err := json.Unmarshal([]byte(storedExternalIDs), &storedIDs); err != nil || len(storedIDs) == 0 {
+		return "", fmt.Errorf("%w: person_ref_id %q has malformed external_ids_json", ErrConflict, artifact.Identity.PersonRefID)
+	}
+	merged := make(map[string]string, len(storedIDs)+len(artifact.Identity.ExternalIDs))
+	for authority, externalID := range storedIDs {
+		key, value, normalizeErr := normalizePersonReferenceExternalID(authority, externalID)
+		if normalizeErr != nil {
+			return "", fmt.Errorf("%w: person_ref_id %q has malformed external_ids_json", ErrConflict, artifact.Identity.PersonRefID)
+		}
+		if existing, exists := merged[key]; exists && existing != value {
+			return "", fmt.Errorf("%w: person_ref_id %q has conflicting stored external IDs", ErrConflict, artifact.Identity.PersonRefID)
+		}
+		merged[key] = value
+	}
+	for authority, externalID := range artifact.Identity.ExternalIDs {
+		key, value, normalizeErr := normalizePersonReferenceExternalID(authority, externalID)
+		if normalizeErr != nil {
+			return "", fmt.Errorf("%w: person_ref_id %q has invalid external identity", ErrConflict, artifact.Identity.PersonRefID)
+		}
+		if existing, exists := merged[key]; exists && existing != value {
+			return "", fmt.Errorf("%w: person_ref_id %q authority %q has conflicting external IDs", ErrConflict, artifact.Identity.PersonRefID, key)
+		}
+		merged[key] = value
+	}
+	return encodeNormalizedExternalIDs(merged)
+}
+
+func normalizePersonReferenceExternalID(authority, externalID string) (string, string, error) {
+	authority = strings.ToLower(strings.TrimSpace(authority))
+	externalID = strings.TrimSpace(externalID)
+	if authority == "" || externalID == "" {
+		return "", "", fmt.Errorf("authority and external ID are required")
+	}
+	return authority, externalID, nil
+}
+
+func encodeNormalizedExternalIDs(externalIDs map[string]string) (string, error) {
+	if len(externalIDs) == 0 {
+		return "", fmt.Errorf("%w: external identity map is empty", ErrConflict)
+	}
+	normalized := make(map[string]string, len(externalIDs))
+	for authority, externalID := range externalIDs {
+		key, value, err := normalizePersonReferenceExternalID(authority, externalID)
+		if err != nil {
+			return "", fmt.Errorf("%w: external identity map is malformed", ErrConflict)
+		}
+		if existing, exists := normalized[key]; exists && existing != value {
+			return "", fmt.Errorf("%w: external identity authority %q is conflicting", ErrConflict, key)
+		}
+		normalized[key] = value
+	}
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return "", fmt.Errorf("encode identity external ids: %w", err)
+	}
+	return string(encoded), nil
 }
 
 func checkExistingItem(ctx context.Context, tx *sql.Tx, item artifactItem, manifestSource string) error {

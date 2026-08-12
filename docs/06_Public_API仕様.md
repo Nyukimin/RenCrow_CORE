@@ -79,6 +79,14 @@ SQLite未設定でもruntime toolを返し、SQLite読込失敗時はruntime too
 restricted | blocked`、名前順の`items`を持ちます。providerが利用できない場合はHTTP 200で
 `available=false`、空の`items`、一般化したerrorを返し、内部errorを公開しません。
 
+itemのstatusは過去の実装段階を固定表示する値ではなく、startupで確認した現在状態です。
+`knowledge_memory`はDB未配置なら`unavailable/database_unavailable`、schemaまたはindex不足なら
+`blocked/schema_missing`、backfill中なら`blocked/indexing`、coverage／hash不一致なら
+`blocked/integrity_failed`、public projectionがreadyで`knowledge.search`が同じRunnerのmetadataにある場合だけ
+`available`と`tool_id=knowledge.search`を返します。authenticated private scopeが未接続の場合は
+`safe_operations`を`public_search`だけとし、private照会を暗黙に許可しません。ViewerはCatalogを再計算せず、
+Chat／Workerと同じstartup instanceを投影します。
+
 ### 人物関連作品Viewer projection
 
 `GET /viewer/movie-catalog/person-related/people`は、映画カタログで`known`または`like`を

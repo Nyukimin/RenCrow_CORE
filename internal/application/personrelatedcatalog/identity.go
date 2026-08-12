@@ -644,9 +644,14 @@ func ResolvePersonIdentity(ctx context.Context, db *sql.DB, personID string) (Id
 
 func listIdentityEvidenceByPerson(ctx context.Context, db *sql.DB, personID string) ([]IdentityEvidence, error) {
 	rows, err := db.QueryContext(ctx, `
-SELECT evidence_id,person_id,authority,candidate_id,normalized_name,state,matched_fields_json,conflicted_fields_json,evidence_source,evidence_url,retrieved_at,reason
-FROM hobby_person_identity_evidence INDEXED BY idx_hobby_person_identity_evidence_candidate
-WHERE person_id=? ORDER BY authority,candidate_id,retrieved_at LIMIT 20`, personID)
+SELECT current.evidence_id,current.person_id,current.authority,current.candidate_id,current.normalized_name,current.state,current.matched_fields_json,current.conflicted_fields_json,current.evidence_source,current.evidence_url,current.retrieved_at,current.reason
+FROM hobby_person_identity_evidence AS current INDEXED BY idx_hobby_person_identity_evidence_candidate
+WHERE current.person_id=? AND NOT EXISTS (
+  SELECT 1 FROM hobby_person_identity_evidence AS newer INDEXED BY idx_hobby_person_identity_evidence_candidate
+  WHERE newer.person_id=current.person_id AND newer.authority=current.authority AND newer.candidate_id=current.candidate_id
+    AND (newer.retrieved_at>current.retrieved_at OR (newer.retrieved_at=current.retrieved_at AND newer.updated_at>current.updated_at))
+)
+ORDER BY current.authority,current.candidate_id,current.retrieved_at LIMIT 20`, personID)
 	if err != nil {
 		return nil, fmt.Errorf("list person identity evidence: %w", err)
 	}
@@ -681,9 +686,14 @@ WHERE person_id=? ORDER BY authority,external_id LIMIT 20`, personID)
 		return IdentityResolution{}, fmt.Errorf("close person identity mappings: %w", err)
 	}
 	rows, err = tx.QueryContext(ctx, `
-SELECT evidence_id,person_id,authority,candidate_id,normalized_name,state,matched_fields_json,conflicted_fields_json,evidence_source,evidence_url,retrieved_at,reason
-FROM hobby_person_identity_evidence INDEXED BY idx_hobby_person_identity_evidence_candidate
-WHERE person_id=? ORDER BY authority,candidate_id,retrieved_at LIMIT 20`, personID)
+SELECT current.evidence_id,current.person_id,current.authority,current.candidate_id,current.normalized_name,current.state,current.matched_fields_json,current.conflicted_fields_json,current.evidence_source,current.evidence_url,current.retrieved_at,current.reason
+FROM hobby_person_identity_evidence AS current INDEXED BY idx_hobby_person_identity_evidence_candidate
+WHERE current.person_id=? AND NOT EXISTS (
+  SELECT 1 FROM hobby_person_identity_evidence AS newer INDEXED BY idx_hobby_person_identity_evidence_candidate
+  WHERE newer.person_id=current.person_id AND newer.authority=current.authority AND newer.candidate_id=current.candidate_id
+    AND (newer.retrieved_at>current.retrieved_at OR (newer.retrieved_at=current.retrieved_at AND newer.updated_at>current.updated_at))
+)
+ORDER BY current.authority,current.candidate_id,current.retrieved_at LIMIT 20`, personID)
 	if err != nil {
 		return IdentityResolution{}, fmt.Errorf("list person identity evidence: %w", err)
 	}

@@ -62,6 +62,8 @@ func main() {
 		cmdBrowserActor()
 	case "knowledge":
 		cmdKnowledge()
+	case "knowledge-memory":
+		cmdKnowledgeMemory()
 	case "help", "-h", "--help":
 		cmdHelp()
 	default:

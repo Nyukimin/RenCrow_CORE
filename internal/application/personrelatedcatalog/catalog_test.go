@@ -127,6 +127,88 @@ func TestImportAndLookupProjectsJapaneseSummaryAndCoverage(t *testing.T) {
 	}
 }
 
+func TestImportMergesIndependentlyConfirmedAuthorityIDsForSamePerson(t *testing.T) {
+	ctx := context.Background()
+	movieDB := openTestDB(t)
+	hobbyDB := openTestDB(t)
+	setupAssessmentFixture(t, movieDB)
+	if err := EnsureSchema(ctx, movieDB, hobbyDB); err != nil {
+		t.Fatal(err)
+	}
+	first := validArtifact(t)
+	firstHash := sha256.Sum256(first)
+	if _, err := Import(ctx, hobbyDB, first, hex.EncodeToString(firstHash[:]), int64(len(first))); err != nil {
+		t.Fatalf("first Import: %v", err)
+	}
+	second := validNDLNovelArtifact(t, "https://id.ndl.go.jp/auth/entity/00131702")
+	secondHash := sha256.Sum256(second)
+	if _, err := Import(ctx, hobbyDB, second, hex.EncodeToString(secondHash[:]), int64(len(second))); err != nil {
+		t.Fatalf("second Import with independent authority: %v", err)
+	}
+	var storedJSON, evidenceURL string
+	if err := hobbyDB.QueryRow(`SELECT external_ids_json,evidence_url FROM hobby_person_references WHERE person_ref_id='ref-1'`).Scan(&storedJSON, &evidenceURL); err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"ndl_authority_uri":"https://id.ndl.go.jp/auth/entity/00131702","wikidata":"Q123"}`; storedJSON != want {
+		t.Fatalf("merged external IDs=%s want=%s", storedJSON, want)
+	}
+	if evidenceURL != "https://ndlsearch.ndl.go.jp/auth/entity/00131702" {
+		t.Fatalf("evidence URL=%q", evidenceURL)
+	}
+	assertCount(t, hobbyDB, "hobby_person_references", 1)
+	assertCount(t, hobbyDB, "hobby_person_external_ids", 2)
+	assertCount(t, hobbyDB, "hobby_collection_receipts", 2)
+	var mappingCount int
+	if err := hobbyDB.QueryRow(`SELECT COUNT(*) FROM hobby_person_external_ids WHERE person_id='p-known' AND state='confirmed'`).Scan(&mappingCount); err != nil {
+		t.Fatal(err)
+	}
+	if mappingCount != 2 {
+		t.Fatalf("confirmed mappings=%d want=2", mappingCount)
+	}
+}
+
+func TestImportRejectsConflictingAuthorityIDForSamePerson(t *testing.T) {
+	ctx := context.Background()
+	movieDB := openTestDB(t)
+	hobbyDB := openTestDB(t)
+	setupAssessmentFixture(t, movieDB)
+	if err := EnsureSchema(ctx, movieDB, hobbyDB); err != nil {
+		t.Fatal(err)
+	}
+	first := validArtifact(t)
+	firstHash := sha256.Sum256(first)
+	if _, err := Import(ctx, hobbyDB, first, hex.EncodeToString(firstHash[:]), int64(len(first))); err != nil {
+		t.Fatal(err)
+	}
+	conflict := []byte(strings.Replace(strings.Replace(string(first), `"Q123"`, `"Q999"`, 1), `"run-1"`, `"run-conflict"`, 1))
+	conflictHash := sha256.Sum256(conflict)
+	if _, err := Import(ctx, hobbyDB, conflict, hex.EncodeToString(conflictHash[:]), int64(len(conflict))); !errors.Is(err, ErrConflict) {
+		t.Fatalf("conflicting authority error=%v want ErrConflict", err)
+	}
+	assertCount(t, hobbyDB, "hobby_collection_receipts", 2)
+}
+
+func TestImportRejectsDifferentMoviePersonForSamePersonReference(t *testing.T) {
+	ctx := context.Background()
+	movieDB := openTestDB(t)
+	hobbyDB := openTestDB(t)
+	setupAssessmentFixture(t, movieDB)
+	if err := EnsureSchema(ctx, movieDB, hobbyDB); err != nil {
+		t.Fatal(err)
+	}
+	first := validArtifact(t)
+	firstHash := sha256.Sum256(first)
+	if _, err := Import(ctx, hobbyDB, first, hex.EncodeToString(firstHash[:]), int64(len(first))); err != nil {
+		t.Fatal(err)
+	}
+	conflict := []byte(strings.Replace(string(validNDLNovelArtifact(t, "https://id.ndl.go.jp/auth/entity/00131702")), `"movie_catalog_person_id":"p-known"`, `"movie_catalog_person_id":"p-like"`, 2))
+	conflictHash := sha256.Sum256(conflict)
+	if _, err := Import(ctx, hobbyDB, conflict, hex.EncodeToString(conflictHash[:]), int64(len(conflict))); !errors.Is(err, ErrConflict) {
+		t.Fatalf("different movie person error=%v want ErrConflict", err)
+	}
+	assertCount(t, hobbyDB, "hobby_collection_receipts", 2)
+}
+
 func TestArtifactSummaryValidation(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -361,6 +443,17 @@ func validArtifact(t *testing.T) []byte {
 		`{"schema_version":"rencrow.person-related-catalog.v1","record_type":"identity","person_ref_id":"ref-1","movie_catalog_person_id":"p-known","identity_state":"confirmed","external_ids":{"wikidata":"Q123"},"evidence_url":"https://example.test/person/123"}`,
 		`{"schema_version":"rencrow.person-related-catalog.v1","record_type":"item","item_id":"drama-1","category":"drama","item_type":"series","display_name":"日本語作品","name_original":"Original Work","name_ja":"日本語作品","name_state":"source_ja","name_ja_source_url":"https://example.test/title/1","source_record_id":"wikidata:Q1","canonical_url":"https://example.test/title/1","description_translation_state":"not_attempted"}`,
 		`{"schema_version":"rencrow.person-related-catalog.v1","record_type":"relation","relation_id":"rel-1","person_ref_id":"ref-1","category":"drama","target_item_id":"drama-1","relation_type":"出演","source":"wikidata","evidence_url":"https://example.test/credit/1","validation_state":"validated"}`,
+	}
+	return []byte(strings.Join(lines, "\n") + "\n")
+}
+
+func validNDLNovelArtifact(t *testing.T, authorityURI string) []byte {
+	t.Helper()
+	lines := []string{
+		`{"schema_version":"rencrow.person-related-catalog.v1","record_type":"manifest","run_id":"run-ndl-1","person_ref_id":"ref-1","movie_catalog_person_id":"p-known","category":"novel","source":"ndl_bibliography","retrieved_at":"2026-08-13T00:00:00Z","item_count":1,"relation_count":1}`,
+		`{"schema_version":"rencrow.person-related-catalog.v1","record_type":"identity","person_ref_id":"ref-1","movie_catalog_person_id":"p-known","identity_state":"confirmed","external_ids":{"ndl_authority_uri":"` + authorityURI + `"},"evidence_url":"https://ndlsearch.ndl.go.jp/auth/entity/00131702"}`,
+		`{"schema_version":"rencrow.person-related-catalog.v1","record_type":"item","item_id":"novel-1","category":"novel","item_type":"book","display_name":"小説作品","name_original":"小説作品","name_ja":"小説作品","name_state":"source_ja","name_ja_source_url":"https://ndlsearch.ndl.go.jp/book/1","source_record_id":"ndl:1","canonical_url":"https://ndlsearch.ndl.go.jp/book/1","description_translation_state":"not_attempted"}`,
+		`{"schema_version":"rencrow.person-related-catalog.v1","record_type":"relation","relation_id":"novel-rel-1","person_ref_id":"ref-1","category":"novel","target_item_id":"novel-1","relation_type":"著者","source":"ndl_bibliography","evidence_url":"https://ndlsearch.ndl.go.jp/book/1","validation_state":"validated"}`,
 	}
 	return []byte(strings.Join(lines, "\n") + "\n")
 }

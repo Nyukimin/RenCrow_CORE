@@ -6,12 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domaincontext "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
+	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	aiworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/aiworkflow"
+	knowledgememorypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/knowledgememory"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
@@ -66,6 +69,15 @@ func TestBuildToolRuntimeRegistersKnowledgeSearchOnlyAfterSQLiteIndexGate(t *tes
 	disabled := false
 	workspace := t.TempDir()
 	dbPath := filepath.Join(workspace, "knowledge_memory.db")
+	source := knowledgememorypersistence.NewJSONLStore(filepath.Join(workspace, "knowledge_jsonl"))
+	if err := source.SaveCreativeKnowledgeItem(context.Background(), domainkm.CreativeKnowledgeItem{
+		ItemID: "runtime-creative-1", Title: "日本語の公開作品", WorkType: "映画", Status: "reviewed", CreatedAt: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := knowledgememorypersistence.ImportJSONLToSQLite(context.Background(), filepath.Join(workspace, "knowledge_jsonl"), dbPath); err != nil {
+		t.Fatalf("prepare promoted SQLite database: %v", err)
+	}
 	cfg := &config.Config{
 		WorkspaceDir:    workspace,
 		Storage:         config.StorageConfig{Databases: config.DatabasePathsConfig{KnowledgeMemory: dbPath}},
@@ -77,6 +89,13 @@ func TestBuildToolRuntimeRegistersKnowledgeSearchOnlyAfterSQLiteIndexGate(t *tes
 		t.Fatal("SQLite Knowledge Memory Tool store was not initialized")
 	}
 	defer runtime.KnowledgeMemoryToolStore.Close()
+	entry, describeErr := runtime.DataCapabilityCatalog.catalog.Describe("knowledge_memory")
+	if describeErr != nil || entry.Status != "available" || entry.ToolID != "knowledge.search" || entry.Reason != "scope_unavailable" {
+		t.Fatalf("promoted public catalog entry = %#v err=%v", entry, describeErr)
+	}
+	if strings.Join(entry.SafeOperations, "\x00") != "public_search" {
+		t.Fatalf("private operation was exposed without trusted auth: %#v", entry.SafeOperations)
+	}
 	publicScope, err := domaintool.NewToolExecutionScope(
 		"runtime-knowledge-test",
 		domaintool.ActorKindAgent,
@@ -118,6 +137,96 @@ func TestBuildToolRuntimeRegistersKnowledgeSearchOnlyAfterSQLiteIndexGate(t *tes
 	}
 	if disabledRuntime.KnowledgeMemoryToolStore != nil || hasToolMetadata(disabledMetadata, "knowledge.search") {
 		t.Fatal("disabled Knowledge Memory must not initialize or expose knowledge.search")
+	}
+}
+
+func TestBuildToolRuntimeAdvertisesPrivateKnowledgeSearchOnlyWithCompleteLineIngress(t *testing.T) {
+	disabled := false
+	workspace := t.TempDir()
+	dbPath := filepath.Join(workspace, "knowledge_memory.db")
+	source := knowledgememorypersistence.NewJSONLStore(filepath.Join(workspace, "knowledge_jsonl"))
+	if err := source.SaveCreativeKnowledgeItem(context.Background(), domainkm.CreativeKnowledgeItem{
+		ItemID: "runtime-private-creative-1", Title: "日本語の非公開境界テスト", WorkType: "映画", Status: "reviewed", CreatedAt: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := knowledgememorypersistence.ImportJSONLToSQLite(context.Background(), filepath.Join(workspace, "knowledge_jsonl"), dbPath); err != nil {
+		t.Fatalf("prepare promoted SQLite database: %v", err)
+	}
+	cases := []struct {
+		name        string
+		secret      string
+		token       string
+		wantPrivate bool
+	}{
+		{name: "none"},
+		{name: "secret-only", secret: "line-channel-secret"},
+		{name: "token-only", token: "line-access-token"},
+		{name: "both", secret: "line-channel-secret", token: "line-access-token", wantPrivate: true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				WorkspaceDir:    workspace,
+				Storage:         config.StorageConfig{Databases: config.DatabasePathsConfig{KnowledgeMemory: dbPath}},
+				KnowledgeMemory: config.KnowledgeMemoryConfig{Storage: "sqlite", SQLitePath: dbPath},
+				Line:            config.LineConfig{ChannelSecret: tt.secret, AccessToken: tt.token},
+				ToolHarness:     config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled},
+			}
+			runtime := buildToolRuntime(cfg, nil, nil, nil)
+			if runtime.KnowledgeMemoryToolStore != nil {
+				t.Cleanup(func() { _ = runtime.KnowledgeMemoryToolStore.Close() })
+			}
+			entry, err := runtime.DataCapabilityCatalog.catalog.Describe("knowledge_memory")
+			if err != nil {
+				t.Fatalf("knowledge_memory catalog entry: %v", err)
+			}
+			if entry.Status != "available" || entry.ToolID != "knowledge.search" {
+				t.Fatalf("knowledge_memory catalog readiness = %#v", entry)
+			}
+			wantOperations := "public_search"
+			wantReason := "scope_unavailable"
+			if tt.wantPrivate {
+				wantOperations = "public_search\x00user_private_search"
+				wantReason = ""
+			}
+			if strings.Join(entry.SafeOperations, "\x00") != wantOperations || entry.Reason != wantReason {
+				t.Fatalf("knowledge_memory catalog scope = operations=%#v reason=%q", entry.SafeOperations, entry.Reason)
+			}
+		})
+	}
+}
+
+func TestBuildToolRuntimeDoesNotCreateOrExposeUnreadyKnowledgeDatabase(t *testing.T) {
+	disabled := false
+	workspace := t.TempDir()
+	dbPath := filepath.Join(workspace, "not-created.db")
+	cfg := &config.Config{
+		WorkspaceDir: workspace,
+		Storage:      config.StorageConfig{Databases: config.DatabasePathsConfig{KnowledgeMemory: dbPath}},
+		KnowledgeMemory: config.KnowledgeMemoryConfig{
+			Storage:    "sqlite",
+			SQLitePath: dbPath,
+		},
+		ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled},
+	}
+	runtime := buildToolRuntime(cfg, nil, nil, nil)
+	if runtime.KnowledgeMemoryToolStore != nil {
+		t.Fatal("unready knowledge database must not be retained as a runtime store")
+	}
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Fatalf("runtime created or retained missing database path: stat err=%v", err)
+	}
+	metadata, err := runtime.WorkerRunnerV2.ListTools(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasToolMetadata(metadata, "knowledge.search") {
+		t.Fatal("knowledge.search must remain unregistered before promotion")
+	}
+	entry, err := runtime.DataCapabilityCatalog.catalog.Describe("knowledge_memory")
+	if err != nil || entry.Status != "unavailable" || entry.Reason != "database_unavailable" {
+		t.Fatalf("unready catalog entry = %#v err=%v", entry, err)
 	}
 }
 

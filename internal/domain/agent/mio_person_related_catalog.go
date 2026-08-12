@@ -15,6 +15,31 @@ type mioPersonRelatedCatalogLookup struct {
 	Category string
 }
 
+const mioPersonRelatedCatalogContextMaxBytes = 12 * 1024
+
+type mioPersonRelatedCatalogConversationProjection struct {
+	Items           []mioPersonRelatedCatalogConversationItem `json:"items"`
+	SummaryCoverage mioPersonRelatedCatalogSummaryCoverage    `json:"summary_coverage"`
+}
+
+type mioPersonRelatedCatalogConversationItem struct {
+	DisplayName      string `json:"display_name"`
+	NameOriginal     string `json:"name_original"`
+	NameJA           string `json:"name_ja,omitempty"`
+	NameState        string `json:"name_state"`
+	RelationType     string `json:"relation_type"`
+	SummaryJA        string `json:"summary_ja,omitempty"`
+	SummaryState     string `json:"summary_state"`
+	SummarySourceURL string `json:"summary_source_url,omitempty"`
+	EvidenceURL      string `json:"evidence_url,omitempty"`
+}
+
+type mioPersonRelatedCatalogSummaryCoverage struct {
+	Ready       int `json:"ready"`
+	Unavailable int `json:"unavailable"`
+	Total       int `json:"total"`
+}
+
 var mioPersonRelatedCatalogCues = []struct {
 	Cue      string
 	Category string
@@ -150,11 +175,151 @@ func (m *MioAgent) personRelatedCatalogLookupContext(ctx context.Context, lookup
 			return unavailable("person_related_catalog.lookup after collection failed")
 		}
 	}
+	projection, err := projectMioPersonRelatedCatalogResult(response.Result)
+	if err != nil {
+		return unavailable("person_related_catalog.lookup result projection failed")
+	}
+	content := fmt.Sprintf("RenCrow indexed person-related catalog result; answer only from it (this indexed result). tool=person_related_catalog.lookup person_name=%s category=%s. Preserve display_name and name_original exactly; do not translate or generate title names. If the result is empty or information is unavailable, say so without web or external supplementation.\n%s", lookup.Name, lookup.Category, projection)
+	if len([]byte(content)) > mioPersonRelatedCatalogContextMaxBytes {
+		return unavailable("person_related_catalog.lookup result exceeds the conversation context bound")
+	}
 	return llm.Message{
 		Role:    "system",
-		Content: fmt.Sprintf("RenCrow indexed person-related catalog result; answer only from it (this indexed result). tool=person_related_catalog.lookup person_name=%s category=%s. Preserve display_name and name_original exactly; do not translate or generate title names. If the result is empty or information is unavailable, say so without web or external supplementation.\n%s", lookup.Name, lookup.Category, response.String()),
+		Content: content,
 		Type:    llm.PromptContextRecall,
 	}
+}
+
+func projectMioPersonRelatedCatalogResult(result any) (string, error) {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("marshal person related catalog result: %w", err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &envelope); err != nil || envelope == nil {
+		if err == nil {
+			err = fmt.Errorf("result is not an object")
+		}
+		return "", fmt.Errorf("decode person related catalog result: %w", err)
+	}
+	itemsPayload, ok := envelope["items"]
+	if !ok {
+		return "", fmt.Errorf("result items are missing")
+	}
+	var rawItems []map[string]json.RawMessage
+	if err := json.Unmarshal(itemsPayload, &rawItems); err != nil || rawItems == nil {
+		if err == nil {
+			err = fmt.Errorf("items are not an array")
+		}
+		return "", fmt.Errorf("decode person related catalog items: %w", err)
+	}
+	coveragePayload, ok := envelope["summary_coverage"]
+	if !ok {
+		return "", fmt.Errorf("summary coverage is missing")
+	}
+	var coverage mioPersonRelatedCatalogSummaryCoverage
+	if err := json.Unmarshal(coveragePayload, &coverage); err != nil {
+		return "", fmt.Errorf("decode summary coverage: %w", err)
+	}
+	if coverage.Ready < 0 || coverage.Unavailable < 0 || coverage.Total < 0 || coverage.Ready+coverage.Unavailable != coverage.Total {
+		return "", fmt.Errorf("summary coverage is inconsistent")
+	}
+	projection := mioPersonRelatedCatalogConversationProjection{
+		Items:           make([]mioPersonRelatedCatalogConversationItem, 0, len(rawItems)),
+		SummaryCoverage: coverage,
+	}
+	for index, rawItem := range rawItems {
+		item, err := projectMioPersonRelatedCatalogItem(rawItem)
+		if err != nil {
+			return "", fmt.Errorf("project person related catalog item %d: %w", index, err)
+		}
+		projection.Items = append(projection.Items, item)
+	}
+	encoded, err := json.Marshal(projection)
+	if err != nil {
+		return "", fmt.Errorf("encode person related catalog projection: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func projectMioPersonRelatedCatalogItem(rawItem map[string]json.RawMessage) (mioPersonRelatedCatalogConversationItem, error) {
+	if rawItem == nil {
+		return mioPersonRelatedCatalogConversationItem{}, fmt.Errorf("item is not an object")
+	}
+	displayName, err := requiredMioPersonRelatedCatalogString(rawItem, "display_name")
+	if err != nil {
+		return mioPersonRelatedCatalogConversationItem{}, err
+	}
+	nameOriginal, err := requiredMioPersonRelatedCatalogString(rawItem, "name_original")
+	if err != nil {
+		return mioPersonRelatedCatalogConversationItem{}, err
+	}
+	nameState, err := requiredMioPersonRelatedCatalogString(rawItem, "name_state")
+	if err != nil {
+		return mioPersonRelatedCatalogConversationItem{}, err
+	}
+	relationType, err := requiredMioPersonRelatedCatalogString(rawItem, "relation_type")
+	if err != nil {
+		return mioPersonRelatedCatalogConversationItem{}, err
+	}
+	summaryState, err := requiredMioPersonRelatedCatalogString(rawItem, "summary_state")
+	if err != nil {
+		return mioPersonRelatedCatalogConversationItem{}, err
+	}
+	nameJA, err := optionalMioPersonRelatedCatalogString(rawItem, "name_ja")
+	if err != nil {
+		return mioPersonRelatedCatalogConversationItem{}, err
+	}
+	summaryJA, err := optionalMioPersonRelatedCatalogString(rawItem, "summary_ja")
+	if err != nil {
+		return mioPersonRelatedCatalogConversationItem{}, err
+	}
+	summarySourceURL, err := optionalMioPersonRelatedCatalogString(rawItem, "summary_source_url")
+	if err != nil {
+		return mioPersonRelatedCatalogConversationItem{}, err
+	}
+	evidenceURL, err := optionalMioPersonRelatedCatalogString(rawItem, "evidence_url")
+	if err != nil {
+		return mioPersonRelatedCatalogConversationItem{}, err
+	}
+	return mioPersonRelatedCatalogConversationItem{
+		DisplayName:      displayName,
+		NameOriginal:     nameOriginal,
+		NameJA:           nameJA,
+		NameState:        nameState,
+		RelationType:     relationType,
+		SummaryJA:        summaryJA,
+		SummaryState:     summaryState,
+		SummarySourceURL: summarySourceURL,
+		EvidenceURL:      evidenceURL,
+	}, nil
+}
+
+func requiredMioPersonRelatedCatalogString(fields map[string]json.RawMessage, name string) (string, error) {
+	payload, ok := fields[name]
+	if !ok {
+		return "", fmt.Errorf("required field %q is missing", name)
+	}
+	var value string
+	if err := json.Unmarshal(payload, &value); err != nil {
+		return "", fmt.Errorf("field %q is not a string: %w", name, err)
+	}
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("required field %q is empty", name)
+	}
+	return value, nil
+}
+
+func optionalMioPersonRelatedCatalogString(fields map[string]json.RawMessage, name string) (string, error) {
+	payload, ok := fields[name]
+	if !ok {
+		return "", nil
+	}
+	var value string
+	if err := json.Unmarshal(payload, &value); err != nil {
+		return "", fmt.Errorf("field %q is not a string: %w", name, err)
+	}
+	return value, nil
 }
 
 func personRelatedCatalogResultEmpty(result any) bool {

@@ -105,6 +105,25 @@ func (s *SQLiteStore) migrate() error {
 			ON knowledge_memory_search_documents(scope, user_id, record_type, record_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_knowledge_memory_search_terms_lookup
 			ON knowledge_memory_search_terms(scope, user_id, token, record_type, record_id)`,
+		`CREATE TABLE IF NOT EXISTS knowledge_memory_index_cursor (
+			record_type TEXT PRIMARY KEY,
+			last_record_id TEXT NOT NULL DEFAULT '',
+			eligible_count INTEGER NOT NULL DEFAULT 0,
+			indexed_count INTEGER NOT NULL DEFAULT 0,
+			state TEXT NOT NULL DEFAULT 'indexing',
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS knowledge_memory_import_manifest (
+			manifest_id TEXT PRIMARY KEY,
+			source_count INTEGER NOT NULL,
+			imported_count INTEGER NOT NULL,
+			source_hash TEXT NOT NULL,
+			imported_hash TEXT NOT NULL,
+			coverage_state TEXT NOT NULL,
+			eligible_count INTEGER NOT NULL,
+			indexed_count INTEGER NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {

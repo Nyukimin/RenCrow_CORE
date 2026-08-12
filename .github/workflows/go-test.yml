@@ -49,6 +49,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Verify repository-local test runtime contract
+        shell: pwsh
+        run: ./scripts/test-local.ps1 -SelfTest
+
       - name: Build
         run: go build ./...
 
