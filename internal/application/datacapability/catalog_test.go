@@ -178,6 +178,19 @@ func TestCatalogOperationalStoresAreNotNormalChatAutoRecall(t *testing.T) {
 	}
 }
 
+func TestCatalogInvestmentIsAvailableOnlyThroughValidatedL1Projection(t *testing.T) {
+	available := Build(map[string]StoreState{"investment": {RecallReady: true}})
+	entry, err := available.Describe("investment")
+	if err != nil || entry.Status != "available" || strings.Join(entry.SafeOperations, "\x00") != "validated_l1_projection" || entry.ToolID != "" {
+		t.Fatalf("investment projection entry=%#v err=%v", entry, err)
+	}
+	unavailable := Build(map[string]StoreState{"investment": {RecallReady: false}})
+	entry, _ = unavailable.Describe("investment")
+	if entry.Status != "unavailable" {
+		t.Fatalf("investment without validated L1 projection=%#v", entry)
+	}
+}
+
 func TestCatalogMissingSemanticStoreIsUnavailable(t *testing.T) {
 	catalog := Build(map[string]StoreState{"glossary": {Configured: true, Exists: false}})
 	entry, err := catalog.Describe("glossary")

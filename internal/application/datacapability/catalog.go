@@ -9,6 +9,7 @@ import (
 type StoreState struct {
 	Configured      bool
 	Exists          bool
+	RecallReady     bool
 	KnowledgeMemory *KnowledgeMemoryState
 }
 
@@ -69,7 +70,7 @@ var storeDefinitions = []Entry{
 	{Name: "glossary", Owner: "RenCrow_CORE Glossary", Categories: []string{"term", "definition"}, SafeOperations: []string{"define_term", "list_category"}, ToolID: "glossary.lookup", Sensitivity: "normal"},
 	{Name: "movie_catalog", Owner: "RenCrow_CORE Movie Catalog", Categories: []string{"movie", "person", "credit"}, SafeOperations: []string{"lookup"}, ToolID: "movie_catalog.lookup", Sensitivity: "normal"},
 	{Name: "hobby_graph", Owner: "RenCrow_CORE Hobby Graph", Categories: []string{"drama", "award", "music", "anime", "novel", "manga"}, SafeOperations: []string{"person_related_lookup", "music_lookup", "lyrics_rights_lookup", "lyrics_syntax_lookup", "licensed_lyrics_lookup"}, ToolID: "person_related_catalog.lookup", Sensitivity: "mixed", Reason: "deployment_or_index_unavailable"},
-	{Name: "investment", Owner: "RenCrow_CORE Investment Projection", Categories: []string{"investment", "snapshot", "event"}, Sensitivity: "financial", Reason: "deployment_unavailable"},
+	{Name: "investment", Owner: "RenCrow_TRADE Investment Projection", Categories: []string{"investment", "snapshot", "event"}, SafeOperations: []string{"validated_l1_projection"}, Sensitivity: "financial", Reason: "deployment_unavailable"},
 	{Name: "advisor", Owner: "RenCrow_CORE Advisor", Categories: []string{"advisor", "policy"}, Status: "restricted", SafeOperations: []string{"advice_runs"}, Sensitivity: "internal", Reason: "owner_service_only"},
 	{Name: "sandbox", Owner: "RenCrow_CORE Sandbox", Categories: []string{"execution"}, Status: "restricted", SafeOperations: []string{"sandboxes"}, Sensitivity: "internal", Reason: "owner_service_only"},
 	{Name: "dci", Owner: "RenCrow_CORE DCI", Categories: []string{"search_trace", "evidence"}, Status: "restricted", SafeOperations: []string{"search_traces"}, Sensitivity: "internal", Reason: "owner_service_only"},
@@ -105,7 +106,10 @@ func Build(states map[string]StoreState) *Catalog {
 			continue
 		}
 		if entry.Status == "" {
-			if state.Configured && state.Exists && (entry.Name == "glossary" || entry.Name == "movie_catalog" || entry.Name == "hobby_graph") {
+			if entry.Name == "investment" && state.RecallReady {
+				entry.Status = "available"
+				entry.Reason = ""
+			} else if state.Configured && state.Exists && (entry.Name == "glossary" || entry.Name == "movie_catalog" || entry.Name == "hobby_graph") {
 				entry.Status = "available"
 				entry.Reason = ""
 			} else {

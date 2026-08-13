@@ -51,6 +51,10 @@ func buildRuntimeDataCapabilityCatalogWithKnowledgeState(cfg *config.Config, glo
 		}
 		states[key] = datacapability.StoreState{Configured: path != "", Exists: exists}
 	}
+	l1State := states["conversation_l1"]
+	investmentState := states["investment"]
+	investmentState.RecallReady = l1State.Configured && l1State.Exists
+	states["investment"] = investmentState
 	if knowledgeState != nil {
 		state := states["knowledge_memory"]
 		state.KnowledgeMemory = knowledgeState

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,6 +34,21 @@ func TestRuntimeDataCapabilityCatalogAllKeysNoPaths(t *testing.T) {
 	entry, _ := catalog.catalog.Describe("glossary")
 	if entry.Status != "unavailable" {
 		t.Fatalf("entry=%#v", entry)
+	}
+}
+
+func TestRuntimeDataCapabilityCatalogInvestmentUsesExistingL1Projection(t *testing.T) {
+	dir := t.TempDir()
+	l1 := filepath.Join(dir, "l1.db")
+	if err := os.WriteFile(l1, []byte("projection-ready"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Storage.Databases.ConversationL1 = l1
+	catalog := buildRuntimeDataCapabilityCatalog(cfg, false, false)
+	entry, err := catalog.catalog.Describe("investment")
+	if err != nil || entry.Status != "available" || strings.Join(entry.SafeOperations, "\x00") != "validated_l1_projection" {
+		t.Fatalf("investment entry=%#v err=%v", entry, err)
 	}
 }
 
