@@ -132,6 +132,8 @@ type Dependencies struct {
 	viewerMemoryUserState          http.HandlerFunc                            // viewer user memory state API
 	viewerMemoryUserForget         http.HandlerFunc                            // viewer user memory forget API
 	viewerMemoryUserSupersede      http.HandlerFunc                            // viewer user memory supersede API
+	viewerMemoryChatGPTL3Import    http.HandlerFunc                            // authenticated ChatGPT export L3 import API
+	viewerMemoryChatGPTL3Confirm   http.HandlerFunc                            // explicit source-bound candidate confirmation API
 	viewerMemoryRecallPack         http.HandlerFunc                            // viewer memory recall pack API
 	viewerMemoryProfilePromotions  http.HandlerFunc                            // async ProfilePromotion job API
 	viewerRecallTraces             http.HandlerFunc                            // viewer recall trace API

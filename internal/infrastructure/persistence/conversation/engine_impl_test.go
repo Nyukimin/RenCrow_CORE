@@ -430,6 +430,25 @@ func TestBeginTurn_LoadsConfirmedAndPinnedUserMemoryForAllCharacters(t *testing.
 	}
 }
 
+func TestBeginTurn_RanksOlderRelevantUserMemoryAheadOfRecentUnrelatedMemory(t *testing.T) {
+	now := time.Now().UTC()
+	memories := make([]domainmemory.UserMemory, 0, 20)
+	for i := 0; i < 19; i++ {
+		memories = append(memories, domainmemory.UserMemory{ID: fmt.Sprintf("recent-%d", i), UserID: "ren", Statement: fmt.Sprintf("最近の無関係な料理メモ%d", i), State: domainmemory.MemoryStateConfirmed, Sensitivity: "normal", Scope: "all_personas", Active: true, UpdatedAt: now.Add(time.Duration(i) * time.Second)})
+	}
+	memories = append(memories, domainmemory.UserMemory{ID: "old-movie", UserID: "ren", Statement: "Renは映画ブレードランナーが好き", State: domainmemory.MemoryStateConfirmed, Sensitivity: "normal", Scope: "all_personas", Active: true, UpdatedAt: now.Add(-time.Hour)})
+	mgr := &mockManager{userMemories: memories}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren")
+	pack, err := engine.BeginTurn(context.Background(), "shared-session", "ブレードランナーについて覚えている？")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(pack.UserProfile.Facts, "\n")
+	if !strings.Contains(got, "ブレードランナー") {
+		t.Fatalf("relevant old memory missing: %q", got)
+	}
+}
+
 func TestBeginTurn_SavesRecallTrace(t *testing.T) {
 	mgr := &mockManager{
 		recallFunc: func(ctx context.Context, sessionID, query string, topK int) ([]domconv.Message, error) {

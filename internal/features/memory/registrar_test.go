@@ -21,6 +21,8 @@ func TestRegisterRoutesRegistersMemoryPaths(t *testing.T) {
 		RecallPack:        statusHandler(http.StatusBadRequest),
 		RecallTraces:      statusHandler(http.StatusConflict),
 		ProfilePromotions: statusHandler(http.StatusTeapot),
+		ChatGPTL3Import:   statusHandler(http.StatusCreated),
+		ChatGPTL3Confirm:  statusHandler(http.StatusForbidden),
 	}})
 
 	tests := []struct {
@@ -39,6 +41,8 @@ func TestRegisterRoutesRegistersMemoryPaths(t *testing.T) {
 		{path: "/viewer/memory/recall-pack", want: http.StatusBadRequest},
 		{path: "/viewer/recall/traces", want: http.StatusConflict},
 		{path: "/viewer/memory/profile-promotions", want: http.StatusTeapot},
+		{path: "/viewer/memory/import/chatgpt", want: http.StatusCreated},
+		{path: "/viewer/memory/import/chatgpt/confirm", want: http.StatusForbidden},
 	}
 
 	for _, tt := range tests {

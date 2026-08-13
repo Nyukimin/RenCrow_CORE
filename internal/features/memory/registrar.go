@@ -26,6 +26,8 @@ type Routes struct {
 	RecallPack        http.HandlerFunc
 	RecallTraces      http.HandlerFunc
 	ProfilePromotions http.HandlerFunc
+	ChatGPTL3Import   http.HandlerFunc
+	ChatGPTL3Confirm  http.HandlerFunc
 }
 
 // RegisterRoutes registers handlers at the feature route boundary.
@@ -43,6 +45,8 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/memory/recall-pack", routes.RecallPack)
 	registerRoute(mux, "/viewer/recall/traces", routes.RecallTraces)
 	registerRoute(mux, "/viewer/memory/profile-promotions", routes.ProfilePromotions)
+	registerRoute(mux, "/viewer/memory/import/chatgpt", routes.ChatGPTL3Import)
+	registerRoute(mux, "/viewer/memory/import/chatgpt/confirm", routes.ChatGPTL3Confirm)
 }
 
 // StartBackground reserves the feature background-job boundary.

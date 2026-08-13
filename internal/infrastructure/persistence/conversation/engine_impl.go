@@ -5,6 +5,7 @@ import (
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -100,7 +101,7 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 		Persona:     e.persona,
 		Constraints: domconv.DefaultConstraints(),
 	}
-	if err := e.loadSharedUserMemory(ctx, pack); err != nil {
+	if err := e.loadSharedUserMemory(ctx, userMessage, pack); err != nil {
 		log.Printf("[ConversationEngine] WARN: UserMemory recall failed: %v", err)
 	}
 
@@ -287,19 +288,38 @@ func isAdoptedCategoryL1Knowledge(item l1sqlite.L1KnowledgeItem, recordIDs map[s
 	return ok
 }
 
-func (e *RealConversationEngine) loadSharedUserMemory(ctx context.Context, pack *domconv.RecallPack) error {
+func (e *RealConversationEngine) loadSharedUserMemory(ctx context.Context, query string, pack *domconv.RecallPack) error {
 	if e.userMemoryStore == nil || pack == nil || e.userID == "" {
 		return nil
 	}
-	items, err := e.userMemoryStore.ListUserMemories(ctx, e.userID, "", false, 12)
+	items, err := e.userMemoryStore.ListUserMemories(ctx, e.userID, "", false, 5000)
 	if err != nil {
 		return err
 	}
-	profile := domconv.NewUserProfile(e.userID)
+	type rankedMemory struct {
+		item  domainmemory.UserMemory
+		score int
+	}
+	ranked := make([]rankedMemory, 0, len(items))
 	for _, item := range items {
 		if !isSharedUserMemoryPromptInjectable(item) {
 			continue
 		}
+		score := userMemoryLexicalScore(query, item.Statement)
+		if item.State == domainmemory.MemoryStatePinned {
+			score += 1000
+		}
+		ranked = append(ranked, rankedMemory{item: item, score: score})
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return ranked[i].item.UpdatedAt.After(ranked[j].item.UpdatedAt)
+	})
+	profile := domconv.NewUserProfile(e.userID)
+	for _, rankedItem := range ranked {
+		item := rankedItem.item
 		statement := strings.TrimSpace(item.Statement)
 		if statement == "" {
 			continue
@@ -308,11 +328,46 @@ func (e *RealConversationEngine) loadSharedUserMemory(ctx context.Context, pack 
 			statement = "[優先] " + statement
 		}
 		profile.Facts = append(profile.Facts, statement)
+		if len(profile.Facts) >= 12 {
+			break
+		}
 	}
 	if len(profile.Facts) > 0 {
 		pack.UserProfile = profile
 	}
 	return nil
+}
+
+func userMemoryLexicalScore(query string, statement string) int {
+	queryTerms := userMemoryRecallTerms(query)
+	if len(queryTerms) == 0 {
+		return 1
+	}
+	statementTerms := userMemoryRecallTerms(statement)
+	score := 0
+	for term := range queryTerms {
+		if statementTerms[term] {
+			score++
+		}
+	}
+	return score
+}
+
+func userMemoryRecallTerms(text string) map[string]bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(text), ""))
+	runes := []rune(normalized)
+	terms := make(map[string]bool)
+	for _, field := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	}) {
+		if len(field) >= 2 {
+			terms[field] = true
+		}
+	}
+	for i := 0; i+1 < len(runes); i++ {
+		terms[string(runes[i:i+2])] = true
+	}
+	return terms
 }
 
 func isSharedUserMemoryPromptInjectable(item domainmemory.UserMemory) bool {
