@@ -53,7 +53,7 @@ func startMemoryPromotionWorkerRunner(
 			case <-ctx.Done():
 				return
 			case now := <-ticker.C:
-				if tracker.Snapshot().Active {
+				if tracker.ExternalBusy() {
 					idleSince = time.Time{}
 					continue
 				}
@@ -66,7 +66,6 @@ func startMemoryPromotionWorkerRunner(
 				}
 				leaseCtx, release, ok := tracker.TryAcquireIdleLease(ctx)
 				if !ok {
-					idleSince = time.Time{}
 					continue
 				}
 				for {

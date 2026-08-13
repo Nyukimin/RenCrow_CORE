@@ -48,3 +48,22 @@ func TestMemoryPromotionWorkerWaitsForIdleGraceThenDrains(t *testing.T) {
 		t.Fatal("worker did not run after idle grace")
 	}
 }
+
+func TestMemoryPromotionWorkerKeepsIdleGraceWhileIdleChatIsBusy(t *testing.T) {
+	tracker := newLLMBusyTracker()
+	endIdleChat := tracker.Begin(context.Background(), "idlechat")
+	runner := &memoryPromotionRunnerStub{called: make(chan struct{}, 1)}
+	cancel := startMemoryPromotionWorkerRunner(
+		runner, tracker, 40*time.Millisecond, time.Second, 5*time.Millisecond,
+		backgroundJobFailureReporter{},
+	)
+	defer cancel()
+
+	time.Sleep(60 * time.Millisecond)
+	endIdleChat()
+	select {
+	case <-runner.called:
+	case <-time.After(30 * time.Millisecond):
+		t.Fatal("worker restarted idle grace after idlechat released the LLM")
+	}
+}
