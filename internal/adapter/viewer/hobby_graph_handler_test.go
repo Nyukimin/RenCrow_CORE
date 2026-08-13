@@ -197,6 +197,35 @@ func TestHandleHobbyGraphBootstrapRejectsInvalidMethod(t *testing.T) {
 	}
 }
 
+func TestHobbyGraphBootstrapCreatesMusicCollectionSchema(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hobby_graph.sqlite")
+	h := HandleHobbyGraphBootstrap(HobbyGraphOptions{DBPath: dbPath})
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodPost, "/viewer/hobby-graph/bootstrap", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bootstrap status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, name := range []string{"hobby_music_lyrics", "hobby_music_syntax_features", "hobby_music_collection_receipts", "idx_hobby_music_items_type_title", "idx_hobby_music_lyrics_song_language", "idx_hobby_music_syntax_song_language"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = ?`, name).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("schema object %s count=%d err=%v", name, count, err)
+		}
+	}
+	_, err = db.Exec(`INSERT INTO hobby_music_lyrics(lyrics_id, song_item_id, source, source_record_id, canonical_url, language, rights_status, storage_mode, content_sha256) VALUES ('l1','song1','unknown','r1','https://example.test/lyrics','ja','unknown','full_text','abc')`)
+	if err == nil {
+		t.Fatal("unknown rights must not permit full lyrics storage")
+	}
+	_, err = db.Exec(`INSERT INTO hobby_music_syntax_features(feature_id, song_item_id, lyrics_source, language, analyzer, analyzer_version, feature_schema, token_count, line_count, vocabulary_size, features_json, source_content_sha256, non_reconstructable, generated_at) VALUES ('f1','song1','lyricfind','ja','syntax-v1','1','rencrow.music.syntax.v1',100,20,60,'{}','abc',0,'2026-08-13T00:00:00Z')`)
+	if err == nil {
+		t.Fatal("reconstructable research features must be rejected")
+	}
+}
+
 func TestHandleHobbyGraphInteractionCreatesItemInteractionAndObservation(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hobby_graph.sqlite")
 	h := HandleHobbyGraphInteraction(HobbyGraphOptions{DBPath: dbPath})

@@ -104,6 +104,7 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		HobbyGraphBootstrap:          viewer.HandleHobbyGraphBootstrap(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
 		HobbyGraphInteraction:        viewer.HandleHobbyGraphInteraction(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
 		HobbyGraphRelation:           viewer.HandleHobbyGraphRelation(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
+		HobbyMusicImport:             viewer.HandleHobbyMusicImport(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
 		HobbyTopicCandidatesGenerate: viewer.HandleHobbyTopicCandidatesGenerate(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
 		InvestmentStatus:             viewer.HandleInvestmentStatus(databasePaths.Investment),
 		InvestmentNotify:             viewer.HandleInvestmentNotify(dependencies.eventHub),

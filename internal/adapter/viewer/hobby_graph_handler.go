@@ -168,6 +168,9 @@ var hobbyGraphTables = []string{
 	"hobby_topic_candidates",
 	"hobby_collection_runs",
 	"hobby_collection_targets",
+	"hobby_music_lyrics",
+	"hobby_music_syntax_features",
+	"hobby_music_collection_receipts",
 }
 
 func HandleHobbyGraph(opts HobbyGraphOptions) http.HandlerFunc {
@@ -667,7 +670,66 @@ CREATE TABLE IF NOT EXISTS hobby_collection_targets (
   fetched_at TEXT,
   error TEXT,
   PRIMARY KEY(run_id, target_url)
-)`)
+);
+CREATE TABLE IF NOT EXISTS hobby_music_lyrics (
+  lyrics_id TEXT PRIMARY KEY,
+  song_item_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  source_record_id TEXT NOT NULL,
+  canonical_url TEXT NOT NULL,
+  language TEXT NOT NULL,
+  rights_status TEXT NOT NULL CHECK(rights_status IN ('licensed','public_domain','user_owned','unknown','restricted')),
+  license_reference TEXT,
+  storage_mode TEXT NOT NULL CHECK(storage_mode IN ('reference_only','hash_only','full_text')),
+  lyrics_text TEXT,
+  content_sha256 TEXT NOT NULL,
+  fetched_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(source, source_record_id, language),
+  CHECK(storage_mode <> 'full_text' OR (rights_status IN ('licensed','public_domain','user_owned') AND TRIM(COALESCE(license_reference, '')) <> '' AND lyrics_text IS NOT NULL)),
+  CHECK(storage_mode = 'full_text' OR lyrics_text IS NULL)
+);
+CREATE TABLE IF NOT EXISTS hobby_music_collection_receipts (
+  receipt_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  entity_kind TEXT NOT NULL CHECK(entity_kind IN ('artist','song','lyrics')),
+  source_record_id TEXT,
+  canonical_url TEXT,
+  status TEXT NOT NULL CHECK(status IN ('imported','reference_only','not_found','restricted','failed')),
+  rights_status TEXT NOT NULL DEFAULT 'unknown',
+  artifact_sha256 TEXT,
+  fetched_at TEXT NOT NULL,
+  error_code TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS hobby_music_syntax_features (
+  feature_id TEXT PRIMARY KEY,
+  song_item_id TEXT NOT NULL,
+  lyrics_source TEXT NOT NULL,
+  language TEXT NOT NULL,
+  analyzer TEXT NOT NULL,
+  analyzer_version TEXT NOT NULL,
+  feature_schema TEXT NOT NULL,
+  token_count INTEGER NOT NULL CHECK(token_count >= 0),
+  line_count INTEGER NOT NULL CHECK(line_count >= 0),
+  vocabulary_size INTEGER NOT NULL CHECK(vocabulary_size >= 0),
+  features_json TEXT NOT NULL,
+  source_content_sha256 TEXT NOT NULL,
+  non_reconstructable INTEGER NOT NULL DEFAULT 1 CHECK(non_reconstructable = 1),
+  generated_at TEXT NOT NULL,
+  UNIQUE(song_item_id, lyrics_source, language, analyzer, analyzer_version, source_content_sha256)
+);
+CREATE INDEX IF NOT EXISTS idx_hobby_music_items_type_title
+  ON hobby_items(category, item_type, normalized_title)
+  WHERE category = 'music' AND item_type IN ('artist','song');
+CREATE INDEX IF NOT EXISTS idx_hobby_music_lyrics_song_language
+  ON hobby_music_lyrics(song_item_id, language, source);
+CREATE INDEX IF NOT EXISTS idx_hobby_music_syntax_song_language
+  ON hobby_music_syntax_features(song_item_id, language, analyzer);
+CREATE INDEX IF NOT EXISTS idx_hobby_music_receipts_run_provider
+  ON hobby_music_collection_receipts(run_id, provider, entity_kind, status);
+`)
 	return err
 }
 

@@ -61,6 +61,7 @@ type BaseRoutes struct {
 	HobbyGraphBootstrap          http.HandlerFunc
 	HobbyGraphInteraction        http.HandlerFunc
 	HobbyGraphRelation           http.HandlerFunc
+	HobbyMusicImport             http.HandlerFunc
 	HobbyTopicCandidatesGenerate http.HandlerFunc
 	InvestmentStatus             http.HandlerFunc
 	InvestmentNotify             http.HandlerFunc
@@ -121,6 +122,7 @@ func RegisterBaseRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/hobby-graph/bootstrap", base.HobbyGraphBootstrap)
 	registerRoute(mux, "/viewer/hobby-graph/interaction", base.HobbyGraphInteraction)
 	registerRoute(mux, "/viewer/hobby-graph/relation", base.HobbyGraphRelation)
+	registerRoute(mux, "/viewer/hobby-graph/music/import", base.HobbyMusicImport)
 	registerRoute(mux, "/viewer/hobby-graph/topic-candidates/generate", base.HobbyTopicCandidatesGenerate)
 	registerRoute(mux, "/viewer/investment/status", base.InvestmentStatus)
 	registerRoute(mux, "/viewer/investment/notify", base.InvestmentNotify)

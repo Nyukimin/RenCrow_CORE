@@ -36,6 +36,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `/viewer/memory/*` | memory event、Recall、ProfilePromotion job の観測 |
 | `POST /viewer/memory/import/chatgpt` | private operator用ChatGPT L3 batch検証／取り込み。既定dry-run、1 request最大100 records |
 | `POST /viewer/memory/import/chatgpt/confirm` | export IDに束縛した候補確認。projection未完了／失敗時はapplyを拒否 |
+| `POST /viewer/hobby-graph/music/import` | `rencrow.music_catalog.v1`を最大100件検証・import。既定dry-run。未許諾歌詞本文と復元可能featureを拒否 |
 | `GET /viewer/databases/conversation-archive` | Conversation Archive（`memory_archive.db`）の読み取り専用snapshot |
 | `GET /viewer/databases/glossary` | Glossary DBの読み取り専用snapshot |
 | `GET /viewer/databases/tool-registry` | production Worker runtimeとTool Registry DBを統合した有効Toolの読み取り専用snapshot |
