@@ -52,6 +52,54 @@ func TestToolExecutionScopeRejectsInvalidOrConflictingClaims(t *testing.T) {
 	}
 }
 
+func TestToolExecutionScopeInternalDataScopeRequiresAuthenticatedAgentOrchestrator(t *testing.T) {
+	valid, err := NewToolExecutionScope(
+		"req-internal-valid",
+		ActorKindAgent,
+		"mio",
+		"",
+		[]string{DataScopeInternal},
+		AuthenticationSourceAgentOrchestrator,
+	)
+	if err != nil {
+		t.Fatalf("authenticated agent internal scope error = %v", err)
+	}
+	if !valid.Allows(DataScopeInternal) {
+		t.Fatal("authenticated agent internal scope must be granted")
+	}
+
+	cases := []ToolExecutionScope{
+		{
+			RequestID:            "req-internal-http-agent",
+			ActorKind:            ActorKindAgent,
+			ActorID:              "mio",
+			AllowedDataScopes:    []string{DataScopeInternal},
+			AuthenticationSource: AuthenticationSourceHTTP,
+		},
+		{
+			RequestID:            "req-internal-user",
+			ActorKind:            ActorKindUser,
+			ActorID:              "user-a",
+			AuthenticatedUserID:  "user-a",
+			AllowedDataScopes:    []string{DataScopeInternal},
+			AuthenticationSource: AuthenticationSourceAgentOrchestrator,
+		},
+		{
+			RequestID:            "req-internal-http-user",
+			ActorKind:            ActorKindUser,
+			ActorID:              "user-a",
+			AuthenticatedUserID:  "user-a",
+			AllowedDataScopes:    []string{DataScopeInternal},
+			AuthenticationSource: AuthenticationSourceHTTP,
+		},
+	}
+	for _, scope := range cases {
+		if err := scope.Validate(); err == nil {
+			t.Fatalf("scope %#v must reject internal access", scope)
+		}
+	}
+}
+
 func TestToolExecutionScopeCannotBeReadFromEmptyContext(t *testing.T) {
 	if _, ok := ToolExecutionScopeFromContext(context.Background()); ok {
 		t.Fatal("empty context must not produce an authenticated scope")

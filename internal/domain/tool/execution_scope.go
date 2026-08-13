@@ -26,8 +26,9 @@ const (
 )
 
 const (
-	DataScopePublic = "public"
-	DataScopeUser   = "user"
+	DataScopePublic   = "public"
+	DataScopeUser     = "user"
+	DataScopeInternal = "internal"
 )
 
 // ToolExecutionScope is the immutable, typed authorization context for a
@@ -102,6 +103,10 @@ func (s ToolExecutionScope) Validate() error {
 		case DataScopeUser:
 			if s.AuthenticatedUserID == "" {
 				return fmt.Errorf("user data scope requires authenticated_user_id")
+			}
+		case DataScopeInternal:
+			if s.ActorKind != ActorKindAgent || s.AuthenticationSource != AuthenticationSourceAgentOrchestrator {
+				return fmt.Errorf("internal data scope requires an authenticated agent orchestrator")
 			}
 		default:
 			return fmt.Errorf("unsupported data scope %q", value)

@@ -105,6 +105,9 @@ func (r *ToolRunner) registerOptionalTools() {
 	if r.config.DataCapabilityCatalog != nil {
 		r.registerDataCapabilityTool()
 	}
+	if r.config.OperationalDataRecall != nil {
+		r.registerDataRecallTool()
+	}
 	if r.config.GlossaryLookup != nil {
 		r.registerGlossaryTool()
 	}
@@ -339,6 +342,9 @@ func (r *ToolRunner) registerToolMetadata() {
 	}
 	if r.config.DataCapabilityCatalog != nil {
 		r.metadata["data_capability.describe"] = dataCapabilityMetadata()
+	}
+	if r.config.OperationalDataRecall != nil {
+		r.metadata[dataRecallToolName] = dataRecallMetadata()
 	}
 	if r.config.GlossaryLookup != nil {
 		r.metadata["glossary.lookup"] = glossaryMetadata()

@@ -100,6 +100,13 @@ type DataCapabilityCatalog interface {
 	Execute(operation string, name string) (any, error)
 }
 
+// OperationalDataRecall is the Worker-owned boundary for named, read-only
+// operational data recall. The provider owns per-store scope and operation
+// policy; CORE only validates the trusted execution scope and tool request.
+type OperationalDataRecall interface {
+	Recall(ctx context.Context, request DataRecallRequest) (any, error)
+}
+
 type GlossaryLookup interface {
 	Lookup(ctx context.Context, operation string, term string, category string, limit int) (any, error)
 }
@@ -148,6 +155,7 @@ type ToolRunnerConfig struct {
 	PersonRelatedCatalogLookup    PersonRelatedCatalogLookup    // nil = person_related_catalog.lookup 無効
 	PersonRelatedCatalogCollector PersonRelatedCatalogCollector // nil = person_related_catalog.collect 無効
 	DataCapabilityCatalog         DataCapabilityCatalog         // nil = data_capability.describe 無効
+	OperationalDataRecall         OperationalDataRecall         // nil = data.recall 無効（Worker専用）
 	GlossaryLookup                GlossaryLookup                // nil = glossary.lookup 無効
 	KnowledgeMemorySearcher       KnowledgeMemorySearcher       // nil = knowledge.search 無効
 	KnowledgeMemorySearchReady    bool                          // schema/index/coverage/trusted wiring gate

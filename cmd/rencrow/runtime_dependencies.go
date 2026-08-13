@@ -18,6 +18,7 @@ import (
 	browsertraceapp "github.com/Nyukimin/RenCrow_CORE/internal/application/browsertrace"
 	complexityapp "github.com/Nyukimin/RenCrow_CORE/internal/application/complexity"
 	dciapp "github.com/Nyukimin/RenCrow_CORE/internal/application/dci"
+	durablestoreapp "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/heartbeat"
 	historyrepairapp "github.com/Nyukimin/RenCrow_CORE/internal/application/historyrepair"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
@@ -496,12 +497,18 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 
 	deps := &Dependencies{serenaMCPClient: serenaRuntime.client}
+	dataRecallRegistry := toolRuntime.DataRecallRegistry
 	durableStoreWorkflow, durableStoreCloser, err := buildDurableStoreRuntime(cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize durable store workflow: %v", err)
 	}
 	deps.durableStoreWorkflow = durableStoreWorkflow
 	deps.durableStoreCloser = durableStoreCloser
+	if durableRecallStore, ok := durableStoreCloser.(durablestoreapp.Store); ok {
+		if err := registerRuntimeDataRecallDurableStoreWorkflow(dataRecallRegistry, durableRecallStore); err != nil {
+			log.Fatalf("Failed to register Durable Store data recall: %v", err)
+		}
+	}
 	deps.globalPolicyStore = configpolicy.NewStore(cfg.WorkspaceDir)
 	globalPolicy := deps.globalPolicyStore.Status()
 	deps.globalPolicyStatus = viewer.HandleGlobalPolicyStatus(deps.globalPolicyStore)
@@ -528,6 +535,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		globalPolicy.BundleRevision,
 	)
 	deps.advisorCloser = advisorRuntime.Closer
+	if err := registerRuntimeDataRecallAdvisor(dataRecallRegistry, advisorRuntime.Store); err != nil {
+		log.Fatalf("Failed to register Advisor data recall: %v", err)
+	}
 	deps.advisorStatus = viewer.HandleAdvisorsStatus(viewer.AdvisorStatusOptions{
 		Store: advisorRuntime.Store, AdvisorProfiles: advisorRuntime.Profiles, AgentProfiles: advisorRuntime.AgentProfiles,
 	})
@@ -660,6 +670,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			}
 		}
 		deps.skillBootstrap = skillapp.NewBootstrapService(skillStore)
+		if err := registerRuntimeDataRecallSkillGovernance(dataRecallRegistry, skillStore); err != nil {
+			log.Fatalf("Failed to register Skill Governance data recall: %v", err)
+		}
 		deps.coderProposalEvidence = skillapp.NewCoderEvidenceService("").WithTranscriptStore(skillStore)
 		deps.skillGovernanceRecent = viewer.HandleSkillGovernanceRecent(skillStore)
 		deps.skillGovernanceBoot = viewer.HandleSkillGovernanceBootstrap(skillStore)
@@ -683,6 +696,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			dciStore = dcipersistence.NewJSONLStore(cfg.DCI.TracePath)
 		}
 		deps.dciTraceStore = dciStore
+		if err := registerRuntimeDataRecallDCI(dataRecallRegistry, dciStore); err != nil {
+			log.Fatalf("Failed to register DCI data recall: %v", err)
+		}
 		deps.dciRecent = viewer.HandleDCIRecent(dciStore)
 		dciOptions := []dciapp.Option{
 			dciapp.WithToolRunner(toolRuntime.WorkerRuntimeRunnerV2),
@@ -747,6 +763,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			sandboxStore = sandboxpersistence.NewJSONLStore(filepath.Join(cfg.WorkspaceDir, "logs", "sandbox"))
 		}
 		deps.sandboxStatus = viewer.HandleSandboxStatus(sandboxStore)
+		if err := registerRuntimeDataRecallSandbox(dataRecallRegistry, sandboxStore); err != nil {
+			log.Fatalf("Failed to register Sandbox data recall: %v", err)
+		}
 		deps.sandboxPromotion = viewer.HandleSandboxPromotionRequest(sandboxStore)
 		promotionDiffPreviewer = sandboxapp.NewPromotionDiffApplier(
 			filepath.Join(cfg.WorkspaceDir, cfg.Sandbox.Root),
@@ -778,6 +797,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			workstreamStore = workstreampersistence.NewJSONLStoreWithVault(cfg.Workstream.LogPath, cfg.Workstream.VaultRoot)
 		}
 		deps.workstreamStore = workstreamStore
+		if err := registerRuntimeDataRecallWorkstream(dataRecallRegistry, workstreamStore); err != nil {
+			log.Fatalf("Failed to register Workstream data recall: %v", err)
+		}
 		deps.workstreamStatus = viewer.HandleWorkstreamStatus(workstreamStore)
 		deps.workstreamGoal = viewer.HandleWorkstreamGoalCreate(workstreamStore)
 		deps.workstreamArtifact = viewer.HandleWorkstreamArtifactCreate(workstreamStore)
@@ -802,6 +824,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			revenueStore = revenuepersistence.NewJSONLStore(cfg.Revenue.LogPath)
 		}
 		deps.revenueStore = revenueStore
+		if err := registerRuntimeDataRecallRevenue(dataRecallRegistry, revenueStore); err != nil {
+			log.Fatalf("Failed to register Revenue data recall: %v", err)
+		}
 		deps.revenueStatus = viewer.HandleRevenueStatus(revenueStore, viewer.RevenueEconomicObjectiveSettings{
 			Enabled: cfg.EconomicObjective.Enabled, DraftOnly: cfg.EconomicObjective.DraftOnlyEnabled(),
 		})
@@ -841,6 +866,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			log.Fatalf("Failed to load Persona Architecture characters: %v", err)
 		}
 		deps.personaRuntimeStore = personaStore
+		if err := registerRuntimeDataRecallPersonaArchitecture(dataRecallRegistry, personaStore); err != nil {
+			log.Fatalf("Failed to register Persona Architecture data recall: %v", err)
+		}
 		personaDefinitionOptions := personaRuntimeDefinitionOptionsFromConfig(cfg.PersonaArchitecture)
 		deps.personaTriggerDefinitions = buildPersonaRuntimeTriggerDefinitionsWithOptions(characters, personaDefinitionOptions)
 		deps.personaCanonicalResponses = buildPersonaRuntimeCanonicalResponsesWithOptions(characters, personaDefinitionOptions)
@@ -866,6 +894,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			browserTraceStore = browsertracepersistence.NewJSONLStore(cfg.BrowserTraceToAPI.LogPath)
 		}
 		deps.browserTraceAPIStatus = viewer.HandleBrowserTraceAPIStatus(browserTraceStore)
+		if err := registerRuntimeDataRecallBrowserTraceToAPI(dataRecallRegistry, browserTraceStore); err != nil {
+			log.Fatalf("Failed to register Browser Trace data recall: %v", err)
+		}
 		var candidateSink viewer.BrowserTraceAPICandidateSink
 		if conversationRuntime.L1Store != nil {
 			candidateSink = browsertracepersistence.NewL1APICandidateStore(conversationRuntime.L1Store, "kb:browser_trace_api")
@@ -894,6 +925,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			complexityStore = complexitypersistence.NewJSONLStore(cfg.ComplexityHotspot.LogPath)
 		}
 		deps.complexityHotspotStatus = viewer.HandleComplexityHotspotStatus(complexityStore)
+		if err := registerRuntimeDataRecallComplexityHotspot(dataRecallRegistry, complexityStore); err != nil {
+			log.Fatalf("Failed to register Complexity Hotspot data recall: %v", err)
+		}
 		var workstreamArtifactSink viewer.ComplexityWorkstreamArtifactSink
 		if ws, ok := deps.workstreamStore.(viewer.ComplexityWorkstreamArtifactSink); ok {
 			workstreamArtifactSink = ws
@@ -917,6 +951,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			superAgentStore = superagentpersistence.NewJSONLStore(cfg.SuperAgentHarness.LogPath, cfg.SuperAgentHarness.MaxContextPackTokens)
 		}
 		deps.superAgentStore = superAgentStore
+		if err := registerRuntimeDataRecallSuperAgentHarness(dataRecallRegistry, superAgentStore); err != nil {
+			log.Fatalf("Failed to register SuperAgent Harness data recall: %v", err)
+		}
 		deps.superAgentRunController = superagentapp.NewRunController()
 		if toolRuntime.SubagentMgr != nil {
 			toolRuntime.SubagentMgr.SetSuperAgentRecorder(superAgentStore)
@@ -939,6 +976,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 	if aiWorkflowStore != nil {
 		deps.aiWorkflowStore = aiWorkflowStore
+		if err := registerRuntimeDataRecallAIWorkflow(dataRecallRegistry, aiWorkflowStore); err != nil {
+			log.Fatalf("Failed to register AI Workflow data recall: %v", err)
+		}
 		if commands, err := aiworkflowapp.RegisterCommandFiles(context.Background(), aiWorkflowStore, aiworkflowapp.CommandRegistryScanOptions{RepoRoot: "."}); err != nil {
 			log.Printf("Failed to register AI Workflow command files: %v", err)
 		} else if len(commands) > 0 {
