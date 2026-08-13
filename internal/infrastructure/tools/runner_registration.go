@@ -90,6 +90,12 @@ func (r *ToolRunner) registerOptionalTools() {
 	if r.config.MovieCatalogLookup != nil {
 		r.registerMovieCatalogLookupTool()
 	}
+	if r.config.MusicCatalogLookup != nil {
+		r.registerMusicCatalogLookupTool()
+	}
+	if r.config.LyricsCatalogLookup != nil {
+		r.registerLyricsCatalogLookupTool()
+	}
 	if r.config.PersonRelatedCatalogLookup != nil {
 		r.registerPersonRelatedCatalogLookupTool()
 	}
@@ -318,6 +324,12 @@ func (r *ToolRunner) registerToolMetadata() {
 	}
 	if r.config.MovieCatalogLookup != nil {
 		r.metadata["movie_catalog.lookup"] = movieCatalogLookupMetadata()
+	}
+	if r.config.MusicCatalogLookup != nil {
+		r.metadata["music_catalog.lookup"] = musicCatalogLookupMetadata()
+	}
+	if r.config.LyricsCatalogLookup != nil {
+		r.metadata["lyrics_catalog.lookup"] = lyricsCatalogLookupMetadata()
 	}
 	if r.config.PersonRelatedCatalogLookup != nil {
 		r.metadata["person_related_catalog.lookup"] = personRelatedCatalogLookupMetadata()

@@ -723,6 +723,10 @@ CREATE TABLE IF NOT EXISTS hobby_music_syntax_features (
 CREATE INDEX IF NOT EXISTS idx_hobby_music_items_type_title
   ON hobby_items(category, item_type, normalized_title)
   WHERE category = 'music' AND item_type IN ('artist','song');
+CREATE INDEX IF NOT EXISTS idx_hobby_music_relations_from
+  ON hobby_relations(from_item_id, relation_type, to_item_id);
+CREATE INDEX IF NOT EXISTS idx_hobby_music_relations_to
+  ON hobby_relations(to_item_id, relation_type, from_item_id);
 CREATE INDEX IF NOT EXISTS idx_hobby_music_lyrics_song_language
   ON hobby_music_lyrics(song_item_id, language, source);
 CREATE INDEX IF NOT EXISTS idx_hobby_music_syntax_song_language

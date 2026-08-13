@@ -88,6 +88,16 @@ func buildToolRuntimeWithCapabilities(
 	} else {
 		log.Printf("Movie catalog lookup Tool ready (indexed read-only execution)")
 	}
+	musicCatalogPrepareCtx, cancelMusicCatalogPrepare := context.WithTimeout(context.Background(), 10*time.Second)
+	musicCatalogLookup, musicCatalogLookupErr := prepareRuntimeMusicCatalogLookup(
+		musicCatalogPrepareCtx, cfg.Storage.Databases.HobbyGraph,
+	)
+	cancelMusicCatalogPrepare()
+	if musicCatalogLookupErr != nil {
+		log.Printf("Music and lyrics catalog lookup Tools unavailable: %v", musicCatalogLookupErr)
+	} else {
+		log.Printf("Music and lyrics catalog lookup Tools ready (rights-aware indexed read-only execution)")
+	}
 	personRelatedPrepareCtx, cancelPersonRelatedPrepare := context.WithTimeout(context.Background(), 10*time.Second)
 	personRelatedCatalogLookup, personRelatedCatalogLookupErr := prepareRuntimePersonRelatedCatalogLookup(
 		personRelatedPrepareCtx,
@@ -234,6 +244,12 @@ func buildToolRuntimeWithCapabilities(
 	if movieCatalogLookup != nil {
 		chatToolRunnerCfg.MovieCatalogLookup = movieCatalogLookup
 		workerToolRunnerCfg.MovieCatalogLookup = movieCatalogLookup
+	}
+	if musicCatalogLookup != nil {
+		chatToolRunnerCfg.MusicCatalogLookup = musicCatalogLookup
+		chatToolRunnerCfg.LyricsCatalogLookup = musicCatalogLookup
+		workerToolRunnerCfg.MusicCatalogLookup = musicCatalogLookup
+		workerToolRunnerCfg.LyricsCatalogLookup = musicCatalogLookup
 	}
 	if personRelatedCatalogLookup != nil {
 		chatToolRunnerCfg.PersonRelatedCatalogLookup = personRelatedCatalogLookup

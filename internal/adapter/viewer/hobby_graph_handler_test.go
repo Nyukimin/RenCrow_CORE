@@ -210,7 +210,7 @@ func TestHobbyGraphBootstrapCreatesMusicCollectionSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	for _, name := range []string{"hobby_music_lyrics", "hobby_music_syntax_features", "hobby_music_collection_receipts", "idx_hobby_music_items_type_title", "idx_hobby_music_lyrics_song_language", "idx_hobby_music_syntax_song_language"} {
+	for _, name := range []string{"hobby_music_lyrics", "hobby_music_syntax_features", "hobby_music_collection_receipts", "idx_hobby_music_items_type_title", "idx_hobby_music_relations_from", "idx_hobby_music_relations_to", "idx_hobby_music_lyrics_song_language", "idx_hobby_music_syntax_song_language"} {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = ?`, name).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("schema object %s count=%d err=%v", name, count, err)

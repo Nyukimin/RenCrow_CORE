@@ -46,6 +46,18 @@ type MovieCatalogLookup interface {
 	Lookup(ctx context.Context, kind string, name string, information string, limit int) (any, error)
 }
 
+// MusicCatalogLookup exposes exact indexed artist/song lookup without a raw
+// database, path, table, or SQL surface.
+type MusicCatalogLookup interface {
+	LookupMusic(ctx context.Context, kind string, name string, artist string, limit int) (any, error)
+}
+
+// LyricsCatalogLookup keeps rights-aware lyrics and non-reconstructable
+// syntax lookup separate from general music metadata lookup.
+type LyricsCatalogLookup interface {
+	LookupLyrics(ctx context.Context, song string, artist string, language string, information string, limit int) (any, error)
+}
+
 // PersonRelatedCatalogLookup is the fixed CORE application boundary used by
 // the indexed person-related catalog Tool. It intentionally exposes no
 // database path or SQL surface.
@@ -131,6 +143,8 @@ type ToolRunnerConfig struct {
 	SkillCatalog                  *SkillCatalog                 // nil/empty = skill.read 無効（Worker専用）
 	MCPToolCatalog                *MCPToolCatalog               // nil/empty = observed MCP tools 無効（Worker専用）
 	MovieCatalogLookup            MovieCatalogLookup            // nil = movie_catalog.lookup 無効
+	MusicCatalogLookup            MusicCatalogLookup            // nil = music_catalog.lookup 無効
+	LyricsCatalogLookup           LyricsCatalogLookup           // nil = lyrics_catalog.lookup 無効
 	PersonRelatedCatalogLookup    PersonRelatedCatalogLookup    // nil = person_related_catalog.lookup 無効
 	PersonRelatedCatalogCollector PersonRelatedCatalogCollector // nil = person_related_catalog.collect 無効
 	DataCapabilityCatalog         DataCapabilityCatalog         // nil = data_capability.describe 無効
