@@ -228,9 +228,10 @@ const (
 	identityEvidenceTable  = "hobby_person_identity_evidence"
 	identityJobsTable      = "hobby_person_identity_jobs"
 	identityMigrationTable = "hobby_person_identity_migrations"
+	collectionSweepTable   = "hobby_collection_sweep_state"
 )
 
-var ownTables = []string{personReferenceTable, relatedItemsTable, relationsTable, receiptsTable, attemptsTable, summariesTable, summaryJobsTable, personExternalIDsTable, identityEvidenceTable, identityJobsTable, identityMigrationTable}
+var ownTables = []string{personReferenceTable, relatedItemsTable, relationsTable, receiptsTable, attemptsTable, summariesTable, summaryJobsTable, personExternalIDsTable, identityEvidenceTable, identityJobsTable, identityMigrationTable, collectionSweepTable}
 
 var ownIndexes = []string{
 	"idx_hobby_person_references_movie_catalog_person_id",
@@ -569,6 +570,14 @@ func hobbySchemaStatements() []string {
 	  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	  CHECK(completed IN (0,1))
 )`,
+		`CREATE TABLE IF NOT EXISTS hobby_collection_sweep_state (
+	  sweep_name TEXT PRIMARY KEY,
+	  cursor_person_id TEXT NOT NULL DEFAULT '',
+	  category_index INTEGER NOT NULL DEFAULT 0,
+	  next_cycle_at TEXT NOT NULL DEFAULT '',
+	  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	  CHECK(category_index >= 0 AND category_index < 6)
+)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_person_references_movie_catalog_person_id
   ON hobby_person_references(movie_catalog_person_id, person_ref_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_hobby_related_items_category_item_id
@@ -600,9 +609,9 @@ func hobbySchemaStatements() []string {
 	}
 }
 
-// EligiblePeople returns only people with an explicit positive assessment.
-// It intentionally does not consult movie_preference_signals or any legacy
-// favorite state.
+// EligiblePeople returns explicit positive people and people reached by one
+// direct credit edge from a positive movie assessment. It intentionally does
+// not expand those people into another movie/person hop.
 func EligiblePeople(ctx context.Context, movieDB *sql.DB, limit int) ([]EligiblePerson, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -613,19 +622,33 @@ func EligiblePeople(ctx context.Context, movieDB *sql.DB, limit int) ([]Eligible
 	if err := requireMovieSelectionSchema(ctx, movieDB); err != nil {
 		return nil, err
 	}
+	directMovieUnion := ""
+	if movieCatalogTableExists(ctx, movieDB, "movie_people") {
+		directMovieUnion = `
+  UNION
+  SELECT mp.person_id
+  FROM movie_catalog_assessments a INDEXED BY idx_movie_catalog_assessments_collection_familiarity
+  JOIN movie_people mp ON mp.movie_id=a.target_id
+  WHERE a.kind='movie' AND a.familiarity='seen'
+  UNION
+  SELECT mp.person_id
+  FROM movie_catalog_assessments a INDEXED BY idx_movie_catalog_assessments_collection_sentiment
+  JOIN movie_people mp ON mp.movie_id=a.target_id
+  WHERE a.kind='movie' AND a.sentiment='like'`
+	}
 	rows, err := movieDB.QueryContext(ctx, `
 WITH eligible AS (
   SELECT target_id FROM movie_catalog_assessments INDEXED BY idx_movie_catalog_assessments_collection_familiarity
   WHERE kind='person' AND familiarity='known'
   UNION
   SELECT target_id FROM movie_catalog_assessments INDEXED BY idx_movie_catalog_assessments_collection_sentiment
-  WHERE kind='person' AND sentiment='like'
+  WHERE kind='person' AND sentiment='like'`+directMovieUnion+`
 )
-SELECT p.person_id, p.name, p.url, a.familiarity, a.sentiment
+SELECT p.person_id, p.name, p.url, COALESCE(a.familiarity,''), COALESCE(a.sentiment,'')
 FROM eligible e
-JOIN movie_catalog_assessments AS a INDEXED BY idx_movie_catalog_assessments_eligible_target
+JOIN people AS p ON p.person_id=e.target_id
+LEFT JOIN movie_catalog_assessments AS a INDEXED BY idx_movie_catalog_assessments_eligible_target
   ON a.kind='person' AND a.target_id=e.target_id
-JOIN people AS p ON p.person_id=a.target_id
 ORDER BY p.name, p.person_id
 LIMIT ?`, limit)
 	if err != nil {
@@ -659,14 +682,26 @@ func EligiblePersonByID(ctx context.Context, movieDB *sql.DB, movieCatalogPerson
 	if err := requireMovieSelectionSchema(ctx, movieDB); err != nil {
 		return EligiblePerson{}, false, err
 	}
+	directMovieCondition := ""
+	if movieCatalogTableExists(ctx, movieDB, "movie_people") {
+		directMovieCondition = `
+  OR EXISTS (
+    SELECT 1 FROM movie_people mp
+    JOIN movie_catalog_assessments ma INDEXED BY idx_movie_catalog_assessments_eligible_target
+      ON ma.kind='movie' AND ma.target_id=mp.movie_id
+    WHERE mp.person_id=p.person_id AND (ma.familiarity='seen' OR ma.sentiment='like')
+  )`
+	}
 	var person EligiblePerson
 	err := movieDB.QueryRowContext(ctx, `
-SELECT p.person_id, p.name, p.url, a.familiarity, a.sentiment
-FROM movie_catalog_assessments AS a INDEXED BY idx_movie_catalog_assessments_eligible_target
-JOIN people AS p ON p.person_id = a.target_id
-WHERE a.kind = 'person'
-  AND a.target_id = ?
-  AND (a.familiarity = 'known' OR a.sentiment = 'like')
+SELECT p.person_id,p.name,p.url,COALESCE(pa.familiarity,''),COALESCE(pa.sentiment,'')
+FROM people p
+LEFT JOIN movie_catalog_assessments pa INDEXED BY idx_movie_catalog_assessments_eligible_target
+  ON pa.kind='person' AND pa.target_id=p.person_id
+WHERE p.person_id=? AND (
+  COALESCE(pa.familiarity,'')='known' OR COALESCE(pa.sentiment,'')='like'
+  `+directMovieCondition+`
+)
 LIMIT 1`, movieCatalogPersonID).Scan(
 		&person.MovieCatalogPersonID, &person.Name, &person.URL,
 		&person.Familiarity, &person.Sentiment,
@@ -678,6 +713,11 @@ LIMIT 1`, movieCatalogPersonID).Scan(
 		return EligiblePerson{}, false, fmt.Errorf("select eligible person by id: %w", err)
 	}
 	return person, true, nil
+}
+
+func movieCatalogTableExists(ctx context.Context, db *sql.DB, name string) bool {
+	var count int
+	return db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&count) == nil && count == 1
 }
 
 // Import validates and imports one immutable category artifact in one hobby

@@ -43,6 +43,42 @@ func TestEligiblePeopleUsesOnlyExplicitPositiveAssessment(t *testing.T) {
 	}
 }
 
+func TestEligiblePeopleIncludesOneHopPeopleFromPositiveMovie(t *testing.T) {
+	ctx := context.Background()
+	movieDB := openTestDB(t)
+	hobbyDB := openTestDB(t)
+	setupAssessmentFixture(t, movieDB)
+	_, err := movieDB.Exec(`
+CREATE TABLE movie_people(movie_id TEXT NOT NULL,person_id TEXT NOT NULL,role TEXT,source TEXT,PRIMARY KEY(movie_id,person_id,role,source));
+CREATE TABLE movies(movie_id TEXT PRIMARY KEY,title TEXT,url TEXT);
+INSERT INTO movies VALUES('m-seen','Seen Movie','https://example.test/m-seen');
+INSERT INTO movie_people VALUES('m-seen','p-unknown','actor','test');
+INSERT INTO movie_catalog_assessments(kind,target_id,target_label,familiarity,sentiment,updated_by)
+VALUES('movie','m-seen','Seen Movie','seen','','test');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureSchema(ctx, movieDB, hobbyDB); err != nil {
+		t.Fatal(err)
+	}
+	people, err := EligiblePeople(ctx, movieDB, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, person := range people {
+		if person.MovieCatalogPersonID == "p-unknown" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("direct person from seen movie missing: %#v", people)
+	}
+	if person, ok, err := EligiblePersonByID(ctx, movieDB, "p-unknown"); err != nil || !ok || person.MovieCatalogPersonID != "p-unknown" {
+		t.Fatalf("D1 person lookup=%#v ok=%t err=%v", person, ok, err)
+	}
+}
+
 func TestImportAndLookupIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	movieDB := openTestDB(t)

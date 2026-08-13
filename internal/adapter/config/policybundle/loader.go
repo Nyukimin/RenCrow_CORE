@@ -170,6 +170,9 @@ func load(root string) (loadResult, error) {
 	if err := registerID("data-handling.yaml", dataHandling.PolicyID); err != nil {
 		return loadResult{}, err
 	}
+	if rule := dataHandling.Recall; !rule.AllDatabasesAreRecallSources || !rule.RouteRequired || !rule.MissingRouteIsIncomplete || !rule.RawAccessForbidden || !rule.CatalogWideScanForbidden {
+		return loadResult{}, fmt.Errorf("data-handling.yaml database_recall must require all database recall routes and forbid raw access and catalog-wide scans")
+	}
 
 	var external domainpolicy.ExternalActionPolicy
 	if err := decodePolicy(contents, "external-actions.yaml", &external); err != nil {

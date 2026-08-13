@@ -27,17 +27,18 @@ import (
 )
 
 type toolRuntime struct {
-	ChatRunnerV2                *tools.ToolRunner
-	WorkerRunnerV2              *tools.ToolRunner
-	ChatRuntimeRunnerV2         domaintool.RunnerV2
-	WorkerRuntimeRunnerV2       domaintool.RunnerV2
-	PersonRelatedCatalogLookup  *runtimePersonRelatedCatalogLookup
-	PersonRelatedSummaryWorker  *runtimePersonRelatedSummaryWorker
-	PersonRelatedIdentityWorker *runtimePersonRelatedIdentityWorker
-	SubagentMgr                 *subagent.Manager
-	ToolMediationRecorder       *toolharnesspersistence.JSONLRecorder
-	DataCapabilityCatalog       *runtimeDataCapabilityCatalog
-	KnowledgeMemoryToolStore    interface{ Close() error }
+	ChatRunnerV2                  *tools.ToolRunner
+	WorkerRunnerV2                *tools.ToolRunner
+	ChatRuntimeRunnerV2           domaintool.RunnerV2
+	WorkerRuntimeRunnerV2         domaintool.RunnerV2
+	PersonRelatedCatalogLookup    *runtimePersonRelatedCatalogLookup
+	PersonRelatedCollectionWorker *runtimePersonRelatedCollectionWorker
+	PersonRelatedSummaryWorker    *runtimePersonRelatedSummaryWorker
+	PersonRelatedIdentityWorker   *runtimePersonRelatedIdentityWorker
+	SubagentMgr                   *subagent.Manager
+	ToolMediationRecorder         *toolharnesspersistence.JSONLRecorder
+	DataCapabilityCatalog         *runtimeDataCapabilityCatalog
+	KnowledgeMemoryToolStore      interface{ Close() error }
 }
 
 func buildToolRuntime(
@@ -111,6 +112,7 @@ func buildToolRuntimeWithCapabilities(
 		log.Printf("Person related catalog lookup Tool ready (indexed read-only execution)")
 	}
 	var personRelatedCatalogCollector *runtimePersonRelatedCatalogCollector
+	var personRelatedCollectionWorker *runtimePersonRelatedCollectionWorker
 	var personRelatedSummaryWorker *runtimePersonRelatedSummaryWorker
 	var personRelatedIdentityWorker *runtimePersonRelatedIdentityWorker
 	if personRelatedCatalogLookup != nil {
@@ -129,6 +131,12 @@ func buildToolRuntimeWithCapabilities(
 				log.Printf("Person related catalog collect Tool unavailable: %v", personRelatedCollectErr)
 			} else {
 				log.Printf("Person related catalog collect Tool ready (Worker-only provider collection)")
+				personRelatedCollectionWorker, personRelatedCollectErr = prepareRuntimePersonRelatedCollectionWorker(personRelatedCatalogCollector, time.Now)
+				if personRelatedCollectErr != nil {
+					log.Printf("Person related D1 collection worker unavailable: %v", personRelatedCollectErr)
+				} else {
+					log.Printf("Person related D1 collection worker ready (positive movie/person one-hop sweep)")
+				}
 			}
 		} else {
 			log.Printf("Person related catalog collect Tool unavailable: provider URL is not configured")
@@ -386,17 +394,18 @@ func buildToolRuntimeWithCapabilities(
 	}
 
 	return toolRuntime{
-		ChatRunnerV2:                chatToolRunnerV2,
-		WorkerRunnerV2:              workerToolRunnerV2,
-		ChatRuntimeRunnerV2:         chatRunnerV2,
-		WorkerRuntimeRunnerV2:       workerRunnerV2,
-		PersonRelatedCatalogLookup:  personRelatedCatalogLookup,
-		PersonRelatedSummaryWorker:  personRelatedSummaryWorker,
-		PersonRelatedIdentityWorker: personRelatedIdentityWorker,
-		SubagentMgr:                 subagentMgr,
-		ToolMediationRecorder:       toolMediationRecorder,
-		DataCapabilityCatalog:       dataCapabilityCatalog,
-		KnowledgeMemoryToolStore:    knowledgeMemoryToolStore,
+		ChatRunnerV2:                  chatToolRunnerV2,
+		WorkerRunnerV2:                workerToolRunnerV2,
+		ChatRuntimeRunnerV2:           chatRunnerV2,
+		WorkerRuntimeRunnerV2:         workerRunnerV2,
+		PersonRelatedCatalogLookup:    personRelatedCatalogLookup,
+		PersonRelatedCollectionWorker: personRelatedCollectionWorker,
+		PersonRelatedSummaryWorker:    personRelatedSummaryWorker,
+		PersonRelatedIdentityWorker:   personRelatedIdentityWorker,
+		SubagentMgr:                   subagentMgr,
+		ToolMediationRecorder:         toolMediationRecorder,
+		DataCapabilityCatalog:         dataCapabilityCatalog,
+		KnowledgeMemoryToolStore:      knowledgeMemoryToolStore,
 	}
 }
 

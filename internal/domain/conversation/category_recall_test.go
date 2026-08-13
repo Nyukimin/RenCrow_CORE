@@ -50,6 +50,20 @@ func TestCategoryRecallRegistry_SelectsOnlyRelevantSources(t *testing.T) {
 	}
 }
 
+func TestCategoryRecallRegistry_SelectsExternalMediaCategories(t *testing.T) {
+	source := &categoryRecallTestSource{id: "hobby", categories: []string{"music", "anime", "novel", "manga", "award"}}
+	registry := NewCategoryRecallRegistry(source)
+	for _, message := range []string{"音楽の話", "アニメ作品", "小説について", "漫画を教えて", "受賞歴"} {
+		source.queries = nil
+		if _, err := registry.Recall(context.Background(), CategoryRecallQuery{Message: message, Limit: 2}); err != nil {
+			t.Fatal(err)
+		}
+		if len(source.queries) == 0 {
+			t.Fatalf("external category was not selected for %q", message)
+		}
+	}
+}
+
 func TestCategoryRecallRegistry_UsesActiveDomainAndStartupEntityHints(t *testing.T) {
 	movie := &categoryRecallTestSource{id: "movie", categories: []string{"movie"}}
 	hobby := &categoryRecallTestSource{id: "hobby", categories: []string{"hobby"}}

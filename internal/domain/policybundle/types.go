@@ -82,7 +82,18 @@ type Authorization struct {
 type DataHandlingPolicy struct {
 	SchemaVersion int                `yaml:"schema_version"`
 	PolicyID      string             `yaml:"policy_id"`
+	Recall        DatabaseRecallRule `yaml:"database_recall"`
 	Rules         []DataHandlingRule `yaml:"rules"`
+}
+
+// DatabaseRecallRule makes every durable database a required, purpose-scoped
+// recall source without permitting raw access or catalog-wide scans.
+type DatabaseRecallRule struct {
+	AllDatabasesAreRecallSources bool `yaml:"all_databases_are_recall_sources"`
+	RouteRequired                bool `yaml:"route_required"`
+	MissingRouteIsIncomplete     bool `yaml:"missing_route_is_incomplete"`
+	RawAccessForbidden           bool `yaml:"raw_access_forbidden"`
+	CatalogWideScanForbidden     bool `yaml:"catalog_wide_scan_forbidden"`
 }
 
 type DataHandlingRule struct {

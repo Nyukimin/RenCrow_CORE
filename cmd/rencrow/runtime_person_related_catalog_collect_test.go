@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	personrelatedcatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/personrelatedcatalog"
@@ -109,6 +110,59 @@ func TestRuntimePersonRelatedCatalogCollectResolvesEligiblePersonPostsAndImports
 	}
 	if count != 1 {
 		t.Fatalf("expected imported relation count=1, got %d", count)
+	}
+}
+
+func TestRuntimePersonRelatedCollectionWorkerSweepsSeenMovieD1Person(t *testing.T) {
+	moviePath := seedRuntimeEligibleMovieCatalog(t)
+	movieDB, err := sql.Open("sqlite", moviePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = movieDB.Exec(`DELETE FROM movie_catalog_assessments;
+INSERT INTO movie_catalog_assessments(kind,target_id,target_label,familiarity,sentiment,updated_by)
+VALUES('movie','m1','Heat','seen','','test');`)
+	_ = movieDB.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hobbyPath := seedRuntimeHobbyGraph(t)
+	artifact := validRuntimePersonRelatedCollectionArtifact()
+	sum := sha256.Sum256(artifact)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/person-related-catalog/collections":
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifact_url": "/artifact.jsonl", "artifact_sha256": hex.EncodeToString(sum[:]), "artifact_bytes": int64(len(artifact))})
+		case "/artifact.jsonl":
+			_, _ = w.Write(artifact)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	if _, err := prepareRuntimePersonRelatedCatalogLookup(context.Background(), moviePath, hobbyPath); err != nil {
+		t.Fatal(err)
+	}
+	collector, err := prepareRuntimePersonRelatedCatalogCollector(context.Background(), moviePath, hobbyPath, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := prepareRuntimePersonRelatedCollectionWorker(collector, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := worker.RunOnce(context.Background())
+	if err != nil || !result.Advanced || result.PersonID != "p1" || result.Category != personrelatedcatalogapp.CategoryDrama {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	db, err := sql.Open("sqlite", hobbyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	state, err := personrelatedcatalogapp.LoadCollectionSweepState(context.Background(), db)
+	if err != nil || state.CursorPersonID != "p1" || state.CategoryIndex != 1 {
+		t.Fatalf("state=%#v err=%v", state, err)
 	}
 }
 

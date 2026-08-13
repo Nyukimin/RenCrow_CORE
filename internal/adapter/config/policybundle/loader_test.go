@@ -73,6 +73,18 @@ func TestLoadWorkspaceRejectsDefaultAllow(t *testing.T) {
 	}
 }
 
+func TestLoadWorkspaceRejectsMissingDatabaseRecallInvariant(t *testing.T) {
+	workspace := t.TempDir()
+	writeValidBundle(t, workspace, map[string]string{
+		"data-handling.yaml": "schema_version: 1\npolicy_id: data-handling\nrules: []\n",
+	})
+
+	status := LoadWorkspace(workspace)
+	if status.State != domainpolicy.StateInvalid || !strings.Contains(status.Error, "database_recall") {
+		t.Fatalf("unexpected status: %+v", status)
+	}
+}
+
 func TestLoadWorkspaceRejectsSymlink(t *testing.T) {
 	workspace := t.TempDir()
 	root := writeValidBundle(t, workspace, nil)
@@ -115,7 +127,7 @@ func writeValidBundle(t *testing.T, workspace string, overrides map[string]strin
 		"global.yaml":                 "schema_version: 1\npolicy_id: global-defaults\ndefault_side_effect: blocked\n",
 		"capabilities.yaml":           "schema_version: 1\npolicy_id: capability-ceiling\ncapabilities:\n  filesystem_read: true\n  financial_order: false\n  git_remote_write: false\n",
 		"authorizations.yaml":         "schema_version: 1\npolicy_id: explicit-authorizations\nauthorizations: []\n",
-		"data-handling.yaml":          "schema_version: 1\npolicy_id: data-handling\nrules: []\n",
+		"data-handling.yaml":          "schema_version: 1\npolicy_id: data-handling\ndatabase_recall:\n  all_databases_are_recall_sources: true\n  route_required: true\n  missing_route_is_incomplete: true\n  raw_access_forbidden: true\n  catalog_wide_scan_forbidden: true\nrules: []\n",
 		"external-actions.yaml":       "schema_version: 1\npolicy_id: external-actions\nactions:\n  financial_order: blocked\n  git_remote_write: explicit_authorization\n",
 		"deployment/production.yaml":  "schema_version: 1\npolicy_id: production\nprofile: production\ndisabled_capabilities:\n  - financial_order\n  - git_remote_write\n",
 		"deployment/development.yaml": "schema_version: 1\npolicy_id: development\nprofile: development\ndisabled_capabilities:\n  - financial_order\n",

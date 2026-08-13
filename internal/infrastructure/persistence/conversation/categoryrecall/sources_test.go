@@ -172,6 +172,27 @@ func TestMovieCatalogSourceFiltersBeforeHardLimit(t *testing.T) {
 	}
 }
 
+func TestHobbyGraphSourceRecallsValidatedPersonRelatedContent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hobby-related.sqlite")
+	db := openTestDB(t, dbPath)
+	mustExec(t, db, `CREATE TABLE hobby_items(item_id TEXT PRIMARY KEY, category TEXT, item_type TEXT, title TEXT, normalized_title TEXT, canonical_source TEXT, canonical_url TEXT, metadata_json TEXT, updated_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE hobby_related_items(item_id TEXT,category TEXT,item_type TEXT,display_name TEXT,name_original TEXT,name_ja TEXT,name_state TEXT,name_ja_source_url TEXT,source_record_id TEXT,canonical_url TEXT,source TEXT,description_original TEXT,description_language TEXT,description_ja TEXT,description_translation_state TEXT,created_at TEXT,updated_at TEXT,PRIMARY KEY(category,item_id))`)
+	mustExec(t, db, `CREATE TABLE hobby_person_relations(relation_id TEXT PRIMARY KEY,person_ref_id TEXT,category TEXT,target_item_id TEXT,relation_type TEXT,source TEXT,evidence_url TEXT,validation_state TEXT,created_at TEXT)`)
+	mustExec(t, db, `CREATE TABLE hobby_item_summaries(category TEXT,item_id TEXT,source TEXT,description_original TEXT,description_language TEXT,description_ja TEXT,source_status TEXT,translation_status TEXT,content_sha256 TEXT,retrieved_at TEXT,validated_at TEXT,expires_at TEXT,updated_at TEXT,PRIMARY KEY(category,item_id))`)
+	mustExec(t, db, `INSERT INTO hobby_related_items VALUES('song-1','music','song','関連楽曲','Related Song','関連楽曲','source_ja','','musicbrainz:1','https://example.test/song-1','musicbrainz','','','','',CURRENT_TIMESTAMP,'2026-08-13 00:00:00')`)
+	mustExec(t, db, `INSERT INTO hobby_person_relations VALUES('rel-1','person-1','music','song-1','performed','musicbrainz','https://example.test/rel-1','validated',CURRENT_TIMESTAMP)`)
+	mustExec(t, db, `INSERT INTO hobby_item_summaries VALUES('music','song-1','musicbrainz','','','公開された楽曲概要','ready','ready','sha','2026-08-13T00:00:00Z','2026-08-13T00:00:00Z','2026-09-13T00:00:00Z','2026-08-13 00:00:00')`)
+	_ = db.Close()
+
+	result, err := NewHobbyGraphSource(dbPath).Search(context.Background(), conversation.CategoryRecallQuery{Category: "music", Message: "関連楽曲", Limit: 3})
+	if err != nil || len(result.Records) != 1 {
+		t.Fatalf("related recall result=%#v err=%v", result, err)
+	}
+	if result.Records[0].Title != "関連楽曲" || result.Records[0].Summary != "公開された楽曲概要" || result.Records[0].State != conversation.CategoryRecordStateValidated {
+		t.Fatalf("unexpected related record: %#v", result.Records[0])
+	}
+}
+
 func TestHobbyGraphSourceDoesNotInjectPersonalTables(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hobby.sqlite")
 	db := openTestDB(t, dbPath)

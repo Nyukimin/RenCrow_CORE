@@ -394,6 +394,11 @@ func defaultCategoryRecallMarkers() map[string][]string {
 	return map[string][]string{
 		"movie":      {"映画", "movie", "film"},
 		"drama":      {"ドラマ", "drama"},
+		"music":      {"音楽", "楽曲", "歌手", "アルバム", "music", "song", "artist"},
+		"anime":      {"アニメ", "anime"},
+		"novel":      {"小説", "novel"},
+		"manga":      {"漫画", "マンガ", "manga"},
+		"award":      {"受賞", "賞", "award"},
 		"person":     {"俳優", "女優", "人物", "監督", "actor", "director"},
 		"hobby":      {"趣味", "ホビー", "hobby"},
 		"book":       {"本を", "本の", "書籍", "読書", "小説", "book"},

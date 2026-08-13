@@ -288,6 +288,7 @@ type Dependencies struct {
 	memoryPromotionCancel          context.CancelFunc                          // async ProfilePromotion worker
 	personRelatedSummaryCancel     context.CancelFunc                          // fixed-ID related-work summary worker
 	personRelatedIdentityCancel    context.CancelFunc                          // fixed-authority person identity worker
+	personRelatedCollectionCancel  context.CancelFunc                          // positive movie/person D1 category collector
 	toolRegistry                   capdomain.ToolRegistry                      // Phase 4: Shiro ツール共有用 ToolRegistry
 	workerToolRunner               domaintool.RunnerV2                         // production Worker tool execution/listing boundary
 	personRelatedCatalogLookup     viewer.PersonRelatedCatalogProvider         // read-only Viewer projection over the startup lookup instance
@@ -323,6 +324,9 @@ func (d *Dependencies) Shutdown() {
 	}
 	if d.personRelatedIdentityCancel != nil {
 		d.personRelatedIdentityCancel()
+	}
+	if d.personRelatedCollectionCancel != nil {
+		d.personRelatedCollectionCancel()
 	}
 	if d.advisorScoreCancel != nil {
 		d.advisorScoreCancel()
@@ -556,6 +560,12 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if toolRuntime.PersonRelatedIdentityWorker != nil {
 		deps.personRelatedIdentityCancel = startRuntimePersonRelatedIdentityWorker(
 			toolRuntime.PersonRelatedIdentityWorker,
+			newBackgroundJobFailureReporter(deps.eventRelay),
+		)
+	}
+	if toolRuntime.PersonRelatedCollectionWorker != nil {
+		deps.personRelatedCollectionCancel = startRuntimePersonRelatedCollectionWorker(
+			toolRuntime.PersonRelatedCollectionWorker,
 			newBackgroundJobFailureReporter(deps.eventRelay),
 		)
 	}
