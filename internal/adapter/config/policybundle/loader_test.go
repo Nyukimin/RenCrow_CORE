@@ -85,6 +85,70 @@ func TestLoadWorkspaceRejectsMissingDatabaseRecallInvariant(t *testing.T) {
 	}
 }
 
+func TestLoadWorkspaceRejectsMissingDatabaseRecallProductionRequirements(t *testing.T) {
+	tests := []struct {
+		name       string
+		read       string
+		write      string
+		production string
+		expected   string
+	}{
+		{
+			name:       "owner read route omitted",
+			write:      "true",
+			production: "true",
+			expected:   "owner_read_route_required (read routes)",
+		},
+		{
+			name:       "owner write route omitted",
+			read:       "true",
+			production: "true",
+			expected:   "owner_write_route_required (write routes)",
+		},
+		{
+			name:     "agent owned production e2e omitted",
+			read:     "true",
+			write:    "true",
+			expected: "agent_owned_production_e2e_required (Agent-owned production E2E)",
+		},
+		{
+			name:       "owner read route false",
+			read:       "false",
+			write:      "true",
+			production: "true",
+			expected:   "owner_read_route_required (read routes)",
+		},
+		{
+			name:       "owner write route false",
+			read:       "true",
+			write:      "false",
+			production: "true",
+			expected:   "owner_write_route_required (write routes)",
+		},
+		{
+			name:       "agent owned production e2e false",
+			read:       "true",
+			write:      "true",
+			production: "false",
+			expected:   "agent_owned_production_e2e_required (Agent-owned production E2E)",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			writeValidBundle(t, workspace, map[string]string{
+				"data-handling.yaml": databaseRecallPolicyYAML(test.read, test.write, test.production),
+			})
+
+			status := LoadWorkspace(workspace)
+			if status.State != domainpolicy.StateInvalid || !strings.Contains(status.Error, test.expected) {
+				t.Fatalf("expected database recall requirement %q to be rejected: %+v", test.expected, status)
+			}
+		})
+	}
+}
+
 func TestLoadWorkspaceRejectsSymlink(t *testing.T) {
 	workspace := t.TempDir()
 	root := writeValidBundle(t, workspace, nil)
@@ -127,7 +191,7 @@ func writeValidBundle(t *testing.T, workspace string, overrides map[string]strin
 		"global.yaml":                 "schema_version: 1\npolicy_id: global-defaults\ndefault_side_effect: blocked\n",
 		"capabilities.yaml":           "schema_version: 1\npolicy_id: capability-ceiling\ncapabilities:\n  filesystem_read: true\n  financial_order: false\n  git_remote_write: false\n",
 		"authorizations.yaml":         "schema_version: 1\npolicy_id: explicit-authorizations\nauthorizations: []\n",
-		"data-handling.yaml":          "schema_version: 1\npolicy_id: data-handling\ndatabase_recall:\n  all_databases_are_recall_sources: true\n  route_required: true\n  missing_route_is_incomplete: true\n  raw_access_forbidden: true\n  catalog_wide_scan_forbidden: true\nrules: []\n",
+		"data-handling.yaml":          "schema_version: 1\npolicy_id: data-handling\ndatabase_recall:\n  all_databases_are_recall_sources: true\n  route_required: true\n  missing_route_is_incomplete: true\n  raw_access_forbidden: true\n  catalog_wide_scan_forbidden: true\n  owner_read_route_required: true\n  owner_write_route_required: true\n  agent_owned_production_e2e_required: true\nrules: []\n",
 		"external-actions.yaml":       "schema_version: 1\npolicy_id: external-actions\nactions:\n  financial_order: blocked\n  git_remote_write: explicit_authorization\n",
 		"deployment/production.yaml":  "schema_version: 1\npolicy_id: production\nprofile: production\ndisabled_capabilities:\n  - financial_order\n  - git_remote_write\n",
 		"deployment/development.yaml": "schema_version: 1\npolicy_id: development\nprofile: development\ndisabled_capabilities:\n  - financial_order\n",
@@ -167,4 +231,18 @@ func writeValidBundle(t *testing.T, workspace string, overrides map[string]strin
 		t.Fatal(err)
 	}
 	return root
+}
+
+func databaseRecallPolicyYAML(ownerRead, ownerWrite, productionE2E string) string {
+	content := "schema_version: 1\npolicy_id: data-handling\ndatabase_recall:\n  all_databases_are_recall_sources: true\n  route_required: true\n  missing_route_is_incomplete: true\n  raw_access_forbidden: true\n  catalog_wide_scan_forbidden: true\n"
+	if ownerRead != "" {
+		content += "  owner_read_route_required: " + ownerRead + "\n"
+	}
+	if ownerWrite != "" {
+		content += "  owner_write_route_required: " + ownerWrite + "\n"
+	}
+	if productionE2E != "" {
+		content += "  agent_owned_production_e2e_required: " + productionE2E + "\n"
+	}
+	return content + "rules: []\n"
 }

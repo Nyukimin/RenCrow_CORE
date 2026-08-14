@@ -86,14 +86,17 @@ type DataHandlingPolicy struct {
 	Rules         []DataHandlingRule `yaml:"rules"`
 }
 
-// DatabaseRecallRule makes every durable database a required, purpose-scoped
-// recall source without permitting raw access or catalog-wide scans.
+// DatabaseRecallRule requires every durable database to provide owner-scoped read
+// and validated write routes plus Agent-owned production E2E, while forbidding raw access and catalog-wide scans.
 type DatabaseRecallRule struct {
-	AllDatabasesAreRecallSources bool `yaml:"all_databases_are_recall_sources"`
-	RouteRequired                bool `yaml:"route_required"`
-	MissingRouteIsIncomplete     bool `yaml:"missing_route_is_incomplete"`
-	RawAccessForbidden           bool `yaml:"raw_access_forbidden"`
-	CatalogWideScanForbidden     bool `yaml:"catalog_wide_scan_forbidden"`
+	AllDatabasesAreRecallSources    bool `yaml:"all_databases_are_recall_sources"`
+	RouteRequired                   bool `yaml:"route_required"`
+	MissingRouteIsIncomplete        bool `yaml:"missing_route_is_incomplete"`
+	RawAccessForbidden              bool `yaml:"raw_access_forbidden"`
+	CatalogWideScanForbidden        bool `yaml:"catalog_wide_scan_forbidden"`
+	OwnerReadRouteRequired          bool `yaml:"owner_read_route_required"`
+	OwnerWriteRouteRequired         bool `yaml:"owner_write_route_required"`
+	AgentOwnedProductionE2ERequired bool `yaml:"agent_owned_production_e2e_required"`
 }
 
 type DataHandlingRule struct {

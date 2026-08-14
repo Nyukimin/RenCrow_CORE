@@ -170,8 +170,33 @@ func load(root string) (loadResult, error) {
 	if err := registerID("data-handling.yaml", dataHandling.PolicyID); err != nil {
 		return loadResult{}, err
 	}
-	if rule := dataHandling.Recall; !rule.AllDatabasesAreRecallSources || !rule.RouteRequired || !rule.MissingRouteIsIncomplete || !rule.RawAccessForbidden || !rule.CatalogWideScanForbidden {
-		return loadResult{}, fmt.Errorf("data-handling.yaml database_recall must require all database recall routes and forbid raw access and catalog-wide scans")
+	if rule := dataHandling.Recall; !rule.AllDatabasesAreRecallSources || !rule.RouteRequired || !rule.MissingRouteIsIncomplete || !rule.RawAccessForbidden || !rule.CatalogWideScanForbidden || !rule.OwnerReadRouteRequired || !rule.OwnerWriteRouteRequired || !rule.AgentOwnedProductionE2ERequired {
+		missing := make([]string, 0, 8)
+		if !rule.AllDatabasesAreRecallSources {
+			missing = append(missing, "all_databases_are_recall_sources")
+		}
+		if !rule.RouteRequired {
+			missing = append(missing, "route_required")
+		}
+		if !rule.MissingRouteIsIncomplete {
+			missing = append(missing, "missing_route_is_incomplete")
+		}
+		if !rule.RawAccessForbidden {
+			missing = append(missing, "raw_access_forbidden")
+		}
+		if !rule.CatalogWideScanForbidden {
+			missing = append(missing, "catalog_wide_scan_forbidden")
+		}
+		if !rule.OwnerReadRouteRequired {
+			missing = append(missing, "owner_read_route_required (read routes)")
+		}
+		if !rule.OwnerWriteRouteRequired {
+			missing = append(missing, "owner_write_route_required (write routes)")
+		}
+		if !rule.AgentOwnedProductionE2ERequired {
+			missing = append(missing, "agent_owned_production_e2e_required (Agent-owned production E2E)")
+		}
+		return loadResult{}, fmt.Errorf("data-handling.yaml database_recall missing or false required invariants: %s", strings.Join(missing, ", "))
 	}
 
 	var external domainpolicy.ExternalActionPolicy
