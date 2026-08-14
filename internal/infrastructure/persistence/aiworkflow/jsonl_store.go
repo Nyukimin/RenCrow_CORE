@@ -50,6 +50,30 @@ func (s *JSONLStore) ListWorkflowEvents(_ context.Context, limit int) ([]domaina
 	return jsonlutil.ListLatest[domainai.WorkflowEvent](s.eventPath, limit)
 }
 
+// FindWorkflowEventByID returns the latest valid record with exactly the requested event ID.
+func (s *JSONLStore) FindWorkflowEventByID(_ context.Context, eventID string) (domainai.WorkflowEvent, bool, error) {
+	var found domainai.WorkflowEvent
+	foundRecord := false
+	err := readJSONL(s.eventPath, func(line []byte) error {
+		var item domainai.WorkflowEvent
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if err := domainai.ValidateWorkflowEvent(item); err != nil {
+			return err
+		}
+		if item.EventID == eventID {
+			found = item
+			foundRecord = true
+		}
+		return nil
+	})
+	if err != nil {
+		return domainai.WorkflowEvent{}, false, err
+	}
+	return found, foundRecord, err
+}
+
 func (s *JSONLStore) SaveProjectMemoryIndex(_ context.Context, item domainai.ProjectMemoryIndex) error {
 	if err := domainai.ValidateProjectMemoryIndex(item); err != nil {
 		return err

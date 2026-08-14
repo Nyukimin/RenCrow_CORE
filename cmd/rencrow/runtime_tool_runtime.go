@@ -31,6 +31,8 @@ type toolRuntime struct {
 	WorkerRunnerV2                *tools.ToolRunner
 	ChatRuntimeRunnerV2           domaintool.RunnerV2
 	WorkerRuntimeRunnerV2         domaintool.RunnerV2
+	MovieCatalogLookup            *runtimeMovieCatalogLookup
+	MusicCatalogLookup            *runtimeMusicCatalogLookup
 	PersonRelatedCatalogLookup    *runtimePersonRelatedCatalogLookup
 	PersonRelatedCollectionWorker *runtimePersonRelatedCollectionWorker
 	PersonRelatedSummaryWorker    *runtimePersonRelatedSummaryWorker
@@ -232,6 +234,7 @@ func buildToolRuntimeWithCapabilities(
 		}
 	}
 	dataCapabilityCatalog := buildRuntimeDataCapabilityCatalogWithKnowledgeState(cfg, glossaryLookup != nil, movieCatalogLookup != nil, []bool{personRelatedCatalogLookup != nil}, knowledgeMemoryState)
+	dataCapabilityCatalog.BindRouteRegistries(dataRecallRegistry, dataWriteRegistry)
 	chatToolRunnerCfg := tools.ToolRunnerConfig{
 		GoogleAPIKey:               googleSearchValue(cfg.GoogleSearchChat.APIKey, "GOOGLE_API_KEY_CHAT"),
 		GoogleSearchEngineID:       googleSearchValue(cfg.GoogleSearchChat.SearchEngineID, "GOOGLE_SEARCH_ENGINE_ID_CHAT"),
@@ -404,6 +407,8 @@ func buildToolRuntimeWithCapabilities(
 		WorkerRunnerV2:                workerToolRunnerV2,
 		ChatRuntimeRunnerV2:           chatRunnerV2,
 		WorkerRuntimeRunnerV2:         workerRunnerV2,
+		MovieCatalogLookup:            movieCatalogLookup,
+		MusicCatalogLookup:            musicCatalogLookup,
 		PersonRelatedCatalogLookup:    personRelatedCatalogLookup,
 		PersonRelatedCollectionWorker: personRelatedCollectionWorker,
 		PersonRelatedSummaryWorker:    personRelatedSummaryWorker,

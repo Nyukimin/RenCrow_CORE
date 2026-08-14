@@ -74,7 +74,10 @@ func registerRuntimeDataWriteWorkstream(r *runtimeDataWriteRegistry, store runti
 		return fmt.Errorf("workstream data write unavailable")
 	}
 	writer := &runtimeWorkstreamGoalWriter{store: store}
-	return r.Register("workstream", "create_goal", dataRecallAccessUser, writer.write)
+	return r.RegisterWithContract("workstream", "create_goal", dataRecallAccessUser, runtimeDataWriteContract{
+		RequiredPayloadFields: []string{"workstream_id", "title", "success_criteria", "verification"},
+		OptionalPayloadFields: []string{"description"},
+	}, writer.write)
 }
 
 func registerRuntimeDataWriteRevenue(r *runtimeDataWriteRegistry, store runtimeRevenueOpportunityStore) error {
@@ -82,7 +85,10 @@ func registerRuntimeDataWriteRevenue(r *runtimeDataWriteRegistry, store runtimeR
 		return fmt.Errorf("revenue data write unavailable")
 	}
 	writer := &runtimeRevenueOpportunityWriter{store: store}
-	return r.Register("revenue", "draft_opportunity", dataRecallAccessInternal, writer.write)
+	return r.RegisterWithContract("revenue", "draft_opportunity", dataRecallAccessInternal, runtimeDataWriteContract{
+		RequiredPayloadFields: []string{"source_kind", "title"},
+		OptionalPayloadFields: []string{"summary", "target_customer", "expected_revenue", "expected_cost", "reuse_value", "automation_rate", "strategic_value", "risk_score"},
+	}, writer.write)
 }
 
 func (w *runtimeWorkstreamGoalWriter) write(ctx context.Context, request tools.DataWriteRequest) (runtimeDataWriteOwnerResult, error) {

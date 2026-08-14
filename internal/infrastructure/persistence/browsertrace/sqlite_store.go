@@ -111,6 +111,26 @@ func (s *SQLiteStore) ListAPICandidates(ctx context.Context, limit int) ([]domai
 	return listSQLiteItems[domaintrace.APICandidate](ctx, s, "api_candidate", limit)
 }
 
+// FindAPICandidateByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindAPICandidateByID(ctx context.Context, candidateID string) (domaintrace.APICandidate, bool, error) {
+	if s == nil || s.db == nil {
+		return domaintrace.APICandidate{}, false, fmt.Errorf("browser trace sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM api_candidate WHERE candidate_id = ?`, candidateID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domaintrace.APICandidate{}, false, nil
+		}
+		return domaintrace.APICandidate{}, false, err
+	}
+	var item domaintrace.APICandidate
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domaintrace.APICandidate{}, false, err
+	}
+	return item, true, nil
+}
+
 func (s *SQLiteStore) SaveAPICandidateSchema(ctx context.Context, item domaintrace.APICandidateSchema) error {
 	if err := domaintrace.ValidateAPICandidateSchema(item); err != nil {
 		return err
@@ -131,6 +151,26 @@ func (s *SQLiteStore) SaveAPICandidateValidationResult(ctx context.Context, item
 
 func (s *SQLiteStore) ListAPICandidateValidationResults(ctx context.Context, limit int) ([]domaintrace.APICandidateValidationResult, error) {
 	return listSQLiteItems[domaintrace.APICandidateValidationResult](ctx, s, "api_candidate_validation", limit)
+}
+
+// FindAPICandidateValidationResultByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindAPICandidateValidationResultByID(ctx context.Context, validationID string) (domaintrace.APICandidateValidationResult, bool, error) {
+	if s == nil || s.db == nil {
+		return domaintrace.APICandidateValidationResult{}, false, fmt.Errorf("browser trace sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM api_candidate_validation WHERE validation_id = ?`, validationID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domaintrace.APICandidateValidationResult{}, false, nil
+		}
+		return domaintrace.APICandidateValidationResult{}, false, err
+	}
+	var item domaintrace.APICandidateValidationResult
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domaintrace.APICandidateValidationResult{}, false, err
+	}
+	return item, true, nil
 }
 
 func (s *SQLiteStore) SaveAPICoverageReport(ctx context.Context, item domaintrace.APICoverageReport) error {

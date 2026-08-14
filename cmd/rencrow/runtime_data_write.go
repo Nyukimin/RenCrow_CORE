@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -57,7 +58,21 @@ type runtimeDataWriteKey struct {
 
 type runtimeDataWriteRegistration struct {
 	access   dataRecallAccess
+	contract runtimeDataWriteContract
 	callback dataWriteCallback
+}
+
+type runtimeDataWriteContract struct {
+	RequiredPayloadFields []string
+	OptionalPayloadFields []string
+}
+
+type runtimeDataWriteRoute struct {
+	Store                 string
+	Operation             string
+	Access                dataRecallAccess
+	RequiredPayloadFields []string
+	OptionalPayloadFields []string
 }
 
 // runtimeDataWriteRegistry is the Worker-owned exact store/operation dispatch
@@ -83,11 +98,19 @@ func newRuntimeDataWriteRegistry() *runtimeDataWriteRegistry {
 // Register adds one exact store/operation route. Names are normalized before
 // duplicate detection, while the callback remains outside the registry lock.
 func (r *runtimeDataWriteRegistry) Register(store, operation string, access dataRecallAccess, callback dataWriteCallback) error {
+	return r.RegisterWithContract(store, operation, access, runtimeDataWriteContract{}, callback)
+}
+
+// RegisterWithContract adds one executable route and its model-visible
+// payload field contract. The contract is the sole source for capability
+// projection; it contains no schema implementation or callback detail.
+func (r *runtimeDataWriteRegistry) RegisterWithContract(store, operation string, access dataRecallAccess, contract runtimeDataWriteContract, callback dataWriteCallback) error {
 	if r == nil || callback == nil {
 		return errDataWriteRegistryInvalidRegistration
 	}
 	key := runtimeDataWriteKey{store: strings.TrimSpace(store), operation: strings.TrimSpace(operation)}
-	if key.store == "" || key.operation == "" || !validDataRecallAccess(access) {
+	normalizedContract, ok := normalizeRuntimeDataWriteContract(contract)
+	if key.store == "" || key.operation == "" || !validDataRecallAccess(access) || !ok {
 		return errDataWriteRegistryInvalidRegistration
 	}
 	r.mu.Lock()
@@ -95,8 +118,61 @@ func (r *runtimeDataWriteRegistry) Register(store, operation string, access data
 	if _, exists := r.registrations[key]; exists {
 		return errDataWriteRegistryInvalidRegistration
 	}
-	r.registrations[key] = runtimeDataWriteRegistration{access: access, callback: callback}
+	r.registrations[key] = runtimeDataWriteRegistration{access: access, contract: normalizedContract, callback: callback}
 	return nil
+}
+
+func normalizeRuntimeDataWriteContract(contract runtimeDataWriteContract) (runtimeDataWriteContract, bool) {
+	seen := map[string]struct{}{}
+	normalize := func(fields []string) ([]string, bool) {
+		out := make([]string, 0, len(fields))
+		for _, field := range fields {
+			field = strings.TrimSpace(field)
+			if field == "" {
+				return nil, false
+			}
+			if _, exists := seen[field]; exists {
+				return nil, false
+			}
+			seen[field] = struct{}{}
+			out = append(out, field)
+		}
+		sort.Strings(out)
+		return out, true
+	}
+	required, ok := normalize(contract.RequiredPayloadFields)
+	if !ok {
+		return runtimeDataWriteContract{}, false
+	}
+	optional, ok := normalize(contract.OptionalPayloadFields)
+	if !ok {
+		return runtimeDataWriteContract{}, false
+	}
+	return runtimeDataWriteContract{RequiredPayloadFields: required, OptionalPayloadFields: optional}, true
+}
+
+// Snapshot returns a deterministic deep copy of executable write contracts.
+func (r *runtimeDataWriteRegistry) Snapshot() []runtimeDataWriteRoute {
+	if r == nil {
+		return []runtimeDataWriteRoute{}
+	}
+	r.mu.RLock()
+	routes := make([]runtimeDataWriteRoute, 0, len(r.registrations))
+	for key, registration := range r.registrations {
+		routes = append(routes, runtimeDataWriteRoute{
+			Store: key.store, Operation: key.operation, Access: registration.access,
+			RequiredPayloadFields: append([]string(nil), registration.contract.RequiredPayloadFields...),
+			OptionalPayloadFields: append([]string(nil), registration.contract.OptionalPayloadFields...),
+		})
+	}
+	r.mu.RUnlock()
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Store != routes[j].Store {
+			return routes[i].Store < routes[j].Store
+		}
+		return routes[i].Operation < routes[j].Operation
+	})
+	return routes
 }
 
 // Write validates the trusted scope, normalizes the model request, checks the

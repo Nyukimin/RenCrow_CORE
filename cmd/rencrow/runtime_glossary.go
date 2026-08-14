@@ -11,12 +11,15 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	glossary "github.com/Nyukimin/RenCrow_CORE/internal/glossary"
+	glossarypersistence "github.com/Nyukimin/RenCrow_CORE/internal/glossary/infrastructure/persistence"
 )
 
 type glossaryRuntime struct {
-	RecentContext func(context.Context, int) (string, error)
-	RecentTopics  func(context.Context, int) ([]string, error)
-	RecentHandler http.HandlerFunc
+	RecentContext  func(context.Context, int) (string, error)
+	RecentTopics   func(context.Context, int) ([]string, error)
+	RecentHandler  http.HandlerFunc
+	IndexedLookup  *runtimeGlossaryLookup
+	CandidateStore *glossarypersistence.SQLiteGlossaryRepository
 }
 
 func buildGlossaryRuntime(cfg *config.Config) glossaryRuntime {
@@ -33,6 +36,12 @@ func buildGlossaryRuntime(cfg *config.Config) glossaryRuntime {
 	if err != nil {
 		log.Printf("WARN: glossary disabled: %v", err)
 		return runtime
+	}
+	runtime.CandidateStore = glossaryModule.Repository
+	if indexedLookup, lookupErr := prepareRuntimeGlossaryLookup(context.Background(), dbPath); lookupErr != nil {
+		log.Printf("WARN: glossary indexed lookup unavailable: %v", lookupErr)
+	} else {
+		runtime.IndexedLookup = indexedLookup
 	}
 	syncGlossary := func() {
 		count, err := glossaryModule.SyncFeeds(context.Background(), cfg.Glossary.FeedURLs)

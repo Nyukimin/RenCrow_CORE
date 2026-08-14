@@ -132,3 +132,33 @@ func TestSQLiteStoreMissingRowsReturnEmptyLists(t *testing.T) {
 		t.Fatalf("transcripts=%#v err=%v", items, err)
 	}
 }
+
+func TestSQLiteStoreFindContributionGateByIDUsesExactPrimaryKey(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "skill_governance.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
+	item := domainskill.ContributionGateLog{
+		EventID: "event-exact", Repo: "example/repo", ProblemStatement: "problem", TestResult: "go test",
+		GateStatus: domainskill.GateStatusBlocked, CreatedAt: now,
+	}
+	if err := store.SaveContributionGateLog(ctx, item); err != nil {
+		t.Fatalf("SaveContributionGateLog failed: %v", err)
+	}
+	if err := store.SaveContributionGateLog(ctx, domainskill.ContributionGateLog{
+		EventID: "event-exact-suffix", Repo: "example/repo", ProblemStatement: "suffix", TestResult: "go test",
+		GateStatus: domainskill.GateStatusBlocked, CreatedAt: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("SaveContributionGateLog suffix failed: %v", err)
+	}
+	got, found, err := store.FindContributionGateByID(ctx, item.EventID)
+	if err != nil || !found || got.EventID != item.EventID || got.ProblemStatement != item.ProblemStatement {
+		t.Fatalf("FindContributionGateByID() = %#v, found=%v, err=%v", got, found, err)
+	}
+	if _, found, err := store.FindContributionGateByID(ctx, "missing"); err != nil || found {
+		t.Fatalf("missing FindContributionGateByID() found=%v err=%v", found, err)
+	}
+}

@@ -73,6 +73,27 @@ func TestRuntimeDataRecallRegistryDispatchesExactRegistrationAndNormalizesReques
 	}
 }
 
+func TestRuntimeDataRecallRegistrySnapshotIsSortedAndSafe(t *testing.T) {
+	registry := newRuntimeDataRecallRegistry()
+	callback := func(_ context.Context, request toolsinfra.DataRecallRequest) (runtimeDataRecallResult, error) {
+		return newRuntimeDataRecallResult(request.Store, request.Operation, []map[string]any{}), nil
+	}
+	if err := registry.Register("store_b", "read_b", dataRecallAccessInternal, callback); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register("store_a", "read_a", dataRecallAccessUser, callback); err != nil {
+		t.Fatal(err)
+	}
+	routes := registry.Snapshot()
+	if len(routes) != 2 || routes[0] != (runtimeDataRecallRoute{Store: "store_a", Operation: "read_a", Access: dataRecallAccessUser}) || routes[1] != (runtimeDataRecallRoute{Store: "store_b", Operation: "read_b", Access: dataRecallAccessInternal}) {
+		t.Fatalf("routes=%#v", routes)
+	}
+	routes[0].Store = "mutated"
+	if got := registry.Snapshot()[0].Store; got != "store_a" {
+		t.Fatalf("snapshot leaked mutable entry: %q", got)
+	}
+}
+
 func TestRuntimeDataRecallRegistryRejectsInvalidRegistration(t *testing.T) {
 	registry := newRuntimeDataRecallRegistry()
 	callback := func(context.Context, toolsinfra.DataRecallRequest) (runtimeDataRecallResult, error) {

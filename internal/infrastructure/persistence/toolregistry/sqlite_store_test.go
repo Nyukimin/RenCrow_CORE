@@ -2,6 +2,8 @@ package toolregistry
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -117,5 +119,91 @@ func TestListForPlatform(t *testing.T) {
 	}
 	if len(darwinTools) != 0 {
 		t.Errorf("expected 0 darwin tools, got %d", len(darwinTools))
+	}
+}
+
+func TestRegisterWithReceiptReplayConflictAndSemanticDedupe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tool-registry.db")
+	store, err := NewSQLiteToolRegistryStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteToolRegistryStore: %v", err)
+	}
+	ctx := context.Background()
+	entry := capability.ToolEntry{
+		Name: "existing_tool", Description: "same", SchemaJSON: `{"type":"object"}`,
+		Platforms: []string{"windows", "linux"}, Source: capability.ToolSource("/workspace/tools/existing_tool.sh"), CreatedBy: "mio",
+	}
+	first, err := store.RegisterWithReceipt(ctx, entry, "request-1", "mio", "hash-1")
+	if err != nil || first.RequestReplay || first.SemanticDedupe || first.Receipt.RequestID != "request-1" {
+		t.Fatalf("first registration = %+v err=%v", first, err)
+	}
+	replay, err := store.RegisterWithReceipt(ctx, entry, "request-1", "mio", "hash-1")
+	if err != nil || !replay.RequestReplay || replay.SemanticDedupe || !replay.Receipt.CreatedAt.Equal(first.Receipt.CreatedAt) {
+		t.Fatalf("replay = %+v err=%v first=%+v", replay, err, first)
+	}
+	if _, err := store.RegisterWithReceipt(ctx, entry, "request-1", "mio", "different-hash"); !errors.Is(err, ErrToolRegistryRequestConflict) {
+		t.Fatalf("payload conflict err=%v", err)
+	}
+	if _, err := store.RegisterWithReceipt(ctx, entry, "request-1", "other-agent", "hash-1"); !errors.Is(err, ErrToolRegistryRequestConflict) {
+		t.Fatalf("actor conflict err=%v", err)
+	}
+	semantic, err := store.RegisterWithReceipt(ctx, entry, "request-2", "shiro", "hash-2")
+	if err != nil || semantic.RequestReplay || !semantic.SemanticDedupe || semantic.Receipt.RequestID != "request-2" {
+		t.Fatalf("semantic dedupe = %+v err=%v", semantic, err)
+	}
+	changed := entry
+	changed.Description = "changed"
+	if _, err := store.RegisterWithReceipt(ctx, changed, "request-3", "mio", "hash-3"); !errors.Is(err, ErrToolRegistryEntryConflict) {
+		t.Fatalf("entry conflict err=%v", err)
+	}
+	if receipt, found, err := store.FindRequestReceipt(ctx, "request-3"); err != nil || found {
+		t.Fatalf("conflicting request receipt = %+v found=%v err=%v", receipt, found, err)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	reopened, err := NewSQLiteToolRegistryStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	reopenedReplay, err := reopened.RegisterWithReceipt(ctx, entry, "request-1", "mio", "hash-1")
+	if err != nil || !reopenedReplay.RequestReplay {
+		t.Fatalf("reopened replay = %+v err=%v", reopenedReplay, err)
+	}
+	got, found, err := reopened.FindRequestReceipt(ctx, "request-2")
+	if err != nil || !found || got.ActorID != "shiro" || got.ToolName != entry.Name || got.PayloadHash != "hash-2" {
+		t.Fatalf("semantic receipt = %+v found=%v err=%v", got, found, err)
+	}
+}
+
+func TestLegacyToolRegistryRowsRemainReadableAfterReceiptMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-tool-registry.db")
+	store, err := NewSQLiteToolRegistryStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteToolRegistryStore: %v", err)
+	}
+	legacy := capability.ToolEntry{
+		Name: "legacy_tool", Description: "legacy", SchemaJSON: `{}`, Platforms: []string{"linux"},
+		Source: capability.ToolSourceBuiltin, CreatedBy: "builtin", CreatedAt: time.Now().UTC(),
+	}
+	if err := store.Register(context.Background(), legacy); err != nil {
+		t.Fatalf("legacy Register: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	reopened, err := NewSQLiteToolRegistryStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	got, err := reopened.Get(context.Background(), legacy.Name)
+	if err != nil || got.Name != legacy.Name || got.Description != legacy.Description || got.Source != legacy.Source {
+		t.Fatalf("legacy row = %+v err=%v", got, err)
+	}
+	if receipt, found, err := reopened.FindRequestReceipt(context.Background(), "missing"); err != nil || found || receipt.RequestID != "" {
+		t.Fatalf("missing receipt = %+v found=%v err=%v", receipt, found, err)
 	}
 }

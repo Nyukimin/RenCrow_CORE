@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -99,6 +100,32 @@ func (s *SQLiteStore) ListAgentRuns(ctx context.Context, limit int) ([]domainsup
 	return listSQLiteItems[domainsuperagent.AgentRun](ctx, s, "agent_run", limit)
 }
 
+// FindAgentRunByID returns the record stored under the exact agent_run primary key.
+func (s *SQLiteStore) FindAgentRunByID(ctx context.Context, runID string) (domainsuperagent.AgentRun, bool, error) {
+	if s == nil || s.db == nil {
+		return domainsuperagent.AgentRun{}, false, fmt.Errorf("superagent sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM agent_run WHERE run_id = ?`, runID).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domainsuperagent.AgentRun{}, false, nil
+	}
+	if err != nil {
+		return domainsuperagent.AgentRun{}, false, err
+	}
+	var item domainsuperagent.AgentRun
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domainsuperagent.AgentRun{}, false, err
+	}
+	if err := domainsuperagent.ValidateAgentRun(item); err != nil {
+		return domainsuperagent.AgentRun{}, false, err
+	}
+	if item.RunID != runID {
+		return domainsuperagent.AgentRun{}, false, fmt.Errorf("stored agent run ID %q does not match primary key %q", item.RunID, runID)
+	}
+	return item, true, nil
+}
+
 func (s *SQLiteStore) SaveSubagentTask(ctx context.Context, item domainsuperagent.SubagentTask) error {
 	if err := domainsuperagent.ValidateSubagentTask(item); err != nil {
 		return err
@@ -141,6 +168,32 @@ func (s *SQLiteStore) SaveTraceEvent(ctx context.Context, item domainsuperagent.
 
 func (s *SQLiteStore) ListTraceEvents(ctx context.Context, limit int) ([]domainsuperagent.TraceEvent, error) {
 	return listSQLiteItems[domainsuperagent.TraceEvent](ctx, s, "trace_event", limit)
+}
+
+// FindTraceEventByID returns the record stored under the exact trace_event primary key.
+func (s *SQLiteStore) FindTraceEventByID(ctx context.Context, eventID string) (domainsuperagent.TraceEvent, bool, error) {
+	if s == nil || s.db == nil {
+		return domainsuperagent.TraceEvent{}, false, fmt.Errorf("superagent sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM trace_event WHERE event_id = ?`, eventID).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domainsuperagent.TraceEvent{}, false, nil
+	}
+	if err != nil {
+		return domainsuperagent.TraceEvent{}, false, err
+	}
+	var item domainsuperagent.TraceEvent
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domainsuperagent.TraceEvent{}, false, err
+	}
+	if err := domainsuperagent.ValidateTraceEvent(item); err != nil {
+		return domainsuperagent.TraceEvent{}, false, err
+	}
+	if item.EventID != eventID {
+		return domainsuperagent.TraceEvent{}, false, fmt.Errorf("stored trace event ID %q does not match primary key %q", item.EventID, eventID)
+	}
+	return item, true, nil
 }
 
 func (s *SQLiteStore) SaveRunQueueItem(ctx context.Context, item domainsuperagent.RunQueueItem) error {

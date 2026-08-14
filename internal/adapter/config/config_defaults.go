@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+func defaultOwnerStorage(currentStorage, sqlitePath string) string {
+	if currentStorage != "" {
+		return currentStorage
+	}
+	if strings.TrimSpace(sqlitePath) != "" {
+		return "sqlite"
+	}
+	return "jsonl"
+}
+
 // setDefaults はデフォルト値を設定
 func (c *Config) setDefaults() {
 	if c.PersonRelatedCatalog.SummaryWorker.Interval == "" {
@@ -296,9 +306,7 @@ func (c *Config) setDefaults() {
 	if c.Sandbox.Root == "" {
 		c.Sandbox.Root = "sandbox"
 	}
-	if c.Sandbox.Storage == "" {
-		c.Sandbox.Storage = "jsonl"
-	}
+	c.Sandbox.Storage = defaultOwnerStorage(c.Sandbox.Storage, c.Sandbox.SQLitePath)
 	if c.Sandbox.SQLitePath == "" {
 		workspaceDir := c.WorkspaceDir
 		if workspaceDir == "" {
@@ -342,9 +350,7 @@ func (c *Config) setDefaults() {
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "./workspace"
 	}
-	if c.Advisor.Storage == "" {
-		c.Advisor.Storage = "jsonl"
-	}
+	c.Advisor.Storage = defaultOwnerStorage(c.Advisor.Storage, c.Advisor.SQLitePath)
 	if c.Advisor.LogPath == "" {
 		c.Advisor.LogPath = filepath.Join(c.WorkspaceDir, "logs", "advisor")
 	}
@@ -369,9 +375,7 @@ func (c *Config) setDefaults() {
 	if c.ToolHarness.LogPath == "" {
 		c.ToolHarness.LogPath = c.WorkspaceDir + "/logs/tool_mediation.jsonl"
 	}
-	if c.DCI.Storage == "" {
-		c.DCI.Storage = "jsonl"
-	}
+	c.DCI.Storage = defaultOwnerStorage(c.DCI.Storage, c.DCI.SQLitePath)
 	if c.DCI.TracePath == "" {
 		c.DCI.TracePath = c.WorkspaceDir + "/logs/dci_search_trace.jsonl"
 	}
@@ -428,9 +432,7 @@ func (c *Config) setDefaults() {
 	if c.SkillGovernance.RegistryPath == "" {
 		c.SkillGovernance.RegistryPath = c.WorkspaceDir + "/logs/skill_governance"
 	}
-	if c.SkillGovernance.Storage == "" {
-		c.SkillGovernance.Storage = "jsonl"
-	}
+	c.SkillGovernance.Storage = defaultOwnerStorage(c.SkillGovernance.Storage, c.SkillGovernance.SQLitePath)
 	if c.SkillGovernance.SQLitePath == "" {
 		c.SkillGovernance.SQLitePath = c.WorkspaceDir + "/logs/skill_governance.db"
 	}
@@ -460,9 +462,7 @@ func (c *Config) setDefaults() {
 	if c.Workstream.LogPath == "" {
 		c.Workstream.LogPath = c.WorkspaceDir + "/logs/workstream"
 	}
-	if c.Workstream.Storage == "" {
-		c.Workstream.Storage = "jsonl"
-	}
+	c.Workstream.Storage = defaultOwnerStorage(c.Workstream.Storage, c.Workstream.SQLitePath)
 	if c.Workstream.SQLitePath == "" {
 		c.Workstream.SQLitePath = c.WorkspaceDir + "/logs/workstream.db"
 	}
@@ -477,9 +477,7 @@ func (c *Config) setDefaults() {
 	if c.Revenue.LogPath == "" {
 		c.Revenue.LogPath = c.WorkspaceDir + "/logs/revenue"
 	}
-	if c.Revenue.Storage == "" {
-		c.Revenue.Storage = "jsonl"
-	}
+	c.Revenue.Storage = defaultOwnerStorage(c.Revenue.Storage, c.Revenue.SQLitePath)
 	if c.Revenue.SQLitePath == "" {
 		c.Revenue.SQLitePath = c.WorkspaceDir + "/logs/revenue.db"
 	}
@@ -491,9 +489,7 @@ func (c *Config) setDefaults() {
 	if c.PersonaArchitecture.LogPath == "" {
 		c.PersonaArchitecture.LogPath = c.WorkspaceDir + "/logs/persona"
 	}
-	if c.PersonaArchitecture.Storage == "" {
-		c.PersonaArchitecture.Storage = "jsonl"
-	}
+	c.PersonaArchitecture.Storage = defaultOwnerStorage(c.PersonaArchitecture.Storage, c.PersonaArchitecture.SQLitePath)
 	if c.PersonaArchitecture.SQLitePath == "" {
 		c.PersonaArchitecture.SQLitePath = c.WorkspaceDir + "/logs/persona.db"
 	}
@@ -527,9 +523,7 @@ func (c *Config) setDefaults() {
 	if c.BrowserTraceToAPI.LogPath == "" {
 		c.BrowserTraceToAPI.LogPath = c.WorkspaceDir + "/logs/browser_trace_to_api"
 	}
-	if c.BrowserTraceToAPI.Storage == "" {
-		c.BrowserTraceToAPI.Storage = "jsonl"
-	}
+	c.BrowserTraceToAPI.Storage = defaultOwnerStorage(c.BrowserTraceToAPI.Storage, c.BrowserTraceToAPI.SQLitePath)
 	if c.BrowserTraceToAPI.SQLitePath == "" {
 		c.BrowserTraceToAPI.SQLitePath = c.WorkspaceDir + "/browser_trace_to_api.db"
 	}
@@ -554,9 +548,7 @@ func (c *Config) setDefaults() {
 	if c.ComplexityHotspot.LogPath == "" {
 		c.ComplexityHotspot.LogPath = c.WorkspaceDir + "/logs/complexity_hotspot"
 	}
-	if c.ComplexityHotspot.Storage == "" {
-		c.ComplexityHotspot.Storage = "jsonl"
-	}
+	c.ComplexityHotspot.Storage = defaultOwnerStorage(c.ComplexityHotspot.Storage, c.ComplexityHotspot.SQLitePath)
 	if c.ComplexityHotspot.SQLitePath == "" {
 		c.ComplexityHotspot.SQLitePath = c.WorkspaceDir + "/logs/complexity_hotspot.db"
 	}
@@ -575,9 +567,7 @@ func (c *Config) setDefaults() {
 	if c.SuperAgentHarness.LogPath == "" {
 		c.SuperAgentHarness.LogPath = c.WorkspaceDir + "/logs/superagent_harness"
 	}
-	if c.SuperAgentHarness.Storage == "" {
-		c.SuperAgentHarness.Storage = "jsonl"
-	}
+	c.SuperAgentHarness.Storage = defaultOwnerStorage(c.SuperAgentHarness.Storage, c.SuperAgentHarness.SQLitePath)
 	if c.SuperAgentHarness.SQLitePath == "" {
 		c.SuperAgentHarness.SQLitePath = c.WorkspaceDir + "/logs/superagent_harness.db"
 	}
@@ -607,9 +597,7 @@ func (c *Config) setDefaults() {
 	if c.AIWorkflow.LogPath == "" {
 		c.AIWorkflow.LogPath = c.WorkspaceDir + "/logs/ai_workflow"
 	}
-	if c.AIWorkflow.Storage == "" {
-		c.AIWorkflow.Storage = "jsonl"
-	}
+	c.AIWorkflow.Storage = defaultOwnerStorage(c.AIWorkflow.Storage, c.AIWorkflow.SQLitePath)
 	if c.AIWorkflow.SQLitePath == "" {
 		c.AIWorkflow.SQLitePath = c.WorkspaceDir + "/logs/ai_workflow.db"
 	}
@@ -656,9 +644,7 @@ func (c *Config) setDefaults() {
 	if c.KnowledgeMemory.LogPath == "" {
 		c.KnowledgeMemory.LogPath = c.WorkspaceDir + "/logs/knowledge_memory"
 	}
-	if c.KnowledgeMemory.Storage == "" {
-		c.KnowledgeMemory.Storage = "jsonl"
-	}
+	c.KnowledgeMemory.Storage = defaultOwnerStorage(c.KnowledgeMemory.Storage, c.KnowledgeMemory.SQLitePath)
 	if c.KnowledgeMemory.SQLitePath == "" {
 		c.KnowledgeMemory.SQLitePath = c.WorkspaceDir + "/logs/knowledge_memory.db"
 	}

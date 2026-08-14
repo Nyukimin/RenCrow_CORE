@@ -404,7 +404,7 @@ func TestHandleBrowserTraceAPIValidationReviewMarksCandidateValidated(t *testing
 	}
 }
 
-func TestHandleBrowserTraceAPIValidationReviewRecordsMissingEvidenceAsNeedsReview(t *testing.T) {
+func TestHandleBrowserTraceAPIValidationReviewRecordsMissingEvidenceAsRejected(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &stubBrowserTraceAPIStore{
 		candidates: []domaintrace.APICandidate{{
@@ -430,7 +430,7 @@ func TestHandleBrowserTraceAPIValidationReviewRecordsMissingEvidenceAsNeedsRevie
 		t.Fatalf("validations=%#v", store.validations)
 	}
 	validation := store.validations[0]
-	if validation.Passed || validation.Status != "needs_review" || len(validation.Issues) == 0 {
+	if validation.Passed || validation.Status != "rejected" || len(validation.Issues) == 0 || validation.Reviewer != "reviewer" {
 		t.Fatalf("validation=%#v", validation)
 	}
 }

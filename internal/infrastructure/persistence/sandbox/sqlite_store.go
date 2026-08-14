@@ -103,6 +103,32 @@ func (s *SQLiteStore) ListSandboxes(ctx context.Context, limit int) ([]domainsan
 	return listSQLiteItems[domainsandbox.SandboxRecord](ctx, s, "sandbox_registry", limit)
 }
 
+// FindSandboxByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindSandboxByID(ctx context.Context, sandboxID string) (domainsandbox.SandboxRecord, bool, error) {
+	if s == nil || s.db == nil {
+		return domainsandbox.SandboxRecord{}, false, fmt.Errorf("sandbox sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM sandbox_registry WHERE sandbox_id = ?`, sandboxID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domainsandbox.SandboxRecord{}, false, nil
+		}
+		return domainsandbox.SandboxRecord{}, false, err
+	}
+	var record domainsandbox.SandboxRecord
+	if err := json.Unmarshal([]byte(payload), &record); err != nil {
+		return domainsandbox.SandboxRecord{}, false, err
+	}
+	if err := domainsandbox.ValidateSandboxRecord(record); err != nil {
+		return domainsandbox.SandboxRecord{}, false, err
+	}
+	if record.SandboxID != sandboxID {
+		return domainsandbox.SandboxRecord{}, false, fmt.Errorf("sandbox payload id %q does not match requested id %q", record.SandboxID, sandboxID)
+	}
+	return record, true, nil
+}
+
 func (s *SQLiteStore) SaveSandboxArtifact(ctx context.Context, artifact domainsandbox.SandboxArtifact) error {
 	if err := domainsandbox.ValidateSandboxArtifact(artifact); err != nil {
 		return err
@@ -115,6 +141,32 @@ func (s *SQLiteStore) SaveSandboxArtifact(ctx context.Context, artifact domainsa
 
 func (s *SQLiteStore) ListSandboxArtifacts(ctx context.Context, limit int) ([]domainsandbox.SandboxArtifact, error) {
 	return listSQLiteItems[domainsandbox.SandboxArtifact](ctx, s, "sandbox_artifact", limit)
+}
+
+// FindSandboxArtifactByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindSandboxArtifactByID(ctx context.Context, artifactID string) (domainsandbox.SandboxArtifact, bool, error) {
+	if s == nil || s.db == nil {
+		return domainsandbox.SandboxArtifact{}, false, fmt.Errorf("sandbox sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM sandbox_artifact WHERE artifact_id = ?`, artifactID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domainsandbox.SandboxArtifact{}, false, nil
+		}
+		return domainsandbox.SandboxArtifact{}, false, err
+	}
+	var artifact domainsandbox.SandboxArtifact
+	if err := json.Unmarshal([]byte(payload), &artifact); err != nil {
+		return domainsandbox.SandboxArtifact{}, false, err
+	}
+	if err := domainsandbox.ValidateSandboxArtifact(artifact); err != nil {
+		return domainsandbox.SandboxArtifact{}, false, err
+	}
+	if artifact.ArtifactID != artifactID {
+		return domainsandbox.SandboxArtifact{}, false, fmt.Errorf("sandbox artifact payload id %q does not match requested id %q", artifact.ArtifactID, artifactID)
+	}
+	return artifact, true, nil
 }
 
 func (s *SQLiteStore) SavePromotionRequest(ctx context.Context, req domainsandbox.PromotionRequest) error {
@@ -131,6 +183,32 @@ func (s *SQLiteStore) ListPromotionRequests(ctx context.Context, limit int) ([]d
 	return listSQLiteItems[domainsandbox.PromotionRequest](ctx, s, "sandbox_promotion_request", limit)
 }
 
+// FindPromotionRequestByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindPromotionRequestByID(ctx context.Context, promotionID string) (domainsandbox.PromotionRequest, bool, error) {
+	if s == nil || s.db == nil {
+		return domainsandbox.PromotionRequest{}, false, fmt.Errorf("sandbox sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM sandbox_promotion_request WHERE promotion_id = ?`, promotionID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domainsandbox.PromotionRequest{}, false, nil
+		}
+		return domainsandbox.PromotionRequest{}, false, err
+	}
+	var request domainsandbox.PromotionRequest
+	if err := json.Unmarshal([]byte(payload), &request); err != nil {
+		return domainsandbox.PromotionRequest{}, false, err
+	}
+	if err := domainsandbox.ValidatePromotionRequest(request); err != nil {
+		return domainsandbox.PromotionRequest{}, false, err
+	}
+	if request.PromotionID != promotionID {
+		return domainsandbox.PromotionRequest{}, false, fmt.Errorf("promotion payload id %q does not match requested id %q", request.PromotionID, promotionID)
+	}
+	return request, true, nil
+}
+
 func (s *SQLiteStore) SavePromotionGateLog(ctx context.Context, log domainsandbox.PromotionGateLog) error {
 	if err := domainsandbox.ValidatePromotionGateLog(log); err != nil {
 		return err
@@ -143,6 +221,32 @@ func (s *SQLiteStore) SavePromotionGateLog(ctx context.Context, log domainsandbo
 
 func (s *SQLiteStore) ListPromotionGateLogs(ctx context.Context, limit int) ([]domainsandbox.PromotionGateLog, error) {
 	return listSQLiteItems[domainsandbox.PromotionGateLog](ctx, s, "promotion_gate_log", limit)
+}
+
+// FindPromotionGateLogByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindPromotionGateLogByID(ctx context.Context, eventID string) (domainsandbox.PromotionGateLog, bool, error) {
+	if s == nil || s.db == nil {
+		return domainsandbox.PromotionGateLog{}, false, fmt.Errorf("sandbox sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM promotion_gate_log WHERE event_id = ?`, eventID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domainsandbox.PromotionGateLog{}, false, nil
+		}
+		return domainsandbox.PromotionGateLog{}, false, err
+	}
+	var log domainsandbox.PromotionGateLog
+	if err := json.Unmarshal([]byte(payload), &log); err != nil {
+		return domainsandbox.PromotionGateLog{}, false, err
+	}
+	if err := domainsandbox.ValidatePromotionGateLog(log); err != nil {
+		return domainsandbox.PromotionGateLog{}, false, err
+	}
+	if log.EventID != eventID {
+		return domainsandbox.PromotionGateLog{}, false, fmt.Errorf("promotion gate payload id %q does not match requested id %q", log.EventID, eventID)
+	}
+	return log, true, nil
 }
 
 func (s *SQLiteStore) save(ctx context.Context, query string, args ...any) error {

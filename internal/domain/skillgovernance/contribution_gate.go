@@ -36,6 +36,10 @@ func EvaluateContributionGate(log ContributionGateLog) ContributionGateDecision 
 		reasons = append(reasons, "core change fit is not verified")
 		actions = append(actions, "core / plugin / project-specific の切り分けを確認する")
 	}
+	if !log.DiffReviewed {
+		reasons = append(reasons, "diff was not reviewed")
+		actions = append(actions, "変更差分をレビューする")
+	}
 	if strings.TrimSpace(log.TestResult) == "" {
 		reasons = append(reasons, "test result is required")
 		actions = append(actions, "実行したテストまたは未実行理由を記録する")

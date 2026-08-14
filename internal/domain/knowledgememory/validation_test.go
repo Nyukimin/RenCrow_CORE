@@ -305,3 +305,61 @@ func TestValidateKnowledgeMemoryRequiredFields(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateCreativeCandidateRequiresPrivateOwnerControlledState(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	base := CreativeKnowledgeItem{
+		ItemID:     "knowledge-candidate/sha256:abc",
+		UserID:     "user-1",
+		Title:      "作品",
+		Status:     "candidate",
+		Visibility: "private",
+		CreatedAt:  now,
+	}
+	if err := ValidateCreativeCandidate(base); err != nil {
+		t.Fatalf("valid creative candidate rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*CreativeKnowledgeItem){
+		"missing user":      func(item *CreativeKnowledgeItem) { item.UserID = "" },
+		"reviewed status":   func(item *CreativeKnowledgeItem) { item.Status = "reviewed" },
+		"public visibility": func(item *CreativeKnowledgeItem) { item.Visibility = "public" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := base
+			mutate(&candidate)
+			if err := ValidateCreativeCandidate(candidate); err == nil {
+				t.Fatal("invalid owner-controlled candidate accepted")
+			}
+		})
+	}
+}
+
+func TestValidateCreativeCandidateBoundsUTF8TextAndArrays(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	base := CreativeKnowledgeItem{
+		ItemID:     "candidate-1",
+		UserID:     "user-1",
+		Title:      "作品",
+		Status:     "candidate",
+		Visibility: "private",
+		CreatedAt:  now,
+	}
+	tooLong := base
+	tooLong.Title = strings.Repeat("あ", MaxCreativeCandidateTitleRunes+1)
+	if err := ValidateCreativeCandidate(tooLong); err == nil {
+		t.Fatal("overlong title accepted")
+	}
+	tooMany := base
+	tooMany.ContentHints = make([]string, MaxCreativeCandidateArrayItems+1)
+	for i := range tooMany.ContentHints {
+		tooMany.ContentHints[i] = "hint"
+	}
+	if err := ValidateCreativeCandidate(tooMany); err == nil {
+		t.Fatal("oversized content_hints array accepted")
+	}
+	invalidUTF8 := base
+	invalidUTF8.WorkType = string([]byte{0xff})
+	if err := ValidateCreativeCandidate(invalidUTF8); err == nil {
+		t.Fatal("invalid UTF-8 accepted")
+	}
+}

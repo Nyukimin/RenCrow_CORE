@@ -334,3 +334,66 @@ func TestValidateBrowserTraceRequiredFields(t *testing.T) {
 func fixedBrowserTraceValidationTime() time.Time {
 	return time.Date(2026, 5, 20, 6, 40, 0, 0, time.UTC)
 }
+
+func TestValidateAPICandidateValidationResultRequiresReviewerForReviewNote(t *testing.T) {
+	item := APICandidateValidationResult{
+		ValidationID: "api_val_owner_audit",
+		CandidateID:  "api_cand_1",
+		TraceRunID:   "trace_1",
+		Status:       "needs_review",
+		ReviewNote:   "terms checked",
+		CreatedAt:    fixedBrowserTraceValidationTime(),
+		Issues: []APIValidationIssue{{
+			Code:    "terms_review_required",
+			Message: "terms review is required",
+		}},
+	}
+	if err := ValidateAPICandidateValidationResult(item); err == nil || !strings.Contains(err.Error(), "reviewer") {
+		t.Fatalf("validation error = %v, want reviewer requirement", err)
+	}
+	item.Reviewer = "ren"
+	if err := ValidateAPICandidateValidationResult(item); err != nil {
+		t.Fatalf("owner-reviewed validation should pass: %v", err)
+	}
+}
+
+func TestValidateAPICandidateValidationResultAcceptsRejectedWithIssues(t *testing.T) {
+	item := APICandidateValidationResult{
+		ValidationID: "api_val_rejected",
+		CandidateID:  "api_cand_1",
+		TraceRunID:   "trace_1",
+		Status:       "rejected",
+		Issues: []APIValidationIssue{{
+			Code:     "terms_review_required",
+			Message:  "terms review is required",
+			Severity: "high",
+		}},
+		CreatedAt: fixedBrowserTraceValidationTime(),
+	}
+	if err := ValidateAPICandidateValidationResult(item); err != nil {
+		t.Fatalf("rejected validation should be accepted: %v", err)
+	}
+}
+
+func TestValidateAPICandidateValidationResultRejectsInvalidRejectedState(t *testing.T) {
+	base := APICandidateValidationResult{
+		ValidationID: "api_val_rejected_invalid",
+		CandidateID:  "api_cand_1",
+		TraceRunID:   "trace_1",
+		Status:       "rejected",
+		CreatedAt:    fixedBrowserTraceValidationTime(),
+	}
+	for _, item := range []APICandidateValidationResult{
+		base,
+		func() APICandidateValidationResult {
+			item := base
+			item.Passed = true
+			item.Issues = []APIValidationIssue{{Code: "risk", Message: "risk review is required"}}
+			return item
+		}(),
+	} {
+		if err := ValidateAPICandidateValidationResult(item); err == nil {
+			t.Fatalf("invalid rejected validation unexpectedly passed: %#v", item)
+		}
+	}
+}

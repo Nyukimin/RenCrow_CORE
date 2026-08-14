@@ -283,6 +283,7 @@ type Dependencies struct {
 	advisorCloser                  interface{ Close() error }                  // advisor SQLite store, when configured
 	durableStoreWorkflow           orchestrator.DurableStoreWorkflow           // Chat起点の永続Store判定
 	durableStoreCloser             interface{ Close() error }                  // workflow decision SQLite store
+	conversationArchiveCloser      interface{ Close() error }                  // CORE-owned L2 archive and request receipts
 	knowledgeMemoryToolStore       interface{ Close() error }                  // indexed Tool search store
 	knowledgeMemoryViewerStore     interface{ Close() error }                  // writable Viewer store, when configured
 	advisorScoreCancel             context.CancelFunc                          // Advisor daily score job
@@ -352,6 +353,11 @@ func (d *Dependencies) Shutdown() {
 	if d.durableStoreCloser != nil {
 		if err := d.durableStoreCloser.Close(); err != nil {
 			log.Printf("Failed to close durable store workflow registry: %v", err)
+		}
+	}
+	if d.conversationArchiveCloser != nil {
+		if err := d.conversationArchiveCloser.Close(); err != nil {
+			log.Printf("Failed to close Conversation Archive store: %v", err)
 		}
 	}
 	if d.knowledgeMemoryToolStore != nil {
@@ -464,10 +470,6 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		runtimeSkillManifests,
 		mcpObservations,
 	)
-	if cfg.Prompts != nil {
-		appendRuntimeCapabilityContext(cfg.Prompts.StableRuntimeContexts, runtimeCapabilityContext)
-	}
-	applyCoderStableRuntimeContext(runtimeCapabilityContext, llmRuntime.Coder1, llmRuntime.Coder2, llmRuntime.Coder3, llmRuntime.Coder4)
 	agents := buildAgentRuntime(
 		cfg,
 		llmRuntime.Chat,
@@ -499,6 +501,63 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps := &Dependencies{serenaMCPClient: serenaRuntime.client}
 	dataRecallRegistry := toolRuntime.DataRecallRegistry
 	dataWriteRegistry := toolRuntime.DataWriteRegistry
+	deps.conversationArchiveCloser = conversationRuntime.ArchiveStore
+	if toolRuntime.MovieCatalogLookup != nil {
+		if err := registerRuntimeDataWriteMovieCatalog(dataWriteRegistry, toolRuntime.MovieCatalogLookup); err != nil {
+			log.Fatalf("Failed to register Movie Catalog data write: %v", err)
+		}
+		if err := registerRuntimeDataRecallMovieCatalog(dataRecallRegistry, toolRuntime.MovieCatalogLookup); err != nil {
+			log.Fatalf("Failed to register Movie Catalog data recall: %v", err)
+		}
+	}
+	if toolRuntime.MusicCatalogLookup != nil {
+		if err := registerRuntimeDataWriteHobbyGraph(dataWriteRegistry, toolRuntime.MusicCatalogLookup); err != nil {
+			log.Fatalf("Failed to register Hobby Graph data write: %v", err)
+		}
+		if err := registerRuntimeDataRecallHobbyGraph(dataRecallRegistry, toolRuntime.MusicCatalogLookup); err != nil {
+			log.Fatalf("Failed to register Hobby Graph data recall: %v", err)
+		}
+	}
+	if runtimeToolRegistry != nil {
+		if err := registerRuntimeDataRecallToolRegistry(dataRecallRegistry, runtimeToolRegistry); err != nil {
+			log.Fatalf("Failed to register Tool Registry data recall: %v", err)
+		}
+		if err := registerRuntimeDataWriteToolRegistry(dataWriteRegistry, cfg.WorkspaceDir, runtimeToolRegistry); err != nil {
+			log.Fatalf("Failed to register Tool Registry data write: %v", err)
+		}
+	}
+	if conversationRuntime.L1Store != nil {
+		if err := registerRuntimeDataRecallConversationL1(dataRecallRegistry, conversationRuntime.L1Store); err != nil {
+			log.Fatalf("Failed to register Conversation L1 data recall: %v", err)
+		}
+		if err := registerRuntimeDataWriteConversationL1(dataWriteRegistry, conversationRuntime.L1Store); err != nil {
+			log.Fatalf("Failed to register Conversation L1 data write: %v", err)
+		}
+	}
+	if conversationRuntime.L1Store != nil && conversationRuntime.ArchiveStore != nil {
+		if err := registerRuntimeDataRecallConversationArchive(dataRecallRegistry, conversationRuntime.ArchiveStore); err != nil {
+			log.Fatalf("Failed to register Conversation Archive data recall: %v", err)
+		}
+		if err := registerRuntimeDataWriteConversationArchive(dataWriteRegistry, conversationRuntime.L1Store, conversationRuntime.ArchiveStore); err != nil {
+			log.Fatalf("Failed to register Conversation Archive data write: %v", err)
+		}
+	}
+	if glossaryRuntime.IndexedLookup != nil {
+		var err error
+		if glossaryRuntime.CandidateStore != nil {
+			err = registerRuntimeDataRecallGlossary(dataRecallRegistry, glossaryRuntime.IndexedLookup, glossaryRuntime.CandidateStore)
+		} else {
+			err = registerRuntimeDataRecallGlossary(dataRecallRegistry, glossaryRuntime.IndexedLookup)
+		}
+		if err != nil {
+			log.Fatalf("Failed to register Glossary data recall: %v", err)
+		}
+	}
+	if glossaryRuntime.CandidateStore != nil {
+		if err := registerRuntimeDataWriteGlossary(dataWriteRegistry, glossaryRuntime.CandidateStore); err != nil {
+			log.Fatalf("Failed to register Glossary data write: %v", err)
+		}
+	}
 	durableStoreWorkflow, durableStoreCloser, err := buildDurableStoreRuntime(cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize durable store workflow: %v", err)
@@ -508,6 +567,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if durableRecallStore, ok := durableStoreCloser.(durablestoreapp.Store); ok {
 		if err := registerRuntimeDataRecallDurableStoreWorkflow(dataRecallRegistry, durableRecallStore); err != nil {
 			log.Fatalf("Failed to register Durable Store data recall: %v", err)
+		}
+		if err := registerRuntimeDataWriteDurableStoreWorkflow(dataWriteRegistry, durableStoreWorkflow); err != nil {
+			log.Fatalf("Failed to register Durable Store data write: %v", err)
 		}
 	}
 	deps.globalPolicyStore = configpolicy.NewStore(cfg.WorkspaceDir)
@@ -538,6 +600,16 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.advisorCloser = advisorRuntime.Closer
 	if err := registerRuntimeDataRecallAdvisor(dataRecallRegistry, advisorRuntime.Store); err != nil {
 		log.Fatalf("Failed to register Advisor data recall: %v", err)
+	}
+	advisorOwnerStore, ok := advisorRuntime.Store.(runtimeAdvisorAdoptionStore)
+	if !ok {
+		log.Fatalf("Failed to initialize Advisor data write owner store")
+	}
+	if err := registerRuntimeDataWriteAdvisor(dataWriteRegistry, advisorOwnerStore); err != nil {
+		log.Fatalf("Failed to register Advisor data write: %v", err)
+	}
+	if err := registerRuntimeDataRecallAdvisorAdoptions(dataRecallRegistry, advisorOwnerStore); err != nil {
+		log.Fatalf("Failed to register Advisor adoption data recall: %v", err)
 	}
 	deps.advisorStatus = viewer.HandleAdvisorsStatus(viewer.AdvisorStatusOptions{
 		Store: advisorRuntime.Store, AdvisorProfiles: advisorRuntime.Profiles, AgentProfiles: advisorRuntime.AgentProfiles,
@@ -674,6 +746,16 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		if err := registerRuntimeDataRecallSkillGovernance(dataRecallRegistry, skillStore); err != nil {
 			log.Fatalf("Failed to register Skill Governance data recall: %v", err)
 		}
+		skillOwnerStore, ok := skillStore.(runtimeSkillContributionGateStore)
+		if !ok {
+			log.Fatalf("Failed to initialize Skill Governance data write owner store")
+		}
+		if err := registerRuntimeDataWriteSkillGovernance(dataWriteRegistry, skillOwnerStore); err != nil {
+			log.Fatalf("Failed to register Skill Governance data write: %v", err)
+		}
+		if err := registerRuntimeDataRecallSkillContributionGates(dataRecallRegistry, skillOwnerStore); err != nil {
+			log.Fatalf("Failed to register Skill Governance contribution gate data recall: %v", err)
+		}
 		deps.coderProposalEvidence = skillapp.NewCoderEvidenceService("").WithTranscriptStore(skillStore)
 		deps.skillGovernanceRecent = viewer.HandleSkillGovernanceRecent(skillStore)
 		deps.skillGovernanceBoot = viewer.HandleSkillGovernanceBootstrap(skillStore)
@@ -740,6 +822,16 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			MaxEvidence:       cfg.DCI.MaxEvidence,
 			MaxSnippetChars:   cfg.DCI.MaxSnippetChars,
 		}, dciStore, dciOptions...)
+		dciOwnerStore, ok := dciStore.(runtimeDCISearchStore)
+		if !ok {
+			log.Fatalf("Failed to initialize DCI data write owner store")
+		}
+		if err := registerRuntimeDataWriteDCI(dataWriteRegistry, dciOwnerStore, dciExplorer); err != nil {
+			log.Fatalf("Failed to register DCI data write: %v", err)
+		}
+		if err := registerRuntimeDataRecallDCISearchTrace(dataRecallRegistry, dciOwnerStore); err != nil {
+			log.Fatalf("Failed to register DCI exact search trace data recall: %v", err)
+		}
 		deps.dciSearcher = dciExplorer
 		deps.dciSearch = viewer.HandleDCISearch(dciExplorer)
 	}
@@ -766,6 +858,16 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.sandboxStatus = viewer.HandleSandboxStatus(sandboxStore)
 		if err := registerRuntimeDataRecallSandbox(dataRecallRegistry, sandboxStore); err != nil {
 			log.Fatalf("Failed to register Sandbox data recall: %v", err)
+		}
+		sandboxOwnerStore, ok := sandboxStore.(runtimeSandboxPromotionGateStore)
+		if !ok {
+			log.Fatalf("Failed to initialize Sandbox data write owner store")
+		}
+		if err := registerRuntimeDataWriteSandbox(dataWriteRegistry, sandboxOwnerStore); err != nil {
+			log.Fatalf("Failed to register Sandbox data write: %v", err)
+		}
+		if err := registerRuntimeDataRecallSandboxPromotionGates(dataRecallRegistry, sandboxOwnerStore); err != nil {
+			log.Fatalf("Failed to register Sandbox promotion gate data recall: %v", err)
 		}
 		deps.sandboxPromotion = viewer.HandleSandboxPromotionRequest(sandboxStore)
 		promotionDiffPreviewer = sandboxapp.NewPromotionDiffApplier(
@@ -884,6 +986,16 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		if err := registerRuntimeDataRecallPersonaArchitecture(dataRecallRegistry, personaStore); err != nil {
 			log.Fatalf("Failed to register Persona Architecture data recall: %v", err)
 		}
+		personaOwnerStore, ok := personaStore.(runtimePersonaObservationStore)
+		if !ok {
+			log.Fatalf("Failed to initialize Persona Architecture data write owner store")
+		}
+		if err := registerRuntimeDataRecallPersonaArchitectureObservations(dataRecallRegistry, personaOwnerStore); err != nil {
+			log.Fatalf("Failed to register Persona Architecture observation data recall: %v", err)
+		}
+		if err := registerRuntimeDataWritePersonaArchitecture(dataWriteRegistry, personaOwnerStore); err != nil {
+			log.Fatalf("Failed to register Persona Architecture data write: %v", err)
+		}
 		personaDefinitionOptions := personaRuntimeDefinitionOptionsFromConfig(cfg.PersonaArchitecture)
 		deps.personaTriggerDefinitions = buildPersonaRuntimeTriggerDefinitionsWithOptions(characters, personaDefinitionOptions)
 		deps.personaCanonicalResponses = buildPersonaRuntimeCanonicalResponsesWithOptions(characters, personaDefinitionOptions)
@@ -911,6 +1023,16 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.browserTraceAPIStatus = viewer.HandleBrowserTraceAPIStatus(browserTraceStore)
 		if err := registerRuntimeDataRecallBrowserTraceToAPI(dataRecallRegistry, browserTraceStore); err != nil {
 			log.Fatalf("Failed to register Browser Trace data recall: %v", err)
+		}
+		browserTraceOwnerStore, ok := browserTraceStore.(runtimeBrowserTraceValidationStore)
+		if !ok {
+			log.Fatalf("Failed to initialize Browser Trace data write owner store")
+		}
+		if err := registerRuntimeDataRecallBrowserTraceValidationReviews(dataRecallRegistry, browserTraceOwnerStore); err != nil {
+			log.Fatalf("Failed to register Browser Trace validation review data recall: %v", err)
+		}
+		if err := registerRuntimeDataWriteBrowserTraceToAPI(dataWriteRegistry, browserTraceOwnerStore); err != nil {
+			log.Fatalf("Failed to register Browser Trace data write: %v", err)
 		}
 		var candidateSink viewer.BrowserTraceAPICandidateSink
 		if conversationRuntime.L1Store != nil {
@@ -943,6 +1065,16 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		if err := registerRuntimeDataRecallComplexityHotspot(dataRecallRegistry, complexityStore); err != nil {
 			log.Fatalf("Failed to register Complexity Hotspot data recall: %v", err)
 		}
+		complexityOwnerStore, ok := complexityStore.(runtimeComplexityHotspotReviewStore)
+		if !ok {
+			log.Fatalf("Failed to initialize Complexity Hotspot data write owner store")
+		}
+		if err := registerRuntimeDataWriteComplexityHotspot(dataWriteRegistry, complexityOwnerStore); err != nil {
+			log.Fatalf("Failed to register Complexity Hotspot data write: %v", err)
+		}
+		if err := registerRuntimeDataRecallComplexityReviews(dataRecallRegistry, complexityOwnerStore); err != nil {
+			log.Fatalf("Failed to register Complexity Hotspot review data recall: %v", err)
+		}
 		var workstreamArtifactSink viewer.ComplexityWorkstreamArtifactSink
 		if ws, ok := deps.workstreamStore.(viewer.ComplexityWorkstreamArtifactSink); ok {
 			workstreamArtifactSink = ws
@@ -969,6 +1101,16 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		if err := registerRuntimeDataRecallSuperAgentHarness(dataRecallRegistry, superAgentStore); err != nil {
 			log.Fatalf("Failed to register SuperAgent Harness data recall: %v", err)
 		}
+		superAgentOwnerStore, ok := superAgentStore.(runtimeSuperAgentTraceStore)
+		if !ok {
+			log.Fatalf("Failed to initialize SuperAgent Harness data write owner store")
+		}
+		if err := registerRuntimeDataWriteSuperAgentHarness(dataWriteRegistry, superAgentOwnerStore); err != nil {
+			log.Fatalf("Failed to register SuperAgent Harness data write: %v", err)
+		}
+		if err := registerRuntimeDataRecallSuperAgentTraceEvents(dataRecallRegistry, superAgentOwnerStore); err != nil {
+			log.Fatalf("Failed to register SuperAgent Harness trace event data recall: %v", err)
+		}
 		deps.superAgentRunController = superagentapp.NewRunController()
 		if toolRuntime.SubagentMgr != nil {
 			toolRuntime.SubagentMgr.SetSuperAgentRecorder(superAgentStore)
@@ -993,6 +1135,16 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.aiWorkflowStore = aiWorkflowStore
 		if err := registerRuntimeDataRecallAIWorkflow(dataRecallRegistry, aiWorkflowStore); err != nil {
 			log.Fatalf("Failed to register AI Workflow data recall: %v", err)
+		}
+		aiWorkflowOwnerStore, ok := aiWorkflowStore.(runtimeAIWorkflowEventStore)
+		if !ok {
+			log.Fatalf("Failed to initialize AI Workflow data write owner store")
+		}
+		if err := registerRuntimeDataWriteAIWorkflow(dataWriteRegistry, aiWorkflowOwnerStore); err != nil {
+			log.Fatalf("Failed to register AI Workflow data write: %v", err)
+		}
+		if err := registerRuntimeDataRecallAIWorkflowEvents(dataRecallRegistry, aiWorkflowOwnerStore); err != nil {
+			log.Fatalf("Failed to register AI Workflow event data recall: %v", err)
 		}
 		if commands, err := aiworkflowapp.RegisterCommandFiles(context.Background(), aiWorkflowStore, aiworkflowapp.CommandRegistryScanOptions{RepoRoot: "."}); err != nil {
 			log.Printf("Failed to register AI Workflow command files: %v", err)
@@ -1050,9 +1202,27 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			store, err := knowledgememorypersistence.OpenSQLiteStoreWritable(path)
 			if err != nil {
 				log.Printf("Knowledge Memory SQLite Viewer unavailable: %v", err)
+			} else if err := store.EnsureOwnerRouteSchema(context.Background()); err != nil {
+				_ = store.Close()
+				log.Printf("Knowledge Memory Owner route schema unavailable: %v", err)
 			} else {
 				knowledgeMemoryStore = store
 				deps.knowledgeMemoryViewerStore = store
+				if searcher, ok := toolRuntime.KnowledgeMemoryToolStore.(runtimeKnowledgeMemoryIndexedSearcher); ok {
+					if err := registerRuntimeDataWriteKnowledgeMemory(dataWriteRegistry, store); err != nil {
+						log.Fatalf("Failed to register Knowledge Memory data write: %v", err)
+					}
+					if err := registerRuntimeDataRecallKnowledgeMemory(dataRecallRegistry, store, searcher); err != nil {
+						log.Fatalf("Failed to register Knowledge Memory data recall: %v", err)
+					}
+				} else {
+					if err := registerRuntimeDataRecallKnowledgeMemoryCandidate(dataRecallRegistry, store); err != nil {
+						log.Fatalf("Failed to register Knowledge Memory candidate recall: %v", err)
+					}
+					if err := registerRuntimeDataRecallKnowledgeMemoryRequests(dataRecallRegistry, store); err != nil {
+						log.Fatalf("Failed to register Knowledge Memory request recall: %v", err)
+					}
+				}
 			}
 		} else {
 			knowledgeMemoryStore = knowledgememorypersistence.NewJSONLStore(cfg.KnowledgeMemory.LogPath)
@@ -1074,6 +1244,19 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			deps.dreamConsolidationReview = viewer.HandleDreamConsolidationReview(knowledgeMemoryStore)
 		}
 	}
+	runtimeCapabilityContext = combineRuntimeCapabilityContexts(
+		runtimeCapabilityContext,
+		renderRuntimeDataRouteContext(dataRecallRegistry, dataWriteRegistry),
+	)
+	applyRuntimeAgentCapabilityContext(
+		cfg,
+		agents,
+		runtimeCapabilityContext,
+		llmRuntime.Coder1,
+		llmRuntime.Coder2,
+		llmRuntime.Coder3,
+		llmRuntime.Coder4,
+	)
 	deps.recallTraceStore = conversationRuntime.L1Store
 	verificationRuntime := buildVerificationRuntime(cfg, deps, conversationRuntime.L1Store)
 

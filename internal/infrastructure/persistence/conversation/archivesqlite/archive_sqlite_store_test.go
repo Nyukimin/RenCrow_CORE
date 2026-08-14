@@ -335,3 +335,108 @@ func TestArchiveSQLiteStore_SearchKnowledgeArchiveFTS(t *testing.T) {
 		t.Fatalf("keywords should be restored from archive json: %+v", got[0])
 	}
 }
+
+func TestArchiveSQLiteStore_UserMemoryReceiptIsAtomicIdempotentAndExact(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "archive.db")
+	store, err := NewArchiveSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
+	}
+	event := archiveTestUserMemoryEvent("memory-receipt-1", "user:archive-user", l1sqlite.MemoryStateConfirmed)
+	receipt := ArchiveRequestReceipt{
+		RequestID: "archive-request-1", UserID: "archive-user", ActorID: "shiro", PayloadHash: "sha256:payload-1", MemoryID: event.ID,
+	}
+	replay, err := store.ArchiveUserMemoryWithReceipt(ctx, event, receipt)
+	if err != nil || replay {
+		t.Fatalf("first archive replay=%v err=%v", replay, err)
+	}
+	gotReceipt, found, err := store.FindArchiveRequestReceipt(ctx, "archive-user", receipt.RequestID)
+	if err != nil || !found || gotReceipt.RequestID != receipt.RequestID || gotReceipt.UserID != receipt.UserID || gotReceipt.ActorID != receipt.ActorID || gotReceipt.PayloadHash != receipt.PayloadHash || gotReceipt.MemoryID != receipt.MemoryID || gotReceipt.CreatedAt.IsZero() {
+		t.Fatalf("archive receipt=%+v found=%v err=%v", gotReceipt, found, err)
+	}
+	gotEvent, found, err := store.FindUserMemoryArchive(ctx, "archive-user", event.ID)
+	if err != nil || !found || !archiveL1MemoryEventEqual(gotEvent, event) {
+		t.Fatalf("archive event=%+v found=%v err=%v", gotEvent, found, err)
+	}
+
+	replay, err = store.ArchiveUserMemoryWithReceipt(ctx, event, receipt)
+	if err != nil || !replay {
+		t.Fatalf("same request replay=%v err=%v", replay, err)
+	}
+	conflict := receipt
+	conflict.ActorID = "mio"
+	if _, err := store.ArchiveUserMemoryWithReceipt(ctx, event, conflict); err == nil {
+		t.Fatal("same request with different actor must conflict")
+	}
+	semantic := receipt
+	semantic.RequestID = "archive-request-2"
+	semantic.CreatedAt = time.Time{}
+	replay, err = store.ArchiveUserMemoryWithReceipt(ctx, event, semantic)
+	if err != nil || replay {
+		t.Fatalf("semantic dedupe replay=%v err=%v", replay, err)
+	}
+	if _, found, err := store.FindArchiveRequestReceipt(ctx, "archive-user", semantic.RequestID); err != nil || !found {
+		t.Fatalf("semantic receipt found=%v err=%v", found, err)
+	}
+
+	different := event
+	different.Message = "must not replace the archived event"
+	differentReceipt := receipt
+	differentReceipt.RequestID = "archive-request-3"
+	if _, err := store.ArchiveUserMemoryWithReceipt(ctx, different, differentReceipt); err == nil {
+		t.Fatal("differing archived event must conflict")
+	}
+	unchanged, found, err := store.FindUserMemoryArchive(ctx, "archive-user", event.ID)
+	if err != nil || !found || unchanged.Message != event.Message {
+		t.Fatalf("differing write changed archived event=%+v found=%v err=%v", unchanged, found, err)
+	}
+
+	if _, found, err := store.FindUserMemoryArchive(ctx, "other-user", event.ID); err != nil || found {
+		t.Fatalf("cross-user archive read leaked found=%v err=%v", found, err)
+	}
+	if _, found, err := store.FindArchiveRequestReceipt(ctx, "other-user", receipt.RequestID); err != nil || found {
+		t.Fatalf("cross-user receipt read leaked found=%v err=%v", found, err)
+	}
+}
+
+func TestArchiveSQLiteStore_UserMemoryArchiveRejectsUntrustedStatesAndReadsLegacyRows(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewArchiveSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+	for _, state := range []string{l1sqlite.MemoryStateObserved, l1sqlite.MemoryStateCandidate} {
+		event := archiveTestUserMemoryEvent("memory-reject-"+state, "user:archive-user", state)
+		if _, err := store.ArchiveUserMemoryWithReceipt(ctx, event, ArchiveRequestReceipt{
+			RequestID: "archive-reject-" + state, UserID: "archive-user", ActorID: "shiro", PayloadHash: "sha256:" + state, MemoryID: event.ID,
+		}); err == nil {
+			t.Fatalf("state %q must not be archived", state)
+		}
+	}
+	now := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
+	_, err = store.db.ExecContext(ctx, `
+INSERT INTO l1_memory_event_archive (
+	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	memory_state, layer, source, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, "legacy-memory", "user:archive-user", "", 0, "memory", "legacy exact message", `{"type":"preference"}`,
+		l1sqlite.MemoryStateConfirmed, l1sqlite.MemoryLayerL1, "legacy", now, now)
+	if err != nil {
+		t.Fatalf("insert legacy archive row: %v", err)
+	}
+	legacy, found, err := store.FindUserMemoryArchive(ctx, "archive-user", "legacy-memory")
+	if err != nil || !found || legacy.Message != "legacy exact message" || legacy.Source != "legacy" {
+		t.Fatalf("legacy archive event=%+v found=%v err=%v", legacy, found, err)
+	}
+}
+
+func archiveTestUserMemoryEvent(id, namespace, state string) l1sqlite.L1MemoryEvent {
+	now := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
+	return l1sqlite.L1MemoryEvent{
+		ID: id, Namespace: namespace, Speaker: domconv.SpeakerMemory, Message: "exact source memory",
+		Meta:        map[string]interface{}{"type": "preference", "statement": "exact source memory"},
+		MemoryState: state, Layer: l1sqlite.MemoryLayerL1, Source: "user_explicit", CreatedAt: now, UpdatedAt: now,
+	}
+}

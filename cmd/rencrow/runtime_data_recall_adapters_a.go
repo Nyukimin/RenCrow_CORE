@@ -16,14 +16,27 @@ import (
 type advisorRecallLister interface {
 	ListAdviceRuns(context.Context, int) ([]domainadvisor.AdviceRunRecord, error)
 }
+type advisorAdoptionRecallFinder interface {
+	FindAdvisorAdoptionByID(context.Context, string) (domainadvisor.AdvisorAdoptionRecord, bool, error)
+}
 type sandboxRecallLister interface {
 	ListSandboxes(context.Context, int) ([]domainsandbox.SandboxRecord, error)
+}
+type sandboxPromotionRecallFinder interface {
+	FindPromotionRequestByID(context.Context, string) (domainsandbox.PromotionRequest, bool, error)
+	FindPromotionGateLogByID(context.Context, string) (domainsandbox.PromotionGateLog, bool, error)
 }
 type dciRecallLister interface {
 	ListRecent(int) ([]domaindci.SearchTrace, error)
 }
+type dciSearchTraceRecallFinder interface {
+	FindSearchTraceByID(context.Context, string) (domaindci.SearchTrace, bool, error)
+}
 type skillRecallLister interface {
 	ListSkillManifests(context.Context, int) ([]domainskill.SkillManifest, error)
+}
+type skillContributionGateRecallFinder interface {
+	FindContributionGateByID(context.Context, string) (domainskill.ContributionGateLog, bool, error)
 }
 type workstreamRecallLister interface {
 	ListGoals(context.Context, int) ([]domainworkstream.Goal, error)
@@ -51,6 +64,28 @@ func registerRuntimeDataRecallAdvisor(r *runtimeDataRecallRegistry, s advisorRec
 	})
 }
 
+func registerRuntimeDataRecallAdvisorAdoptions(r *runtimeDataRecallRegistry, s advisorAdoptionRecallFinder) error {
+	if r == nil || s == nil {
+		return fmt.Errorf("advisor adoption recall unavailable")
+	}
+	return r.Register("advisor", "adoptions", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		item, found, err := s.FindAdvisorAdoptionByID(ctx, q.Query)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		records := []map[string]any{}
+		if found {
+			records = append(records, map[string]any{
+				"adoption_id": item.AdoptionID, "run_id": item.RunID, "task_id": item.TaskID,
+				"advisor_id": string(item.AdvisorID), "adopted_by_agent": item.AdoptedByAgent,
+				"adopted": item.Adopted, "outcome": item.Outcome, "revision_count": item.RevisionCount,
+				"reason": item.Reason, "created_at": item.CreatedAt,
+			})
+		}
+		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+	})
+}
+
 func registerRuntimeDataRecallSandbox(r *runtimeDataRecallRegistry, s sandboxRecallLister) error {
 	if r == nil || s == nil {
 		return fmt.Errorf("sandbox recall unavailable")
@@ -65,6 +100,36 @@ func registerRuntimeDataRecallSandbox(r *runtimeDataRecallRegistry, s sandboxRec
 			if dataRecallMatches(q.Query, v.SandboxID, string(v.Status), v.BaseRef) {
 				records = append(records, map[string]any{"sandbox_id": v.SandboxID, "status": string(v.Status), "base_branch": v.BaseRef, "created_at": v.CreatedAt})
 			}
+		}
+		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+	})
+}
+
+func registerRuntimeDataRecallSandboxPromotionGates(r *runtimeDataRecallRegistry, s sandboxPromotionRecallFinder) error {
+	if r == nil || s == nil {
+		return fmt.Errorf("sandbox promotion gate recall unavailable")
+	}
+	return r.Register("sandbox", "promotion_gates", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		gate, found, err := s.FindPromotionGateLogByID(ctx, q.Query)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		records := []map[string]any{}
+		if found {
+			promotion, promotionFound, err := s.FindPromotionRequestByID(ctx, gate.PromotionID)
+			if err != nil {
+				return runtimeDataRecallResult{}, err
+			}
+			if !promotionFound {
+				return runtimeDataRecallResult{}, fmt.Errorf("sandbox promotion gate references missing promotion")
+			}
+			records = append(records, map[string]any{
+				"event_id": gate.EventID, "promotion_id": promotion.PromotionID, "sandbox_id": promotion.SandboxID,
+				"workstream_id": promotion.WorkstreamID, "goal_id": promotion.GoalID,
+				"requested_by": promotion.RequestedBy, "risk_level": promotion.RiskLevel,
+				"promotion_reason": promotion.Reason, "gate_status": gate.GateStatus,
+				"gate_reason": gate.Reason, "created_at": gate.CreatedAt,
+			})
 		}
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
 	})
@@ -89,6 +154,29 @@ func registerRuntimeDataRecallDCI(r *runtimeDataRecallRegistry, s dciRecallListe
 	})
 }
 
+func registerRuntimeDataRecallDCISearchTrace(r *runtimeDataRecallRegistry, s dciSearchTraceRecallFinder) error {
+	if r == nil || s == nil {
+		return fmt.Errorf("dci exact search trace recall unavailable")
+	}
+	return r.Register("dci", "search_trace", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		trace, found, err := s.FindSearchTraceByID(ctx, q.Query)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		records := []map[string]any{}
+		if found {
+			records = append(records, map[string]any{
+				"trace_id": trace.EventID, "query": trace.UserQuery, "actor": trace.Actor,
+				"mode": trace.Mode, "scope": append([]string(nil), trace.CorpusScope...),
+				"steps":          append([]domaindci.SearchStep(nil), trace.Steps...),
+				"evidence_count": trace.FinalEvidenceCount, "status": trace.Status,
+				"error_message": trace.ErrorMessage, "started_at": trace.StartedAt, "ended_at": trace.EndedAt,
+			})
+		}
+		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+	})
+}
+
 func registerRuntimeDataRecallSkillGovernance(r *runtimeDataRecallRegistry, s skillRecallLister) error {
 	if r == nil || s == nil {
 		return fmt.Errorf("skill recall unavailable")
@@ -107,6 +195,29 @@ func registerRuntimeDataRecallSkillGovernance(r *runtimeDataRecallRegistry, s sk
 			if dataRecallMatches(q.Query, v.SkillID, v.Name, v.Version, status) {
 				records = append(records, map[string]any{"skill_id": v.SkillID, "name": v.Name, "version": v.Version, "status": status})
 			}
+		}
+		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+	})
+}
+
+func registerRuntimeDataRecallSkillContributionGates(r *runtimeDataRecallRegistry, s skillContributionGateRecallFinder) error {
+	if r == nil || s == nil {
+		return fmt.Errorf("skill contribution gate recall unavailable")
+	}
+	return r.Register("skill_governance", "contribution_gates", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		item, found, err := s.FindContributionGateByID(ctx, q.Query)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		records := []map[string]any{}
+		if found {
+			records = append(records, map[string]any{
+				"event_id": item.EventID, "repo": item.Repo, "target_branch": item.TargetBranch,
+				"problem_statement": item.ProblemStatement, "existing_prs_checked": item.ExistingPRsChecked,
+				"real_problem_verified": item.RealProblemVerified, "core_change_verified": item.CoreChangeVerified,
+				"diff_reviewed": item.DiffReviewed, "test_result": item.TestResult,
+				"gate_status": item.GateStatus, "created_at": item.CreatedAt,
+			})
 		}
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
 	})

@@ -288,18 +288,22 @@ func HandleBrowserTraceAPIValidationReview(store BrowserTraceAPIStore) http.Hand
 			return
 		}
 		now := time.Now().UTC()
-		issues := browserTraceValidationReviewIssues(req)
-		validation := domaintrace.APICandidateValidationResult{
-			ValidationID: fmt.Sprintf("api_val_review_%s_%d", req.CandidateID, now.UnixNano()),
-			CandidateID:  req.CandidateID,
-			TraceRunID:   candidate.TraceRunID,
-			Passed:       len(issues) == 0,
-			Status:       "validated",
-			Issues:       issues,
-			CreatedAt:    now,
-		}
-		if !validation.Passed {
-			validation.Status = "needs_review"
+		validation, err := browsertraceapp.BuildValidationReview(browsertraceapp.ValidationReviewInput{
+			ValidationID:        fmt.Sprintf("api_val_review_%s_%d", req.CandidateID, now.UnixNano()),
+			CandidateID:         req.CandidateID,
+			TraceRunID:          candidate.TraceRunID,
+			Reviewer:            req.Reviewer,
+			ReviewNote:          req.ReviewNote,
+			TermsReviewed:       req.TermsReviewed,
+			OfficialAPIReviewed: req.OfficialAPIReviewed,
+			PIIReviewed:         req.PIIReviewed,
+			SchemaReviewed:      req.SchemaReviewed,
+			RiskReviewed:        req.RiskReviewed,
+			CreatedAt:           now,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 		if err := store.SaveAPICandidateValidationResult(r.Context(), validation); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -312,29 +316,6 @@ func HandleBrowserTraceAPIValidationReview(store BrowserTraceAPIStore) http.Hand
 			"implementation_apply": false,
 		})
 	}
-}
-
-func browserTraceValidationReviewIssues(req BrowserTraceAPIValidationReviewRequest) []domaintrace.APIValidationIssue {
-	var issues []domaintrace.APIValidationIssue
-	add := func(code, message, severity string) {
-		issues = append(issues, domaintrace.APIValidationIssue{Code: code, Message: message, Severity: severity})
-	}
-	if !req.TermsReviewed {
-		add("terms_review_required", "terms, robots, API policy, and rate limit review must be recorded", "high")
-	}
-	if !req.OfficialAPIReviewed {
-		add("official_api_review_required", "official API, RSS, Atom, or public feed alternative review must be recorded", "medium")
-	}
-	if !req.PIIReviewed {
-		add("pii_review_required", "personal data safety review must be recorded", "high")
-	}
-	if !req.SchemaReviewed {
-		add("schema_review_required", "schema and response sample review must be recorded", "medium")
-	}
-	if !req.RiskReviewed {
-		add("risk_review_required", "risk review must be recorded before fetcher proposal", "medium")
-	}
-	return issues
 }
 
 func HandleBrowserTraceAPIFetcherProposal(store BrowserTraceAPIStore, workstreamArtifactSink BrowserTraceWorkstreamArtifactSink) http.HandlerFunc {

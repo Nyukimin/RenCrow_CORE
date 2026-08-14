@@ -2,6 +2,7 @@ package aiworkflow
 
 import (
 	"context"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -114,5 +115,46 @@ func TestJSONLStoreCompactsOperationalContextUsage(t *testing.T) {
 	}
 	if items[0].JobID != "job_compact" || items[0].WorkstreamID != "ws_compact" || items[0].CompactionID != "compact_1" {
 		t.Fatalf("newest context usage lost continuity keys: %#v", items[0])
+	}
+}
+
+func TestJSONLStoreFindWorkflowEventByIDReturnsLatestExactRecord(t *testing.T) {
+	store := NewJSONLStore(t.TempDir())
+	ctx := context.Background()
+	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	started := domainai.WorkflowEvent{EventID: "evt_1", EventType: "started", Status: "running", CreatedAt: now}
+	completed := started
+	completed.Status = "completed"
+	completed.CompletedAt = now.Add(time.Minute)
+	if err := store.SaveWorkflowEvent(ctx, started); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveWorkflowEvent(ctx, completed); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err := store.FindWorkflowEventByID(ctx, "evt_1")
+	if err != nil || !found || item.Status != "completed" {
+		t.Fatalf("item=%#v found=%v err=%v", item, found, err)
+	}
+	missing, found, err := store.FindWorkflowEventByID(ctx, "missing")
+	if err != nil || found || missing.EventID != "" {
+		t.Fatalf("missing=%#v found=%v err=%v", missing, found, err)
+	}
+
+	prefixStore := NewJSONLStore(t.TempDir())
+	if err := prefixStore.SaveWorkflowEvent(ctx, domainai.WorkflowEvent{EventID: "evt_10", EventType: "started", Status: "running", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err = prefixStore.FindWorkflowEventByID(ctx, "evt_1")
+	if err != nil || found || item.EventID != "" {
+		t.Fatalf("prefix match item=%#v found=%v err=%v", item, found, err)
+	}
+
+	corruptStore := NewJSONLStore(t.TempDir())
+	if err := os.WriteFile(corruptStore.eventPath, []byte("{\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := corruptStore.FindWorkflowEventByID(ctx, "evt_1"); err == nil {
+		t.Fatal("expected malformed JSON error")
 	}
 }

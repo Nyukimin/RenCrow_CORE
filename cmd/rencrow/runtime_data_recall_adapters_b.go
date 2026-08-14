@@ -9,8 +9,34 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	appstore "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
+	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	domainbrowser "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
+	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
+	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
+
+type runtimePersonaObservationExactFinder interface {
+	FindObservationLogByID(context.Context, string) (domainpersona.ObservationLog, bool, error)
+}
+
+type runtimeBrowserTraceValidationExactFinder interface {
+	FindAPICandidateValidationResultByID(context.Context, string) (domainbrowser.APICandidateValidationResult, bool, error)
+}
+
+type runtimeComplexityReportExactFinder interface {
+	FindReportArtifactByID(context.Context, string) (domaincomplexity.ReportArtifact, bool, error)
+}
+
+type runtimeSuperAgentTraceExactFinder interface {
+	FindTraceEventByID(context.Context, string) (domainsuperagent.TraceEvent, bool, error)
+}
+
+type runtimeAIWorkflowEventExactFinder interface {
+	FindWorkflowEventByID(context.Context, string) (domainai.WorkflowEvent, bool, error)
+}
 
 func registerRuntimeDataRecallPersonaArchitecture(r *runtimeDataRecallRegistry, s viewer.PersonaObservationLister) error {
 	if r == nil || s == nil {
@@ -75,6 +101,62 @@ func registerRuntimeDataRecallBrowserTraceToAPI(r *runtimeDataRecallRegistry, s 
 	})
 }
 
+func registerRuntimeDataRecallPersonaArchitectureObservations(r *runtimeDataRecallRegistry, s runtimePersonaObservationExactFinder) error {
+	if r == nil || s == nil {
+		return fmt.Errorf("persona observation recall unavailable")
+	}
+	return r.Register("persona_architecture", "observations", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		scope, ok := domaintool.ToolExecutionScopeFromContext(ctx)
+		if !ok || strings.TrimSpace(scope.AuthenticatedUserID) == "" {
+			return runtimeDataRecallResult{}, fmt.Errorf("persona observation recall scope unavailable")
+		}
+		item, found, err := s.FindObservationLogByID(ctx, q.Query)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		records := []map[string]any{}
+		if found && strings.TrimSpace(item.TargetID) == strings.TrimSpace(scope.AuthenticatedUserID) {
+			records = append(records, map[string]any{
+				"event_id":         item.EventID,
+				"observation_type": item.ObservationType,
+				"summary":          item.Summary,
+				"evidence_refs":    append([]string(nil), item.EvidenceRefs...),
+				"sensitivity":      item.Sensitivity,
+				"review_status":    item.ReviewStatus,
+				"created_at":       item.CreatedAt,
+			})
+		}
+		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+	})
+}
+
+func registerRuntimeDataRecallBrowserTraceValidationReviews(r *runtimeDataRecallRegistry, s runtimeBrowserTraceValidationExactFinder) error {
+	if r == nil || s == nil {
+		return fmt.Errorf("browser validation review recall unavailable")
+	}
+	return r.Register("browser_trace_to_api", "validation_reviews", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		item, found, err := s.FindAPICandidateValidationResultByID(ctx, q.Query)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		records := []map[string]any{}
+		if found {
+			records = append(records, map[string]any{
+				"validation_id": item.ValidationID,
+				"candidate_id":  item.CandidateID,
+				"trace_run_id":  item.TraceRunID,
+				"passed":        item.Passed,
+				"status":        item.Status,
+				"issues":        append([]domainbrowser.APIValidationIssue(nil), item.Issues...),
+				"reviewer":      item.Reviewer,
+				"review_note":   item.ReviewNote,
+				"created_at":    item.CreatedAt,
+			})
+		}
+		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+	})
+}
+
 func registerRuntimeDataRecallComplexityHotspot(r *runtimeDataRecallRegistry, s viewer.ComplexityHotspotLister) error {
 	if r == nil || s == nil {
 		return fmt.Errorf("complexity recall unavailable")
@@ -93,6 +175,27 @@ func registerRuntimeDataRecallComplexityHotspot(r *runtimeDataRecallRegistry, s 
 			if dataRecallMatches(q.Query, v.HotspotID, v.HotspotType, v.RiskLevel, clean) {
 				records = append(records, map[string]any{"hotspot_id": v.HotspotID, "file_path": filepath.ToSlash(clean), "category": v.HotspotType, "severity": v.RiskLevel, "status": "recorded"})
 			}
+		}
+		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+	})
+}
+
+func registerRuntimeDataRecallComplexityReviews(r *runtimeDataRecallRegistry, s runtimeComplexityReportExactFinder) error {
+	if r == nil || s == nil {
+		return fmt.Errorf("complexity review recall unavailable")
+	}
+	return r.Register("complexity_hotspot", "concrete_diff_reviews", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		item, found, err := s.FindReportArtifactByID(ctx, q.Query)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		records := []map[string]any{}
+		if found {
+			records = append(records, map[string]any{
+				"artifact_id": item.ArtifactID, "scan_id": item.ScanID, "workstream_id": item.WorkstreamID,
+				"artifact_type": item.Type, "title": item.Title, "status": item.Status,
+				"content": item.Content, "created_at": item.CreatedAt,
+			})
 		}
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
 	})
@@ -117,6 +220,27 @@ func registerRuntimeDataRecallSuperAgentHarness(r *runtimeDataRecallRegistry, s 
 	})
 }
 
+func registerRuntimeDataRecallSuperAgentTraceEvents(r *runtimeDataRecallRegistry, s runtimeSuperAgentTraceExactFinder) error {
+	if r == nil || s == nil {
+		return fmt.Errorf("superagent trace recall unavailable")
+	}
+	return r.Register("super_agent_harness", "trace_events", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		item, found, err := s.FindTraceEventByID(ctx, q.Query)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		records := []map[string]any{}
+		if found {
+			records = append(records, map[string]any{
+				"event_id": item.EventID, "parent_event_id": item.ParentEventID, "run_id": item.RunID,
+				"event_type": item.EventType, "actor": item.Actor, "payload_summary": item.PayloadSummary,
+				"status": item.Status, "created_at": item.CreatedAt,
+			})
+		}
+		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+	})
+}
+
 func registerRuntimeDataRecallAIWorkflow(r *runtimeDataRecallRegistry, s viewer.AIWorkflowLister) error {
 	if r == nil || s == nil {
 		return fmt.Errorf("ai workflow recall unavailable")
@@ -136,19 +260,63 @@ func registerRuntimeDataRecallAIWorkflow(r *runtimeDataRecallRegistry, s viewer.
 	})
 }
 
+func registerRuntimeDataRecallAIWorkflowEvents(r *runtimeDataRecallRegistry, s runtimeAIWorkflowEventExactFinder) error {
+	if r == nil || s == nil {
+		return fmt.Errorf("ai workflow event recall unavailable")
+	}
+	return r.Register("ai_workflow", "workflow_events", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		item, found, err := s.FindWorkflowEventByID(ctx, q.Query)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		records := []map[string]any{}
+		if found {
+			records = append(records, map[string]any{
+				"event_id": item.EventID, "parent_event_id": item.ParentEventID, "run_id": item.RunID,
+				"workstream_id": item.WorkstreamID, "event_type": item.EventType, "agent": item.Agent,
+				"repo": item.Repo, "worktree_id": item.WorktreeID, "command_name": item.CommandName,
+				"skill_name": item.SkillName, "status": item.Status, "summary": item.Summary,
+				"created_at": item.CreatedAt, "completed_at": item.CompletedAt,
+			})
+		}
+		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+	})
+}
+
 func registerRuntimeDataRecallDurableStoreWorkflow(r *runtimeDataRecallRegistry, s appstore.Store) error {
 	if r == nil || s == nil {
 		return fmt.Errorf("durable recall unavailable")
 	}
 	return r.Register("durable_store_workflow", "exact_request", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
-		v, err := s.FindByDedupeKey(ctx, q.Query)
+		scope, found := domaintool.ToolExecutionScopeFromContext(ctx)
+		if !found || strings.TrimSpace(scope.AuthenticatedUserID) == "" {
+			return runtimeDataRecallResult{}, fmt.Errorf("authenticated user scope is required")
+		}
+		receipt, err := s.FindByRequestID(ctx, q.Query)
 		if err != nil {
 			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
-		if v != nil {
-			records = append(records, map[string]any{"status": string(v.Status), "owner_module": v.Classification.OwnerModule, "requested_outcome": string(v.Requirement.RequestedOutcome), "created_at": v.CreatedAt})
+		if receipt == nil || strings.TrimSpace(receipt.RequestID) != q.Query || strings.TrimSpace(receipt.UserScope) != strings.TrimSpace(scope.AuthenticatedUserID) {
+			return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
 		}
+		v, err := s.FindByRequirementID(ctx, receipt.RequirementID)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		if v == nil || strings.TrimSpace(v.Requirement.UserScope) != strings.TrimSpace(scope.AuthenticatedUserID) {
+			return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+		}
+		records = append(records, map[string]any{
+			"requirement_id":    v.Requirement.RequirementID,
+			"status":            string(v.Status),
+			"lifecycle":         string(v.Lifecycle),
+			"owner_module":      v.Classification.OwnerModule,
+			"requested_outcome": string(v.Requirement.RequestedOutcome),
+			"reason_code":       v.ReasonCode,
+			"deduplicated":      receipt.RequestID != v.Requirement.RequestID,
+			"created_at":        v.CreatedAt,
+		})
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
 	})
 }

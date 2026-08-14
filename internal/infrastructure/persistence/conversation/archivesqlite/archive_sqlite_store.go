@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -11,7 +13,24 @@ import (
 // ArchiveSQLiteStore はSQLite（pure Go, modernc.org/sqlite）を使ったL2会話アーカイブである。
 type ArchiveSQLiteStore struct {
 	db *sql.DB
+	mu sync.Mutex
 }
+
+// ArchiveRequestReceipt binds one trusted data.write request to the exact L1
+// memory event archived by CORE. It is deliberately separate from any model
+// payload or generated summary.
+type ArchiveRequestReceipt struct {
+	RequestID   string
+	UserID      string
+	ActorID     string
+	PayloadHash string
+	MemoryID    string
+	CreatedAt   time.Time
+}
+
+// ConversationArchiveRequestReceipt is the descriptive alias used by runtime
+// owner adapters and callers that want the storage boundary named explicitly.
+type ConversationArchiveRequestReceipt = ArchiveRequestReceipt
 
 const (
 	L1ArchiveMemory    = "memory"
@@ -40,6 +59,9 @@ func NewArchiveSQLiteStore(dbPath string) (*ArchiveSQLiteStore, error) {
 
 // Close はSQLite接続を閉じる。
 func (d *ArchiveSQLiteStore) Close() error {
+	if d == nil || d.db == nil {
+		return nil
+	}
 	return d.db.Close()
 }
 
@@ -86,6 +108,19 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_l1_memory_archive_namespace_created ON l1_memory_event_archive(namespace, created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_l1_memory_archive_state_created ON l1_memory_event_archive(memory_state, created_at DESC);
+
+	CREATE TABLE IF NOT EXISTS conversation_archive_request_receipt (
+		request_id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		actor_id TEXT NOT NULL,
+		payload_hash TEXT NOT NULL,
+		memory_id TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_conversation_archive_request_user_created
+		ON conversation_archive_request_receipt(user_id, created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_conversation_archive_request_memory
+		ON conversation_archive_request_receipt(memory_id);
 
 	CREATE TABLE IF NOT EXISTS l1_news_item_archive (
 		id VARCHAR PRIMARY KEY,

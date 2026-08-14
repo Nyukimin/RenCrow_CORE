@@ -134,6 +134,17 @@ func (e ActivationEvidence) Complete() bool {
 	return e.MigrationPassed && e.BackupDryRun && e.ScratchRestore && e.IntegrityPassed && e.HealthPassed
 }
 
+// RequestReceipt binds one trusted request identity to the canonical durable
+// workflow result. It is persisted separately so a replay can be resolved by
+// request ID without exposing the workflow payload to the caller.
+type RequestReceipt struct {
+	RequestID     string    `json:"request_id"`
+	UserScope     string    `json:"user_scope"`
+	PayloadHash   string    `json:"payload_hash"`
+	RequirementID string    `json:"requirement_id"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type WorkflowResult struct {
 	Status         Status             `json:"status"`
 	Lifecycle      Lifecycle          `json:"lifecycle"`
@@ -145,6 +156,9 @@ type WorkflowResult struct {
 	ReasonCode     string             `json:"reason_code,omitempty"`
 	EvidenceRefs   []string           `json:"evidence_refs,omitempty"`
 	Deduplicated   bool               `json:"deduplicated,omitempty"`
-	CreatedAt      time.Time          `json:"created_at"`
-	UpdatedAt      time.Time          `json:"updated_at"`
+	// RequestReplay is an in-process projection of the request-receipt path;
+	// it is never persisted as workflow payload data.
+	RequestReplay bool      `json:"-"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }

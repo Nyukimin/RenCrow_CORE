@@ -15,6 +15,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainrelation "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgerelation"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
 	categoryrecallinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/categoryrecall"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
@@ -26,6 +27,7 @@ type conversationRuntime struct {
 	Engine           conversation.ConversationEngine
 	Manager          *conversationpersistence.RealConversationManager
 	L1Store          *l1sqlite.L1SQLiteStore
+	ArchiveStore     *archivesqlite.ArchiveSQLiteStore
 	WebGatherFetcher tools.WebGatherFetcher
 	ProfilePromotion *memorypromotionapp.Service
 }
@@ -39,6 +41,7 @@ func buildConversationRuntime(
 	var convEngine conversation.ConversationEngine
 	var realMgr *conversationpersistence.RealConversationManager
 	var l1Store *l1sqlite.L1SQLiteStore
+	var archiveStore *archivesqlite.ArchiveSQLiteStore
 	var profilePromotion *memorypromotionapp.Service
 	mioPersona := conversation.DefaultMioPersona()
 	if cfg.Prompts != nil {
@@ -54,6 +57,24 @@ func buildConversationRuntime(
 			log.Fatalf("Failed to initialize L1 SQLite store: %v", err)
 		}
 		log.Printf("  L1 SQLite: %s", cfg.Storage.Databases.ConversationL1)
+	}
+	// Conversation Archive is a CORE-owned L2 boundary for user-memory
+	// archive/receipt routes. It must be available with standard L1-only
+	// startup; advanced Redis/vector conversation is not a prerequisite.
+	if l1Store != nil {
+		archivePath := strings.TrimSpace(cfg.Storage.Databases.ConversationArchive)
+		if archivePath != "" {
+			if err := os.MkdirAll(filepath.Dir(archivePath), 0755); err != nil {
+				log.Fatalf("Failed to create conversation archive directory: %v", err)
+			}
+			var err error
+			archiveStore, err = archivesqlite.NewArchiveSQLiteStore(archivePath)
+			if err != nil {
+				log.Fatalf("Failed to initialize conversation archive SQLite store: %v", err)
+			}
+			l1Store.WithArchiveStore(archiveStore)
+			log.Printf("  Conversation Archive SQLite: %s", archivePath)
+		}
 	}
 	categoryRecallRegistry := buildCategoryRecallRegistry(context.Background(), cfg, l1Store)
 	if cfg.Conversation.Enabled {
@@ -79,6 +100,12 @@ func buildConversationRuntime(
 		log.Printf("  VectorDB collection: %s (dimension=%d)", vectorCollection, vectorDimension)
 		if l1Store != nil {
 			realMgr.WithL1Store(l1Store)
+			if archiveStore != nil {
+				// RealConversationManager may attach its optional archive
+				// connection; the CORE-owned route store is authoritative for
+				// L1 archive promotions and request receipts.
+				l1Store.WithArchiveStore(archiveStore)
+			}
 			if cfg.KnowledgeRelation.Enabled {
 				scoring := domainrelation.DefaultScoringConfig()
 				scoring.MinimumScore = cfg.KnowledgeRelation.MinimumScore
@@ -228,6 +255,7 @@ func buildConversationRuntime(
 		Engine:           convEngine,
 		Manager:          realMgr,
 		L1Store:          l1Store,
+		ArchiveStore:     archiveStore,
 		WebGatherFetcher: dailySourceFetcher,
 		ProfilePromotion: profilePromotion,
 	}

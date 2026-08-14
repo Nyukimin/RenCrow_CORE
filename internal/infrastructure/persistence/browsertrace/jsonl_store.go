@@ -84,6 +84,26 @@ func (s *JSONLStore) ListAPICandidates(_ context.Context, limit int) ([]domaintr
 	return reverseLimit(items, limit), nil
 }
 
+// FindAPICandidateByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindAPICandidateByID(_ context.Context, candidateID string) (domaintrace.APICandidate, bool, error) {
+	var found domaintrace.APICandidate
+	matched := false
+	if err := readJSONL(s.candidatePath, func(line []byte) error {
+		var item domaintrace.APICandidate
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.CandidateID == candidateID {
+			found = item
+			matched = true
+		}
+		return nil
+	}); err != nil {
+		return domaintrace.APICandidate{}, false, err
+	}
+	return found, matched, nil
+}
+
 func (s *JSONLStore) SaveAPICandidateSchema(_ context.Context, item domaintrace.APICandidateSchema) error {
 	if err := domaintrace.ValidateAPICandidateSchema(item); err != nil {
 		return err
@@ -132,6 +152,26 @@ func (s *JSONLStore) ListAPICandidateValidationResults(_ context.Context, limit 
 		return nil, err
 	}
 	return reverseLimit(items, limit), nil
+}
+
+// FindAPICandidateValidationResultByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindAPICandidateValidationResultByID(_ context.Context, validationID string) (domaintrace.APICandidateValidationResult, bool, error) {
+	var found domaintrace.APICandidateValidationResult
+	matched := false
+	if err := readJSONL(s.validationPath, func(line []byte) error {
+		var item domaintrace.APICandidateValidationResult
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.ValidationID == validationID {
+			found = item
+			matched = true
+		}
+		return nil
+	}); err != nil {
+		return domaintrace.APICandidateValidationResult{}, false, err
+	}
+	return found, matched, nil
 }
 
 func (s *JSONLStore) SaveAPICoverageReport(_ context.Context, item domaintrace.APICoverageReport) error {

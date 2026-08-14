@@ -3,6 +3,8 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/glossary/domain/entity"
 	_ "modernc.org/sqlite"
@@ -39,9 +41,73 @@ func createTables(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_term ON glossary_items(term);
 	CREATE INDEX IF NOT EXISTS idx_category ON glossary_items(category);
 	CREATE INDEX IF NOT EXISTS idx_created_at ON glossary_items(created_at);
+	CREATE TABLE IF NOT EXISTS glossary_candidates (
+		id TEXT PRIMARY KEY,
+		term TEXT NOT NULL,
+		explanation TEXT NOT NULL,
+		source_url TEXT NOT NULL,
+		category TEXT NOT NULL,
+		proposed_by TEXT NOT NULL,
+		state TEXT NOT NULL,
+		created_at DATETIME NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_glossary_candidates_category ON glossary_candidates(category);
+	CREATE INDEX IF NOT EXISTS idx_glossary_candidates_created_at ON glossary_candidates(created_at);
 	`
 	_, err := db.Exec(query)
 	return err
+}
+
+// SaveCandidate persists one model-proposed candidate without touching the
+// canonical glossary_items table. INSERT-only semantics make accidental
+// candidate replacement visible to the owner route.
+func (r *SQLiteGlossaryRepository) SaveCandidate(ctx context.Context, candidate entity.GlossaryCandidate) error {
+	if r == nil || r.db == nil {
+		return sql.ErrConnDone
+	}
+	if err := entity.ValidateGlossaryCandidate(candidate); err != nil {
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO glossary_candidates
+			(id, term, explanation, source_url, category, proposed_by, state, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, candidate.ID, candidate.Term, candidate.Explanation, candidate.SourceURL, candidate.Category, candidate.ProposedBy, candidate.State, candidate.CreatedAt)
+	return err
+}
+
+// FindCandidateByID performs an exact primary-key lookup and validates the
+// complete stored row before exposing it to an owner route.
+func (r *SQLiteGlossaryRepository) FindCandidateByID(ctx context.Context, id string) (entity.GlossaryCandidate, bool, error) {
+	if r == nil || r.db == nil {
+		return entity.GlossaryCandidate{}, false, sql.ErrConnDone
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return entity.GlossaryCandidate{}, false, fmt.Errorf("candidate id is required")
+	}
+	var candidate entity.GlossaryCandidate
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, term, explanation, source_url, category, proposed_by, state, created_at
+		FROM glossary_candidates WHERE id = ?
+	`, id).Scan(
+		&candidate.ID, &candidate.Term, &candidate.Explanation, &candidate.SourceURL,
+		&candidate.Category, &candidate.ProposedBy, &candidate.State, &candidate.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return entity.GlossaryCandidate{}, false, nil
+	}
+	if err != nil {
+		return entity.GlossaryCandidate{}, false, err
+	}
+	candidate.CreatedAt = candidate.CreatedAt.UTC()
+	if candidate.ID != id {
+		return entity.GlossaryCandidate{}, false, fmt.Errorf("candidate row id mismatch")
+	}
+	if err := entity.ValidateGlossaryCandidate(candidate); err != nil {
+		return entity.GlossaryCandidate{}, false, fmt.Errorf("stored candidate is invalid: %w", err)
+	}
+	return candidate, true, nil
 }
 
 func (r *SQLiteGlossaryRepository) Save(ctx context.Context, item *entity.GlossaryItem) error {

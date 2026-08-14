@@ -50,7 +50,7 @@ func TestExplorerSearchFindsEvidenceInsideAllowlist(t *testing.T) {
 	if ev.LineStart != 2 {
 		t.Fatalf("line start = %d", ev.LineStart)
 	}
-	if len(store.traces) != 1 || store.traces[0].FinalEvidenceCount == 0 {
+	if len(store.traces) != 1 || store.traces[0].FinalEvidenceCount == 0 || store.traces[0].Actor != "Worker" || store.traces[0].Mode != "dci" || store.traces[0].EventID == "" {
 		t.Fatalf("trace not saved with evidence: %#v", store.traces)
 	}
 }
@@ -497,6 +497,121 @@ func TestExplorerSearchSavesSourceCandidatesForEvidence(t *testing.T) {
 	}
 	if len(candidates.results) != 1 || len(candidates.results[0].Pack.Evidence) != 1 {
 		t.Fatalf("source candidates were not saved: %#v", candidates.results)
+	}
+}
+
+func TestExplorerSearchWithIdentityUsesSuppliedIdentity(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "spec.md"), "Corpus identity evidence\n")
+	traceStore := &memoryTraceStore{}
+	skillStore := &dciBootstrapStore{manifests: []domainskill.SkillManifest{{
+		SkillID:         "core.dci-search",
+		Enabled:         true,
+		IntentTriggers:  []string{"dci_search"},
+		KeywordTriggers: []string{"corpus"},
+	}}}
+	explorer := NewExplorer(Config{
+		Enabled:      true,
+		Allowlist:    []string{dir},
+		MaxEvidence:  1,
+		MaxFilesRead: 1,
+		Now:          fixedNow,
+	}, traceStore, WithSkillBootstrap(skillbootstrap.NewBootstrapService(skillStore).WithNow(fixedNow)))
+
+	result, err := explorer.SearchWithIdentity(context.Background(), "  Corpus  ", "  dci-owner-event  ", "  shiro  ")
+	if err != nil {
+		t.Fatalf("SearchWithIdentity failed: %v", err)
+	}
+	if result.Trace.EventID != "dci-owner-event" || result.Pack.EventID != "dci-owner-event" || result.Trace.UserQuery != "Corpus" || result.Pack.Query != "Corpus" || result.Trace.Actor != "shiro" || result.Trace.Mode != "dci" {
+		t.Fatalf("identity not propagated: trace=%#v pack=%#v", result.Trace, result.Pack)
+	}
+	if len(skillStore.logs) != 1 || skillStore.logs[0].Agent != "shiro" {
+		t.Fatalf("skill bootstrap identity=%#v", skillStore.logs)
+	}
+	if len(traceStore.traces) != 1 || traceStore.traces[0].EventID != "dci-owner-event" {
+		t.Fatalf("saved traces=%#v", traceStore.traces)
+	}
+}
+
+func TestExplorerSearchWithIdentityRequiresTrimmedIdentity(t *testing.T) {
+	explorer := NewExplorer(Config{Enabled: true, Now: fixedNow}, nil)
+	for _, tc := range []struct {
+		name    string
+		query   string
+		eventID string
+		actor   string
+	}{
+		{name: "query", query: " ", eventID: "event-1", actor: "shiro"},
+		{name: "event", query: "query", eventID: " ", actor: "shiro"},
+		{name: "actor", query: "query", eventID: "event-1", actor: " "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := explorer.SearchWithIdentity(context.Background(), tc.query, tc.eventID, tc.actor); err == nil {
+				t.Fatalf("SearchWithIdentity(%q, %q, %q) unexpectedly succeeded", tc.query, tc.eventID, tc.actor)
+			}
+		})
+	}
+}
+
+type failingDCISourceCandidateStore struct {
+	traceStore     *memoryTraceStore
+	calls          int
+	sawTraceBefore bool
+	err            error
+}
+
+func (s *failingDCISourceCandidateStore) SaveDCISourceCandidates(_ context.Context, _ domaindci.SearchResult) error {
+	s.calls++
+	s.sawTraceBefore = s.traceStore == nil || len(s.traceStore.traces) == 0
+	return s.err
+}
+
+func TestExplorerSearchWithIdentitySavesTraceAfterAncillaryCandidateFailure(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "spec.md"), "DCI ancillary failure evidence\n")
+	traceStore := &memoryTraceStore{}
+	candidateStore := &failingDCISourceCandidateStore{traceStore: traceStore, err: errors.New("candidate backend unavailable")}
+	explorer := NewExplorer(Config{
+		Enabled:      true,
+		Allowlist:    []string{dir},
+		MaxEvidence:  1,
+		MaxFilesRead: 1,
+		Now:          fixedNow,
+	}, traceStore, WithSourceCandidateStore(candidateStore))
+
+	result, err := explorer.SearchWithIdentity(context.Background(), "ancillary", "dci-ancillary-failure", "shiro")
+	if err != nil {
+		t.Fatalf("SearchWithIdentity failed on ancillary candidate error: %v", err)
+	}
+	if candidateStore.calls != 1 || !candidateStore.sawTraceBefore {
+		t.Fatalf("candidate save ordering calls=%d sawTraceBefore=%v", candidateStore.calls, candidateStore.sawTraceBefore)
+	}
+	if len(traceStore.traces) != 1 || len(result.Pack.Limitations) == 0 || result.Pack.Limitations[len(result.Pack.Limitations)-1] != "dci source candidate save failed" {
+		t.Fatalf("trace limitation/result=%#v traces=%#v", result, traceStore.traces)
+	}
+}
+
+type failingDCITraceStore struct {
+	err   error
+	calls int
+}
+
+func (s *failingDCITraceStore) SaveSearchTrace(context.Context, domaindci.SearchTrace) error {
+	s.calls++
+	return s.err
+}
+
+func TestExplorerSearchWithIdentityPropagatesFinalSaveFailureWithoutAllowlist(t *testing.T) {
+	sentinel := errors.New("final dci store unavailable")
+	store := &failingDCITraceStore{err: sentinel}
+	explorer := NewExplorer(Config{Enabled: true, Now: fixedNow}, store)
+
+	_, err := explorer.SearchWithIdentity(context.Background(), "query", "dci-empty-allowlist", "shiro")
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("SearchWithIdentity error=%v, want %v", err, sentinel)
+	}
+	if store.calls != 1 {
+		t.Fatalf("final store calls=%d, want 1", store.calls)
 	}
 }
 

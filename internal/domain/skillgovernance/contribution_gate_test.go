@@ -12,7 +12,7 @@ func TestEvaluateContributionGateBlocksMissingRequiredChecks(t *testing.T) {
 		ExistingPRsChecked:  true,
 		RealProblemVerified: false,
 		CoreChangeVerified:  true,
-		DiffReviewed:        false,
+		DiffReviewed:        true,
 		TestResult:          "go test ./...",
 	})
 	if decision.Status != GateStatusBlocked || decision.CanContribute {
@@ -20,6 +20,29 @@ func TestEvaluateContributionGateBlocksMissingRequiredChecks(t *testing.T) {
 	}
 	if len(decision.StopReasons) != 1 {
 		t.Fatalf("reasons=%#v", decision.StopReasons)
+	}
+}
+
+func TestEvaluateContributionGateBlocksUnreviewedDiff(t *testing.T) {
+	decision := EvaluateContributionGate(ContributionGateLog{
+		Repo:                "example/repo",
+		ProblemStatement:    "real bug",
+		ExistingPRsChecked:  true,
+		RealProblemVerified: true,
+		CoreChangeVerified:  true,
+		DiffReviewed:        false,
+		TestResult:          "go test ./...",
+	})
+	if decision.Status != GateStatusBlocked || decision.CanContribute {
+		t.Fatalf("decision=%#v", decision)
+	}
+	wantReason := "diff was not reviewed"
+	wantAction := "変更差分をレビューする"
+	if len(decision.StopReasons) != 1 || decision.StopReasons[0] != wantReason {
+		t.Fatalf("stop reasons=%#v, want [%q]", decision.StopReasons, wantReason)
+	}
+	if len(decision.NextActions) != 1 || decision.NextActions[0] != wantAction {
+		t.Fatalf("next actions=%#v, want [%q]", decision.NextActions, wantAction)
 	}
 }
 
@@ -34,6 +57,7 @@ func TestEvaluateContributionGateBlocksAllMissingInputs(t *testing.T) {
 		"existing PRs were not checked",
 		"real problem is not verified",
 		"core change fit is not verified",
+		"diff was not reviewed",
 		"test result is required",
 	}
 	if len(decision.StopReasons) != len(wantReasons) || len(decision.NextActions) != len(wantReasons) {

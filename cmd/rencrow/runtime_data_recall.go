@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,12 @@ type runtimeDataRecallKey struct {
 type runtimeDataRecallRegistration struct {
 	access   dataRecallAccess
 	callback dataRecallCallback
+}
+
+type runtimeDataRecallRoute struct {
+	Store     string
+	Operation string
+	Access    dataRecallAccess
 }
 
 // runtimeDataRecallRegistry is the Worker-owned name/operation dispatch
@@ -72,6 +79,27 @@ func (r *runtimeDataRecallRegistry) Register(store, operation string, access dat
 	}
 	r.registrations[key] = runtimeDataRecallRegistration{access: access, callback: callback}
 	return nil
+}
+
+// Snapshot returns only the safe executable contract of registered routes.
+// Callbacks and storage details never leave the registry.
+func (r *runtimeDataRecallRegistry) Snapshot() []runtimeDataRecallRoute {
+	if r == nil {
+		return []runtimeDataRecallRoute{}
+	}
+	r.mu.RLock()
+	routes := make([]runtimeDataRecallRoute, 0, len(r.registrations))
+	for key, registration := range r.registrations {
+		routes = append(routes, runtimeDataRecallRoute{Store: key.store, Operation: key.operation, Access: registration.access})
+	}
+	r.mu.RUnlock()
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Store != routes[j].Store {
+			return routes[i].Store < routes[j].Store
+		}
+		return routes[i].Operation < routes[j].Operation
+	})
+	return routes
 }
 
 // Recall validates the trusted scope, normalizes the model request, checks the

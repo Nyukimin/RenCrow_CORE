@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -72,6 +73,26 @@ func (s *SQLiteStore) ListAdviceRuns(ctx context.Context, limit int) ([]advisorD
 	return listSQLite[advisorDomain.AdviceRunRecord](ctx, s, "advisor_run", limit)
 }
 
+// FindAdviceRunByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindAdviceRunByID(ctx context.Context, runID string) (advisorDomain.AdviceRunRecord, bool, error) {
+	if s == nil || s.db == nil {
+		return advisorDomain.AdviceRunRecord{}, false, fmt.Errorf("advisor sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, "SELECT payload FROM advisor_run WHERE run_id = ?", runID).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return advisorDomain.AdviceRunRecord{}, false, nil
+	}
+	if err != nil {
+		return advisorDomain.AdviceRunRecord{}, false, err
+	}
+	var item advisorDomain.AdviceRunRecord
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return advisorDomain.AdviceRunRecord{}, false, err
+	}
+	return item, true, nil
+}
+
 func (s *SQLiteStore) SaveAdvisorAdoption(ctx context.Context, item advisorDomain.AdvisorAdoptionRecord) error {
 	if err := item.Validate(); err != nil {
 		return err
@@ -81,6 +102,26 @@ func (s *SQLiteStore) SaveAdvisorAdoption(ctx context.Context, item advisorDomai
 
 func (s *SQLiteStore) ListAdvisorAdoptions(ctx context.Context, limit int) ([]advisorDomain.AdvisorAdoptionRecord, error) {
 	return listSQLite[advisorDomain.AdvisorAdoptionRecord](ctx, s, "advisor_adoption", limit)
+}
+
+// FindAdvisorAdoptionByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindAdvisorAdoptionByID(ctx context.Context, adoptionID string) (advisorDomain.AdvisorAdoptionRecord, bool, error) {
+	if s == nil || s.db == nil {
+		return advisorDomain.AdvisorAdoptionRecord{}, false, fmt.Errorf("advisor sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, "SELECT payload FROM advisor_adoption WHERE adoption_id = ?", adoptionID).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return advisorDomain.AdvisorAdoptionRecord{}, false, nil
+	}
+	if err != nil {
+		return advisorDomain.AdvisorAdoptionRecord{}, false, err
+	}
+	var item advisorDomain.AdvisorAdoptionRecord
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return advisorDomain.AdvisorAdoptionRecord{}, false, err
+	}
+	return item, true, nil
 }
 
 func (s *SQLiteStore) SaveAdvisorScoreSnapshot(ctx context.Context, item advisorDomain.AdvisorScoreSnapshot) error {

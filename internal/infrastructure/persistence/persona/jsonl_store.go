@@ -2,6 +2,7 @@ package persona
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
@@ -101,6 +102,26 @@ func (s *JSONLStore) ListObservationLogs(_ context.Context, limit int) ([]domain
 		limit = 50
 	}
 	return jsonlutil.ListLatest[domainpersona.ObservationLog](s.observationPath, limit)
+}
+
+// FindObservationLogByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindObservationLogByID(_ context.Context, eventID string) (domainpersona.ObservationLog, bool, error) {
+	var found domainpersona.ObservationLog
+	matched := false
+	if err := jsonlutil.Read(s.observationPath, func(line []byte) error {
+		var item domainpersona.ObservationLog
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.EventID == eventID {
+			found = item
+			matched = true
+		}
+		return nil
+	}); err != nil {
+		return domainpersona.ObservationLog{}, false, err
+	}
+	return found, matched, nil
 }
 
 func (s *JSONLStore) SaveMetaProfileUpdate(_ context.Context, item domainpersona.MetaProfileUpdate) error {

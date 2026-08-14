@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -233,5 +234,51 @@ func TestJSONLStoreApplyMetaProfileUpdateRequiresAdoptedReview(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "must be adopted") {
 		t.Fatalf("expected pending review to fail, got %v", err)
+	}
+}
+
+func TestJSONLStoreFindObservationLogByIDReturnsLatestExactRecord(t *testing.T) {
+	store := NewJSONLStore(t.TempDir())
+	ctx := context.Background()
+	now := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
+	first := domainpersona.ObservationLog{
+		EventID:         "event-exact",
+		ObserverID:      "lumina",
+		TargetID:        "ren",
+		ObservationType: "daily",
+		Summary:         "first",
+		Sensitivity:     "normal",
+		ReviewStatus:    "pending",
+		CreatedAt:       now,
+	}
+	latest := first
+	latest.Summary = "latest"
+	latest.CreatedAt = now.Add(time.Minute)
+	suffix := first
+	suffix.EventID = "event-exact-suffix"
+
+	for _, item := range []domainpersona.ObservationLog{first, suffix, latest} {
+		if err := store.SaveObservationLog(ctx, item); err != nil {
+			t.Fatalf("SaveObservationLog(%q) failed: %v", item.EventID, err)
+		}
+	}
+
+	got, found, err := store.FindObservationLogByID(ctx, "event-exact")
+	if err != nil || !found || got.EventID != "event-exact" || got.Summary != "latest" {
+		t.Fatalf("FindObservationLogByID() = %#v, found=%v, err=%v", got, found, err)
+	}
+	if got, found, err := store.FindObservationLogByID(ctx, "missing"); err != nil || found || !reflect.DeepEqual(got, domainpersona.ObservationLog{}) {
+		t.Fatalf("missing FindObservationLogByID() = %#v, found=%v, err=%v", got, found, err)
+	}
+}
+
+func TestJSONLStoreFindObservationLogByIDRejectsMalformedRecord(t *testing.T) {
+	root := t.TempDir()
+	store := NewJSONLStore(root)
+	if err := os.WriteFile(filepath.Join(root, "observation_log.jsonl"), []byte("{malformed}\n"), 0644); err != nil {
+		t.Fatalf("write malformed observation log: %v", err)
+	}
+	if _, found, err := store.FindObservationLogByID(context.Background(), "event"); err == nil || found {
+		t.Fatalf("expected malformed observation log error, found=%v err=%v", found, err)
 	}
 }

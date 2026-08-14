@@ -45,6 +45,40 @@ func (s *JSONLStore) ListAdviceRuns(_ context.Context, limit int) ([]advisorDoma
 	return readJSONL[advisorDomain.AdviceRunRecord](s, s.runPath, limit)
 }
 
+// FindAdviceRunByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindAdviceRunByID(_ context.Context, runID string) (advisorDomain.AdviceRunRecord, bool, error) {
+	if s == nil {
+		return advisorDomain.AdviceRunRecord{}, false, errors.New("advisor jsonl store is required")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	file, err := os.Open(s.runPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return advisorDomain.AdviceRunRecord{}, false, nil
+	}
+	if err != nil {
+		return advisorDomain.AdviceRunRecord{}, false, err
+	}
+	defer file.Close()
+	var latest advisorDomain.AdviceRunRecord
+	found := false
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var item advisorDomain.AdviceRunRecord
+		if err := json.Unmarshal(scanner.Bytes(), &item); err != nil {
+			return advisorDomain.AdviceRunRecord{}, false, err
+		}
+		if item.RunID == runID {
+			latest = item
+			found = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return advisorDomain.AdviceRunRecord{}, false, err
+	}
+	return latest, found, nil
+}
+
 func (s *JSONLStore) SaveAdvisorAdoption(_ context.Context, item advisorDomain.AdvisorAdoptionRecord) error {
 	if err := item.Validate(); err != nil {
 		return err
@@ -54,6 +88,40 @@ func (s *JSONLStore) SaveAdvisorAdoption(_ context.Context, item advisorDomain.A
 
 func (s *JSONLStore) ListAdvisorAdoptions(_ context.Context, limit int) ([]advisorDomain.AdvisorAdoptionRecord, error) {
 	return readJSONL[advisorDomain.AdvisorAdoptionRecord](s, s.adoptionPath, limit)
+}
+
+// FindAdvisorAdoptionByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindAdvisorAdoptionByID(_ context.Context, adoptionID string) (advisorDomain.AdvisorAdoptionRecord, bool, error) {
+	if s == nil {
+		return advisorDomain.AdvisorAdoptionRecord{}, false, errors.New("advisor jsonl store is required")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	file, err := os.Open(s.adoptionPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return advisorDomain.AdvisorAdoptionRecord{}, false, nil
+	}
+	if err != nil {
+		return advisorDomain.AdvisorAdoptionRecord{}, false, err
+	}
+	defer file.Close()
+	var latest advisorDomain.AdvisorAdoptionRecord
+	found := false
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var item advisorDomain.AdvisorAdoptionRecord
+		if err := json.Unmarshal(scanner.Bytes(), &item); err != nil {
+			return advisorDomain.AdvisorAdoptionRecord{}, false, err
+		}
+		if item.AdoptionID == adoptionID {
+			latest = item
+			found = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return advisorDomain.AdvisorAdoptionRecord{}, false, err
+	}
+	return latest, found, nil
 }
 
 func (s *JSONLStore) SaveAdvisorScoreSnapshot(_ context.Context, item advisorDomain.AdvisorScoreSnapshot) error {

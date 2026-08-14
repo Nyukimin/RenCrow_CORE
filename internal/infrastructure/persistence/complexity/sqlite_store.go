@@ -98,6 +98,32 @@ func (s *SQLiteStore) ListHotspots(ctx context.Context, limit int) ([]domaincomp
 	return listSQLiteItems[domaincomplexity.Hotspot](ctx, s, "complexity_hotspot", limit)
 }
 
+// FindHotspotByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindHotspotByID(ctx context.Context, hotspotID string) (domaincomplexity.Hotspot, bool, error) {
+	if s == nil || s.db == nil {
+		return domaincomplexity.Hotspot{}, false, fmt.Errorf("complexity sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM complexity_hotspot WHERE hotspot_id = ?`, hotspotID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domaincomplexity.Hotspot{}, false, nil
+		}
+		return domaincomplexity.Hotspot{}, false, err
+	}
+	var item domaincomplexity.Hotspot
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domaincomplexity.Hotspot{}, false, err
+	}
+	if err := domaincomplexity.ValidateHotspot(item); err != nil {
+		return domaincomplexity.Hotspot{}, false, err
+	}
+	if item.HotspotID != hotspotID {
+		return domaincomplexity.Hotspot{}, false, fmt.Errorf("hotspot payload id %q does not match requested id %q", item.HotspotID, hotspotID)
+	}
+	return item, true, nil
+}
+
 func (s *SQLiteStore) SaveHotspotEvidence(ctx context.Context, item domaincomplexity.HotspotEvidence) error {
 	if err := domaincomplexity.ValidateHotspotEvidence(item); err != nil {
 		return err
@@ -118,6 +144,32 @@ func (s *SQLiteStore) SaveReportArtifact(ctx context.Context, item domaincomplex
 
 func (s *SQLiteStore) ListReportArtifacts(ctx context.Context, limit int) ([]domaincomplexity.ReportArtifact, error) {
 	return listSQLiteItems[domaincomplexity.ReportArtifact](ctx, s, "complexity_report_artifact", limit)
+}
+
+// FindReportArtifactByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindReportArtifactByID(ctx context.Context, artifactID string) (domaincomplexity.ReportArtifact, bool, error) {
+	if s == nil || s.db == nil {
+		return domaincomplexity.ReportArtifact{}, false, fmt.Errorf("complexity sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM complexity_report_artifact WHERE artifact_id = ?`, artifactID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domaincomplexity.ReportArtifact{}, false, nil
+		}
+		return domaincomplexity.ReportArtifact{}, false, err
+	}
+	var item domaincomplexity.ReportArtifact
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domaincomplexity.ReportArtifact{}, false, err
+	}
+	if err := domaincomplexity.ValidateReportArtifact(item); err != nil {
+		return domaincomplexity.ReportArtifact{}, false, err
+	}
+	if item.ArtifactID != artifactID {
+		return domaincomplexity.ReportArtifact{}, false, fmt.Errorf("report artifact payload id %q does not match requested id %q", item.ArtifactID, artifactID)
+	}
+	return item, true, nil
 }
 
 func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, id string, createdAt string, item any) error {

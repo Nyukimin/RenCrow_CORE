@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -130,6 +131,26 @@ func (s *SQLiteStore) SaveContributionGateLog(ctx context.Context, item domainsk
 
 func (s *SQLiteStore) ListContributionGateLogs(ctx context.Context, limit int) ([]domainskill.ContributionGateLog, error) {
 	return listSQLiteItems[domainskill.ContributionGateLog](ctx, s, "contribution_gate_log", limit)
+}
+
+// FindContributionGateByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindContributionGateByID(ctx context.Context, eventID string) (domainskill.ContributionGateLog, bool, error) {
+	if s == nil || s.db == nil {
+		return domainskill.ContributionGateLog{}, false, fmt.Errorf("skill governance sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, "SELECT payload FROM contribution_gate_log WHERE event_id = ?", eventID).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domainskill.ContributionGateLog{}, false, nil
+	}
+	if err != nil {
+		return domainskill.ContributionGateLog{}, false, err
+	}
+	var item domainskill.ContributionGateLog
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domainskill.ContributionGateLog{}, false, err
+	}
+	return item, true, nil
 }
 
 func (s *SQLiteStore) SaveExternalPRSubmitRecord(ctx context.Context, item domainskill.ExternalPRSubmitRecord) error {

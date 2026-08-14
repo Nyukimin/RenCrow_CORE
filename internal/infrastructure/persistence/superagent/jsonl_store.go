@@ -56,6 +56,30 @@ func (s *JSONLStore) ListAgentRuns(_ context.Context, limit int) ([]domainsupera
 	return latestAgentRuns(items, normalizedLimit(limit)), err
 }
 
+// FindAgentRunByID returns the latest valid record with exactly the requested run ID.
+func (s *JSONLStore) FindAgentRunByID(_ context.Context, runID string) (domainsuperagent.AgentRun, bool, error) {
+	var found domainsuperagent.AgentRun
+	foundRecord := false
+	err := readJSONL(s.agentRunPath, func(line []byte) error {
+		var item domainsuperagent.AgentRun
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if err := domainsuperagent.ValidateAgentRun(item); err != nil {
+			return err
+		}
+		if item.RunID == runID {
+			found = item
+			foundRecord = true
+		}
+		return nil
+	})
+	if err != nil {
+		return domainsuperagent.AgentRun{}, false, err
+	}
+	return found, foundRecord, err
+}
+
 func latestAgentRuns(items []domainsuperagent.AgentRun, limit int) []domainsuperagent.AgentRun {
 	if limit <= 0 {
 		limit = len(items)
@@ -151,6 +175,30 @@ func (s *JSONLStore) ListTraceEvents(_ context.Context, limit int) ([]domainsupe
 		return nil
 	})
 	return reverseLimit(items, normalizedLimit(limit)), err
+}
+
+// FindTraceEventByID returns the latest valid record with exactly the requested event ID.
+func (s *JSONLStore) FindTraceEventByID(_ context.Context, eventID string) (domainsuperagent.TraceEvent, bool, error) {
+	var found domainsuperagent.TraceEvent
+	foundRecord := false
+	err := readJSONL(s.traceEventPath, func(line []byte) error {
+		var item domainsuperagent.TraceEvent
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if err := domainsuperagent.ValidateTraceEvent(item); err != nil {
+			return err
+		}
+		if item.EventID == eventID {
+			found = item
+			foundRecord = true
+		}
+		return nil
+	})
+	if err != nil {
+		return domainsuperagent.TraceEvent{}, false, err
+	}
+	return found, foundRecord, err
 }
 
 func (s *JSONLStore) SaveRunQueueItem(_ context.Context, item domainsuperagent.RunQueueItem) error {

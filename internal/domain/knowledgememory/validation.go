@@ -3,6 +3,18 @@ package knowledgememory
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
+)
+
+const (
+	// Creative candidate limits keep the model-owned payload bounded before it
+	// reaches the durable knowledge-memory store. Limits are expressed in
+	// Unicode code points so multi-byte UTF-8 text is treated consistently.
+	MaxCreativeCandidateTitleRunes     = 512
+	MaxCreativeCandidateWorkTypeRunes  = 128
+	MaxCreativeCandidateEntryRunes     = 512
+	MaxCreativeCandidateArrayItems     = 32
+	MaxCreativeCandidateTotalTextRunes = 8192
 )
 
 func ValidatePersonalArchiveEntry(item PersonalArchiveEntry) error {
@@ -39,6 +51,87 @@ func ValidateCreativeKnowledgeItem(item CreativeKnowledgeItem) error {
 	}
 	if item.CreatedAt.IsZero() {
 		return fmt.Errorf("created_at is required")
+	}
+	return nil
+}
+
+// ValidateCreativeCandidate validates the private, candidate-only shape used
+// by the authenticated knowledge-memory owner route. Identity, status and
+// visibility are owner-controlled values and therefore are checked here in
+// addition to the general creative knowledge validation.
+func ValidateCreativeCandidate(item CreativeKnowledgeItem) error {
+	if err := ValidateCreativeKnowledgeItem(item); err != nil {
+		return err
+	}
+	if strings.TrimSpace(item.UserID) == "" {
+		return fmt.Errorf("user_id is required for creative candidate")
+	}
+	if strings.TrimSpace(item.Status) != "candidate" {
+		return fmt.Errorf("creative candidate status must be candidate")
+	}
+	if strings.TrimSpace(item.Visibility) != "private" {
+		return fmt.Errorf("creative candidate visibility must be private")
+	}
+	if err := validateCreativeCandidateText("item_id", item.ItemID, MaxCreativeCandidateEntryRunes, true); err != nil {
+		return err
+	}
+	if err := validateCreativeCandidateText("user_id", item.UserID, MaxCreativeCandidateEntryRunes, true); err != nil {
+		return err
+	}
+	if err := validateCreativeCandidateText("title", item.Title, MaxCreativeCandidateTitleRunes, true); err != nil {
+		return err
+	}
+	if err := validateCreativeCandidateText("work_type", item.WorkType, MaxCreativeCandidateWorkTypeRunes, false); err != nil {
+		return err
+	}
+	if err := validateCreativeCandidateEntries("creator_names", item.CreatorNames); err != nil {
+		return err
+	}
+	if err := validateCreativeCandidateEntries("related_works", item.RelatedWorks); err != nil {
+		return err
+	}
+	if err := validateCreativeCandidateEntries("content_hints", item.ContentHints); err != nil {
+		return err
+	}
+	if item.CreatedAt.IsZero() {
+		return fmt.Errorf("created_at is required")
+	}
+
+	totalTextRunes := utf8.RuneCountInString(strings.TrimSpace(item.Title)) +
+		utf8.RuneCountInString(strings.TrimSpace(item.WorkType))
+	for _, values := range [][]string{item.CreatorNames, item.RelatedWorks, item.ContentHints} {
+		for _, value := range values {
+			totalTextRunes += utf8.RuneCountInString(strings.TrimSpace(value))
+		}
+	}
+	if totalTextRunes > MaxCreativeCandidateTotalTextRunes {
+		return fmt.Errorf("creative candidate text exceeds %d characters", MaxCreativeCandidateTotalTextRunes)
+	}
+	return nil
+}
+
+func validateCreativeCandidateEntries(field string, values []string) error {
+	if len(values) > MaxCreativeCandidateArrayItems {
+		return fmt.Errorf("%s exceeds %d entries", field, MaxCreativeCandidateArrayItems)
+	}
+	for index, value := range values {
+		if err := validateCreativeCandidateText(fmt.Sprintf("%s[%d]", field, index), value, MaxCreativeCandidateEntryRunes, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateCreativeCandidateText(field, value string, maxRunes int, required bool) error {
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("%s must be valid UTF-8", field)
+	}
+	value = strings.TrimSpace(value)
+	if required && value == "" {
+		return fmt.Errorf("%s is required", field)
+	}
+	if utf8.RuneCountInString(value) > maxRunes {
+		return fmt.Errorf("%s exceeds %d characters", field, maxRunes)
 	}
 	return nil
 }

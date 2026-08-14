@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -131,6 +132,32 @@ func (s *SQLiteStore) SaveWorkflowEvent(ctx context.Context, item domainai.Workf
 
 func (s *SQLiteStore) ListWorkflowEvents(ctx context.Context, limit int) ([]domainai.WorkflowEvent, error) {
 	return listSQLiteItems[domainai.WorkflowEvent](ctx, s, "ai_workflow_event", limit)
+}
+
+// FindWorkflowEventByID returns the record stored under the exact ai_workflow_event primary key.
+func (s *SQLiteStore) FindWorkflowEventByID(ctx context.Context, eventID string) (domainai.WorkflowEvent, bool, error) {
+	if s == nil || s.db == nil {
+		return domainai.WorkflowEvent{}, false, fmt.Errorf("ai workflow sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM ai_workflow_event WHERE event_id = ?`, eventID).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domainai.WorkflowEvent{}, false, nil
+	}
+	if err != nil {
+		return domainai.WorkflowEvent{}, false, err
+	}
+	var item domainai.WorkflowEvent
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domainai.WorkflowEvent{}, false, err
+	}
+	if err := domainai.ValidateWorkflowEvent(item); err != nil {
+		return domainai.WorkflowEvent{}, false, err
+	}
+	if item.EventID != eventID {
+		return domainai.WorkflowEvent{}, false, fmt.Errorf("stored workflow event ID %q does not match primary key %q", item.EventID, eventID)
+	}
+	return item, true, nil
 }
 
 func (s *SQLiteStore) SaveProjectMemoryIndex(ctx context.Context, item domainai.ProjectMemoryIndex) error {

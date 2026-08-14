@@ -115,3 +115,98 @@ func TestSQLiteStoreRejectsOversizedContextPack(t *testing.T) {
 		t.Fatal("expected oversized context pack to fail")
 	}
 }
+
+func TestSQLiteStoreFindAgentRunByIDUsesPrimaryKeyAndRejectsMalformedPayload(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	running := domainsuperagent.AgentRun{RunID: "run_1", AgentType: "LeadAgent", Status: "running", StartedAt: now}
+	completed := running
+	completed.Status = "completed"
+	completed.CompletedAt = now.Add(time.Minute)
+	if err := store.SaveAgentRun(ctx, running); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAgentRun(ctx, completed); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err := store.FindAgentRunByID(ctx, "run_1")
+	if err != nil || !found || item.Status != "completed" {
+		t.Fatalf("item=%#v found=%v err=%v", item, found, err)
+	}
+	missing, found, err := store.FindAgentRunByID(ctx, "missing")
+	if err != nil || found || missing.RunID != "" {
+		t.Fatalf("missing=%#v found=%v err=%v", missing, found, err)
+	}
+
+	prefixStore, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prefixStore.Close()
+	if err := prefixStore.SaveAgentRun(ctx, domainsuperagent.AgentRun{RunID: "run_10", AgentType: "LeadAgent", Status: "running", StartedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err = prefixStore.FindAgentRunByID(ctx, "run_1")
+	if err != nil || found || item.RunID != "" {
+		t.Fatalf("prefix match item=%#v found=%v err=%v", item, found, err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, "UPDATE agent_run SET payload = ? WHERE run_id = ?", "{", "run_1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.FindAgentRunByID(ctx, "run_1"); err == nil {
+		t.Fatal("expected malformed payload error")
+	}
+}
+
+func TestSQLiteStoreFindTraceEventByIDUsesPrimaryKeyAndRejectsMalformedPayload(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	started := domainsuperagent.TraceEvent{EventID: "evt_1", EventType: "started", Status: "running", CreatedAt: now}
+	completed := started
+	completed.Status = "completed"
+	if err := store.SaveTraceEvent(ctx, started); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveTraceEvent(ctx, completed); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err := store.FindTraceEventByID(ctx, "evt_1")
+	if err != nil || !found || item.Status != "completed" {
+		t.Fatalf("item=%#v found=%v err=%v", item, found, err)
+	}
+	missing, found, err := store.FindTraceEventByID(ctx, "missing")
+	if err != nil || found || missing.EventID != "" {
+		t.Fatalf("missing=%#v found=%v err=%v", missing, found, err)
+	}
+
+	prefixStore, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prefixStore.Close()
+	if err := prefixStore.SaveTraceEvent(ctx, domainsuperagent.TraceEvent{EventID: "evt_10", EventType: "started", Status: "running", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err = prefixStore.FindTraceEventByID(ctx, "evt_1")
+	if err != nil || found || item.EventID != "" {
+		t.Fatalf("prefix match item=%#v found=%v err=%v", item, found, err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, "UPDATE trace_event SET payload = ? WHERE event_id = ?", "{", "evt_1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.FindTraceEventByID(ctx, "evt_1"); err == nil {
+		t.Fatal("expected malformed payload error")
+	}
+}

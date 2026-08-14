@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"path/filepath"
+	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
@@ -24,6 +25,59 @@ type agentRuntime struct {
 	Heavy       *agent.HeavyAgent
 	Wild        *agent.WildAgent
 	WorkerTools agent.ToolRunner
+}
+
+// applyRuntimeAgentCapabilityContext runs after all owner routes are
+// registered so every production Agent receives the same executable snapshot
+// that data_capability.describe exposes.
+func applyRuntimeAgentCapabilityContext(cfg *config.Config, agents agentRuntime, capabilityContext string, coders ...*coderAdapter) {
+	if cfg == nil || cfg.Prompts == nil {
+		return
+	}
+	if cfg.Prompts.StableRuntimeContexts == nil {
+		cfg.Prompts.StableRuntimeContexts = map[string]string{}
+	}
+	names := []string{"mio", "shiro", "kuro", "midori"}
+	for _, coder := range []config.CoderConfig{cfg.Coder1, cfg.Coder2, cfg.Coder3, cfg.Coder4} {
+		if name := strings.ToLower(strings.TrimSpace(coder.Name)); name != "" {
+			names = append(names, name)
+		}
+	}
+	for _, name := range names {
+		if _, exists := cfg.Prompts.StableRuntimeContexts[name]; !exists {
+			cfg.Prompts.StableRuntimeContexts[name] = ""
+		}
+	}
+	appendRuntimeCapabilityContext(cfg.Prompts.StableRuntimeContexts, capabilityContext)
+	if agents.Mio != nil {
+		agents.Mio.WithStableRuntimeContexts(cfg.Prompts.StableRuntimeContexts)
+	}
+	if agents.ShiroChat != nil {
+		agents.ShiroChat.WithStableRuntimeContexts(cfg.Prompts.StableRuntimeContexts)
+	}
+	if agents.Shiro != nil {
+		agents.Shiro.WithStableRuntimeContext(cfg.Prompts.StableRuntimeContexts["shiro"])
+	}
+	if agents.Heavy != nil {
+		agents.Heavy.WithStableRuntimeContext(cfg.Prompts.StableRuntimeContexts["kuro"])
+	}
+	if agents.Wild != nil {
+		agents.Wild.WithStableRuntimeContext(cfg.Prompts.StableRuntimeContexts["midori"])
+	}
+	coderConfigs := []config.CoderConfig{cfg.Coder1, cfg.Coder2, cfg.Coder3, cfg.Coder4}
+	for index, coder := range coders {
+		if coder == nil {
+			continue
+		}
+		content := capabilityContext
+		if index < len(coderConfigs) {
+			name := strings.ToLower(strings.TrimSpace(coderConfigs[index].Name))
+			if stable := strings.TrimSpace(cfg.Prompts.StableRuntimeContexts[name]); stable != "" {
+				content = stable
+			}
+		}
+		coder.WithStableRuntimeContext(content)
+	}
 }
 
 func buildAgentRuntime(

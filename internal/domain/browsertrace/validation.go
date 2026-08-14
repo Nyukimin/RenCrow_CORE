@@ -19,6 +19,7 @@ var allowedAPICandidateStatuses = map[string]bool{
 var allowedAPIValidationStatuses = map[string]bool{
 	"validated":    true,
 	"needs_review": true,
+	"rejected":     true,
 }
 
 var allowedAPIArtifactStatuses = map[string]bool{
@@ -114,6 +115,9 @@ func ValidateAPICandidateValidationResult(item APICandidateValidationResult) err
 	if strings.TrimSpace(item.TraceRunID) == "" {
 		return errors.New("trace_run_id is required")
 	}
+	if strings.TrimSpace(item.ReviewNote) != "" && strings.TrimSpace(item.Reviewer) == "" {
+		return errors.New("reviewer is required when review_note is provided")
+	}
 	status := strings.TrimSpace(item.Status)
 	if status == "" {
 		return errors.New("status is required")
@@ -138,6 +142,14 @@ func ValidateAPICandidateValidationResult(item APICandidateValidationResult) err
 		}
 		if len(item.Issues) == 0 {
 			return errors.New("needs_review status requires validation issues")
+		}
+	}
+	if status == "rejected" {
+		if item.Passed {
+			return errors.New("rejected status requires passed=false")
+		}
+		if len(item.Issues) == 0 {
+			return errors.New("rejected status requires validation issues")
 		}
 	}
 	for _, issue := range item.Issues {

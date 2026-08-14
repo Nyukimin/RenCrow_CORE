@@ -55,6 +55,29 @@ func (s *JSONLStore) ListSandboxes(_ context.Context, limit int) ([]domainsandbo
 	return reverseLimit(records, limit), nil
 }
 
+// FindSandboxByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindSandboxByID(_ context.Context, sandboxID string) (domainsandbox.SandboxRecord, bool, error) {
+	var found domainsandbox.SandboxRecord
+	matched := false
+	if err := readJSONL(s.sandboxPath, func(line []byte) error {
+		var record domainsandbox.SandboxRecord
+		if err := json.Unmarshal(line, &record); err != nil {
+			return err
+		}
+		if err := domainsandbox.ValidateSandboxRecord(record); err != nil {
+			return err
+		}
+		if record.SandboxID == sandboxID {
+			found = record
+			matched = true
+		}
+		return nil
+	}); err != nil {
+		return domainsandbox.SandboxRecord{}, false, err
+	}
+	return found, matched, nil
+}
+
 func (s *JSONLStore) SaveSandboxArtifact(_ context.Context, artifact domainsandbox.SandboxArtifact) error {
 	if err := domainsandbox.ValidateSandboxArtifact(artifact); err != nil {
 		return err
@@ -78,6 +101,29 @@ func (s *JSONLStore) ListSandboxArtifacts(_ context.Context, limit int) ([]domai
 		return nil, err
 	}
 	return reverseLimit(artifacts, limit), nil
+}
+
+// FindSandboxArtifactByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindSandboxArtifactByID(_ context.Context, artifactID string) (domainsandbox.SandboxArtifact, bool, error) {
+	var found domainsandbox.SandboxArtifact
+	matched := false
+	if err := readJSONL(s.artifactPath, func(line []byte) error {
+		var artifact domainsandbox.SandboxArtifact
+		if err := json.Unmarshal(line, &artifact); err != nil {
+			return err
+		}
+		if err := domainsandbox.ValidateSandboxArtifact(artifact); err != nil {
+			return err
+		}
+		if artifact.ArtifactID == artifactID {
+			found = artifact
+			matched = true
+		}
+		return nil
+	}); err != nil {
+		return domainsandbox.SandboxArtifact{}, false, err
+	}
+	return found, matched, nil
 }
 
 func (s *JSONLStore) SavePromotionRequest(_ context.Context, req domainsandbox.PromotionRequest) error {
@@ -105,6 +151,29 @@ func (s *JSONLStore) ListPromotionRequests(_ context.Context, limit int) ([]doma
 	return reverseLimit(requests, limit), nil
 }
 
+// FindPromotionRequestByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindPromotionRequestByID(_ context.Context, promotionID string) (domainsandbox.PromotionRequest, bool, error) {
+	var found domainsandbox.PromotionRequest
+	matched := false
+	if err := readJSONL(s.promotionPath, func(line []byte) error {
+		var request domainsandbox.PromotionRequest
+		if err := json.Unmarshal(line, &request); err != nil {
+			return err
+		}
+		if err := domainsandbox.ValidatePromotionRequest(request); err != nil {
+			return err
+		}
+		if request.PromotionID == promotionID {
+			found = request
+			matched = true
+		}
+		return nil
+	}); err != nil {
+		return domainsandbox.PromotionRequest{}, false, err
+	}
+	return found, matched, nil
+}
+
 func (s *JSONLStore) SavePromotionGateLog(_ context.Context, log domainsandbox.PromotionGateLog) error {
 	if err := domainsandbox.ValidatePromotionGateLog(log); err != nil {
 		return err
@@ -128,6 +197,29 @@ func (s *JSONLStore) ListPromotionGateLogs(_ context.Context, limit int) ([]doma
 		return nil, err
 	}
 	return reverseLimit(logs, limit), nil
+}
+
+// FindPromotionGateLogByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindPromotionGateLogByID(_ context.Context, eventID string) (domainsandbox.PromotionGateLog, bool, error) {
+	var found domainsandbox.PromotionGateLog
+	matched := false
+	if err := readJSONL(s.gateLogPath, func(line []byte) error {
+		var log domainsandbox.PromotionGateLog
+		if err := json.Unmarshal(line, &log); err != nil {
+			return err
+		}
+		if err := domainsandbox.ValidatePromotionGateLog(log); err != nil {
+			return err
+		}
+		if log.EventID == eventID {
+			found = log
+			matched = true
+		}
+		return nil
+	}); err != nil {
+		return domainsandbox.PromotionGateLog{}, false, err
+	}
+	return found, matched, nil
 }
 
 func appendJSONL(path string, value any) error {

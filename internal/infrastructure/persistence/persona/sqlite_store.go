@@ -171,6 +171,26 @@ func (s *SQLiteStore) ListObservationLogs(ctx context.Context, limit int) ([]dom
 	return listSQLiteItems[domainpersona.ObservationLog](ctx, s, "observation_log", limit)
 }
 
+// FindObservationLogByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindObservationLogByID(ctx context.Context, eventID string) (domainpersona.ObservationLog, bool, error) {
+	if s == nil || s.db == nil {
+		return domainpersona.ObservationLog{}, false, fmt.Errorf("persona sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM observation_log WHERE event_id = ?`, eventID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domainpersona.ObservationLog{}, false, nil
+		}
+		return domainpersona.ObservationLog{}, false, err
+	}
+	var item domainpersona.ObservationLog
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domainpersona.ObservationLog{}, false, err
+	}
+	return item, true, nil
+}
+
 func (s *SQLiteStore) SaveMetaProfileUpdate(ctx context.Context, item domainpersona.MetaProfileUpdate) error {
 	if err := domainpersona.ValidateMetaProfileUpdate(item); err != nil {
 		return err

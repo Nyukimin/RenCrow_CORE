@@ -115,3 +115,134 @@ func TestSQLiteStoreSaveSearchTraceMaintainsTraceContract(t *testing.T) {
 		t.Fatalf("recent = %#v", recent)
 	}
 }
+
+func TestSQLiteStoreFindSearchTraceByIDReturnsExactTraceAndMissing(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "dci.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	first := domaindci.SearchTrace{
+		EventID:            "evt_1",
+		StartedAt:          now,
+		EndedAt:            now.Add(time.Second),
+		Actor:              "Worker",
+		Mode:               "dci",
+		UserQuery:          "first",
+		FinalEvidenceCount: 1,
+		Status:             "completed",
+		Steps: []domaindci.SearchStep{{
+			StepNo:      1,
+			Tool:        "read_file",
+			FilePath:    "docs/first.md",
+			ResultCount: 1,
+			Status:      "ok",
+			CreatedAt:   now,
+		}},
+	}
+	latest := first
+	latest.EndedAt = now.Add(2 * time.Second)
+	latest.UserQuery = "latest"
+	latest.Steps = []domaindci.SearchStep{{
+		StepNo:      1,
+		Tool:        "rg",
+		FilePath:    "docs/latest.md",
+		ResultCount: 2,
+		Status:      "completed",
+		CreatedAt:   now.Add(time.Second),
+	}}
+	prefix := latest
+	prefix.EventID = "evt_10"
+
+	for _, trace := range []domaindci.SearchTrace{first, latest, prefix} {
+		if err := store.SaveSearchTrace(ctx, trace); err != nil {
+			t.Fatalf("SaveSearchTrace(%s): %v", trace.EventID, err)
+		}
+	}
+
+	got, found, err := store.FindSearchTraceByID(ctx, "evt_1")
+	if err != nil {
+		t.Fatalf("FindSearchTraceByID: %v", err)
+	}
+	if !found || got.EventID != "evt_1" || got.UserQuery != "latest" || len(got.Steps) != 1 || got.Steps[0].Tool != "rg" {
+		t.Fatalf("found=%v trace=%#v", found, got)
+	}
+
+	got, found, err = store.FindSearchTraceByID(ctx, "evt_1x")
+	if err != nil {
+		t.Fatalf("FindSearchTraceByID(prefix): %v", err)
+	}
+	if found || got.EventID != "" {
+		t.Fatalf("prefix lookup found=%v trace=%#v", found, got)
+	}
+
+	got, found, err = store.FindSearchTraceByID(ctx, "missing")
+	if err != nil {
+		t.Fatalf("FindSearchTraceByID(missing): %v", err)
+	}
+	if found || got.EventID != "" {
+		t.Fatalf("missing lookup found=%v trace=%#v", found, got)
+	}
+}
+
+func TestSQLiteStoreFindSearchTraceByIDRejectsInvalidRowAndStep(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "dci.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	trace := domaindci.SearchTrace{
+		EventID:   "evt_invalid",
+		StartedAt: now,
+		EndedAt:   now.Add(time.Second),
+		Actor:     "Worker",
+		Mode:      "dci",
+		UserQuery: "invalid row test",
+		Status:    "completed",
+		Steps: []domaindci.SearchStep{{
+			StepNo:    1,
+			Tool:      "read_file",
+			Status:    "ok",
+			CreatedAt: now,
+		}},
+	}
+	if err := store.SaveSearchTrace(ctx, trace); err != nil {
+		t.Fatalf("SaveSearchTrace: %v", err)
+	}
+
+	if _, err := store.db.Exec("UPDATE dci_search_trace SET corpus_scope = ? WHERE event_id = ?", "{", trace.EventID); err != nil {
+		t.Fatalf("corrupt trace row: %v", err)
+	}
+	_, found, err := store.FindSearchTraceByID(ctx, trace.EventID)
+	if err == nil || found {
+		t.Fatalf("FindSearchTraceByID invalid row: found=%v err=%v", found, err)
+	}
+
+	if _, err := store.db.Exec("UPDATE dci_search_trace SET corpus_scope = ? WHERE event_id = ?", "[]", trace.EventID); err != nil {
+		t.Fatalf("restore trace row: %v", err)
+	}
+	if _, err := store.db.Exec("UPDATE dci_search_step SET created_at = ? WHERE event_id = ?", "not-a-time", trace.EventID); err != nil {
+		t.Fatalf("corrupt trace step: %v", err)
+	}
+	_, found, err = store.FindSearchTraceByID(ctx, trace.EventID)
+	if err == nil || found {
+		t.Fatalf("FindSearchTraceByID invalid step: found=%v err=%v", found, err)
+	}
+
+	if _, err := store.db.Exec("UPDATE dci_search_step SET created_at = ? WHERE event_id = ?", formatTime(now), trace.EventID); err != nil {
+		t.Fatalf("restore trace step: %v", err)
+	}
+	if _, err := store.db.Exec("UPDATE dci_search_trace SET status = ? WHERE event_id = ?", "unknown", trace.EventID); err != nil {
+		t.Fatalf("corrupt trace status: %v", err)
+	}
+	_, found, err = store.FindSearchTraceByID(ctx, trace.EventID)
+	if err == nil || found {
+		t.Fatalf("FindSearchTraceByID semantically invalid row: found=%v err=%v", found, err)
+	}
+}

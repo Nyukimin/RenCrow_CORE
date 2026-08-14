@@ -2,13 +2,16 @@ package durablestore
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 )
 
 type memoryStore struct {
-	byKey map[string]domain.WorkflowResult
+	byKey         map[string]domain.WorkflowResult
+	byRequirement map[string]domain.WorkflowResult
+	receipts      map[string]domain.RequestReceipt
 }
 
 type countingImplementer struct {
@@ -22,11 +25,63 @@ func (i *countingImplementer) Implement(_ context.Context, req domain.StorageReq
 }
 
 func (s *memoryStore) FindByDedupeKey(_ context.Context, key string) (*domain.WorkflowResult, error) {
+	if s.byKey == nil {
+		return nil, nil
+	}
 	r, ok := s.byKey[key]
 	if !ok {
 		return nil, nil
 	}
 	return &r, nil
+}
+
+func (s *memoryStore) FindByRequestID(_ context.Context, requestID string) (*domain.RequestReceipt, error) {
+	if s.receipts == nil {
+		return nil, nil
+	}
+	r, ok := s.receipts[requestID]
+	if !ok {
+		return nil, nil
+	}
+	return &r, nil
+}
+
+func (s *memoryStore) FindByRequirementID(_ context.Context, requirementID string) (*domain.WorkflowResult, error) {
+	if s.byRequirement != nil {
+		if r, ok := s.byRequirement[requirementID]; ok {
+			return &r, nil
+		}
+	}
+	for _, r := range s.byKey {
+		if r.Requirement.RequirementID == requirementID {
+			return &r, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *memoryStore) SaveWithReceipt(_ context.Context, result *domain.WorkflowResult, receipt domain.RequestReceipt) error {
+	if s.receipts == nil {
+		s.receipts = map[string]domain.RequestReceipt{}
+	}
+	if _, exists := s.receipts[receipt.RequestID]; exists {
+		return ErrRequestConflict
+	}
+	if result != nil {
+		if s.byKey == nil {
+			s.byKey = map[string]domain.WorkflowResult{}
+		}
+		if s.byRequirement == nil {
+			s.byRequirement = map[string]domain.WorkflowResult{}
+		}
+		if _, exists := s.byKey[result.Requirement.DedupeKey]; exists {
+			return ErrRequestConflict
+		}
+		s.byKey[result.Requirement.DedupeKey] = *result
+		s.byRequirement[result.Requirement.RequirementID] = *result
+	}
+	s.receipts[receipt.RequestID] = receipt
+	return nil
 }
 func (s *memoryStore) Save(_ context.Context, r domain.WorkflowResult) error {
 	if s.byKey == nil {
@@ -50,6 +105,35 @@ func TestServiceAssessAndDedupe(t *testing.T) {
 	second, handled, err := svc.Handle(context.Background(), in)
 	if err != nil || !handled || !second.Deduplicated || second.Requirement.RequirementID != first.Requirement.RequirementID {
 		t.Fatalf("unexpected duplicate result: %+v handled=%v err=%v", second, handled, err)
+	}
+}
+
+func TestServiceRequestReceiptReplayConflictAndSemanticDedupe(t *testing.T) {
+	store := &memoryStore{}
+	svc := NewService([]domain.Manifest{domainTestManifest()}, store, nil)
+	input := Input{RequestID: "request-1", TraceID: "trace-1", RequestedBy: "shiro", UserScope: "user-1", Message: "XのBookmarkを保存するDBの設計を確認して"}
+	first, handled, err := svc.Handle(context.Background(), input)
+	if err != nil || !handled {
+		t.Fatalf("first handled=%v err=%v", handled, err)
+	}
+	replayed, handled, err := svc.Handle(context.Background(), input)
+	if err != nil || !handled || !replayed.RequestReplay || replayed.Requirement.RequirementID != first.Requirement.RequirementID {
+		t.Fatalf("replayed=%+v handled=%v err=%v", replayed, handled, err)
+	}
+	changed := input
+	changed.Message = "XのBookmarkを保存するDBを別方式で実装して"
+	if _, handled, err := svc.Handle(context.Background(), changed); !handled || !errors.Is(err, ErrRequestConflict) {
+		t.Fatalf("changed handled=%v err=%v, want request conflict", handled, err)
+	}
+	if len(store.byKey) != 1 || len(store.receipts) != 1 {
+		t.Fatalf("conflicting request mutated store: byKey=%d receipts=%d", len(store.byKey), len(store.receipts))
+	}
+	semantic, handled, err := svc.Handle(context.Background(), Input{RequestID: "request-2", TraceID: "trace-2", RequestedBy: "shiro", UserScope: "user-1", Message: input.Message})
+	if err != nil || !handled || semantic.RequestReplay || !semantic.Deduplicated || semantic.Requirement.RequirementID != first.Requirement.RequirementID {
+		t.Fatalf("semantic result=%+v handled=%v err=%v", semantic, handled, err)
+	}
+	if receipt, ok := store.receipts["request-2"]; !ok || receipt.RequirementID != first.Requirement.RequirementID {
+		t.Fatalf("semantic receipt=%+v", receipt)
 	}
 }
 

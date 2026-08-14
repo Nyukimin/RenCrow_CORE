@@ -179,3 +179,25 @@ func TestJSONLStoreListSkillManifestsReturnsLatestPerSkill(t *testing.T) {
 		t.Fatalf("second manifest = %#v", manifests[1])
 	}
 }
+
+func TestJSONLStoreFindContributionGateByIDReturnsLatestExactRecord(t *testing.T) {
+	store := NewJSONLStore(t.TempDir())
+	ctx := context.Background()
+	base := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
+	for _, item := range []domainskill.ContributionGateLog{
+		{EventID: "event-exact", Repo: "example/repo", ProblemStatement: "first", TestResult: "go test", GateStatus: domainskill.GateStatusBlocked, CreatedAt: base},
+		{EventID: "event-exact-suffix", Repo: "example/repo", ProblemStatement: "suffix", TestResult: "go test", GateStatus: domainskill.GateStatusBlocked, CreatedAt: base.Add(time.Minute)},
+		{EventID: "event-exact", Repo: "example/repo", ProblemStatement: "latest", TestResult: "go test", GateStatus: domainskill.GateStatusPassed, CreatedAt: base.Add(2 * time.Minute)},
+	} {
+		if err := store.SaveContributionGateLog(ctx, item); err != nil {
+			t.Fatalf("SaveContributionGateLog failed: %v", err)
+		}
+	}
+	got, found, err := store.FindContributionGateByID(ctx, "event-exact")
+	if err != nil || !found || got.EventID != "event-exact" || got.ProblemStatement != "latest" {
+		t.Fatalf("FindContributionGateByID() = %#v, found=%v, err=%v", got, found, err)
+	}
+	if _, found, err := store.FindContributionGateByID(ctx, "missing"); err != nil || found {
+		t.Fatalf("missing FindContributionGateByID() found=%v err=%v", found, err)
+	}
+}

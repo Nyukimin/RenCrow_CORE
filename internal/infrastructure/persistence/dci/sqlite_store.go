@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -100,6 +101,54 @@ CREATE TABLE IF NOT EXISTS dci_query_terms (
 
 func (s *SQLiteStore) SaveSearchTrace(ctx context.Context, trace domaindci.SearchTrace) error {
 	return s.SaveSearchResult(ctx, domaindci.SearchResult{Trace: trace})
+}
+
+func (s *SQLiteStore) FindSearchTraceByID(ctx context.Context, eventID string) (domaindci.SearchTrace, bool, error) {
+	var trace domaindci.SearchTrace
+	var startedAt, endedAt, scopeJSON string
+	err := s.db.QueryRowContext(ctx, `
+SELECT event_id, started_at, ended_at, actor, mode, user_query, corpus_scope, status,
+       final_evidence_count, error_message
+FROM dci_search_trace
+WHERE event_id = ?`, eventID).Scan(
+		&trace.EventID,
+		&startedAt,
+		&endedAt,
+		&trace.Actor,
+		&trace.Mode,
+		&trace.UserQuery,
+		&scopeJSON,
+		&trace.Status,
+		&trace.FinalEvidenceCount,
+		&trace.ErrorMessage,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domaindci.SearchTrace{}, false, nil
+	}
+	if err != nil {
+		return domaindci.SearchTrace{}, false, err
+	}
+
+	trace.StartedAt, err = parseRequiredStoredTime(startedAt, "started_at")
+	if err != nil {
+		return domaindci.SearchTrace{}, false, err
+	}
+	trace.EndedAt, err = parseOptionalStoredTime(endedAt, "ended_at")
+	if err != nil {
+		return domaindci.SearchTrace{}, false, err
+	}
+	trace.CorpusScope, err = parseStoredStringSlice(scopeJSON)
+	if err != nil {
+		return domaindci.SearchTrace{}, false, err
+	}
+	trace.Steps, err = s.listStepsExact(ctx, eventID)
+	if err != nil {
+		return domaindci.SearchTrace{}, false, err
+	}
+	if err := domaindci.ValidateSearchTrace(trace); err != nil {
+		return domaindci.SearchTrace{}, false, err
+	}
+	return trace, true, nil
 }
 
 func (s *SQLiteStore) SaveSearchResult(ctx context.Context, result domaindci.SearchResult) error {
@@ -297,6 +346,42 @@ ORDER BY step_no ASC, id ASC`, eventID)
 	return steps, rows.Err()
 }
 
+func (s *SQLiteStore) listStepsExact(ctx context.Context, eventID string) ([]domaindci.SearchStep, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT step_no, tool, command_text, file_path, result_count, status, error_message, created_at
+FROM dci_search_step
+WHERE event_id = ?
+ORDER BY step_no ASC, id ASC`, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var steps []domaindci.SearchStep
+	for rows.Next() {
+		var step domaindci.SearchStep
+		var createdAt string
+		if err := rows.Scan(
+			&step.StepNo,
+			&step.Tool,
+			&step.CommandText,
+			&step.FilePath,
+			&step.ResultCount,
+			&step.Status,
+			&step.ErrorMessage,
+			&createdAt,
+		); err != nil {
+			return nil, err
+		}
+		step.CreatedAt, err = parseRequiredStoredTime(createdAt, "step.created_at")
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, step)
+	}
+	return steps, rows.Err()
+}
+
 func marshalStringSlice(items []string) (string, error) {
 	if items == nil {
 		items = []string{}
@@ -316,6 +401,20 @@ func unmarshalStringSlice(raw string) []string {
 	return items
 }
 
+func parseStoredStringSlice(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, fmt.Errorf("dci search trace corpus_scope is required")
+	}
+	var items []string
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil, fmt.Errorf("invalid dci search trace corpus_scope: %w", err)
+	}
+	if items == nil {
+		return nil, fmt.Errorf("dci search trace corpus_scope must be an array")
+	}
+	return items, nil
+}
+
 func formatTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -332,4 +431,26 @@ func parseTime(raw string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+func parseRequiredStoredTime(raw, field string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, fmt.Errorf("dci search trace %s is required", field)
+	}
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid dci search trace %s: %w", field, err)
+	}
+	return t, nil
+}
+
+func parseOptionalStoredTime(raw, field string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid dci search trace %s: %w", field, err)
+	}
+	return t, nil
 }

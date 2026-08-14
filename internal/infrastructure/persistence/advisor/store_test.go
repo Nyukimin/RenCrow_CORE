@@ -144,3 +144,71 @@ func TestJSONLStoreDoesNotPersistPromptOrRawOutputFields(t *testing.T) {
 		}
 	}
 }
+
+func TestAdvisorStoresFindByPrimaryID(t *testing.T) {
+	tests := []struct {
+		name string
+		new  func(t *testing.T) advisorStore
+	}{
+		{name: "jsonl", new: func(t *testing.T) advisorStore {
+			return NewJSONLStore(filepath.Join(t.TempDir(), "advisor"))
+		}},
+		{name: "sqlite", new: func(t *testing.T) advisorStore {
+			store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "advisor.db"))
+			if err != nil {
+				t.Fatalf("NewSQLiteStore failed: %v", err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			return store
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := tt.new(t)
+			ctx := context.Background()
+			now := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
+			run := advisorDomain.AdviceRunRecord{
+				RunID: "run-exact", RequestedByAgent: "shiro", AdvisorID: advisorDomain.AdvisorCodex,
+				Status: advisorDomain.AdviceStatus(advisorDomain.StatusCompleted), StartedAt: now, FinishedAt: now,
+			}
+			if err := store.SaveAdviceRun(ctx, run); err != nil {
+				t.Fatalf("SaveAdviceRun failed: %v", err)
+			}
+			if err := store.SaveAdviceRun(ctx, advisorDomain.AdviceRunRecord{
+				RunID: "run-exact-suffix", RequestedByAgent: "shiro", AdvisorID: advisorDomain.AdvisorID("other"),
+				Status: advisorDomain.AdviceStatus(advisorDomain.StatusCompleted), StartedAt: now, FinishedAt: now,
+			}); err != nil {
+				t.Fatalf("SaveAdviceRun suffix failed: %v", err)
+			}
+			adoption := advisorDomain.AdvisorAdoptionRecord{
+				AdoptionID: "adoption-exact", RunID: run.RunID, AdvisorID: run.AdvisorID,
+				AdoptedByAgent: "shiro", Adopted: true, Outcome: "success", CreatedAt: now,
+			}
+			if err := store.SaveAdvisorAdoption(ctx, adoption); err != nil {
+				t.Fatalf("SaveAdvisorAdoption failed: %v", err)
+			}
+			gotRun, found, err := store.(interface {
+				FindAdviceRunByID(context.Context, string) (advisorDomain.AdviceRunRecord, bool, error)
+			}).FindAdviceRunByID(ctx, run.RunID)
+			if err != nil || !found || gotRun.RunID != run.RunID || gotRun.AdvisorID != run.AdvisorID {
+				t.Fatalf("FindAdviceRunByID() = %#v, found=%v, err=%v", gotRun, found, err)
+			}
+			gotAdoption, found, err := store.(interface {
+				FindAdvisorAdoptionByID(context.Context, string) (advisorDomain.AdvisorAdoptionRecord, bool, error)
+			}).FindAdvisorAdoptionByID(ctx, adoption.AdoptionID)
+			if err != nil || !found || gotAdoption.AdoptionID != adoption.AdoptionID || gotAdoption.RunID != adoption.RunID {
+				t.Fatalf("FindAdvisorAdoptionByID() = %#v, found=%v, err=%v", gotAdoption, found, err)
+			}
+			if _, found, err := store.(interface {
+				FindAdviceRunByID(context.Context, string) (advisorDomain.AdviceRunRecord, bool, error)
+			}).FindAdviceRunByID(ctx, "missing"); err != nil || found {
+				t.Fatalf("missing FindAdviceRunByID() found=%v err=%v", found, err)
+			}
+			if _, found, err := store.(interface {
+				FindAdvisorAdoptionByID(context.Context, string) (advisorDomain.AdvisorAdoptionRecord, bool, error)
+			}).FindAdvisorAdoptionByID(ctx, "missing"); err != nil || found {
+				t.Fatalf("missing FindAdvisorAdoptionByID() found=%v err=%v", found, err)
+			}
+		})
+	}
+}

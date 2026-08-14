@@ -143,7 +143,28 @@ func (e *Explorer) ShouldTrigger(query string) bool {
 }
 
 func (e *Explorer) Search(ctx context.Context, query string) (domaindci.SearchResult, error) {
-	if err := e.recordSkillBootstrap(ctx, query); err != nil {
+	started := e.cfg.Now().UTC()
+	eventID := fmt.Sprintf("evt_dci_%d", started.UnixNano())
+	return e.SearchWithIdentity(ctx, query, eventID, "Worker")
+}
+
+// SearchWithIdentity performs one DCI search with the trusted owner identity
+// supplied by the caller. EventID and actor are never inferred from model
+// payloads inside the search itself.
+func (e *Explorer) SearchWithIdentity(ctx context.Context, query, eventID, actor string) (domaindci.SearchResult, error) {
+	query = strings.TrimSpace(query)
+	eventID = strings.TrimSpace(eventID)
+	actor = strings.TrimSpace(actor)
+	if query == "" {
+		return domaindci.SearchResult{}, fmt.Errorf("dci search query is required")
+	}
+	if eventID == "" {
+		return domaindci.SearchResult{}, fmt.Errorf("dci search event_id is required")
+	}
+	if actor == "" {
+		return domaindci.SearchResult{}, fmt.Errorf("dci search actor is required")
+	}
+	if err := e.recordSkillBootstrap(ctx, query, actor); err != nil {
 		return domaindci.SearchResult{}, err
 	}
 	if e.cfg.MaxSeconds > 0 {
@@ -152,11 +173,10 @@ func (e *Explorer) Search(ctx context.Context, query string) (domaindci.SearchRe
 		defer cancel()
 	}
 	started := e.cfg.Now().UTC()
-	eventID := fmt.Sprintf("evt_dci_%d", started.UnixNano())
 	trace := domaindci.SearchTrace{
 		EventID:     eventID,
 		StartedAt:   started,
-		Actor:       "Worker",
+		Actor:       actor,
 		Mode:        "dci",
 		UserQuery:   query,
 		CorpusScope: append([]string(nil), e.cfg.Allowlist...),
@@ -173,8 +193,11 @@ func (e *Explorer) Search(ctx context.Context, query string) (domaindci.SearchRe
 		trace.Status = "completed"
 		trace.FinalEvidenceCount = 0
 		trace.EndedAt = e.cfg.Now().UTC()
-		_ = e.saveResult(ctx, domaindci.SearchResult{Pack: pack, Trace: trace})
-		return domaindci.SearchResult{Pack: pack, Trace: trace}, nil
+		result := domaindci.SearchResult{Pack: pack, Trace: trace}
+		if err := e.saveResult(ctx, result); err != nil {
+			return result, err
+		}
+		return result, nil
 	}
 
 	terms := queryTerms(query)
@@ -239,11 +262,11 @@ func (e *Explorer) Search(ctx context.Context, query string) (domaindci.SearchRe
 	trace.FinalEvidenceCount = len(pack.Evidence)
 	trace.EndedAt = e.cfg.Now().UTC()
 	result := domaindci.SearchResult{Pack: pack, Trace: trace}
-	if err := e.saveResult(ctx, result); err != nil {
-		return domaindci.SearchResult{Pack: pack, Trace: trace}, err
-	}
 	if err := e.saveSourceCandidates(ctx, result); err != nil {
-		return domaindci.SearchResult{Pack: pack, Trace: trace}, err
+		result.Pack.Limitations = append(result.Pack.Limitations, "dci source candidate save failed")
+	}
+	if err := e.saveResult(ctx, result); err != nil {
+		return result, err
 	}
 	return result, nil
 }
@@ -334,14 +357,14 @@ func (e *Explorer) collectCandidateFiles(ctx context.Context, query string, term
 	return candidates, seedRanks, nil
 }
 
-func (e *Explorer) recordSkillBootstrap(ctx context.Context, query string) error {
+func (e *Explorer) recordSkillBootstrap(ctx context.Context, query, actor string) error {
 	if e.skills == nil {
 		return nil
 	}
 	_, err := e.skills.Record(ctx, domainskill.TaskContext{
 		Text:   query,
 		Intent: "dci_search",
-		Agent:  "Worker",
+		Agent:  actor,
 	}, []string{"core.dci-search", "core.dci"})
 	if err != nil {
 		return fmt.Errorf("dci skill bootstrap failed: %w", err)

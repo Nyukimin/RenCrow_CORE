@@ -37,6 +37,41 @@ func (s *JSONLStore) SaveSearchTrace(_ context.Context, trace domaindci.SearchTr
 	return json.NewEncoder(f).Encode(trace)
 }
 
+func (s *JSONLStore) FindSearchTraceByID(_ context.Context, eventID string) (domaindci.SearchTrace, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f, err := os.Open(s.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return domaindci.SearchTrace{}, false, nil
+		}
+		return domaindci.SearchTrace{}, false, err
+	}
+	defer f.Close()
+
+	var found domaindci.SearchTrace
+	var foundRecord bool
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var trace domaindci.SearchTrace
+		if err := json.Unmarshal(scanner.Bytes(), &trace); err != nil {
+			return domaindci.SearchTrace{}, false, err
+		}
+		if err := domaindci.ValidateSearchTrace(trace); err != nil {
+			return domaindci.SearchTrace{}, false, err
+		}
+		if trace.EventID == eventID {
+			found = trace
+			foundRecord = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return domaindci.SearchTrace{}, false, err
+	}
+	return found, foundRecord, nil
+}
+
 func (s *JSONLStore) ListRecent(limit int) ([]domaindci.SearchTrace, error) {
 	if limit <= 0 {
 		limit = 50

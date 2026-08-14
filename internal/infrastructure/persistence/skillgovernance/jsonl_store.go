@@ -134,6 +134,38 @@ func (s *JSONLStore) ListContributionGateLogs(_ context.Context, limit int) ([]d
 	return reverseLimit(logs, limit), nil
 }
 
+// FindContributionGateByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindContributionGateByID(_ context.Context, eventID string) (domainskill.ContributionGateLog, bool, error) {
+	if s == nil {
+		return domainskill.ContributionGateLog{}, false, errors.New("skill governance jsonl store is required")
+	}
+	f, err := os.Open(s.contributionGatePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return domainskill.ContributionGateLog{}, false, nil
+	}
+	if err != nil {
+		return domainskill.ContributionGateLog{}, false, err
+	}
+	defer f.Close()
+	var latest domainskill.ContributionGateLog
+	found := false
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var item domainskill.ContributionGateLog
+		if err := json.Unmarshal(scanner.Bytes(), &item); err != nil {
+			return domainskill.ContributionGateLog{}, false, err
+		}
+		if item.EventID == eventID {
+			latest = item
+			found = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return domainskill.ContributionGateLog{}, false, err
+	}
+	return latest, found, nil
+}
+
 func (s *JSONLStore) SaveExternalPRSubmitRecord(_ context.Context, record domainskill.ExternalPRSubmitRecord) error {
 	if err := domainskill.ValidateExternalPRSubmitRecord(record); err != nil {
 		return err

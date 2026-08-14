@@ -65,6 +65,41 @@ func TestRuntimeDataWriteRegistryDispatchesExactRegistrationAndReturnsReceipt(t 
 	}
 }
 
+func TestRuntimeDataWriteRegistrySnapshotUsesRegisteredContractAndIsDeepCopy(t *testing.T) {
+	registry := newRuntimeDataWriteRegistry()
+	callback := func(context.Context, toolsinfra.DataWriteRequest) (runtimeDataWriteOwnerResult, error) {
+		return validRuntimeDataWriteOwnerResult(), nil
+	}
+	if err := registry.RegisterWithContract(" store_b ", " write_b ", dataRecallAccessInternal, runtimeDataWriteContract{
+		RequiredPayloadFields: []string{"z_required", "a_required"},
+		OptionalPayloadFields: []string{"optional"},
+	}, callback); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.RegisterWithContract("store_a", "write_a", dataRecallAccessUser, runtimeDataWriteContract{}, callback); err != nil {
+		t.Fatal(err)
+	}
+	routes := registry.Snapshot()
+	if len(routes) != 2 || routes[0].Store != "store_a" || routes[1].Store != "store_b" {
+		t.Fatalf("routes=%#v", routes)
+	}
+	if !reflect.DeepEqual(routes[1].RequiredPayloadFields, []string{"a_required", "z_required"}) || !reflect.DeepEqual(routes[1].OptionalPayloadFields, []string{"optional"}) {
+		t.Fatalf("contract=%#v", routes[1])
+	}
+	routes[1].RequiredPayloadFields[0] = "mutated"
+	if got := registry.Snapshot()[1].RequiredPayloadFields[0]; got != "a_required" {
+		t.Fatalf("snapshot leaked mutable fields: %q", got)
+	}
+	for _, invalid := range []runtimeDataWriteContract{
+		{RequiredPayloadFields: []string{""}},
+		{RequiredPayloadFields: []string{"same"}, OptionalPayloadFields: []string{"same"}},
+	} {
+		if err := registry.RegisterWithContract("invalid", "route", dataRecallAccessInternal, invalid, callback); !errors.Is(err, errDataWriteRegistryInvalidRegistration) {
+			t.Fatalf("invalid contract error=%v", err)
+		}
+	}
+}
+
 func TestRuntimeDataWriteRegistryRejectsInvalidRegistrationAndScope(t *testing.T) {
 	registry := newRuntimeDataWriteRegistry()
 	callback := func(context.Context, toolsinfra.DataWriteRequest) (runtimeDataWriteOwnerResult, error) {

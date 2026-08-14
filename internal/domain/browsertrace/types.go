@@ -52,6 +52,8 @@ type APICandidateValidationResult struct {
 	Passed       bool                 `json:"passed"`
 	Status       string               `json:"status"`
 	Issues       []APIValidationIssue `json:"issues,omitempty"`
+	Reviewer     string               `json:"reviewer,omitempty"`
+	ReviewNote   string               `json:"review_note,omitempty"`
 	CreatedAt    time.Time            `json:"created_at"`
 }
 

@@ -80,6 +80,29 @@ func (s *JSONLStore) ListHotspots(_ context.Context, limit int) ([]domaincomplex
 	return reverseUniqueLimit(items, limit, func(item domaincomplexity.Hotspot) string { return item.HotspotID }), nil
 }
 
+// FindHotspotByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindHotspotByID(_ context.Context, hotspotID string) (domaincomplexity.Hotspot, bool, error) {
+	var found domaincomplexity.Hotspot
+	matched := false
+	if err := readJSONL(s.hotspotPath, func(line []byte) error {
+		var item domaincomplexity.Hotspot
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if err := domaincomplexity.ValidateHotspot(item); err != nil {
+			return err
+		}
+		if item.HotspotID == hotspotID {
+			found = item
+			matched = true
+		}
+		return nil
+	}); err != nil {
+		return domaincomplexity.Hotspot{}, false, err
+	}
+	return found, matched, nil
+}
+
 func (s *JSONLStore) SaveHotspotEvidence(_ context.Context, item domaincomplexity.HotspotEvidence) error {
 	if err := domaincomplexity.ValidateHotspotEvidence(item); err != nil {
 		return err
@@ -128,6 +151,29 @@ func (s *JSONLStore) ListReportArtifacts(_ context.Context, limit int) ([]domain
 		return nil, err
 	}
 	return reverseUniqueLimit(items, limit, func(item domaincomplexity.ReportArtifact) string { return item.ArtifactID }), nil
+}
+
+// FindReportArtifactByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindReportArtifactByID(_ context.Context, artifactID string) (domaincomplexity.ReportArtifact, bool, error) {
+	var found domaincomplexity.ReportArtifact
+	matched := false
+	if err := readJSONL(s.reportPath, func(line []byte) error {
+		var item domaincomplexity.ReportArtifact
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if err := domaincomplexity.ValidateReportArtifact(item); err != nil {
+			return err
+		}
+		if item.ArtifactID == artifactID {
+			found = item
+			matched = true
+		}
+		return nil
+	}); err != nil {
+		return domaincomplexity.ReportArtifact{}, false, err
+	}
+	return found, matched, nil
 }
 
 func appendJSONL(path string, value any) error {

@@ -2,10 +2,13 @@ package l1sqlite
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -102,6 +105,269 @@ INSERT INTO l1_memory_event (
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}), nil
+}
+
+const userMemoryCandidateIDPrefix = "user-memory-candidate/sha256:"
+
+// CreateUserMemoryCandidateWithRequest persists one owner-proposed user
+// memory and its audit event as one SQLite transaction. The request ID is the
+// stable idempotency identity; state and source are intentionally owned here,
+// rather than by the caller-controlled input.
+func (s *L1SQLiteStore) CreateUserMemoryCandidateWithRequest(ctx context.Context, requestID, actorID string, input domainmemory.CreateUserMemoryInput) (*domainmemory.UserMemory, bool, error) {
+	requestID = strings.TrimSpace(requestID)
+	actorID = strings.TrimSpace(actorID)
+	if requestID == "" {
+		return nil, false, errors.New("user memory request_id is required")
+	}
+	if actorID == "" {
+		return nil, false, errors.New("user memory actor_id is required")
+	}
+	normalized, namespace, err := normalizeUserMemoryCandidateInput(input)
+	if err != nil {
+		return nil, false, err
+	}
+	source := "agent:" + actorID
+	candidateID := userMemoryCandidateID(requestID)
+
+	meta := map[string]interface{}{
+		"type":               normalized.Type,
+		"user_id":            normalized.UserID,
+		"statement":          normalized.Statement,
+		"evidence_event_ids": normalized.EvidenceEventIDs,
+		"confidence":         normalized.Confidence,
+		"sensitivity":        normalized.Sensitivity,
+		"scope":              normalized.Scope,
+		"active":             true,
+		"actor_id":           actorID,
+		"request_id":         requestID,
+	}
+	metaJSON, err := marshalL1MetaJSON(meta, "failed to marshal user memory candidate meta")
+	if err != nil {
+		return nil, false, err
+	}
+	now := time.Now().UTC()
+	expected := domainmemory.UserMemory{
+		ID:               candidateID,
+		Namespace:        namespace,
+		UserID:           normalized.UserID,
+		Type:             normalized.Type,
+		Statement:        normalized.Statement,
+		EvidenceEventIDs: append([]string(nil), normalized.EvidenceEventIDs...),
+		Confidence:       normalized.Confidence,
+		Sensitivity:      normalized.Sensitivity,
+		State:            MemoryStateCandidate,
+		Scope:            normalized.Scope,
+		Active:           true,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	existing, found, err := findL1MemoryEventByID(ctx, tx, candidateID)
+	if err != nil {
+		return nil, false, rollbackL1Tx(tx, err)
+	}
+	if found {
+		existingMemory, err := strictUserMemoryFromEvent(existing)
+		if err != nil {
+			return nil, false, rollbackL1Tx(tx, fmt.Errorf("existing user memory candidate is invalid: %w", err))
+		}
+		if existing.Source != source || !userMemoryLogicalEqual(*existingMemory, expected) {
+			return nil, false, rollbackL1Tx(tx, errors.New("user memory request idempotency conflict"))
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, false, err
+		}
+		return existingMemory, true, nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO l1_memory_event (
+	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	memory_state, layer, source, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, candidateID, namespace, "", 0, string(domconv.SpeakerMemory), normalized.Statement, metaJSON,
+		MemoryStateCandidate, MemoryLayerL1, source, now, now); err != nil {
+		return nil, false, rollbackL1Tx(tx, fmt.Errorf("failed to create user memory candidate: %w", err))
+	}
+	if _, err := appendL1EventLog(ctx, tx, "memory.user_created", namespace, "", 0, map[string]interface{}{
+		"memory_id":          candidateID,
+		"request_id":         requestID,
+		"actor_id":           actorID,
+		"user_id":            normalized.UserID,
+		"type":               normalized.Type,
+		"memory_state":       MemoryStateCandidate,
+		"evidence_event_ids": normalized.EvidenceEventIDs,
+	}, source); err != nil {
+		return nil, false, rollbackL1Tx(tx, fmt.Errorf("failed to append user memory candidate audit event: %w", err))
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	return &expected, false, nil
+}
+
+func normalizeUserMemoryCandidateInput(input domainmemory.CreateUserMemoryInput) (domainmemory.CreateUserMemoryInput, string, error) {
+	input.UserID = strings.TrimSpace(input.UserID)
+	if input.UserID == "" {
+		return domainmemory.CreateUserMemoryInput{}, "", errors.New("user memory user_id is required")
+	}
+	input.Type = strings.TrimSpace(input.Type)
+	if err := domainmemory.ValidateUserMemoryType(input.Type); err != nil {
+		return domainmemory.CreateUserMemoryInput{}, "", err
+	}
+	input.Statement = strings.TrimSpace(input.Statement)
+	if input.Statement == "" {
+		return domainmemory.CreateUserMemoryInput{}, "", errors.New("user memory statement is required")
+	}
+	if len(input.EvidenceEventIDs) > 0 {
+		evidenceIDs := make([]string, len(input.EvidenceEventIDs))
+		for i, evidenceID := range input.EvidenceEventIDs {
+			evidenceIDs[i] = strings.TrimSpace(evidenceID)
+			if evidenceIDs[i] == "" {
+				return domainmemory.CreateUserMemoryInput{}, "", fmt.Errorf("user memory evidence_event_ids[%d] is required", i)
+			}
+		}
+		input.EvidenceEventIDs = evidenceIDs
+	} else {
+		input.EvidenceEventIDs = nil
+	}
+	if input.Confidence <= 0 {
+		input.Confidence = 0.5
+	}
+	input.Sensitivity = strings.TrimSpace(input.Sensitivity)
+	if input.Sensitivity == "" {
+		input.Sensitivity = "normal"
+	}
+	input.Scope = strings.TrimSpace(input.Scope)
+	if input.Scope == "" {
+		input.Scope = "all_personas"
+	}
+	input.State = MemoryStateCandidate
+	input.Source = ""
+	namespace, err := BuildL1Namespace(NamespaceKindUser, input.UserID)
+	if err != nil {
+		return domainmemory.CreateUserMemoryInput{}, "", err
+	}
+	if err := domainmemory.CanPromoteUserMemory(MemoryStateCandidate, input.EvidenceEventIDs, input.Sensitivity, ""); err != nil {
+		return domainmemory.CreateUserMemoryInput{}, "", err
+	}
+	return input, namespace, nil
+}
+
+func userMemoryCandidateID(requestID string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(requestID)))
+	return userMemoryCandidateIDPrefix + hex.EncodeToString(digest[:])
+}
+
+type l1SQLRowQueryer interface {
+	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
+}
+
+func findL1MemoryEventByID(ctx context.Context, queryer l1SQLRowQueryer, id string) (L1MemoryEvent, bool, error) {
+	if strings.TrimSpace(id) == "" {
+		return L1MemoryEvent{}, false, errors.New("user memory id is required")
+	}
+	events, err := scanL1EventRows(queryer.QueryRowContext(ctx, `
+SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+       memory_state, layer, source, created_at, updated_at
+FROM l1_memory_event
+WHERE id = ?
+`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return L1MemoryEvent{}, false, nil
+	}
+	if err != nil {
+		return L1MemoryEvent{}, false, err
+	}
+	if len(events) != 1 {
+		return L1MemoryEvent{}, false, errors.New("user memory exact lookup returned an invalid row count")
+	}
+	return events[0], true, nil
+}
+
+// FindUserMemoryByID performs an exact primary-ID lookup and rejects rows
+// whose namespace, user projection, or memory metadata do not agree.
+func (s *L1SQLiteStore) FindUserMemoryByID(ctx context.Context, id string) (domainmemory.UserMemory, bool, error) {
+	event, found, err := findL1MemoryEventByID(ctx, s.db, strings.TrimSpace(id))
+	if err != nil || !found {
+		return domainmemory.UserMemory{}, found, err
+	}
+	memory, err := strictUserMemoryFromEvent(event)
+	if err != nil {
+		return domainmemory.UserMemory{}, false, err
+	}
+	return *memory, true, nil
+}
+
+// FindUserMemoryEventByID returns the exact storage event only when its
+// validated user projection belongs to userID. Archive workflows use this
+// owner-scoped form so they can copy the canonical event without rebuilding
+// hidden metadata from a public projection.
+func (s *L1SQLiteStore) FindUserMemoryEventByID(ctx context.Context, userID, id string) (L1MemoryEvent, bool, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return L1MemoryEvent{}, false, errors.New("user memory user_id is required")
+	}
+	event, found, err := findL1MemoryEventByID(ctx, s.db, strings.TrimSpace(id))
+	if err != nil || !found {
+		return L1MemoryEvent{}, found, err
+	}
+	memory, err := strictUserMemoryFromEvent(event)
+	if err != nil {
+		return L1MemoryEvent{}, false, err
+	}
+	if memory.UserID != userID || event.Namespace != NamespaceKindUser+":"+userID {
+		return L1MemoryEvent{}, false, nil
+	}
+	return event, true, nil
+}
+
+func strictUserMemoryFromEvent(event L1MemoryEvent) (*domainmemory.UserMemory, error) {
+	if event.Speaker != domconv.SpeakerMemory {
+		return nil, errors.New("user memory row speaker is invalid")
+	}
+	if event.Layer != MemoryLayerL1 {
+		return nil, errors.New("user memory row layer is invalid")
+	}
+	if !strings.HasPrefix(event.Namespace, NamespaceKindUser+":") {
+		return nil, errors.New("user memory row namespace is not user-scoped")
+	}
+	memory := l1EventToUserMemory(event)
+	if memory == nil {
+		return nil, errors.New("user memory row metadata is invalid")
+	}
+	if err := domainmemory.ValidateUserMemoryType(memory.Type); err != nil {
+		return nil, err
+	}
+	if err := domainmemory.ValidateMemoryState(memory.State); err != nil {
+		return nil, err
+	}
+	if memory.UserID == "" || event.Namespace != NamespaceKindUser+":"+memory.UserID {
+		return nil, errors.New("user memory row user namespace mismatch")
+	}
+	if metaUserID := metaStringValue(event.Meta, "user_id"); metaUserID == "" || metaUserID != memory.UserID {
+		return nil, errors.New("user memory row user_id metadata mismatch")
+	}
+	if metaStatement := metaStringValue(event.Meta, "statement"); metaStatement == "" || metaStatement != strings.TrimSpace(event.Message) || memory.Statement != strings.TrimSpace(event.Message) {
+		return nil, errors.New("user memory row statement metadata mismatch")
+	}
+	for i, evidenceID := range memory.EvidenceEventIDs {
+		if strings.TrimSpace(evidenceID) == "" {
+			return nil, fmt.Errorf("user memory row evidence_event_ids[%d] is empty", i)
+		}
+	}
+	return memory, nil
+}
+
+func userMemoryLogicalEqual(left, right domainmemory.UserMemory) bool {
+	left.CreatedAt = time.Time{}
+	left.UpdatedAt = time.Time{}
+	right.CreatedAt = time.Time{}
+	right.UpdatedAt = time.Time{}
+	return reflect.DeepEqual(left, right)
 }
 
 func (s *L1SQLiteStore) ListUserMemories(ctx context.Context, userID string, state string, includeInactive bool, limit int) ([]domainmemory.UserMemory, error) {

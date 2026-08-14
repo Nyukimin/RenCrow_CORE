@@ -173,24 +173,29 @@ func TestRegisterDataRecallDurableStoreWorkflow(t *testing.T) {
 		Status:    domaindurable.StatusCompleted,
 		CreatedAt: created,
 		Requirement: domaindurable.StorageRequirement{
+			RequirementID:    "sr-1",
+			DedupeKey:        "dedupe-key-1",
+			RequestID:        "request-1",
+			UserScope:        "user-1",
 			RequestedOutcome: domaindurable.OutcomeAssess,
 			FactsToStore:     []string{"secret payload"},
 		},
 		Classification: domaindurable.Classification{OwnerModule: "RenCrow_CORE"},
 	}}
+	store.receipt = &domaindurable.RequestReceipt{RequestID: "request-1", UserScope: "user-1", PayloadHash: "hash", RequirementID: "sr-1", CreatedAt: created}
 	registry := newRuntimeDataRecallRegistry()
 	if err := registerRuntimeDataRecallDurableStoreWorkflow(registry, store); err != nil {
 		t.Fatalf("registerRuntimeDataRecallDurableStoreWorkflow() error = %v", err)
 	}
 	result := recallDataRecallAdapter(t, registry, dataRecallUserContext(t), toolsinfra.DataRecallRequest{
-		Store: "durable_store_workflow", Operation: "exact_request", Query: "dedupe-key-1", Limit: 50,
+		Store: "durable_store_workflow", Operation: "exact_request", Query: "request-1", Limit: 50,
 	})
 	assertRecallResult(t, result, "durable_store_workflow", "exact_request", 1)
-	if store.gotKey != "dedupe-key-1" {
+	if store.gotKey != "request-1" {
 		t.Fatalf("durable lookup key = %q, want exact query", store.gotKey)
 	}
 	record := result.Records[0]
-	assertRecordKeys(t, record, "created_at", "owner_module", "requested_outcome", "status")
+	assertRecordKeys(t, record, "created_at", "deduplicated", "lifecycle", "owner_module", "reason_code", "requested_outcome", "requirement_id", "status")
 	encoded := strings.ToLower(string(mustJSON(record)))
 	for _, forbidden := range []string{"secret payload", "facts_to_store", "dedupe_key", "request_id", "payload"} {
 		if strings.Contains(encoded, forbidden) {
@@ -366,8 +371,9 @@ func (s *dataRecallAIWorkflowListerStub) ListContextUsages(context.Context, int)
 }
 
 type dataRecallDurableStoreStub struct {
-	result *domaindurable.WorkflowResult
-	gotKey string
+	result  *domaindurable.WorkflowResult
+	receipt *domaindurable.RequestReceipt
+	gotKey  string
 }
 
 var _ appstore.Store = (*dataRecallDurableStoreStub)(nil)
@@ -375,6 +381,19 @@ var _ appstore.Store = (*dataRecallDurableStoreStub)(nil)
 func (s *dataRecallDurableStoreStub) FindByDedupeKey(_ context.Context, key string) (*domaindurable.WorkflowResult, error) {
 	s.gotKey = key
 	return s.result, nil
+}
+func (s *dataRecallDurableStoreStub) FindByRequestID(_ context.Context, key string) (*domaindurable.RequestReceipt, error) {
+	s.gotKey = key
+	return s.receipt, nil
+}
+func (s *dataRecallDurableStoreStub) FindByRequirementID(_ context.Context, key string) (*domaindurable.WorkflowResult, error) {
+	if s.result == nil || s.result.Requirement.RequirementID != key {
+		return nil, nil
+	}
+	return s.result, nil
+}
+func (s *dataRecallDurableStoreStub) SaveWithReceipt(context.Context, *domaindurable.WorkflowResult, domaindurable.RequestReceipt) error {
+	return nil
 }
 func (s *dataRecallDurableStoreStub) Save(context.Context, domaindurable.WorkflowResult) error {
 	return nil

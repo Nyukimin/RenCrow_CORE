@@ -3,6 +3,7 @@ package persona
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -123,5 +124,62 @@ func TestSQLiteStoreRejectsSensitiveAutoAdoptedObservation(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected sensitive auto-adopted observation to fail")
+	}
+}
+
+func TestSQLiteStoreFindObservationLogByIDUsesExactPrimaryKey(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "persona.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	item := domainpersona.ObservationLog{
+		EventID:         "event-exact",
+		ObserverID:      "lumina",
+		TargetID:        "ren",
+		ObservationType: "daily",
+		Summary:         "stored",
+		Sensitivity:     "normal",
+		ReviewStatus:    "pending",
+		CreatedAt:       time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC),
+	}
+	if err := store.SaveObservationLog(ctx, item); err != nil {
+		t.Fatalf("SaveObservationLog() failed: %v", err)
+	}
+
+	got, found, err := store.FindObservationLogByID(ctx, item.EventID)
+	if err != nil || !found || !reflect.DeepEqual(got, item) {
+		t.Fatalf("FindObservationLogByID() = %#v, found=%v, err=%v", got, found, err)
+	}
+	if got, found, err := store.FindObservationLogByID(ctx, "event-exact-suffix"); err != nil || found || !reflect.DeepEqual(got, domainpersona.ObservationLog{}) {
+		t.Fatalf("suffix FindObservationLogByID() = %#v, found=%v, err=%v", got, found, err)
+	}
+}
+
+func TestSQLiteStoreFindObservationLogByIDRejectsMalformedPayload(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "persona.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	item := domainpersona.ObservationLog{
+		EventID:         "event-malformed",
+		ObserverID:      "lumina",
+		TargetID:        "ren",
+		ObservationType: "daily",
+		Sensitivity:     "normal",
+		ReviewStatus:    "pending",
+		CreatedAt:       time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC),
+	}
+	if err := store.SaveObservationLog(ctx, item); err != nil {
+		t.Fatalf("SaveObservationLog() failed: %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE observation_log SET payload = ? WHERE event_id = ?`, "{malformed}", item.EventID); err != nil {
+		t.Fatalf("corrupt observation payload: %v", err)
+	}
+	if _, found, err := store.FindObservationLogByID(ctx, item.EventID); err == nil || found {
+		t.Fatalf("expected malformed observation payload error, found=%v err=%v", found, err)
 	}
 }
