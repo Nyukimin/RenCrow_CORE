@@ -108,6 +108,9 @@ func (r *ToolRunner) registerOptionalTools() {
 	if r.config.OperationalDataRecall != nil {
 		r.registerDataRecallTool()
 	}
+	if r.config.OperationalDataWrite != nil {
+		r.registerDataWriteTool()
+	}
 	if r.config.GlossaryLookup != nil {
 		r.registerGlossaryTool()
 	}
@@ -345,6 +348,9 @@ func (r *ToolRunner) registerToolMetadata() {
 	}
 	if r.config.OperationalDataRecall != nil {
 		r.metadata[dataRecallToolName] = dataRecallMetadata()
+	}
+	if r.config.OperationalDataWrite != nil {
+		r.metadata[dataWriteToolName] = dataWriteMetadata()
 	}
 	if r.config.GlossaryLookup != nil {
 		r.metadata["glossary.lookup"] = glossaryMetadata()

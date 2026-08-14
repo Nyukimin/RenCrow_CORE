@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
@@ -46,6 +48,10 @@ func TestOperationalDataRecallE2E_AllOwnerAdaptersThroughWorkerTool(t *testing.T
 		if route.user {
 			ctx = dataRecallUserContext(t)
 		}
+		scope, found := domaintool.ToolExecutionScopeFromContext(ctx)
+		if !found {
+			t.Fatalf("%s/%s missing trusted scope", route.store, route.operation)
+		}
 		response, err := worker.ExecuteV2(ctx, "data.recall", map[string]any{"store": route.store, "operation": route.operation, "query": "e2e", "limit": 1})
 		if err != nil || response == nil || response.IsError() {
 			t.Fatalf("%s/%s response=%#v err=%v", route.store, route.operation, response, err)
@@ -53,6 +59,23 @@ func TestOperationalDataRecallE2E_AllOwnerAdaptersThroughWorkerTool(t *testing.T
 		result, ok := response.Result.(runtimeDataRecallResult)
 		if !ok || result.Store != route.store || result.Operation != route.operation || result.Records == nil {
 			t.Fatalf("%s/%s result=%#v", route.store, route.operation, response.Result)
+		}
+		expectedScope := string(dataRecallAccessInternal)
+		if route.user {
+			expectedScope = string(dataRecallAccessUser)
+		}
+		evidence := result.Evidence
+		if evidence.RequestID != scope.RequestID || evidence.ActorID != scope.ActorID || evidence.AgentRole != scope.AgentRole || evidence.Purpose != scope.Purpose {
+			t.Fatalf("%s/%s identity evidence=%#v scope=%#v", route.store, route.operation, evidence, scope)
+		}
+		if evidence.DataScope != expectedScope || evidence.Owner != route.store || evidence.OwnerRoute != route.store+"/"+route.operation {
+			t.Fatalf("%s/%s owner evidence=%#v", route.store, route.operation, evidence)
+		}
+		if evidence.FreshnessState != "observed_at_read" || evidence.ValidationState != "owner_route_succeeded" || evidence.BudgetLimit != 1 || evidence.ReturnedCount != len(result.Records) {
+			t.Fatalf("%s/%s result evidence=%#v records=%d", route.store, route.operation, evidence, len(result.Records))
+		}
+		if _, err := time.Parse(time.RFC3339Nano, evidence.RetrievedAt); err != nil {
+			t.Fatalf("%s/%s retrieved_at=%q: %v", route.store, route.operation, evidence.RetrievedAt, err)
 		}
 	}
 }

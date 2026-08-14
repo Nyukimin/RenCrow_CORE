@@ -42,6 +42,8 @@ type ToolExecutionScope struct {
 	AuthenticatedUserID  string
 	AllowedDataScopes    []string
 	AuthenticationSource AuthenticationSource
+	AgentRole            string
+	Purpose              string
 }
 
 // NewToolExecutionScope constructs a trusted scope after normalizing and
@@ -95,6 +97,14 @@ func (s ToolExecutionScope) Validate() error {
 	}
 	if len(s.AllowedDataScopes) == 0 {
 		return fmt.Errorf("tool execution scope allowed_data_scopes is required")
+	}
+	if s.Allows(DataScopeInternal) {
+		if strings.TrimSpace(s.AgentRole) == "" {
+			return fmt.Errorf("internal data scope requires agent_role")
+		}
+		if strings.TrimSpace(s.Purpose) == "" {
+			return fmt.Errorf("internal data scope requires purpose")
+		}
 	}
 	seen := make(map[string]struct{}, len(s.AllowedDataScopes))
 	for _, value := range s.AllowedDataScopes {
@@ -180,4 +190,65 @@ func ToolExecutionScopeFromContext(ctx context.Context) (ToolExecutionScope, boo
 func cloneToolExecutionScope(scope ToolExecutionScope) ToolExecutionScope {
 	scope.AllowedDataScopes = append([]string(nil), scope.AllowedDataScopes...)
 	return scope
+}
+
+// DeriveAgentToolExecutionScope creates the trusted scope for a CORE Agent
+// handoff. A validated parent scope may contribute only its authenticated user
+// identity and public/user data scopes. Internal access is always decided by
+// the caller's explicit grantInternal flag, never inherited from the parent.
+func DeriveAgentToolExecutionScope(
+	ctx context.Context,
+	requestID string,
+	actorID string,
+	role string,
+	purpose string,
+	grantInternal bool,
+) (context.Context, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("tool execution scope context is required")
+	}
+
+	authenticatedUserID := ""
+	allowedDataScopes := make([]string, 0, 3)
+	if parent, found := ToolExecutionScopeFromContext(ctx); found {
+		if err := parent.Validate(); err != nil {
+			return nil, fmt.Errorf("parent tool execution scope is invalid: %w", err)
+		}
+		authenticatedUserID = parent.AuthenticatedUserID
+		for _, dataScope := range parent.AllowedDataScopes {
+			switch dataScope {
+			case DataScopePublic, DataScopeUser:
+				if !containsExecutionScope(allowedDataScopes, dataScope) {
+					allowedDataScopes = append(allowedDataScopes, dataScope)
+				}
+			}
+		}
+	}
+	if grantInternal && !containsExecutionScope(allowedDataScopes, DataScopeInternal) {
+		allowedDataScopes = append(allowedDataScopes, DataScopeInternal)
+	}
+
+	derived := ToolExecutionScope{
+		RequestID:            strings.TrimSpace(requestID),
+		ActorKind:            ActorKindAgent,
+		ActorID:              strings.TrimSpace(actorID),
+		AuthenticatedUserID:  strings.TrimSpace(authenticatedUserID),
+		AllowedDataScopes:    allowedDataScopes,
+		AuthenticationSource: AuthenticationSourceAgentOrchestrator,
+		AgentRole:            strings.TrimSpace(role),
+		Purpose:              strings.TrimSpace(purpose),
+	}
+	if err := derived.Validate(); err != nil {
+		return nil, err
+	}
+	return WithToolExecutionScope(ctx, derived), nil
+}
+
+func containsExecutionScope(scopes []string, want string) bool {
+	for _, scope := range scopes {
+		if scope == want {
+			return true
+		}
+	}
+	return false
 }

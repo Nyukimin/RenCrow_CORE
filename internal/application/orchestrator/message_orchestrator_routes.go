@@ -6,6 +6,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
@@ -143,8 +144,12 @@ func chatSpeakerForTask(t task.Task) string {
 
 func (d *messageRouteDispatcher) executeOPSRoute(ctx context.Context, t task.Task, sessionID, channel, chatID, ttsSessionID string) (string, error) {
 	jid := t.JobID().String()
+	shiroCtx, err := domaintool.DeriveAgentToolExecutionScope(ctx, jid, "shiro", "worker", "ops", true)
+	if err != nil {
+		return "", err
+	}
 	d.emit("agent.start", "mio", "shiro", "タスクを実行依頼", "OPS", jid, sessionID, channel, chatID)
-	resp, err := d.shiro.Execute(ctx, t)
+	resp, err := d.shiro.Execute(shiroCtx, t)
 	if err == nil {
 		d.emit("agent.response", "shiro", "mio", resp, "OPS", jid, sessionID, channel, chatID)
 		d.emit("agent.report", "shiro", "mio", formatShiroToMioReport(routing.RouteOPS, jid, resp), "OPS", jid, sessionID, channel, chatID)

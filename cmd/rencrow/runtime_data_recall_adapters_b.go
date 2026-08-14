@@ -16,10 +16,10 @@ func registerRuntimeDataRecallPersonaArchitecture(r *runtimeDataRecallRegistry, 
 	if r == nil || s == nil {
 		return fmt.Errorf("persona recall unavailable")
 	}
-	return r.Register("persona_architecture", "canonical_responses", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("persona_architecture", "canonical_responses", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		items, err := s.ListCanonicalResponseLogs(ctx, q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		for _, v := range items {
@@ -42,14 +42,14 @@ func registerRuntimeDataRecallBrowserTraceToAPI(r *runtimeDataRecallRegistry, s 
 	if r == nil || s == nil {
 		return fmt.Errorf("browser recall unavailable")
 	}
-	return r.Register("browser_trace_to_api", "validated_candidates", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("browser_trace_to_api", "validated_candidates", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		candidates, err := s.ListAPICandidates(ctx, q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		validations, err := s.ListAPICandidateValidationResults(ctx, q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		passed := map[string]bool{}
 		for _, v := range validations {
@@ -79,10 +79,10 @@ func registerRuntimeDataRecallComplexityHotspot(r *runtimeDataRecallRegistry, s 
 	if r == nil || s == nil {
 		return fmt.Errorf("complexity recall unavailable")
 	}
-	return r.Register("complexity_hotspot", "hotspots", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("complexity_hotspot", "hotspots", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		items, err := s.ListHotspots(ctx, q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		for _, v := range items {
@@ -102,10 +102,10 @@ func registerRuntimeDataRecallSuperAgentHarness(r *runtimeDataRecallRegistry, s 
 	if r == nil || s == nil {
 		return fmt.Errorf("superagent recall unavailable")
 	}
-	return r.Register("super_agent_harness", "agent_runs", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("super_agent_harness", "agent_runs", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		items, err := s.ListAgentRuns(ctx, q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		for _, v := range items {
@@ -121,10 +121,10 @@ func registerRuntimeDataRecallAIWorkflow(r *runtimeDataRecallRegistry, s viewer.
 	if r == nil || s == nil {
 		return fmt.Errorf("ai workflow recall unavailable")
 	}
-	return r.Register("ai_workflow", "command_registry", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("ai_workflow", "command_registry", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		items, err := s.ListCommandRegistries(ctx, q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		for _, v := range items {
@@ -140,10 +140,10 @@ func registerRuntimeDataRecallDurableStoreWorkflow(r *runtimeDataRecallRegistry,
 	if r == nil || s == nil {
 		return fmt.Errorf("durable recall unavailable")
 	}
-	return r.Register("durable_store_workflow", "exact_request", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("durable_store_workflow", "exact_request", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		v, err := s.FindByDedupeKey(ctx, q.Query)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		if v != nil {

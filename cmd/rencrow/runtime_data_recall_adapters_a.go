@@ -36,10 +36,10 @@ func registerRuntimeDataRecallAdvisor(r *runtimeDataRecallRegistry, s advisorRec
 	if r == nil || s == nil {
 		return fmt.Errorf("advisor recall unavailable")
 	}
-	return r.Register("advisor", "advice_runs", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("advisor", "advice_runs", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		items, err := s.ListAdviceRuns(ctx, q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		for _, v := range items {
@@ -55,10 +55,10 @@ func registerRuntimeDataRecallSandbox(r *runtimeDataRecallRegistry, s sandboxRec
 	if r == nil || s == nil {
 		return fmt.Errorf("sandbox recall unavailable")
 	}
-	return r.Register("sandbox", "sandboxes", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("sandbox", "sandboxes", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		items, err := s.ListSandboxes(ctx, q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		for _, v := range items {
@@ -74,10 +74,10 @@ func registerRuntimeDataRecallDCI(r *runtimeDataRecallRegistry, s dciRecallListe
 	if r == nil || s == nil {
 		return fmt.Errorf("dci recall unavailable")
 	}
-	return r.Register("dci", "search_traces", dataRecallAccessInternal, func(_ context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("dci", "search_traces", dataRecallAccessInternal, func(_ context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		items, err := s.ListRecent(q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		for _, v := range items {
@@ -93,10 +93,10 @@ func registerRuntimeDataRecallSkillGovernance(r *runtimeDataRecallRegistry, s sk
 	if r == nil || s == nil {
 		return fmt.Errorf("skill recall unavailable")
 	}
-	return r.Register("skill_governance", "skill_manifests", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("skill_governance", "skill_manifests", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		items, err := s.ListSkillManifests(ctx, q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		for _, v := range items {
@@ -116,10 +116,10 @@ func registerRuntimeDataRecallWorkstream(r *runtimeDataRecallRegistry, s workstr
 	if r == nil || s == nil {
 		return fmt.Errorf("workstream recall unavailable")
 	}
-	return r.Register("workstream", "goals", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("workstream", "goals", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		items, err := s.ListGoals(ctx, q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		for _, v := range items {
@@ -135,10 +135,10 @@ func registerRuntimeDataRecallRevenue(r *runtimeDataRecallRegistry, s revenueRec
 	if r == nil || s == nil {
 		return fmt.Errorf("revenue recall unavailable")
 	}
-	return r.Register("revenue", "opportunities", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (any, error) {
+	return r.Register("revenue", "opportunities", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		items, err := s.ListOpportunities(ctx, q.Limit)
 		if err != nil {
-			return nil, err
+			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		for _, v := range items {

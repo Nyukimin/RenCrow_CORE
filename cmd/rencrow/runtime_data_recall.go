@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
@@ -22,7 +23,7 @@ const (
 
 type dataRecallAccess string
 
-type dataRecallCallback func(context.Context, tools.DataRecallRequest) (any, error)
+type dataRecallCallback func(context.Context, tools.DataRecallRequest) (runtimeDataRecallResult, error)
 
 type runtimeDataRecallKey struct {
 	store     string
@@ -100,6 +101,23 @@ func (r *runtimeDataRecallRegistry) Recall(ctx context.Context, request tools.Da
 	if callbackErr != nil {
 		return nil, errDataRecallRegistryCallbackFailed
 	}
+	if result.Store != normalized.Store || result.Operation != normalized.Operation || result.Records == nil {
+		return nil, errDataRecallRegistryCallbackFailed
+	}
+	result.Evidence = runtimeDataRecallEvidence{
+		RequestID:       scope.RequestID,
+		ActorID:         scope.ActorID,
+		AgentRole:       scope.AgentRole,
+		Purpose:         scope.Purpose,
+		DataScope:       string(registration.access),
+		Owner:           normalized.Store,
+		OwnerRoute:      normalized.Store + "/" + normalized.Operation,
+		RetrievedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+		FreshnessState:  "observed_at_read",
+		ValidationState: "owner_route_succeeded",
+		BudgetLimit:     normalized.Limit,
+		ReturnedCount:   len(result.Records),
+	}
 	return result, nil
 }
 
@@ -129,6 +147,9 @@ func validDataRecallAccess(access dataRecallAccess) bool {
 }
 
 func runtimeDataRecallAccessAllowed(scope domaintool.ToolExecutionScope, access dataRecallAccess) bool {
+	if strings.TrimSpace(scope.AgentRole) != "worker" || strings.TrimSpace(scope.Purpose) != "ops" {
+		return false
+	}
 	switch access {
 	case dataRecallAccessPublic:
 		return scope.Allows(domaintool.DataScopePublic)

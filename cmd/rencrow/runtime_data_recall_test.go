@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -18,11 +18,11 @@ func TestRuntimeDataRecallRegistryDispatchesExactRegistrationAndNormalizesReques
 	var calls int
 	var gotContext context.Context
 	var gotRequest toolsinfra.DataRecallRequest
-	callback := func(callbackContext context.Context, request toolsinfra.DataRecallRequest) (any, error) {
+	callback := func(callbackContext context.Context, request toolsinfra.DataRecallRequest) (runtimeDataRecallResult, error) {
 		calls++
 		gotContext = callbackContext
 		gotRequest = request
-		return map[string]any{"store": request.Store}, nil
+		return newRuntimeDataRecallResult(request.Store, request.Operation, []map[string]any{}), nil
 	}
 
 	if err := registry.Register("conversation_l1", "search", dataRecallAccessPublic, callback); err != nil {
@@ -41,7 +41,8 @@ func TestRuntimeDataRecallRegistryDispatchesExactRegistrationAndNormalizesReques
 	if err != nil {
 		t.Fatalf("Recall() error = %v", err)
 	}
-	if !reflect.DeepEqual(result, map[string]any{"store": "conversation_l1"}) {
+	gotResult, ok := result.(runtimeDataRecallResult)
+	if !ok || gotResult.Store != "conversation_l1" || gotResult.Operation != "search" {
 		t.Fatalf("Recall() result = %#v", result)
 	}
 	if calls != 1 {
@@ -74,7 +75,9 @@ func TestRuntimeDataRecallRegistryDispatchesExactRegistrationAndNormalizesReques
 
 func TestRuntimeDataRecallRegistryRejectsInvalidRegistration(t *testing.T) {
 	registry := newRuntimeDataRecallRegistry()
-	callback := func(context.Context, toolsinfra.DataRecallRequest) (any, error) { return nil, nil }
+	callback := func(context.Context, toolsinfra.DataRecallRequest) (runtimeDataRecallResult, error) {
+		return newRuntimeDataRecallResult("store", "search", []map[string]any{}), nil
+	}
 	cases := []struct {
 		name      string
 		store     string
@@ -119,16 +122,17 @@ func TestRuntimeDataRecallRegistryEnforcesTrustedScopePolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			registry := newRuntimeDataRecallRegistry()
 			calls := 0
-			if err := registry.Register("store", "search", tt.access, func(context.Context, toolsinfra.DataRecallRequest) (any, error) {
+			if err := registry.Register("store", "search", tt.access, func(context.Context, toolsinfra.DataRecallRequest) (runtimeDataRecallResult, error) {
 				calls++
-				return "ok", nil
+				return newRuntimeDataRecallResult("store", "search", []map[string]any{}), nil
 			}); err != nil {
 				t.Fatalf("Register() error = %v", err)
 			}
 			ctx := runtimeDataRecallContext(t, tt.actor, tt.actorID, tt.userID, tt.dataScopes)
 			result, err := registry.Recall(ctx, toolsinfra.DataRecallRequest{Store: "store", Operation: "search", Query: "q", Limit: 1})
 			if tt.wantCall {
-				if err != nil || result != "ok" {
+				gotResult, ok := result.(runtimeDataRecallResult)
+				if err != nil || !ok || gotResult.Store != "store" {
 					t.Fatalf("Recall() result=%#v err=%v, want callback result", result, err)
 				}
 				if calls != 1 {
@@ -141,6 +145,54 @@ func TestRuntimeDataRecallRegistryEnforcesTrustedScopePolicy(t *testing.T) {
 			}
 			if calls != 0 {
 				t.Fatalf("callback calls = %d, want 0 for denied scope", calls)
+			}
+		})
+	}
+}
+
+func TestRuntimeDataRecallRegistryRequiresWorkerOpsScopeForEveryRoute(t *testing.T) {
+	cases := []struct {
+		name      string
+		agentRole string
+		purpose   string
+		wantCall  bool
+	}{
+		{name: "worker ops", agentRole: "worker", purpose: "ops", wantCall: true},
+		{name: "wrong role", agentRole: "chat", purpose: "ops"},
+		{name: "wrong purpose", agentRole: "worker", purpose: "chat"},
+		{name: "missing role", purpose: "ops"},
+		{name: "missing purpose", agentRole: "worker"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := newRuntimeDataRecallRegistry()
+			calls := 0
+			if err := registry.Register("store", "search", dataRecallAccessPublic, func(context.Context, toolsinfra.DataRecallRequest) (runtimeDataRecallResult, error) {
+				calls++
+				return newRuntimeDataRecallResult("store", "search", []map[string]any{}), nil
+			}); err != nil {
+				t.Fatalf("Register() error = %v", err)
+			}
+			scope := domaintool.ToolExecutionScope{
+				RequestID:            "req-role-purpose",
+				ActorKind:            domaintool.ActorKindAgent,
+				ActorID:              "shiro",
+				AllowedDataScopes:    []string{domaintool.DataScopePublic},
+				AuthenticationSource: domaintool.AuthenticationSourceAgentOrchestrator,
+				AgentRole:            tt.agentRole,
+				Purpose:              tt.purpose,
+			}
+			ctx := domaintool.WithToolExecutionScope(context.Background(), scope)
+			result, err := registry.Recall(ctx, toolsinfra.DataRecallRequest{Store: "store", Operation: "search", Query: "q", Limit: 1})
+			if tt.wantCall {
+				gotResult, ok := result.(runtimeDataRecallResult)
+				if err != nil || !ok || gotResult.Store != "store" || calls != 1 {
+					t.Fatalf("Recall() result=%#v err=%v calls=%d", result, err, calls)
+				}
+				return
+			}
+			if err == nil || calls != 0 {
+				t.Fatalf("Recall() result=%#v err=%v calls=%d, want fail closed", result, err, calls)
 			}
 		})
 	}
@@ -191,24 +243,26 @@ func TestBuildToolRuntimeRegistersDataRecallOnlyForWorkerAndRetainsRegistry(t *t
 
 func runtimeDataRecallContext(t *testing.T, actor domaintool.ActorKind, actorID, userID string, dataScopes []string) context.Context {
 	t.Helper()
-	scope, err := domaintool.NewToolExecutionScope(
-		"runtime-data-recall-test",
-		actor,
-		actorID,
-		userID,
-		dataScopes,
-		domaintool.AuthenticationSourceAgentOrchestrator,
-	)
-	if err != nil {
-		t.Fatalf("NewToolExecutionScope() error = %v", err)
+	scope := domaintool.ToolExecutionScope{
+		RequestID:            "runtime-data-recall-test",
+		ActorKind:            actor,
+		ActorID:              actorID,
+		AuthenticatedUserID:  userID,
+		AllowedDataScopes:    dataScopes,
+		AuthenticationSource: domaintool.AuthenticationSourceAgentOrchestrator,
+		AgentRole:            "worker",
+		Purpose:              "ops",
+	}
+	if err := scope.Validate(); err != nil {
+		t.Fatalf("ToolExecutionScope.Validate() error = %v", err)
 	}
 	return domaintool.WithToolExecutionScope(context.Background(), scope)
 }
 
 func TestRuntimeDataRecallRegistryDoesNotLeakCallbackError(t *testing.T) {
 	registry := newRuntimeDataRecallRegistry()
-	if err := registry.Register("store", "search", dataRecallAccessPublic, func(context.Context, toolsinfra.DataRecallRequest) (any, error) {
-		return nil, errors.New("secret database token")
+	if err := registry.Register("store", "search", dataRecallAccessPublic, func(context.Context, toolsinfra.DataRecallRequest) (runtimeDataRecallResult, error) {
+		return runtimeDataRecallResult{}, errors.New("secret database token")
 	}); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
@@ -216,5 +270,66 @@ func TestRuntimeDataRecallRegistryDoesNotLeakCallbackError(t *testing.T) {
 	_, err := registry.Recall(ctx, toolsinfra.DataRecallRequest{Store: "store", Operation: "search", Query: "q", Limit: 1})
 	if err == nil || strings.Contains(err.Error(), "secret database token") {
 		t.Fatalf("Recall() error = %v, must fail without callback error details", err)
+	}
+}
+
+func TestRuntimeDataRecallRegistryAddsOwnerEvidenceToCallbackResult(t *testing.T) {
+	registry := newRuntimeDataRecallRegistry()
+	callback := func(context.Context, toolsinfra.DataRecallRequest) (runtimeDataRecallResult, error) {
+		return newRuntimeDataRecallResult("store", "search", []map[string]any{{"id": "1"}}), nil
+	}
+	if err := registry.Register("store", "search", dataRecallAccessUser, callback); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	ctx := runtimeDataRecallContext(t, domaintool.ActorKindAgent, "shiro", "user-1", []string{domaintool.DataScopeUser})
+	value, err := registry.Recall(ctx, toolsinfra.DataRecallRequest{Store: "store", Operation: "search", Query: "q", Limit: 7})
+	if err != nil {
+		t.Fatalf("Recall() error = %v", err)
+	}
+	result, ok := value.(runtimeDataRecallResult)
+	if !ok {
+		t.Fatalf("Recall() result type = %T", value)
+	}
+	if result.Evidence.RequestID != "runtime-data-recall-test" || result.Evidence.ActorID != "shiro" || result.Evidence.AgentRole != "worker" || result.Evidence.Purpose != "ops" {
+		t.Fatalf("identity evidence = %#v", result.Evidence)
+	}
+	if result.Evidence.DataScope != string(dataRecallAccessUser) || result.Evidence.Owner != "store" || result.Evidence.OwnerRoute != "store/search" {
+		t.Fatalf("owner evidence = %#v", result.Evidence)
+	}
+	if result.Evidence.FreshnessState != "observed_at_read" || result.Evidence.ValidationState != "owner_route_succeeded" || result.Evidence.BudgetLimit != 7 || result.Evidence.ReturnedCount != 1 {
+		t.Fatalf("result evidence = %#v", result.Evidence)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, result.Evidence.RetrievedAt); err != nil {
+		t.Fatalf("retrieved_at = %q: %v", result.Evidence.RetrievedAt, err)
+	}
+}
+
+func TestRuntimeDataRecallRegistryRejectsCallbackRouteMismatch(t *testing.T) {
+	registry := newRuntimeDataRecallRegistry()
+	callback := func(context.Context, toolsinfra.DataRecallRequest) (runtimeDataRecallResult, error) {
+		return newRuntimeDataRecallResult("other", "search", []map[string]any{}), nil
+	}
+	if err := registry.Register("store", "search", dataRecallAccessPublic, callback); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	ctx := runtimeDataRecallContext(t, domaintool.ActorKindAgent, "shiro", "", []string{domaintool.DataScopePublic})
+	_, err := registry.Recall(ctx, toolsinfra.DataRecallRequest{Store: "store", Operation: "search", Query: "q", Limit: 1})
+	if !errors.Is(err, errDataRecallRegistryCallbackFailed) {
+		t.Fatalf("Recall() error = %v, want callback route failure", err)
+	}
+}
+
+func TestRuntimeDataRecallRegistryRejectsNilRecords(t *testing.T) {
+	registry := newRuntimeDataRecallRegistry()
+	callback := func(context.Context, toolsinfra.DataRecallRequest) (runtimeDataRecallResult, error) {
+		return runtimeDataRecallResult{Store: "store", Operation: "search"}, nil
+	}
+	if err := registry.Register("store", "search", dataRecallAccessPublic, callback); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	ctx := runtimeDataRecallContext(t, domaintool.ActorKindAgent, "shiro", "", []string{domaintool.DataScopePublic})
+	_, err := registry.Recall(ctx, toolsinfra.DataRecallRequest{Store: "store", Operation: "search", Query: "q", Limit: 1})
+	if !errors.Is(err, errDataRecallRegistryCallbackFailed) {
+		t.Fatalf("Recall() error = %v, want nil-record failure", err)
 	}
 }

@@ -107,6 +107,14 @@ type OperationalDataRecall interface {
 	Recall(ctx context.Context, request DataRecallRequest) (any, error)
 }
 
+// OperationalDataWrite is the Worker-owned boundary for named operational
+// data writes. The provider owns the store's schema, migration, validation,
+// audit, idempotency and operation policy; CORE exposes no database or SQL
+// surface to the model.
+type OperationalDataWrite interface {
+	Write(ctx context.Context, request DataWriteRequest) (any, error)
+}
+
 type GlossaryLookup interface {
 	Lookup(ctx context.Context, operation string, term string, category string, limit int) (any, error)
 }
@@ -156,6 +164,7 @@ type ToolRunnerConfig struct {
 	PersonRelatedCatalogCollector PersonRelatedCatalogCollector // nil = person_related_catalog.collect 無効
 	DataCapabilityCatalog         DataCapabilityCatalog         // nil = data_capability.describe 無効
 	OperationalDataRecall         OperationalDataRecall         // nil = data.recall 無効（Worker専用）
+	OperationalDataWrite          OperationalDataWrite          // nil = data.write 無効（Worker専用）
 	GlossaryLookup                GlossaryLookup                // nil = glossary.lookup 無効
 	KnowledgeMemorySearcher       KnowledgeMemorySearcher       // nil = knowledge.search 無効
 	KnowledgeMemorySearchReady    bool                          // schema/index/coverage/trusted wiring gate

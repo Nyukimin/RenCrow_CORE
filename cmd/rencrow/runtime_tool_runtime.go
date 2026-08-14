@@ -39,6 +39,7 @@ type toolRuntime struct {
 	ToolMediationRecorder         *toolharnesspersistence.JSONLRecorder
 	DataCapabilityCatalog         *runtimeDataCapabilityCatalog
 	DataRecallRegistry            *runtimeDataRecallRegistry
+	DataWriteRegistry             *runtimeDataWriteRegistry
 	KnowledgeMemoryToolStore      interface{ Close() error }
 }
 
@@ -72,6 +73,7 @@ func buildToolRuntimeWithCapabilities(
 	mcpToolCatalog *tools.MCPToolCatalog,
 ) toolRuntime {
 	dataRecallRegistry := newRuntimeDataRecallRegistry()
+	dataWriteRegistry := newRuntimeDataWriteRegistry()
 	personaWritePaths := []string{
 		filepath.Join(cfg.WorkspaceDir, "persona", "mio.md"),
 		filepath.Join(cfg.WorkspaceDir, "persona", "shiro.md"),
@@ -249,6 +251,7 @@ func buildToolRuntimeWithCapabilities(
 		DisableToolHarness:         true,
 		DataCapabilityCatalog:      dataCapabilityCatalog,
 		OperationalDataRecall:      dataRecallRegistry,
+		OperationalDataWrite:       dataWriteRegistry,
 		KnowledgeMemorySearcher:    knowledgeMemorySearcher,
 		KnowledgeMemorySearchReady: knowledgeMemorySearchReady,
 	}
@@ -409,6 +412,7 @@ func buildToolRuntimeWithCapabilities(
 		ToolMediationRecorder:         toolMediationRecorder,
 		DataCapabilityCatalog:         dataCapabilityCatalog,
 		DataRecallRegistry:            dataRecallRegistry,
+		DataWriteRegistry:             dataWriteRegistry,
 		KnowledgeMemoryToolStore:      knowledgeMemoryToolStore,
 	}
 }

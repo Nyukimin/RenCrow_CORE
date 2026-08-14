@@ -53,15 +53,16 @@ func TestToolExecutionScopeRejectsInvalidOrConflictingClaims(t *testing.T) {
 }
 
 func TestToolExecutionScopeInternalDataScopeRequiresAuthenticatedAgentOrchestrator(t *testing.T) {
-	valid, err := NewToolExecutionScope(
-		"req-internal-valid",
-		ActorKindAgent,
-		"mio",
-		"",
-		[]string{DataScopeInternal},
-		AuthenticationSourceAgentOrchestrator,
-	)
-	if err != nil {
+	valid := ToolExecutionScope{
+		RequestID:            "req-internal-valid",
+		ActorKind:            ActorKindAgent,
+		ActorID:              "mio",
+		AllowedDataScopes:    []string{DataScopeInternal},
+		AuthenticationSource: AuthenticationSourceAgentOrchestrator,
+		AgentRole:            "worker",
+		Purpose:              "ops",
+	}
+	if err := valid.Validate(); err != nil {
 		t.Fatalf("authenticated agent internal scope error = %v", err)
 	}
 	if !valid.Allows(DataScopeInternal) {
@@ -75,6 +76,8 @@ func TestToolExecutionScopeInternalDataScopeRequiresAuthenticatedAgentOrchestrat
 			ActorID:              "mio",
 			AllowedDataScopes:    []string{DataScopeInternal},
 			AuthenticationSource: AuthenticationSourceHTTP,
+			AgentRole:            "worker",
+			Purpose:              "ops",
 		},
 		{
 			RequestID:            "req-internal-user",
@@ -83,6 +86,8 @@ func TestToolExecutionScopeInternalDataScopeRequiresAuthenticatedAgentOrchestrat
 			AuthenticatedUserID:  "user-a",
 			AllowedDataScopes:    []string{DataScopeInternal},
 			AuthenticationSource: AuthenticationSourceAgentOrchestrator,
+			AgentRole:            "worker",
+			Purpose:              "ops",
 		},
 		{
 			RequestID:            "req-internal-http-user",
@@ -91,12 +96,105 @@ func TestToolExecutionScopeInternalDataScopeRequiresAuthenticatedAgentOrchestrat
 			AuthenticatedUserID:  "user-a",
 			AllowedDataScopes:    []string{DataScopeInternal},
 			AuthenticationSource: AuthenticationSourceHTTP,
+			AgentRole:            "worker",
+			Purpose:              "ops",
+		},
+		{
+			RequestID:            "req-internal-missing-role",
+			ActorKind:            ActorKindAgent,
+			ActorID:              "mio",
+			AllowedDataScopes:    []string{DataScopeInternal},
+			AuthenticationSource: AuthenticationSourceAgentOrchestrator,
+			Purpose:              "ops",
+		},
+		{
+			RequestID:            "req-internal-missing-purpose",
+			ActorKind:            ActorKindAgent,
+			ActorID:              "mio",
+			AllowedDataScopes:    []string{DataScopeInternal},
+			AuthenticationSource: AuthenticationSourceAgentOrchestrator,
+			AgentRole:            "worker",
 		},
 	}
 	for _, scope := range cases {
 		if err := scope.Validate(); err == nil {
 			t.Fatalf("scope %#v must reject internal access", scope)
 		}
+	}
+}
+
+func TestDeriveAgentToolExecutionScopeCarriesOnlyValidatedDelegatedScopes(t *testing.T) {
+	parent := ToolExecutionScope{
+		RequestID:            "req-parent",
+		ActorKind:            ActorKindUser,
+		ActorID:              "user-a",
+		AuthenticatedUserID:  "user-a",
+		AllowedDataScopes:    []string{DataScopePublic, DataScopeUser},
+		AuthenticationSource: AuthenticationSourceHTTP,
+	}
+	ctx := WithToolExecutionScope(context.Background(), parent)
+
+	derivedCtx, err := DeriveAgentToolExecutionScope(ctx, "req-child", "shiro", "worker", "ops", true)
+	if err != nil {
+		t.Fatalf("DeriveAgentToolExecutionScope() error = %v", err)
+	}
+	derived, ok := ToolExecutionScopeFromContext(derivedCtx)
+	if !ok {
+		t.Fatal("derived context is missing trusted scope")
+	}
+	if derived.RequestID != "req-child" || derived.ActorKind != ActorKindAgent || derived.ActorID != "shiro" {
+		t.Fatalf("derived identity = %#v", derived)
+	}
+	if derived.AuthenticationSource != AuthenticationSourceAgentOrchestrator || derived.AgentRole != "worker" || derived.Purpose != "ops" {
+		t.Fatalf("derived trust metadata = %#v", derived)
+	}
+	if derived.AuthenticatedUserID != "user-a" {
+		t.Fatalf("authenticated user = %q, want user-a", derived.AuthenticatedUserID)
+	}
+	if !derived.Allows(DataScopePublic) || !derived.Allows(DataScopeUser) || !derived.Allows(DataScopeInternal) || len(derived.AllowedDataScopes) != 3 {
+		t.Fatalf("derived data scopes = %#v", derived.AllowedDataScopes)
+	}
+}
+
+func TestDeriveAgentToolExecutionScopeDoesNotInheritInternalWithoutGrant(t *testing.T) {
+	parent := ToolExecutionScope{
+		RequestID:            "req-parent",
+		ActorKind:            ActorKindAgent,
+		ActorID:              "mio",
+		AllowedDataScopes:    []string{DataScopePublic, DataScopeInternal},
+		AuthenticationSource: AuthenticationSourceAgentOrchestrator,
+		AgentRole:            "worker",
+		Purpose:              "ops",
+	}
+	ctx := WithToolExecutionScope(context.Background(), parent)
+
+	derivedCtx, err := DeriveAgentToolExecutionScope(ctx, "req-child", "shiro", "worker", "ops", false)
+	if err != nil {
+		t.Fatalf("DeriveAgentToolExecutionScope() error = %v", err)
+	}
+	derived, ok := ToolExecutionScopeFromContext(derivedCtx)
+	if !ok {
+		t.Fatal("derived context is missing trusted scope")
+	}
+	if derived.Allows(DataScopeInternal) {
+		t.Fatalf("derived scope inherited internal access: %#v", derived)
+	}
+	if !derived.Allows(DataScopePublic) {
+		t.Fatalf("derived scope lost public access: %#v", derived)
+	}
+}
+
+func TestDeriveAgentToolExecutionScopeRejectsInvalidParentBeforeGrantingInternal(t *testing.T) {
+	parent := ToolExecutionScope{
+		RequestID:            "req-parent",
+		ActorKind:            ActorKindAgent,
+		ActorID:              "mio",
+		AllowedDataScopes:    []string{DataScopeInternal},
+		AuthenticationSource: AuthenticationSourceAgentOrchestrator,
+	}
+	_, err := DeriveAgentToolExecutionScope(WithToolExecutionScope(context.Background(), parent), "req-child", "shiro", "worker", "ops", true)
+	if err == nil {
+		t.Fatal("invalid parent scope must be rejected before internal scope derivation")
 	}
 }
 

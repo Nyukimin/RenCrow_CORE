@@ -9,8 +9,16 @@ import (
 
 func dataRecallInternalContext(t *testing.T) context.Context {
 	t.Helper()
-	scope, err := domaintool.NewToolExecutionScope("data-recall-internal", domaintool.ActorKindAgent, "mio", "", []string{domaintool.DataScopeInternal}, domaintool.AuthenticationSourceAgentOrchestrator)
-	if err != nil {
+	scope := domaintool.ToolExecutionScope{
+		RequestID:            "data-recall-internal",
+		ActorKind:            domaintool.ActorKindAgent,
+		ActorID:              "mio",
+		AllowedDataScopes:    []string{domaintool.DataScopeInternal},
+		AuthenticationSource: domaintool.AuthenticationSourceAgentOrchestrator,
+		AgentRole:            "worker",
+		Purpose:              "ops",
+	}
+	if err := scope.Validate(); err != nil {
 		t.Fatalf("internal scope: %v", err)
 	}
 	return domaintool.WithToolExecutionScope(context.Background(), scope)
@@ -22,5 +30,7 @@ func dataRecallUserContext(t *testing.T) context.Context {
 	if err != nil {
 		t.Fatalf("user scope: %v", err)
 	}
+	scope.AgentRole = "worker"
+	scope.Purpose = "ops"
 	return domaintool.WithToolExecutionScope(context.Background(), scope)
 }
