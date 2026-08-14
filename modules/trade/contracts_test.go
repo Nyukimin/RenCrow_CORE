@@ -5,6 +5,24 @@ import (
 	"testing"
 )
 
+func validOwnerEvidenceForTest(agentID, role, purpose, domain, operation, requestID, correlationID string) OwnerEvidence {
+	return OwnerEvidence{
+		AgentID: agentID, Role: role, Purpose: purpose, DataScope: "internal", RequestID: requestID,
+		OwnerModule: "RenCrow_TRADE", Domain: domain, Operation: operation, CorrelationID: correlationID,
+		ProvenanceRef: "portfolio/genesis", RetrievedAt: "2026-08-14T00:00:00.123456789Z",
+		FreshnessState: "observed_at_read", ValidationState: "owner_route_succeeded", BudgetLimit: 1, ReturnedCount: 1,
+	}
+}
+
+func validOwnerReceiptForTest(agentID, role, purpose, domain, operation, requestID string, replay bool) OwnerReceipt {
+	return OwnerReceipt{
+		ReceiptID: "receipt-1", RequestID: requestID, AgentID: agentID, Role: role, Purpose: purpose, DataScope: "internal",
+		OwnerModule: "RenCrow_TRADE", Domain: domain, Operation: operation, Status: "completed", IdempotentReplay: replay,
+		SchemaVersion: 1, AuditRef: "audit-1", PolicyRevision: "policy-1", MigrationState: "embedded_current",
+		ValidationState: "owner_validated", CompletedAt: "2026-08-14T00:00:00.123456789Z",
+	}
+}
+
 func validDisabledStatus() PrivateStatus {
 	return PrivateStatus{
 		ContractVersion: PrivateContractVersion,
@@ -43,10 +61,13 @@ func TestPrivateShadowObservationValidatesNoExecutionMutationOrPromotion(t *test
 	request.Policy.RequestID = request.RequestID
 	request.Policy.RequestScope.Revision = "shadow-observation/sha256:" + request.Observation.ContextSnapshotSHA256
 	response := PrivateShadowObservation{
-		ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: "trace-1", ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE",
-		RequestID: request.RequestID, Environment: "SHADOW", PolicyDecision: PolicyDecision{Capability: "shadow_observation_record", Status: "allowed"},
-		Event: ShadowObservationEvent{EventVersion: 1, EventID: "shadow-event/sha256:" + strings.Repeat("c", 64), Sequence: 1, RecordedAt: "2026-08-06T12:01:00Z", Type: "shadow_observation_recorded", ShadowObservationInput: request.Observation, EventHash: "sha256:" + strings.Repeat("c", 64)},
+		ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: request.RequestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE",
+		RequestID: request.RequestID, Environment: "SHADOW", PolicyDecision: PolicyDecision{Capability: "shadow_observation_record", Status: "allowed", ModulePolicyRevision: "policy-1"},
+		Event:        ShadowObservationEvent{EventVersion: 1, EventID: "shadow-event/sha256:" + strings.Repeat("c", 64), Sequence: 1, RecordedAt: "2026-08-06T12:01:00Z", Type: "shadow_observation_recorded", ShadowObservationInput: request.Observation, EventHash: "sha256:" + strings.Repeat("c", 64)},
+		OwnerReceipt: validOwnerReceiptForTest("shiro", "worker", "ledger_memory_write", "ledger", "shadow_observation", request.RequestID, false),
 	}
+	response.OwnerReceipt.AuditRef = response.Event.EventID
+	response.OwnerReceipt.PolicyRevision = response.PolicyDecision.ModulePolicyRevision
 	if err := response.Validate(request); err != nil {
 		t.Fatal(err)
 	}
@@ -72,9 +93,12 @@ func TestPrivateShadowOutcomeValidatesFixedLabelContractAndSafety(t *testing.T) 
 	}
 	response := PrivateShadowOutcome{
 		ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: "outcome-1", ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE",
-		RequestID: "outcome-1", Environment: "SHADOW", PolicyDecision: PolicyDecision{Capability: "shadow_outcome_record", Status: "allowed"},
-		Event: ShadowOutcomeEvent{EventVersion: 1, EventID: "shadow-event/sha256:" + strings.Repeat("e", 64), Sequence: 2, RecordedAt: "2026-08-07T12:01:00Z", Type: "shadow_outcome_recorded", IdempotencyKey: "outcome-key-1", StudyID: "study-1", DecisionID: "decision-1", MarketObservedAt: "2026-08-06T12:00:00Z", OutcomeLabel: "success", OutcomeObservedAt: "2026-08-07T12:00:00Z", OutcomeSnapshotSHA256: strings.Repeat("c", 64), OutcomeReasonCodes: []string{"THESIS_CONFIRMED"}, OutcomeEvidenceRefs: []string{"source/outcome-1"}, OutcomeLabelContractSHA256: strings.Repeat("b", 64), EventHash: "sha256:" + strings.Repeat("e", 64)},
+		RequestID: "outcome-1", Environment: "SHADOW", PolicyDecision: PolicyDecision{Capability: "shadow_outcome_record", Status: "allowed", ModulePolicyRevision: "policy-1"},
+		Event:        ShadowOutcomeEvent{EventVersion: 1, EventID: "shadow-event/sha256:" + strings.Repeat("e", 64), Sequence: 2, RecordedAt: "2026-08-07T12:01:00Z", Type: "shadow_outcome_recorded", IdempotencyKey: "outcome-key-1", StudyID: "study-1", DecisionID: "decision-1", MarketObservedAt: "2026-08-06T12:00:00Z", OutcomeLabel: "success", OutcomeObservedAt: "2026-08-07T12:00:00Z", OutcomeSnapshotSHA256: strings.Repeat("c", 64), OutcomeReasonCodes: []string{"THESIS_CONFIRMED"}, OutcomeEvidenceRefs: []string{"source/outcome-1"}, OutcomeLabelContractSHA256: strings.Repeat("b", 64), EventHash: "sha256:" + strings.Repeat("e", 64)},
+		OwnerReceipt: validOwnerReceiptForTest("shiro", "worker", "ledger_memory_write", "ledger", "shadow_outcome", "outcome-1", false),
 	}
+	response.OwnerReceipt.AuditRef = response.Event.EventID
+	response.OwnerReceipt.PolicyRevision = response.PolicyDecision.ModulePolicyRevision
 	if err := response.Validate(request); err != nil {
 		t.Fatal(err)
 	}
@@ -155,9 +179,10 @@ func TestSimulationCommitContractRejectsExternalAuthorityAndAcceptsSimulationMut
 		ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: "sim-1", ExecutionMode: "DISABLED", RequestID: "sim-1",
 		PortfolioID: "main-sim", Mode: "SIMULATION", PortfolioMutated: true,
 		PreviousPortfolioEventCount: 1, PreviousPortfolioLatestHash: request.ExpectedPortfolioLatestEventHash,
-		PolicyDecision: PolicyDecision{Capability: "portfolio_simulation_commit", Status: "allowed"},
+		PolicyDecision: PolicyDecision{Capability: "portfolio_simulation_commit", Status: "allowed", ModulePolicyRevision: "policy-1"},
 		RiskDecision:   &RiskPreviewDecision{Status: "pass"},
-		Snapshot:       PortfolioSnapshot{PortfolioID: "main-sim", Mode: "SIMULATION", EventCount: 2},
+		Snapshot:       PortfolioSnapshot{PortfolioID: "main-sim", Mode: "SIMULATION", EventCount: 2, LatestEventHash: "audit-1"},
+		OwnerReceipt:   validOwnerReceiptForTest("shiro", "worker", "portfolio_memory_write", "portfolio", "simulation_commit", "sim-1", false),
 	}
 	if err := response.Validate(request); err != nil {
 		t.Fatal(err)
@@ -165,5 +190,55 @@ func TestSimulationCommitContractRejectsExternalAuthorityAndAcceptsSimulationMut
 	response.AuthorizesExternalExecution = true
 	if err := response.Validate(request); err == nil {
 		t.Fatal("expected external execution authority rejection")
+	}
+}
+
+func TestOwnerEvidenceAndReceiptValidationIsFailClosed(t *testing.T) {
+	evidence := validOwnerEvidenceForTest("shiro", "worker", "portfolio_memory_read", "portfolio", "risk_preview", "request-1", "request-1")
+	if err := validateOwnerEvidence(evidence, ownerRiskPreviewRoute, "request-1", "request-1"); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*OwnerEvidence){
+		"owner module":   func(value *OwnerEvidence) { value.OwnerModule = "CORE" },
+		"domain":         func(value *OwnerEvidence) { value.Domain = "ledger" },
+		"operation":      func(value *OwnerEvidence) { value.Operation = "simulation_commit" },
+		"request id":     func(value *OwnerEvidence) { value.RequestID = "other" },
+		"correlation id": func(value *OwnerEvidence) { value.CorrelationID = "other" },
+		"provenance":     func(value *OwnerEvidence) { value.ProvenanceRef = "" },
+		"freshness":      func(value *OwnerEvidence) { value.FreshnessState = "stale" },
+		"validation":     func(value *OwnerEvidence) { value.ValidationState = "unverified" },
+		"budget":         func(value *OwnerEvidence) { value.BudgetLimit = 2 },
+		"returned":       func(value *OwnerEvidence) { value.ReturnedCount = 2 },
+	} {
+		value := evidence
+		mutate(&value)
+		if err := validateOwnerEvidence(value, ownerRiskPreviewRoute, "request-1", "request-1"); err == nil {
+			t.Errorf("%s: expected rejection", name)
+		}
+	}
+
+	receipt := validOwnerReceiptForTest("shiro", "worker", "portfolio_memory_write", "portfolio", "simulation_commit", "request-1", false)
+	if err := validateOwnerReceipt(receipt, ownerSimulationCommitRoute, "request-1", false); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*OwnerReceipt){
+		"owner module":    func(value *OwnerReceipt) { value.OwnerModule = "CORE" },
+		"domain":          func(value *OwnerReceipt) { value.Domain = "ledger" },
+		"operation":       func(value *OwnerReceipt) { value.Operation = "shadow_outcome" },
+		"request id":      func(value *OwnerReceipt) { value.RequestID = "other" },
+		"status":          func(value *OwnerReceipt) { value.Status = "blocked" },
+		"schema version":  func(value *OwnerReceipt) { value.SchemaVersion = 0 },
+		"audit ref":       func(value *OwnerReceipt) { value.AuditRef = "" },
+		"policy revision": func(value *OwnerReceipt) { value.PolicyRevision = "" },
+		"migration":       func(value *OwnerReceipt) { value.MigrationState = "legacy" },
+		"validation":      func(value *OwnerReceipt) { value.ValidationState = "unverified" },
+		"completed at":    func(value *OwnerReceipt) { value.CompletedAt = "not-a-time" },
+		"replay":          func(value *OwnerReceipt) { value.IdempotentReplay = true },
+	} {
+		value := receipt
+		mutate(&value)
+		if err := validateOwnerReceipt(value, ownerSimulationCommitRoute, "request-1", false); err == nil {
+			t.Errorf("%s: expected rejection", name)
+		}
 	}
 }

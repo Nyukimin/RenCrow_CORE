@@ -122,6 +122,77 @@ type PrivatePolicyEvaluation struct {
 	Decision        PolicyDecision `json:"decision"`
 }
 
+const ownerModule = "RenCrow_TRADE"
+
+type ownerRouteContract struct {
+	purpose   string
+	dataScope string
+	domain    string
+	operation string
+}
+
+var (
+	ownerRiskPreviewRoute = ownerRouteContract{
+		purpose: "portfolio_memory_read", dataScope: "internal", domain: "portfolio", operation: "risk_preview",
+	}
+	ownerSimulationCommitRoute = ownerRouteContract{
+		purpose: "portfolio_memory_write", dataScope: "internal", domain: "portfolio", operation: "simulation_commit",
+	}
+	ownerShadowObservationRoute = ownerRouteContract{
+		purpose: "ledger_memory_write", dataScope: "internal", domain: "ledger", operation: "shadow_observation",
+	}
+	ownerShadowOutcomeRoute = ownerRouteContract{
+		purpose: "ledger_memory_write", dataScope: "internal", domain: "ledger", operation: "shadow_outcome",
+	}
+	ownerShadowReviewRoute = ownerRouteContract{
+		purpose: "ledger_memory_write", dataScope: "internal", domain: "ledger", operation: "shadow_review",
+	}
+	ownerShadowOutcomeReportRoute = ownerRouteContract{
+		purpose: "ledger_memory_read", dataScope: "internal", domain: "ledger", operation: "shadow_outcome_report",
+	}
+	ownerShadowReviewReportRoute = ownerRouteContract{
+		purpose: "ledger_memory_read", dataScope: "internal", domain: "ledger", operation: "shadow_review_report",
+	}
+)
+
+type OwnerEvidence struct {
+	AgentID         string `json:"agent_id"`
+	Role            string `json:"role"`
+	Purpose         string `json:"purpose"`
+	DataScope       string `json:"data_scope"`
+	RequestID       string `json:"request_id"`
+	OwnerModule     string `json:"owner_module"`
+	Domain          string `json:"domain"`
+	Operation       string `json:"operation"`
+	CorrelationID   string `json:"correlation_id"`
+	ProvenanceRef   string `json:"provenance_ref"`
+	RetrievedAt     string `json:"retrieved_at"`
+	FreshnessState  string `json:"freshness_state"`
+	ValidationState string `json:"validation_state"`
+	BudgetLimit     int    `json:"budget_limit"`
+	ReturnedCount   int    `json:"returned_count"`
+}
+
+type OwnerReceipt struct {
+	ReceiptID        string `json:"receipt_id"`
+	RequestID        string `json:"request_id"`
+	AgentID          string `json:"agent_id"`
+	Role             string `json:"role"`
+	Purpose          string `json:"purpose"`
+	DataScope        string `json:"data_scope"`
+	OwnerModule      string `json:"owner_module"`
+	Domain           string `json:"domain"`
+	Operation        string `json:"operation"`
+	Status           string `json:"status"`
+	IdempotentReplay bool   `json:"idempotent_replay"`
+	SchemaVersion    int    `json:"schema_version"`
+	AuditRef         string `json:"audit_ref"`
+	PolicyRevision   string `json:"policy_revision"`
+	MigrationState   string `json:"migration_state"`
+	ValidationState  string `json:"validation_state"`
+	CompletedAt      string `json:"completed_at"`
+}
+
 type RiskPreviewRequest struct {
 	ContractVersion string          `json:"contract_version"`
 	RequestID       string          `json:"request_id"`
@@ -217,6 +288,7 @@ type PrivateRiskPreview struct {
 	PortfolioEventCount      int64               `json:"portfolio_event_count"`
 	PortfolioLatestEventHash string              `json:"portfolio_latest_event_hash"`
 	Decision                 RiskPreviewDecision `json:"decision"`
+	OwnerEvidence            OwnerEvidence       `json:"owner_evidence"`
 }
 
 type SimulationCommitRequest struct {
@@ -247,6 +319,7 @@ type PrivateSimulationCommit struct {
 	PolicyDecision              PolicyDecision       `json:"policy_decision"`
 	RiskDecision                *RiskPreviewDecision `json:"risk_decision,omitempty"`
 	Snapshot                    PortfolioSnapshot    `json:"snapshot"`
+	OwnerReceipt                OwnerReceipt         `json:"owner_receipt"`
 }
 
 type ShadowObservationInput struct {
@@ -295,6 +368,7 @@ type PrivateShadowObservation struct {
 	IdempotentReplay            bool                   `json:"idempotent_replay"`
 	PolicyDecision              PolicyDecision         `json:"policy_decision"`
 	Event                       ShadowObservationEvent `json:"event"`
+	OwnerReceipt                OwnerReceipt           `json:"owner_receipt"`
 }
 
 type ShadowOutcomeInput struct {
@@ -355,6 +429,7 @@ type PrivateShadowOutcome struct {
 	IdempotentReplay            bool               `json:"idempotent_replay"`
 	PolicyDecision              PolicyDecision     `json:"policy_decision"`
 	Event                       ShadowOutcomeEvent `json:"event"`
+	OwnerReceipt                OwnerReceipt       `json:"owner_receipt"`
 }
 
 const ShadowOutcomeReportContractVersion = "shadow-outcome-report/v1"
@@ -396,6 +471,7 @@ type PrivateShadowOutcomeReport struct {
 	PortfolioMutated            bool                `json:"portfolio_mutated"`
 	KnowledgePromoted           bool                `json:"knowledge_promoted"`
 	Report                      ShadowOutcomeReport `json:"report"`
+	OwnerEvidence               OwnerEvidence       `json:"owner_evidence"`
 }
 
 type ShadowReviewReport struct {
@@ -425,6 +501,7 @@ type PrivateShadowReviewReport struct {
 	PortfolioMutated            bool               `json:"portfolio_mutated"`
 	KnowledgePromoted           bool               `json:"knowledge_promoted"`
 	Report                      ShadowReviewReport `json:"report"`
+	OwnerEvidence               OwnerEvidence      `json:"owner_evidence"`
 }
 
 const ShadowReviewContractVersion = "shadow-outcome-review/v1"
@@ -474,10 +551,86 @@ type PrivateShadowReview struct {
 	IdempotentReplay            bool              `json:"idempotent_replay"`
 	PolicyDecision              PolicyDecision    `json:"policy_decision"`
 	Event                       ShadowReviewEvent `json:"event"`
+	OwnerReceipt                OwnerReceipt      `json:"owner_receipt"`
 }
 
 var policySHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var eventSHA256Pattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func validateOwnerIdentity(agentID, role, purpose, dataScope string, route ownerRouteContract) error {
+	switch {
+	case agentID == "shiro" && role == "worker":
+	case agentID == "kuro" && role == "heavy":
+	default:
+		return fmt.Errorf("TRADE owner agent and role are invalid")
+	}
+	if purpose != route.purpose || dataScope != route.dataScope {
+		return fmt.Errorf("TRADE owner purpose or data scope is invalid")
+	}
+	return nil
+}
+
+func validateOwnerEvidence(evidence OwnerEvidence, route ownerRouteContract, requestID, correlationID string) error {
+	for name, value := range map[string]string{
+		"agent_id": evidence.AgentID, "role": evidence.Role, "purpose": evidence.Purpose, "data_scope": evidence.DataScope,
+		"request_id": evidence.RequestID, "owner_module": evidence.OwnerModule, "domain": evidence.Domain, "operation": evidence.Operation,
+		"correlation_id": evidence.CorrelationID, "provenance_ref": evidence.ProvenanceRef, "retrieved_at": evidence.RetrievedAt,
+		"freshness_state": evidence.FreshnessState, "validation_state": evidence.ValidationState,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("TRADE owner evidence %s is required", name)
+		}
+	}
+	if err := validateOwnerIdentity(evidence.AgentID, evidence.Role, evidence.Purpose, evidence.DataScope, route); err != nil {
+		return err
+	}
+	if evidence.OwnerModule != ownerModule || evidence.Domain != route.domain || evidence.Operation != route.operation {
+		return fmt.Errorf("TRADE owner evidence route is invalid")
+	}
+	if evidence.RequestID != requestID || evidence.CorrelationID != correlationID {
+		return fmt.Errorf("TRADE owner evidence request identity is invalid")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, evidence.RetrievedAt); err != nil {
+		return fmt.Errorf("TRADE owner evidence retrieved_at is invalid")
+	}
+	if evidence.FreshnessState != "observed_at_read" || evidence.ValidationState != "owner_route_succeeded" || evidence.BudgetLimit != 1 || evidence.ReturnedCount != 1 {
+		return fmt.Errorf("TRADE owner evidence validation is invalid")
+	}
+	return nil
+}
+
+func validateOwnerReceipt(receipt OwnerReceipt, route ownerRouteContract, requestID string, idempotentReplay bool) error {
+	for name, value := range map[string]string{
+		"receipt_id": receipt.ReceiptID, "request_id": receipt.RequestID, "agent_id": receipt.AgentID, "role": receipt.Role,
+		"purpose": receipt.Purpose, "data_scope": receipt.DataScope, "owner_module": receipt.OwnerModule, "domain": receipt.Domain,
+		"operation": receipt.Operation, "status": receipt.Status, "audit_ref": receipt.AuditRef, "policy_revision": receipt.PolicyRevision,
+		"migration_state": receipt.MigrationState, "validation_state": receipt.ValidationState, "completed_at": receipt.CompletedAt,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("TRADE owner receipt %s is required", name)
+		}
+	}
+	if err := validateOwnerIdentity(receipt.AgentID, receipt.Role, receipt.Purpose, receipt.DataScope, route); err != nil {
+		return err
+	}
+	if receipt.OwnerModule != ownerModule || receipt.Domain != route.domain || receipt.Operation != route.operation || receipt.RequestID != requestID {
+		return fmt.Errorf("TRADE owner receipt identity is invalid")
+	}
+	if receipt.Status != "completed" || receipt.IdempotentReplay != idempotentReplay || receipt.SchemaVersion <= 0 || receipt.MigrationState != "embedded_current" || receipt.ValidationState != "owner_validated" {
+		return fmt.Errorf("TRADE owner receipt completion is invalid")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, receipt.CompletedAt); err != nil {
+		return fmt.Errorf("TRADE owner receipt completed_at is invalid")
+	}
+	return nil
+}
+
+func validateOwnerReceiptReferences(receipt OwnerReceipt, auditRef, policyRevision string) error {
+	if strings.TrimSpace(auditRef) == "" || receipt.AuditRef != auditRef || strings.TrimSpace(policyRevision) == "" || receipt.PolicyRevision != policyRevision {
+		return fmt.Errorf("TRADE owner receipt audit or policy reference is invalid")
+	}
+	return nil
+}
 
 func (status PrivateStatus) ValidateDisabledFoundation() error {
 	if status.ContractVersion != PrivateContractVersion {
@@ -637,7 +790,7 @@ func (response PrivateRiskPreview) Validate(request RiskPreviewRequest) error {
 	if err := request.Validate(); err != nil {
 		return err
 	}
-	if response.ContractVersion != PrivateContractVersion || strings.TrimSpace(response.ServiceStatus) == "" || strings.TrimSpace(response.CorrelationID) == "" {
+	if response.ContractVersion != PrivateContractVersion || strings.TrimSpace(response.ServiceStatus) == "" || response.CorrelationID != request.RequestID {
 		return fmt.Errorf("TRADE risk preview envelope is invalid")
 	}
 	if response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID || strings.TrimSpace(response.PortfolioID) == "" || response.PortfolioEventCount < 1 || !eventSHA256Pattern.MatchString(response.PortfolioLatestEventHash) {
@@ -655,6 +808,9 @@ func (response PrivateRiskPreview) Validate(request RiskPreviewRequest) error {
 	}
 	if (decision.Status == "pass") != (len(decision.ReasonCodes) == 0) {
 		return fmt.Errorf("TRADE risk preview status and reason codes are inconsistent")
+	}
+	if err := validateOwnerEvidence(response.OwnerEvidence, ownerRiskPreviewRoute, request.RequestID, response.CorrelationID); err != nil {
+		return err
 	}
 	return nil
 }
@@ -682,7 +838,7 @@ func (response PrivateSimulationCommit) Validate(request SimulationCommitRequest
 	if err := request.Validate(); err != nil {
 		return err
 	}
-	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
+	if response.ContractVersion != PrivateContractVersion || strings.TrimSpace(response.ServiceStatus) == "" || response.CorrelationID != request.RequestID || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
 		response.PortfolioID == "" || response.Mode != "SIMULATION" || response.AuthorizesExternalExecution || response.PreviousPortfolioEventCount != request.ExpectedPortfolioEventCount ||
 		response.PreviousPortfolioLatestHash != request.ExpectedPortfolioLatestEventHash || response.Snapshot.PortfolioID != response.PortfolioID || response.Snapshot.Mode != "SIMULATION" || response.Snapshot.Guaranteed {
 		return fmt.Errorf("TRADE simulation commit response is invalid")
@@ -692,6 +848,12 @@ func (response PrivateSimulationCommit) Validate(request SimulationCommitRequest
 	}
 	if response.PolicyDecision.Capability != "portfolio_simulation_commit" || response.PolicyDecision.Status != "allowed" {
 		return fmt.Errorf("TRADE simulation commit policy decision is invalid")
+	}
+	if err := validateOwnerReceipt(response.OwnerReceipt, ownerSimulationCommitRoute, request.RequestID, response.IdempotentReplay); err != nil {
+		return err
+	}
+	if err := validateOwnerReceiptReferences(response.OwnerReceipt, response.Snapshot.LatestEventHash, response.PolicyDecision.ModulePolicyRevision); err != nil {
+		return err
 	}
 	return nil
 }
@@ -743,7 +905,7 @@ func (response PrivateShadowObservation) Validate(request ShadowObservationReque
 	if err := request.Validate(); err != nil {
 		return err
 	}
-	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
+	if response.ContractVersion != PrivateContractVersion || strings.TrimSpace(response.ServiceStatus) == "" || response.CorrelationID != request.RequestID || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
 		response.Environment != "SHADOW" || response.AuthorizesExternalExecution || response.PortfolioMutated || response.KnowledgePromoted {
 		return fmt.Errorf("TRADE shadow observation safety envelope is invalid")
 	}
@@ -757,6 +919,12 @@ func (response PrivateShadowObservation) Validate(request ShadowObservationReque
 	}
 	if _, err := time.Parse(time.RFC3339Nano, event.RecordedAt); err != nil {
 		return fmt.Errorf("TRADE shadow observation recorded_at is invalid")
+	}
+	if err := validateOwnerReceipt(response.OwnerReceipt, ownerShadowObservationRoute, request.RequestID, response.IdempotentReplay); err != nil {
+		return err
+	}
+	if err := validateOwnerReceiptReferences(response.OwnerReceipt, response.Event.EventID, response.PolicyDecision.ModulePolicyRevision); err != nil {
+		return err
 	}
 	return nil
 }
@@ -815,7 +983,7 @@ func (response PrivateShadowOutcome) Validate(request ShadowOutcomeRequest) erro
 	if err := request.Validate(); err != nil {
 		return err
 	}
-	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
+	if response.ContractVersion != PrivateContractVersion || strings.TrimSpace(response.ServiceStatus) == "" || response.CorrelationID != request.RequestID || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
 		response.Environment != "SHADOW" || response.AuthorizesExternalExecution || response.PortfolioMutated || response.KnowledgePromoted {
 		return fmt.Errorf("TRADE shadow outcome safety envelope is invalid")
 	}
@@ -835,11 +1003,20 @@ func (response PrivateShadowOutcome) Validate(request ShadowOutcomeRequest) erro
 	if _, err := time.Parse(time.RFC3339Nano, event.RecordedAt); err != nil {
 		return fmt.Errorf("TRADE shadow outcome recorded_at is invalid")
 	}
+	if err := validateOwnerReceipt(response.OwnerReceipt, ownerShadowOutcomeRoute, request.RequestID, response.IdempotentReplay); err != nil {
+		return err
+	}
+	if err := validateOwnerReceiptReferences(response.OwnerReceipt, response.Event.EventID, response.PolicyDecision.ModulePolicyRevision); err != nil {
+		return err
+	}
 	return nil
 }
 
-func (response PrivateShadowOutcomeReport) Validate(studyID string) error {
-	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" ||
+func (response PrivateShadowOutcomeReport) Validate(studyID string, requestIDs ...string) error {
+	if len(requestIDs) > 1 {
+		return fmt.Errorf("TRADE shadow outcome report request identity is invalid")
+	}
+	if response.ContractVersion != PrivateContractVersion || strings.TrimSpace(response.ServiceStatus) == "" || response.ExecutionMode != "DISABLED" ||
 		response.Environment != "SHADOW" || response.AuthorizesExternalExecution || response.PortfolioMutated || response.KnowledgePromoted {
 		return fmt.Errorf("TRADE shadow outcome report safety envelope is invalid")
 	}
@@ -857,11 +1034,24 @@ func (response PrivateShadowOutcomeReport) Validate(studyID string) error {
 	if report.ReviewState != "pending_outcomes" && report.ReviewState != "review_required" {
 		return fmt.Errorf("TRADE shadow outcome report review state is invalid")
 	}
+	expectedRequestID := response.OwnerEvidence.RequestID
+	if len(requestIDs) == 1 {
+		expectedRequestID = requestIDs[0]
+	}
+	if response.CorrelationID != expectedRequestID {
+		return fmt.Errorf("TRADE shadow outcome report correlation ID is invalid")
+	}
+	if err := validateOwnerEvidence(response.OwnerEvidence, ownerShadowOutcomeReportRoute, expectedRequestID, response.CorrelationID); err != nil {
+		return err
+	}
 	return nil
 }
 
-func (response PrivateShadowReviewReport) Validate(studyID string) error {
-	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" || response.Environment != "SHADOW" || response.AuthorizesExternalExecution || response.PortfolioMutated || response.KnowledgePromoted {
+func (response PrivateShadowReviewReport) Validate(studyID string, requestIDs ...string) error {
+	if len(requestIDs) > 1 {
+		return fmt.Errorf("TRADE shadow review report request identity is invalid")
+	}
+	if response.ContractVersion != PrivateContractVersion || strings.TrimSpace(response.ServiceStatus) == "" || response.ExecutionMode != "DISABLED" || response.Environment != "SHADOW" || response.AuthorizesExternalExecution || response.PortfolioMutated || response.KnowledgePromoted {
 		return fmt.Errorf("TRADE shadow review report safety envelope is invalid")
 	}
 	report := response.Report
@@ -876,6 +1066,16 @@ func (response PrivateShadowReviewReport) Validate(studyID string) error {
 	}
 	if report.LatestReviewEventHash != "" && !eventSHA256Pattern.MatchString(report.LatestReviewEventHash) {
 		return fmt.Errorf("TRADE shadow review report latest event hash is invalid")
+	}
+	expectedRequestID := response.OwnerEvidence.RequestID
+	if len(requestIDs) == 1 {
+		expectedRequestID = requestIDs[0]
+	}
+	if response.CorrelationID != expectedRequestID {
+		return fmt.Errorf("TRADE shadow review report correlation ID is invalid")
+	}
+	if err := validateOwnerEvidence(response.OwnerEvidence, ownerShadowReviewReportRoute, expectedRequestID, response.CorrelationID); err != nil {
+		return err
 	}
 	return nil
 }
@@ -933,7 +1133,7 @@ func (response PrivateShadowReview) Validate(request ShadowReviewRequest) error 
 	if err := request.Validate(); err != nil {
 		return err
 	}
-	if response.ContractVersion != PrivateContractVersion || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
+	if response.ContractVersion != PrivateContractVersion || strings.TrimSpace(response.ServiceStatus) == "" || response.CorrelationID != request.RequestID || response.ExecutionMode != "DISABLED" || response.RequestID != request.RequestID ||
 		response.Environment != "SHADOW" || response.AuthorizesExternalExecution || response.PortfolioMutated || response.KnowledgePromoted {
 		return fmt.Errorf("TRADE shadow review safety envelope is invalid")
 	}
@@ -950,6 +1150,12 @@ func (response PrivateShadowReview) Validate(request ShadowReviewRequest) error 
 	}
 	if _, err := time.Parse(time.RFC3339Nano, event.RecordedAt); err != nil {
 		return fmt.Errorf("TRADE shadow review recorded_at is invalid")
+	}
+	if err := validateOwnerReceipt(response.OwnerReceipt, ownerShadowReviewRoute, request.RequestID, response.IdempotentReplay); err != nil {
+		return err
+	}
+	if err := validateOwnerReceiptReferences(response.OwnerReceipt, response.Event.EventID, response.PolicyDecision.ModulePolicyRevision); err != nil {
+		return err
 	}
 	return nil
 }
