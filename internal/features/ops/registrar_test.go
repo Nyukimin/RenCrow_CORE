@@ -59,6 +59,27 @@ func TestRegisterRoutesSkipsNilHandlers(t *testing.T) {
 	}
 }
 
+func TestRegisterRoutesAddsAgentOpsOnlyWhenHandlerIsConfigured(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, Dependencies{Routes: Routes{
+		AgentOps: statusHandler(http.StatusAccepted),
+	}})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agent/ops", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("configured agent ops status=%d want=%d", rec.Code, http.StatusAccepted)
+	}
+
+	disabledMux := http.NewServeMux()
+	RegisterRoutes(disabledMux, Dependencies{})
+	rec = httptest.NewRecorder()
+	disabledMux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/agent/ops", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("disabled agent ops status=%d want=%d", rec.Code, http.StatusNotFound)
+	}
+}
+
 func statusHandler(status int) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(status)

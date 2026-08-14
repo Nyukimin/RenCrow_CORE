@@ -109,6 +109,46 @@ func TestWorktreeSandboxManagerCreatesWorktreeAndSandboxRecord(t *testing.T) {
 	}
 }
 
+func TestWorktreeSandboxManagerForwardsDetachedRefAndUsesResolvedBaseRef(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	creator := &fakeWorktreeCreator{
+		createResult: aiworkflowapp.WorktreeCreateResult{
+			Worktree: domainai.WorktreeRegistry{
+				WorktreeID: "worktree:repo:detached-custom",
+				Repo:       "repo",
+				Path:       "/tmp/worktrees/repo-detached-custom",
+				Branch:     "0123456789abcdef0123456789abcdef01234567",
+				Status:     "active",
+				CreatedAt:  now,
+			},
+		},
+	}
+	store := &fakeWorktreeSandboxStore{}
+	manager := NewWorktreeSandboxManager(creator, store)
+
+	result, err := manager.Create(context.Background(), WorktreeSandboxCreateOptions{
+		RepoRoot:    "/repo",
+		BaseDir:     "/tmp/worktrees",
+		RepoName:    "repo",
+		DetachedRef: "HEAD",
+		PathName:    "repo-detached-custom",
+		OwnerAgent:  "Worker",
+		Now:         func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if creator.createOpts.DetachedRef != "HEAD" || creator.createOpts.Branch != "" {
+		t.Fatalf("worktree opts not forwarded: %#v", creator.createOpts)
+	}
+	if store.sandbox.BaseRef != creator.createResult.Worktree.Branch {
+		t.Fatalf("sandbox base_ref = %q, want resolved ref %q", store.sandbox.BaseRef, creator.createResult.Worktree.Branch)
+	}
+	if result.Sandbox.BaseRef != creator.createResult.Worktree.Branch {
+		t.Fatalf("result base_ref = %q, want resolved ref %q", result.Sandbox.BaseRef, creator.createResult.Worktree.Branch)
+	}
+}
+
 func TestWorktreeSandboxManagerSurfacesRegistryFailure(t *testing.T) {
 	creator := &fakeWorktreeCreator{
 		createResult: aiworkflowapp.WorktreeCreateResult{

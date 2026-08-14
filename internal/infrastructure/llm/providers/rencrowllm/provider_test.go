@@ -128,6 +128,7 @@ func TestGatewayProviderChatSendsLowReasoningContract(t *testing.T) {
 	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second)
 	if _, err := provider.Chat(context.Background(), llm.ChatRequest{
 		Messages:        []llm.ChatMessage{{Role: "user", Content: "run"}},
+		MaxTokens:       4096,
 		ReasoningEffort: llm.ReasoningEffortLow,
 	}); err != nil {
 		t.Fatal(err)
@@ -138,6 +139,9 @@ func TestGatewayProviderChatSendsLowReasoningContract(t *testing.T) {
 	kwargs, ok := payload["chat_template_kwargs"].(map[string]any)
 	if !ok || kwargs["enable_thinking"] != true || kwargs["reasoning_effort"] != "low" {
 		t.Fatalf("low chat template kwargs missing: %#v", payload)
+	}
+	if payload["max_tokens"] != float64(4096) {
+		t.Fatalf("max_tokens = %#v, want 4096", payload["max_tokens"])
 	}
 }
 
@@ -162,6 +166,31 @@ func TestGatewayProviderChatOmitsReasoningContractWhenUnspecified(t *testing.T) 
 		if _, exists := kwargs["reasoning_effort"]; exists {
 			t.Fatalf("unspecified reasoning effort leaked into chat template kwargs: %#v", payload)
 		}
+	}
+	if _, exists := payload["max_tokens"]; exists {
+		t.Fatalf("unspecified max tokens changed existing payload: %#v", payload)
+	}
+}
+
+func TestGatewayProviderChatSendsConfiguredMaxTokens(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		writeToolChatSSE(w, `{"choices":[{"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second)
+	if _, err := provider.Chat(context.Background(), llm.ChatRequest{
+		Messages:  []llm.ChatMessage{{Role: "user", Content: "run"}},
+		MaxTokens: 16384,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if payload["max_tokens"] != float64(16384) {
+		t.Fatalf("max_tokens = %#v, want 16384", payload["max_tokens"])
 	}
 }
 

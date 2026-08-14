@@ -182,32 +182,42 @@ LIMIT ?`, strings.TrimSpace(sessionID), limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var traces []domconv.RecallTrace
+	type recallTraceRow struct {
+		traceID   string
+		turnID    string
+		chatID    string
+		persona   string
+		createdAt time.Time
+	}
+	traceRows := make([]recallTraceRow, 0)
 	for rows.Next() {
-		var traceID string
-		var turnID string
-		var chatID string
-		var persona string
-		var createdAt time.Time
-		if err := rows.Scan(&traceID, &turnID, &chatID, &persona, &createdAt); err != nil {
+		var row recallTraceRow
+		if err := rows.Scan(&row.traceID, &row.turnID, &row.chatID, &row.persona, &row.createdAt); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		items, err := s.recallTraceItems(ctx, traceID)
+		traceRows = append(traceRows, row)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var traces []domconv.RecallTrace
+	for _, row := range traceRows {
+		items, err := s.recallTraceItems(ctx, row.traceID)
 		if err != nil {
 			return nil, err
 		}
 		traces = append(traces, domconv.RecallTrace{
-			ResponseID: turnID,
-			SessionID:  chatID,
-			Role:       persona,
+			ResponseID: row.turnID,
+			SessionID:  row.chatID,
+			Role:       row.persona,
 			Items:      items,
-			CreatedAt:  createdAt,
+			CreatedAt:  row.createdAt,
 		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	return traces, nil
 }

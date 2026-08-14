@@ -153,6 +153,7 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		ChannelsList:    handleViewerChannelsList(buildChannelRegistry(cfg), time.Now),
 		ChannelsProbe:   handleViewerChannelsProbe(buildChannelRegistry(cfg), time.Now),
 		WebGatherDoctor: handleViewerWebGatherDoctor(dependencies.webGatherDeps),
+		AgentOps:        dependencies.agentOps,
 	}})
 	workstreamfeature.RegisterRoutes(mux, workstreamfeature.Dependencies{Routes: workstreamfeature.Routes{
 		Status: dependencies.workstreamStatus, Goals: dependencies.workstreamGoal,

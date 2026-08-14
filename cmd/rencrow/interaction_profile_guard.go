@@ -51,6 +51,12 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 		client: "RenCrow_CMD",
 		allow:  cmdControlInteractionAllowed,
 	},
+	"agent-ops": {
+		client: "RenCrow_CMD",
+		allow: func(method, path string) bool {
+			return method == http.MethodPost && path == "/v1/agent/ops"
+		},
+	},
 	"assistant-core": {
 		client: "RenCrow_ASSISTANT",
 		allow: func(method, path string) bool {

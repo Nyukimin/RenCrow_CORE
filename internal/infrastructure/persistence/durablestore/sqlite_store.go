@@ -36,10 +36,12 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("durable store workflow parent is not a directory")
 	}
-	db, err := sql.Open("sqlite", path+"?_time_format=sqlite")
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout%3d5000&_time_format=sqlite")
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	s := &SQLiteStore{db: db}
 	if err := s.migrate(); err != nil {
 		_ = db.Close()

@@ -94,6 +94,7 @@ type Dependencies struct {
 	viewerAuditSummary             http.HandlerFunc                            // viewer audit summary API
 	viewerJobDetail                http.HandlerFunc                            // viewer job detail API
 	viewerSend                     http.HandlerFunc                            // viewer message sender
+	agentOps                       http.HandlerFunc                            // local authenticated Agent OPS ingress
 	viewerGamesStatus              http.HandlerFunc                            // RenCrow_GAMES bridge status API
 	viewerGamesResult              http.HandlerFunc                            // RenCrow_GAMES result callback API
 	viewerGamesSessions            http.HandlerFunc                            // RenCrow_GAMES recent session observer API
@@ -581,6 +582,16 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	} else {
 		deps.globalPolicyDecisionStore = policyDecisionStore
 		deps.globalPolicyDecisions = viewer.HandlePolicyDecisions(policyDecisionStore)
+	}
+	if err := wireRuntimeTradeInvestmentRoutes(
+		context.Background(),
+		cfg,
+		dataRecallRegistry,
+		dataWriteRegistry,
+		deps.globalPolicyStore,
+		deps.globalPolicyDecisionStore,
+	); err != nil {
+		log.Fatalf("Failed to register TRADE investment data routes: %v", err)
 	}
 	deps.viewerTradeStatus = newTradeStatusHandler(cfg)
 	deps.viewerTradePolicyEvaluation = newTradePolicyEvaluationHandler(cfg, deps.globalPolicyStore, deps.globalPolicyDecisionStore)
@@ -1307,6 +1318,15 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		newRuntimeDailySourceBriefResearch(conversationRuntime.WebGatherFetcher, toolRuntime.WorkerRuntimeRunnerV2),
 		ttsBridge,
 	)
+	var idleChatWorkerNotifier agentOpsWorkerBusyNotifier
+	if deps.idleChatOrch != nil {
+		idleChatWorkerNotifier = deps.idleChatOrch
+	}
+	agentOpsHandler, err := newConfiguredAgentOpsHandler(cfg, agents.Shiro, idleChatWorkerNotifier)
+	if err != nil {
+		log.Fatalf("Failed to initialize local Agent OPS ingress: %v", err)
+	}
+	deps.agentOps = agentOpsHandler
 	var persistentNewsReader domainnews.DailyNewsBriefReader
 	if conversationRuntime.L1Store != nil {
 		persistentNewsReader = newsbriefapp.NewL1Reader(conversationRuntime.L1Store)

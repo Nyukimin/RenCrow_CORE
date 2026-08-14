@@ -26,11 +26,13 @@ func openReadOnlySQLite(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, errUnavailable("database path invalid: " + err.Error())
 	}
-	dsn := "file:" + absPath + "?mode=ro&_time_format=sqlite"
+	dsn := "file:" + absPath + "?mode=ro&_pragma=busy_timeout(5000)&_time_format=sqlite"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, errUnavailable("open read-only sqlite: " + err.Error())
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, errUnavailable("ping read-only sqlite: " + err.Error())

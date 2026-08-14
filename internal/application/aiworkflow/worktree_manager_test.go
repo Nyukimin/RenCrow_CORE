@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,77 @@ func TestWorktreeManagerRejectsProtectedBranch(t *testing.T) {
 		Branch:   "main",
 	}); err == nil {
 		t.Fatal("expected protected branch to fail")
+	}
+}
+
+func TestWorktreeManagerRequiresExactlyOneCreateRef(t *testing.T) {
+	repo := initGitRepo(t)
+	manager := NewWorktreeManager(nil)
+
+	tests := []struct {
+		name string
+		opts WorktreeCreateOptions
+	}{
+		{
+			name: "neither",
+			opts: WorktreeCreateOptions{RepoRoot: repo, BaseDir: filepath.Join(t.TempDir(), "worktrees")},
+		},
+		{
+			name: "both",
+			opts: WorktreeCreateOptions{
+				RepoRoot:    repo,
+				BaseDir:     filepath.Join(t.TempDir(), "worktrees"),
+				Branch:      "feature/both",
+				DetachedRef: "HEAD",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := manager.Create(context.Background(), tt.opts); err == nil {
+				t.Fatal("expected exactly-one-ref validation error")
+			} else if !strings.Contains(err.Error(), "exactly one") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestWorktreeManagerCreatesDetachedWorktreeWithoutBranch(t *testing.T) {
+	repo := initGitRepo(t)
+	base := filepath.Join(t.TempDir(), "worktrees")
+	resolved := strings.TrimSpace(runGitOutput(t, repo, "rev-parse", "HEAD"))
+	branchesBefore := strings.TrimSpace(runGitOutput(t, repo, "for-each-ref", "--format=%(refname)", "refs/heads"))
+	manager := NewWorktreeManager(nil)
+
+	result, err := manager.Create(context.Background(), WorktreeCreateOptions{
+		RepoRoot:    repo,
+		BaseDir:     base,
+		RepoName:    "example",
+		DetachedRef: "HEAD",
+		PathName:    "custom-detached",
+	})
+	if err != nil {
+		t.Fatalf("detached Create failed: %v", err)
+	}
+	if result.Worktree.Branch != resolved {
+		t.Fatalf("registry branch = %q, want resolved commit %q", result.Worktree.Branch, resolved)
+	}
+	if result.Worktree.WorktreeID != "worktree:example:custom-detached" {
+		t.Fatalf("worktree id = %q", result.Worktree.WorktreeID)
+	}
+	if !strings.Contains(result.Command, "worktree add --detach") {
+		t.Fatalf("command = %q", result.Command)
+	}
+	if current := strings.TrimSpace(runGitOutput(t, result.Worktree.Path, "branch", "--show-current")); current != "" {
+		t.Fatalf("detached worktree has branch %q", current)
+	}
+	if head := strings.TrimSpace(runGitOutput(t, result.Worktree.Path, "rev-parse", "HEAD")); head != resolved {
+		t.Fatalf("detached HEAD = %q, want %q", head, resolved)
+	}
+	branchesAfter := strings.TrimSpace(runGitOutput(t, repo, "for-each-ref", "--format=%(refname)", "refs/heads"))
+	if branchesAfter != branchesBefore {
+		t.Fatalf("detached create changed branches: before=%q after=%q", branchesBefore, branchesAfter)
 	}
 }
 
@@ -147,4 +219,14 @@ func runGit(t *testing.T, dir string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
+}
+
+func runGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+	return string(out)
 }

@@ -85,6 +85,95 @@ func TestImportJSONLToSQLiteCreatesPromotionReceiptWithoutChangingSource(t *test
 	_ = writable.Close()
 }
 
+func TestPrivateCandidateDoesNotInvalidatePromotedReadinessAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	sourceRoot := t.TempDir()
+	source := NewJSONLStore(sourceRoot)
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	if err := source.SaveCreativeKnowledgeItem(ctx, domainkm.CreativeKnowledgeItem{
+		ItemID: "creative-imported-1", Title: "Imported public work", Status: "reviewed", CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sqlitePath := filepath.Join(t.TempDir(), "knowledge_memory.db")
+	if _, err := ImportJSONLToSQLite(ctx, sourceRoot, sqlitePath); err != nil {
+		t.Fatal(err)
+	}
+
+	candidate := domainkm.CreativeKnowledgeItem{
+		ItemID:     "candidate-owner-1",
+		UserID:     "user-1",
+		Title:      "Private owner candidate",
+		Status:     "candidate",
+		Visibility: "private",
+		CreatedAt:  now.Add(time.Minute),
+	}
+	receipt := KnowledgeMemoryRequestReceipt{
+		RequestID:   "request-owner-candidate-1",
+		UserID:      candidate.UserID,
+		ActorID:     "shiro",
+		PayloadHash: "sha256:owner-candidate-1",
+		ItemID:      candidate.ItemID,
+		CreatedAt:   now.Add(2 * time.Minute),
+	}
+	writable, err := OpenSQLiteStoreWritable(sqlitePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := writable.SaveCreativeCandidateWithReceipt(ctx, candidate, receipt)
+	if err != nil {
+		_ = writable.Close()
+		t.Fatal(err)
+	}
+	if replayed {
+		_ = writable.Close()
+		t.Fatal("first private candidate write was reported as a replay")
+	}
+	if err := writable.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenSQLiteStore(sqlitePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	readiness, err := store.Readiness(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !readiness.DatabaseAvailable || !readiness.SchemaReady || !readiness.IndexReady || readiness.Coverage.State != KnowledgeMemoryCoverageReady || readiness.IntegrityState != KnowledgeMemoryIntegrityReady {
+		t.Fatalf("readiness after private candidate write = %#v", readiness)
+	}
+
+	got, found, err := store.FindCreativeCandidateByID(ctx, candidate.UserID, candidate.ItemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || got.ItemID != candidate.ItemID || got.UserID != candidate.UserID || got.Title != candidate.Title {
+		t.Fatalf("private candidate recall = %#v, found=%v", got, found)
+	}
+	results, err := store.Search(ctx, appkm.SearchRequest{
+		Query:      candidate.Title,
+		Scope:      appkm.SearchScope{Scope: appkm.SearchScopeUser, UserID: candidate.UserID},
+		RecordType: creativeKnowledgeRecordType,
+		Limit:      20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("private candidate unexpectedly searchable: %#v", results)
+	}
+	var projected int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM knowledge_memory_search_documents WHERE record_type = ? AND record_id = ?`, creativeKnowledgeRecordType, candidate.ItemID).Scan(&projected); err != nil {
+		t.Fatal(err)
+	}
+	if projected != 0 {
+		t.Fatalf("private candidate has a search projection: %d", projected)
+	}
+}
+
 func TestOpenSQLiteStoreDoesNotPromoteAnUnreadyDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "unready.db")
 	if err := os.WriteFile(path, nil, 0600); err != nil {
@@ -220,6 +309,43 @@ func TestBackfillSearchProjectionResumesFromPersistedCursor(t *testing.T) {
 		}
 	}
 	t.Fatal("bounded backfill did not reach ready state")
+}
+
+func TestOpenSQLiteStoresConfigureSingleConnectionAndBusyTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "knowledge_memory.db")
+	seed, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, open := range map[string]func(string) (*SQLiteStore, error){
+		"read-only": OpenSQLiteStore,
+		"writable":  OpenSQLiteStoreWritable,
+	} {
+		store, err := open(path)
+		if err != nil {
+			t.Fatalf("%s open: %v", name, err)
+		}
+		if got := store.db.Stats().MaxOpenConnections; got != 1 {
+			_ = store.Close()
+			t.Fatalf("%s max open connections=%d want=1", name, got)
+		}
+		var busyTimeout int
+		if err := store.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+			_ = store.Close()
+			t.Fatalf("%s busy timeout query: %v", name, err)
+		}
+		if busyTimeout != 5000 {
+			_ = store.Close()
+			t.Fatalf("%s busy timeout=%d want=5000", name, busyTimeout)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatalf("%s close: %v", name, err)
+		}
+	}
 }
 
 func readFilesForTest(t *testing.T, paths []string) map[string][]byte {

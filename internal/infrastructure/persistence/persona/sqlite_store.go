@@ -17,6 +17,8 @@ type SQLiteStore struct {
 	metaRoot string
 }
 
+const sqliteBusyTimeoutMilliseconds = 5000
+
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if path == "" {
 		path = "workspace/logs/persona.db"
@@ -24,10 +26,12 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_time_format=sqlite")
+	db, err := sql.Open("sqlite", fmt.Sprintf("%s?_pragma=busy_timeout%%3d%d&_time_format=sqlite", path, sqliteBusyTimeoutMilliseconds))
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	store := &SQLiteStore{db: db}
 	if err := store.migrate(); err != nil {
 		_ = db.Close()

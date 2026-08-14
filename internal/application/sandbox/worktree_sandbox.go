@@ -27,6 +27,7 @@ type WorktreeSandboxCreateOptions struct {
 	BaseDir      string
 	RepoName     string
 	Branch       string
+	DetachedRef  string
 	PathName     string
 	Purpose      string
 	OwnerAgent   string
@@ -82,14 +83,15 @@ func (m *WorktreeSandboxManager) Create(ctx context.Context, opts WorktreeSandbo
 		return WorktreeSandboxCreateResult{}, fmt.Errorf("sandbox store unavailable")
 	}
 	worktreeResult, err := m.worktrees.Create(ctx, aiworkflowapp.WorktreeCreateOptions{
-		RepoRoot:   opts.RepoRoot,
-		BaseDir:    opts.BaseDir,
-		RepoName:   opts.RepoName,
-		Branch:     opts.Branch,
-		PathName:   opts.PathName,
-		Purpose:    opts.Purpose,
-		OwnerAgent: opts.OwnerAgent,
-		Now:        opts.Now,
+		RepoRoot:    opts.RepoRoot,
+		BaseDir:     opts.BaseDir,
+		RepoName:    opts.RepoName,
+		Branch:      opts.Branch,
+		DetachedRef: opts.DetachedRef,
+		PathName:    opts.PathName,
+		Purpose:     opts.Purpose,
+		OwnerAgent:  opts.OwnerAgent,
+		Now:         opts.Now,
 	})
 	if err != nil {
 		return WorktreeSandboxCreateResult{}, err
@@ -108,7 +110,7 @@ func (m *WorktreeSandboxManager) Create(ctx context.Context, opts WorktreeSandbo
 		GoalID:       strings.TrimSpace(opts.GoalID),
 		Type:         "code_worktree",
 		Path:         worktreeResult.Worktree.Path,
-		BaseRef:      strings.TrimSpace(opts.Branch),
+		BaseRef:      strings.TrimSpace(worktreeResult.Worktree.Branch),
 		CreatedBy:    strings.TrimSpace(opts.OwnerAgent),
 		Status:       domainsandbox.SandboxStatusActive,
 		CreatedAt:    createdAt,

@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -206,5 +208,54 @@ func TestSQLiteStoreFindBrowserTraceByIDRejectsMalformedPayload(t *testing.T) {
 	}
 	if _, found, err := store.FindAPICandidateValidationResultByID(ctx, validation.ValidationID); err == nil || found {
 		t.Fatalf("expected malformed validation payload error, found=%v err=%v", found, err)
+	}
+}
+
+func TestSQLiteStoreConfiguresSingleConnectionAndBusyTimeout(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "browser_trace.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if got := store.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("max open connections=%d want=1", got)
+	}
+	var busyTimeout int
+	if err := store.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatal(err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("busy timeout=%d want=5000", busyTimeout)
+	}
+}
+
+func TestSQLiteStoreConcurrentWritesAreSerialized(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "browser_trace.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	const writes = 64
+	var wg sync.WaitGroup
+	errs := make(chan error, writes)
+	for i := 0; i < writes; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			err := store.SaveTraceRun(context.Background(), domaintrace.TraceRun{
+				TraceRunID: "trace-concurrent-" + strconv.Itoa(index),
+				TracePath:  "traces/concurrent",
+				CreatedAt:  time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC),
+			})
+			if err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent write error: %v", err)
 	}
 }

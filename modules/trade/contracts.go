@@ -2,6 +2,7 @@ package trade
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"strings"
@@ -16,6 +17,23 @@ const SimulationCommitContractVersion = "trade-simulation-commit/v1"
 const ShadowObservationContractVersion = "shadow-observation/v1"
 const ShadowOutcomeContractVersion = "shadow-outcome/v1"
 const ShadowReviewReportContractVersion = "shadow-review-report/v1"
+const MemoryOwnerContractVersion = "trade-memory-owner/v1"
+
+const (
+	MemoryOwnerSource    = "RenCrow_TRADE"
+	MemorySourceSource   = "source"
+	MemorySourceLearning = "learning"
+	MemorySourceMarket   = "market"
+	MemorySourceReplay   = "replay"
+	MemorySourceStatus   = "quarantined"
+	MemoryCandidateState = "candidate"
+)
+
+const (
+	MemoryActionObserve = "observe"
+	MemoryActionSelect  = "select"
+	MemoryActionAvoid   = "avoid"
+)
 
 type PolicyStatus struct {
 	SchemaVersion          int             `json:"schema_version"`
@@ -31,9 +49,18 @@ type PolicyStatus struct {
 }
 
 type DependencyStatuses struct {
-	Broker     string `json:"broker"`
-	Ledger     string `json:"ledger"`
-	MarketData string `json:"market_data"`
+	Broker      string `json:"broker"`
+	Ledger      string `json:"ledger"`
+	MarketData  string `json:"market_data"`
+	MemoryOwner string `json:"memory_owner"`
+}
+
+// MemoryOwnerReady reports whether the TRADE-owned memory routes may be used
+// by an authenticated Agent. The disabled foundation still permits an
+// unavailable, unconfigured memory owner; callers must require ready before
+// attempting memory operations.
+func (dependencies DependencyStatuses) MemoryOwnerReady() bool {
+	return dependencies.MemoryOwner == "ready"
 }
 
 type PrivateStatus struct {
@@ -125,10 +152,12 @@ type PrivatePolicyEvaluation struct {
 const ownerModule = "RenCrow_TRADE"
 
 type ownerRouteContract struct {
-	purpose   string
-	dataScope string
-	domain    string
-	operation string
+	purpose                 string
+	dataScope               string
+	domain                  string
+	operation               string
+	expectedFreshnessState  string
+	expectedValidationState string
 }
 
 var (
@@ -153,6 +182,40 @@ var (
 	ownerShadowReviewReportRoute = ownerRouteContract{
 		purpose: "ledger_memory_read", dataScope: "internal", domain: "ledger", operation: "shadow_review_report",
 	}
+	ownerSourceRecordRoute = ownerRouteContract{
+		purpose: "source_memory_read", dataScope: "internal", domain: "source", operation: "source_record",
+		expectedFreshnessState: "source_observed_at", expectedValidationState: "source_record_integrity_verified",
+	}
+	ownerSourceCollectRoute = ownerRouteContract{
+		purpose: "source_memory_write", dataScope: "internal", domain: "source", operation: "collect_source",
+	}
+	ownerLearningCandidateRoute = ownerRouteContract{
+		purpose: "learning_memory_read", dataScope: "internal", domain: "learning", operation: "learning_candidate",
+		expectedFreshnessState: "learning_candidate_observed_at", expectedValidationState: "learning_candidate_integrity_verified",
+	}
+	ownerLearningImportRoute = ownerRouteContract{
+		purpose: "learning_memory_write", dataScope: "internal", domain: "learning", operation: "import_learning_candidate",
+	}
+	ownerMarketSnapshotRoute = ownerRouteContract{
+		purpose: "market_memory_read", dataScope: "internal", domain: "market", operation: "market_snapshot",
+		expectedFreshnessState: "market_snapshot_available_at_read", expectedValidationState: "market_snapshot_integrity_verified",
+	}
+	ownerMarketImportRoute = ownerRouteContract{
+		purpose: "market_memory_write", dataScope: "internal", domain: "market", operation: "import_market_snapshot",
+	}
+	ownerReplayDecisionRoute = ownerRouteContract{
+		purpose: "replay_memory_read", dataScope: "internal", domain: "replay", operation: "replay_decision",
+		expectedFreshnessState: "replay_snapshot_bound_at_read", expectedValidationState: "replay_decision_integrity_verified",
+	}
+	ownerReplayRecordRoute = ownerRouteContract{
+		purpose: "replay_memory_write", dataScope: "internal", domain: "replay", operation: "record_replay_decision",
+	}
+	ownerPortfolioSnapshotRoute = ownerRouteContract{
+		purpose: "portfolio_memory_read", dataScope: "internal", domain: "portfolio", operation: "portfolio_snapshot",
+	}
+	ownerPortfolioEnsureInitializedRoute = ownerRouteContract{
+		purpose: "portfolio_memory_write", dataScope: "internal", domain: "portfolio", operation: "ensure_initialized",
+	}
 )
 
 type OwnerEvidence struct {
@@ -165,6 +228,7 @@ type OwnerEvidence struct {
 	Domain          string `json:"domain"`
 	Operation       string `json:"operation"`
 	CorrelationID   string `json:"correlation_id"`
+	RequestTime     string `json:"request_time,omitempty"`
 	ProvenanceRef   string `json:"provenance_ref"`
 	RetrievedAt     string `json:"retrieved_at"`
 	FreshnessState  string `json:"freshness_state"`
@@ -191,6 +255,243 @@ type OwnerReceipt struct {
 	MigrationState   string `json:"migration_state"`
 	ValidationState  string `json:"validation_state"`
 	CompletedAt      string `json:"completed_at"`
+	CorrelationID    string `json:"correlation_id,omitempty"`
+}
+
+// SourceRecord is the bounded source projection exposed by TRADE. Raw source
+// bytes and filesystem references intentionally do not cross this boundary.
+type SourceRecord struct {
+	RecordVersion          int      `json:"record_version"`
+	SourceRecordID         string   `json:"source_record_id"`
+	CaptureNonce           string   `json:"capture_nonce"`
+	SourceDefinitionID     string   `json:"source_definition_id"`
+	SourceDefinitionHash   string   `json:"source_definition_hash"`
+	Title                  string   `json:"title"`
+	Publisher              string   `json:"publisher"`
+	Jurisdiction           string   `json:"jurisdiction"`
+	Category               string   `json:"category"`
+	Language               string   `json:"language"`
+	SourceURL              string   `json:"source_url"`
+	FinalURL               string   `json:"final_url"`
+	TermsReference         string   `json:"terms_reference"`
+	LicenseStatus          string   `json:"license_status"`
+	Status                 string   `json:"status"`
+	ObservedAt             string   `json:"observed_at"`
+	PointInTimeAvailableAt string   `json:"point_in_time_available_at"`
+	HTTPStatus             int      `json:"http_status"`
+	MediaType              string   `json:"media_type"`
+	ContentEncoding        string   `json:"content_encoding,omitempty"`
+	ETag                   string   `json:"etag,omitempty"`
+	LastModified           string   `json:"last_modified,omitempty"`
+	ByteSize               int64    `json:"byte_size"`
+	ContentHash            string   `json:"content_hash"`
+	Tags                   []string `json:"tags"`
+}
+
+type BoundSource struct {
+	SourceDefinitionID string `json:"source_definition_id"`
+	SourceRecordID     string `json:"source_record_id"`
+	ContentHash        string `json:"content_hash"`
+	ObservedAt         string `json:"observed_at"`
+	Locator            string `json:"locator"`
+}
+
+type LearningCandidateRecord struct {
+	RecordVersion          int           `json:"record_version"`
+	CandidateRecordID      string        `json:"candidate_record_id"`
+	CandidateDefinitionID  string        `json:"candidate_definition_id"`
+	Status                 string        `json:"status"`
+	Title                  string        `json:"title"`
+	Statement              string        `json:"statement"`
+	BoundSources           []BoundSource `json:"bound_sources"`
+	Applicability          []string      `json:"applicability"`
+	Limitations            []string      `json:"limitations"`
+	InvalidationConditions []string      `json:"invalidation_conditions"`
+	Tags                   []string      `json:"tags"`
+	ContentHash            string        `json:"content_hash"`
+}
+
+type MarketSnapshot struct {
+	SnapshotID       string  `json:"snapshot_id"`
+	SchemaVersion    int     `json:"schema_version"`
+	InstrumentID     string  `json:"instrument_id"`
+	Symbol           string  `json:"symbol"`
+	Name             string  `json:"name,omitempty"`
+	AssetType        string  `json:"asset_type"`
+	Venue            string  `json:"venue"`
+	Currency         string  `json:"currency"`
+	TradeDate        string  `json:"trade_date"`
+	AvailableAt      string  `json:"available_at"`
+	Open             float64 `json:"open"`
+	High             float64 `json:"high"`
+	Low              float64 `json:"low"`
+	Close            float64 `json:"close"`
+	AdjClose         float64 `json:"adj_close"`
+	Volume           float64 `json:"volume"`
+	SourceName       string  `json:"source_name"`
+	RunID            string  `json:"run_id"`
+	PlanID           string  `json:"plan_id"`
+	PlanHash         string  `json:"plan_hash"`
+	DatasetID        string  `json:"dataset_id"`
+	DatasetHash      string  `json:"dataset_hash"`
+	DatasetSourceRef string  `json:"dataset_source_ref"`
+	CodeRevision     string  `json:"code_revision"`
+	ContentHash      string  `json:"content_hash"`
+}
+
+type ReplayDecision struct {
+	DecisionID    string `json:"decision_id"`
+	SchemaVersion int    `json:"schema_version"`
+	SnapshotID    string `json:"snapshot_id"`
+	RunID         string `json:"run_id"`
+	InstrumentID  string `json:"instrument_id"`
+	TradeDate     string `json:"trade_date"`
+	Action        string `json:"action"`
+	ContentHash   string `json:"content_hash"`
+}
+
+type CollectSourceRequest struct {
+	ContractVersion    string `json:"contract_version"`
+	RequestID          string `json:"request_id"`
+	SourceDefinitionID string `json:"source_definition_id"`
+}
+
+type ImportLearningCandidateRequest struct {
+	ContractVersion       string `json:"contract_version"`
+	RequestID             string `json:"request_id"`
+	CandidateDefinitionID string `json:"candidate_definition_id"`
+}
+
+type ImportMarketSnapshotRequest struct {
+	ContractVersion string `json:"contract_version"`
+	RequestID       string `json:"request_id"`
+	RunID           string `json:"run_id"`
+	InstrumentID    string `json:"instrument_id"`
+	TradeDate       string `json:"trade_date"`
+}
+
+type RecordReplayDecisionRequest struct {
+	ContractVersion string `json:"contract_version"`
+	RequestID       string `json:"request_id"`
+	RunID           string `json:"run_id"`
+	InstrumentID    string `json:"instrument_id"`
+	TradeDate       string `json:"trade_date"`
+	Action          string `json:"action"`
+}
+
+type EnsurePortfolioInitializedRequest struct {
+	ContractVersion string `json:"contract_version"`
+	RequestID       string `json:"request_id"`
+}
+
+type SourceRecordReadResponse struct {
+	ContractVersion string        `json:"contract_version"`
+	ServiceStatus   string        `json:"service_status"`
+	CorrelationID   string        `json:"correlation_id"`
+	ExecutionMode   string        `json:"execution_mode"`
+	LearningMode    string        `json:"learning_mode"`
+	MemorySource    string        `json:"memory_source"`
+	Record          SourceRecord  `json:"record"`
+	OwnerEvidence   OwnerEvidence `json:"owner_evidence"`
+}
+
+type SourceRecordWriteResponse struct {
+	ContractVersion string       `json:"contract_version"`
+	ServiceStatus   string       `json:"service_status"`
+	CorrelationID   string       `json:"correlation_id"`
+	ExecutionMode   string       `json:"execution_mode"`
+	LearningMode    string       `json:"learning_mode"`
+	MemorySource    string       `json:"memory_source"`
+	Record          SourceRecord `json:"record"`
+	OwnerReceipt    OwnerReceipt `json:"owner_receipt"`
+}
+
+type LearningCandidateReadResponse struct {
+	ContractVersion string                  `json:"contract_version"`
+	ServiceStatus   string                  `json:"service_status"`
+	CorrelationID   string                  `json:"correlation_id"`
+	ExecutionMode   string                  `json:"execution_mode"`
+	LearningMode    string                  `json:"learning_mode"`
+	MemorySource    string                  `json:"memory_source"`
+	Record          LearningCandidateRecord `json:"record"`
+	OwnerEvidence   OwnerEvidence           `json:"owner_evidence"`
+}
+
+type LearningCandidateWriteResponse struct {
+	ContractVersion string                  `json:"contract_version"`
+	ServiceStatus   string                  `json:"service_status"`
+	CorrelationID   string                  `json:"correlation_id"`
+	ExecutionMode   string                  `json:"execution_mode"`
+	LearningMode    string                  `json:"learning_mode"`
+	MemorySource    string                  `json:"memory_source"`
+	Record          LearningCandidateRecord `json:"record"`
+	OwnerReceipt    OwnerReceipt            `json:"owner_receipt"`
+}
+
+type MarketSnapshotReadResponse struct {
+	ContractVersion string         `json:"contract_version"`
+	ServiceStatus   string         `json:"service_status"`
+	CorrelationID   string         `json:"correlation_id"`
+	ExecutionMode   string         `json:"execution_mode"`
+	LearningMode    string         `json:"learning_mode"`
+	MemorySource    string         `json:"memory_source"`
+	Record          MarketSnapshot `json:"record"`
+	OwnerEvidence   OwnerEvidence  `json:"owner_evidence"`
+}
+
+type MarketSnapshotWriteResponse struct {
+	ContractVersion string         `json:"contract_version"`
+	ServiceStatus   string         `json:"service_status"`
+	CorrelationID   string         `json:"correlation_id"`
+	ExecutionMode   string         `json:"execution_mode"`
+	LearningMode    string         `json:"learning_mode"`
+	MemorySource    string         `json:"memory_source"`
+	Record          MarketSnapshot `json:"record"`
+	OwnerReceipt    OwnerReceipt   `json:"owner_receipt"`
+}
+
+type ReplayDecisionReadResponse struct {
+	ContractVersion string         `json:"contract_version"`
+	ServiceStatus   string         `json:"service_status"`
+	CorrelationID   string         `json:"correlation_id"`
+	ExecutionMode   string         `json:"execution_mode"`
+	LearningMode    string         `json:"learning_mode"`
+	MemorySource    string         `json:"memory_source"`
+	Record          ReplayDecision `json:"record"`
+	OwnerEvidence   OwnerEvidence  `json:"owner_evidence"`
+}
+
+type ReplayDecisionWriteResponse struct {
+	ContractVersion string         `json:"contract_version"`
+	ServiceStatus   string         `json:"service_status"`
+	CorrelationID   string         `json:"correlation_id"`
+	ExecutionMode   string         `json:"execution_mode"`
+	LearningMode    string         `json:"learning_mode"`
+	MemorySource    string         `json:"memory_source"`
+	Record          ReplayDecision `json:"record"`
+	OwnerReceipt    OwnerReceipt   `json:"owner_receipt"`
+}
+
+type PortfolioSnapshotReadResponse struct {
+	ContractVersion string            `json:"contract_version"`
+	ServiceStatus   string            `json:"service_status"`
+	CorrelationID   string            `json:"correlation_id"`
+	ExecutionMode   string            `json:"execution_mode"`
+	LearningMode    string            `json:"learning_mode"`
+	MemorySource    string            `json:"memory_source"`
+	Snapshot        PortfolioSnapshot `json:"snapshot"`
+	OwnerEvidence   OwnerEvidence     `json:"owner_evidence"`
+}
+
+type PortfolioSnapshotWriteResponse struct {
+	ContractVersion string            `json:"contract_version"`
+	ServiceStatus   string            `json:"service_status"`
+	CorrelationID   string            `json:"correlation_id"`
+	ExecutionMode   string            `json:"execution_mode"`
+	LearningMode    string            `json:"learning_mode"`
+	MemorySource    string            `json:"memory_source"`
+	Snapshot        PortfolioSnapshot `json:"snapshot"`
+	OwnerReceipt    OwnerReceipt      `json:"owner_receipt"`
 }
 
 type RiskPreviewRequest struct {
@@ -556,6 +857,430 @@ type PrivateShadowReview struct {
 
 var policySHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var eventSHA256Pattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var memoryIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$`)
+var memoryNoncePattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+func validateMemoryID(value, name string) error {
+	if !memoryIDPattern.MatchString(value) || strings.ContainsAny(value, `/\\`) {
+		return fmt.Errorf("TRADE memory %s is invalid", name)
+	}
+	return nil
+}
+
+func validateMemoryHash(value, name string) error {
+	if !eventSHA256Pattern.MatchString(value) {
+		return fmt.Errorf("TRADE memory %s must be sha256-prefixed lowercase SHA-256", name)
+	}
+	return nil
+}
+
+func validateMemoryUTCTime(value, name string) error {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil || !strings.HasSuffix(value, "Z") || parsed.Location() != time.UTC {
+		return fmt.Errorf("TRADE memory %s must be a UTC RFC3339 timestamp", name)
+	}
+	return nil
+}
+
+func validateMemoryDate(value, name string) error {
+	parsed, err := time.Parse(time.DateOnly, value)
+	if err != nil || parsed.Format(time.DateOnly) != value {
+		return fmt.Errorf("TRADE memory %s must be exact YYYY-MM-DD", name)
+	}
+	return nil
+}
+
+func validateMemoryURL(value, name string) error {
+	if strings.TrimSpace(value) == "" || !strings.HasPrefix(value, "https://") || strings.ContainsAny(value, "\r\n") {
+		return fmt.Errorf("TRADE memory %s is invalid", name)
+	}
+	return nil
+}
+
+func (record SourceRecord) Validate() error {
+	if record.RecordVersion != 1 || !memoryNoncePattern.MatchString(record.CaptureNonce) || record.HTTPStatus != 200 || record.ByteSize < 0 {
+		return fmt.Errorf("TRADE source record version or capture metadata is invalid")
+	}
+	for name, value := range map[string]string{
+		"source_record_id": record.SourceRecordID, "source_definition_id": record.SourceDefinitionID,
+		"title": record.Title, "publisher": record.Publisher, "jurisdiction": record.Jurisdiction,
+		"category": record.Category, "language": record.Language, "terms_reference": record.TermsReference,
+		"media_type": record.MediaType,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("TRADE source record %s is required", name)
+		}
+	}
+	if err := validateMemoryID(record.SourceRecordID, "source_record_id"); err != nil {
+		return err
+	}
+	if err := validateMemoryID(record.SourceDefinitionID, "source_definition_id"); err != nil {
+		return err
+	}
+	if record.SourceDefinitionHash == "" {
+		return fmt.Errorf("TRADE source record source_definition_hash is required")
+	}
+	if err := validateMemoryHash(record.SourceDefinitionHash, "source_definition_hash"); err != nil {
+		return err
+	}
+	if err := validateMemoryHash(record.ContentHash, "content_hash"); err != nil {
+		return err
+	}
+	if record.LicenseStatus != "review_required" || record.Status != MemorySourceStatus {
+		return fmt.Errorf("TRADE source record state is invalid")
+	}
+	if err := validateMemoryURL(record.SourceURL, "source_url"); err != nil {
+		return err
+	}
+	if err := validateMemoryURL(record.FinalURL, "final_url"); err != nil {
+		return err
+	}
+	if err := validateMemoryUTCTime(record.ObservedAt, "observed_at"); err != nil {
+		return err
+	}
+	if err := validateMemoryUTCTime(record.PointInTimeAvailableAt, "point_in_time_available_at"); err != nil {
+		return err
+	}
+	if record.ObservedAt != record.PointInTimeAvailableAt {
+		return fmt.Errorf("TRADE source record observed and point-in-time timestamps must match")
+	}
+	return nil
+}
+
+func (source BoundSource) Validate() error {
+	if err := validateMemoryID(source.SourceDefinitionID, "bound source source_definition_id"); err != nil {
+		return err
+	}
+	if err := validateMemoryID(source.SourceRecordID, "bound source source_record_id"); err != nil {
+		return err
+	}
+	if err := validateMemoryHash(source.ContentHash, "bound source content_hash"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(source.Locator) == "" || strings.ContainsAny(source.Locator, "\r\n") {
+		return fmt.Errorf("TRADE bound source locator is invalid")
+	}
+	return validateMemoryUTCTime(source.ObservedAt, "bound source observed_at")
+}
+
+func (record LearningCandidateRecord) Validate() error {
+	if record.RecordVersion != 1 {
+		return fmt.Errorf("TRADE learning candidate record version is invalid")
+	}
+	for name, value := range map[string]string{
+		"candidate_record_id": record.CandidateRecordID, "candidate_definition_id": record.CandidateDefinitionID,
+		"title": record.Title, "statement": record.Statement,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("TRADE learning candidate %s is required", name)
+		}
+	}
+	if err := validateMemoryID(record.CandidateRecordID, "candidate_record_id"); err != nil {
+		return err
+	}
+	if err := validateMemoryID(record.CandidateDefinitionID, "candidate_definition_id"); err != nil {
+		return err
+	}
+	if record.Status != MemoryCandidateState || len(record.BoundSources) == 0 || len(record.Limitations) == 0 || len(record.InvalidationConditions) == 0 {
+		return fmt.Errorf("TRADE learning candidate state or source bindings are invalid")
+	}
+	for _, source := range record.BoundSources {
+		if err := source.Validate(); err != nil {
+			return err
+		}
+	}
+	return validateMemoryHash(record.ContentHash, "learning candidate content_hash")
+}
+
+func (snapshot MarketSnapshot) Validate() error {
+	if snapshot.SchemaVersion != 1 {
+		return fmt.Errorf("TRADE market snapshot schema version is invalid")
+	}
+	for name, value := range map[string]string{
+		"snapshot_id": snapshot.SnapshotID, "instrument_id": snapshot.InstrumentID, "symbol": snapshot.Symbol,
+		"asset_type": snapshot.AssetType, "venue": snapshot.Venue, "currency": snapshot.Currency,
+		"source_name": snapshot.SourceName, "run_id": snapshot.RunID, "plan_id": snapshot.PlanID,
+		"dataset_id": snapshot.DatasetID, "dataset_source_ref": snapshot.DatasetSourceRef, "code_revision": snapshot.CodeRevision,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("TRADE market snapshot %s is required", name)
+		}
+	}
+	for name, value := range map[string]string{
+		"snapshot_id": snapshot.SnapshotID, "instrument_id": snapshot.InstrumentID, "run_id": snapshot.RunID,
+		"plan_id": snapshot.PlanID, "dataset_id": snapshot.DatasetID,
+	} {
+		if err := validateMemoryID(value, name); err != nil {
+			return err
+		}
+	}
+	if err := validateMemoryDate(snapshot.TradeDate, "trade_date"); err != nil {
+		return err
+	}
+	if err := validateMemoryUTCTime(snapshot.AvailableAt, "available_at"); err != nil {
+		return err
+	}
+	for name, value := range map[string]float64{"open": snapshot.Open, "high": snapshot.High, "low": snapshot.Low, "close": snapshot.Close, "adj_close": snapshot.AdjClose, "volume": snapshot.Volume} {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+			return fmt.Errorf("TRADE market snapshot %s is invalid", name)
+		}
+	}
+	if snapshot.High < snapshot.Low {
+		return fmt.Errorf("TRADE market snapshot high/low range is invalid")
+	}
+	if err := validateMemoryHash(snapshot.PlanHash, "plan_hash"); err != nil {
+		return err
+	}
+	if err := validateMemoryHash(snapshot.DatasetHash, "dataset_hash"); err != nil {
+		return err
+	}
+	return validateMemoryHash(snapshot.ContentHash, "market snapshot content_hash")
+}
+
+func (decision ReplayDecision) Validate() error {
+	if decision.SchemaVersion != 1 {
+		return fmt.Errorf("TRADE replay decision schema version is invalid")
+	}
+	for name, value := range map[string]string{
+		"decision_id": decision.DecisionID, "snapshot_id": decision.SnapshotID,
+		"run_id": decision.RunID, "instrument_id": decision.InstrumentID,
+	} {
+		if err := validateMemoryID(value, name); err != nil {
+			return err
+		}
+	}
+	if err := validateMemoryDate(decision.TradeDate, "trade_date"); err != nil {
+		return err
+	}
+	switch decision.Action {
+	case MemoryActionObserve, MemoryActionSelect, MemoryActionAvoid:
+	default:
+		return fmt.Errorf("TRADE replay decision action is invalid")
+	}
+	return validateMemoryHash(decision.ContentHash, "replay decision content_hash")
+}
+
+func (snapshot PortfolioSnapshot) ValidateMemoryOwner() error {
+	if snapshot.SchemaVersion != 1 {
+		return fmt.Errorf("TRADE portfolio snapshot schema version is invalid")
+	}
+	if err := validateMemoryID(snapshot.PortfolioID, "portfolio_id"); err != nil {
+		return err
+	}
+	if snapshot.Mode != "SIMULATION" || snapshot.Guaranteed || snapshot.InitialCashJPY != 1_000_000 {
+		return fmt.Errorf("TRADE portfolio snapshot violates the simulation foundation")
+	}
+	if snapshot.EventCount < 1 {
+		return fmt.Errorf("TRADE portfolio snapshot event_count must be positive")
+	}
+	if err := validateMemoryHash(snapshot.LatestEventHash, "portfolio latest_event_hash"); err != nil {
+		return err
+	}
+	if snapshot.CashJPY < 0 {
+		return fmt.Errorf("TRADE portfolio snapshot cash cannot be negative")
+	}
+	seen := make(map[string]struct{}, len(snapshot.Positions))
+	for index, position := range snapshot.Positions {
+		if err := validateMemoryID(position.InstrumentID, fmt.Sprintf("positions[%d].instrument_id", index)); err != nil {
+			return err
+		}
+		if _, exists := seen[position.InstrumentID]; exists {
+			return fmt.Errorf("TRADE portfolio snapshot contains duplicate position %q", position.InstrumentID)
+		}
+		seen[position.InstrumentID] = struct{}{}
+		if position.Quantity <= 0 || position.CostBasisJPY < 0 {
+			return fmt.Errorf("TRADE portfolio snapshot position %q is invalid", position.InstrumentID)
+		}
+		for name, value := range map[string]*int64{
+			"mark_price_jpy": position.MarkPriceJPY, "market_value_jpy": position.MarketValueJPY,
+		} {
+			if value != nil && *value < 0 {
+				return fmt.Errorf("TRADE portfolio snapshot position %q %s is invalid", position.InstrumentID, name)
+			}
+		}
+	}
+	if snapshot.ValuationStatus != "" && snapshot.ValuationStatus != "complete" && snapshot.ValuationStatus != "incomplete" {
+		return fmt.Errorf("TRADE portfolio snapshot valuation status is invalid")
+	}
+	return nil
+}
+
+func (request CollectSourceRequest) Validate() error {
+	if request.ContractVersion != MemoryOwnerContractVersion {
+		return fmt.Errorf("unsupported TRADE memory owner contract version %q", request.ContractVersion)
+	}
+	if err := validateMemoryID(request.RequestID, "request_id"); err != nil {
+		return err
+	}
+	return validateMemoryID(request.SourceDefinitionID, "source_definition_id")
+}
+
+func (request ImportLearningCandidateRequest) Validate() error {
+	if request.ContractVersion != MemoryOwnerContractVersion {
+		return fmt.Errorf("unsupported TRADE memory owner contract version %q", request.ContractVersion)
+	}
+	if err := validateMemoryID(request.RequestID, "request_id"); err != nil {
+		return err
+	}
+	return validateMemoryID(request.CandidateDefinitionID, "candidate_definition_id")
+}
+
+func (request ImportMarketSnapshotRequest) Validate() error {
+	if request.ContractVersion != MemoryOwnerContractVersion {
+		return fmt.Errorf("unsupported TRADE memory owner contract version %q", request.ContractVersion)
+	}
+	if err := validateMemoryID(request.RequestID, "request_id"); err != nil {
+		return err
+	}
+	for name, value := range map[string]string{"run_id": request.RunID, "instrument_id": request.InstrumentID} {
+		if err := validateMemoryID(value, name); err != nil {
+			return err
+		}
+	}
+	return validateMemoryDate(request.TradeDate, "trade_date")
+}
+
+func (request RecordReplayDecisionRequest) Validate() error {
+	if request.ContractVersion != MemoryOwnerContractVersion {
+		return fmt.Errorf("unsupported TRADE memory owner contract version %q", request.ContractVersion)
+	}
+	if err := validateMemoryID(request.RequestID, "request_id"); err != nil {
+		return err
+	}
+	for name, value := range map[string]string{"run_id": request.RunID, "instrument_id": request.InstrumentID} {
+		if err := validateMemoryID(value, name); err != nil {
+			return err
+		}
+	}
+	if err := validateMemoryDate(request.TradeDate, "trade_date"); err != nil {
+		return err
+	}
+	switch request.Action {
+	case MemoryActionObserve, MemoryActionSelect, MemoryActionAvoid:
+		return nil
+	default:
+		return fmt.Errorf("TRADE replay decision action is invalid")
+	}
+}
+
+func (request EnsurePortfolioInitializedRequest) Validate() error {
+	if request.ContractVersion != MemoryOwnerContractVersion {
+		return fmt.Errorf("unsupported TRADE memory owner contract version %q", request.ContractVersion)
+	}
+	return validateMemoryID(request.RequestID, "request_id")
+}
+
+func validateMemoryReadEnvelope(contractVersion, serviceStatus, responseCorrelation, memorySource string, expectedSource string, requestID, correlationID string, evidence OwnerEvidence, route ownerRouteContract, validateRecord func() error) error {
+	if contractVersion != PrivateContractVersion || strings.TrimSpace(serviceStatus) == "" || responseCorrelation != correlationID || memorySource != expectedSource {
+		return fmt.Errorf("TRADE memory read envelope is invalid")
+	}
+	if err := validateRecord(); err != nil {
+		return err
+	}
+	if err := validateOwnerEvidence(evidence, route, requestID, responseCorrelation); err != nil {
+		return err
+	}
+	if evidence.RequestTime == "" {
+		return fmt.Errorf("TRADE memory owner evidence request_time is required")
+	}
+	return validateMemoryUTCTime(evidence.RequestTime, "owner evidence request_time")
+}
+
+func validateMemoryRuntimeBase(executionMode, learningMode string) error {
+	if executionMode != "DISABLED" || learningMode != "OFFLINE_AVAILABLE" {
+		return fmt.Errorf("TRADE memory owner runtime mode is invalid")
+	}
+	return nil
+}
+
+func validateMemoryWriteEnvelope(contractVersion, serviceStatus, responseCorrelation, memorySource string, expectedSource string, requestID string, receipt OwnerReceipt, route ownerRouteContract, recordID string, validateRecord func() error) error {
+	if contractVersion != PrivateContractVersion || strings.TrimSpace(serviceStatus) == "" || responseCorrelation != requestID || memorySource != expectedSource {
+		return fmt.Errorf("TRADE memory write envelope is invalid")
+	}
+	if err := validateRecord(); err != nil {
+		return err
+	}
+	if err := validateOwnerReceiptWithCorrelation(receipt, route, requestID, responseCorrelation, receipt.IdempotentReplay); err != nil {
+		return err
+	}
+	if receipt.CorrelationID != responseCorrelation {
+		return fmt.Errorf("TRADE memory owner receipt correlation ID is not bound to the response")
+	}
+	if receipt.AuditRef != recordID {
+		return fmt.Errorf("TRADE memory owner receipt audit reference is not bound to the record")
+	}
+	return nil
+}
+
+func (response SourceRecordReadResponse) Validate(requestID, correlationID string) error {
+	if err := validateMemoryRuntimeBase(response.ExecutionMode, response.LearningMode); err != nil {
+		return err
+	}
+	return validateMemoryReadEnvelope(response.ContractVersion, response.ServiceStatus, response.CorrelationID, response.MemorySource, MemoryOwnerSource, requestID, correlationID, response.OwnerEvidence, ownerSourceRecordRoute, response.Record.Validate)
+}
+
+func (response SourceRecordWriteResponse) Validate(requestID string) error {
+	if err := validateMemoryRuntimeBase(response.ExecutionMode, response.LearningMode); err != nil {
+		return err
+	}
+	return validateMemoryWriteEnvelope(response.ContractVersion, response.ServiceStatus, response.CorrelationID, response.MemorySource, MemoryOwnerSource, requestID, response.OwnerReceipt, ownerSourceCollectRoute, response.Record.SourceRecordID, response.Record.Validate)
+}
+
+func (response LearningCandidateReadResponse) Validate(requestID, correlationID string) error {
+	if err := validateMemoryRuntimeBase(response.ExecutionMode, response.LearningMode); err != nil {
+		return err
+	}
+	return validateMemoryReadEnvelope(response.ContractVersion, response.ServiceStatus, response.CorrelationID, response.MemorySource, MemoryOwnerSource, requestID, correlationID, response.OwnerEvidence, ownerLearningCandidateRoute, response.Record.Validate)
+}
+
+func (response LearningCandidateWriteResponse) Validate(requestID string) error {
+	if err := validateMemoryRuntimeBase(response.ExecutionMode, response.LearningMode); err != nil {
+		return err
+	}
+	return validateMemoryWriteEnvelope(response.ContractVersion, response.ServiceStatus, response.CorrelationID, response.MemorySource, MemoryOwnerSource, requestID, response.OwnerReceipt, ownerLearningImportRoute, response.Record.CandidateRecordID, response.Record.Validate)
+}
+
+func (response MarketSnapshotReadResponse) Validate(requestID, correlationID string) error {
+	if err := validateMemoryRuntimeBase(response.ExecutionMode, response.LearningMode); err != nil {
+		return err
+	}
+	return validateMemoryReadEnvelope(response.ContractVersion, response.ServiceStatus, response.CorrelationID, response.MemorySource, MemoryOwnerSource, requestID, correlationID, response.OwnerEvidence, ownerMarketSnapshotRoute, response.Record.Validate)
+}
+
+func (response MarketSnapshotWriteResponse) Validate(requestID string) error {
+	if err := validateMemoryRuntimeBase(response.ExecutionMode, response.LearningMode); err != nil {
+		return err
+	}
+	return validateMemoryWriteEnvelope(response.ContractVersion, response.ServiceStatus, response.CorrelationID, response.MemorySource, MemoryOwnerSource, requestID, response.OwnerReceipt, ownerMarketImportRoute, response.Record.SnapshotID, response.Record.Validate)
+}
+
+func (response ReplayDecisionReadResponse) Validate(requestID, correlationID string) error {
+	if err := validateMemoryRuntimeBase(response.ExecutionMode, response.LearningMode); err != nil {
+		return err
+	}
+	return validateMemoryReadEnvelope(response.ContractVersion, response.ServiceStatus, response.CorrelationID, response.MemorySource, MemoryOwnerSource, requestID, correlationID, response.OwnerEvidence, ownerReplayDecisionRoute, response.Record.Validate)
+}
+
+func (response ReplayDecisionWriteResponse) Validate(requestID string) error {
+	if err := validateMemoryRuntimeBase(response.ExecutionMode, response.LearningMode); err != nil {
+		return err
+	}
+	return validateMemoryWriteEnvelope(response.ContractVersion, response.ServiceStatus, response.CorrelationID, response.MemorySource, MemoryOwnerSource, requestID, response.OwnerReceipt, ownerReplayRecordRoute, response.Record.DecisionID, response.Record.Validate)
+}
+
+func (response PortfolioSnapshotReadResponse) Validate(requestID, correlationID string) error {
+	if err := validateMemoryRuntimeBase(response.ExecutionMode, response.LearningMode); err != nil {
+		return err
+	}
+	return validateMemoryReadEnvelope(response.ContractVersion, response.ServiceStatus, response.CorrelationID, response.MemorySource, MemoryOwnerSource, requestID, correlationID, response.OwnerEvidence, ownerPortfolioSnapshotRoute, response.Snapshot.ValidateMemoryOwner)
+}
+
+func (response PortfolioSnapshotWriteResponse) Validate(requestID string) error {
+	if err := validateMemoryRuntimeBase(response.ExecutionMode, response.LearningMode); err != nil {
+		return err
+	}
+	return validateMemoryWriteEnvelope(response.ContractVersion, response.ServiceStatus, response.CorrelationID, response.MemorySource, MemoryOwnerSource, requestID, response.OwnerReceipt, ownerPortfolioEnsureInitializedRoute, response.Snapshot.LatestEventHash, response.Snapshot.ValidateMemoryOwner)
+}
 
 func validateOwnerIdentity(agentID, role, purpose, dataScope string, route ownerRouteContract) error {
 	switch {
@@ -593,13 +1318,30 @@ func validateOwnerEvidence(evidence OwnerEvidence, route ownerRouteContract, req
 	if _, err := time.Parse(time.RFC3339Nano, evidence.RetrievedAt); err != nil {
 		return fmt.Errorf("TRADE owner evidence retrieved_at is invalid")
 	}
-	if evidence.FreshnessState != "observed_at_read" || evidence.ValidationState != "owner_route_succeeded" || evidence.BudgetLimit != 1 || evidence.ReturnedCount != 1 {
+	if evidence.RequestTime != "" {
+		if _, err := time.Parse(time.RFC3339Nano, evidence.RequestTime); err != nil {
+			return fmt.Errorf("TRADE owner evidence request_time is invalid")
+		}
+	}
+	expectedFreshnessState := route.expectedFreshnessState
+	if expectedFreshnessState == "" {
+		expectedFreshnessState = "observed_at_read"
+	}
+	expectedValidationState := route.expectedValidationState
+	if expectedValidationState == "" {
+		expectedValidationState = "owner_route_succeeded"
+	}
+	if evidence.FreshnessState != expectedFreshnessState || evidence.ValidationState != expectedValidationState || evidence.BudgetLimit != 1 || evidence.ReturnedCount != 1 {
 		return fmt.Errorf("TRADE owner evidence validation is invalid")
 	}
 	return nil
 }
 
 func validateOwnerReceipt(receipt OwnerReceipt, route ownerRouteContract, requestID string, idempotentReplay bool) error {
+	return validateOwnerReceiptWithCorrelation(receipt, route, requestID, requestID, idempotentReplay)
+}
+
+func validateOwnerReceiptWithCorrelation(receipt OwnerReceipt, route ownerRouteContract, requestID, correlationID string, idempotentReplay bool) error {
 	for name, value := range map[string]string{
 		"receipt_id": receipt.ReceiptID, "request_id": receipt.RequestID, "agent_id": receipt.AgentID, "role": receipt.Role,
 		"purpose": receipt.Purpose, "data_scope": receipt.DataScope, "owner_module": receipt.OwnerModule, "domain": receipt.Domain,
@@ -621,6 +1363,9 @@ func validateOwnerReceipt(receipt OwnerReceipt, route ownerRouteContract, reques
 	}
 	if _, err := time.Parse(time.RFC3339Nano, receipt.CompletedAt); err != nil {
 		return fmt.Errorf("TRADE owner receipt completed_at is invalid")
+	}
+	if receipt.CorrelationID != "" && receipt.CorrelationID != correlationID {
+		return fmt.Errorf("TRADE owner receipt correlation ID is invalid")
 	}
 	return nil
 }
@@ -647,6 +1392,9 @@ func (status PrivateStatus) ValidateDisabledFoundation() error {
 	}
 	if status.Policy.BrokerAdapter != "none" || status.Dependencies.Broker != "disabled" {
 		return fmt.Errorf("TRADE broker boundary is not disabled")
+	}
+	if status.Dependencies.MemoryOwner != "ready" && status.Dependencies.MemoryOwner != "unavailable" {
+		return fmt.Errorf("TRADE memory owner dependency status is invalid")
 	}
 	if status.Policy.Capabilities["broker_network"] || status.Policy.Capabilities["paper_order"] || status.Policy.Capabilities["live_order"] {
 		return fmt.Errorf("TRADE reports an unauthorized external trading capability")

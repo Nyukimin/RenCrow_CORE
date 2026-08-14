@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -98,8 +99,18 @@ func (c *Config) Validate() error {
 		if !filepath.IsAbs(strings.TrimSpace(c.Trade.AuthTokenFile)) {
 			return fmt.Errorf("trade.auth_token_file must be an absolute path when enabled=true")
 		}
-		if c.Trade.TimeoutMS < 1 || c.Trade.TimeoutMS > 30000 {
-			return fmt.Errorf("trade.timeout_ms must be between 1 and 30000 when enabled=true")
+		if c.Trade.TimeoutMS < 1 || c.Trade.TimeoutMS > 60000 {
+			return fmt.Errorf("trade.timeout_ms must be between 1 and 60000 when enabled=true")
+		}
+	}
+	if c.LocalAgentOps.Enabled {
+		tokenPath := strings.TrimSpace(c.LocalAgentOps.AuthTokenFile)
+		if !filepath.IsAbs(tokenPath) {
+			return fmt.Errorf("local_agent_ops.auth_token_file must be an absolute path when enabled=true")
+		}
+		userID := strings.TrimSpace(c.LocalAgentOps.UserID)
+		if userID == "" || !localAgentOpsUserIDPattern.MatchString(userID) {
+			return fmt.Errorf("local_agent_ops.user_id must be a non-empty safe identifier when enabled=true")
 		}
 	}
 
@@ -893,6 +904,8 @@ func (c *Config) Validate() error {
 
 	return nil
 }
+
+var localAgentOpsUserIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$`)
 
 // validateCoderConfig は単一 CoderConfig の妥当性を検証
 func validateCoderConfig(name string, cc *CoderConfig) error {

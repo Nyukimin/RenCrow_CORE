@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
@@ -75,6 +76,10 @@ func (w *runtimeToolRegistryWriter) write(ctx context.Context, request tools.Dat
 	if err != nil {
 		return runtimeDataWriteOwnerResult{}, err
 	}
+	definitionJSON, err := completeRuntimeToolRegistrySchema(canonicalPayload)
+	if err != nil {
+		return runtimeDataWriteOwnerResult{}, err
+	}
 
 	// Serialize the adapter's validation and persistence call. The store also
 	// serializes its transaction, so this is only a small in-process guard for
@@ -84,7 +89,7 @@ func (w *runtimeToolRegistryWriter) write(ctx context.Context, request tools.Dat
 	result, err := w.registry.RegisterWithReceipt(ctx, capdomain.ToolEntry{
 		Name:        payload.Name,
 		Description: payload.Description,
-		SchemaJSON:  canonicalPayload.SchemaJSON,
+		SchemaJSON:  definitionJSON,
 		Platforms:   append([]string(nil), canonicalPayload.Platforms...),
 		Source:      capdomain.ToolSource(scriptPath),
 		CreatedBy:   strings.TrimSpace(scope.ActorID),
@@ -194,6 +199,38 @@ func canonicalRuntimeToolRegistryJSON(raw string) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		return "", err
+	}
+	return string(encoded), nil
+}
+
+func completeRuntimeToolRegistrySchema(payload runtimeToolRegistryWritePayload) (string, error) {
+	decoder := json.NewDecoder(strings.NewReader(payload.SchemaJSON))
+	decoder.UseNumber()
+	var parameters map[string]any
+	if err := decoder.Decode(&parameters); err != nil {
+		return "", fmt.Errorf("decode parameter schema: %w", err)
+	}
+	if parameters == nil {
+		return "", fmt.Errorf("parameter schema must be a JSON object")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return "", fmt.Errorf("parameter schema contains trailing JSON")
+		}
+		return "", fmt.Errorf("decode trailing parameter schema: %w", err)
+	}
+	definition := llm.ToolDefinition{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name:        payload.Name,
+			Description: payload.Description,
+			Parameters:  parameters,
+		},
+	}
+	encoded, err := json.Marshal(definition)
+	if err != nil {
+		return "", fmt.Errorf("marshal tool definition: %w", err)
 	}
 	return string(encoded), nil
 }

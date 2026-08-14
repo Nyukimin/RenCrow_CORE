@@ -2982,13 +2982,21 @@ func TestTradeConfigDefaultsAndValidation(t *testing.T) {
 	cfg.Session.StorageDir = "./data"
 	cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "aka", "ao", "kin", "gin"
 	cfg.setDefaults()
-	if cfg.Trade.Enabled || cfg.Trade.BaseURL != "http://127.0.0.1:8766" || cfg.Trade.TimeoutMS != 3000 {
+	if cfg.Trade.Enabled || cfg.Trade.BaseURL != "http://127.0.0.1:8767" || cfg.Trade.TimeoutMS != 3000 {
 		t.Fatalf("unexpected trade defaults: %+v", cfg.Trade)
 	}
 	cfg.Trade.Enabled = true
 	cfg.Trade.AuthTokenFile = filepath.Join(t.TempDir(), "trade-control.token")
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error=%v", err)
+	}
+	cfg.Trade.TimeoutMS = 60000
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() rejected maximum trade timeout: %v", err)
+	}
+	cfg.Trade.TimeoutMS = 60001
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "trade.timeout_ms") {
+		t.Fatalf("expected trade.timeout_ms upper-bound error, got %v", err)
 	}
 }
 
@@ -3106,5 +3114,70 @@ func TestBuiltInRuntimeTopologyPort_UsesCanonicalLLMModuleID(t *testing.T) {
 	}
 	if got := builtInRuntimeTopologyPort("RenCraw_LLM", "chat"); got != 0 {
 		t.Fatalf("legacy typo RenCraw_LLM chat port = %d, want 0", got)
+	}
+}
+
+func TestLocalAgentOpsConfigDefaultsAndValidation(t *testing.T) {
+	base := func() *Config {
+		cfg := &Config{
+			Server:  ServerConfig{Port: 18790},
+			Session: SessionConfig{StorageDir: "./data"},
+		}
+		cfg.Coder1.Name, cfg.Coder2.Name, cfg.Coder3.Name, cfg.Coder4.Name = "aka", "ao", "kin", "gin"
+		cfg.setDefaults()
+		return cfg
+	}
+
+	cfg := base()
+	if cfg.LocalAgentOps.Enabled {
+		t.Fatal("local_agent_ops must be disabled by default")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("disabled local_agent_ops should validate: %v", err)
+	}
+
+	cfg.LocalAgentOps = LocalAgentOpsConfig{
+		Enabled:       true,
+		AuthTokenFile: filepath.Join(t.TempDir(), "agent-ops.token"),
+		UserID:        "ren",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid local_agent_ops config rejected: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		edit func(*LocalAgentOpsConfig)
+		want string
+	}{
+		{name: "relative token path", edit: func(v *LocalAgentOpsConfig) { v.AuthTokenFile = "agent-ops.token" }, want: "auth_token_file"},
+		{name: "missing user id", edit: func(v *LocalAgentOpsConfig) { v.UserID = "" }, want: "user_id"},
+		{name: "unsafe user id", edit: func(v *LocalAgentOpsConfig) { v.UserID = "../ren" }, want: "user_id"},
+		{name: "whitespace user id", edit: func(v *LocalAgentOpsConfig) { v.UserID = "ren user" }, want: "user_id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := *cfg
+			tc.edit(&candidate.LocalAgentOps)
+			if err := candidate.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() error=%v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadConfigLocalAgentOps(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	tokenPath := filepath.Join(t.TempDir(), "agent-ops.token")
+	content := "server:\n  port: 18790\nlocal_agent_ops:\n  enabled: true\n  auth_token_file: " + tokenPath + "\n  user_id: ren\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error=%v", err)
+	}
+	if !cfg.LocalAgentOps.Enabled || cfg.LocalAgentOps.AuthTokenFile != tokenPath || cfg.LocalAgentOps.UserID != "ren" {
+		t.Fatalf("local_agent_ops=%+v", cfg.LocalAgentOps)
 	}
 }

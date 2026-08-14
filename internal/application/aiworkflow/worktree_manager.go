@@ -18,14 +18,15 @@ type WorktreeStore interface {
 }
 
 type WorktreeCreateOptions struct {
-	RepoRoot   string
-	BaseDir    string
-	RepoName   string
-	Branch     string
-	PathName   string
-	Purpose    string
-	OwnerAgent string
-	Now        func() time.Time
+	RepoRoot    string
+	BaseDir     string
+	RepoName    string
+	Branch      string
+	DetachedRef string
+	PathName    string
+	Purpose     string
+	OwnerAgent  string
+	Now         func() time.Time
 }
 
 type WorktreeCreateResult struct {
@@ -86,15 +87,27 @@ func (m *WorktreeManager) Create(ctx context.Context, opts WorktreeCreateOptions
 		return WorktreeCreateResult{}, err
 	}
 	branch := strings.TrimSpace(opts.Branch)
-	if branch == "" {
-		return WorktreeCreateResult{}, fmt.Errorf("branch is required")
+	detachedRef := strings.TrimSpace(opts.DetachedRef)
+	if (branch == "") == (detachedRef == "") {
+		return WorktreeCreateResult{}, fmt.Errorf("exactly one of branch or detached_ref is required")
 	}
-	if isProtectedBranch(branch) {
+	resolvedRef := branch
+	detached := detachedRef != ""
+	if detached {
+		resolvedRef, err = resolveDetachedCommit(ctx, absRepo, detachedRef)
+		if err != nil {
+			return WorktreeCreateResult{}, err
+		}
+	} else if isProtectedBranch(branch) {
 		return WorktreeCreateResult{}, fmt.Errorf("refusing to create worktree for protected branch %q", branch)
 	}
 	pathName := strings.TrimSpace(opts.PathName)
 	if pathName == "" {
-		pathName = safePathName(branch)
+		if detached {
+			pathName = "detached-" + safePathName(resolvedRef[:12])
+		} else {
+			pathName = safePathName(branch)
+		}
 	}
 	if pathName == "" || isCallerAbsPath(pathName) || strings.Contains(pathName, "..") {
 		return WorktreeCreateResult{}, fmt.Errorf("path_name must be a safe relative name")
@@ -110,7 +123,17 @@ func (m *WorktreeManager) Create(ctx context.Context, opts WorktreeCreateOptions
 	if err := os.MkdirAll(absBase, 0755); err != nil {
 		return WorktreeCreateResult{}, err
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", absRepo, "worktree", "add", "-b", branch, worktreePath)
+	worktreeKey := safePathName(branch)
+	var cmd *exec.Cmd
+	command := ""
+	if detached {
+		worktreeKey = safePathName(pathName)
+		cmd = exec.CommandContext(ctx, "git", "-C", absRepo, "worktree", "add", "--detach", worktreePath, resolvedRef)
+		command = "git -C " + absRepo + " worktree add --detach " + worktreePath + " " + resolvedRef
+	} else {
+		cmd = exec.CommandContext(ctx, "git", "-C", absRepo, "worktree", "add", "-b", branch, worktreePath)
+		command = "git -C " + absRepo + " worktree add -b " + branch + " " + worktreePath
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return WorktreeCreateResult{}, fmt.Errorf("git worktree add failed: %w: %s", err, strings.TrimSpace(string(out)))
@@ -125,17 +148,17 @@ func (m *WorktreeManager) Create(ctx context.Context, opts WorktreeCreateOptions
 		repoName = filepath.Base(absRepo)
 	}
 	worktree := domainai.WorktreeRegistry{
-		WorktreeID: "worktree:" + repoName + ":" + safePathName(branch),
+		WorktreeID: "worktree:" + repoName + ":" + worktreeKey,
 		Repo:       repoName,
 		Path:       worktreePath,
-		Branch:     branch,
+		Branch:     resolvedRef,
 		Purpose:    strings.TrimSpace(opts.Purpose),
 		OwnerAgent: strings.TrimSpace(opts.OwnerAgent),
 		Status:     "active",
 		CreatedAt:  at,
 	}
 	event := domainai.WorkflowEvent{
-		EventID:    "worktree_created:" + repoName + ":" + safePathName(branch) + ":" + at.Format("20060102T150405Z"),
+		EventID:    "worktree_created:" + repoName + ":" + worktreeKey + ":" + at.Format("20060102T150405Z"),
 		EventType:  "worktree_created",
 		Agent:      strings.TrimSpace(opts.OwnerAgent),
 		Repo:       repoName,
@@ -158,8 +181,34 @@ func (m *WorktreeManager) Create(ctx context.Context, opts WorktreeCreateOptions
 	return WorktreeCreateResult{
 		Worktree: worktree,
 		Event:    event,
-		Command:  "git -C " + absRepo + " worktree add -b " + branch + " " + worktreePath,
+		Command:  command,
 	}, nil
+}
+
+func resolveDetachedCommit(ctx context.Context, absRepo, detachedRef string) (string, error) {
+	ref := detachedRef + "^{commit}"
+	cmd := exec.CommandContext(ctx, "git", "-C", absRepo, "rev-parse", "--verify", "--end-of-options", ref)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("detached_ref could not be resolved")
+	}
+	resolved := strings.TrimSpace(string(out))
+	if !isCommitHash(resolved) {
+		return "", fmt.Errorf("detached_ref resolved to an invalid commit hash")
+	}
+	return strings.ToLower(resolved), nil
+}
+
+func isCommitHash(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *WorktreeManager) Close(ctx context.Context, opts WorktreeCloseOptions) (WorktreeCloseResult, error) {

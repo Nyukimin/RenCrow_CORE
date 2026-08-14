@@ -21,6 +21,8 @@ type SQLiteToolRegistryStore struct {
 	mu sync.Mutex
 }
 
+const sqliteBusyTimeoutMilliseconds = 5000
+
 var (
 	// ErrToolRegistryRequestConflict indicates that a request ID was already
 	// used with a different actor or payload.
@@ -38,7 +40,7 @@ func NewSQLiteToolRegistryStore(dbPath string) (*SQLiteToolRegistryStore, error)
 	if dbPath == "" {
 		dbPath = ":memory:"
 	}
-	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
+	db, err := sql.Open("sqlite", fmt.Sprintf("%s?_pragma=busy_timeout%%3d%d&_time_format=sqlite", dbPath, sqliteBusyTimeoutMilliseconds))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open tool registry sqlite: %w", err)
 	}
@@ -46,6 +48,7 @@ func NewSQLiteToolRegistryStore(dbPath string) (*SQLiteToolRegistryStore, error)
 	// schema visibility for :memory: tests while receipt writes use a single
 	// transaction as their atomic boundary.
 	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	store := &SQLiteToolRegistryStore{db: db}
 	if err := store.initTables(context.Background()); err != nil {

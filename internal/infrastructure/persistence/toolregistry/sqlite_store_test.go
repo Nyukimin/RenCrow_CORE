@@ -3,7 +3,10 @@ package toolregistry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +21,65 @@ func newTestStore(t *testing.T) *SQLiteToolRegistryStore {
 	}
 	t.Cleanup(func() { store.Close() })
 	return store
+}
+
+func TestSQLiteToolRegistryConfiguresSerializedBusyTimeoutAndWAL(t *testing.T) {
+	store, err := NewSQLiteToolRegistryStore(filepath.Join(t.TempDir(), "tool-registry.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteToolRegistryStore: %v", err)
+	}
+	defer store.Close()
+	if got := store.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1", got)
+	}
+	var busyTimeout int
+	if err := store.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatalf("busy_timeout query failed: %v", err)
+	}
+	if busyTimeout != sqliteBusyTimeoutMilliseconds {
+		t.Fatalf("busy_timeout = %d, want %d", busyTimeout, sqliteBusyTimeoutMilliseconds)
+	}
+	var journalMode string
+	if err := store.db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		t.Fatalf("journal_mode query failed: %v", err)
+	}
+	if strings.ToLower(journalMode) != "wal" {
+		t.Fatalf("journal_mode = %q, want wal", journalMode)
+	}
+}
+
+func TestSQLiteToolRegistryConcurrentRegisterWrites(t *testing.T) {
+	store := newTestStore(t)
+	const workers = 8
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- store.Register(context.Background(), capability.ToolEntry{
+				Name:        fmt.Sprintf("concurrent-tool-%d", i),
+				Description: "concurrent owner write",
+				SchemaJSON:  `{}`,
+				Platforms:   []string{"linux"},
+				Source:      capability.ToolSourceBuiltin,
+				CreatedAt:   time.Now().UTC(),
+				CreatedBy:   "test",
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Register failed: %v", err)
+		}
+	}
+	items, err := store.ListForPlatform(context.Background(), "linux")
+	if err != nil || len(items) != workers {
+		t.Fatalf("concurrent tool count = %d, err=%v; want %d", len(items), err, workers)
+	}
 }
 
 func TestRegisterAndGet(t *testing.T) {

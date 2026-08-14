@@ -41,10 +41,12 @@ const (
 
 // NewArchiveSQLiteStore は新しいArchiveSQLiteStoreを生成
 func NewArchiveSQLiteStore(dbPath string) (*ArchiveSQLiteStore, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout%3d5000&_time_format=sqlite")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open archive sqlite: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	store := &ArchiveSQLiteStore{db: db}
 

@@ -20,6 +20,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `GET /health` | COREと設定済み依存serviceの総合health |
 | `GET /ready` | request受付可否 |
 | `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読 |
+| `POST /v1/agent/ops` | loopback・Bearer認証済みRenCrow_CMDからShiro／Worker OPSを一回実行 |
 | `GET/POST /viewer/character-runtime` | Character一覧、複数Character Roundと会話ID |
 | `/viewer/status`, `/viewer/agents` | runtime と agent の状態 |
 | `GET /viewer/idlechat/status` | IdleChat状態と読み取り専用の`word_topic_stock`、`forecast_stock`、`episode_stock`、`topic_stock_playback` snapshot |
@@ -64,7 +65,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/trade/simulation-commit` | Preview済みの仮想buyを失効検査して100万円Simulatorへ一度だけ反映。外部注文ではない |
 | `POST /viewer/trade/shadow/observations` | Outcome開示前の無発注判断、context hash、採点契約hashを追記専用Shadow台帳へ固定 |
 | `POST /viewer/trade/shadow/outcomes` | 固定済みOutcome Label Contractに従う結果を観測の後続eventとして追記 |
-| `GET /viewer/trade/shadow/outcomes/report?study_id=<id>` | Shadow Outcome台帳を検証して読み取り専用集計を返す |
+| `GET /viewer/trade/shadow/outcomes/report?study_id=<id>` または `?event_id=<audit_ref>` | Shadow Outcome台帳を検証して読み取り専用集計を返す。write→read handoffの`audit_ref`はexact `shadow-event/sha256:<64 lowercase hex>` |
 | `POST /viewer/trade/shadow/outcomes/reviews` | Outcome reportのhashとlatest event hashを束縛した独立reviewを別台帳へ追記。promotion／Portfolio変更／外部実行は行わない |
 | `GET /viewer/trade/shadow/outcomes/reviews/report?study_id=<id>` | Review ledgerを検証し、独立reviewの有無を返す読み取り専用projection |
 
@@ -89,6 +90,66 @@ itemのstatusは過去の実装段階を固定表示する値ではなく、star
 `available`と`tool_id=knowledge.search`を返します。authenticated private scopeが未接続の場合は
 `safe_operations`を`public_search`だけとし、private照会を暗黙に許可しません。ViewerはCatalogを再計算せず、
 Chat／Workerと同じstartup instanceを投影します。
+
+### 認証済みAgent OPS
+
+`POST /v1/agent/ops`は通常Chatとは別のOperational APIです。`local_agent_ops.enabled=true`でのみ存在し、
+接続元IPがloopbackでないrequestは404、Bearer token不一致は401、client/profile不一致は403で拒否します。
+認証、header、body、request IDの検証に成功したrequestだけがWorker foreground leaseを取得します。
+leaseはShiro実行の成功、失敗、client cancelのいずれでも解放し、並行requestでは最後の1件が終わるまで保持します。
+この間、IdleChatのbackground Worker生成はOPSより先に再queueしません。
+次のheaderを各1個だけ必須とします。
+
+| header | 値 |
+| --- | --- |
+| `Authorization` | `Bearer <owner-only token fileの値>` |
+| `X-Request-ID` | 1から128 bytesのsafe opaque ID |
+| `X-RenCrow-Client` | `RenCrow_CMD` |
+| `X-RenCrow-Interaction-Profile` | `agent-ops` |
+| `Content-Type` | `application/json` |
+
+queryは受けず、request bodyは最大64 KiBのstrict JSONです。唯一のfield `message`は空白でなく、
+encoded bytesで最大32 KiBです。
+
+```json
+{"message":"全DBのOwner routeを確認して"}
+```
+
+COREはtokenに束縛したserver設定の`user_id`からHTTP user scopeを作り、Shiro／`worker`／`ops`の
+child scopeへ導出して実在Shiro Agentへ渡します。clientはuser、Agent、role、scope、route、model、job IDを
+指定できません。認証済み`X-Request-ID`はShiro child scopeの`request_id`として保持し、task／responseの
+`job_id`は別に生成します。同じrequest IDとcanonical payloadの再送は下流child request／idempotency identityを
+再現できますが、job IDは実行ごとに別です。成功時は次の6 fieldだけをHTTP 200で返します。
+
+```json
+{
+  "request_id": "ops-opaque",
+  "job_id": "job-opaque",
+  "agent_id": "shiro",
+  "role": "worker",
+  "route": "OPS",
+  "output": "実行結果"
+}
+```
+
+不正JSON／未知field／trailing JSON／request ID不正は400、非JSONは415、上限超過は413、
+Shiro実行失敗または空出力は500です。error responseはsafe codeだけを返し、token、入力本文、内部errorを
+含めません。`POST /viewer/send`の観測用`user_id`はこの認証契約の代替になりません。
+
+### Worker data.write receipt
+
+Worker専用Tool `data.write` の成功結果は、Owner routeが確定したreceiptです。`audit_ref`はOwnerが生成した
+正規record／artifact IDであり、後続の`data.recall` queryに使う唯一のhandoff tokenです。`request_id`は実行相関、
+`idempotency_key`は再実行判定の値として内部receipt／auditに保持しますが、model向けJSONからは除外します。
+後続のOwner record照会に`request_id`または`idempotency_key`を使いません。
+
+receiptのJSON宣言順は、モデルがhandoff値を先に認識できるよう、`owner`、`owner_route`、`audit_ref`、
+identity／evidence fieldsの順です。`request_id`と`idempotency_key`はGo内部receipt fieldとして保持しますが、
+model向けJSONには現れません。field名、schema、Owner logicは変更しません。
+
+`investment/ensure_portfolio_initialized`の成功receiptは`audit_ref=sha256:<64 hex>`を返します。後続の
+`data.recall investment/portfolio_snapshot`は、その完全一致する`audit_ref`をwrite-to-read handoffの唯一の
+queryとして使えます。`query=current`はhandoffに依存しない独立したcurrent readとして引き続き使用できます。
 
 ### 人物関連作品Viewer projection
 
@@ -268,7 +329,9 @@ SHA-256へPolicy request scopeを固定します。成功responseは`environment
 `POST /viewer/trade/shadow/outcomes`は`allow_record=true`、既存`decision_id`、Outcome label、
 Outcome observed time、Outcome data hash、元観測と一致する採点契約hashを必須にします。同じdecisionへ
 二つ目のOutcomeは拒否し、同じpayloadの再送だけを冪等に処理します。成功responseも
-`GET /viewer/trade/shadow/outcomes/report`は`study_id`を一つだけ受け取り、hash-chainを再検証して
+`GET /viewer/trade/shadow/outcomes/report`は独立readなら`study_id`、write→read handoffならreceipt由来の
+exact `event_id=shadow-event/sha256:<64 lowercase hex>`のどちらか一つだけ受け取り、event lookup時は
+返却されたstudy IDとOwnerEvidence provenanceをevent IDへexact bindingしたうえでhash-chainを再検証して
 Outcome待ち、label別件数、return／benchmark／excess returnを再計算します。これは読み取り専用で、
 `review_required`を返しても採点完了、knowledge promotion、Portfolio更新、実行許可を意味しません。
 `environment=SHADOW`、`authorizes_external_execution=false`、`portfolio_mutated=false`、

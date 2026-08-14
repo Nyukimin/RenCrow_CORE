@@ -265,6 +265,31 @@ func TestHobbyGraphSourceParsesSQLiteTimestamp(t *testing.T) {
 	}
 }
 
+func TestOpenReadOnlySQLiteConfiguresSingleConnectionAndBusyTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "category.sqlite")
+	db := openTestDB(t, path)
+	mustExec(t, db, `CREATE TABLE source_items(id TEXT PRIMARY KEY)`)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	readOnly, err := openReadOnlySQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readOnly.Close()
+	if got := readOnly.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("max open connections=%d want=1", got)
+	}
+	var busyTimeout int
+	if err := readOnly.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatal(err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("busy timeout=%d want=5000", busyTimeout)
+	}
+}
+
 func openTestDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", path)

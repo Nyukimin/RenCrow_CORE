@@ -204,6 +204,103 @@ func TestRegisterDataRecallDurableStoreWorkflow(t *testing.T) {
 	}
 }
 
+func TestRegisterDataRecallDurableStoreWorkflowRequirement(t *testing.T) {
+	created := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+	updated := created.Add(time.Minute)
+	stored := &domaindurable.WorkflowResult{
+		Status:    domaindurable.StatusCompleted,
+		Lifecycle: domaindurable.LifecycleValidated,
+		CreatedAt: created,
+		UpdatedAt: updated,
+		Reason:    "private reason must not be projected",
+		Requirement: domaindurable.StorageRequirement{
+			RequirementID:    "sr-1",
+			DedupeKey:        "dedupe-key-1",
+			RequestID:        "request-1",
+			UserScope:        "user-1",
+			FactsToStore:     []string{"private message"},
+			RequestedOutcome: domaindurable.OutcomeAssess,
+		},
+	}
+	store := &dataRecallDurableStoreStub{result: stored}
+	registry := newRuntimeDataRecallRegistry()
+	if err := registerRuntimeDataRecallDurableStoreWorkflow(registry, store); err != nil {
+		t.Fatalf("registerRuntimeDataRecallDurableStoreWorkflow() error = %v", err)
+	}
+	result := recallDataRecallAdapter(t, registry, dataRecallUserContext(t), toolsinfra.DataRecallRequest{
+		Store: "durable_store_workflow", Operation: "requirement", Query: "sr-1", Limit: 1,
+	})
+	assertRecallResult(t, result, "durable_store_workflow", "requirement", 1)
+	if store.gotRequirementKey != "sr-1" {
+		t.Fatalf("durable requirement lookup key = %q, want exact query", store.gotRequirementKey)
+	}
+	record := result.Records[0]
+	assertRecordKeys(t, record, "created_at", "dedupe_key", "lifecycle", "request_id", "requirement_id", "status", "updated_at")
+	if record["request_id"] != "request-1" || record["requirement_id"] != "sr-1" || record["dedupe_key"] != "dedupe-key-1" || record["status"] != "completed" || record["lifecycle"] != "validated" || record["created_at"] != created || record["updated_at"] != updated {
+		t.Fatalf("durable requirement projection = %#v", record)
+	}
+	encoded := strings.ToLower(string(mustJSON(record)))
+	for _, forbidden := range []string{"private message", "facts_to_store", "user_scope", "reason", "path", "database", "sql"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("durable requirement projection leaked %q: %s", forbidden, encoded)
+		}
+	}
+	var foundRoute bool
+	for _, route := range registry.Snapshot() {
+		if route.Store == "durable_store_workflow" && route.Operation == "requirement" && route.Access == dataRecallAccessUser {
+			foundRoute = true
+		}
+	}
+	if !foundRoute {
+		t.Fatalf("durable requirement route missing from snapshot: %#v", registry.Snapshot())
+	}
+
+	otherUser := &dataRecallDurableStoreStub{result: &domaindurable.WorkflowResult{
+		Status:    domaindurable.StatusCompleted,
+		Lifecycle: domaindurable.LifecycleValidated,
+		CreatedAt: created,
+		UpdatedAt: updated,
+		Requirement: domaindurable.StorageRequirement{
+			RequirementID: "sr-1", DedupeKey: "dedupe-key-1", RequestID: "request-1", UserScope: "user-2",
+		},
+	}}
+	otherRegistry := newRuntimeDataRecallRegistry()
+	if err := registerRuntimeDataRecallDurableStoreWorkflow(otherRegistry, otherUser); err != nil {
+		t.Fatal(err)
+	}
+	otherResult := recallDataRecallAdapter(t, otherRegistry, dataRecallUserContext(t), toolsinfra.DataRecallRequest{
+		Store: "durable_store_workflow", Operation: "requirement", Query: "sr-1", Limit: 1,
+	})
+	assertRecallResult(t, otherResult, "durable_store_workflow", "requirement", 0)
+
+	missingRegistry := newRuntimeDataRecallRegistry()
+	if err := registerRuntimeDataRecallDurableStoreWorkflow(missingRegistry, &dataRecallDurableStoreStub{}); err != nil {
+		t.Fatal(err)
+	}
+	missingResult := recallDataRecallAdapter(t, missingRegistry, dataRecallUserContext(t), toolsinfra.DataRecallRequest{
+		Store: "durable_store_workflow", Operation: "requirement", Query: "missing", Limit: 1,
+	})
+	assertRecallResult(t, missingResult, "durable_store_workflow", "requirement", 0)
+
+	malformedRegistry := newRuntimeDataRecallRegistry()
+	if err := registerRuntimeDataRecallDurableStoreWorkflow(malformedRegistry, &dataRecallDurableStoreStub{result: &domaindurable.WorkflowResult{
+		Status:    domaindurable.StatusCompleted,
+		Lifecycle: domaindurable.LifecycleValidated,
+		CreatedAt: created,
+		UpdatedAt: updated,
+		Requirement: domaindurable.StorageRequirement{
+			RequirementID: "sr-1", RequestID: "request-1", UserScope: "user-1",
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := malformedRegistry.Recall(dataRecallUserContext(t), toolsinfra.DataRecallRequest{
+		Store: "durable_store_workflow", Operation: "requirement", Query: "sr-1", Limit: 1,
+	}); err == nil {
+		t.Fatal("malformed durable workflow record must fail recall")
+	}
+}
+
 func TestRegisterDataRecallAdaptersRejectUnavailableDependencies(t *testing.T) {
 	registry := newRuntimeDataRecallRegistry()
 	if err := registerRuntimeDataRecallPersonaArchitecture(registry, nil); err == nil {
@@ -371,9 +468,11 @@ func (s *dataRecallAIWorkflowListerStub) ListContextUsages(context.Context, int)
 }
 
 type dataRecallDurableStoreStub struct {
-	result  *domaindurable.WorkflowResult
-	receipt *domaindurable.RequestReceipt
-	gotKey  string
+	result            *domaindurable.WorkflowResult
+	receipt           *domaindurable.RequestReceipt
+	requirementErr    error
+	gotKey            string
+	gotRequirementKey string
 }
 
 var _ appstore.Store = (*dataRecallDurableStoreStub)(nil)
@@ -387,6 +486,10 @@ func (s *dataRecallDurableStoreStub) FindByRequestID(_ context.Context, key stri
 	return s.receipt, nil
 }
 func (s *dataRecallDurableStoreStub) FindByRequirementID(_ context.Context, key string) (*domaindurable.WorkflowResult, error) {
+	s.gotRequirementKey = key
+	if s.requirementErr != nil {
+		return nil, s.requirementErr
+	}
 	if s.result == nil || s.result.Requirement.RequirementID != key {
 		return nil, nil
 	}

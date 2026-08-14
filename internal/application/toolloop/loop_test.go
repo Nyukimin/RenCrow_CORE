@@ -2,6 +2,7 @@ package toolloop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -47,6 +48,32 @@ func TestRun_UsesLowReasoningOnEveryIteration(t *testing.T) {
 		t.Fatalf("requests = %d, want 2", len(provider.requests))
 	}
 	for i, request := range provider.requests {
+		if request.ReasoningEffort != llm.ReasoningEffortLow {
+			t.Errorf("request %d reasoning effort = %q, want %q", i, request.ReasoningEffort, llm.ReasoningEffortLow)
+		}
+		if request.MaxTokens != 4096 {
+			t.Errorf("request %d max tokens = %d, want 4096", i, request.MaxTokens)
+		}
+	}
+}
+
+func TestRun_UsesConfiguredMaxTokensOnEveryIteration(t *testing.T) {
+	provider := &mockToolCallingProvider{responses: []llm.ChatResponse{
+		{Message: llm.ChatMessage{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "call-1", Function: llm.ToolCallFunction{Name: "test", Arguments: map[string]any{}}}}}, FinishReason: "tool_calls"},
+		{Message: llm.ChatMessage{Role: "assistant", Content: "done"}, FinishReason: "stop"},
+	}}
+	runner := &mockRunnerV2{results: map[string]*tool.ToolResponse{"test": tool.NewSuccess("ok")}}
+
+	if _, err := Run(context.Background(), provider, runner, nil, []llm.ChatMessage{{Role: "user", Content: "run"}}, Config{MaxTokens: 1234}); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(provider.requests))
+	}
+	for i, request := range provider.requests {
+		if request.MaxTokens != 1234 {
+			t.Errorf("request %d max tokens = %d, want 1234", i, request.MaxTokens)
+		}
 		if request.ReasoningEffort != llm.ReasoningEffortLow {
 			t.Errorf("request %d reasoning effort = %q, want %q", i, request.ReasoningEffort, llm.ReasoningEffortLow)
 		}
@@ -137,6 +164,58 @@ func TestRun_SingleToolCall(t *testing.T) {
 	}
 	if provider.callIndex != 2 {
 		t.Errorf("expected 2 Chat calls, got %d", provider.callIndex)
+	}
+	if got := provider.requests[1].Messages[len(provider.requests[1].Messages)-1].Content; got != "RenCrow is an AI assistant" {
+		t.Errorf("string tool result content = %q, want unchanged result", got)
+	}
+}
+
+func TestRun_StructuredToolResultUsesCanonicalJSONForNextIteration(t *testing.T) {
+	type dataWriteReceipt struct {
+		OwnerRoute string `json:"owner_route"`
+		AuditRef   string `json:"audit_ref"`
+		RequestID  string `json:"-"`
+	}
+	provider := &mockToolCallingProvider{responses: []llm.ChatResponse{
+		{
+			Message: llm.ChatMessage{
+				Role: "assistant",
+				ToolCalls: []llm.ToolCall{{
+					ID:       "call-data-write",
+					Function: llm.ToolCallFunction{Name: "data.write", Arguments: map[string]any{}},
+				}},
+			},
+			FinishReason: "tool_calls",
+		},
+		{Message: llm.ChatMessage{Role: "assistant", Content: "done"}, FinishReason: "stop"},
+	}}
+	runner := &mockRunnerV2{results: map[string]*tool.ToolResponse{
+		"data.write": tool.NewSuccess(dataWriteReceipt{
+			OwnerRoute: "browser_trace_to_api/review_candidate",
+			AuditRef:   "browser-validation/sha256:f662",
+			RequestID:  "internal-request-id",
+		}),
+	}}
+
+	if _, err := Run(context.Background(), provider, runner, nil, []llm.ChatMessage{{Role: "user", Content: "review"}}, Config{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(provider.requests) != 2 {
+		t.Fatalf("provider requests = %d, want 2", len(provider.requests))
+	}
+	messages := provider.requests[1].Messages
+	if len(messages) == 0 || messages[len(messages)-1].Role != "tool" {
+		t.Fatalf("second request messages = %#v, want trailing tool message", messages)
+	}
+	var content map[string]any
+	if err := json.Unmarshal([]byte(messages[len(messages)-1].Content), &content); err != nil {
+		t.Fatalf("tool content = %q is not JSON: %v", messages[len(messages)-1].Content, err)
+	}
+	if content["owner_route"] != "browser_trace_to_api/review_candidate" || content["audit_ref"] != "browser-validation/sha256:f662" {
+		t.Fatalf("structured tool content = %#v, want named owner_route/audit_ref", content)
+	}
+	if _, found := content["request_id"]; found {
+		t.Fatalf("structured tool content leaked hidden request_id: %#v", content)
 	}
 }
 
@@ -298,9 +377,20 @@ func TestRun_DefaultMaxIterations(t *testing.T) {
 	if cfg.maxIterations() != 10 {
 		t.Errorf("default maxIterations should be 10, got %d", cfg.maxIterations())
 	}
+	if cfg.maxTokens() != 4096 {
+		t.Errorf("default maxTokens should be 4096, got %d", cfg.maxTokens())
+	}
 
 	cfg2 := Config{MaxIterations: 5}
 	if cfg2.maxIterations() != 5 {
 		t.Errorf("maxIterations should be 5, got %d", cfg2.maxIterations())
+	}
+	if cfg2.maxTokens() != 4096 {
+		t.Errorf("maxTokens should remain 4096 when unspecified, got %d", cfg2.maxTokens())
+	}
+
+	cfg3 := Config{MaxTokens: 1234}
+	if cfg3.maxTokens() != 1234 {
+		t.Errorf("maxTokens should be 1234, got %d", cfg3.maxTokens())
 	}
 }

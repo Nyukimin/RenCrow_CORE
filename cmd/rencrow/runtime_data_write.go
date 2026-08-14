@@ -31,19 +31,19 @@ type runtimeDataWriteOwnerResult struct {
 // runtimeDataWriteReceipt is the only result exposed by the common write
 // boundary after an owner route succeeds.
 type runtimeDataWriteReceipt struct {
-	RequestID        string `json:"request_id"`
+	Owner            string `json:"owner"`
+	OwnerRoute       string `json:"owner_route"`
+	AuditRef         string `json:"audit_ref"`
+	RequestID        string `json:"-"`
 	ActorID          string `json:"actor_id"`
 	AgentRole        string `json:"agent_role"`
 	Purpose          string `json:"purpose"`
 	DataScope        string `json:"data_scope"`
-	Owner            string `json:"owner"`
-	OwnerRoute       string `json:"owner_route"`
 	Status           string `json:"status"`
 	SchemaVersion    string `json:"schema_version"`
 	MigrationState   string `json:"migration_state"`
 	ValidationState  string `json:"validation_state"`
-	AuditRef         string `json:"audit_ref"`
-	IdempotencyKey   string `json:"idempotency_key"`
+	IdempotencyKey   string `json:"-"`
 	IdempotentReplay bool   `json:"idempotent_replay"`
 	PolicyRevision   string `json:"policy_revision"`
 	CompletedAt      string `json:"completed_at"`

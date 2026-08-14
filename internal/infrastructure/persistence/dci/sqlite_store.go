@@ -23,10 +23,12 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout%3d5000&_time_format=sqlite")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open dci sqlite: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	store := &SQLiteStore{db: db}
 	if err := store.ensureSchema(); err != nil {
 		_ = db.Close()
@@ -278,7 +280,6 @@ LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var traces []domaindci.SearchTrace
 	for rows.Next() {
@@ -301,15 +302,20 @@ LIMIT ?`, limit)
 		trace.StartedAt = parseTime(startedAt)
 		trace.EndedAt = parseTime(endedAt)
 		trace.CorpusScope = unmarshalStringSlice(scopeJSON)
-		steps, err := s.listSteps(trace.EventID)
-		if err != nil {
-			return nil, err
-		}
-		trace.Steps = steps
 		traces = append(traces, trace)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range traces {
+		steps, err := s.listSteps(traces[i].EventID)
+		if err != nil {
+			return nil, err
+		}
+		traces[i].Steps = steps
 	}
 	return traces, nil
 }

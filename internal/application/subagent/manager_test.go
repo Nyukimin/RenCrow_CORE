@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -343,9 +344,16 @@ func TestMergeToolDefs_WithRegistry_MergesRegisteredTools(t *testing.T) {
 	registry := &mockRegistry{
 		entries: map[string]capability.ToolEntry{
 			"custom_tool": {
-				Name:       "custom_tool",
-				SchemaJSON: makeSchemaJSON(t, "custom_tool", "a custom tool"),
-				CreatedAt:  time.Now(),
+				Name:        "custom_tool",
+				Description: "a custom tool",
+				SchemaJSON:  makeSchemaJSON(t, "custom_tool", "a custom tool"),
+				CreatedAt:   time.Now(),
+			},
+			"legacy_tool": {
+				Name:        "legacy_tool",
+				Description: "legacy description",
+				SchemaJSON:  `{"type":"object","properties":{"query":{"type":"string"}}}`,
+				CreatedAt:   time.Now(),
 			},
 		},
 	}
@@ -359,8 +367,16 @@ func TestMergeToolDefs_WithRegistry_MergesRegisteredTools(t *testing.T) {
 	if !names["shell"] {
 		t.Error("expected 'shell' in merged defs")
 	}
-	if !names["custom_tool"] {
-		t.Error("expected 'custom_tool' in merged defs")
+	if !names["custom_tool"] || !names["legacy_tool"] {
+		t.Errorf("expected custom_tool and legacy_tool in merged defs: %v", names)
+	}
+	for _, definition := range merged {
+		if definition.Function.Name == "legacy_tool" {
+			wantParameters := map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}}
+			if definition.Type != "function" || definition.Function.Description != "legacy description" || !reflect.DeepEqual(definition.Function.Parameters, wantParameters) {
+				t.Fatalf("legacy definition = %+v, want trusted named function", definition)
+			}
+		}
 	}
 }
 
@@ -406,5 +422,23 @@ func TestMergeToolDefs_InvalidSchemaJSON_Skipped(t *testing.T) {
 	merged := mgr.mergeToolDefs(context.Background())
 	if len(merged) != 1 {
 		t.Errorf("expected broken tool to be skipped, got %d tools", len(merged))
+	}
+}
+
+func TestMergeToolDefs_InvalidOrMismatchedDefinitionsSkipped(t *testing.T) {
+	baseDefs := []llm.ToolDefinition{{Type: "function", Function: llm.ToolFunctionDef{Name: "shell"}}}
+	registry := &mockRegistry{entries: map[string]capability.ToolEntry{
+		"broken_json":    {Name: "broken_json", Description: "broken", SchemaJSON: "not valid json"},
+		"wrong_type":     {Name: "wrong_type", Description: "wrong", SchemaJSON: `{"type":"object","function":{"name":"wrong_type","description":"wrong","parameters":{}}}`},
+		"wrong_name":     {Name: "wrong_name", Description: "wrong", SchemaJSON: `{"type":"function","function":{"name":"other","description":"wrong","parameters":{}}}`},
+		"partial":        {Name: "partial", Description: "partial", SchemaJSON: `{"type":"function"}`},
+		"nil_parameters": {Name: "nil_parameters", Description: "nil", SchemaJSON: `{"type":"function","function":{"name":"nil_parameters","description":"nil","parameters":null}}`},
+		"empty_desc":     {Name: "empty_desc", Description: " ", SchemaJSON: `{"type":"object"}`},
+		"empty_name":     {Name: " ", Description: "name", SchemaJSON: `{"type":"object"}`},
+	}}
+	mgr := NewManager(&mockProvider{}, &mockRunner{}, baseDefs, toolloop.Config{}, WithToolRegistry(registry))
+	merged := mgr.mergeToolDefs(context.Background())
+	if len(merged) != 1 || merged[0].Function.Name != "shell" {
+		t.Fatalf("invalid registry definitions were exposed: %#v", merged)
 	}
 }

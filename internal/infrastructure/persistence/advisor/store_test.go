@@ -2,15 +2,73 @@ package advisor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	advisorDomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
 	domainagentprofile "github.com/Nyukimin/RenCrow_CORE/internal/domain/agentprofile"
 )
+
+func TestSQLiteStoreConfiguresSerializedBusyTimeout(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "advisor.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+	if got := store.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1", got)
+	}
+	var busyTimeout int
+	if err := store.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatalf("busy_timeout query failed: %v", err)
+	}
+	if busyTimeout != sqliteBusyTimeoutMilliseconds {
+		t.Fatalf("busy_timeout = %d, want %d", busyTimeout, sqliteBusyTimeoutMilliseconds)
+	}
+}
+
+func TestSQLiteStoreConcurrentAdviceRunWrites(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "advisor.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+	const workers = 8
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			now := time.Now().UTC()
+			errs <- store.SaveAdviceRun(context.Background(), advisorDomain.AdviceRunRecord{
+				RunID:            fmt.Sprintf("concurrent-advice-%d", i),
+				RequestedByAgent: "shiro",
+				AdvisorID:        advisorDomain.AdvisorCodex,
+				Status:           advisorDomain.AdviceStatus(advisorDomain.StatusCompleted),
+				StartedAt:        now,
+				FinishedAt:       now,
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent SaveAdviceRun failed: %v", err)
+		}
+	}
+	runs, err := store.ListAdviceRuns(context.Background(), workers)
+	if err != nil || len(runs) != workers {
+		t.Fatalf("concurrent advice run count = %d, err=%v; want %d", len(runs), err, workers)
+	}
+}
 
 type advisorStore interface {
 	SaveAdviceRun(context.Context, advisorDomain.AdviceRunRecord) error

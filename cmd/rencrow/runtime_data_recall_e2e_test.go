@@ -41,7 +41,7 @@ func TestOperationalDataRecallE2E_AllOwnerAdaptersThroughWorkerTool(t *testing.T
 		{"skill_governance", "skill_manifests", false}, {"workstream", "goals", true}, {"revenue", "opportunities", false},
 		{"persona_architecture", "canonical_responses", true}, {"browser_trace_to_api", "validated_candidates", false},
 		{"complexity_hotspot", "hotspots", false}, {"super_agent_harness", "agent_runs", false},
-		{"ai_workflow", "command_registry", false}, {"durable_store_workflow", "exact_request", true},
+		{"ai_workflow", "command_registry", false}, {"durable_store_workflow", "exact_request", true}, {"durable_store_workflow", "requirement", true},
 	}
 	for _, route := range routes {
 		ctx := dataRecallInternalContext(t)

@@ -232,6 +232,9 @@ func (p *GatewayProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Ch
 	}
 	p.addModelContextOption(gatewayReq)
 	p.addRenCrowExecutionMetadata(ctx, gatewayReq, promptContextBlockMetadataFromChat(req))
+	if req.MaxTokens > 0 {
+		gatewayReq["max_tokens"] = req.MaxTokens
+	}
 	if len(req.Tools) > 0 {
 		tools := make([]map[string]interface{}, 0, len(req.Tools))
 		for _, td := range req.Tools {

@@ -2,13 +2,71 @@ package persona
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 )
+
+func TestSQLiteStoreConfiguresSerializedBusyTimeout(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "persona.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	if got := store.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1", got)
+	}
+	var busyTimeout int
+	if err := store.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatalf("busy_timeout query failed: %v", err)
+	}
+	if busyTimeout != sqliteBusyTimeoutMilliseconds {
+		t.Fatalf("busy_timeout = %d, want %d", busyTimeout, sqliteBusyTimeoutMilliseconds)
+	}
+}
+
+func TestSQLiteStoreConcurrentObservationWrites(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "persona.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	const workers = 8
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- store.SaveObservationLog(context.Background(), domainpersona.ObservationLog{
+				EventID:         fmt.Sprintf("concurrent-observation-%d", i),
+				ObserverID:      "lumina",
+				TargetID:        "ren",
+				ObservationType: "daily",
+				Sensitivity:     "normal",
+				ReviewStatus:    "pending",
+				CreatedAt:       time.Now().UTC(),
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent SaveObservationLog failed: %v", err)
+		}
+	}
+	items, err := store.ListObservationLogs(context.Background(), workers)
+	if err != nil || len(items) != workers {
+		t.Fatalf("concurrent observation count = %d, err=%v; want %d", len(items), err, workers)
+	}
+}
 
 func TestSQLiteStorePersonaLogs(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "persona.db"))

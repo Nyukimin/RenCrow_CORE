@@ -88,11 +88,13 @@ func openSQLiteStore(path string, readOnly bool) (*SQLiteStore, error) {
 	if readOnly {
 		mode = "ro"
 	}
-	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=" + mode + "&_time_format=sqlite"}).String()
+	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: "mode=" + mode + "&_pragma=busy_timeout(5000)&_time_format=sqlite"}).String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	store := &SQLiteStore{db: db}
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
@@ -326,47 +328,56 @@ func (s *SQLiteStore) verifySearchProjectionIntegrity(ctx context.Context) (bool
 		if err != nil {
 			return false, err
 		}
+		type sourceRecord struct {
+			id      string
+			payload string
+		}
+		records := []sourceRecord{}
 		for rows.Next() {
-			var id, payload string
-			if err := rows.Scan(&id, &payload); err != nil {
+			var record sourceRecord
+			if err := rows.Scan(&record.id, &record.payload); err != nil {
 				_ = rows.Close()
 				return false, err
 			}
-			projection, err := projectionFromRecord(promotionRecord{recordType: recordType, recordID: id, payload: []byte(payload)})
+			records = append(records, record)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return false, err
+		}
+		if err := rows.Close(); err != nil {
+			return false, err
+		}
+
+		for _, record := range records {
+			projection, err := projectionFromRecord(promotionRecord{recordType: recordType, recordID: record.id, payload: []byte(record.payload)})
 			if err != nil {
-				_ = rows.Close()
 				return false, err
 			}
 			var doc safeSearchProjection
 			err = s.db.QueryRowContext(ctx, `SELECT scope, user_id, title, summary, visibility, source_updated_at, content_sha256
-				FROM knowledge_memory_search_documents WHERE record_type = ? AND record_id = ?`, recordType, id).Scan(
+				FROM knowledge_memory_search_documents WHERE record_type = ? AND record_id = ?`, recordType, record.id).Scan(
 				&doc.scope, &doc.userID, &doc.title, &doc.summary, &doc.visibility, &doc.sourceUpdatedAt, &doc.contentSHA256)
 			if projection == nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					continue
 				}
 				if err != nil {
-					_ = rows.Close()
 					return false, err
 				}
-				_ = rows.Close()
 				return false, nil
 			}
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					_ = rows.Close()
 					return false, nil
 				}
-				_ = rows.Close()
 				return false, err
 			}
 			if doc.scope != projection.scope || doc.userID != projection.userID || doc.title != projection.title || doc.summary != projection.summary || doc.visibility != projection.visibility || doc.sourceUpdatedAt != projection.sourceUpdatedAt || doc.contentSHA256 != projection.contentSHA256 {
-				_ = rows.Close()
 				return false, nil
 			}
-			termRows, err := s.db.QueryContext(ctx, `SELECT token FROM knowledge_memory_search_terms WHERE record_type = ? AND record_id = ? ORDER BY token`, recordType, id)
+			termRows, err := s.db.QueryContext(ctx, `SELECT token FROM knowledge_memory_search_terms WHERE record_type = ? AND record_id = ? ORDER BY token`, recordType, record.id)
 			if err != nil {
-				_ = rows.Close()
 				return false, err
 			}
 			actualTokens := []string{}
@@ -374,7 +385,6 @@ func (s *SQLiteStore) verifySearchProjectionIntegrity(ctx context.Context) (bool
 				var token string
 				if err := termRows.Scan(&token); err != nil {
 					_ = termRows.Close()
-					_ = rows.Close()
 					return false, err
 				}
 				actualTokens = append(actualTokens, token)
@@ -382,21 +392,14 @@ func (s *SQLiteStore) verifySearchProjectionIntegrity(ctx context.Context) (bool
 			termErr := termRows.Err()
 			_ = termRows.Close()
 			if termErr != nil {
-				_ = rows.Close()
 				return false, termErr
 			}
 			expectedTokens := append([]string(nil), projection.tokens...)
 			sort.Strings(expectedTokens)
 			if !slicesEqual(actualTokens, expectedTokens) {
-				_ = rows.Close()
 				return false, nil
 			}
 		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return false, err
-		}
-		_ = rows.Close()
 		var orphanTerms int
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM knowledge_memory_search_terms AS terms
 			LEFT JOIN knowledge_memory_search_documents AS documents
@@ -443,7 +446,21 @@ func (s *SQLiteStore) domainManifest(ctx context.Context) (int, string, error) {
 		{recordType: "temporal_memory_marker", table: "temporal_memory_marker", idColumn: "marker_id"},
 		{recordType: "dream_consolidation_run", table: "dream_consolidation_run", idColumn: "run_id"},
 	} {
-		rows, err := s.db.QueryContext(ctx, `SELECT `+table.idColumn+`, payload FROM `+table.table+` ORDER BY `+table.idColumn)
+		query := `SELECT ` + table.idColumn + `, payload FROM ` + table.table + ` ORDER BY ` + table.idColumn
+		if table.recordType == creativeKnowledgeRecordType {
+			// Receipt-bound creative rows are private Owner-route overlays, not
+			// imported source records. Exclude them from restart drift hashing
+			// without changing the imported manifest or source snapshot.
+			query = `SELECT creative_knowledge.item_id, creative_knowledge.payload
+				FROM creative_knowledge
+				WHERE NOT EXISTS (
+					SELECT 1
+					FROM knowledge_memory_request_receipts
+					WHERE knowledge_memory_request_receipts.item_id = creative_knowledge.item_id
+				)
+				ORDER BY creative_knowledge.item_id`
+		}
+		rows, err := s.db.QueryContext(ctx, query)
 		if err != nil {
 			return 0, "", err
 		}

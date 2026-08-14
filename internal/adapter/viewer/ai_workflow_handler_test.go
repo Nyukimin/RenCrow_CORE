@@ -2,9 +2,11 @@ package viewer
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -496,6 +498,39 @@ func TestHandleAIWorkflowWorktreeCreateRejectsProtectedBranchByPolicy(t *testing
 	}
 }
 
+func TestHandleAIWorkflowWorktreeCreateForwardsDetachedRef(t *testing.T) {
+	repo := t.TempDir()
+	runGitForTest(t, repo, "init", "-b", "main")
+	runGitForTest(t, repo, "config", "user.email", "test@example.com")
+	runGitForTest(t, repo, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("# test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGitForTest(t, repo, "add", "README.md")
+	runGitForTest(t, repo, "commit", "-m", "initial")
+	resolved := strings.TrimSpace(runGitOutputForTest(t, repo, "rev-parse", "HEAD"))
+	base := filepath.Join(t.TempDir(), "worktrees")
+	manager := aiworkflowapp.NewWorktreeManager(&stubAIWorkflowStore{})
+	body := `{"repo_root":"` + filepath.ToSlash(repo) + `","base_dir":"` + filepath.ToSlash(base) + `","repo_name":"example","detached_ref":"HEAD","path_name":"handler-detached","owner_agent":"Worker"}`
+	rec := httptest.NewRecorder()
+
+	HandleAIWorkflowWorktreeCreateRuntime(manager, "../worktrees").ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/viewer/ai-workflow/worktrees/create", strings.NewReader(body)))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response aiworkflowapp.WorktreeCreateResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if response.Worktree.Branch != resolved {
+		t.Fatalf("response branch = %q, want resolved hash %q", response.Worktree.Branch, resolved)
+	}
+	if current := strings.TrimSpace(runGitOutputForTest(t, response.Worktree.Path, "branch", "--show-current")); current != "" {
+		t.Fatalf("handler created attached worktree on branch %q", current)
+	}
+}
+
 func TestHandleAIWorkflowWorktreeCloseRejectsOutsidePathByPolicy(t *testing.T) {
 	store := &stubAIWorkflowStore{}
 	manager := aiworkflowapp.NewWorktreeManager(store)
@@ -510,4 +545,15 @@ func TestHandleAIWorkflowWorktreeCloseRejectsOutsidePathByPolicy(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "must stay under base_dir") {
 		t.Fatalf("expected policy error, got %s", rec.Body.String())
 	}
+}
+
+func runGitOutputForTest(t *testing.T, repoPath string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, output)
+	}
+	return string(output)
 }

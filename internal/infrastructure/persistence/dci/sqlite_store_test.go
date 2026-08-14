@@ -246,3 +246,21 @@ func TestSQLiteStoreFindSearchTraceByIDRejectsInvalidRowAndStep(t *testing.T) {
 		t.Fatalf("FindSearchTraceByID semantically invalid row: found=%v err=%v", found, err)
 	}
 }
+
+func TestSQLiteStoreConfiguresSingleConnectionAndBusyTimeout(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "dci.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if got := store.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("max open connections=%d want=1", got)
+	}
+	var busyTimeout int
+	if err := store.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatal(err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("busy timeout=%d want=5000", busyTimeout)
+	}
+}

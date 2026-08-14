@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -20,19 +21,33 @@ import (
 
 const maxResponseBytes = 1 << 20
 
+var ownerPathIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$`)
+var shadowOutcomeEventIDPattern = regexp.MustCompile(`^shadow-event/sha256:[0-9a-f]{64}$`)
+
 type ownerCallContract struct {
 	purpose   string
 	dataScope string
+	read      bool
 }
 
 var (
-	ownerRiskPreviewCall         = ownerCallContract{purpose: "portfolio_memory_read", dataScope: toolcontext.DataScopeInternal}
+	ownerRiskPreviewCall         = ownerCallContract{purpose: "portfolio_memory_read", dataScope: toolcontext.DataScopeInternal, read: true}
 	ownerSimulationCommitCall    = ownerCallContract{purpose: "portfolio_memory_write", dataScope: toolcontext.DataScopeInternal}
 	ownerShadowObservationCall   = ownerCallContract{purpose: "ledger_memory_write", dataScope: toolcontext.DataScopeInternal}
 	ownerShadowOutcomeCall       = ownerCallContract{purpose: "ledger_memory_write", dataScope: toolcontext.DataScopeInternal}
 	ownerShadowReviewCall        = ownerCallContract{purpose: "ledger_memory_write", dataScope: toolcontext.DataScopeInternal}
-	ownerShadowOutcomeReportCall = ownerCallContract{purpose: "ledger_memory_read", dataScope: toolcontext.DataScopeInternal}
-	ownerShadowReviewReportCall  = ownerCallContract{purpose: "ledger_memory_read", dataScope: toolcontext.DataScopeInternal}
+	ownerShadowOutcomeReportCall = ownerCallContract{purpose: "ledger_memory_read", dataScope: toolcontext.DataScopeInternal, read: true}
+	ownerShadowReviewReportCall  = ownerCallContract{purpose: "ledger_memory_read", dataScope: toolcontext.DataScopeInternal, read: true}
+	ownerSourceRecordCall        = ownerCallContract{purpose: "source_memory_read", dataScope: toolcontext.DataScopeInternal, read: true}
+	ownerSourceCollectCall       = ownerCallContract{purpose: "source_memory_write", dataScope: toolcontext.DataScopeInternal}
+	ownerLearningCandidateCall   = ownerCallContract{purpose: "learning_memory_read", dataScope: toolcontext.DataScopeInternal, read: true}
+	ownerLearningImportCall      = ownerCallContract{purpose: "learning_memory_write", dataScope: toolcontext.DataScopeInternal}
+	ownerMarketSnapshotCall      = ownerCallContract{purpose: "market_memory_read", dataScope: toolcontext.DataScopeInternal, read: true}
+	ownerMarketImportCall        = ownerCallContract{purpose: "market_memory_write", dataScope: toolcontext.DataScopeInternal}
+	ownerReplayDecisionCall      = ownerCallContract{purpose: "replay_memory_read", dataScope: toolcontext.DataScopeInternal, read: true}
+	ownerReplayRecordCall        = ownerCallContract{purpose: "replay_memory_write", dataScope: toolcontext.DataScopeInternal}
+	ownerPortfolioSnapshotCall   = ownerCallContract{purpose: "portfolio_memory_read", dataScope: toolcontext.DataScopeInternal, read: true}
+	ownerPortfolioEnsureCall     = ownerCallContract{purpose: "portfolio_memory_write", dataScope: toolcontext.DataScopeInternal}
 )
 
 type Client struct {
@@ -102,6 +117,12 @@ func setOwnerHeaders(request *http.Request, scope toolcontext.ToolExecutionScope
 	request.Header.Set("X-RenCrow-Request-Purpose", call.purpose)
 	request.Header.Set("X-RenCrow-Data-Scope", call.dataScope)
 	request.Header.Set("X-Request-ID", scope.RequestID)
+	request.Header.Set("X-RenCrow-Request-Time", time.Now().UTC().Format(time.RFC3339Nano))
+	if call.read {
+		request.Header.Set("X-RenCrow-Result-Limit", "1")
+	} else {
+		request.Header.Del("X-RenCrow-Result-Limit")
+	}
 }
 
 func validateOwnerEvidenceIdentity(evidence moduletrade.OwnerEvidence, scope toolcontext.ToolExecutionScope, call ownerCallContract) error {
@@ -116,6 +137,73 @@ func validateOwnerReceiptIdentity(receipt moduletrade.OwnerReceipt, scope toolco
 		return fmt.Errorf("TRADE owner receipt identity does not match the trusted scope")
 	}
 	return nil
+}
+
+func (client *Client) newOwnerRequest(ctx context.Context, method, path string, scope toolcontext.ToolExecutionScope, call ownerCallContract, payload []byte) (*http.Request, error) {
+	var body io.Reader
+	if payload != nil {
+		body = bytes.NewReader(payload)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, client.baseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+client.token)
+	if payload != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	request.Header.Set("X-Correlation-ID", scope.RequestID)
+	setOwnerHeaders(request, scope, call)
+	return request, nil
+}
+
+func decodeStrictOwnerResponse(response *http.Response, operation string, target any) error {
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return &ServiceError{StatusCode: response.StatusCode}
+	}
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	if err != nil {
+		return fmt.Errorf("read TRADE %s response: %w", operation, err)
+	}
+	if len(payload) > maxResponseBytes {
+		return fmt.Errorf("TRADE %s response exceeds %d bytes", operation, maxResponseBytes)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("decode TRADE %s response: %w", operation, err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("decode TRADE %s response: trailing JSON value", operation)
+	}
+	return nil
+}
+
+func encodeOwnerRequest(input any, operation string) ([]byte, error) {
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("encode TRADE %s request: %w", operation, err)
+	}
+	return payload, nil
+}
+
+func validateOwnerPathID(value, name string) error {
+	if !ownerPathIDPattern.MatchString(value) || strings.ContainsAny(value, `/\\`) {
+		return fmt.Errorf("TRADE %s is invalid", name)
+	}
+	return nil
+}
+
+func validateShadowOutcomeReportQuery(queryRef string) (bool, error) {
+	if shadowOutcomeEventIDPattern.MatchString(queryRef) {
+		return true, nil
+	}
+	if err := validateOwnerPathID(queryRef, "Shadow outcome report query"); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 func NewClient(baseURL, tokenFile string, timeout time.Duration) (*Client, error) {
@@ -470,15 +558,20 @@ func (client *Client) RecordShadowReview(ctx context.Context, correlationID stri
 	return result, nil
 }
 
-func (client *Client) ShadowOutcomeReport(ctx context.Context, correlationID, studyID string) (moduletrade.PrivateShadowOutcomeReport, error) {
+func (client *Client) ShadowOutcomeReport(ctx context.Context, correlationID, queryRef string) (moduletrade.PrivateShadowOutcomeReport, error) {
 	scope, err := ownerReportScope(ctx, correlationID, ownerShadowOutcomeReportCall)
 	if err != nil {
 		return moduletrade.PrivateShadowOutcomeReport{}, err
 	}
-	if strings.TrimSpace(studyID) == "" {
-		return moduletrade.PrivateShadowOutcomeReport{}, fmt.Errorf("TRADE Shadow outcome report study ID is required")
+	isEventQuery, err := validateShadowOutcomeReportQuery(queryRef)
+	if err != nil {
+		return moduletrade.PrivateShadowOutcomeReport{}, err
 	}
-	requestURL := client.baseURL + "/v1/shadow/outcomes/report?study_id=" + url.QueryEscape(studyID)
+	queryName := "study_id"
+	if isEventQuery {
+		queryName = "event_id"
+	}
+	requestURL := client.baseURL + "/v1/shadow/outcomes/report?" + queryName + "=" + url.QueryEscape(queryRef)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return moduletrade.PrivateShadowOutcomeReport{}, fmt.Errorf("create TRADE Shadow outcome report request: %w", err)
@@ -508,8 +601,18 @@ func (client *Client) ShadowOutcomeReport(ctx context.Context, correlationID, st
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return moduletrade.PrivateShadowOutcomeReport{}, fmt.Errorf("decode TRADE Shadow outcome report response: trailing JSON value")
 	}
-	if err := result.Validate(studyID, scope.RequestID); err != nil {
+	validationStudyID := queryRef
+	if isEventQuery {
+		if err := validateOwnerPathID(result.Report.StudyID, "Shadow outcome report study ID"); err != nil {
+			return moduletrade.PrivateShadowOutcomeReport{}, err
+		}
+		validationStudyID = result.Report.StudyID
+	}
+	if err := result.Validate(validationStudyID, scope.RequestID); err != nil {
 		return moduletrade.PrivateShadowOutcomeReport{}, fmt.Errorf("validate TRADE Shadow outcome report response: %w", err)
+	}
+	if isEventQuery && result.OwnerEvidence.ProvenanceRef != queryRef {
+		return moduletrade.PrivateShadowOutcomeReport{}, fmt.Errorf("TRADE Shadow outcome report provenance does not match the exact event query")
 	}
 	if err := validateOwnerEvidenceIdentity(result.OwnerEvidence, scope, ownerShadowOutcomeReportCall); err != nil {
 		return moduletrade.PrivateShadowOutcomeReport{}, err
@@ -560,6 +663,369 @@ func (client *Client) ShadowReviewReport(ctx context.Context, correlationID, stu
 	}
 	if err := validateOwnerEvidenceIdentity(result.OwnerEvidence, scope, ownerShadowReviewReportCall); err != nil {
 		return moduletrade.PrivateShadowReviewReport{}, err
+	}
+	return result, nil
+}
+
+// ReadPortfolioSnapshot reads the single TRADE-owned simulation portfolio
+// snapshot for the authenticated Agent scope.
+func (client *Client) ReadPortfolioSnapshot(ctx context.Context) (moduletrade.PortfolioSnapshotReadResponse, error) {
+	scope, err := ownerScopeFor(ctx, ownerPortfolioSnapshotCall)
+	if err != nil {
+		return moduletrade.PortfolioSnapshotReadResponse{}, err
+	}
+	request, err := client.newOwnerRequest(ctx, http.MethodGet, "/v1/memory/portfolio/snapshot", scope, ownerPortfolioSnapshotCall, nil)
+	if err != nil {
+		return moduletrade.PortfolioSnapshotReadResponse{}, fmt.Errorf("create TRADE portfolio snapshot request: %w", err)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.PortfolioSnapshotReadResponse{}, fmt.Errorf("TRADE portfolio snapshot request failed: %w", err)
+	}
+	var result moduletrade.PortfolioSnapshotReadResponse
+	if err := decodeStrictOwnerResponse(response, "portfolio snapshot", &result); err != nil {
+		return moduletrade.PortfolioSnapshotReadResponse{}, err
+	}
+	if err := result.Validate(scope.RequestID, scope.RequestID); err != nil {
+		return moduletrade.PortfolioSnapshotReadResponse{}, fmt.Errorf("validate TRADE portfolio snapshot response: %w", err)
+	}
+	if err := validateOwnerEvidenceIdentity(result.OwnerEvidence, scope, ownerPortfolioSnapshotCall); err != nil {
+		return moduletrade.PortfolioSnapshotReadResponse{}, err
+	}
+	return result, nil
+}
+
+// EnsurePortfolioInitialized asks TRADE to idempotently initialize its
+// simulation portfolio. The request identity comes only from the trusted
+// ToolExecutionScope.
+func (client *Client) EnsurePortfolioInitialized(ctx context.Context) (moduletrade.PortfolioSnapshotWriteResponse, error) {
+	scope, err := ownerScopeFor(ctx, ownerPortfolioEnsureCall)
+	if err != nil {
+		return moduletrade.PortfolioSnapshotWriteResponse{}, err
+	}
+	input := moduletrade.EnsurePortfolioInitializedRequest{
+		ContractVersion: moduletrade.MemoryOwnerContractVersion,
+		RequestID:       scope.RequestID,
+	}
+	if err := input.Validate(); err != nil {
+		return moduletrade.PortfolioSnapshotWriteResponse{}, fmt.Errorf("validate TRADE portfolio initialization request: %w", err)
+	}
+	payload, err := encodeOwnerRequest(input, "portfolio initialization")
+	if err != nil {
+		return moduletrade.PortfolioSnapshotWriteResponse{}, err
+	}
+	request, err := client.newOwnerRequest(ctx, http.MethodPost, "/v1/memory/portfolio/ensure-initialized", scope, ownerPortfolioEnsureCall, payload)
+	if err != nil {
+		return moduletrade.PortfolioSnapshotWriteResponse{}, fmt.Errorf("create TRADE portfolio initialization request: %w", err)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.PortfolioSnapshotWriteResponse{}, fmt.Errorf("TRADE portfolio initialization request failed: %w", err)
+	}
+	var result moduletrade.PortfolioSnapshotWriteResponse
+	if err := decodeStrictOwnerResponse(response, "portfolio initialization", &result); err != nil {
+		return moduletrade.PortfolioSnapshotWriteResponse{}, err
+	}
+	if err := result.Validate(scope.RequestID); err != nil {
+		return moduletrade.PortfolioSnapshotWriteResponse{}, fmt.Errorf("validate TRADE portfolio initialization response: %w", err)
+	}
+	if err := validateOwnerReceiptIdentity(result.OwnerReceipt, scope, ownerPortfolioEnsureCall); err != nil {
+		return moduletrade.PortfolioSnapshotWriteResponse{}, err
+	}
+	return result, nil
+}
+
+// ReadSourceRecord reads exactly one bounded source projection from TRADE.
+func (client *Client) ReadSourceRecord(ctx context.Context, recordID string) (moduletrade.SourceRecordReadResponse, error) {
+	scope, err := ownerScopeFor(ctx, ownerSourceRecordCall)
+	if err != nil {
+		return moduletrade.SourceRecordReadResponse{}, err
+	}
+	if err := validateOwnerPathID(recordID, "source record ID"); err != nil {
+		return moduletrade.SourceRecordReadResponse{}, err
+	}
+	request, err := client.newOwnerRequest(ctx, http.MethodGet, "/v1/memory/source/records/"+url.PathEscape(recordID), scope, ownerSourceRecordCall, nil)
+	if err != nil {
+		return moduletrade.SourceRecordReadResponse{}, fmt.Errorf("create TRADE source record request: %w", err)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.SourceRecordReadResponse{}, fmt.Errorf("TRADE source record request failed: %w", err)
+	}
+	var result moduletrade.SourceRecordReadResponse
+	if err := decodeStrictOwnerResponse(response, "source record", &result); err != nil {
+		return moduletrade.SourceRecordReadResponse{}, err
+	}
+	if err := result.Validate(scope.RequestID, scope.RequestID); err != nil {
+		return moduletrade.SourceRecordReadResponse{}, fmt.Errorf("validate TRADE source record response: %w", err)
+	}
+	if result.Record.SourceRecordID != recordID {
+		return moduletrade.SourceRecordReadResponse{}, fmt.Errorf("TRADE source record response ID does not match the requested ID")
+	}
+	if err := validateOwnerEvidenceIdentity(result.OwnerEvidence, scope, ownerSourceRecordCall); err != nil {
+		return moduletrade.SourceRecordReadResponse{}, err
+	}
+	return result, nil
+}
+
+// CollectSource invokes TRADE's validated source collection workflow. The
+// request ID is always taken from the trusted execution scope.
+func (client *Client) CollectSource(ctx context.Context, sourceDefinitionID string) (moduletrade.SourceRecordWriteResponse, error) {
+	scope, err := ownerScopeFor(ctx, ownerSourceCollectCall)
+	if err != nil {
+		return moduletrade.SourceRecordWriteResponse{}, err
+	}
+	input := moduletrade.CollectSourceRequest{
+		ContractVersion:    moduletrade.MemoryOwnerContractVersion,
+		RequestID:          scope.RequestID,
+		SourceDefinitionID: sourceDefinitionID,
+	}
+	if err := input.Validate(); err != nil {
+		return moduletrade.SourceRecordWriteResponse{}, fmt.Errorf("validate TRADE source collect request: %w", err)
+	}
+	payload, err := encodeOwnerRequest(input, "source collect")
+	if err != nil {
+		return moduletrade.SourceRecordWriteResponse{}, err
+	}
+	request, err := client.newOwnerRequest(ctx, http.MethodPost, "/v1/memory/source/collect", scope, ownerSourceCollectCall, payload)
+	if err != nil {
+		return moduletrade.SourceRecordWriteResponse{}, fmt.Errorf("create TRADE source collect request: %w", err)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.SourceRecordWriteResponse{}, fmt.Errorf("TRADE source collect request failed: %w", err)
+	}
+	var result moduletrade.SourceRecordWriteResponse
+	if err := decodeStrictOwnerResponse(response, "source collect", &result); err != nil {
+		return moduletrade.SourceRecordWriteResponse{}, err
+	}
+	if err := result.Validate(scope.RequestID); err != nil {
+		return moduletrade.SourceRecordWriteResponse{}, fmt.Errorf("validate TRADE source collect response: %w", err)
+	}
+	if err := validateOwnerReceiptIdentity(result.OwnerReceipt, scope, ownerSourceCollectCall); err != nil {
+		return moduletrade.SourceRecordWriteResponse{}, err
+	}
+	return result, nil
+}
+
+// ReadLearningCandidate reads exactly one bounded learning candidate.
+func (client *Client) ReadLearningCandidate(ctx context.Context, candidateRecordID string) (moduletrade.LearningCandidateReadResponse, error) {
+	scope, err := ownerScopeFor(ctx, ownerLearningCandidateCall)
+	if err != nil {
+		return moduletrade.LearningCandidateReadResponse{}, err
+	}
+	if err := validateOwnerPathID(candidateRecordID, "learning candidate ID"); err != nil {
+		return moduletrade.LearningCandidateReadResponse{}, err
+	}
+	request, err := client.newOwnerRequest(ctx, http.MethodGet, "/v1/memory/learning/candidates/"+url.PathEscape(candidateRecordID), scope, ownerLearningCandidateCall, nil)
+	if err != nil {
+		return moduletrade.LearningCandidateReadResponse{}, fmt.Errorf("create TRADE learning candidate request: %w", err)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.LearningCandidateReadResponse{}, fmt.Errorf("TRADE learning candidate request failed: %w", err)
+	}
+	var result moduletrade.LearningCandidateReadResponse
+	if err := decodeStrictOwnerResponse(response, "learning candidate", &result); err != nil {
+		return moduletrade.LearningCandidateReadResponse{}, err
+	}
+	if err := result.Validate(scope.RequestID, scope.RequestID); err != nil {
+		return moduletrade.LearningCandidateReadResponse{}, fmt.Errorf("validate TRADE learning candidate response: %w", err)
+	}
+	if result.Record.CandidateRecordID != candidateRecordID {
+		return moduletrade.LearningCandidateReadResponse{}, fmt.Errorf("TRADE learning candidate response ID does not match the requested ID")
+	}
+	if err := validateOwnerEvidenceIdentity(result.OwnerEvidence, scope, ownerLearningCandidateCall); err != nil {
+		return moduletrade.LearningCandidateReadResponse{}, err
+	}
+	return result, nil
+}
+
+// ImportLearningCandidate invokes TRADE's validated candidate import
+// workflow. The request ID is always taken from the trusted execution scope.
+func (client *Client) ImportLearningCandidate(ctx context.Context, candidateDefinitionID string) (moduletrade.LearningCandidateWriteResponse, error) {
+	scope, err := ownerScopeFor(ctx, ownerLearningImportCall)
+	if err != nil {
+		return moduletrade.LearningCandidateWriteResponse{}, err
+	}
+	input := moduletrade.ImportLearningCandidateRequest{
+		ContractVersion:       moduletrade.MemoryOwnerContractVersion,
+		RequestID:             scope.RequestID,
+		CandidateDefinitionID: candidateDefinitionID,
+	}
+	if err := input.Validate(); err != nil {
+		return moduletrade.LearningCandidateWriteResponse{}, fmt.Errorf("validate TRADE learning candidate import request: %w", err)
+	}
+	payload, err := encodeOwnerRequest(input, "learning candidate import")
+	if err != nil {
+		return moduletrade.LearningCandidateWriteResponse{}, err
+	}
+	request, err := client.newOwnerRequest(ctx, http.MethodPost, "/v1/memory/learning/import-candidate", scope, ownerLearningImportCall, payload)
+	if err != nil {
+		return moduletrade.LearningCandidateWriteResponse{}, fmt.Errorf("create TRADE learning candidate import request: %w", err)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.LearningCandidateWriteResponse{}, fmt.Errorf("TRADE learning candidate import request failed: %w", err)
+	}
+	var result moduletrade.LearningCandidateWriteResponse
+	if err := decodeStrictOwnerResponse(response, "learning candidate import", &result); err != nil {
+		return moduletrade.LearningCandidateWriteResponse{}, err
+	}
+	if err := result.Validate(scope.RequestID); err != nil {
+		return moduletrade.LearningCandidateWriteResponse{}, fmt.Errorf("validate TRADE learning candidate import response: %w", err)
+	}
+	if err := validateOwnerReceiptIdentity(result.OwnerReceipt, scope, ownerLearningImportCall); err != nil {
+		return moduletrade.LearningCandidateWriteResponse{}, err
+	}
+	return result, nil
+}
+
+// ReadMarketSnapshot reads exactly one bounded market snapshot.
+func (client *Client) ReadMarketSnapshot(ctx context.Context, snapshotID string) (moduletrade.MarketSnapshotReadResponse, error) {
+	scope, err := ownerScopeFor(ctx, ownerMarketSnapshotCall)
+	if err != nil {
+		return moduletrade.MarketSnapshotReadResponse{}, err
+	}
+	if err := validateOwnerPathID(snapshotID, "market snapshot ID"); err != nil {
+		return moduletrade.MarketSnapshotReadResponse{}, err
+	}
+	request, err := client.newOwnerRequest(ctx, http.MethodGet, "/v1/memory/market/snapshots/"+url.PathEscape(snapshotID), scope, ownerMarketSnapshotCall, nil)
+	if err != nil {
+		return moduletrade.MarketSnapshotReadResponse{}, fmt.Errorf("create TRADE market snapshot request: %w", err)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.MarketSnapshotReadResponse{}, fmt.Errorf("TRADE market snapshot request failed: %w", err)
+	}
+	var result moduletrade.MarketSnapshotReadResponse
+	if err := decodeStrictOwnerResponse(response, "market snapshot", &result); err != nil {
+		return moduletrade.MarketSnapshotReadResponse{}, err
+	}
+	if err := result.Validate(scope.RequestID, scope.RequestID); err != nil {
+		return moduletrade.MarketSnapshotReadResponse{}, fmt.Errorf("validate TRADE market snapshot response: %w", err)
+	}
+	if result.Record.SnapshotID != snapshotID {
+		return moduletrade.MarketSnapshotReadResponse{}, fmt.Errorf("TRADE market snapshot response ID does not match the requested ID")
+	}
+	if err := validateOwnerEvidenceIdentity(result.OwnerEvidence, scope, ownerMarketSnapshotCall); err != nil {
+		return moduletrade.MarketSnapshotReadResponse{}, err
+	}
+	return result, nil
+}
+
+// ImportMarketSnapshot invokes TRADE's validated market snapshot workflow.
+func (client *Client) ImportMarketSnapshot(ctx context.Context, runID, instrumentID, tradeDate string) (moduletrade.MarketSnapshotWriteResponse, error) {
+	scope, err := ownerScopeFor(ctx, ownerMarketImportCall)
+	if err != nil {
+		return moduletrade.MarketSnapshotWriteResponse{}, err
+	}
+	input := moduletrade.ImportMarketSnapshotRequest{
+		ContractVersion: moduletrade.MemoryOwnerContractVersion,
+		RequestID:       scope.RequestID,
+		RunID:           runID,
+		InstrumentID:    instrumentID,
+		TradeDate:       tradeDate,
+	}
+	if err := input.Validate(); err != nil {
+		return moduletrade.MarketSnapshotWriteResponse{}, fmt.Errorf("validate TRADE market snapshot import request: %w", err)
+	}
+	payload, err := encodeOwnerRequest(input, "market snapshot import")
+	if err != nil {
+		return moduletrade.MarketSnapshotWriteResponse{}, err
+	}
+	request, err := client.newOwnerRequest(ctx, http.MethodPost, "/v1/memory/market/import-snapshot", scope, ownerMarketImportCall, payload)
+	if err != nil {
+		return moduletrade.MarketSnapshotWriteResponse{}, fmt.Errorf("create TRADE market snapshot import request: %w", err)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.MarketSnapshotWriteResponse{}, fmt.Errorf("TRADE market snapshot import request failed: %w", err)
+	}
+	var result moduletrade.MarketSnapshotWriteResponse
+	if err := decodeStrictOwnerResponse(response, "market snapshot import", &result); err != nil {
+		return moduletrade.MarketSnapshotWriteResponse{}, err
+	}
+	if err := result.Validate(scope.RequestID); err != nil {
+		return moduletrade.MarketSnapshotWriteResponse{}, fmt.Errorf("validate TRADE market snapshot import response: %w", err)
+	}
+	if err := validateOwnerReceiptIdentity(result.OwnerReceipt, scope, ownerMarketImportCall); err != nil {
+		return moduletrade.MarketSnapshotWriteResponse{}, err
+	}
+	return result, nil
+}
+
+// ReadReplayDecision reads exactly one bounded replay decision.
+func (client *Client) ReadReplayDecision(ctx context.Context, decisionID string) (moduletrade.ReplayDecisionReadResponse, error) {
+	scope, err := ownerScopeFor(ctx, ownerReplayDecisionCall)
+	if err != nil {
+		return moduletrade.ReplayDecisionReadResponse{}, err
+	}
+	if err := validateOwnerPathID(decisionID, "replay decision ID"); err != nil {
+		return moduletrade.ReplayDecisionReadResponse{}, err
+	}
+	request, err := client.newOwnerRequest(ctx, http.MethodGet, "/v1/memory/replay/decisions/"+url.PathEscape(decisionID), scope, ownerReplayDecisionCall, nil)
+	if err != nil {
+		return moduletrade.ReplayDecisionReadResponse{}, fmt.Errorf("create TRADE replay decision request: %w", err)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.ReplayDecisionReadResponse{}, fmt.Errorf("TRADE replay decision request failed: %w", err)
+	}
+	var result moduletrade.ReplayDecisionReadResponse
+	if err := decodeStrictOwnerResponse(response, "replay decision", &result); err != nil {
+		return moduletrade.ReplayDecisionReadResponse{}, err
+	}
+	if err := result.Validate(scope.RequestID, scope.RequestID); err != nil {
+		return moduletrade.ReplayDecisionReadResponse{}, fmt.Errorf("validate TRADE replay decision response: %w", err)
+	}
+	if result.Record.DecisionID != decisionID {
+		return moduletrade.ReplayDecisionReadResponse{}, fmt.Errorf("TRADE replay decision response ID does not match the requested ID")
+	}
+	if err := validateOwnerEvidenceIdentity(result.OwnerEvidence, scope, ownerReplayDecisionCall); err != nil {
+		return moduletrade.ReplayDecisionReadResponse{}, err
+	}
+	return result, nil
+}
+
+// RecordReplayDecision invokes TRADE's bounded observe/select/avoid workflow.
+func (client *Client) RecordReplayDecision(ctx context.Context, runID, instrumentID, tradeDate, action string) (moduletrade.ReplayDecisionWriteResponse, error) {
+	scope, err := ownerScopeFor(ctx, ownerReplayRecordCall)
+	if err != nil {
+		return moduletrade.ReplayDecisionWriteResponse{}, err
+	}
+	input := moduletrade.RecordReplayDecisionRequest{
+		ContractVersion: moduletrade.MemoryOwnerContractVersion,
+		RequestID:       scope.RequestID,
+		RunID:           runID,
+		InstrumentID:    instrumentID,
+		TradeDate:       tradeDate,
+		Action:          action,
+	}
+	if err := input.Validate(); err != nil {
+		return moduletrade.ReplayDecisionWriteResponse{}, fmt.Errorf("validate TRADE replay decision request: %w", err)
+	}
+	payload, err := encodeOwnerRequest(input, "replay decision record")
+	if err != nil {
+		return moduletrade.ReplayDecisionWriteResponse{}, err
+	}
+	request, err := client.newOwnerRequest(ctx, http.MethodPost, "/v1/memory/replay/record-decision", scope, ownerReplayRecordCall, payload)
+	if err != nil {
+		return moduletrade.ReplayDecisionWriteResponse{}, fmt.Errorf("create TRADE replay decision request: %w", err)
+	}
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return moduletrade.ReplayDecisionWriteResponse{}, fmt.Errorf("TRADE replay decision request failed: %w", err)
+	}
+	var result moduletrade.ReplayDecisionWriteResponse
+	if err := decodeStrictOwnerResponse(response, "replay decision record", &result); err != nil {
+		return moduletrade.ReplayDecisionWriteResponse{}, err
+	}
+	if err := result.Validate(scope.RequestID); err != nil {
+		return moduletrade.ReplayDecisionWriteResponse{}, fmt.Errorf("validate TRADE replay decision response: %w", err)
+	}
+	if err := validateOwnerReceiptIdentity(result.OwnerReceipt, scope, ownerReplayRecordCall); err != nil {
+		return moduletrade.ReplayDecisionWriteResponse{}, err
 	}
 	return result, nil
 }

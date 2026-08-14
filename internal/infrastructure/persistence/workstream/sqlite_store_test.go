@@ -2,13 +2,71 @@ package workstream
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
+
+func TestSQLiteStoreConfiguresSerializedBusyTimeout(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "workstream.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	if got := store.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1", got)
+	}
+	var busyTimeout int
+	if err := store.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatalf("busy_timeout query failed: %v", err)
+	}
+	if busyTimeout != sqliteBusyTimeoutMilliseconds {
+		t.Fatalf("busy_timeout = %d, want %d", busyTimeout, sqliteBusyTimeoutMilliseconds)
+	}
+}
+
+func TestSQLiteStoreConcurrentGoalWrites(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "workstream.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	const workers = 8
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- store.SaveGoal(context.Background(), domainworkstream.Goal{
+				GoalID:          fmt.Sprintf("concurrent-goal-%d", i),
+				WorkstreamID:    "workstream-concurrent",
+				Title:           "concurrent owner write",
+				SuccessCriteria: []string{"saved"},
+				Verification:    []string{"listed"},
+				Status:          domainworkstream.StatusDraft,
+				CreatedAt:       time.Now().UTC(),
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent SaveGoal failed: %v", err)
+		}
+	}
+	goals, err := store.ListGoals(context.Background(), workers)
+	if err != nil || len(goals) != workers {
+		t.Fatalf("concurrent goal count = %d, err=%v; want %d", len(goals), err, workers)
+	}
+}
 
 func TestSQLiteStoreSavesAndListsWorkstreamRecords(t *testing.T) {
 	vaultRoot := filepath.Join(t.TempDir(), "vault")

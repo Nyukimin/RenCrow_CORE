@@ -17,6 +17,8 @@ type SQLiteStore struct {
 	vaultRoot string
 }
 
+const sqliteBusyTimeoutMilliseconds = 5000
+
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	return NewSQLiteStoreWithVault(path, "")
 }
@@ -28,10 +30,12 @@ func NewSQLiteStoreWithVault(path, vaultRoot string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_time_format=sqlite")
+	db, err := sql.Open("sqlite", fmt.Sprintf("%s?_pragma=busy_timeout%%3d%d&_time_format=sqlite", path, sqliteBusyTimeoutMilliseconds))
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	store := &SQLiteStore{db: db, vaultRoot: vaultRoot}
 	if err := store.migrate(); err != nil {
 		_ = db.Close()

@@ -12,6 +12,7 @@ import (
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domainbrowser "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
+	domaindurable "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -287,7 +288,7 @@ func registerRuntimeDataRecallDurableStoreWorkflow(r *runtimeDataRecallRegistry,
 	if r == nil || s == nil {
 		return fmt.Errorf("durable recall unavailable")
 	}
-	return r.Register("durable_store_workflow", "exact_request", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+	if err := r.Register("durable_store_workflow", "exact_request", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
 		scope, found := domaintool.ToolExecutionScopeFromContext(ctx)
 		if !found || strings.TrimSpace(scope.AuthenticatedUserID) == "" {
 			return runtimeDataRecallResult{}, fmt.Errorf("authenticated user scope is required")
@@ -318,5 +319,69 @@ func registerRuntimeDataRecallDurableStoreWorkflow(r *runtimeDataRecallRegistry,
 			"created_at":        v.CreatedAt,
 		})
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
+	}); err != nil {
+		return err
+	}
+	return r.Register("durable_store_workflow", "requirement", dataRecallAccessUser, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		scope, found := domaintool.ToolExecutionScopeFromContext(ctx)
+		if !found || strings.TrimSpace(scope.AuthenticatedUserID) == "" {
+			return runtimeDataRecallResult{}, fmt.Errorf("authenticated user scope is required")
+		}
+		workflow, err := s.FindByRequirementID(ctx, q.Query)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		record, visible, err := durableStoreWorkflowRequirementProjection(workflow, q.Query, scope.AuthenticatedUserID)
+		if err != nil {
+			return runtimeDataRecallResult{}, err
+		}
+		if !visible {
+			return newRuntimeDataRecallResult(q.Store, q.Operation, []map[string]any{}), nil
+		}
+		return newRuntimeDataRecallResult(q.Store, q.Operation, []map[string]any{record}), nil
 	})
+}
+
+func durableStoreWorkflowRequirementProjection(workflow *domaindurable.WorkflowResult, requirementID, userID string) (map[string]any, bool, error) {
+	if workflow == nil {
+		return nil, false, nil
+	}
+	requirement := workflow.Requirement
+	if strings.TrimSpace(requirement.RequirementID) == "" || requirement.RequirementID != requirementID {
+		return nil, false, fmt.Errorf("durable workflow requirement_id is invalid")
+	}
+	if strings.TrimSpace(requirement.RequestID) == "" || requirement.RequestID != strings.TrimSpace(requirement.RequestID) {
+		return nil, false, fmt.Errorf("durable workflow request_id is invalid")
+	}
+	if strings.TrimSpace(requirement.DedupeKey) == "" || requirement.DedupeKey != strings.TrimSpace(requirement.DedupeKey) {
+		return nil, false, fmt.Errorf("durable workflow dedupe_key is invalid")
+	}
+	if strings.TrimSpace(requirement.UserScope) == "" || requirement.UserScope != strings.TrimSpace(requirement.UserScope) {
+		return nil, false, fmt.Errorf("durable workflow user scope is invalid")
+	}
+	switch workflow.Status {
+	case domaindurable.StatusCompleted, domaindurable.StatusRejected, domaindurable.StatusBlocked:
+	default:
+		return nil, false, fmt.Errorf("durable workflow status is invalid")
+	}
+	switch workflow.Lifecycle {
+	case domaindurable.LifecycleProposed, domaindurable.LifecycleValidated, domaindurable.LifecycleImplemented, domaindurable.LifecycleProvisioned, domaindurable.LifecycleActive:
+	default:
+		return nil, false, fmt.Errorf("durable workflow lifecycle is invalid")
+	}
+	if workflow.CreatedAt.IsZero() || workflow.UpdatedAt.IsZero() || workflow.UpdatedAt.Before(workflow.CreatedAt) {
+		return nil, false, fmt.Errorf("durable workflow timestamps are invalid")
+	}
+	if requirement.UserScope != strings.TrimSpace(userID) {
+		return nil, false, nil
+	}
+	return map[string]any{
+		"request_id":     requirement.RequestID,
+		"requirement_id": requirement.RequirementID,
+		"dedupe_key":     requirement.DedupeKey,
+		"status":         string(workflow.Status),
+		"lifecycle":      string(workflow.Lifecycle),
+		"created_at":     workflow.CreatedAt,
+		"updated_at":     workflow.UpdatedAt,
+	}, true, nil
 }

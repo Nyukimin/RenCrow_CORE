@@ -61,7 +61,7 @@ func (c *Config) setDefaults() {
 		c.LLMGateway.TimeoutSec = 600
 	}
 	if strings.TrimSpace(c.Trade.BaseURL) == "" {
-		c.Trade.BaseURL = "http://127.0.0.1:8766"
+		c.Trade.BaseURL = "http://127.0.0.1:8767"
 	}
 	if c.Trade.TimeoutMS <= 0 {
 		c.Trade.TimeoutMS = 3000

@@ -35,8 +35,11 @@ type Config struct {
 	// === RenCrow_GAMES 連携 (マルチペルソナ WP6) ===
 	Games GamesConfig `yaml:"games"`
 
-	// === RenCrow_TRADE read-only status bridge ===
+	// === RenCrow_TRADE private Owner API bridge ===
 	Trade TradeConfig `yaml:"trade"`
+
+	// === Local authenticated Agent OPS ingress ===
+	LocalAgentOps LocalAgentOpsConfig `yaml:"local_agent_ops"`
 
 	// === Optional Webwright browser-backed fetch bridge ===
 	WebwrightFetch WebwrightFetchConfig `yaml:"webwright_fetch"`

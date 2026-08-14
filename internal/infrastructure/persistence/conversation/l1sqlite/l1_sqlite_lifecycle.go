@@ -226,13 +226,34 @@ LIMIT ?`, cutoff.UTC().Format("2006-01-02"), limit)
 	if err != nil {
 		return 0, fmt.Errorf("failed to query monthly highlight candidates: %w", err)
 	}
-	defer rows.Close()
-	count := 0
+	type monthlyHighlightCandidate struct {
+		month         string
+		category      string
+		digestIDsText string
+		digestText    string
+	}
+	candidates := make([]monthlyHighlightCandidate, 0)
 	for rows.Next() {
-		var month, category, digestIDsText, digestText string
-		if err := rows.Scan(&month, &category, &digestIDsText, &digestText); err != nil {
-			return count, fmt.Errorf("failed to scan monthly highlight candidate: %w", err)
+		var candidate monthlyHighlightCandidate
+		if err := rows.Scan(&candidate.month, &candidate.category, &candidate.digestIDsText, &candidate.digestText); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("failed to scan monthly highlight candidate: %w", err)
 		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("monthly highlight rows close error: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("monthly highlight rows error: %w", err)
+	}
+
+	count := 0
+	for _, candidate := range candidates {
+		month := candidate.month
+		category := candidate.category
+		digestIDsText := candidate.digestIDsText
+		digestText := candidate.digestText
 		sourceIDs := nonEmptyLines(digestIDsText)
 		highlight := buildMonthlyHighlightText(month, category, digestText)
 		sourceJSON, err := json.Marshal(sourceIDs)
@@ -255,9 +276,6 @@ INSERT INTO l1_monthly_highlight (
 			return count, err
 		}
 		count++
-	}
-	if err := rows.Err(); err != nil {
-		return count, fmt.Errorf("monthly highlight rows error: %w", err)
 	}
 	return count, nil
 }

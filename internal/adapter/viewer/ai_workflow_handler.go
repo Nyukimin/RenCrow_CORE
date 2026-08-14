@@ -459,13 +459,14 @@ func HandleAIWorkflowProjectInit(scanner *aiworkflowapp.ProjectScanner, projectM
 
 func HandleAIWorkflowWorktreeCreateRuntime(manager *aiworkflowapp.WorktreeManager, baseDir string) http.HandlerFunc {
 	type request struct {
-		RepoRoot   string `json:"repo_root"`
-		BaseDir    string `json:"base_dir"`
-		RepoName   string `json:"repo_name"`
-		Branch     string `json:"branch"`
-		PathName   string `json:"path_name"`
-		Purpose    string `json:"purpose"`
-		OwnerAgent string `json:"owner_agent"`
+		RepoRoot    string `json:"repo_root"`
+		BaseDir     string `json:"base_dir"`
+		RepoName    string `json:"repo_name"`
+		Branch      string `json:"branch"`
+		DetachedRef string `json:"detached_ref"`
+		PathName    string `json:"path_name"`
+		Purpose     string `json:"purpose"`
+		OwnerAgent  string `json:"owner_agent"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -485,13 +486,14 @@ func HandleAIWorkflowWorktreeCreateRuntime(manager *aiworkflowapp.WorktreeManage
 			req.BaseDir = baseDir
 		}
 		result, err := manager.Create(r.Context(), aiworkflowapp.WorktreeCreateOptions{
-			RepoRoot:   req.RepoRoot,
-			BaseDir:    req.BaseDir,
-			RepoName:   req.RepoName,
-			Branch:     req.Branch,
-			PathName:   req.PathName,
-			Purpose:    req.Purpose,
-			OwnerAgent: req.OwnerAgent,
+			RepoRoot:    req.RepoRoot,
+			BaseDir:     req.BaseDir,
+			RepoName:    req.RepoName,
+			Branch:      req.Branch,
+			DetachedRef: req.DetachedRef,
+			PathName:    req.PathName,
+			Purpose:     req.Purpose,
+			OwnerAgent:  req.OwnerAgent,
 		})
 		if err != nil {
 			http.Error(w, "worktree create failed: "+err.Error(), http.StatusBadRequest)

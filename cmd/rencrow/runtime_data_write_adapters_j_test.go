@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	toolregistrypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/toolregistry"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
@@ -53,8 +56,16 @@ func TestRuntimeDataWriteToolRegistryOwnerThroughWorkerAndExactRecall(t *testing
 		t.Fatalf("Get registered tool: %v", err)
 	}
 	canonicalScript, err := filepath.Abs(filepath.Join(workspace, "tools", "report_tool.sh"))
-	if err != nil || entry.Source != capdomain.ToolSource(canonicalScript) || entry.CreatedBy != "mio" || entry.SchemaJSON != `{"properties":{},"type":"object"}` || len(entry.Platforms) != 2 || entry.Platforms[0] != "linux" || entry.Platforms[1] != "windows" {
+	if err != nil || entry.Source != capdomain.ToolSource(canonicalScript) || entry.CreatedBy != "mio" || len(entry.Platforms) != 2 || entry.Platforms[0] != "linux" || entry.Platforms[1] != "windows" {
 		t.Fatalf("registered entry = %+v canonical=%s err=%v", entry, canonicalScript, err)
+	}
+	var definition llm.ToolDefinition
+	if err := json.Unmarshal([]byte(entry.SchemaJSON), &definition); err != nil {
+		t.Fatalf("stored schema_json = %q is not a ToolDefinition: %v", entry.SchemaJSON, err)
+	}
+	wantParameters := map[string]any{"properties": map[string]any{}, "type": "object"}
+	if definition.Type != "function" || definition.Function.Name != "report_tool" || definition.Function.Description != "Generate a report" || !reflect.DeepEqual(definition.Function.Parameters, wantParameters) {
+		t.Fatalf("stored tool definition = %+v, want complete report_tool definition", definition)
 	}
 
 	exact := runtimeDataWriteOwnerExecuteRecall(t, worker, ctx, "tool_registry", "tool", "report_tool")

@@ -2,7 +2,6 @@ package subagent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"runtime"
@@ -184,8 +183,8 @@ func (m *Manager) mergeToolDefs(ctx context.Context) []llm.ToolDefinition {
 		if existing[entry.Name] {
 			continue // base ツールが優先
 		}
-		var toolDef llm.ToolDefinition
-		if err := json.Unmarshal([]byte(entry.SchemaJSON), &toolDef); err != nil {
+		toolDef, err := capability.ParseToolDefinition(entry)
+		if err != nil {
 			log.Printf("[Subagent] WARN: skip registry tool %q: invalid schema: %v", entry.Name, err)
 			continue
 		}

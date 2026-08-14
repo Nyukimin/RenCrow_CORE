@@ -136,6 +136,7 @@ type ChatRequest struct {
 	Model           string
 	Messages        []ChatMessage
 	Tools           []ToolDefinition
+	MaxTokens       int
 	Temperature     float64
 	ReasoningEffort ReasoningEffort
 }

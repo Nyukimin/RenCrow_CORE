@@ -118,6 +118,30 @@ func TestRuntimeDataCapabilityCatalogProjectsOnlyRegisteredExecutableRoutes(t *t
 	}
 }
 
+func TestRuntimeDataCapabilityCatalogProjectsDurableRequirementRecallRoute(t *testing.T) {
+	catalog := buildRuntimeDataCapabilityCatalog(&config.Config{}, false, false)
+	recall := newRuntimeDataRecallRegistry()
+	if err := registerRuntimeDataRecallDurableStoreWorkflow(recall, &dataRecallDurableStoreStub{}); err != nil {
+		t.Fatal(err)
+	}
+	catalog.BindRouteRegistries(recall, newRuntimeDataWriteRegistry())
+	value, err := catalog.Execute("describe", "durable_store_workflow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := value.(datacapability.Entry)
+	want := []datacapability.Route{
+		{Operation: "exact_request", ToolID: "data.recall", Access: string(dataRecallAccessUser)},
+		{Operation: "requirement", ToolID: "data.recall", Access: string(dataRecallAccessUser)},
+	}
+	if !reflect.DeepEqual(entry.RecallRoutes, want) {
+		t.Fatalf("durable recall routes=%#v, want %#v", entry.RecallRoutes, want)
+	}
+	if entry.Status != "blocked" || entry.Reason != "owner_route_incomplete" {
+		t.Fatalf("durable entry status=%#v", entry)
+	}
+}
+
 func TestRenderRuntimeDataRouteContextUsesRegistrySnapshotContracts(t *testing.T) {
 	recall := newRuntimeDataRecallRegistry()
 	write := newRuntimeDataWriteRegistry()

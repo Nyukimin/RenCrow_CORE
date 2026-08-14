@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	appstore "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
@@ -64,10 +65,27 @@ func TestRuntimeDataWriteDurableStoreWorkflowUsesDurableRequestReceipts(t *testi
 	if len(recalled.Records) != 1 || recalled.Records[0]["requirement_id"] != first.AuditRef || recalled.Records[0]["deduplicated"] != true {
 		t.Fatalf("semantic recall=%#v", recalled)
 	}
+	requirementRecall := runtimeDataWriteOwnerExecuteRecall(t, worker, firstContext, "durable_store_workflow", "requirement", first.AuditRef)
+	if len(requirementRecall.Records) != 1 || requirementRecall.Records[0]["requirement_id"] != first.AuditRef || requirementRecall.Records[0]["request_id"] != "durable-write-1" || requirementRecall.Records[0]["status"] == "" || requirementRecall.Records[0]["lifecycle"] == "" {
+		t.Fatalf("requirement recall=%#v", requirementRecall)
+	}
+	for _, forbidden := range []string{"message", "user_scope", "path", "database", "sql"} {
+		if strings.Contains(strings.ToLower(string(mustJSON(requirementRecall.Records[0]))), forbidden) {
+			t.Fatalf("requirement recall leaked %q: %#v", forbidden, requirementRecall.Records[0])
+		}
+	}
 	otherUser := runtimeDurableWriteTestContext(t, "durable-recall-other", "user-2")
 	otherRecall := runtimeDataWriteOwnerExecuteRecall(t, worker, otherUser, "durable_store_workflow", "exact_request", "durable-write-2")
 	if len(otherRecall.Records) != 0 {
 		t.Fatalf("cross-user recall leaked=%#v", otherRecall)
+	}
+	otherRequirementRecall := runtimeDataWriteOwnerExecuteRecall(t, worker, otherUser, "durable_store_workflow", "requirement", first.AuditRef)
+	if len(otherRequirementRecall.Records) != 0 {
+		t.Fatalf("cross-user requirement recall leaked=%#v", otherRequirementRecall)
+	}
+	missingRequirementRecall := runtimeDataWriteOwnerExecuteRecall(t, worker, firstContext, "durable_store_workflow", "requirement", "missing-requirement")
+	if len(missingRequirementRecall.Records) != 0 {
+		t.Fatalf("missing requirement recall=%#v", missingRequirementRecall)
 	}
 
 	for _, forbidden := range []string{"request_id", "trace_id", "requested_by", "user_scope", "requirement_id"} {

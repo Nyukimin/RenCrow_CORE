@@ -160,6 +160,14 @@ type TradeConfig struct {
 	TimeoutMS     int    `yaml:"timeout_ms"`
 }
 
+// LocalAgentOpsConfig controls the optional loopback-only authenticated Agent
+// OPS ingress used by RenCrow_CMD. The token itself is read only at startup.
+type LocalAgentOpsConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	AuthTokenFile string `yaml:"auth_token_file"`
+	UserID        string `yaml:"user_id"`
+}
+
 // GamesAutoPlayConfig はペルソナの自発プレイ（autoplay ランナー）の設定。
 // ペースは固定間隔ではなく LLM 自身が next_check_minutes で決める
 // （RenCrow_GAMES/docs/10_RenCrow自発プレイ仕様.md）。

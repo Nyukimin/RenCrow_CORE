@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
@@ -205,7 +206,21 @@ func TestCompositeRunnerV2_RegisteredToolRejectsBlockedScriptCommand(t *testing.
 func TestCompositeRunnerV2_ListTools_MergesBaseAndRegistry(t *testing.T) {
 	registry := &mockToolRegistry{
 		entries: map[string]capability.ToolEntry{
-			"custom_tool": {Name: "custom_tool"},
+			"custom_tool": {
+				Name:        "custom_tool",
+				Description: "custom description",
+				SchemaJSON:  `{"type":"object","properties":{"query":{"type":"string"}}}`,
+			},
+			"canonical_tool": {
+				Name:        "canonical_tool",
+				Description: "canonical description",
+				SchemaJSON:  `{"type":"function","function":{"name":"canonical_tool","description":"canonical description","parameters":{"type":"object"}}}`,
+			},
+			"invalid_tool": {
+				Name:        "invalid_tool",
+				Description: "invalid",
+				SchemaJSON:  `{"type":"function"}`,
+			},
 		},
 	}
 	base := &mockBaseRunner{
@@ -232,6 +247,26 @@ func TestCompositeRunnerV2_ListTools_MergesBaseAndRegistry(t *testing.T) {
 	}
 	if !names["custom_tool"] {
 		t.Error("expected 'custom_tool' in ListTools")
+	}
+	if !names["canonical_tool"] {
+		t.Error("expected 'canonical_tool' in ListTools")
+	}
+	if names["invalid_tool"] {
+		t.Error("invalid registry definition must not be exposed")
+	}
+	for _, metadata := range metas {
+		switch metadata.ToolID {
+		case "custom_tool":
+			wantParameters := map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}}
+			if metadata.Description != "custom description" || !reflect.DeepEqual(metadata.Parameters, wantParameters) {
+				t.Fatalf("legacy metadata = %#v", metadata)
+			}
+		case "canonical_tool":
+			wantParameters := map[string]any{"type": "object"}
+			if metadata.Description != "canonical description" || !reflect.DeepEqual(metadata.Parameters, wantParameters) {
+				t.Fatalf("canonical metadata = %#v", metadata)
+			}
+		}
 	}
 }
 

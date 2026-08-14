@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -62,6 +63,47 @@ func TestRuntimeDataWriteRegistryDispatchesExactRegistrationAndReturnsReceipt(t 
 	}
 	if _, err := time.Parse(time.RFC3339Nano, receipt.CompletedAt); err != nil {
 		t.Fatalf("completed_at = %q: %v", receipt.CompletedAt, err)
+	}
+}
+
+func TestRuntimeDataWriteReceiptJSONExposesOwnerAuditRefAndHidesInternalCorrelation(t *testing.T) {
+	receipt := runtimeDataWriteReceipt{
+		Owner:          "conversation_l1",
+		OwnerRoute:     "conversation_l1/append",
+		AuditRef:       "owner-record-1",
+		RequestID:      "request-1",
+		ActorID:        "mio",
+		AgentRole:      "worker",
+		Purpose:        "ops",
+		DataScope:      string(dataRecallAccessPublic),
+		IdempotencyKey: "idempotency-1",
+	}
+	encoded, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	serialized := string(encoded)
+	if receipt.RequestID != "request-1" || receipt.IdempotencyKey != "idempotency-1" {
+		t.Fatalf("internal correlation fields = request_id=%q idempotency_key=%q", receipt.RequestID, receipt.IdempotencyKey)
+	}
+	for _, field := range []string{"\"owner\"", "\"owner_route\"", "\"audit_ref\"", "\"actor_id\""} {
+		if !strings.Contains(serialized, field) {
+			t.Fatalf("receipt JSON = %s, want field %q", serialized, field)
+		}
+	}
+	for _, hidden := range []string{"\"request_id\"", "\"idempotency_key\""} {
+		if strings.Contains(serialized, hidden) {
+			t.Fatalf("receipt JSON = %s, must hide internal field %q", serialized, hidden)
+		}
+	}
+	orderedFields := []string{"\"owner\"", "\"owner_route\"", "\"audit_ref\"", "\"actor_id\""}
+	previous := -1
+	for _, field := range orderedFields {
+		current := strings.Index(serialized, field)
+		if current <= previous {
+			t.Fatalf("receipt JSON field order = %s, expected %q after position %d", serialized, field, previous)
+		}
+		previous = current
 	}
 }
 

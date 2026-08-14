@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	dataWriteToolName                            = "data.write"
-	dataWriteUnavailableErrorCode tool.ErrorCode = "UNAVAILABLE"
-	dataWriteMaxPayloadBytes                     = 64 * 1024
+	dataWriteToolName                                = "data.write"
+	dataWriteUnavailableErrorCode     tool.ErrorCode = "UNAVAILABLE"
+	dataWriteMaxPayloadBytes                         = 64 * 1024
+	dataWriteReceiptRecallInstruction                = "follow-up data.recall queryにはaudit_refだけを使い、request_id/idempotency_keyは内部相関用でモデルから参照しない"
 )
 
 var errDataWriteInvalidRequest = errors.New("data write request is invalid")
@@ -58,11 +59,12 @@ func dataWriteMetadata() tool.ToolMetadata {
 		Version:     "1.0.0",
 		Category:    "mutation",
 		Origin:      tool.OriginCoreRuntime,
-		Description: "Workerが認証済み実行scope内の名前付き運用データを書き込む。",
+		Description: "Workerが認証済み実行scope内の名前付き運用データを書き込む。" + dataWriteReceiptRecallInstruction + "。",
 		Invariants: []string{
 			"trusted ToolExecutionScope is required and must identify an Agent",
 			"tool arguments never select actor, user, scope, request, path, database, or SQL",
 			"the provider owns per-store schema, migration, validation, audit, idempotency and operation policy",
+			dataWriteReceiptRecallInstruction,
 		},
 		Parameters: map[string]any{
 			"type":                 "object",

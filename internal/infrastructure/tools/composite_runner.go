@@ -98,11 +98,17 @@ func (c *CompositeRunnerV2) ListTools(ctx context.Context) ([]tool.ToolMetadata,
 		if existing[e.Name] {
 			continue
 		}
+		definition, err := capability.ParseToolDefinition(e)
+		if err != nil {
+			log.Printf("[CompositeRunner] WARN: skip registry tool %q: invalid schema: %v", e.Name, err)
+			continue
+		}
 		result = append(result, tool.ToolMetadata{
 			ToolID:      e.Name,
 			Version:     "1.0.0",
 			Category:    "registered",
 			Description: e.Description,
+			Parameters:  definition.Function.Parameters,
 			Origin:      tool.OriginDynamicRegistry,
 		})
 	}

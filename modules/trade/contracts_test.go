@@ -19,7 +19,7 @@ func validOwnerReceiptForTest(agentID, role, purpose, domain, operation, request
 		ReceiptID: "receipt-1", RequestID: requestID, AgentID: agentID, Role: role, Purpose: purpose, DataScope: "internal",
 		OwnerModule: "RenCrow_TRADE", Domain: domain, Operation: operation, Status: "completed", IdempotentReplay: replay,
 		SchemaVersion: 1, AuditRef: "audit-1", PolicyRevision: "policy-1", MigrationState: "embedded_current",
-		ValidationState: "owner_validated", CompletedAt: "2026-08-14T00:00:00.123456789Z",
+		ValidationState: "owner_validated", CompletedAt: "2026-08-14T00:00:00.123456789Z", CorrelationID: requestID,
 	}
 }
 
@@ -30,7 +30,7 @@ func validDisabledStatus() PrivateStatus {
 		CorrelationID:   "trade-1",
 		ExecutionMode:   "DISABLED",
 		KillSwitch:      "ON",
-		Dependencies:    DependencyStatuses{Broker: "disabled", Ledger: "unconfigured", MarketData: "unavailable"},
+		Dependencies:    DependencyStatuses{Broker: "disabled", Ledger: "unconfigured", MarketData: "unavailable", MemoryOwner: "unavailable"},
 		Policy: PolicyStatus{
 			ExecutionMode:          "DISABLED",
 			KillSwitch:             "ON",
@@ -113,6 +113,18 @@ func TestPrivateStatusValidateDisabledFoundation(t *testing.T) {
 	if err := status.ValidateDisabledFoundation(); err != nil {
 		t.Fatal(err)
 	}
+	if status.Dependencies.MemoryOwnerReady() {
+		t.Fatal("unavailable memory owner must not be reported ready")
+	}
+	status.Dependencies.MemoryOwner = "ready"
+	if err := status.ValidateDisabledFoundation(); err != nil || !status.Dependencies.MemoryOwnerReady() {
+		t.Fatalf("ready memory owner must be accepted: %v", err)
+	}
+	status.Dependencies.MemoryOwner = "broken"
+	if err := status.ValidateDisabledFoundation(); err == nil {
+		t.Fatal("invalid memory owner dependency must be rejected")
+	}
+	status.Dependencies.MemoryOwner = "ready"
 	status.Policy.Capabilities["live_order"] = true
 	if err := status.ValidateDisabledFoundation(); err == nil {
 		t.Fatal("expected unauthorized capability rejection")
@@ -240,5 +252,302 @@ func TestOwnerEvidenceAndReceiptValidationIsFailClosed(t *testing.T) {
 		if err := validateOwnerReceipt(value, ownerSimulationCommitRoute, "request-1", false); err == nil {
 			t.Errorf("%s: expected rejection", name)
 		}
+	}
+}
+
+func validMemorySourceRecordForTest() SourceRecord {
+	return SourceRecord{
+		RecordVersion: 1, SourceRecordID: "source-record-1", CaptureNonce: "0123456789abcdef", SourceDefinitionID: "source-definition-1",
+		SourceDefinitionHash: "sha256:" + strings.Repeat("a", 64), Title: "Official source", Publisher: "Publisher", Jurisdiction: "JP",
+		Category: "market", Language: "ja", SourceURL: "https://example.com/source", FinalURL: "https://example.com/final",
+		TermsReference: "terms-1", LicenseStatus: "review_required", Status: "quarantined", ObservedAt: "2026-08-14T00:00:00Z",
+		PointInTimeAvailableAt: "2026-08-14T00:00:00Z", HTTPStatus: 200, MediaType: "text/html", ByteSize: 12,
+		ContentHash: "sha256:" + strings.Repeat("b", 64), Tags: []string{"official"},
+	}
+}
+
+func validMemoryCandidateForTest() LearningCandidateRecord {
+	return LearningCandidateRecord{
+		RecordVersion: 1, CandidateRecordID: "candidate-record-1", CandidateDefinitionID: "candidate-definition-1", Status: "candidate",
+		Title: "Candidate", Statement: "A bounded statement.", BoundSources: []BoundSource{{
+			SourceDefinitionID: "source-definition-1", SourceRecordID: "source-record-1", ContentHash: "sha256:" + strings.Repeat("b", 64),
+			ObservedAt: "2026-08-14T00:00:00Z", Locator: "section-1",
+		}}, Applicability: []string{"research"}, Limitations: []string{"not advice"}, InvalidationConditions: []string{"source changed"},
+		Tags: []string{"candidate"}, ContentHash: "sha256:" + strings.Repeat("c", 64),
+	}
+}
+
+func validMemoryMarketSnapshotForTest() MarketSnapshot {
+	return MarketSnapshot{
+		SnapshotID: "snapshot-1", SchemaVersion: 1, InstrumentID: "instrument-1", Symbol: "TEST", Name: "Test instrument",
+		AssetType: "equity", Venue: "TSE", Currency: "JPY", TradeDate: "2026-08-14", AvailableAt: "2026-08-14T00:00:00Z",
+		Open: 100, High: 110, Low: 90, Close: 105, AdjClose: 105, Volume: 1000, SourceName: "official",
+		RunID: "run-1", PlanID: "plan-1", PlanHash: "sha256:" + strings.Repeat("a", 64), DatasetID: "dataset-1",
+		DatasetHash: "sha256:" + strings.Repeat("b", 64), DatasetSourceRef: "dataset-source-1", CodeRevision: "revision-1",
+		ContentHash: "sha256:" + strings.Repeat("c", 64),
+	}
+}
+
+func validMemoryReplayDecisionForTest() ReplayDecision {
+	return ReplayDecision{
+		DecisionID: "decision-1", SchemaVersion: 1, SnapshotID: "snapshot-1", RunID: "run-1", InstrumentID: "instrument-1",
+		TradeDate: "2026-08-14", Action: MemoryActionSelect, ContentHash: "sha256:" + strings.Repeat("d", 64),
+	}
+}
+
+func validPortfolioSnapshotForTest() PortfolioSnapshot {
+	nav := int64(1_000_000)
+	unrealized := int64(0)
+	return PortfolioSnapshot{
+		SchemaVersion: 1, PortfolioID: "main-sim", Mode: "SIMULATION", Guaranteed: false, InitialCashJPY: 1_000_000, CashJPY: 1_000_000,
+		ValuationStatus: "complete", UnrealizedPnLJPY: &unrealized, NAVJPY: &nav, Positions: []PortfolioPosition{}, EventCount: 1,
+		LatestEventHash: "sha256:" + strings.Repeat("e", 64),
+	}
+}
+
+func validMemoryEvidenceForTest(purpose, domain, operation, requestID string) OwnerEvidence {
+	evidence := validOwnerEvidenceForTest("shiro", "worker", purpose, domain, operation, requestID, requestID)
+	evidence.RequestTime = "2026-08-14T00:00:00Z"
+	switch purpose {
+	case "source_memory_read":
+		evidence.FreshnessState = "source_observed_at"
+		evidence.ValidationState = "source_record_integrity_verified"
+	case "learning_memory_read":
+		evidence.FreshnessState = "learning_candidate_observed_at"
+		evidence.ValidationState = "learning_candidate_integrity_verified"
+	case "market_memory_read":
+		evidence.FreshnessState = "market_snapshot_available_at_read"
+		evidence.ValidationState = "market_snapshot_integrity_verified"
+	case "replay_memory_read":
+		evidence.FreshnessState = "replay_snapshot_bound_at_read"
+		evidence.ValidationState = "replay_decision_integrity_verified"
+	}
+	return evidence
+}
+
+func TestMemoryOwnerContractsValidateTypedRecordsAndIdentityBindings(t *testing.T) {
+	requestID := "memory-request-1"
+	source := validMemorySourceRecordForTest()
+	candidate := validMemoryCandidateForTest()
+	snapshot := validMemoryMarketSnapshotForTest()
+	decision := validMemoryReplayDecisionForTest()
+
+	readCases := []struct {
+		name     string
+		validate func() error
+	}{
+		{"source", func() error {
+			return (SourceRecordReadResponse{ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: requestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE", MemorySource: MemoryOwnerSource, Record: source, OwnerEvidence: validMemoryEvidenceForTest("source_memory_read", "source", "source_record", requestID)}).Validate(requestID, requestID)
+		}},
+		{"learning", func() error {
+			return (LearningCandidateReadResponse{ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: requestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE", MemorySource: MemoryOwnerSource, Record: candidate, OwnerEvidence: validMemoryEvidenceForTest("learning_memory_read", "learning", "learning_candidate", requestID)}).Validate(requestID, requestID)
+		}},
+		{"market", func() error {
+			return (MarketSnapshotReadResponse{ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: requestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE", MemorySource: MemoryOwnerSource, Record: snapshot, OwnerEvidence: validMemoryEvidenceForTest("market_memory_read", "market", "market_snapshot", requestID)}).Validate(requestID, requestID)
+		}},
+		{"replay", func() error {
+			return (ReplayDecisionReadResponse{ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: requestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE", MemorySource: MemoryOwnerSource, Record: decision, OwnerEvidence: validMemoryEvidenceForTest("replay_memory_read", "replay", "replay_decision", requestID)}).Validate(requestID, requestID)
+		}},
+	}
+	for _, test := range readCases {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+
+	writeCases := []struct {
+		name     string
+		validate func() error
+	}{
+		{"source", func() error {
+			receipt := validOwnerReceiptForTest("shiro", "worker", "source_memory_write", "source", "collect_source", requestID, false)
+			receipt.AuditRef = source.SourceRecordID
+			return (SourceRecordWriteResponse{ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: requestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE", MemorySource: MemoryOwnerSource, Record: source, OwnerReceipt: receipt}).Validate(requestID)
+		}},
+		{"learning", func() error {
+			receipt := validOwnerReceiptForTest("shiro", "worker", "learning_memory_write", "learning", "import_learning_candidate", requestID, false)
+			receipt.AuditRef = candidate.CandidateRecordID
+			return (LearningCandidateWriteResponse{ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: requestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE", MemorySource: MemoryOwnerSource, Record: candidate, OwnerReceipt: receipt}).Validate(requestID)
+		}},
+		{"market", func() error {
+			receipt := validOwnerReceiptForTest("shiro", "worker", "market_memory_write", "market", "import_market_snapshot", requestID, false)
+			receipt.AuditRef = snapshot.SnapshotID
+			return (MarketSnapshotWriteResponse{ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: requestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE", MemorySource: MemoryOwnerSource, Record: snapshot, OwnerReceipt: receipt}).Validate(requestID)
+		}},
+		{"replay", func() error {
+			receipt := validOwnerReceiptForTest("shiro", "worker", "replay_memory_write", "replay", "record_replay_decision", requestID, false)
+			receipt.AuditRef = decision.DecisionID
+			return (ReplayDecisionWriteResponse{ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: requestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE", MemorySource: MemoryOwnerSource, Record: decision, OwnerReceipt: receipt}).Validate(requestID)
+		}},
+	}
+	for _, test := range writeCases {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+
+	badSource := source
+	badSource.Status = "active"
+	if err := badSource.Validate(); err == nil {
+		t.Fatal("source status must be quarantined")
+	}
+	badCandidate := candidate
+	badCandidate.BoundSources[0].ContentHash = "not-a-hash"
+	if err := badCandidate.Validate(); err == nil {
+		t.Fatal("candidate source hash must be validated")
+	}
+	badSnapshot := snapshot
+	badSnapshot.TradeDate = "2026-8-14"
+	if err := badSnapshot.Validate(); err == nil {
+		t.Fatal("market trade date must be exact")
+	}
+	badDecision := decision
+	badDecision.Action = "buy"
+	if err := badDecision.Validate(); err == nil {
+		t.Fatal("replay action must be bounded")
+	}
+
+	receipt := validOwnerReceiptForTest("shiro", "worker", "source_memory_write", "source", "collect_source", requestID, false)
+	receipt.AuditRef = source.SourceRecordID
+	receipt.CorrelationID = "different-correlation"
+	badResponse := SourceRecordWriteResponse{ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: requestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE", MemorySource: MemoryOwnerSource, Record: source, OwnerReceipt: receipt}
+	if err := badResponse.Validate(requestID); err == nil {
+		t.Fatal("receipt correlation must bind to response correlation")
+	}
+}
+
+func TestMemoryOwnerReadEvidenceUsesRouteSpecificStates(t *testing.T) {
+	cases := []struct {
+		name       string
+		route      ownerRouteContract
+		purpose    string
+		domain     string
+		operation  string
+		freshness  string
+		validation string
+	}{
+		{name: "source", route: ownerSourceRecordRoute, purpose: "source_memory_read", domain: "source", operation: "source_record", freshness: "source_observed_at", validation: "source_record_integrity_verified"},
+		{name: "learning", route: ownerLearningCandidateRoute, purpose: "learning_memory_read", domain: "learning", operation: "learning_candidate", freshness: "learning_candidate_observed_at", validation: "learning_candidate_integrity_verified"},
+		{name: "market", route: ownerMarketSnapshotRoute, purpose: "market_memory_read", domain: "market", operation: "market_snapshot", freshness: "market_snapshot_available_at_read", validation: "market_snapshot_integrity_verified"},
+		{name: "replay", route: ownerReplayDecisionRoute, purpose: "replay_memory_read", domain: "replay", operation: "replay_decision", freshness: "replay_snapshot_bound_at_read", validation: "replay_decision_integrity_verified"},
+		{name: "portfolio generic", route: ownerPortfolioSnapshotRoute, purpose: "portfolio_memory_read", domain: "portfolio", operation: "portfolio_snapshot", freshness: "observed_at_read", validation: "owner_route_succeeded"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			evidence := validOwnerEvidenceForTest("shiro", "worker", test.purpose, test.domain, test.operation, "request-1", "request-1")
+			evidence.FreshnessState = test.freshness
+			evidence.ValidationState = test.validation
+			if err := validateOwnerEvidence(evidence, test.route, "request-1", "request-1"); err != nil {
+				t.Fatalf("canonical evidence rejected: %v", err)
+			}
+
+			wrongFreshness := evidence
+			wrongFreshness.FreshnessState = "observed_at_read"
+			if test.freshness == "observed_at_read" {
+				wrongFreshness.FreshnessState = "source_observed_at"
+			}
+			if err := validateOwnerEvidence(wrongFreshness, test.route, "request-1", "request-1"); err == nil {
+				t.Fatal("generic freshness state unexpectedly accepted")
+			}
+			wrongValidation := evidence
+			wrongValidation.ValidationState = "owner_route_succeeded"
+			if test.validation == "owner_route_succeeded" {
+				wrongValidation.ValidationState = "source_record_integrity_verified"
+			}
+			if err := validateOwnerEvidence(wrongValidation, test.route, "request-1", "request-1"); err == nil {
+				t.Fatal("generic validation state unexpectedly accepted")
+			}
+		})
+	}
+}
+
+func TestPortfolioMemoryOwnerContractsValidateSimulationSnapshotAndBinding(t *testing.T) {
+	requestID := "portfolio-request-1"
+	snapshot := validPortfolioSnapshotForTest()
+	read := PortfolioSnapshotReadResponse{
+		ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: requestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE",
+		MemorySource: MemoryOwnerSource, Snapshot: snapshot, OwnerEvidence: validMemoryEvidenceForTest("portfolio_memory_read", "portfolio", "portfolio_snapshot", requestID),
+	}
+	if err := read.Validate(requestID, requestID); err != nil {
+		t.Fatal(err)
+	}
+	receipt := validOwnerReceiptForTest("shiro", "worker", "portfolio_memory_write", "portfolio", "ensure_initialized", requestID, false)
+	receipt.AuditRef = snapshot.LatestEventHash
+	write := PortfolioSnapshotWriteResponse{
+		ContractVersion: PrivateContractVersion, ServiceStatus: "ready", CorrelationID: requestID, ExecutionMode: "DISABLED", LearningMode: "OFFLINE_AVAILABLE",
+		MemorySource: MemoryOwnerSource, Snapshot: snapshot, OwnerReceipt: receipt,
+	}
+	if err := write.Validate(requestID); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, mutate := range map[string]func(*PortfolioSnapshot){
+		"mode":         func(value *PortfolioSnapshot) { value.Mode = "LIVE" },
+		"initial cash": func(value *PortfolioSnapshot) { value.InitialCashJPY = 1 },
+		"guaranteed":   func(value *PortfolioSnapshot) { value.Guaranteed = true },
+		"event hash":   func(value *PortfolioSnapshot) { value.LatestEventHash = "not-a-hash" },
+		"event count":  func(value *PortfolioSnapshot) { value.EventCount = 0 },
+		"portfolio id": func(value *PortfolioSnapshot) { value.PortfolioID = "../portfolio" },
+		"position value": func(value *PortfolioSnapshot) {
+			value.Positions = []PortfolioPosition{{InstrumentID: "instrument-1", Quantity: 1, CostBasisJPY: -1}}
+		},
+	} {
+		value := snapshot
+		mutate(&value)
+		if err := value.ValidateMemoryOwner(); err == nil {
+			t.Errorf("%s: expected rejection", name)
+		}
+	}
+
+	write.OwnerReceipt.AuditRef = "sha256:" + strings.Repeat("f", 64)
+	if err := write.Validate(requestID); err == nil {
+		t.Fatal("portfolio receipt audit must bind to snapshot latest event hash")
+	}
+	write.OwnerReceipt.AuditRef = snapshot.LatestEventHash
+	write.OwnerReceipt.CorrelationID = "other-correlation"
+	if err := write.Validate(requestID); err == nil {
+		t.Fatal("portfolio receipt correlation must bind to response correlation")
+	}
+}
+
+func TestMemoryOwnerRequestsValidateStrictInputs(t *testing.T) {
+	validCollect := CollectSourceRequest{ContractVersion: MemoryOwnerContractVersion, RequestID: "request-1", SourceDefinitionID: "source-definition-1"}
+	if err := validCollect.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*CollectSourceRequest){
+		"contract":   func(value *CollectSourceRequest) { value.ContractVersion = "other/v1" },
+		"request id": func(value *CollectSourceRequest) { value.RequestID = "../request" },
+		"source id":  func(value *CollectSourceRequest) { value.SourceDefinitionID = "source/definition" },
+	} {
+		value := validCollect
+		mutate(&value)
+		if err := value.Validate(); err == nil {
+			t.Errorf("%s: expected rejection", name)
+		}
+	}
+	if err := (ImportLearningCandidateRequest{ContractVersion: MemoryOwnerContractVersion, RequestID: "request-1", CandidateDefinitionID: "candidate-1"}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (ImportMarketSnapshotRequest{ContractVersion: MemoryOwnerContractVersion, RequestID: "request-1", RunID: "run-1", InstrumentID: "instrument-1", TradeDate: "2026-08-14"}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (RecordReplayDecisionRequest{ContractVersion: MemoryOwnerContractVersion, RequestID: "request-1", RunID: "run-1", InstrumentID: "instrument-1", TradeDate: "2026-08-14", Action: MemoryActionAvoid}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (EnsurePortfolioInitializedRequest{ContractVersion: MemoryOwnerContractVersion, RequestID: "request-1"}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	invalidPortfolioRequest := EnsurePortfolioInitializedRequest{ContractVersion: MemoryOwnerContractVersion, RequestID: "request/1"}
+	if err := invalidPortfolioRequest.Validate(); err == nil {
+		t.Fatal("portfolio initialization request identity must be safe")
+	}
+	invalidReplay := RecordReplayDecisionRequest{ContractVersion: MemoryOwnerContractVersion, RequestID: "request-1", RunID: "run-1", InstrumentID: "instrument-1", TradeDate: "2026-08-14", Action: "buy"}
+	if err := invalidReplay.Validate(); err == nil {
+		t.Fatal("replay request action must be bounded")
 	}
 }

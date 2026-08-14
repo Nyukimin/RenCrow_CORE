@@ -15,10 +15,12 @@ type SQLiteGlossaryRepository struct {
 }
 
 func NewSQLiteGlossaryRepository(dbPath string) (*SQLiteGlossaryRepository, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout%3d5000&_time_format=sqlite")
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	if err := createTables(db); err != nil {
 		return nil, err

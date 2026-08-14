@@ -34,6 +34,7 @@ type Routes struct {
 	ChannelsList    http.HandlerFunc
 	ChannelsProbe   http.HandlerFunc
 	WebGatherDoctor http.HandlerFunc
+	AgentOps        http.HandlerFunc
 }
 
 // RegisterRoutes registers handlers at the feature route boundary.
@@ -56,6 +57,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/channels", routes.ChannelsList)
 	registerRoute(mux, "/viewer/channels/probe", routes.ChannelsProbe)
 	registerRoute(mux, "/viewer/web-gather/doctor", routes.WebGatherDoctor)
+	registerRoute(mux, "/v1/agent/ops", routes.AgentOps)
 }
 
 // StartBackground reserves the feature background-job boundary.

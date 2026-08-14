@@ -72,6 +72,20 @@ func TestDataWriteToolRegistrationAndModelSchema(t *testing.T) {
 	if metadata.ToolID != dataWriteToolName || metadata.Category != "mutation" || metadata.DryRun {
 		t.Fatalf("metadata identity = %#v, want mutation/non-dry-run data.write", metadata)
 	}
+	const recallInstruction = "follow-up data.recall queryにはaudit_refだけを使い、request_id/idempotency_keyは内部相関用でモデルから参照しない"
+	if !strings.Contains(metadata.Description, recallInstruction) {
+		t.Fatalf("description = %q, want receipt recall instruction %q", metadata.Description, recallInstruction)
+	}
+	foundRecallInstruction := false
+	for _, invariant := range metadata.Invariants {
+		if invariant == recallInstruction {
+			foundRecallInstruction = true
+			break
+		}
+	}
+	if !foundRecallInstruction {
+		t.Fatalf("invariants = %#v, want exact receipt recall instruction %q", metadata.Invariants, recallInstruction)
+	}
 	if metadata.Parameters["additionalProperties"] != false {
 		t.Fatalf("additionalProperties = %#v, want false", metadata.Parameters["additionalProperties"])
 	}

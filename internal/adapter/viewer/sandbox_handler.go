@@ -136,39 +136,50 @@ func HandleSandboxPromotionRequest(store SandboxPromotionStore) http.HandlerFunc
 			http.Error(w, "failed to save promotion request", http.StatusInternalServerError)
 			return
 		}
+		saveArtifact := func(artifactID, artifactType, filePath, title string) (*domainsandbox.SandboxArtifact, error) {
+			if strings.TrimSpace(filePath) == "" {
+				return nil, nil
+			}
+			artifact := domainsandbox.SandboxArtifact{
+				ArtifactID: artifactID,
+				SandboxID:  req.SandboxID,
+				Type:       artifactType,
+				FilePath:   filePath,
+				Title:      title,
+				Status:     "pending_review",
+				CreatedAt:  now,
+			}
+			if err := store.SaveSandboxArtifact(r.Context(), artifact); err != nil {
+				return nil, err
+			}
+			return &artifact, nil
+		}
+		targetArtifact, err := saveArtifact(fmt.Sprintf("art_target_%s", req.PromotionID), "target_file", req.TargetPath, "Target File")
+		if err != nil {
+			http.Error(w, "failed to save target artifact", http.StatusInternalServerError)
+			return
+		}
+		diffArtifact, err := saveArtifact(fmt.Sprintf("art_diff_%s", req.PromotionID), "diff", req.DiffPath, "Diff")
+		if err != nil {
+			http.Error(w, "failed to save diff artifact", http.StatusInternalServerError)
+			return
+		}
+		testResultArtifact, err := saveArtifact(fmt.Sprintf("art_test_result_%s", req.PromotionID), "test_result", req.TestResultPath, "Test Result")
+		if err != nil {
+			http.Error(w, "failed to save test result artifact", http.StatusInternalServerError)
+			return
+		}
 		var rollbackArtifact *domainsandbox.SandboxArtifact
 		var verificationArtifact *domainsandbox.SandboxArtifact
-		if req.RollbackPlanPath != "" {
-			artifact := domainsandbox.SandboxArtifact{
-				ArtifactID: fmt.Sprintf("art_rollback_%s", req.PromotionID),
-				SandboxID:  req.SandboxID,
-				Type:       "rollback_plan",
-				FilePath:   req.RollbackPlanPath,
-				Title:      "Rollback Plan",
-				Status:     "pending_review",
-				CreatedAt:  now,
-			}
-			if err := store.SaveSandboxArtifact(r.Context(), artifact); err != nil {
-				http.Error(w, "failed to save rollback artifact", http.StatusInternalServerError)
-				return
-			}
-			rollbackArtifact = &artifact
+		rollbackArtifact, err = saveArtifact(fmt.Sprintf("art_rollback_%s", req.PromotionID), "rollback_plan", req.RollbackPlanPath, "Rollback Plan")
+		if err != nil {
+			http.Error(w, "failed to save rollback artifact", http.StatusInternalServerError)
+			return
 		}
-		if req.PostApplyVerificationPath != "" {
-			artifact := domainsandbox.SandboxArtifact{
-				ArtifactID: fmt.Sprintf("art_post_apply_%s", req.PromotionID),
-				SandboxID:  req.SandboxID,
-				Type:       "post_apply_verification",
-				FilePath:   req.PostApplyVerificationPath,
-				Title:      "Post-apply Verification",
-				Status:     "pending_review",
-				CreatedAt:  now,
-			}
-			if err := store.SaveSandboxArtifact(r.Context(), artifact); err != nil {
-				http.Error(w, "failed to save post-apply verification artifact", http.StatusInternalServerError)
-				return
-			}
-			verificationArtifact = &artifact
+		verificationArtifact, err = saveArtifact(fmt.Sprintf("art_post_apply_%s", req.PromotionID), "post_apply_verification", req.PostApplyVerificationPath, "Post-apply Verification")
+		if err != nil {
+			http.Error(w, "failed to save post-apply verification artifact", http.StatusInternalServerError)
+			return
 		}
 		log := domainsandbox.PromotionGateLog{
 			EventID:               fmt.Sprintf("evt_promotion_gate_%d", now.UnixNano()),
@@ -186,6 +197,9 @@ func HandleSandboxPromotionRequest(store SandboxPromotionStore) http.HandlerFunc
 			"promotion":                        req,
 			"decision":                         decision,
 			"gate_log":                         log,
+			"target_artifact":                  targetArtifact,
+			"diff_artifact":                    diffArtifact,
+			"test_result_artifact":             testResultArtifact,
 			"rollback_artifact":                rollbackArtifact,
 			"post_apply_verification_artifact": verificationArtifact,
 		})
@@ -391,6 +405,7 @@ func HandleSandboxWorktreeCreate(manager SandboxWorktreeCreator, baseDir string)
 		RepoRoot     string `json:"repo_root"`
 		RepoName     string `json:"repo_name"`
 		Branch       string `json:"branch"`
+		DetachedRef  string `json:"detached_ref"`
 		PathName     string `json:"path_name"`
 		Purpose      string `json:"purpose"`
 		OwnerAgent   string `json:"owner_agent"`
@@ -417,6 +432,7 @@ func HandleSandboxWorktreeCreate(manager SandboxWorktreeCreator, baseDir string)
 			BaseDir:      baseDir,
 			RepoName:     req.RepoName,
 			Branch:       req.Branch,
+			DetachedRef:  req.DetachedRef,
 			PathName:     req.PathName,
 			Purpose:      req.Purpose,
 			OwnerAgent:   req.OwnerAgent,

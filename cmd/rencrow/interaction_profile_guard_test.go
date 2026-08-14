@@ -212,6 +212,22 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "cmd agent ops can invoke the authenticated ingress",
+			client:  "RenCrow_CMD",
+			profile: "agent-ops",
+			method:  http.MethodPost,
+			path:    "/v1/agent/ops",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "cmd agent ops cannot use another method",
+			client:  "RenCrow_CMD",
+			profile: "agent-ops",
+			method:  http.MethodGet,
+			path:    "/v1/agent/ops",
+			want:    http.StatusForbidden,
+		},
+		{
 			name:    "cmd control can read a shadow outcome report",
 			client:  "RenCrow_CMD",
 			profile: "cmd-control",

@@ -12,6 +12,7 @@ import (
 // Config はツールループの設定
 type Config struct {
 	MaxIterations int // 最大反復回数（0の場合デフォルト10）
+	MaxTokens     int // 1回のモデル呼び出しの最大出力トークン数（0の場合デフォルト4096）
 }
 
 func (c Config) maxIterations() int {
@@ -19,6 +20,13 @@ func (c Config) maxIterations() int {
 		return c.MaxIterations
 	}
 	return 10
+}
+
+func (c Config) maxTokens() int {
+	if c.MaxTokens > 0 {
+		return c.MaxTokens
+	}
+	return 4096
 }
 
 // Run はReActループを実行する
@@ -38,6 +46,7 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 	messages []llm.ChatMessage, cfg Config) (string, error) {
 
 	maxIter := cfg.maxIterations()
+	maxTokens := cfg.maxTokens()
 
 	for i := 0; i < maxIter; i++ {
 		select {
@@ -50,6 +59,7 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 		resp, err := provider.Chat(ctx, llm.ChatRequest{
 			Messages:        messages,
 			Tools:           toolDefs,
+			MaxTokens:       maxTokens,
 			ReasoningEffort: llm.ReasoningEffortLow,
 		})
 		if err != nil {
@@ -78,7 +88,7 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 				content = fmt.Sprintf("Error: %v", err)
 			} else if result != nil && result.Error == nil {
 				log.Printf("[ToolLoop] tool complete name=%s", tc.Function.Name)
-				content = fmt.Sprintf("%v", result.Result)
+				content = result.String()
 			} else if result != nil && result.Error != nil {
 				log.Printf("[ToolLoop] tool returned error name=%s err=%s", tc.Function.Name, result.Error.Message)
 				content = fmt.Sprintf("Error: %s", result.Error.Message)

@@ -201,13 +201,29 @@ ORDER BY created_at ASC, id ASC
 	if err != nil {
 		return ChatGPTL3ConfirmResult{}, err
 	}
-	var matched []string
+	type candidateRow struct {
+		id       string
+		metaJSON string
+	}
+	candidateRows := make([]candidateRow, 0)
 	for rows.Next() {
-		var id, metaJSON string
-		if err := rows.Scan(&id, &metaJSON); err != nil {
+		var row candidateRow
+		if err := rows.Scan(&row.id, &row.metaJSON); err != nil {
 			rows.Close()
 			return ChatGPTL3ConfirmResult{}, err
 		}
+		candidateRows = append(candidateRows, row)
+	}
+	if err := rows.Close(); err != nil {
+		return ChatGPTL3ConfirmResult{}, err
+	}
+	if err := rows.Err(); err != nil {
+		return ChatGPTL3ConfirmResult{}, err
+	}
+
+	var matched []string
+	for _, row := range candidateRows {
+		id, metaJSON := row.id, row.metaJSON
 		var meta struct {
 			EvidenceEventIDs []string `json:"evidence_event_ids"`
 			Sensitivity      string   `json:"sensitivity"`
@@ -231,12 +247,6 @@ ORDER BY created_at ASC, id ASC
 		if allMatch {
 			matched = append(matched, id)
 		}
-	}
-	if err := rows.Close(); err != nil {
-		return ChatGPTL3ConfirmResult{}, err
-	}
-	if err := rows.Err(); err != nil {
-		return ChatGPTL3ConfirmResult{}, err
 	}
 	result.Matched = len(matched)
 	if !apply {

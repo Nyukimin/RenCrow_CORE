@@ -307,21 +307,83 @@ func TestHandleSandboxPromotionRequestRegistersRollbackArtifact(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.artifacts) != 1 {
-		t.Fatalf("expected rollback artifact, got %#v", store.artifacts)
+	if len(store.artifacts) != 4 {
+		t.Fatalf("expected target, diff, test, and rollback artifacts, got %#v", store.artifacts)
 	}
-	artifact := store.artifacts[0]
+	artifact := store.artifacts[3]
 	if artifact.Type != "rollback_plan" || artifact.FilePath != "sandbox/sbx_1/reports/rollback.md" || artifact.Status != "pending_review" {
 		t.Fatalf("unexpected rollback artifact: %#v", artifact)
 	}
 	var response struct {
-		RollbackArtifact *domainsandbox.SandboxArtifact `json:"rollback_artifact"`
+		RollbackArtifact      *domainsandbox.SandboxArtifact `json:"rollback_artifact"`
+		PostApplyVerification *domainsandbox.SandboxArtifact `json:"post_apply_verification_artifact"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if response.RollbackArtifact == nil || response.RollbackArtifact.Type != "rollback_plan" {
 		t.Fatalf("missing rollback artifact in response: %#v", response.RollbackArtifact)
+	}
+	if response.PostApplyVerification != nil {
+		t.Fatalf("optional post-apply artifact should be omitted: %#v", response.PostApplyVerification)
+	}
+}
+
+func TestHandleSandboxPromotionRequestRegistersCompleteArtifactSet(t *testing.T) {
+	store := &stubSandboxPromotionStore{}
+	body := []byte(`{
+		"promotion_id":"prom_complete",
+		"sandbox_id":"sbx_complete",
+		"target_path":"workspace/sbx_complete/target.go",
+		"diff_path":"workspace/sbx_complete/change.diff",
+		"reason":"promote the reviewed change",
+		"test_result_path":"workspace/sbx_complete/test.txt",
+		"rollback_plan_path":"workspace/sbx_complete/rollback.md",
+		"post_apply_verification_path":"workspace/sbx_complete/post-apply.txt"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/viewer/sandbox/promotions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	HandleSandboxPromotionRequest(store).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	want := []domainsandbox.SandboxArtifact{
+		{ArtifactID: "art_target_prom_complete", SandboxID: "sbx_complete", Type: "target_file", FilePath: "workspace/sbx_complete/target.go", Title: "Target File", Status: "pending_review"},
+		{ArtifactID: "art_diff_prom_complete", SandboxID: "sbx_complete", Type: "diff", FilePath: "workspace/sbx_complete/change.diff", Title: "Diff", Status: "pending_review"},
+		{ArtifactID: "art_test_result_prom_complete", SandboxID: "sbx_complete", Type: "test_result", FilePath: "workspace/sbx_complete/test.txt", Title: "Test Result", Status: "pending_review"},
+		{ArtifactID: "art_rollback_prom_complete", SandboxID: "sbx_complete", Type: "rollback_plan", FilePath: "workspace/sbx_complete/rollback.md", Title: "Rollback Plan", Status: "pending_review"},
+		{ArtifactID: "art_post_apply_prom_complete", SandboxID: "sbx_complete", Type: "post_apply_verification", FilePath: "workspace/sbx_complete/post-apply.txt", Title: "Post-apply Verification", Status: "pending_review"},
+	}
+	if len(store.artifacts) != len(want) {
+		t.Fatalf("artifacts = %#v, want %d artifacts", store.artifacts, len(want))
+	}
+	createdAt := store.artifacts[0].CreatedAt
+	for i, expected := range want {
+		got := store.artifacts[i]
+		if got.ArtifactID != expected.ArtifactID || got.SandboxID != expected.SandboxID || got.Type != expected.Type || got.FilePath != expected.FilePath || got.Title != expected.Title || got.Status != expected.Status || got.CreatedAt.IsZero() || !got.CreatedAt.Equal(createdAt) {
+			t.Fatalf("artifact[%d] = %#v, want %#v with non-zero CreatedAt", i, got, expected)
+		}
+	}
+	var response struct {
+		TargetArtifact        *domainsandbox.SandboxArtifact `json:"target_artifact"`
+		DiffArtifact          *domainsandbox.SandboxArtifact `json:"diff_artifact"`
+		TestResultArtifact    *domainsandbox.SandboxArtifact `json:"test_result_artifact"`
+		RollbackArtifact      *domainsandbox.SandboxArtifact `json:"rollback_artifact"`
+		PostApplyVerification *domainsandbox.SandboxArtifact `json:"post_apply_verification_artifact"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	responseArtifacts := []*domainsandbox.SandboxArtifact{response.TargetArtifact, response.DiffArtifact, response.TestResultArtifact, response.RollbackArtifact, response.PostApplyVerification}
+	for i, artifact := range responseArtifacts {
+		if artifact == nil {
+			t.Fatalf("response missing artifact[%d]: %#v", i, response)
+		}
+		if artifact.ArtifactID != want[i].ArtifactID || artifact.Type != want[i].Type || artifact.FilePath != want[i].FilePath || artifact.Status != want[i].Status {
+			t.Fatalf("response artifact[%d] = %#v, want %#v", i, artifact, want[i])
+		}
 	}
 }
 
@@ -345,10 +407,10 @@ func TestHandleSandboxPromotionRequestRegistersPostApplyVerificationArtifact(t *
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.artifacts) != 2 {
-		t.Fatalf("expected rollback and post-apply artifacts, got %#v", store.artifacts)
+	if len(store.artifacts) != 5 {
+		t.Fatalf("expected complete artifact set, got %#v", store.artifacts)
 	}
-	artifact := store.artifacts[1]
+	artifact := store.artifacts[4]
 	if artifact.Type != "post_apply_verification" || artifact.FilePath != "sandbox/sbx_1/reports/post_apply.md" || artifact.Status != "pending_review" {
 		t.Fatalf("unexpected post-apply artifact: %#v", artifact)
 	}
@@ -837,6 +899,48 @@ func TestHandleSandboxWorktreeCreate(t *testing.T) {
 	}
 	if response.Sandbox.Type != "code_worktree" || response.Sandbox.WorkstreamID != "ws_1" {
 		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestHandleSandboxWorktreeCreateForwardsDetachedRef(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	creator := &stubSandboxWorktreeCreator{
+		createResult: sandboxapp.WorktreeSandboxCreateResult{
+			Worktree: aiworkflowapp.WorktreeCreateResult{
+				Worktree: domainai.WorktreeRegistry{
+					WorktreeID: "worktree:repo:detached-custom",
+					Path:       "/tmp/worktrees/repo-detached-custom",
+					Branch:     "0123456789abcdef0123456789abcdef01234567",
+					Status:     "active",
+					CreatedAt:  now,
+				},
+			},
+		},
+	}
+	body := []byte(`{
+		"repo_root":"/repo",
+		"repo_name":"repo",
+		"detached_ref":"HEAD",
+		"path_name":"repo-detached-custom",
+		"owner_agent":"Worker"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/viewer/sandbox/worktrees/create", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	HandleSandboxWorktreeCreate(creator, "../worktrees").ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if creator.createOpts.DetachedRef != "HEAD" || creator.createOpts.Branch != "" {
+		t.Fatalf("opts = %#v", creator.createOpts)
+	}
+	var response sandboxapp.WorktreeSandboxCreateResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if response.Worktree.Worktree.Branch != creator.createResult.Worktree.Worktree.Branch {
+		t.Fatalf("response resolved branch = %q, want %q", response.Worktree.Worktree.Branch, creator.createResult.Worktree.Worktree.Branch)
 	}
 }
 
