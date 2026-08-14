@@ -126,6 +126,26 @@ func (s *SQLiteStore) SaveGoal(ctx context.Context, item domainworkstream.Goal) 
 	return s.save(ctx, "workstream_goal", "goal_id", item.GoalID, "workstream_id", item.WorkstreamID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
+// FindGoalByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindGoalByID(ctx context.Context, goalID string) (domainworkstream.Goal, bool, error) {
+	if s == nil || s.db == nil {
+		return domainworkstream.Goal{}, false, fmt.Errorf("workstream sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM workstream_goal WHERE goal_id = ?`, goalID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domainworkstream.Goal{}, false, nil
+		}
+		return domainworkstream.Goal{}, false, err
+	}
+	var item domainworkstream.Goal
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domainworkstream.Goal{}, false, err
+	}
+	return item, true, nil
+}
+
 func (s *SQLiteStore) ListGoals(ctx context.Context, limit int) ([]domainworkstream.Goal, error) {
 	return listSQLiteItems[domainworkstream.Goal](ctx, s, "workstream_goal", limit)
 }

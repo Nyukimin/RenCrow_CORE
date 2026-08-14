@@ -86,6 +86,26 @@ func (s *JSONLStore) SaveGoal(_ context.Context, goal domainworkstream.Goal) err
 	return appendJSONL(s.goalPath, goal)
 }
 
+// FindGoalByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindGoalByID(_ context.Context, goalID string) (domainworkstream.Goal, bool, error) {
+	var found domainworkstream.Goal
+	matched := false
+	if err := readJSONL(s.goalPath, func(line []byte) error {
+		var item domainworkstream.Goal
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.GoalID == goalID {
+			found = item
+			matched = true
+		}
+		return nil
+	}); err != nil {
+		return domainworkstream.Goal{}, false, err
+	}
+	return found, matched, nil
+}
+
 func (s *JSONLStore) ListGoals(_ context.Context, limit int) ([]domainworkstream.Goal, error) {
 	if limit <= 0 {
 		limit = 50

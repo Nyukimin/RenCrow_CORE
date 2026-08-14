@@ -181,6 +181,26 @@ func (s *JSONLStore) SaveOpportunity(_ context.Context, item domainrevenue.Oppor
 	return appendJSONL(s.opportunityPath, item)
 }
 
+// FindOpportunityByID returns the latest JSONL record with the exact primary ID.
+func (s *JSONLStore) FindOpportunityByID(_ context.Context, opportunityID string) (domainrevenue.Opportunity, bool, error) {
+	var found domainrevenue.Opportunity
+	matched := false
+	if err := readJSONL(s.opportunityPath, func(line []byte) error {
+		var item domainrevenue.Opportunity
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.OpportunityID == opportunityID {
+			found = item
+			matched = true
+		}
+		return nil
+	}); err != nil {
+		return domainrevenue.Opportunity{}, false, err
+	}
+	return found, matched, nil
+}
+
 func (s *JSONLStore) ListOpportunities(_ context.Context, limit int) ([]domainrevenue.Opportunity, error) {
 	if limit <= 0 {
 		limit = 50

@@ -181,6 +181,26 @@ func (s *SQLiteStore) SaveOpportunity(ctx context.Context, item domainrevenue.Op
 	return s.save(ctx, "opportunity", "opportunity_id", item.OpportunityID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
+// FindOpportunityByID returns the row with the exact primary ID without scanning a list.
+func (s *SQLiteStore) FindOpportunityByID(ctx context.Context, opportunityID string) (domainrevenue.Opportunity, bool, error) {
+	if s == nil || s.db == nil {
+		return domainrevenue.Opportunity{}, false, fmt.Errorf("revenue sqlite store is closed")
+	}
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM opportunity WHERE opportunity_id = ?`, opportunityID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domainrevenue.Opportunity{}, false, nil
+		}
+		return domainrevenue.Opportunity{}, false, err
+	}
+	var item domainrevenue.Opportunity
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domainrevenue.Opportunity{}, false, err
+	}
+	return item, true, nil
+}
+
 func (s *SQLiteStore) ListOpportunities(ctx context.Context, limit int) ([]domainrevenue.Opportunity, error) {
 	return listSQLiteItems[domainrevenue.Opportunity](ctx, s, "opportunity", limit)
 }

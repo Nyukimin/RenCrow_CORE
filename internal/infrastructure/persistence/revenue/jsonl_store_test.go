@@ -219,6 +219,31 @@ func TestJSONLStoreRejectsInvalidRevenueRecords(t *testing.T) {
 	}
 }
 
+func TestJSONLStoreFindOpportunityByIDReturnsLatestExactRecord(t *testing.T) {
+	store := NewJSONLStore(t.TempDir())
+	ctx := context.Background()
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	first := domainrevenue.Opportunity{
+		OpportunityID: "opp_exact", SourceKind: "note", Title: "first", ExpectedRevenue: 100, ExpectedCost: 40, CreatedAt: now,
+	}
+	second := first
+	second.Title = "latest"
+	second.CreatedAt = now.Add(time.Second)
+	if err := store.SaveOpportunity(ctx, first); err != nil {
+		t.Fatalf("SaveOpportunity(first) failed: %v", err)
+	}
+	if err := store.SaveOpportunity(ctx, second); err != nil {
+		t.Fatalf("SaveOpportunity(second) failed: %v", err)
+	}
+	got, found, err := store.FindOpportunityByID(ctx, "opp_exact")
+	if err != nil || !found || got.Title != "latest" || got.ExpectedProfit != 60 {
+		t.Fatalf("FindOpportunityByID() = %#v, found=%v, err=%v", got, found, err)
+	}
+	if _, found, err := store.FindOpportunityByID(ctx, "missing"); err != nil || found {
+		t.Fatalf("missing FindOpportunityByID() found=%v err=%v", found, err)
+	}
+}
+
 func TestJSONLStoreListPolicyDecisionRecordsReturnsLatestStatePerDecision(t *testing.T) {
 	store := NewJSONLStore(t.TempDir())
 	ctx := context.Background()

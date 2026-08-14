@@ -209,3 +209,25 @@ func TestSQLiteStoreAllowsEconomicTask(t *testing.T) {
 		t.Fatalf("external publish task should persist: %v", err)
 	}
 }
+
+func TestSQLiteStoreFindOpportunityByIDUsesExactPrimaryKey(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "revenue.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	item := domainrevenue.Opportunity{
+		OpportunityID: "opp_exact", SourceKind: "note", Title: "exact", ExpectedRevenue: 100, ExpectedCost: 40, CreatedAt: time.Now().UTC(),
+	}
+	if err := store.SaveOpportunity(ctx, item); err != nil {
+		t.Fatalf("SaveOpportunity() failed: %v", err)
+	}
+	got, found, err := store.FindOpportunityByID(ctx, item.OpportunityID)
+	if err != nil || !found || got.OpportunityID != item.OpportunityID || got.ExpectedProfit != 60 {
+		t.Fatalf("FindOpportunityByID() = %#v, found=%v, err=%v", got, found, err)
+	}
+	if _, found, err := store.FindOpportunityByID(ctx, "missing"); err != nil || found {
+		t.Fatalf("missing FindOpportunityByID() found=%v err=%v", found, err)
+	}
+}

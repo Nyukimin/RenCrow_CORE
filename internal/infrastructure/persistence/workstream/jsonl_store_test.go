@@ -161,6 +161,32 @@ func TestJSONLStoreRejectsGoalWithoutContract(t *testing.T) {
 	}
 }
 
+func TestJSONLStoreFindGoalByIDReturnsLatestExactRecord(t *testing.T) {
+	store := NewJSONLStore(t.TempDir())
+	ctx := context.Background()
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	first := domainworkstream.Goal{
+		GoalID: "goal_exact", WorkstreamID: "ws_1", Title: "first",
+		SuccessCriteria: []string{"one"}, Verification: []string{"check"}, Status: domainworkstream.StatusDraft, CreatedAt: now,
+	}
+	second := first
+	second.Title = "latest"
+	second.CreatedAt = now.Add(time.Second)
+	if err := store.SaveGoal(ctx, first); err != nil {
+		t.Fatalf("SaveGoal(first) failed: %v", err)
+	}
+	if err := store.SaveGoal(ctx, second); err != nil {
+		t.Fatalf("SaveGoal(second) failed: %v", err)
+	}
+	got, found, err := store.FindGoalByID(ctx, "goal_exact")
+	if err != nil || !found || got.Title != "latest" {
+		t.Fatalf("FindGoalByID() = %#v, found=%v, err=%v", got, found, err)
+	}
+	if _, found, err := store.FindGoalByID(ctx, "missing"); err != nil || found {
+		t.Fatalf("missing FindGoalByID() found=%v err=%v", found, err)
+	}
+}
+
 func TestJSONLStoreRejectsInvalidArtifactAndSteering(t *testing.T) {
 	store := NewJSONLStore(t.TempDir())
 	ctx := context.Background()

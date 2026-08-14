@@ -498,6 +498,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 
 	deps := &Dependencies{serenaMCPClient: serenaRuntime.client}
 	dataRecallRegistry := toolRuntime.DataRecallRegistry
+	dataWriteRegistry := toolRuntime.DataWriteRegistry
 	durableStoreWorkflow, durableStoreCloser, err := buildDurableStoreRuntime(cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize durable store workflow: %v", err)
@@ -800,6 +801,13 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		if err := registerRuntimeDataRecallWorkstream(dataRecallRegistry, workstreamStore); err != nil {
 			log.Fatalf("Failed to register Workstream data recall: %v", err)
 		}
+		ownerStore, ok := workstreamStore.(runtimeWorkstreamGoalStore)
+		if !ok {
+			log.Fatalf("Failed to initialize Workstream data write owner store")
+		}
+		if err := registerRuntimeDataWriteWorkstream(dataWriteRegistry, ownerStore); err != nil {
+			log.Fatalf("Failed to register Workstream data write: %v", err)
+		}
 		deps.workstreamStatus = viewer.HandleWorkstreamStatus(workstreamStore)
 		deps.workstreamGoal = viewer.HandleWorkstreamGoalCreate(workstreamStore)
 		deps.workstreamArtifact = viewer.HandleWorkstreamArtifactCreate(workstreamStore)
@@ -826,6 +834,13 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.revenueStore = revenueStore
 		if err := registerRuntimeDataRecallRevenue(dataRecallRegistry, revenueStore); err != nil {
 			log.Fatalf("Failed to register Revenue data recall: %v", err)
+		}
+		ownerStore, ok := revenueStore.(runtimeRevenueOpportunityStore)
+		if !ok {
+			log.Fatalf("Failed to initialize Revenue data write owner store")
+		}
+		if err := registerRuntimeDataWriteRevenue(dataWriteRegistry, ownerStore); err != nil {
+			log.Fatalf("Failed to register Revenue data write: %v", err)
 		}
 		deps.revenueStatus = viewer.HandleRevenueStatus(revenueStore, viewer.RevenueEconomicObjectiveSettings{
 			Enabled: cfg.EconomicObjective.Enabled, DraftOnly: cfg.EconomicObjective.DraftOnlyEnabled(),

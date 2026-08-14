@@ -125,3 +125,26 @@ func TestSQLiteStoreRejectsGoalWithoutSuccessCriteria(t *testing.T) {
 		t.Fatal("expected goal without success criteria to fail")
 	}
 }
+
+func TestSQLiteStoreFindGoalByIDUsesExactPrimaryKey(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "workstream.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	item := domainworkstream.Goal{
+		GoalID: "goal_exact", WorkstreamID: "ws_1", Title: "exact",
+		SuccessCriteria: []string{"one"}, Verification: []string{"check"}, Status: domainworkstream.StatusDraft, CreatedAt: time.Now().UTC(),
+	}
+	if err := store.SaveGoal(ctx, item); err != nil {
+		t.Fatalf("SaveGoal() failed: %v", err)
+	}
+	got, found, err := store.FindGoalByID(ctx, item.GoalID)
+	if err != nil || !found || got.GoalID != item.GoalID || got.Title != item.Title {
+		t.Fatalf("FindGoalByID() = %#v, found=%v, err=%v", got, found, err)
+	}
+	if _, found, err := store.FindGoalByID(ctx, "missing"); err != nil || found {
+		t.Fatalf("missing FindGoalByID() found=%v err=%v", found, err)
+	}
+}
