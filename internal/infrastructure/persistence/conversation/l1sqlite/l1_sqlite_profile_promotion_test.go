@@ -2,6 +2,7 @@ package l1sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -123,5 +124,200 @@ func TestMemoryLifecycleKeepsRawWhileProfilePromotionIsPending(t *testing.T) {
 	}
 	if got := countL1Rows(t, ctx, store, `SELECT count(*) FROM l1_memory_event WHERE namespace = ?`, "conv:12"); got != 1 {
 		t.Fatalf("raw rows=%d", got)
+	}
+}
+
+func TestRetryFailedProfilePromotionJobsRequeuesOnlyEvidenceBackedRowsIdempotently(t *testing.T) {
+	store := newProfilePromotionTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	if err := store.SaveMessage(ctx, "ren", 13, "conv:13", domconv.NewMessage(domconv.SpeakerUser, "根拠は保持する", map[string]any{"keep": true}), MemoryStateObserved); err != nil {
+		t.Fatal(err)
+	}
+	var evidenceID string
+	var beforeMessage, beforeMeta, beforeState string
+	if err := store.db.QueryRowContext(ctx, `
+SELECT id, message, meta_json, memory_state FROM l1_memory_event WHERE namespace = ?`, "conv:13").Scan(&evidenceID, &beforeMessage, &beforeMeta, &beforeState); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := store.ClaimProfilePromotionBatch(ctx, 1, 1, time.Minute, now)
+	if err != nil || batch == nil {
+		t.Fatalf("claim batch=%#v err=%v", batch, err)
+	}
+	if err := store.FailProfilePromotionBatch(ctx, *batch, 1, now, "numeric preference parse failed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO l1_profile_promotion_job (
+	evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, last_error, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)`,
+		"orphan-evidence", "ren", 13, domainmemory.ProfilePromotionFailed, 5, "orphan must remain", now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.RetryFailedProfilePromotionJobs(ctx, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RequeuedCount != 1 || got.MissingEvidenceCount != 1 {
+		t.Fatalf("retry result=%+v", got)
+	}
+	var state string
+	var attempts int
+	var lastError string
+	if err := store.db.QueryRowContext(ctx, `
+SELECT state, attempt_count, last_error FROM l1_profile_promotion_job WHERE evidence_event_id = ?`, evidenceID).
+		Scan(&state, &attempts, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	if state != domainmemory.ProfilePromotionPending || attempts != 0 || lastError != "numeric preference parse failed" {
+		t.Fatalf("requeued job state=%q attempts=%d error=%q", state, attempts, lastError)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM l1_profile_promotion_job WHERE evidence_event_id = ?`, "orphan-evidence").Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != domainmemory.ProfilePromotionFailed {
+		t.Fatalf("orphan state=%q", state)
+	}
+	var afterMessage, afterMeta, afterState string
+	if err := store.db.QueryRowContext(ctx, `
+SELECT message, meta_json, memory_state FROM l1_memory_event WHERE id = ?`, evidenceID).
+		Scan(&afterMessage, &afterMeta, &afterState); err != nil {
+		t.Fatal(err)
+	}
+	if afterMessage != beforeMessage || afterMeta != beforeMeta || afterState != beforeState {
+		t.Fatalf("evidence changed: before=(%q,%q,%q) after=(%q,%q,%q)", beforeMessage, beforeMeta, beforeState, afterMessage, afterMeta, afterState)
+	}
+	var auditCount int
+	if err := store.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM l1_event_log WHERE event_type = ?`, "memory.profile_promotion_retry_requested").Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("audit count=%d want=1", auditCount)
+	}
+
+	got, err = store.RetryFailedProfilePromotionJobs(ctx, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RequeuedCount != 0 || got.MissingEvidenceCount != 1 {
+		t.Fatalf("second retry result=%+v", got)
+	}
+	if err := store.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM l1_event_log WHERE event_type = ?`, "memory.profile_promotion_retry_requested").Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("second retry changed audit count=%d", auditCount)
+	}
+
+	batch, err = store.ClaimProfilePromotionBatch(ctx, 1, 5, time.Hour, now.Add(3*time.Minute))
+	if err != nil || batch == nil || len(batch.Messages) != 1 || batch.Messages[0].EventID != evidenceID {
+		t.Fatalf("requeued row was not claimable: batch=%#v err=%v", batch, err)
+	}
+}
+
+func TestProfilePromotionDiagnosticsCountsAllRowsAndReportsPoolStats(t *testing.T) {
+	store := newProfilePromotionTestStore(t)
+	ctx := context.Background()
+	states := []string{
+		domainmemory.ProfilePromotionPending,
+		domainmemory.ProfilePromotionRunning,
+		domainmemory.ProfilePromotionRetryWait,
+		domainmemory.ProfilePromotionCompleted,
+		domainmemory.ProfilePromotionFailed,
+	}
+	for i, state := range states {
+		namespace := "conv:diagnostics-" + string(rune('a'+i))
+		if err := store.SaveMessage(ctx, "ren", int64(20+i), namespace, domconv.NewMessage(domconv.SpeakerUser, namespace, nil), MemoryStateObserved); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.db.ExecContext(ctx, `
+UPDATE l1_profile_promotion_job SET state = ?, attempt_count = ?, last_error = ?
+WHERE evidence_event_id = (SELECT id FROM l1_memory_event WHERE namespace = ?)`,
+			state, i, "diagnostic error", namespace); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO l1_profile_promotion_job (
+	evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, last_error, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, '', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		"diagnostics-orphan", "ren", 99, domainmemory.ProfilePromotionFailed, 5, "orphan"); err != nil {
+		t.Fatal(err)
+	}
+
+	jobs, err := store.ListProfilePromotionJobs(ctx, 2)
+	if err != nil || len(jobs) != 2 {
+		t.Fatalf("limited jobs=%d err=%v", len(jobs), err)
+	}
+	report, err := store.ProfilePromotionDiagnostics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.StateCounts[domainmemory.ProfilePromotionPending] != 1 ||
+		report.StateCounts[domainmemory.ProfilePromotionRunning] != 1 ||
+		report.StateCounts[domainmemory.ProfilePromotionRetryWait] != 1 ||
+		report.StateCounts[domainmemory.ProfilePromotionCompleted] != 1 ||
+		report.StateCounts[domainmemory.ProfilePromotionFailed] != 2 {
+		t.Fatalf("state counts=%v", report.StateCounts)
+	}
+	if report.FailedCount != 2 || report.RetryableFailedCount != 1 || report.MissingEvidenceFailedCount != 1 {
+		t.Fatalf("failed diagnostics=%+v", report)
+	}
+	if report.DBPoolStats.Max <= 0 || report.DBPoolStats.Open < 0 || report.DBPoolStats.InUse < 0 || report.DBPoolStats.Idle < 0 || report.DBPoolStats.PoolWaitCount < 0 || report.DBPoolStats.PoolWaitDurationMS < 0 {
+		t.Fatalf("invalid pool stats=%+v", report.DBPoolStats)
+	}
+}
+
+func TestClaimProfilePromotionPrefersLiveConversationOverOlderChatGPTBackfill(t *testing.T) {
+	store := newProfilePromotionTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	chatGPTTime := now.Add(-24 * time.Hour)
+	if _, err := store.ImportChatGPTL3Records(ctx, []ChatGPTL3ImportRecord{{
+		Format:           ChatGPTL3ArtifactFormat,
+		ExportID:         "priority-export",
+		EvidenceID:       "chatgpt_export:old-conversation:user-1",
+		ConversationID:   "old-conversation",
+		MessageID:        "user-1",
+		MessageCreatedAt: chatGPTTime,
+		Role:             "user",
+		Text:             "古いインポート根拠",
+		ContentType:      "text",
+		Content:          json.RawMessage(`{"parts":["古いインポート根拠"]}`),
+		OnCurrentBranch:  true,
+	}}, true); err != nil {
+		t.Fatal(err)
+	}
+	liveMessage := domconv.NewMessage(domconv.SpeakerUser, "新しい通常会話", nil)
+	liveMessage.Timestamp = now
+	if err := store.SaveMessage(ctx, "live-session", 42, "conv:live-priority", liveMessage, MemoryStateObserved); err != nil {
+		t.Fatal(err)
+	}
+	var liveEvidenceID string
+	if err := store.db.QueryRowContext(ctx, `
+SELECT id FROM l1_memory_event WHERE namespace = ? AND source = ?`, "conv:live-priority", "conversation").Scan(&liveEvidenceID); err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := store.ClaimProfilePromotionBatch(ctx, 1, 5, time.Minute, now)
+	if err != nil || batch == nil {
+		t.Fatalf("first batch=%#v err=%v", batch, err)
+	}
+	if len(batch.Messages) != 1 || batch.Messages[0].EventID != liveEvidenceID || batch.SessionID != "live-session" || batch.ThreadID != 42 {
+		t.Fatalf("first batch=%#v want live conversation group", batch)
+	}
+	if _, err := store.CompleteProfilePromotionBatch(ctx, *batch, nil, "ren", now); err != nil {
+		t.Fatal(err)
+	}
+
+	backfill, err := store.ClaimProfilePromotionBatch(ctx, 1, 5, time.Minute, now.Add(time.Minute))
+	if err != nil || backfill == nil {
+		t.Fatalf("backfill batch=%#v err=%v", backfill, err)
+	}
+	if len(backfill.Messages) != 1 || backfill.Messages[0].EventID != "chatgpt_export:old-conversation:user-1" || backfill.Messages[0].SessionID != backfill.SessionID || backfill.Messages[0].ThreadID != backfill.ThreadID {
+		t.Fatalf("backfill batch=%#v want ChatGPT group", backfill)
 	}
 }

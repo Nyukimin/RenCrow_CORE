@@ -91,6 +91,98 @@ itemのstatusは過去の実装段階を固定表示する値ではなく、star
 `safe_operations`を`public_search`だけとし、private照会を暗黙に許可しません。ViewerはCatalogを再計算せず、
 Chat／Workerと同じstartup instanceを投影します。
 
+### ProfilePromotion の診断と明示的な再試行
+
+`GET /viewer/memory/profile-promotions` は、L1に永続化されたProfilePromotion jobの全件集計と、
+限定したjob詳細を同じresponseで返します。`limit`は既定50、最大200です。`job_count`は詳細ページの
+件数であり、全件数ではありません。全件の正本は`state_counts`です。
+
+```json
+{
+  "status": "needs_review",
+  "warnings": [],
+  "jobs": [
+    {
+      "evidence_event_id": "opaque-event-id",
+      "session_id": "opaque-session-id",
+      "thread_id": 123,
+      "state": "failed",
+      "attempt_count": 5,
+      "lease_expires_at": "2026-08-15T12:00:00Z",
+      "next_attempt_at": "2026-08-15T12:00:00Z",
+      "last_error": "safe-error-summary",
+      "created_at": "2026-08-15T11:00:00Z",
+      "updated_at": "2026-08-15T12:00:00Z"
+    }
+  ],
+  "job_count": 1,
+  "state_counts": {
+    "pending": 0,
+    "running": 0,
+    "retry_wait": 0,
+    "completed": 0,
+    "failed": 1
+  },
+  "failed_count": 1,
+  "retryable_failed_count": 1,
+  "missing_evidence_failed_count": 0,
+  "db_pool_stats": {
+    "max": 1,
+    "open": 1,
+    "in_use": 0,
+    "idle": 1,
+    "pool_wait_count": 0,
+    "pool_wait_duration_ms": 0
+  }
+}
+```
+
+`state_counts`は`pending`、`running`、`retry_wait`、`completed`、`failed`を0件でも含む全row集計です。
+`failed_count`はterminal failedの全件、`retryable_failed_count`は`evidence_event_id`に対応する
+L1 Raw eventが残るfailed、`missing_evidence_failed_count`は対応eventがないorphan failedです。
+`jobs`の`lease_token`は返しません。`db_pool_stats`は`database/sql.DB.Stats()`のsnapshotで、
+`pool_wait_count`と`pool_wait_duration_ms`はDB handleの生存期間にわたる累積値です。個別jobや個別requestの
+待ち時間ではありません。L1 storeが利用できない場合もHTTP 200で`status=unavailable`と空の集計を返し、
+不正な`limit`は400、読み取り失敗は500です。method不一致は、production outer guardのallowlist適用前提では
+403としてfail closedになり、guard未適用のhandler単体では405です。
+
+`POST /viewer/memory/profile-promotions/retry` は、明示的に許可されたCMD control scopeだけが呼べる
+state-changing APIです。必須headerは次の2つです。
+
+| header | 必須値 |
+| --- | --- |
+| `X-RenCrow-Client` | `RenCrow_CMD` |
+| `X-RenCrow-Interaction-Profile` | `cmd-control` |
+
+このheader pairはserver-sideのinteraction allowlistを選択するscope情報であり、credentialそのものや
+TLS／network境界の代替ではありません。
+
+bodyは不要です。認可されたrequestだけが同一SQLite transactionで次を行います。
+
+1. `failed` rowのうち、対応するL1 Raw eventが存在するものだけを`pending`へ戻す。
+2. `attempt_count=0`、`lease_token=''`、`lease_expires_at=NULL`、`next_attempt_at=NULL`へ初期化する。
+3. `last_error`と`evidence_event_id`、L1 Raw event本文・metadata・stateは保持する。
+4. evidenceのないorphan failedは不変のまま`missing_evidence_count`へ数える。
+5. 1件以上を戻した場合だけ`memory.profile_promotion_retry_requested`監査eventを同じtransactionで追記する。
+
+responseは次の形です。
+
+```json
+{
+  "requeued_count": 1,
+  "missing_evidence_count": 0
+}
+```
+
+同じrequestを二回送っても、二回目は既に`pending`へ戻ったrowを再更新せず、`requeued_count=0`となります。
+orphanの件数は引き続き報告され、監査eventも二重追加されません。POSTのheader／profile不一致は403、
+L1 store unavailableは503、transaction／storage errorは500、成功は200です。production公開経路では
+outer `interaction_profile_guard`がhandlerより先にmethod／path allowlistを評価するため、正しい
+`RenCrow_CMD`／`cmd-control` headerであっても、このretry pathへのGET／PUTなどallowlist外methodは403として
+fail closedになります。handler単体、またはguard未適用の経路ではPOST以外を405として返します。人の返答を待つgrantやqueueを作らず、
+requestごとにCOREが直ちに認可、拒否、利用不能、成功を確定します。直接DBを書き換える経路や別embedding／
+Recall経路へのfallbackはこのAPIにありません。
+
 ### 認証済みAgent OPS
 
 `POST /v1/agent/ops`は通常Chatとは別のOperational APIです。`local_agent_ops.enabled=true`でのみ存在し、
@@ -838,7 +930,7 @@ capabilityで制限します。
 | `RenCrow_CMD` | `cmd-chat` | Chat送信、event購読、CORE経由のWAV文字起こし |
 | `RenCrow_CMD` | `cmd-idlechat` | IdleChat status／event／start／stop |
 | `RenCrow_CMD` | `cmd-diagnostics` | 診断・状態取得の読み取り専用 |
-| `RenCrow_CMD` | `cmd-control` | process制御とrepair実行 |
+| `RenCrow_CMD` | `cmd-control` | process制御、repair実行、ProfilePromotion retry |
 | `RenCrow_ASSISTANT` | `assistant-core` | COREへのChat送信とevent購読 |
 
 `cmd-diagnostics`と`cmd-control`は、CMDが実装本体を持たずCORE Public API経由で
@@ -872,6 +964,7 @@ HTTPアクセスを伴う操作を公開するとCOREが任意URL取得の踏み
 ```text
 POST /viewer/repair/run
 POST /viewer/source-registry
+POST /viewer/memory/profile-promotions/retry
 POST /viewer/capabilities/apply
 GET  /viewer/capabilities/apply/{request_id}
 ```

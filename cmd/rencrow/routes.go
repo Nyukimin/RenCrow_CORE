@@ -247,6 +247,7 @@ func registerKnowledgeMemorySourceRoutes(mux *http.ServeMux, dependencies *Depen
 		RecallPack:        dependencies.viewerMemoryRecallPack,
 		RecallTraces:      dependencies.viewerRecallTraces,
 		ProfilePromotions: dependencies.viewerMemoryProfilePromotions,
+		ProfileRetry:      dependencies.viewerMemoryProfileRetry,
 		ChatGPTL3Import:   dependencies.viewerMemoryChatGPTL3Import,
 		ChatGPTL3Confirm:  dependencies.viewerMemoryChatGPTL3Confirm,
 	}})

@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -70,6 +71,7 @@ func (e *LLMProfileExtractor) Extract(ctx context.Context, thread *domconv.Threa
 	prompt := fmt.Sprintf(`以下の会話からユーザーに関する新しい情報を抽出してください。
 既知情報と重複するものは除外してください。
 JSON形式で出力してください。
+preferences の各値は必ず JSON の文字列（string）で返してください。数値に見える値も引用符で囲んだ文字列として返してください。オブジェクト、配列、真偽値、null は preferences の値に使わないでください。
 
 %s
 
@@ -89,8 +91,9 @@ JSON形式で出力してください。
 		Messages: []llm.Message{
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:   e.maxTokens,
-		Temperature: e.temperature,
+		MaxTokens:      e.maxTokens,
+		Temperature:    e.temperature,
+		ResponseFormat: llm.ResponseFormatJSONObject,
 	}
 
 	requestCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
@@ -103,13 +106,51 @@ JSON形式で出力してください。
 	}
 
 	// JSON パース（best-effort）
-	result := &domconv.ProfileExtractionResult{}
 	content := extractJSON(resp.Content)
-	if err := json.Unmarshal([]byte(content), result); err != nil {
-		log.Printf("[ProfileExtractor] JSON parse failed: %v (content: %s)", err, resp.Content)
+	result, err := decodeProfileExtractionResult(content)
+	if err != nil {
+		log.Printf("[ProfileExtractor] JSON parse failed: %v", err)
 		return nil, fmt.Errorf("profile extractor JSON parse failed: %w", err)
 	}
 
+	return result, nil
+}
+
+type profileExtractionPayload struct {
+	Preferences map[string]json.RawMessage `json:"preferences"`
+	Facts       []string                   `json:"facts"`
+}
+
+func decodeProfileExtractionResult(content string) (*domconv.ProfileExtractionResult, error) {
+	var payload profileExtractionPayload
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return nil, err
+	}
+	result := &domconv.ProfileExtractionResult{
+		NewPreferences: make(map[string]string, len(payload.Preferences)),
+		NewFacts:       payload.Facts,
+	}
+	for key, raw := range payload.Preferences {
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return nil, fmt.Errorf("preference %q must be a JSON string or number", key)
+		}
+		var stringValue string
+		if err := json.Unmarshal(raw, &stringValue); err == nil {
+			result.NewPreferences[key] = stringValue
+			continue
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, fmt.Errorf("preference %q must be a JSON string or number: %w", key, err)
+		}
+		if number, ok := value.(json.Number); ok {
+			result.NewPreferences[key] = number.String()
+			continue
+		}
+		return nil, fmt.Errorf("preference %q must be a JSON string or number", key)
+	}
 	return result, nil
 }
 

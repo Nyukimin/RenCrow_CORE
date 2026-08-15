@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+Environment=RENCROW_CONFIG=%h/.rencrow/config/core.yaml
 ExecStart=%h/.local/bin/rencrow-storage-backup run
 Nice=10
 IOSchedulingClass=idle

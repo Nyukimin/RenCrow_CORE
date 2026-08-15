@@ -70,6 +70,9 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		viewerMemorySnapshot: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		}),
+		viewerMemoryProfileRetry: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusEarlyHints)
+		}),
 		viewerSourceRegistry: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusPartialContent)
 		}),
@@ -144,6 +147,7 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		{name: "browser trace api", method: http.MethodGet, path: "/viewer/browser-trace-api", want: http.StatusOK},
 		{name: "complexity hotspots", method: http.MethodGet, path: "/viewer/complexity-hotspots", want: http.StatusAccepted},
 		{name: "memory snapshot", method: http.MethodGet, path: "/viewer/memory/snapshot", want: http.StatusNoContent},
+		{name: "profile promotion retry", method: http.MethodPost, path: "/viewer/memory/profile-promotions/retry", want: http.StatusEarlyHints},
 		{name: "source registry", method: http.MethodGet, path: "/viewer/source-registry", want: http.StatusPartialContent},
 		{name: "knowledge memory", method: http.MethodGet, path: "/viewer/knowledge-memory", want: http.StatusCreated},
 		{name: "evidence recent", method: http.MethodGet, path: "/viewer/evidence/recent", want: http.StatusOK},

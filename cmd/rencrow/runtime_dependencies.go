@@ -138,6 +138,7 @@ type Dependencies struct {
 	viewerMemoryChatGPTL3Confirm   http.HandlerFunc                            // explicit source-bound candidate confirmation API
 	viewerMemoryRecallPack         http.HandlerFunc                            // viewer memory recall pack API
 	viewerMemoryProfilePromotions  http.HandlerFunc                            // async ProfilePromotion job API
+	viewerMemoryProfileRetry       http.HandlerFunc                            // explicit ProfilePromotion retry API
 	viewerRecallTraces             http.HandlerFunc                            // viewer recall trace API
 	viewerSourceRegistry           http.HandlerFunc                            // viewer source registry API
 	viewerXBookmarkWorkflow        http.HandlerFunc                            // explicit X Bookmark utilization workflows

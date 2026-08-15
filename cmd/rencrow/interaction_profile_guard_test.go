@@ -212,6 +212,22 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "cmd control can retry failed profile promotions",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/viewer/memory/profile-promotions/retry",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "cmd chat cannot retry failed profile promotions",
+			client:  "RenCrow_CMD",
+			profile: "cmd-chat",
+			method:  http.MethodPost,
+			path:    "/viewer/memory/profile-promotions/retry",
+			want:    http.StatusForbidden,
+		},
+		{
 			name:    "cmd agent ops can invoke the authenticated ingress",
 			client:  "RenCrow_CMD",
 			profile: "agent-ops",

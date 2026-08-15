@@ -4,11 +4,49 @@ set -Eeuo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 checker=${repo_root}/scripts/rencrow-storage-restore-check
 backup_runner=${repo_root}/scripts/rencrow-storage-backup
-test_root=$(mktemp -d)
+unit_file=${repo_root}/systemd/user/rencrow-storage-backup.service
+test_tmp_root=${repo_root}/Tmp/test-runtime
+mkdir -p "${test_tmp_root}"
+test_root=$(mktemp -d "${test_tmp_root}/storage-backup-contract.XXXXXX")
 trap 'rm -rf -- "${test_root}"' EXIT
 
 bash -n "${checker}"
 bash -n "${backup_runner}"
+
+contract_failures=()
+assert_contains() {
+  local file=$1
+  local expected=$2
+  local description=$3
+  if ! grep -Fq -- "${expected}" "${file}"; then
+    contract_failures+=("${description}")
+  fi
+}
+
+assert_contains "${unit_file}" \
+  'Environment=RENCROW_CONFIG=%h/.rencrow/config/core.yaml' \
+  "backup service must pin the current CORE config"
+assert_contains "${backup_runner}" \
+  'config_file=${RENCROW_CONFIG:-${HOME}/.rencrow/config/core.yaml}' \
+  "backup runner must default to the current CORE config"
+assert_contains "${backup_runner}" \
+  'if ! timeout 20 stat "${path}" >/dev/null 2>&1; then' \
+  "backing mount stat failures must be handled explicitly"
+assert_contains "${backup_runner}" \
+  'echo "[NG] required backing mount is inaccessible for ${path}" >&2' \
+  "backing mount stat failures must report the requested path"
+assert_contains "${backup_runner}" \
+  '${mount_target} == /' \
+  "the root filesystem must remain rejected as a backup mount"
+assert_contains "${backup_runner}" \
+  '! mountpoint -q "${mount_target}"' \
+  "unmounted paths must remain rejected"
+
+if (( ${#contract_failures[@]} > 0 )); then
+  printf '[RED] storage backup contract violations:\n' >&2
+  printf ' - %s\n' "${contract_failures[@]}" >&2
+  exit 1
+fi
 
 mkdir -p \
   "${test_root}/source/state/sessions" \

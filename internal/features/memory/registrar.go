@@ -26,6 +26,7 @@ type Routes struct {
 	RecallPack        http.HandlerFunc
 	RecallTraces      http.HandlerFunc
 	ProfilePromotions http.HandlerFunc
+	ProfileRetry      http.HandlerFunc
 	ChatGPTL3Import   http.HandlerFunc
 	ChatGPTL3Confirm  http.HandlerFunc
 }
@@ -45,6 +46,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/memory/recall-pack", routes.RecallPack)
 	registerRoute(mux, "/viewer/recall/traces", routes.RecallTraces)
 	registerRoute(mux, "/viewer/memory/profile-promotions", routes.ProfilePromotions)
+	registerRoute(mux, "/viewer/memory/profile-promotions/retry", routes.ProfileRetry)
 	registerRoute(mux, "/viewer/memory/import/chatgpt", routes.ChatGPTL3Import)
 	registerRoute(mux, "/viewer/memory/import/chatgpt/confirm", routes.ChatGPTL3Confirm)
 }

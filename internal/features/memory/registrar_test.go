@@ -21,6 +21,7 @@ func TestRegisterRoutesRegistersMemoryPaths(t *testing.T) {
 		RecallPack:        statusHandler(http.StatusBadRequest),
 		RecallTraces:      statusHandler(http.StatusConflict),
 		ProfilePromotions: statusHandler(http.StatusTeapot),
+		ProfileRetry:      statusHandler(http.StatusEarlyHints),
 		ChatGPTL3Import:   statusHandler(http.StatusCreated),
 		ChatGPTL3Confirm:  statusHandler(http.StatusForbidden),
 	}})
@@ -41,6 +42,7 @@ func TestRegisterRoutesRegistersMemoryPaths(t *testing.T) {
 		{path: "/viewer/memory/recall-pack", want: http.StatusBadRequest},
 		{path: "/viewer/recall/traces", want: http.StatusConflict},
 		{path: "/viewer/memory/profile-promotions", want: http.StatusTeapot},
+		{path: "/viewer/memory/profile-promotions/retry", want: http.StatusEarlyHints},
 		{path: "/viewer/memory/import/chatgpt", want: http.StatusCreated},
 		{path: "/viewer/memory/import/chatgpt/confirm", want: http.StatusForbidden},
 	}

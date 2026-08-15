@@ -151,6 +151,7 @@ func cmdControlInteractionAllowed(method, path string) bool {
 	switch path {
 	case "/viewer/repair/run",
 		"/viewer/source-registry",
+		"/viewer/memory/profile-promotions/retry",
 		"/viewer/trade/policy/evaluate",
 		"/viewer/trade/risk-preview",
 		"/viewer/trade/simulation-commit",

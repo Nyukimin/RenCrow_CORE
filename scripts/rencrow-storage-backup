@@ -110,10 +110,16 @@ require_command() {
 require_backing_mount() {
   local path=$1
   local mount_target
-  timeout 20 stat "${path}" >/dev/null
-  mount_target=$(findmnt -n -o TARGET -T "${path}")
+  if ! timeout 20 stat "${path}" >/dev/null 2>&1; then
+    echo "[NG] required backing mount is inaccessible for ${path}" >&2
+    return 1
+  fi
+  if ! mount_target=$(findmnt -n -o TARGET -T "${path}"); then
+    echo "[NG] required backing mount is inaccessible for ${path}" >&2
+    return 1
+  fi
   if [[ -z ${mount_target} || ${mount_target} == / ]] || ! mountpoint -q "${mount_target}"; then
-    echo "[NG] required backing mount is unavailable for ${path}" >&2
+    echo "[NG] required backing mount is inaccessible for ${path}" >&2
     exit 1
   fi
 }

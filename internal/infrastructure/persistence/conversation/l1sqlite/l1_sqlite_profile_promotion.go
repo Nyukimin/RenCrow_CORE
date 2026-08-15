@@ -76,10 +76,12 @@ WHERE state IN (?, ?) AND attempt_count >= ?
 	var sessionID string
 	var threadID int64
 	err = tx.QueryRowContext(ctx, `
-SELECT session_id, thread_id
-FROM l1_profile_promotion_job
-WHERE state = ? AND attempt_count < ?
-ORDER BY created_at ASC, evidence_event_id ASC
+SELECT j.session_id, j.thread_id
+FROM l1_profile_promotion_job j
+JOIN l1_memory_event e ON e.id = j.evidence_event_id
+WHERE j.state = ? AND j.attempt_count < ?
+ORDER BY CASE WHEN e.source = 'chatgpt_export' THEN 1 ELSE 0 END ASC,
+	j.created_at ASC, j.evidence_event_id ASC
 LIMIT 1
 `, domainmemory.ProfilePromotionPending, maxAttempts).Scan(&sessionID, &threadID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -318,6 +320,124 @@ WHERE evidence_event_id = ? AND lease_token = ?
 		return rollbackL1Tx(tx, err)
 	}
 	return nil
+}
+
+// RetryFailedProfilePromotionJobs explicitly requeues terminal failed jobs
+// whose raw evidence still exists. The transition and its audit event share a
+// transaction so a retry request cannot report success without its evidence
+// remaining observable.
+func (s *L1SQLiteStore) RetryFailedProfilePromotionJobs(ctx context.Context, now time.Time) (domainmemory.ProfilePromotionRetryResult, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domainmemory.ProfilePromotionRetryResult{}, err
+	}
+	var missingEvidence int
+	if err := tx.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM l1_profile_promotion_job j
+LEFT JOIN l1_memory_event e ON e.id = j.evidence_event_id
+WHERE j.state = ? AND e.id IS NULL
+`, domainmemory.ProfilePromotionFailed).Scan(&missingEvidence); err != nil {
+		return domainmemory.ProfilePromotionRetryResult{}, rollbackL1Tx(tx, fmt.Errorf("count missing profile promotion evidence: %w", err))
+	}
+	result, err := tx.ExecContext(ctx, `
+UPDATE l1_profile_promotion_job
+SET state = ?, attempt_count = 0, lease_token = '', lease_expires_at = NULL,
+	next_attempt_at = NULL, updated_at = ?
+WHERE state = ?
+  AND EXISTS (
+	SELECT 1 FROM l1_memory_event e WHERE e.id = l1_profile_promotion_job.evidence_event_id
+  )
+`, domainmemory.ProfilePromotionPending, now, domainmemory.ProfilePromotionFailed)
+	if err != nil {
+		return domainmemory.ProfilePromotionRetryResult{}, rollbackL1Tx(tx, fmt.Errorf("requeue failed profile promotion jobs: %w", err))
+	}
+	requeued64, err := result.RowsAffected()
+	if err != nil {
+		return domainmemory.ProfilePromotionRetryResult{}, rollbackL1Tx(tx, fmt.Errorf("count requeued profile promotion jobs: %w", err))
+	}
+	requeued := int(requeued64)
+	if requeued > 0 {
+		if _, err := appendL1EventLog(ctx, tx, "memory.profile_promotion_retry_requested", "conv:profile-promotion", "", 0, map[string]interface{}{
+			"requeued_count":         requeued,
+			"missing_evidence_count": missingEvidence,
+		}, "viewer"); err != nil {
+			return domainmemory.ProfilePromotionRetryResult{}, rollbackL1Tx(tx, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domainmemory.ProfilePromotionRetryResult{}, rollbackL1Tx(tx, err)
+	}
+	return domainmemory.ProfilePromotionRetryResult{
+		RequeuedCount:        requeued,
+		MissingEvidenceCount: missingEvidence,
+	}, nil
+}
+
+// ProfilePromotionDiagnostics returns all-row counters independently from the
+// limited job detail page used by the Viewer.
+func (s *L1SQLiteStore) ProfilePromotionDiagnostics(ctx context.Context) (domainmemory.ProfilePromotionDiagnostics, error) {
+	stateCounts := map[string]int{
+		domainmemory.ProfilePromotionPending:   0,
+		domainmemory.ProfilePromotionRunning:   0,
+		domainmemory.ProfilePromotionRetryWait: 0,
+		domainmemory.ProfilePromotionCompleted: 0,
+		domainmemory.ProfilePromotionFailed:    0,
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT state, COUNT(*)
+FROM l1_profile_promotion_job
+GROUP BY state
+`)
+	if err != nil {
+		return domainmemory.ProfilePromotionDiagnostics{}, err
+	}
+	for rows.Next() {
+		var state string
+		var count int
+		if err := rows.Scan(&state, &count); err != nil {
+			rows.Close()
+			return domainmemory.ProfilePromotionDiagnostics{}, err
+		}
+		stateCounts[state] = count
+	}
+	if err := rows.Close(); err != nil {
+		return domainmemory.ProfilePromotionDiagnostics{}, err
+	}
+	if err := rows.Err(); err != nil {
+		return domainmemory.ProfilePromotionDiagnostics{}, err
+	}
+
+	var failed, retryable, missing int
+	if err := s.db.QueryRowContext(ctx, `
+SELECT COUNT(*),
+	COALESCE(SUM(CASE WHEN e.id IS NOT NULL THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN e.id IS NULL THEN 1 ELSE 0 END), 0)
+FROM l1_profile_promotion_job j
+LEFT JOIN l1_memory_event e ON e.id = j.evidence_event_id
+WHERE j.state = ?
+`, domainmemory.ProfilePromotionFailed).Scan(&failed, &retryable, &missing); err != nil {
+		return domainmemory.ProfilePromotionDiagnostics{}, err
+	}
+	stats := s.db.Stats()
+	return domainmemory.ProfilePromotionDiagnostics{
+		StateCounts:                stateCounts,
+		FailedCount:                failed,
+		RetryableFailedCount:       retryable,
+		MissingEvidenceFailedCount: missing,
+		DBPoolStats: domainmemory.L1DBPoolStats{
+			Max:                stats.MaxOpenConnections,
+			Open:               stats.OpenConnections,
+			InUse:              stats.InUse,
+			Idle:               stats.Idle,
+			PoolWaitCount:      stats.WaitCount,
+			PoolWaitDurationMS: stats.WaitDuration.Milliseconds(),
+		},
+	}, nil
 }
 
 func (s *L1SQLiteStore) updateProfilePromotionLease(
