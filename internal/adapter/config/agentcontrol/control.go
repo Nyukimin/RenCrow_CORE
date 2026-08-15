@@ -42,10 +42,18 @@ var coreRouteOwners = map[string]string{
 
 // Control is the validated, combined workspace control plane.
 type Control struct {
-	Agents  map[string]Agent
-	Routing Routing
-	Handoff Handoff
-	Tools   Tools
+	SharedEngineeringRules SharedEngineeringRules
+	Agents                 map[string]Agent
+	Routing                Routing
+	Handoff                Handoff
+	Tools                  Tools
+}
+
+// SharedEngineeringRules is the portable runtime projection of the common
+// development rules. It guides reasoning but does not grant runtime access.
+type SharedEngineeringRules struct {
+	Source     string   `yaml:"source"`
+	Principles []string `yaml:"principles"`
 }
 
 // Agent describes stable character scope. It does not grant runtime access.
@@ -100,8 +108,9 @@ type ToolSelection struct {
 }
 
 type agentsFile struct {
-	Version int              `yaml:"version"`
-	Agents  map[string]Agent `yaml:"agents"`
+	Version                int                    `yaml:"version"`
+	SharedEngineeringRules SharedEngineeringRules `yaml:"shared_engineering_rules"`
+	Agents                 map[string]Agent       `yaml:"agents"`
 }
 
 type routingFile struct {
@@ -162,10 +171,11 @@ func Load(workspaceDir string) (*Control, error) {
 	}
 
 	control := &Control{
-		Agents:  agents.Agents,
-		Routing: routes.Routing,
-		Handoff: handoff.Handoff,
-		Tools:   tools.Tools,
+		SharedEngineeringRules: agents.SharedEngineeringRules,
+		Agents:                 agents.Agents,
+		Routing:                routes.Routing,
+		Handoff:                handoff.Handoff,
+		Tools:                  tools.Tools,
 	}
 	if err := control.validate(map[string]int{
 		"agents.yaml":  agents.Version,
@@ -199,6 +209,17 @@ func (c *Control) validate(versions map[string]int) error {
 	}
 	if len(c.Agents) == 0 {
 		return fmt.Errorf("agents.yaml must define agents")
+	}
+	if c.SharedEngineeringRules.Source != "project-level-ai-rules" {
+		return fmt.Errorf("agents shared_engineering_rules source = %q, want project-level-ai-rules", c.SharedEngineeringRules.Source)
+	}
+	if len(c.SharedEngineeringRules.Principles) == 0 {
+		return fmt.Errorf("agents shared_engineering_rules principles must not be empty")
+	}
+	for index, principle := range c.SharedEngineeringRules.Principles {
+		if strings.TrimSpace(principle) == "" {
+			return fmt.Errorf("agents shared_engineering_rules principles[%d] must not be blank", index)
+		}
 	}
 	for name, profile := range c.Agents {
 		if name != strings.ToLower(strings.TrimSpace(name)) || profile.Role == "" || len(profile.Capabilities) == 0 {
@@ -289,6 +310,9 @@ func (c *Control) PromptFor(agentName string) string {
 	b.WriteString("# Shared Agent Control\n\n")
 	b.WriteString("この制御はworkspace/controlから読み込まれ、RenCrow COREが検証した共通契約です。")
 	b.WriteString("実際のTool利用可否、引数、権限、安全制約はCORE runtime metadataを優先します。\n\n")
+	b.WriteString("## Shared Engineering Rules\n\n")
+	fmt.Fprintf(&b, "- source: %s\n", c.SharedEngineeringRules.Source)
+	writeList(&b, "principles", c.SharedEngineeringRules.Principles)
 	b.WriteString("## Agent Profile\n\n")
 	fmt.Fprintf(&b, "- agent: %s\n- role: %s\n", name, profile.Role)
 	writeList(&b, "capabilities", profile.Capabilities)

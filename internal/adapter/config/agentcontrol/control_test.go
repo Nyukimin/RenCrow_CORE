@@ -22,6 +22,9 @@ func TestLoadReadsAndRendersSharedAgentControl(t *testing.T) {
 	mioPrompt := control.PromptFor("mio")
 	for _, want := range []string{
 		"Shared Agent Control",
+		"Shared Engineering Rules",
+		"project-level-ai-rules",
+		"上から下へ追える",
 		"目的整理",
 		"CHAT -> mio",
 		"ANALYZE -> kuro",
@@ -162,6 +165,30 @@ func TestLoadRejectsMissingEmptyOrBlankSelectionPrinciples(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsMissingSharedEngineeringRules(t *testing.T) {
+	workspaceDir := t.TempDir()
+	writeControlFixture(t, workspaceDir)
+	path := filepath.Join(workspaceDir, "control", "agents.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := `shared_engineering_rules:
+  source: project-level-ai-rules
+  principles:
+    - 要件が同等なら簡潔な設計を選ぶ
+    - 主経路を上から下へ追える形にする
+`
+	data = []byte(strings.Replace(string(data), block, "", 1))
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(workspaceDir); err == nil || !strings.Contains(err.Error(), "shared_engineering_rules") {
+		t.Fatalf("Load() error = %v, want missing shared engineering rules rejection", err)
+	}
+}
+
 func writeControlFixture(t *testing.T, workspaceDir string) {
 	t.Helper()
 	controlDir := filepath.Join(workspaceDir, "control")
@@ -170,6 +197,11 @@ func writeControlFixture(t *testing.T, workspaceDir string) {
 	}
 	files := map[string]string{
 		"agents.yaml": `version: 1
+shared_engineering_rules:
+  source: project-level-ai-rules
+  principles:
+    - 要件が同等なら簡潔な設計を選ぶ
+    - 主経路を上から下へ追える形にする
 agents:
   mio:
     role: chat_orchestrator

@@ -180,6 +180,10 @@ func TestApplyAgentControlKeepsCharacterPromptsCanonicalAndBuildsStableRuntimeCo
 		CharacterPrompts: map[string]string{"mio": "mio system", "shiro": "shiro system", "kuro": "kuro system", "midori": "midori system"},
 	}
 	control := &agentcontrol.Control{
+		SharedEngineeringRules: agentcontrol.SharedEngineeringRules{
+			Source:     "project-level-ai-rules",
+			Principles: []string{"簡潔な設計を選ぶ", "主経路を上から下へ追える形にする"},
+		},
 		Agents: map[string]agentcontrol.Agent{
 			"mio":    {Role: "chat", Capabilities: []string{"conversation"}},
 			"shiro":  {Role: "worker", Capabilities: []string{"execution"}},
