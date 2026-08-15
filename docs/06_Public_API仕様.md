@@ -947,12 +947,18 @@ capabilityで制限します。
 /viewer/source-registry、/viewer/knowledge-memory
 /viewer/debug/system
 /viewer/channels、/viewer/channels/probe
+/viewer/memory/profile-promotions
 /viewer/web-gather/doctor
 ```
 
 `GET /viewer/channels`は設定済みchannelの一覧、`GET /viewer/channels/probe`は各channelの
 疎通結果、`GET /viewer/web-gather/doctor`はweb-gatherの依存構成の診断結果を返します。
-いずれも読み取り専用です。
+`GET /viewer/memory/profile-promotions`はProfilePromotionの全row集計、limited job詳細、
+retryable／orphan failed件数、DB pool統計を返します。いずれも読み取り専用です。
+
+CMDのmemory診断・再試行用の正規CLI名は`rencrowctl memory status`と
+`rencrowctl memory retry-failed`として実装され、前者は`cmd-diagnostics`、後者は
+`cmd-control`のheader／allowlistを使用します。
 
 web-gatherのurl／search／webwright-fetchとimport系はPublic APIへ公開しません。外部への
 HTTPアクセスを伴う操作を公開するとCOREが任意URL取得の踏み台になり、import系はCOREホスト上の

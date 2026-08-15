@@ -113,6 +113,7 @@ func cmdDiagnosticsInteractionAllowed(method, path string) bool {
 		"/viewer/evidence/summary",
 		"/viewer/source-registry",
 		"/viewer/knowledge-memory",
+		"/viewer/memory/profile-promotions",
 		"/viewer/debug/system",
 		"/viewer/channels",
 		"/viewer/channels/probe",

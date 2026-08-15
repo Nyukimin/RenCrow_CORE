@@ -164,6 +164,22 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "cmd diagnostics can read profile promotion diagnostics",
+			client:  "RenCrow_CMD",
+			profile: "cmd-diagnostics",
+			method:  http.MethodGet,
+			path:    "/viewer/memory/profile-promotions",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "cmd diagnostics cannot retry profile promotions",
+			client:  "RenCrow_CMD",
+			profile: "cmd-diagnostics",
+			method:  http.MethodPost,
+			path:    "/viewer/memory/profile-promotions/retry",
+			want:    http.StatusForbidden,
+		},
+		{
 			name:    "cmd control can evaluate trade policy without execution",
 			client:  "RenCrow_CMD",
 			profile: "cmd-control",
