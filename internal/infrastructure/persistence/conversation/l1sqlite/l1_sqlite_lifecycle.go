@@ -149,6 +149,7 @@ WHERE id IN (
 	SELECT id FROM l1_memory_event
 	WHERE namespace LIKE 'conv:%'
 	  AND memory_state = ?
+	  AND layer = ?
 	  AND created_at < ?
 	  AND NOT EXISTS (
 		SELECT 1
@@ -158,7 +159,7 @@ WHERE id IN (
 	  )
 	ORDER BY created_at ASC, rowid ASC
 	LIMIT ?
-)`, MemoryStateObserved, cutoff.UTC(), domainmemory.ProfilePromotionCompleted, limit)
+)`, MemoryStateObserved, MemoryLayerL1, cutoff.UTC(), domainmemory.ProfilePromotionCompleted, limit)
 	if err != nil {
 		return 0, fmt.Errorf("failed to compact old conversation raw memory: %w", err)
 	}

@@ -141,6 +141,60 @@ func TestL1SQLiteStore_RunMemoryLifecycleMaintenance(t *testing.T) {
 	}
 }
 
+func TestL1SQLiteStore_RunMemoryLifecycleMaintenancePreservesChatGPTL3Episodes(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-120 * 24 * time.Hour)
+	if err := store.SaveMessage(ctx, "session-old", 1, "conv:l1", domconv.NewMessage(domconv.SpeakerUser, "old L1 raw", nil), MemoryStateObserved); err != nil {
+		t.Fatalf("SaveMessage L1 failed: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET created_at = ?, updated_at = ? WHERE namespace = 'conv:l1'`, old, old); err != nil {
+		t.Fatalf("backdate L1 memory failed: %v", err)
+	}
+	markProfilePromotionCompletedForNamespace(t, store, "conv:l1")
+
+	if err := store.SaveMessage(ctx, "session-chatgpt", 1, "conv:chatgpt-l3", domconv.NewMessage(domconv.SpeakerSystem, "immutable ChatGPT L3 episode", nil), MemoryStateObserved); err != nil {
+		t.Fatalf("SaveMessage ChatGPT episode failed: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+UPDATE l1_memory_event
+SET layer = ?, source = ?, created_at = ?, updated_at = ?
+WHERE namespace = 'conv:chatgpt-l3'`, "L3", "chatgpt_export", old, old); err != nil {
+		t.Fatalf("prepare ChatGPT L3 episode failed: %v", err)
+	}
+
+	result, err := store.RunMemoryLifecycleMaintenance(ctx, MemoryLifecycleOptions{
+		Now:                      now,
+		RawConversationRetention: 30 * 24 * time.Hour,
+		RawCompactLimit:          10,
+		VectorCleanupLimit:       10,
+	})
+	if err != nil {
+		t.Fatalf("RunMemoryLifecycleMaintenance failed: %v", err)
+	}
+	if result.RawCompacted != 1 {
+		t.Fatalf("unexpected raw compacted count: %d, want 1", result.RawCompacted)
+	}
+
+	if got := countMemoryEventsByNamespace(t, ctx, store, "conv:l1"); got != 0 {
+		t.Fatalf("old L1 raw event count=%d, want 0", got)
+	}
+	var layer, source string
+	if err := store.db.QueryRowContext(ctx, `
+SELECT layer, source FROM l1_memory_event WHERE namespace = 'conv:chatgpt-l3'`).Scan(&layer, &source); err != nil {
+		t.Fatalf("ChatGPT L3 episode should remain: %v", err)
+	}
+	if layer != "L3" || source != "chatgpt_export" {
+		t.Fatalf("ChatGPT episode layer/source=(%q, %q), want (L3, chatgpt_export)", layer, source)
+	}
+}
+
 func TestL1SQLiteStore_RunMemoryLifecycleMaintenanceExecutesVectorCleanup(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
