@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -46,29 +47,44 @@ func HandleMemoryRecallPack(hot MemoryLayerHotStore, cold MemoryLayerColdStore, 
 			}
 		}
 		if users != nil {
-			userMemories, err := users.ListUserMemories(r.Context(), userID, "", false, limit)
-			if err != nil {
-				http.Error(w, "failed to load user memory recall", http.StatusInternalServerError)
-				return
+			userMemories := make([]domainmemory.UserMemory, 0, limit*2)
+			for _, state := range []string{domainmemory.MemoryStateConfirmed, domainmemory.MemoryStatePinned} {
+				memories, err := users.ListUserMemories(r.Context(), userID, state, false, limit)
+				if err != nil {
+					http.Error(w, "failed to load user memory recall", http.StatusInternalServerError)
+					return
+				}
+				for _, mem := range memories {
+					if mem.Sensitivity == "sensitive" {
+						continue
+					}
+					switch mem.State {
+					case domainmemory.MemoryStateConfirmed, domainmemory.MemoryStatePinned:
+						userMemories = append(userMemories, mem)
+					}
+				}
+			}
+			sort.SliceStable(userMemories, func(i, j int) bool {
+				if userMemories[i].CreatedAt.Equal(userMemories[j].CreatedAt) {
+					return userMemories[i].ID < userMemories[j].ID
+				}
+				return userMemories[i].CreatedAt.After(userMemories[j].CreatedAt)
+			})
+			if len(userMemories) > limit {
+				userMemories = userMemories[:limit]
 			}
 			for _, mem := range userMemories {
-				if mem.Sensitivity == "sensitive" {
-					continue
-				}
-				switch mem.State {
-				case domainmemory.MemoryStateConfirmed, domainmemory.MemoryStatePinned:
-					pack.Items = append(pack.Items, domainmemory.UserMemoryRecallItem{
-						Layer:       "UserMemory",
-						Namespace:   mem.Namespace,
-						MemoryID:    mem.ID,
-						Kind:        mem.Type,
-						Summary:     mem.Statement,
-						Score:       scoreForUserMemory(mem),
-						State:       mem.State,
-						EventIDs:    mem.EvidenceEventIDs,
-						Sensitivity: mem.Sensitivity,
-					})
-				}
+				pack.Items = append(pack.Items, domainmemory.UserMemoryRecallItem{
+					Layer:       "UserMemory",
+					Namespace:   mem.Namespace,
+					MemoryID:    mem.ID,
+					Kind:        mem.Type,
+					Summary:     mem.Statement,
+					Score:       scoreForUserMemory(mem),
+					State:       mem.State,
+					EventIDs:    mem.EvidenceEventIDs,
+					Sensitivity: mem.Sensitivity,
+				})
 			}
 		}
 		if cold != nil {

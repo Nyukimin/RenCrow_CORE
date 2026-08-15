@@ -3,9 +3,11 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,22 +15,30 @@ import (
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
 
+type recallPackUserStoreCall struct {
+	userID          string
+	state           string
+	includeInactive bool
+	limit           int
+}
+
 type recallPackUserStoreStub struct {
-	userID string
-	state  string
-	limit  int
-	items  []domainmemory.UserMemory
+	itemsByState map[string][]domainmemory.UserMemory
+	calls        []recallPackUserStoreCall
 }
 
 func (s *recallPackUserStoreStub) CreateUserMemory(context.Context, domainmemory.CreateUserMemoryInput) (*domainmemory.UserMemory, error) {
 	return nil, nil
 }
 
-func (s *recallPackUserStoreStub) ListUserMemories(_ context.Context, userID string, state string, _ bool, limit int) ([]domainmemory.UserMemory, error) {
-	s.userID = userID
-	s.state = state
-	s.limit = limit
-	return append([]domainmemory.UserMemory(nil), s.items...), nil
+func (s *recallPackUserStoreStub) ListUserMemories(_ context.Context, userID string, state string, includeInactive bool, limit int) ([]domainmemory.UserMemory, error) {
+	s.calls = append(s.calls, recallPackUserStoreCall{
+		userID:          userID,
+		state:           state,
+		includeInactive: includeInactive,
+		limit:           limit,
+	})
+	return append([]domainmemory.UserMemory(nil), s.itemsByState[state]...), nil
 }
 
 func (s *recallPackUserStoreStub) UpdateUserMemoryState(context.Context, string, string, string) (*domainmemory.UserMemory, error) {
@@ -71,49 +81,109 @@ func TestHandleMemoryRecallPackFiltersUserMemory(t *testing.T) {
 			UpdatedAt: now,
 		}},
 	}
+	candidates := make([]domainmemory.UserMemory, 5)
+	for i := range candidates {
+		candidates[i] = domainmemory.UserMemory{
+			ID:          fmt.Sprintf("mem-candidate-%d", i+1),
+			Namespace:   "user:ren",
+			UserID:      "ren",
+			Type:        domainmemory.UserMemoryTypePreference,
+			Statement:   "candidate は Recall Pack に入れない",
+			Sensitivity: "normal",
+			State:       domainmemory.MemoryStateCandidate,
+			Active:      true,
+			CreatedAt:   now.Add(-time.Duration(i+1) * time.Second),
+		}
+	}
 	users := &recallPackUserStoreStub{
-		items: []domainmemory.UserMemory{
-			{
-				ID:               "mem-confirmed",
-				Namespace:        "user:ren",
-				UserID:           "ren",
-				Type:             domainmemory.UserMemoryTypePreference,
-				Statement:        "短く論理的な説明を好む",
-				EvidenceEventIDs: []string{"evt-1"},
-				Confidence:       0.9,
-				Sensitivity:      "normal",
-				State:            domainmemory.MemoryStateConfirmed,
-				Active:           true,
+		itemsByState: map[string][]domainmemory.UserMemory{
+			"": candidates,
+			domainmemory.MemoryStateConfirmed: {
+				{
+					ID:               "mem-confirmed-old",
+					Namespace:        "user:ren",
+					UserID:           "ren",
+					Type:             domainmemory.UserMemoryTypePreference,
+					Statement:        "古い確定記憶",
+					EvidenceEventIDs: []string{"evt-old"},
+					Confidence:       0.9,
+					Sensitivity:      "normal",
+					State:            domainmemory.MemoryStateConfirmed,
+					Active:           true,
+					CreatedAt:        now.Add(-50 * time.Second),
+				},
+				{
+					ID:          "mem-sensitive",
+					Namespace:   "user:ren",
+					UserID:      "ren",
+					Type:        domainmemory.UserMemoryTypeSensitive,
+					Statement:   "sensitive は Recall Pack に入れない",
+					Sensitivity: "sensitive",
+					State:       domainmemory.MemoryStateConfirmed,
+					Active:      true,
+					CreatedAt:   now,
+				},
+				{
+					ID:               "mem-confirmed-new",
+					Namespace:        "user:ren",
+					UserID:           "ren",
+					Type:             domainmemory.UserMemoryTypePreference,
+					Statement:        "新しい確定記憶",
+					EvidenceEventIDs: []string{"evt-new"},
+					Confidence:       0.9,
+					Sensitivity:      "normal",
+					State:            domainmemory.MemoryStateConfirmed,
+					Active:           true,
+					CreatedAt:        now.Add(-20 * time.Second),
+				},
+				{
+					ID:               "mem-confirmed",
+					Namespace:        "user:ren",
+					UserID:           "ren",
+					Type:             domainmemory.UserMemoryTypePreference,
+					Statement:        "短く論理的な説明を好む",
+					EvidenceEventIDs: []string{"evt-1"},
+					Confidence:       0.9,
+					Sensitivity:      "normal",
+					State:            domainmemory.MemoryStateConfirmed,
+					Active:           true,
+					CreatedAt:        now.Add(-30 * time.Second),
+				},
 			},
-			{
-				ID:          "mem-pinned",
-				Namespace:   "user:ren",
-				UserID:      "ren",
-				Type:        domainmemory.UserMemoryTypeConstraint,
-				Statement:   "日本語で答える",
-				Sensitivity: "normal",
-				State:       domainmemory.MemoryStatePinned,
-				Active:      true,
-			},
-			{
-				ID:          "mem-candidate",
-				Namespace:   "user:ren",
-				UserID:      "ren",
-				Type:        domainmemory.UserMemoryTypePreference,
-				Statement:   "candidate は Recall Pack に入れない",
-				Sensitivity: "normal",
-				State:       domainmemory.MemoryStateCandidate,
-				Active:      true,
-			},
-			{
-				ID:          "mem-sensitive",
-				Namespace:   "user:ren",
-				UserID:      "ren",
-				Type:        domainmemory.UserMemoryTypeSensitive,
-				Statement:   "sensitive は Recall Pack に入れない",
-				Sensitivity: "sensitive",
-				State:       domainmemory.MemoryStateConfirmed,
-				Active:      true,
+			domainmemory.MemoryStatePinned: {
+				{
+					ID:          "mem-pinned",
+					Namespace:   "user:ren",
+					UserID:      "ren",
+					Type:        domainmemory.UserMemoryTypeConstraint,
+					Statement:   "日本語で答える",
+					Sensitivity: "normal",
+					State:       domainmemory.MemoryStatePinned,
+					Active:      true,
+					CreatedAt:   now.Add(-40 * time.Second),
+				},
+				{
+					ID:          "mem-pinned-old",
+					Namespace:   "user:ren",
+					UserID:      "ren",
+					Type:        domainmemory.UserMemoryTypeConstraint,
+					Statement:   "古いPinned記憶",
+					Sensitivity: "normal",
+					State:       domainmemory.MemoryStatePinned,
+					Active:      true,
+					CreatedAt:   now.Add(-60 * time.Second),
+				},
+				{
+					ID:          "mem-pinned-new",
+					Namespace:   "user:ren",
+					UserID:      "ren",
+					Type:        domainmemory.UserMemoryTypeConstraint,
+					Statement:   "新しいPinned記憶",
+					Sensitivity: "normal",
+					State:       domainmemory.MemoryStatePinned,
+					Active:      true,
+					CreatedAt:   now.Add(-10 * time.Second),
+				},
 			},
 		},
 	}
@@ -125,10 +195,6 @@ func TestHandleMemoryRecallPackFiltersUserMemory(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if users.userID != "ren" || users.state != "" || users.limit != 5 {
-		t.Fatalf("unexpected user memory query: %+v", users)
-	}
-
 	var pack domainmemory.UserMemoryRecallView
 	if err := json.Unmarshal(rec.Body.Bytes(), &pack); err != nil {
 		t.Fatalf("invalid json: %v", err)
@@ -140,15 +206,32 @@ func TestHandleMemoryRecallPackFiltersUserMemory(t *testing.T) {
 	for _, item := range pack.Items {
 		ids[item.MemoryID] = item
 	}
-	for _, want := range []string{"l0-1", "mem-confirmed", "mem-pinned", "thread:42", "kb-1"} {
+	for _, want := range []string{"l0-1", "mem-pinned-new", "mem-confirmed-new", "mem-confirmed", "mem-pinned", "mem-confirmed-old", "thread:42", "kb-1"} {
 		if _, ok := ids[want]; !ok {
 			t.Fatalf("missing recall item %q in %+v", want, ids)
 		}
 	}
-	for _, blocked := range []string{"mem-candidate", "mem-sensitive"} {
+	for _, blocked := range []string{"mem-candidate-1", "mem-sensitive", "mem-pinned-old"} {
 		if _, ok := ids[blocked]; ok {
 			t.Fatalf("blocked recall item %q leaked into pack: %+v", blocked, ids[blocked])
 		}
+	}
+	userMemoryIDs := make([]string, 0, 5)
+	for _, item := range pack.Items {
+		if item.Layer == "UserMemory" {
+			userMemoryIDs = append(userMemoryIDs, item.MemoryID)
+		}
+	}
+	wantUserMemoryIDs := []string{"mem-pinned-new", "mem-confirmed-new", "mem-confirmed", "mem-pinned", "mem-confirmed-old"}
+	if !reflect.DeepEqual(userMemoryIDs, wantUserMemoryIDs) {
+		t.Fatalf("unexpected user memory order or cap: got %v want %v", userMemoryIDs, wantUserMemoryIDs)
+	}
+	wantCalls := []recallPackUserStoreCall{
+		{userID: "ren", state: domainmemory.MemoryStateConfirmed, includeInactive: false, limit: 5},
+		{userID: "ren", state: domainmemory.MemoryStatePinned, includeInactive: false, limit: 5},
+	}
+	if !reflect.DeepEqual(users.calls, wantCalls) {
+		t.Fatalf("unexpected user memory queries: got %+v want %+v", users.calls, wantCalls)
 	}
 	if ids["mem-pinned"].Score != 1.0 {
 		t.Fatalf("pinned user memory should score 1.0, got %v", ids["mem-pinned"].Score)
