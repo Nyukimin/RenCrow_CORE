@@ -2,11 +2,26 @@ package main
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
+
+type countingLLMProvider struct {
+	calls atomic.Int32
+}
+
+func (p *countingLLMProvider) Generate(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+	p.calls.Add(1)
+	return llm.GenerateResponse{}, nil
+}
+
+func (p *countingLLMProvider) Name() string {
+	return "counting"
+}
 
 func TestLLMBusyTrackerSeparatesIdleChatFromExternalBusy(t *testing.T) {
 	tracker := newLLMBusyTracker()
@@ -38,12 +53,12 @@ func TestLLMBusyTrackerSeparatesIdleChatFromExternalBusy(t *testing.T) {
 
 func TestLLMBusyTrackerIdleLeaseIsAtomicAndCancelledByForegroundWork(t *testing.T) {
 	tracker := newLLMBusyTracker()
-	leaseCtx, release, ok := tracker.TryAcquireIdleLease(context.Background())
+	leaseCtx, release, ok := tracker.TryAcquireIdleLease(context.Background(), "profile_promotion")
 	if !ok {
 		t.Fatal("idle lease should be acquired")
 	}
 	defer release()
-	if _, _, second := tracker.TryAcquireIdleLease(context.Background()); second {
+	if _, _, second := tracker.TryAcquireIdleLease(context.Background(), "other_background"); second {
 		t.Fatal("second idle lease should be rejected")
 	}
 
@@ -61,4 +76,55 @@ func TestLLMBusyTrackerIdleLeaseIsAtomicAndCancelledByForegroundWork(t *testing.
 	}
 	endForeground()
 	endBackground()
+}
+
+func TestLLMBusyTrackerIdleLeaseIsVisibleAsExternalBusyUntilReleased(t *testing.T) {
+	tracker := newLLMBusyTracker()
+	_, release, ok := tracker.TryAcquireIdleLease(context.Background(), "profile_promotion")
+	if !ok {
+		t.Fatal("idle lease should be acquired")
+	}
+
+	snapshot := tracker.Snapshot()
+	if !snapshot.Active || snapshot.ActiveCount != 1 {
+		t.Fatalf("active snapshot = %+v, want idle lease as one active request", snapshot)
+	}
+	if !snapshot.External || snapshot.ExternalCount != 1 {
+		t.Fatalf("external snapshot = %+v, want idle lease to pause IdleChat", snapshot)
+	}
+	if snapshot.ExternalSources["profile_promotion"] != 1 {
+		t.Fatalf("external sources = %+v, want named idle lease source", snapshot.ExternalSources)
+	}
+
+	release()
+	if snapshot = tracker.Snapshot(); snapshot.Active || snapshot.External {
+		t.Fatalf("snapshot after release = %+v, want inactive", snapshot)
+	}
+}
+
+func TestTrackedProviderAtomicallyRejectsIdleChatWhenIdleLeaseIsHeld(t *testing.T) {
+	tracker := newLLMBusyTracker()
+	leaseCtx, release, ok := tracker.TryAcquireIdleLease(context.Background(), "profile_promotion")
+	if !ok {
+		t.Fatal("idle lease should be acquired")
+	}
+	defer release()
+
+	inner := &countingLLMProvider{}
+	provider := trackLLMProvider("chat", inner, tracker)
+	_, err := provider.Generate(
+		llm.WithBusySource(context.Background(), "idlechat"),
+		llm.GenerateRequest{},
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("idlechat generate error = %v, want context canceled", err)
+	}
+	if inner.calls.Load() != 0 {
+		t.Fatalf("inner provider calls = %d, want zero", inner.calls.Load())
+	}
+	select {
+	case <-leaseCtx.Done():
+		t.Fatal("rejected IdleChat must not preempt the ProfilePromotion lease")
+	default:
+	}
 }

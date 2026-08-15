@@ -13,6 +13,8 @@ type memoryPromotionRunner interface {
 	RunOne(context.Context) (memorypromotionapp.RunResult, error)
 }
 
+const memoryProfilePromotionBusySource = "memory_profile_promotion"
+
 func startMemoryPromotionWorker(
 	runner memoryPromotionRunner,
 	tracker *llmBusyTracker,
@@ -64,7 +66,7 @@ func startMemoryPromotionWorkerRunner(
 				if now.Sub(idleSince) < idleGrace {
 					continue
 				}
-				leaseCtx, release, ok := tracker.TryAcquireIdleLease(ctx)
+				leaseCtx, release, ok := tracker.TryAcquireIdleLease(ctx, memoryProfilePromotionBusySource)
 				if !ok {
 					continue
 				}
@@ -74,7 +76,7 @@ func startMemoryPromotionWorkerRunner(
 					runCancel()
 					if err != nil {
 						if !errors.Is(err, context.Canceled) {
-							reporter.Failed("memory_profile_promotion", err, "L1 raw UserMemory candidate extraction")
+							reporter.Failed(memoryProfilePromotionBusySource, err, "L1 raw UserMemory candidate extraction")
 						}
 						break
 					}

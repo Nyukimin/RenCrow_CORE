@@ -28,7 +28,9 @@ type llmBusyTracker struct {
 	idleLeaseCancel context.CancelFunc
 }
 
-type llmIdleLease struct{}
+type llmIdleLease struct {
+	source string
+}
 
 type llmIdleLeaseContextKey struct{}
 
@@ -37,8 +39,13 @@ func newLLMBusyTracker() *llmBusyTracker {
 }
 
 func (t *llmBusyTracker) Begin(ctx context.Context, fallbackSource string) func() {
+	done, _ := t.TryBegin(ctx, fallbackSource)
+	return done
+}
+
+func (t *llmBusyTracker) TryBegin(ctx context.Context, fallbackSource string) (func(), bool) {
 	if t == nil {
-		return func() {}
+		return func() {}, true
 	}
 	source := strings.TrimSpace(llm.BusySourceFromContext(ctx))
 	if source == "" {
@@ -50,6 +57,10 @@ func (t *llmBusyTracker) Begin(ctx context.Context, fallbackSource string) func(
 	t.mu.Lock()
 	lease, _ := ctx.Value(llmIdleLeaseContextKey{}).(*llmIdleLease)
 	if t.idleLease != nil && lease != t.idleLease {
+		if source == "idlechat" {
+			t.mu.Unlock()
+			return func() {}, false
+		}
 		cancel := t.idleLeaseCancel
 		t.idleLease = nil
 		t.idleLeaseCancel = nil
@@ -70,19 +81,23 @@ func (t *llmBusyTracker) Begin(ctx context.Context, fallbackSource string) func(
 			return
 		}
 		t.sources[source]--
-	}
+	}, true
 }
 
-func (t *llmBusyTracker) TryAcquireIdleLease(parent context.Context) (context.Context, func(), bool) {
+func (t *llmBusyTracker) TryAcquireIdleLease(parent context.Context, source string) (context.Context, func(), bool) {
 	if t == nil {
 		return parent, func() {}, false
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "idle_lease"
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if len(copyBusySources(t.sources)) > 0 || t.idleLease != nil {
 		return parent, func() {}, false
 	}
-	lease := &llmIdleLease{}
+	lease := &llmIdleLease{source: source}
 	leaseCtx, cancel := context.WithCancel(parent)
 	leaseCtx = context.WithValue(leaseCtx, llmIdleLeaseContextKey{}, lease)
 	t.idleLease = lease
@@ -106,6 +121,9 @@ func (t *llmBusyTracker) Snapshot() llmBusySnapshot {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	all := copyBusySources(t.sources)
+	if t.idleLease != nil {
+		all[t.idleLease.source]++
+	}
 	external := map[string]int{}
 	activeCount := 0
 	externalCount := 0
@@ -175,7 +193,10 @@ func trackLLMProvider(source string, inner llm.LLMProvider, tracker *llmBusyTrac
 }
 
 func (p trackedLLMProvider) Generate(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
-	done := p.tracker.Begin(ctx, p.source)
+	done, ok := p.tracker.TryBegin(ctx, p.source)
+	if !ok {
+		return llm.GenerateResponse{}, context.Canceled
+	}
 	defer done()
 	return p.inner.Generate(ctx, req)
 }
@@ -189,7 +210,10 @@ func (p trackedLLMProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.
 	if !ok {
 		return llm.ChatResponse{}, errTrackedProviderNoToolCalling
 	}
-	done := p.tracker.Begin(ctx, p.source)
+	done, ok := p.tracker.TryBegin(ctx, p.source)
+	if !ok {
+		return llm.ChatResponse{}, context.Canceled
+	}
 	defer done()
 	return toolProvider.Chat(ctx, req)
 }
