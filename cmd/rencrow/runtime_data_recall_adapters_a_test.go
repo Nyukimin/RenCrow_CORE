@@ -70,7 +70,7 @@ func (s *dataRecallWorkstreamListerStub) ListGoals(_ context.Context, limit int)
 
 type dataRecallRevenueListerStub struct {
 	opportunities []domainrevenue.Opportunity
-	gotLimit     int
+	gotLimit      int
 }
 
 func (s *dataRecallRevenueListerStub) ListOpportunities(_ context.Context, limit int) ([]domainrevenue.Opportunity, error) {
