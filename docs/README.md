@@ -34,8 +34,12 @@
   Storage Proposal、Manifest、lifecycle、backup／restore契約は
   [設定リファレンスの「DB物理配置とbackup」](05_設定リファレンス.md#db物理配置とbackup)を
   唯一の現行正本とします。兄弟moduleのREADMEは所有subtreeと設定入口だけを補足します。
+- Conversation、UserMemory、Knowledge Memoryの入力原本を束ねる`Common Raw Data`は、21番目の
+  catalog DB、新module、外部systemではなく、COREが所有する論理source-of-truth層です。source adapter、
+  immutable intake、domain projection、Recall、backup／restoreの一方向契約は[機能仕様のCommon Raw Data](02_機能仕様.md#common-raw-data-intakeとdomain-projection)、
+  [アーキテクチャ概要の記憶ストレージ](04_アーキテクチャ概要.md#記憶ストレージ)、[安全・データ方針のKnowledgeとMemory](07_安全・自動実行・データ方針.md#knowledge-と-memory)を参照し、設定入口と実装状態は05／08で確認します。
 - 実装、production wiring、test、config は現在状態を確認する証拠です。正本と差異が見つかった場合は事実を照合し、採用する契約をこの正本へ反映してから実装を合わせます。
 - 実装済み、未実装、deployment依存を区別します。
 - 現行正本に必要な情報が不足している場合は、該当する `01` から `10` の文書を更新します。別の正本ディレクトリ、版付き正本、補助正本を追加しません。
 
-最終整理日: 2026-08-15
+最終整理日: 2026-08-16

@@ -183,6 +183,66 @@ fail closedになります。handler単体、またはguard未適用の経路で
 requestごとにCOREが直ちに認可、拒否、利用不能、成功を確定します。直接DBを書き換える経路や別embedding／
 Recall経路へのfallbackはこのAPIにありません。
 
+### Memory CLI／API対応（採用済み・未実装）
+
+`/viewer/memory/*`はCOREのowner APIの基礎です。現行の`GET /viewer/memory/profile-promotions`と
+`POST /viewer/memory/profile-promotions/retry`は互換維持し、既存ViewerのUserMemory list／create／state／
+forget／supersede、RecallPack、ChatGPT import／confirmも既存caller向けに保持します。ただし、現行のViewer routeの
+存在はoperator CLI、authenticated owner scope、全操作共通receipt、import checkpointのhash bindingを意味しません。
+下表の新routeと共通response／receiptはtargetであり、採用済み・未実装です。
+
+| RenCrow_CMD target | CORE Public API target | profile | 操作境界 |
+| --- | --- | --- | --- |
+| `memory list` | `GET /viewer/memory/user` | `cmd-diagnostics` | authenticated ownerのbounded list。既存routeをscope付きで継続 |
+| `memory show --id` | `GET /viewer/memory/user/{id}` | `cmd-diagnostics` | 新規exact-ID projection |
+| `memory recall --query` | `GET /viewer/memory/recall-pack` | `cmd-diagnostics` | 既存routeへbounded `query`／Recall traceを追加。caller `user_id`を廃止 |
+| `memory trace list` | `GET /viewer/recall/traces` | `cmd-diagnostics` | 既存routeのbounded trace metadata／state |
+| `memory trace show --id` | `GET /viewer/recall/traces/{id}` | `cmd-diagnostics` | 新規exact-ID trace projection |
+| `memory propose` | `POST /viewer/memory/user` | `cmd-control` | 既存create routeをcandidate-onlyとし、operator statementをL1 evidenceへ同一commit |
+| `memory confirm\|pin --id` | `POST /viewer/memory/user/state` | `cmd-control` | 既存state routeでexact-ID遷移 |
+| `memory forget --id` | `POST /viewer/memory/user/forget` | `cmd-control` | 既存forget routeへowner receiptを追加 |
+| `memory supersede --id --replacement-id` | `POST /viewer/memory/user/supersede` | `cmd-control` | 既存routeでreplacement bindingを検証 |
+| `memory archive --id` | `POST /viewer/memory/user/archive` | `cmd-control` | 新規exact-ID archive receipt |
+| `memory lifecycle plan` | `POST /viewer/memory/lifecycle/plan` | `cmd-control` | dry-run／planのみ |
+| `memory lifecycle run --plan-request-id ... --apply` | `POST /viewer/memory/lifecycle/run` | `cmd-control` | plan receipt／hash再検証後だけapply |
+| `memory export parquet` | `POST /viewer/memory/export/parquet` | `cmd-control` | CORE owner output root内のbounded export |
+| `memory export verify --request-id` | `GET /viewer/memory/export/{request_id}` | `cmd-diagnostics` | manifest／hash／count verify |
+| `memory import status --export-id` | `GET /viewer/memory/import/chatgpt/{export_id}` | `cmd-diagnostics` | 新規import checkpoint／receipt projection |
+| `memory import confirm --export-id` | `POST /viewer/memory/import/chatgpt/confirm` | `cmd-control` | 既存confirm route。reason必須、既定dry-run、`--apply`で適用 |
+
+target CLIは`user_id`、DB path、table／column、SQL、physical output pathを送らず、authenticated userは
+server contextから決定します。legacy callerが`user_id`を送った場合もauthenticated userと一致しなければ403です。
+targetのreadは認証済みownerが明示要求したbounded UserMemory projectionと状態だけを返し、Raw payload、全会話
+transcript、sensitive valueをstdoutへ出さず、通常logにはUserMemory statementとRecall `query`も残しません。state mutationの単一writeは
+verb自体を明示操作とし、bulk mutation／lifecycle／importはplan／dry-runを既定として`--apply`時だけ変更します。
+Parquet exportはsource DBを変更しない明示artifact生成commandです。全effectful operationは`request_id`（CLI自動生成、
+retry時再指定可）を持ち、memory stateを変えるoperationは`reason`も必須とします。approval queueや人の返答待ちstatusは作りません。
+
+新routeの共通response／receiptには`request_id`、`operation`、`status`、`owner_route`、`policy_revision`、
+`idempotency_key`、`idempotent_replay`、input／output counts、warnings、`audit_reference`を含めます。
+`status`は`completed`、`rejected`、`blocked`のいずれかでrequestを閉じ、既存status／retry endpointのresponse形は
+互換維持します。HTTP結果は次の境界です。
+
+| HTTP | 意味 |
+| --- | --- |
+| 200 | typed `completed`、または同じrequestの`idempotent_replay=true` |
+| 400 | 引数、schema、reason、query、plan bindingが不正（`rejected`） |
+| 401 | authenticated owner contextがない（`rejected`） |
+| 403 | client／profile不一致、scope拒否、legacy `user_id`不一致（`rejected`） |
+| 404 | bounded exact-ID、trace、exportが存在しない（`rejected`） |
+| 409 | state、source／artifact hash、idempotency payloadの衝突（`rejected`） |
+| 503 | owner store、Common Raw、必要なmodule routeが利用不能（`blocked`） |
+| 500 | transaction／outbox／receiptの永続化失敗。`completed`を主張せず、可能ならtyped `blocked` errorを返す |
+
+ProfileExtractor／ThreadSummarizerのLLM応答はCOREの正規RenCrow_LLM routeを通るbounded semantic residualだけです。
+COREがL1 Raw evidence、既存UserMemoryのbounded projection、schema、scopeを準備し、出力のtype／enum、長さ、confidence、
+evidence binding、dedupe、sensitivityを検証してからcandidate／summaryを保存します。invalid output、assistant-only
+evidence、synthetic evidenceは保存せず、retry可能性をreceiptへ記録します。EndTurnのconversation responseとmemory
+persistence、trace、archive followerは別typed outcomeとし、部分成功をcompletedへ丸めません。
+新規作成は`candidate`固定で、`confirmed`／`pinned`はexact-ID state APIだけが同一transactionのaudit receiptとともに
+設定します。Agent readもauthenticated userと`DataScopeUser`、active、`confirmed | pinned`、non-sensitiveをserver側で
+検証し、source failureを空の200へ変換せずRecall traceへ記録します。
+
 ### 認証済みAgent OPS
 
 `POST /v1/agent/ops`は通常Chatとは別のOperational APIです。`local_agent_ops.enabled=true`でのみ存在し、
