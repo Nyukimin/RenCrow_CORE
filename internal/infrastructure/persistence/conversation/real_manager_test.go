@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -68,11 +69,22 @@ func (m *mockRedisStore) DeleteThread(_ context.Context, threadID int64) error {
 func (m *mockRedisStore) Close() error { return nil }
 
 type mockArchiveSQLiteStore struct {
-	saved     []*domconv.ThreadSummary
-	kbArchive []l1sqlite.L1KnowledgeItem
+	saved        []*domconv.ThreadSummary
+	kbArchive    []l1sqlite.L1KnowledgeItem
+	saveErr      error
+	receiptCalls int
 }
 
 func (m *mockArchiveSQLiteStore) SaveThreadSummary(_ context.Context, s *domconv.ThreadSummary) error {
+	m.saved = append(m.saved, s)
+	return nil
+}
+func (m *mockArchiveSQLiteStore) SaveThreadSummaryWithReceipt(_ context.Context, s *domconv.ThreadSummary, receipt *domconv.ThreadSummaryReceipt) error {
+	m.receiptCalls++
+	if m.saveErr != nil {
+		return m.saveErr
+	}
+	s.Receipt = receipt
 	m.saved = append(m.saved, s)
 	return nil
 }
@@ -345,17 +357,20 @@ type mockSummarizer struct {
 	summary       string
 	keywords      []string
 	err           error
-	summarizeFunc func(context.Context, *domconv.Thread) (string, error)
+	summarizeFunc func(context.Context, *domconv.Thread) (domconv.SummaryResidual, error)
 }
 
-func (m *mockSummarizer) Summarize(ctx context.Context, thread *domconv.Thread) (string, error) {
+type unnamedSummarizer struct{}
+
+func (unnamedSummarizer) Summarize(context.Context, *domconv.Thread) (domconv.SummaryResidual, error) {
+	return domconv.SummaryResidual{Summary: "summary", Keywords: []string{"one", "two", "three"}}, nil
+}
+
+func (m *mockSummarizer) Summarize(ctx context.Context, thread *domconv.Thread) (domconv.SummaryResidual, error) {
 	if m.summarizeFunc != nil {
 		return m.summarizeFunc(ctx, thread)
 	}
-	return m.summary, m.err
-}
-func (m *mockSummarizer) ExtractKeywords(_ context.Context, _ *domconv.Thread) ([]string, error) {
-	return m.keywords, m.err
+	return domconv.SummaryResidual{Summary: m.summary, Keywords: m.keywords, Provider: "mock"}, m.err
 }
 
 // dummy for time import
@@ -405,6 +420,206 @@ func TestFlushThread_WithLLMSummary(t *testing.T) {
 	}
 	if len(summary.Embedding) == 0 {
 		t.Error("Expected embedding to be generated")
+	}
+}
+
+func TestFlushThread_CurrentPathPersistsReceiptAfterFallback(t *testing.T) {
+	mgr := newTestManager(nil, &mockSummarizer{err: fmt.Errorf("summarizer unavailable")})
+	ctx := context.Background()
+	thread, err := mgr.CreateThread(ctx, "sess-receipt-red", "programming")
+	if err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "保存される会話", nil))
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerMio, "要約対象です", nil))
+	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
+
+	if _, err := mgr.FlushThread(ctx, thread.ID); err != nil {
+		t.Fatalf("FlushThread failed: %v", err)
+	}
+	saved := mgr.archiveStore.(*mockArchiveSQLiteStore).saved
+	if len(saved) != 1 {
+		t.Fatalf("expected one archived summary, got %d", len(saved))
+	}
+	receipt := reflect.ValueOf(saved[0]).Elem().FieldByName("Receipt")
+	if !receipt.IsValid() || receipt.Kind() != reflect.Ptr || receipt.IsNil() {
+		t.Fatal("fallback was silently persisted without a summary receipt")
+	}
+}
+
+func TestFlushThread_FallbackReceiptAndEvidence(t *testing.T) {
+	mgr := newTestManager(nil, nil)
+	ctx := context.Background()
+	thread, err := mgr.CreateThread(ctx, "sess-fallback-receipt", "memory")
+	if err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "覚えて", nil))
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerMio, "保存した", nil))
+	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
+
+	summary, err := mgr.FlushThread(ctx, thread.ID)
+	if err != nil {
+		t.Fatalf("FlushThread failed: %v", err)
+	}
+	if summary.Receipt == nil || summary.Receipt.GenerationMode != domconv.ThreadSummaryGenerationDeterministicFallback {
+		t.Fatalf("unexpected fallback receipt: %#v", summary.Receipt)
+	}
+	if summary.Receipt.FailureCode != domconv.ThreadSummaryFailureNotConfigured {
+		t.Fatalf("unexpected fallback failure code: %#v", summary.Receipt)
+	}
+	if summary.Receipt.Provider != "not_configured" {
+		t.Fatalf("unexpected fallback provider: %#v", summary.Receipt)
+	}
+	if len(summary.Keywords) < 3 || len(summary.Keywords) > 5 || len(summary.Roles) != 2 {
+		t.Fatalf("fallback bounds/roles not preserved: %#v", summary)
+	}
+	if len(summary.Receipt.EvidenceSHA256) != 64 {
+		t.Fatalf("unexpected evidence hash: %q", summary.Receipt.EvidenceSHA256)
+	}
+}
+
+func TestFlushThread_SummarizerUnavailableReceiptCode(t *testing.T) {
+	mgr := newTestManager(nil, &mockSummarizer{err: domconv.ErrThreadSummarizerUnavailable})
+	ctx := context.Background()
+	thread, _ := mgr.CreateThread(ctx, "sess-unavailable", "general")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "失敗しても保存", nil))
+	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
+
+	summary, err := mgr.FlushThread(ctx, thread.ID)
+	if err != nil {
+		t.Fatalf("FlushThread failed: %v", err)
+	}
+	if summary.Receipt == nil || summary.Receipt.FailureCode != domconv.ThreadSummaryFailureUnavailable {
+		t.Fatalf("unexpected unavailable receipt: %#v", summary.Receipt)
+	}
+	if summary.Receipt.Provider != "mock" {
+		t.Fatalf("unavailable provider identity was lost: %#v", summary.Receipt)
+	}
+}
+
+func TestFlushThreadUnnamedSummarizerUsesNotConfiguredFallback(t *testing.T) {
+	mgr := newTestManager(nil, unnamedSummarizer{})
+	thread, _ := mgr.CreateThread(context.Background(), "sess-unnamed", "general")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "persist deterministically", nil))
+	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
+
+	summary, err := mgr.FlushThread(context.Background(), thread.ID)
+	if err != nil {
+		t.Fatalf("FlushThread failed: %v", err)
+	}
+	if summary.Receipt == nil || summary.Receipt.Provider != domconv.ThreadSummaryProviderNotConfigured || summary.Receipt.FailureCode != domconv.ThreadSummaryFailureNotConfigured || summary.Receipt.GenerationMode != domconv.ThreadSummaryGenerationDeterministicFallback {
+		t.Fatalf("unexpected unnamed-provider fallback receipt: %#v", summary.Receipt)
+	}
+}
+
+func TestFlushThread_ArchiveFailureDoesNotRetryWithAlternateSummary(t *testing.T) {
+	archive := &mockArchiveSQLiteStore{saveErr: fmt.Errorf("archive failure")}
+	mgr := newTestManager(nil, nil)
+	mgr.archiveStore = archive
+	ctx := context.Background()
+	thread, _ := mgr.CreateThread(ctx, "sess-archive-failure", "general")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "一度だけ保存", nil))
+	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
+
+	if _, err := mgr.FlushThread(ctx, thread.ID); err == nil {
+		t.Fatal("expected archive failure")
+	}
+	if archive.receiptCalls != 1 {
+		t.Fatalf("archive was retried with an alternate summary: calls=%d", archive.receiptCalls)
+	}
+}
+
+func TestDeriveThreadSummaryEvidenceIsDeterministicAndSensitive(t *testing.T) {
+	thread := domconv.NewThread("evidence-session", "general")
+	thread.ID = 9001
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "body-a", nil))
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerMio, "body-b", nil))
+	_, first, err := deriveThreadSummaryEvidence(thread)
+	if err != nil {
+		t.Fatalf("derive evidence failed: %v", err)
+	}
+	_, second, err := deriveThreadSummaryEvidence(thread)
+	if err != nil {
+		t.Fatalf("derive evidence failed: %v", err)
+	}
+	if first != second {
+		t.Fatalf("same source produced different evidence hashes: %q != %q", first, second)
+	}
+	changedOrder := *thread
+	changedOrder.Turns = append([]domconv.Message(nil), thread.Turns[1], thread.Turns[0])
+	_, orderHash, err := deriveThreadSummaryEvidence(&changedOrder)
+	if err != nil {
+		t.Fatalf("derive order evidence failed: %v", err)
+	}
+	if orderHash == first {
+		t.Fatal("turn order did not change evidence hash")
+	}
+	changedSpeaker := *thread
+	changedSpeaker.Turns = append([]domconv.Message(nil), thread.Turns...)
+	changedSpeaker.Turns[0].Speaker = domconv.SpeakerShiro
+	_, speakerHash, err := deriveThreadSummaryEvidence(&changedSpeaker)
+	if err != nil {
+		t.Fatalf("derive speaker evidence failed: %v", err)
+	}
+	if speakerHash == first {
+		t.Fatal("speaker did not change evidence hash")
+	}
+	changedBody := *thread
+	changedBody.Turns = append([]domconv.Message(nil), thread.Turns...)
+	changedBody.Turns[0].Msg = "body-c"
+	_, bodyHash, err := deriveThreadSummaryEvidence(&changedBody)
+	if err != nil {
+		t.Fatalf("derive body evidence failed: %v", err)
+	}
+	if bodyHash == first {
+		t.Fatal("body did not change evidence hash")
+	}
+}
+
+func TestArchiveThreadSummaryUsesStableSourceTimeForReplay(t *testing.T) {
+	mgr := newTestManager(nil, nil)
+	ctx := context.Background()
+	thread := domconv.NewThread("stable-replay", "general")
+	thread.ID = 9100
+	fixed := time.Date(2026, 8, 16, 18, 30, 0, 0, time.UTC)
+	thread.StartTime = fixed.Add(-time.Minute)
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "stable body", nil))
+	thread.Turns[0].Timestamp = fixed
+	residual := domconv.SummaryResidual{Summary: "stable summary", Keywords: []string{"one", "two", "three"}, Provider: "mock"}
+
+	first, err := mgr.archiveThreadSummary(ctx, thread, residual, domconv.ThreadSummaryGenerationLLM, "", nil)
+	if err != nil {
+		t.Fatalf("first archive failed: %v", err)
+	}
+	second, err := mgr.archiveThreadSummary(ctx, thread, residual, domconv.ThreadSummaryGenerationLLM, "", nil)
+	if err != nil {
+		t.Fatalf("replay archive failed: %v", err)
+	}
+	if !first.EndTime.Equal(second.EndTime) || !first.Receipt.CreatedAt.Equal(second.Receipt.CreatedAt) {
+		t.Fatalf("replay changed archive identity: first=%#v second=%#v", first.Receipt, second.Receipt)
+	}
+}
+
+func TestFlushThreadRejectsInvalidEvidenceBeforeArchive(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		thread *domconv.Thread
+	}{
+		{name: "empty identity", thread: &domconv.Thread{ID: 0, SessionID: "", Turns: []domconv.Message{{Speaker: domconv.SpeakerUser, Msg: "body"}}}},
+		{name: "invalid utf8 body", thread: &domconv.Thread{ID: 9101, SessionID: "valid-session", Turns: []domconv.Message{{Speaker: domconv.SpeakerUser, Msg: string([]byte{0xff})}}}},
+		{name: "empty speaker", thread: &domconv.Thread{ID: 9102, SessionID: "valid-session", Turns: []domconv.Message{{Msg: "body", Timestamp: time.Now().UTC()}}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := newTestManager(nil, nil)
+			mgr.redisStore.(*mockRedisStore).threads[tt.thread.ID] = tt.thread
+			if _, err := mgr.FlushThread(context.Background(), tt.thread.ID); err == nil {
+				t.Fatal("invalid evidence was archived")
+			}
+			if calls := mgr.archiveStore.(*mockArchiveSQLiteStore).receiptCalls; calls != 0 {
+				t.Fatalf("archive was called for invalid evidence: %d", calls)
+			}
+		})
 	}
 }
 
@@ -611,7 +826,7 @@ func TestFlushThread_SkipsSQLiteArchiveWhenArchiveDisabled(t *testing.T) {
 		archiveStore:  nil,
 		vectordbStore: vdb,
 		embedder:      embedder,
-		summarizer:    &mockSummarizer{summary: "summary without archive_sqlite", keywords: []string{"memory"}},
+		summarizer:    &mockSummarizer{summary: "summary without archive_sqlite", keywords: []string{"memory", "thread", "summary"}},
 	}
 	ctx := context.Background()
 
@@ -969,13 +1184,13 @@ func TestStore_RollsThreadWithoutWaitingForLLMSummary(t *testing.T) {
 	release := make(chan struct{})
 	summarizer := &mockSummarizer{
 		keywords: []string{"greeting"},
-		summarizeFunc: func(ctx context.Context, thread *domconv.Thread) (string, error) {
+		summarizeFunc: func(ctx context.Context, thread *domconv.Thread) (domconv.SummaryResidual, error) {
 			close(started)
 			select {
 			case <-release:
-				return "greeting summary", nil
+				return domconv.SummaryResidual{Summary: "greeting summary", Keywords: []string{"greeting", "thread", "conversation"}, Provider: "mock"}, nil
 			case <-ctx.Done():
-				return "", ctx.Err()
+				return domconv.SummaryResidual{Provider: "mock"}, ctx.Err()
 			}
 		},
 	}
@@ -1030,9 +1245,9 @@ func TestStore_RollsThreadWithoutWaitingForLLMSummary(t *testing.T) {
 
 func TestStore_BackgroundSummaryTimeoutPersistsSimpleFallback(t *testing.T) {
 	summarizer := &mockSummarizer{
-		summarizeFunc: func(ctx context.Context, thread *domconv.Thread) (string, error) {
+		summarizeFunc: func(ctx context.Context, thread *domconv.Thread) (domconv.SummaryResidual, error) {
 			<-ctx.Done()
-			return "", ctx.Err()
+			return domconv.SummaryResidual{Provider: "mock"}, ctx.Err()
 		},
 	}
 	mgr := newTestManager(nil, summarizer)

@@ -104,6 +104,11 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	}
 
 	if resp, ok, err := s.tryExecuteCodexWorkPath(ctx, t); ok || err != nil {
+		if err == nil && s.conversation != nil {
+			if commitErr := commitConversationTurn(ctx, s.conversation, jobID, t.ChatID(), t.UserMessage(), resp, conversation.SpeakerShiro, nil); commitErr != nil {
+				return resp, commitErr
+			}
+		}
 		return resp, err
 	}
 	// SubagentManager が設定されている場合は ReActLoop を使用
@@ -118,20 +123,24 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if s.conversation != nil {
+			if commitErr := commitConversationTurn(ctx, s.conversation, jobID, t.ChatID(), t.UserMessage(), result.Output, conversation.SpeakerShiro, nil); commitErr != nil {
+				return result.Output, commitErr
+			}
+		}
 		return result.Output, nil
 	}
 
 	messages := dynamic
+	var recallPack *conversation.RecallPack
 	if s.conversation != nil {
-		recallPack, err := s.conversation.BeginTurn(ctx, t.ChatID(), t.UserMessage())
+		pack, err := s.conversation.BeginTurn(ctx, t.ChatID(), t.UserMessage())
 		if err != nil {
 			log.Printf("[Shiro] BeginTurn failed: %v", err)
-		} else if recallPack != nil {
-			filtered := recallPack.FilterForRole("worker").WithoutPersonaSystemPrompt()
-			if err := recordRecallTrace(ctx, s.conversation, t.ChatID(), t.JobID().String(), string(conversation.SpeakerShiro), filtered); err != nil {
-				log.Printf("[Shiro] RecordRecallTrace failed: %v", err)
-			}
-			messages = append(messages, filtered.ToPromptMessages()...)
+		} else if pack != nil {
+			filtered := pack.FilterForRole("worker").WithoutPersonaSystemPrompt()
+			recallPack = &filtered
+			messages = append(messages, recallPack.ToPromptMessages()...)
 		}
 	}
 	if s.lightMemory != nil {
@@ -153,8 +162,8 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	}
 
 	if s.conversation != nil {
-		if err := endConversationTurnAs(ctx, s.conversation, t.ChatID(), t.UserMessage(), resp.Content, conversation.SpeakerShiro); err != nil {
-			log.Printf("[Shiro] EndTurn failed: %v", err)
+		if err := commitConversationTurn(ctx, s.conversation, t.JobID().String(), t.ChatID(), t.UserMessage(), resp.Content, conversation.SpeakerShiro, recallPack); err != nil {
+			return resp.Content, err
 		}
 	}
 	return resp.Content, nil

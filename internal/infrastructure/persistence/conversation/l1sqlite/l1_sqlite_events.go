@@ -61,6 +61,7 @@ func (s *L1SQLiteStore) SaveRecallTrace(ctx context.Context, trace domconv.Recal
 	}
 	if err := s.StartRecallTrace(ctx, domconv.RecallTraceRecord{
 		TraceID:             traceID,
+		OwnerID:             strings.TrimSpace(trace.OwnerID),
 		TurnID:              trace.ResponseID,
 		ChatID:              trace.SessionID,
 		Persona:             firstNonEmptyString(trace.Role, "mio"),
@@ -71,7 +72,7 @@ func (s *L1SQLiteStore) SaveRecallTrace(ctx context.Context, trace domconv.Recal
 		TotalCandidates:     len(records),
 		InjectedCount:       injectedCount,
 		TotalInjectedTokens: totalTokens,
-		Status:              "completed",
+		Status:              "started",
 	}); err != nil {
 		return err
 	}
@@ -79,6 +80,9 @@ func (s *L1SQLiteStore) SaveRecallTrace(ctx context.Context, trace domconv.Recal
 		return err
 	}
 	if err := s.AddPromptInjectionEvents(ctx, traceID, PromptInjectionEventsFromItems(traceID, records, trace.CreatedAt)); err != nil {
+		return err
+	}
+	if err := s.FinishRecallTrace(ctx, traceID, "completed", injectedCount, totalTokens); err != nil {
 		return err
 	}
 	payload := map[string]interface{}{

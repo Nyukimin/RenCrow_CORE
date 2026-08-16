@@ -3,6 +3,8 @@ package memorypromotion
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,14 +13,22 @@ import (
 )
 
 type promotionStoreStub struct {
-	batch     *domainmemory.ProfilePromotionBatch
-	completed []domainmemory.ProfileCandidate
-	deferred  bool
-	failed    bool
+	batch           *domainmemory.ProfilePromotionBatch
+	projection      []domainmemory.UserMemory
+	projectionErr   error
+	projectionReads int
+	completed       []domainmemory.ProfileCandidate
+	deferred        bool
+	failed          bool
+	failureText     string
 }
 
 func (s *promotionStoreStub) ClaimProfilePromotionBatch(context.Context, int, int, time.Duration, time.Time) (*domainmemory.ProfilePromotionBatch, error) {
 	return s.batch, nil
+}
+func (s *promotionStoreStub) ListProfilePromotionProjection(context.Context, string, int) ([]domainmemory.UserMemory, error) {
+	s.projectionReads++
+	return s.projection, s.projectionErr
 }
 func (s *promotionStoreStub) CompleteProfilePromotionBatch(_ context.Context, _ domainmemory.ProfilePromotionBatch, candidates []domainmemory.ProfileCandidate, _ string, _ time.Time) (int, error) {
 	s.completed = append([]domainmemory.ProfileCandidate(nil), candidates...)
@@ -28,9 +38,22 @@ func (s *promotionStoreStub) DeferProfilePromotionBatch(context.Context, domainm
 	s.deferred = true
 	return nil
 }
-func (s *promotionStoreStub) FailProfilePromotionBatch(context.Context, domainmemory.ProfilePromotionBatch, int, time.Time, string) error {
+func (s *promotionStoreStub) FailProfilePromotionBatch(_ context.Context, _ domainmemory.ProfilePromotionBatch, _ int, _ time.Time, errorText string) error {
 	s.failed = true
+	s.failureText = errorText
 	return nil
+}
+
+type observingPromotionExtractor struct {
+	result   *domconv.ProfileExtractionResult
+	existing domconv.UserProfile
+	called   bool
+}
+
+func (s *observingPromotionExtractor) Extract(_ context.Context, _ *domconv.Thread, existing domconv.UserProfile) (*domconv.ProfileExtractionResult, error) {
+	s.called = true
+	s.existing = existing
+	return s.result, nil
 }
 
 type promotionExtractorStub struct {
@@ -50,7 +73,7 @@ func (s promotionExtractorStub) Extract(ctx context.Context, _ *domconv.Thread, 
 func testPromotionBatch() *domainmemory.ProfilePromotionBatch {
 	return &domainmemory.ProfilePromotionBatch{
 		LeaseToken: "lease", SessionID: "session", ThreadID: 1,
-		Messages: []domainmemory.ProfilePromotionMessage{{EventID: "evt-1", Text: "私はGoが好き"}},
+		Messages: []domainmemory.ProfilePromotionMessage{{EventID: "evt-1", SessionID: "session", ThreadID: 1, Text: "私はGoが好き"}},
 	}
 }
 
@@ -97,5 +120,126 @@ func TestServiceRunOneFailureConsumesAttempt(t *testing.T) {
 	}
 	if !store.failed || store.deferred {
 		t.Fatalf("deferred=%v failed=%v", store.deferred, store.failed)
+	}
+}
+
+func TestServiceRunOnePassesExistingProjectionToExtractor(t *testing.T) {
+	store := &promotionStoreStub{
+		batch: testPromotionBatch(),
+		projection: []domainmemory.UserMemory{{
+			UserID: "ren", Namespace: "user:ren", Type: domainmemory.UserMemoryTypeProfile,
+			Statement: "Goを使う", State: domainmemory.MemoryStateConfirmed, Active: true,
+			Confidence: 0.8, Sensitivity: "normal", Scope: "all_personas",
+		}},
+	}
+	extractor := &observingPromotionExtractor{result: &domconv.ProfileExtractionResult{}}
+	service := NewService(store, extractor, Options{UserID: "ren"})
+
+	if _, err := service.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(extractor.existing.Facts) != 1 || extractor.existing.Facts[0] != "Goを使う" {
+		t.Fatalf("existing projection was not passed to extractor: %+v", extractor.existing)
+	}
+}
+
+func TestServiceRunOneRejectsMoreThanSixteenRawCandidates(t *testing.T) {
+	store := &promotionStoreStub{batch: testPromotionBatch()}
+	facts := make([]string, 17)
+	for i := range facts {
+		facts[i] = fmt.Sprintf("fact-%d", i)
+	}
+	service := NewService(store, promotionExtractorStub{result: &domconv.ProfileExtractionResult{NewFacts: facts}}, Options{})
+
+	if _, err := service.RunOne(context.Background()); err == nil {
+		t.Fatal("expected more-than-sixteen raw candidates to fail")
+	}
+	if !store.failed || len(store.completed) != 0 {
+		t.Fatalf("invalid candidate batch was not failed: failed=%v completed=%#v", store.failed, store.completed)
+	}
+}
+
+func TestServiceRunOneFailsProjectionReadBeforeExtractor(t *testing.T) {
+	store := &promotionStoreStub{batch: testPromotionBatch(), projectionErr: errors.New("projection unavailable")}
+	extractor := &observingPromotionExtractor{result: &domconv.ProfileExtractionResult{}}
+	service := NewService(store, extractor, Options{UserID: "ren"})
+
+	if _, err := service.RunOne(context.Background()); err == nil {
+		t.Fatal("expected projection read failure")
+	}
+	if !store.failed || extractor.existing.UserID != "" || len(extractor.existing.Facts) != 0 {
+		t.Fatalf("projection failure crossed extractor boundary: failed=%v existing=%+v", store.failed, extractor.existing)
+	}
+}
+
+func TestServiceRunOneRejectsInvalidEvidenceBeforeProjectionAndExtractor(t *testing.T) {
+	batch := testPromotionBatch()
+	batch.Messages[0].SessionID = "foreign-session"
+	store := &promotionStoreStub{batch: batch}
+	extractor := &observingPromotionExtractor{result: &domconv.ProfileExtractionResult{}}
+	service := NewService(store, extractor, Options{UserID: "ren"})
+
+	if _, err := service.RunOne(context.Background()); err == nil {
+		t.Fatal("expected invalid evidence to fail")
+	}
+	if store.failureText != "profile_evidence_invalid" || store.projectionReads != 0 || extractor.called {
+		t.Fatalf("invalid evidence crossed pre-LLM boundary: failure=%q projection_reads=%d extractor_called=%v", store.failureText, store.projectionReads, extractor.called)
+	}
+}
+
+func TestServiceRunOneDoesNotPersistPrivateExtractorError(t *testing.T) {
+	secret := "provider private payload TOP-SECRET"
+	store := &promotionStoreStub{batch: testPromotionBatch()}
+	service := NewService(store, promotionExtractorStub{err: errors.New(secret)}, Options{UserID: "ren"})
+
+	if _, err := service.RunOne(context.Background()); err == nil {
+		t.Fatal("expected extractor failure")
+	}
+	if store.failureText != "profile_extractor_failed" || strings.Contains(store.failureText, secret) {
+		t.Fatalf("unsafe failure text=%q", store.failureText)
+	}
+}
+
+func TestServiceRunOneDeduplicatesExistingAndWithinOutputStatements(t *testing.T) {
+	store := &promotionStoreStub{
+		batch: testPromotionBatch(),
+		projection: []domainmemory.UserMemory{
+			{UserID: "ren", Namespace: "user:ren", Type: domainmemory.UserMemoryTypePreference, Statement: "好み: Go", State: domainmemory.MemoryStateConfirmed, Active: true, Confidence: 0.8, Sensitivity: "normal", Scope: "all_personas"},
+			{UserID: "ren", Namespace: "user:ren", Type: domainmemory.UserMemoryTypeProfile, Statement: "開発者", State: domainmemory.MemoryStateCandidate, Active: true, Confidence: 0.8, Sensitivity: "normal", Scope: "all_personas"},
+		},
+	}
+	service := NewService(store, promotionExtractorStub{result: &domconv.ProfileExtractionResult{
+		NewPreferences: map[string]string{"好み": " go "},
+		NewFacts:       []string{"開発者", "  新しい 事実 ", "新しい 事実"},
+	}}, Options{UserID: "ren"})
+
+	result, err := service.RunOne(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CandidateCount != 1 || len(store.completed) != 1 || store.completed[0].Statement != "新しい 事実" {
+		t.Fatalf("deduplicated result=%+v candidates=%#v", result, store.completed)
+	}
+}
+
+func TestServiceRunOneBoundsValidProjectionByTotalRunes(t *testing.T) {
+	projection := make([]domainmemory.UserMemory, 32)
+	for i := range projection {
+		projection[i] = domainmemory.UserMemory{
+			UserID: "ren", Namespace: "user:ren", Type: domainmemory.UserMemoryTypeProfile,
+			Statement: strings.Repeat("x", domainmemory.ProfilePromotionProjectionStatementMax),
+			State:     domainmemory.MemoryStateCandidate, Active: true, Confidence: 0.7,
+			Sensitivity: "normal", Scope: "all_personas",
+		}
+	}
+	store := &promotionStoreStub{batch: testPromotionBatch(), projection: projection}
+	extractor := &observingPromotionExtractor{result: &domconv.ProfileExtractionResult{}}
+	service := NewService(store, extractor, Options{UserID: "ren"})
+
+	if _, err := service.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(extractor.existing.Facts) != domainmemory.ProfilePromotionProjectionTotalMax/domainmemory.ProfilePromotionProjectionStatementMax {
+		t.Fatalf("bounded facts=%d", len(extractor.existing.Facts))
 	}
 }

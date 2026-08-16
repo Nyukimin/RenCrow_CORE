@@ -149,6 +149,113 @@ WHERE evidence_event_id = ? AND state = ?
 	}, nil
 }
 
+// ListProfilePromotionProjection returns the bounded owner-scoped projection
+// used as extractor context. SQL applies the security and lifecycle filters
+// before the limit; a selected row that fails strict decoding is an error.
+func (s *L1SQLiteStore) ListProfilePromotionProjection(ctx context.Context, userID string, limit int) ([]domainmemory.UserMemory, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, errors.New("profile promotion projection user id is required")
+	}
+	namespace, err := BuildL1Namespace(NamespaceKindUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > domainmemory.ProfilePromotionProjectionLimit {
+		limit = domainmemory.ProfilePromotionProjectionLimit
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+       memory_state, layer, source, created_at, updated_at
+FROM l1_memory_event
+WHERE namespace = ? AND speaker = ? AND layer = ?
+  AND json_extract(meta_json, '$.active') = 1
+  AND memory_state IN (?, ?, ?)
+ORDER BY CASE memory_state
+           WHEN ? THEN 0
+           WHEN ? THEN 1
+           WHEN ? THEN 2
+         END ASC,
+         updated_at DESC, rowid DESC
+LIMIT ?
+`, namespace, string(domconv.SpeakerMemory), MemoryLayerL1,
+		domainmemory.MemoryStateCandidate, domainmemory.MemoryStateConfirmed, domainmemory.MemoryStatePinned,
+		domainmemory.MemoryStatePinned, domainmemory.MemoryStateConfirmed, domainmemory.MemoryStateCandidate,
+		limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query profile promotion projection: %w", err)
+	}
+	defer rows.Close()
+	events, err := scanL1Events(rows)
+	if err != nil {
+		return nil, err
+	}
+	decoded := make([]domainmemory.UserMemory, 0, len(events))
+	for _, event := range events {
+		if err := validateProfilePromotionProjectionMetadata(event); err != nil {
+			return nil, fmt.Errorf("invalid profile promotion projection row %q: %w", event.ID, err)
+		}
+		item, strictErr := strictUserMemoryFromEvent(event)
+		if strictErr != nil {
+			return nil, fmt.Errorf("invalid profile promotion projection row %q: %w", event.ID, strictErr)
+		}
+		if err := domainmemory.ValidateProfilePromotionProjection([]domainmemory.UserMemory{*item}, userID); err != nil {
+			return nil, fmt.Errorf("invalid profile promotion projection row %q: %w", event.ID, err)
+		}
+		decoded = append(decoded, *item)
+	}
+	items := make([]domainmemory.UserMemory, 0, len(decoded))
+	totalRunes := 0
+	for _, item := range decoded {
+		if totalRunes+len([]rune(item.Statement)) > domainmemory.ProfilePromotionProjectionTotalMax {
+			break
+		}
+		items = append(items, item)
+		totalRunes += len([]rune(item.Statement))
+	}
+	if err := domainmemory.ValidateProfilePromotionProjection(items, userID); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func validateProfilePromotionProjectionMetadata(event L1MemoryEvent) error {
+	if event.Meta == nil {
+		return errors.New("profile promotion projection metadata is required")
+	}
+	if active, ok := event.Meta["active"].(bool); !ok || !active {
+		return errors.New("profile promotion projection active metadata is invalid")
+	}
+	for _, key := range []string{"type", "user_id", "statement"} {
+		value, ok := event.Meta[key].(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			return fmt.Errorf("profile promotion projection metadata %s is invalid", key)
+		}
+	}
+	for _, key := range []string{"sensitivity", "scope"} {
+		value, ok := event.Meta[key].(string)
+		if !ok || strings.TrimSpace(value) == "" || strings.ContainsAny(value, "\r\n\x00") {
+			return fmt.Errorf("profile promotion projection metadata %s is invalid", key)
+		}
+	}
+	confidence, ok := event.Meta["confidence"].(float64)
+	if !ok || confidence <= 0 || confidence > 1 {
+		return errors.New("profile promotion projection confidence metadata is invalid")
+	}
+	if event.MemoryState == domainmemory.MemoryStateConfirmed || event.MemoryState == domainmemory.MemoryStatePinned {
+		evidenceIDs := metaStringSliceValue(event.Meta, "evidence_event_ids")
+		if len(evidenceIDs) == 0 {
+			return errors.New("confirmed or pinned projection requires evidence_event_ids")
+		}
+		for _, evidenceID := range evidenceIDs {
+			if strings.TrimSpace(evidenceID) == "" {
+				return errors.New("profile promotion projection evidence_event_ids contains an empty id")
+			}
+		}
+	}
+	return nil
+}
+
 func (s *L1SQLiteStore) CompleteProfilePromotionBatch(
 	ctx context.Context,
 	batch domainmemory.ProfilePromotionBatch,
@@ -156,11 +263,14 @@ func (s *L1SQLiteStore) CompleteProfilePromotionBatch(
 	userID string,
 	now time.Time,
 ) (int, error) {
-	if strings.TrimSpace(batch.LeaseToken) == "" || len(batch.Messages) == 0 {
-		return 0, errors.New("profile promotion lease is required")
+	if err := domainmemory.ValidateProfilePromotionBatchEvidence(batch); err != nil {
+		return 0, err
+	}
+	if err := domainmemory.ValidateProfilePromotionCandidates(candidates); err != nil {
+		return 0, err
 	}
 	if strings.TrimSpace(userID) == "" {
-		userID = "ren"
+		return 0, errors.New("profile promotion user id is required")
 	}
 	namespace, err := BuildL1Namespace(NamespaceKindUser, userID)
 	if err != nil {
@@ -181,33 +291,15 @@ func (s *L1SQLiteStore) CompleteProfilePromotionBatch(
 	}
 	saved := 0
 	for _, candidate := range candidates {
-		statement := strings.TrimSpace(candidate.Statement)
-		if statement == "" {
-			continue
-		}
-		memoryType := strings.TrimSpace(candidate.Type)
-		if memoryType == "" {
-			memoryType = domainmemory.UserMemoryTypeProfile
-		}
-		if err := domainmemory.ValidateUserMemoryType(memoryType); err != nil {
-			return 0, rollbackL1Tx(tx, err)
-		}
+		statement := candidate.Statement
+		memoryType := candidate.Type
 		confidence := candidate.Confidence
-		if confidence <= 0 {
-			confidence = 0.5
-		}
-		sensitivity := strings.TrimSpace(candidate.Sensitivity)
-		if sensitivity == "" {
-			sensitivity = "normal"
-		}
-		scope := strings.TrimSpace(candidate.Scope)
-		if scope == "" {
-			scope = "all_personas"
-		}
+		sensitivity := candidate.Sensitivity
+		scope := candidate.Scope
 		if err := domainmemory.CanPromoteUserMemory(MemoryStateCandidate, evidenceIDs, sensitivity, "profile_extractor"); err != nil {
 			return 0, rollbackL1Tx(tx, err)
 		}
-		id := deterministicProfileCandidateID(namespace, evidenceIDs, statement)
+		id := deterministicProfileCandidateID(namespace, memoryType, evidenceIDs, statement)
 		meta := map[string]interface{}{
 			"type": memoryType, "user_id": userID, "statement": statement,
 			"evidence_event_ids": evidenceIDs, "confidence": confidence,
@@ -218,7 +310,7 @@ func (s *L1SQLiteStore) CompleteProfilePromotionBatch(
 			return 0, rollbackL1Tx(tx, err)
 		}
 		result, err := tx.ExecContext(ctx, `
-INSERT OR IGNORE INTO l1_memory_event (
+INSERT INTO l1_memory_event (
 	id, namespace, session_id, thread_id, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
 ) VALUES (?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -509,9 +601,9 @@ LIMIT ?
 	return result, rows.Err()
 }
 
-func deterministicProfileCandidateID(namespace string, evidenceIDs []string, statement string) string {
+func deterministicProfileCandidateID(namespace, memoryType string, evidenceIDs []string, statement string) string {
 	normalized := strings.ToLower(strings.Join(strings.Fields(statement), " "))
-	sum := sha256.Sum256([]byte(strings.Join(evidenceIDs, "\n") + "\n" + normalized))
+	sum := sha256.Sum256([]byte(memoryType + "\n" + strings.Join(evidenceIDs, "\n") + "\n" + normalized))
 	return namespace + ":profile_candidate:" + hex.EncodeToString(sum[:16])
 }
 

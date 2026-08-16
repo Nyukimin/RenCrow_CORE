@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
 
 // PromptConstraints はプロンプト組み立ての制約
@@ -60,6 +61,10 @@ type RecallPack struct {
 
 	// RejectedTraceItems: role filterやbudget制御でプロンプト採用されなかった候補のtrace
 	RejectedTraceItems []RecallTraceItem
+
+	// UserMemoryRecallDecisions contains the bounded deterministic owner-memory
+	// selection and exclusion decisions used by the current turn.
+	UserMemoryRecallDecisions []domainmemory.UserMemoryRecallDecision
 
 	// Persona: キャラクター設定
 	Persona PersonaState

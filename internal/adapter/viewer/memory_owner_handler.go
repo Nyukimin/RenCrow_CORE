@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +27,14 @@ type MemoryOwnerStore interface {
 	OwnerFindUserMemory(context.Context, string, string) (domainmemory.UserMemory, error)
 	OwnerProposeUserMemory(context.Context, string, string, string, string, string, string) (domainmemory.UserMemoryOwnerResult, error)
 	OwnerTransitionUserMemory(context.Context, string, string, string, string, string, string, string) (domainmemory.UserMemoryOwnerResult, error)
+	OwnerArchiveUserMemory(context.Context, string, string, string, string, string) (domainmemory.UserMemoryOwnerResult, error)
+	OwnerRecallUserMemories(context.Context, string, string, string, int) (domainmemory.UserMemoryOwnerRecallResult, error)
+	OwnerListRecallTraces(context.Context, string, int) ([]domainmemory.UserMemoryTraceSummary, error)
+	OwnerFindRecallTrace(context.Context, string, string) (domainmemory.UserMemoryTraceDetail, error)
+	OwnerPlanUserMemoryLifecycle(context.Context, string, string, string) (domainmemory.UserMemoryLifecyclePlanResponse, error)
+	OwnerRunUserMemoryLifecycle(context.Context, string, string, string, string, string, bool) (domainmemory.UserMemoryLifecycleRunResponse, error)
+	OwnerExportConversationArchiveParquet(context.Context, string, string, string) (domainmemory.ConversationArchiveParquetExportResult, error)
+	OwnerVerifyConversationArchiveParquet(context.Context, string, string, string, string) (domainmemory.ConversationArchiveParquetVerifyResult, error)
 }
 
 type memoryOwnerHandler struct {
@@ -66,12 +76,39 @@ func (h *memoryOwnerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := strings.TrimSuffix(r.URL.EscapedPath(), "/")
+	escapedPath := r.URL.EscapedPath()
+	path := strings.TrimSuffix(escapedPath, "/")
 	switch {
 	case path == memoryOwnerRoute && r.Method == http.MethodGet:
 		h.list(ctx, w, r)
+	case path == memoryOwnerRoute+"/recall" && r.Method == http.MethodGet:
+		h.recall(ctx, w, r)
+	case path == memoryOwnerRoute+"/traces" && r.Method == http.MethodGet:
+		h.traceList(ctx, w, r)
+	case strings.HasPrefix(path, memoryOwnerRoute+"/traces/") && r.Method == http.MethodGet:
+		parts, ok := memoryOwnerPathSegments(r)
+		if !ok || len(parts) != 2 || parts[0] != "traces" {
+			writeMemoryOwnerError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		h.traceShow(ctx, w, r, parts[1])
 	case path == memoryOwnerRoute+"/propose" && r.Method == http.MethodPost:
 		h.propose(ctx, w, r)
+	case path == "/viewer/memory/user/archive" && r.Method == http.MethodPost:
+		h.archive(ctx, w, r)
+	case escapedPath == "/viewer/memory/lifecycle/plan" && r.Method == http.MethodPost:
+		h.lifecyclePlan(ctx, w, r)
+	case escapedPath == "/viewer/memory/lifecycle/run" && r.Method == http.MethodPost:
+		h.lifecycleRun(ctx, w, r)
+	case escapedPath == memoryOwnerParquetExportRoute+"/parquet" && r.Method == http.MethodPost:
+		h.parquetExport(ctx, w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(escapedPath, memoryOwnerParquetExportRoute+"/"):
+		targetID, ok := memoryOwnerParquetTargetID(escapedPath)
+		if !ok {
+			writeMemoryOwnerError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		h.parquetVerify(ctx, w, r, targetID)
 	case strings.HasPrefix(path, memoryOwnerRoute+"/"):
 		parts, ok := memoryOwnerPathSegments(r)
 		if !ok {
@@ -82,6 +119,289 @@ func (h *memoryOwnerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeMemoryOwnerError(w, http.StatusNotFound, "not_found")
 	}
+}
+
+func (h *memoryOwnerHandler) lifecyclePlan(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if !memoryOwnerProfileAllowed(r, http.MethodPost) {
+		writeMemoryOwnerError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if err := validateMemoryOwnerQuery(r.URL.Query()); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if err := decodeEmptyMemoryOwnerObjectBody(w, r); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	requestID, ok := memoryOwnerRequestID(ctx)
+	if !ok {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "scope_unavailable")
+		return
+	}
+	result, err := h.store.OwnerPlanUserMemoryLifecycle(ctx, requestID, h.userID, h.userID)
+	if err != nil {
+		writeMemoryOwnerStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *memoryOwnerHandler) lifecycleRun(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if !memoryOwnerProfileAllowed(r, http.MethodPost) {
+		writeMemoryOwnerError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if err := validateMemoryOwnerQuery(r.URL.Query()); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	var request struct {
+		PlanRequestID string `json:"plan_request_id"`
+		Reason        string `json:"reason"`
+		Apply         *bool  `json:"apply"`
+	}
+	if err := decodeStrictLifecycleJSON(w, r, &request, 8<<10); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	request.PlanRequestID = strings.TrimSpace(request.PlanRequestID)
+	request.Reason = strings.TrimSpace(request.Reason)
+	if request.PlanRequestID == "" || request.Reason == "" || request.Apply == nil || !*request.Apply {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	requestID, ok := memoryOwnerRequestID(ctx)
+	if !ok {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "scope_unavailable")
+		return
+	}
+	result, err := h.store.OwnerRunUserMemoryLifecycle(ctx, requestID, h.userID, h.userID, request.PlanRequestID, request.Reason, true)
+	if err != nil {
+		writeMemoryOwnerStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func decodeEmptyMemoryOwnerObjectBody(w http.ResponseWriter, r *http.Request) error {
+	if r.Body == nil {
+		return nil
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
+	var payload map[string]json.RawMessage
+	if err := decoder.Decode(&payload); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	if payload == nil || len(payload) != 0 {
+		return errors.New("lifecycle plan body must be an empty object")
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func decodeStrictLifecycleJSON(w http.ResponseWriter, r *http.Request, target interface{}, maxBytes int64) error {
+	if r.Body == nil {
+		return errors.New("lifecycle run body is required")
+	}
+	payload, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBytes))
+	if err != nil {
+		return err
+	}
+	if err := rejectDuplicateLifecycleObjectKeys(payload); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func rejectDuplicateLifecycleObjectKeys(payload []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	token, err := decoder.Token()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok || delim != '{' {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return errors.New("lifecycle object key must be a string")
+		}
+		switch key {
+		case "plan_request_id", "reason", "apply":
+		default:
+			return errors.New("unknown lifecycle object key")
+		}
+		if _, exists := seen[key]; exists {
+			return errors.New("duplicate lifecycle object key")
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return err
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func (h *memoryOwnerHandler) archive(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if !memoryOwnerProfileAllowed(r, http.MethodPost) {
+		writeMemoryOwnerError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if err := validateMemoryOwnerQuery(r.URL.Query()); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	var request struct {
+		MemoryID string `json:"memory_id"`
+		Reason   string `json:"reason"`
+	}
+	if err := decodeStrictMemoryOwnerJSON(w, r, &request, 8<<10); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	request.MemoryID = strings.TrimSpace(request.MemoryID)
+	request.Reason = strings.TrimSpace(request.Reason)
+	if request.MemoryID == "" || request.Reason == "" {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	requestID, ok := memoryOwnerRequestID(ctx)
+	if !ok {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "scope_unavailable")
+		return
+	}
+	result, err := h.store.OwnerArchiveUserMemory(ctx, requestID, h.userID, h.userID, request.MemoryID, request.Reason)
+	if err != nil {
+		writeMemoryOwnerStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *memoryOwnerHandler) recall(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if !memoryOwnerProfileAllowed(r, http.MethodGet) {
+		writeMemoryOwnerError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if err := validateMemoryOwnerQuery(r.URL.Query(), "query", "limit"); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	if query == "" || len([]rune(query)) > 512 {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	limit, err := parseStrictMemoryOwnerLimit(r.URL.Query().Get("limit"), domainmemory.UserMemoryRecallDefaultLimit, domainmemory.UserMemoryRecallMaxLimit)
+	if err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	requestID, ok := memoryOwnerRequestID(ctx)
+	if !ok {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "scope_unavailable")
+		return
+	}
+	result, err := h.store.OwnerRecallUserMemories(ctx, requestID, h.userID, query, limit)
+	if err != nil {
+		writeMemoryOwnerStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *memoryOwnerHandler) traceList(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if !memoryOwnerProfileAllowed(r, http.MethodGet) {
+		writeMemoryOwnerError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if err := validateMemoryOwnerQuery(r.URL.Query(), "limit"); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	limit, err := parseStrictMemoryOwnerLimit(r.URL.Query().Get("limit"), domainmemory.UserMemoryTraceDefaultLimit, domainmemory.UserMemoryTraceMaxLimit)
+	if err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	items, err := h.store.OwnerListRecallTraces(ctx, h.userID, limit)
+	if err != nil {
+		writeMemoryOwnerStoreError(w, err)
+		return
+	}
+	requestID, ok := memoryOwnerRequestID(ctx)
+	if !ok {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "scope_unavailable")
+		return
+	}
+	receipt := newMemoryOwnerReadReceipt(requestID, domainmemory.UserMemoryOwnerOperationTraceList, "trace_list", 0, len(items))
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items, "receipt": receipt})
+}
+
+func (h *memoryOwnerHandler) traceShow(ctx context.Context, w http.ResponseWriter, r *http.Request, id string) {
+	if !memoryOwnerProfileAllowed(r, http.MethodGet) {
+		writeMemoryOwnerError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if err := validateMemoryOwnerQuery(r.URL.Query()); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	trace, err := h.store.OwnerFindRecallTrace(ctx, h.userID, id)
+	if err != nil {
+		writeMemoryOwnerStoreError(w, err)
+		return
+	}
+	requestID, ok := memoryOwnerRequestID(ctx)
+	if !ok {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "scope_unavailable")
+		return
+	}
+	receipt := newMemoryOwnerReadReceipt(requestID, domainmemory.UserMemoryOwnerOperationTraceShow, trace.ID, 1, len(trace.Items))
+	writeJSON(w, http.StatusOK, map[string]interface{}{"trace": trace, "receipt": receipt})
 }
 
 func (h *memoryOwnerHandler) list(ctx context.Context, w http.ResponseWriter, r *http.Request) {
@@ -264,6 +584,10 @@ func memoryOwnerPathSegments(r *http.Request) ([]string, bool) {
 }
 
 func (h *memoryOwnerHandler) bearerAuthorized(r *http.Request) bool {
+	return memoryOwnerBearerAuthorized(r, h.token)
+}
+
+func memoryOwnerBearerAuthorized(r *http.Request, token []byte) bool {
 	values := r.Header.Values("Authorization")
 	if len(values) != 1 {
 		return false
@@ -272,7 +596,7 @@ func (h *memoryOwnerHandler) bearerAuthorized(r *http.Request) bool {
 	if !ok || scheme != "Bearer" || presented == "" || strings.IndexAny(presented, " \t\r\n") >= 0 {
 		return false
 	}
-	if !constantTimeMemoryOwnerTokenEqual(h.token, []byte(presented)) {
+	if !constantTimeMemoryOwnerTokenEqual(token, []byte(presented)) {
 		return false
 	}
 	return true
@@ -294,12 +618,16 @@ func memoryOwnerClientProfileAllowed(r *http.Request) bool {
 }
 
 func (h *memoryOwnerHandler) ownerContext(r *http.Request) (context.Context, error) {
+	return memoryOwnerOwnerContext(r.Context(), h.userID)
+}
+
+func memoryOwnerOwnerContext(ctx context.Context, userID string) (context.Context, error) {
 	requestID := uuid.NewString()
-	scope, err := domaintool.NewToolExecutionScope(requestID, domaintool.ActorKindUser, h.userID, h.userID, []string{domaintool.DataScopeUser}, domaintool.AuthenticationSourceHTTP)
+	scope, err := domaintool.NewToolExecutionScope(requestID, domaintool.ActorKindUser, userID, userID, []string{domaintool.DataScopeUser}, domaintool.AuthenticationSourceHTTP)
 	if err != nil {
 		return nil, err
 	}
-	return domaintool.WithToolExecutionScope(r.Context(), scope), nil
+	return domaintool.WithToolExecutionScope(ctx, scope), nil
 }
 
 func memoryOwnerRequestID(ctx context.Context) (string, bool) {
@@ -378,6 +706,17 @@ func parseMemoryOwnerBool(raw string) (bool, error) {
 	}
 }
 
+func parseStrictMemoryOwnerLimit(raw string, defaultValue, max int) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return defaultValue, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 1 || n > max {
+		return 0, errors.New("limit out of range")
+	}
+	return n, nil
+}
+
 func validateMemoryOwnerQuery(values url.Values, allowed ...string) error {
 	allowedSet := make(map[string]struct{}, len(allowed))
 	for _, key := range allowed {
@@ -413,6 +752,8 @@ func writeMemoryOwnerStoreError(w http.ResponseWriter, err error) {
 		writeMemoryOwnerError(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, domainmemory.ErrUserMemoryOwnerConflict):
 		writeMemoryOwnerError(w, http.StatusConflict, "conflict")
+	case errors.Is(err, domainmemory.ErrUserMemoryOwnerUnavailable):
+		writeMemoryOwnerError(w, http.StatusServiceUnavailable, "store_unavailable")
 	default:
 		writeMemoryOwnerError(w, http.StatusInternalServerError, "storage_failed")
 	}

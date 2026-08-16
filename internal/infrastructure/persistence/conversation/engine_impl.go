@@ -2,12 +2,14 @@ package conversation
 
 import (
 	"context"
-	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	"errors"
 	"log"
-	"sort"
 	"strings"
 	"time"
+
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/google/uuid"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
@@ -18,7 +20,6 @@ type RealConversationEngine struct {
 	manager                  domconv.ConversationManager
 	persona                  domconv.PersonaState
 	detector                 domconv.ThreadBoundaryDetector // nil の場合はスレッド自動検出無効
-	recallTraceStore         domconv.RecallTraceStore
 	knowledgeRelationEnabled bool
 	knowledgeRelationMaxHops int
 	userMemoryStore          conversationEngineUserMemoryStore
@@ -35,8 +36,19 @@ type conversationEngineExternalRecall interface {
 	RelatedKnowledgeItems(ctx context.Context, itemID string, maxHop int, limit int) ([]l1sqlite.L1KnowledgeRelationHit, error)
 }
 
-type conversationEngineRecallTraceRecorder interface {
-	SaveRecallTrace(ctx context.Context, trace domconv.RecallTrace) error
+// conversationTurnCommitter is intentionally narrower than the legacy
+// ConversationManager interface. Only managers that own the canonical L1
+// EndTurn transaction may satisfy it.
+type conversationTurnCommitter interface {
+	CommitConversationTurn(context.Context, domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error)
+}
+
+type conversationTurnTargetProvider interface {
+	ConversationTurnTargets() []domconv.ConversationTurnTarget
+}
+
+type conversationActiveThreadProvider interface {
+	LoadActiveConversationThread(context.Context, string) (*domconv.Thread, error)
 }
 
 type conversationEngineUserMemoryStore interface {
@@ -57,11 +69,6 @@ func NewRealConversationEngine(
 // WithDetector はスレッド境界検出器を設定する（オプション）
 func (e *RealConversationEngine) WithDetector(d domconv.ThreadBoundaryDetector) *RealConversationEngine {
 	e.detector = d
-	return e
-}
-
-func (e *RealConversationEngine) WithRecallTraceStore(store domconv.RecallTraceStore) *RealConversationEngine {
-	e.recallTraceStore = store
 	return e
 }
 
@@ -101,14 +108,20 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 		Persona:     e.persona,
 		Constraints: domconv.DefaultConstraints(),
 	}
-	if err := e.loadSharedUserMemory(ctx, userMessage, pack); err != nil {
-		log.Printf("[ConversationEngine] WARN: UserMemory recall failed: %v", err)
+	userMemoryErr := e.loadSharedUserMemory(ctx, userMessage, pack)
+	if userMemoryErr != nil {
+		log.Printf("[ConversationEngine] WARN: UserMemory recall failed: %v", userMemoryErr)
 	}
 
 	// Recall（想起）
 	recallMessages, err := e.manager.Recall(ctx, sessionID, userMessage, 3)
 	if err != nil {
 		log.Printf("[ConversationEngine] WARN: Recall failed: %v", err)
+		pack.RejectedTraceItems = append(pack.RejectedTraceItems, domconv.RecallTraceItem{
+			Layer: "L0", Kind: "conversation_recall_source_failure", Status: domconv.TraceStatusSourceFailure,
+			Decision: "rejected", PromptSection: domconv.PromptSectionConversation,
+			Reason: "conversation recall source unavailable", PromptIndex: -1,
+		})
 	} else {
 		// Recall 結果を RecallPack に分類
 		for _, msg := range recallMessages {
@@ -263,11 +276,6 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 
 	applyL0RollingSummary(pack, 6)
 	budgeted := pack.ApplyRecallBudget(pack.Constraints.MaxTotalTokens, pack.Constraints.RecallBudgetRatio)
-	traceStatus := "completed"
-	if len(budgeted.CategoryFailures) > 0 {
-		traceStatus = domconv.CategoryRecallStatusPartial
-	}
-	e.saveBeginTurnRecallTrace(ctx, sessionID, userMessage, &budgeted, traceStatus)
 	return &budgeted, nil
 }
 
@@ -292,34 +300,29 @@ func (e *RealConversationEngine) loadSharedUserMemory(ctx context.Context, query
 	if e.userMemoryStore == nil || pack == nil || e.userID == "" {
 		return nil
 	}
-	items, err := e.userMemoryStore.ListUserMemories(ctx, e.userID, "", false, 5000)
+	items, err := e.userMemoryStore.ListUserMemories(ctx, e.userID, "", true, domainmemory.UserMemoryRecallMaxScan)
 	if err != nil {
+		pack.UserMemoryRecallDecisions = append(pack.UserMemoryRecallDecisions, domainmemory.UserMemoryRecallDecision{
+			Status: domainmemory.UserMemoryRecallStatusSourceFailure,
+			Reason: "user memory source unavailable",
+		})
 		return err
 	}
-	type rankedMemory struct {
-		item  domainmemory.UserMemory
-		score int
-	}
-	ranked := make([]rankedMemory, 0, len(items))
-	for _, item := range items {
-		if !isSharedUserMemoryPromptInjectable(item) {
+	decisions := domainmemory.RankUserMemoriesForRecallForPersona(query, items, domainmemory.UserMemoryRecallDefaultLimit, e.persona.Name)
+	pack.UserMemoryRecallDecisions = decisions
+	profile := domconv.NewUserProfile(e.userID)
+	for i := range pack.UserMemoryRecallDecisions {
+		decision := &pack.UserMemoryRecallDecisions[i]
+		if decision.Selected && !isSharedUserMemoryPromptInjectable(decision.Item) {
+			decision.Selected = false
+			decision.Status = domainmemory.UserMemoryRecallStatusFilteredScope
+			decision.Reason = "memory scope is not available to this persona"
 			continue
 		}
-		score := userMemoryLexicalScore(query, item.Statement)
-		if item.State == domainmemory.MemoryStatePinned {
-			score += 1000
+		if !decision.Selected {
+			continue
 		}
-		ranked = append(ranked, rankedMemory{item: item, score: score})
-	}
-	sort.SliceStable(ranked, func(i, j int) bool {
-		if ranked[i].score != ranked[j].score {
-			return ranked[i].score > ranked[j].score
-		}
-		return ranked[i].item.UpdatedAt.After(ranked[j].item.UpdatedAt)
-	})
-	profile := domconv.NewUserProfile(e.userID)
-	for _, rankedItem := range ranked {
-		item := rankedItem.item
+		item := decision.Item
 		statement := strings.TrimSpace(item.Statement)
 		if statement == "" {
 			continue
@@ -336,38 +339,6 @@ func (e *RealConversationEngine) loadSharedUserMemory(ctx context.Context, query
 		pack.UserProfile = profile
 	}
 	return nil
-}
-
-func userMemoryLexicalScore(query string, statement string) int {
-	queryTerms := userMemoryRecallTerms(query)
-	if len(queryTerms) == 0 {
-		return 1
-	}
-	statementTerms := userMemoryRecallTerms(statement)
-	score := 0
-	for term := range queryTerms {
-		if statementTerms[term] {
-			score++
-		}
-	}
-	return score
-}
-
-func userMemoryRecallTerms(text string) map[string]bool {
-	normalized := strings.ToLower(strings.Join(strings.Fields(text), ""))
-	runes := []rune(normalized)
-	terms := make(map[string]bool)
-	for _, field := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
-		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
-	}) {
-		if len(field) >= 2 {
-			terms[field] = true
-		}
-	}
-	for i := 0; i+1 < len(runes); i++ {
-		terms[string(runes[i:i+2])] = true
-	}
-	return terms
 }
 
 func isSharedUserMemoryPromptInjectable(item domainmemory.UserMemory) bool {
@@ -414,52 +385,6 @@ func (e *RealConversationEngine) expandKnowledgeRelations(ctx context.Context, r
 				return
 			}
 		}
-	}
-}
-
-func (e *RealConversationEngine) saveBeginTurnRecallTrace(ctx context.Context, sessionID string, userMessage string, pack *domconv.RecallPack, status string) {
-	if e.recallTraceStore == nil || pack == nil {
-		return
-	}
-	now := timeNowUTC()
-	traceID := l1sqlite.RecallTraceID(sessionID, now, userMessage)
-	items := l1sqlite.TraceItemRecordsFromPack(traceID, pack.ToTraceItems())
-	injectedCount := 0
-	totalTokens := 0
-	for _, item := range items {
-		if item.Injected {
-			injectedCount++
-			totalTokens += item.TokenCount
-		}
-	}
-	if err := e.recallTraceStore.StartRecallTrace(ctx, domconv.RecallTraceRecord{
-		TraceID:             traceID,
-		TurnID:              traceID,
-		ChatID:              sessionID,
-		Persona:             "mio",
-		Route:               "chat",
-		UserMessageHash:     l1sqlite.HashRecallText(userMessage),
-		QueryTextRedacted:   l1sqlite.RedactedRecallQuery(userMessage),
-		CreatedAt:           now,
-		RecallPolicyVersion: "memory-lifecycle-v1",
-		TotalCandidates:     len(items),
-		InjectedCount:       injectedCount,
-		TotalInjectedTokens: totalTokens,
-		Status:              status,
-	}); err != nil {
-		log.Printf("[ConversationEngine] WARN: StartRecallTrace failed: %v", err)
-		return
-	}
-	if err := e.recallTraceStore.AddRecallTraceItems(ctx, traceID, items); err != nil {
-		log.Printf("[ConversationEngine] WARN: AddRecallTraceItems failed: %v", err)
-		return
-	}
-	if err := e.recallTraceStore.AddPromptInjectionEvents(ctx, traceID, l1sqlite.PromptInjectionEventsFromItems(traceID, items, now)); err != nil {
-		log.Printf("[ConversationEngine] WARN: AddPromptInjectionEvents failed: %v", err)
-		return
-	}
-	if err := e.recallTraceStore.FinishRecallTrace(ctx, traceID, status, injectedCount, totalTokens); err != nil {
-		log.Printf("[ConversationEngine] WARN: FinishRecallTrace failed: %v", err)
 	}
 }
 
@@ -543,8 +468,74 @@ var timeNowUTC = func() time.Time {
 	return time.Now().UTC()
 }
 
-// EndTurn はターン終了時にメッセージ保存を実行
-// スレッド境界検出器が設定されている場合、Store前にトピック変化を検出する
+// CommitConversationTurn is the typed atomic EndTurn route. Caller-supplied
+// ownership, targets, domain and boundary decisions are deliberately ignored.
+func (e *RealConversationEngine) CommitConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+	base := failedConversationTurnManagerResult(request, domconv.ConversationTurnErrorUnavailable)
+	if e == nil || e.manager == nil || strings.TrimSpace(e.userID) == "" {
+		return base, domconv.ErrConversationTurnUnavailable
+	}
+	committer, ok := e.manager.(conversationTurnCommitter)
+	if !ok {
+		return base, domconv.ErrConversationTurnUnavailable
+	}
+	provider, ok := e.manager.(conversationTurnTargetProvider)
+	if !ok {
+		return base, domconv.ErrConversationTurnUnavailable
+	}
+	activeProvider, ok := e.manager.(conversationActiveThreadProvider)
+	if !ok {
+		return base, domconv.ErrConversationTurnUnavailable
+	}
+
+	canonicalSpeaker, ok := domconv.CanonicalChatAgentSpeaker(request.AgentSpeaker)
+	if !ok || canonicalSpeaker != request.AgentSpeaker {
+		base.ErrorCode = domconv.ConversationTurnErrorInvalid
+		return base, domconv.ErrConversationTurnInvalid
+	}
+
+	activeThread, err := activeProvider.LoadActiveConversationThread(ctx, request.SessionID)
+	domain := "general"
+	boundary := false
+	reason := ""
+	if err == nil {
+		if activeThread == nil {
+			return base, domconv.ErrConversationTurnUnavailable
+		}
+		domain = strings.TrimSpace(activeThread.Domain)
+		if domain == "" {
+			return base, domconv.ErrConversationTurnInvalid
+		}
+		if e.detector != nil {
+			decision := e.detector.Detect(activeThread, request.UserMessage, domain)
+			boundary = decision.ShouldCreateNew
+			if boundary {
+				reason = strings.TrimSpace(string(decision.Reason))
+				if reason == "" {
+					return base, domconv.ErrConversationTurnInvalid
+				}
+			}
+		}
+	} else if !errors.Is(err, domconv.ErrThreadNotFound) {
+		return base, err
+	}
+
+	canonical := request
+	canonical.OwnerID = strings.TrimSpace(e.userID)
+	canonical.Domain = domain
+	canonical.AgentSpeaker = canonicalSpeaker
+	canonical.Boundary = boundary
+	canonical.BoundaryReason = reason
+	canonical.Targets = append([]domconv.ConversationTurnTarget(nil), provider.ConversationTurnTargets()...)
+	result, err := committer.CommitConversationTurn(ctx, canonical)
+	if err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+// EndTurn and EndTurnAs remain compatibility wrappers for callers that have
+// not migrated to the typed route. They never perform legacy Store writes.
 func (e *RealConversationEngine) EndTurn(ctx context.Context, sessionID string, userMessage string, response string) error {
 	return e.EndTurnAs(ctx, sessionID, userMessage, response, domconv.SpeakerMio)
 }
@@ -555,60 +546,14 @@ func (e *RealConversationEngine) EndTurnAs(ctx context.Context, sessionID string
 	} else if canonical, ok := domconv.CanonicalChatAgentSpeaker(speaker); ok {
 		speaker = canonical
 	}
-	// スレッド境界検出（detector が設定されている場合）
-	if e.detector != nil {
-		thread, err := e.manager.GetActiveThread(ctx, sessionID)
-		if err == nil && thread != nil {
-			result := e.detector.Detect(thread, userMessage, "")
-			if result.ShouldCreateNew {
-				log.Printf("[ConversationEngine] Thread boundary detected: %s (score=%.2f)", result.Reason, result.Score)
-				if _, err := e.manager.FlushThread(ctx, thread.ID); err != nil {
-					log.Printf("[ConversationEngine] WARN: FlushThread failed: %v", err)
-				}
-				if _, err := e.manager.CreateThread(ctx, sessionID, thread.Domain); err != nil {
-					log.Printf("[ConversationEngine] WARN: CreateThread failed: %v", err)
-				}
-			}
-		}
-	}
-
-	// ユーザーメッセージを記憶
-	userMsg := domconv.NewMessage(domconv.SpeakerUser, userMessage, map[string]interface{}{
-		"from": string(domconv.SpeakerUser),
-		"to":   string(speaker),
+	_, err := e.CommitConversationTurn(ctx, domconv.ConversationTurnRequest{
+		TurnID:       uuid.NewString(),
+		SessionID:    sessionID,
+		UserMessage:  userMessage,
+		AgentMessage: response,
+		AgentSpeaker: speaker,
 	})
-	if err := e.manager.Store(ctx, sessionID, userMsg); err != nil {
-		log.Printf("[ConversationEngine] WARN: Store (user) failed: %v", err)
-	}
-
-	// Agent の応答を記憶
-	agentMsg := domconv.NewMessage(speaker, response, map[string]interface{}{
-		"from": string(speaker),
-		"to":   string(domconv.SpeakerUser),
-	})
-	if err := e.manager.Store(ctx, sessionID, agentMsg); err != nil {
-		log.Printf("[ConversationEngine] WARN: Store (%s) failed: %v", speaker, err)
-	}
-
-	return nil
-}
-
-func (e *RealConversationEngine) RecordRecallTrace(ctx context.Context, sessionID string, responseID string, role string, pack domconv.RecallPack) error {
-	items := pack.ToTraceItems()
-	if len(items) == 0 {
-		return nil
-	}
-	recorder, ok := e.manager.(conversationEngineRecallTraceRecorder)
-	if !ok {
-		return nil
-	}
-	return recorder.SaveRecallTrace(ctx, domconv.RecallTrace{
-		ResponseID: responseID,
-		SessionID:  sessionID,
-		Role:       role,
-		Items:      items,
-		CreatedAt:  timeNowUTC(),
-	})
+	return err
 }
 
 // GetPersona は現在のペルソナ設定を返す

@@ -15,16 +15,24 @@ import (
 // threadSummaryParquetRow は session_thread テーブルの Parquet エクスポート行。
 // ts_end / domain / is_novel はスキーマ上 NOT NULL 制約が無いため optional として扱う。
 type threadSummaryParquetRow struct {
-	ThreadID  int64      `parquet:"thread_id"`
-	SessionID string     `parquet:"session_id"`
-	TsStart   time.Time  `parquet:"ts_start"`
-	TsEnd     *time.Time `parquet:"ts_end,optional"`
-	Domain    *string    `parquet:"domain,optional"`
-	Summary   string     `parquet:"summary"`
-	Keywords  string     `parquet:"keywords"`
-	Embedding string     `parquet:"embedding"`
-	IsNovel   *bool      `parquet:"is_novel,optional"`
-	CreatedAt time.Time  `parquet:"created_at"`
+	ThreadID         int64      `parquet:"thread_id"`
+	SessionID        string     `parquet:"session_id"`
+	TsStart          time.Time  `parquet:"ts_start"`
+	TsEnd            *time.Time `parquet:"ts_end,optional"`
+	Domain           *string    `parquet:"domain,optional"`
+	Summary          string     `parquet:"summary"`
+	Keywords         string     `parquet:"keywords"`
+	Embedding        string     `parquet:"embedding"`
+	IsNovel          *bool      `parquet:"is_novel,optional"`
+	CreatedAt        time.Time  `parquet:"created_at"`
+	SchemaVersion    *string    `parquet:"schema_version,optional"`
+	GenerationMode   *string    `parquet:"generation_mode,optional"`
+	Provider         *string    `parquet:"provider,optional"`
+	FailureCode      *string    `parquet:"failure_code,optional"`
+	EvidenceSHA256   *string    `parquet:"evidence_sha256,optional"`
+	SourceTurnCount  *int64     `parquet:"source_turn_count,optional"`
+	RolesJSON        *string    `parquet:"roles_json,optional"`
+	ReceiptCreatedAt *time.Time `parquet:"receipt_created_at,optional"`
 }
 
 func (d *ArchiveSQLiteStore) ExportThreadSummariesParquet(ctx context.Context, outputPath string) error {
@@ -35,58 +43,15 @@ func (d *ArchiveSQLiteStore) ExportThreadSummariesParquet(ctx context.Context, o
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return fmt.Errorf("failed to create parquet output directory: %w", err)
 	}
-
-	rows, err := d.db.QueryContext(ctx, `
-	SELECT thread_id, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel, created_at
-	FROM session_thread
-	ORDER BY ts_start ASC, thread_id ASC
-	`)
+	snapshot, err := d.readArchiveParquetSnapshot(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to query thread summaries for parquet export: %w", err)
+		return fmt.Errorf("failed to read archive snapshot for parquet export: %w", err)
 	}
-	defer rows.Close()
-
-	records := make([]threadSummaryParquetRow, 0)
-	for rows.Next() {
-		var rec threadSummaryParquetRow
-		var tsEnd sql.NullTime
-		var domain sql.NullString
-		var isNovel sql.NullBool
-
-		if err := rows.Scan(
-			&rec.ThreadID,
-			&rec.SessionID,
-			&rec.TsStart,
-			&tsEnd,
-			&domain,
-			&rec.Summary,
-			&rec.Keywords,
-			&rec.Embedding,
-			&isNovel,
-			&rec.CreatedAt,
-		); err != nil {
-			return fmt.Errorf("failed to scan thread summary row for parquet export: %w", err)
-		}
-		if tsEnd.Valid {
-			t := tsEnd.Time
-			rec.TsEnd = &t
-		}
-		if domain.Valid {
-			v := domain.String
-			rec.Domain = &v
-		}
-		if isNovel.Valid {
-			v := isNovel.Bool
-			rec.IsNovel = &v
-		}
-		records = append(records, rec)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("rows error while exporting thread summaries: %w", err)
-	}
-
-	if err := parquet.WriteFile(outputPath, records); err != nil {
+	if err := parquet.WriteFile(outputPath, snapshot.Threads); err != nil {
 		return fmt.Errorf("failed to write thread summaries parquet file: %w", err)
+	}
+	if err := os.Chmod(outputPath, 0o600); err != nil {
+		return fmt.Errorf("failed to set thread summaries parquet permissions: %w", err)
 	}
 	return nil
 }
@@ -174,28 +139,32 @@ func (d *ArchiveSQLiteStore) ExportL1ArchivesParquet(ctx context.Context, output
 		return nil, fmt.Errorf("failed to create l1 archive output directory: %w", err)
 	}
 
+	snapshot, err := d.readArchiveParquetSnapshot(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read archive snapshot for l1 parquet export: %w", err)
+	}
 	paths := make(map[string]string, 4)
 
 	memoryPath := filepath.Join(outputDir, "l1_memory_event.parquet")
-	if err := d.exportMemoryEventArchiveParquet(ctx, memoryPath); err != nil {
+	if _, err := writeArchiveParquetFile(memoryPath, "l1_memory_event.parquet", snapshot.Memory); err != nil {
 		return nil, fmt.Errorf("failed to export %s archive parquet: %w", L1ArchiveMemory, err)
 	}
 	paths[L1ArchiveMemory] = memoryPath
 
 	newsPath := filepath.Join(outputDir, "l1_news_item.parquet")
-	if err := d.exportNewsItemArchiveParquet(ctx, newsPath); err != nil {
+	if _, err := writeArchiveParquetFile(newsPath, "l1_news_item.parquet", snapshot.News); err != nil {
 		return nil, fmt.Errorf("failed to export %s archive parquet: %w", L1ArchiveNews, err)
 	}
 	paths[L1ArchiveNews] = newsPath
 
 	knowledgePath := filepath.Join(outputDir, "l1_knowledge_item.parquet")
-	if err := d.exportKnowledgeItemArchiveParquet(ctx, knowledgePath); err != nil {
+	if _, err := writeArchiveParquetFile(knowledgePath, "l1_knowledge_item.parquet", snapshot.Knowledge); err != nil {
 		return nil, fmt.Errorf("failed to export %s archive parquet: %w", L1ArchiveKnowledge, err)
 	}
 	paths[L1ArchiveKnowledge] = knowledgePath
 
 	stagingPath := filepath.Join(outputDir, "l1_staging_item.parquet")
-	if err := d.exportStagingItemArchiveParquet(ctx, stagingPath); err != nil {
+	if _, err := writeArchiveParquetFile(stagingPath, "l1_staging_item.parquet", snapshot.Staging); err != nil {
 		return nil, fmt.Errorf("failed to export %s archive parquet: %w", L1ArchiveStaging, err)
 	}
 	paths[L1ArchiveStaging] = stagingPath

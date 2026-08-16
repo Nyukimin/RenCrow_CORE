@@ -26,6 +26,7 @@ storage:
     session_dir: "/state/sessions"
     operation_memory_dir: "/state/memory"
     cold_export_dir: "/state/exports/parquet"
+    raw_source_dir: "/state/raw-source"
   databases:
     conversation_l1: "/state/l1_memory.db"
     conversation_archive: "/state/memory_archive.db"
@@ -40,11 +41,91 @@ storage:
 	}
 	if cfg.Session.StorageDir != "/state/sessions" ||
 		cfg.OperationMemoryDir != "/state/memory" ||
+		cfg.Storage.Memory.RawSourceDir != "/state/raw-source" ||
 		cfg.Capability.ToolRegistryDB != "/state/tool_registry.db" ||
 		cfg.Glossary.DBPath != "/state/glossary.db" ||
 		cfg.Advisor.SQLitePath != "/state/workspace/logs/advisor.db" ||
 		cfg.KnowledgeMemory.SQLitePath != "/state/workspace/logs/knowledge_memory.db" {
 		t.Fatalf("canonical storage paths were not applied: %+v", cfg.Storage)
+	}
+}
+
+func TestLoadConfigRawSourceDirIsAbsoluteNonRootAndBackupCohortRequired(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		root bool
+	}{
+		{name: "posix-root", path: "/", root: true},
+		{name: "drive-root-slash", path: "C:/", root: true},
+		{name: "drive-root-backslash", path: "C:\\", root: true},
+		{name: "unc-root-slash", path: "//server/share", root: true},
+		{name: "unc-root-backslash", path: "\\\\server\\share", root: true},
+		{name: "drive-child", path: "C:/state/raw", root: false},
+		{name: "unc-child", path: "\\\\server\\share\\state\\raw", root: false},
+	} {
+		t.Run("path-"+tc.name, func(t *testing.T) {
+			if !configPathIsAbs(tc.path) {
+				t.Fatalf("configPathIsAbs(%q)=false", tc.path)
+			}
+			if got := configPathIsFilesystemRoot(tc.path); got != tc.root {
+				t.Fatalf("configPathIsFilesystemRoot(%q)=%v, want %v", tc.path, got, tc.root)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name string
+		root string
+		path string
+		want bool
+	}{
+		{name: "drive-child", root: "C:/state", path: "C:/state/raw", want: true},
+		{name: "drive-outside", root: "C:/state", path: "D:/state/raw", want: false},
+		{name: "unc-child", root: `\\server\share\state`, path: `\\server\share\state\raw`, want: true},
+		{name: "unc-outside-share", root: `\\server\share\state`, path: `\\server\other\state\raw`, want: false},
+	} {
+		t.Run("within-"+tc.name, func(t *testing.T) {
+			got, err := pathWithin(tc.root, tc.path)
+			if err != nil || got != tc.want {
+				t.Fatalf("pathWithin(%q, %q)=(%v, %v), want (%v, nil)", tc.root, tc.path, got, err, tc.want)
+			}
+		})
+	}
+
+	baseConfig := func(raw string) *Config {
+		return &Config{
+			Storage: StorageConfig{
+				Memory:    MemoryStorageConfig{SessionDir: "/state/sessions", OperationMemoryDir: "/state/memory", ColdExportDir: "/state/exports/parquet", RawSourceDir: raw},
+				Databases: DatabasePathsConfig{ConversationL1: "/state/l1.db", ConversationArchive: "/state/l2.db"},
+			},
+			Backup: BackupConfig{CoreSource: "/state", CoreSnapshotRoot: "/backup/core-snapshots", KnowledgeSource: "/knowledge", KnowledgeMirror: "/mirror/knowledge", KnowledgeVersions: "/mirror/versions", RecentKeep: 28, DailyKeep: 14, WeeklyKeep: 8, MonthlyKeep: 12},
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "valid", raw: "/state/raw-source"},
+		{name: "relative", raw: "raw-source", want: "storage.memory.raw_source_dir must be an absolute path"},
+		{name: "filesystem-root", raw: "/", want: "storage.memory.raw_source_dir must not be a filesystem or volume root"},
+		{name: "outside-core", raw: "/other/raw-source", want: "storage.memory.raw_source_dir must be inside backup.core_source"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := baseConfig(tc.raw).validateBackupConfig()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("validateBackupConfig failed: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateBackupConfig error=%v, want %q", err, tc.want)
+			}
+		})
+	}
+	if err := baseConfig("").validateBackupConfig(); err == nil || !strings.Contains(err.Error(), "storage.memory.raw_source_dir is required when backup is configured") {
+		t.Fatalf("missing raw source dir error=%v", err)
 	}
 }
 
@@ -154,6 +235,7 @@ storage:
     session_dir: "/outside/sessions"
     operation_memory_dir: "/state/memory"
     cold_export_dir: "/state/exports/parquet"
+    raw_source_dir: "/state/raw-source"
 backup:
   core_source: "/state"
   core_snapshot_root: "/backup/core-snapshots"
@@ -180,6 +262,7 @@ storage:
     session_dir: "/state/sessions"
     operation_memory_dir: "/state/memory"
     cold_export_dir: "/state/exports/parquet"
+    raw_source_dir: "/state/raw-source"
 backup:
   core_source: "/state"
   core_snapshot_root: "/backup/core-snapshots"

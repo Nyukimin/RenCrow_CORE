@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 )
@@ -113,6 +114,14 @@ func (c BackupConfig) configured() bool {
 }
 
 func (c *Config) validateBackupConfig() error {
+	if rawSourceDir := strings.TrimSpace(c.Storage.Memory.RawSourceDir); rawSourceDir != "" {
+		if !configPathIsAbs(rawSourceDir) {
+			return fmt.Errorf("storage.memory.raw_source_dir must be an absolute path")
+		}
+		if configPathIsFilesystemRoot(rawSourceDir) {
+			return fmt.Errorf("storage.memory.raw_source_dir must not be a filesystem or volume root")
+		}
+	}
 	if !c.Backup.configured() {
 		return nil
 	}
@@ -155,6 +164,7 @@ func (c *Config) validateBackupConfig() error {
 		{"storage.memory.session_dir", c.Storage.Memory.SessionDir},
 		{"storage.memory.operation_memory_dir", c.Storage.Memory.OperationMemoryDir},
 		{"storage.memory.cold_export_dir", c.Storage.Memory.ColdExportDir},
+		{"storage.memory.raw_source_dir", c.Storage.Memory.RawSourceDir},
 	} {
 		if strings.TrimSpace(required.value) == "" {
 			return fmt.Errorf("%s is required when backup is configured", required.key)
@@ -181,7 +191,7 @@ func (c *Config) validateBackupConfig() error {
 			return fmt.Errorf("backup.memory.qdrant.base_url must be an absolute HTTP URL when enabled=true")
 		}
 	}
-	coreSource := filepath.Clean(c.Backup.CoreSource)
+	coreSource := strings.TrimSpace(c.Backup.CoreSource)
 	storagePaths := []struct {
 		key   string
 		value string
@@ -189,6 +199,7 @@ func (c *Config) validateBackupConfig() error {
 		{"storage.memory.session_dir", c.Storage.Memory.SessionDir},
 		{"storage.memory.operation_memory_dir", c.Storage.Memory.OperationMemoryDir},
 		{"storage.memory.cold_export_dir", c.Storage.Memory.ColdExportDir},
+		{"storage.memory.raw_source_dir", c.Storage.Memory.RawSourceDir},
 		{"storage.databases.conversation_l1", c.Storage.Databases.ConversationL1},
 		{"storage.databases.conversation_archive", c.Storage.Databases.ConversationArchive},
 		{"storage.databases.tool_registry", c.Storage.Databases.ToolRegistry},
@@ -223,6 +234,25 @@ func (c *Config) validateBackupConfig() error {
 	return nil
 }
 
+func configPathIsFilesystemRoot(path string) bool {
+	normalized := filepath.ToSlash(strings.ReplaceAll(strings.TrimSpace(path), "\\", "/"))
+	if normalized == "/" {
+		return true
+	}
+	if len(normalized) >= 3 && normalized[1] == ':' && strings.Trim(normalized[2:], "/") == "" {
+		return true
+	}
+	if strings.HasPrefix(normalized, "//") {
+		parts := strings.Split(strings.Trim(normalized, "/"), "/")
+		if len(parts) == 2 {
+			return true
+		}
+	}
+	clean := filepath.Clean(path)
+	volume := filepath.VolumeName(clean)
+	return clean == string(filepath.Separator) || (volume != "" && clean == volume+string(filepath.Separator))
+}
+
 // configPathIsAbs reports whether a configured path is absolute on any
 // supported platform. config.yaml is shared across Windows, Linux, and macOS,
 // so a POSIX path such as "/state" must validate on Windows too, where
@@ -235,7 +265,7 @@ func configPathIsAbs(p string) bool {
 	if filepath.IsAbs(p) {
 		return true
 	}
-	slash := filepath.ToSlash(p)
+	slash := filepath.ToSlash(strings.ReplaceAll(p, "\\", "/"))
 	if strings.HasPrefix(slash, "/") {
 		return true
 	}
@@ -247,12 +277,32 @@ func configPathIsAbs(p string) bool {
 }
 
 func pathWithin(root, path string) (bool, error) {
-	if !configPathIsAbs(path) {
+	if !configPathIsAbs(root) || !configPathIsAbs(path) {
 		return false, nil
 	}
-	relative, err := filepath.Rel(root, filepath.Clean(path))
-	if err != nil {
-		return false, err
+	root = normalizeConfigPathForComparison(root)
+	path = normalizeConfigPathForComparison(path)
+	if root == "" || path == "" {
+		return false, nil
 	}
-	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)), nil
+	return path == root || strings.HasPrefix(path, root+"/"), nil
+}
+
+func normalizeConfigPathForComparison(value string) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
+	if value == "" || !configPathIsAbs(value) {
+		return ""
+	}
+	if len(value) >= 2 && value[1] == ':' {
+		if len(value) < 3 || value[2] != '/' {
+			return ""
+		}
+		clean := pathpkg.Clean("/" + strings.TrimPrefix(value[2:], "/"))
+		return strings.ToLower(value[:1]) + ":" + clean
+	}
+	if strings.HasPrefix(value, "//") {
+		clean := pathpkg.Clean("/" + strings.TrimLeft(value, "/"))
+		return "//" + strings.ToLower(strings.TrimPrefix(clean, "/"))
+	}
+	return pathpkg.Clean(value)
 }

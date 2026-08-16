@@ -2,13 +2,13 @@ package conversation
 
 import (
 	"context"
+	"time"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	redisstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/redis"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
-	"time"
-
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
 // redisStoreIface はRedisStoreのインターフェース（テスト用モック差し替え可能）
@@ -26,6 +26,7 @@ type redisStoreIface interface {
 // archiveStoreIface はArchiveSQLiteStoreのインターフェース
 type archiveStoreIface interface {
 	SaveThreadSummary(ctx context.Context, summary *conversation.ThreadSummary) error
+	SaveThreadSummaryWithReceipt(ctx context.Context, summary *conversation.ThreadSummary, receipt *conversation.ThreadSummaryReceipt) error
 	GetSessionHistory(ctx context.Context, sessionID string, limit int) ([]*conversation.ThreadSummary, error)
 	SearchByDomain(ctx context.Context, domain string, limit int) ([]*conversation.ThreadSummary, error)
 	SearchKnowledgeArchiveFTS(ctx context.Context, domain string, query string, limit int) ([]l1sqlite.L1KnowledgeItem, error)
@@ -73,6 +74,24 @@ type l1StoreIface interface {
 	Close() error
 }
 
+// conversationTurnL1Store is the bounded EndTurn/follower surface. It stays
+// separate from the legacy Store interface so old callers and test doubles do
+// not silently acquire a different commit contract.
+type conversationTurnL1Store interface {
+	CommitConversationTurn(context.Context, conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error)
+	GetConversationTurnReceipt(context.Context, string) (conversation.ConversationTurnResult, error)
+	ClaimConversationTurnOutbox(context.Context, string, time.Time, time.Duration) (*conversation.ConversationTurnOutbox, error)
+	ClaimNextConversationTurnOutbox(context.Context, time.Time, time.Duration) (*conversation.ConversationTurnOutbox, error)
+	CompleteConversationTurnOutbox(context.Context, string, string, string, time.Time) (conversation.ConversationTurnResult, error)
+	FailConversationTurnOutbox(context.Context, string, string, string, conversation.ConversationTurnErrorCode, time.Time) (conversation.ConversationTurnResult, error)
+	LoadConversationThreadProjection(context.Context, string, int64) ([]l1sqlite.L1MemoryEvent, error)
+	LoadActiveConversationThreadProjection(context.Context, string) ([]l1sqlite.L1MemoryEvent, error)
+}
+
+type conversationThreadArchiveStore interface {
+	GetThreadSummary(context.Context, int64) (*conversation.ThreadSummary, error)
+}
+
 // noveltyThreshold は「新規情報」と判定する類似度の閾値
 const noveltyThreshold = float32(0.85)
 
@@ -81,3 +100,5 @@ var _ redisStoreIface = (*redisstore.RedisStore)(nil)
 var _ archiveStoreIface = (*archivesqlite.ArchiveSQLiteStore)(nil)
 var _ vectordbStoreIface = (*vectordb.VectorDBStore)(nil)
 var _ l1StoreIface = (*l1sqlite.L1SQLiteStore)(nil)
+var _ conversationTurnL1Store = (*l1sqlite.L1SQLiteStore)(nil)
+var _ conversationThreadArchiveStore = (*archivesqlite.ArchiveSQLiteStore)(nil)

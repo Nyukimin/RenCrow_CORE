@@ -28,8 +28,14 @@ type conversationRuntime struct {
 	Manager          *conversationpersistence.RealConversationManager
 	L1Store          *l1sqlite.L1SQLiteStore
 	ArchiveStore     *archivesqlite.ArchiveSQLiteStore
+	Closer           conversationRuntimeCloser
+	ArchiveCloser    conversationRuntimeCloser // nil when Closer owns archive/L1 shutdown
 	WebGatherFetcher tools.WebGatherFetcher
 	ProfilePromotion *memorypromotionapp.Service
+}
+
+type conversationRuntimeCloser interface {
+	Close() error
 }
 
 func buildConversationRuntime(
@@ -38,6 +44,7 @@ func buildConversationRuntime(
 	chatToolRunnerV2 *tools.ToolRunner,
 	workerToolRunnerV2 *tools.ToolRunner,
 ) conversationRuntime {
+	ownerID := conversationRuntimeUserID(cfg)
 	var convEngine conversation.ConversationEngine
 	var realMgr *conversationpersistence.RealConversationManager
 	var l1Store *l1sqlite.L1SQLiteStore
@@ -55,6 +62,18 @@ func buildConversationRuntime(
 		l1Store, err = l1sqlite.NewL1SQLiteStore(cfg.Storage.Databases.ConversationL1)
 		if err != nil {
 			log.Fatalf("Failed to initialize L1 SQLite store: %v", err)
+		}
+		if exportRoot := strings.TrimSpace(cfg.Storage.Memory.ColdExportDir); exportRoot != "" {
+			if err := l1Store.SetParquetExportRoot(exportRoot); err != nil {
+				log.Fatalf("Failed to configure Parquet export root: %v", err)
+			}
+		}
+		if rawSourceRoot := strings.TrimSpace(cfg.Storage.Memory.RawSourceDir); rawSourceRoot != "" {
+			startupReconcile, err := reconcileChatGPTImportStartup(context.Background(), l1Store, rawSourceRoot)
+			if err != nil {
+				log.Fatalf("Failed to reconcile ChatGPT import startup state: %v", err)
+			}
+			log.Printf("  ChatGPT import startup reconcile: removed_stages=%d blocked_imports=%d", startupReconcile.RemovedStages, startupReconcile.BlockedImports)
 		}
 		log.Printf("  L1 SQLite: %s", cfg.Storage.Databases.ConversationL1)
 	}
@@ -152,17 +171,23 @@ func buildConversationRuntime(
 			log.Printf("  Category Recall Registry: enabled")
 		}
 		if l1Store != nil {
-			engine = engine.WithRecallTraceStore(l1Store)
-			engine = engine.WithUserMemoryStore(l1Store, "ren")
+			engine = engine.WithUserMemoryStore(l1Store, ownerID)
 			if cfg.KnowledgeRelation.Enabled {
 				engine = engine.WithKnowledgeRelationRecall(cfg.KnowledgeRelation.MaxHops)
 				log.Printf("  Knowledge Relation recall: enabled (max_hops=%d)", cfg.KnowledgeRelation.MaxHops)
 			}
 		}
+		if err := realMgr.DrainConversationTurnOutbox(context.Background(), 100); err != nil {
+			code := conversation.ConversationTurnErrorCodeOf(err)
+			if code == "" {
+				code = conversation.ConversationTurnErrorUnavailable
+			}
+			log.Printf("Conversation outbox startup drain failed code=%s; durable L1 receipt retained", code)
+		}
 		if cfg.Conversation.ProfilePromotionEnabledValue() && l1Store != nil && summaryProvider != nil {
 			extractor := conversationpersistence.NewLLMProfileExtractor(summaryProvider).WithMinimumUserMessages(1)
 			profilePromotion = memorypromotionapp.NewService(l1Store, extractor, memorypromotionapp.Options{
-				UserID:        "ren",
+				UserID:        ownerID,
 				BatchMessages: cfg.Conversation.ProfilePromotionBatchMessages,
 				MaxAttempts:   cfg.Conversation.ProfilePromotionMaxAttempts,
 				LeaseDuration: time.Duration(cfg.Conversation.ProfilePromotionTimeoutSeconds+30) * time.Second,
@@ -181,7 +206,7 @@ func buildConversationRuntime(
 			engine := conversationpersistence.NewRealConversationEngine(
 				l1Manager,
 				mioPersona,
-			).WithRecallTraceStore(l1Store).WithUserMemoryStore(l1Store, "ren")
+			).WithUserMemoryStore(l1Store, ownerID)
 			if categoryRecallRegistry != nil {
 				engine = engine.WithCategoryRecallRegistry(categoryRecallRegistry).WithCategoryRecallScope("public")
 				log.Printf("  Category Recall Registry: enabled")
@@ -252,13 +277,45 @@ func buildConversationRuntime(
 		}
 	}
 	return conversationRuntime{
-		Engine:           convEngine,
-		Manager:          realMgr,
-		L1Store:          l1Store,
-		ArchiveStore:     archiveStore,
+		Engine:       convEngine,
+		Manager:      realMgr,
+		L1Store:      l1Store,
+		ArchiveStore: archiveStore,
+		Closer: func() conversationRuntimeCloser {
+			if realMgr != nil {
+				return realMgr
+			}
+			if l1Store != nil {
+				return l1Store
+			}
+			return nil
+		}(),
+		ArchiveCloser:    conversationRuntimeArchiveCloser(realMgr, archiveStore),
 		WebGatherFetcher: dailySourceFetcher,
 		ProfilePromotion: profilePromotion,
 	}
+}
+
+func conversationRuntimeUserID(cfg *config.Config) string {
+	if cfg != nil {
+		if userID := strings.TrimSpace(cfg.LocalAgentOps.UserID); userID != "" {
+			return userID
+		}
+	}
+	// The standard profile historically uses Ren's local owner when no
+	// LocalAgentOps user is configured; keep that compatibility fallback while
+	// allowing configured authenticated owner APIs and conversation recall to
+	// share one identity.
+	return "ren"
+}
+
+func conversationRuntimeArchiveCloser(realMgr *conversationpersistence.RealConversationManager, archiveStore *archivesqlite.ArchiveSQLiteStore) conversationRuntimeCloser {
+	// RealConversationManager.Close closes its internal archive and attached L1
+	// stores. Keep the independent route archive closer only for L1-only mode.
+	if realMgr != nil {
+		return nil
+	}
+	return archiveStore
 }
 
 // buildCategoryRecallRegistry wires only the category sources that CORE is

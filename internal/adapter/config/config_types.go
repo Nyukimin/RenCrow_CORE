@@ -185,6 +185,7 @@ type MemoryStorageConfig struct {
 	SessionDir         string `yaml:"session_dir"`
 	OperationMemoryDir string `yaml:"operation_memory_dir"`
 	ColdExportDir      string `yaml:"cold_export_dir"`
+	RawSourceDir       string `yaml:"raw_source_dir"`
 }
 
 type DatabasePathsConfig struct {

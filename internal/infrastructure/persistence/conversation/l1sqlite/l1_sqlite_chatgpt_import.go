@@ -15,66 +15,14 @@ import (
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
 
-const ChatGPTL3ArtifactFormat = "rencrow.chatgpt_l3.v1"
+const ChatGPTL3ArtifactFormat = domainmemory.ChatGPTL3ArtifactFormat
 
-type ChatGPTL3ImportRecord struct {
-	Format                string
-	ExportID              string
-	EvidenceID            string
-	ConversationID        string
-	ConversationTitle     string
-	ConversationCreatedAt time.Time
-	ConversationUpdatedAt time.Time
-	NodeID                string
-	ParentNodeID          string
-	ChildNodeIDs          []string
-	OnCurrentBranch       bool
-	MessageID             string
-	MessageCreatedAt      time.Time
-	Role                  string
-	ContentType           string
-	Text                  string
-	Content               json.RawMessage
-	Metadata              json.RawMessage
-}
-
-type ChatGPTL3ImportResult struct {
-	Validated int `json:"validated"`
-	Imported  int `json:"imported"`
-	Existing  int `json:"existing"`
-	Queued    int `json:"queued_for_projection"`
-}
-
-type ChatGPTL3ConfirmResult struct {
-	Matched             int `json:"matched"`
-	Confirmed           int `json:"confirmed"`
-	ProjectionPending   int `json:"projection_pending"`
-	ProjectionRunning   int `json:"projection_running"`
-	ProjectionRetryWait int `json:"projection_retry_wait"`
-	ProjectionFailed    int `json:"projection_failed"`
-	ProjectionCompleted int `json:"projection_completed"`
-}
+type ChatGPTL3ImportRecord = domainmemory.ChatGPTL3ImportRecord
+type ChatGPTL3ImportResult = domainmemory.ChatGPTL3ImportResult
+type ChatGPTL3ConfirmResult = domainmemory.ChatGPTL3ConfirmResult
 
 func ValidateChatGPTL3ImportRecord(item ChatGPTL3ImportRecord) error {
-	if item.Format != ChatGPTL3ArtifactFormat {
-		return fmt.Errorf("unsupported ChatGPT L3 artifact format: %q", item.Format)
-	}
-	if strings.TrimSpace(item.ExportID) == "" || strings.TrimSpace(item.ConversationID) == "" || strings.TrimSpace(item.MessageID) == "" {
-		return errors.New("export_id, conversation_id, and message_id are required")
-	}
-	wantEvidence := "chatgpt_export:" + item.ConversationID + ":" + item.MessageID
-	if item.EvidenceID != wantEvidence {
-		return fmt.Errorf("evidence_id mismatch: got %q want %q", item.EvidenceID, wantEvidence)
-	}
-	switch item.Role {
-	case "user", "assistant", "system", "tool":
-	default:
-		return fmt.Errorf("unsupported ChatGPT message role: %q", item.Role)
-	}
-	if strings.TrimSpace(item.Text) == "" && len(item.Content) == 0 {
-		return errors.New("message text or content is required")
-	}
-	return nil
+	return domainmemory.ValidateChatGPTL3ImportRecord(item)
 }
 
 func (s *L1SQLiteStore) ImportChatGPTL3Records(ctx context.Context, records []ChatGPTL3ImportRecord, apply bool) (ChatGPTL3ImportResult, error) {

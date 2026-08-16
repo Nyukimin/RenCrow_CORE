@@ -16,7 +16,7 @@ func TestL1ConversationManagerPersistsSharedAgentContextAcrossReopen(t *testing.
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore: %v", err)
 	}
-	engine := NewRealConversationEngine(NewL1ConversationManager(store), domconv.NewMioPersona("test"))
+	engine := NewRealConversationEngine(NewL1ConversationManager(store), domconv.NewMioPersona("test")).WithUserMemoryStore(store, "ren")
 	if err := engine.EndTurnAs(ctx, "viewer-user", "shared token RC_L1_ONLY", "remembered", domconv.SpeakerMio); err != nil {
 		t.Fatalf("EndTurnAs: %v", err)
 	}
@@ -72,5 +72,32 @@ func TestL1ConversationManagerPersistsAgentAttributedRecallTrace(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Role != string(domconv.SpeakerKuro) || got[0].ResponseID != "response-kuro-1" {
 		t.Fatalf("Agent-attributed recall trace = %#v", got)
+	}
+}
+
+func TestL1ConversationManagerCommitConversationTurnDelegatesOnlyWithoutTargets(t *testing.T) {
+	ctx := context.Background()
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1-turn.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	manager := NewL1ConversationManager(store)
+	request := domconv.ConversationTurnRequest{
+		TurnID: "l1-turn-empty-targets", SessionID: "l1-session", OwnerID: "owner",
+		UserMessage: "hello", AgentMessage: "hi", AgentSpeaker: domconv.SpeakerMio,
+	}
+	result, err := manager.CommitConversationTurn(ctx, request)
+	if err != nil || result.Status != domconv.ConversationTurnCompleted {
+		t.Fatalf("empty target result=%+v err=%v", result, err)
+	}
+	request.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetRedisProjection}
+	rejected, err := manager.CommitConversationTurn(ctx, request)
+	if err == nil || rejected.Status != domconv.ConversationTurnFailed || rejected.ErrorCode != domconv.ConversationTurnErrorInvalid {
+		t.Fatalf("target result=%+v err=%v, want invalid without fallback", rejected, err)
+	}
+	replayed, err := store.GetConversationTurnReceipt(ctx, "l1-turn-empty-targets")
+	if err != nil || replayed.Status != domconv.ConversationTurnCompleted {
+		t.Fatalf("target rejection changed L1 receipt=%+v err=%v", replayed, err)
 	}
 }

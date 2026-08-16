@@ -9,30 +9,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
-func TestExtractJSON(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"clean json", `{"preferences": {}, "facts": []}`, `{"preferences": {}, "facts": []}`},
-		{"with prefix", `Here is the result: {"preferences": {"好み": "SF"}, "facts": ["猫が好き"]}`, `{"preferences": {"好み": "SF"}, "facts": ["猫が好き"]}`},
-		{"with suffix", `{"preferences": {}, "facts": []} end`, `{"preferences": {}, "facts": []}`},
-		{"no json", "no json here", "{}"},
-		{"empty", "", "{}"},
-		{"nested", `{"a": {"b": "c"}}`, `{"a": {"b": "c"}}`},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractJSON(tt.input)
-			if got != tt.want {
-				t.Errorf("extractJSON(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 type profileExtractorRequestProvider struct {
 	response string
 	req      llm.GenerateRequest
@@ -45,9 +21,9 @@ func (p *profileExtractorRequestProvider) Generate(_ context.Context, req llm.Ge
 
 func (p *profileExtractorRequestProvider) Name() string { return "profile-extractor-test" }
 
-func TestLLMProfileExtractorCanonicalizesStringAndNumberPreferenceScalars(t *testing.T) {
+func TestLLMProfileExtractorAcceptsOnlyStringPreferenceScalars(t *testing.T) {
 	provider := &profileExtractorRequestProvider{
-		response: `{"preferences":{"文字列":"SF","数値":3.25e+2},"facts":[]}`,
+		response: `{"preferences":{"文字列":"SF"},"facts":[]}`,
 	}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
 	thread := domconv.NewThread("profile-session", "profile-thread")
@@ -56,7 +32,7 @@ func TestLLMProfileExtractorCanonicalizesStringAndNumberPreferenceScalars(t *tes
 	if err != nil {
 		t.Fatalf("Extract failed: %v", err)
 	}
-	if result.NewPreferences["文字列"] != "SF" || result.NewPreferences["数値"] != "3.25e+2" {
+	if result.NewPreferences["文字列"] != "SF" || len(result.NewPreferences) != 1 {
 		t.Fatalf("preferences=%v", result.NewPreferences)
 	}
 	if provider.req.ResponseFormat != llm.ResponseFormatJSONObject {
@@ -69,6 +45,7 @@ func TestLLMProfileExtractorCanonicalizesStringAndNumberPreferenceScalars(t *tes
 
 func TestLLMProfileExtractorRejectsNonScalarPreferenceValues(t *testing.T) {
 	for _, response := range []string{
+		`{"preferences":{"number":3.25e+2},"facts":[]}`,
 		`{"preferences":{"object":{"nested":true}},"facts":[]}`,
 		`{"preferences":{"array":["x"]},"facts":[]}`,
 		`{"preferences":{"boolean":true},"facts":[]}`,
@@ -83,5 +60,51 @@ func TestLLMProfileExtractorRejectsNonScalarPreferenceValues(t *testing.T) {
 				t.Fatal("Extract succeeded for non-scalar preference value")
 			}
 		})
+	}
+}
+
+func TestLLMProfileExtractorRejectsNonExactJSONResponse(t *testing.T) {
+	for _, response := range []string{
+		`prefix {"preferences":{},"facts":[]}`,
+		`{"preferences":{},"facts":[]} suffix`,
+		`{"preferences":{},"facts":[],"unknown":true}`,
+		`{"preferences":{},"facts":[],"facts":[]}`,
+		`{"preferences":{"key":"one","key":"two"},"facts":[]}`,
+	} {
+		t.Run(response, func(t *testing.T) {
+			provider := &profileExtractorRequestProvider{response: response}
+			extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+			thread := domconv.NewThread("profile-session", "profile-thread")
+			thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
+			if _, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{}); err == nil {
+				t.Fatal("Extract accepted non-exact JSON response")
+			}
+		})
+	}
+}
+
+func TestLLMProfileExtractorRejectsOversizedOrInvalidFactOutput(t *testing.T) {
+	for _, response := range []string{
+		`{"preferences":{},"facts":[3]}`,
+		`{"preferences":{},"facts":[""]}`,
+		`{"preferences":{},"facts":["line\nbreak"]}`,
+	} {
+		t.Run(response, func(t *testing.T) {
+			provider := &profileExtractorRequestProvider{response: response}
+			extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+			thread := domconv.NewThread("profile-session", "profile-thread")
+			thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
+			if _, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{}); err == nil {
+				t.Fatal("Extract accepted invalid fact output")
+			}
+		})
+	}
+
+	provider := &profileExtractorRequestProvider{response: strings.Repeat("x", 64*1024+1)}
+	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
+	if _, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{}); err == nil {
+		t.Fatal("Extract accepted oversized response")
 	}
 }

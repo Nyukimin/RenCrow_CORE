@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"path/filepath"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	avatarfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/avatar"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
 	jobpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/job"
 )
@@ -27,18 +27,19 @@ func buildViewerRuntimeHandlers(
 	databasePaths := viewerDatabasePaths(cfg)
 	movieOptions := viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}
 	hobbyOptions := viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}
-	if ownerHandler, err := newConfiguredMemoryOwnerHandler(cfg, l1Store); err != nil {
+	deps.viewerMemoryOwner = nil
+	deps.viewerMemoryChatGPTImportOwner = nil
+	if ownerHandler, chatGPTOwnerHandler, err := newConfiguredMemoryOwnerHandlers(cfg, l1Store); err != nil {
 		log.Printf("WARN: authenticated memory owner API disabled: %v", err)
 	} else {
 		deps.viewerMemoryOwner = ownerHandler
+		deps.viewerMemoryChatGPTImportOwner = chatGPTOwnerHandler
 	}
 	if l1Store == nil {
 		deps.viewerRecallTraces = viewer.HandleRecallTraces(nil)
 		deps.viewerMemoryLayers = viewer.HandleMemoryLayers(nil, nil)
 		deps.viewerMemoryProfilePromotions = viewer.HandleMemoryProfilePromotions(nil)
 		deps.viewerMemoryProfileRetry = viewer.HandleMemoryProfilePromotionRetry(nil)
-		deps.viewerMemoryChatGPTL3Import = viewer.HandleChatGPTL3Import(nil)
-		deps.viewerMemoryChatGPTL3Confirm = viewer.HandleChatGPTL3Confirm(nil)
 		deps.viewerSourceRegistry = viewer.HandleSourceRegistry(nil)
 		deps.viewerDomainGraphAssertions = viewer.HandleDomainGraphAssertions(nil)
 		deps.viewerMovieDomainGraphSync = viewer.HandleMovieDomainGraphSync(movieOptions, nil)
@@ -58,8 +59,6 @@ func buildViewerRuntimeHandlers(
 		deps.viewerMemoryRecallPack = viewer.HandleMemoryRecallPack(l1Store, realMgr, l1Store)
 		deps.viewerMemoryProfilePromotions = viewer.HandleMemoryProfilePromotions(l1Store)
 		deps.viewerMemoryProfileRetry = viewer.HandleMemoryProfilePromotionRetry(l1Store)
-		deps.viewerMemoryChatGPTL3Import = viewer.HandleChatGPTL3Import(l1Store)
-		deps.viewerMemoryChatGPTL3Confirm = viewer.HandleChatGPTL3Confirm(l1Store)
 		deps.viewerSourceRegistry = viewer.HandleSourceRegistry(l1Store)
 		deps.viewerDomainGraphAssertions = viewer.HandleDomainGraphAssertions(l1Store)
 		deps.viewerMovieDomainGraphSync = viewer.HandleMovieDomainGraphSync(movieOptions, l1Store)

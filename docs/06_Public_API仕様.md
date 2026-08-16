@@ -35,8 +35,9 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `/viewer/revenue/*` | Opportunity、EconomicTask、RevenueEvent、Reflection、policy decision |
 | `GET/POST /viewer/revenue/deliveries` | trace付き汎用Deliveryの一覧・draft/状態record作成 |
 | `/viewer/memory/*` | memory event、Recall、ProfilePromotion job の観測 |
-| `POST /viewer/memory/import/chatgpt` | private operator用ChatGPT L3 batch検証／取り込み。既定dry-run、1 request最大100 records |
-| `POST /viewer/memory/import/chatgpt/confirm` | export IDに束縛した候補確認。projection未完了／失敗時はapplyを拒否 |
+| `POST /v1/memory/import/chatgpt` | authenticated owner用Common Raw bundle upload。既定`apply=false`、whole-artifact検証後にCOREが内部batch化 |
+| `GET /v1/memory/import/chatgpt/{percent-escaped-export-id}` | owner-scoped bounded import status／receipt。Raw本文・path・statementは返さない |
+| `POST /v1/memory/import/chatgpt/confirm` | owner-scoped candidate confirm。reason必須、既定dry-run、projection未完了／failed時はapplyを拒否 |
 | `POST /viewer/hobby-graph/music/import` | `rencrow.music_catalog.v1`を最大100件検証・import。既定dry-run。未許諾歌詞本文と復元可能featureを拒否 |
 | `GET /viewer/databases/conversation-archive` | Conversation Archive（`memory_archive.db`）の読み取り専用snapshot |
 | `GET /viewer/databases/glossary` | Glossary DBの読み取り専用snapshot |
@@ -185,17 +186,17 @@ Recall経路へのfallbackはこのAPIにありません。
 
 ### Memory CLI／API対応
 
-`/viewer/memory/*`はCOREのowner APIの基礎です。現行の`GET /viewer/memory/profile-promotions`と
-`POST /viewer/memory/profile-promotions/retry`は互換維持し、既存ViewerのUserMemory list／create／state／
-forget／supersede、RecallPack、ChatGPT import／confirmも既存caller向けに保持します。ただし、現行のViewer routeの
-存在はoperator CLI、authenticated owner scope、全操作共通receipt、import checkpointのhash bindingを意味しません。
+`/viewer/memory/*`は既存Viewer／legacy caller向けの互換境界です。現行の`GET /viewer/memory/profile-promotions`と
+`POST /viewer/memory/profile-promotions/retry`、既存ViewerのUserMemory list／create／state／forget／supersede、RecallPackは互換維持します。
+legacy ChatGPT `import/confirm`はproduction登録から削除済みで、Common Raw owner APIのfallback／拡張に戻しません。
 CMDはこのAPIのclientであり、owner serviceではありません。CMDが行うのはcommand構文の解析、認証tokenの
-transport、method／path／bodyへの一対一mapping、response表示だけです。認証user、actor、scope、request ID、
+transport、method／path／bodyへの一対一mapping、boundedな単一JSON responseの原文relayだけです。認証user、actor、scope、request ID、
 idempotency、state、policy、transaction、dry-run／applyの意味、receiptはすべてCOREが確定します。
 
-UserMemory owner APIの実装済み第一段階は、loopbackと`local_agent_ops`のowner-only Bearer tokenを再利用する
-`/v1/memory/user`です。tokenはMemory handlerの起動時に読み、requestごとには読まず、CORE設定の`user_id`から
-trusted user scopeを作ります。
+UserMemory owner APIのsource実装済み第一段階は、loopbackと`local_agent_ops`のowner-only Bearer tokenを再利用する
+`/v1/memory/user`と、Recall／Trace、archive、lifecycle、Parquet owner workflowです。tokenはMemory handlerの起動時に読み、
+requestごとには読まず、CORE設定の`user_id`からtrusted user scopeを作ります。source／focused implementation completeですが、
+installed binary、production config／DB migration、authenticated live CMD->CORE route、rebuild／restart、Agent／full DB E2Eは未確認です。
 `X-RenCrow-Client: RenCrow_CMD`とinteraction profileはcapability selectionであり、credentialの代替ではありません。
 認証方式だけが`local_agent_ops`のowner token policyを共有し、Memory APIはAgent OPS route、
 Shiro／Worker実行、foreground leaseを使用しません。
@@ -217,22 +218,138 @@ Shiro／Worker実行、foreground leaseを使用しません。
 `evidence_event_ids`、`confidence`、`sensitivity`、`state`、`persona_scope`、`active`、`superseded_by`、
 `created_at`、`updated_at`だけです。
 
-既存Viewer routeはlegacy compatibility routeとして互換維持します。`/v1/memory/user`はCMD専用owner routeであり、
-このrouteだけが新しいowner receipt契約を満たします。CMDのowner操作は上記APIだけを使います。次の表は後続targetであり、
-今回のUserMemory owner API実装済み判定へ含めません。
+既存Viewer routeはlegacy compatibility routeとして互換維持します。`/v1/memory/user`と、下表のarchive／lifecycle／Parquet routeは
+CMD専用owner routeであり、新しいowner receipt契約を満たすsource実装です。CMDのowner操作は上記APIだけを使います。
+import status／confirm、Common Raw、LLM residual、typed EndTurnはsource／focused実装済みです。
+installed binary、production config／DB migration、ChatGPT backfill、live CMD->CORE／Agent E2Eは未完了であり、source実装を配備済みとは扱いません。
 
 | RenCrow_CMD target | CORE Public API target | profile | CORE所有の操作境界 |
 | --- | --- | --- | --- |
-| `memory recall --query` | `GET /viewer/memory/recall-pack` | `cmd-diagnostics` | 既存routeへbounded `query`／Recall traceを追加。caller `user_id`を廃止 |
-| `memory trace list` | `GET /viewer/recall/traces` | `cmd-diagnostics` | 既存routeのbounded trace metadata／state |
-| `memory trace show --id` | `GET /viewer/recall/traces/{id}` | `cmd-diagnostics` | 新規exact-ID trace projection |
-| `memory archive --id` | `POST /viewer/memory/user/archive` | `cmd-control` | 新規exact-ID archive receipt |
-| `memory lifecycle plan` | `POST /viewer/memory/lifecycle/plan` | `cmd-control` | dry-run／planのみ |
-| `memory lifecycle run --plan-request-id ... --apply` | `POST /viewer/memory/lifecycle/run` | `cmd-control` | plan receipt／hash再検証後だけapply |
-| `memory export parquet` | `POST /viewer/memory/export/parquet` | `cmd-control` | CORE owner output root内のbounded export |
-| `memory export verify --request-id` | `GET /viewer/memory/export/{request_id}` | `cmd-diagnostics` | manifest／hash／count verify |
-| `memory import status --export-id` | `GET /viewer/memory/import/chatgpt/{export_id}` | `cmd-diagnostics` | 新規import checkpoint／receipt projection |
-| `memory import confirm --export-id` | `POST /viewer/memory/import/chatgpt/confirm` | `cmd-control` | 既存confirm route。reason必須、既定dry-run、`--apply`で適用 |
+| `memory recall --query [--limit]` | `GET /v1/memory/user/recall?query=<1..512 rune>&limit=<1..50,default12>` | `cmd-diagnostics` | authenticated ownerの決定論Recall、trace永続化、bounded items＋receipt |
+| `memory trace list [--limit]` | `GET /v1/memory/user/traces?limit=<1..100,default20>` | `cmd-diagnostics` | owner_id一致のbounded trace summary＋receipt |
+| `memory trace show --id` | `GET /v1/memory/user/traces/{escaped-trace-id}` | `cmd-diagnostics` | owner_id一致のexact-ID bounded trace projection＋receipt |
+| `memory archive --id` | `POST /viewer/memory/user/archive` | `cmd-control` | source実装済み。新規exact-ID archive receipt。配備／E2E未確認 |
+| `memory lifecycle plan` | `POST /viewer/memory/lifecycle/plan` | `cmd-control` | source実装済み。dry-run／planのみ。配備／E2E未確認 |
+| `memory lifecycle run --plan-request-id ... --apply` | `POST /viewer/memory/lifecycle/run` | `cmd-control` | source実装済み。plan receipt／hash再検証後だけapply。配備／E2E未確認 |
+| `memory export parquet` | `POST /viewer/memory/export/parquet` | `cmd-control` | source実装済み。configured owner root内のbounded export。配備／E2E未確認 |
+| `memory export verify --request-id` | `GET /viewer/memory/export/{escaped-request-id}` | `cmd-diagnostics` | source実装済み。exact targetのmanifest／hash／count verify。配備／E2E未確認 |
+| `memory import chatgpt --manifest <file> --artifact <tar> [--apply]` | `POST /v1/memory/import/chatgpt` | `cmd-control` | CORE owner routeとCMD facadeはsource／focused実装済み。COREがwhole-artifact検証、内部batch、Raw／projection、receiptを所有。配備／E2E未確認 |
+| `memory import status --export-id` | `GET /v1/memory/import/chatgpt/{percent-escaped-export-id}` | `cmd-diagnostics` | source／focused実装済み。owner-scoped bounded import status／receipt。配備／E2E未確認 |
+| `memory import confirm --export-id <id> --reason <reason> [--apply]` | `POST /v1/memory/import/chatgpt/confirm` | `cmd-control` | source／focused実装済み。reason必須、既定dry-run、projection完了／failedなしだけapply。配備／E2E未確認 |
+
+#### ChatGPT Common Raw import owner API
+
+このAPIは旧 `/viewer/memory/import/chatgpt*` を置換する唯一のruntime import routeです。CORE owner route、runtime wiring、CMD facade、
+Toolsの旧network subcommand削除、CORE旧Viewer route削除、legacy candidate／confirmed／forgotten／superseded不変性testは
+source／focused実装済みですが、production backfillと配備は未完了です。source-focusedな実装が存在しても、installed binary、production config／migration、rebuild／restart、live CMD->CORE／Agent
+E2Eを完了とみなしません。CLIの正規構文は次のとおりです。
+
+```text
+rencrowctl memory import chatgpt --manifest <file> --artifact <tar> [--apply]
+rencrowctl memory import status --export-id <id>
+rencrowctl memory import confirm --export-id <id> --reason <reason> [--apply]
+```
+
+`--url`、`--token-file`、`--json`などの標準global optionは、既存memory commandと同じ配置規則に従います。
+CMDのfile preflightはflagの有無、型、distinct path、open／stream可能なprivate regular file、multipartを構築できることだけです。
+CMDはmanifest／TARをhashまたは解釈せず、schema、batch、checkpoint、request ID、receipt、owner／scope、state、policy、DB意味論を
+持ちません。各commandはCOREへ一回だけrequestを送り、responseを表示します。CMDはretry、client-side batch、checkpoint再開を行いません。
+
+新owner routeは次の3つです。
+
+```text
+POST /v1/memory/import/chatgpt
+GET  /v1/memory/import/chatgpt/{percent-escaped-export-id}
+POST /v1/memory/import/chatgpt/confirm
+```
+
+uploadはauthenticated loopbackの一つのmultipart requestだけを受けます。`X-RenCrow-Client: RenCrow_CMD`と
+`X-RenCrow-Interaction-Profile: cmd-control`を既存のcredential／scope guardと組み合わせ、profile headerをcredentialの代替にしません。
+multipartのpartは次の順序、name、media typeに固定します。
+
+| 順序 | name | media type | 内容 |
+| --- | --- | --- | --- |
+| 1 | `apply` | `text/plain` | ASCII bool `true`／`false`。CLIの`--apply`省略時はCMDが`false`を送る |
+| 2 | `manifest` | `application/json` | manifest JSON file |
+| 3 | `artifact` | `application/x-tar` | uncompressed deterministic TAR file |
+
+unknown／duplicate／missing part、順序違反、name／media type不一致、part内部のEOF不備、multipart trailing bytes／part、
+malformed boundaryはCOREが400で拒否します。uploadはquery/bodyのcaller fieldsを持たず、user、scope、export／request／idempotency ID、
+DB／path、batch size／index、checkpoint、owner、policyは送信しません。request IDとidempotency identityはCOREが生成します。
+
+statusは`cmd-diagnostics`のGET一回で、path segmentはpercent-escaped export IDを一つだけ受けます。decoded後の空、malformed escape、
+encoded slash／backslash、追加segmentは拒否します。statusはowner／scope一致するexportだけを返し、別ownerやunknown exportを公開しません。
+confirmは`cmd-control`のJSON POST一回で、bodyはJSON object`{"export_id":<id>,"reason":<reason>,"apply":<bool>}`だけです。
+`reason`はdry-runでも必須、`apply`既定値はfalseで、callerはrequest ID、user、scope、DB、candidate IDを別途指定しません。
+
+COREは認証とscope検証が成功した後だけ、configured absolute `storage.memory.raw_source_dir`配下のprivate stagingへ受け入れます。
+manifestは64 MiB以下、artifact TARは64 GiB以下です。COREはfirst Raw／domain commit前にmanifest、TAR、EOF／trailing、records、
+source-files index、全objects、content hash／counts、schema／converter version、canonical manifest hash、source reconstructionを
+全件検証します。staging／tempは0700 directory／0600 file、同一filesystemのatomic finalize、failure cleanup／quarantineを使い、
+repository／runtime home／OS temp／backup媒体へfallbackしません。crash／orphan stagingはactiveとせず、安全にreconcile／removeします。
+partial commitで閉じたrequestは`blocked` receiptで終端し、retryは同じartifactを一つのupload requestで再送して収束させます。
+
+physical namespaceは`raw_source_dir/.chatgpt-import-staging/<CORE-generated-stage-id>/`だけです。stage IDは
+pathless ASCII alphanumeric／hyphen、request directoryは0700、`manifest.json`／`artifact.tar`は0600とし、unknown entry、
+symlink、hardlink、device、root escapeを拒否します。stage copyは成功／拒否／`blocked`応答後に削除し、resumeや
+backupの正本にしません。process中断で残ったsafe stageは次回route開始前に削除し、unsafe／unknown entryは
+自動削除せずstartup errorで閉じます。startup順はstage reconcile -> Common Raw object reconcile -> active import ledger
+reconcileで、全stepの成功前にrouteをlisten-readyにしません。
+
+COREの内部batchはsource record最大100件、decoded Common Raw payload合計64 MiB以下、stable artifact order、CORE採番のbatch indexです。
+CMD／clientがbatch size、index、checkpointを決めることはありません。全元fileはordered 32 MiB chunk-backed synthetic Raw source record（64 MiB境界を守るため必要数のchunk-ref record）として
+表現し、message recordはfull canonical Raw payloadを持ちます。Common Raw manifest／record／stateとimmutable `pending` projection receiptを
+先にcommitし、L3／jobs／completed receiptを一つのtransactionで確定します。failed／blocked receiptは追記し、同じartifact bindingのreplayは
+idempotentに収束します。assetsはchunk ingestとsource reconstructionが成功するまでmigratedと数えません。
+
+response／read statusはRaw本文、path、statementを返さず、export／binding hashとversion、source／message／file／chunk／object counts、
+batch／Raw／projection／job aggregate、terminal `import_state`、warnings、audit reference、idempotent replayだけを返します。active requestの
+過渡値は`validating | committing`ですが、人の返答を待つstatusやgrant／queueは作りません。terminal stateは
+`completed | rejected | blocked`です。
+
+confirmはauthenticated owner-scoped candidate operationだけを対象とします。dry-runはread-only、applyはprojectionがcompletedでfailedがなく、
+同じowner／scopeであることをCOREが確認した後だけ、candidate stateとaudit receiptを一つのatomic transactionで更新します。hardcoded
+`user:ren`をowner判定に使わず、別ownerのstatus／candidateを返しません。
+
+| HTTP | 条件／意味 |
+| --- | --- |
+| 200 | typed receiptまたはidempotent replay |
+| 400 | invalid flags、multipart、schema、count、unknown／duplicate／missing part |
+| 401 | authentication missing／invalid |
+| 403 | profile、owner、scope拒否 |
+| 404 | status対象export unknown（別ownerも同じ） |
+| 409 | source changed、artifact binding／idempotency conflict |
+| 413 | manifest／artifact sizeまたはcount bound超過 |
+| 422 | artifact semantic、record／object hash、source reconstruction不一致 |
+| 503 | configured raw root／storage unavailable（`blocked`） |
+| 500 | storage／transaction／receipt failure（successを主張しない） |
+
+旧Tools `import/confirm`とCORE direct-L3 `/viewer/...`はproduction経路から削除済みです。新owner APIはこれらへfallbackせず、
+旧routeへネットワークimport、request ID、hash／checkpoint責務を戻しません。
+
+#### Recall／Trace owner APIの確定契約
+
+上表の3 read routeはlegacy `/viewer/memory/*`／`/viewer/recall/*`の互換routeを再利用しません。COREのconfigured authenticated
+userとtrusted `ToolExecutionScope`／`DataScopeUser`からownerを決定し、callerの`user_id`、session ID、request ID、DB情報を
+受け付けません。`query`は1〜512 rune、`limit`はrecall 1〜50（既定12）、trace list 1〜100（既定20）です。空query、未知／重複
+query、範囲外limitは400、認証なしは401、profile／scope拒否は403、owner不明legacy rowまたは別ownerのexact traceは404、owner store
+不可用は503／`blocked`とします。source read／index failureを空の200へ変換しません。
+
+Recallは最大100件をscanするCORE決定論rankingです。active、非superseded、非decayed、`confirmed | pinned`、normal sensitivity、
+scope適合だけを選び、candidate、sensitive、inactive、superseded、decayed、budget dropはstatus／reason付きtrace itemへ残します。
+LLMは実行しません。responseの`items`は`UserMemoryOwnerView`のbounded fields＋`score`、`trace`は`id`、`status`、
+`query_text_redacted`、`total_candidates`、`selected_count`、`created_at`、receiptのoperationは`recall`、`audit_reference`はtrace IDです。
+
+Trace list itemは`id`、`status`、`route`、`persona`、`total_candidates`、`injected_count`、`total_injected_tokens`、`created_at`、
+receipt operationは`trace_list`です。Trace showはsummary fields、`query_text_redacted`、bounded items（`item_id`、`memory_id`、
+`kind`、`source_id`／`source_type`、optional `summary`、`score`、`status`、`reason`、`prompt_section`、`token_count`、`memory_state`、
+`sensitivity`）を返します。sensitive、short_context、full transcriptはsummaryを空にし、その他summaryも240 rune以内です。receipt
+operationは`trace_show`です。
+
+`recall_trace.owner_id`とowner indexを追加し、新規Agent／owner traceではowner_idを必須にします。`owner_id=''`のlegacy rowはowner
+APIへ公開しません。BeginTurn traceもowner_idとUserMemoryの選択／除外itemを保持します。TraceはStart時`started`、items／injection成功後に
+`completed`または`partial`へFinishし、途中失敗をcompletedと主張しません。CMDは上記GETをBearer＋`cmd-diagnostics`で一回だけ発行し、
+ranking、scope、state、receiptを保持または決定しません。
 
 target CLIは`user_id`、request／idempotency ID、DB path、table／column、SQL、physical output pathを送らず、
 authenticated user、actor、scope、request ID、idempotency keyはserver contextとCORE APIから決定します。
@@ -240,9 +357,15 @@ legacy callerが`user_id`を送った場合もauthenticated userと一致しな�
 targetのreadは認証済みownerが明示要求したbounded UserMemory projectionと状態だけを返し、Raw payload、全会話
 transcript、sensitive valueをstdoutへ出さず、通常logにはUserMemory statementとRecall `query`も残しません。state mutationの単一writeは
 verb自体を明示操作とし、bulk mutation／lifecycle／importはplan／dry-runを既定として`--apply`時だけ変更します。
-Parquet exportはsource DBを変更しない明示artifact生成commandです。全effectful operationはCOREが生成またはAPI契約で
-検証する`request_id`を持ち、memory stateを変えるoperationはCOREが`reason`を必須検証します。許可待ちqueueや
-人の返答待ちstatusは作りません。
+Parquet exportはsource DBを変更しない明示artifact生成commandです。loopbackとowner Bearer scopeを要求し、POSTは`cmd-control`で
+空bodyまたは`{}`だけ（queryなし）を受け付け、GETは`cmd-diagnostics`で一つのescaped export IDだけ（query／bodyなし）を受け付けます。
+GETのtargetはdecoded後に空でない一segmentでなければならず、malformed escape、encoded slash／backslash、additional／trailing segmentは拒否します。
+COREはcurrent request IDを生成し、`storage.memory.cold_export_dir`をrootに、Archive SQLiteの一つのread snapshotから5つのdeterministic
+relative Parquet fileとrows／bytes／SHA-256 manifestを生成し、private staging、atomic finalize、receipt、cleanup／quarantine、exact target
+verify／replay artifact再検証を行います。empty rootは503／`blocked`、非空で不正なrootはstartup config errorです。responseはtyped relative metadataだけで、
+caller path／user／current request ID／DB情報は含みません。
+CMDは各operationをCORE APIへ一回だけ送信し、receipt／hashを計算せず、DBにも接続しません。全effectful operationはCOREが生成またはAPI契約で
+検証する`request_id`を持ち、memory stateを変えるoperationはCOREが`reason`を必須検証します。許可待ちqueueや人の返答待ちstatusは作りません。
 
 新routeの共通response／receiptには`request_id`、`operation`、`status`、`owner_route`、`policy_revision`、
 `idempotency_key`、`idempotent_replay`、input／output counts、`completed_at`、warnings、`audit_reference`を含めます。
@@ -265,6 +388,15 @@ COREがL1 Raw evidence、既存UserMemoryのbounded projection、schema、scope�
 evidence binding、dedupe、sensitivityを検証してからcandidate／summaryを保存します。invalid output、assistant-only
 evidence、synthetic evidenceは保存せず、retry可能性をreceiptへ記録します。EndTurnのconversation responseとmemory
 persistence、trace、archive followerは別typed outcomeとし、部分成功をcompletedへ丸めません。
+ThreadSummarizerは一threadにつき一回のLLM requestとし、64KiB以下のexact JSON、summary 1〜1024 rune、
+3〜5個のunique keyword（各1〜64 rune）をCOREが検証します。CORE由来のevidence SHA-256、roles、provider、
+`llm | deterministic_fallback | legacy_unverified`のgeneration modeと固定failure codeをarchive receiptへ保存し、
+raw provider error、invalid LLM output、物理pathをAPI responseやreceiptへ含めません。
+Canonical AgentのEndTurnはroot `job_id`を維持したtyped internal requestであり、L1 SQLiteの同一transactionへ
+Recall trace、User／Agent 2 message、ProfilePromotion job、event log、turn receipt、required follower outboxを保存します。
+resultは`status=completed | partial | failed`、turn／trace／2 message／receipt ID、follower status、固定error codeだけを
+返します。同一turn＋同一payload hashはidempotent replay、異なるhashは`conflict`です。Redis／archive／VectorDBは
+outbox followerとしてcommit直後とstartupに再生し、外部follower failureを成功へ丸めず`partial`として保持します。
 新規作成は`candidate`固定で、`confirmed`／`pinned`はexact-ID state APIだけが同一transactionのaudit receiptとともに
 設定します。Agent readもauthenticated userと`DataScopeUser`、active、`confirmed | pinned`、non-sensitiveをserver側で
 検証し、source failureを空の200へ変換せずRecall traceへ記録します。

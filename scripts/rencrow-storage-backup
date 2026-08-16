@@ -21,7 +21,7 @@ if [[ ! -x ${rencrow_binary} ]]; then
 fi
 
 mapfile -t backup_config < <(RENCROW_CONFIG="${config_file}" "${rencrow_binary}" config backup-values)
-if (( ${#backup_config[@]} != 19 )); then
+if (( ${#backup_config[@]} != 20 )); then
   echo "[NG] failed to load complete backup config from ${config_file}" >&2
   exit 1
 fi
@@ -38,13 +38,14 @@ monthly_keep=${backup_config[8]}
 session_dir=${backup_config[9]}
 operation_memory_dir=${backup_config[10]}
 cold_export_dir=${backup_config[11]}
-require_memory_exports=${backup_config[12]}
-redis_enabled=${backup_config[13]}
-redis_container=${backup_config[14]}
-qdrant_enabled=${backup_config[15]}
-qdrant_base_url=${backup_config[16]%/}
-conversation_l1=${backup_config[17]}
-conversation_archive=${backup_config[18]}
+raw_source_dir=${backup_config[12]}
+require_memory_exports=${backup_config[13]}
+redis_enabled=${backup_config[14]}
+redis_container=${backup_config[15]}
+qdrant_enabled=${backup_config[16]}
+qdrant_base_url=${backup_config[17]%/}
+conversation_l1=${backup_config[18]}
+conversation_archive=${backup_config[19]}
 lock_file=/home/nyukimi/.cache/rencrow-storage-backup.lock
 
 for retention in "${recent_keep}" "${daily_keep}" "${weekly_keep}" "${monthly_keep}"; do
@@ -75,6 +76,7 @@ relative_to_core() {
 session_relative=$(relative_to_core "${session_dir}")
 operation_memory_relative=$(relative_to_core "${operation_memory_dir}")
 cold_export_relative=$(relative_to_core "${cold_export_dir}")
+raw_source_relative=$(relative_to_core "${raw_source_dir}")
 conversation_l1_relative=$(relative_to_core "${conversation_l1}")
 conversation_archive_relative=$(relative_to_core "${conversation_archive}")
 
@@ -87,10 +89,16 @@ if [[ ${mode} == config ]]; then
     "knowledge_mirror=${knowledge_mirror}" \
     "knowledge_versions=${knowledge_versions}" \
     "memory=session:${session_dir},operation:${operation_memory_dir},cold:${cold_export_dir}" \
+    "raw_source=${raw_source_dir}" \
     "redis=enabled:${redis_enabled},container:${redis_container}" \
     "qdrant=enabled:${qdrant_enabled},base_url:${qdrant_base_url}" \
     "retention=recent:${recent_keep},daily:${daily_keep},weekly:${weekly_keep},monthly:${monthly_keep}"
   exit 0
+fi
+
+if [[ ! -d ${raw_source_dir} ]]; then
+  echo "[NG] configured Common Raw source directory is missing: ${raw_source_dir}" >&2
+  exit 1
 fi
 
 mkdir -p /home/nyukimi/.cache
@@ -282,13 +290,14 @@ mv "${archive}" "${candidate_dir}/rencrow-state.tar.gz"
   sha256sum rencrow-state.tar.gz > SHA256SUMS
 )
 printf '%s\n' \
-  'format_version=3' \
+  'format_version=4' \
   "created_at_jst=${timestamp}" \
   "source=${core_root}" \
   "core_name=${core_name}" \
   "session_relative=${session_relative}" \
   "operation_memory_relative=${operation_memory_relative}" \
   "cold_export_relative=${cold_export_relative}" \
+  "raw_source_relative=${raw_source_relative}" \
   "conversation_l1_relative=${conversation_l1_relative}" \
   "conversation_archive_relative=${conversation_archive_relative}" \
   "redis_export=$([[ ${redis_enabled} == true ]] && printf 'external-memory/redis/dump.rdb' || printf 'disabled')" \

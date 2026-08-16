@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
-	archiveapp "github.com/Nyukimin/RenCrow_CORE/internal/application/archive"
 	knowledgememoryapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
 	moviecatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moviecatalog"
 	newsbriefapp "github.com/Nyukimin/RenCrow_CORE/internal/application/newsbrief"
@@ -123,9 +122,6 @@ func startConversationBackgroundJobs(cfg *config.Config, runtime conversationRun
 		bootstrapDefaultNewsSources(runtime.L1Store, reporter)
 		startSourceRegistrySweeper(cfg, runtime.L1Store, reporter)
 		startMemoryLifecycleJob(runtime.L1Store, reporter)
-	}
-	if runtime.Manager != nil {
-		startParquetExportJob(cfg.Storage.Memory.ColdExportDir, runtime.Manager, reporter)
 	}
 }
 
@@ -349,47 +345,6 @@ func startDailyIntakeSweeper(rules knowledgememoryapp.DailyIntakeRuleStore, regi
 			sweep()
 		}
 	}()
-}
-
-func startParquetExportJob(configuredOutputDir string, store archiveapp.ParquetExportStore, reporter backgroundJobFailureReporter) {
-	outputDir := strings.TrimSpace(configuredOutputDir)
-	if outputDir == "" {
-		outputDir = strings.TrimSpace(os.Getenv("RENCROW_PARQUET_EXPORT_DIR"))
-	}
-	if outputDir == "" {
-		return
-	}
-	interval := 24 * time.Hour
-	if raw := strings.TrimSpace(os.Getenv("RENCROW_PARQUET_EXPORT_INTERVAL_SEC")); raw != "" {
-		sec, err := strconv.Atoi(raw)
-		if err != nil || sec <= 0 {
-			log.Printf("WARN: invalid RENCROW_PARQUET_EXPORT_INTERVAL_SEC=%q", raw)
-			return
-		}
-		interval = time.Duration(sec) * time.Second
-	}
-	job := archiveapp.NewParquetExportJob(store, archiveapp.ParquetExportOptions{
-		OutputDir: outputDir,
-		Interval:  interval,
-	})
-	go func() {
-		result, err := job.RunOnce(context.Background())
-		if err != nil {
-			log.Printf("WARN: parquet export failed: %v", err)
-			reporter.Failed("parquet_export", err, "output_dir="+outputDir)
-		} else {
-			log.Printf("Parquet export complete: thread=%s l1_archives=%d", result.ThreadSummariesPath, len(result.L1ArchivePaths))
-		}
-		for result := range job.Start(context.Background()) {
-			if result.Error != nil {
-				log.Printf("WARN: parquet export failed: %v", result.Error)
-				reporter.Failed("parquet_export", result.Error, "output_dir="+outputDir)
-				continue
-			}
-			log.Printf("Parquet export complete: thread=%s l1_archives=%d", result.ThreadSummariesPath, len(result.L1ArchivePaths))
-		}
-	}()
-	log.Printf("Parquet export job enabled: dir=%s interval=%s", outputDir, interval)
 }
 
 func startMovieCatalogBackfillJob(cfg *config.Config, reporter backgroundJobFailureReporter) {

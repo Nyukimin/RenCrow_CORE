@@ -81,6 +81,56 @@ func (m *L1ConversationManager) Store(ctx context.Context, sessionID string, msg
 	)
 }
 
+// CommitConversationTurn exposes the L1-only EndTurn path. Followers belong
+// to RealConversationManager; accepting them here would silently reintroduce
+// the legacy Store/flush route and lose the durable outbox contract.
+func (m *L1ConversationManager) CommitConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+	base := failedConversationTurnManagerResult(request, domconv.ConversationTurnErrorUnavailable)
+	if m == nil || m.store == nil {
+		return base, domconv.ErrConversationTurnUnavailable
+	}
+	normalized, err := domconv.NormalizeConversationTurnRequest(request)
+	if err != nil {
+		base.ErrorCode = domconv.ConversationTurnErrorInvalid
+		return base, err
+	}
+	if len(normalized.Targets) > 0 {
+		base.ErrorCode = domconv.ConversationTurnErrorInvalid
+		return base, domconv.ErrConversationTurnInvalid
+	}
+	store, ok := m.store.(interface {
+		CommitConversationTurn(context.Context, domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error)
+	})
+	if !ok {
+		return base, domconv.ErrConversationTurnUnavailable
+	}
+	return store.CommitConversationTurn(ctx, normalized)
+}
+
+// ConversationTurnTargets intentionally returns no followers for the
+// always-available L1 manager. Advanced projections are owned by
+// RealConversationManager only.
+func (m *L1ConversationManager) ConversationTurnTargets() []domconv.ConversationTurnTarget {
+	return nil
+}
+
+// LoadActiveConversationThread returns the active thread resolved from the
+// L1 active-thread projection, not from the legacy in-memory thread cache.
+func (m *L1ConversationManager) LoadActiveConversationThread(ctx context.Context, sessionID string) (*domconv.Thread, error) {
+	if m == nil || m.store == nil {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	store, ok := m.store.(conversationTurnL1Store)
+	if !ok {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	events, err := store.LoadActiveConversationThreadProjection(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return conversationThreadFromL1Projection(events, domconv.ThreadActive)
+}
+
 func (m *L1ConversationManager) SaveRecallTrace(ctx context.Context, trace domconv.RecallTrace) error {
 	if m == nil || m.store == nil {
 		return errors.New("L1 conversation store is not configured")

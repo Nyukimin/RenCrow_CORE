@@ -54,14 +54,17 @@ func TestArchiveSQLiteStoreConcurrentWritesDoNotReturnBusy(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			now := time.Date(2026, 8, 14, 0, 0, i, 0, time.UTC)
-			errs <- store.SaveThreadSummary(ctx, &domconv.ThreadSummary{
+			summary := &domconv.ThreadSummary{
 				ThreadID:  int64(i + 1),
 				SessionID: fmt.Sprintf("archive-session-%d", i),
 				StartTime: now,
 				EndTime:   now.Add(time.Minute),
 				Domain:    "parallel",
 				Summary:   fmt.Sprintf("summary-%d", i),
-			})
+				Keywords:  []string{"parallel", "thread", "summary"},
+				Roles:     []string{"user"},
+			}
+			errs <- store.SaveThreadSummaryWithReceipt(ctx, summary, receiptForRoles(summary.Roles))
 		}(i)
 	}
 	wg.Wait()

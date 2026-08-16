@@ -2,6 +2,12 @@ package l1sqlite
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -21,6 +27,111 @@ type L1MemoryEvent struct {
 	Source      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+var (
+	// ErrL1RawLifecycleArchiveUnavailable means that a selected raw event could
+	// not reach the canonical Conversation Archive boundary. The source row is
+	// retained and the durable outbox records the failed attempt.
+	ErrL1RawLifecycleArchiveUnavailable = errors.New("l1 raw lifecycle archive unavailable")
+	// ErrL1RawLifecycleArchiveConflict means that the source or archive binding
+	// no longer matches the event hash captured by the outbox.
+	ErrL1RawLifecycleArchiveConflict = errors.New("l1 raw lifecycle archive conflict")
+)
+
+const (
+	L1RawLifecycleArchiveOutboxStatusPending  = "pending"
+	L1RawLifecycleArchiveOutboxStatusFailed   = "failed"
+	L1RawLifecycleArchiveOutboxStatusArchived = "archived"
+)
+
+// L1RawLifecycleArchiveReceipt binds an archive write to the exact L1 event
+// and durable outbox entry. It contains identity and hash only; the source
+// event remains in L1 until the finalize transaction deletes it.
+type L1RawLifecycleArchiveReceipt struct {
+	OutboxID    string
+	EventID     string
+	EventSHA256 string
+	CreatedAt   time.Time
+}
+
+// L1RawLifecycleArchiveStore is the optional archive boundary used by raw
+// conversation lifecycle maintenance. Its implementation must commit the
+// exact archive row and receipt atomically and must never mutate L1.
+type L1RawLifecycleArchiveStore interface {
+	ArchiveL1RawLifecycleEvent(context.Context, L1MemoryEvent, L1RawLifecycleArchiveReceipt) error
+}
+
+// CanonicalL1MemoryEventBytes returns the stable full-event representation
+// used for raw lifecycle archive binding. Metadata is canonical JSON and
+// timestamps are UTC RFC3339Nano strings; volatile values are excluded.
+func CanonicalL1MemoryEventBytes(item L1MemoryEvent) ([]byte, error) {
+	meta := item.Meta
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal canonical l1 memory metadata: %w", err)
+	}
+	canonical := struct {
+		ID          string          `json:"id"`
+		Namespace   string          `json:"namespace"`
+		SessionID   string          `json:"session_id"`
+		ThreadID    int64           `json:"thread_id"`
+		Speaker     string          `json:"speaker"`
+		Message     string          `json:"message"`
+		Meta        json.RawMessage `json:"meta"`
+		MemoryState string          `json:"memory_state"`
+		Layer       string          `json:"layer"`
+		Source      string          `json:"source"`
+		CreatedAt   string          `json:"created_at"`
+		UpdatedAt   string          `json:"updated_at"`
+	}{
+		ID:          item.ID,
+		Namespace:   item.Namespace,
+		SessionID:   item.SessionID,
+		ThreadID:    item.ThreadID,
+		Speaker:     string(item.Speaker),
+		Message:     item.Message,
+		Meta:        json.RawMessage(metaJSON),
+		MemoryState: item.MemoryState,
+		Layer:       item.Layer,
+		Source:      item.Source,
+		CreatedAt:   canonicalL1Timestamp(item.CreatedAt),
+		UpdatedAt:   canonicalL1Timestamp(item.UpdatedAt),
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode canonical l1 memory event: %w", err)
+	}
+	return encoded, nil
+}
+
+// CanonicalL1MemoryEventSHA256 returns the deterministic full-event hash used
+// by the lifecycle outbox and the archive adapter.
+func CanonicalL1MemoryEventSHA256(item L1MemoryEvent) (string, error) {
+	encoded, err := CanonicalL1MemoryEventBytes(item)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+// L1RawLifecycleOutboxID deterministically binds event identity and content
+// hash without carrying volatile timestamps or retry state.
+func L1RawLifecycleOutboxID(eventID, eventSHA256 string) string {
+	binding := strings.TrimSpace(eventID) + "\x00" + strings.TrimSpace(eventSHA256)
+	digest := sha256.Sum256([]byte(binding))
+	return "raw-archive:" + hex.EncodeToString(digest[:])
+}
+
+func canonicalL1Timestamp(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 type L1SearchCacheEntry struct {

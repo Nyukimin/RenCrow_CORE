@@ -2,11 +2,16 @@ package conversation
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"log"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
@@ -78,18 +83,12 @@ func (r *RealConversationManager) enqueueThreadFlush(parent context.Context, thr
 		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
 		defer cancel()
-		summary, err := r.FlushThread(ctx, threadID)
+		_, err := r.FlushThread(ctx, threadID)
 		if err != nil {
-			log.Printf("Thread #%d LLM background flush failed, using simple summary: %v", threadID, err)
-			persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
-			defer persistCancel()
-			summary, err = r.flushThreadWithSimpleSummary(persistCtx, threadID)
-			if err != nil {
-				log.Printf("Thread #%d simple background flush failed: %v", threadID, err)
-				return
-			}
+			log.Printf("Thread #%d background flush failed: thread_summary_archive_failed", threadID)
+			return
 		}
-		log.Printf("Thread #%d background flushed: %s", threadID, summary.Summary)
+		log.Printf("Thread #%d background flushed: thread_summary_persisted", threadID)
 	}()
 }
 
@@ -104,59 +103,76 @@ func (r *RealConversationManager) FlushThread(ctx context.Context, threadID int6
 		return nil, fmt.Errorf("failed to get thread from redis: %w", err)
 	}
 
-	summaryText, keywords := r.generateSummaryAndKeywords(ctx, thread)
-	if strings.TrimSpace(summaryText) == "" {
-		summaryText = generateSimpleSummary(thread)
-	}
+	residual, generationMode, failureCode := r.generateSummaryResidual(ctx, thread)
 
 	var embedding []float32
 	if r.embedder != nil {
-		emb, err := r.embedder.Embed(ctx, summaryText)
+		emb, err := r.embedder.Embed(ctx, residual.Summary)
 		if err != nil {
-			log.Printf("Failed to generate embedding (skipping VectorDB): %v", err)
+			log.Printf("Failed to generate embedding (skipping VectorDB): embedding_unavailable")
 		} else {
 			embedding = emb
 		}
 	}
 
-	return r.archiveThreadSummary(ctx, thread, summaryText, keywords, embedding)
+	return r.archiveThreadSummary(ctx, thread, residual, generationMode, failureCode, embedding)
 }
 
-func (r *RealConversationManager) flushThreadWithSimpleSummary(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error) {
-	thread, err := r.redisStore.GetThread(ctx, threadID)
+func (r *RealConversationManager) archiveThreadSummary(ctx context.Context, thread *domconv.Thread, residual domconv.SummaryResidual, generationMode string, failureCode string, embedding []float32) (*domconv.ThreadSummary, error) {
+	roles, evidenceSHA256, err := deriveThreadSummaryEvidence(thread)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get thread for simple summary: %w", err)
+		return nil, fmt.Errorf("thread summary evidence unavailable")
 	}
-	return r.archiveThreadSummary(ctx, thread, generateSimpleSummary(thread), []string{thread.Domain}, nil)
-}
-
-func (r *RealConversationManager) archiveThreadSummary(ctx context.Context, thread *domconv.Thread, summaryText string, keywords []string, embedding []float32) (*domconv.ThreadSummary, error) {
+	archiveAt, err := stableThreadSummaryTime(thread)
+	if err != nil {
+		return nil, err
+	}
+	archiveAt = archiveAt.UTC()
+	provider := strings.TrimSpace(residual.Provider)
+	receipt := &domconv.ThreadSummaryReceipt{
+		SchemaVersion:   domconv.ThreadSummaryReceiptSchemaVersion,
+		GenerationMode:  generationMode,
+		Provider:        provider,
+		FailureCode:     failureCode,
+		EvidenceSHA256:  evidenceSHA256,
+		SourceTurnCount: len(thread.Turns),
+		Roles:           roles,
+		CreatedAt:       archiveAt,
+	}
+	if err := receipt.ValidateForWrite(); err != nil {
+		return nil, fmt.Errorf("thread summary receipt invalid")
+	}
+	if err := domconv.ValidateSummaryResidual(residual); err != nil {
+		return nil, fmt.Errorf("thread summary residual invalid")
+	}
 	summary := &domconv.ThreadSummary{
 		ThreadID:  thread.ID,
 		SessionID: thread.SessionID,
 		Domain:    thread.Domain,
-		Summary:   summaryText,
-		Keywords:  keywords,
+		Summary:   residual.Summary,
+		Keywords:  residual.Keywords,
+		Roles:     append([]string(nil), roles...),
+		Receipt:   receipt,
 		Embedding: embedding,
 		StartTime: thread.StartTime,
-		EndTime:   time.Now(),
+		EndTime:   archiveAt,
 		IsNovel:   false,
 	}
 
 	if r.archiveStore != nil {
-		if err := r.archiveStore.SaveThreadSummary(ctx, summary); err != nil {
+		if err := r.archiveStore.SaveThreadSummaryWithReceipt(ctx, summary, receipt); err != nil {
 			return nil, fmt.Errorf("failed to save summary to archive sqlite: %w", err)
 		}
 	}
 
 	if len(summary.Embedding) > 0 {
 		if err := r.vectordbStore.SaveThreadSummary(ctx, summary); err != nil {
-			log.Printf("Failed to save summary to vectordb: %v", err)
+			log.Printf("Failed to save summary to vectordb: vector_summary_unavailable")
 		}
 	}
 
 	if err := r.redisStore.DeleteThread(ctx, thread.ID); err != nil {
-		log.Printf("Failed to delete thread from redis: %v", err)
+		log.Printf("Failed to delete thread from redis: thread_delete_failed")
 	}
 	return summary, nil
 }
@@ -213,36 +229,201 @@ func (r *RealConversationManager) CreateThread(ctx context.Context, sessionID st
 	return thread, nil
 }
 
-func (r *RealConversationManager) generateSummaryAndKeywords(ctx context.Context, thread *domconv.Thread) (string, []string) {
-	if r.summarizer != nil {
-		summary, err := r.summarizer.Summarize(ctx, thread)
-		if err != nil {
-			log.Printf("Summarizer failed, falling back to simple: %v", err)
-		} else {
-			keywords, err := r.summarizer.ExtractKeywords(ctx, thread)
-			if err != nil {
-				log.Printf("ExtractKeywords failed, using domain: %v", err)
-				keywords = []string{thread.Domain}
-			}
-			return summary, keywords
-		}
+func (r *RealConversationManager) generateSummaryResidual(ctx context.Context, thread *domconv.Thread) (domconv.SummaryResidual, string, string) {
+	if r.summarizer == nil {
+		return fallbackSummaryResidual(thread, domconv.ThreadSummaryProviderNotConfigured), domconv.ThreadSummaryGenerationDeterministicFallback, domconv.ThreadSummaryFailureNotConfigured
 	}
-	return generateSimpleSummary(thread), []string{thread.Domain}
+	residual, err := r.summarizer.Summarize(ctx, thread)
+	if err == nil {
+		if normalized, normalizeErr := domconv.NormalizeSummaryResidual(residual); normalizeErr == nil {
+			if strings.TrimSpace(normalized.Provider) != "" {
+				return normalized, domconv.ThreadSummaryGenerationLLM, ""
+			}
+			return fallbackSummaryResidual(thread, domconv.ThreadSummaryProviderNotConfigured), domconv.ThreadSummaryGenerationDeterministicFallback, domconv.ThreadSummaryFailureNotConfigured
+		}
+		provider := strings.TrimSpace(residual.Provider)
+		if provider == "" {
+			provider = domconv.ThreadSummaryProviderNotConfigured
+		}
+		return fallbackSummaryResidual(thread, provider), domconv.ThreadSummaryGenerationDeterministicFallback, domconv.ThreadSummaryFailureInvalid
+	}
+	provider := strings.TrimSpace(residual.Provider)
+	if provider == "" {
+		provider = domconv.ThreadSummaryProviderNotConfigured
+		return fallbackSummaryResidual(thread, provider), domconv.ThreadSummaryGenerationDeterministicFallback, domconv.ThreadSummaryFailureNotConfigured
+	}
+	return fallbackSummaryResidual(thread, provider), domconv.ThreadSummaryGenerationDeterministicFallback, classifySummaryFailure(err)
 }
 
 func generateSimpleSummary(thread *domconv.Thread) string {
-	if len(thread.Turns) == 0 {
+	if thread == nil || len(thread.Turns) == 0 {
 		return "Empty thread"
 	}
 	firstMessage := thread.Turns[0]
 	lastMessage := thread.Turns[len(thread.Turns)-1]
-	first := firstMessage.Msg
-	last := lastMessage.Msg
-	if len(first) > 50 {
-		first = first[:50] + "..."
-	}
-	if len(last) > 50 {
-		last = last[:50] + "..."
-	}
+	first := truncateSummaryFragment(firstMessage.Msg, 50)
+	last := truncateSummaryFragment(lastMessage.Msg, 50)
 	return fmt.Sprintf("Start [%s]: %s ... End [%s]: %s (%d turns)", firstMessage.Speaker, first, lastMessage.Speaker, last, len(thread.Turns))
+}
+
+func fallbackSummaryResidual(thread *domconv.Thread, provider string) domconv.SummaryResidual {
+	residual := domconv.SummaryResidual{
+		Summary:  generateSimpleSummary(thread),
+		Keywords: fallbackSummaryKeywords(thread),
+		Provider: strings.TrimSpace(provider),
+	}
+	if normalized, err := domconv.NormalizeSummaryResidual(residual); err == nil {
+		return normalized
+	}
+	return domconv.SummaryResidual{
+		Summary:  "Conversation thread summary",
+		Keywords: []string{"conversation", "thread", "summary"},
+		Provider: strings.TrimSpace(provider),
+	}
+}
+
+func fallbackSummaryKeywords(thread *domconv.Thread) []string {
+	candidates := make([]string, 0, 8)
+	if thread != nil {
+		candidates = append(candidates, thread.Domain)
+		for _, turn := range thread.Turns {
+			candidates = append(candidates, string(turn.Speaker))
+		}
+	}
+	candidates = append(candidates, "conversation", "thread", "summary")
+	keywords := make([]string, 0, 5)
+	seen := make(map[string]struct{}, 5)
+	for _, candidate := range candidates {
+		candidate = normalizeFallbackKeyword(candidate)
+		if candidate == "" || len([]rune(candidate)) > 64 {
+			continue
+		}
+		folded := strings.ToLower(candidate)
+		if _, ok := seen[folded]; ok {
+			continue
+		}
+		seen[folded] = struct{}{}
+		keywords = append(keywords, candidate)
+		if len(keywords) == 5 {
+			break
+		}
+	}
+	for _, candidate := range []string{"conversation", "thread", "summary"} {
+		if len(keywords) == 5 {
+			break
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		keywords = append(keywords, candidate)
+	}
+	return keywords
+}
+
+func normalizeFallbackKeyword(value string) string {
+	value = strings.Map(func(r rune) rune {
+		switch r {
+		case '\r', '\n', '\x00':
+			return ' '
+		default:
+			return r
+		}
+	}, value)
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func truncateSummaryFragment(value string, max int) string {
+	value = strings.Map(func(r rune) rune {
+		if r == '\x00' {
+			return -1
+		}
+		if r == '\r' || r == '\n' {
+			return ' '
+		}
+		return r
+	}, value)
+	runes := []rune(value)
+	if len(runes) > max {
+		return string(runes[:max]) + "..."
+	}
+	return string(runes)
+}
+
+func classifySummaryFailure(err error) string {
+	switch {
+	case errors.Is(err, domconv.ErrThreadSummarizerUnavailable):
+		return domconv.ThreadSummaryFailureUnavailable
+	case errors.Is(err, domconv.ErrThreadSummarizerNotConfigured):
+		return domconv.ThreadSummaryFailureNotConfigured
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return domconv.ThreadSummaryFailureUnavailable
+	default:
+		return domconv.ThreadSummaryFailureInvalid
+	}
+}
+
+type threadSummaryEvidence struct {
+	SchemaVersion   string                      `json:"schema_version"`
+	ThreadID        int64                       `json:"thread_id"`
+	SessionID       string                      `json:"session_id"`
+	SourceTurnCount int                         `json:"source_turn_count"`
+	Turns           []threadSummaryEvidenceTurn `json:"turns"`
+}
+
+type threadSummaryEvidenceTurn struct {
+	Index   int    `json:"index"`
+	Speaker string `json:"speaker"`
+	Body    string `json:"body"`
+}
+
+func deriveThreadSummaryEvidence(thread *domconv.Thread) ([]string, string, error) {
+	if thread == nil {
+		return nil, "", fmt.Errorf("thread summary evidence source is required")
+	}
+	if thread.ID <= 0 || strings.TrimSpace(thread.SessionID) == "" || !utf8.ValidString(thread.SessionID) || len(thread.Turns) == 0 {
+		return nil, "", fmt.Errorf("thread summary evidence source identity is invalid")
+	}
+	roles := make([]string, 0, len(thread.Turns))
+	seenRoles := make(map[string]struct{}, len(thread.Turns))
+	evidence := threadSummaryEvidence{
+		SchemaVersion:   "conversation.thread_summary_evidence.v1",
+		ThreadID:        thread.ID,
+		SessionID:       thread.SessionID,
+		SourceTurnCount: len(thread.Turns),
+		Turns:           make([]threadSummaryEvidenceTurn, 0, len(thread.Turns)),
+	}
+	for index, turn := range thread.Turns {
+		speaker := string(turn.Speaker)
+		if !utf8.ValidString(speaker) || !utf8.ValidString(turn.Msg) || strings.TrimSpace(speaker) == "" || strings.ContainsAny(speaker, "\r\n\x00") {
+			return nil, "", fmt.Errorf("thread summary evidence contains invalid UTF-8")
+		}
+		if _, ok := seenRoles[speaker]; !ok {
+			seenRoles[speaker] = struct{}{}
+			roles = append(roles, speaker)
+		}
+		evidence.Turns = append(evidence.Turns, threadSummaryEvidenceTurn{Index: index, Speaker: speaker, Body: turn.Msg})
+	}
+	encoded, err := json.Marshal(evidence)
+	if err != nil {
+		return nil, "", fmt.Errorf("thread summary evidence encoding failed")
+	}
+	digest := sha256.Sum256(encoded)
+	return roles, hex.EncodeToString(digest[:]), nil
+}
+
+func stableThreadSummaryTime(thread *domconv.Thread) (time.Time, error) {
+	if thread == nil {
+		return time.Time{}, fmt.Errorf("thread summary time source is required")
+	}
+	if thread.EndTime != nil && !thread.EndTime.IsZero() {
+		return *thread.EndTime, nil
+	}
+	if len(thread.Turns) > 0 && !thread.Turns[len(thread.Turns)-1].Timestamp.IsZero() {
+		return thread.Turns[len(thread.Turns)-1].Timestamp, nil
+	}
+	if !thread.StartTime.IsZero() {
+		return thread.StartTime, nil
+	}
+	return time.Time{}, fmt.Errorf("thread summary time source is unavailable")
 }

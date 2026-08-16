@@ -3,25 +3,29 @@ package conversation
 import (
 	"context"
 	"fmt"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"strings"
 	"testing"
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 )
 
 // === Mocks ===
 
 type mockManager struct {
-	recallFunc          func(ctx context.Context, sessionID, query string, topK int) ([]domconv.Message, error)
-	storeFunc           func(ctx context.Context, sessionID string, msg domconv.Message) error
-	getActiveThreadFunc func(ctx context.Context, sessionID string) (*domconv.Thread, error)
-	flushThreadFunc     func(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error)
-	createThreadFunc    func(ctx context.Context, sessionID, domain string) (*domconv.Thread, error)
-	userMemories        []domainmemory.UserMemory
-	userMemoryErr       error
+	recallFunc           func(ctx context.Context, sessionID, query string, topK int) ([]domconv.Message, error)
+	storeFunc            func(ctx context.Context, sessionID string, msg domconv.Message) error
+	getActiveThreadFunc  func(ctx context.Context, sessionID string) (*domconv.Thread, error)
+	flushThreadFunc      func(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error)
+	createThreadFunc     func(ctx context.Context, sessionID, domain string) (*domconv.Thread, error)
+	commitTurnFunc       func(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error)
+	commitRequests       []domconv.ConversationTurnRequest
+	targets              []domconv.ConversationTurnTarget
+	saveRecallTraceCalls int
+	userMemories         []domainmemory.UserMemory
+	userMemoryErr        error
 }
 
 func (m *mockManager) Recall(ctx context.Context, sessionID, query string, topK int) ([]domconv.Message, error) {
@@ -36,6 +40,38 @@ func (m *mockManager) Store(ctx context.Context, sessionID string, msg domconv.M
 		return m.storeFunc(ctx, sessionID, msg)
 	}
 	return nil
+}
+
+func (m *mockManager) CommitConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+	m.commitRequests = append(m.commitRequests, request)
+	if m.commitTurnFunc != nil {
+		return m.commitTurnFunc(ctx, request)
+	}
+	if request.Boundary {
+		if _, err := m.FlushThread(ctx, 1); err != nil {
+			return domconv.ConversationTurnResult{}, err
+		}
+		if _, err := m.CreateThread(ctx, request.SessionID, request.Domain); err != nil {
+			return domconv.ConversationTurnResult{}, err
+		}
+	}
+	user := domconv.NewMessage(domconv.SpeakerUser, request.UserMessage, map[string]interface{}{"from": string(domconv.SpeakerUser), "to": string(request.AgentSpeaker)})
+	if err := m.Store(ctx, request.SessionID, user); err != nil {
+		return domconv.ConversationTurnResult{}, err
+	}
+	agent := domconv.NewMessage(request.AgentSpeaker, request.AgentMessage, map[string]interface{}{"from": string(request.AgentSpeaker), "to": string(domconv.SpeakerUser)})
+	if err := m.Store(ctx, request.SessionID, agent); err != nil {
+		return domconv.ConversationTurnResult{}, err
+	}
+	return domconv.ConversationTurnResult{TurnID: request.TurnID, SessionID: request.SessionID, Status: domconv.ConversationTurnCompleted}, nil
+}
+
+func (m *mockManager) ConversationTurnTargets() []domconv.ConversationTurnTarget {
+	return append([]domconv.ConversationTurnTarget(nil), m.targets...)
+}
+
+func (m *mockManager) LoadActiveConversationThread(ctx context.Context, sessionID string) (*domconv.Thread, error) {
+	return m.GetActiveThread(ctx, sessionID)
 }
 
 func (m *mockManager) FlushThread(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error) {
@@ -75,19 +111,17 @@ func (m *mockManager) ListUserMemories(context.Context, string, string, bool, in
 	return append([]domainmemory.UserMemory(nil), m.userMemories...), m.userMemoryErr
 }
 
+func (m *mockManager) SaveRecallTrace(context.Context, domconv.RecallTrace) error {
+	m.saveRecallTraceCalls++
+	return nil
+}
+
 type mockDetector struct {
 	result domconv.ThreadBoundaryResult
 }
 
 func (m *mockDetector) Detect(currentThread *domconv.Thread, newMessage, newDomain string) domconv.ThreadBoundaryResult {
 	return m.result
-}
-
-type mockRecallTraceStore struct {
-	started  []domconv.RecallTraceRecord
-	items    []domconv.RecallTraceItemRecord
-	events   []domconv.PromptInjectionEventRecord
-	finished []string
 }
 
 type mockExternalRecallManager struct {
@@ -126,26 +160,6 @@ func (m *mockExternalRecallManager) SearchKB(context.Context, string, string, in
 
 func (m *mockExternalRecallManager) RelatedKnowledgeItems(_ context.Context, itemID string, _ int, _ int) ([]l1sqlite.L1KnowledgeRelationHit, error) {
 	return append([]l1sqlite.L1KnowledgeRelationHit(nil), m.hits[itemID]...), nil
-}
-
-func (m *mockRecallTraceStore) StartRecallTrace(_ context.Context, trace domconv.RecallTraceRecord) error {
-	m.started = append(m.started, trace)
-	return nil
-}
-
-func (m *mockRecallTraceStore) AddRecallTraceItems(_ context.Context, _ string, items []domconv.RecallTraceItemRecord) error {
-	m.items = append(m.items, items...)
-	return nil
-}
-
-func (m *mockRecallTraceStore) AddPromptInjectionEvents(_ context.Context, _ string, events []domconv.PromptInjectionEventRecord) error {
-	m.events = append(m.events, events...)
-	return nil
-}
-
-func (m *mockRecallTraceStore) FinishRecallTrace(_ context.Context, traceID string, _ string, _ int, _ int) error {
-	m.finished = append(m.finished, traceID)
-	return nil
 }
 
 // === Tests ===
@@ -195,24 +209,20 @@ func TestBeginTurn_CategoryRecallFailureIsPartialTrace(t *testing.T) {
 		Category: "movie", SourceID: "movie_catalog", Code: domconv.CategoryRecallFailureSourceUnavailable,
 		State: "unavailable", Reason: "missing DB", Retryable: true,
 	}}}}
-	traceStore := &mockRecallTraceStore{}
 	engine := NewRealConversationEngine(&mockManager{}, domconv.PersonaState{}).
-		WithCategoryRecallRegistry(registry).WithRecallTraceStore(traceStore)
+		WithCategoryRecallRegistry(registry)
 	pack, err := engine.BeginTurn(context.Background(), "s1", "映画の話")
 	if err != nil {
 		t.Fatalf("BeginTurn failed: %v", err)
 	}
-	if len(pack.CategoryFailures) != 1 || len(traceStore.started) != 1 || traceStore.started[0].Status != domconv.CategoryRecallStatusPartial {
-		t.Fatalf("partial category trace pack=%#v traces=%#v", pack.CategoryFailures, traceStore.started)
-	}
 	found := false
-	for _, item := range traceStore.items {
+	for _, item := range pack.ToTraceItems() {
 		if item.Kind == "category_recall_failure" && item.Status == domconv.CategoryRecallFailureSourceUnavailable {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("category failure was not traced: %#v", traceStore.items)
+		t.Fatalf("category failure was not traced in returned pack: %#v", pack.ToTraceItems())
 	}
 }
 
@@ -295,10 +305,8 @@ func TestBeginTurnExpandsKnowledgeRelationsWhenVectorDBIsUnavailable(t *testing.
 		},
 		vectorErr: fmt.Errorf("vector db unavailable"),
 	}
-	traceStore := &mockRecallTraceStore{}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).
-		WithKnowledgeRelationRecall(2).
-		WithRecallTraceStore(traceStore)
+		WithKnowledgeRelationRecall(2)
 	pack, err := engine.BeginTurn(context.Background(), "s1", "RenCrow仕様について調べて")
 	if err != nil {
 		t.Fatalf("BeginTurn failed: %v", err)
@@ -307,13 +315,13 @@ func TestBeginTurnExpandsKnowledgeRelationsWhenVectorDBIsUnavailable(t *testing.
 		t.Fatalf("relation snippets=%#v", pack.RelationSnippets)
 	}
 	foundTrace := false
-	for _, item := range traceStore.items {
+	for _, item := range pack.ToTraceItems() {
 		if item.Kind == "knowledge_relation" && strings.Contains(item.Summary, "hop=1") && strings.Contains(item.Summary, "same entity: mlx") {
 			foundTrace = true
 		}
 	}
 	if !foundTrace {
-		t.Fatalf("knowledge relation trace missing hop/evidence: %#v", traceStore.items)
+		t.Fatalf("knowledge relation trace missing hop/evidence: %#v", pack.ToTraceItems())
 	}
 }
 
@@ -326,7 +334,7 @@ func TestBeginTurn_WithShortContext(t *testing.T) {
 			}, nil
 		},
 	}
-	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren")
 
 	pack, err := engine.BeginTurn(context.Background(), "s1", "hello")
 	if err != nil {
@@ -353,7 +361,7 @@ func TestBeginTurn_SharesAllCharacterMessagesAsShortContext(t *testing.T) {
 			return append([]domconv.Message(nil), want...), nil
 		},
 	}
-	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren")
 
 	pack, err := engine.BeginTurn(context.Background(), "shared-session", "合言葉は？")
 	if err != nil {
@@ -393,7 +401,7 @@ func TestEndTurnAsStoresFromToAttribution(t *testing.T) {
 		stored = append(stored, msg)
 		return nil
 	}}
-	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren")
 
 	if err := engine.EndTurnAs(context.Background(), "shared-session", "前回の続き", "Kuroの返答", domconv.SpeakerKuro); err != nil {
 		t.Fatalf("EndTurnAs failed: %v", err)
@@ -406,6 +414,64 @@ func TestEndTurnAsStoresFromToAttribution(t *testing.T) {
 	}
 	if stored[1].Meta["from"] != "kuro" || stored[1].Meta["to"] != "user" {
 		t.Fatalf("Agent attribution=%#v", stored[1].Meta)
+	}
+}
+
+func TestCommitConversationTurnUsesTrustedOwnerTargetsAndL1Boundary(t *testing.T) {
+	thread := &domconv.Thread{ID: 42, SessionID: "session-typed", Domain: "authoritative", Status: domconv.ThreadActive}
+	var got domconv.ConversationTurnRequest
+	mgr := &mockManager{
+		targets: []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetRedisProjection, domconv.ConversationTurnTargetThreadFollowers},
+		getActiveThreadFunc: func(context.Context, string) (*domconv.Thread, error) {
+			return thread, nil
+		},
+		commitTurnFunc: func(_ context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+			got = request
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, SessionID: request.SessionID, Status: domconv.ConversationTurnCompleted}, nil
+		},
+		storeFunc: func(context.Context, string, domconv.Message) error {
+			t.Fatal("typed engine must not use legacy Store")
+			return nil
+		},
+	}
+	detector := &mockDetector{result: domconv.ThreadBoundaryResult{ShouldCreateNew: true, Reason: domconv.BoundaryKeyword}}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).
+		WithUserMemoryStore(mgr, "trusted-owner").WithDetector(detector)
+	request := domconv.ConversationTurnRequest{
+		TurnID: "job-typed", SessionID: "session-typed", OwnerID: "caller-owner", Domain: "caller-domain",
+		UserMessage: "new topic", AgentMessage: "response", AgentSpeaker: domconv.SpeakerKuro,
+		Boundary: true, BoundaryReason: "caller decision", Targets: []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetRedisProjection},
+	}
+	if _, err := engine.CommitConversationTurn(context.Background(), request); err != nil {
+		t.Fatalf("CommitConversationTurn failed: %v", err)
+	}
+	if got.OwnerID != "trusted-owner" || got.Domain != "authoritative" || !got.Boundary || got.BoundaryReason != string(domconv.BoundaryKeyword) {
+		t.Fatalf("trusted/boundary fields=%#v", got)
+	}
+	if len(got.Targets) != 2 || got.Targets[0] != domconv.ConversationTurnTargetRedisProjection || got.Targets[1] != domconv.ConversationTurnTargetThreadFollowers {
+		t.Fatalf("manager targets=%#v", got.Targets)
+	}
+}
+
+func TestCommitConversationTurnNoActiveThreadUsesGeneralWithoutLegacyWrites(t *testing.T) {
+	var got domconv.ConversationTurnRequest
+	mgr := &mockManager{
+		getActiveThreadFunc: func(context.Context, string) (*domconv.Thread, error) {
+			return nil, domconv.ErrThreadNotFound
+		},
+		commitTurnFunc: func(_ context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
+			got = request
+			return domconv.ConversationTurnResult{TurnID: request.TurnID, Status: domconv.ConversationTurnCompleted}, nil
+		},
+	}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "trusted-owner")
+	if _, err := engine.CommitConversationTurn(context.Background(), domconv.ConversationTurnRequest{
+		TurnID: "job-no-thread", SessionID: "session-no-thread", UserMessage: "hello", AgentMessage: "hi", AgentSpeaker: domconv.SpeakerMio,
+	}); err != nil {
+		t.Fatalf("CommitConversationTurn failed: %v", err)
+	}
+	if got.Domain != "general" || got.Boundary || got.BoundaryReason != "" {
+		t.Fatalf("no-active defaults=%#v", got)
 	}
 }
 
@@ -449,35 +515,109 @@ func TestBeginTurn_RanksOlderRelevantUserMemoryAheadOfRecentUnrelatedMemory(t *t
 	}
 }
 
-func TestBeginTurn_SavesRecallTrace(t *testing.T) {
+func TestBeginTurn_DoesNotPersistRecallTraceSeparately(t *testing.T) {
 	mgr := &mockManager{
 		recallFunc: func(ctx context.Context, sessionID, query string, topK int) ([]domconv.Message, error) {
 			return []domconv.Message{{Speaker: domconv.SpeakerUser, Msg: "prev question"}}, nil
 		},
 	}
-	traceStore := &mockRecallTraceStore{}
-	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithRecallTraceStore(traceStore)
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})
 
 	if _, err := engine.BeginTurn(context.Background(), "chat-1", "hello"); err != nil {
 		t.Fatalf("BeginTurn failed: %v", err)
 	}
-	if len(traceStore.started) != 1 {
-		t.Fatalf("StartRecallTrace calls = %d, want 1", len(traceStore.started))
+	if mgr.saveRecallTraceCalls != 0 {
+		t.Fatalf("BeginTurn must not persist recall trace separately: SaveRecallTrace calls=%d", mgr.saveRecallTraceCalls)
 	}
-	if traceStore.started[0].ChatID != "chat-1" || traceStore.started[0].UserMessageHash == "" {
-		t.Fatalf("unexpected started trace: %+v", traceStore.started[0])
+}
+
+func TestBeginTurn_UserMemoryTraceCarriesOwnerAndSelectionDecisions(t *testing.T) {
+	mgr := &mockManager{userMemories: []domainmemory.UserMemory{
+		{ID: "mem-selected", UserID: "ren", Statement: "Ren likes blue", State: domainmemory.MemoryStateConfirmed, Sensitivity: "normal", Scope: "all_personas", Active: true},
+		{ID: "mem-candidate", UserID: "ren", Statement: "Ren may like blue", State: domainmemory.MemoryStateCandidate, Sensitivity: "normal", Scope: "all_personas", Active: true},
+		{ID: "mem-sensitive", UserID: "ren", Statement: "private blue detail", State: domainmemory.MemoryStateConfirmed, Sensitivity: "sensitive", Scope: "all_personas", Active: true},
+		{ID: "mem-inactive", UserID: "ren", Statement: "inactive blue detail", State: domainmemory.MemoryStateConfirmed, Sensitivity: "normal", Scope: "all_personas", Active: false},
+		{ID: "mem-superseded", UserID: "ren", Statement: "old blue detail", State: domainmemory.MemoryStateConfirmed, Sensitivity: "normal", Scope: "all_personas", Active: true, SupersededBy: "mem-newer"},
+		{ID: "mem-decayed", UserID: "ren", Statement: "decayed blue detail", State: domainmemory.MemoryStateConfirmed, Sensitivity: "normal", Scope: "all_personas", Active: true, LifecycleStatus: "decayed"},
+	}}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).
+		WithUserMemoryStore(mgr, "ren")
+
+	pack, err := engine.BeginTurn(context.Background(), "chat-owner", "blue")
+	if err != nil {
+		t.Fatalf("BeginTurn failed: %v", err)
 	}
-	if len(traceStore.items) == 0 {
-		t.Fatal("expected trace items")
+	statuses := make(map[string]string)
+	for _, item := range pack.ToTraceItems() {
+		if item.MemoryID != "" {
+			statuses[item.MemoryID] = item.Status
+		}
 	}
-	if traceStore.items[0].Status != domconv.TraceStatusInjected || traceStore.items[0].PromptSection == "" {
-		t.Fatalf("unexpected trace item: %+v", traceStore.items[0])
+	if got := statuses["mem-selected"]; got != domconv.TraceStatusInjected {
+		t.Errorf("selected UserMemory trace status=%q, want %q; statuses=%v", got, domconv.TraceStatusInjected, statuses)
 	}
-	if len(traceStore.events) == 0 {
-		t.Fatal("expected prompt injection events")
+	for _, id := range []string{"mem-candidate", "mem-sensitive", "mem-inactive", "mem-superseded", "mem-decayed"} {
+		if got, ok := statuses[id]; !ok || got == domconv.TraceStatusInjected {
+			t.Errorf("rejected UserMemory %q trace status=%q present=%v, want non-injected reasoned item; statuses=%v", id, got, ok, statuses)
+		}
 	}
-	if len(traceStore.finished) != 1 || traceStore.finished[0] != traceStore.started[0].TraceID {
-		t.Fatalf("unexpected finished traces: %+v started=%+v", traceStore.finished, traceStore.started)
+}
+
+func TestBeginTurn_UserMemorySourceFailureIsPartialTrace(t *testing.T) {
+	mgr := &mockManager{userMemoryErr: fmt.Errorf("user memory source unavailable")}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).
+		WithUserMemoryStore(mgr, "ren")
+
+	pack, err := engine.BeginTurn(context.Background(), "user-memory-failure", "blue")
+	if err != nil {
+		t.Fatalf("BeginTurn should continue after UserMemory source failure: %v", err)
+	}
+	if pack == nil {
+		t.Fatal("BeginTurn returned a nil RecallPack")
+	}
+	foundFailure := false
+	for _, item := range pack.ToTraceItems() {
+		if item.Kind != "user_memory_source_failure" {
+			continue
+		}
+		foundFailure = true
+		if item.Status != domconv.TraceStatusSourceFailure {
+			t.Errorf("UserMemory source failure status=%q, want %q", item.Status, domconv.TraceStatusSourceFailure)
+		}
+		if item.Summary != "" {
+			t.Errorf("UserMemory source failure summary=%q, want redacted empty summary", item.Summary)
+		}
+	}
+	if !foundFailure {
+		t.Fatalf("UserMemory source failure was not traced: %+v", pack.ToTraceItems())
+	}
+}
+
+func TestBeginTurn_ConversationRecallSourceFailureIsPartialTrace(t *testing.T) {
+	mgr := &mockManager{recallFunc: func(context.Context, string, string, int) ([]domconv.Message, error) {
+		return nil, fmt.Errorf("conversation recall source unavailable")
+	}}
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})
+
+	pack, err := engine.BeginTurn(context.Background(), "conversation-failure", "hello")
+	if err != nil {
+		t.Fatalf("BeginTurn should continue after conversation Recall failure: %v", err)
+	}
+	if pack == nil {
+		t.Fatal("BeginTurn returned a nil RecallPack")
+	}
+	foundFailure := false
+	for _, item := range pack.ToTraceItems() {
+		if item.Kind != "conversation_recall_source_failure" {
+			continue
+		}
+		foundFailure = true
+		if item.Status != domconv.TraceStatusSourceFailure {
+			t.Errorf("conversation source failure status=%q, want %q", item.Status, domconv.TraceStatusSourceFailure)
+		}
+	}
+	if !foundFailure {
+		t.Fatalf("conversation source failure was not traced: %+v", pack.ToTraceItems())
 	}
 }
 
@@ -683,7 +823,7 @@ func TestEndTurn_BasicStore(t *testing.T) {
 			return nil
 		},
 	}
-	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren")
 
 	err := engine.EndTurn(context.Background(), "s1", "hello", "hi there")
 	if err != nil {
@@ -711,7 +851,7 @@ func TestEndTurn_WithDetector_NoBoundary(t *testing.T) {
 	detector := &mockDetector{
 		result: domconv.ThreadBoundaryResult{ShouldCreateNew: false},
 	}
-	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithDetector(detector)
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren").WithDetector(detector)
 
 	err := engine.EndTurn(context.Background(), "s1", "私はGoが好きです", "覚えておきます")
 	if err != nil {
@@ -738,7 +878,7 @@ func TestEndTurn_WithDetector_Boundary(t *testing.T) {
 	detector := &mockDetector{
 		result: domconv.ThreadBoundaryResult{ShouldCreateNew: true, Reason: domconv.BoundaryKeyword},
 	}
-	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithDetector(detector)
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren").WithDetector(detector)
 
 	err := engine.EndTurn(context.Background(), "s1", "new topic", "response")
 	if err != nil {

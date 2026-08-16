@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -56,11 +57,18 @@ const (
 )
 
 type L1SQLiteStore struct {
-	db                    *sql.DB
-	archiveStore          L1ArchiveStore
-	dailyDigestSummarizer DailyDigestSummarizer
-	knowledgeVectorSink   L1KnowledgeVectorSink
-	vectorCleanupSink     L1VectorCleanupSink
+	db                       *sql.DB
+	archiveStore             L1ArchiveStore
+	ownerArchiveStore        OwnerArchiveStore
+	parquetArchiveStore      OwnerParquetArchiveStore
+	rawLifecycleArchiveStore L1RawLifecycleArchiveStore
+	parquetExportRoot        string
+	rawSourceRoot            string
+	rawMu                    sync.Mutex
+	dailyDigestSummarizer    DailyDigestSummarizer
+	knowledgeVectorSink      L1KnowledgeVectorSink
+	vectorCleanupSink        L1VectorCleanupSink
+	lifecycleMu              sync.Mutex
 }
 
 func NewL1SQLiteStore(dbPath string) (*L1SQLiteStore, error) {
@@ -84,6 +92,18 @@ func (s *L1SQLiteStore) Close() error {
 
 func (s *L1SQLiteStore) WithArchiveStore(archiveStore L1ArchiveStore) *L1SQLiteStore {
 	s.archiveStore = archiveStore
+	s.ownerArchiveStore = nil
+	s.parquetArchiveStore = nil
+	s.rawLifecycleArchiveStore = nil
+	if typed, ok := archiveStore.(OwnerArchiveStore); ok {
+		s.ownerArchiveStore = typed
+	}
+	if typed, ok := archiveStore.(OwnerParquetArchiveStore); ok {
+		s.parquetArchiveStore = typed
+	}
+	if typed, ok := archiveStore.(L1RawLifecycleArchiveStore); ok {
+		s.rawLifecycleArchiveStore = typed
+	}
 	return s
 }
 

@@ -3,7 +3,9 @@ package l1sqlite
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +43,7 @@ func TestProfilePromotionPersistsUserRawJobsAndCompletesAtomically(t *testing.T)
 	}
 	saved, err := store.CompleteProfilePromotionBatch(ctx, *batch, []domainmemory.ProfileCandidate{{
 		Type: domainmemory.UserMemoryTypePreference, Statement: "Goが好き", Confidence: 0.8,
+		Sensitivity: "normal", Scope: "all_personas",
 	}}, "ren", now)
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +66,205 @@ func TestProfilePromotionPersistsUserRawJobsAndCompletesAtomically(t *testing.T)
 	// Deterministic candidate identity prevents duplicate candidates on replay.
 	if err := store.DeferProfilePromotionBatch(ctx, *batch, now); err == nil {
 		t.Fatal("completed lease must not be deferred")
+	}
+}
+
+func TestCompleteProfilePromotionRejectsInvalidCandidate(t *testing.T) {
+	store := newProfilePromotionTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := store.SaveMessage(ctx, "ren", 14, "conv:14", domconv.NewMessage(domconv.SpeakerUser, "不正な候補", nil), MemoryStateObserved); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := store.ClaimProfilePromotionBatch(ctx, 1, 5, time.Minute, now)
+	if err != nil || batch == nil {
+		t.Fatalf("batch=%#v err=%v", batch, err)
+	}
+	_, err = store.CompleteProfilePromotionBatch(ctx, *batch, []domainmemory.ProfileCandidate{{
+		Type: domainmemory.UserMemoryTypeProfile, Statement: "不正な候補", Confidence: 0,
+	}}, "ren", now)
+	if err == nil {
+		t.Fatal("expected invalid candidate confidence to fail")
+	}
+}
+
+func TestCompleteProfilePromotionUsesTypeInDeterministicCandidateID(t *testing.T) {
+	store := newProfilePromotionTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := store.SaveMessage(ctx, "ren", 16, "conv:16", domconv.NewMessage(domconv.SpeakerUser, "同じ文の候補", nil), MemoryStateObserved); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := store.ClaimProfilePromotionBatch(ctx, 1, 5, time.Minute, now)
+	if err != nil || batch == nil {
+		t.Fatalf("batch=%#v err=%v", batch, err)
+	}
+	candidates := []domainmemory.ProfileCandidate{
+		{Type: domainmemory.UserMemoryTypePreference, Statement: "同じ文", Confidence: 0.8, Sensitivity: "normal", Scope: "all_personas"},
+		{Type: domainmemory.UserMemoryTypeProfile, Statement: "同じ文", Confidence: 0.8, Sensitivity: "normal", Scope: "all_personas"},
+	}
+	saved, err := store.CompleteProfilePromotionBatch(ctx, *batch, candidates, "ren", now)
+	if err != nil {
+		t.Fatalf("same statement with distinct allowed types must save atomically: %v", err)
+	}
+	if saved != len(candidates) {
+		t.Fatalf("saved=%d want=%d", saved, len(candidates))
+	}
+	memories, err := store.ListUserMemories(ctx, "ren", MemoryStateCandidate, true, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(memories) != len(candidates) {
+		t.Fatalf("memories=%#v want=%d", memories, len(candidates))
+	}
+	if memories[0].ID == memories[1].ID || memories[0].Type == memories[1].Type {
+		t.Fatalf("candidate identities/types are not distinct: %#v", memories)
+	}
+	jobs, err := store.ListProfilePromotionJobs(ctx, 10)
+	if err != nil || len(jobs) != 1 || jobs[0].State != domainmemory.ProfilePromotionCompleted {
+		t.Fatalf("jobs=%#v err=%v", jobs, err)
+	}
+}
+
+func TestCompleteProfilePromotionRejectsUnboundEvidenceBatch(t *testing.T) {
+	store := newProfilePromotionTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := store.SaveMessage(ctx, "ren", 15, "conv:15", domconv.NewMessage(domconv.SpeakerUser, "根拠", nil), MemoryStateObserved); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := store.ClaimProfilePromotionBatch(ctx, 1, 5, time.Minute, now)
+	if err != nil || batch == nil {
+		t.Fatalf("batch=%#v err=%v", batch, err)
+	}
+	batch.Messages[0].SessionID = "other-session"
+	if _, err := store.CompleteProfilePromotionBatch(ctx, *batch, nil, "ren", now); err == nil {
+		t.Fatal("expected evidence binding mismatch to fail")
+	}
+}
+
+func TestListProfilePromotionProjectionFiltersBoundsAndOrdersStable(t *testing.T) {
+	store := newProfilePromotionTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	insert := func(id, owner, state, statement string, active bool, updatedAt time.Time) {
+		t.Helper()
+		meta, err := json.Marshal(map[string]interface{}{
+			"type": domainmemory.UserMemoryTypeProfile, "user_id": owner, "statement": statement,
+			"evidence_event_ids": []string{"evidence-" + id}, "confidence": 0.7,
+			"sensitivity": "normal", "scope": "all_personas", "active": active,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.db.ExecContext(ctx, `
+INSERT INTO l1_memory_event (
+	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	memory_state, layer, source, created_at, updated_at
+) VALUES (?, ?, '', 0, ?, ?, ?, ?, ?, 'test', ?, ?)`,
+			id, "user:"+owner, string(domconv.SpeakerMemory), statement, string(meta), state, MemoryLayerL1, updatedAt, updatedAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("candidate-old", "ren", MemoryStateCandidate, "candidate old", true, now.Add(-3*time.Hour))
+	insert("candidate-new", "ren", MemoryStateCandidate, "candidate new", true, now.Add(-time.Hour))
+	insert("confirmed", "ren", MemoryStateConfirmed, "confirmed", true, now.Add(-4*time.Hour))
+	insert("pinned", "ren", MemoryStatePinned, "pinned", true, now.Add(-24*time.Hour))
+	insert("inactive", "ren", MemoryStateConfirmed, "inactive", false, now)
+	insert("other-owner", "other", MemoryStatePinned, "other", true, now)
+
+	items, err := store.ListProfilePromotionProjection(ctx, "ren", 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 4 {
+		t.Fatalf("projection=%#v", items)
+	}
+	want := []string{"pinned", "confirmed", "candidate new", "candidate old"}
+	for i, item := range items {
+		if item.Statement != want[i] {
+			t.Fatalf("projection[%d]=%q want %q", i, item.Statement, want[i])
+		}
+	}
+}
+
+func TestListProfilePromotionProjectionFailsClosedOnCorruptSelectedMetadata(t *testing.T) {
+	store := newProfilePromotionTestStore(t)
+	ctx := context.Background()
+	meta, err := json.Marshal(map[string]interface{}{
+		"type": domainmemory.UserMemoryTypeProfile, "user_id": "ren", "statement": "corrupt",
+		"evidence_event_ids": []string{"e-corrupt"}, "confidence": "not-a-number",
+		"sensitivity": "normal", "scope": "all_personas", "active": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO l1_memory_event (
+	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	memory_state, layer, source, created_at, updated_at
+) VALUES ('corrupt-projection', 'user:ren', '', 0, ?, 'corrupt', ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		string(domconv.SpeakerMemory), string(meta), MemoryStateCandidate, MemoryLayerL1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ListProfilePromotionProjection(ctx, "ren", 32); err == nil {
+		t.Fatal("expected corrupt selected projection row to fail closed")
+	}
+}
+
+func TestListProfilePromotionProjectionRejectsUnknownScopeEnum(t *testing.T) {
+	store := newProfilePromotionTestStore(t)
+	ctx := context.Background()
+	meta, err := json.Marshal(map[string]interface{}{
+		"type": domainmemory.UserMemoryTypeProfile, "user_id": "ren", "statement": "scope",
+		"evidence_event_ids": []string{"e-scope"}, "confidence": 0.7,
+		"sensitivity": "normal", "scope": "untrusted", "active": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO l1_memory_event (
+	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	memory_state, layer, source, created_at, updated_at
+) VALUES ('unknown-scope', 'user:ren', '', 0, ?, 'scope', ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		string(domconv.SpeakerMemory), string(meta), MemoryStateCandidate, MemoryLayerL1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ListProfilePromotionProjection(ctx, "ren", 32); err == nil {
+		t.Fatal("expected unknown scope enum to fail closed")
+	}
+}
+
+func TestListProfilePromotionProjectionUsesTotalRunePrefixWithoutFailingValidRows(t *testing.T) {
+	store := newProfilePromotionTestStore(t)
+	ctx := context.Background()
+	statement := strings.Repeat("x", 512)
+	for i := 0; i < 20; i++ {
+		id := fmt.Sprintf("bounded-%02d", i)
+		meta, err := json.Marshal(map[string]interface{}{
+			"type": domainmemory.UserMemoryTypeProfile, "user_id": "ren", "statement": statement,
+			"evidence_event_ids": []string{"e-" + id}, "confidence": 0.7,
+			"sensitivity": "normal", "scope": "all_personas", "active": true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.db.ExecContext(ctx, `
+INSERT INTO l1_memory_event (
+	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	memory_state, layer, source, created_at, updated_at
+) VALUES (?, 'user:ren', '', 0, ?, ?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+			id, string(domconv.SpeakerMemory), statement, string(meta), MemoryStateCandidate, MemoryLayerL1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := store.ListProfilePromotionProjection(ctx, "ren", 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 16 {
+		t.Fatalf("bounded projection count=%d want=16", len(items))
 	}
 }
 

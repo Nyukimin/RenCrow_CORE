@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
-	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	_ "modernc.org/sqlite"
 )
 
@@ -16,17 +16,13 @@ type ArchiveSQLiteStore struct {
 	mu sync.Mutex
 }
 
+var _ l1sqlite.OwnerArchiveStore = (*ArchiveSQLiteStore)(nil)
+var _ l1sqlite.L1RawLifecycleArchiveStore = (*ArchiveSQLiteStore)(nil)
+
 // ArchiveRequestReceipt binds one trusted data.write request to the exact L1
 // memory event archived by CORE. It is deliberately separate from any model
 // payload or generated summary.
-type ArchiveRequestReceipt struct {
-	RequestID   string
-	UserID      string
-	ActorID     string
-	PayloadHash string
-	MemoryID    string
-	CreatedAt   time.Time
-}
+type ArchiveRequestReceipt = l1sqlite.OwnerArchiveRequest
 
 // ConversationArchiveRequestReceipt is the descriptive alias used by runtime
 // owner adapters and callers that want the storage boundary named explicitly.
@@ -94,6 +90,20 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_session_thread_session_ts ON session_thread(session_id, ts_start DESC);
 	CREATE INDEX IF NOT EXISTS idx_session_thread_domain_ts ON session_thread(domain, ts_start DESC);
 
+	CREATE TABLE IF NOT EXISTS conversation_thread_summary_receipt (
+		thread_id BIGINT PRIMARY KEY,
+		schema_version TEXT NOT NULL,
+		generation_mode TEXT NOT NULL,
+		provider TEXT NOT NULL,
+		failure_code TEXT NOT NULL,
+		evidence_sha256 TEXT NOT NULL,
+		source_turn_count INTEGER NOT NULL,
+		roles_json TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_thread_summary_receipt_created
+		ON conversation_thread_summary_receipt(created_at DESC);
+
 	CREATE TABLE IF NOT EXISTS l1_memory_event_archive (
 		id VARCHAR PRIMARY KEY,
 		namespace VARCHAR NOT NULL,
@@ -123,6 +133,28 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 		ON conversation_archive_request_receipt(user_id, created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_conversation_archive_request_memory
 		ON conversation_archive_request_receipt(memory_id);
+
+	CREATE TABLE IF NOT EXISTS conversation_archive_parquet_receipt (
+		request_id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		actor_id TEXT NOT NULL,
+		payload_hash TEXT NOT NULL,
+		manifest_sha256 TEXT NOT NULL,
+		run_relpath TEXT NOT NULL,
+		result_json TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_conversation_archive_parquet_receipt_user_created
+		ON conversation_archive_parquet_receipt(user_id, created_at DESC);
+
+	CREATE TABLE IF NOT EXISTS conversation_lifecycle_raw_archive_receipt (
+		outbox_id TEXT PRIMARY KEY,
+		event_id TEXT NOT NULL UNIQUE,
+		event_sha256 TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_conversation_raw_archive_receipt_event
+		ON conversation_lifecycle_raw_archive_receipt(event_id);
 
 	CREATE TABLE IF NOT EXISTS l1_news_item_archive (
 		id VARCHAR PRIMARY KEY,

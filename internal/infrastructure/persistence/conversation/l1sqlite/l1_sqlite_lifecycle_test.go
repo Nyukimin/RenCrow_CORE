@@ -3,6 +3,7 @@ package l1sqlite
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,236 @@ import (
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
 
+func TestL1SQLiteStore_RawLifecycleRequiresArchiveStoreBeforeDelete(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-120 * 24 * time.Hour)
+	if err := store.SaveMessage(ctx, "session-raw-no-archive", 1, "conv:raw-no-archive", domconv.NewMessage(domconv.SpeakerUser, "raw source must survive", nil), MemoryStateObserved); err != nil {
+		t.Fatalf("SaveMessage failed: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET created_at = ?, updated_at = ? WHERE namespace = ?`, old, old, "conv:raw-no-archive"); err != nil {
+		t.Fatalf("backdate raw memory failed: %v", err)
+	}
+	markProfilePromotionCompletedForNamespace(t, store, "conv:raw-no-archive")
+	var eventID string
+	if err := store.db.QueryRowContext(ctx, `SELECT id FROM l1_memory_event WHERE namespace = ?`, "conv:raw-no-archive").Scan(&eventID); err != nil {
+		t.Fatalf("read raw memory id failed: %v", err)
+	}
+
+	result, err := store.RunMemoryLifecycleMaintenance(ctx, MemoryLifecycleOptions{
+		Now:                      now,
+		RawConversationRetention: 30 * 24 * time.Hour,
+		RawCompactLimit:          1,
+		CandidateReviewAfter:     0,
+		MonthlyHighlightAfter:    0,
+		ThreadSummarySeedAfter:   0,
+		DecayAfter:               0,
+		VectorCleanupLimit:       1,
+	})
+	if err == nil {
+		t.Fatalf("RunMemoryLifecycleMaintenance succeeded without archive store: result=%+v", result)
+	}
+	if !errors.Is(err, domainmemory.ErrUserMemoryOwnerUnavailable) {
+		t.Fatalf("RunMemoryLifecycleMaintenance error=%v, want unavailable", err)
+	}
+	if got := countMemoryEventsByNamespace(t, ctx, store, "conv:raw-no-archive"); got != 1 {
+		t.Fatalf("raw source count=%d, want 1", got)
+	}
+	var outboxCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM conversation_lifecycle_raw_archive_outbox WHERE event_id = ?`, eventID).Scan(&outboxCount); err != nil {
+		t.Fatalf("raw archive outbox query failed: %v", err)
+	}
+	if outboxCount != 1 {
+		t.Fatalf("raw archive outbox count=%d, want 1", outboxCount)
+	}
+}
+
+func TestL1SQLiteStore_RawLifecycleArchiveSuccessDeletesOnlyAfterReceipt(t *testing.T) {
+	ctx := context.Background()
+	store, eventID, now := newOldRawLifecycleStore(t, "conv:raw-success")
+	defer store.Close()
+	archive := &recordingRawLifecycleArchiveStub{}
+	store.WithArchiveStore(archive)
+
+	result, err := store.RunMemoryLifecycleMaintenance(ctx, MemoryLifecycleOptions{
+		Now: now, RawConversationRetention: 30 * 24 * time.Hour, RawCompactLimit: 1,
+		VectorCleanupLimit: 1,
+	})
+	if err != nil {
+		t.Fatalf("RunMemoryLifecycleMaintenance failed: %v", err)
+	}
+	if result.RawCompacted != 1 {
+		t.Fatalf("RawCompacted=%d, want 1", result.RawCompacted)
+	}
+	if len(archive.events) != 1 || len(archive.receipts) != 1 {
+		t.Fatalf("archive calls events=%d receipts=%d, want 1/1", len(archive.events), len(archive.receipts))
+	}
+	var status, hash string
+	var attemptCount int
+	if err := store.db.QueryRowContext(ctx, `
+SELECT status, event_sha256, attempt_count
+FROM conversation_lifecycle_raw_archive_outbox WHERE event_id = ?`, eventID).Scan(&status, &hash, &attemptCount); err != nil {
+		t.Fatalf("read archived raw outbox failed: %v", err)
+	}
+	if status != L1RawLifecycleArchiveOutboxStatusArchived || attemptCount != 1 {
+		t.Fatalf("raw outbox status=%q attempt_count=%d, want archived/1", status, attemptCount)
+	}
+	wantHash, err := CanonicalL1MemoryEventSHA256(archive.events[0])
+	if err != nil {
+		t.Fatalf("hash archived event: %v", err)
+	}
+	if hash != wantHash || archive.receipts[0].EventSHA256 != wantHash {
+		t.Fatalf("archive hash=%q receipt hash=%q want %q", hash, archive.receipts[0].EventSHA256, wantHash)
+	}
+	if got := countMemoryEventsByNamespace(t, ctx, store, "conv:raw-success"); got != 0 {
+		t.Fatalf("raw source count=%d, want 0 after verified archive", got)
+	}
+	var auditCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM l1_event_log WHERE event_type = ? AND namespace = ?`, "memory.l1_raw_archived_compacted", "conv:lifecycle").Scan(&auditCount); err != nil {
+		t.Fatalf("read raw archive finalize audit failed: %v", err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("raw archive finalize audit count=%d, want 1", auditCount)
+	}
+}
+
+func TestL1SQLiteStore_RawLifecycleArchiveFailureRetainsSourceAndMarksOutbox(t *testing.T) {
+	ctx := context.Background()
+	store, eventID, now := newOldRawLifecycleStore(t, "conv:raw-failure")
+	defer store.Close()
+	archiveErr := errors.New("archive write failed")
+	archive := &recordingRawLifecycleArchiveStub{err: archiveErr}
+	store.WithArchiveStore(archive)
+
+	result, err := store.RunMemoryLifecycleMaintenance(ctx, MemoryLifecycleOptions{
+		Now: now, RawConversationRetention: 30 * 24 * time.Hour, RawCompactLimit: 1,
+		VectorCleanupLimit: 1,
+	})
+	if err == nil {
+		t.Fatalf("RunMemoryLifecycleMaintenance succeeded: result=%+v", result)
+	}
+	if result != nil && result.RawCompacted != 0 {
+		t.Fatalf("RawCompacted=%d after archive failure, want 0", result.RawCompacted)
+	}
+	if got := countMemoryEventsByNamespace(t, ctx, store, "conv:raw-failure"); got != 1 {
+		t.Fatalf("raw source count=%d, want 1", got)
+	}
+	var status, lastError string
+	var attemptCount int
+	if err := store.db.QueryRowContext(ctx, `
+SELECT status, last_error, attempt_count
+FROM conversation_lifecycle_raw_archive_outbox WHERE event_id = ?`, eventID).Scan(&status, &lastError, &attemptCount); err != nil {
+		t.Fatalf("read failed raw outbox failed: %v", err)
+	}
+	if status != L1RawLifecycleArchiveOutboxStatusFailed || attemptCount != 1 || !strings.Contains(lastError, archiveErr.Error()) {
+		t.Fatalf("raw outbox status=%q attempt_count=%d last_error=%q", status, attemptCount, lastError)
+	}
+	if len(archive.receipts) != 0 {
+		t.Fatalf("failed archive unexpectedly recorded %d receipts", len(archive.receipts))
+	}
+}
+
+func TestL1SQLiteStore_RawLifecycleArchiveFailedOutboxReplaysAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	store, eventID, now := newOldRawLifecycleStore(t, "conv:raw-replay")
+	defer store.Close()
+	archive := &recordingRawLifecycleArchiveStub{err: errors.New("temporary archive failure")}
+	store.WithArchiveStore(archive)
+	if _, err := store.RunMemoryLifecycleMaintenance(ctx, MemoryLifecycleOptions{
+		Now: now, RawConversationRetention: 30 * 24 * time.Hour, RawCompactLimit: 1,
+		VectorCleanupLimit: 1,
+	}); err == nil {
+		t.Fatal("first lifecycle run unexpectedly succeeded")
+	}
+	archive.err = nil
+	result, err := store.RunMemoryLifecycleMaintenance(ctx, MemoryLifecycleOptions{
+		Now: now.Add(time.Minute), RawConversationRetention: 30 * 24 * time.Hour, RawCompactLimit: 1,
+		VectorCleanupLimit: 1,
+	})
+	if err != nil {
+		t.Fatalf("replay lifecycle run failed: %v", err)
+	}
+	if result.RawCompacted != 1 {
+		t.Fatalf("replay RawCompacted=%d, want 1", result.RawCompacted)
+	}
+	if len(archive.events) != 1 || archive.receipts[0].EventID != eventID {
+		t.Fatalf("replay archive calls=%d receipt=%+v", len(archive.events), archive.receipts)
+	}
+	var status string
+	if err := store.db.QueryRowContext(ctx, `SELECT status FROM conversation_lifecycle_raw_archive_outbox WHERE event_id = ?`, eventID).Scan(&status); err != nil {
+		t.Fatalf("read replay outbox failed: %v", err)
+	}
+	if status != L1RawLifecycleArchiveOutboxStatusArchived {
+		t.Fatalf("replay outbox status=%q, want archived", status)
+	}
+}
+
+func TestL1SQLiteStore_RawLifecycleArchiveHashDriftNeverDeletesSource(t *testing.T) {
+	ctx := context.Background()
+	store, eventID, now := newOldRawLifecycleStore(t, "conv:raw-drift")
+	defer store.Close()
+	archive := &recordingRawLifecycleArchiveStub{}
+	archive.beforeReturn = func(_ L1MemoryEvent, _ L1RawLifecycleArchiveReceipt) {
+		if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET message = ? WHERE id = ?`, "drifted source", eventID); err != nil {
+			t.Fatalf("mutate source in archive stub: %v", err)
+		}
+	}
+	store.WithArchiveStore(archive)
+
+	result, err := store.RunMemoryLifecycleMaintenance(ctx, MemoryLifecycleOptions{
+		Now: now, RawConversationRetention: 30 * 24 * time.Hour, RawCompactLimit: 1,
+		VectorCleanupLimit: 1,
+	})
+	if err == nil {
+		t.Fatalf("hash drift lifecycle run succeeded: result=%+v", result)
+	}
+	if !errors.Is(err, ErrL1RawLifecycleArchiveConflict) {
+		t.Fatalf("hash drift error=%v, want conflict", err)
+	}
+	if got := countMemoryEventsByNamespace(t, ctx, store, "conv:raw-drift"); got != 1 {
+		t.Fatalf("hash drift source count=%d, want 1", got)
+	}
+	var status string
+	if err := store.db.QueryRowContext(ctx, `SELECT status FROM conversation_lifecycle_raw_archive_outbox WHERE event_id = ?`, eventID).Scan(&status); err != nil {
+		t.Fatalf("read drift outbox failed: %v", err)
+	}
+	if status != L1RawLifecycleArchiveOutboxStatusFailed {
+		t.Fatalf("hash drift outbox status=%q, want failed", status)
+	}
+}
+
+func newOldRawLifecycleStore(t *testing.T, namespace string) (*L1SQLiteStore, string, time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-120 * 24 * time.Hour)
+	if err := store.SaveMessage(ctx, "raw-lifecycle-session", 1, namespace, domconv.NewMessage(domconv.SpeakerUser, "raw lifecycle source", nil), MemoryStateObserved); err != nil {
+		store.Close()
+		t.Fatalf("SaveMessage failed: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET created_at = ?, updated_at = ? WHERE namespace = ?`, old, old, namespace); err != nil {
+		store.Close()
+		t.Fatalf("backdate raw source failed: %v", err)
+	}
+	markProfilePromotionCompletedForNamespace(t, store, namespace)
+	var eventID string
+	if err := store.db.QueryRowContext(ctx, `SELECT id FROM l1_memory_event WHERE namespace = ?`, namespace).Scan(&eventID); err != nil {
+		store.Close()
+		t.Fatalf("read raw source id failed: %v", err)
+	}
+	return store, eventID, now
+}
+
 func TestL1SQLiteStore_RunMemoryLifecycleMaintenance(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
@@ -22,6 +253,7 @@ func TestL1SQLiteStore_RunMemoryLifecycleMaintenance(t *testing.T) {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
+	store.WithArchiveStore(&recordingRawLifecycleArchiveStub{})
 
 	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-120 * 24 * time.Hour)
@@ -148,6 +380,7 @@ func TestL1SQLiteStore_RunMemoryLifecycleMaintenancePreservesChatGPTL3Episodes(t
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
+	store.WithArchiveStore(&recordingRawLifecycleArchiveStub{})
 
 	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-120 * 24 * time.Hour)
@@ -405,6 +638,7 @@ func TestL1SQLiteStore_AcceleratedVerificationDB(t *testing.T) {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
+	store.WithArchiveStore(&recordingRawLifecycleArchiveStub{})
 	store.WithVectorCleanupSink(&stubVectorCleanupSink{})
 
 	base := time.Now().UTC()
@@ -495,6 +729,7 @@ func TestL1SQLiteStore_MemoryRetentionQualityEvalOneYear(t *testing.T) {
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
+	store.WithArchiveStore(&recordingRawLifecycleArchiveStub{})
 	store.WithVectorCleanupSink(&stubVectorCleanupSink{})
 
 	base := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
@@ -753,6 +988,41 @@ func evaluateMemoryRetentionQuality(t *testing.T, ctx context.Context, store *L1
 		Score:    score,
 		Failures: failures,
 	}
+}
+
+type recordingRawLifecycleArchiveStub struct {
+	events       []L1MemoryEvent
+	receipts     []L1RawLifecycleArchiveReceipt
+	err          error
+	beforeReturn func(L1MemoryEvent, L1RawLifecycleArchiveReceipt)
+}
+
+func (s *recordingRawLifecycleArchiveStub) ArchiveL1MemoryEvents(context.Context, []L1MemoryEvent) error {
+	return nil
+}
+
+func (s *recordingRawLifecycleArchiveStub) ArchiveL1NewsItems(context.Context, []L1NewsItem) error {
+	return nil
+}
+
+func (s *recordingRawLifecycleArchiveStub) ArchiveL1KnowledgeItems(context.Context, []L1KnowledgeItem) error {
+	return nil
+}
+
+func (s *recordingRawLifecycleArchiveStub) ArchiveL1StagingItems(context.Context, []L1StagingItem) error {
+	return nil
+}
+
+func (s *recordingRawLifecycleArchiveStub) ArchiveL1RawLifecycleEvent(_ context.Context, event L1MemoryEvent, receipt L1RawLifecycleArchiveReceipt) error {
+	if s.err != nil {
+		return s.err
+	}
+	if s.beforeReturn != nil {
+		s.beforeReturn(event, receipt)
+	}
+	s.events = append(s.events, event)
+	s.receipts = append(s.receipts, receipt)
+	return nil
 }
 
 func countMemoryEventsByNamespace(t *testing.T, ctx context.Context, store *L1SQLiteStore, namespace string) int {

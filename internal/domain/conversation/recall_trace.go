@@ -2,12 +2,16 @@ package conversation
 
 import (
 	"context"
+	"strings"
 	"time"
 )
+
+const TraceStatusSourceFailure = "source_failure"
 
 type RecallTrace struct {
 	ResponseID string
 	SessionID  string
+	OwnerID    string
 	Role       string
 	Items      []RecallTraceItem
 	CreatedAt  time.Time
@@ -27,6 +31,8 @@ type RecallTraceItem struct {
 	Decision      string
 	Status        string
 	Reason        string
+	MemoryState   string
+	Sensitivity   string
 	PromptSection string
 	TokenCount    int
 	PromptIndex   int
@@ -34,6 +40,7 @@ type RecallTraceItem struct {
 
 type RecallTraceRecord struct {
 	TraceID             string
+	OwnerID             string
 	TurnID              string
 	ChatID              string
 	Persona             string
@@ -69,6 +76,7 @@ type RecallTraceItemRecord struct {
 	PromptSection  string
 	TokenCount     int
 	Sensitivity    string
+	MemoryState    string
 	IsRawOrSummary string
 	RetrievedAt    time.Time
 	PublishedAt    time.Time
@@ -99,7 +107,7 @@ func (rp *RecallPack) ToTraceItems() []RecallTraceItem {
 	if rp == nil {
 		return nil
 	}
-	items := make([]RecallTraceItem, 0, len(rp.ShortContext)+len(rp.MidSummaries)+len(rp.LongFacts)+len(rp.KBSnippets)+len(rp.WikiSnippets)+len(rp.SearchCacheSnippets)+len(rp.RelationSnippets)+len(rp.CategorySnippets)+len(rp.CategoryFailures)+len(rp.RejectedTraceItems)+1)
+	items := make([]RecallTraceItem, 0, len(rp.ShortContext)+len(rp.MidSummaries)+len(rp.LongFacts)+len(rp.KBSnippets)+len(rp.WikiSnippets)+len(rp.SearchCacheSnippets)+len(rp.RelationSnippets)+len(rp.CategorySnippets)+len(rp.CategoryFailures)+len(rp.UserMemoryRecallDecisions)+len(rp.RejectedTraceItems)+1)
 	if rp.RollingSummary != "" {
 		items = append(items, RecallTraceItem{
 			Layer:         "L0",
@@ -236,6 +244,44 @@ func (rp *RecallPack) ToTraceItems() []RecallTraceItem {
 			Decision: "rejected", Status: failure.Code, PromptSection: PromptSectionKnowledge,
 			Reason: failure.Reason, RetrievedAt: failure.ObservedAt, PromptIndex: -1,
 		})
+	}
+	for _, decision := range rp.UserMemoryRecallDecisions {
+		status := decision.Status
+		if status == "" {
+			status = TraceStatusFilteredStatus
+		}
+		kind := "user_memory"
+		if decision.Status == TraceStatusSourceFailure && strings.TrimSpace(decision.Item.ID) == "" {
+			kind = "user_memory_source_failure"
+		}
+		item := RecallTraceItem{
+			Layer:         "L1",
+			Kind:          kind,
+			MemoryID:      decision.Item.ID,
+			SourceType:    "user_memory",
+			Status:        status,
+			Score:         float32(decision.Score),
+			Decision:      "rejected",
+			PromptSection: PromptSectionUserMemory,
+			Reason:        decision.Reason,
+			MemoryState:   decision.Item.State,
+			Sensitivity:   decision.Item.Sensitivity,
+			PromptIndex:   -1,
+		}
+		if len(decision.Item.EvidenceEventIDs) > 0 {
+			item.SourceID = decision.Item.EvidenceEventIDs[0]
+		}
+		if decision.Selected {
+			item.Decision = "included"
+			item.Summary = decision.Item.Statement
+			item.TokenCount = estimateRecallTokens(item.Summary)
+			item.PromptIndex = len(items)
+		}
+		if decision.Item.Sensitivity != "" && decision.Item.Sensitivity != "normal" {
+			item.Summary = ""
+			item.TokenCount = 0
+		}
+		items = append(items, item)
 	}
 	items = append(items, rp.RejectedTraceItems...)
 	return items

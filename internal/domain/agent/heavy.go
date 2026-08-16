@@ -50,9 +50,6 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 		} else if pack != nil {
 			filtered := pack.FilterForRole("heavy").WithoutPersonaSystemPrompt()
 			recallPack = &filtered
-			if err := recordRecallTrace(ctx, h.conversationEngine, t.ChatID(), t.JobID().String(), string(conversation.SpeakerKuro), filtered); err != nil {
-				log.Printf("[Heavy] RecordRecallTrace failed: %v", err)
-			}
 			messages = appendSharedConversationContinuityPrompt(messages, &filtered)
 			messages = append(messages, filtered.ToPromptMessages()...)
 		}
@@ -62,8 +59,8 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 			onToken(response)
 		}
 		if h.conversationEngine != nil {
-			if err := endConversationTurnAs(ctx, h.conversationEngine, t.ChatID(), userMessage, response, conversation.SpeakerKuro); err != nil {
-				log.Printf("[Heavy] EndTurn failed: %v", err)
+			if err := commitConversationTurn(ctx, h.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
+				return response, err
 			}
 		}
 		return response, nil
@@ -81,8 +78,8 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 	response := strings.TrimSpace(resp.Content)
 	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
 	if h.conversationEngine != nil {
-		if err := endConversationTurnAs(ctx, h.conversationEngine, t.ChatID(), userMessage, response, conversation.SpeakerKuro); err != nil {
-			log.Printf("[Heavy] EndTurn failed: %v", err)
+		if err := commitConversationTurn(ctx, h.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
+			return response, err
 		}
 	}
 	return response, nil

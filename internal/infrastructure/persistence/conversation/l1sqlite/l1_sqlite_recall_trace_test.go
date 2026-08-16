@@ -2,7 +2,9 @@ package l1sqlite
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,5 +95,45 @@ func TestL1SQLiteStore_RecallTraceTables(t *testing.T) {
 	}
 	if itemCount != 2 {
 		t.Fatalf("trace item count = %d, want 2", itemCount)
+	}
+}
+
+func TestL1SQLiteStore_RecallTraceOwnerSchemaAndIndex(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "owner-schema.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	var tableSQL sql.NullString
+	if err := store.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'recall_trace'`).Scan(&tableSQL); err != nil {
+		t.Fatalf("query recall_trace schema: %v", err)
+	}
+	if !tableSQL.Valid || !strings.Contains(strings.ToLower(tableSQL.String), "owner_id") {
+		t.Fatalf("recall_trace schema must include owner_id, sql=%q", tableSQL.String)
+	}
+
+	rows, err := store.db.QueryContext(ctx, `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'recall_trace'`)
+	if err != nil {
+		t.Fatalf("query recall_trace indexes: %v", err)
+	}
+	defer rows.Close()
+	foundOwnerIndex := false
+	for rows.Next() {
+		var name string
+		var indexSQL sql.NullString
+		if err := rows.Scan(&name, &indexSQL); err != nil {
+			t.Fatalf("scan recall_trace index %q: %v", name, err)
+		}
+		if indexSQL.Valid && strings.Contains(strings.ToLower(indexSQL.String), "owner_id") {
+			foundOwnerIndex = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate recall_trace indexes: %v", err)
+	}
+	if !foundOwnerIndex {
+		t.Fatal("recall_trace must have an owner_id lookup index")
 	}
 }

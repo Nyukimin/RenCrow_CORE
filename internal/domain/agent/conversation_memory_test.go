@@ -9,21 +9,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
-type traceAwareConversationEngine struct {
-	*mockConversationEngine
-	traceErr error
-	endErr   error
-	trace    struct {
-		sessionID  string
-		responseID string
-		role       string
-	}
-	endAs struct {
-		sessionID string
-		speaker   conversation.Speaker
-	}
-}
-
 func TestSharedConversationContinuityIsTypedRecallL0(t *testing.T) {
 	pack := &conversation.RecallPack{ShortContext: []conversation.Message{{Speaker: conversation.SpeakerUser, Msg: "previous"}}}
 	messages := appendSharedConversationContinuityPrompt(nil, pack)
@@ -32,52 +17,30 @@ func TestSharedConversationContinuityIsTypedRecallL0(t *testing.T) {
 	}
 }
 
-func (e *traceAwareConversationEngine) RecordRecallTrace(ctx context.Context, sessionID string, responseID string, role string, pack conversation.RecallPack) error {
-	e.trace.sessionID = sessionID
-	e.trace.responseID = responseID
-	e.trace.role = role
-	return e.traceErr
-}
-
-func (e *traceAwareConversationEngine) EndTurnAs(ctx context.Context, sessionID string, userMessage string, response string, speaker conversation.Speaker) error {
-	e.endAs.sessionID = sessionID
-	e.endAs.speaker = speaker
-	return e.endErr
-}
-
-func TestConversationMemoryOptionalInterfaces(t *testing.T) {
-	engine := &traceAwareConversationEngine{mockConversationEngine: &mockConversationEngine{}}
-	pack := conversation.RecallPack{}
-
-	if err := recordRecallTrace(context.Background(), engine, "session-1", "response-1", "wild", pack); err != nil {
-		t.Fatalf("recordRecallTrace failed: %v", err)
+func TestCommitConversationTurnUsesExactFilteredPack(t *testing.T) {
+	var got conversation.ConversationTurnRequest
+	engine := &mockConversationEngine{
+		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
+			got = request
+			return conversation.ConversationTurnResult{TurnID: request.TurnID, Status: conversation.ConversationTurnCompleted}, nil
+		},
 	}
-	if engine.trace.sessionID != "session-1" || engine.trace.responseID != "response-1" || engine.trace.role != "wild" {
-		t.Fatalf("unexpected trace call: %#v", engine.trace)
+	pack := &conversation.RecallPack{ShortContext: []conversation.Message{{Speaker: conversation.SpeakerUser, Msg: "kept"}}}
+	if err := commitConversationTurn(context.Background(), engine, "job-1", "chat-1", "hello", "hi", conversation.SpeakerShiro, pack); err != nil {
+		t.Fatalf("commitConversationTurn failed: %v", err)
 	}
-
-	if err := endConversationTurnAs(context.Background(), engine, "session-1", "hello", "hi", conversation.SpeakerShiro); err != nil {
-		t.Fatalf("endConversationTurnAs failed: %v", err)
-	}
-	if engine.endAs.sessionID != "session-1" || engine.endAs.speaker != conversation.SpeakerShiro {
-		t.Fatalf("unexpected EndTurnAs call: %#v", engine.endAs)
+	if got.TurnID != "job-1" || got.SessionID != "chat-1" || got.AgentSpeaker != conversation.SpeakerShiro || len(got.RecallTraceItems) != 1 || got.RecallTraceItems[0].Summary != "kept" {
+		t.Fatalf("unexpected typed request=%#v", got)
 	}
 }
 
-func TestConversationMemoryOptionalInterfaceErrors(t *testing.T) {
-	traceErr := errors.New("trace failed")
-	endErr := errors.New("end failed")
-	engine := &traceAwareConversationEngine{
-		mockConversationEngine: &mockConversationEngine{},
-		traceErr:               traceErr,
-		endErr:                 endErr,
+func TestCommitConversationTurnRejectsLegacyOnlyEngine(t *testing.T) {
+	type legacyOnlyEngine struct {
+		conversation.ConversationEngine
 	}
-
-	if err := recordRecallTrace(context.Background(), engine, "session-1", "response-1", "wild", conversation.RecallPack{}); !errors.Is(err, traceErr) {
-		t.Fatalf("expected trace error, got %v", err)
-	}
-	if err := endConversationTurnAs(context.Background(), engine, "session-1", "hello", "hi", conversation.SpeakerShiro); !errors.Is(err, endErr) {
-		t.Fatalf("expected end error, got %v", err)
+	legacy := &legacyOnlyEngine{}
+	if err := commitConversationTurn(context.Background(), legacy, "job-1", "chat-1", "hello", "hi", conversation.SpeakerMio, nil); !errors.Is(err, conversation.ErrConversationTurnUnavailable) {
+		t.Fatalf("error=%v, want typed route unavailable", err)
 	}
 }
 

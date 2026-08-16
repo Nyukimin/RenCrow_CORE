@@ -36,11 +36,11 @@ func (s *L1SQLiteStore) StartRecallTrace(ctx context.Context, trace domconv.Reca
 	}
 	_, err := s.db.ExecContext(ctx, `
 INSERT OR REPLACE INTO recall_trace (
-	trace_id, turn_id, chat_id, persona, route, user_message_hash, query_text_redacted,
+	trace_id, owner_id, turn_id, chat_id, persona, route, user_message_hash, query_text_redacted,
 	created_at, model_id, prompt_version, recall_policy_version, total_candidates,
 	injected_count, total_injected_tokens, status
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, trace.TraceID, trace.TurnID, trace.ChatID, trace.Persona, trace.Route, trace.UserMessageHash, trace.QueryTextRedacted,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, trace.TraceID, trace.OwnerID, trace.TurnID, trace.ChatID, trace.Persona, trace.Route, trace.UserMessageHash, trace.QueryTextRedacted,
 		trace.CreatedAt.UTC(), trace.ModelID, trace.PromptVersion, trace.RecallPolicyVersion, trace.TotalCandidates,
 		trace.InjectedCount, trace.TotalInjectedTokens, trace.Status)
 	if err != nil {
@@ -85,12 +85,12 @@ func (s *L1SQLiteStore) AddRecallTraceItems(ctx context.Context, traceID string,
 INSERT OR REPLACE INTO recall_trace_item (
 	item_id, trace_id, layer, memory_id, source_id, source_url, source_type, status,
 	score, relevance, recency, confidence, source_trust, reason, injected,
-	prompt_section, token_count, sensitivity, is_raw_or_summary, retrieved_at,
+	prompt_section, token_count, sensitivity, memory_state, is_raw_or_summary, retrieved_at,
 	published_at, event_id, summary, kind
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, item.ItemID, item.TraceID, item.Layer, item.MemoryID, item.SourceID, item.SourceURL, item.SourceType, item.Status,
 			item.Score, item.Relevance, item.Recency, item.Confidence, item.SourceTrust, item.Reason, injected,
-			item.PromptSection, item.TokenCount, item.Sensitivity, item.IsRawOrSummary, retrievedAt,
+			item.PromptSection, item.TokenCount, item.Sensitivity, item.MemoryState, item.IsRawOrSummary, retrievedAt,
 			publishedAt, item.EventID, item.Summary, item.Kind); err != nil {
 			return fmt.Errorf("failed to insert recall trace item: %w", err)
 		}
@@ -176,6 +176,13 @@ func RecallTraceID(sessionID string, createdAt time.Time, userMessage string) st
 	return "trace:" + safeRecallIDPart(sessionID) + ":" + createdAt.UTC().Format("20060102150405.000000000") + ":" + hex.EncodeToString(sum[:])[:12]
 }
 
+// OwnerRecallTraceID binds an owner recall trace to the authenticated request
+// and query without exposing the raw query in the identifier.
+func OwnerRecallTraceID(requestID, ownerID, query string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(requestID) + "\n" + strings.TrimSpace(ownerID) + "\n" + strings.TrimSpace(query)))
+	return "trace:owner:" + hex.EncodeToString(sum[:])[:32]
+}
+
 func HashRecallText(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
@@ -241,6 +248,8 @@ func TraceItemRecordsFromPack(traceID string, items []domconv.RecallTraceItem) [
 			Injected:       status == domconv.TraceStatusInjected || item.Decision == "included",
 			PromptSection:  item.PromptSection,
 			TokenCount:     item.TokenCount,
+			MemoryState:    item.MemoryState,
+			Sensitivity:    item.Sensitivity,
 			IsRawOrSummary: "summary",
 			RetrievedAt:    item.RetrievedAt,
 			Summary:        item.Summary,

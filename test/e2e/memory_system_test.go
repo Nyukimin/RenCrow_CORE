@@ -2,19 +2,59 @@ package e2e
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 )
 
 type memoryVectorHarness struct {
 	summaries []*domconv.ThreadSummary
+}
+
+type memoryE2EThreadSummaryEvidence struct {
+	SchemaVersion   string                               `json:"schema_version"`
+	ThreadID        int64                                `json:"thread_id"`
+	SessionID       string                               `json:"session_id"`
+	SourceTurnCount int                                  `json:"source_turn_count"`
+	Roles           []string                             `json:"roles"`
+	Turns           []memoryE2EThreadSummaryEvidenceTurn `json:"turns"`
+}
+
+type memoryE2EThreadSummaryEvidenceTurn struct {
+	Index   int    `json:"index"`
+	Speaker string `json:"speaker"`
+	Body    string `json:"body"`
+}
+
+func memoryE2EThreadSummaryEvidenceSHA256(thread *domconv.Thread, roles []string) string {
+	evidence := memoryE2EThreadSummaryEvidence{
+		SchemaVersion:   "memory-e2e.thread-summary-evidence.v1",
+		ThreadID:        thread.ID,
+		SessionID:       thread.SessionID,
+		SourceTurnCount: len(thread.Turns),
+		Roles:           append([]string(nil), roles...),
+		Turns:           make([]memoryE2EThreadSummaryEvidenceTurn, 0, len(thread.Turns)),
+	}
+	for index, turn := range thread.Turns {
+		evidence.Turns = append(evidence.Turns, memoryE2EThreadSummaryEvidenceTurn{
+			Index: index, Speaker: string(turn.Speaker), Body: turn.Msg,
+		})
+	}
+	encoded, err := json.Marshal(evidence)
+	if err != nil {
+		panic(fmt.Sprintf("encode memory E2E summary evidence: %v", err))
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
 }
 
 func (v *memoryVectorHarness) SaveThreadSummary(summary *domconv.ThreadSummary) {
@@ -51,6 +91,8 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 	activeThread := domconv.NewThread(sessionID, "daily")
 	activeThread.ID = threadID
 	vectorStore := &memoryVectorHarness{}
+	var expectedSummaryEvidence string
+	var expectedSummaryTime time.Time
 
 	for i := 1; i <= 15; i++ {
 		msg := domconv.NewMessage(domconv.SpeakerUser, fmt.Sprintf("日常会話メッセージ %02d: RenCrow memory preference", i), map[string]interface{}{
@@ -100,17 +142,30 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 				t.Fatalf("promoted memory state = %q", promoted.MemoryState)
 			}
 
+			summaryRoles := []string{"chat", "worker"}
+			summaryTime := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 			summary := &domconv.ThreadSummary{
 				ThreadID:  activeThread.ID,
 				SessionID: sessionID,
 				Domain:    "daily",
 				Summary:   "Daily conversation established a RenCrow memory preference.",
 				Keywords:  []string{"RenCrow", "memory", "daily"},
-				Roles:     []string{"chat", "worker"},
+				Roles:     summaryRoles,
 				Embedding: []float32{0.1, 0.2, 0.3},
 				StartTime: activeThread.StartTime,
-				EndTime:   time.Now().UTC(),
+				EndTime:   summaryTime,
 				IsNovel:   true,
+			}
+			expectedSummaryEvidence = memoryE2EThreadSummaryEvidenceSHA256(activeThread, summaryRoles)
+			expectedSummaryTime = summaryTime
+			summary.Receipt = &domconv.ThreadSummaryReceipt{
+				SchemaVersion:   domconv.ThreadSummaryReceiptSchemaVersion,
+				GenerationMode:  domconv.ThreadSummaryGenerationLLM,
+				Provider:        "memory-e2e-fixture",
+				EvidenceSHA256:  expectedSummaryEvidence,
+				SourceTurnCount: len(activeThread.Turns),
+				Roles:           append([]string(nil), summaryRoles...),
+				CreatedAt:       summaryTime,
 			}
 			if err := l2.SaveThreadSummary(ctx, summary); err != nil {
 				t.Fatalf("SaveThreadSummary failed: %v", err)
@@ -151,6 +206,20 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 	}
 	if len(l2Summaries) != 1 {
 		t.Fatalf("expected 1 L2 summary, got %d", len(l2Summaries))
+	}
+	readBackSummary := l2Summaries[0]
+	if readBackSummary.Receipt == nil {
+		t.Fatal("L2 summary receipt was not persisted")
+	}
+	if readBackSummary.Receipt.SchemaVersion != domconv.ThreadSummaryReceiptSchemaVersion ||
+		readBackSummary.Receipt.GenerationMode != domconv.ThreadSummaryGenerationLLM ||
+		readBackSummary.Receipt.Provider != "memory-e2e-fixture" ||
+		readBackSummary.Receipt.EvidenceSHA256 != expectedSummaryEvidence ||
+		readBackSummary.Receipt.SourceTurnCount != 12 ||
+		len(readBackSummary.Receipt.Roles) != 2 || readBackSummary.Receipt.Roles[0] != "chat" || readBackSummary.Receipt.Roles[1] != "worker" ||
+		len(readBackSummary.Roles) != 2 || readBackSummary.Roles[0] != "chat" || readBackSummary.Roles[1] != "worker" ||
+		!readBackSummary.Receipt.CreatedAt.Equal(expectedSummaryTime) {
+		t.Fatalf("L2 summary provenance mismatch: summary=%+v receipt=%+v expected_evidence=%q expected_created_at=%s", readBackSummary, readBackSummary.Receipt, expectedSummaryEvidence, expectedSummaryTime.Format(time.RFC3339Nano))
 	}
 
 	l3Results := vectorStore.SearchSimilar([]float32{0.1, 0.2, 0.3}, 3)

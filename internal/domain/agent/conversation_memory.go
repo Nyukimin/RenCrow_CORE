@@ -81,26 +81,28 @@ func containsASCIILetterAndDigit(value string) bool {
 	return hasLetter && hasDigit
 }
 
-type speakerAwareConversationEngine interface {
-	EndTurnAs(ctx context.Context, sessionID string, userMessage string, response string, speaker conversation.Speaker) error
+type typedConversationTurnEngine interface {
+	CommitConversationTurn(context.Context, conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error)
 }
 
-type recallTraceConversationEngine interface {
-	RecordRecallTrace(ctx context.Context, sessionID string, responseID string, role string, pack conversation.RecallPack) error
-}
-
-func recordRecallTrace(ctx context.Context, engine conversation.ConversationEngine, sessionID string, responseID string, role string, pack conversation.RecallPack) error {
-	if recorder, ok := engine.(recallTraceConversationEngine); ok {
-		return recorder.RecordRecallTrace(ctx, sessionID, responseID, role, pack)
+// commitConversationTurn is the only production Agent completion route. The
+// narrow capability check prevents an Agent from silently falling back to the
+// legacy EndTurn/EndTurnAs API, which cannot carry the exact filtered RecallPack
+// or the durable outbox transaction.
+func commitConversationTurn(ctx context.Context, engine conversation.ConversationEngine, turnID, sessionID, userMessage, response string, speaker conversation.Speaker, pack *conversation.RecallPack) error {
+	committer, ok := engine.(typedConversationTurnEngine)
+	if !ok {
+		return conversation.ErrConversationTurnUnavailable
 	}
-	return nil
-}
-
-func endConversationTurnAs(ctx context.Context, engine conversation.ConversationEngine, sessionID, userMessage, response string, speaker conversation.Speaker) error {
-	if aware, ok := engine.(speakerAwareConversationEngine); ok {
-		return aware.EndTurnAs(ctx, sessionID, userMessage, response, speaker)
-	}
-	return engine.EndTurn(ctx, sessionID, userMessage, response)
+	_, err := committer.CommitConversationTurn(ctx, conversation.ConversationTurnRequest{
+		TurnID:           turnID,
+		SessionID:        sessionID,
+		UserMessage:      userMessage,
+		AgentMessage:     response,
+		AgentSpeaker:     speaker,
+		RecallTraceItems: pack.ToTraceItems(),
+	})
+	return err
 }
 
 func conversationSpeakerForViewerRecipient(recipient string, fallback conversation.Speaker) conversation.Speaker {

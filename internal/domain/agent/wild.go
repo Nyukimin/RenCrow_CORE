@@ -82,7 +82,13 @@ func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return result.FormatForUser(), nil
+		response := result.FormatForUser()
+		if w.conversationEngine != nil {
+			if commitErr := commitConversationTurn(ctx, w.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, conversation.SpeakerMidori, nil); commitErr != nil {
+				return response, commitErr
+			}
+		}
+		return response, nil
 	}
 	messages := []llm.Message{}
 	var recallPack *conversation.RecallPack
@@ -93,9 +99,6 @@ func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 		} else if pack != nil {
 			filtered := pack.FilterForRole("wild").WithoutPersonaSystemPrompt()
 			recallPack = &filtered
-			if err := recordRecallTrace(ctx, w.conversationEngine, t.ChatID(), t.JobID().String(), string(conversation.SpeakerMidori), filtered); err != nil {
-				log.Printf("[Wild] RecordRecallTrace failed: %v", err)
-			}
 			messages = appendSharedConversationContinuityPrompt(messages, &filtered)
 			messages = append(messages, filtered.ToPromptMessages()...)
 		}
@@ -105,8 +108,8 @@ func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 			onToken(response)
 		}
 		if w.conversationEngine != nil {
-			if err := endConversationTurnAs(ctx, w.conversationEngine, t.ChatID(), userMessage, response, conversation.SpeakerMidori); err != nil {
-				log.Printf("[Wild] EndTurn failed: %v", err)
+			if err := commitConversationTurn(ctx, w.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, conversation.SpeakerMidori, recallPack); err != nil {
+				return response, err
 			}
 		}
 		return response, nil
@@ -129,8 +132,8 @@ func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 	response := strings.TrimSpace(resp.Content)
 	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
 	if w.conversationEngine != nil {
-		if err := endConversationTurnAs(ctx, w.conversationEngine, t.ChatID(), userMessage, response, conversation.SpeakerMidori); err != nil {
-			log.Printf("[Wild] EndTurn failed: %v", err)
+		if err := commitConversationTurn(ctx, w.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, conversation.SpeakerMidori, recallPack); err != nil {
+			return response, err
 		}
 	}
 	return response, nil

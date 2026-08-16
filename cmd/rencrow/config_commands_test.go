@@ -34,6 +34,7 @@ func TestBackupConfigValues(t *testing.T) {
 		SessionDir:         "/state/sessions",
 		OperationMemoryDir: "/state/memory",
 		ColdExportDir:      "/state/exports/parquet",
+		RawSourceDir:       "/state/raw-source",
 	}
 	databases := config.DatabasePathsConfig{
 		ConversationL1:      "/state/l1_memory.db",
@@ -52,6 +53,7 @@ func TestBackupConfigValues(t *testing.T) {
 		"/state/sessions",
 		"/state/memory",
 		"/state/exports/parquet",
+		"/state/raw-source",
 		"true",
 		"true",
 		"rencrow-redis",

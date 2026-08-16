@@ -104,6 +104,9 @@ func cmdDiagnosticsInteractionAllowed(method, path string) bool {
 	if path == "/v1/memory/user" || strings.HasPrefix(path, "/v1/memory/user/") {
 		return true
 	}
+	if strings.HasPrefix(path, "/viewer/memory/export/") {
+		return true
+	}
 	switch path {
 	case "/health",
 		"/health/live",
@@ -156,6 +159,12 @@ func cmdControlInteractionAllowed(method, path string) bool {
 		return true
 	}
 	switch path {
+	case "/viewer/memory/lifecycle/plan", "/viewer/memory/lifecycle/run":
+		return true
+	case "/viewer/memory/user/archive":
+		return true
+	case "/viewer/memory/export/parquet":
+		return true
 	case "/viewer/repair/run",
 		"/viewer/source-registry",
 		"/viewer/memory/profile-promotions/retry",

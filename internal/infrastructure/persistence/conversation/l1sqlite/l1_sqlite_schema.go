@@ -95,6 +95,20 @@ CREATE TABLE IF NOT EXISTS l1_event_log (
 CREATE INDEX IF NOT EXISTS idx_l1_event_log_namespace_created ON l1_event_log(namespace, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_event_log_type_created ON l1_event_log(event_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_event_log_session_created ON l1_event_log(session_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS conversation_lifecycle_raw_archive_outbox (
+	outbox_id TEXT PRIMARY KEY,
+	event_id TEXT NOT NULL UNIQUE,
+	namespace TEXT NOT NULL,
+	event_sha256 TEXT NOT NULL,
+	status TEXT NOT NULL CHECK(status IN ('pending', 'failed', 'archived')),
+	attempt_count INTEGER NOT NULL DEFAULT 0,
+	last_error TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL,
+	archived_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_raw_archive_outbox_status_created
+	ON conversation_lifecycle_raw_archive_outbox(status, created_at ASC, outbox_id ASC);
 CREATE TABLE IF NOT EXISTS l1_memory_owner_receipt (
 	request_id TEXT PRIMARY KEY,
 	operation TEXT NOT NULL,
@@ -107,6 +121,38 @@ CREATE TABLE IF NOT EXISTS l1_memory_owner_receipt (
 	created_at TIMESTAMP NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_l1_memory_owner_receipt_memory ON l1_memory_owner_receipt(memory_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS l1_user_memory_lifecycle_plan (
+	plan_request_id TEXT PRIMARY KEY,
+	plan_id TEXT NOT NULL UNIQUE,
+	owner_id TEXT NOT NULL,
+	actor_id TEXT NOT NULL,
+	payload_hash TEXT NOT NULL,
+	cohort_hash TEXT NOT NULL,
+	actions_json TEXT NOT NULL,
+	action_count INTEGER NOT NULL,
+	evaluation_at TIMESTAMP NOT NULL,
+	created_at TIMESTAMP NOT NULL,
+	expires_at TIMESTAMP NOT NULL,
+	status TEXT NOT NULL,
+	receipt_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_l1_user_memory_lifecycle_plan_owner_status
+	ON l1_user_memory_lifecycle_plan(owner_id, status, expires_at);
+CREATE TABLE IF NOT EXISTS l1_user_memory_lifecycle_run_receipt (
+	server_request_id TEXT PRIMARY KEY,
+	plan_request_id TEXT NOT NULL UNIQUE,
+	owner_id TEXT NOT NULL,
+	actor_id TEXT NOT NULL,
+	reason_hash TEXT NOT NULL,
+	cohort_hash TEXT NOT NULL,
+	actions_json TEXT NOT NULL,
+	action_count INTEGER NOT NULL,
+	completed_at TIMESTAMP NOT NULL,
+	status TEXT NOT NULL,
+	receipt_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_l1_user_memory_lifecycle_run_owner_completed
+	ON l1_user_memory_lifecycle_run_receipt(owner_id, completed_at DESC);
 CREATE TABLE IF NOT EXISTS l1_staging_item (
 	id TEXT PRIMARY KEY,
 	kind TEXT NOT NULL,
@@ -316,6 +362,7 @@ CREATE INDEX IF NOT EXISTS idx_domain_graph_assertion_entity ON domain_graph_ass
 CREATE INDEX IF NOT EXISTS idx_domain_graph_assertion_source ON domain_graph_assertion(source_id, raw_hash);
 CREATE TABLE IF NOT EXISTS recall_trace (
 	trace_id TEXT PRIMARY KEY,
+	owner_id TEXT NOT NULL DEFAULT '',
 	turn_id TEXT NOT NULL,
 	chat_id TEXT NOT NULL,
 	persona TEXT NOT NULL,
@@ -351,6 +398,7 @@ CREATE TABLE IF NOT EXISTS recall_trace_item (
 	prompt_section TEXT NOT NULL DEFAULT '',
 	token_count INTEGER NOT NULL DEFAULT 0,
 	sensitivity TEXT NOT NULL DEFAULT '',
+	memory_state TEXT NOT NULL DEFAULT '',
 	is_raw_or_summary TEXT NOT NULL DEFAULT '',
 	retrieved_at TIMESTAMP,
 	published_at TIMESTAMP,
@@ -377,6 +425,18 @@ CREATE INDEX IF NOT EXISTS idx_prompt_injection_event_trace ON prompt_injection_
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("failed to initialize l1 sqlite schema: %w", err)
 	}
+	if err := s.applyCommonRawSchemaMigration(ctx); err != nil {
+		return err
+	}
+	if err := s.applyChatGPTImportLedgerSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.applyChatGPTImportConfirmSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.applyConversationTurnSchema(ctx); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE l1_daily_digest ADD COLUMN digest_slot TEXT NOT NULL DEFAULT 'day'`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return fmt.Errorf("failed to migrate l1 daily digest slot: %w", err)
 	}
@@ -396,6 +456,17 @@ CREATE INDEX IF NOT EXISTS idx_prompt_injection_event_trace ON prompt_injection_
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return fmt.Errorf("failed to migrate l1 news article provenance: %w", err)
 		}
+	}
+	for _, stmt := range []string{
+		`ALTER TABLE recall_trace ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE recall_trace_item ADD COLUMN memory_state TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("failed to migrate recall trace owner fields: %w", err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_recall_trace_owner_created ON recall_trace(owner_id, created_at DESC)`); err != nil {
+		return fmt.Errorf("failed to initialize recall trace owner index: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx, `
 DROP INDEX IF EXISTS idx_l1_daily_digest_date_category;

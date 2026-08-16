@@ -14,22 +14,21 @@ type Dependencies struct {
 // Routes groups Memory route handlers supplied by cmd/rencrow.
 // Handler implementations are supplied by their owning adapter and command packages.
 type Routes struct {
-	Owner             http.HandlerFunc
-	Snapshot          http.HandlerFunc
-	Layers            http.HandlerFunc
-	Events            http.HandlerFunc
-	State             http.HandlerFunc
-	Promote           http.HandlerFunc
-	User              http.HandlerFunc
-	UserState         http.HandlerFunc
-	UserForget        http.HandlerFunc
-	UserSupersede     http.HandlerFunc
-	RecallPack        http.HandlerFunc
-	RecallTraces      http.HandlerFunc
-	ProfilePromotions http.HandlerFunc
-	ProfileRetry      http.HandlerFunc
-	ChatGPTL3Import   http.HandlerFunc
-	ChatGPTL3Confirm  http.HandlerFunc
+	Owner              http.HandlerFunc
+	Snapshot           http.HandlerFunc
+	Layers             http.HandlerFunc
+	Events             http.HandlerFunc
+	State              http.HandlerFunc
+	Promote            http.HandlerFunc
+	User               http.HandlerFunc
+	UserState          http.HandlerFunc
+	UserForget         http.HandlerFunc
+	UserSupersede      http.HandlerFunc
+	RecallPack         http.HandlerFunc
+	RecallTraces       http.HandlerFunc
+	ProfilePromotions  http.HandlerFunc
+	ProfileRetry       http.HandlerFunc
+	ChatGPTImportOwner http.HandlerFunc
 }
 
 // RegisterRoutes registers handlers at the feature route boundary.
@@ -37,12 +36,17 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
 	registerRoute(mux, "/v1/memory/user", routes.Owner)
 	registerRoute(mux, "/v1/memory/user/", routes.Owner)
+	registerRoute(mux, "/viewer/memory/lifecycle/plan", routes.Owner)
+	registerRoute(mux, "/viewer/memory/lifecycle/run", routes.Owner)
+	registerRoute(mux, "/viewer/memory/export/parquet", routes.Owner)
+	registerRoute(mux, "/viewer/memory/export/", routes.Owner)
 	registerRoute(mux, "/viewer/memory/snapshot", routes.Snapshot)
 	registerRoute(mux, "/viewer/memory/layers", routes.Layers)
 	registerRoute(mux, "/viewer/memory/events", routes.Events)
 	registerRoute(mux, "/viewer/memory/state", routes.State)
 	registerRoute(mux, "/viewer/memory/promote", routes.Promote)
 	registerRoute(mux, "/viewer/memory/user", routes.User)
+	registerRoute(mux, "/viewer/memory/user/archive", routes.Owner)
 	registerRoute(mux, "/viewer/memory/user/state", routes.UserState)
 	registerRoute(mux, "/viewer/memory/user/forget", routes.UserForget)
 	registerRoute(mux, "/viewer/memory/user/supersede", routes.UserSupersede)
@@ -50,8 +54,8 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/recall/traces", routes.RecallTraces)
 	registerRoute(mux, "/viewer/memory/profile-promotions", routes.ProfilePromotions)
 	registerRoute(mux, "/viewer/memory/profile-promotions/retry", routes.ProfileRetry)
-	registerRoute(mux, "/viewer/memory/import/chatgpt", routes.ChatGPTL3Import)
-	registerRoute(mux, "/viewer/memory/import/chatgpt/confirm", routes.ChatGPTL3Confirm)
+	registerRoute(mux, "/v1/memory/import/chatgpt", routes.ChatGPTImportOwner)
+	registerRoute(mux, "/v1/memory/import/chatgpt/", routes.ChatGPTImportOwner)
 }
 
 // StartBackground reserves the feature background-job boundary.

@@ -5,11 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 )
 
 // LLMProfileExtractor は LLM を使ってユーザープロファイルを抽出する
@@ -55,11 +59,17 @@ func (e *LLMProfileExtractor) Extract(ctx context.Context, thread *domconv.Threa
 		return &domconv.ProfileExtractionResult{}, nil
 	}
 
-	// 既知情報テキスト
+	// 既知情報テキスト。serviceがbounded owner projectionだけを渡す。
 	existingText := ""
 	if len(existing.Preferences) > 0 || len(existing.Facts) > 0 {
 		existingText = "既知情報:\n"
-		for k, v := range existing.Preferences {
+		preferenceKeys := make([]string, 0, len(existing.Preferences))
+		for k := range existing.Preferences {
+			preferenceKeys = append(preferenceKeys, k)
+		}
+		sort.Strings(preferenceKeys)
+		for _, k := range preferenceKeys {
+			v := existing.Preferences[k]
 			existingText += fmt.Sprintf("- %s: %s\n", k, v)
 		}
 		for _, f := range existing.Facts {
@@ -71,7 +81,7 @@ func (e *LLMProfileExtractor) Extract(ctx context.Context, thread *domconv.Threa
 	prompt := fmt.Sprintf(`以下の会話からユーザーに関する新しい情報を抽出してください。
 既知情報と重複するものは除外してください。
 JSON形式で出力してください。
-preferences の各値は必ず JSON の文字列（string）で返してください。数値に見える値も引用符で囲んだ文字列として返してください。オブジェクト、配列、真偽値、null は preferences の値に使わないでください。
+preferences の各キーと値、facts の各要素は必ず JSON の文字列（string）で返してください。数値、オブジェクト、配列、真偽値、null は使わないでください。
 
 %s
 
@@ -101,15 +111,17 @@ preferences の各値は必ず JSON の文字列（string）で返してくだ�
 	})
 	resp, err := e.provider.Generate(requestCtx, req)
 	if err != nil {
-		log.Printf("[ProfileExtractor] LLM call failed: %v", err)
+		log.Printf("[ProfileExtractor] LLM call failed: profile_extractor_unavailable")
 		return nil, fmt.Errorf("profile extractor LLM call failed: %w", err)
 	}
+	if len(resp.Content) > domainmemory.ProfilePromotionResponseBytesMax {
+		return nil, fmt.Errorf("profile extractor response exceeds %d bytes", domainmemory.ProfilePromotionResponseBytesMax)
+	}
 
-	// JSON パース（best-effort）
-	content := extractJSON(resp.Content)
-	result, err := decodeProfileExtractionResult(content)
+	// JSONはresponse全体でなければならない。prefix/suffixからJSONを抜き出さない。
+	result, err := decodeProfileExtractionResult(resp.Content)
 	if err != nil {
-		log.Printf("[ProfileExtractor] JSON parse failed: %v", err)
+		log.Printf("[ProfileExtractor] JSON parse failed: profile_extractor_invalid")
 		return nil, fmt.Errorf("profile extractor JSON parse failed: %w", err)
 	}
 
@@ -122,48 +134,113 @@ type profileExtractionPayload struct {
 }
 
 func decodeProfileExtractionResult(content string) (*domconv.ProfileExtractionResult, error) {
-	var payload profileExtractionPayload
-	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+	if len(content) > domainmemory.ProfilePromotionResponseBytesMax {
+		return nil, fmt.Errorf("profile extractor response exceeds %d bytes", domainmemory.ProfilePromotionResponseBytesMax)
+	}
+	trimmed := bytes.TrimSpace([]byte(content))
+	if !utf8.Valid(trimmed) || len(trimmed) == 0 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		return nil, fmt.Errorf("profile extractor response must be one JSON object")
+	}
+	fields, err := decodeUniqueJSONObject(trimmed)
+	if err != nil {
 		return nil, err
 	}
+	if fields == nil || len(fields) != 2 {
+		return nil, fmt.Errorf("profile extractor response must contain exactly preferences and facts")
+	}
+	preferencesRaw, ok := fields["preferences"]
+	if !ok {
+		return nil, fmt.Errorf("profile extractor response is missing preferences")
+	}
+	factsRaw, ok := fields["facts"]
+	if !ok {
+		return nil, fmt.Errorf("profile extractor response is missing facts")
+	}
+	rawPreferences, err := decodeUniqueJSONObject(bytes.TrimSpace(preferencesRaw))
+	if err != nil {
+		return nil, fmt.Errorf("preferences must be a JSON object")
+	}
+	if bytes.Equal(bytes.TrimSpace(factsRaw), []byte("null")) {
+		return nil, fmt.Errorf("facts must be a JSON array")
+	}
+	var facts []string
+	if err := json.Unmarshal(factsRaw, &facts); err != nil || facts == nil {
+		return nil, fmt.Errorf("facts must be a JSON array of strings")
+	}
+	if len(rawPreferences)+len(facts) > domainmemory.ProfilePromotionRawCandidateLimit {
+		return nil, fmt.Errorf("profile extractor raw candidate count exceeds %d", domainmemory.ProfilePromotionRawCandidateLimit)
+	}
+	var payload profileExtractionPayload
+	payload.Preferences = rawPreferences
+	payload.Facts = facts
 	result := &domconv.ProfileExtractionResult{
 		NewPreferences: make(map[string]string, len(payload.Preferences)),
 		NewFacts:       payload.Facts,
 	}
 	for key, raw := range payload.Preferences {
-		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return nil, fmt.Errorf("preference %q must be a JSON string or number", key)
+		if strings.TrimSpace(key) == "" || strings.ContainsAny(key, "\r\n\x00") || len([]rune(key)) > domainmemory.ProfilePromotionPreferenceKeyMax {
+			return nil, fmt.Errorf("preference key %q is invalid", key)
 		}
 		var stringValue string
 		if err := json.Unmarshal(raw, &stringValue); err == nil {
+			if strings.TrimSpace(stringValue) == "" || strings.ContainsAny(stringValue, "\r\n\x00") || len([]rune(stringValue)) > domainmemory.ProfilePromotionPreferenceValueMax {
+				return nil, fmt.Errorf("preference %q value is invalid", key)
+			}
 			result.NewPreferences[key] = stringValue
 			continue
 		}
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
-		var value any
-		if err := decoder.Decode(&value); err != nil {
-			return nil, fmt.Errorf("preference %q must be a JSON string or number: %w", key, err)
+		return nil, fmt.Errorf("preference %q must be a JSON string", key)
+	}
+	for i, fact := range result.NewFacts {
+		if strings.TrimSpace(fact) == "" || strings.ContainsAny(fact, "\r\n\x00") || len([]rune(fact)) > domainmemory.ProfilePromotionProjectionStatementMax {
+			return nil, fmt.Errorf("fact[%d] is invalid", i)
 		}
-		if number, ok := value.(json.Number); ok {
-			result.NewPreferences[key] = number.String()
-			continue
-		}
-		return nil, fmt.Errorf("preference %q must be a JSON string or number", key)
 	}
 	return result, nil
 }
 
-// extractJSON はレスポンスからJSON部分を抽出する
-func extractJSON(s string) string {
-	// JSON ブロックを探す
-	start := strings.Index(s, "{")
-	if start < 0 {
-		return "{}"
+func decodeUniqueJSONObject(raw []byte) (map[string]json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	first, err := decoder.Token()
+	if err != nil {
+		return nil, err
 	}
-	end := strings.LastIndex(s, "}")
-	if end < 0 || end < start {
-		return "{}"
+	delim, ok := first.(json.Delim)
+	if !ok || delim != '{' {
+		return nil, fmt.Errorf("JSON value must be an object")
 	}
-	return s[start : end+1]
+	values := make(map[string]json.RawMessage)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return nil, fmt.Errorf("JSON object key must be a string")
+		}
+		if _, exists := values[key]; exists {
+			return nil, fmt.Errorf("duplicate JSON object key %q", key)
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		values[key] = value
+	}
+	last, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delim, ok := last.(json.Delim); !ok || delim != '}' {
+		return nil, fmt.Errorf("JSON object is not closed")
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("JSON response contains more than one value")
+		}
+		return nil, err
+	}
+	return values, nil
 }

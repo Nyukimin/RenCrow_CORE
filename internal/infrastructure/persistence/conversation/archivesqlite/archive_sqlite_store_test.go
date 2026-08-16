@@ -22,16 +22,18 @@ func TestArchiveSQLiteStore_ExportThreadSummariesParquet(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.SaveThreadSummary(ctx, &domconv.ThreadSummary{
+	summary := &domconv.ThreadSummary{
 		ThreadID:  101,
 		StartTime: time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC),
 		EndTime:   time.Date(2026, 5, 1, 10, 10, 0, 0, time.UTC),
 		Domain:    "ai",
 		Summary:   "AI discussion",
-		Keywords:  []string{"ai", "local-llm"},
+		Keywords:  []string{"ai", "local-llm", "conversation"},
+		Roles:     []string{"user", "mio"},
 		Embedding: []float32{0.1, 0.2},
 		IsNovel:   true,
-	}); err != nil {
+	}
+	if err := store.SaveThreadSummaryWithReceipt(ctx, summary, receiptForRoles(summary.Roles)); err != nil {
 		t.Fatalf("SaveThreadSummary failed: %v", err)
 	}
 
@@ -67,15 +69,17 @@ func TestArchiveSQLiteStore_SaveThreadSummaryArchivesSessionID(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.SaveThreadSummary(ctx, &domconv.ThreadSummary{
+	summary := &domconv.ThreadSummary{
 		ThreadID:  201,
 		SessionID: "sess-l2",
 		StartTime: time.Date(2026, 5, 1, 11, 0, 0, 0, time.UTC),
 		EndTime:   time.Date(2026, 5, 1, 11, 10, 0, 0, time.UTC),
 		Domain:    "memory",
 		Summary:   "L2 summary archived by session",
-		Keywords:  []string{"l2"},
-	}); err != nil {
+		Keywords:  []string{"l2", "archive", "thread"},
+		Roles:     []string{"user"},
+	}
+	if err := store.SaveThreadSummaryWithReceipt(ctx, summary, receiptForRoles(summary.Roles)); err != nil {
 		t.Fatalf("SaveThreadSummary failed: %v", err)
 	}
 

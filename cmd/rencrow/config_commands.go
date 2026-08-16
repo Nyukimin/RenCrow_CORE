@@ -36,6 +36,7 @@ func backupConfigValues(backup config.BackupConfig, memory config.MemoryStorageC
 		memory.SessionDir,
 		memory.OperationMemoryDir,
 		memory.ColdExportDir,
+		memory.RawSourceDir,
 		fmt.Sprintf("%t", backup.Memory.RequireExports),
 		fmt.Sprintf("%t", backup.Memory.Redis.Enabled),
 		backup.Memory.Redis.Container,

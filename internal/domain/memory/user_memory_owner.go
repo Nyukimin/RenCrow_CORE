@@ -15,13 +15,18 @@ const (
 	UserMemoryOwnerOperationPin       = "pin"
 	UserMemoryOwnerOperationForget    = "forget"
 	UserMemoryOwnerOperationSupersede = "supersede"
+	UserMemoryOwnerOperationRecall    = "recall"
+	UserMemoryOwnerOperationTraceList = "trace_list"
+	UserMemoryOwnerOperationTraceShow = "trace_show"
+	UserMemoryOwnerOperationArchive   = "archive"
 )
 
 var (
-	ErrUserMemoryOwnerInvalid   = errors.New("invalid user memory owner request")
-	ErrUserMemoryOwnerNotFound  = errors.New("user memory owner item not found")
-	ErrUserMemoryOwnerForbidden = errors.New("user memory owner item is not owned by the authenticated user")
-	ErrUserMemoryOwnerConflict  = errors.New("user memory owner request conflicts with existing state")
+	ErrUserMemoryOwnerInvalid     = errors.New("invalid user memory owner request")
+	ErrUserMemoryOwnerNotFound    = errors.New("user memory owner item not found")
+	ErrUserMemoryOwnerForbidden   = errors.New("user memory owner item is not owned by the authenticated user")
+	ErrUserMemoryOwnerConflict    = errors.New("user memory owner request conflicts with existing state")
+	ErrUserMemoryOwnerUnavailable = errors.New("user memory owner store unavailable")
 )
 
 // UserMemoryOwnerView is the bounded projection returned by the CMD owner API.

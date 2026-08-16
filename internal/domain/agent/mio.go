@@ -217,9 +217,6 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 			filtered := recallPack.FilterForRole("chat")
 			filtered = filtered.WithoutPersonaSystemPrompt()
 			recallPack = &filtered
-			if err := recordRecallTrace(ctx, m.conversationEngine, t.ChatID(), t.JobID().String(), string(currentSpeaker), filtered); err != nil {
-				log.Printf("[Mio] RecordRecallTrace failed: %v", err)
-			}
 			// RecallPack からプロンプトメッセージを生成（system prompt + 過去文脈 + 会話履歴）
 			messages = appendSharedConversationContinuityPrompt(messages, recallPack)
 			messages = append(messages, recallPack.ToPromptMessages()...)
@@ -231,14 +228,13 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		}
 		m.rememberExpression(response)
 		if m.conversationEngine != nil {
-			if err := endConversationTurnAs(ctx, m.conversationEngine, t.ChatID(), userMessage, response, currentSpeaker); err != nil {
-				fmt.Printf("WARN: EndTurn failed: %v\n", err)
+			if err := commitConversationTurn(ctx, m.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, currentSpeaker, recallPack); err != nil {
+				return response, err
 			}
 		}
 		return response, nil
 	}
-	userMemoryInRecall := recallPack != nil && (len(recallPack.UserProfile.Facts) > 0 || len(recallPack.UserProfile.Preferences) > 0)
-	if !userMemoryInRecall {
+	if m.conversationEngine == nil {
 		if userMemoryPrompt, err := m.userMemoryPrompt(ctx); err != nil {
 			log.Printf("[Mio] user memory recall failed: %v", err)
 		} else if userMemoryPrompt != "" {
@@ -257,10 +253,10 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 			log.Printf("[Mio] Persona edit failed: %v", err)
 			// フォールバック: 通常の会話として処理を続行
 		} else {
-			// EndTurn で会話履歴に記録
+			// Canonical atomic commit records the user and Agent messages together.
 			if m.conversationEngine != nil {
-				if err := endConversationTurnAs(ctx, m.conversationEngine, t.ChatID(), userMessage, result, currentSpeaker); err != nil {
-					fmt.Printf("WARN: EndTurn failed: %v\n", err)
+				if err := commitConversationTurn(ctx, m.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, result, currentSpeaker, recallPack); err != nil {
+					return result, err
 				}
 			}
 			m.rememberExpression(result)
@@ -386,14 +382,11 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		})
 	}
 
-	// === v5.1: EndTurn（Store） ===
+	// Canonical atomic EndTurn commit.
 	if m.conversationEngine != nil {
-		if err := endConversationTurnAs(ctx, m.conversationEngine, t.ChatID(), userMessage, response, currentSpeaker); err != nil {
-			fmt.Printf("WARN: EndTurn failed: %v\n", err)
+		if err := commitConversationTurn(ctx, m.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, currentSpeaker, recallPack); err != nil {
+			return response, err
 		}
-	}
-	if err := m.captureUserMemoryCandidate(ctx, t); err != nil {
-		log.Printf("[Mio] user memory candidate capture failed: %v", err)
 	}
 
 	return response, nil

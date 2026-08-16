@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 )
 
@@ -22,7 +23,7 @@ import (
 // semantic dedupe, but still creates its own receipt and returns false.
 func (d *ArchiveSQLiteStore) ArchiveUserMemoryWithReceipt(ctx context.Context, item l1sqlite.L1MemoryEvent, receipt ArchiveRequestReceipt) (bool, error) {
 	if d == nil || d.db == nil {
-		return false, errors.New("archive sqlite store is closed")
+		return false, fmt.Errorf("%w: archive sqlite store is closed", domainmemory.ErrUserMemoryOwnerUnavailable)
 	}
 	receipt.RequestID = strings.TrimSpace(receipt.RequestID)
 	receipt.UserID = strings.TrimSpace(receipt.UserID)
@@ -35,7 +36,7 @@ func (d *ArchiveSQLiteStore) ArchiveUserMemoryWithReceipt(ctx context.Context, i
 		receipt.CreatedAt = receipt.CreatedAt.UTC()
 	}
 	if err := validateArchiveUserMemoryBinding(item, receipt); err != nil {
-		return false, err
+		return false, fmt.Errorf("%w: %v", domainmemory.ErrUserMemoryOwnerInvalid, err)
 	}
 	metaJSON, err := json.Marshal(item.Meta)
 	if err != nil {
@@ -46,37 +47,37 @@ func (d *ArchiveSQLiteStore) ArchiveUserMemoryWithReceipt(ctx context.Context, i
 	defer d.mu.Unlock()
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, fmt.Errorf("failed to begin archive user memory transaction: %w", err)
+		return false, fmt.Errorf("%w: failed to begin archive user memory transaction: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
 	defer tx.Rollback()
 
 	existingReceipt, found, err := findArchiveRequestReceipt(ctx, tx, receipt.RequestID, "")
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("%w: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
 	if found {
 		if !archiveRequestReceiptBindingEqual(existingReceipt, receipt) {
-			return false, errors.New("conversation archive request receipt conflict")
+			return false, fmt.Errorf("%w: conversation archive request receipt conflict", domainmemory.ErrUserMemoryOwnerConflict)
 		}
 		existingEvent, eventFound, err := findArchiveMemoryEvent(ctx, tx, "user:"+receipt.UserID, receipt.MemoryID)
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("%w: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 		}
 		if !eventFound {
-			return false, errors.New("conversation archive request receipt references a missing memory")
+			return false, fmt.Errorf("%w: conversation archive request receipt references a missing memory", domainmemory.ErrUserMemoryOwnerConflict)
 		}
 		if !archiveL1MemoryEventEqual(existingEvent, item) {
-			return false, errors.New("conversation archive request receipt memory conflicts with archived event")
+			return false, fmt.Errorf("%w: conversation archive request receipt memory conflicts with archived event", domainmemory.ErrUserMemoryOwnerConflict)
 		}
 		return true, nil
 	}
 
 	existingEvent, eventFound, err := findArchiveMemoryEvent(ctx, tx, "user:"+receipt.UserID, receipt.MemoryID)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("%w: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
 	if eventFound && !archiveL1MemoryEventEqual(existingEvent, item) {
-		return false, errors.New("conversation archive memory conflict")
+		return false, fmt.Errorf("%w: conversation archive memory conflict", domainmemory.ErrUserMemoryOwnerConflict)
 	}
 	if !eventFound {
 		if _, err := tx.ExecContext(ctx, `
@@ -84,20 +85,20 @@ INSERT INTO l1_memory_event_archive (
 	id, namespace, session_id, thread_id, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, item.ID, item.Namespace, item.SessionID, item.ThreadID, string(item.Speaker), item.Message, string(metaJSON),
+		`, item.ID, item.Namespace, item.SessionID, item.ThreadID, string(item.Speaker), item.Message, string(metaJSON),
 			item.MemoryState, item.Layer, item.Source, item.CreatedAt, item.UpdatedAt); err != nil {
-			return false, fmt.Errorf("failed to archive user memory event: %w", err)
+			return false, fmt.Errorf("%w: failed to archive user memory event: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO conversation_archive_request_receipt (
 	request_id, user_id, actor_id, payload_hash, memory_id, created_at
 ) VALUES (?, ?, ?, ?, ?, ?)
-`, receipt.RequestID, receipt.UserID, receipt.ActorID, receipt.PayloadHash, receipt.MemoryID, receipt.CreatedAt); err != nil {
-		return false, fmt.Errorf("failed to persist conversation archive request receipt: %w", err)
+	`, receipt.RequestID, receipt.UserID, receipt.ActorID, receipt.PayloadHash, receipt.MemoryID, receipt.CreatedAt); err != nil {
+		return false, fmt.Errorf("%w: failed to persist conversation archive request receipt: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("failed to commit conversation archive request: %w", err)
+		return false, fmt.Errorf("%w: failed to commit conversation archive request: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
 	return false, nil
 }
@@ -113,12 +114,12 @@ func (d *ArchiveSQLiteStore) ArchiveUserMemoryWithRequest(ctx context.Context, i
 // an archived row.
 func (d *ArchiveSQLiteStore) FindUserMemoryArchive(ctx context.Context, userID, memoryID string) (l1sqlite.L1MemoryEvent, bool, error) {
 	if d == nil || d.db == nil {
-		return l1sqlite.L1MemoryEvent{}, false, errors.New("archive sqlite store is closed")
+		return l1sqlite.L1MemoryEvent{}, false, fmt.Errorf("%w: archive sqlite store is closed", domainmemory.ErrUserMemoryOwnerUnavailable)
 	}
 	userID = strings.TrimSpace(userID)
 	memoryID = strings.TrimSpace(memoryID)
 	if userID == "" || memoryID == "" {
-		return l1sqlite.L1MemoryEvent{}, false, errors.New("archive user memory user_id and memory_id are required")
+		return l1sqlite.L1MemoryEvent{}, false, fmt.Errorf("%w: archive user memory user_id and memory_id are required", domainmemory.ErrUserMemoryOwnerInvalid)
 	}
 	return findArchiveMemoryEvent(ctx, d.db, "user:"+userID, memoryID)
 }
@@ -132,12 +133,12 @@ func (d *ArchiveSQLiteStore) FindArchivedUserMemory(ctx context.Context, userID,
 // FindArchiveRequestReceipt performs an exact request-and-user lookup.
 func (d *ArchiveSQLiteStore) FindArchiveRequestReceipt(ctx context.Context, userID, requestID string) (ArchiveRequestReceipt, bool, error) {
 	if d == nil || d.db == nil {
-		return ArchiveRequestReceipt{}, false, errors.New("archive sqlite store is closed")
+		return ArchiveRequestReceipt{}, false, fmt.Errorf("%w: archive sqlite store is closed", domainmemory.ErrUserMemoryOwnerUnavailable)
 	}
 	userID = strings.TrimSpace(userID)
 	requestID = strings.TrimSpace(requestID)
 	if userID == "" || requestID == "" {
-		return ArchiveRequestReceipt{}, false, errors.New("archive request user_id and request_id are required")
+		return ArchiveRequestReceipt{}, false, fmt.Errorf("%w: archive request user_id and request_id are required", domainmemory.ErrUserMemoryOwnerInvalid)
 	}
 	return findArchiveRequestReceipt(ctx, d.db, requestID, userID)
 }
@@ -245,6 +246,163 @@ func archiveNullTime(value sql.NullTime) time.Time {
 
 func archiveL1MemoryEventEqual(left, right l1sqlite.L1MemoryEvent) bool {
 	return left.ID == right.ID && left.Namespace == right.Namespace && left.SessionID == right.SessionID && left.ThreadID == right.ThreadID && left.Speaker == right.Speaker && left.Message == right.Message && canonicalArchiveJSON(left.Meta) == canonicalArchiveJSON(right.Meta) && left.MemoryState == right.MemoryState && left.Layer == right.Layer && left.Source == right.Source && left.CreatedAt.Equal(right.CreatedAt) && left.UpdatedAt.Equal(right.UpdatedAt)
+}
+
+// ArchiveL1RawLifecycleEvent archives one exact old conversation event and
+// its lifecycle receipt in a single archive transaction. The source L1 store
+// is intentionally not reachable from this adapter, so replay after a crash
+// is safe and never deletes or mutates the source.
+func (d *ArchiveSQLiteStore) ArchiveL1RawLifecycleEvent(ctx context.Context, item l1sqlite.L1MemoryEvent, receipt l1sqlite.L1RawLifecycleArchiveReceipt) error {
+	if d == nil || d.db == nil {
+		return fmt.Errorf("%w: %w: archive sqlite store is closed", l1sqlite.ErrL1RawLifecycleArchiveUnavailable, domainmemory.ErrUserMemoryOwnerUnavailable)
+	}
+	receipt.OutboxID = strings.TrimSpace(receipt.OutboxID)
+	receipt.EventID = strings.TrimSpace(receipt.EventID)
+	receipt.EventSHA256 = strings.TrimSpace(receipt.EventSHA256)
+	if receipt.CreatedAt.IsZero() {
+		receipt.CreatedAt = time.Now().UTC()
+	} else {
+		receipt.CreatedAt = receipt.CreatedAt.UTC()
+	}
+	if receipt.OutboxID == "" || receipt.EventID == "" || receipt.EventSHA256 == "" || item.ID == "" || item.ID != receipt.EventID {
+		return fmt.Errorf("%w: raw lifecycle archive binding is incomplete", l1sqlite.ErrL1RawLifecycleArchiveConflict)
+	}
+	if !strings.HasPrefix(item.Namespace, "conv:") || item.MemoryState != l1sqlite.MemoryStateObserved || item.Layer != l1sqlite.MemoryLayerL1 {
+		return fmt.Errorf("%w: raw lifecycle archive event is not an L1 conversation event", l1sqlite.ErrL1RawLifecycleArchiveConflict)
+	}
+	eventSHA256, err := l1sqlite.CanonicalL1MemoryEventSHA256(item)
+	if err != nil {
+		return fmt.Errorf("%w: compute raw lifecycle archive hash: %v", l1sqlite.ErrL1RawLifecycleArchiveConflict, err)
+	}
+	if eventSHA256 != receipt.EventSHA256 {
+		return fmt.Errorf("%w: raw lifecycle archive hash does not match event %s", l1sqlite.ErrL1RawLifecycleArchiveConflict, item.ID)
+	}
+	if want := l1sqlite.L1RawLifecycleOutboxID(item.ID, eventSHA256); want != receipt.OutboxID {
+		return fmt.Errorf("%w: raw lifecycle archive outbox binding does not match event %s", l1sqlite.ErrL1RawLifecycleArchiveConflict, item.ID)
+	}
+	metaJSON, err := json.Marshal(normalizeArchiveMeta(item.Meta))
+	if err != nil {
+		return fmt.Errorf("%w: marshal raw lifecycle archive metadata: %v", l1sqlite.ErrL1RawLifecycleArchiveConflict, err)
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%w: begin raw lifecycle archive transaction: %v", l1sqlite.ErrL1RawLifecycleArchiveUnavailable, err)
+	}
+	defer tx.Rollback()
+
+	existingReceipt, found, err := findRawLifecycleArchiveReceipt(ctx, tx, receipt.OutboxID, "")
+	if err != nil {
+		return fmt.Errorf("%w: read raw lifecycle archive receipt: %v", l1sqlite.ErrL1RawLifecycleArchiveUnavailable, err)
+	}
+	if found {
+		if existingReceipt.EventID != receipt.EventID || existingReceipt.EventSHA256 != receipt.EventSHA256 {
+			return fmt.Errorf("%w: raw lifecycle archive receipt conflict for outbox %s", l1sqlite.ErrL1RawLifecycleArchiveConflict, receipt.OutboxID)
+		}
+		existingEvent, eventFound, err := findArchiveMemoryEventByID(ctx, tx, receipt.EventID)
+		if err != nil {
+			return fmt.Errorf("%w: read raw lifecycle archived event: %v", l1sqlite.ErrL1RawLifecycleArchiveUnavailable, err)
+		}
+		if !eventFound || !rawLifecycleArchiveEventEqual(existingEvent, item) {
+			return fmt.Errorf("%w: raw lifecycle archive receipt references conflicting event %s", l1sqlite.ErrL1RawLifecycleArchiveConflict, receipt.EventID)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("%w: replay raw lifecycle archive transaction: %v", l1sqlite.ErrL1RawLifecycleArchiveUnavailable, err)
+		}
+		return nil
+	}
+	var eventReceiptOutboxID string
+	if err := tx.QueryRowContext(ctx, `
+SELECT outbox_id
+FROM conversation_lifecycle_raw_archive_receipt
+WHERE event_id = ?`, receipt.EventID).Scan(&eventReceiptOutboxID); err == nil {
+		return fmt.Errorf("%w: raw lifecycle archive event %s is already bound to outbox %s", l1sqlite.ErrL1RawLifecycleArchiveConflict, receipt.EventID, eventReceiptOutboxID)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: read raw lifecycle archive event binding: %v", l1sqlite.ErrL1RawLifecycleArchiveUnavailable, err)
+	}
+
+	existingEvent, eventFound, err := findArchiveMemoryEventByID(ctx, tx, receipt.EventID)
+	if err != nil {
+		return fmt.Errorf("%w: read raw lifecycle archived event: %v", l1sqlite.ErrL1RawLifecycleArchiveUnavailable, err)
+	}
+	if eventFound {
+		if !rawLifecycleArchiveEventEqual(existingEvent, item) {
+			return fmt.Errorf("%w: raw lifecycle archived event %s conflicts with source", l1sqlite.ErrL1RawLifecycleArchiveConflict, receipt.EventID)
+		}
+	} else if _, err := tx.ExecContext(ctx, `
+INSERT INTO l1_memory_event_archive (
+	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	memory_state, layer, source, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, item.ID, item.Namespace, item.SessionID, item.ThreadID, string(item.Speaker), item.Message, string(metaJSON), item.MemoryState, item.Layer, item.Source, item.CreatedAt, item.UpdatedAt); err != nil {
+		return fmt.Errorf("%w: insert raw lifecycle archived event: %v", l1sqlite.ErrL1RawLifecycleArchiveUnavailable, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO conversation_lifecycle_raw_archive_receipt (
+	outbox_id, event_id, event_sha256, created_at
+) VALUES (?, ?, ?, ?)`, receipt.OutboxID, receipt.EventID, receipt.EventSHA256, receipt.CreatedAt); err != nil {
+		return fmt.Errorf("%w: insert raw lifecycle archive receipt: %v", l1sqlite.ErrL1RawLifecycleArchiveUnavailable, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%w: commit raw lifecycle archive transaction: %v", l1sqlite.ErrL1RawLifecycleArchiveUnavailable, err)
+	}
+	return nil
+}
+
+type rawLifecycleArchiveReceipt struct {
+	OutboxID    string
+	EventID     string
+	EventSHA256 string
+	CreatedAt   time.Time
+}
+
+func findRawLifecycleArchiveReceipt(ctx context.Context, queryer interface {
+	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
+}, outboxID, eventID string) (rawLifecycleArchiveReceipt, bool, error) {
+	query := `SELECT outbox_id, event_id, event_sha256, created_at FROM conversation_lifecycle_raw_archive_receipt WHERE outbox_id = ?`
+	args := []interface{}{outboxID}
+	if strings.TrimSpace(eventID) != "" {
+		query = `SELECT outbox_id, event_id, event_sha256, created_at FROM conversation_lifecycle_raw_archive_receipt WHERE outbox_id = ? AND event_id = ?`
+		args = append(args, eventID)
+	}
+	var receipt rawLifecycleArchiveReceipt
+	if err := queryer.QueryRowContext(ctx, query, args...).Scan(&receipt.OutboxID, &receipt.EventID, &receipt.EventSHA256, &receipt.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return rawLifecycleArchiveReceipt{}, false, nil
+		}
+		return rawLifecycleArchiveReceipt{}, false, err
+	}
+	return receipt, true, nil
+}
+
+func findArchiveMemoryEventByID(ctx context.Context, queryer interface {
+	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
+}, eventID string) (l1sqlite.L1MemoryEvent, bool, error) {
+	event, err := scanArchiveMemoryEvent(queryer.QueryRowContext(ctx, `
+SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+       memory_state, layer, source, created_at, updated_at
+FROM l1_memory_event_archive WHERE id = ?`, eventID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return l1sqlite.L1MemoryEvent{}, false, nil
+	}
+	if err != nil {
+		return l1sqlite.L1MemoryEvent{}, false, err
+	}
+	return event, true, nil
+}
+
+func normalizeArchiveMeta(meta map[string]interface{}) map[string]interface{} {
+	if meta == nil {
+		return map[string]interface{}{}
+	}
+	return meta
+}
+
+func rawLifecycleArchiveEventEqual(left, right l1sqlite.L1MemoryEvent) bool {
+	leftHash, leftErr := l1sqlite.CanonicalL1MemoryEventSHA256(left)
+	rightHash, rightErr := l1sqlite.CanonicalL1MemoryEventSHA256(right)
+	return leftErr == nil && rightErr == nil && leftHash == rightHash
 }
 
 func canonicalArchiveJSON(value interface{}) string {

@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -425,13 +427,15 @@ func TestMioAgentChat_UsesFullShiroPromptForShiroChat(t *testing.T) {
 // === mockConversationEngine ===
 
 type mockConversationEngine struct {
-	beginTurnFunc func(ctx context.Context, sessionID string, userMessage string) (*conversation.RecallPack, error)
-	endTurnFunc   func(ctx context.Context, sessionID string, userMessage string, response string) error
-	endTurnAsFunc func(ctx context.Context, sessionID string, userMessage string, response string, speaker conversation.Speaker) error
-	flushFunc     func(ctx context.Context, sessionID string) error
-	statusFunc    func(ctx context.Context, sessionID string) (*conversation.ConversationStatus, error)
-	resetFunc     func(ctx context.Context, sessionID string) error
-	persona       conversation.PersonaState
+	beginTurnFunc  func(ctx context.Context, sessionID string, userMessage string) (*conversation.RecallPack, error)
+	endTurnFunc    func(ctx context.Context, sessionID string, userMessage string, response string) error
+	endTurnAsFunc  func(ctx context.Context, sessionID string, userMessage string, response string, speaker conversation.Speaker) error
+	commitTurnFunc func(ctx context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error)
+	commitRequests []conversation.ConversationTurnRequest
+	flushFunc      func(ctx context.Context, sessionID string) error
+	statusFunc     func(ctx context.Context, sessionID string) (*conversation.ConversationStatus, error)
+	resetFunc      func(ctx context.Context, sessionID string) error
+	persona        conversation.PersonaState
 }
 
 func (m *mockConversationEngine) BeginTurn(ctx context.Context, sessionID string, userMessage string) (*conversation.RecallPack, error) {
@@ -455,6 +459,23 @@ func (m *mockConversationEngine) EndTurnAs(ctx context.Context, sessionID string
 	return m.EndTurn(ctx, sessionID, userMessage, response)
 }
 
+func (m *mockConversationEngine) CommitConversationTurn(ctx context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
+	m.commitRequests = append(m.commitRequests, request)
+	if m.commitTurnFunc != nil {
+		return m.commitTurnFunc(ctx, request)
+	}
+	if m.endTurnAsFunc != nil {
+		if err := m.endTurnAsFunc(ctx, request.SessionID, request.UserMessage, request.AgentMessage, request.AgentSpeaker); err != nil {
+			return conversation.ConversationTurnResult{}, err
+		}
+	} else if m.endTurnFunc != nil {
+		if err := m.endTurnFunc(ctx, request.SessionID, request.UserMessage, request.AgentMessage); err != nil {
+			return conversation.ConversationTurnResult{}, err
+		}
+	}
+	return conversation.ConversationTurnResult{TurnID: request.TurnID, SessionID: request.SessionID, Status: conversation.ConversationTurnCompleted}, nil
+}
+
 func (m *mockConversationEngine) GetPersona() conversation.PersonaState { return m.persona }
 func (m *mockConversationEngine) FlushCurrentThread(ctx context.Context, sessionID string) error {
 	if m.flushFunc != nil {
@@ -473,6 +494,27 @@ func (m *mockConversationEngine) ResetSession(ctx context.Context, sessionID str
 		return m.resetFunc(ctx, sessionID)
 	}
 	return nil
+}
+
+type legacyOnlyConversationEngine struct{ delegate *mockConversationEngine }
+
+func (e *legacyOnlyConversationEngine) BeginTurn(ctx context.Context, sessionID, userMessage string) (*conversation.RecallPack, error) {
+	return e.delegate.BeginTurn(ctx, sessionID, userMessage)
+}
+func (e *legacyOnlyConversationEngine) EndTurn(ctx context.Context, sessionID, userMessage, response string) error {
+	return e.delegate.EndTurn(ctx, sessionID, userMessage, response)
+}
+func (e *legacyOnlyConversationEngine) GetPersona() conversation.PersonaState {
+	return e.delegate.GetPersona()
+}
+func (e *legacyOnlyConversationEngine) FlushCurrentThread(ctx context.Context, sessionID string) error {
+	return e.delegate.FlushCurrentThread(ctx, sessionID)
+}
+func (e *legacyOnlyConversationEngine) GetStatus(ctx context.Context, sessionID string) (*conversation.ConversationStatus, error) {
+	return e.delegate.GetStatus(ctx, sessionID)
+}
+func (e *legacyOnlyConversationEngine) ResetSession(ctx context.Context, sessionID string) error {
+	return e.delegate.ResetSession(ctx, sessionID)
 }
 
 func TestStripLeadingAgentSelfLabel(t *testing.T) {
@@ -573,6 +615,109 @@ func TestMioAgent_Chat_WithConversationEngine(t *testing.T) {
 		if strings.Contains(message.Content, "You are Mio.") {
 			t.Fatalf("RecallPack Persona SystemPrompt was reinjected: %#v", capturedReq.Messages)
 		}
+	}
+}
+
+func TestMioAgent_Chat_CommitsTypedTurnWithJobIDAndFilteredRecall(t *testing.T) {
+	var got conversation.ConversationTurnRequest
+	jobID := task.JobIDFromString("job-typed-commit")
+	inputPack := &conversation.RecallPack{
+		ShortContext: []conversation.Message{{Speaker: conversation.SpeakerUser, Msg: "prior"}},
+		MidSummaries: []conversation.ThreadSummary{{Summary: "chat summary", Roles: []string{"chat"}}, {Summary: "worker only", Roles: []string{"worker"}}},
+	}
+	engine := &mockConversationEngine{
+		beginTurnFunc: func(context.Context, string, string) (*conversation.RecallPack, error) {
+			return inputPack, nil
+		},
+		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
+			got = request
+			return conversation.ConversationTurnResult{TurnID: request.TurnID, Status: conversation.ConversationTurnCompleted}, nil
+		},
+	}
+	provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+		return llm.GenerateResponse{Content: "typed response"}, nil
+	}}
+	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
+	testTask := task.NewTask(jobID, "hello", "viewer", "chat-typed")
+	response, err := mio.Chat(context.Background(), testTask)
+	if err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+	if response != "typed response" {
+		t.Fatalf("response=%q", response)
+	}
+	if len(engine.commitRequests) != 1 {
+		t.Fatalf("typed commit calls=%d, want 1", len(engine.commitRequests))
+	}
+	if got.TurnID != jobID.String() || got.SessionID != "chat-typed" || got.UserMessage != "hello" || got.AgentMessage != response || got.AgentSpeaker != conversation.SpeakerMio {
+		t.Fatalf("typed request identity=%#v", got)
+	}
+	if len(got.RecallTraceItems) == 0 {
+		t.Fatal("filtered RecallPack trace was not committed")
+	}
+	expectedPack := inputPack.FilterForRole("chat").WithoutPersonaSystemPrompt()
+	if !reflect.DeepEqual(got.RecallTraceItems, expectedPack.ToTraceItems()) {
+		t.Fatalf("typed trace does not match exact filtered pack: got=%#v want=%#v", got.RecallTraceItems, expectedPack.ToTraceItems())
+	}
+}
+
+func TestMioAgent_Chat_DoesNotFallbackToLegacyUserMemoryWhenEngineOwnsRecall(t *testing.T) {
+	var capturedReq llm.GenerateRequest
+	var committed conversation.ConversationTurnRequest
+	pack := &conversation.RecallPack{
+		ShortContext: []conversation.Message{{Speaker: conversation.SpeakerUser, Msg: "actual recall"}},
+	}
+	engine := &mockConversationEngine{
+		beginTurnFunc: func(context.Context, string, string) (*conversation.RecallPack, error) {
+			return pack, nil
+		},
+		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
+			committed = request
+			return conversation.ConversationTurnResult{TurnID: request.TurnID, Status: conversation.ConversationTurnCompleted}, nil
+		},
+	}
+	provider := &mockLLMProvider{generateFunc: func(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+		capturedReq = req
+		return llm.GenerateResponse{Content: "canonical response"}, nil
+	}}
+	memory := &mockUserMemoryManager{listItems: []domainmemory.UserMemory{{
+		ID: "legacy-ren-memory", Namespace: "user:ren", UserID: "ren", Statement: "legacy ren memory must not leak",
+		State: domainmemory.MemoryStateConfirmed, Sensitivity: "normal", Active: true,
+	}}}
+	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine).
+		WithUserMemoryManager(memory)
+
+	response, err := mio.Chat(context.Background(), task.NewTask(task.JobIDFromString("job-canonical-memory"), "hello", "viewer", "chat-canonical-memory"))
+	if err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+	if response != "canonical response" {
+		t.Fatalf("response=%q", response)
+	}
+	for _, message := range capturedReq.Messages {
+		if strings.Contains(message.Content, "legacy ren memory must not leak") {
+			t.Fatalf("legacy user-memory prompt leaked despite canonical engine: %#v", capturedReq.Messages)
+		}
+	}
+	filteredPack := pack.FilterForRole("chat").WithoutPersonaSystemPrompt()
+	wantTrace := filteredPack.ToTraceItems()
+	if !reflect.DeepEqual(committed.RecallTraceItems, wantTrace) {
+		t.Fatalf("committed trace=%#v, want exact engine pack trace=%#v", committed.RecallTraceItems, wantTrace)
+	}
+}
+
+func TestMioAgent_Chat_ReturnsUnavailableWhenTypedCommitIsMissing(t *testing.T) {
+	engine := &legacyOnlyConversationEngine{delegate: &mockConversationEngine{}}
+	provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+		return llm.GenerateResponse{Content: "generated"}, nil
+	}}
+	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
+	response, err := mio.Chat(context.Background(), task.NewTask(task.JobIDFromString("job-no-typed"), "hello", "viewer", "chat-no-typed"))
+	if err == nil || !errors.Is(err, conversation.ErrConversationTurnUnavailable) {
+		t.Fatalf("err=%v, want typed route unavailable", err)
+	}
+	if response != "generated" {
+		t.Fatalf("response=%q, want generated response alongside error", response)
 	}
 }
 
@@ -828,8 +973,8 @@ func TestMioAgent_Chat_ConversationEngine_EndTurnError(t *testing.T) {
 	testTask := task.NewTask(task.NewJobID(), "hello", "line", "U123")
 
 	resp, err := mio.Chat(context.Background(), testTask)
-	if err != nil {
-		t.Fatalf("Chat should succeed even when EndTurn fails: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "storage failure") {
+		t.Fatalf("Chat should return the typed commit failure, err=%v", err)
 	}
 	if resp != "my response" {
 		t.Errorf("response should still be returned: want 'my response', got %q", resp)
@@ -1643,60 +1788,5 @@ func TestMioAgentChatInjectsConfirmedUserMemory(t *testing.T) {
 	}
 	if strings.Contains(joined, "candidate は注入しない") || strings.Contains(joined, "sensitive は注入しない") {
 		t.Fatalf("unsafe user memory leaked into prompt: %s", joined)
-	}
-}
-
-func TestMioAgentChatCreatesCandidateFromUserPreference(t *testing.T) {
-	provider := &mockLLMProvider{generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
-		return llm.GenerateResponse{Content: "了解"}, nil
-	}}
-	mem := &mockUserMemoryManager{}
-	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil).
-		WithUserMemoryManager(mem)
-
-	_, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "俺は映画が好き", "viewer", "viewer-user"))
-	if err != nil {
-		t.Fatalf("Chat failed: %v", err)
-	}
-	if len(mem.createInputs) != 1 {
-		t.Fatalf("expected one candidate memory, got %d", len(mem.createInputs))
-	}
-	input := mem.createInputs[0]
-	if input.UserID != "ren" ||
-		input.Type != domainmemory.UserMemoryTypePreference ||
-		input.State != domainmemory.MemoryStateCandidate ||
-		input.Statement != "映画が好き" ||
-		input.Source != "chat_auto_candidate" ||
-		input.Confidence <= 0 ||
-		len(input.EvidenceEventIDs) == 0 {
-		t.Fatalf("unexpected candidate input: %+v", input)
-	}
-}
-
-func TestMioAgentChatDoesNotCreateDuplicateCandidate(t *testing.T) {
-	provider := &mockLLMProvider{generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
-		return llm.GenerateResponse{Content: "了解"}, nil
-	}}
-	mem := &mockUserMemoryManager{
-		listItems: []domainmemory.UserMemory{{
-			ID:          "mem-existing",
-			Namespace:   "user:ren",
-			UserID:      "ren",
-			Type:        domainmemory.UserMemoryTypePreference,
-			Statement:   "映画が好き",
-			State:       domainmemory.MemoryStateCandidate,
-			Sensitivity: "normal",
-			Active:      true,
-		}},
-	}
-	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil).
-		WithUserMemoryManager(mem)
-
-	_, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "俺は映画が好き", "viewer", "viewer-user"))
-	if err != nil {
-		t.Fatalf("Chat failed: %v", err)
-	}
-	if len(mem.createInputs) != 0 {
-		t.Fatalf("duplicate candidate should not be created: %+v", mem.createInputs)
 	}
 }

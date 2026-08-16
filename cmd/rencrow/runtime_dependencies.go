@@ -127,6 +127,7 @@ type Dependencies struct {
 	glossaryRecent                 http.HandlerFunc                            // viewer glossary API
 	viewerMemorySnapshot           http.HandlerFunc                            // viewer memory/news/recall API
 	viewerMemoryOwner              http.HandlerFunc                            // authenticated CMD memory owner API
+	viewerMemoryChatGPTImportOwner http.HandlerFunc                            // authenticated ChatGPT Common Raw owner API
 	viewerMemoryLayers             http.HandlerFunc                            // viewer memory layer API
 	viewerMemoryEvents             http.HandlerFunc                            // viewer L1 event/search cache API
 	viewerMemoryState              http.HandlerFunc                            // viewer memory state API
@@ -135,8 +136,6 @@ type Dependencies struct {
 	viewerMemoryUserState          http.HandlerFunc                            // viewer user memory state API
 	viewerMemoryUserForget         http.HandlerFunc                            // viewer user memory forget API
 	viewerMemoryUserSupersede      http.HandlerFunc                            // viewer user memory supersede API
-	viewerMemoryChatGPTL3Import    http.HandlerFunc                            // authenticated ChatGPT export L3 import API
-	viewerMemoryChatGPTL3Confirm   http.HandlerFunc                            // explicit source-bound candidate confirmation API
 	viewerMemoryRecallPack         http.HandlerFunc                            // viewer memory recall pack API
 	viewerMemoryProfilePromotions  http.HandlerFunc                            // async ProfilePromotion job API
 	viewerMemoryProfileRetry       http.HandlerFunc                            // explicit ProfilePromotion retry API
@@ -287,6 +286,7 @@ type Dependencies struct {
 	durableStoreWorkflow           orchestrator.DurableStoreWorkflow           // Chat起点の永続Store判定
 	durableStoreCloser             interface{ Close() error }                  // workflow decision SQLite store
 	conversationArchiveCloser      interface{ Close() error }                  // CORE-owned L2 archive and request receipts
+	conversationCloser             interface{ Close() error }                  // primary conversation manager or L1 store
 	knowledgeMemoryToolStore       interface{ Close() error }                  // indexed Tool search store
 	knowledgeMemoryViewerStore     interface{ Close() error }                  // writable Viewer store, when configured
 	advisorScoreCancel             context.CancelFunc                          // Advisor daily score job
@@ -361,6 +361,11 @@ func (d *Dependencies) Shutdown() {
 	if d.conversationArchiveCloser != nil {
 		if err := d.conversationArchiveCloser.Close(); err != nil {
 			log.Printf("Failed to close Conversation Archive store: %v", err)
+		}
+	}
+	if d.conversationCloser != nil {
+		if err := d.conversationCloser.Close(); err != nil {
+			log.Printf("Failed to close Conversation runtime: %v", err)
 		}
 	}
 	if d.knowledgeMemoryToolStore != nil {
@@ -504,7 +509,8 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps := &Dependencies{serenaMCPClient: serenaRuntime.client}
 	dataRecallRegistry := toolRuntime.DataRecallRegistry
 	dataWriteRegistry := toolRuntime.DataWriteRegistry
-	deps.conversationArchiveCloser = conversationRuntime.ArchiveStore
+	deps.conversationArchiveCloser = conversationRuntime.ArchiveCloser
+	deps.conversationCloser = conversationRuntime.Closer
 	if toolRuntime.MovieCatalogLookup != nil {
 		if err := registerRuntimeDataWriteMovieCatalog(dataWriteRegistry, toolRuntime.MovieCatalogLookup); err != nil {
 			log.Fatalf("Failed to register Movie Catalog data write: %v", err)
