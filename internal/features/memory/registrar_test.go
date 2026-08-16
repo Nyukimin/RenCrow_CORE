@@ -9,6 +9,7 @@ import (
 func TestRegisterRoutesRegistersMemoryPaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
+		Owner:             statusHandler(http.StatusContinue),
 		Snapshot:          statusHandler(http.StatusOK),
 		Layers:            statusHandler(http.StatusCreated),
 		Events:            statusHandler(http.StatusAccepted),
@@ -30,6 +31,8 @@ func TestRegisterRoutesRegistersMemoryPaths(t *testing.T) {
 		path string
 		want int
 	}{
+		{path: "/v1/memory/user", want: http.StatusContinue},
+		{path: "/v1/memory/user/mem-1", want: http.StatusContinue},
 		{path: "/viewer/memory/snapshot", want: http.StatusOK},
 		{path: "/viewer/memory/layers", want: http.StatusCreated},
 		{path: "/viewer/memory/events", want: http.StatusAccepted},

@@ -95,6 +95,18 @@ CREATE TABLE IF NOT EXISTS l1_event_log (
 CREATE INDEX IF NOT EXISTS idx_l1_event_log_namespace_created ON l1_event_log(namespace, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_event_log_type_created ON l1_event_log(event_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_event_log_session_created ON l1_event_log(session_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS l1_memory_owner_receipt (
+	request_id TEXT PRIMARY KEY,
+	operation TEXT NOT NULL,
+	owner_id TEXT NOT NULL,
+	actor_id TEXT NOT NULL,
+	payload_hash TEXT NOT NULL,
+	memory_id TEXT NOT NULL,
+	audit_reference TEXT NOT NULL,
+	result_json TEXT NOT NULL,
+	created_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_l1_memory_owner_receipt_memory ON l1_memory_owner_receipt(memory_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS l1_staging_item (
 	id TEXT PRIMARY KEY,
 	kind TEXT NOT NULL,

@@ -27,6 +27,11 @@ func buildViewerRuntimeHandlers(
 	databasePaths := viewerDatabasePaths(cfg)
 	movieOptions := viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}
 	hobbyOptions := viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}
+	if ownerHandler, err := newConfiguredMemoryOwnerHandler(cfg, l1Store); err != nil {
+		log.Printf("WARN: authenticated memory owner API disabled: %v", err)
+	} else {
+		deps.viewerMemoryOwner = ownerHandler
+	}
 	if l1Store == nil {
 		deps.viewerRecallTraces = viewer.HandleRecallTraces(nil)
 		deps.viewerMemoryLayers = viewer.HandleMemoryLayers(nil, nil)

@@ -126,6 +126,7 @@ type Dependencies struct {
 	evidenceSummary                http.HandlerFunc                            // viewer evidence summary API
 	glossaryRecent                 http.HandlerFunc                            // viewer glossary API
 	viewerMemorySnapshot           http.HandlerFunc                            // viewer memory/news/recall API
+	viewerMemoryOwner              http.HandlerFunc                            // authenticated CMD memory owner API
 	viewerMemoryLayers             http.HandlerFunc                            // viewer memory layer API
 	viewerMemoryEvents             http.HandlerFunc                            // viewer L1 event/search cache API
 	viewerMemoryState              http.HandlerFunc                            // viewer memory state API

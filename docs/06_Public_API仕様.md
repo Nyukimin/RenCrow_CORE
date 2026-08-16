@@ -183,25 +183,49 @@ fail closedになります。handler単体、またはguard未適用の経路で
 requestごとにCOREが直ちに認可、拒否、利用不能、成功を確定します。直接DBを書き換える経路や別embedding／
 Recall経路へのfallbackはこのAPIにありません。
 
-### Memory CLI／API対応（採用済み・未実装）
+### Memory CLI／API対応
 
 `/viewer/memory/*`はCOREのowner APIの基礎です。現行の`GET /viewer/memory/profile-promotions`と
 `POST /viewer/memory/profile-promotions/retry`は互換維持し、既存ViewerのUserMemory list／create／state／
 forget／supersede、RecallPack、ChatGPT import／confirmも既存caller向けに保持します。ただし、現行のViewer routeの
 存在はoperator CLI、authenticated owner scope、全操作共通receipt、import checkpointのhash bindingを意味しません。
-下表の新routeと共通response／receiptはtargetであり、採用済み・未実装です。
+CMDはこのAPIのclientであり、owner serviceではありません。CMDが行うのはcommand構文の解析、認証tokenの
+transport、method／path／bodyへの一対一mapping、response表示だけです。認証user、actor、scope、request ID、
+idempotency、state、policy、transaction、dry-run／applyの意味、receiptはすべてCOREが確定します。
 
-| RenCrow_CMD target | CORE Public API target | profile | 操作境界 |
+UserMemory owner APIの実装済み第一段階は、loopbackと`local_agent_ops`のowner-only Bearer tokenを再利用する
+`/v1/memory/user`です。tokenはMemory handlerの起動時に読み、requestごとには読まず、CORE設定の`user_id`から
+trusted user scopeを作ります。
+`X-RenCrow-Client: RenCrow_CMD`とinteraction profileはcapability selectionであり、credentialの代替ではありません。
+認証方式だけが`local_agent_ops`のowner token policyを共有し、Memory APIはAgent OPS route、
+Shiro／Worker実行、foreground leaseを使用しません。
+
+| RenCrow_CMD | CORE Public API | profile | CORE所有の操作境界 |
 | --- | --- | --- | --- |
-| `memory list` | `GET /viewer/memory/user` | `cmd-diagnostics` | authenticated ownerのbounded list。既存routeをscope付きで継続 |
-| `memory show --id` | `GET /viewer/memory/user/{id}` | `cmd-diagnostics` | 新規exact-ID projection |
+| `memory list` | `GET /v1/memory/user` | `cmd-diagnostics` | authenticated ownerのbounded list |
+| `memory show --id` | `GET /v1/memory/user/{id}` | `cmd-diagnostics` | owner-scoped exact-ID projection |
+| `memory propose` | `POST /v1/memory/user/propose` | `cmd-control` | request ID生成、operator evidenceとcandidateのatomic commit、receipt |
+| `memory confirm --id` | `POST /v1/memory/user/{id}/confirm` | `cmd-control` | exact-IDのcandidateからconfirmedへの検証済み遷移 |
+| `memory pin --id` | `POST /v1/memory/user/{id}/pin` | `cmd-control` | exact-IDのpinned遷移とreason検証 |
+| `memory forget --id` | `POST /v1/memory/user/{id}/forget` | `cmd-control` | owner-scoped無効化とatomic audit receipt |
+| `memory supersede --id --replacement-id` | `POST /v1/memory/user/{id}/supersede` | `cmd-control` | replacementのowner／namespace検証とatomic audit receipt |
+
+`{id}`はexact UserMemory IDをURLの一segmentとしてpercent-encodeします。ID中の`/`をroute separatorとして
+解釈せず、COREで一度だけdecodeしてexact lookupします。listが受けるqueryは`state`、`include_inactive`、
+`limit`だけです。showとwriteはqueryを受けず、caller指定の`user_id`、request／idempotency ID、DB情報、
+未知field／queryを400で拒否します。bounded UserMemory projectionは`id`、`type`、`statement`、
+`evidence_event_ids`、`confidence`、`sensitivity`、`state`、`persona_scope`、`active`、`superseded_by`、
+`created_at`、`updated_at`だけです。
+
+既存Viewer routeはlegacy compatibility routeとして互換維持します。`/v1/memory/user`はCMD専用owner routeであり、
+このrouteだけが新しいowner receipt契約を満たします。CMDのowner操作は上記APIだけを使います。次の表は後続targetであり、
+今回のUserMemory owner API実装済み判定へ含めません。
+
+| RenCrow_CMD target | CORE Public API target | profile | CORE所有の操作境界 |
+| --- | --- | --- | --- |
 | `memory recall --query` | `GET /viewer/memory/recall-pack` | `cmd-diagnostics` | 既存routeへbounded `query`／Recall traceを追加。caller `user_id`を廃止 |
 | `memory trace list` | `GET /viewer/recall/traces` | `cmd-diagnostics` | 既存routeのbounded trace metadata／state |
 | `memory trace show --id` | `GET /viewer/recall/traces/{id}` | `cmd-diagnostics` | 新規exact-ID trace projection |
-| `memory propose` | `POST /viewer/memory/user` | `cmd-control` | 既存create routeをcandidate-onlyとし、operator statementをL1 evidenceへ同一commit |
-| `memory confirm\|pin --id` | `POST /viewer/memory/user/state` | `cmd-control` | 既存state routeでexact-ID遷移 |
-| `memory forget --id` | `POST /viewer/memory/user/forget` | `cmd-control` | 既存forget routeへowner receiptを追加 |
-| `memory supersede --id --replacement-id` | `POST /viewer/memory/user/supersede` | `cmd-control` | 既存routeでreplacement bindingを検証 |
 | `memory archive --id` | `POST /viewer/memory/user/archive` | `cmd-control` | 新規exact-ID archive receipt |
 | `memory lifecycle plan` | `POST /viewer/memory/lifecycle/plan` | `cmd-control` | dry-run／planのみ |
 | `memory lifecycle run --plan-request-id ... --apply` | `POST /viewer/memory/lifecycle/run` | `cmd-control` | plan receipt／hash再検証後だけapply |
@@ -210,16 +234,18 @@ forget／supersede、RecallPack、ChatGPT import／confirmも既存caller向け�
 | `memory import status --export-id` | `GET /viewer/memory/import/chatgpt/{export_id}` | `cmd-diagnostics` | 新規import checkpoint／receipt projection |
 | `memory import confirm --export-id` | `POST /viewer/memory/import/chatgpt/confirm` | `cmd-control` | 既存confirm route。reason必須、既定dry-run、`--apply`で適用 |
 
-target CLIは`user_id`、DB path、table／column、SQL、physical output pathを送らず、authenticated userは
-server contextから決定します。legacy callerが`user_id`を送った場合もauthenticated userと一致しなければ403です。
+target CLIは`user_id`、request／idempotency ID、DB path、table／column、SQL、physical output pathを送らず、
+authenticated user、actor、scope、request ID、idempotency keyはserver contextとCORE APIから決定します。
+legacy callerが`user_id`を送った場合もauthenticated userと一致しなければ403です。
 targetのreadは認証済みownerが明示要求したbounded UserMemory projectionと状態だけを返し、Raw payload、全会話
 transcript、sensitive valueをstdoutへ出さず、通常logにはUserMemory statementとRecall `query`も残しません。state mutationの単一writeは
 verb自体を明示操作とし、bulk mutation／lifecycle／importはplan／dry-runを既定として`--apply`時だけ変更します。
-Parquet exportはsource DBを変更しない明示artifact生成commandです。全effectful operationは`request_id`（CLI自動生成、
-retry時再指定可）を持ち、memory stateを変えるoperationは`reason`も必須とします。approval queueや人の返答待ちstatusは作りません。
+Parquet exportはsource DBを変更しない明示artifact生成commandです。全effectful operationはCOREが生成またはAPI契約で
+検証する`request_id`を持ち、memory stateを変えるoperationはCOREが`reason`を必須検証します。許可待ちqueueや
+人の返答待ちstatusは作りません。
 
 新routeの共通response／receiptには`request_id`、`operation`、`status`、`owner_route`、`policy_revision`、
-`idempotency_key`、`idempotent_replay`、input／output counts、warnings、`audit_reference`を含めます。
+`idempotency_key`、`idempotent_replay`、input／output counts、`completed_at`、warnings、`audit_reference`を含めます。
 `status`は`completed`、`rejected`、`blocked`のいずれかでrequestを閉じ、既存status／retry endpointのresponse形は
 互換維持します。HTTP結果は次の境界です。
 

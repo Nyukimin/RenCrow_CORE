@@ -101,6 +101,9 @@ func cmdDiagnosticsInteractionAllowed(method, path string) bool {
 	if method != http.MethodGet {
 		return false
 	}
+	if path == "/v1/memory/user" || strings.HasPrefix(path, "/v1/memory/user/") {
+		return true
+	}
 	switch path {
 	case "/health",
 		"/health/live",
@@ -148,6 +151,9 @@ func cmdControlInteractionAllowed(method, path string) bool {
 	}
 	if method != http.MethodPost {
 		return false
+	}
+	if path == "/v1/memory/user/propose" || strings.HasPrefix(path, "/v1/memory/user/") {
+		return true
 	}
 	switch path {
 	case "/viewer/repair/run",

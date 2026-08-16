@@ -14,6 +14,7 @@ type Dependencies struct {
 // Routes groups Memory route handlers supplied by cmd/rencrow.
 // Handler implementations are supplied by their owning adapter and command packages.
 type Routes struct {
+	Owner             http.HandlerFunc
 	Snapshot          http.HandlerFunc
 	Layers            http.HandlerFunc
 	Events            http.HandlerFunc
@@ -34,6 +35,8 @@ type Routes struct {
 // RegisterRoutes registers handlers at the feature route boundary.
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
+	registerRoute(mux, "/v1/memory/user", routes.Owner)
+	registerRoute(mux, "/v1/memory/user/", routes.Owner)
 	registerRoute(mux, "/viewer/memory/snapshot", routes.Snapshot)
 	registerRoute(mux, "/viewer/memory/layers", routes.Layers)
 	registerRoute(mux, "/viewer/memory/events", routes.Events)

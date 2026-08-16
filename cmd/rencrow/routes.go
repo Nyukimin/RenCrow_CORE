@@ -235,6 +235,7 @@ func registerKnowledgeMemorySourceRoutes(mux *http.ServeMux, dependencies *Depen
 		KnowledgeRelationSummary:   dependencies.knowledgeRelationSummary,
 	}})
 	memoryfeature.RegisterRoutes(mux, memoryfeature.Dependencies{Routes: memoryfeature.Routes{
+		Owner:             dependencies.viewerMemoryOwner,
 		Snapshot:          dependencies.viewerMemorySnapshot,
 		Layers:            dependencies.viewerMemoryLayers,
 		Events:            dependencies.viewerMemoryEvents,
