@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
+	"path/filepath"
+	"runtime"
 	"os"
 	"strings"
 	"time"
@@ -34,7 +37,12 @@ func chatGPTConfirmError(code domainmemory.ChatGPTImportErrorCode) error {
 	return domainmemory.NewChatGPTImportError(code, chatGPTConfirmErrorMessages[code])
 }
 
-func chatGPTConfirmInternalError() error {
+func chatGPTConfirmInternalError(cause ...error) error {
+	if len(cause) > 0 && cause[0] != nil {
+		log.Printf("[ChatGPTConfirm] internal failure detail: %v", cause[0])
+	} else if _, file, line, ok := runtime.Caller(1); ok {
+		log.Printf("[ChatGPTConfirm] internal failure at %s:%d", filepath.Base(file), line)
+	}
 	return chatGPTConfirmError(domainmemory.ChatGPTImportErrorInternal)
 }
 
@@ -147,13 +155,13 @@ func (s *L1SQLiteStore) ConfirmChatGPTImportCandidates(ctx context.Context, inpu
 	receiptID := chatGPTConfirmReceiptID(input.OwnerID, input.RequestID)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domainmemory.ChatGPTImportConfirmResult{}, chatGPTConfirmInternalError()
+		return domainmemory.ChatGPTImportConfirmResult{}, chatGPTConfirmInternalError(err)
 	}
 	if stored, found, readErr := readChatGPTConfirmReceipt(ctx, tx, input, receiptID, reasonHash, payloadHash); readErr != nil {
 		return domainmemory.ChatGPTImportConfirmResult{}, rollbackChatGPTConfirm(tx, readErr)
 	} else if found {
 		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-			return domainmemory.ChatGPTImportConfirmResult{}, chatGPTConfirmInternalError()
+			return domainmemory.ChatGPTImportConfirmResult{}, chatGPTConfirmInternalError(err)
 		}
 		stored.IdempotentReplay = true
 		return stored, nil
@@ -188,7 +196,7 @@ func (s *L1SQLiteStore) ConfirmChatGPTImportCandidates(ctx context.Context, inpu
 	}
 	if !input.Apply {
 		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-			return domainmemory.ChatGPTImportConfirmResult{}, chatGPTConfirmInternalError()
+			return domainmemory.ChatGPTImportConfirmResult{}, chatGPTConfirmInternalError(err)
 		}
 		return result, nil
 	}
@@ -208,11 +216,11 @@ func (s *L1SQLiteStore) ConfirmChatGPTImportCandidates(ctx context.Context, inpu
 		"audit_reference":       result.AuditReference,
 	}, "chatgpt_import_confirm")
 	if err != nil {
-		return domainmemory.ChatGPTImportConfirmResult{}, rollbackChatGPTConfirm(tx, chatGPTConfirmInternalError())
+		return domainmemory.ChatGPTImportConfirmResult{}, rollbackChatGPTConfirm(tx, chatGPTConfirmInternalError(err))
 	}
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
-		return domainmemory.ChatGPTImportConfirmResult{}, rollbackChatGPTConfirm(tx, chatGPTConfirmInternalError())
+		return domainmemory.ChatGPTImportConfirmResult{}, rollbackChatGPTConfirm(tx, chatGPTConfirmInternalError(err))
 	}
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO l1_chatgpt_import_confirm_receipt (
@@ -225,10 +233,10 @@ INSERT INTO l1_chatgpt_import_confirm_receipt (
 		result.ProjectionRetryWait, result.ProjectionFailed, result.ProjectionCompleted,
 		result.AuditReference, string(resultJSON), now)
 	if err != nil {
-		return domainmemory.ChatGPTImportConfirmResult{}, rollbackChatGPTConfirm(tx, chatGPTConfirmInternalError())
+		return domainmemory.ChatGPTImportConfirmResult{}, rollbackChatGPTConfirm(tx, chatGPTConfirmInternalError(err))
 	}
 	if err := tx.Commit(); err != nil {
-		return domainmemory.ChatGPTImportConfirmResult{}, chatGPTConfirmInternalError()
+		return domainmemory.ChatGPTImportConfirmResult{}, chatGPTConfirmInternalError(err)
 	}
 	return result, nil
 }
@@ -242,7 +250,7 @@ func latestChatGPTConfirmImportEvent(ctx context.Context, tx *sql.Tx, ownerID, e
 		return domainmemory.ChatGPTImportEvent{}, chatGPTConfirmError(domainmemory.ChatGPTImportErrorNotFound)
 	}
 	if err != nil {
-		return domainmemory.ChatGPTImportEvent{}, chatGPTConfirmInternalError()
+		return domainmemory.ChatGPTImportEvent{}, chatGPTConfirmInternalError(err)
 	}
 	if event.State != domainmemory.ChatGPTImportStateCompleted || !event.Apply {
 		return domainmemory.ChatGPTImportEvent{}, chatGPTConfirmError(domainmemory.ChatGPTImportErrorConflict)
@@ -281,7 +289,7 @@ WHERE owner_id = ? AND request_id = ?`, input.OwnerID, input.RequestID).Scan(
 		return domainmemory.ChatGPTImportConfirmResult{}, false, nil
 	}
 	if err != nil {
-		return domainmemory.ChatGPTImportConfirmResult{}, false, chatGPTConfirmInternalError()
+		return domainmemory.ChatGPTImportConfirmResult{}, false, chatGPTConfirmInternalError(err)
 	}
 	if row.ReceiptID != receiptID || row.RequestID != input.RequestID || row.OwnerID != input.OwnerID {
 		return domainmemory.ChatGPTImportConfirmResult{}, false, chatGPTConfirmInternalError()
@@ -296,7 +304,7 @@ WHERE owner_id = ? AND request_id = ?`, input.OwnerID, input.RequestID).Scan(
 	decoder := json.NewDecoder(strings.NewReader(row.ResultJSON))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
-		return domainmemory.ChatGPTImportConfirmResult{}, false, chatGPTConfirmInternalError()
+		return domainmemory.ChatGPTImportConfirmResult{}, false, chatGPTConfirmInternalError(err)
 	}
 	var trailing interface{}
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
@@ -314,7 +322,7 @@ WHERE owner_id = ? AND request_id = ?`, input.OwnerID, input.RequestID).Scan(
 	}
 	canonicalResult, err := json.Marshal(result)
 	if err != nil || string(canonicalResult) != row.ResultJSON {
-		return domainmemory.ChatGPTImportConfirmResult{}, false, chatGPTConfirmInternalError()
+		return domainmemory.ChatGPTImportConfirmResult{}, false, chatGPTConfirmInternalError(err)
 	}
 	return result, true, nil
 }
@@ -407,7 +415,7 @@ LIMIT 1`, ownerID, ownerScope, chatGPTRawSourceType, exportID, afterRowID).Scan(
 		return chatGPTConfirmRawTarget{}, afterRowID, false, nil
 	}
 	if err != nil {
-		return chatGPTConfirmRawTarget{}, afterRowID, false, chatGPTConfirmInternalError()
+		return chatGPTConfirmRawTarget{}, afterRowID, false, chatGPTConfirmInternalError(err)
 	}
 	if rowID <= afterRowID || rawID == "" || manifestID == "" || sourceID == "" || storedOwner != ownerID || storedScope != ownerScope || sourceType != chatGPTRawSourceType || sourceIdentity != exportID || sensitivity != domainmemory.CommonRawPrivateSensitivity || rawRole == "" || !chatGPTConfirmValidRole(rawRole) || contentType != ChatGPTRawContentType || threadID == "" || provenance == "" || rights != "owner" || license != "private" || contentSize < 0 || !validLowerSHA256Claim(contentHash) || (storageKind != domainmemory.CommonRawStorageInline && storageKind != domainmemory.CommonRawStorageObject) || (storageKind == domainmemory.CommonRawStorageInline && objectRef != "") || rawID != domainmemory.DeterministicCommonRawRecordID(ownerID, ownerScope, sourceType, sourceIdentity, sourceID, contentHash) {
 		return chatGPTConfirmRawTarget{}, afterRowID, false, chatGPTConfirmInternalError()
@@ -449,12 +457,12 @@ LIMIT 1`, ownerID, ownerScope, chatGPTRawSourceType, exportID, afterRowID).Scan(
 		}
 		rawPayload, err = os.ReadFile(path)
 		if err != nil || int64(len(rawPayload)) != contentSize || domainmemory.SHA256Hex(rawPayload) != contentHash {
-			return chatGPTConfirmRawTarget{}, afterRowID, false, chatGPTConfirmInternalError()
+			return chatGPTConfirmRawTarget{}, afterRowID, false, chatGPTConfirmInternalError(err)
 		}
 	}
 	event, err := loadChatGPTEventQueryer(ctx, tx, sourceID)
 	if err != nil {
-		return chatGPTConfirmRawTarget{}, afterRowID, false, chatGPTConfirmInternalError()
+		return chatGPTConfirmRawTarget{}, afterRowID, false, chatGPTConfirmInternalError(err)
 	}
 	role, roleOK := chatGPTConfirmStringMeta(event.Meta, "original_role")
 	branch, branchOK := chatGPTConfirmBoolMeta(event.Meta, "on_current_branch")
@@ -488,26 +496,26 @@ func validateChatGPTConfirmManifest(ctx context.Context, tx *sql.Tx, ownerID, ex
 	var contractVersion, sourceType, sourceIdentity, manifestHash, storedOwner, scope, sensitivity, intakeStatus, receiptJSON, schemaVersion, converterVersion, provenance string
 	var sourceCount int
 	if err := tx.QueryRowContext(ctx, `SELECT contract_version, source_type, source_identity, manifest_sha256, source_count, schema_version, converter_version, owner_id, scope, sensitivity, intake_status, receipt_json, provenance FROM l1_raw_source_manifest WHERE manifest_id = ?`, manifestID).Scan(&contractVersion, &sourceType, &sourceIdentity, &manifestHash, &sourceCount, &schemaVersion, &converterVersion, &storedOwner, &scope, &sensitivity, &intakeStatus, &receiptJSON, &provenance); err != nil {
-		return chatGPTConfirmManifestBinding{}, chatGPTConfirmInternalError()
+		return chatGPTConfirmManifestBinding{}, chatGPTConfirmInternalError(err)
 	}
 	if contractVersion != domainmemory.CommonRawContractVersion || sourceType != chatGPTRawSourceType || sourceIdentity != exportID || storedOwner != ownerID || scope != "user:"+ownerID || sensitivity != domainmemory.CommonRawPrivateSensitivity || intakeStatus != string(domainmemory.CommonRawStateCompleted) || !validLowerSHA256Claim(manifestHash) || sourceCount < 0 || manifestID != domainmemory.DeterministicCommonRawManifestID(ownerID, scope, sourceType, sourceIdentity, manifestHash) {
 		return chatGPTConfirmManifestBinding{}, chatGPTConfirmInternalError()
 	}
 	var rawBinding chatGPTRawBinding
 	if err := json.Unmarshal([]byte(provenance), &rawBinding); err != nil || rawBinding.Adapter != chatGPTRawAdapterVersion || rawBinding.ManifestSHA256 == "" || rawBinding.ArtifactSHA256 == "" || rawBinding.SchemaVersion != schemaVersion || rawBinding.ConverterVersion != converterVersion {
-		return chatGPTConfirmManifestBinding{}, chatGPTConfirmInternalError()
+		return chatGPTConfirmManifestBinding{}, chatGPTConfirmInternalError(err)
 	}
 	canonicalBinding, err := json.Marshal(rawBinding)
 	if err != nil || string(canonicalBinding) != provenance || !validLowerSHA256Claim(rawBinding.ManifestSHA256) || !validLowerSHA256Claim(rawBinding.ArtifactSHA256) || rawBinding.SourceCount <= 0 || rawBinding.BatchCount <= 0 {
-		return chatGPTConfirmManifestBinding{}, chatGPTConfirmInternalError()
+		return chatGPTConfirmManifestBinding{}, chatGPTConfirmInternalError(err)
 	}
 	var receipt domainmemory.CommonRawIntakeReceipt
 	if err := json.Unmarshal([]byte(receiptJSON), &receipt); err != nil || receipt.ManifestID != manifestID || receipt.Status != domainmemory.CommonRawStateCompleted || receipt.ManifestSHA256 != manifestHash || receipt.SourceCount != sourceCount || len(receipt.Records) != sourceCount || receipt.Checkpoint != "completed" {
-		return chatGPTConfirmManifestBinding{}, chatGPTConfirmInternalError()
+		return chatGPTConfirmManifestBinding{}, chatGPTConfirmInternalError(err)
 	}
 	canonicalReceipt, err := json.Marshal(receipt)
 	if err != nil || string(canonicalReceipt) != receiptJSON {
-		return chatGPTConfirmManifestBinding{}, chatGPTConfirmInternalError()
+		return chatGPTConfirmManifestBinding{}, chatGPTConfirmInternalError(err)
 	}
 	found := 0
 	for _, item := range receipt.Records {
@@ -561,7 +569,7 @@ func validateChatGPTConfirmRawPayload(rawPayload []byte, target chatGPTConfirmRa
 	}
 	canonical, err := json.Marshal(payload)
 	if err != nil || string(canonical) != string(rawPayload) {
-		return chatGPTConfirmInternalError()
+		return chatGPTConfirmInternalError(err)
 	}
 	item := domainmemory.ChatGPTL3ImportRecord{
 		Format: payload.Format, ExportID: payload.ExportID, EvidenceID: payload.EvidenceID,
@@ -573,7 +581,7 @@ func validateChatGPTConfirmRawPayload(rawPayload []byte, target chatGPTConfirmRa
 		Text: payload.Text, Content: payload.Content, Metadata: payload.Metadata,
 	}
 	if err := domainmemory.ValidateChatGPTL3ImportRecord(item); err != nil {
-		return chatGPTConfirmInternalError()
+		return chatGPTConfirmInternalError(err)
 	}
 	storedExport, ok := chatGPTConfirmStringMeta(target.Event.Meta, "export_id")
 	if !ok {
@@ -586,7 +594,7 @@ func validateChatGPTConfirmRawPayload(rawPayload []byte, target chatGPTConfirmRa
 		return chatGPTConfirmInternalError()
 	}
 	if err := validateChatGPTLegacyEvent(&target.Event, item); err != nil {
-		return chatGPTConfirmInternalError()
+		return chatGPTConfirmInternalError(err)
 	}
 	return nil
 }
@@ -626,7 +634,7 @@ func validateChatGPTConfirmProjectionTarget(ctx context.Context, tx *sql.Tx, tar
 	}
 	outputHash, err := CanonicalL1MemoryEventSHA256(target.Event)
 	if err != nil || !verifyChatGPTConfirmProjectionReceipt(*completed, target, "completed", outputHash) {
-		return chatGPTConfirmInternalError()
+		return chatGPTConfirmInternalError(err)
 	}
 	return nil
 }
@@ -642,22 +650,22 @@ FROM l1_raw_projection_receipt
 WHERE projection_receipt_id IN (?, ?)
 ORDER BY projection_receipt_id ASC`, pendingID, completedID)
 	if err != nil {
-		return nil, chatGPTConfirmInternalError()
+		return nil, chatGPTConfirmInternalError(err)
 	}
 	defer rows.Close()
 	receipts := make([]chatGPTConfirmProjectionReceipt, 0, 3)
 	for rows.Next() {
 		var receipt chatGPTConfirmProjectionReceipt
 		if err := rows.Scan(&receipt.ID, &receipt.Projection, &receipt.OutputStore, &receipt.OutputID, &receipt.RawIDsJSON, &receipt.Revision, &receipt.InputSHA256, &receipt.OutputSHA256, &receipt.Status, &receipt.CreatedAt, &receipt.UpdatedAt, &receipt.Failure); err != nil {
-			return nil, chatGPTConfirmInternalError()
+			return nil, chatGPTConfirmInternalError(err)
 		}
 		if err := json.Unmarshal([]byte(receipt.RawIDsJSON), &receipt.RawIDs); err != nil {
-			return nil, chatGPTConfirmInternalError()
+			return nil, chatGPTConfirmInternalError(err)
 		}
 		receipts = append(receipts, receipt)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, chatGPTConfirmInternalError()
+		return nil, chatGPTConfirmInternalError(err)
 	}
 	if len(receipts) != 2 {
 		return nil, chatGPTConfirmInternalError()
@@ -677,7 +685,7 @@ FROM l1_profile_promotion_job
 WHERE evidence_event_id = ?
 LIMIT 2`, target.SourceRecordID)
 	if err != nil {
-		return "", chatGPTConfirmInternalError()
+		return "", chatGPTConfirmInternalError(err)
 	}
 	jobs := make([]struct {
 		sessionID string
@@ -692,22 +700,35 @@ LIMIT 2`, target.SourceRecordID)
 		}
 		if err := rows.Scan(&job.sessionID, &job.threadID, &job.state); err != nil {
 			_ = rows.Close()
-			return "", chatGPTConfirmInternalError()
+			return "", chatGPTConfirmInternalError(err)
 		}
 		jobs = append(jobs, job)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return "", chatGPTConfirmInternalError()
+		return "", chatGPTConfirmInternalError(err)
 	}
 	if err := rows.Close(); err != nil {
-		return "", chatGPTConfirmInternalError()
+		return "", chatGPTConfirmInternalError(err)
 	}
-	if target.OriginalRole != "user" || !target.OnCurrentBranch {
+	if target.OriginalRole != "user" {
 		if len(jobs) != 0 {
 			return "", chatGPTConfirmInternalError()
 		}
 		return "", nil
+	}
+	if !target.OnCurrentBranch {
+		// The legacy L3 import queued promotion jobs for every user message
+		// including edited-away branches; the Common Raw import queues only
+		// current-branch ones. Tolerate the historical job but keep its
+		// binding checks so a mismatched row still fails closed.
+		if len(jobs) == 0 {
+			return "", nil
+		}
+		if len(jobs) != 1 || jobs[0].sessionID != target.Event.SessionID || jobs[0].threadID != target.Event.ThreadID {
+			return "", chatGPTConfirmInternalError()
+		}
+		return jobs[0].state, nil
 	}
 	if len(jobs) != 1 || jobs[0].sessionID != target.Event.SessionID || jobs[0].threadID != target.Event.ThreadID {
 		return "", chatGPTConfirmInternalError()
@@ -752,7 +773,7 @@ WHERE event.source = ?
     WHERE raw.owner_id = ? AND raw.scope = ? AND raw.source_type = ?
       AND raw.source_identity = ? AND raw.source_record_id = event.id
 	  )`, chatGPTRawSourceType, exportID, ownerID, "user:"+ownerID, chatGPTRawSourceType, exportID).Scan(&orphanJobs); err != nil {
-		return chatGPTConfirmInternalError()
+		return chatGPTConfirmInternalError(err)
 	}
 	if orphanJobs != 0 {
 		return chatGPTConfirmInternalError()
@@ -768,19 +789,19 @@ WHERE namespace = ? AND source = ? AND memory_state = ? AND rowid > ?
 ORDER BY rowid ASC
 LIMIT ?`, "user:"+ownerID, "profile_extractor", domainmemory.MemoryStateCandidate, afterRowID, chatGPTConfirmCandidatePageSize)
 	if err != nil {
-		return nil, chatGPTConfirmInternalError()
+		return nil, chatGPTConfirmInternalError(err)
 	}
 	defer rows.Close()
 	page := make([]chatGPTConfirmCandidateRef, 0, chatGPTConfirmCandidatePageSize)
 	for rows.Next() {
 		var item chatGPTConfirmCandidateRef
 		if err := rows.Scan(&item.RowID, &item.ID); err != nil || item.RowID <= afterRowID || strings.TrimSpace(item.ID) == "" {
-			return nil, chatGPTConfirmInternalError()
+			return nil, chatGPTConfirmInternalError(err)
 		}
 		page = append(page, item)
 	}
 	if err := rows.Err(); err != nil || len(page) > chatGPTConfirmCandidatePageSize {
-		return nil, chatGPTConfirmInternalError()
+		return nil, chatGPTConfirmInternalError(err)
 	}
 	return page, nil
 }
@@ -803,7 +824,7 @@ SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
 FROM l1_memory_event
 WHERE rowid = ? AND id = ?`, ref.RowID, ref.ID))
 			if err != nil || len(events) != 1 {
-				return 0, chatGPTConfirmInternalError()
+				return 0, chatGPTConfirmInternalError(err)
 			}
 			event := events[0]
 			item, strictErr := strictUserMemoryFromEvent(event)
@@ -842,11 +863,11 @@ WHERE rowid = ? AND id = ? AND namespace = ? AND source = ? AND memory_state = ?
 				domainmemory.MemoryStateConfirmed, updatedAt, ref.RowID, ref.ID,
 				"user:"+ownerID, "profile_extractor", domainmemory.MemoryStateCandidate)
 			if err != nil {
-				return 0, chatGPTConfirmInternalError()
+				return 0, chatGPTConfirmInternalError(err)
 			}
 			affected, err := updated.RowsAffected()
 			if err != nil || affected != 1 {
-				return 0, chatGPTConfirmInternalError()
+				return 0, chatGPTConfirmInternalError(err)
 			}
 		}
 		cursor = page[len(page)-1].RowID
@@ -870,7 +891,7 @@ WHERE raw.owner_id = ? AND raw.scope = ? AND raw.source_type = ?
 		return false, nil
 	}
 	if err != nil || !chatGPTConfirmValidRole(role) || (branch != 0 && branch != 1) {
-		return false, chatGPTConfirmInternalError()
+		return false, chatGPTConfirmInternalError(err)
 	}
 	return role == "user" && branch == 1, nil
 }
