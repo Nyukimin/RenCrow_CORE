@@ -28,8 +28,13 @@ type LLMProfileExtractor struct {
 func NewLLMProfileExtractor(provider llm.LLMProvider) *LLMProfileExtractor {
 	return &LLMProfileExtractor{
 		provider:    provider,
-		minTurns:    3,
-		maxTokens:   256,
+		minTurns: 3,
+		// The Worker target is a reasoning model whose analysis channel
+		// consumes output tokens before the final JSON. 256 tokens starved
+		// the final channel (EMPTY_FINAL_CONTENT) or truncated the JSON.
+		// CORE still validates the response against the 64KiB exact-JSON
+		// contract after generation.
+		maxTokens:   4096,
 		temperature: 0.1,
 	}
 }
@@ -82,6 +87,9 @@ func (e *LLMProfileExtractor) Extract(ctx context.Context, thread *domconv.Threa
 既知情報と重複するものは除外してください。
 JSON形式で出力してください。
 preferences の各キーと値、facts の各要素は必ず JSON の文字列（string）で返してください。数値、オブジェクト、配列、真偽値、null は使わないでください。
+preferences と facts を合わせて最大16件までにしてください。特に重要なものだけを選んでください。
+各文字列は200文字以内の一文とし、文字列の中に改行を入れないでください。
+JSONオブジェクトの前後に説明文、マークダウン、コードフェンスを付けないでください。
 
 %s
 
