@@ -103,6 +103,103 @@ func TestImportChatGPTRawBatchBackfillsExistingLegacyRow(t *testing.T) {
 	}
 }
 
+func TestImportChatGPTRawBatchAcceptsStrippedLegacyMetadata(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "conversation-l1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	record := chatGPTL3RawTestRecord("export-stripped-meta", "conv-stripped-meta", "user-stripped-meta")
+	if _, err := store.ImportChatGPTL3Records(context.Background(), []ChatGPTL3ImportRecord{record}, true); err != nil {
+		t.Fatal(err)
+	}
+	rewriteChatGPTLegacyMeta(t, store, record.EvidenceID, func(meta map[string]interface{}) {
+		for _, key := range chatGPTLegacyOptionalMetaKeys {
+			delete(meta, key)
+		}
+		meta["active"] = true
+	})
+	batch := ChatGPTRawImportBatch{
+		ManifestSHA256: strings.Repeat("a", 64), ArtifactSHA256: strings.Repeat("b", 64),
+		SourceCount: 1, SchemaVersion: ChatGPTL3ArtifactFormat, ConverterVersion: "chatgpt-export-memory-go/v2",
+		BatchIndex: 0, BatchCount: 1, StartLine: 1, Records: []ChatGPTL3ImportRecord{record},
+	}
+	dry, err := store.ImportChatGPTRawBatch(commonRawTestContext(t, "chatgpt-stripped-dry"), "chatgpt-stripped-dry", "ren", "ren", batch, false)
+	if err != nil {
+		t.Fatalf("stripped metadata dry-run: %v", err)
+	}
+	if dry.Validated != 1 || dry.Projected != 0 {
+		t.Fatalf("unexpected stripped dry result: %+v", dry)
+	}
+	if got := queryInt(t, store, "SELECT count(*) FROM l1_raw_source_manifest"); got != 0 {
+		t.Fatalf("dry-run wrote raw: %d", got)
+	}
+	result, err := store.ImportChatGPTRawBatch(commonRawTestContext(t, "chatgpt-stripped-apply"), "chatgpt-stripped-apply", "ren", "ren", batch, true)
+	if err != nil {
+		t.Fatalf("stripped metadata apply: %v", err)
+	}
+	if result.Projected != 0 || result.Existing != 1 {
+		t.Fatalf("stripped legacy row was rewritten: %+v", result)
+	}
+}
+
+func TestImportChatGPTRawBatchRejectsLegacyHashOrIdentityChange(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "conversation-l1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	record := chatGPTL3RawTestRecord("export-meta-guard", "conv-meta-guard", "user-meta-guard")
+	if _, err := store.ImportChatGPTL3Records(context.Background(), []ChatGPTL3ImportRecord{record}, true); err != nil {
+		t.Fatal(err)
+	}
+	batch := ChatGPTRawImportBatch{
+		ManifestSHA256: strings.Repeat("a", 64), ArtifactSHA256: strings.Repeat("b", 64),
+		SourceCount: 1, SchemaVersion: ChatGPTL3ArtifactFormat, ConverterVersion: "chatgpt-export-memory-go/v2",
+		BatchIndex: 0, BatchCount: 1, StartLine: 1, Records: []ChatGPTL3ImportRecord{record},
+	}
+
+	rewriteChatGPTLegacyMeta(t, store, record.EvidenceID, func(meta map[string]interface{}) {
+		meta["content_sha256"] = strings.Repeat("c", 64)
+	})
+	_, err = store.ImportChatGPTRawBatch(commonRawTestContext(t, "chatgpt-hash-change"), "chatgpt-hash-change", "ren", "ren", batch, true)
+	if domainmemory.CommonRawErrorCodeOf(err) != domainmemory.CommonRawErrorSourceChanged {
+		t.Fatalf("hash change code=%q err=%v", domainmemory.CommonRawErrorCodeOf(err), err)
+	}
+
+	rewriteChatGPTLegacyMeta(t, store, record.EvidenceID, func(meta map[string]interface{}) {
+		meta["content_sha256"] = chatGPTRecordContentHash(record)
+		meta["conversation_id"] = "other-conversation"
+	})
+	_, err = store.ImportChatGPTRawBatch(commonRawTestContext(t, "chatgpt-identity-change"), "chatgpt-identity-change", "ren", "ren", batch, true)
+	if domainmemory.CommonRawErrorCodeOf(err) != domainmemory.CommonRawErrorUnavailable {
+		t.Fatalf("identity change code=%q err=%v", domainmemory.CommonRawErrorCodeOf(err), err)
+	}
+	if got := queryInt(t, store, "SELECT count(*) FROM l1_raw_source_manifest"); got != 0 {
+		t.Fatalf("rejected metadata still wrote raw: %d", got)
+	}
+}
+
+func rewriteChatGPTLegacyMeta(t *testing.T, store *L1SQLiteStore, evidenceID string, mutate func(map[string]interface{})) {
+	t.Helper()
+	var metaJSON string
+	if err := store.db.QueryRow(`SELECT meta_json FROM l1_memory_event WHERE id = ?`, evidenceID).Scan(&metaJSON); err != nil {
+		t.Fatalf("read legacy meta: %v", err)
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal([]byte(metaJSON), &meta); err != nil {
+		t.Fatalf("decode legacy meta: %v", err)
+	}
+	mutate(meta)
+	encoded, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("encode legacy meta: %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE l1_memory_event SET meta_json = ? WHERE id = ?`, string(encoded), evidenceID); err != nil {
+		t.Fatalf("rewrite legacy meta: %v", err)
+	}
+}
+
 func TestImportChatGPTRawBatchPreservesLegacyUserMemoryLifecycleRows(t *testing.T) {
 	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "conversation-l1.db"))
 	if err != nil {

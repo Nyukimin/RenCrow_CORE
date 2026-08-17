@@ -66,6 +66,32 @@ type memoryOwnerStoreStub struct {
 	parquetVerifyTargetID  string
 	parquetVerifyScope     domaintool.ToolExecutionScope
 	parquetVerifyErr       error
+	knowledgeBackfillCalls int
+	knowledgeBackfillReqID string
+	knowledgeBackfillOwner string
+	knowledgeBackfillActor string
+	knowledgeBackfillApply bool
+	knowledgeBackfillScope domaintool.ToolExecutionScope
+	knowledgeBackfillErr   error
+}
+
+func (s *memoryOwnerStoreStub) BackfillKnowledgeCommonRaw(ctx context.Context, requestID, ownerID, actorID string, apply bool) (domainmemory.KnowledgeCommonRawBackfillResult, error) {
+	s.knowledgeBackfillCalls++
+	s.knowledgeBackfillReqID, s.knowledgeBackfillOwner, s.knowledgeBackfillActor = requestID, ownerID, actorID
+	s.knowledgeBackfillApply = apply
+	s.knowledgeBackfillScope, _ = domaintool.ToolExecutionScopeFromContext(ctx)
+	if s.knowledgeBackfillErr != nil {
+		return domainmemory.KnowledgeCommonRawBackfillResult{}, s.knowledgeBackfillErr
+	}
+	status := domainmemory.CommonRawStateBlocked
+	if apply {
+		status = domainmemory.CommonRawStateCompleted
+	}
+	return domainmemory.KnowledgeCommonRawBackfillResult{
+		Validated: 2, ItemCount: 2, Coverage: 2, Ready: apply,
+		RawImported: 2, Linked: 2, Status: status, ManifestID: "knowledge-manifest",
+		RawRecordIDs: []string{"raw-one", "raw-two"},
+	}, nil
 }
 
 func (s *memoryOwnerStoreStub) OwnerListUserMemories(ctx context.Context, userID, state string, includeInactive bool, limit int) ([]domainmemory.UserMemory, error) {

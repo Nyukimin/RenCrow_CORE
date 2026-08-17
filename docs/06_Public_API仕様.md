@@ -231,6 +231,7 @@ installed binary、production config／DB migration、ChatGPT backfill、live CM
 | `memory archive --id` | `POST /viewer/memory/user/archive` | `cmd-control` | source実装済み。新規exact-ID archive receipt。配備／E2E未確認 |
 | `memory lifecycle plan` | `POST /viewer/memory/lifecycle/plan` | `cmd-control` | source実装済み。dry-run／planのみ。配備／E2E未確認 |
 | `memory lifecycle run --plan-request-id ... --apply` | `POST /viewer/memory/lifecycle/run` | `cmd-control` | source実装済み。plan receipt／hash再検証後だけapply。配備／E2E未確認 |
+| `memory knowledge-backfill [--apply]` | `POST /viewer/memory/knowledge-raw/backfill` | `cmd-control` | 既存`l1_knowledge_item`のCommon Raw backfill。strict JSON `{"apply":bool}`、既定dry-run、`allow_empty=false`のfail-closed coverage gate。IDとhashとcountだけを返す |
 | `memory export parquet` | `POST /viewer/memory/export/parquet` | `cmd-control` | source実装済み。configured owner root内のbounded export。配備／E2E未確認 |
 | `memory export verify --request-id` | `GET /viewer/memory/export/{escaped-request-id}` | `cmd-diagnostics` | source実装済み。exact targetのmanifest／hash／count verify。配備／E2E未確認 |
 | `memory import chatgpt --manifest <file> --artifact <tar> [--apply]` | `POST /v1/memory/import/chatgpt` | `cmd-control` | CORE owner routeとCMD facadeはsource／focused実装済み。COREがwhole-artifact検証、内部batch、Raw／projection、receiptを所有。配備／E2E未確認 |

@@ -35,6 +35,7 @@ type MemoryOwnerStore interface {
 	OwnerRunUserMemoryLifecycle(context.Context, string, string, string, string, string, bool) (domainmemory.UserMemoryLifecycleRunResponse, error)
 	OwnerExportConversationArchiveParquet(context.Context, string, string, string) (domainmemory.ConversationArchiveParquetExportResult, error)
 	OwnerVerifyConversationArchiveParquet(context.Context, string, string, string, string) (domainmemory.ConversationArchiveParquetVerifyResult, error)
+	BackfillKnowledgeCommonRaw(context.Context, string, string, string, bool) (domainmemory.KnowledgeCommonRawBackfillResult, error)
 }
 
 type memoryOwnerHandler struct {
@@ -100,6 +101,8 @@ func (h *memoryOwnerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.lifecyclePlan(ctx, w, r)
 	case escapedPath == "/viewer/memory/lifecycle/run" && r.Method == http.MethodPost:
 		h.lifecycleRun(ctx, w, r)
+	case escapedPath == "/viewer/memory/knowledge-raw/backfill" && r.Method == http.MethodPost:
+		h.knowledgeBackfill(ctx, w, r)
 	case escapedPath == memoryOwnerParquetExportRoute+"/parquet" && r.Method == http.MethodPost:
 		h.parquetExport(ctx, w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(escapedPath, memoryOwnerParquetExportRoute+"/"):
@@ -184,6 +187,68 @@ func (h *memoryOwnerHandler) lifecycleRun(ctx context.Context, w http.ResponseWr
 	writeJSON(w, http.StatusOK, result)
 }
 
+// knowledgeBackfill links existing l1_knowledge_item rows into Common Raw.
+// The body is a strict JSON object {"apply": bool}; apply defaults to false
+// so the dry-run coverage report is the default operation.
+func (h *memoryOwnerHandler) knowledgeBackfill(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if !memoryOwnerProfileAllowed(r, http.MethodPost) {
+		writeMemoryOwnerError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if err := validateMemoryOwnerQuery(r.URL.Query()); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	var request struct {
+		Apply *bool `json:"apply"`
+	}
+	if err := decodeStrictKnowledgeBackfillJSON(w, r, &request); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	requestID, ok := memoryOwnerRequestID(ctx)
+	if !ok {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "scope_unavailable")
+		return
+	}
+	apply := request.Apply != nil && *request.Apply
+	result, err := h.store.BackfillKnowledgeCommonRaw(ctx, requestID, h.userID, h.userID, apply)
+	if err != nil {
+		writeChatGPTOwnerStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func decodeStrictKnowledgeBackfillJSON(w http.ResponseWriter, r *http.Request, target interface{}) error {
+	if r.Body == nil {
+		return nil
+	}
+	payload, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(payload)) == 0 {
+		return nil
+	}
+	if err := rejectDuplicateObjectKeys(payload, map[string]struct{}{"apply": {}}); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
 func decodeEmptyMemoryOwnerObjectBody(w http.ResponseWriter, r *http.Request) error {
 	if r.Body == nil {
 		return nil
@@ -236,6 +301,12 @@ func decodeStrictLifecycleJSON(w http.ResponseWriter, r *http.Request, target in
 }
 
 func rejectDuplicateLifecycleObjectKeys(payload []byte) error {
+	return rejectDuplicateObjectKeys(payload, map[string]struct{}{
+		"plan_request_id": {}, "reason": {}, "apply": {},
+	})
+}
+
+func rejectDuplicateObjectKeys(payload []byte, allowed map[string]struct{}) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	token, err := decoder.Token()
 	if err != nil {
@@ -258,9 +329,7 @@ func rejectDuplicateLifecycleObjectKeys(payload []byte) error {
 		if !ok {
 			return errors.New("lifecycle object key must be a string")
 		}
-		switch key {
-		case "plan_request_id", "reason", "apply":
-		default:
+		if _, ok := allowed[key]; !ok {
 			return errors.New("unknown lifecycle object key")
 		}
 		if _, exists := seen[key]; exists {

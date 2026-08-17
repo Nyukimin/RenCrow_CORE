@@ -172,6 +172,8 @@ func cmdControlInteractionAllowed(method, path string) bool {
 		return true
 	case "/viewer/memory/export/parquet":
 		return true
+	case "/viewer/memory/knowledge-raw/backfill":
+		return true
 	case "/viewer/repair/run",
 		"/viewer/source-registry",
 		"/viewer/memory/profile-promotions/retry",

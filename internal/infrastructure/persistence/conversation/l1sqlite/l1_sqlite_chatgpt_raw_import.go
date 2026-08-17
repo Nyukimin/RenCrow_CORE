@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -877,20 +878,116 @@ func validateChatGPTLegacyEvent(event *L1MemoryEvent, item ChatGPTL3ImportRecord
 	if err != nil {
 		return err
 	}
-	actualMeta, err := json.Marshal(event.Meta)
-	if err != nil {
-		return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT L3 metadata is malformed")
-	}
 	if event.ID != item.EvidenceID || event.Namespace != expected.namespace || event.SessionID != expected.sessionID || event.ThreadID != expected.threadID || event.Speaker != expected.speaker || event.Message != expected.message || event.MemoryState != MemoryStateObserved || event.Layer != "L3" || event.Source != chatGPTRawSourceType {
 		return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT L3 row binding differs from Raw")
 	}
-	if string(actualMeta) != string(expected.metaJSON) {
-		if strings.TrimSpace(fmt.Sprint(event.Meta["content_sha256"])) != expected.contentHash {
-			return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorSourceChanged, "persisted ChatGPT L3 content hash differs from Raw")
+	return validateChatGPTLegacyMeta(event.Meta, expected)
+}
+
+var chatGPTLegacyRequiredMetaKeys = []string{
+	"external_source", "export_id", "conversation_id", "message_id", "node_id", "content_sha256",
+}
+
+var chatGPTLegacyOptionalMetaKeys = []string{
+	"conversation_title", "parent_node_id", "child_node_ids", "on_current_branch",
+	"original_role", "content_type", "artifact_content", "artifact_metadata",
+}
+
+var chatGPTLegacyForbiddenMetaKeys = map[string]struct{}{
+	"owner_id": {}, "user_id": {}, "scope": {}, "evidence_event_ids": {},
+}
+
+func validateChatGPTLegacyMeta(actual map[string]interface{}, expected chatGPTLegacyEventExpectation) error {
+	var expectedMap map[string]interface{}
+	if err := json.Unmarshal([]byte(expected.metaJSON), &expectedMap); err != nil {
+		return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "expected ChatGPT L3 metadata is malformed")
+	}
+	actualNorm, err := normalizeChatGPTLegacyMeta(actual)
+	if err != nil {
+		return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT L3 metadata is malformed")
+	}
+	expectedNorm, err := normalizeChatGPTLegacyMeta(expectedMap)
+	if err != nil {
+		return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "expected ChatGPT L3 metadata is malformed")
+	}
+	actualHash := strings.TrimSpace(fmt.Sprint(actualNorm["content_sha256"]))
+	if actualHash != expected.contentHash {
+		return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorSourceChanged, "persisted ChatGPT L3 content hash differs from Raw")
+	}
+	known := make(map[string]struct{}, len(chatGPTLegacyRequiredMetaKeys)+len(chatGPTLegacyOptionalMetaKeys))
+	for _, key := range chatGPTLegacyRequiredMetaKeys {
+		known[key] = struct{}{}
+		if _, ok := actualNorm[key]; !ok {
+			return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT L3 metadata is missing identity field "+key)
 		}
-		return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT L3 metadata differs from Raw")
+		if !jsonValuesEqual(actualNorm[key], expectedNorm[key]) {
+			return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT L3 metadata identity differs from Raw")
+		}
+	}
+	for _, key := range chatGPTLegacyOptionalMetaKeys {
+		known[key] = struct{}{}
+		if _, ok := actualNorm[key]; !ok {
+			continue
+		}
+		if !jsonValuesEqual(actualNorm[key], expectedNorm[key]) {
+			return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT L3 metadata differs from Raw")
+		}
+	}
+	for key := range actualNorm {
+		if _, ok := known[key]; ok {
+			continue
+		}
+		if _, forbidden := chatGPTLegacyForbiddenMetaKeys[key]; forbidden {
+			return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT L3 metadata contains forbidden identity field")
+		}
 	}
 	return nil
+}
+
+func normalizeChatGPTLegacyMeta(meta map[string]interface{}) (map[string]interface{}, error) {
+	if meta == nil {
+		return map[string]interface{}{}, nil
+	}
+	encoded, err := json.Marshal(meta)
+	if err != nil {
+		return nil, err
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return nil, err
+	}
+	if decoded == nil {
+		return map[string]interface{}{}, nil
+	}
+	return decoded, nil
+}
+
+func jsonValuesEqual(left, right interface{}) bool {
+	return reflect.DeepEqual(decodeJSONValue(left), decodeJSONValue(right))
+}
+
+func decodeJSONValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case json.RawMessage:
+		if len(typed) == 0 {
+			return nil
+		}
+		var decoded interface{}
+		if err := json.Unmarshal(typed, &decoded); err != nil {
+			return string(typed)
+		}
+		return decoded
+	default:
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return value
+		}
+		var decoded interface{}
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			return value
+		}
+		return decoded
+	}
 }
 
 func chatGPTLegacyMeta(item ChatGPTL3ImportRecord, contentHash string) map[string]interface{} {

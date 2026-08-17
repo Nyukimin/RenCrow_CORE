@@ -429,3 +429,20 @@ func CommonRawInputHash(m CommonRawManifest, records []CommonRawRecord, assets [
 	}
 	return SHA256Hex(encoded), nil
 }
+
+// KnowledgeCommonRawBackfillResult reports the owner-scoped backfill of
+// existing l1_knowledge_item rows into Common Raw and its fail-closed
+// coverage gate. It carries IDs, hashes and counts only, never raw text.
+type KnowledgeCommonRawBackfillResult struct {
+	Validated    int                    `json:"validated"`
+	ItemCount    int                    `json:"item_count"`
+	Coverage     int                    `json:"coverage"`
+	Ready        bool                   `json:"ready"`
+	RawImported  int                    `json:"raw_imported"`
+	RawReplayed  int                    `json:"raw_replayed"`
+	Linked       int                    `json:"linked"`
+	Status       CommonRawState         `json:"status"`
+	ManifestID   string                 `json:"manifest_id"`
+	RawReceipt   CommonRawIntakeReceipt `json:"raw_receipt"`
+	RawRecordIDs []string               `json:"raw_record_ids"`
+}

@@ -39,6 +39,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/memory/lifecycle/plan", routes.Owner)
 	registerRoute(mux, "/viewer/memory/lifecycle/run", routes.Owner)
 	registerRoute(mux, "/viewer/memory/export/parquet", routes.Owner)
+	registerRoute(mux, "/viewer/memory/knowledge-raw/backfill", routes.Owner)
 	registerRoute(mux, "/viewer/memory/export/", routes.Owner)
 	registerRoute(mux, "/viewer/memory/snapshot", routes.Snapshot)
 	registerRoute(mux, "/viewer/memory/layers", routes.Layers)
