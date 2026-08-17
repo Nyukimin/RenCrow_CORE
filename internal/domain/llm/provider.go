@@ -67,6 +67,7 @@ type GenerateRequest struct {
 	Temperature     float64
 	SystemPrompt    string
 	ResponseFormat  ResponseFormat
+	ReasoningEffort ReasoningEffort
 	ProviderOptions map[string]any
 	OnToken         StreamCallback // nil = 非ストリーミング
 	OnMetrics       GenerationMetricsCallback

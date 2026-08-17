@@ -27,14 +27,16 @@ type LLMProfileExtractor struct {
 // NewLLMProfileExtractor は新しい LLMProfileExtractor を作成
 func NewLLMProfileExtractor(provider llm.LLMProvider) *LLMProfileExtractor {
 	return &LLMProfileExtractor{
-		provider:    provider,
+		provider: provider,
 		minTurns: 3,
 		// The Worker target is a reasoning model whose analysis channel
 		// consumes output tokens before the final JSON. 256 tokens starved
-		// the final channel (EMPTY_FINAL_CONTENT) or truncated the JSON.
-		// CORE still validates the response against the 64KiB exact-JSON
-		// contract after generation.
-		maxTokens:   4096,
+		// the final channel (EMPTY_FINAL_CONTENT) or truncated the JSON,
+		// and 4096 still starved it when high-effort reasoning ran long.
+		// Extraction therefore requests low reasoning effort and keeps a
+		// token budget with headroom; CORE still validates the response
+		// against the 64KiB exact-JSON contract after generation.
+		maxTokens:   8192,
 		temperature: 0.1,
 	}
 }
@@ -109,9 +111,10 @@ JSONオブジェクトの前後に説明文、マークダウン、コードフ�
 		Messages: []llm.Message{
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:      e.maxTokens,
-		Temperature:    e.temperature,
-		ResponseFormat: llm.ResponseFormatJSONObject,
+		MaxTokens:       e.maxTokens,
+		Temperature:     e.temperature,
+		ResponseFormat:  llm.ResponseFormatJSONObject,
+		ReasoningEffort: llm.ReasoningEffortLow,
 	}
 
 	requestCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{

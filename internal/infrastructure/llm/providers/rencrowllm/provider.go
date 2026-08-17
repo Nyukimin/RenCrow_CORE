@@ -113,6 +113,9 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	if err := addResponseFormat(gatewayReq, req.ResponseFormat); err != nil {
 		return llm.GenerateResponse{}, err
 	}
+	if err := addReasoningEffort(gatewayReq, req.ReasoningEffort); err != nil {
+		return llm.GenerateResponse{}, err
+	}
 	if streaming {
 		gatewayReq["stream_options"] = map[string]any{"include_usage": true}
 	}
@@ -227,7 +230,7 @@ func (p *GatewayProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Ch
 		"stream":   true,
 	}
 	p.addThinkingBridgeFields(gatewayReq, false)
-	if err := addChatReasoningEffort(gatewayReq, req.ReasoningEffort); err != nil {
+	if err := addReasoningEffort(gatewayReq, req.ReasoningEffort); err != nil {
 		return llm.ChatResponse{}, err
 	}
 	p.addModelContextOption(gatewayReq)
@@ -281,7 +284,7 @@ func (p *GatewayProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Ch
 	return readToolChatCompletionsStream(resp.Body)
 }
 
-func addChatReasoningEffort(payload map[string]interface{}, effort llm.ReasoningEffort) error {
+func addReasoningEffort(payload map[string]interface{}, effort llm.ReasoningEffort) error {
 	switch effort {
 	case llm.ReasoningEffortUnspecified:
 		return nil
@@ -297,7 +300,7 @@ func addChatReasoningEffort(payload map[string]interface{}, effort llm.Reasoning
 		kwargs["reasoning_effort"] = "low"
 		return nil
 	default:
-		return fmt.Errorf("unsupported chat reasoning effort %q", effort)
+		return fmt.Errorf("unsupported reasoning effort %q", effort)
 	}
 }
 
