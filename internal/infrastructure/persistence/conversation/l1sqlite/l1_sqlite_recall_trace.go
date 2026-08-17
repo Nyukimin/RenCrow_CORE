@@ -273,6 +273,9 @@ func PromptInjectionEventsFromItems(traceID string, records []domconv.RecallTrac
 		event, ok := bySection[section]
 		if !ok {
 			event = &domconv.PromptInjectionEventRecord{
+				// injection_id is the table primary key; leaving it empty
+				// collides on the second section of the same trace.
+				InjectionID:   fmt.Sprintf("%s:injection:%04d", traceID, len(order)),
 				TraceID:       traceID,
 				PromptSection: section,
 				OrderIndex:    len(order),

@@ -647,3 +647,48 @@ func TestConversationTurnOutboxStaleTerminalizationIsTurnScopedAndBounded(t *tes
 		}
 	}
 }
+
+// A real RecallPack injects items into more than one prompt section. The
+// injection_id primary key must be filled per section, or the second section
+// collides on an empty ID and every production turn fails.
+func TestConversationTurnCommitPersistsMultiSectionInjectionEvents(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "conversation.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	result, err := store.CommitConversationTurn(context.Background(), domconv.ConversationTurnRequest{
+		TurnID:       "turn-multi-section-1",
+		SessionID:    "session-multi-section-1",
+		OwnerID:      "owner-multi-section-1",
+		UserMessage:  "hello",
+		AgentMessage: "hi",
+		AgentSpeaker: domconv.SpeakerMio,
+		RecallTraceItems: []domconv.RecallTraceItem{
+			{Layer: "L1", Kind: "short_context", Summary: "recent turn", Status: domconv.TraceStatusInjected, Decision: "included", PromptSection: "[RecallPack: ShortContext]", TokenCount: 10},
+			{Layer: "L1", Kind: "rolling_summary", Summary: "summary", Status: domconv.TraceStatusInjected, Decision: "included", PromptSection: "[RecallPack: RollingSummary]", TokenCount: 20},
+			{Layer: "L1", Kind: "user_memory", Summary: "", Status: "filtered_status", Decision: "rejected", Reason: "memory state is not confirmed or pinned", PromptSection: "[RecallPack: UserMemory]"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CommitConversationTurn with multi-section trace: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%q, want completed", result.Status)
+	}
+	var events int
+	if err := store.db.QueryRow(`SELECT count(*) FROM prompt_injection_event WHERE trace_id = 'turn-multi-section-1'`).Scan(&events); err != nil {
+		t.Fatalf("count injection events: %v", err)
+	}
+	if events != 2 {
+		t.Fatalf("injection events=%d, want one per injected section", events)
+	}
+	var distinct int
+	if err := store.db.QueryRow(`SELECT count(DISTINCT injection_id) FROM prompt_injection_event WHERE trace_id = 'turn-multi-section-1'`).Scan(&distinct); err != nil {
+		t.Fatalf("count distinct injection ids: %v", err)
+	}
+	if distinct != 2 {
+		t.Fatalf("distinct injection ids=%d, want 2 non-colliding ids", distinct)
+	}
+}

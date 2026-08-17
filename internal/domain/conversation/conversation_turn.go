@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -21,6 +22,10 @@ const (
 	ConversationTurnMaxReasonRunes     = 1024
 	ConversationTurnMaxTraceItems      = 256
 	ConversationTurnMaxTraceRunes      = 8192
+	// ConversationTurnMaxTraceTotalRunes bounds the whole trace, not one item.
+	// A realistic RecallPack trace holds up to 256 items of a few hundred
+	// runes each; reusing the per-item bound here rejected every real turn.
+	ConversationTurnMaxTraceTotalRunes = 256 * 1024
 	ConversationTurnMaxTraceSourceURLs = 256
 	ConversationTurnMaxTargets         = 2
 	ConversationTurnMaxOutboxAttempts  = 3
@@ -183,8 +188,8 @@ func NormalizeConversationTurnRequest(request ConversationTurnRequest) (Conversa
 			return ConversationTurnRequest{}, invalidConversationTurn("recall trace text exceeds bound")
 		}
 		traceTotalRunes += traceRunes
-		if traceTotalRunes > ConversationTurnMaxTraceRunes {
-			return ConversationTurnRequest{}, invalidConversationTurn("recall trace text exceeds bound")
+		if traceTotalRunes > ConversationTurnMaxTraceTotalRunes {
+			return ConversationTurnRequest{}, invalidConversationTurn("recall trace total text exceeds bound")
 		}
 	}
 	targets, err := normalizeConversationTurnTargets(request.Targets)
@@ -408,7 +413,15 @@ func boundedText(value string, max int, field string) error {
 	return nil
 }
 
-func invalidConversationTurn(_ string) error { return ErrConversationTurnInvalid }
+// invalidConversationTurn keeps the typed invalid identity (errors.Is /
+// ConversationTurnErrorCodeOf) while preserving the static reason for
+// operational logs. Reasons are fixed field labels, never message text.
+func invalidConversationTurn(reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		return ErrConversationTurnInvalid
+	}
+	return fmt.Errorf("%w: %s", ErrConversationTurnInvalid, reason)
+}
 
 func canonicalTurnTime(value time.Time) string {
 	if value.IsZero() {

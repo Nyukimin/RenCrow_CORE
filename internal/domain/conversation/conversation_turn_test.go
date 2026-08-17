@@ -81,12 +81,24 @@ func TestConversationTurnValidationAndStableDistinctMessageIDs(t *testing.T) {
 }
 
 func TestConversationTurnTraceTextHasRequestWideBound(t *testing.T) {
+	// A realistic multi-item trace stays within the request-wide bound. The
+	// former bound reused the per-item limit and rejected every real turn.
 	request := conversationTurnTestRequest()
 	request.RecallTraceItems = []RecallTraceItem{
 		{Layer: "L1", Kind: "memory", Summary: strings.Repeat("a", 5000), Status: TraceStatusInjected, Decision: "included"},
 		{Layer: "L1", Kind: "memory", Summary: strings.Repeat("b", 5000), Status: TraceStatusInjected, Decision: "included"},
 	}
-	if err := request.Validate(); !errors.Is(err, ErrConversationTurnInvalid) {
+	if err := request.Validate(); err != nil {
+		t.Fatalf("realistic trace rejected: %v", err)
+	}
+
+	over := conversationTurnTestRequest()
+	items := make([]RecallTraceItem, 0, 33)
+	for i := 0; i < 33; i++ {
+		items = append(items, RecallTraceItem{Layer: "L1", Kind: "memory", Summary: strings.Repeat("c", 8000), Status: TraceStatusInjected, Decision: "included"})
+	}
+	over.RecallTraceItems = items
+	if err := over.Validate(); !errors.Is(err, ErrConversationTurnInvalid) {
 		t.Fatalf("trace text over request-wide bound error=%v, want invalid", err)
 	}
 }

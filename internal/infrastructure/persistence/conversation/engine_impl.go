@@ -300,13 +300,23 @@ func (e *RealConversationEngine) loadSharedUserMemory(ctx context.Context, query
 	if e.userMemoryStore == nil || pack == nil || e.userID == "" {
 		return nil
 	}
-	items, err := e.userMemoryStore.ListUserMemories(ctx, e.userID, "", true, domainmemory.UserMemoryRecallMaxScan)
-	if err != nil {
-		pack.UserMemoryRecallDecisions = append(pack.UserMemoryRecallDecisions, domainmemory.UserMemoryRecallDecision{
-			Status: domainmemory.UserMemoryRecallStatusSourceFailure,
-			Reason: "user memory source unavailable",
-		})
-		return err
+	// Scan only supply-eligible states. A recency-ordered scan across all
+	// states lets a growing candidate backlog crowd every confirmed/pinned
+	// memory out of the bounded window, so nothing ever reaches the prompt.
+	items := make([]domainmemory.UserMemory, 0, domainmemory.UserMemoryRecallMaxScan)
+	for _, state := range []string{domainmemory.MemoryStatePinned, domainmemory.MemoryStateConfirmed} {
+		stateItems, err := e.userMemoryStore.ListUserMemories(ctx, e.userID, state, false, domainmemory.UserMemoryRecallMaxScan-len(items))
+		if err != nil {
+			pack.UserMemoryRecallDecisions = append(pack.UserMemoryRecallDecisions, domainmemory.UserMemoryRecallDecision{
+				Status: domainmemory.UserMemoryRecallStatusSourceFailure,
+				Reason: "user memory source unavailable",
+			})
+			return err
+		}
+		items = append(items, stateItems...)
+		if len(items) >= domainmemory.UserMemoryRecallMaxScan {
+			break
+		}
 	}
 	decisions := domainmemory.RankUserMemoriesForRecallForPersona(query, items, domainmemory.UserMemoryRecallDefaultLimit, e.persona.Name)
 	pack.UserMemoryRecallDecisions = decisions

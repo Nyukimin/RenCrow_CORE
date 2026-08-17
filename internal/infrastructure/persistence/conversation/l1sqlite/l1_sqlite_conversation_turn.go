@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -122,9 +123,12 @@ func (s *L1SQLiteStore) CommitConversationTurn(ctx context.Context, request domc
 	if err != nil {
 		return base, domconv.ErrConversationTurnInternal
 	}
-	rollback := func(code domconv.ConversationTurnErrorCode) (domconv.ConversationTurnResult, error) {
+	rollback := func(code domconv.ConversationTurnErrorCode, cause ...error) (domconv.ConversationTurnResult, error) {
 		_ = tx.Rollback()
 		base.ErrorCode = code
+		if len(cause) > 0 && cause[0] != nil {
+			log.Printf("[ConversationTurn] commit rollback code=%s turn=%s cause=%v", code, normalized.TurnID, cause[0])
+		}
 		return base, conversationTurnError(code)
 	}
 
@@ -138,8 +142,8 @@ WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingJSON)
 			return rollback(domconv.ConversationTurnErrorConflict)
 		}
 		var replay domconv.ConversationTurnResult
-		if json.Unmarshal([]byte(existingJSON), &replay) != nil {
-			return rollback(domconv.ConversationTurnErrorInternal)
+		if err := json.Unmarshal([]byte(existingJSON), &replay); err != nil {
+			return rollback(domconv.ConversationTurnErrorInternal, err)
 		}
 		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 			return base, domconv.ErrConversationTurnInternal
@@ -148,13 +152,13 @@ WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingJSON)
 		return replay, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return rollback(domconv.ConversationTurnErrorInternal)
+		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
 
 	now := time.Now().UTC()
 	threadID, closedThreadID, messageCount, threadDomain, err := selectConversationTurnThread(ctx, tx, normalized, now)
 	if err != nil {
-		return rollback(domconv.ConversationTurnErrorInternal)
+		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
 	base.ThreadID = threadID
 	base.ClosedThreadID = closedThreadID
@@ -168,18 +172,21 @@ WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingJSON)
 	}
 
 	if err := upsertConversationActiveThread(ctx, tx, normalized.SessionID, threadID, threadDomain, messageCount, now); err != nil {
-		return rollback(domconv.ConversationTurnErrorInternal)
+		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
 	if err := insertConversationTurnMessages(ctx, tx, normalized, threadID, userMessageID, agentMessageID, now); err != nil {
-		return rollback(domconv.ConversationTurnErrorInternal)
+		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
 	if err := insertConversationTurnRecallTrace(ctx, tx, normalized, now); err != nil {
-		return rollback(domconv.ConversationTurnErrorInternal)
+		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
 
 	resultJSON, err := json.Marshal(base)
 	if err != nil || len(resultJSON) > conversationTurnMaxResultBytes {
-		return rollback(domconv.ConversationTurnErrorInternal)
+		if err == nil {
+			err = errors.New("turn result json exceeds bound")
+		}
+		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
 	var closedValue interface{}
 	if closedThreadID != 0 {
@@ -191,12 +198,12 @@ INSERT INTO conversation_turn_receipt (
 	user_message_id, agent_message_id, status, result_json, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, normalized.TurnID, payloadHash, normalized.SessionID,
 		normalized.TurnID, threadID, closedValue, userMessageID, agentMessageID, base.Status, string(resultJSON), now, now); err != nil {
-		return rollback(domconv.ConversationTurnErrorInternal)
+		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
 	for _, target := range requestedConversationTurnOutboxTargets(normalized.Targets, closedThreadID != 0) {
 		payload, err := conversationTurnOutboxPayload(normalized, threadID, closedThreadID, userMessageID, agentMessageID, target, payloadHash)
 		if err != nil {
-			return rollback(domconv.ConversationTurnErrorInternal)
+			return rollback(domconv.ConversationTurnErrorInternal, err)
 		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO conversation_turn_outbox (
@@ -204,10 +211,11 @@ INSERT INTO conversation_turn_outbox (
 	payload_json, status, lease_token, lease_expires_at, attempts, last_error, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', NULL, 0, '', ?, ?)`, normalized.TurnID, target,
 			normalized.SessionID, threadID, closedValue, payloadHash, payload, domconv.ConversationTurnOutboxPending, now, now); err != nil {
-			return rollback(domconv.ConversationTurnErrorInternal)
+			return rollback(domconv.ConversationTurnErrorInternal, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
+		log.Printf("[ConversationTurn] commit failed turn=%s cause=%v", normalized.TurnID, err)
 		base.ErrorCode = domconv.ConversationTurnErrorInternal
 		return base, domconv.ErrConversationTurnInternal
 	}
