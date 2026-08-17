@@ -170,10 +170,15 @@ func prepareChatGPTRawPlan(ownerID string, batch ChatGPTRawImportBatch) (chatGPT
 	if len(batch.Records) == 0 || len(batch.Records) > 100 {
 		return chatGPTRawPlan{}, domainmemory.NewCommonRawError(domainmemory.CommonRawErrorInvalid, "ChatGPT Raw import batch must contain 1..100 records")
 	}
-	if batch.BatchCount <= 0 || batch.BatchCount > batch.SourceCount || batch.BatchIndex < 0 || batch.BatchIndex >= batch.BatchCount {
+	// SourceCount binds the export's source-chunk total, while StartLine and
+	// BatchCount index the verified message-line stream (54K+ lines for 1.7K
+	// chunks in a real export). Coupling them rejected every production-sized
+	// import; per-batch bounds stay enforced by the 1..100 record and payload
+	// checks.
+	if batch.BatchCount <= 0 || batch.BatchIndex < 0 || batch.BatchIndex >= batch.BatchCount {
 		return chatGPTRawPlan{}, domainmemory.NewCommonRawError(domainmemory.CommonRawErrorInvalid, "batch index/count is outside the source bounds")
 	}
-	if batch.StartLine < 1 || batch.StartLine > batch.SourceCount || len(batch.Records) > batch.SourceCount-batch.StartLine+1 {
+	if batch.StartLine < 1 {
 		return chatGPTRawPlan{}, domainmemory.NewCommonRawError(domainmemory.CommonRawErrorInvalid, "start_line and batch size are outside the source bounds")
 	}
 	if strings.TrimSpace(batch.SchemaVersion) == "" || batch.SchemaVersion != ChatGPTL3ArtifactFormat {

@@ -653,3 +653,27 @@ func queryInt(t *testing.T, store *L1SQLiteStore, query string) int {
 	}
 	return value
 }
+
+// A production export has far more verified message lines than source chunks
+// (e.g. 54032 lines over 1751 chunks). StartLine indexes the message stream,
+// so it must not be bounded by the source-chunk total.
+func TestImportChatGPTRawBatchAcceptsMessageLinesBeyondSourceCount(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "conversation-l1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	record := chatGPTL3RawTestRecord("export-linespace", "conv-linespace", "user-linespace")
+	batch := ChatGPTRawImportBatch{
+		ManifestSHA256: strings.Repeat("a", 64), ArtifactSHA256: strings.Repeat("b", 64),
+		SourceCount: 3, SchemaVersion: ChatGPTL3ArtifactFormat, ConverterVersion: "chatgpt-export-memory-go/v2",
+		BatchIndex: 17, BatchCount: 575, StartLine: 1701, Records: []ChatGPTL3ImportRecord{record},
+	}
+	result, err := store.ImportChatGPTRawBatch(commonRawTestContext(t, "chatgpt-linespace"), "chatgpt-linespace", "ren", "ren", batch, false)
+	if err != nil {
+		t.Fatalf("message-line StartLine beyond SourceCount rejected: %v", err)
+	}
+	if result.Validated != 1 {
+		t.Fatalf("unexpected dry result: %+v", result)
+	}
+}

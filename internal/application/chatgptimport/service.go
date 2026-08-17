@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -389,6 +390,9 @@ func classifyImportFailure(err error) (domainmemory.ChatGPTImportState, domainme
 	if err == nil {
 		return domainmemory.ChatGPTImportStateBlocked, domainmemory.ChatGPTImportErrorUnavailable, chatGPTImportUnavailableReason
 	}
+	// The stored reason and API response stay generic by contract; keep the
+	// wrapped detail observable for operators, or every rejection is blind.
+	log.Printf("[ChatGPTImport] failure detail: %v", err)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return domainmemory.ChatGPTImportStateBlocked, domainmemory.ChatGPTImportErrorUnavailable, chatGPTImportUnavailableReason
 	}
