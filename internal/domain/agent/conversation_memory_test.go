@@ -34,6 +34,48 @@ func TestCommitConversationTurnUsesExactFilteredPack(t *testing.T) {
 	}
 }
 
+func TestCommitConversationTurnPartialOutcomeDoesNotFailTurn(t *testing.T) {
+	engine := &mockConversationEngine{
+		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
+			return conversation.ConversationTurnResult{
+				TurnID:         request.TurnID,
+				Status:         conversation.ConversationTurnPartial,
+				PendingTargets: []string{string(conversation.ConversationTurnTargetRedisProjection)},
+				ErrorCode:      conversation.ConversationTurnErrorUnavailable,
+			}, conversation.ErrConversationTurnUnavailable
+		},
+	}
+	if err := commitConversationTurn(context.Background(), engine, "job-1", "chat-1", "hello", "hi", conversation.SpeakerMio, nil); err != nil {
+		t.Fatalf("partial outcome must not fail the committed turn: %v", err)
+	}
+}
+
+func TestCommitConversationTurnFailedReturnsTypedError(t *testing.T) {
+	engine := &mockConversationEngine{
+		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
+			return conversation.ConversationTurnResult{
+				TurnID:    request.TurnID,
+				Status:    conversation.ConversationTurnFailed,
+				ErrorCode: conversation.ConversationTurnErrorUnavailable,
+			}, conversation.ErrConversationTurnUnavailable
+		},
+	}
+	if err := commitConversationTurn(context.Background(), engine, "job-1", "chat-1", "hello", "hi", conversation.SpeakerMio, nil); !errors.Is(err, conversation.ErrConversationTurnUnavailable) {
+		t.Fatalf("error=%v, want typed unavailable", err)
+	}
+}
+
+func TestCommitConversationTurnUnexpectedStatusFailsClosed(t *testing.T) {
+	engine := &mockConversationEngine{
+		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
+			return conversation.ConversationTurnResult{TurnID: request.TurnID, Status: conversation.ConversationTurnFailed}, nil
+		},
+	}
+	if err := commitConversationTurn(context.Background(), engine, "job-1", "chat-1", "hello", "hi", conversation.SpeakerMio, nil); !errors.Is(err, conversation.ErrConversationTurnInternal) {
+		t.Fatalf("error=%v, want typed internal fail-closed", err)
+	}
+}
+
 func TestCommitConversationTurnRejectsLegacyOnlyEngine(t *testing.T) {
 	type legacyOnlyEngine struct {
 		conversation.ConversationEngine

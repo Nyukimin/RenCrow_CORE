@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"log"
 	"regexp"
 	"strings"
 
@@ -89,12 +90,18 @@ type typedConversationTurnEngine interface {
 // narrow capability check prevents an Agent from silently falling back to the
 // legacy EndTurn/EndTurnAs API, which cannot carry the exact filtered RecallPack
 // or the durable outbox transaction.
+//
+// The conversation response and follower persistence are separate typed
+// outcomes: a partial result means the turn is committed in L1 with its
+// receipt while one or more followers stay in the durable outbox. Partial is
+// neither rounded to completed nor escalated into a turn failure here; the
+// receipt keeps the pending targets and the outbox replays them.
 func commitConversationTurn(ctx context.Context, engine conversation.ConversationEngine, turnID, sessionID, userMessage, response string, speaker conversation.Speaker, pack *conversation.RecallPack) error {
 	committer, ok := engine.(typedConversationTurnEngine)
 	if !ok {
 		return conversation.ErrConversationTurnUnavailable
 	}
-	_, err := committer.CommitConversationTurn(ctx, conversation.ConversationTurnRequest{
+	result, err := committer.CommitConversationTurn(ctx, conversation.ConversationTurnRequest{
 		TurnID:           turnID,
 		SessionID:        sessionID,
 		UserMessage:      userMessage,
@@ -102,7 +109,18 @@ func commitConversationTurn(ctx context.Context, engine conversation.Conversatio
 		AgentSpeaker:     speaker,
 		RecallTraceItems: pack.ToTraceItems(),
 	})
-	return err
+	if result.Status == conversation.ConversationTurnPartial {
+		log.Printf("[ConversationTurn] partial outcome turn_id=%s pending_targets=%v error_code=%s",
+			result.TurnID, result.PendingTargets, result.ErrorCode)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if result.Status != conversation.ConversationTurnCompleted {
+		return conversation.ErrConversationTurnInternal
+	}
+	return nil
 }
 
 func conversationSpeakerForViewerRecipient(recipient string, fallback conversation.Speaker) conversation.Speaker {
