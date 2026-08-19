@@ -193,7 +193,6 @@ func claimTurnOutbox(ctx context.Context, store conversationTurnL1Store, turnID 
 	return store.ClaimConversationTurnOutbox(ctx, turnID, now, conversationTurnFollowerLease)
 }
 
-
 // conversationTurnBookkeepingContext returns a short-lived context detached
 // from the caller. The outbox ledger update must succeed even when the
 // follower's own context already expired; otherwise a timed-out follower can

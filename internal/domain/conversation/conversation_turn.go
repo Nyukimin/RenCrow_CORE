@@ -16,12 +16,12 @@ import (
 )
 
 const (
-	ConversationTurnCanonicalVersion   = "rencrow.conversation_turn.v1"
-	ConversationTurnMaxIDRunes         = 256
-	ConversationTurnMaxTextRunes       = 64 * 1024
-	ConversationTurnMaxReasonRunes     = 1024
-	ConversationTurnMaxTraceItems      = 256
-	ConversationTurnMaxTraceRunes      = 8192
+	ConversationTurnCanonicalVersion = "rencrow.conversation_turn.v1"
+	ConversationTurnMaxIDRunes       = 256
+	ConversationTurnMaxTextRunes     = 64 * 1024
+	ConversationTurnMaxReasonRunes   = 1024
+	ConversationTurnMaxTraceItems    = 256
+	ConversationTurnMaxTraceRunes    = 8192
 	// ConversationTurnMaxTraceTotalRunes bounds the whole trace, not one item.
 	// A realistic RecallPack trace holds up to 256 items of a few hundred
 	// runes each; reusing the per-item bound here rejected every real turn.
