@@ -122,7 +122,9 @@ require_backing_mount() {
     echo "[NG] required backing mount is inaccessible for ${path}" >&2
     return 1
   fi
-  if ! mount_target=$(findmnt -n -o TARGET -T "${path}"); then
+  # systemd automount stacks an autofs mount and the real mount on the same
+  # target, making findmnt return one line per layer. Keep the topmost mount.
+  if ! mount_target=$(findmnt -n -o TARGET -T "${path}" | tail -n 1); then
     echo "[NG] required backing mount is inaccessible for ${path}" >&2
     return 1
   fi
