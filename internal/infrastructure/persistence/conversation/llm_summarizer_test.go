@@ -211,3 +211,51 @@ func TestLLMDailyDigestSummarizer_SummarizeDailyDigest(t *testing.T) {
 		t.Fatalf("unexpected digest summary: %q", got)
 	}
 }
+
+// namedMockProvider is a mockLLMProvider with a distinct name so chain tests
+// can assert which target produced the residual.
+type namedMockProvider struct {
+	mockLLMProvider
+	name string
+}
+
+func (p *namedMockProvider) Name() string { return p.name }
+
+func TestLLMSummarizerChainFallsBackToNextProvider(t *testing.T) {
+	worker := &namedMockProvider{name: "worker"}
+	worker.err = errors.New("slot busy")
+	wild := &namedMockProvider{name: "wild"}
+	wild.response = `{"summary":"Wildが要約した","keywords":["会話","要約","fallback"]}`
+	chat := &namedMockProvider{name: "chat"}
+	chat.response = `{"summary":"Chatは呼ばれないはず","keywords":["a","b","c"]}`
+
+	s := NewLLMSummarizerChain(worker, wild, chat)
+	got, err := s.Summarize(context.Background(), newTestThread("こんにちは", "やあ"))
+	if err != nil {
+		t.Fatalf("chain Summarize failed: %v", err)
+	}
+	if got.Provider != "wild" || got.Summary != "Wildが要約した" {
+		t.Fatalf("expected wild fallback result, got provider=%q summary=%q", got.Provider, got.Summary)
+	}
+	if worker.calls != 1 || wild.calls != 1 || chat.calls != 0 {
+		t.Fatalf("calls worker=%d wild=%d chat=%d, want 1,1,0", worker.calls, wild.calls, chat.calls)
+	}
+	if len(wild.requests) != 1 || wild.requests[0].ReasoningEffort != llm.ReasoningEffortLow {
+		t.Fatalf("chain request must use low reasoning effort: %+v", wild.requests)
+	}
+}
+
+func TestLLMSummarizerChainAllProvidersFailReturnsUnavailable(t *testing.T) {
+	worker := &namedMockProvider{name: "worker"}
+	worker.err = errors.New("busy")
+	chat := &namedMockProvider{name: "chat"}
+	chat.err = errors.New("busy too")
+	s := NewLLMSummarizerChain(worker, nil, chat)
+	_, err := s.Summarize(context.Background(), newTestThread("a", "b"))
+	if !errors.Is(err, domconv.ErrThreadSummarizerUnavailable) {
+		t.Fatalf("expected unavailable after all providers fail, got %v", err)
+	}
+	if worker.calls != 1 || chat.calls != 1 {
+		t.Fatalf("each provider must be tried once: worker=%d chat=%d", worker.calls, chat.calls)
+	}
+}

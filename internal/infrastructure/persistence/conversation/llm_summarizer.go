@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -17,61 +18,92 @@ const maxThreadSummaryResponseBytes = 64 * 1024
 // コンパイル時インターフェース適合チェック
 var _ domconv.ConversationSummarizer = (*LLMSummarizer)(nil)
 
-// LLMSummarizer は LLMProvider を使って会話の意味残余を1回で生成する。
+// defaultSummaryAttemptTimeout bounds one provider attempt. A busy slot must
+// fail over to the next provider instead of consuming the whole follower
+// budget in one queue.
+const defaultSummaryAttemptTimeout = 25 * time.Second
+
+// LLMSummarizer は LLMProvider chain を使って会話の意味残余を生成する。
+// 各providerを最大1回、attemptTimeout以内で試し、全滅なら呼出元の
+// deterministic fallbackに委ねる（2026-08-19 利用者指示:
+// Worker -> Wild -> Chat -> LLMなし）。
 type LLMSummarizer struct {
-	provider llm.LLMProvider
+	providers      []llm.LLMProvider
+	attemptTimeout time.Duration
 }
 
-// NewLLMSummarizer は新しい LLMSummarizer を生成する。
+// NewLLMSummarizer は単一providerのSummarizerを生成する（互換入口）。
 func NewLLMSummarizer(provider llm.LLMProvider) *LLMSummarizer {
-	return &LLMSummarizer{provider: provider}
+	return NewLLMSummarizerChain(provider)
 }
 
-// Summarize は Thread を1回のJSON生成で要約・キーワード抽出する。
-func (s *LLMSummarizer) Summarize(ctx context.Context, thread *domconv.Thread) (domconv.SummaryResidual, error) {
-	providerName := threadSummaryProviderName(s)
-	if thread == nil || len(thread.Turns) == 0 {
-		return domconv.SummaryResidual{Provider: providerName}, domconv.ErrThreadSummarizerInvalid
+// NewLLMSummarizerChain は先頭から順に試すprovider chainを生成する。
+// nil providerは静かにスキップされる。
+func NewLLMSummarizerChain(providers ...llm.LLMProvider) *LLMSummarizer {
+	chain := make([]llm.LLMProvider, 0, len(providers))
+	for _, p := range providers {
+		if p != nil {
+			chain = append(chain, p)
+		}
 	}
-	if s == nil || s.provider == nil || providerName == domconv.ThreadSummaryProviderNotConfigured {
-		return domconv.SummaryResidual{Provider: providerName}, domconv.ErrThreadSummarizerNotConfigured
+	return &LLMSummarizer{providers: chain, attemptTimeout: defaultSummaryAttemptTimeout}
+}
+
+// Summarize は各providerを順に最大1回試し、最初に成功した有効なJSONを返す。
+func (s *LLMSummarizer) Summarize(ctx context.Context, thread *domconv.Thread) (domconv.SummaryResidual, error) {
+	if thread == nil || len(thread.Turns) == 0 {
+		return domconv.SummaryResidual{Provider: domconv.ThreadSummaryProviderNotConfigured}, domconv.ErrThreadSummarizerInvalid
+	}
+	if s == nil || len(s.providers) == 0 {
+		return domconv.SummaryResidual{Provider: domconv.ThreadSummaryProviderNotConfigured}, domconv.ErrThreadSummarizerNotConfigured
 	}
 
 	requestCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
 		SessionID: thread.SessionID, Initiator: "shiro", Caller: "conversation.thread", Purpose: "summarize",
 	})
-	resp, err := s.provider.Generate(requestCtx, llm.GenerateRequest{
-		Messages:       []llm.Message{{Role: "user", Content: buildSummarizePrompt(thread)}},
-		MaxTokens:      256,
-		Temperature:    0.3,
-		ResponseFormat: llm.ResponseFormatJSONObject,
-	})
-	if err != nil {
-		return domconv.SummaryResidual{Provider: providerName}, domconv.ErrThreadSummarizerUnavailable
+	prompt := buildSummarizePrompt(thread)
+	lastErr := domconv.ErrThreadSummarizerUnavailable
+	lastProvider := domconv.ThreadSummaryProviderNotConfigured
+	attempted := 0
+	for _, provider := range s.providers {
+		providerName := strings.TrimSpace(provider.Name())
+		if providerName == "" {
+			continue
+		}
+		attempted++
+		lastProvider = providerName
+		if err := ctx.Err(); err != nil {
+			return domconv.SummaryResidual{Provider: providerName}, domconv.ErrThreadSummarizerUnavailable
+		}
+		attemptCtx, cancel := context.WithTimeout(requestCtx, s.attemptTimeout)
+		resp, err := provider.Generate(attemptCtx, llm.GenerateRequest{
+			Messages:        []llm.Message{{Role: "user", Content: prompt}},
+			MaxTokens:       1024,
+			Temperature:     0.3,
+			ResponseFormat:  llm.ResponseFormatJSONObject,
+			ReasoningEffort: llm.ReasoningEffortLow,
+		})
+		cancel()
+		if err != nil {
+			lastErr = domconv.ErrThreadSummarizerUnavailable
+			continue
+		}
+		if len(resp.Content) > maxThreadSummaryResponseBytes || !utf8.ValidString(resp.Content) {
+			lastErr = domconv.ErrThreadSummarizerInvalid
+			continue
+		}
+		residual, err := decodeSummaryResponse(resp.Content)
+		if err != nil {
+			lastErr = domconv.ErrThreadSummarizerInvalid
+			continue
+		}
+		residual.Provider = providerName
+		return residual, nil
 	}
-	if len(resp.Content) > maxThreadSummaryResponseBytes {
-		return domconv.SummaryResidual{Provider: providerName}, domconv.ErrThreadSummarizerInvalid
+	if attempted == 0 {
+		return domconv.SummaryResidual{Provider: domconv.ThreadSummaryProviderNotConfigured}, domconv.ErrThreadSummarizerNotConfigured
 	}
-	if !utf8.ValidString(resp.Content) {
-		return domconv.SummaryResidual{Provider: providerName}, domconv.ErrThreadSummarizerInvalid
-	}
-	residual, err := decodeSummaryResponse(resp.Content)
-	if err != nil {
-		return domconv.SummaryResidual{Provider: providerName}, domconv.ErrThreadSummarizerInvalid
-	}
-	residual.Provider = providerName
-	return residual, nil
-}
-
-func threadSummaryProviderName(s *LLMSummarizer) string {
-	if s == nil || s.provider == nil {
-		return domconv.ThreadSummaryProviderNotConfigured
-	}
-	name := strings.TrimSpace(s.provider.Name())
-	if name == "" {
-		return domconv.ThreadSummaryProviderNotConfigured
-	}
-	return name
+	return domconv.SummaryResidual{Provider: lastProvider}, lastErr
 }
 
 // buildSummarizePrompt は要約とキーワードを同じ生成に要求する。

@@ -150,7 +150,13 @@ func buildConversationRuntime(
 
 		summaryProvider, summaryProviderLabel := buildConversationTextProvider(cfg, primaryProviders)
 		if summaryProvider != nil {
-			summarizer := conversationpersistence.NewLLMSummarizer(summaryProvider)
+			// 2026-08-19 利用者指示: thread要約は Worker -> Wild -> Chat の順で
+			// 空いているtargetを短時間ずつ試し、全滅ならdeterministic fallback。
+			summarizer := conversationpersistence.NewLLMSummarizerChain(
+				primaryProviders.Worker,
+				primaryProviders.Wild,
+				primaryProviders.Chat,
+			)
 			realMgr.WithSummarizer(summarizer)
 			if l1Store != nil {
 				l1Store.WithDailyDigestSummarizer(conversationpersistence.NewLLMDailyDigestSummarizer(summaryProvider))

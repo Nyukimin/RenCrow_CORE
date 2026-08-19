@@ -93,7 +93,9 @@ func (r *RealConversationManager) CommitConversationTurn(ctx context.Context, re
 		finishedAt := time.Now().UTC()
 		if operationErr != nil {
 			code := conversationTurnFollowerErrorCode(operationErr)
-			updated, finishErr := store.FailConversationTurnOutbox(ctx, claim.TurnID, claim.Target, claim.LeaseToken, code, finishedAt)
+			bookCtx, bookCancel := conversationTurnBookkeepingContext()
+			updated, finishErr := store.FailConversationTurnOutbox(bookCtx, claim.TurnID, claim.Target, claim.LeaseToken, code, finishedAt)
+			bookCancel()
 			if finishErr != nil {
 				return updated, finishErr
 			}
@@ -103,7 +105,9 @@ func (r *RealConversationManager) CommitConversationTurn(ctx context.Context, re
 			}
 			continue
 		}
-		updated, finishErr := store.CompleteConversationTurnOutbox(ctx, claim.TurnID, claim.Target, claim.LeaseToken, finishedAt)
+		bookCtx, bookCancel := conversationTurnBookkeepingContext()
+		updated, finishErr := store.CompleteConversationTurnOutbox(bookCtx, claim.TurnID, claim.Target, claim.LeaseToken, finishedAt)
+		bookCancel()
 		if finishErr != nil {
 			return updated, finishErr
 		}
@@ -160,7 +164,9 @@ func (r *RealConversationManager) DrainConversationTurnOutbox(ctx context.Contex
 		finishedAt := time.Now().UTC()
 		if operationErr != nil {
 			code := conversationTurnFollowerErrorCode(operationErr)
-			_, finishErr := store.FailConversationTurnOutbox(ctx, claim.TurnID, claim.Target, claim.LeaseToken, code, finishedAt)
+			bookCtx, bookCancel := conversationTurnBookkeepingContext()
+			_, finishErr := store.FailConversationTurnOutbox(bookCtx, claim.TurnID, claim.Target, claim.LeaseToken, code, finishedAt)
+			bookCancel()
 			if finishErr != nil {
 				return finishErr
 			}
@@ -169,7 +175,11 @@ func (r *RealConversationManager) DrainConversationTurnOutbox(ctx context.Contex
 			}
 			continue
 		}
-		if _, err := store.CompleteConversationTurnOutbox(ctx, claim.TurnID, claim.Target, claim.LeaseToken, finishedAt); err != nil {
+		bookCtx, bookCancel := conversationTurnBookkeepingContext()
+		_, completeErr := store.CompleteConversationTurnOutbox(bookCtx, claim.TurnID, claim.Target, claim.LeaseToken, finishedAt)
+		bookCancel()
+		if completeErr != nil {
+			err := completeErr
 			return err
 		}
 	}
@@ -181,6 +191,15 @@ func claimTurnOutbox(ctx context.Context, store conversationTurnL1Store, turnID 
 		return claimer.ClaimConversationTurnOutboxExcluding(ctx, turnID, now, conversationTurnFollowerLease, excluded)
 	}
 	return store.ClaimConversationTurnOutbox(ctx, turnID, now, conversationTurnFollowerLease)
+}
+
+
+// conversationTurnBookkeepingContext returns a short-lived context detached
+// from the caller. The outbox ledger update must succeed even when the
+// follower's own context already expired; otherwise a timed-out follower can
+// never be marked failed and stays running until the next startup drain.
+func conversationTurnBookkeepingContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 10*time.Second)
 }
 
 func claimNextTurnOutbox(ctx context.Context, store conversationTurnL1Store, now time.Time, excluded map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
