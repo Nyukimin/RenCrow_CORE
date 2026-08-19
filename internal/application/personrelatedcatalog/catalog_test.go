@@ -43,7 +43,7 @@ func TestEligiblePeopleUsesOnlyExplicitPositiveAssessment(t *testing.T) {
 	}
 }
 
-func TestEligiblePeopleIncludesOneHopPeopleFromPositiveMovie(t *testing.T) {
+func TestEligiblePeopleExcludesOneHopPeopleFromPositiveMovie(t *testing.T) {
 	ctx := context.Background()
 	movieDB := openTestDB(t)
 	hobbyDB := openTestDB(t)
@@ -65,17 +65,18 @@ VALUES('movie','m-seen','Seen Movie','seen','','test');`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
+	// L1 expansion is limited to explicitly assessed people: a person reached
+	// only through a seen movie's credits must not become eligible.
 	for _, person := range people {
 		if person.MovieCatalogPersonID == "p-unknown" {
-			found = true
+			t.Fatalf("one-hop movie person must not be eligible: %#v", people)
 		}
 	}
-	if !found {
-		t.Fatalf("direct person from seen movie missing: %#v", people)
+	if _, ok, err := EligiblePersonByID(ctx, movieDB, "p-unknown"); err != nil || ok {
+		t.Fatalf("one-hop person lookup must be ineligible, ok=%t err=%v", ok, err)
 	}
-	if person, ok, err := EligiblePersonByID(ctx, movieDB, "p-unknown"); err != nil || !ok || person.MovieCatalogPersonID != "p-unknown" {
-		t.Fatalf("D1 person lookup=%#v ok=%t err=%v", person, ok, err)
+	if person, ok, err := EligiblePersonByID(ctx, movieDB, "p-known"); err != nil || !ok || person.Familiarity != "known" {
+		t.Fatalf("assessed person lookup=%#v ok=%t err=%v", person, ok, err)
 	}
 }
 
@@ -551,5 +552,49 @@ func assertCount(t *testing.T, db *sql.DB, table string, want int) {
 	}
 	if got != want {
 		t.Fatalf("count %s = %d, want %d", table, got, want)
+	}
+}
+
+func TestImportAcceptsLabelLanguageVarianceForSharedItem(t *testing.T) {
+	ctx := context.Background()
+	movieDB := openTestDB(t)
+	hobbyDB := openTestDB(t)
+	setupAssessmentFixture(t, movieDB)
+	if err := EnsureSchema(ctx, movieDB, hobbyDB); err != nil {
+		t.Fatal(err)
+	}
+	first := validArtifact(t)
+	firstHash := sha256.Sum256(first)
+	if _, err := Import(ctx, hobbyDB, first, hex.EncodeToString(firstHash[:]), int64(len(first))); err != nil {
+		t.Fatal(err)
+	}
+	// The same fixed item ID fetched through another person can carry a
+	// different label-service original (e.g. Wikidata en fallback) while the
+	// display/ja anchor stays identical. This must import, not conflict.
+	variant := []byte(strings.Replace(strings.Replace(string(first), `"name_original":"Original Work"`, `"name_original":"Original Work (en label)"`, 1), `"run_id":"run-1"`, `"run_id":"run-variant"`, 1))
+	variantHash := sha256.Sum256(variant)
+	if _, err := Import(ctx, hobbyDB, variant, hex.EncodeToString(variantHash[:]), int64(len(variant))); err != nil {
+		t.Fatalf("label variance import should succeed, got: %v", err)
+	}
+	var storedOriginal string
+	if err := hobbyDB.QueryRow(`SELECT name_original FROM hobby_related_items WHERE item_id='drama-1'`).Scan(&storedOriginal); err != nil {
+		t.Fatal(err)
+	}
+	if storedOriginal != "Original Work" {
+		t.Fatalf("first-import anchor must be kept, got %q", storedOriginal)
+	}
+	var conflictName string
+	if err := hobbyDB.QueryRow(`SELECT display_name FROM hobby_related_items WHERE item_id='drama-1'`).Scan(&conflictName); err != nil {
+		t.Fatal(err)
+	}
+	if conflictName != "日本語作品" {
+		t.Fatalf("display anchor changed to %q", conflictName)
+	}
+	// A genuinely different display anchor must still conflict.
+	clash := []byte(strings.Replace(strings.Replace(string(first), `"display_name":"日本語作品"`, `"display_name":"別作品"`, 1), `"run_id":"run-1"`, `"run_id":"run-clash"`, 1))
+	clash = []byte(strings.Replace(string(clash), `"name_ja":"日本語作品"`, `"name_ja":"別作品"`, 1))
+	clashHash := sha256.Sum256(clash)
+	if _, err := Import(ctx, hobbyDB, clash, hex.EncodeToString(clashHash[:]), int64(len(clash))); !errors.Is(err, ErrConflict) {
+		t.Fatalf("display anchor clash error=%v want ErrConflict", err)
 	}
 }

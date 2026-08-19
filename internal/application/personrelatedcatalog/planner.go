@@ -123,6 +123,7 @@ var plannerSourcesByCategory = map[string][]plannerSource{
 	},
 	CategoryAward: {
 		{Source: "wikidata_award", Tier: 2, Reason: "tier2_exact_wikidata_qid"},
+		{Source: "japan_academy_prize", Tier: 3, Reason: "tier3_exact_name_match"},
 	},
 	CategoryMusic: {
 		{Source: "musicbrainz", Tier: 2, Reason: "tier2_confirmed_mbid"},

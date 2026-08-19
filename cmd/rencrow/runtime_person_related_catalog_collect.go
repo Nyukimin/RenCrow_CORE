@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -66,7 +67,43 @@ func (c *runtimePersonRelatedCatalogCollector) Collect(ctx context.Context, pers
 	if !found {
 		return nil, fmt.Errorf("person %q is not explicitly eligible for collection", personName)
 	}
+	return c.collectEligible(ctx, movieDB, eligible, category)
+}
 
+// CollectByPersonID runs the same bounded collection as Collect, but starts
+// from the exact movie-catalog person ID so batch callers never depend on
+// unique-name resolution.
+func (c *runtimePersonRelatedCatalogCollector) CollectByPersonID(ctx context.Context, personID, category string) (any, error) {
+	if c == nil || c.provider == nil || strings.TrimSpace(c.movieCatalogPath) == "" || strings.TrimSpace(c.hobbyGraphPath) == "" {
+		return nil, fmt.Errorf("person related catalog collection is unavailable")
+	}
+	if !validRuntimePersonRelatedCatalogCollectCategory(category) {
+		return nil, fmt.Errorf("person related catalog collection category %q is invalid", category)
+	}
+	personID = strings.TrimSpace(personID)
+	if personID == "" {
+		return nil, fmt.Errorf("person related catalog collection person id is required")
+	}
+	movieDB, err := openRuntimeMovieCatalogReadOnly(c.movieCatalogPath)
+	if err != nil {
+		return nil, fmt.Errorf("open movie catalog read-only for collection: %w", err)
+	}
+	defer movieDB.Close()
+	movieDB.SetMaxOpenConns(1)
+	if err := movieDB.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("connect movie catalog read-only for collection: %w", err)
+	}
+	eligible, found, err := personrelatedcatalogapp.EligiblePersonByID(ctx, movieDB, personID)
+	if err != nil {
+		return nil, fmt.Errorf("verify eligible person assessment: %w", err)
+	}
+	if !found {
+		return nil, fmt.Errorf("person id %q is not explicitly eligible for collection", personID)
+	}
+	return c.collectEligible(ctx, movieDB, eligible, category)
+}
+
+func (c *runtimePersonRelatedCatalogCollector) collectEligible(ctx context.Context, movieDB *sql.DB, eligible personrelatedcatalogapp.EligiblePerson, category string) (any, error) {
 	hobbyDB, err := openRuntimePersonRelatedCatalogReadWrite(c.hobbyGraphPath)
 	if err != nil {
 		return nil, fmt.Errorf("open hobby graph read-write for collection: %w", err)
@@ -99,6 +136,12 @@ func (c *runtimePersonRelatedCatalogCollector) Collect(ctx context.Context, pers
 	identityMappings, err := personrelatedcatalogapp.ListPersonIdentityMappings(ctx, hobbyDB, eligible.MovieCatalogPersonID, 20)
 	if err != nil {
 		return nil, fmt.Errorf("list exact person identities for collection: %w", err)
+	}
+	confirmedAuthorities := map[string]bool{}
+	for _, mapping := range identityMappings {
+		if mapping.State == personrelatedcatalogapp.IdentityStatusConfirmed {
+			confirmedAuthorities[mapping.Authority] = true
+		}
 	}
 	personRefID := "eiga:" + eligible.MovieCatalogPersonID
 	seedPlan, err := personrelatedcatalogapp.BuildCollectionPlan(personrelatedcatalogapp.PlanRequest{
@@ -135,7 +178,21 @@ func (c *runtimePersonRelatedCatalogCollector) Collect(ctx context.Context, pers
 		}
 		return result, nil
 	}
+	ranAnyBatch := false
+	skippedReason := ""
 	for index, batch := range plan.Batches {
+		// The fixed-ID sources reject any request without their exact
+		// authority ID, so an identity job may be confirmed while the
+		// specific authority a source needs is still missing. Skip that
+		// source instead of sending an empty identity it will 400, and let
+		// the remaining sources in the plan run.
+		if required, reason := requiredAuthorityForPersonRelatedSource(batch.Source); required != "" && !confirmedAuthorities[required] {
+			if skippedReason == "" {
+				skippedReason = reason
+			}
+			continue
+		}
+		ranAnyBatch = true
 		var wikidataQID, wikidataURL, ndlAuthorityURI string
 		for _, mapping := range identityMappings {
 			if mapping.State != personrelatedcatalogapp.IdentityStatusConfirmed {
@@ -200,7 +257,27 @@ func (c *runtimePersonRelatedCatalogCollector) Collect(ctx context.Context, pers
 			return result, nil
 		}
 	}
+	if !ranAnyBatch && result.Status == "" && skippedReason != "" {
+		result.Status = personrelatedcatalogapp.CollectionStatusAmbiguous
+		result.ReasonCode = skippedReason
+		result.StopReason = personrelatedcatalogapp.StopReasonIdentityAmbiguous
+		result.NextSource = ""
+	}
 	return result, nil
+}
+
+// requiredAuthorityForPersonRelatedSource names the confirmed identity
+// authority a fixed-ID provider source refuses to run without, together with
+// the ambiguous reason code reported while that authority is still missing.
+func requiredAuthorityForPersonRelatedSource(source string) (string, string) {
+	switch source {
+	case "wikidata_award":
+		return "wikidata_qid", "no_confirmed_wikidata_qid"
+	case "ndl_bibliography":
+		return "ndl_authority_uri", "no_confirmed_ndl_authority_uri"
+	default:
+		return "", ""
+	}
 }
 
 func validRuntimePersonRelatedCatalogCollectCategory(category string) bool {

@@ -50,6 +50,7 @@ Commands:
   web-gather  Fetch public web pages into pending L1 staging
   browser-actor  Operate an allowlisted browser session from JSON
   knowledge  Import Knowledge DB seed data
+  person-related  Run bounded person-related catalog collection (collect-batch)
   help      Show this help message
 
 Agent Mode:

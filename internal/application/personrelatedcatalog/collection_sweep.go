@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const CollectionSweepName = "positive_movie_d1_v1"
+const CollectionSweepName = "assessed_person_d0_v1"
 
 var CollectionSweepCategories = []string{CategoryDrama, CategoryAward, CategoryMusic, CategoryAnime, CategoryNovel, CategoryManga}
 
@@ -59,24 +59,17 @@ ON CONFLICT(sweep_name) DO UPDATE SET cursor_person_id=excluded.cursor_person_id
 	return nil
 }
 
-// NextEligiblePersonByID uses the same D0/D1 eligibility as EligiblePeople,
-// but provides a durable ID cursor for bounded background collection.
+// NextEligiblePersonByID uses the same D0 eligibility as EligiblePeople
+// (explicitly assessed people only), but provides a durable ID cursor for
+// bounded background collection.
 func NextEligiblePersonByID(ctx context.Context, movieDB *sql.DB, afterID string) (EligiblePerson, bool, error) {
 	if err := requireMovieSelectionSchema(ctx, movieDB); err != nil {
 		return EligiblePerson{}, false, err
-	}
-	directMovieUnion := ""
-	if movieCatalogTableExists(ctx, movieDB, "movie_people") {
-		directMovieUnion = `
-  UNION
-  SELECT mp.person_id FROM movie_catalog_assessments a JOIN movie_people mp ON mp.movie_id=a.target_id
-  WHERE a.kind='movie' AND (a.familiarity='seen' OR a.sentiment='like')`
 	}
 	var person EligiblePerson
 	err := movieDB.QueryRowContext(ctx, `
 WITH eligible AS (
   SELECT target_id FROM movie_catalog_assessments WHERE kind='person' AND (familiarity='known' OR sentiment='like')
-  `+directMovieUnion+`
 )
 SELECT p.person_id,p.name,p.url,COALESCE(pa.familiarity,''),COALESCE(pa.sentiment,'')
 FROM eligible e JOIN people p ON p.person_id=e.target_id

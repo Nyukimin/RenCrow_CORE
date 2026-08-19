@@ -90,7 +90,9 @@ func (l *runtimeMovieCatalogLookup) Lookup(ctx context.Context, kind string, nam
 }
 
 func openRuntimeMovieCatalogReadOnly(dbPath string) (*sql.DB, error) {
-	return sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_time_format=sqlite")
+	// The movie catalog runs journal_mode=delete, so a concurrent import
+	// write-locks readers; wait briefly instead of surfacing SQLITE_BUSY.
+	return sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_time_format=sqlite&_pragma=busy_timeout(5000)")
 }
 
 // ensureRuntimeMoviePreferenceCandidateSchema is the owner initialization

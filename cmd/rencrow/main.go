@@ -62,6 +62,8 @@ func main() {
 		cmdBrowserActor()
 	case "knowledge":
 		cmdKnowledge()
+	case "person-related":
+		cmdPersonRelated()
 	case "knowledge-memory":
 		cmdKnowledgeMemory()
 	case "help", "-h", "--help":

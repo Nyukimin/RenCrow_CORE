@@ -113,7 +113,7 @@ func TestRuntimePersonRelatedCatalogCollectResolvesEligiblePersonPostsAndImports
 	}
 }
 
-func TestRuntimePersonRelatedCollectionWorkerSweepsSeenMovieD1Person(t *testing.T) {
+func TestRuntimePersonRelatedCollectionWorkerSkipsSeenMovieOneHopPerson(t *testing.T) {
 	moviePath := seedRuntimeEligibleMovieCatalog(t)
 	movieDB, err := sql.Open("sqlite", moviePath)
 	if err != nil {
@@ -151,8 +151,11 @@ VALUES('movie','m1','Heat','seen','','test');`)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// L1 expansion is limited to explicitly assessed people. A person reached
+	// only through a seen movie's credits must not be swept: the cycle ends
+	// without advancing to any person.
 	result, err := worker.RunOnce(context.Background())
-	if err != nil || !result.Advanced || result.PersonID != "p1" || result.Category != personrelatedcatalogapp.CategoryDrama {
+	if err != nil || result.Advanced || !result.CycleDone || result.PersonID != "" {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 	db, err := sql.Open("sqlite", hobbyPath)
@@ -161,7 +164,7 @@ VALUES('movie','m1','Heat','seen','','test');`)
 	}
 	defer db.Close()
 	state, err := personrelatedcatalogapp.LoadCollectionSweepState(context.Background(), db)
-	if err != nil || state.CursorPersonID != "p1" || state.CategoryIndex != 1 {
+	if err != nil || state.CursorPersonID != "" || state.NextCycleAt.IsZero() {
 		t.Fatalf("state=%#v err=%v", state, err)
 	}
 }

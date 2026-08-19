@@ -140,6 +140,11 @@ func normalizeSummaryCollectionRequest(request SummaryCollectionRequest) (Summar
 		target.Source = strings.ToLower(strings.TrimSpace(target.Source))
 		target.SourceRecordID = strings.TrimSpace(target.SourceRecordID)
 		target.CanonicalURL = strings.TrimSpace(target.CanonicalURL)
+		// Wikidata canonical entity URIs are stored in their http:// form by
+		// the award collection; the summary route uses their https form.
+		if target.Source == "wikidata_award" && strings.HasPrefix(target.CanonicalURL, "http://") {
+			target.CanonicalURL = "https://" + strings.TrimPrefix(target.CanonicalURL, "http://")
+		}
 		if !validCollectorCategory(target.Category) || target.ItemID == "" || target.SourceRecordID == "" || !contractFreeSourceAllowed(target.Category, target.Source) {
 			return SummaryCollectionRequest{}, fmt.Errorf("%w: summary target %d is invalid", ErrCollectorProtocol, index)
 		}

@@ -609,9 +609,10 @@ func hobbySchemaStatements() []string {
 	}
 }
 
-// EligiblePeople returns explicit positive people and people reached by one
-// direct credit edge from a positive movie assessment. It intentionally does
-// not expand those people into another movie/person hop.
+// EligiblePeople returns only explicitly assessed positive people (「みた」
+// familiarity or an explicit like). L1 related-content expansion is limited
+// to these direct assessments; people reached only through a positive movie's
+// credits are not expanded.
 func EligiblePeople(ctx context.Context, movieDB *sql.DB, limit int) ([]EligiblePerson, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -622,27 +623,13 @@ func EligiblePeople(ctx context.Context, movieDB *sql.DB, limit int) ([]Eligible
 	if err := requireMovieSelectionSchema(ctx, movieDB); err != nil {
 		return nil, err
 	}
-	directMovieUnion := ""
-	if movieCatalogTableExists(ctx, movieDB, "movie_people") {
-		directMovieUnion = `
-  UNION
-  SELECT mp.person_id
-  FROM movie_catalog_assessments a INDEXED BY idx_movie_catalog_assessments_collection_familiarity
-  JOIN movie_people mp ON mp.movie_id=a.target_id
-  WHERE a.kind='movie' AND a.familiarity='seen'
-  UNION
-  SELECT mp.person_id
-  FROM movie_catalog_assessments a INDEXED BY idx_movie_catalog_assessments_collection_sentiment
-  JOIN movie_people mp ON mp.movie_id=a.target_id
-  WHERE a.kind='movie' AND a.sentiment='like'`
-	}
 	rows, err := movieDB.QueryContext(ctx, `
 WITH eligible AS (
   SELECT target_id FROM movie_catalog_assessments INDEXED BY idx_movie_catalog_assessments_collection_familiarity
   WHERE kind='person' AND familiarity='known'
   UNION
   SELECT target_id FROM movie_catalog_assessments INDEXED BY idx_movie_catalog_assessments_collection_sentiment
-  WHERE kind='person' AND sentiment='like'`+directMovieUnion+`
+  WHERE kind='person' AND sentiment='like'
 )
 SELECT p.person_id, p.name, p.url, COALESCE(a.familiarity,''), COALESCE(a.sentiment,'')
 FROM eligible e
@@ -682,16 +669,6 @@ func EligiblePersonByID(ctx context.Context, movieDB *sql.DB, movieCatalogPerson
 	if err := requireMovieSelectionSchema(ctx, movieDB); err != nil {
 		return EligiblePerson{}, false, err
 	}
-	directMovieCondition := ""
-	if movieCatalogTableExists(ctx, movieDB, "movie_people") {
-		directMovieCondition = `
-  OR EXISTS (
-    SELECT 1 FROM movie_people mp
-    JOIN movie_catalog_assessments ma INDEXED BY idx_movie_catalog_assessments_eligible_target
-      ON ma.kind='movie' AND ma.target_id=mp.movie_id
-    WHERE mp.person_id=p.person_id AND (ma.familiarity='seen' OR ma.sentiment='like')
-  )`
-	}
 	var person EligiblePerson
 	err := movieDB.QueryRowContext(ctx, `
 SELECT p.person_id,p.name,p.url,COALESCE(pa.familiarity,''),COALESCE(pa.sentiment,'')
@@ -700,7 +677,6 @@ LEFT JOIN movie_catalog_assessments pa INDEXED BY idx_movie_catalog_assessments_
   ON pa.kind='person' AND pa.target_id=p.person_id
 WHERE p.person_id=? AND (
   COALESCE(pa.familiarity,'')='known' OR COALESCE(pa.sentiment,'')='like'
-  `+directMovieCondition+`
 )
 LIMIT 1`, movieCatalogPersonID).Scan(
 		&person.MovieCatalogPersonID, &person.Name, &person.URL,
@@ -713,11 +689,6 @@ LIMIT 1`, movieCatalogPersonID).Scan(
 		return EligiblePerson{}, false, fmt.Errorf("select eligible person by id: %w", err)
 	}
 	return person, true, nil
-}
-
-func movieCatalogTableExists(ctx context.Context, db *sql.DB, name string) bool {
-	var count int
-	return db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&count) == nil && count == 1
 }
 
 // Import validates and imports one immutable category artifact in one hobby
@@ -1450,8 +1421,11 @@ FROM hobby_related_items WHERE category=? AND item_id=?`, item.Category, item.It
 	}
 	// The base row is the immutable identity/name anchor. Source record IDs,
 	// canonical URLs, and descriptions belong to the per-source summary table
-	// and may legitimately differ during enrichment.
-	if existing.ItemType != item.ItemType || existing.DisplayName != item.DisplayName || existing.NameOriginal != item.NameOriginal || existingNameJA != nameJA || existing.NameState != item.NameState || existing.NameJASourceURL != item.NameJASourceURL {
+	// and may legitimately differ during enrichment. name_original is excluded
+	// from the anchor: label-service language fallback (e.g. Wikidata ja/en)
+	// can return a different original label for the same fixed item ID when a
+	// shared item is fetched through different persons.
+	if existing.ItemType != item.ItemType || existing.DisplayName != item.DisplayName || existingNameJA != nameJA || existing.NameState != item.NameState || existing.NameJASourceURL != item.NameJASourceURL {
 		return fmt.Errorf("%w: item %q", ErrConflict, item.ItemID)
 	}
 	return nil
