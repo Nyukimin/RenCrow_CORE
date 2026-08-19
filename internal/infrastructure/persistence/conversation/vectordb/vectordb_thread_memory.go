@@ -12,12 +12,16 @@ import (
 
 // SaveThreadSummary はThread要約をVectorDBに保存
 func (v *VectorDBStore) SaveThreadSummary(ctx context.Context, summary *conversation.ThreadSummary) error {
+	return v.SaveThreadSummaryWithPointID(ctx, summary, uuid.New().String())
+}
+
+// SaveThreadSummaryWithPointID upserts one thread summary under a caller-fixed
+// point ID. Owner backfill uses deterministic IDs so re-runs converge instead
+// of duplicating points.
+func (v *VectorDBStore) SaveThreadSummaryWithPointID(ctx context.Context, summary *conversation.ThreadSummary, pointID string) error {
 	if len(summary.Embedding) == 0 {
 		return fmt.Errorf("embedding is required for VectorDB storage")
 	}
-
-	// Qdrant Point作成
-	pointID := uuid.New().String()
 	point := &qdrant.PointStruct{
 		Id: &qdrant.PointId{
 			PointIdOptions: &qdrant.PointId_Uuid{Uuid: pointID},
