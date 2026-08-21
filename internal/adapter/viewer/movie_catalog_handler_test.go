@@ -655,6 +655,27 @@ func TestHandleMovieCatalogFetchReportsCrawlerUnavailable(t *testing.T) {
 	}
 }
 
+func TestHandleMovieCatalogFetchUsesConfiguredCrawlerInsteadOfLegacyEnvironment(t *testing.T) {
+	dbPath := seedMovieCatalogTestDB(t)
+	t.Setenv("RENCROW_MOVIE_CATALOG_CRAWLER_URL", "http://127.0.0.1:1")
+	called := false
+	crawler := movieCatalogCrawlerFunc(func(_ context.Context, req moviecatalog.CrawlerRequest) (moviecatalog.CrawlResult, error) {
+		called = true
+		if req.URL != "https://eiga.com/movie/57573/" {
+			t.Fatalf("configured crawler request URL=%q", req.URL)
+		}
+		return moviecatalog.CrawlResult{}, moviecatalog.ErrCrawlerUnavailable
+	})
+
+	h := HandleMovieCatalogFetch(MovieCatalogOptions{DBPath: dbPath, Crawler: crawler})
+	req := httptest.NewRequest(http.MethodPost, "/viewer/movie-catalog/fetch", strings.NewReader(`{"kind":"movie","url":"https://eiga.com/movie/57573/","max_pages":1}`))
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || !called {
+		t.Fatalf("configured crawler was not used: status=%d called=%v body=%s", rec.Code, called, rec.Body.String())
+	}
+}
+
 func TestResolveMovieCatalogFetchTargetRejectsKindMismatch(t *testing.T) {
 	dbPath := seedMovieCatalogTestDB(t)
 	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")

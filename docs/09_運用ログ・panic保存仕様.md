@@ -111,6 +111,12 @@ Linuxのsystemd常用環境では、`rencrow.service`のstdoutとstderrをsystem
 
 repository内の `systemd/user/rencrow.service` をproduction unitの正本とします。`install.sh` はこのunitを `~/.config/systemd/user/rencrow.service` へコピーし、inline生成しません。CORE同梱promptはinstall時に`%h/.local/share/rencrow/prompts`へcopyし、正本unitはportable install pathとして`WorkingDirectory=%h/.local/share/rencrow`、`ExecStart=%h/.local/bin/rencrow run`、`EnvironmentFile=%h/.rencrow/.env`、optionalな`EnvironmentFile=-%h/.rencrow/llm_ops.env`、`RENCROW_CONFIG=%h/.rencrow/config/core.yaml`を使います。再起動契約は`Restart=always`、`RestartSec=5`、`StartLimitIntervalSec=0`です。journal契約は`StandardOutput=journal`、`StandardError=journal`、`LogRateLimitIntervalSec=0`、`LogRateLimitBurst=0`です。
 
+### Configとdrop-inの所有境界
+
+- live `core.yaml` owns `games.observer_url`, `movie_catalog.crawler_url`, and `person_related_catalog.provider_url`。これらのbackend endpointをsystemd drop-inへ複製しません。
+- `codex.command` owns the executable absolute path。PATHを補うhost固有drop-inは配布しません。
+- trade section owns its API endpoint; the operator manages the optional service lifecycle independently。CORE unitはtradeのhost固有URLやservice lifecycleを所有しません。
+
 ```bash
 journalctl --user -u rencrow.service --since "1 hour ago"
 journalctl --user -u rencrow.service -f

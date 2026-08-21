@@ -142,9 +142,6 @@ func isAllowedGameObserverProxyMethod(method string) bool {
 func parseGameObserverBaseURL(raw string) (*url.URL, error) {
 	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
 	if raw == "" {
-		raw = strings.TrimRight(strings.TrimSpace(os.Getenv("RENCROW_GAMES_OBSERVER_URL")), "/")
-	}
-	if raw == "" {
 		raw = defaultGameObserverLiveBase
 	}
 	parsed, err := url.Parse(raw)

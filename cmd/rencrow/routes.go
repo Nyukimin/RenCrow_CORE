@@ -11,6 +11,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
+	moviecatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moviecatalog"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	agentfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/agent"
 	aiworkflowfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/aiworkflow"
@@ -97,7 +98,7 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		PersonRelatedCatalog:         viewer.HandlePersonRelatedCatalog(dependencies.personRelatedCatalogLookup),
 		PersonRelatedCatalogPeople:   viewer.HandlePersonRelatedCatalogPeople(dependencies.personRelatedCatalogPeople),
 		MovieCatalog:                 viewer.HandleMovieCatalog(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
-		MovieCatalogFetch:            viewer.HandleMovieCatalogFetch(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
+		MovieCatalogFetch:            viewer.HandleMovieCatalogFetch(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog, Crawler: moviecatalogapp.NewHTTPCrawler(cfg.MovieCatalog.CrawlerURL, 90*time.Second)}),
 		MovieCatalogPreference:       viewer.HandleMovieCatalogPreference(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
 		MovieTopicCandidatesGenerate: viewer.HandleMovieTopicCandidatesGenerate(viewer.MovieCatalogOptions{DBPath: databasePaths.MovieCatalog}),
 		HobbyGraph:                   viewer.HandleHobbyGraph(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),

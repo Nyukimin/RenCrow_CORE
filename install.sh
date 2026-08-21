@@ -53,8 +53,18 @@ install -m 0644 systemd/user/rencrow.service.d/10-panic-stack.conf \
   "${SYSTEMD_USER_DIR}/rencrow.service.d/10-panic-stack.conf"
 install -m 0644 systemd/user/rencrow.service.d/20-resilience.conf \
   "${SYSTEMD_USER_DIR}/rencrow.service.d/20-resilience.conf"
-install -m 0644 systemd/user/rencrow.service.d/30-games-observer.conf \
-  "${SYSTEMD_USER_DIR}/rencrow.service.d/30-games-observer.conf"
+
+# These five names were previously host-only projections. Remove only the
+# known legacy files after live core.yaml becomes authoritative; preserve any
+# other operator-owned drop-ins.
+for legacy_dropin in \
+  30-games-observer.conf \
+  40-codex-path.conf \
+  50-movie-catalog.conf \
+  60-person-related-catalog.conf \
+  70-trade.conf; do
+  rm -f -- "${SYSTEMD_USER_DIR}/rencrow.service.d/${legacy_dropin}"
+done
 
 sed "s#@RENCROW_REPO_DIR@#${REPO_DIR}#g" \
   systemd/user/rencrow-resilience.service \

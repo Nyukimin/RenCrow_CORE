@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -132,18 +131,6 @@ func sameOriginRedirect(request *http.Request, via []*http.Request) error {
 	return nil
 }
 
-func ResolveCollectionProviderBaseURL() string {
-	return strings.TrimSpace(os.Getenv("RENCROW_PERSON_RELATED_CATALOG_PROVIDER_URL"))
-}
-
-func NewConfiguredCollector(timeout time.Duration) Collector {
-	baseURL := ResolveCollectionProviderBaseURL()
-	if strings.TrimSpace(baseURL) == "" {
-		return nil
-	}
-	return NewHTTPCollector(baseURL, timeout)
-}
-
 type collectionRequestPayload struct {
 	MovieCatalogPersonID string `json:"movie_catalog_person_id"`
 	Name                 string `json:"name"`
@@ -173,7 +160,7 @@ func (c *HTTPCollector) Collect(ctx context.Context, request CollectionRequest) 
 		ctx = context.Background()
 	}
 	if c == nil || strings.TrimSpace(c.baseURL) == "" {
-		return CollectionResult{}, fmt.Errorf("%w: set RENCROW_PERSON_RELATED_CATALOG_PROVIDER_URL", ErrCollectorUnavailable)
+		return CollectionResult{}, fmt.Errorf("%w: configure person_related_catalog.provider_url", ErrCollectorUnavailable)
 	}
 	origin, err := collectorOrigin(c.baseURL)
 	if err != nil {

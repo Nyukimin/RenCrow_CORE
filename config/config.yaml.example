@@ -117,6 +117,18 @@ codex:
   max_output_bytes: 1048576
   ephemeral: true
 
+# RenCrow_GAMES shared observer. The default is the same-host live observer.
+# A remote observer may be used with an absolute HTTP(S) URL.
+games:
+  observer_url: "http://127.0.0.1:18796"
+
+# Optional local RenCrow_Tools catalog sidecars. Empty values keep the
+# corresponding capability unavailable without changing the CORE process.
+movie_catalog:
+  crawler_url: ""
+person_related_catalog:
+  provider_url: ""
+
 # DB・記憶ファイルの物理配置の正本。
 # 次のrelative pathはdevelopment例。Ubuntu productionではdocs/05に従い、
 # /srv/rencrow/db/core配下の絶対pathへ置き換える。

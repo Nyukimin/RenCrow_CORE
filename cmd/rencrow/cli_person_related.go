@@ -195,9 +195,9 @@ func runPersonRelatedCollectBatch(args []string, out io.Writer, errOut io.Writer
 		fmt.Fprintf(errOut, "failed to load config: %v\n", err)
 		return 1
 	}
-	providerURL := personrelatedcatalogapp.ResolveCollectionProviderBaseURL()
+	providerURL := strings.TrimSpace(cfg.PersonRelatedCatalog.ProviderURL)
 	if strings.TrimSpace(providerURL) == "" {
-		fmt.Fprintln(errOut, "person related catalog provider URL is not configured (set RENCROW_PERSON_RELATED_CATALOG_PROVIDER_URL)")
+		fmt.Fprintln(errOut, "person related catalog provider URL is not configured (set person_related_catalog.provider_url)")
 		return 1
 	}
 

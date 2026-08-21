@@ -106,14 +106,6 @@ func NewHTTPCrawler(baseURL string, timeout time.Duration) *HTTPCrawler {
 	}
 }
 
-func ResolveCrawlerBaseURL() string {
-	return strings.TrimSpace(os.Getenv("RENCROW_MOVIE_CATALOG_CRAWLER_URL"))
-}
-
-func NewConfiguredCrawler(timeout time.Duration) Crawler {
-	return NewHTTPCrawler(ResolveCrawlerBaseURL(), timeout)
-}
-
 type crawlerRequestPayload struct {
 	RequestID                string  `json:"request_id,omitempty"`
 	Kind                     string  `json:"kind"`
@@ -141,7 +133,7 @@ type crawlerResponsePayload struct {
 
 func (c *HTTPCrawler) Crawl(ctx context.Context, request CrawlerRequest) (CrawlResult, error) {
 	if c == nil || strings.TrimSpace(c.baseURL) == "" {
-		return CrawlResult{}, fmt.Errorf("%w: set RENCROW_MOVIE_CATALOG_CRAWLER_URL", ErrCrawlerUnavailable)
+		return CrawlResult{}, fmt.Errorf("%w: configure movie_catalog.crawler_url", ErrCrawlerUnavailable)
 	}
 	seedURL := strings.TrimSpace(request.URL)
 	query := strings.TrimSpace(request.Query)

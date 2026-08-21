@@ -149,7 +149,13 @@ func boolValueOrDefault(value *bool, def bool) bool {
 
 // GamesConfig は RenCrow_GAMES 連携の設定（マルチペルソナ WP6）。
 type GamesConfig struct {
-	AutoPlay GamesAutoPlayConfig `yaml:"auto_play"`
+	ObserverURL string              `yaml:"observer_url"`
+	AutoPlay    GamesAutoPlayConfig `yaml:"auto_play"`
+}
+
+// MovieCatalogConfig controls the optional RenCrow_Tools movie crawler sidecar.
+type MovieCatalogConfig struct {
+	CrawlerURL string `yaml:"crawler_url"`
 }
 
 // TradeConfig connects CORE only to RenCrow_TRADE's authenticated read-only control API.

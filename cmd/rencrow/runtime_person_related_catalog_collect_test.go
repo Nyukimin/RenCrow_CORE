@@ -272,8 +272,9 @@ func TestBuildToolRuntimeRegistersCollectOnlyForWorkerWhenProviderConfigured(t *
 	disabled := false
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
-	t.Setenv("RENCROW_PERSON_RELATED_CATALOG_PROVIDER_URL", server.URL)
+	t.Setenv("RENCROW_PERSON_RELATED_CATALOG_PROVIDER_URL", "http://127.0.0.1:1")
 	cfg := &config.Config{WorkspaceDir: t.TempDir(), ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
+	cfg.PersonRelatedCatalog.ProviderURL = server.URL
 	cfg.Storage.Databases.MovieCatalog = seedRuntimeEligibleMovieCatalog(t)
 	cfg.Storage.Databases.HobbyGraph = seedRuntimeHobbyGraph(t)
 	runtime := buildToolRuntimeWithCapabilities(cfg, nil, nil, nil, nil, nil)
@@ -314,11 +315,19 @@ func TestBuildToolRuntimeLeavesCollectUnregisteredWhenProviderUnset(t *testing.T
 
 func TestLivePersonRelatedCatalogProviderCollectImportLookupE2E(t *testing.T) {
 	if os.Getenv("RENCROW_LIVE_PERSON_RELATED_E2E") != "1" {
-		t.Skip("set RENCROW_LIVE_PERSON_RELATED_E2E=1 and RENCROW_PERSON_RELATED_CATALOG_PROVIDER_URL for the cross-module E2E")
+		t.Skip("set RENCROW_LIVE_PERSON_RELATED_E2E=1 and RENCROW_CONFIG for the cross-module E2E")
 	}
-	providerURL := strings.TrimSpace(os.Getenv("RENCROW_PERSON_RELATED_CATALOG_PROVIDER_URL"))
+	configPath := strings.TrimSpace(os.Getenv("RENCROW_CONFIG"))
+	if configPath == "" {
+		t.Fatal("RENCROW_CONFIG is required")
+	}
+	liveConfig, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("load live config: %v", err)
+	}
+	providerURL := strings.TrimSpace(liveConfig.PersonRelatedCatalog.ProviderURL)
 	if providerURL == "" {
-		t.Fatal("RENCROW_PERSON_RELATED_CATALOG_PROVIDER_URL is required")
+		t.Fatal("person_related_catalog.provider_url is required")
 	}
 	moviePath := seedRuntimeEligibleMovieCatalog(t)
 	hobbyPath := seedRuntimeHobbyGraph(t)

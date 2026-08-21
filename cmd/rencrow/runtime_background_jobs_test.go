@@ -30,6 +30,15 @@ func TestSourceRegistrySweepOptionsWiresArticleReaderOnlyWhenExplicitlyEnabled(t
 	}
 }
 
+func TestMovieCatalogCrawlerURLComesFromConfigNotLegacyEnvironment(t *testing.T) {
+	t.Setenv("RENCROW_MOVIE_CATALOG_CRAWLER_URL", "http://127.0.0.1:1")
+	cfg := &config.Config{}
+	cfg.MovieCatalog.CrawlerURL = "http://127.0.0.1:8790"
+	if got := resolveMovieCatalogCrawlerBaseURL(cfg); got != cfg.MovieCatalog.CrawlerURL {
+		t.Fatalf("crawler URL=%q, want config URL %q", got, cfg.MovieCatalog.CrawlerURL)
+	}
+}
+
 func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T) {
 	processor := &captureSuperAgentRunQueueProcessor{
 		response: orchestrator.ProcessMessageResponse{

@@ -35,6 +35,9 @@ type Config struct {
 	// === RenCrow_GAMES 連携 (マルチペルソナ WP6) ===
 	Games GamesConfig `yaml:"games"`
 
+	// === Optional movie catalog sidecar ===
+	MovieCatalog MovieCatalogConfig `yaml:"movie_catalog"`
+
 	// === RenCrow_TRADE private Owner API bridge ===
 	Trade TradeConfig `yaml:"trade"`
 
@@ -804,6 +807,7 @@ type KnowledgeMemoryConfig struct {
 }
 
 type PersonRelatedCatalogConfig struct {
+	ProviderURL     string                                    `yaml:"provider_url"`
 	SummaryWorker   PersonRelatedCatalogSummaryWorkerConfig   `yaml:"summary_worker"`
 	IdentityMapping PersonRelatedCatalogIdentityMappingConfig `yaml:"identity_mapping"`
 }

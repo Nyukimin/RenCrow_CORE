@@ -360,9 +360,9 @@ func startMovieCatalogBackfillJob(cfg *config.Config, reporter backgroundJobFail
 		log.Printf("[MovieCatalogBackfill] skipped: movie catalog DB not found")
 		return
 	}
-	crawlerURL := moviecatalogapp.ResolveCrawlerBaseURL()
+	crawlerURL := resolveMovieCatalogCrawlerBaseURL(cfg)
 	if crawlerURL == "" {
-		log.Printf("[MovieCatalogBackfill] skipped: RENCROW_MOVIE_CATALOG_CRAWLER_URL is not configured")
+		log.Printf("[MovieCatalogBackfill] skipped: movie_catalog.crawler_url is not configured")
 		return
 	}
 	interval := movieCatalogBackfillDurationEnv("RENCROW_MOVIE_CATALOG_BACKFILL_INTERVAL_SEC", 5*time.Minute, time.Minute)
@@ -398,6 +398,13 @@ func startMovieCatalogBackfillJob(cfg *config.Config, reporter backgroundJobFail
 	}()
 	log.Printf("[MovieCatalogBackfill] enabled: db=%s interval=%s initial_delay=%s timeout=%s max_pages=%d crawler_delay=%s",
 		dbPath, interval, initialDelay, timeout, maxPages, crawlerDelay)
+}
+
+func resolveMovieCatalogCrawlerBaseURL(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.MovieCatalog.CrawlerURL)
 }
 
 func movieCatalogBackfillDisabled() bool {

@@ -19,7 +19,7 @@ type runtimePersonRelatedCatalogCollector struct {
 
 func prepareRuntimePersonRelatedCatalogCollector(ctx context.Context, movieCatalogPath, hobbyGraphPath, providerURL string) (*runtimePersonRelatedCatalogCollector, error) {
 	if strings.TrimSpace(providerURL) == "" {
-		return nil, fmt.Errorf("%w: set RENCROW_PERSON_RELATED_CATALOG_PROVIDER_URL", personrelatedcatalogapp.ErrCollectorUnavailable)
+		return nil, fmt.Errorf("%w: configure person_related_catalog.provider_url", personrelatedcatalogapp.ErrCollectorUnavailable)
 	}
 	resolvedMovieCatalogPath, err := resolveRuntimePersonRelatedCatalogDatabasePath(movieCatalogPath, "movie catalog")
 	if err != nil {

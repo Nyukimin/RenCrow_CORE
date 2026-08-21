@@ -306,7 +306,7 @@ func HandleMovieCatalogFetch(opts MovieCatalogOptions) http.HandlerFunc {
 		defer cancel()
 		crawler := opts.Crawler
 		if crawler == nil {
-			crawler = moviecatalog.NewConfiguredCrawler(time.Duration(maxPages*8+20) * time.Second)
+			crawler = moviecatalog.NewHTTPCrawler("", time.Duration(maxPages*8+20)*time.Second)
 		}
 		requestTarget := targetURL
 		if requestTarget == "" {

@@ -3,12 +3,53 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 )
+
+func TestBuildViewerRuntimeHandlersUsesConfiguredGameObserverURL(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/games/status":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case "/games/launch":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true,"game_id":"nethack","session_id":"session-1","status":"launching"}`))
+		default:
+			t.Fatalf("upstream path=%q", r.URL.Path)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+	legacyURL := "http://127.0.0.1:1"
+	if err := os.Setenv("RENCROW_GAMES_OBSERVER_URL", legacyURL); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Unsetenv("RENCROW_GAMES_OBSERVER_URL") })
+
+	deps := &Dependencies{}
+	cfg := &config.Config{WorkspaceDir: t.TempDir()}
+	cfg.Games.ObserverURL = upstream.URL
+	buildViewerRuntimeHandlers(cfg, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/viewer/games/observer-api/games/status", nil)
+	deps.viewerGamesObserverProxy.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"ok":true}` {
+		t.Fatalf("observer proxy status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	launchRec := httptest.NewRecorder()
+	launchReq := httptest.NewRequest(http.MethodPost, "/viewer/games/launch", strings.NewReader(`{"game_id":"nethack"}`))
+	deps.viewerGamesLaunch.ServeHTTP(launchRec, launchReq)
+	if launchRec.Code != http.StatusOK || !strings.Contains(launchRec.Body.String(), `"session_id":"session-1"`) {
+		t.Fatalf("game launch status=%d body=%q", launchRec.Code, launchRec.Body.String())
+	}
+}
 
 func TestBuildViewerRuntimeHandlersRegistersSourceRegistryUnavailableHandler(t *testing.T) {
 	deps := &Dependencies{}

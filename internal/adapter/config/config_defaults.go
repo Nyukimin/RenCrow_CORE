@@ -51,6 +51,13 @@ func (c *Config) setDefaults() {
 	if c.Server.Host == "" {
 		c.Server.Host = "0.0.0.0"
 	}
+	if strings.TrimSpace(c.Games.ObserverURL) == "" {
+		c.Games.ObserverURL = "http://127.0.0.1:18796"
+	} else {
+		c.Games.ObserverURL = strings.TrimSpace(c.Games.ObserverURL)
+	}
+	c.MovieCatalog.CrawlerURL = strings.TrimSpace(c.MovieCatalog.CrawlerURL)
+	c.PersonRelatedCatalog.ProviderURL = strings.TrimSpace(c.PersonRelatedCatalog.ProviderURL)
 
 	// RenCrow_LLM is mandatory.
 	c.LLMGateway.Enabled = true

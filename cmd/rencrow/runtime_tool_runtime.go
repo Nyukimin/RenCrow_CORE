@@ -122,7 +122,7 @@ func buildToolRuntimeWithCapabilities(
 	var personRelatedSummaryWorker *runtimePersonRelatedSummaryWorker
 	var personRelatedIdentityWorker *runtimePersonRelatedIdentityWorker
 	if personRelatedCatalogLookup != nil {
-		providerURL := personrelatedcatalogapp.ResolveCollectionProviderBaseURL()
+		providerURL := strings.TrimSpace(cfg.PersonRelatedCatalog.ProviderURL)
 		if strings.TrimSpace(providerURL) != "" {
 			personRelatedCollectPrepareCtx, cancelPersonRelatedCollectPrepare := context.WithTimeout(context.Background(), 10*time.Second)
 			var personRelatedCollectErr error
@@ -149,7 +149,7 @@ func buildToolRuntimeWithCapabilities(
 		}
 	}
 	if personRelatedCatalogLookup != nil && cfg.PersonRelatedCatalog.SummaryWorker.IsEnabled() {
-		providerURL := personrelatedcatalogapp.ResolveCollectionProviderBaseURL()
+		providerURL := strings.TrimSpace(cfg.PersonRelatedCatalog.ProviderURL)
 		if strings.TrimSpace(providerURL) != "" {
 			personRelatedSummaryWorker, personRelatedCatalogLookupErr = prepareRuntimePersonRelatedSummaryWorker(
 				cfg.Storage.Databases.HobbyGraph,
@@ -167,7 +167,7 @@ func buildToolRuntimeWithCapabilities(
 		}
 	}
 	if personRelatedCatalogLookup != nil && cfg.PersonRelatedCatalog.IdentityMapping.IsEnabled() {
-		providerURL := personrelatedcatalogapp.ResolveCollectionProviderBaseURL()
+		providerURL := strings.TrimSpace(cfg.PersonRelatedCatalog.ProviderURL)
 		if strings.TrimSpace(providerURL) != "" {
 			identityResolver := personrelatedcatalogapp.NewHTTPIdentityResolver(providerURL, 90*time.Second)
 			personRelatedIdentityWorker, personRelatedCatalogLookupErr = prepareRuntimePersonRelatedIdentityWorker(

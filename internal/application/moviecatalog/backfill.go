@@ -81,7 +81,7 @@ func NewBackfillService(opts BackfillOptions) *BackfillService {
 		opts.CrawlerDelay = defaultCrawlerDelaySec * time.Second
 	}
 	if opts.Crawler == nil {
-		opts.Crawler = NewConfiguredCrawler(opts.Timeout)
+		opts.Crawler = NewHTTPCrawler("", opts.Timeout)
 	}
 	return &BackfillService{
 		dbPath:       strings.TrimSpace(opts.DBPath),

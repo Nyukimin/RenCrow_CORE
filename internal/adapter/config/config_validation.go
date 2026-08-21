@@ -86,6 +86,17 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.LLMGateway.BaseURL) != "" && c.LLMGateway.TimeoutSec < 1 {
 		return fmt.Errorf("llm_gateway.timeout_sec must be >= 1")
 	}
+	if strings.TrimSpace(c.Games.ObserverURL) != "" {
+		if err := validateCatalogEndpoint("games.observer_url", c.Games.ObserverURL, false); err != nil {
+			return err
+		}
+	}
+	if err := validateCatalogEndpoint("movie_catalog.crawler_url", c.MovieCatalog.CrawlerURL, true); err != nil {
+		return err
+	}
+	if err := validateCatalogEndpoint("person_related_catalog.provider_url", c.PersonRelatedCatalog.ProviderURL, true); err != nil {
+		return err
+	}
 	if c.Trade.Enabled {
 		tradeURL, err := url.Parse(strings.TrimSpace(c.Trade.BaseURL))
 		if err != nil || tradeURL.Host == "" || tradeURL.Scheme != "http" || tradeURL.User != nil || tradeURL.RawQuery != "" || tradeURL.Fragment != "" || (tradeURL.Path != "" && tradeURL.Path != "/") {
@@ -907,6 +918,31 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func validateCatalogEndpoint(name, raw string, loopbackOnly bool) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		if loopbackOnly {
+			return nil
+		}
+		return fmt.Errorf("%s must be an absolute HTTP URL", name)
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		if loopbackOnly {
+			return fmt.Errorf("%s must be an absolute HTTP(S) loopback URL without userinfo, query, or fragment", name)
+		}
+		return fmt.Errorf("%s must be an absolute HTTP(S) URL without userinfo, query, or fragment", name)
+	}
+	if loopbackOnly {
+		hostname := parsed.Hostname()
+		ip := net.ParseIP(hostname)
+		if !strings.EqualFold(hostname, "localhost") && (ip == nil || !ip.IsLoopback()) {
+			return fmt.Errorf("%s must use a loopback host", name)
+		}
+	}
 	return nil
 }
 

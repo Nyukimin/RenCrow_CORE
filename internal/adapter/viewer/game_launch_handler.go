@@ -17,7 +17,7 @@ const defaultGameLaunchTimeout = 10 * time.Second
 // (docs/02_正本仕様/09_Game_Bridge_Observer_API.md 11章)。
 type GameLaunchOptions struct {
 	// ObserverBaseURL は共有 observer の base URL。空なら observer proxy と
-	// 同じ解決順（RENCROW_GAMES_OBSERVER_URL > 既定）で解決する。
+	// observer URLはCORE Configから明示注入し、未指定時だけ既定値を使う。
 	ObserverBaseURL string
 	HTTPClient      *http.Client
 	// Store があれば、起動成功時に動機 (reason) を candidate log へ記録する。

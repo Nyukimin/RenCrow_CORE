@@ -691,10 +691,8 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
   observer 側 launcher が正本であり、その 400 をそのまま透過する
   （二重管理によるドリフト防止）。
 - 共有 observer の `POST /games/launch` へ転送する（base URL は observer
-  proxy と同じ解決順: 設定 > `RENCROW_GAMES_OBSERVER_URL` >
-  既定`http://127.0.0.1:18796`。
-  Linux 常駐では `systemd/user/rencrow.service.d/30-games-observer.conf`
-  で設定する）。
+  proxy と同じ解決順: `games.observer_url` > 既定`http://127.0.0.1:18796`）。
+  Linux 常駐でもlive `core.yaml`の`games.observer_url`を使用する。
 - `reason`（動機）があれば起動成功時に**参加ペルソナ全員**の candidate
   イベントとして記録する（i 番目のペルソナは Turn=-(i+1)。言い出しっぺは
   `play_game`、誘われた側は `invited_to_play` + `invited_by`）。
@@ -1015,7 +1013,7 @@ Debug Viewer／localhost運用CLI向けのadmin APIであり、RenCrow_PORTALか
 
 `POST /viewer/movie-catalog/fetch`は`kind`、`query`または`url`、`max_pages`、
 `follow_links`、`include_person_filmography`を受けます。COREは
-`RENCROW_MOVIE_CATALOG_CRAWLER_URL`のRenCrow_Tools Go sidecarへ
+`movie_catalog.crawler_url`のRenCrow_Tools Go sidecarへ
 `POST /v1/movie-catalog/crawls`を送り、完了jobの`artifact_url`、`artifact_sha256`、
 `artifact_bytes`を検証します。取得したJSONLはCOREがtransaction内でSQLite正本へimportし、
 不正record、空artifact、hash／size不一致では全体を失敗させます。sidecarはCOREのSQLiteへ

@@ -84,7 +84,7 @@ func buildViewerRuntimeHandlers(
 	deps.viewerGamesSessions = viewer.HandleGameBridgeSessions(gameBridgeStore, gameBridgeStatusOptions)
 	deps.viewerGamesEvents = viewer.HandleGameBridgeEvents(gameBridgeStore)
 	deps.viewerGamesDecision = viewer.HandleGameAgentDecision(gameDecisionProvider)
-	gameObserverProxyOptions := viewer.GameObserverProxyOptions{}
+	gameObserverProxyOptions := viewer.GameObserverProxyOptions{ObserverBaseURL: cfg.Games.ObserverURL}
 	deps.viewerGamesObserverPage = viewer.HandleGameObserverPage(gameObserverProxyOptions)
 	deps.viewerGamesObserverProxy = viewer.HandleGameObserverProxy(gameObserverProxyOptions)
 	deps.viewerGamesLaunch = viewer.HandleGameLaunch(viewer.GameLaunchOptions{

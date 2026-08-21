@@ -54,6 +54,73 @@ log:
 	}
 }
 
+func TestLoadConfigCatalogEndpointsAreCanonicalAndIgnoreLegacyEnvironment(t *testing.T) {
+	t.Setenv("RENCROW_GAMES_OBSERVER_URL", "http://env-games.invalid:1")
+	t.Setenv("RENCROW_MOVIE_CATALOG_CRAWLER_URL", "http://env-movie.invalid:2")
+	t.Setenv("RENCROW_PERSON_RELATED_CATALOG_PROVIDER_URL", "http://env-person.invalid:3")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := `
+server:
+  port: 8080
+games:
+  observer_url: "https://games.example.test/observer"
+movie_catalog:
+  crawler_url: "http://127.0.0.1:8790"
+person_related_catalog:
+  provider_url: "http://127.0.0.1:18087"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Games.ObserverURL != "https://games.example.test/observer" {
+		t.Fatalf("games.observer_url=%q", cfg.Games.ObserverURL)
+	}
+	if cfg.MovieCatalog.CrawlerURL != "http://127.0.0.1:8790" {
+		t.Fatalf("movie_catalog.crawler_url=%q", cfg.MovieCatalog.CrawlerURL)
+	}
+	if cfg.PersonRelatedCatalog.ProviderURL != "http://127.0.0.1:18087" {
+		t.Fatalf("person_related_catalog.provider_url=%q", cfg.PersonRelatedCatalog.ProviderURL)
+	}
+}
+
+func TestConfigCatalogEndpointDefaultsAndValidation(t *testing.T) {
+	cfg := &Config{Server: ServerConfig{Port: 8080}, Session: SessionConfig{StorageDir: "./data"}}
+	cfg.setDefaults()
+	if cfg.Games.ObserverURL != "http://127.0.0.1:18796" {
+		t.Fatalf("games observer default=%q", cfg.Games.ObserverURL)
+	}
+	if cfg.MovieCatalog.CrawlerURL != "" || cfg.PersonRelatedCatalog.ProviderURL != "" {
+		t.Fatalf("optional catalog defaults=%+v", cfg)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("default catalog endpoint validation: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		set  func(*Config)
+		want string
+	}{
+		{name: "games userinfo", set: func(c *Config) { c.Games.ObserverURL = "http://user:pass@127.0.0.1:18796" }, want: "games.observer_url"},
+		{name: "games query", set: func(c *Config) { c.Games.ObserverURL = "http://127.0.0.1:18796/?x=1" }, want: "games.observer_url"},
+		{name: "movie remote", set: func(c *Config) { c.MovieCatalog.CrawlerURL = "http://192.0.2.10:8790" }, want: "movie_catalog.crawler_url"},
+		{name: "person fragment", set: func(c *Config) { c.PersonRelatedCatalog.ProviderURL = "http://127.0.0.1:18087/#provider" }, want: "person_related_catalog.provider_url"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			caseCfg := *cfg
+			tc.set(&caseCfg)
+			if err := caseCfg.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() error=%v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadConfigPersonRelatedCatalogWorkerDefaults(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(configPath, []byte("server:\n  port: 8080\n"), 0o600); err != nil {
