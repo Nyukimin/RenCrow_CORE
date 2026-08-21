@@ -428,6 +428,25 @@ func TestRunBacklogIntakePromotesOpenItemToWorkstream(t *testing.T) {
 	}
 }
 
+func TestRunBacklogIntakeDoesNotAdoptAtlasCandidate(t *testing.T) {
+	backlogStore := &memoryBacklogStore{items: []domainbacklog.Item{{
+		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "candidate", Title: "candidate",
+		ConceptState: domainbacklog.ConceptCandidate, DeliveryState: domainbacklog.DeliveryNone,
+		Status: "open", Priority: "urgent",
+	}}}
+	workstreamStore := &memoryWorkstreamHeartbeatStore{}
+	svc := NewHeartbeatService(&mockWorkerAgent{}, &mockSender{}, t.TempDir(), 30).
+		WithBacklogStore(backlogStore).WithWorkstreamStore(workstreamStore)
+
+	report, err := svc.RunBacklogIntake(context.Background(), time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Promoted != 0 || len(workstreamStore.workstreams) != 0 || len(backlogStore.saved) != 0 {
+		t.Fatalf("candidate was implicitly adopted: report=%+v workstreams=%+v saved=%+v", report, workstreamStore.workstreams, backlogStore.saved)
+	}
+}
+
 func TestRunBacklogIntakeSkipsWithoutRunnableItems(t *testing.T) {
 	backlogStore := &memoryBacklogStore{items: []domainbacklog.Item{
 		{ItemID: "active", Title: "実装中", Status: "implementing", Priority: "urgent"},

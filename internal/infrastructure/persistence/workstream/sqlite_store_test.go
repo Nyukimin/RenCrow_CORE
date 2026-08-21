@@ -30,6 +30,42 @@ func TestSQLiteStoreConfiguresSerializedBusyTimeout(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreImplementationLeaseIsSingletonAndPersisted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workstream.db")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC)
+	first := domainworkstream.ImplementationLease{LeaseName: "atlas_implementation", HolderUnitID: "unit-1", HolderWorkstreamID: "ws-1", Stage: "QUEUED", AcquiredAt: now, HeartbeatAt: now}
+	second := first
+	second.HolderUnitID = "unit-2"
+	acquired, err := store.AcquireImplementationLease(context.Background(), first)
+	if err != nil || !acquired {
+		t.Fatalf("first acquire=%v err=%v", acquired, err)
+	}
+	acquired, err = store.AcquireImplementationLease(context.Background(), second)
+	if err != nil || acquired {
+		t.Fatalf("second acquire=%v err=%v", acquired, err)
+	}
+	got, ok, err := store.GetImplementationLease(context.Background(), "atlas_implementation")
+	if err != nil || !ok || got.HolderUnitID != "unit-1" {
+		t.Fatalf("lease=%+v ok=%v err=%v", got, ok, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	got, ok, err = reopened.GetImplementationLease(context.Background(), "atlas_implementation")
+	if err != nil || !ok || got.HolderUnitID != "unit-1" {
+		t.Fatalf("reopened lease=%+v ok=%v err=%v", got, ok, err)
+	}
+}
+
 func TestSQLiteStoreConcurrentGoalWrites(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "workstream.db"))
 	if err != nil {

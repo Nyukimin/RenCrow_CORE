@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	_ "modernc.org/sqlite"
@@ -94,6 +95,15 @@ func (s *SQLiteStore) migrate() error {
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS implementation_lease (
+			lease_name TEXT PRIMARY KEY,
+			holder_unit_id TEXT NOT NULL,
+			holder_workstream_id TEXT,
+			stage TEXT,
+			revision TEXT,
+			acquired_at TEXT NOT NULL,
+			heartbeat_at TEXT NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -101,6 +111,115 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 	return nil
+}
+
+// AcquireImplementationLease performs the singleton check and write in one
+// SQLite transaction. The table is part of the existing Workstream database.
+func (s *SQLiteStore) AcquireImplementationLease(ctx context.Context, item domainworkstream.ImplementationLease) (bool, error) {
+	if err := domainworkstream.ValidateImplementationLease(item); err != nil {
+		return false, err
+	}
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("workstream sqlite store is closed")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var holder string
+	err = tx.QueryRowContext(ctx, `SELECT holder_unit_id FROM implementation_lease WHERE lease_name = ?`, item.LeaseName).Scan(&holder)
+	if err == nil {
+		if holder != "" && holder != item.HolderUnitID {
+			if commitErr := tx.Commit(); commitErr != nil {
+				return false, commitErr
+			}
+			return false, nil
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE implementation_lease SET holder_unit_id=?, holder_workstream_id=?, stage=?, revision=?, acquired_at=?, heartbeat_at=? WHERE lease_name=?`, item.HolderUnitID, item.HolderWorkstreamID, item.Stage, item.Revision, item.AcquiredAt.Format(timeFormatRFC3339Nano), item.HeartbeatAt.Format(timeFormatRFC3339Nano), item.LeaseName); err != nil {
+			return false, err
+		}
+	} else if err == sql.ErrNoRows {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO implementation_lease (lease_name, holder_unit_id, holder_workstream_id, stage, revision, acquired_at, heartbeat_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, item.LeaseName, item.HolderUnitID, item.HolderWorkstreamID, item.Stage, item.Revision, item.AcquiredAt.Format(timeFormatRFC3339Nano), item.HeartbeatAt.Format(timeFormatRFC3339Nano)); err != nil {
+			return false, err
+		}
+	} else {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *SQLiteStore) ReleaseImplementationLease(ctx context.Context, leaseName, holderUnitID string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("workstream sqlite store is closed")
+	}
+	if holderUnitID == "" {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM implementation_lease WHERE lease_name = ?`, leaseName)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM implementation_lease WHERE lease_name = ? AND holder_unit_id = ?`, leaseName, holderUnitID)
+	return err
+}
+
+func (s *SQLiteStore) GetImplementationLease(ctx context.Context, leaseName string) (domainworkstream.ImplementationLease, bool, error) {
+	if s == nil || s.db == nil {
+		return domainworkstream.ImplementationLease{}, false, fmt.Errorf("workstream sqlite store is closed")
+	}
+	var item domainworkstream.ImplementationLease
+	var acquired, heartbeat string
+	err := s.db.QueryRowContext(ctx, `SELECT lease_name, holder_unit_id, holder_workstream_id, stage, revision, acquired_at, heartbeat_at FROM implementation_lease WHERE lease_name = ?`, leaseName).Scan(&item.LeaseName, &item.HolderUnitID, &item.HolderWorkstreamID, &item.Stage, &item.Revision, &acquired, &heartbeat)
+	if err == sql.ErrNoRows {
+		return domainworkstream.ImplementationLease{}, false, nil
+	}
+	if err != nil {
+		return domainworkstream.ImplementationLease{}, false, err
+	}
+	item.AcquiredAt, err = time.Parse(timeFormatRFC3339Nano, acquired)
+	if err != nil {
+		return domainworkstream.ImplementationLease{}, false, err
+	}
+	item.HeartbeatAt, err = time.Parse(timeFormatRFC3339Nano, heartbeat)
+	if err != nil {
+		return domainworkstream.ImplementationLease{}, false, err
+	}
+	return item, item.HolderUnitID != "", nil
+}
+
+func (s *SQLiteStore) HeartbeatImplementationLease(ctx context.Context, item domainworkstream.ImplementationLease) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("workstream sqlite store is closed")
+	}
+	if item.HeartbeatAt.IsZero() {
+		item.HeartbeatAt = time.Now().UTC()
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE implementation_lease SET stage=?, revision=?, heartbeat_at=? WHERE lease_name=? AND holder_unit_id=?`, item.Stage, item.Revision, item.HeartbeatAt.Format(timeFormatRFC3339Nano), item.LeaseName, item.HolderUnitID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("implementation lease is not held by %s", item.HolderUnitID)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) AcquireLease(ctx context.Context, item domainworkstream.ImplementationLease) (bool, error) {
+	return s.AcquireImplementationLease(ctx, item)
+}
+func (s *SQLiteStore) ReleaseLease(ctx context.Context, name, holder string) error {
+	return s.ReleaseImplementationLease(ctx, name, holder)
+}
+func (s *SQLiteStore) GetLease(ctx context.Context, name string) (domainworkstream.ImplementationLease, bool, error) {
+	return s.GetImplementationLease(ctx, name)
+}
+func (s *SQLiteStore) HeartbeatLease(ctx context.Context, item domainworkstream.ImplementationLease) error {
+	return s.HeartbeatImplementationLease(ctx, item)
 }
 
 func (s *SQLiteStore) SaveWorkstream(ctx context.Context, item domainworkstream.Workstream) error {

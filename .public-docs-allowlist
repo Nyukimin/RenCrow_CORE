@@ -9,6 +9,7 @@ docs/08_実装状況・ロードマップ.md
 docs/09_運用ログ・panic保存仕様.md
 docs/10_ログ仕様.md
 docs/README.md
+docs/RenCrow_Atlas_Backlog_Implementation_Lifecycle_仕様.md
 docs/ubuntu-host-recovery/99-rencrow-host-recovery.conf
 docs/ubuntu-host-recovery/ubuntu-shutdown-audit
 docs/ubuntu-host-recovery/ubuntu-shutdown-audit.service

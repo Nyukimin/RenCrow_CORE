@@ -1,30 +1,24 @@
 package viewer
 
 import (
-	"bufio"
-	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	backlogpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/backlog"
 )
 
 type BacklogItem = domainbacklog.Item
 
-type BacklogStore struct {
-	path string
-	mu   sync.Mutex
-}
+// BacklogStore remains the viewer-facing name while persistence lives in the
+// feature-owned infrastructure package. This keeps old callers source
+// compatible without creating a second backlog store.
+type BacklogStore = backlogpersistence.JSONLStore
 
 func NewBacklogStore(path string) *BacklogStore {
-	return &BacklogStore{path: path}
+	return backlogpersistence.NewJSONLStore(path)
 }
 
 func HandleBacklog(store *BacklogStore) http.HandlerFunc {
@@ -66,120 +60,16 @@ func HandleBacklog(store *BacklogStore) http.HandlerFunc {
 	}
 }
 
-func (s *BacklogStore) List(_ context.Context, limit int) ([]BacklogItem, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	latest := map[string]BacklogItem{}
-	file, err := os.Open(s.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []BacklogItem{}, nil
-		}
-		return nil, err
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var item BacklogItem
-		if err := json.Unmarshal([]byte(line), &item); err != nil {
-			continue
-		}
-		item = normalizeBacklogItemForRead(item)
-		latest[item.ItemID] = item
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	items := make([]BacklogItem, 0, len(latest))
-	for _, item := range latest {
-		items = append(items, item)
-	}
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].CheckOK != items[j].CheckOK {
-			return !items[i].CheckOK
-		}
-		return items[i].UpdatedAt > items[j].UpdatedAt
-	})
-	if limit > 0 && len(items) > limit {
-		items = items[:limit]
-	}
-	return items, nil
-}
-
-func (s *BacklogStore) Save(_ context.Context, item BacklogItem) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	encoded, err := json.Marshal(normalizeBacklogItem(item))
-	if err != nil {
-		return err
-	}
-	if _, err := file.Write(append(encoded, '\n')); err != nil {
-		return err
-	}
-	return nil
-}
-
 func normalizeBacklogItem(item BacklogItem) BacklogItem {
-	now := time.Now().Format(time.RFC3339)
-	item = normalizeBacklogItemBase(item)
-	if item.CreatedAt == "" {
-		item.CreatedAt = now
-	}
-	item.UpdatedAt = now
-	if item.CheckOK {
-		item.Status = "ok"
-	}
-	return item
+	return backlogpersistence.NormalizeForSave(item, time.Now().UTC())
 }
 
 func normalizeBacklogItemForRead(item BacklogItem) BacklogItem {
-	now := time.Now().Format(time.RFC3339)
-	item = normalizeBacklogItemBase(item)
-	if item.CreatedAt == "" {
-		item.CreatedAt = now
-	}
-	if item.UpdatedAt == "" {
-		item.UpdatedAt = item.CreatedAt
-	}
-	if item.CheckOK {
-		item.Status = "ok"
-	}
-	return item
+	return backlogpersistence.NormalizeForRead(item)
 }
 
 func normalizeBacklogItemBase(item BacklogItem) BacklogItem {
-	item.ItemID = strings.TrimSpace(item.ItemID)
-	if item.ItemID == "" {
-		item.ItemID = fmt.Sprintf("backlog-%d", time.Now().UnixNano())
-	}
-	item.Kind = normalizeBacklogKind(item.Kind)
-	item.Title = strings.TrimSpace(item.Title)
-	if item.Title == "" {
-		item.Title = "untitled"
-	}
-	item.Body = strings.TrimSpace(item.Body)
-	item.Source = normalizeBacklogSource(item.Source)
-	item.Owner = normalizeBacklogSource(item.Owner)
-	item.Status = normalizeBacklogStatus(item.Status, item.CheckOK)
-	item.Priority = normalizeBacklogPriority(item.Priority)
-	item.Implementer = normalizeBacklogSource(item.Implementer)
-	item.Implementation = strings.TrimSpace(item.Implementation)
-	item.TestResult = strings.TrimSpace(item.TestResult)
-	item.CheckedBy = normalizeBacklogSource(item.CheckedBy)
-	return item
+	return backlogpersistence.NormalizeForRead(item)
 }
 
 func normalizeBacklogKind(v string) string {

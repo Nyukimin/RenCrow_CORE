@@ -16,6 +16,10 @@ LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(GIT_COMMIT) -X 
 # Go variables
 GO?=go
 GOFLAGS?=-v
+# Keep repository-local runtime/cache artifacts under Tmp out of Go package
+# discovery. These are deliberately inside the repo on Windows and may contain
+# downloaded modules with their own go.mod files.
+GO_PACKAGES=./application/... ./cmd/... ./domain/... ./infrastructure/... ./internal/... ./modules/... ./pkg/... ./test/... ./tools/...
 PYTHON?=python3
 PYTHONPATH?=rencrow-data/src
 DATA_DB?=rencrow-data/data/rencrow.db
@@ -489,15 +493,15 @@ clean:
 
 ## vet: Run go vet for static analysis
 vet:
-	@$(GO) vet ./...
+	@$(GO) vet $(GO_PACKAGES)
 
 ## fmt: Format Go code
 test:
-	@$(GO) test ./...
+	@$(GO) test $(GO_PACKAGES)
 
 ## fmt: Format Go code
 fmt:
-	@$(GO) fmt ./...
+	@$(GO) fmt $(GO_PACKAGES)
 
 ## deps: Download dependencies
 deps:

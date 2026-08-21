@@ -15,6 +15,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	aiworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/aiworkflow"
 	artifactcleanupapp "github.com/Nyukimin/RenCrow_CORE/internal/application/artifactcleanup"
+	backlogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
 	browsertraceapp "github.com/Nyukimin/RenCrow_CORE/internal/application/browsertrace"
 	complexityapp "github.com/Nyukimin/RenCrow_CORE/internal/application/complexity"
 	dciapp "github.com/Nyukimin/RenCrow_CORE/internal/application/dci"
@@ -42,6 +43,7 @@ import (
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	backlogfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	aiworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/aiworkflow"
 	browsertracepersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/browsertrace"
@@ -268,6 +270,8 @@ type Dependencies struct {
 	dreamConsolidationProposal     http.HandlerFunc                            // viewer dream consolidation proposal API
 	dreamConsolidationReview       http.HandlerFunc                            // viewer dream consolidation review API
 	backlogStore                   *viewer.BacklogStore                        // Backlog intake store shared by Viewer and Heartbeat
+	atlasService                   *backlogapp.Service                         // Atlas lifecycle owner service
+	atlasHandler                   http.HandlerFunc                            // Atlas read projection + authenticated owner API
 	workstreamStore                heartbeat.WorkstreamHeartbeatStore          // Workstream heartbeat draft runner
 	revenueStore                   heartbeat.RevenueDailyRoutineStore          // Revenue daily routine draft runner
 	entryHandler                   http.HandlerFunc                            // unified entry endpoint
@@ -941,6 +945,31 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		if sandboxStore != nil && promotionDiffPreviewer != nil {
 		}
 	}
+	// Atlas shares the established Backlog JSONL and Workstream store. No
+	// lifecycle state is initialized when either owner store is unavailable;
+	// reads still expose an empty/legacy-safe projection and writes fail closed.
+	deps.atlasService = backlogapp.NewService(deps.backlogStore, deps.workstreamStore)
+	if catalog, err := backlogfeature.LoadAtlasCatalog(); err != nil {
+		log.Printf("Atlas catalog unavailable: %v", err)
+	} else {
+		deps.atlasService.WithCatalog([]map[string]any{{
+			"schema_version": catalog.SchemaVersion,
+			"bootstrap_at":   catalog.BootstrapAt,
+			"source":         catalog.Source,
+		}}).WithFeatures(catalog.Features).WithModules(catalog.Modules)
+	}
+	if err := deps.atlasService.Recover(context.Background()); err != nil {
+		log.Printf("Atlas lease recovery failed: %v", err)
+	}
+	var atlasToken []byte
+	if cfg.LocalAgentOps.Enabled {
+		if token, err := readAgentOpsToken(cfg.LocalAgentOps.AuthTokenFile); err != nil {
+			log.Printf("Atlas owner API unavailable: %v", err)
+		} else {
+			atlasToken = token
+		}
+	}
+	deps.atlasHandler = viewer.NewAtlasHandler(deps.atlasService, cfg.LocalAgentOps.UserID, atlasToken)
 	if cfg.Revenue.IsEnabled() {
 		var revenueStore viewer.RevenueStore
 		if cfg.Revenue.Storage == "sqlite" {

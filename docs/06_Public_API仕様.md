@@ -1313,3 +1313,16 @@ path segmentとしてURL encodeします。
 - 専用endpointを追加する場合は、既存Viewer内部APIの無制限な再公開ではなく、認証、scope、idempotency、監査を含むpublic contractとして定義する。
 - ASSISTANTのPUSHを第二の会話systemにせず、CORE応答を利用者、source、category、
   correlation ID付きのInteraction outputとして元のdeliveryへ戻せるようにする。
+
+## Atlas owner API
+
+読み取りprojectionは`GET /viewer/atlas`、`/viewer/atlas/items`、`/viewer/atlas/items/{id}`、
+`/viewer/atlas/radar`、`/viewer/atlas/backlog`、`/viewer/atlas/queue`、`/viewer/atlas/active`、
+`/viewer/atlas/evidence/{implementation_unit_id}`で提供します。Debug Viewerおよび認証済み
+`cmd-diagnostics` profileはこのprojectionだけを読みます。
+
+状態変更は`POST /v1/atlas/intake`と`POST /v1/atlas/items/{id}/{candidate|adopt|defer|reject|revise}`
+に限定します。`cmd-control` profile、Bearer credential、owner identity、bounded JSON bodyを必須とし、
+COREがstate transition、dedupe、Evidence Gate、WIP leaseを検証してtyped resultを返します。
+Viewer、CMD、LLMがstateや`check_ok`を直接確定しません。legacy `GET|POST /viewer/backlog`は互換入口として
+維持しますが、Atlas lifecycleのauthoritative writeではありません。

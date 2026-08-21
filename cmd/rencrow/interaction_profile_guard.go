@@ -104,6 +104,9 @@ func cmdDiagnosticsInteractionAllowed(method, path string) bool {
 	if path == "/v1/memory/user" || strings.HasPrefix(path, "/v1/memory/user/") {
 		return true
 	}
+	if path == "/viewer/atlas" || strings.HasPrefix(path, "/viewer/atlas/") {
+		return true
+	}
 	if strings.HasPrefix(path, "/v1/memory/import/chatgpt/") {
 		exportID := strings.TrimPrefix(path, "/v1/memory/import/chatgpt/")
 		return exportID != "" && exportID != "confirm" && !strings.Contains(exportID, "/")
@@ -174,7 +177,7 @@ func cmdControlInteractionAllowed(method, path string) bool {
 		return true
 	case "/viewer/memory/knowledge-raw/backfill":
 		return true
-	case "/viewer/repair/run",
+	case "/viewer/repair/run", "/v1/atlas/intake",
 		"/viewer/source-registry",
 		"/viewer/memory/profile-promotions/retry",
 		"/viewer/trade/policy/evaluate",
@@ -185,7 +188,7 @@ func cmdControlInteractionAllowed(method, path string) bool {
 		"/viewer/trade/shadow/outcomes/reviews":
 		return true
 	default:
-		return false
+		return strings.HasPrefix(path, "/v1/atlas/items/")
 	}
 }
 

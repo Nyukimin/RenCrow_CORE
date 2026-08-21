@@ -7,13 +7,23 @@ import (
 
 // Dependencies groups feature dependencies supplied by cmd/rencrow.
 type Dependencies struct {
-	Ports Ports
+	Ports  Ports
+	Routes Routes
+}
+
+type Routes struct {
+	Atlas http.HandlerFunc
 }
 
 // RegisterRoutes registers handlers at the feature route boundary.
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
-	_ = mux
-	_ = deps
+	if mux == nil || deps.Routes.Atlas == nil {
+		return
+	}
+	mux.HandleFunc("/viewer/atlas", deps.Routes.Atlas)
+	mux.HandleFunc("/viewer/atlas/", deps.Routes.Atlas)
+	mux.HandleFunc("/v1/atlas", deps.Routes.Atlas)
+	mux.HandleFunc("/v1/atlas/", deps.Routes.Atlas)
 }
 
 // StartBackground reserves the feature background-job boundary.

@@ -1,0 +1,25 @@
+{"schema_version":1,"bootstrap_at":"2026-08-21T00:00:00Z","source":{"type":"specification","locator":"docs/RenCrow_Atlas_Backlog_Implementation_Lifecycle_仕様.md","repository":"Nyukimin/RenCrow_CORE"},"features":[
+{"feature_id":"agents.society","category":"agents","display_name":"Agent society","owner_module":"RenCrow_CORE","summary":"CORE-managed Agent identities, roles, routing, and collaboration","relations":["agents.deliberation"]},
+{"feature_id":"agents.deliberation","category":"agents","display_name":"Deliberation and decisions","owner_module":"RenCrow_CORE","summary":"Agent coordination and synchronous policy decisions","relations":["safety.policy"]},
+{"feature_id":"memory.user","category":"memory","display_name":"Memory / Recall","owner_module":"RenCrow_CORE","summary":"Conversation, UserMemory, Knowledge, and Recall projections","relations":["knowledge.catalog"]},
+{"feature_id":"knowledge.catalog","category":"knowledge","display_name":"Knowledge","owner_module":"RenCrow_CORE","summary":"Knowledge intake, provenance, search, and bounded Agent access","relations":["memory.user"]},
+{"feature_id":"tools.execution","category":"execution","display_name":"Tool / Execution","owner_module":"RenCrow_CORE","summary":"Runtime capability snapshot, policy, Worker execution, and receipts","relations":["safety.policy"]},
+{"feature_id":"safety.policy","category":"safety","display_name":"Safety","owner_module":"RenCrow_CORE","summary":"Authenticated scope, synchronous decisions, fail-closed behavior, and audit","relations":["tools.execution"]},
+{"feature_id":"llm.runtime","category":"runtime","display_name":"LLM Runtime","owner_module":"RenCrow_LLM","summary":"Gateway-to-runtime-to-backend model execution boundary","relations":["agents.society"]},
+{"feature_id":"interaction.multimodal","category":"interaction","display_name":"UI / Avatar / STT / TTS / Vision / Image","owner_module":"RenCrow_CORE","summary":"CORE contracts and mandatory capability-module routes","relations":["ecosystem.modules"]},
+{"feature_id":"evaluation.observability","category":"operations","display_name":"Evaluation / Observability","owner_module":"RenCrow_CORE","summary":"Viewer, evidence, logs, traces, readiness, and production verification","relations":["atlas.lifecycle"]},
+{"feature_id":"growth.motivation","category":"agents","display_name":"Growth / Motivation","owner_module":"RenCrow_CORE","summary":"Reflection, opportunity, workstream, and bounded autonomous activity","relations":["agents.society"]},
+{"feature_id":"ecosystem.modules","category":"ecosystem","display_name":"EcoSystem modules","owner_module":"RenCrow_EcoSystem","summary":"Independent repositories, source pins, deployment targets, and compatibility","relations":["atlas.lifecycle"]},
+{"feature_id":"atlas.lifecycle","category":"operations","display_name":"Atlas / Backlog / Implementation Lifecycle","owner_module":"RenCrow_CORE","summary":"Radar, adoption, WIP=1, evidence-gated delivery, and current feature projection","relations":["evaluation.observability","ecosystem.modules"]}
+],"modules":[
+{"name":"RenCrow_CORE","owner":"RenCrow_CORE","revision":"runtime build metadata","runtime_health":"runtime projection","source":"RenCrow_EcoSystem ecosystem.yaml"},
+{"name":"RenCrow_CMD","owner":"RenCrow_CMD","revision":"EcoSystem source pin","runtime_health":"client","source":"RenCrow_EcoSystem ecosystem.yaml"},
+{"name":"RenCrow_PORTAL","owner":"RenCrow_PORTAL","revision":"EcoSystem source pin","runtime_health":"external projection","source":"RenCrow_EcoSystem ecosystem.yaml"},
+{"name":"RenCrow_LLM","owner":"RenCrow_LLM","revision":"EcoSystem source pin","runtime_health":"external projection","source":"RenCrow_EcoSystem ecosystem.yaml"},
+{"name":"RenCrow_STT","owner":"RenCrow_STT","revision":"EcoSystem source pin","runtime_health":"external projection","source":"RenCrow_EcoSystem ecosystem.yaml"},
+{"name":"RenCrow_TTS","owner":"RenCrow_TTS","revision":"EcoSystem source pin","runtime_health":"external projection","source":"RenCrow_EcoSystem ecosystem.yaml"},
+{"name":"RenCrow_Vision","owner":"RenCrow_Vision","revision":"EcoSystem source pin","runtime_health":"external projection","source":"RenCrow_EcoSystem ecosystem.yaml"},
+{"name":"RenCrow_Image","owner":"RenCrow_Image","revision":"EcoSystem source pin","runtime_health":"external projection","source":"RenCrow_EcoSystem ecosystem.yaml"},
+{"name":"RenCrow_GAMES","owner":"RenCrow_GAMES","revision":"EcoSystem source pin","runtime_health":"external projection","source":"RenCrow_EcoSystem ecosystem.yaml"},
+{"name":"RenCrow_Tools","owner":"RenCrow_Tools","revision":"EcoSystem source pin","runtime_health":"tooling","source":"RenCrow_EcoSystem ecosystem.yaml"}
+]}

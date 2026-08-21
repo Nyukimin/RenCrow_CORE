@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>RenCrow Live</title>
-<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-midori-image-chat-memory-db-accordion-db-capability-catalog">
+<link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-midori-image-chat-memory-db-accordion-db-capability-catalog-atlas">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/prompt-logs.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2-movie-single-row-list">
@@ -48,6 +48,7 @@
       <option value="develop">Develop</option>
       <option value="instructions">Instructions</option>
       <option value="backlog">Backlog</option>
+      <option value="atlas">Atlas</option>
       <option value="reports">Reports</option>
       <optgroup label="Memory">
         <option value="memory">会話 L1</option>
@@ -84,6 +85,7 @@
     <button class="tab-btn" data-tab="develop">Develop</button>
     <button class="tab-btn" data-tab="instructions">Instructions</button>
     <button class="tab-btn" data-tab="backlog">Backlog</button>
+    <button class="tab-btn" data-tab="atlas">Atlas</button>
     <button class="tab-btn" data-tab="reports">Reports</button>
     <button id="memoryNavToggle" class="tab-btn memory-nav-toggle" type="button" aria-expanded="false" aria-controls="memoryDbNav">
       <span>Memory</span><span class="memory-nav-chevron" aria-hidden="true">›</span>
@@ -327,6 +329,37 @@
           </table>
         </div>
       </section>
+    </div>
+  </section>
+
+  <section id="panel-atlas" class="panel atlas-panel">
+    <div id="atlasRoot" class="atlas-shell">
+      <div class="atlas-head">
+        <div>
+          <div class="atlas-kicker">CORE DEBUG VIEWER / READ-ONLY PROJECTION</div>
+          <h2>Atlas</h2>
+          <p>Current、Radar、Backlog、Pipeline、Evidence、Modules を一つの読み取り専用 projection で確認します。</p>
+        </div>
+        <div class="atlas-head-actions">
+          <span id="atlasStatus" class="badge state-thinking" role="status" aria-live="polite">idle</span>
+          <button id="atlasRefreshBtn" class="ctl-btn" type="button">Refresh</button>
+        </div>
+      </div>
+      <section id="atlasSummaryCards" class="atlas-summary-grid" aria-label="Atlas summary"></section>
+      <nav class="atlas-tabs" aria-label="Atlas views" role="tablist">
+        <button id="atlas-tab-current" class="atlas-tab active" type="button" role="tab" data-atlas-tab="current" aria-controls="atlas-view-current" aria-selected="true">Current</button>
+        <button id="atlas-tab-radar" class="atlas-tab" type="button" role="tab" data-atlas-tab="radar" aria-controls="atlas-view-radar" aria-selected="false">Radar</button>
+        <button id="atlas-tab-backlog" class="atlas-tab" type="button" role="tab" data-atlas-tab="backlog" aria-controls="atlas-view-backlog" aria-selected="false">Backlog</button>
+        <button id="atlas-tab-pipeline" class="atlas-tab" type="button" role="tab" data-atlas-tab="pipeline" aria-controls="atlas-view-pipeline" aria-selected="false">Pipeline</button>
+        <button id="atlas-tab-evidence" class="atlas-tab" type="button" role="tab" data-atlas-tab="evidence" aria-controls="atlas-view-evidence" aria-selected="false">Evidence</button>
+        <button id="atlas-tab-modules" class="atlas-tab" type="button" role="tab" data-atlas-tab="modules" aria-controls="atlas-view-modules" aria-selected="false">Modules</button>
+      </nav>
+      <section id="atlas-view-current" class="atlas-view" data-atlas-view="current" role="tabpanel" aria-labelledby="atlas-tab-current"></section>
+      <section id="atlas-view-radar" class="atlas-view" data-atlas-view="radar" role="tabpanel" aria-labelledby="atlas-tab-radar" hidden></section>
+      <section id="atlas-view-backlog" class="atlas-view" data-atlas-view="backlog" role="tabpanel" aria-labelledby="atlas-tab-backlog" hidden></section>
+      <section id="atlas-view-pipeline" class="atlas-view" data-atlas-view="pipeline" role="tabpanel" aria-labelledby="atlas-tab-pipeline" hidden></section>
+      <section id="atlas-view-evidence" class="atlas-view" data-atlas-view="evidence" role="tabpanel" aria-labelledby="atlas-tab-evidence" hidden></section>
+      <section id="atlas-view-modules" class="atlas-view" data-atlas-view="modules" role="tabpanel" aria-labelledby="atlas-tab-modules" hidden></section>
     </div>
   </section>
 
@@ -1668,6 +1701,7 @@
 <script src="/viewer/assets/js/tabs/develop.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/instructions.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/backlog.js?v=20260618-backlog" defer></script>
+<script src="/viewer/assets/js/tabs/atlas.js?v=20260821-atlas" defer></script>
 <script src="/viewer/assets/js/tabs/reports.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/overview.js?v=20260510-tabs-overview" defer></script>
 <script src="/viewer/assets/js/tabs/system.js?v=20260510-tabs-system" defer></script>
@@ -1686,7 +1720,7 @@
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
 <script src="/viewer/assets/js/tabs/image.js?v=20260728-image-mvp" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
-<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion-db-capability-catalog" defer></script>
+<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion-db-capability-catalog-atlas" defer></script>
 <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
 </body>
 </html>

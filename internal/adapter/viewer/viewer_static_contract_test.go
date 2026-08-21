@@ -1077,3 +1077,97 @@ func TestViewerStaticContractGamesAgentOwnedLaunchDesk(t *testing.T) {
 		}
 	}
 }
+
+func TestViewerStaticContractAtlasReadOnlyProjection(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	jsData, err := os.ReadFile("assets/js/tabs/atlas.js")
+	if err != nil {
+		t.Fatalf("read atlas.js: %v", err)
+	}
+	viewerData, err := os.ReadFile("assets/js/viewer.js")
+	if err != nil {
+		t.Fatalf("read viewer.js: %v", err)
+	}
+	cssData, err := os.ReadFile("assets/css/viewer.css")
+	if err != nil {
+		t.Fatalf("read viewer.css: %v", err)
+	}
+
+	html := string(htmlData)
+	atlas := string(jsData)
+	viewer := string(viewerData)
+	css := string(cssData)
+	for _, needle := range []string{
+		`data-tab="atlas"`,
+		`<option value="atlas">Atlas</option>`,
+		`id="panel-atlas"`,
+		`id="atlasRoot"`,
+		`id="atlasSummaryCards"`,
+		`data-atlas-tab="current"`,
+		`data-atlas-tab="radar"`,
+		`data-atlas-tab="backlog"`,
+		`data-atlas-tab="pipeline"`,
+		`data-atlas-tab="evidence"`,
+		`data-atlas-tab="modules"`,
+		`/viewer/assets/js/tabs/atlas.js`,
+	} {
+		if !strings.Contains(html, needle) {
+			t.Fatalf("viewer.html missing Atlas Viewer contract %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		`fetch('/viewer/atlas'`,
+		`cache: 'no-store'`,
+		`catalog`,
+		`features`,
+		`current`,
+		`radar`,
+		`backlog`,
+		`queue`,
+		`evidence`,
+		`modules`,
+		`function refreshAtlas`,
+		`function atlasRenderPipeline`,
+		`function atlasRenderEvidence`,
+		`function atlasRenderModules`,
+	} {
+		if !strings.Contains(atlas, needle) {
+			t.Fatalf("atlas.js missing read-only projection contract %q", needle)
+		}
+	}
+	for _, forbidden := range []string{
+		`method: 'POST'`,
+		`method: "POST"`,
+		`localStorage`,
+		`sessionStorage`,
+	} {
+		if strings.Contains(atlas, forbidden) {
+			t.Fatalf("atlas.js must not own write or durable UI state: found %q", forbidden)
+		}
+	}
+	for _, needle := range []string{
+		`atlas: document.getElementById('panel-atlas')`,
+		`tab === 'atlas'`,
+		`typeof atlasRender === 'function'`,
+	} {
+		if !strings.Contains(viewer, needle) {
+			t.Fatalf("viewer.js missing Atlas tab hook %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		`.atlas-summary-grid`,
+		`.atlas-active-unit`,
+		`.atlas-stage-list`,
+		`.atlas-evidence-timeline`,
+		`.atlas-module-grid`,
+		`@media (max-width:640px)`,
+		`overflow-wrap:anywhere`,
+	} {
+		if !strings.Contains(css, needle) {
+			t.Fatalf("viewer.css missing Atlas layout contract %q", needle)
+		}
+	}
+}

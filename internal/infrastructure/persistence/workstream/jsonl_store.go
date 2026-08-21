@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
@@ -22,6 +24,8 @@ type JSONLStore struct {
 	heartbeatPath   string
 	vaultUpdatePath string
 	vaultRoot       string
+	leasePath       string
+	leaseMu         sync.Mutex
 }
 
 func NewJSONLStore(root string) *JSONLStore {
@@ -36,7 +40,99 @@ func NewJSONLStore(root string) *JSONLStore {
 		steeringPath:    filepath.Join(root, "steering_queue.jsonl"),
 		heartbeatPath:   filepath.Join(root, "heartbeat_schedule.jsonl"),
 		vaultUpdatePath: filepath.Join(root, "vault_update_log.jsonl"),
+		leasePath:       filepath.Join(root, "implementation_lease.jsonl"),
 	}
+}
+
+// AcquireImplementationLease persists Atlas's singleton WIP lease in the
+// existing Workstream JSONL root. The in-process mutex makes check-and-append
+// atomic for the JSONL runtime; recovery reads the last lease record.
+func (s *JSONLStore) AcquireImplementationLease(_ context.Context, item domainworkstream.ImplementationLease) (bool, error) {
+	if err := domainworkstream.ValidateImplementationLease(item); err != nil {
+		return false, err
+	}
+	s.leaseMu.Lock()
+	defer s.leaseMu.Unlock()
+	current, ok, err := s.latestImplementationLeaseLocked()
+	if err != nil {
+		return false, err
+	}
+	if ok && current.HolderUnitID != "" && current.HolderUnitID != item.HolderUnitID {
+		return false, nil
+	}
+	return true, appendJSONL(s.leasePath, item)
+}
+
+func (s *JSONLStore) ReleaseImplementationLease(_ context.Context, leaseName, holderUnitID string) error {
+	s.leaseMu.Lock()
+	defer s.leaseMu.Unlock()
+	current, ok, err := s.latestImplementationLeaseLocked()
+	if err != nil {
+		return err
+	}
+	if !ok || current.LeaseName != leaseName || (holderUnitID != "" && current.HolderUnitID != holderUnitID) {
+		return nil
+	}
+	// A tombstone keeps the append-only history while making the latest state
+	// unambiguously free.
+	return appendJSONL(s.leasePath, map[string]any{
+		"lease_name": leaseName, "released_by": holderUnitID,
+		"released_at": time.Now().UTC().Format(time.RFC3339Nano),
+	})
+}
+
+func (s *JSONLStore) GetImplementationLease(_ context.Context, leaseName string) (domainworkstream.ImplementationLease, bool, error) {
+	s.leaseMu.Lock()
+	defer s.leaseMu.Unlock()
+	item, ok, err := s.latestImplementationLeaseLocked()
+	if err != nil || !ok || item.LeaseName != leaseName || item.HolderUnitID == "" {
+		return domainworkstream.ImplementationLease{}, false, err
+	}
+	return item, true, nil
+}
+
+func (s *JSONLStore) HeartbeatImplementationLease(_ context.Context, item domainworkstream.ImplementationLease) error {
+	if strings.TrimSpace(item.LeaseName) == "" || strings.TrimSpace(item.HolderUnitID) == "" {
+		return fmt.Errorf("lease_name and holder_unit_id are required")
+	}
+	s.leaseMu.Lock()
+	defer s.leaseMu.Unlock()
+	current, ok, err := s.latestImplementationLeaseLocked()
+	if err != nil {
+		return err
+	}
+	if !ok || current.HolderUnitID != item.HolderUnitID || current.LeaseName != item.LeaseName {
+		return fmt.Errorf("implementation lease is not held by %s", item.HolderUnitID)
+	}
+	return appendJSONL(s.leasePath, item)
+}
+
+// Short aliases keep the store convenient for narrow owner adapters.
+func (s *JSONLStore) AcquireLease(ctx context.Context, item domainworkstream.ImplementationLease) (bool, error) {
+	return s.AcquireImplementationLease(ctx, item)
+}
+func (s *JSONLStore) ReleaseLease(ctx context.Context, name, holder string) error {
+	return s.ReleaseImplementationLease(ctx, name, holder)
+}
+func (s *JSONLStore) GetLease(ctx context.Context, name string) (domainworkstream.ImplementationLease, bool, error) {
+	return s.GetImplementationLease(ctx, name)
+}
+func (s *JSONLStore) HeartbeatLease(ctx context.Context, item domainworkstream.ImplementationLease) error {
+	return s.HeartbeatImplementationLease(ctx, item)
+}
+
+func (s *JSONLStore) latestImplementationLeaseLocked() (domainworkstream.ImplementationLease, bool, error) {
+	var latest domainworkstream.ImplementationLease
+	found := false
+	err := readJSONL(s.leasePath, func(line []byte) error {
+		var item domainworkstream.ImplementationLease
+		if err := json.Unmarshal(line, &item); err == nil && item.LeaseName != "" {
+			latest = item
+			found = true
+		}
+		return nil
+	})
+	return latest, found, err
 }
 
 func NewJSONLStoreWithVault(root, vaultRoot string) *JSONLStore {

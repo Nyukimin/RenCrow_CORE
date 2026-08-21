@@ -33,7 +33,7 @@
 ## このファイルの役割
 
 このファイルは、RenCrow_CORE で作業する AI エージェント向けの最小実務ルールです。
-製品仕様の唯一の正本は `docs/README.md` と、そこに列挙された10の仕様書です。`CLAUDE.md` と `rules/` は作業制約であり、製品仕様を再定義しません。
+製品仕様の唯一の正本は `docs/README.md` と、そこに列挙された11の仕様書です。`CLAUDE.md` と `rules/` は作業制約であり、製品仕様を再定義しません。
 
 全project共通の開発判断はworkspace rootから参照する共通Skillを正本とする。
 `rules/common/`は既存参照を維持するCORE-local補足であり、他moduleへcopyしない。

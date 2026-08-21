@@ -114,6 +114,33 @@ func TestJSONLStoreSaveAndListWorkstreamRecords(t *testing.T) {
 	}
 }
 
+func TestJSONLStoreImplementationLeaseIsSingletonAndRecoverable(t *testing.T) {
+	store := NewJSONLStore(t.TempDir())
+	now := time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC)
+	first := domainworkstream.ImplementationLease{LeaseName: "atlas_implementation", HolderUnitID: "unit-1", HolderWorkstreamID: "ws-1", Stage: "QUEUED", AcquiredAt: now, HeartbeatAt: now}
+	second := first
+	second.HolderUnitID = "unit-2"
+	second.HolderWorkstreamID = "ws-2"
+	acquired, err := store.AcquireImplementationLease(context.Background(), first)
+	if err != nil || !acquired {
+		t.Fatalf("first acquire=%v err=%v", acquired, err)
+	}
+	acquired, err = store.AcquireImplementationLease(context.Background(), second)
+	if err != nil || acquired {
+		t.Fatalf("second acquire=%v err=%v", acquired, err)
+	}
+	got, ok, err := store.GetImplementationLease(context.Background(), "atlas_implementation")
+	if err != nil || !ok || got.HolderUnitID != "unit-1" {
+		t.Fatalf("lease=%+v ok=%v err=%v", got, ok, err)
+	}
+	if err := store.ReleaseImplementationLease(context.Background(), "atlas_implementation", "unit-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := store.GetImplementationLease(context.Background(), "atlas_implementation"); err != nil || ok {
+		t.Fatalf("released lease still active ok=%v err=%v", ok, err)
+	}
+}
+
 func TestJSONLStoreListsLatestVaultUpdatePerID(t *testing.T) {
 	ctx := context.Background()
 	store := NewJSONLStore(t.TempDir())

@@ -1191,6 +1191,7 @@ const panels = {
   develop: document.getElementById('panel-develop'),
   instructions: document.getElementById('panel-instructions'),
   backlog: document.getElementById('panel-backlog'),
+  atlas: document.getElementById('panel-atlas'),
   reports: document.getElementById('panel-reports'),
   'prompt-logs': document.getElementById('panel-prompt-logs'),
   ops: document.getElementById('panel-ops'),
@@ -1326,6 +1327,7 @@ function switchTab(tab) {
   if (tab === 'person-related-catalog' && typeof movieDbInitPersonRelatedPanel === 'function') movieDbInitPersonRelatedPanel();
   if (tab === 'tool-registry' && typeof refreshToolRegistryDatabase === 'function') refreshToolRegistryDatabase();
   if (tab === 'backlog' && typeof refreshBacklog === 'function') refreshBacklog();
+  if (tab === 'atlas' && typeof refreshAtlas === 'function') refreshAtlas();
   if (tab === 'prompt-logs') {
     refreshPromptDebugData();
   }
@@ -2348,6 +2350,7 @@ function renderDeskViews() {
   if (typeof renderDevelopDesk === 'function') renderDevelopDesk();
   if (typeof renderInstructionsDesk === 'function') renderInstructionsDesk();
   if (typeof renderBacklogDesk === 'function') renderBacklogDesk();
+  if (typeof atlasRender === 'function') atlasRender();
   if (typeof renderReportsDesk === 'function') renderReportsDesk();
   if (typeof renderInvestmentDesk === 'function') renderInvestmentDesk();
   if (typeof renderGamesDesk === 'function') renderGamesDesk();

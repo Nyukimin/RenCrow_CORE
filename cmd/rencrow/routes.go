@@ -16,6 +16,7 @@ import (
 	agentfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/agent"
 	aiworkflowfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/aiworkflow"
 	avatarfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/avatar"
+	backlogfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
 	channelsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/channels"
 	chatfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/chat"
 	corefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/core"
@@ -156,6 +157,7 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		WebGatherDoctor: handleViewerWebGatherDoctor(dependencies.webGatherDeps),
 		AgentOps:        dependencies.agentOps,
 	}})
+	backlogfeature.RegisterRoutes(mux, backlogfeature.Dependencies{Routes: backlogfeature.Routes{Atlas: dependencies.atlasHandler}})
 	workstreamfeature.RegisterRoutes(mux, workstreamfeature.Dependencies{Routes: workstreamfeature.Routes{
 		Status: dependencies.workstreamStatus, Goals: dependencies.workstreamGoal,
 		Artifacts: dependencies.workstreamArtifact, Annotations: dependencies.workstreamAnnotation,

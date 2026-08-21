@@ -1,6 +1,9 @@
 package workstream
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 const (
 	StatusDraft     = "draft"
@@ -83,6 +86,34 @@ type HeartbeatSchedule struct {
 	LastRunAt    time.Time `json:"last_run_at,omitempty"`
 	NextRunAt    time.Time `json:"next_run_at,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// ImplementationLease is the persisted singleton lease used by Atlas. It is
+// stored alongside Workstream records so recovery observes one durable state.
+type ImplementationLease struct {
+	LeaseName          string    `json:"lease_name"`
+	HolderUnitID       string    `json:"holder_unit_id"`
+	HolderWorkstreamID string    `json:"holder_workstream_id"`
+	Stage              string    `json:"stage,omitempty"`
+	Revision           string    `json:"revision,omitempty"`
+	AcquiredAt         time.Time `json:"acquired_at"`
+	HeartbeatAt        time.Time `json:"heartbeat_at"`
+}
+
+func ValidateImplementationLease(item ImplementationLease) error {
+	if item.LeaseName == "" {
+		return fmt.Errorf("lease_name is required")
+	}
+	if item.HolderUnitID == "" {
+		return fmt.Errorf("holder_unit_id is required")
+	}
+	if item.AcquiredAt.IsZero() {
+		return fmt.Errorf("acquired_at is required")
+	}
+	if item.HeartbeatAt.IsZero() {
+		return fmt.Errorf("heartbeat_at is required")
+	}
+	return nil
 }
 
 type VaultUpdateLog struct {

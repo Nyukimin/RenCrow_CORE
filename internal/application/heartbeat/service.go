@@ -50,6 +50,12 @@ type BacklogStore interface {
 	Save(ctx context.Context, item domainbacklog.Item) error
 }
 
+type atlasImplementationLeaseStore interface {
+	AcquireImplementationLease(context.Context, domainworkstream.ImplementationLease) (bool, error)
+	ReleaseImplementationLease(context.Context, string, string) error
+	GetImplementationLease(context.Context, string) (domainworkstream.ImplementationLease, bool, error)
+}
+
 type RevenueDailyRoutineStore = revenueapp.DailyRoutineStore
 
 type IdleChatSequenceMonitor interface {
@@ -411,6 +417,13 @@ func backlogActiveItems(items []domainbacklog.Item) []domainbacklog.Item {
 		if item.CheckOK {
 			continue
 		}
+		if strings.TrimSpace(item.ConceptState) != "" {
+			if item.ConceptState != domainbacklog.ConceptAdopted || !atlasDeliveryRunnable(item.DeliveryState) {
+				continue
+			}
+			active = append(active, item)
+			continue
+		}
 		switch strings.ToLower(strings.TrimSpace(item.Status)) {
 		case "implementing", "testing", "fixing":
 			active = append(active, item)
@@ -437,6 +450,18 @@ func backlogActiveItems(items []domainbacklog.Item) []domainbacklog.Item {
 	return active
 }
 
+func atlasDeliveryRunnable(state string) bool {
+	switch strings.ToUpper(strings.TrimSpace(state)) {
+	case domainbacklog.DeliveryQueued, domainbacklog.DeliverySpec, domainbacklog.DeliveryTDDRed,
+		domainbacklog.DeliveryTDDGreen, domainbacklog.DeliveryRefactor, domainbacklog.DeliveryE2EPredeploy,
+		domainbacklog.DeliveryBuild, domainbacklog.DeliveryDeploy, domainbacklog.DeliveryRestart,
+		domainbacklog.DeliveryPostDeployVerify:
+		return true
+	default:
+		return false
+	}
+}
+
 func backlogIntakeCandidates(items []domainbacklog.Item) []domainbacklog.Item {
 	candidates := make([]domainbacklog.Item, 0, len(items))
 	seen := map[string]struct{}{}
@@ -450,6 +475,11 @@ func backlogIntakeCandidates(items []domainbacklog.Item) []domainbacklog.Item {
 		}
 		seen[id] = struct{}{}
 		if item.CheckOK || strings.TrimSpace(item.Title) == "" {
+			continue
+		}
+		// Schema v2 intake and adoption are owned by the authenticated Atlas API.
+		// Heartbeat must never infer adoption from the legacy open projection.
+		if strings.TrimSpace(item.ConceptState) != "" {
 			continue
 		}
 		if strings.ToLower(strings.TrimSpace(item.Status)) != "open" {
@@ -478,6 +508,22 @@ func backlogRunnerAlreadyStarted(item domainbacklog.Item) bool {
 }
 
 func backlogRunnerMessage(item domainbacklog.Item) string {
+	if strings.TrimSpace(item.ConceptState) != "" {
+		return fmt.Sprintf(`/code2 Atlas Implementation Unit %s を、現在のstage %sから1段だけ進めてください。
+
+目的:
+- %s
+
+制約:
+- 対象module／repo、正本、受入条件を確認する。
+- 必要な変更とtestだけを行い、正規routeを迂回しない。
+- 成功時は実在するreceipt／test／artifact／traceをEvidenceRefとして、認証済みCORE owner APIの /v1/atlas/items/%s/revise へ次の隣接delivery_stateと共に記録する。
+- legacy /viewer/backlog の status=ok または check_ok=trueで完了させない。
+- build、deploy、restart、readiness、production smokeを実施していない場合は、そのstageのEvidenceを作らない。
+- 失敗時は理由付きBLOCKEDへ確定し、待機状態を作らない。`,
+			strings.TrimSpace(item.ImplementationUnit), strings.TrimSpace(item.DeliveryState),
+			strings.TrimSpace(item.Title), strings.TrimSpace(item.ItemID))
+	}
 	return fmt.Sprintf(`/code2 Backlog item %s を1件だけ実装してください。
 
 目的:
@@ -697,6 +743,35 @@ func (s *HeartbeatService) RunBacklogRunner(ctx context.Context, now time.Time) 
 	}
 	item := active[0]
 	report.ItemID = item.ItemID
+	if strings.TrimSpace(item.ConceptState) != "" {
+		leaseStore, ok := s.workstreamStore.(atlasImplementationLeaseStore)
+		if !ok {
+			report.Failed++
+			return report, fmt.Errorf("atlas implementation lease store unavailable")
+		}
+		lease, held, err := leaseStore.GetImplementationLease(ctx, domainbacklog.ImplementationLeaseName)
+		if err != nil {
+			report.Failed++
+			return report, err
+		}
+		if !held {
+			lease = domainworkstream.ImplementationLease{
+				LeaseName: domainbacklog.ImplementationLeaseName, HolderUnitID: item.ImplementationUnit,
+				HolderWorkstreamID: item.WorkstreamID, Stage: item.DeliveryState,
+				AcquiredAt: now.UTC(), HeartbeatAt: now.UTC(),
+			}
+			acquired, err := leaseStore.AcquireImplementationLease(ctx, lease)
+			if err != nil {
+				report.Failed++
+				return report, err
+			}
+			if !acquired {
+				return report, nil
+			}
+		} else if lease.HolderUnitID != item.ImplementationUnit {
+			return report, nil
+		}
+	}
 	if backlogRunnerAlreadyStarted(item) {
 		s.emitEvent("backlog.runner.waiting_active", fmt.Sprintf("%s status=%s runner=started", item.ItemID, item.Status))
 		return report, nil
