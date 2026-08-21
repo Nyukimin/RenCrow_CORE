@@ -40,6 +40,7 @@ func TestInstallScriptUsesServiceUnitSourceOfTruth(t *testing.T) {
 	script := readRepoText(t, "install.sh")
 	mustContainAll(t, script, []string{
 		"install -m 0644 \"systemd/user/rencrow.service\" \"${SYSTEMD_USER_DIR}/rencrow.service\"",
+		"systemd/user/rencrow.service.d/30-games-observer.conf",
 	})
 	if strings.Contains(script, "cat > \"$SYSTEMD_USER_DIR/rencrow.service\"") {
 		t.Fatalf("install.sh must not inline-generate rencrow.service")

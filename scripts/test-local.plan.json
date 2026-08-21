@@ -105,11 +105,11 @@
       "testFiles": ["scripts/tests/storage_backup_contract_test.sh"]
     },
     {
-      "name": "watchdog",
+      "name": "monotonic-user-timers",
       "workingDirectory": ".",
       "filePath": "bash",
-      "arguments": ["scripts/tests/watchdog_mock_test.sh"],
-      "testFiles": ["scripts/tests/watchdog_mock_test.sh"]
+      "arguments": ["scripts/tests/monotonic_user_timer_contract_test.sh"],
+      "testFiles": ["scripts/tests/monotonic_user_timer_contract_test.sh"]
     }
   ]
 }

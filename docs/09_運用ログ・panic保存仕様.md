@@ -162,7 +162,7 @@ recipient=mio
 
 `rencrow.service`は`Restart=always`で動作し、`StartLimitIntervalSec=0`により連続異常終了時にもsystemdが恒久停止しません。異常終了時の`ExecStopPost`は、終了理由、終了コード、直近journal、panic stackを事故台帳へ保存します。正常な手動停止は事故にしません。
 
-`rencrow-resilience.timer`は30秒ごとに`GET /health/live`を確認します。このendpointはHTTPイベントループ自身だけを確認し、LLM、STT、TTS、DBなどの外部依存を確認しません。systemd上で`active/running`かつ起動後30秒を経過したCOREだけをprobeし、20秒未満に近接した手動確認はfailure回数へ重複計上しません。2回連続で2秒以内に応答しない場合だけハングと判定し、取得可能ならpprof goroutineを保存してからCOREを再起動します。再起動には2分のcooldownを設けます。
+`rencrow-resilience.timer`はuser manager起動3分後から2分ごとに`GET /health/live`を確認します。このendpointはHTTPイベントループ自身だけを確認し、LLM、STT、TTS、DBなどの外部依存を確認しません。systemd上で`active/running`かつ起動後180秒を経過したCOREだけをprobeし、20秒未満に近接した手動確認はfailure回数へ重複計上しません。production起動時の初期化が完了する前に再起動しないため、timerの初回遅延とprocess側graceは実測約145秒を上回る値とします。2回連続で2秒以内に応答しない場合だけハングと判定し、取得可能ならpprof goroutineを保存してからCOREを再起動します。再起動には2分のcooldownを設けます。
 
 依存を含む総合状態は従来どおり`GET /health`、受付可能状態は`GET /ready`を使います。外部LLM停止を理由にCOREを再起動してはいけません。
 

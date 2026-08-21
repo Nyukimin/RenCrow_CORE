@@ -75,10 +75,10 @@ func TestClassifyStopFindsPanic(t *testing.T) {
 
 func TestParseCoreProbeEligibilityRequiresRunningAndStartupGrace(t *testing.T) {
 	properties := "ActiveState=active\nSubState=running\nExecMainStartTimestampMonotonic=100000000\n"
-	if parseCoreProbeEligibility(properties, 129_999_999) {
+	if parseCoreProbeEligibility(properties, 279_999_999) {
 		t.Fatal("CORE inside startup grace was probed")
 	}
-	if !parseCoreProbeEligibility(properties, 130_000_000) {
+	if !parseCoreProbeEligibility(properties, 280_000_000) {
 		t.Fatal("stable running CORE was not eligible")
 	}
 	if parseCoreProbeEligibility(strings.Replace(properties, "SubState=running", "SubState=stop-sigterm", 1), 200_000_000) {

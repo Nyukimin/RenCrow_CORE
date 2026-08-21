@@ -21,7 +21,10 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/resilience"
 )
 
-const resilienceUnit = "rencrow.service"
+const (
+	resilienceUnit           = "rencrow.service"
+	coreLivenessStartupGrace = 180 * time.Second
+)
 
 type resilienceMonitorState struct {
 	ConsecutiveFailures int       `json:"consecutive_failures"`
@@ -175,7 +178,7 @@ func parseCoreProbeEligibility(serviceProperties string, uptimeMicros uint64) bo
 	if _, err := fmt.Sscan(properties["ExecMainStartTimestampMonotonic"], &startedMicros); err != nil || startedMicros == 0 || uptimeMicros < startedMicros {
 		return false
 	}
-	return uptimeMicros-startedMicros >= uint64((30 * time.Second).Microseconds())
+	return uptimeMicros-startedMicros >= uint64(coreLivenessStartupGrace.Microseconds())
 }
 
 func reconcileIncident(store resilience.Store, incident *resilience.Incident, now time.Time) error {

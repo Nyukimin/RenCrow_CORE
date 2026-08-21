@@ -53,6 +53,8 @@ install -m 0644 systemd/user/rencrow.service.d/10-panic-stack.conf \
   "${SYSTEMD_USER_DIR}/rencrow.service.d/10-panic-stack.conf"
 install -m 0644 systemd/user/rencrow.service.d/20-resilience.conf \
   "${SYSTEMD_USER_DIR}/rencrow.service.d/20-resilience.conf"
+install -m 0644 systemd/user/rencrow.service.d/30-games-observer.conf \
+  "${SYSTEMD_USER_DIR}/rencrow.service.d/30-games-observer.conf"
 
 sed "s#@RENCROW_REPO_DIR@#${REPO_DIR}#g" \
   systemd/user/rencrow-resilience.service \
