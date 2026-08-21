@@ -11,7 +11,31 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 )
 
+// buildConversationTextProvider resolves the execution role that owns
+// conversation summarization and async ProfilePromotion extraction.
+// conversation.summary_model selects the role; an empty or unknown value keeps
+// the historical worker role so existing deployments do not change behavior.
+// Extraction is a bounded JSON-contract task, so a non-reasoning role such as
+// chat finishes it without spending the worker reasoning budget.
 func buildConversationTextProvider(cfg *config.Config, providers primaryLLMProviders) (llm.LLMProvider, string) {
+	selected := ""
+	if cfg != nil {
+		selected = strings.ToLower(strings.TrimSpace(cfg.Conversation.SummaryModel))
+	}
+	switch selected {
+	case "chat":
+		if providers.Chat != nil {
+			return providers.Chat, "RenCrow_LLM chat"
+		}
+	case "chatworker":
+		if providers.ChatWorker != nil {
+			return providers.ChatWorker, "RenCrow_LLM chatworker"
+		}
+	case "wild":
+		if providers.Wild != nil {
+			return providers.Wild, "RenCrow_LLM wild"
+		}
+	}
 	if providers.Worker == nil {
 		return nil, ""
 	}

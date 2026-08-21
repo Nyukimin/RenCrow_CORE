@@ -468,6 +468,7 @@ type ConversationConfig struct {
 	VectorCollection                 string `yaml:"vector_collection"` // 会話要約用Qdrant collection名。空の場合はrencrow_memory
 	VectorDimension                  int    `yaml:"vector_dimension"`  // 会話要約用embedding次元。0の場合は768
 	EmbedModel                       string `yaml:"embed_model"`       // RenCrow_LLM logical embedding alias. Empty disables embedding.
+	SummaryModel                     string `yaml:"summary_model"`     // 要約・ProfilePromotion抽出を担う実行role（chat/chatworker/wild/worker）。空はworker。
 	ProfilePromotionEnabled          *bool  `yaml:"profile_promotion_enabled"`
 	ProfilePromotionIdleGraceSeconds int    `yaml:"profile_promotion_idle_grace_seconds"`
 	ProfilePromotionTimeoutSeconds   int    `yaml:"profile_promotion_timeout_seconds"`

@@ -23,6 +23,35 @@ const (
 	ProfilePromotionPreferenceKeyMax       = 64
 	ProfilePromotionPreferenceValueMax     = 448
 	ProfilePromotionResponseBytesMax       = 64 * 1024
+	// ProfilePromotionEvidenceBlockMax bounds one extraction request. Evidence
+	// longer than this is split into several requests instead of being cut,
+	// so the tail of a long turn still reaches the extractor.
+	ProfilePromotionEvidenceBlockMax = 9000
+	// ProfilePromotionEvidenceGroupMax bounds how many extraction requests one
+	// batch may cost. Beyond this the remainder is dropped, and the extractor
+	// reports the dropped amount rather than passing it over in silence.
+	// A long original draft pasted twice across Canvas edits needs the higher
+	// ceiling to be covered end to end.
+	ProfilePromotionEvidenceGroupMax = 12
+	// ProfilePromotionMaterialLeadMax is the longest opening paragraph still
+	// read as the user's own turn in front of pasted material. A longer opening
+	// means the user is writing, not introducing a quote.
+	ProfilePromotionMaterialLeadMax = 200
+	// ProfilePromotionMaterialBodyMin is the shortest trailing block treated as
+	// pasted material rather than the continuation of the user's own turn.
+	ProfilePromotionMaterialBodyMin = 800
+	// ProfilePromotionMaterialExcerptMax bounds one material excerpt. Material
+	// only has to identify what the turn was about, so a head excerpt is
+	// enough and its assertions never become user facts.
+	ProfilePromotionMaterialExcerptMax = 500
+	// ProfilePromotionMaterialDigestMax bounds all material excerpts in one
+	// extraction request.
+	ProfilePromotionMaterialDigestMax = 3000
+	// ProfilePromotionEvidenceTagDensityPercent is the share of characters
+	// inside angle brackets above which a turn is treated as a markup dump.
+	// Pasted Confluence and web bodies sit near 75%; a turn that merely
+	// discusses HTML stays far below it and keeps its markup.
+	ProfilePromotionEvidenceTagDensityPercent = 30
 )
 
 type ProfilePromotionJob struct {

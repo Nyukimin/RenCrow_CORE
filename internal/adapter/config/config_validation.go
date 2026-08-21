@@ -559,6 +559,11 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("conversation.vectordb_url is required when conversation.enabled=true")
 		}
 	}
+	switch strings.ToLower(strings.TrimSpace(c.Conversation.SummaryModel)) {
+	case "", "chat", "chatworker", "wild", "worker":
+	default:
+		return fmt.Errorf("conversation.summary_model must be 'chat', 'chatworker', 'wild', or 'worker'")
+	}
 	if c.Conversation.ProfilePromotionIdleGraceSeconds < 0 {
 		return fmt.Errorf("conversation.profile_promotion_idle_grace_seconds must be >= 0")
 	}
