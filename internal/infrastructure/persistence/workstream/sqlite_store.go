@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	_ "modernc.org/sqlite"
 )
@@ -102,8 +103,31 @@ func (s *SQLiteStore) migrate() error {
 			stage TEXT,
 			revision TEXT,
 			acquired_at TEXT NOT NULL,
-			heartbeat_at TEXT NOT NULL
-		)`,
+				heartbeat_at TEXT NOT NULL
+			)`,
+		`CREATE TABLE IF NOT EXISTS queue_freeze (
+				freeze_id TEXT PRIMARY KEY,
+				blocked_unit_id TEXT NOT NULL,
+				blocked_revision INTEGER NOT NULL,
+				created_at TEXT NOT NULL,
+				payload TEXT NOT NULL
+			)`,
+		`CREATE TABLE IF NOT EXISTS stage_run_receipt (
+				receipt_id TEXT PRIMARY KEY,
+				idempotency_key TEXT NOT NULL UNIQUE,
+				unit_id TEXT NOT NULL,
+				implementation_revision INTEGER NOT NULL,
+				created_at TEXT NOT NULL,
+				payload TEXT NOT NULL
+			)`,
+		`CREATE TABLE IF NOT EXISTS closure_receipt (
+				receipt_id TEXT PRIMARY KEY,
+				idempotency_key TEXT NOT NULL UNIQUE,
+				unit_id TEXT NOT NULL,
+				implementation_revision INTEGER NOT NULL,
+				created_at TEXT NOT NULL,
+				payload TEXT NOT NULL
+			)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -113,43 +137,148 @@ func (s *SQLiteStore) migrate() error {
 	return nil
 }
 
-// AcquireImplementationLease performs the singleton check and write in one
-// SQLite transaction. The table is part of the existing Workstream database.
-func (s *SQLiteStore) AcquireImplementationLease(ctx context.Context, item domainworkstream.ImplementationLease) (bool, error) {
+// AcquireImplementationLeaseIfUnfrozen performs the queue-freeze check and
+// singleton lease write in one SQLite transaction.
+func (s *SQLiteStore) AcquireImplementationLeaseIfUnfrozen(ctx context.Context, item domainworkstream.ImplementationLease) (bool, string, error) {
 	if err := domainworkstream.ValidateImplementationLease(item); err != nil {
-		return false, err
+		return false, "", err
 	}
 	if s == nil || s.db == nil {
-		return false, fmt.Errorf("workstream sqlite store is closed")
+		return false, "", fmt.Errorf("workstream sqlite store is closed")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer func() { _ = tx.Rollback() }()
+	frozen, err := activeQueueFreezeTx(ctx, tx)
+	if err != nil {
+		return false, "", err
+	}
+	if frozen {
+		if err := tx.Commit(); err != nil {
+			return false, "", err
+		}
+		return false, domainworkstream.ErrQueueFrozen.Error(), nil
+	}
 	var holder string
 	err = tx.QueryRowContext(ctx, `SELECT holder_unit_id FROM implementation_lease WHERE lease_name = ?`, item.LeaseName).Scan(&holder)
 	if err == nil {
 		if holder != "" && holder != item.HolderUnitID {
 			if commitErr := tx.Commit(); commitErr != nil {
-				return false, commitErr
+				return false, "", commitErr
 			}
-			return false, nil
+			return false, domainworkstream.ErrImplementationLeaseHeld.Error(), nil
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE implementation_lease SET holder_unit_id=?, holder_workstream_id=?, stage=?, revision=?, acquired_at=?, heartbeat_at=? WHERE lease_name=?`, item.HolderUnitID, item.HolderWorkstreamID, item.Stage, item.Revision, item.AcquiredAt.Format(timeFormatRFC3339Nano), item.HeartbeatAt.Format(timeFormatRFC3339Nano), item.LeaseName); err != nil {
-			return false, err
+			return false, "", err
 		}
 	} else if err == sql.ErrNoRows {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO implementation_lease (lease_name, holder_unit_id, holder_workstream_id, stage, revision, acquired_at, heartbeat_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, item.LeaseName, item.HolderUnitID, item.HolderWorkstreamID, item.Stage, item.Revision, item.AcquiredAt.Format(timeFormatRFC3339Nano), item.HeartbeatAt.Format(timeFormatRFC3339Nano)); err != nil {
-			return false, err
+			return false, "", err
 		}
 	} else {
-		return false, err
+		return false, "", err
 	}
 	if err := tx.Commit(); err != nil {
-		return false, err
+		return false, "", err
 	}
-	return true, nil
+	return true, "", nil
+}
+
+// AcquireImplementationLease keeps the legacy result shape while routing all
+// new writes through the freeze-aware atomic owner operation.
+func (s *SQLiteStore) AcquireImplementationLease(ctx context.Context, item domainworkstream.ImplementationLease) (bool, error) {
+	acquired, _, err := s.AcquireImplementationLeaseIfUnfrozen(ctx, item)
+	return acquired, err
+}
+
+// ResolveQueueFreezeAndAcquireLease resolves one exact active freeze and
+// acquires the replacement lease in one SQLite transaction.
+func (s *SQLiteStore) ResolveQueueFreezeAndAcquireLease(ctx context.Context, freezeID string, resolution domainworkstream.QueueFreezeResolution, replacement domainworkstream.ImplementationLease) (domainworkstream.QueueFreeze, domainworkstream.ImplementationLease, bool, error) {
+	if freezeID == "" {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, fmt.Errorf("freeze_id is required")
+	}
+	if err := domainworkstream.ValidateQueueFreezeResolution(resolution, replacement); err != nil {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, err
+	}
+	if s == nil || s.db == nil {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, fmt.Errorf("workstream sqlite store is closed")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var payload string
+	err = tx.QueryRowContext(ctx, `SELECT payload FROM queue_freeze WHERE freeze_id = ?`, freezeID).Scan(&payload)
+	if err == sql.ErrNoRows {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeNotFound
+	}
+	if err != nil {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, err
+	}
+	var freeze domainworkstream.QueueFreeze
+	if err := json.Unmarshal([]byte(payload), &freeze); err != nil {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, err
+	}
+	if freeze.Status == domainworkstream.QueueFreezeResolved {
+		if !freeze.MatchesResolved(resolution) {
+			return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
+		}
+		if err := tx.Commit(); err != nil {
+			return freeze, domainworkstream.ImplementationLease{}, false, err
+		}
+		return freeze, freeze.ReplacementLease, freeze.ResolutionAcquired, nil
+	}
+	if freeze.Status != domainworkstream.QueueFreezeActive && freeze.Status != "" {
+		return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if freeze.FreezeRevision != resolution.ExpectedFreezeRevision {
+		return freeze, domainworkstream.ImplementationLease{}, false, fmt.Errorf("%w: expected %d current %d", domainworkstream.ErrQueueFreezeRevisionConflict, resolution.ExpectedFreezeRevision, freeze.FreezeRevision)
+	}
+	var holder string
+	leaseErr := tx.QueryRowContext(ctx, `SELECT holder_unit_id FROM implementation_lease WHERE lease_name = ?`, replacement.LeaseName).Scan(&holder)
+	if leaseErr != nil && leaseErr != sql.ErrNoRows {
+		return freeze, domainworkstream.ImplementationLease{}, false, leaseErr
+	}
+	if leaseErr == nil && holder != "" && holder != replacement.HolderUnitID {
+		if err := tx.Commit(); err != nil {
+			return freeze, domainworkstream.ImplementationLease{}, false, err
+		}
+		return freeze, domainworkstream.ImplementationLease{}, false, nil
+	}
+
+	now := time.Now().UTC()
+	freeze.Status = domainworkstream.QueueFreezeResolved
+	freeze.ResolutionRequestID = resolution.ResolutionRequestID
+	freeze.ReplacementUnitID = resolution.ReplacementUnitID
+	freeze.ReplacementLease = replacement
+	freeze.ResolutionAcquired = true
+	freeze.SupersedesUnitID = resolution.SupersedesUnitID
+	freeze.BlockerResolutionRefs = append([]domainbacklog.EvidenceRef(nil), resolution.BlockerResolutionRefs...)
+	freeze.ResolutionPayloadHash = resolution.ResolutionPayloadHash
+	freeze.UpdatedAt = now
+	freeze.ResolvedAt = now
+	resolvedPayload, err := json.Marshal(freeze)
+	if err != nil {
+		return freeze, domainworkstream.ImplementationLease{}, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE queue_freeze SET blocked_unit_id=?, blocked_revision=?, created_at=?, payload=? WHERE freeze_id=?`, freeze.BlockedUnitID, freeze.BlockedRevision, freeze.CreatedAt.Format(timeFormatRFC3339Nano), string(resolvedPayload), freeze.FreezeID); err != nil {
+		return freeze, domainworkstream.ImplementationLease{}, false, err
+	}
+	if leaseErr == sql.ErrNoRows {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO implementation_lease (lease_name, holder_unit_id, holder_workstream_id, stage, revision, acquired_at, heartbeat_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, replacement.LeaseName, replacement.HolderUnitID, replacement.HolderWorkstreamID, replacement.Stage, replacement.Revision, replacement.AcquiredAt.Format(timeFormatRFC3339Nano), replacement.HeartbeatAt.Format(timeFormatRFC3339Nano)); err != nil {
+			return freeze, domainworkstream.ImplementationLease{}, false, err
+		}
+	} else if _, err := tx.ExecContext(ctx, `UPDATE implementation_lease SET holder_unit_id=?, holder_workstream_id=?, stage=?, revision=?, acquired_at=?, heartbeat_at=? WHERE lease_name=?`, replacement.HolderUnitID, replacement.HolderWorkstreamID, replacement.Stage, replacement.Revision, replacement.AcquiredAt.Format(timeFormatRFC3339Nano), replacement.HeartbeatAt.Format(timeFormatRFC3339Nano), replacement.LeaseName); err != nil {
+		return freeze, domainworkstream.ImplementationLease{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return freeze, domainworkstream.ImplementationLease{}, false, err
+	}
+	return freeze, replacement, true, nil
 }
 
 func (s *SQLiteStore) ReleaseImplementationLease(ctx context.Context, leaseName, holderUnitID string) error {
@@ -220,6 +349,91 @@ func (s *SQLiteStore) GetLease(ctx context.Context, name string) (domainworkstre
 }
 func (s *SQLiteStore) HeartbeatLease(ctx context.Context, item domainworkstream.ImplementationLease) error {
 	return s.HeartbeatImplementationLease(ctx, item)
+}
+
+func (s *SQLiteStore) SaveQueueFreeze(ctx context.Context, item domainworkstream.QueueFreeze) error {
+	if item.FreezeRevision < 1 {
+		item.FreezeRevision = 1
+	}
+	if item.Status == "" {
+		item.Status = domainworkstream.QueueFreezeActive
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = item.CreatedAt
+	}
+	if err := domainworkstream.ValidateQueueFreeze(item); err != nil {
+		return err
+	}
+	if s == nil || s.db == nil {
+		return fmt.Errorf("workstream sqlite store is closed")
+	}
+	payload, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO queue_freeze (freeze_id, blocked_unit_id, blocked_revision, created_at, payload) VALUES (?, ?, ?, ?, ?)`, item.FreezeID, item.BlockedUnitID, item.BlockedRevision, item.CreatedAt.Format(timeFormatRFC3339Nano), string(payload))
+	return err
+}
+
+func (s *SQLiteStore) GetQueueFreeze(ctx context.Context, freezeID string) (domainworkstream.QueueFreeze, bool, error) {
+	var payload string
+	if s == nil || s.db == nil {
+		return domainworkstream.QueueFreeze{}, false, fmt.Errorf("workstream sqlite store is closed")
+	}
+	err := s.db.QueryRowContext(ctx, `SELECT payload FROM queue_freeze WHERE freeze_id = ?`, freezeID).Scan(&payload)
+	if err == sql.ErrNoRows {
+		return domainworkstream.QueueFreeze{}, false, nil
+	}
+	if err != nil {
+		return domainworkstream.QueueFreeze{}, false, err
+	}
+	var item domainworkstream.QueueFreeze
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domainworkstream.QueueFreeze{}, false, err
+	}
+	return item, true, nil
+}
+
+func (s *SQLiteStore) ListQueueFreezes(ctx context.Context, limit int) ([]domainworkstream.QueueFreeze, error) {
+	return listSQLiteItems[domainworkstream.QueueFreeze](ctx, s, "queue_freeze", limit)
+}
+
+func (s *SQLiteStore) SaveStageRunReceipt(ctx context.Context, item domainworkstream.StageRunReceipt) error {
+	if err := domainworkstream.ValidateStageRunReceipt(item); err != nil {
+		return err
+	}
+	return s.saveLifecycleReceipt(ctx, "stage_run_receipt", item.ReceiptID, item.IdempotencyKey, item.UnitID, item.ImplementationRevision, item.CreatedAt, item)
+}
+
+func (s *SQLiteStore) FindStageRunReceipt(ctx context.Context, key string) (domainworkstream.StageRunReceipt, bool, error) {
+	return findSQLiteLifecycleReceipt[domainworkstream.StageRunReceipt](ctx, s, "stage_run_receipt", key)
+}
+
+func (s *SQLiteStore) GetStageRunReceipt(ctx context.Context, key string) (domainworkstream.StageRunReceipt, bool, error) {
+	return s.FindStageRunReceipt(ctx, key)
+}
+
+func (s *SQLiteStore) ListStageRunReceipts(ctx context.Context, limit int) ([]domainworkstream.StageRunReceipt, error) {
+	return listSQLiteItems[domainworkstream.StageRunReceipt](ctx, s, "stage_run_receipt", limit)
+}
+
+func (s *SQLiteStore) SaveClosureReceipt(ctx context.Context, item domainworkstream.ClosureReceipt) error {
+	if err := domainworkstream.ValidateClosureReceipt(item); err != nil {
+		return err
+	}
+	return s.saveLifecycleReceipt(ctx, "closure_receipt", item.ReceiptID, item.IdempotencyKey, item.UnitID, item.ImplementationRevision, item.CreatedAt, item)
+}
+
+func (s *SQLiteStore) FindClosureReceipt(ctx context.Context, key string) (domainworkstream.ClosureReceipt, bool, error) {
+	return findSQLiteLifecycleReceipt[domainworkstream.ClosureReceipt](ctx, s, "closure_receipt", key)
+}
+
+func (s *SQLiteStore) GetClosureReceipt(ctx context.Context, key string) (domainworkstream.ClosureReceipt, bool, error) {
+	return s.FindClosureReceipt(ctx, key)
+}
+
+func (s *SQLiteStore) ListClosureReceipts(ctx context.Context, limit int) ([]domainworkstream.ClosureReceipt, error) {
+	return listSQLiteItems[domainworkstream.ClosureReceipt](ctx, s, "closure_receipt", limit)
 }
 
 func (s *SQLiteStore) SaveWorkstream(ctx context.Context, item domainworkstream.Workstream) error {
@@ -346,6 +560,39 @@ func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, i
 	return err
 }
 
+func (s *SQLiteStore) saveLifecycleReceipt(ctx context.Context, table, receiptID, idempotencyKey, unitID string, revision int, createdAt time.Time, item any) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("workstream sqlite store is closed")
+	}
+	payload, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`INSERT OR REPLACE INTO %s (receipt_id, idempotency_key, unit_id, implementation_revision, created_at, payload) VALUES (?, ?, ?, ?, ?, ?)`, table)
+	_, err = s.db.ExecContext(ctx, query, receiptID, idempotencyKey, unitID, revision, createdAt.Format(timeFormatRFC3339Nano), string(payload))
+	return err
+}
+
+func findSQLiteLifecycleReceipt[T any](ctx context.Context, s *SQLiteStore, table, key string) (T, bool, error) {
+	var item T
+	if s == nil || s.db == nil {
+		return item, false, fmt.Errorf("workstream sqlite store is closed")
+	}
+	var payload string
+	query := fmt.Sprintf(`SELECT payload FROM %s WHERE idempotency_key = ? OR receipt_id = ?`, table)
+	err := s.db.QueryRowContext(ctx, query, key, key).Scan(&payload)
+	if err == sql.ErrNoRows {
+		return item, false, nil
+	}
+	if err != nil {
+		return item, false, err
+	}
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return item, false, err
+	}
+	return item, true, nil
+}
+
 func listSQLiteItems[T any](ctx context.Context, s *SQLiteStore, table string, limit int) ([]T, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("workstream sqlite store is closed")
@@ -371,6 +618,28 @@ func listSQLiteItems[T any](ctx context.Context, s *SQLiteStore, table string, l
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func activeQueueFreezeTx(ctx context.Context, tx *sql.Tx) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT payload FROM queue_freeze ORDER BY rowid DESC`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			return false, err
+		}
+		var freeze domainworkstream.QueueFreeze
+		if err := json.Unmarshal([]byte(payload), &freeze); err != nil {
+			return false, err
+		}
+		if freeze.Status == domainworkstream.QueueFreezeActive || freeze.Status == "" {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 const timeFormatRFC3339Nano = "2006-01-02T15:04:05.999999999Z07:00"

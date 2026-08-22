@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	backlogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	revenueapp "github.com/Nyukimin/RenCrow_CORE/internal/application/revenue"
 	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
@@ -50,6 +51,14 @@ type BacklogStore interface {
 	Save(ctx context.Context, item domainbacklog.Item) error
 }
 
+// AtlasRunnerService is the owner boundary for revision-2 queue execution.
+// Heartbeat may request a runnable unit and report a worker failure, but it
+// never mutates v2 lifecycle state directly or invents success evidence.
+type AtlasRunnerService interface {
+	AcquireRunnable(context.Context) (backlogapp.AcquireRunnableResult, error)
+	Revise(context.Context, string, backlogapp.ReviseRequest) (domainbacklog.Item, error)
+}
+
 type atlasImplementationLeaseStore interface {
 	AcquireImplementationLease(context.Context, domainworkstream.ImplementationLease) (bool, error)
 	ReleaseImplementationLease(context.Context, string, string) error
@@ -85,6 +94,7 @@ type HeartbeatService struct {
 	listener            orchestrator.EventListener
 	workstreamStore     WorkstreamHeartbeatStore
 	backlogStore        BacklogStore
+	atlasService        AtlasRunnerService
 	revenueStore        RevenueDailyRoutineStore
 	revenueRoutine      *revenueapp.DailyRoutineService
 	economicDiscovery   *EconomicObjectiveDiscoveryService
@@ -154,6 +164,14 @@ func (s *HeartbeatService) WithWorkstreamStore(store WorkstreamHeartbeatStore) *
 
 func (s *HeartbeatService) WithBacklogStore(store BacklogStore) *HeartbeatService {
 	s.backlogStore = store
+	return s
+}
+
+// WithAtlasService wires the CORE-owned revision-2 lifecycle service into the
+// heartbeat runner. Legacy backlog execution remains available when this is
+// not configured.
+func (s *HeartbeatService) WithAtlasService(service AtlasRunnerService) *HeartbeatService {
+	s.atlasService = service
 	return s
 }
 
@@ -735,8 +753,126 @@ func (s *HeartbeatService) RunBacklogRunner(ctx context.Context, now time.Time) 
 		s.emitEvent("backlog.runner.error", fmt.Sprintf("failed to list backlog: %v", err))
 		return report, err
 	}
-	active := backlogActiveItems(items)
 	report.Checked = len(items)
+	if s.atlasService != nil && backlogHasRevision2(items) {
+		return s.runRevision2BacklogRunner(ctx, now, items, report)
+	}
+	return s.runLegacyBacklogRunner(ctx, now, items, report)
+}
+
+func backlogHasRevision2(items []domainbacklog.Item) bool {
+	for _, item := range items {
+		if item.SchemaVersion < domainbacklog.SchemaVersion2 && strings.TrimSpace(item.ConceptState) == "" {
+			continue
+		}
+		if item.ConceptState != "" && item.ConceptState != domainbacklog.ConceptAdopted {
+			continue
+		}
+		switch strings.ToUpper(strings.TrimSpace(item.DeliveryState)) {
+		case domainbacklog.DeliveryDone, domainbacklog.DeliveryRejected:
+			continue
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+func atlasNextDeliveryStage(state string) string {
+	switch strings.ToUpper(strings.TrimSpace(state)) {
+	case domainbacklog.DeliveryQueued:
+		return domainbacklog.DeliverySpec
+	case domainbacklog.DeliverySpec:
+		return domainbacklog.DeliveryTDDRed
+	case domainbacklog.DeliveryTDDRed:
+		return domainbacklog.DeliveryTDDGreen
+	case domainbacklog.DeliveryTDDGreen:
+		return domainbacklog.DeliveryRefactor
+	case domainbacklog.DeliveryRefactor:
+		return domainbacklog.DeliveryE2EPredeploy
+	case domainbacklog.DeliveryE2EPredeploy:
+		return domainbacklog.DeliveryBuild
+	case domainbacklog.DeliveryBuild:
+		return domainbacklog.DeliveryDeploy
+	case domainbacklog.DeliveryDeploy:
+		return domainbacklog.DeliveryRestart
+	case domainbacklog.DeliveryRestart:
+		return domainbacklog.DeliveryPostDeployVerify
+	case domainbacklog.DeliveryPostDeployVerify:
+		return domainbacklog.DeliveryLiveVerified
+	case domainbacklog.DeliveryLiveVerified:
+		return domainbacklog.DeliveryDone
+	default:
+		return ""
+	}
+}
+
+func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now time.Time, items []domainbacklog.Item, report BacklogRunnerReport) (BacklogRunnerReport, error) {
+	result, err := s.atlasService.AcquireRunnable(ctx)
+	if err != nil {
+		report.Failed++
+		s.emitEvent("backlog.runner.error", fmt.Sprintf("failed to acquire Atlas runnable unit: %v", err))
+		return report, err
+	}
+	// No item is a normal owner decision. In particular, a queue freeze must
+	// not fall through to backlogActiveItems and start a following unit.
+	if !result.Acquired || strings.TrimSpace(result.Item.ItemID) == "" {
+		report.Skipped = len(items)
+		return report, nil
+	}
+	item := result.Item
+	report.ItemID = item.ItemID
+	target := atlasNextDeliveryStage(item.DeliveryState)
+	if target == "" {
+		report.Skipped = len(items)
+		return report, nil
+	}
+
+	jobID := task.NewJobID()
+	t := newHeartbeatWorkerTask(jobID, backlogRunnerMessageForTarget(item, target), "backlog-runner", "heartbeat")
+	s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s target=%s", item.ItemID, jobID.String(), target))
+	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+		RequestID: jobID.String(), TraceID: jobID.String(), JobID: jobID.String(),
+		Initiator: "shiro", Caller: "heartbeat.backlog", Purpose: "process_backlog_item",
+	})
+	if _, err := s.workerAgent.Execute(workerCtx, t); err != nil {
+		reason := fmt.Sprintf("Backlog Runner failed job_id=%s target=%s: %v", jobID.String(), target, err)
+		failureRef := domainbacklog.EvidenceRef{
+			Stage: target, Kind: "worker_failure", Ref: "heartbeat-runner:" + jobID.String(),
+			ObservedAt: now.UTC().Format(time.RFC3339Nano), Passed: false,
+		}
+		request := backlogapp.ReviseRequest{
+			RequestID: jobID.String(), ExpectedRevision: revision2ItemRevision(item),
+			TargetDeliveryState: domainbacklog.DeliveryBlocked,
+			EvidenceRefs:        []domainbacklog.EvidenceRef{failureRef}, Reason: reason,
+		}
+		if _, reviseErr := s.atlasService.Revise(ctx, item.ItemID, request); reviseErr != nil {
+			report.Failed++
+			s.emitEvent("backlog.runner.error", fmt.Sprintf("%s job_id=%s owner BLOCKED revise failed: %v", item.ItemID, jobID.String(), reviseErr))
+			return report, fmt.Errorf("%s; owner BLOCKED revise failed: %w", reason, reviseErr)
+		}
+		report.Failed++
+		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s job_id=%s err=%v", item.ItemID, jobID.String(), err))
+		return report, err
+	}
+	report.Started = 1
+	report.Skipped = len(items) - 1
+	return report, nil
+}
+
+func revision2ItemRevision(item domainbacklog.Item) int {
+	if item.ImplementationRevision < 1 {
+		return 1
+	}
+	return item.ImplementationRevision
+}
+
+func backlogRunnerMessageForTarget(item domainbacklog.Item, target string) string {
+	return backlogRunnerMessage(item) + fmt.Sprintf("\nRunner target delivery_state: %s. The worker must report real evidence through the CORE owner API; do not claim success from this dispatch response.", target)
+}
+
+func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.Time, items []domainbacklog.Item, report BacklogRunnerReport) (BacklogRunnerReport, error) {
+	active := backlogActiveItems(items)
 	report.Skipped = len(items)
 	if len(active) == 0 {
 		return report, nil

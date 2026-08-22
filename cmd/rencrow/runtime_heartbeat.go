@@ -138,6 +138,9 @@ func buildHeartbeatRuntime(
 	if deps.backlogStore != nil {
 		heartbeatSvc.WithBacklogStore(deps.backlogStore)
 	}
+	if deps.atlasService != nil {
+		heartbeatSvc.WithAtlasService(deps.atlasService)
+	}
 	if deps.revenueStore != nil {
 		heartbeatSvc.WithRevenueDailyRoutineStore(deps.revenueStore)
 		if discoveryStore, ok := deps.revenueStore.(heartbeat.EconomicObjectiveDiscoveryStore); ok {

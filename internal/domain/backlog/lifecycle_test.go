@@ -33,7 +33,7 @@ func TestDeliveryTransitionsRequireEvidenceAndAreAdjacent(t *testing.T) {
 	if _, err := TransitionDelivery(item, DeliveryBuild, []EvidenceRef{{Stage: DeliveryBuild, Ref: "build-1", Passed: true}}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("expected adjacent transition error, got %v", err)
 	}
-	next, err := TransitionDelivery(item, DeliverySpec, []EvidenceRef{{Kind: "spec", Ref: "spec-1", Passed: true}})
+	next, err := TransitionDelivery(item, DeliverySpec, []EvidenceRef{{Kind: "spec", Ref: "spec-1", Passed: true, Verified: true}})
 	if err != nil || next.DeliveryState != DeliverySpec {
 		t.Fatalf("spec transition failed: next=%+v err=%v", next, err)
 	}
@@ -48,16 +48,16 @@ func TestLiveVerifiedRequiresCumulativeStageEvidence(t *testing.T) {
 		t.Fatalf("single live ref must not pass cumulative gate: %v", err)
 	}
 	refs := []EvidenceRef{
-		{Stage: DeliverySpec, Ref: "spec", Passed: true},
-		{Stage: DeliveryTDDRed, Ref: "red", Passed: true},
-		{Stage: DeliveryTDDGreen, Ref: "green", Passed: true},
-		{Stage: DeliveryRefactor, Ref: "refactor", Passed: true},
-		{Stage: DeliveryE2EPredeploy, Ref: "e2e", Passed: true},
-		{Stage: DeliveryBuild, Ref: "build", Passed: true},
-		{Stage: DeliveryDeploy, Ref: "deploy", Passed: true},
-		{Stage: DeliveryRestart, Ref: "restart", Passed: true},
-		{Stage: DeliveryPostDeployVerify, Ref: "readiness", Passed: true},
-		{Stage: DeliveryLiveVerified, Ref: "live", Passed: true},
+		{Stage: DeliverySpec, Kind: "spec", Ref: "spec", Passed: true, Verified: true},
+		{Stage: DeliveryTDDRed, Kind: "execution_report", Ref: "red", Passed: true, Verified: true},
+		{Stage: DeliveryTDDGreen, Kind: "execution_report", Ref: "green", Passed: true, Verified: true},
+		{Stage: DeliveryRefactor, Kind: "execution_report", Ref: "refactor", Passed: true, Verified: true},
+		{Stage: DeliveryE2EPredeploy, Kind: "execution_report", Ref: "e2e", Passed: true, Verified: true},
+		{Stage: DeliveryBuild, Kind: "execution_report", Ref: "build", Passed: true, Verified: true},
+		{Stage: DeliveryDeploy, Kind: "deploy_receipt", Ref: "deploy", Passed: true, Verified: true},
+		{Stage: DeliveryRestart, Kind: "deploy_receipt", Ref: "restart", Passed: true, Verified: true},
+		{Stage: DeliveryPostDeployVerify, Kind: "readiness", Ref: "readiness", Passed: true, Verified: true},
+		{Stage: DeliveryLiveVerified, Kind: "production_smoke", Ref: "live", Passed: true, Verified: true},
 	}
 	next, err := TransitionDelivery(item, DeliveryLiveVerified, refs)
 	if err != nil || next.DeliveryState != DeliveryLiveVerified || !next.CheckOK {

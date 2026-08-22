@@ -2,6 +2,7 @@ package workstream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
 
@@ -63,6 +65,132 @@ func TestSQLiteStoreImplementationLeaseIsSingletonAndPersisted(t *testing.T) {
 	got, ok, err = reopened.GetImplementationLease(context.Background(), "atlas_implementation")
 	if err != nil || !ok || got.HolderUnitID != "unit-1" {
 		t.Fatalf("reopened lease=%+v ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestSQLiteStoreLifecycleReceiptsAndFreezeSurviveReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workstream.db")
+	ctx := context.Background()
+	now := time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC)
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveQueueFreeze(ctx, domainworkstream.QueueFreeze{
+		FreezeID: "freeze-1", BlockedUnitID: "unit-1", BlockedRevision: 2,
+		ReasonCode: "dependency", InvalidatedFromStage: "BUILD", CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveStageRunReceipt(ctx, domainworkstream.StageRunReceipt{
+		ReceiptID: "stage-1", IdempotencyKey: "unit-1:2:BUILD", UnitID: "unit-1",
+		ImplementationRevision: 2, TargetStage: "BUILD", PayloadHash: "hash-1",
+		Status: domainworkstream.StageRunCompleted, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveClosureReceipt(ctx, domainworkstream.ClosureReceipt{
+		ReceiptID: "closure-1", IdempotencyKey: "unit-1:2:DONE", UnitID: "unit-1",
+		ImplementationRevision: 2, Phase: domainworkstream.ClosurePhasePrepared,
+		Status: domainworkstream.ClosureStatusPrepared, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	freeze, found, err := reopened.GetQueueFreeze(ctx, "freeze-1")
+	if err != nil || !found || freeze.BlockedRevision != 2 {
+		t.Fatalf("freeze=%+v found=%v err=%v", freeze, found, err)
+	}
+	stage, found, err := reopened.FindStageRunReceipt(ctx, "unit-1:2:BUILD")
+	if err != nil || !found || stage.PayloadHash != "hash-1" {
+		t.Fatalf("stage=%+v found=%v err=%v", stage, found, err)
+	}
+	closure, found, err := reopened.FindClosureReceipt(ctx, "unit-1:2:DONE")
+	if err != nil || !found || closure.Phase != domainworkstream.ClosurePhasePrepared {
+		t.Fatalf("closure=%+v found=%v err=%v", closure, found, err)
+	}
+}
+
+func TestSQLiteStoreAtomicFreezeLeaseOperationsAreIdempotentAndPersisted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workstream.db")
+	ctx := context.Background()
+	now := time.Date(2026, 8, 22, 1, 0, 0, 0, time.UTC)
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := domainworkstream.ImplementationLease{LeaseName: "atlas_implementation", HolderUnitID: "unit-initial", HolderWorkstreamID: "ws-initial", Stage: "QUEUED", AcquiredAt: now, HeartbeatAt: now}
+	if acquired, reason, err := store.AcquireImplementationLeaseIfUnfrozen(ctx, initial); err != nil || !acquired || reason != "" {
+		t.Fatalf("initial atomic acquire=%v reason=%q err=%v", acquired, reason, err)
+	}
+	if err := store.ReleaseImplementationLease(ctx, initial.LeaseName, initial.HolderUnitID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveQueueFreeze(ctx, domainworkstream.QueueFreeze{
+		FreezeID: "freeze-atomic", BlockedUnitID: "unit-blocked", BlockedRevision: 2, FreezeRevision: 7,
+		ReasonCode: "blocked", InvalidatedFromStage: "BUILD", CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blockedLease := initial
+	blockedLease.HolderUnitID = "unit-blocked"
+	if acquired, reason, err := store.AcquireImplementationLeaseIfUnfrozen(ctx, blockedLease); err != nil || acquired || reason != domainworkstream.ErrQueueFrozen.Error() {
+		t.Fatalf("frozen atomic acquire=%v reason=%q err=%v", acquired, reason, err)
+	}
+	replacement := initial
+	replacement.HolderUnitID = "unit-replacement"
+	replacement.HolderWorkstreamID = "ws-replacement"
+	resolution := domainworkstream.QueueFreezeResolution{
+		ExpectedFreezeRevision: 7,
+		ResolutionRequestID:    "resolve-1",
+		ReplacementUnitID:      "unit-replacement",
+		SupersedesUnitID:       "unit-blocked",
+		BlockerResolutionRefs:  []domainbacklog.EvidenceRef{{Kind: "fix", Ref: "fix-1", Verified: true, VerificationResult: domainbacklog.EvidenceVerificationVerified}},
+		ResolutionPayloadHash:  "resolution-hash-1",
+	}
+	resolved, lease, acquired, err := store.ResolveQueueFreezeAndAcquireLease(ctx, "freeze-atomic", resolution, replacement)
+	if err != nil || !acquired || resolved.Status != domainworkstream.QueueFreezeResolved || lease.HolderUnitID != replacement.HolderUnitID {
+		t.Fatalf("resolve freeze=%+v lease=%+v acquired=%v err=%v", resolved, lease, acquired, err)
+	}
+	if resolved.SupersedesUnitID != resolution.SupersedesUnitID || resolved.ReplacementUnitID != resolution.ReplacementUnitID || resolved.ResolutionPayloadHash != resolution.ResolutionPayloadHash || len(resolved.BlockerResolutionRefs) != 1 {
+		t.Fatalf("resolved freeze lost complete metadata: %+v", resolved)
+	}
+	replayed, replayLease, replayAcquired, err := store.ResolveQueueFreezeAndAcquireLease(ctx, "freeze-atomic", resolution, replacement)
+	if err != nil || !replayAcquired || replayed.ResolutionRequestID != resolved.ResolutionRequestID || replayLease.HolderUnitID != replacement.HolderUnitID {
+		t.Fatalf("replay freeze=%+v lease=%+v acquired=%v err=%v", replayed, replayLease, replayAcquired, err)
+	}
+	sameRequestConflict := resolution
+	sameRequestConflict.ResolutionPayloadHash = "different-resolution-hash"
+	if _, _, _, err := store.ResolveQueueFreezeAndAcquireLease(ctx, "freeze-atomic", sameRequestConflict, replacement); !errors.Is(err, domainworkstream.ErrQueueFreezeResolutionConflict) {
+		t.Fatalf("same request with different resolution payload err=%v", err)
+	}
+	conflicting := resolution
+	conflicting.ResolutionRequestID = "resolve-2"
+	if _, _, _, err := store.ResolveQueueFreezeAndAcquireLease(ctx, "freeze-atomic", conflicting, replacement); !errors.Is(err, domainworkstream.ErrQueueFreezeResolutionConflict) {
+		t.Fatalf("conflicting resolution err=%v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	persistedFreeze, found, err := reopened.GetQueueFreeze(ctx, "freeze-atomic")
+	if err != nil || !found || persistedFreeze.Status != domainworkstream.QueueFreezeResolved || persistedFreeze.SupersedesUnitID != resolution.SupersedesUnitID || persistedFreeze.ResolutionPayloadHash != resolution.ResolutionPayloadHash || len(persistedFreeze.BlockerResolutionRefs) != 1 {
+		t.Fatalf("reopened freeze=%+v found=%v err=%v", persistedFreeze, found, err)
+	}
+	persistedLease, found, err := reopened.GetImplementationLease(ctx, replacement.LeaseName)
+	if err != nil || !found || persistedLease.HolderUnitID != replacement.HolderUnitID {
+		t.Fatalf("reopened lease=%+v found=%v err=%v", persistedLease, found, err)
 	}
 }
 

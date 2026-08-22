@@ -268,6 +268,72 @@ L0v2 Shadow Recall
 * production smoke test
 * trace ID
 
+## 4.6 Revision 2の実装契約
+
+Revision 2では、Evidence Refを受け取っただけでstageを成功にしない。COREはItemから
+`item_id`、`implementation_unit_id`、`implementation_revision`、`target_delivery_state`を解決し、
+次のtyped contextとclaimを一緒にowner verifierへ渡す。
+
+```text
+EvidenceVerificationRequest {
+  ref
+  item_id
+  implementation_unit_id
+  implementation_revision
+  target_delivery_state
+}
+```
+
+requestの`passed`は外部claimとして保存できるが、requestが持ち込んだverified値は検証前に除去する。
+CORE verifierが成功した場合だけ、同じRefへCORE-owned verification resultを付加し、Pipelineでは
+`evidence_refs`（claims）と`verified_evidence_refs`（CORE result）を分けて表示する。Item、Unit、revision、
+stageの不一致、owner不一致、stale、hash不一致、検証不能はfail closedとする。
+
+Production verifierのsourceは固定し、requestが任意path、URL、receipt storeを選べない。
+
+| Evidence kind | 固定sourceと検証条件 |
+| --- | --- |
+| `spec` | COREへembeddedされたBackfill Specification。本文、revision、captured_at、content SHA-256を照合する。local 8件だけが本文Evidenceを通過し、external 3件はintake／metadata参照には使えるが本文Evidenceの代用にはしない |
+| `execution_report` | 設定済みCORE ExecutionReport storeの`execution_report:<job_id>`。EvidenceRefの`repository=RenCrow_CORE`、`revision=<full source revision>`を要求し、成功・終了時刻と`atlas.item`、`atlas.unit`、`atlas.implementation_revision`、`atlas.stage`、`atlas.source_revision`（full 40-hex）の完全一致markerを照合する。TDD_REDは`atlas.red_observed=true`、BUILDはEvidenceRefのartifact SHA-256と`atlas.artifact.sha256` markerの一致も要求する |
+| `deploy_receipt` | 固定`~/.rencrow/receipts/binary-redeployment.jsonl`のCORE receipt。component、complete/success、target revision、installed binary hashを照合する |
+| `readiness` | 固定loopbackの`GET /ready`（ref=`core:/ready`）。要求revisionが現行CORE executableのfull SHAであり、build stampがcleanであることを確認する |
+| `production_smoke` | 固定loopbackの`GET /viewer/atlas/items/{item_id}`（ref=`core:/viewer/atlas/items`）。Item、Unit、revision、Design Card、resolved Specificationを照合し、同じclean executable revisionを要求する |
+
+Stageの冪等単位は`implementation_unit_id + implementation_revision + target_stage`であり、
+`StageRunReceipt`へrequest ID、payload hash、prepared/completed状態、結果をappendする。同一key・同一payloadの
+再送は同じreceiptへ収束し、payload違いはconflictとする。receiptをItem stateより先に保存するため、途中停止後も
+prepared receiptを再実行でき、過去revisionの履歴は巻き戻さない。
+
+`BLOCKED`のQueue Freeze、replacement lease、resolution payloadはWorkstreamのdurable JSONLへ保存する。
+resolutionは旧UnitのBLOCKED、revision、`supersedes_unit_id`、blocker Evidence、dependency、他Lease不在を
+同じCORE decisionで検証し、owner storeの一つのlifecycle操作としてpending Freeze、replacement lease、resolved
+Freezeをappendする。lease append後にprocessが停止した場合も最新Freezeはactiveのままなので、queueは再開せず、
+同一payloadの再送だけが安全に完了できる。request IDだけで異なるpayloadを受理しない。
+
+Backlog、Lease、Stage、Closure、FreezeのJSONLはappend-onlyであり、履歴行のrewrite/deleteを行わない。
+Backfillは全itemを検証してから最初のrevisionをappendし、lifecycle JSONLのread/write/parse失敗、unknownまたは
+empty Freeze status、未完了resolutionは実行可能へ推測せずfail closedにする。Prepared receiptは再起動後の
+recovery対象であり、途中までのappendを成功完了とは扱わない。
+
+`LIVE_VERIFIED`に到達したUnitは同じlifecycle runで自動的に`DONE` closureへ進む。ClosureReceiptは
+prepared → resources completed → lease released → doneのphaseを持ち、Current projectionはcompleted closure
+receiptを持つ`DONE`だけを完成機能として返す。CORE起動時の`Recover`はLIVE_VERIFIEDでclosureが欠けたUnitを
+再開し、terminal Unitのlease tombstoneを冪等に処理する。
+
+Owner intakeはSchema v2 Design Cardの`feature_id`、`problem`、`idea`、`background`、`expected_effect[]`、
+`relation_refs[]`、`specification_refs[]`を任意で受け取り、値と配列を保持する。Radar/Candidateではこれらの
+未解決fieldを要求せず、`purpose`以外の内容を推測・生成しない。`specification_refs`が supplied の場合だけ、
+固定embedded Backfill packageの11 ID（local 8 / external 3）とmanifest・本文hashを保存前に検証し、unknownまたは
+broken packageではSaveしない。
+
+起動時はcanonical Backfill reconcileの後、Lease recoveryの前に、次の完全一致だけを一度検査する。
+`atlas:atlas.lifecycle`、`implementation_unit_id=atlas-lifecycle-v1`、Schema v2、Concept `ADOPTED`、
+Delivery `LIVE_VERIFIED`、`implementation_revision < 2`。一致したlegacy recordは履歴を削除・書換えせず新しい
+append revisionへ移し、Design Cardと旧Evidence claimを保持したまま`implementation_revision=2`、
+`invalidated_from_stage=SPEC`、`delivery_state=QUEUED`、`check_ok=false`（legacy statusは`proposal_review`）にする。
+自動verifyは行わない。revision 2以上、terminal、shape不一致はno-opであり、migrationまたはRecover失敗時は
+Atlas serviceを公開せず、legacy completionをCurrentへ露出しない。
+
 ---
 
 # 5. 状態モデル
@@ -615,7 +681,7 @@ Implementation Queueは再起動後も停止する。
 新しい`implementation_revision`で再試行できるが、`BLOCKED`到達後の再試行には必ず置換Unitを作り、旧Unitを`supersedes_unit_id`、
 `blocker_resolution_refs`で参照する。Queue Freeze解除は、認証済みSystem Ownerからの新しいrequest内で、
 置換revision、blocker解消Evidence、dependency成立をCOREが同期検証できた場合だけ行う。
-このrequestは待機artifactへの承認印ではなく、新しい事実と実行目的を持つ独立requestである。
+このrequestは停止中artifactに判を付けるものではなく、新しい事実と実行目的を持つ独立requestである。
 
 解除requestが`rejected`／`blocked`ならFreezeを維持する。単なるCORE再起動、Lease不在、priority変更、
 Agentの自然言語報告ではFreezeを解除しない。

@@ -33,6 +33,10 @@ function atlasEmptyProjection() {
     active: null,
     evidence: [],
     modules: [],
+    pipeline: [],
+    queueFreezes: [],
+    closureReceipts: [],
+    stageReceipts: [],
   };
 }
 
@@ -111,7 +115,7 @@ function atlasDeliveryState(item) {
 }
 
 function atlasTimestamp(item) {
-  return atlasField(item, ['received_at', 'fetched_at', 'ingested_at', 'created_at', 'updated_at', 'timestamp', 'last_verified'], '');
+  return atlasField(item, ['observed_at', 'observedAt', 'verified_at', 'verifiedAt', 'received_at', 'fetched_at', 'ingested_at', 'created_at', 'updated_at', 'timestamp', 'last_verified'], '');
 }
 
 function atlasFormatTime(value) {
@@ -159,13 +163,17 @@ function atlasNormalizeProjection(payload) {
     active: atlasFirstObject(source, ['active', 'active_unit', 'activeUnit', 'active_item']),
     evidence: atlasList(source.evidence),
     modules: atlasList(source.modules),
+    pipeline: atlasList(source.pipeline),
+    queueFreezes: atlasList(source.queue_freezes || source.queueFreezes),
+    closureReceipts: atlasList(source.closure_receipts || source.closureReceipts),
+    stageReceipts: atlasList(source.stage_receipts || source.stageReceipts),
   };
 }
 
 function atlasCurrentItems() {
-  if (atlasProjection.current.length) return atlasProjection.current;
-  if (atlasProjection.features.length) return atlasProjection.features;
-  return atlasProjection.catalog;
+  // Current is authoritative DONE-only. Catalog/features are metadata and
+  // must never be presented as completed runtime functionality.
+  return atlasProjection.current;
 }
 
 function atlasRoot() {
@@ -211,7 +219,7 @@ function atlasRenderSummary() {
   const catalogCount = atlasProjection.catalog.length + atlasProjection.features.length;
   const activeTitle = atlasProjection.active ? atlasItemTitle(atlasProjection.active, 'Active unit') : 'None';
   root.innerHTML = [
-    atlasSummaryCard('Current', String(current.length), atlasProjection.current.length ? 'current projection' : 'catalog/features fallback', current.length ? 'ready' : 'empty'),
+    atlasSummaryCard('Current', String(current.length), 'DONE-only current projection', current.length ? 'ready' : 'empty'),
     atlasSummaryCard('Radar', String(atlasProjection.radar.length), 'new information to review', atlasProjection.radar.length ? 'pending' : 'empty'),
     atlasSummaryCard('Backlog', String(atlasProjection.backlog.length), 'concept-state items', atlasProjection.backlog.length ? 'pending' : 'empty'),
     atlasSummaryCard('Active Unit', activeTitle, 'Global WIP = 1', atlasProjection.active ? 'active' : 'empty'),
@@ -556,12 +564,16 @@ function atlasStageName(stage, index) {
   return atlasDisplay(atlasField(stage, ['name', 'stage', 'label', 'key', 'id'], ''), 'Stage ' + String(index + 1));
 }
 
-function atlasRenderStages(active) {
-  const stages = atlasList(atlasField(active, ['stages', 'pipeline', 'delivery_stages', 'deliveryStages'], []));
-  if (!stages.length) return atlasEmpty('No stage evidence', 'The active unit has no stage list in the projection.');
+function atlasRenderStages(entry) {
+  const stages = atlasList(atlasField(entry, ['stages', 'pipeline', 'delivery_stages', 'deliveryStages'], []));
+  if (!stages.length) return atlasEmpty('Pipeline unavailable', 'CORE returned no authoritative stage projection for this implementation unit.', true);
   return '<ol class="atlas-stage-list">' + stages.map((stage, index) => {
     const value = typeof stage === 'string' ? stage : atlasField(stage, ['status', 'state', 'result'], 'pending');
-    return '<li class="atlas-stage ' + atlasStatusClass(value) + '"><span class="atlas-stage-marker">' + atlasEscape(String(index + 1)) + '</span><div><strong>' + atlasEscape(atlasStageName(stage, index)) + '</strong><span>' + atlasBadge(value, 'pending') + '</span>' + (typeof stage === 'object' ? '<p>' + atlasEscape(atlasField(stage, ['summary', 'detail', 'evidence'], ''), '') + '</p>' : '') + '</div></li>';
+    const reason = typeof stage === 'object' ? atlasField(stage, ['reason', 'summary', 'detail'], '') : '';
+    const verified = typeof stage === 'object' ? atlasList(atlasField(stage, ['verified_evidence_refs', 'verifiedEvidenceRefs'], [])) : [];
+    const claims = typeof stage === 'object' ? atlasList(atlasField(stage, ['evidence_refs', 'evidenceRefs'], [])) : [];
+    const evidenceDetail = claims.length ? '<p>Evidence: ' + atlasEscape(String(verified.length) + ' CORE verified / ' + String(claims.length) + ' claims') + '</p>' : '';
+    return '<li class="atlas-stage ' + atlasStatusClass(value) + '"><span class="atlas-stage-marker">' + atlasEscape(String(index + 1)) + '</span><div><strong>' + atlasEscape(atlasStageName(stage, index)) + '</strong><span>' + atlasBadge(value, 'pending') + '</span>' + (reason ? '<p>' + atlasEscape(reason) + '</p>' : '') + evidenceDetail + '</div></li>';
   }).join('') + '</ol>';
 }
 
@@ -570,10 +582,43 @@ function atlasRenderQueue(queue) {
   return '<div class="atlas-table-wrap"><table class="atlas-table"><thead><tr><th>Unit</th><th>Owner</th><th>Concept</th><th>Delivery</th><th>Queued</th></tr></thead><tbody>' + queue.map((item) => '<tr><td><strong>' + atlasEscape(atlasItemTitle(item, 'Implementation unit')) + '</strong><div class="atlas-code">' + atlasEscape(atlasItemID(item)) + '</div></td><td>' + atlasEscape(atlasItemOwner(item)) + '</td><td>' + atlasBadge(atlasConceptState(item)) + '</td><td>' + atlasBadge(atlasDeliveryState(item)) + '</td><td class="atlas-time">' + atlasEscape(atlasFormatTime(atlasField(item, ['queued_at', 'created_at', 'timestamp'], ''))) + '</td></tr>').join('') + '</tbody></table></div>';
 }
 
+function atlasPipelineUnitID(entry) {
+  return atlasDisplay(atlasField(entry, ['unit_id', 'unitID', 'implementation_unit_id', 'implementationUnit'], ''), '-');
+}
+
+function atlasRenderPipelineRecords(entry) {
+  const freezes = atlasList(atlasField(entry, ['queue_freezes', 'queueFreezes'], []));
+  const closures = atlasList(atlasField(entry, ['closure_receipts', 'closureReceipts'], []));
+  const activeLease = atlasField(entry, ['active_lease', 'activeLease'], null);
+  const records = [];
+  if (activeLease && typeof activeLease === 'object') {
+    records.push('<div class="atlas-pipeline-record atlas-pipeline-lease"><strong>Active lease</strong><span>' + atlasEscape(atlasField(activeLease, ['holder_unit_id', 'holderUnitID', 'stage'], '-')) + '</span></div>');
+  }
+  freezes.forEach((freeze) => {
+    const state = atlasField(freeze, ['status', 'state'], 'active');
+    records.push('<div class="atlas-pipeline-record atlas-pipeline-freeze"><strong>Queue freeze: ' + atlasEscape(state) + '</strong><span>' + atlasEscape(atlasField(freeze, ['reason_code', 'reasonCode', 'invalidated_from_stage'], 'Unavailable')) + '</span><span>replacement: ' + atlasEscape(atlasField(freeze, ['replacement_unit_id', 'replacementUnitID'], 'Unavailable')) + '</span></div>');
+  });
+  closures.forEach((closure) => {
+    const state = atlasField(closure, ['status', 'phase'], 'unavailable');
+    records.push('<div class="atlas-pipeline-record atlas-pipeline-closure"><strong>Closure: ' + atlasEscape(state) + '</strong><span>lease released: ' + atlasEscape(atlasField(closure, ['lease_released', 'leaseReleased'], 'Unavailable')) + '</span><span>' + atlasEscape(atlasField(closure, ['completed_at', 'updated_at'], 'Unavailable')) + '</span></div>');
+  });
+  return records.length ? '<div class="atlas-pipeline-records">' + records.join('') + '</div>' : '<div class="atlas-pipeline-records"><span class="atlas-detail-unavailable">No lease, freeze, or closure receipt is available.</span></div>';
+}
+
+function atlasRenderPipelineUnit(entry, activeUnitID) {
+  const unitID = atlasPipelineUnitID(entry);
+  const active = unitID === activeUnitID;
+  const state = atlasField(entry, ['delivery_state', 'deliveryState', 'state', 'status'], 'unavailable');
+  return '<article class="atlas-pipeline-unit' + (active ? ' atlas-pipeline-unit-active' : '') + '"><div class="atlas-active-head"><div><span class="atlas-kicker">' + (active ? 'ACTIVE IMPLEMENTATION UNIT' : 'IMPLEMENTATION UNIT') + '</span><h3>' + atlasEscape(atlasItemTitle(entry, 'Implementation unit')) + '</h3><div class="atlas-code">' + atlasEscape(unitID) + '</div></div>' + atlasBadge(state, 'unavailable') + '</div><div class="atlas-active-meta"><span>Owner: <strong>' + atlasEscape(atlasItemOwner(entry)) + '</strong></span><span>Concept: ' + atlasBadge(atlasConceptState(entry)) + '</span><span>Revision: <strong>' + atlasEscape(atlasField(entry, ['implementation_revision', 'implementationRevision', 'revision'], 'unavailable')) + '</strong></span></div><div class="atlas-stage-heading"><h4>Stages</h4><span>Specification → Done</span></div>' + atlasRenderStages(entry) + atlasRenderPipelineRecords(entry) + '</article>';
+}
+
 function atlasRenderPipeline(view) {
   const active = atlasProjection.active;
-  const activeBlock = active ? '<article class="atlas-active-unit"><div class="atlas-active-head"><div><span class="atlas-kicker">ACTIVE IMPLEMENTATION UNIT</span><h3>' + atlasEscape(atlasItemTitle(active, 'Active unit')) + '</h3><div class="atlas-code">' + atlasEscape(atlasItemID(active)) + '</div></div>' + atlasBadge(atlasField(active, ['delivery_state', 'deliveryState', 'state', 'status'], 'active'), 'active') + '</div><div class="atlas-active-meta"><span>Owner: <strong>' + atlasEscape(atlasItemOwner(active)) + '</strong></span><span>Concept: ' + atlasBadge(atlasConceptState(active)) + '</span></div><div class="atlas-stage-heading"><h4>Stages</h4><span>passed / active / pending / failed / blocked</span></div>' + atlasRenderStages(active) + '</article>' : atlasEmpty('No active implementation unit', 'Global WIP = 1; the pipeline currently has no active unit.');
-  view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">PIPELINE</span><h3>Implementation Pipeline</h3><p>Active Unit を上部に固定し、Global WIP = 1 を明示します。</p></div><div class="atlas-wip"><span>Global WIP</span><strong>1</strong></div></div>' + activeBlock + '<section class="atlas-subsection"><div class="atlas-subsection-head"><h4>Queue</h4><span>read-only</span></div>' + atlasRenderQueue(atlasProjection.queue) + '</section>';
+  const activeUnitID = active ? atlasDisplay(atlasField(active, ['implementation_unit_id', 'implementationUnit', 'unit_id'], ''), '') : '';
+  const units = atlasProjection.pipeline.slice();
+  if (!units.length && active) units.push(active);
+  const pipelineBlock = units.length ? '<div class="atlas-pipeline-grid">' + units.map((entry) => atlasRenderPipelineUnit(entry, activeUnitID)).join('') + '</div>' : atlasEmpty('No implementation unit', 'Global WIP = 1; CORE returned no implementation-unit projection.');
+  view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">PIPELINE</span><h3>Implementation Pipeline</h3><p>COREのauthoritative Delivery State、verified Evidence、Lease、Freeze、Closure Receiptを表示します。</p></div><div class="atlas-wip"><span>Global WIP</span><strong>1</strong></div></div>' + pipelineBlock + '<section class="atlas-subsection"><div class="atlas-subsection-head"><h4>Queue</h4><span>read-only</span></div>' + atlasRenderQueue(atlasProjection.queue) + '</section>';
 }
 
 function atlasRenderEvidence(view) {
@@ -584,8 +629,14 @@ function atlasRenderEvidence(view) {
   }
   view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">EVIDENCE</span><h3>Stage evidence timeline</h3><p>実装完了の根拠を stage ごとに確認します。</p></div></div><ol class="atlas-evidence-timeline">' + items.map((item, index) => {
     const stage = atlasField(item, ['stage', 'stage_name', 'kind', 'type'], 'Evidence');
-    const status = atlasField(item, ['status', 'state', 'result'], 'recorded');
-    return '<li class="atlas-evidence-item ' + atlasStatusClass(status) + '"><span class="atlas-evidence-line"></span><div class="atlas-evidence-marker">' + atlasEscape(String(index + 1)) + '</div><article><div class="atlas-evidence-head"><strong>' + atlasEscape(stage) + '</strong>' + atlasBadge(status) + '</div><p>' + atlasEscape(atlasField(item, ['summary', 'detail', 'description', 'message'], '-')) + '</p><div class="atlas-evidence-meta"><span>' + atlasEscape(atlasField(item, ['evidence_type', 'source_type', 'type'], '-')) + '</span><span>' + atlasEscape(atlasField(item, ['ref', 'evidence_ref', 'id', 'commit', 'trace_id'], '-')) + '</span><time>' + atlasEscape(atlasFormatTime(atlasTimestamp(item))) + '</time></div></article></li>';
+    const verified = Boolean(atlasField(item, ['verified'], false)) || String(atlasField(item, ['verification_result', 'verificationResult'], '')).toLowerCase() === 'verified';
+    const claim = Boolean(atlasField(item, ['passed'], false));
+    const status = verified ? 'verified' : (claim ? 'claim only' : 'unverified');
+    const verifier = atlasField(item, ['verifier'], 'Unavailable');
+    const hash = atlasField(item, ['sha256', 'hash'], 'Unavailable');
+    const revision = atlasField(item, ['revision'], 'Unavailable');
+    const observedAt = atlasField(item, ['observed_at', 'observedAt', 'verified_at'], 'Unavailable');
+    return '<li class="atlas-evidence-item ' + atlasStatusClass(status) + '"><span class="atlas-evidence-line"></span><div class="atlas-evidence-marker">' + atlasEscape(String(index + 1)) + '</div><article><div class="atlas-evidence-head"><strong>' + atlasEscape(stage) + '</strong>' + atlasBadge(status) + '</div><p>Claim: ' + atlasEscape(claim ? 'passed' : 'not passed') + ' / CORE verified: ' + atlasEscape(verified ? 'verified' : 'not verified') + '</p><div class="atlas-evidence-meta"><span>verifier: ' + atlasEscape(verifier) + '</span><span>hash: ' + atlasEscape(hash) + '</span><span>revision: ' + atlasEscape(revision) + '</span><span>observed_at: ' + atlasEscape(observedAt) + '</span><span>ref: ' + atlasEscape(atlasField(item, ['ref', 'evidence_ref', 'id', 'commit', 'trace_id'], '-')) + '</span></div></article></li>';
   }).join('') + '</ol>';
 }
 
@@ -595,9 +646,13 @@ function atlasRenderModules(view) {
     view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">MODULES</span><h3>EcoSystem modules</h3></div></div>' + atlasEmpty('Modules are empty', 'No module revision or runtime health projection is available.');
     return;
   }
-  view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">MODULES</span><h3>EcoSystem module status</h3><p>revision、runtime health、last verified を表示します。</p></div></div><div class="atlas-module-grid">' + modules.map((module) => {
-    const health = atlasField(module, ['runtime_health', 'runtimeHealth', 'health', 'status'], 'unknown');
-    return '<article class="atlas-module-card"><div class="atlas-module-head"><strong>' + atlasEscape(atlasField(module, ['name', 'module', 'id', 'component'], 'Module')) + '</strong>' + atlasBadge(health) + '</div><dl><div><dt>Revision</dt><dd class="atlas-code">' + atlasEscape(atlasField(module, ['revision', 'source_revision', 'commit', 'sha'], '-')) + '</dd></div><div><dt>Last verified</dt><dd>' + atlasEscape(atlasFormatTime(atlasField(module, ['last_verified', 'lastVerified', 'verified_at'], ''))) + '</dd></div><div><dt>Owner</dt><dd>' + atlasEscape(atlasField(module, ['owner', 'owner_module'], '-')) + '</dd></div></dl></article>';
+  view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">MODULES</span><h3>EcoSystem module status</h3><p>catalog metadata と runtime evidence を分離して表示します。</p></div></div><div class="atlas-module-grid">' + modules.map((module) => {
+    const runtimeAvailable = atlasField(module, ['runtime_evidence_available', 'runtimeEvidenceAvailable'], false) === true;
+    const health = runtimeAvailable ? atlasField(module, ['runtime_health', 'runtimeHealth', 'health', 'status'], 'unavailable') : 'unavailable';
+    const revision = runtimeAvailable ? atlasField(module, ['revision', 'source_revision', 'commit', 'sha'], 'unavailable') : 'unavailable';
+    const catalogRevision = atlasField(module, ['catalog_revision', 'revision'], 'Unavailable');
+    const catalogHealth = atlasField(module, ['catalog_runtime_health'], 'Unavailable');
+    return '<article class="atlas-module-card"><div class="atlas-module-head"><strong>' + atlasEscape(atlasField(module, ['name', 'module', 'id', 'component'], 'Module')) + '</strong>' + atlasBadge(health) + '</div><dl><div><dt>Runtime revision</dt><dd class="atlas-code">' + atlasEscape(revision) + '</dd></div><div><dt>Catalog revision</dt><dd class="atlas-code">' + atlasEscape(catalogRevision) + '</dd></div><div><dt>Catalog health label</dt><dd>' + atlasEscape(catalogHealth) + '</dd></div><div><dt>Last verified</dt><dd>' + atlasEscape(runtimeAvailable ? atlasFormatTime(atlasField(module, ['last_verified', 'lastVerified', 'verified_at'], 'unavailable')) : 'unavailable') + '</dd></div><div><dt>Owner</dt><dd>' + atlasEscape(atlasField(module, ['owner', 'owner_module'], '-')) + '</dd></div></dl></article>';
   }).join('') + '</div>';
 }
 
@@ -618,7 +673,7 @@ function atlasRender() {
   atlasRenderSummary();
   const hasProjectionData = atlasCurrentItems().length > 0 || atlasProjection.radar.length > 0 ||
     atlasProjection.backlog.length > 0 || atlasProjection.queue.length > 0 ||
-    Boolean(atlasProjection.active) || atlasProjection.evidence.length > 0 || atlasProjection.modules.length > 0;
+    Boolean(atlasProjection.active) || atlasProjection.evidence.length > 0 || atlasProjection.modules.length > 0 || atlasProjection.pipeline.length > 0 || atlasProjection.queueFreezes.length > 0 || atlasProjection.closureReceipts.length > 0;
   atlasSetStatus(atlasLoading ? 'loading' : (atlasFetchError ? 'unavailable' : (hasProjectionData ? 'ready' : 'empty')), atlasLoading ? 'pending' : (atlasFetchError ? 'unavailable' : (hasProjectionData ? 'ready' : 'empty')));
   const views = Array.from(root.querySelectorAll('.atlas-view'));
   const tabs = Array.from(root.querySelectorAll('[data-atlas-tab]'));

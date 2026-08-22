@@ -414,6 +414,23 @@ func (d *Dependencies) Shutdown() {
 	log.Println("Shutdown complete")
 }
 
+// prepareAtlasLifecycleService applies the one startup migration before
+// lease recovery. Any migration or recovery failure returns no service so the
+// caller cannot expose a misleading Atlas lifecycle projection.
+func prepareAtlasLifecycleService(ctx context.Context, service *backlogapp.Service) (*backlogapp.Service, bool, error) {
+	if service == nil {
+		return nil, false, nil
+	}
+	migrated, err := service.MigrateLegacyAtlasLifecycle(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := service.Recover(ctx); err != nil {
+		return nil, migrated, err
+	}
+	return service, migrated, nil
+}
+
 // buildDependencies は依存関係を構築
 func buildDependencies(cfg *config.Config) *Dependencies {
 	runtimeToolRegistry := buildRuntimeToolRegistry(cfg)
@@ -974,8 +991,29 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		// Do not expose a projection backed by an alternate or partial Atlas
 		// source when the canonical embedded package cannot be reconciled.
 		deps.atlasService = nil
-	} else if err := deps.atlasService.Recover(context.Background()); err != nil {
-		log.Printf("Atlas lease recovery failed: %v", err)
+	} else {
+		atlasService, migrated, startupErr := prepareAtlasLifecycleService(context.Background(), deps.atlasService)
+		if startupErr != nil {
+			// A failed lifecycle migration or lease recovery must not leave a
+			// pre-revision-2 completion visible as current Atlas state.
+			log.Printf("Atlas lifecycle startup migration/recovery failed: %v", startupErr)
+			deps.atlasService = nil
+		} else {
+			deps.atlasService = atlasService
+			if migrated {
+				log.Printf("Atlas lifecycle legacy completion migrated to revision 2 queue")
+			}
+		}
+	}
+	if deps.atlasService != nil {
+		if verifier, verifierErr := newAtlasEvidenceVerifier(cfg, deps.reportStore); verifierErr != nil {
+			// Keep the owner service present for read-only projection, but leave
+			// its verifier nil so every evidence-gated owner write fails closed.
+			log.Printf("WARN: Atlas evidence verifier unavailable: %v", verifierErr)
+		} else {
+			deps.atlasService.WithEvidenceVerifier(verifier)
+			log.Printf("Atlas evidence verifier enabled (embedded specs, execution reports, deployment receipts)")
+		}
 	}
 	var atlasToken []byte
 	if cfg.LocalAgentOps.Enabled {

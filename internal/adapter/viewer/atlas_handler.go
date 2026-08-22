@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 
 	appbacklog "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	featurebacklog "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
 )
 
@@ -18,20 +20,38 @@ const (
 	atlasOwnerRoot = "/v1/atlas"
 )
 
+// AtlasOwnerService is the CORE-owned contract used by the Viewer adapter.
+// Keeping the adapter on this contract makes it impossible for the HTTP layer
+// to bypass the lifecycle service or to make verification/state decisions.
+type AtlasOwnerService interface {
+	Projection(context.Context) (appbacklog.Projection, error)
+	List(context.Context, int) ([]domainbacklog.Item, error)
+	Get(context.Context, string) (domainbacklog.Item, error)
+	Evidence(context.Context, string) ([]domainbacklog.EvidenceRef, error)
+	ListQueueFreezes(context.Context, int) ([]domainworkstream.QueueFreeze, error)
+	Intake(context.Context, appbacklog.IntakeRequest) (appbacklog.IntakeResult, error)
+	Candidate(context.Context, string) (domainbacklog.Item, error)
+	Adopt(context.Context, string, string) (appbacklog.AdoptionResult, error)
+	Defer(context.Context, string, string) (domainbacklog.Item, error)
+	Reject(context.Context, string, string) (domainbacklog.Item, error)
+	Revise(context.Context, string, appbacklog.ReviseRequest) (domainbacklog.Item, error)
+	ResolveQueueFreeze(context.Context, string, appbacklog.ResolveQueueFreezeRequest) (domainworkstream.QueueFreeze, domainworkstream.ImplementationLease, bool, error)
+}
+
 // NewAtlasHandler serves both the read-only Debug Viewer projection and the
 // authenticated owner mutation surface. GET intentionally remains compatible
 // with the existing local Debug Viewer; every POST is bearer/profile gated.
-func NewAtlasHandler(service *appbacklog.Service, userID string, token []byte) http.HandlerFunc {
+func NewAtlasHandler(service AtlasOwnerService, userID string, token []byte) http.HandlerFunc {
 	h := &atlasHandler{service: service, userID: strings.TrimSpace(userID), token: append([]byte(nil), token...)}
 	return h.ServeHTTP
 }
 
-func HandleAtlas(service *appbacklog.Service) http.HandlerFunc {
+func HandleAtlas(service AtlasOwnerService) http.HandlerFunc {
 	return (&atlasHandler{service: service}).ServeHTTP
 }
 
 type atlasHandler struct {
-	service *appbacklog.Service
+	service AtlasOwnerService
 	userID  string
 	token   []byte
 }
@@ -155,6 +175,15 @@ func (h *atlasHandler) read(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"evidence": evidence})
 		return
 	}
+	if path == atlasReadRoot+"/queue-freezes" {
+		freezes, err := h.service.ListQueueFreezes(r.Context(), atlasLimit(r))
+		if err != nil {
+			writeAtlasError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"queue_freezes": freezes})
+		return
+	}
 	projection, err := h.service.Projection(r.Context())
 	if err != nil {
 		writeAtlasError(w, http.StatusInternalServerError, err.Error())
@@ -198,6 +227,32 @@ func (h *atlasHandler) write(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusOK
 		}
 		writeJSON(w, status, result)
+		return
+	}
+	freezePrefix := atlasOwnerRoot + "/queue-freezes/"
+	if strings.HasPrefix(path, freezePrefix) {
+		tail := strings.TrimPrefix(path, freezePrefix)
+		parts := strings.Split(tail, "/")
+		if len(parts) != 2 || strings.ToLower(strings.TrimSpace(parts[1])) != "resolve" {
+			writeAtlasError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		freezeID, ok := atlasSinglePathID(freezePrefix+parts[0], freezePrefix)
+		if !ok {
+			writeAtlasError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		var request appbacklog.ResolveQueueFreezeRequest
+		if err := decodeAtlasJSON(w, r, &request, 64<<10); err != nil {
+			writeAtlasError(w, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		freeze, lease, acquired, err := h.service.ResolveQueueFreeze(r.Context(), freezeID, request)
+		if err != nil {
+			writeAtlasQueueFreezeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"freeze": freeze, "lease": lease, "acquired": acquired})
 		return
 	}
 	prefix := atlasOwnerRoot + "/items/"
@@ -250,6 +305,8 @@ func (h *atlasHandler) write(w http.ResponseWriter, r *http.Request) {
 		h.writeMutation(w, item, err)
 	case "revise":
 		var request struct {
+			RequestID           string                      `json:"request_id,omitempty"`
+			ExpectedRevision    int                         `json:"expected_revision,omitempty"`
 			DeliveryState       string                      `json:"delivery_state"`
 			TargetDeliveryState string                      `json:"target_delivery_state"`
 			EvidenceRefs        []domainbacklog.EvidenceRef `json:"evidence_refs"`
@@ -267,7 +324,10 @@ func (h *atlasHandler) write(w http.ResponseWriter, r *http.Request) {
 			writeAtlasError(w, http.StatusBadRequest, "delivery_state_and_evidence_required")
 			return
 		}
-		item, err := h.service.Revise(r.Context(), id, appbacklog.ReviseRequest{TargetDeliveryState: target, EvidenceRefs: request.EvidenceRefs, Reason: request.Reason})
+		item, err := h.service.Revise(r.Context(), id, appbacklog.ReviseRequest{
+			RequestID: request.RequestID, ExpectedRevision: request.ExpectedRevision,
+			TargetDeliveryState: target, EvidenceRefs: request.EvidenceRefs, Reason: request.Reason,
+		})
 		h.writeMutation(w, item, err)
 	default:
 		writeAtlasError(w, http.StatusNotFound, "not_found")
@@ -321,6 +381,25 @@ func writeAtlasDomainError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
 	if errors.Is(err, domainbacklog.ErrInvalidTransition) || errors.Is(err, domainbacklog.ErrEvidenceRequired) {
 		status = http.StatusConflict
+	}
+	writeAtlasError(w, status, err.Error())
+}
+
+func writeAtlasQueueFreezeError(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	switch {
+	case errors.Is(err, domainworkstream.ErrQueueFreezeNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, domainworkstream.ErrQueueFreezeRevisionConflict),
+		errors.Is(err, domainworkstream.ErrQueueFreezeResolutionConflict),
+		errors.Is(err, appbacklog.ErrLifecycleConflict),
+		errors.Is(err, domainbacklog.ErrInvalidTransition),
+		errors.Is(err, domainbacklog.ErrEvidenceRequired):
+		status = http.StatusConflict
+	case errors.Is(err, domainworkstream.ErrQueueFrozen) || strings.Contains(strings.ToLower(err.Error()), "blocked"):
+		// A blocked/frozen queue is an explicit resource state, not a malformed
+		// request. HTTP 423 keeps that distinction visible to owner clients.
+		status = http.StatusLocked
 	}
 	writeAtlasError(w, status, err.Error())
 }

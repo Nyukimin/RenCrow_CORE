@@ -2,6 +2,7 @@ package backlog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -10,6 +11,7 @@ import (
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	featurebacklog "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
 )
 
 type ItemStore interface {
@@ -34,13 +36,20 @@ type ImplementationLeaseStore interface {
 
 type IntakeRequest struct {
 	ItemID             string                    `json:"item_id,omitempty"`
+	FeatureID          string                    `json:"feature_id,omitempty"`
 	Kind               string                    `json:"kind,omitempty"`
 	Title              string                    `json:"title"`
 	Body               string                    `json:"body,omitempty"`
 	Purpose            string                    `json:"purpose,omitempty"`
+	Problem            string                    `json:"problem,omitempty"`
+	Idea               string                    `json:"idea,omitempty"`
+	Background         string                    `json:"background,omitempty"`
+	ExpectedEffect     []string                  `json:"expected_effect,omitempty"`
+	RelationRefs       []string                  `json:"relation_refs,omitempty"`
 	Category           string                    `json:"category,omitempty"`
 	Source             string                    `json:"source,omitempty"`
 	SourceRefs         []domainbacklog.SourceRef `json:"source_refs,omitempty"`
+	SpecificationRefs  []string                  `json:"specification_refs,omitempty"`
 	Owner              string                    `json:"owner,omitempty"`
 	OwnerModule        string                    `json:"owner_module,omitempty"`
 	Priority           string                    `json:"priority,omitempty"`
@@ -55,6 +64,8 @@ type IntakeRequest struct {
 }
 
 type ReviseRequest struct {
+	RequestID           string                      `json:"request_id,omitempty"`
+	ExpectedRevision    int                         `json:"expected_revision,omitempty"`
 	TargetDeliveryState string                      `json:"delivery_state"`
 	EvidenceRefs        []domainbacklog.EvidenceRef `json:"evidence_refs"`
 	Reason              string                      `json:"reason,omitempty"`
@@ -83,12 +94,19 @@ type Projection struct {
 	Active   *domainbacklog.Item         `json:"active"`
 	Evidence []domainbacklog.EvidenceRef `json:"evidence"`
 	Modules  []map[string]any            `json:"modules"`
+	Pipeline []PipelineEntry             `json:"pipeline"`
+	// QueueFreezes and ClosureReceipts are the lifecycle-store projection used
+	// by the Viewer to explain a blocked queue or an in-flight DONE closure.
+	QueueFreezes    []domainworkstream.QueueFreeze     `json:"queue_freezes"`
+	ClosureReceipts []domainworkstream.ClosureReceipt  `json:"closure_receipts"`
+	StageReceipts   []domainworkstream.StageRunReceipt `json:"stage_receipts"`
 }
 
 type Service struct {
 	items      ItemStore
 	workstream WorkstreamCreator
 	clock      func() time.Time
+	verifier   EvidenceVerifier
 
 	catalog  []map[string]any
 	features []map[string]any
@@ -196,6 +214,9 @@ func (s *Service) save(ctx context.Context, item domainbacklog.Item) error {
 	}
 	item.UpdatedAt = s.now().Format(time.RFC3339)
 	item.SchemaVersion = domainbacklog.SchemaVersion2
+	if item.ImplementationRevision < 1 {
+		item.ImplementationRevision = 1
+	}
 	if item.ConceptState == "" {
 		item.ConceptState = domainbacklog.ConceptCandidate
 	}
@@ -210,6 +231,10 @@ func (s *Service) save(ctx context.Context, item domainbacklog.Item) error {
 func (s *Service) Intake(ctx context.Context, request IntakeRequest) (IntakeResult, error) {
 	if strings.TrimSpace(request.Title) == "" {
 		return IntakeResult{}, errors.New("title is required")
+	}
+	specificationRefs := append([]string(nil), request.SpecificationRefs...)
+	if err := validateSpecificationRefs(specificationRefs); err != nil {
+		return IntakeResult{}, err
 	}
 	refs := append([]domainbacklog.SourceRef(nil), request.SourceRefs...)
 	if len(refs) == 0 {
@@ -248,14 +273,16 @@ func (s *Service) Intake(ctx context.Context, request IntakeRequest) (IntakeResu
 		id = domainbacklog.NewDeterministicID(refs, request.Title)
 	}
 	item := domainbacklog.Item{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: id,
+		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: id, FeatureID: request.FeatureID,
 		Kind: request.Kind, Title: strings.TrimSpace(request.Title), Body: strings.TrimSpace(request.Body),
-		Purpose:         strings.TrimSpace(request.Purpose),
+		Purpose: strings.TrimSpace(request.Purpose), Problem: request.Problem, Idea: request.Idea, Background: request.Background,
+		ExpectedEffect: append([]string(nil), request.ExpectedEffect...), RelationRefs: append([]string(nil), request.RelationRefs...),
 		TargetModules:   append([]string(nil), request.TargetModules...),
 		ConsumerModules: append([]string(nil), request.ConsumerModules...),
 		AffectedModules: append([]string(nil), request.AffectedModules...), AcceptanceCriteria: append([]string(nil), request.AcceptanceCriteria...),
 		Category: strings.TrimSpace(request.Category), Source: strings.TrimSpace(request.Source), SourceRefs: refs,
-		Owner: strings.TrimSpace(request.Owner), OwnerModule: domainbacklog.LifecycleOwnerModule,
+		SpecificationRefs: specificationRefs,
+		Owner:             strings.TrimSpace(request.Owner), OwnerModule: domainbacklog.LifecycleOwnerModule,
 		ConceptState: domainbacklog.ConceptRadar, DeliveryState: domainbacklog.DeliveryNone,
 		Priority: request.Priority, Tags: append([]string(nil), request.Tags...), DependsOn: append([]string(nil), request.DependsOn...), RelatedIDs: append([]string(nil), request.RelatedIDs...),
 		CreatedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339), Status: "open",
@@ -265,6 +292,25 @@ func (s *Service) Intake(ctx context.Context, request IntakeRequest) (IntakeResu
 		return IntakeResult{}, err
 	}
 	return IntakeResult{Item: item, ItemID: item.ItemID}, nil
+}
+
+func validateSpecificationRefs(specificationRefs []string) error {
+	if len(specificationRefs) == 0 {
+		return nil
+	}
+	pkg, err := featurebacklog.LoadBackfillPackage()
+	if err != nil {
+		return fmt.Errorf("load embedded Atlas specification package: %w", err)
+	}
+	for _, specID := range specificationRefs {
+		if strings.TrimSpace(specID) == "" {
+			return errors.New("specification reference is required")
+		}
+		if _, ok := pkg.Specification(specID); !ok {
+			return fmt.Errorf("unknown Atlas specification reference %q", specID)
+		}
+	}
+	return nil
 }
 
 func (s *Service) Candidate(ctx context.Context, id string) (domainbacklog.Item, error) {
@@ -404,12 +450,115 @@ func safeSegment(value string) string {
 }
 
 func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) (domainbacklog.Item, error) {
+	// Never mutate the caller's slice while replacing claims with the owner
+	// verifier result; callers may replay the exact request value.
+	request.EvidenceRefs = append([]domainbacklog.EvidenceRef(nil), request.EvidenceRefs...)
 	item, err := s.find(ctx, id)
 	if err != nil {
 		return domainbacklog.Item{}, err
 	}
 	if item.ConceptState != domainbacklog.ConceptAdopted {
 		return domainbacklog.Item{}, fmt.Errorf("atlas item %s is not adopted", id)
+	}
+	item = domainbacklog.ProjectLegacy(item)
+	if request.ExpectedRevision > 0 && request.ExpectedRevision != item.ImplementationRevision {
+		return domainbacklog.Item{}, fmt.Errorf("%w: expected revision %d, current %d", ErrLifecycleConflict, request.ExpectedRevision, item.ImplementationRevision)
+	}
+	revision := item.ImplementationRevision
+	if revision < 1 {
+		revision = 1
+	}
+	unitID := strings.TrimSpace(item.ImplementationUnit)
+	if unitID == "" {
+		return domainbacklog.Item{}, errors.New("adopted Atlas item has no implementation unit")
+	}
+	target := strings.ToUpper(strings.TrimSpace(request.TargetDeliveryState))
+	if target == "" {
+		return domainbacklog.Item{}, errors.New("target delivery state is required")
+	}
+	for index, ref := range request.EvidenceRefs {
+		if err := domainbacklog.ValidateEvidenceRef(ref); err != nil {
+			return domainbacklog.Item{}, err
+		}
+		// Normalize the caller claim before hashing. Verification metadata is
+		// produced only by the CORE verifier and must not alter idempotency.
+		normalized, normalizeErr := normalizeEvidenceRefStage(clearVerification(ref), target)
+		if normalizeErr != nil {
+			return domainbacklog.Item{}, normalizeErr
+		}
+		request.EvidenceRefs[index] = normalized
+	}
+	key := stageRunKey(unitID, revision, target)
+	payloadHash := stagePayloadHash(request)
+	existingReceipt, receiptFound, lookupErr := s.findStageReceipt(ctx, key)
+	if lookupErr != nil {
+		return domainbacklog.Item{}, lookupErr
+	}
+	if receiptFound {
+		if existingReceipt.PayloadHash != payloadHash {
+			return domainbacklog.Item{}, fmt.Errorf("%w: stage %s", ErrLifecycleConflict, key)
+		}
+		if existingReceipt.Status == domainworkstream.StageRunCompleted && strings.TrimSpace(existingReceipt.ResultJSON) != "" {
+			var original domainbacklog.Item
+			if err := json.Unmarshal([]byte(existingReceipt.ResultJSON), &original); err != nil {
+				return domainbacklog.Item{}, fmt.Errorf("decode stage receipt result: %w", err)
+			}
+			if target == domainbacklog.DeliveryLiveVerified && original.DeliveryState == domainbacklog.DeliveryLiveVerified {
+				if strings.TrimSpace(request.RequestID) == "" {
+					request.RequestID = existingReceipt.RequestID
+				}
+				return s.completeLiveVerifiedClosure(ctx, original, request)
+			}
+			return original, nil
+		}
+		// A prepared receipt means the process may have stopped between
+		// persistence and the state mutation.  Continue the same operation;
+		// if the target state is already present, only finalize its receipt.
+		if existingReceipt.Status != domainworkstream.StageRunPrepared {
+			return domainbacklog.Item{}, fmt.Errorf("atlas stage receipt %s has status %q", key, existingReceipt.Status)
+		}
+		if strings.EqualFold(item.DeliveryState, target) && strings.TrimSpace(existingReceipt.ResultJSON) != "" {
+			var original domainbacklog.Item
+			if err := json.Unmarshal([]byte(existingReceipt.ResultJSON), &original); err != nil {
+				return domainbacklog.Item{}, fmt.Errorf("decode prepared stage receipt result: %w", err)
+			}
+			existingReceipt.Status = domainworkstream.StageRunCompleted
+			existingReceipt.CompletedAt = s.now()
+			if err := s.saveStageReceipt(ctx, existingReceipt); err != nil {
+				return domainbacklog.Item{}, err
+			}
+			if target == domainbacklog.DeliveryLiveVerified && original.DeliveryState == domainbacklog.DeliveryLiveVerified {
+				if strings.TrimSpace(request.RequestID) == "" {
+					request.RequestID = existingReceipt.RequestID
+				}
+				return s.completeLiveVerifiedClosure(ctx, original, request)
+			}
+			return original, nil
+		}
+	}
+
+	for index, ref := range request.EvidenceRefs {
+		if target != domainbacklog.DeliveryBlocked && target != domainbacklog.DeliveryRejected {
+			verified, verifyErr := s.verifyEvidence(ctx, EvidenceVerificationRequest{
+				Ref:                    ref,
+				ItemID:                 item.ItemID,
+				ImplementationUnitID:   unitID,
+				ImplementationRevision: revision,
+				TargetDeliveryState:    target,
+				Purpose:                "delivery_stage",
+			})
+			if verifyErr != nil {
+				return domainbacklog.Item{}, verifyErr
+			}
+			request.EvidenceRefs[index] = verified
+		} else {
+			// Failed/blocked evidence is retained as a claim for the failure
+			// record, but cannot be mistaken for a successful gate later.
+			request.EvidenceRefs[index] = clearVerification(ref)
+		}
+	}
+	if target == item.DeliveryState {
+		return domainbacklog.Item{}, fmt.Errorf("%w: delivery %s -> %s", domainbacklog.ErrInvalidTransition, item.DeliveryState, target)
 	}
 	for _, ref := range request.EvidenceRefs {
 		if err := domainbacklog.ValidateEvidenceRef(ref); err != nil {
@@ -425,13 +574,73 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 	if strings.TrimSpace(request.Reason) != "" {
 		next.Implementation = request.Reason
 	}
-	if err := s.save(ctx, next); err != nil {
+	next.ImplementationRevision = revision
+	resultJSON, err := json.Marshal(next)
+	if err != nil {
 		return domainbacklog.Item{}, err
 	}
-	if next.DeliveryState == domainbacklog.DeliveryLiveVerified || next.DeliveryState == domainbacklog.DeliveryDone {
-		_ = s.releaseLease(ctx, domainbacklog.ImplementationLeaseName, next.ImplementationUnit)
+	preparedReceipt := existingReceipt
+	if !receiptFound {
+		preparedReceipt = domainworkstream.StageRunReceipt{
+			ReceiptID: stageRunReceiptID(key), IdempotencyKey: key, RequestID: strings.TrimSpace(request.RequestID),
+			UnitID: unitID, ItemID: item.ItemID, ImplementationRevision: revision,
+			TargetStage: target, PayloadHash: payloadHash, Status: domainworkstream.StageRunPrepared,
+			DeliveryState: next.DeliveryState, ResultJSON: string(resultJSON), CreatedAt: s.now(),
+		}
 	}
-	return next, nil
+	preparedReceipt.TargetStage = target
+	preparedReceipt.PayloadHash = payloadHash
+	preparedReceipt.DeliveryState = next.DeliveryState
+	preparedReceipt.ResultJSON = string(resultJSON)
+	if err := s.saveStageReceipt(ctx, preparedReceipt); err != nil {
+		return domainbacklog.Item{}, err
+	}
+
+	var result domainbacklog.Item
+	switch next.DeliveryState {
+	case domainbacklog.DeliveryDone:
+		if err := s.completeDone(ctx, item, next, request, key, payloadHash); err != nil {
+			return domainbacklog.Item{}, err
+		}
+		result = next
+	case domainbacklog.DeliveryBlocked:
+		if err := s.completeBlocked(ctx, item, next, request); err != nil {
+			return domainbacklog.Item{}, err
+		}
+		result = next
+	case domainbacklog.DeliveryRejected:
+		if err := s.releaseLease(ctx, domainbacklog.ImplementationLeaseName, next.ImplementationUnit); err != nil {
+			return domainbacklog.Item{}, err
+		}
+		if err := s.save(ctx, next); err != nil {
+			return domainbacklog.Item{}, err
+		}
+		result = next
+	case domainbacklog.DeliveryLiveVerified:
+		// Persist LIVE_VERIFIED before marking its stage receipt complete. The
+		// lease remains held while the same service operation prepares and runs
+		// the DONE closure below.
+		if err := s.save(ctx, next); err != nil {
+			return domainbacklog.Item{}, err
+		}
+		result = next
+	default:
+		if err := s.save(ctx, next); err != nil {
+			return domainbacklog.Item{}, err
+		}
+		result = next
+	}
+	preparedReceipt.Status = domainworkstream.StageRunCompleted
+	preparedReceipt.DeliveryState = result.DeliveryState
+	preparedReceipt.ResultJSON = string(resultJSON)
+	preparedReceipt.CompletedAt = s.now()
+	if err := s.saveStageReceipt(ctx, preparedReceipt); err != nil {
+		return domainbacklog.Item{}, err
+	}
+	if next.DeliveryState == domainbacklog.DeliveryLiveVerified {
+		return s.completeLiveVerifiedClosure(ctx, result, request)
+	}
+	return result, nil
 }
 
 func (s *Service) Get(ctx context.Context, id string) (domainbacklog.Item, error) {
@@ -451,12 +660,21 @@ func (s *Service) List(ctx context.Context, limit int) ([]domainbacklog.Item, er
 
 func (s *Service) queue(items []domainbacklog.Item) []domainbacklog.Item {
 	queue := make([]domainbacklog.Item, 0)
+	byID := make(map[string]domainbacklog.Item, len(items))
 	for _, item := range items {
-		if item.ConceptState == domainbacklog.ConceptAdopted && item.DeliveryState == domainbacklog.DeliveryQueued {
+		byID[item.ItemID] = item
+	}
+	for _, item := range items {
+		if item.ConceptState == domainbacklog.ConceptAdopted && item.DeliveryState == domainbacklog.DeliveryQueued && dependenciesDone(item, byID, map[string]bool{}) {
 			queue = append(queue, item)
 		}
 	}
 	sort.SliceStable(queue, func(i, j int) bool {
+		depthI := dependencyDepth(queue[i], byID, map[string]bool{}, map[string]int{})
+		depthJ := dependencyDepth(queue[j], byID, map[string]bool{}, map[string]int{})
+		if depthI != depthJ {
+			return depthI < depthJ
+		}
 		if queue[i].QueueRank != queue[j].QueueRank {
 			return queue[i].QueueRank < queue[j].QueueRank
 		}
@@ -469,6 +687,51 @@ func (s *Service) queue(items []domainbacklog.Item) []domainbacklog.Item {
 		return queue[i].ItemID < queue[j].ItemID
 	})
 	return queue
+}
+
+// dependencyDepth places dependency roots before dependent work in the
+// eligible queue.  Dependency eligibility is checked separately below.
+func dependencyDepth(item domainbacklog.Item, byID map[string]domainbacklog.Item, visiting map[string]bool, memo map[string]int) int {
+	if value, ok := memo[item.ItemID]; ok {
+		return value
+	}
+	if visiting[item.ItemID] {
+		return 1
+	}
+	visiting[item.ItemID] = true
+	depth := 0
+	for _, dependencyID := range item.DependsOn {
+		dependency, ok := byID[strings.TrimSpace(dependencyID)]
+		if !ok || dependency.DeliveryState == domainbacklog.DeliveryDone {
+			continue
+		}
+		candidate := 1 + dependencyDepth(dependency, byID, visiting, memo)
+		if candidate > depth {
+			depth = candidate
+		}
+	}
+	delete(visiting, item.ItemID)
+	memo[item.ItemID] = depth
+	return depth
+}
+
+// dependenciesDone is fail-closed: every declared dependency must exist and
+// already be DONE.  A dependency cycle is rejected while traversing the
+// current path instead of being treated as an ordering hint.
+func dependenciesDone(item domainbacklog.Item, byID map[string]domainbacklog.Item, visiting map[string]bool) bool {
+	if visiting[item.ItemID] {
+		return false
+	}
+	visiting[item.ItemID] = true
+	defer delete(visiting, item.ItemID)
+	for _, dependencyID := range item.DependsOn {
+		dependencyID = strings.TrimSpace(dependencyID)
+		dependency, ok := byID[dependencyID]
+		if !ok || visiting[dependencyID] || dependency.DeliveryState != domainbacklog.DeliveryDone {
+			return false
+		}
+	}
+	return true
 }
 
 func priorityRank(value string) int {
@@ -485,39 +748,7 @@ func priorityRank(value string) int {
 }
 
 func (s *Service) Projection(ctx context.Context) (Projection, error) {
-	items, err := s.list(ctx)
-	if err != nil {
-		return Projection{}, err
-	}
-	p := Projection{Catalog: cloneMaps(s.catalog), Features: cloneMaps(s.features), Modules: cloneMaps(s.modules), Current: []domainbacklog.Item{}, Radar: []domainbacklog.Item{}, Backlog: []domainbacklog.Item{}, Queue: []domainbacklog.Item{}, Evidence: []domainbacklog.EvidenceRef{}}
-	for _, item := range items {
-		switch item.ConceptState {
-		case domainbacklog.ConceptRadar:
-			p.Radar = append(p.Radar, item)
-		case domainbacklog.ConceptCandidate, domainbacklog.ConceptAdopted, domainbacklog.ConceptDeferred, domainbacklog.ConceptRejected:
-			p.Backlog = append(p.Backlog, item)
-		}
-		if item.DeliveryState == domainbacklog.DeliveryLiveVerified || item.DeliveryState == domainbacklog.DeliveryDone {
-			p.Current = append(p.Current, item)
-		}
-		if item.ConceptState == domainbacklog.ConceptAdopted && item.DeliveryState == domainbacklog.DeliveryQueued {
-			p.Queue = append(p.Queue, item)
-		}
-		p.Evidence = append(p.Evidence, item.EvidenceRefs...)
-	}
-	p.Queue = s.queue(p.Queue)
-	if lease, ok, err := s.getLease(ctx, domainbacklog.ImplementationLeaseName); err != nil {
-		return Projection{}, err
-	} else if ok {
-		for i := range items {
-			if items[i].ImplementationUnit == lease.HolderUnitID {
-				active := items[i]
-				p.Active = &active
-				break
-			}
-		}
-	}
-	return p, nil
+	return s.buildProjection(ctx)
 }
 
 func (s *Service) Evidence(ctx context.Context, unitID string) ([]domainbacklog.EvidenceRef, error) {
@@ -534,6 +765,10 @@ func (s *Service) Evidence(ctx context.Context, unitID string) ([]domainbacklog.
 }
 
 func (s *Service) acquireLease(ctx context.Context, lease domainworkstream.ImplementationLease) (bool, error) {
+	if external, ok := s.workstream.(LifecycleStore); ok {
+		acquired, _, err := external.AcquireImplementationLeaseIfUnfrozen(ctx, lease)
+		return acquired, err
+	}
 	if external, ok := s.workstream.(ImplementationLeaseStore); ok {
 		return external.AcquireImplementationLease(ctx, lease)
 	}
@@ -554,15 +789,143 @@ func (s *Service) getLease(ctx context.Context, name string) (domainworkstream.I
 	return domainworkstream.ImplementationLease{}, false, errors.New("durable Atlas implementation lease store unavailable")
 }
 
+// ensureBlockedQueueFreeze repairs the only safe recoverable state for a
+// BLOCKED item that still owns the implementation lease.  The item write is
+// durable before the freeze write in the normal path; a restart must therefore
+// reconstruct the exact active freeze from the item before releasing the lease.
+// A missing/failed/mismatched freeze keeps the lease held and fails closed.
+func (s *Service) ensureBlockedQueueFreeze(ctx context.Context, item domainbacklog.Item) error {
+	unitID := strings.TrimSpace(item.ImplementationUnit)
+	if unitID == "" {
+		return errors.New("blocked Atlas item has no implementation unit")
+	}
+	revision := item.ImplementationRevision
+	if revision < 1 {
+		revision = 1
+	}
+	now := s.now()
+	createdAt := now
+	if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(item.CreatedAt)); err == nil {
+		createdAt = parsed
+	}
+	expected := domainworkstream.QueueFreeze{
+		FreezeID:             queueFreezeID(unitID, revision),
+		BlockedUnitID:        unitID,
+		BlockedRevision:      revision,
+		FreezeRevision:       1,
+		ReasonCode:           firstNonEmpty(strings.TrimSpace(item.Implementation), "stage_failed"),
+		InvalidatedFromStage: strings.TrimSpace(item.InvalidatedFromStage),
+		EvidenceRefs:         blockedEvidenceRefs(item),
+		Status:               domainworkstream.QueueFreezeActive,
+		CreatedAt:            createdAt,
+		UpdatedAt:            now,
+	}
+	current, found, err := s.findFreeze(ctx, expected.FreezeID)
+	if err != nil {
+		return err
+	}
+	if found {
+		if current.Status != domainworkstream.QueueFreezeActive && strings.TrimSpace(current.Status) != "" {
+			return fmt.Errorf("%w: blocked unit freeze %q is %s", ErrLifecycleConflict, expected.FreezeID, current.Status)
+		}
+		if !queueFreezeMatchesBlockedItem(current, expected) {
+			return fmt.Errorf("%w: blocked unit freeze %q does not match persisted item", ErrLifecycleConflict, expected.FreezeID)
+		}
+		return nil
+	}
+	return s.saveFreeze(ctx, expected)
+}
+
+func blockedEvidenceRefs(item domainbacklog.Item) []domainbacklog.EvidenceRef {
+	refs := make([]domainbacklog.EvidenceRef, 0)
+	for _, ref := range item.EvidenceRefs {
+		// Persisted BLOCKED items contain cumulative evidence. Only retain
+		// deterministic failed/unverified claims when rebuilding a missing
+		// freeze; old external Passed=true claims are not authoritative.
+		if !ref.Passed && !ref.IsVerified() {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
+
+func queueFreezeMatchesBlockedItem(current, expected domainworkstream.QueueFreeze) bool {
+	return current.FreezeID == expected.FreezeID &&
+		current.BlockedUnitID == expected.BlockedUnitID &&
+		current.BlockedRevision == expected.BlockedRevision &&
+		current.ReasonCode == expected.ReasonCode &&
+		current.InvalidatedFromStage == expected.InvalidatedFromStage
+}
+
+// resumeLiveVerifiedClosure closes a durable LIVE_VERIFIED item before any
+// queue selection.  LIVE_VERIFIED is not a runnable worker state; it is the
+// owner boundary immediately before DONE.  This also repairs a crash after
+// lease release but before the DONE item append, when no lease remains.
+func (s *Service) resumeLiveVerifiedClosure(ctx context.Context) (domainbacklog.Item, bool, error) {
+	items, err := s.list(ctx)
+	if err != nil {
+		return domainbacklog.Item{}, false, err
+	}
+	for _, item := range items {
+		if item.DeliveryState != domainbacklog.DeliveryLiveVerified {
+			continue
+		}
+		return s.resumeLiveVerifiedClosureForItem(ctx, item)
+	}
+	return domainbacklog.Item{}, false, nil
+}
+
+func (s *Service) resumeLiveVerifiedClosureForItem(ctx context.Context, item domainbacklog.Item) (domainbacklog.Item, bool, error) {
+	if item.DeliveryState != domainbacklog.DeliveryLiveVerified {
+		return domainbacklog.Item{}, false, nil
+	}
+	unitID := strings.TrimSpace(item.ImplementationUnit)
+	if unitID == "" {
+		unitID = strings.TrimSpace(item.ItemID)
+	}
+	revision := item.ImplementationRevision
+	if revision < 1 {
+		revision = 1
+	}
+	key := stageRunKey(unitID, revision, domainbacklog.DeliveryDone)
+	closure, found, lookupErr := s.findClosureReceipt(ctx, key)
+	if lookupErr != nil {
+		return domainbacklog.Item{}, true, lookupErr
+	}
+	request := ReviseRequest{TargetDeliveryState: domainbacklog.DeliveryDone}
+	if found {
+		request.RequestID = closure.RequestID
+	}
+	done, closeErr := s.completeLiveVerifiedClosure(ctx, item, request)
+	return done, true, closeErr
+}
+
 // Recover removes terminal/orphaned durable leases. It intentionally does not
 // start work; heartbeat may only observe the resulting active projection.
 func (s *Service) Recover(ctx context.Context) error {
 	lease, ok, err := s.getLease(ctx, domainbacklog.ImplementationLeaseName)
 	if err != nil || !ok {
-		return err
+		if err != nil {
+			return err
+		}
+		_, _, resumeErr := s.resumeLiveVerifiedClosure(ctx)
+		return resumeErr
 	}
 	item, findErr := s.findByUnit(ctx, lease.HolderUnitID)
-	if findErr != nil || item.DeliveryState == domainbacklog.DeliveryLiveVerified || item.DeliveryState == domainbacklog.DeliveryDone || item.DeliveryState == domainbacklog.DeliveryBlocked || item.DeliveryState == domainbacklog.DeliveryRejected {
+	if findErr != nil {
+		return findErr
+	}
+	if item.DeliveryState == domainbacklog.DeliveryLiveVerified {
+		_, _, resumeErr := s.resumeLiveVerifiedClosureForItem(ctx, item)
+		return resumeErr
+	}
+	if item.DeliveryState == domainbacklog.DeliveryBlocked {
+		if err := s.ensureBlockedQueueFreeze(ctx, item); err != nil {
+			return err
+		}
+		return s.releaseLease(ctx, lease.LeaseName, lease.HolderUnitID)
+	}
+	if item.DeliveryState == domainbacklog.DeliveryDone || item.DeliveryState == domainbacklog.DeliveryRejected {
 		return s.releaseLease(ctx, lease.LeaseName, lease.HolderUnitID)
 	}
 	return nil

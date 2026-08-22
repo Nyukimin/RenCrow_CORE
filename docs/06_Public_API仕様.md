@@ -1346,3 +1346,22 @@ Viewer、CMD、LLMがstateや`check_ok`を直接確定しません。legacy `GET
 `blocker_resolution_refs`を必須とします。COREが旧UnitのBLOCKED、supersedes完全一致、blocker解消、dependency、
 他Lease不在を同じdecisionで検証し、成功時だけFreeze解除receiptとreplacement Lease取得を冪等に確定します。
 同一request IDのpayload違いはconflictとし、再起動やLease不在を解除requestとして扱いません。
+
+`POST /v1/atlas/intake`はSchema v2 Design Cardの次のoptional fieldをそのまま保存します。
+`feature_id`、`problem`、`idea`、`background`、`expected_effect[]`、`relation_refs[]`、
+`specification_refs[]`。Radar／Candidateのpartial inputにこれらを要求せず、`purpose`以外の内容をCOREが生成しません。
+`specification_refs[]`がある場合は、COREへembeddedされた固定Backfill packageの11 ID（local 8 / external 3）へ
+照合し、manifestまたはlocal本文hashの検証失敗・未知IDはItem Save前に拒否します。GET itemのresolved Specificationは
+同じallow-listから解決し、任意pathを受けません。
+
+Revision 2の`revise`は`request_id`、`expected_revision`、target stage、Evidence Refを受け取り、COREが
+`item_id + implementation_unit_id + implementation_revision + target_delivery_state`のtyped contextを構成します。
+`passed=true`はclaimのままで、fixed owner verifierの成功結果だけをverified projectionとstage receiptへ反映します。
+stage receiptのidempotency keyは`unit + implementation_revision + target_stage`です。
+
+Freezeの読み取りは`GET /viewer/atlas/queue-freezes`、解除は固定の
+`POST /v1/atlas/queue-freezes/{freeze_id}/resolve`です。RenCrow_CMDのtransport facadeはそれぞれ
+`atlas queue-freezes`、`atlas resolve-freeze`へ1 requestで対応し、後者は
+`--freeze-id --request-id --expected-freeze-revision --replacement-unit-id --supersedes-unit-id`と、
+blocker Evidence group（stage/kind/ref、任意のrepository/revision/sha256/observed-at）を要求します。
+ID、revision、Evidence、replacement、atomicity、receiptの意味はCOREだけが決定します。

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
 
@@ -25,7 +26,17 @@ type JSONLStore struct {
 	vaultUpdatePath string
 	vaultRoot       string
 	leasePath       string
-	leaseMu         sync.Mutex
+	queueFreezePath string
+	stageRunPath    string
+	closurePath     string
+	// lifecycleMu protects the check-and-append sequences for both the
+	// singleton implementation lease and queue-freeze resolution.  JSONL has
+	// no transaction primitive, so all owner lifecycle decisions share this
+	// mutex.
+	lifecycleMu sync.Mutex
+	// resolutionAppendHook is a test-only fault seam.  It is intentionally
+	// unexported so production callers cannot alter the lifecycle protocol.
+	resolutionAppendHook func(string) error
 }
 
 func NewJSONLStore(root string) *JSONLStore {
@@ -41,31 +52,369 @@ func NewJSONLStore(root string) *JSONLStore {
 		heartbeatPath:   filepath.Join(root, "heartbeat_schedule.jsonl"),
 		vaultUpdatePath: filepath.Join(root, "vault_update_log.jsonl"),
 		leasePath:       filepath.Join(root, "implementation_lease.jsonl"),
+		queueFreezePath: filepath.Join(root, "queue_freeze.jsonl"),
+		stageRunPath:    filepath.Join(root, "stage_run_receipt.jsonl"),
+		closurePath:     filepath.Join(root, "closure_receipt.jsonl"),
 	}
+}
+
+func (s *JSONLStore) SaveQueueFreeze(_ context.Context, item domainworkstream.QueueFreeze) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	return s.saveQueueFreezeLocked(item)
+}
+
+func (s *JSONLStore) saveQueueFreezeLocked(item domainworkstream.QueueFreeze) error {
+	if item.FreezeRevision < 1 {
+		item.FreezeRevision = 1
+	}
+	if item.Status == "" {
+		item.Status = domainworkstream.QueueFreezeActive
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = item.CreatedAt
+	}
+	if err := domainworkstream.ValidateQueueFreeze(item); err != nil {
+		return err
+	}
+	return appendJSONL(s.queueFreezePath, item)
+}
+
+func (s *JSONLStore) GetQueueFreeze(_ context.Context, freezeID string) (domainworkstream.QueueFreeze, bool, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	return s.getQueueFreezeLocked(freezeID)
+}
+
+func (s *JSONLStore) getQueueFreezeLocked(freezeID string) (domainworkstream.QueueFreeze, bool, error) {
+	var found domainworkstream.QueueFreeze
+	matched := false
+	err := readJSONL(s.queueFreezePath, func(line []byte) error {
+		var item domainworkstream.QueueFreeze
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.FreezeID == freezeID {
+			found, matched = item, true
+		}
+		return nil
+	})
+	return found, matched, err
+}
+
+func (s *JSONLStore) ListQueueFreezes(_ context.Context, limit int) ([]domainworkstream.QueueFreeze, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	return s.listQueueFreezesLocked(limit)
+}
+
+func (s *JSONLStore) listQueueFreezesLocked(limit int) ([]domainworkstream.QueueFreeze, error) {
+	var items []domainworkstream.QueueFreeze
+	if err := readJSONL(s.queueFreezePath, func(line []byte) error {
+		var item domainworkstream.QueueFreeze
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		items = append(items, item)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return latestQueueFreezes(items, limit), nil
+}
+
+func latestQueueFreezes(items []domainworkstream.QueueFreeze, limit int) []domainworkstream.QueueFreeze {
+	seen := map[string]struct{}{}
+	out := make([]domainworkstream.QueueFreeze, 0, len(items))
+	for index := len(items) - 1; index >= 0; index-- {
+		if _, ok := seen[items[index].FreezeID]; ok {
+			continue
+		}
+		seen[items[index].FreezeID] = struct{}{}
+		out = append(out, items[index])
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func (s *JSONLStore) latestActiveQueueFreezeLocked() (domainworkstream.QueueFreeze, bool, error) {
+	items, err := s.listQueueFreezesLocked(0)
+	if err != nil {
+		return domainworkstream.QueueFreeze{}, false, err
+	}
+	for _, item := range items {
+		// Empty status is treated as active for legacy freeze records.  A
+		// malformed/unknown status therefore fails closed rather than silently
+		// reopening the queue.
+		if item.Status == domainworkstream.QueueFreezeActive || strings.TrimSpace(item.Status) == "" {
+			return item, true, nil
+		}
+	}
+	return domainworkstream.QueueFreeze{}, false, nil
+}
+
+func (s *JSONLStore) SaveStageRunReceipt(_ context.Context, item domainworkstream.StageRunReceipt) error {
+	if err := domainworkstream.ValidateStageRunReceipt(item); err != nil {
+		return err
+	}
+	return appendJSONL(s.stageRunPath, item)
+}
+
+func (s *JSONLStore) FindStageRunReceipt(_ context.Context, key string) (domainworkstream.StageRunReceipt, bool, error) {
+	var found domainworkstream.StageRunReceipt
+	matched := false
+	err := readJSONL(s.stageRunPath, func(line []byte) error {
+		var item domainworkstream.StageRunReceipt
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.IdempotencyKey == key || item.ReceiptID == key {
+			found, matched = item, true
+		}
+		return nil
+	})
+	return found, matched, err
+}
+
+func (s *JSONLStore) GetStageRunReceipt(ctx context.Context, key string) (domainworkstream.StageRunReceipt, bool, error) {
+	return s.FindStageRunReceipt(ctx, key)
+}
+
+func (s *JSONLStore) ListStageRunReceipts(_ context.Context, limit int) ([]domainworkstream.StageRunReceipt, error) {
+	var items []domainworkstream.StageRunReceipt
+	if err := readJSONL(s.stageRunPath, func(line []byte) error {
+		var item domainworkstream.StageRunReceipt
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		items = append(items, item)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	out := make([]domainworkstream.StageRunReceipt, 0, len(items))
+	for index := len(items) - 1; index >= 0; index-- {
+		key := items[index].IdempotencyKey
+		if key == "" {
+			key = items[index].ReceiptID
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, items[index])
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *JSONLStore) SaveClosureReceipt(_ context.Context, item domainworkstream.ClosureReceipt) error {
+	if err := domainworkstream.ValidateClosureReceipt(item); err != nil {
+		return err
+	}
+	return appendJSONL(s.closurePath, item)
+}
+
+func (s *JSONLStore) FindClosureReceipt(_ context.Context, key string) (domainworkstream.ClosureReceipt, bool, error) {
+	var found domainworkstream.ClosureReceipt
+	matched := false
+	err := readJSONL(s.closurePath, func(line []byte) error {
+		var item domainworkstream.ClosureReceipt
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if item.IdempotencyKey == key || item.ReceiptID == key {
+			found, matched = item, true
+		}
+		return nil
+	})
+	return found, matched, err
+}
+
+func (s *JSONLStore) GetClosureReceipt(ctx context.Context, key string) (domainworkstream.ClosureReceipt, bool, error) {
+	return s.FindClosureReceipt(ctx, key)
+}
+
+func (s *JSONLStore) ListClosureReceipts(_ context.Context, limit int) ([]domainworkstream.ClosureReceipt, error) {
+	var items []domainworkstream.ClosureReceipt
+	if err := readJSONL(s.closurePath, func(line []byte) error {
+		var item domainworkstream.ClosureReceipt
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		items = append(items, item)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	out := make([]domainworkstream.ClosureReceipt, 0, len(items))
+	for index := len(items) - 1; index >= 0; index-- {
+		key := items[index].IdempotencyKey
+		if key == "" {
+			key = items[index].ReceiptID
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, items[index])
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// AcquireImplementationLeaseIfUnfrozen performs the freeze check and
+// singleton lease check under the same JSONL lifecycle mutex.
+func (s *JSONLStore) AcquireImplementationLeaseIfUnfrozen(_ context.Context, item domainworkstream.ImplementationLease) (bool, string, error) {
+	if err := domainworkstream.ValidateImplementationLease(item); err != nil {
+		return false, "", err
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if _, frozen, err := s.latestActiveQueueFreezeLocked(); err != nil {
+		return false, "", err
+	} else if frozen {
+		return false, domainworkstream.ErrQueueFrozen.Error(), nil
+	}
+	current, ok, err := s.latestImplementationLeaseLocked()
+	if err != nil {
+		return false, "", err
+	}
+	if ok && current.HolderUnitID != "" && current.HolderUnitID != item.HolderUnitID {
+		return false, domainworkstream.ErrImplementationLeaseHeld.Error(), nil
+	}
+	if err := appendJSONL(s.leasePath, item); err != nil {
+		return false, "", err
+	}
+	return true, "", nil
 }
 
 // AcquireImplementationLease persists Atlas's singleton WIP lease in the
-// existing Workstream JSONL root. The in-process mutex makes check-and-append
-// atomic for the JSONL runtime; recovery reads the last lease record.
-func (s *JSONLStore) AcquireImplementationLease(_ context.Context, item domainworkstream.ImplementationLease) (bool, error) {
-	if err := domainworkstream.ValidateImplementationLease(item); err != nil {
-		return false, err
+// existing Workstream JSONL root. Legacy callers retain the old result shape;
+// the revision-2 path uses AcquireImplementationLeaseIfUnfrozen directly.
+func (s *JSONLStore) AcquireImplementationLease(ctx context.Context, item domainworkstream.ImplementationLease) (bool, error) {
+	acquired, _, err := s.AcquireImplementationLeaseIfUnfrozen(ctx, item)
+	return acquired, err
+}
+
+// ResolveQueueFreezeAndAcquireLease resolves one exact active freeze and
+// acquires the replacement lease while holding the same lifecycle mutex.
+func (s *JSONLStore) ResolveQueueFreezeAndAcquireLease(_ context.Context, freezeID string, resolution domainworkstream.QueueFreezeResolution, replacement domainworkstream.ImplementationLease) (domainworkstream.QueueFreeze, domainworkstream.ImplementationLease, bool, error) {
+	if strings.TrimSpace(freezeID) == "" {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, fmt.Errorf("freeze_id is required")
 	}
-	s.leaseMu.Lock()
-	defer s.leaseMu.Unlock()
-	current, ok, err := s.latestImplementationLeaseLocked()
+	if err := domainworkstream.ValidateQueueFreezeResolution(resolution, replacement); err != nil {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, err
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	freeze, found, err := s.getQueueFreezeLocked(freezeID)
 	if err != nil {
-		return false, err
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, err
 	}
-	if ok && current.HolderUnitID != "" && current.HolderUnitID != item.HolderUnitID {
-		return false, nil
+	if !found {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeNotFound
 	}
-	return true, appendJSONL(s.leasePath, item)
+	if freeze.Status == domainworkstream.QueueFreezeResolved {
+		if !freeze.MatchesResolved(resolution) {
+			return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
+		}
+		if freeze.ResolutionAcquired {
+			return freeze, freeze.ReplacementLease, true, nil
+		}
+		return freeze, domainworkstream.ImplementationLease{}, false, nil
+	}
+	if freeze.Status != domainworkstream.QueueFreezeActive && strings.TrimSpace(freeze.Status) != "" {
+		return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if freeze.FreezeRevision != resolution.ExpectedFreezeRevision {
+		return freeze, domainworkstream.ImplementationLease{}, false, fmt.Errorf("%w: expected %d current %d", domainworkstream.ErrQueueFreezeRevisionConflict, resolution.ExpectedFreezeRevision, freeze.FreezeRevision)
+	}
+	pendingResolution := strings.TrimSpace(freeze.ResolutionRequestID) != ""
+	if pendingResolution && !freeze.MatchesResolution(resolution) {
+		return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	current, leaseFound, err := s.latestImplementationLeaseLocked()
+	if err != nil {
+		return freeze, domainworkstream.ImplementationLease{}, false, err
+	}
+	// A release tombstone is the latest JSONL record but does not represent a
+	// held lease for the resolution decision.
+	if leaseFound && strings.TrimSpace(current.HolderUnitID) == "" {
+		leaseFound = false
+	}
+	if leaseFound && current.HolderUnitID != "" && current.HolderUnitID != replacement.HolderUnitID {
+		return freeze, domainworkstream.ImplementationLease{}, false, nil
+	}
+	if leaseFound && !jsonlLeaseMatchesReplacement(current, replacement) {
+		return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+
+	// Persist the request identity as an active pending freeze before the
+	// replacement lease.  If the process stops after the lease append, the
+	// latest freeze remains active and the queue stays fail-closed; replay can
+	// compare the exact payload rather than guessing which request was in
+	// flight.
+	if !pendingResolution {
+		now := time.Now().UTC()
+		freeze.ResolutionRequestID = resolution.ResolutionRequestID
+		freeze.ReplacementUnitID = resolution.ReplacementUnitID
+		freeze.SupersedesUnitID = resolution.SupersedesUnitID
+		freeze.BlockerResolutionRefs = append([]domainbacklog.EvidenceRef(nil), resolution.BlockerResolutionRefs...)
+		freeze.ResolutionPayloadHash = resolution.ResolutionPayloadHash
+		freeze.ResolutionAcquired = false
+		freeze.UpdatedAt = now
+		if err := s.saveQueueFreezeLocked(freeze); err != nil {
+			return freeze, domainworkstream.ImplementationLease{}, false, err
+		}
+	}
+
+	if !leaseFound {
+		if err := appendJSONL(s.leasePath, replacement); err != nil {
+			return freeze, domainworkstream.ImplementationLease{}, false, err
+		}
+	}
+	if s.resolutionAppendHook != nil {
+		if err := s.resolutionAppendHook("after_lease_before_resolved_freeze"); err != nil {
+			return freeze, replacement, false, err
+		}
+	}
+
+	// The replacement lease is durable before the resolved freeze record is
+	// appended.  A write failure therefore leaves only active freeze + matching
+	// lease, which blocks every other unit and is safe to finish by replay.
+	now := time.Now().UTC()
+	freeze.Status = domainworkstream.QueueFreezeResolved
+	freeze.ReplacementLease = replacement
+	freeze.ResolutionAcquired = true
+	freeze.UpdatedAt = now
+	freeze.ResolvedAt = now
+	if err := s.saveQueueFreezeLocked(freeze); err != nil {
+		return freeze, replacement, false, err
+	}
+	return freeze, replacement, true, nil
+}
+
+func jsonlLeaseMatchesReplacement(current, replacement domainworkstream.ImplementationLease) bool {
+	return current.LeaseName == replacement.LeaseName &&
+		current.HolderUnitID == replacement.HolderUnitID &&
+		current.HolderWorkstreamID == replacement.HolderWorkstreamID &&
+		current.Stage == replacement.Stage &&
+		current.Revision == replacement.Revision
 }
 
 func (s *JSONLStore) ReleaseImplementationLease(_ context.Context, leaseName, holderUnitID string) error {
-	s.leaseMu.Lock()
-	defer s.leaseMu.Unlock()
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	current, ok, err := s.latestImplementationLeaseLocked()
 	if err != nil {
 		return err
@@ -82,8 +431,8 @@ func (s *JSONLStore) ReleaseImplementationLease(_ context.Context, leaseName, ho
 }
 
 func (s *JSONLStore) GetImplementationLease(_ context.Context, leaseName string) (domainworkstream.ImplementationLease, bool, error) {
-	s.leaseMu.Lock()
-	defer s.leaseMu.Unlock()
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	item, ok, err := s.latestImplementationLeaseLocked()
 	if err != nil || !ok || item.LeaseName != leaseName || item.HolderUnitID == "" {
 		return domainworkstream.ImplementationLease{}, false, err
@@ -95,8 +444,8 @@ func (s *JSONLStore) HeartbeatImplementationLease(_ context.Context, item domain
 	if strings.TrimSpace(item.LeaseName) == "" || strings.TrimSpace(item.HolderUnitID) == "" {
 		return fmt.Errorf("lease_name and holder_unit_id are required")
 	}
-	s.leaseMu.Lock()
-	defer s.leaseMu.Unlock()
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	current, ok, err := s.latestImplementationLeaseLocked()
 	if err != nil {
 		return err

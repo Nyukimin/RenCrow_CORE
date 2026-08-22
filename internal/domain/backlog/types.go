@@ -72,7 +72,27 @@ type EvidenceRef struct {
 	Revision   string `json:"revision,omitempty"`
 	SHA256     string `json:"sha256,omitempty"`
 	ObservedAt string `json:"observed_at"`
-	Passed     bool   `json:"passed"`
+	// Passed is an external/request-side claim.  It is intentionally kept for
+	// legacy wire compatibility and is never sufficient for a lifecycle gate.
+	Passed bool `json:"passed"`
+	// Verified is the persisted CORE-owned verification result.  It is separate
+	// from Passed so an untrusted request cannot forge an owner result.
+	Verified           bool   `json:"verified,omitempty"`
+	VerificationResult string `json:"verification_result,omitempty"`
+	VerifiedAt         string `json:"verified_at,omitempty"`
+	Verifier           string `json:"verifier,omitempty"`
+}
+
+const (
+	EvidenceVerificationVerified = "verified"
+	EvidenceVerificationRejected = "rejected"
+)
+
+// IsVerified reports the CORE-owned positive verification result.  The bool
+// field is the canonical persisted value; the status string is accepted for
+// forward/legacy JSON compatibility when it explicitly says "verified".
+func (e EvidenceRef) IsVerified() bool {
+	return e.Verified || strings.EqualFold(strings.TrimSpace(e.VerificationResult), EvidenceVerificationVerified)
 }
 
 // SpecificationArtifact is a verified specification projection. Local bodies
@@ -171,9 +191,13 @@ type Item struct {
 	AdoptionReason string `json:"adoption_reason,omitempty"`
 	AdoptedAt      string `json:"adopted_at,omitempty"`
 
-	WorkstreamID       string        `json:"workstream_id,omitempty"`
-	ImplementationUnit string        `json:"implementation_unit_id,omitempty"`
-	EvidenceRefs       []EvidenceRef `json:"evidence_refs,omitempty"`
+	WorkstreamID           string        `json:"workstream_id,omitempty"`
+	ImplementationUnit     string        `json:"implementation_unit_id,omitempty"`
+	ImplementationRevision int           `json:"implementation_revision,omitempty"`
+	InvalidatedFromStage   string        `json:"invalidated_from_stage,omitempty"`
+	SupersedesUnitID       string        `json:"supersedes_unit_id,omitempty"`
+	BlockerResolutionRefs  []EvidenceRef `json:"blocker_resolution_refs,omitempty"`
+	EvidenceRefs           []EvidenceRef `json:"evidence_refs,omitempty"`
 
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
@@ -190,21 +214,25 @@ type Item struct {
 // ImplementationUnit is the typed lifecycle projection used by the owner API.
 // Durable item state remains in the append-only backlog record.
 type ImplementationUnit struct {
-	UnitID          string        `json:"unit_id"`
-	ItemID          string        `json:"item_id"`
-	Title           string        `json:"title"`
-	OwnerModule     string        `json:"owner_module,omitempty"`
-	TargetModules   []string      `json:"target_modules,omitempty"`
-	ConsumerModules []string      `json:"consumer_modules,omitempty"`
-	AffectedModules []string      `json:"affected_modules,omitempty"`
-	ConceptState    string        `json:"concept_state"`
-	DeliveryState   string        `json:"delivery_state"`
-	WorkstreamID    string        `json:"workstream_id,omitempty"`
-	Priority        string        `json:"priority,omitempty"`
-	QueueRank       int           `json:"queue_rank,omitempty"`
-	EvidenceRefs    []EvidenceRef `json:"evidence_refs,omitempty"`
-	CreatedAt       string        `json:"created_at"`
-	UpdatedAt       string        `json:"updated_at"`
+	UnitID                 string        `json:"unit_id"`
+	ItemID                 string        `json:"item_id"`
+	Title                  string        `json:"title"`
+	OwnerModule            string        `json:"owner_module,omitempty"`
+	TargetModules          []string      `json:"target_modules,omitempty"`
+	ConsumerModules        []string      `json:"consumer_modules,omitempty"`
+	AffectedModules        []string      `json:"affected_modules,omitempty"`
+	ConceptState           string        `json:"concept_state"`
+	DeliveryState          string        `json:"delivery_state"`
+	WorkstreamID           string        `json:"workstream_id,omitempty"`
+	Priority               string        `json:"priority,omitempty"`
+	QueueRank              int           `json:"queue_rank,omitempty"`
+	ImplementationRevision int           `json:"implementation_revision,omitempty"`
+	InvalidatedFromStage   string        `json:"invalidated_from_stage,omitempty"`
+	SupersedesUnitID       string        `json:"supersedes_unit_id,omitempty"`
+	BlockerResolutionRefs  []EvidenceRef `json:"blocker_resolution_refs,omitempty"`
+	EvidenceRefs           []EvidenceRef `json:"evidence_refs,omitempty"`
+	CreatedAt              string        `json:"created_at"`
+	UpdatedAt              string        `json:"updated_at"`
 }
 
 func (i Item) Unit() ImplementationUnit {
@@ -217,9 +245,20 @@ func (i Item) Unit() ImplementationUnit {
 		ConceptState:    i.ConceptState,
 		DeliveryState:   i.DeliveryState, WorkstreamID: i.WorkstreamID,
 		Priority: i.Priority, QueueRank: i.QueueRank,
-		EvidenceRefs: append([]EvidenceRef(nil), i.EvidenceRefs...),
-		CreatedAt:    i.CreatedAt, UpdatedAt: i.UpdatedAt,
+		ImplementationRevision: implementationRevision(i.ImplementationRevision),
+		InvalidatedFromStage:   i.InvalidatedFromStage,
+		SupersedesUnitID:       i.SupersedesUnitID,
+		BlockerResolutionRefs:  append([]EvidenceRef(nil), i.BlockerResolutionRefs...),
+		EvidenceRefs:           append([]EvidenceRef(nil), i.EvidenceRefs...),
+		CreatedAt:              i.CreatedAt, UpdatedAt: i.UpdatedAt,
 	}
+}
+
+func implementationRevision(value int) int {
+	if value < 1 {
+		return 1
+	}
+	return value
 }
 
 // LegacyStatus projects v2 state onto the established backlog API. check_ok is
@@ -263,6 +302,9 @@ func LegacyStatus(item Item) string {
 // completing them. In particular, proposal_review/open records are candidates
 // and remain non-runnable until an owner calls the v2 adopt operation.
 func ProjectLegacy(item Item) Item {
+	if item.ImplementationRevision < 1 {
+		item.ImplementationRevision = 1
+	}
 	if item.SchemaVersion >= SchemaVersion2 {
 		if strings.TrimSpace(item.Status) == "" {
 			item.Status = LegacyStatus(item)
