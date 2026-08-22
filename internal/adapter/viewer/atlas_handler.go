@@ -10,6 +10,7 @@ import (
 
 	appbacklog "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	featurebacklog "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
 )
 
 const (
@@ -103,7 +104,41 @@ func (h *atlasHandler) read(w http.ResponseWriter, r *http.Request) {
 			writeAtlasError(w, http.StatusNotFound, "not_found")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"item": item})
+		response := map[string]any{"item": item}
+		if len(item.SpecificationRefs) > 0 {
+			pkg, loadErr := featurebacklog.LoadBackfillPackage()
+			if loadErr != nil {
+				writeAtlasError(w, http.StatusInternalServerError, "specification_unavailable")
+				return
+			}
+			resolved := make([]domainbacklog.SpecificationArtifact, 0, len(item.SpecificationRefs))
+			for _, specID := range item.SpecificationRefs {
+				if artifact, ok := pkg.Specification(specID); ok {
+					resolved = append(resolved, artifact)
+				}
+			}
+			response["resolved_specifications"] = resolved
+		}
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	if strings.HasPrefix(path, atlasReadRoot+"/specifications/") {
+		specID, ok := atlasSinglePathID(path, atlasReadRoot+"/specifications/")
+		if !ok {
+			writeAtlasError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		pkg, err := featurebacklog.LoadBackfillPackage()
+		if err != nil {
+			writeAtlasError(w, http.StatusInternalServerError, "specification_unavailable")
+			return
+		}
+		artifact, ok := pkg.Specification(specID)
+		if !ok {
+			writeAtlasError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"specification": artifact})
 		return
 	}
 	if strings.HasPrefix(path, atlasReadRoot+"/evidence/") {
@@ -275,7 +310,11 @@ func atlasSinglePathID(path, prefix string) (string, bool) {
 		return "", false
 	}
 	id, err := url.PathUnescape(raw)
-	return strings.TrimSpace(id), err == nil && strings.TrimSpace(id) != ""
+	id = strings.TrimSpace(id)
+	if err != nil || id == "" || strings.ContainsAny(id, `/\\`) || id == "." || id == ".." || strings.Contains(id, "../") {
+		return "", false
+	}
+	return id, true
 }
 
 func writeAtlasDomainError(w http.ResponseWriter, err error) {

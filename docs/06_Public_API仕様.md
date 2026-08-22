@@ -1321,6 +1321,11 @@ path segmentとしてURL encodeします。
 `/viewer/atlas/evidence/{implementation_unit_id}`で提供します。Debug Viewerおよび認証済み
 `cmd-diagnostics` profileはこのprojectionだけを読みます。
 
+`GET /viewer/atlas/items/{id}`はDesign Cardと解決済みSpecification metadataを返します。
+`GET /viewer/atlas/specifications/{spec_id}`はallow-list登録されたSpecificationだけを返し、local artifactでは
+hash検証済み本文と`body_available=true`、external artifactでは本文を複製せず参照metadataと
+`body_available=false`を返します。encoded slash、backslash、traversal、未知IDを拒否し、任意filesystem pathは受理しません。
+
 状態変更は`POST /v1/atlas/intake`と`POST /v1/atlas/items/{id}/{candidate|adopt|defer|reject|revise}`
 に限定します。`cmd-control` profile、Bearer credential、owner identity、bounded JSON bodyを必須とし、
 COREがstate transition、dedupe、Evidence Gate、WIP leaseを検証してtyped resultを返します。

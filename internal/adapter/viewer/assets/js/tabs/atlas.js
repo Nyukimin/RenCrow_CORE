@@ -7,6 +7,20 @@ let atlasFetchError = '';
 let atlasLoading = false;
 let atlasActiveTab = 'current';
 const atlasBacklogFilters = {concept: '', priority: '', owner: ''};
+let atlasItemDetailState = atlasEmptyItemDetailState();
+
+function atlasEmptyItemDetailState(requestID = 0) {
+  return {
+    itemID: '',
+    scope: '',
+    item: null,
+    specifications: [],
+    artifacts: Object.create(null),
+    loading: false,
+    error: '',
+    requestID,
+  };
+}
 
 function atlasEmptyProjection() {
   return {
@@ -70,6 +84,14 @@ function atlasItemTitle(item, fallback = 'Untitled Atlas item') {
 
 function atlasItemID(item) {
   return atlasDisplay(atlasField(item, ['item_id', 'id', 'unit_id', 'feature_id', 'key'], ''), '-');
+}
+
+function atlasRawItemID(item) {
+  if (typeof item === 'string') return item.trim();
+  const itemID = String(atlasField(item, ['item_id', 'id', 'unit_id'], '') || '').trim();
+  if (itemID) return itemID;
+  const featureID = String(atlasField(item, ['feature_id', 'key'], '') || '').trim();
+  return featureID ? 'atlas:' + featureID : '';
 }
 
 function atlasItemCategory(item) {
@@ -198,6 +220,237 @@ function atlasRenderSummary() {
   ].join('');
 }
 
+function atlasDetailSources(item) {
+  const sources = [];
+  if (!item || typeof item !== 'object') return sources;
+  sources.push(item);
+  for (const key of ['design_card', 'designCard', 'purpose_card', 'purposeCard', 'card']) {
+    const value = item[key];
+    if (value && typeof value === 'object' && !Array.isArray(value)) sources.push(value);
+  }
+  return sources;
+}
+
+function atlasDetailField(item, keys, fallback = '') {
+  for (const source of atlasDetailSources(item)) {
+    const value = atlasField(source, keys, '');
+    if (value !== '') return value;
+  }
+  return fallback;
+}
+
+function atlasHasValue(value) {
+  if (value === null || value === undefined) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'string') return value.trim() !== '';
+  return true;
+}
+
+function atlasDetailMarkup(label, value) {
+  const content = atlasHasValue(value)
+    ? atlasEscape(value)
+    : '<span class="atlas-detail-unavailable">Unavailable</span>';
+  return '<div class="atlas-detail-field"><dt>' + atlasEscape(label) + '</dt><dd>' + content + '</dd></div>';
+}
+
+function atlasDetailTrigger(item) {
+  const itemID = atlasRawItemID(item);
+  if (!itemID) return '';
+  return '<button class="atlas-detail-trigger" type="button" data-atlas-item-id="' + atlasEscapeAttr(itemID) + '" aria-label="Open Atlas item detail">Details</button>';
+}
+
+function atlasSpecificationID(specification) {
+  if (typeof specification === 'string') return specification.trim();
+  return String(atlasField(specification, ['spec_id', 'specification_id', 'artifact_id', 'id', 'key'], '') || '').trim();
+}
+
+function atlasSpecificationList(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return typeof value === 'string' && value.trim() ? [value] : [];
+  const nested = atlasList(value);
+  if (nested.length) return nested;
+  return atlasSpecificationID(value) ? [value] : [];
+}
+
+function atlasReferenceList(value) {
+  if (Array.isArray(value)) return value;
+  if (!atlasHasValue(value)) return [];
+  return [value];
+}
+
+function atlasSpecificationRefs(payload, item) {
+  const candidates = [];
+  if (payload && typeof payload === 'object') {
+    candidates.push(payload.specifications, payload.specification_refs, payload.spec_refs, payload.specification);
+  }
+  if (item && typeof item === 'object') {
+    candidates.push(item.specifications, item.specification_refs, item.spec_refs, item.specification_ids, item.specification);
+  }
+  for (const candidate of candidates) {
+    const references = atlasSpecificationList(candidate);
+    if (references.length) return atlasUniqueSpecifications(references);
+  }
+  return [];
+}
+
+function atlasUniqueSpecifications(references) {
+  const seen = new Set();
+  return references.filter((reference) => {
+    const id = atlasSpecificationID(reference);
+    let key = id;
+    if (!key) {
+      try { key = JSON.stringify(reference); } catch (_) { key = String(reference); }
+    }
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function atlasRenderSpecificationArtifacts() {
+  const references = atlasItemDetailState.specifications;
+  if (!references.length) {
+    return atlasEmpty('Specification unavailable', 'No allow-listed specification reference is present for this item.', true);
+  }
+  return '<div class="atlas-spec-list">' + references.map((reference) => {
+    const specID = atlasSpecificationID(reference);
+    const result = specID ? atlasItemDetailState.artifacts[specID] : null;
+    if (!specID || !result || result.error || !result.artifact) {
+      const detail = result && result.error ? result.error : 'Specification ID is unavailable; no body was requested.';
+      return '<article class="atlas-spec-block"><div class="atlas-spec-heading"><strong>' + atlasEscape(specID || 'Specification') + '</strong></div>' + atlasEmpty('Specification unavailable', detail, true) + '</article>';
+    }
+    const artifact = result.artifact;
+    const availability = artifact.content_available !== undefined ? artifact.content_available : artifact.body_available;
+    const contentAvailable = availability !== false && String(availability || '').toLowerCase() !== 'false';
+    const hasContent = contentAvailable && atlasHasValue(artifact.content);
+    const body = hasContent
+      ? '<pre class="atlas-spec-body">' + atlasEscape(artifact.content, 'Specification body unavailable') + '</pre>'
+      : atlasEmpty('Specification body unavailable', 'Metadata was returned, but no readable body is available.', true);
+    return '<article class="atlas-spec-block"><div class="atlas-spec-heading"><div><strong>' + atlasEscape(atlasField(artifact, ['title', 'name'], specID)) + '</strong><div class="atlas-code">' + atlasEscape(specID) + '</div></div>' + atlasBadge(atlasField(artifact, ['status', 'state'], 'available'), 'available') + '</div>' +
+      '<dl class="atlas-detail-grid atlas-spec-meta">' +
+      atlasDetailMarkup('Type', atlasField(artifact, ['type', 'kind'], '')) +
+      atlasDetailMarkup('Source', atlasField(artifact, ['source', 'source_ref', 'locator'], '')) +
+      atlasDetailMarkup('Revision', atlasField(artifact, ['revision', 'source_revision', 'commit', 'sha'], '')) +
+      atlasDetailMarkup('Content SHA-256', atlasField(artifact, ['content_sha256', 'sha256'], '')) +
+      atlasDetailMarkup('Captured At', atlasFormatTime(atlasField(artifact, ['captured_at', 'created_at', 'updated_at'], ''))) +
+      '</dl>' + body + '</article>';
+  }).join('') + '</div>';
+}
+
+function atlasRenderDetailSources(item) {
+  const references = atlasReferenceList(atlasDetailField(item, ['source_refs', 'sourceRefs', 'sources'], []));
+  if (!references.length) return atlasEmpty('Sources unavailable', 'No source references were returned for this item.', true);
+  return '<ul class="atlas-detail-list">' + references.map((reference) => {
+    if (typeof reference === 'string') return '<li>' + atlasEscape(reference) + '</li>';
+    return '<li><strong>' + atlasEscape(atlasField(reference, ['type', 'source_type'], 'Source')) + '</strong><span>' + atlasEscape(atlasField(reference, ['locator', 'url', 'source'], 'Unavailable')) + '</span><span>Strength: ' + atlasEscape(atlasField(reference, ['strength', 'source_strength'], 'unresolved')) + '</span><span>' + atlasEscape(atlasField(reference, ['repository', 'revision', 'content_hash', 'sha256'], '')) + '</span></li>';
+  }).join('') + '</ul>';
+}
+
+function atlasRenderDetailEvidence(item) {
+  const references = atlasReferenceList(atlasDetailField(item, ['evidence_refs', 'evidenceRefs', 'evidence'], []));
+  if (!references.length) return atlasEmpty('Evidence unavailable', 'No item evidence references were returned.', true);
+  return '<ul class="atlas-detail-list">' + references.map((reference) => {
+    if (typeof reference === 'string') return '<li>' + atlasEscape(reference) + '</li>';
+    const passed = reference.passed === true ? 'passed' : reference.passed === false ? 'failed' : atlasField(reference, ['status', 'state', 'result'], 'recorded');
+    return '<li><strong>' + atlasEscape(atlasField(reference, ['stage', 'kind', 'type'], 'Evidence')) + '</strong>' + atlasBadge(passed) + '<span>' + atlasEscape(atlasField(reference, ['ref', 'evidence_ref', 'id', 'commit', 'trace_id'], 'Unavailable')) + '</span><span>' + atlasEscape(atlasFormatTime(atlasField(reference, ['observed_at', 'created_at', 'timestamp'], ''))) + '</span></li>';
+  }).join('') + '</ul>';
+}
+
+function atlasRenderItemDetail(scope) {
+  if (!atlasItemDetailState.itemID || atlasItemDetailState.scope !== scope) return '';
+  const item = atlasItemDetailState.item || {item_id: atlasItemDetailState.itemID};
+  const title = atlasItemTitle(item, 'Atlas item detail');
+  if (atlasItemDetailState.loading) {
+    return '<section class="atlas-item-detail" aria-live="polite"><div class="atlas-detail-head"><div><span class="atlas-kicker">ITEM DETAIL</span><h3>' + atlasEscape(title) + '</h3><div class="atlas-code">' + atlasEscape(atlasItemDetailState.itemID) + '</div></div></div>' + atlasEmpty('Loading item detail', 'Reading the read-only Atlas item and specification references.') + '</section>';
+  }
+  if (atlasItemDetailState.error) {
+    return '<section class="atlas-item-detail" aria-live="polite"><div class="atlas-detail-head"><div><span class="atlas-kicker">ITEM DETAIL</span><h3>' + atlasEscape(title) + '</h3><div class="atlas-code">' + atlasEscape(atlasItemDetailState.itemID) + '</div></div></div>' + atlasEmpty('Item detail unavailable', atlasItemDetailState.error, true) + '</section>';
+  }
+  const cardFields = [
+    ['Purpose', ['purpose', 'design_purpose', 'goal', 'objective']],
+    ['Problem', ['problem', 'problem_statement', 'challenge', 'pain_point']],
+    ['Idea', ['idea', 'proposal', 'solution', 'approach']],
+    ['Background', ['background', 'context', 'rationale']],
+    ['Expected Effect', ['expected_effect', 'expectedEffect', 'expected_outcome', 'outcome', 'benefit', 'benefits']],
+    ['Relations', ['relation_refs', 'relations', 'related_ids', 'depends_on', 'affected_modules']],
+  ];
+  const sourceRefs = atlasReferenceList(atlasDetailField(item, ['source_refs', 'sourceRefs', 'sources'], []));
+  const sourceStrengths = Array.from(new Set(sourceRefs.map((reference) => typeof reference === 'object' && reference ? atlasField(reference, ['strength', 'source_strength'], '') : '').filter(Boolean)));
+  const sourceStrength = atlasDetailField(item, ['source_strength', 'sourceStrength', 'evidence_strength', 'source_confidence', 'confidence'], '') || sourceStrengths;
+  const conceptState = atlasDetailField(item, ['concept_state', 'conceptState'], '');
+  const deliveryState = atlasDetailField(item, ['delivery_state', 'deliveryState'], '');
+  const implementationStatus = atlasDetailField(item, ['implementation_status', 'implementationStatus'], '') || [conceptState, deliveryState].filter(Boolean).join(' / ');
+  return '<section class="atlas-item-detail" aria-live="polite"><div class="atlas-detail-head"><div><span class="atlas-kicker">ITEM DETAIL / READ-ONLY</span><h3>' + atlasEscape(title) + '</h3><div class="atlas-code">' + atlasEscape(atlasItemDetailState.itemID) + '</div></div><button class="atlas-detail-close" type="button" data-atlas-detail-close="true">Close</button></div>' +
+    '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Design Card</h4><span>Purpose and intent</span></div><dl class="atlas-detail-grid">' + cardFields.map((field) => atlasDetailMarkup(field[0], atlasDetailField(item, field[1], ''))).join('') + '</dl></section>' +
+    '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Specification</h4><span>allow-listed metadata and body</span></div>' + atlasRenderSpecificationArtifacts() + '</section>' +
+    '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Sources</h4><span>read-only references</span></div>' + atlasRenderDetailSources(item) + '</section>' +
+    '<dl class="atlas-detail-grid atlas-detail-status">' + atlasDetailMarkup('Source Strength', sourceStrength) + atlasDetailMarkup('Implementation Status', implementationStatus) + '</dl>' +
+    '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Evidence</h4><span>item evidence references</span></div>' + atlasRenderDetailEvidence(item) + '</section></section>';
+}
+
+function atlasBindItemDetailControls(view) {
+  view.querySelectorAll('[data-atlas-item-id]').forEach((button) => {
+    button.addEventListener('click', () => atlasOpenItemDetail(button.dataset.atlasItemId, view.dataset.atlasView || atlasActiveTab));
+  });
+  view.querySelectorAll('[data-atlas-detail-close]').forEach((button) => {
+    button.addEventListener('click', () => {
+      atlasItemDetailState = atlasEmptyItemDetailState(atlasItemDetailState.requestID + 1);
+      atlasRender();
+    });
+  });
+}
+
+async function atlasOpenItemDetail(itemID, scope) {
+  const normalizedID = String(itemID || '').trim();
+  if (!normalizedID) return;
+  const requestID = atlasItemDetailState.requestID + 1;
+  atlasItemDetailState = atlasEmptyItemDetailState(requestID);
+  atlasItemDetailState.itemID = normalizedID;
+  atlasItemDetailState.scope = scope;
+  atlasItemDetailState.loading = true;
+  atlasRender();
+  try {
+    const response = await fetch('/viewer/atlas/items/' + encodeURIComponent(itemID), {cache: 'no-store'});
+    if (!response.ok) throw new Error('HTTP ' + String(response.status));
+    const payload = await response.json();
+    const item = payload && payload.item && typeof payload.item === 'object' ? payload.item : payload;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('invalid Atlas item detail');
+    const specifications = atlasSpecificationRefs(payload, item);
+    const artifacts = Object.create(null);
+    for (const reference of specifications) {
+      const specID = atlasSpecificationID(reference);
+      if (!specID) {
+        artifacts[''] = {error: 'Specification ID is unavailable'};
+        continue;
+      }
+      try {
+        const specificationResponse = await fetch('/viewer/atlas/specifications/' + encodeURIComponent(specID), {cache: 'no-store'});
+        if (!specificationResponse.ok) throw new Error('HTTP ' + String(specificationResponse.status));
+        const specificationPayload = await specificationResponse.json();
+        const artifact = specificationPayload && specificationPayload.specification && typeof specificationPayload.specification === 'object'
+          ? specificationPayload.specification
+          : specificationPayload;
+        if (!artifact || typeof artifact !== 'object' || Array.isArray(artifact)) throw new Error('invalid SpecificationArtifact');
+        artifacts[specID] = {artifact};
+      } catch (error) {
+        artifacts[specID] = {error: String(error && error.message ? error.message : error)};
+      }
+    }
+    if (requestID !== atlasItemDetailState.requestID) return;
+    atlasItemDetailState.item = item;
+    atlasItemDetailState.specifications = specifications;
+    atlasItemDetailState.artifacts = artifacts;
+  } catch (error) {
+    if (requestID !== atlasItemDetailState.requestID) return;
+    atlasItemDetailState.error = String(error && error.message ? error.message : error);
+  } finally {
+    if (requestID === atlasItemDetailState.requestID) {
+      atlasItemDetailState.loading = false;
+      atlasRender();
+    }
+  }
+}
+
 function atlasRenderCurrent(view) {
   const items = atlasCurrentItems();
   if (!items.length) {
@@ -210,12 +463,13 @@ function atlasRenderCurrent(view) {
     items.map((item) => {
       const evidence = atlasField(item, ['evidence_count', 'evidenceCount', 'evidence'], '');
       const evidenceValue = Array.isArray(evidence) ? evidence.length : atlasDisplay(evidence, '0');
-      return '<tr><td><strong>' + atlasEscape(atlasItemTitle(item)) + '</strong><div class="atlas-code">' + atlasEscape(atlasItemID(item)) + '</div></td>' +
+      return '<tr><td><strong>' + atlasEscape(atlasItemTitle(item)) + '</strong><div class="atlas-code">' + atlasEscape(atlasItemID(item)) + '</div><div class="atlas-detail-actions">' + atlasDetailTrigger(item) + '</div></td>' +
         '<td>' + atlasEscape(atlasItemCategory(item)) + '</td><td>' + atlasEscape(atlasItemOwner(item)) + '</td>' +
         '<td>' + atlasBadge(atlasConceptState(item)) + '</td><td>' + atlasBadge(atlasDeliveryState(item)) + '</td>' +
         '<td class="atlas-code">' + atlasEscape(atlasField(item, ['revision', 'source_revision', 'commit', 'sha'], '-')) + '</td>' +
         '<td>' + atlasEscape(evidenceValue) + '</td></tr>';
-    }).join('') + '</tbody></table></div>';
+    }).join('') + '</tbody></table></div>' + atlasRenderItemDetail('current');
+  atlasBindItemDetailControls(view);
 }
 
 function atlasRenderRadar(view) {
@@ -270,12 +524,13 @@ function atlasRenderBacklog(view) {
   }
   view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">BACKLOG</span><h3>検討済み項目</h3><p>Concept State、Priority、Owner で絞り込めます。</p></div><span class="atlas-source-note">' + String(filtered.length) + ' / ' + String(allItems.length) + '</span></div>' + filterBar +
     '<div class="atlas-table-wrap"><table class="atlas-table"><thead><tr><th>Item</th><th>Concept State</th><th>Priority</th><th>Owner</th><th>Summary</th><th>Updated</th></tr></thead><tbody>' +
-    (filtered.length ? filtered.map((item) => '<tr><td><strong>' + atlasEscape(atlasItemTitle(item)) + '</strong><div class="atlas-code">' + atlasEscape(atlasItemID(item)) + '</div></td>' +
+    (filtered.length ? filtered.map((item) => '<tr><td><strong>' + atlasEscape(atlasItemTitle(item)) + '</strong><div class="atlas-code">' + atlasEscape(atlasItemID(item)) + '</div><div class="atlas-detail-actions">' + atlasDetailTrigger(item) + '</div></td>' +
       '<td>' + atlasBadge(atlasConceptState(item)) + '</td><td>' + atlasEscape(atlasField(item, ['priority', 'importance'], '-')) + '</td>' +
       '<td>' + atlasEscape(atlasItemOwner(item)) + '</td><td class="atlas-wrap">' + atlasEscape(atlasField(item, ['summary', 'body', 'description', 'note'], '-')) + '</td>' +
       '<td class="atlas-time">' + atlasEscape(atlasFormatTime(atlasField(item, ['updated_at', 'created_at', 'timestamp'], ''))) + '</td></tr>').join('') : '<tr><td colspan="6">' + atlasEmpty('No matching backlog items', 'Change the read-only filters to inspect other states.') + '</td></tr>') +
-    '</tbody></table></div>';
+    '</tbody></table></div>' + atlasRenderItemDetail('backlog');
   atlasBindBacklogFilters(view);
+  atlasBindItemDetailControls(view);
 }
 
 function atlasBindBacklogFilters(view) {

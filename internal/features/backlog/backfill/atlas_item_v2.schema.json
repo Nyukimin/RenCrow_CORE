@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rencrow.atlas.item.v2",
+  "title": "RenCrow Atlas Item v2",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "feature_id",
+    "category",
+    "title",
+    "purpose",
+    "problem",
+    "idea",
+    "background",
+    "expected_effect",
+    "relation_refs",
+    "concept_state",
+    "delivery_state",
+    "reconstruction_basis",
+    "source_refs",
+    "specification_refs",
+    "migration_status",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "feature_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1
+    },
+    "problem": {
+      "type": "string"
+    },
+    "idea": {
+      "type": "string",
+      "minLength": 1
+    },
+    "background": {
+      "type": "string"
+    },
+    "expected_effect": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "relation_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "concept_state": {
+      "enum": [
+        "RADAR",
+        "CANDIDATE",
+        "ADOPTED",
+        "DEFERRED",
+        "REJECTED"
+      ]
+    },
+    "delivery_state": {
+      "type": "string"
+    },
+    "reconstruction_basis": {
+      "enum": [
+        "direct_spec",
+        "direct_chat",
+        "repo_spec",
+        "project_summary",
+        "implementation_inference",
+        "unresolved"
+      ]
+    },
+    "source_refs": {
+      "type": "array"
+    },
+    "specification_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "migration_status": {
+      "enum": [
+        "restored",
+        "needs_context"
+      ]
+    },
+    "origin_atlas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

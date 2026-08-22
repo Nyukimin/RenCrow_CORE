@@ -267,6 +267,9 @@ func (s *Service) Candidate(ctx context.Context, id string) (domainbacklog.Item,
 	if err != nil {
 		return domainbacklog.Item{}, err
 	}
+	if strings.TrimSpace(item.Purpose) == "" {
+		return domainbacklog.Item{}, errors.New("purpose is required for candidate promotion")
+	}
 	if item.ConceptState == domainbacklog.ConceptCandidate {
 		item.SchemaVersion = domainbacklog.SchemaVersion2
 		if err := s.save(ctx, item); err != nil {

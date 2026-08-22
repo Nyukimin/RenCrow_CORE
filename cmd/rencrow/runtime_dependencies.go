@@ -949,6 +949,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	// lifecycle state is initialized when either owner store is unavailable;
 	// reads still expose an empty/legacy-safe projection and writes fail closed.
 	deps.atlasService = backlogapp.NewService(deps.backlogStore, deps.workstreamStore)
+	atlasBackfillReady := false
 	if catalog, err := backlogfeature.LoadAtlasCatalog(); err != nil {
 		log.Printf("Atlas catalog unavailable: %v", err)
 	} else {
@@ -958,7 +959,22 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			"source":         catalog.Source,
 		}}).WithFeatures(catalog.Features).WithModules(catalog.Modules)
 	}
-	if err := deps.atlasService.Recover(context.Background()); err != nil {
+	if pkg, err := backlogfeature.LoadBackfillPackage(); err != nil {
+		log.Printf("Atlas backfill unavailable: %v", err)
+	} else {
+		deps.atlasService.WithFeatures(pkg.FeatureMaps())
+		if report, reconcileErr := deps.atlasService.ReconcileBackfill(context.Background(), pkg); reconcileErr != nil {
+			log.Printf("Atlas backfill reconcile failed: %v", reconcileErr)
+		} else {
+			log.Printf("Atlas backfill reconciled: imported=%d updated=%d skipped=%d", report.Imported, report.Updated, report.Skipped)
+			atlasBackfillReady = true
+		}
+	}
+	if !atlasBackfillReady {
+		// Do not expose a projection backed by an alternate or partial Atlas
+		// source when the canonical embedded package cannot be reconciled.
+		deps.atlasService = nil
+	} else if err := deps.atlasService.Recover(context.Background()); err != nil {
 		log.Printf("Atlas lease recovery failed: %v", err)
 	}
 	var atlasToken []byte

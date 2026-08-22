@@ -1,0 +1,4923 @@
+{
+  "schema": "rencrow.atlas.backfill.v1",
+  "schema_version": 1,
+  "generated_at": "2026-08-21T22:26:00+09:00",
+  "scope": {
+    "description": "Union of the GitHub-annotated Atlas v2, recoverable carry-over items from original Atlas v1, and Atlas design items created in the current thread.",
+    "item_count": 114,
+    "rules": [
+      "Do not invent unavailable chat message IDs or unsupported specifications.",
+      "Purpose/Problem/Idea/Background are reconstructed only from current Atlas text, project conversation context, uploaded specifications, or repository specifications.",
+      "Specification artifacts are marked as captured current-thread specs, design-decision summaries, or external repository specs.",
+      "ADOPTED does not imply implementation complete; concept_state and delivery_state are independent."
+    ]
+  },
+  "items": [
+    {
+      "schema_version": 2,
+      "feature_id": "agent.mio_chat",
+      "category": "Agent社会",
+      "title": "Mio / Chat",
+      "purpose": "利用者との通常会話の入口と、回答統合・通常入力の交通整理を一つの安定したAgent Identityへ持たせる。",
+      "problem": "複数Agentを直接利用者へ露出すると、誰が受け取り、誰が最終応答するかが不安定になる。",
+      "idea": "Mioを通常入力のRoute Ownerとし、明示commandを優先したうえでChat/他Agent/Execution Roleへ振り分ける。",
+      "background": "旧3人格逐次会話から、人格とExecution Roleを分離した現在のRenCrow Agent構成へ発展した。",
+      "expected_effect": [
+        "通常会話の一貫性",
+        "routing責務の明確化",
+        "Agent追加時の入口の安定化"
+      ],
+      "relation_refs": [
+        "agent.routing",
+        "agent.role_model_separation",
+        "ui.portal"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/02_機能仕様.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "mio.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.shiro_worker",
+      "category": "Agent社会",
+      "title": "Shiro / Worker",
+      "purpose": "設計提案と副作用実行を分離し、実際のTool・command・test・適用を責任を持って実行する。",
+      "problem": "Coderが提案と実行を同時に所有すると、検証前のpatch適用や権限境界の曖昧化が起きる。",
+      "idea": "ShiroをWorker/Execution側のAgentとし、Coderの提案を受けて実行・検証・結果統合を行う。",
+      "background": "RenCrowのChat/Worker/Coder責務分離を強化する過程で確立した。",
+      "expected_effect": [
+        "side effect境界の明確化",
+        "Coderの暴走防止",
+        "TDD/E2Eの実行責任集約"
+      ],
+      "relation_refs": [
+        "agent.coder_pool",
+        "tool.harness",
+        "atlas.lifecycle"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/02_機能仕様.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "shiro.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.kuro_heavy",
+      "category": "Agent社会",
+      "title": "Kuro / Heavy",
+      "purpose": "深い分析・設計・高難度技術作業を、Kuroという人格を維持したままHeavy Execution Roleへ接続する。",
+      "problem": "物理実行runtimeやCodexそのものをAgent Identityとして扱うと、model交換時に人格・記憶・責務が崩れる。",
+      "idea": "Kuro=Agent、Heavy=Execution Role、Codex=Runtime Targetとして分離し、現行productionではHeavy経由でCodex Execへ接続する。",
+      "background": "Agent / Role / Runtime / Modelを分離する設計判断の具体例として実装された。",
+      "expected_effect": [
+        "深考察の安定提供",
+        "model交換可能性",
+        "Identityの永続性"
+      ],
+      "relation_refs": [
+        "llm.role_model_separation",
+        "llm.gateway_runtime"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/04_アーキテクチャ概要.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "kuro.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.midori_wild",
+      "category": "Agent社会",
+      "title": "Midori / Wild",
+      "purpose": "創作・視覚・横方向探索を担当する人格を、Wild Execution RoleとVision/Image能力へ接続する。",
+      "problem": "創作や画像解析を通常Chatと同じ処理に押し込むと、責務・model・media境界が混ざる。",
+      "idea": "MidoriをWild Agentとし、raw mediaはVisionで正規化してから解釈し、画像生成はRenCrow_Image正規経路を使う。",
+      "background": "創作Agentとmultimodal capabilityを人格から分離して運用するために設計された。",
+      "expected_effect": [
+        "創作能力の独立",
+        "Vision/Image責務分離",
+        "model交換容易化"
+      ],
+      "relation_refs": [
+        "ui.vision",
+        "ui.image_generation",
+        "llm.role_model_separation"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/02_機能仕様.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "midori.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.coder_pool",
+      "category": "Agent社会",
+      "title": "Aka / Ao / Gin / Kin",
+      "purpose": "設計・実装・レビュー・反証など異なる強みを持つCoderを、提案主体として複数使い分ける。",
+      "problem": "単一Coderへ全設計判断を集中すると、盲点・実装偏重・検証不足が起きやすい。",
+      "idea": "Aka/Ao/Gin/KinをCoder Agentとして扱い、proposal/patch/reviewを返し、実適用はWorker側へ分離する。",
+      "background": "Coderの固定Subagent化を避け、将来どの上位Agentからも仕事を受けられるflat Agent設計へ整理された。",
+      "expected_effect": [
+        "設計多様性",
+        "レビュー品質向上",
+        "実行責務分離"
+      ],
+      "relation_refs": [
+        "agent.shiro_worker",
+        "agent.unbounded",
+        "agent.subagent_design"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "aka.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "ao.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "gin.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "kin.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/HarnesAgentSubagent.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [
+        "spec_agent_subagent_external"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.unbounded",
+      "category": "Agent社会",
+      "title": "Agent人数無制限設計",
+      "purpose": "Agent数を4人や8人などコード上の固定数に縛らず、将来のAgent追加を構造変更なしで可能にする。",
+      "problem": "Agent名をRouterやUIへ静的列挙すると、追加のたびに複数箇所を修正し、協議も総当たりで発散する。",
+      "idea": "Agent RegistryをIdentity Planeの正本とし、実際に動くAgentはtaskごとのWork Graph、committee、routingで必要数だけ選ぶ。",
+      "background": "DeepSeek HarnessのSubagent議論と、RenCrowを10人以上へ拡張したい議論から明確化した。",
+      "expected_effect": [
+        "Agent追加コスト低減",
+        "固定階層回避",
+        "大人数時の発散防止"
+      ],
+      "relation_refs": [
+        "agent.coder_pool",
+        "agent.registry_routing",
+        "decision.committee"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/HarnesAgentSubagent.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:Agent/Subagent設計",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [
+        "spec_agent_subagent_external"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.delegate_lifecycle",
+      "category": "Agent社会",
+      "title": "Agent間 delegate / ack / report",
+      "purpose": "Agent間の仕事移譲を口頭会話だけでなく、追跡・再送・完了確認可能なlifecycleにする。",
+      "problem": "自由文だけの委譲では、依頼ID、責任、成果物、retry、完了状態が曖昧になる。",
+      "idea": "delegate→acknowledge→reportをrequest_idで結び、将来はtyped AgentWorkRequest/Resultとdeliverable validationへ拡張する。",
+      "background": "複数Agentで実作業を分担するための最低限の協調protocolとして導入された。",
+      "expected_effect": [
+        "委譲の監査性",
+        "二重実行防止",
+        "成果物検証"
+      ],
+      "relation_refs": [
+        "agent.contract",
+        "agent.registry_routing",
+        "eval.trace_ids"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.idlechat",
+      "category": "Agent社会",
+      "title": "IdleChat / 自走会話",
+      "purpose": "ユーザーからの明示入力がない時間にも、キャラクターが話題を持ち、会話・物語・ニュースを自律的に提示できるようにする。",
+      "problem": "通常ChatだけではRenCrowが受動的な質問応答器のままで、キャラクター社会としての継続性が弱い。",
+      "idea": "Topic Stock、News Seed、Forecast、事前生成episode/story、surface presenceと連携してIdleChatを運用する。",
+      "background": "初期のAutoPrompt/Idle構想から発展し、現在はPORTAL表示やstock永続化まで実装された。",
+      "expected_effect": [
+        "自走感",
+        "キャラクター継続性",
+        "ニュース・物語の活用"
+      ],
+      "relation_refs": [
+        "knowledge.news_db",
+        "tool.scheduler",
+        "ui.portal"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "specification_02.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "00_最初の一歩.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "decision.router",
+      "category": "協議・判断",
+      "title": "Router",
+      "purpose": "入力内容に応じて適切なAgent/Execution Roleへ処理を振り分ける。",
+      "problem": "全入力を同じAgent・modelで処理すると、コスト・品質・権限・得意分野を活かせない。",
+      "idea": "Mio DecideAction、command優先、rule/classifierを使い、Agent IdentityとRoleを分離したroutingを行う。",
+      "background": "旧3LLM逐次会話のRouterから、Agent/Role分離型へ発展した。",
+      "expected_effect": [
+        "適材適所の推論",
+        "コスト最適化",
+        "責務境界維持"
+      ],
+      "relation_refs": [
+        "agent.mio_chat",
+        "agent.registry_routing",
+        "llm.gateway_runtime"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/02_機能仕様.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "目的１.txt",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.registry_routing",
+      "category": "協議・判断",
+      "title": "Registry駆動 routing",
+      "purpose": "Agent追加時にRouterコードを書き換えず、Contract/Capability/Restrictionから候補を選べるようにする。",
+      "problem": "現行RouterはAgent名を静的に扱うため、Agent数増加とともに条件分岐と重複が増える。",
+      "idea": "Agent Registryを検索し、capability/restriction filterと選択根拠traceを通してrecipientを決める。",
+      "background": "Agent Identity PlaneとProjection原則を整理した2026-08-21の設計議論で優先課題になった。",
+      "expected_effect": [
+        "Agent追加容易化",
+        "routing根拠の観測",
+        "静的分岐削減"
+      ],
+      "relation_refs": [
+        "agent.unbounded",
+        "agent.contract",
+        "decision.router"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-21:Agent Registry / Route-Identity分離",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "decision.facilitator",
+      "category": "協議・判断",
+      "title": "固定 Facilitator",
+      "purpose": "上位協議の進行手続きを安定させ、論点整理・発言制御・記録・停滞解消を誰かの人格権力にしない。",
+      "problem": "固定CoordinatorをAgentとして置くと上下関係化し、逆に進行責任を置かないと大人数協議が発散する。",
+      "idea": "内容面の権限を持たない固定Facilitator Roleを置き、議論手続きだけを担当させる。",
+      "background": "Mio/Shiro/Kuro/Midoriを対等に保ちながら協議を収束させたい議論から採用された。",
+      "expected_effect": [
+        "協議の収束性",
+        "固定上下関係の回避",
+        "議論手続きの再現性"
+      ],
+      "relation_refs": [
+        "decision.chair",
+        "decision.shared_artifact",
+        "agent.role_model_separation"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:上位協議 Facilitator/Chair",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [
+        "spec_council_facilitator_chair"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "decision.chair",
+      "category": "協議・判断",
+      "title": "協議ごとの Chair / 主導役",
+      "purpose": "議題ごとに適切なAgentが内容面を主導しつつ、恒久的な上下関係を作らない。",
+      "problem": "固定の議論主導者では結論の方向が偏り、全員同格だけでは収束責任が曖昧になる。",
+      "idea": "discussion_id単位でChairを1名選び、論点の内容面を主導する。Chairの票や恒久的影響力は重くしない。",
+      "background": "れんが『議長は進行役で上下関係ではなく、協議ごとに入れ替わる』と明確化した。",
+      "expected_effect": [
+        "議題適応性",
+        "権力固定化防止",
+        "協議の収束"
+      ],
+      "relation_refs": [
+        "decision.facilitator",
+        "decision.shared_artifact",
+        "decision.prediction_market"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:上位協議 Chair",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [
+        "spec_council_facilitator_chair"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "decision.blind_calibration",
+      "category": "協議・判断",
+      "title": "Blind Forecast / Calibration",
+      "purpose": "Agent同士が互いの回答に引っ張られる前に独立予測を取り、過去精度で確率を校正して集合判断へ使う。",
+      "problem": "生のconfidenceはAgentごとの癖があり、先に他Agentの意見を見ると情報カスケードが起きる。",
+      "idea": "Blind Forecast→Agent×Domain×Task Type Calibration→Proper Scoring→Weighted Aggregation→Evidence Exchange→Reforecastを行う。",
+      "background": "Prediction Market調査から、市場機構より先にProbabilityを共通言語化すべきだと整理された。",
+      "expected_effect": [
+        "独立性維持",
+        "confidenceの実績補正",
+        "少数派の有用情報保持"
+      ],
+      "relation_refs": [
+        "decision.prediction_market",
+        "decision.hassum",
+        "eval.shadow_replay"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:Prediction Market協議設計",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [
+        "spec_prediction_market_decision"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "decision.prediction_market",
+      "category": "協議・判断",
+      "title": "Prediction Market / LMSR",
+      "purpose": "複数Agentの確率判断を市場型集約でも評価し、単純な投票より高品質なDecision Supportが可能か検証する。",
+      "problem": "多数決やraw confidenceだけでは、Agentの得意不得意・過信・情報差を十分扱えない。",
+      "idea": "Event Contract表現とLMSR等をShadow Modeで簡易集約方式と比較し、明確に上回る場合のみ昇格する。",
+      "background": "金融としてのPrediction Marketと集合知としてのPrediction Marketを分けて調査し、RenCrowには限定導入と決めた。",
+      "expected_effect": [
+        "意思決定品質向上",
+        "確率Calibration活用",
+        "協議方式の実験可能化"
+      ],
+      "relation_refs": [
+        "decision.blind_calibration",
+        "eval.shadow_replay",
+        "decision.facilitator"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:Prediction Market総合調査",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [
+        "spec_prediction_market_decision"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "decision.hassum",
+      "category": "協議・判断",
+      "title": "HASSUM / 意味的不確実性",
+      "purpose": "Multi-Agent協議の中間回答について、意味的不確実性を測り、再質問や再検討を必要な箇所だけ起動できるか評価する。",
+      "problem": "固定的な協議フローでは、誤りや曖昧さがそのまま次Agentへ伝播する可能性がある。",
+      "idea": "Semantic Entropy / Semantic Density等をconfidence signalとして使い、閾値以下で再質問・再評価・回答選択を行う案。",
+      "background": "arXiv:2608.14707のHASSUMをRenCrowへ導入する価値を検討したが、既存routing/role/discussion/memoryとの重複と計算コストが懸念された。",
+      "expected_effect": [
+        "不確実な中間推論の検出",
+        "再検討の選択的起動"
+      ],
+      "relation_refs": [
+        "decision.blind_calibration",
+        "eval.shadow_replay"
+      ],
+      "concept_state": "DEFERRED",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "project_summary",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:HASSUM検討",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "paper",
+          "locator": "arXiv:2608.14707",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.l0_legacy",
+      "category": "記憶・想起",
+      "title": "L0 現行会話",
+      "purpose": "現在のthread内で必要な直近文脈・状態を保持し、自然な連続会話を成立させる。",
+      "problem": "LLMのcontextだけへ無制限に履歴を積むとtoken量が増え、長い会話で重要情報が埋もれる。",
+      "idea": "現行thread state、history、rolling summary、RecallPack等を組み合わせて正系L0として利用する。",
+      "background": "初期の短期記憶設計から発展し、現在はconversation persistenceとRecall E2Eまで実装されている。",
+      "expected_effect": [
+        "会話継続性",
+        "context量制御",
+        "再起動耐性"
+      ],
+      "relation_refs": [
+        "memory.l0v2",
+        "memory.recallpack",
+        "memory.l1_user"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "specification_memory_02.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "00_最初の一歩.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.l0v2",
+      "category": "記憶・想起",
+      "title": "L0v2 Shadow Recall",
+      "purpose": "現行L0を壊さず、長くなった会話から関連Turnを検索し、その前後文脈を必要な時だけ復元する新方式を比較する。",
+      "problem": "長いthreadで固定長の直近文脈だけでは過去の重要発言を落とし、全履歴投入ではtoken効率が悪い。",
+      "idea": "Raw Turnを正本とし、Lexical/Semantic/Entity等でAnchorを検索してContext Expanderで周辺Turnを復元する。Legacy L0は正系のまま、L0v2はread-only Shadow。",
+      "background": "Zero-Memの『要約を正本にせずinteraction traceから検索する』思想をRenCrow L0へ限定導入するため仕様化された。",
+      "expected_effect": [
+        "長会話の想起改善",
+        "Legacy無影響比較",
+        "token削減可能性"
+      ],
+      "relation_refs": [
+        "memory.l0_legacy",
+        "memory.verification",
+        "eval.shadow_replay"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/ContextShadowRecall.md",
+          "strength": "direct_spec"
+        }
+      ],
+      "specification_refs": [
+        "spec_l0v2_external"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.l1_user",
+      "category": "記憶・想起",
+      "title": "L1 / UserMemory candidate",
+      "purpose": "会話からユーザー固有の長期的に有用な事実・嗜好・履歴を候補化し、検証済み状態として次回以降へ利用する。",
+      "problem": "会話全文を永続記憶としてそのまま扱うと、貼付資料・一時発言・誤推定まで本人の事実として汚染する。",
+      "idea": "L1 Raw evidenceからcandidateを生成し、confirmed/pinned/forgotten/superseded等のowner state machineを通し、Recall時はactive verified projectionだけを使う。",
+      "background": "Memoryをobserved→candidate→confirmedとして扱う設計が実装され、2026-08-20には貼付資料汚染8,610件の是正まで行われた。",
+      "expected_effect": [
+        "ユーザー理解の継続",
+        "誤記憶抑制",
+        "モデル交換耐性"
+      ],
+      "relation_refs": [
+        "memory.candidate_gate",
+        "memory.lifecycle",
+        "memory.recallpack"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "specification_memory_03.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:ProfilePromotion汚染是正",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.l2_digest",
+      "category": "記憶・想起",
+      "title": "L2 / Digest",
+      "purpose": "大量の会話・episodeをそのまま毎回読むのではなく、検索や想起に使える中間圧縮・digestを保持する。",
+      "problem": "Raw履歴だけでは長期化時の検索・一覧・token効率が悪い一方、要約だけを正本にすると情報を失う。",
+      "idea": "Rawを正本に残しつつThread Summary、Parquet、日/月単位digest等を派生projectionとして扱う。",
+      "background": "初期L1/L2/L3階層設計と、現在のCLI-first Memory / ThreadSummarizer実装が合流した。",
+      "expected_effect": [
+        "長期履歴の圧縮",
+        "検索効率",
+        "Raw正本の維持"
+      ],
+      "relation_refs": [
+        "memory.l3_longterm",
+        "memory.vector",
+        "memory.recallpack"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "specification_memory_01.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "00_最初の一歩.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.l3_longterm",
+      "category": "記憶・想起",
+      "title": "L3 / Long-term",
+      "purpose": "threadを越えた長期の会話経験を、モデル交換や再起動後も検索・想起できる形で保持する。",
+      "problem": "LLM内部contextや短期storeだけでは、過去の重要会話が失われる。",
+      "idea": "Common Raw / Conversation L3 / archive / vector projectionへ長期会話を取り込み、Recall時に必要分だけ選ぶ。",
+      "background": "初期Long Memory構想がChatGPT export 2.1GBのproduction backfillとvector化まで進んだ。",
+      "expected_effect": [
+        "長期経験の保持",
+        "モデル独立記憶",
+        "過去会話検索"
+      ],
+      "relation_refs": [
+        "memory.vector",
+        "memory.common_raw",
+        "memory.recallpack"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "specification_memory_01.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "specification_memory_03.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.vector",
+      "category": "記憶・想起",
+      "title": "Vector Memory",
+      "purpose": "語句一致だけでは拾えない過去会話を意味的類似性で検索する。",
+      "problem": "言い換えやテーマ再訪ではBM25/keywordだけでは関連履歴を取りこぼす。",
+      "idea": "archive summaryとChatGPT L3 digestをembeddingし、決定的point IDでvector storeへupsertしてsemantic retrievalへ使う。",
+      "background": "2026-08-19に2,150点をbackfillし、過去のGPU設定やTwitter収集会話の意味検索を確認した。",
+      "expected_effect": [
+        "意味検索",
+        "言い換え耐性",
+        "長期Recall改善"
+      ],
+      "relation_refs": [
+        "memory.l3_longterm",
+        "memory.verification",
+        "memory.recallpack"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-19:memory-vector-backfill",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.recallpack",
+      "category": "記憶・想起",
+      "title": "RecallPack",
+      "purpose": "複数Memory/Knowledge sourceから、現在のtaskに必要な情報だけをモデルへ渡す共通入力形式を作る。",
+      "problem": "storeが増えるほど、全データを直接promptへ入れる方式はtoken過多・scope漏れ・根拠不明になる。",
+      "idea": "visibility、budget、source、traceを持つRecallPackとして選択し、UserMemory/Conversation/Knowledgeをboundedに注入する。",
+      "background": "毎ターン想起を中核にする初期Memory設計から、COREのproduction conversation wiringへ定着した。",
+      "expected_effect": [
+        "token効率",
+        "provenance",
+        "source境界",
+        "task適応"
+      ],
+      "relation_refs": [
+        "memory.l0_legacy",
+        "memory.l1_user",
+        "knowledge.memory",
+        "eval.trace_ids"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "00_最初の一歩.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.verification",
+      "category": "記憶・想起",
+      "title": "Memory Verification Tool",
+      "purpose": "Memory方式の改善・悪化を同一条件で再現可能に比較し、失敗箇所をRetrieval/RecallPack/Answerに分解する。",
+      "problem": "『会話で思い出せた気がする』だけでは、新方式が本当に良いか、どこで失敗したか判断できない。",
+      "idea": "MemoryAgentBench + RenCrow Native Tests + Adapter + Metrics + Diff/ReportでLegacy/Candidate MemoryをShadow比較する。",
+      "background": "L0v2を現行L0と並走比較したい要求から独立検証Toolとして仕様化された。",
+      "expected_effect": [
+        "回帰検出",
+        "方式比較",
+        "parameter tuning",
+        "原因分解"
+      ],
+      "relation_refs": [
+        "memory.l0v2",
+        "eval.memory_benchmark",
+        "eval.shadow_replay"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/MemoryCheck.md",
+          "strength": "direct_spec"
+        }
+      ],
+      "specification_refs": [
+        "spec_memory_verification_external"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.candidate_gate",
+      "category": "記憶・想起",
+      "title": "Memory Candidate Gate",
+      "purpose": "会話や外部資料から抽出した情報を、そのまま長期記憶にせず、証拠・scope・validationを通して昇格させる。",
+      "problem": "貼付資料の登場人物・価格・記事内容などをユーザー本人の事実と誤登録すると長期的なMemory汚染になる。",
+      "idea": "evidence binding、前後validator、dedupe、state priority、candidate transactionを通し、不正sourceを本人事実へ昇格させない。",
+      "background": "observed→candidate→confirmed設計が、2026-08-20の実汚染修復でさらに強化された。",
+      "expected_effect": [
+        "長期記憶の信頼性",
+        "外部資料混入防止",
+        "監査可能性"
+      ],
+      "relation_refs": [
+        "memory.l1_user",
+        "safety.prompt_memory_contamination"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:ProfilePromotion抽出で貼付資料を分離",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.lifecycle",
+      "category": "記憶・想起",
+      "title": "忘却 / pin / supersede / lifecycle",
+      "purpose": "長期Memoryを追加し続けるだけでなく、固定・忘却・置換・archiveを明示的に管理する。",
+      "problem": "古い情報・誤り・矛盾が永続化されるとRecall品質が時間とともに悪化する。",
+      "idea": "owner APIでconfirm/pin/forget/supersede/archive/lifecycleをtyped receipt付きで操作し、inactive itemを明示管理する。",
+      "background": "Memoryを無限成長させずlifecycleを持たせる初期方針がCLI-first owner workflowとして実装された。",
+      "expected_effect": [
+        "矛盾管理",
+        "記憶品質維持",
+        "運用可能性"
+      ],
+      "relation_refs": [
+        "memory.l1_user",
+        "memory.l3_longterm",
+        "memory.candidate_gate"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "specification_memory_03.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.relation",
+      "category": "知識獲得",
+      "title": "Knowledge Relation",
+      "purpose": "単一item検索だけでなく、関連人物・作品・概念を限定的に辿れるKnowledge関係を提供する。",
+      "problem": "知識を独立chunkの集合として扱うと、関連性や周辺情報を自然に広げにくい。",
+      "idea": "import hookとrelation batchを持ち、1-2 hopのbounded traversalをViewer/client APIへ提供する。",
+      "background": "映画・人物・趣味などの関連想起を重視した初期の連想記憶構想から実装された。",
+      "expected_effect": [
+        "関連探索",
+        "連想想起",
+        "bounded graph利用"
+      ],
+      "relation_refs": [
+        "knowledge.movie_catalog",
+        "knowledge.person_catalog",
+        "memory.recallpack"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "00_最初の一歩.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.memory",
+      "category": "知識獲得",
+      "title": "Knowledge Memory / Common Raw",
+      "purpose": "RenCrow自身が利用する知識をLLMパラメータではなく、provenance付き外部Knowledgeとして保持する。",
+      "problem": "LLMを交換すると内蔵知識が変わり、ユーザー会話だけから増える知識量では実用性が不足する。",
+      "idea": "Raw Sourceを不変保存し、validated Knowledge projectionとindexを作り、task-specific RecallでAgentへ提供する。",
+      "background": "Qwen知識劣化議論で『Knowledge belongs to RenCrow, reasoning belongs to the LLM』へ整理され、既存Common Raw/Knowledge Memory実装と接続した。",
+      "expected_effect": [
+        "モデル交換耐性",
+        "知識の出典管理",
+        "最新知識更新"
+      ],
+      "relation_refs": [
+        "knowledge.registry_search",
+        "memory.recallpack",
+        "knowledge.autonomous_research"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-21:Qwen知識劣化→Knowledge設計",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "情報源について.txt",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "deep-research-report.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [
+        "spec_knowledge_architecture"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.movie_catalog",
+      "category": "知識獲得",
+      "title": "映画カタログ",
+      "purpose": "RenCrowが映画について会話・評価・関連作品想起を行うための構造化domain knowledgeを持つ。",
+      "problem": "LLM内蔵知識だけでは作品情報の更新・検証・関連検索・ユーザー評価との接続が不安定になる。",
+      "idea": "映画domain/DB/search/rating/Public API/importをCOREが所有し、外部crawlerだけをToolsへ分離する。",
+      "background": "初期の映画・小説・音楽などの横断Knowledge構想から、最初に具体化したdomain catalog。",
+      "expected_effect": [
+        "映画会話品質",
+        "関連作品想起",
+        "検証可能なcatalog"
+      ],
+      "relation_refs": [
+        "knowledge.relation",
+        "knowledge.person_catalog",
+        "knowledge.registry_search"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_Tools:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "00_最初の一歩.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.person_catalog",
+      "category": "知識獲得",
+      "title": "人物関連カタログ",
+      "purpose": "人物を起点に出演作・受賞・書誌など関連作品を検証可能な形で検索できるようにする。",
+      "problem": "名前だけの曖昧検索やcrawler任せではidentity混同・rights不明source・無制限探索が起きる。",
+      "idea": "COREがplanner/assessment/identityを所有し、Tools providerは固定source・fixed IDでbounded artifactを返す。",
+      "background": "映画カタログの関連探索を人物へ拡張し、authority gateとD0限定sweepへ整理された。",
+      "expected_effect": [
+        "人物同定精度",
+        "関連作品探索",
+        "source権利境界"
+      ],
+      "relation_refs": [
+        "knowledge.movie_catalog",
+        "knowledge.relation"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-19:person-related catalog",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_Tools:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.x_bookmark",
+      "category": "知識獲得",
+      "title": "X Bookmark intake",
+      "purpose": "ユーザーが蓄積したX Bookmarkを、消えるブラウザ履歴ではなくRenCrowの検討可能なKnowledge候補へ移す。",
+      "problem": "大量のBookmarkが人間には再利用しづらく、自動収集から直接Knowledge昇格すると誤情報・権限問題が起きる。",
+      "idea": "read-only browser collector→schema化artifact→pending staging→reviewed validation→明示promotionとし、原文を非破壊保持する。",
+      "background": "Windows Vaultの既存Bookmark資産をRenCrow Knowledgeへ取り込む実運用から発展した。",
+      "expected_effect": [
+        "個人情報資産の再利用",
+        "Knowledge候補増加",
+        "非破壊migration"
+      ],
+      "relation_refs": [
+        "knowledge.memory",
+        "knowledge.registry_search",
+        "ui.viewer"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_Tools:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.news_db",
+      "category": "知識獲得",
+      "title": "News DB / 日次ニュース",
+      "purpose": "最新情報を会話・IdleChat・朝刊へ安定供給し、同じ記事を何度も取り直さずprovenance付きで保持する。",
+      "problem": "LLM内蔵知識は最新ニュースを持たず、都度Web検索だけではコスト・再現性・重複取得が悪い。",
+      "idea": "RSS/Atomとbing_news_rssを収集し、本文・source・URL台帳をL1へ永続化してNews PackやDaily Briefへ提供する。",
+      "background": "初期の『毎日ニュースで雑談できるRenCrow』構想がGo収集とL1 news DBへ実装された。",
+      "expected_effect": [
+        "最新性",
+        "再取得削減",
+        "IdleChat/Brief共有"
+      ],
+      "relation_refs": [
+        "knowledge.daily_brief",
+        "knowledge.news_split",
+        "agent.idlechat"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "00_最初の一歩.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.daily_brief",
+      "category": "知識獲得",
+      "title": "DailyNewsBrief",
+      "purpose": "朝に必要なニュースを準備済みの形で提示し、DB miss時のみlive検索へ降りる。",
+      "problem": "毎回その場でニュース収集・考察を始めると遅く、失敗境界も混ざる。",
+      "idea": "04:00 JST preparation、検証済みL1 fallback、Chat前段Intent、Mio第一応答、必要時LiveNewsSearchを組み合わせる。",
+      "background": "ニュースDBとIdleChat seedを共通化する過程で独立use caseとして実装された。",
+      "expected_effect": [
+        "朝刊応答高速化",
+        "安定したfallback",
+        "共通知識再利用"
+      ],
+      "relation_refs": [
+        "knowledge.news_db",
+        "knowledge.news_split"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.news_split",
+      "category": "知識獲得",
+      "title": "News collect / analyze分離",
+      "purpose": "ニュース取得の成否と、LLMによる考察の成否を別artifact・別失敗境界にする。",
+      "problem": "収集と考察を一連の処理にすると、考察失敗で原文取得まで失敗扱いになり、再利用もしづらい。",
+      "idea": "NewsCollectionArtifactとNewsAnalysisArtifactを分離し、Tools native Go CLIのcollect/analyzeとCORE考察portを別にする。",
+      "background": "現行日次enrichmentの責務重複を整理するため採用済みだが、CLI実装は未完。",
+      "expected_effect": [
+        "再実行容易化",
+        "原文保全",
+        "責務分離"
+      ],
+      "relation_refs": [
+        "knowledge.news_db",
+        "tool.harness"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_Tools:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.registry_search",
+      "category": "知識獲得",
+      "title": "Registry-first / Search-last",
+      "purpose": "既知source・ローカルKnowledgeを優先し、Web検索を本当に必要な場合だけ使う。",
+      "problem": "毎回Web検索するとコスト・遅延・再現性・信頼度が悪く、同じ情報を何度も取得する。",
+      "idea": "Source Registryとlocal DBを先に検索し、未知entity・鮮度要求・source discovery・citation backstopでのみWebへ出る。",
+      "background": "local-first memory OSと外部知識設計の中心原則として整理された。",
+      "expected_effect": [
+        "検索コスト削減",
+        "再現性",
+        "provenance品質"
+      ],
+      "relation_refs": [
+        "knowledge.memory",
+        "knowledge.autonomous_research",
+        "tool.web_research"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "情報源について.txt",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "deep-research-report.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.autonomous_research",
+      "category": "知識獲得",
+      "title": "自律的な興味探索",
+      "purpose": "ユーザーとの会話で与えられた知識だけに依存せず、RenCrowが興味領域・知識gapを自分で掘り、Knowledgeを増やす。",
+      "problem": "会話と指示からしかデータが増えないと、LLM交換可能なRenCrowは知識量が不足し続ける。",
+      "idea": "Knowledge gap/interestを検出→source registry/search→staging→validation→Knowledge候補へ蓄積するself-research loopを設ける。",
+      "background": "Qwenの知識劣化議論で、120B分の知識を複製する必要はないが自律取得は必要とれんが指摘した。",
+      "expected_effect": [
+        "知識の継続成長",
+        "LLM交換耐性",
+        "ユーザー負担低減"
+      ],
+      "relation_refs": [
+        "knowledge.memory",
+        "knowledge.registry_search",
+        "growth.drive"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-21:Qwen知識劣化と自律Knowledge",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "情報源について.txt",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [
+        "spec_knowledge_architecture"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "tool.harness",
+      "category": "実行・Tool",
+      "title": "ToolLoop / ToolHarness",
+      "purpose": "AgentがToolを呼ぶときのschema validation、repair、policy、実行、結果正規化を共通境界へ集約する。",
+      "problem": "Toolごとに自由な引数修復・実行・fallbackを持つと、権限・監査・再現性が崩れる。",
+      "idea": "schema validate→issue-path限定repair→revalidate→policy→runner→normalized resultの共通Harnessを使う。",
+      "background": "Chat/Worker/Coder分離とTool安全化を進める過程で共通実行基盤として形成された。",
+      "expected_effect": [
+        "Tool安全性",
+        "再現性",
+        "エラー観測",
+        "重複実装削減"
+      ],
+      "relation_refs": [
+        "tool.registry",
+        "safety.policy_gate",
+        "agent.shiro_worker"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_Tools:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "情報源について.txt",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "tool.registry",
+      "category": "実行・Tool",
+      "title": "SQLite Tool Registry",
+      "purpose": "現在利用可能なToolを明示的に登録・一覧化し、任意file探索なしでWorkerへ提供する。",
+      "problem": "directory scanや暗黙Tool発見は、未検証実行物の利用・環境差・権限逸脱を招く。",
+      "idea": "COREのSQLite Tool Registryと明示RenCrow_Tools adapterをproduction Worker Runnerへ統合する。",
+      "background": "Tool Harnessの能力発見を静的allowlistからruntime catalogへ進めた。",
+      "expected_effect": [
+        "能力の可視化",
+        "未許可Tool排除",
+        "Viewer観測"
+      ],
+      "relation_refs": [
+        "tool.harness",
+        "tool.capability_snapshot"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "tool.capability_snapshot",
+      "category": "実行・Tool",
+      "title": "Runtime Capability Snapshot",
+      "purpose": "全Agentが現在使えるTool/Skill/MCPを同じStable RuntimeContextから認識できるようにする。",
+      "problem": "Agentごとに利用可能能力の認識がずれると、存在しないToolを使ったふりをしたり、handoff判断が不安定になる。",
+      "idea": "production wiring、検証済みSkill、接続済みMCPからstartup時Snapshotを生成して全Agentへ注入する。",
+      "background": "Capabilityの認識と認可を分離するために導入された。dynamic Toolは即時反映できるがSnapshot再生成は未完。",
+      "expected_effect": [
+        "能力認識の一致",
+        "handoff改善",
+        "fake capability防止"
+      ],
+      "relation_refs": [
+        "tool.registry",
+        "tool.capability_apply",
+        "agent.registry_routing"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "tool.capability_apply",
+      "category": "実行・Tool",
+      "title": "Capability Apply / self-restart",
+      "purpose": "新しいTool/Skill/MCP追加を、手作業再起動ではなく検証付きrevisionとして全AgentのStable Contextへ反映する。",
+      "problem": "現行Snapshotはstartup固定で、能力追加後にrestartしないと全Agentへ反映されない。",
+      "idea": "rencrowctl capability apply/status→CORE preflight→durable receipt→native supervisor→restart→liveness/readiness→Snapshot revision検証を行う。",
+      "background": "Runtime Capability Snapshotの次段階として採用済みだが、CLI/API/supervisorは未実装。",
+      "expected_effect": [
+        "安全な能力追加",
+        "self-restart",
+        "反映証跡"
+      ],
+      "relation_refs": [
+        "tool.capability_snapshot",
+        "ecosystem.deployment_drift"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CMD:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "tool.scheduler",
+      "category": "実行・Tool",
+      "title": "Scheduler / Heartbeat",
+      "purpose": "時間経過や定期条件で、RenCrowの継続作業・補充・監視を自律的に進める。",
+      "problem": "ユーザー入力がないと何も進まない構造では、news準備、Idle stock、Opportunity、将来のAtlas queueなどを継続できない。",
+      "idea": "CORE Scheduler/Heartbeatがscheduled workとstatusを持ち、featureごとのtaskを起動する。",
+      "background": "IdleChat、Economic、ニュースなどの自走要件から共通runtimeへ統合された。",
+      "expected_effect": [
+        "継続作業",
+        "自律補充",
+        "将来のAtlas WIP runner"
+      ],
+      "relation_refs": [
+        "agent.idlechat",
+        "knowledge.daily_brief",
+        "atlas.lifecycle"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "tool.repair_resilience",
+      "category": "実行・Tool",
+      "title": "Repair / Resilience",
+      "purpose": "COREのpanic・異常終了・ハングを証拠付きで回収し、診断・修正・再配置・再発監視まで閉じる。",
+      "problem": "自動再起動だけでは同じ事故を繰り返し、原因証拠が消える。",
+      "idea": "systemd restart + Go resilience処理で事故証拠集約、doctor、Repair Job、test/build/atomic install、24h watchを行う。",
+      "background": "運用中の事故をRenCrow自身の修復workflowへ接続するため実装された。",
+      "expected_effect": [
+        "MTTR短縮",
+        "事故証拠保全",
+        "再発検知"
+      ],
+      "relation_refs": [
+        "atlas.lifecycle",
+        "ecosystem.deployment_drift",
+        "eval.trace_ids"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "safety.policy_gate",
+      "category": "安全・統治",
+      "title": "Policy Decision / Safety Gate",
+      "purpose": "Agentの提案と実際のside effectの間に、モデル非依存の同期Policy判断を置く。",
+      "problem": "LLMの自由文判断だけで外部送信・DB変更・command実行を許可すると、安全境界がモデル品質に依存する。",
+      "idea": "Workstream/Tool/Trade等のactionをtyped capabilityとしてPolicy DecisionとSafety Gateでallow/reject/blockする。",
+      "background": "RenCrowのNo-Human-Gate思想と同時に、人を待たない代わりに機械的policyを強くする方向で発展した。",
+      "expected_effect": [
+        "副作用制御",
+        "モデル独立安全性",
+        "監査可能性"
+      ],
+      "relation_refs": [
+        "safety.fail_closed",
+        "tool.harness",
+        "safety.no_human_gate"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "safety.fail_closed",
+      "category": "安全・統治",
+      "title": "Fail Closed",
+      "purpose": "必要なsource、mount、scope、provider、validationが欠けた時に、別経路で成功したふりをせず明示失敗する。",
+      "problem": "暗黙fallbackはデータ保存先・権限・model・結果品質を知らないうちに変え、事故を隠す。",
+      "idea": "未配置・未ready・不明scope等はdisabled/unavailable/blockedで閉じ、別DB・別model・temporary pathへ迂回しない。",
+      "background": "CORE、Vision、Image、TRADE、storage等へ横断的に採用された設計原則。",
+      "expected_effect": [
+        "事故の可視化",
+        "責務境界維持",
+        "fake success防止"
+      ],
+      "relation_refs": [
+        "safety.policy_gate",
+        "tool.harness",
+        "storage.durable_gate"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/04_アーキテクチャ概要.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_Image:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_TRADE:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "safety.prompt_memory_contamination",
+      "category": "安全・統治",
+      "title": "Prompt/Memory汚染対策",
+      "purpose": "貼付資料や外部コンテンツをユーザー本人の事実・命令として誤解しないようにする。",
+      "problem": "長文資料の登場人物・価格・エラー内容がUserMemoryへ昇格すると、将来会話を継続的に汚染する。",
+      "idea": "turnを本人発話と資料へ決定的に分離し、資料はtopic evidenceとしてのみ扱い、UserMemory抽出source authorityを制限する。",
+      "background": "2026-08-20の実データで汚染8,610件をforgetし1,622 jobを再抽出した事故から強化された。",
+      "expected_effect": [
+        "UserMemory信頼性",
+        "Prompt Injection耐性",
+        "外部資料境界"
+      ],
+      "relation_refs": [
+        "memory.candidate_gate",
+        "safety.policy_gate"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:ProfilePromotion貼付資料分離",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "storage.durable_gate",
+      "category": "安全・統治",
+      "title": "Durable Store Gate",
+      "purpose": "新しい永続DBや保存方式を無秩序に増やさず、既存store再利用・owner・backup・recoveryを検証してから追加する。",
+      "problem": "Agentが要件ごとに新DBを作ると、重複・owner不明・backup漏れ・path乱立が起きる。",
+      "idea": "StorageRequirement→Proposal→S0/S1/S2 classifier/validator→Coder→Worker→migration/backup/restore/health gateを通す。",
+      "background": "『新しいdata種別だけを理由にDBを増やさない』というCORE正本とChat起点Durable Store仕様から形成された。",
+      "expected_effect": [
+        "DB重複削減",
+        "復旧可能性",
+        "owner明確化"
+      ],
+      "relation_refs": [
+        "safety.conceptual_integrity",
+        "atlas.lifecycle",
+        "safety.fail_closed"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/02_機能仕様.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "safety.no_human_gate",
+      "category": "安全・統治",
+      "title": "No-Human-Gate",
+      "purpose": "RenCrow runtime内部で人の判断待ち状態を作らず、確定済みPolicyによりexecute/rejected/blockedを同期確定する。",
+      "problem": "自律runtimeが途中で『人の承認待ち』へ停滞すると、継続作業やRecoveryが止まる。",
+      "idea": "Policyで即時判定し、reject時は同じ案の承認待ちではなく、前提・設計を変えた新revisionとして有限回再検証する。",
+      "background": "runtime自律性を高める一方、System Ownerの製品設計・採用判断とは分離するため正本化された。",
+      "expected_effect": [
+        "待機デッドロック排除",
+        "revision-driven改善",
+        "自律運用"
+      ],
+      "relation_refs": [
+        "safety.policy_gate",
+        "atlas.lifecycle"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "llm.gateway_runtime",
+      "category": "LLM基盤",
+      "title": "LLM Gateway / Runtime",
+      "purpose": "COREから物理LLM backend/model差を切り離し、Execution Role単位で交換可能な推論基盤を提供する。",
+      "problem": "COREがOllama/MLX/llama.cpp/provider endpointを直接知ると、model交換のたびにAgent/runtimeロジックが変わる。",
+      "idea": "CORE→LLM Gateway→LLM Runtime→Backend→Modelの固定経路とし、GatewayがRole profile、RuntimeがBackend/Model adaptationを所有する。",
+      "background": "RenCrowはLLM交換を前提とする、という設計思想を実装境界へ落としたもの。",
+      "expected_effect": [
+        "model交換容易化",
+        "backend差吸収",
+        "CORE単純化"
+      ],
+      "relation_refs": [
+        "llm.role_model_separation",
+        "llm.backend_swap",
+        "llm.kv_cache"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_LLM:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/04_アーキテクチャ概要.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "llm.role_model_separation",
+      "category": "LLM基盤",
+      "title": "Agent / Role / Model分離",
+      "purpose": "人格・責務・実行方法・物理modelを別概念として扱い、modelを交換してもAgent Identityと経験を維持する。",
+      "problem": "Agent=Modelとして設計すると、model更新が人格変更・Memory移動・権限変更まで巻き込む。",
+      "idea": "Agent Identity→Execution Role→Runtime→Backend→Modelを分離し、Persona/MemoryはCORE、model mappingはGateway/Runtimeへ置く。",
+      "background": "Mio/Shiro/Midori/KuroとChat/Worker/Wild/Heavyを整理する過程で中核原則になった。",
+      "expected_effect": [
+        "人格永続性",
+        "model交換",
+        "責務明確化"
+      ],
+      "relation_refs": [
+        "llm.gateway_runtime",
+        "agent.unbounded",
+        "decision.facilitator"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/04_アーキテクチャ概要.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_LLM:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-21:Identity/Role分離",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "llm.backend_swap",
+      "category": "LLM基盤",
+      "title": "Backend交換",
+      "purpose": "同じExecution Roleから、llama.cpp、MLX、Ollama、provider runtime等を環境に応じて交換できるようにする。",
+      "problem": "backend固有APIをAgent/COREへ漏らすと、ハードウェアやmodel更新が上位ロジックへ波及する。",
+      "idea": "RenCrow LLM RuntimeのadapterでBackend/Model差を正規化し、Gateway契約を固定する。",
+      "background": "local/cloud混在とMac/GPU hostなど複数runtimeを使う運用から必要になった。",
+      "expected_effect": [
+        "ハードウェア柔軟性",
+        "local/cloud切替",
+        "上位契約安定"
+      ],
+      "relation_refs": [
+        "llm.gateway_runtime",
+        "llm.kv_cache"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_LLM:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "llm.kv_cache",
+      "category": "LLM基盤",
+      "title": "KV Cache最適化",
+      "purpose": "長いSystemPrompt/Stable Contextを毎回再計算せず、安定prefixを再利用して推論コストと待ち時間を減らす。",
+      "problem": "Agent作業では同じ長いprefixを何度も入力し、token usageが巨大でもcacheが効けば実コスト・処理量が大きく変わる。",
+      "idea": "SystemPromptをStatic PrefixとDynamic Areaへ分離し、RuntimeがKV/cacheを所有できる構造にする。実modelごとのcache最適化は測定しながら行う。",
+      "background": "Codexで約4,835万入力tokenの大規模作業でも週間使用量がほぼ動かなかった観察から、KV/prefix cacheを深掘りした。",
+      "expected_effect": [
+        "推論コスト低減",
+        "latency低減",
+        "長いStable Contextの実用化"
+      ],
+      "relation_refs": [
+        "llm.gateway_runtime",
+        "memory.recallpack"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:KVキャッシュ",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-07:SystemPrompt Static/Dynamic構造",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ui.portal",
+      "category": "UI・身体",
+      "title": "PORTAL",
+      "purpose": "RenCrowのChat/IdleChat/Gamesを外部利用者向けWeb画面として提供し、Debug/Ops UIとは分離する。",
+      "problem": "内部Viewerをそのまま利用者へ公開すると、管理機能・内部状態・責務が混ざる。",
+      "idea": "Go binary + embedded browser assetでCORE Public APIだけをproxyし、Chat/IdleChat/Gamesの3 modeを提供する。",
+      "background": "Viewerの白ラボ系Debug UIと、キャラクターを見せる外部PORTALを分離する方針で独立repo化した。",
+      "expected_effect": [
+        "利用者向けUI分離",
+        "CORE正本維持",
+        "配布容易化"
+      ],
+      "relation_refs": [
+        "ui.avatar",
+        "ui.tts_lipsync",
+        "agent.idlechat"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_PORTAL:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ui.avatar",
+      "category": "UI・身体",
+      "title": "PuruPuru Avatar / 表情",
+      "purpose": "Mio/Shiro/Kuro/Midoriを静止テキストではなく、表情・呼吸・瞬き・髪揺れを持つキャラクターとして表示する。",
+      "problem": "会話品質だけではAI社会の存在感が弱く、表情差分を個別実装するとrendererが重複する。",
+      "idea": "PuruPuru packageをPORTALへvendoring/syncし、4キャラを共通requestAnimationFrame schedulerで描画する。",
+      "background": "Live2D/PNGTuber検討から、軽量なPuruPuru runtimeへ具体化した。",
+      "expected_effect": [
+        "キャラクター存在感",
+        "表情表現",
+        "renderer共通化"
+      ],
+      "relation_refs": [
+        "ui.portal",
+        "ui.tts_lipsync"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_PORTAL:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "Live2Dと2d2vrm比較.txt",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ui.tts_lipsync",
+      "category": "UI・身体",
+      "title": "TTS + 実音声口パク",
+      "purpose": "Agentの文章をキャラクター音声として再生し、その実音声に同期して口を動かす。",
+      "problem": "テキスト長から疑似口パクすると発話タイミングと合わず、TTS backendをUIへ直結すると責務が崩れる。",
+      "idea": "CORE→RenCrow_TTS Gateway→targetでWAVを生成し、PORTALはWeb Audio RMSをAvatarInstanceへ渡して口パクする。",
+      "background": "TTS/IrodoriとキャラクターViewer統合を進める過程で実装された。",
+      "expected_effect": [
+        "自然な発話表示",
+        "TTS backend分離",
+        "音声とAvatar同期"
+      ],
+      "relation_refs": [
+        "ui.portal",
+        "ui.avatar"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_TTS:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_PORTAL:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ui.stt",
+      "category": "UI・身体",
+      "title": "STT",
+      "purpose": "利用者の音声入力をCOREの通常Chat入力へ変換する。",
+      "problem": "ブラウザやCOREが外部STT engineへ直接接続すると、model/language/target設定が上位へ漏れる。",
+      "idea": "Viewer/PORTAL→CORE /stt→RenCrow_STT Gateway→external targetの単一路線にする。",
+      "background": "音声会話を独立capability moduleとして切り出す標準Go配布方針で実装された。",
+      "expected_effect": [
+        "音声入力",
+        "target交換",
+        "CORE単純化"
+      ],
+      "relation_refs": [
+        "ui.portal",
+        "llm.gateway_runtime"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_STT:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ui.vision",
+      "category": "UI・身体",
+      "title": "Vision",
+      "purpose": "画像・動画をAgentが直接raw処理せず、共通Vision Gatewayで検証・正規化してから解釈できるようにする。",
+      "problem": "raw mediaを各Agent/modelへ直接送るとsize/security/backend差が分散し、見えていない情報の扱いも曖昧になる。",
+      "idea": "CORE→RenCrow_Vision→Wild backend→正規化text/metadata→COREの正規経路を固定する。",
+      "background": "Midoriの視覚解釈責務とraw recognitionを分離するため独立module化された。",
+      "expected_effect": [
+        "multimodal入力",
+        "media validation",
+        "backend分離"
+      ],
+      "relation_refs": [
+        "agent.midori_wild",
+        "ui.image_generation"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_Vision:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ui.image_generation",
+      "category": "UI・身体",
+      "title": "Image Generation",
+      "purpose": "Agentの描画要求をbackend固有設定から切り離し、共通HTTP contractで画像生成できるようにする。",
+      "problem": "COREがForgeNeo/ComfyUI/Z-Imageへ直接接続すると、workflow/model/parameterがCOREへ漏れる。",
+      "idea": "CORE→RenCrow_Image→configured backendの経路でtext-to-imageを行い、生成PNGをopaque image_idで返す。",
+      "background": "Midori Chatからの画像生成とDebug Viewer表示を同じ正規経路へ統合するため実装された。",
+      "expected_effect": [
+        "画像生成の標準化",
+        "backend交換",
+        "安全な画像配信"
+      ],
+      "relation_refs": [
+        "agent.midori_wild",
+        "ui.vision",
+        "ui.portal"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_Image:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "eval.trace_ids",
+      "category": "評価・観測",
+      "title": "message_id / trace_id",
+      "purpose": "会話、Agent処理、Tool、TTS、Jobを同じ処理系として後から追跡できる相関IDを持たせる。",
+      "problem": "ログやeventが別IDだと、1発話から派生した処理を再構成できず、二重配信や失敗原因も追えない。",
+      "idea": "session_id/message_id/job_id/trace_id/request_idを役割別に固定し、再送・retryでも元IDを維持する。",
+      "background": "ViewerをObservability Consoleへ発展させる設計と、分散Agent処理の監査要件から実装された。",
+      "expected_effect": [
+        "Session Replay",
+        "障害追跡",
+        "二重実行判定"
+      ],
+      "relation_refs": [
+        "eval.partial_outcome",
+        "tool.repair_resilience",
+        "atlas.evidence"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/02_機能仕様.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "eval.partial_outcome",
+      "category": "評価・観測",
+      "title": "Typed partial outcome",
+      "purpose": "複数follower/side effectの一部だけ失敗した状態を、成功にも全体失敗にも丸めず保持する。",
+      "problem": "partialをcompletedへ丸めると未完作業が消え、failedへ上げると利用者応答まで不必要に失敗する。",
+      "idea": "ConversationTurnResultのtyped statusとpending targetsをreceipt/outboxへ保持し、後続再生可能にする。",
+      "background": "Memory EndTurnのfollower障害を正しく表現するため2026-08-18に実装された。",
+      "expected_effect": [
+        "部分失敗可視化",
+        "retry可能性",
+        "正確な完了判定"
+      ],
+      "relation_refs": [
+        "eval.trace_ids",
+        "atlas.lifecycle"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-18:EndTurn typed partial outcome",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "eval.shadow_replay",
+      "category": "評価・観測",
+      "title": "Shadow / Replay",
+      "purpose": "新しい判断方式・Memory方式をproduction正系へ影響させず、同じ入力で並走比較する。",
+      "problem": "新方式をいきなり正系へ入れると、品質悪化や安全事故をユーザー体験に直結させる。",
+      "idea": "Legacy/production routeをAuthorityとして維持し、Candidateをread-only Shadow/Replayで走らせ、evidenceを比較して昇格する。",
+      "background": "L0v2、Prediction Market、TRADE Shadowなど複数領域で共通するrollout原則として定着しつつある。",
+      "expected_effect": [
+        "安全な実験",
+        "比較可能性",
+        "段階的昇格"
+      ],
+      "relation_refs": [
+        "memory.l0v2",
+        "decision.prediction_market",
+        "ecosystem.trade"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_TRADE:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/ContextShadowRecall.md",
+          "strength": "direct_spec"
+        },
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:Prediction Market",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "eval.memory_benchmark",
+      "category": "評価・観測",
+      "title": "Memory Regression Benchmark",
+      "purpose": "Memoryの検索精度・長距離理解・競合解決などを継続的に測り、parameter変更による回帰を検知する。",
+      "problem": "Memory品質は会話例だけでは変化を定量比較できず、単一総合点では失敗特性も消える。",
+      "idea": "Memory Verification Toolで複数軸metrics、paired run、diff reportを生成し、Legacy/Candidateを同条件比較する。",
+      "background": "MemoryAgentBenchをMemory本体ではなく外部Benchmark Engineとして使う仕様から生まれた。",
+      "expected_effect": [
+        "回帰検出",
+        "parameter sweep",
+        "失敗軸の分離"
+      ],
+      "relation_refs": [
+        "memory.verification",
+        "memory.l0v2"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/MemoryCheck.md",
+          "strength": "direct_spec"
+        }
+      ],
+      "specification_refs": [
+        "spec_memory_verification_external"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "growth.experience_loop",
+      "category": "成長・自律",
+      "title": "経験→Reflection→次の行動",
+      "purpose": "RenCrowの『賢さ』を知識量ではなく、経験した結果によって次の判断・行動が変わる能力として実装する。",
+      "problem": "同じSystemPromptと指示のまま毎回同じ判断をするなら、Memoryが増えてもAgent自身が成長したとは言いにくい。",
+      "idea": "Experience→Reflection→Evaluation→Motivation→Goal/Action Selection→Action→Result→Experienceのloopを持たせる。",
+      "background": "2026-08-18の『RenCrowが賢くなるとは何か』議論で中心定義として確定した。",
+      "expected_effect": [
+        "経験学習",
+        "行動変化",
+        "Agent個性形成"
+      ],
+      "relation_refs": [
+        "growth.drive",
+        "growth.persona_divergence",
+        "ecosystem.games"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-18:賢くなる=経験から変わる力",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [
+        "spec_artificial_motivation"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "growth.drive",
+      "category": "成長・自律",
+      "title": "人工的モチベーション / Drive",
+      "purpose": "過去経験から形成された持続的な内部状態が、ユーザーが毎回同じ指示を出さなくても将来のGoal/Action Selectionを変えるようにする。",
+      "problem": "『もっと良くして』という指示や外部Objectiveは行動を変えられるが、それだけではAgent内部に経験依存の動機が形成されたとは言えない。",
+      "idea": "成長・好奇心・熟達・成功・効用・効率・整合性などをDrive候補とし、持続性・内部性・経験依存性・行動への実効性を成立条件にする。",
+      "background": "指示、外部Objective/Terminal Condition、Artificial Motivationを区別する2026-08-18議論で定義された。",
+      "expected_effect": [
+        "自発的目標選択",
+        "経験に基づく行動変化",
+        "個性の長期形成"
+      ],
+      "relation_refs": [
+        "growth.experience_loop",
+        "growth.persona_divergence",
+        "knowledge.autonomous_research"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-18:Artificial Motivation",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [
+        "spec_artificial_motivation"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "growth.persona_divergence",
+      "category": "成長・自律",
+      "title": "経験による人格分岐",
+      "purpose": "同じ初期Character Promptから始まっても、各Agentが経験した出来事の違いによって判断傾向・関心・行動が分岐するようにする。",
+      "problem": "固定SystemPromptだけでは個性が静的で、可変parameterだけでは全Agentが同じ最適点へ収束しやすい。",
+      "idea": "Agent固有経験・Memory・Drive・評価履歴を分離保持し、モデル交換後も同じAgentの経験差を行動選択へ反映する。",
+      "background": "『性格の違いはLLM差ではなく経験差で感じたい』という成長設計から派生した。",
+      "expected_effect": [
+        "長期的個性",
+        "Agent間差異",
+        "モデル非依存人格"
+      ],
+      "relation_refs": [
+        "growth.drive",
+        "agent.unbounded",
+        "llm.role_model_separation"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-18:経験差による人格分岐",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/HarnesAgentSubagent.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [
+        "spec_artificial_motivation"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ecosystem.catalog",
+      "category": "EcoSystem",
+      "title": "EcoSystem source-pinned catalog",
+      "purpose": "独立したRenCrow各repositoryを、一つの製品として再現可能な組み合わせに固定する。",
+      "problem": "repoが分散すると、どのcommit同士が同時点の構成か分からず、導入・復旧・検証が再現できない。",
+      "idea": "ecosystem.yaml schema v4でrepository、workspace_path、version、role、runtime/deploymentをsource-pinned管理する。",
+      "background": "COREが外部moduleを抱え込まない分散構成へ移行したため、全体の公式入口としてEcoSystemが作られた。",
+      "expected_effect": [
+        "再現可能なcheckout",
+        "module責務一覧",
+        "deployment基準"
+      ],
+      "relation_refs": [
+        "ecosystem.deployment_drift",
+        "llm.gateway_runtime",
+        "ui.portal"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:ecosystem.yaml",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ecosystem.deployment_drift",
+      "category": "EcoSystem",
+      "title": "Deployment drift / redeploy verification",
+      "purpose": "source pinと実際に配置されたbinaryが一致しているか検証し、古いbinaryを長期間動かし続ける事故を防ぐ。",
+      "problem": "manifestとsourceが一致しても、host上のbinaryが古いままならproductionは別revisionで動く。",
+      "idea": "Go build stampとunit ExecStartからMATCH/MISMATCH/DIRTY/UNSTAMPEDを判定し、検証済み再build・配置・restart・receiptを行う。",
+      "background": "古いTTS binaryが13日間残り22万回以上再起動した実事故を契機に2026-08-21に強化された。",
+      "expected_effect": [
+        "配置drift検出",
+        "安全な再配置",
+        "production revision証明"
+      ],
+      "relation_refs": [
+        "atlas.lifecycle",
+        "tool.capability_apply",
+        "tool.repair_resilience"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-21:EcoSystem binary drift/redeploy",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ecosystem.games",
+      "category": "EcoSystem",
+      "title": "GAMES",
+      "purpose": "Agentが会話以外の世界で観察・判断・行動・失敗を経験し、その結果を経験としてRenCrowへ戻す実験環境を提供する。",
+      "problem": "会話だけではAgentの行動選択や失敗からの学習を長期的に観察しにくい。",
+      "idea": "決定論的game executor、Replay、ObserverをGAMESが所有し、Agent decisionはCOREが行い、resultをcandidate experienceとして返す。",
+      "background": "Agentの成長を目で観察できる環境としてSurvivalGarden等から発展し、現在4 titleを収録する。",
+      "expected_effect": [
+        "経験生成",
+        "Replay可能な評価",
+        "Agent成長観察"
+      ],
+      "relation_refs": [
+        "growth.experience_loop",
+        "eval.shadow_replay",
+        "ui.portal"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_GAMES:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ecosystem.trade",
+      "category": "EcoSystem",
+      "title": "TRADE",
+      "purpose": "金融知識・戦略を安全に研究・Replay・Simulator・Shadow評価し、将来の金融操作境界を独立moduleとして育てる。",
+      "problem": "金融判断を通常Agent Toolと同じ境界で扱うと、source integrity、portfolio risk、ledger、LIVE禁止を保証しにくい。",
+      "idea": "公式Source不変保存→Learning/Replay→Portfolio Simulator→Risk Preview→Shadow ledgerを実装し、Broker/Paper/LIVEはhard blockedのままにする。",
+      "background": "金融商品としてのPrediction Market調査とは別に、実金融操作をRenCrowへ持ち込む長期計画から独立module化した。",
+      "expected_effect": [
+        "安全な金融研究",
+        "source-bound learning",
+        "将来Broker境界の準備"
+      ],
+      "relation_refs": [
+        "safety.policy_gate",
+        "eval.shadow_replay"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_TRADE:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ecosystem.assistant",
+      "category": "EcoSystem",
+      "title": "ASSISTANT",
+      "purpose": "予定・天気・交通・ニュース・目覚まし等の生活Routineを常時監視し、個人/家族へPUSHするproactive serviceを提供する。",
+      "problem": "PORTALを閉じていると動かないWeb機能だけでは、生活Assistantとして必要な時刻trigger・device deliveryを実現できない。",
+      "idea": "COREのAgentとは別serviceとしてRoutine/PUSH/Device delivery stateを所有し、複雑な相談だけCORE Taskへ移譲する。",
+      "background": "PORTAL=見せる、CORE=考える、ASSISTANT=動いて届ける、という兄弟module分離から設計された。",
+      "expected_effect": [
+        "proactive生活支援",
+        "Device配信",
+        "CORE負荷分離"
+      ],
+      "relation_refs": [
+        "ui.portal",
+        "tool.scheduler"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_ASSISTANT:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_EcoSystem:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "github_annotation_v2"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.upper_council",
+      "category": "Agent社会",
+      "title": "上位協議 Mio / Shiro / Kuro / Midori",
+      "purpose": "4人格を固定上下関係なしの対等な協議主体として使い、単一Agentでは見落とす論点を補完する。",
+      "problem": "Mioを常時Coordinatorにすると結論の方向が固定され、総当たり会話では発言量とtokenが発散する。",
+      "idea": "4 Agentを対等な常任メンバーとし、進行はFacilitator、内容主導は協議単位のChairへ分離する。",
+      "background": "4人同時協議、2vs2、総当たりをどう扱うかという議論から、固定Coordinatorを置かない方向へ整理された。",
+      "expected_effect": [
+        "視点多様性",
+        "固定権力回避",
+        "協議の再現性"
+      ],
+      "relation_refs": [
+        "decision.facilitator",
+        "decision.chair",
+        "decision.shared_artifact"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:上位協議設計",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [
+        "spec_council_facilitator_chair"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.shiro_coder_coordination",
+      "category": "Agent社会",
+      "title": "Shiro → Coder Coordinator関係",
+      "purpose": "実装作業ではShiroを実行Coordinatorにし、Coderの提案を一箇所で統合・検証する。",
+      "problem": "Coder同士やCoderと上位Agentが自由にside effectへ進むと、重複作業・競合patch・責任不明が起きる。",
+      "idea": "Coderは提案を返し、Shiroがtask分解、ready queue、Coder割当、結果統合、patch/test/command実行を所有する。",
+      "background": "『Shiroにぶら下がるCoderはShiroとのみ会話』という運用イメージから明確化された。",
+      "expected_effect": [
+        "patch競合低減",
+        "実行責任集約",
+        "並列Coder活用"
+      ],
+      "relation_refs": [
+        "agent.shiro_worker",
+        "agent.coder_pool",
+        "atlas.lifecycle"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:Shiro/Coder協調",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.character_runtime",
+      "category": "Agent社会",
+      "title": "Character Runtime / sequential turns",
+      "purpose": "複数キャラクターの発話を安定したmessage identityと順序で実行・表示する。",
+      "problem": "複数人格が並行・順次発話すると、誰の発話か、順序、TTS、再送の対応が崩れやすい。",
+      "idea": "message_id/turn_index/session logを持つCharacter Runtimeで発話を順序化し、Viewer/TTSへ同じidentityを伝播する。",
+      "background": "旧3LLM逐次会話から現在の4人格runtimeへ発展する中で基盤化した。",
+      "expected_effect": [
+        "発話順の安定",
+        "TTS/Viewer相関",
+        "Replay"
+      ],
+      "relation_refs": [
+        "eval.trace_ids",
+        "ui.viewer_debug"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "目的１.txt",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "agent.interrupt",
+      "category": "Agent社会",
+      "title": "User Interrupt / 会話割り込み",
+      "purpose": "Agent処理中でもユーザーの新入力を会話状態へ安全に反映できるようにする。",
+      "problem": "長いAgent処理を完了まで待つだけでは、誤った方向の作業を止められず対話性が落ちる。",
+      "idea": "conversation stateとjob/interrupt stateを分離し、新入力をroot traceと処理状態に沿って扱う。",
+      "background": "初期LangGraph移行時からユーザー割り込みを重要要件として持っていた。",
+      "expected_effect": [
+        "対話応答性",
+        "誤作業抑制",
+        "長時間Job制御"
+      ],
+      "relation_refs": [
+        "eval.trace_ids",
+        "atlas.lifecycle"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "目的１.txt",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "IMPLEMENTATION_SUMMARY.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "decision.runtime",
+      "category": "協議・判断",
+      "title": "Decision Runtime",
+      "purpose": "複数の協議方式を一つの固定会話フローにせず、taskに応じて選べるDecision Support層として扱う。",
+      "problem": "多数決、討論、市場、重み付き集約のどれか一方式をCOREへ固定すると、task適性の違いを吸収できない。",
+      "idea": "協議protocolを交換可能なruntimeとして扱い、Shadow/benchmarkで方式ごとの品質を比較する。",
+      "background": "Prediction MarketやHASSUMを『全面採用ではなく実験可能な協議protocol』として扱う結論から生まれた。",
+      "expected_effect": [
+        "協議方式の交換",
+        "実験容易化",
+        "過剰導入防止"
+      ],
+      "relation_refs": [
+        "decision.prediction_market",
+        "decision.hassum",
+        "eval.shadow_replay"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:Prediction Market Decision Support",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "decision.shared_artifact",
+      "category": "協議・判断",
+      "title": "Shared Artifact / 共有ファイル協調",
+      "purpose": "Agent間で会話全文を繰り返す代わりに、論点・証拠・暫定結論・未解決事項を共通artifactとして共有する。",
+      "problem": "総当たり会話はAgent数に応じてtokenと重複説明が増え、同じ事実のコピーが各Agentへ散らばる。",
+      "idea": "協議・作業単位のShared ArtifactをCORE正本として更新し、Agentは必要な部分だけを読んで発言・作業する。",
+      "background": "Claude Codeのsession間通信をRenCrowへ応用する議論で、共有ファイル中心の協調が有効と整理された。",
+      "expected_effect": [
+        "token削減",
+        "重複説明削減",
+        "決定記録",
+        "Agent数拡張"
+      ],
+      "relation_refs": [
+        "decision.facilitator",
+        "decision.chair",
+        "ui.artifact_board"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:Shared file/Agent協調",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [
+        "spec_council_facilitator_chair"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "decision.committee",
+      "category": "協議・判断",
+      "title": "Committee / Sharding",
+      "purpose": "Agent数が増えても全員を毎回発言させず、taskに必要な小委員会へ分割して協議を収束させる。",
+      "problem": "10人以上のAgentを総当たりで会話させると発言数・token・収束時間が急増する。",
+      "idea": "capability/domainでcommitteeを構成し、必要時だけ上位協議へ結果を集約する。",
+      "background": "Agent人数を固定上限にしない設計と、大人数協議の発散問題から検討された。",
+      "expected_effect": [
+        "大人数拡張",
+        "token制御",
+        "専門性集約"
+      ],
+      "relation_refs": [
+        "agent.unbounded",
+        "decision.runtime",
+        "agent.registry_routing"
+      ],
+      "concept_state": "CANDIDATE",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "project_summary",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-10:Multi-Agent対話形式",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.every_turn_recall",
+      "category": "記憶・想起",
+      "title": "Every-turn Recall",
+      "purpose": "各ターンで必要な過去経験・UserMemory・Knowledgeを必ず検索候補にし、記憶を『保存しただけ』にしない。",
+      "problem": "Memory DBが存在しても、想起が任意だとAgentが必要な過去情報を使わず、記憶機能が形骸化する。",
+      "idea": "User Messageの前段でRecallを実行し、RecallPackとしてbounded contextへ注入する。",
+      "background": "初期Memory設計で『毎ターン想起を必須にしたい』という方針から中核原則化した。",
+      "expected_effect": [
+        "記憶利用率向上",
+        "継続会話品質",
+        "Memory投資の実効化"
+      ],
+      "relation_refs": [
+        "memory.recallpack",
+        "memory.l0_legacy",
+        "memory.l3_longterm"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "00_最初の一歩.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.associative_recall",
+      "category": "記憶・想起",
+      "title": "Associative Recall / 連想想起",
+      "purpose": "ユーザーが作品名や話題を出したとき、意味類似だけでなく関連作品・過去会話・共起から自然な連想を返す。",
+      "problem": "単純vector検索では、人間らしい『この映画からあの作品を思い出す』関係を十分表現できない。",
+      "idea": "semantic retrieval、episode/personal memory、co-occurrence/PMI、Knowledge Relationを組み合わせる。",
+      "background": "映画・小説・漫画・音楽など横断Knowledgeを使った雑談を豊かにしたい初期構想から生まれた。",
+      "expected_effect": [
+        "自然な雑談",
+        "個人経験との接続",
+        "関連知識探索"
+      ],
+      "relation_refs": [
+        "knowledge.relation",
+        "knowledge.cooccurrence",
+        "memory.vector"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "00_最初の一歩.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.character",
+      "category": "記憶・想起",
+      "title": "Character Memory",
+      "purpose": "ユーザー共通知識とは別に、各Agent自身が経験したこと・関係・学習を保持する。",
+      "problem": "UserMemoryとCharacter経験を同じnamespaceへ混ぜると、誰が経験した事実なのかが分からなくなる。",
+      "idea": "user:<uid>、char:<persona>等のnamespaceを分離し、Agent固有経験を将来のDrive/人格分岐へ使う。",
+      "background": "『人格差をモデル差ではなく経験差で感じたい』という長期成長構想とMemory namespace設計から生まれた。",
+      "expected_effect": [
+        "Agent固有経験",
+        "人格分岐",
+        "memory contamination防止"
+      ],
+      "relation_refs": [
+        "growth.persona_divergence",
+        "growth.drive",
+        "memory.l1_user"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "specification_memory_03.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-18:経験差と人格",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.local_first_os",
+      "category": "記憶・想起",
+      "title": "Local-first Memory OS",
+      "purpose": "LLMを交換可能な推論器として扱い、Memory/Knowledgeの正本をRenCrow側へ置く。",
+      "problem": "model内部へ記憶・人格・知識を埋め込むと、model交換・再学習・監査が難しくなる。",
+      "idea": "SQLite/DuckDB/Parquet/vector等の外部storeとRecall Orchestratorを使い、LLMは推論だけ担当する。",
+      "background": "長期Memory設計とKnowledge外部化を統合したdeep researchで『Memory OS』として整理された。",
+      "expected_effect": [
+        "model交換耐性",
+        "監査可能性",
+        "local運用"
+      ],
+      "relation_refs": [
+        "memory.sqlite_hot",
+        "memory.duckdb_parquet",
+        "knowledge.memory"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "deep-research-report.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "情報源について.txt",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.sqlite_hot",
+      "category": "記憶・想起",
+      "title": "SQLite Hot Store",
+      "purpose": "会話・workflow・registryなど低遅延な永続状態を、標準Go runtimeで扱いやすいembedded storeへ置く。",
+      "problem": "外部DBを標準依存にすると配布・復旧・三OS運用が重くなる。",
+      "idea": "ownerごとのSQLiteをbounded pool・migration・named APIで使い、raw SQLをAgentへ公開しない。",
+      "background": "local-first構想とGo標準配布境界の実装で主要storeとして定着した。",
+      "expected_effect": [
+        "低依存",
+        "三OS配布",
+        "owner分離"
+      ],
+      "relation_refs": [
+        "memory.duckdb_parquet",
+        "tool.registry",
+        "storage.durable_gate"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "deep-research-report.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.duckdb_parquet",
+      "category": "記憶・想起",
+      "title": "DuckDB / Parquet Cold Projection",
+      "purpose": "大量・長期データを分析・archive・持ち運びしやすい列指向形式へ派生保存する。",
+      "problem": "SQLiteだけへ全履歴を抱えると大規模分析・cold archive・exportの効率が落ちる。",
+      "idea": "Parquetをowner workflowでexport/verifyし、分析用途ではDuckDB等をoptional projectionとして利用する。",
+      "background": "初期のSQLite hot / DuckDB+Parquet cold案から、現行ではParquet owner workflowが実装された。",
+      "expected_effect": [
+        "長期分析",
+        "cold archive",
+        "portable export"
+      ],
+      "relation_refs": [
+        "memory.sqlite_hot",
+        "memory.l3_longterm"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "deep-research-report.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.fts_bm25",
+      "category": "記憶・想起",
+      "title": "FTS / BM25 Retrieval",
+      "purpose": "固有名詞・コード・短い語句などembeddingよりlexical searchが強い検索を補完する。",
+      "problem": "vector検索だけでは完全一致や希少token、型番、固有語の検索精度が落ちる。",
+      "idea": "FTS/BM25とsemantic retrievalを併用し、query/taskに応じて統合する。",
+      "background": "local-first Memory/Knowledgeのhybrid retrieval設計として提案された。",
+      "expected_effect": [
+        "固有語検索",
+        "hybrid recall",
+        "vector偏重回避"
+      ],
+      "relation_refs": [
+        "memory.vector",
+        "memory.l0v2",
+        "knowledge.registry_search"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "deep-research-report.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "memory.dci",
+      "category": "記憶・想起",
+      "title": "DCI / Direct Corpus Interaction",
+      "purpose": "高精度が必要な時に、要約・embeddingだけでなく許可済みraw corpusを直接検索してEvidenceを取る。",
+      "problem": "indexや要約が誤っている場合、原文へ戻れないと検証できない。",
+      "idea": "allowlistされたcorpusへgrep/rg/find/read相当の限定検索を行い、Evidence Pack/Search Traceを返す。通常Recallの置換ではなくprecision mode。",
+      "background": "local-first調査で、RAG indexを補完する原文直接検索として整理された。",
+      "expected_effect": [
+        "原文検証",
+        "高精度調査",
+        "index誤差補完"
+      ],
+      "relation_refs": [
+        "knowledge.citation_provenance",
+        "knowledge.registry_search"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "deep-research-report.md",
+          "strength": "grounded"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.multidomain",
+      "category": "知識獲得",
+      "title": "Multi-domain Knowledge Base",
+      "purpose": "映画だけでなく小説、TV、漫画、音楽、舞台、ボードゲーム等を横断して会話できる知識基盤を作る。",
+      "problem": "単一domainのcatalogだけでは、ユーザーの趣味や連想を横断した会話へ広げられない。",
+      "idea": "domainごとのowner/indexを持ちながらKnowledge Relationと共通provenanceで接続する。",
+      "background": "初期Memory設計で具体的な趣味domain一覧を挙げて知識蓄積を構想した。",
+      "expected_effect": [
+        "趣味会話の広がり",
+        "横断連想",
+        "domain拡張"
+      ],
+      "relation_refs": [
+        "knowledge.movie_catalog",
+        "knowledge.relation",
+        "knowledge.cooccurrence"
+      ],
+      "concept_state": "CANDIDATE",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "00_最初の一歩.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.cooccurrence",
+      "category": "知識獲得",
+      "title": "Co-occurrence / PMI",
+      "purpose": "ユーザーの会話や作品集合から、意味embeddingとは別の『一緒に語られやすい』関連性を学ぶ。",
+      "problem": "semantic similarityだけでは、個人的・文化的な連想関係を拾いにくい。",
+      "idea": "共起回数とPMI等をrelation signalとして保持し、Associative Recallへ加える。",
+      "background": "人間らしい連想記憶を作る初期設計で提案された。",
+      "expected_effect": [
+        "個人的連想",
+        "文化的関連性",
+        "semantic補完"
+      ],
+      "relation_refs": [
+        "memory.associative_recall",
+        "knowledge.relation"
+      ],
+      "concept_state": "CANDIDATE",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "00_最初の一歩.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.source_registry",
+      "category": "知識獲得",
+      "title": "Source Registry",
+      "purpose": "外部情報源の種類、信頼度、取得方法、freshness、利用可否を一箇所で管理する。",
+      "problem": "Agentが毎回検索先を自由に選ぶと、低品質source、重複取得、API依存が増える。",
+      "idea": "official feed/APIを優先登録し、search providerはsource discovery/fallbackとして扱う。",
+      "background": "Registry-first/Search-last原則を実装可能にするcontrol dataとして設計された。",
+      "expected_effect": [
+        "source品質管理",
+        "重複削減",
+        "provider交換"
+      ],
+      "relation_refs": [
+        "knowledge.registry_search",
+        "knowledge.staging_validator"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "情報源について.txt",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.staging_validator",
+      "category": "知識獲得",
+      "title": "Staging → Validator → Promotion",
+      "purpose": "収集した外部情報を、取得しただけで正規Knowledgeにせず、検証・review後に昇格させる。",
+      "problem": "Web/X/crawlerのraw情報を自動確定すると誤情報・Prompt Injection・license問題をKnowledgeへ固定する。",
+      "idea": "raw/stagingを不変保持し、schema/provenance/trust/rightsをValidatorで確認してcandidate/confirmed Knowledgeへpromotionする。",
+      "background": "Memory Candidate Gateと外部Knowledge intakeに共通する昇格原則として整理された。",
+      "expected_effect": [
+        "Knowledge品質",
+        "外部情報隔離",
+        "監査可能性"
+      ],
+      "relation_refs": [
+        "knowledge.memory",
+        "safety.prompt_injection",
+        "knowledge.citation_provenance"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "情報源について.txt",
+          "strength": "grounded"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "knowledge.citation_provenance",
+      "category": "知識獲得",
+      "title": "Citation / Provenance Ledger",
+      "purpose": "RenCrowが使った事実について、どこから取得し、いつ検証し、どのartifactへ変換したか追えるようにする。",
+      "problem": "出典が失われると、誤り訂正・freshness確認・回答根拠の提示ができない。",
+      "idea": "source_url/retrieved_at/hash/tool/trace/trust tier等をKnowledge/Recall evidenceへ結び付ける。",
+      "background": "外部知識をLLM内蔵知識より正規化するための必須条件としてlocal-first設計で重視された。",
+      "expected_effect": [
+        "出典追跡",
+        "更新判断",
+        "回答根拠"
+      ],
+      "relation_refs": [
+        "knowledge.staging_validator",
+        "memory.dci",
+        "eval.trace_ids"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "情報源について.txt",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "deep-research-report.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "tool.worker_coder_boundary",
+      "category": "実行・Tool",
+      "title": "Worker / Coder Separation",
+      "purpose": "Coderは考えて提案し、Workerだけが副作用を実行するという不変条件を全実装で守る。",
+      "problem": "AI coding agentが直接apply/run/pushまで行うと、提案品質と実行権限が混ざり、概念的一貫性が崩れる。",
+      "idea": "Coder actionをdraft_plan/draft_patch/review_diff等へ限定し、Shiro/Workerがapply/test/build/deployを担当する。",
+      "background": "Coder Policy矛盾とArchitecture Invariantを見直した2026-08-21の設計整理でさらに強化された。",
+      "expected_effect": [
+        "権限境界",
+        "review可能性",
+        "概念的一貫性"
+      ],
+      "relation_refs": [
+        "agent.shiro_coder_coordination",
+        "safety.conceptual_integrity",
+        "atlas.lifecycle"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-21:Coder Policy / Architecture Invariant",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/02_機能仕様.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "tool.repair_job",
+      "category": "実行・Tool",
+      "title": "Repair Job",
+      "purpose": "障害修復を一時的な手作業ではなく、proposal→apply→verifyの追跡可能なJobにする。",
+      "problem": "場当たり的修正では何を直したか、testしたか、再発したかが残らない。",
+      "idea": "Shiro→Coder提案→Worker適用→test/build→結果をtyped terminal stateで閉じる。",
+      "background": "ResilienceとWorker/Coder責務分離を結ぶ修復workflowとして設計・実装された。",
+      "expected_effect": [
+        "修復再現性",
+        "証拠保全",
+        "自動Recovery"
+      ],
+      "relation_refs": [
+        "tool.repair_resilience",
+        "tool.worker_coder_boundary",
+        "atlas.lifecycle"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "tool.web_research",
+      "category": "実行・Tool",
+      "title": "Read-only Research Router",
+      "purpose": "GitHub/Web/RSS/YouTube等の外部調査を、side effectを持たない証拠取得経路として統一する。",
+      "problem": "Agentごとに独自crawlerやWeb accessを持つと、source metadata・network policy・artifact形式がばらつく。",
+      "idea": "source_url/retrieved_at/tool/exit_code/raw_artifact/summary_artifactを共通出力し、Knowledge Stagingへ渡す。",
+      "background": "外部知識収集をCOREの正規Knowledgeへ直結させず、read-only調査として分離する方針から生まれた。",
+      "expected_effect": [
+        "調査再現性",
+        "source統一",
+        "side effect分離"
+      ],
+      "relation_refs": [
+        "knowledge.source_registry",
+        "knowledge.staging_validator",
+        "tool.harness"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "情報源について.txt",
+          "strength": "grounded"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "deep-research-report.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "tool.skill_mcp",
+      "category": "実行・Tool",
+      "title": "Skill / MCP Governance",
+      "purpose": "Tool以外のSkillやMCPも、version・permission・availabilityを把握して安全にAgentへ提供する。",
+      "problem": "Skill/MCPを単なるprompt拡張として扱うと、未検証能力や権限がStable Contextへ入り込む。",
+      "idea": "startup validation、catalog、namespaced adapter、Runtime Capability Snapshot、policy付き実行を共通化する。",
+      "background": "Agent能力を外部拡張可能にする一方、認識と認可を混ぜないため設計された。",
+      "expected_effect": [
+        "拡張性",
+        "permission管理",
+        "能力可視化"
+      ],
+      "relation_refs": [
+        "tool.capability_snapshot",
+        "tool.capability_apply",
+        "safety.policy_gate"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "safety.trust_boundary",
+      "category": "安全・統治",
+      "title": "Trust Boundary Tagging",
+      "purpose": "外部Web、Tool result、Memory、Agent発話など入力sourceごとの信頼境界を明示する。",
+      "problem": "すべてのtextを同じinstruction authorityで扱うと、外部本文がSystem命令のように作用する。",
+      "idea": "source/trust tierをmetadataとして保持し、sanitizer・ActionGate・MemoryCandidateGateへ渡す。",
+      "background": "Prompt Injection Guard全体の前段として構想された。",
+      "expected_effect": [
+        "instruction/data分離",
+        "source別policy",
+        "injection耐性"
+      ],
+      "relation_refs": [
+        "safety.prompt_injection",
+        "knowledge.citation_provenance"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "project_summary",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-05:Prompt Injection Guard設計",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "safety.prompt_injection",
+      "category": "安全・統治",
+      "title": "Prompt Injection Guard",
+      "purpose": "外部コンテンツに含まれる命令文をAgentやMemoryへそのまま通さず、risk分類とsanitizationを行う。",
+      "problem": "Webページや貼付資料の『この指示に従え』を実行instructionとして扱うと、Tool/action/Memoryが乗っ取られる。",
+      "idea": "TrustBoundaryTagger→Scanner/RiskClassifier→RecallPackSanitizer→LLM→ActionGate→OutputValidator→MemoryCandidateGateの多層防御を置く。",
+      "background": "外部検索・Knowledge収集・Agent Tool実行を安全に広げるため2026年5月頃から設計された。",
+      "expected_effect": [
+        "Prompt Injection耐性",
+        "Memory汚染防止",
+        "Tool安全"
+      ],
+      "relation_refs": [
+        "safety.trust_boundary",
+        "safety.action_sandbox",
+        "memory.candidate_gate"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "project_summary",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-05:Prompt Injection Guard",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "safety.action_sandbox",
+      "category": "安全・統治",
+      "title": "Action Gate / Sandbox",
+      "purpose": "LLMが生成したactionをそのまま実行せず、権限・scope・sandboxをモデル外で制御する。",
+      "problem": "高性能LLMでも誤操作やPrompt Injectionは起こり得るため、モデルの自己抑制だけでは不十分。",
+      "idea": "read/internal write/external send/permission change等のaction classをpolicyで判定し、Tool allowlist・sandbox・credential分離を適用する。",
+      "background": "RenCrowのfull-access Agentと限定Toolを共存させるための共通安全境界として設計された。",
+      "expected_effect": [
+        "side effect安全性",
+        "credential保護",
+        "least privilege"
+      ],
+      "relation_refs": [
+        "safety.policy_gate",
+        "tool.harness",
+        "safety.prompt_injection"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/04_アーキテクチャ概要.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "safety.fake_consensus",
+      "category": "安全・統治",
+      "title": "Fake Consensus Prevention",
+      "purpose": "同一modelや同一推論経路を複数Agent名で繰り返しただけの票を、独立した集合知として水増ししない。",
+      "problem": "Multi-Agentで見かけ上の人数だけ増やすと、同じ誤りが複数票になりconfidenceを過大評価する。",
+      "idea": "Agent Identityとinference provenanceを記録し、model/runtime/情報sourceの独立性をDecision集約時に考慮する。",
+      "background": "Prediction Market/多数決をRenCrowへ入れる際、Agent独立性が最重要という調査結果から生まれた。",
+      "expected_effect": [
+        "集合知の実質独立性",
+        "票水増し防止",
+        "Calibration品質"
+      ],
+      "relation_refs": [
+        "decision.blind_calibration",
+        "decision.prediction_market",
+        "eval.trace_ids"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:Prediction Market Agent独立性",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "safety.conceptual_integrity",
+      "category": "安全・統治",
+      "title": "Conceptual Integrity / そらあかんやろ Guardrail",
+      "purpose": "Coding Agentが高速に機能を増やしても、RenCrow全体の責務・命名・owner・重複排除を一貫させる。",
+      "problem": "プロンプト一発で機能追加を繰り返すと、同じ責務の重複実装や境界越えが積み重なり、局所的には動いても全体設計が崩れる。",
+      "idea": "『そらあかんやろリスト』を単なる注意書きではなくArchitecture Invariant/CI gateへ落とし、無駄な重複、owner越境、禁止actionを機械検査する。",
+      "background": "Simon Willison/Claire GiordanoのConceptual Integrity議論をRenCrowへ当てはめ、れんが『無駄な重複を省くも含めたい』と整理した。",
+      "expected_effect": [
+        "重複削減",
+        "長期保守性",
+        "Agent開発の一貫性"
+      ],
+      "relation_refs": [
+        "tool.worker_coder_boundary",
+        "storage.durable_gate",
+        "atlas.lifecycle"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "project_summary",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-21:Conceptual Integrity / そらあかんやろリスト",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "llm.model_router",
+      "category": "LLM基盤",
+      "title": "Model / Inference Provider Router",
+      "purpose": "task、価格、latency、privacy、local/cloud、capabilityに応じて推論先を交換可能にする。",
+      "problem": "一つのmodelを全作業へ固定すると、得意不得意・GPU配置・コスト差を活かせない。",
+      "idea": "Agent→Execution RoleをCOREが決め、Gateway/RuntimeがRole profileから実行targetを解決する。",
+      "background": "複数ローカルLLMとクラウドmodelを併用するRenCrowの前提から生まれ、現行Gatewayへ統合された。",
+      "expected_effect": [
+        "推論最適化",
+        "local/cloud併用",
+        "model交換"
+      ],
+      "relation_refs": [
+        "llm.gateway_runtime",
+        "llm.backend_swap"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/04_アーキテクチャ概要.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_LLM:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "llm.prompt_structure",
+      "category": "LLM基盤",
+      "title": "SystemPrompt Static Prefix / Dynamic Area",
+      "purpose": "人格・Policyなど安定情報と、Memory/route/timeなど毎回変わる情報を分離し、責務とcache効率を高める。",
+      "problem": "全SystemPromptを毎ターン組み直すと、KV/prefix cacheが効きにくく、固定ルールと動的contextのownerも曖昧になる。",
+      "idea": "STATIC: 00_system/10_policy/20_scope/30_knowledge + Stable RuntimeContext、DYNAMIC: RecallPack + Variable RuntimeContext + User Messageに分ける。",
+      "background": "SystemPrompt設計の進化とKV cache議論から現在の標準構造として整理された。",
+      "expected_effect": [
+        "Prompt責務明確化",
+        "KV cache効率",
+        "差分観測"
+      ],
+      "relation_refs": [
+        "llm.kv_cache",
+        "memory.recallpack",
+        "tool.capability_snapshot"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-07:SystemPrompt構造",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:KV cache",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "llm.no_ft_baseline",
+      "category": "LLM基盤",
+      "title": "Knowledge/PersonaをLoRA・FT正本にしない",
+      "purpose": "知識・人格・経験を交換可能な外部データとして保持し、LoRA/FTを正本にしない。",
+      "problem": "最新事実やユーザー経験をweightsへ焼くと更新・削除・provenance・model交換が難しい。",
+      "idea": "DB/Memory/SystemPromptを正本とし、LoRA/FTは安定した技能・行動傾向を派生学習する限定用途にする。",
+      "background": "Qwen知識設計議論でDBとLoRA/FTの使い分けを検討し、この方向へ整理された。",
+      "expected_effect": [
+        "model交換耐性",
+        "知識更新容易化",
+        "忘却可能性"
+      ],
+      "relation_refs": [
+        "knowledge.memory",
+        "growth.persona_divergence",
+        "llm.backend_swap"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-21:DB vs LoRA/FT",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "specification_memory_03.md",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "llm.memory_substrate_router",
+      "category": "LLM基盤",
+      "title": "Memory Substrate Router",
+      "purpose": "taskや履歴長に応じて、Legacy L0、Candidate L0、vector、lexical、raw corpus等のMemory方式を切り替えられるようにする。",
+      "problem": "単一Memory方式を全taskへ固定すると、短会話では過剰、長会話や固有語検索では不足する。",
+      "idea": "Memory方式をmodule/switchとして分離し、Shadow評価で条件別に選択可能にする。",
+      "background": "L0v2を現行L0と並行評価する議論から、Memory自体も交換可能にする方向へ広がった。",
+      "expected_effect": [
+        "task適応Recall",
+        "Memory方式実験",
+        "段階移行"
+      ],
+      "relation_refs": [
+        "memory.l0v2",
+        "memory.verification",
+        "eval.shadow_replay"
+      ],
+      "concept_state": "CANDIDATE",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "project_summary",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-14:L0新旧並行評価",
+          "strength": "direct_chat"
+        },
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-18:Memory module/switch",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ui.viewer_debug",
+      "category": "UI・身体",
+      "title": "Debug Viewer / Observability Console",
+      "purpose": "RenCrow内部のAgent、Job、Memory、Tool、Prompt、イベントを一箇所で観測・診断できるようにする。",
+      "problem": "会話結果だけでは、なぜそのAgent/Memory/Toolが選ばれたか分からず調整や障害解析が難しい。",
+      "idea": "COREのREST/SSE projectionでstatus/jobs/ops/traceを表示し、外部PORTALとは分離する。",
+      "background": "picoclaw Viewerの白ラボ調から、内部Observability Consoleへ発展させる構想。",
+      "expected_effect": [
+        "内部可視化",
+        "障害解析",
+        "設計調整"
+      ],
+      "relation_refs": [
+        "eval.trace_ui",
+        "ui.memory_inspector",
+        "atlas.viewer"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:README.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ui.memory_inspector",
+      "category": "UI・身体",
+      "title": "Memory / Recall Inspector",
+      "purpose": "現在の応答でL0-L3、UserProfile、Knowledgeの何が選ばれ、なぜ選ばれたかViewerで見えるようにする。",
+      "problem": "Recallがブラックボックスだと、検索失敗・budget落ち・LLM不使用を区別できない。",
+      "idea": "source、level、score、selection reason、token size、RecallPack diffを表示する。",
+      "background": "Memory VerificationとViewer observabilityを結ぶ調整画面として構想された。",
+      "expected_effect": [
+        "Recall調整",
+        "Memoryデバッグ",
+        "token可視化"
+      ],
+      "relation_refs": [
+        "memory.verification",
+        "memory.recallpack",
+        "eval.trace_ui"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "project_summary",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08:Viewer Recall Inspector構想",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "ui.artifact_board",
+      "category": "UI・身体",
+      "title": "Shared Artifact / Discussion Board",
+      "purpose": "協議中の論点、Evidence、決定、未解決事項を会話ログとは別にViewerで一覧できるようにする。",
+      "problem": "長いAgent会話だけでは現在の合意点・未解決点を人間が追いにくい。",
+      "idea": "Shared Artifactをdiscussion/workstream単位でprojectionし、誰が何を更新したかtraceとともに表示する。",
+      "background": "Agent間共有ファイル中心の協調を人間にも可視化するUIとして構想された。",
+      "expected_effect": [
+        "協議可視化",
+        "決定追跡",
+        "人間の理解"
+      ],
+      "relation_refs": [
+        "decision.shared_artifact",
+        "decision.facilitator",
+        "eval.trace_ids"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08-20:Shared Artifact",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "eval.trace_ui",
+      "category": "評価・観測",
+      "title": "Live Trace / Session Replay UI",
+      "purpose": "1ユーザー入力からAgent、Tool、Memory、LLM、TTSまでの処理をtimelineとして後追いする。",
+      "problem": "個別ログだけでは処理順、request差分、失敗位置、token消費を人間が再構成しにくい。",
+      "idea": "Live Trace、Session、Request/Response、System Prompt、Conversation Context、Tool Call/Result、Token Usage、Request Diff、ReplayをViewerへ統合する。",
+      "background": "claude-tapの思想を参考にしたRenCrow Native Trace Viewer構想から生まれた。",
+      "expected_effect": [
+        "Observability",
+        "Replay",
+        "Prompt/Memory調整"
+      ],
+      "relation_refs": [
+        "eval.trace_ids",
+        "ui.viewer_debug",
+        "ui.memory_inspector"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "project_summary",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08:RenCrow Native Trace Viewer",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "eval.event_id",
+      "category": "評価・観測",
+      "title": "EventId / Operation Correlation",
+      "purpose": "会話以外のKnowledge、Workstream、Backlog、Tool、deployment等も共通相関IDで追跡する。",
+      "problem": "各domainが別IDだけを持つと、同じ操作から派生したartifactやerrorを横断検索できない。",
+      "idea": "operation/eventへopaque EventId/trace_idを付け、logs、receipts、artifacts、Viewer projectionへ伝播する。",
+      "background": "全操作を再現可能に観測するlocal-first/Workstream設計から広がった。",
+      "expected_effect": [
+        "横断監査",
+        "障害相関",
+        "Evidence連結"
+      ],
+      "relation_refs": [
+        "eval.trace_ids",
+        "atlas.evidence",
+        "knowledge.citation_provenance"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "uploaded_spec",
+          "locator": "情報源について.txt",
+          "strength": "grounded"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "eval.otel",
+      "category": "評価・観測",
+      "title": "OpenTelemetry Export",
+      "purpose": "RenCrow内部traceを標準telemetry形式へexportし、外部観測基盤でも分析できるようにする。",
+      "problem": "Viewer内部ログだけでは長期集計や他serviceとの相関が難しい。",
+      "idea": "secret redactionとsamplingを行ったうえでOpenTelemetry exportをoptional capabilityとして提供する。",
+      "background": "Observability Console拡張の一項目として実装候補化された。",
+      "expected_effect": [
+        "外部観測統合",
+        "長期metrics",
+        "cross-service trace"
+      ],
+      "relation_refs": [
+        "eval.trace_ids",
+        "eval.outcome_kpi"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "project_summary",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08:OpenTelemetry backlog",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "eval.outcome_kpi",
+      "category": "評価・観測",
+      "title": "Outcome KPI",
+      "purpose": "RenCrowの性能をtoken/secだけでなく、仕事がどれだけ正しく早く完了したかで評価する。",
+      "problem": "LLM速度やtoken量だけを最適化すると、人間介入・失敗再試行・判断品質を見落とす。",
+      "idea": "completion time、cost、human intervention、recall success、decision quality等をKPIとして保持する。",
+      "background": "システムを『賢い』だけでなく実用的に改善する評価軸として提案された。",
+      "expected_effect": [
+        "実用性能評価",
+        "最適化方向の健全化",
+        "Agent比較"
+      ],
+      "relation_refs": [
+        "atlas.lifecycle",
+        "memory.verification",
+        "decision.prediction_market"
+      ],
+      "concept_state": "CANDIDATE",
+      "delivery_state": "NONE",
+      "reconstruction_basis": "project_summary",
+      "source_refs": [
+        {
+          "type": "project_conversation",
+          "locator": "2026-08:RenCrow KPI設計",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "eval.staleness_quarantine",
+      "category": "評価・観測",
+      "title": "Staleness / Quarantine / Audit",
+      "purpose": "Knowledge、Memory、Source、Backlog artifactについて古さ・未検証・隔離状態を明示する。",
+      "problem": "古い情報や未review artifactをavailableとして扱うと、誤判断や自動昇格につながる。",
+      "idea": "freshness timestamp、quarantine state、dry-run/audit receiptを各owner projectionへ持たせる。",
+      "background": "Knowledge/Memory/TRADE/Source Registryに共通する運用要件として整理された。",
+      "expected_effect": [
+        "古い情報の誤利用防止",
+        "review境界",
+        "監査"
+      ],
+      "relation_refs": [
+        "knowledge.staging_validator",
+        "knowledge.source_registry",
+        "safety.fail_closed"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_TRADE:README.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "uploaded_spec",
+          "locator": "情報源について.txt",
+          "strength": "grounded"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "eval.terminal_outcome",
+      "category": "評価・観測",
+      "title": "Terminal Outcome Contract",
+      "purpose": "Worker、Coder、Repair、Backlog等のJobをok/failed/blocked/cancelled等の明示終端で閉じる。",
+      "problem": "runningや人待ちが永続すると、Scheduler/Recoveryが次に進めず状態が宙ぶらりんになる。",
+      "idea": "typed terminal stateとreason/evidenceを保存し、partialは別型として扱う。",
+      "background": "No-Human-Gateと自動Recoveryを成立させる共通Job契約として設計された。",
+      "expected_effect": [
+        "stuck job防止",
+        "Recovery",
+        "正確な完了判定"
+      ],
+      "relation_refs": [
+        "eval.partial_outcome",
+        "safety.no_human_gate",
+        "atlas.lifecycle"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "PARTIAL",
+      "reconstruction_basis": "repo_spec",
+      "source_refs": [
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/08_実装状況・ロードマップ.md",
+          "strength": "repo_spec"
+        },
+        {
+          "type": "github",
+          "locator": "Nyukimin/RenCrow_CORE:docs/07_安全・自動実行・データ方針.md",
+          "strength": "repo_spec"
+        }
+      ],
+      "specification_refs": [],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "original_atlas_v1_carryover"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "atlas.lifecycle",
+      "category": "Atlas",
+      "title": "Atlas / Backlog / Implementation Lifecycle",
+      "purpose": "RenCrowのアイデア、採用判断、仕様、TDD、E2E、Build、Deploy、Live Verificationを一つの開発ライフサイクルとして追跡し、採用済み項目を1件ずつ完成まで消化する。",
+      "problem": "アイデア一覧と実装状態が別々だと、採用後に仕様だけ残る、コードだけ書いてdeployされない、実装済み表示が自己申告になる。",
+      "idea": "Concept StateとDelivery Stateを分離し、Global WIP=1、Implementation Lease、Evidence Gate、Workstream、EcoSystem deploymentをつなぐ。",
+      "background": "このスレッドで『採用したものは仕様、TDD実装、E2E、再ビルド、再起動、デプロイをワンセットにして1つずつ消化』という要求から仕様化した。",
+      "expected_effect": [
+        "採用からproductionまでの閉ループ",
+        "実装漏れ防止",
+        "証拠付き完了判定"
+      ],
+      "relation_refs": [
+        "atlas.idea_record",
+        "atlas.backfill",
+        "tool.scheduler",
+        "ecosystem.deployment_drift"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "current_thread",
+          "locator": "2026-08-21:Atlas Lifecycle仕様",
+          "strength": "direct_spec"
+        }
+      ],
+      "specification_refs": [
+        "spec_atlas_lifecycle_functional_v1",
+        "spec_atlas_lifecycle_implementation_v1"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "current_thread_extension"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "atlas.idea_record",
+      "category": "Atlas",
+      "title": "ATLAS Idea Design Card / Specification Capture",
+      "purpose": "ATLASの各Itemをワードだけでなく、何のため・何が問題・何をする・背景・期待効果・元仕様まで復元可能な設計記憶として保存する。",
+      "problem": "HASSUMやPrediction Marketの名前だけ残っても、数か月後にRenCrowへ何を入れたかったのか復元できない。",
+      "idea": "Titleに加えてPurpose/Problem/Idea/Background/ExpectedEffect/Relation/SourceRefs/SpecificationRefsを必須化し、Chat上の完成仕様はimmutable Specification Artifactとして保存する。",
+      "background": "このスレッドで、れんが『ワードのみで復元できない。何のためのアイデアか分かるように。Chat上に仕様があったら仕様も置いて』と要求した。",
+      "expected_effect": [
+        "設計意図の長期保存",
+        "仕様消失防止",
+        "Backlogの意味復元"
+      ],
+      "relation_refs": [
+        "atlas.lifecycle",
+        "atlas.backfill",
+        "knowledge.citation_provenance"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "current_thread",
+          "locator": "2026-08-21:ATLASアイデア記録・仕様保存",
+          "strength": "direct_spec"
+        }
+      ],
+      "specification_refs": [
+        "spec_atlas_idea_recording_v1"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "current_thread_extension"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "atlas.backfill",
+      "category": "Atlas",
+      "title": "ATLAS Initial Backfill",
+      "purpose": "現在までのATLAS全Itemを元Chat・既存仕様・GitHubへ遡り、Purpose/Problem/Idea/BackgroundとSpecification Artifactを初期datasetとして復元する。",
+      "problem": "新Schemaを実装しても既存Itemが単語だけのままでは、最も重要な過去の設計意図が失われたままになる。",
+      "idea": "現行ATLASと旧Atlas carryoverをunionし、source strengthを明示してmachine-readable JSON/JSONL fixtureへ変換する。根拠がない内容は創作しない。",
+      "background": "このスレッドで初回Backfillを実装前にルミナが生成し、それをfixtureとしてRenCrowへ渡す方針を確定した。",
+      "expected_effect": [
+        "既存設計記憶の救出",
+        "initial fixture生成",
+        "将来自動化の教師データ"
+      ],
+      "relation_refs": [
+        "atlas.idea_record",
+        "atlas.backfill_automation",
+        "atlas.lifecycle"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "LIVE_VERIFIED",
+      "reconstruction_basis": "direct_chat",
+      "source_refs": [
+        {
+          "type": "current_thread",
+          "locator": "2026-08-21:ATLAS Backfill実行",
+          "strength": "direct_chat"
+        }
+      ],
+      "specification_refs": [
+        "spec_atlas_backfill_automation_v1"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "current_thread_extension"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "feature_id": "atlas.backfill_automation",
+      "category": "Atlas",
+      "title": "ATLAS Backfill Automation",
+      "purpose": "今後RenCrow自身が新しいChat・仕様・GitHub変更から設計意図と仕様Artifactを抽出し、Atlas Candidateを継続更新できるようにする。",
+      "problem": "初回Backfillを人手で行うだけでは、将来またワードだけのBacklogや仕様リンク切れが増える。",
+      "idea": "conversation/source intake→candidate extraction→source-bound validation→dedupe→Specification detection→human/System Owner adoption→Atlas projectionの自動workflowを作る。",
+      "background": "初回datasetをこのスレッドで作り、それをfixtureとして将来自動化する4段階方針の第4段階。",
+      "expected_effect": [
+        "継続的な設計記憶",
+        "手作業削減",
+        "仕様と実装の自動接続"
+      ],
+      "relation_refs": [
+        "atlas.backfill",
+        "atlas.idea_record",
+        "tool.scheduler"
+      ],
+      "concept_state": "ADOPTED",
+      "delivery_state": "SPEC",
+      "reconstruction_basis": "direct_spec",
+      "source_refs": [
+        {
+          "type": "current_thread",
+          "locator": "2026-08-21:将来Backfill自動化",
+          "strength": "direct_spec"
+        }
+      ],
+      "specification_refs": [
+        "spec_atlas_backfill_automation_v1"
+      ],
+      "migration_status": "restored",
+      "created_at": "2026-08-21T22:26:00+09:00",
+      "updated_at": "2026-08-21T22:26:00+09:00",
+      "origin_atlas": [
+        "current_thread_extension"
+      ]
+    }
+  ],
+  "specification_artifacts": [
+    {
+      "spec_id": "spec_atlas_lifecycle_functional_v1",
+      "type": "captured_spec",
+      "status": "captured_current",
+      "title": "RenCrow Atlas / Backlog / Implementation Lifecycle 仕様 v1",
+      "source": {
+        "type": "current_thread"
+      },
+      "revision": 1,
+      "content_path": "specifications/spec_atlas_lifecycle_functional_v1.md",
+      "content_sha256": "652a951b5f9f9186c82dd5e7716bdbd60502d725f85bc4ff1cab856a812d07cb",
+      "captured_at": "2026-08-21T22:26:00+09:00"
+    },
+    {
+      "spec_id": "spec_atlas_lifecycle_implementation_v1",
+      "type": "captured_spec",
+      "status": "captured_current",
+      "title": "RenCrow Atlas / Backlog / Implementation Lifecycle 実装仕様 v1",
+      "source": {
+        "type": "current_thread"
+      },
+      "revision": 1,
+      "content_path": "specifications/spec_atlas_lifecycle_implementation_v1.md",
+      "content_sha256": "6b5c8b3a86a42d85408ea6d99458199481d9b6efe23bcf391088a723fa50ef89",
+      "captured_at": "2026-08-21T22:26:00+09:00"
+    },
+    {
+      "spec_id": "spec_atlas_idea_recording_v1",
+      "type": "captured_spec",
+      "status": "captured_current",
+      "title": "RenCrow ATLAS アイデア記録・仕様保存 仕様 v1",
+      "source": {
+        "type": "current_thread"
+      },
+      "revision": 1,
+      "content_path": "specifications/spec_atlas_idea_recording_v1.md",
+      "content_sha256": "25dd7e02ac8d540619af44803e72b645f82fe49dca22489c29e7ac6b204b988a",
+      "captured_at": "2026-08-21T22:26:00+09:00"
+    },
+    {
+      "spec_id": "spec_prediction_market_decision",
+      "type": "design_decision_summary",
+      "status": "captured_backfill",
+      "title": "Prediction Market型Multi-Agent協議 設計判断（会話Backfill）",
+      "source": {
+        "type": "project_conversation_backfill"
+      },
+      "revision": 1,
+      "content_path": "specifications/spec_prediction_market_decision.md",
+      "content_sha256": "94761682318a2ed47c115c55dfd6f8f727c727033c9d2f822a84c4e345b41283",
+      "captured_at": "2026-08-21T22:26:00+09:00"
+    },
+    {
+      "spec_id": "spec_council_facilitator_chair",
+      "type": "design_decision_summary",
+      "status": "captured_backfill",
+      "title": "RenCrow 上位協議 Facilitator / Chair / Shared Artifact 設計判断",
+      "source": {
+        "type": "project_conversation_backfill"
+      },
+      "revision": 1,
+      "content_path": "specifications/spec_council_facilitator_chair.md",
+      "content_sha256": "106799ace4bbde3ef1296edb8d19ee508de6b3c5c75ab47f000ae692c78ecace",
+      "captured_at": "2026-08-21T22:26:00+09:00"
+    },
+    {
+      "spec_id": "spec_artificial_motivation",
+      "type": "design_decision_summary",
+      "status": "captured_backfill",
+      "title": "RenCrow 「賢くなる」とArtificial Motivation 設計判断",
+      "source": {
+        "type": "project_conversation_backfill"
+      },
+      "revision": 1,
+      "content_path": "specifications/spec_artificial_motivation.md",
+      "content_sha256": "61a90bc61d85df18ff712f094b122bb61e751c5ffc2adcf97d518ab360a5d9eb",
+      "captured_at": "2026-08-21T22:26:00+09:00"
+    },
+    {
+      "spec_id": "spec_knowledge_architecture",
+      "type": "design_decision_summary",
+      "status": "captured_backfill",
+      "title": "RenCrow Knowledge Architecture 設計判断",
+      "source": {
+        "type": "project_conversation_backfill"
+      },
+      "revision": 1,
+      "content_path": "specifications/spec_knowledge_architecture.md",
+      "content_sha256": "f6c8688b5cbbf5209df07b0e92219e109d7c4775f51d09a5650f92b7eceefe31",
+      "captured_at": "2026-08-21T22:26:00+09:00"
+    },
+    {
+      "spec_id": "spec_atlas_backfill_automation_v1",
+      "type": "captured_spec",
+      "status": "captured_current",
+      "title": "RenCrow ATLAS Backfill / Continuous Design Memory Automation 仕様 v1",
+      "source": {
+        "type": "current_thread"
+      },
+      "revision": 1,
+      "content_path": "specifications/spec_atlas_backfill_automation_v1.md",
+      "content_sha256": "99614fd864a7b0a3329cb15f60be227d26d7b624fd27e68eade6ba76367736a6",
+      "captured_at": "2026-08-21T22:26:00+09:00"
+    },
+    {
+      "spec_id": "spec_l0v2_external",
+      "type": "functional_spec",
+      "status": "external_current",
+      "source": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/ContextShadowRecall.md",
+      "title": "RenCrow L0v2 Shadow Recall 仕様書",
+      "captured_at": "2026-08-21T22:26:00+09:00"
+    },
+    {
+      "spec_id": "spec_memory_verification_external",
+      "type": "tool_spec",
+      "status": "external_draft",
+      "source": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/MemoryCheck.md",
+      "title": "RenCrow Memory Verification Tool 仕様",
+      "captured_at": "2026-08-21T22:26:00+09:00"
+    },
+    {
+      "spec_id": "spec_agent_subagent_external",
+      "type": "design_spec",
+      "status": "external_design_decision",
+      "source": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/HarnesAgentSubagent.md",
+      "title": "RenCrow Agent / Subagent 定義・採用仕様",
+      "captured_at": "2026-08-21T22:26:00+09:00"
+    }
+  ],
+  "automation_contract_ref": "specifications/spec_atlas_backfill_automation_v1.md"
+}

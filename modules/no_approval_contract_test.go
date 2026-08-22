@@ -181,6 +181,12 @@ func isApprovalGuardExcludedFile(path string) bool {
 	if strings.HasSuffix(path, "modules/no_approval_contract_test.go") {
 		return true
 	}
+	// The Atlas backfill package is immutable design-history evidence. Its source
+	// wording is displayed read-only and is never interpreted as a runtime gate.
+	if strings.HasPrefix(path, "internal/features/backlog/backfill/") ||
+		path == "internal/features/backlog/testdata/atlas_backfill_v1.json" {
+		return true
+	}
 	base := filepath.Base(path)
 	return strings.HasPrefix(base, "RELEASE_NOTES") ||
 		strings.HasPrefix(base, "refactor") ||

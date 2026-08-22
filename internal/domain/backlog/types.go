@@ -42,6 +42,7 @@ const (
 type SourceRef struct {
 	Type         string `json:"type"`
 	Locator      string `json:"locator"`
+	Strength     string `json:"strength,omitempty"`
 	Repository   string `json:"repository,omitempty"`
 	Revision     string `json:"revision,omitempty"`
 	ContentHash  string `json:"content_hash,omitempty"`
@@ -70,6 +71,47 @@ type EvidenceRef struct {
 	Passed     bool   `json:"passed"`
 }
 
+// SpecificationArtifact is a verified specification projection. Local bodies
+// are embedded by the feature package and are addressed by SpecID, never by a
+// request-provided filesystem path. External artifacts retain metadata only.
+type SpecificationArtifact struct {
+	SpecID        string `json:"spec_id"`
+	Type          string `json:"type"`
+	Status        string `json:"status"`
+	Title         string `json:"title"`
+	Source        any    `json:"source,omitempty"`
+	Revision      int    `json:"revision,omitempty"`
+	ContentPath   string `json:"content_path,omitempty"`
+	ContentSHA256 string `json:"content_sha256,omitempty"`
+	CapturedAt    string `json:"captured_at,omitempty"`
+	Content       string `json:"content,omitempty"`
+	BodyAvailable bool   `json:"body_available"`
+}
+
+// BackfillImportReceipt is stored as a non-item record in the existing
+// backlog JSONL. It makes a package import auditable without introducing a
+// second backlog database.
+type BackfillImportReceipt struct {
+	RecordType         string `json:"record_type"`
+	ImportID           string `json:"import_id"`
+	DatasetID          string `json:"dataset_id"`
+	PackageSHA256      string `json:"package_sha256"`
+	Revision           int    `json:"revision"`
+	ItemCount          int    `json:"item_count"`
+	SpecificationCount int    `json:"specification_count"`
+	ImportedAt         string `json:"imported_at"`
+}
+
+type BackfillReconcileResult struct {
+	Imported int `json:"imported"`
+	Updated  int `json:"updated"`
+	Skipped  int `json:"skipped"`
+}
+
+func BackfillImportID(packageSHA256 string, revision int) string {
+	return fmt.Sprintf("atlas-backfill:%s:%d", strings.ToLower(strings.TrimSpace(packageSHA256)), revision)
+}
+
 func (e EvidenceRef) Key() string {
 	return strings.Join([]string{
 		strings.ToUpper(strings.TrimSpace(e.Stage)),
@@ -85,10 +127,16 @@ type Item struct {
 	SchemaVersion int `json:"schema_version"`
 
 	ItemID             string   `json:"item_id"`
+	FeatureID          string   `json:"feature_id,omitempty"`
 	Kind               string   `json:"kind"`
 	Title              string   `json:"title"`
 	Body               string   `json:"body,omitempty"`
 	Purpose            string   `json:"purpose,omitempty"`
+	Problem            string   `json:"problem,omitempty"`
+	Idea               string   `json:"idea,omitempty"`
+	Background         string   `json:"background,omitempty"`
+	ExpectedEffect     []string `json:"expected_effect,omitempty"`
+	RelationRefs       []string `json:"relation_refs,omitempty"`
 	AffectedModules    []string `json:"affected_modules,omitempty"`
 	AcceptanceCriteria []string `json:"acceptance_criteria,omitempty"`
 
@@ -100,6 +148,13 @@ type Item struct {
 
 	ConceptState  string `json:"concept_state,omitempty"`
 	DeliveryState string `json:"delivery_state,omitempty"`
+	// DeclaredDeliveryState retains the source package claim separately from
+	// the runtime state, which starts at NONE until CORE has cumulative evidence.
+	DeclaredDeliveryState string   `json:"declared_delivery_state,omitempty"`
+	ReconstructionBasis   string   `json:"reconstruction_basis,omitempty"`
+	MigrationStatus       string   `json:"migration_status,omitempty"`
+	OriginAtlas           []string `json:"origin_atlas,omitempty"`
+	SpecificationRefs     []string `json:"specification_refs,omitempty"`
 
 	Priority   string   `json:"priority"`
 	QueueRank  int      `json:"queue_rank,omitempty"`

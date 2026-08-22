@@ -76,7 +76,7 @@ func TestServiceAdoptCreatesUnitWorkstreamAndSingletonQueue(t *testing.T) {
 	ws := &memoryWorkstreamStore{}
 	svc := NewService(store, ws).WithClock(func() time.Time { return time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC) })
 
-	first, err := svc.Intake(context.Background(), IntakeRequest{ItemID: "a", Title: "A", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "a"}}})
+	first, err := svc.Intake(context.Background(), IntakeRequest{ItemID: "a", Title: "A", Purpose: "test A", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "a"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestServiceAdoptCreatesUnitWorkstreamAndSingletonQueue(t *testing.T) {
 	if firstResult.Item.DeliveryState != domainbacklog.DeliveryQueued || !firstResult.LeaseAcquired {
 		t.Fatalf("first adoption=%+v", firstResult)
 	}
-	second, err := svc.Intake(context.Background(), IntakeRequest{ItemID: "b", Title: "B", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "b"}}})
+	second, err := svc.Intake(context.Background(), IntakeRequest{ItemID: "b", Title: "B", Purpose: "test B", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "b"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +126,21 @@ func TestServiceIntakeDeduplicatesExactSource(t *testing.T) {
 	}
 }
 
+func TestServiceCandidateRequiresPurpose(t *testing.T) {
+	store := &memoryItemStore{}
+	svc := NewService(store, nil)
+	intake, err := svc.Intake(context.Background(), IntakeRequest{
+		ItemID: "missing-purpose", Title: "Missing purpose",
+		SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "missing-purpose"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Candidate(context.Background(), intake.ItemID); err == nil {
+		t.Fatal("candidate promotion accepted an item without purpose")
+	}
+}
+
 func TestServiceRecoverFindsLeaseHolderByImplementationUnit(t *testing.T) {
 	store := &memoryItemStore{}
 	ws := &memoryWorkstreamStore{}
@@ -133,7 +148,7 @@ func TestServiceRecoverFindsLeaseHolderByImplementationUnit(t *testing.T) {
 		return time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC)
 	})
 	intake, err := svc.Intake(context.Background(), IntakeRequest{
-		ItemID: "recover-item", Title: "recover", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "recover"}},
+		ItemID: "recover-item", Title: "recover", Purpose: "recover test", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "recover"}},
 	})
 	if err != nil {
 		t.Fatal(err)

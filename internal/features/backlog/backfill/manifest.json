@@ -1,0 +1,69 @@
+{
+  "generated_at": "2026-08-21T22:26:00+09:00",
+  "files": {
+    "ATLAS_BACKFILL_INDEX.md": {
+      "sha256": "bbe6591b8e21ea9f0fb9a4b10a94a451990f47fca085f04f7791f7ac5c69073b",
+      "bytes": 23869
+    },
+    "README.md": {
+      "sha256": "99dcf07188905cd0b4a62bba89c010a782772b9f0c1469dfd034d49b8b09a780",
+      "bytes": 2077
+    },
+    "RenCrow_CORE/internal/features/backlog/catalog/atlas_seed_v1.json": {
+      "sha256": "9fab11fbe4e8d08de2b0e8f323cc0c6a6eff74c6bdeba043b8a6dfb89cc3ee6b",
+      "bytes": 70106
+    },
+    "RenCrow_CORE/internal/features/backlog/testdata/atlas_backfill_v1.json": {
+      "sha256": "7fd72429f88ff6eeb4be9e08619087a6c7c7b3038ed1b81a7e0e519dab2fb4af",
+      "bytes": 195301
+    },
+    "atlas_backfill_v1.json": {
+      "sha256": "7fd72429f88ff6eeb4be9e08619087a6c7c7b3038ed1b81a7e0e519dab2fb4af",
+      "bytes": 195301
+    },
+    "atlas_item_v2.schema.json": {
+      "sha256": "43a87f86374b06f41c24e5f0657bde9cf87dcc7b7f2cbcca7d11b604bf900a15",
+      "bytes": 2019
+    },
+    "atlas_items_v2.jsonl": {
+      "sha256": "843cf466f5efd63b5e5869eb2a38e724911bbfe4ade913d9ed0ee065d97af02b",
+      "bytes": 148246
+    },
+    "specification_artifacts.json": {
+      "sha256": "7cbd0f1faec33baf4bf2062e74e4f9f28fdf24864eccc6d8ca8efa2bdfe73d0d",
+      "bytes": 4880
+    },
+    "specifications/spec_artificial_motivation.md": {
+      "sha256": "61a90bc61d85df18ff712f094b122bb61e751c5ffc2adcf97d518ab360a5d9eb",
+      "bytes": 1492
+    },
+    "specifications/spec_atlas_backfill_automation_v1.md": {
+      "sha256": "99614fd864a7b0a3329cb15f60be227d26d7b624fd27e68eade6ba76367736a6",
+      "bytes": 2908
+    },
+    "specifications/spec_atlas_idea_recording_v1.md": {
+      "sha256": "25dd7e02ac8d540619af44803e72b645f82fe49dca22489c29e7ac6b204b988a",
+      "bytes": 3124
+    },
+    "specifications/spec_atlas_lifecycle_functional_v1.md": {
+      "sha256": "652a951b5f9f9186c82dd5e7716bdbd60502d725f85bc4ff1cab856a812d07cb",
+      "bytes": 5364
+    },
+    "specifications/spec_atlas_lifecycle_implementation_v1.md": {
+      "sha256": "6b5c8b3a86a42d85408ea6d99458199481d9b6efe23bcf391088a723fa50ef89",
+      "bytes": 7159
+    },
+    "specifications/spec_council_facilitator_chair.md": {
+      "sha256": "106799ace4bbde3ef1296edb8d19ee508de6b3c5c75ab47f000ae692c78ecace",
+      "bytes": 1295
+    },
+    "specifications/spec_knowledge_architecture.md": {
+      "sha256": "f6c8688b5cbbf5209df07b0e92219e109d7c4775f51d09a5650f92b7eceefe31",
+      "bytes": 1302
+    },
+    "specifications/spec_prediction_market_decision.md": {
+      "sha256": "94761682318a2ed47c115c55dfd6f8f727c727033c9d2f822a84c4e345b41283",
+      "bytes": 1278
+    }
+  }
+}

@@ -1,6 +1,8 @@
 package backlog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 )
@@ -21,6 +23,35 @@ func ValidateEvidenceRef(ref EvidenceRef) error {
 	}
 	if strings.TrimSpace(ref.Ref) == "" {
 		return errors.New("evidence ref is required")
+	}
+	return nil
+}
+
+func ValidateSpecificationArtifact(artifact SpecificationArtifact) error {
+	if strings.TrimSpace(artifact.SpecID) == "" {
+		return errors.New("specification spec_id is required")
+	}
+	if artifact.BodyAvailable && strings.TrimSpace(artifact.Content) == "" {
+		return errors.New("available specification body is required")
+	}
+	if strings.TrimSpace(artifact.ContentSHA256) != "" && artifact.Content != "" {
+		hash := sha256.Sum256([]byte(artifact.Content))
+		if !strings.EqualFold(hex.EncodeToString(hash[:]), strings.TrimSpace(artifact.ContentSHA256)) {
+			return errors.New("specification content hash mismatch")
+		}
+	}
+	return nil
+}
+
+func ValidateBackfillImportReceipt(receipt BackfillImportReceipt) error {
+	if strings.TrimSpace(receipt.RecordType) != "atlas_backfill_import" {
+		return errors.New("invalid backfill receipt record type")
+	}
+	if strings.TrimSpace(receipt.ImportID) == "" || strings.TrimSpace(receipt.DatasetID) == "" || strings.TrimSpace(receipt.PackageSHA256) == "" {
+		return errors.New("backfill receipt identity is required")
+	}
+	if receipt.Revision < 1 || receipt.ItemCount < 0 || receipt.SpecificationCount < 0 {
+		return errors.New("invalid backfill receipt counters")
 	}
 	return nil
 }

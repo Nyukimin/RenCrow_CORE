@@ -39,7 +39,7 @@ func TestAtlasOwnerHTTPFlowReachesLiveVerifiedWithEvidence(t *testing.T) {
 		return body.Item
 	}
 
-	if rec := post("/v1/atlas/intake", `{"item_id":"e2e","title":"Atlas E2E","source_refs":[{"type":"manual","locator":"e2e"}]}`); rec.Code < 200 || rec.Code >= 300 {
+	if rec := post("/v1/atlas/intake", `{"item_id":"e2e","title":"Atlas E2E","purpose":"verify the Atlas lifecycle","source_refs":[{"type":"manual","locator":"e2e"}]}`); rec.Code < 200 || rec.Code >= 300 {
 		t.Fatalf("intake status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if rec := post("/v1/atlas/items/e2e/candidate", `{}`); rec.Code != http.StatusOK {
@@ -97,5 +97,41 @@ func TestAtlasOwnerPOSTRequiresBearerAndProfile(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAtlasSpecificationProjectionUsesSpecIDAndResolvesItemReferences(t *testing.T) {
+	store := &atlasHTTPItemStore{items: []domainbacklog.Item{{
+		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "atlas:spec-item", FeatureID: "spec-item", Title: "spec item",
+		ConceptState: domainbacklog.ConceptCandidate, DeliveryState: domainbacklog.DeliveryNone,
+		SpecificationRefs: []string{"spec_atlas_lifecycle_functional_v1"},
+	}}}
+	handler := HandleAtlas(appbacklog.NewService(store, nil))
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/viewer/atlas/specifications/spec_atlas_lifecycle_functional_v1", nil)
+	record := httptest.NewRecorder()
+	handler.ServeHTTP(record, request)
+	if record.Code != http.StatusOK || !bytes.Contains(record.Body.Bytes(), []byte(`"body_available":true`)) {
+		t.Fatalf("specification status=%d body=%s", record.Code, record.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "http://127.0.0.1/viewer/atlas/items/atlas:spec-item", nil)
+	record = httptest.NewRecorder()
+	handler.ServeHTTP(record, request)
+	if record.Code != http.StatusOK || !bytes.Contains(record.Body.Bytes(), []byte(`"resolved_specifications"`)) {
+		t.Fatalf("item resolved specs status=%d body=%s", record.Code, record.Body.String())
+	}
+}
+
+func TestAtlasSpecificationProjectionRejectsEncodedPathSegments(t *testing.T) {
+	handler := HandleAtlas(appbacklog.NewService(&atlasHTTPItemStore{}, nil))
+	for _, target := range []string{
+		"http://127.0.0.1/viewer/atlas/specifications/spec%2Fsecret",
+		"http://127.0.0.1/viewer/atlas/specifications/..%5Csecret",
+	} {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		record := httptest.NewRecorder()
+		handler.ServeHTTP(record, request)
+		if record.Code != http.StatusNotFound {
+			t.Fatalf("target=%s status=%d body=%s", target, record.Code, record.Body.String())
+		}
 	}
 }

@@ -1,0 +1,130 @@
+[
+  {
+    "spec_id": "spec_atlas_lifecycle_functional_v1",
+    "type": "captured_spec",
+    "status": "captured_current",
+    "title": "RenCrow Atlas / Backlog / Implementation Lifecycle 仕様 v1",
+    "source": {
+      "type": "current_thread"
+    },
+    "revision": 1,
+    "content_path": "specifications/spec_atlas_lifecycle_functional_v1.md",
+    "content_sha256": "652a951b5f9f9186c82dd5e7716bdbd60502d725f85bc4ff1cab856a812d07cb",
+    "captured_at": "2026-08-21T22:26:00+09:00"
+  },
+  {
+    "spec_id": "spec_atlas_lifecycle_implementation_v1",
+    "type": "captured_spec",
+    "status": "captured_current",
+    "title": "RenCrow Atlas / Backlog / Implementation Lifecycle 実装仕様 v1",
+    "source": {
+      "type": "current_thread"
+    },
+    "revision": 1,
+    "content_path": "specifications/spec_atlas_lifecycle_implementation_v1.md",
+    "content_sha256": "6b5c8b3a86a42d85408ea6d99458199481d9b6efe23bcf391088a723fa50ef89",
+    "captured_at": "2026-08-21T22:26:00+09:00"
+  },
+  {
+    "spec_id": "spec_atlas_idea_recording_v1",
+    "type": "captured_spec",
+    "status": "captured_current",
+    "title": "RenCrow ATLAS アイデア記録・仕様保存 仕様 v1",
+    "source": {
+      "type": "current_thread"
+    },
+    "revision": 1,
+    "content_path": "specifications/spec_atlas_idea_recording_v1.md",
+    "content_sha256": "25dd7e02ac8d540619af44803e72b645f82fe49dca22489c29e7ac6b204b988a",
+    "captured_at": "2026-08-21T22:26:00+09:00"
+  },
+  {
+    "spec_id": "spec_prediction_market_decision",
+    "type": "design_decision_summary",
+    "status": "captured_backfill",
+    "title": "Prediction Market型Multi-Agent協議 設計判断（会話Backfill）",
+    "source": {
+      "type": "project_conversation_backfill"
+    },
+    "revision": 1,
+    "content_path": "specifications/spec_prediction_market_decision.md",
+    "content_sha256": "94761682318a2ed47c115c55dfd6f8f727c727033c9d2f822a84c4e345b41283",
+    "captured_at": "2026-08-21T22:26:00+09:00"
+  },
+  {
+    "spec_id": "spec_council_facilitator_chair",
+    "type": "design_decision_summary",
+    "status": "captured_backfill",
+    "title": "RenCrow 上位協議 Facilitator / Chair / Shared Artifact 設計判断",
+    "source": {
+      "type": "project_conversation_backfill"
+    },
+    "revision": 1,
+    "content_path": "specifications/spec_council_facilitator_chair.md",
+    "content_sha256": "106799ace4bbde3ef1296edb8d19ee508de6b3c5c75ab47f000ae692c78ecace",
+    "captured_at": "2026-08-21T22:26:00+09:00"
+  },
+  {
+    "spec_id": "spec_artificial_motivation",
+    "type": "design_decision_summary",
+    "status": "captured_backfill",
+    "title": "RenCrow 「賢くなる」とArtificial Motivation 設計判断",
+    "source": {
+      "type": "project_conversation_backfill"
+    },
+    "revision": 1,
+    "content_path": "specifications/spec_artificial_motivation.md",
+    "content_sha256": "61a90bc61d85df18ff712f094b122bb61e751c5ffc2adcf97d518ab360a5d9eb",
+    "captured_at": "2026-08-21T22:26:00+09:00"
+  },
+  {
+    "spec_id": "spec_knowledge_architecture",
+    "type": "design_decision_summary",
+    "status": "captured_backfill",
+    "title": "RenCrow Knowledge Architecture 設計判断",
+    "source": {
+      "type": "project_conversation_backfill"
+    },
+    "revision": 1,
+    "content_path": "specifications/spec_knowledge_architecture.md",
+    "content_sha256": "f6c8688b5cbbf5209df07b0e92219e109d7c4775f51d09a5650f92b7eceefe31",
+    "captured_at": "2026-08-21T22:26:00+09:00"
+  },
+  {
+    "spec_id": "spec_atlas_backfill_automation_v1",
+    "type": "captured_spec",
+    "status": "captured_current",
+    "title": "RenCrow ATLAS Backfill / Continuous Design Memory Automation 仕様 v1",
+    "source": {
+      "type": "current_thread"
+    },
+    "revision": 1,
+    "content_path": "specifications/spec_atlas_backfill_automation_v1.md",
+    "content_sha256": "99614fd864a7b0a3329cb15f60be227d26d7b624fd27e68eade6ba76367736a6",
+    "captured_at": "2026-08-21T22:26:00+09:00"
+  },
+  {
+    "spec_id": "spec_l0v2_external",
+    "type": "functional_spec",
+    "status": "external_current",
+    "source": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/ContextShadowRecall.md",
+    "title": "RenCrow L0v2 Shadow Recall 仕様書",
+    "captured_at": "2026-08-21T22:26:00+09:00"
+  },
+  {
+    "spec_id": "spec_memory_verification_external",
+    "type": "tool_spec",
+    "status": "external_draft",
+    "source": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/MemoryCheck.md",
+    "title": "RenCrow Memory Verification Tool 仕様",
+    "captured_at": "2026-08-21T22:26:00+09:00"
+  },
+  {
+    "spec_id": "spec_agent_subagent_external",
+    "type": "design_spec",
+    "status": "external_design_decision",
+    "source": "Nyukimin/RenCrow_EcoSystem:docs/Backlog/HarnesAgentSubagent.md",
+    "title": "RenCrow Agent / Subagent 定義・採用仕様",
+    "captured_at": "2026-08-21T22:26:00+09:00"
+  }
+]

@@ -117,7 +117,7 @@ all: build
 generate:
 	@echo "Run generate..."
 	@rm -r ./$(CMD_DIR)/workspace 2>/dev/null || true
-	@$(GO) generate ./...
+	@$(GO) generate $(GO_PACKAGES)
 	@echo "Run generate complete"
 
 ## build: Build the rencrow binary for current platform
