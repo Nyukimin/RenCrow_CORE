@@ -1334,3 +1334,15 @@ hash検証済み本文と`body_available=true`、external artifactでは本文�
 COREがstate transition、dedupe、Evidence Gate、WIP leaseを検証してtyped resultを返します。
 Viewer、CMD、LLMがstateや`check_ok`を直接確定しません。legacy `GET|POST /viewer/backlog`は互換入口として
 維持しますが、Atlas lifecycleのauthoritative writeではありません。
+
+`revise`は`implementation_revision`、隣接`target_stage`、Evidence Refを受け取りますが、入力の
+`passed=true`をruntime合格へ直接代入しません。COREはkind別owner verifierで参照先を検証し、
+`unit_id + implementation_revision + target_stage`の冪等receiptを返します。失敗revisionは
+`reason_code`、`invalidated_from_stage`、変更軸を保持し、過去stageを上書きしません。
+
+`BLOCKED`では失敗終端、Queue Freeze、Lease解放結果を同一closure receiptへ束縛します。Freeze解除は
+`POST /v1/atlas/queue-freezes/{freeze_id}/resolve`に限定します。bodyは`request_id`、
+`expected_freeze_revision`、事前Adoption済みの`replacement_unit_id`、旧`supersedes_unit_id`、
+`blocker_resolution_refs`を必須とします。COREが旧UnitのBLOCKED、supersedes完全一致、blocker解消、dependency、
+他Lease不在を同じdecisionで検証し、成功時だけFreeze解除receiptとreplacement Lease取得を冪等に確定します。
+同一request IDのpayload違いはconflictとし、再起動やLease不在を解除requestとして扱いません。

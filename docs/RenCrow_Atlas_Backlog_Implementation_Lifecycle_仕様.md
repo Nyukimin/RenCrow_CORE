@@ -35,6 +35,8 @@ Production Verify
   ↓
 Live Verified
   ↓
+Done / closure
+  ↓
 Current Atlas
 ```
 
@@ -56,7 +58,8 @@ Current Atlas
 Global Implementation WIP = 1
 ```
 
-現在のImplementation Unitが`LIVE_VERIFIED`または明示的な終端状態になるまで、次のImplementation Unitを開始しない。
+現在のImplementation Unitが成功終端`DONE`または理由付き取消終端`REJECTED`になるまで、次のImplementation Unitを開始しない。
+失敗終端`BLOCKED`では実行Leaseを解放するが、Global Queueは永続Freezeし、後続Unitを開始しない。
 
 複数Agent、複数Coder、複数repositoryを一つのImplementation Unit内部で利用することは許可する。
 
@@ -182,7 +185,8 @@ Atlasは次の5面を持つ。
 
 ## 4.1 Current
 
-現在RenCrowに存在する機能。
+現在RenCrowに存在し、closureまで完了した`DONE`機能。`LIVE_VERIFIED`はclosure処理中であり、
+Currentの完成機能件数へ含めない。
 
 表示例:
 
@@ -190,7 +194,7 @@ Atlasは次の5面を持つ。
 UserMemory
 Owner        RenCrow_CORE
 Concept      ADOPTED
-Delivery     LIVE_VERIFIED
+Delivery     DONE
 Revision     d5f181a
 Evidence     12
 ```
@@ -327,7 +331,14 @@ REJECTED
 
 `LIVE_VERIFIED`以前を完成扱いしない。
 
-`DONE`はAtlasへの最終反映まで完了した状態。
+`LIVE_VERIFIED`はrequired Evidenceの実在性と内容をCOREが検証した状態であり、まだLeaseを解放しない。
+
+`DONE`はCurrent反映、Workstream終端、closure receipt保存、Implementation Lease解放まで完了した成功終端である。
+`LIVE_VERIFIED`から`DONE`へのclosureは追加の人判断を待たず、COREが同じlifecycle run内で冪等に実行する。
+
+`BLOCKED`と`REJECTED`は成功を意味せず、Currentへ完成機能として掲載しない。`BLOCKED`はQueue Freezeを伴う
+解決不能終端、`REJECTED`は認証済みSystem Ownerまたは決定済みpolicyによる理由付き取消終端であり、
+取消closure完了後はQueueをFreezeしない。
 
 ---
 
@@ -336,7 +347,11 @@ REJECTED
 ## 6.1 採用
 
 System Ownerが認証済みrequestとしてAtlas Itemを明示的に採用し、COREは同じrequest内で
-`ADOPTED`または理由付き`REJECTED`／`BLOCKED`を確定する。人の追加判断を待つ中間状態は作らない。
+request outcomeを`applied`／`rejected`／`blocked`のいずれかへ確定する。人の追加判断を待つ中間状態は作らない。
+
+`applied`の場合だけConcept Stateを`ADOPTED`へ変更する。採用しない決定をItemへ反映する場合は
+Concept Stateを理由付き`REJECTED`へ変更する。依存利用不能、lease競合、owner scope不一致等でrequest
+outcomeが`blocked`になった場合、Concept Stateへ存在しない`BLOCKED`を代入せず、Itemを採用前状態のまま保持する。
 
 採用時に最低限以下を確定する。
 
@@ -384,9 +399,27 @@ LLMがその場の判断だけで順番を変更しない。
 
 CORE再起動時にはLeaseとWorkstreamを照合し、二重実行を防止する。
 
+Leaseは「現在実行中の1 Unit」を排他する状態であり、Queue停止理由の正本にはしない。
+成功終端`DONE`、失敗終端`BLOCKED`、取消終端`REJECTED`ではLeaseを冪等に解放する。
+
+`BLOCKED`時の後続停止は、Leaseとは別のCORE-owned durable `Queue Freeze`で表す。Queue Freezeは最低限、
+`freeze_id`、`blocked_unit_id`、`blocked_revision`、`reason_code`、`invalidated_from_stage`、
+`evidence_refs`、`created_at`を持ち、CORE再起動後も維持する。Lease不在をQueue実行可能と解釈してはならない。
+
+Queue dispatcherは、active Leaseなし、Queue Freezeなし、dependency成立、直前Unitが`DONE`または取消closure済み
+`REJECTED`であることを同じdecision内で検証してから次UnitのLeaseを取得する。これらを別々に判定してはならない。
+
 ---
 
 # 7. Implementation Unit標準工程
+
+各Unitは単調増加する`implementation_revision`を持つ。stage失敗後に過去の成功recordを削除したり、
+Delivery Stateを履歴上書きで巻き戻したりしない。新revisionへ`invalidated_from_stage`、root cause、
+変更した前提／設計／route、引き継ぐ有効Evidenceを記録し、COREが新revisionのeffective stageを導出する。
+
+Runnerの冪等単位は`implementation_unit_id + implementation_revision + target_stage`とする。
+同一キーの再送は同じreceiptを返し、異なるpayloadはconflictとして拒否する。1 stage完了後は次のtarget stageを
+新しいキーで開始できなければならず、Unit全体に一度だけ付けるstarted markerで後続stageを止めない。
 
 ## Stage 1: Specification
 
@@ -507,19 +540,33 @@ target API smoke test
 
 ## Stage 10: Live Verified
 
-すべての必須Evidenceが成立した場合のみ、
+すべての必須Evidenceについて、参照先のowner、revision、hash、result、observed_atをCOREが検証できた場合のみ、
 
 ```text
 Delivery State = LIVE_VERIFIED
 ```
 
-へ遷移する。
+へ遷移する。request payloadの`passed=true`、Agentの完了発言、文字列だけのrefは検証結果ではない。
+この時点ではImplementation Leaseを解放しない。
 
 ---
 
 ## Stage 11: Done
 
-Atlas Currentへ状態を反映し、Implementation Leaseを解放する。
+COREは`LIVE_VERIFIED`到達後、同じlifecycle run内で次を冪等に実行する。
+
+```text
+closure receipt prepared
+Workstream / Goal / Artifact終端更新
+Implementation Lease解放
+Delivery State = DONE
+closure receipt completed
+Current projectionへDONEを反映
+```
+
+複数storeを一つのtransactionにできない場合は、closure receiptのphaseを正本として順序を固定し、
+再起動時に未完phaseだけを再実行する。Queue dispatcherは`DONE`とcompleted closure receiptの両方を要求する。
+lease解放失敗を無視して`DONE`を保存してはならない。
 
 その後、次のADOPTED itemを開始可能にする。
 
@@ -527,16 +574,16 @@ Atlas Currentへ状態を反映し、Implementation Leaseを解放する。
 
 # 8. 失敗時の扱い
 
-各Stage失敗時は原因を固定する。
+各Stage失敗時はroot cause、reason code、失敗Evidence、無効になった最も早いstageを固定する。
 
 ```text
 failure
  ↓
-root cause
+root cause / invalidated_from_stage
  ↓
-revision
+implementation_revision + 1
  ↓
-失敗によって無効になった最も早いStageへ戻る
+新revisionのeffective stageを導出
 ```
 
 例:
@@ -554,13 +601,37 @@ Deployment failure
 → BUILD
 ```
 
-有限回のrevisionでも成立しない場合は`BLOCKED`で閉じる。
+同じ失敗原因を無条件に繰り返さない。revisionごとに変更した前提、分解、route、Tool、設計を記録し、
+policyで定めた有限回のrevisionでも成立しない場合は理由とEvidence付き`BLOCKED`で閉じる。
 
 `BLOCKED`は待機状態ではなく終端結果である。
 
-既定ではActive UnitがBLOCKEDになった場合、Implementation Queueを停止する。
+Active Unitが`BLOCKED`になった場合、COREは失敗終端recordとQueue Freezeを保存してから実行Leaseを解放する。
+Implementation Queueは再起動後も停止する。
 
 後続項目を黙って飛ばさない。
+
+`BLOCKED` Unitそのものを再開、上書き、状態巻戻ししてはならない。`BLOCKED`到達前のstage失敗は同じUnitの
+新しい`implementation_revision`で再試行できるが、`BLOCKED`到達後の再試行には必ず置換Unitを作り、旧Unitを`supersedes_unit_id`、
+`blocker_resolution_refs`で参照する。Queue Freeze解除は、認証済みSystem Ownerからの新しいrequest内で、
+置換revision、blocker解消Evidence、dependency成立をCOREが同期検証できた場合だけ行う。
+このrequestは待機artifactへの承認印ではなく、新しい事実と実行目的を持つ独立requestである。
+
+解除requestが`rejected`／`blocked`ならFreezeを維持する。単なるCORE再起動、Lease不在、priority変更、
+Agentの自然言語報告ではFreezeを解除しない。
+
+解除のowner APIは次に固定する。
+
+```text
+POST /v1/atlas/queue-freezes/{freeze_id}/resolve
+```
+
+requestは`request_id`、`expected_freeze_revision`、`replacement_unit_id`、`supersedes_unit_id`、
+`blocker_resolution_refs`を必須とする。replacement Unitは事前に認証済みAdoptionを完了した`ADOPTED / QUEUED`
+でなければならず、Freeze中のAdoptionはUnitとQueue recordを作成できるがLeaseを取得しない。
+COREは旧Unitが`BLOCKED`、supersedes関係が完全一致、blocker Evidenceがowner verifier合格、dependency成立、
+他Leaseなしを同じdecision内で検証する。成功時はFreeze解除receiptとreplacement UnitのLease取得を一つの
+冪等operationとして確定する。同じ`request_id`／同じpayloadは同じreceiptを返し、payload違いはconflictとする。
 
 ---
 
@@ -683,6 +754,22 @@ Live Evidence
 
 「docsに実装済みと書いてある」だけで`LIVE_VERIFIED`へ上げない。
 
+Evidence Refは証拠そのものではなく、ownerが管理する証拠へのaddressである。COREはEvidence kindごとの
+allow-list verifierを使い、最低限次を検証する。
+
+```text
+spec        -> canonical document revision / content hash
+test / E2E  -> command、exit status、対象revision、result receipt
+build       -> clean source revision、artifact SHA-256、build receipt
+deploy      -> EcoSystem pin、deployment receipt、installed artifact
+restart     -> 対象service、before / after state、restart receipt
+readiness   -> expected revisionでのreadiness response
+smoke       -> production route、result、trace / observed_at
+```
+
+検証不能、owner不一致、hash不一致、stale、失敗resultは`passed`へ導出しない。外部入力の`passed`はclaimとして
+保持できるが、runtime stage statusはCORE verifierの結果からだけ導出する。
+
 ---
 
 # 13. 既存Backlogとの互換
@@ -746,6 +833,8 @@ Post-deploy verification成功
 Live Evidence保存
 Atlas Current更新
 Implementation Lease解放
+closure receipt完了
+Queue Freezeなし
 ```
 
 一つでも欠ける場合はDONEにしない。
