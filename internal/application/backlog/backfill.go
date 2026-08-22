@@ -108,9 +108,13 @@ func backfillItemToDomain(source featurebacklog.BackfillItem) domainbacklog.Item
 		Background:            source.Background,
 		ExpectedEffect:        append([]string(nil), source.ExpectedEffect...),
 		RelationRefs:          append([]string(nil), source.RelationRefs...),
+		TargetModules:         append([]string(nil), source.TargetModules...),
+		ConsumerModules:       append([]string(nil), source.ConsumerModules...),
+		AffectedModules:       append([]string(nil), source.AffectedModules...),
 		Category:              source.Category,
 		Source:                "atlas_backfill_v1",
 		SourceRefs:            refs,
+		OwnerModule:           domainbacklog.LifecycleOwnerModule,
 		ConceptState:          strings.ToUpper(strings.TrimSpace(source.ConceptState)),
 		DeliveryState:         domainbacklog.DeliveryNone,
 		DeclaredDeliveryState: strings.ToUpper(strings.TrimSpace(source.DeliveryState)),
@@ -138,8 +142,18 @@ func preserveRuntimeOverlay(current, incoming domainbacklog.Item) domainbacklog.
 	incoming.AdoptionReason = current.AdoptionReason
 	incoming.AdoptedAt = current.AdoptedAt
 	incoming.Owner = current.Owner
-	incoming.OwnerModule = current.OwnerModule
-	incoming.AffectedModules = append([]string(nil), current.AffectedModules...)
+	// Lifecycle ownership is a CORE contract and is repaired even when an
+	// existing record is empty or names a different module.
+	incoming.OwnerModule = domainbacklog.LifecycleOwnerModule
+	if len(current.TargetModules) > 0 {
+		incoming.TargetModules = append([]string(nil), current.TargetModules...)
+	}
+	if len(current.ConsumerModules) > 0 {
+		incoming.ConsumerModules = append([]string(nil), current.ConsumerModules...)
+	}
+	if len(current.AffectedModules) > 0 {
+		incoming.AffectedModules = append([]string(nil), current.AffectedModules...)
+	}
 	incoming.Priority = current.Priority
 	incoming.QueueRank = current.QueueRank
 	incoming.Tags = append([]string(nil), current.Tags...)

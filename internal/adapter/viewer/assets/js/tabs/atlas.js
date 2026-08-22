@@ -372,7 +372,13 @@ function atlasRenderItemDetail(scope) {
     ['Idea', ['idea', 'proposal', 'solution', 'approach']],
     ['Background', ['background', 'context', 'rationale']],
     ['Expected Effect', ['expected_effect', 'expectedEffect', 'expected_outcome', 'outcome', 'benefit', 'benefits']],
-    ['Relations', ['relation_refs', 'relations', 'related_ids', 'depends_on', 'affected_modules']],
+    ['Relations', ['relation_refs', 'relations', 'related_ids', 'depends_on']],
+  ];
+  const ownershipFields = [
+    ['Lifecycle Owner', ['owner_module', 'ownerModule']],
+    ['Target Modules', ['target_modules', 'targetModules']],
+    ['Consumer Modules', ['consumer_modules', 'consumerModules']],
+    ['Affected Modules', ['affected_modules', 'affectedModules']],
   ];
   const sourceRefs = atlasReferenceList(atlasDetailField(item, ['source_refs', 'sourceRefs', 'sources'], []));
   const sourceStrengths = Array.from(new Set(sourceRefs.map((reference) => typeof reference === 'object' && reference ? atlasField(reference, ['strength', 'source_strength'], '') : '').filter(Boolean)));
@@ -382,6 +388,7 @@ function atlasRenderItemDetail(scope) {
   const implementationStatus = atlasDetailField(item, ['implementation_status', 'implementationStatus'], '') || [conceptState, deliveryState].filter(Boolean).join(' / ');
   return '<section class="atlas-item-detail" aria-live="polite"><div class="atlas-detail-head"><div><span class="atlas-kicker">ITEM DETAIL / READ-ONLY</span><h3>' + atlasEscape(title) + '</h3><div class="atlas-code">' + atlasEscape(atlasItemDetailState.itemID) + '</div></div><button class="atlas-detail-close" type="button" data-atlas-detail-close="true">Close</button></div>' +
     '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Design Card</h4><span>Purpose and intent</span></div><dl class="atlas-detail-grid">' + cardFields.map((field) => atlasDetailMarkup(field[0], atlasDetailField(item, field[1], ''))).join('') + '</dl></section>' +
+    '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Ownership and Module Scope</h4><span>Lifecycle responsibility and verification impact</span></div><dl class="atlas-detail-grid">' + ownershipFields.map((field) => atlasDetailMarkup(field[0], atlasDetailField(item, field[1], ''))).join('') + '</dl></section>' +
     '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Specification</h4><span>allow-listed metadata and body</span></div>' + atlasRenderSpecificationArtifacts() + '</section>' +
     '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Sources</h4><span>read-only references</span></div>' + atlasRenderDetailSources(item) + '</section>' +
     '<dl class="atlas-detail-grid atlas-detail-status">' + atlasDetailMarkup('Source Strength', sourceStrength) + atlasDetailMarkup('Implementation Status', implementationStatus) + '</dl>' +

@@ -47,6 +47,8 @@ type IntakeRequest struct {
 	Tags               []string                  `json:"tags,omitempty"`
 	DependsOn          []string                  `json:"depends_on,omitempty"`
 	RelatedIDs         []string                  `json:"related_ids,omitempty"`
+	TargetModules      []string                  `json:"target_modules,omitempty"`
+	ConsumerModules    []string                  `json:"consumer_modules,omitempty"`
 	AffectedModules    []string                  `json:"affected_modules,omitempty"`
 	AcceptanceCriteria []string                  `json:"acceptance_criteria,omitempty"`
 	Reason             string                    `json:"reason,omitempty"`
@@ -248,9 +250,12 @@ func (s *Service) Intake(ctx context.Context, request IntakeRequest) (IntakeResu
 	item := domainbacklog.Item{
 		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: id,
 		Kind: request.Kind, Title: strings.TrimSpace(request.Title), Body: strings.TrimSpace(request.Body),
-		Purpose: strings.TrimSpace(request.Purpose), AffectedModules: append([]string(nil), request.AffectedModules...), AcceptanceCriteria: append([]string(nil), request.AcceptanceCriteria...),
+		Purpose:         strings.TrimSpace(request.Purpose),
+		TargetModules:   append([]string(nil), request.TargetModules...),
+		ConsumerModules: append([]string(nil), request.ConsumerModules...),
+		AffectedModules: append([]string(nil), request.AffectedModules...), AcceptanceCriteria: append([]string(nil), request.AcceptanceCriteria...),
 		Category: strings.TrimSpace(request.Category), Source: strings.TrimSpace(request.Source), SourceRefs: refs,
-		Owner: strings.TrimSpace(request.Owner), OwnerModule: strings.TrimSpace(request.OwnerModule),
+		Owner: strings.TrimSpace(request.Owner), OwnerModule: domainbacklog.LifecycleOwnerModule,
 		ConceptState: domainbacklog.ConceptRadar, DeliveryState: domainbacklog.DeliveryNone,
 		Priority: request.Priority, Tags: append([]string(nil), request.Tags...), DependsOn: append([]string(nil), request.DependsOn...), RelatedIDs: append([]string(nil), request.RelatedIDs...),
 		CreatedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339), Status: "open",

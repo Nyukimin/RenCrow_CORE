@@ -126,6 +126,32 @@ func TestServiceIntakeDeduplicatesExactSource(t *testing.T) {
 	}
 }
 
+func TestServiceIntakeFixesLifecycleOwnerAndSeparatesModuleScope(t *testing.T) {
+	store := &memoryItemStore{}
+	svc := NewService(store, nil)
+	result, err := svc.Intake(context.Background(), IntakeRequest{
+		ItemID:          "module-scope",
+		Title:           "Module scope",
+		OwnerModule:     "RenCrow_STT",
+		TargetModules:   []string{"RenCrow_STT"},
+		ConsumerModules: []string{"RenCrow_CORE", "RenCrow_PORTAL"},
+		AffectedModules: []string{"RenCrow_STT", "RenCrow_CORE", "RenCrow_PORTAL"},
+		SourceRefs:      []domainbacklog.SourceRef{{Type: "manual", Locator: "module-scope"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Item.OwnerModule != domainbacklog.LifecycleOwnerModule {
+		t.Fatalf("lifecycle owner=%q", result.Item.OwnerModule)
+	}
+	if len(result.Item.TargetModules) != 1 || result.Item.TargetModules[0] != "RenCrow_STT" {
+		t.Fatalf("target modules=%v", result.Item.TargetModules)
+	}
+	if len(result.Item.ConsumerModules) != 2 || len(result.Item.AffectedModules) != 3 {
+		t.Fatalf("consumer=%v affected=%v", result.Item.ConsumerModules, result.Item.AffectedModules)
+	}
+}
+
 func TestServiceCandidateRequiresPurpose(t *testing.T) {
 	store := &memoryItemStore{}
 	svc := NewService(store, nil)

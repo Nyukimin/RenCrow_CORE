@@ -51,6 +51,9 @@ type BackfillItem struct {
 	Background          string              `json:"background"`
 	ExpectedEffect      []string            `json:"expected_effect"`
 	RelationRefs        []string            `json:"relation_refs"`
+	TargetModules       []string            `json:"target_modules"`
+	ConsumerModules     []string            `json:"consumer_modules"`
+	AffectedModules     []string            `json:"affected_modules"`
 	ConceptState        string              `json:"concept_state"`
 	DeliveryState       string              `json:"delivery_state"`
 	ReconstructionBasis string              `json:"reconstruction_basis"`
@@ -241,7 +244,8 @@ func (p BackfillPackage) FeatureMaps() []map[string]any {
 		features = append(features, map[string]any{
 			"feature_id": feature.FeatureID, "category": feature.Category,
 			"display_name": feature.DisplayName, "purpose": feature.Purpose,
-			"summary": feature.Summary, "relations": append([]string(nil), feature.Relations...),
+			"owner_module": domainbacklog.LifecycleOwnerModule,
+			"summary":      feature.Summary, "relations": append([]string(nil), feature.Relations...),
 			"origin_atlas": append([]string(nil), feature.OriginAtlas...),
 		})
 	}

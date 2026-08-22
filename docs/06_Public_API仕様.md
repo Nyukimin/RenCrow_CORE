@@ -1322,6 +1322,9 @@ path segmentとしてURL encodeします。
 `cmd-diagnostics` profileはこのprojectionだけを読みます。
 
 `GET /viewer/atlas/items/{id}`はDesign Cardと解決済みSpecification metadataを返します。
+Design Cardの`owner_module`はLifecycle ownerとして`RenCrow_CORE`に固定し、
+code配置先の`target_modules`、利用先の`consumer_modules`、検証影響範囲の
+`affected_modules`を別fieldで返します。
 `GET /viewer/atlas/specifications/{spec_id}`はallow-list登録されたSpecificationだけを返し、local artifactでは
 hash検証済み本文と`body_available=true`、external artifactでは本文を複製せず参照metadataと
 `body_available=false`を返します。encoded slash、backslash、traversal、未知IDを拒否し、任意filesystem pathは受理しません。

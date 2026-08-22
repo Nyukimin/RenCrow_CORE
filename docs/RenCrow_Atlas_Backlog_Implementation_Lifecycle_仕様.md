@@ -153,9 +153,16 @@ EcoSystemが以下を所有する。
 
 EcoSystemはAtlas runtime DBを所有しない。
 
-## 3.3 各owner module
+## 3.3 Lifecycle ownerと実装先module
 
-実装対象機能の詳細仕様、code、test、Config、migration、内部contractは各owner repositoryを正本とする。
+Atlas Itemの`owner_module`はAtlas Lifecycleの管理ownerを示し、`RenCrow_CORE`に固定する。
+COREがImplementation Unit、WIP、ShiroとCoder Agentへの実装割当、Evidence Gate、
+`LIVE_VERIFIED`判定を所有する。
+
+codeの配置先repositoryは`target_modules`、完成機能の利用先は`consumer_modules`、
+test・build・互換確認の影響範囲は`affected_modules`として別に記録する。
+実装対象機能の詳細仕様、code、test、Config、migration、内部contractは各target repositoryを正本とする。
+根拠から確定できないtargetやconsumerは推測補完しない。
 
 Atlasは詳細仕様を複製せず参照する。
 
@@ -336,7 +343,9 @@ System Ownerが認証済みrequestとしてAtlas Itemを明示的に採用し、
 * item_id
 * title
 * purpose
-* owner module
+* owner module（`RenCrow_CORE`）
+* target modules（根拠で確定できる場合）
+* consumer modules（根拠で確定できる場合）
 * affected modules
 * acceptance criteria
 * priority

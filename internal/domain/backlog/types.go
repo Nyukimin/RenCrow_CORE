@@ -35,6 +35,10 @@ const (
 	DeliveryRejected         = "REJECTED"
 
 	ImplementationLeaseName = "atlas_implementation"
+
+	// LifecycleOwnerModule is the fixed owner of the Atlas lifecycle. The
+	// implementation target and the feature consumers are separate fields.
+	LifecycleOwnerModule = "RenCrow_CORE"
 )
 
 // SourceRef identifies the immutable source that caused an Atlas item to be
@@ -137,6 +141,8 @@ type Item struct {
 	Background         string   `json:"background,omitempty"`
 	ExpectedEffect     []string `json:"expected_effect,omitempty"`
 	RelationRefs       []string `json:"relation_refs,omitempty"`
+	TargetModules      []string `json:"target_modules,omitempty"`
+	ConsumerModules    []string `json:"consumer_modules,omitempty"`
 	AffectedModules    []string `json:"affected_modules,omitempty"`
 	AcceptanceCriteria []string `json:"acceptance_criteria,omitempty"`
 
@@ -184,25 +190,32 @@ type Item struct {
 // ImplementationUnit is the typed lifecycle projection used by the owner API.
 // Durable item state remains in the append-only backlog record.
 type ImplementationUnit struct {
-	UnitID        string        `json:"unit_id"`
-	ItemID        string        `json:"item_id"`
-	Title         string        `json:"title"`
-	OwnerModule   string        `json:"owner_module,omitempty"`
-	ConceptState  string        `json:"concept_state"`
-	DeliveryState string        `json:"delivery_state"`
-	WorkstreamID  string        `json:"workstream_id,omitempty"`
-	Priority      string        `json:"priority,omitempty"`
-	QueueRank     int           `json:"queue_rank,omitempty"`
-	EvidenceRefs  []EvidenceRef `json:"evidence_refs,omitempty"`
-	CreatedAt     string        `json:"created_at"`
-	UpdatedAt     string        `json:"updated_at"`
+	UnitID          string        `json:"unit_id"`
+	ItemID          string        `json:"item_id"`
+	Title           string        `json:"title"`
+	OwnerModule     string        `json:"owner_module,omitempty"`
+	TargetModules   []string      `json:"target_modules,omitempty"`
+	ConsumerModules []string      `json:"consumer_modules,omitempty"`
+	AffectedModules []string      `json:"affected_modules,omitempty"`
+	ConceptState    string        `json:"concept_state"`
+	DeliveryState   string        `json:"delivery_state"`
+	WorkstreamID    string        `json:"workstream_id,omitempty"`
+	Priority        string        `json:"priority,omitempty"`
+	QueueRank       int           `json:"queue_rank,omitempty"`
+	EvidenceRefs    []EvidenceRef `json:"evidence_refs,omitempty"`
+	CreatedAt       string        `json:"created_at"`
+	UpdatedAt       string        `json:"updated_at"`
 }
 
 func (i Item) Unit() ImplementationUnit {
 	return ImplementationUnit{
 		UnitID: i.ImplementationUnit, ItemID: i.ItemID, Title: i.Title,
-		OwnerModule: i.OwnerModule, ConceptState: i.ConceptState,
-		DeliveryState: i.DeliveryState, WorkstreamID: i.WorkstreamID,
+		OwnerModule:     i.OwnerModule,
+		TargetModules:   append([]string(nil), i.TargetModules...),
+		ConsumerModules: append([]string(nil), i.ConsumerModules...),
+		AffectedModules: append([]string(nil), i.AffectedModules...),
+		ConceptState:    i.ConceptState,
+		DeliveryState:   i.DeliveryState, WorkstreamID: i.WorkstreamID,
 		Priority: i.Priority, QueueRank: i.QueueRank,
 		EvidenceRefs: append([]EvidenceRef(nil), i.EvidenceRefs...),
 		CreatedAt:    i.CreatedAt, UpdatedAt: i.UpdatedAt,

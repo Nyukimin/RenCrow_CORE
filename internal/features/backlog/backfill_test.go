@@ -82,3 +82,19 @@ func TestBackfillFixtureAndJSONLRepresentCanonicalOnly(t *testing.T) {
 		t.Fatalf("JSONL item count=%d want=114", count)
 	}
 }
+
+func TestBackfillFeatureProjectionUsesCORELifecycleOwner(t *testing.T) {
+	pkg, err := LoadBackfillPackage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	features := pkg.FeatureMaps()
+	if len(features) != 114 {
+		t.Fatalf("feature count=%d", len(features))
+	}
+	for _, feature := range features {
+		if feature["owner_module"] != "RenCrow_CORE" {
+			t.Fatalf("feature %v lifecycle owner=%v", feature["feature_id"], feature["owner_module"])
+		}
+	}
+}
