@@ -1001,7 +1001,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		} else {
 			deps.atlasService = atlasService
 			if migrated {
-				log.Printf("Atlas lifecycle legacy completion migrated to revision 2 queue")
+				log.Printf("Atlas lifecycle legacy state migrated or repaired to revision 2")
 			}
 		}
 	}
