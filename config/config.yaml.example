@@ -157,7 +157,8 @@ storage:
     super_agent_harness: "./workspace/logs/superagent_harness.db"
     ai_workflow: "./workspace/logs/ai_workflow.db"
     knowledge_memory: "./workspace/logs/knowledge_memory.db"
-    # Chat起点Durable Store workflowを有効にする場合は、外部HDD配下の絶対pathを指定する。
+    # Chat起点Durable Store workflowを有効にする場合は、owner rootである
+    # /srv/rencrow/db/core配下の絶対pathを指定する。
     durable_store_workflow: ""
 
 durable_store:

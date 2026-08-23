@@ -50,6 +50,18 @@ assert_contains "${backup_runner}" \
 assert_contains "${backup_runner}" \
   "'format_version=4'" \
   "new backups must emit the Common Raw cohort format"
+assert_contains "${backup_runner}" \
+  'mount "${backup_mount}"' \
+  "the backup runner must mount the dedicated backup medium for its window"
+assert_contains "${backup_runner}" \
+  'umount "${backup_mount}"' \
+  "the backup runner must unmount a medium that it mounted"
+assert_contains "${backup_runner}" \
+  'systemctl --user mask --runtime --now rencrow.service' \
+  "the snapshot window must reject external CORE starts and restarts"
+assert_contains "${backup_runner}" \
+  'systemctl --user unmask --runtime rencrow.service' \
+  "the snapshot cleanup must remove its runtime mask"
 
 if (( ${#contract_failures[@]} > 0 )); then
   printf '[RED] storage backup contract violations:\n' >&2

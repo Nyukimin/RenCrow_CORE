@@ -105,6 +105,10 @@ systemctl --user list-timers rencrow-storage-backup.timer
 
 Redis、Qdrant、mount、圧縮、checksum、復元検証のどれかが失敗した場合、serviceはnon-zeroで終了します。失敗途中のstagingは削除し、取得済みQdrant server snapshotもcleanupし、停止前にCOREがactiveだった場合はCOREを再開します。直前の検証済み世代は削除しません。timerの次回実行を待つだけにせず、原因解消後に`make storage-backup-run-once`を実行し、新しい検証済み世代が作られたことを確認します。
 
+backup windowはrunnerが`RENCROW_BACKUP`をmountして所有し、終了時に元のunmount状態へ戻します。整合snapshot中は
+`rencrow.service`をruntime maskし、deploy、手動restart、resilienceを含む別経路からのstartを失敗させます。
+成功・失敗・signalの全終了経路でmaskを解除し、開始前にactiveだったCOREだけを再開します。
+
 ## 正式な記録先
 
 Linuxのsystemd常用環境では、`rencrow.service`のstdoutとstderrをsystemd journalへ送ります。

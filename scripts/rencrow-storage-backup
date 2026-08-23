@@ -47,6 +47,7 @@ qdrant_base_url=${backup_config[17]%/}
 conversation_l1=${backup_config[18]}
 conversation_archive=${backup_config[19]}
 lock_file=/home/nyukimi/.cache/rencrow-storage-backup.lock
+backup_mount=/srv/rencrow/backup
 
 for retention in "${recent_keep}" "${daily_keep}" "${weekly_keep}" "${monthly_keep}"; do
   if [[ ! ${retention} =~ ^[1-9][0-9]*$ ]]; then
@@ -134,9 +135,42 @@ require_backing_mount() {
   fi
 }
 
-for command in curl docker findmnt flock gzip python3 rsync sha256sum tar timeout; do
+is_exact_mount() {
+  local target=$1
+  local mounted_target
+  mounted_target=$(findmnt -rn -o TARGET -T "${target}" | tail -n 1 || true)
+  [[ ${mounted_target} == "${target}" ]] && mountpoint -q "${target}"
+}
+
+backup_mounted_by_runner=false
+cleanup_backup_mount() {
+  if [[ ${backup_mounted_by_runner} == true ]] && is_exact_mount "${backup_mount}"; then
+    umount "${backup_mount}"
+    backup_mounted_by_runner=false
+    echo "[OK] backup medium unmounted: ${backup_mount}"
+  fi
+}
+
+cleanup_preflight() {
+  local status=$?
+  trap - EXIT INT TERM
+  cleanup_backup_mount || status=1
+  exit "${status}"
+}
+trap cleanup_preflight EXIT INT TERM
+
+for command in curl docker findmnt flock gzip mount mountpoint python3 rsync sha256sum systemctl tar timeout umount; do
   require_command "${command}"
 done
+if [[ ${core_snapshot_root} != "${backup_mount}/"* || ${knowledge_mirror} != "${backup_mount}/"* || ${knowledge_versions} != "${backup_mount}/"* ]]; then
+  echo "[NG] backup destinations must be under ${backup_mount}" >&2
+  exit 1
+fi
+if ! is_exact_mount "${backup_mount}"; then
+  mount "${backup_mount}"
+  backup_mounted_by_runner=true
+  echo "[OK] backup medium mounted: ${backup_mount}"
+fi
 require_backing_mount "${core_snapshot_root}"
 require_backing_mount "${knowledge_root}"
 require_backing_mount "${knowledge_mirror}"
@@ -198,6 +232,7 @@ weekday=$(TZ=Asia/Tokyo date +%u)
 monthday=$(TZ=Asia/Tokyo date +%d)
 staging=$(mktemp -d "/home/nyukimi/.cache/rencrow-backup.${timestamp}.XXXXXX")
 core_was_active=false
+core_masked_by_backup=false
 qdrant_snapshot_name=
 qdrant_snapshot_checksum=
 
@@ -212,20 +247,30 @@ cleanup() {
   local status=$?
   trap - EXIT INT TERM
   cleanup_qdrant_snapshot
+  if [[ ${core_masked_by_backup} == true ]]; then
+    systemctl --user unmask --runtime rencrow.service || status=1
+    core_masked_by_backup=false
+  fi
   if [[ ${core_was_active} == true ]] && ! systemctl --user is-active --quiet rencrow.service; then
-    systemctl --user start rencrow.service || true
+    systemctl --user start rencrow.service || status=1
   fi
   if [[ -n ${staging:-} && -d ${staging} && ${staging} == /home/nyukimi/.cache/rencrow-backup.* ]]; then
     rm -rf -- "${staging}"
   fi
+  cleanup_backup_mount || status=1
   exit "${status}"
 }
 trap cleanup EXIT INT TERM
 
 if systemctl --user is-active --quiet rencrow.service; then
   core_was_active=true
-  echo "[INFO] stopping CORE for a consistent snapshot"
-  systemctl --user stop rencrow.service
+fi
+echo "[INFO] masking and stopping CORE for a consistent snapshot"
+systemctl --user mask --runtime --now rencrow.service
+core_masked_by_backup=true
+if systemctl --user is-active --quiet rencrow.service; then
+  echo "[NG] CORE remained active after runtime mask" >&2
+  exit 1
 fi
 
 mkdir -p "${staging}/external-memory/redis" "${staging}/external-memory/qdrant"
@@ -279,6 +324,8 @@ tar \
 gzip -t "${archive}"
 
 if [[ ${core_was_active} == true ]]; then
+  systemctl --user unmask --runtime rencrow.service
+  core_masked_by_backup=false
   systemctl --user start rencrow.service
   core_was_active=false
   echo "[OK] CORE restarted"

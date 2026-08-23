@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+operation=${1:-}
+shift || true
+json=false
+if [[ ${1:-} == --json ]]; then
+  json=true
+  shift
+fi
+if [[ -n ${1:-} || ( ${operation} != inspect && ${operation} != apply && ${operation} != verify ) ]]; then
+  echo "usage: rencrow-storage-configure {inspect|apply|verify} [--json]" >&2
+  exit 2
+fi
+
+db_label=RENCROW_DB
+backup_label=RENCROW_BACKUP
+db_target=/srv/rencrow/db
+backup_target=/srv/rencrow/backup
+test_root=${RENCROW_STORAGE_TEST_ROOT:-}
+fstab=${RENCROW_STORAGE_FSTAB:-/etc/fstab}
+receipt_dir=${RENCROW_STORAGE_RECEIPT_DIR:-/var/lib/rencrow/storage-config/receipts}
+physical_db_target=${test_root}${db_target}
+physical_backup_target=${test_root}${backup_target}
+min_size_bytes=1500000000000
+max_size_bytes=2500000000000
+managed_begin='# BEGIN RENCROW MANAGED STORAGE'
+managed_end='# END RENCROW MANAGED STORAGE'
+
+if [[ ${fstab} != /etc/fstab && -z ${test_root} ]]; then
+  echo "[NG] alternate fstab is available only in the isolated test runtime" >&2
+  exit 2
+fi
+
+emit_error() {
+  local message=$1
+  if [[ ${json} == true ]]; then
+    python3 - "${operation}" "${message}" <<'PY'
+import json, sys
+print(json.dumps({"status": "error", "operation": sys.argv[1], "error": sys.argv[2]}, separators=(",", ":")))
+PY
+  else
+    echo "[NG] ${message}" >&2
+  fi
+}
+
+die() {
+  emit_error "$1"
+  exit 1
+}
+
+for command in lsblk findmnt python3 sha256sum awk mktemp; do
+  command -v "${command}" >/dev/null 2>&1 || die "required command not found: ${command}"
+done
+
+resolve_label() {
+  local label=$1
+  local -a devices=()
+  mapfile -t devices < <(lsblk -rpn -o PATH,LABEL | awk -v label="${label}" '$2 == label { print $1 }')
+  if (( ${#devices[@]} != 1 )); then
+    die "label ${label} must resolve to exactly one filesystem (found ${#devices[@]})"
+  fi
+  resolved_device=${devices[0]}
+}
+
+read_device() {
+  local device=$1
+  local output
+  output=$(lsblk -b -dn -o FSTYPE,SIZE "${device}") || die "cannot inspect ${device}"
+  read -r device_fstype device_size <<<"${output}"
+  [[ ${device_fstype} == ext4 ]] || die "${device} must use ext4 (found ${device_fstype:-unknown})"
+  [[ ${device_size} =~ ^[0-9]+$ ]] || die "${device} size is unavailable"
+  if (( device_size < min_size_bytes || device_size > max_size_bytes )); then
+    die "${device} is outside the supported 2 TB class (${device_size} bytes)"
+  fi
+}
+
+inspect_devices() {
+  resolve_label "${db_label}"
+  db_device=${resolved_device}
+  read_device "${db_device}"
+  db_fstype=${device_fstype}
+  db_size=${device_size}
+  resolve_label "${backup_label}"
+  backup_device=${resolved_device}
+  read_device "${backup_device}"
+  backup_fstype=${device_fstype}
+  backup_size=${device_size}
+  [[ ${db_device} != "${backup_device}" ]] || die "database and backup labels must resolve to different devices"
+}
+
+exact_mount() {
+  local physical_target=$1
+  local expected_target=$2
+  local row
+  row=$(findmnt -rn -o TARGET,SOURCE,FSTYPE -T "${physical_target}" 2>/dev/null | tail -n 1 || true)
+  read -r mounted_target mounted_source mounted_fstype <<<"${row}"
+  if [[ ${test_root} != '' ]]; then
+    [[ ${mounted_target} == "${physical_target}" ]]
+  else
+    [[ ${mounted_target} == "${expected_target}" ]]
+  fi
+}
+
+fstab_entry_count() {
+  local target=$1
+  awk -v target="${target}" '
+    /^[[:space:]]*#/ || NF == 0 { next }
+    $2 == target { count++ }
+    END { print count + 0 }
+  ' "${fstab}"
+}
+
+verify_fstab() {
+  [[ -f ${fstab} ]] || die "fstab not found: ${fstab}"
+  [[ $(fstab_entry_count "${db_target}") == 1 ]] || die "fstab must contain exactly one ${db_target} entry"
+  [[ $(fstab_entry_count "${backup_target}") == 1 ]] || die "fstab must contain exactly one ${backup_target} entry"
+  grep -Fqx "LABEL=${db_label} ${db_target} ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2" "${fstab}" \
+    || die "database fstab entry does not match the canonical contract"
+  grep -Fqx "LABEL=${backup_label} ${backup_target} ext4 noauto,nofail,user 0 2" "${fstab}" \
+    || die "backup fstab entry does not match the canonical contract"
+}
+
+emit_result() {
+  local changed_value=$1
+  local receipt_value=$2
+  local db_mounted_value=$3
+  local backup_mounted_value=$4
+  if [[ ${json} == true ]]; then
+    python3 - \
+      "${operation}" "${changed_value}" "${receipt_value}" \
+      "${db_label}" "${db_device}" "${db_fstype}" "${db_size}" \
+      "${backup_label}" "${backup_device}" "${backup_fstype}" "${backup_size}" \
+      "${db_mounted_value}" "${backup_mounted_value}" <<'PY'
+import json, sys
+(
+    operation, changed, receipt,
+    db_label, db_device, db_fstype, db_size,
+    backup_label, backup_device, backup_fstype, backup_size,
+    db_mounted, backup_mounted,
+) = sys.argv[1:]
+value = {
+    "status": "ok",
+    "operation": operation,
+    "changed": changed == "true",
+    "receipt": receipt,
+    "devices": {
+        "db": {"label": db_label, "device": db_device, "fstype": db_fstype, "size_bytes": int(db_size)},
+        "backup": {"label": backup_label, "device": backup_device, "fstype": backup_fstype, "size_bytes": int(backup_size)},
+    },
+    "mounts": {
+        "db": {"target": "/srv/rencrow/db", "mounted": db_mounted == "true"},
+        "backup": {"target": "/srv/rencrow/backup", "mounted": backup_mounted == "true"},
+    },
+}
+print(json.dumps(value, separators=(",", ":")))
+PY
+  else
+    echo "[OK] ${operation}: ${db_label}=${db_device}, ${backup_label}=${backup_device}, changed=${changed_value}"
+    [[ -z ${receipt_value} ]] || echo "[OK] receipt: ${receipt_value}"
+  fi
+}
+
+inspect_devices
+
+if [[ ${operation} == inspect ]]; then
+  db_is_mounted=false
+  backup_is_mounted=false
+  exact_mount "${physical_db_target}" "${db_target}" && db_is_mounted=true
+  exact_mount "${physical_backup_target}" "${backup_target}" && backup_is_mounted=true
+  emit_result false '' "${db_is_mounted}" "${backup_is_mounted}"
+  exit 0
+fi
+
+if [[ ${operation} == apply ]]; then
+  if [[ ${fstab} == /etc/fstab && ${EUID} -ne 0 ]]; then
+    die "apply must run as root"
+  fi
+  [[ -f ${fstab} ]] || die "fstab not found: ${fstab}"
+  mkdir -p "${physical_db_target}" "${physical_backup_target}" "${receipt_dir}"
+  fstab_dir=$(dirname "${fstab}")
+  candidate=$(mktemp "${fstab_dir}/.rencrow-fstab.XXXXXX")
+  cleanup_candidate() { rm -f -- "${candidate:-}"; }
+  trap cleanup_candidate EXIT INT TERM
+  awk -v begin="${managed_begin}" -v end="${managed_end}" \
+      -v db="${db_target}" -v backup="${backup_target}" '
+    $0 == begin { managed=1; next }
+    $0 == end { managed=0; next }
+    managed { next }
+    /^[[:space:]]*#/ || NF == 0 { print; next }
+    $2 == db || $2 == backup { next }
+    { print }
+  ' "${fstab}" > "${candidate}"
+  if [[ -s ${candidate} ]] && [[ $(tail -c 1 "${candidate}" | wc -l) == 0 ]]; then
+    printf '\n' >> "${candidate}"
+  fi
+  printf '%s\n' \
+    "${managed_begin}" \
+    "LABEL=${db_label} ${db_target} ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2" \
+    "LABEL=${backup_label} ${backup_target} ext4 noauto,nofail,user 0 2" \
+    "${managed_end}" >> "${candidate}"
+  changed=false
+  backup_copy=
+  if ! cmp -s "${fstab}" "${candidate}"; then
+    backup_copy=${fstab}.rencrow-storage.bak
+    cp -p -- "${fstab}" "${backup_copy}"
+    mode=$(stat -c '%a' "${fstab}")
+    chmod "${mode}" "${candidate}"
+    mv -f -- "${candidate}" "${fstab}"
+    candidate=
+    changed=true
+  fi
+  if [[ -z ${test_root} ]]; then
+    systemctl daemon-reload
+    if ! exact_mount "${physical_db_target}" "${db_target}"; then
+      mount "${db_target}"
+    fi
+    exact_mount "${physical_db_target}" "${db_target}" || die "database mount verification failed"
+    backup_was_mounted=false
+    exact_mount "${physical_backup_target}" "${backup_target}" && backup_was_mounted=true
+    if [[ ${backup_was_mounted} == false ]]; then
+      mount "${backup_target}"
+      exact_mount "${physical_backup_target}" "${backup_target}" || die "backup mount verification failed"
+      umount "${backup_target}"
+    fi
+  fi
+  verify_fstab
+  receipt=${receipt_dir}/$(date -u +%Y%m%dT%H%M%SZ)-storage-config.json
+  receipt_tmp=${receipt}.tmp
+  emit_result "${changed}" "${receipt}" true false > "${receipt_tmp}"
+  mv -f -- "${receipt_tmp}" "${receipt}"
+  emit_result "${changed}" "${receipt}" true false
+  exit 0
+fi
+
+verify_fstab
+exact_mount "${physical_db_target}" "${db_target}" || die "database mount is not active"
+[[ ${mounted_source} == "${db_device}" ]] || die "database mount source does not match ${db_label}"
+[[ ${mounted_fstype} == ext4 ]] || die "database mount must use ext4"
+if exact_mount "${physical_backup_target}" "${backup_target}"; then
+  die "backup mount must be inactive outside a backup or verification window"
+fi
+emit_result false '' true false
