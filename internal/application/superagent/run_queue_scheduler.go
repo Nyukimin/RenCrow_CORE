@@ -23,6 +23,11 @@ type RunQueueLeaseStore interface {
 	CompleteRunQueueItem(context.Context, string, string, string, string, time.Time) (bool, error)
 }
 
+type RunQueueAgentRunStore interface {
+	ListAgentRuns(context.Context, int) ([]domainsuperagent.AgentRun, error)
+	SaveAgentRun(context.Context, domainsuperagent.AgentRun) error
+}
+
 type RunQueueProcessor interface {
 	ProcessRunQueueItem(ctx context.Context, item domainsuperagent.RunQueueItem) (string, error)
 }
@@ -95,10 +100,16 @@ func (s *RunQueueScheduler) RunOnce(ctx context.Context) (int, error) {
 			if err := s.complete(ctx, *item, "failed", execErr.Error(), completedAt); err != nil {
 				return processed, err
 			}
+			if err := s.completeAgentRun(ctx, *item, "failed", execErr.Error(), completedAt); err != nil {
+				return processed, err
+			}
 			s.saveTrace(ctx, *item, "run_queue_failed", "failed", execErr.Error())
 			return processed, execErr
 		}
 		if err := s.complete(ctx, *item, "completed", strings.TrimSpace(summary), completedAt); err != nil {
+			return processed, err
+		}
+		if err := s.completeAgentRun(ctx, *item, "completed", strings.TrimSpace(summary), completedAt); err != nil {
 			return processed, err
 		}
 		s.saveTrace(ctx, *item, "run_queue_completed", "completed", summary)
@@ -106,6 +117,25 @@ func (s *RunQueueScheduler) RunOnce(ctx context.Context) (int, error) {
 		now = s.options.Now().UTC()
 	}
 	return processed, nil
+}
+
+func (s *RunQueueScheduler) completeAgentRun(ctx context.Context, item domainsuperagent.RunQueueItem, status, summary string, at time.Time) error {
+	store, ok := s.store.(RunQueueAgentRunStore)
+	if !ok || strings.TrimSpace(item.RunID) == "" {
+		return nil
+	}
+	runs, err := store.ListAgentRuns(ctx, 500)
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.RunID != item.RunID {
+			continue
+		}
+		run.Status, run.Summary, run.CompletedAt = status, summary, at
+		return store.SaveAgentRun(ctx, run)
+	}
+	return nil
 }
 
 func (s *RunQueueScheduler) claimNext(ctx context.Context, now time.Time, token string) (*domainsuperagent.RunQueueItem, error) {

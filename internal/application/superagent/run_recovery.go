@@ -42,8 +42,15 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 		seenRuns[run.RunID] = struct{}{}
 		if run.ResumePolicy == "checkpoint" && run.CheckpointRevision > 0 {
 			queueID := fmt.Sprintf("resume:%s:%d", run.RunID, run.CheckpointRevision)
-			if existing, ok := queueByID[queueID]; ok && existing.Status != "completed" && existing.Status != "failed" && existing.Status != "cancelled" {
-				if run.Status == "completed" || run.Status == "failed" || run.Status == "cancelled" {
+			if existing, ok := queueByID[queueID]; ok {
+				if existing.Status == "completed" || existing.Status == "failed" || existing.Status == "cancelled" {
+					if run.Status != "completed" && run.Status != "failed" && run.Status != "cancelled" {
+						run.Status, run.Summary, run.CompletedAt = existing.Status, existing.Reason, existing.CompletedAt
+						if err := store.SaveAgentRun(ctx, run); err != nil {
+							return queued, blocked, err
+						}
+					}
+				} else if run.Status == "completed" || run.Status == "failed" || run.Status == "cancelled" {
 					existing.Status, existing.Reason, existing.CompletedAt = run.Status, run.Summary, run.CompletedAt
 					existing.LeaseToken, existing.LeaseUntil = "", time.Time{}
 					if err := store.SaveRunQueueItem(ctx, existing); err != nil {

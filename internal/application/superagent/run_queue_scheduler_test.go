@@ -12,6 +12,10 @@ import (
 func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &recordingRunQueueStore{
+		runs: []domainsuperagent.AgentRun{{
+			RunID: "run-high", AgentType: "LeadAgent", Goal: "run this", Status: "queued", StartedAt: now.Add(-time.Minute),
+			ResumePolicy: "checkpoint", CheckpointRevision: 1, CheckpointSummary: "request committed", NextAction: "run this", LastCheckpointAt: now.Add(-time.Minute),
+		}},
 		items: []domainsuperagent.RunQueueItem{
 			{
 				QueueID:   "q-low",
@@ -23,6 +27,7 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 			},
 			{
 				QueueID:   "q-high",
+				RunID:     "run-high",
 				Goal:      "run this",
 				Action:    "resume",
 				Status:    "queued",
@@ -59,6 +64,9 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 	item := store.item("q-high")
 	if item.Status != "completed" || item.Reason != "ok" || item.ClaimedAt.IsZero() || item.CompletedAt.IsZero() {
 		t.Fatalf("completed item = %#v", item)
+	}
+	if run := store.runs[0]; run.Status != "completed" || run.Summary != "ok" || run.CompletedAt.IsZero() {
+		t.Fatalf("completed run = %#v", run)
 	}
 	if len(store.traces) != 2 || store.traces[0].EventType != "run_queue_claimed" || store.traces[1].EventType != "run_queue_completed" {
 		t.Fatalf("unexpected traces = %#v", store.traces)
@@ -176,16 +184,23 @@ func TestRecoverInterruptedAgentRunsQueuesOnlyDurableCheckpoint(t *testing.T) {
 		{RunID: "run-resumable", WorkstreamID: "thread-1", AgentType: "LeadAgent", Goal: "continue", Status: "running", StartedAt: now.Add(-time.Hour), ResumePolicy: "checkpoint", CheckpointRevision: 5, CheckpointSummary: "step four committed", NextAction: "step five", LastCheckpointAt: now.Add(-time.Minute)},
 		{RunID: "run-legacy", AgentType: "LeadAgent", Goal: "unknown position", Status: "running", StartedAt: now.Add(-time.Hour)},
 		{RunID: "run-finished", AgentType: "LeadAgent", Goal: "done", Status: "completed", StartedAt: now.Add(-time.Hour), CompletedAt: now.Add(-time.Minute), Summary: "receipt committed", ResumePolicy: "checkpoint", CheckpointRevision: 1, CheckpointSummary: "dispatch", NextAction: "execute", LastCheckpointAt: now.Add(-time.Hour)},
-	}, items: []domainsuperagent.RunQueueItem{{QueueID: "resume:run-finished:1", RunID: "run-finished", Goal: "done", Action: "resume", Status: "claimed", ClaimedAt: now.Add(-2 * time.Minute), LeaseToken: "dead", LeaseUntil: now.Add(time.Minute), CheckpointRevision: 1, CreatedAt: now.Add(-2 * time.Minute)}}}
+		{RunID: "run-queue-finished", AgentType: "LeadAgent", Goal: "done by queue", Status: "queued", StartedAt: now.Add(-time.Hour), ResumePolicy: "checkpoint", CheckpointRevision: 2, CheckpointSummary: "dispatch", NextAction: "execute", LastCheckpointAt: now.Add(-time.Hour)},
+	}, items: []domainsuperagent.RunQueueItem{
+		{QueueID: "resume:run-finished:1", RunID: "run-finished", Goal: "done", Action: "resume", Status: "claimed", ClaimedAt: now.Add(-2 * time.Minute), LeaseToken: "dead", LeaseUntil: now.Add(time.Minute), CheckpointRevision: 1, CreatedAt: now.Add(-2 * time.Minute)},
+		{QueueID: "resume:run-queue-finished:2", RunID: "run-queue-finished", Goal: "done by queue", Action: "resume", Status: "completed", Reason: "queue receipt", CompletedAt: now.Add(-time.Minute), CheckpointRevision: 2, CreatedAt: now.Add(-2 * time.Minute)},
+	}}
 	queued, blocked, err := RecoverInterruptedAgentRuns(context.Background(), store, now)
 	if err != nil || queued != 1 || blocked != 1 {
 		t.Fatalf("RecoverInterruptedAgentRuns queued=%d blocked=%d err=%v", queued, blocked, err)
 	}
-	if len(store.items) != 2 || store.item("resume:run-resumable:5").CheckpointSummary != "step four committed" || store.item("resume:run-resumable:5").NextAction != "step five" || store.item("resume:run-finished:1").Status != "completed" {
+	if len(store.items) != 3 || store.item("resume:run-resumable:5").CheckpointSummary != "step four committed" || store.item("resume:run-resumable:5").NextAction != "step five" || store.item("resume:run-finished:1").Status != "completed" {
 		t.Fatalf("recovery queue=%#v", store.items)
 	}
+	if run := store.runs[3]; run.Status != "completed" || run.Summary != "queue receipt" {
+		t.Fatalf("queue terminal did not reconcile run: %#v", run)
+	}
 	queued, blocked, err = RecoverInterruptedAgentRuns(context.Background(), store, now.Add(time.Second))
-	if err != nil || queued != 0 || blocked != 0 || len(store.items) != 2 {
+	if err != nil || queued != 0 || blocked != 0 || len(store.items) != 3 {
 		t.Fatalf("idempotent recovery queued=%d blocked=%d items=%#v err=%v", queued, blocked, store.items, err)
 	}
 }

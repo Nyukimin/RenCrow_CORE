@@ -81,4 +81,8 @@ func TestSuperAgentResumeE2EHTTPToRestartedScheduler(t *testing.T) {
 	if err != nil || len(final) != 1 || final[0].Status != "completed" || final[0].Reason != "step two committed" {
 		t.Fatalf("final queue=%#v err=%v", final, err)
 	}
+	finalRuns, err := restarted.ListAgentRuns(context.Background(), 10)
+	if err != nil || len(finalRuns) != 1 || finalRuns[0].Status != "completed" || finalRuns[0].Summary != "step two committed" {
+		t.Fatalf("final run=%#v err=%v", finalRuns, err)
+	}
 }
