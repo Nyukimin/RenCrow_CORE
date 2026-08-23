@@ -53,6 +53,37 @@ func TestRuntimeDataCapabilityCatalogInvestmentNeverUsesConversationL1AsOwnerFal
 	}
 }
 
+func TestRuntimeDataCapabilityCatalogInvestmentUsesRegisteredOwnerRoutesWithoutLocalDB(t *testing.T) {
+	catalog := buildRuntimeDataCapabilityCatalog(&config.Config{}, false, false)
+	recall := newRuntimeDataRecallRegistry()
+	write := newRuntimeDataWriteRegistry()
+	if err := recall.Register("investment", "portfolio_snapshot", dataRecallAccessInternal, func(_ context.Context, request toolsinfra.DataRecallRequest) (runtimeDataRecallResult, error) {
+		return newRuntimeDataRecallResult(request.Store, request.Operation, []map[string]any{}), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := write.RegisterWithContract("investment", "ensure_portfolio_initialized", dataRecallAccessInternal, runtimeDataWriteContract{
+		RequiredPayloadFields: []string{"run_id"},
+	}, func(context.Context, toolsinfra.DataWriteRequest) (runtimeDataWriteOwnerResult, error) {
+		return validRuntimeDataWriteOwnerResult(), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catalog.BindRouteRegistries(recall, write)
+
+	value, err := catalog.Execute("describe", "investment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := value.(datacapability.Entry)
+	if entry.Status != "available" || entry.Reason != "" {
+		t.Fatalf("registered owner routes must determine availability without local DB: %#v", entry)
+	}
+	if !entry.OwnerRouteOnly || entry.PhysicalKey != "storage.databases.investment" {
+		t.Fatalf("investment owner boundary projection=%#v", entry)
+	}
+}
+
 func TestRuntimeDataCapabilityCatalogProjectsOnlyRegisteredExecutableRoutes(t *testing.T) {
 	catalog := buildRuntimeDataCapabilityCatalog(&config.Config{}, false, false)
 	recall := newRuntimeDataRecallRegistry()

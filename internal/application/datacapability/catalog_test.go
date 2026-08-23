@@ -186,6 +186,43 @@ func TestCatalogInvestmentNeverBecomesAvailableFromLocalDatabaseState(t *testing
 	}
 }
 
+func TestCatalogMarksOnlyInvestmentAsOwnerRouteOnly(t *testing.T) {
+	catalog := Build(allConfiguredStoreStates())
+	investment, err := catalog.Describe("investment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !investment.OwnerRouteOnly {
+		t.Fatalf("investment owner_route_only=%v, want true", investment.OwnerRouteOnly)
+	}
+	if investment.PhysicalKey != "storage.databases.investment" {
+		t.Fatalf("investment physical key=%q", investment.PhysicalKey)
+	}
+
+	glossary, err := catalog.Describe("glossary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if glossary.OwnerRouteOnly {
+		t.Fatalf("CORE-owned glossary must not be owner-route-only: %#v", glossary)
+	}
+
+	encoded, err := json.Marshal(investment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"owner_route_only":true`) {
+		t.Fatalf("investment JSON omitted owner_route_only: %s", encoded)
+	}
+	encoded, err = json.Marshal(glossary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"owner_route_only"`) {
+		t.Fatalf("CORE-owned JSON should omit false owner_route_only: %s", encoded)
+	}
+}
+
 func TestCatalogMissingSemanticStoreIsUnavailable(t *testing.T) {
 	catalog := Build(map[string]StoreState{"glossary": {Configured: true, Exists: false}})
 	entry, err := catalog.Describe("glossary")

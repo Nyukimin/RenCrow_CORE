@@ -51,6 +51,7 @@ const (
 type Entry struct {
 	Name           string   `json:"name"`
 	PhysicalKey    string   `json:"physical_key"`
+	OwnerRouteOnly bool     `json:"owner_route_only,omitempty"`
 	Owner          string   `json:"owner"`
 	Categories     []string `json:"categories"`
 	Status         string   `json:"status"`
@@ -81,7 +82,7 @@ var storeDefinitions = []Entry{
 	{Name: "glossary", Owner: "RenCrow_CORE Glossary", Categories: []string{"term", "definition"}, SafeOperations: []string{"define_term", "list_category"}, ToolID: "glossary.lookup", Sensitivity: "normal"},
 	{Name: "movie_catalog", Owner: "RenCrow_CORE Movie Catalog", Categories: []string{"movie", "person", "credit"}, SafeOperations: []string{"lookup"}, ToolID: "movie_catalog.lookup", Sensitivity: "normal"},
 	{Name: "hobby_graph", Owner: "RenCrow_CORE Hobby Graph", Categories: []string{"drama", "award", "music", "anime", "novel", "manga"}, SafeOperations: []string{"person_related_lookup", "music_lookup", "lyrics_rights_lookup", "lyrics_syntax_lookup", "licensed_lyrics_lookup"}, ToolID: "person_related_catalog.lookup", Sensitivity: "mixed", Reason: "deployment_or_index_unavailable"},
-	{Name: "investment", Owner: "RenCrow_TRADE Investment Projection", Categories: []string{"investment", "snapshot", "event"}, Status: "unavailable", Sensitivity: "financial", Reason: "trade_owner_route_unavailable"},
+	{Name: "investment", OwnerRouteOnly: true, Owner: "RenCrow_TRADE Investment Projection", Categories: []string{"investment", "snapshot", "event"}, Status: "unavailable", Sensitivity: "financial", Reason: "trade_owner_route_unavailable"},
 	{Name: "advisor", Owner: "RenCrow_CORE Advisor", Categories: []string{"advisor", "policy"}, Status: "restricted", SafeOperations: []string{"advice_runs"}, Sensitivity: "internal", Reason: "owner_service_only"},
 	{Name: "sandbox", Owner: "RenCrow_CORE Sandbox", Categories: []string{"execution"}, Status: "restricted", SafeOperations: []string{"sandboxes"}, Sensitivity: "internal", Reason: "owner_service_only"},
 	{Name: "dci", Owner: "RenCrow_CORE DCI", Categories: []string{"search_trace", "evidence"}, Status: "restricted", SafeOperations: []string{"search_traces"}, Sensitivity: "internal", Reason: "owner_service_only"},

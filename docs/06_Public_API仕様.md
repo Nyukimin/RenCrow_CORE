@@ -72,6 +72,16 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/trade/shadow/outcomes/reviews` | Outcome reportのhashとlatest event hashを束縛した独立reviewを別台帳へ追記。promotion／Portfolio変更／外部実行は行わない |
 | `GET /viewer/trade/shadow/outcomes/reviews/report?study_id=<id>` | Review ledgerを検証し、独立reviewの有無を返す読み取り専用projection |
 
+`GET /viewer/databases/catalog`およびAgent Tool `data_capability.describe`の各entryは、
+`name`、logicalな`physical_key`、`owner`、`categories`、`status`、安全なoperation、必要な場合の
+`reason`を返します。`physical_key`は`storage.databases.<name>`という設定互換keyであり、物理DB pathを
+意味せず、responseにもpathを出しません。`owner_route_only=true`は、そのentryをCOREのlocal DBへ
+fallbackせず、宣言されたowner module routeだけで解決することを示します。現在は`investment`だけが
+このflagを持ち、正本ownerは`RenCrow_TRADE`です。CORE側の`storage.databases.investment`が未設定または
+local file不在でも、認証済みTRADE read／write routeがruntimeへ登録されていれば`status=available`に
+なります。routeがない場合は`unavailable`または`blocked`となり、別DB・legacy route・fake endpointへ
+fallbackしません。通常のCORE-owned entryでは`owner_route_only`は省略（false）されます。
+
 `GET /viewer/databases/tool-registry`は、同じproduction Worker `RunnerV2`から得たruntime
 metadataと、設定済みSQLite Tool Registryのplatform適合行を、名前順・runtime優先で重複排除して
 返します。各itemの`origin`は`core_runtime | rencrow_tools | dynamic_registry`です。
