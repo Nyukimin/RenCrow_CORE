@@ -108,6 +108,9 @@ Redis、Qdrant、mount、圧縮、checksum、復元検証のどれかが失敗�
 backup windowはrunnerが`RENCROW_BACKUP`をmountして所有し、終了時に元のunmount状態へ戻します。整合snapshot中は
 `rencrow.service`をruntime maskし、deploy、手動restart、resilienceを含む別経路からのstartを失敗させます。
 成功・失敗・signalの全終了経路でmaskを解除し、開始前にactiveだったCOREだけを再開します。
+再開時は設定済みportのloopback `/health/ready`を最大300秒検査し、`ready=true`になるまで
+`CORE restarted`と記録しません。長時間Agent RunはSuperAgent owner storeのcheckpointと期限付きleaseを正本とし、
+backup停止中に失効したclaimは再起動後のschedulerが同じrun／checkpoint identityで回収します。
 
 ## 正式な記録先
 

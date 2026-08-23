@@ -40,6 +40,7 @@ func TestBackupConfigValues(t *testing.T) {
 		ConversationL1:      "/state/l1_memory.db",
 		ConversationArchive: "/state/memory_archive.db",
 	}
+	server := config.ServerConfig{Port: 18790}
 	want := []string{
 		"/state",
 		"/backup/snapshots",
@@ -61,8 +62,9 @@ func TestBackupConfigValues(t *testing.T) {
 		"http://127.0.0.1:6333",
 		"/state/l1_memory.db",
 		"/state/memory_archive.db",
+		"18790",
 	}
-	if got := backupConfigValues(backup, memory, databases); !reflect.DeepEqual(got, want) {
+	if got := backupConfigValues(backup, memory, databases, server); !reflect.DeepEqual(got, want) {
 		t.Fatalf("backupConfigValues() = %#v, want %#v", got, want)
 	}
 }

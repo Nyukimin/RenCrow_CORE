@@ -17,12 +17,12 @@ func cmdConfig() {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
 	}
-	for _, value := range backupConfigValues(cfg.Backup, cfg.Storage.Memory, cfg.Storage.Databases) {
+	for _, value := range backupConfigValues(cfg.Backup, cfg.Storage.Memory, cfg.Storage.Databases, cfg.Server) {
 		fmt.Println(value)
 	}
 }
 
-func backupConfigValues(backup config.BackupConfig, memory config.MemoryStorageConfig, databases config.DatabasePathsConfig) []string {
+func backupConfigValues(backup config.BackupConfig, memory config.MemoryStorageConfig, databases config.DatabasePathsConfig, server config.ServerConfig) []string {
 	return []string{
 		backup.CoreSource,
 		backup.CoreSnapshotRoot,
@@ -44,5 +44,6 @@ func backupConfigValues(backup config.BackupConfig, memory config.MemoryStorageC
 		backup.Memory.Qdrant.BaseURL,
 		databases.ConversationL1,
 		databases.ConversationArchive,
+		fmt.Sprintf("%d", server.Port),
 	}
 }

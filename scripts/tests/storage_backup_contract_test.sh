@@ -42,8 +42,17 @@ assert_contains "${backup_runner}" \
   '! mountpoint -q "${mount_target}"' \
   "unmounted paths must remain rejected"
 assert_contains "${backup_runner}" \
-  'if (( ${#backup_config[@]} != 20 )); then' \
+  'if (( ${#backup_config[@]} != 21 )); then' \
   "backup-values must contain the raw source cohort field"
+assert_contains "${backup_runner}" \
+  'core_port=${backup_config[20]}' \
+  "backup must derive CORE readiness port from canonical config"
+assert_contains "${backup_runner}" \
+  'wait_for_core_readiness' \
+  "backup must not close its stop window before CORE readiness"
+assert_contains "${backup_runner}" \
+  '"http://127.0.0.1:${core_port}/health/ready"' \
+  "backup must verify the canonical local CORE readiness route"
 assert_contains "${backup_runner}" \
   'raw_source_dir=${backup_config[12]}' \
   "raw source field index must follow cold export"
