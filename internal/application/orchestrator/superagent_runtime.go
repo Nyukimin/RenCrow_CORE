@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -15,14 +16,20 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	if recorder == nil {
 		return startedAt, nil
 	}
+	checkpointRevision, checkpointSummary, nextAction, checkpointAt := resumeCheckpoint(req, route, startedAt)
 	run := domainsuperagent.AgentRun{
-		RunID:        leadAgentRunID(jobID),
-		WorkstreamID: req.SessionID,
-		AgentType:    "LeadAgent",
-		Goal:         req.UserMessage,
-		Status:       "running",
-		StartedAt:    startedAt,
-		Summary:      fmt.Sprintf("route=%s", route),
+		RunID:              leadAgentRunID(jobID),
+		WorkstreamID:       req.SessionID,
+		AgentType:          "LeadAgent",
+		Goal:               req.UserMessage,
+		Status:             "running",
+		StartedAt:          startedAt,
+		Summary:            fmt.Sprintf("route=%s", route),
+		ResumePolicy:       "checkpoint",
+		CheckpointRevision: checkpointRevision,
+		CheckpointSummary:  checkpointSummary,
+		NextAction:         nextAction,
+		LastCheckpointAt:   checkpointAt,
 	}
 	if err := recorder.SaveAgentRun(ctx, run); err != nil {
 		return startedAt, fmt.Errorf("failed to save lead agent run start: %w", err)
@@ -62,15 +69,21 @@ func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeR
 		startedAt = time.Now().UTC()
 	}
 	completedAt := time.Now().UTC()
+	checkpointRevision, checkpointSummary, nextAction, checkpointAt := resumeCheckpoint(req, route, startedAt)
 	run := domainsuperagent.AgentRun{
-		RunID:        leadAgentRunID(jobID),
-		WorkstreamID: req.SessionID,
-		AgentType:    "LeadAgent",
-		Goal:         req.UserMessage,
-		Status:       status,
-		StartedAt:    startedAt,
-		CompletedAt:  completedAt,
-		Summary:      summary,
+		RunID:              leadAgentRunID(jobID),
+		WorkstreamID:       req.SessionID,
+		AgentType:          "LeadAgent",
+		Goal:               req.UserMessage,
+		Status:             status,
+		StartedAt:          startedAt,
+		CompletedAt:        completedAt,
+		Summary:            summary,
+		ResumePolicy:       "checkpoint",
+		CheckpointRevision: checkpointRevision,
+		CheckpointSummary:  checkpointSummary,
+		NextAction:         nextAction,
+		LastCheckpointAt:   checkpointAt,
 	}
 	if err := recorder.SaveAgentRun(ctx, run); err != nil {
 		return fmt.Errorf("failed to save lead agent run %s: %w", status, err)
@@ -92,6 +105,13 @@ func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeR
 		return fmt.Errorf("failed to save lead agent trace %s: %w", status, err)
 	}
 	return nil
+}
+
+func resumeCheckpoint(req ProcessMessageRequest, route routing.Route, fallbackAt time.Time) (int, string, string, time.Time) {
+	if req.ResumeCheckpointRevision > 0 && strings.TrimSpace(req.ResumeCheckpointSummary) != "" && strings.TrimSpace(req.ResumeNextAction) != "" {
+		return req.ResumeCheckpointRevision, strings.TrimSpace(req.ResumeCheckpointSummary), strings.TrimSpace(req.ResumeNextAction), fallbackAt
+	}
+	return 1, fmt.Sprintf("request accepted; route=%s", route), "dispatch task with the same job_id", fallbackAt
 }
 
 func leadAgentRunID(jobID task.JobID) string {

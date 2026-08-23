@@ -38,18 +38,21 @@ const (
 
 // ProcessMessageRequest はメッセージ処理リクエスト
 type ProcessMessageRequest struct {
-	JobID               string
-	MessageID           string
-	TraceID             string
-	SessionID           string
-	Channel             string
-	ChatID              string
-	UserMessage         string
-	To                  string
-	OperationSource     string
-	AudioOutput         AudioOutputIntent
-	Attachments         []attachment.Attachment
-	originalUserMessage string
+	JobID                    string
+	MessageID                string
+	TraceID                  string
+	SessionID                string
+	Channel                  string
+	ChatID                   string
+	UserMessage              string
+	To                       string
+	OperationSource          string
+	AudioOutput              AudioOutputIntent
+	Attachments              []attachment.Attachment
+	ResumeCheckpointRevision int
+	ResumeCheckpointSummary  string
+	ResumeNextAction         string
+	originalUserMessage      string
 }
 
 // ProcessMessageResponse はメッセージ処理レスポンス

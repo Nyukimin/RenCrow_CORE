@@ -3,15 +3,20 @@ package superagent
 import "time"
 
 type AgentRun struct {
-	RunID        string    `json:"run_id"`
-	WorkstreamID string    `json:"workstream_id,omitempty"`
-	ParentRunID  string    `json:"parent_run_id,omitempty"`
-	AgentType    string    `json:"agent_type"`
-	Goal         string    `json:"goal,omitempty"`
-	Status       string    `json:"status"`
-	StartedAt    time.Time `json:"started_at"`
-	CompletedAt  time.Time `json:"completed_at,omitempty"`
-	Summary      string    `json:"summary,omitempty"`
+	RunID              string    `json:"run_id"`
+	WorkstreamID       string    `json:"workstream_id,omitempty"`
+	ParentRunID        string    `json:"parent_run_id,omitempty"`
+	AgentType          string    `json:"agent_type"`
+	Goal               string    `json:"goal,omitempty"`
+	Status             string    `json:"status"`
+	StartedAt          time.Time `json:"started_at"`
+	CompletedAt        time.Time `json:"completed_at,omitempty"`
+	Summary            string    `json:"summary,omitempty"`
+	ResumePolicy       string    `json:"resume_policy,omitempty"`
+	CheckpointRevision int       `json:"checkpoint_revision,omitempty"`
+	CheckpointSummary  string    `json:"checkpoint_summary,omitempty"`
+	NextAction         string    `json:"next_action,omitempty"`
+	LastCheckpointAt   time.Time `json:"last_checkpoint_at,omitempty"`
 }
 
 type SubagentTask struct {
@@ -60,16 +65,23 @@ type TraceEvent struct {
 }
 
 type RunQueueItem struct {
-	QueueID      string    `json:"queue_id"`
-	RunID        string    `json:"run_id,omitempty"`
-	WorkstreamID string    `json:"workstream_id,omitempty"`
-	Goal         string    `json:"goal"`
-	Action       string    `json:"action"`
-	Status       string    `json:"status"`
-	Priority     int       `json:"priority,omitempty"`
-	Reason       string    `json:"reason,omitempty"`
-	NotBefore    time.Time `json:"not_before,omitempty"`
-	ClaimedAt    time.Time `json:"claimed_at,omitempty"`
-	CompletedAt  time.Time `json:"completed_at,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	QueueID            string    `json:"queue_id"`
+	RunID              string    `json:"run_id,omitempty"`
+	WorkstreamID       string    `json:"workstream_id,omitempty"`
+	Goal               string    `json:"goal"`
+	Action             string    `json:"action"`
+	Status             string    `json:"status"`
+	Priority           int       `json:"priority,omitempty"`
+	Reason             string    `json:"reason,omitempty"`
+	NotBefore          time.Time `json:"not_before,omitempty"`
+	ClaimedAt          time.Time `json:"claimed_at,omitempty"`
+	LeaseToken         string    `json:"lease_token,omitempty"`
+	LeaseUntil         time.Time `json:"lease_until,omitempty"`
+	AttemptCount       int       `json:"attempt_count,omitempty"`
+	CheckpointRevision int       `json:"checkpoint_revision,omitempty"`
+	CheckpointSummary  string    `json:"checkpoint_summary,omitempty"`
+	NextAction         string    `json:"next_action,omitempty"`
+	IdempotencyKey     string    `json:"idempotency_key,omitempty"`
+	CompletedAt        time.Time `json:"completed_at,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
 }

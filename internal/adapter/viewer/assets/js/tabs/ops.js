@@ -1094,7 +1094,11 @@ function renderSuperAgentResumeAuditResult() {
   const completed = rows.filter((item) => item.status === 'completed').length;
   const withPauseResume = rows.filter((item) => item.paused > 0 && item.resumed > 0).length;
   const runtimeControlApplied = rows.filter((item) => item.runtimeControlApplied).length;
-  el.textContent = 'superagent resume audits: ' + String(rows.length) + ' resume queue / ' + String(completed) + ' completed / ' + String(manual) + ' manual-ledger / ' + String(withPauseResume) + ' pause-resume trace / ' + String(runtimeControlApplied) + ' runtime-control applied\nblocked: true long-running resume not verified';
+  const schedulerExecuted = rows.length - manual;
+  const result = manual > 0 && schedulerExecuted === 0
+    ? 'blocked: manual-ledger evidence does not prove scheduler resume'
+    : 'durable resume evidence: ' + String(schedulerExecuted) + ' scheduler-executed queue item(s); each run remains evidence-gated';
+  el.textContent = 'superagent resume audits: ' + String(rows.length) + ' resume queue / ' + String(completed) + ' completed / ' + String(manual) + ' manual-ledger / ' + String(withPauseResume) + ' pause-resume trace / ' + String(runtimeControlApplied) + ' runtime-control applied\n' + result;
 }
 
 function renderAIWorkflowRunEvidence() {

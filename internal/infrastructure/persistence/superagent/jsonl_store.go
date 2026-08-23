@@ -7,11 +7,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 )
 
 type JSONLStore struct {
+	runQueueMu         sync.Mutex
 	agentRunPath       string
 	subagentTaskPath   string
 	contextPackPath    string
@@ -205,10 +208,77 @@ func (s *JSONLStore) SaveRunQueueItem(_ context.Context, item domainsuperagent.R
 	if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
 		return err
 	}
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
 	return appendJSONL(s.runQueuePath, item)
 }
 
-func (s *JSONLStore) ListRunQueueItems(_ context.Context, limit int) ([]domainsuperagent.RunQueueItem, error) {
+func (s *JSONLStore) ClaimNextRunQueueItem(_ context.Context, now, leaseUntil time.Time, leaseToken string) (*domainsuperagent.RunQueueItem, error) {
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
+	items, err := s.listRunQueueItemsUnlocked(500)
+	if err != nil {
+		return nil, err
+	}
+	var selected *domainsuperagent.RunQueueItem
+	for index := range items {
+		item := items[index]
+		if !runQueueItemClaimable(item, now) {
+			continue
+		}
+		if selected == nil || runQueueItemBefore(item, *selected) {
+			copy := item
+			selected = &copy
+		}
+	}
+	if selected == nil {
+		return nil, nil
+	}
+	selected.Status, selected.ClaimedAt, selected.LeaseToken, selected.LeaseUntil = "claimed", now, leaseToken, leaseUntil
+	selected.AttemptCount++
+	selected.CompletedAt = time.Time{}
+	if err := appendJSONL(s.runQueuePath, *selected); err != nil {
+		return nil, err
+	}
+	return selected, nil
+}
+
+func (s *JSONLStore) RenewRunQueueLease(_ context.Context, queueID, leaseToken string, leaseUntil time.Time) (bool, error) {
+	return s.updateRunQueueLease(queueID, leaseToken, func(item *domainsuperagent.RunQueueItem) { item.LeaseUntil = leaseUntil })
+}
+
+func (s *JSONLStore) CompleteRunQueueItem(_ context.Context, queueID, leaseToken, status, reason string, completedAt time.Time) (bool, error) {
+	return s.updateRunQueueLease(queueID, leaseToken, func(item *domainsuperagent.RunQueueItem) {
+		item.Status, item.Reason, item.CompletedAt = status, reason, completedAt
+		item.LeaseToken, item.LeaseUntil = "", time.Time{}
+	})
+}
+
+func (s *JSONLStore) updateRunQueueLease(queueID, leaseToken string, mutate func(*domainsuperagent.RunQueueItem)) (bool, error) {
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
+	items, err := s.listRunQueueItemsUnlocked(500)
+	if err != nil {
+		return false, err
+	}
+	for index := range items {
+		if items[index].QueueID != queueID {
+			continue
+		}
+		item := items[index]
+		if item.Status != "claimed" || item.LeaseToken != leaseToken {
+			return false, nil
+		}
+		mutate(&item)
+		if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+			return false, err
+		}
+		return true, appendJSONL(s.runQueuePath, item)
+	}
+	return false, nil
+}
+
+func (s *JSONLStore) listRunQueueItemsUnlocked(limit int) ([]domainsuperagent.RunQueueItem, error) {
 	var items []domainsuperagent.RunQueueItem
 	err := readJSONL(s.runQueuePath, func(line []byte) error {
 		var item domainsuperagent.RunQueueItem
@@ -219,6 +289,12 @@ func (s *JSONLStore) ListRunQueueItems(_ context.Context, limit int) ([]domainsu
 		return nil
 	})
 	return latestRunQueueItems(items, normalizedLimit(limit)), err
+}
+
+func (s *JSONLStore) ListRunQueueItems(_ context.Context, limit int) ([]domainsuperagent.RunQueueItem, error) {
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
+	return s.listRunQueueItemsUnlocked(limit)
 }
 
 func latestRunQueueItems(items []domainsuperagent.RunQueueItem, limit int) []domainsuperagent.RunQueueItem {

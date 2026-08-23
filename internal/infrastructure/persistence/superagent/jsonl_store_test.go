@@ -110,6 +110,8 @@ func TestJSONLStoreListRunQueueItemsReturnsLatestStatePerQueue(t *testing.T) {
 		}
 		if status == "claimed" {
 			item.ClaimedAt = now.Add(time.Second)
+			item.LeaseToken = "owner-1"
+			item.LeaseUntil = now.Add(time.Minute)
 		}
 		if status == "completed" {
 			item.ClaimedAt = now.Add(time.Second)

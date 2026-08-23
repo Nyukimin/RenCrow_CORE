@@ -156,10 +156,16 @@ func TestHandleSuperAgentTraceEventCreate(t *testing.T) {
 func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 	startedAt := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{
-		RunID:     "run_1",
-		AgentType: "LeadAgent",
-		Status:    "running",
-		StartedAt: startedAt,
+		RunID:              "run_1",
+		AgentType:          "LeadAgent",
+		Goal:               "continue durable work",
+		Status:             "running",
+		StartedAt:          startedAt,
+		ResumePolicy:       "checkpoint",
+		CheckpointRevision: 3,
+		CheckpointSummary:  "step 2 committed",
+		NextAction:         "execute step 3",
+		LastCheckpointAt:   startedAt,
 	}}}
 
 	pauseReq := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/pause", bytes.NewReader([]byte(`{"run_id":"run_1","reason":"user requested pause"}`)))
@@ -181,11 +187,31 @@ func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 	if resumeRec.Code != http.StatusOK {
 		t.Fatalf("resume status=%d body=%s", resumeRec.Code, resumeRec.Body.String())
 	}
-	if store.runs[len(store.runs)-1].Status != "running" {
-		t.Fatalf("expected running run, got %#v", store.runs)
+	if store.runs[len(store.runs)-1].Status != "queued" {
+		t.Fatalf("expected queued run, got %#v", store.runs)
 	}
 	if len(store.events) != 2 || store.events[1].EventType != "lead_agent_resumed" {
 		t.Fatalf("expected resume trace, got %#v", store.events)
+	}
+	if len(store.queue) != 1 || store.queue[0].QueueID != "resume:run_1:3" || store.queue[0].RunID != "run_1" || store.queue[0].CheckpointRevision != 3 {
+		t.Fatalf("resume queue=%#v", store.queue)
+	}
+	secondReq := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/resume", bytes.NewReader([]byte(`{"run_id":"run_1","reason":"duplicate transport retry"}`)))
+	secondRec := httptest.NewRecorder()
+	HandleSuperAgentRunResume(store).ServeHTTP(secondRec, secondReq)
+	if secondRec.Code != http.StatusOK || len(store.queue) != 1 {
+		t.Fatalf("idempotent resume status=%d queue=%#v body=%s", secondRec.Code, store.queue, secondRec.Body.String())
+	}
+}
+
+func TestHandleSuperAgentRunResumeRejectsMissingCheckpoint(t *testing.T) {
+	startedAt := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{RunID: "run-no-checkpoint", AgentType: "LeadAgent", Goal: "work", Status: "paused", StartedAt: startedAt, CompletedAt: startedAt}}}
+	req := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/resume", bytes.NewReader([]byte(`{"run_id":"run-no-checkpoint"}`)))
+	rec := httptest.NewRecorder()
+	HandleSuperAgentRunResume(store).ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict || len(store.queue) != 0 {
+		t.Fatalf("status=%d queue=%#v body=%s", rec.Code, store.queue, rec.Body.String())
 	}
 }
 

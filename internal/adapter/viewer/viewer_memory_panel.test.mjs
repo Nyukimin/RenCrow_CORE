@@ -3517,7 +3517,7 @@ globalThis.__superAgentResumeResult = document.getElementById('superAgentResumeA
   assert.match(context.__superAgentResume, /manual-ledger only/);
   assert.match(context.__superAgentResume, /runtime control not applied/);
   assert.match(context.__superAgentResumeResult, /1 resume queue \/ 1 completed \/ 1 manual-ledger \/ 1 pause-resume trace \/ 0 runtime-control applied/);
-  assert.match(context.__superAgentResumeResult, /blocked: true long-running resume not verified/);
+  assert.match(context.__superAgentResumeResult, /blocked: manual-ledger evidence does not prove scheduler resume/);
 });
 
 test('viewer renders ai workflow same-run evidence boundary', () => {

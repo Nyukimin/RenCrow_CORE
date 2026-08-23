@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -195,6 +196,9 @@ func HandleSuperAgentRunQueueClaim(store SuperAgentStore) http.HandlerFunc {
 		}
 		item.Status = "claimed"
 		item.ClaimedAt = now
+		item.LeaseToken = fmt.Sprintf("viewer-%d", now.UnixNano())
+		item.LeaseUntil = now.Add(2 * time.Minute)
+		item.AttemptCount++
 		if err := store.SaveRunQueueItem(r.Context(), item); err != nil {
 			http.Error(w, "failed to claim run queue item: "+err.Error(), http.StatusBadRequest)
 			return
@@ -250,6 +254,8 @@ func HandleSuperAgentRunQueueComplete(store SuperAgentStore) http.HandlerFunc {
 		item.Status = status
 		item.Reason = strings.TrimSpace(req.Reason)
 		item.CompletedAt = time.Now().UTC()
+		item.LeaseToken = ""
+		item.LeaseUntil = time.Time{}
 		if err := store.SaveRunQueueItem(r.Context(), item); err != nil {
 			http.Error(w, "failed to complete run queue item: "+err.Error(), http.StatusBadRequest)
 			return
@@ -276,7 +282,7 @@ func HandleSuperAgentRunPauseWithController(store SuperAgentStore, controller Su
 }
 
 func HandleSuperAgentRunResumeWithController(store SuperAgentStore, controller SuperAgentRunController) http.HandlerFunc {
-	return handleSuperAgentRunState(store, controller, "running", "lead_agent_resumed")
+	return handleSuperAgentRunState(store, controller, "queued", "lead_agent_resumed")
 }
 
 func handleSuperAgentRunState(store SuperAgentStore, controller SuperAgentRunController, status string, eventType string) http.HandlerFunc {
@@ -308,6 +314,34 @@ func handleSuperAgentRunState(store SuperAgentStore, controller SuperAgentRunCon
 		if !ok {
 			http.Error(w, "agent run not found", http.StatusNotFound)
 			return
+		}
+		if status == "queued" {
+			if run.ResumePolicy != "checkpoint" || run.CheckpointRevision <= 0 || strings.TrimSpace(run.CheckpointSummary) == "" || strings.TrimSpace(run.NextAction) == "" || run.LastCheckpointAt.IsZero() {
+				http.Error(w, "agent run has no durable resumable checkpoint", http.StatusConflict)
+				return
+			}
+			if run.Status == "completed" || run.Status == "cancelled" {
+				http.Error(w, "terminal agent run cannot be resumed", http.StatusConflict)
+				return
+			}
+			queueID := fmt.Sprintf("resume:%s:%d", runID, run.CheckpointRevision)
+			queue, err := store.ListRunQueueItems(r.Context(), 500)
+			if err != nil {
+				http.Error(w, "failed to load resume queue", http.StatusInternalServerError)
+				return
+			}
+			if !runQueueContains(queue, queueID) {
+				item := domainsuperagent.RunQueueItem{
+					QueueID: queueID, RunID: runID, WorkstreamID: run.WorkstreamID,
+					Goal: run.Goal, Action: "resume", Status: "queued",
+					CheckpointRevision: run.CheckpointRevision, CheckpointSummary: run.CheckpointSummary,
+					NextAction: run.NextAction, IdempotencyKey: queueID, CreatedAt: time.Now().UTC(),
+				}
+				if err := store.SaveRunQueueItem(r.Context(), item); err != nil {
+					http.Error(w, "failed to enqueue agent run resume: "+err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
 		}
 		var control appsuperagent.RuntimeControlResult
 		if controller != nil {
@@ -382,6 +416,15 @@ func findAgentRunByID(items []domainsuperagent.AgentRun, runID string) (domainsu
 		}
 	}
 	return domainsuperagent.AgentRun{}, false
+}
+
+func runQueueContains(items []domainsuperagent.RunQueueItem, queueID string) bool {
+	for _, item := range items {
+		if item.QueueID == queueID {
+			return true
+		}
+	}
+	return false
 }
 
 func nextQueuedRunQueueItem(items []domainsuperagent.RunQueueItem, now time.Time) (domainsuperagent.RunQueueItem, bool) {

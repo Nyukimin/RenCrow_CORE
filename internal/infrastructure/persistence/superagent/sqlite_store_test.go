@@ -98,6 +98,42 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	}
 }
 
+func TestSQLiteRunQueueClaimSurvivesReopenAndRecoversAfterLeaseExpiry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume.db")
+	now := time.Date(2026, 8, 23, 15, 0, 0, 0, time.UTC)
+	first, err := NewSQLiteStore(path, 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := domainsuperagent.RunQueueItem{QueueID: "resume:run-1:7", RunID: "run-1", Goal: "continue", Action: "resume", Status: "queued", CheckpointRevision: 7, CreatedAt: now}
+	if err := first.SaveRunQueueItem(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := first.ClaimNextRunQueueItem(context.Background(), now, now.Add(time.Minute), "owner-1")
+	if err != nil || claimed == nil || claimed.AttemptCount != 1 {
+		t.Fatalf("first claim=%#v err=%v", claimed, err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := NewSQLiteStore(path, 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if got, err := reopened.ClaimNextRunQueueItem(context.Background(), now.Add(30*time.Second), now.Add(90*time.Second), "owner-2"); err != nil || got != nil {
+		t.Fatalf("unexpired claim=%#v err=%v", got, err)
+	}
+	recovered, err := reopened.ClaimNextRunQueueItem(context.Background(), now.Add(61*time.Second), now.Add(2*time.Minute), "owner-2")
+	if err != nil || recovered == nil || recovered.LeaseToken != "owner-2" || recovered.AttemptCount != 2 || recovered.CheckpointRevision != 7 {
+		t.Fatalf("recovered=%#v err=%v", recovered, err)
+	}
+	if completed, err := reopened.CompleteRunQueueItem(context.Background(), recovered.QueueID, "owner-1", "completed", "stale result", now.Add(62*time.Second)); err != nil || completed {
+		t.Fatalf("stale owner completion accepted=%v err=%v", completed, err)
+	}
+}
+
 func TestSQLiteStoreRejectsOversizedContextPack(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 100)
 	if err != nil {

@@ -485,7 +485,12 @@ type superAgentRunQueueMessageProcessor interface {
 	ProcessMessage(context.Context, orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error)
 }
 
-func startSuperAgentRunQueueScheduler(cfg *config.Config, store superagentapp.RunQueueStore, processor superAgentRunQueueMessageProcessor, reporter backgroundJobFailureReporter) {
+type superAgentRunQueueStore interface {
+	superagentapp.RunQueueStore
+	superagentapp.InterruptedRunRecoveryStore
+}
+
+func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQueueStore, processor superAgentRunQueueMessageProcessor, reporter backgroundJobFailureReporter) {
 	if cfg == nil || !cfg.SuperAgentHarness.RunQueueSchedulerEnabled {
 		return
 	}
@@ -495,6 +500,13 @@ func startSuperAgentRunQueueScheduler(cfg *config.Config, store superagentapp.Ru
 		reporter.Failed("superagent_run_queue", err, "")
 		return
 	}
+	queued, blocked, err := superagentapp.RecoverInterruptedAgentRuns(context.Background(), store, time.Now().UTC())
+	if err != nil {
+		log.Printf("WARN: superagent interrupted run recovery failed: %v", err)
+		reporter.Failed("superagent_run_recovery", err, "")
+		return
+	}
+	log.Printf("SuperAgent interrupted run recovery: queued=%d blocked=%d", queued, blocked)
 	interval := time.Duration(cfg.SuperAgentHarness.RunQueueSchedulerIntervalSec) * time.Second
 	claimLimit := cfg.SuperAgentHarness.RunQueueSchedulerClaimLimit
 	scheduler := superagentapp.NewRunQueueScheduler(store, newSuperAgentRunQueueProcessor(processor, reporter), superagentapp.RunQueueSchedulerOptions{
@@ -524,10 +536,14 @@ func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor
 			sessionID = "superagent:" + strings.TrimSpace(item.QueueID)
 		}
 		resp, err := processor.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
-			SessionID:   sessionID,
-			Channel:     "superagent",
-			ChatID:      strings.TrimSpace(item.QueueID),
-			UserMessage: strings.TrimSpace(item.Goal),
+			JobID:                    strings.TrimPrefix(strings.TrimSpace(item.RunID), "run_lead_"),
+			SessionID:                sessionID,
+			Channel:                  "superagent",
+			ChatID:                   strings.TrimSpace(item.QueueID),
+			UserMessage:              strings.TrimSpace(item.Goal),
+			ResumeCheckpointRevision: item.CheckpointRevision,
+			ResumeCheckpointSummary:  strings.TrimSpace(item.CheckpointSummary),
+			ResumeNextAction:         strings.TrimSpace(item.NextAction),
 		})
 		if err != nil {
 			return fail(err)

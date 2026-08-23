@@ -47,11 +47,14 @@ func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T
 		},
 	}
 	item := domainsuperagent.RunQueueItem{
-		QueueID:      " q-1 ",
-		RunID:        "run-1",
-		WorkstreamID: "ws-1",
-		Goal:         " continue the queued run ",
-		Action:       " resume ",
+		QueueID:            " q-1 ",
+		RunID:              "run-1",
+		WorkstreamID:       "ws-1",
+		Goal:               " continue the queued run ",
+		Action:             " resume ",
+		CheckpointRevision: 4,
+		CheckpointSummary:  "step three committed",
+		NextAction:         "execute step four",
 	}
 
 	summary, err := newSuperAgentRunQueueProcessor(processor, backgroundJobFailureReporter{}).ProcessRunQueueItem(context.Background(), item)
@@ -62,7 +65,7 @@ func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T
 		t.Fatalf("summary = %q, want route=CODE job_id=job-1", summary)
 	}
 	req := processor.request
-	if req.SessionID != "ws-1" || req.Channel != "superagent" || req.ChatID != "q-1" || req.UserMessage != "continue the queued run" {
+	if req.JobID != "run-1" || req.SessionID != "ws-1" || req.Channel != "superagent" || req.ChatID != "q-1" || req.UserMessage != "continue the queued run" || req.ResumeCheckpointRevision != 4 || req.ResumeCheckpointSummary != "step three committed" || req.ResumeNextAction != "execute step four" {
 		t.Fatalf("request = %#v", req)
 	}
 }

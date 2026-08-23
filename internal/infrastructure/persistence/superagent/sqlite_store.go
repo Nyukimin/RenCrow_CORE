@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	_ "modernc.org/sqlite"
@@ -202,11 +203,154 @@ func (s *SQLiteStore) SaveRunQueueItem(ctx context.Context, item domainsuperagen
 	if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "run_queue", "queue_id", item.QueueID, "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	payload, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO run_queue (queue_id, status, created_at, payload) VALUES (?, ?, ?, ?)`, item.QueueID, item.Status, item.CreatedAt.Format(timeFormatRFC3339Nano), string(payload))
+	return err
 }
 
 func (s *SQLiteStore) ListRunQueueItems(ctx context.Context, limit int) ([]domainsuperagent.RunQueueItem, error) {
 	return listSQLiteItems[domainsuperagent.RunQueueItem](ctx, s, "run_queue", limit)
+}
+
+func (s *SQLiteStore) ClaimNextRunQueueItem(ctx context.Context, now, leaseUntil time.Time, leaseToken string) (*domainsuperagent.RunQueueItem, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("superagent sqlite store is closed")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT payload FROM run_queue ORDER BY rowid ASC`)
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		item    domainsuperagent.RunQueueItem
+		payload string
+	}
+	var selected *candidate
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		var item domainsuperagent.RunQueueItem
+		if err := json.Unmarshal([]byte(payload), &item); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if !runQueueItemClaimable(item, now) {
+			continue
+		}
+		if selected == nil || runQueueItemBefore(item, selected.item) {
+			selected = &candidate{item: item, payload: payload}
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if selected == nil {
+		return nil, tx.Commit()
+	}
+	item := selected.item
+	item.Status, item.ClaimedAt, item.LeaseToken, item.LeaseUntil = "claimed", now, leaseToken, leaseUntil
+	item.AttemptCount++
+	item.CompletedAt = time.Time{}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		return nil, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE run_queue SET status='claimed', payload=? WHERE queue_id=? AND payload=?`, string(encoded), item.QueueID, selected.payload)
+	if err != nil {
+		return nil, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if changed != 1 {
+		return nil, fmt.Errorf("run queue claim conflict")
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *SQLiteStore) RenewRunQueueLease(ctx context.Context, queueID, leaseToken string, leaseUntil time.Time) (bool, error) {
+	return s.updateRunQueueLease(ctx, queueID, leaseToken, func(item *domainsuperagent.RunQueueItem) {
+		item.LeaseUntil = leaseUntil
+	})
+}
+
+func (s *SQLiteStore) CompleteRunQueueItem(ctx context.Context, queueID, leaseToken, status, reason string, completedAt time.Time) (bool, error) {
+	return s.updateRunQueueLease(ctx, queueID, leaseToken, func(item *domainsuperagent.RunQueueItem) {
+		item.Status, item.Reason, item.CompletedAt = status, reason, completedAt
+		item.LeaseToken, item.LeaseUntil = "", time.Time{}
+	})
+}
+
+func (s *SQLiteStore) updateRunQueueLease(ctx context.Context, queueID, leaseToken string, mutate func(*domainsuperagent.RunQueueItem)) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("superagent sqlite store is closed")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var payload string
+	if err := tx.QueryRowContext(ctx, `SELECT payload FROM run_queue WHERE queue_id=?`, queueID).Scan(&payload); errors.Is(err, sql.ErrNoRows) {
+		return false, tx.Commit()
+	} else if err != nil {
+		return false, err
+	}
+	var item domainsuperagent.RunQueueItem
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return false, err
+	}
+	if item.Status != "claimed" || item.LeaseToken != leaseToken {
+		return false, tx.Commit()
+	}
+	mutate(&item)
+	if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+		return false, err
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE run_queue SET status=?, payload=? WHERE queue_id=? AND payload=?`, item.Status, string(encoded), queueID, payload)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return changed == 1, nil
+}
+
+func runQueueItemClaimable(item domainsuperagent.RunQueueItem, now time.Time) bool {
+	if !item.NotBefore.IsZero() && item.NotBefore.After(now) {
+		return false
+	}
+	return item.Status == "queued" || (item.Status == "claimed" && !item.LeaseUntil.After(now))
+}
+
+func runQueueItemBefore(left, right domainsuperagent.RunQueueItem) bool {
+	return left.Priority > right.Priority || (left.Priority == right.Priority && left.CreatedAt.Before(right.CreatedAt))
 }
 
 func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, id string, timeColumn string, timestamp string, item any) error {

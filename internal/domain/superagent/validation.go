@@ -21,6 +21,14 @@ func ValidateAgentRun(item AgentRun) error {
 	if isAgentRunTerminalStatus(item.Status) && item.CompletedAt.IsZero() {
 		return fmt.Errorf("completed_at is required for terminal agent run")
 	}
+	if strings.TrimSpace(item.ResumePolicy) != "" && strings.TrimSpace(item.ResumePolicy) != "checkpoint" {
+		return fmt.Errorf("resume_policy must be checkpoint when set")
+	}
+	if strings.TrimSpace(item.ResumePolicy) == "checkpoint" {
+		if item.CheckpointRevision <= 0 || strings.TrimSpace(item.CheckpointSummary) == "" || strings.TrimSpace(item.NextAction) == "" || item.LastCheckpointAt.IsZero() {
+			return fmt.Errorf("checkpoint resume requires revision, summary, next_action, and last_checkpoint_at")
+		}
+	}
 	return nil
 }
 
@@ -124,6 +132,14 @@ func ValidateRunQueueItem(item RunQueueItem) error {
 	}
 	if isRunQueueTerminalStatus(item.Status) && item.CompletedAt.IsZero() {
 		return fmt.Errorf("completed_at is required for terminal run queue item")
+	}
+	if item.AttemptCount < 0 || item.CheckpointRevision < 0 {
+		return fmt.Errorf("attempt_count and checkpoint_revision must be >= 0")
+	}
+	if strings.TrimSpace(item.Status) == "claimed" {
+		if strings.TrimSpace(item.LeaseToken) == "" || item.LeaseUntil.IsZero() || item.ClaimedAt.IsZero() {
+			return fmt.Errorf("claimed run queue item requires lease token, lease_until, and claimed_at")
+		}
 	}
 	return nil
 }

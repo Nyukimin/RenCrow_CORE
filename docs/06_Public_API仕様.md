@@ -30,6 +30,8 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /viewer/surface-presence` | PORTAL Chat／IdleChat画面の期限付き在席を通知し、COREが排他的な有効modeを決定する |
 | `/viewer/jobs`, `/viewer/logs` | job と監査可能な log |
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
+| `POST /viewer/superagent/runs/resume` | checkpoint付きRunを同一`run_id + checkpoint_revision`の冪等queueへ登録。checkpointなし、terminal run、非resumable runは409 |
+| `GET/POST /viewer/superagent/run-queue` | durable resume queueの照会・登録。claim lease/tokenは内部schedulerだけが所有する |
 | `/viewer/workstreams/*` | goal、artifact、annotation、heartbeat、review |
 | `/viewer/advisors/*`, `/viewer/agents/profiles` | Advisor run/score と AgentProfile |
 | `/viewer/revenue/*` | Opportunity、EconomicTask、RevenueEvent、Reflection、policy decision |
