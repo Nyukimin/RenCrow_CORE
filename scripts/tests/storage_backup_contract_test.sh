@@ -74,6 +74,12 @@ assert_contains "${backup_runner}" \
 assert_contains "${backup_runner}" \
   'systemctl --user unmask --runtime rencrow.service' \
   "the snapshot cleanup must remove its runtime mask"
+assert_contains "${checker}" \
+  'RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC' \
+  "SQLite restore integrity must have a configurable bounded deadline"
+assert_contains "${checker}" \
+  'SQLite integrity check timed out' \
+  "SQLite integrity timeout must be distinct from corruption"
 
 if (( ${#contract_failures[@]} > 0 )); then
   printf '[RED] storage backup contract violations:\n' >&2
@@ -153,6 +159,22 @@ qdrant_sha256=${qdrant_sha256}
 EOF
 
 "${checker}" "${test_root}/snapshot"
+
+slow_python=${test_root}/slow-python
+cat > "${slow_python}" <<'SH'
+#!/usr/bin/env bash
+if [[ ${1:-} == - && ${2:-} == */l1.db && ${3:-} == */l2.db ]]; then
+  sleep 5
+fi
+exec python3 "$@"
+SH
+chmod +x "${slow_python}"
+if RENCROW_TEST_PYTHON="${slow_python}" RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC=1 \
+  "${checker}" "${test_root}/snapshot" >"${test_root}/timeout.out" 2>"${test_root}/timeout.err"; then
+  echo "[RED] delayed SQLite integrity check unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -Fq 'SQLite integrity check timed out' "${test_root}/timeout.err"
 
 legacy_snapshot=${test_root}/legacy-v3
 mkdir -p "${legacy_snapshot}"

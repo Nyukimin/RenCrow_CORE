@@ -2,7 +2,13 @@
 set -Eeuo pipefail
 
 python_bin=${RENCROW_TEST_PYTHON:-python3}
+sqlite_integrity_timeout=${RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC:-600}
 umask 077
+
+if [[ ! ${sqlite_integrity_timeout} =~ ^[1-9][0-9]*$ ]] || (( sqlite_integrity_timeout > 3600 )); then
+  echo "[NG] SQLite integrity timeout must be 1..3600 seconds" >&2
+  exit 2
+fi
 
 snapshot_dir=${1:-}
 if [[ -z ${snapshot_dir} || ! -d ${snapshot_dir} ]]; then
@@ -114,7 +120,9 @@ for relative in "${conversation_l1_relative}" "${conversation_archive_relative}"
   fi
 done
 
-"${python_bin}" - "${core_restore}/${conversation_l1_relative}" "${core_restore}/${conversation_archive_relative}" <<'PY'
+set +e
+timeout --signal=TERM "${sqlite_integrity_timeout}s" \
+  "${python_bin}" - "${core_restore}/${conversation_l1_relative}" "${core_restore}/${conversation_archive_relative}" <<'PY'
 import sqlite3
 import sys
 
@@ -132,6 +140,15 @@ for path in sys.argv[1:]:
     if not result or result[0] != "ok":
         raise SystemExit(f"SQLite integrity check failed: {path}: {result}")
 PY
+sqlite_integrity_status=$?
+set -e
+if (( sqlite_integrity_status == 124 || sqlite_integrity_status == 137 )); then
+  echo "[NG] SQLite integrity check timed out after ${sqlite_integrity_timeout}s" >&2
+  exit 1
+fi
+if (( sqlite_integrity_status != 0 )); then
+  exit "${sqlite_integrity_status}"
+fi
 
 if [[ ${format_version} == 4 ]]; then
   "${python_bin}" - "${core_restore}/${conversation_l1_relative}" "${core_restore}/${raw_source_relative}" <<'PY'
