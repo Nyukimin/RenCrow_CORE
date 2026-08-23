@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 )
 
 type atlasMigrationItemStore struct {
@@ -77,6 +78,71 @@ func legacyAtlasLifecycleItem() domainbacklog.Item {
 		TestResult:     "legacy test result",
 		CheckOK:        true,
 		CheckedBy:      "legacy-verifier",
+	}
+}
+
+func TestMigrateLegacyAtlasLifecycleRepairsDoneOnlyWithExactClosureReceipt(t *testing.T) {
+	legacy := legacyAtlasLifecycleItem()
+	legacy.DeliveryState = domainbacklog.DeliveryDone
+	legacy.ImplementationRevision = 1
+	legacy.InvalidatedFromStage = domainbacklog.DeliveryBuild
+	legacy.SupersedesUnitID = "atlas-lifecycle-v0"
+	legacy.BlockerResolutionRefs = []domainbacklog.EvidenceRef{{
+		Stage: domainbacklog.DeliveryBlocked, Kind: "blocker_resolution", Ref: "resolution-1", Verified: true,
+	}}
+	store := &atlasMigrationItemStore{items: []domainbacklog.Item{legacy}}
+	workstream := &memoryWorkstreamStore{closureReceipts: []domainworkstream.ClosureReceipt{{
+		ReceiptID:              "atlas-closure:atlas-lifecycle-v1:2",
+		IdempotencyKey:         "atlas-lifecycle-v1:2:DONE",
+		UnitID:                 "atlas-lifecycle-v1",
+		ItemID:                 "atlas:atlas.lifecycle",
+		ImplementationRevision: 2,
+		Phase:                  domainworkstream.ClosurePhaseDone,
+		Status:                 domainworkstream.ClosureStatusCompleted,
+	}}}
+	service := NewService(store, workstream)
+
+	changed, err := service.MigrateLegacyAtlasLifecycle(context.Background())
+	if err != nil {
+		t.Fatalf("migration: %v", err)
+	}
+	if !changed || store.saves != 1 {
+		t.Fatalf("changed=%t saves=%d, want one DONE repair", changed, store.saves)
+	}
+	want := legacy
+	want.ImplementationRevision = 2
+	if !reflect.DeepEqual(store.items[0], want) {
+		t.Fatalf("DONE repair changed fields beyond revision: got=%+v want=%+v", store.items[0], want)
+	}
+
+	changed, err = service.MigrateLegacyAtlasLifecycle(context.Background())
+	if err != nil {
+		t.Fatalf("idempotent migration: %v", err)
+	}
+	if changed || store.saves != 1 {
+		t.Fatalf("second migration changed=%t saves=%d, want no-op", changed, store.saves)
+	}
+}
+
+func TestMigrateLegacyAtlasLifecycleDoesNotRepairDoneWithoutExactClosure(t *testing.T) {
+	legacy := legacyAtlasLifecycleItem()
+	legacy.DeliveryState = domainbacklog.DeliveryDone
+	legacy.ImplementationRevision = 1
+	store := &atlasMigrationItemStore{items: []domainbacklog.Item{legacy}}
+	service := NewService(store, &memoryWorkstreamStore{closureReceipts: []domainworkstream.ClosureReceipt{{
+		UnitID:                 legacy.ImplementationUnit,
+		ItemID:                 legacy.ItemID,
+		ImplementationRevision: 1,
+		Phase:                  domainworkstream.ClosurePhaseDone,
+		Status:                 domainworkstream.ClosureStatusCompleted,
+	}}})
+
+	changed, err := service.MigrateLegacyAtlasLifecycle(context.Background())
+	if err != nil {
+		t.Fatalf("migration: %v", err)
+	}
+	if changed || store.saves != 0 || !reflect.DeepEqual(store.items[0], legacy) {
+		t.Fatalf("DONE item without exact revision-2 closure changed=%t saves=%d item=%+v", changed, store.saves, store.items[0])
 	}
 }
 
