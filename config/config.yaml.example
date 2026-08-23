@@ -166,7 +166,7 @@ durable_store:
   manifest_path: "config/durable-stores.json"
 
 # Long-running Agent Runはdurable checkpointから同一run/job identityで再開する。
-super_agent_harness:
+superagent_harness:
   run_queue_scheduler_enabled: true
   run_queue_scheduler_interval_sec: 30
   run_queue_scheduler_claim_limit: 1

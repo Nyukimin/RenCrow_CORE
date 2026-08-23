@@ -16,6 +16,16 @@ func userHomeDirForTest(t *testing.T) string {
 	return home
 }
 
+func TestExampleConfigEnablesDurableSuperAgentResumeScheduler(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join("..", "..", "..", "config", "config.yaml.example"))
+	if err != nil {
+		t.Fatalf("LoadConfig(example): %v", err)
+	}
+	if !cfg.SuperAgentHarness.RunQueueSchedulerEnabled || cfg.SuperAgentHarness.RunQueueSchedulerIntervalSec != 30 || cfg.SuperAgentHarness.RunQueueSchedulerClaimLimit != 1 {
+		t.Fatalf("example durable resume scheduler is not enabled: %+v", cfg.SuperAgentHarness)
+	}
+}
+
 func TestLoadConfig_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
