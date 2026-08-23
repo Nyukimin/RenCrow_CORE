@@ -73,6 +73,7 @@ import (
 
 // Dependencies はアプリケーション依存関係
 type Dependencies struct {
+	redisHealthCheck               func(context.Context) error
 	dataCapabilityCatalog          *runtimeDataCapabilityCatalog
 	lineHandler                    http.Handler
 	telegramHandler                http.Handler
@@ -532,6 +533,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	dataWriteRegistry := toolRuntime.DataWriteRegistry
 	deps.conversationArchiveCloser = conversationRuntime.ArchiveCloser
 	deps.conversationCloser = conversationRuntime.Closer
+	if conversationRuntime.Manager != nil {
+		deps.redisHealthCheck = conversationRuntime.Manager.RedisHealth
+	}
 	if toolRuntime.MovieCatalogLookup != nil {
 		if err := registerRuntimeDataWriteMovieCatalog(dataWriteRegistry, toolRuntime.MovieCatalogLookup); err != nil {
 			log.Fatalf("Failed to register Movie Catalog data write: %v", err)

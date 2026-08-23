@@ -82,6 +82,12 @@ local file不在でも、認証済みTRADE read／write routeがruntimeへ登録
 なります。routeがない場合は`unavailable`または`blocked`となり、別DB・legacy route・fake endpointへ
 fallbackしません。通常のCORE-owned entryでは`owner_route_only`は省略（false）されます。
 
+`GET /viewer/runtime-config`の`runtime_readiness`は、会話runtimeのRedis projectionについて
+`redis_configured`、`redis_reachable`、`redis_status`を返します。`redis_status`は
+`disabled | available | unavailable`です。`available`はresponse生成時に既存runtime接続への
+bounded PINGが成功したことを表し、URL、credential、backend error本文は返しません。RedisはL1 SQLite
+正本ではないため、この独立statusはCOREの`/health/ready`判定へ混入しません。
+
 `GET /viewer/databases/tool-registry`は、同じproduction Worker `RunnerV2`から得たruntime
 metadataと、設定済みSQLite Tool Registryのplatform適合行を、名前順・runtime優先で重複排除して
 返します。各itemの`origin`は`core_runtime | rencrow_tools | dynamic_registry`です。

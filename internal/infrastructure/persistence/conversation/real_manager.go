@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -36,6 +37,19 @@ func (r *RealConversationManager) WithKnowledgeRelationImportHook(hook func(cont
 		r.knowledgeRelationImportHook = hook
 	}
 	return r
+}
+
+// RedisHealth checks the manager's already-open Redis store. It does not
+// create a client or participate in CORE readiness decisions.
+func (r *RealConversationManager) RedisHealth(ctx context.Context) error {
+	if r == nil || r.redisStore == nil {
+		return errors.New("redis store is unavailable")
+	}
+	pinger, ok := r.redisStore.(interface{ Ping(context.Context) error })
+	if !ok {
+		return errors.New("redis health check is unavailable")
+	}
+	return pinger.Ping(ctx)
 }
 
 // NewRealConversationManager は新しいRealConversationManagerを生成

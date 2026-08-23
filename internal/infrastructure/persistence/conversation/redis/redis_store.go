@@ -48,6 +48,15 @@ func NewRedisStore(redisURL string) (*RedisStore, error) {
 	}, nil
 }
 
+// Ping checks the existing Redis connection without creating a new client.
+// Callers own the timeout supplied through ctx.
+func (r *RedisStore) Ping(ctx context.Context) error {
+	if r == nil || r.client == nil {
+		return fmt.Errorf("redis client is unavailable")
+	}
+	return r.client.Ping(ctx).Err()
+}
+
 // Close はRedis接続を閉じる
 func (r *RedisStore) Close() error {
 	return r.client.Close()

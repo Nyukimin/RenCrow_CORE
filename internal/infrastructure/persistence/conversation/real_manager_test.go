@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 type mockRedisStore struct {
 	sessions map[string]*domconv.SessionConversation
 	threads  map[int64]*domconv.Thread
+	pingErr  error
 }
 
 func newMockRedisStore() *mockRedisStore {
@@ -66,7 +68,8 @@ func (m *mockRedisStore) DeleteThread(_ context.Context, threadID int64) error {
 	delete(m.threads, threadID)
 	return nil
 }
-func (m *mockRedisStore) Close() error { return nil }
+func (m *mockRedisStore) Close() error               { return nil }
+func (m *mockRedisStore) Ping(context.Context) error { return m.pingErr }
 
 type mockArchiveSQLiteStore struct {
 	saved        []*domconv.ThreadSummary
@@ -385,6 +388,19 @@ func newTestManager(embedder domconv.EmbeddingProvider, summarizer domconv.Conve
 		vectordbStore: &mockVectorDBStore{mockScore: 0.5},
 		embedder:      embedder,
 		summarizer:    summarizer,
+	}
+}
+
+func TestRealConversationManagerRedisHealthDelegatesToExistingStore(t *testing.T) {
+	mgr := newTestManager(nil, nil)
+	if err := mgr.RedisHealth(context.Background()); err != nil {
+		t.Fatalf("RedisHealth() unexpected error: %v", err)
+	}
+
+	wantErr := fmt.Errorf("redis unavailable")
+	mgr.redisStore.(*mockRedisStore).pingErr = wantErr
+	if err := mgr.RedisHealth(context.Background()); !errors.Is(err, wantErr) {
+		t.Fatalf("RedisHealth() error=%v, want %v", err, wantErr)
 	}
 }
 

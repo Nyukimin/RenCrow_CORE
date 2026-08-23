@@ -11,6 +11,7 @@ import (
 func buildRuntimeDependencyReadiness(cfg *config.Config, dependencies *Dependencies) viewer.RuntimeDependencyReadiness {
 	conversationEnabled := cfg != nil && cfg.Conversation.Enabled
 	l1SQLiteConfigPresent := cfg != nil && strings.TrimSpace(cfg.Storage.Databases.ConversationL1) != ""
+	redisConfigured := cfg != nil && conversationEnabled && strings.TrimSpace(cfg.Conversation.RedisURL) != ""
 	slackWebhookRegistered := dependencies != nil && dependencies.slackHandler != nil
 	discordWebhookRegistered := dependencies != nil && dependencies.discordHandler != nil
 	telegramWebhookRegistered := dependencies != nil && dependencies.telegramHandler != nil
@@ -57,6 +58,7 @@ func buildRuntimeDependencyReadiness(cfg *config.Config, dependencies *Dependenc
 		DistributedSSHConnected:      distributedSSHConnected,
 		DistributedLocalTransport:    distributedLocalTransport,
 		ConversationEnabled:          conversationEnabled,
+		RedisConfigured:              redisConfigured,
 		L1SQLiteConfigPresent:        l1SQLiteConfigPresent,
 		MemoryLayersAvailable:        memoryLayersAvailable,
 		MemoryLayersStatus:           memoryLayersStatusAvailable,

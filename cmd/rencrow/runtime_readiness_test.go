@@ -43,6 +43,21 @@ func TestBuildRuntimeDependencyReadinessAcceptsTTSGatewayEnv(t *testing.T) {
 	}
 }
 
+func TestBuildRuntimeDependencyReadinessMarksRedisConfiguredOnlyForEnabledConversation(t *testing.T) {
+	disabled := buildRuntimeDependencyReadiness(&config.Config{
+		Conversation: config.ConversationConfig{RedisURL: "redis://localhost:6379"},
+	}, nil)
+	if disabled.RedisConfigured {
+		t.Fatalf("disabled conversation must not claim Redis configured: %+v", disabled)
+	}
+	enabled := buildRuntimeDependencyReadiness(&config.Config{
+		Conversation: config.ConversationConfig{Enabled: true, RedisURL: "redis://localhost:6379"},
+	}, nil)
+	if !enabled.RedisConfigured {
+		t.Fatalf("enabled conversation Redis must be configured: %+v", enabled)
+	}
+}
+
 func TestBuildRuntimeDependencyReadinessReportsSourceRegistryAvailability(t *testing.T) {
 	disabled := buildRuntimeDependencyReadiness(&config.Config{}, &Dependencies{
 		viewerMemoryLayers:          http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),

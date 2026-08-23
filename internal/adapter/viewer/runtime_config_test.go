@@ -1,7 +1,9 @@
 package viewer
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -230,6 +232,44 @@ func TestHandleRuntimeConfig_ReturnsRuntimeReadinessWithoutSecretValues(t *testi
 	}
 	if strings.Contains(rec.Body.String(), "SLACK_BOT_TOKEN") || strings.Contains(rec.Body.String(), "TELEGRAM_BOT_TOKEN") {
 		t.Fatalf("runtime config leaked env names or secrets: %s", rec.Body.String())
+	}
+}
+
+func TestHandleRuntimeConfig_ProbesRedisWithoutChangingCoreReadiness(t *testing.T) {
+	const privateDiagnostic = "private-redis-diagnostic-sentinel"
+	tests := []struct {
+		name       string
+		configured bool
+		check      func(context.Context) error
+		status     string
+		reachable  bool
+	}{
+		{name: "disabled", status: "disabled"},
+		{name: "available", configured: true, check: func(context.Context) error { return nil }, status: "available", reachable: true},
+		{name: "unavailable", configured: true, check: func(context.Context) error { return errors.New(privateDiagnostic) }, status: "unavailable"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := HandleRuntimeConfig(DebugSystemOptions{
+				RuntimeReadiness: RuntimeDependencyReadiness{RedisConfigured: tt.configured},
+				RedisHealthCheck: tt.check,
+			})
+			rec := httptest.NewRecorder()
+			handler(rec, httptest.NewRequest(http.MethodGet, "/viewer/runtime-config", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var body RuntimeConfig
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.RuntimeReadiness.RedisStatus != tt.status || body.RuntimeReadiness.RedisReachable != tt.reachable {
+				t.Fatalf("redis readiness=%+v", body.RuntimeReadiness)
+			}
+			if strings.Contains(rec.Body.String(), privateDiagnostic) {
+				t.Fatalf("runtime config leaked Redis diagnostic detail: %s", rec.Body.String())
+			}
+		})
 	}
 }
 

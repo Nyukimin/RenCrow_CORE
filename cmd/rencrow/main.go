@@ -114,6 +114,7 @@ func cmdRun() {
 	voiceChatRuntime := buildVoiceChatRuntime(cfg, dependencies.voiceDirectHandler, dependencies.idleChatOrch)
 	debugSystemOpts := sttRuntime.DebugOptions
 	debugSystemOpts.RuntimeReadiness = buildRuntimeDependencyReadiness(cfg, dependencies)
+	debugSystemOpts.RedisHealthCheck = dependencies.redisHealthCheck
 	debugSystemOpts.LLMGateway = viewer.LLMGatewayRuntimeConfig{
 		BaseURL:            llmGatewayStatus.BaseURL,
 		Ready:              llmGatewayStatus.Ready,

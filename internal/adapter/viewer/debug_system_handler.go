@@ -51,6 +51,7 @@ type DebugSystemOptions struct {
 	BrowserActor               BrowserActorRuntimeConfig
 	SecretRefs                 []SecretRefRuntimeConfig
 	RuntimeReadiness           RuntimeDependencyReadiness
+	RedisHealthCheck           func(context.Context) error
 	VoiceChatEnabled           bool
 	VoiceChatGatewayConfigured bool
 	VoiceChatStreamURL         string
@@ -81,38 +82,41 @@ type SecretRefRuntimeConfig struct {
 }
 
 type RuntimeDependencyReadiness struct {
-	SlackCredentialsPresent      bool `json:"slack_credentials_present"`
-	SlackWebhookRegistered       bool `json:"slack_webhook_registered"`
-	SlackFilePayloadPipeline     bool `json:"slack_file_payload_pipeline"`
-	DiscordCredentialsPresent    bool `json:"discord_credentials_present"`
-	DiscordWebhookRegistered     bool `json:"discord_webhook_registered"`
-	DiscordFilePayloadPipeline   bool `json:"discord_file_payload_pipeline"`
-	TelegramCredentialsPresent   bool `json:"telegram_credentials_present"`
-	TelegramWebhookRegistered    bool `json:"telegram_webhook_registered"`
-	TelegramFilePayloadPipeline  bool `json:"telegram_file_payload_pipeline"`
-	STTGatewayConfigPresent      bool `json:"stt_gateway_config_present"`
-	TTSProviderEnvPresent        bool `json:"tts_provider_env_present"`
-	TTSProviderConfigPresent     bool `json:"tts_provider_config_present"`
-	DistributedEnabled           bool `json:"distributed_enabled"`
-	DistributedTransportsPresent bool `json:"distributed_transports_present"`
-	DistributedSSHConfigured     bool `json:"distributed_ssh_configured"`
-	DistributedSSHConnected      bool `json:"distributed_ssh_connected"`
-	DistributedLocalTransport    bool `json:"distributed_local_transport"`
-	ConversationEnabled          bool `json:"conversation_enabled"`
-	L1SQLiteConfigPresent        bool `json:"l1_sqlite_config_present"`
-	MemoryLayersAvailable        bool `json:"memory_layers_available"`
-	MemoryLayersStatus           bool `json:"memory_layers_status_available"`
-	SourceRegistryAvailable      bool `json:"source_registry_available"`
-	SourceRegistryStatus         bool `json:"source_registry_status_available"`
-	DomainGraphAvailable         bool `json:"domain_graph_available"`
-	DomainGraphStatus            bool `json:"domain_graph_status_available"`
-	KnowledgeMemoryEnabled       bool `json:"knowledge_memory_enabled"`
-	KnowledgeMemoryStatus        bool `json:"knowledge_memory_status_available"`
-	BrowserTraceAPIEnabled       bool `json:"browser_trace_api_enabled"`
-	BrowserTraceAPIStatus        bool `json:"browser_trace_api_status_available"`
-	BrowserTraceAPIFetcher       bool `json:"browser_trace_api_fetcher_available"`
-	SandboxEnabled               bool `json:"sandbox_enabled"`
-	SandboxStatusAvailable       bool `json:"sandbox_status_available"`
+	SlackCredentialsPresent      bool   `json:"slack_credentials_present"`
+	SlackWebhookRegistered       bool   `json:"slack_webhook_registered"`
+	SlackFilePayloadPipeline     bool   `json:"slack_file_payload_pipeline"`
+	DiscordCredentialsPresent    bool   `json:"discord_credentials_present"`
+	DiscordWebhookRegistered     bool   `json:"discord_webhook_registered"`
+	DiscordFilePayloadPipeline   bool   `json:"discord_file_payload_pipeline"`
+	TelegramCredentialsPresent   bool   `json:"telegram_credentials_present"`
+	TelegramWebhookRegistered    bool   `json:"telegram_webhook_registered"`
+	TelegramFilePayloadPipeline  bool   `json:"telegram_file_payload_pipeline"`
+	STTGatewayConfigPresent      bool   `json:"stt_gateway_config_present"`
+	TTSProviderEnvPresent        bool   `json:"tts_provider_env_present"`
+	TTSProviderConfigPresent     bool   `json:"tts_provider_config_present"`
+	DistributedEnabled           bool   `json:"distributed_enabled"`
+	DistributedTransportsPresent bool   `json:"distributed_transports_present"`
+	DistributedSSHConfigured     bool   `json:"distributed_ssh_configured"`
+	DistributedSSHConnected      bool   `json:"distributed_ssh_connected"`
+	DistributedLocalTransport    bool   `json:"distributed_local_transport"`
+	ConversationEnabled          bool   `json:"conversation_enabled"`
+	RedisConfigured              bool   `json:"redis_configured"`
+	RedisReachable               bool   `json:"redis_reachable"`
+	RedisStatus                  string `json:"redis_status"`
+	L1SQLiteConfigPresent        bool   `json:"l1_sqlite_config_present"`
+	MemoryLayersAvailable        bool   `json:"memory_layers_available"`
+	MemoryLayersStatus           bool   `json:"memory_layers_status_available"`
+	SourceRegistryAvailable      bool   `json:"source_registry_available"`
+	SourceRegistryStatus         bool   `json:"source_registry_status_available"`
+	DomainGraphAvailable         bool   `json:"domain_graph_available"`
+	DomainGraphStatus            bool   `json:"domain_graph_status_available"`
+	KnowledgeMemoryEnabled       bool   `json:"knowledge_memory_enabled"`
+	KnowledgeMemoryStatus        bool   `json:"knowledge_memory_status_available"`
+	BrowserTraceAPIEnabled       bool   `json:"browser_trace_api_enabled"`
+	BrowserTraceAPIStatus        bool   `json:"browser_trace_api_status_available"`
+	BrowserTraceAPIFetcher       bool   `json:"browser_trace_api_fetcher_available"`
+	SandboxEnabled               bool   `json:"sandbox_enabled"`
+	SandboxStatusAvailable       bool   `json:"sandbox_status_available"`
 }
 
 type LLMGatewayRuntimeConfig struct {
@@ -180,7 +184,7 @@ func HandleRuntimeConfig(opts DebugSystemOptions) http.HandlerFunc {
 			WebGather:          normalizeWebGatherRuntimeConfig(opts.WebGather),
 			BrowserActor:       normalizeBrowserActorRuntimeConfig(opts.BrowserActor),
 			SecretRefs:         normalizeSecretRefs(opts.SecretRefs),
-			RuntimeReadiness:   normalizeRuntimeDependencyReadiness(opts),
+			RuntimeReadiness:   normalizeRuntimeDependencyReadiness(r.Context(), opts),
 			VoiceChatEnabled:   opts.VoiceChatEnabled,
 			VoiceChatStreamURL: browserFacingVoiceChatStreamURL(r),
 			VoiceInputMode:     normalizeVoiceInputMode(opts.VoiceInputMode),
@@ -271,10 +275,25 @@ func firstForwardedValue(value string) string {
 	return strings.TrimSpace(value)
 }
 
-func normalizeRuntimeDependencyReadiness(opts DebugSystemOptions) RuntimeDependencyReadiness {
+func normalizeRuntimeDependencyReadiness(parent context.Context, opts DebugSystemOptions) RuntimeDependencyReadiness {
 	readiness := opts.RuntimeReadiness
 	readiness.STTGatewayConfigPresent = strings.TrimSpace(opts.STTBaseURL) != "" || strings.TrimSpace(opts.STTStreamURL) != ""
 	readiness.TTSProviderConfigPresent = strings.TrimSpace(opts.TTSBaseURL) != ""
+	readiness.RedisReachable = false
+	if !readiness.RedisConfigured {
+		readiness.RedisStatus = "disabled"
+		return readiness
+	}
+	readiness.RedisStatus = "unavailable"
+	if opts.RedisHealthCheck == nil {
+		return readiness
+	}
+	ctx, cancel := context.WithTimeout(parent, time.Second)
+	defer cancel()
+	if err := opts.RedisHealthCheck(ctx); err == nil {
+		readiness.RedisReachable = true
+		readiness.RedisStatus = "available"
+	}
 	return readiness
 }
 
