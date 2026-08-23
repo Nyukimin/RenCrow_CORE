@@ -71,7 +71,7 @@ wait_for_core_readiness() {
   local attempt
   for ((attempt = 1; attempt <= 300; attempt++)); do
     if systemctl --user is-active --quiet rencrow.service && \
-      curl -fsS --max-time 2 "http://127.0.0.1:${core_port}/health/ready" \
+      curl -fsS --max-time 2 "http://127.0.0.1:${core_port}/health/ready" 2>/dev/null \
         | python3 -c 'import json,sys; data=json.load(sys.stdin); raise SystemExit(0 if data.get("ready") is True else 1)' \
         >/dev/null 2>&1; then
       echo "[OK] CORE readiness restored after backup window"

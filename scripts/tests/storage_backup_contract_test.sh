@@ -54,6 +54,9 @@ assert_contains "${backup_runner}" \
   '"http://127.0.0.1:${core_port}/health/ready"' \
   "backup must verify the canonical local CORE readiness route"
 assert_contains "${backup_runner}" \
+  '"http://127.0.0.1:${core_port}/health/ready" 2>/dev/null' \
+  "expected readiness retries must not flood the backup journal"
+assert_contains "${backup_runner}" \
   'raw_source_dir=${backup_config[12]}' \
   "raw source field index must follow cold export"
 assert_contains "${backup_runner}" \
