@@ -24,6 +24,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return nil, fmt.Errorf("failed to parse config YAML: %w", err)
 	}
+	if retired := retiredDatabaseConfigKey(&root); retired != "" {
+		return nil, fmt.Errorf("config key %s is retired; CORE uses storage.databases SQLite owner stores", retired)
+	}
 	expandConfigEnvironment(&root)
 	var cfg Config
 	if err := root.Decode(&cfg); err != nil {
@@ -59,6 +62,49 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// retiredDatabaseConfigKey fails closed on settings from the removed DuckDB
+// runtime. Keeping an ignored path in production config makes a retained
+// rollback artifact look like an active owner store.
+func retiredDatabaseConfigKey(root *yaml.Node) string {
+	if mapping := yamlDocumentMapping(root); mapping != nil {
+		for i := 0; i+1 < len(mapping.Content); i += 2 {
+			key, value := mapping.Content[i].Value, mapping.Content[i+1]
+			switch key {
+			case "duckdb_path":
+				return "duckdb_path"
+			case "storage":
+				if child := yamlMappingValue(value, "legacy_databases"); child != nil {
+					return "storage.legacy_databases"
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func yamlDocumentMapping(node *yaml.Node) *yaml.Node {
+	if node != nil && node.Kind == yaml.DocumentNode && len(node.Content) == 1 {
+		node = node.Content[0]
+	}
+	if node != nil && node.Kind == yaml.MappingNode {
+		return node
+	}
+	return nil
+}
+
+func yamlMappingValue(node *yaml.Node, key string) *yaml.Node {
+	mapping := yamlDocumentMapping(node)
+	if mapping == nil {
+		return nil
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
 }
 
 func expandConfigEnvironment(node *yaml.Node) {
