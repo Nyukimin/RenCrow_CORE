@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -123,10 +124,12 @@ func (r *runtimeDataRecallRegistry) Recall(ctx context.Context, request tools.Da
 		return nil, errDataRecallRegistryUnknownOperation
 	}
 	if !runtimeDataRecallAccessAllowed(scope, registration.access) {
+		log.Printf("WARN: data.recall owner route denied store=%s operation=%s actor=%s role=%s purpose=%s required_scope=%s granted_scopes=%v", normalized.Store, normalized.Operation, scope.ActorID, scope.AgentRole, scope.Purpose, registration.access, scope.AllowedDataScopes)
 		return nil, errDataRecallRegistryDenied
 	}
 	result, callbackErr := registration.callback(ctx, normalized)
 	if callbackErr != nil {
+		log.Printf("WARN: data.recall owner route failed store=%s operation=%s error=%v", normalized.Store, normalized.Operation, callbackErr)
 		return nil, errDataRecallRegistryCallbackFailed
 	}
 	if result.Store != normalized.Store || result.Operation != normalized.Operation || result.Records == nil {
