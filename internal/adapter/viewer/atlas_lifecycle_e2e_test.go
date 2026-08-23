@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	appbacklog "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
@@ -92,6 +93,73 @@ func TestAtlasHTTPBackfillAndSpecificationProjection(t *testing.T) {
 		if !artifact.BodyAvailable || strings.TrimSpace(artifact.Content) == "" || strings.TrimSpace(artifact.ContentSHA256) == "" {
 			t.Fatalf("specification body/hash unavailable: %+v", artifact)
 		}
+	}
+}
+
+// TestAtlasHTTPBackfillReconcilePreservesCompletedRevision reproduces the
+// production restart path: a completed runtime item exists, startup reconciles
+// the embedded Backfill package, and Viewer must still match the same revision
+// to its closure receipt.
+func TestAtlasHTTPBackfillReconcilePreservesCompletedRevision(t *testing.T) {
+	runtime := newAtlasLifecycleHTTPRuntime(t)
+	pkg, err := featurebacklog.LoadBackfillPackage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.service.ReconcileBackfill(context.Background(), pkg); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err := runtime.items.FindByID(context.Background(), "atlas:atlas.lifecycle")
+	if err != nil || !found {
+		t.Fatalf("lifecycle item lookup found=%v err=%v", found, err)
+	}
+	item.DeliveryState = domainbacklog.DeliveryDone
+	item.ImplementationUnit = "atlas-lifecycle-v1"
+	item.ImplementationRevision = 2
+	item.EvidenceRefs = []domainbacklog.EvidenceRef{{
+		Stage: domainbacklog.DeliveryLiveVerified, Kind: "production_smoke", Ref: "isolated-smoke", Verified: true,
+	}}
+	if err := runtime.items.Save(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+	if err := runtime.workstream.SaveClosureReceipt(context.Background(), domainworkstream.ClosureReceipt{
+		ReceiptID: "isolated-closure", IdempotencyKey: "atlas-lifecycle-v1:2:DONE",
+		UnitID: "atlas-lifecycle-v1", ItemID: item.ItemID, ImplementationRevision: 2,
+		Phase: domainworkstream.ClosurePhaseDone, Status: domainworkstream.ClosureStatusCompleted,
+		LeaseReleased: true, CreatedAt: now, UpdatedAt: now, CompletedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reconciled, err := runtime.service.ReconcileBackfill(context.Background(), pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconciled.Imported != 0 || reconciled.Updated != 0 || reconciled.Skipped != len(pkg.Items) {
+		t.Fatalf("completed runtime reconcile report=%+v", reconciled)
+	}
+
+	status, body := runtime.get(t, "/viewer/atlas/items/atlas:atlas.lifecycle")
+	if status != http.StatusOK {
+		t.Fatalf("item detail status=%d body=%s", status, body)
+	}
+	var detail struct {
+		Item domainbacklog.Item `json:"item"`
+	}
+	decodeAtlasLifecycleJSON(t, body, &detail)
+	if detail.Item.DeliveryState != domainbacklog.DeliveryDone || detail.Item.ImplementationRevision != 2 {
+		t.Fatalf("reconcile rolled back completed lifecycle: %+v", detail.Item)
+	}
+
+	status, body = runtime.get(t, "/viewer/atlas")
+	if status != http.StatusOK {
+		t.Fatalf("projection status=%d body=%s", status, body)
+	}
+	var projection appbacklog.Projection
+	decodeAtlasLifecycleJSON(t, body, &projection)
+	if len(projection.Current) != 1 || projection.Current[0].ItemID != item.ItemID || projection.Current[0].ImplementationRevision != 2 {
+		t.Fatalf("completed lifecycle missing from Current: %+v", projection.Current)
 	}
 }
 
@@ -221,6 +289,7 @@ type atlasLifecycleHTTPRuntime struct {
 	client         *http.Client
 	server         *httptest.Server
 	items          *backlogpersistence.JSONLStore
+	workstream     *workstreampersistence.JSONLStore
 	workstreamRoot string
 	service        *appbacklog.Service
 	verifier       *atlasStrictHTTPVerifier
@@ -233,11 +302,12 @@ func newAtlasLifecycleHTTPRuntime(t *testing.T) *atlasLifecycleHTTPRuntime {
 	workstreamRoot := filepath.Join(root, "workstream")
 	items := backlogpersistence.NewJSONLStore(filepath.Join(root, "backlog.jsonl"))
 	verifier := &atlasStrictHTTPVerifier{expected: map[string]atlasVerifierExpectation{}}
-	service := appbacklog.NewService(items, workstreampersistence.NewJSONLStore(workstreamRoot)).WithEvidenceVerifier(verifier)
+	workstream := workstreampersistence.NewJSONLStore(workstreamRoot)
+	service := appbacklog.NewService(items, workstream).WithEvidenceVerifier(verifier)
 	token := "atlas-http-owner-token-012345678901234567890123"
 	server := httptest.NewServer(NewAtlasHandler(service, "ren", []byte(token)))
 	runtime := &atlasLifecycleHTTPRuntime{
-		client: http.DefaultClient, server: server, items: items, workstreamRoot: workstreamRoot,
+		client: http.DefaultClient, server: server, items: items, workstream: workstream, workstreamRoot: workstreamRoot,
 		service: service, verifier: verifier, token: token,
 	}
 	t.Cleanup(server.Close)

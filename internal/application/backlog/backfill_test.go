@@ -2,11 +2,76 @@ package backlog
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	featurebacklog "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
 )
+
+func TestReconcileBackfillPreservesRuntimeLifecycleIdentityAndOverlay(t *testing.T) {
+	pkg, err := featurebacklog.LoadBackfillPackage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := backfillItemToDomain(pkg.Items[0])
+	runtime.DeliveryState = domainbacklog.DeliveryDone
+	runtime.ImplementationUnit = "atlas-lifecycle-v1"
+	runtime.ImplementationRevision = 2
+	runtime.InvalidatedFromStage = domainbacklog.DeliveryBuild
+	runtime.SupersedesUnitID = "atlas-lifecycle-v0"
+	runtime.BlockerResolutionRefs = []domainbacklog.EvidenceRef{{
+		Stage: domainbacklog.DeliveryBlocked, Kind: "blocker_resolution", Ref: "resolution-1", Verified: true,
+	}}
+	runtime.EvidenceRefs = []domainbacklog.EvidenceRef{{
+		Stage: domainbacklog.DeliveryLiveVerified, Kind: "production_smoke", Ref: "smoke-1", Verified: true,
+	}}
+	wantBlockerRefs := append([]domainbacklog.EvidenceRef(nil), runtime.BlockerResolutionRefs...)
+	store := &memoryItemStore{items: []domainbacklog.Item{runtime}}
+	service := NewService(store, nil)
+
+	first, err := service.ReconcileBackfill(context.Background(), pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Imported != len(pkg.Items)-1 || first.Updated != 1 || len(store.items) != len(pkg.Items) {
+		t.Fatalf("first reconcile report=%+v items=%d", first, len(store.items))
+	}
+	item, err := service.Get(context.Background(), runtime.ItemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.DeliveryState != domainbacklog.DeliveryDone || item.ImplementationUnit != "atlas-lifecycle-v1" || item.ImplementationRevision != 2 || item.InvalidatedFromStage != domainbacklog.DeliveryBuild || item.SupersedesUnitID != "atlas-lifecycle-v0" {
+		t.Fatalf("runtime lifecycle identity was overwritten: %+v", item)
+	}
+	if !reflect.DeepEqual(item.BlockerResolutionRefs, wantBlockerRefs) || !reflect.DeepEqual(item.EvidenceRefs, runtime.EvidenceRefs) {
+		t.Fatalf("runtime evidence overlay was overwritten: blocker=%+v evidence=%+v", item.BlockerResolutionRefs, item.EvidenceRefs)
+	}
+
+	runtime.BlockerResolutionRefs[0].Ref = "mutated-outside-store"
+	stored, err := service.Get(context.Background(), runtime.ItemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(stored.BlockerResolutionRefs, wantBlockerRefs) {
+		t.Fatalf("blocker resolution refs were not deep-copied: %+v", stored.BlockerResolutionRefs)
+	}
+
+	second, err := service.ReconcileBackfill(context.Background(), pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Imported != 0 || second.Updated != 0 || second.Skipped != len(pkg.Items) || len(store.items) != len(pkg.Items) {
+		t.Fatalf("identical reconcile was not idempotent: report=%+v items=%d", second, len(store.items))
+	}
+	item, err = service.Get(context.Background(), runtime.ItemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.ImplementationUnit != "atlas-lifecycle-v1" || item.ImplementationRevision != 2 || item.DeliveryState != domainbacklog.DeliveryDone || !reflect.DeepEqual(item.BlockerResolutionRefs, wantBlockerRefs) {
+		t.Fatalf("second reconcile lost runtime overlay: %+v", item)
+	}
+}
 
 func TestReconcileBackfillIsIdempotentAndPreservesRuntimeOverlay(t *testing.T) {
 	pkg, err := featurebacklog.LoadBackfillPackage()

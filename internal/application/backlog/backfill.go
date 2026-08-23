@@ -139,6 +139,10 @@ func preserveRuntimeOverlay(current, incoming domainbacklog.Item) domainbacklog.
 	incoming.EvidenceRefs = append([]domainbacklog.EvidenceRef(nil), current.EvidenceRefs...)
 	incoming.WorkstreamID = current.WorkstreamID
 	incoming.ImplementationUnit = current.ImplementationUnit
+	incoming.ImplementationRevision = current.ImplementationRevision
+	incoming.InvalidatedFromStage = current.InvalidatedFromStage
+	incoming.SupersedesUnitID = current.SupersedesUnitID
+	incoming.BlockerResolutionRefs = append([]domainbacklog.EvidenceRef(nil), current.BlockerResolutionRefs...)
 	incoming.AdoptionReason = current.AdoptionReason
 	incoming.AdoptedAt = current.AdoptedAt
 	incoming.Owner = current.Owner
