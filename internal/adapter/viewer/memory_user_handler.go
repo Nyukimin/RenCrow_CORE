@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
@@ -15,6 +16,13 @@ type UserMemoryStore interface {
 	UpdateUserMemoryState(ctx context.Context, id string, state string, reason string) (*domainmemory.UserMemory, error)
 	ForgetUserMemory(ctx context.Context, id string, reason string) (*domainmemory.UserMemory, error)
 	SupersedeUserMemory(ctx context.Context, oldID string, newID string, reason string) (*domainmemory.UserMemory, error)
+}
+
+// UserMemoryPageStore is the optional owner projection used by Viewer when a
+// human must inspect more than the newest page. Runtime recall continues to use
+// the bounded ListUserMemories contract above.
+type UserMemoryPageStore interface {
+	ListUserMemoriesPage(ctx context.Context, userID, state string, includeInactive bool, query string, limit, offset int) ([]domainmemory.UserMemory, int, error)
 }
 
 func HandleUserMemory(store UserMemoryStore) http.HandlerFunc {
@@ -122,13 +130,45 @@ func handleUserMemoryList(w http.ResponseWriter, r *http.Request, store UserMemo
 		userID = "ren"
 	}
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len([]rune(query)) > 256 {
+		http.Error(w, "invalid query", http.StatusBadRequest)
+		return
+	}
+	offset := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+		offset, err = strconv.Atoi(raw)
+		if err != nil || offset < 0 || offset > 1_000_000 {
+			http.Error(w, "invalid offset", http.StatusBadRequest)
+			return
+		}
+	}
 	includeInactive := r.URL.Query().Get("include_inactive") == "1" || strings.EqualFold(r.URL.Query().Get("include_inactive"), "true")
+	if pager, ok := store.(UserMemoryPageStore); ok {
+		items, total, pageErr := pager.ListUserMemoriesPage(r.Context(), userID, state, includeInactive, query, limit, offset)
+		if pageErr != nil {
+			http.Error(w, "failed to list user memories: "+pageErr.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"user_id": userID, "items": items, "total": total,
+			"limit": limit, "offset": offset, "has_more": offset+len(items) < total,
+		})
+		return
+	}
+	if query != "" || offset != 0 {
+		http.Error(w, "user memory pagination unavailable", http.StatusNotImplemented)
+		return
+	}
 	items, err := store.ListUserMemories(r.Context(), userID, state, includeInactive, limit)
 	if err != nil {
 		http.Error(w, "failed to list user memories: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"user_id": userID, "items": items})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"user_id": userID, "items": items, "total": len(items),
+		"limit": limit, "offset": 0, "has_more": len(items) == limit,
+	})
 }
 
 func handleUserMemoryCreate(w http.ResponseWriter, r *http.Request, store UserMemoryStore) {

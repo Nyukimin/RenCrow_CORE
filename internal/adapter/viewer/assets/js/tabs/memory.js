@@ -1,4 +1,6 @@
 // Memory tab module: memory snapshots, layers, source registry, and recall traces.
+let userMemoryOffset = 0;
+const userMemoryPageSize = 50;
 function renderMemorySnapshot() {
   const snap = state.memory.snapshot || {};
   const fetchError = String(state.memory.memorySnapshotFetchError || '');
@@ -225,7 +227,16 @@ function renderUserMemory() {
   const count = document.getElementById('userMemoryCount');
   const items = Array.isArray(state.memory.userMemory) ? state.memory.userMemory : [];
   const error = String(state.memory.userMemoryFetchError || '');
-  if (count) count.textContent = error ? '0' : String(items.length);
+  const total = Number(state.memory.userMemoryTotal || 0);
+  const pageStatus = document.getElementById('userMemoryPageStatus');
+  if (count) count.textContent = error ? '0' : String(total);
+  if (pageStatus) {
+    const first = items.length === 0 ? 0 : userMemoryOffset + 1;
+    const last = userMemoryOffset + items.length;
+    pageStatus.textContent = first + '-' + last + ' / ' + total;
+  }
+  if (userMemoryPrevBtn) userMemoryPrevBtn.disabled = userMemoryOffset === 0;
+  if (userMemoryNextBtn) userMemoryNextBtn.disabled = !state.memory.userMemoryHasMore;
   if (!body) return;
   body.innerHTML = '';
   if (error) {
@@ -259,7 +270,10 @@ function renderUserMemory() {
 function refreshUserMemory() {
   const params = new URLSearchParams();
   params.set('user_id', 'ren');
-  params.set('limit', '50');
+  params.set('limit', String(userMemoryPageSize));
+  params.set('offset', String(userMemoryOffset));
+  if (userMemoryStateFilter && userMemoryStateFilter.value) params.set('state', userMemoryStateFilter.value);
+  if (userMemoryQuery && userMemoryQuery.value.trim()) params.set('q', userMemoryQuery.value.trim());
   fetch('/viewer/memory/user?' + params.toString())
     .then((r) => {
       if (!r.ok) {
@@ -272,14 +286,34 @@ function refreshUserMemory() {
     .then((data) => {
       state.memory.userMemoryFetchError = '';
       state.memory.userMemory = Array.isArray(data.items) ? data.items : [];
+      state.memory.userMemoryTotal = Number(data.total || 0);
+      state.memory.userMemoryHasMore = Boolean(data.has_more);
       renderUserMemory();
     })
     .catch((err) => {
       state.memory.userMemoryFetchError = String(err && err.message ? err.message : err);
       state.memory.userMemory = [];
+      state.memory.userMemoryTotal = 0;
+      state.memory.userMemoryHasMore = false;
       renderUserMemory();
       console.error(err);
     });
+}
+
+function resetAndRefreshUserMemory() {
+  userMemoryOffset = 0;
+  refreshUserMemory();
+}
+
+function previousUserMemoryPage() {
+  userMemoryOffset = Math.max(0, userMemoryOffset - userMemoryPageSize);
+  refreshUserMemory();
+}
+
+function nextUserMemoryPage() {
+  if (!state.memory.userMemoryHasMore) return;
+  userMemoryOffset += userMemoryPageSize;
+  refreshUserMemory();
 }
 
 function memoryEventNamespaceValue() {

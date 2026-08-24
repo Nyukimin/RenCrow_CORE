@@ -429,6 +429,81 @@ LIMIT ?
 	return memories, nil
 }
 
+// ListUserMemoriesPage provides an exact, searchable owner-facing projection.
+// It is intentionally separate from bounded prompt recall so Viewer browsing
+// cannot widen the LLM injection contract.
+func (s *L1SQLiteStore) ListUserMemoriesPage(ctx context.Context, userID, state string, includeInactive bool, query string, limit, offset int) ([]domainmemory.UserMemory, int, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		userID = "ren"
+	}
+	namespace, err := BuildL1Namespace(NamespaceKindUser, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	state = strings.TrimSpace(state)
+	if state != "" {
+		if err := validateMemoryState(state); err != nil {
+			return nil, 0, err
+		}
+	}
+	query = strings.TrimSpace(query)
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		return nil, 0, errors.New("user memory offset must be non-negative")
+	}
+
+	where := "namespace = ? AND speaker = ? AND layer = ?"
+	args := []interface{}{namespace, string(domconv.SpeakerMemory), MemoryLayerL1}
+	if !includeInactive {
+		where += " AND COALESCE(json_extract(meta_json, '$.active'), 1) = 1"
+	}
+	if state != "" {
+		where += " AND memory_state = ?"
+		args = append(args, state)
+	}
+	if query != "" {
+		where += " AND (instr(lower(message), lower(?)) > 0 OR instr(lower(meta_json), lower(?)) > 0)"
+		args = append(args, query, query)
+	}
+
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM l1_memory_event WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count user memories: %w", err)
+	}
+	pageArgs := append(append([]interface{}{}, args...), limit, offset)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+       memory_state, layer, source, created_at, updated_at
+FROM l1_memory_event
+WHERE `+where+`
+ORDER BY created_at DESC, rowid DESC
+LIMIT ? OFFSET ?
+`, pageArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query user memory page: %w", err)
+	}
+	defer rows.Close()
+	events, err := scanL1Events(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]domainmemory.UserMemory, 0, len(events))
+	for _, event := range events {
+		item, strictErr := strictUserMemoryFromEvent(event)
+		if strictErr != nil {
+			continue
+		}
+		items = append(items, *item)
+	}
+	return items, total, nil
+}
+
 func (s *L1SQLiteStore) ListPromptInjectableUserMemories(ctx context.Context, userID string, persona string, limit int) ([]domainmemory.UserMemory, error) {
 	if limit <= 0 {
 		limit = 12

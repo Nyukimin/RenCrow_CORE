@@ -970,6 +970,20 @@
       <h3>User Memory</h3>
       <div class="sub">user:ren の observed / candidate / confirmed / pinned</div>
     </div>
+    <div class="filters">
+      <select id="userMemoryStateFilter">
+        <option value="">all states</option>
+        <option value="candidate">candidate</option>
+        <option value="confirmed">confirmed</option>
+        <option value="pinned">pinned</option>
+        <option value="observed">observed</option>
+      </select>
+      <input id="userMemoryQuery" placeholder="memory / evidence を検索">
+      <button id="userMemorySearchBtn" class="ctl-btn" type="button">Search</button>
+      <button id="userMemoryPrevBtn" class="ctl-btn" type="button">Previous</button>
+      <button id="userMemoryNextBtn" class="ctl-btn" type="button">Next</button>
+      <span id="userMemoryPageStatus" class="small">0 / 0</span>
+    </div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>State</th><th>Type</th><th>Memory</th><th>Evidence</th><th>Updated</th><th>Action</th></tr></thead>

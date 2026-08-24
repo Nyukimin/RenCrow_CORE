@@ -208,6 +208,9 @@ Recall経路へのfallbackはこのAPIにありません。
 
 `/viewer/memory/*`は既存Viewer／legacy caller向けの互換境界です。現行の`GET /viewer/memory/profile-promotions`と
 `POST /viewer/memory/profile-promotions/retry`、既存ViewerのUserMemory list／create／state／forget／supersede、RecallPackは互換維持します。
+`GET /viewer/memory/user`は従来の`user_id | state | include_inactive | limit`に加え、Viewerの全候補到達用に
+`q`（statement／Evidenceの256 rune以下の部分一致）と`offset`（0以上1,000,000以下）を受け、`items | total | limit | offset | has_more`を返します。
+これはowner-facing projectionの検索契約であり、LLMへ渡すRecall件数やprompt injection上限を拡張しません。
 legacy ChatGPT `import/confirm`はproduction登録から削除済みで、Common Raw owner APIのfallback／拡張に戻しません。
 CMDはこのAPIのclientであり、owner serviceではありません。CMDが行うのはcommand構文の解析、認証tokenの
 transport、method／path／bodyへの一対一mapping、boundedな単一JSON responseの原文relayだけです。認証user、actor、scope、request ID、
@@ -215,8 +218,9 @@ idempotency、state、policy、transaction、dry-run／applyの意味、receipt�
 
 UserMemory owner APIのsource実装済み第一段階は、loopbackと`local_agent_ops`のowner-only Bearer tokenを再利用する
 `/v1/memory/user`と、Recall／Trace、archive、lifecycle、Parquet owner workflowです。tokenはMemory handlerの起動時に読み、
-requestごとには読まず、CORE設定の`user_id`からtrusted user scopeを作ります。source／focused implementation completeですが、
-installed binary、production config／DB migration、authenticated live CMD->CORE route、rebuild／restart、Agent／full DB E2Eは未確認です。
+requestごとには読まず、CORE設定の`user_id`からtrusted user scopeを作ります。installed binary、production config／DB migration、
+authenticated live CMD->CORE route、rebuild／restartとChatGPT由来記憶のMio Recall E2Eは2026-08-24 JSTに確認済みです。
+他Agent／他DBのE2Eをこの確認で代用しません。
 `X-RenCrow-Client: RenCrow_CMD`とinteraction profileはcapability selectionであり、credentialの代替ではありません。
 認証方式だけが`local_agent_ops`のowner token policyを共有し、Memory APIはAgent OPS route、
 Shiro／Worker実行、foreground leaseを使用しません。
@@ -240,8 +244,8 @@ Shiro／Worker実行、foreground leaseを使用しません。
 
 既存Viewer routeはlegacy compatibility routeとして互換維持します。`/v1/memory/user`と、下表のarchive／lifecycle／Parquet routeは
 CMD専用owner routeであり、新しいowner receipt契約を満たすsource実装です。CMDのowner操作は上記APIだけを使います。
-import status／progress／retry／finalize、Common Raw、LLM residual、typed EndTurnはsource／focused実装対象です。Import finalizeとexact-ID UserMemory confirmは別契約です。
-installed binary、production config／DB migration、ChatGPT backfill、live CMD->CORE／Agent E2Eは未完了であり、source実装を配備済みとは扱いません。
+import status／progress／retry／finalize、Common Raw、LLM residual、typed EndTurnは実装済みです。Import finalizeとexact-ID UserMemory confirmは別契約です。
+ChatGPT backfillは2026-08-24 JSTにlive CMD->COREのprogress／finalize冪等replayとMio Agent E2Eまで確認済みです。
 
 | RenCrow_CMD target | CORE Public API target | profile | CORE所有の操作境界 |
 | --- | --- | --- | --- |
@@ -263,9 +267,9 @@ installed binary、production config／DB migration、ChatGPT backfill、live CM
 #### ChatGPT Common Raw import owner API
 
 このAPIは旧 `/viewer/memory/import/chatgpt*` を置換する唯一のruntime import routeです。CORE owner route、runtime wiring、CMD facade、
-Toolsの旧network subcommand削除、CORE旧Viewer route削除、legacy candidate／confirmed／forgotten／superseded不変性testは
-source／focused実装済みですが、production backfillと配備は未完了です。source-focusedな実装が存在しても、installed binary、production config／migration、rebuild／restart、live CMD->CORE／Agent
-E2Eを完了とみなしません。CLIの正規構文は次のとおりです。
+Toolsの旧network subcommand削除、CORE旧Viewer route削除、legacy candidate／confirmed／forgotten／superseded不変性testを含めて
+production配備済みです。2026-08-24 JSTに実exportの全件進捗、machine finalize、冪等replay、Mio Recall traceを確認しました。
+CLIの正規構文は次のとおりです。
 
 ```text
 rencrowctl memory import chatgpt --manifest <file> --artifact <tar> [--apply]
