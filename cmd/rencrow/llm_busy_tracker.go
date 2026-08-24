@@ -26,9 +26,14 @@ type llmBusyTracker struct {
 	sources         map[string]int
 	idleLease       *llmIdleLease
 	idleLeaseCancel context.CancelFunc
+	idleReservation *llmIdleReservation
 }
 
 type llmIdleLease struct {
+	source string
+}
+
+type llmIdleReservation struct {
 	source string
 }
 
@@ -56,6 +61,13 @@ func (t *llmBusyTracker) TryBegin(ctx context.Context, fallbackSource string) (f
 	}
 	t.mu.Lock()
 	lease, _ := ctx.Value(llmIdleLeaseContextKey{}).(*llmIdleLease)
+	if t.idleReservation != nil && source == "idlechat" {
+		t.mu.Unlock()
+		return func() {}, false
+	}
+	if t.idleReservation != nil && source != "idlechat" {
+		t.idleReservation = nil
+	}
 	if t.idleLease != nil && lease != t.idleLease {
 		if source == "idlechat" {
 			t.mu.Unlock()
@@ -84,7 +96,70 @@ func (t *llmBusyTracker) TryBegin(ctx context.Context, fallbackSource string) (f
 	}, true
 }
 
+func (t *llmBusyTracker) TryReserveIdleReservation(source string) (func(), bool) {
+	if t == nil {
+		return func() {}, false
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "idle_reservation"
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.idleLease != nil {
+		return func() {}, false
+	}
+	if t.idleReservation != nil {
+		if t.idleReservation.source != source {
+			return func() {}, false
+		}
+		reservation := t.idleReservation
+		return func() {
+			t.mu.Lock()
+			defer t.mu.Unlock()
+			if t.idleReservation == reservation {
+				t.idleReservation = nil
+			}
+		}, true
+	}
+	for busySource, count := range t.sources {
+		if count > 0 && busySource != "idlechat" {
+			return func() {}, false
+		}
+	}
+	reservation := &llmIdleReservation{source: source}
+	t.idleReservation = reservation
+	return func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if t.idleReservation == reservation {
+			t.idleReservation = nil
+		}
+	}, true
+}
+
 func (t *llmBusyTracker) TryAcquireIdleLease(parent context.Context, source string) (context.Context, func(), bool) {
+	return t.tryAcquireIdleLease(parent, source, false)
+}
+
+func (t *llmBusyTracker) TryAcquireReservedIdleLease(parent context.Context, source string) (context.Context, func(), bool) {
+	return t.tryAcquireIdleLease(parent, source, true)
+}
+
+func (t *llmBusyTracker) IdleReservationHeld(source string) bool {
+	if t == nil {
+		return false
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "idle_reservation"
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.idleReservation != nil && t.idleReservation.source == source
+}
+
+func (t *llmBusyTracker) tryAcquireIdleLease(parent context.Context, source string, requireReservation bool) (context.Context, func(), bool) {
 	if t == nil {
 		return parent, func() {}, false
 	}
@@ -94,7 +169,16 @@ func (t *llmBusyTracker) TryAcquireIdleLease(parent context.Context, source stri
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if len(copyBusySources(t.sources)) > 0 || t.idleLease != nil {
+	if t.idleLease != nil {
+		return parent, func() {}, false
+	}
+	busySources := copyBusySources(t.sources)
+	if t.idleReservation != nil {
+		if t.idleReservation.source != source || len(busySources) > 0 {
+			return parent, func() {}, false
+		}
+		t.idleReservation = nil
+	} else if requireReservation || len(busySources) > 0 {
 		return parent, func() {}, false
 	}
 	lease := &llmIdleLease{source: source}

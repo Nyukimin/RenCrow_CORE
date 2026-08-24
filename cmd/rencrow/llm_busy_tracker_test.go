@@ -128,3 +128,95 @@ func TestTrackedProviderAtomicallyRejectsIdleChatWhenIdleLeaseIsHeld(t *testing.
 	default:
 	}
 }
+
+func TestLLMBusyTrackerIdleReservationIsNotActiveAndBlocksNewIdleChat(t *testing.T) {
+	tracker := newLLMBusyTracker()
+	releaseReservation, ok := tracker.TryReserveIdleReservation("memory_profile_promotion")
+	if !ok {
+		t.Fatal("idle reservation should be acquired")
+	}
+	defer releaseReservation()
+
+	if snapshot := tracker.Snapshot(); snapshot.Active || snapshot.ActiveCount != 0 || snapshot.External {
+		t.Fatalf("reservation must not count as active/external work: %+v", snapshot)
+	}
+	if _, ok := tracker.TryReserveIdleReservation("other_background"); ok {
+		t.Fatal("competing idle reservation source should be rejected")
+	}
+
+	endIdleChat, ok := tracker.TryBegin(llm.WithBusySource(context.Background(), "idlechat"), "chat")
+	if ok {
+		endIdleChat()
+		t.Fatal("new IdleChat should be rejected while memory reservation is held")
+	}
+
+	endForeground, ok := tracker.TryBegin(context.Background(), "chat")
+	if !ok {
+		t.Fatal("foreground work should preempt the reservation")
+	}
+	endForeground()
+	replacementRelease, ok := tracker.TryReserveIdleReservation("other_background")
+	if !ok {
+		t.Fatal("foreground preemption should clear the reservation")
+	}
+	replacementRelease()
+}
+
+func TestLLMBusyTrackerIdleReservationConvertsAfterRunningIdleChatEnds(t *testing.T) {
+	tracker := newLLMBusyTracker()
+	idleContext, idleCancel := context.WithCancel(llm.WithBusySource(context.Background(), "idlechat"))
+	defer idleCancel()
+	endIdleChat, ok := tracker.TryBegin(idleContext, "chat")
+	if !ok {
+		t.Fatal("running IdleChat should start before reservation")
+	}
+	reservationRelease, ok := tracker.TryReserveIdleReservation("memory_profile_promotion")
+	if !ok {
+		t.Fatal("memory reservation should coexist with running IdleChat")
+	}
+	defer reservationRelease()
+
+	if snapshot := tracker.Snapshot(); snapshot.ActiveCount != 1 || snapshot.External {
+		t.Fatalf("reservation must not add active/external work: %+v", snapshot)
+	}
+	if _, _, ok := tracker.TryAcquireIdleLease(context.Background(), "memory_profile_promotion"); ok {
+		t.Fatal("reservation must wait for the running IdleChat")
+	}
+	select {
+	case <-idleContext.Done():
+		t.Fatal("reservation cancelled the running IdleChat")
+	default:
+	}
+
+	endIdleChat()
+	leaseContext, releaseLease, ok := tracker.TryAcquireReservedIdleLease(context.Background(), "memory_profile_promotion")
+	if !ok {
+		t.Fatal("reservation should convert to an idle lease after IdleChat ends")
+	}
+	defer releaseLease()
+	if leaseContext == nil {
+		t.Fatal("converted idle lease returned nil context")
+	}
+}
+
+func TestLLMBusyTrackerReservedIdleLeaseRequiresReservation(t *testing.T) {
+	tracker := newLLMBusyTracker()
+	if _, _, ok := tracker.TryAcquireReservedIdleLease(context.Background(), "memory_profile_promotion"); ok {
+		t.Fatal("reserved idle lease should not bypass a missing reservation")
+	}
+}
+
+func TestLLMBusyTrackerIdleReservationReleaseAllowsAnotherSource(t *testing.T) {
+	tracker := newLLMBusyTracker()
+	releaseReservation, ok := tracker.TryReserveIdleReservation("memory_profile_promotion")
+	if !ok {
+		t.Fatal("idle reservation should be acquired")
+	}
+	releaseReservation()
+
+	replacementRelease, ok := tracker.TryReserveIdleReservation("other_background")
+	if !ok {
+		t.Fatal("released reservation should allow another source")
+	}
+	replacementRelease()
+}

@@ -23,13 +23,22 @@ const (
 	// ProfilePromotionPerGroupCandidateLimit keeps each logical LLM request
 	// small while the merged extraction remains capped by RawCandidateLimit.
 	ProfilePromotionPerGroupCandidateLimit = 4
-	ProfilePromotionPreferenceKeyMax       = 64
-	ProfilePromotionPreferenceValueMax     = 448
-	ProfilePromotionResponseBytesMax       = 64 * 1024
+	// ProfilePromotionRepairCandidateLimit is the stricter cap used only by the
+	// one corrective generation after an invalid provider response.
+	ProfilePromotionRepairCandidateLimit = 2
+	ProfilePromotionPreferenceKeyMax     = 64
+	ProfilePromotionPreferenceValueMax   = 448
+	ProfilePromotionResponseBytesMax     = 64 * 1024
 	// ProfilePromotionMaxTokens is the provider-independent completion budget
 	// for one logical extraction request. It is not a physical model context
 	// or provider setting.
 	ProfilePromotionMaxTokens = 1024
+	// ProfilePromotionRepairMaxTokens is the provider-independent completion
+	// budget for the bounded corrective generation.
+	ProfilePromotionRepairMaxTokens = 512
+	// ProfilePromotionRepairStringMax bounds every string in a repaired
+	// candidate payload, including facts and preference values.
+	ProfilePromotionRepairStringMax = 100
 	// ProfilePromotionEvidenceBlockMax bounds one extraction request. Evidence
 	// longer than this is split into several requests instead of being cut,
 	// so the tail of a long turn still reaches the extractor.

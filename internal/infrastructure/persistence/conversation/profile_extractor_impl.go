@@ -65,7 +65,7 @@ var (
 
 const evidencePathPlaceholder = "<path>"
 
-const profileExtractorRepairInstructionTemplate = `前回の応答はProfilePromotionの厳密な出力契約に違反しました。元の会話だけを根拠に、説明文・Markdown・コードフェンスを付けず、preferencesは文字列値だけのJSON object、factsは文字列だけのJSON arrayとし、キーをpreferencesとfactsだけにした単一JSON objectを返してください。各文字列は200文字以内の一文にしてください。preferencesとfactsを合わせて最大%d件にしてください。空の場合も{"preferences":{},"facts":[]}を返してください。`
+const profileExtractorRepairInstructionTemplate = `検証コード=%s。%s 元の会話だけを根拠に、説明文・Markdown・コードフェンスを付けず、preferencesは文字列値だけのJSON object、factsは文字列だけのJSON arrayとし、キーをpreferencesとfactsだけにした単一JSON objectを返してください。各文字列は%d文字以内の一文、preferencesとfactsを合わせて最大%d件にしてください。空の場合も{"preferences":{},"facts":[]}を返してください。`
 
 func profileExtractorCandidateLimit(candidateLimit int) int {
 	if candidateLimit < 1 {
@@ -77,8 +77,63 @@ func profileExtractorCandidateLimit(candidateLimit int) int {
 	return candidateLimit
 }
 
-func profileExtractorRepairInstruction(candidateLimit int) string {
-	return fmt.Sprintf(profileExtractorRepairInstructionTemplate, profileExtractorCandidateLimit(candidateLimit))
+func profileExtractorRepairValidationCode(code profileExtractorValidationCode) profileExtractorValidationCode {
+	switch code {
+	case profileValidationResponseTooLarge,
+		profileValidationJSONObject,
+		profileValidationSchemaFields,
+		profileValidationPreferencesType,
+		profileValidationFactsType,
+		profileValidationCandidateLimit,
+		profileValidationPreferenceKey,
+		profileValidationPreferenceValue,
+		profileValidationPreferenceType,
+		profileValidationFactValue,
+		profileValidationInvalidJSON:
+		return code
+	default:
+		return profileValidationInvalidJSON
+	}
+}
+
+func profileExtractorRepairCorrection(code profileExtractorValidationCode) string {
+	switch profileExtractorRepairValidationCode(code) {
+	case profileValidationResponseTooLarge:
+		return "応答を短くしてください。"
+	case profileValidationJSONObject:
+		return "応答全体をJSON objectにしてください。"
+	case profileValidationSchemaFields:
+		return "キーをpreferencesとfactsだけにしてください。"
+	case profileValidationPreferencesType:
+		return "preferencesを文字列値だけのJSON objectにしてください。"
+	case profileValidationFactsType:
+		return "factsを文字列だけのJSON arrayにしてください。"
+	case profileValidationCandidateLimit:
+		return "候補数を減らしてください。"
+	case profileValidationPreferenceKey:
+		return "preferencesのキーを有効な文字列にしてください。"
+	case profileValidationPreferenceValue:
+		return "preferencesの値を短い文字列にしてください。"
+	case profileValidationPreferenceType:
+		return "preferencesの値を文字列にしてください。"
+	case profileValidationFactValue:
+		return "factsの各値を短い文字列にしてください。"
+	case profileValidationInvalidJSON:
+		return "JSONの構文を正してください。"
+	default:
+		return "JSONの構文を正してください。"
+	}
+}
+
+func profileExtractorRepairInstruction(code profileExtractorValidationCode) string {
+	code = profileExtractorRepairValidationCode(code)
+	return fmt.Sprintf(
+		profileExtractorRepairInstructionTemplate,
+		code,
+		profileExtractorRepairCorrection(code),
+		domainmemory.ProfilePromotionRepairStringMax,
+		domainmemory.ProfilePromotionRepairCandidateLimit,
+	)
 }
 
 type profileExtractorValidationCode string
@@ -651,6 +706,7 @@ func (e *LLMProfileExtractor) extractGroup(
 		return result, nil
 	}
 	logProfileExtractorInvalid(err)
+	validationCode := profileExtractorValidationCodeOf(err)
 	invalidErr := domconv.NewProfileExtractionInvalidError(err)
 	if repairUsed == nil || *repairUsed {
 		return nil, invalidErr
@@ -661,16 +717,21 @@ func (e *LLMProfileExtractor) extractGroup(
 	*repairUsed = true
 
 	repairReq := req
+	repairReq.MaxTokens = domainmemory.ProfilePromotionRepairMaxTokens
 	repairReq.Messages = append(append([]llm.Message(nil), req.Messages...), llm.Message{
 		Role:    "user",
-		Content: profileExtractorRepairInstruction(candidateLimit),
+		Content: profileExtractorRepairInstruction(validationCode),
 	})
 	repairResp, repairErr := e.provider.Generate(requestCtx, repairReq)
 	if repairErr != nil {
 		log.Printf("[ProfileExtractor] repair LLM call failed: profile_extractor_unavailable")
 		return nil, domconv.NewProfileExtractionUnavailableError(repairErr)
 	}
-	result, repairValidationErr := decodeProfileExtractionResultWithLimit(repairResp.Content, candidateLimit)
+	result, repairValidationErr := decodeProfileExtractionResultWithStringLimit(
+		repairResp.Content,
+		domainmemory.ProfilePromotionRepairCandidateLimit,
+		domainmemory.ProfilePromotionRepairStringMax,
+	)
 	if repairValidationErr != nil {
 		logProfileExtractorInvalid(repairValidationErr)
 		return nil, domconv.NewProfileExtractionInvalidError(repairValidationErr)
@@ -689,8 +750,26 @@ func decodeProfileExtractionResult(content string) (*domconv.ProfileExtractionRe
 }
 
 func decodeProfileExtractionResultWithLimit(content string, candidateLimit int) (*domconv.ProfileExtractionResult, error) {
+	return decodeProfileExtractionResultWithStringLimit(content, candidateLimit, 0)
+}
+
+func decodeProfileExtractionResultWithStringLimit(content string, candidateLimit, stringLimit int) (*domconv.ProfileExtractionResult, error) {
 	if candidateLimit <= 0 || candidateLimit > domainmemory.ProfilePromotionRawCandidateLimit {
 		candidateLimit = domainmemory.ProfilePromotionRawCandidateLimit
+	}
+	preferenceKeyMax := domainmemory.ProfilePromotionPreferenceKeyMax
+	preferenceValueMax := domainmemory.ProfilePromotionPreferenceValueMax
+	factValueMax := domainmemory.ProfilePromotionProjectionStatementMax
+	if stringLimit > 0 {
+		if stringLimit < preferenceKeyMax {
+			preferenceKeyMax = stringLimit
+		}
+		if stringLimit < preferenceValueMax {
+			preferenceValueMax = stringLimit
+		}
+		if stringLimit < factValueMax {
+			factValueMax = stringLimit
+		}
 	}
 	if len(content) > domainmemory.ProfilePromotionResponseBytesMax {
 		return nil, newProfileExtractorValidationError(profileValidationResponseTooLarge)
@@ -760,12 +839,12 @@ func decodeProfileExtractionResultWithLimit(content string, candidateLimit int) 
 		NewFacts:       payload.Facts,
 	}
 	for key, raw := range payload.Preferences {
-		if strings.TrimSpace(key) == "" || strings.ContainsAny(key, "\r\n\x00") || len([]rune(key)) > domainmemory.ProfilePromotionPreferenceKeyMax {
+		if strings.TrimSpace(key) == "" || strings.ContainsAny(key, "\r\n\x00") || len([]rune(key)) > preferenceKeyMax {
 			return nil, newProfileExtractorValidationError(profileValidationPreferenceKey)
 		}
 		var stringValue string
 		if err := json.Unmarshal(raw, &stringValue); err == nil {
-			if strings.TrimSpace(stringValue) == "" || strings.ContainsAny(stringValue, "\r\n\x00") || len([]rune(stringValue)) > domainmemory.ProfilePromotionPreferenceValueMax {
+			if strings.TrimSpace(stringValue) == "" || strings.ContainsAny(stringValue, "\r\n\x00") || len([]rune(stringValue)) > preferenceValueMax {
 				return nil, newProfileExtractorValidationError(profileValidationPreferenceValue)
 			}
 			result.NewPreferences[key] = stringValue
@@ -774,7 +853,7 @@ func decodeProfileExtractionResultWithLimit(content string, candidateLimit int) 
 		return nil, newProfileExtractorValidationError(profileValidationPreferenceType)
 	}
 	for _, fact := range result.NewFacts {
-		if strings.TrimSpace(fact) == "" || strings.ContainsAny(fact, "\r\n\x00") || len([]rune(fact)) > domainmemory.ProfilePromotionProjectionStatementMax {
+		if strings.TrimSpace(fact) == "" || strings.ContainsAny(fact, "\r\n\x00") || len([]rune(fact)) > factValueMax {
 			return nil, newProfileExtractorValidationError(profileValidationFactValue)
 		}
 	}

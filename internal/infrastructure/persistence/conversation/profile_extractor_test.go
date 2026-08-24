@@ -148,8 +148,8 @@ func TestLLMProfileExtractorRepairsInvalidResponseOnce(t *testing.T) {
 	if provider.calls != 2 || len(provider.requests) != 2 {
 		t.Fatalf("provider calls=%d requests=%d want one initial plus one repair", provider.calls, len(provider.requests))
 	}
-	if provider.requests[0].MaxTokens != domainmemory.ProfilePromotionMaxTokens || provider.requests[1].MaxTokens != domainmemory.ProfilePromotionMaxTokens {
-		t.Fatalf("initial/repair MaxTokens=%d/%d want %d", provider.requests[0].MaxTokens, provider.requests[1].MaxTokens, domainmemory.ProfilePromotionMaxTokens)
+	if provider.requests[0].MaxTokens != domainmemory.ProfilePromotionMaxTokens || provider.requests[1].MaxTokens != domainmemory.ProfilePromotionRepairMaxTokens {
+		t.Fatalf("initial/repair MaxTokens=%d/%d want %d/%d", provider.requests[0].MaxTokens, provider.requests[1].MaxTokens, domainmemory.ProfilePromotionMaxTokens, domainmemory.ProfilePromotionRepairMaxTokens)
 	}
 	if initialRunes := utf8.RuneCountInString(provider.requests[0].Messages[0].Content); initialRunes > domainmemory.ProfilePromotionInitialPromptMax {
 		t.Fatalf("initial prompt has %d runes, want <=%d", initialRunes, domainmemory.ProfilePromotionInitialPromptMax)
@@ -169,8 +169,13 @@ func TestLLMProfileExtractorRepairsInvalidResponseOnce(t *testing.T) {
 	if result.NewPreferences["言語"] != "Go" {
 		t.Fatalf("repaired result=%v", result)
 	}
-	if len(provider.requests[1].Messages) != 2 || provider.requests[1].Messages[1].Content != profileExtractorRepairInstruction(4) {
+	if len(provider.requests[1].Messages) != 2 || provider.requests[1].Messages[1].Content != profileExtractorRepairInstruction(profileValidationJSONObject) {
 		t.Fatalf("repair request did not use fixed corrective instruction: %#v", provider.requests[1].Messages)
+	}
+	if !strings.Contains(provider.requests[1].Messages[1].Content, string(profileValidationJSONObject)) ||
+		!strings.Contains(provider.requests[1].Messages[1].Content, "最大2件") ||
+		!strings.Contains(provider.requests[1].Messages[1].Content, "100文字以内") {
+		t.Fatalf("repair instruction omitted fixed category or repair bounds: %q", provider.requests[1].Messages[1].Content)
 	}
 	if strings.Contains(provider.requests[1].Messages[1].Content, "prefix") {
 		t.Fatal("repair instruction must not echo raw invalid provider output")
@@ -194,9 +199,63 @@ func TestLLMProfileExtractorRepairsLengthViolation(t *testing.T) {
 	if provider.calls != 2 || result.NewPreferences["好み"] != "Go" {
 		t.Fatalf("calls=%d result=%v want one length repair", provider.calls, result)
 	}
-	if !strings.Contains(provider.requests[1].Messages[1].Content, "各文字列は200文字以内") ||
-		!strings.Contains(provider.requests[1].Messages[1].Content, "最大4件") {
+	if provider.requests[1].MaxTokens != domainmemory.ProfilePromotionRepairMaxTokens {
+		t.Fatalf("repair MaxTokens=%d want %d", provider.requests[1].MaxTokens, domainmemory.ProfilePromotionRepairMaxTokens)
+	}
+	if !strings.Contains(provider.requests[1].Messages[1].Content, "各文字列は100文字以内") ||
+		!strings.Contains(provider.requests[1].Messages[1].Content, "最大2件") ||
+		!strings.Contains(provider.requests[1].Messages[1].Content, string(profileValidationPreferenceValue)) {
 		t.Fatalf("repair instruction omits bounded contract: %q", provider.requests[1].Messages[1].Content)
+	}
+}
+
+func TestLLMProfileExtractorRejectsThreeCandidatesOnRepairBudget(t *testing.T) {
+	secret := "RAW-SECRET-RESPONSE"
+	oversized := strings.Repeat(secret, domainmemory.ProfilePromotionResponseBytesMax/len(secret)+1)
+	provider := &profileExtractorRequestProvider{responses: []string{
+		oversized,
+		`{"preferences":{"one":"1","two":"2"},"facts":["three"]}`,
+	}}
+	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "repair candidate budget", nil))
+
+	_, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
+	if err == nil || !errors.Is(err, domconv.ErrProfileExtractorInvalid) {
+		t.Fatalf("error=%v want invalid after repair candidate overflow", err)
+	}
+	if provider.calls != 2 {
+		t.Fatalf("provider calls=%d want initial plus one repair", provider.calls)
+	}
+	if provider.requests[0].MaxTokens != domainmemory.ProfilePromotionMaxTokens || provider.requests[1].MaxTokens != domainmemory.ProfilePromotionRepairMaxTokens {
+		t.Fatalf("initial/repair MaxTokens=%d/%d want %d/%d", provider.requests[0].MaxTokens, provider.requests[1].MaxTokens, domainmemory.ProfilePromotionMaxTokens, domainmemory.ProfilePromotionRepairMaxTokens)
+	}
+	repairPrompt := provider.requests[1].Messages[1].Content
+	if !strings.Contains(repairPrompt, string(profileValidationResponseTooLarge)) || strings.Contains(repairPrompt, secret) {
+		t.Fatalf("repair prompt category/raw response boundary failed: %q", repairPrompt)
+	}
+}
+
+func TestLLMProfileExtractorAcceptsTwoCandidatesOnRepairBudget(t *testing.T) {
+	secret := "RAW-SECRET-RESPONSE"
+	oversized := strings.Repeat(secret, domainmemory.ProfilePromotionResponseBytesMax/len(secret)+1)
+	provider := &profileExtractorRequestProvider{responses: []string{
+		oversized,
+		`{"preferences":{"one":"1"},"facts":["two"]}`,
+	}}
+	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "repair candidate budget", nil))
+
+	result, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
+	if err != nil {
+		t.Fatalf("Extract failed for compliant repair: %v", err)
+	}
+	if len(result.NewPreferences) != 1 || len(result.NewFacts) != 1 {
+		t.Fatalf("repaired result=%+v want two candidates", result)
+	}
+	if provider.requests[1].MaxTokens != domainmemory.ProfilePromotionRepairMaxTokens {
+		t.Fatalf("repair MaxTokens=%d want %d", provider.requests[1].MaxTokens, domainmemory.ProfilePromotionRepairMaxTokens)
 	}
 }
 
@@ -561,8 +620,12 @@ func TestLLMProfileExtractorStrictlyEnforcesPerGroupCandidateLimit(t *testing.T)
 	if provider.calls != 2 {
 		t.Fatalf("provider calls=%d want one initial plus one repair", provider.calls)
 	}
-	if !strings.Contains(provider.requests[1].Messages[1].Content, "最大4件") {
-		t.Fatalf("repair instruction omitted per-group limit: %q", provider.requests[1].Messages[1].Content)
+	if provider.requests[1].MaxTokens != domainmemory.ProfilePromotionRepairMaxTokens {
+		t.Fatalf("repair MaxTokens=%d want %d", provider.requests[1].MaxTokens, domainmemory.ProfilePromotionRepairMaxTokens)
+	}
+	if !strings.Contains(provider.requests[1].Messages[1].Content, "candidate_limit") ||
+		!strings.Contains(provider.requests[1].Messages[1].Content, "最大2件") {
+		t.Fatalf("repair instruction omitted fixed repair limit: %q", provider.requests[1].Messages[1].Content)
 	}
 }
 

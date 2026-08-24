@@ -7,6 +7,7 @@ import (
 	"time"
 
 	memorypromotionapp "github.com/Nyukimin/RenCrow_CORE/internal/application/memorypromotion"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 type memoryPromotionRunnerStub struct {
@@ -115,4 +116,69 @@ func TestMemoryPromotionWorkerPausesIdleChatWhileHoldingIdleLease(t *testing.T) 
 	if tracker.ExternalBusy() {
 		t.Fatal("idle lease remained externally busy after ProfilePromotion released it")
 	}
+}
+
+func TestMemoryPromotionWorkerReservesAfterGraceAndDrainsAfterRunningIdleChat(t *testing.T) {
+	tracker := newLLMBusyTracker()
+	endRunningIdleChat := tracker.Begin(llm.WithBusySource(context.Background(), "idlechat"), "chat")
+	idleChatEnded := false
+	runner := &memoryPromotionRunnerStub{called: make(chan struct{}, 1)}
+	cancel := startMemoryPromotionWorkerRunner(
+		runner, tracker, 20*time.Millisecond, time.Second, 5*time.Millisecond,
+		backgroundJobFailureReporter{},
+	)
+	defer cancel()
+	defer func() {
+		if !idleChatEnded {
+			endRunningIdleChat()
+		}
+	}()
+
+	// The first IdleChat remains active beyond idle grace. A new IdleChat must
+	// be rejected after the worker has reserved its turn, while the first one
+	// continues to own its existing busy slot.
+	time.Sleep(50 * time.Millisecond)
+	endNewIdleChat, ok := tracker.TryBegin(llm.WithBusySource(context.Background(), "idlechat"), "chat")
+	if ok {
+		endNewIdleChat()
+		t.Fatal("new IdleChat was accepted after ProfilePromotion reservation")
+	}
+
+	endRunningIdleChat()
+	idleChatEnded = true
+	select {
+	case <-runner.called:
+	case <-time.After(time.Second):
+		t.Fatal("ProfilePromotion did not run after the current IdleChat ended")
+	}
+}
+
+func TestMemoryPromotionWorkerCancellationReleasesIdleReservation(t *testing.T) {
+	tracker := newLLMBusyTracker()
+	endRunningIdleChat := tracker.Begin(llm.WithBusySource(context.Background(), "idlechat"), "chat")
+	runner := &memoryPromotionRunnerStub{called: make(chan struct{}, 1)}
+	cancel := startMemoryPromotionWorkerRunner(
+		runner, tracker, 20*time.Millisecond, time.Second, 5*time.Millisecond,
+		backgroundJobFailureReporter{},
+	)
+	time.Sleep(50 * time.Millisecond)
+	tracker.mu.Lock()
+	reservationHeld := tracker.idleReservation != nil
+	tracker.mu.Unlock()
+	if !reservationHeld {
+		t.Fatal("worker did not acquire an idle reservation before cancellation")
+	}
+	cancel()
+	defer endRunningIdleChat()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		release, ok := tracker.TryReserveIdleReservation("other_background")
+		if ok {
+			release()
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("worker cancellation did not release its idle reservation")
 }

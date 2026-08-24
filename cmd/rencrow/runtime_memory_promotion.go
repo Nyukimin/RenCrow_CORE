@@ -49,6 +49,12 @@ func startMemoryPromotionWorkerRunner(
 	go func() {
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
+		var releaseReservation func()
+		defer func() {
+			if releaseReservation != nil {
+				releaseReservation()
+			}
+		}()
 		var idleSince time.Time
 		for {
 			select {
@@ -56,6 +62,10 @@ func startMemoryPromotionWorkerRunner(
 				return
 			case now := <-ticker.C:
 				if tracker.ExternalBusy() {
+					if releaseReservation != nil {
+						releaseReservation()
+						releaseReservation = nil
+					}
 					idleSince = time.Time{}
 					continue
 				}
@@ -66,10 +76,23 @@ func startMemoryPromotionWorkerRunner(
 				if now.Sub(idleSince) < idleGrace {
 					continue
 				}
-				leaseCtx, release, ok := tracker.TryAcquireIdleLease(ctx, memoryProfilePromotionBusySource)
+				if releaseReservation == nil {
+					reservationRelease, reserved := tracker.TryReserveIdleReservation(memoryProfilePromotionBusySource)
+					if !reserved {
+						continue
+					}
+					releaseReservation = reservationRelease
+				}
+				if !tracker.IdleReservationHeld(memoryProfilePromotionBusySource) {
+					releaseReservation = nil
+					idleSince = time.Time{}
+					continue
+				}
+				leaseCtx, release, ok := tracker.TryAcquireReservedIdleLease(ctx, memoryProfilePromotionBusySource)
 				if !ok {
 					continue
 				}
+				releaseReservation = nil
 				for {
 					runCtx, runCancel := context.WithTimeout(leaseCtx, timeout)
 					result, err := runner.RunOne(runCtx)

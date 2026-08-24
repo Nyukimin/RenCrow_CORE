@@ -18,6 +18,15 @@ func TestProfilePromotionLogicalRequestBudgets(t *testing.T) {
 	if ProfilePromotionPerGroupCandidateLimit != 4 {
 		t.Fatalf("per-group candidate max=%d want 4", ProfilePromotionPerGroupCandidateLimit)
 	}
+	if ProfilePromotionRepairCandidateLimit != 2 {
+		t.Fatalf("repair candidate max=%d want 2", ProfilePromotionRepairCandidateLimit)
+	}
+	if ProfilePromotionRepairMaxTokens != 512 {
+		t.Fatalf("repair max tokens=%d want 512", ProfilePromotionRepairMaxTokens)
+	}
+	if ProfilePromotionRepairStringMax != 100 {
+		t.Fatalf("repair string max=%d want 100", ProfilePromotionRepairStringMax)
+	}
 	wantInitial := ProfilePromotionEvidenceBlockMax + ProfilePromotionExistingContextMax + ProfilePromotionMaterialDigestMax + ProfilePromotionPromptInstructionMax
 	if ProfilePromotionInitialPromptMax != wantInitial {
 		t.Fatalf("initial prompt max=%d want derived %d", ProfilePromotionInitialPromptMax, wantInitial)
