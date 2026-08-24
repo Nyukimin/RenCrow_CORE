@@ -12,8 +12,9 @@ import (
 
 const (
 	chatGPTProfilePromotionBindingTable            = "l1_chatgpt_profile_promotion_binding"
+	chatGPTProfilePromotionSummaryTable            = "l1_chatgpt_profile_promotion_summary"
 	chatGPTProfilePromotionBindingMigrationName    = "conversation_l1_chatgpt_profile_promotion_binding"
-	chatGPTProfilePromotionBindingMigrationVersion = 1
+	chatGPTProfilePromotionBindingMigrationVersion = 2
 )
 
 // applyChatGPTProfilePromotionBindingSchema adds the immutable membership
@@ -33,12 +34,198 @@ func applyChatGPTProfilePromotionBindingSchema(ctx context.Context, tx *sql.Tx) 
 			ON l1_chatgpt_profile_promotion_binding(owner_id, export_id, evidence_event_id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_l1_chatgpt_profile_promotion_binding_evidence_unique
 			ON l1_chatgpt_profile_promotion_binding(evidence_event_id)`,
+		`CREATE TABLE IF NOT EXISTS l1_chatgpt_profile_promotion_summary (
+			owner_id TEXT NOT NULL CHECK(length(owner_id) > 0),
+			export_id TEXT NOT NULL CHECK(length(export_id) > 0),
+			binding_count INTEGER NOT NULL CHECK(binding_count >= 0),
+			pending_count INTEGER NOT NULL CHECK(pending_count >= 0),
+			running_count INTEGER NOT NULL CHECK(running_count >= 0),
+			retry_wait_count INTEGER NOT NULL CHECK(retry_wait_count >= 0),
+			completed_count INTEGER NOT NULL CHECK(completed_count >= 0),
+			failed_count INTEGER NOT NULL CHECK(failed_count >= 0),
+			missing_evidence_count INTEGER NOT NULL CHECK(missing_evidence_count >= 0),
+			failed_missing_evidence_count INTEGER NOT NULL CHECK(failed_missing_evidence_count >= 0),
+			missing_job_count INTEGER NOT NULL CHECK(missing_job_count >= 0),
+			PRIMARY KEY(owner_id, export_id)
+		)`,
 		`CREATE TRIGGER IF NOT EXISTS trg_l1_chatgpt_profile_promotion_binding_immutable_update
 			BEFORE UPDATE ON l1_chatgpt_profile_promotion_binding
 			BEGIN SELECT RAISE(ABORT, 'l1 ChatGPT profile promotion binding is immutable'); END`,
 		`CREATE TRIGGER IF NOT EXISTS trg_l1_chatgpt_profile_promotion_binding_immutable_delete
 			BEFORE DELETE ON l1_chatgpt_profile_promotion_binding
 			BEGIN SELECT RAISE(ABORT, 'l1 ChatGPT profile promotion binding is immutable'); END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_l1_chatgpt_profile_promotion_summary_binding_insert
+			AFTER INSERT ON l1_chatgpt_profile_promotion_binding
+			BEGIN
+				INSERT INTO l1_chatgpt_profile_promotion_summary (
+					owner_id, export_id, binding_count, pending_count, running_count,
+					retry_wait_count, completed_count, failed_count, missing_evidence_count,
+					failed_missing_evidence_count, missing_job_count
+				) VALUES (
+					NEW.owner_id, NEW.export_id, 1,
+					COALESCE((SELECT CASE WHEN state = 'pending' THEN 1 ELSE 0 END FROM l1_profile_promotion_job WHERE evidence_event_id = NEW.evidence_event_id), 0),
+					COALESCE((SELECT CASE WHEN state = 'running' THEN 1 ELSE 0 END FROM l1_profile_promotion_job WHERE evidence_event_id = NEW.evidence_event_id), 0),
+					COALESCE((SELECT CASE WHEN state = 'retry_wait' THEN 1 ELSE 0 END FROM l1_profile_promotion_job WHERE evidence_event_id = NEW.evidence_event_id), 0),
+					COALESCE((SELECT CASE WHEN state = 'completed' THEN 1 ELSE 0 END FROM l1_profile_promotion_job WHERE evidence_event_id = NEW.evidence_event_id), 0),
+					COALESCE((SELECT CASE WHEN state = 'failed' THEN 1 ELSE 0 END FROM l1_profile_promotion_job WHERE evidence_event_id = NEW.evidence_event_id), 0),
+					CASE WHEN EXISTS (
+						SELECT 1 FROM l1_memory_event
+						WHERE id = NEW.evidence_event_id AND speaker = 'user' AND source = 'chatgpt_export' AND layer = 'L3'
+					) THEN 0 ELSE 1 END,
+					CASE WHEN COALESCE((SELECT state FROM l1_profile_promotion_job WHERE evidence_event_id = NEW.evidence_event_id), '') = 'failed'
+						AND NOT EXISTS (
+							SELECT 1 FROM l1_memory_event
+							WHERE id = NEW.evidence_event_id AND speaker = 'user' AND source = 'chatgpt_export' AND layer = 'L3'
+						) THEN 1 ELSE 0 END,
+					CASE WHEN EXISTS (SELECT 1 FROM l1_profile_promotion_job WHERE evidence_event_id = NEW.evidence_event_id) THEN 0 ELSE 1 END
+				)
+				ON CONFLICT(owner_id, export_id) DO UPDATE SET
+					binding_count = l1_chatgpt_profile_promotion_summary.binding_count + excluded.binding_count,
+					pending_count = l1_chatgpt_profile_promotion_summary.pending_count + excluded.pending_count,
+					running_count = l1_chatgpt_profile_promotion_summary.running_count + excluded.running_count,
+					retry_wait_count = l1_chatgpt_profile_promotion_summary.retry_wait_count + excluded.retry_wait_count,
+					completed_count = l1_chatgpt_profile_promotion_summary.completed_count + excluded.completed_count,
+					failed_count = l1_chatgpt_profile_promotion_summary.failed_count + excluded.failed_count,
+					missing_evidence_count = l1_chatgpt_profile_promotion_summary.missing_evidence_count + excluded.missing_evidence_count,
+					failed_missing_evidence_count = l1_chatgpt_profile_promotion_summary.failed_missing_evidence_count + excluded.failed_missing_evidence_count,
+					missing_job_count = l1_chatgpt_profile_promotion_summary.missing_job_count + excluded.missing_job_count;
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_l1_chatgpt_profile_promotion_summary_job_insert
+			AFTER INSERT ON l1_profile_promotion_job
+			BEGIN
+				UPDATE l1_chatgpt_profile_promotion_summary
+				SET missing_job_count = CASE WHEN missing_job_count > 0 THEN missing_job_count - 1 ELSE 0 END,
+					pending_count = pending_count + CASE WHEN NEW.state = 'pending' THEN 1 ELSE 0 END,
+					running_count = running_count + CASE WHEN NEW.state = 'running' THEN 1 ELSE 0 END,
+					retry_wait_count = retry_wait_count + CASE WHEN NEW.state = 'retry_wait' THEN 1 ELSE 0 END,
+					completed_count = completed_count + CASE WHEN NEW.state = 'completed' THEN 1 ELSE 0 END,
+					failed_count = failed_count + CASE WHEN NEW.state = 'failed' THEN 1 ELSE 0 END,
+					failed_missing_evidence_count = failed_missing_evidence_count + CASE WHEN NEW.state = 'failed' AND NOT EXISTS (
+						SELECT 1 FROM l1_memory_event
+						WHERE id = NEW.evidence_event_id AND speaker = 'user' AND source = 'chatgpt_export' AND layer = 'L3'
+					) THEN 1 ELSE 0 END
+				WHERE EXISTS (
+					SELECT 1 FROM l1_chatgpt_profile_promotion_binding b
+					WHERE b.owner_id = l1_chatgpt_profile_promotion_summary.owner_id
+						AND b.export_id = l1_chatgpt_profile_promotion_summary.export_id
+						AND b.evidence_event_id = NEW.evidence_event_id
+				);
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_l1_chatgpt_profile_promotion_summary_job_state_update
+			AFTER UPDATE OF state ON l1_profile_promotion_job
+			BEGIN
+				UPDATE l1_chatgpt_profile_promotion_summary
+				SET pending_count = pending_count + CASE WHEN NEW.state = 'pending' THEN 1 ELSE 0 END - CASE WHEN OLD.state = 'pending' THEN 1 ELSE 0 END,
+					running_count = running_count + CASE WHEN NEW.state = 'running' THEN 1 ELSE 0 END - CASE WHEN OLD.state = 'running' THEN 1 ELSE 0 END,
+					retry_wait_count = retry_wait_count + CASE WHEN NEW.state = 'retry_wait' THEN 1 ELSE 0 END - CASE WHEN OLD.state = 'retry_wait' THEN 1 ELSE 0 END,
+					completed_count = completed_count + CASE WHEN NEW.state = 'completed' THEN 1 ELSE 0 END - CASE WHEN OLD.state = 'completed' THEN 1 ELSE 0 END,
+					failed_count = failed_count + CASE WHEN NEW.state = 'failed' THEN 1 ELSE 0 END - CASE WHEN OLD.state = 'failed' THEN 1 ELSE 0 END,
+					failed_missing_evidence_count = failed_missing_evidence_count
+						+ CASE WHEN NEW.state = 'failed' AND NOT EXISTS (
+							SELECT 1 FROM l1_memory_event
+							WHERE id = NEW.evidence_event_id AND speaker = 'user' AND source = 'chatgpt_export' AND layer = 'L3'
+						) THEN 1 ELSE 0 END
+						- CASE WHEN OLD.state = 'failed' AND NOT EXISTS (
+							SELECT 1 FROM l1_memory_event
+							WHERE id = OLD.evidence_event_id AND speaker = 'user' AND source = 'chatgpt_export' AND layer = 'L3'
+						) THEN 1 ELSE 0 END
+				WHERE EXISTS (
+					SELECT 1 FROM l1_chatgpt_profile_promotion_binding b
+					WHERE b.owner_id = l1_chatgpt_profile_promotion_summary.owner_id
+						AND b.export_id = l1_chatgpt_profile_promotion_summary.export_id
+						AND b.evidence_event_id = NEW.evidence_event_id
+				);
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_l1_chatgpt_profile_promotion_summary_job_delete
+			AFTER DELETE ON l1_profile_promotion_job
+			BEGIN
+				UPDATE l1_chatgpt_profile_promotion_summary
+				SET missing_job_count = missing_job_count + 1,
+					pending_count = CASE WHEN OLD.state = 'pending' AND pending_count > 0 THEN pending_count - 1 ELSE pending_count END,
+					running_count = CASE WHEN OLD.state = 'running' AND running_count > 0 THEN running_count - 1 ELSE running_count END,
+					retry_wait_count = CASE WHEN OLD.state = 'retry_wait' AND retry_wait_count > 0 THEN retry_wait_count - 1 ELSE retry_wait_count END,
+					completed_count = CASE WHEN OLD.state = 'completed' AND completed_count > 0 THEN completed_count - 1 ELSE completed_count END,
+					failed_count = CASE WHEN OLD.state = 'failed' AND failed_count > 0 THEN failed_count - 1 ELSE failed_count END,
+					failed_missing_evidence_count = CASE WHEN OLD.state = 'failed' AND NOT EXISTS (
+						SELECT 1 FROM l1_memory_event
+						WHERE id = OLD.evidence_event_id AND speaker = 'user' AND source = 'chatgpt_export' AND layer = 'L3'
+					) AND failed_missing_evidence_count > 0 THEN failed_missing_evidence_count - 1 ELSE failed_missing_evidence_count END
+				WHERE EXISTS (
+					SELECT 1 FROM l1_chatgpt_profile_promotion_binding b
+					WHERE b.owner_id = l1_chatgpt_profile_promotion_summary.owner_id
+						AND b.export_id = l1_chatgpt_profile_promotion_summary.export_id
+						AND b.evidence_event_id = OLD.evidence_event_id
+				);
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_l1_chatgpt_profile_promotion_summary_event_delete
+			AFTER DELETE ON l1_memory_event
+			BEGIN
+				UPDATE l1_chatgpt_profile_promotion_summary
+				SET missing_evidence_count = missing_evidence_count + 1,
+					failed_missing_evidence_count = failed_missing_evidence_count + CASE WHEN EXISTS (
+						SELECT 1 FROM l1_profile_promotion_job j
+						JOIN l1_chatgpt_profile_promotion_binding b ON b.evidence_event_id = j.evidence_event_id
+						WHERE j.evidence_event_id = OLD.id AND j.state = 'failed'
+							AND b.owner_id = l1_chatgpt_profile_promotion_summary.owner_id
+							AND b.export_id = l1_chatgpt_profile_promotion_summary.export_id
+					) THEN 1 ELSE 0 END
+				WHERE OLD.speaker = 'user' AND OLD.source = 'chatgpt_export' AND OLD.layer = 'L3'
+					AND EXISTS (
+						SELECT 1 FROM l1_chatgpt_profile_promotion_binding b
+						WHERE b.owner_id = l1_chatgpt_profile_promotion_summary.owner_id
+							AND b.export_id = l1_chatgpt_profile_promotion_summary.export_id
+							AND b.evidence_event_id = OLD.id
+					);
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_l1_chatgpt_profile_promotion_summary_event_insert
+			AFTER INSERT ON l1_memory_event
+			BEGIN
+				UPDATE l1_chatgpt_profile_promotion_summary
+				SET missing_evidence_count = CASE WHEN missing_evidence_count > 0 THEN missing_evidence_count - 1 ELSE 0 END,
+					failed_missing_evidence_count = CASE WHEN NEW.speaker = 'user' AND NEW.source = 'chatgpt_export' AND NEW.layer = 'L3'
+						AND failed_missing_evidence_count > 0
+						AND EXISTS (SELECT 1 FROM l1_profile_promotion_job WHERE evidence_event_id = NEW.id AND state = 'failed')
+						THEN failed_missing_evidence_count - 1 ELSE failed_missing_evidence_count END
+				WHERE NEW.speaker = 'user' AND NEW.source = 'chatgpt_export' AND NEW.layer = 'L3'
+					AND missing_evidence_count > 0
+					AND EXISTS (
+						SELECT 1 FROM l1_chatgpt_profile_promotion_binding b
+						WHERE b.owner_id = l1_chatgpt_profile_promotion_summary.owner_id
+							AND b.export_id = l1_chatgpt_profile_promotion_summary.export_id
+							AND b.evidence_event_id = NEW.id
+					);
+			END`,
+		`CREATE TRIGGER IF NOT EXISTS trg_l1_chatgpt_profile_promotion_summary_event_validity_update
+			AFTER UPDATE OF speaker, source, layer ON l1_memory_event
+			BEGIN
+				UPDATE l1_chatgpt_profile_promotion_summary
+				SET missing_evidence_count = missing_evidence_count
+					+ CASE WHEN NEW.speaker = 'user' AND NEW.source = 'chatgpt_export' AND NEW.layer = 'L3' THEN -1 ELSE 1 END
+				WHERE (OLD.speaker = 'user' AND OLD.source = 'chatgpt_export' AND OLD.layer = 'L3')
+					<> (NEW.speaker = 'user' AND NEW.source = 'chatgpt_export' AND NEW.layer = 'L3')
+					AND EXISTS (
+						SELECT 1 FROM l1_chatgpt_profile_promotion_binding b
+						WHERE b.owner_id = l1_chatgpt_profile_promotion_summary.owner_id
+							AND b.export_id = l1_chatgpt_profile_promotion_summary.export_id
+							AND b.evidence_event_id = NEW.id
+					)
+					AND (NEW.speaker = 'user' AND NEW.source = 'chatgpt_export' AND NEW.layer = 'L3' AND missing_evidence_count > 0
+						OR OLD.speaker = 'user' AND OLD.source = 'chatgpt_export' AND OLD.layer = 'L3');
+				UPDATE l1_chatgpt_profile_promotion_summary
+				SET failed_missing_evidence_count = failed_missing_evidence_count
+					+ CASE WHEN NEW.speaker = 'user' AND NEW.source = 'chatgpt_export' AND NEW.layer = 'L3' THEN -1 ELSE 1 END
+				WHERE (OLD.speaker = 'user' AND OLD.source = 'chatgpt_export' AND OLD.layer = 'L3')
+					<> (NEW.speaker = 'user' AND NEW.source = 'chatgpt_export' AND NEW.layer = 'L3')
+					AND EXISTS (
+						SELECT 1 FROM l1_chatgpt_profile_promotion_binding b
+						WHERE b.owner_id = l1_chatgpt_profile_promotion_summary.owner_id
+							AND b.export_id = l1_chatgpt_profile_promotion_summary.export_id
+							AND b.evidence_event_id = NEW.id
+					)
+					AND EXISTS (SELECT 1 FROM l1_profile_promotion_job WHERE evidence_event_id = NEW.id AND state = 'failed')
+					AND (NEW.speaker = 'user' AND NEW.source = 'chatgpt_export' AND NEW.layer = 'L3' AND failed_missing_evidence_count > 0
+						OR OLD.speaker = 'user' AND OLD.source = 'chatgpt_export' AND OLD.layer = 'L3');
+			END`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return chatGPTImportInternalError("ChatGPT profile promotion binding schema update failed")
@@ -50,14 +237,31 @@ func applyChatGPTProfilePromotionBindingSchema(ctx context.Context, tx *sql.Tx) 
 	var appliedVersion int
 	markerErr := tx.QueryRowContext(ctx, `
 SELECT version FROM l1_schema_migrations WHERE migration_name = ?
-`, chatGPTProfilePromotionBindingMigrationName).Scan(&appliedVersion)
+	`, chatGPTProfilePromotionBindingMigrationName).Scan(&appliedVersion)
 	switch {
 	case markerErr == nil:
-		if appliedVersion != chatGPTProfilePromotionBindingMigrationVersion {
+		switch appliedVersion {
+		case chatGPTProfilePromotionBindingMigrationVersion:
+			return nil
+		case 1:
+			if err := backfillChatGPTProfilePromotionSummary(ctx, tx); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+UPDATE l1_schema_migrations
+SET version = ?, applied_at = ?
+WHERE migration_name = ? AND version = 1
+`, chatGPTProfilePromotionBindingMigrationVersion, time.Now().UTC(), chatGPTProfilePromotionBindingMigrationName); err != nil {
+				return chatGPTImportInternalError("ChatGPT profile promotion binding summary migration marker could not be updated")
+			}
+		default:
 			return chatGPTImportInternalError("ChatGPT profile promotion binding migration version is incompatible")
 		}
 	case errors.Is(markerErr, sql.ErrNoRows):
 		if err := backfillChatGPTProfilePromotionBindings(ctx, tx); err != nil {
+			return err
+		}
+		if err := backfillChatGPTProfilePromotionSummary(ctx, tx); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -80,8 +284,16 @@ func verifyChatGPTProfilePromotionBindingSchema(ctx context.Context, tx *sql.Tx)
 		{kind: "table", name: chatGPTProfilePromotionBindingTable},
 		{kind: "index", name: "idx_l1_chatgpt_profile_promotion_binding_owner_export"},
 		{kind: "index", name: "idx_l1_chatgpt_profile_promotion_binding_evidence_unique"},
+		{kind: "table", name: chatGPTProfilePromotionSummaryTable},
 		{kind: "trigger", name: "trg_l1_chatgpt_profile_promotion_binding_immutable_update"},
 		{kind: "trigger", name: "trg_l1_chatgpt_profile_promotion_binding_immutable_delete"},
+		{kind: "trigger", name: "trg_l1_chatgpt_profile_promotion_summary_binding_insert"},
+		{kind: "trigger", name: "trg_l1_chatgpt_profile_promotion_summary_job_insert"},
+		{kind: "trigger", name: "trg_l1_chatgpt_profile_promotion_summary_job_state_update"},
+		{kind: "trigger", name: "trg_l1_chatgpt_profile_promotion_summary_job_delete"},
+		{kind: "trigger", name: "trg_l1_chatgpt_profile_promotion_summary_event_delete"},
+		{kind: "trigger", name: "trg_l1_chatgpt_profile_promotion_summary_event_insert"},
+		{kind: "trigger", name: "trg_l1_chatgpt_profile_promotion_summary_event_validity_update"},
 	} {
 		var count int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = ? AND name = ?`, object.kind, object.name).Scan(&count); err != nil {
@@ -129,6 +341,46 @@ func verifyChatGPTProfilePromotionBindingSchema(ctx context.Context, tx *sql.Tx)
 	}
 	if err := verifyChatGPTProfilePromotionBindingIndex(ctx, tx, "idx_l1_chatgpt_profile_promotion_binding_evidence_unique", true, []string{"evidence_event_id"}); err != nil {
 		return err
+	}
+	if err := verifyChatGPTProfilePromotionSummarySchema(ctx, tx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func verifyChatGPTProfilePromotionSummarySchema(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(l1_chatgpt_profile_promotion_summary)`)
+	if err != nil {
+		return chatGPTImportInternalError("ChatGPT profile promotion summary columns cannot be read")
+	}
+	defer rows.Close()
+	columns := make(map[string]int, 10)
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return chatGPTImportInternalError("ChatGPT profile promotion summary columns cannot be read")
+		}
+		if notNull != 1 {
+			return chatGPTImportInternalError("ChatGPT profile promotion summary column is nullable")
+		}
+		columns[name] = primaryKey
+	}
+	if err := rows.Err(); err != nil {
+		return chatGPTImportInternalError("ChatGPT profile promotion summary columns cannot be read")
+	}
+	for _, name := range []string{
+		"owner_id", "export_id", "binding_count", "pending_count", "running_count",
+		"retry_wait_count", "completed_count", "failed_count", "missing_evidence_count",
+		"failed_missing_evidence_count", "missing_job_count",
+	} {
+		if _, ok := columns[name]; !ok {
+			return chatGPTImportInternalError("ChatGPT profile promotion summary schema is incomplete")
+		}
+	}
+	if columns["owner_id"] != 1 || columns["export_id"] != 2 {
+		return chatGPTImportInternalError("ChatGPT profile promotion summary primary key is incomplete")
 	}
 	return nil
 }
@@ -224,6 +476,42 @@ ORDER BY r.owner_id, r.source_identity, j.evidence_event_id
 `)
 	if err != nil {
 		return chatGPTImportInternalError("ChatGPT profile promotion binding backfill failed")
+	}
+	return nil
+}
+
+// backfillChatGPTProfilePromotionSummary rebuilds the derived export-level
+// projection once during the v2 migration. The binding table and promotion
+// job table remain the durable sources of truth; a missing or invalid job is
+// represented by a count mismatch so progress fails closed.
+func backfillChatGPTProfilePromotionSummary(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM l1_chatgpt_profile_promotion_summary`); err != nil {
+		return chatGPTImportInternalError("ChatGPT profile promotion summary reset failed")
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO l1_chatgpt_profile_promotion_summary (
+	owner_id, export_id, binding_count, pending_count, running_count,
+	retry_wait_count, completed_count, failed_count, missing_evidence_count,
+	failed_missing_evidence_count, missing_job_count
+)
+SELECT
+	b.owner_id,
+	b.export_id,
+	COUNT(*),
+	COALESCE(SUM(CASE WHEN j.state = 'pending' THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN j.state = 'running' THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN j.state = 'retry_wait' THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN j.state = 'completed' THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN j.state = 'failed' THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN e.id IS NULL OR e.speaker <> 'user' OR e.source <> 'chatgpt_export' OR e.layer <> 'L3' THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN j.state = 'failed' AND (e.id IS NULL OR e.speaker <> 'user' OR e.source <> 'chatgpt_export' OR e.layer <> 'L3') THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN j.evidence_event_id IS NULL THEN 1 ELSE 0 END), 0)
+FROM l1_chatgpt_profile_promotion_binding b
+LEFT JOIN l1_profile_promotion_job j ON j.evidence_event_id = b.evidence_event_id
+LEFT JOIN l1_memory_event e ON e.id = b.evidence_event_id
+GROUP BY b.owner_id, b.export_id
+`); err != nil {
+		return chatGPTImportInternalError("ChatGPT profile promotion summary backfill failed")
 	}
 	return nil
 }

@@ -269,43 +269,38 @@ func readChatGPTMachineJobs(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, ownerID, exportID string, expectedJobCount int) (chatGPTMachineJobSummary, error) {
 	var summary chatGPTMachineJobSummary
-	var bindingCount, missingJob, missingEvidence, invalidState int
-	var pending, running, retryWait, completed, failed, failedWithEvidence, nonTerminal int
+	var bindingCount, pending, running, retryWait, completed, failed int
+	var missingEvidence, failedMissingEvidence, missingJob int
 	err := queryer.QueryRowContext(ctx, `
-WITH bound_jobs AS (
-	SELECT b.evidence_event_id, j.state AS job_state,
-		CASE WHEN j.evidence_event_id IS NULL THEN 1 ELSE 0 END AS missing_job,
-		CASE WHEN e.id IS NULL OR e.speaker <> 'user' OR e.source <> ? OR e.layer <> 'L3' THEN 1 ELSE 0 END AS missing_evidence,
-		CASE WHEN j.state IN ('pending', 'running', 'retry_wait', 'failed', 'completed') THEN 0 ELSE 1 END AS invalid_state
-	FROM l1_chatgpt_profile_promotion_binding b
-	LEFT JOIN l1_profile_promotion_job j ON j.evidence_event_id = b.evidence_event_id
-	LEFT JOIN l1_memory_event e ON e.id = b.evidence_event_id
-	WHERE b.owner_id = ? AND b.export_id = ?
-)
-SELECT
-	COUNT(*),
-	COALESCE(SUM(missing_job), 0),
-	COALESCE(SUM(missing_evidence), 0),
-	COALESCE(SUM(invalid_state), 0),
-	COALESCE(SUM(CASE WHEN job_state = 'pending' THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN job_state = 'running' THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN job_state = 'retry_wait' THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN job_state = 'completed' THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN job_state = 'failed' THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN job_state = 'failed' AND missing_evidence = 0 THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN job_state <> 'completed' THEN 1 ELSE 0 END), 0)
-FROM bound_jobs
-	`, chatGPTMachineRawSourceType, ownerID, exportID).Scan(
-		&bindingCount, &missingJob, &missingEvidence, &invalidState,
-		&pending, &running, &retryWait, &completed, &failed, &failedWithEvidence, &nonTerminal)
+	SELECT binding_count, pending_count, running_count, retry_wait_count,
+		completed_count, failed_count, missing_evidence_count,
+		failed_missing_evidence_count, missing_job_count
+	FROM l1_chatgpt_profile_promotion_summary
+	WHERE owner_id = ? AND export_id = ?
+	`, ownerID, exportID).Scan(
+		&bindingCount, &pending, &running, &retryWait, &completed, &failed,
+		&missingEvidence, &failedMissingEvidence, &missingJob)
+	if errors.Is(err, sql.ErrNoRows) {
+		if expectedJobCount != 0 {
+			return chatGPTMachineJobSummary{}, chatGPTMachineBlockedError()
+		}
+		return chatGPTMachineJobSummary{}, nil
+	}
 	if err != nil {
 		return chatGPTMachineJobSummary{}, chatGPTMachineInternalError()
 	}
-	if bindingCount != expectedJobCount || missingJob != 0 || invalidState != 0 {
+	stateCount := pending + running + retryWait + completed + failed
+	if bindingCount != expectedJobCount || stateCount != bindingCount || missingJob != 0 ||
+		missingEvidence > bindingCount || failedMissingEvidence > missingEvidence || failedMissingEvidence > failed {
 		return chatGPTMachineJobSummary{}, chatGPTMachineBlockedError()
 	}
-	summary.StateCounts = domainmemory.ChatGPTImportPromotionStateCounts{Pending: pending, Running: running, RetryWait: retryWait, Completed: completed, Failed: failed}
-	summary.JobCount, summary.FailedWithEvidence, summary.MissingEvidence, summary.NonTerminal = bindingCount, failedWithEvidence, missingEvidence, nonTerminal
+	summary.StateCounts = domainmemory.ChatGPTImportPromotionStateCounts{
+		Pending: pending, Running: running, RetryWait: retryWait, Completed: completed, Failed: failed,
+	}
+	summary.JobCount = bindingCount
+	summary.FailedWithEvidence = failed - failedMissingEvidence
+	summary.MissingEvidence = missingEvidence
+	summary.NonTerminal = bindingCount - completed
 	return summary, nil
 }
 

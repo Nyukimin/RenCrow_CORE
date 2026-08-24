@@ -157,6 +157,54 @@ func TestChatGPTImportProgressFailsClosedWhenBindingCountDiffers(t *testing.T) {
 	}
 }
 
+func TestChatGPTImportProgressFailsClosedWhenBoundJobIsMissing(t *testing.T) {
+	store := mustMachineStore(t)
+	defer store.Close()
+	fixture := appendChatGPTMachineFixtureOnStore(t, store, "missing-job-summary", domainmemory.ProfilePromotionCompleted)
+	if _, err := store.db.Exec(`DELETE FROM l1_profile_promotion_job WHERE evidence_event_id = ?`, fixture.evidenceID); err != nil {
+		t.Fatal(err)
+	}
+	var missingJobs int
+	if err := store.db.QueryRow(`SELECT missing_job_count FROM l1_chatgpt_profile_promotion_summary WHERE owner_id = ? AND export_id = ?`, "machine-owner", fixture.exportID).Scan(&missingJobs); err != nil {
+		t.Fatal(err)
+	}
+	if missingJobs != 1 {
+		t.Fatalf("summary missing_job_count=%d, want 1", missingJobs)
+	}
+	_, err := store.GetChatGPTImportProgress(chatGPTMachineContext(t, "missing-job-summary", "machine-owner"), "missing-job-summary", "machine-owner", "machine-owner", fixture.exportID)
+	if err == nil || domainmemory.ChatGPTImportErrorCodeOf(err) != domainmemory.ChatGPTImportErrorBlocked {
+		t.Fatalf("missing job progress error=%v code=%q, want blocked", err, domainmemory.ChatGPTImportErrorCodeOf(err))
+	}
+}
+
+func TestChatGPTImportProgressSummaryTracksJobStateTransitions(t *testing.T) {
+	store := mustMachineStore(t)
+	defer store.Close()
+	fixture := appendChatGPTMachineFixtureOnStore(t, store, "state-summary", domainmemory.ProfilePromotionCompleted)
+
+	if _, err := store.db.Exec(`UPDATE l1_profile_promotion_job SET state = ? WHERE evidence_event_id = ?`, domainmemory.ProfilePromotionFailed, fixture.evidenceID); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := store.GetChatGPTImportProgress(chatGPTMachineContext(t, "state-summary-failed", "machine-owner"), "state-summary-failed", "machine-owner", "machine-owner", fixture.exportID)
+	if err != nil {
+		t.Fatalf("failed progress: %v", err)
+	}
+	if progress.PromotionStateCounts.Failed != 1 || progress.PromotionStateCounts.Completed != 0 || progress.TerminalSuccess {
+		t.Fatalf("failed summary did not follow job source of truth: %+v", progress)
+	}
+
+	if _, err := store.db.Exec(`UPDATE l1_profile_promotion_job SET state = ? WHERE evidence_event_id = ?`, domainmemory.ProfilePromotionCompleted, fixture.evidenceID); err != nil {
+		t.Fatal(err)
+	}
+	progress, err = store.GetChatGPTImportProgress(chatGPTMachineContext(t, "state-summary-completed", "machine-owner"), "state-summary-completed", "machine-owner", "machine-owner", fixture.exportID)
+	if err != nil {
+		t.Fatalf("completed progress: %v", err)
+	}
+	if progress.PromotionStateCounts.Completed != 1 || progress.PromotionStateCounts.Failed != 0 || !progress.TerminalSuccess {
+		t.Fatalf("completed summary did not follow job source of truth: %+v", progress)
+	}
+}
+
 func TestChatGPTImportProgressReportsMissingEvidenceWithoutHidingProgress(t *testing.T) {
 	store := mustMachineStore(t)
 	defer store.Close()
@@ -180,19 +228,39 @@ func TestChatGPTProfilePromotionBindingBackfillRunsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := store.db.Exec(`DROP TABLE l1_chatgpt_profile_promotion_binding`); err != nil {
-		_ = store.Close()
-		t.Fatalf("drop binding table: %v", err)
+	for _, triggerName := range []string{
+		"trg_l1_chatgpt_profile_promotion_summary_binding_insert",
+		"trg_l1_chatgpt_profile_promotion_summary_job_insert",
+		"trg_l1_chatgpt_profile_promotion_summary_job_state_update",
+		"trg_l1_chatgpt_profile_promotion_summary_job_delete",
+		"trg_l1_chatgpt_profile_promotion_summary_event_delete",
+		"trg_l1_chatgpt_profile_promotion_summary_event_insert",
+		"trg_l1_chatgpt_profile_promotion_summary_event_validity_update",
+	} {
+		if _, err := store.db.Exec(`DROP TRIGGER ` + triggerName); err != nil {
+			_ = store.Close()
+			t.Fatalf("drop summary trigger %s: %v", triggerName, err)
+		}
 	}
-	if _, err := store.db.Exec(`DELETE FROM l1_schema_migrations WHERE migration_name = ?`, chatGPTProfilePromotionBindingMigrationName); err != nil {
+	if _, err := store.db.Exec(`DROP TABLE l1_chatgpt_profile_promotion_summary`); err != nil {
 		_ = store.Close()
-		t.Fatalf("remove binding migration marker: %v", err)
+		t.Fatalf("drop summary table: %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE l1_schema_migrations SET version = 1 WHERE migration_name = ?`, chatGPTProfilePromotionBindingMigrationName); err != nil {
+		_ = store.Close()
+		t.Fatalf("downgrade binding migration marker: %v", err)
 	}
 
 	seedChatGPTProfilePromotionBindingBackfillRow(t, store, "owner-a", "export-valid", "evidence-valid", `{"external_source":"chatgpt_export","export_id":"export-valid","original_role":"user","on_current_branch":true}`, "user:owner-a", "chatgpt_export", "L3", "user", "user")
 	seedChatGPTProfilePromotionBindingBackfillRow(t, store, "owner-a", "export-malformed", "evidence-malformed", "not-json", "user:owner-a", "chatgpt_export", "L3", "user", "user")
 	seedChatGPTProfilePromotionBindingBackfillRow(t, store, "owner-a", "export-conversation-namespace", "evidence-conversation-namespace", `{"external_source":"chatgpt_export","export_id":"export-conversation-namespace","original_role":"user","on_current_branch":true}`, "conv:conversation", "chatgpt_export", "L3", "user", "user")
 	seedChatGPTProfilePromotionBindingBackfillRow(t, store, "owner-a", "export-wrong-source", "evidence-wrong-source", `{"external_source":"chatgpt_export","export_id":"export-wrong-source","original_role":"user","on_current_branch":true}`, "user:owner-a", "other_source", "L3", "user", "user")
+	for _, row := range [][2]string{{"export-valid", "evidence-valid"}, {"export-conversation-namespace", "evidence-conversation-namespace"}} {
+		if _, err := store.db.Exec(`INSERT INTO l1_chatgpt_profile_promotion_binding (owner_id, export_id, evidence_event_id, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)`, "owner-a", row[0], row[1]); err != nil {
+			_ = store.Close()
+			t.Fatalf("seed legacy binding %s: %v", row[1], err)
+		}
+	}
 
 	if err := store.applyChatGPTImportLedgerSchema(context.Background()); err != nil {
 		_ = store.Close()
@@ -206,6 +274,24 @@ func TestChatGPTProfilePromotionBindingBackfillRunsOnce(t *testing.T) {
 	if count != 2 {
 		_ = store.Close()
 		t.Fatalf("backfilled binding count=%d, want 2", count)
+	}
+	var summaryBindingCount, summaryCompletedCount, summaryMissingJobs int
+	if err := store.db.QueryRow(`SELECT binding_count, completed_count, missing_job_count FROM l1_chatgpt_profile_promotion_summary WHERE owner_id = ? AND export_id = ?`, "owner-a", "export-valid").Scan(&summaryBindingCount, &summaryCompletedCount, &summaryMissingJobs); err != nil {
+		_ = store.Close()
+		t.Fatalf("read backfilled summary: %v", err)
+	}
+	if summaryBindingCount != 1 || summaryCompletedCount != 1 || summaryMissingJobs != 0 {
+		_ = store.Close()
+		t.Fatalf("backfilled summary=(bindings:%d completed:%d missing_jobs:%d), want (1,1,0)", summaryBindingCount, summaryCompletedCount, summaryMissingJobs)
+	}
+	var migrationVersion int
+	if err := store.db.QueryRow(`SELECT version FROM l1_schema_migrations WHERE migration_name = ?`, chatGPTProfilePromotionBindingMigrationName).Scan(&migrationVersion); err != nil {
+		_ = store.Close()
+		t.Fatalf("read binding migration version: %v", err)
+	}
+	if migrationVersion != chatGPTProfilePromotionBindingMigrationVersion {
+		_ = store.Close()
+		t.Fatalf("binding migration version=%d, want %d", migrationVersion, chatGPTProfilePromotionBindingMigrationVersion)
 	}
 	var createdAt time.Time
 	if err := store.db.QueryRow(`SELECT created_at FROM l1_chatgpt_profile_promotion_binding WHERE evidence_event_id = ?`, "evidence-valid").Scan(&createdAt); err != nil {
