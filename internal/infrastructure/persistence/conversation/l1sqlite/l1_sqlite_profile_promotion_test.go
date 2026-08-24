@@ -220,6 +220,36 @@ INSERT INTO l1_memory_event (
 	}
 }
 
+func TestListProfilePromotionProjectionDoesNotUseWriteConnection(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.CreateUserMemory(ctx, domainmemory.CreateUserMemoryInput{
+		UserID: "ren", Type: domainmemory.UserMemoryTypePreference, Statement: "read projection",
+		State: MemoryStateCandidate, Sensitivity: "normal", Scope: "all_personas",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	writeConn, err := store.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writeConn.Close()
+	readCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	items, err := store.ListProfilePromotionProjection(readCtx, "ren", 1)
+	if err != nil {
+		t.Fatalf("profile projection waited for write connection: %v", err)
+	}
+	if len(items) != 1 || items[0].Statement != "read projection" {
+		t.Fatalf("profile projection=%+v", items)
+	}
+}
+
 func TestListProfilePromotionProjectionFailsClosedOnCorruptSelectedMetadata(t *testing.T) {
 	store := newProfilePromotionTestStore(t)
 	ctx := context.Background()

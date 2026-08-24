@@ -153,7 +153,7 @@ func (s *L1SQLiteStore) ListProfilePromotionProjection(ctx context.Context, user
 	if limit <= 0 || limit > domainmemory.ProfilePromotionProjectionLimit {
 		limit = domainmemory.ProfilePromotionProjectionLimit
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.readDB.QueryContext(ctx, `
 SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
