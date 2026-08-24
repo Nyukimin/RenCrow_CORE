@@ -230,6 +230,28 @@ func TestChatGPTImportProgressDoesNotWaitForWriteConnection(t *testing.T) {
 	}
 }
 
+func TestChatGPTImportProgressDoesNotWaitForLifecycleReadConnection(t *testing.T) {
+	store := mustMachineStore(t)
+	defer store.Close()
+	fixture := appendChatGPTMachineFixtureOnStore(t, store, "dedicated-progress-read", domainmemory.ProfilePromotionCompleted)
+
+	lifecycleRead, err := store.readDB.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lifecycleRead.Close()
+
+	ctx, cancel := context.WithTimeout(chatGPTMachineContext(t, "dedicated-progress-read", "machine-owner"), 500*time.Millisecond)
+	defer cancel()
+	progress, err := store.GetChatGPTImportProgress(ctx, "dedicated-progress-read", "machine-owner", "machine-owner", fixture.exportID)
+	if err != nil {
+		t.Fatalf("progress waited for the lifecycle read connection: %v", err)
+	}
+	if !progress.TerminalSuccess {
+		t.Fatalf("isolated progress read=%+v", progress)
+	}
+}
+
 func TestChatGPTImportProgressReportsMissingEvidenceWithoutHidingProgress(t *testing.T) {
 	store := mustMachineStore(t)
 	defer store.Close()

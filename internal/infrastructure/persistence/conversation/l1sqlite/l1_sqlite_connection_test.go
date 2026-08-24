@@ -21,8 +21,8 @@ func TestL1SQLiteStoreConnectionPolicyPreservesWAL(t *testing.T) {
 	if got := store.db.Stats().MaxOpenConnections; got != 1 {
 		t.Fatalf("MaxOpenConnections = %d, want 1", got)
 	}
-	if got := store.readDB.Stats().MaxOpenConnections; got != 1 {
-		t.Fatalf("read MaxOpenConnections = %d, want 1", got)
+	if got := store.readDB.Stats().MaxOpenConnections; got != l1ReadPoolSize {
+		t.Fatalf("read MaxOpenConnections = %d, want %d", got, l1ReadPoolSize)
 	}
 	var queryOnly int
 	if err := store.readDB.QueryRowContext(context.Background(), "PRAGMA query_only").Scan(&queryOnly); err != nil {

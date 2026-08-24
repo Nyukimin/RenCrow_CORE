@@ -14,6 +14,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const l1ReadPoolSize = 2
+
 var l1IDSequence atomic.Uint64
 
 const (
@@ -89,8 +91,8 @@ func NewL1SQLiteStore(dbPath string) (*L1SQLiteStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to open l1 sqlite read connection: %w", err)
 	}
-	readDB.SetMaxOpenConns(1)
-	readDB.SetMaxIdleConns(1)
+	readDB.SetMaxOpenConns(l1ReadPoolSize)
+	readDB.SetMaxIdleConns(l1ReadPoolSize)
 	if err := readDB.PingContext(context.Background()); err != nil {
 		readDB.Close()
 		db.Close()
