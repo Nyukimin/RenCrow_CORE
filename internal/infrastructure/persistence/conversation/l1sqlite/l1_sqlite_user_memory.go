@@ -473,10 +473,14 @@ func (s *L1SQLiteStore) ListUserMemoriesPage(ctx context.Context, userID, state 
 	}
 
 	pageArgs := append(append([]interface{}{}, args...), limit+1, offset)
+	projectionSource := "l1_user_memory_viewer_projection INDEXED BY idx_l1_user_memory_viewer_page"
+	if query != "" {
+		projectionSource = "l1_user_memory_viewer_projection INDEXED BY idx_l1_user_memory_viewer_search_cover"
+	}
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, namespace, user_id, memory_type, memory_state, active, statement, evidence_text,
        confidence, sensitivity, scope, lifecycle_status, decay_score, superseded_by, created_at, updated_at
-FROM l1_user_memory_viewer_projection
+FROM `+projectionSource+`
 WHERE `+where+`
 ORDER BY created_at DESC, id DESC
 LIMIT ? OFFSET ?

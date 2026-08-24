@@ -51,3 +51,30 @@ func TestListUserMemoriesPageMakesOlderCandidatesSearchable(t *testing.T) {
 		t.Fatalf("inactive memory remained in search projection: %+v", active)
 	}
 }
+
+func TestUserMemoryViewerSearchIndexCoversSearchText(t *testing.T) {
+	store, err := NewL1SQLiteStore(l1TestTempDir(t) + "/l1.db")
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	rows, err := store.db.Query(`PRAGMA index_info('idx_l1_user_memory_viewer_search_cover')`)
+	if err != nil {
+		t.Fatalf("index_info: %v", err)
+	}
+	defer rows.Close()
+	columns := map[string]bool{}
+	for rows.Next() {
+		var seq, cid int
+		var name string
+		if err := rows.Scan(&seq, &cid, &name); err != nil {
+			t.Fatalf("scan index_info: %v", err)
+		}
+		columns[name] = true
+	}
+	for _, want := range []string{"namespace", "memory_state", "active", "created_at", "id", "statement", "evidence_text"} {
+		if !columns[want] {
+			t.Fatalf("search covering index missing %s: %+v", want, columns)
+		}
+	}
+}

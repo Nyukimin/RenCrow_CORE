@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS l1_user_memory_viewer_projection (
 );
 CREATE INDEX IF NOT EXISTS idx_l1_user_memory_viewer_page
 	ON l1_user_memory_viewer_projection(namespace, memory_state, active, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_l1_user_memory_viewer_search_cover
+	ON l1_user_memory_viewer_projection(
+		namespace, memory_state, active, created_at DESC, id DESC, statement, evidence_text);
 CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_viewer_insert_v2
 AFTER INSERT ON l1_memory_event
 WHEN NEW.speaker = 'memory' AND NEW.layer = 'L1' AND json_valid(NEW.meta_json)
