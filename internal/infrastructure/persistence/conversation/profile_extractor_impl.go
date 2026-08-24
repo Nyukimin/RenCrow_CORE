@@ -718,7 +718,14 @@ func (e *LLMProfileExtractor) extractGroup(
 
 	repairReq := req
 	repairReq.MaxTokens = domainmemory.ProfilePromotionRepairMaxTokens
-	repairReq.Messages = append(append([]llm.Message(nil), req.Messages...), llm.Message{
+	repairReq.Messages = append([]llm.Message(nil), req.Messages...)
+	repairReq.Messages[0].Content = buildProfileExtractionPrompt(
+		domainmemory.ProfilePromotionRepairCandidateLimit,
+		existingText,
+		evidence,
+		materialDigest,
+	)
+	repairReq.Messages = append(repairReq.Messages, llm.Message{
 		Role:    "user",
 		Content: profileExtractorRepairInstruction(validationCode),
 	})

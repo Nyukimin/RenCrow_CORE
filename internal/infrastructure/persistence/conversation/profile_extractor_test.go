@@ -182,6 +182,30 @@ func TestLLMProfileExtractorRepairsInvalidResponseOnce(t *testing.T) {
 	}
 }
 
+func TestLLMProfileExtractorRepairRebuildsBasePromptWithRepairLimit(t *testing.T) {
+	provider := &profileExtractorRequestProvider{responses: []string{
+		`prefix {"preferences":{},"facts":[]}`,
+		`{"preferences":{},"facts":[]}`,
+	}}
+	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "repair base prompt", nil))
+
+	if _, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{}); err != nil {
+		t.Fatalf("Extract failed after repair: %v", err)
+	}
+	if provider.calls != 2 || len(provider.requests[1].Messages) != 2 {
+		t.Fatalf("provider calls=%d messages=%d want initial plus two-message repair", provider.calls, len(provider.requests[1].Messages))
+	}
+	basePrompt := provider.requests[1].Messages[0].Content
+	if !strings.Contains(basePrompt, "最大2件まで") {
+		t.Fatalf("repair base prompt omitted repair candidate limit: %q", basePrompt)
+	}
+	if strings.Contains(basePrompt, "最大4件まで") {
+		t.Fatalf("repair base prompt retained conflicting initial candidate limit: %q", basePrompt)
+	}
+}
+
 func TestLLMProfileExtractorRepairsLengthViolation(t *testing.T) {
 	tooLong := strings.Repeat("あ", domainmemory.ProfilePromotionPreferenceValueMax+1)
 	provider := &profileExtractorRequestProvider{responses: []string{
