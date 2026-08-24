@@ -29,6 +29,51 @@ func TestChatGPTImportProgressIsExportScoped(t *testing.T) {
 	}
 }
 
+func TestChatGPTImportProgressUsesProjectionReceiptProgressIndex(t *testing.T) {
+	store := mustMachineStore(t)
+	defer store.Close()
+
+	var indexCount int
+	if err := store.db.QueryRowContext(context.Background(), `
+SELECT count(*) FROM sqlite_master
+WHERE type = 'index' AND name = 'idx_l1_raw_projection_progress'
+`).Scan(&indexCount); err != nil {
+		t.Fatalf("find progress receipt index: %v", err)
+	}
+	if indexCount != 1 {
+		t.Fatalf("progress receipt index count=%d, want 1", indexCount)
+	}
+
+	rows, err := store.db.QueryContext(context.Background(), `
+EXPLAIN QUERY PLAN
+SELECT COUNT(DISTINCT p.output_record_id)
+FROM l1_raw_projection_receipt p
+JOIN l1_raw_record r ON r.source_record_id = p.output_record_id
+WHERE r.owner_id = ? AND r.scope = ? AND r.source_type = ? AND r.source_identity = ?
+  AND p.projection_type = ? AND p.output_store = ? AND p.revision = ? AND p.status = 'completed'
+`, "machine-owner", "user:machine-owner", chatGPTMachineRawSourceType, "machine-export", chatGPTMachineProjectionType, chatGPTMachineProjectionOutput, chatGPTMachineProjectionRevision)
+	if err != nil {
+		t.Fatalf("explain progress receipt query: %v", err)
+	}
+	defer rows.Close()
+
+	var details []string
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatalf("scan progress receipt query plan: %v", err)
+		}
+		details = append(details, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate progress receipt query plan: %v", err)
+	}
+	if !strings.Contains(strings.Join(details, "\n"), "idx_l1_raw_projection_progress") {
+		t.Fatalf("progress receipt query did not use export progress index; plan:\n%s", strings.Join(details, "\n"))
+	}
+}
+
 func TestChatGPTImportRetryIsExportScopedAndRequiresEvidence(t *testing.T) {
 	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {

@@ -428,6 +428,12 @@ CREATE INDEX IF NOT EXISTS idx_prompt_injection_event_trace ON prompt_injection_
 	if err := s.applyCommonRawSchemaMigration(ctx); err != nil {
 		return err
 	}
+	if _, err := s.db.ExecContext(ctx, `
+CREATE INDEX IF NOT EXISTS idx_l1_raw_projection_progress
+	ON l1_raw_projection_receipt(projection_type, output_store, revision, status, output_record_id)
+`); err != nil {
+		return fmt.Errorf("failed to initialize raw projection progress index: %w", err)
+	}
 	if err := s.applyChatGPTImportLedgerSchema(ctx); err != nil {
 		return err
 	}
