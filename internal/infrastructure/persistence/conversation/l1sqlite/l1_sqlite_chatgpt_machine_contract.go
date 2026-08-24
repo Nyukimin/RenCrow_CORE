@@ -89,7 +89,6 @@ func (s *L1SQLiteStore) RetryFailedChatGPTImportJobsForExport(ctx context.Contex
 	if err != nil {
 		return domainmemory.ChatGPTImportRetryResult{}, chatGPTMachineInternalError()
 	}
-	ownerScope := "user:" + input.OwnerID
 	missingEvidence, err := chatGPTMachineMissingFailedEvidence(ctx, tx, input.OwnerID, input.ExportID)
 	if err != nil {
 		return domainmemory.ChatGPTImportRetryResult{}, rollbackL1Tx(tx, chatGPTMachineInternalError())
@@ -101,21 +100,16 @@ SET state = ?, attempt_count = 0, lease_token = '', lease_expires_at = NULL,
 WHERE state = ?
   AND EXISTS (
 		SELECT 1
-		FROM l1_memory_event e
-		WHERE e.id = l1_profile_promotion_job.evidence_event_id
-		  AND e.source = ?
-		  AND e.layer = 'L3'
-		  AND json_extract(e.meta_json, '$.external_source') = ?
-		  AND json_extract(e.meta_json, '$.export_id') = ?
-		  AND EXISTS (
-				SELECT 1
-				FROM l1_raw_record r
-				WHERE r.source_record_id = e.id
-				  AND r.owner_id = ? AND r.scope = ?
-				  AND r.source_type = ? AND r.source_identity = ?
-		  )
+		FROM l1_chatgpt_profile_promotion_binding b
+		WHERE b.owner_id = ? AND b.export_id = ?
+		  AND b.evidence_event_id = l1_profile_promotion_job.evidence_event_id
 	)
-`, domainmemory.ProfilePromotionPending, domainmemory.ProfilePromotionFailed, chatGPTMachineRawSourceType, chatGPTMachineRawSourceType, input.ExportID, ownerID, ownerScope, chatGPTMachineRawSourceType, input.ExportID)
+  AND EXISTS (
+		SELECT 1 FROM l1_memory_event e
+		WHERE e.id = l1_profile_promotion_job.evidence_event_id
+		  AND e.speaker = 'user' AND e.source = ? AND e.layer = 'L3'
+	)
+`, domainmemory.ProfilePromotionPending, domainmemory.ProfilePromotionFailed, input.OwnerID, input.ExportID, chatGPTMachineRawSourceType)
 	if err != nil {
 		return domainmemory.ChatGPTImportRetryResult{}, rollbackL1Tx(tx, chatGPTMachineInternalError())
 	}
@@ -305,16 +299,15 @@ func readChatGPTMachineJobs(ctx context.Context, queryer interface {
 }
 
 func chatGPTMachineMissingFailedEvidence(ctx context.Context, tx *sql.Tx, ownerID, exportID string) (int, error) {
-	ownerScope := "user:" + ownerID
 	var count int
 	err := tx.QueryRowContext(ctx, `
-SELECT COUNT(*)
-FROM l1_profile_promotion_job j
-JOIN l1_raw_record r ON r.source_record_id = j.evidence_event_id
-	AND r.owner_id = ? AND r.scope = ? AND r.source_type = ? AND r.source_identity = ?
-LEFT JOIN l1_memory_event e ON e.id = j.evidence_event_id
-WHERE j.state = ? AND e.id IS NULL
-`, ownerID, ownerScope, chatGPTMachineRawSourceType, exportID, domainmemory.ProfilePromotionFailed).Scan(&count)
+SELECT failed_missing_evidence_count
+FROM l1_chatgpt_profile_promotion_summary
+WHERE owner_id = ? AND export_id = ?
+`, ownerID, exportID).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, chatGPTMachineBlockedError()
+	}
 	return count, err
 }
 

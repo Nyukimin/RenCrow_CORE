@@ -257,7 +257,7 @@ installed binary、production config／DB migration、ChatGPT backfill、live CM
 | `memory import chatgpt --manifest <file> --artifact <tar> [--apply]` | `POST /v1/memory/import/chatgpt` | `cmd-control` | CORE owner routeとCMD facadeはsource／focused実装済み。COREがwhole-artifact検証、内部batch、Raw／projection、receiptを所有。配備／E2E未確認 |
 | `memory import status --export-id` | `GET /v1/memory/import/chatgpt/{percent-escaped-export-id}` | `cmd-diagnostics` | source／focused実装済み。owner-scoped bounded import status／receipt。配備／E2E未確認 |
 | `memory import progress --export-id <id>` | `GET /v1/memory/import/chatgpt/{percent-escaped-export-id}/progress` | `cmd-diagnostics` | completed import ledgerの確定Raw／projection件数と、immutable export/job bindingから同一transactionで導出したbounded summaryのProfilePromotion内訳・evidence有無だけを返す。requestごとの全Raw／L3 JSON／全job再走査は行わない |
-| `memory import retry-failed --export-id <id>` | `POST /v1/memory/import/chatgpt/retry` | `cmd-control` | 同じexportでevidenceが残るfailed jobだけを再投入し、別export／orphanを変更しない |
+| `memory import retry-failed --export-id <id>` | `POST /v1/memory/import/chatgpt/retry` | `cmd-control` | immutable bindingで同じowner／exportへ限定し、evidenceが残るfailed jobだけを再投入する。Raw／L3 JSON全走査、別export／orphanの変更は行わない |
 | `memory import finalize --export-id <id> [--apply]` | `POST /v1/memory/import/chatgpt/finalize` | `cmd-control` | LLMなしでbinding／hash／counts／job終端を検証し、apply時だけimmutable／idempotent receiptを保存。candidate状態は変えない |
 
 #### ChatGPT Common Raw import owner API
