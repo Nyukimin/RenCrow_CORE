@@ -82,6 +82,9 @@ func (s *L1SQLiteStore) applyChatGPTImportLedgerSchema(ctx context.Context) erro
 			return rollback(chatGPTImportInternalError("ChatGPT import ledger schema update failed"))
 		}
 	}
+	if err := applyChatGPTProfilePromotionBindingSchema(ctx, tx); err != nil {
+		return rollback(err)
+	}
 	if err := verifyChatGPTImportLedgerSchema(ctx, tx); err != nil {
 		return rollback(err)
 	}

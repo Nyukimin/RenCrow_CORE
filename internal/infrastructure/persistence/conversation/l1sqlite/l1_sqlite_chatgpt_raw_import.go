@@ -623,7 +623,7 @@ func (s *L1SQLiteStore) projectChatGPTRawRecords(ctx context.Context, ownerID, a
 		} else {
 			existing++
 		}
-		jobCreated, err := ensureChatGPTPromotionJobTx(ctx, tx, record.Item)
+		jobCreated, err := ensureChatGPTPromotionJobTx(ctx, tx, ownerID, record.Item)
 		if err != nil {
 			return 0, 0, 0, rollbackL1Tx(tx, err)
 		}
@@ -1018,7 +1018,7 @@ func chatGPTRawSpeaker(role string) domconv.Speaker {
 	}
 }
 
-func ensureChatGPTPromotionJobTx(ctx context.Context, tx *sql.Tx, item ChatGPTL3ImportRecord) (bool, error) {
+func ensureChatGPTPromotionJobTx(ctx context.Context, tx *sql.Tx, ownerID string, item ChatGPTL3ImportRecord) (bool, error) {
 	if item.Role != "user" || !item.OnCurrentBranch {
 		return false, nil
 	}
@@ -1042,6 +1042,9 @@ INSERT OR IGNORE INTO l1_profile_promotion_job (
 		if err != nil {
 			return false, err
 		}
+		if err := ensureChatGPTProfilePromotionBindingTx(ctx, tx, ownerID, item.ExportID, item.EvidenceID); err != nil {
+			return false, err
+		}
 		return affected == 1, nil
 	}
 	if err != nil {
@@ -1049,6 +1052,9 @@ INSERT OR IGNORE INTO l1_profile_promotion_job (
 	}
 	if existingSession != sessionID || existingThread != threadID || !validProfilePromotionState(existingState) {
 		return false, domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT promotion job is inconsistent")
+	}
+	if err := ensureChatGPTProfilePromotionBindingTx(ctx, tx, ownerID, item.ExportID, item.EvidenceID); err != nil {
+		return false, err
 	}
 	return false, nil
 }

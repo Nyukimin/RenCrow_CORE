@@ -241,35 +241,13 @@ func latestChatGPTMachineImportEvent(ctx context.Context, tx *sql.Tx, ownerID, e
 func readChatGPTMachineProgress(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, ownerID string, event domainmemory.ChatGPTImportEvent) (domainmemory.ChatGPTImportProgress, error) {
-	ownerScope := "user:" + ownerID
-	var rawCount, projectionCount, receiptCount int
-	if err := queryer.QueryRowContext(ctx, `
-SELECT COUNT(*) FROM l1_raw_record
-WHERE owner_id = ? AND scope = ? AND source_type = ? AND source_identity = ?
-`, ownerID, ownerScope, chatGPTMachineRawSourceType, event.Binding.ExportID).Scan(&rawCount); err != nil {
-		return domainmemory.ChatGPTImportProgress{}, chatGPTMachineInternalError()
-	}
-	if err := queryer.QueryRowContext(ctx, `
-SELECT COUNT(*)
-FROM l1_memory_event e
-JOIN l1_raw_record r ON r.source_record_id = e.id
-WHERE r.owner_id = ? AND r.scope = ? AND r.source_type = ? AND r.source_identity = ?
-  AND e.source = ? AND e.layer = 'L3'
-  AND json_extract(e.meta_json, '$.external_source') = ?
-  AND json_extract(e.meta_json, '$.export_id') = ?
-`, ownerID, ownerScope, chatGPTMachineRawSourceType, event.Binding.ExportID, chatGPTMachineRawSourceType, chatGPTMachineRawSourceType, event.Binding.ExportID).Scan(&projectionCount); err != nil {
-		return domainmemory.ChatGPTImportProgress{}, chatGPTMachineInternalError()
-	}
-	if err := queryer.QueryRowContext(ctx, `
-SELECT COUNT(DISTINCT p.output_record_id)
-FROM l1_raw_projection_receipt p
-JOIN l1_raw_record r ON r.source_record_id = p.output_record_id
-WHERE r.owner_id = ? AND r.scope = ? AND r.source_type = ? AND r.source_identity = ?
-  AND p.projection_type = ? AND p.output_store = ? AND p.revision = ? AND p.status = 'completed'
-`, ownerID, ownerScope, chatGPTMachineRawSourceType, event.Binding.ExportID, chatGPTMachineProjectionType, chatGPTMachineProjectionOutput, chatGPTMachineProjectionRevision).Scan(&receiptCount); err != nil {
-		return domainmemory.ChatGPTImportProgress{}, chatGPTMachineInternalError()
-	}
-	jobs, err := readChatGPTMachineJobs(ctx, queryer, ownerID, event.Binding.ExportID)
+	// Raw, projection, and completed-receipt counts are immutable values from
+	// the latest import event. Re-scanning the large source/projection tables
+	// here would both repeat work and make progress depend on mutable metadata.
+	rawCount := event.Counts.RawCount
+	projectionCount := event.Counts.ProjectionCount
+	receiptCount := event.Counts.ProjectionCount
+	jobs, err := readChatGPTMachineJobs(ctx, queryer, ownerID, event.Binding.ExportID, event.Counts.JobCount)
 	if err != nil {
 		return domainmemory.ChatGPTImportProgress{}, err
 	}
@@ -289,41 +267,45 @@ WHERE r.owner_id = ? AND r.scope = ? AND r.source_type = ? AND r.source_identity
 
 func readChatGPTMachineJobs(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, ownerID, exportID string) (chatGPTMachineJobSummary, error) {
-	ownerScope := "user:" + ownerID
+}, ownerID, exportID string, expectedJobCount int) (chatGPTMachineJobSummary, error) {
 	var summary chatGPTMachineJobSummary
-	var pending, running, retryWait, completed, failed, failedWithEvidence, missingEvidence, nonTerminal, jobCount int
+	var bindingCount, missingJob, missingEvidence, invalidState int
+	var pending, running, retryWait, completed, failed, failedWithEvidence, nonTerminal int
 	err := queryer.QueryRowContext(ctx, `
-WITH export_jobs AS (
-	SELECT j.state,
-		CASE WHEN e.id IS NULL AND r.raw_record_id IS NOT NULL THEN 1 ELSE 0 END AS missing_evidence
-	FROM l1_profile_promotion_job j
-	LEFT JOIN l1_memory_event e ON e.id = j.evidence_event_id
-		AND e.source = ? AND e.layer = 'L3'
-		AND json_extract(e.meta_json, '$.external_source') = ?
-		AND json_extract(e.meta_json, '$.export_id') = ?
-	LEFT JOIN l1_raw_record r ON r.source_record_id = j.evidence_event_id
-		AND r.owner_id = ? AND r.scope = ? AND r.source_type = ? AND r.source_identity = ?
-	WHERE r.raw_record_id IS NOT NULL
+WITH bound_jobs AS (
+	SELECT b.evidence_event_id, j.state AS job_state,
+		CASE WHEN j.evidence_event_id IS NULL THEN 1 ELSE 0 END AS missing_job,
+		CASE WHEN e.id IS NULL OR e.speaker <> 'user' OR e.source <> ? OR e.layer <> 'L3' THEN 1 ELSE 0 END AS missing_evidence,
+		CASE WHEN j.state IN ('pending', 'running', 'retry_wait', 'failed', 'completed') THEN 0 ELSE 1 END AS invalid_state
+	FROM l1_chatgpt_profile_promotion_binding b
+	LEFT JOIN l1_profile_promotion_job j ON j.evidence_event_id = b.evidence_event_id
+	LEFT JOIN l1_memory_event e ON e.id = b.evidence_event_id
+	WHERE b.owner_id = ? AND b.export_id = ?
 )
 SELECT
-	COALESCE(SUM(CASE WHEN state = 'pending' THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN state = 'running' THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN state = 'retry_wait' THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN state = 'failed' AND missing_evidence = 0 THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN missing_evidence = 1 THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(CASE WHEN state <> 'completed' THEN 1 ELSE 0 END), 0),
-	COUNT(*)
-FROM export_jobs
-	`, chatGPTMachineRawSourceType, chatGPTMachineRawSourceType, exportID, ownerID, ownerScope, chatGPTMachineRawSourceType, exportID).Scan(
-		&pending, &running, &retryWait, &completed, &failed, &failedWithEvidence, &missingEvidence, &nonTerminal, &jobCount)
+	COUNT(*),
+	COALESCE(SUM(missing_job), 0),
+	COALESCE(SUM(missing_evidence), 0),
+	COALESCE(SUM(invalid_state), 0),
+	COALESCE(SUM(CASE WHEN job_state = 'pending' THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN job_state = 'running' THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN job_state = 'retry_wait' THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN job_state = 'completed' THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN job_state = 'failed' THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN job_state = 'failed' AND missing_evidence = 0 THEN 1 ELSE 0 END), 0),
+	COALESCE(SUM(CASE WHEN job_state <> 'completed' THEN 1 ELSE 0 END), 0)
+FROM bound_jobs
+	`, chatGPTMachineRawSourceType, ownerID, exportID).Scan(
+		&bindingCount, &missingJob, &missingEvidence, &invalidState,
+		&pending, &running, &retryWait, &completed, &failed, &failedWithEvidence, &nonTerminal)
 	if err != nil {
 		return chatGPTMachineJobSummary{}, chatGPTMachineInternalError()
 	}
+	if bindingCount != expectedJobCount || missingJob != 0 || invalidState != 0 {
+		return chatGPTMachineJobSummary{}, chatGPTMachineBlockedError()
+	}
 	summary.StateCounts = domainmemory.ChatGPTImportPromotionStateCounts{Pending: pending, Running: running, RetryWait: retryWait, Completed: completed, Failed: failed}
-	summary.JobCount, summary.FailedWithEvidence, summary.MissingEvidence, summary.NonTerminal = jobCount, failedWithEvidence, missingEvidence, nonTerminal
+	summary.JobCount, summary.FailedWithEvidence, summary.MissingEvidence, summary.NonTerminal = bindingCount, failedWithEvidence, missingEvidence, nonTerminal
 	return summary, nil
 }
 

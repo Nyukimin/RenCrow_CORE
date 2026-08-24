@@ -256,7 +256,7 @@ installed binary、production config／DB migration、ChatGPT backfill、live CM
 | `memory export verify --request-id` | `GET /viewer/memory/export/{escaped-request-id}` | `cmd-diagnostics` | source実装済み。exact targetのmanifest／hash／count verify。配備／E2E未確認 |
 | `memory import chatgpt --manifest <file> --artifact <tar> [--apply]` | `POST /v1/memory/import/chatgpt` | `cmd-control` | CORE owner routeとCMD facadeはsource／focused実装済み。COREがwhole-artifact検証、内部batch、Raw／projection、receiptを所有。配備／E2E未確認 |
 | `memory import status --export-id` | `GET /v1/memory/import/chatgpt/{percent-escaped-export-id}` | `cmd-diagnostics` | source／focused実装済み。owner-scoped bounded import status／receipt。配備／E2E未確認 |
-| `memory import progress --export-id <id>` | `GET /v1/memory/import/chatgpt/{percent-escaped-export-id}/progress` | `cmd-diagnostics` | export単位のRaw／projection／ProfilePromotion内訳とevidence有無だけを返す |
+| `memory import progress --export-id <id>` | `GET /v1/memory/import/chatgpt/{percent-escaped-export-id}/progress` | `cmd-diagnostics` | completed import ledgerの確定Raw／projection件数と、immutable export/job bindingに限定した現在のProfilePromotion内訳・evidence有無だけを返す。requestごとの全Raw／L3 JSON再走査は行わない |
 | `memory import retry-failed --export-id <id>` | `POST /v1/memory/import/chatgpt/retry` | `cmd-control` | 同じexportでevidenceが残るfailed jobだけを再投入し、別export／orphanを変更しない |
 | `memory import finalize --export-id <id> [--apply]` | `POST /v1/memory/import/chatgpt/finalize` | `cmd-control` | LLMなしでbinding／hash／counts／job終端を検証し、apply時だけimmutable／idempotent receiptを保存。candidate状態は変えない |
 
@@ -290,7 +290,14 @@ POST /v1/memory/import/chatgpt/retry
 POST /v1/memory/import/chatgpt/finalize
 ```
 
-`progress`と`finalize`はRaw本文、statement、物理pathを返しません。`retry`と`finalize`のbodyはそれぞれ`{"export_id":<id>}`、`{"export_id":<id>,"apply":<bool>}`に限定し、unknown fieldを拒否します。finalizeは取込時に検証済みのhash bindingと永続済みledger／receiptを再照合し、全object再hashを繰り返しません。旧`POST /v1/memory/import/chatgpt/confirm`はbulk candidate confirmとしては廃止し、互換応答が必要な場合もcandidateを変更せず明示的にretiredを返します。
+`progress`と`finalize`はRaw本文、statement、物理pathを返しません。`progress`のRaw／projection件数は
+completed import eventにcommitされたimmutable ledger値を使い、ProfilePromotionは同じexportのeligible evidenceだけを
+immutable bindingから現行jobへ結合します。binding件数とledger `job_count`が不一致な場合はfail closedし、
+他exportのjobや過去の非current-branch jobを補正値として混ぜません。`retry`と`finalize`のbodyはそれぞれ
+`{"export_id":<id>}`、`{"export_id":<id>,"apply":<bool>}`に限定し、unknown fieldを拒否します。finalizeは取込時に
+検証済みのhash bindingと永続済みledger／receiptを再照合し、全object再hashを繰り返しません。旧
+`POST /v1/memory/import/chatgpt/confirm`はbulk candidate confirmとしては廃止し、互換応答が必要な場合もcandidateを変更せず
+明示的にretiredを返します。
 
 uploadはauthenticated loopbackの一つのmultipart requestだけを受けます。`X-RenCrow-Client: RenCrow_CMD`と
 `X-RenCrow-Interaction-Profile: cmd-control`を既存のcredential／scope guardと組み合わせ、profile headerをcredentialの代替にしません。
