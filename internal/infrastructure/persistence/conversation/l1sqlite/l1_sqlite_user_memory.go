@@ -477,7 +477,11 @@ func (s *L1SQLiteStore) ListUserMemoriesPage(ctx context.Context, userID, state 
 	if query != "" {
 		projectionSource = "l1_user_memory_viewer_projection p JOIN l1_user_memory_viewer_fts ON l1_user_memory_viewer_fts.id = p.id"
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	queryDB := s.readDB
+	if queryDB == nil {
+		queryDB = s.db
+	}
+	rows, err := queryDB.QueryContext(ctx, `
 SELECT p.id, p.namespace, p.user_id, p.memory_type, p.memory_state, p.active, p.statement, p.evidence_text,
        p.confidence, p.sensitivity, p.scope, p.lifecycle_status, p.decay_score, p.superseded_by, p.created_at, p.updated_at
 FROM `+projectionSource+`
