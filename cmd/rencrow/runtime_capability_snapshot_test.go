@@ -147,15 +147,36 @@ func TestAppendRuntimeCapabilityContextKeepsExistingContextText(t *testing.T) {
 		"mio":   "mio contract",
 		"shiro": "shiro contract",
 	}
-	appendRuntimeCapabilityContext(contexts, "## Runtime Capability Snapshot\n- 利用可能: shell")
+	appendRuntimeCapabilityContext(contexts, `## Runtime Capability Snapshot
+この一覧は認識用であり、実行権限を付与しません。
 
-	for name, want := range map[string]string{
-		"mio":   "mio contract",
-		"shiro": "shiro contract",
-	} {
-		if !strings.HasPrefix(contexts[name], want+"\n\n## Runtime Capability Snapshot") {
-			t.Fatalf("%s context was not appended as a separate section: %q", name, contexts[name])
+### Tools
+- 利用可能: shell
+- 利用可能: data.read
+- 利用不可: browser
+  理由: 未接続
+
+### Skills
+- 利用可能: review
+- 利用不可: release
+  理由: 無効
+
+### MCP
+- 利用可能: serena.search`)
+
+	if !strings.HasPrefix(contexts["mio"], "mio contract\n\n## Runtime Capability Snapshot") {
+		t.Fatalf("Mio context lost its existing contract: %q", contexts["mio"])
+	}
+	for _, want := range []string{"projection: summary_for_mio", "tools: available=2 unavailable=1", "skills: available=1 unavailable=1", "mcp: available=1 unavailable=0"} {
+		if !strings.Contains(contexts["mio"], want) {
+			t.Fatalf("Mio capability summary missing %q: %q", want, contexts["mio"])
 		}
+	}
+	if strings.Contains(contexts["mio"], "data.read") || strings.Contains(contexts["mio"], "serena.search") {
+		t.Fatalf("Mio context expanded capability entries: %q", contexts["mio"])
+	}
+	if !strings.HasPrefix(contexts["shiro"], "shiro contract\n\n## Runtime Capability Snapshot") || !strings.Contains(contexts["shiro"], "data.read") {
+		t.Fatalf("Shiro must retain the full capability snapshot: %q", contexts["shiro"])
 	}
 }
 

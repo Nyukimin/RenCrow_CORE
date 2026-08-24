@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
@@ -362,11 +363,61 @@ func appendRuntimeCapabilityContext(contexts map[string]string, capabilityContex
 		return
 	}
 	for name, contextText := range contexts {
+		projectedContext := capabilityContext
+		if strings.EqualFold(strings.TrimSpace(name), "mio") {
+			projectedContext = summarizeRuntimeCapabilityContextForMio(capabilityContext)
+		}
 		contextText = strings.TrimSpace(contextText)
 		if contextText == "" {
-			contexts[name] = capabilityContext
+			contexts[name] = projectedContext
 			continue
 		}
-		contexts[name] = contextText + "\n\n" + capabilityContext
+		contexts[name] = contextText + "\n\n" + projectedContext
 	}
+}
+
+// summarizeRuntimeCapabilityContextForMio keeps capability awareness without
+// placing the Worker-owned execution catalog in the conversational prompt.
+// Mio routes work; CORE policy and the Worker runtime own exact availability.
+func summarizeRuntimeCapabilityContextForMio(capabilityContext string) string {
+	type counts struct{ available, unavailable int }
+	sections := map[string]*counts{
+		"tools":  {},
+		"skills": {},
+		"mcp":    {},
+	}
+	current := ""
+	for _, rawLine := range strings.Split(capabilityContext, "\n") {
+		line := strings.TrimSpace(rawLine)
+		switch line {
+		case "### Tools":
+			current = "tools"
+		case "### Skills":
+			current = "skills"
+		case "### MCP":
+			current = "mcp"
+		default:
+			section := sections[current]
+			if section == nil || strings.HasSuffix(line, "なし") {
+				continue
+			}
+			if strings.HasPrefix(line, "- 利用可能: ") {
+				section.available++
+			}
+			if strings.HasPrefix(line, "- 利用不可: ") {
+				section.unavailable++
+			}
+		}
+	}
+	return fmt.Sprintf(`## Runtime Capability Snapshot
+- projection: summary_for_mio
+- full_snapshot_owner: CORE Worker runtime
+- tools: available=%d unavailable=%d
+- skills: available=%d unavailable=%d
+- mcp: available=%d unavailable=%d
+- exact availability and permission are evaluated by CORE policy at execution time; Mio returns the required capability to the Orchestrator.`,
+		sections["tools"].available, sections["tools"].unavailable,
+		sections["skills"].available, sections["skills"].unavailable,
+		sections["mcp"].available, sections["mcp"].unavailable,
+	)
 }
