@@ -2,6 +2,7 @@ package l1sqlite
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
@@ -52,29 +53,28 @@ func TestListUserMemoriesPageMakesOlderCandidatesSearchable(t *testing.T) {
 	}
 }
 
-func TestUserMemoryViewerSearchIndexCoversSearchText(t *testing.T) {
+func TestUserMemoryViewerSearchUsesFTS5Trigram(t *testing.T) {
 	store, err := NewL1SQLiteStore(l1TestTempDir(t) + "/l1.db")
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore: %v", err)
 	}
 	defer store.Close()
-	rows, err := store.db.Query(`PRAGMA index_info('idx_l1_user_memory_viewer_search_cover')`)
+	var schema string
+	if err := store.db.QueryRow(`SELECT sql FROM sqlite_master WHERE name = 'l1_user_memory_viewer_fts'`).Scan(&schema); err != nil {
+		t.Fatalf("read FTS schema: %v", err)
+	}
+	if !strings.Contains(schema, "fts5") || !strings.Contains(schema, "trigram") {
+		t.Fatalf("unexpected FTS schema: %s", schema)
+	}
+}
+
+func TestSQLiteRuntimeSupportsUserMemoryFTS5(t *testing.T) {
+	store, err := NewL1SQLiteStore(l1TestTempDir(t) + "/l1.db")
 	if err != nil {
-		t.Fatalf("index_info: %v", err)
+		t.Fatalf("NewL1SQLiteStore: %v", err)
 	}
-	defer rows.Close()
-	columns := map[string]bool{}
-	for rows.Next() {
-		var seq, cid int
-		var name string
-		if err := rows.Scan(&seq, &cid, &name); err != nil {
-			t.Fatalf("scan index_info: %v", err)
-		}
-		columns[name] = true
-	}
-	for _, want := range []string{"namespace", "memory_state", "active", "created_at", "id", "statement", "evidence_text"} {
-		if !columns[want] {
-			t.Fatalf("search covering index missing %s: %+v", want, columns)
-		}
+	defer store.Close()
+	if _, err := store.db.Exec(`CREATE VIRTUAL TABLE temp.user_memory_fts_probe USING fts5(statement, evidence, tokenize='trigram')`); err != nil {
+		t.Fatalf("FTS5 is required for bounded User Memory search: %v", err)
 	}
 }

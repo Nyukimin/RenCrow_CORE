@@ -56,3 +56,12 @@ func TestHandleUserMemoryListRejectsInvalidOffset(t *testing.T) {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestHandleUserMemoryListRejectsSearchShorterThanThreeRunes(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/viewer/memory/user?q=GP", nil)
+	rec := httptest.NewRecorder()
+	HandleUserMemory(&userMemoryStoreStub{})(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

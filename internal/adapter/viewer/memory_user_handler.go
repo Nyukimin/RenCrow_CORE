@@ -131,7 +131,7 @@ func handleUserMemoryList(w http.ResponseWriter, r *http.Request, store UserMemo
 	}
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	if len([]rune(query)) > 256 {
+	if query != "" && (len([]rune(query)) < 3 || len([]rune(query)) > 256) {
 		http.Error(w, "invalid query", http.StatusBadRequest)
 		return
 	}

@@ -458,31 +458,31 @@ func (s *L1SQLiteStore) ListUserMemoriesPage(ctx context.Context, userID, state 
 		return nil, false, errors.New("user memory offset must be non-negative")
 	}
 
-	where := "namespace = ?"
+	where := "p.namespace = ?"
 	args := []interface{}{namespace}
 	if !includeInactive {
-		where += " AND active = 1"
+		where += " AND p.active = 1"
 	}
 	if state != "" {
-		where += " AND memory_state = ?"
+		where += " AND p.memory_state = ?"
 		args = append(args, state)
 	}
 	if query != "" {
-		where += " AND (instr(lower(statement), lower(?)) > 0 OR instr(lower(evidence_text), lower(?)) > 0)"
-		args = append(args, query, query)
+		where += " AND l1_user_memory_viewer_fts MATCH ?"
+		args = append(args, `"`+strings.ReplaceAll(query, `"`, `""`)+`"`)
 	}
 
 	pageArgs := append(append([]interface{}{}, args...), limit+1, offset)
-	projectionSource := "l1_user_memory_viewer_projection INDEXED BY idx_l1_user_memory_viewer_page"
+	projectionSource := "l1_user_memory_viewer_projection p INDEXED BY idx_l1_user_memory_viewer_page"
 	if query != "" {
-		projectionSource = "l1_user_memory_viewer_projection INDEXED BY idx_l1_user_memory_viewer_search_cover"
+		projectionSource = "l1_user_memory_viewer_projection p JOIN l1_user_memory_viewer_fts ON l1_user_memory_viewer_fts.id = p.id"
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, namespace, user_id, memory_type, memory_state, active, statement, evidence_text,
-       confidence, sensitivity, scope, lifecycle_status, decay_score, superseded_by, created_at, updated_at
+SELECT p.id, p.namespace, p.user_id, p.memory_type, p.memory_state, p.active, p.statement, p.evidence_text,
+       p.confidence, p.sensitivity, p.scope, p.lifecycle_status, p.decay_score, p.superseded_by, p.created_at, p.updated_at
 FROM `+projectionSource+`
 WHERE `+where+`
-ORDER BY created_at DESC, id DESC
+ORDER BY p.created_at DESC, p.id DESC
 LIMIT ? OFFSET ?
 `, pageArgs...)
 	if err != nil {

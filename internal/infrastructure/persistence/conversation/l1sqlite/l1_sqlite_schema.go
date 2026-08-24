@@ -53,9 +53,27 @@ CREATE TABLE IF NOT EXISTS l1_user_memory_viewer_projection (
 );
 CREATE INDEX IF NOT EXISTS idx_l1_user_memory_viewer_page
 	ON l1_user_memory_viewer_projection(namespace, memory_state, active, created_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_l1_user_memory_viewer_search_cover
-	ON l1_user_memory_viewer_projection(
-		namespace, memory_state, active, created_at DESC, id DESC, statement, evidence_text);
+DROP INDEX IF EXISTS idx_l1_user_memory_viewer_search_cover;
+CREATE VIRTUAL TABLE IF NOT EXISTS l1_user_memory_viewer_fts
+	USING fts5(id UNINDEXED, statement, evidence_text, tokenize='trigram');
+CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_viewer_fts_insert_v3
+AFTER INSERT ON l1_user_memory_viewer_projection
+BEGIN
+	INSERT INTO l1_user_memory_viewer_fts(id, statement, evidence_text)
+	VALUES(NEW.id, NEW.statement, NEW.evidence_text);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_viewer_fts_update_v3
+AFTER UPDATE OF statement, evidence_text ON l1_user_memory_viewer_projection
+BEGIN
+	DELETE FROM l1_user_memory_viewer_fts WHERE id = OLD.id;
+	INSERT INTO l1_user_memory_viewer_fts(id, statement, evidence_text)
+	VALUES(NEW.id, NEW.statement, NEW.evidence_text);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_viewer_fts_delete_v3
+AFTER DELETE ON l1_user_memory_viewer_projection
+BEGIN
+	DELETE FROM l1_user_memory_viewer_fts WHERE id = OLD.id;
+END;
 CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_viewer_insert_v2
 AFTER INSERT ON l1_memory_event
 WHEN NEW.speaker = 'memory' AND NEW.layer = 'L1' AND json_valid(NEW.meta_json)
@@ -132,6 +150,9 @@ WHERE speaker = 'memory' AND layer = 'L1' AND json_valid(meta_json)
 	AND trim(COALESCE(json_extract(meta_json, '$.statement'), '')) = trim(message)
 	AND namespace = 'user:' || trim(json_extract(meta_json, '$.user_id'))
 	AND NOT EXISTS (SELECT 1 FROM l1_user_memory_viewer_projection LIMIT 1);
+INSERT INTO l1_user_memory_viewer_fts(id, statement, evidence_text)
+SELECT id, statement, evidence_text FROM l1_user_memory_viewer_projection
+WHERE NOT EXISTS (SELECT 1 FROM l1_user_memory_viewer_fts LIMIT 1);
 CREATE TABLE IF NOT EXISTS l1_profile_promotion_job (
 	evidence_event_id TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL,
