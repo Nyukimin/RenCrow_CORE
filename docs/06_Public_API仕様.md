@@ -39,7 +39,9 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `/viewer/memory/*` | memory event、Recall、ProfilePromotion job の観測 |
 | `POST /v1/memory/import/chatgpt` | authenticated owner用Common Raw bundle upload。既定`apply=false`、whole-artifact検証後にCOREが内部batch化 |
 | `GET /v1/memory/import/chatgpt/{percent-escaped-export-id}` | owner-scoped bounded import status／receipt。Raw本文・path・statementは返さない |
-| `POST /v1/memory/import/chatgpt/confirm` | owner-scoped candidate confirm。reason必須、既定dry-run、projection未完了／failed時はapplyを拒否 |
+| `GET /v1/memory/import/chatgpt/{percent-escaped-export-id}/progress` | owner-scoped Raw／projection／ProfilePromotion進捗 |
+| `POST /v1/memory/import/chatgpt/retry` | evidenceが残る同exportのfailed jobだけを再投入 |
+| `POST /v1/memory/import/chatgpt/finalize` | 検証済みbindingと永続receiptをLLMなしで再照合し、終端receiptを作成 |
 | `POST /viewer/hobby-graph/music/import` | `rencrow.music_catalog.v1`を最大100件検証・import。既定dry-run。未許諾歌詞本文と復元可能featureを拒否 |
 | `GET /viewer/databases/conversation-archive` | Conversation Archive（`memory_archive.db`）の読み取り専用snapshot |
 | `GET /viewer/databases/glossary` | Glossary DBの読み取り専用snapshot |
@@ -238,7 +240,7 @@ Shiro／Worker実行、foreground leaseを使用しません。
 
 既存Viewer routeはlegacy compatibility routeとして互換維持します。`/v1/memory/user`と、下表のarchive／lifecycle／Parquet routeは
 CMD専用owner routeであり、新しいowner receipt契約を満たすsource実装です。CMDのowner操作は上記APIだけを使います。
-import status／confirm、Common Raw、LLM residual、typed EndTurnはsource／focused実装済みです。
+import status／progress／retry／finalize、Common Raw、LLM residual、typed EndTurnはsource／focused実装対象です。Import finalizeとexact-ID UserMemory confirmは別契約です。
 installed binary、production config／DB migration、ChatGPT backfill、live CMD->CORE／Agent E2Eは未完了であり、source実装を配備済みとは扱いません。
 
 | RenCrow_CMD target | CORE Public API target | profile | CORE所有の操作境界 |
@@ -254,7 +256,9 @@ installed binary、production config／DB migration、ChatGPT backfill、live CM
 | `memory export verify --request-id` | `GET /viewer/memory/export/{escaped-request-id}` | `cmd-diagnostics` | source実装済み。exact targetのmanifest／hash／count verify。配備／E2E未確認 |
 | `memory import chatgpt --manifest <file> --artifact <tar> [--apply]` | `POST /v1/memory/import/chatgpt` | `cmd-control` | CORE owner routeとCMD facadeはsource／focused実装済み。COREがwhole-artifact検証、内部batch、Raw／projection、receiptを所有。配備／E2E未確認 |
 | `memory import status --export-id` | `GET /v1/memory/import/chatgpt/{percent-escaped-export-id}` | `cmd-diagnostics` | source／focused実装済み。owner-scoped bounded import status／receipt。配備／E2E未確認 |
-| `memory import confirm --export-id <id> --reason <reason> [--apply]` | `POST /v1/memory/import/chatgpt/confirm` | `cmd-control` | source／focused実装済み。reason必須、既定dry-run、projection完了／failedなしだけapply。配備／E2E未確認 |
+| `memory import progress --export-id <id>` | `GET /v1/memory/import/chatgpt/{percent-escaped-export-id}/progress` | `cmd-diagnostics` | export単位のRaw／projection／ProfilePromotion内訳とevidence有無だけを返す |
+| `memory import retry-failed --export-id <id>` | `POST /v1/memory/import/chatgpt/retry` | `cmd-control` | 同じexportでevidenceが残るfailed jobだけを再投入し、別export／orphanを変更しない |
+| `memory import finalize --export-id <id> [--apply]` | `POST /v1/memory/import/chatgpt/finalize` | `cmd-control` | LLMなしでbinding／hash／counts／job終端を検証し、apply時だけimmutable／idempotent receiptを保存。candidate状態は変えない |
 
 #### ChatGPT Common Raw import owner API
 
@@ -266,7 +270,9 @@ E2Eを完了とみなしません。CLIの正規構文は次のとおりです�
 ```text
 rencrowctl memory import chatgpt --manifest <file> --artifact <tar> [--apply]
 rencrowctl memory import status --export-id <id>
-rencrowctl memory import confirm --export-id <id> --reason <reason> [--apply]
+rencrowctl memory import progress --export-id <id>
+rencrowctl memory import retry-failed --export-id <id>
+rencrowctl memory import finalize --export-id <id> [--apply]
 ```
 
 `--url`、`--token-file`、`--json`などの標準global optionは、既存memory commandと同じ配置規則に従います。
@@ -274,13 +280,17 @@ CMDのfile preflightはflagの有無、型、distinct path、open／stream可能
 CMDはmanifest／TARをhashまたは解釈せず、schema、batch、checkpoint、request ID、receipt、owner／scope、state、policy、DB意味論を
 持ちません。各commandはCOREへ一回だけrequestを送り、responseを表示します。CMDはretry、client-side batch、checkpoint再開を行いません。
 
-新owner routeは次の3つです。
+新owner routeは次の5つです。
 
 ```text
 POST /v1/memory/import/chatgpt
 GET  /v1/memory/import/chatgpt/{percent-escaped-export-id}
-POST /v1/memory/import/chatgpt/confirm
+GET  /v1/memory/import/chatgpt/{percent-escaped-export-id}/progress
+POST /v1/memory/import/chatgpt/retry
+POST /v1/memory/import/chatgpt/finalize
 ```
+
+`progress`と`finalize`はRaw本文、statement、物理pathを返しません。`retry`と`finalize`のbodyはそれぞれ`{"export_id":<id>}`、`{"export_id":<id>,"apply":<bool>}`に限定し、unknown fieldを拒否します。finalizeは取込時に検証済みのhash bindingと永続済みledger／receiptを再照合し、全object再hashを繰り返しません。旧`POST /v1/memory/import/chatgpt/confirm`はbulk candidate confirmとしては廃止し、互換応答が必要な場合もcandidateを変更せず明示的にretiredを返します。
 
 uploadはauthenticated loopbackの一つのmultipart requestだけを受けます。`X-RenCrow-Client: RenCrow_CMD`と
 `X-RenCrow-Interaction-Profile: cmd-control`を既存のcredential／scope guardと組み合わせ、profile headerをcredentialの代替にしません。

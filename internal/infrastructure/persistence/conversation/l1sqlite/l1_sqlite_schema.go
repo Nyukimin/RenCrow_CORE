@@ -434,6 +434,9 @@ CREATE INDEX IF NOT EXISTS idx_prompt_injection_event_trace ON prompt_injection_
 	if err := s.applyChatGPTImportConfirmSchema(ctx); err != nil {
 		return err
 	}
+	if err := s.applyChatGPTImportFinalizeSchema(ctx); err != nil {
+		return err
+	}
 	if err := s.applyConversationTurnSchema(ctx); err != nil {
 		return err
 	}

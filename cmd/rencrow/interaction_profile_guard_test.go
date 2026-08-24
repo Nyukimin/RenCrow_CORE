@@ -204,6 +204,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "cmd diagnostics can read ChatGPT import progress",
+			client:  "RenCrow_CMD",
+			profile: "cmd-diagnostics",
+			method:  http.MethodGet,
+			path:    "/v1/memory/import/chatgpt/export-1/progress",
+			want:    http.StatusNoContent,
+		},
+		{
 			name:    "cmd diagnostics cannot retry profile promotions",
 			client:  "RenCrow_CMD",
 			profile: "cmd-diagnostics",
@@ -297,6 +305,22 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			profile: "cmd-control",
 			method:  http.MethodPost,
 			path:    "/v1/memory/import/chatgpt/confirm",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "cmd control can retry ChatGPT import jobs",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/v1/memory/import/chatgpt/retry",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "cmd control can finalize ChatGPT import",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/v1/memory/import/chatgpt/finalize",
 			want:    http.StatusNoContent,
 		},
 		{

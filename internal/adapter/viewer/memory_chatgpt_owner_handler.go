@@ -39,7 +39,10 @@ var (
 type ChatGPTImportOwnerLimits struct {
 	ManifestMaxBytes int64
 	ArtifactMaxBytes int64
-	ConfirmMaxBytes  int64
+	// ConfirmMaxBytes is retained as the bounded JSON command limit for
+	// source compatibility with existing constructor callers. The old
+	// candidate-confirm route itself is retired.
+	ConfirmMaxBytes int64
 }
 
 func defaultChatGPTImportOwnerLimits() ChatGPTImportOwnerLimits {
@@ -82,15 +85,18 @@ type ChatGPTImportOwnerService interface {
 	Import(context.Context, chatgptimport.ImportRequest) (chatgptimport.ImportResult, error)
 }
 
-// ChatGPTImportOwnerStore is the small owner API boundary used by status and
-// confirmation. It intentionally does not require the broad MemoryOwnerStore.
+// ChatGPTImportOwnerStore is the small owner API boundary used by deterministic
+// import status, retry, and finalization. It intentionally does not require
+// the broad MemoryOwnerStore or expose candidate confirmation.
 type ChatGPTImportOwnerStore interface {
 	GetChatGPTImportStatus(context.Context, string, string, string, string) (domainmemory.ChatGPTImportView, error)
-	ConfirmChatGPTImportCandidates(context.Context, domainmemory.ChatGPTImportConfirmInput) (domainmemory.ChatGPTImportConfirmResult, error)
+	GetChatGPTImportProgress(context.Context, string, string, string, string) (domainmemory.ChatGPTImportProgress, error)
+	RetryFailedChatGPTImportJobsForExport(context.Context, string, string, string, string) (domainmemory.ChatGPTImportRetryResult, error)
+	FinalizeChatGPTImport(context.Context, domainmemory.ChatGPTImportFinalizeInput) (domainmemory.ChatGPTImportFinalizeResult, error)
 }
 
 // NewMemoryChatGPTOwnerHandler constructs the authenticated ChatGPT Common Raw
-// import/status/confirm handler.
+// import/status/progress/retry/finalize handler.
 func NewMemoryChatGPTOwnerHandler(service ChatGPTImportOwnerService, store ChatGPTImportOwnerStore, rawSourceRoot, userID string, token []byte) http.HandlerFunc {
 	return NewMemoryChatGPTOwnerHandlerWithLimits(service, store, rawSourceRoot, userID, token, defaultChatGPTImportOwnerLimits())
 }
@@ -157,12 +163,29 @@ func (h *memoryChatGPTOwnerHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 			return
 		}
 		h.status(ctx, w, r, exportID)
-	case chatGPTOwnerOperationConfirm:
+	case chatGPTOwnerOperationProgress:
 		if h.store == nil {
 			writeMemoryOwnerError(w, http.StatusServiceUnavailable, "unavailable")
 			return
 		}
-		h.confirm(ctx, w, r)
+		h.progress(ctx, w, r, exportID)
+	case chatGPTOwnerOperationRetry:
+		if h.store == nil || h.limitsErr != nil {
+			writeMemoryOwnerError(w, http.StatusServiceUnavailable, "unavailable")
+			return
+		}
+		h.retry(ctx, w, r)
+	case chatGPTOwnerOperationFinalize:
+		if h.store == nil || h.limitsErr != nil {
+			writeMemoryOwnerError(w, http.StatusServiceUnavailable, "unavailable")
+			return
+		}
+		h.finalize(ctx, w, r)
+	case chatGPTOwnerOperationConfirm:
+		// The old bulk candidate confirmation changed UserMemory state and is
+		// intentionally retired. Keep an explicit response for callers that
+		// have not yet migrated rather than silently changing its semantics.
+		writeMemoryOwnerError(w, http.StatusGone, "retired")
 	default:
 		writeMemoryOwnerError(w, http.StatusNotFound, "not_found")
 	}
@@ -171,9 +194,12 @@ func (h *memoryChatGPTOwnerHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 type chatGPTOwnerOperation string
 
 const (
-	chatGPTOwnerOperationUpload  chatGPTOwnerOperation = "upload"
-	chatGPTOwnerOperationStatus  chatGPTOwnerOperation = "status"
-	chatGPTOwnerOperationConfirm chatGPTOwnerOperation = "confirm"
+	chatGPTOwnerOperationUpload   chatGPTOwnerOperation = "upload"
+	chatGPTOwnerOperationStatus   chatGPTOwnerOperation = "status"
+	chatGPTOwnerOperationProgress chatGPTOwnerOperation = "progress"
+	chatGPTOwnerOperationRetry    chatGPTOwnerOperation = "retry"
+	chatGPTOwnerOperationFinalize chatGPTOwnerOperation = "finalize"
+	chatGPTOwnerOperationConfirm  chatGPTOwnerOperation = "confirm"
 )
 
 func chatGPTOwnerRoute(r *http.Request) (chatGPTOwnerOperation, string, bool) {
@@ -189,12 +215,22 @@ func chatGPTOwnerRoute(r *http.Request) (chatGPTOwnerOperation, string, bool) {
 		return chatGPTOwnerOperationUpload, "", true
 	case escaped == chatGPTImportOwnerRoute+"/confirm" && r.Method == http.MethodPost:
 		return chatGPTOwnerOperationConfirm, "", true
+	case escaped == chatGPTImportOwnerRoute+"/retry" && r.Method == http.MethodPost:
+		return chatGPTOwnerOperationRetry, "", true
+	case escaped == chatGPTImportOwnerRoute+"/finalize" && r.Method == http.MethodPost:
+		return chatGPTOwnerOperationFinalize, "", true
 	}
 	prefix := chatGPTImportOwnerRoute + "/"
 	if r.Method != http.MethodGet || !strings.HasPrefix(escaped, prefix) {
 		return "", "", false
 	}
 	rawID := strings.TrimPrefix(escaped, prefix)
+	progressSuffix := "/progress"
+	operation := chatGPTOwnerOperationStatus
+	if strings.HasSuffix(rawID, progressSuffix) {
+		rawID = strings.TrimSuffix(rawID, progressSuffix)
+		operation = chatGPTOwnerOperationProgress
+	}
 	if rawID == "" || strings.Contains(rawID, "/") {
 		return "", "", false
 	}
@@ -202,7 +238,7 @@ func chatGPTOwnerRoute(r *http.Request) (chatGPTOwnerOperation, string, bool) {
 	if err != nil || strings.TrimSpace(exportID) == "" || len(exportID) > domainmemory.ChatGPTImportMaxIdentifierByte || !utf8.ValidString(exportID) || strings.ContainsAny(exportID, "/\\\r\n\x00") {
 		return "", "", false
 	}
-	return chatGPTOwnerOperationStatus, exportID, true
+	return operation, exportID, true
 }
 
 func chatGPTOwnerValidateNoQuery(r *http.Request) error {
@@ -252,7 +288,29 @@ func (h *memoryChatGPTOwnerHandler) status(ctx context.Context, w http.ResponseW
 	writeJSON(w, http.StatusOK, chatGPTImportOwnerViewResponse{ChatGPTImportView: view})
 }
 
-func (h *memoryChatGPTOwnerHandler) confirm(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (h *memoryChatGPTOwnerHandler) progress(ctx context.Context, w http.ResponseWriter, r *http.Request, exportID string) {
+	if err := chatGPTOwnerValidateNoQuery(r); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if err := chatGPTOwnerValidateNoRequestBody(r); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	requestID, ownerID, actorID, ok := chatGPTOwnerScope(ctx, h.userID)
+	if !ok {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "blocked")
+		return
+	}
+	progress, err := h.store.GetChatGPTImportProgress(ctx, requestID, ownerID, actorID, exportID)
+	if err != nil {
+		writeChatGPTOwnerStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, progress)
+}
+
+func (h *memoryChatGPTOwnerHandler) retry(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	if err := chatGPTOwnerValidateNoQuery(r); err != nil {
 		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
 		return
@@ -266,7 +324,7 @@ func (h *memoryChatGPTOwnerHandler) confirm(ctx context.Context, w http.Response
 		writeMemoryOwnerError(w, http.StatusInternalServerError, "blocked")
 		return
 	}
-	request, err := decodeChatGPTOwnerConfirm(w, r, h.limits.ConfirmMaxBytes)
+	request, err := decodeChatGPTOwnerRetryRequest(w, r, h.limits.ConfirmMaxBytes)
 	if errors.Is(err, errChatGPTOwnerTooLarge) {
 		writeMemoryOwnerError(w, http.StatusRequestEntityTooLarge, "too_large")
 		return
@@ -275,15 +333,12 @@ func (h *memoryChatGPTOwnerHandler) confirm(ctx context.Context, w http.Response
 		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	input := domainmemory.ChatGPTImportConfirmInput{
-		RequestID: requestID, OwnerID: ownerID, ActorID: actorID,
-		ExportID: strings.TrimSpace(request.ExportID), Reason: strings.TrimSpace(request.Reason), Apply: request.Apply,
-	}
+	input := domainmemory.ChatGPTImportRetryInput{RequestID: requestID, OwnerID: ownerID, ActorID: actorID, ExportID: strings.TrimSpace(request.ExportID)}
 	if err := input.Validate(); err != nil {
 		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	result, err := h.store.ConfirmChatGPTImportCandidates(ctx, input)
+	result, err := h.store.RetryFailedChatGPTImportJobsForExport(ctx, input.RequestID, input.OwnerID, input.ActorID, input.ExportID)
 	if err != nil {
 		writeChatGPTOwnerStoreError(w, err)
 		return
@@ -291,83 +346,146 @@ func (h *memoryChatGPTOwnerHandler) confirm(ctx context.Context, w http.Response
 	writeJSON(w, http.StatusOK, result)
 }
 
-type chatGPTOwnerConfirmRequest struct {
+func (h *memoryChatGPTOwnerHandler) finalize(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if err := chatGPTOwnerValidateNoQuery(r); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if err := chatGPTOwnerValidateJSONContentType(r); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	requestID, ownerID, actorID, ok := chatGPTOwnerScope(ctx, h.userID)
+	if !ok {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "blocked")
+		return
+	}
+	request, err := decodeChatGPTOwnerFinalizeRequest(w, r, h.limits.ConfirmMaxBytes)
+	if errors.Is(err, errChatGPTOwnerTooLarge) {
+		writeMemoryOwnerError(w, http.StatusRequestEntityTooLarge, "too_large")
+		return
+	}
+	if err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	input := domainmemory.ChatGPTImportFinalizeInput{
+		RequestID: requestID,
+		OwnerID:   ownerID,
+		ActorID:   actorID,
+		ExportID:  strings.TrimSpace(request.ExportID),
+		Apply:     request.Apply,
+	}
+	if err := input.Validate(); err != nil {
+		writeMemoryOwnerError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	result, err := h.store.FinalizeChatGPTImport(ctx, input)
+	if err != nil {
+		writeChatGPTOwnerStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+type chatGPTOwnerRetryRequest struct {
 	ExportID string
-	Reason   string
+}
+
+type chatGPTOwnerFinalizeRequest struct {
+	ExportID string
 	Apply    bool
 }
 
-func decodeChatGPTOwnerConfirm(w http.ResponseWriter, r *http.Request, maxBytes int64) (chatGPTOwnerConfirmRequest, error) {
+func decodeChatGPTOwnerRetryRequest(w http.ResponseWriter, r *http.Request, maxBytes int64) (chatGPTOwnerRetryRequest, error) {
+	values, err := decodeChatGPTOwnerMachineObject(w, r, maxBytes, "export_id")
+	if err != nil {
+		return chatGPTOwnerRetryRequest{}, err
+	}
+	var result chatGPTOwnerRetryRequest
+	if raw, ok := values["export_id"]; !ok || !decodeNonNullJSONString(raw, &result.ExportID) {
+		return chatGPTOwnerRetryRequest{}, errChatGPTOwnerInvalid
+	}
+	return result, nil
+}
+
+func decodeChatGPTOwnerFinalizeRequest(w http.ResponseWriter, r *http.Request, maxBytes int64) (chatGPTOwnerFinalizeRequest, error) {
+	values, err := decodeChatGPTOwnerMachineObject(w, r, maxBytes, "export_id", "apply")
+	if err != nil {
+		return chatGPTOwnerFinalizeRequest{}, err
+	}
+	var result chatGPTOwnerFinalizeRequest
+	if raw, ok := values["export_id"]; !ok || !decodeNonNullJSONString(raw, &result.ExportID) {
+		return chatGPTOwnerFinalizeRequest{}, errChatGPTOwnerInvalid
+	}
+	raw, ok := values["apply"]
+	if !ok || !decodeNonNullJSONBool(raw, &result.Apply) {
+		return chatGPTOwnerFinalizeRequest{}, errChatGPTOwnerInvalid
+	}
+	return result, nil
+}
+
+func decodeChatGPTOwnerMachineObject(w http.ResponseWriter, r *http.Request, maxBytes int64, allowed ...string) (map[string]json.RawMessage, error) {
 	if r == nil || r.Body == nil {
-		return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+		return nil, errChatGPTOwnerInvalid
 	}
 	payload, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBytes+1))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerTooLarge
+			return nil, errChatGPTOwnerTooLarge
 		}
-		return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+		return nil, errChatGPTOwnerInvalid
 	}
 	if int64(len(payload)) > maxBytes {
-		return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerTooLarge
+		return nil, errChatGPTOwnerTooLarge
 	}
 	if !utf8.Valid(payload) {
-		return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+		return nil, errChatGPTOwnerInvalid
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	token, err := decoder.Token()
 	if err != nil {
-		return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+		return nil, errChatGPTOwnerInvalid
 	}
 	delim, ok := token.(json.Delim)
 	if !ok || delim != '{' {
-		return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+		return nil, errChatGPTOwnerInvalid
 	}
-	values := make(map[string]json.RawMessage, 3)
+	allowedKeys := make(map[string]struct{}, len(allowed))
+	for _, key := range allowed {
+		allowedKeys[key] = struct{}{}
+	}
+	values := make(map[string]json.RawMessage, len(allowed))
 	for decoder.More() {
 		keyToken, err := decoder.Token()
 		if err != nil {
-			return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+			return nil, errChatGPTOwnerInvalid
 		}
 		key, ok := keyToken.(string)
 		if !ok {
-			return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+			return nil, errChatGPTOwnerInvalid
 		}
 		if _, exists := values[key]; exists {
-			return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+			return nil, errChatGPTOwnerInvalid
 		}
-		if key != "export_id" && key != "reason" && key != "apply" {
-			return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+		if _, ok := allowedKeys[key]; !ok {
+			return nil, errChatGPTOwnerInvalid
 		}
 		var value json.RawMessage
 		if err := decoder.Decode(&value); err != nil {
-			return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+			return nil, errChatGPTOwnerInvalid
 		}
 		values[key] = value
 	}
 	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
-		return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+		return nil, errChatGPTOwnerInvalid
 	}
 	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
+		return nil, errChatGPTOwnerInvalid
 	}
-	var result chatGPTOwnerConfirmRequest
-	raw, ok := values["export_id"]
-	if !ok || !decodeNonNullJSONString(raw, &result.ExportID) {
-		return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
-	}
-	raw, ok = values["reason"]
-	if !ok || !decodeNonNullJSONString(raw, &result.Reason) {
-		return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
-	}
-	if raw, ok = values["apply"]; ok {
-		if !decodeNonNullJSONBool(raw, &result.Apply) {
-			return chatGPTOwnerConfirmRequest{}, errChatGPTOwnerInvalid
-		}
-	}
-	return result, nil
+	return values, nil
 }
 
 func decodeNonNullJSONString(raw json.RawMessage, target *string) bool {
@@ -736,6 +854,8 @@ func chatGPTOwnerErrorStatus(err error) (int, string) {
 		return http.StatusBadRequest, "invalid_request"
 	case domainmemory.ChatGPTImportErrorUnavailable:
 		return http.StatusServiceUnavailable, "unavailable"
+	case domainmemory.ChatGPTImportErrorBlocked:
+		return http.StatusConflict, "blocked"
 	case domainmemory.ChatGPTImportErrorInternal:
 		return http.StatusInternalServerError, "internal"
 	}
@@ -746,6 +866,8 @@ func chatGPTOwnerErrorStatus(err error) (int, string) {
 		return http.StatusBadRequest, "invalid_request"
 	case errors.Is(err, domainmemory.ErrChatGPTImportForbidden), errors.Is(err, domainmemory.ErrCommonRawForbidden):
 		return http.StatusForbidden, "forbidden"
+	case errors.Is(err, domainmemory.ErrChatGPTImportBlocked):
+		return http.StatusConflict, "blocked"
 	case errors.Is(err, domainmemory.ErrChatGPTImportNotFound):
 		return http.StatusNotFound, "not_found"
 	case errors.Is(err, domainmemory.ErrChatGPTImportConflict), errors.Is(err, domainmemory.ErrChatGPTImportSourceChanged), errors.Is(err, domainmemory.ErrCommonRawConflict), errors.Is(err, domainmemory.ErrCommonRawSourceChanged):

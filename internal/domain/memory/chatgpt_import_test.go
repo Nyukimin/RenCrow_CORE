@@ -229,6 +229,32 @@ func TestChatGPTImportConfirmInputValidationIsBoundedAndResultIsSafe(t *testing.
 	}
 }
 
+func TestChatGPTImportMachineContractsRejectPathAndExposeNoPrivateFields(t *testing.T) {
+	if err := (ChatGPTImportRetryInput{RequestID: "req", OwnerID: "ren", ActorID: "ren", ExportID: "export"}).Validate(); err != nil {
+		t.Fatalf("valid retry rejected: %v", err)
+	}
+	if err := (ChatGPTImportFinalizeInput{RequestID: "req", OwnerID: "ren", ActorID: "ren", ExportID: "export", Apply: true}).Validate(); err != nil {
+		t.Fatalf("valid finalize rejected: %v", err)
+	}
+	for _, err := range []error{
+		(ChatGPTImportRetryInput{RequestID: "req", OwnerID: "ren", ActorID: "ren", ExportID: "../export"}).Validate(),
+		(ChatGPTImportFinalizeInput{RequestID: "req", OwnerID: "ren", ActorID: "ren", ExportID: "export/secret", Apply: true}).Validate(),
+	} {
+		if ChatGPTImportErrorCodeOf(err) != ChatGPTImportErrorInvalid {
+			t.Fatalf("unsafe machine request error=%v code=%q", err, ChatGPTImportErrorCodeOf(err))
+		}
+	}
+	encoded, err := json.Marshal(ChatGPTImportFinalizeResult{RequestID: "req", ExportID: "export", Status: ChatGPTImportFinalizeStatusCompleted, ReceiptID: "opaque", AuditReference: "opaque"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"owner_id", "actor_id", "raw_record_id", "candidate", "statement", "content", "path"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("machine receipt exposes %q: %s", forbidden, encoded)
+		}
+	}
+}
+
 func testChatGPTImportBinding() ChatGPTImportBinding {
 	return ChatGPTImportBinding{
 		ExportID:          "export-1",

@@ -109,7 +109,10 @@ func cmdDiagnosticsInteractionAllowed(method, path string) bool {
 	}
 	if strings.HasPrefix(path, "/v1/memory/import/chatgpt/") {
 		exportID := strings.TrimPrefix(path, "/v1/memory/import/chatgpt/")
-		return exportID != "" && exportID != "confirm" && !strings.Contains(exportID, "/")
+		if strings.HasSuffix(exportID, "/progress") {
+			exportID = strings.TrimSuffix(exportID, "/progress")
+		}
+		return exportID != "" && exportID != "confirm" && exportID != "retry" && exportID != "finalize" && !strings.Contains(exportID, "/")
 	}
 	if strings.HasPrefix(path, "/viewer/memory/export/") {
 		return true
@@ -165,7 +168,7 @@ func cmdControlInteractionAllowed(method, path string) bool {
 	if path == "/v1/memory/user/propose" || strings.HasPrefix(path, "/v1/memory/user/") {
 		return true
 	}
-	if path == "/v1/memory/import/chatgpt" || path == "/v1/memory/import/chatgpt/confirm" {
+	if path == "/v1/memory/import/chatgpt" || path == "/v1/memory/import/chatgpt/confirm" || path == "/v1/memory/import/chatgpt/retry" || path == "/v1/memory/import/chatgpt/finalize" {
 		return true
 	}
 	switch path {

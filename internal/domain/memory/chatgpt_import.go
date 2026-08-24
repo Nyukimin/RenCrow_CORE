@@ -229,6 +229,7 @@ const (
 	ChatGPTImportErrorConflict        ChatGPTImportErrorCode = "conflict"
 	ChatGPTImportErrorSourceChanged   ChatGPTImportErrorCode = "source_changed"
 	ChatGPTImportErrorUnavailable     ChatGPTImportErrorCode = "unavailable"
+	ChatGPTImportErrorBlocked         ChatGPTImportErrorCode = "blocked"
 )
 
 // ChatGPTImportError is the bounded machine-readable failure contract. Its
@@ -276,6 +277,7 @@ var (
 	ErrChatGPTImportConflict        = &ChatGPTImportError{Code: ChatGPTImportErrorConflict}
 	ErrChatGPTImportSourceChanged   = &ChatGPTImportError{Code: ChatGPTImportErrorSourceChanged}
 	ErrChatGPTImportUnavailable     = &ChatGPTImportError{Code: ChatGPTImportErrorUnavailable}
+	ErrChatGPTImportBlocked         = &ChatGPTImportError{Code: ChatGPTImportErrorBlocked}
 )
 
 // ChatGPTImportBinding is the strict, source-owned binding. It intentionally
@@ -637,3 +639,113 @@ func (in ChatGPTImportConfirmInput) Validate() error {
 	}
 	return nil
 }
+
+// ChatGPTImportPromotionStateCounts is the fixed, export-scoped state
+// projection used by progress and finalization. The fields are deliberately
+// closed so a caller cannot make CORE render arbitrary database state.
+type ChatGPTImportPromotionStateCounts struct {
+	Pending   int `json:"pending"`
+	Running   int `json:"running"`
+	RetryWait int `json:"retry_wait"`
+	Completed int `json:"completed"`
+	Failed    int `json:"failed"`
+}
+
+// ChatGPTImportProgress is the deterministic owner projection for one export.
+// It contains counts and states only; it never carries Raw IDs, payloads,
+// statements, filesystem paths, or LLM output.
+type ChatGPTImportProgress struct {
+	RequestID                       string                            `json:"request_id"`
+	ImportID                        string                            `json:"import_id"`
+	ExportID                        string                            `json:"export_id"`
+	Apply                           bool                              `json:"apply"`
+	State                           ChatGPTImportState                `json:"state"`
+	ExpectedRawCount                int                               `json:"expected_raw_count"`
+	ExpectedProjectionCount         int                               `json:"expected_projection_count"`
+	ExpectedJobCount                int                               `json:"expected_job_count"`
+	RawCount                        int                               `json:"raw_count"`
+	ProjectionCount                 int                               `json:"projection_count"`
+	CompletedProjectionReceiptCount int                               `json:"completed_projection_receipt_count"`
+	JobCount                        int                               `json:"job_count"`
+	PromotionStateCounts            ChatGPTImportPromotionStateCounts `json:"promotion_state_counts"`
+	FailedWithEvidenceCount         int                               `json:"failed_with_evidence_count"`
+	MissingEvidenceCount            int                               `json:"missing_evidence_count"`
+	NonTerminalCount                int                               `json:"non_terminal_count"`
+	TerminalSuccess                 bool                              `json:"terminal_success"`
+}
+
+// ChatGPTImportRetryInput is the authenticated, export-scoped retry command.
+// It deliberately has no reason, path, candidate, or LLM fields.
+type ChatGPTImportRetryInput struct {
+	RequestID string `json:"request_id"`
+	OwnerID   string `json:"owner_id"`
+	ActorID   string `json:"actor_id"`
+	ExportID  string `json:"export_id"`
+}
+
+func (in ChatGPTImportRetryInput) Validate() error {
+	for _, value := range []string{in.RequestID, in.OwnerID, in.ActorID, in.ExportID} {
+		if err := validatePathlessIdentifier("retry_identifier", value); err != nil {
+			return NewChatGPTImportError(ChatGPTImportErrorInvalid, "invalid ChatGPT import retry request")
+		}
+	}
+	return nil
+}
+
+// ChatGPTImportRetryResult is a bounded deterministic retry receipt. Failed
+// jobs without evidence are reported but never requeued.
+type ChatGPTImportRetryResult struct {
+	RequestID            string `json:"request_id"`
+	ExportID             string `json:"export_id"`
+	RequeuedCount        int    `json:"requeued_count"`
+	MissingEvidenceCount int    `json:"missing_evidence_count"`
+	AuditReference       string `json:"audit_reference,omitempty"`
+}
+
+// ChatGPTImportFinalizeInput is the authenticated machine finalization
+// command. Finalization verifies persisted counts; Apply controls whether it
+// writes the immutable receipt. It never confirms, pins, or otherwise changes
+// UserMemory candidates.
+type ChatGPTImportFinalizeInput struct {
+	RequestID string `json:"request_id"`
+	OwnerID   string `json:"owner_id"`
+	ActorID   string `json:"actor_id"`
+	ExportID  string `json:"export_id"`
+	Apply     bool   `json:"apply"`
+}
+
+func (in ChatGPTImportFinalizeInput) Validate() error {
+	for _, value := range []string{in.RequestID, in.OwnerID, in.ActorID, in.ExportID} {
+		if err := validatePathlessIdentifier("finalize_identifier", value); err != nil {
+			return NewChatGPTImportError(ChatGPTImportErrorInvalid, "invalid ChatGPT import finalization request")
+		}
+	}
+	return nil
+}
+
+// ChatGPTImportFinalizeResult is the machine verification result returned for
+// a ready export. ReceiptID is empty for a dry-run and identifies the immutable
+// receipt when Apply is true. Its counters can be checked without reopening
+// private storage.
+type ChatGPTImportFinalizeResult struct {
+	RequestID                       string                            `json:"request_id"`
+	ExportID                        string                            `json:"export_id"`
+	Apply                           bool                              `json:"apply"`
+	Status                          string                            `json:"status"`
+	ReceiptID                       string                            `json:"receipt_id"`
+	ExpectedRawCount                int                               `json:"expected_raw_count"`
+	ExpectedProjectionCount         int                               `json:"expected_projection_count"`
+	ExpectedJobCount                int                               `json:"expected_job_count"`
+	RawCount                        int                               `json:"raw_count"`
+	ProjectionCount                 int                               `json:"projection_count"`
+	CompletedProjectionReceiptCount int                               `json:"completed_projection_receipt_count"`
+	JobCount                        int                               `json:"job_count"`
+	PromotionStateCounts            ChatGPTImportPromotionStateCounts `json:"promotion_state_counts"`
+	FailedWithEvidenceCount         int                               `json:"failed_with_evidence_count"`
+	MissingEvidenceCount            int                               `json:"missing_evidence_count"`
+	NonTerminalCount                int                               `json:"non_terminal_count"`
+	AuditReference                  string                            `json:"audit_reference"`
+	IdempotentReplay                bool                              `json:"idempotent_replay"`
+}
+
+const ChatGPTImportFinalizeStatusCompleted = "completed"

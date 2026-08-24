@@ -48,14 +48,29 @@ func (service *chatGPTOwnerTestService) Import(_ context.Context, request chatgp
 }
 
 type chatGPTOwnerTestStore struct {
-	statusCalls                  int
-	statusErr                    error
-	statusRequestID              string
-	statusOwnerID, statusActorID string
-	statusExportID               string
-	confirmErr                   error
-	statusView                   domainmemory.ChatGPTImportView
-	confirmInput                 domainmemory.ChatGPTImportConfirmInput
+	statusCalls                      int
+	statusErr                        error
+	statusRequestID                  string
+	statusOwnerID, statusActorID     string
+	statusExportID                   string
+	statusView                       domainmemory.ChatGPTImportView
+	progressCalls                    int
+	progressErr                      error
+	progressRequestID                string
+	progressOwnerID, progressActorID string
+	progressExportID                 string
+	progress                         domainmemory.ChatGPTImportProgress
+	retryCalls                       int
+	retryErr                         error
+	retryRequestID                   string
+	retryOwnerID, retryActorID       string
+	retryExportID                    string
+	retryResult                      domainmemory.ChatGPTImportRetryResult
+	finalizeCalls                    int
+	finalizeErr                      error
+	finalizeInput                    domainmemory.ChatGPTImportFinalizeInput
+	finalizeResult                   domainmemory.ChatGPTImportFinalizeResult
+	confirmCalls                     int
 }
 
 type chatGPTOwnerStageCloserStub struct {
@@ -96,12 +111,46 @@ func (store *chatGPTOwnerTestStore) GetChatGPTImportStatus(_ context.Context, re
 	return store.statusView, nil
 }
 
-func (store *chatGPTOwnerTestStore) ConfirmChatGPTImportCandidates(_ context.Context, input domainmemory.ChatGPTImportConfirmInput) (domainmemory.ChatGPTImportConfirmResult, error) {
-	store.confirmInput = input
-	if store.confirmErr != nil {
-		return domainmemory.ChatGPTImportConfirmResult{}, store.confirmErr
+func (store *chatGPTOwnerTestStore) GetChatGPTImportProgress(_ context.Context, requestID, ownerID, actorID, exportID string) (domainmemory.ChatGPTImportProgress, error) {
+	store.progressCalls++
+	store.progressRequestID, store.progressOwnerID, store.progressActorID, store.progressExportID = requestID, ownerID, actorID, exportID
+	if store.progressErr != nil {
+		return domainmemory.ChatGPTImportProgress{}, store.progressErr
 	}
-	return domainmemory.ChatGPTImportConfirmResult{RequestID: input.RequestID, ExportID: input.ExportID, Apply: input.Apply}, nil
+	return store.progress, nil
+}
+
+func (store *chatGPTOwnerTestStore) RetryFailedChatGPTImportJobsForExport(_ context.Context, requestID, ownerID, actorID, exportID string) (domainmemory.ChatGPTImportRetryResult, error) {
+	store.retryCalls++
+	store.retryRequestID, store.retryOwnerID, store.retryActorID, store.retryExportID = requestID, ownerID, actorID, exportID
+	if store.retryErr != nil {
+		return domainmemory.ChatGPTImportRetryResult{}, store.retryErr
+	}
+	result := store.retryResult
+	if result.RequestID == "" {
+		result.RequestID = requestID
+	}
+	if result.ExportID == "" {
+		result.ExportID = exportID
+	}
+	return result, nil
+}
+
+func (store *chatGPTOwnerTestStore) FinalizeChatGPTImport(_ context.Context, input domainmemory.ChatGPTImportFinalizeInput) (domainmemory.ChatGPTImportFinalizeResult, error) {
+	store.finalizeCalls++
+	store.finalizeInput = input
+	if store.finalizeErr != nil {
+		return domainmemory.ChatGPTImportFinalizeResult{}, store.finalizeErr
+	}
+	result := store.finalizeResult
+	if result.RequestID == "" {
+		result.RequestID = input.RequestID
+	}
+	if result.ExportID == "" {
+		result.ExportID = input.ExportID
+	}
+	result.Apply = input.Apply
+	return result, nil
 }
 
 func TestMemoryChatGPTOwnerHandlerRejectsMultipartPreamble(t *testing.T) {
@@ -247,9 +296,14 @@ func TestMemoryChatGPTOwnerHandlerBoundedUploadAndErrorMap(t *testing.T) {
 	}
 }
 
-func TestMemoryChatGPTOwnerHandlerStatusAndConfirmStrictContracts(t *testing.T) {
+func TestMemoryChatGPTOwnerHandlerStatusProgressRetryFinalizeAndRetiredConfirm(t *testing.T) {
 	view := domainmemory.ChatGPTImportView{EventID: "event", ImportID: "import", RequestID: "request", ExportID: "export-1", State: domainmemory.ChatGPTImportStateCompleted, AuditReference: "audit"}
-	store := &chatGPTOwnerTestStore{statusView: view}
+	store := &chatGPTOwnerTestStore{
+		statusView:     view,
+		progress:       domainmemory.ChatGPTImportProgress{ExportID: "export-1", TerminalSuccess: true},
+		retryResult:    domainmemory.ChatGPTImportRetryResult{RequeuedCount: 2, MissingEvidenceCount: 1},
+		finalizeResult: domainmemory.ChatGPTImportFinalizeResult{Status: domainmemory.ChatGPTImportFinalizeStatusCompleted, ReceiptID: "receipt-1", AuditReference: "audit"},
+	}
 	h := NewMemoryChatGPTOwnerHandler(&chatGPTOwnerTestService{}, store, chatGPTOwnerPrivateTempDir(t), "ren", []byte(chatGPTOwnerTestToken))
 	rec := httptest.NewRecorder()
 	h(rec, chatGPTOwnerRequest(http.MethodGet, "/v1/memory/import/chatgpt/export-1", "", nil, "cmd-diagnostics"))
@@ -274,6 +328,11 @@ func TestMemoryChatGPTOwnerHandlerStatusAndConfirmStrictContracts(t *testing.T) 
 	if rec.Code != http.StatusBadRequest || store.statusCalls != 1 {
 		t.Fatalf("status body accepted: status=%d calls=%d body=%s", rec.Code, store.statusCalls, rec.Body.String())
 	}
+	rec = httptest.NewRecorder()
+	h(rec, chatGPTOwnerRequest(http.MethodGet, "/v1/memory/import/chatgpt/export-1/progress", "", nil, "cmd-diagnostics"))
+	if rec.Code != http.StatusOK || store.progressCalls != 1 || store.progressExportID != "export-1" {
+		t.Fatalf("progress status=%d calls=%d export=%q body=%s", rec.Code, store.progressCalls, store.progressExportID, rec.Body.String())
+	}
 	wrongProfile := chatGPTOwnerRequest(http.MethodGet, "/v1/memory/import/chatgpt/export-1", "", nil, "cmd-control")
 	rec = httptest.NewRecorder()
 	h(rec, wrongProfile)
@@ -286,51 +345,67 @@ func TestMemoryChatGPTOwnerHandlerStatusAndConfirmStrictContracts(t *testing.T) 
 		}
 	}
 
+	rec = httptest.NewRecorder()
+	h(rec, chatGPTOwnerRequest(http.MethodPost, "/v1/memory/import/chatgpt/retry", "application/json", []byte(`{"export_id":"export-1"}`), "cmd-control"))
+	if rec.Code != http.StatusOK || store.retryCalls != 1 || store.retryExportID != "export-1" {
+		t.Fatalf("retry status=%d calls=%d export=%q body=%s", rec.Code, store.retryCalls, store.retryExportID, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h(rec, chatGPTOwnerRequest(http.MethodPost, "/v1/memory/import/chatgpt/finalize", "application/json", []byte(`{"export_id":"export-1","apply":true}`), "cmd-control"))
+	if rec.Code != http.StatusOK || store.finalizeCalls != 1 || store.finalizeInput.ExportID != "export-1" || !store.finalizeInput.Apply {
+		t.Fatalf("finalize status=%d calls=%d input=%+v body=%s", rec.Code, store.finalizeCalls, store.finalizeInput, rec.Body.String())
+	}
 	for _, tc := range []struct {
 		name string
 		body string
 		ct   string
-		want int
+		path string
 	}{
-		{name: "default-dry-run", body: `{"export_id":"export-1","reason":"reviewed"}`, ct: "application/json", want: http.StatusOK},
-		{name: "apply-true", body: `{"export_id":"export-1","reason":"reviewed","apply":true}`, ct: "application/json", want: http.StatusOK},
-		{name: "duplicate", body: `{"export_id":"export-1","reason":"a","reason":"b"}`, ct: "application/json", want: http.StatusBadRequest},
-		{name: "unknown", body: `{"export_id":"export-1","reason":"a","x":1}`, ct: "application/json", want: http.StatusBadRequest},
-		{name: "trailing", body: `{"export_id":"export-1","reason":"a"}{}`, ct: "application/json", want: http.StatusBadRequest},
-		{name: "missing-reason", body: `{"export_id":"export-1"}`, ct: "application/json", want: http.StatusBadRequest},
-		{name: "wrong-content-type", body: `{"export_id":"export-1","reason":"a"}`, ct: "text/plain", want: http.StatusBadRequest},
-		{name: "content-type-params", body: `{"export_id":"export-1","reason":"a"}`, ct: "application/json; charset=utf-8", want: http.StatusBadRequest},
-		{name: "missing-content-type", body: `{"export_id":"export-1","reason":"a"}`, ct: "", want: http.StatusBadRequest},
+		{name: "retry-duplicate", body: `{"export_id":"export-1","export_id":"other"}`, ct: "application/json", path: "/v1/memory/import/chatgpt/retry"},
+		{name: "retry-unknown", body: `{"export_id":"export-1","x":1}`, ct: "application/json", path: "/v1/memory/import/chatgpt/retry"},
+		{name: "retry-path", body: `{"export_id":"../secret"}`, ct: "application/json", path: "/v1/memory/import/chatgpt/retry"},
+		{name: "retry-trailing", body: `{"export_id":"export-1"}{}`, ct: "application/json", path: "/v1/memory/import/chatgpt/retry"},
+		{name: "retry-wrong-content-type", body: `{"export_id":"export-1"}`, ct: "text/plain", path: "/v1/memory/import/chatgpt/retry"},
+		{name: "finalize-missing-apply", body: `{"export_id":"export-1"}`, ct: "application/json", path: "/v1/memory/import/chatgpt/finalize"},
+		{name: "finalize-unknown", body: `{"export_id":"export-1","apply":true,"path":"/tmp/secret"}`, ct: "application/json", path: "/v1/memory/import/chatgpt/finalize"},
+		{name: "finalize-content-type-params", body: `{"export_id":"export-1","apply":true}`, ct: "application/json; charset=utf-8", path: "/v1/memory/import/chatgpt/finalize"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			before := store.confirmInput
+			beforeRetry, beforeFinalize := store.retryCalls, store.finalizeCalls
 			rec := httptest.NewRecorder()
-			h(rec, chatGPTOwnerRequest(http.MethodPost, "/v1/memory/import/chatgpt/confirm", tc.ct, []byte(tc.body), "cmd-control"))
-			if rec.Code != tc.want {
-				t.Fatalf("status=%d want=%d body=%s", rec.Code, tc.want, rec.Body.String())
+			h(rec, chatGPTOwnerRequest(http.MethodPost, tc.path, tc.ct, []byte(tc.body), "cmd-control"))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d want=%d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
 			}
-			if tc.name == "default-dry-run" && (store.confirmInput.Apply || store.confirmInput.Reason != "reviewed") {
-				t.Fatalf("confirm input=%+v", store.confirmInput)
+			if store.retryCalls != beforeRetry || store.finalizeCalls != beforeFinalize {
+				t.Fatalf("invalid request reached store retry=%d/%d finalize=%d/%d", store.retryCalls, beforeRetry, store.finalizeCalls, beforeFinalize)
 			}
-			if tc.want != http.StatusOK && store.confirmInput != before {
-				t.Fatalf("invalid request reached store: before=%+v after=%+v", before, store.confirmInput)
+			for _, private := range []string{"path", "content", "statement", "raw_record_id"} {
+				if bytes.Contains(rec.Body.Bytes(), []byte(private)) {
+					t.Fatalf("error exposes private field %q: %s", private, rec.Body.String())
+				}
 			}
 		})
 	}
+	rec = httptest.NewRecorder()
+	h(rec, chatGPTOwnerRequest(http.MethodPost, "/v1/memory/import/chatgpt/confirm", "application/json", []byte(`{"export_id":"export-1","reason":"reviewed","apply":true}`), "cmd-control"))
+	if rec.Code != http.StatusGone || store.confirmCalls != 0 || !bytes.Contains(rec.Body.Bytes(), []byte(`"retired"`)) {
+		t.Fatalf("retired confirm status=%d calls=%d body=%s", rec.Code, store.confirmCalls, rec.Body.String())
+	}
 }
 
-func TestMemoryChatGPTOwnerHandlerRejectsInvalidUTF8ConfirmBeforeStore(t *testing.T) {
+func TestMemoryChatGPTOwnerHandlerRejectsInvalidUTF8MachineRequestBeforeStore(t *testing.T) {
 	store := &chatGPTOwnerTestStore{}
 	h := NewMemoryChatGPTOwnerHandler(&chatGPTOwnerTestService{}, store, chatGPTOwnerPrivateTempDir(t), "ren", []byte(chatGPTOwnerTestToken))
-	payload := append([]byte(`{"export_id":"export-1","reason":"`), 0xff)
+	payload := append([]byte(`{"export_id":"`), 0xff)
 	payload = append(payload, []byte(`"}`)...)
 	rec := httptest.NewRecorder()
-	h(rec, chatGPTOwnerRequest(http.MethodPost, "/v1/memory/import/chatgpt/confirm", "application/json", payload, "cmd-control"))
+	h(rec, chatGPTOwnerRequest(http.MethodPost, "/v1/memory/import/chatgpt/retry", "application/json", payload, "cmd-control"))
 	if rec.Code != http.StatusBadRequest || !bytes.Contains(rec.Body.Bytes(), []byte(`"invalid_request"`)) {
 		t.Fatalf("status=%d body=%s, want invalid_request 400", rec.Code, rec.Body.String())
 	}
-	if store.confirmInput != (domainmemory.ChatGPTImportConfirmInput{}) {
-		t.Fatalf("invalid UTF-8 reached store: %+v", store.confirmInput)
+	if store.retryCalls != 0 {
+		t.Fatalf("invalid UTF-8 reached store: %d", store.retryCalls)
 	}
 }
 
@@ -345,6 +420,8 @@ func TestMemoryChatGPTOwnerHandlerRejectsUnknownOwnerStatusAndBadPath(t *testing
 		"/v1/memory/import/chatgpt/%00",
 		"/v1/memory/import/chatgpt/%ff",
 		"/v1/memory/import/chatgpt/a/extra",
+		"/v1/memory/import/chatgpt/a/extra/progress",
+		"/v1/memory/import/chatgpt/progress",
 		"/v1/memory/import/chatgpt/",
 	} {
 		rec := httptest.NewRecorder()
