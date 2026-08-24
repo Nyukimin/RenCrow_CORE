@@ -123,6 +123,52 @@ func TestServiceRunOneFailureConsumesAttempt(t *testing.T) {
 	}
 }
 
+func TestServiceRunOneMapsTypedExtractorFailuresToSafeCodes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "provider unavailable",
+			err:  domconv.NewProfileExtractionUnavailableError(errors.New("provider payload TOP-SECRET")),
+			want: "profile_extractor_unavailable",
+		},
+		{
+			name: "invalid response",
+			err:  domconv.NewProfileExtractionInvalidError(errors.New("raw response TOP-SECRET")),
+			want: "profile_extractor_invalid",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &promotionStoreStub{batch: testPromotionBatch()}
+			service := NewService(store, promotionExtractorStub{err: tc.err}, Options{})
+
+			if _, err := service.RunOne(context.Background()); err == nil {
+				t.Fatal("expected extractor failure")
+			}
+			if !store.failed || store.failureText != tc.want || strings.Contains(store.failureText, "TOP-SECRET") {
+				t.Fatalf("failed=%v code=%q want=%q", store.failed, store.failureText, tc.want)
+			}
+		})
+	}
+}
+
+func TestServiceRunOneTypedCancellationStillDefers(t *testing.T) {
+	store := &promotionStoreStub{batch: testPromotionBatch()}
+	service := NewService(store, promotionExtractorStub{
+		err: domconv.NewProfileExtractionUnavailableError(context.Canceled),
+	}, Options{})
+
+	_, err := service.RunOne(context.Background())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v want cancellation", err)
+	}
+	if !store.deferred || store.failed {
+		t.Fatalf("deferred=%v failed=%v", store.deferred, store.failed)
+	}
+}
+
 func TestServiceRunOnePassesExistingProjectionToExtractor(t *testing.T) {
 	store := &promotionStoreStub{
 		batch: testPromotionBatch(),

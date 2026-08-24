@@ -107,7 +107,14 @@ func (s *Service) RunOne(ctx context.Context) (RunResult, error) {
 			}
 			return result, extractErr
 		}
-		failErr := s.failBatch(batch, "profile_extractor_failed")
+		failureCode := "profile_extractor_failed"
+		switch {
+		case errors.Is(extractErr, domconv.ErrProfileExtractorUnavailable):
+			failureCode = "profile_extractor_unavailable"
+		case errors.Is(extractErr, domconv.ErrProfileExtractorInvalid):
+			failureCode = "profile_extractor_invalid"
+		}
+		failErr := s.failBatch(batch, failureCode)
 		if failErr != nil {
 			return result, errors.Join(extractErr, failErr)
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -68,6 +69,12 @@ var (
 )
 
 const evidencePathPlaceholder = "<path>"
+
+const profileExtractorRepairInstructionTemplate = `前回の応答はProfilePromotionの厳密な出力契約に違反しました。元の会話だけを根拠に、説明文・Markdown・コードフェンスを付けず、preferencesは文字列値だけのJSON object、factsは文字列だけのJSON arrayとし、キーをpreferencesとfactsだけにした単一JSON objectを返してください。各文字列は200文字以内の一文にしてください。preferencesとfactsを合わせて最大%d件にしてください。空の場合も{"preferences":{},"facts":[]}を返してください。`
+
+func profileExtractorRepairInstruction(candidateLimit int) string {
+	return fmt.Sprintf(profileExtractorRepairInstructionTemplate, candidateLimit)
+}
 
 // sanitizeEvidenceText removes the machine-generated noise that ChatGPT-imported
 // turns carry: pasted markup dumps, CSS rules, shell prompt lines, and bare path
@@ -435,8 +442,11 @@ func (e *LLMProfileExtractor) Extract(ctx context.Context, thread *domconv.Threa
 		perGroupLimit = 2
 	}
 	results := make([]*domconv.ProfileExtractionResult, 0, len(groups))
+	// One repair is allowed for the whole Extract call, even when evidence was
+	// split into multiple groups. This keeps the background retry budget fixed.
+	repairUsed := false
 	for index, group := range groups {
-		result, err := e.extractGroup(ctx, thread, existingText, group, materialDigest, perGroupLimit)
+		result, err := e.extractGroup(ctx, thread, existingText, group, materialDigest, perGroupLimit, &repairUsed)
 		if err != nil {
 			return nil, fmt.Errorf("profile extractor group %d/%d failed: %w", index+1, len(groups), err)
 		}
@@ -453,7 +463,11 @@ func (e *LLMProfileExtractor) extractGroup(
 	evidence string,
 	materialDigest string,
 	candidateLimit int,
+	repairUsed *bool,
 ) (*domconv.ProfileExtractionResult, error) {
+	if e == nil || e.provider == nil {
+		return nil, domconv.NewProfileExtractionUnavailableError(errors.New("profile extractor provider is not configured"))
+	}
 	evidenceSection := "会話:\n(このバッチにユーザー自身の発言はありません)"
 	if strings.TrimSpace(evidence) != "" {
 		evidenceSection = "会話（ユーザー本人の発言）:\n" + evidence
@@ -507,17 +521,38 @@ JSONオブジェクトの前後に説明文、マークダウン、コードフ�
 	resp, err := e.provider.Generate(requestCtx, req)
 	if err != nil {
 		log.Printf("[ProfileExtractor] LLM call failed: profile_extractor_unavailable")
-		return nil, fmt.Errorf("profile extractor LLM call failed: %w", err)
-	}
-	if len(resp.Content) > domainmemory.ProfilePromotionResponseBytesMax {
-		return nil, fmt.Errorf("profile extractor response exceeds %d bytes", domainmemory.ProfilePromotionResponseBytesMax)
+		return nil, domconv.NewProfileExtractionUnavailableError(err)
 	}
 
 	// JSONはresponse全体でなければならない。prefix/suffixからJSONを抜き出さない。
 	result, err := decodeProfileExtractionResult(resp.Content)
-	if err != nil {
-		log.Printf("[ProfileExtractor] JSON parse failed: profile_extractor_invalid")
-		return nil, fmt.Errorf("profile extractor JSON parse failed: %w", err)
+	if err == nil {
+		return result, nil
+	}
+	log.Printf("[ProfileExtractor] JSON parse failed: profile_extractor_invalid")
+	invalidErr := domconv.NewProfileExtractionInvalidError(err)
+	if repairUsed == nil || *repairUsed {
+		return nil, invalidErr
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	*repairUsed = true
+
+	repairReq := req
+	repairReq.Messages = append(append([]llm.Message(nil), req.Messages...), llm.Message{
+		Role:    "user",
+		Content: profileExtractorRepairInstruction(candidateLimit),
+	})
+	repairResp, repairErr := e.provider.Generate(requestCtx, repairReq)
+	if repairErr != nil {
+		log.Printf("[ProfileExtractor] repair LLM call failed: profile_extractor_unavailable")
+		return nil, domconv.NewProfileExtractionUnavailableError(repairErr)
+	}
+	result, repairValidationErr := decodeProfileExtractionResult(repairResp.Content)
+	if repairValidationErr != nil {
+		log.Printf("[ProfileExtractor] repaired JSON remains invalid: profile_extractor_invalid")
+		return nil, domconv.NewProfileExtractionInvalidError(repairValidationErr)
 	}
 
 	return result, nil

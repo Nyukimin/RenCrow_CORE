@@ -1,6 +1,46 @@
 package conversation
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
+
+func TestProfileExtractionErrorCategoriesAreTypedAndSecretSafe(t *testing.T) {
+	secret := errors.New("provider response TOP-SECRET")
+
+	for _, tc := range []struct {
+		name string
+		got  error
+		want ProfileExtractionErrorCode
+		ref  error
+	}{
+		{
+			name: "unavailable",
+			got:  NewProfileExtractionUnavailableError(secret),
+			want: ProfileExtractionErrorUnavailable,
+			ref:  ErrProfileExtractorUnavailable,
+		},
+		{
+			name: "invalid",
+			got:  NewProfileExtractionInvalidError(secret),
+			want: ProfileExtractionErrorInvalid,
+			ref:  ErrProfileExtractorInvalid,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !errors.Is(tc.got, tc.ref) {
+				t.Fatalf("error=%v is not category %v", tc.got, tc.ref)
+			}
+			if got := ProfileExtractionErrorCodeOf(tc.got); got != tc.want {
+				t.Fatalf("code=%q want %q", got, tc.want)
+			}
+			if strings.Contains(tc.got.Error(), "TOP-SECRET") {
+				t.Fatalf("typed error leaked provider detail: %q", tc.got.Error())
+			}
+		})
+	}
+}
 
 func TestProfileExtractionResult_HasData_Empty(t *testing.T) {
 	r := &ProfileExtractionResult{}

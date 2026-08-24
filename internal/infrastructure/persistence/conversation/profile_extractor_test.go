@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -13,13 +14,30 @@ import (
 )
 
 type profileExtractorRequestProvider struct {
-	response string
-	req      llm.GenerateRequest
+	response  string
+	responses []string
+	err       error
+	errs      []error
+	req       llm.GenerateRequest
+	requests  []llm.GenerateRequest
+	calls     int
 }
 
 func (p *profileExtractorRequestProvider) Generate(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+	p.calls++
 	p.req = req
-	return llm.GenerateResponse{Content: p.response}, nil
+	p.requests = append(p.requests, req)
+	if len(p.errs) >= p.calls && p.errs[p.calls-1] != nil {
+		return llm.GenerateResponse{}, p.errs[p.calls-1]
+	}
+	if p.err != nil {
+		return llm.GenerateResponse{}, p.err
+	}
+	response := p.response
+	if len(p.responses) >= p.calls {
+		response = p.responses[p.calls-1]
+	}
+	return llm.GenerateResponse{Content: response}, nil
 }
 
 func (p *profileExtractorRequestProvider) Name() string { return "profile-extractor-test" }
@@ -109,6 +127,115 @@ func TestLLMProfileExtractorRejectsOversizedOrInvalidFactOutput(t *testing.T) {
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
 	if _, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{}); err == nil {
 		t.Fatal("Extract accepted oversized response")
+	}
+}
+
+func TestLLMProfileExtractorRepairsInvalidResponseOnce(t *testing.T) {
+	provider := &profileExtractorRequestProvider{responses: []string{
+		`prefix {"preferences":{},"facts":[]}`,
+		`{"preferences":{"言語":"Go"},"facts":[]}`,
+	}}
+	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "言語", nil))
+
+	result, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
+	if err != nil {
+		t.Fatalf("Extract failed after repair: %v", err)
+	}
+	if provider.calls != 2 || len(provider.requests) != 2 {
+		t.Fatalf("provider calls=%d requests=%d want one initial plus one repair", provider.calls, len(provider.requests))
+	}
+	if result.NewPreferences["言語"] != "Go" {
+		t.Fatalf("repaired result=%v", result)
+	}
+	if len(provider.requests[1].Messages) != 2 || provider.requests[1].Messages[1].Content != profileExtractorRepairInstruction(16) {
+		t.Fatalf("repair request did not use fixed corrective instruction: %#v", provider.requests[1].Messages)
+	}
+	if strings.Contains(provider.requests[1].Messages[1].Content, "prefix") {
+		t.Fatal("repair instruction must not echo raw invalid provider output")
+	}
+}
+
+func TestLLMProfileExtractorRepairsLengthViolation(t *testing.T) {
+	tooLong := strings.Repeat("あ", domainmemory.ProfilePromotionPreferenceValueMax+1)
+	provider := &profileExtractorRequestProvider{responses: []string{
+		fmt.Sprintf(`{"preferences":{"好み":%q},"facts":[]}`, tooLong),
+		`{"preferences":{"好み":"Go"},"facts":[]}`,
+	}}
+	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "好み", nil))
+
+	result, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
+	if err != nil {
+		t.Fatalf("Extract failed after length repair: %v", err)
+	}
+	if provider.calls != 2 || result.NewPreferences["好み"] != "Go" {
+		t.Fatalf("calls=%d result=%v want one length repair", provider.calls, result)
+	}
+	if !strings.Contains(provider.requests[1].Messages[1].Content, "各文字列は200文字以内") ||
+		!strings.Contains(provider.requests[1].Messages[1].Content, "最大16件") {
+		t.Fatalf("repair instruction omits bounded contract: %q", provider.requests[1].Messages[1].Content)
+	}
+}
+
+func TestLLMProfileExtractorDoesNotRepairProviderUnavailable(t *testing.T) {
+	secret := errors.New("provider private payload TOP-SECRET")
+	provider := &profileExtractorRequestProvider{err: secret}
+	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
+
+	_, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
+	if err == nil || !errors.Is(err, domconv.ErrProfileExtractorUnavailable) {
+		t.Fatalf("error=%v want unavailable category", err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls=%d want no internal retry", provider.calls)
+	}
+	if strings.Contains(err.Error(), "TOP-SECRET") {
+		t.Fatalf("provider detail leaked through domain error: %v", err)
+	}
+}
+
+func TestLLMProfileExtractorRepairsAtMostOnce(t *testing.T) {
+	provider := &profileExtractorRequestProvider{responses: []string{
+		`{"preferences":{},"facts":[3]}`,
+		`{"preferences":{},"facts":[3]}`,
+		`{"preferences":{},"facts":[]}`,
+	}}
+	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
+
+	_, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
+	if err == nil || !errors.Is(err, domconv.ErrProfileExtractorInvalid) {
+		t.Fatalf("error=%v want invalid category after failed repair", err)
+	}
+	if provider.calls != 2 {
+		t.Fatalf("provider calls=%d want one repair maximum", provider.calls)
+	}
+}
+
+func TestLLMProfileExtractorRepairBudgetIsPerExtractAcrossGroups(t *testing.T) {
+	provider := &profileExtractorRequestProvider{responses: []string{
+		`{"preferences":{},"facts":[3]}`,
+		`{"preferences":{},"facts":[]}`,
+		`{"preferences":{},"facts":[3]}`,
+		`{"preferences":{},"facts":[]}`,
+	}}
+	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, strings.Repeat("a", 5000), nil))
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, strings.Repeat("b", 5000), nil))
+
+	_, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
+	if err == nil || !errors.Is(err, domconv.ErrProfileExtractorInvalid) {
+		t.Fatalf("error=%v want second group invalid after global repair budget", err)
+	}
+	if provider.calls != 3 {
+		t.Fatalf("provider calls=%d want two initial generations plus one repair", provider.calls)
 	}
 }
 
