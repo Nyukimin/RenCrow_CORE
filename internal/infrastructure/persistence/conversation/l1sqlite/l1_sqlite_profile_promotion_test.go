@@ -535,7 +535,7 @@ INSERT INTO l1_profile_promotion_job (
 	}
 }
 
-func TestProfilePromotionReadPathsBypassOccupiedWriteConnection(t *testing.T) {
+func TestProfilePromotionReadPathsBypassOccupiedWorkerConnections(t *testing.T) {
 	tests := []struct {
 		name string
 		read func(context.Context, *L1SQLiteStore) error
@@ -556,7 +556,7 @@ func TestProfilePromotionReadPathsBypassOccupiedWriteConnection(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+			t.Run(tt.name, func(t *testing.T) {
 			store := newProfilePromotionTestStore(t)
 			ctx := context.Background()
 			if err := store.SaveMessage(ctx, "ren", 30, "conv:read-path-"+tt.name, domconv.NewMessage(domconv.SpeakerUser, "read path", nil), MemoryStateObserved); err != nil {
@@ -567,6 +567,16 @@ func TestProfilePromotionReadPathsBypassOccupiedWriteConnection(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer writeConn.Close()
+			readConn1, err := store.readDB.Conn(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer readConn1.Close()
+			readConn2, err := store.readDB.Conn(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer readConn2.Close()
 
 			readCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 			defer cancel()

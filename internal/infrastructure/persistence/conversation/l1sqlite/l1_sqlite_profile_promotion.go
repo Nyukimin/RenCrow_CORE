@@ -469,7 +469,7 @@ func (s *L1SQLiteStore) ProfilePromotionDiagnostics(ctx context.Context) (domain
 		domainmemory.ProfilePromotionCompleted: 0,
 		domainmemory.ProfilePromotionFailed:    0,
 	}
-	rows, err := s.readDB.QueryContext(ctx, `
+	rows, err := s.progressDB.QueryContext(ctx, `
 SELECT state, COUNT(*)
 FROM l1_profile_promotion_job
 GROUP BY state
@@ -494,7 +494,7 @@ GROUP BY state
 	}
 
 	var failed, retryable, missing int
-	if err := s.readDB.QueryRowContext(ctx, `
+	if err := s.progressDB.QueryRowContext(ctx, `
 SELECT COUNT(*),
 	COALESCE(SUM(CASE WHEN e.id IS NOT NULL THEN 1 ELSE 0 END), 0),
 	COALESCE(SUM(CASE WHEN e.id IS NULL THEN 1 ELSE 0 END), 0)
@@ -558,7 +558,7 @@ func (s *L1SQLiteStore) ListProfilePromotionJobs(ctx context.Context, limit int)
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.readDB.QueryContext(ctx, `
+	rows, err := s.progressDB.QueryContext(ctx, `
 SELECT evidence_event_id, session_id, thread_id, state, attempt_count,
 	lease_token, lease_expires_at, next_attempt_at, last_error, created_at, updated_at
 FROM l1_profile_promotion_job
