@@ -4469,7 +4469,7 @@ function rememberVoiceDirectTimelineJob() {}
 function isVoiceDirectTimelineResponse() { return false; }
 function addJobNotificationToTimeline() {}
 function addCoordinationTraceToTimeline() {}
-` + sourceBetween(timelineJs, 'function addMsgToTimeline', 'function isCoordinationTraceEvent') + `
+` + sourceBetween(timelineJs, 'function renderTrustedGeneratedImages', 'function isCoordinationTraceEvent') + `
 globalThis.__addMsgToTimeline = addMsgToTimeline;
 `;
   const context = vm.createContext({
@@ -4649,11 +4649,15 @@ const idleModeForecastBtn = null;
 const idleModeStorySimpleBtn = null;
 const idleStopBtn = {disabled: false};
 const idleStateEl = {textContent: '', className: ''};
+const idlePlaybackPlayBtn = null;
+const idlePlaybackNextBtn = null;
+const idlePlaybackPreviousBtn = null;
 const state = {idleChat: {history: [], openIndex: -1}};
 function esc(s) { return String(s || ''); }
 function fdt(s) { return String(s || '-'); }
 function short(s) { return String(s || ''); }
 function fmt(s) { return String(s || ''); }
+function idleEsc(s) { return esc(s); }
 function copyTextPayload() {}
 function showToast() {}
 ` + sourceBetween(idleChatJs, 'function setIdleState', 'async function controlIdle') +
@@ -4787,6 +4791,8 @@ function esc(s) { return String(s || ''); }
 function fdt(s) { return String(s || '-'); }
 function short(s) { return String(s || ''); }
 function fmt(s) { return String(s || ''); }
+function idleEsc(s) { return esc(s); }
+function updateIdlePlaybackControls() {}
 function copyTextPayload() {}
 function showToast() {}
 ` + sourceBetween(idleChatJs, 'function setIdleState', 'async function controlIdle') + `
@@ -4889,7 +4895,7 @@ test('viewer chat send uses Shiro and Midori recipient contracts', () => {
   const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
   const store = new Map([['roleSelector.selectedTarget', 'shiro']]);
   const context = vm.createContext({
-    document: {querySelectorAll: () => []},
+    document: {querySelectorAll: () => [], getElementById: () => null},
     localStorage: {
       getItem: (key) => store.get(key) || null,
       setItem: (key, value) => store.set(key, String(value)),
@@ -4931,7 +4937,7 @@ test('viewer explicit chat keeps the selected Kuro recipient', () => {
   const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
   const store = new Map([['roleSelector.selectedTarget', 'kuro']]);
   const context = vm.createContext({
-    document: {querySelectorAll: () => []},
+    document: {querySelectorAll: () => [], getElementById: () => null},
     localStorage: {
       getItem: (key) => store.get(key) || null,
       setItem: (key, value) => store.set(key, String(value)),
@@ -4952,7 +4958,7 @@ test('viewer chat coder role target remains an explicit route command', () => {
   const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
   const store = new Map([['roleSelector.selectedTarget', 'coder1']]);
   const context = vm.createContext({
-    document: {querySelectorAll: () => []},
+    document: {querySelectorAll: () => [], getElementById: () => null},
     localStorage: {
       getItem: (key) => store.get(key) || null,
       setItem: (key, value) => store.set(key, String(value)),
