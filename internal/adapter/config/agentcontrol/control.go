@@ -395,7 +395,8 @@ func (c *Control) PromptForMio() string {
 	writeList(&b, "selection_principles", c.Tools.SelectionPrinciples)
 	if policy, ok := c.Tools.Agents["mio"]; ok {
 		fmt.Fprintf(&b, "- access: %s\n", policy.Access)
-		writeList(&b, "rules", policy.Rules)
+		fmt.Fprintf(&b, "- tool_rules_count: %d\n", len(policy.Rules))
+		b.WriteString("- 個別ruleは実行時CORE policyが判定し、Mio向けpromptへ全件展開しない。\n")
 		b.WriteString("- 書き込み、実装、外部副作用はMioが直接行わず、必要能力としてOrchestratorへ返す。\n")
 	}
 	return strings.TrimSpace(b.String())

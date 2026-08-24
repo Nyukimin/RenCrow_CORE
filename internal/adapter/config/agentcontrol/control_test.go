@@ -1,6 +1,7 @@
 package agentcontrol
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,41 @@ func TestLoadReadsAndRendersSharedAgentControl(t *testing.T) {
 		if !strings.Contains(midoriPrompt, want) {
 			t.Fatalf("Midori control prompt missing %q:\n%s", want, midoriPrompt)
 		}
+	}
+}
+
+func TestPromptForMioSummarizesToolRulesInsteadOfExpandingCatalog(t *testing.T) {
+	rules := make([]string, 0, 300)
+	for i := 0; i < 300; i++ {
+		rules = append(rules, fmt.Sprintf("data.capability.%03d", i))
+	}
+	control := &Control{
+		Agents: map[string]Agent{"mio": {Role: "conversation_orchestrator"}},
+		Routing: Routing{Fallback: "CHAT", Routes: map[string]Route{
+			"CHAT": {Primary: "mio"},
+		}},
+		Handoff: Handoff{DestinationOwner: "orchestrator"},
+		Tools: Tools{
+			MetadataSource:       "core_toolrunner",
+			AvailabilityRequired: true,
+			SelectionPrinciples:  []string{"CORE metadataで利用可能性を確認する"},
+			Agents: map[string]AgentTools{
+				"mio": {Access: "chat_read_only", Rules: rules},
+			},
+		},
+	}
+
+	prompt := control.PromptForMio()
+	for _, want := range []string{"tool_rules_count: 300", "個別ruleは実行時CORE policyが判定"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("Mio tool boundary missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "data.capability.000") || strings.Contains(prompt, "data.capability.299") {
+		t.Fatalf("Mio prompt expanded the full tool catalog: %d runes", len([]rune(prompt)))
+	}
+	if got := len([]rune(prompt)); got > 6000 {
+		t.Fatalf("Mio stable prompt is unbounded: %d runes", got)
 	}
 }
 
