@@ -1,9 +1,11 @@
 package conversation
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -614,5 +616,78 @@ func TestLLMProfileExtractorBoundsExistingContextToCompleteLines(t *testing.T) {
 	}
 	if strings.HasSuffix(section, "a") || strings.HasSuffix(section, "b") || strings.HasSuffix(section, "c") {
 		t.Fatalf("existing context ended mid-line: %q", section)
+	}
+}
+
+func TestProfileExtractorValidationCategoriesAreFixed(t *testing.T) {
+	tooMany := `{"preferences":{"a":"1","b":"2","c":"3","d":"4","e":"5"},"facts":[]}`
+	secretKey := "SECRET_FIELD_VALUE\n"
+	secretKeyResponse := fmt.Sprintf(`{"preferences":{%q:"ok"},"facts":[]}`, secretKey)
+	tooLong := strings.Repeat("v", domainmemory.ProfilePromotionPreferenceValueMax+1)
+	cases := []struct {
+		name     string
+		response string
+		want     string
+	}{
+		{name: "response_too_large", response: strings.Repeat("x", domainmemory.ProfilePromotionResponseBytesMax+1), want: "response_too_large"},
+		{name: "json_object", response: `prefix {"preferences":{},"facts":[]}`, want: "json_object"},
+		{name: "schema_fields", response: `{"preferences":{},"facts":[],"extra":true}`, want: "schema_fields"},
+		{name: "preferences_type", response: `{"preferences":[],"facts":[]}`, want: "preferences_type"},
+		{name: "facts_type", response: `{"preferences":{},"facts":null}`, want: "facts_type"},
+		{name: "candidate_limit", response: tooMany, want: "candidate_limit"},
+		{name: "preference_key", response: secretKeyResponse, want: "preference_key"},
+		{name: "preference_value", response: fmt.Sprintf(`{"preferences":{"kind":%q},"facts":[]}`, tooLong), want: "preference_value"},
+		{name: "preference_type", response: `{"preferences":{"kind":3},"facts":[]}`, want: "preference_type"},
+		{name: "fact_value", response: `{"preferences":{},"facts":[""]}`, want: "fact_value"},
+		{name: "fact_value_type", response: `{"preferences":{},"facts":[3]}`, want: "fact_value"},
+		{name: "invalid_json", response: `{"preferences":}`, want: "invalid_json"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := decodeProfileExtractionResultWithLimit(tc.response, domainmemory.ProfilePromotionPerGroupCandidateLimit)
+			if err == nil {
+				t.Fatal("decode unexpectedly succeeded")
+			}
+			if got := profileExtractorValidationCategory(err); got != tc.want {
+				t.Fatalf("category=%q want %q", got, tc.want)
+			}
+			if strings.Contains(profileExtractorValidationCategory(err), "SECRET_FIELD_VALUE") {
+				t.Fatalf("category exposed secret field value: %q", profileExtractorValidationCategory(err))
+			}
+		})
+	}
+	unknown := profileExtractorValidationCategory(errors.New("PROVIDER_RAW_SECRET"))
+	if unknown != "invalid_json" || strings.Contains(unknown, "PROVIDER_RAW_SECRET") {
+		t.Fatalf("unknown validation error was not safely mapped: %q", unknown)
+	}
+}
+
+func TestProfileExtractorValidationLogDoesNotExposeRawDetails(t *testing.T) {
+	secret := "TOP-SECRET-PREFERENCE"
+	invalid := fmt.Sprintf(`{"preferences":{%q:"ok"},"facts":[]}`, secret+"\n")
+	provider := &profileExtractorRequestProvider{responses: []string{invalid, invalid}}
+	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
+	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "秘密値の検証", nil))
+
+	var logs bytes.Buffer
+	previousWriter := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousWriter) })
+
+	_, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
+	if err == nil {
+		t.Fatal("Extract unexpectedly succeeded")
+	}
+	if provider.calls != 2 {
+		t.Fatalf("provider calls=%d want initial plus repair", provider.calls)
+	}
+	output := logs.String()
+	if got := strings.Count(output, "profile_extractor_invalid category=preference_key"); got != 2 {
+		t.Fatalf("validation log count=%d want 2: %q", got, output)
+	}
+	if strings.Contains(output, secret) || strings.Contains(output, "ok") || strings.Contains(output, "preference key") || strings.Contains(output, "fact[") || strings.Contains(output, "index") {
+		t.Fatalf("validation log exposed raw details: %q", output)
 	}
 }

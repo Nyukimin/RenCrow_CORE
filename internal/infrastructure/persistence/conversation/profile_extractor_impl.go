@@ -81,6 +81,68 @@ func profileExtractorRepairInstruction(candidateLimit int) string {
 	return fmt.Sprintf(profileExtractorRepairInstructionTemplate, profileExtractorCandidateLimit(candidateLimit))
 }
 
+type profileExtractorValidationCode string
+
+const (
+	profileValidationResponseTooLarge profileExtractorValidationCode = "response_too_large"
+	profileValidationJSONObject       profileExtractorValidationCode = "json_object"
+	profileValidationSchemaFields     profileExtractorValidationCode = "schema_fields"
+	profileValidationPreferencesType  profileExtractorValidationCode = "preferences_type"
+	profileValidationFactsType        profileExtractorValidationCode = "facts_type"
+	profileValidationCandidateLimit   profileExtractorValidationCode = "candidate_limit"
+	profileValidationPreferenceKey    profileExtractorValidationCode = "preference_key"
+	profileValidationPreferenceValue  profileExtractorValidationCode = "preference_value"
+	profileValidationPreferenceType   profileExtractorValidationCode = "preference_type"
+	profileValidationFactValue        profileExtractorValidationCode = "fact_value"
+	profileValidationInvalidJSON      profileExtractorValidationCode = "invalid_json"
+)
+
+// profileExtractorValidationError deliberately carries only a fixed category.
+// It must never retain a provider response, field value, key, or array index.
+type profileExtractorValidationError struct {
+	code profileExtractorValidationCode
+}
+
+func (e *profileExtractorValidationError) Error() string {
+	return "profile extractor invalid response"
+}
+
+func newProfileExtractorValidationError(code profileExtractorValidationCode) error {
+	return &profileExtractorValidationError{code: code}
+}
+
+func profileExtractorValidationCodeOf(err error) profileExtractorValidationCode {
+	var validationErr *profileExtractorValidationError
+	if errors.As(err, &validationErr) && validationErr != nil {
+		switch validationErr.code {
+		case profileValidationResponseTooLarge,
+			profileValidationJSONObject,
+			profileValidationSchemaFields,
+			profileValidationPreferencesType,
+			profileValidationFactsType,
+			profileValidationCandidateLimit,
+			profileValidationPreferenceKey,
+			profileValidationPreferenceValue,
+			profileValidationPreferenceType,
+			profileValidationFactValue,
+			profileValidationInvalidJSON:
+			return validationErr.code
+		}
+	}
+	return profileValidationInvalidJSON
+}
+
+// profileExtractorValidationCategory maps decoder failures to an allowlisted
+// operator category. Unknown errors fail closed to invalid_json without
+// inspecting or exposing their text.
+func profileExtractorValidationCategory(err error) string {
+	return string(profileExtractorValidationCodeOf(err))
+}
+
+func logProfileExtractorInvalid(err error) {
+	log.Printf("[ProfileExtractor] profile_extractor_invalid category=%s", profileExtractorValidationCategory(err))
+}
+
 // sanitizeEvidenceText removes the machine-generated noise that ChatGPT-imported
 // turns carry: pasted markup dumps, CSS rules, shell prompt lines, and bare path
 // listings. None of it states anything about the user, and it crowds out the
@@ -588,7 +650,7 @@ func (e *LLMProfileExtractor) extractGroup(
 	if err == nil {
 		return result, nil
 	}
-	log.Printf("[ProfileExtractor] JSON parse failed: profile_extractor_invalid")
+	logProfileExtractorInvalid(err)
 	invalidErr := domconv.NewProfileExtractionInvalidError(err)
 	if repairUsed == nil || *repairUsed {
 		return nil, invalidErr
@@ -610,7 +672,7 @@ func (e *LLMProfileExtractor) extractGroup(
 	}
 	result, repairValidationErr := decodeProfileExtractionResultWithLimit(repairResp.Content, candidateLimit)
 	if repairValidationErr != nil {
-		log.Printf("[ProfileExtractor] repaired JSON remains invalid: profile_extractor_invalid")
+		logProfileExtractorInvalid(repairValidationErr)
 		return nil, domconv.NewProfileExtractionInvalidError(repairValidationErr)
 	}
 
@@ -631,40 +693,64 @@ func decodeProfileExtractionResultWithLimit(content string, candidateLimit int) 
 		candidateLimit = domainmemory.ProfilePromotionRawCandidateLimit
 	}
 	if len(content) > domainmemory.ProfilePromotionResponseBytesMax {
-		return nil, fmt.Errorf("profile extractor response exceeds %d bytes", domainmemory.ProfilePromotionResponseBytesMax)
+		return nil, newProfileExtractorValidationError(profileValidationResponseTooLarge)
 	}
 	trimmed := bytes.TrimSpace([]byte(content))
-	if !utf8.Valid(trimmed) || len(trimmed) == 0 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
-		return nil, fmt.Errorf("profile extractor response must be one JSON object")
+	if !utf8.Valid(trimmed) || len(trimmed) == 0 {
+		return nil, newProfileExtractorValidationError(profileValidationInvalidJSON)
+	}
+	if trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		return nil, newProfileExtractorValidationError(profileValidationJSONObject)
 	}
 	fields, err := decodeUniqueJSONObject(trimmed)
 	if err != nil {
 		return nil, err
 	}
 	if fields == nil || len(fields) != 2 {
-		return nil, fmt.Errorf("profile extractor response must contain exactly preferences and facts")
+		return nil, newProfileExtractorValidationError(profileValidationSchemaFields)
 	}
 	preferencesRaw, ok := fields["preferences"]
 	if !ok {
-		return nil, fmt.Errorf("profile extractor response is missing preferences")
+		return nil, newProfileExtractorValidationError(profileValidationSchemaFields)
 	}
 	factsRaw, ok := fields["facts"]
 	if !ok {
-		return nil, fmt.Errorf("profile extractor response is missing facts")
+		return nil, newProfileExtractorValidationError(profileValidationSchemaFields)
 	}
-	rawPreferences, err := decodeUniqueJSONObject(bytes.TrimSpace(preferencesRaw))
+	preferencesTrimmed := bytes.TrimSpace(preferencesRaw)
+	if !json.Valid(preferencesTrimmed) {
+		return nil, newProfileExtractorValidationError(profileValidationInvalidJSON)
+	}
+	if len(preferencesTrimmed) == 0 || preferencesTrimmed[0] != '{' || preferencesTrimmed[len(preferencesTrimmed)-1] != '}' {
+		return nil, newProfileExtractorValidationError(profileValidationPreferencesType)
+	}
+	rawPreferences, err := decodeUniqueJSONObject(preferencesTrimmed)
 	if err != nil {
-		return nil, fmt.Errorf("preferences must be a JSON object")
+		code := profileExtractorValidationCodeOf(err)
+		if code == profileValidationJSONObject {
+			code = profileValidationPreferencesType
+		}
+		return nil, newProfileExtractorValidationError(code)
 	}
-	if bytes.Equal(bytes.TrimSpace(factsRaw), []byte("null")) {
-		return nil, fmt.Errorf("facts must be a JSON array")
+	factsTrimmed := bytes.TrimSpace(factsRaw)
+	if !json.Valid(factsTrimmed) {
+		return nil, newProfileExtractorValidationError(profileValidationInvalidJSON)
 	}
-	var facts []string
-	if err := json.Unmarshal(factsRaw, &facts); err != nil || facts == nil {
-		return nil, fmt.Errorf("facts must be a JSON array of strings")
+	if len(factsTrimmed) == 0 || factsTrimmed[0] != '[' || factsTrimmed[len(factsTrimmed)-1] != ']' {
+		return nil, newProfileExtractorValidationError(profileValidationFactsType)
+	}
+	var rawFacts []json.RawMessage
+	if err := json.Unmarshal(factsTrimmed, &rawFacts); err != nil || rawFacts == nil {
+		return nil, newProfileExtractorValidationError(profileValidationFactsType)
+	}
+	facts := make([]string, len(rawFacts))
+	for index, rawFact := range rawFacts {
+		if err := json.Unmarshal(rawFact, &facts[index]); err != nil {
+			return nil, newProfileExtractorValidationError(profileValidationFactValue)
+		}
 	}
 	if len(rawPreferences)+len(facts) > candidateLimit {
-		return nil, fmt.Errorf("profile extractor candidate count exceeds %d", candidateLimit)
+		return nil, newProfileExtractorValidationError(profileValidationCandidateLimit)
 	}
 	var payload profileExtractionPayload
 	payload.Preferences = rawPreferences
@@ -675,21 +761,21 @@ func decodeProfileExtractionResultWithLimit(content string, candidateLimit int) 
 	}
 	for key, raw := range payload.Preferences {
 		if strings.TrimSpace(key) == "" || strings.ContainsAny(key, "\r\n\x00") || len([]rune(key)) > domainmemory.ProfilePromotionPreferenceKeyMax {
-			return nil, fmt.Errorf("preference key %q is invalid", key)
+			return nil, newProfileExtractorValidationError(profileValidationPreferenceKey)
 		}
 		var stringValue string
 		if err := json.Unmarshal(raw, &stringValue); err == nil {
 			if strings.TrimSpace(stringValue) == "" || strings.ContainsAny(stringValue, "\r\n\x00") || len([]rune(stringValue)) > domainmemory.ProfilePromotionPreferenceValueMax {
-				return nil, fmt.Errorf("preference %q value is invalid", key)
+				return nil, newProfileExtractorValidationError(profileValidationPreferenceValue)
 			}
 			result.NewPreferences[key] = stringValue
 			continue
 		}
-		return nil, fmt.Errorf("preference %q must be a JSON string", key)
+		return nil, newProfileExtractorValidationError(profileValidationPreferenceType)
 	}
-	for i, fact := range result.NewFacts {
+	for _, fact := range result.NewFacts {
 		if strings.TrimSpace(fact) == "" || strings.ContainsAny(fact, "\r\n\x00") || len([]rune(fact)) > domainmemory.ProfilePromotionProjectionStatementMax {
-			return nil, fmt.Errorf("fact[%d] is invalid", i)
+			return nil, newProfileExtractorValidationError(profileValidationFactValue)
 		}
 	}
 	return result, nil
@@ -699,44 +785,41 @@ func decodeUniqueJSONObject(raw []byte) (map[string]json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	first, err := decoder.Token()
 	if err != nil {
-		return nil, err
+		return nil, newProfileExtractorValidationError(profileValidationInvalidJSON)
 	}
 	delim, ok := first.(json.Delim)
 	if !ok || delim != '{' {
-		return nil, fmt.Errorf("JSON value must be an object")
+		return nil, newProfileExtractorValidationError(profileValidationJSONObject)
 	}
 	values := make(map[string]json.RawMessage)
 	for decoder.More() {
 		keyToken, err := decoder.Token()
 		if err != nil {
-			return nil, err
+			return nil, newProfileExtractorValidationError(profileValidationInvalidJSON)
 		}
 		key, ok := keyToken.(string)
 		if !ok {
-			return nil, fmt.Errorf("JSON object key must be a string")
+			return nil, newProfileExtractorValidationError(profileValidationInvalidJSON)
 		}
 		if _, exists := values[key]; exists {
-			return nil, fmt.Errorf("duplicate JSON object key %q", key)
+			return nil, newProfileExtractorValidationError(profileValidationInvalidJSON)
 		}
 		var value json.RawMessage
 		if err := decoder.Decode(&value); err != nil {
-			return nil, err
+			return nil, newProfileExtractorValidationError(profileValidationInvalidJSON)
 		}
 		values[key] = value
 	}
 	last, err := decoder.Token()
 	if err != nil {
-		return nil, err
+		return nil, newProfileExtractorValidationError(profileValidationInvalidJSON)
 	}
 	if delim, ok := last.(json.Delim); !ok || delim != '}' {
-		return nil, fmt.Errorf("JSON object is not closed")
+		return nil, newProfileExtractorValidationError(profileValidationInvalidJSON)
 	}
 	var extra interface{}
 	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return nil, fmt.Errorf("JSON response contains more than one value")
-		}
-		return nil, err
+		return nil, newProfileExtractorValidationError(profileValidationInvalidJSON)
 	}
 	return values, nil
 }
