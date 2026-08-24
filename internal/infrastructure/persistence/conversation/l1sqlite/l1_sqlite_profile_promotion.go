@@ -41,17 +41,6 @@ func (s *L1SQLiteStore) ClaimProfilePromotionBatch(
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `
-INSERT OR IGNORE INTO l1_profile_promotion_job (
-	evidence_event_id, session_id, thread_id, state, attempt_count,
-	lease_token, last_error, created_at, updated_at
-)
-SELECT id, session_id, thread_id, ?, 0, '', '', created_at, ?
-FROM l1_memory_event
-WHERE namespace LIKE 'conv:%' AND speaker = ? AND memory_state = ?
-`, domainmemory.ProfilePromotionPending, now, string(domconv.SpeakerUser), MemoryStateObserved); err != nil {
-		return nil, rollbackL1Tx(tx, fmt.Errorf("enqueue existing profile promotion jobs: %w", err))
-	}
-	if _, err := tx.ExecContext(ctx, `
 UPDATE l1_profile_promotion_job
 SET state = ?, lease_token = '', lease_expires_at = NULL, updated_at = ?
 WHERE state = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?

@@ -69,6 +69,38 @@ func TestProfilePromotionPersistsUserRawJobsAndCompletesAtomically(t *testing.T)
 	}
 }
 
+func TestClaimProfilePromotionDoesNotRepairMissingJobsByScanningRaw(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if err := store.SaveMessage(ctx, "missing-job-session", 1, "conv:missing-job", domconv.NewMessage(domconv.SpeakerUser, "missing job", nil), MemoryStateObserved); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM l1_profile_promotion_job WHERE session_id = ?`, "missing-job-session"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+CREATE TRIGGER reject_claim_time_job_repair
+BEFORE INSERT ON l1_profile_promotion_job
+BEGIN
+	SELECT RAISE(ABORT, 'claim must not repair missing jobs');
+END`); err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := store.ClaimProfilePromotionBatch(ctx, 1, 5, time.Minute, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("claim attempted implicit raw repair: %v", err)
+	}
+	if batch != nil {
+		t.Fatalf("claim returned batch for raw without canonical job: %+v", batch)
+	}
+}
+
 func TestCompleteProfilePromotionRejectsInvalidCandidate(t *testing.T) {
 	store := newProfilePromotionTestStore(t)
 	ctx := context.Background()
