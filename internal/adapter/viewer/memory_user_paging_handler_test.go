@@ -14,23 +14,21 @@ type pagedUserMemoryStoreStub struct {
 	userMemoryStoreStub
 	query  string
 	offset int
-	total  int
 }
 
-func (s *pagedUserMemoryStoreStub) ListUserMemoriesPage(_ context.Context, userID, state string, includeInactive bool, query string, limit, offset int) ([]domainmemory.UserMemory, int, error) {
+func (s *pagedUserMemoryStoreStub) ListUserMemoriesPage(_ context.Context, userID, state string, includeInactive bool, query string, limit, offset int) ([]domainmemory.UserMemory, bool, error) {
 	s.listUserID = userID
 	s.listState = state
 	s.listInactive = includeInactive
 	s.listLimit = limit
 	s.query = query
 	s.offset = offset
-	return append([]domainmemory.UserMemory(nil), s.items...), s.total, nil
+	return append([]domainmemory.UserMemory(nil), s.items...), true, nil
 }
 
 func TestHandleUserMemoryListSupportsSearchStateAndPagination(t *testing.T) {
 	store := &pagedUserMemoryStoreStub{
 		userMemoryStoreStub: userMemoryStoreStub{items: []domainmemory.UserMemory{{ID: "mem-51"}}},
-		total:               121,
 	}
 	req := httptest.NewRequest(http.MethodGet, "/viewer/memory/user?user_id=ren&state=candidate&q=GPU&limit=50&offset=50", nil)
 	rec := httptest.NewRecorder()
@@ -43,7 +41,7 @@ func TestHandleUserMemoryListSupportsSearchStateAndPagination(t *testing.T) {
 	if store.listUserID != "ren" || store.listState != "candidate" || store.query != "GPU" || store.listLimit != 50 || store.offset != 50 {
 		t.Fatalf("unexpected page args: %+v", store)
 	}
-	for _, want := range []string{`"total":121`, `"offset":50`, `"limit":50`, `"has_more":true`} {
+	for _, want := range []string{`"total":null`, `"offset":50`, `"limit":50`, `"has_more":true`} {
 		if body := rec.Body.String(); !strings.Contains(body, want) {
 			t.Fatalf("response missing %s: %s", want, body)
 		}

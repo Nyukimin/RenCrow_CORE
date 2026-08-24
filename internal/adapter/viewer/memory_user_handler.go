@@ -22,7 +22,7 @@ type UserMemoryStore interface {
 // human must inspect more than the newest page. Runtime recall continues to use
 // the bounded ListUserMemories contract above.
 type UserMemoryPageStore interface {
-	ListUserMemoriesPage(ctx context.Context, userID, state string, includeInactive bool, query string, limit, offset int) ([]domainmemory.UserMemory, int, error)
+	ListUserMemoriesPage(ctx context.Context, userID, state string, includeInactive bool, query string, limit, offset int) ([]domainmemory.UserMemory, bool, error)
 }
 
 func HandleUserMemory(store UserMemoryStore) http.HandlerFunc {
@@ -145,14 +145,14 @@ func handleUserMemoryList(w http.ResponseWriter, r *http.Request, store UserMemo
 	}
 	includeInactive := r.URL.Query().Get("include_inactive") == "1" || strings.EqualFold(r.URL.Query().Get("include_inactive"), "true")
 	if pager, ok := store.(UserMemoryPageStore); ok {
-		items, total, pageErr := pager.ListUserMemoriesPage(r.Context(), userID, state, includeInactive, query, limit, offset)
+		items, hasMore, pageErr := pager.ListUserMemoriesPage(r.Context(), userID, state, includeInactive, query, limit, offset)
 		if pageErr != nil {
 			http.Error(w, "failed to list user memories: "+pageErr.Error(), http.StatusBadRequest)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"user_id": userID, "items": items, "total": total,
-			"limit": limit, "offset": offset, "has_more": offset+len(items) < total,
+			"user_id": userID, "items": items, "total": nil,
+			"limit": limit, "offset": offset, "has_more": hasMore,
 		})
 		return
 	}

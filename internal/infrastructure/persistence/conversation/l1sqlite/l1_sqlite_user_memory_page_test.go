@@ -24,19 +24,19 @@ func TestListUserMemoriesPageMakesOlderCandidatesSearchable(t *testing.T) {
 		}
 	}
 
-	items, total, err := store.ListUserMemoriesPage(ctx, "ren", MemoryStateCandidate, false, "GPU", 1, 0)
+	items, hasMore, err := store.ListUserMemoriesPage(ctx, "ren", MemoryStateCandidate, false, "GPU", 1, 0)
 	if err != nil {
 		t.Fatalf("ListUserMemoriesPage search: %v", err)
 	}
-	if total != 1 || len(items) != 1 || items[0].Statement != "middle GPU candidate" {
-		t.Fatalf("unexpected search page total=%d items=%+v", total, items)
+	if hasMore || len(items) != 1 || items[0].Statement != "middle GPU candidate" {
+		t.Fatalf("unexpected search page has_more=%v items=%+v", hasMore, items)
 	}
 
-	items, total, err = store.ListUserMemoriesPage(ctx, "ren", MemoryStateCandidate, false, "", 1, 1)
+	items, hasMore, err = store.ListUserMemoriesPage(ctx, "ren", MemoryStateCandidate, false, "", 1, 1)
 	if err != nil {
 		t.Fatalf("ListUserMemoriesPage offset: %v", err)
 	}
-	if total != 3 || len(items) != 1 {
-		t.Fatalf("unexpected offset page total=%d items=%+v", total, items)
+	if !hasMore || len(items) != 1 {
+		t.Fatalf("unexpected offset page has_more=%v items=%+v", hasMore, items)
 	}
 }

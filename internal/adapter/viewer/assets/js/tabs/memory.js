@@ -227,13 +227,13 @@ function renderUserMemory() {
   const count = document.getElementById('userMemoryCount');
   const items = Array.isArray(state.memory.userMemory) ? state.memory.userMemory : [];
   const error = String(state.memory.userMemoryFetchError || '');
-  const total = Number(state.memory.userMemoryTotal || 0);
+  const total = Number.isFinite(state.memory.userMemoryTotal) ? state.memory.userMemoryTotal : null;
   const pageStatus = document.getElementById('userMemoryPageStatus');
-  if (count) count.textContent = error ? '0' : String(total);
+  if (count) count.textContent = error ? '0' : (total === null ? String(userMemoryOffset + items.length) + (state.memory.userMemoryHasMore ? '+' : '') : String(total));
   if (pageStatus) {
     const first = items.length === 0 ? 0 : userMemoryOffset + 1;
     const last = userMemoryOffset + items.length;
-    pageStatus.textContent = first + '-' + last + ' / ' + total;
+    pageStatus.textContent = first + '-' + last + (total === null ? (state.memory.userMemoryHasMore ? ' / more' : '') : ' / ' + total);
   }
   if (userMemoryPrevBtn) userMemoryPrevBtn.disabled = userMemoryOffset === 0;
   if (userMemoryNextBtn) userMemoryNextBtn.disabled = !state.memory.userMemoryHasMore;
@@ -286,7 +286,7 @@ function refreshUserMemory() {
     .then((data) => {
       state.memory.userMemoryFetchError = '';
       state.memory.userMemory = Array.isArray(data.items) ? data.items : [];
-      state.memory.userMemoryTotal = Number(data.total || 0);
+      state.memory.userMemoryTotal = data.total === null || data.total === undefined ? null : Number(data.total);
       state.memory.userMemoryHasMore = Boolean(data.has_more);
       renderUserMemory();
     })
