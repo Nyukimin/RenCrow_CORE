@@ -167,40 +167,24 @@ func (s *L1SQLiteStore) queueOldConversationRaw(ctx context.Context, cutoff time
 	if limit <= 0 {
 		return nil
 	}
+	events, err := s.rawLifecycleArchiveCandidates(ctx, cutoff, limit)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin raw archive outbox queue transaction: %w", err)
 	}
-	rows, err := tx.QueryContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
-       memory_state, layer, source, created_at, updated_at
-FROM l1_memory_event
-WHERE namespace LIKE 'conv:%'
-  AND memory_state = ?
-  AND layer = ?
-  AND created_at < ?
-  AND NOT EXISTS (
-	SELECT 1
-	FROM l1_profile_promotion_job p
-	WHERE p.evidence_event_id = l1_memory_event.id
-	  AND p.state <> ?
-  )
-ORDER BY created_at ASC, id ASC
-LIMIT ?`, MemoryStateObserved, MemoryLayerL1, cutoff.UTC(), domainmemory.ProfilePromotionCompleted, limit)
-	if err != nil {
-		return rollbackL1Tx(tx, fmt.Errorf("failed to query raw archive candidates: %w", err))
-	}
-	events, scanErr := scanL1Events(rows)
-	closeErr := rows.Close()
-	if scanErr != nil {
-		return rollbackL1Tx(tx, fmt.Errorf("failed to scan raw archive candidates: %w", scanErr))
-	}
-	if closeErr != nil {
-		return rollbackL1Tx(tx, fmt.Errorf("failed to close raw archive candidates: %w", closeErr))
-	}
 	now := time.Now().UTC()
 	var conflictErr error
 	for _, event := range events {
+		eligible, err := rawLifecycleArchiveCandidateEligible(ctx, tx, event.ID, cutoff)
+		if err != nil {
+			return rollbackL1Tx(tx, fmt.Errorf("failed to revalidate raw archive candidate %s: %w", event.ID, err))
+		}
+		if !eligible {
+			continue
+		}
 		eventSHA256, err := CanonicalL1MemoryEventSHA256(event)
 		if err != nil {
 			return rollbackL1Tx(tx, fmt.Errorf("failed to hash raw archive candidate %s: %w", event.ID, err))
@@ -273,6 +257,61 @@ WHERE event_id = ?`, L1RawLifecycleArchiveOutboxStatusPending, now, event.ID); e
 		return fmt.Errorf("failed to commit raw archive outbox queue: %w", err)
 	}
 	return conflictErr
+}
+
+func (s *L1SQLiteStore) rawLifecycleArchiveCandidates(ctx context.Context, cutoff time.Time, limit int) ([]L1MemoryEvent, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.readDB.QueryContext(ctx, `
+SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+       memory_state, layer, source, created_at, updated_at
+FROM l1_memory_event
+WHERE namespace LIKE 'conv:%'
+  AND memory_state = ?
+  AND layer = ?
+  AND created_at < ?
+  AND NOT EXISTS (
+	SELECT 1
+	FROM l1_profile_promotion_job p
+	WHERE p.evidence_event_id = l1_memory_event.id
+	  AND p.state <> ?
+  )
+ORDER BY created_at ASC, id ASC
+LIMIT ?`, MemoryStateObserved, MemoryLayerL1, cutoff.UTC(), domainmemory.ProfilePromotionCompleted, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query raw archive candidates: %w", err)
+	}
+	events, scanErr := scanL1Events(rows)
+	closeErr := rows.Close()
+	if scanErr != nil {
+		return nil, fmt.Errorf("failed to scan raw archive candidates: %w", scanErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("failed to close raw archive candidates: %w", closeErr)
+	}
+	return events, nil
+}
+
+func rawLifecycleArchiveCandidateEligible(ctx context.Context, tx *sql.Tx, eventID string, cutoff time.Time) (bool, error) {
+	var eligible bool
+	err := tx.QueryRowContext(ctx, `
+SELECT EXISTS (
+	SELECT 1
+	FROM l1_memory_event e
+	WHERE e.id = ?
+	  AND e.namespace LIKE 'conv:%'
+	  AND e.memory_state = ?
+	  AND e.layer = ?
+	  AND e.created_at < ?
+	  AND NOT EXISTS (
+		SELECT 1
+		FROM l1_profile_promotion_job p
+		WHERE p.evidence_event_id = e.id
+		  AND p.state <> ?
+	  )
+)`, eventID, MemoryStateObserved, MemoryLayerL1, cutoff.UTC(), domainmemory.ProfilePromotionCompleted).Scan(&eligible)
+	return eligible, err
 }
 
 func (s *L1SQLiteStore) drainRawLifecycleArchiveOutbox(ctx context.Context, cutoff time.Time, limit int) (int, error) {

@@ -66,6 +66,28 @@ func TestL1SQLiteStore_RawLifecycleRequiresArchiveStoreBeforeDelete(t *testing.T
 	}
 }
 
+func TestL1SQLiteStore_RawLifecycleCandidateDiscoveryDoesNotUseWriteConnection(t *testing.T) {
+	ctx := context.Background()
+	store, _, now := newOldRawLifecycleStore(t, "conv:raw-read-snapshot")
+	defer store.Close()
+
+	writeConn, err := store.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("reserve write connection: %v", err)
+	}
+	defer writeConn.Close()
+
+	discoveryCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	events, err := store.rawLifecycleArchiveCandidates(discoveryCtx, now.Add(-30*24*time.Hour), 1)
+	if err != nil {
+		t.Fatalf("discover raw lifecycle candidates while write connection is reserved: %v", err)
+	}
+	if len(events) != 1 || events[0].Namespace != "conv:raw-read-snapshot" {
+		t.Fatalf("raw lifecycle candidates=%+v, want one read-only snapshot candidate", events)
+	}
+}
+
 func TestL1SQLiteStore_RawLifecycleArchiveSuccessDeletesOnlyAfterReceipt(t *testing.T) {
 	ctx := context.Background()
 	store, eventID, now := newOldRawLifecycleStore(t, "conv:raw-success")
