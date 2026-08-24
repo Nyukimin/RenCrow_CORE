@@ -29,6 +29,10 @@ CREATE INDEX IF NOT EXISTS idx_l1_memory_namespace_created ON l1_memory_event(na
 CREATE INDEX IF NOT EXISTS idx_l1_memory_session_created ON l1_memory_event(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_memory_state_created ON l1_memory_event(memory_state, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_memory_thread_created ON l1_memory_event(thread_id, created_at DESC);
+DROP TRIGGER IF EXISTS trg_l1_user_memory_search_insert;
+DROP TRIGGER IF EXISTS trg_l1_user_memory_search_update;
+DROP TRIGGER IF EXISTS trg_l1_user_memory_search_delete;
+DROP TABLE IF EXISTS l1_user_memory_search_projection;
 CREATE TABLE IF NOT EXISTS l1_user_memory_viewer_projection (
 	id TEXT PRIMARY KEY,
 	namespace TEXT NOT NULL,
