@@ -458,45 +458,72 @@ func (s *L1SQLiteStore) ListUserMemoriesPage(ctx context.Context, userID, state 
 		return nil, false, errors.New("user memory offset must be non-negative")
 	}
 
-	where := "p.namespace = ?"
+	where := "namespace = ?"
 	args := []interface{}{namespace}
 	if !includeInactive {
-		where += " AND p.active = 1"
+		where += " AND active = 1"
 	}
 	if state != "" {
-		where += " AND p.memory_state = ?"
+		where += " AND memory_state = ?"
 		args = append(args, state)
 	}
 	if query != "" {
-		where += " AND (instr(lower(p.statement), lower(?)) > 0 OR instr(lower(p.evidence_text), lower(?)) > 0)"
+		where += " AND (instr(lower(statement), lower(?)) > 0 OR instr(lower(evidence_text), lower(?)) > 0)"
 		args = append(args, query, query)
 	}
 
 	pageArgs := append(append([]interface{}{}, args...), limit+1, offset)
 	rows, err := s.db.QueryContext(ctx, `
-SELECT e.id, e.namespace, e.session_id, e.thread_id, e.speaker, e.message, e.meta_json,
-       e.memory_state, e.layer, e.source, e.created_at, e.updated_at
-FROM l1_memory_event e
-JOIN l1_user_memory_search_projection p ON p.id = e.id
+SELECT id, namespace, user_id, memory_type, memory_state, active, statement, evidence_text,
+       confidence, sensitivity, scope, lifecycle_status, decay_score, superseded_by, created_at, updated_at
+FROM l1_user_memory_viewer_projection
 WHERE `+where+`
-ORDER BY p.created_at DESC, p.id DESC
+ORDER BY created_at DESC, id DESC
 LIMIT ? OFFSET ?
 `, pageArgs...)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to query user memory page: %w", err)
 	}
 	defer rows.Close()
-	events, err := scanL1Events(rows)
-	if err != nil {
-		return nil, false, err
-	}
-	items := make([]domainmemory.UserMemory, 0, len(events))
-	for _, event := range events {
-		item, strictErr := strictUserMemoryFromEvent(event)
-		if strictErr != nil {
+	items := make([]domainmemory.UserMemory, 0, limit+1)
+	for rows.Next() {
+		var item domainmemory.UserMemory
+		var active int
+		var evidenceJSON string
+		if err := rows.Scan(
+			&item.ID, &item.Namespace, &item.UserID, &item.Type, &item.State, &active,
+			&item.Statement, &evidenceJSON, &item.Confidence, &item.Sensitivity, &item.Scope,
+			&item.LifecycleStatus, &item.DecayScore, &item.SupersededBy, &item.CreatedAt, &item.UpdatedAt,
+		); err != nil {
+			return nil, false, err
+		}
+		if err := json.Unmarshal([]byte(evidenceJSON), &item.EvidenceEventIDs); err != nil {
 			continue
 		}
-		items = append(items, *item)
+		item.Active = active == 1
+		if item.Namespace != NamespaceKindUser+":"+item.UserID || strings.TrimSpace(item.Statement) == "" {
+			continue
+		}
+		if err := domainmemory.ValidateUserMemoryType(item.Type); err != nil {
+			continue
+		}
+		if err := domainmemory.ValidateMemoryState(item.State); err != nil {
+			continue
+		}
+		validEvidence := true
+		for _, evidenceID := range item.EvidenceEventIDs {
+			if strings.TrimSpace(evidenceID) == "" {
+				validEvidence = false
+				break
+			}
+		}
+		if !validEvidence {
+			continue
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
 	}
 	hasMore := len(items) > limit
 	if hasMore {

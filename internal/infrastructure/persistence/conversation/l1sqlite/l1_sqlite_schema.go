@@ -29,51 +29,102 @@ CREATE INDEX IF NOT EXISTS idx_l1_memory_namespace_created ON l1_memory_event(na
 CREATE INDEX IF NOT EXISTS idx_l1_memory_session_created ON l1_memory_event(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_memory_state_created ON l1_memory_event(memory_state, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_memory_thread_created ON l1_memory_event(thread_id, created_at DESC);
-CREATE TABLE IF NOT EXISTS l1_user_memory_search_projection (
+CREATE TABLE IF NOT EXISTS l1_user_memory_viewer_projection (
 	id TEXT PRIMARY KEY,
 	namespace TEXT NOT NULL,
+	user_id TEXT NOT NULL,
+	memory_type TEXT NOT NULL,
 	memory_state TEXT NOT NULL,
 	active INTEGER NOT NULL,
 	statement TEXT NOT NULL,
 	evidence_text TEXT NOT NULL,
-	created_at TIMESTAMP NOT NULL
+	confidence REAL NOT NULL,
+	sensitivity TEXT NOT NULL,
+	scope TEXT NOT NULL,
+	lifecycle_status TEXT NOT NULL,
+	decay_score REAL NOT NULL,
+	superseded_by TEXT NOT NULL,
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_l1_user_memory_search_page
-	ON l1_user_memory_search_projection(namespace, memory_state, active, created_at DESC, id DESC);
-CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_search_insert
+CREATE INDEX IF NOT EXISTS idx_l1_user_memory_viewer_page
+	ON l1_user_memory_viewer_projection(namespace, memory_state, active, created_at DESC, id DESC);
+CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_viewer_insert_v2
 AFTER INSERT ON l1_memory_event
 WHEN NEW.speaker = 'memory' AND NEW.layer = 'L1' AND json_valid(NEW.meta_json)
+	AND json_type(NEW.meta_json, '$.user_id') = 'text'
+	AND json_type(NEW.meta_json, '$.type') = 'text'
+	AND trim(COALESCE(json_extract(NEW.meta_json, '$.statement'), '')) = trim(NEW.message)
+	AND NEW.namespace = 'user:' || trim(json_extract(NEW.meta_json, '$.user_id'))
 BEGIN
-	INSERT INTO l1_user_memory_search_projection(id, namespace, memory_state, active, statement, evidence_text, created_at)
-	VALUES(NEW.id, NEW.namespace, NEW.memory_state,
+	INSERT INTO l1_user_memory_viewer_projection(
+		id, namespace, user_id, memory_type, memory_state, active, statement, evidence_text,
+		confidence, sensitivity, scope, lifecycle_status, decay_score, superseded_by, created_at, updated_at)
+	VALUES(NEW.id, NEW.namespace, trim(json_extract(NEW.meta_json, '$.user_id')),
+		trim(json_extract(NEW.meta_json, '$.type')), NEW.memory_state,
 		CAST(COALESCE(json_extract(NEW.meta_json, '$.active'), 1) AS INTEGER),
-		NEW.message, COALESCE(json_extract(NEW.meta_json, '$.evidence_event_ids'), '[]'), NEW.created_at)
+		NEW.message, COALESCE(json_extract(NEW.meta_json, '$.evidence_event_ids'), '[]'),
+		CAST(COALESCE(json_extract(NEW.meta_json, '$.confidence'), 0.5) AS REAL),
+		COALESCE(json_extract(NEW.meta_json, '$.sensitivity'), 'normal'),
+		COALESCE(json_extract(NEW.meta_json, '$.scope'), 'all_personas'),
+		COALESCE(json_extract(NEW.meta_json, '$.lifecycle_status'), ''),
+		CAST(COALESCE(json_extract(NEW.meta_json, '$.decay_score'), 0) AS REAL),
+		COALESCE(json_extract(NEW.meta_json, '$.superseded_by'), ''), NEW.created_at, NEW.updated_at)
 	ON CONFLICT(id) DO UPDATE SET
-		namespace=excluded.namespace, memory_state=excluded.memory_state, active=excluded.active,
-		statement=excluded.statement, evidence_text=excluded.evidence_text, created_at=excluded.created_at;
+		namespace=excluded.namespace, user_id=excluded.user_id, memory_type=excluded.memory_type,
+		memory_state=excluded.memory_state, active=excluded.active, statement=excluded.statement,
+		evidence_text=excluded.evidence_text, confidence=excluded.confidence,
+		sensitivity=excluded.sensitivity, scope=excluded.scope, lifecycle_status=excluded.lifecycle_status,
+		decay_score=excluded.decay_score, superseded_by=excluded.superseded_by,
+		created_at=excluded.created_at, updated_at=excluded.updated_at;
 END;
-CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_search_update
-AFTER UPDATE OF namespace, speaker, message, meta_json, memory_state, layer, created_at ON l1_memory_event
+CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_viewer_update_v2
+AFTER UPDATE OF namespace, speaker, message, meta_json, memory_state, layer, created_at, updated_at ON l1_memory_event
 BEGIN
-	DELETE FROM l1_user_memory_search_projection WHERE id = OLD.id;
-	INSERT INTO l1_user_memory_search_projection(id, namespace, memory_state, active, statement, evidence_text, created_at)
-	SELECT NEW.id, NEW.namespace, NEW.memory_state,
+	DELETE FROM l1_user_memory_viewer_projection WHERE id = OLD.id;
+	INSERT INTO l1_user_memory_viewer_projection(
+		id, namespace, user_id, memory_type, memory_state, active, statement, evidence_text,
+		confidence, sensitivity, scope, lifecycle_status, decay_score, superseded_by, created_at, updated_at)
+	SELECT NEW.id, NEW.namespace, trim(json_extract(NEW.meta_json, '$.user_id')),
+		trim(json_extract(NEW.meta_json, '$.type')), NEW.memory_state,
 		CAST(COALESCE(json_extract(NEW.meta_json, '$.active'), 1) AS INTEGER),
-		NEW.message, COALESCE(json_extract(NEW.meta_json, '$.evidence_event_ids'), '[]'), NEW.created_at
-	WHERE NEW.speaker = 'memory' AND NEW.layer = 'L1' AND json_valid(NEW.meta_json);
+		NEW.message, COALESCE(json_extract(NEW.meta_json, '$.evidence_event_ids'), '[]'),
+		CAST(COALESCE(json_extract(NEW.meta_json, '$.confidence'), 0.5) AS REAL),
+		COALESCE(json_extract(NEW.meta_json, '$.sensitivity'), 'normal'),
+		COALESCE(json_extract(NEW.meta_json, '$.scope'), 'all_personas'),
+		COALESCE(json_extract(NEW.meta_json, '$.lifecycle_status'), ''),
+		CAST(COALESCE(json_extract(NEW.meta_json, '$.decay_score'), 0) AS REAL),
+		COALESCE(json_extract(NEW.meta_json, '$.superseded_by'), ''), NEW.created_at, NEW.updated_at
+	WHERE NEW.speaker = 'memory' AND NEW.layer = 'L1' AND json_valid(NEW.meta_json)
+		AND json_type(NEW.meta_json, '$.user_id') = 'text'
+		AND json_type(NEW.meta_json, '$.type') = 'text'
+		AND trim(COALESCE(json_extract(NEW.meta_json, '$.statement'), '')) = trim(NEW.message)
+		AND NEW.namespace = 'user:' || trim(json_extract(NEW.meta_json, '$.user_id'));
 END;
-CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_search_delete
+CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_viewer_delete_v2
 AFTER DELETE ON l1_memory_event
 BEGIN
-	DELETE FROM l1_user_memory_search_projection WHERE id = OLD.id;
+	DELETE FROM l1_user_memory_viewer_projection WHERE id = OLD.id;
 END;
-INSERT OR IGNORE INTO l1_user_memory_search_projection(id, namespace, memory_state, active, statement, evidence_text, created_at)
-SELECT id, namespace, memory_state,
+INSERT OR IGNORE INTO l1_user_memory_viewer_projection(
+	id, namespace, user_id, memory_type, memory_state, active, statement, evidence_text,
+	confidence, sensitivity, scope, lifecycle_status, decay_score, superseded_by, created_at, updated_at)
+SELECT id, namespace, trim(json_extract(meta_json, '$.user_id')), trim(json_extract(meta_json, '$.type')), memory_state,
 	CAST(COALESCE(json_extract(meta_json, '$.active'), 1) AS INTEGER),
-	message, COALESCE(json_extract(meta_json, '$.evidence_event_ids'), '[]'), created_at
+	message, COALESCE(json_extract(meta_json, '$.evidence_event_ids'), '[]'),
+	CAST(COALESCE(json_extract(meta_json, '$.confidence'), 0.5) AS REAL),
+	COALESCE(json_extract(meta_json, '$.sensitivity'), 'normal'),
+	COALESCE(json_extract(meta_json, '$.scope'), 'all_personas'),
+	COALESCE(json_extract(meta_json, '$.lifecycle_status'), ''),
+	CAST(COALESCE(json_extract(meta_json, '$.decay_score'), 0) AS REAL),
+	COALESCE(json_extract(meta_json, '$.superseded_by'), ''), created_at, updated_at
 FROM l1_memory_event
 WHERE speaker = 'memory' AND layer = 'L1' AND json_valid(meta_json)
-	AND NOT EXISTS (SELECT 1 FROM l1_user_memory_search_projection LIMIT 1);
+	AND json_type(meta_json, '$.user_id') = 'text'
+	AND json_type(meta_json, '$.type') = 'text'
+	AND trim(COALESCE(json_extract(meta_json, '$.statement'), '')) = trim(message)
+	AND namespace = 'user:' || trim(json_extract(meta_json, '$.user_id'))
+	AND NOT EXISTS (SELECT 1 FROM l1_user_memory_viewer_projection LIMIT 1);
 CREATE TABLE IF NOT EXISTS l1_profile_promotion_job (
 	evidence_event_id TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL,
