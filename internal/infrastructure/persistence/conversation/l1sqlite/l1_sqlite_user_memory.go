@@ -458,27 +458,28 @@ func (s *L1SQLiteStore) ListUserMemoriesPage(ctx context.Context, userID, state 
 		return nil, false, errors.New("user memory offset must be non-negative")
 	}
 
-	where := "namespace = ? AND speaker = ? AND layer = ?"
-	args := []interface{}{namespace, string(domconv.SpeakerMemory), MemoryLayerL1}
+	where := "p.namespace = ?"
+	args := []interface{}{namespace}
 	if !includeInactive {
-		where += " AND COALESCE(json_extract(meta_json, '$.active'), 1) = 1"
+		where += " AND p.active = 1"
 	}
 	if state != "" {
-		where += " AND memory_state = ?"
+		where += " AND p.memory_state = ?"
 		args = append(args, state)
 	}
 	if query != "" {
-		where += " AND (instr(lower(message), lower(?)) > 0 OR instr(lower(meta_json), lower(?)) > 0)"
+		where += " AND (instr(lower(p.statement), lower(?)) > 0 OR instr(lower(p.evidence_text), lower(?)) > 0)"
 		args = append(args, query, query)
 	}
 
 	pageArgs := append(append([]interface{}{}, args...), limit+1, offset)
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
-       memory_state, layer, source, created_at, updated_at
-FROM l1_memory_event
+SELECT e.id, e.namespace, e.session_id, e.thread_id, e.speaker, e.message, e.meta_json,
+       e.memory_state, e.layer, e.source, e.created_at, e.updated_at
+FROM l1_memory_event e
+JOIN l1_user_memory_search_projection p ON p.id = e.id
 WHERE `+where+`
-ORDER BY created_at DESC, rowid DESC
+ORDER BY p.created_at DESC, p.id DESC
 LIMIT ? OFFSET ?
 `, pageArgs...)
 	if err != nil {

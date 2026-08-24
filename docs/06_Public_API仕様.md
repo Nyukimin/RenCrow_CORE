@@ -211,6 +211,7 @@ Recall経路へのfallbackはこのAPIにありません。
 `GET /viewer/memory/user`は従来の`user_id | state | include_inactive | limit`に加え、Viewerの全候補到達用に
 `q`（statement／Evidenceの256 rune以下の部分一致）と`offset`（0以上1,000,000以下）を受け、`items | total=null | limit | offset | has_more`を返します。
 通常表示のたびに大容量DBを全件COUNTせず、`limit+1`のbounded queryから`has_more`を決定します。
+検索は正本L1 eventとtrigger同期する再生成可能な`l1_user_memory_search_projection`でIDを選び、正本eventを返します。
 これはowner-facing projectionの検索契約であり、LLMへ渡すRecall件数やprompt injection上限を拡張しません。
 legacy ChatGPT `import/confirm`はproduction登録から削除済みで、Common Raw owner APIのfallback／拡張に戻しません。
 CMDはこのAPIのclientであり、owner serviceではありません。CMDが行うのはcommand構文の解析、認証tokenの

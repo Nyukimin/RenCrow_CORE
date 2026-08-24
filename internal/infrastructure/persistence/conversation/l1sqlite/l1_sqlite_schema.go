@@ -29,6 +29,51 @@ CREATE INDEX IF NOT EXISTS idx_l1_memory_namespace_created ON l1_memory_event(na
 CREATE INDEX IF NOT EXISTS idx_l1_memory_session_created ON l1_memory_event(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_memory_state_created ON l1_memory_event(memory_state, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_memory_thread_created ON l1_memory_event(thread_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS l1_user_memory_search_projection (
+	id TEXT PRIMARY KEY,
+	namespace TEXT NOT NULL,
+	memory_state TEXT NOT NULL,
+	active INTEGER NOT NULL,
+	statement TEXT NOT NULL,
+	evidence_text TEXT NOT NULL,
+	created_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_l1_user_memory_search_page
+	ON l1_user_memory_search_projection(namespace, memory_state, active, created_at DESC, id DESC);
+CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_search_insert
+AFTER INSERT ON l1_memory_event
+WHEN NEW.speaker = 'memory' AND NEW.layer = 'L1' AND json_valid(NEW.meta_json)
+BEGIN
+	INSERT INTO l1_user_memory_search_projection(id, namespace, memory_state, active, statement, evidence_text, created_at)
+	VALUES(NEW.id, NEW.namespace, NEW.memory_state,
+		CAST(COALESCE(json_extract(NEW.meta_json, '$.active'), 1) AS INTEGER),
+		NEW.message, COALESCE(json_extract(NEW.meta_json, '$.evidence_event_ids'), '[]'), NEW.created_at)
+	ON CONFLICT(id) DO UPDATE SET
+		namespace=excluded.namespace, memory_state=excluded.memory_state, active=excluded.active,
+		statement=excluded.statement, evidence_text=excluded.evidence_text, created_at=excluded.created_at;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_search_update
+AFTER UPDATE OF namespace, speaker, message, meta_json, memory_state, layer, created_at ON l1_memory_event
+BEGIN
+	DELETE FROM l1_user_memory_search_projection WHERE id = OLD.id;
+	INSERT INTO l1_user_memory_search_projection(id, namespace, memory_state, active, statement, evidence_text, created_at)
+	SELECT NEW.id, NEW.namespace, NEW.memory_state,
+		CAST(COALESCE(json_extract(NEW.meta_json, '$.active'), 1) AS INTEGER),
+		NEW.message, COALESCE(json_extract(NEW.meta_json, '$.evidence_event_ids'), '[]'), NEW.created_at
+	WHERE NEW.speaker = 'memory' AND NEW.layer = 'L1' AND json_valid(NEW.meta_json);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_l1_user_memory_search_delete
+AFTER DELETE ON l1_memory_event
+BEGIN
+	DELETE FROM l1_user_memory_search_projection WHERE id = OLD.id;
+END;
+INSERT OR IGNORE INTO l1_user_memory_search_projection(id, namespace, memory_state, active, statement, evidence_text, created_at)
+SELECT id, namespace, memory_state,
+	CAST(COALESCE(json_extract(meta_json, '$.active'), 1) AS INTEGER),
+	message, COALESCE(json_extract(meta_json, '$.evidence_event_ids'), '[]'), created_at
+FROM l1_memory_event
+WHERE speaker = 'memory' AND layer = 'L1' AND json_valid(meta_json)
+	AND NOT EXISTS (SELECT 1 FROM l1_user_memory_search_projection LIMIT 1);
 CREATE TABLE IF NOT EXISTS l1_profile_promotion_job (
 	evidence_event_id TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL,

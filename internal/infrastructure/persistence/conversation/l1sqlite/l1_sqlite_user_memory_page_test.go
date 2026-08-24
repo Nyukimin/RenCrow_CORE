@@ -39,4 +39,15 @@ func TestListUserMemoriesPageMakesOlderCandidatesSearchable(t *testing.T) {
 	if !hasMore || len(items) != 1 {
 		t.Fatalf("unexpected offset page has_more=%v items=%+v", hasMore, items)
 	}
+
+	if _, err := store.ForgetUserMemory(ctx, items[0].ID, "projection sync test"); err != nil {
+		t.Fatalf("ForgetUserMemory: %v", err)
+	}
+	active, _, err := store.ListUserMemoriesPage(ctx, "ren", MemoryStateCandidate, false, items[0].Statement, 10, 0)
+	if err != nil {
+		t.Fatalf("ListUserMemoriesPage after forget: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("inactive memory remained in search projection: %+v", active)
+	}
 }
