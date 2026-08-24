@@ -2,6 +2,7 @@ package l1sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -235,11 +236,15 @@ func TestChatGPTImportProgressDoesNotWaitForLifecycleReadConnection(t *testing.T
 	defer store.Close()
 	fixture := appendChatGPTMachineFixtureOnStore(t, store, "dedicated-progress-read", domainmemory.ProfilePromotionCompleted)
 
-	lifecycleRead, err := store.readDB.Conn(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	lifecycleReads := make([]*sql.Conn, 0, l1ReadPoolSize)
+	for range l1ReadPoolSize {
+		conn, err := store.readDB.Conn(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		lifecycleReads = append(lifecycleReads, conn)
+		defer conn.Close()
 	}
-	defer lifecycleRead.Close()
 
 	ctx, cancel := context.WithTimeout(chatGPTMachineContext(t, "dedicated-progress-read", "machine-owner"), 500*time.Millisecond)
 	defer cancel()

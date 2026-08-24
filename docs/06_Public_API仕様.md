@@ -300,10 +300,10 @@ binding件数、state合計、missing job／evidenceとledger `job_count`が不�
 `POST /v1/memory/import/chatgpt/confirm`はbulk candidate confirmとしては廃止し、互換応答が必要な場合もcandidateを変更せず
 明示的にretiredを返します。
 
-`progress`のread-only queryは、writeを1接続へ直列化する通常L1 poolとは分離したSQLite
-`query_only` read poolで同一WAL snapshotを読みます。read poolは2接続へ固定し、長いlifecycle candidate探索が一接続を
-使用中でもoperator progressを処理します。background write／readのpool待ちをAPI timeoutへ持ち込まず、このpoolによる
-状態変更は拒否します。`retry`／`finalize --apply`は引き続きowner write transactionだけを使います。
+`progress`のread-only queryは、writeを1接続へ直列化する通常L1 poolと、lifecycle／ProfilePromotion context用の
+2接続read poolの双方から分離した1接続のSQLite `query_only` handleで同一WAL snapshotを読みます。
+background writeや複数のbackground readのpool待ちをAPI timeoutへ持ち込まず、このhandleによる状態変更は拒否します。
+`retry`／`finalize --apply`は引き続きowner write transactionだけを使います。
 
 uploadはauthenticated loopbackの一つのmultipart requestだけを受けます。`X-RenCrow-Client: RenCrow_CMD`と
 `X-RenCrow-Interaction-Profile: cmd-control`を既存のcredential／scope guardと組み合わせ、profile headerをcredentialの代替にしません。

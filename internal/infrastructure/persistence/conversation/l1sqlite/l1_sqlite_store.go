@@ -61,6 +61,7 @@ const (
 type L1SQLiteStore struct {
 	db                       *sql.DB
 	readDB                   *sql.DB
+	progressDB               *sql.DB
 	archiveStore             L1ArchiveStore
 	ownerArchiveStore        OwnerArchiveStore
 	parquetArchiveStore      OwnerParquetArchiveStore
@@ -99,15 +100,37 @@ func NewL1SQLiteStore(dbPath string) (*L1SQLiteStore, error) {
 		return nil, fmt.Errorf("failed to initialize l1 sqlite read connection: %w", err)
 	}
 	store.readDB = readDB
+	progressDB, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout%3d5000&_pragma=query_only%3d1&_time_format=sqlite")
+	if err != nil {
+		readDB.Close()
+		db.Close()
+		return nil, fmt.Errorf("failed to open l1 sqlite progress connection: %w", err)
+	}
+	progressDB.SetMaxOpenConns(1)
+	progressDB.SetMaxIdleConns(1)
+	if err := progressDB.PingContext(context.Background()); err != nil {
+		progressDB.Close()
+		readDB.Close()
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize l1 sqlite progress connection: %w", err)
+	}
+	store.progressDB = progressDB
 	return store, nil
 }
 
 func (s *L1SQLiteStore) Close() error {
+	var progressErr error
+	if s.progressDB != nil {
+		progressErr = s.progressDB.Close()
+	}
 	var readErr error
 	if s.readDB != nil {
 		readErr = s.readDB.Close()
 	}
 	writeErr := s.db.Close()
+	if progressErr != nil {
+		return progressErr
+	}
 	if readErr != nil {
 		return readErr
 	}

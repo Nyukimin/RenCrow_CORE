@@ -39,13 +39,13 @@ func (s *L1SQLiteStore) GetChatGPTImportProgress(ctx context.Context, requestID,
 	if err := input.Validate(); err != nil {
 		return domainmemory.ChatGPTImportProgress{}, err
 	}
-	if s == nil || s.readDB == nil {
+	if s == nil || s.progressDB == nil {
 		return domainmemory.ChatGPTImportProgress{}, chatGPTMachineUnavailableError()
 	}
 	if err := authorizeChatGPTImportScope(ctx, input.RequestID, input.OwnerID, input.ActorID); err != nil {
 		return domainmemory.ChatGPTImportProgress{}, chatGPTMachineForbiddenError()
 	}
-	tx, err := s.readDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.progressDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return domainmemory.ChatGPTImportProgress{}, chatGPTMachineInternalError()
 	}
