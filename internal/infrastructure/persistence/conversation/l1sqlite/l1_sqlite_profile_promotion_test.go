@@ -535,6 +535,48 @@ INSERT INTO l1_profile_promotion_job (
 	}
 }
 
+func TestProfilePromotionReadPathsBypassOccupiedWriteConnection(t *testing.T) {
+	tests := []struct {
+		name string
+		read func(context.Context, *L1SQLiteStore) error
+	}{
+		{
+			name: "jobs",
+			read: func(ctx context.Context, store *L1SQLiteStore) error {
+				_, err := store.ListProfilePromotionJobs(ctx, 10)
+				return err
+			},
+		},
+		{
+			name: "diagnostics",
+			read: func(ctx context.Context, store *L1SQLiteStore) error {
+				_, err := store.ProfilePromotionDiagnostics(ctx)
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newProfilePromotionTestStore(t)
+			ctx := context.Background()
+			if err := store.SaveMessage(ctx, "ren", 30, "conv:read-path-"+tt.name, domconv.NewMessage(domconv.SpeakerUser, "read path", nil), MemoryStateObserved); err != nil {
+				t.Fatal(err)
+			}
+			writeConn, err := store.db.Conn(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer writeConn.Close()
+
+			readCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+			defer cancel()
+			if err := tt.read(readCtx, store); err != nil {
+				t.Fatalf("read path waited for occupied write connection: %v", err)
+			}
+		})
+	}
+}
+
 func TestClaimProfilePromotionPrefersLiveConversationOverOlderChatGPTBackfill(t *testing.T) {
 	store := newProfilePromotionTestStore(t)
 	ctx := context.Background()
