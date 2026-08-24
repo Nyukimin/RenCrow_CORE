@@ -31,14 +31,9 @@ func NewLLMProfileExtractor(provider llm.LLMProvider) *LLMProfileExtractor {
 	return &LLMProfileExtractor{
 		provider: provider,
 		minTurns: 3,
-		// The Worker target is a reasoning model whose analysis channel
-		// consumes output tokens before the final JSON. 256 tokens starved
-		// the final channel (EMPTY_FINAL_CONTENT) or truncated the JSON,
-		// and 4096 still starved it when high-effort reasoning ran long.
-		// Extraction therefore requests low reasoning effort and keeps a
-		// token budget with headroom; CORE still validates the response
-		// against the 64KiB exact-JSON contract after generation.
-		maxTokens:   8192,
+		// Extraction uses a logical CORE completion budget. Provider/model
+		// context details stay behind the RenCrow_LLM boundary.
+		maxTokens:   domainmemory.ProfilePromotionMaxTokens,
 		temperature: 0.1,
 	}
 }
@@ -72,8 +67,18 @@ const evidencePathPlaceholder = "<path>"
 
 const profileExtractorRepairInstructionTemplate = `前回の応答はProfilePromotionの厳密な出力契約に違反しました。元の会話だけを根拠に、説明文・Markdown・コードフェンスを付けず、preferencesは文字列値だけのJSON object、factsは文字列だけのJSON arrayとし、キーをpreferencesとfactsだけにした単一JSON objectを返してください。各文字列は200文字以内の一文にしてください。preferencesとfactsを合わせて最大%d件にしてください。空の場合も{"preferences":{},"facts":[]}を返してください。`
 
+func profileExtractorCandidateLimit(candidateLimit int) int {
+	if candidateLimit < 1 {
+		return 1
+	}
+	if candidateLimit > domainmemory.ProfilePromotionPerGroupCandidateLimit {
+		return domainmemory.ProfilePromotionPerGroupCandidateLimit
+	}
+	return candidateLimit
+}
+
 func profileExtractorRepairInstruction(candidateLimit int) string {
-	return fmt.Sprintf(profileExtractorRepairInstructionTemplate, candidateLimit)
+	return fmt.Sprintf(profileExtractorRepairInstructionTemplate, profileExtractorCandidateLimit(candidateLimit))
 }
 
 // sanitizeEvidenceText removes the machine-generated noise that ChatGPT-imported
@@ -188,15 +193,22 @@ func buildMaterialDigest(materials []string) string {
 			continue
 		}
 		seen[key] = struct{}{}
-		size := utf8.RuneCountInString(excerpt)
-		if size > remaining {
-			excerpt = headRunes(excerpt, remaining)
-			size = remaining
+		linePrefix := "- "
+		separator := 0
+		if len(excerpts) > 0 {
+			separator = 1
 		}
-		if size <= 0 {
+		available := remaining - utf8.RuneCountInString(linePrefix) - separator
+		if available <= 0 {
 			break
 		}
-		excerpts = append(excerpts, "- "+strings.ReplaceAll(excerpt, "\n", " "))
+		excerpt = headRunes(excerpt, available)
+		line := linePrefix + strings.ReplaceAll(excerpt, "\n", " ")
+		size := utf8.RuneCountInString(line) + separator
+		if size <= separator {
+			break
+		}
+		excerpts = append(excerpts, line)
 		remaining -= size
 		if remaining <= 0 {
 			break
@@ -206,6 +218,41 @@ func buildMaterialDigest(materials []string) string {
 		return ""
 	}
 	return strings.Join(excerpts, "\n")
+}
+
+// buildExistingProfileContext renders the already bounded owner projection in
+// stable order. A line is appended only when the complete line fits, so the
+// context never cuts a preference or fact in the middle.
+func buildExistingProfileContext(existing domconv.UserProfile) string {
+	if len(existing.Preferences) == 0 && len(existing.Facts) == 0 {
+		return ""
+	}
+	const header = "既知情報:\n"
+	contextText := header
+	appendLine := func(line string) bool {
+		candidate := contextText + line
+		if utf8.RuneCountInString(candidate) > domainmemory.ProfilePromotionExistingContextMax {
+			return false
+		}
+		contextText = candidate
+		return true
+	}
+	preferenceKeys := make([]string, 0, len(existing.Preferences))
+	for key := range existing.Preferences {
+		preferenceKeys = append(preferenceKeys, key)
+	}
+	sort.Strings(preferenceKeys)
+	for _, key := range preferenceKeys {
+		if !appendLine(fmt.Sprintf("- %s: %s\n", key, existing.Preferences[key])) {
+			return contextText
+		}
+	}
+	for _, fact := range existing.Facts {
+		if !appendLine(fmt.Sprintf("- %s\n", fact)) {
+			return contextText
+		}
+	}
+	return contextText
 }
 
 // splitEvidenceSegments cuts one turn at meaning boundaries so a chunk never
@@ -418,28 +465,16 @@ func (e *LLMProfileExtractor) Extract(ctx context.Context, thread *domconv.Threa
 	}
 
 	// 既知情報テキスト。serviceがbounded owner projectionだけを渡す。
-	existingText := ""
-	if len(existing.Preferences) > 0 || len(existing.Facts) > 0 {
-		existingText = "既知情報:\n"
-		preferenceKeys := make([]string, 0, len(existing.Preferences))
-		for k := range existing.Preferences {
-			preferenceKeys = append(preferenceKeys, k)
-		}
-		sort.Strings(preferenceKeys)
-		for _, k := range preferenceKeys {
-			v := existing.Preferences[k]
-			existingText += fmt.Sprintf("- %s: %s\n", k, v)
-		}
-		for _, f := range existing.Facts {
-			existingText += fmt.Sprintf("- %s\n", f)
-		}
-	}
+	existingText := buildExistingProfileContext(existing)
 
 	// group ごとに抽出し、結果を束ねる。1 group あたりの上限を配ることで、
 	// 後半の chunk が上限に押し出されて捨てられるのを防ぐ。
 	perGroupLimit := domainmemory.ProfilePromotionRawCandidateLimit / len(groups)
-	if perGroupLimit < 2 {
-		perGroupLimit = 2
+	if perGroupLimit < 1 {
+		perGroupLimit = 1
+	}
+	if perGroupLimit > domainmemory.ProfilePromotionPerGroupCandidateLimit {
+		perGroupLimit = domainmemory.ProfilePromotionPerGroupCandidateLimit
 	}
 	results := make([]*domconv.ProfileExtractionResult, 0, len(groups))
 	// One repair is allowed for the whole Extract call, even when evidence was
@@ -456,18 +491,26 @@ func (e *LLMProfileExtractor) Extract(ctx context.Context, thread *domconv.Threa
 	return mergeProfileExtractionResults(results, domainmemory.ProfilePromotionRawCandidateLimit), nil
 }
 
-func (e *LLMProfileExtractor) extractGroup(
-	ctx context.Context,
-	thread *domconv.Thread,
-	existingText string,
-	evidence string,
-	materialDigest string,
-	candidateLimit int,
-	repairUsed *bool,
-) (*domconv.ProfileExtractionResult, error) {
-	if e == nil || e.provider == nil {
-		return nil, domconv.NewProfileExtractionUnavailableError(errors.New("profile extractor provider is not configured"))
+func boundCompleteLines(text string, maxRunes int) string {
+	if maxRunes <= 0 || text == "" {
+		return ""
 	}
+	bounded := strings.Builder{}
+	for _, line := range strings.SplitAfter(text, "\n") {
+		candidate := bounded.String() + line
+		if utf8.RuneCountInString(candidate) > maxRunes {
+			break
+		}
+		bounded.WriteString(line)
+	}
+	return bounded.String()
+}
+
+func buildProfileExtractionPrompt(candidateLimit int, existingText, evidence, materialDigest string) string {
+	candidateLimit = profileExtractorCandidateLimit(candidateLimit)
+	evidence = headRunes(evidence, domainmemory.ProfilePromotionEvidenceBlockMax)
+	existingText = boundCompleteLines(existingText, domainmemory.ProfilePromotionExistingContextMax)
+	materialDigest = boundCompleteLines(materialDigest, domainmemory.ProfilePromotionMaterialDigestMax)
 	evidenceSection := "会話:\n(このバッチにユーザー自身の発言はありません)"
 	if strings.TrimSpace(evidence) != "" {
 		evidenceSection = "会話（ユーザー本人の発言）:\n" + evidence
@@ -476,7 +519,7 @@ func (e *LLMProfileExtractor) extractGroup(
 	if strings.TrimSpace(materialDigest) != "" {
 		materialSection = "\n\n参照資料（ユーザーが貼り付けた資料の冒頭。ユーザーの主張でも体験でもありません）:\n" + materialDigest
 	}
-	prompt := fmt.Sprintf(`以下の会話からユーザーに関する新しい情報を抽出してください。
+	return fmt.Sprintf(`以下の会話からユーザーに関する新しい情報を抽出してください。
 既知情報と重複するものは除外してください。
 JSON形式で出力してください。
 preferences の各キーと値、facts の各要素は必ず JSON の文字列（string）で返してください。数値、オブジェクト、配列、真偽値、null は使わないでください。
@@ -504,6 +547,22 @@ JSONオブジェクトの前後に説明文、マークダウン、コードフ�
 		evidenceSection,
 		materialSection,
 	)
+}
+
+func (e *LLMProfileExtractor) extractGroup(
+	ctx context.Context,
+	thread *domconv.Thread,
+	existingText string,
+	evidence string,
+	materialDigest string,
+	candidateLimit int,
+	repairUsed *bool,
+) (*domconv.ProfileExtractionResult, error) {
+	if e == nil || e.provider == nil {
+		return nil, domconv.NewProfileExtractionUnavailableError(errors.New("profile extractor provider is not configured"))
+	}
+	candidateLimit = profileExtractorCandidateLimit(candidateLimit)
+	prompt := buildProfileExtractionPrompt(candidateLimit, existingText, evidence, materialDigest)
 
 	req := llm.GenerateRequest{
 		Messages: []llm.Message{
@@ -525,7 +584,7 @@ JSONオブジェクトの前後に説明文、マークダウン、コードフ�
 	}
 
 	// JSONはresponse全体でなければならない。prefix/suffixからJSONを抜き出さない。
-	result, err := decodeProfileExtractionResult(resp.Content)
+	result, err := decodeProfileExtractionResultWithLimit(resp.Content, candidateLimit)
 	if err == nil {
 		return result, nil
 	}
@@ -549,7 +608,7 @@ JSONオブジェクトの前後に説明文、マークダウン、コードフ�
 		log.Printf("[ProfileExtractor] repair LLM call failed: profile_extractor_unavailable")
 		return nil, domconv.NewProfileExtractionUnavailableError(repairErr)
 	}
-	result, repairValidationErr := decodeProfileExtractionResult(repairResp.Content)
+	result, repairValidationErr := decodeProfileExtractionResultWithLimit(repairResp.Content, candidateLimit)
 	if repairValidationErr != nil {
 		log.Printf("[ProfileExtractor] repaired JSON remains invalid: profile_extractor_invalid")
 		return nil, domconv.NewProfileExtractionInvalidError(repairValidationErr)
@@ -564,6 +623,13 @@ type profileExtractionPayload struct {
 }
 
 func decodeProfileExtractionResult(content string) (*domconv.ProfileExtractionResult, error) {
+	return decodeProfileExtractionResultWithLimit(content, domainmemory.ProfilePromotionRawCandidateLimit)
+}
+
+func decodeProfileExtractionResultWithLimit(content string, candidateLimit int) (*domconv.ProfileExtractionResult, error) {
+	if candidateLimit <= 0 || candidateLimit > domainmemory.ProfilePromotionRawCandidateLimit {
+		candidateLimit = domainmemory.ProfilePromotionRawCandidateLimit
+	}
 	if len(content) > domainmemory.ProfilePromotionResponseBytesMax {
 		return nil, fmt.Errorf("profile extractor response exceeds %d bytes", domainmemory.ProfilePromotionResponseBytesMax)
 	}
@@ -597,8 +663,8 @@ func decodeProfileExtractionResult(content string) (*domconv.ProfileExtractionRe
 	if err := json.Unmarshal(factsRaw, &facts); err != nil || facts == nil {
 		return nil, fmt.Errorf("facts must be a JSON array of strings")
 	}
-	if len(rawPreferences)+len(facts) > domainmemory.ProfilePromotionRawCandidateLimit {
-		return nil, fmt.Errorf("profile extractor raw candidate count exceeds %d", domainmemory.ProfilePromotionRawCandidateLimit)
+	if len(rawPreferences)+len(facts) > candidateLimit {
+		return nil, fmt.Errorf("profile extractor candidate count exceeds %d", candidateLimit)
 	}
 	var payload profileExtractionPayload
 	payload.Preferences = rawPreferences

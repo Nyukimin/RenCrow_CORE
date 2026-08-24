@@ -20,13 +20,20 @@ const (
 	ProfilePromotionProjectionStatementMax = 512
 	ProfilePromotionProjectionTotalMax     = 8192
 	ProfilePromotionRawCandidateLimit      = 16
+	// ProfilePromotionPerGroupCandidateLimit keeps each logical LLM request
+	// small while the merged extraction remains capped by RawCandidateLimit.
+	ProfilePromotionPerGroupCandidateLimit = 4
 	ProfilePromotionPreferenceKeyMax       = 64
 	ProfilePromotionPreferenceValueMax     = 448
 	ProfilePromotionResponseBytesMax       = 64 * 1024
+	// ProfilePromotionMaxTokens is the provider-independent completion budget
+	// for one logical extraction request. It is not a physical model context
+	// or provider setting.
+	ProfilePromotionMaxTokens = 1024
 	// ProfilePromotionEvidenceBlockMax bounds one extraction request. Evidence
 	// longer than this is split into several requests instead of being cut,
 	// so the tail of a long turn still reaches the extractor.
-	ProfilePromotionEvidenceBlockMax = 9000
+	ProfilePromotionEvidenceBlockMax = 3000
 	// ProfilePromotionEvidenceGroupMax bounds how many extraction requests one
 	// batch may cost. Beyond this the remainder is dropped, and the extractor
 	// reports the dropped amount rather than passing it over in silence.
@@ -46,7 +53,20 @@ const (
 	ProfilePromotionMaterialExcerptMax = 500
 	// ProfilePromotionMaterialDigestMax bounds all material excerpts in one
 	// extraction request.
-	ProfilePromotionMaterialDigestMax = 3000
+	ProfilePromotionMaterialDigestMax = 800
+	// ProfilePromotionExistingContextMax bounds the known profile rendered into
+	// one request. The extractor keeps complete deterministic lines only.
+	ProfilePromotionExistingContextMax = 800
+	// The prompt limits are logical CORE budgets. PromptInstructionMax covers
+	// fixed labels/instructions and RepairInstructionMax covers the one fixed
+	// corrective message appended to a repair request. They do not describe a
+	// physical model n_ctx.
+	ProfilePromotionPromptInstructionMax = 2048
+	ProfilePromotionRepairInstructionMax = 512
+	ProfilePromotionInitialPromptMax     = ProfilePromotionEvidenceBlockMax +
+		ProfilePromotionExistingContextMax + ProfilePromotionMaterialDigestMax +
+		ProfilePromotionPromptInstructionMax
+	ProfilePromotionPromptMax = ProfilePromotionInitialPromptMax + ProfilePromotionRepairInstructionMax
 	// ProfilePromotionEvidenceTagDensityPercent is the share of characters
 	// inside angle brackets above which a turn is treated as a markup dump.
 	// Pasted Confluence and web bodies sit near 75%; a turn that merely
