@@ -10,7 +10,7 @@ RenCrow_COREを止めたままにせず、異常停止、応答停止、再起�
 - journalと日別アーカイブ: 直近7日間の連続した運用ログを保持する
 - Go製`rencrow resilience`: 異常証拠の集約、生存監視、修復、再発確認、解決済み証拠のGCを行う
 - CORE Repair: 再起動後に事故証拠を読み、実ファイルへの最小修正とtestを行う
-- storage backup timer: 6時間ごとにCOREと記憶backendを一つの復旧単位として保存・検査する
+- storage backup timer: JST 03:00から1日1回、COREと記憶backendを一つの復旧単位として保存・検査する
 
 COREプロセス自身だけに再起動責務を持たせません。panicやデッドロック後はプロセス内コードを実行できないため、外部supervisorを必須とします。
 

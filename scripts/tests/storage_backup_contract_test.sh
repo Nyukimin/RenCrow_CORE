@@ -5,6 +5,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 checker=${repo_root}/scripts/rencrow-storage-restore-check
 backup_runner=${repo_root}/scripts/rencrow-storage-backup
 unit_file=${repo_root}/systemd/user/rencrow-storage-backup.service
+timer_file=${repo_root}/systemd/user/rencrow-storage-backup.timer
 test_tmp_root=${repo_root}/Tmp/test-runtime
 mkdir -p "${test_tmp_root}"
 test_root=$(mktemp -d "${test_tmp_root}/storage-backup-contract.XXXXXX")
@@ -26,6 +27,18 @@ assert_contains() {
 assert_contains "${unit_file}" \
   'Environment=RENCROW_CONFIG=%h/.rencrow/config/core.yaml' \
   "backup service must pin the current CORE config"
+assert_contains "${timer_file}" \
+  'Description=RenCrow memory backup daily at 03:00 JST' \
+  "backup timer must describe the canonical daily schedule"
+assert_contains "${timer_file}" \
+  'OnCalendar=*-*-* 03:00:00 Asia/Tokyo' \
+  "backup timer must run once daily at 03:00 JST"
+assert_contains "${timer_file}" \
+  'RandomizedDelaySec=5m' \
+  "backup timer jitter must remain within the 03:00 backup window"
+if [[ $(grep -c '^OnCalendar=' "${timer_file}") -ne 1 ]]; then
+  contract_failures+=("backup timer must have exactly one daily calendar expression")
+fi
 assert_contains "${backup_runner}" \
   'config_file=${RENCROW_CONFIG:-${HOME}/.rencrow/config/core.yaml}' \
   "backup runner must default to the current CORE config"
