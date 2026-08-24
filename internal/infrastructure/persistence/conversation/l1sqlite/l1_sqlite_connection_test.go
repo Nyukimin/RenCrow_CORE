@@ -21,6 +21,19 @@ func TestL1SQLiteStoreConnectionPolicyPreservesWAL(t *testing.T) {
 	if got := store.db.Stats().MaxOpenConnections; got != 1 {
 		t.Fatalf("MaxOpenConnections = %d, want 1", got)
 	}
+	if got := store.readDB.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("read MaxOpenConnections = %d, want 1", got)
+	}
+	var queryOnly int
+	if err := store.readDB.QueryRowContext(context.Background(), "PRAGMA query_only").Scan(&queryOnly); err != nil {
+		t.Fatalf("query read connection query_only: %v", err)
+	}
+	if queryOnly != 1 {
+		t.Fatalf("read connection query_only = %d, want 1", queryOnly)
+	}
+	if _, err := store.readDB.ExecContext(context.Background(), `UPDATE l1_profile_promotion_job SET updated_at = updated_at`); err == nil {
+		t.Fatal("read connection accepted a write")
+	}
 	var busyTimeout int
 	if err := store.db.QueryRowContext(context.Background(), "PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
 		t.Fatalf("query busy_timeout: %v", err)

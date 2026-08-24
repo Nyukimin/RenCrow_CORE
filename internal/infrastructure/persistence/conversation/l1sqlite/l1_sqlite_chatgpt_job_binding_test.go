@@ -205,6 +205,31 @@ func TestChatGPTImportProgressSummaryTracksJobStateTransitions(t *testing.T) {
 	}
 }
 
+func TestChatGPTImportProgressDoesNotWaitForWriteConnection(t *testing.T) {
+	store := mustMachineStore(t)
+	defer store.Close()
+	fixture := appendChatGPTMachineFixtureOnStore(t, store, "dedicated-read", domainmemory.ProfilePromotionCompleted)
+
+	writeTx, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writeTx.Rollback()
+	if _, err := writeTx.Exec(`UPDATE l1_profile_promotion_job SET updated_at = updated_at WHERE evidence_event_id = ?`, fixture.evidenceID); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(chatGPTMachineContext(t, "dedicated-read", "machine-owner"), 500*time.Millisecond)
+	defer cancel()
+	progress, err := store.GetChatGPTImportProgress(ctx, "dedicated-read", "machine-owner", "machine-owner", fixture.exportID)
+	if err != nil {
+		t.Fatalf("progress waited for the write connection: %v", err)
+	}
+	if !progress.TerminalSuccess {
+		t.Fatalf("dedicated read progress=%+v", progress)
+	}
+}
+
 func TestChatGPTImportProgressReportsMissingEvidenceWithoutHidingProgress(t *testing.T) {
 	store := mustMachineStore(t)
 	defer store.Close()
