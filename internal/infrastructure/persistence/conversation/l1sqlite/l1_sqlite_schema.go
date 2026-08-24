@@ -46,6 +46,8 @@ CREATE INDEX IF NOT EXISTS idx_l1_profile_promotion_state_retry
 	ON l1_profile_promotion_job(state, next_attempt_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_l1_profile_promotion_session_thread
 	ON l1_profile_promotion_job(session_id, thread_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_l1_profile_promotion_created
+	ON l1_profile_promotion_job(created_at DESC, evidence_event_id DESC);
 CREATE TABLE IF NOT EXISTS l1_search_cache (
 	query_hash TEXT PRIMARY KEY,
 	normalized_query TEXT NOT NULL,

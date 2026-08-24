@@ -587,6 +587,37 @@ func TestProfilePromotionReadPathsBypassOccupiedWorkerConnections(t *testing.T) 
 	}
 }
 
+func TestListProfilePromotionJobsUsesLatestFirstIndex(t *testing.T) {
+	store := newProfilePromotionTestStore(t)
+	rows, err := store.progressDB.QueryContext(context.Background(), `
+EXPLAIN QUERY PLAN
+SELECT evidence_event_id, session_id, thread_id, state, attempt_count,
+	lease_token, lease_expires_at, next_attempt_at, last_error, created_at, updated_at
+FROM l1_profile_promotion_job
+ORDER BY created_at DESC, evidence_event_id DESC
+LIMIT 50
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		details = append(details, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(details, "\n"), "idx_l1_profile_promotion_created") {
+		t.Fatalf("latest-first query does not use bounded ordering index: %v", details)
+	}
+}
+
 func TestClaimProfilePromotionPrefersLiveConversationOverOlderChatGPTBackfill(t *testing.T) {
 	store := newProfilePromotionTestStore(t)
 	ctx := context.Background()
