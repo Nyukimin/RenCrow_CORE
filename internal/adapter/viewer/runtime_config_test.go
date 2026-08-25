@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHandleRuntimeConfig_ReturnsSameOriginSTTStreamURL(t *testing.T) {
@@ -177,6 +178,74 @@ func TestHandleRuntimeConfig_ReturnsModuleGatewayStatus(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "test-secret") {
 		t.Fatalf("runtime config leaked a secret value: %s", rec.Body.String())
+	}
+}
+
+func TestHandleRuntimeConfig_RefreshesLLMGatewayReadinessAndClearsStaleWarning(t *testing.T) {
+	var probeContext context.Context
+	handler := HandleRuntimeConfig(DebugSystemOptions{
+		LLMGateway: LLMGatewayRuntimeConfig{
+			BaseURL:            "http://127.0.0.1:8090/",
+			Ready:              false,
+			AutoStartAttempted: true,
+			AutoStarted:        true,
+			Warning:            "stale startup warning",
+		},
+		LLMGatewayHealthCheck: func(ctx context.Context) error {
+			probeContext = ctx
+			return nil
+		},
+	})
+	rec := httptest.NewRecorder()
+	handler(rec, httptest.NewRequest(http.MethodGet, "/viewer/runtime-config", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var body RuntimeConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode runtime config: %v", err)
+	}
+	if !body.LLMGateway.Ready || body.LLMGateway.Warning != "" {
+		t.Fatalf("healthy request probe did not refresh gateway status: %+v", body.LLMGateway)
+	}
+	if !body.LLMGateway.AutoStartAttempted || !body.LLMGateway.AutoStarted {
+		t.Fatalf("request probe did not preserve startup metadata: %+v", body.LLMGateway)
+	}
+	if probeContext == nil {
+		t.Fatal("request-time gateway probe was not called")
+	}
+	if deadline, ok := probeContext.Deadline(); !ok || time.Until(deadline) > 1100*time.Millisecond {
+		t.Fatalf("gateway probe was not bounded: deadline=%v ok=%v", deadline, ok)
+	}
+}
+
+func TestHandleRuntimeConfig_ReportsLLMGatewayUnavailableWithoutLeakingProbeError(t *testing.T) {
+	const privateDiagnostic = "private-llm-diagnostic-sentinel"
+	handler := HandleRuntimeConfig(DebugSystemOptions{
+		LLMGateway: LLMGatewayRuntimeConfig{
+			BaseURL: "http://127.0.0.1:8090",
+			Ready:   true,
+		},
+		LLMGatewayHealthCheck: func(context.Context) error {
+			return errors.New(privateDiagnostic)
+		},
+	})
+	rec := httptest.NewRecorder()
+	handler(rec, httptest.NewRequest(http.MethodGet, "/viewer/runtime-config", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var body RuntimeConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode runtime config: %v", err)
+	}
+	if body.LLMGateway.Ready || body.LLMGateway.Warning == "" {
+		t.Fatalf("failed request probe was not reflected as unavailable: %+v", body.LLMGateway)
+	}
+	if strings.Contains(rec.Body.String(), privateDiagnostic) {
+		t.Fatalf("runtime config leaked gateway probe detail: %s", rec.Body.String())
 	}
 }
 

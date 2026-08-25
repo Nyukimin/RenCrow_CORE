@@ -61,8 +61,15 @@ func TestCatalogContainsEveryKnownStoreWithoutPaths(t *testing.T) {
 	}
 	for _, key := range KnownStoreKeys() {
 		entry, err := catalog.Describe(key)
-		if err != nil || entry.PhysicalKey != "storage.databases."+key {
+		if err != nil {
 			t.Fatalf("missing key %s: %#v err=%v", key, entry, err)
+		}
+		if entry.OwnerRouteOnly {
+			if entry.PhysicalKey != "" {
+				t.Fatalf("owner-route-only key %s exposed physical key: %#v", key, entry)
+			}
+		} else if entry.PhysicalKey != "storage.databases."+key {
+			t.Fatalf("physical key %s: %#v", key, entry)
 		}
 	}
 	if entry, _ := catalog.Describe("glossary"); entry.Status != "available" || entry.ToolID != "glossary.lookup" {
@@ -76,16 +83,15 @@ func TestCatalogContainsEveryKnownStoreWithoutPaths(t *testing.T) {
 	}
 }
 
-func TestCatalogKeysExactlyMatchDatabasePathsConfig(t *testing.T) {
+func TestCatalogPhysicalKeysExactlyMatchDatabasePathsConfig(t *testing.T) {
 	catalog := Build(allConfiguredStoreStates())
 	want := databasePathsConfigYAMLKeys(t)
-	if len(want) != 20 {
-		t.Fatalf("DatabasePathsConfig yaml keys=%d, want 20", len(want))
-	}
 
 	got := make(map[string]struct{}, len(catalog.All()))
 	for _, entry := range catalog.All() {
-		got[entry.Name] = struct{}{}
+		if !entry.OwnerRouteOnly {
+			got[entry.Name] = struct{}{}
+		}
 	}
 	if !reflect.DeepEqual(sortedSetKeys(got), sortedSetKeys(want)) {
 		t.Fatalf("catalog keys=%v, want DatabasePathsConfig keys=%v", sortedSetKeys(got), sortedSetKeys(want))

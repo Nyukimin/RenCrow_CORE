@@ -99,31 +99,38 @@ func ensureLLMGateway(cfg *config.Config) llmGatewayStartupStatus {
 }
 
 func llmGatewayHealthy(baseURL string) bool {
-	if strings.TrimSpace(baseURL) == "" {
-		return false
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
 	defer cancel()
+	return llmGatewayReady(ctx, baseURL) == nil
+}
+
+func llmGatewayReady(ctx context.Context, baseURL string) error {
+	if strings.TrimSpace(baseURL) == "" {
+		return fmt.Errorf("RenCrow_LLM Gateway base URL is empty")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/health/ready", nil)
 	if err != nil {
-		return false
+		return err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return false
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return false
+		return fmt.Errorf("RenCrow_LLM Gateway readiness returned HTTP %d", resp.StatusCode)
 	}
 	var body struct {
 		OK     bool   `json:"ok"`
 		Status string `json:"status"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return false
+		return err
 	}
-	return body.OK && strings.EqualFold(strings.TrimSpace(body.Status), "ready")
+	if !body.OK || !strings.EqualFold(strings.TrimSpace(body.Status), "ready") {
+		return fmt.Errorf("RenCrow_LLM Gateway is not ready")
+	}
+	return nil
 }
 
 func isLoopbackLLMHost(host string) bool {

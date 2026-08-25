@@ -2,25 +2,16 @@ package viewer
 
 import (
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-func readViewerAssetFile(path string) ([]byte, error) {
-	content, err := os.ReadFile(path)
-	if err == nil {
-		return content, nil
-	}
-	if filepath.IsAbs(path) {
-		return nil, err
-	}
-	contentFromPackageDir, packageErr := os.ReadFile(filepath.Join("..", "..", "..", path))
-	if packageErr == nil {
-		return contentFromPackageDir, nil
-	}
-	return nil, err
+func readViewerAssetFile(assetPath string) ([]byte, error) {
+	assetPath = strings.TrimPrefix(strings.TrimSpace(assetPath), "internal/adapter/viewer/")
+	return fs.ReadFile(viewerFS, assetPath)
 }
 
 // HandleLive2DCharacter serves Live2D HTML for characters
@@ -39,9 +30,9 @@ func HandleLive2DCharacter(w http.ResponseWriter, r *http.Request) {
 	var htmlPath string
 	switch strings.ToLower(characterID) {
 	case "mio":
-		htmlPath = "internal/adapter/viewer/assets/images/mio/Mio_透過版.html"
+		htmlPath = "assets/images/mio/Mio_透過版.html"
 	case "shiro":
-		htmlPath = "internal/adapter/viewer/assets/images/shiro/Shiro_透過版.html"
+		htmlPath = "assets/images/shiro/Shiro_透過版.html"
 	default:
 		http.Error(w, "Unknown character", http.StatusNotFound)
 		return

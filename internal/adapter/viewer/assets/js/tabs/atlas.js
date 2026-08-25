@@ -474,14 +474,21 @@ function atlasRenderCurrent(view) {
   }
   const sourceName = atlasProjection.current.length ? 'current' : (atlasProjection.features.length ? 'features' : 'catalog');
   view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">CURRENT</span><h3>現在の機能</h3><p>実装状態は読み取り専用の Atlas projection から表示します。</p></div><span class="atlas-source-note">source: ' + atlasEscape(sourceName) + '</span></div>' +
-    '<div class="atlas-table-wrap"><table class="atlas-table"><thead><tr><th>Feature</th><th>Category</th><th>Owner</th><th>Concept</th><th>Delivery</th><th>Revision</th><th>Evidence</th></tr></thead><tbody>' +
+    '<div class="atlas-table-wrap"><table class="atlas-table"><thead><tr><th>Feature</th><th>Category</th><th>Owner</th><th>Concept</th><th>Delivery</th><th>Implementation revision</th><th>Evidence</th></tr></thead><tbody>' +
     items.map((item) => {
-      const evidence = atlasField(item, ['evidence_count', 'evidenceCount', 'evidence'], '');
+      let evidence;
+      if (item && typeof item === 'object' && Object.prototype.hasOwnProperty.call(item, 'evidence_refs')) {
+        evidence = item.evidence_refs;
+      } else if (item && typeof item === 'object' && Object.prototype.hasOwnProperty.call(item, 'evidenceRefs')) {
+        evidence = item.evidenceRefs;
+      } else {
+        evidence = atlasField(item, ['evidence_count', 'evidenceCount', 'evidence'], '');
+      }
       const evidenceValue = Array.isArray(evidence) ? evidence.length : atlasDisplay(evidence, '0');
       return '<tr><td><strong>' + atlasEscape(atlasItemTitle(item)) + '</strong><div class="atlas-code">' + atlasEscape(atlasItemID(item)) + '</div><div class="atlas-detail-actions">' + atlasDetailTrigger(item) + '</div></td>' +
         '<td>' + atlasEscape(atlasItemCategory(item)) + '</td><td>' + atlasEscape(atlasItemOwner(item)) + '</td>' +
         '<td>' + atlasBadge(atlasConceptState(item)) + '</td><td>' + atlasBadge(atlasDeliveryState(item)) + '</td>' +
-        '<td class="atlas-code">' + atlasEscape(atlasField(item, ['revision', 'source_revision', 'commit', 'sha'], '-')) + '</td>' +
+        '<td class="atlas-code">' + atlasEscape(atlasField(item, ['implementation_revision', 'implementationRevision', 'revision', 'source_revision', 'commit', 'sha'], '-')) + '</td>' +
         '<td>' + atlasEscape(evidenceValue) + '</td></tr>';
     }).join('') + '</tbody></table></div>' + atlasRenderItemDetail('current');
   atlasBindItemDetailControls(view);

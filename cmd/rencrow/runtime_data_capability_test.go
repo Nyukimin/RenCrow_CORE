@@ -203,7 +203,7 @@ func TestRenderRuntimeDataRouteContextUsesRegistrySnapshotContracts(t *testing.T
 	}
 }
 
-func TestDataCapabilityCatalogCoversDatabasePathsConfigFields(t *testing.T) {
+func TestDataCapabilityCatalogPhysicalStoresCoverDatabasePathsConfigFields(t *testing.T) {
 	want := map[string]bool{}
 	typ := reflect.TypeOf(config.DatabasePathsConfig{})
 	for i := 0; i < typ.NumField(); i++ {
@@ -214,7 +214,13 @@ func TestDataCapabilityCatalogCoversDatabasePathsConfigFields(t *testing.T) {
 	}
 	got := map[string]bool{}
 	for _, key := range datacapability.KnownStoreKeys() {
-		got[key] = true
+		entry, err := datacapability.Build(nil).Describe(key)
+		if err != nil {
+			t.Fatalf("describe catalog entry %q: %v", key, err)
+		}
+		if !entry.OwnerRouteOnly {
+			got[key] = true
+		}
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("catalog/config drift got=%v want=%v", got, want)

@@ -7,6 +7,25 @@ import (
 	"testing"
 )
 
+func TestHandleLive2DCharacterServesEmbeddedHTMLIndependentOfWorkingDirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, characterID := range []string{"mio", "shiro"} {
+		t.Run(characterID, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/viewer/live2d/character?character_id="+characterID, nil)
+			w := httptest.NewRecorder()
+
+			HandleLive2DCharacter(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("HandleLive2DCharacter(%s) status = %d, want %d: %s", characterID, w.Code, http.StatusOK, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), "<!DOCTYPE html>") {
+				t.Fatalf("HandleLive2DCharacter(%s) should return embedded HTML", characterID)
+			}
+		})
+	}
+}
+
 func TestHandleLive2DCharacter(t *testing.T) {
 	t.Skip("Skipping Live2D character test - requires large HTML files")
 }

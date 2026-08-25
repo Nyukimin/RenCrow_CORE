@@ -93,6 +93,16 @@ InvestmentのViewer表示は`GET /viewer/trade/status`のprojectionをそのま�
 bounded PINGが成功したことを表し、URL、credential、backend error本文は返しません。RedisはL1 SQLite
 正本ではないため、この独立statusはCOREの`/health/ready`判定へ混入しません。
 
+同responseの`llm_gateway.ready`は起動時snapshotを固定表示せず、response生成時に設定済み
+RenCrow_LLM Gatewayの`/health/ready`を1秒以内で確認した現在projectionです。成功時は過去の
+起動警告を表示せず、失敗時は`ready=false`と一般化したwarningを返します。probeの内部error、
+credential、backend情報はViewerへ公開せず、`auto_start_attempted`と`auto_started`は起動時の
+履歴metadataとして維持します。
+
+`GET /viewer/live2d/character`はMio／Shiroの固定allow-listだけを受け付け、CORE binaryへ
+embeddedされたViewer HTML assetを返します。processのcurrent working directoryやsource checkoutを
+runtime依存にせず、未知characterは404、任意pathは受理しません。
+
 `GET /viewer/databases/tool-registry`は、同じproduction Worker `RunnerV2`から得たruntime
 metadataと、設定済みSQLite Tool Registryのplatform適合行を、名前順・runtime優先で重複排除して
 返します。各itemの`origin`は`core_runtime | rencrow_tools | dynamic_registry`です。
@@ -1371,6 +1381,10 @@ path segmentとしてURL encodeします。
 `/viewer/atlas/radar`、`/viewer/atlas/backlog`、`/viewer/atlas/queue`、`/viewer/atlas/active`、
 `/viewer/atlas/evidence/{implementation_unit_id}`で提供します。Debug Viewerおよび認証済み
 `cmd-diagnostics` profileはこのprojectionだけを読みます。
+
+Debug ViewerのCurrent表はItemの`implementation_revision`を実装revisionとして表示し、
+`evidence_refs`の件数をEvidence件数として表示します。Dataset／Specificationのrevisionや旧互換fieldを
+実装revisionより優先せず、APIに存在するEvidenceを0件へ縮退させません。
 
 `GET /viewer/atlas/items/{id}`はDesign Cardと解決済みSpecification metadataを返します。
 Design Cardの`owner_module`はLifecycle ownerとして`RenCrow_CORE`に固定し、

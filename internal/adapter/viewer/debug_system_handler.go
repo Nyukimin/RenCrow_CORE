@@ -46,6 +46,7 @@ type DebugSystemOptions struct {
 	TTSBaseURL                 string
 	TTSHealthPath              string
 	LLMGateway                 LLMGatewayRuntimeConfig
+	LLMGatewayHealthCheck      func(context.Context) error
 	WebwrightFetch             WebwrightFetchRuntimeConfig
 	WebGather                  WebGatherRuntimeConfig
 	BrowserActor               BrowserActorRuntimeConfig
@@ -179,7 +180,7 @@ func HandleRuntimeConfig(opts DebugSystemOptions) http.HandlerFunc {
 			STTBaseURL:         strings.TrimRight(strings.TrimSpace(opts.STTBaseURL), "/"),
 			TTSBaseURL:         strings.TrimRight(strings.TrimSpace(opts.TTSBaseURL), "/"),
 			TTSHealthPath:      strings.TrimSpace(opts.TTSHealthPath),
-			LLMGateway:         normalizeLLMGatewayRuntimeConfig(opts.LLMGateway),
+			LLMGateway:         normalizeLLMGatewayRuntimeConfig(r.Context(), opts.LLMGateway, opts.LLMGatewayHealthCheck),
 			WebwrightFetch:     normalizeWebwrightFetchRuntimeConfig(opts.WebwrightFetch),
 			WebGather:          normalizeWebGatherRuntimeConfig(opts.WebGather),
 			BrowserActor:       normalizeBrowserActorRuntimeConfig(opts.BrowserActor),
@@ -192,9 +193,26 @@ func HandleRuntimeConfig(opts DebugSystemOptions) http.HandlerFunc {
 	}
 }
 
-func normalizeLLMGatewayRuntimeConfig(in LLMGatewayRuntimeConfig) LLMGatewayRuntimeConfig {
+func normalizeLLMGatewayRuntimeConfig(parent context.Context, in LLMGatewayRuntimeConfig, healthCheck func(context.Context) error) LLMGatewayRuntimeConfig {
 	in.BaseURL = strings.TrimRight(strings.TrimSpace(in.BaseURL), "/")
 	in.Warning = strings.TrimSpace(in.Warning)
+	if healthCheck == nil {
+		return in
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, time.Second)
+	defer cancel()
+	if err := healthCheck(ctx); err == nil {
+		in.Ready = true
+		in.Warning = ""
+		return in
+	}
+	in.Ready = false
+	if in.Warning == "" {
+		in.Warning = "RenCrow_LLM is unavailable; all LLM functions are disabled"
+	}
 	return in
 }
 

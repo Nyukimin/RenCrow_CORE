@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -121,6 +122,9 @@ func cmdRun() {
 		AutoStartAttempted: llmGatewayStatus.AutoStartAttempted,
 		AutoStarted:        llmGatewayStatus.AutoStarted,
 		Warning:            llmGatewayStatus.Warning,
+	}
+	debugSystemOpts.LLMGatewayHealthCheck = func(ctx context.Context) error {
+		return llmGatewayReady(ctx, llmGatewayStatus.BaseURL)
 	}
 	debugSystemOpts.SecretRefs = buildSecretRefsFromConfig(cfg)
 	debugSystemOpts.WebwrightFetch = viewer.WebwrightFetchRuntimeConfig{

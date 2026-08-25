@@ -4974,3 +4974,38 @@ test('viewer chat coder role target remains an explicit route command', () => {
   assert.deepEqual(req, {message: '/code1 実装方針を出して', audio_output: 'disabled'});
   assert.equal(Object.hasOwn(req, 'to'), false);
 });
+
+test('Atlas Current renders implementation revision and counts evidence refs', () => {
+  const atlasJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/atlas.js', 'utf8');
+  const document = {
+    getElementById: () => null,
+    createElement: () => {
+      const node = {innerHTML: ''};
+      Object.defineProperty(node, 'textContent', {
+        set(value) { node.innerHTML = String(value); },
+      });
+      return node;
+    },
+  };
+  const context = vm.createContext({document});
+  vm.runInContext(atlasJs + `
+    globalThis.__renderAtlasCurrent = function(item) {
+      atlasProjection = atlasNormalizeProjection({current: [item]});
+      const view = {innerHTML: '', querySelectorAll: () => []};
+      atlasRenderCurrent(view);
+      return view.innerHTML;
+    };
+  `, context);
+  context.item = {
+    item_id: 'atlas-current-1',
+    title: 'Viewer runtime probe',
+    implementation_revision: 'impl-revision-42',
+    evidence_refs: [{ref: 'receipt-1'}, {ref: 'receipt-2'}],
+  };
+
+  const html = vm.runInContext('__renderAtlasCurrent(item)', context);
+  assert.match(html, /<th>Implementation revision<\/th>/);
+  assert.match(html, /impl-revision-42/);
+  assert.match(html, /<th>Evidence<\/th>/);
+  assert.match(html, /<td>2<\/td>/);
+});
