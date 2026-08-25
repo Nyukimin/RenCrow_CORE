@@ -69,8 +69,8 @@ func TestEmitIdleChatTTSSendsMessage(t *testing.T) {
 	if len(bridge.startReqs) != 1 {
 		t.Fatalf("expected 1 start request, got %d", len(bridge.startReqs))
 	}
-	if bridge.startReqs[0].VoiceID != "male_01" {
-		t.Fatalf("expected male_01 voice, got %q", bridge.startReqs[0].VoiceID)
+	if bridge.startReqs[0].VoiceID != "shiro" {
+		t.Fatalf("expected shiro voice, got %q", bridge.startReqs[0].VoiceID)
 	}
 	if len(bridge.pushTexts) != 1 {
 		t.Fatalf("expected 1 push text, got %d", len(bridge.pushTexts))
@@ -701,7 +701,7 @@ func TestEmitIdleChatTTSSkipsNonMessageEvent(t *testing.T) {
 
 func TestIdleChatVoiceForSpeaker(t *testing.T) {
 	voiceID, voiceProfile := idleChatVoiceForSpeaker("shiro")
-	if voiceID != "male_01" || voiceProfile != "lumina_male" {
+	if voiceID != "shiro" || voiceProfile != "lumina_male" {
 		t.Fatalf("unexpected shiro voice mapping: %q %q", voiceID, voiceProfile)
 	}
 	voiceID, voiceProfile = idleChatVoiceForSpeaker("mio")

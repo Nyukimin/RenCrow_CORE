@@ -28,7 +28,7 @@ func TestBuildIdleChatTTSPlanBuildsSessionAndVoiceMetadata(t *testing.T) {
 		got.TurnIndex != 2 {
 		t.Fatalf("unexpected ids: %+v", got)
 	}
-	if got.CharacterID != "shiro" || got.VoiceID != IdleChatMaleVoiceID || got.VoiceProfile != IdleChatMaleVoiceProfile {
+	if got.CharacterID != "shiro" || got.VoiceID != "shiro" || got.VoiceProfile != IdleChatMaleVoiceProfile {
 		t.Fatalf("unexpected voice metadata: %+v", got)
 	}
 	if got.SpeechMode != IdleChatTTSSpeechMode ||

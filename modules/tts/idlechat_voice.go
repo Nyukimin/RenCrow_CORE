@@ -8,14 +8,14 @@ import (
 const (
 	IdleChatDefaultVoiceID      = "mio"
 	IdleChatDefaultVoiceProfile = "lumina_female"
-	IdleChatMaleVoiceID         = "male_01"
+	IdleChatShiroVoiceID        = "shiro"
 	IdleChatMaleVoiceProfile    = "lumina_male"
 )
 
 func IdleChatVoiceForSpeaker(speaker string) (voiceID, voiceProfile string) {
 	switch NormalizeIdleChatCharacterID(speaker) {
 	case "shiro":
-		return IdleChatMaleVoiceID, IdleChatMaleVoiceProfile
+		return IdleChatShiroVoiceID, IdleChatMaleVoiceProfile
 	default:
 		return IdleChatDefaultVoiceID, IdleChatDefaultVoiceProfile
 	}

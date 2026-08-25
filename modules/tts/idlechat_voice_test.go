@@ -7,7 +7,7 @@ import (
 
 func TestIdleChatVoiceForSpeaker(t *testing.T) {
 	voiceID, voiceProfile := IdleChatVoiceForSpeaker("shiro")
-	if voiceID != IdleChatMaleVoiceID || voiceProfile != IdleChatMaleVoiceProfile {
+	if voiceID != "shiro" || voiceProfile != IdleChatMaleVoiceProfile {
 		t.Fatalf("unexpected shiro voice mapping: %q %q", voiceID, voiceProfile)
 	}
 	voiceID, voiceProfile = IdleChatVoiceForSpeaker("mio")

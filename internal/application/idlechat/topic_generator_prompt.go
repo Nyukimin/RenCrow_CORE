@@ -28,6 +28,8 @@ func (g *TopicGenerator) BuildGenerationPrompt(category TopicCategory, seed Topi
 	prompt = renderTopicPromptPlaceholders(prompt, map[string]string{
 		"candidate_count":    fmt.Sprint(g.config.CandidatesPerAttempt),
 		"category":           string(category),
+		"genre_1":            strings.TrimSpace(seed.Genre1),
+		"genre_2":            strings.TrimSpace(seed.Genre2),
 		"seed_json":          string(seedJSON),
 		"recent_topics_json": string(recentJSON),
 	})
