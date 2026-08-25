@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "purpose": "operational_status",
+  "phase": "runtime",
+  "checks": [
+    {
+      "check_id": "core_health",
+      "guarantee_id": "core_health_available",
+      "owner": "RenCrow_CORE",
+      "purpose": "runtime health",
+      "target": "core:/health",
+      "phase": "runtime",
+      "consumer": "runtime operational status",
+      "failure_action": "degraded",
+      "cost": "low",
+      "safety_gate": false
+    },
+    {
+      "check_id": "core_readiness",
+      "guarantee_id": "core_readiness_available",
+      "owner": "RenCrow_CORE",
+      "purpose": "runtime readiness",
+      "target": "core:/health/ready",
+      "phase": "runtime",
+      "consumer": "runtime readiness",
+      "failure_action": "blocked",
+      "cost": "low",
+      "safety_gate": false
+    },
+    {
+      "check_id": "core_l1_lightweight_query",
+      "guarantee_id": "conversation_l1_available",
+      "owner": "RenCrow_CORE",
+      "purpose": "runtime availability",
+      "target": "conversation_l1",
+      "phase": "runtime",
+      "consumer": "database operational status",
+      "failure_action": "degraded",
+      "cost": "low",
+      "safety_gate": false
+    },
+    {
+      "check_id": "core_l1_snapshot_integrity",
+      "guarantee_id": "conversation_l1_integrity",
+      "owner": "RenCrow_CORE",
+      "purpose": "offline restore integrity",
+      "target": "conversation_l1 snapshot",
+      "phase": "backup",
+      "consumer": "backup completion gate",
+      "failure_action": "blocked",
+      "cost": "high",
+      "safety_gate": false
+    }
+  ]
+}
