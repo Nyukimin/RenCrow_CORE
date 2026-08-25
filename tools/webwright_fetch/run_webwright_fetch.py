@@ -42,10 +42,10 @@ def prepare_config_args(args: argparse.Namespace) -> None:
 
 def build_command(args: argparse.Namespace) -> list[str]:
     if args.uvx_from:
-        cmd = [args.uvx_binary, "--from", args.uvx_from, args.python or "python", "-m", "webwright.run.cli"]
+        cmd = [args.uvx_binary, "--from", args.uvx_from, args.python or "python", "-m", "webwright.run.cli", "main"]
     else:
         python = args.python or os.environ.get("WEBWRIGHT_PYTHON") or sys.executable
-        cmd = [python, "-m", "webwright.run.cli"]
+        cmd = [python, "-m", "webwright.run.cli", "main"]
     for config in args.config:
         cmd.extend(["-c", config])
     cmd.extend(["-t", args.task])

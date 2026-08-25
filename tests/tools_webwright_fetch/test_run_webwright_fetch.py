@@ -33,7 +33,7 @@ class RunWebwrightFetchTest(unittest.TestCase):
             )
 
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertIn("/tmp/webwright-python -m webwright.run.cli", proc.stdout)
+            self.assertIn("/tmp/webwright-python -m webwright.run.cli main", proc.stdout)
             self.assertIn("-t 'Collect public data'", proc.stdout)
 
     def test_dry_run_supports_uvx_package_source(self):
@@ -61,7 +61,7 @@ class RunWebwrightFetchTest(unittest.TestCase):
 
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn(
-                "/usr/local/bin/uvx --from git+https://github.com/microsoft/Webwright.git python -m webwright.run.cli",
+                "/usr/local/bin/uvx --from git+https://github.com/microsoft/Webwright.git python -m webwright.run.cli main",
                 proc.stdout,
             )
 
