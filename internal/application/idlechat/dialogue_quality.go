@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
@@ -222,7 +223,94 @@ func hasDialogueUptake(utterance, latestOther string) bool {
 			return true
 		}
 	}
+	if hasDialogueJapaneseAnchor(utterance, latestOther) {
+		return true
+	}
 	return containsAny(utterance, "それ", "その", "そこ", "たしかに", "ただ", "でも", "一方", "今の")
+}
+
+var dialogueJapaneseAnchorStopWords = map[string]struct{}{
+	"確認":  {},
+	"検討":  {},
+	"説明":  {},
+	"対応":  {},
+	"利用":  {},
+	"必要":  {},
+	"可能":  {},
+	"重要":  {},
+	"内容":  {},
+	"方法":  {},
+	"状況":  {},
+	"問題":  {},
+	"関係":  {},
+	"意味":  {},
+	"理由":  {},
+	"場合":  {},
+	"全体":  {},
+	"一部":  {},
+	"一方":  {},
+	"両方":  {},
+	"共通":  {},
+	"構造":  {},
+	"大切":  {},
+	"面白":  {},
+	"不思議": {},
+	"興味":  {},
+	"本当":  {},
+	"具体":  {},
+	"自然":  {},
+	"現在":  {},
+	"最近":  {},
+}
+
+func hasDialogueJapaneseAnchor(utterance, latestOther string) bool {
+	utteranceAnchors := make(map[string]struct{})
+	for _, anchor := range dialogueJapaneseAnchorTokens(utterance) {
+		utteranceAnchors[anchor] = struct{}{}
+	}
+	for _, anchor := range dialogueJapaneseAnchorTokens(latestOther) {
+		if _, ok := utteranceAnchors[anchor]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func dialogueJapaneseAnchorTokens(text string) []string {
+	var anchors []string
+	for _, segment := range strings.FieldsFunc(text, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r)
+	}) {
+		runes := []rune(segment)
+		start := -1
+		for i, r := range runes {
+			if unicode.In(r, unicode.Han, unicode.Katakana) {
+				if start < 0 {
+					start = i
+				}
+				continue
+			}
+			if start >= 0 {
+				anchors = appendDialogueJapaneseAnchor(anchors, string(runes[start:i]))
+				start = -1
+			}
+		}
+		if start >= 0 {
+			anchors = appendDialogueJapaneseAnchor(anchors, string(runes[start:]))
+		}
+	}
+	return anchors
+}
+
+func appendDialogueJapaneseAnchor(anchors []string, token string) []string {
+	token = strings.ToLower(strings.TrimSpace(token))
+	if utf8.RuneCountInString(token) < 2 {
+		return anchors
+	}
+	if _, stop := dialogueJapaneseAnchorStopWords[token]; stop {
+		return anchors
+	}
+	return append(anchors, token)
 }
 
 func lacksNewContribution(utterance, latestOther, latestSelf string) bool {

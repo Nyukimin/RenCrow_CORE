@@ -56,23 +56,40 @@ single／doubleの候補JSONとseedは正常だったが、生成topicがseedの
   - □ ライフサイクル: topicの有限retryとTTSのrequest errorを別々に追跡し、cancelを成功やschema修復へ丸めなかった。
   - □ 既存知見: 過去のIdleChat調査・現行docsのretry／Gateway境界を確認し、旧仮説を無根拠に再利用しなかった。
 
+### 仮説4: 日本語対話のuptake検査が空白区切りを前提としている
+
+- **根拠**: 修正後のlive E2Eではtopic生成・Judge・Stock投入・session開始まで成功したが、自然な12 turn対話がsuffix修復を3回使い切り、再生前に停止した。
+- **検証結果**: 確認
+- **証拠**:
+  - session `idle-1787661971-topic-00` のturn 3「本人へ電話してみたいな」に対し、turn 4は「電話の前に」で明示的に受けていたが、`dialogue_no_uptake`になった。
+  - `hasDialogueUptake`は正規化後の文を`strings.Fields`で分割していた。空白を置かない通常の日本語文は全文が一tokenとなるため、共有語`電話`を検出できなかった。
+  - 同じturnは`dialogue_category_axis_missing`も持ったが、uptakeを正しく認識すればscoreは60から80となり、既定の品質閾値を満たす。category判定や閾値を緩和する必要はない。
+- **チェックリスト結果**:
+  - □ 確証バイアス: LLM出力を無条件に正しいとはせず、artifactの全revisionと各failure reasonを比較した。
+  - □ 頻度制約: 4 revisionで同型のfalse negativeがturn 2〜6へ移動し、有限repairでも収束しなかった。
+  - □ ライフサイクル: topic採用 → dialogue生成 → CORE品質検査 → suffix修復 → failed → playback停止まで追跡した。
+  - □ 既存知見: 決定的validatorを維持し、retry増加や品質閾値低下を回避した。
+
 ## 根本原因
 
 - **原因1**: 候補生成promptがseed genreの意味利用だけを指示し、validatorが要求するgenre文字列の逐語包含をrequestごとの具体値として明示していなかった。
 - **原因2**: COREのShiro向けIdleChat TTS mappingがGateway公開IDではない旧`male_01`を送信していた。character identityとvoice IDの境界が仕様として固定されていなかった。
-- **影響範囲**: single／double Stock補充、bootstrap、heartbeat／idle refill、およびShiro発話を含む全IdleChat TTS。JSON parse、seed選択、Gateway readiness、Mio合成成功はこの二つの失敗を解消しない。
+- **原因3**: 日本語の前発話取り込み判定が空白区切りtokenだけを比較し、通常の日本語対話にある共有語彙アンカーを認識できなかった。
+- **影響範囲**: single／double Stock補充、bootstrap、heartbeat／idle refill、日本語dialogue episodeの品質検査、およびShiro発話を含む全IdleChat TTS。JSON parse、seed選択、Gateway readiness、Mio合成成功はこれらの失敗を解消しない。
 
 ## 修正案
 
 1. CORE正本へ、singleは`genre_1`、doubleは`genre_1`／`genre_2`の値そのものをtopicへ含める契約と、promptへ具体値を展開する規則を追加する。validatorは引き続き最終境界として保持する。
 2. IdleChat TTSはcharacter identityをMio／Shiroのまま保持し、Gateway `voice_id`をそれぞれ`mio`／`shiro`へ固定する。`male_01`／`female_01`はGateway voice IDとして扱わず、非一致は`VOICE_NOT_FOUND`で可視化する。
 3. 実装・再build・restart後は、rendered promptのliteral確認、single／doubleのTopic Stock公開、Gateway `/health/ready`、Mio／Shiroの実`/synthesis`、CORE journalのerror消失を同じcanonical routeで確認する。本調査ではコード変更・test・deployは実施していない。
+4. uptake検査は既存の英語・空白token・指示語判定を保持し、日本語では句読点境界を跨がない2文字以上の共有語彙アンカーを追加する。一般語だけの一致は除外し、閾値・category軸・repair上限は変更しない。
 
 ## 関連ソースファイル
 
 - `docs/04_アーキテクチャ概要.md:1563-1664` - topic seed／validator境界とepisode TTS経路の正本。
 - `modules/chat/topic_policy.go:228-289` - seed必須条件とsingle／doubleのliteral包含validator。
 - `internal/application/idlechat/topic_generator_prompt.go:12-42`、`prompts/idle_chat/topic_generator_single.md:6-8`、`topic_generator_double.md:6-8` - prompt値展開とカテゴリ指示。
+- `internal/application/idlechat/dialogue_quality.go`、`dialogue_quality_test.go` - 日本語uptake判定と肯定／否定境界。
 - `modules/tts/idlechat_voice.go:8-21`、`cmd/rencrow/idlechat_tts.go:65-74` - character／voice IDのCORE mappingとGateway request。
 - `journalctl --user -u rencrow.service`、`curl http://127.0.0.1:7870/health/ready` - 2026-08-25のlive receipt／health evidence。
 

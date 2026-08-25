@@ -50,6 +50,44 @@ func TestDialogueQualityCheckerRequiresUptakeAndCategoryAxis(t *testing.T) {
 	}
 }
 
+func TestDialogueQualityCheckerRecognizesJapaneseUptakeAnchor(t *testing.T) {
+	if !hasDialogueUptake("電話の前に、弁当の名札を確認したい。", "本人へ電話してみたいな。") {
+		t.Fatal("shared Japanese anchor 電話 should count as uptake")
+	}
+}
+
+func TestDialogueQualityCheckerRejectsUnrelatedJapaneseUptakeAnchors(t *testing.T) {
+	cases := []struct {
+		name        string
+		utterance   string
+		latestOther string
+	}{
+		{
+			name:        "unrelated topic words",
+			utterance:   "古書店の棚に残った封筒は、誰かの記憶みたいですね。",
+			latestOther: "医療現場では、判断を急がされる人が増えそうです。",
+		},
+		{
+			name:        "generic confirmation verb only",
+			utterance:   "名札の内容を確認してから渡したい。",
+			latestOther: "画面の内容を確認してから送信したい。",
+		},
+		{
+			name:        "punctuation cannot join single runes",
+			utterance:   "電 話について考えたい。",
+			latestOther: "電、話をしてみたいな。",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if hasDialogueUptake(tc.utterance, tc.latestOther) {
+				t.Fatalf("unrelated or generic-only Japanese overlap must not count as uptake: utterance=%q latestOther=%q", tc.utterance, tc.latestOther)
+			}
+		})
+	}
+}
+
 func TestDialogueQualityCheckerAcceptsCategorySpecificProgress(t *testing.T) {
 	checker := NewDialogueQualityChecker(DefaultDialogueInterestingnessConfig())
 	state := DialogueArcState{Category: TopicCategoryForecast, Topic: "AI技術が、個人の記憶整理をどう変えるか"}
