@@ -1418,13 +1418,13 @@
     <div class="desk-screen desk-workspace">
       <aside class="desk-side">
         <div class="desk-brand">
-          <div class="desk-kicker">Investment / Data Desk</div>
-          <h2 class="daily-desk-title">学習基盤の状態</h2>
+          <div class="desk-kicker">Investment / TRADE Owner Desk</div>
+          <h2 class="daily-desk-title">投資機能の状態</h2>
         </div>
         <div class="desk-character">
           <div class="desk-character-mark">I</div>
           <div class="desk-character-name">Investment Desk</div>
-          <div class="daily-desk-muted">株式・ETF 学習基盤の snapshot / feature / event を確認します。</div>
+          <div class="daily-desk-muted">RenCrow_TRADE owner projectionを確認します。</div>
         </div>
         <button id="investmentRefreshBtn" class="desk-primary-btn" type="button">Refresh</button>
         <div id="investmentStateBadge" class="desk-status-pill">loading</div>
@@ -1433,33 +1433,10 @@
       <section class="desk-main">
         <section id="investmentSummaryCards" class="desk-card-list home-focus"></section>
         <div class="desk-two-col">
-          <div id="investmentSnapshotCard" class="daily-desk-card"></div>
-          <div id="investmentHealthCard" class="daily-desk-card"></div>
+          <div id="investmentDependencyCard" class="daily-desk-card"></div>
+          <div id="investmentPortfolioCard" class="daily-desk-card"></div>
         </div>
-        <div class="table-wrap" style="margin-top:10px">
-          <table>
-            <thead><tr><th>Snapshot Date</th><th>Status</th><th>DB Hash</th><th>Features Hash</th><th>Data Range</th><th>Missing</th><th>Updated</th></tr></thead>
-            <tbody id="investmentSnapshotBody"></tbody>
-          </table>
-        </div>
-        <div class="table-wrap" style="margin-top:10px">
-          <table>
-            <thead><tr><th>Source</th><th>Latest Status</th><th>Last Fetch</th><th>Success</th><th>Partial</th><th>Fail</th><th>Rows</th></tr></thead>
-            <tbody id="investmentSourceBody"></tbody>
-          </table>
-        </div>
-        <div class="table-wrap" style="margin-top:10px">
-          <table>
-            <thead><tr><th>Week End</th><th>Instrument</th><th>ret_1w</th><th>ret_12w</th><th>vol_12w</th><th>event_risk</th><th>Flags</th></tr></thead>
-            <tbody id="investmentFeatureBody"></tbody>
-          </table>
-        </div>
-        <div class="table-wrap" style="margin-top:10px">
-          <table>
-            <thead><tr><th>Event Time</th><th>Level</th><th>Scope</th><th>Reason</th><th>Risk</th><th>Resolved</th></tr></thead>
-            <tbody id="investmentEventBody"></tbody>
-          </table>
-        </div>
+        <div id="investmentCapabilityCard" class="daily-desk-card" style="margin-top:10px"></div>
       </section>
     </div>
   </section>
@@ -1724,7 +1701,7 @@
 <script src="/viewer/assets/js/tabs/database-viewers.js?v=20260811-db-capability-catalog" defer></script>
 <script src="/viewer/assets/js/tabs/news-pack.js?v=20260805-news-pack-snapshot" defer></script>
 <script src="/viewer/assets/js/tabs/collection.js?v=20260721-daily-collection" defer></script>
-<script src="/viewer/assets/js/tabs/investment.js?v=20260616-investment-desk" defer></script>
+<script src="/viewer/assets/js/tabs/investment.js?v=20260825-trade-owner-projection" defer></script>
 <script src="/viewer/assets/js/tabs/roles.js?v=20260805-chat-recipient-label" defer></script>
 <script src="/viewer/assets/js/tabs/progress.js?v=20260510-tabs-progress" defer></script>
 <script src="/viewer/assets/js/tabs/timeline.js?v=20260805-midori-image-chat" defer></script>

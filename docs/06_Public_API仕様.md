@@ -64,7 +64,7 @@ RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewe
 | `POST /internal/assistant/notifications/line` | localhostのRenCrow_ASSISTANT専用LINE push transport |
 | `/viewer/ai-workflow/*` | AI engineering workflow の experimental API |
 | `/viewer/games/*` | RenCrow_GAMES bridge（status/decision/result/sessions/events/launch/observer proxy） |
-| `GET /viewer/trade/status` | RenCrow_TRADEのread-only状態projection。Broker／注文APIではない |
+| `GET /viewer/trade/status` | RenCrow_TRADEのread-only状態projection。Investment Viewerもこのowner routeを使用し、Broker／注文APIではない |
 | `POST /viewer/trade/policy/evaluate` | Global PolicyとTRADE policyの純粋な診断評価。実行許可や注文APIではない |
 | `POST /viewer/trade/risk-preview` | Global Policyに束縛した100万円Simulator購入前Risk Preview。Portfolio更新や注文APIではない |
 | `POST /viewer/trade/simulation-commit` | Preview済みの仮想buyを失効検査して100万円Simulatorへ一度だけ反映。外部注文ではない |
@@ -83,6 +83,11 @@ fallbackせず、宣言されたowner module routeだけで解決することを
 local file不在でも、認証済みTRADE read／write routeがruntimeへ登録されていれば`status=available`に
 なります。routeがない場合は`unavailable`または`blocked`となり、別DB・legacy route・fake endpointへ
 fallbackしません。通常のCORE-owned entryでは`owner_route_only`は省略（false）されます。
+
+InvestmentのViewer表示は、COREのローカルSQLiteや旧`/viewer/investment/status`へfallbackせず、
+`GET /viewer/trade/status`のprojectionをそのまま参照します。`storage.databases.investment`は
+既存設定との互換性を保つための論理keyであり、空値を正とします。COREはこのkeyから物理pathを
+解決・作成・公開しません。
 
 `GET /viewer/runtime-config`の`runtime_readiness`は、会話runtimeのRedis projectionについて
 `redis_configured`、`redis_reachable`、`redis_status`を返します。`redis_status`は

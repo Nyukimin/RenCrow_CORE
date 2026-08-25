@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -108,8 +107,6 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		HobbyGraphRelation:           viewer.HandleHobbyGraphRelation(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
 		HobbyMusicImport:             viewer.HandleHobbyMusicImport(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
 		HobbyTopicCandidatesGenerate: viewer.HandleHobbyTopicCandidatesGenerate(viewer.HobbyGraphOptions{DBPath: databasePaths.HobbyGraph}),
-		InvestmentStatus:             viewer.HandleInvestmentStatus(databasePaths.Investment),
-		InvestmentNotify:             viewer.HandleInvestmentNotify(dependencies.eventHub),
 	}})
 	avatarfeature.RegisterRoutes(mux, avatarfeature.Dependencies{Routes: avatarfeature.Routes{
 		CharacterRuntime: dependencies.characterRuntime,
@@ -390,7 +387,6 @@ type configuredViewerDatabasePaths struct {
 	ToolRegistry        string
 	MovieCatalog        string
 	HobbyGraph          string
-	Investment          string
 }
 
 func viewerDatabasePaths(cfg *config.Config) configuredViewerDatabasePaths {
@@ -402,14 +398,6 @@ func viewerDatabasePaths(cfg *config.Config) configuredViewerDatabasePaths {
 			ToolRegistry:        strings.TrimSpace(cfg.Storage.Databases.ToolRegistry),
 			MovieCatalog:        strings.TrimSpace(cfg.Storage.Databases.MovieCatalog),
 			HobbyGraph:          strings.TrimSpace(cfg.Storage.Databases.HobbyGraph),
-			Investment:          strings.TrimSpace(cfg.Storage.Databases.Investment),
-		}
-	}
-	if paths.Investment == "" {
-		if env := strings.TrimSpace(os.Getenv("RENCROW_DATA_DB")); env != "" {
-			paths.Investment = env
-		} else {
-			paths.Investment = filepath.Join("rencrow-data", "data", "rencrow.db")
 		}
 	}
 	return paths

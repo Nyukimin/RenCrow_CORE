@@ -730,6 +730,74 @@ func TestViewerStaticContractInvestmentTabSwitchMapping(t *testing.T) {
 	if !strings.Contains(js, "refreshInvestmentData()") {
 		t.Fatal("viewer.js missing Investment tab refresh wiring")
 	}
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	html := string(htmlData)
+	for _, needle := range []string{
+		`id="investmentDependencyCard"`,
+		`id="investmentPortfolioCard"`,
+		`id="investmentCapabilityCard"`,
+		`RenCrow_TRADE owner projection`,
+	} {
+		if !strings.Contains(html, needle) {
+			t.Fatalf("Investment Viewer missing owner projection contract %q", needle)
+		}
+	}
+	for _, forbidden := range []string{
+		`id="investmentSnapshotBody"`,
+		`id="investmentSourceBody"`,
+		`id="investmentFeatureBody"`,
+		`id="investmentEventBody"`,
+		`DB path`,
+	} {
+		if strings.Contains(html, forbidden) {
+			t.Fatalf("Investment Viewer must not expose retired local database contract %q", forbidden)
+		}
+	}
+}
+
+func TestViewerStaticContractInvestmentUsesTradeOwnerProjection(t *testing.T) {
+	data, err := os.ReadFile("assets/js/tabs/investment.js")
+	if err != nil {
+		t.Fatalf("read investment.js: %v", err)
+	}
+	js := string(data)
+	if !strings.Contains(js, "fetch('/viewer/trade/status") {
+		t.Fatal("Investment tab must read the canonical RenCrow_TRADE status projection")
+	}
+	for _, forbidden := range []string{
+		"/viewer/investment/status",
+		"/viewer/investment/notify",
+		"db_path",
+		"investmentSnapshotBody",
+		"investmentSourceBody",
+		"investmentFeatureBody",
+		"investmentEventBody",
+	} {
+		if strings.Contains(js, forbidden) {
+			t.Fatalf("Investment tab must not depend on retired local investment data %q", forbidden)
+		}
+	}
+}
+
+func TestViewerStaticContractRetiredInvestmentRoutesAreNotRegistered(t *testing.T) {
+	data, err := os.ReadFile("../../features/viewer/registrar.go")
+	if err != nil {
+		t.Fatalf("read viewer registrar: %v", err)
+	}
+	registrar := string(data)
+	for _, forbidden := range []string{
+		"/viewer/investment/status",
+		"/viewer/investment/notify",
+		"InvestmentStatus",
+		"InvestmentNotify",
+	} {
+		if strings.Contains(registrar, forbidden) {
+			t.Fatalf("Viewer registrar still exposes retired investment route wiring %q", forbidden)
+		}
+	}
 }
 
 func TestViewerStaticContractChatScrollUsesConversationContainer(t *testing.T) {
