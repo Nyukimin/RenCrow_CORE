@@ -195,8 +195,8 @@ func TestCatalogMarksOnlyInvestmentAsOwnerRouteOnly(t *testing.T) {
 	if !investment.OwnerRouteOnly {
 		t.Fatalf("investment owner_route_only=%v, want true", investment.OwnerRouteOnly)
 	}
-	if investment.PhysicalKey != "storage.databases.investment" {
-		t.Fatalf("investment physical key=%q", investment.PhysicalKey)
+	if investment.PhysicalKey != "" {
+		t.Fatalf("owner-route-only investment must not expose a physical key: %q", investment.PhysicalKey)
 	}
 
 	glossary, err := catalog.Describe("glossary")

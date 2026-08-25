@@ -15,16 +15,6 @@
       "arguments": ["build", "./..."]
     },
     {
-      "name": "rencrow-data",
-      "workingDirectory": ".",
-      "filePath": "python",
-      "arguments": ["-m", "unittest", "discover", "-s", "rencrow-data/tests", "-p", "test_*.py", "-v"],
-      "testFiles": ["rencrow-data/tests/*.py"],
-      "environment": {
-        "PYTHONPATH": "rencrow-data/src"
-      }
-    },
-    {
       "name": "viewer-node",
       "workingDirectory": ".",
       "filePath": "node",

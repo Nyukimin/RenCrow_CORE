@@ -79,7 +79,7 @@ func TestRuntimeDataCapabilityCatalogInvestmentUsesRegisteredOwnerRoutesWithoutL
 	if entry.Status != "available" || entry.Reason != "" {
 		t.Fatalf("registered owner routes must determine availability without local DB: %#v", entry)
 	}
-	if !entry.OwnerRouteOnly || entry.PhysicalKey != "storage.databases.investment" {
+	if !entry.OwnerRouteOnly || entry.PhysicalKey != "" {
 		t.Fatalf("investment owner boundary projection=%#v", entry)
 	}
 }

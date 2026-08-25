@@ -61,7 +61,6 @@ jobs:
           sources.extend(Path("workspace").glob("*.md"))
           sources.extend(Path("workspace/skills/log-ops").rglob("*.md"))
           sources.extend(Path("config").glob("*.md"))
-          sources.append(Path("rencrow-data/README.md"))
           sources.extend(Path(".agents/skills/stt-debug-report").rglob("*.md"))
           sources.extend(Path(".claude/skills/stt-debug-report").rglob("*.md"))
           failures = []
@@ -104,7 +103,6 @@ jobs:
           roots.extend(Path("workspace").glob("*.md"))
           roots.extend(Path("workspace/skills/log-ops").rglob("*.md"))
           roots.extend(Path("config").glob("*.md"))
-          roots.append(Path("rencrow-data/README.md"))
           roots.extend(Path(".agents/skills/stt-debug-report").rglob("*.md"))
           roots.extend(Path(".claude/skills/stt-debug-report").rglob("*.md"))
           failures = []

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,6 +59,43 @@ func TestViewerRouteRegistrationUsesTradeOwnerForInvestment(t *testing.T) {
 	} {
 		if strings.Contains(routes, forbidden) {
 			t.Fatalf("routes.go still contains retired local investment wiring %q", forbidden)
+		}
+	}
+}
+
+func TestRetiredCoreInvestmentSystemIsAbsent(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, relativePath := range []string{
+		"rencrow-data",
+		"scripts/rencrow_data_scheduler.sh",
+		"systemd/user/rencrow-data-daily.service",
+		"systemd/user/rencrow-data-daily.timer",
+		"systemd/user/rencrow-data-weekly.service",
+		"systemd/user/rencrow-data-weekly.timer",
+	} {
+		if _, err := os.Stat(filepath.Join(root, relativePath)); !os.IsNotExist(err) {
+			t.Fatalf("retired CORE investment artifact still exists: %s", relativePath)
+		}
+	}
+
+	for _, relativePath := range []string{
+		"Makefile",
+		"config/config.yaml.example",
+		"internal/adapter/config/config_types.go",
+		"internal/adapter/config/storage_config.go",
+		"scripts/test-local.plan.json",
+	} {
+		content, err := os.ReadFile(filepath.Join(root, relativePath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"rencrow-data", "storage.databases.investment", `yaml:"investment"`} {
+			if bytes.Contains(content, []byte(forbidden)) {
+				t.Fatalf("%s still contains retired CORE investment contract %q", relativePath, forbidden)
+			}
 		}
 	}
 }

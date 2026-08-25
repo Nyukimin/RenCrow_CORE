@@ -1,9 +1,0 @@
-{
-  "calendar_sources": [
-    {
-      "source_name": "csv_calendar",
-      "fixture": "fixtures/economic_calendar.csv"
-    }
-  ]
-}
-

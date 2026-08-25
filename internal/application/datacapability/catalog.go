@@ -110,7 +110,9 @@ func Build(states map[string]StoreState) *Catalog {
 	entries := make(map[string]Entry, len(storeDefinitions))
 	for _, definition := range storeDefinitions {
 		entry := definition
-		entry.PhysicalKey = "storage.databases." + entry.Name
+		if !entry.OwnerRouteOnly {
+			entry.PhysicalKey = "storage.databases." + entry.Name
+		}
 		state := states[entry.Name]
 		if entry.Name == "knowledge_memory" {
 			applyKnowledgeMemoryState(&entry, state)

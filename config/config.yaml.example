@@ -144,10 +144,6 @@ storage:
     glossary: "./data/glossary.db"
     movie_catalog: "./data/movie_catalog/eiga_catalog.sqlite"
     hobby_graph: "./data/hobby_graph/hobby_graph.sqlite"
-    # Logical compatibility key only. Investment state is owned by
-    # RenCrow_TRADE and is read through /viewer/trade/status; CORE must not
-    # create or open a local investment database for this key.
-    investment: ""
     advisor: "./workspace/logs/advisor.db"
     sandbox: "./workspace/logs/sandbox.db"
     dci: "./workspace/dci.db"

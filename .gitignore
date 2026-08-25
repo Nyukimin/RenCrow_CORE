@@ -31,12 +31,6 @@ workspace/skills/*
 # Secrets & Config (keep templates, ignore actual secrets)
 .env
 /config.yaml
-rencrow-data/data/
-rencrow-data/logs/
-rencrow-data/archive/
-rencrow-data/policies/
-rencrow-data/reports/
-rencrow-data/.env
 *.sqlite
 *.db
 *.sqlite.gz

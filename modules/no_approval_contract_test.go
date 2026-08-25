@@ -41,7 +41,6 @@ func TestActiveRepositoryHasNoApprovalContract(t *testing.T) {
 		"modules",
 		"pkg",
 		"prompts",
-		"rencrow-data",
 		"scripts",
 		"test/e2e",
 		"tools",
@@ -169,8 +168,6 @@ func hasForbiddenApprovalTerm(t *testing.T, path string, forbidden []string) boo
 func isApprovalGuardExcludedDirectory(path string) bool {
 	path = filepath.ToSlash(path)
 	return path == "docs/調査" ||
-		path == "rencrow-data/data" ||
-		path == "rencrow-data/reports" ||
 		strings.HasSuffix(path, "/__pycache__") ||
 		strings.Contains(path, "/archive/") ||
 		strings.HasPrefix(path, "internal/application/idlechat/archive/")

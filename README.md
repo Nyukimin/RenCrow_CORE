@@ -42,7 +42,7 @@ API key や token はリポジトリへ保存せず、`${ENV_VAR}` 形式で環�
 ## Go配布境界
 
 標準配布はCOREのGo binaryと設定を基本とし、Python／Node.jsを必須runtimeにしません。
-Browser Actor、Webwright、`rencrow-data`はoptional sidecar／運用機能です。PORTAL／GAMESの
+Browser Actor、Webwrightはoptional sidecar／運用機能です。PORTAL／GAMESの
 ブラウザJavaScriptはブラウザで実行します。
 
 COREと各moduleのnative Go process、公開contract、Config、health、errorの意味はUbuntu、

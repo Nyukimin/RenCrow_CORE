@@ -198,7 +198,6 @@ type DatabasePathsConfig struct {
 	Glossary             string `yaml:"glossary"`
 	MovieCatalog         string `yaml:"movie_catalog"`
 	HobbyGraph           string `yaml:"hobby_graph"`
-	Investment           string `yaml:"investment"`
 	Advisor              string `yaml:"advisor"`
 	Sandbox              string `yaml:"sandbox"`
 	DCI                  string `yaml:"dci"`

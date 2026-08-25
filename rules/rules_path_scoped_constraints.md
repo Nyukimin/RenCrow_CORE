@@ -22,7 +22,6 @@ RenCrow の module / directory 固有制約を、常時 `AGENTS.md` へ詰め込
 | `RenCrow_Tools/**` | 横断 tool の正本。新規 browser sidecar、変換、検証 CLI はここを優先する。 | root `AGENTS.md` |
 | `modules/stt/**` | Core runtime 側の STT integration。STT engine 本体と混同しない。 | `skills/core/stt-latency-debug` |
 | `internal/adapter/viewer/**` | Viewer UI。desktop / narrow / mobile、pointer-events、z-index、固定入力バー、overlay 干渉を実ブラウザで確認する。 | `rules/rules_viewer_ui.md`, `skills/core/viewer-live-verification` |
-| `rencrow-data/**` | market data workflow。snapshot_id、policy_status、paper_trade_log、CLI audit を保つ。 | `skills/core/rencrow-data-refresh-audit` |
 | `systemd/**` | live service deployment。restart 前に service stop、残 process、port、health down を確認する。 | `skills/core/rencrow-service-rebuild-restart` |
 | `internal/infrastructure/persistence/**` | DB / JSONL persistence。schema、audit trail、migration、direct write boundary を確認する。 | `rules/common/rules_state_management.md` |
 | `docs/README.md` | 現行正本の索引、範囲、優先順位。正本追加ではなく既存 `01` から `10` へ収束させる。 | `docs/README.md` |

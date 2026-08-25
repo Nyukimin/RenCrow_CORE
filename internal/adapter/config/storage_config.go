@@ -206,7 +206,6 @@ func (c *Config) validateBackupConfig() error {
 		{"storage.databases.glossary", c.Storage.Databases.Glossary},
 		{"storage.databases.movie_catalog", c.Storage.Databases.MovieCatalog},
 		{"storage.databases.hobby_graph", c.Storage.Databases.HobbyGraph},
-		{"storage.databases.investment", c.Storage.Databases.Investment},
 		{"storage.databases.advisor", c.Storage.Databases.Advisor},
 		{"storage.databases.sandbox", c.Storage.Databases.Sandbox},
 		{"storage.databases.dci", c.Storage.Databases.DCI},

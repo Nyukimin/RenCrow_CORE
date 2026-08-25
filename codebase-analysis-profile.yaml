@@ -55,9 +55,8 @@ module_groups:
       - prompts
       - skills
       - schemas
-      - rencrow-data
     focus:
-      - 正本仕様、Viewer仕様、Knowledge Wiki、投資研究基盤の配置
+      - 正本仕様、Viewer仕様、Knowledge Wiki、TRADE owner projectionの配置
       - config/prompts/skills/schemasの実行時参照関係
       - docsと実装の乖離が起こりやすい境界
 
@@ -73,4 +72,4 @@ use_cases:
   - id: repair_plane
     name: Viewer Repair Planeから自己修復ジョブを起動する
   - id: investment_status
-    name: rencrow-data投資研究基盤をViewerへ表示する
+    name: RenCrow_TRADE owner projectionをViewerへ表示する
