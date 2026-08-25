@@ -58,6 +58,7 @@ type WebwrightFetchConfig struct {
 	OutputDir         string `yaml:"output_dir"`
 	StagingOutputDir  string `yaml:"staging_output_dir"`
 	UvxFrom           string `yaml:"uvx_from"`
+	UvxBinary         string `yaml:"uvx_binary"`
 	Python            string `yaml:"python"`
 	ResponsesEndpoint string `yaml:"responses_endpoint"`
 	Model             string `yaml:"model"`

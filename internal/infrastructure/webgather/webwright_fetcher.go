@@ -30,6 +30,7 @@ type WebwrightFetcherConfig struct {
 	OutputDir         string
 	StagingOutputDir  string
 	UvxFrom           string
+	UvxBinary         string
 	Python            string
 	ResponsesEndpoint string
 	Model             string
@@ -207,6 +208,9 @@ func buildWebwrightRunnerCommand(cfg WebwrightFetcherConfig, task string, startU
 	}
 	if strings.TrimSpace(cfg.UvxFrom) != "" {
 		args = append(args, "--uvx-from", cfg.UvxFrom)
+		if strings.TrimSpace(cfg.UvxBinary) != "" {
+			args = append(args, "--uvx-binary", cfg.UvxBinary)
+		}
 	}
 	return "python3", args
 }

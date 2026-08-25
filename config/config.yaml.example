@@ -59,7 +59,7 @@ web_gather:
   searxng_base_url: ""
 
 # Webwright は RenCrow_Tools に分離した任意のブラウザ取得補助ツール。
-# uvx_from は外部取得を伴うため、使う場合だけ明示する。
+# uvx_from は外部取得を伴うため、使う場合だけ明示する。service PATH に依存させない場合は uvx_binary に絶対pathを指定する。
 # runner_path / config_path 未指定時は RENCROW_TOOLS_ROOT、または $HOME/RenCrow/RenCrow_Tools から解決する。
 webwright_fetch:
   enabled: false
@@ -68,6 +68,7 @@ webwright_fetch:
   output_dir: "tmp/webwright_runs"
   staging_output_dir: "tmp/webwright_staging"
   uvx_from: ""
+  uvx_binary: ""
   python: ""
   # RenCrow_LLM Gatewayの論理aliasを指定する。
   responses_endpoint: "http://127.0.0.1:8090/v1/responses"
@@ -357,7 +358,7 @@ heartbeat:
     interval_minutes: 360 # 60〜10080分（既定6時間）
     timeout_minutes: 90   # 1 run全体の上限
     run_on_start: true    # CORE起動直後に1回収集
-    command: "rencrow-x-bookmarks"
+    command: "/absolute/path/to/rencrow-x-bookmarks"
     output_root: "/home/<user>/.local/share/rencrow/x_bookmarks/heartbeat_exports"
     max_scrolls: 100
 

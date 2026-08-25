@@ -65,6 +65,7 @@ func webwrightFetcherConfigFromRuntime(cfg config.WebwrightFetchConfig) webgathe
 		OutputDir:         cfg.OutputDir,
 		StagingOutputDir:  cfg.StagingOutputDir,
 		UvxFrom:           cfg.UvxFrom,
+		UvxBinary:         cfg.UvxBinary,
 		Python:            cfg.Python,
 		ResponsesEndpoint: cfg.ResponsesEndpoint,
 		Model:             cfg.Model,
@@ -850,6 +851,9 @@ func buildWebGatherWebwrightCommand(cfg config.WebwrightFetchConfig, req webGath
 	}
 	if uvxFrom := strings.TrimSpace(cfg.UvxFrom); uvxFrom != "" {
 		args = append(args, "--uvx-from", uvxFrom)
+		if uvxBinary := strings.TrimSpace(cfg.UvxBinary); uvxBinary != "" {
+			args = append(args, "--uvx-binary", uvxBinary)
+		}
 	}
 	if endpoint := strings.TrimSpace(cfg.ResponsesEndpoint); endpoint != "" {
 		args = append(args, "--local-responses-endpoint", endpoint)
@@ -951,6 +955,15 @@ func runWebGatherDoctor(ctx context.Context, deps webGatherCLIDeps) webGatherDoc
 		add("webwright_uvx_from", true, "ok", "disabled; external package fetch is opt-in")
 	} else {
 		add("webwright_uvx_from", true, "ok", deps.WebwrightFetch.UvxFrom)
+		uvxBinary := strings.TrimSpace(deps.WebwrightFetch.UvxBinary)
+		if uvxBinary == "" {
+			uvxBinary = "uvx"
+		}
+		if resolved, err := exec.LookPath(uvxBinary); err != nil {
+			add("webwright_uvx_binary", false, "fail", err.Error())
+		} else {
+			add("webwright_uvx_binary", true, "ok", resolved)
+		}
 	}
 	if err := checkWebwrightResponsesEndpoint(ctx, deps.WebwrightFetch.ResponsesEndpoint); err != nil {
 		add("webwright_responses_endpoint", false, "fail", err.Error())

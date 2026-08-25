@@ -977,6 +977,7 @@ server:
 webwright_fetch:
   enabled: true
   uvx_from: "git+https://github.com/microsoft/Webwright.git"
+  uvx_binary: "/opt/uv/bin/uvx"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -988,6 +989,9 @@ webwright_fetch:
 	}
 	if cfg.WebwrightFetch.UvxFrom != "git+https://github.com/microsoft/Webwright.git" {
 		t.Fatalf("explicit uvx_from should be preserved, got %s", cfg.WebwrightFetch.UvxFrom)
+	}
+	if cfg.WebwrightFetch.UvxBinary != "/opt/uv/bin/uvx" {
+		t.Fatalf("explicit uvx_binary should be preserved, got %s", cfg.WebwrightFetch.UvxBinary)
 	}
 }
 

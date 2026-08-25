@@ -135,6 +135,7 @@ type WebwrightFetchRuntimeConfig struct {
 	OutputDir         string `json:"output_dir,omitempty"`
 	StagingOutputDir  string `json:"staging_output_dir,omitempty"`
 	UvxFrom           string `json:"uvx_from,omitempty"`
+	UvxBinary         string `json:"uvx_binary,omitempty"`
 	Python            string `json:"python,omitempty"`
 	ResponsesEndpoint string `json:"responses_endpoint,omitempty"`
 	Model             string `json:"model,omitempty"`
@@ -343,6 +344,7 @@ func normalizeWebwrightFetchRuntimeConfig(in WebwrightFetchRuntimeConfig) Webwri
 	in.OutputDir = strings.TrimSpace(in.OutputDir)
 	in.StagingOutputDir = strings.TrimSpace(in.StagingOutputDir)
 	in.UvxFrom = strings.TrimSpace(in.UvxFrom)
+	in.UvxBinary = strings.TrimSpace(in.UvxBinary)
 	in.Python = strings.TrimSpace(in.Python)
 	in.ResponsesEndpoint = strings.TrimRight(strings.TrimSpace(in.ResponsesEndpoint), "/")
 	in.Model = strings.TrimSpace(in.Model)

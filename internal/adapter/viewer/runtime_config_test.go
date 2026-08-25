@@ -103,6 +103,7 @@ func TestHandleRuntimeConfig_ReturnsModuleGatewayStatus(t *testing.T) {
 			OutputDir:         "tmp/webwright_runs",
 			StagingOutputDir:  "tmp/webwright_staging",
 			UvxFrom:           "git+https://github.com/microsoft/Webwright.git",
+			UvxBinary:         "/opt/uv/bin/uvx",
 			ResponsesEndpoint: "http://192.168.1.31:8090/v1/responses/",
 			Model:             "Coder1",
 			APIKeyConfigured:  true,

@@ -134,6 +134,7 @@ func cmdRun() {
 		OutputDir:         cfg.WebwrightFetch.OutputDir,
 		StagingOutputDir:  cfg.WebwrightFetch.StagingOutputDir,
 		UvxFrom:           cfg.WebwrightFetch.UvxFrom,
+		UvxBinary:         cfg.WebwrightFetch.UvxBinary,
 		Python:            cfg.WebwrightFetch.Python,
 		ResponsesEndpoint: cfg.WebwrightFetch.ResponsesEndpoint,
 		Model:             cfg.WebwrightFetch.Model,

@@ -277,6 +277,7 @@ func TestRunWebGatherCommandWebwrightFetchDryRunUsesConfiguredRunner(t *testing.
 			ConfigPath:        "tools/webwright_fetch/config_local_worker.yaml",
 			OutputDir:         "tmp/webwright_runs",
 			UvxFrom:           "git+https://github.com/microsoft/Webwright.git",
+			UvxBinary:         "/opt/uv/bin/uvx",
 			ResponsesEndpoint: "http://127.0.0.1:8082/v1/responses",
 			Model:             "Coder1",
 			APIKey:            "dummy",
@@ -297,6 +298,7 @@ func TestRunWebGatherCommandWebwrightFetchDryRunUsesConfiguredRunner(t *testing.
 	for _, want := range []string{
 		"tools/webwright_fetch/run_webwright_fetch.py",
 		"--task", "collect page",
+		"--uvx-binary", "/opt/uv/bin/uvx",
 		"--start-url", "https://example.com",
 		"--task-id", "task-1",
 		"--dry-run",
@@ -418,6 +420,35 @@ func TestRunWebGatherCommandDoctorPassesReachableWebwrightEndpoint(t *testing.T)
 	}, &out, &errOut)
 	if code != 0 || !strings.Contains(out.String(), "webwright_responses_endpoint: ok") {
 		t.Fatalf("expected doctor success, code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	}
+}
+
+func TestRunWebGatherCommandDoctorFailsMissingUvxBinary(t *testing.T) {
+	dir := t.TempDir()
+	runnerPath := filepath.Join(dir, "run_webwright_fetch.py")
+	if err := os.WriteFile(runnerPath, []byte("#!/usr/bin/env python3\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile runner failed: %v", err)
+	}
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(dir, "l1.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+
+	var out, errOut bytes.Buffer
+	code := runWebGatherCommand([]string{"doctor"}, webGatherCLIDeps{
+		StagingStore: store,
+		WebwrightFetch: config.WebwrightFetchConfig{
+			Enabled:           true,
+			RunnerPath:        runnerPath,
+			Python:            "python3",
+			UvxFrom:           "git+https://example.invalid/webwright.git",
+			UvxBinary:         filepath.Join(dir, "missing-uvx"),
+			ResponsesEndpoint: "http://127.0.0.1:1/v1/responses",
+		},
+	}, &out, &errOut)
+	if code != 1 || !strings.Contains(out.String(), "webwright_uvx_binary: fail") {
+		t.Fatalf("expected missing uvx failure, code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 }
 
