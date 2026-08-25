@@ -94,7 +94,7 @@ bounded PINGが成功したことを表し、URL、credential、backend error本
 正本ではないため、この独立statusはCOREの`/health/ready`判定へ混入しません。
 
 同responseの`llm_gateway.ready`は起動時snapshotを固定表示せず、response生成時に設定済み
-RenCrow_LLM Gatewayの`/health/ready`を1秒以内で確認した現在projectionです。成功時は過去の
+RenCrow_LLM Gatewayの軽量`/v1/models`契約で`mio` aliasを1秒以内に確認した現在projectionです。成功時は過去の
 起動警告を表示せず、失敗時は`ready=false`と一般化したwarningを返します。probeの内部error、
 credential、backend情報はViewerへ公開せず、`auto_start_attempted`と`auto_started`は起動時の
 履歴metadataとして維持します。

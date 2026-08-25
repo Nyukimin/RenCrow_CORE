@@ -11,11 +11,11 @@ import (
 
 func TestEnsureLLMGatewayAcceptsHealthyGateway(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health/ready" {
-			t.Fatalf("health path=%q, want /health/ready", r.URL.Path)
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("health path=%q, want /v1/models", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"status":"ready"}`))
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"mio"}]}`))
 	}))
 	defer server.Close()
 
@@ -27,18 +27,18 @@ func TestEnsureLLMGatewayAcceptsHealthyGateway(t *testing.T) {
 	}
 }
 
-func TestLLMGatewayLivenessIsNotReadiness(t *testing.T) {
+func TestLLMGatewayEmptyModelCatalogIsNotReadiness(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health/ready" {
-			t.Fatalf("health path=%q, want /health/ready", r.URL.Path)
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("health path=%q, want /v1/models", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"status":"live"}`))
+		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
 	}))
 	defer server.Close()
 
 	if llmGatewayHealthy(server.URL) {
-		t.Fatal("liveness response must not be accepted as readiness")
+		t.Fatal("empty model catalog must not be accepted as readiness")
 	}
 }
 
