@@ -556,7 +556,7 @@ func TestProfilePromotionReadPathsBypassOccupiedWorkerConnections(t *testing.T) 
 		},
 	}
 	for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			store := newProfilePromotionTestStore(t)
 			ctx := context.Background()
 			if err := store.SaveMessage(ctx, "ren", 30, "conv:read-path-"+tt.name, domconv.NewMessage(domconv.SpeakerUser, "read path", nil), MemoryStateObserved); err != nil {
