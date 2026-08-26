@@ -573,6 +573,61 @@ func TestEmitIdleChatTTSAsyncSerializesIdleSpeech(t *testing.T) {
 	}
 }
 
+func TestIdleChatTTSWorkerContextDoesNotOwnACompetingDeadline(t *testing.T) {
+	bridge := &cancelAwareIdleChatTTSBridge{
+		started:  make(chan struct{}),
+		canceled: make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+
+	lifecycle := emitIdleChatTTSAsync(bridge, idlechat.TimelineEvent{
+		Type:      "idlechat.message",
+		From:      "mio",
+		To:        "shiro",
+		Content:   "合成時間の正本はセッション側です。",
+		SessionID: "idle-single-timeout-owner",
+		MessageID: "message-single-timeout-owner",
+	})
+	select {
+	case <-bridge.started:
+	case <-time.After(time.Second):
+		t.Fatal("TTS synthesis did not start")
+	}
+
+	idleChatTTSActiveMu.Lock()
+	items := idleChatTTSActive[streamKey("idle-single-timeout-owner", "message-single-timeout-owner")]
+	var hasDeadline bool
+	for item := range items {
+		_, hasDeadline = item.ctx.Deadline()
+	}
+	idleChatTTSActiveMu.Unlock()
+	if hasDeadline {
+		t.Fatal("worker context must not compete with orchestrator Ready/Done deadlines")
+	}
+
+	close(bridge.release)
+	select {
+	case <-lifecycle.Done:
+	case <-time.After(time.Second):
+		t.Fatal("TTS synthesis did not finish")
+	}
+}
+
+func TestIdleChatTTSPrefetchContextDoesNotOwnACompetingDeadline(t *testing.T) {
+	bridge := &idleChatMockTTSBridge{}
+	manager := newIdleChatTTSPrefetchManager(bridge)
+	stream := manager.stream("idle-prefetch-timeout-owner", "message-prefetch-timeout-owner", idlechat.TTSPrefetchEvent{
+		SessionID: "idle-prefetch-timeout-owner",
+		MessageID: "message-prefetch-timeout-owner",
+		From:      "mio",
+		To:        "shiro",
+	})
+	if _, hasDeadline := stream.ctx.Deadline(); hasDeadline {
+		t.Fatal("prefetch context must not compete with orchestrator Ready/Done deadlines")
+	}
+	manager.CancelAll()
+}
+
 func TestEmitIdleChatTTSAsyncPrefetchesWithoutPlaybackCompletion(t *testing.T) {
 	clearAllIdleChatTTSPending()
 	resetTTSPublicSessionStateForTest()

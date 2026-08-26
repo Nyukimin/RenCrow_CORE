@@ -175,7 +175,10 @@ func (m *idleChatTTSPrefetchManager) stream(sessionID, messageID string, ev idle
 		turnIndex:       ev.TurnIndex,
 		responseID:      nextTTSPublicResponseIDForMessage(strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID)),
 	}
-	stream.ctx, stream.cancel = context.WithTimeout(context.Background(), idleChatTTSWorkerTimeout)
+	// Timeout ownership belongs to the orchestrator's Ready/Done waits. A
+	// prefetch stream may exist before its final utterance is known, so a second
+	// deadline here would consume the drain budget prematurely.
+	stream.ctx, stream.cancel = context.WithCancel(context.Background())
 	stream.lifecycle = newIdleChatTTSLifecycleController()
 	go stream.run()
 	m.streams[key] = stream

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
@@ -29,14 +28,15 @@ var (
 	idleChatTTSActive   = make(map[string]map[*idleChatTTSItem]struct{})
 )
 
-const idleChatTTSWorkerTimeout = 120 * time.Second
-
 func emitIdleChatTTSAsync(bridge orchestrator.TTSBridge, ev idlechat.TimelineEvent) idlechat.TTSLifecycle {
 	if bridge == nil {
 		return idlechat.TTSLifecycle{}
 	}
 	controller := newIdleChatTTSLifecycleController()
-	ctx, cancel := context.WithTimeout(context.Background(), idleChatTTSWorkerTimeout)
+	// The orchestrator owns the user-visible readiness and session-drain
+	// deadlines. Starting another deadline when an item is enqueued makes a
+	// bounded multi-chunk utterance lose part of its budget before synthesis.
+	ctx, cancel := context.WithCancel(context.Background())
 	item := &idleChatTTSItem{
 		bridge:    bridge,
 		ev:        ev,
