@@ -1414,11 +1414,24 @@ code配置先の`target_modules`、利用先の`consumer_modules`、検証影響
 hash検証済み本文と`body_available=true`、external artifactでは本文を複製せず参照metadataと
 `body_available=false`を返します。encoded slash、backslash、traversal、未知IDを拒否し、任意filesystem pathは受理しません。
 
-状態変更は`POST /v1/atlas/intake`と`POST /v1/atlas/items/{id}/{candidate|adopt|defer|reject|revise}`
+状態変更は`POST /v1/atlas/intake`と`POST /v1/atlas/items/{id}/{candidate|adopt|defer|reject|revise|revalidate|enrich}`
 に限定します。`cmd-control` profile、Bearer credential、owner identity、bounded JSON bodyを必須とし、
 COREがstate transition、dedupe、Evidence Gate、WIP leaseを検証してtyped resultを返します。
-Viewer、CMD、LLMがstateや`check_ok`を直接確定しません。legacy `GET|POST /viewer/backlog`は互換入口として
-維持しますが、Atlas lifecycleのauthoritative writeではありません。
+Viewer、CMD、LLMがstateや`check_ok`を直接確定しません。legacy `GET /viewer/backlog`はread互換入口として
+維持しますが、`POST /viewer/backlog`は405を返し、Atlas lifecycleを迂回するwriteを受理しません。
+
+`POST /v1/atlas/items/{id}/revalidate`の通常requestは`request_id`と任意の`trigger`だけを受理します。
+RenCrowが七観点と`PROMOTE | MERGE | HOLD | DROP`案を生成し、COREが最低7日、対象Item、実在する
+MERGE先、HOLD trigger、schema、state transitionを検証して、Itemと`revalidation_record`を返します。
+通常requestへdecision、reason、七観点等を含めると400です。`forced=true`は認証済みownerの
+`PROMOTE | HOLD | DROP`だけを許可し、reasonを必須とします。eligible前は許可された
+`bypass_reason`も必須です。強制MERGEは拒否し、review actorはrequest bodyでなく認証ownerをserverが記録します。
+
+`POST /v1/atlas/items/{id}/enrich`は`source_refs`、`related_ids`、`relation_refs`、`body`、
+`background`、`priority`だけを更新できます。`material_change=true`では理由を必須とし、
+履歴を保持したまま7日間のMATURATIONを再開始します。軽微な追記では時刻をリセットしません。
+`GET /viewer/atlas`の`maturation_metrics`は30日windowのcreation/promotion/merge/hold/drop rate、
+average maturation days、backlog growthをItem履歴から決定的に投影します。
 
 `revise`は`implementation_revision`、隣接`target_stage`、Evidence Refを受け取りますが、入力の
 `passed=true`をruntime合格へ直接代入しません。COREはkind別owner verifierで参照先を検証し、

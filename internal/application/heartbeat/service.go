@@ -59,6 +59,10 @@ type AtlasRunnerService interface {
 	Revise(context.Context, string, backlogapp.ReviseRequest) (domainbacklog.Item, error)
 }
 
+type atlasMaturationService interface {
+	RunEligibleRevalidations(context.Context, int) (backlogapp.RevalidationSweepReport, error)
+}
+
 type atlasImplementationLeaseStore interface {
 	AcquireImplementationLease(context.Context, domainworkstream.ImplementationLease) (bool, error)
 	ReleaseImplementationLease(context.Context, string, string) error
@@ -114,6 +118,7 @@ type HeartbeatService struct {
 	done                chan struct{}
 	mu                  sync.Mutex
 	running             bool
+	lastMaturationSweep time.Time
 }
 
 // NewHeartbeatService は新しいHeartbeatServiceを作成
@@ -277,6 +282,7 @@ func (s *HeartbeatService) loop() {
 }
 
 func (s *HeartbeatService) runScheduledBacklogIntake(ctx context.Context, now time.Time) {
+	s.runMaturationRevalidation(ctx, now)
 	report, err := s.RunBacklogIntake(ctx, now)
 	if err != nil {
 		log.Printf("[Heartbeat] backlog intake error: %v", err)
@@ -294,6 +300,33 @@ func (s *HeartbeatService) runScheduledBacklogIntake(ctx context.Context, now ti
 	if runnerReport.Started > 0 || runnerReport.Failed > 0 {
 		log.Printf("[Heartbeat] backlog runner: checked=%d started=%d skipped=%d failed=%d item=%s",
 			runnerReport.Checked, runnerReport.Started, runnerReport.Skipped, runnerReport.Failed, runnerReport.ItemID)
+	}
+}
+
+func (s *HeartbeatService) runMaturationRevalidation(ctx context.Context, now time.Time) {
+	service, ok := s.atlasService.(atlasMaturationService)
+	if !ok || service == nil {
+		return
+	}
+	now = now.UTC()
+	s.mu.Lock()
+	if !s.lastMaturationSweep.IsZero() && now.Sub(s.lastMaturationSweep) < 24*time.Hour {
+		s.mu.Unlock()
+		return
+	}
+	// Stamp before the potentially slow semantic call. A failed evaluator is
+	// retried on the next daily sweep, not every heartbeat tick.
+	s.lastMaturationSweep = now
+	s.mu.Unlock()
+	report, err := service.RunEligibleRevalidations(ctx, 1)
+	if err != nil {
+		log.Printf("[Heartbeat] Atlas maturation revalidation error: %v", err)
+		s.emitEvent("atlas.maturation.error", err.Error())
+		return
+	}
+	if report.Attempted > 0 || report.Failed > 0 {
+		log.Printf("[Heartbeat] Atlas maturation revalidation: eligible=%d attempted=%d completed=%d failed=%d items=%v", report.Eligible, report.Attempted, report.Completed, report.Failed, report.ItemIDs)
+		s.emitEvent("atlas.maturation.completed", fmt.Sprintf("eligible=%d attempted=%d completed=%d failed=%d", report.Eligible, report.Attempted, report.Completed, report.Failed))
 	}
 }
 

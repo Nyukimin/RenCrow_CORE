@@ -1,13 +1,18 @@
 'use strict';
 
-// Atlas is a read-only projection for the CORE Debug Viewer. It intentionally
-// keeps no durable state and never calls an Atlas write endpoint.
+// Atlas reads the public projection and exposes the authenticated CORE owner
+// operations required to complete user decisions. Owner credentials stay only
+// in this page's memory and are never written to browser storage.
 let atlasProjection = atlasEmptyProjection();
 let atlasFetchError = '';
 let atlasLoading = false;
 let atlasActiveTab = 'current';
 const atlasBacklogFilters = {concept: '', priority: '', owner: ''};
 let atlasItemDetailState = atlasEmptyItemDetailState();
+let atlasOwnerToken = '';
+let atlasOwnerBusy = false;
+let atlasOwnerReceipt = null;
+let atlasOwnerError = '';
 
 function atlasEmptyItemDetailState(requestID = 0) {
   return {
@@ -37,6 +42,7 @@ function atlasEmptyProjection() {
     queueFreezes: [],
     closureReceipts: [],
     stageReceipts: [],
+    maturationMetrics: {},
   };
 }
 
@@ -167,6 +173,7 @@ function atlasNormalizeProjection(payload) {
     queueFreezes: atlasList(source.queue_freezes || source.queueFreezes),
     closureReceipts: atlasList(source.closure_receipts || source.closureReceipts),
     stageReceipts: atlasList(source.stage_receipts || source.stageReceipts),
+    maturationMetrics: source.maturation_metrics && typeof source.maturation_metrics === 'object' ? source.maturation_metrics : {},
   };
 }
 
@@ -218,6 +225,8 @@ function atlasRenderSummary() {
   const current = atlasCurrentItems();
   const catalogCount = atlasProjection.catalog.length + atlasProjection.features.length;
   const activeTitle = atlasProjection.active ? atlasItemTitle(atlasProjection.active, 'Active unit') : 'None';
+  const metrics = atlasProjection.maturationMetrics;
+  const decisions = Number(metrics.decision_count || 0);
   root.innerHTML = [
     atlasSummaryCard('Current', String(current.length), 'DONE-only current projection', current.length ? 'ready' : 'empty'),
     atlasSummaryCard('Radar', String(atlasProjection.radar.length), 'new information to review', atlasProjection.radar.length ? 'pending' : 'empty'),
@@ -225,6 +234,7 @@ function atlasRenderSummary() {
     atlasSummaryCard('Active Unit', activeTitle, 'Global WIP = 1', atlasProjection.active ? 'active' : 'empty'),
     atlasSummaryCard('Queue', String(atlasProjection.queue.length), 'adopted implementation units', atlasProjection.queue.length ? 'pending' : 'empty'),
     atlasSummaryCard('Catalog', String(catalogCount), 'catalog + feature entries', catalogCount ? 'ready' : 'empty'),
+    atlasSummaryCard('Maturation', String(decisions), '30-day revalidation decisions', decisions ? 'ready' : 'empty'),
   ].join('');
 }
 
@@ -364,6 +374,116 @@ function atlasRenderDetailEvidence(item) {
   }).join('') + '</ul>';
 }
 
+function atlasLatestRevalidation(item) {
+  const records = atlasList(atlasField(item, ['revalidation_records'], []));
+  return records.length ? records[records.length - 1] : null;
+}
+
+function atlasRenderRevalidationRecord(item) {
+  const record = atlasLatestRevalidation(item);
+  if (!record) return atlasEmpty('No revalidation receipt', 'RenCrow has not produced a maturation decision for this item.');
+  const fields = [
+    ['Decision', ['decision']], ['Reason', ['reason']], ['Maturation Days', ['maturation_days']],
+    ['Necessity', ['necessity']], ['Duplication', ['duplication']], ['Mergeability', ['mergeability']],
+    ['Architecture', ['architectural_consistency', 'architecture_impact']],
+    ['Technology', ['technology_validity', 'technology_changes']],
+    ['Implementation Value', ['implementation_value']], ['Timing', ['timing']],
+    ['Related Backlogs', ['related_backlogs']], ['Conflicting Specs', ['conflicting_specs']],
+    ['Merged Into', ['merged_into']], ['Next Review Trigger', ['next_review_trigger']],
+    ['Review Agents', ['review_agents']], ['Bypass', ['bypass_reason']],
+  ];
+  return '<dl class="atlas-detail-grid">' + fields.map((field) => atlasDetailMarkup(field[0], atlasField(record, field[1], ''))).join('') + '</dl>';
+}
+
+function atlasOwnerHeaders() {
+  return {
+    'Authorization': 'Bearer ' + atlasOwnerToken,
+    'Content-Type': 'application/json',
+    'X-RenCrow-Client': 'RenCrow_CMD',
+    'X-RenCrow-Interaction-Profile': 'cmd-control',
+  };
+}
+
+function atlasReceiptMarkup() {
+  if (atlasOwnerError) return '<div class="atlas-owner-receipt state-error"><strong>Request failed</strong><span>' + atlasEscape(atlasOwnerError) + '</span></div>';
+  if (!atlasOwnerReceipt) return '<div class="atlas-owner-receipt"><strong>Receipt</strong><span>No owner action has been submitted in this page session.</span></div>';
+  const record = atlasOwnerReceipt.revalidation_record || null;
+  const item = atlasOwnerReceipt.item || null;
+  const result = [
+    atlasField(item, ['item_id'], atlasField(atlasOwnerReceipt, ['item_id'], '')),
+    atlasField(record, ['decision'], ''),
+    atlasField(record, ['revalidation_date'], atlasField(item, ['updated_at'], '')),
+    atlasOwnerReceipt.duplicate === true ? 'duplicate' : '',
+  ].filter(Boolean).join(' / ');
+  return '<div class="atlas-owner-receipt state-idle"><strong>Receipt</strong><span>' + atlasEscape(result || 'CORE accepted the request') + '</span></div>';
+}
+
+function atlasRenderOwnerCredentials() {
+  return '<section class="atlas-owner-card"><div class="atlas-subsection-head"><h4>Authenticated owner operation</h4><span>token is kept in memory only</span></div>' +
+    '<label class="atlas-owner-field"><span>CORE owner token</span><input type="password" autocomplete="off" data-atlas-owner-token value="' + atlasEscapeAttr(atlasOwnerToken) + '" placeholder="Bearer token"></label>' +
+    atlasReceiptMarkup() + '</section>';
+}
+
+function atlasRenderIntakeForm() {
+  return '<section class="atlas-owner-card"><div class="atlas-subsection-head"><h4>Backlog Intake</h4><span>registration is not adoption</span></div>' +
+    '<div class="atlas-owner-grid"><label class="atlas-owner-field"><span>Title</span><input data-atlas-intake="title" maxlength="240"></label>' +
+    '<label class="atlas-owner-field"><span>Purpose</span><input data-atlas-intake="purpose" maxlength="1000"></label>' +
+    '<label class="atlas-owner-field atlas-owner-wide"><span>Problem / context</span><textarea data-atlas-intake="problem" rows="3" maxlength="8000"></textarea></label>' +
+    '<label class="atlas-owner-field"><span>Owner module</span><input data-atlas-intake="owner_module" placeholder="RenCrow_CORE"></label>' +
+    '<label class="atlas-owner-field"><span>Priority</span><select data-atlas-intake="priority"><option>normal</option><option>high</option><option>urgent</option><option>low</option></select></label>' +
+    '<label class="atlas-owner-field atlas-owner-wide"><span>Source URL or reference</span><input data-atlas-intake="source_locator" placeholder="https://… or an immutable reference"></label></div>' +
+    '<div class="atlas-owner-actions"><button class="ctl-btn" type="button" data-atlas-owner-action="intake"' + (atlasOwnerBusy ? ' disabled' : '') + '>Register for maturation</button></div></section>';
+}
+
+function atlasRenderMaturationMetrics() {
+  const metrics = atlasProjection.maturationMetrics || {};
+  const percent = (value) => (Number(value || 0) * 100).toFixed(1) + '%';
+  return '<section class="atlas-owner-card"><div class="atlas-subsection-head"><h4>Maturation metrics</h4><span>' + atlasEscape(String(metrics.window_days || 30)) + ' days</span></div><dl class="atlas-detail-grid">' +
+    atlasDetailMarkup('Created', metrics.created_in_window) + atlasDetailMarkup('Creation / day', Number(metrics.creation_rate_per_day || 0).toFixed(2)) +
+    atlasDetailMarkup('PROMOTE', String(metrics.promoted_count || 0) + ' / ' + percent(metrics.promotion_rate)) +
+    atlasDetailMarkup('MERGE', String(metrics.merged_count || 0) + ' / ' + percent(metrics.merge_rate)) +
+    atlasDetailMarkup('HOLD', String(metrics.held_count || 0) + ' / ' + percent(metrics.hold_rate)) +
+    atlasDetailMarkup('DROP', String(metrics.dropped_count || 0) + ' / ' + percent(metrics.drop_rate)) +
+    atlasDetailMarkup('Average maturation', Number(metrics.average_maturation_days || 0).toFixed(1) + ' days') +
+    atlasDetailMarkup('Backlog growth', metrics.backlog_growth || 0) + '</dl></section>';
+}
+
+function atlasRenderOwnerDecision(item) {
+  const concept = String(atlasField(item, ['concept_state'], '') || '').toUpperCase();
+  const maturation = String(atlasField(item, ['maturation_state'], 'MATURATION') || '').toUpperCase();
+  const eligibleAt = atlasField(item, ['maturation_eligible_at'], '');
+  const latest = atlasLatestRevalidation(item);
+  const recommendation = latest ? atlasField(latest, ['decision'], '') : 'Run RenCrow revalidation';
+  const reason = latest ? atlasField(latest, ['reason'], '') : 'No semantic decision has been recorded.';
+  return '<section class="atlas-detail-section atlas-owner-control"><div class="atlas-subsection-head"><h4>Maturation decision</h4><span>CORE owner boundary</span></div>' +
+    '<dl class="atlas-detail-grid">' + atlasDetailMarkup('Current state', concept + ' / ' + maturation) + atlasDetailMarkup('Eligible at', atlasFormatTime(eligibleAt)) + atlasDetailMarkup('Recommended', recommendation) + atlasDetailMarkup('Recommendation reason', reason) + '</dl>' +
+    '<div class="atlas-decision-impact-grid"><article><strong>PROMOTE</strong><span>Implementation Queueへの移動資格を与えます。</span><small>Risk: 新しい責務・維持コストを受け入れます。</small></article>' +
+    '<article><strong>HOLD</strong><span>価値を保持し、event triggerまで実装しません。</span><small>Risk: 依存変化の見落としや機会遅延。</small></article>' +
+    '<article><strong>DROP</strong><span>理由と履歴を保持して非採用にします。</span><small>Risk: 将来価値を捨てるため再発見が必要。</small></article>' +
+    '<article><strong>MERGE</strong><span>RenCrowだけが実在する関連Itemへ統合できます。</span><small>Risk: 責務境界の誤統合。owner forceは禁止。</small></article></div>' +
+    '<div class="atlas-owner-grid"><label class="atlas-owner-field"><span>Force decision</span><select data-atlas-decision><option value="">Select…</option><option value="PROMOTE">PROMOTE</option><option value="HOLD">HOLD</option><option value="DROP">DROP</option></select></label>' +
+    '<label class="atlas-owner-field"><span>Emergency bypass</span><select data-atlas-bypass><option value="">None</option><option value="security_issue">Security issue</option><option value="data_loss_risk">Data loss risk</option><option value="production_failure">Production failure</option><option value="breaking_change">Breaking change</option><option value="bug_fix">Clear bug fix</option><option value="runtime_continuity">Runtime continuity</option></select></label>' +
+    '<label class="atlas-owner-field atlas-owner-wide"><span>Reason</span><textarea data-atlas-decision-reason rows="3" maxlength="4000" placeholder="Decision rationale and impact"></textarea></label>' +
+    '<label class="atlas-owner-field atlas-owner-wide"><span>HOLD next review trigger</span><input data-atlas-next-trigger maxlength="1000" placeholder="event that should trigger revalidation"></label></div>' +
+    '<div class="atlas-owner-actions"><button class="ctl-btn" type="button" data-atlas-owner-action="revalidate"' + (atlasOwnerBusy ? ' disabled' : '') + '>Run RenCrow revalidation</button>' +
+    '<button class="ctl-btn" type="button" data-atlas-owner-action="force"' + (atlasOwnerBusy ? ' disabled' : '') + '>Submit forced decision</button>' +
+    (concept === 'RADAR' ? '<button class="ctl-btn" type="button" data-atlas-owner-action="candidate"' + (atlasOwnerBusy ? ' disabled' : '') + '>Start maturation</button>' : '') +
+    (maturation === 'PROMOTED' ? '<button class="ctl-btn" type="button" data-atlas-owner-action="adopt"' + (atlasOwnerBusy ? ' disabled' : '') + '>Move to Implementation Queue</button>' : '') + '</div>' +
+    '<p class="atlas-owner-help">Normal revalidation is generated by RenCrow after 7 days. Forced MERGE is intentionally unavailable. Early forced decisions require an allowed emergency bypass.</p>' +
+    atlasReceiptMarkup() + '</section>';
+}
+
+function atlasRenderEnrichment() {
+  return '<section class="atlas-detail-section atlas-owner-control"><div class="atlas-subsection-head"><h4>Maturation enrichment</h4><span>bounded mutable fields</span></div>' +
+    '<div class="atlas-owner-grid"><label class="atlas-owner-field atlas-owner-wide"><span>Source URL / reference</span><input data-atlas-enrich="source_locator"></label>' +
+    '<label class="atlas-owner-field"><span>Related Backlog ID</span><input data-atlas-enrich="related_id"></label>' +
+    '<label class="atlas-owner-field"><span>Priority</span><select data-atlas-enrich="priority"><option value="">unchanged</option><option>normal</option><option>high</option><option>urgent</option><option>low</option></select></label>' +
+    '<label class="atlas-owner-field atlas-owner-wide"><span>Body addition / replacement</span><textarea data-atlas-enrich="body" rows="3"></textarea></label>' +
+    '<label class="atlas-owner-check"><input type="checkbox" data-atlas-enrich="material_change"><span>Major semantic change: restart the 7-day maturation period</span></label>' +
+    '<label class="atlas-owner-field atlas-owner-wide"><span>Major change reason</span><input data-atlas-enrich="material_change_reason"></label></div>' +
+    '<div class="atlas-owner-actions"><button class="ctl-btn" type="button" data-atlas-owner-action="enrich"' + (atlasOwnerBusy ? ' disabled' : '') + '>Save enrichment</button></div></section>';
+}
+
 function atlasRenderItemDetail(scope) {
   if (!atlasItemDetailState.itemID || atlasItemDetailState.scope !== scope) return '';
   const item = atlasItemDetailState.item || {item_id: atlasItemDetailState.itemID};
@@ -394,13 +514,15 @@ function atlasRenderItemDetail(scope) {
   const conceptState = atlasDetailField(item, ['concept_state', 'conceptState'], '');
   const deliveryState = atlasDetailField(item, ['delivery_state', 'deliveryState'], '');
   const implementationStatus = atlasDetailField(item, ['implementation_status', 'implementationStatus'], '') || [conceptState, deliveryState].filter(Boolean).join(' / ');
-  return '<section class="atlas-item-detail" aria-live="polite"><div class="atlas-detail-head"><div><span class="atlas-kicker">ITEM DETAIL / READ-ONLY</span><h3>' + atlasEscape(title) + '</h3><div class="atlas-code">' + atlasEscape(atlasItemDetailState.itemID) + '</div></div><button class="atlas-detail-close" type="button" data-atlas-detail-close="true">Close</button></div>' +
+  return '<section class="atlas-item-detail" aria-live="polite"><div class="atlas-detail-head"><div><span class="atlas-kicker">ITEM DETAIL / OWNER-CONTROLLED</span><h3>' + atlasEscape(title) + '</h3><div class="atlas-code">' + atlasEscape(atlasItemDetailState.itemID) + '</div></div><button class="atlas-detail-close" type="button" data-atlas-detail-close="true">Close</button></div>' +
     '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Design Card</h4><span>Purpose and intent</span></div><dl class="atlas-detail-grid">' + cardFields.map((field) => atlasDetailMarkup(field[0], atlasDetailField(item, field[1], ''))).join('') + '</dl></section>' +
     '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Ownership and Module Scope</h4><span>Lifecycle responsibility and verification impact</span></div><dl class="atlas-detail-grid">' + ownershipFields.map((field) => atlasDetailMarkup(field[0], atlasDetailField(item, field[1], ''))).join('') + '</dl></section>' +
     '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Specification</h4><span>allow-listed metadata and body</span></div>' + atlasRenderSpecificationArtifacts() + '</section>' +
     '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Sources</h4><span>read-only references</span></div>' + atlasRenderDetailSources(item) + '</section>' +
     '<dl class="atlas-detail-grid atlas-detail-status">' + atlasDetailMarkup('Source Strength', sourceStrength) + atlasDetailMarkup('Implementation Status', implementationStatus) + '</dl>' +
-    '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Evidence</h4><span>item evidence references</span></div>' + atlasRenderDetailEvidence(item) + '</section></section>';
+    '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Evidence</h4><span>item evidence references</span></div>' + atlasRenderDetailEvidence(item) + '</section>' +
+    '<section class="atlas-detail-section"><div class="atlas-subsection-head"><h4>Revalidation history</h4><span>latest append-only record</span></div>' + atlasRenderRevalidationRecord(item) + '</section>' +
+    atlasRenderOwnerDecision(item) + atlasRenderEnrichment() + '</section>';
 }
 
 function atlasBindItemDetailControls(view) {
@@ -412,6 +534,111 @@ function atlasBindItemDetailControls(view) {
       atlasItemDetailState = atlasEmptyItemDetailState(atlasItemDetailState.requestID + 1);
       atlasRender();
     });
+  });
+  atlasBindOwnerControls(view);
+}
+
+function atlasOwnerValue(root, selector) {
+  const input = root.querySelector(selector);
+  return input ? String(input.value || '').trim() : '';
+}
+
+async function atlasOwnerPost(path, payload) {
+  if (!atlasOwnerToken.trim()) throw new Error('CORE owner token is required');
+  const response = await fetch(path, {method: 'POST', headers: atlasOwnerHeaders(), body: JSON.stringify(payload || {})});
+  let body = null;
+  try { body = await response.json(); } catch (_) { body = null; }
+  if (!response.ok) {
+    const detail = body && (body.error || body.message) ? (body.error || body.message) : 'HTTP ' + String(response.status);
+    throw new Error(String(detail));
+  }
+  return body || {};
+}
+
+async function atlasRunOwnerAction(action, root) {
+  if (atlasOwnerBusy) return;
+  atlasOwnerBusy = true;
+  atlasOwnerError = '';
+  atlasOwnerReceipt = null;
+  atlasRender();
+  try {
+    let result;
+    if (action === 'intake') {
+      const title = atlasOwnerValue(root, '[data-atlas-intake="title"]');
+      const purpose = atlasOwnerValue(root, '[data-atlas-intake="purpose"]');
+      const problem = atlasOwnerValue(root, '[data-atlas-intake="problem"]');
+      const ownerModule = atlasOwnerValue(root, '[data-atlas-intake="owner_module"]');
+      const priority = atlasOwnerValue(root, '[data-atlas-intake="priority"]');
+      const locator = atlasOwnerValue(root, '[data-atlas-intake="source_locator"]');
+      if (!title) throw new Error('Title is required');
+      const payload = {title, purpose, problem, owner_module: ownerModule, priority, source: 'ren'};
+      if (locator) payload.source_refs = [{type: 'owner_input', locator}];
+      result = await atlasOwnerPost('/v1/atlas/intake', payload);
+    } else {
+      const itemID = atlasItemDetailState.itemID;
+      if (!itemID) throw new Error('Atlas item is not selected');
+      const base = '/v1/atlas/items/' + encodeURIComponent(itemID) + '/';
+      if (action === 'candidate') {
+        result = await atlasOwnerPost(base + 'candidate', {});
+      } else if (action === 'revalidate') {
+        result = await atlasOwnerPost(base + 'revalidate', {});
+      } else if (action === 'force') {
+        const decision = atlasOwnerValue(root, '[data-atlas-decision]');
+        const reason = atlasOwnerValue(root, '[data-atlas-decision-reason]');
+        const bypass = atlasOwnerValue(root, '[data-atlas-bypass]');
+        const nextTrigger = atlasOwnerValue(root, '[data-atlas-next-trigger]');
+        if (!decision || !reason) throw new Error('Force decision and reason are required');
+        const payload = {decision, reason, forced: true};
+        if (bypass) payload.bypass_reason = bypass;
+        if (nextTrigger) payload.next_review_trigger = nextTrigger;
+        result = await atlasOwnerPost(base + 'revalidate', payload);
+      } else if (action === 'adopt') {
+        const reason = atlasOwnerValue(root, '[data-atlas-decision-reason]');
+        if (!reason) throw new Error('Implementation Queue reason is required');
+        result = await atlasOwnerPost(base + 'adopt', {reason});
+      } else if (action === 'enrich') {
+        const locator = atlasOwnerValue(root, '[data-atlas-enrich="source_locator"]');
+        const relatedID = atlasOwnerValue(root, '[data-atlas-enrich="related_id"]');
+        const priority = atlasOwnerValue(root, '[data-atlas-enrich="priority"]');
+        const body = atlasOwnerValue(root, '[data-atlas-enrich="body"]');
+        const materialInput = root.querySelector('[data-atlas-enrich="material_change"]');
+        const materialChange = Boolean(materialInput && materialInput.checked);
+        const materialChangeReason = atlasOwnerValue(root, '[data-atlas-enrich="material_change_reason"]');
+        const payload = {material_change: materialChange};
+        if (locator) payload.source_refs = [{type: 'owner_input', locator}];
+        if (relatedID) payload.related_ids = [relatedID];
+        if (priority) payload.priority = priority;
+        if (body) payload.body = body;
+        if (materialChangeReason) payload.material_change_reason = materialChangeReason;
+        result = await atlasOwnerPost(base + 'enrich', payload);
+      } else {
+        throw new Error('Unknown owner operation');
+      }
+    }
+    atlasOwnerReceipt = result;
+    await refreshAtlas();
+    const returnedItem = result && result.item;
+    if (returnedItem && atlasItemDetailState.itemID === returnedItem.item_id) {
+      await atlasOpenItemDetail(returnedItem.item_id, 'backlog');
+    }
+  } catch (error) {
+    atlasOwnerError = String(error && error.message ? error.message : error);
+  } finally {
+    atlasOwnerBusy = false;
+    atlasRender();
+  }
+}
+
+function atlasBindOwnerControls(root) {
+  root.querySelectorAll('[data-atlas-owner-token]').forEach((input) => {
+    if (input.dataset.bound === '1') return;
+    input.dataset.bound = '1';
+    input.addEventListener('input', () => { atlasOwnerToken = String(input.value || ''); });
+  });
+  root.querySelectorAll('[data-atlas-owner-action]').forEach((button) => {
+    if (button.dataset.bound === '1') return;
+    button.dataset.bound = '1';
+    button.addEventListener('click', () => atlasRunOwnerAction(button.dataset.atlasOwnerAction || '', root));
   });
 }
 
@@ -526,6 +753,7 @@ function atlasRenderFilter(label, filterKey, values) {
 
 function atlasRenderBacklog(view) {
   const allItems = atlasProjection.backlog;
+  const pending = allItems.filter((item) => ['MATURATION', 'REVALIDATION', 'HOLD'].includes(String(atlasField(item, ['maturation_state'], 'MATURATION')).toUpperCase())).length;
   const filtered = allItems.filter((item) => {
     const concept = atlasDisplay(atlasField(item, ['concept_state', 'conceptState', 'state', 'status'], ''), '');
     const priority = atlasDisplay(atlasField(item, ['priority', 'importance'], ''), '');
@@ -540,11 +768,12 @@ function atlasRenderBacklog(view) {
     atlasRenderFilter('Owner', 'owner', atlasFilterValues(allItems, ['owner', 'owner_module', 'module', 'maintainer'])) +
     '</div>';
   if (!allItems.length) {
-    view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">BACKLOG</span><h3>検討済み項目</h3></div></div>' + filterBar + atlasEmpty('Backlog is empty', 'No Atlas backlog items are available.');
+    view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">BACKLOG</span><h3>技術熟成領域</h3></div><span class="atlas-source-note">pending 0 / total 0</span></div>' + atlasRenderOwnerCredentials() + atlasRenderIntakeForm() + atlasRenderMaturationMetrics() + filterBar + atlasEmpty('Backlog is empty', 'No Atlas backlog items are available.');
     atlasBindBacklogFilters(view);
+    atlasBindOwnerControls(view);
     return;
   }
-  view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">BACKLOG</span><h3>検討済み項目</h3><p>Concept State、Priority、Owner で絞り込めます。</p></div><span class="atlas-source-note">' + String(filtered.length) + ' / ' + String(allItems.length) + '</span></div>' + filterBar +
+  view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">BACKLOG</span><h3>技術熟成領域</h3><p>登録は採用ではありません。7日経過後もRenCrowの再検証結果と理由を確認して判断します。</p></div><span class="atlas-source-note">pending ' + String(pending) + ' / total ' + String(allItems.length) + ' / filtered ' + String(filtered.length) + '</span></div>' + atlasRenderOwnerCredentials() + atlasRenderIntakeForm() + atlasRenderMaturationMetrics() + filterBar +
     '<div class="atlas-table-wrap"><table class="atlas-table"><thead><tr><th>Item</th><th>Concept State</th><th>Priority</th><th>Owner</th><th>Summary</th><th>Updated</th></tr></thead><tbody>' +
     (filtered.length ? filtered.map((item) => '<tr><td><strong>' + atlasEscape(atlasItemTitle(item)) + '</strong><div class="atlas-code">' + atlasEscape(atlasItemID(item)) + '</div><div class="atlas-detail-actions">' + atlasDetailTrigger(item) + '</div></td>' +
       '<td>' + atlasBadge(atlasConceptState(item)) + '</td><td>' + atlasEscape(atlasField(item, ['priority', 'importance'], '-')) + '</td>' +
@@ -553,6 +782,7 @@ function atlasRenderBacklog(view) {
     '</tbody></table></div>' + atlasRenderItemDetail('backlog');
   atlasBindBacklogFilters(view);
   atlasBindItemDetailControls(view);
+  atlasBindOwnerControls(view);
 }
 
 function atlasBindBacklogFilters(view) {

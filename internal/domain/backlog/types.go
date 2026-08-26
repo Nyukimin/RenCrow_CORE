@@ -18,6 +18,28 @@ const (
 	ConceptDeferred  = "DEFERRED"
 	ConceptRejected  = "REJECTED"
 
+	// Maturation states are orthogonal to concept and delivery lifecycle.  A
+	// candidate must reach PROMOTED through owner revalidation before it can be
+	// adopted; the other terminal decisions retain their own audit state.
+	MaturationStateMaturation   = "MATURATION"
+	MaturationStateRevalidation = "REVALIDATION"
+	MaturationStatePromoted     = "PROMOTED"
+	MaturationStateMerged       = "MERGED"
+	MaturationStateHold         = "HOLD"
+	MaturationStateDropped      = "DROPPED"
+
+	RevalidationDecisionPromote = "PROMOTE"
+	RevalidationDecisionMerge   = "MERGE"
+	RevalidationDecisionHold    = "HOLD"
+	RevalidationDecisionDrop    = "DROP"
+
+	MaturationBypassSecurityIssue     = "security_issue"
+	MaturationBypassDataLossRisk      = "data_loss_risk"
+	MaturationBypassProductionFailure = "production_failure"
+	MaturationBypassBreakingChange    = "breaking_change"
+	MaturationBypassBugFix            = "bug_fix"
+	MaturationBypassRuntimeContinuity = "runtime_continuity"
+
 	DeliveryNone             = "NONE"
 	DeliveryQueued           = "QUEUED"
 	DeliverySpec             = "SPEC"
@@ -132,6 +154,34 @@ type BackfillReconcileResult struct {
 	Skipped  int `json:"skipped"`
 }
 
+// RevalidationRecord is the append-only audit entry for an Atlas maturation
+// decision.  It keeps the semantic review payload alongside the item rather
+// than introducing a second store or mutable decision table.
+type RevalidationRecord struct {
+	BacklogID                string   `json:"backlog_id"`
+	RevalidationDate         string   `json:"revalidation_date"`
+	MaturationDays           int      `json:"maturation_days"`
+	Decision                 string   `json:"decision"`
+	Reason                   string   `json:"reason"`
+	Necessity                string   `json:"necessity,omitempty"`
+	Duplication              string   `json:"duplication,omitempty"`
+	Mergeability             string   `json:"mergeability,omitempty"`
+	ArchitecturalConsistency string   `json:"architectural_consistency,omitempty"`
+	TechnologyValidity       string   `json:"technology_validity,omitempty"`
+	Timing                   string   `json:"timing,omitempty"`
+	RelatedBacklogs          []string `json:"related_backlogs,omitempty"`
+	ConflictingSpecs         []string `json:"conflicting_specs,omitempty"`
+	MergedInto               string   `json:"merged_into,omitempty"`
+	TechnologyChanges        []string `json:"technology_changes,omitempty"`
+	ArchitectureImpact       string   `json:"architecture_impact,omitempty"`
+	ImplementationValue      string   `json:"implementation_value,omitempty"`
+	NextReviewTrigger        string   `json:"next_review_trigger,omitempty"`
+	ReviewAgents             []string `json:"review_agents"`
+	Forced                   bool     `json:"forced,omitempty"`
+	MaturationBypass         bool     `json:"maturation_bypass,omitempty"`
+	BypassReason             string   `json:"bypass_reason,omitempty"`
+}
+
 func BackfillImportID(packageSHA256 string, revision int) string {
 	return fmt.Sprintf("atlas-backfill:%s:%d", strings.ToLower(strings.TrimSpace(packageSHA256)), revision)
 }
@@ -172,8 +222,17 @@ type Item struct {
 	Owner       string      `json:"owner,omitempty"`
 	OwnerModule string      `json:"owner_module,omitempty"`
 
-	ConceptState  string `json:"concept_state,omitempty"`
-	DeliveryState string `json:"delivery_state,omitempty"`
+	ConceptState         string               `json:"concept_state,omitempty"`
+	DeliveryState        string               `json:"delivery_state,omitempty"`
+	MaturationState      string               `json:"maturation_state,omitempty"`
+	MaturationStartedAt  string               `json:"maturation_started_at,omitempty"`
+	MaturationEligibleAt string               `json:"maturation_eligible_at,omitempty"`
+	LastMaterialChangeAt string               `json:"last_material_change_at,omitempty"`
+	MergedInto           string               `json:"merged_into,omitempty"`
+	NextReviewTrigger    string               `json:"next_review_trigger,omitempty"`
+	MaturationBypass     bool                 `json:"maturation_bypass,omitempty"`
+	BypassReason         string               `json:"bypass_reason,omitempty"`
+	RevalidationRecords  []RevalidationRecord `json:"revalidation_records,omitempty"`
 	// DeclaredDeliveryState retains the source package claim separately from
 	// the runtime state, which starts at NONE until CORE has cumulative evidence.
 	DeclaredDeliveryState string   `json:"declared_delivery_state,omitempty"`

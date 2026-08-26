@@ -1,7 +1,6 @@
 package viewer
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -43,17 +42,10 @@ func HandleBacklog(store *BacklogStore) http.HandlerFunc {
 			items = filterBacklogItems(items, kind, status)
 			writeMonitorJSON(w, map[string]any{"items": items})
 		case http.MethodPost:
-			var item BacklogItem
-			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128*1024)).Decode(&item); err != nil {
-				http.Error(w, "invalid request", http.StatusBadRequest)
-				return
-			}
-			item = normalizeBacklogItem(item)
-			if err := store.Save(r.Context(), item); err != nil {
-				http.Error(w, "failed to save backlog item", http.StatusInternalServerError)
-				return
-			}
-			writeMonitorJSON(w, map[string]any{"item": item})
+			// The legacy Viewer route cannot express owner authentication,
+			// maturation, or evidence gates. All writes go through /v1/atlas.
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "legacy backlog writes disabled; use authenticated Atlas owner API", http.StatusMethodNotAllowed)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}

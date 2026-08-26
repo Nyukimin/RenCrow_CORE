@@ -145,6 +145,15 @@ func preserveRuntimeOverlay(current, incoming domainbacklog.Item) domainbacklog.
 	incoming.BlockerResolutionRefs = append([]domainbacklog.EvidenceRef(nil), current.BlockerResolutionRefs...)
 	incoming.AdoptionReason = current.AdoptionReason
 	incoming.AdoptedAt = current.AdoptedAt
+	incoming.MaturationState = current.MaturationState
+	incoming.MaturationStartedAt = current.MaturationStartedAt
+	incoming.MaturationEligibleAt = current.MaturationEligibleAt
+	incoming.LastMaterialChangeAt = current.LastMaterialChangeAt
+	incoming.MergedInto = current.MergedInto
+	incoming.NextReviewTrigger = current.NextReviewTrigger
+	incoming.MaturationBypass = current.MaturationBypass
+	incoming.BypassReason = current.BypassReason
+	incoming.RevalidationRecords = cloneRevalidationRecords(current.RevalidationRecords)
 	incoming.Owner = current.Owner
 	// Lifecycle ownership is a CORE contract and is repaired even when an
 	// existing record is empty or names a different module.
@@ -183,6 +192,21 @@ func preserveRuntimeOverlay(current, incoming domainbacklog.Item) domainbacklog.
 		incoming.CheckOK = current.CheckOK
 	}
 	return incoming
+}
+
+func cloneRevalidationRecords(records []domainbacklog.RevalidationRecord) []domainbacklog.RevalidationRecord {
+	if records == nil {
+		return nil
+	}
+	out := make([]domainbacklog.RevalidationRecord, len(records))
+	for index, record := range records {
+		out[index] = record
+		out[index].RelatedBacklogs = append([]string(nil), record.RelatedBacklogs...)
+		out[index].ConflictingSpecs = append([]string(nil), record.ConflictingSpecs...)
+		out[index].TechnologyChanges = append([]string(nil), record.TechnologyChanges...)
+		out[index].ReviewAgents = append([]string(nil), record.ReviewAgents...)
+	}
+	return out
 }
 
 func countNew(existing map[string]domainbacklog.Item, desired []domainbacklog.Item) int {

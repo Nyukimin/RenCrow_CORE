@@ -18,6 +18,80 @@ func validConceptState(value string) bool {
 	}
 }
 
+func validMaturationState(value string) bool {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case MaturationStateMaturation, MaturationStateRevalidation, MaturationStatePromoted,
+		MaturationStateMerged, MaturationStateHold, MaturationStateDropped:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidateMaturationState checks the optional orthogonal maturation state.
+// Empty is intentionally handled by callers as a legacy pre-feature value.
+func ValidateMaturationState(value string) error {
+	if !validMaturationState(value) {
+		return fmt.Errorf("%w: unknown maturation state %q", ErrInvalidTransition, strings.TrimSpace(value))
+	}
+	return nil
+}
+
+// ValidateMaturationTransition checks the owner-controlled maturation graph.
+// Revalidation is an in-flight state; a synchronous owner decision may move
+// directly from MATURATION to its final decision state.
+func ValidateMaturationTransition(from, to string) error {
+	from = strings.ToUpper(strings.TrimSpace(from))
+	to = strings.ToUpper(strings.TrimSpace(to))
+	if !validMaturationState(from) || !validMaturationState(to) {
+		return fmt.Errorf("%w: unknown maturation state %q -> %q", ErrInvalidTransition, from, to)
+	}
+	allowed := map[string]map[string]bool{
+		MaturationStateMaturation: {
+			MaturationStateRevalidation: true,
+			MaturationStatePromoted:     true,
+			MaturationStateMerged:       true,
+			MaturationStateHold:         true,
+			MaturationStateDropped:      true,
+		},
+		MaturationStateRevalidation: {
+			MaturationStateMaturation: true,
+			MaturationStatePromoted:   true,
+			MaturationStateMerged:     true,
+			MaturationStateHold:       true,
+			MaturationStateDropped:    true,
+		},
+		MaturationStatePromoted: {MaturationStateMaturation: true},
+		MaturationStateHold: {
+			MaturationStateMaturation:   true,
+			MaturationStateRevalidation: true,
+			MaturationStatePromoted:     true,
+			MaturationStateMerged:       true,
+			MaturationStateHold:         true,
+			MaturationStateDropped:      true,
+		},
+		MaturationStateMerged:  {},
+		MaturationStateDropped: {},
+	}
+	if allowed[from][to] {
+		return nil
+	}
+	return fmt.Errorf("%w: maturation %s -> %s", ErrInvalidTransition, from, to)
+}
+
+// TransitionMaturation validates and applies one maturation state change.
+func TransitionMaturation(item Item, target string) (Item, error) {
+	target = strings.ToUpper(strings.TrimSpace(target))
+	if item.MaturationState == "" {
+		return item, fmt.Errorf("%w: current maturation state is missing", ErrInvalidTransition)
+	}
+	if err := ValidateMaturationTransition(item.MaturationState, target); err != nil {
+		return item, err
+	}
+	item.MaturationState = target
+	return item, nil
+}
+
 func validDeliveryState(value string) bool {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
 	case DeliveryNone, DeliveryQueued, DeliverySpec, DeliveryTDDRed, DeliveryTDDGreen,

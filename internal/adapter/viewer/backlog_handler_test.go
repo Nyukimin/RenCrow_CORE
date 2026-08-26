@@ -2,8 +2,11 @@ package viewer
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
@@ -45,6 +48,21 @@ func TestBacklogStoreSaveListLatest(t *testing.T) {
 	}
 	if !items[0].CheckOK || items[0].Status != "ok" || items[0].TestResult != "passed" {
 		t.Fatalf("latest item not returned: %+v", items[0])
+	}
+}
+
+func TestLegacyBacklogPostCannotBypassAtlasOwner(t *testing.T) {
+	store := NewBacklogStore(filepath.Join(t.TempDir(), "backlog.jsonl"))
+	handler := HandleBacklog(store)
+	request := httptest.NewRequest(http.MethodPost, "/viewer/backlog", strings.NewReader(`{"item_id":"bypass","title":"bypass","status":"implementing"}`))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusMethodNotAllowed || recorder.Header().Get("Allow") != http.MethodGet {
+		t.Fatalf("legacy mutation status=%d allow=%q body=%s", recorder.Code, recorder.Header().Get("Allow"), recorder.Body.String())
+	}
+	items, err := store.List(context.Background(), 10)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("legacy route mutated canonical store: items=%+v err=%v", items, err)
 	}
 }
 

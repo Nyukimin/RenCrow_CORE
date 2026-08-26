@@ -85,16 +85,17 @@ type AdoptionResult struct {
 }
 
 type Projection struct {
-	Catalog  []map[string]any            `json:"catalog"`
-	Features []map[string]any            `json:"features"`
-	Current  []domainbacklog.Item        `json:"current"`
-	Radar    []domainbacklog.Item        `json:"radar"`
-	Backlog  []domainbacklog.Item        `json:"backlog"`
-	Queue    []domainbacklog.Item        `json:"queue"`
-	Active   *domainbacklog.Item         `json:"active"`
-	Evidence []domainbacklog.EvidenceRef `json:"evidence"`
-	Modules  []map[string]any            `json:"modules"`
-	Pipeline []PipelineEntry             `json:"pipeline"`
+	Catalog           []map[string]any            `json:"catalog"`
+	Features          []map[string]any            `json:"features"`
+	Current           []domainbacklog.Item        `json:"current"`
+	Radar             []domainbacklog.Item        `json:"radar"`
+	Backlog           []domainbacklog.Item        `json:"backlog"`
+	Queue             []domainbacklog.Item        `json:"queue"`
+	Active            *domainbacklog.Item         `json:"active"`
+	Evidence          []domainbacklog.EvidenceRef `json:"evidence"`
+	Modules           []map[string]any            `json:"modules"`
+	Pipeline          []PipelineEntry             `json:"pipeline"`
+	MaturationMetrics MaturationMetrics           `json:"maturation_metrics"`
 	// QueueFreezes and ClosureReceipts are the lifecycle-store projection used
 	// by the Viewer to explain a blocked queue or an in-flight DONE closure.
 	QueueFreezes    []domainworkstream.QueueFreeze     `json:"queue_freezes"`
@@ -107,6 +108,7 @@ type Service struct {
 	workstream WorkstreamCreator
 	clock      func() time.Time
 	verifier   EvidenceVerifier
+	evaluator  RevalidationEvaluator
 
 	catalog  []map[string]any
 	features []map[string]any
@@ -323,6 +325,9 @@ func (s *Service) Candidate(ctx context.Context, id string) (domainbacklog.Item,
 	}
 	if item.ConceptState == domainbacklog.ConceptCandidate {
 		item.SchemaVersion = domainbacklog.SchemaVersion2
+		if err := ensureMaturationFields(&item, s.now(), false); err != nil {
+			return domainbacklog.Item{}, err
+		}
 		if err := s.save(ctx, item); err != nil {
 			return domainbacklog.Item{}, err
 		}
@@ -334,6 +339,9 @@ func (s *Service) Candidate(ctx context.Context, id string) (domainbacklog.Item,
 	item.SchemaVersion = domainbacklog.SchemaVersion2
 	item.ConceptState = domainbacklog.ConceptCandidate
 	item.DeliveryState = domainbacklog.DeliveryNone
+	if err := ensureMaturationFields(&item, s.now(), true); err != nil {
+		return domainbacklog.Item{}, err
+	}
 	return item, s.save(ctx, item)
 }
 
@@ -374,6 +382,9 @@ func (s *Service) Adopt(ctx context.Context, id, reason string) (AdoptionResult,
 	}
 	if item.ConceptState != domainbacklog.ConceptCandidate {
 		return AdoptionResult{}, fmt.Errorf("atlas item %s is %s, want %s", id, item.ConceptState, domainbacklog.ConceptCandidate)
+	}
+	if strings.TrimSpace(item.MaturationState) != domainbacklog.MaturationStatePromoted {
+		return AdoptionResult{}, fmt.Errorf("atlas item %s is not maturation PROMOTED", id)
 	}
 	now := s.now()
 	item.SchemaVersion = domainbacklog.SchemaVersion2

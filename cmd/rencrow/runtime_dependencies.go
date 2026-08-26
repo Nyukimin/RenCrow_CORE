@@ -970,6 +970,12 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	// lifecycle state is initialized when either owner store is unavailable;
 	// reads still expose an empty/legacy-safe projection and writes fail closed.
 	deps.atlasService = backlogapp.NewService(deps.backlogStore, deps.workstreamStore)
+	if llmRuntime.Worker != nil {
+		deps.atlasService.WithRevalidationEvaluator(backlogapp.NewLLMRevalidationEvaluator(llmRuntime.Worker, "shiro"))
+		log.Printf("Atlas maturation revalidation evaluator enabled via RenCrow_LLM Worker")
+	} else {
+		log.Printf("WARN: Atlas maturation revalidation evaluator unavailable: Worker route is not configured")
+	}
 	atlasBackfillReady := false
 	if catalog, err := backlogfeature.LoadAtlasCatalog(); err != nil {
 		log.Printf("Atlas catalog unavailable: %v", err)

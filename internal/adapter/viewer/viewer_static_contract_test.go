@@ -1146,7 +1146,7 @@ func TestViewerStaticContractGamesAgentOwnedLaunchDesk(t *testing.T) {
 	}
 }
 
-func TestViewerStaticContractAtlasReadOnlyProjection(t *testing.T) {
+func TestViewerStaticContractAtlasProjectionAndOwnerDecisionGUI(t *testing.T) {
 	htmlData, err := os.ReadFile("viewer.html")
 	if err != nil {
 		t.Fatalf("read viewer.html: %v", err)
@@ -1228,22 +1228,44 @@ func TestViewerStaticContractAtlasReadOnlyProjection(t *testing.T) {
 		`function atlasRenderPipeline`,
 		`function atlasRenderEvidence`,
 		`function atlasRenderModules`,
+		`function atlasRenderOwnerDecision`,
+		`function atlasRenderIntakeForm`,
+		`function atlasRenderMaturationMetrics`,
+		`function atlasRenderRevalidationRecord`,
+		`function atlasOwnerPost`,
+		`method: 'POST'`,
+		`'Authorization': 'Bearer ' + atlasOwnerToken`,
+		`'X-RenCrow-Client': 'RenCrow_CMD'`,
+		`'X-RenCrow-Interaction-Profile': 'cmd-control'`,
+		`'/v1/atlas/intake'`,
+		`base + 'candidate'`,
+		`base + 'revalidate'`,
+		`base + 'enrich'`,
+		`base + 'adopt'`,
+		`<option value="PROMOTE">`,
+		`<option value="HOLD">`,
+		`<option value="DROP">`,
+		`Maturation metrics`,
+		`maturation_metrics`,
+		`Receipt`,
+		`Risk: 新しい責務・維持コスト`,
+		`Risk: 責務境界の誤統合`,
 	} {
 		if !strings.Contains(atlas, needle) {
-			t.Fatalf("atlas.js missing read-only projection contract %q", needle)
+			t.Fatalf("atlas.js missing projection or owner GUI contract %q", needle)
 		}
 	}
 	for _, forbidden := range []string{
-		`method: 'POST'`,
-		`method: "POST"`,
 		`localStorage`,
 		`sessionStorage`,
 		`file://`,
 		`file_path`,
 		`spec_path`,
+		`<option value="MERGE">`,
+		`/viewer/backlog', {method: 'POST'`,
 	} {
 		if strings.Contains(atlas, forbidden) {
-			t.Fatalf("atlas.js must not own write or durable UI state: found %q", forbidden)
+			t.Fatalf("atlas.js violates owner GUI boundary: found %q", forbidden)
 		}
 	}
 	for _, needle := range []string{

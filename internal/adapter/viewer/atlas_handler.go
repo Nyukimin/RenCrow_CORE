@@ -35,6 +35,9 @@ type AtlasOwnerService interface {
 	Defer(context.Context, string, string) (domainbacklog.Item, error)
 	Reject(context.Context, string, string) (domainbacklog.Item, error)
 	Revise(context.Context, string, appbacklog.ReviseRequest) (domainbacklog.Item, error)
+	Revalidate(context.Context, string, appbacklog.RevalidateRequest) (domainbacklog.Item, error)
+	EvaluateAndRevalidateOnTrigger(context.Context, string, string) (domainbacklog.Item, error)
+	Enrich(context.Context, string, appbacklog.EnrichRequest) (domainbacklog.Item, error)
 	ResolveQueueFreeze(context.Context, string, appbacklog.ResolveQueueFreezeRequest) (domainworkstream.QueueFreeze, domainworkstream.ImplementationLease, bool, error)
 }
 
@@ -329,8 +332,93 @@ func (h *atlasHandler) write(w http.ResponseWriter, r *http.Request) {
 			TargetDeliveryState: target, EvidenceRefs: request.EvidenceRefs, Reason: request.Reason,
 		})
 		h.writeMutation(w, item, err)
+	case "revalidate":
+		var request atlasRevalidateRequest
+		if err := decodeAtlasJSON(w, r, &request, 64<<10); err != nil {
+			writeAtlasError(w, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		var item domainbacklog.Item
+		var err error
+		if request.Forced {
+			item, err = h.service.Revalidate(r.Context(), id, request.ownerRequest(h.userID))
+		} else if request.hasSemanticDecision() {
+			writeAtlasError(w, http.StatusBadRequest, "non_forced_revalidation_is_generated_by_rencrow")
+			return
+		} else {
+			item, err = h.service.EvaluateAndRevalidateOnTrigger(r.Context(), id, request.Trigger)
+		}
+		if err != nil {
+			writeAtlasDomainError(w, err)
+			return
+		}
+		if len(item.RevalidationRecords) == 0 {
+			writeAtlasError(w, http.StatusInternalServerError, "revalidation_receipt_unavailable")
+			return
+		}
+		record := item.RevalidationRecords[len(item.RevalidationRecords)-1]
+		writeJSON(w, http.StatusOK, map[string]any{"item": item, "revalidation_record": record})
+	case "enrich":
+		var request appbacklog.EnrichRequest
+		if err := decodeAtlasJSON(w, r, &request, 64<<10); err != nil {
+			writeAtlasError(w, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		item, err := h.service.Enrich(r.Context(), id, request)
+		h.writeMutation(w, item, err)
 	default:
 		writeAtlasError(w, http.StatusNotFound, "not_found")
+	}
+}
+
+// atlasRevalidateRequest separates a normal RenCrow semantic evaluation from
+// an authenticated owner force command. review_agents is intentionally absent:
+// the server stamps the authenticated owner and never trusts that identity
+// from JSON.
+type atlasRevalidateRequest struct {
+	RequestID                string   `json:"request_id,omitempty"`
+	Trigger                  string   `json:"trigger,omitempty"`
+	Forced                   bool     `json:"forced,omitempty"`
+	Decision                 string   `json:"decision,omitempty"`
+	Reason                   string   `json:"reason,omitempty"`
+	Necessity                string   `json:"necessity,omitempty"`
+	Duplication              string   `json:"duplication,omitempty"`
+	Mergeability             string   `json:"mergeability,omitempty"`
+	ArchitecturalConsistency string   `json:"architectural_consistency,omitempty"`
+	TechnologyValidity       string   `json:"technology_validity,omitempty"`
+	Timing                   string   `json:"timing,omitempty"`
+	RelatedBacklogs          []string `json:"related_backlogs,omitempty"`
+	ConflictingSpecs         []string `json:"conflicting_specs,omitempty"`
+	MergedInto               string   `json:"merged_into,omitempty"`
+	TechnologyChanges        []string `json:"technology_changes,omitempty"`
+	ArchitectureImpact       string   `json:"architecture_impact,omitempty"`
+	ImplementationValue      string   `json:"implementation_value,omitempty"`
+	NextReviewTrigger        string   `json:"next_review_trigger,omitempty"`
+	BypassReason             string   `json:"bypass_reason,omitempty"`
+}
+
+func (r atlasRevalidateRequest) hasSemanticDecision() bool {
+	return strings.TrimSpace(r.Decision) != "" || strings.TrimSpace(r.Reason) != "" ||
+		strings.TrimSpace(r.MergedInto) != "" || strings.TrimSpace(r.BypassReason) != "" ||
+		len(r.RelatedBacklogs) > 0 || len(r.ConflictingSpecs) > 0 || len(r.TechnologyChanges) > 0 ||
+		strings.TrimSpace(r.Necessity) != "" || strings.TrimSpace(r.Duplication) != "" ||
+		strings.TrimSpace(r.Mergeability) != "" || strings.TrimSpace(r.ArchitecturalConsistency) != "" ||
+		strings.TrimSpace(r.TechnologyValidity) != "" || strings.TrimSpace(r.Timing) != "" ||
+		strings.TrimSpace(r.ArchitectureImpact) != "" || strings.TrimSpace(r.ImplementationValue) != "" ||
+		strings.TrimSpace(r.NextReviewTrigger) != ""
+}
+
+func (r atlasRevalidateRequest) ownerRequest(owner string) appbacklog.RevalidateRequest {
+	return appbacklog.RevalidateRequest{
+		RequestID: r.RequestID, Trigger: r.Trigger, Forced: true,
+		Decision: r.Decision, Reason: r.Reason, Necessity: r.Necessity,
+		Duplication: r.Duplication, Mergeability: r.Mergeability,
+		ArchitecturalConsistency: r.ArchitecturalConsistency, TechnologyValidity: r.TechnologyValidity,
+		Timing: r.Timing, RelatedBacklogs: r.RelatedBacklogs, ConflictingSpecs: r.ConflictingSpecs,
+		MergedInto: r.MergedInto, TechnologyChanges: r.TechnologyChanges,
+		ArchitectureImpact: r.ArchitectureImpact, ImplementationValue: r.ImplementationValue,
+		NextReviewTrigger: r.NextReviewTrigger, ReviewAgents: []string{strings.TrimSpace(owner)},
+		BypassReason: r.BypassReason,
 	}
 }
 
@@ -379,7 +467,15 @@ func atlasSinglePathID(path, prefix string) (string, bool) {
 
 func writeAtlasDomainError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
-	if errors.Is(err, domainbacklog.ErrInvalidTransition) || errors.Is(err, domainbacklog.ErrEvidenceRequired) {
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(message, "not found"):
+		status = http.StatusNotFound
+	case errors.Is(err, domainbacklog.ErrInvalidTransition), errors.Is(err, domainbacklog.ErrEvidenceRequired),
+		errors.Is(err, appbacklog.ErrLifecycleConflict), errors.Is(err, appbacklog.ErrMaturationNotEligible),
+		errors.Is(err, appbacklog.ErrMaturationTerminal), errors.Is(err, appbacklog.ErrMaturationForceMerge),
+		errors.Is(err, appbacklog.ErrMaturationBypassRequired), strings.Contains(message, "not revalidatable"),
+		strings.Contains(message, "not enrichable"), strings.Contains(message, "not maturation promoted"):
 		status = http.StatusConflict
 	}
 	writeAtlasError(w, status, err.Error())

@@ -226,9 +226,14 @@ func TestServiceAdoptCreatesUnitWorkstreamAndSingletonQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Candidate(context.Background(), first.ItemID); err != nil {
+	firstCandidate, err := svc.Candidate(context.Background(), first.ItemID)
+	if err != nil {
 		t.Fatal(err)
 	}
+	// This fixture exercises the adoption/workstream behavior.  Maturation is
+	// covered by the dedicated tests; seed the owner-approved decision here.
+	firstCandidate.MaturationState = domainbacklog.MaturationStatePromoted
+	store.items[0] = firstCandidate
 	firstResult, err := svc.Adopt(context.Background(), first.ItemID, "owner selected")
 	if err != nil {
 		t.Fatal(err)
@@ -240,9 +245,12 @@ func TestServiceAdoptCreatesUnitWorkstreamAndSingletonQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Candidate(context.Background(), second.ItemID); err != nil {
+	secondCandidate, err := svc.Candidate(context.Background(), second.ItemID)
+	if err != nil {
 		t.Fatal(err)
 	}
+	secondCandidate.MaturationState = domainbacklog.MaturationStatePromoted
+	store.items[1] = secondCandidate
 	secondResult, err := svc.Adopt(context.Background(), second.ItemID, "owner selected")
 	if err != nil {
 		t.Fatal(err)
@@ -325,9 +333,12 @@ func TestServiceRecoverFindsLeaseHolderByImplementationUnit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Candidate(context.Background(), intake.ItemID); err != nil {
+	candidate, err := svc.Candidate(context.Background(), intake.ItemID)
+	if err != nil {
 		t.Fatal(err)
 	}
+	candidate.MaturationState = domainbacklog.MaturationStatePromoted
+	store.items[0] = candidate
 	adopted, err := svc.Adopt(context.Background(), intake.ItemID, "recover test")
 	if err != nil {
 		t.Fatal(err)

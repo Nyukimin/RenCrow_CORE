@@ -277,58 +277,11 @@
   </section>
 
   <section id="panel-backlog" class="panel">
-    <div class="desk-screen desk-workspace">
-      <aside class="desk-side">
-        <div class="desk-brand">
-          <div class="desk-kicker">Backlog</div>
-          <h2 class="daily-desk-title">アイデア・未実装一覧</h2>
-        </div>
-        <div class="desk-character">
-          <div class="desk-character-mark">B</div>
-          <div class="desk-character-name">Idea Desk</div>
-          <div class="daily-desk-muted">面白そうなこと、未実装、実装中、テスト中、OKを追います。</div>
-        </div>
-        <section class="daily-desk-card desk-form-card">
-          <input id="backlogTitle" class="desk-input" type="text" placeholder="タイトル">
-          <textarea id="backlogBody" class="daily-desk-input" rows="2" placeholder="メモ・背景・期待する動き"></textarea>
-          <div class="desk-form-grid">
-            <select id="backlogKind" class="desk-select">
-              <option value="idea">idea</option>
-              <option value="unimplemented">unimplemented</option>
-            </select>
-            <select id="backlogSource" class="desk-select">
-              <option value="ren">Ren</option>
-              <option value="mio">Mio</option>
-              <option value="shiro">Shiro</option>
-              <option value="coder">Coder</option>
-            </select>
-            <select id="backlogPriority" class="desk-select">
-              <option value="normal">normal</option>
-              <option value="high">high</option>
-              <option value="urgent">urgent</option>
-              <option value="low">low</option>
-            </select>
-          </div>
-          <button id="backlogAddBtn" class="desk-primary-btn" type="button">メモする</button>
-          <button id="backlogRefreshBtn" class="ctl-btn" type="button">Refresh</button>
-        </section>
-      </aside>
-      <section class="desk-main">
-        <div class="desk-head compact">
-          <div>
-            <div class="desk-kicker">Implementation Board</div>
-            <h3>実装・テスト・修正・OK</h3>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table class="compact-table backlog-table">
-            <thead>
-              <tr><th>kind</th><th>status</th><th>title</th><th>source</th><th>owner</th><th>test</th><th>ok</th><th>actions</th></tr>
-            </thead>
-            <tbody id="backlogBodyTable"></tbody>
-          </table>
-        </div>
-      </section>
+    <div class="atlas-legacy-notice">
+      <div class="atlas-kicker">CANONICAL OWNER MOVED</div>
+      <h2>BacklogはAtlasへ統合されました</h2>
+      <p>登録、7日間の熟成、再検証、強制判断、Implementation Queueへの移動はAtlasのBacklog画面から行います。この画面には独立したwrite経路を残しません。</p>
+      <button class="ctl-btn" id="backlogOpenAtlasBtn" type="button">Open Atlas Backlog</button>
     </div>
   </section>
 
@@ -336,9 +289,9 @@
     <div id="atlasRoot" class="atlas-shell">
       <div class="atlas-head">
         <div>
-          <div class="atlas-kicker">CORE DEBUG VIEWER / READ-ONLY PROJECTION</div>
+          <div class="atlas-kicker">CORE ATLAS / OWNER-CONTROLLED LIFECYCLE</div>
           <h2>Atlas</h2>
-          <p>Current、Radar、Backlog、Pipeline、Evidence、Modules を一つの読み取り専用 projection で確認します。</p>
+          <p>同じCORE正本からCurrent、Radar、Backlog、Pipeline、Evidence、Modulesを確認し、認証済みBacklog判断を完結します。</p>
         </div>
         <div class="atlas-head-actions">
           <span id="atlasStatus" class="badge state-thinking" role="status" aria-live="polite">idle</span>
@@ -1691,8 +1644,8 @@
 <script src="/viewer/assets/js/tabs/home.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/develop.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/instructions.js?v=20260517-desk-regenerated" defer></script>
-<script src="/viewer/assets/js/tabs/backlog.js?v=20260618-backlog" defer></script>
-<script src="/viewer/assets/js/tabs/atlas.js?v=20260821-atlas" defer></script>
+<script src="/viewer/assets/js/tabs/backlog.js?v=20260826-atlas-canonical" defer></script>
+<script src="/viewer/assets/js/tabs/atlas.js?v=20260826-maturation-owner" defer></script>
 <script src="/viewer/assets/js/tabs/reports.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/overview.js?v=20260510-tabs-overview" defer></script>
 <script src="/viewer/assets/js/tabs/system.js?v=20260510-tabs-system" defer></script>

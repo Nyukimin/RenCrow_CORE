@@ -470,6 +470,7 @@ func (s *Service) buildProjection(ctx context.Context) (Projection, error) {
 		Current: []domainbacklog.Item{}, Radar: []domainbacklog.Item{}, Backlog: []domainbacklog.Item{}, Queue: []domainbacklog.Item{}, Evidence: []domainbacklog.EvidenceRef{}, Pipeline: []PipelineEntry{},
 		QueueFreezes: append([]domainworkstream.QueueFreeze(nil), freezes...), ClosureReceipts: append([]domainworkstream.ClosureReceipt(nil), closures...), StageReceipts: append([]domainworkstream.StageRunReceipt(nil), stageReceipts...),
 	}
+	p.MaturationMetrics = calculateMaturationMetrics(items, s.now(), 30)
 	for _, item := range items {
 		switch item.ConceptState {
 		case domainbacklog.ConceptRadar:

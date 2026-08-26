@@ -151,7 +151,7 @@ td{color:var(--t1)}
   background:rgba(255,255,255,.05);color:var(--t1);padding:8px 10px;font:inherit
 }
 
-/* Atlas read-only projection */
+/* Atlas canonical lifecycle */
 .atlas-panel{padding-top:10px}
 .atlas-shell{display:grid;gap:12px;min-width:0}
 .atlas-head{
@@ -164,7 +164,7 @@ td{color:var(--t1)}
 .atlas-head p{max-width:760px;color:var(--t2);font-size:12px;line-height:1.6}
 .atlas-head-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .atlas-kicker{display:block;color:var(--t3);font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
-.atlas-summary-grid{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:9px}
+.atlas-summary-grid{display:grid;grid-template-columns:repeat(7,minmax(110px,1fr));gap:9px}
 .atlas-summary-card{
   min-width:0;display:grid;gap:5px;padding:12px;border:1px solid var(--border);border-radius:14px;
   background:rgba(18,29,52,.68);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)
@@ -290,6 +290,28 @@ td{color:var(--t1)}
 .atlas-detail-list li strong{color:var(--t1);overflow-wrap:anywhere}
 .atlas-detail-list li span{min-width:0;overflow-wrap:anywhere}
 .atlas-detail-list li .badge{justify-self:start}
+.atlas-legacy-notice{display:grid;gap:12px;max-width:760px;margin:48px auto;padding:24px;border:1px solid rgba(128,230,255,.32);border-radius:18px;background:rgba(12,24,43,.78)}
+.atlas-legacy-notice h2{color:var(--t1);font-size:22px}
+.atlas-legacy-notice p{color:var(--t2);font-size:13px;line-height:1.7}
+.atlas-legacy-notice .ctl-btn{justify-self:start}
+.atlas-owner-card,.atlas-owner-control{display:grid;gap:12px;min-width:0;padding:14px;border:1px solid rgba(128,230,255,.28);border-radius:14px;background:rgba(13,27,49,.72)}
+.atlas-owner-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.atlas-owner-field{display:grid;gap:5px;min-width:0;color:var(--t2);font-size:10px;font-weight:800}
+.atlas-owner-field input,.atlas-owner-field textarea,.atlas-owner-field select{width:100%;min-width:0;padding:8px 9px;border:1px solid var(--border);border-radius:9px;background:rgba(6,12,28,.76);color:var(--t1);font:12px/1.45 inherit;resize:vertical}
+.atlas-owner-wide{grid-column:1/-1}
+.atlas-owner-check{grid-column:1/-1;display:flex;align-items:center;gap:8px;color:var(--t2);font-size:11px}
+.atlas-owner-actions{display:flex;flex-wrap:wrap;gap:8px}
+.atlas-owner-actions .ctl-btn:disabled{cursor:wait;opacity:.55}
+.atlas-owner-help{margin:0;color:var(--t3);font-size:10px;line-height:1.55}
+.atlas-decision-impact-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.atlas-decision-impact-grid article{display:grid;gap:4px;padding:9px 10px;border:1px solid var(--border);border-radius:9px;background:rgba(255,255,255,.025)}
+.atlas-decision-impact-grid strong{color:var(--t1);font-size:11px}
+.atlas-decision-impact-grid span{color:var(--t2);font-size:11px;line-height:1.45}
+.atlas-decision-impact-grid small{color:var(--t3);font-size:10px;line-height:1.4}
+.atlas-owner-receipt{display:flex;flex-wrap:wrap;gap:6px 12px;padding:9px 10px;border:1px solid var(--border);border-radius:9px;color:var(--t2);font-size:11px}
+.atlas-owner-receipt strong{color:var(--t1)}
+.atlas-owner-receipt.state-error{border-color:rgba(248,113,113,.45);background:rgba(127,29,29,.12)}
+.atlas-owner-receipt.state-idle{border-color:rgba(74,222,128,.3);background:rgba(74,222,128,.07)}
 .atlas-spec-list{display:grid;gap:10px;min-width:0}
 .atlas-spec-block{display:grid;gap:10px;min-width:0;padding-top:11px;border-top:1px solid var(--border)}
 .atlas-spec-block:first-child{padding-top:0;border-top:0}
@@ -1227,6 +1249,9 @@ body.theme-compact .input-wrap textarea{min-height:38px;max-height:86px}
   .atlas-source-note{align-self:flex-start}
   .atlas-wrap{max-width:none}
   .atlas-detail-grid,.atlas-spec-meta{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .atlas-owner-grid{grid-template-columns:1fr}
+  .atlas-decision-impact-grid{grid-template-columns:1fr}
+  .atlas-owner-wide,.atlas-owner-check{grid-column:auto}
 }
 
 @media (max-width:640px){

@@ -233,6 +233,10 @@ REJECTED
 
 `ADOPTED`になった項目だけImplementation Queueへ入れる。
 
+`CANDIDATE`は実装待ちではなく、技術観測、仮説、設計候補、競合案を保持する熟成領域である。
+`CANDIDATE`へ入った新規ItemはMaturation / Revalidation契約を通過し、
+`maturation_state=PROMOTED`がCOREによって保存されるまで採用できない。
+
 ## 4.4 Implementation Pipeline
 
 現在実装している1件と、その工程を表示する。
@@ -374,7 +378,91 @@ Rejected理由は削除しない。
 
 ---
 
-## 5.2 Delivery State
+## 5.2 Maturation State
+
+Concept StateとDelivery Stateの間に、実装判断の熟成と再検証を表す
+`maturation_state`を置く。これは構想の採否や実装stageを二重管理するstateではない。
+
+```text
+MATURATION
+REVALIDATION
+PROMOTED
+MERGED
+HOLD
+DROPPED
+```
+
+- `RADAR` Itemは情報であり、まだMaturationの対象ではない。
+- `RADAR -> CANDIDATE`と同じCORE owner操作で`MATURATION`を開始する。
+- 最低熟成期間は`7 * 24h`とし、`maturation_started_at`と
+  `maturation_eligible_at`をUTCで保存する。七日経過は採用ではなく、再検証可能を意味する。
+- 関連資料、Source Ref、コメント、関連Item、仮説、暫定priorityは
+  `MATURATION`中も追記できる。追記は履歴を消さない。
+- 目的、Problem、上位設計との関係、実装方針を変える重大更新は理由を必須とし、
+  新しい`MATURATION`を開始する。軽微な根拠追記で時刻をリセットしない。
+- `PROMOTED`のItemだけが、認証済みowner requestの`Adopt`によって
+  `ADOPTED / QUEUED`へ進める。
+- `MERGED`は統合元を履歴として保持し、実在する別Itemを`merged_into`で参照する。
+- `HOLD`は失敗終端ではない。`next_review_trigger`と一致する新事実を受けた新requestで
+  `REVALIDATION`へ戻れる。人の返答待ちstatusにはしない。
+- `DROPPED`は理由付き非採用であり、Itemと過去のrevalidation recordを削除しない。
+
+Revalidationでは必ずNecessity、Duplication、Mergeability、Architectural Consistency、
+Technology Validity、Implementation Value、Timingを評価する。決定は
+`PROMOTE` / `MERGE` / `HOLD` / `DROP`の一つに収束させる。LLMは意味評価案を生成できるが、
+COREがJSON contract、熟成日数、対象Item、統合先、policy、state transitionを決定論的に
+検証した後だけ保存する。
+
+各再検証は既存Backlog Itemのappend-only履歴に次を保存する。
+
+```text
+backlog_id
+revalidation_date
+maturation_days
+decision
+reason
+necessity
+duplication
+mergeability
+architectural_consistency
+technology_validity
+timing
+related_backlogs
+conflicting_specs
+merged_into
+technology_changes
+architecture_impact
+implementation_value
+next_review_trigger
+review_agents
+forced
+maturation_bypass
+bypass_reason
+```
+
+Security Issue、Data Loss Risk、Production Failure、Breaking Change、明確なBug Fix、
+RenCrow稼働維持だけ7日gateを迂回できる。迂回は`maturation_bypass=true`と
+machine-readableな`bypass_reason`を同じrecordに必ず保存する。
+
+System Ownerは認証済みの新requestとして強制`PROMOTE` / `HOLD` / `DROP`、
+またはRevalidation再実行を指示できる。これらも人の返答待ちworkflowの解除ではなく、
+理由とActorをrecordしてCOREが同期評価する新しいowner requestである。
+強制`MERGE`は統合先との意味的整合性を人が直接確定する迂回経路になるため受理せず、
+通常Revalidationだけが実在する統合先を選択できる。
+
+通常RevalidationのHTTP bodyは`request_id`とevent-driven HOLD用`trigger`だけを受理する。
+七観点、decision、reason、関連候補はRenCrowのRevalidation Evaluatorが生成し、COREが
+schema、対象、7日gate、統合先、state transitionを検証する。callerが通常requestへ
+semantic decisionを注入した場合は拒否する。Heartbeatは1日1回、古いeligible Itemから
+最大1件を評価し、失敗時に同じheartbeatで無限再試行しない。
+
+Debug ViewerのAtlas Backlog画面は判断対象、原文・Evidence、現在state、eligible時刻、
+RenCrowの推奨decisionと理由、七観点、各選択肢、緊急bypass、編集可能なenrichment、
+未処理数、30日metrics、実行結果receiptを同じ画面に表示する。Bearer tokenはpage memoryだけに
+保持し、browser storageへ保存しない。旧`/viewer/backlog`はGET互換だけを残し、POSTは405で
+Atlas owner APIへ誘導する。
+
+## 5.3 Delivery State
 
 ```text
 NONE
@@ -418,6 +506,9 @@ request outcomeを`applied`／`rejected`／`blocked`のいずれかへ確定す�
 `applied`の場合だけConcept Stateを`ADOPTED`へ変更する。採用しない決定をItemへ反映する場合は
 Concept Stateを理由付き`REJECTED`へ変更する。依存利用不能、lease競合、owner scope不一致等でrequest
 outcomeが`blocked`になった場合、Concept Stateへ存在しない`BLOCKED`を代入せず、Itemを採用前状態のまま保持する。
+
+採用前に`maturation_state=PROMOTED`を必須とする。熟成期間中、未検証、`MERGED`、
+`HOLD`、`DROPPED`のItemからImplementation Unitを作成しない。
 
 採用時に最低限以下を確定する。
 

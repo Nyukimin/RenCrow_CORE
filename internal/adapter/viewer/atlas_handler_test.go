@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	appbacklog "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
@@ -47,6 +49,9 @@ func TestAtlasOwnerHTTPFlowReachesLiveVerifiedWithEvidence(t *testing.T) {
 	}
 	if rec := post("/v1/atlas/items/e2e/candidate", `{}`); rec.Code != http.StatusOK {
 		t.Fatalf("candidate status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := post("/v1/atlas/items/e2e/revalidate", `{"decision":"PROMOTE","reason":"owner review","forced":true,"bypass_reason":"runtime_continuity"}`); rec.Code != http.StatusOK {
+		t.Fatalf("revalidate status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if rec := post("/v1/atlas/items/e2e/adopt", `{"reason":"owner"}`); rec.Code != http.StatusOK {
 		t.Fatalf("adopt status=%d body=%s", rec.Code, rec.Body.String())
@@ -145,6 +150,263 @@ func TestAtlasOwnerPOSTRequiresBearerAndProfile(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
+}
+
+func TestAtlasOwnerMaturationHTTPRequiresLoopbackBearerAndCmdControl(t *testing.T) {
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	service := appbacklog.NewService(&atlasHTTPItemStore{items: []domainbacklog.Item{atlasMaturationHTTPItem("auth", start)}}, nil).WithClock(func() time.Time { return start.Add(7 * 24 * time.Hour) })
+	token := "atlas-owner-token-012345678901234567890123"
+	handler := NewAtlasHandler(service, "ren", []byte(token))
+	body := `{"decision":"PROMOTE","reason":"owner review","forced":true}`
+
+	cases := []struct {
+		name       string
+		remoteAddr string
+		authorize  bool
+		profile    string
+		wantStatus int
+	}{
+		{name: "missing bearer", remoteAddr: "127.0.0.1:43210", profile: "cmd-control", wantStatus: http.StatusUnauthorized},
+		{name: "non loopback", remoteAddr: "192.0.2.10:43210", authorize: true, profile: "cmd-control", wantStatus: http.StatusNotFound},
+		{name: "wrong profile", remoteAddr: "127.0.0.1:43210", authorize: true, profile: "cmd-diagnostics", wantStatus: http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/v1/atlas/items/auth/revalidate", bytes.NewBufferString(body))
+			request.RemoteAddr = tc.remoteAddr
+			if tc.authorize {
+				request.Header.Set("Authorization", "Bearer "+token)
+			}
+			request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+			request.Header.Set("X-RenCrow-Interaction-Profile", tc.profile)
+			record := httptest.NewRecorder()
+			handler.ServeHTTP(record, request)
+			if record.Code != tc.wantStatus {
+				t.Fatalf("status=%d body=%s want=%d", record.Code, record.Body.String(), tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestAtlasOwnerRevalidateHTTPReturnsLatestPersistedRecord(t *testing.T) {
+	start := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	now := start.Add(7 * 24 * time.Hour)
+	store := &atlasHTTPItemStore{items: []domainbacklog.Item{atlasMaturationHTTPItem("revalidate", start)}}
+	service := appbacklog.NewService(store, nil).WithClock(func() time.Time { return now })
+	handler := NewAtlasHandler(service, "ren", []byte(atlasOwnerHTTPToken))
+	record := atlasOwnerHTTPPost(t, handler, atlasOwnerHTTPToken, "/v1/atlas/items/revalidate/revalidate", `{"request_id":"review-1","decision":"PROMOTE","reason":"still valuable","related_backlogs":["related-1"],"conflicting_specs":["spec-1"],"technology_changes":["Go"],"architecture_impact":"none","implementation_value":"high","next_review_trigger":"new evidence","forced":true}`)
+	if record.Code != http.StatusOK {
+		t.Fatalf("revalidate status=%d body=%s", record.Code, record.Body.String())
+	}
+	var response struct {
+		Item               domainbacklog.Item               `json:"item"`
+		RevalidationRecord domainbacklog.RevalidationRecord `json:"revalidation_record"`
+	}
+	if err := json.Unmarshal(record.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode revalidate response: %v body=%s", err, record.Body.String())
+	}
+	if response.Item.MaturationState != domainbacklog.MaturationStatePromoted || len(response.Item.RevalidationRecords) != 1 {
+		t.Fatalf("revalidate item=%+v", response.Item)
+	}
+	if response.RevalidationRecord.BacklogID != response.Item.ItemID || response.RevalidationRecord.Decision != domainbacklog.RevalidationDecisionPromote || response.RevalidationRecord.MaturationDays != 7 || response.RevalidationRecord.Reason != "still valuable" {
+		t.Fatalf("revalidation receipt=%+v item=%+v", response.RevalidationRecord, response.Item)
+	}
+	if !reflect.DeepEqual(response.RevalidationRecord, response.Item.RevalidationRecords[len(response.Item.RevalidationRecords)-1]) {
+		t.Fatalf("response receipt differs from latest persisted record: receipt=%+v item=%+v", response.RevalidationRecord, response.Item.RevalidationRecords)
+	}
+	if len(store.items) != 1 || !reflect.DeepEqual(store.items[0].RevalidationRecords, response.Item.RevalidationRecords) {
+		t.Fatalf("persisted revalidation history=%+v response=%+v", store.items[0].RevalidationRecords, response.Item.RevalidationRecords)
+	}
+}
+
+type atlasHTTPRevalidationEvaluator struct{}
+
+func (atlasHTTPRevalidationEvaluator) Evaluate(context.Context, appbacklog.RevalidationEvaluationInput) (appbacklog.RevalidationEvaluation, error) {
+	return appbacklog.RevalidationEvaluation{Proposal: appbacklog.RevalidationProposal{
+		Decision: domainbacklog.RevalidationDecisionHold, Reason: "依存仕様待ち",
+		Necessity: "必要", Duplication: "なし", Mergeability: "統合不要",
+		ArchitecturalFit: "整合", TechnologyValidity: "有効",
+		ImplementationValue: "依存後に価値あり", Timing: "現在は早い",
+		ArchitectureImpact: "新規層なし", NextReviewTrigger: "依存仕様の確定",
+	}, ReviewAgents: []string{"shiro"}}, nil
+}
+
+func TestAtlasOwnerNormalRevalidationUsesRenCrowEvaluator(t *testing.T) {
+	start := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	store := &atlasHTTPItemStore{items: []domainbacklog.Item{atlasMaturationHTTPItem("normal", start)}}
+	service := appbacklog.NewService(store, nil).
+		WithClock(func() time.Time { return start.Add(7 * 24 * time.Hour) }).
+		WithRevalidationEvaluator(atlasHTTPRevalidationEvaluator{})
+	handler := NewAtlasHandler(service, "ren", []byte(atlasOwnerHTTPToken))
+	record := atlasOwnerHTTPPost(t, handler, atlasOwnerHTTPToken, "/v1/atlas/items/normal/revalidate", `{}`)
+	if record.Code != http.StatusOK {
+		t.Fatalf("normal revalidation status=%d body=%s", record.Code, record.Body.String())
+	}
+	var response struct {
+		Item domainbacklog.Item `json:"item"`
+	}
+	if err := json.Unmarshal(record.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Item.MaturationState != domainbacklog.MaturationStateHold || len(response.Item.RevalidationRecords) != 1 || !reflect.DeepEqual(response.Item.RevalidationRecords[0].ReviewAgents, []string{"shiro"}) {
+		t.Fatalf("normal evaluator result=%+v", response.Item)
+	}
+}
+
+func TestAtlasOwnerRevalidateHTTPRejectsEarlyAndRequiresValidForcedBypass(t *testing.T) {
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	now := start.Add(24 * time.Hour)
+	store := &atlasHTTPItemStore{items: []domainbacklog.Item{atlasMaturationHTTPItem("early", start)}}
+	service := appbacklog.NewService(store, nil).WithClock(func() time.Time { return now }).WithRevalidationEvaluator(atlasHTTPRevalidationEvaluator{})
+	handler := NewAtlasHandler(service, "ren", []byte(atlasOwnerHTTPToken))
+	base := `"decision":"PROMOTE","reason":"urgent continuity"`
+
+	cases := []struct {
+		name       string
+		body       string
+		wantStatus int
+	}{
+		{name: "ordinary semantic injection", body: `{` + base + `}`, wantStatus: http.StatusBadRequest},
+		{name: "forced without bypass", body: `{` + base + `,"forced":true}`, wantStatus: http.StatusConflict},
+		{name: "forced invalid bypass", body: `{` + base + `,"forced":true,"bypass_reason":"operator_preference"}`, wantStatus: http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			record := atlasOwnerHTTPPost(t, handler, atlasOwnerHTTPToken, "/v1/atlas/items/early/revalidate", tc.body)
+			if record.Code != tc.wantStatus {
+				t.Fatalf("status=%d body=%s want=%d", record.Code, record.Body.String(), tc.wantStatus)
+			}
+		})
+	}
+	earlyNormal := atlasOwnerHTTPPost(t, handler, atlasOwnerHTTPToken, "/v1/atlas/items/early/revalidate", `{}`)
+	if earlyNormal.Code != http.StatusConflict {
+		t.Fatalf("early normal evaluation status=%d body=%s", earlyNormal.Code, earlyNormal.Body.String())
+	}
+	valid := atlasOwnerHTTPPost(t, handler, atlasOwnerHTTPToken, "/v1/atlas/items/early/revalidate", `{`+base+`,"forced":true,"bypass_reason":"runtime_continuity"}`)
+	if valid.Code != http.StatusOK {
+		t.Fatalf("valid forced revalidate status=%d body=%s", valid.Code, valid.Body.String())
+	}
+	var response struct {
+		Item domainbacklog.Item `json:"item"`
+	}
+	if err := json.Unmarshal(valid.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode valid forced response: %v body=%s", err, valid.Body.String())
+	}
+	if !response.Item.MaturationBypass || response.Item.BypassReason != domainbacklog.MaturationBypassRuntimeContinuity || len(response.Item.RevalidationRecords) != 1 || !response.Item.RevalidationRecords[0].Forced {
+		t.Fatalf("forced bypass was not persisted: %+v", response.Item)
+	}
+}
+
+func TestAtlasOwnerMaturationHTTPRejectsUnknownTrailingAndOversizedJSON(t *testing.T) {
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	store := &atlasHTTPItemStore{items: []domainbacklog.Item{atlasMaturationHTTPItem("strict", start)}}
+	service := appbacklog.NewService(store, nil).WithClock(func() time.Time { return start.Add(7 * 24 * time.Hour) })
+	handler := NewAtlasHandler(service, "ren", []byte(atlasOwnerHTTPToken))
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "unknown field", body: `{"decision":"PROMOTE","reason":"still valuable","forced":true,"unknown":true}`},
+		{name: "trailing value", body: `{"decision":"PROMOTE","reason":"still valuable","forced":true}{}`},
+		{name: "body bound", body: `{"decision":"PROMOTE","reason":"` + strings.Repeat("x", 64<<10) + `","forced":true}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			record := atlasOwnerHTTPPost(t, handler, atlasOwnerHTTPToken, "/v1/atlas/items/strict/revalidate", tc.body)
+			if record.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s want=%d", record.Code, record.Body.String(), http.StatusBadRequest)
+			}
+		})
+	}
+	if len(store.items) != 1 || len(store.items[0].RevalidationRecords) != 0 || store.items[0].MaturationState != domainbacklog.MaturationStateMaturation {
+		t.Fatalf("strict decoder failure mutated item: %+v", store.items[0])
+	}
+}
+
+func TestAtlasOwnerRevalidateHTTPMapsMissingMergeTargetToNotFound(t *testing.T) {
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	store := &atlasHTTPItemStore{items: []domainbacklog.Item{atlasMaturationHTTPItem("merge", start)}}
+	service := appbacklog.NewService(store, nil).WithClock(func() time.Time { return start.Add(7 * 24 * time.Hour) })
+	handler := NewAtlasHandler(service, "ren", []byte(atlasOwnerHTTPToken))
+	record := atlasOwnerHTTPPost(t, handler, atlasOwnerHTTPToken, "/v1/atlas/items/merge/revalidate", `{"decision":"MERGE","reason":"duplicate","merged_into":"missing-target"}`)
+	if record.Code != http.StatusBadRequest {
+		t.Fatalf("non-forced semantic injection status=%d body=%s want=%d", record.Code, record.Body.String(), http.StatusBadRequest)
+	}
+}
+
+func TestAtlasOwnerEnrichHTTPParsesMinorAndMajorRequests(t *testing.T) {
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	now := start.Add(7 * 24 * time.Hour)
+	item := atlasMaturationHTTPItem("enrich", start)
+	item.MaturationState = domainbacklog.MaturationStatePromoted
+	store := &atlasHTTPItemStore{items: []domainbacklog.Item{item}}
+	service := appbacklog.NewService(store, nil).WithClock(func() time.Time { return now })
+	handler := NewAtlasHandler(service, "ren", []byte(atlasOwnerHTTPToken))
+
+	minor := atlasOwnerHTTPPost(t, handler, atlasOwnerHTTPToken, "/v1/atlas/items/enrich/enrich", `{"source_refs":[{"type":"url","locator":"https://example.test/new"}],"related_ids":["related"],"relation_refs":["relation"],"body":"updated body","background":"updated background","priority":"high"}`)
+	if minor.Code != http.StatusOK {
+		t.Fatalf("minor enrich status=%d body=%s", minor.Code, minor.Body.String())
+	}
+	var minorResponse struct {
+		Item domainbacklog.Item `json:"item"`
+	}
+	if err := json.Unmarshal(minor.Body.Bytes(), &minorResponse); err != nil {
+		t.Fatalf("decode minor enrich: %v body=%s", err, minor.Body.String())
+	}
+	if minorResponse.Item.Body != "updated body" || minorResponse.Item.Background != "updated background" || minorResponse.Item.Priority != "high" || len(minorResponse.Item.SourceRefs) != 2 || !reflect.DeepEqual(minorResponse.Item.RelatedIDs, []string{"related"}) || !reflect.DeepEqual(minorResponse.Item.RelationRefs, []string{"relation"}) {
+		t.Fatalf("minor enrich fields=%+v", minorResponse.Item)
+	}
+	if minorResponse.Item.MaturationState != item.MaturationState || minorResponse.Item.MaturationStartedAt != item.MaturationStartedAt || minorResponse.Item.MaturationEligibleAt != item.MaturationEligibleAt {
+		t.Fatalf("minor enrich reset maturation clocks: before=%+v after=%+v", item, minorResponse.Item)
+	}
+
+	major := atlasOwnerHTTPPost(t, handler, atlasOwnerHTTPToken, "/v1/atlas/items/enrich/enrich", `{"material_change":true,"material_change_reason":"architecture changed","body":"major body"}`)
+	if major.Code != http.StatusOK {
+		t.Fatalf("major enrich status=%d body=%s", major.Code, major.Body.String())
+	}
+	var majorResponse struct {
+		Item domainbacklog.Item `json:"item"`
+	}
+	if err := json.Unmarshal(major.Body.Bytes(), &majorResponse); err != nil {
+		t.Fatalf("decode major enrich: %v body=%s", err, major.Body.String())
+	}
+	if majorResponse.Item.MaturationState != domainbacklog.MaturationStateMaturation || majorResponse.Item.MaturationStartedAt != now.Format(time.RFC3339) || majorResponse.Item.MaturationEligibleAt != now.Add(7*24*time.Hour).Format(time.RFC3339) || majorResponse.Item.LastMaterialChangeAt != now.Format(time.RFC3339) || majorResponse.Item.Body != "major body" {
+		t.Fatalf("major enrich did not reset maturation: %+v", majorResponse.Item)
+	}
+}
+
+const atlasOwnerHTTPToken = "atlas-owner-token-012345678901234567890123"
+
+func atlasMaturationHTTPItem(id string, start time.Time) domainbacklog.Item {
+	return domainbacklog.Item{
+		SchemaVersion:        domainbacklog.SchemaVersion2,
+		ItemID:               id,
+		FeatureID:            id,
+		Title:                "Atlas maturation " + id,
+		Purpose:              "validate Atlas maturation over HTTP",
+		ConceptState:         domainbacklog.ConceptCandidate,
+		DeliveryState:        domainbacklog.DeliveryNone,
+		MaturationState:      domainbacklog.MaturationStateMaturation,
+		MaturationStartedAt:  start.Format(time.RFC3339),
+		MaturationEligibleAt: start.Add(7 * 24 * time.Hour).Format(time.RFC3339),
+		CreatedAt:            start.Format(time.RFC3339),
+		UpdatedAt:            start.Format(time.RFC3339),
+		SourceRefs:           []domainbacklog.SourceRef{{Type: "test", Locator: id}},
+	}
+}
+
+func atlasOwnerHTTPPost(t *testing.T, handler http.HandlerFunc, token, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1"+path, bytes.NewBufferString(body))
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+	request.Header.Set("X-RenCrow-Interaction-Profile", "cmd-control")
+	request.RemoteAddr = "127.0.0.1:43210"
+	record := httptest.NewRecorder()
+	handler.ServeHTTP(record, request)
+	return record
 }
 
 func TestAtlasSpecificationProjectionUsesSpecIDAndResolvesItemReferences(t *testing.T) {

@@ -213,6 +213,13 @@ func TestAtlasHTTPDesignCardLifecycleAndFreezeResolution(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("replacement candidate status=%d body=%s", status, body)
 	}
+	status, body = runtime.post(t, "/v1/atlas/items/"+second.ItemID+"/revalidate", map[string]any{
+		"decision": "PROMOTE", "reason": "replacement owner review",
+		"forced": true, "bypass_reason": domainbacklog.MaturationBypassRuntimeContinuity,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("replacement revalidate status=%d body=%s", status, body)
+	}
 	var adoption appbacklog.AdoptionResult
 	status, body = runtime.post(t, "/v1/atlas/items/"+second.ItemID+"/adopt", map[string]any{"reason": "replace blocked unit"})
 	if status == http.StatusOK {
@@ -396,6 +403,13 @@ func (r *atlasLifecycleHTTPRuntime) candidateAndAdopt(t *testing.T, itemID strin
 	status, body := r.post(t, "/v1/atlas/items/"+itemID+"/candidate", map[string]any{})
 	if status != http.StatusOK {
 		t.Fatalf("candidate status=%d body=%s", status, body)
+	}
+	status, body = r.post(t, "/v1/atlas/items/"+itemID+"/revalidate", map[string]any{
+		"decision": "PROMOTE", "reason": "owner HTTP E2E maturation review",
+		"forced": true, "bypass_reason": domainbacklog.MaturationBypassRuntimeContinuity,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("revalidate status=%d body=%s", status, body)
 	}
 	status, body = r.post(t, "/v1/atlas/items/"+itemID+"/adopt", map[string]any{"reason": "owner HTTP E2E adoption"})
 	if status != http.StatusOK {
