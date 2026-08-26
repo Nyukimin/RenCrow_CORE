@@ -557,6 +557,27 @@ async function atlasOwnerPost(path, payload) {
 
 async function atlasRunOwnerAction(action, root) {
   if (atlasOwnerBusy) return;
+  // Rendering replaces the form controls. Capture the visible owner input
+  // before showing the busy state so the request reflects the clicked form.
+  const input = {
+    itemID: atlasItemDetailState.itemID,
+    title: atlasOwnerValue(root, '[data-atlas-intake="title"]'),
+    purpose: atlasOwnerValue(root, '[data-atlas-intake="purpose"]'),
+    problem: atlasOwnerValue(root, '[data-atlas-intake="problem"]'),
+    ownerModule: atlasOwnerValue(root, '[data-atlas-intake="owner_module"]'),
+    intakePriority: atlasOwnerValue(root, '[data-atlas-intake="priority"]'),
+    intakeLocator: atlasOwnerValue(root, '[data-atlas-intake="source_locator"]'),
+    decision: atlasOwnerValue(root, '[data-atlas-decision]'),
+    reason: atlasOwnerValue(root, '[data-atlas-decision-reason]'),
+    bypass: atlasOwnerValue(root, '[data-atlas-bypass]'),
+    nextTrigger: atlasOwnerValue(root, '[data-atlas-next-trigger]'),
+    enrichLocator: atlasOwnerValue(root, '[data-atlas-enrich="source_locator"]'),
+    relatedID: atlasOwnerValue(root, '[data-atlas-enrich="related_id"]'),
+    enrichPriority: atlasOwnerValue(root, '[data-atlas-enrich="priority"]'),
+    body: atlasOwnerValue(root, '[data-atlas-enrich="body"]'),
+    materialChange: Boolean(root.querySelector('[data-atlas-enrich="material_change"]')?.checked),
+    materialChangeReason: atlasOwnerValue(root, '[data-atlas-enrich="material_change_reason"]'),
+  };
   atlasOwnerBusy = true;
   atlasOwnerError = '';
   atlasOwnerReceipt = null;
@@ -564,18 +585,12 @@ async function atlasRunOwnerAction(action, root) {
   try {
     let result;
     if (action === 'intake') {
-      const title = atlasOwnerValue(root, '[data-atlas-intake="title"]');
-      const purpose = atlasOwnerValue(root, '[data-atlas-intake="purpose"]');
-      const problem = atlasOwnerValue(root, '[data-atlas-intake="problem"]');
-      const ownerModule = atlasOwnerValue(root, '[data-atlas-intake="owner_module"]');
-      const priority = atlasOwnerValue(root, '[data-atlas-intake="priority"]');
-      const locator = atlasOwnerValue(root, '[data-atlas-intake="source_locator"]');
-      if (!title) throw new Error('Title is required');
-      const payload = {title, purpose, problem, owner_module: ownerModule, priority, source: 'ren'};
-      if (locator) payload.source_refs = [{type: 'owner_input', locator}];
+      if (!input.title) throw new Error('Title is required');
+      const payload = {title: input.title, purpose: input.purpose, problem: input.problem, owner_module: input.ownerModule, priority: input.intakePriority, source: 'ren'};
+      if (input.intakeLocator) payload.source_refs = [{type: 'owner_input', locator: input.intakeLocator}];
       result = await atlasOwnerPost('/v1/atlas/intake', payload);
     } else {
-      const itemID = atlasItemDetailState.itemID;
+      const itemID = input.itemID;
       if (!itemID) throw new Error('Atlas item is not selected');
       const base = '/v1/atlas/items/' + encodeURIComponent(itemID) + '/';
       if (action === 'candidate') {
@@ -583,33 +598,21 @@ async function atlasRunOwnerAction(action, root) {
       } else if (action === 'revalidate') {
         result = await atlasOwnerPost(base + 'revalidate', {});
       } else if (action === 'force') {
-        const decision = atlasOwnerValue(root, '[data-atlas-decision]');
-        const reason = atlasOwnerValue(root, '[data-atlas-decision-reason]');
-        const bypass = atlasOwnerValue(root, '[data-atlas-bypass]');
-        const nextTrigger = atlasOwnerValue(root, '[data-atlas-next-trigger]');
-        if (!decision || !reason) throw new Error('Force decision and reason are required');
-        const payload = {decision, reason, forced: true};
-        if (bypass) payload.bypass_reason = bypass;
-        if (nextTrigger) payload.next_review_trigger = nextTrigger;
+        if (!input.decision || !input.reason) throw new Error('Force decision and reason are required');
+        const payload = {decision: input.decision, reason: input.reason, forced: true};
+        if (input.bypass) payload.bypass_reason = input.bypass;
+        if (input.nextTrigger) payload.next_review_trigger = input.nextTrigger;
         result = await atlasOwnerPost(base + 'revalidate', payload);
       } else if (action === 'adopt') {
-        const reason = atlasOwnerValue(root, '[data-atlas-decision-reason]');
-        if (!reason) throw new Error('Implementation Queue reason is required');
-        result = await atlasOwnerPost(base + 'adopt', {reason});
+        if (!input.reason) throw new Error('Implementation Queue reason is required');
+        result = await atlasOwnerPost(base + 'adopt', {reason: input.reason});
       } else if (action === 'enrich') {
-        const locator = atlasOwnerValue(root, '[data-atlas-enrich="source_locator"]');
-        const relatedID = atlasOwnerValue(root, '[data-atlas-enrich="related_id"]');
-        const priority = atlasOwnerValue(root, '[data-atlas-enrich="priority"]');
-        const body = atlasOwnerValue(root, '[data-atlas-enrich="body"]');
-        const materialInput = root.querySelector('[data-atlas-enrich="material_change"]');
-        const materialChange = Boolean(materialInput && materialInput.checked);
-        const materialChangeReason = atlasOwnerValue(root, '[data-atlas-enrich="material_change_reason"]');
-        const payload = {material_change: materialChange};
-        if (locator) payload.source_refs = [{type: 'owner_input', locator}];
-        if (relatedID) payload.related_ids = [relatedID];
-        if (priority) payload.priority = priority;
-        if (body) payload.body = body;
-        if (materialChangeReason) payload.material_change_reason = materialChangeReason;
+        const payload = {material_change: input.materialChange};
+        if (input.enrichLocator) payload.source_refs = [{type: 'owner_input', locator: input.enrichLocator}];
+        if (input.relatedID) payload.related_ids = [input.relatedID];
+        if (input.enrichPriority) payload.priority = input.enrichPriority;
+        if (input.body) payload.body = input.body;
+        if (input.materialChangeReason) payload.material_change_reason = input.materialChangeReason;
         result = await atlasOwnerPost(base + 'enrich', payload);
       } else {
         throw new Error('Unknown owner operation');

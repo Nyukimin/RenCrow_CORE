@@ -1294,3 +1294,21 @@ func TestViewerStaticContractAtlasProjectionAndOwnerDecisionGUI(t *testing.T) {
 		}
 	}
 }
+
+func TestViewerAtlasCapturesOwnerInputBeforeBusyRender(t *testing.T) {
+	jsData, err := os.ReadFile("assets/js/tabs/atlas.js")
+	if err != nil {
+		t.Fatalf("read atlas.js: %v", err)
+	}
+	source := string(jsData)
+	functionStart := strings.Index(source, "async function atlasRunOwnerAction(action, root)")
+	if functionStart < 0 {
+		t.Fatal("atlasRunOwnerAction is missing")
+	}
+	functionBody := source[functionStart:]
+	capture := strings.Index(functionBody, "const input = {")
+	render := strings.Index(functionBody, "atlasRender();")
+	if capture < 0 || render < 0 || capture > render {
+		t.Fatal("owner input must be captured before atlasRender replaces the form controls")
+	}
+}
