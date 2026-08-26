@@ -1,8 +1,10 @@
 package idlechat
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -44,6 +46,130 @@ func (p *capturingDailySemanticProvider) Generate(_ context.Context, req llm.Gen
 }
 
 func (p *capturingDailySemanticProvider) Name() string { return "capturing-daily-semantic" }
+
+type unexpectedDailyTranslationProvider struct {
+	requests atomic.Int32
+}
+
+func (p *unexpectedDailyTranslationProvider) Generate(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+	p.requests.Add(1)
+	return llm.GenerateResponse{}, errors.New("deterministic Japanese translation should bypass the provider")
+}
+
+func (p *unexpectedDailyTranslationProvider) Name() string { return "unexpected-daily-translation" }
+
+func TestIsClearlyJapaneseDailySourceBodyUsesConservativeLetterRatio(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "clear Japanese", body: strings.Repeat("日本語の記事です。", 12), want: true},
+		{name: "Chinese Han only", body: strings.Repeat("这是中文新闻正文", 8), want: false},
+		{name: "English", body: strings.Repeat("English words ", 8), want: false},
+		{name: "ambiguous mixed", body: strings.Repeat("日本語", 12) + strings.Repeat("English words ", 8), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isClearlyJapaneseDailySourceBody(tt.body); got != tt.want {
+				t.Fatalf("isClearlyJapaneseDailySourceBody() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTranslateDailySourceBodiesBypassesClearlyJapaneseBody(t *testing.T) {
+	body := strings.Repeat("日本語", 12) + "\nそのまま保持します。"
+	provider := &unexpectedDailyTranslationProvider{}
+	inputs := []dailySourceBriefInput{{Index: 7, SourceURL: "https://example.com/japanese", Body: body}}
+
+	translations, err := translateDailySourceBodies(context.Background(), provider, inputs)
+	if err != nil {
+		t.Fatalf("translateDailySourceBodies() error = %v", err)
+	}
+	if provider.requests.Load() != 0 {
+		t.Fatalf("clear Japanese source must bypass the translation provider: requests=%d", provider.requests.Load())
+	}
+	if len(translations) != 1 || translations[0].Index != 7 || translations[0].TranslatedBody != body {
+		t.Fatalf("translations = %#v, want unchanged body with original index", translations)
+	}
+}
+
+func TestTranslateDailySourceBodiesUsesWorkerForEnglishAndAmbiguousMixedBodies(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{name: "English", body: strings.Repeat("English words ", 8)},
+		{name: "ambiguous mixed", body: strings.Repeat("日本語", 12) + strings.Repeat("English words ", 8)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &scriptedDailyOutputProvider{responses: []string{
+				`{"items":[{"index":0,"translated_body":"Workerが翻訳した本文です。"}]}`,
+			}}
+			translations, err := translateDailySourceBodies(context.Background(), provider, []dailySourceBriefInput{{Index: 4, SourceURL: "https://example.com/article", Body: tt.body}})
+			if err != nil {
+				t.Fatalf("translateDailySourceBodies() error = %v", err)
+			}
+			if provider.requests.Load() != 1 {
+				t.Fatalf("%s source must use Worker exactly once: requests=%d", tt.name, provider.requests.Load())
+			}
+			if len(translations) != 1 || translations[0].TranslatedBody != "Workerが翻訳した本文です。" {
+				t.Fatalf("translations = %#v, want Worker output", translations)
+			}
+		})
+	}
+}
+
+func TestTranslateDailySourceBodiesRestoresStableOrderAfterJapaneseBypass(t *testing.T) {
+	provider := &scriptedDailyOutputProvider{responses: []string{
+		`{"items":[{"index":0,"translated_body":"英語本文をWorkerで翻訳しました。"}]}`,
+	}}
+	inputs := []dailySourceBriefInput{
+		{Index: 10, SourceURL: "https://example.com/ja-1", Body: strings.Repeat("日本語の記事です。", 12)},
+		{Index: 20, SourceURL: "https://example.com/en", Body: strings.Repeat("English words ", 8)},
+		{Index: 30, SourceURL: "https://example.com/ja-2", Body: strings.Repeat("漢字かな", 6)},
+	}
+
+	translations, err := translateDailySourceBodies(context.Background(), provider, inputs)
+	if err != nil {
+		t.Fatalf("translateDailySourceBodies() error = %v", err)
+	}
+	if provider.requests.Load() != 1 {
+		t.Fatalf("only residual English input should reach Worker: requests=%d", provider.requests.Load())
+	}
+	want := []dailyTranslationItem{
+		{Index: 10, TranslatedBody: inputs[0].Body},
+		{Index: 20, TranslatedBody: "英語本文をWorkerで翻訳しました。"},
+		{Index: 30, TranslatedBody: inputs[2].Body},
+	}
+	if len(translations) != len(want) {
+		t.Fatalf("translations = %#v, want %#v", translations, want)
+	}
+	for index := range want {
+		if translations[index] != want[index] {
+			t.Fatalf("translations[%d] = %#v, want %#v", index, translations[index], want[index])
+		}
+	}
+}
+
+func TestGenerateDailyBriefLLMLogsBoundedStageReceipt(t *testing.T) {
+	provider := &capturingDailySemanticProvider{}
+	var logs bytes.Buffer
+	previousWriter := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(previousWriter)
+
+	if _, err := generateDailyBriefLLM(context.Background(), provider, "translate_article", "工程: 原文翻訳"); err != nil {
+		t.Fatalf("generateDailyBriefLLM() error = %v", err)
+	}
+	line := logs.String()
+	for _, field := range []string{"purpose=translate_article", "input_runes=", "elapsed_ms=", "terminal=completed"} {
+		if !strings.Contains(line, field) {
+			t.Fatalf("stage receipt missing %q: %q", field, line)
+		}
+	}
+}
 
 func TestDailySemanticRequestsUseLowReasoningEffort(t *testing.T) {
 	articleURL := "https://example.com/articles/daily-low-reasoning"

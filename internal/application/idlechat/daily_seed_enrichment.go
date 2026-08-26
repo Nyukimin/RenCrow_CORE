@@ -592,10 +592,25 @@ func buildDailySourceBriefBatch(ctx context.Context, provider llm.LLMProvider, r
 }
 
 func translateDailySourceBodies(ctx context.Context, provider llm.LLMProvider, inputs []dailySourceBriefInput) ([]dailyTranslationItem, error) {
-	translations := make([]dailyTranslationItem, 0, len(inputs))
-	for start := 0; start < len(inputs); start += dailyTranslationBatchSize {
-		end := min(start+dailyTranslationBatchSize, len(inputs))
-		localInputs := append([]dailySourceBriefInput(nil), inputs[start:end]...)
+	translationsByPosition := make([]dailyTranslationItem, len(inputs))
+	translated := make([]bool, len(inputs))
+	llmInputs := make([]dailySourceBriefInput, 0, len(inputs))
+	llmPositions := make([]int, 0, len(inputs))
+	for position, input := range inputs {
+		if isClearlyJapaneseDailySourceBody(input.Body) {
+			translationsByPosition[position] = dailyTranslationItem{
+				Index: input.Index, TranslatedBody: truncateDailyBriefRunes(input.Body, dailyTranslationMaxRunes),
+			}
+			translated[position] = true
+			continue
+		}
+		llmInputs = append(llmInputs, input)
+		llmPositions = append(llmPositions, position)
+	}
+
+	for start := 0; start < len(llmInputs); start += dailyTranslationBatchSize {
+		end := min(start+dailyTranslationBatchSize, len(llmInputs))
+		localInputs := append([]dailySourceBriefInput(nil), llmInputs[start:end]...)
 		for index := range localInputs {
 			localInputs[index].Index = index
 		}
@@ -630,11 +645,42 @@ func translateDailySourceBodies(ctx context.Context, provider llm.LLMProvider, i
 			return nil, err
 		}
 		for _, item := range batch {
-			item.Index = inputs[start+item.Index].Index
+			position := llmPositions[start+item.Index]
+			item.Index = inputs[position].Index
+			translationsByPosition[position] = item
+			translated[position] = true
+		}
+	}
+
+	translations := make([]dailyTranslationItem, 0, len(inputs))
+	for position, item := range translationsByPosition {
+		if translated[position] {
 			translations = append(translations, item)
 		}
 	}
 	return translations, nil
+}
+
+// isClearlyJapaneseDailySourceBody classifies only bodies that are safe to
+// preserve as-is. The threshold is intentionally conservative: short or
+// mixed-language bodies remain semantic Worker translation inputs.
+func isClearlyJapaneseDailySourceBody(value string) bool {
+	japaneseLetters := 0
+	kanaLetters := 0
+	letterLikeRunes := 0
+	for _, r := range value {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		letterLikeRunes++
+		if unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana) {
+			japaneseLetters++
+		}
+		if unicode.In(r, unicode.Hiragana, unicode.Katakana) {
+			kanaLetters++
+		}
+	}
+	return japaneseLetters >= 20 && kanaLetters >= 5 && japaneseLetters*100 >= letterLikeRunes*60
 }
 
 func extractDailyTerms(ctx context.Context, provider llm.LLMProvider, inputs []dailySourceBriefInput) ([]dailyTermExtractionItem, error) {
@@ -733,6 +779,15 @@ func generateDailyLLM(ctx context.Context, provider llm.LLMProvider, request llm
 func generateDailyLLMWithValidation(ctx context.Context, provider llm.LLMProvider, request llm.GenerateRequest, validate func(string) error) (llm.GenerateResponse, error) {
 	const maxAttempts = 2
 	attempts := 0
+	startedAt := time.Now()
+	terminal := "failed"
+	observation, observed := llm.ExecutionObservationFromContext(ctx)
+	if observed && strings.TrimSpace(observation.Purpose) != "" {
+		defer func() {
+			log.Printf("[IdleChat] Daily LLM stage receipt purpose=%s input_runes=%d elapsed_ms=%d terminal=%s attempts=%d",
+				strings.TrimSpace(observation.Purpose), dailyLLMInputRunes(request), time.Since(startedAt).Milliseconds(), terminal, attempts)
+		}()
+	}
 	for {
 		response, err := provider.Generate(ctx, request)
 		if err != nil {
@@ -740,10 +795,12 @@ func generateDailyLLMWithValidation(ctx context.Context, provider llm.LLMProvide
 				if ctx.Err() == nil {
 					log.Printf("[IdleChat] Daily source brief paused at current LLM stage for competing work skill=%s", dailySourceBriefSkillID)
 					if err := waitForDailyLLMRetry(ctx); err != nil {
+						terminal = dailyLLMTerminalStatus(err)
 						return llm.GenerateResponse{}, err
 					}
 					continue
 				}
+				terminal = dailyLLMTerminalStatus(err)
 				return llm.GenerateResponse{}, err
 			}
 			attempts++
@@ -753,6 +810,7 @@ func generateDailyLLMWithValidation(ctx context.Context, provider llm.LLMProvide
 			}
 			log.Printf("[IdleChat] Daily source brief retrying retryable LLM boundary failure skill=%s attempt=%d/%d", dailySourceBriefSkillID, attempts+1, maxAttempts)
 			if err := waitForDailyLLMRetry(ctx); err != nil {
+				terminal = dailyLLMTerminalStatus(err)
 				return llm.GenerateResponse{}, err
 			}
 			continue
@@ -760,6 +818,7 @@ func generateDailyLLMWithValidation(ctx context.Context, provider llm.LLMProvide
 
 		attempts++
 		if validate == nil {
+			terminal = "completed"
 			return response, nil
 		}
 		if err := validate(response.Content); err != nil {
@@ -768,11 +827,32 @@ func generateDailyLLMWithValidation(ctx context.Context, provider llm.LLMProvide
 				return llm.GenerateResponse{}, err
 			}
 			if waitErr := waitForDailyLLMRetry(ctx); waitErr != nil {
+				terminal = dailyLLMTerminalStatus(waitErr)
 				return llm.GenerateResponse{}, waitErr
 			}
 			continue
 		}
+		terminal = "completed"
 		return response, nil
+	}
+}
+
+func dailyLLMInputRunes(request llm.GenerateRequest) int {
+	count := len([]rune(request.SystemPrompt))
+	for _, message := range request.Messages {
+		count += len([]rune(message.Content))
+	}
+	return count
+}
+
+func dailyLLMTerminalStatus(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	default:
+		return "failed"
 	}
 }
 

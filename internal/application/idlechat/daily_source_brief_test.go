@@ -82,7 +82,7 @@ func TestBuildDailySourceBriefReadsBodyBeforeSummaryAndSearchesOnlyUnknownTerms(
 	research := &dailySourceBriefResearchStub{
 		events: &events,
 		documents: map[string]DailySourceDocument{
-			articleURL:    {URL: articleURL, Text: "新しいRAG検索支援機能を提供します。LLMへの入力に検索資料を追加し、回答を根拠づけます。"},
+			articleURL:    {URL: articleURL, Text: "The source announces a new RAG retrieval support feature. It adds search material to LLM input and grounds responses."},
 			definitionURL: {URL: definitionURL, Text: "RAGは、検索した外部情報を生成モデルへの入力に加える手法です。"},
 		},
 		readErrors: map[string]error{},
