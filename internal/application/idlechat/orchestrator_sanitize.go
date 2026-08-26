@@ -140,14 +140,14 @@ func normalizeIdleSpeakerName(s string) string {
 }
 
 func sanitizeIdleSummaryResponse(raw, topic string) string {
-	out := strings.TrimSpace(extractVisibleLLMAnswer(raw))
+	out := strings.TrimSpace(extractVisibleLLMSummary(raw))
 	if out == "" {
 		return ""
 	}
 	out = dropLeadingReasoningParagraphs(out)
 	if hasPromptLeak(out) || hasInternalReasoningLeak(out) {
 		// 同一抽出器で再抽出（Final answer / 末尾日本語ブロック）
-		out = strings.TrimSpace(extractVisibleLLMAnswer(out))
+		out = strings.TrimSpace(extractVisibleLLMSummary(out))
 		out = dropLeadingReasoningParagraphs(out)
 	}
 	out = strings.TrimSpace(out)

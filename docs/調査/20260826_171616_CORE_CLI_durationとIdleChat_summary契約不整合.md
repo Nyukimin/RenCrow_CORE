@@ -77,4 +77,10 @@ domain型を変えず、CLI projectionとsummary sanitizerの責務境界で是�
 - 回帰: `go test ./application/... ./cmd/... ./internal/... ./modules/... ./pkg/... -count=1`が成功した。
 - `go test ./...`はrepo内の`Tmp/test-runtime`にあるGoの一時build生成物までpackageとして走査するため
   setupで失敗した。これはsource packageの失敗と分離し、上記の明示source root回帰で検証した。
-- 配備後のCLIとIdleChat正規経路の結果は、後続検証後に追記する。
+- 初回配備後、3つのCLI JSON経路で実測`duration_ms=1..4`を確認した。
+- IdleChat正規session `idle-1787733350-topic-00`は12発話とsummary生成、summary TTS、session完了まで進んだ。
+  このE2Eでsanitizer拒否は解消したが、共通visible-answer抽出が空行で分かれた3段落の最後だけを
+  保存する追加不整合を検出した。
+- 追加REDで実機と同じMarkdown＋空行の3点summaryが3点目だけへ切り詰められることを固定し、
+  summary用visible-answer抽出を通常発話から分離した。同testとIdleChat packageのtest／vet／buildは成功した。
+- 最終配備後の保存summary E2Eは後続確認後に追記する。

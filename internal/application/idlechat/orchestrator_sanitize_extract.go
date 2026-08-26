@@ -40,6 +40,38 @@ func extractVisibleLLMAnswer(raw string) string {
 	return trimHarmonyTail(s)
 }
 
+// extractVisibleLLMSummary preserves a valid multi-paragraph summary. Dialogue
+// extraction intentionally prefers the final Japanese paragraph, which would
+// discard earlier numbered summary points.
+func extractVisibleLLMSummary(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	lower := strings.ToLower(s)
+	for _, marker := range []string{
+		"<|channel|>final",
+		"<|channel>final",
+		"channel>final",
+		"channel=final",
+		"final answer",
+		"final response",
+		"最終回答",
+		"最終返答",
+	} {
+		if strings.Contains(lower, strings.ToLower(marker)) {
+			return extractVisibleLLMAnswer(s)
+		}
+	}
+	if strings.Contains(lower, "<|channel") || strings.Contains(lower, "channel>thought") || strings.Contains(lower, "channel=analysis") {
+		return extractVisibleLLMAnswer(s)
+	}
+	if hasInternalReasoningLeak(s) || summaryLooksLikeEnglishReasoningLead(s) {
+		return extractVisibleLLMAnswer(s)
+	}
+	return trimHarmonyTail(s)
+}
+
 func extractFinalAnswerBlock(s string) string {
 	type marker struct {
 		raw        string
