@@ -739,10 +739,11 @@ function atlasRenderRadar(view) {
     '<div class="atlas-table-wrap"><table class="atlas-table"><thead><tr><th>Received</th><th>Source</th><th>Title</th><th>Kind</th><th>Summary</th><th>Status</th></tr></thead><tbody>' +
     items.map((item) => '<tr><td class="atlas-time">' + atlasEscape(atlasFormatTime(atlasTimestamp(item))) + '</td>' +
       '<td>' + atlasEscape(atlasField(item, ['source_type', 'source', 'origin'], '-')) + '</td>' +
-      '<td><strong>' + atlasEscape(atlasItemTitle(item)) + '</strong><div class="atlas-code">' + atlasEscape(atlasItemID(item)) + '</div></td>' +
+      '<td><strong>' + atlasEscape(atlasItemTitle(item)) + '</strong><div class="atlas-code">' + atlasEscape(atlasItemID(item)) + '</div><div class="atlas-detail-actions">' + atlasDetailTrigger(item) + '</div></td>' +
       '<td>' + atlasEscape(atlasField(item, ['kind', 'type', 'category'], '-')) + '</td>' +
       '<td class="atlas-wrap">' + atlasEscape(atlasField(item, ['summary', 'body', 'description', 'note'], '-')) + '</td>' +
-      '<td>' + atlasBadge(atlasField(item, ['status', 'state'], '-')) + '</td></tr>').join('') + '</tbody></table></div>';
+      '<td>' + atlasBadge(atlasField(item, ['status', 'state'], '-')) + '</td></tr>').join('') + '</tbody></table></div>' + atlasRenderItemDetail('radar');
+  atlasBindItemDetailControls(view);
 }
 
 function atlasFilterValues(items, keys) {

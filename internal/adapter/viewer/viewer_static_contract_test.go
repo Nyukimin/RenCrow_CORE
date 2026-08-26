@@ -1192,6 +1192,7 @@ func TestViewerStaticContractAtlasProjectionAndOwnerDecisionGUI(t *testing.T) {
 		`function atlasRenderItemDetail`,
 		`function atlasOpenItemDetail`,
 		`atlasRenderItemDetail('current')`,
+		`atlasRenderItemDetail('radar')`,
 		`atlasRenderItemDetail('backlog')`,
 		`data-atlas-item-id`,
 		`'/viewer/atlas/items/' + encodeURIComponent(itemID)`,
