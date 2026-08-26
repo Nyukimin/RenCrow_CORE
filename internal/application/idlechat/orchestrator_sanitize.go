@@ -194,5 +194,15 @@ func trimAnySummaryPrefix(line string, prefixes []string) (string, bool) {
 			return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
 		}
 	}
+	// The semantic contract is positional: the first, second, and third lines
+	// already correspond to the requested three viewpoints. LLM wording for a
+	// heading is not a separate source of truth, so accept any non-empty label
+	// separated from a non-empty body by a Japanese or ASCII colon.
+	if label, body, ok := strings.Cut(line, "："); ok && strings.TrimSpace(label) != "" && strings.TrimSpace(body) != "" {
+		return strings.TrimSpace(body), true
+	}
+	if label, body, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(label) != "" && strings.TrimSpace(body) != "" {
+		return strings.TrimSpace(body), true
+	}
 	return "", false
 }

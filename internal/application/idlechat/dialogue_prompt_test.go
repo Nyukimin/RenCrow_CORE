@@ -760,6 +760,14 @@ func TestSanitizeIdleSummaryResponseNormalizesEquivalentThreePointHeadings(t *te
 	}
 }
 
+func TestSanitizeIdleSummaryResponseNormalizesUnboundedHeadingWordingByPosition(t *testing.T) {
+	raw := "面白点：最後の二食が安心の象徴になったこと\n前進要因：十秒置き取り置きで連絡を試す提案\n次の観点：予備食や電話受付で制度を柔軟化する案"
+	want := "1. いちばん面白かった点: 最後の二食が安心の象徴になったこと\n2. 話を前に進めた点: 十秒置き取り置きで連絡を試す提案\n3. 次に広がりそうな観点: 予備食や電話受付で制度を柔軟化する案"
+	if got := sanitizeIdleSummaryResponse(raw, "子ども食堂"); got != want {
+		t.Fatalf("positional headings were not normalized: got=%q want=%q", got, want)
+	}
+}
+
 func TestSanitizeIdleSummaryResponsePreservesThreeMarkdownParagraphs(t *testing.T) {
 	raw := "**1. いちばん面白かった点**  \n地図を順番表に見立てた観察が光りました。\n\n**2. 何が話を前に進めたか**  \n正式な引継ぎ欄へ移す提案で責任が整理されました。\n\n**3. 次に広がりそうな観点**  \n必要最小限の情報とプライバシーの両立へ広がりそうです。"
 	got := sanitizeIdleSummaryResponse(raw, "感染症と宅配")
