@@ -79,6 +79,10 @@ func (c *idleChatTTSLifecycleController) signalDone() {
 }
 
 func emitIdleChatTTS(ctx context.Context, bridge orchestrator.TTSBridge, ev idlechat.TimelineEvent) (idlechat.TTSLifecycle, bool) {
+	if !hasIdleChatViewerClients() {
+		log.Printf("[IdleChat] TTS synthesis skipped because no active audio Viewer is connected: session=%s response=%s", strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID))
+		return idlechat.TTSLifecycle{}, false
+	}
 	controller := newIdleChatTTSLifecycleController()
 	ok := emitIdleChatTTSWithLifecycle(ctx, bridge, ev, controller)
 	return controller.lifecycle(), ok
@@ -93,6 +97,10 @@ func emitIdleChatTTSWithLifecycle(ctx context.Context, bridge orchestrator.TTSBr
 		ctx = context.Background()
 	}
 	if bridge == nil || strings.TrimSpace(ev.Content) == "" || !isIdleChatTTSEventType(ev.Type) {
+		return false
+	}
+	if !hasIdleChatViewerClients() {
+		log.Printf("[IdleChat] TTS synthesis skipped because no active audio Viewer is connected: session=%s response=%s", strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID))
 		return false
 	}
 
@@ -132,7 +140,7 @@ func emitIdleChatTTSWithLifecycle(ctx context.Context, bridge orchestrator.TTSBr
 		VoiceProfile: plan.VoiceProfile,
 	})
 
-	expectPlaybackAck := hasIdleChatViewerClients()
+	expectPlaybackAck := true
 	registerTTSPublicSessionWithMessage(plan.SessionID, plan.PublicSessionID, plan.ResponseID, plan.MessageID, plan.TurnIndex)
 	registerIdleChatTTSSynthesisLifecycle(plan.SessionID, lifecycle)
 	defer unregisterIdleChatTTSSynthesisLifecycle(plan.SessionID, lifecycle)

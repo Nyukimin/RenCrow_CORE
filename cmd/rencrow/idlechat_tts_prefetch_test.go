@@ -75,9 +75,12 @@ func (m *idleChatPrefetchMockBridge) EmitIdleChatTTSError(_ context.Context, _, 
 func TestIdleChatTTSPrefetchManagerStreamsChunksInOneSession(t *testing.T) {
 	clearAllIdleChatTTSPending()
 	resetTTSPublicSessionStateForTest()
-	setIdleChatViewerClientCount(func() int { return 0 })
+	resetActiveViewerControlForTest()
+	activeViewerControl.Claim("audio", "prefetch-stream-viewer")
+	setIdleChatViewerClientCount(func() int { return 1 })
 	t.Cleanup(func() {
 		setIdleChatViewerClientCount(nil)
+		resetActiveViewerControlForTest()
 		clearAllIdleChatTTSPending()
 		resetTTSPublicSessionStateForTest()
 	})
@@ -144,7 +147,9 @@ func TestIdleChatTTSPrefetchManagerStreamsChunksInOneSession(t *testing.T) {
 func TestIdleChatTTSPrefetchCloseDoesNotWaitForSynthesis(t *testing.T) {
 	clearAllIdleChatTTSPending()
 	resetTTSPublicSessionStateForTest()
-	setIdleChatViewerClientCount(func() int { return 0 })
+	resetActiveViewerControlForTest()
+	activeViewerControl.Claim("audio", "prefetch-blocking-viewer")
+	setIdleChatViewerClientCount(func() int { return 1 })
 	bridge := &blockingIdleChatPrefetchBridge{
 		started:  make(chan struct{}),
 		canceled: make(chan struct{}),
@@ -153,6 +158,7 @@ func TestIdleChatTTSPrefetchCloseDoesNotWaitForSynthesis(t *testing.T) {
 	t.Cleanup(func() {
 		bridge.releaseSynthesis()
 		setIdleChatViewerClientCount(nil)
+		resetActiveViewerControlForTest()
 		clearAllIdleChatTTSPending()
 		resetTTSPublicSessionStateForTest()
 	})

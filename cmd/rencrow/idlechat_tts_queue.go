@@ -29,7 +29,10 @@ var (
 )
 
 func emitIdleChatTTSAsync(bridge orchestrator.TTSBridge, ev idlechat.TimelineEvent) idlechat.TTSLifecycle {
-	if bridge == nil {
+	if bridge == nil || !hasIdleChatViewerClients() {
+		if bridge != nil {
+			log.Printf("[IdleChat] TTS synthesis skipped before enqueue because no active audio Viewer is connected: session=%s response=%s", strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID))
+		}
 		return idlechat.TTSLifecycle{}
 	}
 	controller := newIdleChatTTSLifecycleController()

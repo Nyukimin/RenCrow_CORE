@@ -90,7 +90,7 @@ func TestEmitIdleChatTTSSendsMessage(t *testing.T) {
 	}
 }
 
-func TestEmitIdleChatTTSSkipsPlaybackWaitWhenNoViewerClients(t *testing.T) {
+func TestEmitIdleChatTTSSkipsSynthesisWhenNoViewerClients(t *testing.T) {
 	clearAllIdleChatTTSPending()
 	resetTTSPublicSessionStateForTest()
 	setIdleChatViewerClientCount(func() int { return 0 })
@@ -111,30 +111,17 @@ func TestEmitIdleChatTTSSkipsPlaybackWaitWhenNoViewerClients(t *testing.T) {
 		TurnIndex: 1,
 	})
 
-	if !ok {
-		t.Fatal("expected TTS route to run")
+	if ok {
+		t.Fatal("TTS route must not run without a listening Viewer")
 	}
-	if lifecycle.Ready == nil || lifecycle.Done == nil {
-		t.Fatal("no Viewer clients should still expose synthesis lifecycle channels")
+	if lifecycle.Ready != nil || lifecycle.Done != nil {
+		t.Fatal("skipped synthesis must not expose lifecycle waits")
 	}
-	if len(bridge.startReqs) != 1 || len(bridge.pushTexts) != 1 || len(bridge.endIDs) != 1 {
-		t.Fatalf("expected TTS bridge to receive start/push/end, got start=%d push=%d end=%d", len(bridge.startReqs), len(bridge.pushTexts), len(bridge.endIDs))
+	if len(bridge.startReqs) != 0 || len(bridge.pushTexts) != 0 || len(bridge.endIDs) != 0 {
+		t.Fatalf("TTS bridge must remain untouched, got start=%d push=%d end=%d", len(bridge.startReqs), len(bridge.pushTexts), len(bridge.endIDs))
 	}
 	if got := snapshotIdleChatTTSPending(); got.PendingSessionCount != 0 || got.PendingResponseCount != 0 {
 		t.Fatalf("pending should stay empty without Viewer clients: %+v", got)
-	}
-	if got := resolveTTSPublicResponse(bridge.startReqs[0].SessionID); got != "" {
-		t.Fatalf("public route should be cleared after no-viewer TTS, got %q", got)
-	}
-	select {
-	case <-lifecycle.Ready:
-	case <-time.After(time.Second):
-		t.Fatal("synthesis Ready was not signaled")
-	}
-	select {
-	case <-lifecycle.Done:
-	case <-time.After(time.Second):
-		t.Fatal("synthesis Done was not signaled")
 	}
 }
 
@@ -157,7 +144,7 @@ func TestNotifyIdleChatTTSSynthesisReadySignalsFirstChunkLifecycle(t *testing.T)
 	}
 }
 
-func TestEmitIdleChatTTSSkipsPlaybackWaitUntilAudioViewerClaimsOwnership(t *testing.T) {
+func TestEmitIdleChatTTSSkipsSynthesisUntilAudioViewerClaimsOwnership(t *testing.T) {
 	resetActiveViewerControlForTest()
 	setIdleChatViewerClientCount(func() int { return 1 })
 	defer func() {
@@ -168,11 +155,11 @@ func TestEmitIdleChatTTSSkipsPlaybackWaitUntilAudioViewerClaimsOwnership(t *test
 	lifecycle, ok := emitIdleChatTTS(context.Background(), &idleChatMockTTSBridge{}, idlechat.TimelineEvent{
 		Type: "idlechat.message", SessionID: "idle-audio-owner", MessageID: "idle-audio-owner:0001", TurnIndex: 1, From: "mio", Content: "こんにちは。",
 	})
-	if !ok {
-		t.Fatal("TTS was not emitted")
+	if ok {
+		t.Fatal("SSE connection without an active audio owner must not synthesize")
 	}
-	if lifecycle.Ready == nil || lifecycle.Done == nil {
-		t.Fatal("SSE connection without an active audio owner must still expose synthesis lifecycle")
+	if lifecycle.Ready != nil || lifecycle.Done != nil {
+		t.Fatal("skipped synthesis must not expose lifecycle waits")
 	}
 }
 
@@ -199,6 +186,58 @@ func TestIdleChatViewerDisconnectClearsPlaybackWaits(t *testing.T) {
 	}
 	if got := resolveTTSPublicResponse("idle-disconnect-tts"); got != "" {
 		t.Fatalf("public session route should be cleared, got %q", got)
+	}
+}
+
+func TestIdleChatViewerDisconnectCancelsActiveSynthesis(t *testing.T) {
+	clearAllIdleChatTTSPending()
+	resetTTSPublicSessionStateForTest()
+	resetIdleChatTTSQueue()
+	resetActiveViewerControlForTest()
+	activeViewerControl.Claim("audio", "disconnect-cancel-viewer")
+	setIdleChatViewerClientCount(func() int { return 1 })
+	bridge := &cancelAwareIdleChatTTSBridge{
+		started:  make(chan struct{}),
+		canceled: make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	t.Cleanup(func() {
+		close(bridge.release)
+		setIdleChatViewerClientCount(nil)
+		resetActiveViewerControlForTest()
+		resetIdleChatTTSQueue()
+		clearAllIdleChatTTSPending()
+		resetTTSPublicSessionStateForTest()
+	})
+
+	lifecycle := emitIdleChatTTSAsync(bridge, idlechat.TimelineEvent{
+		Type:      "idlechat.message",
+		From:      "mio",
+		To:        "shiro",
+		Content:   "切断時に中止する合成です。",
+		SessionID: "idle-disconnect-cancel",
+		MessageID: "idle-disconnect-cancel:msg:0001",
+		TurnIndex: 1,
+	})
+	if lifecycle.Done == nil {
+		t.Fatal("active Viewer synthesis must expose lifecycle")
+	}
+	select {
+	case <-bridge.started:
+	case <-time.After(time.Second):
+		t.Fatal("synthesis did not start")
+	}
+
+	handleIdleChatViewerClientCountChanged(0)
+	select {
+	case <-bridge.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("Viewer disconnect did not cancel active synthesis")
+	}
+	select {
+	case <-lifecycle.Done:
+	case <-time.After(time.Second):
+		t.Fatal("canceled synthesis did not reach Done")
 	}
 }
 
@@ -715,7 +754,9 @@ func TestIdleChatTTSTimeoutCancelsActiveSynthesisContext(t *testing.T) {
 	clearAllIdleChatTTSPending()
 	resetTTSPublicSessionStateForTest()
 	resetIdleChatTTSQueue()
-	setIdleChatViewerClientCount(func() int { return 0 })
+	resetActiveViewerControlForTest()
+	activeViewerControl.Claim("audio", "timeout-cancel-viewer")
+	setIdleChatViewerClientCount(func() int { return 1 })
 	bridge := &cancelAwareIdleChatTTSBridge{
 		started:  make(chan struct{}),
 		canceled: make(chan struct{}),
@@ -724,6 +765,7 @@ func TestIdleChatTTSTimeoutCancelsActiveSynthesisContext(t *testing.T) {
 	t.Cleanup(func() {
 		close(bridge.release)
 		setIdleChatViewerClientCount(nil)
+		resetActiveViewerControlForTest()
 		resetIdleChatTTSQueue()
 		clearAllIdleChatTTSPending()
 		resetTTSPublicSessionStateForTest()

@@ -22,6 +22,10 @@ func handleIdleChatViewerClientCountChanged(count int) {
 	if count != 0 {
 		return
 	}
+	cancelAllIdleChatTTS()
+	if idleChatTTSPrefetch != nil {
+		idleChatTTSPrefetch.CancelAll()
+	}
 	pending := snapshotIdleChatTTSPending()
 	if pending.PendingSessionCount == 0 && pending.PendingResponseCount == 0 {
 		return

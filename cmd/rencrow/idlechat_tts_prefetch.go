@@ -61,12 +61,20 @@ func (m *idleChatTTSPrefetchManager) Push(ev idlechat.TTSPrefetchEvent) {
 	if m == nil || m.bridge == nil || strings.TrimSpace(ev.SessionID) == "" || strings.TrimSpace(ev.MessageID) == "" {
 		return
 	}
+	if !hasIdleChatViewerClients() {
+		return
+	}
 	stream := m.stream(ev.SessionID, ev.MessageID, ev)
 	stream.enqueue(ev.Token)
 }
 
 func (m *idleChatTTSPrefetchManager) Close(ev idlechat.TimelineEvent) (idlechat.TTSLifecycle, bool) {
 	if m == nil || m.bridge == nil || strings.TrimSpace(ev.SessionID) == "" || strings.TrimSpace(ev.MessageID) == "" {
+		return idlechat.TTSLifecycle{}, false
+	}
+	if !hasIdleChatViewerClients() {
+		m.cancelMatching(ev.SessionID, ev.MessageID, false)
+		log.Printf("[IdleChat] TTS prefetch synthesis skipped because no active audio Viewer is connected: session=%s response=%s", strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID))
 		return idlechat.TTSLifecycle{}, false
 	}
 	key := streamKey(ev.SessionID, ev.MessageID)
@@ -311,6 +319,10 @@ func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 	if s == nil || text == "" || s.ctx == nil || s.ctx.Err() != nil {
 		return
 	}
+	if !hasIdleChatViewerClients() {
+		s.cancelForStale()
+		return
+	}
 	filtered := moduletts.FilterSpeakableText("agent.response", idleChatRoute, text)
 	if filtered == "" {
 		return
@@ -351,7 +363,7 @@ func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 			VoiceProfile: plan.VoiceProfile,
 		})
 
-		expectPlaybackAck := hasIdleChatViewerClients()
+		expectPlaybackAck := true
 		registerTTSPublicSessionWithMessage(plan.SessionID, plan.PublicSessionID, plan.ResponseID, plan.MessageID, plan.TurnIndex)
 		if expectPlaybackAck {
 			registerIdleChatTTSPending(plan.SessionID, plan.ResponseID)
