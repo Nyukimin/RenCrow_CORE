@@ -154,5 +154,45 @@ func sanitizeIdleSummaryResponse(raw, topic string) string {
 	if out == "" || hasPromptLeak(out) || hasInternalReasoningLeak(out) || summaryLooksLikeEnglishMetaReasoning(out) {
 		return ""
 	}
-	return out
+	return normalizeIdleSummaryHeadings(out)
+}
+
+func normalizeIdleSummaryHeadings(summary string) string {
+	lines := make([]string, 0, 3)
+	for _, line := range strings.Split(strings.TrimSpace(summary), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) != 3 {
+		return summary
+	}
+	prefixes := [][]string{
+		{"面白さ:", "面白さ：", "面白かった点:", "面白かった点："},
+		{"前進:", "前進：", "話を前に進めた点:", "話を前に進めた点："},
+		{"次の展開:", "次の展開：", "次に広がりそうな観点:", "次に広がりそうな観点："},
+	}
+	headings := []string{
+		"1. いちばん面白かった点: ",
+		"2. 話を前に進めた点: ",
+		"3. 次に広がりそうな観点: ",
+	}
+	normalized := make([]string, 3)
+	for i := range lines {
+		body, ok := trimAnySummaryPrefix(lines[i], prefixes[i])
+		if !ok || body == "" {
+			return summary
+		}
+		normalized[i] = headings[i] + body
+	}
+	return strings.Join(normalized, "\n")
+}
+
+func trimAnySummaryPrefix(line string, prefixes []string) (string, bool) {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+		}
+	}
+	return "", false
 }

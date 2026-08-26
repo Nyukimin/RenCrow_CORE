@@ -752,6 +752,14 @@ func TestSanitizeIdleSummaryResponseAllowsThreeNumberedJapanesePoints(t *testing
 	}
 }
 
+func TestSanitizeIdleSummaryResponseNormalizesEquivalentThreePointHeadings(t *testing.T) {
+	raw := "面白さ: 赤いランプが無音の緊張感を象徴した点\n前進: 笑いボタンを外し、間を信じて開演したこと\n次の展開: 無音と観客反応を分ける配信形態の模索"
+	want := "1. いちばん面白かった点: 赤いランプが無音の緊張感を象徴した点\n2. 話を前に進めた点: 笑いボタンを外し、間を信じて開演したこと\n3. 次に広がりそうな観点: 無音と観客反応を分ける配信形態の模索"
+	if got := sanitizeIdleSummaryResponse(raw, "寄席配信"); got != want {
+		t.Fatalf("equivalent headings were not normalized: got=%q want=%q", got, want)
+	}
+}
+
 func TestSanitizeIdleSummaryResponsePreservesThreeMarkdownParagraphs(t *testing.T) {
 	raw := "**1. いちばん面白かった点**  \n地図を順番表に見立てた観察が光りました。\n\n**2. 何が話を前に進めたか**  \n正式な引継ぎ欄へ移す提案で責任が整理されました。\n\n**3. 次に広がりそうな観点**  \n必要最小限の情報とプライバシーの両立へ広がりそうです。"
 	got := sanitizeIdleSummaryResponse(raw, "感染症と宅配")
