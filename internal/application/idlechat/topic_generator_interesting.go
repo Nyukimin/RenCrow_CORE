@@ -78,6 +78,9 @@ func (g *TopicGenerator) GenerateInterestingTopic(ctx context.Context, category 
 	if g == nil || g.llm == nil {
 		return nil, fmt.Errorf("%w: topic generator provider unavailable", ErrTopicGenerationFailed)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	normalized, err := modulechat.NormalizeTopicCategory(string(category))
 	if err != nil {
 		return nil, err
@@ -94,9 +97,15 @@ func (g *TopicGenerator) GenerateInterestingTopic(ctx context.Context, category 
 		})
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	var lastErr error
 	for attempt := 1; attempt <= g.config.MaxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		prompt, err := g.BuildGenerationPrompt(normalized, seed, recent, attempt, lastErr)
 		if err != nil {
 			return nil, err
@@ -111,6 +120,9 @@ func (g *TopicGenerator) GenerateInterestingTopic(ctx context.Context, category 
 			ProviderOptions: map[string]any{"think": false},
 		})
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			lastErr = err
 			logTopicDiagnostic(TopicGenerationDiagnostic{
 				Category:     string(normalized),
@@ -121,6 +133,9 @@ func (g *TopicGenerator) GenerateInterestingTopic(ctx context.Context, category 
 				SeedSummary:  summarizeTopicSeed(seed),
 			})
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		logIdleRaw(fmt.Sprintf("topic.candidates.generate attempt=%d category=%s", attempt, normalized), resp.Content)
 		candidates, err := modulechat.ParseTopicCandidates(resp.Content)
@@ -160,8 +175,14 @@ func (g *TopicGenerator) GenerateInterestingTopic(ctx context.Context, category 
 			continue
 		}
 
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		winner, judge, err := g.JudgeCandidates(ctx, normalized, seed, recent, validCandidates)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			lastErr = err
 			continue
 		}
@@ -172,6 +193,9 @@ func (g *TopicGenerator) GenerateInterestingTopic(ctx context.Context, category 
 		if err := modulechat.CheckRecentTopicSimilarity(winner.Topic, recent, g.config.RecentSimilarity); err != nil {
 			lastErr = err
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		result := &TopicGenerationResult{
 			Topic:               winner.Topic,
@@ -187,6 +211,9 @@ func (g *TopicGenerator) GenerateInterestingTopic(ctx context.Context, category 
 		}
 		logTopicGenerated(result, attempt)
 		return result, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	logTopicDiagnostic(TopicGenerationDiagnostic{
 		Category:     string(normalized),

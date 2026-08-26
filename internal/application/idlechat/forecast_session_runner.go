@@ -95,6 +95,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		// ドメイン特化トピック生成: ストックから取得（空ならインライン生成）
 		var displayTopic string
 		var seeds []string
+		o.markWatchdogStage("topic_generation", fmt.Sprintf("mode=forecast domain=%s", domain.Name), TimelineEvent{SessionID: sessionID})
 		if len(prepared) > 0 && prepared[0].Domain.Name == domain.Name && strings.TrimSpace(prepared[0].Topic) != "" {
 			displayTopic = strings.TrimSpace(prepared[0].Topic)
 			seeds = append([]string(nil), prepared[0].Seeds...)
@@ -110,6 +111,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 			log.Printf("[Forecast] Topic discarded after interrupt: session=%s domain=%s", sessionID, domain.Name)
 			return totalTurns
 		}
+		o.markWatchdogStage("topic_ready", fmt.Sprintf("mode=forecast domain=%s", domain.Name), TimelineEvent{SessionID: sessionID})
 
 		o.mu.Lock()
 		o.currentTopic = fmt.Sprintf("[%s] %s", domain.Name, displayTopic)
@@ -140,12 +142,17 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		o.currentDialoguePlan = &arcPlan
 		o.currentDialogueState = &arcState
 		o.mu.Unlock()
+		o.markWatchdogStageWithTimeout(watchdogDialogueGenerationStage, fmt.Sprintf("mode=forecast domain=%s", domain.Name), TimelineEvent{SessionID: sessionID}, forecastDialogueGenerationWatchdogTimeout)
 		dialogueEpisode, dialogueErr := o.prepareDialogueEpisode(sessionID, forecastTopicResult, forecastTurnsPerDomain)
 		if dialogueErr != nil {
+			if o.isIdleSessionActive(sessionID, generation) {
+				o.markWatchdogStage("dialogue_generation_failed", fmt.Sprintf("mode=forecast domain=%s", domain.Name), TimelineEvent{SessionID: sessionID})
+			}
 			o.recordGenerationErrorToTimeline("shiro", "mio", sessionID, "dialogue_episode_generation_failed", totalTurns+1)
 			log.Printf("[Forecast] Domain stopped before dialogue playback: session=%s domain=%s error=%v", sessionID, domain.Name, dialogueErr)
 			continue
 		}
+		o.markWatchdogStage("dialogue_ready", fmt.Sprintf("mode=forecast domain=%s turns=%d", domain.Name, len(dialogueEpisode.Turns)), TimelineEvent{SessionID: sessionID})
 
 		// Viewer/TTS には通常 IdleChat と同じ topic イベント契約で表示する。
 		topicAnnounce := fmt.Sprintf("今日のお題（%s）: %s", StrategyForecast, displayTopic)

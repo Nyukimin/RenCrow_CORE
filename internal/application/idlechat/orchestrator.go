@@ -182,7 +182,7 @@ type IdleChatOrchestrator struct {
 	cancel                    context.CancelFunc
 	runCtx                    context.Context
 	runCancel                 context.CancelFunc
-	dailyEnrichmentCancel     context.CancelFunc
+	dailyEnrichmentJob        *dailyEnrichmentJob
 	dailyEnrichmentGeneration uint64
 	activeSessionID           string
 	activeGeneration          uint64
@@ -194,6 +194,7 @@ type IdleChatOrchestrator struct {
 	watchdogMessageID         string
 	watchdogTurnIndex         int
 	watchdogUpdatedAt         time.Time
+	watchdogStageDeadlineAt   time.Time
 	messageIDs                map[string]string
 	mu                        sync.Mutex
 	wg                        sync.WaitGroup

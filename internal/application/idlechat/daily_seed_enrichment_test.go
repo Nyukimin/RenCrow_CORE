@@ -22,6 +22,63 @@ func (p *failingDailyBriefProvider) Generate(context.Context, llm.GenerateReques
 
 func (p *failingDailyBriefProvider) Name() string { return "collection-test-shiro" }
 
+type capturingDailySemanticProvider struct {
+	requests []llm.GenerateRequest
+}
+
+func (p *capturingDailySemanticProvider) Generate(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+	p.requests = append(p.requests, req)
+	prompt := req.Messages[len(req.Messages)-1].Content
+	switch {
+	case strings.Contains(prompt, "工程: 原文翻訳"):
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"原文を日本語へ忠実に翻訳した本文です。"}]}`}, nil
+	case strings.Contains(prompt, "工程: 用語抽出"):
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"terms":[{"term":"RAG","explanation":"本文だけでは意味を特定できません。","needs_lookup":true,"lookup_query":"RAG 公式 定義"}]}]}`}, nil
+	case strings.Contains(prompt, "工程: 不明語補足"):
+		return llm.GenerateResponse{Content: `{"items":[{"item_index":0,"term_index":0,"explanation":"検索した参照本文に基づく用語の説明です。"}]}`}, nil
+	case strings.Contains(prompt, "工程: サマリと見解"):
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"summary":"記事の要約です。","perspective":"Shiroの見解: 記事への見解です。"}]}`}, nil
+	default:
+		return llm.GenerateResponse{}, errors.New("想定外の日次工程です")
+	}
+}
+
+func (p *capturingDailySemanticProvider) Name() string { return "capturing-daily-semantic" }
+
+func TestDailySemanticRequestsUseLowReasoningEffort(t *testing.T) {
+	articleURL := "https://example.com/articles/daily-low-reasoning"
+	definitionURL := "https://example.org/reference/daily-low-reasoning"
+	events := []string{}
+	research := &dailySourceBriefResearchStub{
+		events: &events,
+		documents: map[string]DailySourceDocument{
+			articleURL:    {URL: articleURL, Text: "RAGを使う記事本文です。"},
+			definitionURL: {URL: definitionURL, Text: "RAGは検索情報を生成に加える手法です。"},
+		},
+		readErrors: map[string]error{},
+		searchResults: map[string][]DailyTermSearchResult{
+			"RAG": {{Title: "RAGの定義", URL: definitionURL}},
+		},
+		searchErrors: map[string]error{},
+	}
+	provider := &capturingDailySemanticProvider{}
+
+	_, err := buildDailySourceBriefBatch(context.Background(), provider, research, []NewsSeed{{
+		Title: "日次のlow reasoning検証", URL: articleURL, Source: "公式ニュース", SourceType: "rss",
+	}})
+	if err != nil {
+		t.Fatalf("buildDailySourceBriefBatch: %v", err)
+	}
+	if len(provider.requests) != 4 {
+		t.Fatalf("日次semantic request数 = %d, want 4", len(provider.requests))
+	}
+	for index, req := range provider.requests {
+		if req.ReasoningEffort != llm.ReasoningEffortLow {
+			t.Errorf("request[%d] reasoning effort = %q, want %q", index, req.ReasoningEffort, llm.ReasoningEffortLow)
+		}
+	}
+}
+
 type oneArticleAtATimeProvider struct {
 	badURL                    string
 	completedBeforeSecondItem bool
@@ -284,5 +341,152 @@ func TestEnrichCurrentDailySeedsPausesForForegroundChatAndResumesWithoutLosingAr
 	}
 	if nonStreaming := provider.nonStreaming.Load(); nonStreaming != 0 {
 		t.Fatalf("物理backendへcancelを伝播するため日次LLM requestはstreamingである必要があります: non_streaming=%d", nonStreaming)
+	}
+}
+
+type supersededDailyEnrichmentProvider struct {
+	oldStarted  chan struct{}
+	oldCanceled chan struct{}
+	releaseOld  chan struct{}
+	newStarted  chan struct{}
+	newCanceled chan struct{}
+	allowNew    chan struct{}
+	oldOnce     atomic.Bool
+	newOnce     atomic.Bool
+}
+
+func (p *supersededDailyEnrichmentProvider) Name() string { return "superseded-job-worker" }
+
+func (p *supersededDailyEnrichmentProvider) Generate(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+	prompt := req.Messages[len(req.Messages)-1].Content
+	if strings.Contains(prompt, "old-article") && p.oldOnce.CompareAndSwap(false, true) {
+		close(p.oldStarted)
+		<-ctx.Done()
+		close(p.oldCanceled)
+		<-p.releaseOld
+		return dailyEnrichmentTestResponse(prompt, "旧ジョブの結果")
+	}
+	if strings.Contains(prompt, "new-article") && p.newOnce.CompareAndSwap(false, true) {
+		close(p.newStarted)
+		select {
+		case <-p.allowNew:
+		case <-ctx.Done():
+			close(p.newCanceled)
+			return llm.GenerateResponse{}, ctx.Err()
+		}
+	}
+	return dailyEnrichmentTestResponse(prompt, "新ジョブの結果")
+}
+
+func dailyEnrichmentTestResponse(prompt, label string) (llm.GenerateResponse, error) {
+	switch {
+	case strings.Contains(prompt, "工程: 原文翻訳"):
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"` + label + `の原文翻訳です。"}]}`}, nil
+	case strings.Contains(prompt, "工程: 用語抽出"):
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"terms":[]}]}`}, nil
+	case strings.Contains(prompt, "工程: サマリと見解"):
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"summary":"` + label + `の要約です。","perspective":"Shiroの見解: ` + label + `の見解です。"}]}`}, nil
+	default:
+		return llm.GenerateResponse{}, errors.New("unknown daily enrichment stage")
+	}
+}
+
+func TestNewDailyEnrichmentSupersedesOldJobAndPreventsStalePublication(t *testing.T) {
+	oldURL := "https://example.com/old-article"
+	newURL := "https://example.com/new-article"
+	withDailySeedCache(t, &DailySeedCache{
+		Date: "2026-07-23", FetchedAt: time.Date(2026, 7, 23, 4, 0, 0, 0, jst), EnrichmentStatus: "pending",
+		NewsSeedItems: []NewsSeed{{Title: "old-article", URL: oldURL}},
+	})
+	provider := &supersededDailyEnrichmentProvider{
+		oldStarted:  make(chan struct{}),
+		oldCanceled: make(chan struct{}),
+		releaseOld:  make(chan struct{}),
+		newStarted:  make(chan struct{}),
+		newCanceled: make(chan struct{}),
+		allowNew:    make(chan struct{}),
+	}
+	events := []string{}
+	research := &dailySourceBriefResearchStub{
+		events: &events,
+		documents: map[string]DailySourceDocument{
+			oldURL: {URL: oldURL, Text: "old article body"},
+			newURL: {URL: newURL, Text: "new article body"},
+		},
+		readErrors: map[string]error{}, searchResults: map[string][]DailyTermSearchResult{}, searchErrors: map[string]error{},
+	}
+	orch := NewIdleChatOrchestrator(nil, nil, nil, 5, 10, 0.7, nil, "")
+	orch.SetSpeakerProviders(map[string]llm.LLMProvider{"worker": provider})
+	orch.SetDailySourceBriefResearch(research)
+
+	oldDone := make(chan struct{})
+	go func() {
+		defer close(oldDone)
+		orch.enrichCurrentDailySeeds()
+	}()
+	select {
+	case <-provider.oldStarted:
+	case <-time.After(time.Second):
+		t.Fatal("old daily enrichment did not start")
+	}
+
+	cacheMu.Lock()
+	dailyCache = &DailySeedCache{
+		Date: "2026-07-23", FetchedAt: time.Date(2026, 7, 23, 4, 1, 0, 0, jst), EnrichmentStatus: "pending",
+		NewsSeedItems: []NewsSeed{{Title: "new-article", URL: newURL}},
+	}
+	cacheMu.Unlock()
+
+	newDone := make(chan struct{})
+	go func() {
+		defer close(newDone)
+		orch.enrichCurrentDailySeeds()
+	}()
+	select {
+	case <-provider.oldCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("new daily cache did not cancel the old job")
+	}
+	close(provider.releaseOld)
+	select {
+	case <-oldDone:
+	case <-time.After(time.Second):
+		t.Fatal("new daily enrichment started before joining the old job")
+	}
+	select {
+	case <-provider.newStarted:
+	case <-time.After(time.Second):
+		t.Fatal("new daily enrichment did not start after joining the old job")
+	}
+
+	// If the old job still owned a shared batch cancel slot, this interrupt
+	// would leave the new request running. The new job must own cancellation.
+	orch.Interrupt("superseded-job-test")
+	select {
+	case <-provider.newCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("interrupt did not cancel the current daily enrichment request")
+	}
+	close(provider.allowNew)
+	select {
+	case <-oldDone:
+	case <-time.After(time.Second):
+		t.Fatal("old daily enrichment did not join")
+	}
+	select {
+	case <-newDone:
+	case <-time.After(time.Second):
+		t.Fatal("new daily enrichment did not finish")
+	}
+
+	got := getDailyCache()
+	if got.FetchedAt.Minute() != 1 {
+		t.Fatalf("stale job replaced the current daily cache: %+v", got)
+	}
+	if got.EnrichmentStatus != "ready" || !strings.Contains(got.NewsSeedItems[0].TranslatedBody, "新ジョブ") {
+		t.Fatalf("new job did not publish its own result: %+v", got)
+	}
+	if strings.Contains(got.NewsSeedItems[0].TranslatedBody, "旧ジョブ") {
+		t.Fatalf("old job published into the new cache: %+v", got)
 	}
 }

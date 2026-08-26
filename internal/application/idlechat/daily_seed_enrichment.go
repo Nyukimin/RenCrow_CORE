@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -126,12 +127,92 @@ type dailyBriefResponse struct {
 	Items []dailyBriefItem `json:"items"`
 }
 
+// dailyEnrichmentJob owns one cache enrichment from collection snapshot to
+// final publication. A job-level context is canceled when a newer cache
+// supersedes it; individual batch contexts are canceled only to yield to
+// foreground work and are then recreated by the same job.
+type dailyEnrichmentJob struct {
+	generation uint64
+	fetchedAt  time.Time
+	ctx        context.Context
+	cancel     context.CancelFunc
+
+	mu              sync.Mutex
+	batchGeneration uint64
+	batchCancel     context.CancelFunc
+	done            chan struct{}
+	doneOnce        sync.Once
+}
+
+func (j *dailyEnrichmentJob) cancelJob() {
+	if j == nil || j.cancel == nil {
+		return
+	}
+	j.cancel()
+}
+
+func (j *dailyEnrichmentJob) cancelBatch() {
+	if j == nil {
+		return
+	}
+	j.mu.Lock()
+	cancel := j.batchCancel
+	j.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (j *dailyEnrichmentJob) beginBatch(timeout time.Duration) (context.Context, func(), bool) {
+	if j == nil || j.ctx == nil || j.ctx.Err() != nil {
+		return nil, nil, false
+	}
+	if timeout <= 0 {
+		timeout = dailySeedEnrichmentTimeout
+	}
+	batchCtx, cancel := context.WithTimeout(j.ctx, timeout)
+	if err := j.ctx.Err(); err != nil {
+		cancel()
+		return nil, nil, false
+	}
+	j.mu.Lock()
+	j.batchGeneration++
+	batchGeneration := j.batchGeneration
+	j.batchCancel = cancel
+	j.mu.Unlock()
+
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			cancel()
+			j.mu.Lock()
+			if j.batchGeneration == batchGeneration {
+				j.batchCancel = nil
+			}
+			j.mu.Unlock()
+		})
+	}
+	return batchCtx, release, true
+}
+
+func (j *dailyEnrichmentJob) closeDone() {
+	if j == nil {
+		return
+	}
+	j.doneOnce.Do(func() { close(j.done) })
+}
+
 // enrichCurrentDailySeeds は04:00 JSTに収集したURLへSkill契約を適用する。
 func (o *IdleChatOrchestrator) enrichCurrentDailySeeds() {
 	cache := beginDailySeedEnrichment()
 	if cache == nil {
 		return
 	}
+	job := o.beginDailyEnrichmentJob(cache.FetchedAt)
+	if job == nil {
+		return
+	}
+	defer o.finishDailyEnrichmentJob(job)
 	rawItems := append([]NewsSeed(nil), cache.NewsSeedItems...)
 	items := applyFallbackNewsSeedAnnotations(rawItems)
 	provider := o.providerForSpeaker("worker")
@@ -143,7 +224,7 @@ func (o *IdleChatOrchestrator) enrichCurrentDailySeeds() {
 		if research == nil {
 			reason = "daily source brief research unavailable"
 		}
-		finishDailySeedEnrichment(cache.FetchedAt, items, "fallback", "", reason)
+		o.finishDailySeedEnrichment(job, items, "fallback", "", reason)
 		return
 	}
 	providerName := strings.TrimSpace(provider.Name())
@@ -154,17 +235,26 @@ func (o *IdleChatOrchestrator) enrichCurrentDailySeeds() {
 	successfulBatches := 0
 	var failures []string
 	for start := 0; start < len(rawItems); start += dailySeedEnrichmentBatchSize {
+		if err := job.ctx.Err(); err != nil {
+			log.Printf("[IdleChat] Daily source brief job stopped skill=%s generation=%d error=%v", dailySourceBriefSkillID, job.generation, err)
+			return
+		}
 		end := min(start+dailySeedEnrichmentBatchSize, len(rawItems))
 		enriched, err := o.buildDailySourceBriefBatchWithForegroundPriority(
+			job,
 			provider,
 			research,
 			append([]NewsSeed(nil), rawItems[start:end]...),
 		)
 		if len(enriched) > 0 {
 			copy(items[start:end], enriched)
-			publishDailySeedEnrichmentItems(cache.FetchedAt, start, enriched, providerName)
+			o.publishDailySeedEnrichmentItems(job, start, enriched, providerName)
 		}
 		if err != nil {
+			if job.ctx.Err() != nil {
+				log.Printf("[IdleChat] Daily source brief job stopped skill=%s generation=%d error=%v", dailySourceBriefSkillID, job.generation, job.ctx.Err())
+				return
+			}
 			failures = append(failures, fmt.Sprintf("batch %d-%d: %v", start, end-1, err))
 			log.Printf("[IdleChat] Daily source brief failed skill=%s batch=%d-%d provider=%s: %v", dailySourceBriefSkillID, start, end-1, providerName, err)
 			continue
@@ -181,28 +271,38 @@ func (o *IdleChatOrchestrator) enrichCurrentDailySeeds() {
 		}
 		errorText = truncate(strings.Join(failures, "; "), 400)
 	}
-	finishDailySeedEnrichment(cache.FetchedAt, items, status, providerName, errorText)
-	log.Printf("[IdleChat] Daily source brief completed skill=%s status=%s provider=%s items=%d batches=%d failures=%d", dailySourceBriefSkillID, status, providerName, len(items), successfulBatches, len(failures))
+	o.finishDailySeedEnrichment(job, items, status, providerName, errorText)
+	log.Printf("[IdleChat] Daily source brief completed skill=%s status=%s provider=%s items=%d batches=%d failures=%d generation=%d", dailySourceBriefSkillID, status, providerName, len(items), successfulBatches, len(failures), job.generation)
 }
 
 // buildDailySourceBriefBatchWithForegroundPriority は日次処理の入力やcontextを
 // 変更せず、対話・明示Worker実行が始まった時だけ実行中requestを中断して同じ記事を再試行する。
 func (o *IdleChatOrchestrator) buildDailySourceBriefBatchWithForegroundPriority(
+	job *dailyEnrichmentJob,
 	provider llm.LLMProvider,
 	research DailySourceBriefResearch,
 	seeds []NewsSeed,
 ) ([]NewsSeed, error) {
 	for {
-		if err := o.waitForDailyEnrichmentWindow(); err != nil {
+		if job == nil || job.ctx == nil {
+			return nil, context.Canceled
+		}
+		if err := o.waitForDailyEnrichmentWindow(job.ctx); err != nil {
 			return nil, err
 		}
-		ctx, release, ok := o.beginDailyEnrichmentBatch()
+		ctx, release, ok := o.beginDailyEnrichmentBatchForJob(job)
 		if !ok {
+			if err := job.ctx.Err(); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		enriched, err := buildDailySourceBriefBatch(ctx, provider, research, seeds)
 		ctxErr := ctx.Err()
 		release()
+		if job.ctx.Err() != nil {
+			return nil, job.ctx.Err()
+		}
 		if ctxErr == context.Canceled && o.ctx.Err() == nil {
 			log.Printf("[IdleChat] Daily source brief paused for foreground activity skill=%s", dailySourceBriefSkillID)
 			continue
@@ -211,11 +311,11 @@ func (o *IdleChatOrchestrator) buildDailySourceBriefBatchWithForegroundPriority(
 	}
 }
 
-func (o *IdleChatOrchestrator) waitForDailyEnrichmentWindow() error {
+func (o *IdleChatOrchestrator) waitForDailyEnrichmentWindow(ctx context.Context) error {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if err := o.ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		o.mu.Lock()
@@ -225,8 +325,8 @@ func (o *IdleChatOrchestrator) waitForDailyEnrichmentWindow() error {
 			return nil
 		}
 		select {
-		case <-o.ctx.Done():
-			return o.ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-ticker.C:
 		}
 	}
@@ -234,30 +334,89 @@ func (o *IdleChatOrchestrator) waitForDailyEnrichmentWindow() error {
 
 func (o *IdleChatOrchestrator) beginDailyEnrichmentBatch() (context.Context, func(), bool) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.chatBusy || o.workerBusy || o.ctx.Err() != nil {
-		return nil, nil, false
-	}
-	ctx, cancel := context.WithTimeout(llm.WithBusySource(o.ctx, "idlechat"), dailySeedEnrichmentTimeout)
-	o.dailyEnrichmentGeneration++
-	generation := o.dailyEnrichmentGeneration
-	o.dailyEnrichmentCancel = cancel
-	return ctx, func() {
-		cancel()
-		o.mu.Lock()
-		defer o.mu.Unlock()
-		if o.dailyEnrichmentGeneration == generation {
-			o.dailyEnrichmentCancel = nil
-		}
-	}, true
+	job := o.dailyEnrichmentJob
+	o.mu.Unlock()
+	return o.beginDailyEnrichmentBatchForJob(job)
 }
 
-// publishDailySeedEnrichmentItems は完了した記事だけを即時公開し、次の記事の
-// 処理中も既完了結果をViewer/APIから確認できるようにする。
-func publishDailySeedEnrichmentItems(fetchedAt time.Time, start int, items []NewsSeed, provider string) {
+func (o *IdleChatOrchestrator) beginDailyEnrichmentBatchForJob(job *dailyEnrichmentJob) (context.Context, func(), bool) {
+	if job == nil || job.ctx == nil || job.ctx.Err() != nil {
+		return nil, nil, false
+	}
+	o.mu.Lock()
+	foregroundBusy := o.chatBusy || o.workerBusy
+	rootErr := o.ctx.Err()
+	active := o.dailyEnrichmentJob == job && o.dailyEnrichmentGeneration == job.generation
+	o.mu.Unlock()
+	if foregroundBusy || rootErr != nil || !active {
+		return nil, nil, false
+	}
+	return job.beginBatch(dailySeedEnrichmentTimeout)
+}
+
+func (o *IdleChatOrchestrator) beginDailyEnrichmentJob(fetchedAt time.Time) *dailyEnrichmentJob {
+	if o == nil || o.ctx == nil || o.ctx.Err() != nil {
+		return nil
+	}
+	jobCtx, cancel := context.WithCancel(llm.WithBusySource(o.ctx, "idlechat"))
+	job := &dailyEnrichmentJob{
+		fetchedAt: fetchedAt,
+		ctx:       jobCtx,
+		cancel:    cancel,
+		done:      make(chan struct{}),
+	}
+	o.mu.Lock()
+	oldJob := o.dailyEnrichmentJob
+	// A delayed caller may still hold a snapshot from before a newer cache
+	// refresh installed its job. Do not let that stale caller replace the
+	// newer owner after it has already superseded the old job.
+	if oldJob != nil && !fetchedAt.After(oldJob.fetchedAt) {
+		o.mu.Unlock()
+		cancel()
+		return nil
+	}
+	o.dailyEnrichmentGeneration++
+	job.generation = o.dailyEnrichmentGeneration
+	o.dailyEnrichmentJob = job
+	o.mu.Unlock()
+
+	if oldJob != nil {
+		oldJob.cancelJob()
+		<-oldJob.done
+	}
+	return job
+}
+
+func (o *IdleChatOrchestrator) finishDailyEnrichmentJob(job *dailyEnrichmentJob) {
+	if job == nil {
+		return
+	}
+	job.cancelBatch()
+	job.cancelJob()
+	o.mu.Lock()
+	if o.dailyEnrichmentJob == job && o.dailyEnrichmentGeneration == job.generation {
+		o.dailyEnrichmentJob = nil
+	}
+	o.mu.Unlock()
+	job.closeDone()
+}
+
+func (o *IdleChatOrchestrator) dailyEnrichmentJobIsCurrentLocked(job *dailyEnrichmentJob) bool {
+	return job != nil && o.dailyEnrichmentJob == job && o.dailyEnrichmentGeneration == job.generation
+}
+
+func (o *IdleChatOrchestrator) publishDailySeedEnrichmentItems(job *dailyEnrichmentJob, start int, items []NewsSeed, provider string) {
+	if o == nil || job == nil || len(items) == 0 {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.dailyEnrichmentJobIsCurrentLocked(job) {
+		return
+	}
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
-	if dailyCache == nil || !dailyCache.FetchedAt.Equal(fetchedAt) || start < 0 || start >= len(dailyCache.NewsSeedItems) {
+	if dailyCache == nil || !dailyCache.FetchedAt.Equal(job.fetchedAt) || start < 0 || start >= len(dailyCache.NewsSeedItems) {
 		return
 	}
 	updated := cloneDailySeedCache(dailyCache)
@@ -266,6 +425,29 @@ func publishDailySeedEnrichmentItems(fetchedAt time.Time, start int, items []New
 	updated.EnrichmentStatus = "enriching"
 	updated.EnrichmentProvider = strings.TrimSpace(provider)
 	updated.EnrichmentError = ""
+	dailyCache = updated
+}
+
+func (o *IdleChatOrchestrator) finishDailySeedEnrichment(job *dailyEnrichmentJob, items []NewsSeed, status, provider, errorText string) {
+	if o == nil || job == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.dailyEnrichmentJobIsCurrentLocked(job) {
+		return
+	}
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	if dailyCache == nil || !dailyCache.FetchedAt.Equal(job.fetchedAt) {
+		return
+	}
+	updated := cloneDailySeedCache(dailyCache)
+	updated.NewsSeedItems = append([]NewsSeed(nil), items...)
+	updated.EnrichmentStatus = status
+	updated.EnrichmentProvider = provider
+	updated.EnrichmentError = strings.TrimSpace(errorText)
+	updated.EnrichedAt = time.Now()
 	dailyCache = updated
 }
 
@@ -433,7 +615,9 @@ func translateDailySourceBodies(ctx context.Context, provider llm.LLMProvider, i
 				{Role: "system", Content: "あなたはShiroです。特定URLから直接取得した原文を忠実に日本語へ翻訳し、確認できない内容を追加しません。"},
 				{Role: "user", Content: prompt},
 			},
-			MaxTokens: dailyTranslationMaxTokens, Temperature: 0.1,
+			MaxTokens:       dailyTranslationMaxTokens,
+			Temperature:     0.1,
+			ReasoningEffort: llm.ReasoningEffortLow,
 		})
 		if err != nil {
 			return nil, err
@@ -514,7 +698,9 @@ func generateDailyBriefLLM(ctx context.Context, provider llm.LLMProvider, purpos
 			{Role: "system", Content: "あなたはShiroです。一次情報の原文翻訳、サマリ、見解、用語補足を明確に分離し、確認できない内容は推測しません。利用者向け本文はすべて日本語で記述します。"},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens: dailySeedEnrichmentMaxTokens, Temperature: 0.2,
+		MaxTokens:       dailySeedEnrichmentMaxTokens,
+		Temperature:     0.2,
+		ReasoningEffort: llm.ReasoningEffortLow,
 	})
 }
 
@@ -738,21 +924,6 @@ func beginDailySeedEnrichment() *DailySeedCache {
 	published.EnrichmentError = ""
 	dailyCache = published
 	return raw
-}
-
-func finishDailySeedEnrichment(fetchedAt time.Time, items []NewsSeed, status, provider, errorText string) {
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-	if dailyCache == nil || !dailyCache.FetchedAt.Equal(fetchedAt) {
-		return
-	}
-	updated := cloneDailySeedCache(dailyCache)
-	updated.NewsSeedItems = append([]NewsSeed(nil), items...)
-	updated.EnrichmentStatus = status
-	updated.EnrichmentProvider = provider
-	updated.EnrichmentError = strings.TrimSpace(errorText)
-	updated.EnrichedAt = time.Now()
-	dailyCache = updated
 }
 
 func cloneDailySeedCache(cache *DailySeedCache) *DailySeedCache {

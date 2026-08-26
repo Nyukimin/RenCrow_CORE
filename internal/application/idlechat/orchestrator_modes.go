@@ -103,9 +103,7 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	o.cancelTopicProduction(reason)
 	o.mu.Lock()
 	cancel := o.runCancel
-	dailyEnrichmentCancel := o.dailyEnrichmentCancel
-	o.dailyEnrichmentCancel = nil
-	o.dailyEnrichmentGeneration++
+	dailyEnrichmentJob := o.dailyEnrichmentJob
 	if o.manualMode || o.chatActive {
 		log.Printf("[IdleChat] Interrupted: reason=%s generation=%d session=%s", strings.TrimSpace(reason), o.activeGeneration, o.activeSessionID)
 	}
@@ -129,6 +127,7 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	o.watchdogMessageID = ""
 	o.watchdogTurnIndex = 0
 	o.watchdogUpdatedAt = time.Now().UTC()
+	o.watchdogStageDeadlineAt = time.Time{}
 	o.activeSessionID = ""
 	o.runCancel = nil
 	o.runCtx = o.ctx
@@ -136,8 +135,8 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	if cancel != nil {
 		cancel()
 	}
-	if dailyEnrichmentCancel != nil {
-		dailyEnrichmentCancel()
+	if dailyEnrichmentJob != nil {
+		dailyEnrichmentJob.cancelBatch()
 	}
 }
 
@@ -165,6 +164,7 @@ func (o *IdleChatOrchestrator) beginIdleRunLocked() uint64 {
 	o.watchdogMessageID = ""
 	o.watchdogTurnIndex = 0
 	o.watchdogUpdatedAt = time.Now().UTC()
+	o.watchdogStageDeadlineAt = time.Time{}
 	return o.activeGeneration
 }
 

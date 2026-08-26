@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+const (
+	// CodexExe dialogue generation has its own bounded process timeout. The
+	// heartbeat's generic stall threshold must not interrupt that bounded
+	// operation while it is still within the configured allowance.
+	forecastDialogueGenerationWatchdogTimeout = 10 * time.Minute
+	watchdogDialogueGenerationStage           = "dialogue_generation"
+)
+
 type WatchdogSnapshot struct {
 	ChatActive      bool      `json:"chat_active"`
 	ManualMode      bool      `json:"manual_mode"`
@@ -40,6 +48,10 @@ type WatchdogRecovery struct {
 }
 
 func (o *IdleChatOrchestrator) markWatchdogStage(stage, detail string, ev TimelineEvent) {
+	o.markWatchdogStageWithTimeout(stage, detail, ev, 0)
+}
+
+func (o *IdleChatOrchestrator) markWatchdogStageWithTimeout(stage, detail string, ev TimelineEvent, timeout time.Duration) {
 	if o == nil {
 		return
 	}
@@ -49,13 +61,18 @@ func (o *IdleChatOrchestrator) markWatchdogStage(stage, detail string, ev Timeli
 	}
 	detail = strings.TrimSpace(detail)
 	o.mu.Lock()
+	updatedAt := time.Now().UTC()
 	o.watchdogStage = stage
 	o.watchdogDetail = detail
 	o.watchdogFrom = strings.TrimSpace(ev.From)
 	o.watchdogTo = strings.TrimSpace(ev.To)
 	o.watchdogMessageID = strings.TrimSpace(ev.MessageID)
 	o.watchdogTurnIndex = ev.TurnIndex
-	o.watchdogUpdatedAt = time.Now().UTC()
+	o.watchdogUpdatedAt = updatedAt
+	o.watchdogStageDeadlineAt = time.Time{}
+	if timeout > 0 {
+		o.watchdogStageDeadlineAt = updatedAt.Add(timeout)
+	}
 	sessionID := o.activeSessionID
 	generation := o.activeGeneration
 	from := o.watchdogFrom
@@ -67,9 +84,9 @@ func (o *IdleChatOrchestrator) markWatchdogStage(stage, detail string, ev Timeli
 		stage, detail, sessionID, from, to, messageID, turnIndex, generation)
 }
 
-func (o *IdleChatOrchestrator) WatchdogSnapshot(now time.Time) WatchdogSnapshot {
+func (o *IdleChatOrchestrator) watchdogSnapshot(now time.Time) (WatchdogSnapshot, time.Time) {
 	if o == nil {
-		return WatchdogSnapshot{}
+		return WatchdogSnapshot{}, time.Time{}
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -89,7 +106,11 @@ func (o *IdleChatOrchestrator) WatchdogSnapshot(now time.Time) WatchdogSnapshot 
 	if o.externalLLMBusy != nil {
 		externalLLMBusy = o.externalLLMBusy()
 	}
-	return WatchdogSnapshot{
+	stageDeadlineAt := o.watchdogStageDeadlineAt
+	if stageDeadlineAt.IsZero() && o.watchdogStage == watchdogDialogueGenerationStage && !o.watchdogUpdatedAt.IsZero() {
+		stageDeadlineAt = o.watchdogUpdatedAt.Add(forecastDialogueGenerationWatchdogTimeout)
+	}
+	snapshot := WatchdogSnapshot{
 		ChatActive:      o.chatActive,
 		ManualMode:      o.manualMode,
 		Disabled:        o.disabled,
@@ -112,14 +133,28 @@ func (o *IdleChatOrchestrator) WatchdogSnapshot(now time.Time) WatchdogSnapshot 
 		ExternalLLMBusy: externalLLMBusy,
 		RecoveryReady:   recoveryReady,
 	}
+	return snapshot, stageDeadlineAt
+}
+
+func (o *IdleChatOrchestrator) WatchdogSnapshot(now time.Time) WatchdogSnapshot {
+	snapshot, _ := o.watchdogSnapshot(now)
+	return snapshot
 }
 
 func (o *IdleChatOrchestrator) RecoverIfStalled(now time.Time, threshold time.Duration, reason string) (WatchdogRecovery, bool) {
 	if o == nil || threshold <= 0 {
 		return WatchdogRecovery{}, false
 	}
-	snapshot := o.WatchdogSnapshot(now)
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	snapshot, stageDeadlineAt := o.watchdogSnapshot(now)
 	if !snapshot.ChatActive || !snapshot.RecoveryReady {
+		return WatchdogRecovery{}, false
+	}
+	if stageDeadlineAt.After(now) {
 		return WatchdogRecovery{}, false
 	}
 	if time.Duration(snapshot.AgeSeconds)*time.Second < threshold {
