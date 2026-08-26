@@ -38,6 +38,7 @@ func buildTTSClientBridge(
 			log.Printf("[TTS] dropping stale idlechat chunk session=%s response=%s chunk=%d", sessionID, responseID, chunkIndex)
 			return
 		}
+		notifyIdleChatTTSSynthesisReady(sessionID)
 		publicSessionID, publicChunkIndex := resolveTTSPublicChunk(sessionID, chunkIndex)
 		if normalizedResponseID := strings.TrimSpace(responseID); normalizedResponseID != "" {
 			sessionResponseIDs.Store(sessionID, normalizedResponseID)
@@ -90,7 +91,7 @@ func buildTTSClientBridge(
 	onSessionDoneFn := func(sessionID, characterID string) {
 		if isStaleTTSPublicSession(sessionID) {
 			log.Printf("[TTS] dropping stale idlechat completion session=%s", sessionID)
-			clearTTSPublicSession(sessionID)
+			retireTTSPublicSession(sessionID)
 			return
 		}
 		publicSessionID := resolveTTSPublicSession(sessionID)

@@ -8,6 +8,10 @@ import (
 )
 
 func markIdleChatTTSTimeout(ev idlechat.TTSTimeoutEvent) {
+	cancelIdleChatTTSTimeout(ev)
+	if idleChatTTSPrefetch != nil {
+		idleChatTTSPrefetch.CancelTimeout(ev)
+	}
 	consumption := ttsPublicSessions.MarkTimeout(moduletts.PlaybackTimeoutInput{
 		Kind:           ev.Kind,
 		SessionID:      ev.SessionID,
@@ -20,7 +24,7 @@ func markIdleChatTTSTimeout(ev idlechat.TTSTimeoutEvent) {
 		return
 	}
 	for _, internalSessionID := range consumption.MatchedInternalSessionIDs {
-		clearIdleChatTTSPending(internalSessionID)
+		clearIdleChatTTSPendingStale(internalSessionID)
 	}
 	if consumption.AllForSession {
 		log.Printf("[IdleChat] consumed pending TTS session audio timeout: session=%s matched=%d remaining_index=%d/%d", consumption.SessionID, consumption.MatchedCount, consumption.RemainingIndex, consumption.RemainingCount)

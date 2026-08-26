@@ -191,7 +191,7 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 			Strategy:   TopicStrategy("story"),
 		}
 		done := o.emitTimelineEvent(event)
-		o.waitForTTSDoneForEvent(event, done)
+		o.waitForTTSReadyForEvent(event, done)
 		o.waitBreak(speakerBreak)
 	}
 	if !o.isIdleSessionActive(sessionID, generation) {

@@ -19,9 +19,11 @@ type idleChatTTSPrefetchManager struct {
 }
 
 type idleChatTTSPrefetchStream struct {
+	manager           *idleChatTTSPrefetchManager
 	bridge            orchestrator.TTSBridge
 	key               string
 	sessionID         string
+	internalSessionID string
 	responseID        string
 	publicSessionID   string
 	messageID         string
@@ -30,12 +32,17 @@ type idleChatTTSPrefetchStream struct {
 	turnIndex         int
 	voiceProfile      string
 	queue             chan string
-	wg                sync.WaitGroup
+	ctx               context.Context
+	cancel            context.CancelFunc
+	lifecycle         *idleChatTTSLifecycleController
 	mu                sync.Mutex
 	started           bool
 	closed            bool
+	failed            bool
 	expectPlaybackAck bool
-	waitCh            <-chan struct{}
+	cleanupOnce       sync.Once
+	endOnce           sync.Once
+	endErr            error
 	finalEvent        idlechat.TimelineEvent
 	chunker           moduletts.StreamChunker
 }
@@ -58,25 +65,67 @@ func (m *idleChatTTSPrefetchManager) Push(ev idlechat.TTSPrefetchEvent) {
 	stream.enqueue(ev.Token)
 }
 
-func (m *idleChatTTSPrefetchManager) Close(ev idlechat.TimelineEvent) (<-chan struct{}, bool) {
+func (m *idleChatTTSPrefetchManager) Close(ev idlechat.TimelineEvent) (idlechat.TTSLifecycle, bool) {
 	if m == nil || m.bridge == nil || strings.TrimSpace(ev.SessionID) == "" || strings.TrimSpace(ev.MessageID) == "" {
-		return nil, false
+		return idlechat.TTSLifecycle{}, false
 	}
 	key := streamKey(ev.SessionID, ev.MessageID)
 	m.mu.Lock()
 	stream := m.streams[key]
-	if stream != nil {
-		delete(m.streams, key)
-	}
 	m.mu.Unlock()
 	if stream == nil {
-		return emitIdleChatTTS(context.Background(), m.bridge, ev)
+		stream = m.stream(ev.SessionID, ev.MessageID, idlechat.TTSPrefetchEvent{
+			SessionID: ev.SessionID,
+			MessageID: ev.MessageID,
+			From:      ev.From,
+			To:        ev.To,
+			TurnIndex: ev.TurnIndex,
+		})
 	}
-	waitCh, ok := stream.close(ev)
-	if !ok {
-		return emitIdleChatTTS(context.Background(), m.bridge, ev)
+	return stream.close(ev)
+}
+
+func (m *idleChatTTSPrefetchManager) CancelTimeout(ev idlechat.TTSTimeoutEvent) {
+	if m == nil {
+		return
 	}
-	return waitCh, true
+	m.cancelMatching(ev.SessionID, ev.MessageID, ev.Kind == "session_audio_timeout")
+}
+
+func (m *idleChatTTSPrefetchManager) CancelAll() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	streams := make([]*idleChatTTSPrefetchStream, 0, len(m.streams))
+	for _, stream := range m.streams {
+		streams = append(streams, stream)
+	}
+	m.streams = make(map[string]*idleChatTTSPrefetchStream)
+	m.mu.Unlock()
+	for _, stream := range streams {
+		stream.cancelForStale()
+	}
+}
+
+func (m *idleChatTTSPrefetchManager) cancelMatching(sessionID, messageID string, allForSession bool) {
+	sessionID = strings.TrimSpace(sessionID)
+	messageID = strings.TrimSpace(messageID)
+	m.mu.Lock()
+	streams := make([]*idleChatTTSPrefetchStream, 0)
+	for _, stream := range m.streams {
+		if stream == nil || strings.TrimSpace(stream.sessionID) != sessionID {
+			continue
+		}
+		if !allForSession && messageID != "" && strings.TrimSpace(stream.messageID) != messageID {
+			continue
+		}
+		streams = append(streams, stream)
+	}
+	m.mu.Unlock()
+	for _, stream := range streams {
+		stream.cancelForStale()
+	}
 }
 
 func (m *idleChatTTSPrefetchManager) HasActive(sessionID, messageID string) bool {
@@ -85,8 +134,25 @@ func (m *idleChatTTSPrefetchManager) HasActive(sessionID, messageID string) bool
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, ok := m.streams[streamKey(sessionID, messageID)]
-	return ok
+	stream, ok := m.streams[streamKey(sessionID, messageID)]
+	if !ok || stream == nil {
+		return false
+	}
+	stream.mu.Lock()
+	closed := stream.closed
+	stream.mu.Unlock()
+	return !closed
+}
+
+func (m *idleChatTTSPrefetchManager) removeStream(key string, stream *idleChatTTSPrefetchStream) {
+	if m == nil || stream == nil {
+		return
+	}
+	m.mu.Lock()
+	if current := m.streams[key]; current == stream {
+		delete(m.streams, key)
+	}
+	m.mu.Unlock()
 }
 
 func (m *idleChatTTSPrefetchManager) stream(sessionID, messageID string, ev idlechat.TTSPrefetchEvent) *idleChatTTSPrefetchStream {
@@ -97,6 +163,7 @@ func (m *idleChatTTSPrefetchManager) stream(sessionID, messageID string, ev idle
 		return stream
 	}
 	stream := &idleChatTTSPrefetchStream{
+		manager:         m,
 		bridge:          m.bridge,
 		key:             key,
 		queue:           make(chan string, 128),
@@ -106,8 +173,10 @@ func (m *idleChatTTSPrefetchManager) stream(sessionID, messageID string, ev idle
 		publicSessionID: strings.TrimSpace(ev.SessionID),
 		messageID:       strings.TrimSpace(ev.MessageID),
 		turnIndex:       ev.TurnIndex,
+		responseID:      nextTTSPublicResponseIDForMessage(strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID)),
 	}
-	stream.wg.Add(1)
+	stream.ctx, stream.cancel = context.WithTimeout(context.Background(), idleChatTTSWorkerTimeout)
+	stream.lifecycle = newIdleChatTTSLifecycleController()
 	go stream.run()
 	m.streams[key] = stream
 	return stream
@@ -123,29 +192,38 @@ func (s *idleChatTTSPrefetchStream) enqueue(token string) {
 		return
 	}
 	s.mu.Lock()
-	closed := s.closed
-	queue := s.queue
-	s.mu.Unlock()
-	if closed || queue == nil {
+	defer s.mu.Unlock()
+	if s.closed || s.queue == nil {
 		return
 	}
 	select {
-	case queue <- token:
+	case s.queue <- token:
 	default:
 		log.Printf("[IdleChat] TTS prefetch queue full; dropping token: key=%s", s.key)
 	}
 }
 
 func (s *idleChatTTSPrefetchStream) run() {
-	defer s.wg.Done()
+	defer s.manager.removeStream(s.key, s)
+	defer s.cancel()
+	defer s.lifecycle.signalDone()
+	defer func() {
+		s.mu.Lock()
+		internalSessionID := s.internalSessionID
+		s.mu.Unlock()
+		unregisterIdleChatTTSSynthesisLifecycle(internalSessionID, s.lifecycle)
+	}()
 	for token := range s.queue {
+		if s.ctx.Err() != nil {
+			break
+		}
 		s.consumeToken(token)
 	}
 	s.finalizeAfterQueueDrain()
 }
 
 func (s *idleChatTTSPrefetchStream) consumeToken(token string) {
-	if s == nil || token == "" {
+	if s == nil || token == "" || s.ctx == nil || s.ctx.Err() != nil {
 		return
 	}
 	for _, chunk := range s.chunker.AcceptToken(token) {
@@ -153,9 +231,81 @@ func (s *idleChatTTSPrefetchStream) consumeToken(token string) {
 	}
 }
 
+func (s *idleChatTTSPrefetchStream) pushPreparedChunk(text, displayText string, emotion *moduletts.EmotionState) error {
+	if s == nil || s.ctx == nil || s.ctx.Err() != nil {
+		if s != nil && s.ctx != nil {
+			return s.ctx.Err()
+		}
+		return context.Canceled
+	}
+	s.mu.Lock()
+	sessionID := s.internalSessionID
+	s.mu.Unlock()
+	if strings.TrimSpace(sessionID) == "" {
+		return context.Canceled
+	}
+	if displayBridge, ok := s.bridge.(orchestrator.TTSDisplayBridge); ok {
+		return displayBridge.PushTextWithDisplay(s.ctx, sessionID, text, displayText, emotion)
+	}
+	return s.bridge.PushText(s.ctx, sessionID, text, emotion)
+}
+
+func (s *idleChatTTSPrefetchStream) cleanupStale() {
+	if s == nil {
+		return
+	}
+	s.cleanupOnce.Do(func() {
+		s.mu.Lock()
+		internalSessionID := strings.TrimSpace(s.internalSessionID)
+		expectPlaybackAck := s.expectPlaybackAck
+		s.mu.Unlock()
+		if internalSessionID == "" {
+			return
+		}
+		if expectPlaybackAck {
+			clearIdleChatTTSPendingStale(internalSessionID)
+			return
+		}
+		retireTTSPublicSession(internalSessionID)
+	})
+}
+
+func (s *idleChatTTSPrefetchStream) endSession() error {
+	if s == nil {
+		return nil
+	}
+	s.endOnce.Do(func() {
+		s.mu.Lock()
+		internalSessionID := strings.TrimSpace(s.internalSessionID)
+		s.mu.Unlock()
+		if internalSessionID == "" {
+			return
+		}
+		s.endErr = s.bridge.EndSession(s.ctx, internalSessionID)
+	})
+	return s.endErr
+}
+
+func (s *idleChatTTSPrefetchStream) cancelForStale() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if !s.closed {
+		s.closed = true
+		close(s.queue)
+	}
+	s.mu.Unlock()
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.cleanupStale()
+	s.lifecycle.signalDone()
+}
+
 func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 	text = strings.TrimSpace(text)
-	if s == nil || text == "" {
+	if s == nil || text == "" || s.ctx == nil || s.ctx.Err() != nil {
 		return
 	}
 	filtered := moduletts.FilterSpeakableText("agent.response", idleChatRoute, text)
@@ -170,7 +320,6 @@ func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 	responseID := s.responseID
 	publicSessionID := s.publicSessionID
 	voiceProfile := s.voiceProfile
-	waitCh := s.waitCh
 	s.mu.Unlock()
 
 	if !started {
@@ -202,11 +351,17 @@ func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 		expectPlaybackAck := hasIdleChatViewerClients()
 		registerTTSPublicSessionWithMessage(plan.SessionID, plan.PublicSessionID, plan.ResponseID, plan.MessageID, plan.TurnIndex)
 		if expectPlaybackAck {
-			waitCh = registerIdleChatTTSPending(plan.SessionID, plan.ResponseID)
+			registerIdleChatTTSPending(plan.SessionID, plan.ResponseID)
 		} else {
 			log.Printf("[IdleChat] TTS playback wait skipped because no Viewer SSE clients are connected: session=%s response=%s", plan.SessionID, plan.ResponseID)
 		}
-		if err := s.bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
+		s.mu.Lock()
+		s.internalSessionID = plan.SessionID
+		s.expectPlaybackAck = expectPlaybackAck
+		s.voiceProfile = plan.VoiceProfile
+		s.mu.Unlock()
+		registerIdleChatTTSSynthesisLifecycle(plan.SessionID, s.lifecycle)
+		if err := s.bridge.StartSession(s.ctx, orchestrator.TTSSessionStart{
 			SessionID:        plan.SessionID,
 			ResponseID:       plan.ResponseID,
 			CharacterID:      plan.CharacterID,
@@ -222,32 +377,28 @@ func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 			VoiceProfile:          plan.VoiceProfile,
 			UserAttentionRequired: false,
 		}); err != nil {
-			if expectPlaybackAck {
-				clearIdleChatTTSPending(plan.SessionID)
-			} else {
-				clearTTSPublicSession(plan.SessionID)
-			}
+			s.mu.Lock()
+			s.failed = true
+			s.mu.Unlock()
+			s.cleanupStale()
 			log.Printf("[IdleChat] TTS prefetch start failed: %v", err)
+			s.cancelForStale()
 			return
 		}
-		if displayBridge, ok := s.bridge.(orchestrator.TTSDisplayBridge); ok {
-			if err := displayBridge.PushTextWithDisplay(context.Background(), plan.SessionID, plan.SpeechText, plan.DisplayText, &emotion); err != nil {
-				log.Printf("[IdleChat] TTS prefetch push failed: %v", err)
-			}
-		} else if err := s.bridge.PushText(context.Background(), plan.SessionID, plan.SpeechText, &emotion); err != nil {
+		if err := s.pushPreparedChunk(plan.SpeechText, plan.DisplayText, &emotion); err != nil {
 			log.Printf("[IdleChat] TTS prefetch push failed: %v", err)
+			s.mu.Lock()
+			s.failed = true
+			s.mu.Unlock()
+			s.cleanupStale()
+			s.cancelForStale()
+			return
 		}
 		s.mu.Lock()
 		s.started = true
-		s.sessionID = plan.SessionID
-		s.responseID = plan.ResponseID
-		s.publicSessionID = plan.PublicSessionID
-		s.messageID = plan.MessageID
-		s.turnIndex = plan.TurnIndex
 		s.voiceProfile = plan.VoiceProfile
-		s.expectPlaybackAck = expectPlaybackAck
-		s.waitCh = waitCh
 		s.mu.Unlock()
+		s.lifecycle.signalReady()
 		return
 	}
 
@@ -257,27 +408,43 @@ func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 		Context:      moduletts.EmotionContext{TimeOfDay: idleChatTimeOfDay(), Urgency: moduletts.IdleChatTTSUrgencyNormal},
 		VoiceProfile: voiceProfile,
 	})
-	if displayBridge, ok := s.bridge.(orchestrator.TTSDisplayBridge); ok {
-		if err := displayBridge.PushTextWithDisplay(context.Background(), s.sessionID, filtered, text, &emotion); err != nil {
-			log.Printf("[IdleChat] TTS prefetch push failed: %v", err)
-		}
-	} else if err := s.bridge.PushText(context.Background(), s.sessionID, filtered, &emotion); err != nil {
+	if err := s.pushPreparedChunk(filtered, text, &emotion); err != nil {
 		log.Printf("[IdleChat] TTS prefetch push failed: %v", err)
+		s.mu.Lock()
+		s.failed = true
+		s.mu.Unlock()
+		s.cleanupStale()
+		s.cancelForStale()
 	}
 }
 
 func (s *idleChatTTSPrefetchStream) finalizeAfterQueueDrain() {
 	s.mu.Lock()
 	started := s.started
-	sessionID := s.sessionID
+	failed := s.failed
 	expectPlaybackAck := s.expectPlaybackAck
-	waitCh := s.waitCh
 	finalEvent := s.finalEvent
 	closed := s.closed
 	voiceProfile := s.voiceProfile
 	s.mu.Unlock()
 
-	if !started || !closed {
+	if !closed {
+		return
+	}
+	if s.ctx == nil || s.ctx.Err() != nil || failed {
+		if started {
+			if err := s.endSession(); err != nil {
+				log.Printf("[IdleChat] TTS prefetch end after cancellation failed: %v", err)
+			}
+			s.cleanupStale()
+		}
+		return
+	}
+	if !started {
+		if strings.TrimSpace(finalEvent.Content) == "" && strings.TrimSpace(finalEvent.RawContent) == "" {
+			return
+		}
+		emitIdleChatTTSWithLifecycle(s.ctx, s.bridge, finalEvent, s.lifecycle)
 		return
 	}
 
@@ -296,53 +463,51 @@ func (s *idleChatTTSPrefetchStream) finalizeAfterQueueDrain() {
 			VoiceProfile: voiceProfile,
 		})
 		for _, chunk := range s.chunker.FinalizeAll(finalText) {
+			if s.ctx.Err() != nil {
+				break
+			}
 			filtered := moduletts.FilterSpeakableText("agent.response", idleChatRoute, chunk)
 			if filtered == "" {
 				continue
 			}
-			if displayBridge, ok := s.bridge.(orchestrator.TTSDisplayBridge); ok {
-				if err := displayBridge.PushTextWithDisplay(context.Background(), sessionID, filtered, chunk, &emotion); err != nil {
-					log.Printf("[IdleChat] TTS prefetch push failed: %v", err)
-				}
-			} else if err := s.bridge.PushText(context.Background(), sessionID, filtered, &emotion); err != nil {
+			if err := s.pushPreparedChunk(filtered, chunk, &emotion); err != nil {
 				log.Printf("[IdleChat] TTS prefetch push failed: %v", err)
+				s.mu.Lock()
+				s.failed = true
+				s.mu.Unlock()
+				s.cleanupStale()
+				s.cancelForStale()
+				return
 			}
 		}
 	}
-	if err := s.bridge.EndSession(context.Background(), sessionID); err != nil {
+	if err := s.endSession(); err != nil {
 		log.Printf("[IdleChat] TTS prefetch end failed: %v", err)
-		if expectPlaybackAck {
-			clearIdleChatTTSPending(sessionID)
-		} else {
-			clearTTSPublicSession(sessionID)
-		}
+		s.cleanupStale()
 		return
 	}
 	if !expectPlaybackAck {
-		clearTTSPublicSession(sessionID)
+		s.mu.Lock()
+		internalSessionID := s.internalSessionID
+		s.mu.Unlock()
+		clearTTSPublicSession(internalSessionID)
 	}
-	_ = waitCh
 }
 
-func (s *idleChatTTSPrefetchStream) close(ev idlechat.TimelineEvent) (<-chan struct{}, bool) {
+func (s *idleChatTTSPrefetchStream) close(ev idlechat.TimelineEvent) (idlechat.TTSLifecycle, bool) {
 	if s == nil {
-		return nil, false
+		return idlechat.TTSLifecycle{}, false
 	}
 	s.mu.Lock()
 	if s.closed {
-		waitCh := s.waitCh
+		lifecycle := s.lifecycle.lifecycle()
 		s.mu.Unlock()
-		return waitCh, true
+		return lifecycle, true
 	}
 	s.closed = true
 	s.finalEvent = ev
 	close(s.queue)
-	waitCh := s.waitCh
+	lifecycle := s.lifecycle.lifecycle()
 	s.mu.Unlock()
-
-	s.wg.Wait()
-	if !s.started {
-		return emitIdleChatTTS(context.Background(), s.bridge, ev)
-	}
-	return waitCh, true
+	return lifecycle, true
 }

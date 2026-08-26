@@ -362,7 +362,7 @@ func (o *IdleChatOrchestrator) emitStoryParagraph(sessionID, paragraph string, u
 			TurnIndex: turnIndex,
 		}
 		ttsDone := o.emitTimelineEvent(ttsEvent)
-		o.waitForTTSDoneForEvent(ttsEvent, ttsDone)
+		o.waitForTTSReadyForEvent(ttsEvent, ttsDone)
 		o.waitBreak(speakerBreak)
 	}
 }

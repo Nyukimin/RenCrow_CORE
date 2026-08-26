@@ -60,8 +60,8 @@ func TestRunSimpleStorySessionDoesNotDropGeneratedBodyWithValidationText(t *test
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
 	closed := make(chan struct{})
 	close(closed)
-	o.SetEventEmitter(func(TimelineEvent) <-chan struct{} {
-		return closed
+	o.SetEventEmitter(func(TimelineEvent) TTSLifecycle {
+		return TTSLifecycle{Ready: closed, Done: closed}
 	})
 
 	o.RunSimpleStorySession()
@@ -107,9 +107,9 @@ func TestRunSimpleStorySessionDoesNotPublishBeforeGenerationCompletes(t *testing
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
 
 	events := make(chan TimelineEvent, 32)
-	o.SetEventEmitter(func(ev TimelineEvent) <-chan struct{} {
+	o.SetEventEmitter(func(ev TimelineEvent) TTSLifecycle {
 		events <- ev
-		return nil
+		return TTSLifecycle{}
 	})
 
 	done := make(chan struct{})
@@ -162,9 +162,9 @@ func TestRunSimpleStorySessionEmitsUniqueStoryTTSMessageIDs(t *testing.T) {
 	var ttsIDs []string
 	closed := make(chan struct{})
 	close(closed)
-	o.SetEventEmitter(func(ev TimelineEvent) <-chan struct{} {
+	o.SetEventEmitter(func(ev TimelineEvent) TTSLifecycle {
 		if ev.Type != "idlechat.tts" {
-			return nil
+			return TTSLifecycle{}
 		}
 		if ev.MessageID == "" {
 			t.Fatal("story TTS message id is empty")
@@ -174,7 +174,7 @@ func TestRunSimpleStorySessionEmitsUniqueStoryTTSMessageIDs(t *testing.T) {
 		}
 		seen[ev.MessageID] = true
 		ttsIDs = append(ttsIDs, ev.MessageID)
-		return closed
+		return TTSLifecycle{Ready: closed, Done: closed}
 	})
 
 	o.RunSimpleStorySession()

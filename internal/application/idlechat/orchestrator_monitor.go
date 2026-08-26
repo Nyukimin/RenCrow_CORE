@@ -136,8 +136,8 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 		log.Printf("[IdleChat] Session stopped before playback: session=%s dialogue_error=%v", segmentID, err)
 		return
 	}
-	ttsDrain := make([]<-chan struct{}, 0, turnLimit+2)
-	if ttsDone := o.emitTopicToTimeline(segmentID, topic, strategy); ttsDone != nil {
+	ttsDrain := make([]TTSLifecycle, 0, turnLimit+2)
+	if ttsDone := o.emitTopicToTimeline(segmentID, topic, strategy); ttsDone.Done != nil {
 		ttsDrain = append(ttsDrain, ttsDone)
 	}
 
@@ -217,7 +217,7 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 			MessageID:  messageID,
 			TurnIndex:  turnIndex,
 		})
-		if ttsDone != nil {
+		if ttsDone.Done != nil {
 			ttsDrain = append(ttsDrain, ttsDone)
 		}
 		o.markWatchdogStage("message_emitted", fmt.Sprintf("%s->%s turn=%d", speaker, nextSpeaker, turnIndex), TimelineEvent{
@@ -231,7 +231,7 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 		segmentTurns++
 
 		log.Printf("[IdleChat] [Turn %d] %s→%s: %s", turn, speaker, nextSpeaker, truncate(response, 80))
-		o.waitForTTSDoneForEvent(TimelineEvent{
+		o.waitForTTSReadyForEvent(TimelineEvent{
 			Type:      "idlechat.message",
 			From:      speaker,
 			To:        nextSpeaker,
@@ -258,7 +258,7 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 		o.markWatchdogStage("summary_generation", fmt.Sprintf("turns=%d ended_early=%t", segmentTurns, endedEarly), TimelineEvent{SessionID: segmentID})
 		summary := o.saveSummary(segmentID, topic, displayStrategy, transcript, startedAt, endedAt, segmentTurns, endedEarly, loopReason)
 		o.markWatchdogStage("summary_tts", fmt.Sprintf("turns=%d", segmentTurns), TimelineEvent{SessionID: segmentID})
-		if ttsDone := o.speakSummary(segmentID, summary); ttsDone != nil {
+		if ttsDone := o.speakSummary(segmentID, summary); ttsDone.Done != nil {
 			ttsDrain = append(ttsDrain, ttsDone)
 		}
 	}
@@ -306,14 +306,10 @@ func (o *IdleChatOrchestrator) idleChatTurnLimit() int {
 	return o.maxTurns
 }
 
-// waitForTTSDone はTTS完了チャネルを短時間だけ待つ。TTS未完了は音声系エラーとして扱い、会話進行は止めない。
-
-func (o *IdleChatOrchestrator) waitForTTSDone(ch <-chan struct{}) {
-	o.waitForTTSDoneForEvent(TimelineEvent{}, ch)
-}
-
-func (o *IdleChatOrchestrator) waitForTTSDoneForEvent(ev TimelineEvent, ch <-chan struct{}) {
-	if ch == nil {
+// waitForTTSReadyForEvent bounds only the wait for synthesis readiness. The
+// browser playback ACK is intentionally outside this path.
+func (o *IdleChatOrchestrator) waitForTTSReadyForEvent(ev TimelineEvent, lifecycle TTSLifecycle) {
+	if lifecycle.Ready == nil {
 		return
 	}
 	if ev.Type != "" || ev.SessionID != "" || ev.MessageID != "" {
@@ -323,8 +319,8 @@ func (o *IdleChatOrchestrator) waitForTTSDoneForEvent(ev TimelineEvent, ch <-cha
 	if timeout <= 0 {
 		select {
 		case <-o.idleRunContext().Done():
-		case <-ch:
-			o.markWatchdogStage("tts_done", idleWatchdogEventDetail(ev), ev)
+		case <-lifecycle.Ready:
+			o.markWatchdogStage("tts_ready", idleWatchdogEventDetail(ev), ev)
 		}
 		return
 	}
@@ -333,8 +329,8 @@ func (o *IdleChatOrchestrator) waitForTTSDoneForEvent(ev TimelineEvent, ch <-cha
 	select {
 	case <-o.idleRunContext().Done():
 		return
-	case <-ch:
-		o.markWatchdogStage("tts_done", idleWatchdogEventDetail(ev), ev)
+	case <-lifecycle.Ready:
+		o.markWatchdogStage("tts_ready", idleWatchdogEventDetail(ev), ev)
 	case <-timer.C:
 		o.markWatchdogStage("tts_timeout", idleWatchdogEventDetail(ev), ev)
 		log.Printf("[IdleChat] TTS completion wait timed out after %s; continuing conversation (tts_error=true tts_error_kind=timeout session=%s message_id=%s turn_index=%d)", timeout, ev.SessionID, ev.MessageID, ev.TurnIndex)
@@ -347,38 +343,38 @@ func (o *IdleChatOrchestrator) waitForTTSDoneForEvent(ev TimelineEvent, ch <-cha
 	}
 }
 
-func (o *IdleChatOrchestrator) waitForTTSSessionDrain(sessionID string, channels []<-chan struct{}) {
-	if len(channels) == 0 {
+func (o *IdleChatOrchestrator) waitForTTSSessionDrain(sessionID string, lifecycles []TTSLifecycle) {
+	if len(lifecycles) == 0 {
 		return
 	}
-	o.markWatchdogStage("tts_session_drain", fmt.Sprintf("channels=%d", len(channels)), TimelineEvent{SessionID: sessionID})
+	o.markWatchdogStage("tts_session_drain", fmt.Sprintf("channels=%d", len(lifecycles)), TimelineEvent{SessionID: sessionID})
 	timeout := idleChatTTSSessionDrainTimeout
 	if timeout <= 0 {
 		timeout = idleChatTTSWaitTimeout
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	for idx, ch := range channels {
-		if ch == nil {
+	for idx, lifecycle := range lifecycles {
+		if lifecycle.Done == nil {
 			continue
 		}
 		select {
 		case <-o.idleRunContext().Done():
 			return
-		case <-ch:
+		case <-lifecycle.Done:
 		case <-timer.C:
-			o.markWatchdogStage("tts_session_drain_timeout", fmt.Sprintf("remaining=%d/%d", idx+1, len(channels)), TimelineEvent{SessionID: sessionID})
-			log.Printf("[IdleChat] TTS session drain timed out after %s; continuing next session (session=%s remaining_index=%d/%d session_audio_timeout=true)", timeout, sessionID, idx+1, len(channels))
+			o.markWatchdogStage("tts_session_drain_timeout", fmt.Sprintf("remaining=%d/%d", idx+1, len(lifecycles)), TimelineEvent{SessionID: sessionID})
+			log.Printf("[IdleChat] TTS session drain timed out after %s; continuing next session (session=%s remaining_index=%d/%d session_audio_timeout=true)", timeout, sessionID, idx+1, len(lifecycles))
 			o.reportTTSTimeoutEvent(TTSTimeoutEvent{
 				Kind:           "session_audio_timeout",
 				SessionID:      sessionID,
 				RemainingIndex: idx + 1,
-				RemainingCount: len(channels),
+				RemainingCount: len(lifecycles),
 			})
 			return
 		}
 	}
-	o.markWatchdogStage("tts_session_drain_done", fmt.Sprintf("channels=%d", len(channels)), TimelineEvent{SessionID: sessionID})
+	o.markWatchdogStage("tts_session_drain_done", fmt.Sprintf("channels=%d", len(lifecycles)), TimelineEvent{SessionID: sessionID})
 }
 
 func (o *IdleChatOrchestrator) reportTTSTimeoutEvent(ev TTSTimeoutEvent) {

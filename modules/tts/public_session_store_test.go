@@ -48,3 +48,31 @@ func TestPublicSessionStoreMarksTimedOutRoute(t *testing.T) {
 		t.Fatalf("unexpected stale state tts-1=%t tts-2=%t", store.IsStale("tts-1"), store.IsStale("tts-2"))
 	}
 }
+
+func TestPublicSessionStoreRetireKeepsLateCallbacksStale(t *testing.T) {
+	store := NewPublicSessionStore()
+	store.Register(PublicSessionRouteRegistration{InternalSessionID: "tts-retire", PublicSessionID: "idle-retire", ResponseID: "idle-retire:0000"})
+
+	store.Retire("tts-retire")
+
+	if !store.IsStale("tts-retire") {
+		t.Fatal("retired route must remain stale for late callbacks")
+	}
+	if got := store.Snapshot(); got.RouteCount != 0 || got.StaleRouteCount != 0 {
+		t.Fatalf("unexpected retired snapshot: %+v", got)
+	}
+}
+
+func TestPublicSessionStoreRetireByResponseKeepsLateCallbacksStale(t *testing.T) {
+	store := NewPublicSessionStore()
+	store.Register(PublicSessionRouteRegistration{InternalSessionID: "tts-retire-response", PublicSessionID: "idle-retire", ResponseID: "idle-retire:0001"})
+
+	store.RetireByResponse("idle-retire:0001")
+
+	if !store.IsStale("tts-retire-response") {
+		t.Fatal("response-retired route must remain stale for late callbacks")
+	}
+	if got := store.Snapshot(); got.RouteCount != 0 || got.StaleRouteCount != 0 {
+		t.Fatalf("unexpected response-retired snapshot: %+v", got)
+	}
+}

@@ -51,8 +51,16 @@ func clearTTSPublicSession(internalSessionID string) {
 	ttsPublicSessions.Clear(internalSessionID)
 }
 
+func retireTTSPublicSession(internalSessionID string) {
+	ttsPublicSessions.Retire(internalSessionID)
+}
+
 func clearTTSPublicSessionByResponse(responseID string) {
 	ttsPublicSessions.ClearByResponse(responseID)
+}
+
+func retireTTSPublicSessionByResponse(responseID string) {
+	ttsPublicSessions.RetireByResponse(responseID)
 }
 
 func clearTTSPublicSequenceStateIfNoRoutes() {

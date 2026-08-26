@@ -85,11 +85,11 @@ func TestIdleChatInterruptResetsStateAndCancelsRunContext(t *testing.T) {
 func TestIdleChatInterruptDiscardsStaleTimelineEvent(t *testing.T) {
 	o := NewIdleChatOrchestrator(&capturingIdleProvider{response: "ok"}, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
 	emitted := 0
-	o.SetEventEmitter(func(ev TimelineEvent) <-chan struct{} {
+	o.SetEventEmitter(func(ev TimelineEvent) TTSLifecycle {
 		emitted++
 		done := make(chan struct{})
 		close(done)
-		return done
+		return TTSLifecycle{Ready: done, Done: done}
 	})
 
 	o.mu.Lock()
@@ -107,8 +107,8 @@ func TestIdleChatInterruptDiscardsStaleTimelineEvent(t *testing.T) {
 		SessionID: "idle-stale-topic-00",
 	})
 
-	if done != nil {
-		t.Fatal("stale idlechat event should not return a TTS wait channel")
+	if done.Ready != nil || done.Done != nil {
+		t.Fatal("stale idlechat event should not return a TTS lifecycle")
 	}
 	if emitted != 0 {
 		t.Fatalf("stale idlechat event emitted %d times, want 0", emitted)

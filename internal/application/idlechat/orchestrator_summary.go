@@ -84,9 +84,9 @@ func isWhatIfRepetition(transcript []string) bool {
 	return repeated >= 4 && repeated*2 >= window
 }
 
-func (o *IdleChatOrchestrator) speakSummary(sessionID, summary string) <-chan struct{} {
+func (o *IdleChatOrchestrator) speakSummary(sessionID, summary string) TTSLifecycle {
 	if strings.TrimSpace(summary) == "" {
-		return nil
+		return TTSLifecycle{}
 	}
 	o.waitBreak(topicBreak)
 	spokenSummary := "今回のまとめです。\n" + strings.TrimSpace(summary)
@@ -106,7 +106,7 @@ func (o *IdleChatOrchestrator) speakSummary(sessionID, summary string) <-chan st
 		TurnIndex: turnIndex,
 	})
 	log.Printf("[IdleChat] Mio reading summary: %s", truncate(spokenSummary, 80))
-	o.waitForTTSDoneForEvent(TimelineEvent{
+	o.waitForTTSReadyForEvent(TimelineEvent{
 		Type:      "idlechat.message",
 		From:      "mio",
 		To:        "user",

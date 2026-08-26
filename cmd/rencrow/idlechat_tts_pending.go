@@ -27,6 +27,13 @@ func clearIdleChatTTSPending(sessionID string) {
 	}
 }
 
+func clearIdleChatTTSPendingStale(sessionID string) {
+	action := idleChatTTSPendingStore.Clear(sessionID)
+	if action.ClearPublicSession != "" {
+		retireTTSPublicSession(action.ClearPublicSession)
+	}
+}
+
 func clearIdleChatTTSPendingByChan(target <-chan struct{}) {
 	action := idleChatTTSPendingStore.ClearByWait(target)
 	if action.ClearPublicSession != "" {
@@ -37,6 +44,12 @@ func clearIdleChatTTSPendingByChan(target <-chan struct{}) {
 func clearAllIdleChatTTSPending() {
 	for _, sessionID := range idleChatTTSPendingStore.ClearAll() {
 		clearTTSPublicSession(sessionID)
+	}
+}
+
+func clearAllIdleChatTTSPendingStale() {
+	for _, sessionID := range idleChatTTSPendingStore.ClearAll() {
+		retireTTSPublicSession(sessionID)
 	}
 }
 

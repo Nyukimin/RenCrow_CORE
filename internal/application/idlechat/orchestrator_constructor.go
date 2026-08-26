@@ -74,7 +74,7 @@ func (o *IdleChatOrchestrator) SetDialogueInterestingnessConfig(config DialogueI
 	o.dialogueConfig = normalizeDialogueInterestingnessConfig(config)
 }
 
-func (o *IdleChatOrchestrator) SetEventEmitter(emit func(TimelineEvent) <-chan struct{}) {
+func (o *IdleChatOrchestrator) SetEventEmitter(emit func(TimelineEvent) TTSLifecycle) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.emitEvent = emit

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -100,7 +101,7 @@ func TestEmitIdleChatTTSSkipsPlaybackWaitWhenNoViewerClients(t *testing.T) {
 	})
 
 	bridge := &idleChatMockTTSBridge{}
-	waitCh, ok := emitIdleChatTTS(context.Background(), bridge, idlechat.TimelineEvent{
+	lifecycle, ok := emitIdleChatTTS(context.Background(), bridge, idlechat.TimelineEvent{
 		Type:      "idlechat.message",
 		From:      "mio",
 		To:        "shiro",
@@ -113,8 +114,8 @@ func TestEmitIdleChatTTSSkipsPlaybackWaitWhenNoViewerClients(t *testing.T) {
 	if !ok {
 		t.Fatal("expected TTS route to run")
 	}
-	if waitCh != nil {
-		t.Fatal("no Viewer clients should not create a playback wait channel")
+	if lifecycle.Ready == nil || lifecycle.Done == nil {
+		t.Fatal("no Viewer clients should still expose synthesis lifecycle channels")
 	}
 	if len(bridge.startReqs) != 1 || len(bridge.pushTexts) != 1 || len(bridge.endIDs) != 1 {
 		t.Fatalf("expected TTS bridge to receive start/push/end, got start=%d push=%d end=%d", len(bridge.startReqs), len(bridge.pushTexts), len(bridge.endIDs))
@@ -124,6 +125,35 @@ func TestEmitIdleChatTTSSkipsPlaybackWaitWhenNoViewerClients(t *testing.T) {
 	}
 	if got := resolveTTSPublicResponse(bridge.startReqs[0].SessionID); got != "" {
 		t.Fatalf("public route should be cleared after no-viewer TTS, got %q", got)
+	}
+	select {
+	case <-lifecycle.Ready:
+	case <-time.After(time.Second):
+		t.Fatal("synthesis Ready was not signaled")
+	}
+	select {
+	case <-lifecycle.Done:
+	case <-time.After(time.Second):
+		t.Fatal("synthesis Done was not signaled")
+	}
+}
+
+func TestNotifyIdleChatTTSSynthesisReadySignalsFirstChunkLifecycle(t *testing.T) {
+	controller := newIdleChatTTSLifecycleController()
+	registerIdleChatTTSSynthesisLifecycle("tts-first-chunk", controller)
+	t.Cleanup(func() { unregisterIdleChatTTSSynthesisLifecycle("tts-first-chunk", controller) })
+
+	notifyIdleChatTTSSynthesisReady("tts-first-chunk")
+
+	select {
+	case <-controller.ready:
+	case <-time.After(time.Second):
+		t.Fatal("first chunk callback did not signal Ready")
+	}
+	select {
+	case <-controller.done:
+		t.Fatal("first chunk callback must not signal Done")
+	default:
 	}
 }
 
@@ -135,14 +165,14 @@ func TestEmitIdleChatTTSSkipsPlaybackWaitUntilAudioViewerClaimsOwnership(t *test
 		resetActiveViewerControlForTest()
 	}()
 
-	waitCh, ok := emitIdleChatTTS(context.Background(), &idleChatMockTTSBridge{}, idlechat.TimelineEvent{
+	lifecycle, ok := emitIdleChatTTS(context.Background(), &idleChatMockTTSBridge{}, idlechat.TimelineEvent{
 		Type: "idlechat.message", SessionID: "idle-audio-owner", MessageID: "idle-audio-owner:0001", TurnIndex: 1, From: "mio", Content: "こんにちは。",
 	})
 	if !ok {
 		t.Fatal("TTS was not emitted")
 	}
-	if waitCh != nil {
-		t.Fatal("SSE connection without an active audio owner must not create a playback wait")
+	if lifecycle.Ready == nil || lifecycle.Done == nil {
+		t.Fatal("SSE connection without an active audio owner must still expose synthesis lifecycle")
 	}
 }
 
@@ -177,7 +207,7 @@ func TestEmitIdleChatTTSCompletesNormallyOnPushFailure(t *testing.T) {
 	t.Cleanup(clearAllIdleChatTTSPending)
 	bridge := &idleChatMockTTSBridge{pushErr: errors.New("tts gateway unavailable")}
 
-	waitCh, ok := emitIdleChatTTS(context.Background(), bridge, idlechat.TimelineEvent{
+	lifecycle, ok := emitIdleChatTTS(context.Background(), bridge, idlechat.TimelineEvent{
 		Type:      "idlechat.message",
 		From:      "shiro",
 		To:        "mio",
@@ -187,8 +217,8 @@ func TestEmitIdleChatTTSCompletesNormallyOnPushFailure(t *testing.T) {
 		TurnIndex: 2,
 	})
 
-	if !ok || waitCh == nil {
-		t.Fatal("expected failed push to still expose a completed wait channel")
+	if ok || lifecycle.Done == nil {
+		t.Fatal("expected failed push to report failure and close lifecycle")
 	}
 	if len(bridge.errorEvents) != 0 {
 		t.Fatalf("TTS provider failures should remain log-only for IdleChat processing, got error events %#v", bridge.errorEvents)
@@ -200,9 +230,9 @@ func TestEmitIdleChatTTSCompletesNormallyOnPushFailure(t *testing.T) {
 		t.Fatalf("pending response count = %d, want 0 after log-only TTS failure", got.PendingResponseCount)
 	}
 	select {
-	case <-waitCh:
+	case <-lifecycle.Done:
 	case <-time.After(time.Second):
-		t.Fatal("wait channel did not close after log-only TTS failure")
+		t.Fatal("Done did not close after TTS failure")
 	}
 }
 
@@ -211,7 +241,7 @@ func TestEmitIdleChatTTSSendsStorySimpleTTSEvent(t *testing.T) {
 	t.Cleanup(clearAllIdleChatTTSPending)
 	bridge := &idleChatMockTTSBridge{}
 
-	waitCh, ok := emitIdleChatTTS(context.Background(), bridge, idlechat.TimelineEvent{
+	lifecycle, ok := emitIdleChatTTS(context.Background(), bridge, idlechat.TimelineEvent{
 		Type:      "idlechat.tts",
 		From:      "mio",
 		To:        "user",
@@ -221,8 +251,8 @@ func TestEmitIdleChatTTSSendsStorySimpleTTSEvent(t *testing.T) {
 		TurnIndex: 1,
 	})
 
-	if !ok || waitCh == nil {
-		t.Fatal("expected idlechat.tts event to enter the TTS route")
+	if !ok || lifecycle.Ready == nil || lifecycle.Done == nil {
+		t.Fatal("expected idlechat.tts event to enter the TTS route with lifecycle")
 	}
 	if len(bridge.startReqs) != 1 {
 		t.Fatalf("expected 1 start request, got %d", len(bridge.startReqs))
@@ -489,19 +519,19 @@ func TestEmitIdleChatTTS_CutsInlineEnglishReasoningTail(t *testing.T) {
 func TestEmitIdleChatTTSAsyncTopicAnnouncementReturnsCompletion(t *testing.T) {
 	bridge := &idleChatMockTTSBridge{notifyOnEnd: true}
 
-	done := emitIdleChatTTSAsync(bridge, idlechat.TimelineEvent{
+	lifecycle := emitIdleChatTTSAsync(bridge, idlechat.TimelineEvent{
 		Type:      "idlechat.message",
 		From:      "user",
 		To:        "mio",
 		Content:   "今日のお題（external）: 記憶と風景の関係",
 		SessionID: "idle-topic-async",
 	})
-	if done == nil {
-		t.Fatal("expected topic announcement to return a completion channel")
+	if lifecycle.Ready == nil || lifecycle.Done == nil {
+		t.Fatal("expected topic announcement to return synthesis lifecycle channels")
 	}
 
 	select {
-	case <-done:
+	case <-lifecycle.Done:
 	case <-time.After(time.Second):
 		t.Fatal("topic TTS completion was not signaled")
 	}
@@ -528,9 +558,9 @@ func TestEmitIdleChatTTSAsyncSerializesIdleSpeech(t *testing.T) {
 		SessionID: "idle-serial-1",
 	})
 
-	for name, done := range map[string]<-chan struct{}{"first": first, "second": second} {
+	for name, lifecycle := range map[string]idlechat.TTSLifecycle{"first": first, "second": second} {
 		select {
-		case <-done:
+		case <-lifecycle.Done:
 		case <-time.After(time.Second):
 			t.Fatalf("%s TTS completion was not signaled", name)
 		}
@@ -572,22 +602,16 @@ func TestEmitIdleChatTTSAsyncPrefetchesWithoutPlaybackCompletion(t *testing.T) {
 		SessionID: "idle-prefetch-1",
 	})
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if len(bridge.pushTexts) >= 2 {
-			break
+	for name, lifecycle := range map[string]idlechat.TTSLifecycle{"first": first, "second": second} {
+		select {
+		case <-lifecycle.Done:
+			// Synthesis completion must not be coupled to browser playback ACK.
+		case <-time.After(time.Second):
+			t.Fatalf("%s synthesis completion was not signaled before playback ack", name)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	if len(bridge.pushTexts) < 2 {
 		t.Fatalf("expected queued speech to be synthesized without playback completion, got %d pushes", len(bridge.pushTexts))
-	}
-	for name, done := range map[string]<-chan struct{}{"first": first, "second": second} {
-		select {
-		case <-done:
-			t.Fatalf("%s playback completion was signaled before playback ack", name)
-		default:
-		}
 	}
 
 	var responseIDs []string
@@ -602,16 +626,79 @@ func TestEmitIdleChatTTSAsyncPrefetchesWithoutPlaybackCompletion(t *testing.T) {
 	for _, responseID := range responseIDs {
 		notifyIdleChatTTSPlaybackCompleted(responseID)
 	}
-	for name, done := range map[string]<-chan struct{}{"first": first, "second": second} {
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-			t.Fatalf("%s playback completion was not signaled after ack", name)
-		}
-	}
 	if bridge.pushTexts[len(bridge.pushTexts)-2] != "先に合成する発話です。" ||
 		bridge.pushTexts[len(bridge.pushTexts)-1] != "再生完了を待たずに合成する発話です。" {
 		t.Fatalf("unexpected synthesis order: %#v", bridge.pushTexts)
+	}
+}
+
+type cancelAwareIdleChatTTSBridge struct {
+	idleChatMockTTSBridge
+	started    chan struct{}
+	canceled   chan struct{}
+	release    chan struct{}
+	startOnce  sync.Once
+	cancelOnce sync.Once
+}
+
+func (b *cancelAwareIdleChatTTSBridge) PushText(ctx context.Context, sessionID, text string, emotion *moduletts.EmotionState) error {
+	b.startOnce.Do(func() { close(b.started) })
+	select {
+	case <-ctx.Done():
+		b.cancelOnce.Do(func() { close(b.canceled) })
+		return ctx.Err()
+	case <-b.release:
+		return nil
+	}
+}
+
+func (b *cancelAwareIdleChatTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID, text, displayText string, emotion *moduletts.EmotionState) error {
+	return b.PushText(ctx, sessionID, text, emotion)
+}
+
+func TestIdleChatTTSTimeoutCancelsActiveSynthesisContext(t *testing.T) {
+	clearAllIdleChatTTSPending()
+	resetTTSPublicSessionStateForTest()
+	resetIdleChatTTSQueue()
+	setIdleChatViewerClientCount(func() int { return 0 })
+	bridge := &cancelAwareIdleChatTTSBridge{
+		started:  make(chan struct{}),
+		canceled: make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	t.Cleanup(func() {
+		close(bridge.release)
+		setIdleChatViewerClientCount(nil)
+		resetIdleChatTTSQueue()
+		clearAllIdleChatTTSPending()
+		resetTTSPublicSessionStateForTest()
+	})
+
+	_ = emitIdleChatTTSAsync(bridge, idlechat.TimelineEvent{
+		Type:      "idlechat.message",
+		From:      "mio",
+		To:        "shiro",
+		Content:   "キャンセルされる合成です。",
+		SessionID: "idle-cancel-active",
+		MessageID: "idle-cancel-active:msg:0001",
+		TurnIndex: 1,
+	})
+	select {
+	case <-bridge.started:
+	case <-time.After(time.Second):
+		t.Fatal("synthesis did not start")
+	}
+
+	markIdleChatTTSTimeout(idlechat.TTSTimeoutEvent{
+		Kind:      "timeout",
+		SessionID: "idle-cancel-active",
+		MessageID: "idle-cancel-active:msg:0001",
+		TurnIndex: 1,
+	})
+	select {
+	case <-bridge.canceled:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("TTS timeout did not cancel the active synthesis context")
 	}
 }
 

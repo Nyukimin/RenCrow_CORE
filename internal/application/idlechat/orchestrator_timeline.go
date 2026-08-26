@@ -10,10 +10,10 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) <-chan struct{} {
+func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) TTSLifecycle {
 	if strings.HasPrefix(ev.Type, "idlechat.") && o.isInterruptedSession(ev.SessionID) {
 		log.Printf("[IdleChat] stale event discarded: type=%s session=%s", ev.Type, ev.SessionID)
-		return nil
+		return TTSLifecycle{}
 	}
 	o.recordPersonaTimelineEvent(ev)
 	o.mu.Lock()
@@ -22,10 +22,10 @@ func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) <-chan struct
 	if emit != nil {
 		return emit(ev)
 	}
-	return nil
+	return TTSLifecycle{}
 }
 
-func (o *IdleChatOrchestrator) emitTopicToTimeline(sessionID, topic string, strategy TopicStrategy) <-chan struct{} {
+func (o *IdleChatOrchestrator) emitTopicToTimeline(sessionID, topic string, strategy TopicStrategy) TTSLifecycle {
 	content := fmt.Sprintf("今日のお題（%s）: %s", strategy, topic)
 	messageID := idleChatTopicMessageID()
 	category, _ := modulechat.NormalizeTopicCategory(string(strategy))

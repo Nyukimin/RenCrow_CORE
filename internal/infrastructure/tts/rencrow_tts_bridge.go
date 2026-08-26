@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -103,7 +104,7 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 	responseID := session.responseID
 	voiceID := moduletts.ChooseNonEmpty(session.voiceID, b.cfg.VoiceID)
 
-	for _, item := range plan {
+	for planIndex, item := range plan {
 		speechText := moduletts.EnsureEmotionPrefixForCharacter(item.SpeechText, emotion, characterID)
 		payload, err := moduletts.BuildSynthesisPayload(moduletts.SynthesisPayloadInput{
 			Text:           speechText,
@@ -119,10 +120,15 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 		if err != nil {
 			return fmt.Errorf("marshal /synthesis request: %w", err)
 		}
-		body, err := b.postSynthesisWithRetry(ctx, reqBody, sessionID, session.nextChunk)
+		chunkIndex := session.nextChunk
+		startedAt := time.Now()
+		log.Printf("[TTS] synthesis request start: session=%s chunk=%d plan_index=%d/%d speech_runes=%d", sessionID, chunkIndex, planIndex+1, len(plan), moduletts.SpeechTextRuneCount(speechText))
+		body, err := b.postSynthesisWithRetry(ctx, reqBody, sessionID, chunkIndex)
 		if err != nil {
+			log.Printf("[TTS] synthesis request failed: session=%s chunk=%d elapsed_ms=%d error=%v", sessionID, chunkIndex, time.Since(startedAt).Milliseconds(), err)
 			return err
 		}
+		log.Printf("[TTS] synthesis request done: session=%s chunk=%d elapsed_ms=%d", sessionID, chunkIndex, time.Since(startedAt).Milliseconds())
 
 		out, err := decodeGatewaySynthesisResponse(body)
 		if err != nil {

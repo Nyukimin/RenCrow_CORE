@@ -61,6 +61,12 @@ func TestPrepareRenCrowSpeechText(t *testing.T) {
 	}
 }
 
+func TestSpeechTextRuneCountUsesUnicodeCodePoints(t *testing.T) {
+	if got := SpeechTextRuneCount("Mioの声"); got != 5 {
+		t.Fatalf("SpeechTextRuneCount() = %d, want 5", got)
+	}
+}
+
 func TestHasRenCrowSynthesisAudioOutput(t *testing.T) {
 	if HasRenCrowSynthesisAudioOutput(" ", " ") {
 		t.Fatal("empty audio output should be false")

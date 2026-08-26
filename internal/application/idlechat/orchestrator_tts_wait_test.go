@@ -12,7 +12,7 @@ func TestEmitTopicToTimelineDoesNotWaitForTTSCompletion(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
 	ttsDone := make(chan struct{})
 	eventSeen := make(chan struct{}, 1)
-	o.SetEventEmitter(func(ev TimelineEvent) <-chan struct{} {
+	o.SetEventEmitter(func(ev TimelineEvent) TTSLifecycle {
 		if ev.Type != "idlechat.topic" {
 			t.Fatalf("unexpected event type: %s", ev.Type)
 		}
@@ -20,7 +20,7 @@ func TestEmitTopicToTimelineDoesNotWaitForTTSCompletion(t *testing.T) {
 			t.Fatalf("unexpected topic identity: %+v", ev)
 		}
 		eventSeen <- struct{}{}
-		return ttsDone
+		return TTSLifecycle{Ready: ttsDone, Done: ttsDone}
 	})
 
 	returned := make(chan struct{})
@@ -42,7 +42,7 @@ func TestEmitTopicToTimelineDoesNotWaitForTTSCompletion(t *testing.T) {
 	close(ttsDone)
 }
 
-func TestWaitForTTSDoneTimesOut(t *testing.T) {
+func TestWaitForTTSReadyTimesOut(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
 	old := idleChatTTSWaitTimeout
 	idleChatTTSWaitTimeout = 10 * time.Millisecond
@@ -54,14 +54,14 @@ func TestWaitForTTSDoneTimesOut(t *testing.T) {
 
 	blocked := make(chan struct{})
 	start := time.Now()
-	o.waitForTTSDoneForEvent(TimelineEvent{
+	o.waitForTTSReadyForEvent(TimelineEvent{
 		SessionID: "idle-timeout",
 		MessageID: "idle-timeout:msg:0001",
 		TurnIndex: 1,
-	}, blocked)
+	}, TTSLifecycle{Ready: blocked})
 
 	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
-		t.Fatalf("waitForTTSDone did not time out promptly: %s", elapsed)
+		t.Fatalf("waitForTTSReady did not time out promptly: %s", elapsed)
 	}
 	if timeoutEvent.Kind != "timeout" || timeoutEvent.SessionID != "idle-timeout" || timeoutEvent.MessageID != "idle-timeout:msg:0001" || timeoutEvent.TurnIndex != 1 {
 		t.Fatalf("unexpected timeout event: %#v", timeoutEvent)
@@ -74,8 +74,8 @@ func TestIdleChatTTSWaitTimeoutDefaultIsSixtySeconds(t *testing.T) {
 	}
 }
 
-func TestIdleChatTTSSessionDrainTimeoutDefaultIsSixtySeconds(t *testing.T) {
-	if idleChatTTSSessionDrainTimeout != 60*time.Second {
+func TestIdleChatTTSSessionDrainTimeoutDefaultIsOneHundredTwentySeconds(t *testing.T) {
+	if idleChatTTSSessionDrainTimeout != 120*time.Second {
 		t.Fatalf("unexpected idleChatTTSSessionDrainTimeout: %s", idleChatTTSSessionDrainTimeout)
 	}
 }
@@ -92,7 +92,7 @@ func TestWaitForTTSSessionDrainWaitsForOutstandingPlaybackBeforeNextSession(t *t
 		close(done)
 	}()
 	start := time.Now()
-	o.waitForTTSSessionDrain("idle-drain", []<-chan struct{}{done})
+	o.waitForTTSSessionDrain("idle-drain", []TTSLifecycle{{Done: done}})
 
 	if elapsed := time.Since(start); elapsed < 25*time.Millisecond {
 		t.Fatalf("session drain returned before outstanding playback completed: %s", elapsed)
@@ -111,7 +111,7 @@ func TestWaitForTTSSessionDrainTimesOutInsteadOfStoppingSystem(t *testing.T) {
 
 	blocked := make(chan struct{})
 	start := time.Now()
-	o.waitForTTSSessionDrain("idle-drain-timeout", []<-chan struct{}{blocked})
+	o.waitForTTSSessionDrain("idle-drain-timeout", []TTSLifecycle{{Done: blocked}})
 
 	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
 		t.Fatalf("session drain did not time out promptly: %s", elapsed)

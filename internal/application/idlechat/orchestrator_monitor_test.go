@@ -219,9 +219,9 @@ func TestEmitTopicUsesTopicEventOutsideConversationTurns(t *testing.T) {
 	memory := session.NewCentralMemory()
 	o := NewIdleChatOrchestrator(nil, memory, []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
 	var emitted []TimelineEvent
-	o.SetEventEmitter(func(ev TimelineEvent) <-chan struct{} {
+	o.SetEventEmitter(func(ev TimelineEvent) TTSLifecycle {
 		emitted = append(emitted, ev)
-		return nil
+		return TTSLifecycle{}
 	})
 
 	o.emitTopicToTimeline("idle-topic-contract", "記憶と風景の関係", StrategyExternalStimulus)

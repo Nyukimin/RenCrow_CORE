@@ -123,7 +123,7 @@ func buildIdleChatRuntime(
 				idleChatTTSPrefetch.Push(ev)
 			}
 		})
-		idleChatOrch.SetEventEmitter(func(ev idlechat.TimelineEvent) <-chan struct{} {
+		idleChatOrch.SetEventEmitter(func(ev idlechat.TimelineEvent) idlechat.TTSLifecycle {
 			if ev.Type != "idlechat.tts" {
 				viewerType := ev.Type
 				if viewerType == "idlechat.viewer" {
@@ -152,13 +152,13 @@ func buildIdleChatRuntime(
 				deps.eventHub.OnEvent(viewerEvent)
 			}
 			if ev.Type == "idlechat.viewer" {
-				return nil
+				return idlechat.TTSLifecycle{}
 			}
 			if ev.Type == "idlechat.message" && idleChatTTSPrefetch != nil && idleChatTTSPrefetch.HasActive(ev.SessionID, ev.MessageID) {
-				if waitCh, ok := idleChatTTSPrefetch.Close(ev); ok {
-					return waitCh
+				if lifecycle, ok := idleChatTTSPrefetch.Close(ev); ok {
+					return lifecycle
 				}
-				return nil
+				return idlechat.TTSLifecycle{}
 			}
 			return emitIdleChatTTSAsync(ttsBridge, ev)
 		})

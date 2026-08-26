@@ -29,7 +29,7 @@ const (
 
 var idleChatTTSWaitTimeout = 60 * time.Second
 
-var idleChatTTSSessionDrainTimeout = 60 * time.Second
+var idleChatTTSSessionDrainTimeout = 120 * time.Second
 
 var idleChatLLMGenerateTimeout = 45 * time.Second
 
@@ -93,6 +93,14 @@ type TimelineEvent struct {
 	Strategy   TopicStrategy
 }
 
+// TTSLifecycle separates synthesis readiness from the terminal state of the
+// complete TTS session. Playback acknowledgements are deliberately not part
+// of this lifecycle; they only release playback-owned pending state.
+type TTSLifecycle struct {
+	Ready <-chan struct{}
+	Done  <-chan struct{}
+}
+
 type TTSPrefetchEvent struct {
 	SessionID string
 	MessageID string
@@ -154,7 +162,7 @@ type IdleChatOrchestrator struct {
 	forecastStep              int
 	nextTopicAt               time.Time
 	history                   []SessionSummary
-	emitEvent                 func(TimelineEvent) <-chan struct{}
+	emitEvent                 func(TimelineEvent) TTSLifecycle
 	emitTTSPrefetch           func(TTSPrefetchEvent)
 	reportTTSTimeout          func(TTSTimeoutEvent)
 	topicStore                *TopicStore
@@ -480,4 +488,5 @@ func formatPersonaEventTime(t time.Time) string {
 }
 
 // SetEventEmitter sets an optional timeline event emitter used by viewer SSE.
-// The callback returns a channel that closes when TTS playback completes (nil = no TTS).
+// The callback returns synthesis readiness and terminal session channels. Viewer
+// playback acknowledgements are intentionally outside this lifecycle.

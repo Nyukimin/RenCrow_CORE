@@ -184,6 +184,22 @@ func (s *PublicSessionStore) Clear(internalSessionID string) {
 	s.mu.Unlock()
 }
 
+// Retire removes a route while retaining a stale marker so late chunk or
+// completion callbacks cannot recreate an already-cancelled session.
+func (s *PublicSessionStore) Retire(internalSessionID string) {
+	if s == nil {
+		return
+	}
+	internalSessionID = strings.TrimSpace(internalSessionID)
+	if internalSessionID == "" {
+		return
+	}
+	s.mu.Lock()
+	s.stale[internalSessionID] = s.generation
+	delete(s.routes, internalSessionID)
+	s.mu.Unlock()
+}
+
 func (s *PublicSessionStore) ClearByResponse(responseID string) {
 	if s == nil {
 		return
@@ -195,6 +211,26 @@ func (s *PublicSessionStore) ClearByResponse(responseID string) {
 	s.mu.Lock()
 	for internalSessionID, route := range s.routes {
 		if route != nil && route.Response() == responseID {
+			delete(s.routes, internalSessionID)
+			break
+		}
+	}
+	s.mu.Unlock()
+}
+
+// RetireByResponse removes a response route while retaining its stale marker.
+func (s *PublicSessionStore) RetireByResponse(responseID string) {
+	if s == nil {
+		return
+	}
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" {
+		return
+	}
+	s.mu.Lock()
+	for internalSessionID, route := range s.routes {
+		if route != nil && route.Response() == responseID {
+			s.stale[internalSessionID] = s.generation
 			delete(s.routes, internalSessionID)
 			break
 		}

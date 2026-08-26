@@ -26,6 +26,6 @@ func handleIdleChatViewerClientCountChanged(count int) {
 	if pending.PendingSessionCount == 0 && pending.PendingResponseCount == 0 {
 		return
 	}
-	clearAllIdleChatTTSPending()
+	clearAllIdleChatTTSPendingStale()
 	log.Printf("[IdleChat] cleared pending TTS playback waits because no Viewer SSE clients remain: pending_sessions=%d pending_responses=%d", pending.PendingSessionCount, pending.PendingResponseCount)
 }

@@ -78,6 +78,12 @@ func PrepareRenCrowSpeechText(text string) (string, bool, error) {
 	return trimmed, false, nil
 }
 
+// SpeechTextRuneCount reports the Unicode code point count used by the
+// RenCrow TTS request contract and its runtime receipts.
+func SpeechTextRuneCount(text string) int {
+	return utf8.RuneCountInString(text)
+}
+
 func HasRenCrowSynthesisAudioOutput(audioPath, audioURL string) bool {
 	return strings.TrimSpace(audioPath) != "" || strings.TrimSpace(audioURL) != ""
 }

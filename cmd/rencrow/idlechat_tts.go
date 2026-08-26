@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
@@ -13,14 +14,91 @@ import (
 
 const idleChatRoute = "IDLECHAT"
 
-func emitIdleChatTTS(ctx context.Context, bridge orchestrator.TTSBridge, ev idlechat.TimelineEvent) (<-chan struct{}, bool) {
+type idleChatTTSLifecycleController struct {
+	ready     chan struct{}
+	done      chan struct{}
+	readyOnce sync.Once
+	doneOnce  sync.Once
+}
+
+var idleChatTTSSynthesisLifecycles sync.Map
+
+func registerIdleChatTTSSynthesisLifecycle(sessionID string, lifecycle *idleChatTTSLifecycleController) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || lifecycle == nil {
+		return
+	}
+	idleChatTTSSynthesisLifecycles.Store(sessionID, lifecycle)
+}
+
+func unregisterIdleChatTTSSynthesisLifecycle(sessionID string, lifecycle *idleChatTTSLifecycleController) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || lifecycle == nil {
+		return
+	}
+	idleChatTTSSynthesisLifecycles.CompareAndDelete(sessionID, lifecycle)
+}
+
+func notifyIdleChatTTSSynthesisReady(sessionID string) {
+	value, ok := idleChatTTSSynthesisLifecycles.Load(strings.TrimSpace(sessionID))
+	if !ok {
+		return
+	}
+	if lifecycle, ok := value.(*idleChatTTSLifecycleController); ok {
+		lifecycle.signalReady()
+	}
+}
+
+func newIdleChatTTSLifecycleController() *idleChatTTSLifecycleController {
+	return &idleChatTTSLifecycleController{
+		ready: make(chan struct{}),
+		done:  make(chan struct{}),
+	}
+}
+
+func (c *idleChatTTSLifecycleController) lifecycle() idlechat.TTSLifecycle {
+	if c == nil {
+		return idlechat.TTSLifecycle{}
+	}
+	return idlechat.TTSLifecycle{Ready: c.ready, Done: c.done}
+}
+
+func (c *idleChatTTSLifecycleController) signalReady() {
+	if c == nil {
+		return
+	}
+	c.readyOnce.Do(func() { close(c.ready) })
+}
+
+func (c *idleChatTTSLifecycleController) signalDone() {
+	if c == nil {
+		return
+	}
+	c.signalReady()
+	c.doneOnce.Do(func() { close(c.done) })
+}
+
+func emitIdleChatTTS(ctx context.Context, bridge orchestrator.TTSBridge, ev idlechat.TimelineEvent) (idlechat.TTSLifecycle, bool) {
+	controller := newIdleChatTTSLifecycleController()
+	ok := emitIdleChatTTSWithLifecycle(ctx, bridge, ev, controller)
+	return controller.lifecycle(), ok
+}
+
+func emitIdleChatTTSWithLifecycle(ctx context.Context, bridge orchestrator.TTSBridge, ev idlechat.TimelineEvent, lifecycle *idleChatTTSLifecycleController) (ok bool) {
+	if lifecycle == nil {
+		lifecycle = newIdleChatTTSLifecycleController()
+	}
+	defer lifecycle.signalDone()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if bridge == nil || strings.TrimSpace(ev.Content) == "" || !isIdleChatTTSEventType(ev.Type) {
-		return nil, false
+		return false
 	}
 
 	filtered := moduletts.FilterSpeakableText("agent.response", idleChatRoute, formatIdleChatTTSText(ev))
 	if filtered == "" {
-		return nil, false
+		return false
 	}
 	displayText := filtered
 	if isIdleChatTopicAnnouncement(ev) {
@@ -41,7 +119,7 @@ func emitIdleChatTTS(ctx context.Context, bridge orchestrator.TTSBridge, ev idle
 		Now:             time.Now(),
 	})
 	if !ok {
-		return nil, false
+		return false
 	}
 	emotion := moduletts.PlanEmotion(moduletts.EmotionInput{
 		Event: plan.Event,
@@ -56,9 +134,10 @@ func emitIdleChatTTS(ctx context.Context, bridge orchestrator.TTSBridge, ev idle
 
 	expectPlaybackAck := hasIdleChatViewerClients()
 	registerTTSPublicSessionWithMessage(plan.SessionID, plan.PublicSessionID, plan.ResponseID, plan.MessageID, plan.TurnIndex)
-	var waitCh <-chan struct{}
+	registerIdleChatTTSSynthesisLifecycle(plan.SessionID, lifecycle)
+	defer unregisterIdleChatTTSSynthesisLifecycle(plan.SessionID, lifecycle)
 	if expectPlaybackAck {
-		waitCh = registerIdleChatTTSPending(plan.SessionID, plan.ResponseID)
+		registerIdleChatTTSPending(plan.SessionID, plan.ResponseID)
 	} else {
 		log.Printf("[IdleChat] TTS playback wait skipped because no Viewer SSE clients are connected: session=%s response=%s", plan.SessionID, plan.ResponseID)
 	}
@@ -78,12 +157,12 @@ func emitIdleChatTTS(ctx context.Context, bridge orchestrator.TTSBridge, ev idle
 		VoiceProfile: plan.VoiceProfile,
 	}); err != nil {
 		if expectPlaybackAck {
-			clearIdleChatTTSPending(plan.SessionID)
+			clearIdleChatTTSPendingStale(plan.SessionID)
 		} else {
-			clearTTSPublicSession(plan.SessionID)
+			retireTTSPublicSession(plan.SessionID)
 		}
 		log.Printf("[IdleChat] TTS start failed: %v", err)
-		return nil, false
+		return false
 	}
 	if displayBridge, ok := bridge.(orchestrator.TTSDisplayBridge); ok {
 		err := displayBridge.PushTextWithDisplay(ctx, plan.SessionID, plan.SpeechText, plan.DisplayText, &emotion)
@@ -93,11 +172,11 @@ func emitIdleChatTTS(ctx context.Context, bridge orchestrator.TTSBridge, ev idle
 				log.Printf("[IdleChat] TTS end after push failure failed: %v", endErr)
 			}
 			if expectPlaybackAck {
-				clearIdleChatTTSPending(plan.SessionID)
+				clearIdleChatTTSPendingStale(plan.SessionID)
 			} else {
-				clearTTSPublicSession(plan.SessionID)
+				retireTTSPublicSession(plan.SessionID)
 			}
-			return waitCh, true
+			return false
 		}
 	} else if err := bridge.PushText(ctx, plan.SessionID, plan.SpeechText, &emotion); err != nil {
 		log.Printf("[IdleChat] TTS push failed: %v", err)
@@ -105,25 +184,26 @@ func emitIdleChatTTS(ctx context.Context, bridge orchestrator.TTSBridge, ev idle
 			log.Printf("[IdleChat] TTS end after push failure failed: %v", endErr)
 		}
 		if expectPlaybackAck {
-			clearIdleChatTTSPending(plan.SessionID)
+			clearIdleChatTTSPendingStale(plan.SessionID)
 		} else {
-			clearTTSPublicSession(plan.SessionID)
+			retireTTSPublicSession(plan.SessionID)
 		}
-		return waitCh, true
+		return false
 	}
+	lifecycle.signalReady()
 	if err := bridge.EndSession(ctx, plan.SessionID); err != nil {
 		if expectPlaybackAck {
-			clearIdleChatTTSPending(plan.SessionID)
+			clearIdleChatTTSPendingStale(plan.SessionID)
 		} else {
-			clearTTSPublicSession(plan.SessionID)
+			retireTTSPublicSession(plan.SessionID)
 		}
 		log.Printf("[IdleChat] TTS end failed: %v", err)
-		return nil, false
+		return false
 	}
 	if !expectPlaybackAck {
 		clearTTSPublicSession(plan.SessionID)
 	}
-	return waitCh, true
+	return true
 }
 
 func isIdleChatTTSEventType(eventType string) bool {
