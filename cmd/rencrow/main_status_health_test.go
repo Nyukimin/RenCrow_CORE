@@ -91,12 +91,45 @@ func TestRunHealthCommand_JSONContract(t *testing.T) {
 		OK        bool   `json:"ok"`
 		Component string `json:"component"`
 		Status    string `json:"status"`
+		Details   struct {
+			Checks []struct {
+				DurationMS float64 `json:"duration_ms"`
+			} `json:"checks"`
+		} `json:"details"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
 	if !payload.OK || payload.Component != "health" || payload.Status != "ok" {
 		t.Fatalf("unexpected payload: %+v", payload)
+	}
+	if len(payload.Details.Checks) != 1 || payload.Details.Checks[0].DurationMS != 5 {
+		t.Fatalf("duration_ms = %+v, want 5 milliseconds", payload.Details.Checks)
+	}
+}
+
+func TestRunHealthCommand_DefaultJSONProjectsDurationAsMilliseconds(t *testing.T) {
+	checker := &fakeHealthChecker{report: domainhealth.HealthReport{
+		Status: domainhealth.StatusOK,
+		Checks: []domainhealth.CheckResult{
+			{Name: "gateway_mio", Status: domainhealth.StatusOK, Message: "ok", Duration: 5 * time.Millisecond},
+		},
+	}}
+	var out, errOut bytes.Buffer
+	code := runHealthCommand(nil, checker, &out, &errOut, fixedNow)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d", code)
+	}
+	var payload struct {
+		Checks []struct {
+			DurationMS float64 `json:"duration_ms"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if len(payload.Checks) != 1 || payload.Checks[0].DurationMS != 5 {
+		t.Fatalf("duration_ms = %+v, want 5 milliseconds", payload.Checks)
 	}
 }
 
@@ -151,6 +184,14 @@ func TestRunStatusCommand_DeepUsageJSON(t *testing.T) {
 	}
 	if _, ok := payload.Details["usage"]; !ok {
 		t.Fatalf("expected usage details: %+v", payload.Details)
+	}
+	checks, ok := payload.Details["checks"].([]any)
+	if !ok || len(checks) != 1 {
+		t.Fatalf("expected one check detail: %+v", payload.Details["checks"])
+	}
+	check, ok := checks[0].(map[string]any)
+	if !ok || check["duration_ms"] != float64(50) {
+		t.Fatalf("duration_ms = %#v, want 50 milliseconds", check["duration_ms"])
 	}
 }
 

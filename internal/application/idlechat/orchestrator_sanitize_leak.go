@@ -97,8 +97,6 @@ func hasInternalReasoningLeak(s string) bool {
 		"キャラクター（",
 		"**現在の状況**",
 		"**目標**",
-		"1. **",
-		"2. **",
 		"好的",
 		"我现在需要",
 		"用户",
@@ -115,20 +113,28 @@ func hasInternalReasoningLeak(s string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+var dialogueStructuredListLineRe = regexp.MustCompile(`^\d+[.)．]\s*`)
+
+func hasDialogueStructuredListLeak(s string) bool {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return false
+	}
 	lines := strings.Split(trimmed, "\n")
-	if len(lines) >= 3 {
-		bullets := 0
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") || regexp.MustCompile(`^\d+[.)．]\s*`).MatchString(line) {
-				bullets++
-			}
-		}
-		if bullets >= 2 {
-			return true
+	if len(lines) < 3 {
+		return false
+	}
+	bullets := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") || dialogueStructuredListLineRe.MatchString(line) {
+			bullets++
 		}
 	}
-	return false
+	return bullets >= 2
 }
 
 func englishDominantIdleText(s string) bool {

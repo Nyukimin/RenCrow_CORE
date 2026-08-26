@@ -228,6 +228,14 @@ func TestPromptInstructionLeakIsRejectedAsUnusableIdleResponse(t *testing.T) {
 	}
 }
 
+func TestSanitizeIdleResponseRejectsStructuredSummaryList(t *testing.T) {
+	raw := "1. まず状況を整理します。\n2. 次に必要な条件を確認します。\n3. 最後に結論を出します。"
+	got := sanitizeIdleResponse(raw, "文化交流")
+	if got != "" {
+		t.Fatalf("structured summary list must remain unusable for dialogue: %q", got)
+	}
+}
+
 func TestSanitizeIdleResponseExtractsStraightQuotedPossibleResponse(t *testing.T) {
 	raw := `Possible response: "雨上がりの空気は、薄い青色だったような気がする。でも、古い傘の柄にまだ水滴が残っていた。"`
 
@@ -733,6 +741,28 @@ func TestSanitizeIdleSummaryResponseDropsEnglishMetaReasoningAndKeepsBody(t *tes
 	}
 	if !strings.Contains(got, "錆びた鍵") {
 		t.Fatalf("summary body was not preserved: %q", got)
+	}
+}
+
+func TestSanitizeIdleSummaryResponseAllowsThreeNumberedJapanesePoints(t *testing.T) {
+	raw := "1. いちばん面白かった点は、古書店の棚から落ちた手紙に雨の跡と消えた宛名が残っていたことです。\n2. 話を前に進めたのは、手紙をすぐ開けず配達記録と封筒の濡れ方を調べる選択でした。\n3. 次に広がりそうなのは、宛名を消した人が誰を守ろうとしたのかという観点です。"
+	got := sanitizeIdleSummaryResponse(raw, "郵便と古書店")
+	if got != raw {
+		t.Fatalf("valid numbered summary was rejected or changed: got=%q want=%q", got, raw)
+	}
+}
+
+func TestSummarizeByWorkerKeepsThreeNumberedJapanesePoints(t *testing.T) {
+	summary := "1. いちばん面白かった点は、古書店の棚から落ちた手紙に雨の跡と消えた宛名が残っていたことです。\n2. 話を前に進めたのは、手紙をすぐ開けず配達記録と封筒の濡れ方を調べる選択でした。\n3. 次に広がりそうなのは、宛名を消した人が誰を守ろうとしたのかという観点です。"
+	provider := &capturingIdleProvider{response: summary}
+	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+
+	got := o.summarizeByWorker("郵便と古書店", []string{
+		"古書店の棚から手紙が落ちた。",
+		"配達記録を調べることにした。",
+	})
+	if got != summary {
+		t.Fatalf("summary fell back to transcript or changed: got=%q want=%q", got, summary)
 	}
 }
 

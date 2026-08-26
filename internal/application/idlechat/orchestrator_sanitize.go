@@ -14,6 +14,9 @@ func sanitizeIdleResponseForSpeaker(s, topic, speaker string) string {
 	if out == "" {
 		return out
 	}
+	if hasDialogueStructuredListLeak(out) {
+		return ""
+	}
 	for _, marker := range []string{"<|channel", "channel>thought", "channel=analysis"} {
 		if idx := strings.Index(strings.ToLower(out), strings.ToLower(marker)); idx >= 0 {
 			out = strings.TrimSpace(out[:idx])

@@ -48,8 +48,42 @@ func cmdStatus() {
 	}
 }
 
+type healthCheckCLIProjection struct {
+	Name       string              `json:"name"`
+	Status     domainhealth.Status `json:"status"`
+	Message    string              `json:"message,omitempty"`
+	DurationMS int64               `json:"duration_ms"`
+}
+
+type healthReportCLIProjection struct {
+	Status    domainhealth.Status        `json:"status"`
+	Checks    []healthCheckCLIProjection `json:"checks"`
+	Timestamp time.Time                  `json:"timestamp"`
+}
+
+func projectHealthReportForCLI(report domainhealth.HealthReport) healthReportCLIProjection {
+	var checks []healthCheckCLIProjection
+	if report.Checks != nil {
+		checks = make([]healthCheckCLIProjection, len(report.Checks))
+		for i, check := range report.Checks {
+			checks[i] = healthCheckCLIProjection{
+				Name:       check.Name,
+				Status:     check.Status,
+				Message:    check.Message,
+				DurationMS: check.Duration.Milliseconds(),
+			}
+		}
+	}
+	return healthReportCLIProjection{
+		Status:    report.Status,
+		Checks:    checks,
+		Timestamp: report.Timestamp,
+	}
+}
+
 func runHealthCommand(args []string, checker healthChecker, out io.Writer, _ io.Writer, now func() time.Time) int {
 	report := checker.RunChecks(context.Background())
+	projected := projectHealthReportForCLI(report)
 	if hasFlag(args, "--json") {
 		writeJSONCLI(out, map[string]any{
 			"ok":        report.Status != domainhealth.StatusDown,
@@ -57,11 +91,11 @@ func runHealthCommand(args []string, checker healthChecker, out io.Writer, _ io.
 			"component": "health",
 			"status":    report.Status,
 			"details": map[string]any{
-				"checks": report.Checks,
+				"checks": projected.Checks,
 			},
 		}, true)
 	} else {
-		writeJSONCLI(out, report, true)
+		writeJSONCLI(out, projected, true)
 	}
 	if report.Status == domainhealth.StatusDown {
 		return 1
@@ -80,6 +114,7 @@ func runStatusCommand(
 	now func() time.Time,
 ) int {
 	report := checker.RunChecks(context.Background())
+	projected := projectHealthReportForCLI(report)
 	deep := hasFlag(args, "--deep")
 	usage := hasFlag(args, "--usage")
 	jsonOut := hasFlag(args, "--json")
@@ -101,7 +136,7 @@ func runStatusCommand(
 			},
 		}
 		if deep {
-			details["checks"] = report.Checks
+			details["checks"] = projected.Checks
 			if statsErr == nil {
 				details["execution"] = map[string]int{
 					"running": stats[domainexecution.StatusRunning],
