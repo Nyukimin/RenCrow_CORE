@@ -83,4 +83,8 @@ domain型を変えず、CLI projectionとsummary sanitizerの責務境界で是�
   保存する追加不整合を検出した。
 - 追加REDで実機と同じMarkdown＋空行の3点summaryが3点目だけへ切り詰められることを固定し、
   summary用visible-answer抽出を通常発話から分離した。同testとIdleChat packageのtest／vet／buildは成功した。
-- 最終配備後の保存summary E2Eは後続確認後に追記する。
+- 最終配備後のIdleChat正規session `idle-1787734252-topic-00`は12発話、summary生成、保存、
+  summary TTS、session完了まで到達した。生成されたMarkdown＋空行の`1.`〜`3.`全体が
+  `/viewer/idlechat/logs`の`summary`へ保持され、同sessionで`summary sanitize failed`は0件だった。
+- 同sessionのsummary TTSは60秒timeout後に遅延chunkをdrainした。summaryの生成／sanitize／保存と
+  session完了は成功しており、本修正とは別のTTS遅延観測として分離する。
