@@ -661,6 +661,26 @@ launchd操作を直接行いません。stdoutはmachine-readableなresponse／r
 COREの`request_id`、`trace_id`、phase、error codeを利用者が追跡できる形で表示します。Agent-originated
 requestもCORE内の認証済みscopeを通る同じAPI／receipt経路を使い、Agentが任意commandを直接実行しません。
 
+### Channels CLI
+
+`rencrow channels list --json`は、設定済みchannelを`details.channels`へ返します。通知先を解決できない
+状態で`rencrow channels send --message <text> --json`を実行した場合は、exit codeを非0とし、stdoutへ
+次の機械可読receiptを出力します。destination errorのfilesystem path、secret、内部エラー本文はJSONにも
+stderrにも出しません。非JSON実行時は従来の詳細なstderr表示を維持します。
+
+```json
+{
+  "ok": false,
+  "timestamp": "2026-03-10T12:00:00Z",
+  "component": "channels",
+  "status": "unavailable",
+  "code": "E_NOTIFICATION_DESTINATION_UNAVAILABLE"
+}
+```
+
+message欠落、adapter未設定、channel probe失敗、送信失敗はそれぞれ既存の非0終了とstderr契約を
+維持し、このdestination-unavailable receiptとは別に扱います。
+
 ### Trade status
 
 `GET /viewer/trade/status`はCOREからRenCrow_TRADEの正規private APIへ接続した結果だけを返します。

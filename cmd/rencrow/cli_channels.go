@@ -213,7 +213,18 @@ func runChannelsCommandWithDestination(
 			return 1
 		}
 		if destinationErr != nil {
-			fmt.Fprintf(errOut, "notification destination unavailable: %v\n", destinationErr)
+			if jsonOut {
+				writeJSONCLI(out, map[string]any{
+					"ok":        false,
+					"timestamp": now().Format(time.RFC3339),
+					"component": "channels",
+					"status":    "unavailable",
+					"code":      "E_NOTIFICATION_DESTINATION_UNAVAILABLE",
+				}, true)
+				fmt.Fprintln(errOut, "notification destination unavailable")
+			} else {
+				fmt.Fprintf(errOut, "notification destination unavailable: %v\n", destinationErr)
+			}
 			return 1
 		}
 		outboundRegistry, ok := registry.(outboundChannelRegistry)

@@ -128,3 +128,67 @@ func TestRunChannelsCommand_ProbeJSON_Down(t *testing.T) {
 		t.Fatalf("expected ok=false payload")
 	}
 }
+
+func TestRunChannelsCommand_SendJSONMissingDestinationReturnsReceipt(t *testing.T) {
+	var out, errOut bytes.Buffer
+	destinationErr := errors.New("target file=/private/rencrow/line-target.json token=secret-token")
+
+	code := runChannelsCommandWithDestination(
+		[]string{"send", "--message", "test", "--json"},
+		&fakeChannelRegistry{},
+		notificationDestination{},
+		destinationErr,
+		&out,
+		&errOut,
+		fixedNow,
+	)
+
+	if code == 0 {
+		t.Fatal("missing destination should fail")
+	}
+	var payload struct {
+		OK        bool   `json:"ok"`
+		Component string `json:"component"`
+		Status    string `json:"status"`
+		Code      string `json:"code"`
+		Timestamp string `json:"timestamp"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json receipt: %v (stdout=%q)", err, out.String())
+	}
+	if payload.OK || payload.Component != "channels" || payload.Status != "unavailable" ||
+		payload.Code != "E_NOTIFICATION_DESTINATION_UNAVAILABLE" {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+	if payload.Timestamp != fixedNow().Format(time.RFC3339) {
+		t.Fatalf("unexpected timestamp: %q", payload.Timestamp)
+	}
+	if bytes.Contains(errOut.Bytes(), []byte("/private/rencrow/line-target.json")) ||
+		bytes.Contains(errOut.Bytes(), []byte("secret-token")) {
+		t.Fatalf("stderr leaked destination details: %q", errOut.String())
+	}
+}
+
+func TestRunChannelsCommand_SendMissingDestinationNonJSONKeepsStderr(t *testing.T) {
+	var out, errOut bytes.Buffer
+
+	code := runChannelsCommandWithDestination(
+		[]string{"send", "--message", "test"},
+		&fakeChannelRegistry{},
+		notificationDestination{},
+		errors.New("target not configured"),
+		&out,
+		&errOut,
+		fixedNow,
+	)
+
+	if code == 0 {
+		t.Fatal("missing destination should fail")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("non-JSON command unexpectedly wrote stdout: %q", out.String())
+	}
+	if errOut.String() != "notification destination unavailable: target not configured\n" {
+		t.Fatalf("unexpected stderr: %q", errOut.String())
+	}
+}
