@@ -35,6 +35,24 @@ type renCrowTTSSession struct {
 	nextChunk   int
 }
 
+const renCrowTTSMaxConcurrentSynthesis = 2
+
+type renCrowTTSPlanRequest struct {
+	chunkIndex  int
+	planIndex   int
+	item        ttsChunkPlanItem
+	speechText  string
+	requestBody []byte
+}
+
+type renCrowTTSPlanResult struct {
+	request   renCrowTTSPlanRequest
+	audioPath string
+	audioURL  string
+	sinkPath  string
+	err       error
+}
+
 type RenCrowTTSBridge struct {
 	cfg      RenCrowTTSBridgeConfig
 	client   *http.Client
@@ -99,11 +117,11 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 		return nil
 	}
 
-	session := b.getOrCreateSession(sessionID)
+	session, firstChunk := b.reserveSessionChunks(sessionID, len(plan))
 	characterID := session.characterID
 	responseID := session.responseID
 	voiceID := moduletts.ChooseNonEmpty(session.voiceID, b.cfg.VoiceID)
-
+	requests := make([]renCrowTTSPlanRequest, 0, len(plan))
 	for planIndex, item := range plan {
 		speechText := moduletts.EnsureEmotionPrefixForCharacter(item.SpeechText, emotion, characterID)
 		payload, err := moduletts.BuildSynthesisPayload(moduletts.SynthesisPayloadInput{
@@ -120,57 +138,114 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 		if err != nil {
 			return fmt.Errorf("marshal /synthesis request: %w", err)
 		}
-		chunkIndex := session.nextChunk
-		startedAt := time.Now()
-		log.Printf("[TTS] synthesis request start: session=%s chunk=%d plan_index=%d/%d speech_runes=%d", sessionID, chunkIndex, planIndex+1, len(plan), moduletts.SpeechTextRuneCount(speechText))
-		body, err := b.postSynthesisWithRetry(ctx, reqBody, sessionID, chunkIndex)
-		if err != nil {
-			log.Printf("[TTS] synthesis request failed: session=%s chunk=%d elapsed_ms=%d error=%v", sessionID, chunkIndex, time.Since(startedAt).Milliseconds(), err)
-			return err
-		}
-		log.Printf("[TTS] synthesis request done: session=%s chunk=%d elapsed_ms=%d", sessionID, chunkIndex, time.Since(startedAt).Milliseconds())
+		requests = append(requests, renCrowTTSPlanRequest{
+			chunkIndex:  firstChunk + planIndex,
+			planIndex:   planIndex,
+			item:        item,
+			speechText:  speechText,
+			requestBody: reqBody,
+		})
+	}
 
-		out, err := decodeGatewaySynthesisResponse(body)
-		if err != nil {
-			return err
-		}
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make([]chan renCrowTTSPlanResult, len(requests))
+	type synthesisJob struct {
+		index   int
+		request renCrowTTSPlanRequest
+	}
+	jobs := make(chan synthesisJob, len(requests))
+	for index, request := range requests {
+		results[index] = make(chan renCrowTTSPlanResult, 1)
+		jobs <- synthesisJob{index: index, request: request}
+	}
+	close(jobs)
+	var workers sync.WaitGroup
+	workerCount := min(renCrowTTSMaxConcurrentSynthesis, len(requests))
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for job := range jobs {
+				if err := workCtx.Err(); err != nil {
+					results[job.index] <- renCrowTTSPlanResult{request: job.request, err: err}
+					continue
+				}
+				results[job.index] <- b.synthesizePlanRequest(workCtx, sessionID, len(requests), job.request)
+			}
+		}()
+	}
 
-		audioPath := strings.TrimSpace(out.AudioPath)
-		audioURL, err := resolveGatewayRelayURL(b.cfg.HTTPBaseURL, audioPath)
-		if err != nil {
-			return err
+	for index := range results {
+		result := <-results[index]
+		if result.err != nil {
+			cancel()
+			workers.Wait()
+			return result.err
 		}
-		sinkAudioPath := audioPath
-		if b.cfg.DownloadAudio {
-			sinkAudioPath, audioURL, err = downloadGatewayAudio(ctx, b.client, b.cfg.HTTPBaseURL, audioPath, b.cfg.OutputDir, "viewer-tts")
-			if err != nil {
-				return err
-			}
-			if rel, ok := moduletts.LocalAudioRelPath(b.cfg.OutputDir, sinkAudioPath); ok {
-				audioPath = rel
-			} else {
-				audioPath = sinkAudioPath
-			}
-		}
+		request := result.request
 		ch := audioChunk{
-			ChunkIndex: session.nextChunk,
-			Text:       speechText,
-			AudioPath:  sinkAudioPath,
-			AudioURL:   audioURL,
-			PauseAfter: chunkPauseForText(speechText),
+			ChunkIndex: request.chunkIndex,
+			Text:       request.speechText,
+			AudioPath:  result.sinkPath,
+			AudioURL:   result.audioURL,
+			PauseAfter: chunkPauseForText(request.speechText),
 		}
-		session.nextChunk++
-
 		if b.cfg.OnChunkReady != nil {
-			b.cfg.OnChunkReady(sessionID, responseID, ch.ChunkIndex, characterID, speechText, strings.TrimSpace(item.DisplayText), audioPath, ch.AudioURL)
+			b.cfg.OnChunkReady(sessionID, responseID, ch.ChunkIndex, characterID, request.speechText, strings.TrimSpace(request.item.DisplayText), result.audioPath, ch.AudioURL)
 		}
 		if b.cfg.Sink != nil {
 			if err := b.cfg.Sink.SubmitChunk(ctx, sessionID, ch); err != nil {
+				cancel()
+				workers.Wait()
 				return err
 			}
 		}
 	}
+	workers.Wait()
 	return nil
+}
+
+func (b *RenCrowTTSBridge) synthesizePlanRequest(ctx context.Context, sessionID string, planLength int, request renCrowTTSPlanRequest) renCrowTTSPlanResult {
+	result := renCrowTTSPlanResult{request: request}
+	startedAt := time.Now()
+	log.Printf("[TTS] synthesis request start: session=%s chunk=%d plan_index=%d/%d speech_runes=%d", sessionID, request.chunkIndex, request.planIndex+1, planLength, moduletts.SpeechTextRuneCount(request.speechText))
+	body, err := b.postSynthesisWithRetry(ctx, request.requestBody, sessionID, request.chunkIndex)
+	if err != nil {
+		log.Printf("[TTS] synthesis request failed: session=%s chunk=%d elapsed_ms=%d error=%v", sessionID, request.chunkIndex, time.Since(startedAt).Milliseconds(), err)
+		result.err = err
+		return result
+	}
+	log.Printf("[TTS] synthesis request done: session=%s chunk=%d elapsed_ms=%d", sessionID, request.chunkIndex, time.Since(startedAt).Milliseconds())
+
+	out, err := decodeGatewaySynthesisResponse(body)
+	if err != nil {
+		result.err = err
+		return result
+	}
+	audioPath := strings.TrimSpace(out.AudioPath)
+	audioURL, err := resolveGatewayRelayURL(b.cfg.HTTPBaseURL, audioPath)
+	if err != nil {
+		result.err = err
+		return result
+	}
+	sinkAudioPath := audioPath
+	if b.cfg.DownloadAudio {
+		sinkAudioPath, audioURL, err = downloadGatewayAudio(ctx, b.client, b.cfg.HTTPBaseURL, audioPath, b.cfg.OutputDir, "viewer-tts")
+		if err != nil {
+			result.err = err
+			return result
+		}
+		if rel, ok := moduletts.LocalAudioRelPath(b.cfg.OutputDir, sinkAudioPath); ok {
+			audioPath = rel
+		} else {
+			audioPath = sinkAudioPath
+		}
+	}
+	result.audioPath = audioPath
+	result.audioURL = audioURL
+	result.sinkPath = sinkAudioPath
+	return result
 }
 
 func (b *RenCrowTTSBridge) EndSession(ctx context.Context, sessionID string) error {

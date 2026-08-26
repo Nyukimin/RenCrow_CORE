@@ -32,6 +32,8 @@ func (p *capturingDailySemanticProvider) Generate(_ context.Context, req llm.Gen
 	p.requests = append(p.requests, req)
 	prompt := req.Messages[len(req.Messages)-1].Content
 	switch {
+	case strings.Contains(prompt, "工程: 記事統合分析"):
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"原文を日本語へ忠実に翻訳した本文です。","terms":[{"term":"RAG","explanation":"本文だけでは意味を特定できません。","needs_lookup":true,"lookup_query":"RAG 公式 定義"}],"summary":"記事の要約です。","perspective":"Shiroの見解: 記事への見解です。"}]}`}, nil
 	case strings.Contains(prompt, "工程: 原文翻訳"):
 		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"原文を日本語へ忠実に翻訳した本文です。"}]}`}, nil
 	case strings.Contains(prompt, "工程: 用語抽出"):
@@ -153,6 +155,33 @@ func TestTranslateDailySourceBodiesRestoresStableOrderAfterJapaneseBypass(t *tes
 	}
 }
 
+func TestAnalyzeDailySourceBodiesUsesOneRequestAndPreservesClearlyJapaneseBody(t *testing.T) {
+	body := strings.Repeat("日本語の記事本文です。", 12)
+	provider := &scriptedDailyOutputProvider{responses: []string{
+		`{"items":[{"index":0,"translated_body":"LLMが返した値は採用しません。","terms":[],"summary":"記事本文の要約です。","perspective":"Shiroの見解: 記事本文を確認した見解です。"}]}`,
+	}}
+	analyses, err := analyzeDailySourceBodies(context.Background(), provider, []dailySourceBriefInput{{Index: 8, Body: body}})
+	if err != nil {
+		t.Fatalf("analyzeDailySourceBodies() error = %v", err)
+	}
+	if provider.requests.Load() != 1 {
+		t.Fatalf("integrated analysis requests = %d, want 1", provider.requests.Load())
+	}
+	if len(analyses) != 1 || analyses[0].Index != 8 || analyses[0].TranslatedBody != body {
+		t.Fatalf("analyses = %#v, want deterministic Japanese projection", analyses)
+	}
+}
+
+func TestParseDailyArticleAnalysisRejectsMissingEnglishTranslation(t *testing.T) {
+	_, err := parseDailyArticleAnalysis(
+		`{"items":[{"index":0,"translated_body":"","terms":[],"summary":"記事の要約です。","perspective":"Shiroの見解: 見解です。"}]}`,
+		[]dailySourceBriefInput{{Index: 0, Body: strings.Repeat("English article body. ", 8)}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "翻訳") {
+		t.Fatalf("parseDailyArticleAnalysis() error = %v, want translation validation error", err)
+	}
+}
+
 func TestGenerateDailyBriefLLMLogsBoundedStageReceipt(t *testing.T) {
 	provider := &capturingDailySemanticProvider{}
 	var logs bytes.Buffer
@@ -195,8 +224,8 @@ func TestDailySemanticRequestsUseLowReasoningEffort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildDailySourceBriefBatch: %v", err)
 	}
-	if len(provider.requests) != 4 {
-		t.Fatalf("日次semantic request数 = %d, want 4", len(provider.requests))
+	if len(provider.requests) != 2 {
+		t.Fatalf("日次semantic request数 = %d, want 2 (統合分析 + 不明語補足)", len(provider.requests))
 	}
 	for index, req := range provider.requests {
 		if req.ReasoningEffort != llm.ReasoningEffortLow {
@@ -230,6 +259,8 @@ func (p *chatPriorityDailyBriefProvider) Generate(ctx context.Context, req llm.G
 	}
 	prompt := req.Messages[len(req.Messages)-1].Content
 	switch {
+	case strings.Contains(prompt, "工程: 記事統合分析"):
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"中断後に原文を分析しました。","terms":[],"summary":"再開後のサマリです。","perspective":"Shiroの見解: 対話を優先してから再開しました。"}]}`}, nil
 	case strings.Contains(prompt, "工程: 原文翻訳"):
 		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"中断後に原文翻訳を再開しました。"}]}`}, nil
 	case strings.Contains(prompt, "工程: 用語抽出"):
@@ -251,6 +282,8 @@ func (p *oneArticleAtATimeProvider) Generate(_ context.Context, req llm.Generate
 		return llm.GenerateResponse{}, errors.New("2件目の処理失敗")
 	}
 	switch {
+	case strings.Contains(prompt, "工程: 記事統合分析"):
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"1件目の原文を日本語に翻訳しました。","terms":[],"summary":"1件目のサマリです。","perspective":"Shiroの見解: 1件目の見解です。"}]}`}, nil
 	case strings.Contains(prompt, "工程: 原文翻訳"):
 		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"1件目の原文を日本語に翻訳しました。"}]}`}, nil
 	case strings.Contains(prompt, "工程: 用語抽出"):
@@ -462,8 +495,8 @@ func TestEnrichCurrentDailySeedsPausesForForegroundChatAndResumesWithoutLosingAr
 	if got.EnrichmentStatus != "ready" || got.NewsSeedItems[0].TranslatedBody == "" || got.NewsSeedItems[0].Summary == "" {
 		t.Fatalf("中断した記事を失わずに完了する必要があります: %+v", got)
 	}
-	if requests := provider.requests.Load(); requests != 4 {
-		t.Fatalf("cancelされた翻訳1回と再開後の3工程だけを実行する必要があります: requests=%d", requests)
+	if requests := provider.requests.Load(); requests != 2 {
+		t.Fatalf("cancelされた統合分析1回と再開後の統合分析だけを実行する必要があります: requests=%d", requests)
 	}
 	if nonStreaming := provider.nonStreaming.Load(); nonStreaming != 0 {
 		t.Fatalf("物理backendへcancelを伝播するため日次LLM requestはstreamingである必要があります: non_streaming=%d", nonStreaming)
@@ -538,6 +571,8 @@ func (p *supersededDailyEnrichmentProvider) Generate(ctx context.Context, req ll
 
 func dailyEnrichmentTestResponse(prompt, label string) (llm.GenerateResponse, error) {
 	switch {
+	case strings.Contains(prompt, "工程: 記事統合分析"):
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"` + label + `の原文翻訳です。","terms":[],"summary":"` + label + `の要約です。","perspective":"Shiroの見解: ` + label + `の見解です。"}]}`}, nil
 	case strings.Contains(prompt, "工程: 原文翻訳"):
 		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"` + label + `の原文翻訳です。"}]}`}, nil
 	case strings.Contains(prompt, "工程: 用語抽出"):

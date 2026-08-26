@@ -15,6 +15,19 @@ func (b *RenCrowTTSBridge) getOrCreateSession(sessionID string) *renCrowTTSSessi
 	return s
 }
 
+func (b *RenCrowTTSBridge) reserveSessionChunks(sessionID string, count int) (renCrowTTSSession, int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	session, ok := b.sessions[sessionID]
+	if !ok {
+		session = &renCrowTTSSession{voiceID: b.cfg.VoiceID}
+		b.sessions[sessionID] = session
+	}
+	first := session.nextChunk
+	session.nextChunk += count
+	return *session, first
+}
+
 func normalizeSynthesisURL(base string) string {
 	base = strings.TrimRight(strings.TrimSpace(base), "/")
 	if base == "" {

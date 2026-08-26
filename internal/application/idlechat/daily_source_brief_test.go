@@ -43,6 +43,9 @@ func (p *orderedDailyBriefProvider) Generate(_ context.Context, req llm.Generate
 	p.requests = append(p.requests, req)
 	prompt := req.Messages[len(req.Messages)-1].Content
 	switch {
+	case strings.Contains(prompt, "工程: 記事統合分析"):
+		*p.events = append(*p.events, "LLM:記事統合分析")
+		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"新しいRAG検索支援機能を提供します。LLMへの入力に検索資料を追加し、回答を根拠づけます。","terms":[{"term":"LLM","explanation":"文章を生成・理解する大規模言語モデルです。","needs_lookup":false},{"term":"RAG","explanation":"本文だけでは意味を特定できません。","needs_lookup":true,"lookup_query":"RAG 公式 定義"}],"summary":"本文では、RAGを使った新しい検索支援機能が発表されています。","perspective":"Shiroの見解: 評価条件と情報源の品質を確認してから導入判断をするのがよいです。"}]}`}, nil
 	case strings.Contains(prompt, "工程: 原文翻訳"):
 		*p.events = append(*p.events, "LLM:原文翻訳")
 		return llm.GenerateResponse{Content: `{"items":[{"index":0,"translated_body":"新しいRAG検索支援機能を提供します。LLMへの入力に検索資料を追加し、回答を根拠づけます。"}]}`}, nil
@@ -75,7 +78,7 @@ func (p *failingDailyBriefStageProvider) Generate(ctx context.Context, req llm.G
 	return p.orderedDailyBriefProvider.Generate(ctx, req)
 }
 
-func TestBuildDailySourceBriefReadsBodyBeforeSummaryAndSearchesOnlyUnknownTerms(t *testing.T) {
+func TestBuildDailySourceBriefUsesOneIntegratedAnalysisAndSearchesOnlyUnknownTerms(t *testing.T) {
 	articleURL := "https://example.com/articles/rag"
 	definitionURL := "https://example.org/reference/rag"
 	events := []string{}
@@ -101,12 +104,10 @@ func TestBuildDailySourceBriefReadsBodyBeforeSummaryAndSearchesOnlyUnknownTerms(
 	}
 	wantEvents := []string{
 		"本文取得:" + articleURL,
-		"LLM:原文翻訳",
-		"LLM:用語抽出",
+		"LLM:記事統合分析",
 		"用語検索:RAG:RAG 公式 定義",
 		"本文取得:" + definitionURL,
 		"LLM:不明語補足",
-		"LLM:サマリと見解",
 	}
 	if !reflect.DeepEqual(events, wantEvents) {
 		t.Fatalf("工程順序 = %#v, want %#v", events, wantEvents)
@@ -123,16 +124,12 @@ func TestBuildDailySourceBriefReadsBodyBeforeSummaryAndSearchesOnlyUnknownTerms(
 	if got[0].TranslatedBody == "" || got[0].Summary == "" || got[0].Perspective == "" || got[0].SourceReadStatus != "ready" || got[0].ProcessingStatus != "ready" || got[0].ProcessingError != "" {
 		t.Fatalf("ブリーフ = %+v", got[0])
 	}
-	if len(provider.requests) != 4 {
+	if len(provider.requests) != 2 {
 		t.Fatalf("LLM呼び出し回数 = %d", len(provider.requests))
 	}
-	resolutionPrompt := provider.requests[2].Messages[len(provider.requests[2].Messages)-1].Content
+	resolutionPrompt := provider.requests[1].Messages[len(provider.requests[1].Messages)-1].Content
 	if !strings.Contains(resolutionPrompt, "RAGは、検索した外部情報") {
 		t.Fatalf("不明語補足は検索先本文を根拠にする必要があります: %s", resolutionPrompt)
-	}
-	finalPrompt := provider.requests[3].Messages[len(provider.requests[3].Messages)-1].Content
-	if !strings.Contains(finalPrompt, "検索拡張生成の略") || strings.Contains(finalPrompt, "検索結果のスニペット") {
-		t.Fatalf("最終工程は確定済み用語補足を受け取る必要があります: %s", finalPrompt)
 	}
 }
 
@@ -171,7 +168,7 @@ func TestBuildDailySourceBriefDoesNotGuessWhenArticleBodyCannotBeRead(t *testing
 	}
 }
 
-func TestBuildDailySourceBriefPreservesSourceReadSuccessWhenTranslationFails(t *testing.T) {
+func TestBuildDailySourceBriefPreservesSourceReadSuccessWhenIntegratedAnalysisFails(t *testing.T) {
 	articleURL := "https://example.com/articles/translation-failure"
 	events := []string{}
 	research := &dailySourceBriefResearchStub{
@@ -182,13 +179,13 @@ func TestBuildDailySourceBriefPreservesSourceReadSuccessWhenTranslationFails(t *
 		readErrors: map[string]error{}, searchResults: map[string][]DailyTermSearchResult{}, searchErrors: map[string]error{},
 	}
 	provider := &failingDailyBriefStageProvider{
-		failStage:                 "工程: 原文翻訳",
+		failStage:                 "工程: 記事統合分析",
 		orderedDailyBriefProvider: orderedDailyBriefProvider{events: &events},
 	}
 
 	got, err := buildDailySourceBriefBatch(context.Background(), provider, research, []NewsSeed{{Title: "翻訳失敗", URL: articleURL}})
 	if err == nil {
-		t.Fatal("翻訳失敗をbatch errorとして返す必要があります")
+		t.Fatal("記事統合分析失敗をbatch errorとして返す必要があります")
 	}
 	if len(got) != 1 {
 		t.Fatalf("失敗時も項目別の途中状態を返す必要があります: %+v", got)
@@ -205,62 +202,6 @@ func TestBuildDailySourceBriefPreservesSourceReadSuccessWhenTranslationFails(t *
 	}
 	if strings.Contains(item.ProcessingError, "backend detail") {
 		t.Fatalf("backend errorをViewer向け項目へ漏らしてはいけません: %+v", item)
-	}
-}
-
-func TestBuildDailySourceBriefPreservesTranslationWhenTermExtractionFails(t *testing.T) {
-	articleURL := "https://example.com/articles/term-failure"
-	events := []string{}
-	research := &dailySourceBriefResearchStub{
-		events: &events,
-		documents: map[string]DailySourceDocument{
-			articleURL: {URL: articleURL, Text: "本文は取得できました。"},
-		},
-		readErrors: map[string]error{}, searchResults: map[string][]DailyTermSearchResult{}, searchErrors: map[string]error{},
-	}
-	provider := &failingDailyBriefStageProvider{
-		failStage:                 "工程: 用語抽出",
-		orderedDailyBriefProvider: orderedDailyBriefProvider{events: &events},
-	}
-
-	got, err := buildDailySourceBriefBatch(context.Background(), provider, research, []NewsSeed{{Title: "用語抽出失敗", URL: articleURL}})
-	if err == nil || len(got) != 1 {
-		t.Fatalf("用語抽出失敗時も途中状態を返す必要があります: items=%+v err=%v", got, err)
-	}
-	item := got[0]
-	if item.SourceReadStatus != "ready" || item.TranslatedBody == "" || item.ProcessingStatus != "term_extraction_failed" {
-		t.Fatalf("翻訳済み本文を保持して用語抽出失敗を明示する必要があります: %+v", item)
-	}
-	if item.Summary != "用語抽出に失敗したため、サマリを作成できませんでした。" {
-		t.Fatalf("停止工程をサマリ欄でも明示する必要があります: %+v", item)
-	}
-}
-
-func TestBuildDailySourceBriefPreservesEarlierStagesWhenBriefFails(t *testing.T) {
-	articleURL := "https://example.com/articles/brief-failure"
-	events := []string{}
-	research := &dailySourceBriefResearchStub{
-		events: &events,
-		documents: map[string]DailySourceDocument{
-			articleURL: {URL: articleURL, Text: "本文は取得できました。"},
-		},
-		readErrors: map[string]error{}, searchResults: map[string][]DailyTermSearchResult{}, searchErrors: map[string]error{},
-	}
-	provider := &failingDailyBriefStageProvider{
-		failStage:                 "工程: サマリと見解",
-		orderedDailyBriefProvider: orderedDailyBriefProvider{events: &events},
-	}
-
-	got, err := buildDailySourceBriefBatch(context.Background(), provider, research, []NewsSeed{{Title: "考察失敗", URL: articleURL}})
-	if err == nil || len(got) != 1 {
-		t.Fatalf("考察失敗時も途中状態を返す必要があります: items=%+v err=%v", got, err)
-	}
-	item := got[0]
-	if item.SourceReadStatus != "ready" || item.TranslatedBody == "" || len(item.TermNotes) == 0 || item.ProcessingStatus != "brief_failed" {
-		t.Fatalf("考察より前の工程結果を保持する必要があります: %+v", item)
-	}
-	if item.Summary != "サマリと見解の生成に失敗しました。" || item.Perspective != "Shiroの見解: 生成に失敗したため、見解を提示できません。" {
-		t.Fatalf("考察工程の失敗を明示する必要があります: %+v", item)
 	}
 }
 

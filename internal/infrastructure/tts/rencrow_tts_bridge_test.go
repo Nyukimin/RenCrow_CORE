@@ -6,8 +6,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
@@ -175,6 +178,7 @@ func TestRenCrowTTSBridgeUsesGatewayRelayPathForViewer(t *testing.T) {
 }
 
 func TestRenCrowTTSBridge_SplitsTextWithSharedChunkPlan(t *testing.T) {
+	var requestMu sync.Mutex
 	var gotTexts []string
 	var readyTexts []string
 	var readyDisplays []string
@@ -196,7 +200,9 @@ func TestRenCrowTTSBridge_SplitsTextWithSharedChunkPlan(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
+		requestMu.Lock()
 		gotTexts = append(gotTexts, gotBody["text"].(string))
+		requestMu.Unlock()
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -226,9 +232,13 @@ func TestRenCrowTTSBridge_SplitsTextWithSharedChunkPlan(t *testing.T) {
 	if len(gotTexts) != len(want) {
 		t.Fatalf("expected %d synthesis requests, got %d: %#v", len(want), len(gotTexts), gotTexts)
 	}
+	requestCounts := make(map[string]int, len(gotTexts))
+	for _, text := range gotTexts {
+		requestCounts[text]++
+	}
 	for i := range want {
-		if gotTexts[i] != want[i] {
-			t.Fatalf("request text[%d] = %q, want %q", i, gotTexts[i], want[i])
+		if requestCounts[want[i]] != 1 {
+			t.Fatalf("request texts = %#v, want one %q", gotTexts, want[i])
 		}
 		if readyTexts[i] != want[i] || readyDisplays[i] != wantDisplay[i] {
 			t.Fatalf("ready chunk[%d] speech/display = %q/%q, want %q/%q", i, readyTexts[i], readyDisplays[i], want[i], wantDisplay[i])
@@ -239,6 +249,63 @@ func TestRenCrowTTSBridge_SplitsTextWithSharedChunkPlan(t *testing.T) {
 	}
 	if sink.calls != len(want) {
 		t.Fatalf("expected sink submit %d times, got %d", len(want), sink.calls)
+	}
+}
+
+func TestRenCrowTTSBridge_SynthesizesTwoChunksConcurrentlyAndPublishesInOrder(t *testing.T) {
+	var mu sync.Mutex
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	ready := make([]int, 0, 2)
+	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
+		HTTPBaseURL: "http://tts.local",
+		VoiceID:     "mio",
+		OnChunkReady: func(_, _ string, chunkIndex int, _, _, _, _, _ string) {
+			mu.Lock()
+			ready = append(ready, chunkIndex)
+			mu.Unlock()
+		},
+	})
+	bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			return nil, err
+		}
+		started <- payload["text"].(string)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"gateway_service":"tts-gateway","request_id":"req-parallel","audio_path":"/audio/irodori/parallel"}`)),
+		}, nil
+	})}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- bridge.PushText(ctx, "s-parallel", strings.Repeat("あ", 70), nil)
+	}()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-ctx.Done():
+			t.Fatal("two synthesis requests did not start concurrently")
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("PushText() error = %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !reflect.DeepEqual(ready, []int{0, 1}) {
+		t.Fatalf("ready order = %v, want [0 1]", ready)
 	}
 }
 
