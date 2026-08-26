@@ -774,6 +774,25 @@ func TestSummarizeByWorkerKeepsThreeNumberedJapanesePoints(t *testing.T) {
 	}
 }
 
+func TestSummarizeByWorkerCompressesSummaryBeyondTTSChunkBudget(t *testing.T) {
+	longPoint := strings.Repeat("長い説明が続きます", 12) + "。"
+	longSummary := "1. いちばん面白かった点は、" + longPoint + "\n2. 話を前に進めたのは、" + longPoint + "\n3. 次に広がりそうなのは、" + longPoint
+	compact := "1. 面白かった点は、測定値の意味を問い直したことです。\n2. 再測定で偏りを確かめ、停止判断を支えました。\n3. 別構造の可能性を照合する観点へ広がります。"
+	provider := &capturingIdleProvider{responses: []string{longSummary, compact}}
+	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+
+	got := o.summarizeByWorker("地下の測定", []string{"測定値を確認した。", "再測定した。"})
+	if got != compact {
+		t.Fatalf("summary was not compressed: got=%q want=%q", got, compact)
+	}
+	if !idleSummaryFitsTTSBudget(got) {
+		t.Fatalf("compressed summary still exceeds TTS chunk budget: chunks=%d", idleSummaryTTSChunkCount(got))
+	}
+	if len(provider.requests) != 2 {
+		t.Fatalf("Generate calls = %d, want 2", len(provider.requests))
+	}
+}
+
 func TestBuildIdleTurnPromptRequiresDialogueResponse(t *testing.T) {
 	got := buildIdleTurnPrompt("郵便と古書店", "shiro", "古書店に届く宛先不明の手紙って、誰かの記憶みたいだね。", "配達記録が鍵になりそうです。", 1, 1, false)
 

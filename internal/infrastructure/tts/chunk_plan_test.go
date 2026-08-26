@@ -1,6 +1,24 @@
 package tts
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
+)
+
+func TestPlannedChunkLeavesRoomForProviderPrefixAndPunctuation(t *testing.T) {
+	plan := planTTSChunks(strings.Repeat("あ", 100), "")
+	if len(plan) < 2 {
+		t.Fatalf("plan length = %d, want multiple chunks", len(plan))
+	}
+	for i, item := range plan {
+		payloadText := moduletts.EnsureEmotionPrefixForCharacter(item.SpeechText, nil, "mio")
+		if got := moduletts.SpeechTextRuneCount(payloadText); got > moduletts.TTSProviderPayloadMaxRunes {
+			t.Fatalf("payload chunk[%d] runes = %d, max %d", i, got, moduletts.TTSProviderPayloadMaxRunes)
+		}
+	}
+}
 
 func TestPlanTTSChunksKeepsSpeechAndDisplayAlignedForDefaultText(t *testing.T) {
 	plan := planTTSChunks("こんにちは", "")

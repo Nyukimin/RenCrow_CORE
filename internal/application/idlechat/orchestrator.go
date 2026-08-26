@@ -22,6 +22,7 @@ const (
 	idleChatShiroResponseMaxTokens = 1024
 	idleChatShiroRetryMaxTokens    = 1024
 	idleChatShiroSummaryMaxTokens  = 1024
+	idleChatSummaryMaxTTSChunks    = 7
 	idleChatQualityReviewMaxTokens = 900
 	speakerBreak                   = 500 * time.Millisecond  // 話者交代ブレイク（TTS完了後）
 	topicBreak                     = 1000 * time.Millisecond // 次IdleChat session/ドメイン交代ブレイク（TTS完了後）

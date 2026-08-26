@@ -10,8 +10,12 @@ const (
 	TTSChunkMinRunes = 6
 	// Keep synthesis chunks short enough for realtime-ish playback. Long single
 	// sentences can take tens of seconds to generate even when they are natural.
-	TTSChunkTargetRunes          = 34
-	TTSChunkMaxRunes             = 44
+	TTSChunkTargetRunes = 34
+	// Reserve two code points for the provider-facing emotion prefix and a
+	// terminal punctuation mark. The actual Gateway payload therefore remains
+	// within TTSProviderPayloadMaxRunes.
+	TTSChunkMaxRunes             = 42
+	TTSProviderPayloadMaxRunes   = 44
 	TTSChunkSoftBoundaryMinRunes = 18
 )
 

@@ -10,6 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 func detectLoopReason(transcript []string) string {
@@ -245,7 +246,7 @@ func (o *IdleChatOrchestrator) summarizeByWorker(topic string, transcript []stri
 	}
 	messages := []llm.Message{
 		{Role: "system", Content: o.getSystemPrompt("shiro")},
-		{Role: "user", Content: fmt.Sprintf("次のidleChatを要約してください。硬い報告書ではなく、読んで雰囲気が分かる短い要約にしてください。1. いちばん面白かった点 2. 何が話を前に進めたか 3. 次に広がりそうな観点、の順で自然にまとめてください。\n話題: %s%s\n\n%s", topic, summaryContext, body)},
+		{Role: "user", Content: fmt.Sprintf("次のidleChatを要約してください。硬い報告書ではなく、読んで雰囲気が分かる短い要約にしてください。1. いちばん面白かった点 2. 何が話を前に進めたか 3. 次に広がりそうな観点、の順にし、各項目は見出しを含め45文字以内の完結した1文にしてください。前置き、補足、Markdown装飾は不要です。\n話題: %s%s\n\n%s", topic, summaryContext, body)},
 	}
 	req := llm.GenerateRequest{Messages: messages, MaxTokens: 800, Temperature: 0.4}
 	req.MaxTokens = idleChatShiroSummaryMaxTokens
@@ -262,7 +263,37 @@ func (o *IdleChatOrchestrator) summarizeByWorker(topic string, transcript []stri
 		log.Printf("[IdleChat] summary sanitize failed; raw=%q", truncate(strings.TrimSpace(resp.Content), 180))
 		return truncate(body, 200)
 	}
+	if idleSummaryFitsTTSBudget(summary) {
+		return summary
+	}
+	log.Printf("[IdleChat] summary exceeds TTS budget; retrying bounded compression: chunks=%d max=%d", idleSummaryTTSChunkCount(summary), idleChatSummaryMaxTTSChunks)
+	compactRequest := llm.GenerateRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: o.getSystemPrompt("shiro")},
+			{Role: "user", Content: fmt.Sprintf("次の3点要約を意味と順序を保って短くしてください。各項目は見出しを含め45文字以内の完結した1文にし、1. 2. 3. の3行だけを返してください。Markdown装飾、前置き、補足は禁止です。\n\n%s", summary)},
+		},
+		MaxTokens:   320,
+		Temperature: 0.2,
+	}
+	compactResponse, compactErr := o.providerForSpeaker("shiro").Generate(o.idleRunContext(), compactRequest)
+	if compactErr == nil {
+		logIdleRaw("summary.compress", compactResponse.Content)
+		compact := sanitizeIdleSummaryResponse(compactResponse.Content, topic)
+		if compact != "" && idleSummaryFitsTTSBudget(compact) {
+			return compact
+		}
+	}
+	log.Printf("[IdleChat] summary compression failed TTS budget; preserving text summary without TTS-safe claim")
 	return summary
+}
+
+func idleSummaryTTSChunkCount(summary string) int {
+	return len(moduletts.SplitTTSChunks("今回のまとめです。\n" + strings.TrimSpace(summary)))
+}
+
+func idleSummaryFitsTTSBudget(summary string) bool {
+	count := idleSummaryTTSChunkCount(summary)
+	return count > 0 && count <= idleChatSummaryMaxTTSChunks
 }
 
 func (o *IdleChatOrchestrator) dialogueSummaryContext() string {
