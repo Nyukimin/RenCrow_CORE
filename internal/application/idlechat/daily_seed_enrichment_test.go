@@ -438,6 +438,98 @@ func (p *retryableDailyProvider) Generate(_ context.Context, req llm.GenerateReq
 	return dailyEnrichmentTestResponse(req.Messages[len(req.Messages)-1].Content, "再試行後")
 }
 
+type scriptedDailyOutputProvider struct {
+	responses []string
+	requests  atomic.Int32
+}
+
+func (p *scriptedDailyOutputProvider) Name() string { return "scripted-daily-output" }
+
+func (p *scriptedDailyOutputProvider) Generate(_ context.Context, _ llm.GenerateRequest) (llm.GenerateResponse, error) {
+	index := int(p.requests.Add(1)) - 1
+	if index >= len(p.responses) {
+		return llm.GenerateResponse{}, errors.New("scripted daily output exhausted")
+	}
+	return llm.GenerateResponse{Content: p.responses[index]}, nil
+}
+
+func TestTranslateDailySourceBodiesRetriesGeneratedOutputInvalidOnce(t *testing.T) {
+	provider := &scriptedDailyOutputProvider{responses: []string{
+		`{"items":[{"index":0,"translated_body":"壊れた\q"}]}`,
+		`{"items":[{"index":0,"translated_body":"再生成された翻訳です。"}]}`,
+	}}
+	inputs := []dailySourceBriefInput{{Index: 0, SourceURL: "https://example.com/article", Body: "article body"}}
+
+	translations, err := translateDailySourceBodies(context.Background(), provider, inputs)
+	if err != nil {
+		t.Fatalf("translateDailySourceBodies() error = %v", err)
+	}
+	if provider.requests.Load() != 2 {
+		t.Fatalf("generated-output-invalid should consume one regeneration: requests=%d, want 2", provider.requests.Load())
+	}
+	if len(translations) != 1 || translations[0].TranslatedBody != "再生成された翻訳です。" {
+		t.Fatalf("translations = %#v, want regenerated valid output", translations)
+	}
+}
+
+func TestTranslateDailySourceBodiesReturnsSecondGeneratedOutputInvalidAfterTwoCalls(t *testing.T) {
+	invalid := `{"items":[{"index":0,"translated_body":"壊れた\q"}]}`
+	provider := &scriptedDailyOutputProvider{responses: []string{invalid, invalid}}
+	inputs := []dailySourceBriefInput{{Index: 0, SourceURL: "https://example.com/article", Body: "article body"}}
+
+	_, err := translateDailySourceBodies(context.Background(), provider, inputs)
+	if err == nil || !strings.Contains(err.Error(), "応答JSONを解析できません") {
+		t.Fatalf("translateDailySourceBodies() error = %v, want existing parse error", err)
+	}
+	if provider.requests.Load() != 2 {
+		t.Fatalf("generated-output-invalid must be bounded to two provider calls: requests=%d, want 2", provider.requests.Load())
+	}
+}
+
+func TestDailyLLMStagesRetryGeneratedOutputInvalidOnce(t *testing.T) {
+	tests := []struct {
+		name  string
+		valid string
+		run   func(*scriptedDailyOutputProvider) error
+	}{
+		{
+			name:  "term extraction",
+			valid: `{"items":[{"index":0,"terms":[]}]}`,
+			run: func(provider *scriptedDailyOutputProvider) error {
+				_, err := extractDailyTerms(context.Background(), provider, []dailySourceBriefInput{{Index: 0, Body: "本文"}})
+				return err
+			},
+		},
+		{
+			name:  "term resolution",
+			valid: `{"items":[{"item_index":0,"term_index":0,"explanation":"日本語の用語補足です。"}]}`,
+			run: func(provider *scriptedDailyOutputProvider) error {
+				_, err := resolveDailyTerms(context.Background(), provider, []dailyTermLookupEvidence{{ItemIndex: 0, TermIndex: 0, Term: "term", SourceURL: "https://example.com/reference", Body: "本文"}})
+				return err
+			},
+		},
+		{
+			name:  "brief",
+			valid: `{"items":[{"index":0,"summary":"日本語の要約です。","perspective":"Shiroの見解: 日本語の見解です。"}]}`,
+			run: func(provider *scriptedDailyOutputProvider) error {
+				_, err := createDailyBriefs(context.Background(), provider, []dailyBriefLLMInput{{Index: 0, Title: "記事", SourceURL: "https://example.com/article", Body: "本文", TranslatedBody: "翻訳"}})
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &scriptedDailyOutputProvider{responses: []string{"not-json", tt.valid}}
+			if err := tt.run(provider); err != nil {
+				t.Fatalf("stage error = %v", err)
+			}
+			if provider.requests.Load() != 2 {
+				t.Fatalf("generated-output-invalid should consume one regeneration: requests=%d, want 2", provider.requests.Load())
+			}
+		})
+	}
+}
+
 func TestGenerateDailyBriefLLMRetriesRetryableBoundaryFailureOnce(t *testing.T) {
 	provider := &retryableDailyProvider{}
 	response, err := generateDailyBriefLLM(context.Background(), provider, "translate_article", "工程: 原文翻訳")
