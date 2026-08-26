@@ -17,15 +17,18 @@ import (
 )
 
 const (
-	dailySourceBriefSkillID      = "core.build-daily-source-brief"
-	dailySeedEnrichmentBatchSize = 1
-	dailySeedEnrichmentMaxTokens = 4096
-	dailyTranslationBatchSize    = 1
-	dailyTranslationMaxTokens    = 16384
-	dailySeedEnrichmentTimeout   = 10 * time.Minute
-	dailySourceBodyMaxRunes      = 12000
-	dailyDefinitionMaxRunes      = 2400
-	dailyTranslationMaxRunes     = 18000
+	dailySourceBriefSkillID               = "core.build-daily-source-brief"
+	dailySeedEnrichmentBatchSize          = 1
+	dailySeedEnrichmentMaxTargets         = 12
+	dailySeedEnrichmentMaxTokens          = 4096
+	dailyTranslationBatchSize             = 1
+	dailyTranslationMaxTokens             = 16384
+	dailySeedEnrichmentTimeout            = 10 * time.Minute
+	dailySourceBodyMaxRunes               = 12000
+	dailyDefinitionMaxRunes               = 2400
+	dailyTranslationMaxRunes              = 18000
+	dailyLLMRetryInterval                 = 250 * time.Millisecond
+	dailyLLMLowerLayerCancelRetryInterval = 2 * time.Second
 
 	dailyProcessingPending              = "pending"
 	dailyProcessingReady                = "ready"
@@ -246,47 +249,122 @@ func (o *IdleChatOrchestrator) enrichCurrentDailySeeds() {
 		providerName = "Worker"
 	}
 
-	successfulBatches := 0
+	targetIndexes := selectDailySeedEnrichmentTargetIndexes(rawItems)
+	successfulTargets := 0
 	var failures []string
-	for start := 0; start < len(rawItems); start += dailySeedEnrichmentBatchSize {
+	for _, targetIndex := range targetIndexes {
 		if err := job.ctx.Err(); err != nil {
 			log.Printf("[IdleChat] Daily source brief job stopped skill=%s generation=%d error=%v", dailySourceBriefSkillID, job.generation, err)
 			return
 		}
-		end := min(start+dailySeedEnrichmentBatchSize, len(rawItems))
 		enriched, err := o.buildDailySourceBriefBatchWithForegroundPriority(
 			job,
 			provider,
 			research,
-			append([]NewsSeed(nil), rawItems[start:end]...),
+			[]NewsSeed{rawItems[targetIndex]},
 		)
 		if len(enriched) > 0 {
-			copy(items[start:end], enriched)
-			o.publishDailySeedEnrichmentItems(job, start, enriched, providerName)
+			items[targetIndex] = enriched[0]
+			o.publishDailySeedEnrichmentItems(job, targetIndex, enriched, providerName)
 		}
 		if err != nil {
 			if job.ctx.Err() != nil {
 				log.Printf("[IdleChat] Daily source brief job stopped skill=%s generation=%d error=%v", dailySourceBriefSkillID, job.generation, job.ctx.Err())
 				return
 			}
-			failures = append(failures, fmt.Sprintf("batch %d-%d: %v", start, end-1, err))
-			log.Printf("[IdleChat] Daily source brief failed skill=%s batch=%d-%d provider=%s: %v", dailySourceBriefSkillID, start, end-1, providerName, err)
+			failures = append(failures, fmt.Sprintf("item %d: %v", targetIndex, err))
+			log.Printf("[IdleChat] Daily source brief failed skill=%s item=%d provider=%s: %v", dailySourceBriefSkillID, targetIndex, providerName, err)
 			continue
 		}
-		successfulBatches++
+		successfulTargets++
 	}
 
 	status := "ready"
 	errorText := ""
 	if len(failures) > 0 {
 		status = "partial"
-		if successfulBatches == 0 {
+		if successfulTargets == 0 {
 			status = "fallback"
 		}
 		errorText = truncate(strings.Join(failures, "; "), 400)
 	}
 	o.finishDailySeedEnrichment(job, items, status, providerName, errorText)
-	log.Printf("[IdleChat] Daily source brief completed skill=%s status=%s provider=%s items=%d batches=%d failures=%d generation=%d", dailySourceBriefSkillID, status, providerName, len(items), successfulBatches, len(failures), job.generation)
+	log.Printf("[IdleChat] Daily source brief completed skill=%s status=%s provider=%s items=%d selected_targets=%d successful_targets=%d failures=%d generation=%d", dailySourceBriefSkillID, status, providerName, len(items), len(targetIndexes), successfulTargets, len(failures), job.generation)
+}
+
+// selectDailySeedEnrichmentTargetIndexes returns at most the bounded number of
+// articles allowed into the expensive analysis phase. The first pass gives
+// every category one original-order representative, the second pass gives
+// every remaining source one representative, and the final pass fills the
+// remaining slots in original order. The collection cache remains untouched
+// by this selection; callers publish results using these original indexes.
+func selectDailySeedEnrichmentTargetIndexes(seeds []NewsSeed) []int {
+	limit := min(len(seeds), dailySeedEnrichmentMaxTargets)
+	if limit <= 0 {
+		return nil
+	}
+
+	selected := make([]int, 0, limit)
+	selectedSet := make(map[int]struct{}, limit)
+	selectIndex := func(index int) bool {
+		if len(selected) >= limit {
+			return false
+		}
+		if _, exists := selectedSet[index]; exists {
+			return false
+		}
+		selected = append(selected, index)
+		selectedSet[index] = struct{}{}
+		return true
+	}
+
+	categories := make(map[string]struct{}, len(seeds))
+	for index, seed := range seeds {
+		category := dailySeedDiversityKey(seed.Category)
+		if _, exists := categories[category]; exists {
+			continue
+		}
+		categories[category] = struct{}{}
+		selectIndex(index)
+		if len(selected) >= limit {
+			return selected
+		}
+	}
+
+	sources := make(map[string]struct{}, len(selected))
+	for _, index := range selected {
+		sources[dailySeedDiversityKey(seeds[index].Source)] = struct{}{}
+	}
+	for index, seed := range seeds {
+		if _, exists := selectedSet[index]; exists {
+			continue
+		}
+		source := dailySeedDiversityKey(seed.Source)
+		if _, exists := sources[source]; exists {
+			continue
+		}
+		sources[source] = struct{}{}
+		selectIndex(index)
+		if len(selected) >= limit {
+			return selected
+		}
+	}
+
+	for index := range seeds {
+		selectIndex(index)
+		if len(selected) >= limit {
+			break
+		}
+	}
+	return selected
+}
+
+func dailySeedDiversityKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }
 
 // buildDailySourceBriefBatchWithForegroundPriority は日次処理の入力やcontextを
@@ -812,6 +890,7 @@ func generateDailyLLM(ctx context.Context, provider llm.LLMProvider, request llm
 func generateDailyLLMWithValidation(ctx context.Context, provider llm.LLMProvider, request llm.GenerateRequest, validate func(string) error) (llm.GenerateResponse, error) {
 	const maxAttempts = 2
 	attempts := 0
+	pauseLogged := false
 	startedAt := time.Now()
 	terminal := "failed"
 	observation, observed := llm.ExecutionObservationFromContext(ctx)
@@ -826,8 +905,11 @@ func generateDailyLLMWithValidation(ctx context.Context, provider llm.LLMProvide
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				if ctx.Err() == nil {
-					log.Printf("[IdleChat] Daily source brief paused at current LLM stage for competing work skill=%s", dailySourceBriefSkillID)
-					if err := waitForDailyLLMRetry(ctx); err != nil {
+					if !pauseLogged {
+						log.Printf("[IdleChat] Daily source brief paused at current LLM stage for competing work skill=%s", dailySourceBriefSkillID)
+						pauseLogged = true
+					}
+					if err := waitForDailyLLMLowerLayerCancelRetry(ctx); err != nil {
 						terminal = dailyLLMTerminalStatus(err)
 						return llm.GenerateResponse{}, err
 					}
@@ -890,10 +972,18 @@ func dailyLLMTerminalStatus(err error) string {
 }
 
 func waitForDailyLLMRetry(ctx context.Context) error {
+	return waitForDailyLLMRetryAfter(ctx, dailyLLMRetryInterval)
+}
+
+func waitForDailyLLMLowerLayerCancelRetry(ctx context.Context) error {
+	return waitForDailyLLMRetryAfter(ctx, dailyLLMLowerLayerCancelRetryInterval)
+}
+
+func waitForDailyLLMRetryAfter(ctx context.Context, interval time.Duration) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(interval):
 		return nil
 	}
 }

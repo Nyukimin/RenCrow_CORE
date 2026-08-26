@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync/atomic"
@@ -440,6 +441,87 @@ func TestEnrichCurrentDailySeedsCompletesAndPublishesOneArticleBeforeStartingNex
 	}
 }
 
+func TestSelectDailySeedEnrichmentTargetIndexesPrioritizesCategoryAndSourceDiversity(t *testing.T) {
+	seeds := []NewsSeed{
+		{Title: "category-a-source-1", Category: "a", Source: "source-1"},
+		{Title: "category-a-source-2", Category: "a", Source: "source-2"},
+		{Title: "category-b-source-1", Category: "b", Source: "source-1"},
+		{Title: "category-b-source-3", Category: "b", Source: "source-3"},
+		{Title: "category-c-source-1", Category: "c", Source: "source-1"},
+		{Title: "category-c-source-3", Category: "c", Source: "source-3"},
+		{Title: "category-a-source-1-again", Category: "a", Source: "source-1"},
+		{Title: "category-a-source-2-again", Category: "a", Source: "source-2"},
+		{Title: "category-b-source-1-again", Category: "b", Source: "source-1"},
+		{Title: "category-c-source-1-again", Category: "c", Source: "source-1"},
+		{Title: "category-a-source-1-third", Category: "a", Source: "source-1"},
+		{Title: "category-b-source-1-third", Category: "b", Source: "source-1"},
+		{Title: "category-c-source-1-third", Category: "c", Source: "source-1"},
+		{Title: "category-a-source-2-third", Category: "a", Source: "source-2"},
+		{Title: "category-b-source-3-third", Category: "b", Source: "source-3"},
+	}
+
+	want := []int{0, 2, 4, 1, 3, 5, 6, 7, 8, 9, 10, 11}
+	got := selectDailySeedEnrichmentTargetIndexes(seeds)
+	if len(got) != len(want) {
+		t.Fatalf("selected target indexes = %v, want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("selected target indexes[%d] = %d, want %d; got=%v", index, got[index], want[index], got)
+		}
+	}
+}
+
+func TestEnrichCurrentDailySeedsLimitsTargetsAndPublishesAtOriginalIndexes(t *testing.T) {
+	const seedCount = 15
+	seeds := make([]NewsSeed, seedCount)
+	documents := make(map[string]DailySourceDocument, seedCount)
+	for index := range seeds {
+		articleURL := fmt.Sprintf("https://example.com/daily/%02d", index)
+		category := []string{"a", "a", "b", "b", "c", "c", "a", "b", "c", "a", "b", "c", "a", "b", "c"}[index]
+		source := []string{"source-1", "source-1", "source-1", "source-1", "source-1", "source-1", "source-1", "source-1", "source-1", "source-1", "source-2", "source-1", "source-3", "source-1", "source-4"}[index]
+		seeds[index] = NewsSeed{Title: fmt.Sprintf("記事%02d", index), Category: category, Source: source, URL: articleURL}
+		documents[articleURL] = DailySourceDocument{URL: articleURL, Text: strings.Repeat("日本語の記事本文です。", 8)}
+	}
+	withDailySeedCache(t, &DailySeedCache{
+		Date: "2026-08-26", NewsSeedItems: seeds, FetchedAt: time.Now(), EnrichmentStatus: "pending",
+	})
+	events := []string{}
+	research := &dailySourceBriefResearchStub{
+		events: &events, documents: documents, readErrors: map[string]error{},
+		searchResults: map[string][]DailyTermSearchResult{}, searchErrors: map[string]error{},
+	}
+	provider := &orderedDailyBriefProvider{events: &events}
+	orch := NewIdleChatOrchestrator(nil, nil, nil, 5, 10, 0.7, nil, "")
+	orch.SetSpeakerProviders(map[string]llm.LLMProvider{"worker": provider})
+	orch.SetDailySourceBriefResearch(research)
+
+	orch.enrichCurrentDailySeeds()
+
+	got := getDailyCache()
+	if len(got.NewsSeedItems) != seedCount {
+		t.Fatalf("all collected seeds must remain in cache: got %d, want %d", len(got.NewsSeedItems), seedCount)
+	}
+	if got.EnrichmentStatus != "ready" {
+		t.Fatalf("all selected targets succeeded, so pending remainders must not force failure: status=%q", got.EnrichmentStatus)
+	}
+	if len(provider.requests) != dailySeedEnrichmentMaxTargets {
+		t.Fatalf("analysis request count = %d, want max %d", len(provider.requests), dailySeedEnrichmentMaxTargets)
+	}
+	selected := map[int]bool{0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true, 8: true, 10: true, 12: true, 14: true}
+	for index, item := range got.NewsSeedItems {
+		if selected[index] {
+			if item.SourceReadStatus != "ready" || item.ProcessingStatus != dailyProcessingReady || item.Summary == "" {
+				t.Fatalf("selected item[%d] was not published at its original index: %+v", index, item)
+			}
+			continue
+		}
+		if item.SourceReadStatus != "unprocessed" || item.ProcessingStatus != dailyProcessingPending || item.ProcessingError != "" {
+			t.Fatalf("nonselected item[%d] must remain pending, not failed: %+v", index, item)
+		}
+	}
+}
+
 func TestEnrichCurrentDailySeedsPausesForForegroundChatAndResumesWithoutLosingArticle(t *testing.T) {
 	articleURL := "https://example.com/priority"
 	withDailySeedCache(t, &DailySeedCache{
@@ -710,6 +792,44 @@ func TestGenerateDailyBriefLLMWaitsAndRetriesCapacityCancellationAtSameStage(t *
 	}
 	if !strings.Contains(response.Content, "再開後") || provider.requests.Load() != 2 {
 		t.Fatalf("current stage was not resumed: requests=%d response=%q", provider.requests.Load(), response.Content)
+	}
+}
+
+type repeatedLowerLayerCanceledDailyProvider struct {
+	requests          atomic.Int32
+	cancellationCount int32
+}
+
+func (p *repeatedLowerLayerCanceledDailyProvider) Name() string {
+	return "repeated-cancel-daily-worker"
+}
+func (p *repeatedLowerLayerCanceledDailyProvider) Generate(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+	if p.requests.Add(1) <= p.cancellationCount {
+		return llm.GenerateResponse{}, context.Canceled
+	}
+	return dailyEnrichmentTestResponse(req.Messages[len(req.Messages)-1].Content, "再開後")
+}
+
+func TestGenerateDailyLLMLogsLiveLowerLayerCancellationOncePerStageAndWaitsTwoSeconds(t *testing.T) {
+	provider := &repeatedLowerLayerCanceledDailyProvider{cancellationCount: 2}
+	var logs bytes.Buffer
+	previousWriter := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(previousWriter)
+
+	startedAt := time.Now()
+	response, err := generateDailyBriefLLM(context.Background(), provider, "translate_article", "工程: 原文翻訳")
+	if err != nil {
+		t.Fatalf("generateDailyBriefLLM() error = %v", err)
+	}
+	if !strings.Contains(response.Content, "再開後") || provider.requests.Load() != 3 {
+		t.Fatalf("same stage was not retried until success: requests=%d response=%q", provider.requests.Load(), response.Content)
+	}
+	if elapsed := time.Since(startedAt); elapsed < 3500*time.Millisecond {
+		t.Fatalf("live lower-layer cancellation retry interval was too short: elapsed=%s", elapsed)
+	}
+	if pauses := strings.Count(logs.String(), "paused at current LLM stage"); pauses != 1 {
+		t.Fatalf("live lower-layer cancellation must log one pause per stage invocation: pauses=%d logs=%q", pauses, logs.String())
 	}
 }
 

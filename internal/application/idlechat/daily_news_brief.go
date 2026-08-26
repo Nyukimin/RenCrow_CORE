@@ -53,6 +53,9 @@ func (o *IdleChatOrchestrator) Read(ctx context.Context, now time.Time) (domainn
 		if !isDailyNewsBriefArticle(seed.SourceType) {
 			continue
 		}
+		if !isDailyNewsBriefAnalyzed(seed) {
+			continue
+		}
 		brief.Items = append(brief.Items, dailyNewsBriefItem(seed, index))
 	}
 	if len(brief.Items) == 0 && brief.Status != domainnews.StatusStale {
@@ -64,6 +67,23 @@ func (o *IdleChatOrchestrator) Read(ctx context.Context, now time.Time) (domainn
 func isDailyNewsBriefArticle(sourceType string) bool {
 	switch strings.ToLower(strings.TrimSpace(sourceType)) {
 	case "rss", "atom":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDailyNewsBriefAnalyzed(seed NewsSeed) bool {
+	sourceReadStatus := strings.ToLower(strings.TrimSpace(seed.SourceReadStatus))
+	if sourceReadStatus != "ready" && sourceReadStatus != "unavailable" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(seed.ProcessingStatus)) {
+	case dailyProcessingReady,
+		dailyProcessingSourceUnavailable,
+		dailyProcessingTranslationFailed,
+		dailyProcessingTermExtractionFailed,
+		dailyProcessingBriefFailed:
 		return true
 	default:
 		return false
