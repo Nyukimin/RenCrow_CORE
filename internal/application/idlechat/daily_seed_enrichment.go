@@ -3,6 +3,7 @@ package idlechat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -303,7 +304,7 @@ func (o *IdleChatOrchestrator) buildDailySourceBriefBatchWithForegroundPriority(
 		if job.ctx.Err() != nil {
 			return nil, job.ctx.Err()
 		}
-		if ctxErr == context.Canceled && o.ctx.Err() == nil {
+		if (ctxErr == context.Canceled || errors.Is(err, context.Canceled)) && o.ctx.Err() == nil {
 			log.Printf("[IdleChat] Daily source brief paused for foreground activity skill=%s", dailySourceBriefSkillID)
 			continue
 		}
@@ -319,7 +320,7 @@ func (o *IdleChatOrchestrator) waitForDailyEnrichmentWindow(ctx context.Context)
 			return err
 		}
 		o.mu.Lock()
-		foregroundBusy := o.chatBusy || o.workerBusy
+		foregroundBusy := o.chatActive || o.chatBusy || o.workerBusy
 		o.mu.Unlock()
 		if !foregroundBusy {
 			return nil
@@ -344,7 +345,7 @@ func (o *IdleChatOrchestrator) beginDailyEnrichmentBatchForJob(job *dailyEnrichm
 		return nil, nil, false
 	}
 	o.mu.Lock()
-	foregroundBusy := o.chatBusy || o.workerBusy
+	foregroundBusy := o.chatActive || o.chatBusy || o.workerBusy
 	rootErr := o.ctx.Err()
 	active := o.dailyEnrichmentJob == job && o.dailyEnrichmentGeneration == job.generation
 	o.mu.Unlock()
@@ -610,7 +611,7 @@ func translateDailySourceBodies(ctx context.Context, provider llm.LLMProvider, i
 		requestCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
 			Initiator: "shiro", Caller: "idlechat.daily_source_brief", Purpose: "translate_article",
 		})
-		resp, err := provider.Generate(requestCtx, llm.GenerateRequest{
+		resp, err := generateDailyLLM(requestCtx, provider, llm.GenerateRequest{
 			Messages: []llm.Message{
 				{Role: "system", Content: "あなたはShiroです。特定URLから直接取得した原文を忠実に日本語へ翻訳し、確認できない内容を追加しません。"},
 				{Role: "user", Content: prompt},
@@ -693,7 +694,7 @@ func generateDailyBriefLLM(ctx context.Context, provider llm.LLMProvider, purpos
 	requestCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
 		Initiator: "shiro", Caller: "idlechat.daily_source_brief", Purpose: purpose,
 	})
-	return provider.Generate(requestCtx, llm.GenerateRequest{
+	return generateDailyLLM(requestCtx, provider, llm.GenerateRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: "あなたはShiroです。一次情報の原文翻訳、サマリ、見解、用語補足を明確に分離し、確認できない内容は推測しません。利用者向け本文はすべて日本語で記述します。"},
 			{Role: "user", Content: prompt},
@@ -702,6 +703,37 @@ func generateDailyBriefLLM(ctx context.Context, provider llm.LLMProvider, purpos
 		Temperature:     0.2,
 		ReasoningEffort: llm.ReasoningEffortLow,
 	})
+}
+
+func generateDailyLLM(ctx context.Context, provider llm.LLMProvider, request llm.GenerateRequest) (llm.GenerateResponse, error) {
+	const maxAttempts = 2
+	retryableAttempt := 1
+	for {
+		response, err := provider.Generate(ctx, request)
+		if err == nil {
+			return response, nil
+		}
+		if errors.Is(err, context.Canceled) && ctx.Err() == nil {
+			log.Printf("[IdleChat] Daily source brief paused at current LLM stage for competing work skill=%s", dailySourceBriefSkillID)
+			select {
+			case <-ctx.Done():
+				return llm.GenerateResponse{}, ctx.Err()
+			case <-time.After(250 * time.Millisecond):
+			}
+			continue
+		}
+		var retryable interface{ Retryable() bool }
+		if retryableAttempt == maxAttempts || !errors.As(err, &retryable) || !retryable.Retryable() {
+			return llm.GenerateResponse{}, err
+		}
+		retryableAttempt++
+		log.Printf("[IdleChat] Daily source brief retrying retryable LLM boundary failure skill=%s attempt=%d/%d", dailySourceBriefSkillID, retryableAttempt, maxAttempts)
+		select {
+		case <-ctx.Done():
+			return llm.GenerateResponse{}, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 
 func parseDailyTermExtraction(content string, expected int) ([]dailyTermExtractionItem, error) {

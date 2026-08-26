@@ -127,6 +127,25 @@ func TestEmitIdleChatTTSSkipsPlaybackWaitWhenNoViewerClients(t *testing.T) {
 	}
 }
 
+func TestEmitIdleChatTTSSkipsPlaybackWaitUntilAudioViewerClaimsOwnership(t *testing.T) {
+	resetActiveViewerControlForTest()
+	setIdleChatViewerClientCount(func() int { return 1 })
+	defer func() {
+		setIdleChatViewerClientCount(nil)
+		resetActiveViewerControlForTest()
+	}()
+
+	waitCh, ok := emitIdleChatTTS(context.Background(), &idleChatMockTTSBridge{}, idlechat.TimelineEvent{
+		Type: "idlechat.message", SessionID: "idle-audio-owner", MessageID: "idle-audio-owner:0001", TurnIndex: 1, From: "mio", Content: "こんにちは。",
+	})
+	if !ok {
+		t.Fatal("TTS was not emitted")
+	}
+	if waitCh != nil {
+		t.Fatal("SSE connection without an active audio owner must not create a playback wait")
+	}
+}
+
 func TestIdleChatViewerDisconnectClearsPlaybackWaits(t *testing.T) {
 	clearAllIdleChatTTSPending()
 	resetTTSPublicSessionStateForTest()
@@ -527,9 +546,12 @@ func TestEmitIdleChatTTSAsyncSerializesIdleSpeech(t *testing.T) {
 func TestEmitIdleChatTTSAsyncPrefetchesWithoutPlaybackCompletion(t *testing.T) {
 	clearAllIdleChatTTSPending()
 	resetTTSPublicSessionStateForTest()
+	resetActiveViewerControlForTest()
+	activeViewerControl.Claim("audio", "test-audio-viewer")
 	setIdleChatViewerClientCount(func() int { return 1 })
 	t.Cleanup(func() {
 		setIdleChatViewerClientCount(nil)
+		resetActiveViewerControlForTest()
 		clearAllIdleChatTTSPending()
 		resetTTSPublicSessionStateForTest()
 	})

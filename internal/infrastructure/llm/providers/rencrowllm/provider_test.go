@@ -3,6 +3,7 @@ package rencrowllm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -247,6 +248,26 @@ func TestStreamingGatewayNumericErrorCodeIsDecoded(t *testing.T) {
 	_, err := provider.readChatCompletionsStream(stream, func(string) {})
 	if err == nil || !strings.Contains(err.Error(), "gateway stream error 503: backend unavailable") {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestGatewayErrorPreservesRetryableContract(t *testing.T) {
+	err := decodeGatewayError(http.StatusBadGateway, []byte(`{"error":{"code":"TARGET_UNAVAILABLE","message":"configured target is unavailable","retryable":true}}`))
+	var gatewayErr *GatewayError
+	if !errors.As(err, &gatewayErr) {
+		t.Fatalf("error type = %T, want *GatewayError", err)
+	}
+	if gatewayErr.Code != "TARGET_UNAVAILABLE" || !gatewayErr.Retryable() {
+		t.Fatalf("gateway error contract was not preserved: %#v", gatewayErr)
+	}
+}
+
+func TestStreamingGatewayErrorPreservesRetryableContract(t *testing.T) {
+	provider := NewGatewayProvider("", "worker")
+	_, err := provider.readChatCompletionsStream(strings.NewReader("data: {\"error\":{\"code\":\"NORMALIZATION_ERROR\",\"message\":\"structured response failed\",\"retryable\":true}}\n\n"), func(string) {})
+	var gatewayErr *GatewayError
+	if !errors.As(err, &gatewayErr) || !gatewayErr.Retryable() {
+		t.Fatalf("stream retry contract was not preserved: %T %v", err, err)
 	}
 }
 

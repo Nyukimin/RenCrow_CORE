@@ -1,15 +1,32 @@
 package idlechat
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
+
+func TestAutomaticIdleChatWaitsForDailyEnrichmentCompletion(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 0, 2, 0.7, nil, "")
+	jobCtx, cancel := context.WithCancel(o.ctx)
+	defer cancel()
+	o.mu.Lock()
+	o.lastActivity = time.Now().Add(-time.Minute)
+	o.dailyEnrichmentJob = &dailyEnrichmentJob{ctx: jobCtx, cancel: cancel, done: make(chan struct{})}
+	o.mu.Unlock()
+
+	o.checkAndStartChat()
+	if o.IsChatActive() {
+		t.Fatal("automatic IdleChat must not start while Daily enrichment is active")
+	}
+}
 
 func attachPreparedWordDialogue(t *testing.T, o *IdleChatOrchestrator, topic, seedWord string, turns int) *queuedIdleChatCodexGenerator {
 	t.Helper()

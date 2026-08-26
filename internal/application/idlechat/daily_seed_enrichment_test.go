@@ -344,6 +344,38 @@ func TestEnrichCurrentDailySeedsPausesForForegroundChatAndResumesWithoutLosingAr
 	}
 }
 
+func TestDailyEnrichmentWaitsUntilForegroundIdleChatSessionEnds(t *testing.T) {
+	orch := NewIdleChatOrchestrator(nil, nil, nil, 5, 10, 0.7, nil, "")
+	job := orch.beginDailyEnrichmentJob(time.Now())
+	if job == nil {
+		t.Fatal("daily enrichment job was not created")
+	}
+	defer orch.finishDailyEnrichmentJob(job)
+	orch.mu.Lock()
+	orch.chatActive = true
+	orch.mu.Unlock()
+
+	returned := make(chan error, 1)
+	go func() { returned <- orch.waitForDailyEnrichmentWindow(job.ctx) }()
+	select {
+	case err := <-returned:
+		t.Fatalf("Daily resumed while foreground IdleChat was active: %v", err)
+	case <-time.After(75 * time.Millisecond):
+	}
+
+	orch.mu.Lock()
+	orch.chatActive = false
+	orch.mu.Unlock()
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Fatalf("waitForDailyEnrichmentWindow() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Daily did not resume after foreground IdleChat ended")
+	}
+}
+
 type supersededDailyEnrichmentProvider struct {
 	oldStarted  chan struct{}
 	oldCanceled chan struct{}
@@ -388,6 +420,75 @@ func dailyEnrichmentTestResponse(prompt, label string) (llm.GenerateResponse, er
 		return llm.GenerateResponse{Content: `{"items":[{"index":0,"summary":"` + label + `の要約です。","perspective":"Shiroの見解: ` + label + `の見解です。"}]}`}, nil
 	default:
 		return llm.GenerateResponse{}, errors.New("unknown daily enrichment stage")
+	}
+}
+
+type retryableDailyError struct{ message string }
+
+func (e retryableDailyError) Error() string   { return e.message }
+func (e retryableDailyError) Retryable() bool { return true }
+
+type retryableDailyProvider struct{ requests atomic.Int32 }
+
+func (p *retryableDailyProvider) Name() string { return "retryable-daily-worker" }
+func (p *retryableDailyProvider) Generate(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+	if p.requests.Add(1) == 1 {
+		return llm.GenerateResponse{}, retryableDailyError{message: "temporary structured generation failure"}
+	}
+	return dailyEnrichmentTestResponse(req.Messages[len(req.Messages)-1].Content, "再試行後")
+}
+
+func TestGenerateDailyBriefLLMRetriesRetryableBoundaryFailureOnce(t *testing.T) {
+	provider := &retryableDailyProvider{}
+	response, err := generateDailyBriefLLM(context.Background(), provider, "translate_article", "工程: 原文翻訳")
+	if err != nil {
+		t.Fatalf("generateDailyBriefLLM() error = %v", err)
+	}
+	if !strings.Contains(response.Content, "再試行後") || provider.requests.Load() != 2 {
+		t.Fatalf("bounded retry was not used: requests=%d response=%q", provider.requests.Load(), response.Content)
+	}
+}
+
+func TestGenerateDailyBriefLLMWaitsAndRetriesCapacityCancellationAtSameStage(t *testing.T) {
+	provider := &lowerLayerCanceledDailyProvider{}
+	response, err := generateDailyBriefLLM(context.Background(), provider, "translate_article", "工程: 原文翻訳")
+	if err != nil {
+		t.Fatalf("generateDailyBriefLLM() error = %v", err)
+	}
+	if !strings.Contains(response.Content, "再開後") || provider.requests.Load() != 2 {
+		t.Fatalf("current stage was not resumed: requests=%d response=%q", provider.requests.Load(), response.Content)
+	}
+}
+
+type lowerLayerCanceledDailyProvider struct{ requests atomic.Int32 }
+
+func (p *lowerLayerCanceledDailyProvider) Name() string { return "cancel-daily-worker" }
+func (p *lowerLayerCanceledDailyProvider) Generate(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+	if p.requests.Add(1) == 1 {
+		return llm.GenerateResponse{}, context.Canceled
+	}
+	return dailyEnrichmentTestResponse(req.Messages[len(req.Messages)-1].Content, "再開後")
+}
+
+func TestDailyForegroundPriorityRetriesLowerLayerCancellation(t *testing.T) {
+	provider := &lowerLayerCanceledDailyProvider{}
+	orch := NewIdleChatOrchestrator(nil, nil, nil, 5, 10, 0.7, nil, "")
+	job := orch.beginDailyEnrichmentJob(time.Now())
+	if job == nil {
+		t.Fatal("daily enrichment job was not created")
+	}
+	defer orch.finishDailyEnrichmentJob(job)
+	events := []string{}
+	got, err := orch.buildDailySourceBriefBatchWithForegroundPriority(job, provider, &dailySourceBriefResearchStub{
+		events:     &events,
+		documents:  map[string]DailySourceDocument{"https://example.com/article": {URL: "https://example.com/article", Text: "article body"}},
+		readErrors: map[string]error{}, searchResults: map[string][]DailyTermSearchResult{}, searchErrors: map[string]error{},
+	}, []NewsSeed{{Title: "article", URL: "https://example.com/article"}})
+	if err != nil {
+		t.Fatalf("buildDailySourceBriefBatchWithForegroundPriority() error = %v", err)
+	}
+	if len(got) != 1 || !strings.Contains(got[0].TranslatedBody, "再開後") {
+		t.Fatalf("same item was not resumed: %#v", got)
 	}
 }
 

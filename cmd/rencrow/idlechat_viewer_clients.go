@@ -1,6 +1,9 @@
 package main
 
-import "log"
+import (
+	"log"
+	"strings"
+)
 
 var idleChatViewerClientCount func() int
 
@@ -12,7 +15,7 @@ func hasIdleChatViewerClients() bool {
 	if idleChatViewerClientCount == nil {
 		return true
 	}
-	return idleChatViewerClientCount() > 0
+	return idleChatViewerClientCount() > 0 && strings.TrimSpace(activeViewerControl.Snapshot().ActiveAudioViewerID) != ""
 }
 
 func handleIdleChatViewerClientCountChanged(count int) {

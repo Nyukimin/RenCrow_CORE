@@ -40,6 +40,7 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 	workerBusy := o.workerBusy
 	manualMode := o.manualMode
 	disabled := o.disabled
+	dailyEnrichmentActive := o.dailyEnrichmentJob != nil
 	externalLLMBusy := false
 	if o.externalLLMBusy != nil {
 		externalLLMBusy = o.externalLLMBusy()
@@ -47,7 +48,7 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 	stock := o.topicStockBuf
 	wordStock := o.wordTopicStock
 	stockFilling := (stock != nil && stock.anyFilling()) || (wordStock != nil && wordStock.anyFilling()) || o.topicProductionBusy()
-	if disabled || externalLLMBusy || stockFilling || o.chatActive || chatBusy || workerBusy || (!nextTopicAt.IsZero() && now.Before(nextTopicAt)) || (!manualMode && idleDuration < threshold) {
+	if disabled || externalLLMBusy || stockFilling || o.chatActive || chatBusy || workerBusy || (!nextTopicAt.IsZero() && now.Before(nextTopicAt)) || (!manualMode && (dailyEnrichmentActive || idleDuration < threshold)) {
 		o.mu.Unlock()
 		return
 	}

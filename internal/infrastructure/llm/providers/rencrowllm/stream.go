@@ -33,8 +33,9 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 		}
 		var chunk struct {
 			Error *struct {
-				Code    json.RawMessage `json:"code"`
-				Message string          `json:"message"`
+				Code      json.RawMessage `json:"code"`
+				Message   string          `json:"message"`
+				Retryable bool            `json:"retryable"`
 			} `json:"error,omitempty"`
 			Choices []struct {
 				Delta struct {
@@ -53,7 +54,7 @@ func (p *GatewayProvider) readChatCompletionsStream(body io.Reader, onToken llm.
 			return llm.GenerateResponse{}, fmt.Errorf("failed to decode stream chunk: %w", err)
 		}
 		if chunk.Error != nil {
-			return llm.GenerateResponse{}, fmt.Errorf("gateway stream error %s: %s", streamErrorCodeText(chunk.Error.Code), chunk.Error.Message)
+			return llm.GenerateResponse{}, &GatewayError{Code: streamErrorCodeText(chunk.Error.Code), Message: chunk.Error.Message, CanRetry: chunk.Error.Retryable}
 		}
 		if chunk.Usage.CompletionTokens > 0 {
 			completionTokens = chunk.Usage.CompletionTokens

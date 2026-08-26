@@ -15,6 +15,24 @@ import (
 
 const defaultBaseURL = "http://127.0.0.1:8090"
 
+// GatewayError preserves the machine-readable retry contract returned by
+// RenCrow_LLM without exposing backend- or model-specific errors to CORE.
+type GatewayError struct {
+	Status   int
+	Code     string
+	Message  string
+	CanRetry bool
+}
+
+func (e *GatewayError) Error() string {
+	if e.Status == 0 {
+		return fmt.Sprintf("gateway stream error %s: %s", e.Code, e.Message)
+	}
+	return fmt.Sprintf("gateway API error: status=%d code=%s message=%s", e.Status, e.Code, e.Message)
+}
+
+func (e *GatewayError) Retryable() bool { return e != nil && e.CanRetry }
+
 // GatewayProvider はRenCrow_LLM Gateway APIプロバイダーの実装
 type GatewayProvider struct {
 	apiKey         string
@@ -155,7 +173,7 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return llm.GenerateResponse{}, fmt.Errorf("gateway API error: status=%d, body=%s", resp.StatusCode, string(body))
+		return llm.GenerateResponse{}, decodeGatewayError(resp.StatusCode, body)
 	}
 
 	if streaming {
@@ -196,6 +214,27 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 		TokensUsed:   gatewayResp.Usage.TotalTokens,
 		FinishReason: finishReason,
 	}, nil
+}
+
+func decodeGatewayError(status int, body []byte) error {
+	var envelope struct {
+		Error struct {
+			Code      string `json:"code"`
+			Message   string `json:"message"`
+			Retryable bool   `json:"retryable"`
+		} `json:"error"`
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		Retryable bool   `json:"retryable"`
+	}
+	if json.Unmarshal(body, &envelope) == nil {
+		code, message, retryable := envelope.Code, envelope.Message, envelope.Retryable
+		if envelope.Error.Code != "" || envelope.Error.Message != "" {
+			code, message, retryable = envelope.Error.Code, envelope.Error.Message, envelope.Error.Retryable
+		}
+		return &GatewayError{Status: status, Code: strings.TrimSpace(code), Message: strings.TrimSpace(message), CanRetry: retryable}
+	}
+	return &GatewayError{Status: status, Message: http.StatusText(status), CanRetry: status >= 500}
 }
 
 func addResponseFormat(payload map[string]interface{}, format llm.ResponseFormat) error {
