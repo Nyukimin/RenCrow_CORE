@@ -27,6 +27,9 @@ func LoadConfig(path string) (*Config, error) {
 	if retired := retiredDatabaseConfigKey(&root); retired != "" {
 		return nil, fmt.Errorf("config key %s is retired; CORE uses storage.databases SQLite owner stores", retired)
 	}
+	if retired := retiredTTSEndpointConfigKey(&root); retired != "" {
+		return nil, fmt.Errorf("config key %s is retired; CORE uses tts.gateway_base_url", retired)
+	}
 	expandConfigEnvironment(&root)
 	var cfg Config
 	if err := root.Decode(&cfg); err != nil {
@@ -79,6 +82,21 @@ func retiredDatabaseConfigKey(root *yaml.Node) string {
 					return "storage.legacy_databases"
 				}
 			}
+		}
+	}
+	return ""
+}
+
+// retiredTTSEndpointConfigKey fails closed on direct TTS endpoints from the
+// removed route. The CORE TTS boundary is the RenCrow_TTS Gateway only.
+func retiredTTSEndpointConfigKey(root *yaml.Node) string {
+	tts := yamlMappingValue(yamlDocumentMapping(root), "tts")
+	if tts == nil {
+		return ""
+	}
+	for _, key := range []string{"http_base_url", "base_url", "public_base_url", "audio_base_url"} {
+		if yamlMappingValue(tts, key) != nil {
+			return "tts." + key
 		}
 	}
 	return ""
