@@ -347,6 +347,7 @@ core_was_active=false
 core_masked_by_backup=false
 qdrant_snapshot_name=
 qdrant_snapshot_checksum=
+core_snapshot_partial_parent=
 declare -A module_writer_was_active=()
 declare -A module_writer_masked=()
 
@@ -449,6 +450,10 @@ cleanup() {
   fi
   if [[ -n ${staging:-} && -d ${staging} && ${staging} == /home/nyukimi/.cache/rencrow-backup.* ]]; then
     rm -rf -- "${staging}"
+  fi
+  if [[ -n ${core_snapshot_partial_parent:-} && -d ${core_snapshot_partial_parent} && \
+        ${core_snapshot_partial_parent} == "${core_snapshot_root}/recent/.${timestamp}.partial."* ]]; then
+    rm -rf -- "${core_snapshot_partial_parent}" || status=1
   fi
   cleanup_backup_mount || status=1
   exit "${status}"
@@ -556,7 +561,16 @@ printf '%s\n' \
 
 "${restore_checker}" "${candidate_dir}"
 snapshot_dir="${core_snapshot_root}/recent/${timestamp}"
-mv "${candidate_dir}" "${snapshot_dir}"
+core_snapshot_partial_parent=$(mktemp -d "${core_snapshot_root}/recent/.${timestamp}.partial.XXXXXX")
+mv "${candidate_dir}" "${core_snapshot_partial_parent}/snapshot"
+sync "${core_snapshot_partial_parent}/snapshot/rencrow-state.tar.gz" \
+  "${core_snapshot_partial_parent}/snapshot/SHA256SUMS" \
+  "${core_snapshot_partial_parent}/snapshot/manifest.txt"
+sync "${core_snapshot_partial_parent}/snapshot" "${core_snapshot_partial_parent}"
+mv "${core_snapshot_partial_parent}/snapshot" "${snapshot_dir}"
+rmdir "${core_snapshot_partial_parent}"
+core_snapshot_partial_parent=
+sync "${core_snapshot_root}/recent"
 cleanup_qdrant_snapshot
 
 if [[ ${hour} == 03 ]]; then

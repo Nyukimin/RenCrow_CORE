@@ -108,6 +108,12 @@ assert_contains "${backup_runner}" \
 assert_contains "${backup_runner}" \
   'database and backup roots must use distinct mounted devices' \
   "module backups must reject a destination on the live database device"
+assert_contains "${backup_runner}" \
+  'mktemp -d "${core_snapshot_root}/recent/.${timestamp}.partial.XXXXXX"' \
+  "CORE snapshot copy must remain hidden on the destination filesystem"
+assert_contains "${backup_runner}" \
+  'mv "${core_snapshot_partial_parent}/snapshot" "${snapshot_dir}"' \
+  "CORE snapshot final name must be exposed only by a same-filesystem rename"
 assert_contains "${checker}" \
   'RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC' \
   "SQLite restore integrity must have a configurable bounded deadline"
