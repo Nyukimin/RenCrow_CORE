@@ -47,11 +47,32 @@ func isAllowedTailscaleRequest(r *http.Request) bool {
 	if strings.TrimSpace(r.Header.Get("Tailscale-Funnel-Request")) != "" {
 		return false
 	}
+	if isAllowedTailscaleCMDInteractionRequest(r) {
+		return true
+	}
+	client := strings.TrimSpace(r.Header.Get("X-RenCrow-Client"))
+	profile := strings.ToLower(strings.TrimSpace(r.Header.Get(interactionProfileHeader)))
+	if client == "RenCrow_CMD" || strings.HasPrefix(profile, "cmd-") {
+		return false
+	}
 	path := r.URL.Path
 	if path == "/viewer" || strings.HasPrefix(path, "/viewer/") {
 		return true
 	}
 	return path == "/audio-router/events" || path == "/stt" || path == "/voice-chat" || path == "/voice-chat-ws"
+}
+
+func isAllowedTailscaleCMDInteractionRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	client := strings.TrimSpace(r.Header.Get("X-RenCrow-Client"))
+	profile := strings.ToLower(strings.TrimSpace(r.Header.Get(interactionProfileHeader)))
+	if client != "RenCrow_CMD" || !strings.HasPrefix(profile, "cmd-") {
+		return false
+	}
+	policy, ok := interactionProfilePolicies[profile]
+	return ok && policy.client == "RenCrow_CMD" && policy.allow != nil && policy.allow(r.Method, r.URL.Path)
 }
 
 func firstHeaderValue(value string) string {
