@@ -11,6 +11,8 @@ fi
 config_file=${RENCROW_CONFIG:-${HOME}/.rencrow/config/core.yaml}
 rencrow_binary=${RENCROW_BINARY:-/home/nyukimi/.local/bin/rencrow}
 restore_checker=${RENCROW_RESTORE_CHECKER:-/home/nyukimi/.local/bin/rencrow-storage-restore-check}
+durable_snapshot_binary=${RENCROW_DURABLE_SNAPSHOT_BINARY:-/home/nyukimi/.local/bin/rencrow-durable-snapshot}
+durable_manifest_dir=${RENCROW_DURABLE_MANIFEST_DIR:-${HOME}/.local/share/rencrow/config/durable-stores.d}
 if [[ ! -f ${config_file} ]]; then
   echo "[NG] config file not found: ${config_file}" >&2
   exit 1
@@ -49,6 +51,8 @@ conversation_archive=${backup_config[19]}
 core_port=${backup_config[20]}
 lock_file=/home/nyukimi/.cache/rencrow-storage-backup.lock
 backup_mount=/srv/rencrow/backup
+module_snapshot_root=${backup_mount}/snapshots/modules
+module_receipt_root=${backup_mount}/receipts/modules
 
 for retention in "${recent_keep}" "${daily_keep}" "${weekly_keep}" "${monthly_keep}"; do
   if [[ ! ${retention} =~ ^[1-9][0-9]*$ ]]; then
@@ -137,6 +141,77 @@ require_command() {
   fi
 }
 
+module_manifests=()
+module_ids=()
+module_roots=()
+module_manifest_hashes=()
+module_writers=()
+declare -A module_writer_seen=()
+
+load_durable_module_plans() {
+  local expected manifest plan
+  local -a discovered_manifests=()
+  local -a values=()
+  if [[ ! -d ${durable_manifest_dir} ]]; then
+    echo "[NG] durable store manifest catalog is missing: ${durable_manifest_dir}" >&2
+    return 1
+  fi
+  mapfile -d '' -t discovered_manifests < <(find "${durable_manifest_dir}" -maxdepth 1 -type f -name 'RenCrow_*.json' -print0 | sort -z)
+  for manifest in "${discovered_manifests[@]}"; do
+    expected=$(basename "${manifest}" .json)
+    if [[ ${expected} == RenCrow_CORE ]]; then
+      continue
+    fi
+    if [[ -L ${manifest} ]]; then
+      echo "[NG] durable store manifest must not be a symlink: ${manifest}" >&2
+      return 1
+    fi
+    if ! plan=$("${durable_snapshot_binary}" plan --manifest "${manifest}"); then
+      echo "[NG] durable store plan failed: ${manifest}" >&2
+      return 1
+    fi
+    mapfile -t values < <(python3 -c '
+import json, sys
+value = json.load(sys.stdin)
+assert value.get("tool_revision")
+assert value.get("module_id")
+assert value.get("source_root")
+assert value.get("manifest_sha256")
+writers = value.get("authoritative_writers")
+assert isinstance(writers, list) and writers
+print(value["module_id"])
+print(value["source_root"])
+print(value["manifest_sha256"])
+for writer in writers:
+    assert isinstance(writer, str) and writer
+    print(writer)
+' <<<"${plan}")
+    if (( ${#values[@]} < 4 )) || [[ ${values[0]} != "${expected}" ]]; then
+      echo "[NG] durable store plan identity mismatch: ${manifest}" >&2
+      return 1
+    fi
+    module_manifests+=("${manifest}")
+    module_ids+=("${values[0]}")
+    module_roots+=("${values[1]}")
+    module_manifest_hashes+=("${values[2]}")
+    local writer
+    for writer in "${values[@]:3}"; do
+      if [[ ! ${writer} =~ ^[A-Za-z0-9][A-Za-z0-9_.@-]*$ ]]; then
+        echo "[NG] unsafe authoritative writer identity: ${writer}" >&2
+        return 1
+      fi
+      if [[ -z ${module_writer_seen[${writer}]+x} ]]; then
+        module_writer_seen[${writer}]=1
+        module_writers+=("${writer}")
+      fi
+    done
+  done
+  if (( ${#module_manifests[@]} == 0 )); then
+    echo "[NG] no installed non-CORE durable store manifests were found" >&2
+    return 1
+  fi
+}
+
 require_backing_mount() {
   local path=$1
   local mount_target
@@ -180,9 +255,14 @@ cleanup_preflight() {
 }
 trap cleanup_preflight EXIT INT TERM
 
-for command in curl docker findmnt flock gzip mount mountpoint python3 rsync sha256sum systemctl tar timeout umount; do
+for command in basename curl cut docker find findmnt flock gzip install mount mountpoint python3 rsync sha256sum sort sync systemctl tar timeout umount; do
   require_command "${command}"
 done
+if [[ ! -x ${durable_snapshot_binary} ]]; then
+  echo "[NG] durable snapshot binary not found: ${durable_snapshot_binary}" >&2
+  exit 1
+fi
+load_durable_module_plans
 if [[ ${core_snapshot_root} != "${backup_mount}/"* || ${knowledge_mirror} != "${backup_mount}/"* || ${knowledge_versions} != "${backup_mount}/"* ]]; then
   echo "[NG] backup destinations must be under ${backup_mount}" >&2
   exit 1
@@ -195,6 +275,15 @@ fi
 require_backing_mount "${core_snapshot_root}"
 require_backing_mount "${knowledge_root}"
 require_backing_mount "${knowledge_mirror}"
+for module_root in "${module_roots[@]}"; do
+  require_backing_mount "${module_root}"
+done
+backup_device=$(findmnt -n -o SOURCE -T "${backup_mount}" | tail -n 1)
+database_device=$(findmnt -n -o SOURCE -T "${core_root}" | tail -n 1)
+if [[ -z ${backup_device} || -z ${database_device} || ${backup_device} == "${database_device}" ]]; then
+  echo "[NG] database and backup roots must use distinct mounted devices" >&2
+  exit 1
+fi
 
 mkdir -p \
   "${core_snapshot_root}/recent" \
@@ -202,7 +291,9 @@ mkdir -p \
   "${core_snapshot_root}/weekly" \
   "${core_snapshot_root}/monthly" \
   "${knowledge_mirror}" \
-  "${knowledge_versions}"
+  "${knowledge_versions}" \
+  "${module_snapshot_root}" \
+  "${module_receipt_root}"
 
 check_redis() {
   docker inspect -f '{{.State.Running}}' "${redis_container}" | grep -qx true
@@ -231,7 +322,7 @@ if [[ ${mode} == check ]]; then
     exit 1
   fi
   echo "[OK] all storage mounts and memory backends are available"
-  du -sh "${core_root}" "${knowledge_root}"
+  du -sh "${core_root}" "${knowledge_root}" "${module_roots[@]}"
   rsync -rtn \
     --safe-links \
     --modify-window=1 \
@@ -256,6 +347,85 @@ core_was_active=false
 core_masked_by_backup=false
 qdrant_snapshot_name=
 qdrant_snapshot_checksum=
+declare -A module_writer_was_active=()
+declare -A module_writer_masked=()
+
+stop_durable_module_writers() {
+  local writer
+  for writer in "${module_writers[@]}"; do
+    if ! systemctl --user cat "${writer}.service" >/dev/null 2>&1; then
+      echo "[NG] authoritative writer service is not installed: ${writer}.service" >&2
+      return 1
+    fi
+    module_writer_was_active[${writer}]=false
+    if systemctl --user is-active --quiet "${writer}.service"; then
+      module_writer_was_active[${writer}]=true
+    fi
+    systemctl --user mask --runtime --now "${writer}.service"
+    module_writer_masked[${writer}]=true
+    if systemctl --user is-active --quiet "${writer}.service"; then
+      echo "[NG] authoritative writer remained active after runtime mask: ${writer}.service" >&2
+      return 1
+    fi
+  done
+}
+
+restore_durable_module_writers() {
+  local status=0 writer
+  for writer in "${module_writers[@]}"; do
+    if [[ ${module_writer_masked[${writer}]:-false} == true ]]; then
+      systemctl --user unmask --runtime "${writer}.service" || status=1
+      module_writer_masked[${writer}]=false
+    fi
+  done
+  for writer in "${module_writers[@]}"; do
+    if [[ ${module_writer_was_active[${writer}]:-false} == true ]]; then
+      systemctl --user start "${writer}.service" || status=1
+      if ! systemctl --user is-active --quiet "${writer}.service"; then
+        echo "[NG] authoritative writer did not return active: ${writer}.service" >&2
+        status=1
+      fi
+      module_writer_was_active[${writer}]=false
+    fi
+  done
+  return "${status}"
+}
+
+snapshot_durable_modules() {
+  local index module_id module_slug source_root source_manifest staged_manifest snapshot_parent snapshot_dir receipt receipt_path
+  for index in "${!module_ids[@]}"; do
+    module_id=${module_ids[${index}]}
+    module_slug=${module_id#RenCrow_}
+    module_slug=${module_slug,,}
+    source_root=${module_roots[${index}]}
+    source_manifest=${module_manifests[${index}]}
+    staged_manifest=${staging}/durable-manifests/${module_id}.json
+    mkdir -p "${staging}/durable-manifests"
+    install -m 0600 "${source_manifest}" "${staged_manifest}"
+    if [[ $(sha256sum "${source_manifest}" | cut -d' ' -f1) != "${module_manifest_hashes[${index}]}" || \
+          $(sha256sum "${staged_manifest}" | cut -d' ' -f1) != "${module_manifest_hashes[${index}]}" ]]; then
+      echo "[NG] durable store manifest changed while freezing the backup plan: ${source_manifest}" >&2
+      return 1
+    fi
+    snapshot_parent=${module_snapshot_root}/${module_slug}/recent
+    mkdir -p "${snapshot_parent}"
+    snapshot_dir=${snapshot_parent}/${timestamp}
+    receipt=$("${durable_snapshot_binary}" create --manifest "${staged_manifest}" --source-root "${source_root}" --snapshot-dir "${snapshot_dir}")
+    python3 -c '
+import json, sys
+value=json.load(sys.stdin)
+assert value.get("contract_version") == "rencrow-durable-snapshot-receipt/v1"
+assert value.get("operation") == "create"
+assert value.get("status") == "completed"
+assert value.get("tool_revision")
+' <<<"${receipt}"
+    receipt_path=${module_receipt_root}/${timestamp}-${module_slug}.json
+    printf '%s\n' "${receipt}" > "${receipt_path}"
+    chmod 0600 "${receipt_path}"
+    sync "${receipt_path}"
+    echo "[OK] durable module snapshot verified: ${module_id} ${snapshot_dir}"
+  done
+}
 
 cleanup_qdrant_snapshot() {
   if [[ -n ${qdrant_snapshot_name} ]]; then
@@ -268,6 +438,7 @@ cleanup() {
   local status=$?
   trap - EXIT INT TERM
   cleanup_qdrant_snapshot
+  restore_durable_module_writers || status=1
   if [[ ${core_masked_by_backup} == true ]]; then
     systemctl --user unmask --runtime rencrow.service || status=1
     core_masked_by_backup=false
@@ -294,6 +465,9 @@ if systemctl --user is-active --quiet rencrow.service; then
   echo "[NG] CORE remained active after runtime mask" >&2
   exit 1
 fi
+echo "[INFO] masking authoritative module writers for consistent snapshots"
+stop_durable_module_writers
+snapshot_durable_modules
 
 mkdir -p "${staging}/external-memory/redis" "${staging}/external-memory/qdrant"
 
@@ -344,6 +518,8 @@ tar \
   -C "${staging}" \
   external-memory
 gzip -t "${archive}"
+
+restore_durable_module_writers
 
 if [[ ${core_was_active} == true ]]; then
   systemctl --user unmask --runtime rencrow.service
@@ -414,6 +590,28 @@ prune_snapshots "${core_snapshot_root}/recent" "${recent_keep}"
 prune_snapshots "${core_snapshot_root}/daily" "${daily_keep}"
 prune_snapshots "${core_snapshot_root}/weekly" "${weekly_keep}"
 prune_snapshots "${core_snapshot_root}/monthly" "${monthly_keep}"
+
+prune_module_snapshots() {
+  local root=$1
+  local keep=$2
+  local index=0 entry
+  if [[ ${root} != "${module_snapshot_root}/"*/recent ]]; then
+    echo "[NG] refusing to prune outside module snapshot roots: ${root}" >&2
+    return 1
+  fi
+  while IFS= read -r entry; do
+    index=$((index + 1))
+    if (( index > keep )); then
+      rm -rf -- "${entry}"
+    fi
+  done < <(find "${root}" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
+}
+
+for module_id in "${module_ids[@]}"; do
+  module_slug=${module_id#RenCrow_}
+  module_slug=${module_slug,,}
+  prune_module_snapshots "${module_snapshot_root}/${module_slug}/recent" "${recent_keep}"
+done
 
 version_dir="${knowledge_versions}/${timestamp}"
 mkdir -p "${version_dir}"

@@ -87,6 +87,27 @@ assert_contains "${backup_runner}" \
 assert_contains "${backup_runner}" \
   'systemctl --user unmask --runtime rencrow.service' \
   "the snapshot cleanup must remove its runtime mask"
+assert_contains "${backup_runner}" \
+  "find \"\${durable_manifest_dir}\" -maxdepth 1 -type f -name 'RenCrow_*.json'" \
+  "backup must discover the installed non-CORE durable module catalog"
+assert_contains "${backup_runner}" \
+  '"${durable_snapshot_binary}" plan --manifest' \
+  "backup must consume the canonical manifest planner"
+assert_contains "${backup_runner}" \
+  '"${durable_snapshot_binary}" create --manifest' \
+  "backup must create and scratch-verify module snapshots through the owner-neutral CLI"
+assert_contains "${backup_runner}" \
+  'systemctl --user mask --runtime --now "${writer}.service"' \
+  "backup must reject writer restarts during each module snapshot window"
+assert_contains "${backup_runner}" \
+  'systemctl --user unmask --runtime "${writer}.service"' \
+  "backup cleanup must remove every writer runtime mask"
+assert_contains "${backup_runner}" \
+  'module_snapshot_root=${backup_mount}/snapshots/modules' \
+  "module snapshots must stay on the dedicated backup medium"
+assert_contains "${backup_runner}" \
+  'database and backup roots must use distinct mounted devices' \
+  "module backups must reject a destination on the live database device"
 assert_contains "${checker}" \
   'RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC' \
   "SQLite restore integrity must have a configurable bounded deadline"
