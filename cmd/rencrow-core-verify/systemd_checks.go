@@ -357,8 +357,8 @@ func runStartupPhaseTrace(ctx context.Context, options verifierOptions, check ma
 	}
 	journal := deps.RunCommand(ctx, "journalctl", []string{
 		"--user", "-u", canonicalCoreUnit,
-		"--since", since.UTC().Format(time.RFC3339),
-		"--until", options.ObservedAt.UTC().Format(time.RFC3339),
+		"--since", formatJournalctlTime(since),
+		"--until", formatJournalctlTime(options.ObservedAt),
 		"--no-pager", "--output=cat",
 	})
 	if commandUnavailable(journal) || strings.TrimSpace(journal.Stdout) == "" {
@@ -393,6 +393,13 @@ func runStartupPhaseTrace(ctx context.Context, options verifierOptions, check ma
 		"journal_sha256": sha256Text(journal.Stdout),
 	}, readiness.Evidence, requestEvidence)
 	return verifierOutcome{Status: "passed", Evidence: evidence}
+}
+
+// journalctl's accepted timestamp grammar is older than RFC3339 on some
+// supported Linux hosts: the T separator and trailing Z are rejected. Keep
+// the frozen UTC bounds while using journalctl's portable explicit-UTC form.
+func formatJournalctlTime(value time.Time) string {
+	return value.UTC().Format("2006-01-02 15:04:05 UTC")
 }
 
 func sortedPhaseNames(phases map[string]int64) []string {

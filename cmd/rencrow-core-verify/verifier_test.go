@@ -285,6 +285,7 @@ func TestVerifierStartupRequiresJournalAndRequestEvidence(t *testing.T) {
 	}))
 	defer server.Close()
 	var output bytes.Buffer
+	var journalArgs []string
 	deps := verifierDependencies{
 		Platform:   func() string { return "linux" },
 		HTTPClient: server.Client(),
@@ -298,6 +299,7 @@ func TestVerifierStartupRequiresJournalAndRequestEvidence(t *testing.T) {
 			case "ss":
 				return verifierCommandResult{ExitCode: 0, Stdout: `LISTEN 0 128 127.0.0.1:18790 0.0.0.0:* users:(("rencrow",pid=4242,fd=7))`}
 			case "journalctl":
+				journalArgs = append([]string(nil), args...)
 				return verifierCommandResult{ExitCode: 0, Stdout: "startup_phase phase=config_load elapsed_ms=1\nstartup_phase phase=llm_gateway elapsed_ms=2\nstartup_phase phase=dependencies_total elapsed_ms=3\nstartup_phase phase=server_listen_ready elapsed_ms=4\nstartup_phase phase=startup_total elapsed_ms=5\n"}
 			default:
 				return verifierCommandResult{ExitCode: 127, Err: errors.New("unexpected command")}
@@ -314,6 +316,12 @@ func TestVerifierStartupRequiresJournalAndRequestEvidence(t *testing.T) {
 	receipt := decodeVerifierReceipt(t, output.Bytes())
 	if !strings.Contains(receipt.FailureBoundary, "request evidence") {
 		t.Fatalf("receipt=%+v", receipt)
+	}
+	joinedJournalArgs := strings.Join(journalArgs, " ")
+	if strings.Contains(joinedJournalArgs, "T00:00:00Z") ||
+		!strings.Contains(joinedJournalArgs, "--until 2026-08-27 00:00:00 UTC") ||
+		!strings.Contains(joinedJournalArgs, "--since 2026-08-26 00:00:00 UTC") {
+		t.Fatalf("journalctl timestamps are not portable explicit UTC: %q", joinedJournalArgs)
 	}
 
 	requestEvidence := filepath.Join(t.TempDir(), "request.json")
