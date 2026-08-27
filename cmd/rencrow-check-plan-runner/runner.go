@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,20 +13,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
 
 const (
-	runnerSchemaVersion = 1
-	defaultCoreURL      = "http://127.0.0.1:18790"
-	defaultPlanner      = "rencrow-check-plan"
-	maxManifestBytes    = 1 << 20
-	maxPlanBytes        = 1 << 20
-	maxResponseBytes    = 64 << 10
-	maxReceiptMessage   = 256
+	runnerSchemaVersion  = 1
+	ownerManifestVersion = 2
+	ownerReceiptSchema   = "rencrow.check-receipt.v1"
+	defaultCoreURL       = "http://127.0.0.1:18790"
+	defaultPlanner       = "rencrow-check-plan"
+	maxManifestBytes     = 1 << 20
+	maxPlanBytes         = 1 << 20
+	maxResponseBytes     = 64 << 10
+	maxReceiptMessage    = 256
+	maxManifestChecks    = 128
 )
+
+var stableCommandIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
 
 func defaultManifestPath() string {
 	if configured := strings.TrimSpace(os.Getenv("RENCROW_CORE_CHECK_MANIFEST")); configured != "" {
@@ -57,6 +64,29 @@ type checkRequest struct {
 	Purpose       string          `json:"purpose"`
 	Phase         string          `json:"phase"`
 	Checks        []manifestCheck `json:"checks"`
+}
+
+// ownerManifestEnvelope is the on-disk CORE-owned source representation. v2
+// adds metadata used by full-system composition; only its planner-compatible
+// Check fields are projected into checkRequest before invoking the strict v1
+// planner.
+type ownerManifestEnvelope struct {
+	SchemaVersion int               `json:"schema_version"`
+	Purpose       string            `json:"purpose"`
+	Phase         string            `json:"phase"`
+	Checks        []json.RawMessage `json:"checks"`
+}
+
+type ownerManifest struct {
+	SchemaVersion int
+	Purpose       string
+	Phase         string
+	Checks        []manifestCheck
+}
+
+type ownerExecutor struct {
+	Kind      string `json:"kind"`
+	CommandID string `json:"command_id"`
 }
 
 type manifestCheck struct {
@@ -148,18 +178,24 @@ func runRunner(ctx context.Context, options runnerOptions, out io.Writer) (runne
 	}
 
 	receipt := runnerReceipt{SchemaVersion: runnerSchemaVersion, Status: "blocked", Results: []checkResult{}}
-	request, err := loadCheckRequest(options.ManifestPath)
+	manifest, err := loadCheckManifest(options.ManifestPath)
 	if err != nil {
 		return finishRunner(out, receipt, fmt.Errorf("load check manifest: %w", err))
 	}
-	if request.Phase != options.Phase {
-		return finishRunner(out, receipt, fmt.Errorf("manifest phase %q does not match requested phase %q", request.Phase, options.Phase))
+	request, err := projectCheckRequest(manifest, options.Phase)
+	if err != nil {
+		return finishRunner(out, receipt, fmt.Errorf("project check manifest: %w", err))
 	}
 	receipt.Purpose = request.Purpose
 	receipt.Phase = request.Phase
 	receipt.EvaluatedAt = now.Format(time.RFC3339)
 
-	plannerArgs := []string{"plan", "--input", options.ManifestPath, "--now", now.Format(time.RFC3339)}
+	plannerInputPath, cleanupPlannerInput, err := writePlannerInput(request)
+	if err != nil {
+		return finishRunner(out, receipt, fmt.Errorf("prepare planner input: %w", err))
+	}
+	defer cleanupPlannerInput()
+	plannerArgs := []string{"plan", "--input", plannerInputPath, "--now", now.Format(time.RFC3339)}
 	plannerOutput, plannerErr := invokePlanner(ctx, options, plannerArgs)
 	if len(plannerOutput) == 0 {
 		if plannerErr == nil {
@@ -191,10 +227,12 @@ func runRunner(ctx context.Context, options runnerOptions, out io.Writer) (runne
 	}
 	allowlist := coreCheckAllowlist()
 	for _, item := range plan.Included {
-		executor, ok := allowlist[item.CheckID]
-		if !ok {
+		if _, ok := allowlist[item.CheckID]; !ok {
 			return finishRunner(out, receipt, fmt.Errorf("included check %q is not allowlisted", item.CheckID))
 		}
+	}
+	for _, item := range plan.Included {
+		executor := allowlist[item.CheckID]
 		result := executor(ctx, baseURL, options.HTTPClient, options)
 		result.CheckID = item.CheckID
 		if result.Status == "" {
@@ -380,31 +418,288 @@ func runJSONGetCheck(ctx context.Context, baseURL *url.URL, client *http.Client,
 	return result
 }
 
+// loadCheckRequest preserves the old helper contract for callers that want a
+// request using the manifest's declared phase. runRunner deliberately calls
+// projectCheckRequest with its explicit requested phase instead.
 func loadCheckRequest(path string) (checkRequest, error) {
-	file, err := os.Open(path)
+	manifest, err := loadCheckManifest(path)
 	if err != nil {
 		return checkRequest{}, err
 	}
+	return projectCheckRequest(manifest, manifest.Phase)
+}
+
+func loadCheckManifest(path string) (ownerManifest, error) {
+	data, err := readManifestFile(path)
+	if err != nil {
+		return ownerManifest{}, err
+	}
+	var envelope ownerManifestEnvelope
+	if err := decodeStrictJSON(data, &envelope); err != nil {
+		return ownerManifest{}, err
+	}
+	if strings.TrimSpace(envelope.Purpose) == "" || strings.TrimSpace(envelope.Phase) == "" {
+		return ownerManifest{}, errors.New("manifest purpose and phase are required")
+	}
+	if len(envelope.Checks) == 0 || len(envelope.Checks) > maxManifestChecks {
+		return ownerManifest{}, fmt.Errorf("manifest checks must contain 1..%d entries", maxManifestChecks)
+	}
+	if envelope.SchemaVersion != runnerSchemaVersion && envelope.SchemaVersion != ownerManifestVersion {
+		return ownerManifest{}, fmt.Errorf("manifest schema_version must be %d or %d", runnerSchemaVersion, ownerManifestVersion)
+	}
+	if envelope.SchemaVersion == ownerManifestVersion && !validManifestPhase(envelope.Phase) {
+		return ownerManifest{}, fmt.Errorf("manifest has invalid phase %q", envelope.Phase)
+	}
+
+	checks := make([]manifestCheck, 0, len(envelope.Checks))
+	seen := make(map[string]struct{}, len(envelope.Checks))
+	for index, rawCheck := range envelope.Checks {
+		check, err := decodeManifestCheck(rawCheck, envelope.SchemaVersion)
+		if err != nil {
+			return ownerManifest{}, fmt.Errorf("manifest checks[%d]: %w", index, err)
+		}
+		if _, exists := seen[check.CheckID]; exists {
+			return ownerManifest{}, fmt.Errorf("manifest contains duplicate check %q", check.CheckID)
+		}
+		seen[check.CheckID] = struct{}{}
+		checks = append(checks, check)
+	}
+	return ownerManifest{
+		SchemaVersion: envelope.SchemaVersion,
+		Purpose:       envelope.Purpose,
+		Phase:         envelope.Phase,
+		Checks:        checks,
+	}, nil
+}
+
+// projectCheckRequest strips v2-only metadata and sets the planner phase from
+// the caller. The manifest's phase is descriptive/default metadata; it must
+// not constrain an explicit phase requested by the runner.
+func projectCheckRequest(manifest ownerManifest, requestedPhase string) (checkRequest, error) {
+	requestedPhase = strings.TrimSpace(requestedPhase)
+	if requestedPhase == "" {
+		return checkRequest{}, errors.New("requested phase is required")
+	}
+	return checkRequest{
+		SchemaVersion: runnerSchemaVersion,
+		Purpose:       manifest.Purpose,
+		Phase:         requestedPhase,
+		Checks:        append([]manifestCheck(nil), manifest.Checks...),
+	}, nil
+}
+
+var plannerManifestFields = map[string]struct{}{
+	"check_id": {}, "guarantee_id": {}, "owner": {}, "purpose": {}, "target": {}, "phase": {},
+	"consumer": {}, "failure_action": {}, "cost": {}, "safety_gate": {}, "replacement_check_id": {}, "evidence": {},
+}
+
+var v2ManifestFields = map[string]struct{}{
+	"check_id": {}, "guarantee_id": {}, "owner": {}, "purpose": {}, "target": {}, "phase": {},
+	"consumer": {}, "failure_action": {}, "cost": {}, "safety_gate": {}, "replacement_check_id": {}, "evidence": {},
+	"coverage": {}, "executor": {}, "receipt_schema": {}, "surfaces": {},
+}
+
+func decodeManifestCheck(raw json.RawMessage, schemaVersion int) (manifestCheck, error) {
+	var fields map[string]json.RawMessage
+	if err := decodeJSON(raw, &fields); err != nil {
+		return manifestCheck{}, fmt.Errorf("check must be an object: %w", err)
+	}
+	if fields == nil {
+		return manifestCheck{}, errors.New("check must be an object")
+	}
+	allowed := plannerManifestFields
+	if schemaVersion == ownerManifestVersion {
+		allowed = v2ManifestFields
+	}
+	for key := range fields {
+		if _, ok := allowed[key]; !ok {
+			return manifestCheck{}, fmt.Errorf("unknown field %q", key)
+		}
+	}
+
+	var check manifestCheck
+	if err := decodeJSON(raw, &check); err != nil {
+		return manifestCheck{}, fmt.Errorf("decode planner fields: %w", err)
+	}
+	if evidenceRaw, ok := fields["evidence"]; ok {
+		var value evidence
+		if err := decodeStrictJSON(evidenceRaw, &value); err != nil {
+			return manifestCheck{}, fmt.Errorf("decode evidence: %w", err)
+		}
+	}
+	if strings.TrimSpace(check.CheckID) == "" {
+		return manifestCheck{}, errors.New("check_id is required")
+	}
+	if schemaVersion != ownerManifestVersion {
+		return check, nil
+	}
+
+	if _, err := validateStringList(fields, "coverage", true); err != nil {
+		return manifestCheck{}, err
+	}
+	if _, err := decodeOwnerExecutor(fields); err != nil {
+		return manifestCheck{}, err
+	}
+	receiptSchema, err := decodeRequiredString(fields, "receipt_schema")
+	if err != nil {
+		return manifestCheck{}, err
+	}
+	if receiptSchema != ownerReceiptSchema {
+		return manifestCheck{}, fmt.Errorf("receipt_schema must be %q, got %q", ownerReceiptSchema, receiptSchema)
+	}
+	if _, err := validateStringList(fields, "surfaces", false); err != nil {
+		return manifestCheck{}, err
+	}
+	return check, nil
+}
+
+func decodeOwnerExecutor(fields map[string]json.RawMessage) (ownerExecutor, error) {
+	raw, ok := fields["executor"]
+	if !ok {
+		return ownerExecutor{}, errors.New("executor is required")
+	}
+	var object map[string]json.RawMessage
+	if err := decodeJSON(raw, &object); err != nil {
+		return ownerExecutor{}, fmt.Errorf("executor must be an object: %w", err)
+	}
+	if object == nil {
+		return ownerExecutor{}, errors.New("executor must be an object")
+	}
+	if len(object) != 2 {
+		return ownerExecutor{}, errors.New("executor must contain exactly kind and command_id")
+	}
+	if _, ok := object["kind"]; !ok {
+		return ownerExecutor{}, errors.New("executor.kind is required")
+	}
+	if _, ok := object["command_id"]; !ok {
+		return ownerExecutor{}, errors.New("executor.command_id is required")
+	}
+	var executor ownerExecutor
+	if err := decodeStrictJSON(raw, &executor); err != nil {
+		return ownerExecutor{}, fmt.Errorf("decode executor: %w", err)
+	}
+	if executor.Kind != "owner_cli" {
+		return ownerExecutor{}, fmt.Errorf("executor.kind must be owner_cli, got %q", executor.Kind)
+	}
+	if strings.TrimSpace(executor.CommandID) == "" || !stableCommandIDPattern.MatchString(executor.CommandID) {
+		return ownerExecutor{}, fmt.Errorf("executor.command_id must be a non-empty stable id: %q", executor.CommandID)
+	}
+	return executor, nil
+}
+
+func decodeRequiredString(fields map[string]json.RawMessage, key string) (string, error) {
+	raw, ok := fields[key]
+	if !ok {
+		return "", fmt.Errorf("%s is required", key)
+	}
+	var value string
+	if err := decodeJSON(raw, &value); err != nil {
+		return "", fmt.Errorf("%s must be a string: %w", key, err)
+	}
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("%s must be non-empty", key)
+	}
+	return value, nil
+}
+
+func validateStringList(fields map[string]json.RawMessage, key string, required bool) ([]string, error) {
+	raw, ok := fields[key]
+	if !ok {
+		if required {
+			return nil, fmt.Errorf("%s is required", key)
+		}
+		return nil, nil
+	}
+	var values []string
+	if err := decodeJSON(raw, &values); err != nil {
+		return nil, fmt.Errorf("%s must be an array of strings: %w", key, err)
+	}
+	if len(values) == 0 {
+		if required {
+			return nil, fmt.Errorf("%s must be non-empty", key)
+		}
+		return nil, fmt.Errorf("%s must be non-empty when present", key)
+	}
+	seen := make(map[string]struct{}, len(values))
+	for index, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("%s[%d] must be non-empty", key, index)
+		}
+		if _, exists := seen[value]; exists {
+			return nil, fmt.Errorf("%s contains duplicate value %q", key, value)
+		}
+		seen[value] = struct{}{}
+	}
+	return values, nil
+}
+
+func validManifestPhase(phase string) bool {
+	switch phase {
+	case "any", "startup", "runtime", "deploy", "backup", "diagnostic":
+		return true
+	default:
+		return false
+	}
+}
+
+func readManifestFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
 	defer file.Close()
-	decoder := json.NewDecoder(io.LimitReader(file, maxManifestBytes+1))
+	data, err := io.ReadAll(io.LimitReader(file, maxManifestBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxManifestBytes {
+		return nil, fmt.Errorf("manifest exceeds %d bytes", maxManifestBytes)
+	}
+	return data, nil
+}
+
+func writePlannerInput(request checkRequest) (string, func(), error) {
+	data, err := json.Marshal(request)
+	if err != nil {
+		return "", func() {}, err
+	}
+	if len(data) > maxManifestBytes {
+		return "", func() {}, errors.New("projected planner input exceeds bounded size")
+	}
+	file, err := os.CreateTemp("", "rencrow-check-plan-runner-*.json")
+	if err != nil {
+		return "", func() {}, err
+	}
+	path := file.Name()
+	cleanup := func() { _ = os.Remove(path) }
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return path, cleanup, nil
+}
+
+func decodeJSON(data []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	return ensureJSONEOF(decoder)
+}
+
+func decodeStrictJSON(data []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	var request checkRequest
-	if err := decoder.Decode(&request); err != nil {
-		return checkRequest{}, err
+	if err := decoder.Decode(destination); err != nil {
+		return err
 	}
-	if err := ensureJSONEOF(decoder); err != nil {
-		return checkRequest{}, err
-	}
-	if request.SchemaVersion != runnerSchemaVersion {
-		return checkRequest{}, fmt.Errorf("manifest schema_version must be %d", runnerSchemaVersion)
-	}
-	if strings.TrimSpace(request.Purpose) == "" || strings.TrimSpace(request.Phase) == "" {
-		return checkRequest{}, errors.New("manifest purpose and phase are required")
-	}
-	if len(request.Checks) == 0 || len(request.Checks) > 128 {
-		return checkRequest{}, errors.New("manifest checks must contain 1..128 entries")
-	}
-	return request, nil
+	return ensureJSONEOF(decoder)
 }
 
 func decodePlan(data []byte) (checkPlan, error) {

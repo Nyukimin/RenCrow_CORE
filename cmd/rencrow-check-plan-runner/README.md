@@ -1,10 +1,11 @@
 # CORE Check Plan runner
 
 `rencrow-check-plan-runner` is the CORE owner integration for the cross-module
-`rencrow-check-plan` planner. It reads the versioned manifest at
-`config/checks/core.json`, invokes the fixed planner executable with an
-explicit UTC evaluation time, and executes only included checks from the
-allowlist.
+`rencrow-check-plan` planner. It strictly reads the v2 owner manifest at
+`config/checks/core.json`, validates its planner fields and execution metadata,
+then writes an ephemeral v1 planner request containing only the requested
+`--phase`. The source manifest is never mutated or passed raw to the strict
+v1 planner. Legacy v1 manifests remain accepted for compatibility.
 
 The repository manifest is installed at
 `~/.local/share/rencrow/checks/core.json`. The runner uses that path by
@@ -18,8 +19,8 @@ Runtime checks use the existing CORE routes:
 - `GET /viewer/memory/layers?include_l2=false&limit=1`
 
 The Conversation L1 snapshot integrity check is declared for the `backup`
-phase and is deferred during the manifest's `runtime` phase. It never opens a
-live production database. Backup execution, when explicitly requested with a
+phase and is deferred when `runtime` is requested. It never opens a live
+production database. Backup execution, when explicitly requested with a
 snapshot directory, delegates only to the fixed read-only
 `rencrow-storage-restore-check` owner utility.
 

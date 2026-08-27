@@ -1,8 +1,24 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "purpose": "operational_status",
   "phase": "runtime",
   "checks": [
+    {
+      "check_id": "core_startup_phase_trace",
+      "guarantee_id": "core_startup_owner_readiness_trace_available",
+      "owner": "RenCrow_CORE",
+      "purpose": "startup phase timing and canonical owner trace",
+      "target": "CORE canonical unit/config -> executable/PID -> startup phase journal -> listener/readiness -> first real request receipt",
+      "phase": "startup",
+      "consumer": "full-system startup acceptance",
+      "failure_action": "blocked",
+      "cost": "medium",
+      "safety_gate": false,
+      "coverage": ["lifecycle", "runtime_identity", "readiness", "receipt_trace"],
+      "executor": {"kind": "owner_cli", "command_id": "core-startup-phase-trace"},
+      "receipt_schema": "rencrow.check-receipt.v1",
+      "surfaces": ["lifecycle_resources"]
+    },
     {
       "check_id": "core_health",
       "guarantee_id": "core_health_available",
@@ -13,7 +29,10 @@
       "consumer": "runtime operational status",
       "failure_action": "degraded",
       "cost": "low",
-      "safety_gate": false
+      "safety_gate": false,
+      "coverage": ["readiness"],
+      "executor": {"kind": "owner_cli", "command_id": "core-health"},
+      "receipt_schema": "rencrow.check-receipt.v1"
     },
     {
       "check_id": "core_readiness",
@@ -25,7 +44,11 @@
       "consumer": "runtime readiness",
       "failure_action": "blocked",
       "cost": "low",
-      "safety_gate": false
+      "safety_gate": false,
+      "coverage": ["readiness"],
+      "executor": {"kind": "owner_cli", "command_id": "core-readiness"},
+      "receipt_schema": "rencrow.check-receipt.v1",
+      "surfaces": ["browser_ui", "route_security_exposure", "lifecycle_resources"]
     },
     {
       "check_id": "core_l1_lightweight_query",
@@ -37,7 +60,10 @@
       "consumer": "database operational status",
       "failure_action": "degraded",
       "cost": "low",
-      "safety_gate": false
+      "safety_gate": false,
+      "coverage": ["readiness"],
+      "executor": {"kind": "owner_cli", "command_id": "core-l1-lightweight-query"},
+      "receipt_schema": "rencrow.check-receipt.v1"
     },
     {
       "check_id": "core_l1_snapshot_integrity",
@@ -49,7 +75,57 @@
       "consumer": "backup completion gate",
       "failure_action": "blocked",
       "cost": "high",
-      "safety_gate": false
+      "safety_gate": false,
+      "coverage": ["durability"],
+      "executor": {"kind": "owner_cli", "command_id": "core-l1-snapshot-integrity"},
+      "receipt_schema": "rencrow.check-receipt.v1",
+      "surfaces": ["backup_restore"]
+    },
+    {
+      "check_id": "core_deploy_identity_chain",
+      "guarantee_id": "core_source_artifact_publication_identity",
+      "owner": "RenCrow_CORE",
+      "purpose": "source, artifact, and publication identity chain",
+      "target": "RenCrow_CORE source revision -> built artifact -> installed publication",
+      "phase": "deploy",
+      "consumer": "CORE deployment identity gate",
+      "failure_action": "blocked",
+      "cost": "high",
+      "safety_gate": false,
+      "coverage": ["source_identity", "artifact_identity", "publication"],
+      "executor": {"kind": "owner_cli", "command_id": "core-deploy-identity-chain"},
+      "receipt_schema": "rencrow.check-receipt.v1"
+    },
+    {
+      "check_id": "core_runtime_identity_lifecycle_security",
+      "guarantee_id": "core_runtime_identity_lifecycle_security",
+      "owner": "RenCrow_CORE",
+      "purpose": "runtime identity, lifecycle, and security exposure",
+      "target": "CORE installed artifact -> owner process identity, lifecycle, and protected runtime exposure",
+      "phase": "runtime",
+      "consumer": "CORE runtime lifecycle and security gate",
+      "failure_action": "blocked",
+      "cost": "high",
+      "safety_gate": true,
+      "coverage": ["runtime_identity", "lifecycle", "security_exposure"],
+      "executor": {"kind": "owner_cli", "command_id": "core-runtime-identity-lifecycle-security"},
+      "receipt_schema": "rencrow.check-receipt.v1",
+      "surfaces": ["route_security_exposure", "lifecycle_resources"]
+    },
+    {
+      "check_id": "core_canonical_actor_e2e",
+      "guarantee_id": "core_canonical_actor_result_with_trace",
+      "owner": "RenCrow_CORE",
+      "purpose": "canonical authenticated Agent result and receipt trace",
+      "target": "authenticated CORE Agent -> canonical conversation route -> user-visible result with receipt trace",
+      "phase": "diagnostic",
+      "consumer": "CORE canonical Agent acceptance",
+      "failure_action": "blocked",
+      "cost": "high",
+      "safety_gate": false,
+      "coverage": ["canonical_e2e", "actor_result", "receipt_trace"],
+      "executor": {"kind": "owner_cli", "command_id": "core-canonical-actor-e2e"},
+      "receipt_schema": "rencrow.check-receipt.v1"
     }
   ]
 }

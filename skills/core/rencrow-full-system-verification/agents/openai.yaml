@@ -1,0 +1,4 @@
+interface:
+  display_name: "RenCrow Full-System Verification"
+  short_description: "Read-only audit from source to real user receipt"
+  default_prompt: "$rencrow-full-system-verificationを使い、RenCrow全体を読み取り専用で検証し、固定マトリクスの全行について証拠付き終端状態とCheck Plan receiptを作成してください。"

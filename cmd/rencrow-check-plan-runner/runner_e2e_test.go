@@ -15,7 +15,7 @@ import (
 	"testing"
 )
 
-func TestRunnerRealProcessUsesToolsPlannerAndIsolatedCoreHTTP(t *testing.T) {
+func TestRunnerRealProcessUsesToolsPlannerAndFailsClosedForUnknownCanonicalCheck(t *testing.T) {
 	planner := realPlannerBinary(t)
 	runner := buildRunnerBinary(t)
 
@@ -62,20 +62,20 @@ func TestRunnerRealProcessUsesToolsPlannerAndIsolatedCoreHTTP(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("runner process failed: %v stderr=%s stdout=%s", err, stderr.String(), stdout.String())
+	if err := cmd.Run(); err == nil {
+		t.Fatalf("runner unexpectedly accepted an unknown canonical check: stdout=%s", stdout.String())
 	}
 	var receipt runnerReceipt
 	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
 		t.Fatalf("decode runner receipt: %v stdout=%s", err, stdout.String())
 	}
-	if receipt.Status != "passed" || !strings.HasPrefix(receipt.PlanRevision, "sha256:") {
+	if receipt.Status != "blocked" || !strings.HasPrefix(receipt.PlanRevision, "sha256:") || !strings.Contains(receipt.Error, "not allowlisted") {
 		t.Fatalf("unexpected receipt: %+v", receipt)
 	}
-	if len(receipt.Results) != 3 || len(receipt.Deferred) != 1 || receipt.Deferred[0].CheckID != "core_l1_snapshot_integrity" {
+	if len(receipt.Results) != 0 {
 		t.Fatalf("unexpected plan execution receipt: %+v", receipt)
 	}
-	if healthHits.Load() != 1 || readinessHits.Load() != 1 || l1Hits.Load() != 1 || backupHits.Load() != 0 {
+	if healthHits.Load() != 0 || readinessHits.Load() != 0 || l1Hits.Load() != 0 || backupHits.Load() != 0 {
 		t.Fatalf("unexpected isolated route hits: health=%d readiness=%d l1=%d backup=%d", healthHits.Load(), readinessHits.Load(), l1Hits.Load(), backupHits.Load())
 	}
 }

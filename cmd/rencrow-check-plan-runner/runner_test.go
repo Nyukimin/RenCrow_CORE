@@ -71,6 +71,46 @@ const testManifest = `{
   ]
 }`
 
+const testManifestV2 = `{
+  "schema_version": 2,
+  "purpose": "operational_status",
+  "phase": "runtime",
+  "checks": [
+    {
+      "check_id": "core_health",
+      "guarantee_id": "core_health_available",
+      "owner": "RenCrow_CORE",
+      "purpose": "runtime health",
+      "target": "core:/health",
+      "phase": "runtime",
+      "consumer": "runtime operational status",
+      "failure_action": "degraded",
+      "cost": "low",
+      "safety_gate": false,
+      "coverage": ["readiness"],
+      "executor": {"kind": "owner_cli", "command_id": "core-health"},
+      "receipt_schema": "rencrow.check-receipt.v1",
+      "surfaces": ["browser_ui"]
+    },
+    {
+      "check_id": "core_l1_snapshot_integrity",
+      "guarantee_id": "conversation_l1_integrity",
+      "owner": "RenCrow_CORE",
+      "purpose": "offline restore integrity",
+      "target": "conversation_l1 snapshot",
+      "phase": "backup",
+      "consumer": "backup completion gate",
+      "failure_action": "blocked",
+      "cost": "high",
+      "safety_gate": false,
+      "coverage": ["durability"],
+      "executor": {"kind": "owner_cli", "command_id": "core-l1-snapshot-integrity"},
+      "receipt_schema": "rencrow.check-receipt.v1",
+      "surfaces": ["backup_restore"]
+    }
+  ]
+}`
+
 func writeTestManifest(t *testing.T, contents string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "core-checks.json")
@@ -85,6 +125,135 @@ func TestDefaultManifestPathHonorsExplicitOwnerConfiguration(t *testing.T) {
 	t.Setenv("RENCROW_CORE_CHECK_MANIFEST", want)
 	if got := defaultManifestPath(); got != want {
 		t.Fatalf("defaultManifestPath() = %q, want %q", got, want)
+	}
+}
+
+func TestRuntimeRunnerProjectsV2ManifestForRequestedPhase(t *testing.T) {
+	manifestPath := writeTestManifest(t, testManifestV2)
+	sourceBefore, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read source manifest: %v", err)
+	}
+	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	var plannerArgs []string
+	var plannerInputPath string
+	planner := func(_ context.Context, args []string) ([]byte, error) {
+		plannerArgs = append([]string(nil), args...)
+		if len(args) != 5 || args[0] != "plan" || args[1] != "--input" || args[3] != "--now" {
+			t.Fatalf("unexpected planner args: %v", args)
+		}
+		plannerInputPath = args[2]
+		projected, err := os.ReadFile(plannerInputPath)
+		if err != nil {
+			t.Fatalf("read projected planner input: %v", err)
+		}
+		var request struct {
+			SchemaVersion int                          `json:"schema_version"`
+			Purpose       string                       `json:"purpose"`
+			Phase         string                       `json:"phase"`
+			Checks        []map[string]json.RawMessage `json:"checks"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(projected))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil {
+			t.Fatalf("decode projected planner input: %v", err)
+		}
+		if request.SchemaVersion != 1 || request.Purpose != "operational_status" || request.Phase != "startup" {
+			t.Fatalf("unexpected projected request: %+v", request)
+		}
+		if len(request.Checks) != 2 {
+			t.Fatalf("projected checks=%d, want 2", len(request.Checks))
+		}
+		for _, check := range request.Checks {
+			for _, extension := range []string{"coverage", "executor", "receipt_schema", "surfaces"} {
+				if _, ok := check[extension]; ok {
+					t.Fatalf("v2 extension %q leaked into v1 planner input: %s", extension, string(projected))
+				}
+			}
+		}
+		return []byte(`{"schema_version":1,"status":"ready","purpose":"operational_status","phase":"startup","evaluated_at":"2026-08-27T00:00:00Z","plan_revision":"sha256:v2-projection","included":[],"excluded":[],"deferred":[{"check_id":"core_health","classifications":["wrong_phase"],"reason":"runtime check is deferred for startup"},{"check_id":"core_l1_snapshot_integrity","classifications":["wrong_phase"],"reason":"backup check is deferred for startup"}],"errors":[]}`), nil
+	}
+
+	receipt, err := runRunner(context.Background(), runnerOptions{
+		ManifestPath: manifestPath,
+		CoreURL:      "http://127.0.0.1:1",
+		Phase:        "startup",
+		Now:          now,
+		Planner:      planner,
+		HTTPClient:   &http.Client{Timeout: time.Second},
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("runRunner: %v", err)
+	}
+	if receipt.Status != "passed" || receipt.Phase != "startup" || len(receipt.Deferred) != 2 {
+		t.Fatalf("unexpected v2 projection receipt: %+v", receipt)
+	}
+	if len(plannerArgs) != 5 || plannerArgs[4] != now.Format(time.RFC3339) {
+		t.Fatalf("planner evaluation args = %v", plannerArgs)
+	}
+	if plannerInputPath == manifestPath {
+		t.Fatal("planner received the source manifest instead of a v1 projection")
+	}
+	if _, err := os.Stat(plannerInputPath); !os.IsNotExist(err) {
+		t.Fatalf("projected planner input was not cleaned up: path=%s err=%v", plannerInputPath, err)
+	}
+	sourceAfter, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read source manifest after run: %v", err)
+	}
+	if !bytes.Equal(sourceBefore, sourceAfter) {
+		t.Fatalf("source manifest was mutated")
+	}
+}
+
+func TestLoadV2ManifestRejectsUnknownOrMalformedExtensions(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(map[string]any)
+		want string
+	}{
+		{
+			name: "unknown check field",
+			edit: func(check map[string]any) { check["unexpected"] = true },
+			want: "unknown field",
+		},
+		{
+			name: "invalid executor command id",
+			edit: func(check map[string]any) {
+				check["executor"] = map[string]any{"kind": "owner_cli", "command_id": "not a stable id"}
+			},
+			want: "executor.command_id",
+		},
+		{
+			name: "invalid receipt schema",
+			edit: func(check map[string]any) { check["receipt_schema"] = "rencrow.check-receipt.v9" },
+			want: "receipt_schema",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var document map[string]any
+			if err := json.Unmarshal([]byte(testManifestV2), &document); err != nil {
+				t.Fatalf("decode fixture: %v", err)
+			}
+			checks, ok := document["checks"].([]any)
+			if !ok || len(checks) == 0 {
+				t.Fatal("fixture checks missing")
+			}
+			check, ok := checks[0].(map[string]any)
+			if !ok {
+				t.Fatal("fixture check is not an object")
+			}
+			tt.edit(check)
+			contents, err := json.Marshal(document)
+			if err != nil {
+				t.Fatalf("encode fixture: %v", err)
+			}
+			_, err = loadCheckManifest(writeTestManifest(t, string(contents)))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("load error = %v, want substring %q", err, tt.want)
+			}
+		})
 	}
 }
 
