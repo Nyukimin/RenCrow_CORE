@@ -54,6 +54,7 @@ func buildConversationRuntime(
 	if cfg.Prompts != nil {
 		mioPersona = conversation.NewMioPersona(cfg.Prompts.MioPersona)
 	}
+	l1StoreStartedAt := time.Now()
 	if cfg.Storage.Databases.ConversationL1 != "" {
 		if err := os.MkdirAll(filepath.Dir(cfg.Storage.Databases.ConversationL1), 0755); err != nil {
 			log.Fatalf("Failed to create L1 SQLite directory: %v", err)
@@ -68,6 +69,10 @@ func buildConversationRuntime(
 				log.Fatalf("Failed to configure Parquet export root: %v", err)
 			}
 		}
+	}
+	logStartupPhase("conversation_l1_store_init", l1StoreStartedAt)
+	reconcileStartedAt := time.Now()
+	if l1Store != nil {
 		if rawSourceRoot := strings.TrimSpace(cfg.Storage.Memory.RawSourceDir); rawSourceRoot != "" {
 			startupReconcile, err := reconcileChatGPTImportStartup(context.Background(), l1Store, rawSourceRoot)
 			if err != nil {
@@ -77,6 +82,7 @@ func buildConversationRuntime(
 		}
 		log.Printf("  L1 SQLite: %s", cfg.Storage.Databases.ConversationL1)
 	}
+	logStartupPhase("chatgpt_import_reconcile", reconcileStartedAt)
 	// Conversation Archive is a CORE-owned L2 boundary for user-memory
 	// archive/receipt routes. It must be available with standard L1-only
 	// startup; advanced Redis/vector conversation is not a prerequisite.

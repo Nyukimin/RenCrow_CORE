@@ -8,6 +8,32 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const l1UserMemoryViewerProjectionBackfillSQL = `
+INSERT OR IGNORE INTO l1_user_memory_viewer_projection(
+	id, namespace, user_id, memory_type, memory_state, active, statement, evidence_text,
+	confidence, sensitivity, scope, lifecycle_status, decay_score, superseded_by, created_at, updated_at)
+SELECT id, namespace, trim(json_extract(meta_json, '$.user_id')), trim(json_extract(meta_json, '$.type')), memory_state,
+	CAST(COALESCE(json_extract(meta_json, '$.active'), 1) AS INTEGER),
+	message, COALESCE(json_extract(meta_json, '$.evidence_event_ids'), '[]'),
+	CAST(COALESCE(json_extract(meta_json, '$.confidence'), 0.5) AS REAL),
+	COALESCE(json_extract(meta_json, '$.sensitivity'), 'normal'),
+	COALESCE(json_extract(meta_json, '$.scope'), 'all_personas'),
+	COALESCE(json_extract(meta_json, '$.lifecycle_status'), ''),
+	CAST(COALESCE(json_extract(meta_json, '$.decay_score'), 0) AS REAL),
+	COALESCE(json_extract(meta_json, '$.superseded_by'), ''), created_at, updated_at
+FROM l1_memory_event
+WHERE speaker = 'memory' AND layer = 'L1' AND json_valid(meta_json)
+	AND json_type(meta_json, '$.user_id') = 'text'
+	AND json_type(meta_json, '$.type') = 'text'
+	AND trim(COALESCE(json_extract(meta_json, '$.statement'), '')) = trim(message)
+	AND namespace = 'user:' || trim(json_extract(meta_json, '$.user_id'))
+`
+
+const l1UserMemoryViewerFTSBackfillSQL = `
+INSERT INTO l1_user_memory_viewer_fts(id, statement, evidence_text)
+SELECT id, statement, evidence_text FROM l1_user_memory_viewer_projection
+`
+
 func (s *L1SQLiteStore) initTables(ctx context.Context) error {
 	schema := `
 PRAGMA journal_mode=WAL;
@@ -131,28 +157,6 @@ AFTER DELETE ON l1_memory_event
 BEGIN
 	DELETE FROM l1_user_memory_viewer_projection WHERE id = OLD.id;
 END;
-INSERT OR IGNORE INTO l1_user_memory_viewer_projection(
-	id, namespace, user_id, memory_type, memory_state, active, statement, evidence_text,
-	confidence, sensitivity, scope, lifecycle_status, decay_score, superseded_by, created_at, updated_at)
-SELECT id, namespace, trim(json_extract(meta_json, '$.user_id')), trim(json_extract(meta_json, '$.type')), memory_state,
-	CAST(COALESCE(json_extract(meta_json, '$.active'), 1) AS INTEGER),
-	message, COALESCE(json_extract(meta_json, '$.evidence_event_ids'), '[]'),
-	CAST(COALESCE(json_extract(meta_json, '$.confidence'), 0.5) AS REAL),
-	COALESCE(json_extract(meta_json, '$.sensitivity'), 'normal'),
-	COALESCE(json_extract(meta_json, '$.scope'), 'all_personas'),
-	COALESCE(json_extract(meta_json, '$.lifecycle_status'), ''),
-	CAST(COALESCE(json_extract(meta_json, '$.decay_score'), 0) AS REAL),
-	COALESCE(json_extract(meta_json, '$.superseded_by'), ''), created_at, updated_at
-FROM l1_memory_event
-WHERE speaker = 'memory' AND layer = 'L1' AND json_valid(meta_json)
-	AND json_type(meta_json, '$.user_id') = 'text'
-	AND json_type(meta_json, '$.type') = 'text'
-	AND trim(COALESCE(json_extract(meta_json, '$.statement'), '')) = trim(message)
-	AND namespace = 'user:' || trim(json_extract(meta_json, '$.user_id'))
-	AND NOT EXISTS (SELECT 1 FROM l1_user_memory_viewer_projection LIMIT 1);
-INSERT INTO l1_user_memory_viewer_fts(id, statement, evidence_text)
-SELECT id, statement, evidence_text FROM l1_user_memory_viewer_projection
-WHERE NOT EXISTS (SELECT 1 FROM l1_user_memory_viewer_fts LIMIT 1);
 CREATE TABLE IF NOT EXISTS l1_profile_promotion_job (
 	evidence_event_id TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL,
@@ -551,6 +555,9 @@ CREATE INDEX IF NOT EXISTS idx_prompt_injection_event_trace ON prompt_injection_
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("failed to initialize l1 sqlite schema: %w", err)
 	}
+	if err := s.ensureL1UserMemoryViewerProjection(ctx); err != nil {
+		return err
+	}
 	if err := s.applyCommonRawSchemaMigration(ctx); err != nil {
 		return err
 	}
@@ -611,6 +618,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_l1_monthly_highlight_month_category ON l1_
 CREATE INDEX IF NOT EXISTS idx_l1_monthly_highlight_category_updated ON l1_monthly_highlight(category, updated_at DESC);
 `); err != nil {
 		return fmt.Errorf("failed to initialize l1 daily digest slot indexes: %w", err)
+	}
+	return nil
+}
+
+func (s *L1SQLiteStore) ensureL1UserMemoryViewerProjection(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin l1 viewer projection initialization: %w", err)
+	}
+	var projectionRows int
+	if err := tx.QueryRowContext(ctx, `
+SELECT CASE WHEN EXISTS (
+	SELECT 1 FROM l1_user_memory_viewer_projection LIMIT 1
+) THEN 1 ELSE 0 END
+`).Scan(&projectionRows); err != nil {
+		return rollbackL1Tx(tx, fmt.Errorf("failed to check l1 viewer projection: %w", err))
+	}
+	if projectionRows == 0 {
+		if _, err := tx.ExecContext(ctx, l1UserMemoryViewerProjectionBackfillSQL); err != nil {
+			return rollbackL1Tx(tx, fmt.Errorf("failed to backfill l1 viewer projection: %w", err))
+		}
+	}
+
+	var ftsRows int
+	if err := tx.QueryRowContext(ctx, `
+SELECT CASE WHEN EXISTS (
+	SELECT 1 FROM l1_user_memory_viewer_fts LIMIT 1
+) THEN 1 ELSE 0 END
+`).Scan(&ftsRows); err != nil {
+		return rollbackL1Tx(tx, fmt.Errorf("failed to check l1 viewer search projection: %w", err))
+	}
+	if ftsRows == 0 {
+		if _, err := tx.ExecContext(ctx, l1UserMemoryViewerFTSBackfillSQL); err != nil {
+			return rollbackL1Tx(tx, fmt.Errorf("failed to backfill l1 viewer search projection: %w", err))
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit l1 viewer projection initialization: %w", err)
 	}
 	return nil
 }

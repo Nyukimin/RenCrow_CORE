@@ -116,6 +116,15 @@ backup停止中に失効したclaimは再起動後のschedulerが同じrun／che
 
 Linuxのsystemd常用環境では、`rencrow.service`のstdoutとstderrをsystemd journalへ送ります。
 
+COREの起動時間は、低カーディナリティの固定phase名と整数millisecondだけを
+`startup_phase phase=<name> elapsed_ms=<n>`として記録します。少なくとも
+`config_load`、`llm_gateway`、`conversation_l1_store_init`、
+`chatgpt_import_reconcile`、`dependencies_total`、`server_listen_ready`、
+`startup_total`を記録し、path、credential、入力本文はphase timingへ含めません。
+`server_listen_ready`はsocket bind単体、`startup_total`はprocess内の起動開始から
+bind完了までを表します。初期化失敗は従来どおり起動をfail closedし、phase logのために
+listenerを先行公開しません。
+
 repository内の `systemd/user/rencrow.service` をproduction unitの正本とします。`install.sh` はこのunitを `~/.config/systemd/user/rencrow.service` へコピーし、inline生成しません。CORE同梱promptはinstall時に`%h/.local/share/rencrow/prompts`へcopyし、正本unitはportable install pathとして`WorkingDirectory=%h/.local/share/rencrow`、`ExecStart=%h/.local/bin/rencrow run`、`EnvironmentFile=%h/.rencrow/.env`、optionalな`EnvironmentFile=-%h/.rencrow/llm_ops.env`、`RENCROW_CONFIG=%h/.rencrow/config/core.yaml`を使います。再起動契約は`Restart=always`、`RestartSec=5`、`StartLimitIntervalSec=0`です。journal契約は`StandardOutput=journal`、`StandardError=journal`、`LogRateLimitIntervalSec=0`、`LogRateLimitBurst=0`です。
 
 ### Configとdrop-inの所有境界

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
@@ -23,6 +24,14 @@ var (
 	Commit    = "unknown"
 	BuildDate = "unknown"
 )
+
+func logStartupPhase(phase string, startedAt time.Time) {
+	elapsed := time.Since(startedAt)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	log.Printf("startup_phase phase=%s elapsed_ms=%d", phase, elapsed.Milliseconds())
+}
 
 func main() {
 	cmd := "run"
@@ -78,9 +87,12 @@ func main() {
 
 // cmdRun はHTTPサーバーを起動する（デフォルトコマンド）
 func cmdRun() {
+	startupStartedAt := time.Now()
 	configPath := getConfigPath()
 
+	configStartedAt := time.Now()
 	cfg, err := config.LoadConfig(configPath)
+	logStartupPhase("config_load", configStartedAt)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
@@ -88,8 +100,12 @@ func cmdRun() {
 	log.Printf("RenCrow %s (commit: %s, built: %s)", Version, Commit, BuildDate)
 	log.Printf("Loaded config from: %s", configPath)
 
+	llmGatewayStartedAt := time.Now()
 	llmGatewayStatus := ensureLLMGateway(cfg)
+	logStartupPhase("llm_gateway", llmGatewayStartedAt)
+	dependenciesStartedAt := time.Now()
 	dependencies := buildDependencies(cfg)
+	logStartupPhase("dependencies_total", dependenciesStartedAt)
 	dependencies.llmGatewayProcess = llmGatewayStatus.Process
 
 	// Graceful shutdown用シグナル
@@ -178,10 +194,17 @@ func cmdRun() {
 			log.Printf("[ConnState] %s -> %s (remote: %s)", state.String(), conn.LocalAddr(), conn.RemoteAddr())
 		}
 	}
+	listenerStartedAt := time.Now()
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("Server failed: %v", err)
+	}
+	logStartupPhase("server_listen_ready", listenerStartedAt)
+	logStartupPhase("startup_total", startupStartedAt)
 	if cfg.Server.TLS.Enabled {
-		err = server.ListenAndServeTLS(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
+		err = server.ServeTLS(listener, cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
 	} else {
-		err = server.ListenAndServe()
+		err = server.Serve(listener)
 	}
 	if err != nil {
 		log.Fatalf("Server failed: %v", err)
