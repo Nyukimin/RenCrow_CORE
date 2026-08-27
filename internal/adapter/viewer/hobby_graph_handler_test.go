@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHandleHobbyGraphBootstrapCreatesCommonTables(t *testing.T) {
@@ -147,6 +148,39 @@ func TestHandleHobbyGraphOverviewReturnsRecentRows(t *testing.T) {
 	}
 	if out.TopicCandidates[0].TargetTitle != "九井諒子" || out.TopicCandidates[0].Status != "candidate" {
 		t.Fatalf("unexpected topic candidate overview: %+v", out.TopicCandidates[0])
+	}
+}
+
+func TestHandleHobbyGraphOverviewWaitsForShortWriterLock(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "hobby_graph.sqlite")
+	bootstrap := HandleHobbyGraphBootstrap(HobbyGraphOptions{DBPath: dbPath})
+	bootstrapRec := httptest.NewRecorder()
+	bootstrap(bootstrapRec, httptest.NewRequest(http.MethodPost, "/viewer/hobby-graph/bootstrap", nil))
+	if bootstrapRec.Code != http.StatusOK {
+		t.Fatalf("bootstrap expected 200, got %d: %s", bootstrapRec.Code, bootstrapRec.Body.String())
+	}
+
+	writer, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if _, err := writer.Exec("BEGIN EXCLUSIVE"); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(75 * time.Millisecond)
+		_, _ = writer.Exec("ROLLBACK")
+		close(released)
+	}()
+
+	h := HandleHobbyGraph(HobbyGraphOptions{DBPath: dbPath})
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/viewer/hobby-graph?action=overview&limit=5", nil))
+	<-released
+	if rec.Code != http.StatusOK {
+		t.Fatalf("short writer lock must not become transient 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
