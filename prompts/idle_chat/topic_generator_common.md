@@ -10,8 +10,9 @@ Mio と Shiro が自律的に雑談したとき、12ターン程度で自然に�
 - candidates 配列に {candidate_count} 件を返す。
 - candidates は topic 文字列だけの配列にする。
 - topic は1行。
+- topic は4〜90文字（Unicode文字数）にする。
 - topic には説明文を含めない。
-- topic にカテゴリ名、内部 strategy、provider 名、取得経路、seed ID を出さない。
+- topic にカテゴリ名、内部 strategy、provider 名、取得経路、seed ID、生成・プロンプト・JSON・候補などのメタ語を出さない（seed のジャンル名に含まれる語は除く）。
 - 抽象語だけで終わらせない。
 - 人物・物・場所・場面・制度・出来事のうち、可能な限り1つ以上を入れる。
 - Mio と Shiro の見方が分かれそうな余地を残す。

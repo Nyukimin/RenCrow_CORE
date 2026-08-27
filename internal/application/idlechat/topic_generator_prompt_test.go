@@ -5,6 +5,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 )
 
 func TestTopicGenerationPromptNamesSingleGenreLiteral(t *testing.T) {
@@ -29,6 +31,22 @@ func TestTopicGenerationPromptNamesDoubleGenreLiterals(t *testing.T) {
 	want := "- topic 文字列には「生成AI」と「防災」をそれぞれそのまま1回以上含める。"
 	if !strings.Contains(prompt, want) {
 		t.Fatalf("double prompt must name both exact genre values in its topic requirement; missing %q in:\n%s", want, prompt)
+	}
+}
+
+func TestTopicGenerationPromptStatesCommonTopicValidatorContract(t *testing.T) {
+	prompt := buildTopicGenerationPromptForTest(t, TopicCategorySingle, TopicSeed{
+		Category: TopicCategorySingle,
+		Genre1:   "防災",
+	})
+
+	if want := "- topic は4〜90文字（Unicode文字数）にする。"; !strings.Contains(prompt, want) {
+		t.Fatalf("common prompt must state the topic length contract; missing %q in:\n%s", want, prompt)
+	}
+	for _, forbidden := range modulechat.CommonForbiddenMetaTerms {
+		if !strings.Contains(prompt, forbidden) {
+			t.Fatalf("common prompt must name validator forbidden term %q in:\n%s", forbidden, prompt)
+		}
 	}
 }
 
