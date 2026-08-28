@@ -15,6 +15,7 @@ import (
 
 type GatewayProviderConfig struct {
 	BaseURL       string
+	AuthToken     string
 	VoiceID       string
 	Speed         float64
 	TLSSkipVerify bool
@@ -30,6 +31,7 @@ type GatewayProvider struct {
 func NewGatewayProvider(cfg GatewayProviderConfig) *GatewayProvider {
 	return &GatewayProvider{bridge: NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL:    cfg.BaseURL,
+		AuthToken:      cfg.AuthToken,
 		VoiceID:        cfg.VoiceID,
 		Speed:          cfg.Speed,
 		TLSSkipVerify:  cfg.TLSSkipVerify,

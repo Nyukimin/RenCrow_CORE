@@ -32,8 +32,13 @@ func buildPrimaryTTSProvider(cfg *config.Config) (ttsProviderSelection, bool) {
 	if baseURL == "" {
 		return ttsProviderSelection{}, false
 	}
+	authToken, err := readTTSOwnerToken(cfg.TTS.AuthTokenFile)
+	if err != nil {
+		return ttsProviderSelection{}, false
+	}
 	provider := ttsinfra.NewGatewayProvider(ttsinfra.GatewayProviderConfig{
 		BaseURL:       baseURL,
+		AuthToken:     authToken,
 		VoiceID:       cfg.TTS.VoiceID,
 		Speed:         cfg.TTS.Speed,
 		TLSSkipVerify: cfg.TTS.TLSSkipVerify,

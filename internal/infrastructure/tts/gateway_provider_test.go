@@ -18,6 +18,9 @@ func TestGatewayProviderSynthesizesAndDownloadsThroughGatewayRelay(t *testing.T)
 		switch r.URL.Path {
 		case "/api/tts":
 			synthesisCalls++
+			if got := r.Header.Get("Authorization"); got != "Bearer owner-test-token" {
+				t.Fatalf("Authorization = %q, want owner Bearer token", got)
+			}
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode synthesis payload: %v", err)
@@ -49,6 +52,7 @@ func TestGatewayProviderSynthesizesAndDownloadsThroughGatewayRelay(t *testing.T)
 
 	provider := NewGatewayProvider(GatewayProviderConfig{
 		BaseURL: server.URL,
+		AuthToken: "owner-test-token",
 		VoiceID: "mio",
 		Speed:   1.2,
 		Timeout: time.Second,
