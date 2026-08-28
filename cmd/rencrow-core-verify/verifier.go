@@ -27,7 +27,7 @@ const (
 	verifierSchemaVersion           = 1
 	verifierReceiptSchema           = "rencrow.check-receipt.v1"
 	verifierOwner                   = "RenCrow_CORE"
-	verifierManifestV2              = 2
+	verifierManifestV3              = 3
 	defaultVerifierURL              = "http://127.0.0.1:18790"
 	canonicalCoreUnit               = "rencrow.service"
 	canonicalCorePort               = 18790
@@ -93,8 +93,22 @@ type manifestCheck struct {
 }
 
 type manifestExecutor struct {
-	Kind      string `json:"kind"`
-	CommandID string `json:"command_id"`
+	Kind        string               `json:"kind"`
+	CommandID   string               `json:"command_id"`
+	Acquisition *manifestAcquisition `json:"acquisition"`
+}
+
+type manifestAcquisition struct {
+	Mode             string          `json:"mode"`
+	VerificationSafe *bool           `json:"verification_safe"`
+	Inputs           []manifestInput `json:"inputs"`
+}
+
+type manifestInput struct {
+	ID       string `json:"id"`
+	Class    string `json:"class"`
+	Required *bool  `json:"required"`
+	Source   string `json:"source"`
 }
 
 type verifierOptions struct {
@@ -269,8 +283,8 @@ func loadOwnerManifest(path string) (ownerManifest, error) {
 	if err := decodeStrictJSON(data, &manifest); err != nil {
 		return ownerManifest{}, fmt.Errorf("decode manifest: %w", err)
 	}
-	if manifest.SchemaVersion != verifierManifestV2 {
-		return ownerManifest{}, fmt.Errorf("manifest schema_version must be %d", verifierManifestV2)
+	if manifest.SchemaVersion != verifierManifestV3 {
+		return ownerManifest{}, fmt.Errorf("manifest schema_version must be %d", verifierManifestV3)
 	}
 	if strings.TrimSpace(manifest.Purpose) == "" || strings.TrimSpace(manifest.Phase) == "" {
 		return ownerManifest{}, errors.New("manifest purpose and phase are required")
@@ -324,6 +338,9 @@ func validateManifestCheck(check manifestCheck) error {
 	if !stableVerifierID.MatchString(check.Executor.CommandID) {
 		return errors.New("executor.command_id must be a stable identifier")
 	}
+	if err := validateManifestAcquisition(check); err != nil {
+		return err
+	}
 	if check.ReceiptSchema != verifierReceiptSchema {
 		return fmt.Errorf("receipt_schema must be %q", verifierReceiptSchema)
 	}
@@ -338,6 +355,49 @@ func validateManifestCheck(check manifestCheck) error {
 	for _, coverage := range check.Coverage {
 		if strings.TrimSpace(coverage) == "security_exposure" && !check.SafetyGate {
 			return errors.New("security_exposure requires safety_gate=true")
+		}
+	}
+	return nil
+}
+
+func validateManifestAcquisition(check manifestCheck) error {
+	acquisition := check.Executor.Acquisition
+	if acquisition == nil {
+		return errors.New("executor.acquisition is required")
+	}
+	if acquisition.Mode != "owner_self_collect" {
+		return fmt.Errorf("executor.acquisition.mode must be owner_self_collect, got %q", acquisition.Mode)
+	}
+	if acquisition.VerificationSafe == nil {
+		return errors.New("executor.acquisition.verification_safe is required")
+	}
+	if *acquisition.VerificationSafe && !check.SafetyGate {
+		return errors.New("executor.acquisition.verification_safe requires safety_gate=true")
+	}
+	if len(acquisition.Inputs) == 0 {
+		return errors.New("executor.acquisition.inputs must be non-empty")
+	}
+	seen := make(map[string]struct{}, len(acquisition.Inputs))
+	for index, input := range acquisition.Inputs {
+		if !stableVerifierID.MatchString(input.ID) {
+			return fmt.Errorf("executor.acquisition.inputs[%d].id must be a stable identifier", index)
+		}
+		if _, exists := seen[input.ID]; exists {
+			return fmt.Errorf("executor.acquisition.inputs contains duplicate id %q", input.ID)
+		}
+		seen[input.ID] = struct{}{}
+		if input.Required == nil {
+			return fmt.Errorf("executor.acquisition.inputs[%d].required is required", index)
+		}
+		switch input.Class {
+		case "discoverable", "credential_reference", "verification_fixture", "external_prerequisite":
+		default:
+			return fmt.Errorf("executor.acquisition.inputs[%d].class is unsupported: %q", index, input.Class)
+		}
+		switch input.Source {
+		case "ecosystem_catalog", "owner_active_config", "owner_service_manager", "owner_operations_api", "owner_fixed_fixture", "owner_external_artifact":
+		default:
+			return fmt.Errorf("executor.acquisition.inputs[%d].source is unsupported: %q", index, input.Source)
 		}
 	}
 	return nil

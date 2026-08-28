@@ -1,6 +1,6 @@
 # CORE owner verifier
 
-`rencrow-core-verify` is the read-only RenCrow_CORE executor for the v2 owner
+`rencrow-core-verify` is the read-only RenCrow_CORE executor for the v3 owner
 manifest. It accepts one declared `check_id` and emits one
 `rencrow.check-receipt.v1` JSON receipt:
 

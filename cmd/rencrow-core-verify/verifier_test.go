@@ -30,6 +30,25 @@ func testManifest(t *testing.T, commands ...string) string {
 		if !ok {
 			t.Fatalf("unknown fixture command %q", command)
 		}
+		safetyGate := false
+		acquisition := `{
+          "mode": "owner_self_collect",
+          "verification_safe": false,
+          "inputs": [
+            {"id": "owner_config", "class": "discoverable", "required": true, "source": "owner_active_config"}
+          ]
+        }`
+		if command == "core-canonical-actor-e2e" {
+			safetyGate = true
+			acquisition = `{
+          "mode": "owner_self_collect",
+          "verification_safe": true,
+          "inputs": [
+            {"id": "actor_fixture", "class": "verification_fixture", "required": true, "source": "owner_fixed_fixture"},
+            {"id": "canonical_auth", "class": "credential_reference", "required": true, "source": "owner_active_config"}
+          ]
+        }`
+		}
 		checks = append(checks, fmt.Sprintf(`{
       "check_id": %q,
       "guarantee_id": %q,
@@ -40,13 +59,13 @@ func testManifest(t *testing.T, commands ...string) string {
       "consumer": "fixture",
       "failure_action": "blocked",
       "cost": "low",
-      "safety_gate": false,
+      "safety_gate": %t,
       "coverage": ["readiness"],
-      "executor": {"kind": "owner_cli", "command_id": %q},
+      "executor": {"kind": "owner_cli", "command_id": %q, "acquisition": %s},
       "receipt_schema": "rencrow.check-receipt.v1"
-    }`, checkID, checkID+"-guarantee", checkID, command))
+    }`, checkID, checkID+"-guarantee", checkID, safetyGate, command, acquisition))
 	}
-	contents := fmt.Sprintf(`{"schema_version":2,"purpose":"operational_status","phase":"runtime","checks":[%s]}`, strings.Join(checks, ","))
+	contents := fmt.Sprintf(`{"schema_version":3,"purpose":"operational_status","phase":"runtime","checks":[%s]}`, strings.Join(checks, ","))
 	path := filepath.Join(t.TempDir(), "core.json")
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatalf("write fixture manifest: %v", err)
@@ -91,6 +110,87 @@ func TestVerifierAllowlistCoversCurrentManifestCommands(t *testing.T) {
 	if len(seen) != 8 {
 		t.Fatalf("current CORE manifest commands=%d, want 8: %#v", len(seen), seen)
 	}
+}
+
+func TestVerifierV3AcquisitionContractRejectsMalformedValues(t *testing.T) {
+	mutations := map[string]func(*ownerManifest){
+		"schema-v2": func(value *ownerManifest) {
+			value.SchemaVersion = 2
+		},
+		"missing-acquisition": func(value *ownerManifest) {
+			value.Checks[0].Executor.Acquisition = nil
+		},
+		"unsupported-mode": func(value *ownerManifest) {
+			value.Checks[0].Executor.Acquisition.Mode = "owner_guess"
+		},
+		"unsupported-class": func(value *ownerManifest) {
+			value.Checks[0].Executor.Acquisition.Inputs[0].Class = "arbitrary_path"
+		},
+		"unsupported-source": func(value *ownerManifest) {
+			value.Checks[0].Executor.Acquisition.Inputs[0].Source = "shell_command"
+		},
+		"duplicate-input-id": func(value *ownerManifest) {
+			input := value.Checks[0].Executor.Acquisition.Inputs[0]
+			value.Checks[0].Executor.Acquisition.Inputs = append(value.Checks[0].Executor.Acquisition.Inputs, input)
+		},
+		"missing-required": func(value *ownerManifest) {
+			value.Checks[0].Executor.Acquisition.Inputs[0].Required = nil
+		},
+		"verification-safe-without-gate": func(value *ownerManifest) {
+			value.Checks[0].Executor.Acquisition.VerificationSafe = boolPointer(true)
+			value.Checks[0].SafetyGate = false
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			path := testManifest(t, "core-health")
+			value, err := loadOwnerManifest(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutate(&value)
+			data, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadOwnerManifest(path); err == nil {
+				t.Fatal("invalid v3 acquisition contract was accepted")
+			}
+		})
+	}
+}
+
+func TestVerifierCanonicalActorManifestUsesSafeFixedFixture(t *testing.T) {
+	manifest, err := loadOwnerManifest(filepath.Join("..", "..", "config", "checks", "core.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range manifest.Checks {
+		if check.Executor.CommandID != "core-canonical-actor-e2e" {
+			continue
+		}
+		if !check.SafetyGate || check.Executor.Acquisition == nil || check.Executor.Acquisition.VerificationSafe == nil || !*check.Executor.Acquisition.VerificationSafe {
+			t.Fatalf("canonical actor contract is not verification-safe: %+v", check)
+		}
+		foundFixture := false
+		for _, input := range check.Executor.Acquisition.Inputs {
+			if input.Class == "verification_fixture" && input.Source == "owner_fixed_fixture" {
+				foundFixture = true
+			}
+		}
+		if !foundFixture {
+			t.Fatal("canonical actor check lacks its fixed fixture input")
+		}
+		return
+	}
+	t.Fatal("canonical actor check not found")
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }
 
 func TestVerifierHealthUsesCanonicalLoopbackAndWritesReceiptEvidence(t *testing.T) {
