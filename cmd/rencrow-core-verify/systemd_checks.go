@@ -381,9 +381,21 @@ func runStartupPhaseTrace(ctx context.Context, options verifierOptions, check ma
 	if readiness.Status != "passed" {
 		return verifierOutcome{Status: readiness.Status, FailureBoundary: readiness.FailureBoundary, Evidence: map[string]any{"startup_phases": phases}}
 	}
-	requestEvidence, requestOutcome := loadStartupRequestEvidence(options.RequestEvidence, options.ObservedAt)
-	if requestOutcome.Status != "" {
-		return requestOutcome
+	var requestEvidence map[string]any
+	if strings.TrimSpace(options.RequestEvidence) != "" {
+		requestEvidence, outcome = loadStartupRequestEvidence(options.RequestEvidence, options.ObservedAt)
+		if outcome.Status != "" {
+			return outcome
+		}
+	} else {
+		actor := runCanonicalActorE2E(ctx, options, check, deps)
+		if actor.Status != "passed" {
+			return verifierOutcome{Status: actor.Status, FailureBoundary: actor.FailureBoundary, Evidence: actor.Evidence}
+		}
+		requestEvidence = make(map[string]any, len(actor.Evidence))
+		for key, value := range actor.Evidence {
+			requestEvidence["first_request_"+key] = value
+		}
 	}
 	evidence := mergeEvidence(identity.Evidence, config.Evidence, listener.Evidence, map[string]any{
 		"unit":           canonicalCoreUnit,

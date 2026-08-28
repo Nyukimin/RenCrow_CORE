@@ -330,20 +330,31 @@ func TestVerifierSnapshotWithoutMountedMediaUsesCanonicalBackupReceipt(t *testin
 	}
 }
 
-func TestVerifierStartupRequiresJournalAndRequestEvidence(t *testing.T) {
+func TestVerifierStartupCollectsJournalAndCanonicalRequestEvidence(t *testing.T) {
 	manifest := testManifest(t, "core-startup-phase-trace")
 	artifact := filepath.Join(t.TempDir(), "rencrow")
 	configPath := filepath.Join(t.TempDir(), "core.yaml")
 	if err := os.WriteFile(artifact, []byte("binary"), 0o700); err != nil {
 		t.Fatalf("artifact: %v", err)
 	}
-	if err := os.WriteFile(configPath, []byte("server: {}\n"), 0o600); err != nil {
+	tokenPath := filepath.Join(t.TempDir(), "agent-ops.token")
+	if err := os.WriteFile(tokenPath, []byte("owner-token-012345678901234567890123"), 0o600); err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	config := "local_agent_ops:\n  enabled: true\n  auth_token_file: \"" + tokenPath + "\"\n  user_id: ren\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("config: %v", err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/health/ready" {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"service":"rencrow-core","ready":true}`))
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/agent/ops" {
+			requestID := r.Header.Get("X-Request-ID")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"request_id":%q,"job_id":"startup-job","agent_id":"shiro","role":"worker","route":"OPS","output":"OK"}`, requestID)
 			return
 		}
 		http.NotFound(w, r)
@@ -375,11 +386,11 @@ func TestVerifierStartupRequiresJournalAndRequestEvidence(t *testing.T) {
 	args := verifierArgs(manifest, "core_startup_phase_trace", t.TempDir())
 	args = append(args, "--core-url", server.URL)
 	code := runVerifierCLI(context.Background(), args, &output, &bytes.Buffer{}, deps)
-	if code != verifierExitBlocked {
+	if code != verifierExitPassed {
 		t.Fatalf("exit=%d output=%s", code, output.String())
 	}
 	receipt := decodeVerifierReceipt(t, output.Bytes())
-	if !strings.Contains(receipt.FailureBoundary, "request evidence") {
+	if receipt.Status != "passed" {
 		t.Fatalf("receipt=%+v", receipt)
 	}
 	joinedJournalArgs := strings.Join(journalArgs, " ")
