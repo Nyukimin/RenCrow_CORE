@@ -123,6 +123,13 @@ func (p *visionRequestProcessor) Process(
 		emitVisionEvent(emit, "vision.request.completed", visionEventContent(*item, result.Provider, result.Model), request)
 	}
 	processed.UserMessage = appendVisionContext(request.UserMessage, processed.Attachments, results)
+	retained := processed.Attachments[:0]
+	for _, item := range processed.Attachments {
+		if !isVisualAttachment(item) {
+			retained = append(retained, item)
+		}
+	}
+	processed.Attachments = retained
 	return processed, nil
 }
 

@@ -83,8 +83,11 @@ func TestVisionRequestProcessorReplacesRawVisualMediaWithNormalizedContext(t *te
 	if analyzeRequest.Prompt != request.UserMessage || analyzeRequest.MaxFrames != 8 {
 		t.Fatalf("unexpected analyze request: %+v", analyzeRequest)
 	}
-	if len(got.Attachments[0].Data) != 0 {
-		t.Fatal("processed attachment must not retain raw image bytes")
+	if string(analyzeRequest.Data) != "raw-image" {
+		t.Fatalf("analyzer did not receive raw image bytes: %q", analyzeRequest.Data)
+	}
+	if len(got.Attachments) != 0 {
+		t.Fatalf("processed visual attachment must be consumed before downstream routing: %+v", got.Attachments)
 	}
 	if !strings.Contains(got.UserMessage, "RenCrow_Vision解析結果") ||
 		!strings.Contains(got.UserMessage, "机の上に青いカップがあります。") {
@@ -95,6 +98,39 @@ func TestVisionRequestProcessorReplacesRawVisualMediaWithNormalizedContext(t *te
 	}
 	if len(events) != 2 || events[0].eventType != "vision.request.started" || events[1].eventType != "vision.request.completed" {
 		t.Fatalf("unexpected events: %+v", events)
+	}
+}
+
+func TestVisionRequestProcessorConsumesVisualAttachmentsButPreservesNonVisual(t *testing.T) {
+	analyzer := &visionAnalyzerStub{result: domainvision.AnalyzeResult{
+		OK: true, Kind: "video", Text: "動画に猫が映っています。",
+	}}
+	processor := newVisionRequestProcessor(analyzer, VisionOptions{MaxImageBytes: 20 << 20, MaxVideoBytes: 100 << 20, MaxFrames: 4})
+	nonVisual := domainattachment.Attachment{
+		ID: "doc-1", Kind: domainattachment.KindDocument, Filename: "notes.txt", ContentType: "text/plain",
+		SizeBytes: 5, Data: []byte("notes"), ExtractedText: "notes",
+	}
+	visual := domainattachment.Attachment{
+		ID: "video-1", Kind: domainattachment.KindVideo, Filename: "clip.mp4", ContentType: "video/mp4",
+		SizeBytes: 5, Data: []byte("video"),
+	}
+	request := ProcessMessageRequest{
+		TraceID: "trace-mixed", SessionID: "session-mixed", UserMessage: "確認して",
+		Attachments: []domainattachment.Attachment{visual, nonVisual},
+	}
+
+	got, err := processor.Process(context.Background(), request, nil)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if len(analyzer.requests) != 1 || string(analyzer.requests[0].Data) != "video" {
+		t.Fatalf("analyzer request did not preserve raw visual bytes: %+v", analyzer.requests)
+	}
+	if len(got.Attachments) != 1 || got.Attachments[0].ID != nonVisual.ID || string(got.Attachments[0].Data) != "notes" {
+		t.Fatalf("non-visual attachment was not preserved while visual was consumed: %+v", got.Attachments)
+	}
+	if !strings.Contains(got.UserMessage, "動画に猫が映っています。") {
+		t.Fatalf("normalized Vision context missing: %q", got.UserMessage)
 	}
 }
 
@@ -202,8 +238,7 @@ func TestMessageOrchestratorRunsVisionBeforeAgentRouting(t *testing.T) {
 	if !strings.Contains(routedTask.UserMessage(), "白い猫が座っています。") {
 		t.Fatalf("Vision result not routed as text context: %q", routedTask.UserMessage())
 	}
-	attachments := routedTask.Attachments()
-	if len(attachments) != 1 || len(attachments[0].Data) != 0 {
-		t.Fatalf("raw image reached routed task: %+v", attachments)
+	if attachments := routedTask.Attachments(); len(attachments) != 0 {
+		t.Fatalf("raw visual attachment reached routed task: %+v", attachments)
 	}
 }
