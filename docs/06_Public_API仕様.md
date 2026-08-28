@@ -793,13 +793,12 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
   `observation`、`available_actions`、`request`を持つ。
 - COREは`persona`から実Agentを解決し、Agent固有のPersona／Execution Role／
   推論Target経路でstrict JSONの`BrainDecision`を生成する。
-- Game turnのLLM requestは`ResponseFormatJSONObject`を指定し、non-streamで実行する。
-  RenCrow LLM Runtimeが`response_format.type=json_object`に基づいてModel固有の外装を
-  正規化し、COREはコードフェンスを受理せずstrict JSONだけをdomain検証する。
+- Game turnのLLM requestはnon-stream textで実行し、`available_actions`の一要素と
+  完全一致する単一action tokenだけを受理する。引用符、JSON、Markdown、説明文は拒否する。
 - COREは大きなworld観測でもpromptとcompletionをcontext上限内へ収めるため、requestを
   compact JSONで渡し、全Agentのgame turn completionを共通のbounded token budgetへ固定する。
 - LLM residualは`available_actions`からの`intent`選択だけに限定する。CORE Boundaryは
-  strictな単一field JSONをdecodeし、Agent identity、選択を表す定型reason、単一stepの
+  exact tokenをallowlist照合し、Agent identity、選択を表す定型reason、単一stepの
   action planを決定的に付与してdomain contractを検証する。
 - Responseは`agent_id`を必須とし、`agent_id`と`persona`はrequestの`persona`に
   一致しなければならない。

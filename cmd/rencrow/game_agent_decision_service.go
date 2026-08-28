@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
@@ -46,7 +45,7 @@ func (s *gameAgentDecisionService) DecideGameTurn(ctx context.Context, request v
 	if err != nil {
 		return viewer.GameBrainDecision{}, err
 	}
-	decision, err := decodeAgentGameDecision(raw)
+	decision, err := decodeAgentGameIntent(raw, request.AvailableActions)
 	if err != nil {
 		return viewer.GameBrainDecision{}, err
 	}
@@ -68,30 +67,21 @@ func buildGameAgentTurnPrompt(request viewer.GameAgentDecisionRequest) (string, 
 	}
 	return `Agent自身がプレイしているゲームの1ターンです。
 観測と available_actions の範囲だけで、次の行動を一つ決めてください。
-intentはavailable_actionsの文字列と完全一致させてください。
-出力は次の単一field JSONオブジェクトだけにしてください。別field、Markdown、説明文は禁止です。
-{"intent":"<action>"}
+出力はavailable_actionsの文字列から選んだaction tokenを一つだけ返してください。
+JSON、引用符、Markdown、説明文、改行は禁止です。
 
 Game turn input:
 ` + string(payload), nil
 }
 
-func decodeAgentGameDecision(content string) (viewer.GameBrainDecision, error) {
-	decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(content)))
-	decoder.DisallowUnknownFields()
-	var payload struct {
-		Intent string `json:"intent"`
+func decodeAgentGameIntent(content string, availableActions []string) (viewer.GameBrainDecision, error) {
+	intent := strings.TrimSpace(content)
+	for _, available := range availableActions {
+		if intent == available {
+			return viewer.GameBrainDecision{Intent: intent}, nil
+		}
 	}
-	if err := decoder.Decode(&payload); err != nil {
-		return viewer.GameBrainDecision{}, fmt.Errorf("decode Agent game decision JSON: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return viewer.GameBrainDecision{}, fmt.Errorf("Agent game decision contains trailing content")
-	}
-	return viewer.GameBrainDecision{
-		Intent: strings.TrimSpace(payload.Intent),
-	}, nil
+	return viewer.GameBrainDecision{}, fmt.Errorf("Agent game intent is not an exact available action")
 }
 
 var _ viewer.GameAgentDecisionProvider = (*gameAgentDecisionService)(nil)

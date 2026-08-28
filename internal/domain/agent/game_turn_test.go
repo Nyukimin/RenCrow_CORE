@@ -7,7 +7,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
-func TestMioDecideGameTurnRequestsNonStreamingJSONObject(t *testing.T) {
+func TestMioDecideGameTurnRequestsBoundedNonStreamingText(t *testing.T) {
 	var captured llm.GenerateRequest
 	provider := &mockLLMProvider{
 		generateFunc: func(_ context.Context, request llm.GenerateRequest) (llm.GenerateResponse, error) {
@@ -27,8 +27,8 @@ func TestMioDecideGameTurnRequestsNonStreamingJSONObject(t *testing.T) {
 	if _, err := mio.DecideGameTurn(t.Context(), "choose one action", "mio"); err != nil {
 		t.Fatalf("DecideGameTurn() error = %v", err)
 	}
-	if captured.ResponseFormat != llm.ResponseFormatJSONObject {
-		t.Fatalf("ResponseFormat = %q, want %q", captured.ResponseFormat, llm.ResponseFormatJSONObject)
+	if captured.ResponseFormat != llm.ResponseFormatText {
+		t.Fatalf("ResponseFormat = %q, want text", captured.ResponseFormat)
 	}
 	if captured.OnToken != nil {
 		t.Fatal("game turn structured output must be non-streaming")

@@ -20,7 +20,7 @@ func TestBuildGameAgentTurnPromptCarriesObservationAndStrictContract(t *testing.
 	if err != nil {
 		t.Fatalf("build prompt: %v", err)
 	}
-	for _, required := range []string{`"session_id":"nh_agent_e2e"`, `"search"`, `{"intent":"<action>"}`, "単一field", "Markdown、説明文は禁止"} {
+	for _, required := range []string{`"session_id":"nh_agent_e2e"`, `"search"`, "action tokenを一つ", "JSON、引用符、Markdown、説明文、改行は禁止"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("prompt missing %q: %s", required, prompt)
 		}
@@ -30,20 +30,20 @@ func TestBuildGameAgentTurnPromptCarriesObservationAndStrictContract(t *testing.
 	}
 }
 
-func TestDecodeAgentGameDecisionRejectsJSONFence(t *testing.T) {
-	if _, err := decodeAgentGameDecision("```json\n{\"intent\":\"search\"}\n```"); err == nil {
+func TestDecodeAgentGameIntentRejectsJSONFence(t *testing.T) {
+	if _, err := decodeAgentGameIntent("```json\n{\"intent\":\"search\"}\n```", []string{"search"}); err == nil {
 		t.Fatal("CORE must reject decoder-specific JSON fences")
 	}
 }
 
-func TestDecodeAgentGameDecisionRejectsNonJSONMarkdown(t *testing.T) {
-	if _, err := decodeAgentGameDecision("result:\n```json\n{\"intent\":\"search\"}\n```"); err == nil {
-		t.Fatal("expected prose outside the JSON fence to be rejected")
+func TestDecodeAgentGameIntentRejectsProse(t *testing.T) {
+	if _, err := decodeAgentGameIntent("I choose search", []string{"search"}); err == nil {
+		t.Fatal("expected prose to be rejected")
 	}
 }
 
-func TestDecodeAgentGameDecisionAcceptsStrictJSON(t *testing.T) {
-	decision, err := decodeAgentGameDecision(`{"intent":"search"}`)
+func TestDecodeAgentGameIntentAcceptsExactAvailableAction(t *testing.T) {
+	decision, err := decodeAgentGameIntent("search", []string{"search", "rest"})
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -52,9 +52,9 @@ func TestDecodeAgentGameDecisionAcceptsStrictJSON(t *testing.T) {
 	}
 }
 
-func TestDecodeAgentGameDecisionRejectsFieldsOutsideLLMResidual(t *testing.T) {
-	if _, err := decodeAgentGameDecision(`{"intent":"search","reason":"model supplied"}`); err == nil {
-		t.Fatal("game decision LLM residual must contain only intent")
+func TestDecodeAgentGameIntentRejectsUnavailableAction(t *testing.T) {
+	if _, err := decodeAgentGameIntent("attack", []string{"search", "rest"}); err == nil {
+		t.Fatal("game decision LLM residual must match available actions")
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
-const gameTurnMaxTokens = 64
+const gameTurnMaxTokens = 16
 
 // DecideGameTurn is a dedicated Agent cognition path for game observations.
 // Unlike Chat/Execute, the environment observation is not recorded as a user
@@ -27,7 +27,7 @@ func (m *MioAgent) DecideGameTurn(ctx context.Context, prompt string, recipient 
 	)
 	request := m.generationRequest(messages, nil)
 	request.MaxTokens = gameTurnMaxTokens
-	request.ResponseFormat = llm.ResponseFormatJSONObject
+	request.ResponseFormat = llm.ResponseFormatText
 	request.OnToken = nil
 	resp, err := m.llmProvider.Generate(ctx, request)
 	if err != nil {
@@ -45,7 +45,7 @@ func (h *HeavyAgent) DecideGameTurn(ctx context.Context, prompt string) (string,
 		Messages:       []llm.Message{{Role: "user", Content: prompt}},
 		MaxTokens:      gameTurnMaxTokens,
 		Temperature:    0.3,
-		ResponseFormat: llm.ResponseFormatJSONObject,
+		ResponseFormat: llm.ResponseFormatText,
 	}))
 	if err != nil {
 		return "", err
@@ -62,7 +62,7 @@ func (w *WildAgent) DecideGameTurn(ctx context.Context, prompt string) (string, 
 		Messages:       []llm.Message{{Role: "user", Content: prompt}},
 		MaxTokens:      gameTurnMaxTokens,
 		Temperature:    0.4,
-		ResponseFormat: llm.ResponseFormatJSONObject,
+		ResponseFormat: llm.ResponseFormatText,
 	}))
 	if err != nil {
 		return "", err
@@ -72,4 +72,4 @@ func (w *WildAgent) DecideGameTurn(ctx context.Context, prompt string) (string, 
 
 const gameTurnBoundaryPrompt = `This is an environment observation for an Agent-owned game turn, not a user message.
 Decide only the requested game action. Do not call tools, modify files, or perform other side effects.
-Return only the strict JSON object requested by the game turn prompt.`
+Return only the exact action token requested by the game turn prompt.`
