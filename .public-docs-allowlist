@@ -30,4 +30,16 @@ docs/調査/20260815_213804_ChatGPT_L3想起停止.md
 docs/調査/20260815_233027_ProfilePromotion再試行と記憶基盤修復.md
 docs/調査/20260821_220842_Atlas_Lifecycle_QA.md
 docs/調査/20260823_132500_storage_backup_lifecycle競合修復.md
+docs/調査/20260825_212614_IdleChat_topic_TTS契約不整合.md
+docs/調査/20260826_082721_IdleChat_Forecast不安定化精査.md
+docs/調査/20260826_112314_IdleChat_Daily再起動後不安定化.md
+docs/調査/20260826_141100_TTS複数Chunk直列合成.md
+docs/調査/20260826_141430_Daily記事3段LLM直列占有.md
+docs/調査/20260826_143000_Daily_SSE_retry契約再発.md
+docs/調査/20260826_171616_CORE_CLI_durationとIdleChat_summary契約不整合.md
+docs/調査/20260826_193500_IdleChat_TTS期限所有重複.md
+docs/調査/20260826_225553_Daily日本語翻訳境界.md
+docs/調査/20260827_041500_hobby_graph一時500.md
+docs/調査/20260827_173835_CORE起動時L1投影全走査.md
+docs/調査/20260827_190435_IdleChat_topic_prompt_validator契約不一致.md
 docs/調査/RenCrow_Atlas_Backlog_Implementation_Lifecycle_実装仕様.md
