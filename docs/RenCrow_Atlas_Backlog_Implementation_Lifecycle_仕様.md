@@ -995,3 +995,122 @@ Queue Freezeなし
 ```
 
 一つでも欠ける場合はDONEにしない。
+
+---
+
+# 16. Development Methodology v1
+
+## 16.1 適用境界
+
+Development Methodologyは別の開発管理systemではない。既存Atlasの
+`Item -> Implementation Unit -> Workstream -> Evidence -> DONE`を、Task、Plan、Review、
+Ruling、Authority Evidenceまで詳細化するCORE所有の契約である。Concept State、Delivery
+State、Global Implementation Lease、Queue Freeze、Workstream、Skill Registry、Event／Traceの
+正本は既存機構を維持し、同義のstate machine、ledger、policy engine、schedulerを新設しない。
+
+Specification、Plan、Implementation Authority Token、Ruling、Evidence Receipt、Review、Development Ledgerは、
+Implementation Unitの既存Workstreamへ属するtyped artifactとして保存する。static Atlas catalogへ
+runtime stateやEvidenceを手書きしない。
+
+## 16.2 CLI / LLM / Boundary分類
+
+| 工程 | 区分 | Owner | 入力 | 出力・失敗 | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| intake分類、state遷移、hash、token期限、authority、worktree、test、review、LIVE gate | CLI | CORE | typed requestと既存state | typed result、`blocked`／`failed` | receipt、event、ledger revision |
+| 設計案、仕様本文、plan案、原因仮説、review finding | LLM | CORE Agent | bounded context | proposal。直接state変更不可 | transcript refとcontent hash |
+| schema、認証、policy、保存、外部実行、deploy、restart | Boundary | CORE／対象module | 認証済みrequestとproposal | 同期実行／拒否 | owner receiptとtrace |
+
+LLMは曖昧な意味判断または複数の妥当案からの選択にだけ使う。hash、遷移、認証、policy、保存、
+shell、test、build、deployをLLMへ移さない。
+
+## 16.3 Implementation AuthorityとNo-Human-Gate
+
+Implementation Authority Tokenは、System Ownerが発行済みの採用requestまたは7日Maturation後のowner
+revalidationをunit、spec hash、scope、issuer、期間へ束縛するprovenanceである。人の返答を待つ
+status、decision queue、grant待機artifactではない。tokenがない、失効、期限切れ、scope不一致、
+spec hash不一致の場合、開始requestを同期的に`blocked`へ収束させる。有効tokenを持つ同一requestで
+同じ確認を繰り返さない。
+
+## 16.4 Stateとterminal outcome
+
+Task StateはDelivery Stateと分離し、単一transition tableで扱う。
+
+```text
+PENDING -> READY -> ASSIGNED -> RED_VERIFIED -> GREEN_VERIFIED
+        -> REFACTORED -> TASK_REVIEWED -> DONE
+```
+
+どの非terminal stateからも、検証済み理由により`BLOCKED`、`FAILED`、`CANCELLED`へ遷移できる。
+Task、run、unitのterminal outcomeは`ok | failed | blocked | cancelled`のいずれかとし、timeout、
+context終了、Tool終了を曖昧なrunningへ残さない。
+
+Deliveryの既存stage名は変更しない。`SPEC`はapproved specとplan、`TDD_RED`はworktree／baseline／
+RED、`TDD_GREEN`はGREEN、`REFACTOR`はrefactorとTask Review、`E2E_PREDEPLOY`はBranch Reviewと
+predeploy E2E、以降は既存stageへ対応する。新しい同義Delivery enumを追加しない。
+
+## 16.5 Policy Gate
+
+各遷移はCORE owner serviceで同じgateを通す。
+
+* Authority: Coder execution roleはplan／patch／test proposal／findingだけを生成する。repository
+  write、shell、test、build、deploy、restartはWorker authorityだけが行う。Skillはauthorityを付与しない。
+* Worktree: production変更は既定branch以外の隔離worktreeとbase revisionを必要とする。
+* Baseline/TDD: baseline receipt、意図した失敗を示すRED、成功したGREENを順に必要とする。
+* Review: implementerと異なるreviewerによるTask Review、全diffとintegration Evidenceを読むBranch
+  Reviewを必要とする。
+* Root Cause: repairは再現Evidence、log／trace、call path、単一仮説、最小実験を必要とする。同じ症状への
+  3回目の失敗はarchitecture assumption reviewへ移し、追加patchを拒否する。
+* Conflict: reversible local ambiguityとnon-destructive design gapだけをRuling付きで継続できる。
+  destructive／irreversible／security／data loss／external contract／product semantics conflictは`BLOCKED`。
+* LIVE: accepted implementation、relevant tests、build artifact hash、EcoSystem pin、deploy、restart／reload、
+  process／port／binary identity、readiness、production smoke／E2E、Viewer確認が揃うまで拒否する。
+
+Agentの自然言語報告、request側の`passed=true`、`check_ok=true`、別unit／別revision／期限切れEvidenceは
+gateを満たさない。credential、Authorization、cookie、password、秘密tokenはartifact、event、ledger、
+Viewerへ保存しない。
+
+## 16.6 ArtifactとLedger
+
+全artifactは`unit_id`、`plan_id`、`spec_ref`、`spec_hash`、revision、作成時刻を照合できるbounded
+JSONとする。Planはexact files、interface、Task DAG、command、expected result、review、rollbackを持つ。
+Evidenceはstage、type、command、exit code、artifact ref／SHA-256、git revision、trace、valid revisionを持つ。
+Reviewはimplementer、reviewer、diff、finding、verdict、Evidence refを持つ。Rulingはconflict type、decision、
+rationale、impact、actorを持つ。
+
+Development Ledgerはplanごとに一意で、Task、assignment、worktree、baseline、ruling、review、Evidence、
+blocked reason、checkpoint、resume tokenを集約する。同じIDと同じpayloadの再保存はidempotent、同じIDと
+異なるpayloadはconflictとして拒否する。process restart後は最新の同一unit／plan ledgerから再開し、
+別planの記録を採用しない。revision変更は既存ledgerをterminalへ閉じた後、新plan、新revision、
+`supersedes_plan_id`／`supersedes_revision`、新しい隔離worktree／baselineを持つ`PENDING` ledgerとして開始する。
+旧revisionのEvidence、Review、Ruling、assignmentは持ち越さない。
+
+## 16.7 Skill、Team Composer、Authority
+
+Development stage skillは既存Skill Registryへ登録し、description、required capability／tools／knowledge、
+authority requirement、input／output contract、cost、risk、evaluation、versionを宣言する。
+`rencrow_development_loop`は現在stateから次のstage skillを選ぶだけで、authority付与、Evidence生成、
+state上書き、LIVE判定を行わない。
+
+Team ComposerはSkill requirementとruntime capabilityを照合してexecution role候補を返す。Agent identityや
+model／providerを固定せず、World ActorとExecution Roleを混同しない。最終実行前にCOREのAuthority
+Validationが認証済みactor、execution role、requested action、scopeを同期評価する。
+
+## 16.8 API、CMD、Event、Viewer
+
+CORE read APIはactive unit、unit detail、Task DAG／status、Implementation Authority、Ruling、Evidence list／detail、Review、worktree／
+revision、deployment／readiness／LIVEを返す。mutationは認証済みCORE owner APIだけが受け、CMDとViewerは
+state machineを持たない。CMDは既存`atlas` commandへread facadeを追加する。
+
+実行側はunit／transition／skill／worktree／TDD／review／ruling／evidence／build／deploy／readiness／
+production／terminalの事実を既存Event／Traceへ発行する。Viewerは既存Atlas Pipeline／Evidenceを拡張し、
+poll結果から内部stateを推測しない。Viewer停止時もowner workflowは継続する。
+
+## 16.9 Migration、rollback、recovery
+
+既存Item、Lease、Stage／Closure Receiptを変更または自動成功させない。Development artifactがない既存Unitは
+legacyとして読めるが、新methodology stage開始時にapproved spec、plan、token、worktree／baselineを新規検証する。
+migrationはappend-onlyかつ冪等とし、別DBを作らない。
+
+rollbackは新artifact／projectionの読取りを無効化して既存Atlas lifecycleへ戻せることを要求する。Unit stateや
+既存Evidenceを削除・書換えない。再起動時はplan-scoped ledgerと既存Lease／Queue Freezeを照合し、不一致、
+unknown status、malformed receiptはfail closedで`blocked`にする。

@@ -1,0 +1,32 @@
+skill:
+  id: "core.implementation-planning"
+  name: "Implementation Planning"
+  scope: "core"
+  version: "1.0.0"
+  description: "Create a bounded implementation plan from canonical specification, with file scope, TDD order, and evidence."
+  enabled: true
+development_contract:
+  required_capability: "implementation_plan"
+  required_tools:
+    - "rg"
+    - "git"
+    - "go"
+  required_knowledge:
+    - "canonical specification and acceptance criteria"
+    - "owning module source and direct dependencies"
+    - "repository test and runtime contracts"
+  authority_requirement: "explicit plan scope; execution remains with authorized owner or Worker"
+  input_contract: "A settled specification, current source state, owner module, and required terminal evidence."
+  output_contract: "A bounded ordered plan with exact files, contracts, TDD checks, validation commands, and blockers."
+  cost_hint: "low"
+  risk_level: "medium"
+  evaluation_method: "plan schema, scope, dependency, and acceptance coverage checks"
+  version: "1.0.0"
+triggers:
+  keywords:
+    - "実装計画"
+    - "bounded plan"
+    - "TDD計画"
+  intents:
+    - "implementation_planning"
+    - "bounded_execution_plan"

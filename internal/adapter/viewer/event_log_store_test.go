@@ -37,6 +37,33 @@ func TestEventLogStoreQueryFiltersByAgentAndJob(t *testing.T) {
 	}
 }
 
+func TestEventLogStoreAppendIsIdempotentByMessageIDAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "orchestrator_events.jsonl")
+	store, err := NewEventLogStore(path)
+	if err != nil {
+		t.Fatalf("NewEventLogStore failed: %v", err)
+	}
+	event := orchestrator.OrchestratorEvent{Type: "development_plan_recorded", MessageID: "development:plan:1", Content: "first", Timestamp: time.Now().Format(time.RFC3339)}
+	if err := store.Append(event); err != nil {
+		t.Fatalf("first Append failed: %v", err)
+	}
+	store, err = NewEventLogStore(path)
+	if err != nil {
+		t.Fatalf("reopen EventLogStore failed: %v", err)
+	}
+	if err := store.Append(event); err != nil {
+		t.Fatalf("idempotent Append failed: %v", err)
+	}
+	event.Content = "retry must not replace the original"
+	if err := store.Append(event); err == nil {
+		t.Fatal("conflicting message_id payload was accepted")
+	}
+	items, err := store.Query(context.Background(), LogFilter{Limit: 10})
+	if err != nil || len(items) != 1 || items[0].Content != "first" {
+		t.Fatalf("idempotent query items=%+v err=%v", items, err)
+	}
+}
+
 func TestEventLogStoreQueryWithoutFiltersReturnsRecentTail(t *testing.T) {
 	store, err := NewEventLogStore(filepath.Join(t.TempDir(), "orchestrator_events.jsonl"))
 	if err != nil {

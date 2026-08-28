@@ -1,0 +1,33 @@
+skill:
+  id: "core.rencrow-development-loop"
+  name: "RenCrow Development Loop"
+  scope: "core"
+  version: "1.0.0"
+  description: "Orchestrate intake, specification, bounded TDD, review, delivery verification, and evidence-based closeout."
+  enabled: true
+development_contract:
+  required_capability: "development_orchestration"
+  required_tools:
+    - "rg"
+    - "git"
+    - "go test"
+    - "go vet"
+  required_knowledge:
+    - "all RenCrow development methodology cards"
+    - "AGENTS.md and canonical CORE specifications"
+    - "owner, policy, route, actor, and terminal evidence rules"
+  authority_requirement: "orchestration metadata only; never grants actor, runtime, or state-change authority"
+  input_contract: "A user goal with constraints, target repository/module, baseline, canonical refs, and operational acceptance evidence."
+  output_contract: "A phase-by-phase development loop receipt with owner chain, classification, test/delivery evidence, final status, and unresolved boundaries."
+  cost_hint: "high"
+  risk_level: "high"
+  evaluation_method: "phase completeness, receipt chain, and final request-evidence reconciliation"
+  version: "1.0.0"
+triggers:
+  keywords:
+    - "RenCrow development loop"
+    - "開発ループ"
+    - "実装から完了まで"
+  intents:
+    - "rencrow_development_loop"
+    - "development_lifecycle"

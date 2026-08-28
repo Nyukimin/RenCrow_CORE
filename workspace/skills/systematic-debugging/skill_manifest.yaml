@@ -1,0 +1,32 @@
+skill:
+  id: "core.systematic-debugging"
+  name: "Systematic Debugging"
+  scope: "core"
+  version: "1.0.0"
+  description: "Investigate symptoms with evidence-led hypotheses and discriminating checks while preserving canonical runtime routes."
+  enabled: true
+development_contract:
+  required_capability: "diagnostic_investigation"
+  required_tools:
+    - "rg"
+    - "git"
+    - "go test"
+  required_knowledge:
+    - "observed symptom and known-good boundary"
+    - "canonical runtime and module ownership"
+    - "source, config, process, route, storage, and log evidence"
+  authority_requirement: "read-only diagnosis unless an explicit bounded fix scope is issued"
+  input_contract: "A symptom with time/reproduction context, expected contract, and available source/runtime evidence."
+  output_contract: "A debug report with hypotheses, discriminating checks, root cause confidence, remediation scope, and regression test."
+  cost_hint: "medium"
+  risk_level: "medium"
+  evaluation_method: "hypothesis ledger and discriminating-check reproducibility"
+  version: "1.0.0"
+triggers:
+  keywords:
+    - "systematic debugging"
+    - "原因調査"
+    - "仮説駆動デバッグ"
+  intents:
+    - "systematic_debugging"
+    - "root_cause_investigation"

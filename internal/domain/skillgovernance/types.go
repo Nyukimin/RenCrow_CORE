@@ -1,6 +1,9 @@
 package skillgovernance
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	ScopeCore    = "core"
@@ -15,16 +18,49 @@ const (
 )
 
 type SkillManifest struct {
-	SkillID         string    `json:"skill_id"`
-	Name            string    `json:"name"`
-	Scope           string    `json:"scope"`
-	Version         string    `json:"version"`
-	Path            string    `json:"path"`
-	Description     string    `json:"description,omitempty"`
-	KeywordTriggers []string  `json:"keyword_triggers,omitempty"`
-	IntentTriggers  []string  `json:"intent_triggers,omitempty"`
-	Enabled         bool      `json:"enabled"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	SkillID             string              `json:"skill_id" yaml:"skill_id"`
+	Name                string              `json:"name" yaml:"name"`
+	Scope               string              `json:"scope" yaml:"scope"`
+	Version             string              `json:"version" yaml:"version"`
+	Path                string              `json:"path" yaml:"path"`
+	Description         string              `json:"description,omitempty" yaml:"description,omitempty"`
+	KeywordTriggers     []string            `json:"keyword_triggers,omitempty" yaml:"keyword_triggers,omitempty"`
+	IntentTriggers      []string            `json:"intent_triggers,omitempty" yaml:"intent_triggers,omitempty"`
+	Enabled             bool                `json:"enabled" yaml:"enabled"`
+	UpdatedAt           time.Time           `json:"updated_at" yaml:"updated_at"`
+	DevelopmentContract DevelopmentContract `json:"development_contract" yaml:"development_contract"`
+}
+
+// DevelopmentContract describes the deterministic inputs, capability
+// prerequisites, and evaluation boundary for a skill. It is declarative
+// metadata only: it never grants authority or changes runtime policy.
+type DevelopmentContract struct {
+	RequiredCapability   string   `json:"required_capability" yaml:"required_capability"`
+	RequiredTools        []string `json:"required_tools" yaml:"required_tools"`
+	RequiredKnowledge    []string `json:"required_knowledge" yaml:"required_knowledge"`
+	AuthorityRequirement string   `json:"authority_requirement" yaml:"authority_requirement"`
+	InputContract        string   `json:"input_contract" yaml:"input_contract"`
+	OutputContract       string   `json:"output_contract" yaml:"output_contract"`
+	CostHint             string   `json:"cost_hint" yaml:"cost_hint"`
+	RiskLevel            string   `json:"risk_level" yaml:"risk_level"`
+	EvaluationMethod     string   `json:"evaluation_method" yaml:"evaluation_method"`
+	Version              string   `json:"version" yaml:"version"`
+}
+
+// IsZero reports whether a manifest carries no development contract. An
+// absent contract keeps legacy manifests valid while a present contract is
+// validated as a complete unit.
+func (c DevelopmentContract) IsZero() bool {
+	return strings.TrimSpace(c.RequiredCapability) == "" &&
+		len(c.RequiredTools) == 0 &&
+		len(c.RequiredKnowledge) == 0 &&
+		strings.TrimSpace(c.AuthorityRequirement) == "" &&
+		strings.TrimSpace(c.InputContract) == "" &&
+		strings.TrimSpace(c.OutputContract) == "" &&
+		strings.TrimSpace(c.CostHint) == "" &&
+		strings.TrimSpace(c.RiskLevel) == "" &&
+		strings.TrimSpace(c.EvaluationMethod) == "" &&
+		strings.TrimSpace(c.Version) == ""
 }
 
 type TaskContext struct {

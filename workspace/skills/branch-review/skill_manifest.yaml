@@ -1,0 +1,32 @@
+skill:
+  id: "core.branch-review"
+  name: "Branch Review"
+  scope: "core"
+  version: "1.0.0"
+  description: "Review a branch or commit range against its base with ownership, integration, and evidence boundaries."
+  enabled: true
+development_contract:
+  required_capability: "branch_comparison"
+  required_tools:
+    - "git"
+    - "rg"
+    - "go test"
+  required_knowledge:
+    - "repository branch and integration policy"
+    - "canonical cross-module contracts"
+    - "complete range diff and verification evidence"
+  authority_requirement: "read-only branch comparison; no checkout, rebase, merge, or push"
+  input_contract: "An exact repository, base ref, target ref or range, request, and required integration evidence."
+  output_contract: "A branch review record with range identity, ownership, risks, checks, verdict, and evidence refs."
+  cost_hint: "medium"
+  risk_level: "medium"
+  evaluation_method: "merge-base, complete-diff, and integration-risk checklist"
+  version: "1.0.0"
+triggers:
+  keywords:
+    - "branch review"
+    - "ブランチレビュー"
+    - "commit range"
+  intents:
+    - "branch_review"
+    - "range_review"

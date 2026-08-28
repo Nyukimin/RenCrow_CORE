@@ -1,0 +1,32 @@
+skill:
+  id: "core.worktree-baseline-setup"
+  name: "Worktree Baseline Setup"
+  scope: "core"
+  version: "1.0.0"
+  description: "Record a reproducible worktree baseline while preserving existing changes and repository boundaries."
+  enabled: true
+development_contract:
+  required_capability: "worktree_inspection"
+  required_tools:
+    - "git"
+    - "rg"
+    - "go"
+  required_knowledge:
+    - "AGENTS.md branch and test rules"
+    - "repository README and test entrypoint"
+    - "allowed temporary output boundary"
+  authority_requirement: "read-only baseline scope; no branch or dirty-state mutation"
+  input_contract: "An exact worktree, owning repository, task scope, and expected test entrypoint."
+  output_contract: "A baseline receipt with repository identity, branch, HEAD, dirty paths, toolchain, and test boundary."
+  cost_hint: "low"
+  risk_level: "low"
+  evaluation_method: "baseline receipt fields and non-mutation check"
+  version: "1.0.0"
+triggers:
+  keywords:
+    - "worktree baseline"
+    - "作業ツリー初期確認"
+    - "dirty state"
+  intents:
+    - "worktree_baseline"
+    - "repository_baseline"

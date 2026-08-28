@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,8 +20,9 @@ type EventLogReader interface {
 }
 
 type EventLogStore struct {
-	path string
-	mu   sync.Mutex
+	path           string
+	mu             sync.Mutex
+	seenMessageIDs map[string][sha256.Size]byte
 }
 
 func NewEventLogStore(path string) (*EventLogStore, error) {
@@ -36,7 +38,34 @@ func NewEventLogStore(path string) (*EventLogStore, error) {
 		return nil, fmt.Errorf("touch file: %w", err)
 	}
 	_ = f.Close()
-	return &EventLogStore{path: path}, nil
+	store := &EventLogStore{path: path, seenMessageIDs: map[string][sha256.Size]byte{}}
+	if err := store.loadMessageIDs(); err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+func (s *EventLogStore) loadMessageIDs() error {
+	f, err := os.Open(s.path)
+	if err != nil {
+		return fmt.Errorf("open event log index: %w", err)
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var event orchestrator.OrchestratorEvent
+		if json.Unmarshal(scanner.Bytes(), &event) == nil && strings.TrimSpace(event.MessageID) != "" {
+			payload, marshalErr := json.Marshal(event)
+			if marshalErr != nil {
+				return fmt.Errorf("index event: %w", marshalErr)
+			}
+			s.seenMessageIDs[event.MessageID] = sha256.Sum256(payload)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan event log index: %w", err)
+	}
+	return nil
 }
 
 func (s *EventLogStore) Path() string {
@@ -46,6 +75,20 @@ func (s *EventLogStore) Path() string {
 func (s *EventLogStore) Append(ev orchestrator.OrchestratorEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	messageID := strings.TrimSpace(ev.MessageID)
+	payload, err := json.Marshal(ev)
+	if err != nil {
+		return fmt.Errorf("encode event payload: %w", err)
+	}
+	digest := sha256.Sum256(payload)
+	if messageID != "" {
+		if existing, exists := s.seenMessageIDs[messageID]; exists {
+			if existing == digest {
+				return nil
+			}
+			return fmt.Errorf("event message_id %q conflicts with existing payload", messageID)
+		}
+	}
 
 	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -54,6 +97,9 @@ func (s *EventLogStore) Append(ev orchestrator.OrchestratorEvent) error {
 	defer f.Close()
 	if err := json.NewEncoder(f).Encode(ev); err != nil {
 		return fmt.Errorf("encode event: %w", err)
+	}
+	if messageID != "" {
+		s.seenMessageIDs[messageID] = digest
 	}
 	return nil
 }

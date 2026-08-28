@@ -1,0 +1,33 @@
+skill:
+  id: "core.tdd-task-implementation"
+  name: "TDD Task Implementation"
+  scope: "core"
+  version: "1.0.0"
+  description: "Implement one bounded task with red-first tests, a minimal owner patch, and explicit evidence boundaries."
+  enabled: true
+development_contract:
+  required_capability: "code_edit_and_test"
+  required_tools:
+    - "rg"
+    - "git"
+    - "gofmt"
+    - "go test"
+  required_knowledge:
+    - "approved implementation plan"
+    - "canonical owner contract and invariants"
+    - "repository test and runtime boundaries"
+  authority_requirement: "explicit exact-file implementation scope; Worker or owner executes effects"
+  input_contract: "A bounded plan, baseline receipt, allowed files, canonical contracts, and red test or verification point."
+  output_contract: "A diff and machine-readable implementation result with red/green evidence, receipts, and unverified boundaries."
+  cost_hint: "medium"
+  risk_level: "high"
+  evaluation_method: "red-green focused tests, diff review, and scope/invariant checks"
+  version: "1.0.0"
+triggers:
+  keywords:
+    - "TDD実装"
+    - "task implementation"
+    - "red green refactor"
+  intents:
+    - "tdd_task_implementation"
+    - "bounded_task_execution"

@@ -41,6 +41,15 @@ type AtlasOwnerService interface {
 	ResolveQueueFreeze(context.Context, string, appbacklog.ResolveQueueFreezeRequest) (domainworkstream.QueueFreeze, domainworkstream.ImplementationLease, bool, error)
 }
 
+// AtlasDevelopmentService is an optional extension of the canonical Atlas
+// owner. Keeping it separate preserves existing clients while ensuring the
+// HTTP adapter never implements methodology state or persistence itself.
+type AtlasDevelopmentService interface {
+	Development(context.Context, string) (appbacklog.DevelopmentProjection, error)
+	SaveDevelopmentArtifact(context.Context, string, appbacklog.SaveDevelopmentArtifactRequest) (appbacklog.DevelopmentProjection, bool, error)
+	IssueDevelopmentImplementationAuthority(context.Context, string, appbacklog.IssueDevelopmentImplementationAuthorityRequest) (appbacklog.DevelopmentProjection, bool, error)
+}
+
 // NewAtlasHandler serves both the read-only Debug Viewer projection and the
 // authenticated owner mutation surface. GET intentionally remains compatible
 // with the existing local Debug Viewer; every POST is bearer/profile gated.
@@ -98,6 +107,57 @@ func (h *atlasHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *atlasHandler) read(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSuffix(r.URL.Path, "/")
+	developmentPrefix := atlasReadRoot + "/development/units/"
+	if strings.HasPrefix(path, developmentPrefix) {
+		tail := strings.TrimPrefix(path, developmentPrefix)
+		parts := strings.Split(tail, "/")
+		if len(parts) < 1 || len(parts) > 3 || strings.TrimSpace(parts[0]) == "" {
+			writeAtlasError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		unitID, err := url.PathUnescape(parts[0])
+		if err != nil || strings.TrimSpace(unitID) == "" || strings.ContainsAny(unitID, `/\\`) {
+			writeAtlasError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		service, ok := h.service.(AtlasDevelopmentService)
+		if !ok {
+			writeAtlasError(w, http.StatusServiceUnavailable, "development_methodology_unavailable")
+			return
+		}
+		projection, err := service.Development(r.Context(), unitID)
+		if err != nil {
+			writeAtlasDomainError(w, err)
+			return
+		}
+		if len(parts) == 1 {
+			writeJSON(w, http.StatusOK, projection)
+			return
+		}
+		switch parts[1] {
+		case "tasks":
+			writeJSON(w, http.StatusOK, map[string]any{"unit_id": projection.UnitID, "tasks": projection.Tasks})
+		case "evidence":
+			if len(parts) == 3 {
+				for _, evidence := range projection.Evidence {
+					if evidence.EvidenceID == parts[2] {
+						writeJSON(w, http.StatusOK, map[string]any{"unit_id": projection.UnitID, "evidence": evidence})
+						return
+					}
+				}
+				writeAtlasError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"unit_id": projection.UnitID, "evidence": projection.Evidence})
+		case "rulings":
+			writeJSON(w, http.StatusOK, map[string]any{"unit_id": projection.UnitID, "rulings": projection.Rulings})
+		case "reviews":
+			writeJSON(w, http.StatusOK, map[string]any{"unit_id": projection.UnitID, "reviews": projection.Reviews})
+		default:
+			writeAtlasError(w, http.StatusNotFound, "not_found")
+		}
+		return
+	}
 	if path == atlasReadRoot {
 		projection, err := h.service.Projection(r.Context())
 		if err != nil {
@@ -214,6 +274,53 @@ func atlasLimit(r *http.Request) int {
 
 func (h *atlasHandler) write(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSuffix(r.URL.Path, "/")
+	developmentPrefix := atlasOwnerRoot + "/development/units/"
+	if strings.HasPrefix(path, developmentPrefix) {
+		tail := strings.TrimPrefix(path, developmentPrefix)
+		parts := strings.Split(tail, "/")
+		if len(parts) != 2 || (parts[1] != "artifacts" && parts[1] != "implementation_authority") {
+			writeAtlasError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		unitID, ok := atlasSinglePathID(developmentPrefix+parts[0], developmentPrefix)
+		if !ok {
+			writeAtlasError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		service, ok := h.service.(AtlasDevelopmentService)
+		if !ok {
+			writeAtlasError(w, http.StatusServiceUnavailable, "development_methodology_unavailable")
+			return
+		}
+		var projection appbacklog.DevelopmentProjection
+		var created bool
+		var err error
+		if parts[1] == "implementation_authority" {
+			var request appbacklog.IssueDevelopmentImplementationAuthorityRequest
+			if decodeErr := decodeAtlasJSON(w, r, &request, 64<<10); decodeErr != nil {
+				writeAtlasError(w, http.StatusBadRequest, "invalid_request")
+				return
+			}
+			projection, created, err = service.IssueDevelopmentImplementationAuthority(r.Context(), unitID, request)
+		} else {
+			var request appbacklog.SaveDevelopmentArtifactRequest
+			if decodeErr := decodeAtlasJSON(w, r, &request, 512<<10); decodeErr != nil {
+				writeAtlasError(w, http.StatusBadRequest, "invalid_request")
+				return
+			}
+			projection, created, err = service.SaveDevelopmentArtifact(r.Context(), unitID, request)
+		}
+		if err != nil {
+			writeAtlasDomainError(w, err)
+			return
+		}
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+		}
+		writeJSON(w, status, projection)
+		return
+	}
 	if path == atlasOwnerRoot+"/intake" {
 		var request appbacklog.IntakeRequest
 		if err := decodeAtlasJSON(w, r, &request, 128<<10); err != nil {

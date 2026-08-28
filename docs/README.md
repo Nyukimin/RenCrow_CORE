@@ -16,6 +16,8 @@
 10. [ログ仕様](10_ログ仕様.md)
 11. [Atlas / Backlog / Implementation Lifecycle仕様](RenCrow_Atlas_Backlog_Implementation_Lifecycle_仕様.md)
 
+Development Methodology v1は別正本を持たず、上記Atlas仕様の第16章に統合します。
+
 ## 文書の位置づけ
 
 - `main` のこの12ファイルだけを、Public向けか内部向けかを問わない現行の製品仕様正本とします。

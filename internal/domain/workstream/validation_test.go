@@ -1,6 +1,7 @@
 package workstream
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,30 @@ func TestValidateArtifactRequiresContractFields(t *testing.T) {
 	item.CreatedAt = now
 	if err := ValidateArtifact(item); err != nil {
 		t.Fatalf("ValidateArtifact failed: %v", err)
+	}
+}
+
+func TestValidateArtifactPayloadIsBoundedValidJSON(t *testing.T) {
+	item := Artifact{ArtifactID: "art_payload", WorkstreamID: "ws_1", Type: "development.ledger", Status: "verified", CreatedAt: time.Now().UTC()}
+	for name, payload := range map[string]json.RawMessage{
+		"malformed": []byte(`{"state":`),
+		"trailing":  []byte(`{} {}`),
+		"oversized": []byte(`"` + strings.Repeat("x", (512<<10)+1) + `"`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			item.Payload = payload
+			if err := ValidateArtifact(item); err == nil {
+				t.Fatal("invalid artifact payload accepted")
+			}
+		})
+	}
+	item.Payload = json.RawMessage(`{"state":"READY"}`)
+	if err := ValidateArtifact(item); err != nil {
+		t.Fatalf("valid bounded payload rejected: %v", err)
+	}
+	item.Payload = nil
+	if err := ValidateArtifact(item); err != nil {
+		t.Fatalf("legacy artifact without payload rejected: %v", err)
 	}
 }
 

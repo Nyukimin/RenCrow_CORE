@@ -66,7 +66,7 @@ func ParseManifestYAML(content string) SkillManifest {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if trimmed == "skill:" || trimmed == "triggers:" {
+		if trimmed == "skill:" || trimmed == "triggers:" || trimmed == "development_contract:" {
 			section = strings.TrimSuffix(trimmed, ":")
 			listKey = ""
 			continue
@@ -78,6 +78,10 @@ func ParseManifestYAML(content string) SkillManifest {
 				manifest.KeywordTriggers = append(manifest.KeywordTriggers, item)
 			case "intents":
 				manifest.IntentTriggers = append(manifest.IntentTriggers, item)
+			case "required_tools":
+				manifest.DevelopmentContract.RequiredTools = append(manifest.DevelopmentContract.RequiredTools, item)
+			case "required_knowledge":
+				manifest.DevelopmentContract.RequiredKnowledge = append(manifest.DevelopmentContract.RequiredKnowledge, item)
 			}
 			continue
 		}
@@ -97,11 +101,80 @@ func ParseManifestYAML(content string) SkillManifest {
 			} else {
 				listKey = ""
 			}
+		case section == "development_contract":
+			applyDevelopmentContractField(&manifest.DevelopmentContract, key, value, &listKey)
 		default:
 			listKey = ""
 		}
 	}
 	return manifest
+}
+
+func applyDevelopmentContractField(contract *DevelopmentContract, key, value string, listKey *string) {
+	switch key {
+	case "required_capability":
+		contract.RequiredCapability = value
+		*listKey = ""
+	case "required_tools":
+		if value == "" {
+			*listKey = key
+			return
+		}
+		contract.RequiredTools = append(contract.RequiredTools, parseManifestStringList(value)...)
+		*listKey = ""
+	case "required_knowledge":
+		if value == "" {
+			*listKey = key
+			return
+		}
+		contract.RequiredKnowledge = append(contract.RequiredKnowledge, parseManifestStringList(value)...)
+		*listKey = ""
+	case "authority_requirement":
+		contract.AuthorityRequirement = value
+		*listKey = ""
+	case "input_contract":
+		contract.InputContract = value
+		*listKey = ""
+	case "output_contract":
+		contract.OutputContract = value
+		*listKey = ""
+	case "cost_hint":
+		contract.CostHint = value
+		*listKey = ""
+	case "risk_level":
+		contract.RiskLevel = value
+		*listKey = ""
+	case "evaluation_method":
+		contract.EvaluationMethod = value
+		*listKey = ""
+	case "version":
+		contract.Version = value
+		*listKey = ""
+	default:
+		*listKey = ""
+	}
+}
+
+func parseManifestStringList(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		value = strings.TrimSpace(value[1 : len(value)-1])
+		if value == "" {
+			return nil
+		}
+	}
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		item := strings.Trim(strings.TrimSpace(part), "\"'")
+		if item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }
 
 func applySkillField(manifest *SkillManifest, key, value string) {

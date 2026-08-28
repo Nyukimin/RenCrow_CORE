@@ -1,0 +1,33 @@
+skill:
+  id: "core.finish-implementation-unit"
+  name: "Finish Implementation Unit"
+  scope: "core"
+  version: "1.0.0"
+  description: "Close one implementation unit only after scope, canonical source, tests, invariants, and terminal evidence are reconciled."
+  enabled: true
+development_contract:
+  required_capability: "implementation_unit_closeout"
+  required_tools:
+    - "git"
+    - "rg"
+    - "go test"
+    - "go vet"
+  required_knowledge:
+    - "original request, accepted plan, and baseline receipt"
+    - "canonical specification and architecture invariants"
+    - "TDD, route, delivery, and user-visible evidence"
+  authority_requirement: "explicit closeout scope; cannot turn unverified evidence into completion"
+  input_contract: "An implementation unit with original request, plan, diff, canonical refs, tests, and required terminal evidence."
+  output_contract: "A closeout record with request matrix, scope, canonical updates, tests, architecture checks, terminal status, and remaining boundaries."
+  cost_hint: "high"
+  risk_level: "high"
+  evaluation_method: "request-evidence matrix, hash match, invariant, and terminal-chain checklist"
+  version: "1.0.0"
+triggers:
+  keywords:
+    - "implementation unit完了"
+    - "closeout"
+    - "完了整合性"
+  intents:
+    - "implementation_unit_closeout"
+    - "finish_implementation_unit"

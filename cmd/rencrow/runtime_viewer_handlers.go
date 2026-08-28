@@ -123,6 +123,9 @@ func buildViewerRuntimeHandlers(
 			log.Printf("WARN: viewer event log disabled: %v", err)
 		} else {
 			deps.eventLogStore = eventLogStore
+			if deps.atlasService != nil {
+				deps.atlasService.WithDevelopmentEventSink(developmentEventLogSink{store: eventLogStore})
+			}
 			log.Printf("Viewer event log enabled: %s", eventLogPath)
 			gcPath := filepath.Join(filepath.Dir(eventLogPath), "orchestrator_event_gc.jsonl")
 			if gcSvc, err := viewer.NewEventLogGCService(eventLogStore, gcPath, cfg.ViewerLog.RetentionDays, cfg.ViewerLog.GCIntervalMinutes); err != nil {

@@ -81,3 +81,100 @@ func TestValidateSkillGovernanceRejectsMissingRequiredFields(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateSkillManifestAcceptsLegacyAndCompleteDevelopmentContracts(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 40, 0, 0, time.UTC)
+	legacy := SkillManifest{
+		SkillID:   "core.legacy",
+		Name:      "Legacy",
+		Scope:     ScopeCore,
+		Path:      "skills/core/legacy",
+		UpdatedAt: now,
+	}
+	if err := ValidateSkillManifest(legacy); err != nil {
+		t.Fatalf("legacy manifest should remain valid: %v", err)
+	}
+	complete := legacy
+	complete.SkillID = "core.complete"
+	complete.DevelopmentContract = DevelopmentContract{
+		RequiredCapability:   "inspect",
+		RequiredTools:        []string{"rg"},
+		RequiredKnowledge:    []string{"AGENTS.md"},
+		AuthorityRequirement: "authenticated_request_scope",
+		InputContract:        "request",
+		OutputContract:       "receipt",
+		CostHint:             "low",
+		RiskLevel:            "low",
+		EvaluationMethod:     "focused tests",
+		Version:              "1.0.0",
+	}
+	if err := ValidateSkillManifest(complete); err != nil {
+		t.Fatalf("complete development contract should be valid: %v", err)
+	}
+}
+
+func TestValidateSkillManifestRejectsIncompleteDevelopmentContract(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 40, 0, 0, time.UTC)
+	base := SkillManifest{
+		SkillID:   "core.incomplete",
+		Name:      "Incomplete",
+		Scope:     ScopeCore,
+		Path:      "skills/core/incomplete",
+		UpdatedAt: now,
+	}
+	cases := []struct {
+		name string
+		item DevelopmentContract
+		want string
+	}{
+		{name: "required capability", item: DevelopmentContract{Version: "1.0.0"}, want: "required_capability"},
+		{name: "required tools", item: DevelopmentContract{RequiredCapability: "inspect", Version: "1.0.0"}, want: "required_tools"},
+		{name: "required knowledge", item: DevelopmentContract{RequiredCapability: "inspect", RequiredTools: []string{"rg"}, Version: "1.0.0"}, want: "required_knowledge"},
+		{name: "authority requirement", item: DevelopmentContract{RequiredCapability: "inspect", RequiredTools: []string{"rg"}, RequiredKnowledge: []string{"AGENTS.md"}, Version: "1.0.0"}, want: "authority_requirement"},
+		{name: "input contract", item: DevelopmentContract{RequiredCapability: "inspect", RequiredTools: []string{"rg"}, RequiredKnowledge: []string{"AGENTS.md"}, AuthorityRequirement: "none", Version: "1.0.0"}, want: "input_contract"},
+		{name: "output contract", item: DevelopmentContract{RequiredCapability: "inspect", RequiredTools: []string{"rg"}, RequiredKnowledge: []string{"AGENTS.md"}, AuthorityRequirement: "none", InputContract: "request", Version: "1.0.0"}, want: "output_contract"},
+		{name: "cost hint", item: DevelopmentContract{RequiredCapability: "inspect", RequiredTools: []string{"rg"}, RequiredKnowledge: []string{"AGENTS.md"}, AuthorityRequirement: "none", InputContract: "request", OutputContract: "receipt", Version: "1.0.0"}, want: "cost_hint"},
+		{name: "risk level", item: DevelopmentContract{RequiredCapability: "inspect", RequiredTools: []string{"rg"}, RequiredKnowledge: []string{"AGENTS.md"}, AuthorityRequirement: "none", InputContract: "request", OutputContract: "receipt", CostHint: "low", Version: "1.0.0"}, want: "risk_level"},
+		{name: "evaluation method", item: DevelopmentContract{RequiredCapability: "inspect", RequiredTools: []string{"rg"}, RequiredKnowledge: []string{"AGENTS.md"}, AuthorityRequirement: "none", InputContract: "request", OutputContract: "receipt", CostHint: "low", RiskLevel: "low", Version: "1.0.0"}, want: "evaluation_method"},
+		{name: "version", item: DevelopmentContract{RequiredCapability: "inspect", RequiredTools: []string{"rg"}, RequiredKnowledge: []string{"AGENTS.md"}, AuthorityRequirement: "none", InputContract: "request", OutputContract: "receipt", CostHint: "low", RiskLevel: "low", EvaluationMethod: "tests"}, want: "version"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			item := base
+			item.DevelopmentContract = tc.item
+			err := ValidateSkillManifest(item)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err=%v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateDevelopmentContractRejectsBlankListItems(t *testing.T) {
+	base := completeDevelopmentContractForTest()
+	base.RequiredTools = []string{"rg", " "}
+	if err := ValidateDevelopmentContract(base); err == nil || !strings.Contains(err.Error(), "required_tools[1]") {
+		t.Fatalf("blank required tool err=%v", err)
+	}
+
+	base = completeDevelopmentContractForTest()
+	base.RequiredKnowledge = []string{"AGENTS.md", ""}
+	if err := ValidateDevelopmentContract(base); err == nil || !strings.Contains(err.Error(), "required_knowledge[1]") {
+		t.Fatalf("blank required knowledge err=%v", err)
+	}
+}
+
+func completeDevelopmentContractForTest() DevelopmentContract {
+	return DevelopmentContract{
+		RequiredCapability:   "inspect",
+		RequiredTools:        []string{"rg"},
+		RequiredKnowledge:    []string{"AGENTS.md"},
+		AuthorityRequirement: "none",
+		InputContract:        "request",
+		OutputContract:       "receipt",
+		CostHint:             "low",
+		RiskLevel:            "low",
+		EvaluationMethod:     "tests",
+		Version:              "1.0.0",
+	}
+}

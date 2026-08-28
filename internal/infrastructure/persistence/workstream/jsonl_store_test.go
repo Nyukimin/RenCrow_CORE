@@ -2,6 +2,7 @@ package workstream
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -113,6 +114,43 @@ func TestJSONLStoreSaveAndListWorkstreamRecords(t *testing.T) {
 	vaultUpdates, err := store.ListVaultUpdateLogs(ctx, 10)
 	if err != nil || len(vaultUpdates) != 1 || vaultUpdates[0].UpdateID != "upd_1" {
 		t.Fatalf("vaultUpdates=%#v err=%v", vaultUpdates, err)
+	}
+}
+
+func TestJSONLStoreArtifactPayloadSurvivesReopen(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	payload := json.RawMessage(`{"schema":"development_methodology","version":1,"stages":["IMPLEMENT","VERIFY"]}`)
+	expected := domainworkstream.Artifact{
+		ArtifactID:   "artifact-payload-1",
+		TraceID:      "trace-payload-1",
+		WorkstreamID: "workstream-payload-1",
+		Type:         "atlas_methodology",
+		Title:        "Development methodology",
+		Status:       domainworkstream.StatusDraft,
+		Payload:      payload,
+		CreatedAt:    time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC),
+	}
+
+	store := NewJSONLStore(root)
+	if err := store.SaveArtifact(ctx, expected); err != nil {
+		t.Fatalf("SaveArtifact failed: %v", err)
+	}
+
+	reopened := NewJSONLStore(root)
+	artifacts, err := reopened.ListArtifacts(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListArtifacts after reopen failed: %v", err)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("reopened artifacts = %d, want 1", len(artifacts))
+	}
+	got := artifacts[0]
+	if got.ArtifactID != expected.ArtifactID || got.TraceID != expected.TraceID || got.WorkstreamID != expected.WorkstreamID {
+		t.Fatalf("reopened artifact identity = %+v, want %+v", got, expected)
+	}
+	if !json.Valid(got.Payload) || string(got.Payload) != string(payload) {
+		t.Fatalf("reopened payload = %s, want valid payload %s", got.Payload, payload)
 	}
 }
 

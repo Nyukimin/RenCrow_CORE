@@ -1,0 +1,32 @@
+skill:
+  id: "core.development-intake"
+  name: "Development Intake"
+  scope: "core"
+  version: "1.0.0"
+  description: "Turn a development request into a bounded intake with owner, source of truth, and terminal evidence."
+  enabled: true
+development_contract:
+  required_capability: "repository_read"
+  required_tools:
+    - "rg"
+    - "git"
+    - "go"
+  required_knowledge:
+    - "AGENTS.md"
+    - "README.md"
+    - "docs/README.md"
+  authority_requirement: "authenticated request scope; declarative only"
+  input_contract: "A development goal, requested verb, target module, constraints, and observed evidence."
+  output_contract: "An intake record with owner, canonical source, classification, allowed scope, and terminal evidence."
+  cost_hint: "low"
+  risk_level: "low"
+  evaluation_method: "required-field and source-of-truth checklist"
+  version: "1.0.0"
+triggers:
+  keywords:
+    - "development intake"
+    - "実装前整理"
+    - "担当リポジトリ"
+  intents:
+    - "development_intake"
+    - "scope_intake"

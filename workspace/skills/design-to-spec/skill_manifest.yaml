@@ -1,0 +1,32 @@
+skill:
+  id: "core.design-to-spec"
+  name: "Design to Specification"
+  scope: "core"
+  version: "1.0.0"
+  description: "Turn an accepted design into a canonical, testable specification with explicit route and invariant boundaries."
+  enabled: true
+development_contract:
+  required_capability: "specification_analysis"
+  required_tools:
+    - "rg"
+    - "git"
+    - "go"
+  required_knowledge:
+    - "canonical CORE specification"
+    - "affected module contracts"
+    - "failure knowledge and architecture invariants"
+  authority_requirement: "explicit specification scope and owner review; no runtime grant"
+  input_contract: "An accepted problem, design alternatives, affected contracts, and evidence of current behavior."
+  output_contract: "A canonical spec change describing schema, route, policy, state, errors, acceptance, and obsolete paths."
+  cost_hint: "medium"
+  risk_level: "high"
+  evaluation_method: "spec consistency, invariant, and architecture review checklist"
+  version: "1.0.0"
+triggers:
+  keywords:
+    - "設計を仕様化"
+    - "design to spec"
+    - "正本仕様"
+  intents:
+    - "design_to_spec"
+    - "specification_design"

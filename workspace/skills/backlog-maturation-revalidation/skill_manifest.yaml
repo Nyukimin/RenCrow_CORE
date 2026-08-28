@@ -1,0 +1,32 @@
+skill:
+  id: "core.backlog-maturation-revalidation"
+  name: "Backlog Maturation Revalidation"
+  scope: "core"
+  version: "1.0.0"
+  description: "Revalidate backlog work against current specifications, evidence, dependencies, and the real acceptance route."
+  enabled: true
+development_contract:
+  required_capability: "backlog_read_revalidate"
+  required_tools:
+    - "rg"
+    - "git"
+    - "go"
+  required_knowledge:
+    - "Atlas and Backlog specification"
+    - "current module README and docs"
+    - "source, test, and runtime evidence"
+  authority_requirement: "owner-scoped backlog mutation is separate; declarative only"
+  input_contract: "A backlog item plus current canonical, implementation, test, route, and dependency evidence."
+  output_contract: "A revalidation record with conflicts, dependencies, acceptance criteria, status recommendation, and evidence refs."
+  cost_hint: "medium"
+  risk_level: "medium"
+  evaluation_method: "revalidation fixture and acceptance-route checklist"
+  version: "1.0.0"
+triggers:
+  keywords:
+    - "backlog再検証"
+    - "backlog成熟化"
+    - "古いbacklog"
+  intents:
+    - "backlog_revalidation"
+    - "backlog_maturation"

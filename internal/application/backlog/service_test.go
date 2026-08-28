@@ -75,6 +75,13 @@ func (s *memoryWorkstreamStore) SaveArtifact(_ context.Context, item domainworks
 	s.artifacts = append(s.artifacts, item)
 	return nil
 }
+func (s *memoryWorkstreamStore) ListArtifacts(_ context.Context, limit int) ([]domainworkstream.Artifact, error) {
+	out := append([]domainworkstream.Artifact(nil), s.artifacts...)
+	if limit > 0 && len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out, nil
+}
 
 func (s *memoryWorkstreamStore) SaveQueueFreeze(_ context.Context, item domainworkstream.QueueFreeze) error {
 	for index := range s.queueFreezes {

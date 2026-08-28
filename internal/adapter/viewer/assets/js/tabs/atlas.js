@@ -13,6 +13,8 @@ let atlasOwnerToken = '';
 let atlasOwnerBusy = false;
 let atlasOwnerReceipt = null;
 let atlasOwnerError = '';
+let atlasDevelopment = null;
+let atlasDevelopmentError = '';
 
 function atlasEmptyItemDetailState(requestID = 0) {
   return {
@@ -853,13 +855,28 @@ function atlasRenderPipelineUnit(entry, activeUnitID) {
   return '<article class="atlas-pipeline-unit' + (active ? ' atlas-pipeline-unit-active' : '') + '"><div class="atlas-active-head"><div><span class="atlas-kicker">' + (active ? 'ACTIVE IMPLEMENTATION UNIT' : 'IMPLEMENTATION UNIT') + '</span><h3>' + atlasEscape(atlasItemTitle(entry, 'Implementation unit')) + '</h3><div class="atlas-code">' + atlasEscape(unitID) + '</div></div>' + atlasBadge(state, 'unavailable') + '</div><div class="atlas-active-meta"><span>Owner: <strong>' + atlasEscape(atlasItemOwner(entry)) + '</strong></span><span>Concept: ' + atlasBadge(atlasConceptState(entry)) + '</span><span>Revision: <strong>' + atlasEscape(atlasField(entry, ['implementation_revision', 'implementationRevision', 'revision'], 'unavailable')) + '</strong></span></div><div class="atlas-stage-heading"><h4>Stages</h4><span>Specification → Done</span></div>' + atlasRenderStages(entry) + atlasRenderPipelineRecords(entry) + '</article>';
 }
 
+function atlasRenderDevelopmentMethodology(activeUnitID) {
+  if (!activeUnitID) return '';
+  if (atlasDevelopmentError) return '<section class="atlas-subsection"><div class="atlas-subsection-head"><h4>Development Methodology</h4><span>unavailable</span></div>' + atlasEmpty('Methodology Evidence unavailable', atlasDevelopmentError, true) + '</section>';
+  const data = atlasDevelopment && atlasDevelopment.unit_id === activeUnitID ? atlasDevelopment : null;
+  if (!data) return '<section class="atlas-subsection"><div class="atlas-subsection-head"><h4>Development Methodology</h4><span>legacy unit</span></div>' + atlasEmpty('Methodology artifact is not available', 'This unit remains readable through the existing Atlas lifecycle and must pass the new gates before a new methodology stage starts.') + '</section>';
+  const ledger = data.ledger || {};
+  const token = data.implementation_authority_token || {};
+  const tasks = atlasList(data.tasks);
+  const evidence = atlasList(data.evidence);
+  const rulings = atlasList(data.rulings);
+  const reviews = atlasList(data.reviews);
+  const taskRows = tasks.length ? '<div class="atlas-table-wrap"><table class="atlas-table"><thead><tr><th>Task</th><th>State</th><th>Implementer</th><th>Reviewer</th><th>Outcome</th></tr></thead><tbody>' + tasks.map((task) => '<tr><td><strong>' + atlasEscape(atlasField(task, ['purpose', 'task_id'], '-')) + '</strong><div class="atlas-code">' + atlasEscape(atlasField(task, ['task_id'], '-')) + '</div></td><td>' + atlasBadge(atlasField(task, ['state'], 'unavailable')) + '</td><td>' + atlasEscape(atlasField(task, ['implementer_agent_id'], '-')) + '</td><td>' + atlasEscape(atlasField(task, ['reviewer_agent_id'], '-')) + '</td><td>' + atlasBadge(atlasField(task, ['terminal_outcome'], 'open')) + '</td></tr>').join('') + '</tbody></table></div>' : atlasEmpty('Task DAG is empty', 'No plan-scoped tasks were returned.');
+  return '<section class="atlas-subsection"><div class="atlas-subsection-head"><h4>Development Methodology</h4><span>plan-scoped owner Evidence</span></div><div class="atlas-active-meta"><span>Plan: <strong>' + atlasEscape(atlasField(ledger, ['plan_id'], '-')) + '</strong></span><span>ImplementationAuthority: ' + atlasBadge(atlasField(token, ['implementation_authority_token_id'], 'missing')) + '</span><span>State: ' + atlasBadge(atlasField(ledger, ['current_state'], 'unavailable')) + '</span><span>Terminal: ' + atlasBadge(atlasField(ledger, ['terminal_outcome'], 'open')) + '</span><span>Evidence: <strong>' + atlasEscape(String(evidence.length)) + '</strong></span><span>Reviews: <strong>' + atlasEscape(String(reviews.length)) + '</strong></span><span>Rulings: <strong>' + atlasEscape(String(rulings.length)) + '</strong></span></div>' + taskRows + (atlasField(ledger, ['blocked_reason'], '') ? '<div class="atlas-detail-unavailable">Blocked: ' + atlasEscape(atlasField(ledger, ['blocked_reason'], '')) + '</div>' : '') + '</section>';
+}
+
 function atlasRenderPipeline(view) {
   const active = atlasProjection.active;
   const activeUnitID = active ? atlasDisplay(atlasField(active, ['implementation_unit_id', 'implementationUnit', 'unit_id'], ''), '') : '';
   const units = atlasProjection.pipeline.slice();
   if (!units.length && active) units.push(active);
   const pipelineBlock = units.length ? '<div class="atlas-pipeline-grid">' + units.map((entry) => atlasRenderPipelineUnit(entry, activeUnitID)).join('') + '</div>' : atlasEmpty('No implementation unit', 'Global WIP = 1; CORE returned no implementation-unit projection.');
-  view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">PIPELINE</span><h3>Implementation Pipeline</h3><p>COREのauthoritative Delivery State、verified Evidence、Lease、Freeze、Closure Receiptを表示します。</p></div><div class="atlas-wip"><span>Global WIP</span><strong>1</strong></div></div>' + pipelineBlock + '<section class="atlas-subsection"><div class="atlas-subsection-head"><h4>Queue</h4><span>read-only</span></div>' + atlasRenderQueue(atlasProjection.queue) + '</section>';
+  view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">PIPELINE</span><h3>Implementation Pipeline</h3><p>COREのauthoritative Delivery State、verified Evidence、Lease、Freeze、Closure Receiptを表示します。</p></div><div class="atlas-wip"><span>Global WIP</span><strong>1</strong></div></div>' + pipelineBlock + atlasRenderDevelopmentMethodology(activeUnitID) + '<section class="atlas-subsection"><div class="atlas-subsection-head"><h4>Queue</h4><span>read-only</span></div>' + atlasRenderQueue(atlasProjection.queue) + '</section>';
 }
 
 function atlasRenderEvidence(view) {
@@ -945,8 +962,18 @@ async function refreshAtlas() {
     const payload = await response.json();
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('invalid Atlas projection');
     atlasProjection = atlasNormalizeProjection(payload);
+    atlasDevelopment = null;
+    atlasDevelopmentError = '';
+    const active = atlasProjection.active;
+    const unitID = active ? String(atlasField(active, ['implementation_unit_id', 'implementationUnit', 'unit_id'], '') || '').trim() : '';
+    if (unitID) {
+      const developmentResponse = await fetch('/viewer/atlas/development/units/' + encodeURIComponent(unitID), {cache: 'no-store'});
+      if (developmentResponse.ok) atlasDevelopment = await developmentResponse.json();
+      else if (developmentResponse.status !== 404 && developmentResponse.status !== 503) atlasDevelopmentError = 'HTTP ' + String(developmentResponse.status);
+    }
   } catch (error) {
     atlasProjection = atlasEmptyProjection();
+    atlasDevelopment = null;
     atlasFetchError = String(error && error.message ? error.message : error);
   } finally {
     atlasLoading = false;

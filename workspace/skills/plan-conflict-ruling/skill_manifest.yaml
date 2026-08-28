@@ -1,0 +1,32 @@
+skill:
+  id: "core.plan-conflict-ruling"
+  name: "Plan Conflict Ruling"
+  scope: "core"
+  version: "1.0.0"
+  description: "Resolve competing plans using canonical ownership, user constraints, invariants, and evidence."
+  enabled: true
+development_contract:
+  required_capability: "plan_conflict_analysis"
+  required_tools:
+    - "rg"
+    - "git"
+    - "go"
+  required_knowledge:
+    - "current user constraints and observed corrections"
+    - "canonical specifications and ownership boundaries"
+    - "competing plans, rejection reasons, and verification evidence"
+  authority_requirement: "orchestrator ruling scope; cannot broaden request or grant runtime authority"
+  input_contract: "An original request, competing plans, canonical refs, constraints, invariants, and evidence."
+  output_contract: "A ruling with precedence, decision, rejected reasons, revised plan, bounded scope, and unresolved boundaries."
+  cost_hint: "medium"
+  risk_level: "high"
+  evaluation_method: "conflict matrix, precedence, and reject-driven revision review"
+  version: "1.0.0"
+triggers:
+  keywords:
+    - "plan conflict"
+    - "計画の矛盾"
+    - "方針裁定"
+  intents:
+    - "plan_conflict_ruling"
+    - "development_ruling"

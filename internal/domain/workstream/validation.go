@@ -1,9 +1,12 @@
 package workstream
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 )
+
+const artifactPayloadMaxBytes = 512 << 10
 
 func ValidateGoal(goal Goal) error {
 	if strings.TrimSpace(goal.GoalID) == "" {
@@ -61,6 +64,12 @@ func ValidateArtifact(item Artifact) error {
 	}
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
+	}
+	if len(item.Payload) > artifactPayloadMaxBytes {
+		return errors.New("artifact payload exceeds 512 KiB")
+	}
+	if len(item.Payload) > 0 && !json.Valid(item.Payload) {
+		return errors.New("artifact payload must be valid JSON")
 	}
 	return nil
 }

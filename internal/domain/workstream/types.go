@@ -1,6 +1,7 @@
 package workstream
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -49,15 +50,19 @@ type Goal struct {
 }
 
 type Artifact struct {
-	ArtifactID   string    `json:"artifact_id"`
-	TraceID      string    `json:"trace_id,omitempty"`
-	WorkstreamID string    `json:"workstream_id"`
-	Type         string    `json:"artifact_type"`
-	FilePath     string    `json:"file_path,omitempty"`
-	Title        string    `json:"title,omitempty"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	ArtifactID   string `json:"artifact_id"`
+	TraceID      string `json:"trace_id,omitempty"`
+	WorkstreamID string `json:"workstream_id"`
+	Type         string `json:"artifact_type"`
+	FilePath     string `json:"file_path,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Status       string `json:"status"`
+	// Payload carries bounded, owner-validated typed artifact content. It is
+	// stored in the existing Workstream artifact record so Atlas methodology
+	// does not create a second ledger or physical database.
+	Payload   json.RawMessage `json:"payload,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at,omitempty"`
 }
 
 type ArtifactAnnotation struct {

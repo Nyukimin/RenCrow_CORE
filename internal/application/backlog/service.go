@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
@@ -104,15 +105,22 @@ type Projection struct {
 }
 
 type Service struct {
-	items      ItemStore
-	workstream WorkstreamCreator
-	clock      func() time.Time
-	verifier   EvidenceVerifier
-	evaluator  RevalidationEvaluator
+	items             ItemStore
+	workstream        WorkstreamCreator
+	clock             func() time.Time
+	verifier          EvidenceVerifier
+	evaluator         RevalidationEvaluator
+	developmentEvents DevelopmentEventSink
+	developmentMu     sync.Mutex
 
 	catalog  []map[string]any
 	features []map[string]any
 	modules  []map[string]any
+}
+
+func (s *Service) WithDevelopmentEventSink(sink DevelopmentEventSink) *Service {
+	s.developmentEvents = sink
+	return s
 }
 
 func NewService(items ItemStore, workstream WorkstreamCreator) *Service {
@@ -487,6 +495,15 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 	if target == "" {
 		return domainbacklog.Item{}, errors.New("target delivery state is required")
 	}
+	if err := s.emitDevelopmentTransition(ctx, "state_transition_requested", item, target, request.RequestID, ""); err != nil {
+		return domainbacklog.Item{}, err
+	}
+	if err := s.validateDevelopmentStageGate(ctx, item, target); err != nil {
+		if eventErr := s.emitDevelopmentTransition(ctx, "state_transition_rejected", item, target, request.RequestID, err.Error()); eventErr != nil {
+			return domainbacklog.Item{}, eventErr
+		}
+		return domainbacklog.Item{}, fmt.Errorf("development methodology gate: %w", err)
+	}
 	for index, ref := range request.EvidenceRefs {
 		if err := domainbacklog.ValidateEvidenceRef(ref); err != nil {
 			return domainbacklog.Item{}, err
@@ -646,6 +663,9 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 	preparedReceipt.ResultJSON = string(resultJSON)
 	preparedReceipt.CompletedAt = s.now()
 	if err := s.saveStageReceipt(ctx, preparedReceipt); err != nil {
+		return domainbacklog.Item{}, err
+	}
+	if err := s.emitDevelopmentTransition(ctx, "state_transition_accepted", result, target, request.RequestID, ""); err != nil {
 		return domainbacklog.Item{}, err
 	}
 	if next.DeliveryState == domainbacklog.DeliveryLiveVerified {

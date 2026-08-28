@@ -2,6 +2,7 @@ package workstream
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -328,6 +329,54 @@ func TestSQLiteStoreSavesAndListsWorkstreamRecords(t *testing.T) {
 	assertOne("heartbeats", err, len(heartbeats))
 	vaultUpdates, err := store.ListVaultUpdateLogs(context.Background(), 10)
 	assertOne("vault updates", err, len(vaultUpdates))
+}
+
+func TestSQLiteStoreArtifactPayloadSurvivesReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workstream.db")
+	ctx := context.Background()
+	payload := json.RawMessage(`{"schema":"development_methodology","version":1,"stages":["IMPLEMENT","VERIFY"]}`)
+	expected := domainworkstream.Artifact{
+		ArtifactID:   "artifact-payload-1",
+		TraceID:      "trace-payload-1",
+		WorkstreamID: "workstream-payload-1",
+		Type:         "atlas_methodology",
+		Title:        "Development methodology",
+		Status:       domainworkstream.StatusDraft,
+		Payload:      payload,
+		CreatedAt:    time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC),
+	}
+
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	if err := store.SaveArtifact(ctx, expected); err != nil {
+		_ = store.Close()
+		t.Fatalf("SaveArtifact failed: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("reopen NewSQLiteStore() error = %v", err)
+	}
+	defer reopened.Close()
+	artifacts, err := reopened.ListArtifacts(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListArtifacts after reopen failed: %v", err)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("reopened artifacts = %d, want 1", len(artifacts))
+	}
+	got := artifacts[0]
+	if got.ArtifactID != expected.ArtifactID || got.TraceID != expected.TraceID || got.WorkstreamID != expected.WorkstreamID {
+		t.Fatalf("reopened artifact identity = %+v, want %+v", got, expected)
+	}
+	if !json.Valid(got.Payload) || string(got.Payload) != string(payload) {
+		t.Fatalf("reopened payload = %s, want valid payload %s", got.Payload, payload)
+	}
 }
 
 func TestSQLiteStoreRejectsGoalWithoutSuccessCriteria(t *testing.T) {
