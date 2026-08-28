@@ -50,6 +50,9 @@ func isAllowedTailscaleRequest(r *http.Request) bool {
 	if isAllowedTailscaleCMDInteractionRequest(r) {
 		return true
 	}
+	if isAllowedTailscalePortalInteractionRequest(r) {
+		return true
+	}
 	client := strings.TrimSpace(r.Header.Get("X-RenCrow-Client"))
 	profile := strings.ToLower(strings.TrimSpace(r.Header.Get(interactionProfileHeader)))
 	if client == "RenCrow_CMD" || strings.HasPrefix(profile, "cmd-") {
@@ -60,6 +63,47 @@ func isAllowedTailscaleRequest(r *http.Request) bool {
 		return true
 	}
 	return path == "/audio-router/events" || path == "/stt" || path == "/voice-chat" || path == "/voice-chat-ws"
+}
+
+func isAllowedTailscalePortalInteractionRequest(r *http.Request) bool {
+	if r == nil || r.Method != http.MethodPost || r.URL.Path != "/stt/chat-input" {
+		return false
+	}
+	client := strings.TrimSpace(r.Header.Get("X-RenCrow-Client"))
+	profile := strings.ToLower(strings.TrimSpace(r.Header.Get(interactionProfileHeader)))
+	if client != "RenCrow_PORTAL" || profile != "portal-chat" {
+		return false
+	}
+	policy, ok := interactionProfilePolicies[profile]
+	if !ok || policy.client != client || policy.allow == nil || !policy.allow(r.Method, r.URL.Path) {
+		return false
+	}
+	values := headerValuesCaseInsensitive(r.Header, "X-RenCrow-Authenticated-Actor")
+	return len(values) == 1 && validTailscaleAuthenticatedActor(values[0])
+}
+
+func headerValuesCaseInsensitive(header http.Header, name string) []string {
+	var values []string
+	for key, entries := range header {
+		if strings.EqualFold(key, name) {
+			values = append(values, entries...)
+		}
+	}
+	return values
+}
+
+func validTailscaleAuthenticatedActor(value string) bool {
+	const prefix = "tailscale-sha256:"
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+64 {
+		return false
+	}
+	for _, character := range strings.TrimPrefix(value, prefix) {
+		if !strings.ContainsRune("0123456789abcdef", character) {
+			return false
+		}
+	}
+	return true
 }
 
 func isAllowedTailscaleCMDInteractionRequest(r *http.Request) bool {

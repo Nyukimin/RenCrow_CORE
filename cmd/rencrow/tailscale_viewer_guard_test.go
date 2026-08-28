@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -153,6 +154,45 @@ func TestTailscaleViewerOnlyGuardBlocksInvalidCMDInteractionProfiles(t *testing.
 				t.Fatalf("%s %s: expected blocked route, got status %d", tt.method, tt.path, rec.Code)
 			}
 		})
+	}
+}
+
+func TestTailscaleViewerOnlyGuardAllowsOnlyAuthenticatedPortalSTTFileRoute(t *testing.T) {
+	var calls int
+	handler := withTailscaleViewerOnlyGuard(withInteractionProfileGuard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNoContent)
+	})))
+
+	validActor := "tailscale-sha256:" + strings.Repeat("a", 64)
+	tests := []struct {
+		name, profile, actor string
+		want                 int
+	}{
+		{name: "authenticated portal chat", profile: "portal-chat", actor: validActor, want: http.StatusNoContent},
+		{name: "missing actor", profile: "portal-chat", want: http.StatusNotFound},
+		{name: "invalid actor", profile: "portal-chat", actor: "tailscale-sha256:not-a-digest", want: http.StatusNotFound},
+		{name: "idlechat", profile: "portal-idlechat", actor: validActor, want: http.StatusNotFound},
+		{name: "games", profile: "portal-games", actor: validActor, want: http.StatusNotFound},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "https://example.ts.net/stt/chat-input", nil)
+			request.Header.Set("X-Forwarded-Host", "example.ts.net")
+			request.Header.Set("X-RenCrow-Client", "RenCrow_PORTAL")
+			request.Header.Set(interactionProfileHeader, test.profile)
+			if test.actor != "" {
+				request.Header.Set("X-RenCrow-Authenticated-Actor", test.actor)
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != test.want {
+				t.Fatalf("status=%d want=%d", recorder.Code, test.want)
+			}
+		})
+	}
+	if calls != 1 {
+		t.Fatalf("downstream calls=%d want=1", calls)
 	}
 }
 
