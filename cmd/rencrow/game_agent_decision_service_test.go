@@ -52,6 +52,20 @@ func TestDecodeAgentGameIntentAcceptsExactAvailableAction(t *testing.T) {
 	}
 }
 
+func TestDecodeAgentGameIntentAcceptsValidatedLeadingActionToken(t *testing.T) {
+	for _, raw := range []string{"search,garbage", "search/repeated", "search because"} {
+		decision, err := decodeAgentGameIntent(raw, []string{"search", "rest"})
+		if err != nil || decision.Intent != "search" {
+			t.Fatalf("raw=%q decision=%+v err=%v", raw, decision, err)
+		}
+	}
+	for _, raw := range []string{"unknown/search", `"search"`, "_search"} {
+		if _, err := decodeAgentGameIntent(raw, []string{"search", "rest"}); err == nil {
+			t.Fatalf("invalid leading token accepted: %q", raw)
+		}
+	}
+}
+
 func TestDecodeAgentGameIntentRejectsUnavailableAction(t *testing.T) {
 	if _, err := decodeAgentGameIntent("attack", []string{"search", "rest"}); err == nil {
 		t.Fatal("game decision LLM residual must match available actions")

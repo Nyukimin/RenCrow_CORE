@@ -75,13 +75,22 @@ Game turn input:
 }
 
 func decodeAgentGameIntent(content string, availableActions []string) (viewer.GameBrainDecision, error) {
-	intent := strings.TrimSpace(content)
+	content = strings.TrimSpace(content)
+	end := 0
+	for end < len(content) && isGameActionTokenByte(content[end]) {
+		end++
+	}
+	intent := content[:end]
 	for _, available := range availableActions {
 		if intent == available {
 			return viewer.GameBrainDecision{Intent: intent}, nil
 		}
 	}
 	return viewer.GameBrainDecision{}, fmt.Errorf("Agent game intent is not an exact available action")
+}
+
+func isGameActionTokenByte(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || value == '_' || value == '.' || value == '-'
 }
 
 var _ viewer.GameAgentDecisionProvider = (*gameAgentDecisionService)(nil)
