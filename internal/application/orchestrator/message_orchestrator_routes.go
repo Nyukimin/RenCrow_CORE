@@ -153,6 +153,7 @@ func (d *messageRouteDispatcher) executeOPSRoute(ctx context.Context, t task.Tas
 	if err == nil {
 		d.emit("agent.response", "shiro", "mio", resp, "OPS", jid, sessionID, channel, chatID)
 		d.emit("agent.report", "shiro", "mio", formatShiroToMioReport(routing.RouteOPS, jid, resp), "OPS", jid, sessionID, channel, chatID)
+		d.emit("agent.response", "mio", "user", resp, "OPS", jid, sessionID, channel, chatID)
 		d.pushTTS(ctx, ttsSessionID, routing.RouteOPS, "agent.response", resp)
 	} else {
 		d.emit("agent.report", "shiro", "mio", formatShiroToMioReport(routing.RouteOPS, jid, "実行失敗: "+err.Error()), "OPS", jid, sessionID, channel, chatID)

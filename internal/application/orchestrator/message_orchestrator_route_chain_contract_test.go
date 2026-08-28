@@ -320,6 +320,26 @@ func TestMessageOrchestrator_RouteChainContract_AnalyzeEmitsPublicTerminalRespon
 	}
 }
 
+func TestMessageOrchestrator_RouteChainContract_OPSEmitsPublicTerminalResponse(t *testing.T) {
+	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteOPS, 1, "ops")}
+	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{response: "PORTAL_OPS_OK"}, nil, nil, nil, nil, nil)
+	rec := &recordingEventListener{}
+	orch.SetEventListener(rec)
+
+	resp, err := orch.ProcessMessage(context.Background(), defaultReq())
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+	if resp.Response != "PORTAL_OPS_OK" {
+		t.Fatalf("response=%q", resp.Response)
+	}
+	internal := indexOfEvent(rec.events, "agent.response", "shiro", "mio", "OPS")
+	public := indexOfEvent(rec.events, "agent.response", "mio", "user", "OPS")
+	if internal < 0 || public <= internal {
+		t.Fatalf("OPS must emit internal then public terminal response: %#v", rec.events)
+	}
+}
+
 func TestMessageOrchestrator_RouteChainContract_WorkerErrorDoesNotBecomeSuccess(t *testing.T) {
 	workerErr := errors.New("worker failed")
 	worker := &recordingWorkerExecutionService{err: workerErr}
