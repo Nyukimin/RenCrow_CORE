@@ -72,6 +72,26 @@ func TestDecodeAgentGameIntentRejectsUnavailableAction(t *testing.T) {
 	}
 }
 
+func TestGenerateValidatedGameIntentRetriesOnlyBoundedInvalidOutputs(t *testing.T) {
+	outputs := []string{"200000", "unknown/action", "search/trailing"}
+	calls := 0
+	decision, err := generateValidatedGameIntent(func() (string, error) {
+		value := outputs[calls]
+		calls++
+		return value, nil
+	}, []string{"search", "rest"}, 3)
+	if err != nil || decision.Intent != "search" || calls != 3 {
+		t.Fatalf("decision=%+v calls=%d err=%v", decision, calls, err)
+	}
+	calls = 0
+	if _, err := generateValidatedGameIntent(func() (string, error) {
+		calls++
+		return "invalid", nil
+	}, []string{"search"}, 3); err == nil || calls != 3 {
+		t.Fatalf("bounded retry was not enforced: calls=%d err=%v", calls, err)
+	}
+}
+
 func TestGameAgentDecisionServiceRejectsUnmigratedTitle(t *testing.T) {
 	service := &gameAgentDecisionService{}
 	_, err := service.DecideGameTurn(t.Context(), viewer.GameAgentDecisionRequest{

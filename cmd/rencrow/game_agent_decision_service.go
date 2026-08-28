@@ -13,6 +13,8 @@ type gameAgentDecisionService struct {
 	agents agentRuntime
 }
 
+const gameAgentDecisionAttempts = 3
+
 func newGameAgentDecisionService(agents agentRuntime) viewer.GameAgentDecisionProvider {
 	return &gameAgentDecisionService{agents: agents}
 }
@@ -29,27 +31,43 @@ func (s *gameAgentDecisionService) DecideGameTurn(ctx context.Context, request v
 		return viewer.GameBrainDecision{}, err
 	}
 	persona := strings.ToLower(strings.TrimSpace(request.Persona))
-	var raw string
+	var generate func() (string, error)
 	switch persona {
 	case "mio":
-		raw, err = s.agents.Mio.DecideGameTurn(ctx, prompt, "mio")
+		generate = func() (string, error) { return s.agents.Mio.DecideGameTurn(ctx, prompt, "mio") }
 	case "shiro":
-		raw, err = s.agents.ShiroChat.DecideGameTurn(ctx, prompt, "shiro")
+		generate = func() (string, error) { return s.agents.ShiroChat.DecideGameTurn(ctx, prompt, "shiro") }
 	case "kuro":
-		raw, err = s.agents.Heavy.DecideGameTurn(ctx, prompt)
+		generate = func() (string, error) { return s.agents.Heavy.DecideGameTurn(ctx, prompt) }
 	case "midori":
-		raw, err = s.agents.Wild.DecideGameTurn(ctx, prompt)
+		generate = func() (string, error) { return s.agents.Wild.DecideGameTurn(ctx, prompt) }
 	default:
 		return viewer.GameBrainDecision{}, fmt.Errorf("unknown Agent %q", request.Persona)
 	}
-	if err != nil {
-		return viewer.GameBrainDecision{}, err
-	}
-	decision, err := decodeAgentGameIntent(raw, request.AvailableActions)
+	decision, err := generateValidatedGameIntent(generate, request.AvailableActions, gameAgentDecisionAttempts)
 	if err != nil {
 		return viewer.GameBrainDecision{}, err
 	}
 	return completeAgentGameDecision(persona, decision), nil
+}
+
+func generateValidatedGameIntent(generate func() (string, error), availableActions []string, attempts int) (viewer.GameBrainDecision, error) {
+	if generate == nil || attempts < 1 {
+		return viewer.GameBrainDecision{}, fmt.Errorf("Agent game intent generator is unavailable")
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		raw, err := generate()
+		if err != nil {
+			return viewer.GameBrainDecision{}, err
+		}
+		decision, err := decodeAgentGameIntent(raw, availableActions)
+		if err == nil {
+			return decision, nil
+		}
+		lastErr = err
+	}
+	return viewer.GameBrainDecision{}, fmt.Errorf("Agent game intent remained invalid after %d attempts: %w", attempts, lastErr)
 }
 
 func completeAgentGameDecision(persona string, decision viewer.GameBrainDecision) viewer.GameBrainDecision {

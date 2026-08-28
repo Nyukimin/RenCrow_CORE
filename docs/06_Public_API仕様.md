@@ -798,6 +798,8 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
   完全一致だけを受理する。引用符、JSON、Markdown、未知の先頭tokenは拒否する。
 - COREはcomma、空白、改行、引用符をstop sequenceとしてGatewayへ渡し、最初のaction
   tokenで生成を停止させる。stop適用後もallowlist完全一致を満たさない出力は拒否する。
+- 先頭tokenが不正な場合は同じ実Agent・正規routeで最大3回まで再判断する。各回を同じ
+  allowlist Boundaryで検証し、3回とも不正ならturnをblockedにする。別Brainへfallbackしない。
 - COREは大きなworld観測でもpromptとcompletionをcontext上限内へ収めるため、requestを
   compact JSONで渡し、全Agentのgame turn completionを共通のbounded token budgetへ固定する。
 - LLM residualは`available_actions`からの`intent`選択だけに限定する。CORE Boundaryは
