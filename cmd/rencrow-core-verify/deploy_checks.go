@@ -118,8 +118,11 @@ func runDeployIdentityChain(ctx context.Context, options verifierOptions, _ mani
 		return verifierOutcome{Status: "failed", FailureBoundary: "installed CORE artifact was built from modified source", Evidence: evidence}
 	}
 	checkerOptions := options
+	checkerOptions.CatalogPath = catalogPath
+	checkerOptions.WorkspacePath = filepath.Dir(catalogPath)
+	checkerOptions.InstalledArtifact = artifactPath
 	if strings.TrimSpace(checkerOptions.StampedChecker) == "" {
-		checkerOptions.StampedChecker = discoverStampedChecker(options.CatalogPath)
+		checkerOptions.StampedChecker = discoverStampedChecker(catalogPath)
 	}
 	if checkerOptions.StampedChecker != "" {
 		checkerOutcome := runStampedDeploymentChecker(ctx, checkerOptions, deps)

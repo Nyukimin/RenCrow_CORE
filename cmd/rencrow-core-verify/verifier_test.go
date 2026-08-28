@@ -469,7 +469,16 @@ func TestVerifierDeployIdentityUsesCatalogSourceAndGoStamp(t *testing.T) {
 	if err := os.WriteFile(artifact, []byte("binary"), 0o700); err != nil {
 		t.Fatalf("artifact: %v", err)
 	}
+	checkerDir := filepath.Join(root, "scripts")
+	if err := os.Mkdir(checkerDir, 0o700); err != nil {
+		t.Fatalf("checker dir: %v", err)
+	}
+	checkerPath := filepath.Join(checkerDir, "check_deployed_binaries.py")
+	if err := os.WriteFile(checkerPath, []byte("fixture"), 0o600); err != nil {
+		t.Fatalf("checker: %v", err)
+	}
 	manifest := testManifest(t, "core-deploy-identity-chain")
+	var checkerArgs []string
 	deps := verifierDependencies{RunCommand: func(_ context.Context, name string, args []string) verifierCommandResult {
 		switch name {
 		case "systemctl":
@@ -485,6 +494,10 @@ func TestVerifierDeployIdentityUsesCatalogSourceAndGoStamp(t *testing.T) {
 		case "go":
 			return verifierCommandResult{ExitCode: 0, Stdout: "artifact\tpath\tgithub.com/Nyukimin/RenCrow_CORE/cmd/rencrow\nartifact\tmod\tgithub.com/Nyukimin/RenCrow_CORE (devel)\nartifact\tbuild\tvcs.revision=" + revision + "\nartifact\tbuild\tvcs.modified=false\n"}
 		default:
+			if strings.Contains(filepath.Base(name), "python") {
+				checkerArgs = append([]string(nil), args...)
+				return verifierCommandResult{ExitCode: 0, Stdout: `[{"component":"core","status":"MATCH","built_revision":"` + revision + `","pin_revision":"` + revision + `"}]`}
+			}
 			return verifierCommandResult{ExitCode: 127, Err: errors.New("unexpected command")}
 		}
 	}}
@@ -497,6 +510,9 @@ func TestVerifierDeployIdentityUsesCatalogSourceAndGoStamp(t *testing.T) {
 	receipt := decodeVerifierReceipt(t, output.Bytes())
 	if receipt.Status != "passed" || strings.Contains(output.String(), revision) {
 		t.Fatalf("receipt=%+v output=%s", receipt, output.String())
+	}
+	if !slices.Contains(checkerArgs, catalogPath) || !slices.Contains(checkerArgs, root) {
+		t.Fatalf("checker args=%#v", checkerArgs)
 	}
 }
 
