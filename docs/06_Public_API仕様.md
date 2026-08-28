@@ -798,6 +798,9 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
   正規化し、COREはコードフェンスを受理せずstrict JSONだけをdomain検証する。
 - COREは大きなworld観測でもpromptとcompletionをcontext上限内へ収めるため、requestを
   compact JSONで渡し、全Agentのgame turn completionを共通のbounded token budgetへ固定する。
+- LLM residualは`available_actions`からの`intent`選択だけに限定する。CORE Boundaryは
+  strictな単一field JSONをdecodeし、Agent identity、選択を表す定型reason、単一stepの
+  action planを決定的に付与してdomain contractを検証する。
 - Responseは`agent_id`を必須とし、`agent_id`と`persona`はrequestの`persona`に
   一致しなければならない。
 - GAMESは`intent`と`action_plan[].action`を`available_actions`に対して再検証して

@@ -20,7 +20,7 @@ func TestBuildGameAgentTurnPromptCarriesObservationAndStrictContract(t *testing.
 	if err != nil {
 		t.Fatalf("build prompt: %v", err)
 	}
-	for _, required := range []string{`"session_id":"nh_agent_e2e"`, `"search"`, `"intent"`, "reasonは40文字以内", "Markdownや説明文は禁止"} {
+	for _, required := range []string{`"session_id":"nh_agent_e2e"`, `"search"`, `{"intent":"<action>"}`, "単一field", "Markdown、説明文は禁止"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("prompt missing %q: %s", required, prompt)
 		}
@@ -43,12 +43,18 @@ func TestDecodeAgentGameDecisionRejectsNonJSONMarkdown(t *testing.T) {
 }
 
 func TestDecodeAgentGameDecisionAcceptsStrictJSON(t *testing.T) {
-	decision, err := decodeAgentGameDecision(`{"intent":"search","reason":"周囲を確認する","action_plan":[{"action":"search"}],"memory_refs":[],"confidence":0.8}`)
+	decision, err := decodeAgentGameDecision(`{"intent":"search"}`)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if decision.Intent != "search" || decision.Confidence != 0.8 {
+	if decision.Intent != "search" {
 		t.Fatalf("unexpected decision: %+v", decision)
+	}
+}
+
+func TestDecodeAgentGameDecisionRejectsFieldsOutsideLLMResidual(t *testing.T) {
+	if _, err := decodeAgentGameDecision(`{"intent":"search","reason":"model supplied"}`); err == nil {
+		t.Fatal("game decision LLM residual must contain only intent")
 	}
 }
 
@@ -63,5 +69,12 @@ func TestGameAgentDecisionServiceRejectsUnmigratedTitle(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "not implemented") {
 		t.Fatalf("expected unmigrated title rejection, got %v", err)
+	}
+}
+
+func TestGameAgentDecisionServiceDerivesExecutionFieldsFromValidatedIntent(t *testing.T) {
+	decision := completeAgentGameDecision("mio", viewer.GameBrainDecision{Intent: "search"})
+	if decision.Reason == "" || len(decision.ActionPlan) != 1 || decision.ActionPlan[0].Action != "search" {
+		t.Fatalf("derived decision fields are incomplete: %+v", decision)
 	}
 }

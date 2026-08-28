@@ -8,7 +8,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
-const gameTurnMaxTokens = 512
+const gameTurnMaxTokens = 64
 
 // DecideGameTurn is a dedicated Agent cognition path for game observations.
 // Unlike Chat/Execute, the environment observation is not recorded as a user

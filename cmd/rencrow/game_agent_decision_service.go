@@ -50,9 +50,15 @@ func (s *gameAgentDecisionService) DecideGameTurn(ctx context.Context, request v
 	if err != nil {
 		return viewer.GameBrainDecision{}, err
 	}
+	return completeAgentGameDecision(persona, decision), nil
+}
+
+func completeAgentGameDecision(persona string, decision viewer.GameBrainDecision) viewer.GameBrainDecision {
 	decision.AgentID = persona
 	decision.Persona = persona
-	return decision, nil
+	decision.Reason = "CORE Agent selected available action: " + decision.Intent
+	decision.ActionPlan = []viewer.GameActionStep{{Action: decision.Intent}}
+	return decision
 }
 
 func buildGameAgentTurnPrompt(request viewer.GameAgentDecisionRequest) (string, error) {
@@ -62,11 +68,9 @@ func buildGameAgentTurnPrompt(request viewer.GameAgentDecisionRequest) (string, 
 	}
 	return `Agent自身がプレイしているゲームの1ターンです。
 観測と available_actions の範囲だけで、次の行動を一つ決めてください。
-intent と action_plan[].action は available_actions の文字列と完全一致させてください。
-対象が必要な行動では、観測内のIDを action_plan[].target または args に指定してください。
-reasonは40文字以内、action_planは1要素、memory_refsは最大3要素にしてください。
-出力は次の形の短いJSONオブジェクトだけにしてください。Markdownや説明文は禁止です。
-{"intent":"<action>","reason":"<Agent自身の短い判断理由>","action_plan":[{"action":"<action>","target":"<optional id>","args":{}}],"memory_refs":[],"confidence":0.0}
+intentはavailable_actionsの文字列と完全一致させてください。
+出力は次の単一field JSONオブジェクトだけにしてください。別field、Markdown、説明文は禁止です。
+{"intent":"<action>"}
 
 Game turn input:
 ` + string(payload), nil
@@ -76,11 +80,7 @@ func decodeAgentGameDecision(content string) (viewer.GameBrainDecision, error) {
 	decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(content)))
 	decoder.DisallowUnknownFields()
 	var payload struct {
-		Intent     string                  `json:"intent"`
-		Reason     string                  `json:"reason"`
-		ActionPlan []viewer.GameActionStep `json:"action_plan"`
-		MemoryRefs []string                `json:"memory_refs"`
-		Confidence float64                 `json:"confidence"`
+		Intent string `json:"intent"`
 	}
 	if err := decoder.Decode(&payload); err != nil {
 		return viewer.GameBrainDecision{}, fmt.Errorf("decode Agent game decision JSON: %w", err)
@@ -90,11 +90,7 @@ func decodeAgentGameDecision(content string) (viewer.GameBrainDecision, error) {
 		return viewer.GameBrainDecision{}, fmt.Errorf("Agent game decision contains trailing content")
 	}
 	return viewer.GameBrainDecision{
-		Intent:     strings.TrimSpace(payload.Intent),
-		Reason:     strings.TrimSpace(payload.Reason),
-		ActionPlan: payload.ActionPlan,
-		MemoryRefs: append([]string(nil), payload.MemoryRefs...),
-		Confidence: payload.Confidence,
+		Intent: strings.TrimSpace(payload.Intent),
 	}, nil
 }
 
