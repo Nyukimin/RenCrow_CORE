@@ -30,12 +30,25 @@ func runDeployIdentityChain(ctx context.Context, options verifierOptions, _ mani
 	catalogPath := strings.TrimSpace(options.CatalogPath)
 	workspacePath := strings.TrimSpace(options.WorkspacePath)
 	artifactPath := strings.TrimSpace(options.InstalledArtifact)
-	if catalogPath == "" || workspacePath == "" || artifactPath == "" {
-		return verifierOutcome{Status: "blocked", FailureBoundary: "catalog, workspace, and installed artifact inputs are required"}
+	if catalogPath == "" {
+		workingDirectory, err := os.Getwd()
+		if err == nil {
+			catalogPath = filepath.Join(workingDirectory, "ecosystem.yaml")
+		}
 	}
 	catalog, err := loadCatalogCoreIdentity(catalogPath)
 	if err != nil {
 		return verifierOutcome{Status: "blocked", FailureBoundary: "ecosystem catalog evidence is unavailable"}
+	}
+	if workspacePath == "" {
+		workspacePath = resolveCatalogWorkspace(catalogPath, catalog.WorkspacePath)
+	}
+	if artifactPath == "" {
+		snapshot, outcome := readSystemdService(ctx, options, deps)
+		if outcome.Status != "" {
+			return verifierOutcome{Status: "blocked", FailureBoundary: "installed CORE artifact evidence is unavailable"}
+		}
+		artifactPath = snapshot.ExecPath
 	}
 	workspaceInfo, err := os.Lstat(workspacePath)
 	if err != nil || workspaceInfo.Mode()&os.ModeSymlink != 0 || !workspaceInfo.IsDir() {

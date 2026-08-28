@@ -454,9 +454,14 @@ func TestVerifierMalformedManifestIsCLIErrorWithoutReceipt(t *testing.T) {
 
 func TestVerifierDeployIdentityUsesCatalogSourceAndGoStamp(t *testing.T) {
 	root := t.TempDir()
+	t.Chdir(root)
 	catalogPath := filepath.Join(root, "ecosystem.yaml")
 	const revision = "0123456789abcdef0123456789abcdef01234567"
-	catalog := `{"schema_version":4,"components":{"core":{"repository":"Nyukimin/RenCrow_CORE","workspace_path":".","version":"` + revision + `"}}}`
+	workspace := filepath.Join(root, "RenCrow_CORE")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	catalog := `{"schema_version":4,"components":{"core":{"repository":"Nyukimin/RenCrow_CORE","workspace_path":"./RenCrow_CORE","version":"` + revision + `"}}}`
 	if err := os.WriteFile(catalogPath, []byte(catalog), 0o600); err != nil {
 		t.Fatalf("catalog: %v", err)
 	}
@@ -467,6 +472,11 @@ func TestVerifierDeployIdentityUsesCatalogSourceAndGoStamp(t *testing.T) {
 	manifest := testManifest(t, "core-deploy-identity-chain")
 	deps := verifierDependencies{RunCommand: func(_ context.Context, name string, args []string) verifierCommandResult {
 		switch name {
+		case "systemctl":
+			if slices.Contains(args, "cat") {
+				return verifierCommandResult{ExitCode: 0, Stdout: "[Service]\nExecStart=" + artifact + " run\nEnvironment=RENCROW_CONFIG=/tmp/core.yaml\nRestart=always\nStandardOutput=journal\nStandardError=journal\n"}
+			}
+			return verifierCommandResult{ExitCode: 0, Stdout: "ActiveState=active\nSubState=running\nResult=success\nMainPID=4242\nExecStart={ path=" + artifact + "; argv[]=" + artifact + " run ; }\nEnvironment=RENCROW_CONFIG=/tmp/core.yaml\n"}
 		case "git":
 			if len(args) >= 4 && args[2] == "rev-parse" {
 				return verifierCommandResult{ExitCode: 0, Stdout: revision + "\n"}
@@ -479,7 +489,6 @@ func TestVerifierDeployIdentityUsesCatalogSourceAndGoStamp(t *testing.T) {
 		}
 	}}
 	args := verifierArgs(manifest, "core_deploy_identity_chain", t.TempDir())
-	args = append(args, "--catalog", catalogPath, "--workspace", root, "--installed-artifact", artifact)
 	var output bytes.Buffer
 	code := runVerifierCLI(context.Background(), args, &output, &bytes.Buffer{}, deps)
 	if code != verifierExitPassed {
