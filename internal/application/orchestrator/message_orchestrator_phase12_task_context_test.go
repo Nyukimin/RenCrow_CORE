@@ -97,16 +97,24 @@ func TestPhase12TaskContextBuilderSkipsTTSSessionForRenCrowCMD(t *testing.T) {
 		func() bool { return true },
 	)
 
-	_, _, ttsSessionID := builder.Build(ProcessMessageRequest{
-		SessionID:       "viewer",
-		Channel:         "viewer",
-		ChatID:          "viewer-user",
-		UserMessage:     "おはようございます",
-		OperationSource: "RenCrow_CMD",
-	})
-
-	if ttsSessionID != "" {
-		t.Fatalf("expected CMD text chat to skip TTS, got %q", ttsSessionID)
+	for _, tt := range []struct {
+		name      string
+		intent    AudioOutputIntent
+		wantEmpty bool
+	}{
+		{name: "omitted", wantEmpty: true},
+		{name: "explicit requested", intent: AudioOutputRequested, wantEmpty: false},
+		{name: "explicit disabled", intent: AudioOutputDisabled, wantEmpty: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, ttsSessionID := builder.Build(ProcessMessageRequest{
+				SessionID: "viewer", Channel: "viewer", ChatID: "viewer-user", UserMessage: "おはようございます",
+				OperationSource: "RenCrow_CMD", AudioOutput: tt.intent,
+			})
+			if (ttsSessionID == "") != tt.wantEmpty {
+				t.Fatalf("ttsSessionID=%q wantEmpty=%t", ttsSessionID, tt.wantEmpty)
+			}
+		})
 	}
 }
 

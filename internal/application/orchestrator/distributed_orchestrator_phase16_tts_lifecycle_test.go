@@ -68,22 +68,31 @@ func TestPhase16DistributedTTSLifecycleStartFailureClearsSession(t *testing.T) {
 }
 
 func TestPhase16DistributedTTSLifecycleSkipsRenCrowCMD(t *testing.T) {
-	bridge := &mockTTSBridge{}
-	lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
+	for _, tt := range []struct {
+		name      string
+		intent    AudioOutputIntent
+		wantEmpty bool
+	}{
+		{name: "omitted", wantEmpty: true},
+		{name: "explicit requested", intent: AudioOutputRequested, wantEmpty: false},
+		{name: "explicit disabled", intent: AudioOutputDisabled, wantEmpty: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			bridge := &mockTTSBridge{}
+			lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
 
-	ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
-		SessionID:       "viewer",
-		Channel:         "viewer",
-		ChatID:          "viewer-user",
-		UserMessage:     "おはようございます",
-		OperationSource: "RenCrow_CMD",
-	}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 0.98, "chat"))
+			ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
+				SessionID: "viewer", Channel: "viewer", ChatID: "viewer-user", UserMessage: "おはようございます",
+				OperationSource: "RenCrow_CMD", AudioOutput: tt.intent,
+			}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 0.98, "chat"))
 
-	if ttsSessionID != "" {
-		t.Fatalf("expected CMD text chat to skip TTS, got %q", ttsSessionID)
-	}
-	if len(bridge.startReqs) != 0 {
-		t.Fatalf("expected no TTS start request for CMD, got %d", len(bridge.startReqs))
+			if (ttsSessionID == "") != tt.wantEmpty {
+				t.Fatalf("ttsSessionID=%q wantEmpty=%t", ttsSessionID, tt.wantEmpty)
+			}
+			if (len(bridge.startReqs) == 0) != tt.wantEmpty {
+				t.Fatalf("start requests=%d wantStarted=%t", len(bridge.startReqs), !tt.wantEmpty)
+			}
+		})
 	}
 }
 

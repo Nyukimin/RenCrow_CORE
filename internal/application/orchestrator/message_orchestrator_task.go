@@ -43,12 +43,19 @@ func (b *messageTaskContextBuilder) BuildWithJobID(req ProcessMessageRequest, jo
 			"", jobID.String(), req.SessionID, req.Channel, req.ChatID)
 	}
 	ttsSessionID := ""
-	if b.ttsEnabled() && ttsAllowedForOperationSource(req.OperationSource) && req.AudioOutput != AudioOutputDisabled {
+	if b.ttsEnabled() && ttsAllowedForRequest(req) {
 		ttsSessionID = fmt.Sprintf("%s-%s", req.SessionID, jobID.String())
 	}
 	return t, jobID, ttsSessionID
 }
 
-func ttsAllowedForOperationSource(operationSource string) bool {
-	return !strings.EqualFold(strings.TrimSpace(operationSource), "RenCrow_CMD")
+func ttsAllowedForRequest(req ProcessMessageRequest) bool {
+	intent := strings.ToLower(strings.TrimSpace(string(req.AudioOutput)))
+	if intent == string(AudioOutputDisabled) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(req.OperationSource), "RenCrow_CMD") {
+		return intent == string(AudioOutputRequested)
+	}
+	return true
 }
