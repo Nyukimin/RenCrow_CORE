@@ -232,7 +232,8 @@ func portalChatInteractionAllowed(method, path string) bool {
 	case "/viewer/send",
 		"/viewer/recipient-selection",
 		"/viewer/active-control",
-		"/viewer/tts/playback-ack":
+		"/viewer/tts/playback-ack",
+		"/stt/chat-input":
 		return true
 	default:
 		return false

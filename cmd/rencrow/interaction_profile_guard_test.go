@@ -36,6 +36,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusNoContent,
 		},
 		{
+			name:    "portal chat can transcribe audio through CORE",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-chat",
+			method:  http.MethodPost,
+			path:    "/stt/chat-input",
+			want:    http.StatusNoContent,
+		},
+		{
 			name:    "portal idlechat can read",
 			client:  "RenCrow_PORTAL",
 			profile: "portal-idlechat",
@@ -92,6 +100,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusForbidden,
 		},
 		{
+			name:    "portal idlechat cannot transcribe audio through CORE",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-idlechat",
+			method:  http.MethodPost,
+			path:    "/stt/chat-input",
+			want:    http.StatusForbidden,
+		},
+		{
 			name:    "portal games can launch agent session",
 			client:  "RenCrow_PORTAL",
 			profile: "portal-games",
@@ -129,6 +145,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			profile: "portal-games",
 			method:  http.MethodPost,
 			path:    "/viewer/games/observer-api/games/sessions/nh-1/summary",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "portal games cannot transcribe audio through CORE",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-games",
+			method:  http.MethodPost,
+			path:    "/stt/chat-input",
 			want:    http.StatusForbidden,
 		},
 		{
