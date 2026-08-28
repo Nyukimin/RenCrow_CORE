@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	"gopkg.in/yaml.v3"
@@ -20,12 +21,14 @@ const (
 	verifierMinActorTokenBytes     = 32
 	verifierMaxActorMessageBytes   = 32 << 10
 	verifierMaxActorRequestIDBytes = 128
+	verifierActorRequestTimeout    = 60 * time.Second
 )
 
 var verifierActorRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 
 func runCanonicalActorE2E(ctx context.Context, options verifierOptions, _ manifestCheck, deps verifierDependencies) verifierOutcome {
 	deps = normalizeVerifierDependencies(deps)
+	actorClient := verifierActorHTTPClient(deps.HTTPClient)
 	if strings.TrimSpace(options.ActorTokenFile) == "" {
 		configPath := strings.TrimSpace(options.ConfigPath)
 		if configPath == "" {
@@ -70,7 +73,7 @@ func runCanonicalActorE2E(ctx context.Context, options verifierOptions, _ manife
 	if err != nil {
 		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical Agent request could not be encoded"}
 	}
-	response := verifierHTTPJSON(ctx, deps.HTTPClient, http.MethodPost, coreEndpoint(baseURL, "/v1/agent/ops"), map[string]string{
+	response := verifierHTTPJSON(ctx, &actorClient, http.MethodPost, coreEndpoint(baseURL, "/v1/agent/ops"), map[string]string{
 		"Accept":                        "application/json",
 		"Content-Type":                  "application/json",
 		"Authorization":                 "Bearer " + token,
@@ -110,6 +113,14 @@ func runCanonicalActorE2E(ctx context.Context, options verifierOptions, _ manife
 	evidence["output_bytes"] = len([]byte(responseFields.Output))
 	evidence["output_sha256"] = sha256Text(responseFields.Output)
 	return verifierOutcome{Status: "passed", Evidence: evidence}
+}
+
+func verifierActorHTTPClient(source *http.Client) http.Client {
+	client := *source
+	if client.Timeout == 0 || client.Timeout < verifierActorRequestTimeout {
+		client.Timeout = verifierActorRequestTimeout
+	}
+	return client
 }
 
 func readCanonicalActorTokenPath(configPath string) (string, error) {

@@ -264,6 +264,14 @@ func TestVerifierActorDiscoversCanonicalInputsFromActiveService(t *testing.T) {
 	}
 }
 
+func TestCanonicalActorRequestUsesInferenceSizedTimeout(t *testing.T) {
+	client := &http.Client{Timeout: 8 * time.Second}
+	copy := verifierActorHTTPClient(client)
+	if copy.Timeout != 60*time.Second || client.Timeout != 8*time.Second {
+		t.Fatalf("actor timeout=%s source timeout=%s", copy.Timeout, client.Timeout)
+	}
+}
+
 func TestVerifierSnapshotDelegatesOnlyToExplicitRestoreChecker(t *testing.T) {
 	manifest := testManifest(t, "core-l1-snapshot-integrity")
 	snapshotDir := t.TempDir()
