@@ -304,21 +304,29 @@ func TestVerifierSnapshotDelegatesOnlyToExplicitRestoreChecker(t *testing.T) {
 	}
 }
 
-func TestVerifierSnapshotMissingInputBlocksWithoutRunningChecker(t *testing.T) {
+func TestVerifierSnapshotWithoutMountedMediaUsesCanonicalBackupReceipt(t *testing.T) {
 	manifest := testManifest(t, "core-l1-snapshot-integrity")
-	called := false
-	deps := verifierDependencies{RunCommand: func(context.Context, string, []string) verifierCommandResult {
-		called = true
-		return verifierCommandResult{ExitCode: 0}
-	}}
+	deps := verifierDependencies{
+		Platform: func() string { return "linux" },
+		RunCommand: func(_ context.Context, name string, args []string) verifierCommandResult {
+			switch name {
+			case "systemctl":
+				return verifierCommandResult{ExitCode: 0, Stdout: "ActiveState=inactive\nResult=success\nExecMainStatus=0\n"}
+			case "journalctl":
+				if !slices.Contains(args, "2026-08-25 12:00:00 UTC") {
+					t.Fatalf("journal args=%#v", args)
+				}
+				return verifierCommandResult{ExitCode: 0, Stdout: "[OK] snapshot is checksum-valid, extractable, and restorable: snapshot\n[OK] CORE and memory snapshot verified: snapshot\n[OK] backup medium unmounted: backup\n"}
+			default:
+				return verifierCommandResult{ExitCode: 1, Err: errors.New("unexpected command")}
+			}
+		},
+	}
 	args := verifierArgs(manifest, "core_l1_snapshot_integrity", t.TempDir())
 	var output bytes.Buffer
 	code := runVerifierCLI(context.Background(), args, &output, &bytes.Buffer{}, deps)
-	if code != verifierExitBlocked {
+	if code != verifierExitPassed {
 		t.Fatalf("exit=%d output=%s", code, output.String())
-	}
-	if called {
-		t.Fatal("restore checker ran without explicit snapshot")
 	}
 }
 

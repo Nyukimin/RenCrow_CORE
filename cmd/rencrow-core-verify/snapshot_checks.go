@@ -13,7 +13,7 @@ func runL1SnapshotIntegrity(ctx context.Context, options verifierOptions, _ mani
 	deps = normalizeVerifierDependencies(deps)
 	snapshot := strings.TrimSpace(options.SnapshotDir)
 	if snapshot == "" {
-		return verifierOutcome{Status: "blocked", FailureBoundary: "snapshot input is required for the backup check"}
+		return verifyLatestCanonicalBackupReceipt(ctx, options, deps)
 	}
 	info, err := os.Lstat(snapshot)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
@@ -56,6 +56,42 @@ func runL1SnapshotIntegrity(ctx context.Context, options verifierOptions, _ mani
 		return verifierOutcome{Status: "failed", FailureBoundary: "snapshot restore checker returned no success evidence", Evidence: evidence}
 	}
 	return verifierOutcome{Status: "passed", Evidence: evidence}
+}
+
+func verifyLatestCanonicalBackupReceipt(ctx context.Context, options verifierOptions, deps verifierDependencies) verifierOutcome {
+	if deps.Platform() != "linux" {
+		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical backup receipt observation is unavailable on this platform"}
+	}
+	state := deps.RunCommand(ctx, "systemctl", []string{"--user", "show", "rencrow-storage-backup.service", "-p", "ActiveState", "-p", "Result", "-p", "ExecMainStatus"})
+	if commandUnavailable(state) {
+		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical backup service receipt is unavailable"}
+	}
+	properties := parseKeyValueOutput(state.Stdout)
+	if properties["ActiveState"] != "inactive" || properties["Result"] != "success" || properties["ExecMainStatus"] != "0" {
+		return verifierOutcome{Status: "failed", FailureBoundary: "latest canonical backup service did not finish successfully"}
+	}
+	since := options.ObservedAt.UTC().Add(-36 * time.Hour).Format("2006-01-02 15:04:05 UTC")
+	journal := deps.RunCommand(ctx, "journalctl", []string{"--user", "-u", "rencrow-storage-backup.service", "--since", since, "--no-pager", "-o", "cat"})
+	if commandUnavailable(journal) {
+		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical backup journal receipt is unavailable"}
+	}
+	for _, marker := range []string{
+		"[OK] snapshot is checksum-valid, extractable, and restorable:",
+		"[OK] CORE and memory snapshot verified:",
+		"[OK] backup medium unmounted:",
+	} {
+		if !strings.Contains(journal.Stdout, marker) {
+			return verifierOutcome{Status: "failed", FailureBoundary: "canonical backup journal is missing restore or completion evidence"}
+		}
+	}
+	return verifierOutcome{Status: "passed", Evidence: map[string]any{
+		"backup_unit":          "rencrow-storage-backup.service",
+		"service_result":       properties["Result"],
+		"journal_window_hours": 36,
+		"journal_bytes":        len(journal.Stdout),
+		"journal_sha256":       sha256Text(journal.Stdout),
+		"medium_state":         "unmounted_after_verified_backup",
+	}}
 }
 
 // validateSnapshotFreshness reads the canonical backup manifest timestamp.
