@@ -795,6 +795,8 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
   推論Target経路でstrict JSONの`BrainDecision`を生成する。
 - Game turnのLLM requestはnon-stream textで実行し、`available_actions`の一要素と
   完全一致する単一action tokenだけを受理する。引用符、JSON、Markdown、説明文は拒否する。
+- COREはcomma、空白、改行、引用符をstop sequenceとしてGatewayへ渡し、最初のaction
+  tokenで生成を停止させる。stop適用後もallowlist完全一致を満たさない出力は拒否する。
 - COREは大きなworld観測でもpromptとcompletionをcontext上限内へ収めるため、requestを
   compact JSONで渡し、全Agentのgame turn completionを共通のbounded token budgetへ固定する。
 - LLM residualは`available_actions`からの`intent`選択だけに限定する。CORE Boundaryは

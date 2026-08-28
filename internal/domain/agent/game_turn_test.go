@@ -36,4 +36,8 @@ func TestMioDecideGameTurnRequestsBoundedNonStreamingText(t *testing.T) {
 	if captured.MaxTokens != gameTurnMaxTokens {
 		t.Fatalf("MaxTokens = %d, want bounded game budget %d", captured.MaxTokens, gameTurnMaxTokens)
 	}
+	stop, ok := captured.ProviderOptions["stop"].([]string)
+	if !ok || len(stop) != 4 || stop[0] != "," {
+		t.Fatalf("game turn stop contract missing: %#v", captured.ProviderOptions)
+	}
 }

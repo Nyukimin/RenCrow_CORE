@@ -28,6 +28,7 @@ func (m *MioAgent) DecideGameTurn(ctx context.Context, prompt string, recipient 
 	request := m.generationRequest(messages, nil)
 	request.MaxTokens = gameTurnMaxTokens
 	request.ResponseFormat = llm.ResponseFormatText
+	request.ProviderOptions = gameTurnProviderOptions(request.ProviderOptions)
 	request.OnToken = nil
 	resp, err := m.llmProvider.Generate(ctx, request)
 	if err != nil {
@@ -41,11 +42,12 @@ func (h *HeavyAgent) DecideGameTurn(ctx context.Context, prompt string) (string,
 		return "", fmt.Errorf("Agent is unavailable")
 	}
 	resp, err := h.llmProvider.Generate(ctx, llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
-		SystemPrompt:   h.systemPrompt + "\n" + gameTurnBoundaryPrompt,
-		Messages:       []llm.Message{{Role: "user", Content: prompt}},
-		MaxTokens:      gameTurnMaxTokens,
-		Temperature:    0.3,
-		ResponseFormat: llm.ResponseFormatText,
+		SystemPrompt:    h.systemPrompt + "\n" + gameTurnBoundaryPrompt,
+		Messages:        []llm.Message{{Role: "user", Content: prompt}},
+		MaxTokens:       gameTurnMaxTokens,
+		Temperature:     0.3,
+		ResponseFormat:  llm.ResponseFormatText,
+		ProviderOptions: gameTurnProviderOptions(nil),
 	}))
 	if err != nil {
 		return "", err
@@ -58,11 +60,12 @@ func (w *WildAgent) DecideGameTurn(ctx context.Context, prompt string) (string, 
 		return "", fmt.Errorf("Agent is unavailable")
 	}
 	resp, err := w.llmProvider.Generate(ctx, llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
-		SystemPrompt:   w.systemPrompt + "\n" + gameTurnBoundaryPrompt,
-		Messages:       []llm.Message{{Role: "user", Content: prompt}},
-		MaxTokens:      gameTurnMaxTokens,
-		Temperature:    0.4,
-		ResponseFormat: llm.ResponseFormatText,
+		SystemPrompt:    w.systemPrompt + "\n" + gameTurnBoundaryPrompt,
+		Messages:        []llm.Message{{Role: "user", Content: prompt}},
+		MaxTokens:       gameTurnMaxTokens,
+		Temperature:     0.4,
+		ResponseFormat:  llm.ResponseFormatText,
+		ProviderOptions: gameTurnProviderOptions(nil),
 	}))
 	if err != nil {
 		return "", err
@@ -73,3 +76,12 @@ func (w *WildAgent) DecideGameTurn(ctx context.Context, prompt string) (string, 
 const gameTurnBoundaryPrompt = `This is an environment observation for an Agent-owned game turn, not a user message.
 Decide only the requested game action. Do not call tools, modify files, or perform other side effects.
 Return only the exact action token requested by the game turn prompt.`
+
+func gameTurnProviderOptions(existing map[string]any) map[string]any {
+	options := make(map[string]any, len(existing)+1)
+	for key, value := range existing {
+		options[key] = value
+	}
+	options["stop"] = []string{",", "\n", " ", "\""}
+	return options
+}
