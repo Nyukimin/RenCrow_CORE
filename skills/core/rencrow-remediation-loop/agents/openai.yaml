@@ -1,0 +1,4 @@
+interface:
+  display_name: "RenCrow Remediation Loop"
+  short_description: "Repair, deploy, prove each defect, then audit all"
+  default_prompt: "$rencrow-remediation-loopを使い、未達を1件ずつTDD修正、E2E、Push、再build、再起動、deploy、修正箇所再検証まで閉じ、最後にフルチェックしてください。"
