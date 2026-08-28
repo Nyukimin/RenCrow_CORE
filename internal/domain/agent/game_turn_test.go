@@ -33,4 +33,7 @@ func TestMioDecideGameTurnRequestsNonStreamingJSONObject(t *testing.T) {
 	if captured.OnToken != nil {
 		t.Fatal("game turn structured output must be non-streaming")
 	}
+	if captured.MaxTokens != gameTurnMaxTokens {
+		t.Fatalf("MaxTokens = %d, want bounded game budget %d", captured.MaxTokens, gameTurnMaxTokens)
+	}
 }

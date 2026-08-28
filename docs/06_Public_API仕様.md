@@ -796,6 +796,8 @@ LLM、Model、provider、Agent Runtime、Execution RoleはAgentの推論・実�
 - Game turnのLLM requestは`ResponseFormatJSONObject`を指定し、non-streamで実行する。
   RenCrow LLM Runtimeが`response_format.type=json_object`に基づいてModel固有の外装を
   正規化し、COREはコードフェンスを受理せずstrict JSONだけをdomain検証する。
+- COREは大きなworld観測でもpromptとcompletionをcontext上限内へ収めるため、requestを
+  compact JSONで渡し、全Agentのgame turn completionを共通のbounded token budgetへ固定する。
 - Responseは`agent_id`を必須とし、`agent_id`と`persona`はrequestの`persona`に
   一致しなければならない。
 - GAMESは`intent`と`action_plan[].action`を`available_actions`に対して再検証して

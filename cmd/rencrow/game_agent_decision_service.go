@@ -56,7 +56,7 @@ func (s *gameAgentDecisionService) DecideGameTurn(ctx context.Context, request v
 }
 
 func buildGameAgentTurnPrompt(request viewer.GameAgentDecisionRequest) (string, error) {
-	payload, err := json.MarshalIndent(request, "", "  ")
+	payload, err := json.Marshal(request)
 	if err != nil {
 		return "", fmt.Errorf("encode game observation: %w", err)
 	}
@@ -64,7 +64,8 @@ func buildGameAgentTurnPrompt(request viewer.GameAgentDecisionRequest) (string, 
 観測と available_actions の範囲だけで、次の行動を一つ決めてください。
 intent と action_plan[].action は available_actions の文字列と完全一致させてください。
 対象が必要な行動では、観測内のIDを action_plan[].target または args に指定してください。
-出力は次の形のJSONオブジェクトだけにしてください。Markdownや説明文は禁止です。
+reasonは40文字以内、action_planは1要素、memory_refsは最大3要素にしてください。
+出力は次の形の短いJSONオブジェクトだけにしてください。Markdownや説明文は禁止です。
 {"intent":"<action>","reason":"<Agent自身の短い判断理由>","action_plan":[{"action":"<action>","target":"<optional id>","args":{}}],"memory_refs":[],"confidence":0.0}
 
 Game turn input:

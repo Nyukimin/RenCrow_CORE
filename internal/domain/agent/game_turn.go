@@ -8,7 +8,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
-const gameTurnMaxTokens = 1200
+const gameTurnMaxTokens = 512
 
 // DecideGameTurn is a dedicated Agent cognition path for game observations.
 // Unlike Chat/Execute, the environment observation is not recorded as a user
@@ -26,6 +26,7 @@ func (m *MioAgent) DecideGameTurn(ctx context.Context, prompt string, recipient 
 		llm.Message{Role: "user", Content: prompt},
 	)
 	request := m.generationRequest(messages, nil)
+	request.MaxTokens = gameTurnMaxTokens
 	request.ResponseFormat = llm.ResponseFormatJSONObject
 	request.OnToken = nil
 	resp, err := m.llmProvider.Generate(ctx, request)

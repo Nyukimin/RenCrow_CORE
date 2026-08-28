@@ -20,10 +20,13 @@ func TestBuildGameAgentTurnPromptCarriesObservationAndStrictContract(t *testing.
 	if err != nil {
 		t.Fatalf("build prompt: %v", err)
 	}
-	for _, required := range []string{`"session_id": "nh_agent_e2e"`, `"search"`, `"intent"`, "Markdownや説明文は禁止"} {
+	for _, required := range []string{`"session_id":"nh_agent_e2e"`, `"search"`, `"intent"`, "reasonは40文字以内", "Markdownや説明文は禁止"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("prompt missing %q: %s", required, prompt)
 		}
+	}
+	if strings.Contains(prompt, "\n  ") {
+		t.Fatalf("game observation must use compact JSON to preserve context budget: %s", prompt)
 	}
 }
 
