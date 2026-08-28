@@ -30,6 +30,13 @@ Skill本文はcomponent、port、endpoint、check数を正本として複製し�
 
 manifestにcomponentが追加されたのにCoverage Policyまたはowner manifestがなければ、実行開始前にfail closedでpreflight errorにする。owner receiptを作らず、Skillの固定表へ手で追加して補完しない。
 
+必須componentでもcanonical runtimeが未実装なら、Coverage Policyの
+`temporarily_excluded_components`に`reason=required_component_unimplemented`、
+`reinclude_when=canonical_runtime_implemented`が正規宣言されている場合だけ、現行のowner manifest実行、
+binding、receipt母数から一時除外できる。component宣言と将来のcoverage requirementsは保持し、
+trackerへ理由と再参加条件を出す。未知component、optional component、自由記述理由はfail closedとし、
+実装後は同じ変更単位で除外を削除する。現在のASSISTANTはこの契約で扱う。
+
 ## Authorization boundary
 
 デフォルトはread-onlyである。検査のためにrestart、stop、rebuild、deploy、install、fix、restore promotion、commit、push、外部公開、credential変更を行わない。必要なら該当checkを`blocked`とし、監査とは別の明示依頼を求める。
@@ -50,7 +57,7 @@ LLMの自然言語をcheck成功、認証、state、外部I/Oのreceiptにしな
 
 1. workspace rootと各child repositoryを別Git repositoryとして扱う。
 2. catalog validatorとSkill contract validatorを実行する。
-3. `ecosystem.yaml`のcomponent集合、Coverage Policyのcomponent集合、owner manifest集合が完全一致することを確認する。
+3. `ecosystem.yaml`のcomponent集合とCoverage Policyのcomponent集合が完全一致し、実行対象componentのowner manifest集合が一致することを確認する。一時除外は上記の構造化宣言だけを許す。
 4. dirty worktreeは観測だけして保存する。監査のためにstash/resetしない。
 
 ### 2. Compose every required phase
@@ -171,6 +178,7 @@ aggregate-setは、全phase、同一request集合、bindings、coverage、revisi
 - component数、check数、phase別included数。
 - Plan/composition/aggregate revisions。
 - status別件数と全check tracker。
+- 一時除外component、その理由、再参加条件。
 - canonical route、実Actor、browser、media、security/Tailscale/LAN、DB/storage、backup/restore、startup/resources、publicationの結果。
 - failed/blocked/deferred/unverifiedのowner、failure boundary、次の安全な操作。
 - `all_clear: true|false`。

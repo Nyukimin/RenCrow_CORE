@@ -12,6 +12,9 @@ TRIGGER = "システム全体を検証して"
 REQUIRED_TERMS = (
     "ecosystem.yaml",
     "full-system-coverage.json",
+    "temporarily_excluded_components",
+    "required_component_unimplemented",
+    "canonical_runtime_implemented",
     "every owner v2 check manifest",
     "required_phases",
     "rencrow-full-system-verification compose",
@@ -38,6 +41,7 @@ REQUIRED_TERMS = (
     "fabricate",
     "aggregate-set",
     "all_clear=true",
+    "trackerへ理由と再参加条件",
     "read-only",
     "実Actor",
     "blocked",

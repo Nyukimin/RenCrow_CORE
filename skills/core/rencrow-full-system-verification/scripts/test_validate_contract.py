@@ -62,6 +62,18 @@ class ValidateContractTest(unittest.TestCase):
                     f"validator errors={errors}",
                 )
 
+    def test_missing_temporary_component_scope_contract_fails_closed(self) -> None:
+        text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        text = text.replace(
+            "temporarily_excluded_components",
+            "component scope removed",
+        )
+        errors = self._validate_text(text)
+        self.assertTrue(
+            any("temporarily_excluded_components" in error for error in errors),
+            f"validator errors={errors}",
+        )
+
     def test_crlf_frontmatter_remains_valid(self) -> None:
         text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
         errors = self._validate_text(text.replace("\n", "\r\n"))
