@@ -298,6 +298,28 @@ func TestMessageOrchestrator_RouteChainContract_UnknownRouteDoesNotEmitSuccessRe
 	}
 }
 
+func TestMessageOrchestrator_RouteChainContract_AnalyzeEmitsPublicTerminalResponse(t *testing.T) {
+	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteANALYZE, 1, "analyze")}
+	heavy := &mockHeavyAgent{response: "PORTAL_BROWSER_OK"}
+	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetHeavyAgent(heavy)
+	rec := &recordingEventListener{}
+	orch.SetEventListener(rec)
+
+	resp, err := orch.ProcessMessage(context.Background(), defaultReq())
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+	if resp.Response != "PORTAL_BROWSER_OK" {
+		t.Fatalf("response=%q", resp.Response)
+	}
+	internal := indexOfEvent(rec.events, "agent.response", "heavy", "mio", "ANALYZE")
+	public := indexOfEvent(rec.events, "agent.response", "mio", "user", "ANALYZE")
+	if internal < 0 || public <= internal {
+		t.Fatalf("ANALYZE must emit internal then public terminal response: %#v", rec.events)
+	}
+}
+
 func TestMessageOrchestrator_RouteChainContract_WorkerErrorDoesNotBecomeSuccess(t *testing.T) {
 	workerErr := errors.New("worker failed")
 	worker := &recordingWorkerExecutionService{err: workerErr}

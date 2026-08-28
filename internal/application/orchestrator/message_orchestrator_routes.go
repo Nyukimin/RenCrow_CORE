@@ -216,6 +216,7 @@ func (d *messageRouteDispatcher) executeAnalyzeRoute(ctx context.Context, t task
 	if err == nil {
 		d.emit("agent.response", "heavy", "mio", resp, "ANALYZE", jid, sessionID, channel, chatID)
 		d.emit("agent.report", "heavy", "mio", formatAgentHandoffCompletionSpeech("mio", "heavy", resp), "ANALYZE", jid, sessionID, channel, chatID)
+		d.emit("agent.response", "mio", "user", resp, "ANALYZE", jid, sessionID, channel, chatID)
 		ttsStream.Finalize(ctx, resp)
 		recordHeavyWorkflowEvent(ctx, d.workflowEvents, "completed", "Heavy Worker completed", jid)
 	} else {
