@@ -39,6 +39,9 @@ func (b *RenCrowTTSBridge) postSynthesisWithRetry(ctx context.Context, reqBody [
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-RenCrow-TTS-Request-Id", buildRequestIDHeader(sessionID, chunkIndex))
+		if token := strings.TrimSpace(b.cfg.AuthToken); token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
 
 		resp, err := b.client.Do(req)
 		if err != nil {

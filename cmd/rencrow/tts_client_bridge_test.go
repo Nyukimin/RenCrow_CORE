@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -18,6 +20,35 @@ func TestBuildTTSClientBridge_Disabled(t *testing.T) {
 	cfg := &config.Config{}
 	if got := buildTTSClientBridge(cfg, nil, nil, nil); got != nil {
 		t.Fatal("expected nil bridge when tts is disabled")
+	}
+}
+
+func TestBuildTTSClientBridgeLoadsOwnerTokenAndAuthenticatesSynthesis(t *testing.T) {
+	tokenPath := filepath.Join(t.TempDir(), "tts-owner.token")
+	if err := os.WriteFile(tokenPath, []byte("owner-test-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/test.wav"}`)
+	}))
+	t.Cleanup(server.Close)
+	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
+		Enabled: true, GatewayBaseURL: server.URL, AuthTokenFile: tokenPath, VoiceID: "mio", TimeoutMS: 15000,
+	}}, nil, nil, nil)
+	if bridge == nil {
+		t.Fatal("expected authenticated TTS bridge")
+	}
+	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "auth-session", VoiceID: "mio"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.PushText(context.Background(), "auth-session", "認証確認です。", nil); err != nil {
+		t.Fatal(err)
+	}
+	if authorization != "Bearer owner-test-token" {
+		t.Fatalf("Authorization = %q, want owner bearer", authorization)
 	}
 }
 

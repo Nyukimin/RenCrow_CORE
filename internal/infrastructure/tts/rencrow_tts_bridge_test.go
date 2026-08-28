@@ -27,11 +27,13 @@ func TestRenCrowTTSBridge_PushTextCallsSynthesis(t *testing.T) {
 	var gotReqPath string
 	var gotAudioURL string
 	var gotHeader string
+	var gotAuthorization string
 	var gotBody map[string]any
 
 	sink := &sinkStub{}
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL: "http://tts.local",
+		AuthToken:   "owner-test-token",
 		VoiceID:     "female_01",
 		Sink:        sink,
 		OnChunkReady: func(_, _ string, _ int, _, _, _, audioPath, audioURL string) {
@@ -41,6 +43,7 @@ func TestRenCrowTTSBridge_PushTextCallsSynthesis(t *testing.T) {
 	bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 		gotReqPath = r.URL.Path
 		gotHeader = r.Header.Get("X-RenCrow-TTS-Request-Id")
+		gotAuthorization = r.Header.Get("Authorization")
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
@@ -67,6 +70,9 @@ func TestRenCrowTTSBridge_PushTextCallsSynthesis(t *testing.T) {
 	}
 	if strings.TrimSpace(gotHeader) == "" {
 		t.Fatal("expected X-RenCrow-TTS-Request-Id header")
+	}
+	if gotAuthorization != "Bearer owner-test-token" {
+		t.Fatalf("Authorization = %q, want owner bearer", gotAuthorization)
 	}
 	if gotBody["text"] != "😊こんにちは。" {
 		t.Fatalf("expected punctuated text, got %+v", gotBody["text"])

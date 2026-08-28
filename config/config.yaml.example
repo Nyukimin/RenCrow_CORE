@@ -373,6 +373,8 @@ tts:
   enabled: true
   output_dir: "./workspace/tts"
   gateway_base_url: "http://127.0.0.1:7870"
+  # LAN上のGatewayでは必須。token本体ではなくowner-only fileの絶対pathを指定する。
+  auth_token_file: "/absolute/runtime/path/tts-owner.token"
   timeout_ms: 120000
   tls_skip_verify: false
   voice_id: "mio"

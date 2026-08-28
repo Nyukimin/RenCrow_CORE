@@ -17,6 +17,7 @@ import (
 
 type RenCrowTTSBridgeConfig struct {
 	HTTPBaseURL        string
+	AuthToken          string
 	OutputDir          string
 	VoiceID            string
 	Speed              float64

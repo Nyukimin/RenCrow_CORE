@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -151,6 +152,14 @@ func (c *Config) Validate() error {
 		}
 		if c.TTS.TimeoutMS < 1 {
 			return fmt.Errorf("tts.timeout_ms must be >= 1")
+		}
+		hostname := gatewayURL.Hostname()
+		ip := net.ParseIP(hostname)
+		loopback := strings.EqualFold(hostname, "localhost") || ip != nil && ip.IsLoopback()
+		if !loopback {
+			if err := validateTTSOwnerTokenFile(c.TTS.AuthTokenFile); err != nil {
+				return err
+			}
 		}
 	}
 	if c.STT.Enabled {
@@ -918,6 +927,27 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func validateTTSOwnerTokenFile(path string) error {
+	path = strings.TrimSpace(path)
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("tts.auth_token_file must be an absolute path for a non-loopback gateway")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("tts.auth_token_file: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("tts.auth_token_file must be a regular non-symlink file")
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("tts.auth_token_file must be owner-only")
+	}
+	if info.Size() <= 0 || info.Size() > 64<<10 {
+		return fmt.Errorf("tts.auth_token_file must contain a bounded non-empty token")
+	}
 	return nil
 }
 

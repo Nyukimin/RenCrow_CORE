@@ -3,7 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +24,11 @@ func buildTTSClientBridge(
 	onSessionCompleted func(sessionID, characterID string),
 ) orchestrator.TTSBridge {
 	if cfg == nil || !cfg.TTS.Enabled {
+		return nil
+	}
+	authToken, err := readTTSOwnerToken(cfg.TTS.AuthTokenFile)
+	if err != nil {
+		log.Printf("WARN: TTS owner authentication unavailable: %v", err)
 		return nil
 	}
 	cmds := buildTTSCommandSpecs(cfg)
@@ -130,6 +138,7 @@ func buildTTSClientBridge(
 	gatewayBaseURL := cfg.TTS.GatewayURL()
 	bridge := ttsinfra.NewRenCrowTTSBridge(ttsinfra.RenCrowTTSBridgeConfig{
 		HTTPBaseURL:        gatewayBaseURL,
+		AuthToken:          authToken,
 		OutputDir:          cfg.TTS.OutputDir,
 		VoiceID:            cfg.TTS.VoiceID,
 		Speed:              cfg.TTS.Speed,
@@ -142,4 +151,41 @@ func buildTTSClientBridge(
 	})
 	log.Printf("TTS RenCrow_TTS Gateway bridge enabled (/api/tts base=%s)", gatewayBaseURL)
 	return bridge
+}
+
+func readTTSOwnerToken(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("TTS auth token file must be a regular non-symlink file")
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("TTS auth token file must be owner-only")
+	}
+	if info.Size() <= 0 || info.Size() > 64<<10 {
+		return "", fmt.Errorf("TTS auth token file must contain one bounded token")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, (64<<10)+1))
+	if err != nil {
+		return "", fmt.Errorf("read TTS auth token: %w", err)
+	}
+	if len(data) > 64<<10 {
+		return "", fmt.Errorf("TTS auth token exceeds bounded size")
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" || strings.ContainsAny(token, "\r\n") {
+		return "", fmt.Errorf("TTS auth token must contain one non-empty line")
+	}
+	return token, nil
 }

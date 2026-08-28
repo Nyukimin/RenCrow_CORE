@@ -2024,6 +2024,45 @@ func TestTTSGatewayValidationRejectsPhysicalTargetStyleURL(t *testing.T) {
 	}
 }
 
+func TestTTSGatewayValidationRequiresOwnerTokenForRemoteGateway(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "core.yaml")
+	content := `
+server:
+  port: 8080
+tts:
+  enabled: true
+  gateway_base_url: "http://192.168.1.205:7870"
+  timeout_ms: 120000
+  voice_id: "mio"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "tts.auth_token_file") {
+		t.Fatalf("Validate error = %v, want tts.auth_token_file", err)
+	}
+}
+
+func TestTTSGatewayValidationAcceptsOwnerOnlyTokenForRemoteGateway(t *testing.T) {
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "tts-owner.token")
+	if err := os.WriteFile(tokenPath, []byte("owner-test-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "core.yaml")
+	content := "server:\n  port: 8080\ntts:\n  enabled: true\n  gateway_base_url: http://192.168.1.205:7870\n  auth_token_file: \"" + tokenPath + "\"\n  timeout_ms: 120000\n  voice_id: mio\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TTS.AuthTokenFile != tokenPath {
+		t.Fatalf("tts.auth_token_file = %q, want %q", cfg.TTS.AuthTokenFile, tokenPath)
+	}
+}
+
 func TestLoadConfig_STTSettings(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "stt.yaml")

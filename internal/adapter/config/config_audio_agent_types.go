@@ -19,6 +19,7 @@ type TTSConfig struct {
 	Enabled            bool                        `yaml:"enabled"`
 	OutputDir          string                      `yaml:"output_dir"`
 	GatewayBaseURL     string                      `yaml:"gateway_base_url"`
+	AuthTokenFile      string                      `yaml:"auth_token_file"`
 	TLSSkipVerify      bool                        `yaml:"tls_skip_verify"`
 	TimeoutMS          int                         `yaml:"timeout_ms"`
 	VoiceID            string                      `yaml:"voice_id"`
