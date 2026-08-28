@@ -2,6 +2,7 @@ package toolloop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 
@@ -47,6 +48,7 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 
 	maxIter := cfg.maxIterations()
 	maxTokens := cfg.maxTokens()
+	failedCalls := make(map[string]struct{})
 
 	for i := 0; i < maxIter; i++ {
 		select {
@@ -79,22 +81,34 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 
 		// 各ツール呼び出しを実行
 		for _, tc := range resp.Message.ToolCalls {
+			signature, signatureOK := failedToolCallSignature(tc)
+			if _, repeated := failedCalls[signature]; signatureOK && repeated {
+				log.Printf("[ToolLoop] blocked repeated failed tool call name=%s", tc.Function.Name)
+				return fmt.Sprintf("blocked: repeated identical failed tool call: %s", tc.Function.Name), nil
+			}
 			log.Printf("[ToolLoop] tool start name=%s args_keys=%d", tc.Function.Name, len(tc.Function.Arguments))
 			result, err := toolRunner.ExecuteV2(ctx, tc.Function.Name, tc.Function.Arguments)
 
 			var content string
+			failed := false
 			if err != nil {
 				log.Printf("[ToolLoop] tool error name=%s err=%v", tc.Function.Name, err)
 				content = fmt.Sprintf("Error: %v", err)
+				failed = true
 			} else if result != nil && result.Error == nil {
 				log.Printf("[ToolLoop] tool complete name=%s", tc.Function.Name)
 				content = result.String()
 			} else if result != nil && result.Error != nil {
 				log.Printf("[ToolLoop] tool returned error name=%s err=%s", tc.Function.Name, result.Error.Message)
 				content = fmt.Sprintf("Error: %s", result.Error.Message)
+				failed = true
 			} else {
 				log.Printf("[ToolLoop] tool nil response name=%s", tc.Function.Name)
 				content = "Error: nil response"
+				failed = true
+			}
+			if failed && signatureOK {
+				failedCalls[signature] = struct{}{}
 			}
 
 			messages = append(messages, llm.ChatMessage{
@@ -114,4 +128,12 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 	}
 
 	return "", fmt.Errorf("max iterations (%d) exceeded with no assistant response", maxIter)
+}
+
+func failedToolCallSignature(call llm.ToolCall) (string, bool) {
+	arguments, err := json.Marshal(call.Function.Arguments)
+	if err != nil {
+		return "", false
+	}
+	return call.Function.Name + "\n" + string(arguments), true
 }

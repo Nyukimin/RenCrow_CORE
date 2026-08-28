@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
@@ -352,6 +353,46 @@ func TestRun_ToolExecutionError(t *testing.T) {
 		t.Errorf("unexpected result: %s", result)
 	}
 }
+
+func TestRun_StopsBeforeRepeatingIdenticalFailedToolCall(t *testing.T) {
+	provider := &mockToolCallingProvider{responses: []llm.ChatResponse{
+		{
+			Message: llm.ChatMessage{Role: "assistant", ToolCalls: []llm.ToolCall{{
+				ID: "c1", Function: llm.ToolCallFunction{Name: "person_related_catalog.collect", Arguments: map[string]any{"person_name": "Unknown", "category": "music"}},
+			}}},
+			FinishReason: "tool_calls",
+		},
+		{
+			Message: llm.ChatMessage{Role: "assistant", ToolCalls: []llm.ToolCall{{
+				ID: "c2", Function: llm.ToolCallFunction{Name: "person_related_catalog.collect", Arguments: map[string]any{"category": "music", "person_name": "Unknown"}},
+			}}},
+			FinishReason: "tool_calls",
+		},
+	}}
+	runner := &countingErrorRunner{}
+
+	result, err := Run(context.Background(), provider, runner, nil,
+		[]llm.ChatMessage{{Role: "user", Content: "collect"}}, Config{MaxIterations: 10})
+
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.HasPrefix(result, "blocked:") || !strings.Contains(result, "person_related_catalog.collect") {
+		t.Fatalf("result = %q, want deterministic blocked result", result)
+	}
+	if provider.callIndex != 2 || runner.calls != 1 {
+		t.Fatalf("provider calls=%d tool calls=%d, want 2/1", provider.callIndex, runner.calls)
+	}
+}
+
+type countingErrorRunner struct{ calls int }
+
+func (r *countingErrorRunner) ExecuteV2(context.Context, string, map[string]any) (*tool.ToolResponse, error) {
+	r.calls++
+	return tool.NewError(tool.ErrNotFound, "person not found", nil), nil
+}
+
+func (*countingErrorRunner) ListTools(context.Context) ([]tool.ToolMetadata, error) { return nil, nil }
 
 func TestRun_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
