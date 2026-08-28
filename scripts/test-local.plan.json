@@ -50,6 +50,20 @@
       "testFiles": ["scripts/*_test.py"]
     },
     {
+      "name": "full-system-verification-skill-contract",
+      "workingDirectory": ".",
+      "filePath": "python",
+      "arguments": ["skills/core/rencrow-full-system-verification/scripts/test_validate_contract.py", "-v"],
+      "testFiles": ["skills/core/rencrow-full-system-verification/scripts/test_validate_contract.py"]
+    },
+    {
+      "name": "remediation-loop-skill-contract",
+      "workingDirectory": ".",
+      "filePath": "python",
+      "arguments": ["skills/core/rencrow-remediation-loop/scripts/test_validate_contract.py", "-v"],
+      "testFiles": ["skills/core/rencrow-remediation-loop/scripts/test_validate_contract.py"]
+    },
+    {
       "name": "core-tools-eiga",
       "workingDirectory": ".",
       "filePath": "python",
