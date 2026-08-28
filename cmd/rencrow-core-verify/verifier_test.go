@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -159,7 +160,9 @@ func TestVerifierCanonicalRouteUnavailableIsBlocked(t *testing.T) {
 func TestVerifierMissingActorCredentialsEmitsBlockedReceipt(t *testing.T) {
 	manifest := testManifest(t, "core-canonical-actor-e2e")
 	var output bytes.Buffer
-	code := runVerifierCLI(context.Background(), verifierArgs(manifest, "core_canonical_actor_e2e", t.TempDir()), &output, &bytes.Buffer{}, verifierDependencies{})
+	args := verifierArgs(manifest, "core_canonical_actor_e2e", t.TempDir())
+	args = append(args, "--config", filepath.Join(t.TempDir(), "missing-core.yaml"))
+	code := runVerifierCLI(context.Background(), args, &output, &bytes.Buffer{}, verifierDependencies{})
 	if code != verifierExitBlocked {
 		t.Fatalf("exit=%d output=%s", code, output.String())
 	}
@@ -212,6 +215,52 @@ func TestVerifierActorUsesAuthenticatedCanonicalRouteAndDoesNotLeakToken(t *test
 	}
 	if strings.Contains(output.String(), token) {
 		t.Fatalf("receipt leaked token: %s", output.String())
+	}
+}
+
+func TestVerifierActorDiscoversCanonicalInputsFromActiveService(t *testing.T) {
+	const token = "owner-token-012345678901234567890123"
+	root := t.TempDir()
+	tokenPath := filepath.Join(root, "agent-ops.token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+	configPath := filepath.Join(root, "core.yaml")
+	config := "local_agent_ops:\n  enabled: true\n  auth_token_file: \"" + tokenPath + "\"\n  user_id: ren\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var gotRequestID string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestID = r.Header.Get("X-Request-ID")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"request_id":%q,"job_id":"job-e2e","agent_id":"shiro","role":"worker","route":"OPS","output":"OK"}`, gotRequestID)
+	}))
+	defer srv.Close()
+	manifest := testManifest(t, "core-canonical-actor-e2e")
+	args := verifierArgs(manifest, "core_canonical_actor_e2e", t.TempDir())
+	args = append(args, "--core-url", srv.URL)
+	show := "ActiveState=active\nSubState=running\nResult=success\nMainPID=4242\nExecStart={ path=/tmp/rencrow; argv[]=/tmp/rencrow run ; }\nEnvironment=RENCROW_CONFIG=" + configPath + "\n"
+	deps := verifierDependencies{
+		HTTPClient: srv.Client(),
+		RunCommand: func(_ context.Context, name string, args []string) verifierCommandResult {
+			if name == "systemctl" && slices.Contains(args, "show") {
+				return verifierCommandResult{Stdout: show}
+			}
+			if name == "systemctl" && slices.Contains(args, "cat") {
+				return verifierCommandResult{Stdout: "[Service]\nExecStart=/tmp/rencrow run\nEnvironment=RENCROW_CONFIG=" + configPath + "\nRestart=always\nStandardOutput=journal\nStandardError=journal\n"}
+			}
+			return verifierCommandResult{ExitCode: 1, Err: errors.New("unexpected command")}
+		},
+		Platform: func() string { return "linux" },
+	}
+	var output bytes.Buffer
+	code := runVerifierCLI(context.Background(), args, &output, &bytes.Buffer{}, deps)
+	if code != verifierExitPassed {
+		t.Fatalf("exit=%d output=%s", code, output.String())
+	}
+	if !strings.HasPrefix(gotRequestID, "core-verify-") {
+		t.Fatalf("request id=%q", gotRequestID)
 	}
 }
 

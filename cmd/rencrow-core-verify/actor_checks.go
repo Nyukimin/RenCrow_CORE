@@ -8,9 +8,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -23,15 +26,36 @@ var verifierActorRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._
 
 func runCanonicalActorE2E(ctx context.Context, options verifierOptions, _ manifestCheck, deps verifierDependencies) verifierOutcome {
 	deps = normalizeVerifierDependencies(deps)
+	if strings.TrimSpace(options.ActorTokenFile) == "" {
+		configPath := strings.TrimSpace(options.ConfigPath)
+		if configPath == "" {
+			snapshot, outcome := readSystemdService(ctx, options, deps)
+			if outcome.Status != "" {
+				return verifierOutcome{Status: "blocked", FailureBoundary: "canonical Agent active config is unavailable"}
+			}
+			configPath = snapshot.ConfigPath
+		}
+		tokenPath, err := readCanonicalActorTokenPath(configPath)
+		if err != nil {
+			return verifierOutcome{Status: "blocked", FailureBoundary: "canonical Agent credentials are unavailable"}
+		}
+		options.ActorTokenFile = tokenPath
+	}
 	token, err := readVerifierActorToken(options.ActorTokenFile, deps)
 	if err != nil {
 		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical Agent credentials are unavailable"}
 	}
 	requestID := strings.TrimSpace(options.RequestID)
+	if requestID == "" {
+		requestID = "core-verify-" + options.ObservedAt.UTC().Format("20060102T150405.000000000Z")
+	}
 	if !verifierActorRequestIDPattern.MatchString(requestID) || len([]byte(requestID)) > verifierMaxActorRequestIDBytes {
 		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical Agent request id is required"}
 	}
 	message := strings.TrimSpace(options.ActorMessage)
+	if message == "" {
+		message = "Read-only full-system verification. Reply briefly with OK."
+	}
 	if message == "" {
 		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical Agent request message is required"}
 	}
@@ -86,6 +110,32 @@ func runCanonicalActorE2E(ctx context.Context, options verifierOptions, _ manife
 	evidence["output_bytes"] = len([]byte(responseFields.Output))
 	evidence["output_sha256"] = sha256Text(responseFields.Output)
 	return verifierOutcome{Status: "passed", Evidence: evidence}
+}
+
+func readCanonicalActorTokenPath(configPath string) (string, error) {
+	configPath = expandHomePlaceholder(strings.TrimSpace(configPath))
+	info, err := os.Lstat(configPath)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", errors.New("active CORE config must be a regular non-symlink file")
+	}
+	raw, err := readRegularFile(configPath, maxVerifierFileBytes)
+	if err != nil {
+		return "", err
+	}
+	var config struct {
+		LocalAgentOps struct {
+			Enabled       bool   `yaml:"enabled"`
+			AuthTokenFile string `yaml:"auth_token_file"`
+		} `yaml:"local_agent_ops"`
+	}
+	if err := yaml.Unmarshal(raw, &config); err != nil || !config.LocalAgentOps.Enabled {
+		return "", errors.New("local_agent_ops is not enabled in active CORE config")
+	}
+	tokenPath := strings.TrimSpace(config.LocalAgentOps.AuthTokenFile)
+	if tokenPath == "" || !filepath.IsAbs(tokenPath) {
+		return "", errors.New("local_agent_ops token path must be absolute")
+	}
+	return tokenPath, nil
 }
 
 func readVerifierActorToken(path string, deps verifierDependencies) (string, error) {
