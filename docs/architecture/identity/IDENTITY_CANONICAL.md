@@ -422,7 +422,17 @@ run.completed
 
 新規IDはUUIDv7で生成する。
 
+UUIDv7生成が失敗した場合はfail closedとし、UUIDv4、時刻文字列、乱数文字列、連番へfallbackしない。`New*ID`は既存のno-error API契約を維持し、OS entropy取得失敗をpanicとして呼出元へ明示する。
+
 Migrationで既存Recordへ新IDを付与する場合は、Field pathを含むUUIDv5で決定的に生成する。
+
+`RenCrowMigrationNamespace`は次のUUIDへ固定する。
+
+```text
+6570d821-e63e-592d-a51f-8cf4b43cdba5
+```
+
+この値はDNS namespace UUIDに`rencrow.identity.migration.v1`を適用したUUIDv5である。Runtimeで再導出せず、上記UUIDを正本定数として使う。
 
 ```text
 UUIDv5(

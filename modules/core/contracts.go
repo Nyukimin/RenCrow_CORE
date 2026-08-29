@@ -5,34 +5,7 @@ package core
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
-
-type SessionID string
-type RequestID string
-type ResponseID string
-type UtteranceID string
-type MessageID string
-type TraceID string
-
-// NewMessageID returns an opaque, globally unique identifier for one logical
-// user or agent message. Ordering belongs to turn_index, not to this value.
-func NewMessageID() MessageID {
-	return MessageID(newUUIDv7OrV4("msg_"))
-}
-
-func NewTraceID() TraceID {
-	return TraceID(newUUIDv7OrV4("trc_"))
-}
-
-func newUUIDv7OrV4(prefix string) string {
-	id, err := uuid.NewV7()
-	if err != nil {
-		id = uuid.New()
-	}
-	return prefix + id.String()
-}
 
 type ChunkRef struct {
 	SessionID   SessionID   `json:"session_id,omitempty"`
