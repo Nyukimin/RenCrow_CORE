@@ -1,6 +1,6 @@
 # RenCrow_CORE 現行正本
 
-この README、`01` から `10` の仕様書、および Atlas / Backlog / Implementation Lifecycle仕様は、`main` における RenCrow_CORE の唯一の現行正本です。利用者、連携モジュール開発者、contributor が同じ現在仕様を参照できるよう、採用済みの製品契約だけを置きます。
+この README、`01` から `10` の仕様書、Atlas / Backlog / Implementation Lifecycle仕様、およびIdentity Canonical仕様は、`main` における RenCrow_CORE の唯一の現行正本です。利用者、連携モジュール開発者、contributor が同じ現在仕様を参照できるよう、採用済みの製品契約だけを置きます。
 
 ## 読む順番
 
@@ -15,12 +15,13 @@
 9. [運用ログ・panic保存仕様](09_運用ログ・panic保存仕様.md)
 10. [ログ仕様](10_ログ仕様.md)
 11. [Atlas / Backlog / Implementation Lifecycle仕様](RenCrow_Atlas_Backlog_Implementation_Lifecycle_仕様.md)
+12. [Identity Canonical仕様](architecture/identity/IDENTITY_CANONICAL.md)
 
 Development Methodology v1は別正本を持たず、上記Atlas仕様の第16章に統合します。
 
 ## 文書の位置づけ
 
-- `main` のこの12ファイルだけを、Public向けか内部向けかを問わない現行の製品仕様正本とします。
+- `main` のこのREADMEと上記12仕様書だけを、Public向けか内部向けかを問わない現行の製品仕様正本とします。
 - `AGENTS.md`、`CLAUDE.md`、`rules/` は作業者向けの実行制約です。製品仕様を再定義せず、この正本を参照します。
 - COREと兄弟モジュールの連携境界、入出力の意味、責務分担はこの正本で定義します。兄弟モジュールのdocsは各モジュール内部の実装詳細を補足できますが、この正本を上書きしません。差異がある場合はこの正本を基準に兄弟モジュール側を更新します。
 - 全moduleは[システム概要のNo-Human-Gate](01_システム概要.md#no-human-gateとreject再考)と
@@ -43,6 +44,6 @@ Development Methodology v1は別正本を持たず、上記Atlas仕様の第16�
   [アーキテクチャ概要の記憶ストレージ](04_アーキテクチャ概要.md#記憶ストレージ)、[安全・データ方針のKnowledgeとMemory](07_安全・自動実行・データ方針.md#knowledge-と-memory)を参照し、設定入口と実装状態は05／08で確認します。
 - 実装、production wiring、test、config は現在状態を確認する証拠です。正本と差異が見つかった場合は事実を照合し、採用する契約をこの正本へ反映してから実装を合わせます。
 - 実装済み、未実装、deployment依存を区別します。
-- 現行正本に必要な情報が不足している場合は、該当する `01` から `10` またはAtlas仕様を更新します。別の正本ディレクトリ、版付き正本、補助正本を追加しません。
+- 現行正本に必要な情報が不足している場合は、該当する `01` から `10`、Atlas仕様、またはIdentity Canonical仕様を更新します。Identity Canonical仕様の正規配置である`docs/architecture/identity/`を除き、別の正本ディレクトリ、版付き正本、補助正本を追加しません。
 
-最終整理日: 2026-08-21
+最終整理日: 2026-08-29
