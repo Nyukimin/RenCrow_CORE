@@ -24,7 +24,7 @@ func TestRunStateDescribeReturnsHonestDurableReceipt(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
 		t.Fatalf("receipt JSON: %v", err)
 	}
-	if receipt.Status != "completed" || receipt.StateClass != "durable" || receipt.SchemaRevision != "rencrow-core-migration-state/v1" || receipt.ConsistencyMode != "module_backup_api" {
+	if receipt.Status != "completed" || receipt.StateClass != "durable" || receipt.SchemaRevision != "rencrow-core-migration-state/v1" || receipt.ConsistencyMode != "quiesced" {
 		t.Fatalf("receipt=%+v", receipt)
 	}
 	if receipt.ContractVersion != ResponseContractVersion || receipt.ContractVersion == RequestContractVersion {
@@ -35,6 +35,74 @@ func TestRunStateDescribeReturnsHonestDurableReceipt(t *testing.T) {
 	}
 	if len(stdout.Bytes()) > MaxJSONBytes {
 		t.Fatalf("receipt exceeds %d bytes", MaxJSONBytes)
+	}
+}
+
+func TestRunStateDescribeAdvertisesOnlyImplementedBackupOperations(t *testing.T) {
+	request := `{"contract_version":"rencrow-migration-owner-hook-request/v1","operation":"state_describe","owner":"RenCrow_CORE","request_id":"describe-implemented"}`
+	var stdout bytes.Buffer
+	code := Run(nil, strings.NewReader(request), &stdout, func(string) error { return nil }, StateOperations{
+		Export:          func(string) (Artifact, error) { return Artifact{}, nil },
+		ValidateRestore: func(string, string, string) error { return nil },
+		ImportDryRun:    func(string, string, string) error { return nil },
+	})
+	if code != ExitCompleted {
+		t.Fatalf("exit=%d stdout=%q", code, stdout.String())
+	}
+	var receipt Receipt
+	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"state_export", "state_import:dry-run", "state_validate_restore"}
+	if strings.Join(receipt.Operations, ",") != strings.Join(want, ",") {
+		t.Fatalf("operations=%v want=%v", receipt.Operations, want)
+	}
+}
+
+func TestRunStateExportAndRestoreChecksUseOnlyBoundedStagingInputs(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "output")
+	packageDir := filepath.Join(root, "package")
+	target := filepath.Join(root, "target")
+	for _, path := range []string{output, packageDir, target} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	candidate := filepath.Join(target, "core.yaml")
+	if err := os.WriteFile(candidate, []byte("server:\n  port: 18790\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := StateOperations{
+		Export: func(path string) (Artifact, error) {
+			if path != output {
+				t.Fatalf("output=%q", path)
+			}
+			return Artifact{LogicalID: "core-state-cohort", SHA256: strings.Repeat("a", 64), SizeBytes: 42}, nil
+		},
+		ValidateRestore: func(pkg, config, targetRoot string) error {
+			if pkg != packageDir || config != candidate || targetRoot != target {
+				t.Fatalf("restore inputs=%q %q %q", pkg, config, targetRoot)
+			}
+			return nil
+		},
+		ImportDryRun: func(string, string, string) error { return nil },
+	}
+	for _, request := range []map[string]any{
+		{"contract_version": RequestContractVersion, "operation": "state_export", "owner": Owner, "request_id": "export-1", "output_dir": output},
+		{"contract_version": RequestContractVersion, "operation": "state_validate_restore", "owner": Owner, "request_id": "restore-1", "package_dir": packageDir, "candidate_config": candidate, "target_root": target},
+	} {
+		var stdout bytes.Buffer
+		code := Run(nil, strings.NewReader(requestJSON(t, request)), &stdout, func(string) error { return nil }, state)
+		if code != ExitCompleted {
+			t.Fatalf("request=%v exit=%d stdout=%q", request, code, stdout.String())
+		}
+		if strings.Contains(stdout.String(), root) {
+			t.Fatalf("receipt leaked path: %s", stdout.String())
+		}
 	}
 }
 

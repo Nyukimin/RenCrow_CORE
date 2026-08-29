@@ -3,8 +3,29 @@ set -Eeuo pipefail
 umask 077
 
 mode=${1:-}
-if [[ ${mode} != config && ${mode} != check && ${mode} != run ]]; then
-  echo "usage: rencrow-storage-backup {config|check|run}" >&2
+core_export=false
+migration_output_dir=${2:-}
+case ${mode} in
+  config|check|run)
+    if (( $# != 1 )); then
+      echo "usage: rencrow-storage-backup {config|check|run}" >&2
+      exit 2
+    fi
+    ;;
+  core-export)
+    if (( $# != 2 )) || [[ -z ${migration_output_dir} ]]; then
+      echo "usage: rencrow-storage-backup core-export OUTPUT_DIR" >&2
+      exit 2
+    fi
+    core_export=true
+    ;;
+  *)
+    echo "usage: rencrow-storage-backup {config|check|run|core-export OUTPUT_DIR}" >&2
+    exit 2
+    ;;
+esac
+if [[ ${core_export} == true && ${migration_output_dir} != /srv/rencrow/backup/recovery/* ]]; then
+  echo "[NG] CORE migration output must be under the production recovery root" >&2
   exit 2
 fi
 
@@ -12,6 +33,7 @@ config_file=${RENCROW_CONFIG:-${HOME}/.rencrow/config/core.yaml}
 rencrow_binary=${RENCROW_BINARY:-/home/nyukimi/.local/bin/rencrow}
 restore_checker=${RENCROW_RESTORE_CHECKER:-/home/nyukimi/.local/bin/rencrow-storage-restore-check}
 durable_snapshot_binary=${RENCROW_DURABLE_SNAPSHOT_BINARY:-/home/nyukimi/.local/bin/rencrow-durable-snapshot}
+migration_packager=${RENCROW_MIGRATION_PACKAGER:-/home/nyukimi/.local/bin/rencrow-core-migration-package}
 durable_manifest_dir=${RENCROW_DURABLE_MANIFEST_DIR:-${HOME}/.local/share/rencrow/config/durable-stores.d}
 if [[ ! -f ${config_file} ]]; then
   echo "[NG] config file not found: ${config_file}" >&2
@@ -258,11 +280,16 @@ trap cleanup_preflight EXIT INT TERM
 for command in basename curl cut docker find findmnt flock gzip install mount mountpoint python3 rsync sha256sum sort sync systemctl tar timeout umount; do
   require_command "${command}"
 done
-if [[ ! -x ${durable_snapshot_binary} ]]; then
-  echo "[NG] durable snapshot binary not found: ${durable_snapshot_binary}" >&2
+if [[ ${core_export} != true ]]; then
+  if [[ ! -x ${durable_snapshot_binary} ]]; then
+    echo "[NG] durable snapshot binary not found: ${durable_snapshot_binary}" >&2
+    exit 1
+  fi
+  load_durable_module_plans
+elif [[ ! -x ${migration_packager} ]]; then
+  echo "[NG] CORE migration packager not found" >&2
   exit 1
 fi
-load_durable_module_plans
 if [[ ${core_snapshot_root} != "${backup_mount}/"* || ${knowledge_mirror} != "${backup_mount}/"* || ${knowledge_versions} != "${backup_mount}/"* ]]; then
   echo "[NG] backup destinations must be under ${backup_mount}" >&2
   exit 1
@@ -273,11 +300,15 @@ if ! is_exact_mount "${backup_mount}"; then
   echo "[OK] backup medium mounted: ${backup_mount}"
 fi
 require_backing_mount "${core_snapshot_root}"
-require_backing_mount "${knowledge_root}"
-require_backing_mount "${knowledge_mirror}"
-for module_root in "${module_roots[@]}"; do
-  require_backing_mount "${module_root}"
-done
+if [[ ${core_export} == true ]]; then
+  require_backing_mount "${migration_output_dir}"
+else
+  require_backing_mount "${knowledge_root}"
+  require_backing_mount "${knowledge_mirror}"
+  for module_root in "${module_roots[@]}"; do
+    require_backing_mount "${module_root}"
+  done
+fi
 backup_device=$(findmnt -n -o SOURCE -T "${backup_mount}" | tail -n 1)
 database_device=$(findmnt -n -o SOURCE -T "${core_root}" | tail -n 1)
 if [[ -z ${backup_device} || -z ${database_device} || ${backup_device} == "${database_device}" ]]; then
@@ -285,15 +316,17 @@ if [[ -z ${backup_device} || -z ${database_device} || ${backup_device} == "${dat
   exit 1
 fi
 
-mkdir -p \
-  "${core_snapshot_root}/recent" \
-  "${core_snapshot_root}/daily" \
-  "${core_snapshot_root}/weekly" \
-  "${core_snapshot_root}/monthly" \
-  "${knowledge_mirror}" \
-  "${knowledge_versions}" \
-  "${module_snapshot_root}" \
-  "${module_receipt_root}"
+if [[ ${core_export} != true ]]; then
+  mkdir -p \
+    "${core_snapshot_root}/recent" \
+    "${core_snapshot_root}/daily" \
+    "${core_snapshot_root}/weekly" \
+    "${core_snapshot_root}/monthly" \
+    "${knowledge_mirror}" \
+    "${knowledge_versions}" \
+    "${module_snapshot_root}" \
+    "${module_receipt_root}"
+fi
 
 check_redis() {
   docker inspect -f '{{.State.Running}}' "${redis_container}" | grep -qx true
@@ -470,9 +503,11 @@ if systemctl --user is-active --quiet rencrow.service; then
   echo "[NG] CORE remained active after runtime mask" >&2
   exit 1
 fi
-echo "[INFO] masking authoritative module writers for consistent snapshots"
-stop_durable_module_writers
-snapshot_durable_modules
+if [[ ${core_export} != true ]]; then
+  echo "[INFO] masking authoritative module writers for consistent snapshots"
+  stop_durable_module_writers
+  snapshot_durable_modules
+fi
 
 mkdir -p "${staging}/external-memory/redis" "${staging}/external-memory/qdrant"
 
@@ -560,6 +595,12 @@ printf '%s\n' \
   > "${candidate_dir}/manifest.txt"
 
 "${restore_checker}" "${candidate_dir}"
+if [[ ${core_export} == true ]]; then
+  "${migration_packager}" --snapshot-dir "${candidate_dir}" --output-dir "${migration_output_dir}" >/dev/null
+  sync "${migration_output_dir}"
+  echo "[OK] CORE migration state package verified"
+  exit 0
+fi
 snapshot_dir="${core_snapshot_root}/recent/${timestamp}"
 core_snapshot_partial_parent=$(mktemp -d "${core_snapshot_root}/recent/.${timestamp}.partial.XXXXXX")
 mv "${candidate_dir}" "${core_snapshot_partial_parent}/snapshot"

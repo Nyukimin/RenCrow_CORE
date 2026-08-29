@@ -6,6 +6,7 @@ checker=${repo_root}/scripts/rencrow-storage-restore-check
 backup_runner=${repo_root}/scripts/rencrow-storage-backup
 unit_file=${repo_root}/systemd/user/rencrow-storage-backup.service
 timer_file=${repo_root}/systemd/user/rencrow-storage-backup.timer
+makefile=${repo_root}/Makefile
 test_tmp_root=${repo_root}/Tmp/test-runtime
 mkdir -p "${test_tmp_root}"
 test_root=$(mktemp -d "${test_tmp_root}/storage-backup-contract.XXXXXX")
@@ -87,6 +88,24 @@ assert_contains "${backup_runner}" \
 assert_contains "${backup_runner}" \
   'systemctl --user unmask --runtime rencrow.service' \
   "the snapshot cleanup must remove its runtime mask"
+assert_contains "${backup_runner}" \
+  'core-export)' \
+  "the owner runner must expose a fixed CORE-only migration export mode"
+assert_contains "${backup_runner}" \
+  'migration_output_dir=${2:-}' \
+  "CORE migration export must accept only the Workspace staging output directory"
+assert_contains "${backup_runner}" \
+  'if [[ ${core_export} != true ]]; then' \
+  "CORE-only export must keep non-CORE durable module handling outside its execution path"
+assert_contains "${backup_runner}" \
+  '"${migration_packager}" --snapshot-dir "${candidate_dir}" --output-dir "${migration_output_dir}"' \
+  "CORE migration export must package only the restore-checked candidate"
+assert_contains "${backup_runner}" \
+  'CORE migration state package verified' \
+  "CORE migration export must emit a bounded success marker"
+assert_contains "${makefile}" \
+  'install -m 0755 $(CORE_MIGRATION_PACKAGER) $(CORE_MIGRATION_PACKAGER_DST)' \
+  "storage backup deployment must install the CORE migration packager"
 assert_contains "${backup_runner}" \
   "find \"\${durable_manifest_dir}\" -maxdepth 1 -type f -name 'RenCrow_*.json'" \
   "backup must discover the installed non-CORE durable module catalog"

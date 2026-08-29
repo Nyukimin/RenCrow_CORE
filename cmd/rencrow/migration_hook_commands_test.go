@@ -43,3 +43,19 @@ func TestRunMigrationHookKeepsLegacySubcommandsOutOfHookArguments(t *testing.T) 
 		t.Fatalf("exit=%d stdout=%q", code, stdout.String())
 	}
 }
+
+func TestRunMigrationHookDescribesProductionBackupOperations(t *testing.T) {
+	request := `{"contract_version":"rencrow-migration-owner-hook-request/v1","operation":"state_describe","owner":"RenCrow_CORE","request_id":"production-state"}`
+	var stdout bytes.Buffer
+	if code := runMigrationHook(nil, strings.NewReader(request), &stdout); code != migrationhook.ExitCompleted {
+		t.Fatalf("exit=%d stdout=%q", code, stdout.String())
+	}
+	var receipt migrationhook.Receipt
+	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	want := "state_export,state_import:dry-run,state_validate_restore"
+	if strings.Join(receipt.Operations, ",") != want || receipt.ConsistencyMode != "quiesced" {
+		t.Fatalf("receipt=%+v", receipt)
+	}
+}
