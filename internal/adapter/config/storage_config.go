@@ -202,6 +202,7 @@ func (c *Config) validateBackupConfig() error {
 		{"storage.memory.raw_source_dir", c.Storage.Memory.RawSourceDir},
 		{"storage.databases.conversation_l1", c.Storage.Databases.ConversationL1},
 		{"storage.databases.conversation_archive", c.Storage.Databases.ConversationArchive},
+		{"storage.databases.event_store", c.Storage.Databases.EventStore},
 		{"storage.databases.tool_registry", c.Storage.Databases.ToolRegistry},
 		{"storage.databases.glossary", c.Storage.Databases.Glossary},
 		{"storage.databases.movie_catalog", c.Storage.Databases.MovieCatalog},

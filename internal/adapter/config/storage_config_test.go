@@ -32,6 +32,7 @@ storage:
     conversation_archive: "/state/memory_archive.db"
     tool_registry: "/state/tool_registry.db"
     glossary: "/state/glossary.db"
+    event_store: "/state/events.db"
     advisor: "/state/workspace/logs/advisor.db"
     knowledge_memory: "/state/workspace/logs/knowledge_memory.db"
 `)
@@ -44,6 +45,7 @@ storage:
 		cfg.Storage.Memory.RawSourceDir != "/state/raw-source" ||
 		cfg.Capability.ToolRegistryDB != "/state/tool_registry.db" ||
 		cfg.Glossary.DBPath != "/state/glossary.db" ||
+		cfg.Storage.Databases.EventStore != "/state/events.db" ||
 		cfg.Advisor.SQLitePath != "/state/workspace/logs/advisor.db" ||
 		cfg.KnowledgeMemory.SQLitePath != "/state/workspace/logs/knowledge_memory.db" {
 		t.Fatalf("canonical storage paths were not applied: %+v", cfg.Storage)

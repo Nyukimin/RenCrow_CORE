@@ -194,6 +194,7 @@ type MemoryStorageConfig struct {
 type DatabasePathsConfig struct {
 	ConversationL1       string `yaml:"conversation_l1"`
 	ConversationArchive  string `yaml:"conversation_archive"`
+	EventStore           string `yaml:"event_store"`
 	ToolRegistry         string `yaml:"tool_registry"`
 	Glossary             string `yaml:"glossary"`
 	MovieCatalog         string `yaml:"movie_catalog"`
