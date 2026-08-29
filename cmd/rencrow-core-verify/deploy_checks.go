@@ -316,9 +316,10 @@ func runStampedDeploymentChecker(ctx context.Context, options verifierOptions, d
 		evidence := map[string]any{"stamped_checker": safeBase(checker), "stamped_status": status}
 		switch status {
 		case "MATCH":
-			if result.ExitCode != 0 {
-				return verifierOutcome{Status: "failed", FailureBoundary: "stamped deployment checker exited unsuccessfully", Evidence: evidence}
-			}
+			// The checker reports every deployed component and its process exit
+			// status is aggregate. A non-zero exit can therefore be caused by an
+			// unrelated component even when CORE itself matches its pin. The
+			// component row is the authoritative result for this CORE check.
 			return verifierOutcome{Status: "passed", Evidence: evidence}
 		case "DIRTY", "MISMATCH":
 			return verifierOutcome{Status: "failed", FailureBoundary: "stamped deployment checker reported publication drift", Evidence: evidence}

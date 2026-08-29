@@ -623,7 +623,7 @@ func TestVerifierDeployIdentityUsesCatalogSourceAndGoStamp(t *testing.T) {
 		default:
 			if strings.Contains(filepath.Base(name), "python") {
 				checkerArgs = append([]string(nil), args...)
-				return verifierCommandResult{ExitCode: 0, Stdout: `[{"component":"core","status":"MATCH","built_revision":"` + revision + `","pin_revision":"` + revision + `"}]`}
+				return verifierCommandResult{ExitCode: 1, Stdout: `[{"component":"core","status":"MATCH","built_revision":"` + revision + `","pin_revision":"` + revision + `"},{"component":"tts","status":"MISMATCH"}]`}
 			}
 			return verifierCommandResult{ExitCode: 127, Err: errors.New("unexpected command")}
 		}
