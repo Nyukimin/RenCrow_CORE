@@ -1050,6 +1050,28 @@ Test:
 - 対象Scopeに`ParentEventID`が残っていない
 - EventIDをRunIDとして使う箇所がない
 
+#### Step 02配備契約
+
+- 発生済み事実の唯一の永続正本は`storage.databases.event_store`が指す
+  SQLite Canonical Event Storeとする。
+- AI WorkflowとSuperAgentのDomain Storeは現在状態だけを所有し、Eventの独立table、
+  JSONL writer、dual writeを残さない。
+- Event Storeはappend-onlyとし、同一EventIDの再保存、存在しないCausation、
+  存在しないDependency、Trace跨ぎ参照をtransaction内で拒否する。
+- owner固有の`status`、`agent`、`repo`、`worktree_id`、`command_name`、
+  `skill_name`、`summary`はCanonical fieldを増やさず`Payload`に保存する。
+- ComponentIDは少なくとも`ai_workflow`、`superagent`、`orchestrator`を区別する。
+- 旧RecordのEventIDは旧primary keyからEventIDへ、RunIDとWorkstreamIDは各自の
+  旧fieldから対応するCanonical IDへUUIDv5で変換する。
+- 旧RecordにRunIDがある場合はそのRunIDからTraceIDを決定的に導出し、ない場合は
+  旧EventIDから独立TraceIDを導出する。これは過去Eventの追加ではなく、既存事実の識別子変換である。
+- 旧`parent_event_id`が同一migration set内のEventを指す場合だけ
+  `CausationEventID`へ変換する。RunIDを指す既知の誤用は偽Eventを生成せず、
+  migration manifestに件数と理由を記録してCanonical Eventから除去する。
+  それ以外の未解決参照はfail closedとする。
+- 旧Event tableとJSONLの削除は、production snapshot dry-run、件数・checksum・参照整合性、
+  新binaryのRuntime疎通を確認した同じcutoverで行う。
+
 ---
 
 ### Step 03: DCIのEventID誤用を置換
