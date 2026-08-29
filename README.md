@@ -78,6 +78,12 @@ Codexが変更を行う際のユーザー権限境界は、このRenCrow製品�
 [設定リファレンスの「DB物理配置とbackup」](docs/05_設定リファレンス.md#db物理配置とbackup)です。
 RenCrow_WorkspaceのGit snapshotはこのlive dataやbackupの代替ではありません。
 
+COREのMigration Owner Hook v1 Phase 1は`rencrow migration-hook`で提供します。
+stdinの単1個のbounded JSON requestだけを受け、`config_validate`は既存のCORE
+Config loader/validatorを使い、`state_describe`はCORE stateを`durable`と申告します。
+現時点の`operations`は空で、migration用State export/importは未実装です。
+通常backup機能が存在してもこの不足を代替せず、migration checkはblockedを維持します。
+
 新しいdata種別だけを理由にDBを増やしません。新しい物理store、外部database、privacy／retention／
 復旧単位の追加はStorage Proposal、Orchestrator審査、System Owner（Ren）による採否確定を必要とします。
 既存store再利用条件、判断class、Durable Store Manifest、CI gateも上記正本で定義します。

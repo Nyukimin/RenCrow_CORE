@@ -40,6 +40,7 @@ Commands:
   status    Show system status overview
   doctor    Diagnose config and runtime prerequisites
   config    Read validated runtime configuration
+  migration-hook  Run the strict Migration Owner Hook v1 over stdin JSON
   resilience  Inspect/reconcile restart and self-repair incidents
   channels  List/probe channel adapters or send a configured notification
   gateway   Gateway status/restart operations

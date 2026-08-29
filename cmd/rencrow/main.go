@@ -52,6 +52,8 @@ func main() {
 		cmdDoctor()
 	case "config":
 		cmdConfig()
+	case "migration-hook":
+		cmdMigrationHook()
 	case "resilience":
 		cmdResilience()
 	case "channels":

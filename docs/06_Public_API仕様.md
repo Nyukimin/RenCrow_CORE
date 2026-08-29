@@ -2,6 +2,29 @@
 
 RenCrow_CORE の HTTP API は、RenCrow_ASSISTANT、RenCrow_PORTAL、Debug Viewer、CLI facade が利用するruntime contractです。endpointは互換性維持のため`/viewer/*`を中心に構成されますが、外部公開可否はclientごとのallowlistで制限します。
 
+## Migration Owner Hook CLI
+
+`rencrow migration-hook`はHTTP APIやCMD facadeではなく、RenCrow_Workspaceから呼ぶ
+CORE owner-local CLIである。argumentを取らず、stdinのbounded JSON requestとstdoutの
+bounded JSON receiptだけを公開する。Phase 1のoperationは`config_validate`と
+`state_describe`のみである。
+
+```json
+{"contract_version":"rencrow-migration-owner-hook-request/v1","operation":"state_describe","owner":"RenCrow_CORE","request_id":"<opaque-id>"}
+```
+
+```json
+{"contract_version":"rencrow-migration-owner-hook-request/v1","operation":"config_validate","owner":"RenCrow_CORE","request_id":"<opaque-id>","candidate_config":"<OS-local confined path>"}
+```
+
+response receiptの`contract_version`は`rencrow-migration-owner-hook/v1`とし、request versionと
+意図的に分離する。receiptは`operation`、`owner`、`request_id`、`status`、
+`state_class`、`schema_revision`、`consistency_mode`、`operations`、`artifact`、`counts`、
+`failure`を持つ。`state_describe`の`operations=[]`はMigration State export/import未実装の
+機械可読証拠であり、migration readinessをpassedにしない。Config拒否時の
+`failure`は`{"code":"config_invalid","boundary":"CORE configuration was rejected"}`に固定し、
+path、Config、secret、validator内部errorを開示しない。
+
 ## 安定性区分
 
 | 区分 | 対象 | 互換性方針 |
