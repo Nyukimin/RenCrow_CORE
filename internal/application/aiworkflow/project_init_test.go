@@ -9,14 +9,15 @@ import (
 	"time"
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type memoryProjectInitStore struct {
-	events  []domainai.WorkflowEvent
+	events  []modulecore.EventEnvelope
 	indexes []domainai.ProjectMemoryIndex
 }
 
-func (s *memoryProjectInitStore) SaveWorkflowEvent(_ context.Context, item domainai.WorkflowEvent) error {
+func (s *memoryProjectInitStore) Append(_ context.Context, item modulecore.EventEnvelope) error {
 	s.events = append(s.events, item)
 	return nil
 }
@@ -52,7 +53,7 @@ func TestProjectScannerGeneratesInitPackAndIndexes(t *testing.T) {
 	if len(store.indexes) != 6 {
 		t.Fatalf("expected 6 project memory indexes, got %d", len(store.indexes))
 	}
-	if len(store.events) != 1 || store.events[0].EventType != "project_init_completed" {
+	if len(store.events) != 1 || store.events[0].EventType != "project_init.completed" {
 		t.Fatalf("unexpected workflow events: %+v", store.events)
 	}
 	assertFileContains(t, filepath.Join(root, ".ai", "project_profile.md"), "Repository: example")

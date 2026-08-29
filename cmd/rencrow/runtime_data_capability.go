@@ -144,7 +144,7 @@ func buildRuntimeDataCapabilityCatalogWithKnowledgeState(cfg *config.Config, glo
 	if cfg != nil {
 		d := cfg.Storage.Databases
 		paths = map[string]string{
-			"conversation_l1": d.ConversationL1, "conversation_archive": d.ConversationArchive, "tool_registry": d.ToolRegistry, "glossary": d.Glossary, "movie_catalog": d.MovieCatalog, "hobby_graph": d.HobbyGraph, "advisor": d.Advisor, "sandbox": d.Sandbox, "dci": d.DCI, "skill_governance": d.SkillGovernance, "workstream": d.Workstream, "revenue": d.Revenue, "persona_architecture": d.PersonaArchitecture, "browser_trace_to_api": d.BrowserTraceToAPI, "complexity_hotspot": d.ComplexityHotspot, "super_agent_harness": d.SuperAgentHarness, "ai_workflow": d.AIWorkflow, "knowledge_memory": d.KnowledgeMemory, "durable_store_workflow": d.DurableStoreWorkflow,
+			"conversation_l1": d.ConversationL1, "conversation_archive": d.ConversationArchive, "tool_registry": d.ToolRegistry, "glossary": d.Glossary, "movie_catalog": d.MovieCatalog, "hobby_graph": d.HobbyGraph, "advisor": d.Advisor, "sandbox": d.Sandbox, "dci": d.DCI, "skill_governance": d.SkillGovernance, "workstream": d.Workstream, "revenue": d.Revenue, "persona_architecture": d.PersonaArchitecture, "browser_trace_to_api": d.BrowserTraceToAPI, "complexity_hotspot": d.ComplexityHotspot, "super_agent_harness": d.SuperAgentHarness, "ai_workflow": d.AIWorkflow, "event_store": d.EventStore, "knowledge_memory": d.KnowledgeMemory, "durable_store_workflow": d.DurableStoreWorkflow,
 		}
 	}
 	states := map[string]datacapability.StoreState{}

@@ -10,11 +10,12 @@ import (
 	"time"
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type WorktreeStore interface {
 	SaveWorktreeRegistry(ctx context.Context, item domainai.WorktreeRegistry) error
-	SaveWorkflowEvent(ctx context.Context, item domainai.WorkflowEvent) error
+	modulecore.EventAppender
 }
 
 type WorktreeCreateOptions struct {
@@ -31,7 +32,7 @@ type WorktreeCreateOptions struct {
 
 type WorktreeCreateResult struct {
 	Worktree domainai.WorktreeRegistry `json:"worktree"`
-	Event    domainai.WorkflowEvent    `json:"event"`
+	Event    modulecore.EventEnvelope  `json:"event"`
 	Command  string                    `json:"command"`
 }
 
@@ -48,7 +49,7 @@ type WorktreeCloseOptions struct {
 
 type WorktreeCloseResult struct {
 	Worktree domainai.WorktreeRegistry `json:"worktree"`
-	Event    domainai.WorkflowEvent    `json:"event"`
+	Event    modulecore.EventEnvelope  `json:"event"`
 	Command  string                    `json:"command"`
 }
 
@@ -157,24 +158,19 @@ func (m *WorktreeManager) Create(ctx context.Context, opts WorktreeCreateOptions
 		Status:     "active",
 		CreatedAt:  at,
 	}
-	event := domainai.WorkflowEvent{
-		EventID:    "worktree_created:" + repoName + ":" + worktreeKey + ":" + at.Format("20060102T150405Z"),
-		EventType:  "worktree_created",
-		Agent:      strings.TrimSpace(opts.OwnerAgent),
-		Repo:       repoName,
-		WorktreeID: worktree.WorktreeID,
-		Status:     "completed",
-		CreatedAt:  at,
-		Summary:    "created git worktree " + worktreePath,
+	agentLabel := strings.TrimSpace(opts.OwnerAgent)
+	if agentLabel == "" {
+		agentLabel = "Worker"
 	}
-	if event.Agent == "" {
-		event.Agent = "Worker"
-	}
+	event := modulecore.NewRootEventEnvelope("ai_workflow", "worktree.created", at, map[string]any{
+		"agent_label": agentLabel, "repo": repoName, "worktree_id": worktree.WorktreeID,
+		"status": "completed", "summary": "created git worktree " + worktreePath,
+	})
 	if m.store != nil {
 		if err := m.store.SaveWorktreeRegistry(ctx, worktree); err != nil {
 			return WorktreeCreateResult{}, err
 		}
-		if err := m.store.SaveWorkflowEvent(ctx, event); err != nil {
+		if err := m.store.Append(ctx, event); err != nil {
 			return WorktreeCreateResult{}, err
 		}
 	}
@@ -290,24 +286,19 @@ func (m *WorktreeManager) Close(ctx context.Context, opts WorktreeCloseOptions) 
 		CreatedAt:  at,
 		ClosedAt:   at,
 	}
-	event := domainai.WorkflowEvent{
-		EventID:    "worktree_closed:" + repoName + ":" + safePathName(branch) + ":" + at.Format("20060102T150405Z"),
-		EventType:  "worktree_closed",
-		Agent:      strings.TrimSpace(opts.OwnerAgent),
-		Repo:       repoName,
-		WorktreeID: worktree.WorktreeID,
-		Status:     "completed",
-		CreatedAt:  at,
-		Summary:    "closed git worktree " + absWorktree,
+	agentLabel := strings.TrimSpace(opts.OwnerAgent)
+	if agentLabel == "" {
+		agentLabel = "Worker"
 	}
-	if event.Agent == "" {
-		event.Agent = "Worker"
-	}
+	event := modulecore.NewRootEventEnvelope("ai_workflow", "worktree.closed", at, map[string]any{
+		"agent_label": agentLabel, "repo": repoName, "worktree_id": worktree.WorktreeID,
+		"status": "completed", "summary": "closed git worktree " + absWorktree,
+	})
 	if m.store != nil {
 		if err := m.store.SaveWorktreeRegistry(ctx, worktree); err != nil {
 			return WorktreeCloseResult{}, err
 		}
-		if err := m.store.SaveWorkflowEvent(ctx, event); err != nil {
+		if err := m.store.Append(ctx, event); err != nil {
 			return WorktreeCloseResult{}, err
 		}
 	}

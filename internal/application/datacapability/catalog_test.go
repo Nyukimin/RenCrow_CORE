@@ -132,6 +132,7 @@ func TestCatalogRestrictedStoresExposeWorkerRecallOperations(t *testing.T) {
 		"complexity_hotspot":     "hotspots",
 		"super_agent_harness":    "agent_runs",
 		"ai_workflow":            "command_registry",
+		"event_store":            "envelope",
 		"durable_store_workflow": "exact_request",
 	}
 	catalog := Build(allConfiguredStoreStates())
@@ -167,6 +168,7 @@ func TestCatalogOperationalStoresAreNotNormalChatAutoRecall(t *testing.T) {
 		"complexity_hotspot",
 		"super_agent_harness",
 		"ai_workflow",
+		"event_store",
 		"durable_store_workflow",
 	}
 	available := make(map[string]struct{})

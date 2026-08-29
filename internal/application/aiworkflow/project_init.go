@@ -10,10 +10,11 @@ import (
 	"time"
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type ProjectInitStore interface {
-	SaveWorkflowEvent(ctx context.Context, item domainai.WorkflowEvent) error
+	modulecore.EventAppender
 	SaveProjectMemoryIndex(ctx context.Context, item domainai.ProjectMemoryIndex) error
 }
 
@@ -29,7 +30,7 @@ type ProjectInitResult struct {
 	RepoName       string                        `json:"repo_name"`
 	GeneratedFiles []string                      `json:"generated_files"`
 	MemoryIndexes  []domainai.ProjectMemoryIndex `json:"memory_indexes"`
-	WorkflowEvent  domainai.WorkflowEvent        `json:"workflow_event"`
+	Event          modulecore.EventEnvelope      `json:"event"`
 }
 
 type ProjectScanner struct {
@@ -122,17 +123,12 @@ func (s *ProjectScanner) Run(ctx context.Context, opts ProjectInitOptions) (Proj
 	}
 	sort.Strings(generated)
 	sort.Slice(indexes, func(i, j int) bool { return indexes[i].FilePath < indexes[j].FilePath })
-	event := domainai.WorkflowEvent{
-		EventID:   "project_init:" + repoName + ":" + at.Format("20060102T150405Z"),
-		EventType: "project_init_completed",
-		Agent:     "Worker",
-		Repo:      repoName,
-		Status:    "completed",
-		CreatedAt: at,
-		Summary:   fmt.Sprintf("generated %d project init files", len(generated)),
-	}
+	event := modulecore.NewRootEventEnvelope("ai_workflow", "project_init.completed", at, map[string]any{
+		"agent_label": "Worker", "repo": repoName, "status": "completed",
+		"summary": fmt.Sprintf("generated %d project init files", len(generated)),
+	})
 	if s.store != nil {
-		if err := s.store.SaveWorkflowEvent(ctx, event); err != nil {
+		if err := s.store.Append(ctx, event); err != nil {
 			return ProjectInitResult{}, err
 		}
 	}
@@ -141,7 +137,7 @@ func (s *ProjectScanner) Run(ctx context.Context, opts ProjectInitOptions) (Proj
 		RepoName:       repoName,
 		GeneratedFiles: generated,
 		MemoryIndexes:  indexes,
-		WorkflowEvent:  event,
+		Event:          event,
 	}, nil
 }
 

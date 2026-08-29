@@ -21,6 +21,7 @@ import (
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
@@ -230,11 +231,11 @@ func (m *mockRecallTraceStore) SaveRecallTrace(ctx context.Context, trace domain
 	return nil
 }
 
-type mockWorkflowEventRecorder struct {
-	events []domainai.WorkflowEvent
+type mockCanonicalEventRecorder struct {
+	events []modulecore.EventEnvelope
 }
 
-func (m *mockWorkflowEventRecorder) SaveWorkflowEvent(ctx context.Context, item domainai.WorkflowEvent) error {
+func (m *mockCanonicalEventRecorder) Append(ctx context.Context, item modulecore.EventEnvelope) error {
 	m.events = append(m.events, item)
 	return nil
 }
@@ -254,7 +255,7 @@ func (m *mockCommandRegistryStore) ListCommandRegistries(_ context.Context, _ in
 type mockSuperAgentRuntimeRecorder struct {
 	runs         []domainsuperagent.AgentRun
 	contextPacks []domainsuperagent.ContextPack
-	traces       []domainsuperagent.TraceEvent
+	traces       []modulecore.EventEnvelope
 	err          error
 }
 
@@ -274,7 +275,7 @@ func (m *mockSuperAgentRuntimeRecorder) SaveContextPack(_ context.Context, item 
 	return nil
 }
 
-func (m *mockSuperAgentRuntimeRecorder) SaveTraceEvent(_ context.Context, item domainsuperagent.TraceEvent) error {
+func (m *mockSuperAgentRuntimeRecorder) Append(_ context.Context, item modulecore.EventEnvelope) error {
 	if m.err != nil {
 		return m.err
 	}
@@ -1474,10 +1475,10 @@ func TestProcessMessage_RouteAnalyzeUsesHeavyAgent(t *testing.T) {
 	repo := newMockSessionRepository()
 	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteANALYZE, 1.0, "explicit analyze")}
 	heavy := &mockHeavyAgent{response: "heavy response"}
-	workflowEvents := &mockWorkflowEventRecorder{}
+	canonicalEvents := &mockCanonicalEventRecorder{}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
 	orch.SetHeavyAgent(heavy)
-	orch.SetWorkflowEventRecorder(workflowEvents)
+	orch.SetCanonicalEventRecorder(canonicalEvents)
 
 	resp, err := orch.ProcessMessage(context.Background(), defaultReq())
 	if err != nil {
@@ -1492,11 +1493,11 @@ func TestProcessMessage_RouteAnalyzeUsesHeavyAgent(t *testing.T) {
 	if resp.Response != "heavy response" {
 		t.Fatalf("response: want heavy response, got %q", resp.Response)
 	}
-	if len(workflowEvents.events) != 2 {
-		t.Fatalf("expected heavy lifecycle events, got %#v", workflowEvents.events)
+	if len(canonicalEvents.events) != 2 {
+		t.Fatalf("expected heavy lifecycle events, got %#v", canonicalEvents.events)
 	}
-	if workflowEvents.events[0].EventType != "heavy_worker_started" || workflowEvents.events[1].EventType != "heavy_worker_completed" {
-		t.Fatalf("unexpected heavy lifecycle events: %#v", workflowEvents.events)
+	if canonicalEvents.events[0].EventType != "heavy_worker.started" || canonicalEvents.events[1].EventType != "heavy_worker.completed" {
+		t.Fatalf("unexpected heavy lifecycle events: %#v", canonicalEvents.events)
 	}
 }
 
@@ -1504,14 +1505,14 @@ func TestProcessMessage_HeavyWorkerPolicyElevatesDeepDiveToAnalyze(t *testing.T)
 	repo := newMockSessionRepository()
 	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteCHAT, 0.7, "default chat")}
 	heavy := &mockHeavyAgent{response: "heavy deep dive"}
-	workflowEvents := &mockWorkflowEventRecorder{}
+	canonicalEvents := &mockCanonicalEventRecorder{}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
 	orch.SetHeavyAgent(heavy)
 	orch.SetHeavyWorkerPolicy(domainai.HeavyWorkerPolicy{
 		Enabled:       true,
 		RequireReason: true,
 	})
-	orch.SetWorkflowEventRecorder(workflowEvents)
+	orch.SetCanonicalEventRecorder(canonicalEvents)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "deep-session",
@@ -1528,13 +1529,13 @@ func TestProcessMessage_HeavyWorkerPolicyElevatesDeepDiveToAnalyze(t *testing.T)
 	if resp.Route != routing.RouteANALYZE || resp.Response != "heavy deep dive" {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
-	if len(workflowEvents.events) != 3 {
-		t.Fatalf("expected requested + lifecycle events, got %#v", workflowEvents.events)
+	if len(canonicalEvents.events) != 3 {
+		t.Fatalf("expected requested + lifecycle events, got %#v", canonicalEvents.events)
 	}
-	if workflowEvents.events[0].EventType != "heavy_worker_requested" ||
-		workflowEvents.events[1].EventType != "heavy_worker_started" ||
-		workflowEvents.events[2].EventType != "heavy_worker_completed" {
-		t.Fatalf("unexpected heavy events: %#v", workflowEvents.events)
+	if canonicalEvents.events[0].EventType != "heavy_worker.requested" ||
+		canonicalEvents.events[1].EventType != "heavy_worker.started" ||
+		canonicalEvents.events[2].EventType != "heavy_worker.completed" {
+		t.Fatalf("unexpected heavy events: %#v", canonicalEvents.events)
 	}
 }
 
@@ -1561,7 +1562,7 @@ func TestProcessMessage_RegisteredSlashCommandExpandsRuntimePrompt(t *testing.T)
 			return "review result", nil
 		},
 	}
-	events := &mockWorkflowEventRecorder{}
+	events := &mockCanonicalEventRecorder{}
 	skills := &mockSkillBootstrapRecorder{}
 	commands := &mockCommandRegistryStore{commands: []domainai.CommandRegistry{{
 		CommandName:   "/review-architecture",
@@ -1572,7 +1573,7 @@ func TestProcessMessage_RegisteredSlashCommandExpandsRuntimePrompt(t *testing.T)
 		UpdatedAt:     time.Now().UTC(),
 	}}}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
-	orch.SetWorkflowEventRecorder(events)
+	orch.SetCanonicalEventRecorder(events)
 	orch.SetSkillBootstrapRecorder(skills)
 	orch.SetCommandRegistry(commands)
 
@@ -1595,7 +1596,7 @@ func TestProcessMessage_RegisteredSlashCommandExpandsRuntimePrompt(t *testing.T)
 			t.Fatalf("command prompt was not expanded:\n%s", got)
 		}
 	}
-	if len(events.events) != 1 || events.events[0].EventType != "command_invoked" || events.events[0].CommandName != "/review-architecture" {
+	if len(events.events) != 1 || events.events[0].EventType != "command.invoked" || events.events[0].Payload["command_name"] != "/review-architecture" {
 		t.Fatalf("expected command_invoked event, got %+v", events.events)
 	}
 	if len(skills.used) != 1 || len(skills.used[0]) != 1 || skills.used[0][0] != "core.architecture-review" {
@@ -1656,7 +1657,7 @@ func TestProcessMessage_RecordsLeadAgentRun(t *testing.T) {
 	if len(super.contextPacks) != 1 || super.contextPacks[0].RunID != super.runs[0].RunID {
 		t.Fatalf("unexpected context pack: %+v", super.contextPacks)
 	}
-	if len(super.traces) != 2 || super.traces[0].EventType != "lead_agent_started" || super.traces[1].EventType != "lead_agent_completed" {
+	if len(super.traces) != 2 || super.traces[0].EventType != "lead_agent.started" || super.traces[1].EventType != "lead_agent.completed" {
 		t.Fatalf("unexpected trace events: %+v", super.traces)
 	}
 }
@@ -1688,7 +1689,7 @@ func TestProcessMessage_RecordsPausedLeadAgentRunWhenRuntimePauseCancelsContext(
 	if !strings.Contains(super.runs[1].Summary, "pause requested") {
 		t.Fatalf("paused run summary did not record pause reason: %+v", super.runs[1])
 	}
-	if len(super.traces) != 2 || super.traces[0].EventType != "lead_agent_started" || super.traces[1].EventType != "lead_agent_paused" {
+	if len(super.traces) != 2 || super.traces[0].EventType != "lead_agent.started" || super.traces[1].EventType != "lead_agent.paused" {
 		t.Fatalf("unexpected trace events: %+v", super.traces)
 	}
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
-type developmentEventLogSink struct{ store *viewer.EventLogStore }
+type developmentEventLogSink struct{ store *viewer.CanonicalEventLog }
 
 func (s developmentEventLogSink) AppendDevelopmentEvent(_ context.Context, event backlogapp.DevelopmentEvent) error {
 	if s.store == nil {

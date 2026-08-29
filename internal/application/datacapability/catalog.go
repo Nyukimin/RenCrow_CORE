@@ -94,6 +94,7 @@ var storeDefinitions = []Entry{
 	{Name: "complexity_hotspot", Owner: "RenCrow_CORE Complexity", Categories: []string{"complexity", "evidence"}, Status: "restricted", SafeOperations: []string{"hotspots"}, Sensitivity: "internal", Reason: "owner_service_only"},
 	{Name: "super_agent_harness", Owner: "RenCrow_CORE SuperAgent Harness", Categories: []string{"agent_run", "trace"}, Status: "restricted", SafeOperations: []string{"agent_runs"}, Sensitivity: "private", Reason: "owner_service_only"},
 	{Name: "ai_workflow", Owner: "RenCrow_CORE AI Workflow", Categories: []string{"workflow", "command", "worktree"}, Status: "restricted", SafeOperations: []string{"command_registry"}, Sensitivity: "internal", Reason: "owner_service_only"},
+	{Name: "event_store", Owner: "RenCrow_CORE Canonical Event Store", Categories: []string{"event", "trace", "causation", "dependency"}, Status: "restricted", SafeOperations: []string{"envelope"}, Sensitivity: "internal", Reason: "owner_service_only"},
 	{Name: "knowledge_memory", Owner: "RenCrow_CORE Knowledge Memory", Categories: []string{"knowledge", "personal_archive"}, Sensitivity: "mixed"},
 	{Name: "durable_store_workflow", Owner: "RenCrow_CORE Durable Store", Categories: []string{"workflow", "receipt"}, Status: "restricted", SafeOperations: []string{"exact_request"}, Sensitivity: "internal", Reason: "owner_service_only"},
 }

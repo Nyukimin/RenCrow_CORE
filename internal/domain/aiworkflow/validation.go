@@ -5,22 +5,6 @@ import (
 	"strings"
 )
 
-func ValidateWorkflowEvent(item WorkflowEvent) error {
-	if strings.TrimSpace(item.EventID) == "" {
-		return errors.New("event_id is required")
-	}
-	if strings.TrimSpace(item.EventType) == "" {
-		return errors.New("event_type is required")
-	}
-	if strings.TrimSpace(item.Status) == "" {
-		return errors.New("status is required")
-	}
-	if item.CreatedAt.IsZero() {
-		return errors.New("created_at is required")
-	}
-	return nil
-}
-
 func ValidateProjectMemoryIndex(item ProjectMemoryIndex) error {
 	if strings.TrimSpace(item.ID) == "" {
 		return errors.New("id is required")

@@ -21,9 +21,6 @@ func TestSQLiteStoreSaveAndListAIWorkflowRecords(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
-	if err := store.SaveWorkflowEvent(ctx, domainai.WorkflowEvent{EventID: "evt_1", RunID: "run_1", WorkstreamID: "ws_1", EventType: "project_init_started", Status: "completed", CreatedAt: now}); err != nil {
-		t.Fatalf("SaveWorkflowEvent() error = %v", err)
-	}
 	if err := store.SaveProjectMemoryIndex(ctx, domainai.ProjectMemoryIndex{ID: "mem_1", Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}); err != nil {
 		t.Fatalf("SaveProjectMemoryIndex() error = %v", err)
 	}
@@ -35,9 +32,6 @@ func TestSQLiteStoreSaveAndListAIWorkflowRecords(t *testing.T) {
 	}
 	if err := store.SaveContextUsage(ctx, domainai.ContextUsage{EventID: "ctx_1", SessionID: "session_1", RunID: "run_1", WorkstreamID: "ws_1", JobID: "job_1", CompactionID: "compact_1", Agent: "Coder", InputTokens: 1, CreatedAt: now}); err != nil {
 		t.Fatalf("SaveContextUsage() error = %v", err)
-	}
-	if items, err := store.ListWorkflowEvents(ctx, 10); err != nil || len(items) != 1 || items[0].EventID != "evt_1" || items[0].RunID != "run_1" || items[0].WorkstreamID != "ws_1" {
-		t.Fatalf("events=%#v err=%v", items, err)
 	}
 	if items, err := store.ListProjectMemoryIndexes(ctx, 10); err != nil || len(items) != 1 || items[0].ID != "mem_1" {
 		t.Fatalf("memories=%#v err=%v", items, err)
@@ -53,51 +47,18 @@ func TestSQLiteStoreSaveAndListAIWorkflowRecords(t *testing.T) {
 	}
 }
 
-func TestSQLiteStoreFindWorkflowEventByIDUsesPrimaryKeyAndRejectsMalformedPayload(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+func TestSQLiteStoreDoesNotCreateLegacyEventTable(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "ai_workflow.db"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
 	defer store.Close()
-	started := domainai.WorkflowEvent{EventID: "evt_1", EventType: "started", Status: "running", CreatedAt: now}
-	completed := started
-	completed.Status = "completed"
-	completed.CompletedAt = now.Add(time.Minute)
-	if err := store.SaveWorkflowEvent(ctx, started); err != nil {
-		t.Fatal(err)
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_workflow_event'`).Scan(&count); err != nil {
+		t.Fatalf("inspect schema: %v", err)
 	}
-	if err := store.SaveWorkflowEvent(ctx, completed); err != nil {
-		t.Fatal(err)
-	}
-	item, found, err := store.FindWorkflowEventByID(ctx, "evt_1")
-	if err != nil || !found || item.Status != "completed" {
-		t.Fatalf("item=%#v found=%v err=%v", item, found, err)
-	}
-	missing, found, err := store.FindWorkflowEventByID(ctx, "missing")
-	if err != nil || found || missing.EventID != "" {
-		t.Fatalf("missing=%#v found=%v err=%v", missing, found, err)
-	}
-
-	prefixStore, err := NewSQLiteStore(filepath.Join(t.TempDir(), "ai_workflow.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prefixStore.Close()
-	if err := prefixStore.SaveWorkflowEvent(ctx, domainai.WorkflowEvent{EventID: "evt_10", EventType: "started", Status: "running", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	item, found, err = prefixStore.FindWorkflowEventByID(ctx, "evt_1")
-	if err != nil || found || item.EventID != "" {
-		t.Fatalf("prefix match item=%#v found=%v err=%v", item, found, err)
-	}
-
-	if _, err := store.db.ExecContext(ctx, "UPDATE ai_workflow_event SET payload = ? WHERE event_id = ?", "{", "evt_1"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := store.FindWorkflowEventByID(ctx, "evt_1"); err == nil {
-		t.Fatal("expected malformed payload error")
+	if count != 0 {
+		t.Fatal("legacy ai_workflow_event table was created")
 	}
 }
 
@@ -139,7 +100,7 @@ func TestSQLiteStoreConfiguresSingleConnectionBusyTimeoutAndPreservesWAL(t *test
 	}
 }
 
-func TestSQLiteStoreConcurrentContextUsageAndWorkflowEventSaves(t *testing.T) {
+func TestSQLiteStoreConcurrentContextUsageSaves(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "ai_workflow.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -149,28 +110,17 @@ func TestSQLiteStoreConcurrentContextUsageAndWorkflowEventSaves(t *testing.T) {
 	const writers = 8
 	const iterations = 20
 	ctx := context.Background()
-	errs := make(chan error, writers*iterations*2)
+	errs := make(chan error, writers*iterations)
 	var wg sync.WaitGroup
 	for writer := 0; writer < writers; writer++ {
 		for iteration := 0; iteration < iterations; iteration++ {
 			writer, iteration := writer, iteration
-			wg.Add(2)
+			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				if err := store.SaveContextUsage(ctx, domainai.ContextUsage{
 					EventID:   "ctx-stress-" + testSQLiteStoreIndex(writer, iteration),
 					Agent:     "Shiro",
-					CreatedAt: time.Date(2026, 8, 14, 7, 0, 0, 0, time.UTC),
-				}); err != nil {
-					errs <- err
-				}
-			}()
-			go func() {
-				defer wg.Done()
-				if err := store.SaveWorkflowEvent(ctx, domainai.WorkflowEvent{
-					EventID:   "evt-stress-" + testSQLiteStoreIndex(writer, iteration),
-					EventType: "context_usage_recorded",
-					Status:    "completed",
 					CreatedAt: time.Date(2026, 8, 14, 7, 0, 0, 0, time.UTC),
 				}); err != nil {
 					errs <- err
@@ -210,10 +160,9 @@ func TestSQLiteStorePropagatesWriteErrorAfterSQLiteBusyTimeout(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
-	err = store.SaveWorkflowEvent(ctx, domainai.WorkflowEvent{
+	err = store.SaveContextUsage(ctx, domainai.ContextUsage{
 		EventID:   "busy-timeout",
-		EventType: "busy_test",
-		Status:    "running",
+		Agent:     "Shiro",
 		CreatedAt: time.Now().UTC(),
 	})
 	_ = tx.Rollback()

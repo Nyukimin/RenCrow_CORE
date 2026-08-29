@@ -141,7 +141,7 @@ func (d *Dependencies) buildDistributedMode(
 		log.Println("Coder proposal evidence recorder integrated with DistributedOrchestrator")
 	}
 	if d.aiWorkflowStore != nil {
-		distOrch.SetWorkflowEventRecorder(d.aiWorkflowStore)
+		distOrch.SetCanonicalEventRecorder(d.aiWorkflowStore)
 		distOrch.SetCommandRegistry(d.aiWorkflowStore)
 		log.Println("AI Workflow event recorder integrated with DistributedOrchestrator")
 	}

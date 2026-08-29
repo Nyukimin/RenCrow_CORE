@@ -14,6 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const defaultSystemPrompt = "You are a helpful assistant. Use the provided tools to complete the task."
@@ -30,7 +31,7 @@ type superAgentRuntimeContext struct {
 // SuperAgentRecorder は subagent 実行を SuperAgent Harness 台帳へ記録する最小インターフェース。
 type SuperAgentRecorder interface {
 	SaveSubagentTask(ctx context.Context, item domainsuperagent.SubagentTask) error
-	SaveTraceEvent(ctx context.Context, item domainsuperagent.TraceEvent) error
+	modulecore.EventAppender
 }
 
 // ManagerOption は Manager の追加設定オプション
@@ -111,7 +112,7 @@ func (m *Manager) RunSync(ctx context.Context, task agent.SubagentTask) (agent.S
 	log.Printf("[Subagent] start agent=%s instruction_len=%d", task.AgentName, len(task.Instruction))
 	record, recordCtx := m.newSuperAgentExecutionRecord(ctx, task)
 	if record != nil {
-		if err := m.recordSuperAgentSubagentStarted(ctx, *record, recordCtx); err != nil {
+		if err := m.recordSuperAgentSubagentStarted(ctx, record, recordCtx); err != nil {
 			return agent.SubagentResult{}, err
 		}
 	}
@@ -196,8 +197,10 @@ func (m *Manager) mergeToolDefs(ctx context.Context) []llm.ToolDefinition {
 }
 
 type superAgentExecutionRecord struct {
-	SubagentID string
-	StartedAt  time.Time
+	SubagentID     string
+	StartedAt      time.Time
+	TraceID        modulecore.TraceID
+	StartedEventID modulecore.EventID
 }
 
 func (m *Manager) newSuperAgentExecutionRecord(ctx context.Context, task agent.SubagentTask) (*superAgentExecutionRecord, superAgentRuntimeContext) {
@@ -216,10 +219,11 @@ func (m *Manager) newSuperAgentExecutionRecord(ctx context.Context, task agent.S
 	return &superAgentExecutionRecord{
 		SubagentID: fmt.Sprintf("sub_%s_%d", agentName, startedAt.UnixNano()),
 		StartedAt:  startedAt,
+		TraceID:    modulecore.NewTraceID(),
 	}, runtimeCtx
 }
 
-func (m *Manager) recordSuperAgentSubagentStarted(ctx context.Context, record superAgentExecutionRecord, runtimeCtx superAgentRuntimeContext) error {
+func (m *Manager) recordSuperAgentSubagentStarted(ctx context.Context, record *superAgentExecutionRecord, runtimeCtx superAgentRuntimeContext) error {
 	item := domainsuperagent.SubagentTask{
 		SubagentID:           record.SubagentID,
 		ParentRunID:          runtimeCtx.ParentRunID,
@@ -234,17 +238,12 @@ func (m *Manager) recordSuperAgentSubagentStarted(ctx context.Context, record su
 	if err := m.superAgentRecorder.SaveSubagentTask(ctx, item); err != nil {
 		return fmt.Errorf("failed to record superagent subagent start: %w", err)
 	}
-	trace := domainsuperagent.TraceEvent{
-		EventID:        fmt.Sprintf("evt_subagent_started_%s_%d", record.SubagentID, record.StartedAt.UnixNano()),
-		ParentEventID:  runtimeCtx.ParentRunID,
-		RunID:          runtimeCtx.ParentRunID,
-		EventType:      "subagent_started",
-		Actor:          "Subagent",
-		PayloadSummary: "runtime delegated subagent task",
-		Status:         "running",
-		CreatedAt:      record.StartedAt,
-	}
-	if err := m.superAgentRecorder.SaveTraceEvent(ctx, trace); err != nil {
+	event := modulecore.NewEventEnvelope(record.TraceID, "", nil, "superagent", "subagent.started", record.StartedAt, map[string]any{
+		"task_reference": record.SubagentID, "run_reference": runtimeCtx.ParentRunID,
+		"actor_label": "Subagent", "status": "running", "summary": "runtime delegated subagent task",
+	})
+	record.StartedEventID = event.EventID
+	if err := m.superAgentRecorder.Append(ctx, event); err != nil {
 		return fmt.Errorf("failed to record superagent subagent start trace: %w", err)
 	}
 	return nil
@@ -267,17 +266,11 @@ func (m *Manager) recordSuperAgentSubagentFinished(ctx context.Context, record s
 	if err := m.superAgentRecorder.SaveSubagentTask(ctx, item); err != nil {
 		return fmt.Errorf("failed to record superagent subagent %s: %w", status, err)
 	}
-	trace := domainsuperagent.TraceEvent{
-		EventID:        fmt.Sprintf("evt_subagent_%s_%s_%d", status, record.SubagentID, completedAt.UnixNano()),
-		ParentEventID:  runtimeCtx.ParentRunID,
-		RunID:          runtimeCtx.ParentRunID,
-		EventType:      "subagent_" + status,
-		Actor:          "Subagent",
-		PayloadSummary: summary,
-		Status:         status,
-		CreatedAt:      completedAt,
-	}
-	if err := m.superAgentRecorder.SaveTraceEvent(ctx, trace); err != nil {
+	event := modulecore.NewEventEnvelope(record.TraceID, record.StartedEventID, nil, "superagent", "subagent."+status, completedAt, map[string]any{
+		"task_reference": record.SubagentID, "run_reference": runtimeCtx.ParentRunID,
+		"actor_label": "Subagent", "status": status, "summary": summary,
+	})
+	if err := m.superAgentRecorder.Append(ctx, event); err != nil {
 		return fmt.Errorf("failed to record superagent subagent %s trace: %w", status, err)
 	}
 	return nil

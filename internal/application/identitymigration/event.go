@@ -20,9 +20,10 @@ type LegacyEvent struct {
 }
 
 type EventMigrationManifest struct {
-	InputCount              int `json:"input_count"`
-	ConvertedCount          int `json:"converted_count"`
-	DroppedRunAsParentCount int `json:"dropped_run_as_parent_count"`
+	InputCount               int    `json:"input_count"`
+	ConvertedCount           int    `json:"converted_count"`
+	DroppedRunAsParentCount  int    `json:"dropped_run_as_parent_count"`
+	DroppedRunAsParentReason string `json:"dropped_run_as_parent_reason,omitempty"`
 }
 
 type EventMigrationResult struct {
@@ -126,6 +127,7 @@ func ConvertLegacyEvents(componentID string, legacy []LegacyEvent) (EventMigrati
 				event.CausationEventID = parentEventID
 			} else if item.RunID != "" && item.ParentEventID == item.RunID {
 				result.Manifest.DroppedRunAsParentCount++
+				result.Manifest.DroppedRunAsParentReason = "legacy_parent_event_id_referenced_run_id"
 			} else {
 				return EventMigrationResult{}, fmt.Errorf("legacy event %q references missing parent event %q", item.EventID, item.ParentEventID)
 			}

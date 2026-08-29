@@ -14,6 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // --- モック ---
@@ -59,7 +60,7 @@ func (m *mockRunner) ListTools(ctx context.Context) ([]tool.ToolMetadata, error)
 
 type mockSuperAgentRecorder struct {
 	tasks  []domainsuperagent.SubagentTask
-	events []domainsuperagent.TraceEvent
+	events []modulecore.EventEnvelope
 }
 
 func (m *mockSuperAgentRecorder) SaveSubagentTask(_ context.Context, item domainsuperagent.SubagentTask) error {
@@ -70,8 +71,8 @@ func (m *mockSuperAgentRecorder) SaveSubagentTask(_ context.Context, item domain
 	return nil
 }
 
-func (m *mockSuperAgentRecorder) SaveTraceEvent(_ context.Context, item domainsuperagent.TraceEvent) error {
-	if err := domainsuperagent.ValidateTraceEvent(item); err != nil {
+func (m *mockSuperAgentRecorder) Append(_ context.Context, item modulecore.EventEnvelope) error {
+	if err := modulecore.ValidateEventEnvelope(item); err != nil {
 		return err
 	}
 	m.events = append(m.events, item)
@@ -222,7 +223,7 @@ func TestRunSync_RecordsSuperAgentSubagentTask(t *testing.T) {
 	if recorder.tasks[0].ParentRunID != "run_lead_1" || recorder.tasks[0].Scope[0] != "session:s1" {
 		t.Fatalf("unexpected task linkage: %#v", recorder.tasks[0])
 	}
-	if len(recorder.events) != 2 || recorder.events[0].EventType != "subagent_started" || recorder.events[1].EventType != "subagent_completed" {
+	if len(recorder.events) != 2 || recorder.events[0].EventType != "subagent.started" || recorder.events[1].EventType != "subagent.completed" || recorder.events[1].CausationEventID != recorder.events[0].EventID {
 		t.Fatalf("unexpected trace events: %#v", recorder.events)
 	}
 }

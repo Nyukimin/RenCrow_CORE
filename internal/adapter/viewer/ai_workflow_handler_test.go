@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,25 +16,56 @@ import (
 	aiworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/aiworkflow"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type stubAIWorkflowStore struct {
-	events    []domainai.WorkflowEvent
+	events    []modulecore.EventEnvelope
+	appendErr error
 	memories  []domainai.ProjectMemoryIndex
 	worktrees []domainai.WorktreeRegistry
 	commands  []domainai.CommandRegistry
 	contexts  []domainai.ContextUsage
 }
 
-func (s *stubAIWorkflowStore) SaveWorkflowEvent(_ context.Context, item domainai.WorkflowEvent) error {
-	if err := domainai.ValidateWorkflowEvent(item); err != nil {
+func (s *stubAIWorkflowStore) Append(_ context.Context, item modulecore.EventEnvelope) error {
+	if s.appendErr != nil {
+		return s.appendErr
+	}
+	if err := modulecore.ValidateEventEnvelope(item); err != nil {
 		return err
 	}
 	s.events = append(s.events, item)
 	return nil
 }
-func (s *stubAIWorkflowStore) ListWorkflowEvents(_ context.Context, _ int) ([]domainai.WorkflowEvent, error) {
-	return s.events, nil
+
+func TestHandleAIWorkflowExternalControlCheckFailsClosedWhenEventCannotPersist(t *testing.T) {
+	store := &stubAIWorkflowStore{appendErr: fmt.Errorf("event store unavailable")}
+	rec := httptest.NewRecorder()
+	body := `{"actor":"Worker","channel_id":"viewer","action":"promotion_apply"}`
+	HandleAIWorkflowExternalControlCheck(store, domainai.ExternalControlPolicy{
+		AllowedActors: []string{"Worker"}, AllowedChannels: []string{"viewer"}, AllowedActions: []string{"promotion_apply"},
+	}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/viewer/ai-workflow/external-control/check", strings.NewReader(body)))
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "event store unavailable") {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+func (s *stubAIWorkflowStore) GetByID(_ context.Context, id modulecore.EventID) (modulecore.EventEnvelope, bool, error) {
+	for _, item := range s.events {
+		if item.EventID == id {
+			return item, true, nil
+		}
+	}
+	return modulecore.EventEnvelope{}, false, nil
+}
+func (s *stubAIWorkflowStore) ListByComponent(_ context.Context, component string, _ int) ([]modulecore.EventEnvelope, error) {
+	items := make([]modulecore.EventEnvelope, 0, len(s.events))
+	for _, item := range s.events {
+		if item.ComponentID == component {
+			items = append(items, item)
+		}
+	}
+	return items, nil
 }
 func (s *stubAIWorkflowStore) SaveProjectMemoryIndex(_ context.Context, item domainai.ProjectMemoryIndex) error {
 	if err := domainai.ValidateProjectMemoryIndex(item); err != nil {
@@ -94,7 +126,7 @@ func (s *stubAIWorkflowSkillBootstrap) Record(_ context.Context, task domainskil
 func TestHandleAIWorkflowStatus(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &stubAIWorkflowStore{
-		events:    []domainai.WorkflowEvent{{EventID: "evt_1", EventType: "project_init_started", Status: "completed", CreatedAt: now}},
+		events:    []modulecore.EventEnvelope{modulecore.NewRootEventEnvelope("ai_workflow", "project_init.started", now, map[string]any{"status": "completed"})},
 		memories:  []domainai.ProjectMemoryIndex{{ID: "mem_1", Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}},
 		worktrees: []domainai.WorktreeRegistry{{WorktreeID: "wt_1", Repo: "repo", Path: "../worktrees/repo-feature", Branch: "feature/a", Status: "active", CreatedAt: now}},
 		commands:  []domainai.CommandRegistry{{CommandName: "/review-architecture", FilePath: "commands/review-architecture.md", UpdatedAt: now}},
@@ -106,7 +138,7 @@ func TestHandleAIWorkflowStatus(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"workflow_events", "project_memory_indexes", "worktree_registries", "command_registries", "context_usages", "usage_continuity", "context_budget_policy", "job_1", "ws_1"} {
+	for _, want := range []string{"events", "project_memory_indexes", "worktree_registries", "command_registries", "context_usages", "usage_continuity", "context_budget_policy", "job_1", "ws_1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response missing %s: %s", want, body)
 		}
@@ -132,19 +164,6 @@ func TestHandleAIWorkflowStatusWithPolicyShowsEffectiveContextBudget(t *testing.
 	}
 }
 
-func TestHandleAIWorkflowEventCreate(t *testing.T) {
-	store := &stubAIWorkflowStore{}
-	rec := httptest.NewRecorder()
-	body := `{"event_id":"evt_1","event_type":"project_init_started","status":"completed","created_at":"2026-05-18T12:00:00Z"}`
-	HandleAIWorkflowEventCreate(store).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/viewer/ai-workflow/events", strings.NewReader(body)))
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if len(store.events) != 1 || store.events[0].EventID != "evt_1" {
-		t.Fatalf("events=%#v", store.events)
-	}
-}
-
 func TestHandleAIWorkflowExternalControlCheckAllowsPolicyMatch(t *testing.T) {
 	store := &stubAIWorkflowStore{}
 	rec := httptest.NewRecorder()
@@ -160,7 +179,7 @@ func TestHandleAIWorkflowExternalControlCheckAllowsPolicyMatch(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"status":"allowed"`) {
 		t.Fatalf("body=%s", rec.Body.String())
 	}
-	if len(store.events) != 1 || store.events[0].EventType != "external_control_policy_checked" || store.events[0].Status != domainai.ExternalControlStatusAllowed {
+	if len(store.events) != 1 || store.events[0].EventType != "external_control_policy.checked" || store.events[0].Payload["status"] != domainai.ExternalControlStatusAllowed {
 		t.Fatalf("events=%#v", store.events)
 	}
 }
@@ -195,20 +214,22 @@ func TestHandleAIWorkflowCommandRunSavesEventAndRunsSkillBootstrap(t *testing.T)
 	}
 	skills := &stubAIWorkflowSkillBootstrap{}
 	rec := httptest.NewRecorder()
-	body := `{"command_name":"/review-architecture","text":"境界を確認して","run_id":"run_1","workstream_id":"ws_1"}`
+	runID := modulecore.NewRunID()
+	workstreamID := modulecore.NewWorkstreamID()
+	body := fmt.Sprintf(`{"command_name":"/review-architecture","text":"境界を確認して","run_id":%q,"workstream_id":%q}`, runID, workstreamID)
 
 	HandleAIWorkflowCommandRun(store, skills).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/viewer/ai-workflow/commands/run", strings.NewReader(body)))
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.events) != 1 || store.events[0].EventType != "command_invoked" || store.events[0].CommandName != "/review-architecture" {
+	if len(store.events) != 1 || store.events[0].EventType != "command.invoked" || store.events[0].Payload["command_name"] != "/review-architecture" {
 		t.Fatalf("events=%#v", store.events)
 	}
-	if store.events[0].RunID != "run_1" || store.events[0].WorkstreamID != "ws_1" {
+	if store.events[0].RunID != runID || store.events[0].WorkstreamID != workstreamID {
 		t.Fatalf("event run/workstream=%#v", store.events[0])
 	}
-	if skills.task.Intent != "review-architecture" || skills.task.Agent != "Coder" || skills.task.WorkstreamID != "ws_1" {
+	if skills.task.Intent != "review-architecture" || skills.task.Agent != "Coder" || skills.task.WorkstreamID != string(workstreamID) {
 		t.Fatalf("task=%#v", skills.task)
 	}
 	if len(skills.used) != 1 || skills.used[0] != "core.review" {
@@ -246,7 +267,7 @@ func TestHandleAIWorkflowContextBudgetCheckWarnsAndSavesEvent(t *testing.T) {
 	if len(store.contexts) != 1 || store.contexts[0].EventID != "ctx_warn" {
 		t.Fatalf("contexts=%#v", store.contexts)
 	}
-	if len(store.events) != 1 || store.events[0].EventType != "context_budget_warning" || store.events[0].Status != domainai.ContextBudgetStatusWarn {
+	if len(store.events) != 1 || store.events[0].EventType != "context_budget_warning" || store.events[0].Payload["status"] != domainai.ContextBudgetStatusWarn {
 		t.Fatalf("events=%#v", store.events)
 	}
 	if !strings.Contains(rec.Body.String(), `"status":"warn"`) {
@@ -268,7 +289,7 @@ func TestHandleAIWorkflowContextBudgetCheckStopsAndSavesEvent(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.events) != 1 || store.events[0].EventType != "context_budget_exceeded" || store.events[0].Status != domainai.ContextBudgetStatusStop {
+	if len(store.events) != 1 || store.events[0].EventType != "context_budget_exceeded" || store.events[0].Payload["status"] != domainai.ContextBudgetStatusStop {
 		t.Fatalf("events=%#v", store.events)
 	}
 }
@@ -286,10 +307,12 @@ func TestHandleAIWorkflowCommandAndContextBudgetAreVisibleInStatus(t *testing.T)
 		}},
 	}
 	skills := &stubAIWorkflowSkillBootstrap{}
+	runID := modulecore.NewRunID()
+	workstreamID := modulecore.NewWorkstreamID()
 
 	commandRec := httptest.NewRecorder()
 	HandleAIWorkflowCommandRun(store, skills).ServeHTTP(commandRec, httptest.NewRequest(http.MethodPost, "/viewer/ai-workflow/commands/run", strings.NewReader(
-		`{"command_name":"/review-architecture","text":"境界を確認して","run_id":"run_1","workstream_id":"ws_1"}`,
+		fmt.Sprintf(`{"command_name":"/review-architecture","text":"境界を確認して","run_id":%q,"workstream_id":%q}`, runID, workstreamID),
 	)))
 	if commandRec.Code != http.StatusCreated {
 		t.Fatalf("command status=%d body=%s", commandRec.Code, commandRec.Body.String())
@@ -313,7 +336,7 @@ func TestHandleAIWorkflowCommandAndContextBudgetAreVisibleInStatus(t *testing.T)
 		t.Fatalf("status=%d body=%s", statusRec.Code, statusRec.Body.String())
 	}
 	body := statusRec.Body.String()
-	for _, want := range []string{"command_invoked", "context_budget_warning", "ctx_ws_1", "run_1", "ws_1", "/review-architecture"} {
+	for _, want := range []string{"command.invoked", "context_budget_warning", "ctx_ws_1", string(runID), string(workstreamID), "/review-architecture"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("status response missing %s: %s", want, body)
 		}
@@ -323,14 +346,12 @@ func TestHandleAIWorkflowCommandAndContextBudgetAreVisibleInStatus(t *testing.T)
 func TestHandleAIWorkflowStatusShowsUsageContinuityAcrossJobAndWorkstream(t *testing.T) {
 	now := time.Date(2026, 6, 22, 7, 0, 0, 0, time.UTC)
 	store := &stubAIWorkflowStore{
-		events: []domainai.WorkflowEvent{{
-			EventID:      "evt_ws_done",
-			RunID:        "run_1",
-			WorkstreamID: "ws_1",
-			EventType:    "backlog_runner",
-			Status:       "completed",
-			CreatedAt:    now.Add(2 * time.Minute),
-		}},
+		events: []modulecore.EventEnvelope{func() modulecore.EventEnvelope {
+			event := modulecore.NewRootEventEnvelope("ai_workflow", "backlog_runner.completed", now.Add(2*time.Minute), map[string]any{"status": "completed"})
+			event.RunID = modulecore.RunID("run_1")
+			event.WorkstreamID = modulecore.WorkstreamID("ws_1")
+			return event
+		}()},
 		contexts: []domainai.ContextUsage{
 			{EventID: "ctx_before", JobID: "job_1", RunID: "run_1", WorkstreamID: "ws_1", SessionID: "session_1", Agent: "Coder", ContextTokens: 100, CreatedAt: now},
 			{EventID: "ctx_after", JobID: "job_1", RunID: "run_1", WorkstreamID: "ws_1", SessionID: "session_1", CompactionID: "compact_1", Agent: "Coder", Model: "Worker", ContextTokens: 80, InputTokens: 12, OutputTokens: 5, CreatedAt: now.Add(time.Minute)},
@@ -409,7 +430,7 @@ func TestHandleAIWorkflowHeavyWorkerEvaluateSavesRequestedEvent(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.events) != 1 || store.events[0].EventType != "heavy_worker_requested" || store.events[0].ParentEventID != "run_1" {
+	if len(store.events) != 1 || store.events[0].EventType != "heavy_worker.requested" || store.events[0].CausationEventID != "" || store.events[0].Payload["source_record_id"] != "run_1" {
 		t.Fatalf("events=%#v", store.events)
 	}
 	if !strings.Contains(rec.Body.String(), `"status":"requested"`) {
@@ -471,7 +492,7 @@ func TestHandleAIWorkflowProjectInit(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if len(store.events) != 1 || store.events[0].EventType != "project_init_completed" {
+	if len(store.events) != 1 || store.events[0].EventType != "project_init.completed" {
 		t.Fatalf("events=%#v", store.events)
 	}
 	if len(store.memories) != 6 {

@@ -14,13 +14,15 @@ import (
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	aiworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/aiworkflow"
+	eventpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	knowledgememorypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/knowledgememory"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type runtimeContextBudgetRecorderStub struct {
 	usages []domainai.ContextUsage
-	events []domainai.WorkflowEvent
+	events []modulecore.EventEnvelope
 }
 
 func TestViewerRuntimeToolsUsesProductionWorkerRunner(t *testing.T) {
@@ -244,7 +246,7 @@ func (s *runtimeContextBudgetRecorderStub) SaveContextUsage(_ context.Context, i
 	return nil
 }
 
-func (s *runtimeContextBudgetRecorderStub) SaveWorkflowEvent(_ context.Context, item domainai.WorkflowEvent) error {
+func (s *runtimeContextBudgetRecorderStub) Append(_ context.Context, item modulecore.EventEnvelope) error {
 	s.events = append(s.events, item)
 	return nil
 }
@@ -364,8 +366,8 @@ func TestBuildToolRuntimeRecordsToolContextBudgetUsage(t *testing.T) {
 	if recorder.events[0].EventType != "context_budget_warning" {
 		t.Fatalf("expected context budget warning event, got %#v", recorder.events[0])
 	}
-	if recorder.events[0].ParentEventID != recorder.usages[0].EventID {
-		t.Fatalf("event should link to usage: event=%#v usage=%#v", recorder.events[0], recorder.usages[0])
+	if recorder.events[0].CausationEventID != "" || recorder.events[0].Payload["context_usage_record_id"] != recorder.usages[0].EventID {
+		t.Fatalf("event must reference non-event usage only through payload: event=%#v usage=%#v", recorder.events[0], recorder.usages[0])
 	}
 }
 
@@ -381,7 +383,13 @@ func TestBuildToolRuntimePersistsToolContextBudgetToAIWorkflowStore(t *testing.T
 	if err := os.WriteFile(stopPath, []byte(strings.Repeat("s", 520)), 0644); err != nil {
 		t.Fatalf("write stop fixture: %v", err)
 	}
-	store := aiworkflowpersistence.NewJSONLStore(filepath.Join(workspace, "logs", "ai_workflow"))
+	stateStore := aiworkflowpersistence.NewJSONLStore(filepath.Join(workspace, "logs", "ai_workflow"))
+	eventsStore, err := eventpersistence.NewSQLiteStore(filepath.Join(workspace, "events.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eventsStore.Close()
+	store := composeRuntimeAIWorkflowStore(stateStore, eventsStore)
 	cfg := &config.Config{
 		WorkspaceDir: workspace,
 		ToolHarness: config.ToolHarnessConfig{
@@ -424,14 +432,14 @@ func TestBuildToolRuntimePersistsToolContextBudgetToAIWorkflowStore(t *testing.T
 	if err != nil {
 		t.Fatalf("ListContextUsages() error = %v", err)
 	}
-	events, err := store.ListWorkflowEvents(ctx, 10)
+	events, err := store.ListByComponent(ctx, "ai_workflow", 10)
 	if err != nil {
-		t.Fatalf("ListWorkflowEvents() error = %v", err)
+		t.Fatalf("ListByComponent() error = %v", err)
 	}
 	if len(usages) != 2 {
 		t.Fatalf("expected two persisted context usages, got %#v", usages)
 	}
-	byType := map[string]domainai.WorkflowEvent{}
+	byType := map[string]modulecore.EventEnvelope{}
 	for _, event := range events {
 		byType[event.EventType] = event
 	}
@@ -440,7 +448,7 @@ func TestBuildToolRuntimePersistsToolContextBudgetToAIWorkflowStore(t *testing.T
 		if !ok {
 			t.Fatalf("expected persisted %s event, got %#v", want, events)
 		}
-		if event.CommandName != "file_read" || event.Agent != "Worker" || event.ParentEventID == "" {
+		if event.Payload["command_name"] != "file_read" || event.Payload["agent_label"] != "Worker" || event.CausationEventID != "" || event.Payload["context_usage_record_id"] == "" {
 			t.Fatalf("unexpected persisted event for %s: %#v", want, event)
 		}
 	}

@@ -12,6 +12,7 @@ import (
 
 	appsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type stubSuperAgentStore struct {
@@ -19,7 +20,7 @@ type stubSuperAgentStore struct {
 	tasks    []domainsuperagent.SubagentTask
 	contexts []domainsuperagent.ContextPack
 	channels []domainsuperagent.MessageChannel
-	events   []domainsuperagent.TraceEvent
+	events   []modulecore.EventEnvelope
 	queue    []domainsuperagent.RunQueueItem
 }
 
@@ -35,8 +36,22 @@ func (s *stubSuperAgentStore) ListContextPacks(_ context.Context, _ int) ([]doma
 func (s *stubSuperAgentStore) ListMessageChannels(_ context.Context, _ int) ([]domainsuperagent.MessageChannel, error) {
 	return s.channels, nil
 }
-func (s *stubSuperAgentStore) ListTraceEvents(_ context.Context, _ int) ([]domainsuperagent.TraceEvent, error) {
-	return s.events, nil
+func (s *stubSuperAgentStore) GetByID(_ context.Context, id modulecore.EventID) (modulecore.EventEnvelope, bool, error) {
+	for _, item := range s.events {
+		if item.EventID == id {
+			return item, true, nil
+		}
+	}
+	return modulecore.EventEnvelope{}, false, nil
+}
+func (s *stubSuperAgentStore) ListByComponent(_ context.Context, component string, _ int) ([]modulecore.EventEnvelope, error) {
+	items := make([]modulecore.EventEnvelope, 0, len(s.events))
+	for _, item := range s.events {
+		if item.ComponentID == component {
+			items = append(items, item)
+		}
+	}
+	return items, nil
 }
 func (s *stubSuperAgentStore) ListRunQueueItems(_ context.Context, _ int) ([]domainsuperagent.RunQueueItem, error) {
 	return s.queue, nil
@@ -69,8 +84,8 @@ func (s *stubSuperAgentStore) SaveMessageChannel(_ context.Context, item domains
 	s.channels = append(s.channels, item)
 	return nil
 }
-func (s *stubSuperAgentStore) SaveTraceEvent(_ context.Context, item domainsuperagent.TraceEvent) error {
-	if err := domainsuperagent.ValidateTraceEvent(item); err != nil {
+func (s *stubSuperAgentStore) Append(_ context.Context, item modulecore.EventEnvelope) error {
+	if err := modulecore.ValidateEventEnvelope(item); err != nil {
 		return err
 	}
 	s.events = append(s.events, item)
@@ -138,21 +153,6 @@ func TestHandleSuperAgentSubagentTaskRequiresScope(t *testing.T) {
 	}
 }
 
-func TestHandleSuperAgentTraceEventCreate(t *testing.T) {
-	store := &stubSuperAgentStore{}
-	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	payload := []byte(`{"event_id":"evt_1","run_id":"run_1","event_type":"lead_agent_started","status":"completed","created_at":"` + now + `"}`)
-	req := httptest.NewRequest(http.MethodPost, "/viewer/superagent/trace-events", bytes.NewReader(payload))
-	rec := httptest.NewRecorder()
-	HandleSuperAgentTraceEventCreate(store).ServeHTTP(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if len(store.events) != 1 {
-		t.Fatalf("events=%#v", store.events)
-	}
-}
-
 func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 	startedAt := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{
@@ -177,7 +177,7 @@ func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 	if store.runs[len(store.runs)-1].Status != "paused" {
 		t.Fatalf("expected paused run, got %#v", store.runs)
 	}
-	if len(store.events) != 1 || store.events[0].EventType != "lead_agent_paused" {
+	if len(store.events) != 1 || store.events[0].EventType != "run.lead_agent_paused" {
 		t.Fatalf("expected pause trace, got %#v", store.events)
 	}
 
@@ -190,7 +190,7 @@ func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 	if store.runs[len(store.runs)-1].Status != "queued" {
 		t.Fatalf("expected queued run, got %#v", store.runs)
 	}
-	if len(store.events) != 2 || store.events[1].EventType != "lead_agent_resumed" {
+	if len(store.events) != 2 || store.events[1].EventType != "run.lead_agent_resumed" {
 		t.Fatalf("expected resume trace, got %#v", store.events)
 	}
 	if len(store.queue) != 1 || store.queue[0].QueueID != "resume:run_1:3" || store.queue[0].RunID != "run_1" || store.queue[0].CheckpointRevision != 3 {

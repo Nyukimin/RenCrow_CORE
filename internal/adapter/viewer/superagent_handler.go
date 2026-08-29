@@ -11,25 +11,34 @@ import (
 
 	appsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-type SuperAgentLister interface {
+type SuperAgentStateLister interface {
 	ListAgentRuns(ctx context.Context, limit int) ([]domainsuperagent.AgentRun, error)
 	ListSubagentTasks(ctx context.Context, limit int) ([]domainsuperagent.SubagentTask, error)
 	ListContextPacks(ctx context.Context, limit int) ([]domainsuperagent.ContextPack, error)
 	ListMessageChannels(ctx context.Context, limit int) ([]domainsuperagent.MessageChannel, error)
-	ListTraceEvents(ctx context.Context, limit int) ([]domainsuperagent.TraceEvent, error)
 	ListRunQueueItems(ctx context.Context, limit int) ([]domainsuperagent.RunQueueItem, error)
 }
 
-type SuperAgentStore interface {
-	SuperAgentLister
+type SuperAgentStateStore interface {
+	SuperAgentStateLister
 	SaveAgentRun(ctx context.Context, item domainsuperagent.AgentRun) error
 	SaveSubagentTask(ctx context.Context, item domainsuperagent.SubagentTask) error
 	SaveContextPack(ctx context.Context, item domainsuperagent.ContextPack) error
 	SaveMessageChannel(ctx context.Context, item domainsuperagent.MessageChannel) error
-	SaveTraceEvent(ctx context.Context, item domainsuperagent.TraceEvent) error
 	SaveRunQueueItem(ctx context.Context, item domainsuperagent.RunQueueItem) error
+}
+
+type SuperAgentLister interface {
+	SuperAgentStateLister
+	modulecore.EventReader
+}
+
+type SuperAgentStore interface {
+	SuperAgentStateStore
+	modulecore.EventStore
 }
 
 type SuperAgentRunController interface {
@@ -82,7 +91,7 @@ func HandleSuperAgentStatusWithRuntimeConfig(store SuperAgentLister, runtimeConf
 			http.Error(w, "failed to load message channels", http.StatusInternalServerError)
 			return
 		}
-		events, err := store.ListTraceEvents(r.Context(), limit)
+		events, err := store.ListByComponent(r.Context(), "superagent", limit)
 		if err != nil {
 			http.Error(w, "failed to load trace events", http.StatusInternalServerError)
 			return
@@ -97,7 +106,7 @@ func HandleSuperAgentStatusWithRuntimeConfig(store SuperAgentLister, runtimeConf
 			"subagent_tasks":   nonNilSubagentTasks(tasks),
 			"context_packs":    nonNilContextPacks(contexts),
 			"message_channels": nonNilMessageChannels(channels),
-			"trace_events":     nonNilTraceEvents(events),
+			"events":           nonNilEventEnvelopes(events),
 			"run_queue":        nonNilRunQueueItems(queue),
 			"runtime_config":   runtimeConfig,
 		})
@@ -141,16 +150,6 @@ func HandleSuperAgentMessageChannelCreate(store SuperAgentStore) http.HandlerFun
 			return err
 		}
 		return store.SaveMessageChannel(ctx, item)
-	})
-}
-
-func HandleSuperAgentTraceEventCreate(store SuperAgentStore) http.HandlerFunc {
-	return saveSuperAgentItem(store, "trace event", func(ctx context.Context, store SuperAgentStore, dec *json.Decoder) error {
-		var item domainsuperagent.TraceEvent
-		if err := dec.Decode(&item); err != nil {
-			return err
-		}
-		return store.SaveTraceEvent(ctx, item)
 	})
 }
 
@@ -368,16 +367,11 @@ func handleSuperAgentRunState(store SuperAgentStore, controller SuperAgentRunCon
 			http.Error(w, "failed to save agent run state: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		trace := domainsuperagent.TraceEvent{
-			EventID:        "evt_" + eventType + "_" + runID + "_" + formatUnixNano(now),
-			RunID:          runID,
-			EventType:      eventType,
-			Actor:          "ExternalControl",
-			PayloadSummary: strings.TrimSpace(run.Summary + " runtime_control=" + control.Action),
-			Status:         status,
-			CreatedAt:      now,
-		}
-		if err := store.SaveTraceEvent(r.Context(), trace); err != nil {
+		trace := modulecore.NewRootEventEnvelope("superagent", "run."+eventType, now, map[string]any{
+			"actor_label": "ExternalControl", "status": status,
+			"summary": strings.TrimSpace(run.Summary + " runtime_control=" + control.Action), "run_reference": runID,
+		})
+		if err := store.Append(r.Context(), trace); err != nil {
 			http.Error(w, "failed to save agent run state trace: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -482,13 +476,6 @@ func nonNilContextPacks(items []domainsuperagent.ContextPack) []domainsuperagent
 func nonNilMessageChannels(items []domainsuperagent.MessageChannel) []domainsuperagent.MessageChannel {
 	if items == nil {
 		return []domainsuperagent.MessageChannel{}
-	}
-	return items
-}
-
-func nonNilTraceEvents(items []domainsuperagent.TraceEvent) []domainsuperagent.TraceEvent {
-	if items == nil {
-		return []domainsuperagent.TraceEvent{}
 	}
 	return items
 }

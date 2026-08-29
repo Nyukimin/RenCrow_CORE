@@ -187,14 +187,14 @@ func TestE2E_SuperAgentPauseResumeAndQueueReentryClientFlow(t *testing.T) {
 	}
 	foundPaused := false
 	foundResumed := false
-	for _, event := range status.TraceEvents {
-		if event.RunID != runID {
+	for _, event := range status.Events {
+		if string(event.RunID) != runID && event.Payload["run_reference"] != runID {
 			continue
 		}
 		switch event.EventType {
-		case "lead_agent_paused":
+		case "run.lead_agent_paused":
 			foundPaused = true
-		case "lead_agent_resumed":
+		case "run.lead_agent_resumed":
 			foundResumed = true
 		}
 	}

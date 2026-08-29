@@ -11,10 +11,10 @@ import (
 )
 
 type routeDecisionCoordinator struct {
-	mio            MioAgent
-	emit           messageEventEmitter
-	heavyPolicy    domainai.HeavyWorkerPolicy
-	workflowEvents WorkflowEventRecorder
+	mio             MioAgent
+	emit            messageEventEmitter
+	heavyPolicy     domainai.HeavyWorkerPolicy
+	canonicalEvents CanonicalEventRecorder
 }
 
 func newRouteDecisionCoordinator(mio MioAgent, emit messageEventEmitter) *routeDecisionCoordinator {
@@ -28,8 +28,8 @@ func (c *routeDecisionCoordinator) SetHeavyWorkerPolicy(policy domainai.HeavyWor
 	c.heavyPolicy = policy
 }
 
-func (c *routeDecisionCoordinator) SetWorkflowEventRecorder(recorder WorkflowEventRecorder) {
-	c.workflowEvents = recorder
+func (c *routeDecisionCoordinator) SetCanonicalEventRecorder(recorder CanonicalEventRecorder) {
+	c.canonicalEvents = recorder
 }
 
 func (c *routeDecisionCoordinator) Decide(ctx context.Context, t task.Task, req ProcessMessageRequest, jobID task.JobID) (routing.Decision, error) {
@@ -94,7 +94,7 @@ func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, d
 	if evaluated.Status != domainai.HeavyWorkerStatusRequested {
 		return decision
 	}
-	recordHeavyWorkflowEvent(ctx, c.workflowEvents, "requested", strings.Join(evaluated.Reasons, "; "), jobID.String())
+	recordHeavyCanonicalEvent(ctx, c.canonicalEvents, "requested", strings.Join(evaluated.Reasons, "; "), jobID.String())
 	elevated := decision
 	elevated.Route = routing.RouteANALYZE
 	if elevated.Confidence < 0.95 {

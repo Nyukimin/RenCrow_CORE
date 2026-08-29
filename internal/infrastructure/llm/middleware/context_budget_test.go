@@ -8,6 +8,7 @@ import (
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type contextBudgetStubProvider struct {
@@ -29,7 +30,7 @@ func (p *contextBudgetStubProvider) Name() string { return "stub" }
 
 type contextBudgetRecorderStub struct {
 	usages []domainai.ContextUsage
-	events []domainai.WorkflowEvent
+	events []modulecore.EventEnvelope
 	err    error
 }
 
@@ -41,7 +42,7 @@ func (s *contextBudgetRecorderStub) SaveContextUsage(_ context.Context, item dom
 	return nil
 }
 
-func (s *contextBudgetRecorderStub) SaveWorkflowEvent(_ context.Context, item domainai.WorkflowEvent) error {
+func (s *contextBudgetRecorderStub) Append(_ context.Context, item modulecore.EventEnvelope) error {
 	if s.err != nil {
 		return s.err
 	}
@@ -137,7 +138,7 @@ func TestContextBudgetProviderRecordsWarningUsageAndEvent(t *testing.T) {
 	if recorder.events[0].EventType != "context_budget_warning" {
 		t.Fatalf("unexpected event: %#v", recorder.events[0])
 	}
-	if recorder.events[0].ParentEventID != recorder.usages[0].EventID {
+	if recorder.events[0].CausationEventID != "" || recorder.events[0].Payload["context_usage_record_id"] != recorder.usages[0].EventID {
 		t.Fatalf("event should link to usage: event=%#v usage=%#v", recorder.events[0], recorder.usages[0])
 	}
 }

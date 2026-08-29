@@ -10,11 +10,12 @@ import (
 	"time"
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type memoryWorktreeStore struct {
 	worktrees []domainai.WorktreeRegistry
-	events    []domainai.WorkflowEvent
+	events    []modulecore.EventEnvelope
 }
 
 func (s *memoryWorktreeStore) SaveWorktreeRegistry(_ context.Context, item domainai.WorktreeRegistry) error {
@@ -22,7 +23,7 @@ func (s *memoryWorktreeStore) SaveWorktreeRegistry(_ context.Context, item domai
 	return nil
 }
 
-func (s *memoryWorktreeStore) SaveWorkflowEvent(_ context.Context, item domainai.WorkflowEvent) error {
+func (s *memoryWorktreeStore) Append(_ context.Context, item modulecore.EventEnvelope) error {
 	s.events = append(s.events, item)
 	return nil
 }
@@ -184,7 +185,7 @@ func TestWorktreeManagerClosesGitWorktreeAndRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
-	if closed.Worktree.Status != "closed" || closed.Event.EventType != "worktree_closed" {
+	if closed.Worktree.Status != "closed" || closed.Event.EventType != "worktree.closed" {
 		t.Fatalf("unexpected close result: %+v", closed)
 	}
 	if _, err := os.Stat(created.Worktree.Path); !os.IsNotExist(err) {

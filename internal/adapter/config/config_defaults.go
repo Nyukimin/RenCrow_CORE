@@ -334,15 +334,6 @@ func (c *Config) setDefaults() {
 			RequirePostApplyVerification: true,
 		}
 	}
-	if c.ViewerLog.Path == "" {
-		c.ViewerLog.Path = "./workspace/orchestrator_event_log.jsonl"
-	}
-	if c.ViewerLog.RetentionDays <= 0 {
-		c.ViewerLog.RetentionDays = 14
-	}
-	if c.ViewerLog.GCIntervalMinutes <= 0 {
-		c.ViewerLog.GCIntervalMinutes = 60
-	}
 	if c.Verification.Mode == "" {
 		c.Verification.Mode = "dry_run"
 	}
@@ -356,6 +347,9 @@ func (c *Config) setDefaults() {
 	}
 	if c.WorkspaceDir == "" {
 		c.WorkspaceDir = "./workspace"
+	}
+	if c.Storage.Databases.EventStore == "" {
+		c.Storage.Databases.EventStore = filepath.Join(c.WorkspaceDir, "logs", "event_store.db")
 	}
 	c.Advisor.Storage = defaultOwnerStorage(c.Advisor.Storage, c.Advisor.SQLitePath)
 	if c.Advisor.LogPath == "" {
@@ -672,9 +666,6 @@ func (c *Config) setDefaults() {
 	c.OperationMemoryDir = c.Storage.Memory.OperationMemoryDir
 	if c.Verification.ReportPath == "" {
 		c.Verification.ReportPath = c.WorkspaceDir + "/verification_report.jsonl"
-	}
-	if !c.ViewerLog.Enabled {
-		c.ViewerLog.Enabled = true
 	}
 	if c.TTS.OutputDir == "" {
 		c.TTS.OutputDir = "./workspace/tts"

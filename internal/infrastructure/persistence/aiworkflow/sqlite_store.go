@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,21 +48,6 @@ func (s *SQLiteStore) Close() error {
 
 func (s *SQLiteStore) migrate() error {
 	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS ai_workflow_event (
-			event_id TEXT PRIMARY KEY,
-			parent_event_id TEXT,
-			run_id TEXT,
-			workstream_id TEXT,
-			event_type TEXT,
-			agent TEXT,
-			repo TEXT,
-			worktree_id TEXT,
-			command_name TEXT,
-			skill_name TEXT,
-			status TEXT,
-			created_at TEXT,
-			payload TEXT NOT NULL
-		)`,
 		`CREATE TABLE IF NOT EXISTS project_memory_index (
 			id TEXT PRIMARY KEY,
 			repo TEXT,
@@ -106,12 +90,6 @@ func (s *SQLiteStore) migrate() error {
 			return err
 		}
 	}
-	if err := addColumnIfMissing(s.db, "ai_workflow_event", "run_id", "TEXT"); err != nil {
-		return err
-	}
-	if err := addColumnIfMissing(s.db, "ai_workflow_event", "workstream_id", "TEXT"); err != nil {
-		return err
-	}
 	if err := addColumnIfMissing(s.db, "ai_context_usage", "run_id", "TEXT"); err != nil {
 		return err
 	}
@@ -122,46 +100,6 @@ func (s *SQLiteStore) migrate() error {
 		return err
 	}
 	return nil
-}
-
-func (s *SQLiteStore) SaveWorkflowEvent(ctx context.Context, item domainai.WorkflowEvent) error {
-	if err := domainai.ValidateWorkflowEvent(item); err != nil {
-		return err
-	}
-	return s.save(ctx, `INSERT OR REPLACE INTO ai_workflow_event (
-		event_id, parent_event_id, run_id, workstream_id, event_type, agent, repo, worktree_id, command_name, skill_name, status, created_at, payload
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		item.EventID, item.ParentEventID, item.RunID, item.WorkstreamID, item.EventType, item.Agent, item.Repo, item.WorktreeID, item.CommandName, item.SkillName, item.Status, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
-}
-
-func (s *SQLiteStore) ListWorkflowEvents(ctx context.Context, limit int) ([]domainai.WorkflowEvent, error) {
-	return listSQLiteItems[domainai.WorkflowEvent](ctx, s, "ai_workflow_event", limit)
-}
-
-// FindWorkflowEventByID returns the record stored under the exact ai_workflow_event primary key.
-func (s *SQLiteStore) FindWorkflowEventByID(ctx context.Context, eventID string) (domainai.WorkflowEvent, bool, error) {
-	if s == nil || s.db == nil {
-		return domainai.WorkflowEvent{}, false, fmt.Errorf("ai workflow sqlite store is closed")
-	}
-	var payload string
-	err := s.db.QueryRowContext(ctx, `SELECT payload FROM ai_workflow_event WHERE event_id = ?`, eventID).Scan(&payload)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domainai.WorkflowEvent{}, false, nil
-	}
-	if err != nil {
-		return domainai.WorkflowEvent{}, false, err
-	}
-	var item domainai.WorkflowEvent
-	if err := json.Unmarshal([]byte(payload), &item); err != nil {
-		return domainai.WorkflowEvent{}, false, err
-	}
-	if err := domainai.ValidateWorkflowEvent(item); err != nil {
-		return domainai.WorkflowEvent{}, false, err
-	}
-	if item.EventID != eventID {
-		return domainai.WorkflowEvent{}, false, fmt.Errorf("stored workflow event ID %q does not match primary key %q", item.EventID, eventID)
-	}
-	return item, true, nil
 }
 
 func (s *SQLiteStore) SaveProjectMemoryIndex(ctx context.Context, item domainai.ProjectMemoryIndex) error {

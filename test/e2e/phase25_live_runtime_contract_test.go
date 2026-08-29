@@ -67,7 +67,6 @@ func TestE2E_Phase25LiveViewerRuntimeConfigClient(t *testing.T) {
 		cfg.RuntimeReadiness.TelegramCredentialsPresent == nil ||
 		cfg.RuntimeReadiness.TelegramWebhookRegistered == nil ||
 		cfg.RuntimeReadiness.TelegramFilePayloadPipeline == nil ||
-		cfg.RuntimeReadiness.STTGatewayEnvPresent == nil ||
 		cfg.RuntimeReadiness.STTGatewayConfigPresent == nil ||
 		cfg.RuntimeReadiness.TTSProviderEnvPresent == nil ||
 		cfg.RuntimeReadiness.TTSProviderConfigPresent == nil ||

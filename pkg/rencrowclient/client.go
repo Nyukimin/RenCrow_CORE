@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type Client struct {
@@ -64,13 +66,13 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 }
 
 type SuperAgentStatus struct {
-	AgentRuns       []AgentRun              `json:"agent_runs"`
-	SubagentTasks   []SubagentTask          `json:"subagent_tasks"`
-	ContextPacks    []ContextPack           `json:"context_packs"`
-	MessageChannels []MessageChannel        `json:"message_channels"`
-	TraceEvents     []TraceEvent            `json:"trace_events"`
-	RunQueue        []RunQueueItem          `json:"run_queue"`
-	RuntimeConfig   SuperAgentRuntimeConfig `json:"runtime_config"`
+	AgentRuns       []AgentRun                 `json:"agent_runs"`
+	SubagentTasks   []SubagentTask             `json:"subagent_tasks"`
+	ContextPacks    []ContextPack              `json:"context_packs"`
+	MessageChannels []MessageChannel           `json:"message_channels"`
+	Events          []modulecore.EventEnvelope `json:"events"`
+	RunQueue        []RunQueueItem             `json:"run_queue"`
+	RuntimeConfig   SuperAgentRuntimeConfig    `json:"runtime_config"`
 }
 
 type SuperAgentRuntimeConfig struct {
@@ -121,17 +123,6 @@ type MessageChannel struct {
 	Name           string    `json:"name,omitempty"`
 	AuthScope      string    `json:"auth_scope,omitempty"`
 	AllowedActions []string  `json:"allowed_actions,omitempty"`
-	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"created_at"`
-}
-
-type TraceEvent struct {
-	EventID        string    `json:"event_id"`
-	ParentEventID  string    `json:"parent_event_id,omitempty"`
-	RunID          string    `json:"run_id,omitempty"`
-	EventType      string    `json:"event_type"`
-	Actor          string    `json:"actor,omitempty"`
-	PayloadSummary string    `json:"payload_summary,omitempty"`
 	Status         string    `json:"status"`
 	CreatedAt      time.Time `json:"created_at"`
 }
@@ -442,38 +433,21 @@ type CommandRunRequest struct {
 }
 
 type CommandRunResponse struct {
-	Command      CommandRegistry `json:"command"`
-	Event        WorkflowEvent   `json:"event"`
-	EventID      string          `json:"event_id,omitempty"`
-	SkillEventID string          `json:"skill_event_id,omitempty"`
-	CommandName  string          `json:"command_name,omitempty"`
-	Status       string          `json:"status,omitempty"`
+	Command      CommandRegistry          `json:"command"`
+	Event        modulecore.EventEnvelope `json:"event"`
+	EventID      string                   `json:"event_id,omitempty"`
+	SkillEventID string                   `json:"skill_event_id,omitempty"`
+	CommandName  string                   `json:"command_name,omitempty"`
+	Status       string                   `json:"status,omitempty"`
 }
 
 type AIWorkflowStatus struct {
-	WorkflowEvents       []WorkflowEvent      `json:"workflow_events"`
-	ProjectMemoryIndexes []ProjectMemoryIndex `json:"project_memory_indexes"`
-	WorktreeRegistries   []WorktreeRegistry   `json:"worktree_registries"`
-	CommandRegistries    []CommandRegistry    `json:"command_registries"`
-	ContextUsages        []ContextUsage       `json:"context_usages"`
-	ContextBudgetPolicy  ContextBudgetPolicy  `json:"context_budget_policy"`
-}
-
-type WorkflowEvent struct {
-	EventID       string    `json:"event_id"`
-	ParentEventID string    `json:"parent_event_id,omitempty"`
-	RunID         string    `json:"run_id,omitempty"`
-	WorkstreamID  string    `json:"workstream_id,omitempty"`
-	EventType     string    `json:"event_type"`
-	Agent         string    `json:"agent,omitempty"`
-	Repo          string    `json:"repo,omitempty"`
-	WorktreeID    string    `json:"worktree_id,omitempty"`
-	CommandName   string    `json:"command_name,omitempty"`
-	SkillName     string    `json:"skill_name,omitempty"`
-	Status        string    `json:"status"`
-	CreatedAt     time.Time `json:"created_at"`
-	CompletedAt   time.Time `json:"completed_at,omitempty"`
-	Summary       string    `json:"summary,omitempty"`
+	Events               []modulecore.EventEnvelope `json:"events"`
+	ProjectMemoryIndexes []ProjectMemoryIndex       `json:"project_memory_indexes"`
+	WorktreeRegistries   []WorktreeRegistry         `json:"worktree_registries"`
+	CommandRegistries    []CommandRegistry          `json:"command_registries"`
+	ContextUsages        []ContextUsage             `json:"context_usages"`
+	ContextBudgetPolicy  ContextBudgetPolicy        `json:"context_budget_policy"`
 }
 
 type ProjectMemoryIndex struct {
@@ -1050,9 +1024,9 @@ type ContextBudgetDecision struct {
 }
 
 type ContextBudgetResponse struct {
-	ContextUsage ContextUsage          `json:"context_usage"`
-	Decision     ContextBudgetDecision `json:"decision"`
-	Event        *WorkflowEvent        `json:"event,omitempty"`
+	ContextUsage ContextUsage              `json:"context_usage"`
+	Decision     ContextBudgetDecision     `json:"decision"`
+	Event        *modulecore.EventEnvelope `json:"event,omitempty"`
 }
 
 type HeavyWorkerRequest struct {
@@ -1073,9 +1047,9 @@ type HeavyWorkerDecision struct {
 }
 
 type HeavyWorkerResponse struct {
-	Request  HeavyWorkerRequest  `json:"request"`
-	Decision HeavyWorkerDecision `json:"decision"`
-	Event    *WorkflowEvent      `json:"event,omitempty"`
+	Request  HeavyWorkerRequest        `json:"request"`
+	Decision HeavyWorkerDecision       `json:"decision"`
+	Event    *modulecore.EventEnvelope `json:"event,omitempty"`
 }
 
 type HeavyWorkerRuntimeDiagnostics struct {
@@ -1968,13 +1942,6 @@ func (c *Client) CreateAgentRun(ctx context.Context, item AgentRun) error {
 		return err
 	}
 	return c.do(ctx, http.MethodPost, "/viewer/superagent/runs", item, nil)
-}
-
-func (c *Client) CreateTraceEvent(ctx context.Context, item TraceEvent) error {
-	if err := validateTraceEventRequest(item); err != nil {
-		return err
-	}
-	return c.do(ctx, http.MethodPost, "/viewer/superagent/trace-events", item, nil)
 }
 
 func (c *Client) CreateRunQueueItem(ctx context.Context, item RunQueueItem) error {
@@ -3713,22 +3680,16 @@ func validateSuperAgentStatus(resp SuperAgentStatus) error {
 		seenChannels[channelID] = struct{}{}
 	}
 	seenEvents := map[string]struct{}{}
-	for _, event := range resp.TraceEvents {
-		eventID := strings.TrimSpace(event.EventID)
-		if eventID == "" {
-			return fmt.Errorf("superagent status trace_event missing event_id")
+	for _, event := range resp.Events {
+		eventID := string(event.EventID)
+		if err := modulecore.ValidateEventEnvelope(event); err != nil {
+			return fmt.Errorf("superagent status invalid event %q: %w", eventID, err)
 		}
-		if strings.TrimSpace(event.EventType) == "" {
-			return fmt.Errorf("superagent status trace_event %q missing event_type", eventID)
-		}
-		if strings.TrimSpace(event.Status) == "" {
-			return fmt.Errorf("superagent status trace_event %q missing status", eventID)
-		}
-		if event.CreatedAt.IsZero() {
-			return fmt.Errorf("superagent status trace_event %q missing created_at", eventID)
+		if event.ComponentID != "superagent" {
+			return fmt.Errorf("superagent status event %q has component %q", eventID, event.ComponentID)
 		}
 		if _, ok := seenEvents[eventID]; ok {
-			return fmt.Errorf("superagent status contains duplicate trace_event for event_id %q", eventID)
+			return fmt.Errorf("superagent status contains duplicate event for event_id %q", eventID)
 		}
 		seenEvents[eventID] = struct{}{}
 	}
@@ -3816,22 +3777,16 @@ func validateAIWorkflowStatus(resp AIWorkflowStatus) error {
 		return err
 	}
 	seenEvents := map[string]struct{}{}
-	for _, event := range resp.WorkflowEvents {
-		eventID := strings.TrimSpace(event.EventID)
-		if eventID == "" {
-			return fmt.Errorf("ai workflow status workflow_event missing event_id")
+	for _, event := range resp.Events {
+		eventID := string(event.EventID)
+		if err := modulecore.ValidateEventEnvelope(event); err != nil {
+			return fmt.Errorf("ai workflow status invalid event %q: %w", eventID, err)
 		}
-		if strings.TrimSpace(event.EventType) == "" {
-			return fmt.Errorf("ai workflow status workflow_event missing event_type")
-		}
-		if strings.TrimSpace(event.Status) == "" {
-			return fmt.Errorf("ai workflow status workflow_event missing status")
-		}
-		if event.CreatedAt.IsZero() {
-			return fmt.Errorf("ai workflow status workflow_event missing created_at")
+		if event.ComponentID != "ai_workflow" {
+			return fmt.Errorf("ai workflow status event %q has component %q", eventID, event.ComponentID)
 		}
 		if _, ok := seenEvents[eventID]; ok {
-			return fmt.Errorf("ai workflow status contains duplicate workflow_event for event_id %q", eventID)
+			return fmt.Errorf("ai workflow status contains duplicate event for event_id %q", eventID)
 		}
 		seenEvents[eventID] = struct{}{}
 	}
@@ -5579,19 +5534,6 @@ func validateAgentRunRequest(item AgentRun) error {
 	return nil
 }
 
-func validateTraceEventRequest(item TraceEvent) error {
-	if strings.TrimSpace(item.EventID) == "" {
-		return fmt.Errorf("trace event request missing event_id")
-	}
-	if strings.TrimSpace(item.EventType) == "" {
-		return fmt.Errorf("trace event request missing event_type")
-	}
-	if strings.TrimSpace(item.Status) == "" {
-		return fmt.Errorf("trace event request missing status")
-	}
-	return nil
-}
-
 func normalizeRunQueueCreateRequest(item RunQueueItem) RunQueueItem {
 	if strings.TrimSpace(item.Status) == "" {
 		item.Status = "queued"
@@ -5743,19 +5685,25 @@ func validateHeavyWorkerResponse(resp HeavyWorkerResponse, req HeavyWorkerReques
 		if resp.Event == nil {
 			return fmt.Errorf("heavy worker response requested missing event")
 		}
-		if strings.TrimSpace(resp.Event.EventType) != "heavy_worker_requested" {
+		if err := modulecore.ValidateEventEnvelope(*resp.Event); err != nil {
+			return fmt.Errorf("heavy worker response invalid event: %w", err)
+		}
+		if strings.TrimSpace(resp.Event.EventType) != "heavy_worker.requested" {
 			return fmt.Errorf("heavy worker response event_type mismatch")
 		}
-		if strings.TrimSpace(resp.Event.Status) != "requested" {
+		if eventPayloadString(*resp.Event, "status") != "requested" {
 			return fmt.Errorf("heavy worker response event status mismatch")
 		}
-		if strings.TrimSpace(resp.Event.Agent) != strings.TrimSpace(req.Agent) {
+		if eventPayloadString(*resp.Event, "agent_label") != strings.TrimSpace(req.Agent) {
 			return fmt.Errorf("heavy worker response event agent mismatch")
 		}
-		if strings.TrimSpace(req.EventID) != "" && strings.TrimSpace(resp.Event.ParentEventID) != strings.TrimSpace(req.EventID) {
+		if strings.TrimSpace(string(resp.Event.CausationEventID)) != "" {
+			return fmt.Errorf("heavy worker response must not use a legacy record as causation")
+		}
+		if strings.TrimSpace(req.EventID) != "" && eventPayloadString(*resp.Event, "source_record_id") != strings.TrimSpace(req.EventID) {
 			return fmt.Errorf("heavy worker response event parent mismatch")
 		}
-		if resp.Event.CreatedAt.IsZero() {
+		if resp.Event.OccurredAt.IsZero() {
 			return fmt.Errorf("heavy worker response event missing created_at")
 		}
 	default:
@@ -5816,25 +5764,28 @@ func validateCommandRunResponse(resp CommandRunResponse, req CommandRunRequest) 
 	if strings.TrimSpace(resp.Command.CommandName) != requested {
 		return fmt.Errorf("command run response command_name mismatch")
 	}
-	if strings.TrimSpace(resp.Event.EventID) == "" {
+	if err := modulecore.ValidateEventEnvelope(resp.Event); err != nil {
+		return fmt.Errorf("command run response invalid event: %w", err)
+	}
+	if strings.TrimSpace(string(resp.Event.EventID)) == "" {
 		return fmt.Errorf("command run response missing event_id")
 	}
-	if strings.TrimSpace(resp.Event.EventType) != "command_invoked" {
+	if strings.TrimSpace(resp.Event.EventType) != "command.invoked" {
 		return fmt.Errorf("command run response event_type mismatch: got %q", resp.Event.EventType)
 	}
-	if strings.TrimSpace(resp.Event.CommandName) != requested {
+	if eventPayloadString(resp.Event, "command_name") != requested {
 		return fmt.Errorf("command run response event command_name mismatch")
 	}
-	if strings.TrimSpace(resp.Event.Status) != "requested" {
-		return fmt.Errorf("command run response status mismatch: got %q", resp.Event.Status)
+	if eventPayloadString(resp.Event, "status") != "requested" {
+		return fmt.Errorf("command run response status mismatch: got %q", eventPayloadString(resp.Event, "status"))
 	}
-	if resp.Event.CreatedAt.IsZero() {
+	if resp.Event.OccurredAt.IsZero() {
 		return fmt.Errorf("command run response event missing created_at")
 	}
-	if strings.TrimSpace(req.RunID) != "" && strings.TrimSpace(resp.Event.RunID) != strings.TrimSpace(req.RunID) {
+	if strings.TrimSpace(req.RunID) != "" && strings.TrimSpace(string(resp.Event.RunID)) != strings.TrimSpace(req.RunID) {
 		return fmt.Errorf("command run response run_id mismatch")
 	}
-	if strings.TrimSpace(req.WorkstreamID) != "" && strings.TrimSpace(resp.Event.WorkstreamID) != strings.TrimSpace(req.WorkstreamID) {
+	if strings.TrimSpace(req.WorkstreamID) != "" && strings.TrimSpace(string(resp.Event.WorkstreamID)) != strings.TrimSpace(req.WorkstreamID) {
 		return fmt.Errorf("command run response workstream_id mismatch")
 	}
 	return nil
@@ -5877,10 +5828,16 @@ func validateContextBudgetResponse(resp ContextBudgetResponse, req ContextUsage)
 		if resp.Event == nil {
 			return fmt.Errorf("context budget response %s missing budget event", status)
 		}
-		if strings.TrimSpace(resp.Event.ParentEventID) != strings.TrimSpace(resp.ContextUsage.EventID) {
+		if err := modulecore.ValidateEventEnvelope(*resp.Event); err != nil {
+			return fmt.Errorf("context budget response invalid event: %w", err)
+		}
+		if strings.TrimSpace(string(resp.Event.CausationEventID)) != "" {
+			return fmt.Errorf("context budget response must not use a legacy record as causation")
+		}
+		if eventPayloadString(*resp.Event, "context_usage_record_id") != strings.TrimSpace(resp.ContextUsage.EventID) {
 			return fmt.Errorf("context budget response event parent mismatch")
 		}
-		if strings.TrimSpace(resp.Event.Status) != status {
+		if eventPayloadString(*resp.Event, "status") != status {
 			return fmt.Errorf("context budget response event status mismatch")
 		}
 		wantType := "context_budget_warning"
@@ -5890,7 +5847,7 @@ func validateContextBudgetResponse(resp ContextBudgetResponse, req ContextUsage)
 		if strings.TrimSpace(resp.Event.EventType) != wantType {
 			return fmt.Errorf("context budget response event_type mismatch: got %q want %q", resp.Event.EventType, wantType)
 		}
-		if resp.Event.CreatedAt.IsZero() {
+		if resp.Event.OccurredAt.IsZero() {
 			return fmt.Errorf("context budget response event missing created_at")
 		}
 	default:
@@ -5900,6 +5857,11 @@ func validateContextBudgetResponse(resp ContextBudgetResponse, req ContextUsage)
 		return fmt.Errorf("context budget response decision context_tokens mismatch")
 	}
 	return nil
+}
+
+func eventPayloadString(event modulecore.EventEnvelope, key string) string {
+	value, _ := event.Payload[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func validateWorkstreamStatus(resp WorkstreamStatus) error {

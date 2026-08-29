@@ -41,15 +41,6 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveContextPack() error = %v", err)
 	}
-	if err := store.SaveTraceEvent(context.Background(), domainsuperagent.TraceEvent{
-		EventID:   "evt_1",
-		RunID:     "run_1",
-		EventType: "lead_agent_started",
-		Status:    "completed",
-		CreatedAt: now,
-	}); err != nil {
-		t.Fatalf("SaveTraceEvent() error = %v", err)
-	}
 	if err := store.SaveRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
 		QueueID:   "queue_1",
 		RunID:     "run_1",
@@ -71,10 +62,6 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	contexts, err := store.ListContextPacks(context.Background(), 10)
 	if err != nil || len(contexts) != 1 {
 		t.Fatalf("ListContextPacks() = %#v, %v", contexts, err)
-	}
-	events, err := store.ListTraceEvents(context.Background(), 10)
-	if err != nil || len(events) != 1 {
-		t.Fatalf("ListTraceEvents() = %#v, %v", events, err)
 	}
 	queue, err := store.ListRunQueueItems(context.Background(), 10)
 	if err != nil || len(queue) != 1 {
@@ -201,47 +188,6 @@ func TestJSONLStoreFindAgentRunByIDReturnsLatestExactRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := corruptStore.FindAgentRunByID(ctx, "run_1"); err == nil {
-		t.Fatal("expected malformed JSON error")
-	}
-}
-
-func TestJSONLStoreFindTraceEventByIDReturnsLatestExactRecord(t *testing.T) {
-	store := NewJSONLStore(t.TempDir(), 3000)
-	ctx := context.Background()
-	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
-	started := domainsuperagent.TraceEvent{EventID: "evt_1", EventType: "started", Status: "running", CreatedAt: now}
-	completed := started
-	completed.Status = "completed"
-	if err := store.SaveTraceEvent(ctx, started); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SaveTraceEvent(ctx, completed); err != nil {
-		t.Fatal(err)
-	}
-	item, found, err := store.FindTraceEventByID(ctx, "evt_1")
-	if err != nil || !found || item.Status != "completed" {
-		t.Fatalf("item=%#v found=%v err=%v", item, found, err)
-	}
-
-	missing, found, err := store.FindTraceEventByID(ctx, "missing")
-	if err != nil || found || missing.EventID != "" {
-		t.Fatalf("missing=%#v found=%v err=%v", missing, found, err)
-	}
-
-	prefixStore := NewJSONLStore(t.TempDir(), 3000)
-	if err := prefixStore.SaveTraceEvent(ctx, domainsuperagent.TraceEvent{EventID: "evt_10", EventType: "started", Status: "running", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	item, found, err = prefixStore.FindTraceEventByID(ctx, "evt_1")
-	if err != nil || found || item.EventID != "" {
-		t.Fatalf("prefix match item=%#v found=%v err=%v", item, found, err)
-	}
-
-	corruptStore := NewJSONLStore(t.TempDir(), 3000)
-	if err := os.WriteFile(corruptStore.traceEventPath, []byte("{\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := corruptStore.FindTraceEventByID(ctx, "evt_1"); err == nil {
 		t.Fatal("expected malformed JSON error")
 	}
 }

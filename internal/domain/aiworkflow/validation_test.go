@@ -8,9 +8,6 @@ import (
 
 func TestValidateAIWorkflowRecords(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 10, 0, 0, time.UTC)
-	if err := ValidateWorkflowEvent(WorkflowEvent{EventID: "evt_1", EventType: "project_init_started", Status: "completed", CreatedAt: now}); err != nil {
-		t.Fatalf("ValidateWorkflowEvent() error = %v", err)
-	}
 	if err := ValidateProjectMemoryIndex(ProjectMemoryIndex{ID: "mem_1", Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}); err != nil {
 		t.Fatalf("ValidateProjectMemoryIndex() error = %v", err)
 	}
@@ -38,13 +35,6 @@ func TestValidateAIWorkflowRejectsMissingTimestamp(t *testing.T) {
 		err  string
 		run  func() error
 	}{
-		{
-			name: "workflow event",
-			err:  "created_at",
-			run: func() error {
-				return ValidateWorkflowEvent(WorkflowEvent{EventID: "evt_1", EventType: "project_init_started", Status: "completed"})
-			},
-		},
 		{
 			name: "project memory",
 			err:  "updated_at",
@@ -94,9 +84,6 @@ func TestValidateAIWorkflowRejectsMissingRequiredFields(t *testing.T) {
 		err  error
 		want string
 	}{
-		{name: "workflow missing event id", err: ValidateWorkflowEvent(WorkflowEvent{EventType: "project_init_started", Status: "completed", CreatedAt: now}), want: "event_id"},
-		{name: "workflow missing event type", err: ValidateWorkflowEvent(WorkflowEvent{EventID: "evt_1", Status: "completed", CreatedAt: now}), want: "event_type"},
-		{name: "workflow missing status", err: ValidateWorkflowEvent(WorkflowEvent{EventID: "evt_1", EventType: "project_init_started", CreatedAt: now}), want: "status"},
 		{name: "project memory missing id", err: ValidateProjectMemoryIndex(ProjectMemoryIndex{Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}), want: "id"},
 		{name: "project memory missing repo", err: ValidateProjectMemoryIndex(ProjectMemoryIndex{ID: "mem_1", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}), want: "repo"},
 		{name: "project memory missing file path", err: ValidateProjectMemoryIndex(ProjectMemoryIndex{ID: "mem_1", Repo: "repo", MemoryType: "project", UpdatedAt: now}), want: "file_path"},

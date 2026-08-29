@@ -10,11 +10,12 @@ import (
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type ContextBudgetRecorder interface {
 	SaveContextUsage(ctx context.Context, item domainai.ContextUsage) error
-	SaveWorkflowEvent(ctx context.Context, item domainai.WorkflowEvent) error
+	modulecore.EventAppender
 }
 
 type ContextBudgetProvider struct {
@@ -105,17 +106,11 @@ func (p *ContextBudgetProvider) recordContextBudget(ctx context.Context, usage d
 		return nil
 	}
 	now := time.Now().UTC()
-	event := domainai.WorkflowEvent{
-		EventID:       fmt.Sprintf("evt_llm_context_budget_%s_%d", strings.ToLower(p.Name()), now.UnixNano()),
-		ParentEventID: usage.EventID,
-		EventType:     eventType,
-		Agent:         p.Name(),
-		Status:        decision.Status,
-		CreatedAt:     now,
-		CompletedAt:   now,
-		Summary:       decision.Reason,
-	}
-	if err := p.rec.SaveWorkflowEvent(ctx, event); err != nil {
+	event := modulecore.NewRootEventEnvelope("ai_workflow", eventType, now, map[string]any{
+		"context_usage_record_id": usage.EventID,
+		"provider_label":          p.Name(), "status": decision.Status, "summary": decision.Reason,
+	})
+	if err := p.rec.Append(ctx, event); err != nil {
 		return fmt.Errorf("llm context budget event save failed: %w", err)
 	}
 	return nil

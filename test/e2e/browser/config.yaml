@@ -28,12 +28,6 @@ prompts_dir: "${RENCROW_E2E_REPO}/prompts"
 workspace_dir: "${RENCROW_E2E_RUNTIME}/workspace"
 self_source_dir: "${RENCROW_E2E_REPO}"
 
-viewer_log:
-  enabled: true
-  path: "${RENCROW_E2E_RUNTIME}/workspace/logs/orchestrator_event_log.jsonl"
-  retention_days: 1
-  gc_interval_minutes: 60
-
 idle_chat:
   enabled: false
 conversation:

@@ -25,7 +25,7 @@ type messageRouteDispatcher struct {
 	withStreamHooks   messageStreamHook
 	pushTTS           messageTTSPusher
 	executeAutonomous autonomousRouteExecutor
-	workflowEvents    WorkflowEventRecorder
+	canonicalEvents   CanonicalEventRecorder
 }
 
 func newMessageRouteDispatcher(
@@ -62,8 +62,8 @@ func (d *messageRouteDispatcher) SetAutonomousExecutor(execute autonomousRouteEx
 	d.executeAutonomous = execute
 }
 
-func (d *messageRouteDispatcher) SetWorkflowEventRecorder(recorder WorkflowEventRecorder) {
-	d.workflowEvents = recorder
+func (d *messageRouteDispatcher) SetCanonicalEventRecorder(recorder CanonicalEventRecorder) {
+	d.canonicalEvents = recorder
 }
 
 func (d *messageRouteDispatcher) ExecuteTask(ctx context.Context, t task.Task, route routing.Route, sessionID, channel, chatID, ttsSessionID string) (string, error) {
@@ -211,7 +211,7 @@ func (d *messageRouteDispatcher) executeAnalyzeRoute(ctx context.Context, t task
 	d.emit("agent.delegate", "mio", "heavy", formatAgentHandoffSpeech("mio", "heavy", work, t.UserMessage()), "ANALYZE", jid, sessionID, channel, chatID)
 	d.emit("agent.acknowledge", "heavy", "mio", formatAgentHandoffReadbackSpeech("mio", "heavy", work, t.UserMessage()), "ANALYZE", jid, sessionID, channel, chatID)
 	d.emit("agent.start", "mio", "heavy", "分析中...", "ANALYZE", jid, sessionID, channel, chatID)
-	recordHeavyWorkflowEvent(ctx, d.workflowEvents, "started", "Heavy Worker started", jid)
+	recordHeavyCanonicalEvent(ctx, d.canonicalEvents, "started", "Heavy Worker started", jid)
 	analyzeCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteANALYZE, jid, sessionID, channel, chatID, ttsSessionID)
 	resp, err := d.heavy.Generate(analyzeCtx, t)
 	if err == nil {
@@ -219,10 +219,10 @@ func (d *messageRouteDispatcher) executeAnalyzeRoute(ctx context.Context, t task
 		d.emit("agent.report", "heavy", "mio", formatAgentHandoffCompletionSpeech("mio", "heavy", resp), "ANALYZE", jid, sessionID, channel, chatID)
 		d.emit("agent.response", "mio", "user", resp, "ANALYZE", jid, sessionID, channel, chatID)
 		ttsStream.Finalize(ctx, resp)
-		recordHeavyWorkflowEvent(ctx, d.workflowEvents, "completed", "Heavy Worker completed", jid)
+		recordHeavyCanonicalEvent(ctx, d.canonicalEvents, "completed", "Heavy Worker completed", jid)
 	} else {
 		d.emit("agent.report", "heavy", "mio", formatAgentHandoffCompletionSpeech("mio", "heavy", "実行失敗: "+err.Error()), "ANALYZE", jid, sessionID, channel, chatID)
-		recordHeavyWorkflowEvent(ctx, d.workflowEvents, "failed", err.Error(), jid)
+		recordHeavyCanonicalEvent(ctx, d.canonicalEvents, "failed", err.Error(), jid)
 	}
 	return resp, err
 }

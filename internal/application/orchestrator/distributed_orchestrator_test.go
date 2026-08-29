@@ -486,11 +486,11 @@ func TestDistributedOrchestrator_RegisteredSlashCommandExpandsRuntimePrompt(t *t
 	router := transport.NewMessageRouter()
 	defer router.Stop()
 	memory := session.NewCentralMemory()
-	events := &mockWorkflowEventRecorder{}
+	events := &mockCanonicalEventRecorder{}
 	skills := &mockSkillBootstrapRecorder{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
-	orch.SetWorkflowEventRecorder(events)
+	orch.SetCanonicalEventRecorder(events)
 	orch.SetSkillBootstrapRecorder(skills)
 	orch.SetCommandRegistry(&mockCommandRegistryStore{commands: []domainai.CommandRegistry{{
 		CommandName:   "/review-architecture",
@@ -518,7 +518,7 @@ func TestDistributedOrchestrator_RegisteredSlashCommandExpandsRuntimePrompt(t *t
 		!strings.Contains(mockMio.lastChatInput, "User input:\ndocs を確認") {
 		t.Fatalf("command prompt was not expanded:\n%s", mockMio.lastChatInput)
 	}
-	if len(events.events) != 1 || events.events[0].EventType != "command_invoked" {
+	if len(events.events) != 1 || events.events[0].EventType != "command.invoked" {
 		t.Fatalf("expected command_invoked event, got %+v", events.events)
 	}
 	if len(skills.used) != 1 || !containsString(skills.used[0], "core.architecture-review") {
@@ -555,7 +555,7 @@ func TestDistributedOrchestrator_RecordsLeadAgentRun(t *testing.T) {
 	if super.runs[0].Status != "running" || super.runs[1].Status != "completed" {
 		t.Fatalf("unexpected agent_run statuses: %+v", super.runs)
 	}
-	if len(super.traces) != 2 || super.traces[0].EventType != "lead_agent_started" || super.traces[1].EventType != "lead_agent_completed" {
+	if len(super.traces) != 2 || super.traces[0].EventType != "lead_agent.started" || super.traces[1].EventType != "lead_agent.completed" {
 		t.Fatalf("unexpected trace events: %+v", super.traces)
 	}
 }
@@ -594,12 +594,12 @@ func TestDistributedOrchestrator_ProcessMessage_AnalyzeRouteUsesHeavyAgentWithou
 	memory := session.NewCentralMemory()
 	heavy := &mockHeavyAgent{response: "heavy response"}
 	rec := &distRecordingEventListener{}
-	workflowEvents := &mockWorkflowEventRecorder{}
+	canonicalEvents := &mockCanonicalEventRecorder{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
 	orch.SetHeavyAgent(heavy)
 	orch.SetEventListener(rec)
-	orch.SetWorkflowEventRecorder(workflowEvents)
+	orch.SetCanonicalEventRecorder(canonicalEvents)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "analyze-session",
@@ -622,11 +622,11 @@ func TestDistributedOrchestrator_ProcessMessage_AnalyzeRouteUsesHeavyAgentWithou
 	if distIndexOfEvent(rec.events, "agent.response", "heavy", "mio", "ANALYZE") < 0 {
 		t.Fatalf("expected heavy response evidence, got %+v", rec.events)
 	}
-	if len(workflowEvents.events) != 2 {
-		t.Fatalf("expected heavy lifecycle events, got %#v", workflowEvents.events)
+	if len(canonicalEvents.events) != 2 {
+		t.Fatalf("expected heavy lifecycle events, got %#v", canonicalEvents.events)
 	}
-	if workflowEvents.events[0].EventType != "heavy_worker_started" || workflowEvents.events[1].EventType != "heavy_worker_completed" {
-		t.Fatalf("unexpected heavy lifecycle events: %#v", workflowEvents.events)
+	if canonicalEvents.events[0].EventType != "heavy_worker.started" || canonicalEvents.events[1].EventType != "heavy_worker.completed" {
+		t.Fatalf("unexpected heavy lifecycle events: %#v", canonicalEvents.events)
 	}
 }
 
@@ -637,11 +637,11 @@ func TestDistributedOrchestrator_HeavyWorkerPolicyElevatesDeepDiveToAnalyze(t *t
 	defer router.Stop()
 	memory := session.NewCentralMemory()
 	heavy := &mockHeavyAgent{response: "heavy deep dive"}
-	workflowEvents := &mockWorkflowEventRecorder{}
+	canonicalEvents := &mockCanonicalEventRecorder{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
 	orch.SetHeavyAgent(heavy)
-	orch.SetWorkflowEventRecorder(workflowEvents)
+	orch.SetCanonicalEventRecorder(canonicalEvents)
 	orch.SetHeavyWorkerPolicy(domainai.HeavyWorkerPolicy{
 		Enabled:       true,
 		RequireReason: true,
@@ -665,13 +665,13 @@ func TestDistributedOrchestrator_HeavyWorkerPolicyElevatesDeepDiveToAnalyze(t *t
 	if resp.Route != routing.RouteANALYZE || resp.Response != "heavy deep dive" {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
-	if len(workflowEvents.events) != 3 {
-		t.Fatalf("expected requested + lifecycle events, got %#v", workflowEvents.events)
+	if len(canonicalEvents.events) != 3 {
+		t.Fatalf("expected requested + lifecycle events, got %#v", canonicalEvents.events)
 	}
-	if workflowEvents.events[0].EventType != "heavy_worker_requested" ||
-		workflowEvents.events[1].EventType != "heavy_worker_started" ||
-		workflowEvents.events[2].EventType != "heavy_worker_completed" {
-		t.Fatalf("unexpected heavy events: %#v", workflowEvents.events)
+	if canonicalEvents.events[0].EventType != "heavy_worker.requested" ||
+		canonicalEvents.events[1].EventType != "heavy_worker.started" ||
+		canonicalEvents.events[2].EventType != "heavy_worker.completed" {
+		t.Fatalf("unexpected heavy events: %#v", canonicalEvents.events)
 	}
 }
 

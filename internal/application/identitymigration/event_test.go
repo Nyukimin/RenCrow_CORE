@@ -29,6 +29,9 @@ func TestConvertLegacyEventsIsDeterministicAndDropsKnownRunReferenceMisuse(t *te
 	if first.Manifest.InputCount != 2 || first.Manifest.ConvertedCount != 2 || first.Manifest.DroppedRunAsParentCount != 1 {
 		t.Fatalf("manifest = %#v", first.Manifest)
 	}
+	if first.Manifest.DroppedRunAsParentReason != "legacy_parent_event_id_referenced_run_id" {
+		t.Fatalf("dropped run-as-parent reason = %q", first.Manifest.DroppedRunAsParentReason)
+	}
 	if first.Events[0].TraceID != first.Events[1].TraceID || first.Events[0].RunID != first.Events[1].RunID {
 		t.Fatalf("same legacy run did not map to same trace/run: %#v", first.Events)
 	}

@@ -45,7 +45,7 @@ type DistributedOrchestrator struct {
 	dciSearcher             DCISearcher
 	recallTrace             RecallTraceStore
 	skillBootstrap          SkillBootstrapRecorder
-	workflowEvents          WorkflowEventRecorder
+	canonicalEvents         CanonicalEventRecorder
 	commandRegistry         CommandRegistryLister
 	superAgentRuns          SuperAgentRuntimeRecorder
 	superAgentRunController SuperAgentRunController

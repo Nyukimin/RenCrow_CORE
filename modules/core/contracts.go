@@ -103,14 +103,6 @@ func BuildHealthSnapshot(reports []HealthReport, updatedAt time.Time) HealthSnap
 	}
 }
 
-type Event struct {
-	Type      string         `json:"type"`
-	SessionID SessionID      `json:"session_id,omitempty"`
-	TraceID   string         `json:"trace_id,omitempty"`
-	At        time.Time      `json:"at,omitempty"`
-	Payload   map[string]any `json:"payload,omitempty"`
-}
-
 type StateOwner string
 
 const (

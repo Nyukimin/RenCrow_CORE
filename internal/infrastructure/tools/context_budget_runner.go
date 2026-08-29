@@ -10,6 +10,7 @@ import (
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type ContextBudgetRunnerConfig struct {
@@ -22,7 +23,7 @@ type ContextBudgetRunnerConfig struct {
 
 type ContextBudgetUsageRecorder interface {
 	SaveContextUsage(ctx context.Context, item domainai.ContextUsage) error
-	SaveWorkflowEvent(ctx context.Context, item domainai.WorkflowEvent) error
+	modulecore.EventAppender
 }
 
 // ContextBudgetRunner enforces the AI Native context budget on tool results
@@ -140,18 +141,11 @@ func (r *ContextBudgetRunner) recordContextBudget(ctx context.Context, usage dom
 		return nil
 	}
 	now := time.Now().UTC()
-	event := domainai.WorkflowEvent{
-		EventID:       fmt.Sprintf("evt_tool_context_budget_%d", now.UnixNano()),
-		EventType:     eventType,
-		Agent:         r.agent,
-		CommandName:   toolName,
-		Status:        decision.Status,
-		CreatedAt:     now,
-		CompletedAt:   now,
-		Summary:       decision.Reason,
-		ParentEventID: usage.EventID,
-	}
-	if err := r.rec.SaveWorkflowEvent(ctx, event); err != nil {
+	event := modulecore.NewRootEventEnvelope("ai_workflow", eventType, now, map[string]any{
+		"context_usage_record_id": usage.EventID, "agent_label": r.agent,
+		"command_name": toolName, "status": decision.Status, "summary": decision.Reason,
+	})
+	if err := r.rec.Append(ctx, event); err != nil {
 		return fmt.Errorf("tool context budget event save failed: %w", err)
 	}
 	return nil

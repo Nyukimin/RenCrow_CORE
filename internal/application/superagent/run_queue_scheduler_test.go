@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
@@ -68,7 +69,7 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 	if run := store.runs[0]; run.Status != "completed" || run.Summary != "ok" || run.CompletedAt.IsZero() {
 		t.Fatalf("completed run = %#v", run)
 	}
-	if len(store.traces) != 2 || store.traces[0].EventType != "run_queue_claimed" || store.traces[1].EventType != "run_queue_completed" {
+	if len(store.traces) != 2 || store.traces[0].EventType != "run_queue.claimed" || store.traces[1].EventType != "run_queue.completed" || store.traces[1].CausationEventID != store.traces[0].EventID {
 		t.Fatalf("unexpected traces = %#v", store.traces)
 	}
 }
@@ -99,7 +100,7 @@ func TestRunQueueSchedulerRunOnceMarksFailure(t *testing.T) {
 	if item.Status != "failed" || item.Reason != "worker failed" || item.CompletedAt.IsZero() {
 		t.Fatalf("failed item = %#v", item)
 	}
-	if len(store.traces) != 2 || store.traces[1].EventType != "run_queue_failed" {
+	if len(store.traces) != 2 || store.traces[1].EventType != "run_queue.failed" || store.traces[1].CausationEventID != store.traces[0].EventID {
 		t.Fatalf("unexpected traces = %#v", store.traces)
 	}
 }
@@ -131,7 +132,7 @@ func TestRunQueueSchedulerRecoversOnlyExpiredClaimWithSameCheckpoint(t *testing.
 type recordingRunQueueStore struct {
 	runs   []domainsuperagent.AgentRun
 	items  []domainsuperagent.RunQueueItem
-	traces []domainsuperagent.TraceEvent
+	traces []modulecore.EventEnvelope
 }
 
 func (s *recordingRunQueueStore) ListAgentRuns(context.Context, int) ([]domainsuperagent.AgentRun, error) {
@@ -164,7 +165,7 @@ func (s *recordingRunQueueStore) SaveRunQueueItem(_ context.Context, item domain
 	return nil
 }
 
-func (s *recordingRunQueueStore) SaveTraceEvent(_ context.Context, item domainsuperagent.TraceEvent) error {
+func (s *recordingRunQueueStore) Append(_ context.Context, item modulecore.EventEnvelope) error {
 	s.traces = append(s.traces, item)
 	return nil
 }

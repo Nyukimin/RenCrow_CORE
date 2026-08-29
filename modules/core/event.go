@@ -1,12 +1,27 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 )
 
 const EventEnvelopeSchemaVersion = "rencrow.event/v1"
+
+type EventAppender interface {
+	Append(context.Context, EventEnvelope) error
+}
+
+type EventReader interface {
+	GetByID(context.Context, EventID) (EventEnvelope, bool, error)
+	ListByComponent(context.Context, string, int) ([]EventEnvelope, error)
+}
+
+type EventStore interface {
+	EventAppender
+	EventReader
+}
 
 // EventEnvelope is the single canonical representation of an occurred fact.
 // IDs in this envelope are assigned by the owning runtime, never accepted from
@@ -52,6 +67,24 @@ type EventEnvelope struct {
 	ReceiptID    ReceiptID    `json:"receipt_id,omitempty"`
 
 	Payload map[string]any `json:"payload,omitempty"`
+}
+
+func NewRootEventEnvelope(componentID, eventType string, occurredAt time.Time, payload map[string]any) EventEnvelope {
+	return NewEventEnvelope(NewTraceID(), "", nil, componentID, eventType, occurredAt, payload)
+}
+
+func NewEventEnvelope(traceID TraceID, causationEventID EventID, dependencyEventIDs []EventID, componentID, eventType string, occurredAt time.Time, payload map[string]any) EventEnvelope {
+	return EventEnvelope{
+		SchemaVersion:      EventEnvelopeSchemaVersion,
+		EventID:            NewEventID(),
+		TraceID:            traceID,
+		CausationEventID:   causationEventID,
+		DependencyEventIDs: append([]EventID(nil), dependencyEventIDs...),
+		EventType:          eventType,
+		ComponentID:        componentID,
+		OccurredAt:         occurredAt.UTC(),
+		Payload:            payload,
+	}
 }
 
 func ValidateEventEnvelope(event EventEnvelope) error {

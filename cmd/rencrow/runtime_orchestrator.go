@@ -142,7 +142,7 @@ func buildOrchestratorRuntime(
 		log.Println("Coder proposal evidence recorder integrated with MessageOrchestrator")
 	}
 	if deps.aiWorkflowStore != nil {
-		orch.SetWorkflowEventRecorder(deps.aiWorkflowStore)
+		orch.SetCanonicalEventRecorder(deps.aiWorkflowStore)
 		orch.SetCommandRegistry(deps.aiWorkflowStore)
 		log.Println("AI Workflow event recorder integrated with MessageOrchestrator")
 	}

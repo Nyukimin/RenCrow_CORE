@@ -98,22 +98,6 @@ func ValidateMessageChannel(item MessageChannel) error {
 	return nil
 }
 
-func ValidateTraceEvent(item TraceEvent) error {
-	if strings.TrimSpace(item.EventID) == "" {
-		return fmt.Errorf("event_id is required")
-	}
-	if strings.TrimSpace(item.EventType) == "" {
-		return fmt.Errorf("event_type is required")
-	}
-	if strings.TrimSpace(item.Status) == "" {
-		return fmt.Errorf("status is required")
-	}
-	if item.CreatedAt.IsZero() {
-		return fmt.Errorf("created_at is required")
-	}
-	return nil
-}
-
 func ValidateRunQueueItem(item RunQueueItem) error {
 	if strings.TrimSpace(item.QueueID) == "" {
 		return fmt.Errorf("queue_id is required")

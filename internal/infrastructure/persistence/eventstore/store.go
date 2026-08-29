@@ -144,6 +144,70 @@ func (s *SQLiteStore) Append(ctx context.Context, event modulecore.EventEnvelope
 	return nil
 }
 
+// AppendBatch atomically appends one closed migration graph. Unlike the live
+// Append path, input order does not need to place causes before effects.
+func (s *SQLiteStore) AppendBatch(ctx context.Context, events []modulecore.EventEnvelope) error {
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	if err := modulecore.ValidateEventEnvelopeGraph(events); err != nil {
+		return fmt.Errorf("validate event envelope graph: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	for _, event := range events {
+		var existing int
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM event_envelope WHERE event_id = ? LIMIT 1`, string(event.EventID)).Scan(&existing)
+		if err == nil {
+			return fmt.Errorf("duplicate event_id %q", event.EventID)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		payload, err := json.Marshal(event)
+		if err != nil {
+			return fmt.Errorf("marshal event envelope: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO event_envelope
+				(event_id, trace_id, schema_version, event_type, component_id, occurred_at, envelope_json)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			string(event.EventID), string(event.TraceID), event.SchemaVersion,
+			event.EventType, event.ComponentID, event.OccurredAt.Format(time.RFC3339Nano), string(payload),
+		); err != nil {
+			return err
+		}
+	}
+	for _, event := range events {
+		if event.CausationEventID != "" {
+			if err := insertDependency(ctx, tx, event.EventID, event.CausationEventID, "causation"); err != nil {
+				return err
+			}
+		}
+		for _, dependencyID := range event.DependencyEventIDs {
+			if err := insertDependency(ctx, tx, event.EventID, dependencyID, "dependency"); err != nil {
+				return err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
 // GetByID returns the exact canonical envelope for eventID. The boolean is
 // false when no event with that ID exists.
 func (s *SQLiteStore) GetByID(ctx context.Context, eventID modulecore.EventID) (modulecore.EventEnvelope, bool, error) {

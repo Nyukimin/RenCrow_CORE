@@ -150,7 +150,6 @@ type Config struct {
 	AudioRouter AudioRouterConfig `yaml:"audio_router"`
 
 	// === Viewer persisted JSON operation log ===
-	ViewerLog ViewerLogConfig `yaml:"viewer_log"`
 
 	// === Response verification pipeline ===
 	Verification VerificationConfig `yaml:"verification"`

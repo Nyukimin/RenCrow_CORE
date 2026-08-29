@@ -31,7 +31,6 @@ func TestCanonicalIDGeneratorsHaveOneSource(t *testing.T) {
 	legacyGeneratorSites := map[string]struct{}{
 		// Frozen legacy sites are removed by later canonical replacement steps.
 		// This allowlist prevents Step 01 from increasing their scope.
-		"internal/adapter/viewer/ai_workflow_handler.go:HandleAIWorkflowExternalControlCheck":                  {},
 		"internal/adapter/viewer/browser_trace_api_handler.go:HandleBrowserTraceAPIFetcherProposal":            {},
 		"internal/adapter/viewer/complexity_hotspot_handler.go:HandleComplexityHotspotConcreteDiffWithSandbox": {},
 		"internal/adapter/viewer/complexity_hotspot_handler.go:HandleComplexityHotspotProposalWithSandbox":     {},
@@ -45,26 +44,19 @@ func TestCanonicalIDGeneratorsHaveOneSource(t *testing.T) {
 		"internal/adapter/viewer/sandbox_handler.go:HandleSandboxPromotionRollback":                            {},
 		"internal/adapter/viewer/skill_governance_handler.go:HandleSkillGovernanceBootstrap":                   {},
 		"internal/adapter/viewer/skill_governance_handler.go:HandleSkillGovernanceContributionGate":            {},
-		"internal/adapter/viewer/superagent_handler.go:handleSuperAgentRunState":                               {},
 		"internal/application/browsertrace/artifacts.go:BuildAPIArtifactsWithValidations":                      {},
 		"internal/application/backlog/service.go:Adopt":                                                        {},
 		"internal/application/dci/explorer.go:Search":                                                          {},
 		"internal/application/heartbeat/service.go:RunBacklogIntake":                                           {},
 		"internal/application/idlechat/orchestrator.go:applyPersonaCanonicalResponse":                          {},
 		"internal/application/idlechat/orchestrator.go:recordPersonaTimelineEvent":                             {},
-		"internal/application/orchestrator/ai_workflow_events.go:recordHeavyWorkflowEvent":                     {},
 		"internal/application/orchestrator/message_orchestrator_persona.go:applyPersonaCanonicalResponse":      {},
 		"internal/application/orchestrator/message_orchestrator_persona.go:recordPersonaRuntimeObservation":    {},
 		"internal/application/orchestrator/superagent_runtime.go:leadAgentRunID":                               {},
-		"internal/application/orchestrator/superagent_runtime.go:leadAgentTraceEventID":                        {},
-		"internal/application/subagent/manager.go:recordSuperAgentSubagentFinished":                            {},
-		"internal/application/subagent/manager.go:recordSuperAgentSubagentStarted":                             {},
 		"internal/domain/conversation/conversation_turn.go:ConversationTurnMessageIDs":                         {},
 		"internal/application/skillgovernance/bootstrap_service.go:Record":                                     {},
 		"internal/application/skillgovernance/coder_evidence_service.go:saveCoderTranscriptEntries":            {},
-		"internal/infrastructure/llm/middleware/context_budget.go:recordContextBudget":                         {},
 		"internal/infrastructure/stt/provider.go:NextEventID":                                                  {},
-		"internal/infrastructure/tools/context_budget_runner.go:recordContextBudget":                           {},
 		"internal/infrastructure/tools/harness_runner.go:record":                                               {},
 		"internal/infrastructure/tools/runner.go:recordToolMediation":                                          {},
 	}
@@ -176,4 +168,64 @@ func canonicalGeneratorLiteral(node ast.Node) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func TestCanonicalEventRuntimeHasNoLegacyOwnerEventContract(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve current file")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	legacyTokens := []string{"WorkflowEvent", "TraceEvent", "ParentEventID", "parent_event_id", "workflow_event", "trace_event", "viewer_log", "orchestrator_event_log"}
+	var violations []string
+	err := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			name := entry.Name()
+			if name == ".git" || name == "vendor" || name == "node_modules" || name == "Tmp" {
+				return filepath.SkipDir
+			}
+			cleanPath := filepath.Clean(path)
+			if cleanPath == filepath.Join(repoRoot, "internal", "application", "identitymigration") ||
+				cleanPath == filepath.Join(repoRoot, "internal", "infrastructure", "persistence", "eventmigration") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		relative := strings.TrimPrefix(path, repoRoot+string(filepath.Separator))
+		for _, token := range legacyTokens {
+			if relative == "internal/adapter/config/config.go" && token == "viewer_log" {
+				continue
+			}
+			if strings.Contains(string(content), token) {
+				violations = append(violations, relative+":"+token)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan Go source: %v", err)
+	}
+	for _, retired := range []string{
+		"internal/adapter/viewer/event_log_store.go",
+		"internal/adapter/viewer/event_log_gc.go",
+		"cmd/rencrow/runtime_data_write_adapters_e.go",
+	} {
+		if _, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(retired))); !os.IsNotExist(err) {
+			violations = append(violations, "retired path remains:"+retired)
+		}
+	}
+	sort.Strings(violations)
+	if len(violations) != 0 {
+		t.Fatalf("legacy Event contract remains in runtime source: %v", violations)
+	}
 }

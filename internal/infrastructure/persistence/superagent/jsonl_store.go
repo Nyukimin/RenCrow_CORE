@@ -19,7 +19,6 @@ type JSONLStore struct {
 	subagentTaskPath   string
 	contextPackPath    string
 	messageChannelPath string
-	traceEventPath     string
 	runQueuePath       string
 	maxContextTokens   int
 }
@@ -33,7 +32,6 @@ func NewJSONLStore(root string, maxContextTokens int) *JSONLStore {
 		subagentTaskPath:   filepath.Join(root, "subagent_task.jsonl"),
 		contextPackPath:    filepath.Join(root, "context_pack.jsonl"),
 		messageChannelPath: filepath.Join(root, "message_channel.jsonl"),
-		traceEventPath:     filepath.Join(root, "trace_event.jsonl"),
 		runQueuePath:       filepath.Join(root, "run_queue.jsonl"),
 		maxContextTokens:   maxContextTokens,
 	}
@@ -158,50 +156,6 @@ func (s *JSONLStore) ListMessageChannels(_ context.Context, limit int) ([]domain
 		return nil
 	})
 	return reverseLimit(items, normalizedLimit(limit)), err
-}
-
-func (s *JSONLStore) SaveTraceEvent(_ context.Context, item domainsuperagent.TraceEvent) error {
-	if err := domainsuperagent.ValidateTraceEvent(item); err != nil {
-		return err
-	}
-	return appendJSONL(s.traceEventPath, item)
-}
-
-func (s *JSONLStore) ListTraceEvents(_ context.Context, limit int) ([]domainsuperagent.TraceEvent, error) {
-	var items []domainsuperagent.TraceEvent
-	err := readJSONL(s.traceEventPath, func(line []byte) error {
-		var item domainsuperagent.TraceEvent
-		if err := json.Unmarshal(line, &item); err != nil {
-			return err
-		}
-		items = append(items, item)
-		return nil
-	})
-	return reverseLimit(items, normalizedLimit(limit)), err
-}
-
-// FindTraceEventByID returns the latest valid record with exactly the requested event ID.
-func (s *JSONLStore) FindTraceEventByID(_ context.Context, eventID string) (domainsuperagent.TraceEvent, bool, error) {
-	var found domainsuperagent.TraceEvent
-	foundRecord := false
-	err := readJSONL(s.traceEventPath, func(line []byte) error {
-		var item domainsuperagent.TraceEvent
-		if err := json.Unmarshal(line, &item); err != nil {
-			return err
-		}
-		if err := domainsuperagent.ValidateTraceEvent(item); err != nil {
-			return err
-		}
-		if item.EventID == eventID {
-			found = item
-			foundRecord = true
-		}
-		return nil
-	})
-	if err != nil {
-		return domainsuperagent.TraceEvent{}, false, err
-	}
-	return found, foundRecord, err
 }
 
 func (s *JSONLStore) SaveRunQueueItem(_ context.Context, item domainsuperagent.RunQueueItem) error {

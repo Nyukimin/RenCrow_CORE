@@ -24,7 +24,6 @@ type Routes struct {
 	SubagentTask     http.HandlerFunc
 	ContextPack      http.HandlerFunc
 	MessageChannel   http.HandlerFunc
-	TraceEvent       http.HandlerFunc
 }
 
 // RegisterRoutes registers handlers at the feature route boundary.
@@ -40,7 +39,6 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/superagent/subagent-tasks", routes.SubagentTask)
 	registerRoute(mux, "/viewer/superagent/context-packs", routes.ContextPack)
 	registerRoute(mux, "/viewer/superagent/message-channels", routes.MessageChannel)
-	registerRoute(mux, "/viewer/superagent/trace-events", routes.TraceEvent)
 }
 
 // StartBackground reserves the feature background-job boundary.

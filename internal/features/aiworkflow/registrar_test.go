@@ -10,7 +10,6 @@ func TestRegisterRoutesRegistersAIWorkflowPaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
 		Status:                  statusHandler(http.StatusOK),
-		Event:                   statusHandler(http.StatusCreated),
 		ProjectMemory:           statusHandler(http.StatusAccepted),
 		Worktree:                statusHandler(http.StatusNoContent),
 		Command:                 statusHandler(http.StatusPartialContent),
@@ -30,7 +29,6 @@ func TestRegisterRoutesRegistersAIWorkflowPaths(t *testing.T) {
 		want int
 	}{
 		{path: "/viewer/ai-workflow", want: http.StatusOK},
-		{path: "/viewer/ai-workflow/events", want: http.StatusCreated},
 		{path: "/viewer/ai-workflow/project-memory", want: http.StatusAccepted},
 		{path: "/viewer/ai-workflow/worktrees", want: http.StatusNoContent},
 		{path: "/viewer/ai-workflow/commands", want: http.StatusPartialContent},

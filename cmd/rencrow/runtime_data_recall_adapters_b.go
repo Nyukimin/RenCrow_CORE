@@ -9,14 +9,13 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	appstore "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
-	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domainbrowser "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
 	domaindurable "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
-	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type runtimePersonaObservationExactFinder interface {
@@ -29,14 +28,6 @@ type runtimeBrowserTraceValidationExactFinder interface {
 
 type runtimeComplexityReportExactFinder interface {
 	FindReportArtifactByID(context.Context, string) (domaincomplexity.ReportArtifact, bool, error)
-}
-
-type runtimeSuperAgentTraceExactFinder interface {
-	FindTraceEventByID(context.Context, string) (domainsuperagent.TraceEvent, bool, error)
-}
-
-type runtimeAIWorkflowEventExactFinder interface {
-	FindWorkflowEventByID(context.Context, string) (domainai.WorkflowEvent, bool, error)
 }
 
 func registerRuntimeDataRecallPersonaArchitecture(r *runtimeDataRecallRegistry, s viewer.PersonaObservationLister) error {
@@ -221,22 +212,22 @@ func registerRuntimeDataRecallSuperAgentHarness(r *runtimeDataRecallRegistry, s 
 	})
 }
 
-func registerRuntimeDataRecallSuperAgentTraceEvents(r *runtimeDataRecallRegistry, s runtimeSuperAgentTraceExactFinder) error {
+func registerRuntimeDataRecallCanonicalEvents(r *runtimeDataRecallRegistry, s modulecore.EventReader) error {
 	if r == nil || s == nil {
-		return fmt.Errorf("superagent trace recall unavailable")
+		return fmt.Errorf("canonical event recall unavailable")
 	}
-	return r.Register("super_agent_harness", "trace_events", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
-		item, found, err := s.FindTraceEventByID(ctx, q.Query)
+	return r.Register("canonical_event", "envelope", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		eventID := modulecore.EventID(strings.TrimSpace(q.Query))
+		if err := eventID.Validate(); err != nil {
+			return runtimeDataRecallResult{}, fmt.Errorf("event_id: %w", err)
+		}
+		item, found, err := s.GetByID(ctx, eventID)
 		if err != nil {
 			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		if found {
-			records = append(records, map[string]any{
-				"event_id": item.EventID, "parent_event_id": item.ParentEventID, "run_id": item.RunID,
-				"event_type": item.EventType, "actor": item.Actor, "payload_summary": item.PayloadSummary,
-				"status": item.Status, "created_at": item.CreatedAt,
-			})
+			records = append(records, map[string]any{"event": item})
 		}
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
 	})
@@ -256,29 +247,6 @@ func registerRuntimeDataRecallAIWorkflow(r *runtimeDataRecallRegistry, s viewer.
 			if dataRecallMatches(q.Query, v.CommandName, v.Description) {
 				records = append(records, map[string]any{"command": v.CommandName, "name": strings.TrimPrefix(v.CommandName, "/"), "description": v.Description, "status": "registered"})
 			}
-		}
-		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
-	})
-}
-
-func registerRuntimeDataRecallAIWorkflowEvents(r *runtimeDataRecallRegistry, s runtimeAIWorkflowEventExactFinder) error {
-	if r == nil || s == nil {
-		return fmt.Errorf("ai workflow event recall unavailable")
-	}
-	return r.Register("ai_workflow", "workflow_events", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
-		item, found, err := s.FindWorkflowEventByID(ctx, q.Query)
-		if err != nil {
-			return runtimeDataRecallResult{}, err
-		}
-		records := []map[string]any{}
-		if found {
-			records = append(records, map[string]any{
-				"event_id": item.EventID, "parent_event_id": item.ParentEventID, "run_id": item.RunID,
-				"workstream_id": item.WorkstreamID, "event_type": item.EventType, "agent": item.Agent,
-				"repo": item.Repo, "worktree_id": item.WorktreeID, "command_name": item.CommandName,
-				"skill_name": item.SkillName, "status": item.Status, "summary": item.Summary,
-				"created_at": item.CreatedAt, "completed_at": item.CompletedAt,
-			})
 		}
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
 	})

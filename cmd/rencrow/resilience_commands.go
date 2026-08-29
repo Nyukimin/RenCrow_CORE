@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -18,7 +17,9 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/resilience"
+	eventpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 )
 
 const (
@@ -528,38 +529,28 @@ func findRepairResult(jobID string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	path := cfg.ViewerLog.Path
-	f, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", false, nil
-	}
+	store, err := eventpersistence.NewSQLiteStore(cfg.Storage.Databases.EventStore)
 	if err != nil {
 		return "", false, err
 	}
-	defer f.Close()
-	if info, statErr := f.Stat(); statErr == nil && info.Size() > 8<<20 {
-		_, _ = f.Seek(info.Size()-(8<<20), io.SeekStart)
-		_, _ = bufio.NewReader(f).ReadString('\n')
+	defer store.Close()
+	projection, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		return "", false, err
 	}
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64<<10), 2<<20)
-	result := ""
-	for scanner.Scan() {
-		var event struct {
-			Type  string `json:"type"`
-			JobID string `json:"job_id"`
-		}
-		if json.Unmarshal(scanner.Bytes(), &event) != nil || event.JobID != jobID {
-			continue
-		}
+	events, err := projection.Query(context.Background(), viewer.LogFilter{JobID: jobID, Limit: 1000})
+	if err != nil {
+		return "", false, err
+	}
+	for _, event := range events {
 		switch event.Type {
 		case "repair.completed":
-			result = "completed"
+			return "completed", true, nil
 		case "repair.failed", "repair.start_failed":
-			result = "failed"
+			return "failed", true, nil
 		}
 	}
-	return result, result != "", scanner.Err()
+	return "", false, nil
 }
 
 func buildInstallAndRestart() error {

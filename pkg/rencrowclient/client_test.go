@@ -9,7 +9,24 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func canonicalTestEvent(componentID, eventType string, occurredAt time.Time, payload map[string]any) modulecore.EventEnvelope {
+	return modulecore.NewRootEventEnvelope(componentID, eventType, occurredAt, payload)
+}
+
+func canonicalTestCommandEvent(occurredAt time.Time, commandName, status, runID, workstreamID string) modulecore.EventEnvelope {
+	event := canonicalTestEvent("ai_workflow", "command.invoked", occurredAt, map[string]any{
+		"agent_label":  "Worker",
+		"command_name": commandName,
+		"status":       status,
+	})
+	event.RunID = modulecore.RunID(runID)
+	event.WorkstreamID = modulecore.WorkstreamID(workstreamID)
+	return event
+}
 
 func newNoRequestClient(t *testing.T) (*Client, *bool, func()) {
 	t.Helper()
@@ -164,22 +181,33 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 			want: "missing created_at",
 		},
 		{
-			name: "duplicate trace event",
-			resp: SuperAgentStatus{TraceEvents: []TraceEvent{
-				{EventID: "evt_1", EventType: "lead_agent_started", Status: "started", CreatedAt: now},
-				{EventID: "evt_1", EventType: "lead_agent_completed", Status: "completed", CreatedAt: now.Add(time.Second)},
-			}},
-			want: "duplicate trace_event",
+			name: "duplicate event",
+			resp: func() SuperAgentStatus {
+				event := canonicalTestEvent("superagent", "run.started", now, map[string]any{"status": "started"})
+				duplicate := event
+				duplicate.EventType = "run.completed"
+				duplicate.OccurredAt = now.Add(time.Second)
+				return SuperAgentStatus{Events: []modulecore.EventEnvelope{event, duplicate}}
+			}(),
+			want: "duplicate event",
 		},
 		{
-			name: "trace event missing type",
-			resp: SuperAgentStatus{TraceEvents: []TraceEvent{{EventID: "evt_1", Status: "completed"}}},
-			want: "missing event_type",
+			name: "event missing type",
+			resp: func() SuperAgentStatus {
+				event := canonicalTestEvent("superagent", "run.completed", now, map[string]any{"status": "completed"})
+				event.EventType = ""
+				return SuperAgentStatus{Events: []modulecore.EventEnvelope{event}}
+			}(),
+			want: "event_type is required",
 		},
 		{
-			name: "trace event missing created at",
-			resp: SuperAgentStatus{TraceEvents: []TraceEvent{{EventID: "evt_1", EventType: "lead_agent_completed", Status: "completed"}}},
-			want: "missing created_at",
+			name: "event missing occurred at",
+			resp: func() SuperAgentStatus {
+				event := canonicalTestEvent("superagent", "run.completed", now, map[string]any{"status": "completed"})
+				event.OccurredAt = time.Time{}
+				return SuperAgentStatus{Events: []modulecore.EventEnvelope{event}}
+			}(),
+			want: "occurred_at is required",
 		},
 		{
 			name: "missing queue id",
@@ -661,82 +689,6 @@ func TestCreateAgentRunRejectsInvalidRequest(t *testing.T) {
 	}
 }
 
-func TestCreateTraceEvent(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/trace-events" {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		var item TraceEvent
-		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-			t.Fatal(err)
-		}
-		if item.EventID != "event_1" || item.EventType != "run_started" || item.Status != "ok" {
-			t.Fatalf("payload=%#v", item)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-	client, err := New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = client.CreateTraceEvent(context.Background(), TraceEvent{
-		EventID:   "event_1",
-		RunID:     "run_1",
-		EventType: "run_started",
-		Status:    "ok",
-		CreatedAt: time.Now().UTC(),
-	})
-	if err != nil {
-		t.Fatalf("CreateTraceEvent() error = %v", err)
-	}
-}
-
-func TestCreateTraceEventRejectsInvalidRequest(t *testing.T) {
-	tests := []struct {
-		name string
-		item TraceEvent
-		want string
-	}{
-		{
-			name: "missing event id",
-			item: TraceEvent{EventType: "run_started", Status: "ok"},
-			want: "missing event_id",
-		},
-		{
-			name: "missing event type",
-			item: TraceEvent{EventID: "event_1", Status: "ok"},
-			want: "missing event_type",
-		},
-		{
-			name: "missing status",
-			item: TraceEvent{EventID: "event_1", EventType: "run_started"},
-			want: "missing status",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			called := false
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				called = true
-				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-			}))
-			defer server.Close()
-			client, err := New(server.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = client.CreateTraceEvent(context.Background(), tt.item)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("CreateTraceEvent() error = %v, want %q", err, tt.want)
-			}
-			if called {
-				t.Fatal("server was called for invalid request")
-			}
-		})
-	}
-}
-
 func TestRunQueueClientFlow(t *testing.T) {
 	var paths []string
 	now := time.Date(2026, 5, 20, 5, 40, 0, 0, time.UTC)
@@ -1192,17 +1144,15 @@ func TestEvaluateHeavyWorker(t *testing.T) {
 		if req.EventID != "evt_parent_1" || req.Agent != "Worker" || !req.UserRequestedDeepDive {
 			t.Fatalf("payload=%#v", req)
 		}
+		event := canonicalTestEvent("ai_workflow", "heavy_worker.requested", now, map[string]any{
+			"source_record_id": req.EventID,
+			"agent_label":      req.Agent,
+			"status":           "requested",
+		})
 		_ = json.NewEncoder(w).Encode(HeavyWorkerResponse{
 			Request:  req,
 			Decision: HeavyWorkerDecision{Status: "requested", Reasons: []string{"user requested deep dive"}},
-			Event: &WorkflowEvent{
-				EventID:       "heavy_worker:evt_parent_1",
-				ParentEventID: "evt_parent_1",
-				EventType:     "heavy_worker_requested",
-				Agent:         "Worker",
-				Status:        "requested",
-				CreatedAt:     now,
-			},
+			Event:    &event,
 		})
 	}))
 	defer server.Close()
@@ -1219,8 +1169,13 @@ func TestEvaluateHeavyWorker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvaluateHeavyWorker() error = %v", err)
 	}
-	if resp.Decision.Status != "requested" || resp.Event == nil || resp.Event.ParentEventID != "evt_parent_1" {
+	if resp.Decision.Status != "requested" || resp.Event == nil ||
+		eventPayloadString(*resp.Event, "source_record_id") != "evt_parent_1" ||
+		resp.Event.CausationEventID != "" {
 		t.Fatalf("response=%#v", resp)
+	}
+	if err := modulecore.ValidateEventEnvelope(*resp.Event); err != nil {
+		t.Fatalf("canonical event invalid: %v", err)
 	}
 }
 
@@ -1258,11 +1213,16 @@ func TestEvaluateHeavyWorkerRejectsMalformedResponse(t *testing.T) {
 	}{
 		{
 			name: "request mismatch",
-			resp: HeavyWorkerResponse{
-				Request:  HeavyWorkerRequest{EventID: "other", Agent: "Worker", UserRequestedDeepDive: true, Reason: "deep investigation requested"},
-				Decision: HeavyWorkerDecision{Status: "requested", Reasons: []string{"user requested deep dive"}},
-				Event:    &WorkflowEvent{EventID: "heavy_worker:evt_parent_1", ParentEventID: "evt_parent_1", EventType: "heavy_worker_requested", Agent: "Worker", Status: "requested", CreatedAt: now},
-			},
+			resp: func() HeavyWorkerResponse {
+				event := canonicalTestEvent("ai_workflow", "heavy_worker.requested", now, map[string]any{
+					"source_record_id": req.EventID, "agent_label": req.Agent, "status": "requested",
+				})
+				return HeavyWorkerResponse{
+					Request:  HeavyWorkerRequest{EventID: "other", Agent: "Worker", UserRequestedDeepDive: true, Reason: "deep investigation requested"},
+					Decision: HeavyWorkerDecision{Status: "requested", Reasons: []string{"user requested deep dive"}},
+					Event:    &event,
+				}
+			}(),
 			want: "request mismatch",
 		},
 		{
@@ -1275,30 +1235,46 @@ func TestEvaluateHeavyWorkerRejectsMalformedResponse(t *testing.T) {
 		},
 		{
 			name: "blocked with event",
-			resp: HeavyWorkerResponse{
-				Request:  req,
-				Decision: HeavyWorkerDecision{Status: "blocked", Reasons: []string{"reason is required"}},
-				Event:    &WorkflowEvent{EventID: "evt_1", EventType: "heavy_worker_requested", Agent: "Worker", Status: "requested"},
-			},
+			resp: func() HeavyWorkerResponse {
+				event := canonicalTestEvent("ai_workflow", "heavy_worker.requested", now, map[string]any{
+					"source_record_id": req.EventID, "agent_label": req.Agent, "status": "requested",
+				})
+				return HeavyWorkerResponse{
+					Request:  req,
+					Decision: HeavyWorkerDecision{Status: "blocked", Reasons: []string{"reason is required"}},
+					Event:    &event,
+				}
+			}(),
 			want: "should not include event",
 		},
 		{
 			name: "requested wrong event type",
-			resp: HeavyWorkerResponse{
-				Request:  req,
-				Decision: HeavyWorkerDecision{Status: "requested", Reasons: []string{"user requested deep dive"}},
-				Event:    &WorkflowEvent{EventID: "evt_1", ParentEventID: "evt_parent_1", EventType: "heavy_worker_started", Agent: "Worker", Status: "requested", CreatedAt: now},
-			},
+			resp: func() HeavyWorkerResponse {
+				event := canonicalTestEvent("ai_workflow", "heavy_worker.started", now, map[string]any{
+					"source_record_id": req.EventID, "agent_label": req.Agent, "status": "requested",
+				})
+				return HeavyWorkerResponse{
+					Request:  req,
+					Decision: HeavyWorkerDecision{Status: "requested", Reasons: []string{"user requested deep dive"}},
+					Event:    &event,
+				}
+			}(),
 			want: "event_type mismatch",
 		},
 		{
 			name: "requested event missing created at",
-			resp: HeavyWorkerResponse{
-				Request:  req,
-				Decision: HeavyWorkerDecision{Status: "requested", Reasons: []string{"user requested deep dive"}},
-				Event:    &WorkflowEvent{EventID: "evt_1", ParentEventID: "evt_parent_1", EventType: "heavy_worker_requested", Agent: "Worker", Status: "requested"},
-			},
-			want: "event missing created_at",
+			resp: func() HeavyWorkerResponse {
+				event := canonicalTestEvent("ai_workflow", "heavy_worker.requested", now, map[string]any{
+					"source_record_id": req.EventID, "agent_label": req.Agent, "status": "requested",
+				})
+				event.OccurredAt = time.Time{}
+				return HeavyWorkerResponse{
+					Request:  req,
+					Decision: HeavyWorkerDecision{Status: "requested", Reasons: []string{"user requested deep dive"}},
+					Event:    &event,
+				}
+			}(),
+			want: "occurred_at is required",
 		},
 		{
 			name: "invalid status",
@@ -1404,6 +1380,8 @@ func TestHeavyWorkerRuntimeDiagnosticsRejectsMalformedResponse(t *testing.T) {
 
 func TestRunCommand(t *testing.T) {
 	now := time.Date(2026, 5, 20, 5, 45, 0, 0, time.UTC)
+	runID := string(modulecore.NewRunID())
+	workstreamID := string(modulecore.NewWorkstreamID())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/viewer/ai-workflow/commands/run" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -1412,12 +1390,13 @@ func TestRunCommand(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.CommandName != "review-architecture" || req.Text != "target docs" || req.RunID != "run_1" || req.WorkstreamID != "ws_1" {
+		if req.CommandName != "review-architecture" || req.Text != "target docs" || req.RunID != runID || req.WorkstreamID != workstreamID {
 			t.Fatalf("payload=%#v", req)
 		}
+		event := canonicalTestCommandEvent(now, req.CommandName, "requested", req.RunID, req.WorkstreamID)
 		_ = json.NewEncoder(w).Encode(CommandRunResponse{
 			Command: CommandRegistry{CommandName: req.CommandName},
-			Event:   WorkflowEvent{EventID: "evt_1", RunID: req.RunID, WorkstreamID: req.WorkstreamID, EventType: "command_invoked", CommandName: req.CommandName, Status: "requested", CreatedAt: now},
+			Event:   event,
 		})
 	}))
 	defer server.Close()
@@ -1425,12 +1404,16 @@ func TestRunCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := client.RunCommand(context.Background(), CommandRunRequest{CommandName: "review-architecture", RunID: "run_1", WorkstreamID: "ws_1", Text: "target docs"})
+	resp, err := client.RunCommand(context.Background(), CommandRunRequest{CommandName: "review-architecture", RunID: runID, WorkstreamID: workstreamID, Text: "target docs"})
 	if err != nil {
 		t.Fatalf("RunCommand() error = %v", err)
 	}
-	if resp.Event.EventID != "evt_1" || resp.Event.Status != "requested" || resp.Event.RunID != "run_1" || resp.Event.WorkstreamID != "ws_1" {
+	if resp.Event.EventID == "" || eventPayloadString(resp.Event, "status") != "requested" ||
+		string(resp.Event.RunID) != runID || string(resp.Event.WorkstreamID) != workstreamID {
 		t.Fatalf("response=%#v", resp)
+	}
+	if err := modulecore.ValidateEventEnvelope(resp.Event); err != nil {
+		t.Fatalf("canonical event invalid: %v", err)
 	}
 }
 
@@ -1448,6 +1431,8 @@ func TestRunCommandRejectsInvalidRequest(t *testing.T) {
 
 func TestRunCommandRejectsMalformedResponse(t *testing.T) {
 	now := time.Date(2026, 5, 20, 5, 45, 0, 0, time.UTC)
+	runID := string(modulecore.NewRunID())
+	workstreamID := string(modulecore.NewWorkstreamID())
 	tests := []struct {
 		name string
 		resp CommandRunResponse
@@ -1455,50 +1440,69 @@ func TestRunCommandRejectsMalformedResponse(t *testing.T) {
 	}{
 		{
 			name: "command mismatch",
-			resp: CommandRunResponse{
-				Command: CommandRegistry{CommandName: "other-command"},
-				Event:   WorkflowEvent{EventID: "evt_1", EventType: "command_invoked", CommandName: "review-architecture", Status: "requested"},
-			},
+			resp: func() CommandRunResponse {
+				event := canonicalTestCommandEvent(now, "review-architecture", "requested", runID, workstreamID)
+				return CommandRunResponse{
+					Command: CommandRegistry{CommandName: "other-command"},
+					Event:   event,
+				}
+			}(),
 			want: "command_name mismatch",
 		},
 		{
 			name: "missing event id",
-			resp: CommandRunResponse{
-				Command: CommandRegistry{CommandName: "review-architecture"},
-				Event:   WorkflowEvent{EventType: "command_invoked", CommandName: "review-architecture", Status: "requested"},
-			},
-			want: "missing event_id",
+			resp: func() CommandRunResponse {
+				event := canonicalTestCommandEvent(now, "review-architecture", "requested", runID, workstreamID)
+				event.EventID = ""
+				return CommandRunResponse{
+					Command: CommandRegistry{CommandName: "review-architecture"},
+					Event:   event,
+				}
+			}(),
+			want: "event_id: canonical ID is required",
 		},
 		{
 			name: "wrong status",
-			resp: CommandRunResponse{
-				Command: CommandRegistry{CommandName: "review-architecture"},
-				Event:   WorkflowEvent{EventID: "evt_1", EventType: "command_invoked", CommandName: "review-architecture", Status: "completed"},
-			},
+			resp: func() CommandRunResponse {
+				event := canonicalTestCommandEvent(now, "review-architecture", "completed", runID, workstreamID)
+				return CommandRunResponse{
+					Command: CommandRegistry{CommandName: "review-architecture"},
+					Event:   event,
+				}
+			}(),
 			want: "status mismatch",
 		},
 		{
 			name: "run mismatch",
-			resp: CommandRunResponse{
-				Command: CommandRegistry{CommandName: "review-architecture"},
-				Event:   WorkflowEvent{EventID: "evt_1", RunID: "other_run", WorkstreamID: "ws_1", EventType: "command_invoked", CommandName: "review-architecture", Status: "requested", CreatedAt: now},
-			},
+			resp: func() CommandRunResponse {
+				event := canonicalTestCommandEvent(now, "review-architecture", "requested", string(modulecore.NewRunID()), workstreamID)
+				return CommandRunResponse{
+					Command: CommandRegistry{CommandName: "review-architecture"},
+					Event:   event,
+				}
+			}(),
 			want: "run_id mismatch",
 		},
 		{
 			name: "missing created at",
-			resp: CommandRunResponse{
-				Command: CommandRegistry{CommandName: "review-architecture"},
-				Event:   WorkflowEvent{EventID: "evt_1", RunID: "run_1", WorkstreamID: "ws_1", EventType: "command_invoked", CommandName: "review-architecture", Status: "requested"},
-			},
-			want: "missing created_at",
+			resp: func() CommandRunResponse {
+				event := canonicalTestCommandEvent(time.Time{}, "review-architecture", "requested", runID, workstreamID)
+				return CommandRunResponse{
+					Command: CommandRegistry{CommandName: "review-architecture"},
+					Event:   event,
+				}
+			}(),
+			want: "occurred_at is required",
 		},
 		{
 			name: "valid fixture",
-			resp: CommandRunResponse{
-				Command: CommandRegistry{CommandName: "review-architecture"},
-				Event:   WorkflowEvent{EventID: "evt_1", RunID: "run_1", WorkstreamID: "ws_1", EventType: "command_invoked", CommandName: "review-architecture", Status: "requested", CreatedAt: now},
-			},
+			resp: func() CommandRunResponse {
+				event := canonicalTestCommandEvent(now, "review-architecture", "requested", runID, workstreamID)
+				return CommandRunResponse{
+					Command: CommandRegistry{CommandName: "review-architecture"},
+					Event:   event,
+				}
+			}(),
 			want: "",
 		},
 	}
@@ -1515,7 +1519,7 @@ func TestRunCommandRejectsMalformedResponse(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = client.RunCommand(context.Background(), CommandRunRequest{CommandName: "review-architecture", RunID: "run_1", WorkstreamID: "ws_1"})
+			_, err = client.RunCommand(context.Background(), CommandRunRequest{CommandName: "review-architecture", RunID: runID, WorkstreamID: workstreamID})
 			if tt.want == "" {
 				if err != nil {
 					t.Fatalf("RunCommand() error = %v", err)
@@ -1536,11 +1540,15 @@ func TestAIWorkflowStatusAndContextBudget(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		switch r.URL.Path {
 		case "/viewer/ai-workflow":
+			event := canonicalTestEvent("ai_workflow", "command.invoked", now, map[string]any{
+				"command_name": "review-architecture",
+				"status":       "requested",
+			})
 			if r.Method != http.MethodGet || r.URL.Query().Get("limit") != "25" {
 				t.Fatalf("unexpected request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(AIWorkflowStatus{
-				WorkflowEvents:      []WorkflowEvent{{EventID: "evt_1", EventType: "command_invoked", Status: "requested", CreatedAt: now}},
+				Events:              []modulecore.EventEnvelope{event},
 				CommandRegistries:   []CommandRegistry{{CommandName: "review-architecture", FilePath: "commands/review-architecture.md", UpdatedAt: now}},
 				ContextUsages:       []ContextUsage{{EventID: "ctx_1", SessionID: "ws_1", Agent: "Worker", ContextTokens: 10, CreatedAt: now}},
 				ContextBudgetPolicy: ContextBudgetPolicy{MaxContextTokens: 1000, WarnAtRatio: 0.8, StopAtRatio: 0.95},
@@ -1573,7 +1581,7 @@ func TestAIWorkflowStatusAndContextBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AIWorkflowStatus() error = %v", err)
 	}
-	if len(status.WorkflowEvents) != 1 || status.ContextBudgetPolicy.MaxContextTokens != 1000 {
+	if len(status.Events) != 1 || status.ContextBudgetPolicy.MaxContextTokens != 1000 {
 		t.Fatalf("status=%#v", status)
 	}
 	budget, err := client.CheckContextBudget(context.Background(), ContextUsage{
@@ -1602,22 +1610,31 @@ func TestAIWorkflowStatusRejectsMalformedCurrentView(t *testing.T) {
 		want string
 	}{
 		{
-			name: "duplicate workflow event",
-			resp: AIWorkflowStatus{WorkflowEvents: []WorkflowEvent{
-				{EventID: "evt_1", EventType: "command_invoked", Status: "requested", CreatedAt: now},
-				{EventID: "evt_1", EventType: "command_completed", Status: "completed", CreatedAt: now.Add(time.Second)},
+			name: "duplicate event",
+			resp: func() AIWorkflowStatus {
+				event := canonicalTestEvent("ai_workflow", "command.invoked", now, map[string]any{"status": "requested"})
+				duplicate := event
+				duplicate.EventType = "command.completed"
+				duplicate.OccurredAt = now.Add(time.Second)
+				return AIWorkflowStatus{Events: []modulecore.EventEnvelope{event, duplicate}}
+			}(),
+			want: "duplicate event",
+		},
+		{
+			name: "event component mismatch",
+			resp: AIWorkflowStatus{Events: []modulecore.EventEnvelope{
+				canonicalTestEvent("superagent", "command.invoked", now, map[string]any{"status": "requested"}),
 			}},
-			want: "duplicate workflow_event",
+			want: "has component",
 		},
 		{
-			name: "missing workflow event status",
-			resp: AIWorkflowStatus{WorkflowEvents: []WorkflowEvent{{EventID: "evt_1", EventType: "command_invoked", CreatedAt: now}}},
-			want: "workflow_event missing status",
-		},
-		{
-			name: "missing workflow event created at",
-			resp: AIWorkflowStatus{WorkflowEvents: []WorkflowEvent{{EventID: "evt_1", EventType: "command_invoked", Status: "requested"}}},
-			want: "workflow_event missing created_at",
+			name: "event missing occurred at",
+			resp: func() AIWorkflowStatus {
+				event := canonicalTestEvent("ai_workflow", "command.invoked", now, map[string]any{"status": "requested"})
+				event.OccurredAt = time.Time{}
+				return AIWorkflowStatus{Events: []modulecore.EventEnvelope{event}}
+			}(),
+			want: "occurred_at is required",
 		},
 		{
 			name: "duplicate project memory",
@@ -3790,21 +3807,31 @@ func TestCheckContextBudgetRejectsMalformedResponse(t *testing.T) {
 		{
 			name: "stop wrong event type",
 			req:  ContextUsage{EventID: "ctx_1", Agent: "Worker", ContextTokens: 950, CreatedAt: now},
-			resp: ContextBudgetResponse{
-				ContextUsage: ContextUsage{EventID: "ctx_1", Agent: "Worker", ContextTokens: 950, CreatedAt: now},
-				Decision:     ContextBudgetDecision{Status: "stop", ContextTokens: 950},
-				Event:        &WorkflowEvent{EventID: "evt_1", ParentEventID: "ctx_1", EventType: "context_budget_warning", Status: "stop", CreatedAt: now},
-			},
+			resp: func() ContextBudgetResponse {
+				event := canonicalTestEvent("ai_workflow", "context_budget_warning", now, map[string]any{
+					"context_usage_record_id": "ctx_1", "status": "stop",
+				})
+				return ContextBudgetResponse{
+					ContextUsage: ContextUsage{EventID: "ctx_1", Agent: "Worker", ContextTokens: 950, CreatedAt: now},
+					Decision:     ContextBudgetDecision{Status: "stop", ContextTokens: 950},
+					Event:        &event,
+				}
+			}(),
 			want: "event_type mismatch",
 		},
 		{
 			name: "ok with event",
 			req:  ContextUsage{EventID: "ctx_1", Agent: "Worker", ContextTokens: 10, CreatedAt: now},
-			resp: ContextBudgetResponse{
-				ContextUsage: ContextUsage{EventID: "ctx_1", Agent: "Worker", ContextTokens: 10, CreatedAt: now},
-				Decision:     ContextBudgetDecision{Status: "ok", ContextTokens: 10},
-				Event:        &WorkflowEvent{EventID: "evt_1", ParentEventID: "ctx_1", EventType: "context_budget_warning", Status: "warn", CreatedAt: now},
-			},
+			resp: func() ContextBudgetResponse {
+				event := canonicalTestEvent("ai_workflow", "context_budget_warning", now, map[string]any{
+					"context_usage_record_id": "ctx_1", "status": "warn",
+				})
+				return ContextBudgetResponse{
+					ContextUsage: ContextUsage{EventID: "ctx_1", Agent: "Worker", ContextTokens: 10, CreatedAt: now},
+					Decision:     ContextBudgetDecision{Status: "ok", ContextTokens: 10},
+					Event:        &event,
+				}
+			}(),
 			want: "ok should not include",
 		},
 		{
@@ -3819,12 +3846,18 @@ func TestCheckContextBudgetRejectsMalformedResponse(t *testing.T) {
 		{
 			name: "warn event missing created at",
 			req:  ContextUsage{EventID: "ctx_1", Agent: "Worker", ContextTokens: 850, CreatedAt: now},
-			resp: ContextBudgetResponse{
-				ContextUsage: ContextUsage{EventID: "ctx_1", Agent: "Worker", ContextTokens: 850, CreatedAt: now},
-				Decision:     ContextBudgetDecision{Status: "warn", ContextTokens: 850},
-				Event:        &WorkflowEvent{EventID: "evt_1", ParentEventID: "ctx_1", EventType: "context_budget_warning", Status: "warn"},
-			},
-			want: "event missing created_at",
+			resp: func() ContextBudgetResponse {
+				event := canonicalTestEvent("ai_workflow", "context_budget_warning", now, map[string]any{
+					"context_usage_record_id": "ctx_1", "status": "warn",
+				})
+				event.OccurredAt = time.Time{}
+				return ContextBudgetResponse{
+					ContextUsage: ContextUsage{EventID: "ctx_1", Agent: "Worker", ContextTokens: 850, CreatedAt: now},
+					Decision:     ContextBudgetDecision{Status: "warn", ContextTokens: 850},
+					Event:        &event,
+				}
+			}(),
+			want: "occurred_at is required",
 		},
 	}
 	for _, tt := range tests {

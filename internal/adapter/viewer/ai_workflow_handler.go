@@ -5,30 +5,38 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	aiworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/aiworkflow"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-type AIWorkflowLister interface {
-	ListWorkflowEvents(ctx context.Context, limit int) ([]domainai.WorkflowEvent, error)
+type AIWorkflowStateLister interface {
 	ListProjectMemoryIndexes(ctx context.Context, limit int) ([]domainai.ProjectMemoryIndex, error)
 	ListWorktreeRegistries(ctx context.Context, limit int) ([]domainai.WorktreeRegistry, error)
 	ListCommandRegistries(ctx context.Context, limit int) ([]domainai.CommandRegistry, error)
 	ListContextUsages(ctx context.Context, limit int) ([]domainai.ContextUsage, error)
 }
 
-type AIWorkflowStore interface {
-	AIWorkflowLister
-	SaveWorkflowEvent(ctx context.Context, item domainai.WorkflowEvent) error
+type AIWorkflowStateStore interface {
+	AIWorkflowStateLister
 	SaveProjectMemoryIndex(ctx context.Context, item domainai.ProjectMemoryIndex) error
 	SaveWorktreeRegistry(ctx context.Context, item domainai.WorktreeRegistry) error
 	SaveCommandRegistry(ctx context.Context, item domainai.CommandRegistry) error
 	SaveContextUsage(ctx context.Context, item domainai.ContextUsage) error
+}
+
+type AIWorkflowLister interface {
+	AIWorkflowStateLister
+	modulecore.EventReader
+}
+
+type AIWorkflowStore interface {
+	AIWorkflowStateStore
+	modulecore.EventStore
 }
 
 type AIWorkflowSkillBootstrap interface {
@@ -64,15 +72,14 @@ func HandleAIWorkflowExternalControlCheck(store AIWorkflowStore, policy domainai
 		decision := domainai.EvaluateExternalControl(policy, req)
 		if store != nil {
 			now := time.Now().UTC()
-			_ = store.SaveWorkflowEvent(r.Context(), domainai.WorkflowEvent{
-				EventID:     "evt_external_control_policy_" + strconv.FormatInt(now.UnixNano(), 10),
-				EventType:   "external_control_policy_checked",
-				Agent:       strings.TrimSpace(req.Actor),
-				Status:      decision.Status,
-				CreatedAt:   now,
-				Summary:     strings.TrimSpace(req.ChannelID + " " + req.Action),
-				CompletedAt: now,
+			event := modulecore.NewRootEventEnvelope("ai_workflow", "external_control_policy.checked", now, map[string]any{
+				"actor_label": strings.TrimSpace(req.Actor), "status": decision.Status,
+				"summary": strings.TrimSpace(req.ChannelID + " " + req.Action),
 			})
+			if err := store.Append(r.Context(), event); err != nil {
+				http.Error(w, "failed to save external control policy event", http.StatusInternalServerError)
+				return
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"request":  req,
@@ -100,7 +107,7 @@ func HandleAIWorkflowStatusWithPolicy(store AIWorkflowLister, contextBudgetPolic
 			http.Error(w, "invalid limit", http.StatusBadRequest)
 			return
 		}
-		events, err := store.ListWorkflowEvents(r.Context(), limit)
+		events, err := store.ListByComponent(r.Context(), "ai_workflow", limit)
 		if err != nil {
 			http.Error(w, "failed to load workflow events", http.StatusInternalServerError)
 			return
@@ -126,7 +133,7 @@ func HandleAIWorkflowStatusWithPolicy(store AIWorkflowLister, contextBudgetPolic
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"workflow_events":        nonNilWorkflowEvents(events),
+			"events":                 nonNilEventEnvelopes(events),
 			"project_memory_indexes": nonNilProjectMemoryIndexes(memories),
 			"worktree_registries":    nonNilWorktreeRegistries(worktrees),
 			"command_registries":     nonNilCommandRegistries(commands),
@@ -135,16 +142,6 @@ func HandleAIWorkflowStatusWithPolicy(store AIWorkflowLister, contextBudgetPolic
 			"context_budget_policy":  contextBudgetPolicy,
 		})
 	}
-}
-
-func HandleAIWorkflowEventCreate(store AIWorkflowStore) http.HandlerFunc {
-	return saveAIWorkflowItem(store, "workflow event", func(ctx context.Context, store AIWorkflowStore, dec *json.Decoder) error {
-		var item domainai.WorkflowEvent
-		if err := dec.Decode(&item); err != nil {
-			return err
-		}
-		return store.SaveWorkflowEvent(ctx, item)
-	})
 }
 
 func HandleAIWorkflowProjectMemoryCreate(store AIWorkflowStore) http.HandlerFunc {
@@ -188,7 +185,7 @@ func HandleAIWorkflowCommandRun(store AIWorkflowStore, skills AIWorkflowSkillBoo
 	}
 	type response struct {
 		Command domainai.CommandRegistry      `json:"command"`
-		Event   domainai.WorkflowEvent        `json:"event"`
+		Event   modulecore.EventEnvelope      `json:"event"`
 		Skills  []domainskill.SkillTriggerLog `json:"skills"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -222,18 +219,13 @@ func HandleAIWorkflowCommandRun(store AIWorkflowStore, skills AIWorkflowSkillBoo
 		}
 		agent := firstNonEmptyString(req.Agent, command.DefaultAgent, "Worker")
 		now := time.Now().UTC()
-		event := domainai.WorkflowEvent{
-			EventID:      "command_invoked:" + strings.TrimPrefix(command.CommandName, "/") + ":" + now.Format("20060102150405.000000000"),
-			RunID:        strings.TrimSpace(req.RunID),
-			WorkstreamID: strings.TrimSpace(req.WorkstreamID),
-			EventType:    "command_invoked",
-			Agent:        agent,
-			CommandName:  command.CommandName,
-			Status:       "requested",
-			CreatedAt:    now,
-			Summary:      strings.TrimSpace(req.Text),
-		}
-		if err := store.SaveWorkflowEvent(r.Context(), event); err != nil {
+		event := modulecore.NewRootEventEnvelope("ai_workflow", "command.invoked", now, map[string]any{
+			"agent_label": agent, "command_name": command.CommandName,
+			"status": "requested", "summary": strings.TrimSpace(req.Text),
+		})
+		event.RunID = modulecore.RunID(strings.TrimSpace(req.RunID))
+		event.WorkstreamID = modulecore.WorkstreamID(strings.TrimSpace(req.WorkstreamID))
+		if err := store.Append(r.Context(), event); err != nil {
 			http.Error(w, "failed to save command event: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -276,7 +268,7 @@ func HandleAIWorkflowContextBudgetCheck(store AIWorkflowStore, policy domainai.C
 	type response struct {
 		ContextUsage domainai.ContextUsage          `json:"context_usage"`
 		Decision     domainai.ContextBudgetDecision `json:"decision"`
-		Event        *domainai.WorkflowEvent        `json:"event,omitempty"`
+		Event        *modulecore.EventEnvelope      `json:"event,omitempty"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -301,7 +293,7 @@ func HandleAIWorkflowContextBudgetCheck(store AIWorkflowStore, policy domainai.C
 			http.Error(w, "failed to save context usage: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		var event *domainai.WorkflowEvent
+		var event *modulecore.EventEnvelope
 		switch decision.Status {
 		case domainai.ContextBudgetStatusWarn, domainai.ContextBudgetStatusStop:
 			createdAt := usage.CreatedAt
@@ -312,16 +304,11 @@ func HandleAIWorkflowContextBudgetCheck(store AIWorkflowStore, policy domainai.C
 			if decision.Status == domainai.ContextBudgetStatusStop {
 				eventType = "context_budget_exceeded"
 			}
-			item := domainai.WorkflowEvent{
-				EventID:       "context_budget:" + usage.EventID,
-				ParentEventID: usage.EventID,
-				EventType:     eventType,
-				Agent:         usage.Agent,
-				Status:        decision.Status,
-				CreatedAt:     createdAt,
-				Summary:       decision.Reason,
-			}
-			if err := store.SaveWorkflowEvent(r.Context(), item); err != nil {
+			item := modulecore.NewRootEventEnvelope("ai_workflow", eventType, createdAt, map[string]any{
+				"context_usage_record_id": usage.EventID, "agent_label": usage.Agent,
+				"status": decision.Status, "summary": decision.Reason,
+			})
+			if err := store.Append(r.Context(), item); err != nil {
 				http.Error(w, "failed to save context budget event: "+err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -339,7 +326,7 @@ func HandleAIWorkflowHeavyWorkerEvaluate(store AIWorkflowStore, policy domainai.
 	type response struct {
 		Request  domainai.HeavyWorkerRequest  `json:"request"`
 		Decision domainai.HeavyWorkerDecision `json:"decision"`
-		Event    *domainai.WorkflowEvent      `json:"event,omitempty"`
+		Event    *modulecore.EventEnvelope    `json:"event,omitempty"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -356,25 +343,14 @@ func HandleAIWorkflowHeavyWorkerEvaluate(store AIWorkflowStore, policy domainai.
 			return
 		}
 		decision := domainai.EvaluateHeavyWorker(req, policy)
-		var event *domainai.WorkflowEvent
+		var event *modulecore.EventEnvelope
 		if decision.Status == domainai.HeavyWorkerStatusRequested {
 			createdAt := time.Now().UTC()
-			eventID := "heavy_worker_requested"
-			if req.EventID != "" {
-				eventID = "heavy_worker:" + req.EventID
-			}
-			item := domainai.WorkflowEvent{
-				EventID:   eventID,
-				EventType: "heavy_worker_requested",
-				Agent:     req.Agent,
-				Status:    decision.Status,
-				CreatedAt: createdAt,
-				Summary:   strings.Join(decision.Reasons, "; "),
-			}
-			if req.EventID != "" {
-				item.ParentEventID = req.EventID
-			}
-			if err := store.SaveWorkflowEvent(r.Context(), item); err != nil {
+			item := modulecore.NewRootEventEnvelope("ai_workflow", "heavy_worker.requested", createdAt, map[string]any{
+				"source_record_id": req.EventID, "agent_label": req.Agent,
+				"status": decision.Status, "summary": strings.Join(decision.Reasons, "; "),
+			})
+			if err := store.Append(r.Context(), item); err != nil {
 				http.Error(w, "failed to save heavy worker event: "+err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -574,7 +550,7 @@ func stringSliceContains(values []string, want string) bool {
 	return false
 }
 
-func buildUsageContinuitySnapshots(events []domainai.WorkflowEvent, usages []domainai.ContextUsage, limit int) []UsageContinuitySnapshot {
+func buildUsageContinuitySnapshots(events []modulecore.EventEnvelope, usages []domainai.ContextUsage, limit int) []UsageContinuitySnapshot {
 	if len(usages) == 0 {
 		return []UsageContinuitySnapshot{}
 	}
@@ -646,21 +622,21 @@ func contextUsageScopes(usage domainai.ContextUsage) []usageScope {
 	return out
 }
 
-func latestRunStatesByScope(events []domainai.WorkflowEvent) map[string]string {
+func latestRunStatesByScope(events []modulecore.EventEnvelope) map[string]string {
 	out := map[string]string{}
 	latest := map[string]time.Time{}
 	for _, event := range events {
 		for _, scope := range []usageScope{
-			{Scope: "workstream", ScopeID: strings.TrimSpace(event.WorkstreamID)},
-			{Scope: "run", ScopeID: strings.TrimSpace(event.RunID)},
+			{Scope: "workstream", ScopeID: strings.TrimSpace(string(event.WorkstreamID))},
+			{Scope: "run", ScopeID: strings.TrimSpace(string(event.RunID))},
 		} {
 			if scope.ScopeID == "" {
 				continue
 			}
 			key := scope.Scope + "\x00" + scope.ScopeID
-			if event.CreatedAt.After(latest[key]) || latest[key].IsZero() {
-				latest[key] = event.CreatedAt
-				out[key] = strings.TrimSpace(event.Status)
+			if event.OccurredAt.After(latest[key]) || latest[key].IsZero() {
+				latest[key] = event.OccurredAt
+				out[key], _ = event.Payload["status"].(string)
 			}
 		}
 	}
@@ -685,9 +661,9 @@ func saveAIWorkflowItem(store AIWorkflowStore, name string, save func(context.Co
 	}
 }
 
-func nonNilWorkflowEvents(items []domainai.WorkflowEvent) []domainai.WorkflowEvent {
+func nonNilEventEnvelopes(items []modulecore.EventEnvelope) []modulecore.EventEnvelope {
 	if items == nil {
-		return []domainai.WorkflowEvent{}
+		return []modulecore.EventEnvelope{}
 	}
 	return items
 }

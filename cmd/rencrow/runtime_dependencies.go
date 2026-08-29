@@ -65,6 +65,7 @@ import (
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/userhome"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
@@ -72,6 +73,11 @@ import (
 )
 
 // Dependencies はアプリケーション依存関係
+type runtimeCanonicalEventStore interface {
+	modulecore.EventStore
+	Close() error
+}
+
 type Dependencies struct {
 	redisHealthCheck               func(context.Context) error
 	dataCapabilityCatalog          *runtimeDataCapabilityCatalog
@@ -81,8 +87,8 @@ type Dependencies struct {
 	slackHandler                   http.Handler
 	eventHub                       *viewer.EventHub                            // live viewer
 	monitorStore                   *viewer.MonitorStore                        // viewer monitor snapshots
-	eventLogStore                  *viewer.EventLogStore                       // persisted orchestrator event log
-	eventLogGC                     *viewer.EventLogGCService                   // persisted event log GC
+	eventLogStore                  *viewer.CanonicalEventLog                   // canonical orchestrator event projection
+	canonicalEventStore            runtimeCanonicalEventStore                  // canonical append-only Event Store
 	reportStore                    *executionpersistence.JSONLReportStore      // execution evidence store
 	eventRelay                     *idleAwareEventListener                     // viewer + idlechat stop relay
 	viewerStatus                   http.HandlerFunc                            // viewer status API
@@ -239,11 +245,9 @@ type Dependencies struct {
 	superAgentSubagentTask         http.HandlerFunc                            // viewer subagent task API
 	superAgentContextPack          http.HandlerFunc                            // viewer context pack API
 	superAgentMessageChannel       http.HandlerFunc                            // viewer message channel API
-	superAgentTraceEvent           http.HandlerFunc                            // viewer trace event API
 	superAgentStore                viewer.SuperAgentStore                      // SuperAgent runtime telemetry store
 	superAgentRunController        *superagentapp.RunController                // SuperAgent runtime pause/resume controller
 	aiWorkflowStatus               http.HandlerFunc                            // viewer AI workflow status API
-	aiWorkflowEvent                http.HandlerFunc                            // viewer AI workflow event API
 	aiWorkflowProjectMemory        http.HandlerFunc                            // viewer project memory index API
 	aiWorkflowWorktree             http.HandlerFunc                            // viewer worktree registry API
 	aiWorkflowCommand              http.HandlerFunc                            // viewer command registry API
@@ -347,9 +351,6 @@ func (d *Dependencies) Shutdown() {
 	if d.gameAutoplay != nil {
 		d.gameAutoplay.Stop()
 	}
-	if d.eventLogGC != nil {
-		d.eventLogGC.Stop()
-	}
 	if d.heartbeatSvc != nil {
 		d.heartbeatSvc.Stop()
 	}
@@ -412,6 +413,11 @@ func (d *Dependencies) Shutdown() {
 	if d.eventRelay != nil {
 		d.eventRelay.Close()
 	}
+	if d.canonicalEventStore != nil {
+		if err := d.canonicalEventStore.Close(); err != nil {
+			log.Printf("Failed to close Canonical Event Store: %v", err)
+		}
+	}
 	log.Println("Shutdown complete")
 }
 
@@ -436,7 +442,11 @@ func prepareAtlasLifecycleService(ctx context.Context, service *backlogapp.Servi
 func buildDependencies(cfg *config.Config) *Dependencies {
 	runtimeToolRegistry := buildRuntimeToolRegistry(cfg)
 	nodeCaps := buildCapabilityRuntime(cfg, runtimeToolRegistry)
-	aiWorkflowStore := buildAIWorkflowStore(cfg)
+	canonicalEventStore, err := openRuntimeCanonicalEventStore(cfg.Storage.Databases.EventStore)
+	if err != nil {
+		log.Fatalf("Failed to initialize Canonical Event Store: %v", err)
+	}
+	aiWorkflowStore := composeRuntimeAIWorkflowStore(buildAIWorkflowStateStore(cfg), canonicalEventStore)
 	llmBusyTracker := newLLMBusyTracker()
 	llmRuntime := buildLLMRuntimeProviders(cfg, aiWorkflowStore, llmBusyTracker)
 	classifier := routing.NewLLMClassifier(llmRuntime.Chat, cfg.Prompts.Classifier)
@@ -528,9 +538,12 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		workerExecutionService.SetMCPToolCaller(serenaRuntime.client)
 	}
 
-	deps := &Dependencies{serenaMCPClient: serenaRuntime.client}
+	deps := &Dependencies{serenaMCPClient: serenaRuntime.client, canonicalEventStore: canonicalEventStore}
 	dataRecallRegistry := toolRuntime.DataRecallRegistry
 	dataWriteRegistry := toolRuntime.DataWriteRegistry
+	if err := registerRuntimeDataRecallCanonicalEvents(dataRecallRegistry, canonicalEventStore); err != nil {
+		log.Fatalf("Failed to register Canonical Event data recall: %v", err)
+	}
 	deps.conversationArchiveCloser = conversationRuntime.ArchiveCloser
 	deps.conversationCloser = conversationRuntime.Closer
 	if conversationRuntime.Manager != nil {
@@ -1199,29 +1212,20 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.complexityHotspotCoderDiff = buildComplexityHotspotCoderDiffHandler(complexityStore, llmRuntime, workstreamArtifactSink, sandboxStore)
 	}
 	if cfg.SuperAgentHarness.IsEnabled() {
-		var superAgentStore viewer.SuperAgentStore
+		var superAgentStateStore viewer.SuperAgentStateStore
 		if cfg.SuperAgentHarness.Storage == "sqlite" {
 			store, err := superagentpersistence.NewSQLiteStore(cfg.SuperAgentHarness.SQLitePath, cfg.SuperAgentHarness.MaxContextPackTokens)
 			if err != nil {
 				log.Fatalf("Failed to initialize SuperAgent Harness SQLite store: %v", err)
 			}
-			superAgentStore = store
+			superAgentStateStore = store
 		} else {
-			superAgentStore = superagentpersistence.NewJSONLStore(cfg.SuperAgentHarness.LogPath, cfg.SuperAgentHarness.MaxContextPackTokens)
+			superAgentStateStore = superagentpersistence.NewJSONLStore(cfg.SuperAgentHarness.LogPath, cfg.SuperAgentHarness.MaxContextPackTokens)
 		}
+		superAgentStore := composeRuntimeSuperAgentStore(superAgentStateStore, canonicalEventStore)
 		deps.superAgentStore = superAgentStore
 		if err := registerRuntimeDataRecallSuperAgentHarness(dataRecallRegistry, superAgentStore); err != nil {
 			log.Fatalf("Failed to register SuperAgent Harness data recall: %v", err)
-		}
-		superAgentOwnerStore, ok := superAgentStore.(runtimeSuperAgentTraceStore)
-		if !ok {
-			log.Fatalf("Failed to initialize SuperAgent Harness data write owner store")
-		}
-		if err := registerRuntimeDataWriteSuperAgentHarness(dataWriteRegistry, superAgentOwnerStore); err != nil {
-			log.Fatalf("Failed to register SuperAgent Harness data write: %v", err)
-		}
-		if err := registerRuntimeDataRecallSuperAgentTraceEvents(dataRecallRegistry, superAgentOwnerStore); err != nil {
-			log.Fatalf("Failed to register SuperAgent Harness trace event data recall: %v", err)
 		}
 		deps.superAgentRunController = superagentapp.NewRunController()
 		if toolRuntime.SubagentMgr != nil {
@@ -1241,22 +1245,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.superAgentSubagentTask = viewer.HandleSuperAgentSubagentTaskCreate(superAgentStore)
 		deps.superAgentContextPack = viewer.HandleSuperAgentContextPackCreate(superAgentStore)
 		deps.superAgentMessageChannel = viewer.HandleSuperAgentMessageChannelCreate(superAgentStore)
-		deps.superAgentTraceEvent = viewer.HandleSuperAgentTraceEventCreate(superAgentStore)
 	}
 	if aiWorkflowStore != nil {
 		deps.aiWorkflowStore = aiWorkflowStore
 		if err := registerRuntimeDataRecallAIWorkflow(dataRecallRegistry, aiWorkflowStore); err != nil {
 			log.Fatalf("Failed to register AI Workflow data recall: %v", err)
-		}
-		aiWorkflowOwnerStore, ok := aiWorkflowStore.(runtimeAIWorkflowEventStore)
-		if !ok {
-			log.Fatalf("Failed to initialize AI Workflow data write owner store")
-		}
-		if err := registerRuntimeDataWriteAIWorkflow(dataWriteRegistry, aiWorkflowOwnerStore); err != nil {
-			log.Fatalf("Failed to register AI Workflow data write: %v", err)
-		}
-		if err := registerRuntimeDataRecallAIWorkflowEvents(dataRecallRegistry, aiWorkflowOwnerStore); err != nil {
-			log.Fatalf("Failed to register AI Workflow event data recall: %v", err)
 		}
 		if commands, err := aiworkflowapp.RegisterCommandFiles(context.Background(), aiWorkflowStore, aiworkflowapp.CommandRegistryScanOptions{RepoRoot: "."}); err != nil {
 			log.Printf("Failed to register AI Workflow command files: %v", err)
@@ -1268,7 +1261,6 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			WarnAtRatio:      cfg.AIWorkflow.ContextBudgetWarnRatio,
 			StopAtRatio:      cfg.AIWorkflow.ContextBudgetStopRatio,
 		})
-		deps.aiWorkflowEvent = viewer.HandleAIWorkflowEventCreate(aiWorkflowStore)
 		deps.aiWorkflowProjectMemory = viewer.HandleAIWorkflowProjectMemoryCreate(aiWorkflowStore)
 		deps.aiWorkflowWorktree = viewer.HandleAIWorkflowWorktreeCreate(aiWorkflowStore)
 		deps.aiWorkflowCommand = viewer.HandleAIWorkflowCommandCreate(aiWorkflowStore)
@@ -1514,7 +1506,7 @@ func buildComplexityHotspotCoderDiffHandler(store viewer.ComplexityHotspotStore,
 	return viewer.HandleComplexityHotspotCoderDiffWithSandbox(store, complexityapp.NewCoderDiffService(coder), workstreamSink, sandboxStore)
 }
 
-func buildAIWorkflowStore(cfg *config.Config) viewer.AIWorkflowStore {
+func buildAIWorkflowStateStore(cfg *config.Config) viewer.AIWorkflowStateStore {
 	if cfg == nil || !cfg.AIWorkflow.IsEnabled() {
 		return nil
 	}

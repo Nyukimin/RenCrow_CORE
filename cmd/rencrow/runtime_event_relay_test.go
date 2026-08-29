@@ -1,12 +1,46 @@
 package main
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+type shutdownOrderEventStore struct {
+	mu      sync.Mutex
+	closed  bool
+	appends int
+}
+
+func (s *shutdownOrderEventStore) Append(_ context.Context, _ modulecore.EventEnvelope) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return errRecordTest
+	}
+	s.appends++
+	return nil
+}
+
+func (s *shutdownOrderEventStore) GetByID(context.Context, modulecore.EventID) (modulecore.EventEnvelope, bool, error) {
+	return modulecore.EventEnvelope{}, false, nil
+}
+
+func (s *shutdownOrderEventStore) ListByComponent(context.Context, string, int) ([]modulecore.EventEnvelope, error) {
+	return nil, nil
+}
+
+func (s *shutdownOrderEventStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return nil
+}
 
 // recordingSink は記録パスへ届いたイベントを数える
 type recordingSink struct {
@@ -110,6 +144,27 @@ func TestDependenciesShutdownFlushesEventRecorder(t *testing.T) {
 
 	if got := sink.count(); got != total {
 		t.Fatalf("recorded %d events after shutdown, want %d (停止時にイベントが欠落した)", got, total)
+	}
+}
+
+func TestDependenciesShutdownDrainsRecorderBeforeCanonicalStoreClose(t *testing.T) {
+	store := &shutdownOrderEventStore{}
+	archive, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	relay := &idleAwareEventListener{archive: archive}
+	relay.recorderOnce.Do(func() {
+		relay.recorder = newEventRecorder(relay.recordEventSync, 4)
+	})
+	relay.recorder.Record(orchestrator.OrchestratorEvent{Type: "shutdown.test", Timestamp: time.Now().UTC().Format(time.RFC3339Nano)})
+
+	(&Dependencies{eventRelay: relay, canonicalEventStore: store}).Shutdown()
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.appends != 1 || !store.closed {
+		t.Fatalf("appends=%d closed=%t, want one append before close", store.appends, store.closed)
 	}
 }
 

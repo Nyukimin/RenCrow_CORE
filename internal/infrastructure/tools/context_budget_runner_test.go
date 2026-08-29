@@ -10,6 +10,7 @@ import (
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type contextBudgetRunnerStub struct {
@@ -26,7 +27,7 @@ func (s *contextBudgetRunnerStub) ListTools(context.Context) ([]tool.ToolMetadat
 
 type contextBudgetRecorderStub struct {
 	usages []domainai.ContextUsage
-	events []domainai.WorkflowEvent
+	events []modulecore.EventEnvelope
 	err    error
 }
 
@@ -38,7 +39,7 @@ func (s *contextBudgetRecorderStub) SaveContextUsage(_ context.Context, item dom
 	return nil
 }
 
-func (s *contextBudgetRecorderStub) SaveWorkflowEvent(_ context.Context, item domainai.WorkflowEvent) error {
+func (s *contextBudgetRecorderStub) Append(_ context.Context, item modulecore.EventEnvelope) error {
 	if s.err != nil {
 		return s.err
 	}
@@ -139,8 +140,11 @@ func TestContextBudgetRunnerWarnsAndPreservesToolResult(t *testing.T) {
 	if len(recorder.events) != 1 || recorder.events[0].EventType != "context_budget_warning" {
 		t.Fatalf("expected warning workflow event, got %#v", recorder.events)
 	}
-	if recorder.events[0].ParentEventID != recorder.usages[0].EventID {
-		t.Fatalf("event should link to context usage: event=%#v usage=%#v", recorder.events[0], recorder.usages[0])
+	if recorder.events[0].CausationEventID != "" {
+		t.Fatalf("context usage record must not be misused as event causation: event=%#v", recorder.events[0])
+	}
+	if recorder.events[0].Payload["context_usage_record_id"] != recorder.usages[0].EventID {
+		t.Fatalf("event payload should identify the context usage record: event=%#v usage=%#v", recorder.events[0], recorder.usages[0])
 	}
 	if recorder.usages[0].CreatedAt.After(time.Now().Add(time.Second)) {
 		t.Fatalf("unexpected usage timestamp: %s", recorder.usages[0].CreatedAt)

@@ -53,15 +53,6 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveMessageChannel() error = %v", err)
 	}
-	if err := store.SaveTraceEvent(context.Background(), domainsuperagent.TraceEvent{
-		EventID:   "evt_1",
-		RunID:     "run_1",
-		EventType: "lead_agent_started",
-		Status:    "completed",
-		CreatedAt: now,
-	}); err != nil {
-		t.Fatalf("SaveTraceEvent() error = %v", err)
-	}
 	if err := store.SaveRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
 		QueueID:   "queue_1",
 		RunID:     "run_1",
@@ -88,13 +79,24 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	if err != nil || len(channels) != 1 || channels[0].ChannelID != "ch_1" {
 		t.Fatalf("ListMessageChannels() = %#v, %v", channels, err)
 	}
-	events, err := store.ListTraceEvents(context.Background(), 10)
-	if err != nil || len(events) != 1 || events[0].EventID != "evt_1" {
-		t.Fatalf("ListTraceEvents() = %#v, %v", events, err)
-	}
 	queue, err := store.ListRunQueueItems(context.Background(), 10)
 	if err != nil || len(queue) != 1 || queue[0].QueueID != "queue_1" {
 		t.Fatalf("ListRunQueueItems() = %#v, %v", queue, err)
+	}
+}
+
+func TestSQLiteStoreDoesNotCreateLegacyTraceEventTable(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 3000)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='trace_event'`).Scan(&count); err != nil {
+		t.Fatalf("inspect schema: %v", err)
+	}
+	if count != 0 {
+		t.Fatal("legacy trace_event table was created")
 	}
 }
 
@@ -196,53 +198,6 @@ func TestSQLiteStoreFindAgentRunByIDUsesPrimaryKeyAndRejectsMalformedPayload(t *
 		t.Fatal(err)
 	}
 	if _, _, err := store.FindAgentRunByID(ctx, "run_1"); err == nil {
-		t.Fatal("expected malformed payload error")
-	}
-}
-
-func TestSQLiteStoreFindTraceEventByIDUsesPrimaryKeyAndRejectsMalformedPayload(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 3000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	started := domainsuperagent.TraceEvent{EventID: "evt_1", EventType: "started", Status: "running", CreatedAt: now}
-	completed := started
-	completed.Status = "completed"
-	if err := store.SaveTraceEvent(ctx, started); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SaveTraceEvent(ctx, completed); err != nil {
-		t.Fatal(err)
-	}
-	item, found, err := store.FindTraceEventByID(ctx, "evt_1")
-	if err != nil || !found || item.Status != "completed" {
-		t.Fatalf("item=%#v found=%v err=%v", item, found, err)
-	}
-	missing, found, err := store.FindTraceEventByID(ctx, "missing")
-	if err != nil || found || missing.EventID != "" {
-		t.Fatalf("missing=%#v found=%v err=%v", missing, found, err)
-	}
-
-	prefixStore, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 3000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prefixStore.Close()
-	if err := prefixStore.SaveTraceEvent(ctx, domainsuperagent.TraceEvent{EventID: "evt_10", EventType: "started", Status: "running", CreatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	item, found, err = prefixStore.FindTraceEventByID(ctx, "evt_1")
-	if err != nil || found || item.EventID != "" {
-		t.Fatalf("prefix match item=%#v found=%v err=%v", item, found, err)
-	}
-
-	if _, err := store.db.ExecContext(ctx, "UPDATE trace_event SET payload = ? WHERE event_id = ?", "{", "evt_1"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := store.FindTraceEventByID(ctx, "evt_1"); err == nil {
 		t.Fatal("expected malformed payload error")
 	}
 }

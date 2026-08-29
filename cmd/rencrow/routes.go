@@ -311,11 +311,9 @@ func registerGovernanceSecurityReportRoutes(mux *http.ServeMux, dependencies *De
 		SubagentTask:     dependencies.superAgentSubagentTask,
 		ContextPack:      dependencies.superAgentContextPack,
 		MessageChannel:   dependencies.superAgentMessageChannel,
-		TraceEvent:       dependencies.superAgentTraceEvent,
 	}})
 	aiworkflowfeature.RegisterRoutes(mux, aiworkflowfeature.Dependencies{Routes: aiworkflowfeature.Routes{
 		Status:                  dependencies.aiWorkflowStatus,
-		Event:                   dependencies.aiWorkflowEvent,
 		ProjectMemory:           dependencies.aiWorkflowProjectMemory,
 		Worktree:                dependencies.aiWorkflowWorktree,
 		Command:                 dependencies.aiWorkflowCommand,

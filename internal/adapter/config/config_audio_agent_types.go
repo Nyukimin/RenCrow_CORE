@@ -1,12 +1,5 @@
 package config
 
-type ViewerLogConfig struct {
-	Enabled           bool   `yaml:"enabled"`
-	Path              string `yaml:"path"`
-	RetentionDays     int    `yaml:"retention_days"`
-	GCIntervalMinutes int    `yaml:"gc_interval_minutes"`
-}
-
 type VerificationConfig struct {
 	Enabled      bool   `yaml:"enabled"`
 	Mode         string `yaml:"mode"`          // dry_run|revise

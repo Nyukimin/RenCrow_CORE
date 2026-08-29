@@ -891,6 +891,24 @@ func TestViewerStaticContractHobbyGraphOpsOverview(t *testing.T) {
 	}
 }
 
+func TestOpsCanonicalEventProjectionUsesEnvelopeAndPayloadFields(t *testing.T) {
+	data, err := os.ReadFile("assets/js/tabs/ops.js")
+	if err != nil {
+		t.Fatalf("read ops.js: %v", err)
+	}
+	js := string(data)
+	for _, required := range []string{"function canonicalEventField", "run_reference", "run.lead_agent_paused", "run.lead_agent_resumed", "command.invoked"} {
+		if !strings.Contains(js, required) {
+			t.Fatalf("ops.js missing canonical Event projection contract %q", required)
+		}
+	}
+	for _, retired := range []string{"'lead_agent_paused'", "'lead_agent_resumed'", "'command_invoked'", "payload_summary"} {
+		if strings.Contains(js, retired) {
+			t.Fatalf("ops.js retains legacy Event field/type %q", retired)
+		}
+	}
+}
+
 func TestViewerStaticContractGameBridgeOpsCard(t *testing.T) {
 	viewerJS, err := os.ReadFile("assets/js/viewer.js")
 	if err != nil {

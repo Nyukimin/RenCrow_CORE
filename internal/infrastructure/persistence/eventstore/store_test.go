@@ -199,6 +199,31 @@ func TestAppendCannotCreateCycleBecauseReferencesMustPreexist(t *testing.T) {
 	assertEventAbsent(t, store, second.EventID)
 }
 
+func TestAppendBatchIsOrderIndependentAndAtomic(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	traceID := modulecore.NewTraceID()
+	root := eventFixture(traceID, "migration.root", "ai_workflow")
+	child := eventFixture(traceID, "migration.child", "ai_workflow")
+	child.CausationEventID = root.EventID
+
+	if err := store.AppendBatch(ctx, []modulecore.EventEnvelope{child, root}); err != nil {
+		t.Fatalf("AppendBatch() error = %v", err)
+	}
+	if _, found, err := store.GetByID(ctx, child.EventID); err != nil || !found {
+		t.Fatalf("child found=%t err=%v", found, err)
+	}
+
+	valid := eventFixture(modulecore.NewTraceID(), "migration.valid", "superagent")
+	invalid := eventFixture(modulecore.NewTraceID(), "migration.invalid", "superagent")
+	invalid.CausationEventID = modulecore.NewEventID()
+	if err := store.AppendBatch(ctx, []modulecore.EventEnvelope{valid, invalid}); err == nil {
+		t.Fatal("AppendBatch() error = nil, want closed-graph rejection")
+	}
+	assertEventAbsent(t, store, valid.EventID)
+	assertEventAbsent(t, store, invalid.EventID)
+}
+
 func TestAppendEnablesForeignKeysAndReadIsBounded(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

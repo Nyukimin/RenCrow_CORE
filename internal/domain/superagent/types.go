@@ -53,17 +53,6 @@ type MessageChannel struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-type TraceEvent struct {
-	EventID        string    `json:"event_id"`
-	ParentEventID  string    `json:"parent_event_id,omitempty"`
-	RunID          string    `json:"run_id,omitempty"`
-	EventType      string    `json:"event_type"`
-	Actor          string    `json:"actor,omitempty"`
-	PayloadSummary string    `json:"payload_summary,omitempty"`
-	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"created_at"`
-}
-
 type RunQueueItem struct {
 	QueueID            string    `json:"queue_id"`
 	RunID              string    `json:"run_id,omitempty"`

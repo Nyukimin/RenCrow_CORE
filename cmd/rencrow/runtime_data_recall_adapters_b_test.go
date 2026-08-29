@@ -17,6 +17,7 @@ import (
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestRegisterDataRecallPersonaArchitecture(t *testing.T) {
@@ -438,10 +439,13 @@ func (s *dataRecallSuperAgentListerStub) ListContextPacks(context.Context, int) 
 func (s *dataRecallSuperAgentListerStub) ListMessageChannels(context.Context, int) ([]domainsuperagent.MessageChannel, error) {
 	return nil, nil
 }
-func (s *dataRecallSuperAgentListerStub) ListTraceEvents(context.Context, int) ([]domainsuperagent.TraceEvent, error) {
+func (s *dataRecallSuperAgentListerStub) ListRunQueueItems(context.Context, int) ([]domainsuperagent.RunQueueItem, error) {
 	return nil, nil
 }
-func (s *dataRecallSuperAgentListerStub) ListRunQueueItems(context.Context, int) ([]domainsuperagent.RunQueueItem, error) {
+func (s *dataRecallSuperAgentListerStub) GetByID(context.Context, modulecore.EventID) (modulecore.EventEnvelope, bool, error) {
+	return modulecore.EventEnvelope{}, false, nil
+}
+func (s *dataRecallSuperAgentListerStub) ListByComponent(context.Context, string, int) ([]modulecore.EventEnvelope, error) {
 	return nil, nil
 }
 
@@ -450,9 +454,6 @@ type dataRecallAIWorkflowListerStub struct {
 	gotLimit int
 }
 
-func (s *dataRecallAIWorkflowListerStub) ListWorkflowEvents(context.Context, int) ([]domainai.WorkflowEvent, error) {
-	return nil, nil
-}
 func (s *dataRecallAIWorkflowListerStub) ListProjectMemoryIndexes(context.Context, int) ([]domainai.ProjectMemoryIndex, error) {
 	return nil, nil
 }
@@ -464,6 +465,12 @@ func (s *dataRecallAIWorkflowListerStub) ListCommandRegistries(_ context.Context
 	return s.commands, nil
 }
 func (s *dataRecallAIWorkflowListerStub) ListContextUsages(context.Context, int) ([]domainai.ContextUsage, error) {
+	return nil, nil
+}
+func (s *dataRecallAIWorkflowListerStub) GetByID(context.Context, modulecore.EventID) (modulecore.EventEnvelope, bool, error) {
+	return modulecore.EventEnvelope{}, false, nil
+}
+func (s *dataRecallAIWorkflowListerStub) ListByComponent(context.Context, string, int) ([]modulecore.EventEnvelope, error) {
 	return nil, nil
 }
 

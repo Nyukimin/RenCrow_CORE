@@ -328,7 +328,7 @@ const state = {
     superAgentSubagentTasks: [],
     superAgentContextPacks: [],
     superAgentMessageChannels: [],
-    superAgentTraceEvents: [],
+    superAgentEvents: [],
     superAgentRunQueue: [],
     superAgentRuntimeConfig: null,
     superAgentFetchError: '',
@@ -2813,7 +2813,7 @@ function refreshSuperAgentData() {
       state.ops.superAgentSubagentTasks = Array.isArray(data.subagent_tasks) ? data.subagent_tasks : [];
       state.ops.superAgentContextPacks = Array.isArray(data.context_packs) ? data.context_packs : [];
       state.ops.superAgentMessageChannels = Array.isArray(data.message_channels) ? data.message_channels : [];
-      state.ops.superAgentTraceEvents = Array.isArray(data.trace_events) ? data.trace_events : [];
+      state.ops.superAgentEvents = Array.isArray(data.events) ? data.events : [];
       state.ops.superAgentRunQueue = Array.isArray(data.run_queue) ? data.run_queue : [];
       state.ops.superAgentRuntimeConfig = data.runtime_config && typeof data.runtime_config === 'object' ? data.runtime_config : null;
       renderOps();
@@ -2824,7 +2824,7 @@ function refreshSuperAgentData() {
       state.ops.superAgentSubagentTasks = [];
       state.ops.superAgentContextPacks = [];
       state.ops.superAgentMessageChannels = [];
-      state.ops.superAgentTraceEvents = [];
+      state.ops.superAgentEvents = [];
       state.ops.superAgentRunQueue = [];
       state.ops.superAgentRuntimeConfig = null;
       renderOps();
@@ -2844,7 +2844,7 @@ function refreshAIWorkflowData() {
     })
     .then((data) => {
       state.ops.aiWorkflowFetchError = '';
-      state.ops.aiWorkflowEvents = Array.isArray(data.workflow_events) ? data.workflow_events : [];
+      state.ops.aiWorkflowEvents = Array.isArray(data.events) ? data.events : [];
       state.ops.aiWorkflowProjectMemoryIndexes = Array.isArray(data.project_memory_indexes) ? data.project_memory_indexes : [];
       state.ops.aiWorkflowWorktreeRegistries = Array.isArray(data.worktree_registries) ? data.worktree_registries : [];
       state.ops.aiWorkflowCommandRegistries = Array.isArray(data.command_registries) ? data.command_registries : [];

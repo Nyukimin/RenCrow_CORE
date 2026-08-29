@@ -88,7 +88,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		if heavyReq.UserRequestedDeepDive {
 			evaluated := domainai.EvaluateHeavyWorker(heavyReq, o.heavyPolicy)
 			if evaluated.Status == domainai.HeavyWorkerStatusRequested {
-				recordHeavyWorkflowEvent(ctx, o.workflowEvents, "requested", strings.Join(evaluated.Reasons, "; "), jobID.String())
+				recordHeavyCanonicalEvent(ctx, o.canonicalEvents, "requested", strings.Join(evaluated.Reasons, "; "), jobID.String())
 				decision.Route = routing.RouteANALYZE
 				if decision.Confidence < 0.95 {
 					decision.Confidence = 0.95

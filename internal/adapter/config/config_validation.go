@@ -894,17 +894,6 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("knowledge_memory.dream_requires_review must be true when knowledge_memory is enabled")
 		}
 	}
-	if c.ViewerLog.Enabled {
-		if c.ViewerLog.RetentionDays < 1 {
-			return fmt.Errorf("viewer_log.retention_days must be >= 1")
-		}
-		if c.ViewerLog.GCIntervalMinutes < 1 {
-			return fmt.Errorf("viewer_log.gc_interval_minutes must be >= 1")
-		}
-		if c.ViewerLog.Path == "" {
-			return fmt.Errorf("viewer_log.path is required when viewer_log.enabled=true")
-		}
-	}
 
 	// v4.1 Coder スロット検証
 	coders := []struct {

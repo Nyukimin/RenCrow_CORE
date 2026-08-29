@@ -9,12 +9,13 @@ import (
 	"time"
 
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type RunQueueStore interface {
 	ListRunQueueItems(ctx context.Context, limit int) ([]domainsuperagent.RunQueueItem, error)
 	SaveRunQueueItem(ctx context.Context, item domainsuperagent.RunQueueItem) error
-	SaveTraceEvent(ctx context.Context, item domainsuperagent.TraceEvent) error
+	modulecore.EventAppender
 }
 
 type RunQueueLeaseStore interface {
@@ -93,7 +94,11 @@ func (s *RunQueueScheduler) RunOnce(ctx context.Context) (int, error) {
 		if item == nil {
 			return processed, nil
 		}
-		s.saveTrace(ctx, *item, "run_queue_claimed", "claimed", item.Action)
+		traceID := modulecore.NewTraceID()
+		claimedEventID, err := s.saveTrace(ctx, *item, traceID, "", "run_queue.claimed", "claimed", item.Action)
+		if err != nil {
+			return processed, err
+		}
 		summary, execErr := s.processWithHeartbeat(ctx, *item)
 		completedAt := s.options.Now().UTC()
 		if execErr != nil {
@@ -103,7 +108,9 @@ func (s *RunQueueScheduler) RunOnce(ctx context.Context) (int, error) {
 			if err := s.completeAgentRun(ctx, *item, "failed", execErr.Error(), completedAt); err != nil {
 				return processed, err
 			}
-			s.saveTrace(ctx, *item, "run_queue_failed", "failed", execErr.Error())
+			if _, eventErr := s.saveTrace(ctx, *item, traceID, claimedEventID, "run_queue.failed", "failed", execErr.Error()); eventErr != nil {
+				return processed, eventErr
+			}
 			return processed, execErr
 		}
 		if err := s.complete(ctx, *item, "completed", strings.TrimSpace(summary), completedAt); err != nil {
@@ -112,7 +119,9 @@ func (s *RunQueueScheduler) RunOnce(ctx context.Context) (int, error) {
 		if err := s.completeAgentRun(ctx, *item, "completed", strings.TrimSpace(summary), completedAt); err != nil {
 			return processed, err
 		}
-		s.saveTrace(ctx, *item, "run_queue_completed", "completed", summary)
+		if _, err := s.saveTrace(ctx, *item, traceID, claimedEventID, "run_queue.completed", "completed", summary); err != nil {
+			return processed, err
+		}
 		processed++
 		now = s.options.Now().UTC()
 	}
@@ -240,21 +249,19 @@ func (s *RunQueueScheduler) Start(ctx context.Context) {
 	}()
 }
 
-func (s *RunQueueScheduler) saveTrace(ctx context.Context, item domainsuperagent.RunQueueItem, eventType, status, summary string) {
+func (s *RunQueueScheduler) saveTrace(ctx context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID, causationEventID modulecore.EventID, eventType, status, summary string) (modulecore.EventID, error) {
 	if s == nil || s.store == nil {
-		return
+		return "", fmt.Errorf("run queue event store is not configured")
 	}
 	now := s.options.Now().UTC()
-	trace := domainsuperagent.TraceEvent{
-		EventID:        fmt.Sprintf("trace-run-queue-%d", now.UnixNano()),
-		RunID:          item.RunID,
-		EventType:      eventType,
-		Actor:          "RunQueueScheduler",
-		PayloadSummary: strings.TrimSpace(summary),
-		Status:         status,
-		CreatedAt:      now,
+	event := modulecore.NewEventEnvelope(traceID, causationEventID, nil, "superagent", eventType, now, map[string]any{
+		"queue_reference": item.QueueID, "run_reference": item.RunID,
+		"actor_label": "RunQueueScheduler", "status": status, "summary": strings.TrimSpace(summary),
+	})
+	if err := s.store.Append(ctx, event); err != nil {
+		return "", fmt.Errorf("append run queue event: %w", err)
 	}
-	_ = s.store.SaveTraceEvent(ctx, trace)
+	return event.EventID, nil
 }
 
 func nextDueRunQueueItem(items []domainsuperagent.RunQueueItem, now time.Time) (domainsuperagent.RunQueueItem, bool) {

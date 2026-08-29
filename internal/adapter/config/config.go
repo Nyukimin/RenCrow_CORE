@@ -27,6 +27,9 @@ func LoadConfig(path string) (*Config, error) {
 	if retired := retiredDatabaseConfigKey(&root); retired != "" {
 		return nil, fmt.Errorf("config key %s is retired; CORE uses storage.databases SQLite owner stores", retired)
 	}
+	if yamlDocumentMapping(&root) != nil && yamlMappingValue(yamlDocumentMapping(&root), "viewer_log") != nil {
+		return nil, fmt.Errorf("config key viewer_log is retired; CORE uses storage.databases.event_store as the only durable Event source")
+	}
 	if retired := retiredTTSEndpointConfigKey(&root); retired != "" {
 		return nil, fmt.Errorf("config key %s is retired; CORE uses tts.gateway_base_url", retired)
 	}

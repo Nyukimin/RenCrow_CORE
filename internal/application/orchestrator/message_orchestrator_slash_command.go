@@ -10,22 +10,23 @@ import (
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const maxSlashCommandBodyBytes = 64 * 1024
 
 func (o *MessageOrchestrator) expandRegisteredSlashCommand(ctx context.Context, req ProcessMessageRequest) (ProcessMessageRequest, bool, error) {
-	return expandRegisteredSlashCommand(ctx, o.commandRegistry, o.workflowEvents, o.skillBootstrap, req)
+	return expandRegisteredSlashCommand(ctx, o.commandRegistry, o.canonicalEvents, o.skillBootstrap, req)
 }
 
 func (o *DistributedOrchestrator) expandRegisteredSlashCommand(ctx context.Context, req ProcessMessageRequest) (ProcessMessageRequest, bool, error) {
-	return expandRegisteredSlashCommand(ctx, o.commandRegistry, o.workflowEvents, o.skillBootstrap, req)
+	return expandRegisteredSlashCommand(ctx, o.commandRegistry, o.canonicalEvents, o.skillBootstrap, req)
 }
 
 func expandRegisteredSlashCommand(
 	ctx context.Context,
 	registry CommandRegistryLister,
-	workflowEvents WorkflowEventRecorder,
+	canonicalEvents CanonicalEventRecorder,
 	skillBootstrap SkillBootstrapRecorder,
 	req ProcessMessageRequest,
 ) (ProcessMessageRequest, bool, error) {
@@ -49,7 +50,7 @@ func expandRegisteredSlashCommand(
 		return req, false, fmt.Errorf("slash command expansion failed: %w", err)
 	}
 	agent := firstNonEmptyStringLocal(command.DefaultAgent, "Chat")
-	if err := recordSlashCommandInvocation(ctx, workflowEvents, command, agent, userInput); err != nil {
+	if err := recordSlashCommandInvocation(ctx, canonicalEvents, command, agent, userInput); err != nil {
 		return req, false, fmt.Errorf("slash command expansion failed: %w", err)
 	}
 	if err := recordSlashCommandSkillBootstrap(ctx, skillBootstrap, command, agent, req, userInput); err != nil {
@@ -122,21 +123,15 @@ func validateSlashCommandFilePath(path string) (string, error) {
 	return clean, nil
 }
 
-func recordSlashCommandInvocation(ctx context.Context, workflowEvents WorkflowEventRecorder, command domainai.CommandRegistry, agent string, userInput string) error {
-	if workflowEvents == nil {
+func recordSlashCommandInvocation(ctx context.Context, canonicalEvents CanonicalEventRecorder, command domainai.CommandRegistry, agent string, userInput string) error {
+	if canonicalEvents == nil {
 		return nil
 	}
 	now := time.Now().UTC()
-	event := domainai.WorkflowEvent{
-		EventID:     fmt.Sprintf("command_invoked:%s:%d", strings.TrimPrefix(command.CommandName, "/"), now.UnixNano()),
-		EventType:   "command_invoked",
-		Agent:       agent,
-		CommandName: command.CommandName,
-		Status:      "expanded",
-		CreatedAt:   now,
-		Summary:     userInput,
-	}
-	if err := workflowEvents.SaveWorkflowEvent(ctx, event); err != nil {
+	event := modulecore.NewRootEventEnvelope("ai_workflow", "command.invoked", now, map[string]any{
+		"agent_label": agent, "command_name": command.CommandName, "status": "expanded", "summary": userInput,
+	})
+	if err := canonicalEvents.Append(ctx, event); err != nil {
 		return fmt.Errorf("save command event: %w", err)
 	}
 	return nil

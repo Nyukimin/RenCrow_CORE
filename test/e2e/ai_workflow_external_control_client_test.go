@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
@@ -48,23 +49,20 @@ func TestE2E_AIWorkflowExternalControlClientUsesSynchronousPolicy(t *testing.T) 
 		t.Fatalf("live /viewer/ai-workflow status=%d, want 200", statusResp.StatusCode)
 	}
 	var body struct {
-		WorkflowEvents []struct {
-			EventType string `json:"event_type"`
-			Status    string `json:"status"`
-		} `json:"workflow_events"`
+		Events []modulecore.EventEnvelope `json:"events"`
 	}
 	if err := json.NewDecoder(statusResp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode live AI Workflow status: %v", err)
 	}
-	for _, event := range body.WorkflowEvents {
-		if event.EventType == "external_control_policy_checked" && event.Status == "allowed" {
+	for _, event := range body.Events {
+		if event.EventType == "external_control_policy.checked" && event.Payload["status"] == "allowed" {
 			return
 		}
 	}
 	t.Fatalf("live AI Workflow status did not include recent external_control_policy_checked allowed event")
 }
 
-func TestE2E_AIWorkflowCommandContextAndSuperAgentTraceSameRun(t *testing.T) {
+func TestE2E_AIWorkflowCommandContextAndSuperAgentStateSameRun(t *testing.T) {
 	if os.Getenv("RENCROW_LIVE_E2E") != "1" {
 		t.Skip("set RENCROW_LIVE_E2E=1 to verify live AI Workflow command/context client")
 	}
@@ -93,8 +91,8 @@ func TestE2E_AIWorkflowCommandContextAndSuperAgentTraceSameRun(t *testing.T) {
 	}
 
 	suffix := time.Now().UTC().Format("20060102150405.000000000")
-	workstreamID := "ws_aiworkflow_client_" + suffix
-	runID := "run_aiworkflow_client_" + suffix
+	workstreamID := string(modulecore.NewWorkstreamID())
+	runID := string(modulecore.NewRunID())
 	if err := client.CreateAgentRun(ctx, rencrowclient.AgentRun{
 		RunID:        runID,
 		WorkstreamID: workstreamID,
@@ -104,18 +102,6 @@ func TestE2E_AIWorkflowCommandContextAndSuperAgentTraceSameRun(t *testing.T) {
 		StartedAt:    time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("CreateAgentRun() live call failed at %s: %v", baseURL, err)
-	}
-	traceID := "trace_aiworkflow_client_" + suffix
-	if err := client.CreateTraceEvent(ctx, rencrowclient.TraceEvent{
-		EventID:        traceID,
-		RunID:          runID,
-		EventType:      "ai_workflow_client_e2e",
-		Actor:          "Worker",
-		PayloadSummary: workstreamID,
-		Status:         "recorded",
-		CreatedAt:      time.Now().UTC(),
-	}); err != nil {
-		t.Fatalf("CreateTraceEvent() live call failed at %s: %v", baseURL, err)
 	}
 	commandResp, err := client.RunCommand(ctx, rencrowclient.CommandRunRequest{
 		CommandName:  commandName,
@@ -127,17 +113,17 @@ func TestE2E_AIWorkflowCommandContextAndSuperAgentTraceSameRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunCommand() live call failed at %s: %v", baseURL, err)
 	}
-	if commandResp.Event.EventType != "command_invoked" || commandResp.Event.Status != "requested" {
-		t.Fatalf("command response event = %+v, want command_invoked/requested", commandResp.Event)
+	if commandResp.Event.EventType != "command.invoked" || commandResp.Event.Payload["status"] != "requested" {
+		t.Fatalf("command response event = %+v, want command.invoked/requested", commandResp.Event)
 	}
-	if commandResp.Event.RunID != runID || commandResp.Event.WorkstreamID != workstreamID {
+	if string(commandResp.Event.RunID) != runID || string(commandResp.Event.WorkstreamID) != workstreamID {
 		t.Fatalf("command response event run/workstream = %+v, want run=%s workstream=%s", commandResp.Event, runID, workstreamID)
 	}
 
 	contextEventID := "ctx_aiworkflow_client_" + suffix
 	budgetResp, err := client.CheckContextBudget(ctx, rencrowclient.ContextUsage{
 		EventID:       contextEventID,
-		SessionID:     runID,
+		SessionID:     string(modulecore.NewSessionID()),
 		Agent:         "Worker",
 		Model:         "live-e2e",
 		ContextTokens: 128,
@@ -156,8 +142,8 @@ func TestE2E_AIWorkflowCommandContextAndSuperAgentTraceSameRun(t *testing.T) {
 		t.Fatalf("AIWorkflowStatus() live follow-up failed at %s: %v", baseURL, err)
 	}
 	foundCommandEvent := false
-	for _, event := range after.WorkflowEvents {
-		if event.EventID == commandResp.Event.EventID && event.EventType == "command_invoked" && event.CommandName == commandName && event.RunID == runID && event.WorkstreamID == workstreamID {
+	for _, event := range after.Events {
+		if event.EventID == commandResp.Event.EventID && event.EventType == "command.invoked" && event.Payload["command_name"] == commandName && string(event.RunID) == runID && string(event.WorkstreamID) == workstreamID {
 			foundCommandEvent = true
 			break
 		}
@@ -167,7 +153,7 @@ func TestE2E_AIWorkflowCommandContextAndSuperAgentTraceSameRun(t *testing.T) {
 	}
 	foundContextUsage := false
 	for _, usage := range after.ContextUsages {
-		if usage.EventID == contextEventID && usage.SessionID == runID {
+		if usage.EventID == contextEventID {
 			foundContextUsage = true
 			break
 		}
@@ -188,16 +174,6 @@ func TestE2E_AIWorkflowCommandContextAndSuperAgentTraceSameRun(t *testing.T) {
 	}
 	if !foundRun {
 		t.Fatalf("live SuperAgent status did not include run %q for workstream %q", runID, workstreamID)
-	}
-	foundTrace := false
-	for _, event := range superagent.TraceEvents {
-		if event.EventID == traceID && event.RunID == runID {
-			foundTrace = true
-			break
-		}
-	}
-	if !foundTrace {
-		t.Fatalf("live SuperAgent status did not include trace %q for run %q", traceID, runID)
 	}
 }
 

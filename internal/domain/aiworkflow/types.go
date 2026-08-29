@@ -2,23 +2,6 @@ package aiworkflow
 
 import "time"
 
-type WorkflowEvent struct {
-	EventID       string    `json:"event_id"`
-	ParentEventID string    `json:"parent_event_id,omitempty"`
-	RunID         string    `json:"run_id,omitempty"`
-	WorkstreamID  string    `json:"workstream_id,omitempty"`
-	EventType     string    `json:"event_type"`
-	Agent         string    `json:"agent,omitempty"`
-	Repo          string    `json:"repo,omitempty"`
-	WorktreeID    string    `json:"worktree_id,omitempty"`
-	CommandName   string    `json:"command_name,omitempty"`
-	SkillName     string    `json:"skill_name,omitempty"`
-	Status        string    `json:"status"`
-	CreatedAt     time.Time `json:"created_at"`
-	CompletedAt   time.Time `json:"completed_at,omitempty"`
-	Summary       string    `json:"summary,omitempty"`
-}
-
 type ProjectMemoryIndex struct {
 	ID          string    `json:"id"`
 	Repo        string    `json:"repo"`

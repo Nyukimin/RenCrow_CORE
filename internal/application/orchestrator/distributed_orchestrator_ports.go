@@ -33,10 +33,10 @@ func (o *DistributedOrchestrator) SetCoderProposalEvidenceRecorder(recorder Code
 	}
 }
 
-func (o *DistributedOrchestrator) SetWorkflowEventRecorder(recorder WorkflowEventRecorder) {
-	o.workflowEvents = recorder
+func (o *DistributedOrchestrator) SetCanonicalEventRecorder(recorder CanonicalEventRecorder) {
+	o.canonicalEvents = recorder
 	if o.routes != nil {
-		o.routes.SetWorkflowEventRecorder(recorder)
+		o.routes.SetCanonicalEventRecorder(recorder)
 	}
 }
 

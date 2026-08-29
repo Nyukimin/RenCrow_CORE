@@ -15,7 +15,6 @@ const (
 )
 
 type JSONLStore struct {
-	eventPath         string
 	projectMemoryPath string
 	worktreePath      string
 	commandPath       string
@@ -27,7 +26,6 @@ func NewJSONLStore(root string) *JSONLStore {
 		root = "workspace/logs/ai_workflow"
 	}
 	return &JSONLStore{
-		eventPath:         filepath.Join(root, "ai_workflow_event.jsonl"),
 		projectMemoryPath: filepath.Join(root, "project_memory_index.jsonl"),
 		worktreePath:      filepath.Join(root, "worktree_registry.jsonl"),
 		commandPath:       filepath.Join(root, "command_registry.jsonl"),
@@ -37,41 +35,6 @@ func NewJSONLStore(root string) *JSONLStore {
 
 func (s *JSONLStore) CompactOperationalLogs() error {
 	return jsonlutil.CompactLatestRecords(s.contextUsagePath, contextUsageMaxRecords)
-}
-
-func (s *JSONLStore) SaveWorkflowEvent(_ context.Context, item domainai.WorkflowEvent) error {
-	if err := domainai.ValidateWorkflowEvent(item); err != nil {
-		return err
-	}
-	return appendJSONL(s.eventPath, item)
-}
-
-func (s *JSONLStore) ListWorkflowEvents(_ context.Context, limit int) ([]domainai.WorkflowEvent, error) {
-	return jsonlutil.ListLatest[domainai.WorkflowEvent](s.eventPath, limit)
-}
-
-// FindWorkflowEventByID returns the latest valid record with exactly the requested event ID.
-func (s *JSONLStore) FindWorkflowEventByID(_ context.Context, eventID string) (domainai.WorkflowEvent, bool, error) {
-	var found domainai.WorkflowEvent
-	foundRecord := false
-	err := readJSONL(s.eventPath, func(line []byte) error {
-		var item domainai.WorkflowEvent
-		if err := json.Unmarshal(line, &item); err != nil {
-			return err
-		}
-		if err := domainai.ValidateWorkflowEvent(item); err != nil {
-			return err
-		}
-		if item.EventID == eventID {
-			found = item
-			foundRecord = true
-		}
-		return nil
-	})
-	if err != nil {
-		return domainai.WorkflowEvent{}, false, err
-	}
-	return found, foundRecord, err
 }
 
 func (s *JSONLStore) SaveProjectMemoryIndex(_ context.Context, item domainai.ProjectMemoryIndex) error {

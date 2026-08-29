@@ -52,6 +52,36 @@ storage:
 	}
 }
 
+func TestLoadConfigDefaultsCanonicalEventStoreInsideWorkspace(t *testing.T) {
+	path := writeStorageTestConfig(t, `
+server:
+  port: 8080
+workspace_dir: "/state/workspace"
+`)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	want := filepath.Join("/state/workspace", "logs", "event_store.db")
+	if cfg.Storage.Databases.EventStore != want {
+		t.Fatalf("event store path = %q, want %q", cfg.Storage.Databases.EventStore, want)
+	}
+}
+
+func TestLoadConfigRejectsRetiredViewerEventLog(t *testing.T) {
+	path := writeStorageTestConfig(t, `
+server:
+  port: 8080
+viewer_log:
+  enabled: true
+  path: "./workspace/orchestrator_event_log.jsonl"
+`)
+	_, err := LoadConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "viewer_log is retired") {
+		t.Fatalf("LoadConfig error = %v, want retired viewer_log rejection", err)
+	}
+}
+
 func TestLoadConfigRawSourceDirIsAbsoluteNonRootAndBackupCohortRequired(t *testing.T) {
 	for _, tc := range []struct {
 		name string

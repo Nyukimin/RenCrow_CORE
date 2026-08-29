@@ -15,7 +15,6 @@ type Dependencies struct {
 // Handler implementations are supplied by their owning adapter and command packages.
 type Routes struct {
 	Status                  http.HandlerFunc
-	Event                   http.HandlerFunc
 	ProjectMemory           http.HandlerFunc
 	Worktree                http.HandlerFunc
 	Command                 http.HandlerFunc
@@ -34,7 +33,6 @@ type Routes struct {
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
 	registerRoute(mux, "/viewer/ai-workflow", routes.Status)
-	registerRoute(mux, "/viewer/ai-workflow/events", routes.Event)
 	registerRoute(mux, "/viewer/ai-workflow/project-memory", routes.ProjectMemory)
 	registerRoute(mux, "/viewer/ai-workflow/worktrees", routes.Worktree)
 	registerRoute(mux, "/viewer/ai-workflow/commands", routes.Command)

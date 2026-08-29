@@ -1,16 +1,15 @@
 ---
 name: log-ops
-description: Inspect RenCrow persisted JSON operation logs, follow Chat/Worker/Coder execution, and diagnose log retention or GC failures without re-deriving the workflow.
+description: Inspect RenCrow canonical operation events, follow Chat/Worker/Coder execution, and diagnose Event Store failures without re-deriving the workflow.
 ---
 
 # Log Ops
 
 Use this skill when tracing what RenCrow actually did, especially across restarts or after live Viewer history has been lost.
 
-## Canonical Files
+## Canonical Stores
 
-- `workspace/orchestrator_event_log.jsonl`
-- `workspace/orchestrator_event_gc.jsonl`
+- `storage.databases.event_store` (`component_id=orchestrator`)
 - `workspace/execution_report.jsonl`
 
 ## Canonical APIs
@@ -23,7 +22,7 @@ Use this skill when tracing what RenCrow actually did, especially across restart
 ## Investigation Order
 
 1. Find the `job_id`.
-Start from `/viewer/logs?scope=persisted&limit=100` or grep the JSONL file.
+Start from `/viewer/logs?scope=persisted&limit=100`.
 
 2. Confirm the route and handoff chain.
 Look for:
@@ -46,7 +45,7 @@ The final user-facing truth is `agent.response` from `mio` to `user`.
 ## Common Failure Patterns
 
 - `live` has events but `persisted` does not
-Check whether `viewer_log.enabled` is on and whether append to `workspace/orchestrator_event_log.jsonl` is succeeding.
+Check the configured `storage.databases.event_store`, the Canonical Event Store append error, and the `orchestrator` component projection.
 
 - agent shows `offline` after restart
 This is expected for in-memory status. Use persisted logs for history, not current liveness.
@@ -54,15 +53,9 @@ This is expected for in-memory status. Use persisted logs for history, not curre
 - coder jobs stop at `mailbox.waiting`
 Check whether a matching `mailbox.received` exists. If not, the remote/local agent likely never returned.
 
-- GC removed too much
-Inspect `workspace/orchestrator_event_gc.jsonl` for `retention_days`, `before_count`, `deleted_count`, and `status`.
-
-- `partial_error` in GC
-This usually means malformed JSON lines or broken `timestamp` values were encountered during compaction.
-
 ## Rules
 
-- Treat `workspace/orchestrator_event_log.jsonl` as the persisted source of truth for operation history.
+- Treat the append-only Canonical Event Store as the persisted source of truth for operation history.
 - Treat `workspace/execution_report.jsonl` as execution evidence, not the full operation log.
 - Do not infer completion from `agent.note`; confirm with `agent.response`.
 - When reporting to a user, summarize through Mio-facing outcome first, then add the deeper agent chain only if needed.

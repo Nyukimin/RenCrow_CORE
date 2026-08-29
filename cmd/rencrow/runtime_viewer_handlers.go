@@ -117,24 +117,14 @@ func buildViewerRuntimeHandlers(
 	deps.viewerPromptDebug = viewer.HandlePromptDebugLogs(viewer.PromptDebugLogOptions{})
 	setIdleChatViewerClientCount(hub.ClientCount)
 	hub.SetClientCountListener(handleIdleChatViewerClientCountChanged)
-	if cfg.ViewerLog.Enabled {
-		eventLogPath := cfg.ViewerLog.Path
-		if eventLogStore, err := viewer.NewEventLogStore(eventLogPath); err != nil {
-			log.Printf("WARN: viewer event log disabled: %v", err)
-		} else {
-			deps.eventLogStore = eventLogStore
-			if deps.atlasService != nil {
-				deps.atlasService.WithDevelopmentEventSink(developmentEventLogSink{store: eventLogStore})
-			}
-			log.Printf("Viewer event log enabled: %s", eventLogPath)
-			gcPath := filepath.Join(filepath.Dir(eventLogPath), "orchestrator_event_gc.jsonl")
-			if gcSvc, err := viewer.NewEventLogGCService(eventLogStore, gcPath, cfg.ViewerLog.RetentionDays, cfg.ViewerLog.GCIntervalMinutes); err != nil {
-				log.Printf("WARN: viewer event log GC disabled: %v", err)
-			} else {
-				deps.eventLogGC = gcSvc
-				deps.eventLogGC.Start()
-				log.Printf("Viewer event log GC enabled: %s", gcPath)
-			}
+	if deps.canonicalEventStore != nil {
+		eventLogStore, err := viewer.NewCanonicalEventLog(deps.canonicalEventStore)
+		if err != nil {
+			log.Fatalf("Failed to initialize Viewer Canonical Event projection: %v", err)
+		}
+		deps.eventLogStore = eventLogStore
+		if deps.atlasService != nil {
+			deps.atlasService.WithDevelopmentEventSink(developmentEventLogSink{store: eventLogStore})
 		}
 	}
 	if reportStore, err := executionpersistence.NewJSONLReportStore(reportPath); err != nil {

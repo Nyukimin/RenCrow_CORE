@@ -25,11 +25,11 @@ func TestRuntimeDataCapabilityCatalogAllKeysNoPaths(t *testing.T) {
 	if strings.Contains(string(encoded), "/srv/") {
 		t.Fatalf("path leak: %s", encoded)
 	}
-	if len(all) != 20 {
+	if len(all) != len(datacapability.KnownStoreKeys()) {
 		t.Fatalf("entries=%d", len(all))
 	}
 	listed, err := catalog.Execute("list_catalog", "")
-	if err != nil || len(listed.([]datacapability.Entry)) != 20 {
+	if err != nil || len(listed.([]datacapability.Entry)) != len(datacapability.KnownStoreKeys()) {
 		t.Fatalf("list_catalog=%#v err=%v", listed, err)
 	}
 	entry, _ := catalog.catalog.Describe("glossary")
@@ -236,7 +236,7 @@ func TestProductionRunnersAndSnapshotExposeDataCatalogAndGlossary(t *testing.T) 
 		t.Fatal("tool runtime did not retain startup data capability catalog")
 	}
 	viewerEntries, err := runtime.DataCapabilityCatalog.Entries(context.Background())
-	if err != nil || len(viewerEntries) != 20 {
+	if err != nil || len(viewerEntries) != len(datacapability.KnownStoreKeys()) {
 		t.Fatalf("viewer catalog entries=%d err=%v", len(viewerEntries), err)
 	}
 	runners := []struct {

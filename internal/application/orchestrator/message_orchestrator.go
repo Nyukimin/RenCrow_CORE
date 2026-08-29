@@ -27,6 +27,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type AudioOutputIntent string
@@ -131,8 +132,8 @@ type CoderProposalEvidenceRecorder interface {
 	SaveCoderProposalEvidence(ctx context.Context, evidence domainskill.CoderProposalEvidence) (domainskill.CoderProposalEvidencePaths, error)
 }
 
-type WorkflowEventRecorder interface {
-	SaveWorkflowEvent(ctx context.Context, item domainai.WorkflowEvent) error
+type CanonicalEventRecorder interface {
+	modulecore.EventAppender
 }
 
 type CommandRegistryLister interface {
@@ -142,7 +143,7 @@ type CommandRegistryLister interface {
 type SuperAgentRuntimeRecorder interface {
 	SaveAgentRun(ctx context.Context, item domainsuperagent.AgentRun) error
 	SaveContextPack(ctx context.Context, item domainsuperagent.ContextPack) error
-	SaveTraceEvent(ctx context.Context, item domainsuperagent.TraceEvent) error
+	modulecore.EventAppender
 }
 
 type SuperAgentRunController interface {
@@ -195,7 +196,7 @@ type MessageOrchestrator struct {
 	recallTrace               RecallTraceStore
 	skillBootstrap            SkillBootstrapRecorder
 	coderProposalEvidence     CoderProposalEvidenceRecorder
-	workflowEvents            WorkflowEventRecorder
+	canonicalEvents           CanonicalEventRecorder
 	commandRegistry           CommandRegistryLister
 	superAgentRuns            SuperAgentRuntimeRecorder
 	superAgentRunController   SuperAgentRunController
@@ -403,13 +404,13 @@ func (o *MessageOrchestrator) SetCoderProposalEvidenceRecorder(recorder CoderPro
 	}
 }
 
-func (o *MessageOrchestrator) SetWorkflowEventRecorder(recorder WorkflowEventRecorder) {
-	o.workflowEvents = recorder
+func (o *MessageOrchestrator) SetCanonicalEventRecorder(recorder CanonicalEventRecorder) {
+	o.canonicalEvents = recorder
 	if o.routeDecisions != nil {
-		o.routeDecisions.SetWorkflowEventRecorder(recorder)
+		o.routeDecisions.SetCanonicalEventRecorder(recorder)
 	}
 	if o.routeDispatcher != nil {
-		o.routeDispatcher.SetWorkflowEventRecorder(recorder)
+		o.routeDispatcher.SetCanonicalEventRecorder(recorder)
 	}
 }
 

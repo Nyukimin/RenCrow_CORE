@@ -71,12 +71,6 @@ func (s *SQLiteStore) migrate() error {
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS trace_event (
-			event_id TEXT PRIMARY KEY,
-			run_id TEXT,
-			created_at TEXT,
-			payload TEXT NOT NULL
-		)`,
 		`CREATE TABLE IF NOT EXISTS run_queue (
 			queue_id TEXT PRIMARY KEY,
 			status TEXT,
@@ -160,43 +154,6 @@ func (s *SQLiteStore) SaveMessageChannel(ctx context.Context, item domainsuperag
 
 func (s *SQLiteStore) ListMessageChannels(ctx context.Context, limit int) ([]domainsuperagent.MessageChannel, error) {
 	return listSQLiteItems[domainsuperagent.MessageChannel](ctx, s, "message_channel", limit)
-}
-
-func (s *SQLiteStore) SaveTraceEvent(ctx context.Context, item domainsuperagent.TraceEvent) error {
-	if err := domainsuperagent.ValidateTraceEvent(item); err != nil {
-		return err
-	}
-	return s.save(ctx, "trace_event", "event_id", item.EventID, "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
-}
-
-func (s *SQLiteStore) ListTraceEvents(ctx context.Context, limit int) ([]domainsuperagent.TraceEvent, error) {
-	return listSQLiteItems[domainsuperagent.TraceEvent](ctx, s, "trace_event", limit)
-}
-
-// FindTraceEventByID returns the record stored under the exact trace_event primary key.
-func (s *SQLiteStore) FindTraceEventByID(ctx context.Context, eventID string) (domainsuperagent.TraceEvent, bool, error) {
-	if s == nil || s.db == nil {
-		return domainsuperagent.TraceEvent{}, false, fmt.Errorf("superagent sqlite store is closed")
-	}
-	var payload string
-	err := s.db.QueryRowContext(ctx, `SELECT payload FROM trace_event WHERE event_id = ?`, eventID).Scan(&payload)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domainsuperagent.TraceEvent{}, false, nil
-	}
-	if err != nil {
-		return domainsuperagent.TraceEvent{}, false, err
-	}
-	var item domainsuperagent.TraceEvent
-	if err := json.Unmarshal([]byte(payload), &item); err != nil {
-		return domainsuperagent.TraceEvent{}, false, err
-	}
-	if err := domainsuperagent.ValidateTraceEvent(item); err != nil {
-		return domainsuperagent.TraceEvent{}, false, err
-	}
-	if item.EventID != eventID {
-		return domainsuperagent.TraceEvent{}, false, fmt.Errorf("stored trace event ID %q does not match primary key %q", item.EventID, eventID)
-	}
-	return item, true, nil
 }
 
 func (s *SQLiteStore) SaveRunQueueItem(ctx context.Context, item domainsuperagent.RunQueueItem) error {

@@ -19,7 +19,6 @@ func TestRegisterRoutesRegistersSuperAgentPaths(t *testing.T) {
 		SubagentTask:     statusHandler(http.StatusIMUsed),
 		ContextPack:      statusHandler(http.StatusMultiStatus),
 		MessageChannel:   statusHandler(http.StatusBadRequest),
-		TraceEvent:       statusHandler(http.StatusConflict),
 	}})
 
 	tests := []struct {
@@ -36,7 +35,6 @@ func TestRegisterRoutesRegistersSuperAgentPaths(t *testing.T) {
 		{path: "/viewer/superagent/subagent-tasks", want: http.StatusIMUsed},
 		{path: "/viewer/superagent/context-packs", want: http.StatusMultiStatus},
 		{path: "/viewer/superagent/message-channels", want: http.StatusBadRequest},
-		{path: "/viewer/superagent/trace-events", want: http.StatusConflict},
 	}
 
 	for _, tt := range tests {

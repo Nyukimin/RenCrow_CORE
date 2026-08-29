@@ -12,7 +12,7 @@ import (
 type idleAwareEventListener struct {
 	hub      *viewer.EventHub
 	monitor  *viewer.MonitorStore
-	archive  *viewer.EventLogStore
+	archive  *viewer.CanonicalEventLog
 	mu       sync.RWMutex
 	idleChat *idlechat.IdleChatOrchestrator
 

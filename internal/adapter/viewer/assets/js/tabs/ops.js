@@ -486,6 +486,14 @@ function sandboxField(item, snake, pascal) {
   return undefined;
 }
 
+function canonicalEventField(item, field) {
+  const direct = sandboxField(item, field, field);
+  if (direct !== undefined) return direct;
+  const payload = sandboxField(item, 'payload', 'Payload');
+  if (payload && Object.prototype.hasOwnProperty.call(payload, field)) return payload[field];
+  return undefined;
+}
+
 function sandboxOpsCard() {
   const fetchError = String(state.ops.sandboxFetchError || '');
   if (fetchError) {
@@ -1045,12 +1053,12 @@ function renderSuperAgentResumeAudits() {
 
 function superAgentResumeAuditRows() {
   const queue = Array.isArray(state.ops.superAgentRunQueue) ? state.ops.superAgentRunQueue : [];
-  const traces = Array.isArray(state.ops.superAgentTraceEvents) ? state.ops.superAgentTraceEvents : [];
+  const traces = Array.isArray(state.ops.superAgentEvents) ? state.ops.superAgentEvents : [];
   return queue.filter((item) => String(sandboxField(item, 'action', 'Action') || '') === 'resume').map((item) => {
     const runID = sandboxField(item, 'run_id', 'RunID') || '';
-    const related = traces.filter((ev) => String(sandboxField(ev, 'run_id', 'RunID') || '') === String(runID));
-    const paused = related.filter((ev) => String(sandboxField(ev, 'event_type', 'EventType') || '') === 'lead_agent_paused').length;
-    const resumed = related.filter((ev) => String(sandboxField(ev, 'event_type', 'EventType') || '') === 'lead_agent_resumed').length;
+    const related = traces.filter((ev) => String(canonicalEventField(ev, 'run_id') || canonicalEventField(ev, 'run_reference') || '') === String(runID));
+    const paused = related.filter((ev) => String(canonicalEventField(ev, 'event_type') || '') === 'run.lead_agent_paused').length;
+    const resumed = related.filter((ev) => String(canonicalEventField(ev, 'event_type') || '') === 'run.lead_agent_resumed').length;
     const reason = String(sandboxField(item, 'reason', 'Reason') || '');
     const manualLedger = /manual ledger|without scheduler execution|scheduler execution not used/i.test(reason);
     const runtimeControlActions = superAgentResumeRuntimeControlActions(related);
@@ -1073,7 +1081,7 @@ function superAgentResumeAuditRows() {
 function superAgentResumeRuntimeControlActions(events) {
   const actions = [];
   (Array.isArray(events) ? events : []).forEach((ev) => {
-    const summary = String(sandboxField(ev, 'payload_summary', 'PayloadSummary') || '');
+    const summary = String(canonicalEventField(ev, 'summary') || '');
     const match = summary.match(/runtime_control=([^\s;]+)/);
     if (!match || !match[1]) return;
     if (!actions.includes(match[1])) actions.push(match[1]);
@@ -1139,7 +1147,7 @@ function renderAIWorkflowRunEvidence() {
 function aiWorkflowRunEvidenceRows() {
   const events = Array.isArray(state.ops.aiWorkflowEvents) ? state.ops.aiWorkflowEvents : [];
   const contexts = Array.isArray(state.ops.aiWorkflowContextUsages) ? state.ops.aiWorkflowContextUsages : [];
-  const traces = Array.isArray(state.ops.superAgentTraceEvents) ? state.ops.superAgentTraceEvents : [];
+  const traces = Array.isArray(state.ops.superAgentEvents) ? state.ops.superAgentEvents : [];
   const byRun = new Map();
   const ensure = (runID, workstreamID) => {
     const id = String(runID || '');
@@ -1152,9 +1160,9 @@ function aiWorkflowRunEvidenceRows() {
     return row;
   };
   events.forEach((item) => {
-    const row = ensure(sandboxField(item, 'run_id', 'RunID'), sandboxField(item, 'workstream_id', 'WorkstreamID'));
+    const row = ensure(canonicalEventField(item, 'run_id'), canonicalEventField(item, 'workstream_id'));
     if (!row) return;
-    if (String(sandboxField(item, 'event_type', 'EventType') || '') === 'command_invoked') row.hasCommand = true;
+    if (String(canonicalEventField(item, 'event_type') || '') === 'command.invoked') row.hasCommand = true;
   });
   contexts.forEach((item) => {
     const row = ensure(sandboxField(item, 'run_id', 'RunID'), sandboxField(item, 'workstream_id', 'WorkstreamID'));
@@ -1162,7 +1170,7 @@ function aiWorkflowRunEvidenceRows() {
     row.hasContext = true;
   });
   traces.forEach((item) => {
-    const row = ensure(sandboxField(item, 'run_id', 'RunID'), '');
+    const row = ensure(canonicalEventField(item, 'run_id') || canonicalEventField(item, 'run_reference'), '');
     if (!row) return;
     row.hasTrace = true;
   });
@@ -2061,7 +2069,7 @@ function superAgentOpsCard() {
   const tasks = Array.isArray(state.ops.superAgentSubagentTasks) ? state.ops.superAgentSubagentTasks : [];
   const contexts = Array.isArray(state.ops.superAgentContextPacks) ? state.ops.superAgentContextPacks : [];
   const channels = Array.isArray(state.ops.superAgentMessageChannels) ? state.ops.superAgentMessageChannels : [];
-  const events = Array.isArray(state.ops.superAgentTraceEvents) ? state.ops.superAgentTraceEvents : [];
+  const events = Array.isArray(state.ops.superAgentEvents) ? state.ops.superAgentEvents : [];
   const queue = Array.isArray(state.ops.superAgentRunQueue) ? state.ops.superAgentRunQueue : [];
   const runtimeConfig = state.ops.superAgentRuntimeConfig || {};
   const running = runs.filter((item) => String(sandboxField(item, 'status', 'Status') || '') === 'running').length;

@@ -9,13 +9,9 @@ import (
 	"time"
 
 	dciapp "github.com/Nyukimin/RenCrow_CORE/internal/application/dci"
-	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domainsandbox "github.com/Nyukimin/RenCrow_CORE/internal/domain/sandbox"
-	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
-	aiworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/aiworkflow"
 	complexitypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/complexity"
 	dcipersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/dci"
-	superagentpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/superagent"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
@@ -82,82 +78,6 @@ func TestOwnerRouteWriteRecallE2E(t *testing.T) {
 		record := result.Records[0]
 		if record["artifact_id"] != first.AuditRef || record["artifact_type"] != "complexity_concrete_diff_review" || record["status"] != "generated" || record["scan_id"] != "scan-owner-1" {
 			t.Fatalf("complexity recalled record=%#v", record)
-		}
-	})
-
-	t.Run("super agent trace event", func(t *testing.T) {
-		store := superagentpersistence.NewJSONLStore(t.TempDir(), 3000)
-		now := time.Date(2026, 8, 14, 5, 0, 0, 0, time.UTC)
-		if err := store.SaveAgentRun(context.Background(), domainsuperagent.AgentRun{
-			RunID: "run-owner-route", AgentType: "LeadAgent", Status: "running", StartedAt: now,
-		}); err != nil {
-			t.Fatalf("seed super agent run: %v", err)
-		}
-		if err := store.SaveTraceEvent(context.Background(), domainsuperagent.TraceEvent{
-			EventID: "parent-owner-route", RunID: "run-owner-route", EventType: "run_started", Status: "running", CreatedAt: now,
-		}); err != nil {
-			t.Fatalf("seed super agent parent: %v", err)
-		}
-		writeRegistry := newRuntimeDataWriteRegistry()
-		if err := registerRuntimeDataWriteSuperAgentHarness(writeRegistry, store); err != nil {
-			t.Fatalf("register super agent write: %v", err)
-		}
-		recallRegistry := newRuntimeDataRecallRegistry()
-		if err := registerRuntimeDataRecallSuperAgentTraceEvents(recallRegistry, store); err != nil {
-			t.Fatalf("register super agent recall: %v", err)
-		}
-		worker := toolsinfra.NewToolRunner(toolsinfra.ToolRunnerConfig{
-			OperationalDataWrite: writeRegistry, OperationalDataRecall: recallRegistry, DisableToolHarness: true,
-		})
-		requestID := "owner-route-super-agent-recall-1"
-		ctx := runtimeDataWriteOwnerContext(t, requestID, false)
-		first := runtimeDataWriteOwnerExecuteWrite(t, worker, ctx, "super_agent_harness", "record_trace_event", map[string]any{
-			"run_id": "run-owner-route", "event_type": "tool_started", "status": "running", "parent_event_id": "parent-owner-route", "payload_summary": "inspect source",
-		})
-		if first.IdempotentReplay || first.AuditRef == "" || first.OwnerRoute != "super_agent_harness/record_trace_event" {
-			t.Fatalf("super agent write receipt=%#v", first)
-		}
-		result := ownerRouteRecallByAuditRef(t, worker, ctx, "super_agent_harness", "trace_events", first.AuditRef, requestID)
-		record := result.Records[0]
-		if record["event_id"] != first.AuditRef || record["run_id"] != "run-owner-route" || record["parent_event_id"] != "parent-owner-route" || record["actor"] != "shiro" || record["status"] != "running" {
-			t.Fatalf("super agent recalled record=%#v", record)
-		}
-	})
-
-	t.Run("AI workflow event", func(t *testing.T) {
-		store := aiworkflowpersistence.NewJSONLStore(t.TempDir())
-		now := time.Date(2026, 8, 14, 6, 0, 0, 0, time.UTC)
-		if err := store.SaveWorkflowEvent(context.Background(), domainai.WorkflowEvent{
-			EventID: "parent-ai-owner-route", RunID: "run-ai-owner-route", WorkstreamID: "ws-owner-route", EventType: "run_started",
-			Agent: "mio", Repo: "repo-owner-route", WorktreeID: "wt-owner-route", Status: "running", CreatedAt: now,
-		}); err != nil {
-			t.Fatalf("seed AI workflow parent: %v", err)
-		}
-		writeRegistry := newRuntimeDataWriteRegistry()
-		if err := registerRuntimeDataWriteAIWorkflow(writeRegistry, store); err != nil {
-			t.Fatalf("register AI workflow write: %v", err)
-		}
-		recallRegistry := newRuntimeDataRecallRegistry()
-		if err := registerRuntimeDataRecallAIWorkflowEvents(recallRegistry, store); err != nil {
-			t.Fatalf("register AI workflow recall: %v", err)
-		}
-		worker := toolsinfra.NewToolRunner(toolsinfra.ToolRunnerConfig{
-			OperationalDataWrite: writeRegistry, OperationalDataRecall: recallRegistry, DisableToolHarness: true,
-		})
-		requestID := "owner-route-ai-workflow-recall-1"
-		ctx := runtimeDataWriteOwnerContext(t, requestID, false)
-		first := runtimeDataWriteOwnerExecuteWrite(t, worker, ctx, "ai_workflow", "record_workflow_event", map[string]any{
-			"event_type": "command_started", "status": "running", "parent_event_id": "parent-ai-owner-route",
-			"run_id": "run-ai-owner-route", "workstream_id": "ws-owner-route", "repo": "repo-owner-route",
-			"worktree_id": "wt-owner-route", "command_name": "/review", "skill_name": "audit", "summary": "command started",
-		})
-		if first.IdempotentReplay || first.AuditRef == "" || first.OwnerRoute != "ai_workflow/record_workflow_event" {
-			t.Fatalf("AI workflow write receipt=%#v", first)
-		}
-		result := ownerRouteRecallByAuditRef(t, worker, ctx, "ai_workflow", "workflow_events", first.AuditRef, requestID)
-		record := result.Records[0]
-		if record["event_id"] != first.AuditRef || record["run_id"] != "run-ai-owner-route" || record["parent_event_id"] != "parent-ai-owner-route" || record["agent"] != "shiro" || record["status"] != "running" {
-			t.Fatalf("AI workflow recalled record=%#v", record)
 		}
 	})
 
