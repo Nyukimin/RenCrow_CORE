@@ -14,7 +14,9 @@
 
 **Target repository path:** `docs/architecture/identity/IDENTITY_CANONICAL.md`
 
-**Implementation baseline:** `Nyukimin/RenCrow_CORE main@aeeaec86c7a519ebb68c38293a223701e71863fd`
+**Implementation baseline:** `Nyukimin/RenCrow_CORE main@5d856613f3d10952e7a23d0cff9c4145de63da9d`
+
+**Step 00 evidence:** [`docs/調査/20260829_221132_ID統一Step00_baseline.md`](../../調査/20260829_221132_ID統一Step00_baseline.md)
 
 ---
 
