@@ -8,14 +8,6 @@ import (
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
-func sttGatewayStreamURLFromConfig(cfg *config.Config) string {
-	return inferSTTStreamURLFromGatewayHTTPURL(inferSTTGatewayHTTPURLFromConfig(cfg))
-}
-
-func inferSTTStreamURLFromGatewayHTTPURL(gatewayHTTPURL string) string {
-	return modulestt.InferStreamURLFromGatewayHTTPURL(gatewayHTTPURL)
-}
-
 func inferSTTBaseURL(ttsBaseURL, sttGatewayHTTPURL string) string {
 	return modulestt.InferBaseURL(modulestt.RuntimeURLConfig{
 		TTSBaseURL:     ttsBaseURL,

@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	sttinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/stt"
@@ -14,180 +13,12 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-// handleSTTWebSocketBridge は /stt で Viewer と、CORE設定から解決した
-// RenCrow_STT Gatewayを中継する。
-func handleSTTWebSocketBridge(gatewayURL string) http.Handler {
-	return websocket.Handler(func(conn *websocket.Conn) {
-		defer conn.Close()
-		origin := "http://localhost/"
-		gw, err := websocket.Dial(gatewayURL, "", origin)
-		if err != nil {
-			_ = sendSTTError(conn, "RenCrow STT bridge unavailable: "+err.Error())
-			return
-		}
-		defer gw.Close()
-
-		silenceThreshold := sttSilenceAbsThresholdFromEnv()
-		var finalMu sync.Mutex
-		finalSent := false
-		trace := newSTTTimingTrace("bridge")
-
-		isFinalSent := func() bool {
-			finalMu.Lock()
-			defer finalMu.Unlock()
-			return finalSent
-		}
-		markTerminalSent := func() bool {
-			finalMu.Lock()
-			if finalSent {
-				finalMu.Unlock()
-				return false
-			}
-			finalSent = true
-			finalMu.Unlock()
-			return true
-		}
-
-		errc := make(chan error, 2)
-		relayBrowserToGateway := func(src, dst *websocket.Conn) {
-			for {
-				if isFinalSent() {
-					return
-				}
-				var msg []byte
-				if err := websocket.Message.Receive(src, &msg); err != nil {
-					errc <- err
-					return
-				}
-				if !isSTTTextFramePayload(msg) {
-					now := time.Now()
-					trace.markAudio(now)
-					if !isLikelySilentWAV(normalizeSTTAudioPayload(msg), silenceThreshold) {
-						trace.markVoice(now)
-					}
-				}
-				var sendErr error
-				if isSTTTextFramePayload(msg) {
-					sendErr = websocket.Message.Send(dst, string(msg))
-				} else {
-					sendErr = websocket.Message.Send(dst, msg)
-				}
-				if sendErr != nil {
-					errc <- sendErr
-					return
-				}
-			}
-		}
-		go relayBrowserToGateway(conn, gw) // browser -> RenCrow_STT
-		go relaySTTGatewayToBrowser(gw, conn, trace, isFinalSent, markTerminalSent, errc)
-		<-errc
-	})
-}
-
-func relaySTTGatewayToBrowser(src, dst *websocket.Conn, trace *sttTimingTrace, isFinalSent func() bool, markTerminalSent func() bool, errc chan error) {
-	for {
-		if isFinalSent() {
-			return
-		}
-		var msg []byte
-		if err := websocket.Message.Receive(src, &msg); err != nil {
-			errc <- err
-			return
-		}
-		if !isSTTTextFramePayload(msg) {
-			if err := websocket.Message.Send(dst, msg); err != nil {
-				errc <- err
-				return
-			}
-			continue
-		}
-
-		transformed, handled := transformSTTGatewayTextFrame(msg)
-		if !handled {
-			if err := websocket.Message.Send(dst, string(msg)); err != nil {
-				errc <- err
-				return
-			}
-			continue
-		}
-		if transformed == "" {
-			continue
-		}
-		var ev map[string]any
-		if err := json.Unmarshal([]byte(transformed), &ev); err == nil {
-			if typ, _ := ev["type"].(string); typ == modulestt.WebSocketEventTypeFinal || typ == modulestt.WebSocketEventTypeError {
-				text, _ := ev["text"].(string)
-				if typ == modulestt.WebSocketEventTypeFinal {
-					trace.logFinal("gateway", "gateway_final", text)
-				}
-				if markTerminalSent() {
-					if err := websocket.Message.Send(dst, transformed); err != nil {
-						errc <- err
-					}
-					_ = src.Close()
-					_ = dst.Close()
-					return
-				}
-				return
-			}
-		}
-		if evType, _ := ev["type"].(string); evType == modulestt.WebSocketEventTypePartial || evType == modulestt.WebSocketEventTypeDraft {
-			trace.markProvisional(time.Now())
-		}
-		if err := websocket.Message.Send(dst, transformed); err != nil {
-			errc <- err
-			return
-		}
-	}
-}
-
-func transformSTTGatewayTextFrame(payload []byte) (string, bool) {
-	var ev map[string]any
-	if err := json.Unmarshal(payload, &ev); err != nil {
-		return "", false
-	}
-	evType, _ := ev["type"].(string)
-	if evType == "" {
-		return "", false
-	}
-
-	text := ""
-	if raw, ok := ev["text"].(string); ok {
-		if modulestt.IsProviderErrorTranscriptText(raw) {
-			return mustJSON(modulestt.BuildErrorEvent(modulestt.ProviderTranscriptErrorMessage)), true
-		}
-		text = modulestt.NormalizeTranscriptText(raw)
-	}
-
-	if evType != modulestt.WebSocketEventTypePartial && evType != modulestt.WebSocketEventTypeDraft && evType != modulestt.WebSocketEventTypeFinal {
-		if text != "" {
-			ev["text"] = text
-			return mustJSON(ev), true
-		}
-		return "", false
-	}
-
-	if evType == modulestt.WebSocketEventTypeFinal && text == "" {
-		return mustJSON(modulestt.BuildErrorEvent(modulestt.ProviderTranscriptErrorMessage)), true
-	}
-
-	if text == "" {
-		return "", true
-	}
-	ev["text"] = text
-	return mustJSON(ev), true
-}
-
 func mustJSON(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return ""
 	}
 	return string(b)
-}
-
-func isSTTTextFramePayload(payload []byte) bool {
-	return modulestt.IsWebSocketTextFramePayload(payload)
 }
 
 func handleSTTWebSocketProvider(provider sttinfra.Provider) http.Handler {

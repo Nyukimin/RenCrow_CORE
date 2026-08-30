@@ -23,30 +23,10 @@ func GatewayTranscriptionURL(baseURL string) string {
 type RuntimeURLConfig struct {
 	Provider       string
 	GatewayHTTPURL string
-	StreamURL      string
 	TTSBaseURL     string
 	ServerHost     string
 	ServerPort     int
 	TLSEnabled     bool
-}
-
-func StreamURL(config RuntimeURLConfig) string {
-	if raw := strings.TrimSpace(config.StreamURL); raw != "" {
-		return raw
-	}
-	return InferStreamURLFromGatewayHTTPURL(config.GatewayHTTPURL)
-}
-
-func InferStreamURLFromGatewayHTTPURL(gatewayHTTPURL string) string {
-	u, err := url.Parse(strings.TrimSpace(gatewayHTTPURL))
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return ""
-	}
-	scheme := "ws"
-	if strings.EqualFold(u.Scheme, "https") {
-		scheme = "wss"
-	}
-	return fmt.Sprintf("%s://%s/ws/transcribe", scheme, u.Host)
 }
 
 func InferBaseURL(config RuntimeURLConfig) string {
@@ -96,5 +76,5 @@ func InferGatewayHTTPURL(config RuntimeURLConfig) string {
 	if base == "" {
 		return ""
 	}
-	return strings.TrimRight(base, "/") + "/stt/file"
+	return GatewayTranscriptionURL(base)
 }
