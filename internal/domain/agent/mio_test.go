@@ -618,6 +618,47 @@ func TestMioAgent_Chat_WithConversationEngine(t *testing.T) {
 	}
 }
 
+func TestMioAgentChatDoesNotReinjectDegenerateAgentHistory(t *testing.T) {
+	inputPack := &conversation.RecallPack{ShortContext: []conversation.Message{
+		{Speaker: conversation.SpeakerUser, Msg: "ユーザーの正規発話"},
+		{Speaker: conversation.SpeakerMio, Msg: "り1/20、いって、いって、疎通確認了解！"},
+	}}
+	engine := &mockConversationEngine{
+		beginTurnFunc: func(context.Context, string, string) (*conversation.RecallPack, error) {
+			return inputPack, nil
+		},
+	}
+	var captured llm.GenerateRequest
+	provider := &mockLLMProvider{generateFunc: func(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+		captured = req
+		return llm.GenerateResponse{Content: "正常な返答です"}, nil
+	}}
+	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
+	if _, err := mio.Chat(context.Background(), task.NewTask(task.JobIDFromString("job-safe-recall"), "続けて", "viewer", "chat-safe-recall")); err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+	joined := joinPromptMessages(captured.Messages)
+	if strings.Contains(joined, "いって、いって") {
+		t.Fatalf("degenerate Agent history leaked into generated prompt:\n%s", joined)
+	}
+	if !strings.Contains(joined, "ユーザーの正規発話") {
+		t.Fatalf("authoritative user history was lost:\n%s", joined)
+	}
+	if len(engine.commitRequests) != 1 {
+		t.Fatalf("typed commit calls=%d, want 1", len(engine.commitRequests))
+	}
+	trace := engine.commitRequests[0].RecallTraceItems
+	foundRejected := false
+	for _, item := range trace {
+		if item.Decision == "excluded" && strings.Contains(item.Reason, "degenerate") {
+			foundRejected = true
+		}
+	}
+	if !foundRejected {
+		t.Fatalf("missing rejection trace: %#v", trace)
+	}
+}
+
 func TestMioAgent_Chat_CommitsTypedTurnWithJobIDAndFilteredRecall(t *testing.T) {
 	var got conversation.ConversationTurnRequest
 	jobID := task.JobIDFromString("job-typed-commit")

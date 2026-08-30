@@ -3,11 +3,53 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
+
+func TestSanitizeRecallPackForGenerationRejectsDegenerateAgentExamplesOnly(t *testing.T) {
+	pack := &conversation.RecallPack{ShortContext: []conversation.Message{
+		{Speaker: conversation.SpeakerUser, Msg: "いって、いって、とユーザーが引用した"},
+		{Speaker: conversation.SpeakerMio, Msg: "り1/20、いって、いって、疎通確認了解！"},
+		{Speaker: conversation.SpeakerShiro, Msg: "通常の調査結果です"},
+	}}
+
+	got := pack.WithoutUnsafeAgentExamples()
+	if len(got.ShortContext) != 2 {
+		t.Fatalf("short context count=%d, want user quote and healthy Agent message", len(got.ShortContext))
+	}
+	if got.ShortContext[0].Speaker != conversation.SpeakerUser || got.ShortContext[1].Speaker != conversation.SpeakerShiro {
+		t.Fatalf("unexpected retained context: %#v", got.ShortContext)
+	}
+	if len(got.RejectedTraceItems) != 1 || got.RejectedTraceItems[0].Decision != "excluded" || !strings.Contains(got.RejectedTraceItems[0].Reason, "degenerate") {
+		t.Fatalf("missing bounded rejection trace: %#v", got.RejectedTraceItems)
+	}
+	if len(pack.ShortContext) != 3 || len(pack.RejectedTraceItems) != 0 {
+		t.Fatalf("source RecallPack was mutated: %#v", pack)
+	}
+}
+
+func TestUnsafePromptExampleDetectsRepeatedMotifAndRuneRun(t *testing.T) {
+	for _, value := range []string{
+		"り1/20、いって、いって、疎通確認了解！",
+		"応答です。0000000000000000",
+	} {
+		if !conversation.IsUnsafeGeneratedTextForPrompt(value) {
+			t.Fatalf("unsafe prompt example was accepted: %q", value)
+		}
+	}
+	for _, value := range []string{
+		"確認しました。次の境界を調べます。",
+		"一つずつ、確実に確認します。",
+	} {
+		if conversation.IsUnsafeGeneratedTextForPrompt(value) {
+			t.Fatalf("healthy prompt example was rejected: %q", value)
+		}
+	}
+}
 
 func TestSharedConversationContinuityIsTypedRecallL0(t *testing.T) {
 	pack := &conversation.RecallPack{ShortContext: []conversation.Message{{Speaker: conversation.SpeakerUser, Msg: "previous"}}}

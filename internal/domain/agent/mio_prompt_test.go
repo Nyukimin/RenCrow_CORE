@@ -102,6 +102,20 @@ func TestMioExpressionHistoryPromptIsSmallAndCapped(t *testing.T) {
 	}
 }
 
+func TestMioExpressionHistoryExcludesDegenerateGeneratedWording(t *testing.T) {
+	history := MioExpressionHistory{
+		Openings: []string{"通常の書き出し", "いって、いって、こんにちは"},
+		Closings: []string{"安全に確認します", "0000000000000000"},
+	}
+	prompt := history.Prompt()
+	if strings.Contains(prompt, "いって、いって") || strings.Contains(prompt, "00000000") {
+		t.Fatalf("degenerate wording leaked into expression history:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "通常の書き出し") || !strings.Contains(prompt, "安全に確認します") {
+		t.Fatalf("healthy wording was lost:\n%s", prompt)
+	}
+}
+
 func TestMioToneTracksConversationRisk(t *testing.T) {
 	cases := []struct {
 		name string

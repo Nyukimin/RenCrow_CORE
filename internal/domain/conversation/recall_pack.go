@@ -375,7 +375,7 @@ func (rp *RecallPack) FilterForRole(role string) RecallPack {
 	}
 	role = normalizeRecallRole(role)
 	if role == "" {
-		return *rp
+		return rp.WithoutUnsafeAgentExamples()
 	}
 	policy := RecallPolicyForRole(role)
 	filtered := *rp
@@ -433,7 +433,7 @@ func (rp *RecallPack) FilterForRole(role string) RecallPack {
 		}
 		filtered.RejectedTraceItems = append(filtered.RejectedTraceItems, rejectedCategoryTrace(snippet, decision.Reason))
 	}
-	return filtered
+	return filtered.WithoutUnsafeAgentExamples()
 }
 
 // WithoutPersonaSystemPrompt removes the stored conversation persona while

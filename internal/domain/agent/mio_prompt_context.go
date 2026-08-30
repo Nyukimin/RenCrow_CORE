@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
@@ -51,7 +52,7 @@ func normalizeMioHistoryItems(items []string) []string {
 	seen := make(map[string]struct{}, mioExpressionHistoryLimit)
 	for i := len(items) - 1; i >= 0 && len(out) < mioExpressionHistoryLimit; i-- {
 		item := truncateMioExpression(strings.TrimSpace(items[i]), 80)
-		if item == "" {
+		if item == "" || conversation.IsUnsafeGeneratedTextForPrompt(item) {
 			continue
 		}
 		key := strings.ToLower(item)
