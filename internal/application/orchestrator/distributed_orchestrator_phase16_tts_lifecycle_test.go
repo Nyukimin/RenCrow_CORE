@@ -8,6 +8,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestPhase16DistributedTTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
@@ -44,6 +45,23 @@ func TestPhase16DistributedTTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 	lifecycle.EndSession(context.Background(), ttsSessionID)
 	if len(bridge.ended) != 1 || bridge.ended[0] != ttsSessionID {
 		t.Fatalf("expected TTS end for %s, got %#v", ttsSessionID, bridge.ended)
+	}
+}
+
+func TestPhase16DistributedTTSLifecyclePassesRequestTraceToTTSSession(t *testing.T) {
+	bridge := &mockTTSBridge{}
+	lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
+	traceID := modulecore.NewTraceID()
+
+	lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
+		TraceID: string(traceID), SessionID: "sess-trace", Channel: "viewer", ChatID: "viewer-user",
+	}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 0.9, "chat"))
+
+	if len(bridge.startReqs) != 1 {
+		t.Fatalf("expected one TTS start request, got %d", len(bridge.startReqs))
+	}
+	if bridge.startReqs[0].TraceID != string(traceID) {
+		t.Fatalf("TTS start trace_id = %q, want parent %q", bridge.startReqs[0].TraceID, traceID)
 	}
 }
 

@@ -2,7 +2,24 @@ package tts
 
 import (
 	"strings"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func canonicalRenCrowTTSTraceID(raw string) modulecore.TraceID {
+	traceID := modulecore.TraceID(strings.TrimSpace(raw))
+	if traceID.Validate() != nil {
+		return modulecore.NewTraceID()
+	}
+	return traceID
+}
+
+func newRenCrowTTSSession(voiceID string) *renCrowTTSSession {
+	return &renCrowTTSSession{
+		voiceID: voiceID,
+		traceID: modulecore.NewTraceID(),
+	}
+}
 
 func (b *RenCrowTTSBridge) getOrCreateSession(sessionID string) *renCrowTTSSession {
 	b.mu.Lock()
@@ -10,7 +27,7 @@ func (b *RenCrowTTSBridge) getOrCreateSession(sessionID string) *renCrowTTSSessi
 	if s, ok := b.sessions[sessionID]; ok {
 		return s
 	}
-	s := &renCrowTTSSession{voiceID: b.cfg.VoiceID}
+	s := newRenCrowTTSSession(b.cfg.VoiceID)
 	b.sessions[sessionID] = s
 	return s
 }
@@ -20,7 +37,7 @@ func (b *RenCrowTTSBridge) reserveSessionChunks(sessionID string, count int) (re
 	defer b.mu.Unlock()
 	session, ok := b.sessions[sessionID]
 	if !ok {
-		session = &renCrowTTSSession{voiceID: b.cfg.VoiceID}
+		session = newRenCrowTTSSession(b.cfg.VoiceID)
 		b.sessions[sessionID] = session
 	}
 	first := session.nextChunk

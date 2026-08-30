@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
@@ -36,7 +37,7 @@ func TestRenCrowTTSBridge_PushTextCallsSynthesis(t *testing.T) {
 		AuthToken:   "owner-test-token",
 		VoiceID:     "female_01",
 		Sink:        sink,
-		OnChunkReady: func(_, _ string, _ int, _, _, _, audioPath, audioURL string) {
+		OnChunkReady: func(_, _, _ string, _ int, _, _, _, audioPath, audioURL string) {
 			gotAudioURL = moduletts.ChooseNonEmpty(audioURL, audioPath)
 		},
 	})
@@ -85,6 +86,91 @@ func TestRenCrowTTSBridge_PushTextCallsSynthesis(t *testing.T) {
 	}
 }
 
+func TestRenCrowTTSBridgePreservesOneTraceAcrossSessionCallbacks(t *testing.T) {
+	traceID := modulecore.NewTraceID()
+	var chunkTraceID string
+	var completedTraceID string
+	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
+		HTTPBaseURL: "http://tts.local",
+		OnChunkReady: func(_, _, gotTraceID string, _ int, _, _, _, _, _ string) {
+			chunkTraceID = gotTraceID
+		},
+		OnSessionCompleted: func(_, gotTraceID, _ string) {
+			completedTraceID = gotTraceID
+		},
+	})
+	bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"gateway_service":"tts-gateway","audio_path":"/audio/trace.wav"}`)),
+		}, nil
+	})}
+
+	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "trace-session", TraceID: string(traceID)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.PushText(context.Background(), "trace-session", "確認です。", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.EndSession(context.Background(), "trace-session"); err != nil {
+		t.Fatal(err)
+	}
+	if chunkTraceID != string(traceID) || completedTraceID != string(traceID) {
+		t.Fatalf("callback traces = chunk:%q completed:%q, want %q", chunkTraceID, completedTraceID, traceID)
+	}
+}
+
+func TestRenCrowTTSBridgeGeneratesOneTraceForIndependentSession(t *testing.T) {
+	var chunkTraceID string
+	var completedTraceID string
+	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
+		HTTPBaseURL: "http://tts.local",
+		OnChunkReady: func(_, _, gotTraceID string, _ int, _, _, _, _, _ string) {
+			chunkTraceID = gotTraceID
+		},
+		OnSessionCompleted: func(_, gotTraceID, _ string) {
+			completedTraceID = gotTraceID
+		},
+	})
+	bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"gateway_service":"tts-gateway","audio_path":"/audio/generated-trace.wav"}`)),
+		}, nil
+	})}
+
+	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "independent-session"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.PushText(context.Background(), "independent-session", "確認です。", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.EndSession(context.Background(), "independent-session"); err != nil {
+		t.Fatal(err)
+	}
+	if modulecore.TraceID(chunkTraceID).Validate() != nil || completedTraceID != chunkTraceID {
+		t.Fatalf("independent callback traces = chunk:%q completed:%q, want one canonical trace", chunkTraceID, completedTraceID)
+	}
+}
+
+func TestRenCrowTTSBridgeEndUnknownSessionEmitsCanonicalTrace(t *testing.T) {
+	var completedTraceID string
+	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
+		OnSessionCompleted: func(_, gotTraceID, _ string) {
+			completedTraceID = gotTraceID
+		},
+	})
+
+	if err := bridge.EndSession(context.Background(), "unknown-session"); err != nil {
+		t.Fatal(err)
+	}
+	if modulecore.TraceID(completedTraceID).Validate() != nil {
+		t.Fatalf("completion trace_id = %q, want canonical identity", completedTraceID)
+	}
+}
+
 func TestRenCrowTTSBridgeRejectsResponseWithoutGatewayMarker(t *testing.T) {
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL: "http://tts.invalid",
@@ -114,7 +200,7 @@ func TestRenCrowTTSBridge_FormatsProviderSpeechTextOnly(t *testing.T) {
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL: "http://tts.local",
 		VoiceID:     "female_01",
-		OnChunkReady: func(_, _ string, _ int, _, speechText, displayText, _, _ string) {
+		OnChunkReady: func(_, _, _ string, _ int, _, speechText, displayText, _, _ string) {
 			readySpeech = speechText
 			readyDisplay = displayText
 		},
@@ -159,7 +245,7 @@ func TestRenCrowTTSBridgeUsesGatewayRelayPathForViewer(t *testing.T) {
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL: "http://tts.local",
 		VoiceID:     "female_01",
-		OnChunkReady: func(_, _ string, _ int, _, _, _, audioPath, audioURL string) {
+		OnChunkReady: func(_, _, _ string, _ int, _, _, _, audioPath, audioURL string) {
 			gotAudioPath = audioPath
 			gotAudioURL = audioURL
 		},
@@ -195,7 +281,7 @@ func TestRenCrowTTSBridge_SplitsTextWithSharedChunkPlan(t *testing.T) {
 		HTTPBaseURL: "http://tts.local",
 		VoiceID:     "female_01",
 		Sink:        sink,
-		OnChunkReady: func(_, _ string, chunkIndex int, _, text, displayText, _, _ string) {
+		OnChunkReady: func(_, _, _ string, chunkIndex int, _, text, displayText, _, _ string) {
 			readyIndexes = append(readyIndexes, chunkIndex)
 			readyTexts = append(readyTexts, text)
 			readyDisplays = append(readyDisplays, displayText)
@@ -266,7 +352,7 @@ func TestRenCrowTTSBridge_SynthesizesTwoChunksConcurrentlyAndPublishesInOrder(t 
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
 		HTTPBaseURL: "http://tts.local",
 		VoiceID:     "mio",
-		OnChunkReady: func(_, _ string, chunkIndex int, _, _, _, _, _ string) {
+		OnChunkReady: func(_, _, _ string, chunkIndex int, _, _, _, _, _ string) {
 			mu.Lock()
 			ready = append(ready, chunkIndex)
 			mu.Unlock()

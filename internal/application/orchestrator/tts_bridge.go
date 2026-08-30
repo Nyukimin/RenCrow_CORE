@@ -10,6 +10,7 @@ import (
 type TTSSessionStart struct {
 	SessionID             string
 	ResponseID            string
+	TraceID               string
 	CharacterID           string
 	VoiceID               string
 	SpeechMode            string

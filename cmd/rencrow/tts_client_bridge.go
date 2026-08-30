@@ -14,6 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	ttsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tts"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
@@ -41,7 +42,7 @@ func buildTTSClientBridge(
 		player := ttsinfra.NewCommandPlayer(cmds)
 		sink = ttsinfra.NewAsyncAudioSink(ttsinfra.NewPlaybackAudioSink(player, ""))
 	}
-	onChunkFn := func(sessionID, responseID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string) {
+	onChunkFn := func(sessionID, responseID, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string) {
 		if isStaleTTSPublicSession(sessionID) {
 			log.Printf("[TTS] dropping stale idlechat chunk session=%s response=%s chunk=%d", sessionID, responseID, chunkIndex)
 			return
@@ -83,7 +84,7 @@ func buildTTSClientBridge(
 		})
 		if metricErr == nil {
 			route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-			onChunk(orchestrator.NewEvent("metrics.latency", "metrics", "viewer", string(metricJSON), "TTS", payload.ResponseID, payload.SessionID, route.Channel, route.ChatID))
+			onChunk(orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "metrics.latency", "metrics", "viewer", string(metricJSON), "TTS", payload.ResponseID, payload.SessionID, route.Channel, route.ChatID))
 		}
 		payloadJSON, err := json.Marshal(payload)
 		if err != nil {
@@ -91,12 +92,12 @@ func buildTTSClientBridge(
 			return
 		}
 		route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-		event := orchestrator.NewEvent("tts.audio_chunk", "tts", "user", string(payloadJSON), "TTS", payload.ResponseID, payload.SessionID, route.Channel, route.ChatID)
+		event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.audio_chunk", "tts", "user", string(payloadJSON), "TTS", payload.ResponseID, payload.SessionID, route.Channel, route.ChatID)
 		event.MessageID = payload.MessageID
 		event.TurnIndex = payload.TurnIndex
 		onChunk(event)
 	}
-	onSessionDoneFn := func(sessionID, characterID string) {
+	onSessionDoneFn := func(sessionID, traceID, characterID string) {
 		if isStaleTTSPublicSession(sessionID) {
 			log.Printf("[TTS] dropping stale idlechat completion session=%s", sessionID)
 			retireTTSPublicSession(sessionID)
@@ -125,7 +126,7 @@ func buildTTSClientBridge(
 				log.Printf("WARN: tts session completed payload marshal failed: %v", err)
 			} else {
 				route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-				event := orchestrator.NewEvent("tts.session_completed", "tts", "user", string(payloadJSON), "TTS", payload.ResponseID, payload.SessionID, route.Channel, route.ChatID)
+				event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.session_completed", "tts", "user", string(payloadJSON), "TTS", payload.ResponseID, payload.SessionID, route.Channel, route.ChatID)
 				event.MessageID = payload.MessageID
 				event.TurnIndex = payload.TurnIndex
 				onChunk(event)

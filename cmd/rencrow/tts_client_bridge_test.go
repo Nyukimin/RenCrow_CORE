@@ -204,6 +204,7 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	var events []orchestrator.OrchestratorEvent
+	traceID := modulecore.NewTraceID()
 	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
 		Enabled: true, GatewayBaseURL: srv.URL, VoiceID: "mio", TimeoutMS: 15000,
 	}}, func(event orchestrator.OrchestratorEvent) {
@@ -211,7 +212,7 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 	}, nil, nil)
 
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
-		SessionID: "viewer-chat-1", ResponseID: "response-chat-1", CharacterID: "mio", VoiceID: "mio",
+		SessionID: "viewer-chat-1", ResponseID: "response-chat-1", TraceID: string(traceID), CharacterID: "mio", VoiceID: "mio",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +223,14 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	seen := map[string]bool{}
 	for _, event := range events {
+		if event.Type == "metrics.latency" || event.Type == "tts.audio_chunk" || event.Type == "tts.session_completed" {
+			seen[event.Type] = true
+			if event.TraceID != string(traceID) {
+				t.Fatalf("%s trace_id = %q, want parent %q", event.Type, event.TraceID, traceID)
+			}
+		}
 		if event.Type != "tts.session_completed" {
 			continue
 		}
@@ -235,6 +243,9 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 		}
 		if modulecore.TraceID(event.TraceID).Validate() != nil || event.TraceID == event.JobID || event.JobID != "response-chat-1" {
 			t.Fatalf("completion correlation = job:%q trace:%q, want canonical trace and response-chat-1 job", event.JobID, event.TraceID)
+		}
+		if !seen["metrics.latency"] || !seen["tts.audio_chunk"] || !seen["tts.session_completed"] {
+			t.Fatalf("missing TTS callback events: %#v", seen)
 		}
 		return
 	}

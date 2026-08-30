@@ -49,6 +49,7 @@ func (l *messageTTSLifecycle) StartSessionForRoute(ctx context.Context, req Proc
 	startReq := TTSSessionStart{
 		SessionID:             plan.SessionID,
 		ResponseID:            plan.ResponseID,
+		TraceID:               req.TraceID,
 		CharacterID:           plan.CharacterID,
 		VoiceID:               plan.VoiceID,
 		SpeechMode:            plan.SpeechMode,

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
@@ -25,13 +26,14 @@ type RenCrowTTSBridgeConfig struct {
 	RequestTimeout     time.Duration
 	DownloadAudio      bool
 	Sink               AudioSink
-	OnChunkReady       func(sessionID, responseID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string)
-	OnSessionCompleted func(sessionID, characterID string)
+	OnChunkReady       func(sessionID, responseID, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string)
+	OnSessionCompleted func(sessionID, traceID, characterID string)
 }
 
 type renCrowTTSSession struct {
 	characterID string
 	responseID  string
+	traceID     modulecore.TraceID
 	voiceID     string
 	nextChunk   int
 }
@@ -94,6 +96,7 @@ func (b *RenCrowTTSBridge) StartSession(_ context.Context, req orchestrator.TTSS
 	b.sessions[start.SessionID] = &renCrowTTSSession{
 		characterID: start.CharacterID,
 		responseID:  start.ResponseID,
+		traceID:     canonicalRenCrowTTSTraceID(req.TraceID),
 		voiceID:     start.VoiceID,
 		nextChunk:   0,
 	}
@@ -193,7 +196,7 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 			PauseAfter: chunkPauseForText(request.speechText),
 		}
 		if b.cfg.OnChunkReady != nil {
-			b.cfg.OnChunkReady(sessionID, responseID, ch.ChunkIndex, characterID, request.speechText, strings.TrimSpace(request.item.DisplayText), result.audioPath, ch.AudioURL)
+			b.cfg.OnChunkReady(sessionID, responseID, string(session.traceID), ch.ChunkIndex, characterID, request.speechText, strings.TrimSpace(request.item.DisplayText), result.audioPath, ch.AudioURL)
 		}
 		if b.cfg.Sink != nil {
 			if err := b.cfg.Sink.SubmitChunk(ctx, sessionID, ch); err != nil {
@@ -254,9 +257,13 @@ func (b *RenCrowTTSBridge) EndSession(ctx context.Context, sessionID string) err
 		return nil
 	}
 	var characterID string
+	traceID := modulecore.NewTraceID()
 	b.mu.Lock()
 	if session, ok := b.sessions[sessionID]; ok && session != nil {
 		characterID = strings.TrimSpace(session.characterID)
+		if session.traceID.Validate() == nil {
+			traceID = session.traceID
+		}
 	}
 	delete(b.sessions, sessionID)
 	b.mu.Unlock()
@@ -266,7 +273,7 @@ func (b *RenCrowTTSBridge) EndSession(ctx context.Context, sessionID string) err
 		}
 	}
 	if b.cfg.OnSessionCompleted != nil {
-		b.cfg.OnSessionCompleted(sessionID, characterID)
+		b.cfg.OnSessionCompleted(sessionID, string(traceID), characterID)
 	}
 	return nil
 }

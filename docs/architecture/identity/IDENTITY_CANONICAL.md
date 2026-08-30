@@ -1100,6 +1100,16 @@ Test:
 - **Enforcement:** Event発行境界をerror-returningにし、request Trace単位で最初の失敗を保持する。最初の受付Event失敗時はLLM／Tool／外部処理へ進まず、途中失敗時も最終成功応答を拒否する。
 - **Tests:** appendが成功したEventだけが一度だけ投影されること、最初／途中／最終append失敗で成功応答が返らないこと、失敗EventがViewerへ出ないことをMessage／Distributed経路で検査する。
 
+#### Step 02 Failure Knowledge: TTS callbackによるTrace分断
+
+- **Failure:** 一つのAgent応答から非同期に返る`metrics.latency`、`tts.audio_chunk`、`tts.session_completed`が、callbackごとに新しい`TraceID`を生成した。
+- **Problem:** 本文のOrchestrator Eventは同じTraceに保存されても、音声生成・chunk・完了だけが別Traceになり、利用者に見える応答を一つの因果処理として追跡できなかった。
+- **Cause:** TTS session開始契約が親`TraceID`を受け取らず、callback adapterが`ResponseID`／`JobID`だけを持つ状態でEventを生成した。
+- **Lesson:** 非同期callbackは新しいingressではない。開始時に確定した親Traceをsession stateへ明示的に保持し、全callbackへ渡す必要がある。
+- **Invariant:** `ProcessMessageRequest`から開始するTTS sessionは、そのrequestのCanonical `TraceID`を`TTSSessionStart`へ明示的に渡し、全chunk／metric／completion Eventで同じ値を保持する。`ResponseID`、`JobID`、`SessionID`からTraceを推測しない。
+- **Enforcement:** TTS bridgeは有効な開始Traceをそのままsessionへ保持する。独立TTS sessionに親Traceがない場合だけ開始境界で一度Canonical Traceを生成し、session終了まで再生成しない。callback adapterは保持されたTraceを`NewEventWithTraceID`へ渡す。
+- **Tests:** Message／Distributed lifecycleがrequest Traceを開始契約へ渡すこと、指定Traceと開始境界で生成したTraceの両方が全chunk／completionで一致すること、配備後の実Actor応答で本文・TTSを含む全Eventが一つのTraceになることを検査する。
+
 #### Step 02 offline Trace repair契約
 
 修正前runtimeがappendした分断Eventはactive Event Store内で更新しない。SQLite backup APIで取得した

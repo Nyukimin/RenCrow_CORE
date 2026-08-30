@@ -51,6 +51,7 @@ func (l *distributedTTSLifecycle) StartSessionForRoute(ctx context.Context, req 
 	startReq := TTSSessionStart{
 		SessionID:             plan.SessionID,
 		ResponseID:            plan.ResponseID,
+		TraceID:               req.TraceID,
 		CharacterID:           plan.CharacterID,
 		VoiceID:               plan.VoiceID,
 		SpeechMode:            plan.SpeechMode,
