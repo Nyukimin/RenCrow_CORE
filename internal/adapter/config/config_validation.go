@@ -60,6 +60,9 @@ func (c *Config) Validate() error {
 	if err := c.validateBackupConfig(); err != nil {
 		return err
 	}
+	if err := validateVerificationConfig(c.Verification, c.Backup); err != nil {
+		return err
+	}
 	if c.DurableStore.Enabled {
 		if strings.TrimSpace(c.DurableStore.ManifestPath) == "" {
 			return fmt.Errorf("durable_store.manifest_path is required when enabled=true")

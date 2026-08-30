@@ -233,6 +233,14 @@ security:
 prompts_dir: "./prompts"       # デフォルトプロンプト（リポジトリ固定）
 workspace_dir: "./workspace"   # ユーザーカスタマイズ領域（オーバーライド）
 
+# 応答検証policy。productionで有効化する場合、report_pathは絶対pathにし、
+# backup設定時はbackup.core_source配下へ置く。
+verification:
+  enabled: false
+  mode: "dry_run"
+  default_level: "low"
+  report_path: "/srv/rencrow/db/core/reports/verification_report.jsonl"
+
 # ログ設定
 log:
   level: "info"
