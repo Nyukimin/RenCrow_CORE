@@ -1082,6 +1082,25 @@ Test:
 - **Enforcement:** malformed ingress Traceはowner境界で置換し、Event adapter内ではJobIDからTraceを推測しない。production Event Storeはappend-onlyのままとする。
 - **Tests:** Viewer受付、Message/Distributed Orchestrator、SuperAgent、AI Workflowで、正規Trace、JobIDとの非同一、同一request内のTrace一致を検査する。配備後は受付receiptとEvent Storeを照合する。
 
+#### Step 02 offline Trace repair契約
+
+修正前runtimeがappendした分断Eventはactive Event Store内で更新しない。SQLite backup APIで取得した
+read-only production snapshotを入力とし、別pathへ全Eventを再構築するone-shot owner CLIだけを使用する。
+
+- 同じJobの候補は、Payloadの`job_id`、`task_reference`、`run_reference=run_lead_<job_id>`から決定的に集約する。
+- repair対象は、同一Job内にTraceが複数あり、`component_id=orchestrator`かつ
+  `event_type=message.received`のroot Eventがちょうど一件あるgroupだけとする。
+- target Traceはroot Eventが既に持つCanonical `TraceID`とし、新しい過去Eventや新しいTraceを生成しない。
+- 曖昧root、group外へのCausation／Dependency、group外からgroup内への参照、invalid envelope、
+  source columnとenvelopeの不一致はfail closedとする。
+- `EventID`、Event順序、Payload、Canonical field、dependency edgeは保持し、変更可能fieldは対象Eventの`TraceID`だけとする。
+- dry-run receiptはsource file SHA-256、Event count、Event set hash、repair Job count、repair Event count、
+  output Event set hashをbounded JSONで固定する。
+- buildはchecksum一致するdry-run receiptを必須とし、存在しない別output pathだけへ新DBを作る。
+- production applyはwriter停止後にactive source checksumを再照合し、DB／WAL／SHMと旧binaryをrollback rootへ保存してからatomic swapする。
+- swap後はrow count、EventID set、非Trace content hash、graph整合性、quick check、owner process、readiness、
+  実Actor Trace E2Eを確認する。失敗時は新DBへ追記せず旧snapshotへ戻す。
+
 ---
 
 ### Step 03: DCIのEventID誤用を置換
