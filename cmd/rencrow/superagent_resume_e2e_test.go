@@ -81,9 +81,11 @@ func TestSuperAgentResumeE2EHTTPToRestartedScheduler(t *testing.T) {
 	}
 	defer restartedEvents.Close()
 	var resumed domainsuperagent.RunQueueItem
+	var resumedTrace modulecore.TraceID
 	now := crashAt.Add(time.Minute + time.Second)
-	scheduler := appsuperagent.NewRunQueueScheduler(composeRuntimeSuperAgentStore(restarted, restartedEvents), appsuperagent.RunQueueProcessorFunc(func(_ context.Context, item domainsuperagent.RunQueueItem) (string, error) {
+	scheduler := appsuperagent.NewRunQueueScheduler(composeRuntimeSuperAgentStore(restarted, restartedEvents), appsuperagent.RunQueueProcessorFunc(func(_ context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error) {
 		resumed = item
+		resumedTrace = traceID
 		return "step two committed", nil
 	}), appsuperagent.RunQueueSchedulerOptions{Now: func() time.Time { return now }, ClaimLimit: 1, LeaseDuration: time.Minute, LeaseToken: func() (string, error) { return "restarted-process", nil }})
 	count, err := scheduler.RunOnce(context.Background())
@@ -92,6 +94,22 @@ func TestSuperAgentResumeE2EHTTPToRestartedScheduler(t *testing.T) {
 	}
 	if resumed.RunID != run.RunID || resumed.WorkstreamID != run.WorkstreamID || resumed.CheckpointRevision != run.CheckpointRevision || resumed.AttemptCount != 2 {
 		t.Fatalf("resumed identity/checkpoint=%#v", resumed)
+	}
+	if resumedTrace.Validate() != nil {
+		t.Fatalf("resumed trace=%q is not canonical", resumedTrace)
+	}
+	events, err := restartedEvents.ListByComponent(context.Background(), "superagent", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queueEvents := make([]modulecore.EventEnvelope, 0, 2)
+	for _, event := range events {
+		if event.EventType == "run_queue.claimed" || event.EventType == "run_queue.completed" {
+			queueEvents = append(queueEvents, event)
+		}
+	}
+	if len(queueEvents) != 2 || queueEvents[0].TraceID != resumedTrace || queueEvents[1].TraceID != resumedTrace {
+		t.Fatalf("run queue events=%#v want trace=%q", queueEvents, resumedTrace)
 	}
 	final, err := restarted.ListRunQueueItems(context.Background(), 10)
 	if err != nil || len(final) != 1 || final[0].Status != "completed" || final[0].Reason != "step two committed" {

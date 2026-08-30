@@ -22,6 +22,7 @@ import (
 	superagentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	webgatherinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/webgather"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type backgroundJobFailureReporter struct {
@@ -39,8 +40,19 @@ func newBackgroundJobFailureReporter(listener orchestrator.EventListener) backgr
 }
 
 func (r backgroundJobFailureReporter) Failed(job string, err error, detail string) {
+	r.failedWithTrace("", job, err, detail)
+}
+
+func (r backgroundJobFailureReporter) FailedWithTrace(traceID modulecore.TraceID, job string, err error, detail string) {
+	r.failedWithTrace(traceID, job, err, detail)
+}
+
+func (r backgroundJobFailureReporter) failedWithTrace(traceID modulecore.TraceID, job string, err error, detail string) {
 	if r.listener == nil || err == nil {
 		return
+	}
+	if traceID.Validate() != nil {
+		traceID = modulecore.NewTraceID()
 	}
 	job = normalizeBackgroundJobName(job)
 	errorText := compactBackgroundJobText(err.Error(), 600)
@@ -62,8 +74,8 @@ func (r backgroundJobFailureReporter) Failed(job string, err error, detail strin
 		payload["detail"] = detail
 	}
 	payloadJSON, _ := json.Marshal(payload)
-	r.listener.OnEvent(orchestrator.NewEvent("background_job.failed", "background_job", "shiro", string(payloadJSON), "OPS", jobID, sessionID, "background", job))
-	r.listener.OnEvent(orchestrator.NewEvent("job.notification", "shiro", "mio", backgroundJobFailureNotification(job, errorText, detail), "OPS", jobID, sessionID, "background", job))
+	r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "background_job.failed", "background_job", "shiro", string(payloadJSON), "OPS", jobID, sessionID, "background", job))
+	r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "job.notification", "shiro", "mio", backgroundJobFailureNotification(job, errorText, detail), "OPS", jobID, sessionID, "background", job))
 }
 
 func normalizeBackgroundJobName(job string) string {
@@ -518,11 +530,14 @@ func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQue
 }
 
 func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor, reporter backgroundJobFailureReporter) superagentapp.RunQueueProcessorFunc {
-	return superagentapp.RunQueueProcessorFunc(func(ctx context.Context, item domainsuperagent.RunQueueItem) (string, error) {
+	return superagentapp.RunQueueProcessorFunc(func(ctx context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error) {
 		fail := func(err error) (string, error) {
 			detail := fmt.Sprintf("queue_id=%s run_id=%s workstream_id=%s action=%s", strings.TrimSpace(item.QueueID), strings.TrimSpace(item.RunID), strings.TrimSpace(item.WorkstreamID), strings.TrimSpace(item.Action))
-			reporter.Failed("superagent_run_queue", err, detail)
+			reporter.FailedWithTrace(traceID, "superagent_run_queue", err, detail)
 			return "", err
+		}
+		if err := traceID.Validate(); err != nil {
+			return fail(fmt.Errorf("trace_id must be canonical: %w", err))
 		}
 		action := strings.TrimSpace(item.Action)
 		if action != "resume" && action != "process_message" && action != "chat" {
@@ -537,6 +552,7 @@ func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor
 		}
 		resp, err := processor.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
 			JobID:                    strings.TrimPrefix(strings.TrimSpace(item.RunID), "run_lead_"),
+			TraceID:                  string(traceID),
 			SessionID:                sessionID,
 			Channel:                  "superagent",
 			ChatID:                   strings.TrimSpace(item.QueueID),

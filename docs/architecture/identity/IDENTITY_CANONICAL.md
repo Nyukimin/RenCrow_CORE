@@ -1080,7 +1080,8 @@ Test:
 - **Lesson:** canonical prefixへの変換成功は因果整合性の証明ではない。Trace owner、伝播、永続化を一つのE2E契約として検査する。
 - **Invariant:** ingress ownerが一つのCanonical `TraceID`を生成し、同一Trigger内のowner Eventへその値を保持して渡す。`TraceID == JobID`を禁止する。
 - **Enforcement:** malformed ingress Traceはowner境界で置換し、Event adapter内ではJobIDからTraceを推測しない。production Event Storeはappend-onlyのままとする。
-- **Tests:** Viewer受付、Message/Distributed Orchestrator、SuperAgent、AI Workflowで、正規Trace、JobIDとの非同一、同一request内のTrace一致を検査する。配備後は受付receiptとEvent Storeを照合する。
+- **Queue Trigger:** `run_queue.claimed`を発生させる一回のclaim attemptは一つの内部Triggerである。Run Queue SchedulerがそのclaimのCanonical `TraceID`を一度だけ生成し、claimed／completed／failed Eventと、同じclaimから呼ぶ`ProcessMessageRequest`へ明示的に渡す。ProcessorはTraceをJobID、RunID、QueueIDから再生成・推測してはならない。lease失効後の再claimは新しい内部Triggerなので新しいTraceIDを持つ。
+- **Tests:** Viewer受付、Message/Distributed Orchestrator、SuperAgent、AI Workflowで、正規Trace、JobIDとの非同一、同一request内のTrace一致を検査する。Run Queueはclaim Eventと`ProcessMessageRequest`が同じTraceを持ち、再claimが別Traceになることを検査する。配備後は受付receiptとEvent Storeを照合する。
 
 #### Step 02 offline Trace repair契約
 

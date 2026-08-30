@@ -30,13 +30,13 @@ type RunQueueAgentRunStore interface {
 }
 
 type RunQueueProcessor interface {
-	ProcessRunQueueItem(ctx context.Context, item domainsuperagent.RunQueueItem) (string, error)
+	ProcessRunQueueItem(ctx context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error)
 }
 
-type RunQueueProcessorFunc func(ctx context.Context, item domainsuperagent.RunQueueItem) (string, error)
+type RunQueueProcessorFunc func(ctx context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error)
 
-func (f RunQueueProcessorFunc) ProcessRunQueueItem(ctx context.Context, item domainsuperagent.RunQueueItem) (string, error) {
-	return f(ctx, item)
+func (f RunQueueProcessorFunc) ProcessRunQueueItem(ctx context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error) {
+	return f(ctx, item, traceID)
 }
 
 type RunQueueSchedulerOptions struct {
@@ -99,7 +99,7 @@ func (s *RunQueueScheduler) RunOnce(ctx context.Context) (int, error) {
 		if err != nil {
 			return processed, err
 		}
-		summary, execErr := s.processWithHeartbeat(ctx, *item)
+		summary, execErr := s.processWithHeartbeat(ctx, *item, traceID)
 		completedAt := s.options.Now().UTC()
 		if execErr != nil {
 			if err := s.complete(ctx, *item, "failed", execErr.Error(), completedAt); err != nil {
@@ -169,10 +169,10 @@ func (s *RunQueueScheduler) claimNext(ctx context.Context, now time.Time, token 
 	return &item, nil
 }
 
-func (s *RunQueueScheduler) processWithHeartbeat(ctx context.Context, item domainsuperagent.RunQueueItem) (string, error) {
+func (s *RunQueueScheduler) processWithHeartbeat(ctx context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error) {
 	store, ok := s.store.(RunQueueLeaseStore)
 	if !ok {
-		return s.processor.ProcessRunQueueItem(ctx, item)
+		return s.processor.ProcessRunQueueItem(ctx, item, traceID)
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -199,7 +199,7 @@ func (s *RunQueueScheduler) processWithHeartbeat(ctx context.Context, item domai
 			}
 		}
 	}()
-	summary, err := s.processor.ProcessRunQueueItem(runCtx, item)
+	summary, err := s.processor.ProcessRunQueueItem(runCtx, item, traceID)
 	cancel()
 	if heartbeat := <-heartbeatErr; heartbeat != nil {
 		return "", heartbeat

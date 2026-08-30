@@ -47,8 +47,10 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 		},
 	}
 	var processed domainsuperagent.RunQueueItem
-	scheduler := NewRunQueueScheduler(store, RunQueueProcessorFunc(func(_ context.Context, item domainsuperagent.RunQueueItem) (string, error) {
+	var processedTrace modulecore.TraceID
+	scheduler := NewRunQueueScheduler(store, RunQueueProcessorFunc(func(_ context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error) {
 		processed = item
+		processedTrace = traceID
 		return "ok", nil
 	}), RunQueueSchedulerOptions{Now: func() time.Time { return now }, ClaimLimit: 1})
 
@@ -72,6 +74,9 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 	if len(store.traces) != 2 || store.traces[0].EventType != "run_queue.claimed" || store.traces[1].EventType != "run_queue.completed" || store.traces[1].CausationEventID != store.traces[0].EventID {
 		t.Fatalf("unexpected traces = %#v", store.traces)
 	}
+	if processedTrace.Validate() != nil || processedTrace != store.traces[0].TraceID || processedTrace != store.traces[1].TraceID {
+		t.Fatalf("processor trace=%q events=%q/%q", processedTrace, store.traces[0].TraceID, store.traces[1].TraceID)
+	}
 }
 
 func TestRunQueueSchedulerRunOnceMarksFailure(t *testing.T) {
@@ -85,7 +90,7 @@ func TestRunQueueSchedulerRunOnceMarksFailure(t *testing.T) {
 			CreatedAt: now,
 		}},
 	}
-	scheduler := NewRunQueueScheduler(store, RunQueueProcessorFunc(func(_ context.Context, _ domainsuperagent.RunQueueItem) (string, error) {
+	scheduler := NewRunQueueScheduler(store, RunQueueProcessorFunc(func(_ context.Context, _ domainsuperagent.RunQueueItem, _ modulecore.TraceID) (string, error) {
 		return "", errors.New("worker failed")
 	}), RunQueueSchedulerOptions{Now: func() time.Time { return now }, ClaimLimit: 1})
 
@@ -112,8 +117,10 @@ func TestRunQueueSchedulerRecoversOnlyExpiredClaimWithSameCheckpoint(t *testing.
 		{QueueID: "active", RunID: "run-2", Goal: "do not duplicate", Action: "resume", Status: "claimed", LeaseToken: "live-owner", LeaseUntil: now.Add(time.Minute), CheckpointRevision: 2, AttemptCount: 1, CreatedAt: now.Add(-time.Hour)},
 	}}
 	var processed domainsuperagent.RunQueueItem
-	scheduler := NewRunQueueScheduler(store, RunQueueProcessorFunc(func(_ context.Context, item domainsuperagent.RunQueueItem) (string, error) {
+	var recoveredTrace modulecore.TraceID
+	scheduler := NewRunQueueScheduler(store, RunQueueProcessorFunc(func(_ context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error) {
 		processed = item
+		recoveredTrace = traceID
 		return "resumed", nil
 	}), RunQueueSchedulerOptions{Now: func() time.Time { return now }, ClaimLimit: 1, LeaseDuration: 3 * time.Minute})
 
@@ -123,6 +130,9 @@ func TestRunQueueSchedulerRecoversOnlyExpiredClaimWithSameCheckpoint(t *testing.
 	}
 	if processed.QueueID != "expired" || processed.CheckpointRevision != 4 || processed.AttemptCount != 2 {
 		t.Fatalf("recovered item=%#v", processed)
+	}
+	if recoveredTrace.Validate() != nil || len(store.traces) == 0 || recoveredTrace != store.traces[0].TraceID {
+		t.Fatalf("recovered processor trace=%q events=%#v", recoveredTrace, store.traces)
 	}
 	if got := store.item("active"); got.LeaseToken != "live-owner" || got.Status != "claimed" {
 		t.Fatalf("unexpired claim changed: %#v", got)
