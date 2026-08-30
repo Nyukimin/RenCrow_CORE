@@ -1154,6 +1154,13 @@ read-only production snapshotを入力とし、別pathへ全Eventを再構築す
 - production applyは`unresolved=0`のreceiptに限り、writer停止後にactive source checksumを再照合し、
   DB／WAL／SHMと旧binaryをrollback rootへ保存してからatomic swapする。`unresolved>0`のbuild成果物は
   調査用に保持できるがproductionへ適用しない。
+- writer停止の確認と停止中receiptはservice managerの責務境界とし、apply CLIはactive DBの論理Event count、
+  EventID set hash、非Trace content hashを再照合する。SQLite Backup APIのpage layout差があるため、
+  activeとsourceのbyte SHA一致は要求しない。applyは`unresolved>0`、activeのWAL／SHM／journal残存、
+  apply開始前に固定したbuild receipt SHA-256を引数として再照合し、build／source／output／runtimeの
+  checksum不一致をswap前に拒否してから、DBとruntimeを同じrollback rootへ保存する。
+  DBを先に、binaryを次にatomic replaceし、後段検証またはreceipt保存に失敗した場合は両方を復元する。
+  終端statusは`applied`、`blocked`、`rolled_back`、`rollback_failed`に限定する。
 - swap後はrow count、EventID set、非Trace content hash、graph整合性、quick check、owner process、readiness、
   実Actor Trace E2Eを確認する。失敗時は新DBへ追記せず旧snapshotへ戻す。
 

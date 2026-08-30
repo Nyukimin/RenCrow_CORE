@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -235,7 +236,7 @@ func containedPath(root, raw string, mustExist bool) (string, error) {
 }
 
 func readSnapshot(ctx context.Context, path string) ([]modulecore.EventEnvelope, string, error) {
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro&_pragma=query_only%3d1")
+	db, err := sql.Open("sqlite", readOnlySQLiteDSN(path))
 	if err != nil {
 		return nil, "", err
 	}
@@ -272,6 +273,17 @@ func readSnapshot(ctx context.Context, path string) ([]modulecore.EventEnvelope,
 	}
 	hash, err := nonTraceHash(events)
 	return events, hash, err
+}
+
+func readOnlySQLiteDSN(path string) string {
+	query := url.Values{}
+	query.Set("mode", "ro")
+	query.Set("_pragma", "query_only=1")
+	return (&url.URL{
+		Scheme:   "file",
+		Path:     filepath.ToSlash(path),
+		RawQuery: query.Encode(),
+	}).String()
 }
 
 func eventJobID(event modulecore.EventEnvelope) (string, error) {

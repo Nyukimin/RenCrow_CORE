@@ -45,3 +45,14 @@ func TestRunDryRunProducesBoundedReceipt(t *testing.T) {
 		t.Fatalf("unexpected stdout: %s", stdout.String())
 	}
 }
+
+func TestRunApplyRequiresAllCutoverFlags(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"--mode", "apply"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("apply without cutover flags must fail")
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"status":"blocked"`)) {
+		t.Fatalf("apply failure must emit bounded blocked receipt: %s", stdout.String())
+	}
+}
