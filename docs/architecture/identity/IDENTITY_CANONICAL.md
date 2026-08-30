@@ -1121,16 +1121,34 @@ read-only production snapshotを入力とし、別pathへ全Eventを再構築す
   `run_reference=run_lead_<job_id>`だけをJob候補として集約する。
   `superagent.subagent.*`の`task_reference=sub_<agent>_<id>`はsubagent task identityであり、
   親Job候補として扱わない。同じfield名でもowner／Event typeが契約外ならJobを推測しない。
-- repair対象は、同一Job内にTraceが複数あり、`component_id=orchestrator`かつ
-  `event_type=message.received`のroot Eventがちょうど一件あるgroupだけとする。
+- Job候補groupは`verified`、`repairable`、`unresolved`へ全件分類する。既にTraceが一つのgroupは
+  `verified`、owner契約からTriggerまたはsession同一性を立証できるgroupは`repairable`、
+  それ以外は理由付き`unresolved`とし、未解決Eventを変更、削除、別groupへ混入させない。
 - target Traceはroot Eventが既に持つCanonical `TraceID`とし、新しい過去Eventや新しいTraceを生成しない。
-- 曖昧root、group外へのCausation／Dependency、group外からgroup内への参照、invalid envelope、
-  source columnとenvelopeの不一致はfail closedとする。
+  通常requestは`component_id=orchestrator,event_type=message.received`、Queue Triggerは
+  `component_id=superagent,event_type=run_queue.claimed`、background failureは
+  `component_id=orchestrator,event_type=background_job.failed`をrootとする。
+- 同一JobIDが複数Triggerで再利用された場合はJob単位で統合しない。EventID順のowner rootでsegment化し、
+  `run_queue.claimed`の後に同じJobの`message.received`が一件だけ続く場合は同じQueue Triggerへ含める。
+  新しいowner rootより前のsegmentに`agent.response`、`viewer.error`、`verification.report`、
+  `run_queue.completed`、`run_queue.failed`のいずれかの終端証拠がない場合は、時刻の近さだけで
+  分割せずJob全体を`unresolved`にする。
+- 独立TTS sessionは、group内の全Eventが`component_id=orchestrator`で、Event typeが
+  `metrics.latency`の`audio_chunk_ready`、`tts.audio_chunk`、`tts.session_completed`だけ、
+  `session_id`と`response_id`が各一値、completionが一件の場合に限り同一sessionと立証する。
+  この場合はEventID順で最初の既存callback Traceをtargetとする。background failureは
+  `background_job.failed`と`job.notification`が各一件のgroupだけを同一Triggerとする。
+- conflicting job identity、group／segmentを跨ぐCausation／Dependency、invalid envelope、
+  source columnとenvelopeの不一致は全体をfail closedとする。これらの構造矛盾と、証拠不足で
+  未変更の`unresolved`を混同しない。
 - `EventID`、Event順序、Payload、Canonical field、dependency edgeは保持し、変更可能fieldは対象Eventの`TraceID`だけとする。
-- dry-run receiptはsource file SHA-256、Event count、Event set hash、repair Job count、repair Event count、
-  output Event set hashをbounded JSONで固定する。
+- dry-run receiptはsource file SHA-256、Event count、Event set hash、verified／repairable／unresolved Job数、
+  repair segment／Event数、列挙型に限定したrepair evidence／unresolved reason別件数、output Event set hashを
+  bounded JSONで固定する。個別Event全件やPayloadをreceiptへ列挙しない。
 - buildはchecksum一致するdry-run receiptを必須とし、存在しない別output pathだけへ新DBを作る。
-- production applyはwriter停止後にactive source checksumを再照合し、DB／WAL／SHMと旧binaryをrollback rootへ保存してからatomic swapする。
+- production applyは`unresolved=0`のreceiptに限り、writer停止後にactive source checksumを再照合し、
+  DB／WAL／SHMと旧binaryをrollback rootへ保存してからatomic swapする。`unresolved>0`のbuild成果物は
+  調査用に保持できるがproductionへ適用しない。
 - swap後はrow count、EventID set、非Trace content hash、graph整合性、quick check、owner process、readiness、
   実Actor Trace E2Eを確認する。失敗時は新DBへ追記せず旧snapshotへ戻す。
 

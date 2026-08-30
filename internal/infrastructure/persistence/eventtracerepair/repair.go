@@ -23,12 +23,13 @@ import (
 )
 
 const (
-	ManifestSchemaVersion = "rencrow.identity.event-trace-repair/v1"
-	ModeDryRun            = "dry-run"
-	ModeBuild             = "build"
-	StatusReady           = "ready"
-	StatusBuilt           = "built"
-	StatusBlocked         = "blocked"
+	ManifestSchemaVersion     = "rencrow.identity.event-trace-repair/v2"
+	ModeDryRun                = "dry-run"
+	ModeBuild                 = "build"
+	StatusReady               = "ready"
+	StatusReadyWithUnresolved = "ready_with_unresolved"
+	StatusBuilt               = "built"
+	StatusBlocked             = "blocked"
 )
 
 type Options struct {
@@ -45,14 +46,20 @@ type Manifest struct {
 	Mode          string `json:"mode"`
 	Status        string `json:"status"`
 
-	SourceSHA256          string `json:"source_sha256,omitempty"`
-	InputCount            int    `json:"input_count"`
-	RepairJobCount        int    `json:"repair_job_count"`
-	RepairEventCount      int    `json:"repair_event_count"`
-	InputEventSetSHA256   string `json:"input_event_set_sha256,omitempty"`
-	OutputEventSetSHA256  string `json:"output_event_set_sha256,omitempty"`
-	NonTraceContentSHA256 string `json:"non_trace_content_sha256,omitempty"`
-	ErrorCode             string `json:"error_code,omitempty"`
+	SourceSHA256           string         `json:"source_sha256,omitempty"`
+	InputCount             int            `json:"input_count"`
+	RepairJobCount         int            `json:"repair_job_count"`
+	RepairSegmentCount     int            `json:"repair_segment_count"`
+	RepairEventCount       int            `json:"repair_event_count"`
+	VerifiedJobCount       int            `json:"verified_job_count"`
+	RepairableJobCount     int            `json:"repairable_job_count"`
+	UnresolvedJobCount     int            `json:"unresolved_job_count"`
+	RepairEvidenceCounts   map[string]int `json:"repair_evidence_counts"`
+	UnresolvedReasonCounts map[string]int `json:"unresolved_reason_counts"`
+	InputEventSetSHA256    string         `json:"input_event_set_sha256,omitempty"`
+	OutputEventSetSHA256   string         `json:"output_event_set_sha256,omitempty"`
+	NonTraceContentSHA256  string         `json:"non_trace_content_sha256,omitempty"`
+	ErrorCode              string         `json:"error_code,omitempty"`
 }
 
 type codedError struct {
@@ -95,12 +102,20 @@ func Run(ctx context.Context, options Options) (Manifest, error) {
 	}
 	manifest.NonTraceContentSHA256 = columnsHash
 
-	repaired, jobCount, eventCount, err := repair(events)
+	result, err := classifyAndRepair(events)
 	if err != nil {
 		return finishFailure(options, manifest, errorCode(err, "repair_blocked"), err)
 	}
-	manifest.RepairJobCount = jobCount
-	manifest.RepairEventCount = eventCount
+	manifest.RepairJobCount = result.repairJobCount
+	manifest.RepairSegmentCount = result.repairSegmentCount
+	manifest.RepairEventCount = result.repairEventCount
+	manifest.VerifiedJobCount = result.verifiedJobCount
+	manifest.RepairableJobCount = result.repairableJobCount
+	manifest.UnresolvedJobCount = result.unresolvedJobCount
+	manifest.RepairEvidenceCounts = result.repairEvidenceCounts
+	manifest.UnresolvedReasonCounts = result.unresolvedReasonCounts
+	manifest.Status = statusForUnresolved(result.unresolvedJobCount)
+	repaired := result.events
 	manifest.OutputEventSetSHA256, err = eventSetHash(repaired)
 	if err != nil {
 		return finishFailure(options, manifest, "output_hash", err)
@@ -110,7 +125,6 @@ func Run(ctx context.Context, options Options) (Manifest, error) {
 	}
 
 	if options.Mode == ModeDryRun {
-		manifest.Status = StatusReady
 		if err := writeManifest(options.Manifest, manifest); err != nil {
 			return manifest, err
 		}
@@ -260,73 +274,6 @@ func readSnapshot(ctx context.Context, path string) ([]modulecore.EventEnvelope,
 	return events, hash, err
 }
 
-type repairGroup struct {
-	jobID   string
-	indexes []int
-	roots   []int
-	traces  map[modulecore.TraceID]struct{}
-}
-
-func repair(input []modulecore.EventEnvelope) ([]modulecore.EventEnvelope, int, int, error) {
-	output := append([]modulecore.EventEnvelope(nil), input...)
-	groups := make(map[string]*repairGroup)
-	eventJob := make(map[modulecore.EventID]string)
-	for index, event := range input {
-		jobID, err := eventJobID(event)
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		if jobID == "" {
-			continue
-		}
-		group := groups[jobID]
-		if group == nil {
-			group = &repairGroup{jobID: jobID, traces: make(map[modulecore.TraceID]struct{})}
-			groups[jobID] = group
-		}
-		group.indexes = append(group.indexes, index)
-		group.traces[event.TraceID] = struct{}{}
-		if event.ComponentID == "orchestrator" && event.EventType == "message.received" {
-			group.roots = append(group.roots, index)
-		}
-		eventJob[event.EventID] = jobID
-	}
-	for _, event := range input {
-		ownerJob := eventJob[event.EventID]
-		for _, ref := range references(event) {
-			refJob := eventJob[ref]
-			if ownerJob != refJob && (ownerJob != "" || refJob != "") {
-				return nil, 0, 0, fail("cross_group_reference", "event %q and reference %q cross repair groups", event.EventID, ref)
-			}
-		}
-	}
-	jobIDs := make([]string, 0, len(groups))
-	for jobID := range groups {
-		jobIDs = append(jobIDs, jobID)
-	}
-	sort.Strings(jobIDs)
-	repairJobs, repairEvents := 0, 0
-	for _, jobID := range jobIDs {
-		group := groups[jobID]
-		if len(group.traces) <= 1 {
-			continue
-		}
-		if len(group.roots) != 1 {
-			return nil, 0, 0, fail("ambiguous_root", "job %q has %d message.received roots", jobID, len(group.roots))
-		}
-		target := input[group.roots[0]].TraceID
-		for _, index := range group.indexes {
-			output[index].TraceID = target
-		}
-		repairJobs++
-		repairEvents += len(group.indexes)
-	}
-	if err := modulecore.ValidateEventEnvelopeGraph(output); err != nil {
-		return nil, 0, 0, fail("invalid_repaired_graph", "%v", err)
-	}
-	return output, repairJobs, repairEvents, nil
-}
-
 func eventJobID(event modulecore.EventEnvelope) (string, error) {
 	var candidates []string
 	if raw, ok := event.Payload["job_id"].(string); ok && strings.TrimSpace(raw) != "" {
@@ -450,13 +397,28 @@ func fileSHA256(path string) (string, error) {
 }
 
 func compareManifest(prior, current Manifest) error {
-	if prior.SchemaVersion != ManifestSchemaVersion || prior.Mode != ModeDryRun || prior.Status != StatusReady {
+	if prior.SchemaVersion != ManifestSchemaVersion || prior.Mode != ModeDryRun || (prior.Status != StatusReady && prior.Status != StatusReadyWithUnresolved) {
 		return fmt.Errorf("prior receipt is not a ready dry-run")
 	}
-	if prior.SourceSHA256 != current.SourceSHA256 || prior.InputCount != current.InputCount || prior.RepairJobCount != current.RepairJobCount || prior.RepairEventCount != current.RepairEventCount || prior.InputEventSetSHA256 != current.InputEventSetSHA256 || prior.OutputEventSetSHA256 != current.OutputEventSetSHA256 || prior.NonTraceContentSHA256 != current.NonTraceContentSHA256 {
+	if prior.Status != current.Status || prior.SourceSHA256 != current.SourceSHA256 || prior.InputCount != current.InputCount || prior.RepairJobCount != current.RepairJobCount || prior.RepairSegmentCount != current.RepairSegmentCount || prior.RepairEventCount != current.RepairEventCount || prior.VerifiedJobCount != current.VerifiedJobCount || prior.RepairableJobCount != current.RepairableJobCount || prior.UnresolvedJobCount != current.UnresolvedJobCount || prior.InputEventSetSHA256 != current.InputEventSetSHA256 || prior.OutputEventSetSHA256 != current.OutputEventSetSHA256 || prior.NonTraceContentSHA256 != current.NonTraceContentSHA256 || !sameCountMap(prior.RepairEvidenceCounts, current.RepairEvidenceCounts) || !sameCountMap(prior.UnresolvedReasonCounts, current.UnresolvedReasonCounts) {
 		return fmt.Errorf("source or repair result changed after dry-run")
 	}
 	return nil
+}
+
+func sameCountMap(left, right map[string]int) bool {
+	if (left == nil) != (right == nil) {
+		return false
+	}
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if right[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func readManifest(path string) (Manifest, error) {

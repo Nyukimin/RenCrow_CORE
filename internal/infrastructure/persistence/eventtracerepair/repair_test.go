@@ -76,21 +76,230 @@ func TestDryRunAndBuildRepairFragmentedJobWithoutChangingEventIdentity(t *testin
 	}
 }
 
-func TestDryRunBlocksAmbiguousMessageReceivedRoot(t *testing.T) {
+func TestDryRunSegmentsReusedJobByDirectAndQueueTriggerRoots(t *testing.T) {
 	snapshot := t.TempDir()
 	source := filepath.Join(snapshot, "event_store.db")
-	jobID := "job-ambiguous"
-	writeStore(t, source, []modulecore.EventEnvelope{
+	jobID := "job-reused"
+	directTrace := modulecore.NewTraceID()
+	queueTrace := modulecore.NewTraceID()
+	events := []modulecore.EventEnvelope{
+		eventFixture(directTrace, "orchestrator", "message.received", map[string]any{"job_id": jobID}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "agent.thinking", map[string]any{"job_id": jobID}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "viewer.error", map[string]any{"job_id": jobID}),
+		eventFixture(queueTrace, "superagent", "run_queue.claimed", map[string]any{"run_reference": "run_lead_" + jobID}),
 		eventFixture(modulecore.NewTraceID(), "orchestrator", "message.received", map[string]any{"job_id": jobID}),
-		eventFixture(modulecore.NewTraceID(), "orchestrator", "message.received", map[string]any{"job_id": jobID}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "agent.thinking", map[string]any{"job_id": jobID}),
+		eventFixture(modulecore.NewTraceID(), "superagent", "run_queue.failed", map[string]any{"run_reference": "run_lead_" + jobID}),
+	}
+	writeStore(t, source, events)
+
+	dryPath := filepath.Join(snapshot, "dry-run.json")
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: dryPath, Mode: ModeDryRun,
 	})
+	if err != nil || receipt.Status != StatusReady || receipt.RepairJobCount != 1 || receipt.RepairSegmentCount != 2 || receipt.RepairEventCount != len(events) {
+		t.Fatalf("reused job must be segmented by owner roots: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.RepairEvidenceCounts["message_received_root"] != 1 || receipt.RepairEvidenceCounts["run_queue_claimed_root"] != 1 {
+		t.Fatalf("unexpected evidence counts: %+v", receipt.RepairEvidenceCounts)
+	}
+	output := filepath.Join(snapshot, "repaired.db")
+	if _, err := Run(context.Background(), Options{SnapshotDir: snapshot, SourceStore: source, OutputStore: output, Manifest: filepath.Join(snapshot, "build.json"), DryRunManifest: dryPath, Mode: ModeBuild}); err != nil {
+		t.Fatal(err)
+	}
+	got := readAll(t, output)
+	for index, event := range got {
+		want := directTrace
+		if index >= 3 {
+			want = queueTrace
+		}
+		if event.TraceID != want {
+			t.Fatalf("event[%d] trace=%s want=%s", index, event.TraceID, want)
+		}
+	}
+}
+
+func TestDryRunClassifiesStandaloneTTSSessionAndBackgroundFailure(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	ttsTrace := modulecore.NewTraceID()
+	backgroundTrace := modulecore.NewTraceID()
+	writeStore(t, source, []modulecore.EventEnvelope{
+		eventFixture(ttsTrace, "orchestrator", "metrics.latency", map[string]any{"job_id": "idle:0001", "session_id": "idle", "response_id": "idle:0001", "content": `{"kind":"tts","point":"audio_chunk_ready"}`}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "tts.audio_chunk", map[string]any{"job_id": "idle:0001", "session_id": "idle", "response_id": "idle:0001"}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "tts.session_completed", map[string]any{"job_id": "idle:0001", "session_id": "idle", "response_id": "idle:0001"}),
+		eventFixture(backgroundTrace, "orchestrator", "background_job.failed", map[string]any{"job_id": "background-job-1"}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "job.notification", map[string]any{"job_id": "background-job-1"}),
+	})
+
+	receipt, err := Run(context.Background(), Options{SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"), Manifest: filepath.Join(snapshot, "dry-run.json"), Mode: ModeDryRun})
+	if err != nil || receipt.Status != StatusReady || receipt.RepairJobCount != 2 || receipt.RepairSegmentCount != 2 || receipt.RepairEventCount != 5 {
+		t.Fatalf("owner evidence groups must be repairable: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.RepairEvidenceCounts["tts_session_existing_trace"] != 1 || receipt.RepairEvidenceCounts["background_failure_root"] != 1 {
+		t.Fatalf("unexpected evidence counts: %+v", receipt.RepairEvidenceCounts)
+	}
+}
+
+func TestDryRunKeepsEvidenceInsufficientGroupUnchanged(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	events := []modulecore.EventEnvelope{
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "unknown.started", map[string]any{"job_id": "unknown-job"}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "unknown.finished", map[string]any{"job_id": "unknown-job"}),
+	}
+	writeStore(t, source, events)
+	dryPath := filepath.Join(snapshot, "dry-run.json")
+	receipt, err := Run(context.Background(), Options{SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"), Manifest: dryPath, Mode: ModeDryRun})
+	if err != nil || receipt.Status != StatusReadyWithUnresolved || receipt.UnresolvedJobCount != 1 || receipt.RepairEventCount != 0 {
+		t.Fatalf("evidence-insufficient group must remain explicit: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.UnresolvedReasonCounts["missing_owner_root"] != 1 || receipt.InputEventSetSHA256 != receipt.OutputEventSetSHA256 {
+		t.Fatalf("unresolved group changed or reason missing: %+v", receipt)
+	}
+	output := filepath.Join(snapshot, "repaired.db")
+	built, err := Run(context.Background(), Options{SnapshotDir: snapshot, SourceStore: source, OutputStore: output, Manifest: filepath.Join(snapshot, "build.json"), DryRunManifest: dryPath, Mode: ModeBuild})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if built.Status != StatusBuilt || built.UnresolvedJobCount != 1 || built.RepairEventCount != 0 || built.OutputEventSetSHA256 != receipt.OutputEventSetSHA256 {
+		t.Fatalf("unresolved build must remain investigation-only and checksum-bound: %+v", built)
+	}
+	got := readAll(t, output)
+	for index := range events {
+		if got[index].TraceID != events[index].TraceID {
+			t.Fatalf("unresolved event[%d] trace changed", index)
+		}
+	}
+}
+
+func TestDryRunLeavesTwoMessageRootsWithoutPriorTerminalUnresolved(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	jobID := "job-missing-terminal"
+	firstTrace := modulecore.NewTraceID()
+	secondTrace := modulecore.NewTraceID()
+	events := []modulecore.EventEnvelope{
+		eventFixture(firstTrace, "orchestrator", "message.received", map[string]any{"job_id": jobID}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "agent.thinking", map[string]any{"job_id": jobID}),
+		eventFixture(secondTrace, "orchestrator", "message.received", map[string]any{"job_id": jobID}),
+	}
+	writeStore(t, source, events)
+	dryPath := filepath.Join(snapshot, "dry-run.json")
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: dryPath, Mode: ModeDryRun,
+	})
+	if err != nil || receipt.Status != StatusReadyWithUnresolved || receipt.UnresolvedJobCount != 1 || receipt.RepairEventCount != 0 {
+		t.Fatalf("ambiguous roots without terminal must remain unresolved: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.UnresolvedReasonCounts[unresolvedReasonAmbiguousRoot] != 1 {
+		t.Fatalf("unexpected unresolved reasons: %+v", receipt.UnresolvedReasonCounts)
+	}
+
+	output := filepath.Join(snapshot, "repaired.db")
+	if _, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: output,
+		Manifest: filepath.Join(snapshot, "build.json"), DryRunManifest: dryPath, Mode: ModeBuild,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := readAll(t, output)
+	for index, event := range got {
+		if event.TraceID != events[index].TraceID {
+			t.Fatalf("unresolved event[%d] trace changed from %s to %s", index, events[index].TraceID, event.TraceID)
+		}
+	}
+}
+
+func TestDryRunRejectsCrossSegmentReference(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	jobID := "job-cross-segment-reference"
+	firstTrace := modulecore.NewTraceID()
+	secondTrace := modulecore.NewTraceID()
+	root := eventFixture(firstTrace, "orchestrator", "message.received", map[string]any{"job_id": jobID})
+	crossSegmentCause := eventFixture(secondTrace, "orchestrator", "agent.thinking", map[string]any{"job_id": jobID})
+	terminal := eventFixture(firstTrace, "orchestrator", "viewer.error", map[string]any{"job_id": jobID})
+	laterRoot := eventFixture(secondTrace, "orchestrator", "message.received", map[string]any{"job_id": jobID})
+	dependent := eventFixture(secondTrace, "orchestrator", "agent.response", map[string]any{"job_id": jobID})
+	dependent.CausationEventID = crossSegmentCause.EventID
+	writeStore(t, source, []modulecore.EventEnvelope{root, crossSegmentCause, terminal, laterRoot, dependent})
 
 	receipt, err := Run(context.Background(), Options{
 		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
 		Manifest: filepath.Join(snapshot, "dry-run.json"), Mode: ModeDryRun,
 	})
-	if err == nil || receipt.Status != StatusBlocked || receipt.ErrorCode != "ambiguous_root" {
-		t.Fatalf("ambiguous root must fail closed: receipt=%+v err=%v", receipt, err)
+	if err == nil || receipt.Status != StatusBlocked || receipt.ErrorCode != "cross_segment_reference" {
+		t.Fatalf("cross-segment reference must fail closed: receipt=%+v err=%v", receipt, err)
+	}
+}
+
+func TestDryRunLeavesMalformedTTSSessionUnresolved(t *testing.T) {
+	tests := []struct {
+		name   string
+		events []modulecore.EventEnvelope
+	}{
+		{
+			name: "multiple response ids",
+			events: []modulecore.EventEnvelope{
+				eventFixture(modulecore.NewTraceID(), "orchestrator", "metrics.latency", map[string]any{
+					"job_id": "tts-malformed-response", "session_id": "tts-session", "response_id": "response-1",
+					"content": `{"kind":"tts","point":"audio_chunk_ready"}`,
+				}),
+				eventFixture(modulecore.NewTraceID(), "orchestrator", "tts.audio_chunk", map[string]any{
+					"job_id": "tts-malformed-response", "session_id": "tts-session", "response_id": "response-2",
+				}),
+				eventFixture(modulecore.NewTraceID(), "orchestrator", "tts.session_completed", map[string]any{
+					"job_id": "tts-malformed-response", "session_id": "tts-session", "response_id": "response-2",
+				}),
+			},
+		},
+		{
+			name: "missing completion",
+			events: []modulecore.EventEnvelope{
+				eventFixture(modulecore.NewTraceID(), "orchestrator", "metrics.latency", map[string]any{
+					"job_id": "tts-missing-completion", "session_id": "tts-session", "response_id": "response-1",
+					"content": `{"kind":"tts","point":"audio_chunk_ready"}`,
+				}),
+				eventFixture(modulecore.NewTraceID(), "orchestrator", "tts.audio_chunk", map[string]any{
+					"job_id": "tts-missing-completion", "session_id": "tts-session", "response_id": "response-1",
+				}),
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := t.TempDir()
+			source := filepath.Join(snapshot, "event_store.db")
+			writeStore(t, source, test.events)
+			dryPath := filepath.Join(snapshot, "dry-run.json")
+			receipt, err := Run(context.Background(), Options{
+				SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+				Manifest: dryPath, Mode: ModeDryRun,
+			})
+			if err != nil || receipt.Status != StatusReadyWithUnresolved || receipt.UnresolvedJobCount != 1 || receipt.RepairEventCount != 0 {
+				t.Fatalf("malformed TTS session must remain unresolved: receipt=%+v err=%v", receipt, err)
+			}
+			if receipt.UnresolvedReasonCounts[unresolvedReasonMissingOwnerRoot] != 1 {
+				t.Fatalf("unexpected unresolved reasons: %+v", receipt.UnresolvedReasonCounts)
+			}
+			output := filepath.Join(snapshot, "repaired.db")
+			if _, err := Run(context.Background(), Options{
+				SnapshotDir: snapshot, SourceStore: source, OutputStore: output,
+				Manifest: filepath.Join(snapshot, "build.json"), DryRunManifest: dryPath, Mode: ModeBuild,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			got := readAll(t, output)
+			for index, event := range got {
+				if event.TraceID != test.events[index].TraceID {
+					t.Fatalf("unresolved event[%d] trace changed from %s to %s", index, test.events[index].TraceID, event.TraceID)
+				}
+			}
+		})
 	}
 }
 
