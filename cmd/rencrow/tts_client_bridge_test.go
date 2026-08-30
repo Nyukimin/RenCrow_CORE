@@ -14,6 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	ttsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tts"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestBuildTTSClientBridge_Disabled(t *testing.T) {
@@ -181,7 +182,7 @@ func TestTTSClientBridgeIdleChatChunkPayloadIncludesCanonicalSpeechFields(t *tes
 	if payload["session_id"] != "idle-canon" || payload["message_id"] != "idle-canon:msg:0003" {
 		t.Fatalf("unexpected identity payload: %#v", payload)
 	}
-	if audioChunks[0].MessageID != "idle-canon:msg:0003" || audioChunks[0].TraceID != "idle-canon:0003" {
+	if audioChunks[0].MessageID != "idle-canon:msg:0003" || modulecore.TraceID(audioChunks[0].TraceID).Validate() != nil || audioChunks[0].TraceID == audioChunks[0].JobID {
 		t.Fatalf("top-level TTS identity drifted: %#v", audioChunks[0])
 	}
 	if payload["speech_text"] != "😊同じチャンクです。" || payload["text"] != "😊同じチャンクです。" || payload["display_text"] != "同じチャンクです。" {
@@ -232,8 +233,8 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 		if payload["response_id"] != "response-chat-1" {
 			t.Fatalf("completion response_id = %#v, want response-chat-1; payload=%#v", payload["response_id"], payload)
 		}
-		if event.TraceID != "response-chat-1" || event.JobID != "response-chat-1" {
-			t.Fatalf("completion correlation = job:%q trace:%q, want response-chat-1", event.JobID, event.TraceID)
+		if modulecore.TraceID(event.TraceID).Validate() != nil || event.TraceID == event.JobID || event.JobID != "response-chat-1" {
+			t.Fatalf("completion correlation = job:%q trace:%q, want canonical trace and response-chat-1 job", event.JobID, event.TraceID)
 		}
 		return
 	}

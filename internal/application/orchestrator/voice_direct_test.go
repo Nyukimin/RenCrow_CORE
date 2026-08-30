@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
@@ -39,7 +40,7 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 	if resp.Route != routing.RouteCHAT || resp.Response != "おはよう" || resp.JobID == "" {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
-	if resp.TraceID != resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
+	if modulecore.TraceID(resp.TraceID).Validate() != nil || resp.TraceID == resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
 		t.Fatalf("voice response identity is incomplete: %+v", resp)
 	}
 

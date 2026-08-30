@@ -13,7 +13,7 @@ func recordHeavyCanonicalEvent(ctx context.Context, recorder CanonicalEventRecor
 		return
 	}
 	now := time.Now().UTC()
-	event := modulecore.NewRootEventEnvelope("ai_workflow", "heavy_worker."+status, now, map[string]any{
+	event := modulecore.NewEventEnvelope(canonicalTraceFromContext(ctx), "", nil, "ai_workflow", "heavy_worker."+status, now, map[string]any{
 		"task_reference": jobID, "agent_label": "Heavy", "command_name": "ANALYZE",
 		"status": status, "summary": summary,
 	})

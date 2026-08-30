@@ -15,6 +15,7 @@ import (
 
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestHandleSendPreservesAudioOutputIntent(t *testing.T) {
@@ -149,8 +150,8 @@ func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 		t.Fatalf("viewer send response must include job_id: %#v", body)
 	}
 	traceID, _ := body["trace_id"].(string)
-	if traceID != jobID {
-		t.Fatalf("viewer send trace_id = %q, want root job_id %q", traceID, jobID)
+	if modulecore.TraceID(traceID).Validate() != nil || traceID == jobID {
+		t.Fatalf("viewer send trace_id = %q, want canonical identity distinct from job_id %q", traceID, jobID)
 	}
 	messageID, _ := body["message_id"].(string)
 	if !strings.HasPrefix(messageID, "msg_") {

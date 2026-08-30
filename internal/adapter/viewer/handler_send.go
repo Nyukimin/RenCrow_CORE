@@ -108,10 +108,11 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 		}
 		jobID := task.NewJobID().String()
 		messageID := string(modulecore.NewMessageID())
+		traceID := string(modulecore.NewTraceID())
 		sendReq := SendRequest{
 			JobID:          jobID,
 			MessageID:      messageID,
-			TraceID:        jobID,
+			TraceID:        traceID,
 			ViewerClientID: req.ViewerClientID,
 			AudioOutput:    audioOutput,
 			Provenance:     provenance,
@@ -125,22 +126,22 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 		}
 		sendReq.Message = effectiveMessage
 		log.Printf("[Viewer] HandleSend: accepted job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachment_count=%d message_len=%d %s",
-			jobID, jobID, messageID, req.ViewerClientID, recipient, len(attachments), len([]rune(effectiveMessage)), provenance.LogFields())
+			jobID, traceID, messageID, req.ViewerClientID, recipient, len(attachments), len([]rune(effectiveMessage)), provenance.LogFields())
 		log.Printf("[Viewer] HandleSend: message received: %q", req.Message)
 
 		// Process asynchronously — events flow back via SSE.
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
-			log.Printf("[Viewer] HandleSend: async start job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s", jobID, jobID, messageID, req.ViewerClientID, recipient, provenance.LogFields())
+			log.Printf("[Viewer] HandleSend: async start job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s", jobID, traceID, messageID, req.ViewerClientID, recipient, provenance.LogFields())
 			response, err := handler(ctx, sendReq)
 			if err != nil {
-				log.Printf("[Viewer] HandleSend: async error job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s err=%v", jobID, jobID, messageID, req.ViewerClientID, recipient, provenance.LogFields(), err)
+				log.Printf("[Viewer] HandleSend: async error job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s err=%v", jobID, traceID, messageID, req.ViewerClientID, recipient, provenance.LogFields(), err)
 				if onError != nil {
 					onError(sendReq, err)
 				}
 			} else {
-				log.Printf("[Viewer] HandleSend: async complete job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s response_len=%d %s", jobID, jobID, messageID, req.ViewerClientID, recipient, len(response), provenance.LogFields())
+				log.Printf("[Viewer] HandleSend: async complete job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s response_len=%d %s", jobID, traceID, messageID, req.ViewerClientID, recipient, len(response), provenance.LogFields())
 			}
 		}()
 
@@ -157,7 +158,7 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			OK:             true,
 			JobID:          jobID,
 			MessageID:      messageID,
-			TraceID:        jobID,
+			TraceID:        traceID,
 			ViewerClientID: req.ViewerClientID,
 			Recipient:      string(recipient),
 			Attachments:    len(attachments),

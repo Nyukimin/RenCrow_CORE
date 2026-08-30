@@ -1072,6 +1072,16 @@ Test:
 - 旧Event tableとJSONLの削除は、production snapshot dry-run、件数・checksum・参照整合性、
   新binaryのRuntime疎通を確認した同じcutoverで行う。
 
+#### Step 02 Failure Knowledge: JobIDをTraceIDとして流用したEvent分断
+
+- **Failure:** Orchestrator Eventの`TraceID`へ旧`JobID`を渡し、Canonical Event adapterが不正形式をEventごとに別Traceへ置換した。
+- **Problem:** 同じ外部Triggerから生じたOrchestrator、SuperAgent、AI WorkflowのEventを、一つのTraceとして追跡できなかった。
+- **Cause:** ingressでTraceを一度だけ所有せず、実行識別子を因果識別子として兼用した。adapterの形式補正が関係の欠落を隠した。
+- **Lesson:** canonical prefixへの変換成功は因果整合性の証明ではない。Trace owner、伝播、永続化を一つのE2E契約として検査する。
+- **Invariant:** ingress ownerが一つのCanonical `TraceID`を生成し、同一Trigger内のowner Eventへその値を保持して渡す。`TraceID == JobID`を禁止する。
+- **Enforcement:** malformed ingress Traceはowner境界で置換し、Event adapter内ではJobIDからTraceを推測しない。production Event Storeはappend-onlyのままとする。
+- **Tests:** Viewer受付、Message/Distributed Orchestrator、SuperAgent、AI Workflowで、正規Trace、JobIDとの非同一、同一request内のTrace一致を検査する。配備後は受付receiptとEvent Storeを照合する。
+
 ---
 
 ### Step 03: DCIのEventID誤用を置換

@@ -19,6 +19,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type distRecordingEventListener struct {
@@ -193,7 +194,7 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 	if resp.JobID != "viewer-distributed-job" {
 		t.Errorf("JobID = %q, want viewer-distributed-job", resp.JobID)
 	}
-	if resp.TraceID != resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
+	if modulecore.TraceID(resp.TraceID).Validate() != nil || resp.TraceID == resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
 		t.Fatalf("response identity is incomplete: %+v", resp)
 	}
 }
@@ -557,6 +558,11 @@ func TestDistributedOrchestrator_RecordsLeadAgentRun(t *testing.T) {
 	}
 	if len(super.traces) != 2 || super.traces[0].EventType != "lead_agent.started" || super.traces[1].EventType != "lead_agent.completed" {
 		t.Fatalf("unexpected trace events: %+v", super.traces)
+	}
+	for _, event := range super.traces {
+		if string(event.TraceID) != resp.TraceID {
+			t.Fatalf("lead agent trace_id=%q, want root %q", event.TraceID, resp.TraceID)
+		}
 	}
 }
 

@@ -4,15 +4,17 @@ import (
 	"log"
 
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type messageEventPort struct {
 	listener   EventListener
 	identities *conversationIdentityTracker
+	traces     *eventTraceBindings
 }
 
 func newMessageEventPort(listener EventListener) *messageEventPort {
-	return &messageEventPort{listener: listener, identities: newConversationIdentityTracker()}
+	return &messageEventPort{listener: listener, identities: newConversationIdentityTracker(), traces: newEventTraceBindings()}
 }
 
 func (p *messageEventPort) SetListener(listener EventListener) {
@@ -20,13 +22,21 @@ func (p *messageEventPort) SetListener(listener EventListener) {
 }
 
 func (p *messageEventPort) Emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
-	ev := NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+	ev := NewEventWithTraceID(p.traces.Resolve(jobID), eventType, from, to, content, route, jobID, sessionID, channel, chatID)
 	p.emitWithMessageID(ev, "")
 }
 
 func (p *messageEventPort) EmitWithMessageID(eventType, from, to, content, route, jobID, sessionID, channel, chatID, messageID string) {
-	ev := NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+	ev := NewEventWithTraceID(p.traces.Resolve(jobID), eventType, from, to, content, route, jobID, sessionID, channel, chatID)
 	p.emitWithMessageID(ev, messageID)
+}
+
+func (p *messageEventPort) BindTrace(jobID string, traceID modulecore.TraceID) {
+	p.traces.Bind(jobID, traceID)
+}
+
+func (p *messageEventPort) ReleaseTrace(jobID string) {
+	p.traces.Release(jobID)
 }
 
 func (p *messageEventPort) emitWithMessageID(ev OrchestratorEvent, messageID string) {

@@ -1,12 +1,31 @@
 package orchestrator
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
 
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+type canonicalTraceContextKey struct{}
+
+func contextWithCanonicalTrace(ctx context.Context, traceID modulecore.TraceID) context.Context {
+	if traceID.Validate() != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, canonicalTraceContextKey{}, traceID)
+}
+
+func canonicalTraceFromContext(ctx context.Context) modulecore.TraceID {
+	if ctx != nil {
+		if traceID, ok := ctx.Value(canonicalTraceContextKey{}).(modulecore.TraceID); ok && traceID.Validate() == nil {
+			return traceID
+		}
+	}
+	return modulecore.NewTraceID()
+}
 
 var jst = time.FixedZone("JST", 9*60*60)
 
@@ -38,6 +57,12 @@ type OrchestratorEvent struct {
 
 // NewEvent creates a new OrchestratorEvent with the current timestamp
 func NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) OrchestratorEvent {
+	return NewEventWithTraceID(modulecore.NewTraceID(), eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+}
+
+// NewEventWithTraceID creates an event inside an owner-assigned canonical
+// trace. Callers must create the TraceID once at the root interaction boundary.
+func NewEventWithTraceID(traceID modulecore.TraceID, eventType, from, to, content, route, jobID, sessionID, channel, chatID string) OrchestratorEvent {
 	return OrchestratorEvent{
 		Type:      eventType,
 		From:      from,
@@ -45,12 +70,51 @@ func NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, ch
 		Content:   content,
 		Route:     route,
 		JobID:     jobID,
-		TraceID:   jobID,
+		TraceID:   string(traceID),
 		SessionID: sessionID,
 		Channel:   channel,
 		ChatID:    chatID,
 		Timestamp: time.Now().In(jst).Format(time.RFC3339),
 	}
+}
+
+type eventTraceBindings struct {
+	mu    sync.RWMutex
+	byJob map[string]modulecore.TraceID
+}
+
+func newEventTraceBindings() *eventTraceBindings {
+	return &eventTraceBindings{byJob: make(map[string]modulecore.TraceID)}
+}
+
+func (b *eventTraceBindings) Bind(jobID string, traceID modulecore.TraceID) {
+	if b == nil || strings.TrimSpace(jobID) == "" || traceID.Validate() != nil {
+		return
+	}
+	b.mu.Lock()
+	b.byJob[jobID] = traceID
+	b.mu.Unlock()
+}
+
+func (b *eventTraceBindings) Release(jobID string) {
+	if b == nil || strings.TrimSpace(jobID) == "" {
+		return
+	}
+	b.mu.Lock()
+	delete(b.byJob, jobID)
+	b.mu.Unlock()
+}
+
+func (b *eventTraceBindings) Resolve(jobID string) modulecore.TraceID {
+	if b != nil && strings.TrimSpace(jobID) != "" {
+		b.mu.RLock()
+		traceID := b.byJob[jobID]
+		b.mu.RUnlock()
+		if traceID.Validate() == nil {
+			return traceID
+		}
+	}
+	return modulecore.NewTraceID()
 }
 
 func isConversationMessageEvent(eventType string) bool {

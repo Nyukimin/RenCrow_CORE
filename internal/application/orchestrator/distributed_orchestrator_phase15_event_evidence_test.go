@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestPhase15DistributedEventPortNilListenerIsNoop(t *testing.T) {
@@ -29,6 +30,9 @@ func TestPhase15DistributedEventPortNilListenerIsNoop(t *testing.T) {
 func TestPhase15DistributedEventPortAssignsStableConversationIdentity(t *testing.T) {
 	listener := &distRecordingEventListener{}
 	port := newDistributedEventPort(listener)
+	traceID := modulecore.NewTraceID()
+	port.BindTrace("job-1", traceID)
+	defer port.ReleaseTrace("job-1")
 
 	port.Emit("message.received", "user", "mio", "hello", "", "", "session-1", "line", "chat-1")
 	port.Emit("agent.response", "mio", "user", "hi", "CHAT", "job-1", "session-1", "line", "chat-1")
@@ -46,8 +50,11 @@ func TestPhase15DistributedEventPortAssignsStableConversationIdentity(t *testing
 	if listener.events[2].MessageID != "" || listener.events[2].TurnIndex != 0 {
 		t.Fatalf("non conversation event should not get conversation identity: %#v", listener.events[2])
 	}
-	if listener.events[1].TraceID != "job-1" || listener.events[2].TraceID != "job-1" {
+	if listener.events[1].TraceID != string(traceID) || listener.events[2].TraceID != string(traceID) {
 		t.Fatalf("all job events must retain trace_id: %#v", listener.events)
+	}
+	if listener.events[1].TraceID == listener.events[1].JobID {
+		t.Fatalf("trace_id must not reuse job_id: %#v", listener.events[1])
 	}
 }
 

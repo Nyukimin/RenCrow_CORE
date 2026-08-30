@@ -23,6 +23,10 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	if recorder == nil {
 		return leadAgentRunRecord{StartedAt: startedAt}, nil
 	}
+	traceID := modulecore.TraceID(req.TraceID)
+	if err := traceID.Validate(); err != nil {
+		return leadAgentRunRecord{}, fmt.Errorf("lead agent trace identity is invalid: %w", err)
+	}
 	checkpointRevision, checkpointSummary, nextAction, checkpointAt := resumeCheckpoint(req, route, startedAt)
 	run := domainsuperagent.AgentRun{
 		RunID:              leadAgentRunID(jobID),
@@ -41,7 +45,6 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	if err := recorder.SaveAgentRun(ctx, run); err != nil {
 		return leadAgentRunRecord{}, fmt.Errorf("failed to save lead agent run start: %w", err)
 	}
-	traceID := modulecore.NewTraceID()
 	event := modulecore.NewEventEnvelope(traceID, "", nil, "superagent", "lead_agent.started", startedAt, map[string]any{
 		"run_reference": run.RunID, "actor_label": "LeadAgent", "route": string(route), "status": "running",
 	})

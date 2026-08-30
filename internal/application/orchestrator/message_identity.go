@@ -11,24 +11,27 @@ type correlatedSessionTurnLogger interface {
 	WriteAssistantWithIdentity(sessionID, channel, route, jobID, messageID, traceID, content string)
 }
 
-func ensureProcessRequestIdentity(req *ProcessMessageRequest, rootJobID string) {
+func ensureProcessRequestIdentity(req *ProcessMessageRequest) {
 	if req == nil {
 		return
 	}
 	if strings.TrimSpace(req.MessageID) == "" {
 		req.MessageID = string(modulecore.NewMessageID())
 	}
-	// The current conversation path has exactly one root job. Keep the trace
-	// value equal to that root job until child jobs are introduced.
-	req.TraceID = rootJobID
+	// Preserve the canonical TraceID assigned by the ingress owner. Direct
+	// callers without one receive a new root identity here.
+	if modulecore.TraceID(strings.TrimSpace(req.TraceID)).Validate() != nil {
+		req.TraceID = string(modulecore.NewTraceID())
+	}
 }
 
 func ensureProcessResponseIdentity(
 	resp ProcessMessageResponse,
 	rootJobID string,
+	rootTraceID string,
 	takeResponseMessageID func(string) string,
 ) ProcessMessageResponse {
-	resp.TraceID = rootJobID
+	resp.TraceID = rootTraceID
 	if strings.TrimSpace(resp.MessageID) == "" && takeResponseMessageID != nil {
 		resp.MessageID = strings.TrimSpace(takeResponseMessageID(rootJobID))
 	}

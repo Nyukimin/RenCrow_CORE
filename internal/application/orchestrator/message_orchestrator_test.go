@@ -610,7 +610,7 @@ func TestMessageOrchestrator_ProcessMessage_AttachesVerificationReport(t *testin
 	if resp.Verification.Status != domainverification.StatusWeaklySupported {
 		t.Fatalf("unexpected verification status: %s", resp.Verification.Status)
 	}
-	if resp.JobID == "" || resp.TraceID != resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
+	if resp.JobID == "" || modulecore.TraceID(resp.TraceID).Validate() != nil || resp.TraceID == resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
 		t.Fatalf("response identity is incomplete: %+v", resp)
 	}
 	if verifier.req.DraftResponse != "これは2014年公開です。" || verifier.req.UserMessage != "作品情報を教えて" {
@@ -1496,6 +1496,11 @@ func TestProcessMessage_RouteAnalyzeUsesHeavyAgent(t *testing.T) {
 	if len(canonicalEvents.events) != 2 {
 		t.Fatalf("expected heavy lifecycle events, got %#v", canonicalEvents.events)
 	}
+	for _, event := range canonicalEvents.events {
+		if string(event.TraceID) != resp.TraceID {
+			t.Fatalf("heavy lifecycle trace_id=%q, want root %q", event.TraceID, resp.TraceID)
+		}
+	}
 	if canonicalEvents.events[0].EventType != "heavy_worker.started" || canonicalEvents.events[1].EventType != "heavy_worker.completed" {
 		t.Fatalf("unexpected heavy lifecycle events: %#v", canonicalEvents.events)
 	}
@@ -1659,6 +1664,11 @@ func TestProcessMessage_RecordsLeadAgentRun(t *testing.T) {
 	}
 	if len(super.traces) != 2 || super.traces[0].EventType != "lead_agent.started" || super.traces[1].EventType != "lead_agent.completed" {
 		t.Fatalf("unexpected trace events: %+v", super.traces)
+	}
+	for _, event := range super.traces {
+		if string(event.TraceID) != resp.TraceID {
+			t.Fatalf("lead agent trace_id=%q, want root %q", event.TraceID, resp.TraceID)
+		}
 	}
 }
 

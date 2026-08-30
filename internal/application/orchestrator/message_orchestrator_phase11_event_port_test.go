@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"strings"
 	"testing"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type phase11RecordingEventListener struct {
@@ -28,6 +30,9 @@ func TestPhase11EventPortUsesUpdatedListener(t *testing.T) {
 	port := newMessageEventPort(nil)
 	listener := &phase11RecordingEventListener{}
 	port.SetListener(listener)
+	traceID := modulecore.NewTraceID()
+	port.BindTrace("job-1", traceID)
+	port.BindTrace("job-2", traceID)
 
 	port.Emit("routing.decision", "mio", "", "confidence 90%", "CHAT", "job-1", "sess-1", "line", "U123")
 	if len(listener.events) != 1 {
@@ -57,8 +62,8 @@ func TestPhase11EventPortUsesUpdatedListener(t *testing.T) {
 	if !strings.HasPrefix(received.MessageID, "msg_") || received.TurnIndex != 1 {
 		t.Fatalf("message.received should include stable conversation identity: %#v", received)
 	}
-	if received.TraceID != "job-2" {
-		t.Fatalf("message.received trace_id = %q, want root job_id", received.TraceID)
+	if received.TraceID != string(traceID) {
+		t.Fatalf("message.received trace_id = %q, want %q", received.TraceID, traceID)
 	}
 }
 
@@ -89,6 +94,8 @@ func TestPhase11EventPortUsesViewerRecipientWithoutExecutionRoute(t *testing.T) 
 func TestPhase11EventPortAssignsStableConversationIdentity(t *testing.T) {
 	listener := &phase11RecordingEventListener{}
 	port := newMessageEventPort(listener)
+	traceID := modulecore.NewTraceID()
+	port.BindTrace("job-1", traceID)
 
 	port.Emit("message.received", "user", "mio", "hello", "", "", "sess-1", "viewer", "viewer-user")
 	port.Emit("agent.response", "mio", "user", "hi", "CHAT", "job-1", "sess-1", "viewer", "viewer-user")
@@ -106,8 +113,22 @@ func TestPhase11EventPortAssignsStableConversationIdentity(t *testing.T) {
 	if listener.events[2].MessageID != "" || listener.events[2].TurnIndex != 0 {
 		t.Fatalf("non conversation event should not get conversation identity: %#v", listener.events[2])
 	}
-	if listener.events[1].TraceID != "job-1" || listener.events[2].TraceID != "job-1" {
+	if listener.events[1].TraceID != string(traceID) || listener.events[2].TraceID != string(traceID) {
 		t.Fatalf("all job events must retain trace_id: %#v", listener.events)
+	}
+}
+
+func TestPhase11EventPortReleasesTraceBinding(t *testing.T) {
+	listener := &phase11RecordingEventListener{}
+	port := newMessageEventPort(listener)
+	bound := modulecore.NewTraceID()
+	port.BindTrace("job-1", bound)
+	port.ReleaseTrace("job-1")
+
+	port.Emit("routing.decision", "mio", "", "CHAT", "CHAT", "job-1", "sess-1", "viewer", "viewer-user")
+
+	if got := modulecore.TraceID(listener.events[0].TraceID); got == bound || got.Validate() != nil {
+		t.Fatalf("released trace binding was reused or invalid: got=%q bound=%q", got, bound)
 	}
 }
 

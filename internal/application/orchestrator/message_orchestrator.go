@@ -469,7 +469,10 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	ctx = contextWithLatencyTrace(ctx, latencyStartedAt)
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
-	ensureProcessRequestIdentity(&req, jobID.String())
+	ensureProcessRequestIdentity(&req)
+	ctx = contextWithCanonicalTrace(ctx, modulecore.TraceID(req.TraceID))
+	o.events.BindTrace(jobID.String(), modulecore.TraceID(req.TraceID))
+	defer o.events.ReleaseTrace(jobID.String())
 	preserveOriginalUserMessage(&req)
 	log.Printf("[MessageOrch] ProcessMessage START: jobID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
 		jobID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
@@ -491,7 +494,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if resp, handled, err := o.preRoutingCommands.Handle(ctx, req); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
@@ -512,21 +515,21 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, t, jobID, ttsSessionID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t.WithRoute(routing.RouteRESEARCH), jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
 	if resp, handled, err := o.handleDurableStore(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
@@ -610,6 +613,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	resp := ensureProcessResponseIdentity(
 		o.responses.BuildWithVerification(response, decision, jobID, verificationReport),
 		jobID.String(),
+		req.TraceID,
 		o.events.TakeResponseMessageID,
 	)
 	log.Printf("[MessageOrch] ProcessMessage COMPLETE: jobID=%s traceID=%s messageID=%s route=%s response_len=%d",

@@ -110,12 +110,16 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 		return ProcessMessageResponse{}, err
 	}
 	decision := routing.NewDecision(routing.RouteCHAT, 1.0, voiceChatSurfaceReason)
+	jobID := task.NewJobID()
+	traceID := modulecore.NewTraceID()
+	o.events.BindTrace(jobID.String(), traceID)
+	defer o.events.ReleaseTrace(jobID.String())
 
 	published, err := voiceinput.Publisher{
 		Events:     o.events,
 		TurnLogger: o.sessionTurnLogger,
 		NewJobID: func() string {
-			return task.NewJobID().String()
+			return jobID.String()
 		},
 		NewMessageID: func() string {
 			return string(modulecore.NewMessageID())
@@ -127,9 +131,9 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	jobID, _ := task.ParseJobID(published.JobID)
-	if jobID.IsZero() {
-		jobID = task.NewJobID()
+	publishedJobID, _ := task.ParseJobID(published.JobID)
+	if publishedJobID.IsZero() {
+		publishedJobID = jobID
 	}
 
 	if !req.FirstTokenAt.IsZero() {
@@ -150,8 +154,9 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 
 	_ = ctx
 	return ensureProcessResponseIdentity(
-		o.responses.Build(result.Reply, decision, jobID),
-		jobID.String(),
+		o.responses.Build(result.Reply, decision, publishedJobID),
+		publishedJobID.String(),
+		string(traceID),
 		o.events.TakeResponseMessageID,
 	), nil
 }

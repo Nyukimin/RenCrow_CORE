@@ -2,15 +2,17 @@ package orchestrator
 
 import (
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type distributedEventPort struct {
 	listener   EventListener
 	identities *conversationIdentityTracker
+	traces     *eventTraceBindings
 }
 
 func newDistributedEventPort(listener EventListener) *distributedEventPort {
-	return &distributedEventPort{listener: listener, identities: newConversationIdentityTracker()}
+	return &distributedEventPort{listener: listener, identities: newConversationIdentityTracker(), traces: newEventTraceBindings()}
 }
 
 func (p *distributedEventPort) SetListener(listener EventListener) {
@@ -18,14 +20,22 @@ func (p *distributedEventPort) SetListener(listener EventListener) {
 }
 
 func (p *distributedEventPort) Emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
-	ev := NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+	ev := NewEventWithTraceID(p.traces.Resolve(jobID), eventType, from, to, content, route, jobID, sessionID, channel, chatID)
 	p.emitWithMessageID(ev, "")
 }
 
 func (p *distributedEventPort) EmitMessageReceived(req ProcessMessageRequest, jobID string) {
 	recipient := normalizeProcessViewerRecipient(req.To)
-	ev := NewEvent("message.received", "user", recipient, req.UserMessage, "", jobID, req.SessionID, req.Channel, req.ChatID)
+	ev := NewEventWithTraceID(p.traces.Resolve(jobID), "message.received", "user", recipient, req.UserMessage, "", jobID, req.SessionID, req.Channel, req.ChatID)
 	p.emitWithMessageID(ev, req.MessageID)
+}
+
+func (p *distributedEventPort) BindTrace(jobID string, traceID modulecore.TraceID) {
+	p.traces.Bind(jobID, traceID)
+}
+
+func (p *distributedEventPort) ReleaseTrace(jobID string) {
+	p.traces.Release(jobID)
 }
 
 func (p *distributedEventPort) emitWithMessageID(ev OrchestratorEvent, messageID string) {

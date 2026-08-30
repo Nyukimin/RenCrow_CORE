@@ -11,6 +11,7 @@ import (
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // ProcessMessage は既存MessageOrchestratorと同じシグネチャでメッセージを処理
@@ -18,7 +19,10 @@ import (
 func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (ProcessMessageResponse, error) {
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
-	ensureProcessRequestIdentity(&req, jobID.String())
+	ensureProcessRequestIdentity(&req)
+	ctx = contextWithCanonicalTrace(ctx, modulecore.TraceID(req.TraceID))
+	o.events.BindTrace(jobID.String(), modulecore.TraceID(req.TraceID))
+	defer o.events.ReleaseTrace(jobID.String())
 	preserveOriginalUserMessage(&req)
 	log.Printf("[DistributedOrch] ProcessMessage START: jobID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
 		jobID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
@@ -57,17 +61,17 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
-		return ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID), nil
+		return ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID), nil
 	}
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
-		return ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID), nil
+		return ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID), nil
 	}
 	if resp, handled, err := o.handleDurableStore(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
-		return ensureProcessResponseIdentity(resp, jobID.String(), o.events.TakeResponseMessageID), nil
+		return ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID), nil
 	}
 
 	// 3. mio がルーティング決定
@@ -167,7 +171,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		Route:      decision.Route,
 		Confidence: decision.Confidence,
 		JobID:      jobID.String(),
-	}, jobID.String(), o.events.TakeResponseMessageID)
+	}, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
 	log.Printf("[DistributedOrch] ProcessMessage COMPLETE: jobID=%s traceID=%s messageID=%s route=%s response_len=%d",
 		jobID.String(), resp.TraceID, resp.MessageID, decision.Route, len(response))
 	return resp, nil

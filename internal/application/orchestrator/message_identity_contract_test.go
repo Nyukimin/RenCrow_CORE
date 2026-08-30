@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type recordedCorrelatedTurn struct {
@@ -54,10 +55,11 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	orch.SetEventListener(events)
 	orch.SetSessionTurnLogger(turns)
 
+	ingressTraceID := string(modulecore.NewTraceID())
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		JobID:       "job-fixed",
 		MessageID:   "msg_ingress_fixed",
-		TraceID:     "discarded-non-root-trace",
+		TraceID:     ingressTraceID,
 		SessionID:   "session-1",
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
@@ -66,7 +68,7 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
-	if resp.TraceID != "job-fixed" || resp.MessageID == "" {
+	if resp.TraceID != ingressTraceID || resp.TraceID == "job-fixed" || modulecore.TraceID(resp.TraceID).Validate() != nil || resp.MessageID == "" {
 		t.Fatalf("response identity = %+v", resp)
 	}
 
@@ -76,7 +78,7 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 		t.Fatalf("missing conversation events: %#v", events.events)
 	}
 	if events.events[receivedIndex].MessageID != "msg_ingress_fixed" ||
-		events.events[receivedIndex].TraceID != "job-fixed" {
+		events.events[receivedIndex].TraceID != resp.TraceID {
 		t.Fatalf("ingress event identity drifted: %+v", events.events[receivedIndex])
 	}
 	if events.events[responseIndex].MessageID != resp.MessageID ||
@@ -87,11 +89,27 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	if len(turns.turns) != 2 {
 		t.Fatalf("session turns = %#v", turns.turns)
 	}
-	if turns.turns[0].messageID != "msg_ingress_fixed" || turns.turns[0].traceID != "job-fixed" {
+	if turns.turns[0].messageID != "msg_ingress_fixed" || turns.turns[0].traceID != resp.TraceID {
 		t.Fatalf("user session log identity drifted: %+v", turns.turns[0])
 	}
 	if turns.turns[1].messageID != resp.MessageID || turns.turns[1].traceID != resp.TraceID ||
 		turns.turns[1].jobID != resp.JobID {
 		t.Fatalf("assistant session log identity drifted: %+v", turns.turns[1])
+	}
+}
+
+func TestEnsureProcessRequestIdentityReplacesMalformedIngressTrace(t *testing.T) {
+	req := ProcessMessageRequest{MessageID: "msg_ingress_fixed", TraceID: "not-a-canonical-trace"}
+
+	ensureProcessRequestIdentity(&req)
+
+	if modulecore.TraceID(req.TraceID).Validate() != nil {
+		t.Fatalf("trace_id=%q must be replaced with a canonical identity", req.TraceID)
+	}
+	if req.TraceID == "job-fixed" || req.TraceID == "not-a-canonical-trace" {
+		t.Fatalf("trace_id must be independent from job and malformed ingress values: %q", req.TraceID)
+	}
+	if req.MessageID != "msg_ingress_fixed" {
+		t.Fatalf("valid message_id drifted: %q", req.MessageID)
 	}
 }
