@@ -146,6 +146,31 @@ func TestDryRunBlocksConflictingJobReferences(t *testing.T) {
 	}
 }
 
+func TestDryRunUsesSuperAgentRunReferenceWithoutTreatingTaskAsJob(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	jobID := "20260829-234308-ec21a7d5"
+	rootTrace := modulecore.NewTraceID()
+	writeStore(t, source, []modulecore.EventEnvelope{
+		eventFixture(rootTrace, "orchestrator", "message.received", map[string]any{"job_id": jobID}),
+		eventFixture(modulecore.NewTraceID(), "superagent", "subagent.started", map[string]any{
+			"run_reference":  "run_lead_" + jobID,
+			"task_reference": "sub_shiro_1788047000859921868",
+		}),
+	})
+
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: filepath.Join(snapshot, "dry-run.json"), Mode: ModeDryRun,
+	})
+	if err != nil {
+		t.Fatalf("superagent task identity must not conflict with root job: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.Status != StatusReady || receipt.RepairJobCount != 1 || receipt.RepairEventCount != 2 {
+		t.Fatalf("unexpected receipt: %+v", receipt)
+	}
+}
+
 func eventFixture(traceID modulecore.TraceID, componentID, eventType string, payload map[string]any) modulecore.EventEnvelope {
 	return modulecore.NewEventEnvelope(traceID, "", nil, componentID, eventType, time.Date(2026, 8, 30, 9, 41, 30, 0, time.UTC), payload)
 }

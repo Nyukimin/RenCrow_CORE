@@ -329,13 +329,20 @@ func repair(input []modulecore.EventEnvelope) ([]modulecore.EventEnvelope, int, 
 
 func eventJobID(event modulecore.EventEnvelope) (string, error) {
 	var candidates []string
-	for _, key := range []string{"job_id", "task_reference"} {
-		if raw, ok := event.Payload[key].(string); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := event.Payload["job_id"].(string); ok && strings.TrimSpace(raw) != "" {
+		candidates = append(candidates, strings.TrimSpace(raw))
+	}
+	if event.ComponentID == "ai_workflow" && strings.HasPrefix(event.EventType, "heavy_worker.") {
+		if raw, ok := event.Payload["task_reference"].(string); ok && strings.TrimSpace(raw) != "" {
 			candidates = append(candidates, strings.TrimSpace(raw))
 		}
 	}
-	if raw, ok := event.Payload["run_reference"].(string); ok && strings.HasPrefix(strings.TrimSpace(raw), "run_lead_") {
-		candidates = append(candidates, strings.TrimPrefix(strings.TrimSpace(raw), "run_lead_"))
+	if event.ComponentID == "superagent" && isSuperAgentRunEvent(event.EventType) {
+		raw, _ := event.Payload["run_reference"].(string)
+		raw = strings.TrimSpace(raw)
+		if strings.HasPrefix(raw, "run_lead_") {
+			candidates = append(candidates, strings.TrimPrefix(strings.TrimSpace(raw), "run_lead_"))
+		}
 	}
 	if len(candidates) == 0 {
 		return "", nil
@@ -346,6 +353,12 @@ func eventJobID(event modulecore.EventEnvelope) (string, error) {
 		}
 	}
 	return candidates[0], nil
+}
+
+func isSuperAgentRunEvent(eventType string) bool {
+	return strings.HasPrefix(eventType, "lead_agent.") ||
+		strings.HasPrefix(eventType, "subagent.") ||
+		strings.HasPrefix(eventType, "run_queue.")
 }
 
 func references(event modulecore.EventEnvelope) []modulecore.EventID {

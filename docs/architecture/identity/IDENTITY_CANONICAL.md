@@ -1087,7 +1087,12 @@ Test:
 修正前runtimeがappendした分断Eventはactive Event Store内で更新しない。SQLite backup APIで取得した
 read-only production snapshotを入力とし、別pathへ全Eventを再構築するone-shot owner CLIだけを使用する。
 
-- 同じJobの候補は、Payloadの`job_id`、`task_reference`、`run_reference=run_lead_<job_id>`から決定的に集約する。
+- 同じJobの候補はfield名だけで推測せず、ownerとEvent typeを含む正規契約から決定する。
+  全ownerの`job_id`、`ai_workflow`の`heavy_worker.*`にある`task_reference`、
+  `superagent`の`lead_agent.*`／`subagent.*`／`run_queue.*`にある
+  `run_reference=run_lead_<job_id>`だけをJob候補として集約する。
+  `superagent.subagent.*`の`task_reference=sub_<agent>_<id>`はsubagent task identityであり、
+  親Job候補として扱わない。同じfield名でもowner／Event typeが契約外ならJobを推測しない。
 - repair対象は、同一Job内にTraceが複数あり、`component_id=orchestrator`かつ
   `event_type=message.received`のroot Eventがちょうど一件あるgroupだけとする。
 - target Traceはroot Eventが既に持つCanonical `TraceID`とし、新しい過去Eventや新しいTraceを生成しない。
