@@ -11,6 +11,7 @@ import (
 	entryadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/entry"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type viewerBridgeFactories struct {
@@ -59,7 +60,7 @@ func buildViewerBridgeHandlers(
 			return resp.Response, nil
 		}, func(req viewer.SendRequest, err error) {
 			if deps.eventRelay != nil {
-				if publishErr := deps.eventRelay.OnEvent(orchestrator.NewEvent(
+				if publishErr := deps.eventRelay.OnEvent(orchestrator.NewEventWithTraceID(modulecore.TraceID(req.TraceID),
 					"viewer.error", "system", "viewer", err.Error(),
 					"", req.JobID, "viewer", "viewer", "viewer-user",
 				)); publishErr != nil {

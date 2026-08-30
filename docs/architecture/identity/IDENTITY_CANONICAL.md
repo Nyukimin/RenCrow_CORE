@@ -1110,6 +1110,16 @@ Test:
 - **Enforcement:** TTS bridgeは有効な開始Traceをそのままsessionへ保持する。独立TTS sessionに親Traceがない場合だけ開始境界で一度Canonical Traceを生成し、session終了まで再生成しない。callback adapterは保持されたTraceを`NewEventWithTraceID`へ渡す。
 - **Tests:** Message／Distributed lifecycleがrequest Traceを開始契約へ渡すこと、指定Traceと開始境界で生成したTraceの両方が全chunk／completionで一致すること、配備後の実Actor応答で本文・TTSを含む全Eventが一つのTraceになることを検査する。
 
+#### Step 02 Failure Knowledge: Viewer失敗callbackによるTrace分断
+
+- **Failure:** Viewerがrequestを受理した後の非同期処理失敗で、`viewer.error`だけが受付時の`TraceID`を継承せず新しいTraceを生成した。
+- **Problem:** 受付Eventと失敗Eventが別Traceになり、一回の利用者requestが失敗まで追跡できず、修復済みproduction Event Storeへ新しい分断Eventを追加した。
+- **Cause:** error callbackを新しいingressとして扱い、callbackへ既に渡されていたCanonical `TraceID`をEvent生成時に使用しなかった。
+- **Lesson:** 非同期成功・失敗callbackはいずれも新しいTriggerではない。受付境界で確定したTraceを終端Eventまで保持する必要がある。
+- **Invariant:** Viewer受付後に同じrequestから発生する`viewer.error`は、受付responseのCanonical `TraceID`をenvelopeとpayloadの両方へ保持し、`JobID`とは分離する。
+- **Enforcement:** Viewer error callbackは受付`SendRequest.TraceID`を`NewEventWithTraceID`へ明示的に渡し、callback内でTraceを生成・推測しない。
+- **Tests:** `TestViewerAsyncErrorEventKeepsAcceptedIngressTrace`で受付responseと永続化された`viewer.error`のJobID、payload TraceID、envelope TraceIDを照合する。配備後は正規失敗経路とEvent Storeを照合し、repair dry-runが新しい修復対象を検出しないことを確認する。
+
 #### Step 02 offline Trace repair契約
 
 修正前runtimeがappendした分断Eventはactive Event Store内で更新しない。SQLite backup APIで取得した
