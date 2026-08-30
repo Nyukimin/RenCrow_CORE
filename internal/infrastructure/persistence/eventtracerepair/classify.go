@@ -102,17 +102,32 @@ func classifyAndRepair(input []modulecore.EventEnvelope) (repairResult, error) {
 			result.unresolvedReasonCounts[reason]++
 			continue
 		}
-		result.repairJobCount++
-		result.repairableJobCount++
-		result.repairSegmentCount += len(segments)
+		changedEventCount := 0
+		changedSegmentCount := 0
 		for segmentIndex, segment := range segments {
-			result.repairEvidenceCounts[segment.evidence]++
-			result.repairEventCount += len(segment.indexes)
+			segmentChanged := 0
 			for _, eventIndex := range segment.indexes {
 				segmentRefs[input[eventIndex].EventID] = repairSegmentRef{jobID: jobID, segment: segmentIndex}
+				if input[eventIndex].TraceID == segment.target {
+					continue
+				}
 				result.events[eventIndex].TraceID = segment.target
+				segmentChanged++
+			}
+			if segmentChanged > 0 {
+				changedSegmentCount++
+				changedEventCount += segmentChanged
+				result.repairEvidenceCounts[segment.evidence]++
 			}
 		}
+		if changedEventCount == 0 {
+			result.verifiedJobCount++
+			continue
+		}
+		result.repairJobCount++
+		result.repairableJobCount++
+		result.repairSegmentCount += changedSegmentCount
+		result.repairEventCount += changedEventCount
 	}
 	if err := validateCrossSegmentReferences(input, segmentRefs); err != nil {
 		return repairResult{}, err

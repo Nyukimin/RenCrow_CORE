@@ -1133,6 +1133,11 @@ read-only production snapshotを入力とし、別pathへ全Eventを再構築す
   新しいowner rootより前のsegmentに`agent.response`、`viewer.error`、`verification.report`、
   `run_queue.completed`、`run_queue.failed`のいずれかの終端証拠がない場合は、時刻の近さだけで
   分割せずJob全体を`unresolved`にする。
+- 証拠で立証した各segmentのroot TraceIDが既にsegment内の全Eventへ保持されている場合、
+  複数Traceを持つJob groupでも`verified`として扱う。`repair_job_count`と`repairable_job_count`は
+  実際にTraceIDを変更するgroupだけ、`repair_event_count`は変更したEventだけを数え、`repair_segment_count`と
+  `repair_evidence_counts`も少なくとも一件の変更があるsegmentだけを数える。変更のないsegmentも
+  境界参照の検証対象から外さず、TraceID、EventID、Payload、依存関係は変更しない。
 - 独立TTS sessionは、group内の全Eventが`component_id=orchestrator`で、Event typeが
   `metrics.latency`の`audio_chunk_ready`、`tts.audio_chunk`、`tts.session_completed`だけ、
   `session_id`と`response_id`が各一値、completionが一件の場合に限り同一sessionと立証する。

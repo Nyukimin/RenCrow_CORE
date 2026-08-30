@@ -35,7 +35,7 @@ func TestDryRunAndBuildRepairFragmentedJobWithoutChangingEventIdentity(t *testin
 	if err != nil {
 		t.Fatalf("dry-run: %v", err)
 	}
-	if dry.Status != StatusReady || dry.InputCount != len(events) || dry.RepairJobCount != 1 || dry.RepairEventCount != len(events) {
+	if dry.Status != StatusReady || dry.InputCount != len(events) || dry.RepairJobCount != 1 || dry.RepairSegmentCount != 1 || dry.RepairEventCount != 4 {
 		t.Fatalf("unexpected dry-run receipt: %+v", dry)
 	}
 	if dry.SourceSHA256 == "" || dry.InputEventSetSHA256 == "" || dry.OutputEventSetSHA256 == "" || dry.InputEventSetSHA256 == dry.OutputEventSetSHA256 {
@@ -74,6 +74,23 @@ func TestDryRunAndBuildRepairFragmentedJobWithoutChangingEventIdentity(t *testin
 			t.Fatalf("event %s changed outside trace: before=%s after=%s", before.EventID, beforeJSON, afterJSON)
 		}
 	}
+
+	secondDry, err := Run(ctx, Options{
+		SnapshotDir: snapshot, SourceStore: output, OutputStore: filepath.Join(snapshot, "idempotent-repaired.db"),
+		Manifest: filepath.Join(snapshot, "second-dry-run.json"), Mode: ModeDryRun,
+	})
+	if err != nil {
+		t.Fatalf("second dry-run: %v", err)
+	}
+	if secondDry.Status != StatusReady || secondDry.InputEventSetSHA256 != secondDry.OutputEventSetSHA256 || secondDry.RepairJobCount != 0 || secondDry.RepairableJobCount != 0 || secondDry.RepairSegmentCount != 0 || secondDry.RepairEventCount != 0 || secondDry.VerifiedJobCount != 1 || secondDry.UnresolvedJobCount != 0 {
+		t.Fatalf("repaired output must be idempotently verified: %+v", secondDry)
+	}
+	secondEvents := readAll(t, output)
+	for index, event := range secondEvents {
+		if event.TraceID != byID[event.EventID].TraceID {
+			t.Fatalf("second dry-run changed event[%d] trace", index)
+		}
+	}
 }
 
 func TestDryRunSegmentsReusedJobByDirectAndQueueTriggerRoots(t *testing.T) {
@@ -98,7 +115,7 @@ func TestDryRunSegmentsReusedJobByDirectAndQueueTriggerRoots(t *testing.T) {
 		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
 		Manifest: dryPath, Mode: ModeDryRun,
 	})
-	if err != nil || receipt.Status != StatusReady || receipt.RepairJobCount != 1 || receipt.RepairSegmentCount != 2 || receipt.RepairEventCount != len(events) {
+	if err != nil || receipt.Status != StatusReady || receipt.RepairJobCount != 1 || receipt.RepairSegmentCount != 2 || receipt.RepairEventCount != 5 {
 		t.Fatalf("reused job must be segmented by owner roots: receipt=%+v err=%v", receipt, err)
 	}
 	if receipt.RepairEvidenceCounts["message_received_root"] != 1 || receipt.RepairEvidenceCounts["run_queue_claimed_root"] != 1 {
@@ -106,6 +123,64 @@ func TestDryRunSegmentsReusedJobByDirectAndQueueTriggerRoots(t *testing.T) {
 	}
 	output := filepath.Join(snapshot, "repaired.db")
 	if _, err := Run(context.Background(), Options{SnapshotDir: snapshot, SourceStore: source, OutputStore: output, Manifest: filepath.Join(snapshot, "build.json"), DryRunManifest: dryPath, Mode: ModeBuild}); err != nil {
+		t.Fatal(err)
+	}
+	got := readAll(t, output)
+	for index, event := range got {
+		want := directTrace
+		if index >= 3 {
+			want = queueTrace
+		}
+		if event.TraceID != want {
+			t.Fatalf("event[%d] trace=%s want=%s", index, event.TraceID, want)
+		}
+	}
+	secondDry, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: output, OutputStore: filepath.Join(snapshot, "idempotent-repaired.db"),
+		Manifest: filepath.Join(snapshot, "second-dry-run.json"), Mode: ModeDryRun,
+	})
+	if err != nil {
+		t.Fatalf("second dry-run: %v", err)
+	}
+	if secondDry.Status != StatusReady || secondDry.InputEventSetSHA256 != secondDry.OutputEventSetSHA256 || secondDry.RepairJobCount != 0 || secondDry.RepairableJobCount != 0 || secondDry.RepairSegmentCount != 0 || secondDry.RepairEventCount != 0 || secondDry.VerifiedJobCount != 1 || secondDry.UnresolvedJobCount != 0 {
+		t.Fatalf("repaired reused job must be idempotently verified: %+v", secondDry)
+	}
+}
+
+func TestDryRunCountsOnlyChangedSegmentInMixedReusedJob(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	jobID := "job-mixed-reused"
+	directTrace := modulecore.NewTraceID()
+	queueTrace := modulecore.NewTraceID()
+	events := []modulecore.EventEnvelope{
+		eventFixture(directTrace, "orchestrator", "message.received", map[string]any{"job_id": jobID}),
+		eventFixture(directTrace, "orchestrator", "agent.thinking", map[string]any{"job_id": jobID}),
+		eventFixture(directTrace, "orchestrator", "viewer.error", map[string]any{"job_id": jobID}),
+		eventFixture(queueTrace, "superagent", "run_queue.claimed", map[string]any{"run_reference": "run_lead_" + jobID}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "message.received", map[string]any{"job_id": jobID}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "agent.thinking", map[string]any{"job_id": jobID}),
+		eventFixture(modulecore.NewTraceID(), "superagent", "run_queue.failed", map[string]any{"run_reference": "run_lead_" + jobID}),
+	}
+	writeStore(t, source, events)
+
+	dryPath := filepath.Join(snapshot, "dry-run.json")
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: dryPath, Mode: ModeDryRun,
+	})
+	if err != nil || receipt.Status != StatusReady || receipt.RepairJobCount != 1 || receipt.RepairSegmentCount != 1 || receipt.RepairEventCount != 3 {
+		t.Fatalf("only broken segment must be repairable: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.RepairEvidenceCounts[repairEvidenceMessageReceivedRoot] != 0 || receipt.RepairEvidenceCounts[repairEvidenceRunQueueClaimedRoot] != 1 {
+		t.Fatalf("only broken segment evidence must be counted: %+v", receipt.RepairEvidenceCounts)
+	}
+
+	output := filepath.Join(snapshot, "repaired.db")
+	if _, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: output,
+		Manifest: filepath.Join(snapshot, "build.json"), DryRunManifest: dryPath, Mode: ModeBuild,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	got := readAll(t, output)
@@ -134,7 +209,7 @@ func TestDryRunClassifiesStandaloneTTSSessionAndBackgroundFailure(t *testing.T) 
 	})
 
 	receipt, err := Run(context.Background(), Options{SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"), Manifest: filepath.Join(snapshot, "dry-run.json"), Mode: ModeDryRun})
-	if err != nil || receipt.Status != StatusReady || receipt.RepairJobCount != 2 || receipt.RepairSegmentCount != 2 || receipt.RepairEventCount != 5 {
+	if err != nil || receipt.Status != StatusReady || receipt.RepairJobCount != 2 || receipt.RepairSegmentCount != 2 || receipt.RepairEventCount != 3 {
 		t.Fatalf("owner evidence groups must be repairable: receipt=%+v err=%v", receipt, err)
 	}
 	if receipt.RepairEvidenceCounts["tts_session_existing_trace"] != 1 || receipt.RepairEvidenceCounts["background_failure_root"] != 1 {
@@ -375,7 +450,7 @@ func TestDryRunUsesSuperAgentRunReferenceWithoutTreatingTaskAsJob(t *testing.T) 
 	if err != nil {
 		t.Fatalf("superagent task identity must not conflict with root job: receipt=%+v err=%v", receipt, err)
 	}
-	if receipt.Status != StatusReady || receipt.RepairJobCount != 1 || receipt.RepairEventCount != 2 {
+	if receipt.Status != StatusReady || receipt.RepairJobCount != 1 || receipt.RepairEventCount != 1 {
 		t.Fatalf("unexpected receipt: %+v", receipt)
 	}
 }
