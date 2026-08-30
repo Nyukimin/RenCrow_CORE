@@ -65,7 +65,7 @@ func (d *Dependencies) buildDistributedMode(
 				reason := formatAgentUnavailableReason("ssh connect failed", err)
 				markAgentUnavailable(d.monitorStore, agentName, reason)
 				if d.eventRelay != nil {
-					d.eventRelay.OnEvent(orchestrator.NewEvent(
+					if publishErr := d.eventRelay.OnEvent(orchestrator.NewEvent(
 						"agent.unavailable",
 						agentName,
 						"system",
@@ -75,7 +75,9 @@ func (d *Dependencies) buildDistributedMode(
 						"system",
 						"system",
 						"system",
-					))
+					)); publishErr != nil {
+						log.Printf("[Distributed] agent unavailable event publication failed agent=%s: %v", agentName, publishErr)
+					}
 				}
 			}
 		}

@@ -74,8 +74,13 @@ func (r backgroundJobFailureReporter) failedWithTrace(traceID modulecore.TraceID
 		payload["detail"] = detail
 	}
 	payloadJSON, _ := json.Marshal(payload)
-	r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "background_job.failed", "background_job", "shiro", string(payloadJSON), "OPS", jobID, sessionID, "background", job))
-	r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "job.notification", "shiro", "mio", backgroundJobFailureNotification(job, errorText, detail), "OPS", jobID, sessionID, "background", job))
+	if publishErr := r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "background_job.failed", "background_job", "shiro", string(payloadJSON), "OPS", jobID, sessionID, "background", job)); publishErr != nil {
+		log.Printf("[BackgroundJob] failure event publication failed job=%s: %v", jobID, publishErr)
+		return
+	}
+	if publishErr := r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "job.notification", "shiro", "mio", backgroundJobFailureNotification(job, errorText, detail), "OPS", jobID, sessionID, "background", job)); publishErr != nil {
+		log.Printf("[BackgroundJob] notification event publication failed job=%s: %v", jobID, publishErr)
+	}
 }
 
 func normalizeBackgroundJobName(job string) string {

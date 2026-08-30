@@ -17,14 +17,10 @@ type repairProcessor interface {
 
 type asyncRepairJobRunner struct {
 	processor repairProcessor
-	listener  interface {
-		OnEvent(orchestrator.OrchestratorEvent)
-	}
+	listener  orchestrator.EventListener
 }
 
-func newAsyncRepairJobRunner(processor repairProcessor, listener interface {
-	OnEvent(orchestrator.OrchestratorEvent)
-}) *asyncRepairJobRunner {
+func newAsyncRepairJobRunner(processor repairProcessor, listener orchestrator.EventListener) *asyncRepairJobRunner {
 	if processor == nil {
 		return nil
 	}
@@ -46,12 +42,15 @@ func (r *asyncRepairJobRunner) run(req viewer.RepairJobRequest) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	started := time.Now()
-	r.emit(req.TargetRoute, "repair.started", "repair", "shiro", map[string]any{
+	if err := r.emit(req.TargetRoute, "repair.started", "repair", "shiro", map[string]any{
 		"job_id":       req.JobID,
 		"status":       "running",
 		"target_route": req.TargetRoute,
 		"target_agent": req.TargetAgent,
-	})
+	}); err != nil {
+		log.Printf("repair started event publication failed job=%s: %v", req.JobID, err)
+		return
+	}
 	resp, err := r.processor.ProcessRepair(ctx, orchestrator.ProcessRepairRequest{
 		JobID:       req.JobID,
 		Reason:      req.Reason,
@@ -63,28 +62,32 @@ func (r *asyncRepairJobRunner) run(req viewer.RepairJobRequest) {
 	})
 	if err != nil {
 		log.Printf("repair job failed job=%s err=%v", req.JobID, err)
-		r.emit(req.TargetRoute, "repair.failed", "shiro", "repair", map[string]any{
+		if emitErr := r.emit(req.TargetRoute, "repair.failed", "shiro", "repair", map[string]any{
 			"job_id":     req.JobID,
 			"status":     "failed",
 			"error":      err.Error(),
 			"elapsed_ms": time.Since(started).Milliseconds(),
-		})
+		}); emitErr != nil {
+			log.Printf("repair failed event publication failed job=%s: %v", req.JobID, emitErr)
+		}
 		return
 	}
-	r.emit(resp.Route.String(), "repair.completed", "shiro", "repair", map[string]any{
+	if err := r.emit(resp.Route.String(), "repair.completed", "shiro", "repair", map[string]any{
 		"job_id":       req.JobID,
 		"status":       "completed",
 		"route":        resp.Route.String(),
 		"response_len": len(resp.Response),
 		"elapsed_ms":   time.Since(started).Milliseconds(),
-	})
+	}); err != nil {
+		log.Printf("repair completed event publication failed job=%s: %v", req.JobID, err)
+	}
 }
 
-func (r *asyncRepairJobRunner) emit(route, eventType, from, to string, payload map[string]any) {
+func (r *asyncRepairJobRunner) emit(route, eventType, from, to string, payload map[string]any) error {
 	if r.listener == nil {
-		return
+		return nil
 	}
 	jobID, _ := payload["job_id"].(string)
 	content, _ := json.Marshal(payload)
-	r.listener.OnEvent(orchestrator.NewEvent(eventType, from, to, string(content), route, jobID, "repair-"+jobID, "viewer", "repair"))
+	return r.listener.OnEvent(orchestrator.NewEvent(eventType, from, to, string(content), route, jobID, "repair-"+jobID, "viewer", "repair"))
 }

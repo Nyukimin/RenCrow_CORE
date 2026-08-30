@@ -29,9 +29,83 @@ func canonicalTraceFromContext(ctx context.Context) modulecore.TraceID {
 
 var jst = time.FixedZone("JST", 9*60*60)
 
-// EventListener receives orchestrator events for external monitoring
+// EventListener receives orchestrator events at the synchronous canonical
+// publication boundary. Production listeners must persist the event before
+// projecting it to external monitoring surfaces and return any publication
+// failure to the caller.
 type EventListener interface {
-	OnEvent(ev OrchestratorEvent)
+	OnEvent(ev OrchestratorEvent) error
+}
+
+type eventPublicationFailure struct {
+	err    error
+	cancel context.CancelCauseFunc
+}
+
+// eventPublicationFailureTracker retains the first canonical publication
+// failure for each active request trace. Event callbacks intentionally remain
+// void for compatibility, so the owning ProcessMessage call observes this
+// tracker at its request boundary.
+type eventPublicationFailureTracker struct {
+	mu     sync.Mutex
+	active map[modulecore.TraceID]eventPublicationFailure
+}
+
+func newEventPublicationFailureTracker() *eventPublicationFailureTracker {
+	return &eventPublicationFailureTracker{active: make(map[modulecore.TraceID]eventPublicationFailure)}
+}
+
+func (t *eventPublicationFailureTracker) Begin(traceID modulecore.TraceID, cancel context.CancelCauseFunc) {
+	if t == nil || traceID.Validate() != nil {
+		return
+	}
+	t.mu.Lock()
+	if t.active == nil {
+		t.active = make(map[modulecore.TraceID]eventPublicationFailure)
+	}
+	t.active[traceID] = eventPublicationFailure{cancel: cancel}
+	t.mu.Unlock()
+}
+
+func (t *eventPublicationFailureTracker) Record(traceID modulecore.TraceID, err error) {
+	if t == nil || traceID.Validate() != nil || err == nil {
+		return
+	}
+	var cancel context.CancelCauseFunc
+	t.mu.Lock()
+	failure, ok := t.active[traceID]
+	if !ok || failure.err != nil {
+		t.mu.Unlock()
+		return
+	}
+	failure.err = err
+	t.active[traceID] = failure
+	cancel = failure.cancel
+	t.mu.Unlock()
+	if cancel != nil {
+		cancel(err)
+	}
+}
+
+func (t *eventPublicationFailureTracker) Current(traceID modulecore.TraceID) error {
+	if t == nil || traceID.Validate() != nil {
+		return nil
+	}
+	t.mu.Lock()
+	failure := t.active[traceID]
+	t.mu.Unlock()
+	return failure.err
+}
+
+func (t *eventPublicationFailureTracker) End(traceID modulecore.TraceID) error {
+	if t == nil || traceID.Validate() != nil {
+		return nil
+	}
+	t.mu.Lock()
+	failure := t.active[traceID]
+	delete(t.active, traceID)
+	t.mu.Unlock()
+	return failure.err
 }
 
 // OrchestratorEvent represents a significant event in message processing

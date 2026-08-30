@@ -113,7 +113,6 @@ func buildViewerRuntimeHandlers(
 
 	hub := viewer.NewEventHub(200)
 	deps.eventHub = hub
-	deps.characterRuntime = avatarfeature.HandleCharacterRuntime(characterruntimeapp.NewService(), hub)
 	deps.viewerPromptDebug = viewer.HandlePromptDebugLogs(viewer.PromptDebugLogOptions{})
 	setIdleChatViewerClientCount(hub.ClientCount)
 	hub.SetClientCountListener(handleIdleChatViewerClientCountChanged)
@@ -154,6 +153,7 @@ func buildViewerRuntimeHandlers(
 		deps.evidenceSummary = viewer.HandleEvidenceSummary(reportStore)
 		log.Printf("Viewer evidence API enabled: %s", reportPath)
 	}
+	deps.characterRuntime = avatarfeature.HandleCharacterRuntime(characterruntimeapp.NewService(), deps.eventRelay)
 	jobStorePath := defaultParallelJobStorePath(cfg.WorkspaceDir)
 	if jobStorePath == "" {
 		log.Printf("WARN: parallel job API disabled: workspace_dir is empty")

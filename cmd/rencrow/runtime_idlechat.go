@@ -116,7 +116,7 @@ func buildIdleChatRuntime(
 	} else {
 		log.Printf("IdleChat topic store enabled: %s", topicStorePath)
 	}
-	if deps.eventHub != nil {
+	if deps.eventRelay != nil {
 		idleChatTTSPrefetch = newIdleChatTTSPrefetchManager(ttsBridge)
 		idleChatOrch.SetTTSPrefetchEmitter(func(ev idlechat.TTSPrefetchEvent) {
 			if idleChatTTSPrefetch != nil {
@@ -149,7 +149,10 @@ func buildIdleChatRuntime(
 				viewerEvent.TurnIndex = ev.TurnIndex
 				viewerEvent.Category = string(ev.Category)
 				viewerEvent.Strategy = string(ev.Strategy)
-				deps.eventHub.OnEvent(viewerEvent)
+				if err := deps.eventRelay.OnEvent(viewerEvent); err != nil {
+					log.Printf("[IdleChat] event publication failed type=%s session_id=%s message_id=%s: %v", viewerEvent.Type, viewerEvent.SessionID, viewerEvent.MessageID, err)
+					return idlechat.TTSLifecycle{}
+				}
 			}
 			if ev.Type == "idlechat.viewer" {
 				return idlechat.TTSLifecycle{}

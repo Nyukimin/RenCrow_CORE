@@ -14,7 +14,7 @@ import (
 )
 
 type repairEventListener interface {
-	OnEvent(orchestrator.OrchestratorEvent)
+	OnEvent(orchestrator.OrchestratorEvent) error
 }
 
 type RepairJobRunner interface {
@@ -73,9 +73,19 @@ func HandleRepairRunWithRunner(listener repairEventListener, runner RepairJobRun
 			"target_agent": req.TargetAgent,
 			"status":       "requested",
 		})
-		if listener != nil {
-			listener.OnEvent(orchestrator.NewEvent("repair.requested", "user", "repair", string(payload), "OPS", jobID, "", "viewer", "repair"))
-			listener.OnEvent(orchestrator.NewEvent("job.notification", "shiro", "mio", repairNotificationContent(req, jobID), "OPS", jobID, "", "viewer", "repair"))
+		if listener == nil {
+			http.Error(w, "repair event publication unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if err := listener.OnEvent(orchestrator.NewEvent("repair.requested", "user", "repair", string(payload), "OPS", jobID, "", "viewer", "repair")); err != nil {
+			log.Printf("repair requested event publication failed job=%s: %v", jobID, err)
+			http.Error(w, "repair event publication failed", http.StatusServiceUnavailable)
+			return
+		}
+		if err := listener.OnEvent(orchestrator.NewEvent("job.notification", "shiro", "mio", repairNotificationContent(req, jobID), "OPS", jobID, "", "viewer", "repair")); err != nil {
+			log.Printf("repair notification event publication failed job=%s: %v", jobID, err)
+			http.Error(w, "repair event publication failed", http.StatusServiceUnavailable)
+			return
 		}
 		if runner != nil {
 			runReq := RepairJobRequest{
@@ -89,13 +99,13 @@ func HandleRepairRunWithRunner(listener repairEventListener, runner RepairJobRun
 			}
 			if err := runner.StartRepairJob(r.Context(), runReq); err != nil {
 				log.Printf("repair job start failed job=%s: %v", jobID, err)
-				if listener != nil {
-					errPayload, _ := json.Marshal(map[string]any{
-						"job_id": jobID,
-						"status": "start_failed",
-						"error":  err.Error(),
-					})
-					listener.OnEvent(orchestrator.NewEvent("repair.start_failed", "repair", "shiro", string(errPayload), "OPS", jobID, "", "viewer", "repair"))
+				errPayload, _ := json.Marshal(map[string]any{
+					"job_id": jobID,
+					"status": "start_failed",
+					"error":  err.Error(),
+				})
+				if publishErr := listener.OnEvent(orchestrator.NewEvent("repair.start_failed", "repair", "shiro", string(errPayload), "OPS", jobID, "", "viewer", "repair")); publishErr != nil {
+					log.Printf("repair start_failed event publication failed job=%s: %v", jobID, publishErr)
 				}
 			}
 		}

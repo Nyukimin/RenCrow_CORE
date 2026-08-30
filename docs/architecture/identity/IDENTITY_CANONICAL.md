@@ -1054,6 +1054,13 @@ Test:
 
 - 発生済み事実の唯一の永続正本は`storage.databases.event_store`が指す
   SQLite Canonical Event Storeとする。
+- ownerがEventを発行する正規経路は、Canonical Event Storeへの同期appendを先に完了し、
+  成功したEventだけをViewer／monitorへ投影する。正本appendを非同期queueへ委ねたり、
+  投影後のappend失敗をlogだけで終端したりしてはならない。
+- request処理中に一件でもCanonical Event appendが失敗した場合、そのrequest contextをcancelし、
+  利用主体へ成功応答を返さない。既に成功したEventはappend-onlyのまま保持し、失敗Eventを
+  投影または成功扱いしない。同期callerを持たないbackground producerは失敗をowner jobの
+  failureとして返すか、少なくともerrorを明示して成功通知を発行しない。
 - AI WorkflowとSuperAgentのDomain Storeは現在状態だけを所有し、Eventの独立table、
   JSONL writer、dual writeを残さない。
 - Event Storeはappend-onlyとし、同一EventIDの再保存、存在しないCausation、
@@ -1082,6 +1089,16 @@ Test:
 - **Enforcement:** malformed ingress Traceはowner境界で置換し、Event adapter内ではJobIDからTraceを推測しない。production Event Storeはappend-onlyのままとする。
 - **Queue Trigger:** `run_queue.claimed`を発生させる一回のclaim attemptは一つの内部Triggerである。Run Queue SchedulerがそのclaimのCanonical `TraceID`を一度だけ生成し、claimed／completed／failed Eventと、同じclaimから呼ぶ`ProcessMessageRequest`へ明示的に渡す。ProcessorはTraceをJobID、RunID、QueueIDから再生成・推測してはならない。lease失効後の再claimは新しい内部Triggerなので新しいTraceIDを持つ。
 - **Tests:** Viewer受付、Message/Distributed Orchestrator、SuperAgent、AI Workflowで、正規Trace、JobIDとの非同一、同一request内のTrace一致を検査する。Run Queueはclaim Eventと`ProcessMessageRequest`が同じTraceを持ち、再claimが別Traceになることを検査する。配備後は受付receiptとEvent Storeを照合する。
+
+#### Step 02 Failure Knowledge: 非同期Event記録による偽成功
+
+- **Failure:** Orchestrator EventをViewerへ先に配信し、Canonical Event Store appendを非同期queueへ渡していた。
+- **Problem:** append失敗が呼出元へ戻らず、利用者には成功結果が見えても発生済み事実の正本が欠落し得た。
+- **Cause:** 低遅延が必要なSSE配信と、欠落禁止の正本記録を同じ`EventListener` lifecycleへ混在させ、失敗契約をvoid callbackにしていた。
+- **Lesson:** 記録と配信の分離は、正本記録をbest-effort化することではない。同期append成功が投影と成功応答の前提である。
+- **Invariant:** 一つのowner Event発行は`canonical append -> projection`の一方向だけを通り、append失敗はrequest error／cancelへ伝播する。別writer、dual write、非同期canonical queueを作らない。
+- **Enforcement:** Event発行境界をerror-returningにし、request Trace単位で最初の失敗を保持する。最初の受付Event失敗時はLLM／Tool／外部処理へ進まず、途中失敗時も最終成功応答を拒否する。
+- **Tests:** appendが成功したEventだけが一度だけ投影されること、最初／途中／最終append失敗で成功応答が返らないこと、失敗EventがViewerへ出ないことをMessage／Distributed経路で検査する。
 
 #### Step 02 offline Trace repair契約
 

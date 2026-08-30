@@ -26,8 +26,9 @@ type distRecordingEventListener struct {
 	events []OrchestratorEvent
 }
 
-func (r *distRecordingEventListener) OnEvent(ev OrchestratorEvent) {
+func (r *distRecordingEventListener) OnEvent(ev OrchestratorEvent) error {
 	r.events = append(r.events, ev)
+	return nil
 }
 
 func distIndexOfEvent(events []OrchestratorEvent, eventType, from, to, route string) int {
@@ -196,6 +197,44 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 	}
 	if modulecore.TraceID(resp.TraceID).Validate() != nil || resp.TraceID == resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
 		t.Fatalf("response identity is incomplete: %+v", resp)
+	}
+}
+
+func TestDistributedOrchestrator_CanonicalEventFailureStopsBeforeLLM(t *testing.T) {
+	wantErr := errors.New("canonical append unavailable")
+	mockMio := &distMockMioAgent{chatResponse: "must not reach LLM"}
+	mockRepo := &distMockSessionRepo{}
+	router := transport.NewMessageRouter()
+	defer router.Stop()
+	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, session.NewCentralMemory(), nil)
+	orch.SetEventListener(&failingEventListener{err: wantErr})
+
+	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
+		SessionID: "event-failure", Channel: "viewer", ChatID: "viewer-user", UserMessage: "must not reach LLM",
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ProcessMessage() error=%v, want %v", err, wantErr)
+	}
+	if mockMio.decideCalls != 0 {
+		t.Fatalf("LLM routing was invoked %d times after canonical append failure", mockMio.decideCalls)
+	}
+}
+
+func TestDistributedEventPortStopsAfterFirstPublicationFailure(t *testing.T) {
+	wantErr := errors.New("canonical append unavailable")
+	listener := &failingEventListener{err: wantErr}
+	port := newDistributedEventPort(listener)
+	traceID := modulecore.NewTraceID()
+	port.BindTrace("job-1", traceID)
+	port.publicationFail.Begin(traceID, nil)
+	defer port.publicationFail.End(traceID)
+
+	if err := port.EmitMessageReceived(ProcessMessageRequest{SessionID: "session-1", UserMessage: "hello"}, "job-1"); !errors.Is(err, wantErr) {
+		t.Fatalf("first publication error=%v, want %v", err, wantErr)
+	}
+	port.Emit("agent.response", "mio", "user", "must not project", "CHAT", "job-1", "session-1", "viewer", "viewer-user")
+	if listener.calls != 1 {
+		t.Fatalf("listener calls=%d, want one call before trace failure closed publication", listener.calls)
 	}
 }
 

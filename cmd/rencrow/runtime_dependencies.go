@@ -408,11 +408,6 @@ func (d *Dependencies) Shutdown() {
 			log.Printf("Failed to close ToolRegistry: %v", err)
 		}
 	}
-	// 記録パスの排出は最後に行う。ここまでの停止処理が出したイベントも
-	// 取りこぼさずに永続化するため（docs/10_ログ仕様.md）。
-	if d.eventRelay != nil {
-		d.eventRelay.Close()
-	}
 	if d.canonicalEventStore != nil {
 		if err := d.canonicalEventStore.Close(); err != nil {
 			log.Printf("Failed to close Canonical Event Store: %v", err)
@@ -1371,7 +1366,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		cfg,
 		func(ev orchestrator.OrchestratorEvent) {
 			if deps.eventRelay != nil {
-				deps.eventRelay.OnEvent(ev)
+				if err := deps.eventRelay.OnEvent(ev); err != nil {
+					log.Printf("[TTS] event publication failed type=%s session_id=%s: %v", ev.Type, ev.SessionID, err)
+				}
 			}
 		},
 		func(sessionID, characterID, text string) {
@@ -1389,10 +1386,12 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	// NI-003: ToolRegistry エラーを SSE でユーザーに通知する
 	if toolRuntime.SubagentMgr != nil && deps.eventRelay != nil {
 		toolRuntime.SubagentMgr.SetRegistryErrorHandler(func(err error) {
-			deps.eventRelay.OnEvent(orchestrator.NewEvent(
+			if publishErr := deps.eventRelay.OnEvent(orchestrator.NewEvent(
 				"registry.error", "system", "subagent", err.Error(),
 				"", "", "system", "system", "system",
-			))
+			)); publishErr != nil {
+				log.Printf("[ToolRegistry] event publication failed: %v", publishErr)
+			}
 		})
 	}
 

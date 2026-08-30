@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -464,18 +465,45 @@ func (o *MessageOrchestrator) ttsEnabled() bool {
 }
 
 // ProcessMessage はメッセージを処理
-func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (ProcessMessageResponse, error) {
+func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (resp ProcessMessageResponse, err error) {
 	latencyStartedAt := time.Now()
 	ctx = contextWithLatencyTrace(ctx, latencyStartedAt)
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
 	ensureProcessRequestIdentity(&req)
-	ctx = contextWithCanonicalTrace(ctx, modulecore.TraceID(req.TraceID))
+	traceID := modulecore.TraceID(req.TraceID)
+	ctx = contextWithCanonicalTrace(ctx, traceID)
 	o.events.BindTrace(jobID.String(), modulecore.TraceID(req.TraceID))
 	defer o.events.ReleaseTrace(jobID.String())
+	ctx, cancel := context.WithCancelCause(ctx)
+	publicationFailures := o.events.publicationFail
+	if publicationFailures != nil {
+		publicationFailures.Begin(traceID, cancel)
+	}
+	defer func() {
+		var publicationErr error
+		if publicationFailures != nil {
+			publicationErr = publicationFailures.End(traceID)
+		}
+		if publicationErr == nil {
+			cancel(nil)
+			return
+		}
+		cancel(publicationErr)
+		wrapped := fmt.Errorf("canonical event publication failed: %w", publicationErr)
+		resp = ProcessMessageResponse{}
+		if err == nil {
+			err = wrapped
+		} else if !errors.Is(err, publicationErr) {
+			err = errors.Join(err, wrapped)
+		}
+	}()
 	preserveOriginalUserMessage(&req)
 	log.Printf("[MessageOrch] ProcessMessage START: jobID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
 		jobID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
+	if err := o.events.EmitMessageReceived(req, jobID.String()); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 
 	endChatBusy := o.idleBusyGuards.BeginChat()
 	defer endChatBusy()
@@ -486,14 +514,19 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 
 	emitLatencyMetric(o.events.Emit, "network", "server_received", latencyStartedAt, "", jobID.String(), req.SessionID, req.Channel, req.ChatID, "")
+	if err := o.events.PublicationError(traceID); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 	writeUserSessionTurn(o.sessionTurnLogger, req)
 	if err := o.recordPersonaRuntimeObservation(ctx, req); err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	o.events.EmitMessageReceived(req, jobID.String())
 	if resp, handled, err := o.preRoutingCommands.Handle(ctx, req); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
+		if err := o.events.PublicationError(traceID); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
@@ -509,12 +542,18 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			return ProcessMessageResponse{}, err
 		}
 		req = processed
+		if err := o.events.PublicationError(traceID); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 	}
 
 	t, jobID, ttsSessionID := o.taskContexts.BuildWithJobID(req, jobID)
 	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, t, jobID, ttsSessionID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
+		if err := o.events.PublicationError(traceID); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
@@ -522,6 +561,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t.WithRoute(routing.RouteRESEARCH), jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
+		if err := o.events.PublicationError(traceID); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
@@ -529,6 +571,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if resp, handled, err := o.handleDurableStore(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
+		if err := o.events.PublicationError(traceID); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
@@ -539,6 +584,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, err
 	}
 	emitLatencyMetric(o.events.Emit, "llm", "route_decision", latencyStartedAt, string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID, decision.Reason)
+	if err := o.events.PublicationError(traceID); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 
 	t = t.WithRoute(decision.Route)
 	if err := o.recordRouteSkillBootstrap(ctx, req, decision.Route); err != nil {
@@ -563,7 +611,16 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 
 	// 4. ルートに応じて実行
 	emitLatencyMetric(o.events.Emit, "llm", "dispatch_start", latencyStartedAt, string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID, "")
+	if err := o.events.PublicationError(traceID); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 	response, err := o.routeDispatcher.ExecuteTask(ctx, t, decision.Route, req.SessionID, req.Channel, req.ChatID, ttsSessionID)
+	if publicationErr := o.events.PublicationError(traceID); publicationErr != nil {
+		if err != nil {
+			return ProcessMessageResponse{}, errors.Join(err, publicationErr)
+		}
+		return ProcessMessageResponse{}, publicationErr
+	}
 	if err != nil {
 		if o.superAgentRunController != nil && o.superAgentRunController.IsPauseRequested(leadRunID) {
 			_ = recordLeadAgentRunFinished(context.Background(), o.superAgentRuns, req, jobID, decision.Route, runStartedAt, "paused", "pause requested; task execution canceled")
@@ -573,6 +630,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, fmt.Errorf("task execution failed: %w", err)
 	}
 	emitLatencyMetric(o.events.Emit, "llm", "response_complete", latencyStartedAt, string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID, fmt.Sprintf("response_len=%d", len(response)))
+	if err := o.events.PublicationError(traceID); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 	o.ttsLifecycle.EndSession(ctx, ttsSessionID)
 
 	var verificationReport *domainverification.VerificationReport
@@ -593,6 +653,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		response = verification.Response
 		verificationReport = &verification.Report
 		o.events.Emit("verification.report", "verification", "viewer", string(verification.Report.Status), string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID)
+		if err := o.events.PublicationError(traceID); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 	}
 
 	if applied, err := o.applyPersonaCanonicalResponse(ctx, req, response); err != nil {
@@ -610,7 +673,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, err
 	}
 
-	resp := ensureProcessResponseIdentity(
+	resp = ensureProcessResponseIdentity(
 		o.responses.BuildWithVerification(response, decision, jobID, verificationReport),
 		jobID.String(),
 		req.TraceID,

@@ -2,6 +2,7 @@ package heartbeat
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,10 +64,15 @@ func (m *mockSender) SendNotification(ctx context.Context, message string) error
 
 type recordingEventListener struct {
 	events []orchestrator.OrchestratorEvent
+	err    error
 }
 
-func (r *recordingEventListener) OnEvent(ev orchestrator.OrchestratorEvent) {
+func (r *recordingEventListener) OnEvent(ev orchestrator.OrchestratorEvent) error {
+	if r.err != nil {
+		return r.err
+	}
 	r.events = append(r.events, ev)
+	return nil
 }
 
 type fakeIdleChatSequenceMonitor struct {
@@ -338,6 +344,23 @@ func TestTick_NotificationEmitsViewerEvent(t *testing.T) {
 	}
 	if ev.Content != "Disk usage is 95%" {
 		t.Fatalf("unexpected event content: %q", ev.Content)
+	}
+}
+
+func TestTick_DoesNotNotifyUserAfterHeartbeatEventPublicationFailure(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("Check alerts"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	listener := &recordingEventListener{err: errors.New("canonical append failed")}
+	sender := &mockSender{}
+	svc := NewHeartbeatService(&mockWorkerAgent{response: "Disk usage is 95%"}, sender, dir, 30).WithEventListener(listener)
+
+	if err := svc.tick(context.Background()); err == nil {
+		t.Fatal("tick error = nil, want publication failure")
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("notifications=%d, want 0 after event publication failure", len(sender.messages))
 	}
 }
 

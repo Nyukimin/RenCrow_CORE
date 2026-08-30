@@ -16,8 +16,9 @@ type captureCharacterRuntimeEvents struct {
 	events []orchestrator.OrchestratorEvent
 }
 
-func (c *captureCharacterRuntimeEvents) OnEvent(ev orchestrator.OrchestratorEvent) {
+func (c *captureCharacterRuntimeEvents) OnEvent(ev orchestrator.OrchestratorEvent) error {
 	c.events = append(c.events, ev)
+	return nil
 }
 
 func TestHandleCharacterRuntimeRunRoundEmitsSixTurns(t *testing.T) {

@@ -272,7 +272,7 @@ func (d *Dependencies) emitLocalAgentNote(from, to, content string, msg domaintr
 			route = v
 		}
 	}
-	d.eventRelay.OnEvent(orchestrator.NewEvent(
+	if err := d.eventRelay.OnEvent(orchestrator.NewEvent(
 		"agent.note",
 		from,
 		to,
@@ -282,5 +282,7 @@ func (d *Dependencies) emitLocalAgentNote(from, to, content string, msg domaintr
 		msg.SessionID,
 		"distributed",
 		msg.SessionID,
-	))
+	)); err != nil {
+		log.Printf("[LocalCoder] agent note event publication failed agent=%s job=%s: %v", from, msg.JobID, err)
+	}
 }

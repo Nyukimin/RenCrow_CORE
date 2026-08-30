@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -145,6 +146,20 @@ type mockMioAgent struct {
 	decideFunc func(ctx context.Context, t task.Task) (routing.Decision, error)
 	chatFunc   func(ctx context.Context, t task.Task) (string, error)
 	cmdFunc    func(ctx context.Context, sessionID string, message string) (agent.ChatCommandResult, error)
+}
+
+type failOnEventListener struct {
+	failType string
+	err      error
+	events   []OrchestratorEvent
+}
+
+func (l *failOnEventListener) OnEvent(ev OrchestratorEvent) error {
+	l.events = append(l.events, ev)
+	if ev.Type == l.failType {
+		return l.err
+	}
+	return nil
 }
 
 func (m *mockMioAgent) DecideAction(ctx context.Context, t task.Task) (routing.Decision, error) {
@@ -398,6 +413,60 @@ func TestMessageOrchestrator_ProcessMessage_NewSession(t *testing.T) {
 	exists, _ := repo.Exists(context.Background(), "20260302-line-U123")
 	if !exists {
 		t.Error("Session should be saved")
+	}
+}
+
+func TestMessageOrchestrator_CanonicalEventFailureStopsBeforeLLM(t *testing.T) {
+	wantErr := fmt.Errorf("canonical append unavailable")
+	decideCalls := 0
+	mio := &mockMioAgent{decideFunc: func(context.Context, task.Task) (routing.Decision, error) {
+		decideCalls++
+		return routing.NewDecision(routing.RouteCHAT, 1, "unexpected"), nil
+	}}
+	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetEventListener(&failingEventListener{err: wantErr})
+
+	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
+		SessionID: "event-failure", Channel: "viewer", ChatID: "viewer-user", UserMessage: "must not reach LLM",
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ProcessMessage() error=%v, want %v", err, wantErr)
+	}
+	if decideCalls != 0 {
+		t.Fatalf("LLM routing was invoked %d times after canonical append failure", decideCalls)
+	}
+}
+
+func TestMessageOrchestrator_LaterCanonicalEventFailureSuppressesResponse(t *testing.T) {
+	wantErr := errors.New("final canonical append unavailable")
+	chatCalls := 0
+	mio := &mockMioAgent{
+		decision: routing.NewDecision(routing.RouteCHAT, 1.0, "Chat route"),
+		chatFunc: func(context.Context, task.Task) (string, error) {
+			chatCalls++
+			return "response must not escape", nil
+		},
+	}
+	listener := &failOnEventListener{failType: "agent.response", err: wantErr}
+	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetEventListener(listener)
+	turns := &recordingCorrelatedTurnLogger{}
+	orch.SetSessionTurnLogger(turns)
+
+	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
+		SessionID: "later-event-failure", Channel: "viewer", ChatID: "viewer-user", UserMessage: "run chat first",
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ProcessMessage() error=%v, want %v", err, wantErr)
+	}
+	if resp.Response != "" {
+		t.Fatalf("response=%q, want empty after canonical publication failure", resp.Response)
+	}
+	if chatCalls != 1 {
+		t.Fatalf("chat calls=%d, want 1", chatCalls)
+	}
+	if len(turns.turns) != 1 || turns.turns[0].role != "user" {
+		t.Fatalf("session turns=%#v, want only the accepted user turn", turns.turns)
 	}
 }
 

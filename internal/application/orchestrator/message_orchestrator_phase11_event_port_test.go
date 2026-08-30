@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -11,8 +12,52 @@ type phase11RecordingEventListener struct {
 	events []OrchestratorEvent
 }
 
-func (l *phase11RecordingEventListener) OnEvent(ev OrchestratorEvent) {
+func (l *phase11RecordingEventListener) OnEvent(ev OrchestratorEvent) error {
 	l.events = append(l.events, ev)
+	return nil
+}
+
+type failingEventListener struct {
+	err   error
+	calls int
+}
+
+func (l *failingEventListener) OnEvent(OrchestratorEvent) error {
+	l.calls++
+	return l.err
+}
+
+func TestPhase11MessageReceivedReturnsPublicationFailure(t *testing.T) {
+	wantErr := errors.New("canonical append unavailable")
+	listener := &failingEventListener{err: wantErr}
+	port := newMessageEventPort(listener)
+	traceID := modulecore.NewTraceID()
+	port.BindTrace("job-1", traceID)
+
+	err := port.EmitMessageReceived(ProcessMessageRequest{
+		TraceID: string(traceID), SessionID: "session-1", Channel: "viewer", ChatID: "chat-1", UserMessage: "hello",
+	}, "job-1")
+	if !errors.Is(err, wantErr) || listener.calls != 1 {
+		t.Fatalf("EmitMessageReceived() error=%v calls=%d", err, listener.calls)
+	}
+}
+
+func TestPhase11EventPortStopsAfterFirstPublicationFailure(t *testing.T) {
+	wantErr := errors.New("canonical append unavailable")
+	listener := &failingEventListener{err: wantErr}
+	port := newMessageEventPort(listener)
+	traceID := modulecore.NewTraceID()
+	port.BindTrace("job-1", traceID)
+	port.publicationFail.Begin(traceID, nil)
+	defer port.publicationFail.End(traceID)
+
+	if err := port.EmitMessageReceived(ProcessMessageRequest{SessionID: "session-1", UserMessage: "hello"}, "job-1"); !errors.Is(err, wantErr) {
+		t.Fatalf("first publication error=%v, want %v", err, wantErr)
+	}
+	port.Emit("agent.response", "mio", "user", "must not project", "CHAT", "job-1", "session-1", "viewer", "viewer-user")
+	if listener.calls != 1 {
+		t.Fatalf("listener calls=%d, want one call before trace failure closed publication", listener.calls)
+	}
 }
 
 func TestPhase11EventPortNilListenerIsNoop(t *testing.T) {

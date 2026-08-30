@@ -59,10 +59,12 @@ func buildViewerBridgeHandlers(
 			return resp.Response, nil
 		}, func(req viewer.SendRequest, err error) {
 			if deps.eventRelay != nil {
-				deps.eventRelay.OnEvent(orchestrator.NewEvent(
+				if publishErr := deps.eventRelay.OnEvent(orchestrator.NewEvent(
 					"viewer.error", "system", "viewer", err.Error(),
 					"", req.JobID, "viewer", "viewer", "viewer-user",
-				))
+				)); publishErr != nil {
+					log.Printf("[Viewer] error event publication failed job=%s: %v", req.JobID, publishErr)
+				}
 			}
 		}, attachmentStore)
 	}
@@ -79,7 +81,7 @@ func buildViewerBridgeHandlers(
 					jobID = result.JobID
 				}
 				if deps.eventRelay != nil {
-					deps.eventRelay.OnEvent(orchestrator.NewEvent(
+					if publishErr := deps.eventRelay.OnEvent(orchestrator.NewEvent(
 						"entry.stage",
 						req.Platform,
 						"system",
@@ -89,7 +91,9 @@ func buildViewerBridgeHandlers(
 						req.SessionID,
 						req.Channel,
 						req.UserID,
-					))
+					)); publishErr != nil {
+						log.Printf("[Entry] stage event publication failed stage=%s session=%s job=%s: %v", stage, req.SessionID, jobID, publishErr)
+					}
 				}
 				switch stage {
 				case entryadapter.StageReceived:

@@ -23,6 +23,10 @@ func HandleCharacterRuntime(service *characterruntime.Service, listener orchestr
 			http.Error(w, "character runtime unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		if listener == nil {
+			http.Error(w, "character runtime event publication unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		defer r.Body.Close()
 		var req characterruntime.RunRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -34,13 +38,14 @@ func HandleCharacterRuntime(service *characterruntime.Service, listener orchestr
 			http.Error(w, "character runtime failed: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if listener != nil {
-			for _, turn := range result.Turns {
-				ev := orchestrator.NewEvent("character_runtime.turn", turn.CharacterID, "viewer", turn.Content, "CHARACTER_RUNTIME", "", result.SessionID, "viewer", req.RequestedBy)
-				ev.TurnIndex = turn.TurnIndex
-				ev.MessageID = turn.MessageID
-				ev.TraceID = result.TraceID
-				listener.OnEvent(ev)
+		for _, turn := range result.Turns {
+			ev := orchestrator.NewEvent("character_runtime.turn", turn.CharacterID, "viewer", turn.Content, "CHARACTER_RUNTIME", "", result.SessionID, "viewer", req.RequestedBy)
+			ev.TurnIndex = turn.TurnIndex
+			ev.MessageID = turn.MessageID
+			ev.TraceID = result.TraceID
+			if err := listener.OnEvent(ev); err != nil {
+				http.Error(w, "character runtime event publication failed", http.StatusServiceUnavailable)
+				return
 			}
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"result": result})

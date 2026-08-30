@@ -221,6 +221,21 @@ func TestBackgroundJobFailureReporterEmitsShiroAndMioEvents(t *testing.T) {
 	}
 }
 
+func TestBackgroundJobFailureReporterStopsNotificationAfterPublicationFailure(t *testing.T) {
+	listener := &captureBackgroundJobEventListener{err: errors.New("canonical append failed")}
+	newBackgroundJobFailureReporter(listener).Failed("daily_intake_sweep", errors.New("boom"), "rule_limit=100")
+
+	listener.mu.Lock()
+	calls := listener.calls
+	listener.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("listener calls=%d, want 1 after failed prerequisite publication", calls)
+	}
+	if events := listener.Events(); len(events) != 0 {
+		t.Fatalf("events=%d, want no projected events", len(events))
+	}
+}
+
 func TestBackgroundJobFailureReporterIgnoresTypedNilListener(t *testing.T) {
 	var listener *idleAwareEventListener
 	reporter := newBackgroundJobFailureReporter(listener)
@@ -373,12 +388,21 @@ func (r *failingMemoryLifecycleRunner) RunMemoryLifecycleMaintenance(context.Con
 type captureBackgroundJobEventListener struct {
 	mu     sync.Mutex
 	events []orchestrator.OrchestratorEvent
+	err    error
+	calls  int
 }
 
-func (l *captureBackgroundJobEventListener) OnEvent(ev orchestrator.OrchestratorEvent) {
+func (l *captureBackgroundJobEventListener) OnEvent(ev orchestrator.OrchestratorEvent) error {
+	l.mu.Lock()
+	l.calls++
+	l.mu.Unlock()
+	if l.err != nil {
+		return l.err
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.events = append(l.events, ev)
+	return nil
 }
 
 func (l *captureBackgroundJobEventListener) Events() []orchestrator.OrchestratorEvent {

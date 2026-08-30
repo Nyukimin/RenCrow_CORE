@@ -413,7 +413,9 @@ func (s *HeartbeatService) tick(ctx context.Context) error {
 
 	// HEARTBEAT_OK 以外はユーザーに通知
 	s.logHeartbeat("NOTIFY", response)
-	s.emitEvent("heartbeat.notify", response)
+	if err := s.emitEvent("heartbeat.notify", response); err != nil {
+		return fmt.Errorf("heartbeat notification event publication failed: %w", err)
+	}
 	if s.sender != nil {
 		if err := s.sender.SendNotification(ctx, response); err != nil {
 			s.emitEvent("heartbeat.error", fmt.Sprintf("failed to send notification: %v", err))
@@ -863,7 +865,10 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 
 	jobID := task.NewJobID()
 	t := newHeartbeatWorkerTask(jobID, backlogRunnerMessageForTarget(item, target), "backlog-runner", "heartbeat")
-	s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s target=%s", item.ItemID, jobID.String(), target))
+	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s target=%s", item.ItemID, jobID.String(), target)); err != nil {
+		report.Failed++
+		return report, fmt.Errorf("backlog runner start event publication failed: %w", err)
+	}
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
 		RequestID: jobID.String(), TraceID: jobID.String(), JobID: jobID.String(),
 		Initiator: "shiro", Caller: "heartbeat.backlog", Purpose: "process_backlog_item",
@@ -958,7 +963,10 @@ func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.
 
 	jobID := task.NewJobID()
 	t := newHeartbeatWorkerTask(jobID, backlogRunnerMessage(item), "backlog-runner", "heartbeat")
-	s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s", item.ItemID, jobID.String()))
+	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s", item.ItemID, jobID.String())); err != nil {
+		report.Failed++
+		return report, fmt.Errorf("backlog runner start event publication failed: %w", err)
+	}
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
 		RequestID: jobID.String(), TraceID: jobID.String(), JobID: jobID.String(),
 		Initiator: "shiro", Caller: "heartbeat.backlog", Purpose: "process_backlog_item",
@@ -1252,11 +1260,11 @@ func (s *HeartbeatService) logHeartbeat(status, message string) {
 	f.WriteString(entry)
 }
 
-func (s *HeartbeatService) emitEvent(eventType, content string) {
-	if s.listener == nil {
-		return
+func (s *HeartbeatService) emitEvent(eventType, content string) error {
+	if s == nil || s.listener == nil {
+		return nil
 	}
-	s.listener.OnEvent(orchestrator.NewEvent(
+	if err := s.listener.OnEvent(orchestrator.NewEvent(
 		eventType,
 		"heartbeat",
 		"viewer",
@@ -1266,5 +1274,9 @@ func (s *HeartbeatService) emitEvent(eventType, content string) {
 		"heartbeat",
 		"heartbeat",
 		"viewer",
-	))
+	)); err != nil {
+		log.Printf("[Heartbeat] event publication failed type=%s: %v", eventType, err)
+		return err
+	}
+	return nil
 }

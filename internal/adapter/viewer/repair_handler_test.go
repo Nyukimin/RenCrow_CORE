@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,10 +14,15 @@ import (
 
 type repairTestListener struct {
 	events []orchestrator.OrchestratorEvent
+	errAt  int
 }
 
-func (l *repairTestListener) OnEvent(ev orchestrator.OrchestratorEvent) {
+func (l *repairTestListener) OnEvent(ev orchestrator.OrchestratorEvent) error {
+	if l.errAt >= 0 && len(l.events) == l.errAt {
+		return errors.New("canonical append failed")
+	}
 	l.events = append(l.events, ev)
+	return nil
 }
 
 type repairTestRunner struct {
@@ -29,7 +35,7 @@ func (r *repairTestRunner) StartRepairJob(_ context.Context, req RepairJobReques
 }
 
 func TestHandleRepairRunEmitsRepairEvents(t *testing.T) {
-	listener := &repairTestListener{}
+	listener := &repairTestListener{errAt: -1}
 	body := bytes.NewBufferString(`{"reason":"echo-loop","instruction":"ログを見て修復","recent":50}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/repair/run", body)
 	rec := httptest.NewRecorder()
@@ -58,7 +64,7 @@ func TestHandleRepairRunEmitsRepairEvents(t *testing.T) {
 }
 
 func TestHandleRepairRunStartsRepairJobRunner(t *testing.T) {
-	listener := &repairTestListener{}
+	listener := &repairTestListener{errAt: -1}
 	runner := &repairTestRunner{}
 	body := bytes.NewBufferString(`{"reason":"echo-loop","instruction":"ログを見て修復","recent":50,"target_route":"CHAT","target_agent":"mio"}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/repair/run", body)
@@ -82,5 +88,21 @@ func TestHandleRepairRunStartsRepairJobRunner(t *testing.T) {
 	}
 	if call.Instruction != "ログを見て修復" || call.TargetRoute != "CHAT" || call.TargetAgent != "mio" || call.Source != "viewer" {
 		t.Fatalf("unexpected runner request: %+v", call)
+	}
+}
+
+func TestHandleRepairRunPublicationFailureDoesNotStartRunner(t *testing.T) {
+	listener := &repairTestListener{errAt: 0}
+	runner := &repairTestRunner{}
+	req := httptest.NewRequest(http.MethodPost, "/viewer/repair/run", bytes.NewBufferString(`{"reason":"archive-down"}`))
+	rec := httptest.NewRecorder()
+
+	HandleRepairRunWithRunner(listener, runner)(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s, want service unavailable", rec.Code, rec.Body.String())
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("runner calls=%d, want 0 after publication failure", len(runner.calls))
 	}
 }

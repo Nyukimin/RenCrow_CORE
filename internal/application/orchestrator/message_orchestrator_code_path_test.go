@@ -13,8 +13,9 @@ type recordingEventListener struct {
 	events []OrchestratorEvent
 }
 
-func (r *recordingEventListener) OnEvent(ev OrchestratorEvent) {
+func (r *recordingEventListener) OnEvent(ev OrchestratorEvent) error {
 	r.events = append(r.events, ev)
+	return nil
 }
 
 func indexOfEvent(events []OrchestratorEvent, typ, from, to, route string) int {

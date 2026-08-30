@@ -8,8 +8,8 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
-// EventHub broadcasts orchestrator events to connected SSE clients.
-// Implements orchestrator.EventListener.
+// EventHub broadcasts already-persisted orchestrator events to connected SSE
+// clients. Canonical publication is owned by the runtime event relay.
 type EventHub struct {
 	mu                  sync.RWMutex
 	clients             map[chan []byte]struct{}
@@ -27,7 +27,7 @@ func NewEventHub(maxHistory int) *EventHub {
 	}
 }
 
-// OnEvent implements orchestrator.EventListener.
+// OnEvent projects an event to the Viewer history and SSE clients.
 func (h *EventHub) OnEvent(ev orchestrator.OrchestratorEvent) {
 	h.mu.Lock()
 	h.nextSeq++

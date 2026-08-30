@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -16,16 +17,43 @@ import (
 
 // ProcessMessage は既存MessageOrchestratorと同じシグネチャでメッセージを処理
 // 分散環境ではTransport経由でAgent間通信を行う
-func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (ProcessMessageResponse, error) {
+func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (resp ProcessMessageResponse, err error) {
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
 	ensureProcessRequestIdentity(&req)
-	ctx = contextWithCanonicalTrace(ctx, modulecore.TraceID(req.TraceID))
-	o.events.BindTrace(jobID.String(), modulecore.TraceID(req.TraceID))
+	traceID := modulecore.TraceID(req.TraceID)
+	ctx = contextWithCanonicalTrace(ctx, traceID)
+	o.events.BindTrace(jobID.String(), traceID)
 	defer o.events.ReleaseTrace(jobID.String())
+	ctx, cancel := context.WithCancelCause(ctx)
+	publicationFailures := o.events.publicationFail
+	if publicationFailures != nil {
+		publicationFailures.Begin(traceID, cancel)
+	}
+	defer func() {
+		var publicationErr error
+		if publicationFailures != nil {
+			publicationErr = publicationFailures.End(traceID)
+		}
+		if publicationErr == nil {
+			cancel(nil)
+			return
+		}
+		cancel(publicationErr)
+		wrapped := fmt.Errorf("canonical event publication failed: %w", publicationErr)
+		resp = ProcessMessageResponse{}
+		if err == nil {
+			err = wrapped
+		} else if !errors.Is(err, publicationErr) {
+			err = errors.Join(err, wrapped)
+		}
+	}()
 	preserveOriginalUserMessage(&req)
 	log.Printf("[DistributedOrch] ProcessMessage START: jobID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
 		jobID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
+	if err := o.events.EmitMessageReceived(req, jobID.String()); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 	startedAt := time.Now().UTC()
 
 	if o.idleNotifier != nil {
@@ -40,7 +68,6 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		return ProcessMessageResponse{}, fmt.Errorf("failed to load or create session: %w", err)
 	}
 
-	o.events.EmitMessageReceived(req, jobID.String())
 	if expandedReq, handled, err := o.expandRegisteredSlashCommand(ctx, req); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
@@ -52,6 +79,9 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 			return ProcessMessageResponse{}, err
 		}
 		req = processed
+		if err := o.events.PublicationError(traceID); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 	}
 
 	// 2. タスクを作成
@@ -61,16 +91,25 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
+		if err := o.events.PublicationError(traceID); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		return ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID), nil
 	}
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
+		if err := o.events.PublicationError(traceID); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		return ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID), nil
 	}
 	if resp, handled, err := o.handleDurableStore(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
+		if err := o.events.PublicationError(traceID); err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		return ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID), nil
 	}
 
@@ -111,6 +150,9 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	o.emitNote("mio", "user",
 		fmt.Sprintf("%s", routeNoticeText(decision.Route, req.UserMessage)),
 		string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID)
+	if err := o.events.PublicationError(traceID); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 
 	t = t.WithRoute(decision.Route)
 	if err := recordRouteSkillBootstrap(ctx, o.skillBootstrap, req, decision.Route); err != nil {
@@ -140,6 +182,12 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 
 	// 4. ルートに応じてTransport経由で実行
 	response, err := o.executeDistributed(ctx, t, decision.Route, sess.ID(), ttsSessionID)
+	if publicationErr := o.events.PublicationError(traceID); publicationErr != nil {
+		if err != nil {
+			return ProcessMessageResponse{}, errors.Join(err, publicationErr)
+		}
+		return ProcessMessageResponse{}, publicationErr
+	}
 	if err != nil {
 		if o.superAgentRunController != nil && o.superAgentRunController.IsPauseRequested(leadRunID) {
 			_ = recordLeadAgentRunFinished(context.Background(), o.superAgentRuns, req, jobID, decision.Route, runStartedAt, "paused", "pause requested; distributed execution canceled")
@@ -166,7 +214,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		o.saveExecutionReport(ctx, jobID.String(), req.UserMessage, string(decision.Route), startedAt, time.Now().UTC(), nil)
 	}
 
-	resp := ensureProcessResponseIdentity(ProcessMessageResponse{
+	resp = ensureProcessResponseIdentity(ProcessMessageResponse{
 		Response:   response,
 		Route:      decision.Route,
 		Confidence: decision.Confidence,
