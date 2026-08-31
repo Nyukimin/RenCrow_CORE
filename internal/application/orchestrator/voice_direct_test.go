@@ -134,6 +134,7 @@ func TestProcessVoiceDirect_EmitsLatencyMetrics(t *testing.T) {
 		SessionID:    "viewer-session",
 		Channel:      "viewer",
 		ChatID:       "viewer-user",
+		UserText:     "おはよう",
 		FinalText:    "おはよう",
 		StartedAt:    startedAt,
 		FirstTokenAt: firstTokenAt,
@@ -209,6 +210,7 @@ func TestProcessVoiceDirect_DoesNotRouteToIdleChat(t *testing.T) {
 	_, err := orch.ProcessVoiceDirect(context.Background(), ProcessVoiceDirectRequest{
 		UtteranceID: "utt-1",
 		Channel:     "viewer",
+		UserText:    "入力",
 		FinalText:   "ok",
 	})
 	if err != nil {

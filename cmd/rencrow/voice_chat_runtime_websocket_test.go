@@ -401,11 +401,31 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 		if payload["think"] != false || kwargs["enable_thinking"] != false {
 			t.Fatalf("voice CHAT must force enable_thinking=false: %#v", payload)
 		}
+		responseFormat, _ := payload["response_format"].(map[string]any)
+		if responseFormat["type"] != "json_object" {
+			t.Fatalf("input_audio must request JSON object response format: %#v", payload["response_format"])
+		}
 		rawMessages, _ := payload["messages"].([]any)
-		if len(rawMessages) != 1 {
+		if len(rawMessages) != 2 {
 			t.Fatalf("messages = %#v", payload["messages"])
 		}
-		msg, _ := rawMessages[0].(map[string]any)
+		systemMessage, _ := rawMessages[0].(map[string]any)
+		if systemMessage["role"] != "system" {
+			t.Fatalf("first message must be the fixed CORE system contract: %#v", systemMessage)
+		}
+		systemPrompt, _ := systemMessage["content"].(string)
+		for _, required := range []string{"exactly one JSON object", `"user_text"`, "audio transcript", `"reply"`, "existing client/config prompt"} {
+			if !strings.Contains(systemPrompt, required) {
+				t.Fatalf("fixed input_audio system contract missing %q: %q", required, systemPrompt)
+			}
+		}
+		if strings.Contains(systemPrompt, "短く確認") {
+			t.Fatalf("client prompt must remain a user message, not enter the fixed system contract: %q", systemPrompt)
+		}
+		msg, _ := rawMessages[1].(map[string]any)
+		if msg["role"] != "user" {
+			t.Fatalf("second message must preserve the user audio prompt: %#v", msg)
+		}
 		content, _ := msg["content"].([]any)
 		if len(content) != 2 {
 			t.Fatalf("content = %#v", msg["content"])
@@ -415,6 +435,10 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 		data, _ := inputAudio["data"].(string)
 		if data == "" {
 			t.Fatal("missing input_audio data")
+		}
+		textPart, _ := content[1].(map[string]any)
+		if textPart["type"] != "text" || textPart["text"] != "短く確認" {
+			t.Fatalf("client prompt must remain the user text part: %#v", textPart)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"user_text\":\"Mioさんいますか\",\"reply\":\"Gatewayのraw応答\"}"}}]}`))

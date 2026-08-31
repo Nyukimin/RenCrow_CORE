@@ -55,6 +55,9 @@ func (r Result) Validate() error {
 	}
 	switch r.Mode {
 	case ModeLLM:
+		if strings.TrimSpace(r.UserText) == "" {
+			return errors.New("llm voice user_text is required")
+		}
 		if strings.TrimSpace(r.Reply) == "" {
 			return errors.New("llm voice reply is required")
 		}

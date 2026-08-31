@@ -23,6 +23,8 @@ import (
 
 const voiceChatInputAudioTimeout = 180 * time.Second
 
+const voiceChatInputAudioSystemPrompt = `Return exactly one JSON object with exactly these non-empty string fields: "user_text" (the audio transcript) and "reply" (the response following the existing client/config prompt). Do not return prose, Markdown, or any other format.`
+
 type voiceChatInputAudioSettings struct {
 	Model          string
 	APIKey         string
@@ -251,6 +253,8 @@ func postVoiceChatInputAudio(ctx context.Context, baseURL string, settings voice
 		}},
 		MaxTokens:       settings.MaxTokens,
 		Temperature:     settings.Temperature,
+		SystemPrompt:    voiceChatInputAudioSystemPrompt,
+		ResponseFormat:  llm.ResponseFormatJSONObject,
 		ProviderOptions: providerOptions,
 	}
 	if settings.Stream {

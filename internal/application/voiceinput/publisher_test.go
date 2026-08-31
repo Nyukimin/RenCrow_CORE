@@ -152,6 +152,7 @@ func TestPublisherDoesNotReuseJobIDAsTraceID(t *testing.T) {
 		SessionID:   "viewer",
 		Channel:     "viewer",
 		ChatID:      "default",
+		UserText:    "入力",
 		Reply:       "応答",
 		RawFinal:    "応答",
 		Source:      "RenCrow_LLM llm.final",
@@ -190,6 +191,44 @@ func TestPublisherPassesExplicitTraceIDToCorrelatedSessionLogs(t *testing.T) {
 	}
 	if logger.userTraceID != string(traceID) || logger.assistantTraceID != string(traceID) {
 		t.Fatalf("correlated session log traces user=%q assistant=%q, want %q", logger.userTraceID, logger.assistantTraceID, traceID)
+	}
+}
+
+func TestPublisherRejectsMissingUserTextBeforeEmittingOrLogging(t *testing.T) {
+	emitter := &recordingEmitter{}
+	logger := &recordingPublisherCorrelatedTurnLogger{}
+	jobCalls := 0
+	publisher := Publisher{
+		Events:     emitter,
+		TurnLogger: logger,
+		TraceID:    modulecore.NewTraceID(),
+		NewJobID: func() string {
+			jobCalls++
+			return task.NewJobID().String()
+		},
+	}
+
+	_, err := publisher.Publish(Result{
+		Mode:        ModeLLM,
+		UtteranceID: "utt-missing-user-text",
+		SessionID:   "viewer",
+		Channel:     "viewer",
+		ChatID:      "default",
+		Reply:       "応答",
+		RawFinal:    "応答",
+		Source:      "RenCrow_LLM llm.final",
+	})
+	if err == nil {
+		t.Fatal("expected missing LLM user_text to fail closed")
+	}
+	if len(emitter.events) != 0 {
+		t.Fatalf("missing user_text must not emit events: %#v", emitter.events)
+	}
+	if logger.userCalls != 0 || logger.assistantCalls != 0 {
+		t.Fatalf("missing user_text must not write session logs: %+v", logger)
+	}
+	if jobCalls != 0 {
+		t.Fatalf("missing user_text must fail before allocating a job: calls=%d", jobCalls)
 	}
 }
 
@@ -244,6 +283,7 @@ func TestPublisherMarksVoiceInputAsVoiceChatSurface(t *testing.T) {
 		SessionID:   "viewer",
 		Channel:     "viewer",
 		ChatID:      "default",
+		UserText:    "入力",
 		Reply:       "はい。",
 		RawFinal:    "はい。",
 		Source:      "RenCrow_LLM llm.final",

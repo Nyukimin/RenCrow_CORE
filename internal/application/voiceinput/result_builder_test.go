@@ -43,6 +43,19 @@ func TestBuildFromLLMFinal_UsesHintAfterRelaySplit(t *testing.T) {
 	}
 }
 
+func TestBuildFromLLMFinal_RejectsUnstructuredFinalWithoutTranscript(t *testing.T) {
+	_, err := BuildFromLLMFinal(BuildLLMRequest{
+		UtteranceID: "utt-1",
+		SessionID:   "viewer",
+		Channel:     "viewer",
+		ChatID:      "default",
+		FinalText:   "Mioの応答",
+	})
+	if err == nil {
+		t.Fatal("expected unstructured LLM final without transcript to be rejected")
+	}
+}
+
 func TestBuildFromLLMFinal_RejectsNoAudioMeta(t *testing.T) {
 	_, err := BuildFromLLMFinal(BuildLLMRequest{
 		UtteranceID: "utt-1",

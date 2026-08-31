@@ -109,6 +109,13 @@ appendを完了したowner receiptではありません。
 `ProcessVoiceDirect`を同期呼出しし、Canonical Event appendとowner finalizationが成功した後に、
 次の2 eventを順に投影します。
 
+`input_audio`のGateway requestは、既存のclient／config promptをuser messageの音声と同じ
+multimodal contentへ保持し、CORE固定のsystem contractと
+`response_format={"type":"json_object"}`を付けます。LLMは音声転写を`user_text`、既存promptに
+従った応答を`reply`へ入れた、両方が非空のJSON objectだけを返します。COREはreplyから
+transcriptを推測・補完せず、`user_text`が欠落したLLM resultをEvent／session log発行前に拒否します。
+その場合は`VOICE_RESULT_PUBLISH_FAILED`を返し、成功`llm.final`を送信しません。
+
 - `llm.delta`: `trace_id`、`job_id`、`message_id`を含む最初の応答event
 - `llm.final`: 同じ3つのIDを含む完成応答event。`ProcessVoiceDirect`成功後だけ送信される
 
