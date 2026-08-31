@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func (o *IdleChatOrchestrator) Start() {
@@ -101,8 +102,11 @@ func (o *IdleChatOrchestrator) Interrupt(reason string) {
 
 func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	o.cancelTopicProduction(reason)
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
 	o.mu.Lock()
 	cancel := o.runCancel
+	onInterrupt := o.onInterrupt
 	dailyEnrichmentJob := o.dailyEnrichmentJob
 	if o.manualMode || o.chatActive {
 		log.Printf("[IdleChat] Interrupted: reason=%s generation=%d session=%s", strings.TrimSpace(reason), o.activeGeneration, o.activeSessionID)
@@ -129,11 +133,16 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	o.watchdogUpdatedAt = time.Now().UTC()
 	o.watchdogStageDeadlineAt = time.Time{}
 	o.activeSessionID = ""
+	o.activeTraceID = ""
+	o.activeTraceSessionID = ""
 	o.runCancel = nil
 	o.runCtx = o.ctx
 	o.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if onInterrupt != nil {
+		onInterrupt()
 	}
 	if dailyEnrichmentJob != nil {
 		dailyEnrichmentJob.cancelBatch()
@@ -156,6 +165,8 @@ func (o *IdleChatOrchestrator) beginIdleRunLocked() uint64 {
 		o.runCancel()
 	}
 	o.activeGeneration++
+	o.activeTraceID = modulecore.NewTraceID()
+	o.activeTraceSessionID = ""
 	o.runCtx, o.runCancel = context.WithCancel(o.ctx)
 	o.watchdogStage = "run_started"
 	o.watchdogDetail = ""
@@ -169,10 +180,14 @@ func (o *IdleChatOrchestrator) beginIdleRunLocked() uint64 {
 }
 
 func (o *IdleChatOrchestrator) cancelIdleRun() {
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
 	o.mu.Lock()
 	cancel := o.runCancel
 	o.runCancel = nil
 	o.runCtx = o.ctx
+	o.activeTraceID = ""
+	o.activeTraceSessionID = ""
 	o.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -180,6 +195,8 @@ func (o *IdleChatOrchestrator) cancelIdleRun() {
 }
 
 func (o *IdleChatOrchestrator) cancelIdleRunIfGeneration(generation uint64) {
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
 	o.mu.Lock()
 	if generation != 0 && o.activeGeneration != generation {
 		o.mu.Unlock()
@@ -188,6 +205,8 @@ func (o *IdleChatOrchestrator) cancelIdleRunIfGeneration(generation uint64) {
 	cancel := o.runCancel
 	o.runCancel = nil
 	o.runCtx = o.ctx
+	o.activeTraceID = ""
+	o.activeTraceSessionID = ""
 	o.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -204,17 +223,64 @@ func (o *IdleChatOrchestrator) idleRunContext() context.Context {
 }
 
 func (o *IdleChatOrchestrator) activateIdleSession(sessionID string) uint64 {
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.runCtx == nil {
+	if o.runCancel == nil {
 		o.beginIdleRunLocked()
 	}
-	o.activeSessionID = strings.TrimSpace(sessionID)
-	o.messageIDs = make(map[string]string)
-	if o.interruptedSessions != nil {
-		delete(o.interruptedSessions, o.activeSessionID)
-	}
+	o.bindIdleSessionLocked(sessionID)
 	return o.activeGeneration
+}
+
+func (o *IdleChatOrchestrator) bindIdleSessionLocked(sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if o.activeTraceID.Validate() != nil || (o.activeTraceSessionID != "" && o.activeTraceSessionID != sessionID) {
+		o.activeTraceID = modulecore.NewTraceID()
+	}
+	o.activeSessionID = sessionID
+	o.activeTraceSessionID = sessionID
+	if o.interruptedSessions != nil {
+		// A prepared episode can legitimately replay the same SessionID after
+		// an interruption. The new bind is the authoritative owner transition.
+		delete(o.interruptedSessions, sessionID)
+	}
+	o.messageIDs = make(map[string]string)
+}
+
+func (o *IdleChatOrchestrator) traceForSession(sessionID string, explicit modulecore.TraceID, generation uint64) (modulecore.TraceID, bool) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || generation == 0 {
+		return "", false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if generation != o.activeGeneration || o.activeSessionID != sessionID || o.activeTraceSessionID != sessionID || o.activeTraceID.Validate() != nil {
+		return "", false
+	}
+	if explicit == "" {
+		return o.activeTraceID, true
+	}
+	if explicit.Validate() != nil || o.activeTraceID != explicit {
+		return "", false
+	}
+	return explicit, true
+}
+
+func (o *IdleChatOrchestrator) ownsIdleSessionLocked(sessionID string, generation uint64) bool {
+	return generation != 0 && generation == o.activeGeneration &&
+		strings.TrimSpace(sessionID) != "" && o.activeSessionID == strings.TrimSpace(sessionID) &&
+		o.activeTraceSessionID == strings.TrimSpace(sessionID) && o.activeTraceID.Validate() == nil
+}
+
+func (o *IdleChatOrchestrator) ownsIdleSession(sessionID string, generation uint64) bool {
+	if o == nil {
+		return false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.ownsIdleSessionLocked(sessionID, generation)
 }
 
 func (o *IdleChatOrchestrator) isIdleSessionActive(sessionID string, generation uint64) bool {
@@ -402,6 +468,8 @@ func (o *IdleChatOrchestrator) StartManualMode() error {
 // StartForecastMode switches from manual idlechat into forecast mode immediately.
 
 func (o *IdleChatOrchestrator) StartForecastMode() error {
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if len(o.participants) < 2 {
@@ -425,6 +493,8 @@ func (o *IdleChatOrchestrator) StartForecastMode() error {
 // StartStoryMode switches from manual idlechat into story mode immediately.
 
 func (o *IdleChatOrchestrator) StartStoryMode() error {
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if len(o.participants) < 2 {

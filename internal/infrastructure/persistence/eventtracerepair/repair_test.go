@@ -1,8 +1,10 @@
 package eventtracerepair
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -217,6 +219,181 @@ func TestDryRunClassifiesStandaloneTTSSessionAndBackgroundFailure(t *testing.T) 
 	}
 }
 
+func TestDryRunRepairsIdleChatTimelineRunWithoutCountingItAsJob(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	sessionID := "idle-identity-step02-topic-00"
+	rootTrace := modulecore.NewTraceID()
+	events := []modulecore.EventEnvelope{
+		eventFixture(rootTrace, "orchestrator", "idlechat.topic", map[string]any{"session_id": sessionID}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "mio", "to": "shiro", "turn_index": 1}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "shiro", "to": "mio", "turn_index": 2}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.summary", map[string]any{"session_id": sessionID, "turn_index": 3}),
+	}
+	writeStore(t, source, events)
+
+	dryPath := filepath.Join(snapshot, "dry-run.json")
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: dryPath, Mode: ModeDryRun,
+	})
+	if err != nil || receipt.Status != StatusReady || receipt.RepairJobCount != 0 || receipt.RepairIdleChatRunCount != 1 || receipt.RepairableIdleChatRunCount != 1 || receipt.RepairSegmentCount != 1 || receipt.RepairEventCount != 3 || receipt.UnresolvedIdleChatRunCount != 0 {
+		t.Fatalf("idle chat run must be repaired independently from jobs: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.RepairEvidenceCounts[repairEvidenceIdleChatSessionTopicRoot] != 1 {
+		t.Fatalf("unexpected evidence counts: %+v", receipt.RepairEvidenceCounts)
+	}
+
+	output := filepath.Join(snapshot, "repaired.db")
+	if _, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: output,
+		Manifest: filepath.Join(snapshot, "build.json"), DryRunManifest: dryPath, Mode: ModeBuild,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for index, event := range readAll(t, output) {
+		if event.TraceID != rootTrace {
+			t.Fatalf("event[%d] trace=%s want=%s", index, event.TraceID, rootTrace)
+		}
+	}
+	second, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: output, OutputStore: filepath.Join(snapshot, "second-repaired.db"),
+		Manifest: filepath.Join(snapshot, "second-dry-run.json"), Mode: ModeDryRun,
+	})
+	if err != nil || second.Status != StatusReady || second.RepairIdleChatRunCount != 0 || second.VerifiedIdleChatRunCount != 1 || second.UnresolvedIdleChatRunCount != 0 || second.InputEventSetSHA256 != second.OutputEventSetSHA256 {
+		t.Fatalf("repaired idle chat run must be idempotently verified: receipt=%+v err=%v", second, err)
+	}
+}
+
+func TestDryRunSegmentsReplayedStorySessionByTurnOneRoots(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	sessionID := "story-episode-reused"
+	firstTrace := modulecore.NewTraceID()
+	secondTrace := modulecore.NewTraceID()
+	events := []modulecore.EventEnvelope{
+		eventFixture(firstTrace, "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "mio", "to": "shiro", "turn_index": 1}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "shiro", "to": "mio", "turn_index": 2}),
+		eventFixture(secondTrace, "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "mio", "to": "shiro", "turn_index": 1}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "shiro", "to": "mio", "turn_index": 2}),
+	}
+	writeStore(t, source, events)
+
+	dryPath := filepath.Join(snapshot, "dry-run.json")
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: dryPath, Mode: ModeDryRun,
+	})
+	if err != nil || receipt.Status != StatusReady || receipt.RepairJobCount != 0 || receipt.RepairIdleChatRunCount != 2 || receipt.RepairSegmentCount != 2 || receipt.RepairEventCount != 2 {
+		t.Fatalf("replayed story session must remain two owner runs: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.RepairEvidenceCounts[repairEvidenceIdleChatStoryTurnRoot] != 2 {
+		t.Fatalf("unexpected evidence counts: %+v", receipt.RepairEvidenceCounts)
+	}
+	output := filepath.Join(snapshot, "repaired.db")
+	if _, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: output,
+		Manifest: filepath.Join(snapshot, "build.json"), DryRunManifest: dryPath, Mode: ModeBuild,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := readAll(t, output)
+	for index, want := range []modulecore.TraceID{firstTrace, firstTrace, secondTrace, secondTrace} {
+		if got[index].TraceID != want {
+			t.Fatalf("event[%d] trace=%s want=%s", index, got[index].TraceID, want)
+		}
+	}
+}
+
+func TestDryRunRepairsIdleChatForecastFailureFromOwnerAnnouncement(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	sessionID := "forecast-identity-step02"
+	rootTrace := modulecore.NewTraceID()
+	events := []modulecore.EventEnvelope{
+		eventFixture(rootTrace, "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "user", "to": "mio"}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "shiro", "to": "mio", "turn_index": 1}),
+	}
+	writeStore(t, source, events)
+
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: filepath.Join(snapshot, "dry-run.json"), Mode: ModeDryRun,
+	})
+	if err != nil || receipt.Status != StatusReady || receipt.RepairIdleChatRunCount != 1 || receipt.RepairSegmentCount != 1 || receipt.RepairEventCount != 1 {
+		t.Fatalf("forecast failure must bind to its owner announcement: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.RepairEvidenceCounts[repairEvidenceIdleChatForecastFailureRoot] != 1 {
+		t.Fatalf("unexpected evidence counts: %+v", receipt.RepairEvidenceCounts)
+	}
+}
+
+func TestDryRunLeavesMalformedIdleChatTurnSequenceUnresolved(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	sessionID := "story-episode-malformed"
+	events := []modulecore.EventEnvelope{
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "mio", "to": "shiro", "turn_index": 1}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "shiro", "to": "mio", "turn_index": 3}),
+	}
+	writeStore(t, source, events)
+
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: filepath.Join(snapshot, "dry-run.json"), Mode: ModeDryRun,
+	})
+	if err != nil || receipt.Status != StatusReadyWithUnresolved || receipt.RepairEventCount != 0 || receipt.UnresolvedIdleChatRunCount != 1 {
+		t.Fatalf("malformed idle chat sequence must remain unchanged: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.UnresolvedReasonCounts[unresolvedReasonInvalidIdleChatTurnSequence] != 1 || receipt.InputEventSetSHA256 != receipt.OutputEventSetSHA256 {
+		t.Fatalf("unexpected unresolved result: %+v", receipt)
+	}
+}
+
+func TestDryRunLeavesIdleChatTurnBeforeTopicUnresolved(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	sessionID := "idle-topic-after-turn"
+	events := []modulecore.EventEnvelope{
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "mio", "to": "shiro", "turn_index": 1}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.topic", map[string]any{"session_id": sessionID}),
+	}
+	writeStore(t, source, events)
+
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: filepath.Join(snapshot, "dry-run.json"), Mode: ModeDryRun,
+	})
+	if err != nil || receipt.Status != StatusReadyWithUnresolved || receipt.RepairEventCount != 0 || receipt.UnresolvedIdleChatRunCount != 1 {
+		t.Fatalf("turn before topic must remain unchanged: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.UnresolvedReasonCounts[unresolvedReasonAmbiguousIdleChatSession] != 1 || receipt.InputEventSetSHA256 != receipt.OutputEventSetSHA256 {
+		t.Fatalf("unexpected unresolved result: %+v", receipt)
+	}
+}
+
+func TestDryRunLeavesIdleChatTopicWithoutTurnUnresolved(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	sessionID := "idle-topic-without-turn"
+	events := []modulecore.EventEnvelope{
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.message", map[string]any{"session_id": sessionID, "from": "user", "to": "mio"}),
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "idlechat.topic", map[string]any{"session_id": sessionID}),
+	}
+	writeStore(t, source, events)
+
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: filepath.Join(snapshot, "dry-run.json"), Mode: ModeDryRun,
+	})
+	if err != nil || receipt.Status != StatusReadyWithUnresolved || receipt.RepairEventCount != 0 || receipt.UnresolvedIdleChatRunCount != 1 {
+		t.Fatalf("topic without a numbered turn must remain unchanged: receipt=%+v err=%v", receipt, err)
+	}
+	if receipt.UnresolvedReasonCounts[unresolvedReasonInvalidIdleChatTurnSequence] != 1 || receipt.InputEventSetSHA256 != receipt.OutputEventSetSHA256 {
+		t.Fatalf("unexpected unresolved result: %+v", receipt)
+	}
+}
+
 func TestDryRunKeepsEvidenceInsufficientGroupUnchanged(t *testing.T) {
 	snapshot := t.TempDir()
 	source := filepath.Join(snapshot, "event_store.db")
@@ -343,6 +520,21 @@ func TestDryRunLeavesMalformedTTSSessionUnresolved(t *testing.T) {
 				}),
 			},
 		},
+		{
+			name: "identity missing from one event",
+			events: []modulecore.EventEnvelope{
+				eventFixture(modulecore.NewTraceID(), "orchestrator", "metrics.latency", map[string]any{
+					"job_id": "tts-missing-event-identity", "session_id": "tts-session", "response_id": "response-1",
+					"content": `{"kind":"tts","point":"audio_chunk_ready"}`,
+				}),
+				eventFixture(modulecore.NewTraceID(), "orchestrator", "tts.audio_chunk", map[string]any{
+					"job_id": "tts-missing-event-identity",
+				}),
+				eventFixture(modulecore.NewTraceID(), "orchestrator", "tts.session_completed", map[string]any{
+					"job_id": "tts-missing-event-identity", "session_id": "tts-session", "response_id": "response-1",
+				}),
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -413,6 +605,77 @@ func TestBuildRejectsSourceChangedAfterDryRun(t *testing.T) {
 	}
 }
 
+func TestBuildRejectsUnknownOrTrailingDryRunManifestJSON(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func([]byte) []byte
+	}{
+		{
+			name: "unknown field",
+			mutate: func(content []byte) []byte {
+				trimmed := bytes.TrimSpace(content)
+				return append(append(trimmed[:len(trimmed)-1], []byte(`,"unexpected":true}`)...), '\n')
+			},
+		},
+		{
+			name: "trailing json",
+			mutate: func(content []byte) []byte {
+				return append(append([]byte{}, content...), []byte(`{}`)...)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := t.TempDir()
+			source := filepath.Join(snapshot, "event_store.db")
+			writeStore(t, source, []modulecore.EventEnvelope{
+				eventFixture(modulecore.NewTraceID(), "orchestrator", "message.received", map[string]any{"job_id": "job-strict-manifest"}),
+				eventFixture(modulecore.NewTraceID(), "orchestrator", "agent.response", map[string]any{"job_id": "job-strict-manifest"}),
+			})
+			dryPath := filepath.Join(snapshot, "dry-run.json")
+			if _, err := Run(context.Background(), Options{
+				SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+				Manifest: dryPath, Mode: ModeDryRun,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			content, err := os.ReadFile(dryPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dryPath, test.mutate(content), 0600); err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := Run(context.Background(), Options{
+				SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+				Manifest: filepath.Join(snapshot, "build.json"), DryRunManifest: dryPath, Mode: ModeBuild,
+			})
+			if err == nil || receipt.Status != StatusBlocked || receipt.ErrorCode != "dry_run_manifest_invalid" {
+				t.Fatalf("malformed dry-run manifest must block: receipt=%+v err=%v", receipt, err)
+			}
+		})
+	}
+}
+
+func TestDryRunManifestWriteFailureReturnsBlockedStatus(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	writeStore(t, source, []modulecore.EventEnvelope{
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "heartbeat.skip", nil),
+	})
+	wantErr := errors.New("injected repair receipt failure")
+	previous := repairManifestWriter
+	repairManifestWriter = func(string, Manifest) error { return wantErr }
+	defer func() { repairManifestWriter = previous }()
+
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: filepath.Join(snapshot, "dry-run.json"), Mode: ModeDryRun,
+	})
+	if !errors.Is(err, wantErr) || receipt.Status != StatusBlocked || receipt.ErrorCode != "manifest_write" {
+		t.Fatalf("manifest write failure must return blocked receipt: receipt=%+v err=%v", receipt, err)
+	}
+}
+
 func TestDryRunBlocksConflictingJobReferences(t *testing.T) {
 	snapshot := t.TempDir()
 	source := filepath.Join(snapshot, "event_store.db")
@@ -427,6 +690,74 @@ func TestDryRunBlocksConflictingJobReferences(t *testing.T) {
 	})
 	if err == nil || receipt.Status != StatusBlocked || receipt.ErrorCode != "conflicting_job_identity" {
 		t.Fatalf("conflicting job references must fail closed: receipt=%+v err=%v", receipt, err)
+	}
+}
+
+func TestDryRunBlocksMalformedCanonicalJobIdentityField(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	writeStore(t, source, []modulecore.EventEnvelope{
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "message.received", map[string]any{"job_id": 42}),
+	})
+
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: filepath.Join(snapshot, "dry-run.json"), Mode: ModeDryRun,
+	})
+	if err == nil || receipt.Status != StatusBlocked || receipt.ErrorCode != "invalid_job_identity" {
+		t.Fatalf("malformed canonical job identity must fail closed: receipt=%+v err=%v", receipt, err)
+	}
+}
+
+func TestDryRunRejectsSymlinkedManifestParent(t *testing.T) {
+	snapshot := t.TempDir()
+	outside := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	writeStore(t, source, []modulecore.EventEnvelope{
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "heartbeat.skip", nil),
+	})
+	linkedParent := filepath.Join(snapshot, "linked-parent")
+	if err := os.Symlink(outside, linkedParent); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	receipt, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: filepath.Join(linkedParent, "dry-run.json"), Mode: ModeDryRun,
+	})
+	if err == nil || receipt.Status != StatusBlocked || receipt.ErrorCode != "invalid_path" {
+		t.Fatalf("symlinked manifest parent must fail closed: receipt=%+v err=%v", receipt, err)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "dry-run.json")); !os.IsNotExist(err) {
+		t.Fatalf("manifest escaped snapshot through symlinked parent: %v", err)
+	}
+}
+
+func TestDryRunDoesNotFollowPredictableManifestTempSymlink(t *testing.T) {
+	snapshot := t.TempDir()
+	source := filepath.Join(snapshot, "event_store.db")
+	manifestPath := filepath.Join(snapshot, "dry-run.json")
+	victim := filepath.Join(snapshot, "victim.txt")
+	writeStore(t, source, []modulecore.EventEnvelope{
+		eventFixture(modulecore.NewTraceID(), "orchestrator", "heartbeat.skip", nil),
+	})
+	if err := os.WriteFile(victim, []byte("do-not-change"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, manifestPath+".tmp"); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := Run(context.Background(), Options{
+		SnapshotDir: snapshot, SourceStore: source, OutputStore: filepath.Join(snapshot, "repaired.db"),
+		Manifest: manifestPath, Mode: ModeDryRun,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(victim); err != nil || string(content) != "do-not-change" {
+		t.Fatalf("predictable temp symlink changed victim: content=%q err=%v", content, err)
+	}
+	info, err := os.Lstat(manifestPath)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("manifest must be a regular file: info=%v err=%v", info, err)
 	}
 }
 

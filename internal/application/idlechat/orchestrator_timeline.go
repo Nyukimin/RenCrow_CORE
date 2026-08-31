@@ -11,10 +11,18 @@ import (
 )
 
 func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) TTSLifecycle {
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
 	if strings.HasPrefix(ev.Type, "idlechat.") && o.isInterruptedSession(ev.SessionID) {
 		log.Printf("[IdleChat] stale event discarded: type=%s session=%s", ev.Type, ev.SessionID)
 		return TTSLifecycle{}
 	}
+	traceID, ok := o.traceForSession(ev.SessionID, ev.TraceID, ev.Generation)
+	if !ok {
+		log.Printf("[IdleChat] timeline event rejected without owner generation/trace: type=%s session=%s generation=%d", ev.Type, ev.SessionID, ev.Generation)
+		return TTSLifecycle{}
+	}
+	ev.TraceID = traceID
 	o.recordPersonaTimelineEvent(ev)
 	o.mu.Lock()
 	emit := o.emitEvent
@@ -25,24 +33,42 @@ func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) TTSLifecycle 
 	return TTSLifecycle{}
 }
 
-func (o *IdleChatOrchestrator) emitTopicToTimeline(sessionID, topic string, strategy TopicStrategy) TTSLifecycle {
+func (o *IdleChatOrchestrator) emitTTSPrefetchEvent(ev TTSPrefetchEvent) {
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
+	traceID, ok := o.traceForSession(ev.SessionID, ev.TraceID, ev.Generation)
+	if !ok {
+		log.Printf("[IdleChat] TTS prefetch rejected without owner generation/trace: session=%s message_id=%s generation=%d", ev.SessionID, ev.MessageID, ev.Generation)
+		return
+	}
+	ev.TraceID = traceID
+	o.mu.Lock()
+	emit := o.emitTTSPrefetch
+	o.mu.Unlock()
+	if emit != nil {
+		emit(ev)
+	}
+}
+
+func (o *IdleChatOrchestrator) emitTopicToTimeline(sessionID, topic string, strategy TopicStrategy, generation uint64) TTSLifecycle {
 	content := fmt.Sprintf("今日のお題（%s）: %s", strategy, topic)
 	messageID := idleChatTopicMessageID()
 	category, _ := modulechat.NormalizeTopicCategory(string(strategy))
 	return o.emitTimelineEvent(TimelineEvent{
-		Type:      "idlechat.topic",
-		From:      "user",
-		To:        "mio",
-		Content:   content,
-		SessionID: sessionID,
-		MessageID: messageID,
-		TurnIndex: 0,
-		Category:  category,
-		Strategy:  strategy,
+		Type:       "idlechat.topic",
+		From:       "user",
+		To:         "mio",
+		Content:    content,
+		SessionID:  sessionID,
+		MessageID:  messageID,
+		TurnIndex:  0,
+		Category:   category,
+		Strategy:   strategy,
+		Generation: generation,
 	})
 }
 
-func (o *IdleChatOrchestrator) recordGenerationErrorToTimeline(speaker, target, sessionID, reason string, turnIndex int) {
+func (o *IdleChatOrchestrator) recordGenerationErrorToTimeline(speaker, target, sessionID, reason string, turnIndex int, generation uint64) {
 	speaker = strings.TrimSpace(speaker)
 	if speaker == "" {
 		speaker = "unknown"
@@ -60,16 +86,36 @@ func (o *IdleChatOrchestrator) recordGenerationErrorToTimeline(speaker, target, 
 	msg := domaintransport.NewMessage(speaker, target, sessionID, "", content)
 	msg.Type = domaintransport.MessageTypeIdleChat
 	msg.Context = idleChatMessageContext(messageID, turnIndex)
-	o.memory.RecordMessage(msg)
+	if !o.recordIdleMessageForGeneration(generation, sessionID, msg) {
+		log.Printf("[IdleChat] generation error record rejected without active owner: session=%s generation=%d", sessionID, generation)
+		return
+	}
 	o.emitTimelineEvent(TimelineEvent{
-		Type:      "idlechat.viewer",
-		From:      speaker,
-		To:        target,
-		Content:   content,
-		SessionID: sessionID,
-		MessageID: messageID,
-		TurnIndex: turnIndex,
+		Type:       "idlechat.viewer",
+		From:       speaker,
+		To:         target,
+		Content:    content,
+		SessionID:  sessionID,
+		MessageID:  messageID,
+		TurnIndex:  turnIndex,
+		Generation: generation,
 	})
+}
+
+func (o *IdleChatOrchestrator) recordIdleMessageForGeneration(generation uint64, sessionID string, msg domaintransport.Message) bool {
+	if o == nil || o.memory == nil {
+		return false
+	}
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
+	o.mu.Lock()
+	owns := o.ownsIdleSessionLocked(sessionID, generation)
+	o.mu.Unlock()
+	if !owns {
+		return false
+	}
+	o.memory.RecordMessage(msg)
+	return true
 }
 
 func (o *IdleChatOrchestrator) idleChatMessageID(sessionID string, turnIndex int) string {

@@ -4,6 +4,7 @@
 package eventtracerepair
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -11,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -24,7 +26,7 @@ import (
 )
 
 const (
-	ManifestSchemaVersion     = "rencrow.identity.event-trace-repair/v2"
+	ManifestSchemaVersion     = "rencrow.identity.event-trace-repair/v3"
 	ModeDryRun                = "dry-run"
 	ModeBuild                 = "build"
 	StatusReady               = "ready"
@@ -47,26 +49,32 @@ type Manifest struct {
 	Mode          string `json:"mode"`
 	Status        string `json:"status"`
 
-	SourceSHA256           string         `json:"source_sha256,omitempty"`
-	InputCount             int            `json:"input_count"`
-	RepairJobCount         int            `json:"repair_job_count"`
-	RepairSegmentCount     int            `json:"repair_segment_count"`
-	RepairEventCount       int            `json:"repair_event_count"`
-	VerifiedJobCount       int            `json:"verified_job_count"`
-	RepairableJobCount     int            `json:"repairable_job_count"`
-	UnresolvedJobCount     int            `json:"unresolved_job_count"`
-	RepairEvidenceCounts   map[string]int `json:"repair_evidence_counts"`
-	UnresolvedReasonCounts map[string]int `json:"unresolved_reason_counts"`
-	InputEventSetSHA256    string         `json:"input_event_set_sha256,omitempty"`
-	OutputEventSetSHA256   string         `json:"output_event_set_sha256,omitempty"`
-	NonTraceContentSHA256  string         `json:"non_trace_content_sha256,omitempty"`
-	ErrorCode              string         `json:"error_code,omitempty"`
+	SourceSHA256               string         `json:"source_sha256,omitempty"`
+	InputCount                 int            `json:"input_count"`
+	RepairJobCount             int            `json:"repair_job_count"`
+	RepairSegmentCount         int            `json:"repair_segment_count"`
+	RepairEventCount           int            `json:"repair_event_count"`
+	VerifiedJobCount           int            `json:"verified_job_count"`
+	RepairableJobCount         int            `json:"repairable_job_count"`
+	UnresolvedJobCount         int            `json:"unresolved_job_count"`
+	RepairIdleChatRunCount     int            `json:"repair_idlechat_run_count"`
+	VerifiedIdleChatRunCount   int            `json:"verified_idlechat_run_count"`
+	RepairableIdleChatRunCount int            `json:"repairable_idlechat_run_count"`
+	UnresolvedIdleChatRunCount int            `json:"unresolved_idlechat_run_count"`
+	RepairEvidenceCounts       map[string]int `json:"repair_evidence_counts"`
+	UnresolvedReasonCounts     map[string]int `json:"unresolved_reason_counts"`
+	InputEventSetSHA256        string         `json:"input_event_set_sha256,omitempty"`
+	OutputEventSetSHA256       string         `json:"output_event_set_sha256,omitempty"`
+	NonTraceContentSHA256      string         `json:"non_trace_content_sha256,omitempty"`
+	ErrorCode                  string         `json:"error_code,omitempty"`
 }
 
 type codedError struct {
 	code string
 	err  error
 }
+
+var repairManifestWriter = writeManifest
 
 func (e *codedError) Error() string { return e.err.Error() }
 func (e *codedError) Unwrap() error { return e.err }
@@ -113,9 +121,13 @@ func Run(ctx context.Context, options Options) (Manifest, error) {
 	manifest.VerifiedJobCount = result.verifiedJobCount
 	manifest.RepairableJobCount = result.repairableJobCount
 	manifest.UnresolvedJobCount = result.unresolvedJobCount
+	manifest.RepairIdleChatRunCount = result.repairIdleChatRunCount
+	manifest.VerifiedIdleChatRunCount = result.verifiedIdleChatRunCount
+	manifest.RepairableIdleChatRunCount = result.repairableIdleChatRunCount
+	manifest.UnresolvedIdleChatRunCount = result.unresolvedIdleChatRunCount
 	manifest.RepairEvidenceCounts = result.repairEvidenceCounts
 	manifest.UnresolvedReasonCounts = result.unresolvedReasonCounts
-	manifest.Status = statusForUnresolved(result.unresolvedJobCount)
+	manifest.Status = statusForUnresolved(result.unresolvedJobCount, result.unresolvedIdleChatRunCount)
 	repaired := result.events
 	manifest.OutputEventSetSHA256, err = eventSetHash(repaired)
 	if err != nil {
@@ -126,8 +138,8 @@ func Run(ctx context.Context, options Options) (Manifest, error) {
 	}
 
 	if options.Mode == ModeDryRun {
-		if err := writeManifest(options.Manifest, manifest); err != nil {
-			return manifest, err
+		if err := repairManifestWriter(options.Manifest, manifest); err != nil {
+			return blockedManifestWrite(manifest, err)
 		}
 		return manifest, nil
 	}
@@ -158,8 +170,8 @@ func Run(ctx context.Context, options Options) (Manifest, error) {
 		return finishFailure(options, manifest, "output_mismatch", err)
 	}
 	manifest.Status = StatusBuilt
-	if err := writeManifest(options.Manifest, manifest); err != nil {
-		return manifest, err
+	if err := repairManifestWriter(options.Manifest, manifest); err != nil {
+		return blockedManifestWrite(manifest, err)
 	}
 	return manifest, nil
 }
@@ -219,20 +231,36 @@ func containedPath(root, raw string, mustExist bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if mustExist {
-		info, statErr := os.Lstat(path)
-		if statErr != nil {
-			return "", statErr
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return "", fmt.Errorf("must be a regular non-symlink file")
-		}
+	path = filepath.Clean(path)
+	parent := filepath.Dir(path)
+	parentInfo, err := os.Lstat(parent)
+	if err != nil {
+		return "", fmt.Errorf("parent directory must exist: %w", err)
 	}
-	rel, err := filepath.Rel(root, path)
+	if parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() {
+		return "", fmt.Errorf("parent must be a real directory")
+	}
+	resolvedParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return "", fmt.Errorf("resolve parent directory: %w", err)
+	}
+	if filepath.Clean(resolvedParent) != parent {
+		return "", fmt.Errorf("parent path must not contain symlinks")
+	}
+	rel, err := filepath.Rel(root, resolvedParent)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path must stay inside snapshot directory")
 	}
-	return filepath.Clean(path), nil
+	path = filepath.Join(resolvedParent, filepath.Base(path))
+	info, statErr := os.Lstat(path)
+	if statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return "", fmt.Errorf("must be a regular non-symlink file")
+		}
+	} else if !os.IsNotExist(statErr) || mustExist {
+		return "", statErr
+	}
+	return path, nil
 }
 
 func readSnapshot(ctx context.Context, path string) ([]modulecore.EventEnvelope, string, error) {
@@ -288,19 +316,25 @@ func readOnlySQLiteDSN(path string) string {
 
 func eventJobID(event modulecore.EventEnvelope) (string, error) {
 	var candidates []string
-	if raw, ok := event.Payload["job_id"].(string); ok && strings.TrimSpace(raw) != "" {
-		candidates = append(candidates, strings.TrimSpace(raw))
+	if raw, ok, err := canonicalIdentityValue(event, "job_id"); err != nil {
+		return "", err
+	} else if ok {
+		candidates = append(candidates, raw)
 	}
 	if event.ComponentID == "ai_workflow" && strings.HasPrefix(event.EventType, "heavy_worker.") {
-		if raw, ok := event.Payload["task_reference"].(string); ok && strings.TrimSpace(raw) != "" {
-			candidates = append(candidates, strings.TrimSpace(raw))
+		if raw, ok, err := canonicalIdentityValue(event, "task_reference"); err != nil {
+			return "", err
+		} else if ok {
+			candidates = append(candidates, raw)
 		}
 	}
 	if event.ComponentID == "superagent" && isSuperAgentRunEvent(event.EventType) {
-		raw, _ := event.Payload["run_reference"].(string)
-		raw = strings.TrimSpace(raw)
-		if strings.HasPrefix(raw, "run_lead_") {
-			candidates = append(candidates, strings.TrimPrefix(strings.TrimSpace(raw), "run_lead_"))
+		raw, ok, err := canonicalIdentityValue(event, "run_reference")
+		if err != nil {
+			return "", err
+		}
+		if ok && strings.HasPrefix(raw, "run_lead_") {
+			candidates = append(candidates, strings.TrimPrefix(raw, "run_lead_"))
 		}
 	}
 	if len(candidates) == 0 {
@@ -312,6 +346,22 @@ func eventJobID(event modulecore.EventEnvelope) (string, error) {
 		}
 	}
 	return candidates[0], nil
+}
+
+func canonicalIdentityValue(event modulecore.EventEnvelope, key string) (string, bool, error) {
+	if event.Payload == nil {
+		return "", false, nil
+	}
+	raw, present := event.Payload[key]
+	if !present || raw == nil {
+		return "", false, nil
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", false, fail("invalid_job_identity", "event %q field %q must be a string", event.EventID, key)
+	}
+	value = strings.TrimSpace(value)
+	return value, value != "", nil
 }
 
 func isSuperAgentRunEvent(eventType string) bool {
@@ -412,7 +462,7 @@ func compareManifest(prior, current Manifest) error {
 	if prior.SchemaVersion != ManifestSchemaVersion || prior.Mode != ModeDryRun || (prior.Status != StatusReady && prior.Status != StatusReadyWithUnresolved) {
 		return fmt.Errorf("prior receipt is not a ready dry-run")
 	}
-	if prior.Status != current.Status || prior.SourceSHA256 != current.SourceSHA256 || prior.InputCount != current.InputCount || prior.RepairJobCount != current.RepairJobCount || prior.RepairSegmentCount != current.RepairSegmentCount || prior.RepairEventCount != current.RepairEventCount || prior.VerifiedJobCount != current.VerifiedJobCount || prior.RepairableJobCount != current.RepairableJobCount || prior.UnresolvedJobCount != current.UnresolvedJobCount || prior.InputEventSetSHA256 != current.InputEventSetSHA256 || prior.OutputEventSetSHA256 != current.OutputEventSetSHA256 || prior.NonTraceContentSHA256 != current.NonTraceContentSHA256 || !sameCountMap(prior.RepairEvidenceCounts, current.RepairEvidenceCounts) || !sameCountMap(prior.UnresolvedReasonCounts, current.UnresolvedReasonCounts) {
+	if prior.Status != current.Status || prior.SourceSHA256 != current.SourceSHA256 || prior.InputCount != current.InputCount || prior.RepairJobCount != current.RepairJobCount || prior.RepairSegmentCount != current.RepairSegmentCount || prior.RepairEventCount != current.RepairEventCount || prior.VerifiedJobCount != current.VerifiedJobCount || prior.RepairableJobCount != current.RepairableJobCount || prior.UnresolvedJobCount != current.UnresolvedJobCount || prior.RepairIdleChatRunCount != current.RepairIdleChatRunCount || prior.VerifiedIdleChatRunCount != current.VerifiedIdleChatRunCount || prior.RepairableIdleChatRunCount != current.RepairableIdleChatRunCount || prior.UnresolvedIdleChatRunCount != current.UnresolvedIdleChatRunCount || prior.InputEventSetSHA256 != current.InputEventSetSHA256 || prior.OutputEventSetSHA256 != current.OutputEventSetSHA256 || prior.NonTraceContentSHA256 != current.NonTraceContentSHA256 || !sameCountMap(prior.RepairEvidenceCounts, current.RepairEvidenceCounts) || !sameCountMap(prior.UnresolvedReasonCounts, current.UnresolvedReasonCounts) {
 		return fmt.Errorf("source or repair result changed after dry-run")
 	}
 	return nil
@@ -438,8 +488,17 @@ func readManifest(path string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.DisallowUnknownFields()
 	var manifest Manifest
-	if err := json.Unmarshal(content, &manifest); err != nil {
+	if err := decoder.Decode(&manifest); err != nil {
+		return Manifest{}, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return Manifest{}, fmt.Errorf("trailing JSON is not allowed")
+		}
 		return Manifest{}, err
 	}
 	return manifest, nil
@@ -450,14 +509,46 @@ func writeManifest(path string, manifest Manifest) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	parent := filepath.Dir(path)
+	info, err := os.Lstat(parent)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("manifest parent must be a real directory")
+		}
 		return err
 	}
-	temp := path + ".tmp"
-	if err := os.WriteFile(temp, append(encoded, '\n'), 0600); err != nil {
+	temp, err := os.CreateTemp(parent, ".rencrow-event-trace-repair-")
+	if err != nil {
 		return err
 	}
-	return os.Rename(temp, path)
+	tempPath := temp.Name()
+	remove := true
+	defer func() {
+		_ = temp.Close()
+		if remove {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := temp.Chmod(0600); err != nil {
+		return err
+	}
+	if _, err := temp.Write(append(encoded, '\n')); err != nil {
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := atomicReplaceFile(tempPath, path); err != nil {
+		return err
+	}
+	if err := syncDirectory(parent); err != nil {
+		return err
+	}
+	remove = false
+	return nil
 }
 
 func finishFailure(options Options, manifest Manifest, fallbackCode string, err error) (Manifest, error) {
@@ -466,6 +557,12 @@ func finishFailure(options Options, manifest Manifest, fallbackCode string, err 
 	if strings.TrimSpace(options.Manifest) != "" {
 		_ = writeManifest(options.Manifest, manifest)
 	}
+	return manifest, err
+}
+
+func blockedManifestWrite(manifest Manifest, err error) (Manifest, error) {
+	manifest.Status = StatusBlocked
+	manifest.ErrorCode = "manifest_write"
 	return manifest, err
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
@@ -30,6 +31,7 @@ type idleChatTTSPrefetchStream struct {
 	speaker           string
 	target            string
 	turnIndex         int
+	traceID           string
 	voiceProfile      string
 	queue             chan string
 	ctx               context.Context
@@ -58,7 +60,7 @@ func newIdleChatTTSPrefetchManager(bridge orchestrator.TTSBridge) *idleChatTTSPr
 }
 
 func (m *idleChatTTSPrefetchManager) Push(ev idlechat.TTSPrefetchEvent) {
-	if m == nil || m.bridge == nil || strings.TrimSpace(ev.SessionID) == "" || strings.TrimSpace(ev.MessageID) == "" {
+	if m == nil || m.bridge == nil || strings.TrimSpace(ev.SessionID) == "" || strings.TrimSpace(ev.MessageID) == "" || ev.TraceID.Validate() != nil {
 		return
 	}
 	if !hasIdleChatViewerClients() {
@@ -69,35 +71,38 @@ func (m *idleChatTTSPrefetchManager) Push(ev idlechat.TTSPrefetchEvent) {
 }
 
 func (m *idleChatTTSPrefetchManager) Close(ev idlechat.TimelineEvent) (idlechat.TTSLifecycle, bool) {
-	if m == nil || m.bridge == nil || strings.TrimSpace(ev.SessionID) == "" || strings.TrimSpace(ev.MessageID) == "" {
+	if m == nil || m.bridge == nil || strings.TrimSpace(ev.SessionID) == "" || strings.TrimSpace(ev.MessageID) == "" || ev.TraceID.Validate() != nil {
 		return idlechat.TTSLifecycle{}, false
 	}
 	if !hasIdleChatViewerClients() {
-		m.cancelMatching(ev.SessionID, ev.MessageID, false)
+		m.cancelMatching(ev.SessionID, ev.MessageID, string(ev.TraceID), false)
 		log.Printf("[IdleChat] TTS prefetch synthesis skipped because no active audio Viewer is connected: session=%s response=%s", strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID))
 		return idlechat.TTSLifecycle{}, false
 	}
-	key := streamKey(ev.SessionID, ev.MessageID)
+	key := streamKey(ev.SessionID, ev.MessageID, string(ev.TraceID))
 	m.mu.Lock()
 	stream := m.streams[key]
 	m.mu.Unlock()
 	if stream == nil {
-		stream = m.stream(ev.SessionID, ev.MessageID, idlechat.TTSPrefetchEvent{
-			SessionID: ev.SessionID,
-			MessageID: ev.MessageID,
-			From:      ev.From,
-			To:        ev.To,
-			TurnIndex: ev.TurnIndex,
-		})
+		// Close is a terminal operation for an existing owner. It must never
+		// create a stream for a late/mismatched trace.
+		return idlechat.TTSLifecycle{}, false
 	}
 	return stream.close(ev)
 }
 
-func (m *idleChatTTSPrefetchManager) CancelTimeout(ev idlechat.TTSTimeoutEvent) {
-	if m == nil {
+func (m *idleChatTTSPrefetchManager) Cancel(ev idlechat.TimelineEvent) {
+	if m == nil || strings.TrimSpace(ev.SessionID) == "" || strings.TrimSpace(ev.MessageID) == "" || ev.TraceID.Validate() != nil {
 		return
 	}
-	m.cancelMatching(ev.SessionID, ev.MessageID, ev.Kind == "session_audio_timeout")
+	m.cancelMatching(ev.SessionID, ev.MessageID, string(ev.TraceID), false)
+}
+
+func (m *idleChatTTSPrefetchManager) CancelTimeout(ev idlechat.TTSTimeoutEvent) {
+	if m == nil || ev.TraceID.Validate() != nil {
+		return
+	}
+	m.cancelMatching(ev.SessionID, ev.MessageID, string(ev.TraceID), ev.Kind == "session_audio_timeout")
 }
 
 func (m *idleChatTTSPrefetchManager) CancelAll() {
@@ -116,7 +121,7 @@ func (m *idleChatTTSPrefetchManager) CancelAll() {
 	}
 }
 
-func (m *idleChatTTSPrefetchManager) cancelMatching(sessionID, messageID string, allForSession bool) {
+func (m *idleChatTTSPrefetchManager) cancelMatching(sessionID, messageID, traceID string, allForSession bool) {
 	sessionID = strings.TrimSpace(sessionID)
 	messageID = strings.TrimSpace(messageID)
 	m.mu.Lock()
@@ -128,6 +133,9 @@ func (m *idleChatTTSPrefetchManager) cancelMatching(sessionID, messageID string,
 		if !allForSession && messageID != "" && strings.TrimSpace(stream.messageID) != messageID {
 			continue
 		}
+		if strings.TrimSpace(traceID) == "" || stream.traceID != strings.TrimSpace(traceID) {
+			continue
+		}
 		streams = append(streams, stream)
 	}
 	m.mu.Unlock()
@@ -136,13 +144,13 @@ func (m *idleChatTTSPrefetchManager) cancelMatching(sessionID, messageID string,
 	}
 }
 
-func (m *idleChatTTSPrefetchManager) HasActive(sessionID, messageID string) bool {
-	if m == nil || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(messageID) == "" {
+func (m *idleChatTTSPrefetchManager) HasActive(sessionID, messageID string, traceID modulecore.TraceID) bool {
+	if m == nil || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(messageID) == "" || traceID.Validate() != nil {
 		return false
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	stream, ok := m.streams[streamKey(sessionID, messageID)]
+	stream, ok := m.streams[streamKey(sessionID, messageID, string(traceID))]
 	if !ok || stream == nil {
 		return false
 	}
@@ -164,7 +172,7 @@ func (m *idleChatTTSPrefetchManager) removeStream(key string, stream *idleChatTT
 }
 
 func (m *idleChatTTSPrefetchManager) stream(sessionID, messageID string, ev idlechat.TTSPrefetchEvent) *idleChatTTSPrefetchStream {
-	key := streamKey(sessionID, messageID)
+	key := streamKey(sessionID, messageID, string(ev.TraceID))
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if stream := m.streams[key]; stream != nil {
@@ -181,6 +189,7 @@ func (m *idleChatTTSPrefetchManager) stream(sessionID, messageID string, ev idle
 		publicSessionID: strings.TrimSpace(ev.SessionID),
 		messageID:       strings.TrimSpace(ev.MessageID),
 		turnIndex:       ev.TurnIndex,
+		traceID:         string(ev.TraceID),
 		responseID:      nextTTSPublicResponseIDForMessage(strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID)),
 	}
 	// Timeout ownership belongs to the orchestrator's Ready/Done waits. A
@@ -193,8 +202,8 @@ func (m *idleChatTTSPrefetchManager) stream(sessionID, messageID string, ev idle
 	return stream
 }
 
-func streamKey(sessionID, messageID string) string {
-	return strings.TrimSpace(sessionID) + "\x00" + strings.TrimSpace(messageID)
+func streamKey(sessionID, messageID, traceID string) string {
+	return strings.TrimSpace(sessionID) + "\x00" + strings.TrimSpace(messageID) + "\x00" + strings.TrimSpace(traceID)
 }
 
 func (s *idleChatTTSPrefetchStream) enqueue(token string) {
@@ -379,6 +388,7 @@ func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 		if err := s.bridge.StartSession(s.ctx, orchestrator.TTSSessionStart{
 			SessionID:        plan.SessionID,
 			ResponseID:       plan.ResponseID,
+			TraceID:          s.traceID,
 			CharacterID:      plan.CharacterID,
 			VoiceID:          plan.VoiceID,
 			SpeechMode:       plan.SpeechMode,
@@ -514,6 +524,10 @@ func (s *idleChatTTSPrefetchStream) close(ev idlechat.TimelineEvent) (idlechat.T
 		return idlechat.TTSLifecycle{}, false
 	}
 	s.mu.Lock()
+	if strings.TrimSpace(string(ev.TraceID)) == "" || s.traceID != string(ev.TraceID) {
+		s.mu.Unlock()
+		return idlechat.TTSLifecycle{}, false
+	}
 	if s.closed {
 		lifecycle := s.lifecycle.lifecycle()
 		s.mu.Unlock()

@@ -99,6 +99,10 @@ func emitIdleChatTTSWithLifecycle(ctx context.Context, bridge orchestrator.TTSBr
 	if bridge == nil || strings.TrimSpace(ev.Content) == "" || !isIdleChatTTSEventType(ev.Type) {
 		return false
 	}
+	if ev.TraceID.Validate() != nil {
+		log.Printf("[IdleChat] TTS event rejected with invalid trace: session=%s message_id=%s", strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID))
+		return false
+	}
 	if !hasIdleChatViewerClients() {
 		log.Printf("[IdleChat] TTS synthesis skipped because no active audio Viewer is connected: session=%s response=%s", strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID))
 		return false
@@ -152,6 +156,7 @@ func emitIdleChatTTSWithLifecycle(ctx context.Context, bridge orchestrator.TTSBr
 	if err := bridge.StartSession(ctx, orchestrator.TTSSessionStart{
 		SessionID:        plan.SessionID,
 		ResponseID:       plan.ResponseID,
+		TraceID:          string(ev.TraceID),
 		CharacterID:      plan.CharacterID,
 		VoiceID:          plan.VoiceID,
 		SpeechMode:       plan.SpeechMode,

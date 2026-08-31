@@ -92,6 +92,15 @@ func (o *IdleChatOrchestrator) SetTTSTimeoutReporter(report func(TTSTimeoutEvent
 	o.reportTTSTimeout = report
 }
 
+// SetInterruptHandler registers the runtime-owned TTS cancellation hook. The
+// orchestrator invokes it after ending the active owner and releasing its
+// state mutex, while the emission lifecycle remains serialized.
+func (o *IdleChatOrchestrator) SetInterruptHandler(handler func()) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.onInterrupt = handler
+}
+
 // SetForecastProvider sets the LLM used for forecast session reasoning and summaries.
 
 func (o *IdleChatOrchestrator) SetForecastProvider(provider llm.LLMProvider) {

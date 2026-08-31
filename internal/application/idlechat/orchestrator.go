@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -92,6 +93,11 @@ type TimelineEvent struct {
 	TurnIndex  int
 	Category   TopicCategory
 	Strategy   TopicStrategy
+	TraceID    modulecore.TraceID
+	// Generation is the immutable IdleChat run owner captured by the caller.
+	// SessionID alone is not sufficient because a prepared episode may be
+	// replayed with the same public session identifier after an interrupt.
+	Generation uint64
 }
 
 // TTSLifecycle separates synthesis readiness from the terminal state of the
@@ -103,12 +109,14 @@ type TTSLifecycle struct {
 }
 
 type TTSPrefetchEvent struct {
-	SessionID string
-	MessageID string
-	From      string
-	To        string
-	TurnIndex int
-	Token     string
+	SessionID  string
+	MessageID  string
+	From       string
+	To         string
+	TurnIndex  int
+	Token      string
+	TraceID    modulecore.TraceID
+	Generation uint64
 }
 
 type PersonaRuntimeRecorder interface {
@@ -166,6 +174,7 @@ type IdleChatOrchestrator struct {
 	emitEvent                 func(TimelineEvent) TTSLifecycle
 	emitTTSPrefetch           func(TTSPrefetchEvent)
 	reportTTSTimeout          func(TTSTimeoutEvent)
+	onInterrupt               func()
 	topicStore                *TopicStore
 	topicStockBuf             *forecastTopicStock // 未来展望お題ストック
 	wordTopicStock            *wordTopicStock     // 1ワード／2ワードお題ストック
@@ -194,6 +203,8 @@ type IdleChatOrchestrator struct {
 	dailyEnrichmentJob        *dailyEnrichmentJob
 	dailyEnrichmentGeneration uint64
 	activeSessionID           string
+	activeTraceID             modulecore.TraceID
+	activeTraceSessionID      string
 	activeGeneration          uint64
 	interruptedSessions       map[string]struct{}
 	watchdogStage             string
@@ -205,8 +216,12 @@ type IdleChatOrchestrator struct {
 	watchdogUpdatedAt         time.Time
 	watchdogStageDeadlineAt   time.Time
 	messageIDs                map[string]string
-	mu                        sync.Mutex
-	wg                        sync.WaitGroup
+	// emitMu serializes owner validation with the runtime callback. The lock
+	// order is emitMu -> mu; it prevents a stale callback from passing the
+	// generation check and emitting after Interrupt has ended the owner.
+	emitMu sync.Mutex
+	mu     sync.Mutex
+	wg     sync.WaitGroup
 }
 
 // SetNewsSourceConfig はIdleChatのお題に使うSNS取得先を設定する。
@@ -234,6 +249,11 @@ type TTSTimeoutEvent struct {
 	TurnIndex      int
 	RemainingIndex int
 	RemainingCount int
+	TraceID        modulecore.TraceID
+	// Generation is the immutable IdleChat run owner captured by the wait.
+	// SessionID alone is not sufficient because an episode may be replayed
+	// with the same public session identifier after an interrupt.
+	Generation uint64
 }
 
 type idleSessionPlan struct {
@@ -487,7 +507,3 @@ func idlePersonaEvidenceRefs(ev TimelineEvent) []string {
 func formatPersonaEventTime(t time.Time) string {
 	return strings.ReplaceAll(t.Format("20060102150405.000000000"), ".", "")
 }
-
-// SetEventEmitter sets an optional timeline event emitter used by viewer SSE.
-// The callback returns synthesis readiness and terminal session channels. Viewer
-// playback acknowledgements are intentionally outside this lifecycle.

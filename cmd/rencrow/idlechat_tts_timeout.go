@@ -8,6 +8,10 @@ import (
 )
 
 func markIdleChatTTSTimeout(ev idlechat.TTSTimeoutEvent) {
+	if ev.TraceID.Validate() != nil {
+		log.Printf("[IdleChat] rejected TTS timeout with invalid trace: session=%s message_id=%s", ev.SessionID, ev.MessageID)
+		return
+	}
 	cancelIdleChatTTSTimeout(ev)
 	if idleChatTTSPrefetch != nil {
 		idleChatTTSPrefetch.CancelTimeout(ev)

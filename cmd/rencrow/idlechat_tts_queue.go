@@ -29,9 +29,14 @@ var (
 )
 
 func emitIdleChatTTSAsync(bridge orchestrator.TTSBridge, ev idlechat.TimelineEvent) idlechat.TTSLifecycle {
-	if bridge == nil || !hasIdleChatViewerClients() {
+	invalidTrace := ev.TraceID.Validate() != nil
+	if bridge == nil || invalidTrace || !hasIdleChatViewerClients() {
 		if bridge != nil {
-			log.Printf("[IdleChat] TTS synthesis skipped before enqueue because no active audio Viewer is connected: session=%s response=%s", strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID))
+			if invalidTrace {
+				log.Printf("[IdleChat] TTS synthesis rejected before enqueue because trace is invalid: session=%s response=%s", strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID))
+			} else {
+				log.Printf("[IdleChat] TTS synthesis skipped before enqueue because no active audio Viewer is connected: session=%s response=%s", strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID))
+			}
 		}
 		return idlechat.TTSLifecycle{}
 	}
@@ -64,7 +69,7 @@ func registerIdleChatTTSItem(item *idleChatTTSItem) {
 	if item == nil {
 		return
 	}
-	key := streamKey(item.ev.SessionID, item.ev.MessageID)
+	key := streamKey(item.ev.SessionID, item.ev.MessageID, string(item.ev.TraceID))
 	idleChatTTSActiveMu.Lock()
 	if idleChatTTSActive[key] == nil {
 		idleChatTTSActive[key] = make(map[*idleChatTTSItem]struct{})
@@ -77,7 +82,7 @@ func unregisterIdleChatTTSItem(item *idleChatTTSItem) {
 	if item == nil {
 		return
 	}
-	key := streamKey(item.ev.SessionID, item.ev.MessageID)
+	key := streamKey(item.ev.SessionID, item.ev.MessageID, string(item.ev.TraceID))
 	idleChatTTSActiveMu.Lock()
 	items := idleChatTTSActive[key]
 	delete(items, item)
@@ -95,15 +100,24 @@ func cancelIdleChatTTSItem(item *idleChatTTSItem) {
 }
 
 func cancelIdleChatTTSTimeout(ev idlechat.TTSTimeoutEvent) {
-	if ev.Kind == "session_audio_timeout" || strings.TrimSpace(ev.MessageID) == "" {
-		cancelIdleChatTTSSession(ev.SessionID)
+	if ev.TraceID.Validate() != nil {
 		return
 	}
-	key := streamKey(ev.SessionID, ev.MessageID)
+	traceID := strings.TrimSpace(string(ev.TraceID))
+	if ev.Kind == "session_audio_timeout" || strings.TrimSpace(ev.MessageID) == "" {
+		cancelIdleChatTTSSession(ev.SessionID, traceID)
+		return
+	}
 	idleChatTTSActiveMu.Lock()
-	items := make([]*idleChatTTSItem, 0, len(idleChatTTSActive[key]))
-	for item := range idleChatTTSActive[key] {
-		items = append(items, item)
+	items := make([]*idleChatTTSItem, 0)
+	for _, keyed := range idleChatTTSActive {
+		for item := range keyed {
+			if strings.TrimSpace(item.ev.SessionID) == strings.TrimSpace(ev.SessionID) &&
+				strings.TrimSpace(item.ev.MessageID) == strings.TrimSpace(ev.MessageID) &&
+				strings.TrimSpace(string(item.ev.TraceID)) == traceID {
+				items = append(items, item)
+			}
+		}
 	}
 	idleChatTTSActiveMu.Unlock()
 	for _, item := range items {
@@ -111,8 +125,9 @@ func cancelIdleChatTTSTimeout(ev idlechat.TTSTimeoutEvent) {
 	}
 }
 
-func cancelIdleChatTTSSession(sessionID string) {
+func cancelIdleChatTTSSession(sessionID, traceID string) {
 	sessionID = strings.TrimSpace(sessionID)
+	traceID = strings.TrimSpace(traceID)
 	if sessionID == "" {
 		return
 	}
@@ -120,7 +135,7 @@ func cancelIdleChatTTSSession(sessionID string) {
 	items := make([]*idleChatTTSItem, 0)
 	for _, keyed := range idleChatTTSActive {
 		for item := range keyed {
-			if strings.TrimSpace(item.ev.SessionID) == sessionID {
+			if strings.TrimSpace(item.ev.SessionID) == sessionID && strings.TrimSpace(string(item.ev.TraceID)) == traceID {
 				items = append(items, item)
 			}
 		}

@@ -42,8 +42,9 @@ func TestGenerateResponseWithRawStreamsPrimaryTokensToPrefetchEmitter(t *testing
 	o.SetTTSPrefetchEmitter(func(ev TTSPrefetchEvent) {
 		got = append(got, ev)
 	})
+	generation := activateIdleChatTestSession(o, "idle-prefetch")
 
-	_, raw, err := o.generateResponseWithRaw("shiro", "mio", "idle-prefetch", 1, 1, "郵便と古書店")
+	_, raw, err := o.generateResponseWithRawForGeneration("shiro", "mio", "idle-prefetch", 1, 1, "郵便と古書店", generation)
 	if err != nil {
 		t.Fatalf("generateResponseWithRaw() error = %v", err)
 	}
@@ -65,6 +66,12 @@ func TestGenerateResponseWithRawStreamsPrimaryTokensToPrefetchEmitter(t *testing
 		}
 		if got[i].Token != token {
 			t.Fatalf("event[%d] token = %q, want %q", i, got[i].Token, token)
+		}
+		if got[i].TraceID.Validate() != nil {
+			t.Fatalf("event[%d] trace_id = %q, want canonical TraceID", i, got[i].TraceID)
+		}
+		if got[i].Generation != generation {
+			t.Fatalf("event[%d] generation = %d, want %d", i, got[i].Generation, generation)
 		}
 	}
 	if len(provider.requests) != 1 {

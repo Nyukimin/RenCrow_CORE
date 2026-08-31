@@ -1,7 +1,6 @@
 package eventtracerepair
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/hex"
@@ -19,7 +18,7 @@ import (
 const (
 	ModeApply = "apply"
 
-	CutoverManifestSchemaVersion = "rencrow.identity.event-trace-cutover/v1"
+	CutoverManifestSchemaVersion = "rencrow.identity.event-trace-cutover/v2"
 	CutoverStatusApplied         = "applied"
 	CutoverStatusBlocked         = "blocked"
 	CutoverStatusRolledBack      = "rolled_back"
@@ -63,17 +62,21 @@ type CutoverManifest struct {
 	AfterRuntimeSHA256    string `json:"after_runtime_sha256,omitempty"`
 	RollbackRuntimeSHA256 string `json:"rollback_runtime_sha256,omitempty"`
 
-	InputCount            int    `json:"input_count"`
-	RepairJobCount        int    `json:"repair_job_count"`
-	RepairSegmentCount    int    `json:"repair_segment_count"`
-	RepairEventCount      int    `json:"repair_event_count"`
-	VerifiedJobCount      int    `json:"verified_job_count"`
-	RepairableJobCount    int    `json:"repairable_job_count"`
-	UnresolvedJobCount    int    `json:"unresolved_job_count"`
-	InputEventSetSHA256   string `json:"input_event_set_sha256,omitempty"`
-	OutputEventSetSHA256  string `json:"output_event_set_sha256,omitempty"`
-	NonTraceContentSHA256 string `json:"non_trace_content_sha256,omitempty"`
-	ErrorCode             string `json:"error_code,omitempty"`
+	InputCount                 int    `json:"input_count"`
+	RepairJobCount             int    `json:"repair_job_count"`
+	RepairSegmentCount         int    `json:"repair_segment_count"`
+	RepairEventCount           int    `json:"repair_event_count"`
+	VerifiedJobCount           int    `json:"verified_job_count"`
+	RepairableJobCount         int    `json:"repairable_job_count"`
+	UnresolvedJobCount         int    `json:"unresolved_job_count"`
+	RepairIdleChatRunCount     int    `json:"repair_idlechat_run_count"`
+	VerifiedIdleChatRunCount   int    `json:"verified_idlechat_run_count"`
+	RepairableIdleChatRunCount int    `json:"repairable_idlechat_run_count"`
+	UnresolvedIdleChatRunCount int    `json:"unresolved_idlechat_run_count"`
+	InputEventSetSHA256        string `json:"input_event_set_sha256,omitempty"`
+	OutputEventSetSHA256       string `json:"output_event_set_sha256,omitempty"`
+	NonTraceContentSHA256      string `json:"non_trace_content_sha256,omitempty"`
+	ErrorCode                  string `json:"error_code,omitempty"`
 }
 
 type applyPaths struct {
@@ -128,7 +131,7 @@ func Apply(ctx context.Context, options ApplyOptions) (CutoverManifest, error) {
 	if receipt.BuildManifestSHA256 != options.ExpectedBuildManifestSHA256 {
 		return cutoverFailure(receipt, &paths, "build_manifest_sha256", fmt.Errorf("build manifest SHA256=%s want=%s", receipt.BuildManifestSHA256, options.ExpectedBuildManifestSHA256))
 	}
-	buildManifest, err := readStrictRepairManifest(paths.buildManifest)
+	buildManifest, err := readManifest(paths.buildManifest)
 	if err != nil {
 		return cutoverFailure(receipt, &paths, "build_manifest_invalid", err)
 	}
@@ -522,33 +525,12 @@ func pathWithin(root, path string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "."
 }
 
-func readStrictRepairManifest(path string) (Manifest, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return Manifest{}, err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(content))
-	decoder.DisallowUnknownFields()
-	var manifest Manifest
-	if err := decoder.Decode(&manifest); err != nil {
-		return Manifest{}, err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return Manifest{}, fmt.Errorf("trailing JSON is not allowed")
-		}
-		return Manifest{}, err
-	}
-	return manifest, nil
-}
-
 func validateBuildManifestForApply(manifest Manifest) error {
 	if manifest.SchemaVersion != ManifestSchemaVersion || manifest.Mode != ModeBuild || manifest.Status != StatusBuilt {
-		return fmt.Errorf("build manifest must be schema v2, mode build, and status built")
+		return fmt.Errorf("build manifest must be schema v3, mode build, and status built")
 	}
-	if manifest.UnresolvedJobCount != 0 {
-		return fail("build_manifest_unresolved", "build manifest contains unresolved jobs")
+	if manifest.UnresolvedJobCount != 0 || manifest.UnresolvedIdleChatRunCount != 0 {
+		return fail("build_manifest_unresolved", "build manifest contains unresolved jobs or idle chat runs")
 	}
 	for name, value := range map[string]string{
 		"source_sha256":            manifest.SourceSHA256,
@@ -560,7 +542,7 @@ func validateBuildManifestForApply(manifest Manifest) error {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
-	counts := []int{manifest.InputCount, manifest.RepairJobCount, manifest.RepairSegmentCount, manifest.RepairEventCount, manifest.VerifiedJobCount, manifest.RepairableJobCount, manifest.UnresolvedJobCount}
+	counts := []int{manifest.InputCount, manifest.RepairJobCount, manifest.RepairSegmentCount, manifest.RepairEventCount, manifest.VerifiedJobCount, manifest.RepairableJobCount, manifest.UnresolvedJobCount, manifest.RepairIdleChatRunCount, manifest.VerifiedIdleChatRunCount, manifest.RepairableIdleChatRunCount, manifest.UnresolvedIdleChatRunCount}
 	for _, value := range counts {
 		if value < 0 {
 			return fmt.Errorf("manifest counts must be non-negative")
@@ -568,6 +550,9 @@ func validateBuildManifestForApply(manifest Manifest) error {
 	}
 	if manifest.RepairJobCount != manifest.RepairableJobCount {
 		return fmt.Errorf("repair_job_count must equal repairable_job_count")
+	}
+	if manifest.RepairIdleChatRunCount != manifest.RepairableIdleChatRunCount {
+		return fmt.Errorf("repair_idlechat_run_count must equal repairable_idlechat_run_count")
 	}
 	evidenceTotal := 0
 	for key, value := range manifest.RepairEvidenceCounts {
@@ -592,10 +577,11 @@ func validateBuildManifestForApply(manifest Manifest) error {
 		}
 		reasonTotal += value
 	}
-	if reasonTotal != manifest.UnresolvedJobCount {
-		return fmt.Errorf("unresolved job count does not match reason counts")
+	if reasonTotal != manifest.UnresolvedJobCount+manifest.UnresolvedIdleChatRunCount {
+		return fmt.Errorf("unresolved group counts do not match reason counts")
 	}
-	if manifest.RepairSegmentCount > manifest.RepairEventCount || manifest.RepairEventCount > manifest.InputCount || manifest.RepairSegmentCount < manifest.RepairJobCount || (manifest.RepairJobCount == 0 && (manifest.RepairSegmentCount != 0 || manifest.RepairEventCount != 0)) || (manifest.RepairJobCount > 0 && (manifest.RepairSegmentCount == 0 || manifest.RepairEventCount == 0)) {
+	repairUnitCount := manifest.RepairJobCount + manifest.RepairIdleChatRunCount
+	if manifest.RepairSegmentCount > manifest.RepairEventCount || manifest.RepairEventCount > manifest.InputCount || manifest.RepairSegmentCount < repairUnitCount || (repairUnitCount == 0 && (manifest.RepairSegmentCount != 0 || manifest.RepairEventCount != 0)) || (repairUnitCount > 0 && (manifest.RepairSegmentCount == 0 || manifest.RepairEventCount == 0)) {
 		return fmt.Errorf("repair counts are internally inconsistent")
 	}
 	if manifest.ErrorCode != "" {
@@ -606,7 +592,7 @@ func validateBuildManifestForApply(manifest Manifest) error {
 
 func knownRepairEvidence(key string) bool {
 	switch key {
-	case repairEvidenceMessageReceivedRoot, repairEvidenceRunQueueClaimedRoot, repairEvidenceBackgroundFailure, repairEvidenceTTSSession:
+	case repairEvidenceMessageReceivedRoot, repairEvidenceRunQueueClaimedRoot, repairEvidenceBackgroundFailure, repairEvidenceTTSSession, repairEvidenceIdleChatSessionTopicRoot, repairEvidenceIdleChatStoryTurnRoot, repairEvidenceIdleChatForecastFailureRoot:
 		return true
 	default:
 		return false
@@ -615,7 +601,7 @@ func knownRepairEvidence(key string) bool {
 
 func knownUnresolvedReason(key string) bool {
 	switch key {
-	case unresolvedReasonMissingOwnerRoot, unresolvedReasonAmbiguousRoot:
+	case unresolvedReasonMissingOwnerRoot, unresolvedReasonAmbiguousRoot, unresolvedReasonAmbiguousIdleChatSession, unresolvedReasonInvalidIdleChatTurnSequence:
 		return true
 	default:
 		return false
@@ -641,6 +627,10 @@ func copyRepairCountsToCutover(receipt *CutoverManifest, manifest Manifest) {
 	receipt.VerifiedJobCount = manifest.VerifiedJobCount
 	receipt.RepairableJobCount = manifest.RepairableJobCount
 	receipt.UnresolvedJobCount = manifest.UnresolvedJobCount
+	receipt.RepairIdleChatRunCount = manifest.RepairIdleChatRunCount
+	receipt.VerifiedIdleChatRunCount = manifest.VerifiedIdleChatRunCount
+	receipt.RepairableIdleChatRunCount = manifest.RepairableIdleChatRunCount
+	receipt.UnresolvedIdleChatRunCount = manifest.UnresolvedIdleChatRunCount
 	receipt.InputEventSetSHA256 = manifest.InputEventSetSHA256
 	receipt.OutputEventSetSHA256 = manifest.OutputEventSetSHA256
 	receipt.NonTraceContentSHA256 = manifest.NonTraceContentSHA256

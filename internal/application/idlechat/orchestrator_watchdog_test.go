@@ -136,13 +136,15 @@ func TestForecastMarksBoundedDialogueGenerationStage(t *testing.T) {
 	if !stock.push(domain.Name, PreparedTopic{Domain: domain, Topic: "検証用の未来展望", Created: time.Now().UTC()}) {
 		t.Fatal("failed to prepare forecast topic")
 	}
+	o.emitMu.Lock()
 	o.mu.Lock()
 	o.topicStockBuf = stock
 	o.chatActive = true
 	o.sessionMode = "forecast"
 	generation := o.beginIdleRunLocked()
-	o.activeSessionID = "forecast-watchdog-test"
+	o.bindIdleSessionLocked("forecast-watchdog-test")
 	o.mu.Unlock()
+	o.emitMu.Unlock()
 
 	done := make(chan struct{})
 	go func() {

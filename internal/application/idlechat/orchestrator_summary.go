@@ -85,7 +85,7 @@ func isWhatIfRepetition(transcript []string) bool {
 	return repeated >= 4 && repeated*2 >= window
 }
 
-func (o *IdleChatOrchestrator) speakSummary(sessionID, summary string) TTSLifecycle {
+func (o *IdleChatOrchestrator) speakSummary(sessionID, summary string, generation uint64) TTSLifecycle {
 	if strings.TrimSpace(summary) == "" {
 		return TTSLifecycle{}
 	}
@@ -96,26 +96,23 @@ func (o *IdleChatOrchestrator) speakSummary(sessionID, summary string) TTSLifecy
 	msg := domaintransport.NewMessage("mio", "user", sessionID, "", spokenSummary)
 	msg.Type = domaintransport.MessageTypeIdleChat
 	msg.Context = idleChatMessageContext(messageID, turnIndex)
-	o.memory.RecordMessage(msg)
-	ttsDone := o.emitTimelineEvent(TimelineEvent{
-		Type:      "idlechat.message",
-		From:      "mio",
-		To:        "user",
-		Content:   spokenSummary,
-		SessionID: sessionID,
-		MessageID: messageID,
-		TurnIndex: turnIndex,
-	})
+	if !o.recordIdleMessageForGeneration(generation, sessionID, msg) {
+		log.Printf("[IdleChat] summary record rejected without active owner: session=%s generation=%d", sessionID, generation)
+		return TTSLifecycle{}
+	}
+	spokenEvent := TimelineEvent{
+		Type:       "idlechat.message",
+		From:       "mio",
+		To:         "user",
+		Content:    spokenSummary,
+		SessionID:  sessionID,
+		MessageID:  messageID,
+		TurnIndex:  turnIndex,
+		Generation: generation,
+	}
+	ttsDone := o.emitTimelineEvent(spokenEvent)
 	log.Printf("[IdleChat] Mio reading summary: %s", truncate(spokenSummary, 80))
-	o.waitForTTSReadyForEvent(TimelineEvent{
-		Type:      "idlechat.message",
-		From:      "mio",
-		To:        "user",
-		Content:   spokenSummary,
-		SessionID: sessionID,
-		MessageID: messageID,
-		TurnIndex: turnIndex,
-	}, ttsDone)
+	o.waitForTTSReadyForEvent(spokenEvent, ttsDone)
 	o.waitBreak(topicBreak)
 	return ttsDone
 }
@@ -178,10 +175,14 @@ func (o *IdleChatOrchestrator) isLooping(transcript []string) bool {
 	return detectLoopReason(transcript) != ""
 }
 
-func (o *IdleChatOrchestrator) saveSummary(sessionID, topic string, strategy TopicStrategy, transcript []string, startedAt, endedAt time.Time, turns int, loopRestarted bool, loopReason string) string {
+func (o *IdleChatOrchestrator) saveSummary(sessionID, topic string, strategy TopicStrategy, transcript []string, startedAt, endedAt time.Time, turns int, loopRestarted bool, loopReason string, generation uint64) string {
 	summary := o.summarizeByWorker(topic, transcript)
 	summary = annotateLoopSummary(summary, loopRestarted, loopReason)
 	qualityReview, promptGuidance := o.reviewSessionEnd(topic, string(strategy), transcript, summary, loopReason)
+	if generation != 0 && !o.ownsIdleSession(sessionID, generation) {
+		log.Printf("[IdleChat] summary state rejected after owner change: session=%s generation=%d", sessionID, generation)
+		return ""
+	}
 	title := fmt.Sprintf("%d月%d日の%sの話題まとめ", endedAt.Month(), endedAt.Day(), truncate(topic, 24))
 	category, _ := modulechat.NormalizeTopicCategory(string(strategy))
 	record := SessionSummary{
@@ -220,15 +221,19 @@ func (o *IdleChatOrchestrator) saveSummary(sessionID, topic string, strategy Top
 	turnIndex := o.nextIdleChatTurnIndex(sessionID)
 	messageID := o.idleChatMessageID(sessionID, turnIndex)
 	msg.Context = idleChatMessageContext(messageID, turnIndex)
-	o.memory.RecordMessage(msg)
+	if !o.recordIdleMessageForGeneration(generation, sessionID, msg) {
+		log.Printf("[IdleChat] summary record rejected without active owner: session=%s generation=%d", sessionID, generation)
+		return summary
+	}
 	o.emitTimelineEvent(TimelineEvent{
-		Type:      "idlechat.summary",
-		From:      "shiro",
-		To:        "idlechat_summary",
-		Content:   title + "\n" + summary,
-		SessionID: sessionID,
-		MessageID: messageID,
-		TurnIndex: turnIndex,
+		Type:       "idlechat.summary",
+		From:       "shiro",
+		To:         "idlechat_summary",
+		Content:    title + "\n" + summary,
+		SessionID:  sessionID,
+		MessageID:  messageID,
+		TurnIndex:  turnIndex,
+		Generation: generation,
 	})
 	return summary
 }

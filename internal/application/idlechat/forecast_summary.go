@@ -11,12 +11,16 @@ import (
 )
 
 // saveForecastSummary は CodexExe で要約+継続考察テーマを生成して保存する。
-func (o *IdleChatOrchestrator) saveForecastSummary(sessionID string, domain ForecastDomain, topic string, transcript []string, startedAt, endedAt time.Time, turns int, loopRestarted bool, loopReason string) string {
+func (o *IdleChatOrchestrator) saveForecastSummary(sessionID string, domain ForecastDomain, topic string, transcript []string, startedAt, endedAt time.Time, turns int, loopRestarted bool, loopReason string, generation uint64) string {
 	summary := o.summarizeByForecastLLM(domain, topic, transcript)
 	summary = annotateLoopSummary(summary, loopRestarted, loopReason)
 	fullTopic := fmt.Sprintf("[%s] %s", domain.Name, topic)
 	forecastProvider, _ := o.forecastPrimaryLLMInfo()
 	qualityReview, promptGuidance := o.reviewSessionEndWithProvider(forecastProvider, fullTopic, fmt.Sprintf("forecast/%s", domain.Name), transcript, summary, loopReason)
+	if !o.ownsIdleSession(sessionID, generation) {
+		log.Printf("[Forecast] summary state rejected after owner change: session=%s generation=%d", sessionID, generation)
+		return ""
+	}
 	title := fmt.Sprintf("%d月%d日の%sの話題まとめ", endedAt.Month(), endedAt.Day(), truncate(fullTopic, 24))
 	record := SessionSummary{
 		SessionID:       sessionID,
@@ -56,15 +60,19 @@ func (o *IdleChatOrchestrator) saveForecastSummary(sessionID string, domain Fore
 	turnIndex := o.nextIdleChatTurnIndex(sessionID)
 	messageID := o.idleChatMessageID(sessionID, turnIndex)
 	msg.Context = idleChatMessageContext(messageID, turnIndex)
-	o.memory.RecordMessage(msg)
+	if !o.recordIdleMessageForGeneration(generation, sessionID, msg) {
+		log.Printf("[Forecast] summary record rejected without active owner: session=%s generation=%d", sessionID, generation)
+		return summary
+	}
 	o.emitTimelineEvent(TimelineEvent{
-		Type:      "idlechat.summary",
-		From:      "shiro",
-		To:        "forecast_summary",
-		Content:   title + "\n" + summary,
-		SessionID: sessionID,
-		MessageID: messageID,
-		TurnIndex: turnIndex,
+		Type:       "idlechat.summary",
+		From:       "shiro",
+		To:         "forecast_summary",
+		Content:    title + "\n" + summary,
+		SessionID:  sessionID,
+		MessageID:  messageID,
+		TurnIndex:  turnIndex,
+		Generation: generation,
 	})
 	return summary
 }

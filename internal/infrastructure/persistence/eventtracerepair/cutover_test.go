@@ -188,6 +188,20 @@ func TestApplyRejectsUnresolvedBuildBeforeRollbackOrTargetMutation(t *testing.T)
 	}
 }
 
+func TestValidateBuildManifestRejectsUnresolvedIdleChatRun(t *testing.T) {
+	manifest := Manifest{
+		SchemaVersion:              ManifestSchemaVersion,
+		Mode:                       ModeBuild,
+		Status:                     StatusBuilt,
+		UnresolvedIdleChatRunCount: 1,
+	}
+	err := validateBuildManifestForApply(manifest)
+	var coded *codedError
+	if !errors.As(err, &coded) || coded.code != "build_manifest_unresolved" {
+		t.Fatalf("unresolved idle chat run must block apply before mutation: err=%v", err)
+	}
+}
+
 func TestApplyRejectsUnknownOrTrailingBuildManifestJSON(t *testing.T) {
 	for _, test := range []struct {
 		name   string

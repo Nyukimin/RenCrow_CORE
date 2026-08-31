@@ -18,15 +18,18 @@ func (o *IdleChatOrchestrator) RunForecastSession() {
 
 	log.Printf("[Forecast] Session %s started (%d domains, max %d turns/domain)", sessionID, len(sessionDomains), forecastTurnsPerDomain)
 
+	o.emitMu.Lock()
 	o.mu.Lock()
 	o.chatActive = true
 	o.sessionMode = "forecast"
 	generation := o.beginIdleRunLocked()
-	o.activeSessionID = sessionID
+	o.bindIdleSessionLocked(sessionID)
 	o.mu.Unlock()
+	o.emitMu.Unlock()
 
 	totalTurns := o.runForecastSessionDomains(sessionID, generation, startedAt, sessionDomains)
 
+	o.emitMu.Lock()
 	o.mu.Lock()
 	if o.activeGeneration == generation {
 		o.chatActive = false
@@ -37,6 +40,7 @@ func (o *IdleChatOrchestrator) RunForecastSession() {
 	}
 	o.lastActivity = time.Now()
 	o.mu.Unlock()
+	o.emitMu.Unlock()
 	o.cancelIdleRunIfGeneration(generation)
 	log.Printf("[Forecast] Session %s completed (%d total turns)", sessionID, totalTurns)
 }
@@ -76,15 +80,19 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		announceMsg := domaintransport.NewMessage("user", "mio", sessionID, "", announce)
 		announceMsg.Type = domaintransport.MessageTypeIdleChat
 		announceMsg.Context = idleChatMessageContext(announceMessageID, 0)
-		o.memory.RecordMessage(announceMsg)
+		if !o.recordIdleMessageForGeneration(generation, sessionID, announceMsg) {
+			log.Printf("[Forecast] announce record rejected without active owner: session=%s generation=%d", sessionID, generation)
+			return totalTurns
+		}
 		announceEvent := TimelineEvent{
-			Type:      "idlechat.message",
-			From:      "user",
-			To:        "mio",
-			Content:   announce,
-			SessionID: sessionID,
-			MessageID: announceMessageID,
-			TurnIndex: 0,
+			Type:       "idlechat.message",
+			From:       "user",
+			To:         "mio",
+			Content:    announce,
+			SessionID:  sessionID,
+			MessageID:  announceMessageID,
+			TurnIndex:  0,
+			Generation: generation,
 		}
 		ttsDone := o.emitTimelineEvent(announceEvent)
 		if ttsDone.Done != nil {
@@ -103,7 +111,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 			displayTopic, seeds = o.popForecastTopic(domain)
 		}
 		if isForecastTopicGenerationError(displayTopic) {
-			o.recordGenerationErrorToTimeline("shiro", "mio", sessionID, displayTopic, totalTurns+1)
+			o.recordGenerationErrorToTimeline("shiro", "mio", sessionID, displayTopic, totalTurns+1, generation)
 			log.Printf("[Forecast] Domain stopped before topic playback: session=%s domain=%s topic_error=%s", sessionID, domain.Name, displayTopic)
 			continue
 		}
@@ -148,7 +156,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 			if o.isIdleSessionActive(sessionID, generation) {
 				o.markWatchdogStage("dialogue_generation_failed", fmt.Sprintf("mode=forecast domain=%s", domain.Name), TimelineEvent{SessionID: sessionID})
 			}
-			o.recordGenerationErrorToTimeline("shiro", "mio", sessionID, "dialogue_episode_generation_failed", totalTurns+1)
+			o.recordGenerationErrorToTimeline("shiro", "mio", sessionID, "dialogue_episode_generation_failed", totalTurns+1, generation)
 			log.Printf("[Forecast] Domain stopped before dialogue playback: session=%s domain=%s error=%v", sessionID, domain.Name, dialogueErr)
 			continue
 		}
@@ -160,17 +168,21 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		topicMsg := domaintransport.NewMessage("user", "mio", sessionID, "", topicAnnounce)
 		topicMsg.Type = domaintransport.MessageTypeIdleChat
 		topicMsg.Context = idleChatMessageContext(topicMessageID, 0)
-		o.memory.RecordMessage(topicMsg)
+		if !o.recordIdleMessageForGeneration(generation, sessionID, topicMsg) {
+			log.Printf("[Forecast] topic record rejected without active owner: session=%s generation=%d", sessionID, generation)
+			return totalTurns
+		}
 		topicEvent := TimelineEvent{
-			Type:      "idlechat.topic",
-			From:      "user",
-			To:        "mio",
-			Content:   topicAnnounce,
-			SessionID: sessionID,
-			MessageID: topicMessageID,
-			TurnIndex: 0,
-			Category:  TopicCategoryForecast,
-			Strategy:  StrategyForecast,
+			Type:       "idlechat.topic",
+			From:       "user",
+			To:         "mio",
+			Content:    topicAnnounce,
+			SessionID:  sessionID,
+			MessageID:  topicMessageID,
+			TurnIndex:  0,
+			Category:   TopicCategoryForecast,
+			Strategy:   StrategyForecast,
+			Generation: generation,
 		}
 		ttsDone = o.emitTimelineEvent(topicEvent)
 		if ttsDone.Done != nil {
@@ -248,15 +260,21 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 			msg := domaintransport.NewMessage(speaker, nextSpeaker, sessionID, "", response)
 			msg.Type = domaintransport.MessageTypeIdleChat
 			msg.Context = idleChatMessageContext(messageID, turnIndex)
-			o.memory.RecordMessage(msg)
 			turnEvent := TimelineEvent{
-				Type:      "idlechat.message",
-				From:      speaker,
-				To:        nextSpeaker,
-				Content:   response,
-				SessionID: sessionID,
-				MessageID: messageID,
-				TurnIndex: turnIndex,
+				Type:       "idlechat.message",
+				From:       speaker,
+				To:         nextSpeaker,
+				Content:    response,
+				SessionID:  sessionID,
+				MessageID:  messageID,
+				TurnIndex:  turnIndex,
+				Generation: generation,
+			}
+			if !o.recordIdleMessageForGeneration(generation, sessionID, msg) {
+				log.Printf("[Forecast] message record rejected after owner change: session=%s generation=%d turn=%d", sessionID, generation, turnIndex)
+				interrupted = true
+				loopReason = "interrupted"
+				break
 			}
 			ttsDone := o.emitTimelineEvent(turnEvent)
 			if ttsDone.Done != nil {
@@ -281,12 +299,12 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		endedAt := time.Now().In(jst)
 		if segmentTurns > 0 && o.isIdleSessionActive(sessionID, generation) {
 			summary := o.saveForecastSummary(sessionID, domain, topic, transcript, startedAt, endedAt, segmentTurns,
-				interrupted || loopReason != "", loopReason)
-			if ttsDone := o.speakSummary(sessionID, summary); ttsDone.Done != nil {
+				interrupted || loopReason != "", loopReason, generation)
+			if ttsDone := o.speakSummary(sessionID, summary, generation); ttsDone.Done != nil {
 				ttsDrain = append(ttsDrain, ttsDone)
 			}
 		}
-		o.waitForTTSSessionDrain(sessionID, ttsDrain)
+		o.waitForTTSSessionDrain(sessionID, generation, ttsDrain)
 
 		if interrupted {
 			return totalTurns

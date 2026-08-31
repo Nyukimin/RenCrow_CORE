@@ -10,6 +10,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
@@ -58,6 +59,7 @@ func (m *idleChatMockTTSBridge) EmitIdleChatTTSError(_ context.Context, sessionI
 
 func TestEmitIdleChatTTSSendsMessage(t *testing.T) {
 	bridge := &idleChatMockTTSBridge{}
+	traceID := modulecore.NewTraceID()
 
 	_, _ = emitIdleChatTTS(context.Background(), bridge, idlechat.TimelineEvent{
 		Type:      "idlechat.message",
@@ -65,6 +67,7 @@ func TestEmitIdleChatTTSSendsMessage(t *testing.T) {
 		To:        "mio",
 		Content:   "はい、承知いたしました。おはようございます！",
 		SessionID: "idle-1",
+		TraceID:   traceID,
 	})
 
 	if len(bridge.startReqs) != 1 {
@@ -72,6 +75,9 @@ func TestEmitIdleChatTTSSendsMessage(t *testing.T) {
 	}
 	if bridge.startReqs[0].VoiceID != "shiro" {
 		t.Fatalf("expected shiro voice, got %q", bridge.startReqs[0].VoiceID)
+	}
+	if bridge.startReqs[0].TraceID != string(traceID) {
+		t.Fatalf("TTS trace_id = %q, want %q", bridge.startReqs[0].TraceID, traceID)
 	}
 	if len(bridge.pushTexts) != 1 {
 		t.Fatalf("expected 1 push text, got %d", len(bridge.pushTexts))
@@ -153,7 +159,7 @@ func TestEmitIdleChatTTSSkipsSynthesisUntilAudioViewerClaimsOwnership(t *testing
 	}()
 
 	lifecycle, ok := emitIdleChatTTS(context.Background(), &idleChatMockTTSBridge{}, idlechat.TimelineEvent{
-		Type: "idlechat.message", SessionID: "idle-audio-owner", MessageID: "idle-audio-owner:0001", TurnIndex: 1, From: "mio", Content: "こんにちは。",
+		Type: "idlechat.message", SessionID: "idle-audio-owner", MessageID: "idle-audio-owner:0001", TurnIndex: 1, From: "mio", Content: "こんにちは。", TraceID: modulecore.NewTraceID(),
 	})
 	if ok {
 		t.Fatal("SSE connection without an active audio owner must not synthesize")
@@ -218,6 +224,7 @@ func TestIdleChatViewerDisconnectCancelsActiveSynthesis(t *testing.T) {
 		SessionID: "idle-disconnect-cancel",
 		MessageID: "idle-disconnect-cancel:msg:0001",
 		TurnIndex: 1,
+		TraceID:   modulecore.NewTraceID(),
 	})
 	if lifecycle.Done == nil {
 		t.Fatal("active Viewer synthesis must expose lifecycle")
@@ -254,6 +261,7 @@ func TestEmitIdleChatTTSCompletesNormallyOnPushFailure(t *testing.T) {
 		SessionID: "idle-tts-error",
 		MessageID: "idle-tts-error:msg:0002",
 		TurnIndex: 2,
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	if ok || lifecycle.Done == nil {
@@ -288,6 +296,7 @@ func TestEmitIdleChatTTSSendsStorySimpleTTSEvent(t *testing.T) {
 		SessionID: "story-simple-1",
 		MessageID: "story-simple-1:story:0001",
 		TurnIndex: 1,
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	if !ok || lifecycle.Ready == nil || lifecycle.Done == nil {
@@ -368,6 +377,7 @@ func TestEmitIdleChatTTS_AppendsSentencePauseForAgentMessage(t *testing.T) {
 		To:        "shiro",
 		Content:   "次は別の観点で見てみよう",
 		SessionID: "idle-3",
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	if len(bridge.pushTexts) != 1 {
@@ -387,6 +397,7 @@ func TestEmitIdleChatTTS_FormatsTopicAnnouncement(t *testing.T) {
 		To:        "mio",
 		Content:   "今日のお題（external）: 震災の追悼の杜で、記憶と風景の関係をどう捉えたらどうだろう？",
 		SessionID: "idle-topic-1",
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	if len(bridge.pushTexts) != 1 {
@@ -424,6 +435,7 @@ func TestNonStorySpeechTopicDoesNotRewrite(t *testing.T) {
 				SessionID: "idle-topic-no-rewrite",
 				Category:  idlechat.TopicCategoryNews,
 				Strategy:  strategy,
+				TraceID:   modulecore.NewTraceID(),
 			})
 			if len(bridge.pushTexts) != 1 {
 				t.Fatalf("expected 1 push text, got %d", len(bridge.pushTexts))
@@ -445,6 +457,7 @@ func TestEmitIdleChatTTS_StripsSpeakerLabelsFromDisplayAndSpeech(t *testing.T) {
 		To:        "shiro",
 		Content:   "mio: その封筒を開けた瞬間、棚の奥の雨音まで変わりそう。",
 		SessionID: "idle-label",
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	if len(bridge.pushTexts) != 1 {
@@ -468,6 +481,7 @@ func TestEmitIdleChatTTS_DropsReasoningLinesFromScriptOutput(t *testing.T) {
 		To:        "mio",
 		Content:   "Looking at the example responses,\nshiro: 開ける前に、宛名の消え方を見たほうがいい。",
 		SessionID: "idle-reasoning",
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	if len(bridge.pushTexts) != 1 {
@@ -491,6 +505,7 @@ func TestEmitIdleChatTTS_StripsPossibleResponsePrefix(t *testing.T) {
 		To:        "mio",
 		Content:   `Possible response: "雨上がりの空気は、薄い青色だったような気がする。"`,
 		SessionID: "idle-possible-response",
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	if len(bridge.pushTexts) != 1 {
@@ -518,6 +533,7 @@ func TestEmitIdleChatTTS_DropsEmbeddedEnglishReasoningLines(t *testing.T) {
 			"\" So Mio is suggesting the scars are a sign for someone to step forward,\n" +
 			"and the \"waiting presence\" might be someone at the top of the stairs.",
 		SessionID: "idle-english-reasoning",
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	if len(bridge.pushTexts) != 1 {
@@ -541,6 +557,7 @@ func TestEmitIdleChatTTS_CutsInlineEnglishReasoningTail(t *testing.T) {
 		To:        "mio",
 		Content:   `雨上がりの庭で、苔が宿主の根を守りながら共生する姿は、静かな中にも生命力の循環が感じられる。" That's one sentence. Maybe add a question.`,
 		SessionID: "idle-inline-reasoning",
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	if len(bridge.pushTexts) != 1 {
@@ -564,6 +581,7 @@ func TestEmitIdleChatTTSAsyncTopicAnnouncementReturnsCompletion(t *testing.T) {
 		To:        "mio",
 		Content:   "今日のお題（external）: 記憶と風景の関係",
 		SessionID: "idle-topic-async",
+		TraceID:   modulecore.NewTraceID(),
 	})
 	if lifecycle.Ready == nil || lifecycle.Done == nil {
 		t.Fatal("expected topic announcement to return synthesis lifecycle channels")
@@ -588,6 +606,7 @@ func TestEmitIdleChatTTSAsyncSerializesIdleSpeech(t *testing.T) {
 		To:        "shiro",
 		Content:   "先の発話です。",
 		SessionID: "idle-serial-1",
+		TraceID:   modulecore.NewTraceID(),
 	})
 	second := emitIdleChatTTSAsync(bridge, idlechat.TimelineEvent{
 		Type:      "idlechat.message",
@@ -595,6 +614,7 @@ func TestEmitIdleChatTTSAsyncSerializesIdleSpeech(t *testing.T) {
 		To:        "mio",
 		Content:   "後の発話です。",
 		SessionID: "idle-serial-1",
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	for name, lifecycle := range map[string]idlechat.TTSLifecycle{"first": first, "second": second} {
@@ -618,6 +638,7 @@ func TestIdleChatTTSWorkerContextDoesNotOwnACompetingDeadline(t *testing.T) {
 		canceled: make(chan struct{}),
 		release:  make(chan struct{}),
 	}
+	traceID := modulecore.NewTraceID()
 
 	lifecycle := emitIdleChatTTSAsync(bridge, idlechat.TimelineEvent{
 		Type:      "idlechat.message",
@@ -626,6 +647,7 @@ func TestIdleChatTTSWorkerContextDoesNotOwnACompetingDeadline(t *testing.T) {
 		Content:   "合成時間の正本はセッション側です。",
 		SessionID: "idle-single-timeout-owner",
 		MessageID: "message-single-timeout-owner",
+		TraceID:   traceID,
 	})
 	select {
 	case <-bridge.started:
@@ -634,7 +656,7 @@ func TestIdleChatTTSWorkerContextDoesNotOwnACompetingDeadline(t *testing.T) {
 	}
 
 	idleChatTTSActiveMu.Lock()
-	items := idleChatTTSActive[streamKey("idle-single-timeout-owner", "message-single-timeout-owner")]
+	items := idleChatTTSActive[streamKey("idle-single-timeout-owner", "message-single-timeout-owner", string(traceID))]
 	var hasDeadline bool
 	for item := range items {
 		_, hasDeadline = item.ctx.Deadline()
@@ -652,14 +674,39 @@ func TestIdleChatTTSWorkerContextDoesNotOwnACompetingDeadline(t *testing.T) {
 	}
 }
 
+func TestEmitIdleChatTTSRejectsMalformedTraceBeforeBridge(t *testing.T) {
+	bridge := &idleChatMockTTSBridge{notifyOnEnd: true}
+	event := idlechat.TimelineEvent{
+		Type:      "idlechat.message",
+		From:      "mio",
+		To:        "shiro",
+		Content:   "不正なTraceでは合成しません。",
+		SessionID: "idle-invalid-tts-trace",
+		MessageID: "idle-invalid-tts-trace:msg:0001",
+		TraceID:   modulecore.TraceID("not-a-trace"),
+	}
+	_, ok := emitIdleChatTTS(context.Background(), bridge, event)
+	if ok {
+		t.Fatal("malformed trace must be rejected before TTS bridge calls")
+	}
+	if lifecycle := emitIdleChatTTSAsync(bridge, event); lifecycle.Ready != nil || lifecycle.Done != nil {
+		t.Fatal("malformed trace must be rejected before async queue registration")
+	}
+	if len(bridge.startReqs) != 0 {
+		t.Fatalf("bridge received %d StartSession calls for malformed trace", len(bridge.startReqs))
+	}
+}
+
 func TestIdleChatTTSPrefetchContextDoesNotOwnACompetingDeadline(t *testing.T) {
 	bridge := &idleChatMockTTSBridge{}
 	manager := newIdleChatTTSPrefetchManager(bridge)
+	traceID := modulecore.NewTraceID()
 	stream := manager.stream("idle-prefetch-timeout-owner", "message-prefetch-timeout-owner", idlechat.TTSPrefetchEvent{
 		SessionID: "idle-prefetch-timeout-owner",
 		MessageID: "message-prefetch-timeout-owner",
 		From:      "mio",
 		To:        "shiro",
+		TraceID:   traceID,
 	})
 	if _, hasDeadline := stream.ctx.Deadline(); hasDeadline {
 		t.Fatal("prefetch context must not compete with orchestrator Ready/Done deadlines")
@@ -680,6 +727,7 @@ func TestEmitIdleChatTTSAsyncPrefetchesWithoutPlaybackCompletion(t *testing.T) {
 		resetTTSPublicSessionStateForTest()
 	})
 	bridge := &idleChatMockTTSBridge{notifyOnEnd: false}
+	traceID := modulecore.NewTraceID()
 
 	first := emitIdleChatTTSAsync(bridge, idlechat.TimelineEvent{
 		Type:      "idlechat.message",
@@ -687,6 +735,7 @@ func TestEmitIdleChatTTSAsyncPrefetchesWithoutPlaybackCompletion(t *testing.T) {
 		To:        "shiro",
 		Content:   "先に合成する発話です。",
 		SessionID: "idle-prefetch-1",
+		TraceID:   traceID,
 	})
 	second := emitIdleChatTTSAsync(bridge, idlechat.TimelineEvent{
 		Type:      "idlechat.message",
@@ -694,6 +743,7 @@ func TestEmitIdleChatTTSAsyncPrefetchesWithoutPlaybackCompletion(t *testing.T) {
 		To:        "mio",
 		Content:   "再生完了を待たずに合成する発話です。",
 		SessionID: "idle-prefetch-1",
+		TraceID:   traceID,
 	})
 
 	for name, lifecycle := range map[string]idlechat.TTSLifecycle{"first": first, "second": second} {
@@ -771,6 +821,7 @@ func TestIdleChatTTSTimeoutCancelsActiveSynthesisContext(t *testing.T) {
 		resetTTSPublicSessionStateForTest()
 	})
 
+	traceID := modulecore.NewTraceID()
 	_ = emitIdleChatTTSAsync(bridge, idlechat.TimelineEvent{
 		Type:      "idlechat.message",
 		From:      "mio",
@@ -779,6 +830,7 @@ func TestIdleChatTTSTimeoutCancelsActiveSynthesisContext(t *testing.T) {
 		SessionID: "idle-cancel-active",
 		MessageID: "idle-cancel-active:msg:0001",
 		TurnIndex: 1,
+		TraceID:   traceID,
 	})
 	select {
 	case <-bridge.started:
@@ -791,6 +843,7 @@ func TestIdleChatTTSTimeoutCancelsActiveSynthesisContext(t *testing.T) {
 		SessionID: "idle-cancel-active",
 		MessageID: "idle-cancel-active:msg:0001",
 		TurnIndex: 1,
+		TraceID:   traceID,
 	})
 	select {
 	case <-bridge.canceled:
@@ -799,9 +852,127 @@ func TestIdleChatTTSTimeoutCancelsActiveSynthesisContext(t *testing.T) {
 	}
 }
 
+func TestIdleChatTTSTimeoutCancelsOnlyMatchingQueueTrace(t *testing.T) {
+	resetIdleChatTTSQueue()
+	t.Cleanup(resetIdleChatTTSQueue)
+	firstTrace := modulecore.NewTraceID()
+	secondTrace := modulecore.NewTraceID()
+	firstCtx, firstCancel := context.WithCancel(context.Background())
+	secondCtx, secondCancel := context.WithCancel(context.Background())
+	first := &idleChatTTSItem{
+		ev:        idlechat.TimelineEvent{SessionID: "idle-timeout-replay", MessageID: "idle-timeout-replay:msg:0001", TraceID: firstTrace},
+		ctx:       firstCtx,
+		cancel:    firstCancel,
+		lifecycle: newIdleChatTTSLifecycleController(),
+	}
+	second := &idleChatTTSItem{
+		ev:        idlechat.TimelineEvent{SessionID: "idle-timeout-replay", MessageID: "idle-timeout-replay:msg:0001", TraceID: secondTrace},
+		ctx:       secondCtx,
+		cancel:    secondCancel,
+		lifecycle: newIdleChatTTSLifecycleController(),
+	}
+	registerIdleChatTTSItem(first)
+	registerIdleChatTTSItem(second)
+	t.Cleanup(func() {
+		unregisterIdleChatTTSItem(first)
+		unregisterIdleChatTTSItem(second)
+		firstCancel()
+		secondCancel()
+	})
+
+	cancelIdleChatTTSTimeout(idlechat.TTSTimeoutEvent{
+		Kind:      "timeout",
+		SessionID: "idle-timeout-replay",
+		MessageID: "idle-timeout-replay:msg:0001",
+		TraceID:   firstTrace,
+	})
+	select {
+	case <-firstCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("timeout did not cancel the matching trace queue item")
+	}
+	select {
+	case <-secondCtx.Done():
+		t.Fatal("timeout for trace A canceled the active trace B queue item")
+	default:
+	}
+}
+
+func TestIdleChatTTSSessionTimeoutCancelsOnlyMatchingTrace(t *testing.T) {
+	resetIdleChatTTSQueue()
+	t.Cleanup(resetIdleChatTTSQueue)
+	firstTrace := modulecore.NewTraceID()
+	secondTrace := modulecore.NewTraceID()
+	firstCtx, firstCancel := context.WithCancel(context.Background())
+	secondCtx, secondCancel := context.WithCancel(context.Background())
+	first := &idleChatTTSItem{
+		ev:        idlechat.TimelineEvent{SessionID: "idle-session-timeout-replay", MessageID: "idle-session-timeout-replay:msg:0001", TraceID: firstTrace},
+		ctx:       firstCtx,
+		cancel:    firstCancel,
+		lifecycle: newIdleChatTTSLifecycleController(),
+	}
+	second := &idleChatTTSItem{
+		ev:        idlechat.TimelineEvent{SessionID: "idle-session-timeout-replay", MessageID: "idle-session-timeout-replay:msg:0002", TraceID: secondTrace},
+		ctx:       secondCtx,
+		cancel:    secondCancel,
+		lifecycle: newIdleChatTTSLifecycleController(),
+	}
+	registerIdleChatTTSItem(first)
+	registerIdleChatTTSItem(second)
+	t.Cleanup(func() {
+		unregisterIdleChatTTSItem(first)
+		unregisterIdleChatTTSItem(second)
+		firstCancel()
+		secondCancel()
+	})
+
+	cancelIdleChatTTSTimeout(idlechat.TTSTimeoutEvent{
+		Kind:      "session_audio_timeout",
+		SessionID: "idle-session-timeout-replay",
+		TraceID:   firstTrace,
+	})
+	select {
+	case <-firstCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("session timeout did not cancel the matching trace queue item")
+	}
+	select {
+	case <-secondCtx.Done():
+		t.Fatal("session timeout for trace A canceled the active trace B queue item")
+	default:
+	}
+}
+
+func TestMarkIdleChatTTSTimeoutRejectsMalformedTrace(t *testing.T) {
+	resetTTSPublicSessionStateForTest()
+	clearAllIdleChatTTSPending()
+	t.Cleanup(func() {
+		clearAllIdleChatTTSPending()
+		resetTTSPublicSessionStateForTest()
+	})
+	pending := registerIdleChatTTSPending("idle-invalid-timeout-tts", "idle-invalid-timeout:0001")
+	registerTTSPublicSessionWithMessage("idle-invalid-timeout-tts", "idle-invalid-timeout", "idle-invalid-timeout:0001", "idle-invalid-timeout:msg:0001", 1)
+
+	markIdleChatTTSTimeout(idlechat.TTSTimeoutEvent{
+		Kind:      "timeout",
+		SessionID: "idle-invalid-timeout",
+		MessageID: "idle-invalid-timeout:msg:0001",
+		TraceID:   modulecore.TraceID("not-a-trace"),
+	})
+	select {
+	case <-pending:
+		t.Fatal("malformed timeout must not consume a pending playback route")
+	default:
+	}
+	if got := snapshotTTSPublicSessions(); got.RouteCount != 1 {
+		t.Fatalf("malformed timeout changed public routes: %+v", got)
+	}
+}
+
 func TestMarkIdleChatTTSTimeoutConsumesPendingAsFailedPlayback(t *testing.T) {
 	resetTTSPublicSessionStateForTest()
 	clearAllIdleChatTTSPending()
+	traceID := modulecore.NewTraceID()
 
 	first := registerIdleChatTTSPending("idle-timeout-tts-1", "idle-timeout:0000")
 	second := registerIdleChatTTSPending("idle-timeout-tts-2", "idle-timeout:0001")
@@ -813,6 +984,7 @@ func TestMarkIdleChatTTSTimeoutConsumesPendingAsFailedPlayback(t *testing.T) {
 		SessionID: "idle-timeout",
 		MessageID: "idle-timeout:msg:0001",
 		TurnIndex: 1,
+		TraceID:   traceID,
 	})
 
 	select {
@@ -838,6 +1010,7 @@ func TestMarkIdleChatTTSTimeoutConsumesPendingAsFailedPlayback(t *testing.T) {
 func TestMarkIdleChatTTSSessionAudioTimeoutClosesAllPendingForSession(t *testing.T) {
 	resetTTSPublicSessionStateForTest()
 	clearAllIdleChatTTSPending()
+	traceID := modulecore.NewTraceID()
 
 	first := registerIdleChatTTSPending("idle-drain-tts-1", "idle-drain:0000")
 	second := registerIdleChatTTSPending("idle-drain-tts-2", "idle-drain:0001")
@@ -849,6 +1022,7 @@ func TestMarkIdleChatTTSSessionAudioTimeoutClosesAllPendingForSession(t *testing
 		SessionID:      "idle-drain",
 		RemainingIndex: 1,
 		RemainingCount: 2,
+		TraceID:        traceID,
 	})
 
 	for name, ch := range map[string]<-chan struct{}{"first": first, "second": second} {
@@ -874,6 +1048,7 @@ func TestEmitIdleChatTTS_RemovesLoopNotesFromSpeechOnly(t *testing.T) {
 		To:        "user",
 		Content:   content,
 		SessionID: "idle-note-1",
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	if len(bridge.pushTexts) != 1 {
@@ -898,6 +1073,7 @@ func TestEmitIdleChatTTSSkipsNonMessageEvent(t *testing.T) {
 		From:      "shiro",
 		Content:   "summary",
 		SessionID: "idle-2",
+		TraceID:   modulecore.NewTraceID(),
 	})
 
 	if len(bridge.startReqs) != 0 || len(bridge.pushTexts) != 0 || len(bridge.endIDs) != 0 {

@@ -55,13 +55,15 @@ func TestIdleChatRecordsPersonaTimelineObservation(t *testing.T) {
 		Category:    "tiredness",
 		Keywords:    []string{"疲れた"},
 	}})
+	generation := activateIdleChatTestSession(o, "idle-1")
 
 	o.emitTimelineEvent(TimelineEvent{
-		Type:      "idlechat.message",
-		From:      "mio",
-		To:        "user",
-		Content:   "今日は疲れた時に効く話にしよう。",
-		SessionID: "idle-1",
+		Type:       "idlechat.message",
+		From:       "mio",
+		To:         "user",
+		Content:    "今日は疲れた時に効く話にしよう。",
+		SessionID:  "idle-1",
+		Generation: generation,
 	})
 
 	if len(recorder.sessions) != 1 {
@@ -97,13 +99,15 @@ func TestIdleChatPersonaRecorderIgnoresTTSAudioChunks(t *testing.T) {
 		Category:    "tiredness",
 		Keywords:    []string{"疲れた"},
 	}})
+	generation := activateIdleChatTestSession(o, "idle-tts")
 
 	o.emitTimelineEvent(TimelineEvent{
-		Type:      "idlechat.tts",
-		From:      "mio",
-		To:        "user",
-		Content:   "疲れた",
-		SessionID: "idle-tts",
+		Type:       "idlechat.tts",
+		From:       "mio",
+		To:         "user",
+		Content:    "疲れた",
+		SessionID:  "idle-tts",
+		Generation: generation,
 	})
 
 	if len(recorder.sessions) != 0 || len(recorder.observations) != 0 || len(recorder.triggers) != 0 {
@@ -115,13 +119,15 @@ func TestIdleChatCreatesPendingMetaUpdateCandidateFromTimelineEvent(t *testing.T
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
 	recorder := &idlePersonaRecorder{}
 	o.SetPersonaRuntimeRecorder(recorder, nil)
+	generation := activateIdleChatTestSession(o, "idle-meta")
 
 	o.emitTimelineEvent(TimelineEvent{
-		Type:      "idlechat.message",
-		From:      "user",
-		To:        "mio",
-		Content:   "私は映画の話題をアイデア源にする",
-		SessionID: "idle-meta",
+		Type:       "idlechat.message",
+		From:       "user",
+		To:         "mio",
+		Content:    "私は映画の話題をアイデア源にする",
+		SessionID:  "idle-meta",
+		Generation: generation,
 	})
 
 	if len(recorder.metaUpdates) != 1 {

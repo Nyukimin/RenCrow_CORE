@@ -131,6 +131,7 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 
 	sessionID := "story-episode-" + artifact.EpisodeID
 	startedAt := time.Now().In(jst)
+	o.emitMu.Lock()
 	o.mu.Lock()
 	if !o.chatActive {
 		o.chatActive = true
@@ -140,10 +141,12 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 	if o.runCancel == nil {
 		generation = o.beginIdleRunLocked()
 	}
-	o.activeSessionID = sessionID
+	o.bindIdleSessionLocked(sessionID)
 	o.currentTopic = storyEpisodeDisplayTitle(artifact)
 	o.mu.Unlock()
+	o.emitMu.Unlock()
 	defer func() {
+		o.emitMu.Lock()
 		o.mu.Lock()
 		if o.activeGeneration == generation {
 			o.chatActive = false
@@ -153,6 +156,7 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 		}
 		o.lastActivity = time.Now()
 		o.mu.Unlock()
+		o.emitMu.Unlock()
 		o.cancelIdleRunIfGeneration(generation)
 	}()
 
@@ -173,11 +177,11 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 				continue
 			}
 			next := artifact.Turns[j]
-			o.emitStoryTTSPrefetch(sessionID, next)
+			o.emitStoryTTSPrefetch(sessionID, generation, next)
 			prefetched[j] = struct{}{}
 		}
 		transcript = append(transcript, turn.Speaker+": "+turn.DisplayText)
-		o.recordPreparedStoryTurn(sessionID, turn)
+		o.recordPreparedStoryTurn(sessionID, generation, turn)
 		event := TimelineEvent{
 			Type:       "idlechat.message",
 			From:       normalizeStoryAgent(turn.Speaker),
@@ -189,6 +193,7 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 			TurnIndex:  turn.TurnIndex,
 			Category:   TopicCategoryStory,
 			Strategy:   TopicStrategy("story"),
+			Generation: generation,
 		}
 		done := o.emitTimelineEvent(event)
 		o.waitForTTSReadyForEvent(event, done)
@@ -204,30 +209,33 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 	o.RefillStoryEpisodesAsync("played")
 }
 
-func (o *IdleChatOrchestrator) emitStoryTTSPrefetch(sessionID string, turn StoryEpisodeTurn) {
+func (o *IdleChatOrchestrator) emitStoryTTSPrefetch(sessionID string, generation uint64, turn StoryEpisodeTurn) {
 	o.mu.Lock()
 	emit := o.emitTTSPrefetch
 	o.mu.Unlock()
 	if emit == nil || strings.TrimSpace(turn.MessageID) == "" || strings.TrimSpace(turn.SpeechText) == "" {
 		return
 	}
-	emit(TTSPrefetchEvent{
-		SessionID: sessionID,
-		MessageID: turn.MessageID,
-		From:      normalizeStoryAgent(turn.Speaker),
-		To:        "user",
-		TurnIndex: turn.TurnIndex,
-		Token:     turn.SpeechText,
+	o.emitTTSPrefetchEvent(TTSPrefetchEvent{
+		SessionID:  sessionID,
+		MessageID:  turn.MessageID,
+		From:       normalizeStoryAgent(turn.Speaker),
+		To:         "user",
+		TurnIndex:  turn.TurnIndex,
+		Token:      turn.SpeechText,
+		Generation: generation,
 	})
 }
 
-func (o *IdleChatOrchestrator) recordPreparedStoryTurn(sessionID string, turn StoryEpisodeTurn) {
+func (o *IdleChatOrchestrator) recordPreparedStoryTurn(sessionID string, generation uint64, turn StoryEpisodeTurn) {
 	if o.memory == nil {
 		return
 	}
 	message := domaintransport.NewMessage(normalizeStoryAgent(turn.Speaker), "user", sessionID, "", turn.DisplayText)
 	message.Type = domaintransport.MessageTypeIdleChat
-	o.memory.RecordMessage(message)
+	if !o.recordIdleMessageForGeneration(generation, sessionID, message) {
+		log.Printf("[Story] prepared turn record rejected without active owner: session=%s generation=%d", sessionID, generation)
+	}
 }
 
 func (o *IdleChatOrchestrator) savePreparedStoryReview(artifact StoryEpisodeArtifact, sessionID string, transcript []string, startedAt time.Time) {

@@ -71,6 +71,8 @@ var protagonistOptions = []string{
 
 // StartSimpleStoryMode は簡易版物語モードを手動起動する。
 func (o *IdleChatOrchestrator) StartSimpleStoryMode() error {
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if len(o.participants) < 1 {
@@ -103,14 +105,17 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	sessionID := fmt.Sprintf("story-simple-%d", time.Now().Unix())
 	startedAt := time.Now().In(jst)
 
+	o.emitMu.Lock()
 	o.mu.Lock()
 	o.chatActive = true
 	o.sessionMode = "story-simple"
 	generation := o.beginIdleRunLocked()
-	o.activeSessionID = sessionID
+	o.bindIdleSessionLocked(sessionID)
 	o.mu.Unlock()
+	o.emitMu.Unlock()
 
 	defer func() {
+		o.emitMu.Lock()
 		o.mu.Lock()
 		if o.activeGeneration == generation {
 			o.chatActive = false
@@ -120,6 +125,7 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 		}
 		o.lastActivity = time.Now()
 		o.mu.Unlock()
+		o.emitMu.Unlock()
 		o.cancelIdleRunIfGeneration(generation)
 	}()
 
@@ -171,7 +177,7 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 		o.saveSimpleStoryReview(sessionID, storyTopic, tale.title, protagonist, "", "", transcript, startedAt, "invalid_response")
 		return
 	}
-	o.emitStoryParagraph(sessionID, intro, &storyUtteranceSeq)
+	o.emitStoryParagraph(sessionID, generation, intro, &storyUtteranceSeq)
 
 	// タイトル行と本文を分離
 	titleLine := ""
@@ -193,19 +199,19 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	if titleLine != "" {
 		titleSpeech := fmt.Sprintf("改題は『%s』。", titleLine)
 		transcript = append(transcript, "mio: "+titleSpeech)
-		o.emitStoryParagraph(sessionID, titleSpeech, &storyUtteranceSeq)
+		o.emitStoryParagraph(sessionID, generation, titleSpeech, &storyUtteranceSeq)
 	}
 
 	// 本文を段落単位でViewerに配信
 	for _, para := range groupStoryIntoViewerParagraphs(body, 150) {
 		transcript = append(transcript, "mio: "+para)
-		o.emitStoryParagraph(sessionID, para, &storyUtteranceSeq)
+		o.emitStoryParagraph(sessionID, generation, para, &storyUtteranceSeq)
 	}
 
 	// 締め
 	closing := fmt.Sprintf("『%s』を下敷きにした、主人公%sのお話でした。", tale.title, protagonist)
 	transcript = append(transcript, "mio: "+closing)
-	o.emitStoryParagraph(sessionID, closing, &storyUtteranceSeq)
+	o.emitStoryParagraph(sessionID, generation, closing, &storyUtteranceSeq)
 	o.saveSimpleStoryReview(sessionID, storyTopic, tale.title, protagonist, titleLine, body, transcript, startedAt, "")
 
 	log.Printf("[SimpleStory] Session complete: %s × %s", tale.title, protagonist)
@@ -321,7 +327,7 @@ func (o *IdleChatOrchestrator) saveSimpleStoryReview(sessionID, topic, sourceTit
 }
 
 // emitStoryParagraph は段落をViewer + TTSに配信する（story_mode.goから移植）
-func (o *IdleChatOrchestrator) emitStoryParagraph(sessionID, paragraph string, utteranceSeq *int) {
+func (o *IdleChatOrchestrator) emitStoryParagraph(sessionID string, generation uint64, paragraph string, utteranceSeq *int) {
 	paragraph = strings.TrimSpace(paragraph)
 	if paragraph == "" {
 		return
@@ -329,14 +335,18 @@ func (o *IdleChatOrchestrator) emitStoryParagraph(sessionID, paragraph string, u
 	// memory に段落単位で記録
 	msg := domaintransport.NewMessage("mio", "user", sessionID, "", paragraph)
 	msg.Type = domaintransport.MessageTypeIdleChat
-	o.memory.RecordMessage(msg)
+	if !o.recordIdleMessageForGeneration(generation, sessionID, msg) {
+		log.Printf("[SimpleStory] paragraph record rejected without active owner: session=%s generation=%d", sessionID, generation)
+		return
+	}
 	// Viewer に段落全体を1件送る（TTS なし）
 	o.emitTimelineEvent(TimelineEvent{
-		Type:      "idlechat.viewer",
-		From:      "mio",
-		To:        "user",
-		Content:   paragraph,
-		SessionID: sessionID,
+		Type:       "idlechat.viewer",
+		From:       "mio",
+		To:         "user",
+		Content:    paragraph,
+		SessionID:  sessionID,
+		Generation: generation,
 	})
 	// TTS に文節単位で送る（Viewer には表示しない）
 	for _, sentence := range splitStorySentences(paragraph) {
@@ -353,13 +363,14 @@ func (o *IdleChatOrchestrator) emitStoryParagraph(sessionID, paragraph string, u
 		}
 		messageID := newIdleChatMessageID()
 		ttsEvent := TimelineEvent{
-			Type:      "idlechat.tts",
-			From:      "mio",
-			To:        "user",
-			Content:   sentence,
-			SessionID: sessionID,
-			MessageID: messageID,
-			TurnIndex: turnIndex,
+			Type:       "idlechat.tts",
+			From:       "mio",
+			To:         "user",
+			Content:    sentence,
+			SessionID:  sessionID,
+			MessageID:  messageID,
+			TurnIndex:  turnIndex,
+			Generation: generation,
 		}
 		ttsDone := o.emitTimelineEvent(ttsEvent)
 		o.waitForTTSReadyForEvent(ttsEvent, ttsDone)

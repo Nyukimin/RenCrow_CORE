@@ -31,6 +31,7 @@ func (o *IdleChatOrchestrator) monitorLoop() {
 }
 
 func (o *IdleChatOrchestrator) checkAndStartChat() {
+	o.emitMu.Lock()
 	o.mu.Lock()
 	idleDuration := time.Since(o.lastActivity)
 	threshold := o.interval
@@ -50,6 +51,7 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 	stockFilling := (stock != nil && stock.anyFilling()) || (wordStock != nil && wordStock.anyFilling()) || o.topicProductionBusy()
 	if disabled || externalLLMBusy || stockFilling || o.chatActive || chatBusy || workerBusy || (!nextTopicAt.IsZero() && now.Before(nextTopicAt)) || (!manualMode && (dailyEnrichmentActive || idleDuration < threshold)) {
 		o.mu.Unlock()
+		o.emitMu.Unlock()
 		return
 	}
 	o.chatActive = true
@@ -57,6 +59,7 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 	o.sessionMode = plan.mode
 	generation := o.beginIdleRunLocked()
 	o.mu.Unlock()
+	o.emitMu.Unlock()
 
 	log.Printf("[IdleChat] Idle for %v, starting %s session generation=%d", idleDuration.Round(time.Second), plan.mode, generation)
 	switch plan.mode {
@@ -72,6 +75,7 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 		o.runChatSession(plan.strategy)
 	}
 
+	o.emitMu.Lock()
 	o.mu.Lock()
 	if o.activeGeneration == generation {
 		o.chatActive = false
@@ -81,6 +85,7 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 	}
 	o.lastActivity = time.Now() // セッション終了でアイドル計測をリセット
 	o.mu.Unlock()
+	o.emitMu.Unlock()
 	o.cancelIdleRunIfGeneration(generation)
 }
 
@@ -107,7 +112,7 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 		topic, strategy = o.generateTopicFromChat(segmentID, strategy)
 	}
 	if isWordTopicGenerationError(topic) {
-		o.recordGenerationErrorToTimeline("shiro", "mio", segmentID, topic, 0)
+		o.recordGenerationErrorToTimeline("shiro", "mio", segmentID, topic, 0, generation)
 		log.Printf("[IdleChat] Session stopped before playback: session=%s topic_error=%s", segmentID, topic)
 		return
 	}
@@ -132,12 +137,12 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 	log.Printf("[IdleChat] Topic: %s (%s, session=%s)", topic, strategy, segmentID)
 	dialogueEpisode, err := o.prepareDialogueEpisode(segmentID, topicResult, turnLimit)
 	if err != nil {
-		o.recordGenerationErrorToTimeline("shiro", "mio", segmentID, "dialogue_episode_generation_failed", 0)
+		o.recordGenerationErrorToTimeline("shiro", "mio", segmentID, "dialogue_episode_generation_failed", 0, generation)
 		log.Printf("[IdleChat] Session stopped before playback: session=%s dialogue_error=%v", segmentID, err)
 		return
 	}
 	ttsDrain := make([]TTSLifecycle, 0, turnLimit+2)
-	if ttsDone := o.emitTopicToTimeline(segmentID, topic, strategy); ttsDone.Done != nil {
+	if ttsDone := o.emitTopicToTimeline(segmentID, topic, strategy, generation); ttsDone.Done != nil {
 		ttsDrain = append(ttsDrain, ttsDone)
 	}
 
@@ -206,8 +211,13 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 		msg := domaintransport.NewMessage(speaker, nextSpeaker, segmentID, "", response)
 		msg.Type = domaintransport.MessageTypeIdleChat
 		msg.Context = idleChatMessageContext(messageID, turnIndex)
-		o.memory.RecordMessage(msg)
-		ttsDone := o.emitTimelineEvent(TimelineEvent{
+		if !o.recordIdleMessageForGeneration(generation, segmentID, msg) {
+			log.Printf("[IdleChat] message record rejected after owner change: session=%s generation=%d turn=%d", segmentID, generation, turnIndex)
+			sessionInterrupted = true
+			loopReason = "interrupted"
+			break
+		}
+		messageEvent := TimelineEvent{
 			Type:       "idlechat.message",
 			From:       speaker,
 			To:         nextSpeaker,
@@ -216,7 +226,9 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 			SessionID:  segmentID,
 			MessageID:  messageID,
 			TurnIndex:  turnIndex,
-		})
+			Generation: generation,
+		}
+		ttsDone := o.emitTimelineEvent(messageEvent)
 		if ttsDone.Done != nil {
 			ttsDrain = append(ttsDrain, ttsDone)
 		}
@@ -231,15 +243,7 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 		segmentTurns++
 
 		log.Printf("[IdleChat] [Turn %d] %s→%s: %s", turn, speaker, nextSpeaker, truncate(response, 80))
-		o.waitForTTSReadyForEvent(TimelineEvent{
-			Type:      "idlechat.message",
-			From:      speaker,
-			To:        nextSpeaker,
-			Content:   response,
-			SessionID: segmentID,
-			MessageID: messageID,
-			TurnIndex: turnIndex,
-		}, ttsDone)
+		o.waitForTTSReadyForEvent(messageEvent, ttsDone)
 		o.waitBreak(speakerBreak)
 
 		if reason := detectLoopReason(transcript); reason != "" {
@@ -256,14 +260,14 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 		displayStrategy := TopicStrategy(fmt.Sprintf("%s: %s", strategy, truncate(topic, 30)))
 		endedEarly := sessionInterrupted
 		o.markWatchdogStage("summary_generation", fmt.Sprintf("turns=%d ended_early=%t", segmentTurns, endedEarly), TimelineEvent{SessionID: segmentID})
-		summary := o.saveSummary(segmentID, topic, displayStrategy, transcript, startedAt, endedAt, segmentTurns, endedEarly, loopReason)
+		summary := o.saveSummary(segmentID, topic, displayStrategy, transcript, startedAt, endedAt, segmentTurns, endedEarly, loopReason, generation)
 		o.markWatchdogStage("summary_tts", fmt.Sprintf("turns=%d", segmentTurns), TimelineEvent{SessionID: segmentID})
-		if ttsDone := o.speakSummary(segmentID, summary); ttsDone.Done != nil {
+		if ttsDone := o.speakSummary(segmentID, summary, generation); ttsDone.Done != nil {
 			ttsDrain = append(ttsDrain, ttsDone)
 		}
 	}
 	o.markWatchdogStage("session_drain", fmt.Sprintf("channels=%d", len(ttsDrain)), TimelineEvent{SessionID: segmentID})
-	o.waitForTTSSessionDrain(segmentID, ttsDrain)
+	o.waitForTTSSessionDrain(segmentID, generation, ttsDrain)
 	cooldown := topicBreak
 	if sessionInterrupted {
 		idleCooldown := o.interval
@@ -335,15 +339,17 @@ func (o *IdleChatOrchestrator) waitForTTSReadyForEvent(ev TimelineEvent, lifecyc
 		o.markWatchdogStage("tts_timeout", idleWatchdogEventDetail(ev), ev)
 		log.Printf("[IdleChat] TTS completion wait timed out after %s; continuing conversation (tts_error=true tts_error_kind=timeout session=%s message_id=%s turn_index=%d)", timeout, ev.SessionID, ev.MessageID, ev.TurnIndex)
 		o.reportTTSTimeoutEvent(TTSTimeoutEvent{
-			Kind:      "timeout",
-			SessionID: ev.SessionID,
-			MessageID: ev.MessageID,
-			TurnIndex: ev.TurnIndex,
+			Kind:       "timeout",
+			SessionID:  ev.SessionID,
+			MessageID:  ev.MessageID,
+			TurnIndex:  ev.TurnIndex,
+			TraceID:    ev.TraceID,
+			Generation: ev.Generation,
 		})
 	}
 }
 
-func (o *IdleChatOrchestrator) waitForTTSSessionDrain(sessionID string, lifecycles []TTSLifecycle) {
+func (o *IdleChatOrchestrator) waitForTTSSessionDrain(sessionID string, generation uint64, lifecycles []TTSLifecycle) {
 	if len(lifecycles) == 0 {
 		return
 	}
@@ -370,6 +376,7 @@ func (o *IdleChatOrchestrator) waitForTTSSessionDrain(sessionID string, lifecycl
 				SessionID:      sessionID,
 				RemainingIndex: idx + 1,
 				RemainingCount: len(lifecycles),
+				Generation:     generation,
 			})
 			return
 		}
@@ -381,6 +388,13 @@ func (o *IdleChatOrchestrator) reportTTSTimeoutEvent(ev TTSTimeoutEvent) {
 	if o == nil {
 		return
 	}
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
+	traceID, ok := o.traceForSession(ev.SessionID, ev.TraceID, ev.Generation)
+	if !ok {
+		return
+	}
+	ev.TraceID = traceID
 	o.mu.Lock()
 	report := o.reportTTSTimeout
 	o.mu.Unlock()

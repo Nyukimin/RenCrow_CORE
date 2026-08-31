@@ -118,53 +118,13 @@ func buildIdleChatRuntime(
 	}
 	if deps.eventRelay != nil {
 		idleChatTTSPrefetch = newIdleChatTTSPrefetchManager(ttsBridge)
+		idleChatOrch.SetInterruptHandler(resetIdleChatTTSQueue)
 		idleChatOrch.SetTTSPrefetchEmitter(func(ev idlechat.TTSPrefetchEvent) {
 			if idleChatTTSPrefetch != nil {
 				idleChatTTSPrefetch.Push(ev)
 			}
 		})
-		idleChatOrch.SetEventEmitter(func(ev idlechat.TimelineEvent) idlechat.TTSLifecycle {
-			if ev.Type != "idlechat.tts" {
-				viewerType := ev.Type
-				if viewerType == "idlechat.viewer" {
-					viewerType = "idlechat.message"
-				}
-				chatID := strings.TrimSpace(ev.SessionID)
-				if chatID == "" {
-					chatID = "idlechat"
-				}
-				viewerEvent := orchestrator.NewEvent(
-					viewerType,
-					ev.From,
-					ev.To,
-					ev.Content,
-					"IDLECHAT",
-					"",
-					ev.SessionID,
-					"idlechat",
-					chatID,
-				)
-				viewerEvent.RawContent = ev.RawContent
-				viewerEvent.MessageID = ev.MessageID
-				viewerEvent.TurnIndex = ev.TurnIndex
-				viewerEvent.Category = string(ev.Category)
-				viewerEvent.Strategy = string(ev.Strategy)
-				if err := deps.eventRelay.OnEvent(viewerEvent); err != nil {
-					log.Printf("[IdleChat] event publication failed type=%s session_id=%s message_id=%s: %v", viewerEvent.Type, viewerEvent.SessionID, viewerEvent.MessageID, err)
-					return idlechat.TTSLifecycle{}
-				}
-			}
-			if ev.Type == "idlechat.viewer" {
-				return idlechat.TTSLifecycle{}
-			}
-			if ev.Type == "idlechat.message" && idleChatTTSPrefetch != nil && idleChatTTSPrefetch.HasActive(ev.SessionID, ev.MessageID) {
-				if lifecycle, ok := idleChatTTSPrefetch.Close(ev); ok {
-					return lifecycle
-				}
-				return idlechat.TTSLifecycle{}
-			}
-			return emitIdleChatTTSAsync(ttsBridge, ev)
-		})
+		idleChatOrch.SetEventEmitter(newIdleChatRuntimeEventEmitter(deps.eventRelay.OnEvent, idleChatTTSPrefetch, ttsBridge))
 	}
 	idleChatOrch.SetTTSTimeoutReporter(func(ev idlechat.TTSTimeoutEvent) {
 		markIdleChatTTSTimeout(ev)
@@ -178,6 +138,70 @@ func buildIdleChatRuntime(
 	deps.idleChatOrch = idleChatOrch
 	deps.idleChatSurfacePresence = newIdleChatSurfacePresenceController(idleChatOrch, idleChatSurfacePresenceTTL, resetIdleChatTTSQueue)
 	log.Printf("IdleChat enabled (participants=%v)", cfg.IdleChat.Participants)
+}
+
+func idleChatViewerEvent(ev idlechat.TimelineEvent) orchestrator.OrchestratorEvent {
+	viewerType := ev.Type
+	if viewerType == "idlechat.viewer" {
+		viewerType = "idlechat.message"
+	}
+	chatID := strings.TrimSpace(ev.SessionID)
+	if chatID == "" {
+		chatID = "idlechat"
+	}
+	viewerEvent := orchestrator.NewEventWithTraceID(
+		ev.TraceID,
+		viewerType,
+		ev.From,
+		ev.To,
+		ev.Content,
+		"IDLECHAT",
+		"",
+		ev.SessionID,
+		"idlechat",
+		chatID,
+	)
+	viewerEvent.RawContent = ev.RawContent
+	viewerEvent.MessageID = ev.MessageID
+	viewerEvent.TurnIndex = ev.TurnIndex
+	viewerEvent.Category = string(ev.Category)
+	viewerEvent.Strategy = string(ev.Strategy)
+	return viewerEvent
+}
+
+func newIdleChatRuntimeEventEmitter(
+	publish func(orchestrator.OrchestratorEvent) error,
+	prefetch *idleChatTTSPrefetchManager,
+	ttsBridge orchestrator.TTSBridge,
+) func(idlechat.TimelineEvent) idlechat.TTSLifecycle {
+	return func(ev idlechat.TimelineEvent) idlechat.TTSLifecycle {
+		if ev.Type != "idlechat.tts" {
+			viewerEvent := idleChatViewerEvent(ev)
+			if publish == nil {
+				if prefetch != nil {
+					prefetch.Cancel(ev)
+				}
+				return idlechat.TTSLifecycle{}
+			}
+			if err := publish(viewerEvent); err != nil {
+				log.Printf("[IdleChat] event publication failed type=%s session_id=%s message_id=%s: %v", viewerEvent.Type, viewerEvent.SessionID, viewerEvent.MessageID, err)
+				if prefetch != nil {
+					prefetch.Cancel(ev)
+				}
+				return idlechat.TTSLifecycle{}
+			}
+		}
+		if ev.Type == "idlechat.viewer" {
+			return idlechat.TTSLifecycle{}
+		}
+		if ev.Type == "idlechat.message" && prefetch != nil && prefetch.HasActive(ev.SessionID, ev.MessageID, ev.TraceID) {
+			if lifecycle, ok := prefetch.Close(ev); ok {
+				return lifecycle
+			}
+			return idlechat.TTSLifecycle{}
+		}
+		return emitIdleChatTTSAsync(ttsBridge, ev)
+	}
 }
 
 func idleChatCodexWorkingDir(cfg *config.Config) string {

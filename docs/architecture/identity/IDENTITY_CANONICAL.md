@@ -1111,6 +1111,16 @@ Test:
 - **Enforcement:** TTS bridgeは有効な開始Traceをそのままsessionへ保持する。独立TTS sessionに親Traceがない場合だけ開始境界で一度Canonical Traceを生成し、session終了まで再生成しない。callback adapterは保持されたTraceを`NewEventWithTraceID`へ渡す。
 - **Tests:** Message／Distributed lifecycleがrequest Traceを開始契約へ渡すこと、指定Traceと開始境界で生成したTraceの両方が全chunk／completionで一致すること、配備後の実Actor応答で本文・TTSを含む全Eventが一つのTraceになることを検査する。
 
+#### Step 02 Failure Knowledge: IdleChat timelineによるTrace分断
+
+- **Failure:** IdleChatのtopic、message、summaryをViewer Eventへ変換するたびに新しい`TraceID`を生成し、TTS／prefetch開始契約にも親Traceを渡さなかった。
+- **Problem:** 一回のIdleChat runがEvent数と同数のTraceへ分裂し、Mio／Shiroの会話、要約、音声を一つのowner Triggerとして追跡できなかった。同じstory episodeを複数回再生した履歴では、同一`SessionID`の別playbackを区別するrootも失われた。
+- **Cause:** IdleChat Orchestratorがrun開始時の因果identityを所有せず、timeline adapterとTTS adapterを独立ingressとして扱った。
+- **Lesson:** `SessionID`は会話対象または再利用可能なepisode identityであり、Trigger identityではない。非同期timeline／prefetchも新しいingressではなく、owner runのTraceを明示的に継承する。
+- **Invariant:** 一回のIdleChat runは開始境界で一つのCanonical `TraceID`を生成し、同じrunのtopic、message、summary、TTS、prefetchへ保持する。別runは同じ`SessionID`を再利用しても別Traceを持つ。`TraceID`を`SessionID`、`MessageID`、turn番号から生成・推測しない。
+- **Enforcement:** IdleChat Orchestratorはrun開始時にTraceを生成し、session bind後だけtimeline／prefetch Eventを受理する。active owner Traceとの不一致、session不一致、run終了後の遅延Eventはfail closedで拒否する。runtime adapterは受け取ったTraceを`NewEventWithTraceID`と`TTSSessionStart`へ渡し、新しく生成しない。
+- **Tests:** `TestIdleChatSessionBindsTimelineAndPrefetchToOneCanonicalTrace`で同一runのtopic／message／prefetch一致、別runのTrace分離、run終了後の遅延Event拒否を検査する。runtime adapterと通常TTS／prefetch TTSの試験で同じTraceがEvent／開始契約へ伝播することを検査し、配備後は実Mio／Shiro IdleChat runの全timeline EventをEvent Storeで照合する。
+
 #### Step 02 Failure Knowledge: Viewer失敗callbackによるTrace分断
 
 - **Failure:** Viewerがrequestを受理した後の非同期処理失敗で、`viewer.error`だけが受付時の`TraceID`を継承せず新しいTraceを生成した。
@@ -1154,15 +1164,25 @@ read-only production snapshotを入力とし、別pathへ全Eventを再構築す
   `session_id`と`response_id`が各一値、completionが一件の場合に限り同一sessionと立証する。
   この場合はEventID順で最初の既存callback Traceをtargetとする。background failureは
   `background_job.failed`と`job.notification`が各一件のgroupだけを同一Triggerとする。
+- IdleChatはJobとして数えず、`component_id=orchestrator`、Event typeが`idlechat.topic`、
+  `idlechat.message`、`idlechat.summary`、payloadの`session_id`が同一のEventだけを候補groupとする。
+  一つのtopicを持つgroupは、topicより前に任意で存在できる`from=user,to=mio`の無turn announcementと、
+  1から欠番・重複なく増加する一件以上のturn列を一つのrunとする。targetはEventID順で最初の既存Traceとし、
+  content本文や時刻の近さでは分類しない。
+- topic／summaryを持たない`story-episode-*` groupは、`turn_index=1`から始まり欠番なく増加する列ごとに
+  別runへsegment化する。同じepisode `SessionID`の再playbackを統合せず、各segmentの最初の既存Traceを
+  targetとする。topicを持たない2 Eventの`forecast-*` failureは、無turnの`user -> mio` announcementと
+  `turn_index=1`の`shiro -> mio` messageが各一件の場合だけ一つのrunとする。一Eventだけで既に一Traceの
+  groupは変更不要としてverifiedに数え、その他の構造や不正turn列は理由付きunresolvedとして変更しない。
 - conflicting job identity、group／segmentを跨ぐCausation／Dependency、invalid envelope、
   source columnとenvelopeの不一致は全体をfail closedとする。これらの構造矛盾と、証拠不足で
   未変更の`unresolved`を混同しない。
 - `EventID`、Event順序、Payload、Canonical field、dependency edgeは保持し、変更可能fieldは対象Eventの`TraceID`だけとする。
-- dry-run receiptはsource file SHA-256、Event count、Event set hash、verified／repairable／unresolved Job数、
-  repair segment／Event数、列挙型に限定したrepair evidence／unresolved reason別件数、output Event set hashを
-  bounded JSONで固定する。個別Event全件やPayloadをreceiptへ列挙しない。
+- dry-run receipt schema v3はsource file SHA-256、Event count、Event set hash、verified／repairable／unresolved
+  Job数とIdleChat run数、repair segment／Event数、列挙型に限定したrepair evidence／unresolved reason別件数、
+  output Event set hashをbounded JSONで固定する。個別Event全件やPayloadをreceiptへ列挙しない。
 - buildはchecksum一致するdry-run receiptを必須とし、存在しない別output pathだけへ新DBを作る。
-- production applyは`unresolved=0`のreceiptに限り、writer停止後にactive source checksumを再照合し、
+- production applyはJobとIdleChat runの両方が`unresolved=0`のreceiptに限り、writer停止後にactive source checksumを再照合し、
   DB／WAL／SHMと旧binaryをrollback rootへ保存してからatomic swapする。`unresolved>0`のbuild成果物は
   調査用に保持できるがproductionへ適用しない。
 - writer停止の確認と停止中receiptはservice managerの責務境界とし、apply CLIはactive DBの論理Event count、
@@ -1171,9 +1191,13 @@ read-only production snapshotを入力とし、別pathへ全Eventを再構築す
   apply開始前に固定したbuild receipt SHA-256を引数として再照合し、build／source／output／runtimeの
   checksum不一致をswap前に拒否してから、DBとruntimeを同じrollback rootへ保存する。
   DBを先に、binaryを次にatomic replaceし、後段検証またはreceipt保存に失敗した場合は両方を復元する。
-  終端statusは`applied`、`blocked`、`rolled_back`、`rollback_failed`に限定する。
+  cutover receipt schema v2のstatusは`applied`、`blocked`、`rolled_back`、`rollback_failed`に限定する。
+  この`applied`はDB／runtime fileのchecksum-bound atomic swapとCLI内検査だけを示すsubreceiptであり、
+  Step 02の運用完了、service readiness、または実Actor E2E成功を意味しない。
 - swap後はrow count、EventID set、非Trace content hash、graph整合性、quick check、owner process、readiness、
-  実Actor Trace E2Eを確認する。失敗時は新DBへ追記せず旧snapshotへ戻す。
+  実Actor Trace E2Eをservice-manager receiptと配備後receiptで確認する。writer停止前からこの終端確認まで
+  rollback rootを保持し、一項目でも失敗した場合は新DBへ追記を再開せず旧snapshotへ戻す。Step 02を完了扱いに
+  できるのは、cutover subreceiptとこれらの運用receiptが同じsource／build／runtime checksum chainへ結合した後だけとする。
 
 ---
 

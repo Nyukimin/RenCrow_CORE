@@ -10,11 +10,15 @@ import (
 )
 
 func (o *IdleChatOrchestrator) generateResponse(speaker, target, sessionID string, turn int, segmentTurns int, topic string) (string, error) {
-	response, _, err := o.generateResponseWithRaw(speaker, target, sessionID, turn, segmentTurns, topic)
+	response, _, err := o.generateResponseWithRawForGeneration(speaker, target, sessionID, turn, segmentTurns, topic, 0)
 	return response, err
 }
 
 func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionID string, turn int, segmentTurns int, topic string) (string, string, error) {
+	return o.generateResponseWithRawForGeneration(speaker, target, sessionID, turn, segmentTurns, topic, 0)
+}
+
+func (o *IdleChatOrchestrator) generateResponseWithRawForGeneration(speaker, target, sessionID string, turn int, segmentTurns int, topic string, generation uint64) (string, string, error) {
 	topic = o.resolveDialogueTopic(sessionID, speaker, topic)
 	systemPrompt := o.getSystemPrompt(speaker)
 	temp := o.temperatureForSpeaker(speaker)
@@ -104,13 +108,14 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 			if token == "" {
 				return
 			}
-			prefetchEmitter(TTSPrefetchEvent{
-				SessionID: sessionID,
-				MessageID: messageID,
-				From:      speaker,
-				To:        target,
-				TurnIndex: turn + 1,
-				Token:     token,
+			o.emitTTSPrefetchEvent(TTSPrefetchEvent{
+				SessionID:  sessionID,
+				MessageID:  messageID,
+				From:       speaker,
+				To:         target,
+				TurnIndex:  turn + 1,
+				Token:      token,
+				Generation: generation,
 			})
 		}
 	}
@@ -272,10 +277,24 @@ func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionI
 		}
 	}
 
-	if canonical := o.applyPersonaCanonicalResponse(speaker, sessionID, messageID, first); canonical != "" {
+	if canonical := o.applyPersonaCanonicalResponseForGeneration(speaker, sessionID, messageID, first, generation); canonical != "" {
 		return canonical, firstRaw, nil
 	}
 	return first, firstRaw, nil
+}
+
+func (o *IdleChatOrchestrator) applyPersonaCanonicalResponseForGeneration(speaker, sessionID, messageID, candidate string, generation uint64) string {
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
+	if generation != 0 {
+		o.mu.Lock()
+		owns := o.ownsIdleSessionLocked(sessionID, generation)
+		o.mu.Unlock()
+		if !owns {
+			return ""
+		}
+	}
+	return o.applyPersonaCanonicalResponse(speaker, sessionID, messageID, candidate)
 }
 
 func (o *IdleChatOrchestrator) dialoguePromptContextLocked(topic, speaker, latestOther, latestSelf string, turn int) (string, *DialogueTurnPlan, *DialogueArcState, DialogueInterestingnessConfig, DialogueContentPolicy) {
