@@ -21,11 +21,10 @@ func voiceInputModeFromEnv() string {
 }
 
 func inferVoiceChatGatewayURL(cfg *config.Config) string {
-	return modulevoicechat.InferGatewayURL(
-		strings.TrimSpace(os.Getenv("VOICE_CHAT_GATEWAY_URL")),
-		strings.TrimSpace(os.Getenv("RENCROW_LLM_CHAT_WS")),
-		"",
-	)
+	if cfg == nil || !cfg.LLMGateway.Enabled {
+		return ""
+	}
+	return modulevoicechat.InferGatewayURLFromChatBase(cfg.LLMGateway.BaseURL)
 }
 
 func voiceChatInputAudioSettingsFromConfig(cfg *config.Config) voiceChatInputAudioSettings {

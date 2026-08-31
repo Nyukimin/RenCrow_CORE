@@ -52,11 +52,15 @@ func (n *recordingVoiceChatIdleNotifier) SetChatBusy(busy bool) {
 func (n *recordingVoiceChatIdleNotifier) SetWorkerBusy(bool) {
 }
 
-func TestInferVoiceChatGatewayURL_PrioritizesExplicitGateway(t *testing.T) {
+func TestInferVoiceChatGatewayURLUsesCanonicalLLMGateway(t *testing.T) {
 	t.Setenv("VOICE_CHAT_GATEWAY_URL", " ws://192.168.1.207:8081/v1/chat/audio/sessions ")
-	t.Setenv("RENCROW_LLM_CHAT_WS", "ws://ignored/v1/chat/audio/sessions")
-	got := inferVoiceChatGatewayURL(&config.Config{})
-	want := "ws://192.168.1.207:8081/v1/chat/audio/sessions"
+	t.Setenv("RENCROW_LLM_CHAT_WS", "ws://192.168.1.31:8081/v1/chat/audio/sessions")
+	cfg := &config.Config{LLMGateway: config.LLMGatewayConfig{
+		Enabled: true,
+		BaseURL: "http://127.0.0.1:8090",
+	}}
+	got := inferVoiceChatGatewayURL(cfg)
+	want := "ws://127.0.0.1:8090/v1/chat/audio/sessions"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -80,14 +84,30 @@ func TestSplitVoiceChatStructuredFinalKeepsUserTextForServer(t *testing.T) {
 	}
 }
 
-func TestInferVoiceChatGatewayURLIsEmptyWithoutGatewayConfiguration(t *testing.T) {
-	t.Setenv("VOICE_CHAT_GATEWAY_URL", "")
-	t.Setenv("RENCROW_LLM_CHAT_WS", "")
-	cfg := &config.Config{}
-	got := inferVoiceChatGatewayURL(cfg)
-	want := ""
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
+func TestInferVoiceChatGatewayURLRequiresEnabledValidCanonicalGateway(t *testing.T) {
+	t.Setenv("VOICE_CHAT_GATEWAY_URL", "ws://192.168.1.207:8081/v1/chat/audio/sessions")
+	t.Setenv("RENCROW_LLM_CHAT_WS", "ws://192.168.1.31:8081/v1/chat/audio/sessions")
+	for _, test := range []struct {
+		name string
+		cfg  *config.Config
+	}{
+		{name: "nil config"},
+		{name: "disabled", cfg: &config.Config{LLMGateway: config.LLMGatewayConfig{
+			BaseURL: "http://127.0.0.1:8090",
+		}}},
+		{name: "empty base url", cfg: &config.Config{LLMGateway: config.LLMGatewayConfig{
+			Enabled: true,
+		}}},
+		{name: "invalid base url", cfg: &config.Config{LLMGateway: config.LLMGatewayConfig{
+			Enabled: true,
+			BaseURL: "not-a-url",
+		}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := inferVoiceChatGatewayURL(test.cfg); got != "" {
+				t.Fatalf("expected empty gateway URL, got %q", got)
+			}
+		})
 	}
 }
 
