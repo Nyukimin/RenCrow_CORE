@@ -11,6 +11,7 @@ const (
 	ErrorSessionMismatch          = "SESSION_MISMATCH"
 	ErrorLLMInferenceFailed       = "LLM_INFERENCE_FAILED"
 	ErrorLLMBusy                  = "LLM_BUSY"
+	ErrorVoiceResultPublishFailed = "VOICE_RESULT_PUBLISH_FAILED"
 	ErrorInvalidRequest           = "INVALID_REQUEST"
 	VoiceInputModeSTTPrimary      = "stt_primary"
 	VoiceInputModeVDSSub          = "vds_sub"

@@ -16,6 +16,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulevoicechat "github.com/Nyukimin/RenCrow_CORE/modules/voicechat"
 	"golang.org/x/net/websocket"
 )
@@ -39,15 +40,17 @@ type voiceChatInputAudioSettings struct {
 }
 
 type voiceChatInputAudioSession struct {
-	utteranceID string
-	sessionID   string
-	channel     string
-	chatID      string
-	prompt      string
-	sampleRate  int
-	channels    int
-	startedAt   time.Time
-	pcm         bytes.Buffer
+	utteranceID  string
+	sessionID    string
+	channel      string
+	chatID       string
+	prompt       string
+	sampleRate   int
+	channels     int
+	startedAt    time.Time
+	commitAt     time.Time
+	firstTokenAt time.Time
+	pcm          bytes.Buffer
 }
 
 func handleVoiceChatInputAudioBridge(gatewayURL string, settings voiceChatInputAudioSettings, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier) http.Handler {
@@ -113,6 +116,7 @@ func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, settings voi
 				if utteranceID := stringField(ev, "utterance_id"); utteranceID != "" {
 					sess.utteranceID = utteranceID
 				}
+				sess.commitAt = time.Now()
 				text, err := postVoiceChatInputAudio(context.Background(), baseURL, settings, sess)
 				if err != nil {
 					_ = sendVoiceChatError(conn, modulevoicechat.ErrorLLMInferenceFailed, err.Error())
@@ -124,12 +128,24 @@ func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, settings voi
 					sess = nil
 					continue
 				}
+				sess.firstTokenAt = time.Now()
+				response, err := processVoiceChatInputAudioFinal(voiceDirect, sess, text)
+				if err != nil {
+					_ = sendVoiceChatError(conn, modulevoicechat.ErrorVoiceResultPublishFailed, "voice response could not be published")
+					sess = nil
+					clearChatBusy()
+					continue
+				}
+				publishedText := strings.TrimSpace(response.Response)
 				if err := sendVoiceChatJSON(conn, map[string]any{
 					"type":         modulevoicechat.EventLLMDelta,
 					"utterance_id": sess.utteranceID,
 					"session_id":   sess.sessionID,
 					"seq":          1,
-					"text":         text,
+					"text":         publishedText,
+					"trace_id":     response.TraceID,
+					"job_id":       response.JobID,
+					"message_id":   response.MessageID,
 				}); err != nil {
 					return err
 				}
@@ -137,12 +153,21 @@ func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, settings voi
 					"type":         modulevoicechat.EventLLMFinal,
 					"utterance_id": sess.utteranceID,
 					"session_id":   sess.sessionID,
-					"text":         text,
+					"text":         publishedText,
+					"trace_id":     response.TraceID,
+					"job_id":       response.JobID,
+					"message_id":   response.MessageID,
 				}); err != nil {
 					return err
 				}
-				log.Printf("[voice-chat] input_audio finalized utterance_id=%s bytes=%d text_len=%d", sess.utteranceID, sess.pcm.Len(), len([]rune(text)))
-				processVoiceChatInputAudioFinalAsync(voiceDirect, sess, text)
+				log.Printf("[voice-chat] input_audio finalized utterance_id=%s trace_id=%s job_id=%s message_id=%s bytes=%d text_len=%d",
+					voiceChatShortLogText(sess.utteranceID, 128),
+					voiceChatShortLogText(response.TraceID, 128),
+					voiceChatShortLogText(response.JobID, 128),
+					voiceChatShortLogText(response.MessageID, 128),
+					sess.pcm.Len(),
+					len([]rune(publishedText)),
+				)
 				sess = nil
 				clearChatBusy()
 			case modulevoicechat.EventSessionCancel:
@@ -252,33 +277,113 @@ func normalizeVoiceChatInputAudioSettings(settings voiceChatInputAudioSettings) 
 	return settings
 }
 
-func processVoiceChatInputAudioFinalAsync(handler voiceDirectFinalHandler, sess *voiceChatInputAudioSession, text string) {
-	if handler == nil || sess == nil || strings.TrimSpace(text) == "" {
-		return
+func processVoiceChatInputAudioFinal(handler voiceDirectFinalHandler, sess *voiceChatInputAudioSession, text string) (orchestrator.ProcessMessageResponse, error) {
+	started := time.Now()
+	if handler == nil {
+		err := voiceChatInputAudioPublishError(fmt.Errorf("voice direct owner is unavailable"))
+		logVoiceChatInputAudioPublishFailure(sess, orchestrator.ProcessMessageResponse{}, err)
+		return orchestrator.ProcessMessageResponse{}, err
 	}
-	snapshot := *sess
-	go processVoiceChatInputAudioFinal(handler, &snapshot, text)
+	if sess == nil || strings.TrimSpace(text) == "" {
+		err := voiceChatInputAudioPublishError(fmt.Errorf("voice direct final input is incomplete"))
+		logVoiceChatInputAudioPublishFailure(sess, orchestrator.ProcessMessageResponse{}, err)
+		return orchestrator.ProcessMessageResponse{}, err
+	}
+	req := orchestrator.ProcessVoiceDirectRequest{
+		UtteranceID:  sess.utteranceID,
+		SessionID:    sess.sessionID,
+		Channel:      sess.channel,
+		ChatID:       sess.chatID,
+		Prompt:       sess.prompt,
+		SampleRate:   sess.sampleRate,
+		Channels:     sess.channels,
+		StartedAt:    sess.startedAt,
+		CommitAt:     sess.commitAt,
+		FirstTokenAt: sess.firstTokenAt,
+		FinalText:    text,
+	}
+	response, err := handler.ProcessVoiceDirect(context.Background(), req)
+	if err != nil {
+		publishErr := voiceChatInputAudioPublishError(err)
+		logVoiceChatInputAudioPublishFailure(sess, response, publishErr)
+		return orchestrator.ProcessMessageResponse{}, publishErr
+	}
+	if err := validateVoiceChatProcessResponseIdentity(response); err != nil {
+		publishErr := voiceChatInputAudioPublishError(err)
+		logVoiceChatInputAudioPublishFailure(sess, response, publishErr)
+		return orchestrator.ProcessMessageResponse{}, publishErr
+	}
+	publishedText := strings.TrimSpace(response.Response)
+	if publishedText == "" {
+		publishErr := voiceChatInputAudioPublishError(fmt.Errorf("voice direct owner response is empty"))
+		logVoiceChatInputAudioPublishFailure(sess, response, publishErr)
+		return orchestrator.ProcessMessageResponse{}, publishErr
+	}
+	log.Printf("[voice-chat] ProcessVoiceDirect completed utterance_id=%s trace_id=%s job_id=%s message_id=%s text_len=%d elapsed_ms=%d",
+		voiceChatShortLogText(req.UtteranceID, 128),
+		voiceChatShortLogText(response.TraceID, 128),
+		voiceChatShortLogText(response.JobID, 128),
+		voiceChatShortLogText(response.MessageID, 128),
+		len([]rune(publishedText)),
+		time.Since(started).Milliseconds(),
+	)
+	return response, nil
 }
 
-func processVoiceChatInputAudioFinal(handler voiceDirectFinalHandler, sess *voiceChatInputAudioSession, text string) {
-	started := time.Now()
-	req := orchestrator.ProcessVoiceDirectRequest{
-		UtteranceID: sess.utteranceID,
-		SessionID:   sess.sessionID,
-		Channel:     sess.channel,
-		ChatID:      sess.chatID,
-		Prompt:      sess.prompt,
-		SampleRate:  sess.sampleRate,
-		Channels:    sess.channels,
-		StartedAt:   sess.startedAt,
-		FinalText:   text,
+func validateVoiceChatProcessResponseIdentity(response orchestrator.ProcessMessageResponse) error {
+	if strings.TrimSpace(response.TraceID) != response.TraceID {
+		return fmt.Errorf("trace_id contains surrounding whitespace")
 	}
-	handler.NotifyVoiceDirectFirstToken(context.Background(), req, task.NewJobID(), time.Now())
-	if _, err := handler.ProcessVoiceDirect(context.Background(), req); err != nil {
-		log.Printf("[voice-chat] ProcessVoiceDirect failed utterance_id=%s: %v", req.UtteranceID, err)
-		return
+	traceID := modulecore.TraceID(response.TraceID)
+	if err := traceID.Validate(); err != nil {
+		return fmt.Errorf("trace_id is invalid: %w", err)
 	}
-	log.Printf("[voice-chat] ProcessVoiceDirect completed utterance_id=%s text_len=%d elapsed_ms=%d", req.UtteranceID, len([]rune(text)), time.Since(started).Milliseconds())
+	if strings.TrimSpace(response.JobID) != response.JobID {
+		return fmt.Errorf("job_id contains surrounding whitespace")
+	}
+	jobID, err := task.ParseJobID(response.JobID)
+	if err != nil || jobID.IsZero() {
+		if err == nil {
+			err = fmt.Errorf("job_id is empty")
+		}
+		return fmt.Errorf("job_id is invalid: %w", err)
+	}
+	if jobID.String() == string(traceID) {
+		return fmt.Errorf("trace_id must differ from job_id")
+	}
+	if strings.TrimSpace(response.MessageID) != response.MessageID {
+		return fmt.Errorf("message_id contains surrounding whitespace")
+	}
+	messageID := modulecore.MessageID(response.MessageID)
+	if err := messageID.Validate(); err != nil {
+		return fmt.Errorf("message_id is invalid: %w", err)
+	}
+	return nil
+}
+
+func voiceChatInputAudioPublishError(err error) error {
+	if err == nil {
+		err = fmt.Errorf("voice result publish failed")
+	}
+	return fmt.Errorf("%s: %w", modulevoicechat.ErrorVoiceResultPublishFailed, err)
+}
+
+func logVoiceChatInputAudioPublishFailure(sess *voiceChatInputAudioSession, response orchestrator.ProcessMessageResponse, err error) {
+	utteranceID := ""
+	if sess != nil {
+		utteranceID = sess.utteranceID
+	}
+	errText := ""
+	if err != nil {
+		errText = voiceChatShortLogText(err.Error(), 160)
+	}
+	log.Printf("[voice-chat] input_audio voice result publish failed utterance_id=%s trace_id=%s job_id=%s message_id=%s error=%s",
+		voiceChatShortLogText(utteranceID, 128),
+		voiceChatShortLogText(response.TraceID, 128),
+		voiceChatShortLogText(response.JobID, 128),
+		voiceChatShortLogText(response.MessageID, 128),
+		errText,
+	)
 }
 
 func encodePCM16WAV(pcm []byte, sampleRate, channels int) []byte {

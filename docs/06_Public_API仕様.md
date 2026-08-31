@@ -80,6 +80,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `POST /viewer/movie-catalog/preference` | 映画・人物の認知・好み評価を保存 |
 | `/viewer/active-control`, `/viewer/tts/*`, `/viewer/stt/*` | audio/control bridge |
 | `WS /stt` | Viewerの同一origin音声入力。COREが音声chunkをRenCrow_STTのHTTP公開APIへ中継する |
+| `WS /voice-chat` | Viewerの`input_audio`音声入力。COREがRenCrow LLM Gatewayへ送り、同期した受付owner receiptを返してから応答eventを投影する（`/voice-chat-ws`は互換alias） |
 | `POST /stt/chat-input` | CMDまたはPORTAL Chatが送る`multipart/form-data`の`file`（WAV）をRenCrow_STT経由で文字起こしし、Chat入力用envelopeを返す。Tailscale Serve経由のPORTAL ChatはPORTALが確定した匿名化済み認証Actorを1値だけ要求する |
 | `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewerの画像生成と結果表示 |
 | `POST /viewer/recipient-selection` | client-localなchat recipient選択の通知event |
@@ -96,6 +97,31 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /viewer/trade/shadow/outcomes/report?study_id=<id>` または `?event_id=<audit_ref>` | Shadow Outcome台帳を検証して読み取り専用集計を返す。write→read handoffの`audit_ref`はexact `shadow-event/sha256:<64 lowercase hex>` |
 | `POST /viewer/trade/shadow/outcomes/reviews` | Outcome reportのhashとlatest event hashを束縛した独立reviewを別台帳へ追記。promotion／Portfolio変更／外部実行は行わない |
 | `GET /viewer/trade/shadow/outcomes/reviews/report?study_id=<id>` | Review ledgerを検証し、独立reviewの有無を返す読み取り専用projection |
+
+### WS /voice-chat
+
+`WS /voice-chat`（互換alias: `/voice-chat-ws`）は、Viewerの同一originから受けた
+`input_audio`音声をCOREがRenCrow LLM Gatewayへ渡す音声Chat routeです。通常Chatと同じく
+thinkingは無効です。`session.ready`は`session.start`を受理した通知であり、Canonical Event
+appendを完了したowner receiptではありません。
+
+`session.commit`後、COREはLLM resultを受け取っても直ちに成功eventを送信しません。既存の
+`ProcessVoiceDirect`を同期呼出しし、Canonical Event appendとowner finalizationが成功した後に、
+次の2 eventを順に投影します。
+
+- `llm.delta`: `trace_id`、`job_id`、`message_id`を含む最初の応答event
+- `llm.final`: 同じ3つのIDを含む完成応答event。`ProcessVoiceDirect`成功後だけ送信される
+
+両eventのクライアント本文はLLMのraw resultではなく、同期`ProcessVoiceDirect`が返す
+`ProcessMessageResponse.Response`をtrimしたowner確定responseです。owner確定responseが空の場合も
+`VOICE_RESULT_PUBLISH_FAILED`を返し、成功eventを送信しません。
+
+同一受付の`llm.delta`と`llm.final`の3つのIDは、`ProcessVoiceDirect`が返す
+`ProcessMessageResponse`の値と完全一致し、`trace_id`はCanonical `trc_` ID、`message_id`は
+Canonical `msg_` ID、`job_id`は有効なJob IDで、`trace_id`と`job_id`は同一値になりません。
+owner finalizationが失敗した場合、owner確定responseが空の場合、または返却IDが欠落・不正・衝突した場合は
+`{"type":"error","error_code":"VOICE_RESULT_PUBLISH_FAILED"}`を返し、`llm.final`を成功扱いで
+送信しません。
 
 `GET /viewer/databases/catalog`およびAgent Tool `data_capability.describe`の各entryは、
 `name`、任意のlogicalな`physical_key`、`owner`、`categories`、`status`、安全なoperation、必要な場合の

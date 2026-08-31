@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulevoicechat "github.com/Nyukimin/RenCrow_CORE/modules/voicechat"
 	"golang.org/x/net/websocket"
 )
@@ -34,6 +36,62 @@ func (h *slowVoiceDirectHandler) ProcessVoiceDirect(context.Context, orchestrato
 }
 
 func (h *slowVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, task.JobID, time.Time) {
+}
+
+type inputAudioVoiceDirectHandler struct {
+	mu          sync.Mutex
+	response    orchestrator.ProcessMessageResponse
+	err         error
+	requests    []orchestrator.ProcessVoiceDirectRequest
+	notifyCalls int
+	started     chan struct{}
+	release     chan struct{}
+	startOnce   sync.Once
+	releaseOnce sync.Once
+}
+
+func (h *inputAudioVoiceDirectHandler) ProcessVoiceDirect(_ context.Context, req orchestrator.ProcessVoiceDirectRequest) (orchestrator.ProcessMessageResponse, error) {
+	h.mu.Lock()
+	h.requests = append(h.requests, req)
+	h.startOnce.Do(func() {
+		if h.started != nil {
+			close(h.started)
+		}
+	})
+	response, err, release := h.response, h.err, h.release
+	h.mu.Unlock()
+	if release != nil {
+		<-release
+	}
+	return response, err
+}
+
+func (h *inputAudioVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, task.JobID, time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.notifyCalls++
+}
+
+func (h *inputAudioVoiceDirectHandler) snapshot() ([]orchestrator.ProcessVoiceDirectRequest, int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]orchestrator.ProcessVoiceDirectRequest(nil), h.requests...), h.notifyCalls
+}
+
+func (h *inputAudioVoiceDirectHandler) unblock() {
+	if h == nil || h.release == nil {
+		return
+	}
+	h.releaseOnce.Do(func() { close(h.release) })
+}
+
+func validInputAudioVoiceDirectResponse(text string) orchestrator.ProcessMessageResponse {
+	return orchestrator.ProcessMessageResponse{
+		Response:  text,
+		JobID:     task.NewJobID().String(),
+		TraceID:   string(modulecore.NewTraceID()),
+		MessageID: string(modulecore.NewMessageID()),
+	}
 }
 
 type recordingVoiceChatIdleNotifier struct {
@@ -322,6 +380,9 @@ func TestVoiceChatWebSocketBridgeE2E_FinalRelayDoesNotWaitForVoiceDirectProcessi
 
 func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 	pcm := rawPCM16Chunk()
+	const rawLLMText = `{"user_text":"Mioさんいますか","reply":"Gatewayのraw応答"}`
+	const publishedText = "Owner確定応答"
+	voiceDirect := &inputAudioVoiceDirectHandler{response: validInputAudioVoiceDirectResponse(publishedText)}
 	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
@@ -356,7 +417,7 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 			t.Fatal("missing input_audio data")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"音声を確認しました"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"user_text\":\"Mioさんいますか\",\"reply\":\"Gatewayのraw応答\"}"}}]}`))
 	}))
 	defer llm.Close()
 
@@ -368,7 +429,7 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 		TopP:        float64Ptr(0.9),
 		TopK:        intPtr(40),
 		MinP:        float64Ptr(0.0),
-	}, nil, nil))
+	}, voiceDirect, nil))
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 
@@ -398,20 +459,239 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 	if err := websocket.Message.Receive(conn, &delta); err != nil {
 		t.Fatalf("receive delta: %v", err)
 	}
-	if !strings.Contains(delta, `"type":"llm.delta"`) || !strings.Contains(delta, `"text":"音声を確認しました"`) {
+	var deltaEvent map[string]any
+	if err := json.Unmarshal([]byte(delta), &deltaEvent); err != nil {
+		t.Fatalf("decode delta event: %v", err)
+	}
+	if deltaEvent["type"] != modulevoicechat.EventLLMDelta || deltaEvent["text"] != publishedText {
 		t.Fatalf("unexpected delta event: %s", delta)
 	}
 	var final string
 	if err := websocket.Message.Receive(conn, &final); err != nil {
 		t.Fatalf("receive final: %v", err)
 	}
-	if !strings.Contains(final, `"type":"llm.final"`) || !strings.Contains(final, `"text":"音声を確認しました"`) {
+	var finalEvent map[string]any
+	if err := json.Unmarshal([]byte(final), &finalEvent); err != nil {
+		t.Fatalf("decode final event: %v", err)
+	}
+	if finalEvent["type"] != modulevoicechat.EventLLMFinal || finalEvent["text"] != publishedText {
 		t.Fatalf("unexpected final event: %s", final)
+	}
+	requests, notifyCalls := voiceDirect.snapshot()
+	if len(requests) != 1 {
+		t.Fatalf("expected one ProcessVoiceDirect request, got %d", len(requests))
+	}
+	if notifyCalls != 0 {
+		t.Fatalf("input_audio must not notify a separate first-token job, got %d calls", notifyCalls)
+	}
+	if requests[0].FirstTokenAt.IsZero() {
+		t.Fatal("input_audio ProcessVoiceDirect request must carry FirstTokenAt")
+	}
+	if requests[0].FinalText != rawLLMText {
+		t.Fatalf("ProcessVoiceDirect must receive raw LLM text, got %q", requests[0].FinalText)
+	}
+	for _, event := range []map[string]any{deltaEvent, finalEvent} {
+		if event["trace_id"] != voiceDirect.response.TraceID || event["job_id"] != voiceDirect.response.JobID || event["message_id"] != voiceDirect.response.MessageID {
+			t.Fatalf("event identity does not match ProcessVoiceDirect response: event=%#v response=%+v", event, voiceDirect.response)
+		}
+	}
+}
+
+func TestVoiceChatInputAudioBridge_FinalizesBeforePublishingLLMEvents(t *testing.T) {
+	pcm := rawPCM16Chunk()
+	voiceDirect := &inputAudioVoiceDirectHandler{
+		response: validInputAudioVoiceDirectResponse("音声を確認しました"),
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	defer voiceDirect.unblock()
+	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"音声を確認しました"}}]}`))
+	}))
+	defer llm.Close()
+
+	mux := http.NewServeMux()
+	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, voiceDirect, nil))
+	bridge := httptest.NewServer(mux)
+	defer bridge.Close()
+
+	conn, err := websocket.Dial("ws"+strings.TrimPrefix(bridge.URL, "http")+modulevoicechat.RoutePathPrimary, "", "http://localhost/")
+	if err != nil {
+		t.Fatalf("dial bridge websocket: %v", err)
+	}
+	defer conn.Close()
+
+	if err := websocket.Message.Send(conn, `{"type":"session.start","utterance_id":"utt-1","sample_rate":16000,"channels":1,"format":"pcm16le","channel":"viewer"}`); err != nil {
+		t.Fatalf("send start: %v", err)
+	}
+	var ready string
+	if err := websocket.Message.Receive(conn, &ready); err != nil {
+		t.Fatalf("receive ready: %v", err)
+	}
+	if err := websocket.Message.Send(conn, pcm); err != nil {
+		t.Fatalf("send pcm: %v", err)
+	}
+	if err := websocket.Message.Send(conn, `{"type":"session.commit","utterance_id":"utt-1"}`); err != nil {
+		t.Fatalf("send commit: %v", err)
+	}
+
+	firstEvent := make(chan string, 1)
+	go func() {
+		var event string
+		if err := websocket.Message.Receive(conn, &event); err != nil {
+			firstEvent <- "receive error: " + err.Error()
+			return
+		}
+		firstEvent <- event
+	}()
+	select {
+	case event := <-firstEvent:
+		t.Fatalf("input_audio published %s before ProcessVoiceDirect completed", event)
+	case <-voiceDirect.started:
+	case <-time.After(time.Second):
+		t.Fatal("ProcessVoiceDirect did not start")
+	}
+	select {
+	case event := <-firstEvent:
+		t.Fatalf("input_audio published event while ProcessVoiceDirect was blocked: %s", event)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	voiceDirect.unblock()
+	var delta string
+	select {
+	case delta = <-firstEvent:
+	case <-time.After(time.Second):
+		t.Fatal("llm.delta was not published after ProcessVoiceDirect completed")
+	}
+	var deltaEvent map[string]any
+	if err := json.Unmarshal([]byte(delta), &deltaEvent); err != nil {
+		t.Fatalf("decode delta event: %v", err)
+	}
+	if deltaEvent["type"] != modulevoicechat.EventLLMDelta {
+		t.Fatalf("first event = %#v, want llm.delta", deltaEvent)
+	}
+	var final string
+	if err := websocket.Message.Receive(conn, &final); err != nil {
+		t.Fatalf("receive final: %v", err)
+	}
+	var finalEvent map[string]any
+	if err := json.Unmarshal([]byte(final), &finalEvent); err != nil {
+		t.Fatalf("decode final event: %v", err)
+	}
+	if finalEvent["type"] != modulevoicechat.EventLLMFinal {
+		t.Fatalf("final event = %#v, want llm.final", finalEvent)
+	}
+	for _, event := range []map[string]any{deltaEvent, finalEvent} {
+		if event["trace_id"] != voiceDirect.response.TraceID || event["job_id"] != voiceDirect.response.JobID || event["message_id"] != voiceDirect.response.MessageID {
+			t.Fatalf("event identity does not match finalized response: event=%#v response=%+v", event, voiceDirect.response)
+		}
+	}
+}
+
+func TestVoiceChatInputAudioBridge_FailsClosedWhenVoiceResultCannotBePublished(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		response orchestrator.ProcessMessageResponse
+		err      error
+	}{
+		{
+			name: "owner error",
+			err:  fmt.Errorf("canonical append failed"),
+		},
+		{
+			name: "invalid trace identity",
+			response: orchestrator.ProcessMessageResponse{
+				JobID:     task.NewJobID().String(),
+				TraceID:   "not-a-trace",
+				MessageID: string(modulecore.NewMessageID()),
+			},
+		},
+		{
+			name: "trace and job identity collide",
+			response: func() orchestrator.ProcessMessageResponse {
+				traceID := string(modulecore.NewTraceID())
+				return orchestrator.ProcessMessageResponse{
+					JobID:     traceID,
+					TraceID:   traceID,
+					MessageID: string(modulecore.NewMessageID()),
+				}
+			}(),
+		},
+		{
+			name: "missing message identity",
+			response: orchestrator.ProcessMessageResponse{
+				JobID:   task.NewJobID().String(),
+				TraceID: string(modulecore.NewTraceID()),
+			},
+		},
+		{
+			name: "missing owner response",
+			response: func() orchestrator.ProcessMessageResponse {
+				response := validInputAudioVoiceDirectResponse(" ")
+				response.Response = ""
+				return response
+			}(),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pcm := rawPCM16Chunk()
+			voiceDirect := &inputAudioVoiceDirectHandler{response: test.response, err: test.err}
+			llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"音声を確認しました"}}]}`))
+			}))
+			defer llm.Close()
+
+			mux := http.NewServeMux()
+			registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, voiceDirect, nil))
+			bridge := httptest.NewServer(mux)
+			defer bridge.Close()
+
+			conn, err := websocket.Dial("ws"+strings.TrimPrefix(bridge.URL, "http")+modulevoicechat.RoutePathPrimary, "", "http://localhost/")
+			if err != nil {
+				t.Fatalf("dial bridge websocket: %v", err)
+			}
+			defer conn.Close()
+			if err := websocket.Message.Send(conn, `{"type":"session.start","utterance_id":"utt-1","sample_rate":16000,"channels":1,"format":"pcm16le","channel":"viewer"}`); err != nil {
+				t.Fatalf("send start: %v", err)
+			}
+			var ready string
+			if err := websocket.Message.Receive(conn, &ready); err != nil {
+				t.Fatalf("receive ready: %v", err)
+			}
+			if err := websocket.Message.Send(conn, pcm); err != nil {
+				t.Fatalf("send pcm: %v", err)
+			}
+			if err := websocket.Message.Send(conn, `{"type":"session.commit","utterance_id":"utt-1"}`); err != nil {
+				t.Fatalf("send commit: %v", err)
+			}
+
+			var failure string
+			if err := websocket.Message.Receive(conn, &failure); err != nil {
+				t.Fatalf("receive failure: %v", err)
+			}
+			var failureEvent map[string]any
+			if err := json.Unmarshal([]byte(failure), &failureEvent); err != nil {
+				t.Fatalf("decode failure event: %v", err)
+			}
+			if failureEvent["type"] != modulevoicechat.EventError || failureEvent["error_code"] != modulevoicechat.ErrorVoiceResultPublishFailed {
+				t.Fatalf("unexpected failure event: %#v", failureEvent)
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			var unexpected string
+			if err := websocket.Message.Receive(conn, &unexpected); err == nil {
+				t.Fatalf("unexpected success event after publish failure: %s", unexpected)
+			}
+			_ = conn.SetReadDeadline(time.Time{})
+		})
 	}
 }
 
 func TestVoiceChatInputAudioBridge_InterruptsIdleChatDuringVoiceSession(t *testing.T) {
 	pcm := rawPCM16Chunk()
+	voiceDirect := &inputAudioVoiceDirectHandler{response: validInputAudioVoiceDirectResponse("音声を確認しました")}
 	llm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"音声を確認しました"}}]}`))
@@ -420,7 +700,7 @@ func TestVoiceChatInputAudioBridge_InterruptsIdleChatDuringVoiceSession(t *testi
 
 	idle := &recordingVoiceChatIdleNotifier{}
 	mux := http.NewServeMux()
-	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, nil, idle))
+	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, voiceDirect, idle))
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 
