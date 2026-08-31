@@ -118,6 +118,7 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	published, err := voiceinput.Publisher{
 		Events:     o.events,
 		TurnLogger: o.sessionTurnLogger,
+		TraceID:    traceID,
 		NewJobID: func() string {
 			return jobID.String()
 		},

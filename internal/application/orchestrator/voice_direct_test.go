@@ -24,13 +24,16 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 	}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
 	rec := &recordingEventListener{}
+	turns := &recordingCorrelatedTurnLogger{}
 	orch.SetEventListener(rec)
+	orch.SetSessionTurnLogger(turns)
 
 	resp, err := orch.ProcessVoiceDirect(context.Background(), ProcessVoiceDirectRequest{
 		UtteranceID: "utt-1",
 		SessionID:   "viewer-session",
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
+		UserText:    "おはよう",
 		FinalText:   "おはよう",
 		StartedAt:   time.Now(),
 	})
@@ -65,6 +68,21 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 		if ev.JobID != "" && ev.TraceID != resp.TraceID {
 			t.Fatalf("voice event lost root trace: %+v", ev)
 		}
+	}
+	if len(turns.turns) != 2 {
+		t.Fatalf("expected correlated user and assistant session logs, got %#v", turns.turns)
+	}
+	if turns.turns[0].role != "user" || turns.turns[1].role != "assistant" {
+		t.Fatalf("unexpected correlated session log roles: %#v", turns.turns)
+	}
+	if modulecore.TraceID(turns.turns[0].traceID).Validate() != nil || turns.turns[0].traceID != resp.TraceID {
+		t.Fatalf("user session log lost canonical root trace: %+v response=%+v", turns.turns[0], resp)
+	}
+	if modulecore.TraceID(turns.turns[1].traceID).Validate() != nil || turns.turns[1].traceID != resp.TraceID {
+		t.Fatalf("assistant session log lost canonical root trace: %+v response=%+v", turns.turns[1], resp)
+	}
+	if turns.turns[1].jobID != resp.JobID {
+		t.Fatalf("assistant session log job identity drifted: %+v response=%+v", turns.turns[1], resp)
 	}
 }
 

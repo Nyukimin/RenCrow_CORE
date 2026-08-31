@@ -3,6 +3,8 @@ package voiceinput
 import (
 	"fmt"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -31,6 +33,7 @@ type CorrelatedSessionTurnLogger interface {
 type Publisher struct {
 	Events       EventEmitter
 	TurnLogger   SessionTurnLogger
+	TraceID      modulecore.TraceID
 	NewJobID     func() string
 	NewMessageID func() string
 	EmitMetric   func(kind, point string, startedAt time.Time, route, jobID, sessionID, channel, chatID, detail string)
@@ -47,12 +50,18 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 	if err := result.Validate(); err != nil {
 		return PublishResult{}, err
 	}
+	if err := p.TraceID.Validate(); err != nil {
+		return PublishResult{}, fmt.Errorf("voice publisher trace_id is invalid: %w", err)
+	}
 	if result.Timings.PublishedAt.IsZero() {
 		result.Timings.PublishedAt = time.Now()
 	}
 	jobID := ""
 	if p.NewJobID != nil {
 		jobID = p.NewJobID()
+	}
+	if jobID != "" && jobID == string(p.TraceID) {
+		return PublishResult{}, fmt.Errorf("voice publisher trace_id must differ from job_id")
 	}
 	userMessageID := p.newMessageID()
 	responseMessageID := p.newMessageID()
@@ -92,9 +101,9 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 	if p.TurnLogger != nil {
 		if correlated, ok := p.TurnLogger.(CorrelatedSessionTurnLogger); ok {
 			if result.UserText != "" {
-				correlated.WriteUserWithIdentity(result.SessionID, result.Channel, userMessageID, jobID, result.UserText)
+				correlated.WriteUserWithIdentity(result.SessionID, result.Channel, userMessageID, string(p.TraceID), result.UserText)
 			}
-			correlated.WriteAssistantWithIdentity(result.SessionID, result.Channel, "CHAT", jobID, responseMessageID, jobID, result.Reply)
+			correlated.WriteAssistantWithIdentity(result.SessionID, result.Channel, "CHAT", jobID, responseMessageID, string(p.TraceID), result.Reply)
 		} else {
 			if result.UserText != "" {
 				p.TurnLogger.WriteUser(result.SessionID, result.Channel, result.UserText)
@@ -102,7 +111,7 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 			p.TurnLogger.WriteAssistant(result.SessionID, result.Channel, "CHAT", jobID, result.Reply)
 		}
 	}
-	return PublishResult{JobID: jobID, MessageID: responseMessageID, TraceID: jobID, Result: result}, nil
+	return PublishResult{JobID: jobID, MessageID: responseMessageID, TraceID: string(p.TraceID), Result: result}, nil
 }
 
 func (p Publisher) newMessageID() string {
