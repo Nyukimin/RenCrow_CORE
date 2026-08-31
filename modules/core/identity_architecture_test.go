@@ -229,3 +229,34 @@ func TestCanonicalEventRuntimeHasNoLegacyOwnerEventContract(t *testing.T) {
 		t.Fatalf("legacy Event contract remains in runtime source: %v", violations)
 	}
 }
+
+func TestCurrentDocumentationDoesNotReuseJobIDAsTraceID(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve current file")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	documents := []string{
+		"docs/02_機能仕様.md",
+		"docs/04_アーキテクチャ概要.md",
+		"docs/06_Public_API仕様.md",
+		"docs/10_ログ仕様.md",
+	}
+	legacyClaims := []string{
+		"rootの`trace_id`には`job_id`と同じ",
+		"root `trace_id`は受付時の`job_id`と同じ",
+		"root `trace_id`は`job_id`と同じ",
+		`"trace_id":"job-..."`,
+	}
+	for _, document := range documents {
+		content, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(document)))
+		if err != nil {
+			t.Fatalf("read %s: %v", document, err)
+		}
+		for _, claim := range legacyClaims {
+			if strings.Contains(string(content), claim) {
+				t.Errorf("%s retains legacy JobID/TraceID equality claim %q", document, claim)
+			}
+		}
+	}
+}
