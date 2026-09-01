@@ -452,6 +452,12 @@ runtime の変更を行わず、それらの成功を主張しない。
   `target-event-store.db`、`target-l1.db`、`target-archive.db` を owner helper で
   一回だけ materialize する。root は 0700、DB と build receipt は 0600、SQLite
   sidecar は zero、ready root の entry set はこの五つだけである。
+- captured Event Store の source schema／non-DCI hash は入力世代を束縛するが、output
+  schema と同一であることは要求しない。captured clone は current Event Store owner の
+  `NewSQLiteStore` だけで canonicalize し、DCI append 前の schema／full logical hash を
+  output baseline とする。append 後の schema は baseline と同一、planned DCI row を除外した
+  non-DCI hash は baseline full hash と同一でなければならない。source の既存 envelope／
+  dependency は別の exact row comparison で不変を証明する。
 - receipt は capture／dry-run hash、artifact set、manifest の exact projection、
   source hash maps、mapping／ID-set／event-plan hash、counts、planned zero counters、
   四 output の file hash／bytes／role-specific schema／logical／non-DCI hash、owner
@@ -483,6 +489,26 @@ runtime の変更を行わず、それらの成功を主張しない。
   source drift、non-fresh／symlink root、各 output 後の cleanup、receipt writer failure、
   owner evidence／hash／zero counter tamper、repeat-build determinism、CLI build flag
   isolation、stdout 一 JSON／stderr bounded code／path-free receipt を検査する。
+
+- **Failure:** previous-generation Event Store source と current owner が canonicalize した
+  output の schema hash を無条件に同一比較し、owner が追加する必須 trace indexまで
+  `target_hash_mismatch`として拒否した。
+- **Problem:** source保全checkが正規schema migrationをschema driftと同一視し、readyな
+  production captureからoffline buildを作れない。一方で単にschema比較を外すと、owner外の
+  schema変更やnon-DCI driftを見逃す。
+- **Cause:** captured input boundaryとcurrent owner output boundaryの二世代を分けず、
+  source schema／non-DCI hashをoutputの期待値へ直接流用した。
+- **Lesson:** source hashは入力の不変性へ使い、outputはowner migration直後・DCI append前の
+  canonical baselineへ束縛する。既存rowのexact比較はschema-aware hashとは別に維持する。
+- **Invariant:** output schemaはowner canonical baselineと同一で、planned DCI rowを除いた
+  output non-DCI hashはbaseline full hashと同一である。captured source bytesと既存 Event
+  Store rowは不変であり、owner以外のschema routeは存在しない。
+- **Enforcement:** captured clone、`NewSQLiteStore`、close、read-only logical baseline、owner
+  reopen／append、post-append schema／non-DCI hash比較、exact envelope／dependency comparison、
+  failure cleanupを一つのhelper chainで強制する。
+- **Tests:** current trace indexを持たないprevious-generation sourceがowner canonicalizationで
+  indexを一つだけ取得して成功する経路、source bytes不変、post-append arbitrary schema drift、
+  non-DCI event drift、target cleanupを検査する。
 
 ## D2d-2b service-manager receipt boundary
 

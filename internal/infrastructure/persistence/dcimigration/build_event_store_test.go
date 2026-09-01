@@ -67,6 +67,63 @@ func TestCreateBuiltEventStorePreservesSourceAndAppendsExactPlan(t *testing.T) {
 	}
 }
 
+func TestCreateBuiltEventStoreAcceptsCanonicalOwnerSchemaUpgrade(t *testing.T) {
+	fixture := newBuildEventStoreFixtureWithSourceMutation(t, func(t *testing.T, path string) {
+		t.Helper()
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, dropErr := db.Exec(`DROP INDEX event_envelope_trace_idx`)
+		closeErr := db.Close()
+		if dropErr != nil {
+			t.Fatal(dropErr)
+		}
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	})
+	sourceBefore, err := os.ReadFile(fixture.source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evidence, err := createBuiltEventStore(context.Background(), fixture.source, fixture.target, fixture.snapshot, fixture.plan)
+	if err != nil {
+		t.Fatalf("createBuiltEventStore() error = %v", err)
+	}
+	if evidence.OutputSchemaSHA256 == evidence.SourceSchemaSHA256 {
+		t.Fatal("canonical owner schema upgrade did not change the previous-generation source schema")
+	}
+	if evidence.OutputNonDCISHA256 == evidence.SourceNonDCISHA256 {
+		t.Fatal("schema-aware non-DCI hashes unexpectedly matched across the owner schema upgrade")
+	}
+	sourceAfter, err := os.ReadFile(fixture.source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(sourceAfter) != string(sourceBefore) {
+		t.Fatal("Event Store source bytes changed during owner schema upgrade")
+	}
+
+	db, err := sql.Open("sqlite", fixture.target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var indexCount int
+	queryErr := db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='index' AND name='event_envelope_trace_idx'`).Scan(&indexCount)
+	closeErr := db.Close()
+	if queryErr != nil {
+		t.Fatal(queryErr)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if indexCount != 1 {
+		t.Fatalf("canonical trace index count = %d, want 1", indexCount)
+	}
+}
+
 func TestCreateBuiltEventStoreRejectsInvalidPathsAndCanceledContext(t *testing.T) {
 	fixture := newBuildEventStoreFixture(t)
 	tests := []struct {
@@ -371,6 +428,10 @@ type buildEventStoreFixture struct {
 }
 
 func newBuildEventStoreFixture(t *testing.T) buildEventStoreFixture {
+	return newBuildEventStoreFixtureWithSourceMutation(t, nil)
+}
+
+func newBuildEventStoreFixtureWithSourceMutation(t *testing.T, mutate func(*testing.T, string)) buildEventStoreFixture {
 	t.Helper()
 	sourceRoot := makeTestSnapshot(t, "build-event-store-source")
 	eventStorePath := filepath.Join(sourceRoot, "source-event-store")
@@ -391,6 +452,9 @@ func newBuildEventStoreFixture(t *testing.T) buildEventStoreFixture {
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if mutate != nil {
+		mutate(t, eventStorePath)
 	}
 
 	snapshotRoot := filepath.Join(t.TempDir(), "captured")

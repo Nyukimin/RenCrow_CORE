@@ -140,6 +140,14 @@ func createBuiltEventStore(ctx context.Context, source, target string, snapshot 
 		return buildEventStoreEvidence{}, err
 	}
 
+	canonicalBaseline, err := canonicalizeBuiltEventStore(ctx, targetPath)
+	if err != nil {
+		return buildEventStoreCauseErrorResult(err, "target_store")
+	}
+	if err := ctx.Err(); err != nil {
+		return buildEventStoreEvidence{}, err
+	}
+
 	store, err := eventstore.NewSQLiteStore(targetPath)
 	if err != nil {
 		return buildEventStoreEvidence{}, buildEventStoreError("target_store")
@@ -195,7 +203,7 @@ func createBuiltEventStore(ctx context.Context, source, target string, snapshot 
 	if err := verifyBuildEventStoreOutput(sourceRows, outputRows, planned); err != nil {
 		return buildEventStoreCauseErrorResult(err, "target_verify")
 	}
-	if logical.Schema != sourceHashes.Schema || logical.NonDCI != sourceHashes.NonDCI || logical.Full == "" {
+	if logical.Schema != canonicalBaseline.Schema || logical.NonDCI != canonicalBaseline.Full || logical.Full == "" {
 		return buildEventStoreEvidence{}, buildEventStoreError("target_hash_mismatch")
 	}
 	if runtime.GOOS != "windows" {
@@ -234,6 +242,34 @@ func createBuiltEventStore(ctx context.Context, source, target string, snapshot 
 	}
 	created = false
 	return evidence, nil
+}
+
+// canonicalizeBuiltEventStore lets the current Event Store owner apply its
+// schema migration to the captured clone before DCI events are appended. The
+// resulting logical state is the only valid output baseline: captured source
+// hashes still bind the input, while owner-added indexes may intentionally
+// make the output schema-aware hash differ from the previous generation.
+func canonicalizeBuiltEventStore(ctx context.Context, target string) (logicalHashes, error) {
+	store, err := eventstore.NewSQLiteStore(target)
+	if err != nil {
+		return logicalHashes{}, err
+	}
+	if err := store.Close(); err != nil {
+		return logicalHashes{}, err
+	}
+	db, err := openSQLiteReadOnly(ctx, target)
+	if err != nil {
+		return logicalHashes{}, err
+	}
+	logical, hashErr := hashSQLiteLogical(ctx, db, nil)
+	closeErr := db.Close()
+	if hashErr != nil {
+		return logicalHashes{}, hashErr
+	}
+	if closeErr != nil {
+		return logicalHashes{}, closeErr
+	}
+	return logical, nil
 }
 
 func validateBuildEventStorePlan(snapshot sourceSnapshot, plan migrationPlan) (map[modulecore.EventID]modulecore.EventEnvelope, error) {
