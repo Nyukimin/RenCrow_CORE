@@ -45,6 +45,12 @@ for legacy in \
 done
 contains 'for legacy_dropin in' "${INSTALLER}"
 contains 'rm -f -- "${SYSTEMD_USER_DIR}/rencrow.service.d/${legacy_dropin}"' "${INSTALLER}"
+contains 'SYSTEMD_USER_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/systemd/user"' "${INSTALLER}"
+contains 'install -m 0644 "systemd/user/rencrow.service" "${SYSTEMD_USER_DATA_DIR}/rencrow.service"' "${INSTALLER}"
+contains 'cmp -s "systemd/user/rencrow.service" "${SYSTEMD_USER_DIR}/rencrow.service"' "${INSTALLER}"
+contains 'rm -f -- "${SYSTEMD_USER_DIR}/rencrow.service"' "${INSTALLER}"
+contains 'if [[ ${legacy_core_unit_present} == true ]]; then' "${INSTALLER}"
+not_contains 'install -m 0644 "systemd/user/rencrow.service" "${SYSTEMD_USER_DIR}/rencrow.service"' "${INSTALLER}"
 
 # Removal must be an exact-name allowlist. Wildcards, recursive deletes, and
 # find-based cleanup would erase host-owned unknown drop-ins.
@@ -55,6 +61,12 @@ not_contains 'find "${SYSTEMD_USER_DIR}/rencrow.service.d"' "${INSTALLER}"
 daemon_reload_line="$(grep -nF 'systemctl --user daemon-reload' "${INSTALLER}" | cut -d: -f1 | head -n1)"
 removal_line="$(grep -nF 'rm -f -- "${SYSTEMD_USER_DIR}/rencrow.service.d/${legacy_dropin}"' "${INSTALLER}" | cut -d: -f1 | head -n1)"
 [[ -n "${daemon_reload_line}" && -n "${removal_line}" && ${removal_line} -lt ${daemon_reload_line} ]] || fail "legacy cleanup must precede daemon-reload"
+base_install_line="$(grep -nF 'install -m 0644 "systemd/user/rencrow.service" "${SYSTEMD_USER_DATA_DIR}/rencrow.service"' "${INSTALLER}" | cut -d: -f1 | head -n1)"
+base_removal_line="$(grep -nF 'rm -f -- "${SYSTEMD_USER_DIR}/rencrow.service"' "${INSTALLER}" | cut -d: -f1 | head -n1)"
+reenable_line="$(grep -nF 'systemctl --user reenable rencrow.service' "${INSTALLER}" | cut -d: -f1 | head -n1)"
+[[ -n "${base_install_line}" && -n "${base_removal_line}" && -n "${reenable_line}" && \
+  ${base_install_line} -lt ${base_removal_line} && ${base_removal_line} -lt ${daemon_reload_line} && \
+  ${daemon_reload_line} -lt ${reenable_line} ]] || fail "base unit migration order is unsafe"
 not_contains 'systemctl --user restart rencrow' "${INSTALLER}"
 
 repo_dropins="$(find "${DROPIN_DIR}" -maxdepth 1 -type f -exec basename {} \; | sort)"
@@ -70,5 +82,7 @@ fi
 contains 'live `core.yaml` owns `games.observer_url`, `movie_catalog.crawler_url`, and `person_related_catalog.provider_url`' "${DOC}"
 contains '`codex.command` owns the executable absolute path' "${DOC}"
 contains 'trade section owns its API endpoint; the operator manages the optional service lifecycle independently' "${DOC}"
+contains '`~/.local/share/systemd/user/rencrow.service`' "${DOC}"
+contains '`~/.config/systemd/user/rencrow.service.d/`' "${DOC}"
 
 echo "PASS: CORE systemd drop-in contract"

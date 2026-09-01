@@ -639,6 +639,26 @@ one-JSON／bounded stderr、path／secret non-leak、fixed Linux owner、非 Lin
 - **Tests:** success order、proof failure no-mutation、recovery、systemd identity/state rejection、
   receipt exclusivity、flag isolation、running-mode regression、cross-compile を検査する。
 
+#### Failure Knowledge: config base unit が runtime mask を無効化する
+
+- **Failure:** `~/.config/systemd/user/rencrow.service`をbase unitとして配置したまま
+  `systemctl --user mask --runtime --now`を成功扱いした。
+- **Problem:** systemctlは`$XDG_RUNTIME_DIR/systemd/user/rencrow.service -> /dev/null`を作るが、
+  user managerはより優先度の高いconfig base unitを読み続ける。command exit 0でも
+  `LoadState=loaded`、`UnitFileState=enabled`、`is-enabled=enabled`となり、別経路から再起動できる。
+- **Cause:** user unitのbase sourceとoperator overrideを同じconfig directoryへ置き、
+  systemd user load pathとruntime maskの優先順位を検証していなかった。
+- **Lesson:** 配布base unitはXDG data path、operator override／drop-inはXDG config pathへ分離する。
+  mask commandの成功ではなく、load state、unit-file state、is-enabled、PID、listenerを検査する。
+- **Invariant:** production `rencrow.service`の`FragmentPath`は
+  `~/.local/share/systemd/user/rencrow.service`、config pathにはbase unitを置かない。
+  runtime mask中は`LoadState=masked`、`UnitFileState=masked-runtime`、
+  `is-enabled=masked-runtime`、inactive、PID-zero、listener-zeroを全て満たす。
+- **Enforcement:** installerのexact legacy comparison、data-path install、fail-closed recovery、
+  installer／docs contract test、既存cutover stopped proof、配備後live mask testで強制する。
+- **Tests:** operator unit拒否、exact legacy除去、data/config ownership、drop-in allowlist、
+  DCI systemd regression、live runtime mask／unmask／readinessを検査する。
+
 ## D2e-1 owner post-deploy identity evidence
 
 D2e-1 は [IDENTITY_CANONICAL.md の D2e-1 owner post-deploy identity evidence](../architecture/identity/IDENTITY_CANONICAL.md#d2e-1-owner-post-deploy-identity-evidence)

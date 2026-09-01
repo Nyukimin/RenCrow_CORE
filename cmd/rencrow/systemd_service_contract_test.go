@@ -39,7 +39,11 @@ func TestRenCrowServiceUnitIsPortableProductionDefinition(t *testing.T) {
 func TestInstallScriptUsesServiceUnitSourceOfTruth(t *testing.T) {
 	script := readRepoText(t, "install.sh")
 	mustContainAll(t, script, []string{
-		"install -m 0644 \"systemd/user/rencrow.service\" \"${SYSTEMD_USER_DIR}/rencrow.service\"",
+		"SYSTEMD_USER_DATA_DIR=\"${XDG_DATA_HOME:-${HOME}/.local/share}/systemd/user\"",
+		"install -m 0644 \"systemd/user/rencrow.service\" \"${SYSTEMD_USER_DATA_DIR}/rencrow.service\"",
+		"cmp -s \"systemd/user/rencrow.service\" \"${SYSTEMD_USER_DIR}/rencrow.service\"",
+		"rm -f -- \"${SYSTEMD_USER_DIR}/rencrow.service\"",
+		"if [[ ${legacy_core_unit_present} == true ]]; then",
 		"systemd/user/rencrow.service.d/10-panic-stack.conf",
 		"systemd/user/rencrow.service.d/20-resilience.conf",
 		"30-games-observer.conf",
@@ -54,12 +58,17 @@ func TestInstallScriptUsesServiceUnitSourceOfTruth(t *testing.T) {
 	if strings.Contains(script, "cat > \"$SYSTEMD_USER_DIR/rencrow.service\"") {
 		t.Fatalf("install.sh must not inline-generate rencrow.service")
 	}
+	if strings.Contains(script, "install -m 0644 \"systemd/user/rencrow.service\" \"${SYSTEMD_USER_DIR}/rencrow.service\"") {
+		t.Fatalf("install.sh must not install the base unit above the standard runtime-mask path")
+	}
 }
 
 func TestOpsDocsNameServiceUnitSourceOfTruth(t *testing.T) {
 	doc := readRepoText(t, "docs", "09_運用ログ・panic保存仕様.md")
 	mustContainAll(t, doc, []string{
 		"`systemd/user/rencrow.service`",
+		"`~/.local/share/systemd/user/rencrow.service`",
+		"`~/.config/systemd/user/rencrow.service.d/`",
 		"`WorkingDirectory=%h/.local/share/rencrow`",
 		"`ExecStart=%h/.local/bin/rencrow run`",
 		"`RENCROW_CONFIG=%h/.rencrow/config/core.yaml`",
@@ -92,6 +101,7 @@ func TestConfigDocsNameCanonicalRuntimeLayout(t *testing.T) {
 		"`~/.rencrow/config/image.json`",
 		"`~/.rencrow/config/portal.json`",
 		"`~/.rencrow/config/trade/learning-plan.json`",
+		"`~/.local/share/systemd/user/`",
 		"`~/.config/systemd/user/`",
 	})
 }

@@ -4,7 +4,8 @@ set -euo pipefail
 RENCROW_HOME="${HOME}/.rencrow"
 RENCROW_CONFIG_DIR="${RENCROW_HOME}/config"
 RENCROW_BIN="${HOME}/.local/bin"
-SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
+SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
+SYSTEMD_USER_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/systemd/user"
 RENCROW_SHARE_DIR="${HOME}/.local/share/rencrow"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -15,8 +16,19 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
+legacy_core_unit="${SYSTEMD_USER_DIR}/rencrow.service"
+legacy_core_unit_present=false
+if [[ -e "${legacy_core_unit}" || -L "${legacy_core_unit}" ]]; then
+  if [[ -L "${legacy_core_unit}" || ! -f "${legacy_core_unit}" ]] ||
+    ! cmp -s "${REPO_DIR}/systemd/user/rencrow.service" "${legacy_core_unit}"; then
+    echo "Refusing to replace operator-owned CORE unit: ${legacy_core_unit}" >&2
+    exit 1
+  fi
+  legacy_core_unit_present=true
+fi
+
 mkdir -p "${RENCROW_HOME}/logs" "${RENCROW_HOME}/data/sessions" "${RENCROW_CONFIG_DIR}"
-mkdir -p "${RENCROW_BIN}" "${SYSTEMD_USER_DIR}" "${RENCROW_SHARE_DIR}/scripts"
+mkdir -p "${RENCROW_BIN}" "${SYSTEMD_USER_DIR}" "${SYSTEMD_USER_DATA_DIR}" "${RENCROW_SHARE_DIR}/scripts"
 mkdir -p "${RENCROW_SHARE_DIR}/prompts"
 
 cd "${REPO_DIR}"
@@ -43,7 +55,7 @@ EOF
   chmod 600 "${RENCROW_HOME}/.env"
 fi
 
-install -m 0644 "systemd/user/rencrow.service" "${SYSTEMD_USER_DIR}/rencrow.service"
+install -m 0644 "systemd/user/rencrow.service" "${SYSTEMD_USER_DATA_DIR}/rencrow.service"
 install -m 0755 scripts/rencrow_log_rotate.sh "${RENCROW_SHARE_DIR}/scripts/rencrow_log_rotate.sh"
 install -m 0644 systemd/user/rencrow-log-rotate.service "${SYSTEMD_USER_DIR}/rencrow-log-rotate.service"
 install -m 0644 systemd/user/rencrow-log-rotate.timer "${SYSTEMD_USER_DIR}/rencrow-log-rotate.timer"
@@ -66,6 +78,14 @@ for legacy_dropin in \
   rm -f -- "${SYSTEMD_USER_DIR}/rencrow.service.d/${legacy_dropin}"
 done
 
+# A base unit in XDG_CONFIG_HOME outranks systemctl's runtime mask in
+# XDG_RUNTIME_DIR. Remove only the exact legacy CORE-owned copy after the
+# canonical unit is installed in XDG_DATA_HOME; preserve all config drop-ins.
+if [[ -f "${SYSTEMD_USER_DIR}/rencrow.service" && ! -L "${SYSTEMD_USER_DIR}/rencrow.service" ]] &&
+  cmp -s "systemd/user/rencrow.service" "${SYSTEMD_USER_DIR}/rencrow.service"; then
+  rm -f -- "${SYSTEMD_USER_DIR}/rencrow.service"
+fi
+
 sed "s#@RENCROW_REPO_DIR@#${REPO_DIR}#g" \
   systemd/user/rencrow-resilience.service \
   > "${SYSTEMD_USER_DIR}/rencrow-resilience.service"
@@ -73,7 +93,17 @@ install -m 0644 systemd/user/rencrow-resilience.timer \
   "${SYSTEMD_USER_DIR}/rencrow-resilience.timer"
 
 systemctl --user daemon-reload
-systemctl --user enable rencrow
+if ! systemctl --user reenable rencrow.service; then
+  if [[ ${legacy_core_unit_present} == true ]]; then
+    install -m 0644 "systemd/user/rencrow.service" "${legacy_core_unit}"
+  fi
+  systemctl --user daemon-reload
+  if [[ ${legacy_core_unit_present} == true ]]; then
+    systemctl --user reenable rencrow.service || true
+  fi
+  echo "Failed to enable CORE from ${SYSTEMD_USER_DATA_DIR}; restored the legacy unit." >&2
+  exit 1
+fi
 systemctl --user enable --now rencrow-log-rotate.timer
 systemctl --user enable --now rencrow-resilience.timer
 

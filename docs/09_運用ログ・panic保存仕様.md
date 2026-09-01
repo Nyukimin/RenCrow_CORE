@@ -125,7 +125,7 @@ COREの起動時間は、低カーディナリティの固定phase名と整数mi
 bind完了までを表します。初期化失敗は従来どおり起動をfail closedし、phase logのために
 listenerを先行公開しません。
 
-repository内の `systemd/user/rencrow.service` をproduction unitの正本とします。`install.sh` はこのunitを `~/.config/systemd/user/rencrow.service` へコピーし、inline生成しません。CORE同梱promptはinstall時に`%h/.local/share/rencrow/prompts`へcopyし、正本unitはportable install pathとして`WorkingDirectory=%h/.local/share/rencrow`、`ExecStart=%h/.local/bin/rencrow run`、`EnvironmentFile=%h/.rencrow/.env`、optionalな`EnvironmentFile=-%h/.rencrow/llm_ops.env`、`RENCROW_CONFIG=%h/.rencrow/config/core.yaml`を使います。再起動契約は`Restart=always`、`RestartSec=5`、`StartLimitIntervalSec=0`です。journal契約は`StandardOutput=journal`、`StandardError=journal`、`LogRateLimitIntervalSec=0`、`LogRateLimitBurst=0`です。
+repository内の `systemd/user/rencrow.service` をproduction unitの正本とします。`install.sh` はこのbase unitを `~/.local/share/systemd/user/rencrow.service` へコピーし、inline生成しません。`~/.config/systemd/user/rencrow.service.d/`はoperator overrideとCORE所有のallowlist済みdrop-inだけを持ち、base unitを置きません。このload orderによって`systemctl --user mask --runtime`がbase unitより優先されます。legacy base unitは正本sourceと完全一致するregular fileの場合だけconfig pathから除去し、異なるfileやsymlinkはoperator-ownedとしてinstallを拒否します。CORE同梱promptはinstall時に`%h/.local/share/rencrow/prompts`へcopyし、正本unitはportable install pathとして`WorkingDirectory=%h/.local/share/rencrow`、`ExecStart=%h/.local/bin/rencrow run`、`EnvironmentFile=%h/.rencrow/.env`、optionalな`EnvironmentFile=-%h/.rencrow/llm_ops.env`、`RENCROW_CONFIG=%h/.rencrow/config/core.yaml`を使います。再起動契約は`Restart=always`、`RestartSec=5`、`StartLimitIntervalSec=0`です。journal契約は`StandardOutput=journal`、`StandardError=journal`、`LogRateLimitIntervalSec=0`、`LogRateLimitBurst=0`です。
 
 ### Configとdrop-inの所有境界
 
