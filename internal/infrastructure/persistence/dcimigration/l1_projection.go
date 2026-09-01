@@ -257,6 +257,10 @@ func openSQLiteWritable(ctx context.Context, path string) (*sql.DB, error) {
 }
 
 func prepareL1Projection(ctx context.Context, snapshot sourceSnapshot, plan migrationPlan, archive bool) (l1ProjectionPlan, l1SourceData, sourceHashes, string, error) {
+	projectionIdentities, err := indexL1ProjectionIdentities(snapshot.currentL1, snapshot.archiveL1)
+	if err != nil {
+		return l1ProjectionPlan{}, l1SourceData{}, sourceHashes{}, "", err
+	}
 	var sourceData l1SourceData
 	var sourceHashKey string
 	if archive {
@@ -344,7 +348,8 @@ func prepareL1Projection(ctx context.Context, snapshot sourceSnapshot, plan migr
 				return l1ProjectionPlan{}, l1SourceData{}, sourceHashes{}, "", fmt.Errorf("L1 registry ref %q has no evidence mapping", sourceID)
 			}
 			legacyEvidence, ok := snapshot.Evidence[ref.EvidenceID]
-			if !ok || legacyEvidence.SearchID != ref.SearchID || (legacyEvidence.SourceID != "" && legacyEvidence.SourceID != ref.SourceID) {
+			projectionIdentity, projectionOK := projectionIdentities[ref.EvidenceID]
+			if !ok || legacyEvidence.SearchID != ref.SearchID || !projectionOK || projectionIdentity.SearchID != ref.SearchID || projectionIdentity.SourceID != ref.SourceID {
 				return l1ProjectionPlan{}, l1SourceData{}, sourceHashes{}, "", fmt.Errorf("L1 registry ref %q evidence mapping is inconsistent", sourceID)
 			}
 			metadata, encoded, err := canonicalL1Metadata(ref.RawMetaJSON, searchIDs, evidenceIDs, snapshot.Searches[ref.SearchID].Query)

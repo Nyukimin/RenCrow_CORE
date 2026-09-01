@@ -258,7 +258,10 @@ func classifyStagingRow(values []any, data *l1SourceData, lineTag string) error 
 		return newCodedError("malformed_source", "DCI staging created_at: %v", err)
 	}
 	item := legacyEvidence{
-		ID: evidenceID, SearchID: searchID, SourceID: readText(values[4]),
+		// L1 staging source_id identifies the projection/source-registry row.
+		// The staging schema does not retain the original Evidence provenance,
+		// so do not infer Evidence.SourceID from that projection identity.
+		ID: evidenceID, SearchID: searchID, SourceID: "",
 		FilePath: metadataString(meta, "file_path"), Heading: metadataString(meta, "heading"),
 		LineStart: int(lineStart), LineEnd: int(lineEnd), Snippet: rawText,
 		Reason: metadataString(meta, "reason"), Confidence: confidence, CreatedAt: created,
@@ -276,6 +279,25 @@ func classifyStagingRow(values []any, data *l1SourceData, lineTag string) error 
 	line, _ := json.Marshal([]any{lineTag, stagingID, kind, namespace, eventID, readText(values[4]), readText(values[5]), rawText, rawHash, rawMetaJSON, readText(values[9])})
 	data.Lines = append(data.Lines, string(line))
 	return nil
+}
+
+type l1ProjectionIdentity struct {
+	SearchID string
+	SourceID string
+}
+
+func indexL1ProjectionIdentities(sources ...l1SourceData) (map[string]l1ProjectionIdentity, error) {
+	identities := make(map[string]l1ProjectionIdentity)
+	for _, source := range sources {
+		for _, ref := range source.StagingRefs {
+			identity := l1ProjectionIdentity{SearchID: ref.SearchID, SourceID: ref.SourceID}
+			if prior, exists := identities[ref.EvidenceID]; exists && prior != identity {
+				return nil, newCodedError("conflicting_duplicate_evidence", "L1 staging evidence resolves to inconsistent projection identities")
+			}
+			identities[ref.EvidenceID] = identity
+		}
+	}
+	return identities, nil
 }
 
 func readCurrentRegistry(ctx context.Context, db *sql.DB, data *l1SourceData) error {

@@ -228,9 +228,11 @@ func mergeSearches(destination map[string]legacySearch, incoming map[string]lega
 func mergeEvidenceMap(destination map[string]legacyEvidence, incoming map[string]legacyEvidence) error {
 	for id, evidence := range incoming {
 		if prior, exists := destination[id]; exists {
-			if !equalLegacyEvidence(prior, evidence) {
+			merged, err := mergeLegacyEvidenceAcrossSources(prior, evidence)
+			if err != nil {
 				return newCodedError("conflicting_duplicate_evidence", "legacy evidence duplicate conflicts")
 			}
+			destination[id] = merged
 			continue
 		}
 		destination[id] = evidence
@@ -241,9 +243,11 @@ func mergeEvidenceMap(destination map[string]legacyEvidence, incoming map[string
 func mergeEvidenceList(destination map[string]legacyEvidence, incoming []legacyEvidence) error {
 	for _, evidence := range incoming {
 		if prior, exists := destination[evidence.ID]; exists {
-			if !equalLegacyEvidence(prior, evidence) {
+			merged, err := mergeLegacyEvidenceAcrossSources(prior, evidence)
+			if err != nil {
 				return newCodedError("conflicting_duplicate_evidence", "staging evidence duplicate conflicts")
 			}
+			destination[evidence.ID] = merged
 			continue
 		}
 		destination[evidence.ID] = evidence
@@ -251,11 +255,32 @@ func mergeEvidenceList(destination map[string]legacyEvidence, incoming []legacyE
 	return nil
 }
 
+func mergeLegacyEvidenceAcrossSources(left, right legacyEvidence) (legacyEvidence, error) {
+	leftContent := left
+	rightContent := right
+	leftContent.SourceID = ""
+	rightContent.SourceID = ""
+	if !equalLegacyEvidence(leftContent, rightContent) {
+		return legacyEvidence{}, fmt.Errorf("evidence content differs")
+	}
+	if left.SourceID != "" && right.SourceID != "" && left.SourceID != right.SourceID {
+		return legacyEvidence{}, fmt.Errorf("evidence provenance differs")
+	}
+	if left.SourceID == "" {
+		left.SourceID = right.SourceID
+	}
+	return left, nil
+}
+
 func mergeRegistryRefs(snapshot *sourceSnapshot, incoming []legacyRegistryRef) {
 	snapshot.RegistryRefs = append(snapshot.RegistryRefs, incoming...)
 }
 
 func validateMergedSnapshot(snapshot sourceSnapshot) error {
+	projectionIdentities, err := indexL1ProjectionIdentities(snapshot.currentL1, snapshot.archiveL1)
+	if err != nil {
+		return err
+	}
 	actorLabels := make(map[string]struct{})
 	for _, search := range snapshot.Searches {
 		if err := validateLegacySearch(search); err != nil {
@@ -293,8 +318,9 @@ func validateMergedSnapshot(snapshot sourceSnapshot) error {
 		if evidence.SearchID != ref.SearchID {
 			return newCodedError("conflicting_duplicate_evidence", "source registry DCI metadata resolves to another search")
 		}
-		if evidence.SourceID != "" && ref.SourceID != "" && evidence.SourceID != ref.SourceID {
-			return newCodedError("conflicting_duplicate_evidence", "source registry DCI metadata resolves to another source")
+		projectionIdentity, exists := projectionIdentities[ref.EvidenceID]
+		if !exists || projectionIdentity.SearchID != ref.SearchID || projectionIdentity.SourceID != ref.SourceID {
+			return newCodedError("conflicting_duplicate_registry", "source registry DCI metadata is not bound to its L1 projection identity")
 		}
 		_ = search
 	}

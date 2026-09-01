@@ -270,6 +270,82 @@ func TestDryRunRejectsConflictingEvidenceMalformedJSONLOversizedSchemaAndCollisi
 	}
 }
 
+func TestDryRunKeepsEvidenceSourceSeparateFromL1ProjectionSource(t *testing.T) {
+	snapshot := makeTestSnapshot(t, "projection-source-identity")
+	const projectionSourceID = "dci:file:0123456789abcdef"
+
+	current := openTestDB(t, filepath.Join(snapshot, "source-l1"))
+	mustExec(t, current, `UPDATE l1_staging_item SET source_id=?`, projectionSourceID)
+	mustExec(t, current, `UPDATE l1_source_registry SET source_id=?`, projectionSourceID)
+	if err := current.Close(); err != nil {
+		t.Fatal(err)
+	}
+	archive := openTestDB(t, filepath.Join(snapshot, "source-archive"))
+	mustExec(t, archive, `UPDATE l1_staging_item_archive SET source_id=?`, projectionSourceID)
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	options := Options{
+		SnapshotDir: snapshot, SourceDCI: "source-dci", SourceDCIJSONL: "source-dci-jsonl",
+		SourceEventStore: "source-event-store", SourceL1: "source-l1", SourceArchive: "source-archive",
+		Manifest: "manifest.json", Expected: ExpectedCounts{Searches: 1, ReadEvents: 1, EvidenceEvents: 1, TotalEvents: 4}, AgentIDs: testAgentIDs,
+	}
+	paths, err := resolvePaths(options)
+	if err != nil {
+		t.Fatalf("resolvePaths() error = %v", err)
+	}
+	report, err := classifySnapshot(context.Background(), paths, options)
+	if err != nil {
+		t.Fatalf("classifySnapshot() error = %v", err)
+	}
+	evidence, ok := report.Snapshot.Evidence["legacy-evidence-1"]
+	if !ok {
+		t.Fatal("classified snapshot is missing legacy evidence")
+	}
+	if evidence.SourceID != "source-1" {
+		t.Fatalf("evidence source_id = %q, want original DCI source_id", evidence.SourceID)
+	}
+}
+
+func TestLoadL1KeepsProjectionSourceOutOfEvidenceProvenance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source-l1")
+	writeL1TestDB(t, path, "legacy-search-1", "legacy-evidence-1", true, false)
+	const projectionSourceID = "dci:file:0123456789abcdef"
+	db := openTestDB(t, path)
+	mustExec(t, db, `UPDATE l1_staging_item SET source_id=?`, projectionSourceID)
+	mustExec(t, db, `UPDATE l1_source_registry SET source_id=?`, projectionSourceID)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _, err := loadL1Current(context.Background(), path)
+	if err != nil {
+		t.Fatalf("loadL1Current() error = %v", err)
+	}
+	if len(data.Evidence) != 1 || data.Evidence[0].SourceID != "" {
+		t.Fatalf("L1 evidence provenance = %#v, want no Evidence source_id", data.Evidence)
+	}
+	ref, ok := data.StagingRefs["staging-1"]
+	if !ok || ref.SourceID != projectionSourceID {
+		t.Fatalf("L1 projection source ref = %#v, want %q", ref, projectionSourceID)
+	}
+}
+
+func TestDryRunRejectsRegistrySourceUnboundFromL1Projection(t *testing.T) {
+	snapshot := makeTestSnapshot(t, "registry-projection-source-mismatch")
+	db := openTestDB(t, filepath.Join(snapshot, "source-l1"))
+	mustExec(t, db, `UPDATE l1_source_registry SET source_id=?`, "dci:file:unbound-source")
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest, err := runTestSnapshotResult(t, snapshot, "manifest.json")
+	if err == nil || manifest.Status != StatusBlocked || manifest.ErrorCode != "conflicting_duplicate_registry" {
+		t.Fatalf("result = %#v, err=%v, want conflicting_duplicate_registry", manifest, err)
+	}
+}
+
 func TestDryRunRejectsEventStoreEnvelopeColumnAndDependencyMismatches(t *testing.T) {
 	tests := []struct {
 		name   string
