@@ -46,6 +46,7 @@ func TestViewerStaticContractSeparatesDisplayAudioLipsyncAndLogs(t *testing.T) {
 		`id="opsFeedBody"`:               "ops/event log",
 		`id="toolHarnessBody"`:           "Tool Harness mediation event log",
 		`id="dciTraceBody"`:              "DCI search trace log",
+		`id="dciOwnerTokenInput"`:        "local DCI owner token input",
 		`id="debugLatencySummary"`:       "LLM/TTS/STT/network latency summary",
 		`id="debugSttTrace"`:             "STT trace log",
 		`id="sourceRegistryBody"`:        "Source Registry panel",
@@ -76,6 +77,55 @@ func TestViewerStaticContractSeparatesDisplayAudioLipsyncAndLogs(t *testing.T) {
 	}
 	if headerEnd < 0 || lipsyncIndex < 0 || lipsyncIndex > headerEnd {
 		t.Fatal("Mio/Shiro lipsync mini icons must be placed inside the top header band")
+	}
+}
+
+func TestViewerStaticContractDCIUsesCanonicalOwnerReferences(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	html := string(htmlData)
+	for _, required := range []string{
+		`id="dciOwnerTokenInput"`,
+		"Local-only owner operation",
+		"memory only",
+	} {
+		if !strings.Contains(html, required) {
+			t.Fatalf("viewer.html missing DCI owner contract %q", required)
+		}
+	}
+	jsData, err := os.ReadFile("assets/js/tabs/ops.js")
+	if err != nil {
+		t.Fatalf("read ops.js: %v", err)
+	}
+	js := string(jsData)
+	start := strings.Index(js, "function dciField")
+	end := strings.Index(js, "function sandboxField")
+	if start < 0 || end <= start {
+		t.Fatal("ops.js missing bounded DCI renderer")
+	}
+	dci := js[start:end]
+	for _, required := range []string{
+		"action_id",
+		"trace_id",
+		"evidence_id",
+		"created_by_event_id",
+		"dciOwnerBearerToken",
+		"X-RenCrow-Client",
+		"X-RenCrow-Interaction-Profile",
+	} {
+		if !strings.Contains(js, required) {
+			t.Fatalf("ops.js missing DCI owner/canonical contract %q", required)
+		}
+	}
+	for _, retired := range []string{"EventID", "Actor", "dciField(trace, 'event_id'", "pack.event_id", "result.Pack", "result.Trace"} {
+		if strings.Contains(dci, retired) {
+			t.Fatalf("ops.js DCI renderer retains retired field %q", retired)
+		}
+	}
+	if strings.Contains(js, "localStorage") || strings.Contains(js, "sessionStorage") {
+		t.Fatal("ops.js must not persist the DCI owner token in browser storage")
 	}
 }
 

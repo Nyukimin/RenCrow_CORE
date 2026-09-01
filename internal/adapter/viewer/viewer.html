@@ -680,11 +680,13 @@
       <div class="table-wrap">
         <div class="debug-actions">
           <input id="dciSearchInput" type="text" placeholder="DCI query (docs/10_新仕様 など)" />
+          <input id="dciOwnerTokenInput" type="password" autocomplete="new-password" placeholder="Local owner token (memory only)" aria-label="Local DCI owner token" />
           <button id="dciSearchBtn" type="button">DCI Search</button>
         </div>
+        <div class="small">Local-only owner operation. The token stays in this page's memory and is never stored or sent in the request body.</div>
         <pre id="dciSearchResult" class="small ops-raw">DCI manual search result: -</pre>
         <table>
-          <thead><tr><th>Time</th><th>Event</th><th>Query</th><th>Evidence</th><th>Status</th><th>Scope</th></tr></thead>
+          <thead><tr><th>Time</th><th>Action</th><th>Trace</th><th>Query</th><th>Evidence</th><th>Status</th><th>Scope</th></tr></thead>
           <tbody id="dciTraceBody"></tbody>
         </table>
       </div>

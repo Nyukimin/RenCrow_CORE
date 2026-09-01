@@ -224,6 +224,7 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_l1_staging_archive_status_created ON l1_staging_item_archive(validation_status, created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_l1_staging_archive_namespace_created ON l1_staging_item_archive(namespace, created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_l1_staging_archive_namespace_event ON l1_staging_item_archive(namespace, event_id);
 	`
 
 	if _, err := d.db.ExecContext(ctx, schema); err != nil {

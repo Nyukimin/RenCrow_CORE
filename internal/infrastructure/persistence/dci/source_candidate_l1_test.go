@@ -2,7 +2,6 @@ package dci
 
 import (
 	"context"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +10,60 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func validL1SearchResult() domaindci.SearchResult {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	traceID := modulecore.NewTraceID()
+	actionID := modulecore.NewActionID()
+	stepEventID := modulecore.NewEventID()
+	evidenceEventID := modulecore.NewEventID()
+	evidenceID := modulecore.NewEvidenceID()
+	return domaindci.SearchResult{
+		Pack: domaindci.EvidencePack{
+			ActionID:     actionID,
+			Query:        "DCI evidence",
+			CorpusScope:  []string{"docs/"},
+			DerivedTerms: []string{"dci"},
+			Evidence: []domaindci.Evidence{{
+				EvidenceID:       evidenceID,
+				CreatedByEventID: evidenceEventID,
+				FilePath:         "docs/spec.md",
+				LineStart:        12,
+				LineEnd:          12,
+				Snippet:          "DCI evidence line",
+				Reason:           "query term matched",
+				Confidence:       0.7,
+			}},
+		},
+		Trace: domaindci.SearchTrace{
+			TraceID:            traceID,
+			ActionID:           actionID,
+			StartedAt:          now,
+			EndedAt:            now.Add(time.Second),
+			ActorAttribution:   domaindci.ActorAttributionAuthenticated,
+			ActorKind:          "agent",
+			ActorID:            "shiro",
+			Mode:               "dci",
+			UserQuery:          "DCI evidence",
+			CorpusScope:        []string{"docs/"},
+			FinalEvidenceCount: 1,
+			Status:             "completed",
+			Steps: []domaindci.SearchStep{{
+				StepNo:      1,
+				EventID:     stepEventID,
+				EventType:   "dci.file.read",
+				Tool:        "read_file",
+				FilePath:    "docs/spec.md",
+				ResultCount: 1,
+				Status:      "ok",
+				CreatedAt:   now,
+			}},
+		},
+	}
+}
 
 func TestL1SourceCandidateStoreStagesDCIEvidenceAsPendingSearchResult(t *testing.T) {
 	ctx := context.Background()
@@ -23,27 +75,7 @@ func TestL1SourceCandidateStoreStagesDCIEvidenceAsPendingSearchResult(t *testing
 	store := NewL1SourceCandidateStore(l1, "kb:dci").WithNow(func() time.Time {
 		return time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	})
-	result := domaindci.SearchResult{
-		Pack: domaindci.EvidencePack{
-			EventID:      "evt_dci_1",
-			Query:        "DCI evidence",
-			DerivedTerms: []string{"DCI"},
-			Evidence: []domaindci.Evidence{{
-				EvidenceID: "evt_dci_1_ev_001",
-				FilePath:   "docs/spec.md",
-				LineStart:  12,
-				LineEnd:    12,
-				Snippet:    "DCI evidence line",
-				Reason:     "query term matched",
-				Confidence: 0.7,
-			}},
-		},
-		Trace: domaindci.SearchTrace{
-			EventID:   "evt_dci_1",
-			StartedAt: time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
-			EndedAt:   time.Date(2026, 5, 18, 12, 0, 1, 0, time.UTC),
-		},
-	}
+	result := validL1SearchResult()
 
 	if err := store.SaveDCISourceCandidates(ctx, result); err != nil {
 		t.Fatalf("SaveDCISourceCandidates failed: %v", err)
@@ -59,7 +91,7 @@ func TestL1SourceCandidateStoreStagesDCIEvidenceAsPendingSearchResult(t *testing
 	if item.Kind != l1sqlite.L1StagingKindSearchResult {
 		t.Fatalf("kind = %s", item.Kind)
 	}
-	if item.SourceID == "dci:evt_dci_1" || item.SourceURL == "" {
+	if item.SourceID == "dci:"+string(result.Trace.ActionID) || item.SourceURL == "" {
 		t.Fatalf("unexpected source fields: %+v", item)
 	}
 	if item.Meta["source_kind"] != "dci" || item.Meta["review_required"] != true {
@@ -67,6 +99,22 @@ func TestL1SourceCandidateStoreStagesDCIEvidenceAsPendingSearchResult(t *testing
 	}
 	if item.Meta["file_path"] != "docs/spec.md" || item.RawText != "DCI evidence line" {
 		t.Fatalf("unexpected staged evidence: %+v", item)
+	}
+	if item.EventID != string(result.Pack.Evidence[0].CreatedByEventID) {
+		t.Fatalf("staging event_id = %q, want evidence event %q", item.EventID, result.Pack.Evidence[0].CreatedByEventID)
+	}
+	if _, exists := item.Meta["search_event_id"]; exists {
+		t.Fatalf("legacy search_event_id metadata remains: %#v", item.Meta)
+	}
+	for key, want := range map[string]interface{}{
+		"search_action_id":          string(result.Trace.ActionID),
+		"trace_id":                  string(result.Trace.TraceID),
+		"evidence_id":               string(result.Pack.Evidence[0].EvidenceID),
+		"evidence_created_event_id": string(result.Pack.Evidence[0].CreatedByEventID),
+	} {
+		if item.Meta[key] != want {
+			t.Fatalf("metadata[%q] = %#v, want %#v", key, item.Meta[key], want)
+		}
 	}
 	entries, err := l1.ListSourceRegistryEntries(ctx, false)
 	if err != nil {
@@ -85,6 +133,9 @@ func TestL1SourceCandidateStoreStagesDCIEvidenceAsPendingSearchResult(t *testing
 	if entry.Meta["source_kind"] != "dci" || entry.Meta["auto_fetch"] != false || entry.Meta["review_required"] != true {
 		t.Fatalf("missing source registry dci metadata: %#v", entry.Meta)
 	}
+	if entry.Meta["search_action_id"] != string(result.Trace.ActionID) || entry.Meta["trace_id"] != string(result.Trace.TraceID) || entry.Meta["evidence_id"] != string(result.Pack.Evidence[0].EvidenceID) || entry.Meta["evidence_created_event_id"] != string(result.Pack.Evidence[0].CreatedByEventID) {
+		t.Fatalf("source registry canonical metadata missing: %#v", entry.Meta)
+	}
 }
 
 func TestL1SourceCandidateStoreWithoutSourceRegistrySupportStillStages(t *testing.T) {
@@ -93,23 +144,12 @@ func TestL1SourceCandidateStoreWithoutSourceRegistrySupportStillStages(t *testin
 	candidates := NewL1SourceCandidateStore(store, "kb:dci").WithNow(func() time.Time {
 		return time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	})
-	result := domaindci.SearchResult{
-		Pack: domaindci.EvidencePack{
-			EventID: "evt_dci_2",
-			Query:   "DCI evidence",
-			Evidence: []domaindci.Evidence{{
-				EvidenceID: "evt_dci_2_ev_001",
-				FilePath:   "docs/spec.md",
-				Snippet:    "DCI evidence line",
-			}},
-		},
-		Trace: domaindci.SearchTrace{EventID: "evt_dci_2"},
-	}
+	result := validL1SearchResult()
 
 	if err := candidates.SaveDCISourceCandidates(ctx, result); err != nil {
 		t.Fatalf("SaveDCISourceCandidates failed: %v", err)
 	}
-	if len(store.items) != 1 || store.items[0].SourceURL == "" {
+	if len(store.items) != 1 || store.items[0].SourceURL == "" || store.items[0].EventID != string(result.Pack.Evidence[0].CreatedByEventID) {
 		t.Fatalf("expected staged DCI source candidate with synthetic URL, got %#v", store.items)
 	}
 }

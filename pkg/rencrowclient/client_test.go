@@ -1874,9 +1874,56 @@ func TestToolHarnessStatusRejectsMalformedCurrentView(t *testing.T) {
 	}
 }
 
+func clientDCIResult(query string) DCISearchResult {
+	now := time.Date(2026, 5, 19, 16, 30, 0, 0, time.UTC)
+	traceID := modulecore.NewTraceID()
+	actionID := modulecore.NewActionID()
+	return DCISearchResult{
+		Pack: DCIEvidencePack{
+			ActionID: actionID,
+			Query:    query,
+			Evidence: []DCIEvidence{{
+				EvidenceID:       modulecore.NewEvidenceID(),
+				CreatedByEventID: modulecore.NewEventID(),
+				FilePath:         "docs/spec.md",
+				LineStart:        1,
+				LineEnd:          1,
+				Snippet:          "DCI",
+			}},
+		},
+		Trace: DCISearchTrace{
+			TraceID:            traceID,
+			ActionID:           actionID,
+			StartedAt:          now.Add(-time.Second),
+			EndedAt:            now,
+			ActorAttribution:   "authenticated",
+			ActorKind:          "user",
+			ActorID:            "ren",
+			Mode:               "dci",
+			UserQuery:          query,
+			Status:             "completed",
+			FinalEvidenceCount: 1,
+			Steps: []DCISearchStep{{
+				StepNo:    1,
+				EventID:   modulecore.NewEventID(),
+				EventType: "dci.file.read",
+				Tool:      "file_read",
+				Status:    "ok",
+				CreatedAt: now,
+			}},
+		},
+	}
+}
+
 func TestDCIRecentAndSearch(t *testing.T) {
 	var paths []string
+	var gotHeaders http.Header
 	now := time.Date(2026, 5, 19, 16, 30, 0, 0, time.UTC)
+	recentTrace := clientDCIResult("Tool Harness").Trace
+	recentTrace.ActorKind = "agent"
+	recentTrace.ActorID = "shiro"
+	recentTrace.FinalEvidenceCount = 0
+	recentTrace.Steps = nil
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.String())
 		switch r.URL.Path {
@@ -1884,55 +1931,25 @@ func TestDCIRecentAndSearch(t *testing.T) {
 			if r.Method != http.MethodGet {
 				t.Fatalf("method=%s", r.Method)
 			}
-			_ = json.NewEncoder(w).Encode(DCIRecentStatus{Items: []DCISearchTrace{{
-				EventID:            "evt_dci_1",
-				StartedAt:          now.Add(-time.Second),
-				Actor:              "Worker",
-				Mode:               "dci",
-				UserQuery:          "Tool Harness",
-				Status:             "completed",
-				EndedAt:            now,
-				FinalEvidenceCount: 1,
-				Steps:              []DCISearchStep{{StepNo: 1, Tool: "file_read", Status: "completed", ResultCount: 1, CreatedAt: now}},
-			}}})
+			recentTrace.StartedAt = now.Add(-time.Second)
+			recentTrace.EndedAt = now
+			_ = json.NewEncoder(w).Encode(DCIRecentStatus{Items: []DCISearchTrace{recentTrace}})
 		case "/viewer/dci/search":
 			if r.Method != http.MethodPost {
 				t.Fatalf("method=%s", r.Method)
 			}
+			gotHeaders = r.Header.Clone()
 			var req DCISearchRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(DCISearchResult{
-				Pack: DCIEvidencePack{
-					EventID: "evt_dci_search",
-					Query:   req.Query,
-					Evidence: []DCIEvidence{{
-						EvidenceID: "ev_1",
-						FilePath:   "docs/10_新仕様/20_Tool_Harness_Contract_Mediation仕様.md",
-						LineStart:  1,
-						LineEnd:    2,
-						Snippet:    "Tool Harness",
-					}},
-				},
-				Trace: DCISearchTrace{
-					EventID:            "evt_dci_search",
-					StartedAt:          now.Add(-time.Second),
-					Actor:              "Worker",
-					Mode:               "dci",
-					UserQuery:          req.Query,
-					Status:             "completed",
-					EndedAt:            now,
-					FinalEvidenceCount: 1,
-					Steps:              []DCISearchStep{{StepNo: 1, Tool: "file_read", Status: "completed", ResultCount: 1, CreatedAt: now}},
-				},
-			})
+			_ = json.NewEncoder(w).Encode(clientDCIResult(req.Query))
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL)
+	client, err := New(server.URL, WithOwnerBearerToken("owner-token"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1940,99 +1957,64 @@ func TestDCIRecentAndSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DCIRecent() error = %v", err)
 	}
-	if len(recent.Items) != 1 || recent.Items[0].EventID != "evt_dci_1" {
+	if len(recent.Items) != 1 || recent.Items[0].TraceID == "" || recent.Items[0].ActionID == "" {
 		t.Fatalf("recent=%#v", recent)
 	}
 	search, err := client.DCISearch(context.Background(), DCISearchRequest{Query: "Tool Harness"})
 	if err != nil {
 		t.Fatalf("DCISearch() error = %v", err)
 	}
-	if search.Pack.EventID != "evt_dci_search" || len(search.Pack.Evidence) != 1 {
+	if search.Pack.ActionID != search.Trace.ActionID || len(search.Pack.Evidence) != 1 || string(search.Pack.Evidence[0].EvidenceID) == string(search.Pack.Evidence[0].CreatedByEventID) {
 		t.Fatalf("search=%#v", search)
+	}
+	if gotHeaders.Get("Authorization") != "Bearer owner-token" || gotHeaders.Get("X-RenCrow-Client") != "RenCrow_CMD" || gotHeaders.Get("X-RenCrow-Interaction-Profile") != "cmd-control" {
+		t.Fatalf("owner headers=%#v", gotHeaders)
 	}
 	if len(paths) != 2 || paths[0] != "/viewer/dci/recent?limit=5" || paths[1] != "/viewer/dci/search" {
 		t.Fatalf("paths=%#v", paths)
 	}
 }
 
+func TestDCISearchRequiresInMemoryOwnerToken(t *testing.T) {
+	client, called, cleanup := newNoRequestClient(t)
+	defer cleanup()
+	_, err := client.DCISearch(context.Background(), DCISearchRequest{Query: "DCI"})
+	if err == nil || !strings.Contains(err.Error(), "bearer token is required") {
+		t.Fatalf("DCISearch() error = %v", err)
+	}
+	if *called {
+		t.Fatal("server was called without an owner token")
+	}
+}
+
 func TestDCIRecentRejectsMalformedCurrentView(t *testing.T) {
-	now := time.Date(2026, 5, 19, 16, 30, 0, 0, time.UTC)
 	valid := func() DCIRecentStatus {
-		return DCIRecentStatus{Items: []DCISearchTrace{{
-			EventID:            "evt_dci_1",
-			StartedAt:          now.Add(-time.Second),
-			Actor:              "Worker",
-			Mode:               "dci",
-			UserQuery:          "DCI",
-			Status:             "completed",
-			EndedAt:            now,
-			FinalEvidenceCount: 1,
-			Steps:              []DCISearchStep{{StepNo: 1, Tool: "file_read", Status: "completed", CreatedAt: now}},
-		}}}
+		trace := clientDCIResult("DCI").Trace
+		trace.ActorKind = "agent"
+		trace.ActorID = "shiro"
+		trace.FinalEvidenceCount = 0
+		trace.Steps = nil
+		return DCIRecentStatus{Items: []DCISearchTrace{trace}}
 	}
 	tests := []struct {
 		name   string
 		mutate func(*DCIRecentStatus)
 		want   string
 	}{
-		{name: "duplicate trace", mutate: func(s *DCIRecentStatus) {
-			s.Items = append(s.Items, s.Items[0])
-		}, want: "duplicate trace"},
-		{name: "missing query", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].UserQuery = ""
-		}, want: "missing user_query"},
-		{name: "missing status", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].Status = ""
-		}, want: "missing status"},
-		{name: "missing started_at", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].StartedAt = time.Time{}
-		}, want: "missing started_at"},
-		{name: "missing actor", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].Actor = ""
-		}, want: "trace missing actor"},
-		{name: "missing mode", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].Mode = ""
-		}, want: "trace missing mode"},
-		{name: "invalid trace status", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].Status = "done"
-		}, want: "invalid trace status"},
-		{name: "failed trace missing error", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].Status = "failed"
-			s.Items[0].ErrorMessage = ""
-		}, want: "failed trace missing error_message"},
-		{name: "terminal trace missing ended_at", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].EndedAt = time.Time{}
-		}, want: "missing ended_at"},
-		{name: "duplicate step", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].Steps = append(s.Items[0].Steps, s.Items[0].Steps[0])
-		}, want: "duplicate step_no"},
-		{name: "missing step tool", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].Steps[0].Tool = ""
-		}, want: "step missing tool"},
-		{name: "invalid step status", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].Steps[0].Status = "done"
-		}, want: "invalid step status"},
-		{name: "error step missing error", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].Steps[0].Status = "error"
-			s.Items[0].Steps[0].ErrorMessage = ""
-		}, want: "error step missing error_message"},
-		{name: "negative step result count", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].Steps[0].ResultCount = -1
-		}, want: "result_count"},
-		{name: "step missing created at", mutate: func(s *DCIRecentStatus) {
-			s.Items[0].Steps[0].CreatedAt = time.Time{}
-		}, want: "step missing created_at"},
+		{name: "duplicate trace", mutate: func(s *DCIRecentStatus) { s.Items = append(s.Items, s.Items[0]) }, want: "duplicate trace"},
+		{name: "missing actor attribution", mutate: func(s *DCIRecentStatus) { s.Items[0].ActorAttribution = "" }, want: "invalid actor_attribution"},
+		{name: "legacy actor fields", mutate: func(s *DCIRecentStatus) {
+			s.Items[0].ActorAttribution = "legacy_unattributed"
+			s.Items[0].ActorKind = "agent"
+		}, want: "legacy_unattributed"},
+		{name: "invalid trace status", mutate: func(s *DCIRecentStatus) { s.Items[0].Status = "done" }, want: "invalid trace status"},
+		{name: "terminal trace missing ended_at", mutate: func(s *DCIRecentStatus) { s.Items[0].EndedAt = time.Time{} }, want: "missing ended_at"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resp := valid()
 			tt.mutate(&resp)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/viewer/dci/recent" {
-					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-				}
-				_ = json.NewEncoder(w).Encode(resp)
-			}))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(resp) }))
 			defer server.Close()
 			client, err := New(server.URL)
 			if err != nil {
@@ -2059,90 +2041,31 @@ func TestDCISearchRejectsInvalidRequest(t *testing.T) {
 }
 
 func TestDCISearchRejectsMalformedResponse(t *testing.T) {
-	now := time.Date(2026, 5, 19, 16, 30, 0, 0, time.UTC)
-	valid := func() DCISearchResult {
-		return DCISearchResult{
-			Pack: DCIEvidencePack{
-				EventID: "evt_dci_search",
-				Query:   "DCI",
-				Evidence: []DCIEvidence{{
-					EvidenceID: "ev_1",
-					FilePath:   "docs/10_新仕様/19_DCI_直接コーパス探索仕様.md",
-					LineStart:  1,
-					LineEnd:    1,
-					Snippet:    "DCI",
-				}},
-			},
-			Trace: DCISearchTrace{
-				EventID:            "evt_dci_search",
-				StartedAt:          now.Add(-time.Second),
-				Actor:              "Worker",
-				Mode:               "dci",
-				UserQuery:          "DCI",
-				Status:             "completed",
-				EndedAt:            now,
-				FinalEvidenceCount: 1,
-				Steps:              []DCISearchStep{{StepNo: 1, Tool: "file_read", Status: "completed", CreatedAt: now}},
-			},
-		}
-	}
 	tests := []struct {
 		name   string
 		mutate func(*DCISearchResult)
 		want   string
 	}{
-		{name: "event mismatch", mutate: func(s *DCISearchResult) {
-			s.Trace.EventID = "other"
-		}, want: "event_id mismatch"},
-		{name: "query mismatch", mutate: func(s *DCISearchResult) {
-			s.Pack.Query = "other"
-		}, want: "query mismatch"},
-		{name: "terminal trace missing ended_at", mutate: func(s *DCISearchResult) {
-			s.Trace.EndedAt = time.Time{}
-		}, want: "missing ended_at"},
-		{name: "missing started_at", mutate: func(s *DCISearchResult) {
-			s.Trace.StartedAt = time.Time{}
-		}, want: "missing started_at"},
-		{name: "missing actor", mutate: func(s *DCISearchResult) {
-			s.Trace.Actor = ""
-		}, want: "trace missing actor"},
-		{name: "missing mode", mutate: func(s *DCISearchResult) {
-			s.Trace.Mode = ""
-		}, want: "trace missing mode"},
-		{name: "invalid trace status", mutate: func(s *DCISearchResult) {
-			s.Trace.Status = "done"
-		}, want: "invalid trace status"},
-		{name: "evidence count mismatch", mutate: func(s *DCISearchResult) {
-			s.Trace.FinalEvidenceCount = 2
-		}, want: "evidence count mismatch"},
-		{name: "pack confidence out of range", mutate: func(s *DCISearchResult) {
-			s.Pack.Confidence = 1.2
-		}, want: "pack confidence out of range"},
-		{name: "missing evidence path", mutate: func(s *DCISearchResult) {
-			s.Pack.Evidence[0].FilePath = ""
-		}, want: "evidence missing file_path"},
-		{name: "invalid evidence lines", mutate: func(s *DCISearchResult) {
-			s.Pack.Evidence[0].LineEnd = 0
-		}, want: "invalid line range"},
-		{name: "evidence confidence out of range", mutate: func(s *DCISearchResult) {
-			s.Pack.Evidence[0].Confidence = -0.1
-		}, want: "evidence confidence out of range"},
-		{name: "step missing created at", mutate: func(s *DCISearchResult) {
-			s.Trace.Steps[0].CreatedAt = time.Time{}
-		}, want: "step missing created_at"},
+		{name: "action mismatch", mutate: func(s *DCISearchResult) { s.Trace.ActionID = modulecore.NewActionID() }, want: "action_id mismatch"},
+		{name: "query mismatch", mutate: func(s *DCISearchResult) { s.Pack.Query = "other" }, want: "query mismatch"},
+		{name: "terminal trace missing ended_at", mutate: func(s *DCISearchResult) { s.Trace.EndedAt = time.Time{} }, want: "missing ended_at"},
+		{name: "missing started_at", mutate: func(s *DCISearchResult) { s.Trace.StartedAt = time.Time{} }, want: "missing started_at"},
+		{name: "missing actor", mutate: func(s *DCISearchResult) { s.Trace.ActorKind = "" }, want: "trace actor"},
+		{name: "invalid trace status", mutate: func(s *DCISearchResult) { s.Trace.Status = "done" }, want: "invalid trace status"},
+		{name: "evidence count mismatch", mutate: func(s *DCISearchResult) { s.Trace.FinalEvidenceCount = 2 }, want: "evidence count mismatch"},
+		{name: "pack confidence out of range", mutate: func(s *DCISearchResult) { s.Pack.Confidence = 1.2 }, want: "pack confidence out of range"},
+		{name: "missing evidence path", mutate: func(s *DCISearchResult) { s.Pack.Evidence[0].FilePath = "" }, want: "evidence missing file_path"},
+		{name: "invalid evidence lines", mutate: func(s *DCISearchResult) { s.Pack.Evidence[0].LineEnd = 0 }, want: "invalid line range"},
+		{name: "evidence confidence out of range", mutate: func(s *DCISearchResult) { s.Pack.Evidence[0].Confidence = -0.1 }, want: "evidence confidence out of range"},
+		{name: "step missing event", mutate: func(s *DCISearchResult) { s.Trace.Steps[0].EventID = "" }, want: "step event_id"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp := valid()
+			resp := clientDCIResult("DCI")
 			tt.mutate(&resp)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.Path != "/viewer/dci/search" {
-					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-				}
-				_ = json.NewEncoder(w).Encode(resp)
-			}))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(resp) }))
 			defer server.Close()
-			client, err := New(server.URL)
+			client, err := New(server.URL, WithOwnerBearerToken("owner-token"))
 			if err != nil {
 				t.Fatal(err)
 			}

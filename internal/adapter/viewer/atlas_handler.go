@@ -69,11 +69,11 @@ type atlasHandler struct {
 }
 
 func (h *atlasHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !memoryOwnerDirectLocalRequest(r) && r.Method != http.MethodGet {
+		writeAtlasError(w, http.StatusNotFound, "not_found")
+		return
+	}
 	if r.Method == http.MethodPost {
-		if !memoryOwnerLoopback(r) {
-			writeAtlasError(w, http.StatusNotFound, "not_found")
-			return
-		}
 		if !memoryOwnerBearerAuthorized(r, h.token) {
 			writeAtlasError(w, http.StatusUnauthorized, "unauthorized")
 			return

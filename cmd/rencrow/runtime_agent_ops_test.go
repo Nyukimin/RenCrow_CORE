@@ -90,7 +90,7 @@ func TestAgentOpsHandlerExecutesWithAuthenticatedShiroWorkerScope(t *testing.T) 
 	notifier := &agentOpsBusyNotifierStub{}
 	handler := newAgentOpsTestHandlerWithNotifier(t, token, executor, notifier)
 	requestID := "req-agent-ops-1"
-	req := httptest.NewRequest(http.MethodPost, "/v1/agent/ops", strings.NewReader(`{"message":"状態を確認して"}`))
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/v1/agent/ops", strings.NewReader(`{"message":"状態を確認して"}`))
 	setAgentOpsHeaders(req, token, requestID)
 	req.RemoteAddr = "127.0.0.1:18791"
 	rec := httptest.NewRecorder()

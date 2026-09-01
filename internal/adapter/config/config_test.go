@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -442,13 +443,8 @@ server:
 	if !cfg.DCI.IsEnabled() {
 		t.Error("DCI should be enabled by default")
 	}
-	if cfg.DCI.TracePath != cfg.WorkspaceDir+"/logs/dci_search_trace.jsonl" {
-		t.Errorf("Expected DCI TracePath under workspace, got '%s'", cfg.DCI.TracePath)
-	}
-	if cfg.DCI.Storage != "jsonl" {
-		t.Errorf("Expected DCI Storage 'jsonl', got '%s'", cfg.DCI.Storage)
-	}
-	if cfg.DCI.SQLitePath != cfg.WorkspaceDir+"/dci.db" {
+	wantDCIPath := filepath.Join(cfg.WorkspaceDir, "dci.db")
+	if cfg.DCI.SQLitePath != wantDCIPath || cfg.Storage.Databases.DCI != wantDCIPath {
 		t.Errorf("Expected DCI SQLitePath under workspace, got '%s'", cfg.DCI.SQLitePath)
 	}
 	if cfg.DCI.MaxSeconds != 10 || cfg.DCI.MaxSteps != 8 || cfg.DCI.MaxCandidateFiles != 50 || cfg.DCI.MaxFilesRead != 10 || cfg.DCI.MaxEvidence != 6 || cfg.DCI.MaxSnippetChars != 800 {
@@ -715,8 +711,6 @@ storage:
 
 dci:
   enabled: false
-  storage: sqlite
-  trace_path: "./logs/custom_dci.jsonl"
   corpus_allowlist:
     - "docs/10_新仕様"
   corpus_denylist:
@@ -743,14 +737,11 @@ dci:
 	if cfg.DCI.IsEnabled() {
 		t.Fatal("DCI should be disabled by explicit config")
 	}
-	if cfg.DCI.TracePath != "./logs/custom_dci.jsonl" {
-		t.Fatalf("unexpected DCI TracePath: %s", cfg.DCI.TracePath)
-	}
-	if cfg.DCI.Storage != "sqlite" {
-		t.Fatalf("unexpected DCI Storage: %s", cfg.DCI.Storage)
-	}
 	if cfg.DCI.SQLitePath != "./data/custom_dci.db" {
 		t.Fatalf("unexpected DCI SQLitePath: %s", cfg.DCI.SQLitePath)
+	}
+	if cfg.Storage.Databases.DCI != "./data/custom_dci.db" {
+		t.Fatalf("unexpected canonical DCI database path: %s", cfg.Storage.Databases.DCI)
 	}
 	if cfg.DCI.MaxSeconds != 9 || cfg.DCI.MaxSteps != 7 || cfg.DCI.MaxCandidateFiles != 11 || cfg.DCI.MaxFilesRead != 4 || cfg.DCI.MaxEvidence != 3 || cfg.DCI.MaxSnippetChars != 120 {
 		t.Fatalf("unexpected DCI limits: %+v", cfg.DCI)
@@ -760,21 +751,44 @@ dci:
 	}
 }
 
-func TestLoadConfig_DCIInvalidStorage(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "dci_invalid_storage.yaml")
+func TestLoadConfigRejectsRetiredDCIStorageKeysRegardlessOfEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "storage", key: "storage", value: "sqlite"},
+		{name: "trace-path", key: "trace_path", value: "./logs/retired.jsonl"},
+		{name: "sqlite-path", key: "sqlite_path", value: "./logs/retired.db"},
+	} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/enabled-%t", tc.name, enabled), func(t *testing.T) {
+				configPath := filepath.Join(t.TempDir(), "dci-retired.yaml")
+				content := fmt.Sprintf("server:\n  port: 8080\nstorage:\n  databases:\n    dci: %q\ndci:\n  enabled: %t\n  %s: %q\n", filepath.Join(t.TempDir(), "canonical.db"), enabled, tc.key, tc.value)
+				if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				_, err := LoadConfig(configPath)
+				if err == nil || !strings.Contains(err.Error(), "dci."+tc.key) || !strings.Contains(err.Error(), "storage.databases.dci") {
+					t.Fatalf("LoadConfig error=%v, want retired dci.%s error naming storage.databases.dci", err, tc.key)
+				}
+			})
+		}
+	}
+}
 
-	content := `
-server:
-  port: 8080
-dci:
-  storage: memory
-`
-
-	os.WriteFile(configPath, []byte(content), 0644)
-
-	if _, err := LoadConfig(configPath); err == nil {
-		t.Fatal("expected invalid dci.storage error")
+func TestConfigValidateDCIRequiresCanonicalSQLitePathWhenEnabled(t *testing.T) {
+	cfg := &Config{
+		Server:  ServerConfig{Port: 8080},
+		Session: SessionConfig{StorageDir: "./data"},
+		DCI:     DCIConfig{Enabled: boolConfigPtr(true)},
+		Coder1:  CoderConfig{Name: "aka"},
+		Coder2:  CoderConfig{Name: "ao"},
+		Coder3:  CoderConfig{Name: "kin"},
+		Coder4:  CoderConfig{Name: "gin"},
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "storage.databases.dci") {
+		t.Fatalf("Validate() error=%v, want missing canonical DCI database path", err)
 	}
 }
 
@@ -2214,6 +2228,7 @@ func TestConfig_Validate(t *testing.T) {
 				Session: SessionConfig{
 					StorageDir: "./data/sessions",
 				},
+				DCI:    DCIConfig{Enabled: boolConfigPtr(false)},
 				Coder1: CoderConfig{Name: "aka"},
 				Coder2: CoderConfig{Name: "ao"},
 				Coder3: CoderConfig{Name: "kin"},
@@ -2226,6 +2241,7 @@ func TestConfig_Validate(t *testing.T) {
 			config: &Config{
 				Server:  ServerConfig{Port: 8080},
 				Session: SessionConfig{StorageDir: "./data/sessions"},
+				DCI:     DCIConfig{Enabled: boolConfigPtr(false)},
 				Security: SecurityConfig{
 					Enabled:      true,
 					PolicyMode:   "balanced",
@@ -2243,6 +2259,7 @@ func TestConfig_Validate(t *testing.T) {
 			config: &Config{
 				Server:  ServerConfig{Port: 8080},
 				Session: SessionConfig{StorageDir: "./data/sessions"},
+				DCI:     DCIConfig{Enabled: boolConfigPtr(false)},
 				Security: SecurityConfig{
 					Enabled:    true,
 					PolicyMode: "dev",
@@ -2305,6 +2322,7 @@ func TestConfig_Validate_Distributed(t *testing.T) {
 		cfg := &Config{
 			Server:  ServerConfig{Port: 8080},
 			Session: SessionConfig{StorageDir: "./data"},
+			DCI:     DCIConfig{Enabled: boolConfigPtr(false)},
 		}
 		// Coder1-4 の最小限の設定（バリデーションを通すため）
 		cfg.Coder1.Name = "aka"
@@ -2362,6 +2380,7 @@ func TestConfig_Validate_IdleChat(t *testing.T) {
 		cfg := &Config{
 			Server:  ServerConfig{Port: 8080},
 			Session: SessionConfig{StorageDir: "./data"},
+			DCI:     DCIConfig{Enabled: boolConfigPtr(false)},
 		}
 		// Coder1-4 の最小限の設定（バリデーションを通すため）
 		cfg.Coder1.Name = "aka"

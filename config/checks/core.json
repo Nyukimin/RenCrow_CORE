@@ -211,6 +211,61 @@
         }
       },
       "receipt_schema": "rencrow.check-receipt.v1"
+    },
+    {
+      "check_id": "core_dci_identity_pre_restart",
+      "guarantee_id": "core_dci_identity_pre_restart_acceptance",
+      "owner": "RenCrow_CORE",
+      "purpose": "fresh Shiro DCI identity acceptance before canonical restart",
+      "target": "CORE canonical service -> authenticated Shiro DCI acceptance -> pre-restart evidence",
+      "phase": "diagnostic",
+      "consumer": "Step03 DCI restart acceptance",
+      "failure_action": "blocked",
+      "cost": "high",
+      "safety_gate": true,
+      "coverage": ["canonical_e2e", "runtime_identity", "restart_binding", "receipt_trace"],
+      "executor": {
+        "kind": "owner_cli",
+        "command_id": "core-dci-identity-pre-restart",
+        "acquisition": {
+          "mode": "owner_self_collect",
+          "verification_safe": true,
+          "inputs": [
+            {"id": "service_identity", "class": "discoverable", "required": true, "source": "owner_service_manager"},
+            {"id": "canonical_auth", "class": "credential_reference", "required": true, "source": "owner_active_config"},
+            {"id": "owner_fixed_fixture", "class": "verification_fixture", "required": true, "source": "owner_fixed_fixture"}
+          ]
+        }
+      },
+      "receipt_schema": "rencrow.check-receipt.v1"
+    },
+    {
+      "check_id": "core_dci_identity_post_restart",
+      "guarantee_id": "core_dci_identity_post_restart_acceptance",
+      "owner": "RenCrow_CORE",
+      "purpose": "same-request Shiro DCI identity acceptance after canonical restart",
+      "target": "pre-restart evidence -> canonical service generation change -> authenticated Shiro DCI acceptance",
+      "phase": "diagnostic",
+      "consumer": "Step03 DCI restart acceptance",
+      "failure_action": "blocked",
+      "cost": "high",
+      "safety_gate": true,
+      "coverage": ["canonical_e2e", "runtime_identity", "restart_binding", "receipt_trace"],
+      "executor": {
+        "kind": "owner_cli",
+        "command_id": "core-dci-identity-post-restart",
+        "acquisition": {
+          "mode": "owner_self_collect",
+          "verification_safe": true,
+          "inputs": [
+            {"id": "service_identity", "class": "discoverable", "required": true, "source": "owner_service_manager"},
+            {"id": "canonical_auth", "class": "credential_reference", "required": true, "source": "owner_active_config"},
+            {"id": "owner_fixed_fixture", "class": "verification_fixture", "required": true, "source": "owner_fixed_fixture"},
+            {"id": "pre_restart_evidence", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"}
+          ]
+        }
+      },
+      "receipt_schema": "rencrow.check-receipt.v1"
     }
   ]
 }

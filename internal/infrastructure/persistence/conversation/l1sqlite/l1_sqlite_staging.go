@@ -205,3 +205,58 @@ LIMIT 1
 	}
 	return &items[0], nil
 }
+
+// FindStagingItemByNamespaceEventID performs one exact, bounded lookup for a
+// canonical staging projection.  The namespace and event ID are both part of
+// the predicate so a caller cannot accidentally resolve an event from another
+// projection namespace.
+func (s *L1SQLiteStore) FindStagingItemByNamespaceEventID(ctx context.Context, namespace, eventID string) (L1StagingItem, bool, error) {
+	if s == nil {
+		return L1StagingItem{}, false, errors.New("l1 staging store is closed")
+	}
+	queryDB := s.readDB
+	if queryDB == nil {
+		queryDB = s.db
+	}
+	if queryDB == nil {
+		return L1StagingItem{}, false, errors.New("l1 staging store is closed")
+	}
+	if ctx == nil {
+		return L1StagingItem{}, false, errors.New("l1 staging lookup context is required")
+	}
+	if strings.TrimSpace(namespace) != namespace {
+		return L1StagingItem{}, false, errors.New("l1 staging namespace must not have surrounding whitespace")
+	}
+	if err := ValidateL1Namespace(namespace); err != nil {
+		return L1StagingItem{}, false, err
+	}
+	if eventID == "" || strings.TrimSpace(eventID) != eventID {
+		return L1StagingItem{}, false, errors.New("l1 staging event_id is required")
+	}
+	rows, err := queryDB.QueryContext(ctx, `
+SELECT id, kind, namespace, event_id, source_id, source_url, fetched_at, published_at,
+       raw_text, raw_hash, summary_draft, keywords_json, license_note,
+       validation_status, meta_json, created_at, updated_at
+FROM l1_staging_item
+WHERE namespace = ? AND event_id = ?
+LIMIT 2
+`, namespace, eventID)
+	if err != nil {
+		return L1StagingItem{}, false, err
+	}
+	defer rows.Close()
+	items, err := scanL1StagingItems(rows)
+	if err != nil {
+		return L1StagingItem{}, false, err
+	}
+	if len(items) == 0 {
+		return L1StagingItem{}, false, nil
+	}
+	if len(items) > 1 {
+		return L1StagingItem{}, false, errors.New("l1 staging namespace and event_id are not unique")
+	}
+	if items[0].Namespace != namespace || items[0].EventID != eventID {
+		return L1StagingItem{}, false, errors.New("l1 staging lookup returned a mismatched key")
+	}
+	return items[0], true, nil
+}

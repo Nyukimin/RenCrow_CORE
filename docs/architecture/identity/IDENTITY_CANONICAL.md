@@ -1226,7 +1226,238 @@ Test:
 - DCIでEventIDが検索全体IDとして使われていない
 - EvidenceIDがEventID文字列から派生していない
 
+#### Step 03配備契約
+
+- DCI検索は一つの`ActionID`と一つの`TraceID`を持つ。検索結果、検索trace、冪等再送、
+  Data Write receiptは検索全体を`EventID`または`TraceID`で識別しない。冪等キーはIDとは別fieldに保存し、
+  RequestIDのhashや文字列連結からActionIDを作らない。
+- 新規検索では、ownerが`ActionID`と`EvidenceID`をUUIDv7で生成し、
+  `dci.search.requested`、`dci.search.started`、`dci.source.selected`、`dci.file.read`、
+  `dci.evidence.created`、`dci.search.completed`または`dci.search.failed`をCanonical Event Storeへ同期appendする。
+  `SearchStep.EventID`は対応する`dci.file.read`を、Evidenceの`CreatedByEventID`は対応する
+  `dci.evidence.created`を逆参照する。Canonical Event appendに失敗したrequestは成功応答や成功projectionを返さない。
+- 新規runtime検索の`actor_attribution`は`authenticated`だけを許可し、認証済みuserまたは実CORE Agentの
+  `ActorKind`／`ActorID`を必須にする。旧履歴の`Worker`のような実装roleはAgentへ推定置換しない。
+  canonical Agent catalogまたは認証済みuser記録へ一致する根拠がない旧labelは、migration時だけ
+  `actor_attribution=legacy_unattributed`、空の`ActorKind`／`ActorID`として保存し、元labelはmigration Event payloadと
+  bounded receiptの分類Evidenceにだけ残す。通常のruntime writerは`legacy_unattributed`を生成・更新できない。
+- DCIの現在状態SQLiteは`action_id`を親keyとし、stepの`event_id`、Evidenceの
+  `created_by_event_id`を検索親keyと兼用しない。Viewer、public client、Data Recall、L1 current projectionも
+  同じ`action_id`、`trace_id`、実Event参照だけを公開する。
+- 新SQLite schemaは明示versionとforeign keyを持ち、旧`event_id`親schemaを通常起動時に自動変換しない。
+  旧schema、version不明、必須column／index不足はfail closedとし、checksum-bound migration outputだけを受理する。
+- 旧SQLite、旧JSONL、L1 staging current／archiveに同じ旧検索またはEvidenceが重複している場合、
+  migration内の一時mapでdedupeし、同じ旧値を一つのCanonical ActionID、TraceID、EvidenceID、EventIDへ
+  UUIDv5変換する。runtime alias、dual read、dual write、旧JSON key fallbackを残さない。
+- 過去分は、旧trace rowの開始／終端、旧`read_file` step、旧Evidence rowまたはstaging rowのように
+  発生済み事実を直接示すrecordだけをCanonical Eventへ変換する。独立recordが存在しない
+  `dci.search.requested`と`dci.source.selected`は生成しない。旧`limit` stepは独立Eventへ偽装せず、
+  terminal Event payloadとmigration receiptの除外理由へ保存する。
+- 移行計画の`dci.search.completed`／`dci.search.failed`は、同じ検索の全`dci.evidence.created`を閉じたjoinで
+  束縛する。Evidenceが1件以上なら決定的に最後のEvidence Eventを`CausationEventID`とし、それより前の全Evidence
+  EventIDを重複なくsorted `DependencyEventIDs`へ入れる。Evidenceが0件なら従来どおり最後のreadまたはstartedをcauseとし、
+  dependencyは持たない。各Evidenceのreadまたはstartedへのcausationは変更せず、全体graphを検証してから受理する。
+- 移行計画のEvent payloadは旧IDを完全に置換し、`legacy_search_id`、`legacy_evidence_id`、
+  `legacy_step_no`、`legacy_final_evidence_count`、`search_event_id`と、それらのraw valueを保持しない。
+  step番号は`step_no`、最終件数はcanonicalな`evidence_count`へ統一する。migration metadataとして
+  許可する旧語彙は`legacy_actor_label`だけであり、旧`limit` stepの除外を示すterminal payloadの
+  `legacy_limit_steps`／`limitations`だけを例外とする。dry-runはplanned payloadを再帰的にexact-keyと
+  raw legacy ID valueで検査し、1件でも検出したらblockedにする。`planned_zero_counters.legacy_key_zero`
+  は旧keyとraw valueの検出数を合算した検査結果から測定し、固定値を出力しない。
+- activeな旧DCI JSONLはruntime inputから外し、checksum-bound cutover時にrollback rootへ退避する。
+  immutableな旧監査logはmigration入力Evidenceとして保持できるが、current DCI API、current projection、
+  owner lookup、runtime writerから参照しない。
+- legacy sourceの`TEXT`はinvalid UTF-8を含み得る。capture artifactは各source DBのraw bytesをimmutableなrollback
+  evidenceとして保持し、L1／archiveの`raw_text`／`raw_hash`は変更しない。canonical derived DCI／Event snippetだけをplanning前に
+  固定algorithm `rencrow.utf8.invalid-byte-replacement/v1`でnormalizeする。invalid byte一つを一つの`U+FFFD`へ
+  置換し、既に有効な`U+FFFD`は変更しない。dry-run／build receiptはexpected／actual normalized valueと
+  invalid byte countを束縛し、一致しなければfail closedとする。
+- production snapshotのreceiptはschema `rencrow.identity.dci-migration/v2`と、固定algorithm
+  `rencrow.sqlite.logical/v1`を持つ。`source_database_logical_sha256`と`source_schema_sha256`は
+  `source_dci`、`source_event_store`、`source_l1`、`source_archive`の4 source、
+  `source_dci_classification_sha256`はJSONLを含む5 source、`source_file_sha256`はJSONLだけ、
+  `source_non_dci_logical_sha256`はEvent Store／L1／archiveの3 sourceをexact key setで束縛する。
+  ready receiptは全値をlowercase SHA-256とし、旧v1 receiptはapplyへ渡さない。
+- `event_plan_sha256`は、planned EventEnvelopeをpayload／Event graph検証した後、完全なcanonical EventEnvelopeを
+  JSON化した行をsortedしてhashするlowercase SHA-256である。Event sliceの順序とsnapshot rootには依存せず、payload、
+  envelope field、causationの変更を検出する。ready receiptでは必須かつ有効な値とし、blocked receiptだけは省略できる。
+  receiptの明文fieldへ個別payloadやsource pathを含めず、hashはcanonical EventEnvelope JSON linesだけから計算する。
+- SQLite logical hashはread-only/query-onlyの同一source-open windowで、headerの
+  `user_version`／`application_id`／`encoding`、canonical `sqlite_schema`、`table_xinfo`、
+  `sqlite_sequence`を含む全user／shadow tableの全row/valueをtyped length-prefixで読む。
+  row order、rowid、page size、VACUUM、filesystem pathをhashへ含めず、tableごとのsorted 32-byte row digest、
+  cell／row／column／context bound、未知型拒否でfail closedにする。L1 non-DCI hashは分類済みDCI stagingの
+  primary keyとcurrent registryのsource_idだけを除外し、FTS／projectionを含む他のrow/tableを除外しない。
+- production cutoverはCORE writer停止後に、DCI SQLite、Canonical Event Store、Conversation L1 current、
+  Conversation archive、runtime binaryを同じrollback rootへ保存し、source logical hashとbuild receipt SHA-256を
+  再照合してから一括置換する。一つでも失敗した場合は全対象を旧snapshotへ戻し、新旧を混在させない。
+- build／apply receiptはsource別件数、dedupe後件数、変換Event数、除外理由別件数、ActionID／EvidenceID／EventID set hash、
+  完全なplanned EventEnvelope内容の`event_plan_sha256`、
+  output DB hash、旧column／旧JSON key／旧lookup zero、orphan zeroをbounded JSONで固定する。
+  dry-runとbuild再実行は同じmapping hashと`event_plan_sha256`を返す。manifest validatorはreadyで欠落・不正な
+  `event_plan_sha256`をfail closedにする。
+- 配備後は実Actorが正規CORE routeからDCI検索を行い、APIのActionID／TraceID、全step EventID、
+  Evidence CreatedByEventID、Canonical Event graph、L1 staging参照、Data Write冪等再送、再起動後lookupを
+  一つのreceipt chainで照合する。
+
+#### Step 03 Failure Knowledge: 検索ActionをEventとして保存したDCI履歴分断
+
+- **Failure:** 検索全体を`EventID`と呼び、子stepの親key、EvidenceIDの文字列prefix、Viewer表示、
+  Data Write audit reference、L1 staging EventIDへ兼用した。
+- **Problem:** 一つのActionと複数の発生済み事実を区別できず、Evidenceから作成Eventを逆引きできない。
+  同じ値をTraceIDとして返すconsumerも生じ、検索の因果graphと冪等性を証明できなかった。
+- **Cause:** 検索単位、発生事実、保存根拠、冪等tokenを一つの文字列へ圧縮し、DCI state storeを
+  Event Storeの代替として扱った。
+- **Lesson:** prefix変更やfield renameだけでは意味は直らない。Action、Event、Evidence、Trace、
+  idempotency keyを別々のowner fieldと永続参照で強制し、過去変換は実在recordだけから行う。
+- **Invariant:** 検索全体はActionID、検索事実はEventID、保存根拠はEvidenceIDである。
+  EvidenceIDはEventIDから派生せず、Evidenceは作成Eventを逆参照する。
+- **Enforcement:** typed Canonical ID、SQLite column／foreign key、owner input validation、Canonical Event同期append、
+  runtime JSONの旧key拒否、migration-only UUIDv5 map、legacy zero architecture testで強制する。
+- **Tests:** success、no evidence、limit、file read failure、timeout、Evidence逆参照、Event Store failure、
+  idempotent replay、snapshot dry-run、second-run mapping一致、partial cutover rollback、配備後実Actor DCIを検査する。
+
+#### Step 03 Failure Knowledge: rollback aliasによる旧ID payload残存
+
+- **Failure:** rollbackやlookupを簡単にするため、planned Event payloadへ旧検索／Evidence IDまたは旧JSON keyを
+  aliasとして残し、`legacy_key_zero`を固定値0でreceiptへ出力した。
+- **Problem:** 旧IDと新IDの併記がproduction payloadへ残り、Gate 7の旧JSON key／旧lookup zeroを証明できない。
+  payloadを使ったrollbackは新旧の意味を混在させ、監査上のAction／Event／Evidence分離も再び崩す。
+- **Cause:** rollbackの証拠をpayload aliasへ持たせ、同じsnapshotから再計算できるUUIDv5 mappingとmapping hashを
+  使わず、planned payloadを実際に走査せずにzeroを宣言した。
+- **Lesson:** rollbackは4 DBとbinaryを同じrollback rootへ保存したchecksum-bound artifactから行う。旧recordの変換は
+  固定されたmigration-only UUIDv5 ruleで再現し、mapping hashを再照合する。rollback根拠をproduction payload aliasへ
+  保存してはならない。
+- **Invariant:** planned Event payloadに旧ID／旧keyは存在せず、許可されるmigration metadataは
+  `legacy_actor_label`とterminalの`legacy_limit_steps`／`limitations`だけである。ready receiptはさらに完全な
+  planned EventEnvelope内容を束縛する`event_plan_sha256`を持つ。
+- **Enforcement:** 再帰的なexact-key／raw legacy ID validatorをbuild前に実行し、nonzeroならfail closedにする。
+  receiptの`planned_zero_counters.legacy_key_zero`は旧keyとraw valueの検出数を合算した測定結果だけを反映する。
+  payload／graph検証後にcanonical EventEnvelope全体をsorted JSON linesとしてhashし、ready manifestの欠落・不正な
+  `event_plan_sha256`を拒否する。
+- **Tests:** 全planned Eventの旧key／raw legacy ID zero、許可metadata保持、actor classificationとmapping／ID set hashの
+  再実行一致、禁止payloadの注入拒否、Event plan hashのroot／slice order非依存とpayload／causation変更検出、ready欠落・
+  不正値拒否、rollback root／UUIDv5／mapping hashの再照合境界を検査する。
+
+#### Step 03 Failure Knowledge: terminal EventがEvidence branchを閉じない
+
+- **Failure:** terminalのcauseを最後のEvidenceだけへ設定し、同じ検索の他の`dci.evidence.created` branchを
+  `DependencyEventIDs`へ含めなかった。
+- **Problem:** terminal Eventから全Evidenceが到達可能であることを証明できず、並列のEvidence作成結果を含む検索完了／失敗の
+  closed graphにならない。
+- **Cause:** Evidenceを単一の線形`lastEvent`として扱い、terminalをjoinとして構築しなかった。
+- **Lesson:** 各Evidenceのreadまたはstartedへのcausationは保持したまま、terminalだけを全branchのjoinにする。最後の決定的な
+  Evidenceをcause、それ以前のEvidenceをsorted dependenciesとして、payloadではなく既存のEvent graph参照で束縛する。
+- **Invariant:** Evidenceが複数ならterminalのcauseとdependenciesの和集合は各Evidence EventIDを重複なく一度ずつ含み、causeをdependencyへ
+  重複させない。Evidenceが0件は最後のread／started cause、1件は追加dependencyなしとする。
+- **Enforcement:** planned Eventをgraph検証し、terminalの`CausationEventID`／`DependencyEventIDs`を含む完全なEnvelope setを
+  `event_plan_sha256`へ束縛する。
+- **Tests:** 2 read／3 Evidenceのclosed join、zero／one Evidence、sorted dependency、cause重複拒否、graph validation、
+  root／order-independent plan hashを検査する。
+
+#### Step 03 Failure Knowledge: selective source hashとrows保持によるcutover証拠欠落
+
+- **Failure:** DCI分類行だけをsource hashへ記録し、L1非DCI row、schema、allocator、Event Store全tableを
+  協調cutoverの証拠として束縛していなかった。また、SQLite table名rowsを開いたまま`table_xinfo`を同じ
+  `MaxOpenConns(1)`接続へ発行し、dry-runがdeadlineまで自己待機した。
+- **Problem:** DCI classificationが一致しても同時置換対象の別table／schemaを検出できず、sourceを正しく
+  再照合できない。rows保持時はbounded receiptを発行する前に検査がtimeoutする。
+- **Cause:** 「移行対象の意味行」と「一括置換するdatabase全体」を一つのhashへ混同し、DB connectionの
+  cursor lifecycleを一覧取得とdescriptor取得で分離しなかった。
+- **Lesson:** classification hashは対象行の説明でありcutover証拠ではない。v2はfull／schema／non-DCIを
+  独立したalgorithm-bound hashとして発行し、schema rowsをboundedにmaterializeして`Err`／`Close`を確認後、
+  別loopでcolumn queryを行う。
+- **Invariant:** ready receiptはv2のexact hash mapと固定algorithmを満たし、v1はapply-eligibleにならない。
+  logical hashはpath／page／row順に依存せず、memory／cell／row／context boundを超えたら失敗する。
+- **Enforcement:** `table_xinfo`、typed length-prefix、table単位sorted digest、L1 classified primary-key-only
+  exclusion、rows materialize-close-query sequence、manifest exact-map validation、atomic 0600 receiptで強制する。
+- **Tests:** insertion order／page size／VACUUM不変、content／schema／allocator／duplicate、L1 DCI／non-DCI mutation、
+  shadow／projection inclusion、旧rows-held構造のdeadlineと修正版の即時完了、bound／unknown type／v1 rejection、
+  root-independent bounded receiptを検査する。
+
+#### Step 03 Failure Knowledge: implicit encoding/json replacementによるDCI raw persistenceの分岐
+
+- **Failure:** legacy `TEXT`のinvalid UTF-8をdecoder／`encoding/json`のimplicit replacementへ任せる一方、DCI raw
+  persistenceは別のbytesを保持し、capture artifactの各source DB raw bytesをrollback evidenceとして固定しなかった。
+- **Problem:** dry-runとbuildが同じsourceから異なるcanonical DCI／Event textを計画し、normalized value／invalid byte
+  countを再現できず、rollback時に原bytesを復元・監査できない。
+- **Cause:** raw source bytesとcanonical derived textを同じ表現として扱い、planning boundaryで明示的なnormalizationを
+  せず、serializerのreplacement behaviorを正本にした。
+- **Lesson:** capture artifactは各source DBのraw bytesをimmutableに保持し、L1／archiveの`raw_text`／`raw_hash`は変更せず、
+  canonical derived DCI／Event snippetだけをplanning前に `rencrow.utf8.invalid-byte-replacement/v1` でnormalizeする。
+  一つのplanは全てのdownstreamで同じnormalized valueを使う。
+- **Invariant:** 一つのmigration plan内のexpected／actual normalized valueとinvalid byte countは一致し、capture artifactの各source
+  DB raw bytesとL1／archiveの`raw_text`／`raw_hash`は変化しない。どれか一つでも不一致ならfail closedとする。
+- **Enforcement:** capture receiptはphysical raw evidenceだけをhash-boundにし、dry-run／build receiptはnormalized valueと
+  invalid byte countのexpected／actualを束縛する。`encoding/json`のimplicit replacementをcanonical valueの決定に使わず、
+  固定algorithm以外の結果またはmismatchを受理しない。
+- **Tests:** invalid byte一つごとの一つの`U+FFFD`置換、validな`U+FFFD`の保持、同一plan内のdry-run／build normalized valueと
+  invalid byte countの一致、mismatchのblocked、capture artifact raw bytes／L1／archiveの`raw_text`／`raw_hash`の不変性と
+  rollback evidenceを検査する。
+
 ---
+
+### D1b-2c: offline four-store build and bounded receipt
+
+D1b-2c は、D1b-2a の capture receipt と D1a dry-run の ready manifest を
+同一の immutable snapshot として再検証し、保持された一つの migration plan から
+offline の四つの SQLite 出力を作る工程である。公開入口は
+`Build(ctx, BuildOptions)` だけとし、`build.json` は
+`rencrow.identity.dci-build/v1`、`mode=build`、`status=ready|blocked` の
+bounded receipt とする。この工程は production apply、cutover、rollback、service
+runtime の変更を実行したことを意味しない。
+
+#### Contract and invariants
+
+- `BuildOptions` は `SnapshotDir`、`BuildDir`、`CaptureReceipt`、
+  `DryRunManifest`、`AgentIDs` を明示する。snapshot root と capture／manifest は
+  canonical な既存 root 内の regular non-symlink input で、capture receipt は
+  ready capture schema、manifest は ready dry-run schema として strict JSON（一つの
+  JSON value、unknown field と trailing token を拒否）で読む。
+- receipt の file SHA-256、bytes、artifact-set SHA-256 と各 captured artifact を
+  再計算し、分類／plan は保持された plan へ一度だけ束縛する。caller の expected
+  count や AgentIDs で再計画せず、classifier の manifest が supplied manifest と
+  semantic exact equality でない場合は blocked とする。source、capture receipt、
+  dry-run manifest は operation 前後で同一でなければならない。
+- fresh な canonical build root を 0700 で作り、owner API 経由で固定名
+  `target-dci.db`、`target-event-store.db`、`target-l1.db`、`target-archive.db` を
+  0600 で一度だけ生成する。owner の read-only verification evidence（schema／
+  logical／non-DCI hash、counts、quick-check、foreign-key、sidecar zero）を
+  `build.json` へ bounded projection として結合し、output artifact-set hash と
+  exact key set を検証する。
+- ready root の直下は四 DB と `build.json` の五 entry だけで、SQLite sidecar は
+  zero である。途中失敗または receipt write／final verification failure は output
+  と sidecar を全て削除する。safe に作成済みの root へ blocked receipt を durable
+  に書ける場合だけ `build.json` を残し、blocked receipt 自体を書けなければ empty
+  root とする。どちらの場合も ready を返さない。
+- receipt は path、query、snippet、command、payload、secret、個別の canonical／
+  legacy ID を含めず、capture／manifest hash、source hash maps、mapping／action／
+  trace／evidence／event／event-plan hash、expected／actual／dedupe／actor counts、
+  planned zero counters、四 output の hash／bytes／health と owner bounded checks
+  だけを公開する。ready では measured legacy key、orphan、foreign-key、sidecar
+  counters が全て zero でなければならない。
+
+#### Failure Knowledge
+
+- **Failure:** build が capture／dry-run を再実行して ID または actor attribution を
+  再計算し、receipt と出力 DB／Event Store の plan が分裂した。
+- **Problem:** 同じ snapshot でも output の mapping／event-plan hash と既存 manifest
+  が一致せず、source drift を検出できない。
+- **Cause:** prepare と materialize の境界を公開 Build から隠さず、caller flags／
+  default source を別の入力として許した。
+- **Lesson:** prepare は strict binding、classification 一回、plan retention を
+  所有し、Build はその private prepared input のみを owner helper へ渡す。
+- **Invariant:** ready receipt の manifest projection、capture／dry-run bytes hash、
+  artifact set、四 output evidence は一つの prepared input と exact semantic equality
+  で結合される。source/input drift、unsafe path、non-fresh root、owner evidence
+  mismatch は fail closed である。
+- **Enforcement:** strict bounded reader、canonical／alias path guard、owner helper
+  の単一呼び出し、atomic 0600 receipt、root／parent sync、final exact-root／hash／
+  input recheck、blocked cleanup と bounded generic error で機械的に強制する。
+- **Tests:** ready／blocked receipt の schema、key set、size、permission、hash／bytes／
+  aggregate、owner evidence／zero counters、path-free output、context／source drift、
+  non-fresh／symlink root、各 output 後の failure、receipt writer failure、repeat build
+  の plan determinism、CLI flag isolation と bounded stdout／stderr を検査する。
 
 ### Step 04: SessionID
 
@@ -1951,3 +2182,462 @@ External Trigger
 ```
 
 この構造を満たした時点で、RenCrowのID統一は完了とする。
+
+## D2d-2b service-manager cutover subreceipt
+
+D2d-2b は、D2d service manager が実行した停止・再開境界を D2c の file-swap
+subreceipt と結合する、CORE 内の bounded な証跡境界である。schema は
+`rencrow.identity.dci-service-cutover/v1`、mode は `cutover`、status は
+`applied`、`blocked`、`rolled_back`、`rollback_failed` のいずれかに固定する。
+この receipt は service-manager subreceipt であり、配備後の readiness、実 Actor
+Trace、Data Write、restart 後の exact lookup を成功とは主張しない。
+
+### Invariants and enforcement
+
+- service receipt path は service command の前に canonical parent の fresh regular
+  target として解決し、build root／固定四 output／旧新 runtime／active 五 source／
+  rollback root／D2c receipt と path containment、symlink、hardlink、alias を拒否する。
+- outer receipt の `cutover_subreceipt_sha256` は durable な D2c receipt の物理
+  hash だけを束縛し、その `cutover_subreceipt_status` は常に `applied` である。
+  D2c が pre-mutation に blocked／rolled_back となり receipt を発行しない場合だけ
+  空を許す。service lifecycle が後で rollback しても、immutable な D2c applied
+  file の意味を `rolled_back` と書き換えない。`cutover_terminal_status` は D2c の
+  in-memory terminal 状態を別に示す。
+- `initial_running`、二つの stopped proof、`final_running` は owner の bounded
+  projection（owner／enabled／unmasked／active／PID-positive／listener／readiness、
+  または masked／inactive／PID-zero／listener-zero）だけを含む。path、PID値、socket、
+  command、config、query、payload、secret、個別 ID、raw error は含めない。空 projection
+  は未到達 phase に限る。
+- D2c apply の成功後に new service の start/readiness または service receipt の
+  durable publication が失敗した場合は、detached recovery context で停止を再証明し、
+  D2c rollback と old service の running proof を完了してから `rolled_back` を出す。
+  receipt write／readback／cleanup が証明できない場合は `rollback_failed` とし、unknown
+  final、symlink、hardlink を削除・上書きしない。
+- receipt は strict one-value JSON、unknown field／trailing token 拒否、64 KiB 以下、
+  same-parent temp、file sync、fresh-only atomic publication、parent sync、exact inode
+  readback、非 Windows 0600 を満たす。`applied` の ErrorCode は空、他の terminal status
+  は bounded machine code を持つ。
+
+### Failure Knowledge
+
+- **Failure:** D2c の applied receipt を service rollback 後に `rolled_back` と書き換え、
+  または service lifecycle の証拠を同じ file receipt に混在させた。
+- **Problem:** file-swap が実際に成功した証跡と service manager の復旧結果が区別できず、
+  durable audit chain と失敗時の責任境界が失われる。
+- **Cause:** D2c owner と service-manager owner の terminal 状態を一つの mutable な
+  status として扱い、receipt publication を active cohort の成功と同一視した。
+- **Lesson:** D2c applied file は immutable historical subreceipt として hash/status を
+  保持し、service の outer terminal status と phase projections を別の bounded receipt
+  に結合する。publication failure は file rollback の trigger であり成功の根拠ではない。
+- **Invariant:** `applied` は valid old-running、二つの stopped proof、D2c applied
+  subreceipt、new-running を全て持つ。`rolled_back` は D2c terminal rollback と old
+  running を持つ。`rollback_failed` は完全復旧を claim しない。
+- **Enforcement:** `executeServiceCutover` の唯一の service command order を再利用し、
+  private result へ bounded evidence を保持する。strict validator、fresh-only owner
+  writer、inode binding、detached recovery、generic error code、D2c hash cross-binding
+  で強制する。
+- **Tests:** happy applied、pre-mutation blocked、readiness/write failure rollback、
+  durable D2c hash retention、context cancellation、fresh/symlink/hardlink/alias、
+  unknown/trailing/oversize JSON、receipt substitution preservation、path／payload／ID
+  非漏洩を fake manager と temp fixture で検査する。production apply、post-deploy E2E、
+  service restart の成功はこの単位の受入条件に含めない。
+
+## D2d-2c production cutover owner CLI
+
+D2d-2c は、D2d-2b まで private に閉じていた service-managed cutover を、既存の
+`rencrow-dci-migrate --mode cutover` だけから実行可能にする owner operation 境界である。
+新しい binary、service、endpoint、apply route は作らない。公開 API は path／hash を受ける
+薄い `dcimigration.Cutover` facade に限定し、service command order、file swap、rollback、
+receipt publication は既存の private `executeServiceCutoverWithReceipt` を唯一の正本として
+再利用する。
+
+### CLI / Boundary / LLM classification
+
+- `CLI`: build cohort、active 五 source、old/new runtime、active config、fresh rollback／
+  D2c／service receipt target を明示入力とし、`ServiceCutoverReceipt`、bounded stderr code、
+  exit status を決定的に返す。owner は `RenCrow_CORE` の `dcimigration` である。
+- `Boundary`: 固定 `rencrow.service`、`:18790`、fixed readiness、service identity、
+  source／artifact checksum、canonical path／alias、stop/start、rollback、durable receipt を
+  existing service manager と cutover owner が拘束する。
+- `LLM`: 0。意味復元、生成、model routing はなく、LLM を採用する必須性／品質優位性はない。
+
+### Public operation and fixed flags
+
+- `dcimigration.Cutover(ctx, CutoverOptions)` は public execution contract だけを公開し、
+  private manager、private applied state、command runner、unit、port、readiness URL、polling、
+  arbitrary shell を公開しない。入力を private `cutoverArtifactOptions`／
+  `cutoverActiveOptions` へ一度だけ写像し、既存 facade を一回だけ呼ぶ。
+- CLI の cutover mode は次の明示 flag を全て要求する。
+  `--build-dir`、`--build-receipt`、`--expected-build-receipt-sha256`、
+  `--installed-runtime`、`--staged-runtime`、`--expected-installed-runtime-sha256`、
+  `--expected-staged-runtime-sha256`、`--active-dci`、`--active-dci-jsonl`、
+  `--active-event-store`、`--active-l1`、`--active-archive`、`--active-config`、
+  `--rollback-dir`、`--cutover-receipt`、`--service-receipt`。
+  dry-run／capture／build 用 flag、positional argument、空値、uppercase／不正 hash、
+  unknown flag は state mutation 前に拒否する。
+- exact flag set を受理した cutover invocation の stdout は path-free な
+  `ServiceCutoverReceipt` 一 JSON value と改行だけ、stderr は bounded machine code だけとする。
+  exit 0 は durable `status=applied` に限り、`blocked`、`rolled_back`、`rollback_failed`、
+  semantic invalid／unsupported は nonzero とする。unknown／positional／mode-incompatible／
+  missing／empty flag は既存 CLI と同じ parse/form error として stdout なし、fixed stderr、
+  exit 2 で mutation 前に拒否する。それ以外の service command 前 semantic invalid／unsupported
+  は durable service receipt を捏造せず、同じ schema の bounded in-memory blocked result だけを返す。
+- Linux は既存の fixed systemd manager を構築する。Windows／macOS は同じ API／CLI を
+  compile できなければならず、対応する canonical service manager が存在しない間は、path、
+  command、service、config 内容を出さず mutation 前に `service_manager_unavailable` で
+  fail closed にする。systemd substitute や direct process control を fallback にしない。
+
+### Invariants and tests
+
+- active config は caller が明示する canonical existing path であり、fixed service の
+  `RENCROW_CONFIG` と一致することを manager が検証する。caller は unit／port／readiness／
+  command を変更できない。installed runtime は同じ値を artifact cohort と service identity
+  の両方へ渡し、別の runtime owner を作らない。
+- public facade／CLI は既存 D2c／D2d-2b の source hash、build receipt hash、runtime hash、
+  fresh target、alias、stopped proof、rollback、receipt fsync/readback を弱めない。
+  production cutover を test helper、private package test、手動 file swap から起動しない。
+- TDD は public option mapping、fixed manager factory、single owner call、cutover flag exact set、
+  incompatible flag、invalid hash、stdout one JSON、stderr bounded code、path／secret non-leak、
+  applied／blocked／rolled_back／rollback_failed exit、Linux fixed owner、非 Linux compile／
+  unavailable を検査する。unit test は fake manager と isolated fixture だけを使い、production
+  service、DB、runtime を変更しない。
+- この receipt は production file/service cutover の terminal だけを証明する。D2e-3 pre、
+  canonical restart、D2e-3 post、logs／durable state review、final Step03 receipt chain が揃うまで
+  Step03 の operational completion を主張しない。
+
+### Failure Knowledge
+
+- **Failure:** 完成済みの private cutover を test package から直接呼ぶか、手動 systemctl と
+  file copy を組み合わせ、CLI receipt を持たずに productionへ適用した。
+- **Problem:** operator intent、input hash、service owner、rollback、exit status が一つの再現可能な
+  route に束縛されず、成功／復旧／未実行を機械判定できない。
+- **Cause:** safety-critical logic を private に保つことと、owner operation を外部から一切
+  起動不能にすることを混同した。
+- **Lesson:** lifecycle logic は private のまま保ち、public surface は exact options と bounded
+  receipt の薄い facade にする。既存 migration CLI がその facade の唯一の運用入口を持つ。
+- **Invariant:** production cutover は `rencrow-dci-migrate --mode cutover` ->
+  `dcimigration.Cutover` -> private D2d-2b owner の一方向だけであり、alternate route はない。
+- **Enforcement:** exact flag matrix、private types、platform factory、fixed manager constants、
+  facade mapping test、non-test caller architecture test、cross-compile、production receipt chain で
+  強制する。
+
+## D2e-1 owner post-deploy identity evidence
+
+D2e-1 は、D2d-2b の service receipt や D2c の build receipt を置き換えず、完了済みの
+一つの DCI Action が owner の正本間で同じ実行として読めることを検査する read-only
+subevidence である。公開 schema は `rencrow.dci.identity-evidence/v1`、状態は
+`passed` に固定し、`IdentityEvidenceVerifier.VerifyAction(ctx, ActionID)` は一つの
+authenticated actor action だけを対象にする。
+
+### Owner readers and exact contract
+
+- DCI owner は `FindSearchResultByActionID(ctx, actionID)` で Action を一件だけ読み、
+  `ValidateStoredSearchResult`、authenticated `ValidateActor`、`mode=dci`、
+  `status=completed`、`steps>0`、`evidence>0`、`FinalEvidenceCount` の一致を要求する。
+  legacy attribution、failed result、ActionID／TraceID／actor の不一致は拒否する。
+- Canonical Event Store owner は DCI TraceID に対して `ListByTraceID(ctx, traceID, 256)`
+  を一度だけ呼ぶ。256 は verifier 内の固定上限であり、caller が拡張できない。返る
+  Event は一つの exact set として扱い、`3 + 2*step_count + evidence_count` 件と一致し、
+  `dci.search.requested`、`dci.search.started`、step ごとの
+  `dci.source.selected`／`dci.file.read`、`dci.evidence.created`、
+  `dci.search.completed` だけを許す。failed、unknown、extra、duplicate は fail closed とする。
+- 全 Event は `ActionID`、`TraceID`、authenticated actor、`component_id=dci` を共有する。
+  Event graph は `ValidateEventEnvelopeGraph` を通し、requested root -> started ->
+  selected/read の順を再構成する。最初の selected は started に、次の selected は
+  前 step の pack-order 最後の evidence（なければ前 step の read）に束縛する。
+  Evidence は対応する read を cause とし、selected/read/evidence-created の dependency は
+  空、completed の cause と sorted dependencies は terminal event join と完全一致させる。
+  各 payload は canonical key/value のみを持ち、query、file path、read status/count/error、
+  evidence の file／line／snippet／source／reason／confidence、terminal の status／count／
+  limitations を結果と相互照合する。
+- L1 current と archive は Evidence ごとに
+  `FindStagingItemByNamespaceEventID(ctx, "kb:dci", Evidence.CreatedByEventID)` を exact
+  lookup する。kind は `search_result`、EventID は Evidence の `CreatedByEventID`、
+  `RawText` と SHA-256、canonical DCI `SourceID`／synthetic `SourceURL`、および
+  `source_kind=dci`、`search_action_id`、`trace_id`、`evidence_id`、
+  `evidence_created_event_id` の meta binding を検査する。current／archive は ID、内容、
+  metadata、keywords、status、timestamps を含む full staging projection として等しくなければならない。
+- 公開 projection は `schema_version`、`status`、Action／Trace／actor、search status、
+  event／step／evidence／current projection／archive projection counts、
+  `event_graph_sha256` だけを持つ。graph hash は full Event envelope を occurred time、
+  同時刻なら EventID で deterministic に並べ、`encoding/json` で計算する。query、path、
+  snippet、URL、payload、meta、DB path、secret、raw error は receipt に出さず、失敗も固定
+  bounded code のみを返す。
+
+これは read-only subevidence の受入であり、service receipt、build artifact／runtime
+checksum、Data Write の idempotency、restart 後の lookup、正規 service の readiness、または
+実 Actor が正規 runtime route を通ったことを証明しない。それらは D2d-2b、D2c、および
+後続の post-deploy route acceptance の owner evidence として別に検査する。
+
+### Failure Knowledge
+
+- **Failure:** DCI Action、Event、current L1、archive L1 の一部だけを照合し、検索 query や
+  内部 path を返した結果を post-deploy identity proof と扱った。
+- **Problem:** owner 間の Action／Trace／actor／Evidence binding と Event graph の欠損を
+  検知できず、別の結果や projection を同じ実行として公開する。
+- **Cause:** exact Action lookup と bounded Trace lookup を分離せず、terminal join、payload、
+  current／archive full projection を独立の正本として扱った。
+- **Lesson:** verifier は既存 owner reader と canonical validator だけを使う read-only 境界とし、
+  一つの固定 Event set、Evidence created EventID、current／archive projection を同時に満たした
+  ときだけ bounded subevidence を返す。
+- **Invariant:** `passed` は authenticated completed DCI、positive counts、exact event formula、
+  graph／payload／actor binding、Evidence ごとの current＋archive equality、lowercase 64 桁
+  graph hash を全て満たす。どれか一つでも欠ければ receipt は発行しない。
+- **Enforcement:** `ValidateStoredSearchResult`、`ValidateActor`、`ValidateEventEnvelopeGraph`、
+  fixed 256 limit、exact event/payload cardinality、terminal join、canonical L1 source/hash/meta
+  checks、path/content-free fixed errors を `IdentityEvidenceVerifier` 境界で強制する。
+- **Tests:** happy path、reader order に対する hash determinism、missing／legacy／failed／zero
+  evidence、wrong binding、unknown／extra／duplicate／overbound Event、bad graph／chain／payload／
+  terminal、current／archive missing／mismatch／hash／meta／reader error、receipt tamper、error／
+  receipt non-leak を isolated fake reader で検査する。service command、build、runtime restart、
+  production write、post-deploy route は実行しない。
+
+## D2e-2 actual Shiro deterministic post-deploy route acceptance
+
+D2e-2 は D2e-1 の owner identity evidence を、認証済みの実 Shiro が既存の
+`/v1/agent/ops` route から決定的に呼び出したことへ結合する bounded な route acceptance
+subevidence である。新しい endpoint、direct DB reader、generic tool dispatcher、
+自然言語の `RouteOPS`、または LLM を acceptance 経路へ追加しない。D2e-2 の実装・unit
+test は handler 契約と `Shiro.ExecuteTool` -> `ToolRunner` の接続だけを検査し、production
+deploy、初回／再起動後の実 request、service receipt、artifact checksum、readiness、および
+最終 receipt chain は未検証境界として残す。
+
+### Existing route and strict request contract
+
+- 利用する経路は既存の認証済み local-only `POST /v1/agent/ops` 一つだけである。既存の
+  client/profile 認証、Bearer、`X-Request-ID`、local-only 制約、body size bound、strict
+  one-value JSON、unknown field／trailing token 拒否をそのまま適用する。固定 operation の
+  request は `{ "operation": "dci_identity_acceptance", "query": "..." }` とし、legacy
+  request `{ "message": "..." }` と mutually exclusive にする。空値、unknown field、両方の
+  field、どちらでもない shape は bounded error で拒否し、message branch や LLM へ fallback
+  しない。`tool`、`args`、任意の operation 名、任意の DB／path 指定は公開しない。
+- `dci_identity_acceptance` は実際に設定された CORE-managed Shiro を actor として使い、
+  既存の `Shiro.ExecuteTool` -> `ToolRunner.ExecuteV2` owner route を一つの認証済み
+  `agent=shiro`、`role=worker`、`purpose=ops`、`access=internal` scope で呼ぶ。この branch
+  では自然言語 `Execute`／`RouteOPS` を呼ばず、LLM を一度も使わない。scope はこの request
+  の処理全体で再利用し、次の三つの tool call 以外の tool call を発生させない。
+
+  1. `data.write` / `dci/search` に query を渡す。
+  2. 同一 scope、同一 query、同一 request の idempotency key で、同じ
+     `data.write` / `dci/search` を直ちにもう一度呼ぶ。
+  3. 一回目の write receipt の `audit_ref`（DCI ActionID）を指定し、`data.recall` /
+     `dci/identity_evidence` を `limit=1` で一回だけ呼ぶ。
+
+- write の両 receipt と recall projection は strict に decode／validate し、どれか一つでも
+  欠ける、owner／route が違う、actor／role／purpose／internal scope が違う、schema／policy／
+  validation が成功状態でない、ActionID が一致しない、または D2e-1 の identity evidence
+  が `passed` でない場合は fail closed とする。二回目 write は必ず
+  `idempotent_replay=true` でなければならない。最初の write の replay は新規 request では
+  `false`、再利用 request では `true` を許すが、acceptance runner は fresh な pre-restart
+  request で `false`、同じ `X-Request-ID` と query を用いた post-restart request で
+  `true`、かつ post-restart の二回とも `true` であることを要求する。ActionID、TraceID、
+  Event graph、event／step／evidence／current projection／archive projection counts は
+  restart の前後で完全一致しなければならない。
+
+### Public receipt and error boundary
+
+- 固定 operation の成功結果は専用の machine-readable schema
+  `rencrow.agent-ops.dci-identity-acceptance/v1` とし、次の field だけを持つ。
+  `schema_version`、`status`、`request_id`、`agent_id`、`role`、`operation`、`action_id`、
+  `trace_id`、`first_write_replay`、`second_write_replay`、`event_count`、`step_count`、
+  `evidence_count`、`current_projection_count`、`archive_projection_count`、
+  `event_graph_sha256`。成功 status は D2e-1 の `passed` と結合した `passed` のみとする。
+  この branch では `job_id` と `output` を返さない。legacy message branch の既存 response
+  は従来どおり six-field shape を維持する。
+- error は既存の one-field bounded error envelope だけを返す。malformed／mutually mixed
+  request、認証／scope failure、Shiro／ToolRunner unavailable、tool failure、receipt／
+  identity tamper、schema／policy／validation failure は同じ非詳細の bounded code に収束し、
+  query、path、snippet、URL、payload、meta、tool output、database path、secret、raw error、
+  arbitrary ID を漏らさない。失敗した branch を message branch、RouteOPS、LLM、direct DB
+  へ切り替えて成功に見せてはならない。
+
+### Implementation boundary and acceptance sequence
+
+- D2e-2 の実装／unit test は strict request dispatch、mutual exclusion、exact three-call
+  order、同一 Shiro internal scope、typed/narrow test double を通した ExecuteTool ->
+  ToolRunner 呼出し、write receipt／replay／ActionID binding、D2e-1 recall projection の
+  bounded mapping、success field allowlist、malformed／unavailable／tamper の non-leak を
+  検査する。test double は seam の検査に限り、実 Shiro actor、production identity、deploy
+  または post-deploy E2E の証拠を名乗らない。
+- production acceptance は、artifact と active config の checksum／owner を先に照合し、
+  正規 service の readiness を確認した後、同じ認証と固定 route で fresh pre-restart
+  request（first `false`, second `true`）を保存する。正規 service を restart し、owner／
+  readiness と旧 generation の消失を確認してから、同じ `X-Request-ID` と query の
+  post-restart request（first `true`, second `true`）を実行する。二つの成功 response と
+  service／build receipt を一つの final receipt chain として保存し、Action／Trace／Event
+  graph／counts の一致、ユーザー利用主体からの route 到達、ログと durable state を照合
+  できた時だけ D2e-2 post-deploy route acceptance を passed とする。これらが未実行の間は
+  D2e-2、Step 03、または全体 ID 統一を完了と報告しない。
+
+### Failure Knowledge
+
+- **Failure:** 自然言語 `RouteOPS` の LLM 応答、direct DB read、fake actor、または D2e-1
+  verifier の内部呼出しだけを post-deploy route acceptance と扱った。
+- **Problem:** 実際の authenticated Shiro が既存 owner route と policy を通った事実、write
+  idempotency、restart 後の同一 Action／Trace／Event graph を証明できず、別 actor／別経路の
+  結果を identity evidence と誤認する。
+- **Cause:** 既存 `/v1/agent/ops` の message／LLM 経路と deterministic operation を区別せず、
+  または route の前後を同じ test double／DB projection で置き換えた。さらに fresh と replay
+  の replay semantics を一回の成功値へ潰した。
+- **Lesson:** 既存 endpoint の strict tagged branch だけを拡張し、実 Shiro の既存
+  `ExecuteTool` -> `ToolRunner` を一つの authenticated internal scope で三回だけ呼ぶ。fresh
+  pre-restart と同一 request の post-restart を別 phase として記録し、二回目 replay と D2e-1
+  identity evidence を同じ bounded receipt chain へ結合する。
+- **Invariant:** deterministic branch は自然言語／LLM／direct DB／generic tool を使わず、
+  exact three-call order、correct owner／route／Shiro actor／role／purpose／internal scope、
+  matching ActionID、second replay、passed identity evidence、restart 前後の Action／Trace／
+  graph／counts equality を全て満たす。公開 success は許可された固定 field のみである。
+- **Enforcement:** strict JSON decoder、tagged request allowlist、single authenticated scope、
+  fixed operation dispatch、typed receipt validators、trusted request-id idempotency、D2e-1
+  schema／status／count／hash validation、one-field bounded error envelope、raw output
+  suppression、および acceptance runner の fresh/restart replay assertions で強制する。
+- **Tests:** legacy compatibility、operation／message mutual exclusion、unknown／trailing／
+  oversize JSON、exact call order／scope／no-LLM、first／second write receipt mismatch、replay
+  false／true、Action／Trace／identity evidence tamper、projection／graph/count mismatch、
+  unavailable／tool error、success／error non-leak を typed/narrow test double で検査する。
+  production deploy、service restart、artifact／readiness、実 Shiro route、ユーザー E2E、final
+  receipt chain はこの unit では実行せず、後続の実運用 acceptance に委譲する。
+
+## D2e-3 fixed pre/post-restart verifier checks
+
+D2e-3 は D2e-2 の実 Shiro route acceptance を、fresh request の前半と canonical service
+restart 後の同一 request の後半へ分けて固定する `RenCrow_CORE` 所有の運用 verifier 境界である。
+実装する check は次の二つだけであり、phase flag、generic command、任意 query flag、第三の
+互換 check は作らない。
+
+| check_id | command_id | 役割 |
+| --- | --- | --- |
+| `core_dci_identity_pre_restart` | `core-dci-identity-pre-restart` | restart 前の fresh な実 Shiro request と pre evidence を発行する |
+| `core_dci_identity_post_restart` | `core-dci-identity-post-restart` | 明示された pre evidence と restart 後の実 Shiro request を deterministic に照合する |
+
+### Common route and bounded fixture
+
+- 両 check の owner は既存の `cmd/rencrow-core-verify` であり、既存の認証済み local-only
+  `POST /v1/agent/ops`、active config の client/profile、Bearer、`X-Request-ID`、local-only
+  制約、body bound、strict one-value JSON、unknown field／trailing token 拒否をそのまま使う。
+  実際に設定された CORE-managed Shiro を actor とし、D2e-2 の
+  `Shiro.ExecuteTool` -> `ToolRunner.ExecuteV2` -> `data.write`／`data.recall` owner route を
+  通る。LLM、自然言語 `RouteOPS`、direct DB、generic tool、別 endpoint、別 actor、別 route は
+  許可しない。
+- request body は D2e-2 と同じ固定 operation の strict shape
+  `{ "operation": "dci_identity_acceptance", "query": "<owner-fixed fixture>" }` だけを使う。
+  query は一つの owner-fixed な非秘密 fixture とし、その値の正本は
+  `cmd/rencrow-core-verify` の source に置く。manifest は `owner_fixed_fixture` の acquisition
+  contract だけを宣言し、独立編集可能な query 値を持たない。
+  caller は query、operation、DB、path、tool、args を指定できず、CLI に任意 query を受ける flag
+  を追加しない。evidence には query 自体を保存せず、fixture の lowercase SHA-256 だけを保存する。
+- D2e-2 の success response allowlist（`schema_version`、`status`、`request_id`、`agent_id`、
+  `role`、`operation`、`action_id`、`trace_id`、`first_write_replay`、`second_write_replay`、
+  `event_count`、`step_count`、`evidence_count`、`current_projection_count`、
+  `archive_projection_count`、`event_graph_sha256`）を strict に受け入れる。query、body、Bearer、
+  path、tool output、payload、meta、secret、raw error、未許可 field、または unrelated／arbitrary ID は
+  receipt／evidence に出さない。ID はこの allowlist にある `request_id`、`agent_id`、`action_id`、
+  `trace_id` のうちこの chain の binding に必要な canonical 値だけを許可する。
+
+### Pre check
+
+`core_dci_identity_pre_restart` は、既存の canonical systemd service owner の現在 generation、
+固定 listener、readiness を観測してから、fresh な request ID（または canonical request-ID 規則を
+満たす明示 caller ID）で `/v1/agent/ops` を一回の authenticated route acceptance として呼ぶ。
+D2e-2 の三つの tool call と response validation を通し、最初の write は
+`first_write_replay=false`、二回目は `second_write_replay=true` でなければ `passed` としない。
+成功時は標準 `rencrow.check-receipt.v1` の check receipt と、owner-only の bounded pre evidence
+を同じ acceptance cohort として発行する。
+
+pre evidence に残してよいのは、D2e-2 success response の allowlist field（そのうち
+`request_id`、`agent_id`、`action_id`、`trace_id` はこの chain に必要な canonical 値だけ）、
+`phase=pre_restart`、`observed_at`、固定 fixture の lowercase SHA-256、bounded な非秘密
+`service_main_pid`、観測した `service_generation_sha256`、`artifact_sha256`、`config_sha256`、
+listener／readiness の bounded boolean、および response facts の canonical hash だけである。
+`artifact_sha256` と `config_sha256` は pre／post の観測を同じ artifact／active config に束ねるための
+hash であり、deploy／catalog の検証結果を意味しない（その owner evidence は
+`core_deploy_identity_chain` に残す）。request の query／body／token／path／output／secret や
+allowlist 外の unrelated／arbitrary ID は保存しない。standard check receipt は通常の
+`evidence_ref` で evidence publication 後にこの物理 evidence を参照する。chain は
+`observed_at`、post が記録する物理 pre evidence SHA-256、および通常の `evidence_ref` で構成し、
+evidence 作成時に最終 receipt を循環参照しない。
+fresh request、service generation、fixture／artifact／config hash、allowlist response、0600 publication
+のいずれかを検証できなければ、詳細を返さず固定された `failed` または prerequisite の
+`blocked` として nonzero exit で終了する。
+
+### Post check and exact chain
+
+`core_dci_identity_post_restart` は、caller が明示した一つの pre evidence file だけを入力とする。
+その file は canonical owner が発行した regular non-symlink file、owner-only（Unix は mode 0600、
+同等の ACL が必要な platform は owner-only ACL）、サイズ／schema／single JSON value が bounded
+で、`check_id`、`command_id`、`phase`、`status=passed`、freshness、fixture SHA-256、pre の request
+ID と D2e-2 facts／hash、`service_main_pid`、`service_generation_sha256`、`artifact_sha256`、
+`config_sha256` が strict に一致しなければ拒否する。caller が path の代替、query、request body、
+token、service command、shell command を差し込むことはできず、pre evidence の freshness bound は
+check 側の固定値であり CLI override を持たない。
+
+post check は canonical service manager が起動した現在の generation、固定 listener、readiness を
+観測する。pre evidence の generation と異なり、pre evidence の `service_main_pid` に対応する
+`/proc/<pid>` が存在せず、旧 generation が残っていないことを確認する。この raw prior PID は
+旧 generation の不在確認にだけ使い、post receipt／evidence へ再出力しない。pre／post で観測した
+`artifact_sha256` と `config_sha256` がそれぞれ一致して同じ artifact／active config を束ね、同じ
+fixture hash、同じ request ID、同じ固定 query を canonical `/v1/agent/ops` へ送った場合だけ続行する。
+これらの hash は deploy／catalog 成功の主張ではなく、deploy／catalog の owner evidence は
+`core_deploy_identity_chain` が持つ。post response
+は最初と二回目の write がともに `true` でなければならず、`action_id`、`trace_id`、
+`event_graph_sha256`、event／step／evidence／current projection／archive projection counts は
+pre response と完全一致しなければならない。異なる generation、旧 generation の残存、listener／
+readiness unavailable、pre evidence の stale／tamper、request／fixture／identity／count mismatch
+は固定 non-leaking `failed` または `blocked` とし、message／LLM／direct DB／alternate route に
+fallback しない。
+
+post evidence は pre と同じ D2e-2 allowlist facts（chain に必要な canonical allowlist ID だけ）に
+`phase=post_restart`、`observed_at`、post generation の非秘密 `service_generation_sha256`、
+pre／post で一致した `artifact_sha256` と `config_sha256`、listener／readiness／
+`old_generation_absent` の bounded boolean、fixture／response facts の hash、および入力 pre evidence
+の物理 SHA-256 だけを加える。pre の request body、query、token、path、output、secret、allowlist 外の
+unrelated／arbitrary ID は再出力しない。二つの check の標準 receipt は通常の `evidence_ref` で各
+evidence を参照し、service／build receipt、logs、durable-state review とともに一つの final receipt
+chain へ結合する。
+
+### Ownership, sequence, and non-goals
+
+- verifier は観測と検証だけを行い、restart、stop／start、install、deploy、Git、任意 shell、
+  任意 request body／query、artifact publication、DB migration、alternate topology を実行しない。
+  canonical service manager が restart の唯一の owner であり、`core_deploy_identity_chain` と
+  `core_runtime_identity_lifecycle_security` が source／artifact／publication／full lifecycle を
+  所有する。既存 readiness check と service/lifecycle observation は D2e-3 の generation binding
+  に再利用できるが、artifact／deploy 判定を複製しない。
+- 固定された運用順序は次の通りである。
+  `core_deploy_identity_chain` + `core_runtime_identity_lifecycle_security` + readiness
+  -> `core_dci_identity_pre_restart`
+  -> canonical service-manager restart
+  -> runtime identity／lifecycle + readiness／old-generation-absent
+  -> `core_dci_identity_post_restart`
+  -> logs／durable state review
+  -> final Step03 receipt chain。
+  pre／post、実 Shiro route、service generation、Action／Trace／Event graph／projection counts の
+  全てが揃うまで D2e-3、D2e-2、または Step 03 を complete と報告しない。
+
+### Failure Knowledge
+
+- **Failure:** pre と post を一つの phase flag／generic verifier command にまとめ、restart を
+  verifier 内で実行したか、pre response を保存せず post を新規 request として通した。
+- **Problem:** canonical service generation の切替、同じ request ID の idempotency、実 Shiro の
+  同じ Action／Trace／Event graph、owner の artifact／lifecycle 証拠を一つの境界で追跡できない。
+- **Cause:** D2e-2 route response、service-manager lifecycle、artifact/deploy verifier を同じ
+  owner として扱い、fresh／replay semantics と pre evidence の freshness／hash binding を
+  省略した。
+- **Lesson:** D2e-2 route は変更せず、`cmd/rencrow-core-verify` に pre と post の二つの fixed
+  check だけを置く。pre は fresh false／true、post は同じ request の true／true と旧 generation
+  消失を、owner-only evidence と deterministic hash chain で結合する。
+- **Invariant:** `passed` は固定 fixture、strict auth/body/response、実 Shiro、canonical route、
+  pre の false／true、post の true／true、異なる service generation、旧 generation 不在、同じ
+  Action／Trace／graph／counts、non-leaking bounded evidence を同時に満たす。restart／artifact／
+  deploy の実行権限は verifier にない。
+- **Enforcement:** fixed manifest allowlist、二つの command ID、strict request／header／response
+  validation、canonical allowlist ID の限定、owner-only 0600 evidence、fixed freshness、fixture／
+  response／artifact／config／prior-evidence SHA-256、service generation／listener／readiness
+  observation、prior PID の `/proc` absence と old-generation-absent check、fixed status／exit code、
+  one-field non-leaking errors で強制する。
+- **Tests:** manifest allowlist／fixed-fixture acquisition、strict body／auth headers、pre replay、
+  post evidence schema／0600／freshness／hash、same request ID／fixture、different generation／old
+  absent、Action／Trace／identity／count equality、response field allowlist、success／error non-leak、
+  `passed`／`failed`／`blocked` の status／exit code を fake service／typed route seam で検査する。
+  unit test は実 service restart、deploy、artifact publication、Git、shell、または production
+  Shiro route を実行しない。

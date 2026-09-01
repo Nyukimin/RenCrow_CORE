@@ -23,23 +23,19 @@ func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req Process
 	}
 
 	jid := jobID.String()
-	o.events.Emit("dci.search.started", "mio", "worker", req.UserMessage, string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
 	result, err := o.dciSearcher.Search(ctx, req.UserMessage)
 	if err != nil {
-		o.events.Emit("dci.search.failed", "worker", "mio", err.Error(), string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
 		return ProcessMessageResponse{}, true, fmt.Errorf("dci search failed: %w", err)
 	}
 
 	response := formatDCIResponse(result)
-	o.events.Emit("dci.search.completed", "worker", "mio", response, string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
-	o.events.Emit("agent.response", "worker", "mio", response, string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
-
 	if err := o.saveDCIRecallTrace(ctx, req.SessionID, jid, result); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
 	if err := o.sessions.SaveCompletedTask(ctx, sess, t); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
+	o.events.Emit("agent.response", "shiro", "mio", response, string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
 
 	decision := routing.NewDecision(routing.RouteRESEARCH, 1.0, "explicit DCI trigger")
 	return o.responses.Build(response, decision, jobID), true, nil
@@ -69,6 +65,8 @@ func dciResultToRecallTrace(sessionID string, responseID string, result domaindc
 		items = append(items, domainconversation.RecallTraceItem{
 			Layer:       "DCI",
 			Kind:        "evidence",
+			SourceID:    string(ev.EvidenceID),
+			SourceType:  "dci.evidence",
 			Summary:     strings.TrimSpace(location + " " + strings.TrimSpace(ev.Snippet)),
 			Query:       result.Pack.Query,
 			Provider:    "dci",
@@ -115,7 +113,8 @@ func formatDCIResponse(result domaindci.SearchResult) string {
 	pack := result.Pack
 	trace := result.Trace
 	fmt.Fprintf(&b, "DCI探索結果\n")
-	fmt.Fprintf(&b, "event_id: %s\n", pack.EventID)
+	fmt.Fprintf(&b, "action_id: %s\n", trace.ActionID)
+	fmt.Fprintf(&b, "trace_id: %s\n", trace.TraceID)
 	fmt.Fprintf(&b, "query: %s\n", pack.Query)
 	fmt.Fprintf(&b, "status: %s\n", trace.Status)
 	fmt.Fprintf(&b, "evidence_count: %d\n", len(pack.Evidence))
@@ -131,7 +130,7 @@ func formatDCIResponse(result domaindci.SearchResult) string {
 		if ev.LineStart > 0 {
 			location = fmt.Sprintf("%s:%d", ev.FilePath, ev.LineStart)
 		}
-		fmt.Fprintf(&b, "- %s\n  %s\n", location, strings.TrimSpace(ev.Snippet))
+		fmt.Fprintf(&b, "- evidence_id: %s created_by_event_id: %s location: %s\n  %s\n", ev.EvidenceID, ev.CreatedByEventID, location, strings.TrimSpace(ev.Snippet))
 	}
 	for _, limitation := range pack.Limitations {
 		if strings.TrimSpace(limitation) == "" {

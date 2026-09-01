@@ -112,25 +112,26 @@ type manifestInput struct {
 }
 
 type verifierOptions struct {
-	ManifestPath      string
-	CheckID           string
-	ObservedAt        time.Time
-	EvidenceDir       string
-	CoreURL           string
-	SnapshotDir       string
-	RestoreCheck      string
-	CatalogPath       string
-	WorkspacePath     string
-	InstalledArtifact string
-	StampedChecker    string
-	Python            string
-	Unit              string
-	ConfigPath        string
-	RequestEvidence   string
-	JournalSince      time.Time
-	ActorTokenFile    string
-	RequestID         string
-	ActorMessage      string
+	ManifestPath          string
+	CheckID               string
+	ObservedAt            time.Time
+	EvidenceDir           string
+	CoreURL               string
+	SnapshotDir           string
+	RestoreCheck          string
+	CatalogPath           string
+	WorkspacePath         string
+	InstalledArtifact     string
+	StampedChecker        string
+	Python                string
+	Unit                  string
+	ConfigPath            string
+	RequestEvidence       string
+	JournalSince          time.Time
+	ActorTokenFile        string
+	RequestID             string
+	ActorMessage          string
+	DCIPreRestartEvidence string
 }
 
 type verifierCommandResult struct {
@@ -145,6 +146,7 @@ type verifierDependencies struct {
 	RunCommand func(context.Context, string, []string) verifierCommandResult
 	LookPath   func(string) (string, error)
 	Readlink   func(string) (string, error)
+	Lstat      func(string) (os.FileInfo, error)
 	Platform   func() string
 }
 
@@ -154,6 +156,7 @@ func defaultVerifierDependencies() verifierDependencies {
 		RunCommand: runVerifierCommand,
 		LookPath:   exec.LookPath,
 		Readlink:   os.Readlink,
+		Lstat:      os.Lstat,
 		Platform:   func() string { return runtime.GOOS },
 	}
 }
@@ -171,6 +174,9 @@ func normalizeVerifierDependencies(deps verifierDependencies) verifierDependenci
 	}
 	if deps.Readlink == nil {
 		deps.Readlink = defaults.Readlink
+	}
+	if deps.Lstat == nil {
+		deps.Lstat = defaults.Lstat
 	}
 	if deps.Platform == nil {
 		deps.Platform = defaults.Platform
@@ -238,6 +244,8 @@ var fixedVerifierCommands = map[string]string{
 	"core-deploy-identity-chain":               "core_deploy_identity_chain",
 	"core-runtime-identity-lifecycle-security": "core_runtime_identity_lifecycle_security",
 	"core-canonical-actor-e2e":                 "core_canonical_actor_e2e",
+	"core-dci-identity-pre-restart":            "core_dci_identity_pre_restart",
+	"core-dci-identity-post-restart":           "core_dci_identity_post_restart",
 }
 
 func checkIDForCommand(commandID string) (string, bool) {
@@ -265,6 +273,10 @@ func verifierForCommand(commandID string) (verifierHandler, bool) {
 		return runRuntimeIdentityLifecycleSecurity, true
 	case "core-canonical-actor-e2e":
 		return runCanonicalActorE2E, true
+	case "core-dci-identity-pre-restart":
+		return runDCIIdentityPreRestart, true
+	case "core-dci-identity-post-restart":
+		return runDCIIdentityPostRestart, true
 	default:
 		return nil, false
 	}
@@ -546,6 +558,7 @@ func runVerifierCLI(ctx context.Context, args []string, out, errOut io.Writer, d
 	actorRequestIDAlias := flags.String("actor-request-id", "", "alias for --request-id")
 	actorMessage := flags.String("actor-message", "", "bounded canonical Agent diagnostic message")
 	messageAlias := flags.String("message", "", "alias for --actor-message")
+	dciPreRestartEvidence := flags.String("dci-pre-restart-evidence", "", "owner-only DCI pre-restart evidence for the fixed post-restart check")
 	if err := flags.Parse(args[1:]); err != nil {
 		return verifierExitCLIError
 	}
@@ -646,6 +659,7 @@ func runVerifierCLI(ctx context.Context, args []string, out, errOut io.Writer, d
 		Python: *python, Unit: *unit, ConfigPath: *configPath,
 		RequestEvidence: *requestEvidence, JournalSince: journalSince,
 		ActorTokenFile: *actorTokenFile, RequestID: *requestID, ActorMessage: *actorMessage,
+		DCIPreRestartEvidence: *dciPreRestartEvidence,
 	}
 	deps = normalizeVerifierDependencies(deps)
 	outcome := handler(ctx, options, check, deps)

@@ -280,6 +280,61 @@ func (s *SQLiteStore) ListByComponent(ctx context.Context, componentID string, l
 	return events, nil
 }
 
+// ListByTraceID returns the exact canonical envelopes for one trace in
+// deterministic chronological order.  The caller supplies the hard bound;
+// the query deliberately reads one additional row so an over-bound trace is
+// rejected instead of silently truncated.
+func (s *SQLiteStore) ListByTraceID(ctx context.Context, traceID modulecore.TraceID, max int) ([]modulecore.EventEnvelope, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		return nil, errors.New("trace lookup context is required")
+	}
+	if err := traceID.Validate(); err != nil {
+		return nil, fmt.Errorf("trace_id: %w", err)
+	}
+	if max <= 0 {
+		return nil, errors.New("trace lookup maximum must be positive")
+	}
+	if max > maxListLimit {
+		return nil, errors.New("trace lookup maximum exceeds the bound")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT event_id, trace_id, schema_version, event_type, component_id, occurred_at, envelope_json
+		FROM event_envelope
+		WHERE trace_id = ?
+		ORDER BY occurred_at ASC, event_id ASC
+		LIMIT ?`, string(traceID), max+1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := make([]modulecore.EventEnvelope, 0, max+1)
+	for rows.Next() {
+		var storedEventID, storedTraceID, schemaVersion, eventType, componentID, occurredAt, payload string
+		if err := rows.Scan(&storedEventID, &storedTraceID, &schemaVersion, &eventType, &componentID, &occurredAt, &payload); err != nil {
+			return nil, err
+		}
+		event, err := decodeStoredEnvelope(storedEventID, storedTraceID, schemaVersion, eventType, componentID, occurredAt, payload)
+		if err != nil {
+			return nil, err
+		}
+		if event.TraceID != traceID {
+			return nil, errors.New("stored trace lookup returned a mismatched trace")
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(events) > max {
+		return nil, errors.New("trace lookup exceeded maximum")
+	}
+	return events, nil
+}
+
 func (s *SQLiteStore) ensureOpen() error {
 	if s == nil || s.db == nil {
 		return errStoreClosed
@@ -322,6 +377,8 @@ func (s *SQLiteStore) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS event_envelope_component_idx
 			ON event_envelope (component_id, occurred_at, event_id)`,
+		`CREATE INDEX IF NOT EXISTS event_envelope_trace_idx
+			ON event_envelope (trace_id, occurred_at, event_id)`,
 		`CREATE TRIGGER IF NOT EXISTS event_envelope_append_only_update
 			BEFORE UPDATE ON event_envelope
 			BEGIN

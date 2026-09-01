@@ -155,7 +155,7 @@ func TestRegisterKnowledgeMemorySourceRoutesReachesChatGPTOwnerHandler(t *testin
 		{method: http.MethodGet, path: "/v1/memory/import/chatgpt/export-1"},
 	} {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(route.method, route.path, nil)
+		req := httptest.NewRequest(route.method, "http://127.0.0.1"+route.path, nil)
 		req.RemoteAddr = "127.0.0.1:18790"
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {

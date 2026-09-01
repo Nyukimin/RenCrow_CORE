@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
@@ -17,8 +19,9 @@ import (
 )
 
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL          string
+	httpClient       *http.Client
+	ownerBearerToken string
 }
 
 type APIError struct {
@@ -42,6 +45,15 @@ func WithHTTPClient(httpClient *http.Client) Option {
 		if httpClient != nil {
 			c.httpClient = httpClient
 		}
+	}
+}
+
+// WithOwnerBearerToken supplies the in-memory credential used only by the
+// authenticated local DCI owner operation. It is never serialized into a
+// request body or persisted by the client.
+func WithOwnerBearerToken(token string) Option {
+	return func(c *Client) {
+		c.ownerBearerToken = strings.TrimSpace(token)
 	}
 }
 
@@ -547,51 +559,57 @@ type DCISearchResult struct {
 }
 
 type DCIEvidencePack struct {
-	EventID      string        `json:"event_id"`
-	Query        string        `json:"query"`
-	Intent       string        `json:"intent,omitempty"`
-	CorpusScope  []string      `json:"corpus_scope"`
-	Evidence     []DCIEvidence `json:"evidence"`
-	DerivedTerms []string      `json:"derived_terms,omitempty"`
-	Confidence   float64       `json:"confidence"`
-	Limitations  []string      `json:"limitations,omitempty"`
+	ActionID     modulecore.ActionID `json:"action_id"`
+	Query        string              `json:"query"`
+	Intent       string              `json:"intent,omitempty"`
+	CorpusScope  []string            `json:"corpus_scope"`
+	Evidence     []DCIEvidence       `json:"evidence"`
+	DerivedTerms []string            `json:"derived_terms,omitempty"`
+	Confidence   float64             `json:"confidence"`
+	Limitations  []string            `json:"limitations,omitempty"`
 }
 
 type DCIEvidence struct {
-	EvidenceID string  `json:"evidence_id"`
-	SourceID   string  `json:"source_id,omitempty"`
-	FilePath   string  `json:"file_path"`
-	Heading    string  `json:"heading,omitempty"`
-	LineStart  int     `json:"line_start"`
-	LineEnd    int     `json:"line_end"`
-	Snippet    string  `json:"snippet"`
-	Reason     string  `json:"reason,omitempty"`
-	Confidence float64 `json:"confidence"`
+	EvidenceID       modulecore.EvidenceID `json:"evidence_id"`
+	CreatedByEventID modulecore.EventID    `json:"created_by_event_id"`
+	SourceID         string                `json:"source_id,omitempty"`
+	FilePath         string                `json:"file_path"`
+	Heading          string                `json:"heading,omitempty"`
+	LineStart        int                   `json:"line_start"`
+	LineEnd          int                   `json:"line_end"`
+	Snippet          string                `json:"snippet"`
+	Reason           string                `json:"reason,omitempty"`
+	Confidence       float64               `json:"confidence"`
 }
 
 type DCISearchTrace struct {
-	EventID            string          `json:"event_id"`
-	StartedAt          time.Time       `json:"started_at"`
-	EndedAt            time.Time       `json:"ended_at"`
-	Actor              string          `json:"actor"`
-	Mode               string          `json:"mode"`
-	UserQuery          string          `json:"user_query"`
-	CorpusScope        []string        `json:"corpus_scope"`
-	Steps              []DCISearchStep `json:"steps"`
-	FinalEvidenceCount int             `json:"final_evidence_count"`
-	Status             string          `json:"status"`
-	ErrorMessage       string          `json:"error_message,omitempty"`
+	TraceID            modulecore.TraceID  `json:"trace_id"`
+	ActionID           modulecore.ActionID `json:"action_id"`
+	StartedAt          time.Time           `json:"started_at"`
+	EndedAt            time.Time           `json:"ended_at"`
+	ActorAttribution   string              `json:"actor_attribution"`
+	ActorKind          string              `json:"actor_kind"`
+	ActorID            string              `json:"actor_id"`
+	Mode               string              `json:"mode"`
+	UserQuery          string              `json:"user_query"`
+	CorpusScope        []string            `json:"corpus_scope"`
+	Steps              []DCISearchStep     `json:"steps"`
+	FinalEvidenceCount int                 `json:"final_evidence_count"`
+	Status             string              `json:"status"`
+	ErrorMessage       string              `json:"error_message,omitempty"`
 }
 
 type DCISearchStep struct {
-	StepNo       int       `json:"step_no"`
-	Tool         string    `json:"tool"`
-	CommandText  string    `json:"command_text,omitempty"`
-	FilePath     string    `json:"file_path,omitempty"`
-	ResultCount  int       `json:"result_count,omitempty"`
-	Status       string    `json:"status"`
-	ErrorMessage string    `json:"error_message,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	StepNo       int                `json:"step_no"`
+	EventID      modulecore.EventID `json:"event_id"`
+	EventType    string             `json:"event_type"`
+	Tool         string             `json:"tool"`
+	CommandText  string             `json:"command_text,omitempty"`
+	FilePath     string             `json:"file_path,omitempty"`
+	ResultCount  int                `json:"result_count,omitempty"`
+	Status       string             `json:"status"`
+	ErrorMessage string             `json:"error_message,omitempty"`
+	CreatedAt    time.Time          `json:"created_at"`
 }
 
 type KnowledgeMemoryStatus struct {
@@ -2081,7 +2099,7 @@ func (c *Client) DCIRecent(ctx context.Context, limit int) (DCIRecentStatus, err
 		path = fmt.Sprintf("%s?limit=%d", path, limit)
 	}
 	var out DCIRecentStatus
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.doStrict(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return DCIRecentStatus{}, err
 	}
 	if err := validateDCIRecentStatus(out); err != nil {
@@ -2094,8 +2112,16 @@ func (c *Client) DCISearch(ctx context.Context, req DCISearchRequest) (DCISearch
 	if err := validateDCISearchRequest(req); err != nil {
 		return DCISearchResult{}, err
 	}
+	if c.ownerBearerToken == "" {
+		return DCISearchResult{}, fmt.Errorf("dci owner bearer token is required")
+	}
+	req.Query = strings.TrimSpace(req.Query)
 	var out DCISearchResult
-	if err := c.do(ctx, http.MethodPost, "/viewer/dci/search", req, &out); err != nil {
+	headers := make(http.Header)
+	headers.Set("Authorization", "Bearer "+c.ownerBearerToken)
+	headers.Set("X-RenCrow-Client", "RenCrow_CMD")
+	headers.Set("X-RenCrow-Interaction-Profile", "cmd-control")
+	if err := c.doDecodedWithHeaders(ctx, http.MethodPost, "/viewer/dci/search", req, &out, true, headers); err != nil {
 		return DCISearchResult{}, err
 	}
 	if err := validateDCISearchResult(out, req); err != nil {
@@ -3931,16 +3957,20 @@ func validateToolHarnessStatus(resp ToolHarnessStatus) error {
 }
 
 func validateDCIRecentStatus(resp DCIRecentStatus) error {
-	seen := map[string]struct{}{}
+	seenTraces := map[modulecore.TraceID]struct{}{}
+	seenActions := map[modulecore.ActionID]struct{}{}
 	for _, item := range resp.Items {
-		if err := validateDCISearchTrace(item, "dci recent"); err != nil {
+		if err := validateDCISearchTrace(item, "dci recent", true); err != nil {
 			return err
 		}
-		eventID := strings.TrimSpace(item.EventID)
-		if _, ok := seen[eventID]; ok {
-			return fmt.Errorf("dci recent contains duplicate trace for event_id %q", eventID)
+		if _, ok := seenTraces[item.TraceID]; ok {
+			return fmt.Errorf("dci recent contains duplicate trace for trace_id %q", item.TraceID)
 		}
-		seen[eventID] = struct{}{}
+		if _, ok := seenActions[item.ActionID]; ok {
+			return fmt.Errorf("dci recent contains duplicate trace for action_id %q", item.ActionID)
+		}
+		seenTraces[item.TraceID] = struct{}{}
+		seenActions[item.ActionID] = struct{}{}
 	}
 	return nil
 }
@@ -3953,47 +3983,74 @@ func validateDCISearchRequest(req DCISearchRequest) error {
 }
 
 func validateDCISearchResult(resp DCISearchResult, req DCISearchRequest) error {
-	if strings.TrimSpace(resp.Pack.EventID) == "" {
-		return fmt.Errorf("dci search response pack missing event_id")
+	if err := validateDCISearchTrace(resp.Trace, "dci search response", false); err != nil {
+		return err
 	}
-	if strings.TrimSpace(resp.Trace.EventID) == "" {
-		return fmt.Errorf("dci search response trace missing event_id")
+	if err := validateDCIEvidencePack(resp.Pack, "dci search response"); err != nil {
+		return err
 	}
-	if resp.Pack.EventID != resp.Trace.EventID {
-		return fmt.Errorf("dci search response event_id mismatch")
+	if resp.Pack.ActionID != resp.Trace.ActionID {
+		return fmt.Errorf("dci search response action_id mismatch")
 	}
-	if strings.TrimSpace(resp.Pack.Query) != strings.TrimSpace(req.Query) {
+	query := strings.TrimSpace(req.Query)
+	if resp.Pack.Query != query || resp.Trace.UserQuery != query {
 		return fmt.Errorf("dci search response query mismatch")
 	}
-	if resp.Pack.Confidence < 0 || resp.Pack.Confidence > 1 {
-		return fmt.Errorf("dci search response pack confidence out of range")
-	}
-	if err := validateDCISearchTrace(resp.Trace, "dci search response"); err != nil {
-		return err
+	if !sameDCIStringSlice(resp.Pack.CorpusScope, resp.Trace.CorpusScope) {
+		return fmt.Errorf("dci search response corpus_scope mismatch")
 	}
 	if resp.Trace.FinalEvidenceCount != len(resp.Pack.Evidence) {
 		return fmt.Errorf("dci search response evidence count mismatch")
 	}
+	stepEventIDs := make(map[modulecore.EventID]struct{}, len(resp.Trace.Steps))
+	for _, step := range resp.Trace.Steps {
+		stepEventIDs[step.EventID] = struct{}{}
+	}
+	seenEvidenceIDs := make(map[modulecore.EvidenceID]struct{}, len(resp.Pack.Evidence))
+	seenCreatedByEventIDs := make(map[modulecore.EventID]struct{}, len(resp.Pack.Evidence))
 	for _, evidence := range resp.Pack.Evidence {
 		if err := validateDCIEvidence(evidence); err != nil {
 			return err
 		}
+		if _, ok := seenEvidenceIDs[evidence.EvidenceID]; ok {
+			return fmt.Errorf("dci search response duplicate evidence_id %q", evidence.EvidenceID)
+		}
+		if _, ok := seenCreatedByEventIDs[evidence.CreatedByEventID]; ok {
+			return fmt.Errorf("dci search response duplicate created_by_event_id %q", evidence.CreatedByEventID)
+		}
+		if _, ok := stepEventIDs[evidence.CreatedByEventID]; ok {
+			return fmt.Errorf("dci search response evidence created_by_event_id reuses a file-read step event_id")
+		}
+		seenEvidenceIDs[evidence.EvidenceID] = struct{}{}
+		seenCreatedByEventIDs[evidence.CreatedByEventID] = struct{}{}
 	}
 	return nil
 }
 
-func validateDCISearchTrace(trace DCISearchTrace, label string) error {
-	if strings.TrimSpace(trace.EventID) == "" {
-		return fmt.Errorf("%s trace missing event_id", label)
+func validateDCISearchTrace(trace DCISearchTrace, label string, allowLegacyUnattributed bool) error {
+	if err := trace.TraceID.Validate(); err != nil {
+		return fmt.Errorf("%s trace trace_id: %w", label, err)
+	}
+	if err := trace.ActionID.Validate(); err != nil {
+		return fmt.Errorf("%s trace action_id: %w", label, err)
 	}
 	if trace.StartedAt.IsZero() {
 		return fmt.Errorf("%s trace missing started_at", label)
 	}
-	if strings.TrimSpace(trace.Actor) == "" {
-		return fmt.Errorf("%s trace missing actor", label)
+	switch trace.ActorAttribution {
+	case "authenticated":
+		if err := validateDCIActor(trace.ActorKind, trace.ActorID); err != nil {
+			return fmt.Errorf("%s trace actor: %w", label, err)
+		}
+	case "legacy_unattributed":
+		if !allowLegacyUnattributed || trace.ActorKind != "" || trace.ActorID != "" {
+			return fmt.Errorf("%s trace legacy_unattributed requires empty actor_kind and actor_id", label)
+		}
+	default:
+		return fmt.Errorf("%s trace invalid actor_attribution %q", label, trace.ActorAttribution)
 	}
-	if strings.TrimSpace(trace.Mode) == "" {
-		return fmt.Errorf("%s trace missing mode", label)
+	if trace.Mode != "dci" {
+		return fmt.Errorf("%s trace invalid mode %q", label, trace.Mode)
 	}
 	if strings.TrimSpace(trace.Status) == "" {
 		return fmt.Errorf("%s trace missing status", label)
@@ -4003,18 +4060,22 @@ func validateDCISearchTrace(trace DCISearchTrace, label string) error {
 		return fmt.Errorf("%s invalid trace status %q", label, trace.Status)
 	}
 	if isDCISearchTerminalStatus(status) && trace.EndedAt.IsZero() {
-		return fmt.Errorf("%s terminal trace %s missing ended_at", label, strings.TrimSpace(trace.EventID))
+		return fmt.Errorf("%s terminal trace %s missing ended_at", label, trace.TraceID)
+	}
+	if !trace.EndedAt.IsZero() && trace.EndedAt.Before(trace.StartedAt) {
+		return fmt.Errorf("%s trace ended_at must be >= started_at", label)
 	}
 	if status == "failed" && strings.TrimSpace(trace.ErrorMessage) == "" {
 		return fmt.Errorf("%s failed trace missing error_message", label)
 	}
-	if strings.TrimSpace(trace.UserQuery) == "" && label == "dci recent" {
+	if strings.TrimSpace(trace.UserQuery) == "" {
 		return fmt.Errorf("%s trace missing user_query", label)
 	}
 	if trace.FinalEvidenceCount < 0 {
 		return fmt.Errorf("%s trace has negative final_evidence_count", label)
 	}
 	seenSteps := map[int]struct{}{}
+	seenStepEvents := map[modulecore.EventID]struct{}{}
 	for _, step := range trace.Steps {
 		if step.StepNo <= 0 {
 			return fmt.Errorf("%s step missing step_no", label)
@@ -4023,6 +4084,16 @@ func validateDCISearchTrace(trace DCISearchTrace, label string) error {
 			return fmt.Errorf("%s contains duplicate step_no %d", label, step.StepNo)
 		}
 		seenSteps[step.StepNo] = struct{}{}
+		if err := step.EventID.Validate(); err != nil {
+			return fmt.Errorf("%s step event_id: %w", label, err)
+		}
+		if _, ok := seenStepEvents[step.EventID]; ok {
+			return fmt.Errorf("%s contains duplicate step event_id %q", label, step.EventID)
+		}
+		seenStepEvents[step.EventID] = struct{}{}
+		if step.EventType != "dci.file.read" {
+			return fmt.Errorf("%s invalid step event_type %q", label, step.EventType)
+		}
 		if strings.TrimSpace(step.Tool) == "" {
 			return fmt.Errorf("%s step missing tool", label)
 		}
@@ -4042,6 +4113,54 @@ func validateDCISearchTrace(trace DCISearchTrace, label string) error {
 		if step.CreatedAt.IsZero() {
 			return fmt.Errorf("%s step missing created_at", label)
 		}
+	}
+	return nil
+}
+
+func sameDCIStringSlice(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func validateDCIEvidencePack(pack DCIEvidencePack, label string) error {
+	if err := pack.ActionID.Validate(); err != nil {
+		return fmt.Errorf("%s pack action_id: %w", label, err)
+	}
+	if strings.TrimSpace(pack.Query) == "" {
+		return fmt.Errorf("%s pack missing query", label)
+	}
+	if math.IsNaN(pack.Confidence) || pack.Confidence < 0 || pack.Confidence > 1 {
+		return fmt.Errorf("%s pack confidence out of range", label)
+	}
+	seenTerms := make(map[string]struct{}, len(pack.DerivedTerms))
+	for _, term := range pack.DerivedTerms {
+		if term == "" || strings.TrimSpace(term) != term {
+			return fmt.Errorf("%s pack derived_terms contains a blank or surrounding-whitespace term", label)
+		}
+		if _, ok := seenTerms[term]; ok {
+			return fmt.Errorf("%s pack contains duplicate derived term %q", label, term)
+		}
+		seenTerms[term] = struct{}{}
+	}
+	return nil
+}
+
+func validateDCIActor(kind, id string) error {
+	if kind != "user" && kind != "agent" {
+		return fmt.Errorf("actor_kind %q is invalid", kind)
+	}
+	if strings.TrimSpace(kind) != kind {
+		return fmt.Errorf("actor_kind must be lower-case and have no surrounding whitespace")
+	}
+	if id == "" || strings.TrimSpace(id) != id {
+		return fmt.Errorf("actor_id is invalid")
 	}
 	return nil
 }
@@ -4074,8 +4193,11 @@ func isDCISearchStepStatus(status string) bool {
 }
 
 func validateDCIEvidence(evidence DCIEvidence) error {
-	if strings.TrimSpace(evidence.EvidenceID) == "" {
-		return fmt.Errorf("dci search response evidence missing evidence_id")
+	if err := evidence.EvidenceID.Validate(); err != nil {
+		return fmt.Errorf("dci search response evidence evidence_id: %w", err)
+	}
+	if err := evidence.CreatedByEventID.Validate(); err != nil {
+		return fmt.Errorf("dci search response evidence created_by_event_id: %w", err)
 	}
 	if strings.TrimSpace(evidence.FilePath) == "" {
 		return fmt.Errorf("dci search response evidence missing file_path")
@@ -4086,7 +4208,7 @@ func validateDCIEvidence(evidence DCIEvidence) error {
 	if strings.TrimSpace(evidence.Snippet) == "" {
 		return fmt.Errorf("dci search response evidence missing snippet")
 	}
-	if evidence.Confidence < 0 || evidence.Confidence > 1 {
+	if math.IsNaN(evidence.Confidence) || evidence.Confidence < 0 || evidence.Confidence > 1 {
 		return fmt.Errorf("dci search response evidence confidence out of range")
 	}
 	return nil
@@ -7110,6 +7232,10 @@ func (c *Client) doStrict(ctx context.Context, method string, path string, body 
 }
 
 func (c *Client) doDecoded(ctx context.Context, method string, path string, body any, out any, strict bool) error {
+	return c.doDecodedWithHeaders(ctx, method, path, body, out, strict, nil)
+}
+
+func (c *Client) doDecodedWithHeaders(ctx context.Context, method string, path string, body any, out any, strict bool, headers http.Header) error {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -7124,6 +7250,11 @@ func (c *Client) doDecoded(ctx context.Context, method string, path string, body
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for key, values := range headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -7144,6 +7275,14 @@ func (c *Client) doDecoded(ctx context.Context, method string, path string, body
 	}
 	if err := decoder.Decode(out); err != nil {
 		return fmt.Errorf("decode response: %w", err)
+	}
+	if strict {
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			if err == nil {
+				return fmt.Errorf("decode response: trailing JSON value")
+			}
+			return fmt.Errorf("decode response: %w", err)
+		}
 	}
 	return nil
 }

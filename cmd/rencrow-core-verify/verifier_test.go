@@ -48,6 +48,29 @@ func testManifest(t *testing.T, commands ...string) string {
             {"id": "canonical_auth", "class": "credential_reference", "required": true, "source": "owner_active_config"}
           ]
         }`
+		} else if command == "core-dci-identity-pre-restart" {
+			safetyGate = true
+			acquisition = `{
+          "mode": "owner_self_collect",
+          "verification_safe": true,
+          "inputs": [
+            {"id": "service_identity", "class": "discoverable", "required": true, "source": "owner_service_manager"},
+            {"id": "canonical_auth", "class": "credential_reference", "required": true, "source": "owner_active_config"},
+            {"id": "owner_fixed_fixture", "class": "verification_fixture", "required": true, "source": "owner_fixed_fixture"}
+          ]
+        }`
+		} else if command == "core-dci-identity-post-restart" {
+			safetyGate = true
+			acquisition = `{
+          "mode": "owner_self_collect",
+          "verification_safe": true,
+          "inputs": [
+            {"id": "service_identity", "class": "discoverable", "required": true, "source": "owner_service_manager"},
+            {"id": "canonical_auth", "class": "credential_reference", "required": true, "source": "owner_active_config"},
+            {"id": "owner_fixed_fixture", "class": "verification_fixture", "required": true, "source": "owner_fixed_fixture"},
+            {"id": "pre_restart_evidence", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"}
+          ]
+        }`
 		}
 		checks = append(checks, fmt.Sprintf(`{
       "check_id": %q,
@@ -107,8 +130,8 @@ func TestVerifierAllowlistCoversCurrentManifestCommands(t *testing.T) {
 		}
 		seen[check.Executor.CommandID] = struct{}{}
 	}
-	if len(seen) != 8 {
-		t.Fatalf("current CORE manifest commands=%d, want 8: %#v", len(seen), seen)
+	if len(seen) != 10 {
+		t.Fatalf("current CORE manifest commands=%d, want 10: %#v", len(seen), seen)
 	}
 }
 
@@ -187,6 +210,66 @@ func TestVerifierCanonicalActorManifestUsesSafeFixedFixture(t *testing.T) {
 		return
 	}
 	t.Fatal("canonical actor check not found")
+}
+
+func TestVerifierDCIIdentityManifestUsesOnlyFixedOwnerInputs(t *testing.T) {
+	manifestPath := filepath.Join("..", "..", "config", "checks", "core.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), dciIdentityFixedQuery) {
+		t.Fatal("fixed DCI fixture must not be duplicated in the manifest")
+	}
+	manifest, err := loadOwnerManifest(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]struct {
+		command string
+		inputs  map[string]string
+	}{
+		"core_dci_identity_pre_restart": {
+			command: dciIdentityPreCommandID,
+			inputs: map[string]string{
+				"service_identity":    "owner_service_manager",
+				"canonical_auth":      "owner_active_config",
+				"owner_fixed_fixture": "owner_fixed_fixture",
+			},
+		},
+		"core_dci_identity_post_restart": {
+			command: dciIdentityPostCommandID,
+			inputs: map[string]string{
+				"service_identity":     "owner_service_manager",
+				"canonical_auth":       "owner_active_config",
+				"owner_fixed_fixture":  "owner_fixed_fixture",
+				"pre_restart_evidence": "owner_external_artifact",
+			},
+		},
+	}
+	seen := make(map[string]bool)
+	for _, check := range manifest.Checks {
+		wantCheck, ok := want[check.CheckID]
+		if !ok {
+			continue
+		}
+		seen[check.CheckID] = true
+		if !check.SafetyGate || check.Phase != "diagnostic" || check.Executor.CommandID != wantCheck.command || check.Executor.Acquisition == nil || check.Executor.Acquisition.Mode != "owner_self_collect" || check.Executor.Acquisition.VerificationSafe == nil || !*check.Executor.Acquisition.VerificationSafe {
+			t.Fatalf("invalid DCI check contract: %+v", check)
+		}
+		inputs := check.Executor.Acquisition.Inputs
+		if len(inputs) != len(wantCheck.inputs) {
+			t.Fatalf("%s input count=%d, want %d", check.CheckID, len(inputs), len(wantCheck.inputs))
+		}
+		for _, input := range inputs {
+			if input.Source != wantCheck.inputs[input.ID] || input.Required == nil || !*input.Required {
+				t.Fatalf("%s input=%+v", check.CheckID, input)
+			}
+		}
+	}
+	if len(seen) != len(want) {
+		t.Fatalf("DCI checks seen=%v, want=%v", seen, want)
+	}
 }
 
 func boolPointer(value bool) *bool {

@@ -11,7 +11,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
-	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -287,23 +286,18 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCIBypassesRouting(t *te
 	memory := session.NewCentralMemory()
 	searcher := &mockDCISearcher{
 		trigger: true,
-		result: domaindci.SearchResult{
-			Pack: domaindci.EvidencePack{
-				EventID:     "evt_dist_dci_test",
-				Query:       "docs から DCI を探して",
-				CorpusScope: []string{"docs/10_新仕様"},
-				Evidence: []domaindci.Evidence{{
-					FilePath:  "docs/10_新仕様/19_DCI_直接コーパス探索仕様.md",
-					LineStart: 22,
-					Snippet:   "DCIは通常RAGの代替ではない",
-				}},
-			},
-			Trace: domaindci.SearchTrace{EventID: "evt_dist_dci_test", Status: "completed"},
-		},
+		result: validDCISearchResult(
+			"docs から DCI を探して",
+			"docs/10_新仕様/19_DCI_直接コーパス探索仕様.md",
+			"DCIは通常RAGの代替ではない",
+			22,
+		),
 	}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
 	orch.SetDCISearcher(searcher)
+	rec := &distRecordingEventListener{}
+	orch.SetEventListener(rec)
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "sess-dci",
 		Channel:     "line",
@@ -325,6 +319,8 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCIBypassesRouting(t *te
 	if !strings.Contains(resp.Response, "DCI探索結果") || !strings.Contains(resp.Response, "docs/10_新仕様/19_DCI_直接コーパス探索仕様.md:22") {
 		t.Fatalf("DCI response should include evidence location, got %q", resp.Response)
 	}
+	assertDCIResponseIDs(t, resp.Response, searcher.result)
+	assertDCIOrchestratorEvents(t, rec.events, resp.Response)
 }
 
 func TestDistributedOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *testing.T) {
@@ -335,26 +331,20 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *t
 	memory := session.NewCentralMemory()
 	searcher := &mockDCISearcher{
 		trigger: true,
-		result: domaindci.SearchResult{
-			Pack: domaindci.EvidencePack{
-				EventID:     "evt_dist_dci_recall",
-				Query:       "DCI を探して",
-				CorpusScope: []string{"docs/10_新仕様"},
-				Evidence: []domaindci.Evidence{{
-					FilePath:   "docs/10_新仕様/19_DCI_直接コーパス探索仕様.md",
-					LineStart:  44,
-					Snippet:    "Search Trace",
-					Confidence: 0.75,
-				}},
-			},
-			Trace: domaindci.SearchTrace{EventID: "evt_dist_dci_recall", Status: "completed", EndedAt: time.Date(2026, 5, 18, 1, 2, 3, 0, time.UTC)},
-		},
+		result: validDCISearchResult(
+			"DCI を探して",
+			"docs/10_新仕様/19_DCI_直接コーパス探索仕様.md",
+			"Search Trace",
+			44,
+		),
 	}
 	recall := &mockRecallTraceStore{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
 	orch.SetDCISearcher(searcher)
 	orch.SetRecallTraceStore(recall)
+	rec := &distRecordingEventListener{}
+	orch.SetEventListener(rec)
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "sess-dci-recall",
 		Channel:     "line",
@@ -377,6 +367,10 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *t
 	if !strings.Contains(trace.Items[0].Summary, "docs/10_新仕様/19_DCI_直接コーパス探索仕様.md:44") {
 		t.Fatalf("recall trace item should include evidence location: %+v", trace.Items[0])
 	}
+	if trace.Items[0].SourceID != string(searcher.result.Pack.Evidence[0].EvidenceID) || trace.Items[0].SourceType != "dci.evidence" {
+		t.Fatalf("recall trace canonical source = %q/%q, want %q/dci.evidence", trace.Items[0].SourceID, trace.Items[0].SourceType, searcher.result.Pack.Evidence[0].EvidenceID)
+	}
+	assertDCIOrchestratorEvents(t, rec.events, resp.Response)
 }
 
 func TestDistributedOrchestrator_ProcessMessage_ExplicitDCIErrorDoesNotFallback(t *testing.T) {
@@ -389,6 +383,8 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCIErrorDoesNotFallback(
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
 	orch.SetDCISearcher(searcher)
+	rec := &distRecordingEventListener{}
+	orch.SetEventListener(rec)
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "sess-dci-fail",
 		Channel:     "line",
@@ -404,6 +400,7 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCIErrorDoesNotFallback(
 	if !strings.Contains(err.Error(), "dci search failed") || !strings.Contains(err.Error(), "dci trace unavailable") {
 		t.Fatalf("error should preserve DCI failure, got %v", err)
 	}
+	assertNoDCIResponseEvent(t, rec.events)
 }
 
 func TestDistributedOrchestrator_ProcessMessage_WildRouteUsesWildAgentWithoutFallback(t *testing.T) {

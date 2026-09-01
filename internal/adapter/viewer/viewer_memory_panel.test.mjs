@@ -106,6 +106,7 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(html, /id="sandboxGateLogBody"/);
   assert.match(html, /id="sandboxGateLogResult"/);
   assert.match(html, /id="dciSearchInput"/);
+  assert.match(html, /id="dciOwnerTokenInput"/);
   assert.match(html, /id="dciSearchBtn"/);
   assert.match(html, /id="dciSearchResult"/);
   assert.match(html, /id="sandboxBody"/);
@@ -2479,7 +2480,7 @@ const state = {ops: {
   toolHarnessFetchError: 'HTTP 500: tool harness store unavailable',
   toolHarnessEvents: [{event_id: 'stale_tool_event', tool_name: 'stale_tool', validation_status: 'repaired'}],
   dciFetchError: 'HTTP 500: dci trace store unavailable',
-  dciTraces: [{event_id: 'stale_dci_trace', user_query: 'stale vector query', final_evidence_count: 9, status: 'completed'}],
+  dciTraces: [{action_id: 'act_stale_dci_trace', trace_id: 'trc_stale_dci_trace', user_query: 'stale vector query', final_evidence_count: 9, status: 'completed'}],
 }};
 ` + sourceBetween(opsJs, 'function toolHarnessField', 'function sandboxField') + `
 globalThis.__toolCard = toolHarnessOpsCard();
@@ -2526,10 +2527,11 @@ test('viewer renders dci manual search fetch errors with response body', async (
       return elements.get(id);
     },
   };
+  let requested = null;
   const source = `
 function short(s, n) { const v = String(s || ''); return v.length > n ? v.slice(0, n) + '...' : v; }
 const state = {ops: {
-  dciLastResult: {pack: {query: 'stale query'}, trace: {status: 'completed'}, Pack: {Evidence: [{FilePath: 'stale.go'}]}},
+  dciLastResult: {pack: {query: 'stale query'}, trace: {status: 'completed'}},
 }};
 ` + sourceBetween(opsJs, 'function renderDCISearchResult', 'function sandboxField') + `
 ` + sourceBetween(opsJs, 'let dciSearchBound', 'function syncRuntimeConfigPanel') + `
@@ -2537,16 +2539,20 @@ globalThis.__getDCIResult = () => state.ops.dciLastResult;
 `;
   const context = vm.createContext({
     document,
-    fetch: async () => ({
-      ok: false,
-      status: 503,
-      statusText: 'Service Unavailable',
-      text: async () => 'dci search store unavailable',
-    }),
+    fetch: async (url, init) => {
+      requested = {url, init};
+      return {
+        ok: false,
+        status: 503,
+        statusText: 'Service Unavailable',
+        text: async () => 'dci search store unavailable',
+      };
+    },
     JSON,
   });
   vm.runInContext(source, context);
   document.getElementById('dciSearchInput').value = 'ToolRunner context budget';
+  document.getElementById('dciOwnerTokenInput').value = 'owner-token';
   context.bindDCISearchControls();
   listeners['dciSearchBtn:click']();
   await new Promise((resolve) => setImmediate(resolve));
@@ -2557,6 +2563,14 @@ globalThis.__getDCIResult = () => state.ops.dciLastResult;
   assert.match(resultText, /error: HTTP 503: dci search store unavailable/);
   assert.doesNotMatch(resultText, /stale query/);
   assert.doesNotMatch(resultText, /stale\.go/);
+  assert.ok(requested);
+  assert.equal(requested.url, '/viewer/dci/search');
+  assert.equal(requested.init.method, 'POST');
+  assert.equal(requested.init.headers.Authorization, 'Bearer owner-token');
+  assert.equal(requested.init.headers['X-RenCrow-Client'], 'RenCrow_CMD');
+  assert.equal(requested.init.headers['X-RenCrow-Interaction-Profile'], 'cmd-control');
+  assert.equal(requested.init.body, JSON.stringify({query: 'ToolRunner context budget'}));
+  assert.doesNotMatch(requested.init.body, /owner-token/);
   assert.equal(context.__getDCIResult().trace.error_message, 'HTTP 503: dci search store unavailable');
   assert.equal(document.getElementById('dciSearchBtn').disabled, false);
 });

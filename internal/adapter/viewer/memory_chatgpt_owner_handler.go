@@ -127,12 +127,12 @@ type memoryChatGPTOwnerHandler struct {
 }
 
 func (h *memoryChatGPTOwnerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	operation, exportID, ok := chatGPTOwnerRoute(r)
-	if !ok {
+	if !memoryOwnerDirectLocalRequest(r) {
 		writeMemoryOwnerError(w, http.StatusNotFound, "not_found")
 		return
 	}
-	if !memoryOwnerLoopback(r) {
+	operation, exportID, ok := chatGPTOwnerRoute(r)
+	if !ok {
 		writeMemoryOwnerError(w, http.StatusNotFound, "not_found")
 		return
 	}

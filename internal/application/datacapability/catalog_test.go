@@ -117,23 +117,23 @@ func TestCatalogEveryStoreHasMachineReadableRecallDisposition(t *testing.T) {
 }
 
 func TestCatalogRestrictedStoresExposeWorkerRecallOperations(t *testing.T) {
-	wantOperations := map[string]string{
-		"conversation_l1":        "recall_pack",
-		"conversation_archive":   "recall_pack",
-		"tool_registry":          "runtime_snapshot",
-		"advisor":                "advice_runs",
-		"sandbox":                "sandboxes",
-		"dci":                    "search_traces",
-		"skill_governance":       "skill_manifests",
-		"workstream":             "goals",
-		"revenue":                "opportunities",
-		"persona_architecture":   "canonical_responses",
-		"browser_trace_to_api":   "validated_candidates",
-		"complexity_hotspot":     "hotspots",
-		"super_agent_harness":    "agent_runs",
-		"ai_workflow":            "command_registry",
-		"event_store":            "envelope",
-		"durable_store_workflow": "exact_request",
+	wantOperations := map[string][]string{
+		"conversation_l1":        {"recall_pack"},
+		"conversation_archive":   {"recall_pack"},
+		"tool_registry":          {"runtime_snapshot"},
+		"advisor":                {"advice_runs"},
+		"sandbox":                {"sandboxes"},
+		"dci":                    {"search_traces", "search_result"},
+		"skill_governance":       {"skill_manifests"},
+		"workstream":             {"goals"},
+		"revenue":                {"opportunities"},
+		"persona_architecture":   {"canonical_responses"},
+		"browser_trace_to_api":   {"validated_candidates"},
+		"complexity_hotspot":     {"hotspots"},
+		"super_agent_harness":    {"agent_runs"},
+		"ai_workflow":            {"command_registry"},
+		"event_store":            {"envelope"},
+		"durable_store_workflow": {"exact_request"},
 	}
 	catalog := Build(allConfiguredStoreStates())
 	for name, operation := range wantOperations {
@@ -144,8 +144,11 @@ func TestCatalogRestrictedStoresExposeWorkerRecallOperations(t *testing.T) {
 		if entry.Status != "restricted" {
 			t.Errorf("store %q status = %q, want restricted", name, entry.Status)
 		}
-		if !reflect.DeepEqual(entry.SafeOperations, []string{operation}) {
-			t.Errorf("store %q safe operations = %#v, want %#v", name, entry.SafeOperations, []string{operation})
+		if name == "dci" && !reflect.DeepEqual(entry.Categories, []string{"search_action", "search_trace", "evidence"}) {
+			t.Errorf("store %q categories = %#v, want canonical DCI categories", name, entry.Categories)
+		}
+		if !reflect.DeepEqual(entry.SafeOperations, operation) {
+			t.Errorf("store %q safe operations = %#v, want %#v", name, entry.SafeOperations, operation)
 		}
 		if entry.ToolID != "" {
 			t.Errorf("store %q exposes tool id %q; restricted recall must remain Worker metadata", name, entry.ToolID)

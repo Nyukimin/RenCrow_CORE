@@ -16,6 +16,7 @@ import (
 	domainsandbox "github.com/Nyukimin/RenCrow_CORE/internal/domain/sandbox"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type stubComplexityHotspotStore struct {
@@ -310,6 +311,8 @@ func TestHandleComplexityHotspotScanRegistersWorkstreamArtifact(t *testing.T) {
 
 func TestHandleComplexityHotspotScanDerivesCandidatePatternsFromDCITrace(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	traceID := modulecore.NewTraceID()
+	actionID := modulecore.NewActionID()
 	store := &stubComplexityHotspotStore{}
 	analyzer := &stubComplexityAnalyzer{result: domaincomplexity.ScanResult{
 		Scan: domaincomplexity.ScanEvent{
@@ -321,10 +324,20 @@ func TestHandleComplexityHotspotScanDerivesCandidatePatternsFromDCITrace(t *test
 		},
 	}}
 	dciStore := stubComplexityDCITraceStore{traces: []domaindci.SearchTrace{{
-		EventID:   "evt_dci_1",
-		UserQuery: "heavyLookup の repeated lookup を探す",
-		Status:    "completed",
+		TraceID:          traceID,
+		ActionID:         actionID,
+		StartedAt:        now,
+		EndedAt:          now,
+		ActorAttribution: domaindci.ActorAttributionAuthenticated,
+		ActorKind:        "agent",
+		ActorID:          "shiro",
+		Mode:             "dci",
+		UserQuery:        "heavyLookup の repeated lookup を探す",
+		Status:           "completed",
 		Steps: []domaindci.SearchStep{{
+			StepNo:      1,
+			EventID:     modulecore.NewEventID(),
+			EventType:   "dci.file.read",
 			Tool:        "rg",
 			CommandText: `rg "orders.find|users.find" internal/application`,
 			FilePath:    "internal/application/example/orders.go",

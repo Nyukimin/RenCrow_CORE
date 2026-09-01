@@ -233,6 +233,101 @@ func (m *mockDCISearcher) Search(ctx context.Context, query string) (domaindci.S
 	return m.result, m.err
 }
 
+func validDCISearchResult(query, filePath, snippet string, line int) domaindci.SearchResult {
+	now := time.Date(2026, 5, 18, 1, 2, 3, 0, time.UTC)
+	traceID := modulecore.NewTraceID()
+	actionID := modulecore.NewActionID()
+	readEventID := modulecore.NewEventID()
+	evidenceEventID := modulecore.NewEventID()
+	evidenceID := modulecore.NewEvidenceID()
+	scope := []string{"docs/10_新仕様"}
+	return domaindci.SearchResult{
+		Pack: domaindci.EvidencePack{
+			ActionID:     actionID,
+			Query:        query,
+			Intent:       "direct DCI evidence lookup",
+			CorpusScope:  append([]string(nil), scope...),
+			DerivedTerms: []string{"dci"},
+			Evidence: []domaindci.Evidence{{
+				EvidenceID:       evidenceID,
+				CreatedByEventID: evidenceEventID,
+				SourceID:         "src_dci_test",
+				FilePath:         filePath,
+				LineStart:        line,
+				LineEnd:          line,
+				Snippet:          snippet,
+				Reason:           "query term matched",
+				Confidence:       0.8,
+			}},
+		},
+		Trace: domaindci.SearchTrace{
+			TraceID:            traceID,
+			ActionID:           actionID,
+			StartedAt:          now,
+			EndedAt:            now.Add(time.Second),
+			ActorAttribution:   domaindci.ActorAttributionAuthenticated,
+			ActorKind:          "agent",
+			ActorID:            "shiro",
+			Mode:               "dci",
+			UserQuery:          query,
+			CorpusScope:        append([]string(nil), scope...),
+			FinalEvidenceCount: 1,
+			Status:             "completed",
+			Steps: []domaindci.SearchStep{{
+				StepNo:      1,
+				EventID:     readEventID,
+				EventType:   "dci.file.read",
+				Tool:        "read_file",
+				FilePath:    filePath,
+				ResultCount: 1,
+				Status:      "ok",
+				CreatedAt:   now,
+			}},
+		},
+	}
+}
+
+func assertDCIOrchestratorEvents(t *testing.T, events []OrchestratorEvent, response string) {
+	t.Helper()
+	for _, event := range events {
+		if strings.HasPrefix(event.Type, "dci.search.") {
+			t.Fatalf("orchestrator must not emit canonical DCI search event: %#v", event)
+		}
+	}
+	for _, event := range events {
+		if event.Type == "agent.response" && event.Content == response {
+			if event.From != "shiro" || event.To != "mio" {
+				t.Fatalf("DCI response actor = %s -> %s, want shiro -> mio: %#v", event.From, event.To, event)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing shiro -> mio DCI response event: %#v", events)
+}
+
+func assertDCIResponseIDs(t *testing.T, response string, result domaindci.SearchResult) {
+	t.Helper()
+	if !strings.Contains(response, "action_id: "+string(result.Trace.ActionID)) || !strings.Contains(response, "trace_id: "+string(result.Trace.TraceID)) {
+		t.Fatalf("DCI response missing canonical action/trace IDs: %q", response)
+	}
+	evidence := result.Pack.Evidence[0]
+	if !strings.Contains(response, "evidence_id: "+string(evidence.EvidenceID)) || !strings.Contains(response, "created_by_event_id: "+string(evidence.CreatedByEventID)) {
+		t.Fatalf("DCI response missing canonical evidence references: %q", response)
+	}
+	if strings.Contains(response, "\nevent_id:") {
+		t.Fatalf("DCI response contains obsolete search-wide event_id: %q", response)
+	}
+}
+
+func assertNoDCIResponseEvent(t *testing.T, events []OrchestratorEvent) {
+	t.Helper()
+	for _, event := range events {
+		if strings.HasPrefix(event.Type, "dci.search.") || event.Type == "agent.response" && event.Route == string(routing.RouteRESEARCH) {
+			t.Fatalf("failed DCI search emitted response/search event: %#v", event)
+		}
+	}
+}
+
 type mockRecallTraceStore struct {
 	traces []domainconversation.RecallTrace
 	err    error
@@ -1348,27 +1443,20 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCIBypassesRouting(t *testin
 	}
 	searcher := &mockDCISearcher{
 		trigger: true,
-		result: domaindci.SearchResult{
-			Pack: domaindci.EvidencePack{
-				EventID:     "evt_dci_test",
-				Query:       "docs から DCI を探して",
-				CorpusScope: []string{"docs/10_新仕様"},
-				Evidence: []domaindci.Evidence{{
-					FilePath:  "docs/10_新仕様/19_DCI_直接コーパス探索仕様.md",
-					LineStart: 12,
-					Snippet:   "DCIは原文確認能力である",
-				}},
-			},
-			Trace: domaindci.SearchTrace{
-				EventID: "evt_dci_test",
-				Status:  "completed",
-			},
-		},
+		result: validDCISearchResult(
+			"docs から DCI を探して",
+			"docs/10_新仕様/19_DCI_直接コーパス探索仕様.md",
+			"DCIは原文確認能力である",
+			12,
+		),
 	}
 	req := defaultReq()
 	req.UserMessage = "docs から DCI を探して"
+	result := searcher.result
+	listener := &recordingEventListener{}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
 	orch.SetDCISearcher(searcher)
+	orch.SetEventListener(listener)
 
 	resp, err := orch.ProcessMessage(context.Background(), req)
 	if err != nil {
@@ -1386,33 +1474,30 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCIBypassesRouting(t *testin
 	if !strings.Contains(resp.Response, "DCI探索結果") || !strings.Contains(resp.Response, "docs/10_新仕様/19_DCI_直接コーパス探索仕様.md:12") {
 		t.Fatalf("DCI response should include evidence location, got %q", resp.Response)
 	}
+	assertDCIResponseIDs(t, resp.Response, result)
+	assertDCIOrchestratorEvents(t, listener.events, resp.Response)
 }
 
 func TestMessageOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *testing.T) {
 	mio := &mockMioAgent{response: "chat fallback"}
 	searcher := &mockDCISearcher{
 		trigger: true,
-		result: domaindci.SearchResult{
-			Pack: domaindci.EvidencePack{
-				EventID:     "evt_dci_recall",
-				Query:       "DCI を探して",
-				CorpusScope: []string{"docs/10_新仕様"},
-				Evidence: []domaindci.Evidence{{
-					FilePath:   "docs/10_新仕様/19_DCI_直接コーパス探索仕様.md",
-					LineStart:  30,
-					Snippet:    "Evidence Pack",
-					Confidence: 0.8,
-				}},
-			},
-			Trace: domaindci.SearchTrace{EventID: "evt_dci_recall", Status: "completed", EndedAt: time.Date(2026, 5, 18, 1, 2, 3, 0, time.UTC)},
-		},
+		result: validDCISearchResult(
+			"DCI を探して",
+			"docs/10_新仕様/19_DCI_直接コーパス探索仕様.md",
+			"Evidence Pack",
+			30,
+		),
 	}
 	recall := &mockRecallTraceStore{}
 	req := defaultReq()
 	req.UserMessage = "DCI を探して"
+	result := searcher.result
+	listener := &recordingEventListener{}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
 	orch.SetDCISearcher(searcher)
 	orch.SetRecallTraceStore(recall)
+	orch.SetEventListener(listener)
 
 	resp, err := orch.ProcessMessage(context.Background(), req)
 	if err != nil {
@@ -1438,6 +1523,10 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *testi
 	if !strings.Contains(item.Summary, "docs/10_新仕様/19_DCI_直接コーパス探索仕様.md:30") {
 		t.Fatalf("recall trace item should include evidence location: %+v", item)
 	}
+	if item.SourceID != string(result.Pack.Evidence[0].EvidenceID) || item.SourceType != "dci.evidence" {
+		t.Fatalf("recall trace canonical source = %q/%q, want %q/dci.evidence", item.SourceID, item.SourceType, result.Pack.Evidence[0].EvidenceID)
+	}
+	assertDCIOrchestratorEvents(t, listener.events, resp.Response)
 }
 
 func TestMessageOrchestrator_ProcessMessage_ExplicitDCIErrorDoesNotFallback(t *testing.T) {
@@ -1452,8 +1541,10 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCIErrorDoesNotFallback(t *t
 	searcher := &mockDCISearcher{trigger: true, err: fmt.Errorf("trace store failed")}
 	req := defaultReq()
 	req.UserMessage = "ログを探して"
+	listener := &recordingEventListener{}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
 	orch.SetDCISearcher(searcher)
+	orch.SetEventListener(listener)
 
 	_, err := orch.ProcessMessage(context.Background(), req)
 	if err == nil {
@@ -1465,28 +1556,20 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCIErrorDoesNotFallback(t *t
 	if !strings.Contains(err.Error(), "dci search failed") || !strings.Contains(err.Error(), "trace store failed") {
 		t.Fatalf("error should preserve DCI failure, got %v", err)
 	}
+	assertNoDCIResponseEvent(t, listener.events)
 }
 
 func TestMessageOrchestrator_ProcessMessage_ExplicitDCIRecallTraceErrorFails(t *testing.T) {
 	mio := &mockMioAgent{response: "chat fallback"}
 	searcher := &mockDCISearcher{
 		trigger: true,
-		result: domaindci.SearchResult{
-			Pack: domaindci.EvidencePack{
-				EventID: "evt_dci_recall_fail",
-				Query:   "DCI を探して",
-				Evidence: []domaindci.Evidence{{
-					FilePath:  "docs/spec.md",
-					LineStart: 1,
-					Snippet:   "DCI",
-				}},
-			},
-			Trace: domaindci.SearchTrace{EventID: "evt_dci_recall_fail", Status: "completed"},
-		},
+		result:  validDCISearchResult("DCI を探して", "docs/spec.md", "DCI", 1),
 	}
+	listener := &recordingEventListener{}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
 	orch.SetDCISearcher(searcher)
 	orch.SetRecallTraceStore(&mockRecallTraceStore{err: fmt.Errorf("l1 unavailable")})
+	orch.SetEventListener(listener)
 
 	req := defaultReq()
 	req.UserMessage = "DCI を探して"
@@ -1497,6 +1580,7 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCIRecallTraceErrorFails(t *
 	if !strings.Contains(err.Error(), "failed to save dci recall trace") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	assertNoDCIResponseEvent(t, listener.events)
 }
 
 func TestMessageOrchestrator_ProcessMessage_SessionSaveError(t *testing.T) {

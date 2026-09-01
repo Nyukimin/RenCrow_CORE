@@ -388,11 +388,9 @@ function renderToolHarnessEvents() {
   });
 }
 
-function dciField(trace, snake, pascal) {
-  if (!trace) return undefined;
-  if (Object.prototype.hasOwnProperty.call(trace, snake)) return trace[snake];
-  if (Object.prototype.hasOwnProperty.call(trace, pascal)) return trace[pascal];
-  return undefined;
+function dciField(trace, field) {
+  if (!trace || !Object.prototype.hasOwnProperty.call(trace, field)) return undefined;
+  return trace[field];
 }
 
 function dciOpsCard() {
@@ -406,11 +404,11 @@ function dciOpsCard() {
   }
   const traces = Array.isArray(state.ops.dciTraces) ? state.ops.dciTraces : [];
   const latest = traces[0] || null;
-  const evidenceCount = traces.reduce((sum, trace) => sum + Number(dciField(trace, 'final_evidence_count', 'FinalEvidenceCount') || 0), 0);
+  const evidenceCount = traces.reduce((sum, trace) => sum + Number(dciField(trace, 'final_evidence_count') || 0), 0);
   return {
     title: 'DCI Trace',
     big: String(evidenceCount) + '/' + String(traces.length),
-    sub: latest ? ('latest: ' + short(dciField(latest, 'user_query', 'UserQuery') || '-', 72) + '\nread-only evidence: VectorDB/Qdrant E2E not verified') : 'Search Trace なし\nblocked: VectorDB/Qdrant E2E not verified',
+    sub: latest ? ('latest: ' + short(dciField(latest, 'user_query') || '-', 72) + '\nread-only evidence: VectorDB/Qdrant E2E not verified') : 'Search Trace なし\nblocked: VectorDB/Qdrant E2E not verified',
   };
 }
 
@@ -421,26 +419,27 @@ function renderDCITraces() {
   const fetchError = String(state.ops.dciFetchError || '');
   if (fetchError) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6" class="small">DCI search traces unavailable: ' + esc(fetchError) + '</td>';
+    tr.innerHTML = '<td colspan="7" class="small">DCI search traces unavailable: ' + esc(fetchError) + '</td>';
     body.appendChild(tr);
     return;
   }
   const traces = Array.isArray(state.ops.dciTraces) ? state.ops.dciTraces : [];
   if (traces.length === 0) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6" class="small">No DCI search traces yet</td>';
+    tr.innerHTML = '<td colspan="7" class="small">No DCI search traces yet</td>';
     body.appendChild(tr);
     return;
   }
   traces.slice(0, 20).forEach((trace) => {
-    const scope = dciField(trace, 'corpus_scope', 'CorpusScope') || [];
-    const status = String(dciField(trace, 'status', 'Status') || '-');
+    const scope = dciField(trace, 'corpus_scope') || [];
+    const status = String(dciField(trace, 'status') || '-');
     const tr = document.createElement('tr');
     tr.innerHTML =
-      '<td>' + esc(ftime(dciField(trace, 'ended_at', 'EndedAt') || dciField(trace, 'started_at', 'StartedAt'))) + '</td>' +
-      '<td class="code">' + esc(short(dciField(trace, 'event_id', 'EventID') || '-', 32)) + '</td>' +
-      '<td>' + esc(short(dciField(trace, 'user_query', 'UserQuery') || '-', 90)) + '</td>' +
-      '<td>' + esc(String(dciField(trace, 'final_evidence_count', 'FinalEvidenceCount') || 0)) + '</td>' +
+      '<td>' + esc(ftime(dciField(trace, 'ended_at') || dciField(trace, 'started_at'))) + '</td>' +
+      '<td class="code">' + esc(short(dciField(trace, 'action_id') || '-', 32)) + '</td>' +
+      '<td class="code">' + esc(short(dciField(trace, 'trace_id') || '-', 32)) + '</td>' +
+      '<td>' + esc(short(dciField(trace, 'user_query') || '-', 90)) + '</td>' +
+      '<td>' + esc(String(dciField(trace, 'final_evidence_count') || 0)) + '</td>' +
       '<td><span class="badge ' + stateClass(status) + '">' + esc(status) + '</span></td>' +
       '<td class="code">' + esc(Array.isArray(scope) ? scope.join(', ') : String(scope || '-')) + '</td>';
     body.appendChild(tr);
@@ -455,27 +454,26 @@ function renderDCISearchResult() {
     el.textContent = 'DCI manual search result: -';
     return;
   }
-  const pack = result.pack || result.Pack || {};
-  const trace = result.trace || result.Trace || {};
-  const evidence = pack.evidence || pack.Evidence || [];
+  const pack = result.pack || {};
+  const trace = result.trace || {};
+  const evidence = Array.isArray(pack.evidence) ? pack.evidence : [];
   const lines = [
-    'event: ' + String(pack.event_id || pack.EventID || trace.event_id || trace.EventID || '-'),
-    'query: ' + String(pack.query || pack.Query || '-'),
-    'status: ' + String(trace.status || trace.Status || '-'),
-    'evidence: ' + String(Array.isArray(evidence) ? evidence.length : 0),
+    'action: ' + String(pack.action_id || trace.action_id || '-'),
+    'trace: ' + String(trace.trace_id || '-'),
+    'query: ' + String(pack.query || '-'),
+    'status: ' + String(trace.status || '-'),
+    'evidence: ' + String(evidence.length),
   ];
-  const errorMessage = String(trace.error_message || trace.ErrorMessage || '');
+  const errorMessage = String(trace.error_message || '');
   if (errorMessage) {
     lines.push('error: ' + errorMessage);
   }
-  if (Array.isArray(evidence) && evidence.length) {
-    evidence.slice(0, 3).forEach((ev, idx) => {
-      const file = ev.file_path || ev.FilePath || '-';
-      const line = ev.line_start || ev.LineStart || '-';
-      const snippet = ev.snippet || ev.Snippet || '-';
-      lines.push(String(idx + 1) + '. ' + file + ':' + line + ' ' + short(snippet, 160));
-    });
-  }
+  evidence.slice(0, 3).forEach((ev, idx) => {
+    const file = ev.file_path || '-';
+    const line = ev.line_start || '-';
+    const snippet = ev.snippet || '-';
+    lines.push(String(idx + 1) + '. evidence_id=' + String(ev.evidence_id || '-') + ' created_by_event_id=' + String(ev.created_by_event_id || '-') + ' ' + file + ':' + line + ' ' + short(snippet, 160));
+  });
   el.textContent = lines.join('\n');
 }
 
@@ -2314,12 +2312,17 @@ function fetchKnowledgeMemoryDetail(detailType, id) {
 }
 
 let dciSearchBound = false;
+let dciOwnerBearerToken = '';
 function bindDCISearchControls() {
   if (dciSearchBound) return;
   dciSearchBound = true;
   const input = document.getElementById('dciSearchInput');
+  const tokenInput = document.getElementById('dciOwnerTokenInput');
   const button = document.getElementById('dciSearchBtn');
-  if (!input || !button) return;
+  if (!input || !tokenInput || !button) return;
+  tokenInput.addEventListener('input', () => {
+    dciOwnerBearerToken = String(tokenInput.value || '');
+  });
   const run = () => {
     const query = String(input.value || '').trim();
     if (!query) {
@@ -2327,10 +2330,21 @@ function bindDCISearchControls() {
       renderDCISearchResult();
       return;
     }
+    dciOwnerBearerToken = String(tokenInput.value || '').trim();
+    if (!dciOwnerBearerToken) {
+      state.ops.dciLastResult = {pack: {query}, trace: {status: 'owner_token_required'}};
+      renderDCISearchResult();
+      return;
+    }
     button.disabled = true;
     fetch('/viewer/dci/search', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + dciOwnerBearerToken,
+        'X-RenCrow-Client': 'RenCrow_CMD',
+        'X-RenCrow-Interaction-Profile': 'cmd-control',
+      },
       body: JSON.stringify({query}),
     })
       .then((r) => {

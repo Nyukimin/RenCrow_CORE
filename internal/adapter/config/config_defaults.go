@@ -376,12 +376,8 @@ func (c *Config) setDefaults() {
 	if c.ToolHarness.LogPath == "" {
 		c.ToolHarness.LogPath = c.WorkspaceDir + "/logs/tool_mediation.jsonl"
 	}
-	c.DCI.Storage = defaultOwnerStorage(c.DCI.Storage, c.DCI.SQLitePath)
-	if c.DCI.TracePath == "" {
-		c.DCI.TracePath = c.WorkspaceDir + "/logs/dci_search_trace.jsonl"
-	}
 	if c.DCI.SQLitePath == "" {
-		c.DCI.SQLitePath = c.WorkspaceDir + "/dci.db"
+		c.DCI.SQLitePath = filepath.Join(c.WorkspaceDir, "dci.db")
 	}
 	// SelfSourceDir: 未設定なら cwd を自分自身のソースディレクトリとして使う
 	if c.SelfSourceDir == "" {

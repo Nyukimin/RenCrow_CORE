@@ -56,7 +56,12 @@ func scanL1EventLogEntries(rows *sql.Rows) ([]L1EventLogEntry, error) {
 	return events, nil
 }
 
-func scanL1StagingItems(rows *sql.Rows) ([]L1StagingItem, error) {
+// ScanL1StagingItems decodes the canonical staging-row representation for
+// owner readers that need to inspect the same projection from another store.
+func ScanL1StagingItems(rows *sql.Rows) ([]L1StagingItem, error) {
+	if rows == nil {
+		return nil, errors.New("l1 staging rows are required")
+	}
 	var items []L1StagingItem
 	for rows.Next() {
 		var item L1StagingItem
@@ -97,6 +102,10 @@ func scanL1StagingItems(rows *sql.Rows) ([]L1StagingItem, error) {
 		return nil, fmt.Errorf("l1 staging rows error: %w", err)
 	}
 	return items, nil
+}
+
+func scanL1StagingItems(rows *sql.Rows) ([]L1StagingItem, error) {
+	return ScanL1StagingItems(rows)
 }
 
 func scanL1SourceRegistryEntries(rows *sql.Rows) ([]L1SourceRegistryEntry, error) {

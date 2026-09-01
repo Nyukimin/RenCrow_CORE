@@ -9,10 +9,11 @@ import (
 	"time"
 
 	dciapp "github.com/Nyukimin/RenCrow_CORE/internal/application/dci"
+	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	domainsandbox "github.com/Nyukimin/RenCrow_CORE/internal/domain/sandbox"
 	complexitypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/complexity"
-	dcipersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/dci"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestOwnerRouteWriteRecallE2E(t *testing.T) {
@@ -81,22 +82,22 @@ func TestOwnerRouteWriteRecallE2E(t *testing.T) {
 		}
 	})
 
-	t.Run("DCI search trace", func(t *testing.T) {
+	t.Run("DCI search action", func(t *testing.T) {
 		corpus := t.TempDir()
 		if err := writeDCIAdapterTestFile(filepath.Join(corpus, "owner.md"), "owner route DCI evidence\n"); err != nil {
 			t.Fatalf("write DCI corpus: %v", err)
 		}
-		store := dcipersistence.NewJSONLStore(filepath.Join(t.TempDir(), "dci", "search_traces.jsonl"))
+		store, events := newDCIAdapterStores(t)
 		explorer := dciapp.NewExplorer(dciapp.Config{
-			Enabled: true, Allowlist: []string{corpus}, MaxEvidence: 2, MaxFilesRead: 2,
+			Enabled: true, Allowlist: []string{corpus}, ActorKind: "agent", ActorID: "shiro", MaxEvidence: 2, MaxFilesRead: 2,
 			Now: func() time.Time { return time.Date(2026, 8, 14, 7, 0, 0, 0, time.UTC) },
-		}, store)
+		}, store, dciapp.WithEventAppender(events))
 		writeRegistry := newRuntimeDataWriteRegistry()
 		if err := registerRuntimeDataWriteDCI(writeRegistry, store, explorer); err != nil {
 			t.Fatalf("register DCI write: %v", err)
 		}
 		recallRegistry := newRuntimeDataRecallRegistry()
-		if err := registerRuntimeDataRecallDCISearchTrace(recallRegistry, store); err != nil {
+		if err := registerRuntimeDataRecallDCISearchResult(recallRegistry, store); err != nil {
 			t.Fatalf("register DCI recall: %v", err)
 		}
 		worker := toolsinfra.NewToolRunner(toolsinfra.ToolRunnerConfig{
@@ -108,13 +109,44 @@ func TestOwnerRouteWriteRecallE2E(t *testing.T) {
 		if first.IdempotentReplay || first.AuditRef == "" || first.OwnerRoute != "dci/search" {
 			t.Fatalf("DCI write receipt=%#v", first)
 		}
-		result := ownerRouteRecallByAuditRef(t, worker, ctx, "dci", "search_trace", first.AuditRef, requestID)
+		actionID := modulecore.ActionID(first.AuditRef)
+		if err := actionID.Validate(); err != nil {
+			t.Fatalf("DCI AuditRef is not an ActionID: %v", err)
+		}
+		stored, found, err := store.FindSearchResultByActionID(ctx, actionID)
+		if err != nil || !found {
+			t.Fatalf("stored DCI result found=%v err=%v", found, err)
+		}
+		result := ownerRouteRecallByAuditRef(t, worker, ctx, "dci", "search_result", first.AuditRef, requestID)
 		record := result.Records[0]
-		if record["trace_id"] != first.AuditRef || record["query"] != "owner route" || record["actor"] != "shiro" || record["mode"] != "dci" || record["status"] != "completed" {
+		if record["action_id"] != first.AuditRef || record["trace_id"] != string(stored.Trace.TraceID) || record["trace_id"] == first.AuditRef || record["query"] != "owner route" || record["actor_attribution"] != "authenticated" || record["actor_kind"] != "agent" || record["actor_id"] != "shiro" || record["mode"] != "dci" || record["status"] != "completed" {
 			t.Fatalf("DCI recalled record=%#v", record)
 		}
 		if evidenceCount, ok := record["evidence_count"].(int); !ok || evidenceCount == 0 {
 			t.Fatalf("DCI recalled evidence_count=%#v", record["evidence_count"])
+		}
+		steps, ok := record["steps"].([]domaindci.SearchStep)
+		if !ok || len(steps) != len(stored.Trace.Steps) {
+			t.Fatalf("DCI recalled steps=%#v", record["steps"])
+		}
+		for _, step := range steps {
+			if step.EventType != "dci.file.read" {
+				t.Fatalf("DCI recalled step=%#v", step)
+			}
+		}
+		evidence, ok := record["evidence"].([]domaindci.Evidence)
+		if !ok || len(evidence) != len(stored.Pack.Evidence) {
+			t.Fatalf("DCI recalled evidence=%#v", record["evidence"])
+		}
+		for index := range evidence {
+			if evidence[index].EvidenceID != stored.Pack.Evidence[index].EvidenceID || evidence[index].CreatedByEventID != stored.Pack.Evidence[index].CreatedByEventID {
+				t.Fatalf("DCI evidence reverse refs=%#v stored=%#v", evidence[index], stored.Pack.Evidence[index])
+			}
+		}
+		assertARecordDoesNotContain(t, record, "idempotency_key", stored.Trace.IdempotencyKey)
+		assertDCIAdapterEventGraph(t, events, stored)
+		if response, err := worker.ExecuteV2(ctx, "data.recall", map[string]any{"store": "dci", "operation": "search_trace", "query": first.AuditRef, "limit": 1}); err != nil || response == nil || !response.IsError() {
+			t.Fatalf("retired dci/search_trace response=%#v err=%v", response, err)
 		}
 	})
 }

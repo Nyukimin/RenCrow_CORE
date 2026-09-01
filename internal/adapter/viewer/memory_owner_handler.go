@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
 	"github.com/google/uuid"
 )
 
@@ -55,7 +55,7 @@ func NewMemoryOwnerHandler(store MemoryOwnerStore, userID string, token []byte) 
 }
 
 func (h *memoryOwnerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !memoryOwnerLoopback(r) {
+	if !memoryOwnerDirectLocalRequest(r) {
 		writeMemoryOwnerError(w, http.StatusNotFound, "not_found")
 		return
 	}
@@ -752,16 +752,8 @@ func constantTimeMemoryOwnerTokenEqual(expected, presented []byte) bool {
 	return subtle.ConstantTimeCompare(expectedHash[:], presentedHash[:]) == 1
 }
 
-func memoryOwnerLoopback(r *http.Request) bool {
-	if r == nil || strings.TrimSpace(r.RemoteAddr) == "" {
-		return false
-	}
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err != nil {
-		host = strings.Trim(strings.TrimSpace(r.RemoteAddr), "[]")
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+func memoryOwnerDirectLocalRequest(r *http.Request) bool {
+	return security.IsDirectLoopbackRequest(r)
 }
 
 func parseMemoryOwnerBool(raw string) (bool, error) {

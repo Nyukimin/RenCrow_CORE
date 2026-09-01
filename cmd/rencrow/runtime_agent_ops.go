@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -44,6 +45,16 @@ type agentOpsExecutor interface {
 	Execute(context.Context, task.Task) (string, error)
 }
 
+// agentOpsToolExecutor is the deterministic tool seam used by the fixed DCI
+// identity-acceptance branch. It is intentionally narrower than a generic
+// tool dispatcher: the handler supplies the exact tool names and arguments.
+type agentOpsToolExecutor interface {
+	ExecuteTool(context.Context, string, map[string]interface{}) (string, error)
+}
+
+var _ agentOpsExecutor = (*agent.ShiroAgent)(nil)
+var _ agentOpsToolExecutor = (*agent.ShiroAgent)(nil)
+
 // agentOpsWorkerBusyNotifier is the narrow IdleChat coordination boundary
 // used while an authenticated OPS request owns the foreground worker lease.
 type agentOpsWorkerBusyNotifier interface {
@@ -52,6 +63,7 @@ type agentOpsWorkerBusyNotifier interface {
 
 type agentOpsHandler struct {
 	executor           agentOpsExecutor
+	toolExecutor       agentOpsToolExecutor
 	userID             string
 	token              []byte
 	workerBusyNotifier agentOpsWorkerBusyNotifier
@@ -60,7 +72,9 @@ type agentOpsHandler struct {
 }
 
 type agentOpsRequest struct {
-	Message string `json:"message"`
+	Message   string `json:"message"`
+	Operation string `json:"operation"`
+	Query     string `json:"query"`
 }
 
 type agentOpsResponse struct {
@@ -94,7 +108,11 @@ func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBus
 		return nil, err
 	}
 	handler := &agentOpsHandler{
-		executor:           executor,
+		executor: executor,
+		toolExecutor: func() agentOpsToolExecutor {
+			toolExecutor, _ := executor.(agentOpsToolExecutor)
+			return toolExecutor
+		}(),
 		userID:             userID,
 		token:              append([]byte(nil), token...),
 		workerBusyNotifier: workerBusyNotifier,
@@ -193,13 +211,13 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	message := strings.TrimSpace(request.Message)
-	if message == "" {
-		writeAgentOpsError(w, http.StatusBadRequest, "invalid_request")
-		return
-	}
-	if len([]byte(message)) > agentOpsMaxMessageBytes {
-		writeAgentOpsError(w, http.StatusRequestEntityTooLarge, "request_too_large")
+	branch, err := normalizeAgentOpsRequest(&request)
+	if err != nil {
+		if errors.Is(err, errAgentOpsRequestTooLarge) {
+			writeAgentOpsError(w, http.StatusRequestEntityTooLarge, "request_too_large")
+		} else {
+			writeAgentOpsError(w, http.StatusBadRequest, "invalid_request")
+		}
 		return
 	}
 
@@ -216,7 +234,6 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parentContext := domaintool.WithToolExecutionScope(r.Context(), parentScope)
-	jobID := task.NewJobID()
 	shiroContext, err := domaintool.DeriveAgentToolExecutionScope(
 		parentContext,
 		requestID,
@@ -229,9 +246,28 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAgentOpsError(w, http.StatusInternalServerError, "runtime_unavailable")
 		return
 	}
-	opsTask := task.NewTask(jobID, message, agentOpsTaskChannel, agentOpsTaskChatID).WithRoute(routing.RouteOPS)
 	releaseWorkerBusy := h.acquireWorkerBusyLease()
 	defer releaseWorkerBusy()
+	if branch == agentOpsRequestBranchDCIIdentityAcceptance {
+		if h.toolExecutor == nil {
+			writeAgentOpsError(w, http.StatusInternalServerError, "runtime_unavailable")
+			return
+		}
+		response, err := h.executeAgentOpsDCIIdentityAcceptance(shiroContext, requestID, request.Query)
+		if err != nil {
+			if errors.Is(err, errAgentOpsDCIIdentityUnavailable) {
+				writeAgentOpsError(w, http.StatusInternalServerError, "runtime_unavailable")
+			} else {
+				writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
+			}
+			return
+		}
+		writeJSONStatus(w, http.StatusOK, response)
+		return
+	}
+
+	jobID := task.NewJobID()
+	opsTask := task.NewTask(jobID, request.Message, agentOpsTaskChannel, agentOpsTaskChatID).WithRoute(routing.RouteOPS)
 	output, err := h.executor.Execute(shiroContext, opsTask)
 	if err != nil || strings.TrimSpace(output) == "" {
 		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")

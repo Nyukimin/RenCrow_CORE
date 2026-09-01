@@ -619,8 +619,6 @@ type DCISessionLogSource struct {
 
 type DCIConfig struct {
 	Enabled             *bool                 `yaml:"enabled"`
-	Storage             string                `yaml:"storage"`
-	TracePath           string                `yaml:"trace_path"`
 	SQLitePath          string                `yaml:"-"`
 	CorpusAllowlist     []string              `yaml:"corpus_allowlist"`
 	CorpusDenylist      []string              `yaml:"corpus_denylist"`

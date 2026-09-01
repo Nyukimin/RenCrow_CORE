@@ -16,6 +16,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
 )
 
 // Version 情報（go build -ldflags で注入）
@@ -226,21 +227,12 @@ func registerLocalPprofRoutes(mux *http.ServeMux) {
 
 func localOnlyHandler(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isLoopbackRemoteAddr(r.RemoteAddr) {
+		if !security.IsDirectLoopbackRequest(r) {
 			http.NotFound(w, r)
 			return
 		}
 		next(w, r)
 	}
-}
-
-func isLoopbackRemoteAddr(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
-	if err != nil {
-		host = strings.TrimSpace(remoteAddr)
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // getConfigPath は設定ファイルパスを取得

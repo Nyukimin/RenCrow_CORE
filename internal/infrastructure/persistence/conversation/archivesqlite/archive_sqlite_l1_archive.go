@@ -148,6 +148,54 @@ func (d *ArchiveSQLiteStore) FindConversationArchiveRequest(ctx context.Context,
 	return d.FindArchiveRequestReceipt(ctx, userID, requestID)
 }
 
+// FindStagingItemByNamespaceEventID performs one exact, bounded lookup for an
+// archived L1 staging projection.  Archive rows intentionally do not use a
+// unique constraint for this pair; duplicates are an integrity failure rather
+// than an arbitrary first-row result.
+func (d *ArchiveSQLiteStore) FindStagingItemByNamespaceEventID(ctx context.Context, namespace, eventID string) (l1sqlite.L1StagingItem, bool, error) {
+	if d == nil || d.db == nil {
+		return l1sqlite.L1StagingItem{}, false, errors.New("archive sqlite store is closed")
+	}
+	if ctx == nil {
+		return l1sqlite.L1StagingItem{}, false, errors.New("archive staging lookup context is required")
+	}
+	if strings.TrimSpace(namespace) != namespace {
+		return l1sqlite.L1StagingItem{}, false, errors.New("archive staging namespace must not have surrounding whitespace")
+	}
+	if err := l1sqlite.ValidateL1Namespace(namespace); err != nil {
+		return l1sqlite.L1StagingItem{}, false, err
+	}
+	if eventID == "" || strings.TrimSpace(eventID) != eventID {
+		return l1sqlite.L1StagingItem{}, false, errors.New("archive staging event_id is required")
+	}
+	rows, err := d.db.QueryContext(ctx, `
+SELECT id, kind, namespace, event_id, source_id, source_url, fetched_at, published_at,
+       raw_text, raw_hash, summary_draft, keywords_json, license_note,
+       validation_status, meta_json, created_at, updated_at
+FROM l1_staging_item_archive
+WHERE namespace = ? AND event_id = ?
+LIMIT 2
+`, namespace, eventID)
+	if err != nil {
+		return l1sqlite.L1StagingItem{}, false, err
+	}
+	defer rows.Close()
+	items, err := l1sqlite.ScanL1StagingItems(rows)
+	if err != nil {
+		return l1sqlite.L1StagingItem{}, false, err
+	}
+	if len(items) == 0 {
+		return l1sqlite.L1StagingItem{}, false, nil
+	}
+	if len(items) > 1 {
+		return l1sqlite.L1StagingItem{}, false, errors.New("archive staging namespace and event_id are not unique")
+	}
+	if items[0].Namespace != namespace || items[0].EventID != eventID {
+		return l1sqlite.L1StagingItem{}, false, errors.New("archive staging lookup returned a mismatched key")
+	}
+	return items[0], true, nil
+}
+
 type archiveRowScanner interface {
 	Scan(dest ...interface{}) error
 }

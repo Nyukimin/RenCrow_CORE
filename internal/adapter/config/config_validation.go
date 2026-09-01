@@ -635,8 +635,8 @@ func (c *Config) Validate() error {
 		}
 	}
 	if c.DCI.IsEnabled() {
-		if c.DCI.Storage != "" && c.DCI.Storage != "jsonl" && c.DCI.Storage != "sqlite" {
-			return fmt.Errorf("dci.storage must be jsonl or sqlite")
+		if strings.TrimSpace(c.DCI.SQLitePath) == "" {
+			return fmt.Errorf("storage.databases.dci is required when dci.enabled=true")
 		}
 		if c.DCI.MaxFilesRead < 0 {
 			return fmt.Errorf("dci.max_files_read must be >= 1")
@@ -664,12 +664,6 @@ func (c *Config) Validate() error {
 			if strings.ContainsAny(domain, " \t\r\n:") {
 				return fmt.Errorf("invalid dci.knowledge_fts_domains value: %s", domain)
 			}
-		}
-		if c.DCI.Storage != "sqlite" && c.DCI.Enabled != nil && *c.DCI.Enabled && strings.TrimSpace(c.DCI.TracePath) == "" {
-			return fmt.Errorf("dci.trace_path is required when dci.enabled=true")
-		}
-		if c.DCI.Storage == "sqlite" && strings.TrimSpace(c.DCI.SQLitePath) == "" {
-			return fmt.Errorf("dci.sqlite_path is required when dci.storage=sqlite")
 		}
 	}
 	if (c.SkillGovernance.Enabled != nil && *c.SkillGovernance.Enabled) ||

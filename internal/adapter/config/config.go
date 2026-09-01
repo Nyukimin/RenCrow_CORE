@@ -27,6 +27,9 @@ func LoadConfig(path string) (*Config, error) {
 	if retired := retiredDatabaseConfigKey(&root); retired != "" {
 		return nil, fmt.Errorf("config key %s is retired; CORE uses storage.databases SQLite owner stores", retired)
 	}
+	if retired := retiredDCIConfigKey(&root); retired != "" {
+		return nil, fmt.Errorf("config key %s is retired; CORE uses storage.databases.dci as the canonical DCI SQLite path", retired)
+	}
 	if yamlDocumentMapping(&root) != nil && yamlMappingValue(yamlDocumentMapping(&root), "viewer_log") != nil {
 		return nil, fmt.Errorf("config key viewer_log is retired; CORE uses storage.databases.event_store as the only durable Event source")
 	}
@@ -68,6 +71,23 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// retiredDCIConfigKey fails closed on the removed DCI JSONL and per-module
+// path settings. DCI has one runtime database path, owned by
+// storage.databases.dci; this check must run before YAML decoding so ignored
+// yaml:"-" fields cannot silently preserve an obsolete route.
+func retiredDCIConfigKey(root *yaml.Node) string {
+	dci := yamlMappingValue(yamlDocumentMapping(root), "dci")
+	if dci == nil {
+		return ""
+	}
+	for _, key := range []string{"storage", "trace_path", "sqlite_path"} {
+		if yamlMappingValue(dci, key) != nil {
+			return "dci." + key
+		}
+	}
+	return ""
 }
 
 // retiredDatabaseConfigKey fails closed on settings from the removed DuckDB

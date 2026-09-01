@@ -37,7 +37,6 @@ import (
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domaincontext "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
-	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
@@ -817,27 +816,27 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.skillExternalPRSubmit = viewer.HandleSkillGovernanceExternalPRSubmit(skillStore)
 	}
 	if cfg.DCI.IsEnabled() {
-		var dciStore interface {
-			dciapp.TraceStore
-			ListRecent(limit int) ([]domaindci.SearchTrace, error)
-		}
-		if cfg.DCI.Storage == "sqlite" {
-			store, err := dcipersistence.NewSQLiteStore(cfg.DCI.SQLitePath)
-			if err != nil {
-				log.Fatalf("Failed to initialize DCI SQLite store: %v", err)
-			}
-			dciStore = store
-		} else {
-			dciStore = dcipersistence.NewJSONLStore(cfg.DCI.TracePath)
+		dciStore, err := dcipersistence.NewSQLiteStore(cfg.DCI.SQLitePath)
+		if err != nil {
+			log.Fatalf("Failed to initialize DCI SQLite store: %v", err)
 		}
 		deps.dciTraceStore = dciStore
 		if err := registerRuntimeDataRecallDCI(dataRecallRegistry, dciStore); err != nil {
 			log.Fatalf("Failed to register DCI data recall: %v", err)
 		}
+		if canonicalEventStore != nil && conversationRuntime.L1Store != nil && conversationRuntime.ArchiveStore != nil {
+			identityEvidenceVerifier := dcipersistence.NewIdentityEvidenceVerifier(dciStore, canonicalEventStore, conversationRuntime.L1Store, conversationRuntime.ArchiveStore)
+			if err := registerRuntimeDataRecallDCIIdentityEvidence(dataRecallRegistry, identityEvidenceVerifier); err != nil {
+				log.Fatalf("Failed to register DCI identity evidence data recall: %v", err)
+			}
+		} else {
+			log.Printf("WARN: DCI identity evidence data recall unavailable: owner dependencies missing")
+		}
 		deps.dciRecent = viewer.HandleDCIRecent(dciStore)
 		dciOptions := []dciapp.Option{
 			dciapp.WithToolRunner(toolRuntime.WorkerRuntimeRunnerV2),
 			dciapp.WithSkillBootstrap(deps.skillBootstrap),
+			dciapp.WithEventAppender(canonicalEventStore),
 		}
 		if conversationRuntime.L1Store != nil {
 			dciOptions = append(dciOptions, dciapp.WithSourceCandidateStore(dcipersistence.NewL1SourceCandidateStore(conversationRuntime.L1Store, "kb:dci")))
@@ -864,6 +863,8 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 
 		dciExplorer := dciapp.NewExplorer(dciapp.Config{
 			Enabled:           cfg.DCI.IsEnabled(),
+			ActorKind:         "agent",
+			ActorID:           "shiro",
 			Allowlist:         allowlist,
 			DenylistPatterns:  cfg.DCI.CorpusDenylist,
 			ExplicitKeywords:  cfg.DCI.ExplicitKeywords,
@@ -874,18 +875,22 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			MaxEvidence:       cfg.DCI.MaxEvidence,
 			MaxSnippetChars:   cfg.DCI.MaxSnippetChars,
 		}, dciStore, dciOptions...)
-		dciOwnerStore, ok := dciStore.(runtimeDCISearchStore)
-		if !ok {
-			log.Fatalf("Failed to initialize DCI data write owner store")
-		}
-		if err := registerRuntimeDataWriteDCI(dataWriteRegistry, dciOwnerStore, dciExplorer); err != nil {
+		if err := registerRuntimeDataWriteDCI(dataWriteRegistry, dciStore, dciExplorer); err != nil {
 			log.Fatalf("Failed to register DCI data write: %v", err)
 		}
-		if err := registerRuntimeDataRecallDCISearchTrace(dataRecallRegistry, dciOwnerStore); err != nil {
-			log.Fatalf("Failed to register DCI exact search trace data recall: %v", err)
+		if err := registerRuntimeDataRecallDCISearchResult(dataRecallRegistry, dciStore); err != nil {
+			log.Fatalf("Failed to register DCI exact search result data recall: %v", err)
 		}
 		deps.dciSearcher = dciExplorer
-		deps.dciSearch = viewer.HandleDCISearch(dciExplorer)
+		var dciOwnerToken []byte
+		if cfg.LocalAgentOps.Enabled {
+			if token, err := readAgentOpsToken(cfg.LocalAgentOps.AuthTokenFile); err != nil {
+				log.Printf("DCI owner API unavailable: %v", err)
+			} else {
+				dciOwnerToken = token
+			}
+		}
+		deps.dciSearch = viewer.NewDCISearchHandler(dciExplorer, cfg.LocalAgentOps.UserID, dciOwnerToken)
 	}
 	type sandboxRuntimeStore interface {
 		viewer.SandboxLister

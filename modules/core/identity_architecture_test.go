@@ -46,7 +46,6 @@ func TestCanonicalIDGeneratorsHaveOneSource(t *testing.T) {
 		"internal/adapter/viewer/skill_governance_handler.go:HandleSkillGovernanceContributionGate":            {},
 		"internal/application/browsertrace/artifacts.go:BuildAPIArtifactsWithValidations":                      {},
 		"internal/application/backlog/service.go:Adopt":                                                        {},
-		"internal/application/dci/explorer.go:Search":                                                          {},
 		"internal/application/heartbeat/service.go:RunBacklogIntake":                                           {},
 		"internal/application/idlechat/orchestrator.go:applyPersonaCanonicalResponse":                          {},
 		"internal/application/idlechat/orchestrator.go:recordPersonaTimelineEvent":                             {},

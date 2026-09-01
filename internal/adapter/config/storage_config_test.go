@@ -172,7 +172,6 @@ func TestLoadConfigOwnerStorageDefaultsPreferCanonicalSQLitePaths(t *testing.T) 
 	cases := []ownerStorageCase{
 		{name: "advisor", databaseKey: "advisor", moduleKey: "advisor", storage: func(c *Config) string { return c.Advisor.Storage }, sqlitePath: func(c *Config) string { return c.Advisor.SQLitePath }},
 		{name: "sandbox", databaseKey: "sandbox", moduleKey: "sandbox", storage: func(c *Config) string { return c.Sandbox.Storage }, sqlitePath: func(c *Config) string { return c.Sandbox.SQLitePath }},
-		{name: "dci", databaseKey: "dci", moduleKey: "dci", storage: func(c *Config) string { return c.DCI.Storage }, sqlitePath: func(c *Config) string { return c.DCI.SQLitePath }},
 		{name: "skill_governance", databaseKey: "skill_governance", moduleKey: "skill_governance", storage: func(c *Config) string { return c.SkillGovernance.Storage }, sqlitePath: func(c *Config) string { return c.SkillGovernance.SQLitePath }},
 		{name: "workstream", databaseKey: "workstream", moduleKey: "workstream", storage: func(c *Config) string { return c.Workstream.Storage }, sqlitePath: func(c *Config) string { return c.Workstream.SQLitePath }},
 		{name: "revenue", databaseKey: "revenue", moduleKey: "revenue", storage: func(c *Config) string { return c.Revenue.Storage }, sqlitePath: func(c *Config) string { return c.Revenue.SQLitePath }},
@@ -241,6 +240,27 @@ func TestLoadConfigOwnerStorageDefaultsPreferCanonicalSQLitePaths(t *testing.T) 
 				t.Fatalf("SQLitePath = %q, want canonical path %q", got, canonicalPaths[tc.name])
 			}
 		})
+	}
+}
+
+func TestLoadConfigDCIPathUsesCanonicalStorageDatabase(t *testing.T) {
+	canonicalPath := filepath.Join(t.TempDir(), "dci.db")
+	path := writeStorageTestConfig(t, fmt.Sprintf(`
+server:
+  port: 8080
+workspace_dir: %q
+storage:
+  databases:
+    dci: %q
+dci:
+  enabled: false
+`, filepath.Join(t.TempDir(), "workspace"), canonicalPath))
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Storage.Databases.DCI != canonicalPath || cfg.DCI.SQLitePath != canonicalPath {
+		t.Fatalf("DCI database path = storage %q/runtime %q, want %q", cfg.Storage.Databases.DCI, cfg.DCI.SQLitePath, canonicalPath)
 	}
 }
 

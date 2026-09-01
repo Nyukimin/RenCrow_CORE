@@ -29,17 +29,12 @@ func (o *DistributedOrchestrator) handleExplicitDCI(ctx context.Context, req Pro
 	}
 
 	jid := jobID.String()
-	o.emit("dci.search.started", "mio", "worker", req.UserMessage, string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
 	result, err := o.dciSearcher.Search(ctx, req.UserMessage)
 	if err != nil {
-		o.emit("dci.search.failed", "worker", "mio", err.Error(), string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
 		return ProcessMessageResponse{}, true, fmt.Errorf("dci search failed: %w", err)
 	}
 
 	response := formatDCIResponse(result)
-	o.emit("dci.search.completed", "worker", "mio", response, string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
-	o.emit("agent.response", "worker", "mio", response, string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
-
 	if err := o.saveDCIRecallTrace(ctx, req.SessionID, jid, result); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
@@ -47,6 +42,7 @@ func (o *DistributedOrchestrator) handleExplicitDCI(ctx context.Context, req Pro
 	if err := o.sessions.SaveCompletedTask(ctx, sess, routedTask); err != nil {
 		return ProcessMessageResponse{}, true, fmt.Errorf("failed to save session: %w", err)
 	}
+	o.emit("agent.response", "shiro", "mio", response, string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
 
 	return ProcessMessageResponse{
 		Response:   response,

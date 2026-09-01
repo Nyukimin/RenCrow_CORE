@@ -16,15 +16,3 @@ func TestEnvBool(t *testing.T) {
 		t.Fatal("off should be disabled")
 	}
 }
-
-func TestIsLoopbackRemoteAddr(t *testing.T) {
-	if !isLoopbackRemoteAddr("127.0.0.1:1234") {
-		t.Fatal("127.0.0.1 should be loopback")
-	}
-	if !isLoopbackRemoteAddr("[::1]:1234") {
-		t.Fatal("::1 should be loopback")
-	}
-	if isLoopbackRemoteAddr("192.168.1.10:1234") {
-		t.Fatal("LAN address should not be loopback")
-	}
-}

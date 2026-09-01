@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	domainadvisor "github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
@@ -11,6 +12,7 @@ import (
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type advisorRecallLister interface {
@@ -29,8 +31,8 @@ type sandboxPromotionRecallFinder interface {
 type dciRecallLister interface {
 	ListRecent(int) ([]domaindci.SearchTrace, error)
 }
-type dciSearchTraceRecallFinder interface {
-	FindSearchTraceByID(context.Context, string) (domaindci.SearchTrace, bool, error)
+type dciSearchResultRecallFinder interface {
+	FindSearchResultByActionID(context.Context, modulecore.ActionID) (domaindci.SearchResult, bool, error)
 }
 type skillRecallLister interface {
 	ListSkillManifests(context.Context, int) ([]domainskill.SkillManifest, error)
@@ -146,31 +148,67 @@ func registerRuntimeDataRecallDCI(r *runtimeDataRecallRegistry, s dciRecallListe
 		}
 		records := []map[string]any{}
 		for _, v := range items {
-			if dataRecallMatches(q.Query, v.EventID, v.UserQuery, v.Status) {
-				records = append(records, map[string]any{"trace_id": v.EventID, "query": v.UserQuery, "scope": v.CorpusScope, "status": v.Status, "created_at": v.StartedAt})
+			if dataRecallMatches(q.Query, string(v.ActionID), string(v.TraceID), v.UserQuery, string(v.ActorAttribution), v.ActorKind, v.ActorID, v.Status) {
+				records = append(records, map[string]any{
+					"action_id":         string(v.ActionID),
+					"trace_id":          string(v.TraceID),
+					"actor_attribution": string(v.ActorAttribution),
+					"actor_kind":        v.ActorKind,
+					"actor_id":          v.ActorID,
+					"query":             v.UserQuery,
+					"scope":             append([]string(nil), v.CorpusScope...),
+					"status":            v.Status,
+					"created_at":        v.StartedAt,
+				})
 			}
 		}
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
 	})
 }
 
-func registerRuntimeDataRecallDCISearchTrace(r *runtimeDataRecallRegistry, s dciSearchTraceRecallFinder) error {
+func registerRuntimeDataRecallDCISearchResult(r *runtimeDataRecallRegistry, s dciSearchResultRecallFinder) error {
 	if r == nil || s == nil {
-		return fmt.Errorf("dci exact search trace recall unavailable")
+		return fmt.Errorf("dci exact search result recall unavailable")
 	}
-	return r.Register("dci", "search_trace", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
-		trace, found, err := s.FindSearchTraceByID(ctx, q.Query)
+	return r.Register("dci", "search_result", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
+		actionID := modulecore.ActionID(strings.TrimSpace(q.Query))
+		if err := actionID.Validate(); err != nil {
+			return runtimeDataRecallResult{}, fmt.Errorf("dci search_result action_id: %w", err)
+		}
+		result, found, err := s.FindSearchResultByActionID(ctx, actionID)
 		if err != nil {
 			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		if found {
+			if err := domaindci.ValidateStoredSearchResult(result); err != nil {
+				return runtimeDataRecallResult{}, fmt.Errorf("dci search_result is invalid: %w", err)
+			}
+			if result.Trace.ActionID != actionID || result.Pack.ActionID != actionID {
+				return runtimeDataRecallResult{}, fmt.Errorf("dci search_result action_id mismatch")
+			}
+			trace := result.Trace
+			pack := result.Pack
 			records = append(records, map[string]any{
-				"trace_id": trace.EventID, "query": trace.UserQuery, "actor": trace.Actor,
-				"mode": trace.Mode, "scope": append([]string(nil), trace.CorpusScope...),
-				"steps":          append([]domaindci.SearchStep(nil), trace.Steps...),
-				"evidence_count": trace.FinalEvidenceCount, "status": trace.Status,
-				"error_message": trace.ErrorMessage, "started_at": trace.StartedAt, "ended_at": trace.EndedAt,
+				"action_id":         string(trace.ActionID),
+				"trace_id":          string(trace.TraceID),
+				"actor_attribution": string(trace.ActorAttribution),
+				"actor_kind":        trace.ActorKind,
+				"actor_id":          trace.ActorID,
+				"mode":              trace.Mode,
+				"query":             trace.UserQuery,
+				"scope":             append([]string(nil), trace.CorpusScope...),
+				"status":            trace.Status,
+				"error_message":     trace.ErrorMessage,
+				"started_at":        trace.StartedAt,
+				"ended_at":          trace.EndedAt,
+				"steps":             append([]domaindci.SearchStep(nil), trace.Steps...),
+				"evidence":          append([]domaindci.Evidence(nil), pack.Evidence...),
+				"intent":            pack.Intent,
+				"derived_terms":     append([]string(nil), pack.DerivedTerms...),
+				"confidence":        pack.Confidence,
+				"limitations":       append([]string(nil), pack.Limitations...),
+				"evidence_count":    len(pack.Evidence),
 			})
 		}
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil

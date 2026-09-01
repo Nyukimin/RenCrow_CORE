@@ -16,6 +16,7 @@ import (
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type dataRecallAdvisorListerStub struct {
@@ -46,6 +47,18 @@ type dataRecallDCIListerStub struct {
 func (s *dataRecallDCIListerStub) ListRecent(limit int) ([]domaindci.SearchTrace, error) {
 	s.gotLimit = limit
 	return s.traces, nil
+}
+
+type dataRecallDCISearchResultFinderStub struct {
+	result      domaindci.SearchResult
+	found       bool
+	err         error
+	gotActionID modulecore.ActionID
+}
+
+func (s *dataRecallDCISearchResultFinderStub) FindSearchResultByActionID(_ context.Context, actionID modulecore.ActionID) (domaindci.SearchResult, bool, error) {
+	s.gotActionID = actionID
+	return s.result, s.found, s.err
 }
 
 type dataRecallSkillGovernanceListerStub struct {
@@ -122,9 +135,13 @@ func TestRegisterDataRecallSandbox(t *testing.T) {
 
 func TestRegisterDataRecallDCI(t *testing.T) {
 	created := time.Date(2026, 8, 13, 3, 4, 5, 0, time.UTC)
+	traceID := modulecore.NewTraceID()
+	actionID := modulecore.NewActionID()
+	otherTraceID := modulecore.NewTraceID()
+	otherActionID := modulecore.NewActionID()
 	store := &dataRecallDCIListerStub{traces: []domaindci.SearchTrace{
-		{EventID: "trace-1", UserQuery: "Needle query", CorpusScope: []string{"core"}, Status: "completed", StartedAt: created, Actor: "agent-secret", Steps: []domaindci.SearchStep{{CommandText: "secret command"}}},
-		{EventID: "trace-2", UserQuery: "Other", CorpusScope: []string{"docs"}, Status: "failed", StartedAt: created.Add(time.Minute)},
+		{TraceID: traceID, ActionID: actionID, UserQuery: "Needle query", CorpusScope: []string{"core"}, Status: "completed", StartedAt: created, EndedAt: created, ActorAttribution: domaindci.ActorAttributionAuthenticated, ActorKind: "agent", ActorID: "shiro", Mode: "dci"},
+		{TraceID: otherTraceID, ActionID: otherActionID, UserQuery: "Other", CorpusScope: []string{"docs"}, Status: "failed", StartedAt: created.Add(time.Minute), EndedAt: created.Add(time.Minute), ActorAttribution: domaindci.ActorAttributionAuthenticated, ActorKind: "agent", ActorID: "shiro", Mode: "dci"},
 	}}
 	registry := newRuntimeDataRecallRegistry()
 	if err := registerRuntimeDataRecallDCI(registry, store); err != nil {
@@ -135,10 +152,103 @@ func TestRegisterDataRecallDCI(t *testing.T) {
 	if store.gotLimit != 4 {
 		t.Fatalf("ListRecent limit = %d, want 4", store.gotLimit)
 	}
-	assertARecord(t, result.Records[0], map[string]any{"trace_id": "trace-1", "query": "Needle query", "scope": []string{"core"}, "status": "completed", "created_at": created}, "created_at", "query", "scope", "status", "trace_id")
-	assertARecordDoesNotContain(t, result.Records[0], "actor", "agent-secret", "secret command", "command_text", "file_path", "snippet")
+	assertARecord(t, result.Records[0], map[string]any{
+		"action_id": string(actionID), "trace_id": string(traceID), "actor_attribution": "authenticated", "actor_kind": "agent", "actor_id": "shiro",
+		"query": "Needle query", "scope": []string{"core"}, "status": "completed", "created_at": created,
+	}, "action_id", "actor_attribution", "actor_id", "actor_kind", "created_at", "query", "scope", "status", "trace_id")
+	assertARecordDoesNotContain(t, result.Records[0], "secret command", "command_text", "file_path", "snippet", "evidence", "idempotency_key")
 	assertARecallEmpty(t, registry, dataRecallInternalContext(t), "dci", "search_traces", "unknown")
 	assertARecallDenied(t, registry, dataRecallUserContext(t), "dci", "search_traces")
+	if _, err := registry.Recall(dataRecallInternalContext(t), toolsinfra.DataRecallRequest{Store: "dci", Operation: "search_trace", Query: string(actionID), Limit: 1}); !errors.Is(err, errDataRecallRegistryUnknownOperation) {
+		t.Fatalf("retired dci/search_trace error = %v, want unavailable", err)
+	}
+}
+
+func TestRegisterDataRecallDCISearchResult(t *testing.T) {
+	created := time.Date(2026, 8, 13, 3, 4, 5, 0, time.UTC)
+	traceID := modulecore.NewTraceID()
+	actionID := modulecore.NewActionID()
+	stepEventID := modulecore.NewEventID()
+	evidenceID := modulecore.NewEvidenceID()
+	createdByEventID := modulecore.NewEventID()
+	stored := validDCIAdapterResult("Needle query", traceID, actionID, "agent", "shiro", "request-secret")
+	stored.Pack.CorpusScope = []string{"core"}
+	stored.Pack.Intent = "direct corpus evidence lookup"
+	stored.Pack.DerivedTerms = []string{"needle"}
+	stored.Pack.Confidence = 0.8
+	stored.Pack.Limitations = []string{"limited"}
+	stored.Pack.Evidence = []domaindci.Evidence{{
+		EvidenceID: evidenceID, CreatedByEventID: createdByEventID, FilePath: "/private/source.md",
+		LineStart: 2, LineEnd: 3, Snippet: "private snippet", Confidence: 0.8,
+	}}
+	stored.Trace.CorpusScope = []string{"core"}
+	stored.Trace.Steps = []domaindci.SearchStep{{
+		StepNo: 1, EventID: stepEventID, EventType: "dci.file.read", Tool: "read_file", FilePath: "/private/source.md",
+		ResultCount: 1, Status: "ok", CreatedAt: created,
+	}}
+	stored.Trace.FinalEvidenceCount = 1
+	stored.Trace.StartedAt = created
+	stored.Trace.EndedAt = created
+	finder := &dataRecallDCISearchResultFinderStub{result: stored, found: true}
+	registry := newRuntimeDataRecallRegistry()
+	if err := registerRuntimeDataRecallDCISearchResult(registry, finder); err != nil {
+		t.Fatalf("registerRuntimeDataRecallDCISearchResult() error = %v", err)
+	}
+	result := recallDataRecallAdapter(t, registry, dataRecallInternalContext(t), toolsinfra.DataRecallRequest{Store: "dci", Operation: "search_result", Query: string(actionID), Limit: 1})
+	assertRecallResult(t, result, "dci", "search_result", 1)
+	if finder.gotActionID != actionID {
+		t.Fatalf("FindSearchResultByActionID action=%q, want %q", finder.gotActionID, actionID)
+	}
+	assertARecord(t, result.Records[0], map[string]any{
+		"action_id": string(actionID), "trace_id": string(traceID), "actor_attribution": "authenticated", "actor_kind": "agent", "actor_id": "shiro",
+		"mode": "dci", "query": "Needle query", "scope": []string{"core"}, "status": "completed", "error_message": "",
+		"started_at": created, "ended_at": created, "steps": []domaindci.SearchStep(stored.Trace.Steps), "evidence": []domaindci.Evidence(stored.Pack.Evidence),
+		"intent": "direct corpus evidence lookup", "derived_terms": []string{"needle"}, "confidence": 0.8, "limitations": []string{"limited"}, "evidence_count": 1,
+	}, "action_id", "actor_attribution", "actor_id", "actor_kind", "confidence", "derived_terms", "ended_at", "error_message", "evidence", "evidence_count", "intent", "limitations", "mode", "query", "scope", "started_at", "status", "steps", "trace_id")
+	assertARecordDoesNotContain(t, result.Records[0], "request-secret", "idempotency_key")
+}
+
+func TestRegisterDataRecallDCISearchResultRejectsInvalidAndMismatchedResults(t *testing.T) {
+	actionID := modulecore.NewActionID()
+	tests := []struct {
+		name   string
+		query  string
+		result domaindci.SearchResult
+	}{
+		{name: "malformed action id", query: "not-an-action", result: domaindci.SearchResult{}},
+		{name: "mismatched action id", query: string(actionID), result: validDCIAdapterResult("query", modulecore.NewTraceID(), modulecore.NewActionID(), "agent", "shiro", "request")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := newRuntimeDataRecallRegistry()
+			finder := &dataRecallDCISearchResultFinderStub{result: tt.result, found: true}
+			if err := registerRuntimeDataRecallDCISearchResult(registry, finder); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Recall(dataRecallInternalContext(t), toolsinfra.DataRecallRequest{Store: "dci", Operation: "search_result", Query: tt.query, Limit: 1}); !errors.Is(err, errDataRecallRegistryCallbackFailed) {
+				t.Fatalf("Recall() error = %v, want callback failure", err)
+			}
+		})
+	}
+}
+
+func TestRegisterDataRecallDCISearchResultReadsLegacyUnattributed(t *testing.T) {
+	actionID := modulecore.NewActionID()
+	stored := validDCIAdapterResult("legacy query", modulecore.NewTraceID(), actionID, "agent", "shiro", "legacy-request")
+	stored.Trace.ActorAttribution = domaindci.ActorAttributionLegacyUnattributed
+	stored.Trace.ActorKind = ""
+	stored.Trace.ActorID = ""
+	finder := &dataRecallDCISearchResultFinderStub{result: stored, found: true}
+	registry := newRuntimeDataRecallRegistry()
+	if err := registerRuntimeDataRecallDCISearchResult(registry, finder); err != nil {
+		t.Fatal(err)
+	}
+	result := recallDataRecallAdapter(t, registry, dataRecallInternalContext(t), toolsinfra.DataRecallRequest{Store: "dci", Operation: "search_result", Query: string(actionID), Limit: 1})
+	assertRecallResult(t, result, "dci", "search_result", 1)
+	if result.Records[0]["actor_attribution"] != "legacy_unattributed" || result.Records[0]["actor_kind"] != "" || result.Records[0]["actor_id"] != "" {
+		t.Fatalf("legacy actor projection=%#v", result.Records[0])
+	}
+	assertARecordDoesNotContain(t, result.Records[0], "legacy-request", "idempotency_key")
 }
 
 func TestRegisterDataRecallSkillGovernance(t *testing.T) {

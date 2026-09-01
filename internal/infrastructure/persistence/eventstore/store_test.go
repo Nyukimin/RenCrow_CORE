@@ -252,6 +252,82 @@ func TestAppendEnablesForeignKeysAndReadIsBounded(t *testing.T) {
 	}
 }
 
+func TestListByTraceIDIsExactBoundedAndIndexed(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	traceID := modulecore.NewTraceID()
+	first := eventFixture(traceID, "trace.first", "dci")
+	first.OccurredAt = first.OccurredAt.Add(2 * time.Second)
+	second := eventFixture(traceID, "trace.second", "dci")
+	second.OccurredAt = second.OccurredAt.Add(time.Second)
+	third := eventFixture(traceID, "trace.third", "dci")
+	for _, event := range []modulecore.EventEnvelope{first, second, third} {
+		if err := store.Append(ctx, event); err != nil {
+			t.Fatalf("Append(%q): %v", event.EventID, err)
+		}
+	}
+	got, err := store.ListByTraceID(ctx, traceID, 3)
+	if err != nil {
+		t.Fatalf("ListByTraceID(): %v", err)
+	}
+	if len(got) != 3 || got[0].EventID != third.EventID || got[1].EventID != second.EventID || got[2].EventID != first.EventID {
+		t.Fatalf("ListByTraceID() order = %#v, want chronological order", got)
+	}
+	if _, err := store.ListByTraceID(ctx, traceID, 2); err == nil {
+		t.Fatal("ListByTraceID() over-bound query returned nil error")
+	}
+	if got, err := store.ListByTraceID(ctx, modulecore.NewTraceID(), 3); err != nil || len(got) != 0 {
+		t.Fatalf("ListByTraceID() missing trace = %#v, %v; want empty success", got, err)
+	}
+	for _, invalid := range []struct {
+		trace modulecore.TraceID
+		max   int
+	}{
+		{trace: modulecore.TraceID(""), max: 1},
+		{trace: traceID, max: 0},
+	} {
+		if _, err := store.ListByTraceID(ctx, invalid.trace, invalid.max); err == nil {
+			t.Fatalf("ListByTraceID(%q,%d) returned nil error", invalid.trace, invalid.max)
+		}
+	}
+	if _, err := store.ListByTraceID(ctx, traceID, maxListLimit+1); err == nil {
+		t.Fatal("ListByTraceID() accepted a maximum above the hard bound")
+	}
+	var indexExists int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_index_list('event_envelope') WHERE name = 'event_envelope_trace_idx'`).Scan(&indexExists); err != nil {
+		t.Fatalf("trace index lookup: %v", err)
+	}
+	if indexExists != 1 {
+		t.Fatal("event_envelope_trace_idx is missing")
+	}
+	var planID, planParent, planNotUsed int
+	var queryPlan string
+	if err := store.db.QueryRowContext(ctx, `EXPLAIN QUERY PLAN SELECT event_id FROM event_envelope WHERE trace_id = ? ORDER BY occurred_at ASC, event_id ASC LIMIT 4`, traceID).Scan(&planID, &planParent, &planNotUsed, &queryPlan); err != nil {
+		t.Fatalf("trace query plan: %v", err)
+	}
+	if !strings.Contains(strings.ToUpper(queryPlan), "EVENT_ENVELOPE_TRACE_IDX") {
+		t.Fatalf("exact trace lookup did not use trace index: %q", queryPlan)
+	}
+}
+
+func TestListByTraceIDRejectsEnvelopeColumnDrift(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	event := eventFixture(modulecore.NewTraceID(), "trace.drift", "dci")
+	if err := store.Append(ctx, event); err != nil {
+		t.Fatalf("Append(): %v", err)
+	}
+	if _, err := store.db.Exec(`DROP TRIGGER event_envelope_append_only_update`); err != nil {
+		t.Fatalf("drop append-only trigger: %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE event_envelope SET component_id = 'other' WHERE event_id = ?`, event.EventID); err != nil {
+		t.Fatalf("mutate canonical column: %v", err)
+	}
+	if _, err := store.ListByTraceID(ctx, event.TraceID, 1); err == nil {
+		t.Fatal("ListByTraceID() accepted column/envelope mismatch")
+	}
+}
+
 func newTestStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "event-store.sqlite"))

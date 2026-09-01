@@ -9,16 +9,15 @@ import (
 	dciapp "github.com/Nyukimin/RenCrow_CORE/internal/application/dci"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-const runtimeDCISearchIDPrefix = "dci-search/sha256:"
-
 type runtimeDCISearchStore interface {
-	FindSearchTraceByID(context.Context, string) (domaindci.SearchTrace, bool, error)
+	FindSearchResultByIdempotencyKey(context.Context, string) (domaindci.SearchResult, bool, error)
 }
 
 type runtimeDCISearcher interface {
-	SearchWithIdentity(context.Context, string, string, string) (domaindci.SearchResult, error)
+	SearchWithIdentity(context.Context, string, modulecore.TraceID, modulecore.ActionID, string, string, string) (domaindci.SearchResult, error)
 }
 
 type runtimeDCISearchWritePayload struct {
@@ -50,47 +49,50 @@ func (w *runtimeDCISearchWriter) write(ctx context.Context, request tools.DataWr
 	if err != nil {
 		return runtimeDataWriteOwnerResult{}, err
 	}
-	actor := strings.TrimSpace(scope.ActorID)
-	eventID := runtimeDataWriteDerivedID(runtimeDCISearchIDPrefix, scope.RequestID)
+	actorKind := string(scope.ActorKind)
+	actorID := scope.ActorID
+	if err := domaindci.ValidateActor(actorKind, actorID); err != nil {
+		return runtimeDataWriteOwnerResult{}, fmt.Errorf("dci owner actor: %w", err)
+	}
+	idempotencyKey := scope.RequestID
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	existing, found, err := w.store.FindSearchTraceByID(ctx, eventID)
+	existing, found, err := w.store.FindSearchResultByIdempotencyKey(ctx, idempotencyKey)
 	if err != nil {
 		return runtimeDataWriteOwnerResult{}, err
 	}
 	if found {
-		if err := domaindci.ValidateSearchTrace(existing); err != nil {
-			return runtimeDataWriteOwnerResult{}, fmt.Errorf("dci existing search trace is invalid: %w", err)
-		}
-		if strings.TrimSpace(existing.UserQuery) != payload.Query || strings.TrimSpace(existing.Actor) != actor || strings.TrimSpace(existing.Mode) != "dci" {
-			return runtimeDataWriteOwnerResult{}, fmt.Errorf("dci search idempotency payload mismatch")
+		if err := validateRuntimeDCISearchResult(existing, payload.Query, existing.Trace.TraceID, existing.Trace.ActionID, actorKind, actorID, idempotencyKey); err != nil {
+			return runtimeDataWriteOwnerResult{}, fmt.Errorf("dci existing search result is invalid: %w", err)
 		}
 		return runtimeDataWriteOwnerResult{
-			SchemaVersion:    "dci-search/v1",
+			SchemaVersion:    "dci-search/v2",
 			MigrationState:   "embedded_current",
 			ValidationState:  "owner_validated",
-			AuditRef:         existing.EventID,
-			IdempotencyKey:   scope.RequestID,
+			AuditRef:         string(existing.Trace.ActionID),
+			IdempotencyKey:   idempotencyKey,
 			IdempotentReplay: true,
 			PolicyRevision:   runtimeDataWritePolicyRevision,
 		}, nil
 	}
 
-	result, err := w.searcher.SearchWithIdentity(ctx, payload.Query, eventID, actor)
+	traceID := modulecore.NewTraceID()
+	actionID := modulecore.NewActionID()
+	result, err := w.searcher.SearchWithIdentity(ctx, payload.Query, traceID, actionID, actorKind, actorID, idempotencyKey)
 	if err != nil {
 		return runtimeDataWriteOwnerResult{}, err
 	}
-	if err := validateRuntimeDCISearchResult(result, payload.Query, eventID, actor); err != nil {
+	if err := validateRuntimeDCISearchResult(result, payload.Query, traceID, actionID, actorKind, actorID, idempotencyKey); err != nil {
 		return runtimeDataWriteOwnerResult{}, err
 	}
 	return runtimeDataWriteOwnerResult{
-		SchemaVersion:    "dci-search/v1",
+		SchemaVersion:    "dci-search/v2",
 		MigrationState:   "embedded_current",
 		ValidationState:  "owner_validated",
-		AuditRef:         result.Trace.EventID,
-		IdempotencyKey:   scope.RequestID,
+		AuditRef:         string(result.Trace.ActionID),
+		IdempotencyKey:   idempotencyKey,
 		IdempotentReplay: false,
 		PolicyRevision:   runtimeDataWritePolicyRevision,
 	}, nil
@@ -111,16 +113,16 @@ func decodeRuntimeDCISearchPayload(payload map[string]any) (runtimeDCISearchWrit
 	return decoded, nil
 }
 
-func validateRuntimeDCISearchResult(result domaindci.SearchResult, query, eventID, actor string) error {
+func validateRuntimeDCISearchResult(result domaindci.SearchResult, query string, traceID modulecore.TraceID, actionID modulecore.ActionID, actorKind, actorID, idempotencyKey string) error {
+	if err := domaindci.ValidateSearchResult(result); err != nil {
+		return fmt.Errorf("dci searcher returned an invalid result: %w", err)
+	}
 	trace := result.Trace
-	if trace.EventID != eventID || trace.UserQuery != query || trace.Actor != actor || trace.Mode != "dci" {
+	if trace.TraceID != traceID || trace.ActionID != actionID || trace.UserQuery != query || trace.ActorAttribution != domaindci.ActorAttributionAuthenticated || trace.ActorKind != actorKind || trace.ActorID != actorID || trace.IdempotencyKey != idempotencyKey || trace.Mode != "dci" {
 		return fmt.Errorf("dci searcher returned an identity-mismatched trace")
 	}
-	if result.Pack.EventID != eventID || result.Pack.Query != query {
+	if result.Pack.ActionID != actionID || result.Pack.Query != query || result.Pack.ActionID != trace.ActionID {
 		return fmt.Errorf("dci searcher returned an identity-mismatched evidence pack")
-	}
-	if err := domaindci.ValidateSearchTrace(trace); err != nil {
-		return fmt.Errorf("dci searcher returned an invalid trace: %w", err)
 	}
 	return nil
 }

@@ -16,7 +16,10 @@ import (
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+var errCandidateCollectionLimit = errors.New("dci candidate collection limit reached")
 
 type TraceStore interface {
 	SaveSearchTrace(ctx context.Context, trace domaindci.SearchTrace) error
@@ -49,14 +52,27 @@ type Config struct {
 	MaxFilesRead      int
 	MaxEvidence       int
 	MaxSnippetChars   int
+	ActorKind         string
+	ActorID           string
 	Now               func() time.Time
 }
 
-var errSearchLimitReached = errors.New("dci search limit reached")
+const (
+	dciComponentID              = "dci"
+	dciSearchRequestedEventType = "dci.search.requested"
+	dciSearchStartedEventType   = "dci.search.started"
+	dciSourceSelectedEventType  = "dci.source.selected"
+	dciFileReadEventType        = "dci.file.read"
+	dciEvidenceCreatedEventType = "dci.evidence.created"
+	dciSearchCompletedEventType = "dci.search.completed"
+	dciSearchFailedEventType    = "dci.search.failed"
+	dciRecoveryTimeout          = 5 * time.Second
+)
 
 type Explorer struct {
 	cfg              Config
 	store            TraceStore
+	events           modulecore.EventAppender
 	toolRunner       tool.RunnerV2
 	skills           *skillbootstrap.BootstrapService
 	sourceCandidates SourceCandidateStore
@@ -69,6 +85,12 @@ type Option func(*Explorer)
 func WithToolRunner(runner tool.RunnerV2) Option {
 	return func(e *Explorer) {
 		e.toolRunner = runner
+	}
+}
+
+func WithEventAppender(appender modulecore.EventAppender) Option {
+	return func(e *Explorer) {
+		e.events = appender
 	}
 }
 
@@ -142,116 +164,281 @@ func (e *Explorer) ShouldTrigger(query string) bool {
 	return false
 }
 
+func newDCIRecoveryContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), dciRecoveryTimeout)
+}
+
 func (e *Explorer) Search(ctx context.Context, query string) (domaindci.SearchResult, error) {
-	started := e.cfg.Now().UTC()
-	eventID := fmt.Sprintf("evt_dci_%d", started.UnixNano())
-	return e.SearchWithIdentity(ctx, query, eventID, "Worker")
+	return e.SearchWithIdentity(ctx, query, modulecore.NewTraceID(), modulecore.NewActionID(), e.cfg.ActorKind, e.cfg.ActorID, "")
 }
 
 // SearchWithIdentity performs one DCI search with the trusted owner identity
-// supplied by the caller. EventID and actor are never inferred from model
-// payloads inside the search itself.
-func (e *Explorer) SearchWithIdentity(ctx context.Context, query, eventID, actor string) (domaindci.SearchResult, error) {
+// supplied by the caller. Canonical IDs and actor identity are never inferred
+// from model payloads inside the search itself.
+func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID modulecore.TraceID, actionID modulecore.ActionID, actorKind, actorID, idempotencyKey string) (domaindci.SearchResult, error) {
 	query = strings.TrimSpace(query)
-	eventID = strings.TrimSpace(eventID)
-	actor = strings.TrimSpace(actor)
+	traceID = modulecore.TraceID(strings.TrimSpace(string(traceID)))
+	actionID = modulecore.ActionID(strings.TrimSpace(string(actionID)))
+	actorKind = strings.ToLower(strings.TrimSpace(actorKind))
+	actorID = strings.TrimSpace(actorID)
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
 	if query == "" {
 		return domaindci.SearchResult{}, fmt.Errorf("dci search query is required")
 	}
-	if eventID == "" {
-		return domaindci.SearchResult{}, fmt.Errorf("dci search event_id is required")
+	if err := traceID.Validate(); err != nil {
+		return domaindci.SearchResult{}, fmt.Errorf("dci search trace_id: %w", err)
 	}
-	if actor == "" {
-		return domaindci.SearchResult{}, fmt.Errorf("dci search actor is required")
+	if err := actionID.Validate(); err != nil {
+		return domaindci.SearchResult{}, fmt.Errorf("dci search action_id: %w", err)
 	}
-	if err := e.recordSkillBootstrap(ctx, query, actor); err != nil {
-		return domaindci.SearchResult{}, err
+	if err := domaindci.ValidateActor(actorKind, actorID); err != nil {
+		return domaindci.SearchResult{}, fmt.Errorf("dci search actor: %w", err)
 	}
+	if e.events == nil {
+		return domaindci.SearchResult{}, fmt.Errorf("dci event appender is required")
+	}
+	if ctx == nil {
+		return domaindci.SearchResult{}, fmt.Errorf("dci search context is required")
+	}
+
+	searchCtx := ctx
+	var cancel context.CancelFunc
 	if e.cfg.MaxSeconds > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.cfg.MaxSeconds)*time.Second)
+		searchCtx, cancel = context.WithTimeout(ctx, time.Duration(e.cfg.MaxSeconds)*time.Second)
 		defer cancel()
 	}
+	terms := queryTerms(query)
 	started := e.cfg.Now().UTC()
 	trace := domaindci.SearchTrace{
-		EventID:     eventID,
-		StartedAt:   started,
-		Actor:       actor,
-		Mode:        "dci",
-		UserQuery:   query,
-		CorpusScope: append([]string(nil), e.cfg.Allowlist...),
-		Status:      "completed",
+		TraceID:          traceID,
+		ActionID:         actionID,
+		StartedAt:        started,
+		ActorAttribution: domaindci.ActorAttributionAuthenticated,
+		ActorKind:        actorKind,
+		ActorID:          actorID,
+		IdempotencyKey:   idempotencyKey,
+		Mode:             "dci",
+		UserQuery:        query,
+		CorpusScope:      append([]string(nil), e.cfg.Allowlist...),
+		Status:           "completed",
 	}
 	pack := domaindci.EvidencePack{
-		EventID:     eventID,
-		Query:       query,
-		Intent:      "direct corpus evidence lookup",
-		CorpusScope: append([]string(nil), e.cfg.Allowlist...),
+		ActionID:     actionID,
+		Query:        query,
+		Intent:       "direct corpus evidence lookup",
+		CorpusScope:  append([]string(nil), e.cfg.Allowlist...),
+		DerivedTerms: append([]string(nil), terms...),
 	}
-	if len(e.cfg.Allowlist) == 0 {
-		pack.Limitations = append(pack.Limitations, "no corpus allowlist configured")
-		trace.Status = "completed"
-		trace.FinalEvidenceCount = 0
+	lastEventID := modulecore.EventID("")
+	evidenceEventIDs := make([]modulecore.EventID, 0)
+	appendEvent := func(appendCtx context.Context, eventType string, cause modulecore.EventID, dependencies []modulecore.EventID, evidenceID modulecore.EvidenceID, payload map[string]any) (modulecore.EventEnvelope, error) {
+		event := modulecore.NewEventEnvelope(traceID, cause, dependencies, dciComponentID, eventType, e.cfg.Now().UTC(), payload)
+		event.ActionID = actionID
+		event.ActorKind = actorKind
+		event.ActorID = actorID
+		event.EvidenceID = evidenceID
+		if err := modulecore.ValidateEventEnvelope(event); err != nil {
+			return modulecore.EventEnvelope{}, fmt.Errorf("dci event %s invalid: %w", eventType, err)
+		}
+		if err := e.events.Append(appendCtx, event); err != nil {
+			return modulecore.EventEnvelope{}, fmt.Errorf("dci event %s append failed: %w", eventType, err)
+		}
+		return event, nil
+	}
+	appendTerminal := func(status string, searchErr error) (domaindci.SearchResult, error) {
+		if status == "completed" {
+			// Build a complete terminal projection before the completed event so
+			// ancillary projection failures can be reflected in its payload.
+			trace.Status = "completed"
+			trace.ErrorMessage = ""
+			trace.FinalEvidenceCount = len(pack.Evidence)
+			trace.EndedAt = e.cfg.Now().UTC()
+			if searchCtx.Err() == nil {
+				projection := domaindci.SearchResult{
+					Pack:  pack,
+					Trace: trace,
+				}
+				if err := e.saveSourceCandidates(searchCtx, projection); err != nil {
+					pack.Limitations = append(pack.Limitations, "dci source candidate save failed")
+					if searchCtx.Err() != nil {
+						status = "failed"
+						searchErr = searchCtx.Err()
+					}
+				}
+			}
+			if searchCtx.Err() != nil {
+				status = "failed"
+				searchErr = searchCtx.Err()
+			}
+		}
+		trace.Status = status
+		trace.ErrorMessage = ""
+		if searchErr != nil {
+			trace.ErrorMessage = searchErr.Error()
+		}
+		trace.FinalEvidenceCount = len(pack.Evidence)
 		trace.EndedAt = e.cfg.Now().UTC()
+		payload := map[string]any{
+			"status":         status,
+			"evidence_count": len(pack.Evidence),
+			"limitations":    append([]string(nil), pack.Limitations...),
+		}
+		terminalType := dciSearchCompletedEventType
+		if status == "failed" {
+			terminalType = dciSearchFailedEventType
+			if searchErr != nil {
+				payload["error"] = searchErr.Error()
+			}
+		}
+		terminalCause, terminalDependencies, joinErr := terminalEventJoin(lastEventID, evidenceEventIDs)
+		if joinErr != nil {
+			return domaindci.SearchResult{Pack: pack, Trace: trace}, joinErr
+		}
+		persistCtx := searchCtx
+		var recoveryCancel context.CancelFunc
+		if searchCtx.Err() != nil || errors.Is(searchErr, context.Canceled) || errors.Is(searchErr, context.DeadlineExceeded) {
+			persistCtx, recoveryCancel = newDCIRecoveryContext(ctx)
+			defer recoveryCancel()
+		}
+		terminal, err := appendEvent(persistCtx, terminalType, terminalCause, terminalDependencies, "", payload)
+		if err != nil {
+			return domaindci.SearchResult{Pack: pack, Trace: trace}, err
+		}
+		lastEventID = terminal.EventID
 		result := domaindci.SearchResult{Pack: pack, Trace: trace}
-		if err := e.saveResult(ctx, result); err != nil {
+		if err := domaindci.ValidateSearchResult(result); err != nil {
 			return result, err
+		}
+		if err := e.saveResult(persistCtx, result); err != nil {
+			if searchErr != nil {
+				return result, errors.Join(searchErr, err)
+			}
+			return result, err
+		}
+		if searchErr != nil {
+			return result, searchErr
 		}
 		return result, nil
 	}
-
-	terms := queryTerms(query)
-	stepNo := 1
-	limitReached := false
-	reachLimit := func(reason string) error {
-		if !limitReached {
-			limitReached = true
-			pack.Limitations = append(pack.Limitations, reason)
-			trace.Steps = append(trace.Steps, e.step(stepNo, "limit", reason, 0, "stopped", reason))
-			stepNo++
-		}
-		return errSearchLimitReached
+	requested, err := appendEvent(searchCtx, dciSearchRequestedEventType, "", nil, "", map[string]any{
+		"query": query,
+	})
+	if err != nil {
+		return domaindci.SearchResult{}, err
 	}
-	candidates, seedRanks, collectErr := e.collectCandidateFiles(ctx, query, terms, &pack)
+	lastEventID = requested.EventID
+	startedEvent, err := appendEvent(searchCtx, dciSearchStartedEventType, lastEventID, nil, "", map[string]any{
+		"query": query,
+	})
+	if err != nil {
+		return domaindci.SearchResult{}, err
+	}
+	lastEventID = startedEvent.EventID
+	if err := e.recordSkillBootstrap(searchCtx, query, actorID); err != nil {
+		return appendTerminal("failed", err)
+	}
+	if len(e.cfg.Allowlist) == 0 {
+		pack.Limitations = append(pack.Limitations, "no corpus allowlist configured")
+		return appendTerminal("completed", nil)
+	}
+
+	stepNo := 1
+	candidates, seedRanks, collectErr := e.collectCandidateFiles(searchCtx, query, terms, &pack)
 	if collectErr != nil {
 		trace.Status = "failed"
 		trace.ErrorMessage = collectErr.Error()
 	}
-	sourceRanks := e.rankCandidateFiles(ctx, candidates, terms, &pack)
+	if searchCtx.Err() != nil {
+		return appendTerminal("failed", searchCtx.Err())
+	}
+	sourceRanks := e.rankCandidateFiles(searchCtx, candidates, terms, &pack)
 	sourceRanks = mergeSourceMetadataRanks(sourceRanks, seedRanks)
-	contentRanks := e.rankCandidateFilesByContent(ctx, candidates, terms, &pack)
+	contentRanks := e.rankCandidateFilesByContent(searchCtx, candidates, terms, &pack)
 	sortCandidateFilesWithRank(candidates, terms, sourceRanks, contentRanks)
 	filesRead := 0
 	for _, path := range candidates {
-		if ctx.Err() != nil {
-			trace.Status = "failed"
-			trace.ErrorMessage = ctx.Err().Error()
+		if searchCtx.Err() != nil {
+			return appendTerminal("failed", searchCtx.Err())
+		}
+		if stepNo > e.cfg.MaxSteps {
+			pack.Limitations = append(pack.Limitations, "max search steps reached")
 			break
 		}
-		if limitReached || stepNo > e.cfg.MaxSteps {
-			_ = reachLimit("max search steps reached")
+		if filesRead >= e.cfg.MaxFilesRead {
+			pack.Limitations = append(pack.Limitations, "max files read reached")
 			break
 		}
-		if filesRead >= e.cfg.MaxFilesRead || len(pack.Evidence) >= e.cfg.MaxEvidence {
+		if len(pack.Evidence) >= e.cfg.MaxEvidence {
+			pack.Limitations = append(pack.Limitations, "max evidence reached")
 			break
 		}
 		filesRead++
-		matches, readErr := e.scanFile(ctx, path, terms, sourceRanks[path])
+		sourceSelected, err := appendEvent(searchCtx, dciSourceSelectedEventType, lastEventID, nil, "", map[string]any{
+			"file_path": path,
+		})
+		if err != nil {
+			return domaindci.SearchResult{}, err
+		}
+		lastEventID = sourceSelected.EventID
+		matches, readErr := e.scanFile(searchCtx, path, terms, sourceRanks[path])
 		status := "ok"
 		errMsg := ""
 		if readErr != nil {
 			status = "error"
 			errMsg = readErr.Error()
 		}
-		trace.Steps = append(trace.Steps, e.step(stepNo, "read_file", path, len(matches), status, errMsg))
+		readAppendCtx := searchCtx
+		var readRecoveryCancel context.CancelFunc
+		if searchCtx.Err() != nil {
+			readAppendCtx, readRecoveryCancel = newDCIRecoveryContext(ctx)
+			defer readRecoveryCancel()
+		}
+		readEvent, err := appendEvent(readAppendCtx, dciFileReadEventType, lastEventID, nil, "", map[string]any{
+			"file_path":    path,
+			"status":       status,
+			"result_count": len(matches),
+			"error":        errMsg,
+		})
+		if err != nil {
+			return domaindci.SearchResult{}, err
+		}
+		lastEventID = readEvent.EventID
+		trace.Steps = append(trace.Steps, e.step(readEvent.EventID, stepNo, "read_file", path, len(matches), status, errMsg))
 		stepNo++
+		if readErr != nil {
+			if searchCtx.Err() != nil {
+				return appendTerminal("failed", searchCtx.Err())
+			}
+			continue
+		}
+		readEventID := readEvent.EventID
 		for _, evidence := range matches {
 			if len(pack.Evidence) >= e.cfg.MaxEvidence {
+				pack.Limitations = append(pack.Limitations, "max evidence reached")
 				break
 			}
-			evidence.EvidenceID = fmt.Sprintf("%s_ev_%03d", eventID, len(pack.Evidence)+1)
+			evidenceID := modulecore.NewEvidenceID()
+			evidenceEvent, err := appendEvent(searchCtx, dciEvidenceCreatedEventType, readEventID, nil, evidenceID, map[string]any{
+				"file_path":  evidence.FilePath,
+				"line_start": evidence.LineStart,
+				"line_end":   evidence.LineEnd,
+				"snippet":    evidence.Snippet,
+				"source_id":  evidence.SourceID,
+				"reason":     evidence.Reason,
+				"confidence": evidence.Confidence,
+			})
+			if err != nil {
+				return domaindci.SearchResult{}, err
+			}
+			evidence.EvidenceID = evidenceID
+			evidence.CreatedByEventID = evidenceEvent.EventID
 			pack.Evidence = append(pack.Evidence, evidence)
+			evidenceEventIDs = append(evidenceEventIDs, evidenceEvent.EventID)
+			lastEventID = evidenceEvent.EventID
 		}
+	}
+	if searchCtx.Err() != nil {
+		return appendTerminal("failed", searchCtx.Err())
 	}
 	if len(pack.Evidence) == 0 && trace.ErrorMessage == "" {
 		pack.Limitations = append(pack.Limitations, "no evidence found in allowed corpus")
@@ -259,16 +446,45 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query, eventID, actor
 	if len(pack.Evidence) > 0 {
 		pack.Confidence = 0.70
 	}
-	trace.FinalEvidenceCount = len(pack.Evidence)
-	trace.EndedAt = e.cfg.Now().UTC()
-	result := domaindci.SearchResult{Pack: pack, Trace: trace}
-	if err := e.saveSourceCandidates(ctx, result); err != nil {
-		result.Pack.Limitations = append(result.Pack.Limitations, "dci source candidate save failed")
+	if collectErr != nil {
+		return appendTerminal("failed", collectErr)
 	}
-	if err := e.saveResult(ctx, result); err != nil {
-		return result, err
+	return appendTerminal("completed", nil)
+}
+
+// terminalEventJoin closes every evidence branch from one search.  The last
+// evidence event remains the deterministic causation edge; all earlier
+// evidence events are sorted dependencies.  Empty and single-evidence
+// searches retain the historical single-cause shape with no dependencies.
+func terminalEventJoin(lastEventID modulecore.EventID, evidenceEventIDs []modulecore.EventID) (modulecore.EventID, []modulecore.EventID, error) {
+	if err := lastEventID.Validate(); err != nil {
+		return "", nil, errors.New("dci terminal event join cause is invalid")
 	}
-	return result, nil
+	seen := make(map[modulecore.EventID]struct{}, len(evidenceEventIDs))
+	for _, eventID := range evidenceEventIDs {
+		if err := eventID.Validate(); err != nil {
+			return "", nil, errors.New("dci terminal event join evidence is invalid")
+		}
+		if _, exists := seen[eventID]; exists {
+			return "", nil, errors.New("dci terminal event join evidence is duplicated")
+		}
+		seen[eventID] = struct{}{}
+	}
+	if len(evidenceEventIDs) == 0 {
+		return lastEventID, nil, nil
+	}
+	cause := evidenceEventIDs[len(evidenceEventIDs)-1]
+	if len(evidenceEventIDs) == 1 {
+		return cause, nil, nil
+	}
+	dependencies := make([]modulecore.EventID, 0, len(evidenceEventIDs)-1)
+	for _, eventID := range evidenceEventIDs[:len(evidenceEventIDs)-1] {
+		dependencies = append(dependencies, eventID)
+	}
+	sort.Slice(dependencies, func(left, right int) bool {
+		return dependencies[left] < dependencies[right]
+	})
+	return cause, dependencies, nil
 }
 
 func (e *Explorer) collectCandidateFiles(ctx context.Context, query string, terms []string, pack *domaindci.EvidencePack) ([]string, map[string]domaindci.SourceMetadataRank, error) {
@@ -340,11 +556,11 @@ func (e *Explorer) collectCandidateFiles(ctx context.Context, query string, term
 			}
 			addCandidate(path, domaindci.SourceMetadataRank{})
 			if len(candidates) >= maxCandidates {
-				return errSearchLimitReached
+				return errCandidateCollectionLimit
 			}
 			return nil
 		})
-		if errors.Is(walkErr, errSearchLimitReached) {
+		if errors.Is(walkErr, errCandidateCollectionLimit) {
 			break
 		}
 		if walkErr != nil {
@@ -533,9 +749,11 @@ func (e *Explorer) scanText(path string, content string, terms []string, sourceR
 	return out
 }
 
-func (e *Explorer) step(no int, toolName, path string, count int, status string, errMsg string) domaindci.SearchStep {
+func (e *Explorer) step(eventID modulecore.EventID, no int, toolName, path string, count int, status string, errMsg string) domaindci.SearchStep {
 	return domaindci.SearchStep{
 		StepNo:       no,
+		EventID:      eventID,
+		EventType:    dciFileReadEventType,
 		Tool:         toolName,
 		CommandText:  toolName + " " + path,
 		FilePath:     path,

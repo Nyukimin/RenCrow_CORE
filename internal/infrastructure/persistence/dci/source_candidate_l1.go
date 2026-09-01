@@ -48,6 +48,9 @@ func (s *L1SourceCandidateStore) WithNow(now func() time.Time) *L1SourceCandidat
 }
 
 func (s *L1SourceCandidateStore) SaveDCISourceCandidates(ctx context.Context, result domaindci.SearchResult) error {
+	if err := domaindci.ValidateSearchResult(result); err != nil {
+		return fmt.Errorf("dci source candidate result validation failed: %w", err)
+	}
 	if s == nil || s.store == nil || len(result.Pack.Evidence) == 0 {
 		return nil
 	}
@@ -59,10 +62,10 @@ func (s *L1SourceCandidateStore) SaveDCISourceCandidates(ctx context.Context, re
 		fetchedAt = s.now().UTC()
 	}
 	for _, evidence := range result.Pack.Evidence {
-		if strings.TrimSpace(evidence.EvidenceID) == "" {
+		if strings.TrimSpace(string(evidence.EvidenceID)) == "" {
 			return fmt.Errorf("dci source candidate evidence_id is required")
 		}
-		sourceID := fmt.Sprintf("dci:%s", result.Trace.EventID)
+		sourceID := fmt.Sprintf("dci:%s", result.Trace.ActionID)
 		sourceURL := dciSyntheticSourceURL(evidence.FilePath)
 		if sourceURL != "" {
 			sourceID = dciSourceID(evidence.FilePath)
@@ -73,7 +76,7 @@ func (s *L1SourceCandidateStore) SaveDCISourceCandidates(ctx context.Context, re
 		item := l1sqlite.L1StagingItem{
 			Kind:         l1sqlite.L1StagingKindSearchResult,
 			Namespace:    s.namespace,
-			EventID:      fmt.Sprintf("%s:%s", result.Trace.EventID, evidence.EvidenceID),
+			EventID:      string(evidence.CreatedByEventID),
 			SourceID:     sourceID,
 			SourceURL:    sourceURL,
 			FetchedAt:    fetchedAt,
@@ -82,17 +85,19 @@ func (s *L1SourceCandidateStore) SaveDCISourceCandidates(ctx context.Context, re
 			Keywords:     append([]string(nil), result.Pack.DerivedTerms...),
 			LicenseNote:  "local corpus evidence; review required before promote",
 			Meta: map[string]interface{}{
-				"source_kind":     "dci",
-				"search_event_id": result.Trace.EventID,
-				"evidence_id":     evidence.EvidenceID,
-				"query":           result.Pack.Query,
-				"file_path":       evidence.FilePath,
-				"line_start":      evidence.LineStart,
-				"line_end":        evidence.LineEnd,
-				"heading":         evidence.Heading,
-				"reason":          evidence.Reason,
-				"confidence":      evidence.Confidence,
-				"review_required": true,
+				"source_kind":               "dci",
+				"search_action_id":          string(result.Trace.ActionID),
+				"trace_id":                  string(result.Trace.TraceID),
+				"evidence_id":               string(evidence.EvidenceID),
+				"evidence_created_event_id": string(evidence.CreatedByEventID),
+				"query":                     result.Pack.Query,
+				"file_path":                 evidence.FilePath,
+				"line_start":                evidence.LineStart,
+				"line_end":                  evidence.LineEnd,
+				"heading":                   evidence.Heading,
+				"reason":                    evidence.Reason,
+				"confidence":                evidence.Confidence,
+				"review_required":           true,
 			},
 		}
 		if _, err := s.store.SaveStagingItem(ctx, item); err != nil {
@@ -116,13 +121,15 @@ func (s *L1SourceCandidateStore) saveSourceRegistryCandidate(ctx context.Context
 		LicenseNote:   "local corpus evidence discovered by DCI; review required before promote",
 		Enabled:       false,
 		Meta: map[string]interface{}{
-			"source_kind":     "dci",
-			"local_path":      evidence.FilePath,
-			"search_event_id": result.Trace.EventID,
-			"evidence_id":     evidence.EvidenceID,
-			"query":           result.Pack.Query,
-			"review_required": true,
-			"auto_fetch":      false,
+			"source_kind":               "dci",
+			"local_path":                evidence.FilePath,
+			"search_action_id":          string(result.Trace.ActionID),
+			"trace_id":                  string(result.Trace.TraceID),
+			"evidence_id":               string(evidence.EvidenceID),
+			"evidence_created_event_id": string(evidence.CreatedByEventID),
+			"query":                     result.Pack.Query,
+			"review_required":           true,
+			"auto_fetch":                false,
 		},
 	}
 	if _, err := registry.SaveSourceRegistryEntry(ctx, entry); err != nil {
