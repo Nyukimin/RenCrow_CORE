@@ -46,6 +46,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	rollbackDir := flags.String("rollback-dir", "", "fresh rollback root")
 	cutoverReceipt := flags.String("cutover-receipt", "", "fresh DCI cutover receipt")
 	serviceReceipt := flags.String("service-receipt", "", "fresh service cutover receipt")
+	initialServiceStopped := flags.Bool("initial-service-stopped", false, "require canonical service to be maintenance-stopped before cutover ownership")
 	captureReceipt := flags.String("capture-receipt", "", "captured snapshot receipt")
 	dryRunManifest := flags.String("dry-run-manifest", "", "ready dry-run manifest")
 	sourceDCI := flags.String("source-dci", "source-dci", "legacy DCI SQLite snapshot")
@@ -91,6 +92,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		"active-dci-jsonl", "active-event-store", "active-l1", "active-archive", "active-config",
 		"rollback-dir", "cutover-receipt", "service-receipt",
 	}
+	cutoverOptionalFlags := []string{"initial-service-stopped"}
 	cutoverRequiredFlags := append([]string{"build-dir"}, cutoverFlags...)
 	rejectVisited := func(names []string) bool {
 		for _, name := range names {
@@ -128,6 +130,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		result, err := cutoverOperation(context.Background(), dcimigration.CutoverOptions{
+			InitialServiceStopped:          *initialServiceStopped,
 			BuildRoot:                      *buildDir,
 			BuildReceipt:                   *buildReceipt,
 			ExpectedBuildReceiptSHA256:     *expectedBuildReceiptSHA256,
@@ -152,7 +155,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *mode == dcimigration.ModeBuild {
-		if rejectVisited(append(append(append(append(append([]string{}, sourceFlags...), liveFlags...), expectedFlags...), "manifest"), cutoverFlags...)) {
+		if rejectVisited(append(append(append(append(append(append([]string{}, sourceFlags...), liveFlags...), expectedFlags...), "manifest"), cutoverFlags...), cutoverOptionalFlags...)) {
 			_, _ = fmt.Fprintln(stderr, "build mode rejects incompatible flags")
 			return 2
 		}
@@ -168,7 +171,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return writeReceipt(stdout, stderr, result, err)
 	}
 	if *mode == dcimigration.ModeCapture {
-		if rejectVisited(append(append(append(append(append([]string{}, sourceFlags...), expectedFlags...), buildOnly...), "manifest"), cutoverFlags...)) {
+		if rejectVisited(append(append(append(append(append(append([]string{}, sourceFlags...), expectedFlags...), buildOnly...), "manifest"), cutoverFlags...), cutoverOptionalFlags...)) {
 			_, _ = fmt.Fprintln(stderr, "capture mode rejects incompatible flags")
 			return 2
 		}
@@ -182,7 +185,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		})
 		return writeReceipt(stdout, stderr, result, err)
 	}
-	if rejectVisited(append(append(append([]string{}, liveFlags...), buildOnly...), cutoverFlags...)) {
+	if rejectVisited(append(append(append(append([]string{}, liveFlags...), buildOnly...), cutoverFlags...), cutoverOptionalFlags...)) {
 		_, _ = fmt.Fprintln(stderr, "dry-run mode rejects incompatible flags")
 		return 2
 	}

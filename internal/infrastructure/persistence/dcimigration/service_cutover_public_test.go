@@ -48,6 +48,10 @@ func (*publicCutoverManagerStub) VerifyRunning(context.Context, string) (cutover
 	return cutoverServiceRunningEvidence{}, errors.New("stub manager must not run")
 }
 
+func (*publicCutoverManagerStub) VerifyMaintenanceStopped(context.Context, string) (cutoverServiceMaintenanceStoppedEvidence, error) {
+	return cutoverServiceMaintenanceStoppedEvidence{}, errors.New("stub manager must not run")
+}
+
 func (*publicCutoverManagerStub) MaskAndStop(context.Context) error {
 	return errors.New("stub manager must not run")
 }
@@ -87,6 +91,7 @@ func (*publicCutoverManagerStub) UnmaskAndStart(context.Context) error {
 
 func TestCutoverMapsOptionsAndCallsPrivateOwnerOnce(t *testing.T) {
 	options := publicCutoverOptionsForTest()
+	options.InitialServiceStopped = true
 	manager := &publicCutoverManagerStub{}
 	wantReceipt := validServiceCutoverReceiptForTest()
 	var gotManagerRuntime, gotManagerConfig string
@@ -137,8 +142,9 @@ func TestCutoverMapsOptionsAndCallsPrivateOwnerOnce(t *testing.T) {
 			SourceL1:         options.ActiveL1,
 			SourceArchive:    options.ActiveArchive,
 		},
-		manager:        manager,
-		ServiceReceipt: options.ServiceReceipt,
+		manager:               manager,
+		initialServiceStopped: true,
+		ServiceReceipt:        options.ServiceReceipt,
 	}
 	if !reflect.DeepEqual(gotOptions, want) {
 		t.Fatalf("private owner options = %#v, want %#v", gotOptions, want)

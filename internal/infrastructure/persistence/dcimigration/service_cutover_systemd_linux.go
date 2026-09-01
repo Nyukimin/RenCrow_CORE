@@ -170,6 +170,39 @@ func (manager *linuxSystemdCutoverServiceManager) VerifyRunning(ctx context.Cont
 	return cutoverServiceRunningEvidence{}, linuxSystemdCutoverError("service_running")
 }
 
+func (manager *linuxSystemdCutoverServiceManager) VerifyMaintenanceStopped(ctx context.Context, expectedSHA256 string) (cutoverServiceMaintenanceStoppedEvidence, error) {
+	if ctx == nil {
+		return cutoverServiceMaintenanceStoppedEvidence{}, linuxSystemdCutoverError("invalid_context")
+	}
+	if !isLowerHexSHA256(expectedSHA256) {
+		return cutoverServiceMaintenanceStoppedEvidence{}, linuxSystemdCutoverError("invalid_runtime")
+	}
+	verificationContext, cancel := context.WithTimeout(ctx, linuxSystemdStoppedTimeout)
+	defer cancel()
+	for attempt := 0; attempt < manager.stoppedPolls; attempt++ {
+		evidence, err, retry := manager.verifyMaintenanceStoppedOnce(verificationContext, expectedSHA256)
+		if err == nil {
+			return evidence, nil
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return cutoverServiceMaintenanceStoppedEvidence{}, err
+		}
+		if !retry || attempt+1 >= manager.stoppedPolls {
+			return cutoverServiceMaintenanceStoppedEvidence{}, err
+		}
+		if manager.sleep == nil {
+			return cutoverServiceMaintenanceStoppedEvidence{}, linuxSystemdCutoverError("service_poll")
+		}
+		if err := manager.sleep(verificationContext, manager.pollInterval); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return cutoverServiceMaintenanceStoppedEvidence{}, err
+			}
+			return cutoverServiceMaintenanceStoppedEvidence{}, linuxSystemdCutoverError("service_poll")
+		}
+	}
+	return cutoverServiceMaintenanceStoppedEvidence{}, linuxSystemdCutoverError("service_maintenance_stopped")
+}
+
 func (manager *linuxSystemdCutoverServiceManager) VerifyStopped(ctx context.Context) (cutoverServiceStoppedEvidence, error) {
 	if ctx == nil {
 		return cutoverServiceStoppedEvidence{}, linuxSystemdCutoverError("invalid_context")
@@ -237,19 +270,8 @@ func (manager *linuxSystemdCutoverServiceManager) verifyRunningOnce(ctx context.
 	if err != nil {
 		return cutoverServiceRunningEvidence{}, linuxSystemdCutoverRetryError("service_running"), true
 	}
-	installedRuntime, err := manager.validateInstalledRuntime(expectedSHA256)
+	installedRuntime, err := manager.validateEnabledServiceIdentity(properties, expectedSHA256)
 	if err != nil {
-		return cutoverServiceRunningEvidence{}, err, false
-	}
-	execStart, err := parseLinuxSystemdExecStartDetails(properties["ExecStart"])
-	if err != nil || !samePath(execStart.path, installedRuntime) || len(execStart.argv) != 2 || !samePath(execStart.argv[0], installedRuntime) || execStart.argv[1] != "run" {
-		return cutoverServiceRunningEvidence{}, linuxSystemdCutoverError("service_identity"), false
-	}
-	configPath, err := parseLinuxSystemdConfigPath(properties["Environment"])
-	if err != nil || !samePath(configPath, manager.configPath) {
-		return cutoverServiceRunningEvidence{}, linuxSystemdCutoverError("service_identity"), false
-	}
-	if err := manager.validateConfig(); err != nil {
 		return cutoverServiceRunningEvidence{}, err, false
 	}
 	if manager.readlink == nil {
@@ -289,6 +311,67 @@ func (manager *linuxSystemdCutoverServiceManager) verifyRunningOnce(ctx context.
 		Readiness:       1,
 		RuntimeSHA256:   expectedSHA256,
 	}, nil, false
+}
+
+func (manager *linuxSystemdCutoverServiceManager) verifyMaintenanceStoppedOnce(ctx context.Context, expectedSHA256 string) (cutoverServiceMaintenanceStoppedEvidence, error, bool) {
+	if ctx == nil {
+		return cutoverServiceMaintenanceStoppedEvidence{}, linuxSystemdCutoverError("invalid_context"), false
+	}
+	if err := ctx.Err(); err != nil {
+		return cutoverServiceMaintenanceStoppedEvidence{}, err, false
+	}
+	properties, err := manager.systemdProperties(ctx)
+	if err != nil {
+		return cutoverServiceMaintenanceStoppedEvidence{}, err, false
+	}
+	if properties["LoadState"] != "loaded" || properties["UnitFileState"] != "enabled" {
+		return cutoverServiceMaintenanceStoppedEvidence{}, linuxSystemdCutoverError("service_maintenance_stopped"), false
+	}
+	if err := manager.requireSystemdEnabled(ctx, "enabled"); err != nil {
+		return cutoverServiceMaintenanceStoppedEvidence{}, err, false
+	}
+	if properties["ActiveState"] != "inactive" || properties["SubState"] != "dead" {
+		return cutoverServiceMaintenanceStoppedEvidence{}, linuxSystemdCutoverRetryError("service_maintenance_stopped"), true
+	}
+	if _, err := parseLinuxSystemdPID(properties["MainPID"], false); err != nil {
+		return cutoverServiceMaintenanceStoppedEvidence{}, linuxSystemdCutoverRetryError("service_maintenance_stopped"), true
+	}
+	if _, err := manager.validateEnabledServiceIdentity(properties, expectedSHA256); err != nil {
+		return cutoverServiceMaintenanceStoppedEvidence{}, err, false
+	}
+	_, found, err := manager.listenerPID(ctx)
+	if err != nil {
+		return cutoverServiceMaintenanceStoppedEvidence{}, err, false
+	}
+	if found {
+		return cutoverServiceMaintenanceStoppedEvidence{}, linuxSystemdCutoverRetryError("listener"), true
+	}
+	if err := ctx.Err(); err != nil {
+		return cutoverServiceMaintenanceStoppedEvidence{}, err, false
+	}
+	return cutoverServiceMaintenanceStoppedEvidence{
+		Owner: 1, Enabled: 1, Unmasked: 1, Active: 0, MainPIDZero: 1,
+		ListenerZero: 1, RuntimeSHA256: expectedSHA256,
+	}, nil, false
+}
+
+func (manager *linuxSystemdCutoverServiceManager) validateEnabledServiceIdentity(properties map[string]string, expectedSHA256 string) (string, error) {
+	installedRuntime, err := manager.validateInstalledRuntime(expectedSHA256)
+	if err != nil {
+		return "", err
+	}
+	execStart, err := parseLinuxSystemdExecStartDetails(properties["ExecStart"])
+	if err != nil || !samePath(execStart.path, installedRuntime) || len(execStart.argv) != 2 || !samePath(execStart.argv[0], installedRuntime) || execStart.argv[1] != "run" {
+		return "", linuxSystemdCutoverError("service_identity")
+	}
+	configPath, err := parseLinuxSystemdConfigPath(properties["Environment"])
+	if err != nil || !samePath(configPath, manager.configPath) {
+		return "", linuxSystemdCutoverError("service_identity")
+	}
+	if err := manager.validateConfig(); err != nil {
+		return "", err
+	}
+	return installedRuntime, nil
 }
 
 func (manager *linuxSystemdCutoverServiceManager) verifyStoppedOnce(ctx context.Context) (cutoverServiceStoppedEvidence, error, bool) {

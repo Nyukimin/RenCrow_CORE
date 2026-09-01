@@ -216,7 +216,7 @@ func prepareServiceCutoverReceipt(ctx context.Context, options cutoverServiceOpt
 	if err != nil || buildSHA != options.build.ExpectedBuildReceiptSHA256 || !samePath(binding.path, paths.buildReceipt) {
 		return preparedServiceCutoverReceipt{}, errors.New("build receipt binding is invalid")
 	}
-	seed := newServiceCutoverReceiptSeed(build, buildSHA, options.build.ExpectedInstalledRuntimeSHA256, options.build.ExpectedStagedRuntimeSHA256)
+	seed := newServiceCutoverReceiptSeed(build, buildSHA, options.build.ExpectedInstalledRuntimeSHA256, options.build.ExpectedStagedRuntimeSHA256, options.initialServiceStopped)
 	if err := validateServiceCutoverReceipt(seed); err != nil {
 		return preparedServiceCutoverReceipt{}, err
 	}
@@ -244,15 +244,20 @@ func validateServiceCutoverReceiptAliases(paths cutoverArtifactPaths, active cut
 	return nil
 }
 
-func newServiceCutoverReceiptSeed(build BuildReceipt, buildSHA, oldSHA, newSHA string) ServiceCutoverReceipt {
+func newServiceCutoverReceiptSeed(build BuildReceipt, buildSHA, oldSHA, newSHA string, initialServiceStopped bool) ServiceCutoverReceipt {
 	now := time.Now().UTC()
-	return ServiceCutoverReceipt{
+	receipt := ServiceCutoverReceipt{
 		SchemaVersion: ServiceCutoverSchemaVersion, Mode: ModeCutover, Status: CutoverStatusBlocked,
 		StartedAt: now, CompletedAt: now,
 		BuildReceiptSHA256: buildSHA, CaptureReceiptSHA256: build.CaptureReceiptSHA256,
 		DryRunManifestSHA256: build.DryRunManifestSHA256, CaptureArtifactSetSHA256: build.CaptureArtifactSetSHA256,
-		OldRuntimeSHA256: oldSHA, NewRuntimeSHA256: newSHA, ErrorCode: "service_cutover",
+		OldRuntimeSHA256: oldSHA, NewRuntimeSHA256: newSHA,
+		InitialState: ServiceCutoverInitialRunning, ErrorCode: "service_cutover",
 	}
+	if initialServiceStopped {
+		receipt.InitialState = ServiceCutoverInitialMaintenanceStopped
+	}
+	return receipt
 }
 
 func serviceCutoverReceiptFromResult(seed ServiceCutoverReceipt, result cutoverServiceResult, subreceiptSHA, subreceiptStatus, code string) ServiceCutoverReceipt {
@@ -263,6 +268,7 @@ func serviceCutoverReceiptFromResult(seed ServiceCutoverReceipt, result cutoverS
 	receipt.CutoverSubreceiptStatus = subreceiptStatus
 	receipt.CutoverTerminalStatus = string(result.receipt.Status)
 	receipt.InitialRunning = serviceRunningProjection(result.initialRunning, receipt.OldRuntimeSHA256)
+	receipt.InitialMaintenanceStopped = serviceMaintenanceStoppedProjection(result.initialMaintenanceStopped, receipt.OldRuntimeSHA256)
 	receipt.StoppedBeforePrepare = serviceStoppedProjection(result.stoppedBeforePrepare)
 	receipt.StoppedBeforeApply = serviceStoppedProjection(result.stoppedBeforeApply)
 	finalExpected := receipt.OldRuntimeSHA256
@@ -281,6 +287,17 @@ func serviceCutoverReceiptFromResult(seed ServiceCutoverReceipt, result cutoverS
 		receipt.ErrorCode = code
 	}
 	return receipt
+}
+
+func serviceMaintenanceStoppedProjection(evidence cutoverServiceMaintenanceStoppedEvidence, expectedSHA256 string) ServiceCutoverMaintenanceStoppedEvidence {
+	if !evidence.valid(expectedSHA256) {
+		return ServiceCutoverMaintenanceStoppedEvidence{}
+	}
+	return ServiceCutoverMaintenanceStoppedEvidence{
+		Owner: evidence.Owner, Enabled: evidence.Enabled, Unmasked: evidence.Unmasked,
+		Active: evidence.Active, MainPIDZero: evidence.MainPIDZero,
+		ListenerZero: evidence.ListenerZero, RuntimeSHA256: evidence.RuntimeSHA256,
+	}
 }
 
 func serviceRunningProjection(evidence cutoverServiceRunningEvidence, expectedSHA256 string) ServiceCutoverRunningEvidence {
@@ -381,6 +398,9 @@ func validateServiceCutoverReceipt(receipt ServiceCutoverReceipt) error {
 	if err := validateServiceRunningProjection(receipt.FinalRunning); err != nil {
 		return err
 	}
+	if err := validateServiceMaintenanceStoppedProjection(receipt.InitialMaintenanceStopped); err != nil {
+		return err
+	}
 	if err := validateServiceStoppedProjection(receipt.StoppedBeforePrepare); err != nil {
 		return err
 	}
@@ -390,9 +410,12 @@ func validateServiceCutoverReceipt(receipt ServiceCutoverReceipt) error {
 	if receipt.ErrorCode != "" && !validErrorCode(receipt.ErrorCode) {
 		return errors.New("service receipt error code is invalid")
 	}
+	if !serviceInitialEvidenceCoherent(receipt, false) {
+		return errors.New("service initial evidence is invalid")
+	}
 	switch receipt.Status {
 	case CutoverStatusApplied:
-		if receipt.ErrorCode != "" || receipt.CutoverTerminalStatus != CutoverStatusApplied || receipt.CutoverSubreceiptSHA256 == "" || receipt.CutoverSubreceiptStatus != CutoverStatusApplied || !serviceReceiptHashesComplete(receipt) || !serviceRunningProjectionMatches(receipt.InitialRunning, receipt.OldRuntimeSHA256) || !serviceStoppedProjectionValid(receipt.StoppedBeforePrepare) || !serviceStoppedProjectionValid(receipt.StoppedBeforeApply) || !serviceRunningProjectionMatches(receipt.FinalRunning, receipt.NewRuntimeSHA256) {
+		if receipt.ErrorCode != "" || receipt.CutoverTerminalStatus != CutoverStatusApplied || receipt.CutoverSubreceiptSHA256 == "" || receipt.CutoverSubreceiptStatus != CutoverStatusApplied || !serviceReceiptHashesComplete(receipt) || !serviceInitialEvidenceCoherent(receipt, true) || !serviceStoppedProjectionValid(receipt.StoppedBeforePrepare) || !serviceStoppedProjectionValid(receipt.StoppedBeforeApply) || !serviceRunningProjectionMatches(receipt.FinalRunning, receipt.NewRuntimeSHA256) {
 			return errors.New("service applied claims are incomplete")
 		}
 	case CutoverStatusBlocked:
@@ -406,7 +429,7 @@ func validateServiceCutoverReceipt(receipt ServiceCutoverReceipt) error {
 			return errors.New("service blocked restoration is unproven")
 		}
 	case CutoverStatusRolledBack:
-		if receipt.ErrorCode == "" || receipt.CutoverTerminalStatus != CutoverStatusRolledBack || !serviceReceiptHashesComplete(receipt) || !serviceRunningProjectionMatches(receipt.InitialRunning, receipt.OldRuntimeSHA256) || !serviceStoppedProjectionValid(receipt.StoppedBeforePrepare) || !serviceStoppedProjectionValid(receipt.StoppedBeforeApply) || !serviceRunningProjectionMatches(receipt.FinalRunning, receipt.OldRuntimeSHA256) {
+		if receipt.ErrorCode == "" || receipt.CutoverTerminalStatus != CutoverStatusRolledBack || !serviceReceiptHashesComplete(receipt) || !serviceInitialEvidenceCoherent(receipt, true) || !serviceStoppedProjectionValid(receipt.StoppedBeforePrepare) || !serviceStoppedProjectionValid(receipt.StoppedBeforeApply) || !serviceRunningProjectionMatches(receipt.FinalRunning, receipt.OldRuntimeSHA256) {
 			return errors.New("service rolled-back claims are incomplete")
 		}
 	case CutoverStatusRollbackFailed:
@@ -439,6 +462,47 @@ func validateServiceRunningProjection(evidence ServiceCutoverRunningEvidence) er
 		return errors.New("service running evidence is incomplete")
 	}
 	return nil
+}
+
+func validateServiceMaintenanceStoppedProjection(evidence ServiceCutoverMaintenanceStoppedEvidence) error {
+	fields := []int{evidence.Owner, evidence.Enabled, evidence.Unmasked, evidence.Active, evidence.MainPIDZero, evidence.ListenerZero}
+	allZero := evidence.RuntimeSHA256 == ""
+	for _, value := range fields {
+		if value != 0 && value != 1 {
+			return errors.New("service maintenance-stopped evidence is invalid")
+		}
+		if value != 0 {
+			allZero = false
+		}
+	}
+	if evidence.RuntimeSHA256 != "" && !isLowerHexSHA256(evidence.RuntimeSHA256) {
+		return errors.New("service maintenance-stopped hash is invalid")
+	}
+	if !allZero && evidence.RuntimeSHA256 == "" {
+		return errors.New("service maintenance-stopped evidence is incomplete")
+	}
+	return nil
+}
+
+func serviceInitialEvidenceCoherent(receipt ServiceCutoverReceipt, required bool) bool {
+	switch receipt.InitialState {
+	case ServiceCutoverInitialRunning:
+		if receipt.InitialMaintenanceStopped != (ServiceCutoverMaintenanceStoppedEvidence{}) {
+			return false
+		}
+		return serviceRunningProjectionMatches(receipt.InitialRunning, receipt.OldRuntimeSHA256) || (!required && receipt.InitialRunning == (ServiceCutoverRunningEvidence{}))
+	case ServiceCutoverInitialMaintenanceStopped:
+		if receipt.InitialRunning != (ServiceCutoverRunningEvidence{}) {
+			return false
+		}
+		return serviceMaintenanceStoppedProjectionMatches(receipt.InitialMaintenanceStopped, receipt.OldRuntimeSHA256) || (!required && receipt.InitialMaintenanceStopped == (ServiceCutoverMaintenanceStoppedEvidence{}))
+	default:
+		return false
+	}
+}
+
+func serviceMaintenanceStoppedProjectionMatches(evidence ServiceCutoverMaintenanceStoppedEvidence, expected string) bool {
+	return expected != "" && evidence.Owner == 1 && evidence.Enabled == 1 && evidence.Unmasked == 1 && evidence.Active == 0 && evidence.MainPIDZero == 1 && evidence.ListenerZero == 1 && evidence.RuntimeSHA256 == expected
 }
 
 func validateServiceStoppedProjection(evidence ServiceCutoverStoppedEvidence) error {

@@ -120,6 +120,7 @@ func TestRunRejectsEveryAlternateMode(t *testing.T) {
 func TestRunCutoverMapsExactFlagsAndEmitsOneJSON(t *testing.T) {
 	args := cutoverCLIArgsForTest()
 	want := dcimigration.CutoverOptions{
+		InitialServiceStopped:          true,
 		BuildRoot:                      "build-root-secret",
 		BuildReceipt:                   "build-receipt-secret",
 		ExpectedBuildReceiptSHA256:     strings.Repeat("a", 64),
@@ -327,7 +328,7 @@ func TestRunCutoverStatusExitBehaviorAndBoundedError(t *testing.T) {
 
 func cutoverCLIArgsForTest() []string {
 	return []string{
-		"--mode", "cutover", "--build-dir", "build-root-secret", "--build-receipt", "build-receipt-secret",
+		"--mode", "cutover", "--initial-service-stopped", "--build-dir", "build-root-secret", "--build-receipt", "build-receipt-secret",
 		"--expected-build-receipt-sha256", strings.Repeat("a", 64), "--installed-runtime", "installed-runtime-secret",
 		"--staged-runtime", "staged-runtime-secret", "--expected-installed-runtime-sha256", strings.Repeat("b", 64),
 		"--expected-staged-runtime-sha256", strings.Repeat("c", 64), "--active-dci", "active-dci-secret",
@@ -335,6 +336,27 @@ func cutoverCLIArgsForTest() []string {
 		"--active-l1", "active-l1-secret", "--active-archive", "active-archive-secret",
 		"--active-config", "active-config-secret", "--rollback-dir", "rollback-secret",
 		"--cutover-receipt", "cutover-receipt-secret", "--service-receipt", "service-receipt-secret",
+	}
+}
+
+func TestRunRejectsInitialServiceStoppedOutsideCutover(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantStderr string
+	}{
+		{name: "dry-run", args: dryRunArgs(t.TempDir(), 0, 0, 0, 0, 0), wantStderr: "dry-run mode rejects incompatible flags\n"},
+		{name: "capture", args: []string{"--mode", "capture", "--snapshot-dir", t.TempDir()}, wantStderr: "capture mode rejects incompatible flags\n"},
+		{name: "build", args: []string{"--mode", "build", "--snapshot-dir", t.TempDir()}, wantStderr: "build mode rejects incompatible flags\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			args := append(test.args, "--initial-service-stopped")
+			var stdout, stderr bytes.Buffer
+			if code := run(args, &stdout, &stderr); code != 2 || stdout.Len() != 0 || stderr.String() != test.wantStderr {
+				t.Fatalf("initial-service-stopped outside cutover: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+			}
+		})
 	}
 }
 

@@ -21,15 +21,18 @@ const (
 	CaptureSchemaVersion        = "rencrow.identity.dci-capture/v1"
 	BuildSchemaVersion          = "rencrow.identity.dci-build/v1"
 	CutoverSchemaVersion        = "rencrow.identity.dci-cutover/v2"
-	ServiceCutoverSchemaVersion = "rencrow.identity.dci-service-cutover/v1"
-	LogicalHashAlgorithm        = "rencrow.sqlite.logical/v1"
-	TextNormalizationAlgorithm  = "rencrow.utf8.invalid-byte-replacement/v1"
-	ModeDryRun                  = "dry-run"
-	ModeCapture                 = "capture"
-	ModeBuild                   = "build"
-	ModeCutover                 = "cutover"
-	StatusReady                 = "ready"
-	StatusBlocked               = "blocked"
+	ServiceCutoverSchemaVersion = "rencrow.identity.dci-service-cutover/v2"
+
+	ServiceCutoverInitialRunning            = "running"
+	ServiceCutoverInitialMaintenanceStopped = "maintenance_stopped"
+	LogicalHashAlgorithm                    = "rencrow.sqlite.logical/v1"
+	TextNormalizationAlgorithm              = "rencrow.utf8.invalid-byte-replacement/v1"
+	ModeDryRun                              = "dry-run"
+	ModeCapture                             = "capture"
+	ModeBuild                               = "build"
+	ModeCutover                             = "cutover"
+	StatusReady                             = "ready"
+	StatusBlocked                           = "blocked"
 
 	CutoverStatusBlocked        = StatusBlocked
 	CutoverStatusApplied        = "applied"
@@ -381,6 +384,20 @@ type ServiceCutoverStoppedEvidence struct {
 	ListenerZero int `json:"listener_zero"`
 }
 
+// ServiceCutoverMaintenanceStoppedEvidence proves the canonical service was
+// deliberately stopped while still enabled and unmasked before the cutover
+// owner acquired its runtime mask. The runtime hash binds the inactive unit's
+// fixed ExecStart to the installed artifact without exposing paths or PIDs.
+type ServiceCutoverMaintenanceStoppedEvidence struct {
+	Owner         int    `json:"owner"`
+	Enabled       int    `json:"enabled"`
+	Unmasked      int    `json:"unmasked"`
+	Active        int    `json:"active"`
+	MainPIDZero   int    `json:"main_pid_zero"`
+	ListenerZero  int    `json:"listener_zero"`
+	RuntimeSHA256 string `json:"runtime_sha256"`
+}
+
 // ServiceCutoverReceipt is the durable service-manager subreceipt for D2d.
 // It binds the service lifecycle evidence to the already-durable D2c file
 // subreceipt, but does not claim post-deploy readiness or real-Actor E2E.
@@ -405,10 +422,12 @@ type ServiceCutoverReceipt struct {
 	OldRuntimeSHA256 string `json:"old_runtime_sha256"`
 	NewRuntimeSHA256 string `json:"new_runtime_sha256"`
 
-	InitialRunning       ServiceCutoverRunningEvidence `json:"initial_running"`
-	StoppedBeforePrepare ServiceCutoverStoppedEvidence `json:"stopped_before_prepare"`
-	StoppedBeforeApply   ServiceCutoverStoppedEvidence `json:"stopped_before_apply"`
-	FinalRunning         ServiceCutoverRunningEvidence `json:"final_running"`
+	InitialState              string                                   `json:"initial_state"`
+	InitialRunning            ServiceCutoverRunningEvidence            `json:"initial_running"`
+	InitialMaintenanceStopped ServiceCutoverMaintenanceStoppedEvidence `json:"initial_maintenance_stopped"`
+	StoppedBeforePrepare      ServiceCutoverStoppedEvidence            `json:"stopped_before_prepare"`
+	StoppedBeforeApply        ServiceCutoverStoppedEvidence            `json:"stopped_before_apply"`
+	FinalRunning              ServiceCutoverRunningEvidence            `json:"final_running"`
 
 	ErrorCode string `json:"error_code"`
 }

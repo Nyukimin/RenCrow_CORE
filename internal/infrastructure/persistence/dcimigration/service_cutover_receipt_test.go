@@ -17,7 +17,8 @@ func validServiceCutoverReceiptForTest() ServiceCutoverReceipt {
 	now := time.Now().UTC()
 	return ServiceCutoverReceipt{
 		SchemaVersion: ServiceCutoverSchemaVersion, Mode: ModeCutover, Status: CutoverStatusApplied,
-		StartedAt: now, CompletedAt: now,
+		InitialState: ServiceCutoverInitialRunning,
+		StartedAt:    now, CompletedAt: now,
 		CutoverSubreceiptSHA256: strings.Repeat("c", 64), CutoverSubreceiptStatus: CutoverStatusApplied,
 		CutoverTerminalStatus: CutoverStatusApplied,
 		BuildReceiptSHA256:    strings.Repeat("d", 64), CaptureReceiptSHA256: strings.Repeat("e", 64),
@@ -34,6 +35,17 @@ func validServiceCutoverReceiptForTest() ServiceCutoverReceipt {
 			ListenerOwned: 1, Readiness: 1, RuntimeSHA256: newSHA,
 		},
 	}
+}
+
+func validMaintenanceStoppedServiceCutoverReceiptForTest() ServiceCutoverReceipt {
+	receipt := validServiceCutoverReceiptForTest()
+	receipt.InitialState = ServiceCutoverInitialMaintenanceStopped
+	receipt.InitialRunning = ServiceCutoverRunningEvidence{}
+	receipt.InitialMaintenanceStopped = ServiceCutoverMaintenanceStoppedEvidence{
+		Owner: 1, Enabled: 1, Unmasked: 1, Active: 0, MainPIDZero: 1,
+		ListenerZero: 1, RuntimeSHA256: receipt.OldRuntimeSHA256,
+	}
+	return receipt
 }
 
 func TestServiceCutoverReceiptWriterRoundTripFreshOnly(t *testing.T) {
@@ -154,6 +166,7 @@ func TestValidateServiceCutoverReceiptStrictClaims(t *testing.T) {
 		{name: "status", edit: func(r *ServiceCutoverReceipt) { r.Status = "unknown" }},
 		{name: "error", edit: func(r *ServiceCutoverReceipt) { r.ErrorCode = "/private" }},
 		{name: "missing subreceipt", edit: func(r *ServiceCutoverReceipt) { r.CutoverSubreceiptSHA256 = ""; r.CutoverSubreceiptStatus = "" }},
+		{name: "initial state", edit: func(r *ServiceCutoverReceipt) { r.InitialState = "unknown" }},
 		{name: "bad running", edit: func(r *ServiceCutoverReceipt) { r.InitialRunning.Owner = 2 }},
 		{name: "bad stopped", edit: func(r *ServiceCutoverReceipt) { r.StoppedBeforePrepare.Active = 2 }},
 		{name: "non UTC", edit: func(r *ServiceCutoverReceipt) { r.StartedAt = r.StartedAt.In(time.FixedZone("x", 0)) }},
@@ -180,6 +193,27 @@ func TestValidateServiceCutoverReceiptStrictClaims(t *testing.T) {
 	blocked.FinalRunning = ServiceCutoverRunningEvidence{}
 	if err := validateServiceCutoverReceipt(blocked); err != nil {
 		t.Fatalf("valid blocked receipt rejected: %v", err)
+	}
+	maintenance := validMaintenanceStoppedServiceCutoverReceiptForTest()
+	if err := validateServiceCutoverReceipt(maintenance); err != nil {
+		t.Fatalf("valid maintenance-stopped receipt rejected: %v", err)
+	}
+	maintenanceCases := []struct {
+		name string
+		edit func(*ServiceCutoverReceipt)
+	}{
+		{name: "also running", edit: func(r *ServiceCutoverReceipt) { r.InitialRunning = valid.InitialRunning }},
+		{name: "active", edit: func(r *ServiceCutoverReceipt) { r.InitialMaintenanceStopped.Active = 1 }},
+		{name: "wrong runtime", edit: func(r *ServiceCutoverReceipt) { r.InitialMaintenanceStopped.RuntimeSHA256 = r.NewRuntimeSHA256 }},
+	}
+	for _, test := range maintenanceCases {
+		t.Run("maintenance-"+test.name, func(t *testing.T) {
+			got := maintenance
+			test.edit(&got)
+			if err := validateServiceCutoverReceipt(got); err == nil {
+				t.Fatal("invalid maintenance-stopped receipt accepted")
+			}
+		})
 	}
 	blocked.CutoverSubreceiptSHA256 = strings.Repeat("a", 64)
 	if err := validateServiceCutoverReceipt(blocked); err == nil {

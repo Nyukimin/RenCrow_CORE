@@ -2187,7 +2187,7 @@ External Trigger
 
 D2d-2b は、D2d service manager が実行した停止・再開境界を D2c の file-swap
 subreceipt と結合する、CORE 内の bounded な証跡境界である。schema は
-`rencrow.identity.dci-service-cutover/v1`、mode は `cutover`、status は
+`rencrow.identity.dci-service-cutover/v2`、mode は `cutover`、status は
 `applied`、`blocked`、`rolled_back`、`rollback_failed` のいずれかに固定する。
 この receipt は service-manager subreceipt であり、配備後の readiness、実 Actor
 Trace、Data Write、restart 後の exact lookup を成功とは主張しない。
@@ -2203,11 +2203,13 @@ Trace、Data Write、restart 後の exact lookup を成功とは主張しない�
   空を許す。service lifecycle が後で rollback しても、immutable な D2c applied
   file の意味を `rolled_back` と書き換えない。`cutover_terminal_status` は D2c の
   in-memory terminal 状態を別に示す。
-- `initial_running`、二つの stopped proof、`final_running` は owner の bounded
-  projection（owner／enabled／unmasked／active／PID-positive／listener／readiness、
-  または masked／inactive／PID-zero／listener-zero）だけを含む。path、PID値、socket、
-  command、config、query、payload、secret、個別 ID、raw error は含めない。空 projection
-  は未到達 phase に限る。
+- `initial_state` は `running` または `maintenance_stopped` に固定する。`running` は
+  `initial_running` だけを要求する。`maintenance_stopped` は fixed unit が enabled／unmasked、
+  inactive、PID-zero、listener-zero であり、unit の固定 ExecStart／config／installed runtime
+  hash が canonical owner と一致する `initial_maintenance_stopped` だけを要求する。二つの
+  masked stopped proof と `final_running` を含め、path、PID値、socket、command、config、query、
+  payload、secret、個別 ID、raw error は含めない。二つの initial projection の同時 claim を
+  拒否し、空 projection は未到達 phase に限る。
 - D2c apply の成功後に new service の start/readiness または service receipt の
   durable publication が失敗した場合は、detached recovery context で停止を再証明し、
   D2c rollback と old service の running proof を完了してから `rolled_back` を出す。
@@ -2229,9 +2231,10 @@ Trace、Data Write、restart 後の exact lookup を成功とは主張しない�
 - **Lesson:** D2c applied file は immutable historical subreceipt として hash/status を
   保持し、service の outer terminal status と phase projections を別の bounded receipt
   に結合する。publication failure は file rollback の trigger であり成功の根拠ではない。
-- **Invariant:** `applied` は valid old-running、二つの stopped proof、D2c applied
-  subreceipt、new-running を全て持つ。`rolled_back` は D2c terminal rollback と old
-  running を持つ。`rollback_failed` は完全復旧を claim しない。
+- **Invariant:** `applied` は valid old-running または maintenance-stopped initial proof の
+  片方だけ、二つの stopped proof、D2c applied subreceipt、new-running を全て持つ。
+  `rolled_back` は同じ initial proof、D2c terminal rollback、old running を持つ。
+  `rollback_failed` は完全復旧を claim しない。
 - **Enforcement:** `executeServiceCutover` の唯一の service command order を再利用し、
   private result へ bounded evidence を保持する。strict validator、fresh-only owner
   writer、inode binding、detached recovery、generic error code、D2c hash cross-binding
@@ -2273,6 +2276,9 @@ receipt publication は既存の private `executeServiceCutoverWithReceipt` を�
   `--expected-staged-runtime-sha256`、`--active-dci`、`--active-dci-jsonl`、
   `--active-event-store`、`--active-l1`、`--active-archive`、`--active-config`、
   `--rollback-dir`、`--cutover-receipt`、`--service-receipt`。
+  `--initial-service-stopped` は cutover 専用の optional flag であり、指定時は owner が
+  canonical service の maintenance-stopped proof を mutation 前に検証する。他 mode では
+  parse/form error として拒否する。
   dry-run／capture／build 用 flag、positional argument、空値、uppercase／不正 hash、
   unknown flag は state mutation 前に拒否する。
 - exact flag set を受理した cutover invocation の stdout は path-free な
@@ -2320,6 +2326,28 @@ receipt publication は既存の private `executeServiceCutoverWithReceipt` を�
 - **Enforcement:** exact flag matrix、private types、platform factory、fixed manager constants、
   facade mapping test、non-test caller architecture test、cross-compile、production receipt chain で
   強制する。
+
+#### Failure Knowledge: 起動時書込みと frozen cohort を同時に要求した cutover
+
+- **Failure:** offline snapshot／build 後に旧 service を再起動して running preflight を通し、
+  その後に同じ frozen cohort を active source と一致させようとした。
+- **Problem:** service startup 自体が Event Store へ一件書くため、running proof と frozen
+  source hash が構造的に両立せず、同じ手順の timing retry では cutover が成立しない。
+- **Cause:** service lifecycle の安全確認を「必ず起動中から開始」と同一視し、保守停止を
+  owner が認証・証跡化して引き継ぐ開始状態を contract に持たせていなかった。
+- **Lesson:** write quiescence が必要な cohort は、canonical service を enabled／unmasked の
+  まま停止した maintenance state から owner CLI が引き継ぎ、runtime mask を取得した後に
+  prepare／stage／apply を一方向で完了させる。
+- **Invariant:** `--initial-service-stopped` 指定時は、fixed unit、ExecStart、config、旧 runtime
+  hash、inactive、PID-zero、listener-zero の全 proof が mutation 前に一致しなければ
+  `service_maintenance_stopped` で fail closed にする。proof 前は mask／start／file mutation を
+  行わず、mask 取得後の失敗は旧 runtime の running proof まで復旧する。
+- **Enforcement:** `VerifyMaintenanceStopped`、相互排他的な v2 initial projections、固定 CLI
+  flag isolation、既存 `MaskAndStop`／D2c／recovery chain の再利用で強制する。手動 file swap、
+  direct backend、別 port、alternate service route は作らない。
+- **Tests:** maintenance-stopped happy order、invalid proof pre-mutation、old runtime recovery、
+  unit state／ExecStart／config／runtime hash／PID／listener rejection、bounded error、receipt
+  exclusivity、通常 running cutover regression、三 OS compile を検査する。
 
 ## D2e-1 owner post-deploy identity evidence
 

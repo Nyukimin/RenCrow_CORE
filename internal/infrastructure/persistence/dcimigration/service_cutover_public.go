@@ -10,6 +10,7 @@ import (
 // DCI cutover.  Service identity, command order, readiness, and rollback
 // behavior remain private to this package and its fixed platform owner.
 type CutoverOptions struct {
+	InitialServiceStopped          bool
 	BuildRoot                      string
 	BuildReceipt                   string
 	ExpectedBuildReceiptSHA256     string
@@ -83,10 +84,11 @@ func Cutover(ctx context.Context, options CutoverOptions) (ServiceCutoverReceipt
 	}
 
 	serviceOptions := cutoverServiceOptions{
-		build:          build,
-		active:         active,
-		manager:        manager,
-		ServiceReceipt: options.ServiceReceipt,
+		build:                 build,
+		active:                active,
+		manager:               manager,
+		initialServiceStopped: options.InitialServiceStopped,
+		ServiceReceipt:        options.ServiceReceipt,
 	}
 	if cutoverPublicExecutor == nil {
 		return blockedServiceCutoverReceipt(options, "service_cutover")
@@ -129,9 +131,13 @@ func blockedServiceCutoverReceipt(options CutoverOptions, code string) (ServiceC
 		SchemaVersion: ServiceCutoverSchemaVersion,
 		Mode:          ModeCutover,
 		Status:        CutoverStatusBlocked,
+		InitialState:  ServiceCutoverInitialRunning,
 		StartedAt:     now,
 		CompletedAt:   now,
 		ErrorCode:     code,
+	}
+	if options.InitialServiceStopped {
+		receipt.InitialState = ServiceCutoverInitialMaintenanceStopped
 	}
 	// A blocked in-memory receipt may retain only caller-provided hashes that
 	// are already valid lowercase SHA-256 values.  Invalid input is omitted.

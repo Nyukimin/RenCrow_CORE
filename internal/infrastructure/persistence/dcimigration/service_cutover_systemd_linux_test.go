@@ -147,6 +147,18 @@ func linuxSystemdStoppedShow() string {
 	}, "\n") + "\n"
 }
 
+func linuxSystemdMaintenanceStoppedShow(runtimePath, configPath string) string {
+	return strings.Join([]string{
+		"LoadState=loaded",
+		"UnitFileState=enabled",
+		"ActiveState=inactive",
+		"SubState=dead",
+		"MainPID=0",
+		"ExecStart={ path=" + runtimePath + "; argv[]=" + runtimePath + " run ; }",
+		"Environment=RENCROW_CONFIG=" + configPath,
+	}, "\n") + "\n"
+}
+
 func linuxSystemdListeningSS(pid int64) string {
 	return fmt.Sprintf("State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\nLISTEN 0 128 127.0.0.1:%d 0.0.0.0:* users:((\"rencrow\",pid=%d,fd=7))\n", linuxSystemdCutoverPort, pid)
 }
@@ -156,6 +168,15 @@ func linuxSystemdStoppedFixture(t *testing.T) linuxSystemdFixture {
 	fixture := newLinuxSystemdFixture(t)
 	fixture.fake.showQueue = []linuxSystemdCommandResult{{ExitCode: 0, Stdout: linuxSystemdStoppedShow()}}
 	fixture.fake.enabledQueue = []linuxSystemdCommandResult{{ExitCode: 1, Stdout: "masked-runtime\n"}}
+	fixture.fake.ssQueue = []linuxSystemdCommandResult{{ExitCode: 0, Stdout: "State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"}}
+	return fixture
+}
+
+func linuxSystemdMaintenanceStoppedFixture(t *testing.T) linuxSystemdFixture {
+	t.Helper()
+	fixture := newLinuxSystemdFixture(t)
+	fixture.fake.showQueue = []linuxSystemdCommandResult{{ExitCode: 0, Stdout: linuxSystemdMaintenanceStoppedShow(fixture.runtime, fixture.config)}}
+	fixture.fake.enabledQueue = []linuxSystemdCommandResult{{ExitCode: 0, Stdout: "enabled\n"}}
 	fixture.fake.ssQueue = []linuxSystemdCommandResult{{ExitCode: 0, Stdout: "State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"}}
 	return fixture
 }
@@ -192,6 +213,91 @@ func TestLinuxSystemdCutoverServiceManagerHappyEvidence(t *testing.T) {
 	}
 	if len(stopped.fake.calls) != 3 || stopped.fake.calls[0].name != linuxSystemdSystemctlCommand || stopped.fake.calls[0].args[1] != "show" || stopped.fake.calls[1].name != linuxSystemdSystemctlCommand || stopped.fake.calls[1].args[1] != "is-enabled" || stopped.fake.calls[2].name != linuxSystemdSSCommand {
 		t.Fatalf("stopped command calls = %#v", stopped.fake.calls)
+	}
+}
+
+func TestLinuxSystemdCutoverServiceManagerMaintenanceStoppedEvidence(t *testing.T) {
+	fixture := linuxSystemdMaintenanceStoppedFixture(t)
+	evidence, err := fixture.manager.VerifyMaintenanceStopped(context.Background(), fixture.sha)
+	if err != nil {
+		t.Fatalf("VerifyMaintenanceStopped() error = %v", err)
+	}
+	want := cutoverServiceMaintenanceStoppedEvidence{
+		Owner: 1, Enabled: 1, Unmasked: 1, Active: 0, MainPIDZero: 1,
+		ListenerZero: 1, RuntimeSHA256: fixture.sha,
+	}
+	if evidence != want || !evidence.valid(fixture.sha) {
+		t.Fatalf("maintenance-stopped evidence = %#v, want %#v", evidence, want)
+	}
+	if len(fixture.fake.calls) != 3 || fixture.fake.calls[0].args[1] != "show" || fixture.fake.calls[1].args[1] != "is-enabled" || fixture.fake.calls[2].name != linuxSystemdSSCommand {
+		t.Fatalf("maintenance-stopped calls = %#v", fixture.fake.calls)
+	}
+}
+
+func TestLinuxSystemdCutoverServiceManagerMaintenanceStoppedRejectsRunning(t *testing.T) {
+	fixture := newLinuxSystemdFixture(t)
+	if _, err := fixture.manager.VerifyMaintenanceStopped(context.Background(), fixture.sha); err == nil {
+		t.Fatal("running service accepted as maintenance-stopped")
+	}
+}
+
+func TestLinuxSystemdCutoverServiceManagerMaintenanceStoppedRejectsInvalidEvidence(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*linuxSystemdFixture)
+	}{
+		{name: "load state", setup: func(f *linuxSystemdFixture) {
+			f.fake.showQueue[0].Stdout = strings.Replace(f.fake.showQueue[0].Stdout, "LoadState=loaded", "LoadState=not-found", 1)
+		}},
+		{name: "unit disabled", setup: func(f *linuxSystemdFixture) {
+			f.fake.showQueue[0].Stdout = strings.Replace(f.fake.showQueue[0].Stdout, "UnitFileState=enabled", "UnitFileState=disabled", 1)
+		}},
+		{name: "is-enabled mismatch", setup: func(f *linuxSystemdFixture) { f.fake.enabledQueue[0].Stdout = "disabled\n" }},
+		{name: "active", setup: func(f *linuxSystemdFixture) {
+			f.fake.showQueue[0].Stdout = strings.Replace(f.fake.showQueue[0].Stdout, "ActiveState=inactive", "ActiveState=active", 1)
+		}},
+		{name: "substate", setup: func(f *linuxSystemdFixture) {
+			f.fake.showQueue[0].Stdout = strings.Replace(f.fake.showQueue[0].Stdout, "SubState=dead", "SubState=running", 1)
+		}},
+		{name: "pid", setup: func(f *linuxSystemdFixture) {
+			f.fake.showQueue[0].Stdout = strings.Replace(f.fake.showQueue[0].Stdout, "MainPID=0", "MainPID=4242", 1)
+		}},
+		{name: "exec", setup: func(f *linuxSystemdFixture) {
+			f.fake.showQueue[0].Stdout = strings.Replace(f.fake.showQueue[0].Stdout, "argv[]="+f.runtime+" run", "argv[]="+f.runtime+" start", 1)
+		}},
+		{name: "config", setup: func(f *linuxSystemdFixture) {
+			f.fake.showQueue[0].Stdout = strings.Replace(f.fake.showQueue[0].Stdout, "RENCROW_CONFIG="+f.config, "RENCROW_CONFIG=/other/config", 1)
+		}},
+		{name: "runtime hash", setup: func(f *linuxSystemdFixture) {
+			if err := os.WriteFile(f.runtime, []byte("changed runtime"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "listener", setup: func(f *linuxSystemdFixture) { f.fake.ssQueue[0].Stdout = linuxSystemdListeningSS(99) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := linuxSystemdMaintenanceStoppedFixture(t)
+			test.setup(&fixture)
+			if _, err := fixture.manager.VerifyMaintenanceStopped(context.Background(), fixture.sha); err == nil {
+				t.Fatal("invalid maintenance-stopped evidence accepted")
+			}
+		})
+	}
+}
+
+func TestLinuxSystemdCutoverServiceManagerMaintenanceStoppedBoundsErrors(t *testing.T) {
+	fixture := linuxSystemdMaintenanceStoppedFixture(t)
+	secret := "private/secret/value"
+	fixture.fake.showQueue[0] = linuxSystemdCommandResult{Err: errors.New(secret)}
+	if _, err := fixture.manager.VerifyMaintenanceStopped(context.Background(), fixture.sha); err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("maintenance-stopped error = %v", err)
+	}
+	if _, err := fixture.manager.VerifyMaintenanceStopped(nil, fixture.sha); err == nil {
+		t.Fatal("nil maintenance-stopped context accepted")
+	}
+	if _, err := fixture.manager.VerifyMaintenanceStopped(context.Background(), strings.ToUpper(fixture.sha)); err == nil {
+		t.Fatal("uppercase maintenance-stopped runtime hash accepted")
 	}
 }
 

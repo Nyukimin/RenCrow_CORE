@@ -11,6 +11,7 @@ import (
 // arbitrary command, service name, or path.
 type cutoverServiceManager interface {
 	VerifyRunning(context.Context, string) (cutoverServiceRunningEvidence, error)
+	VerifyMaintenanceStopped(context.Context, string) (cutoverServiceMaintenanceStoppedEvidence, error)
 	MaskAndStop(context.Context) error
 	VerifyStopped(context.Context) (cutoverServiceStoppedEvidence, error)
 	UnmaskAndStart(context.Context) error
@@ -34,6 +35,16 @@ type cutoverServiceStoppedEvidence struct {
 	ListenerZero int
 }
 
+type cutoverServiceMaintenanceStoppedEvidence struct {
+	Owner         int
+	Enabled       int
+	Unmasked      int
+	Active        int
+	MainPIDZero   int
+	ListenerZero  int
+	RuntimeSHA256 string
+}
+
 func (e cutoverServiceRunningEvidence) valid(expectedSHA256 string) bool {
 	return expectedSHA256 != "" && isLowerHexSHA256(expectedSHA256) &&
 		e.Owner == 1 && e.Enabled == 1 && e.Unmasked == 1 && e.Active == 1 &&
@@ -45,11 +56,18 @@ func (e cutoverServiceStoppedEvidence) valid() bool {
 	return e.Masked == 1 && e.Active == 0 && e.MainPIDZero == 1 && e.ListenerZero == 1
 }
 
+func (e cutoverServiceMaintenanceStoppedEvidence) valid(expectedSHA256 string) bool {
+	return expectedSHA256 != "" && isLowerHexSHA256(expectedSHA256) &&
+		e.Owner == 1 && e.Enabled == 1 && e.Unmasked == 1 && e.Active == 0 &&
+		e.MainPIDZero == 1 && e.ListenerZero == 1 && e.RuntimeSHA256 == expectedSHA256
+}
+
 type cutoverServiceOptions struct {
-	build          cutoverArtifactOptions
-	active         cutoverActiveOptions
-	manager        cutoverServiceManager
-	ServiceReceipt string
+	build                 cutoverArtifactOptions
+	active                cutoverActiveOptions
+	manager               cutoverServiceManager
+	initialServiceStopped bool
+	ServiceReceipt        string
 }
 
 type cutoverServiceStatus string
@@ -62,12 +80,14 @@ const (
 )
 
 type cutoverServiceResult struct {
-	status               cutoverServiceStatus
-	receipt              CutoverReceipt
-	initialRunning       cutoverServiceRunningEvidence
-	stoppedBeforePrepare cutoverServiceStoppedEvidence
-	stoppedBeforeApply   cutoverServiceStoppedEvidence
-	finalRunning         cutoverServiceRunningEvidence
+	status                    cutoverServiceStatus
+	receipt                   CutoverReceipt
+	initialState              string
+	initialRunning            cutoverServiceRunningEvidence
+	initialMaintenanceStopped cutoverServiceMaintenanceStoppedEvidence
+	stoppedBeforePrepare      cutoverServiceStoppedEvidence
+	stoppedBeforeApply        cutoverServiceStoppedEvidence
+	finalRunning              cutoverServiceRunningEvidence
 	// applied remains private on an operational applied result, and on the
 	// rollback_failed boundary where the post-apply stop proof itself failed;
 	// the latter is the only rollback_failed path that still has a coherent
@@ -96,21 +116,45 @@ func executeServiceCutover(ctx context.Context, options cutoverServiceOptions) (
 		return cutoverServiceResult{status: cutoverServiceBlocked}, cutoverServiceError(errorCode(err, "invalid_options"))
 	}
 
-	serviceResult := cutoverServiceResult{}
+	serviceResult := cutoverServiceResult{initialState: ServiceCutoverInitialRunning}
 	oldRuntimeSHA256 := options.build.ExpectedInstalledRuntimeSHA256
-	running, err := options.manager.VerifyRunning(ctx, oldRuntimeSHA256)
-	serviceResult.initialRunning = running
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	var running cutoverServiceRunningEvidence
+	if options.initialServiceStopped {
+		serviceResult.initialState = ServiceCutoverInitialMaintenanceStopped
+		stopped, err := options.manager.VerifyMaintenanceStopped(ctx, oldRuntimeSHA256)
+		serviceResult.initialMaintenanceStopped = stopped
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return cutoverServiceResult{}, err
+			}
+			serviceResult.status = cutoverServiceBlocked
+			return serviceResult, cutoverServiceError("service_maintenance_stopped")
+		}
+		if err := ctx.Err(); err != nil {
 			return cutoverServiceResult{}, err
 		}
-		return cutoverServiceResult{status: cutoverServiceBlocked}, cutoverServiceError("service_running")
-	}
-	if err := ctx.Err(); err != nil {
-		return cutoverServiceResult{}, err
-	}
-	if !running.valid(oldRuntimeSHA256) {
-		return cutoverServiceResult{status: cutoverServiceBlocked}, cutoverServiceError("service_running")
+		if !stopped.valid(oldRuntimeSHA256) {
+			serviceResult.status = cutoverServiceBlocked
+			return serviceResult, cutoverServiceError("service_maintenance_stopped")
+		}
+	} else {
+		var err error
+		running, err = options.manager.VerifyRunning(ctx, oldRuntimeSHA256)
+		serviceResult.initialRunning = running
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return cutoverServiceResult{}, err
+			}
+			serviceResult.status = cutoverServiceBlocked
+			return serviceResult, cutoverServiceError("service_running")
+		}
+		if err := ctx.Err(); err != nil {
+			return cutoverServiceResult{}, err
+		}
+		if !running.valid(oldRuntimeSHA256) {
+			serviceResult.status = cutoverServiceBlocked
+			return serviceResult, cutoverServiceError("service_running")
+		}
 	}
 
 	if err := options.manager.MaskAndStop(ctx); err != nil {

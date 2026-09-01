@@ -514,7 +514,7 @@ runtime の変更を行わず、それらの成功を主張しない。
 
 D2d-2b は、既存の private `executeServiceCutover` を service lifecycle の唯一の
 owner として再利用し、その reached phase を bounded な
-`rencrow.identity.dci-service-cutover/v1` receipt へ durable に記録する単位である。
+`rencrow.identity.dci-service-cutover/v2` receipt へ durable に記録する単位である。
 service receipt は D2c の file-swap subreceipt、service manager の停止／再開証拠、
 old/new runtime checksum chain だけを結合し、production apply、配備後 readiness、
 実 Actor Trace／Data Write、restart 後 lookup の成功は主張しない。
@@ -533,13 +533,15 @@ old/new runtime checksum chain だけを結合し、production apply、配備後
   `cutover_subreceipt_sha256` と `cutover_subreceipt_status=applied` は service rollback
   後も不変である。D2c が pre-mutation に receipt を発行しない場合だけ subreceipt は
   空であり、`cutover_terminal_status` が D2c の in-memory terminal を別に示す。
-- `initial_running`、`stopped_before_prepare`、`stopped_before_apply`、`final_running`
-  は owner が返した bounded projection のみを含む。実 PID、listener、command、
-  config path、query、payload、secret、個別 ID、raw error は receipt／error に出さない。
-  `applied` は old running＋二つの stopped proof＋D2c applied＋new running、
-  `rolled_back` は old running と D2c rollback、`rollback_failed` は完全復旧を claim
-  しない。service receipt write/readback failure も新 cohort failure として detached
-  stop、D2c rollback、old running proof を要求する。
+- `initial_state=running` は `initial_running`、`initial_state=maintenance_stopped` は
+  enabled／unmasked、inactive、PID-zero、listener-zero、fixed ExecStart／config／旧 runtime
+  hash を束縛する `initial_maintenance_stopped` の片方だけを要求する。
+  `stopped_before_prepare`、`stopped_before_apply`、`final_running` を owner projection とし、
+  実 PID、listener、command、config path、query、payload、secret、個別 ID、raw error は
+  receipt／error に出さない。`applied` は initial proof＋二つの stopped proof＋D2c applied＋
+  new running、`rolled_back` は initial proof と D2c rollback＋old running、
+  `rollback_failed` は完全復旧を claim しない。service receipt write/readback failure も新
+  cohort failure として detached stop、D2c rollback、old running proof を要求する。
 - この単位の TDD は fake manager と isolated temporary fixture だけを使う。production
   service command、runtime restart、DB、CLI、post-deploy E2E は実行しない。
 
@@ -586,6 +588,8 @@ cutover mode は `--build-dir`、`--build-receipt`、`--expected-build-receipt-s
 `--expected-staged-runtime-sha256`、`--active-dci`、`--active-dci-jsonl`、
 `--active-event-store`、`--active-l1`、`--active-archive`、`--active-config`、
 `--rollback-dir`、`--cutover-receipt`、`--service-receipt` の exact set を要求する。
+`--initial-service-stopped` は cutover 専用 optional flag であり、指定時は canonical service の
+maintenance-stopped proof を mutation 前に要求する。
 unit、port、readiness、service command、shell、query は入力にしない。他 mode の flag、unknown、
 positional、missing／empty は parse/form error として stdout なし、fixed stderr、exit 2 で
 mutation 前に拒否する。exact flag set を受理した invocation は stdout 一 JSON、stderr bounded
@@ -616,6 +620,24 @@ one-JSON／bounded stderr、path／secret non-leak、fixed Linux owner、非 Lin
   D2d-2b owner だけが production cutover route である。
 - **Enforcement:** exact flag matrix、platform factory、private type boundary、architecture test、
   cross-compile、production receipt chain で強制する。
+
+#### Failure Knowledge: startup write で frozen cohort が必ず drift する cutover
+
+- **Failure:** stopped snapshot／build 後に old service を再起動して running preflight を通し、
+  同じ frozen source hash で cutover しようとした。
+- **Problem:** startup Event が Event Store を更新するため、running proof 後の active prepare は
+  必ず `active_source_drift_pre_cutover` となり、timing retry では解消しない。
+- **Cause:** service owner contract が running start だけを許し、認証済み maintenance stop を
+  mutation 前 evidence として引き継げなかった。
+- **Lesson:** quiescent cohort は enabled／unmasked の canonical service を停止した状態から、
+  owner が identity と停止を証明し、runtime mask を取得したまま apply と new start まで進める。
+- **Invariant:** maintenance flag 指定時は fixed unit／ExecStart／config／old runtime hash／
+  inactive／PID-zero／listener-zero が揃わなければ mutation せず blocked。mask 後の失敗は
+  old runtime running proof まで復旧する。
+- **Enforcement:** `VerifyMaintenanceStopped`、v2 initial-state receipt、cutover-only flag、既存
+  D2d-2b lifecycle／D2c／recovery の再利用で強制する。
+- **Tests:** success order、proof failure no-mutation、recovery、systemd identity/state rejection、
+  receipt exclusivity、flag isolation、running-mode regression、cross-compile を検査する。
 
 ## D2e-1 owner post-deploy identity evidence
 

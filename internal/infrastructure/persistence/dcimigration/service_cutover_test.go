@@ -24,11 +24,34 @@ type fakeCutoverServiceManager struct {
 	startRuntimeSHA     []string
 	runningErrors       []error
 	runningEvidence     []cutoverServiceRunningEvidence
+	maintenanceErrors   []error
+	maintenanceEvidence []cutoverServiceMaintenanceStoppedEvidence
 	mutateBeforeStopErr bool
 
 	stopCalls         int
 	startCalls        int
 	startedRuntimeSHA []string
+}
+
+func (m *fakeCutoverServiceManager) VerifyMaintenanceStopped(_ context.Context, _ string) (cutoverServiceMaintenanceStoppedEvidence, error) {
+	m.events = append(m.events, "verify_maintenance_stopped")
+	if len(m.maintenanceErrors) != 0 {
+		err := m.maintenanceErrors[0]
+		m.maintenanceErrors = m.maintenanceErrors[1:]
+		return cutoverServiceMaintenanceStoppedEvidence{}, err
+	}
+	if len(m.maintenanceEvidence) != 0 {
+		evidence := m.maintenanceEvidence[0]
+		m.maintenanceEvidence = m.maintenanceEvidence[1:]
+		return evidence, nil
+	}
+	if m.running || m.masked {
+		return cutoverServiceMaintenanceStoppedEvidence{}, nil
+	}
+	return cutoverServiceMaintenanceStoppedEvidence{
+		Owner: 1, Enabled: 1, Unmasked: 1, Active: 0, MainPIDZero: 1,
+		ListenerZero: 1, RuntimeSHA256: m.runtimeSHA,
+	}, nil
 }
 
 func (m *fakeCutoverServiceManager) VerifyRunning(_ context.Context, _ string) (cutoverServiceRunningEvidence, error) {
@@ -218,6 +241,72 @@ func TestExecuteServiceCutoverHappyPathOrdersStopBeforeRealD2C(t *testing.T) {
 	}
 	if _, err := os.Stat(options.build.CutoverReceipt); err != nil {
 		t.Fatalf("D2c receipt missing after service cutover: %v", err)
+	}
+}
+
+func TestExecuteServiceCutoverMaintenanceStoppedHappyPath(t *testing.T) {
+	fixture := newCutoverActiveCohortTestFixture(t)
+	oldSHA := mustFileSHA256(t, fixture.build.paths.installedRuntime)
+	newSHA := mustFileSHA256(t, fixture.build.paths.stagedRuntime)
+	manager := newCutoverServiceManager(oldSHA, newSHA)
+	manager.running = false
+	options := cutoverServiceOptionsForFixture(t, fixture, manager)
+	options.initialServiceStopped = true
+	recordCutoverServicePipeline(t, manager)
+
+	result, err := executeServiceCutover(context.Background(), options)
+	if err != nil || result.status != cutoverServiceApplied || result.applied == nil {
+		t.Fatalf("maintenance-stopped cutover = %#v, err=%v", result, err)
+	}
+	want := []string{"verify_maintenance_stopped", "mask_stop", "verify_stopped", "prepare_build", "prepare_active", "stage", "verify_stopped", "apply", "unmask_start", "verify_running"}
+	if !reflect.DeepEqual(manager.events, want) {
+		t.Fatalf("maintenance-stopped order = %#v, want %#v", manager.events, want)
+	}
+	if result.initialState != ServiceCutoverInitialMaintenanceStopped || !result.initialMaintenanceStopped.valid(oldSHA) || result.initialRunning != (cutoverServiceRunningEvidence{}) {
+		t.Fatalf("maintenance-stopped initial evidence = %#v", result)
+	}
+}
+
+func TestExecuteServiceCutoverMaintenanceStoppedRejectsInvalidProofBeforeMutation(t *testing.T) {
+	oldSHA := strings.Repeat("a", 64)
+	manager := newCutoverServiceManager(oldSHA, strings.Repeat("b", 64))
+	manager.running = false
+	manager.maintenanceEvidence = []cutoverServiceMaintenanceStoppedEvidence{
+		{Owner: 1, Enabled: 1, Unmasked: 1, Active: 0, MainPIDZero: 1, ListenerZero: 0, RuntimeSHA256: oldSHA},
+	}
+	options := syntheticCutoverServiceOptions(manager, oldSHA, strings.Repeat("b", 64))
+	options.initialServiceStopped = true
+
+	result, err := executeServiceCutover(context.Background(), options)
+	if err == nil || result.status != cutoverServiceBlocked || errorCode(err, "") != "service_maintenance_stopped" {
+		t.Fatalf("invalid maintenance proof = %#v, err=%v", result, err)
+	}
+	if !reflect.DeepEqual(manager.events, []string{"verify_maintenance_stopped"}) || manager.stopCalls != 0 || manager.startCalls != 0 {
+		t.Fatalf("invalid maintenance proof mutated service: events=%#v stops=%d starts=%d", manager.events, manager.stopCalls, manager.startCalls)
+	}
+}
+
+func TestExecuteServiceCutoverMaintenanceStoppedRecoveryRestartsOldRuntime(t *testing.T) {
+	oldSHA := strings.Repeat("a", 64)
+	newSHA := strings.Repeat("b", 64)
+	manager := newCutoverServiceManager(oldSHA, newSHA)
+	manager.running = false
+	manager.startRuntimeSHA = []string{oldSHA}
+	options := syntheticCutoverServiceOptions(manager, oldSHA, newSHA)
+	options.initialServiceStopped = true
+	original := cutoverServicePrepareBuild
+	cutoverServicePrepareBuild = func(context.Context, cutoverArtifactOptions) (preparedCutoverArtifacts, error) {
+		return preparedCutoverArtifacts{}, errors.New("prepare failed")
+	}
+	t.Cleanup(func() { cutoverServicePrepareBuild = original })
+
+	result, err := executeServiceCutover(context.Background(), options)
+	if err == nil || result.status != cutoverServiceBlocked || !result.finalRunning.valid(oldSHA) {
+		t.Fatalf("maintenance recovery = %#v, err=%v", result, err)
+	}
+	want := []string{"verify_maintenance_stopped", "mask_stop", "verify_stopped", "unmask_start", "verify_running"}
+	if !reflect.DeepEqual(manager.events, want) || !reflect.DeepEqual(manager.startedRuntimeSHA, []string{oldSHA}) {
+		t.Fatalf("maintenance recovery events=%#v starts=%#v", manager.events, manager.startedRuntimeSHA)
 	}
 }
 
