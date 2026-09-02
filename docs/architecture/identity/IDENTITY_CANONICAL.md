@@ -2736,7 +2736,7 @@ old-generation-absent を再照合する。service-cutover v3 と cutover v2 は
 orphan、legacy key、sidecar zeroを検査する。migration cohort の runtime hashを後続 remediation artifact
 hashと同一視しない。
 
-deploy JSONL は bounded line数／line size／strict schemaで読み、最後の成功した `rencrow` と
+deploy JSONL は bounded line数／line size／owner deploy receiptの成功・失敗・deferredを含むstrict schemaで読み、最後の成功した `rencrow` と
 `rencrow-core-verify` の共通 full Git revisionを決定的に選ぶ。現在の canonical service owner、artifact、
 active config、listener、readinessを再観測し、pre／postのartifact／config hashと一致させる。post evidence
 の時刻以降の canonical unit journalをboundedに取得し、warning／error／panic／fatalが一件でもあれば

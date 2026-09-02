@@ -878,7 +878,8 @@ SQLite quick check／foreign key、restart 後 warning log も照合済みであ
 
 D2e-4 で、これらを service／build receipt、logs、durable-state review と機械的に束ねる専用の
 `core-dci-identity-final` を `rencrow-core-verify` と owner manifestへ追加した。pre／post、service-cutover、
-cutover、deploy JSONLをowner-onlyの明示入力としてstrictに検証し、現在のservice／listener／readinessと
+cutover、deploy JSONLをowner-onlyの明示入力として、成功・失敗・deferredを含むowner receipt schemaで
+strictに検証し、現在のservice／listener／readinessと
 post以降のwarning/error journalを自己収集する。成功evidenceは固定hash、canonical chain ID／counts、
 booleanだけを公開し、path、PID、query、credential、raw logを出さない。source-built verifierによる
 production read-only pre-deploy acceptanceは2026-09-02に`passed`したが、pushed/pinned artifactのdeployと

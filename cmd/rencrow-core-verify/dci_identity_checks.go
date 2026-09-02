@@ -214,6 +214,8 @@ type dciDeployReceipt struct {
 	RunningUnits    []string `json:"running_units"`
 	DeferredUnits   []string `json:"deferred_units,omitempty"`
 	Reason          string   `json:"reason,omitempty"`
+	FailedUnit      string   `json:"failed_unit,omitempty"`
+	Error           string   `json:"error,omitempty"`
 	BackupPath      string   `json:"backup_path"`
 	StartedAt       string   `json:"started_at"`
 	FinishedAt      string   `json:"finished_at"`
