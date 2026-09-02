@@ -21,7 +21,7 @@ const (
 	CaptureSchemaVersion        = "rencrow.identity.dci-capture/v1"
 	BuildSchemaVersion          = "rencrow.identity.dci-build/v1"
 	CutoverSchemaVersion        = "rencrow.identity.dci-cutover/v2"
-	ServiceCutoverSchemaVersion = "rencrow.identity.dci-service-cutover/v2"
+	ServiceCutoverSchemaVersion = "rencrow.identity.dci-service-cutover/v3"
 
 	ServiceCutoverInitialRunning            = "running"
 	ServiceCutoverInitialMaintenanceStopped = "maintenance_stopped"
@@ -398,6 +398,17 @@ type ServiceCutoverMaintenanceStoppedEvidence struct {
 	RuntimeSHA256 string `json:"runtime_sha256"`
 }
 
+// ServiceCutoverQuiesceEvidence proves that all fixed active SQLite sources
+// were checkpointed by the service owner after stopped proof and before active
+// source binding. It contains only bounded counts and Boolean evidence.
+type ServiceCutoverQuiesceEvidence struct {
+	SQLiteSources     int `json:"sqlite_sources"`
+	BusyZero          int `json:"busy_zero"`
+	JournalModeDelete int `json:"journal_mode_delete"`
+	SameFile          int `json:"same_file"`
+	SidecarZero       int `json:"sidecar_zero"`
+}
+
 // ServiceCutoverReceipt is the durable service-manager subreceipt for D2d.
 // It binds the service lifecycle evidence to the already-durable D2c file
 // subreceipt, but does not claim post-deploy readiness or real-Actor E2E.
@@ -426,6 +437,7 @@ type ServiceCutoverReceipt struct {
 	InitialRunning            ServiceCutoverRunningEvidence            `json:"initial_running"`
 	InitialMaintenanceStopped ServiceCutoverMaintenanceStoppedEvidence `json:"initial_maintenance_stopped"`
 	StoppedBeforePrepare      ServiceCutoverStoppedEvidence            `json:"stopped_before_prepare"`
+	ActiveSourcesQuiesced     ServiceCutoverQuiesceEvidence            `json:"active_sources_quiesced"`
 	StoppedBeforeApply        ServiceCutoverStoppedEvidence            `json:"stopped_before_apply"`
 	FinalRunning              ServiceCutoverRunningEvidence            `json:"final_running"`
 

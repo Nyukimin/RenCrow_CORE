@@ -2187,7 +2187,7 @@ External Trigger
 
 D2d-2b は、D2d service manager が実行した停止・再開境界を D2c の file-swap
 subreceipt と結合する、CORE 内の bounded な証跡境界である。schema は
-`rencrow.identity.dci-service-cutover/v2`、mode は `cutover`、status は
+`rencrow.identity.dci-service-cutover/v3`、mode は `cutover`、status は
 `applied`、`blocked`、`rolled_back`、`rollback_failed` のいずれかに固定する。
 この receipt は service-manager subreceipt であり、配備後の readiness、実 Actor
 Trace、Data Write、restart 後の exact lookup を成功とは主張しない。
@@ -2210,6 +2210,13 @@ Trace、Data Write、restart 後の exact lookup を成功とは主張しない�
   masked stopped proof と `final_running` を含め、path、PID値、socket、command、config、query、
   payload、secret、個別 ID、raw error は含めない。二つの initial projection の同時 claim を
   拒否し、空 projection は未到達 phase に限る。
+- 最初の masked stopped proof 後、active source binding 前に、owner は固定4 SQLite sourceを
+  `mode=rw`／busy timeout 0で開き、`wal_checkpoint(TRUNCATE)`のbusy=0、
+  `journal_mode=DELETE`、base fileの同一inode、WAL／SHM／journal zeroを確認する。
+  `active_sources_quiesced`は`sqlite_sources=4`と各Boolean proofをexact値で持ち、`applied`／
+  `rolled_back`では必須とする。busy、alias、symlink、file replacement、sidecar残存、context cancellationは
+  `active_quiesce`でfail closedし、file swap前に旧runtimeのrunning proofまで復旧する。通常runtimeの
+  persistent WAL policyは変更せず、この変換をservice-managed cutover Boundaryの中だけに限定する。
 - D2c apply の成功後に new service の start/readiness または service receipt の
   durable publication が失敗した場合は、detached recovery context で停止を再証明し、
   D2c rollback と old service の running proof を完了してから `rolled_back` を出す。
@@ -2244,6 +2251,24 @@ Trace、Data Write、restart 後の exact lookup を成功とは主張しない�
   unknown/trailing/oversize JSON、receipt substitution preservation、path／payload／ID
   非漏洩を fake manager と temp fixture で検査する。production apply、post-deploy E2E、
   service restart の成功はこの単位の受入条件に含めない。
+
+#### Failure Knowledge: 停止後persistent WALをactive sourceとして拒否したcutover
+
+- **Failure:** canonical serviceをPID-zero／listener-zeroまで停止してもL1／archiveのpersistent
+  WAL／SHMが残り、active source bindingが`active_source`でcutoverを拒否した。
+- **Problem:** process停止とSQLiteのcheckpoint完了を同一視したため、通常runtimeとして正しい
+  persistent WAL policyと、sidecar-zeroを要求するatomic cutover contractが接続されなかった。
+- **Cause:** storeの通常`Close`へjournal policy変更を混ぜずに済む、service owner固有のquiesce
+  Boundaryが停止証明とsource bindingの間に存在しなかった。
+- **Lesson:** runtime store lifecycleはWALのまま維持し、production state変更を所有するcutoverだけが、
+  service停止証明後に固定sourceをcheckpointしてDELETE modeへ移す。手動SQLite commandや別CLIを
+  operator手順へ追加しない。
+- **Invariant:** active source bindingへ到達する全service cutoverは、4 sourceすべてについてbusy=0、
+  DELETE mode、same-file、sidecar-zeroの一つのexact evidenceを持つ。部分成功や推定値をreceiptへ投影しない。
+- **Enforcement:** fixed source set、canonical non-symlink binding、inode alias検査、`mode=rw`、no-wait
+  checkpoint、post-close sidecar拒否、service receipt v3 strict validator、失敗時old-runtime recoveryで強制する。
+- **Tests:** persistent WAL happy path、busy writer、symlink／alias、cancellation、same-file、sidecar-zero、
+  stopped-before-quiesce順序、applied／rolled_back receipt必須性、pre-quiesce blocked zero projectionを検査する。
 
 ## D2d-2c production cutover owner CLI
 

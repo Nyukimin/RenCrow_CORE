@@ -270,6 +270,7 @@ func serviceCutoverReceiptFromResult(seed ServiceCutoverReceipt, result cutoverS
 	receipt.InitialRunning = serviceRunningProjection(result.initialRunning, receipt.OldRuntimeSHA256)
 	receipt.InitialMaintenanceStopped = serviceMaintenanceStoppedProjection(result.initialMaintenanceStopped, receipt.OldRuntimeSHA256)
 	receipt.StoppedBeforePrepare = serviceStoppedProjection(result.stoppedBeforePrepare)
+	receipt.ActiveSourcesQuiesced = serviceQuiesceProjection(result.activeSourcesQuiesced)
 	receipt.StoppedBeforeApply = serviceStoppedProjection(result.stoppedBeforeApply)
 	finalExpected := receipt.OldRuntimeSHA256
 	if result.status == cutoverServiceApplied {
@@ -317,6 +318,17 @@ func serviceStoppedProjection(evidence cutoverServiceStoppedEvidence) ServiceCut
 		return ServiceCutoverStoppedEvidence{}
 	}
 	return ServiceCutoverStoppedEvidence{Masked: evidence.Masked, Active: evidence.Active, MainPIDZero: evidence.MainPIDZero, ListenerZero: evidence.ListenerZero}
+}
+
+func serviceQuiesceProjection(evidence cutoverActiveQuiesceEvidence) ServiceCutoverQuiesceEvidence {
+	if !evidence.valid() {
+		return ServiceCutoverQuiesceEvidence{}
+	}
+	return ServiceCutoverQuiesceEvidence{
+		SQLiteSources: evidence.SQLiteSources, BusyZero: evidence.BusyZero,
+		JournalModeDelete: evidence.JournalModeDelete, SameFile: evidence.SameFile,
+		SidecarZero: evidence.SidecarZero,
+	}
 }
 
 func serviceCutoverD2CBindingMatches(seed ServiceCutoverReceipt, receipt CutoverReceipt) bool {
@@ -404,6 +416,9 @@ func validateServiceCutoverReceipt(receipt ServiceCutoverReceipt) error {
 	if err := validateServiceStoppedProjection(receipt.StoppedBeforePrepare); err != nil {
 		return err
 	}
+	if err := validateServiceQuiesceProjection(receipt.ActiveSourcesQuiesced); err != nil {
+		return err
+	}
 	if err := validateServiceStoppedProjection(receipt.StoppedBeforeApply); err != nil {
 		return err
 	}
@@ -415,7 +430,7 @@ func validateServiceCutoverReceipt(receipt ServiceCutoverReceipt) error {
 	}
 	switch receipt.Status {
 	case CutoverStatusApplied:
-		if receipt.ErrorCode != "" || receipt.CutoverTerminalStatus != CutoverStatusApplied || receipt.CutoverSubreceiptSHA256 == "" || receipt.CutoverSubreceiptStatus != CutoverStatusApplied || !serviceReceiptHashesComplete(receipt) || !serviceInitialEvidenceCoherent(receipt, true) || !serviceStoppedProjectionValid(receipt.StoppedBeforePrepare) || !serviceStoppedProjectionValid(receipt.StoppedBeforeApply) || !serviceRunningProjectionMatches(receipt.FinalRunning, receipt.NewRuntimeSHA256) {
+		if receipt.ErrorCode != "" || receipt.CutoverTerminalStatus != CutoverStatusApplied || receipt.CutoverSubreceiptSHA256 == "" || receipt.CutoverSubreceiptStatus != CutoverStatusApplied || !serviceReceiptHashesComplete(receipt) || !serviceInitialEvidenceCoherent(receipt, true) || !serviceStoppedProjectionValid(receipt.StoppedBeforePrepare) || !serviceQuiesceProjectionValid(receipt.ActiveSourcesQuiesced) || !serviceStoppedProjectionValid(receipt.StoppedBeforeApply) || !serviceRunningProjectionMatches(receipt.FinalRunning, receipt.NewRuntimeSHA256) {
 			return errors.New("service applied claims are incomplete")
 		}
 	case CutoverStatusBlocked:
@@ -428,16 +443,38 @@ func validateServiceCutoverReceipt(receipt ServiceCutoverReceipt) error {
 		if !serviceStoppedProjectionZero(receipt.StoppedBeforeApply) && !serviceRunningProjectionMatches(receipt.FinalRunning, receipt.OldRuntimeSHA256) {
 			return errors.New("service blocked restoration is unproven")
 		}
+		if serviceStoppedProjectionValid(receipt.StoppedBeforeApply) && !serviceQuiesceProjectionValid(receipt.ActiveSourcesQuiesced) {
+			return errors.New("service blocked quiesce evidence is incomplete")
+		}
 	case CutoverStatusRolledBack:
-		if receipt.ErrorCode == "" || receipt.CutoverTerminalStatus != CutoverStatusRolledBack || !serviceReceiptHashesComplete(receipt) || !serviceInitialEvidenceCoherent(receipt, true) || !serviceStoppedProjectionValid(receipt.StoppedBeforePrepare) || !serviceStoppedProjectionValid(receipt.StoppedBeforeApply) || !serviceRunningProjectionMatches(receipt.FinalRunning, receipt.OldRuntimeSHA256) {
+		if receipt.ErrorCode == "" || receipt.CutoverTerminalStatus != CutoverStatusRolledBack || !serviceReceiptHashesComplete(receipt) || !serviceInitialEvidenceCoherent(receipt, true) || !serviceStoppedProjectionValid(receipt.StoppedBeforePrepare) || !serviceQuiesceProjectionValid(receipt.ActiveSourcesQuiesced) || !serviceStoppedProjectionValid(receipt.StoppedBeforeApply) || !serviceRunningProjectionMatches(receipt.FinalRunning, receipt.OldRuntimeSHA256) {
 			return errors.New("service rolled-back claims are incomplete")
 		}
 	case CutoverStatusRollbackFailed:
 		if receipt.ErrorCode != CutoverStatusRollbackFailed || receipt.CutoverTerminalStatus == CutoverStatusRolledBack {
 			return errors.New("service rollback-failed claims are invalid")
 		}
+		if receipt.CutoverSubreceiptSHA256 != "" && !serviceQuiesceProjectionValid(receipt.ActiveSourcesQuiesced) {
+			return errors.New("service rollback-failed quiesce evidence is incomplete")
+		}
 	}
 	return nil
+}
+
+func validateServiceQuiesceProjection(evidence ServiceCutoverQuiesceEvidence) error {
+	if serviceQuiesceProjectionZero(evidence) || serviceQuiesceProjectionValid(evidence) {
+		return nil
+	}
+	return errors.New("service quiesce evidence is invalid")
+}
+
+func serviceQuiesceProjectionValid(evidence ServiceCutoverQuiesceEvidence) bool {
+	return evidence.SQLiteSources == 4 && evidence.BusyZero == 1 && evidence.JournalModeDelete == 1 &&
+		evidence.SameFile == 1 && evidence.SidecarZero == 1
+}
+
+func serviceQuiesceProjectionZero(evidence ServiceCutoverQuiesceEvidence) bool {
+	return evidence == (ServiceCutoverQuiesceEvidence{})
 }
 
 func serviceReceiptHashesComplete(receipt ServiceCutoverReceipt) bool {

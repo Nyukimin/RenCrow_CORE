@@ -29,7 +29,10 @@ func validServiceCutoverReceiptForTest() ServiceCutoverReceipt {
 			ListenerOwned: 1, Readiness: 1, RuntimeSHA256: oldSHA,
 		},
 		StoppedBeforePrepare: ServiceCutoverStoppedEvidence{Masked: 1, Active: 0, MainPIDZero: 1, ListenerZero: 1},
-		StoppedBeforeApply:   ServiceCutoverStoppedEvidence{Masked: 1, Active: 0, MainPIDZero: 1, ListenerZero: 1},
+		ActiveSourcesQuiesced: ServiceCutoverQuiesceEvidence{
+			SQLiteSources: 4, BusyZero: 1, JournalModeDelete: 1, SameFile: 1, SidecarZero: 1,
+		},
+		StoppedBeforeApply: ServiceCutoverStoppedEvidence{Masked: 1, Active: 0, MainPIDZero: 1, ListenerZero: 1},
 		FinalRunning: ServiceCutoverRunningEvidence{
 			Owner: 1, Enabled: 1, Unmasked: 1, Active: 1, MainPIDPositive: 1,
 			ListenerOwned: 1, Readiness: 1, RuntimeSHA256: newSHA,
@@ -169,6 +172,7 @@ func TestValidateServiceCutoverReceiptStrictClaims(t *testing.T) {
 		{name: "initial state", edit: func(r *ServiceCutoverReceipt) { r.InitialState = "unknown" }},
 		{name: "bad running", edit: func(r *ServiceCutoverReceipt) { r.InitialRunning.Owner = 2 }},
 		{name: "bad stopped", edit: func(r *ServiceCutoverReceipt) { r.StoppedBeforePrepare.Active = 2 }},
+		{name: "bad quiesce", edit: func(r *ServiceCutoverReceipt) { r.ActiveSourcesQuiesced.SidecarZero = 0 }},
 		{name: "non UTC", edit: func(r *ServiceCutoverReceipt) { r.StartedAt = r.StartedAt.In(time.FixedZone("x", 0)) }},
 	}
 	for _, tt := range cases {
@@ -189,6 +193,7 @@ func TestValidateServiceCutoverReceiptStrictClaims(t *testing.T) {
 	blocked.ErrorCode = "service_running"
 	blocked.InitialRunning = ServiceCutoverRunningEvidence{}
 	blocked.StoppedBeforePrepare = ServiceCutoverStoppedEvidence{}
+	blocked.ActiveSourcesQuiesced = ServiceCutoverQuiesceEvidence{}
 	blocked.StoppedBeforeApply = ServiceCutoverStoppedEvidence{}
 	blocked.FinalRunning = ServiceCutoverRunningEvidence{}
 	if err := validateServiceCutoverReceipt(blocked); err != nil {
@@ -218,6 +223,23 @@ func TestValidateServiceCutoverReceiptStrictClaims(t *testing.T) {
 	blocked.CutoverSubreceiptSHA256 = strings.Repeat("a", 64)
 	if err := validateServiceCutoverReceipt(blocked); err == nil {
 		t.Fatal("blocked receipt claimed a D2c subreceipt")
+	}
+}
+
+func TestServiceCutoverReceiptProjectsActiveSourceQuiesceEvidence(t *testing.T) {
+	seed := validServiceCutoverReceiptForTest()
+	seed.ActiveSourcesQuiesced = ServiceCutoverQuiesceEvidence{}
+	result := cutoverServiceResult{
+		status: cutoverServiceApplied,
+		activeSourcesQuiesced: cutoverActiveQuiesceEvidence{
+			SQLiteSources: 4, BusyZero: 1, JournalModeDelete: 1, SameFile: 1, SidecarZero: 1,
+		},
+	}
+	receipt := serviceCutoverReceiptFromResult(seed, result, strings.Repeat("c", 64), CutoverStatusApplied, "")
+	if receipt.ActiveSourcesQuiesced != (ServiceCutoverQuiesceEvidence{
+		SQLiteSources: 4, BusyZero: 1, JournalModeDelete: 1, SameFile: 1, SidecarZero: 1,
+	}) {
+		t.Fatalf("active source quiesce projection = %#v", receipt.ActiveSourcesQuiesced)
 	}
 }
 
@@ -443,6 +465,38 @@ func TestExecuteServiceCutoverWithReceiptAppliedBindsD2C(t *testing.T) {
 	}
 	if receipt.CutoverSubreceiptStatus != CutoverStatusApplied || receipt.CutoverTerminalStatus != CutoverStatusApplied {
 		t.Fatalf("D2c status projection = %#v", receipt)
+	}
+	if !serviceQuiesceProjectionValid(receipt.ActiveSourcesQuiesced) {
+		t.Fatalf("active source quiesce projection = %#v", receipt.ActiveSourcesQuiesced)
+	}
+}
+
+func TestExecuteServiceCutoverWithReceiptQuiesceFailureIsBlockedAndRecovered(t *testing.T) {
+	fixture := newCutoverActiveCohortTestFixture(t)
+	oldSHA := mustFileSHA256(t, fixture.build.paths.installedRuntime)
+	manager := newCutoverServiceManager(oldSHA, mustFileSHA256(t, fixture.build.paths.stagedRuntime))
+	manager.startRuntimeSHA = []string{oldSHA}
+	options := cutoverServiceOptionsForFixture(t, fixture, manager)
+	options.ServiceReceipt = filepath.Join(filepath.Dir(options.build.CutoverReceipt), "service.json")
+	original := cutoverServiceQuiesceActive
+	cutoverServiceQuiesceActive = func(context.Context, cutoverActiveOptions) (cutoverActiveQuiesceEvidence, error) {
+		return cutoverActiveQuiesceEvidence{}, newCodedError("active_quiesce", "fixture is busy")
+	}
+	t.Cleanup(func() { cutoverServiceQuiesceActive = original })
+
+	receipt, err := executeServiceCutoverWithReceipt(context.Background(), options)
+	if err == nil || receipt.Status != CutoverStatusBlocked || receipt.ErrorCode != "active_quiesce" {
+		t.Fatalf("quiesce blocked receipt = %#v, err=%v", receipt, err)
+	}
+	if !serviceQuiesceProjectionZero(receipt.ActiveSourcesQuiesced) || !serviceRunningProjectionMatches(receipt.FinalRunning, oldSHA) {
+		t.Fatalf("quiesce blocked receipt overclaimed = %#v", receipt)
+	}
+	if err := validateServiceCutoverReceipt(receipt); err != nil {
+		t.Fatalf("quiesce blocked receipt invalid: %v", err)
+	}
+	onDisk, err := readServiceCutoverReceipt(options.ServiceReceipt)
+	if err != nil || !reflect.DeepEqual(onDisk, receipt) {
+		t.Fatalf("quiesce blocked receipt not durable: %#v, err=%v", onDisk, err)
 	}
 }
 

@@ -86,6 +86,7 @@ type cutoverServiceResult struct {
 	initialRunning            cutoverServiceRunningEvidence
 	initialMaintenanceStopped cutoverServiceMaintenanceStoppedEvidence
 	stoppedBeforePrepare      cutoverServiceStoppedEvidence
+	activeSourcesQuiesced     cutoverActiveQuiesceEvidence
 	stoppedBeforeApply        cutoverServiceStoppedEvidence
 	finalRunning              cutoverServiceRunningEvidence
 	// applied remains private on an operational applied result, and on the
@@ -97,6 +98,7 @@ type cutoverServiceResult struct {
 }
 
 var cutoverServicePrepareBuild = prepareCutoverBuildCohort
+var cutoverServiceQuiesceActive = quiesceCutoverActiveSQLiteSources
 var cutoverServicePrepareActive = prepareCutoverActiveCohort
 var cutoverServiceStage = stageCutoverCohort
 var cutoverServiceApply = applyStagedCutoverOperation
@@ -164,6 +166,14 @@ func executeServiceCutover(ctx context.Context, options cutoverServiceOptions) (
 	serviceResult.stoppedBeforePrepare = stopped
 	if err != nil {
 		return recoverCutoverServiceBeforeMutationWithResult(ctx, options.manager, oldRuntimeSHA256, serviceResult, "service_stopped", err)
+	}
+	quiesced, err := cutoverServiceQuiesceActive(ctx, options.active)
+	serviceResult.activeSourcesQuiesced = quiesced
+	if err != nil || !quiesced.valid() {
+		if err == nil {
+			err = errors.New("active SQLite quiesce evidence is invalid")
+		}
+		return recoverCutoverServiceBeforeMutationWithResult(ctx, options.manager, oldRuntimeSHA256, serviceResult, errorCode(err, "active_quiesce"), err)
 	}
 
 	preparedBuild, err := cutoverServicePrepareBuild(ctx, options.build)
