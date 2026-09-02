@@ -2300,6 +2300,23 @@ Trace、Data Write、restart 後の exact lookup を成功とは主張しない�
 - **Enforcement:** shared conversation retry classifierでcodeを判定し、error textの文字列判定は使わない。
 - **Tests:** `codes.InvalidArgument` operationのattempt countがexactly 1であることを検査する。
 
+#### Failure Knowledge: Vector契約検査がembedding後でDCI終端を欠落させた
+
+- **Failure:** retryを一回へ制限しても、1024次元embeddingを生成した後で既存`kb_general`の3584次元契約を
+  初めて検出したため、実Shiro DCIは`dci.file.read`後に10秒deadlineへ到達した。
+- **Problem:** requestはHTTP 500となり、期限切れ直後の`dci.evidence.created` appendもcanceled contextで失敗して、
+  `dci.search.failed`とfailed traceが残らなかった。
+- **Cause:** KB collection契約をembedding前に検査するowner境界がなく、Explorerもfile read後のEvidence appendだけ
+  recovery contextへ切り替えていなかった。
+- **Lesson:** 永続collectionの決定的なvector契約は高コストembeddingより前に検査する。探索期限後も、期限前に
+  読み取ったbounded evidenceとfailed terminal／traceは新しい短時間のrecovery contextで閉じる。
+- **Invariant:** incompatible KB collectionはembedding call zeroでtyped `InvalidArgument`となる。DCIがfile read直後に
+  canceledとなっても、Evidence event、failed terminal、failed traceを一つのAction／Traceへ永続化する。
+- **Enforcement:** `VectorDBStore.ValidateKBVectorContract`を`RealConversationManager.SearchKB`のembedding前gateとし、
+  ExplorerのEvidence appendはexpired search contextをbounded recovery contextへ置換する。
+- **Tests:** collection contract failure時のembedding call zeroと、file read直後cancel時のEvidence／failed terminal／
+  failed traceおよびfresh recovery contextを検査する。
+
 ## D2d-2c production cutover owner CLI
 
 D2d-2c は、D2d-2b まで private に閉じていた service-managed cutover を、既存の

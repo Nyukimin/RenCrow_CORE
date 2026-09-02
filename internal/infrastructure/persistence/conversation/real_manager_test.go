@@ -110,9 +110,10 @@ func (m *mockArchiveSQLiteStore) CleanupOldRecords(_ context.Context) (int64, er
 func (m *mockArchiveSQLiteStore) Close() error                                       { return nil }
 
 type mockVectorDBStore struct {
-	saved     []*domconv.ThreadSummary
-	kbSaved   []*domconv.Document
-	mockScore float32
+	saved         []*domconv.ThreadSummary
+	kbSaved       []*domconv.Document
+	mockScore     float32
+	kbContractErr error
 }
 
 func (m *mockVectorDBStore) SaveThreadSummary(_ context.Context, s *domconv.ThreadSummary) error {
@@ -140,6 +141,9 @@ func (m *mockVectorDBStore) IsNovelQuery(_ context.Context, _ []float32, thresho
 func (m *mockVectorDBStore) SaveKB(_ context.Context, doc *domconv.Document) error {
 	m.kbSaved = append(m.kbSaved, doc)
 	return nil
+}
+func (m *mockVectorDBStore) ValidateKBVectorContract(_ context.Context, _ string) error {
+	return m.kbContractErr
 }
 func (m *mockVectorDBStore) SearchKB(_ context.Context, _ string, _ []float32, _ int) ([]*domconv.Document, error) {
 	return []*domconv.Document{}, nil
@@ -348,11 +352,13 @@ func (m *mockL1Store) RecentRecallTraces(_ context.Context, sessionID string, _ 
 func (m *mockL1Store) Close() error { return nil }
 
 type mockEmbeddingProvider struct {
-	vec []float32
-	err error
+	vec   []float32
+	err   error
+	calls int
 }
 
 func (m *mockEmbeddingProvider) Embed(_ context.Context, _ string) ([]float32, error) {
+	m.calls++
 	return m.vec, m.err
 }
 
@@ -388,6 +394,21 @@ func newTestManager(embedder domconv.EmbeddingProvider, summarizer domconv.Conve
 		vectordbStore: &mockVectorDBStore{mockScore: 0.5},
 		embedder:      embedder,
 		summarizer:    summarizer,
+	}
+}
+
+func TestSearchKBRejectsCollectionContractBeforeEmbedding(t *testing.T) {
+	contractErr := errors.New("vector dimension contract mismatch")
+	embedder := &mockEmbeddingProvider{vec: []float32{0.1, 0.2}}
+	store := &mockVectorDBStore{kbContractErr: contractErr}
+	manager := &RealConversationManager{vectordbStore: store, embedder: embedder}
+
+	_, err := manager.SearchKB(context.Background(), "general", "identity", 3)
+	if !errors.Is(err, contractErr) {
+		t.Fatalf("SearchKB error = %v, want %v", err, contractErr)
+	}
+	if embedder.calls != 0 {
+		t.Fatalf("embedding calls = %d, want 0", embedder.calls)
 	}
 }
 

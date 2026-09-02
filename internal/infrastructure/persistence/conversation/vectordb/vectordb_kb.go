@@ -9,11 +9,40 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/google/uuid"
 	"github.com/qdrant/go-client/qdrant"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // getKBCollectionName はドメインごとのKBコレクション名を返す
 func (v *VectorDBStore) getKBCollectionName(domain string) string {
 	return fmt.Sprintf("kb_%s", domain)
+}
+
+// ValidateKBVectorContract rejects an existing KB collection whose unnamed
+// dense-vector size does not match the configured embedding contract.  This
+// check runs before embedding so a known-incompatible collection cannot spend
+// the caller's semantic-search budget.
+func (v *VectorDBStore) ValidateKBVectorContract(ctx context.Context, domain string) error {
+	collectionName := v.getKBCollectionName(domain)
+	exists, err := v.client.CollectionExists(ctx, collectionName)
+	if err != nil {
+		return fmt.Errorf("failed to check kb collection existence: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	info, err := v.client.GetCollectionInfo(ctx, collectionName)
+	if err != nil {
+		return fmt.Errorf("failed to inspect kb collection: %w", err)
+	}
+	actual := info.GetConfig().GetParams().GetVectorsConfig().GetParams().GetSize()
+	if actual == 0 {
+		return fmt.Errorf("kb collection %s has no unnamed dense-vector contract", collectionName)
+	}
+	if actual != v.vectorDimension {
+		return status.Errorf(codes.InvalidArgument, "kb collection %s vector dimension: expected %d, got %d", collectionName, v.vectorDimension, actual)
+	}
+	return nil
 }
 
 // initKBCollection はKBコレクションを初期化

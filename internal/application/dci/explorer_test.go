@@ -35,6 +35,24 @@ type eventAppendContext struct {
 	deadline    time.Time
 }
 
+type cancelAfterFileReadAppender struct {
+	recordingEventAppender
+	cancel context.CancelFunc
+}
+
+func (a *cancelAfterFileReadAppender) Append(ctx context.Context, event modulecore.EventEnvelope) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := a.recordingEventAppender.Append(ctx, event); err != nil {
+		return err
+	}
+	if event.EventType == dciFileReadEventType {
+		a.cancel()
+	}
+	return nil
+}
+
 func (a *recordingEventAppender) Append(ctx context.Context, event modulecore.EventEnvelope) error {
 	deadline, hasDeadline := ctx.Deadline()
 	a.contexts = append(a.contexts, eventAppendContext{
@@ -682,6 +700,40 @@ func TestExplorerSearchTimeoutRecoveryUsesFreshBoundedContext(t *testing.T) {
 	recoveredSave := traceStore.contexts[0]
 	if recoveredSave.err != nil || !recoveredSave.hasDeadline || !recoveredSave.deadline.After(time.Now()) {
 		t.Fatalf("failed trace save did not receive a fresh bounded context: %#v", recoveredSave)
+	}
+}
+
+func TestExplorerSearchTimeoutAfterFileReadPersistsFailedTerminal(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "spec.md"), "identity architecture evidence\n")
+	searchCtx, cancel := context.WithCancel(context.Background())
+	appender := &cancelAfterFileReadAppender{cancel: cancel}
+	traceStore := &memoryTraceStore{}
+	explorer := NewExplorer(Config{
+		Enabled:      true,
+		Allowlist:    []string{dir},
+		MaxEvidence:  1,
+		MaxFilesRead: 1,
+		Now:          fixedNow,
+	}, traceStore, WithEventAppender(appender))
+
+	result, err := explorer.SearchWithIdentity(searchCtx, "identity", modulecore.NewTraceID(), modulecore.NewActionID(), "agent", "shiro", "timeout-after-read")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("timeout-after-read error = %v, want context canceled", err)
+	}
+	if result.Trace.Status != "failed" || result.Trace.ErrorMessage != context.Canceled.Error() {
+		t.Fatalf("timeout-after-read trace = %#v", result.Trace)
+	}
+	if len(appender.events) != 6 || appender.events[4].EventType != dciEvidenceCreatedEventType || appender.events[5].EventType != dciSearchFailedEventType {
+		t.Fatalf("timeout-after-read events = %#v", appender.events)
+	}
+	for index, appendContext := range appender.contexts[4:] {
+		if appendContext.err != nil || !appendContext.hasDeadline || !appendContext.deadline.After(time.Now()) {
+			t.Fatalf("timeout-after-read recovery context %d = %#v", index, appendContext)
+		}
+	}
+	if len(traceStore.traces) != 1 || traceStore.traces[0].Status != "failed" {
+		t.Fatalf("timeout-after-read persistence = %#v", traceStore.traces)
 	}
 }
 

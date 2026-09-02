@@ -44,6 +44,7 @@ type vectordbStoreIface interface {
 	IsNovelQuery(ctx context.Context, queryEmbedding []float32, threshold float32) (bool, float32, error)
 	// KB (Knowledge Base) メソッド
 	SaveKB(ctx context.Context, doc *conversation.Document) error
+	ValidateKBVectorContract(ctx context.Context, domain string) error
 	SearchKB(ctx context.Context, domain string, queryEmbedding []float32, topK int) ([]*conversation.Document, error)
 	// KB管理メソッド (kb-admin用)
 	ListKBDocuments(ctx context.Context, domain string, limit int) ([]*conversation.Document, error)

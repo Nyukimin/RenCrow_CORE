@@ -418,7 +418,12 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID
 				break
 			}
 			evidenceID := modulecore.NewEvidenceID()
-			evidenceEvent, err := appendEvent(searchCtx, dciEvidenceCreatedEventType, readEventID, nil, evidenceID, map[string]any{
+			evidenceAppendCtx := searchCtx
+			var evidenceRecoveryCancel context.CancelFunc
+			if searchCtx.Err() != nil {
+				evidenceAppendCtx, evidenceRecoveryCancel = newDCIRecoveryContext(ctx)
+			}
+			evidenceEvent, err := appendEvent(evidenceAppendCtx, dciEvidenceCreatedEventType, readEventID, nil, evidenceID, map[string]any{
 				"file_path":  evidence.FilePath,
 				"line_start": evidence.LineStart,
 				"line_end":   evidence.LineEnd,
@@ -427,6 +432,9 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID
 				"reason":     evidence.Reason,
 				"confidence": evidence.Confidence,
 			})
+			if evidenceRecoveryCancel != nil {
+				evidenceRecoveryCancel()
+			}
 			if err != nil {
 				return domaindci.SearchResult{}, err
 			}

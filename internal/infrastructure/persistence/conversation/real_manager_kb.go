@@ -178,6 +178,9 @@ func (m *RealConversationManager) SearchKB(ctx context.Context, domain string, q
 		log.Printf("SearchKB: Embedder not configured, returning empty results (domain=%s, query=%q)", domain, query)
 		return []*domconv.Document{}, nil
 	}
+	if err := m.vectordbStore.ValidateKBVectorContract(ctx, domain); err != nil {
+		return nil, fmt.Errorf("kb vector contract validation failed for domain=%s: %w", domain, err)
+	}
 
 	// Query の Embedding 生成
 	queryEmbedding, err := m.embedder.Embed(ctx, query)
