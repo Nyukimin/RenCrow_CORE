@@ -876,10 +876,13 @@ restart 後は旧 generation 不在を確認し、同じ request／Action／Trac
 SQLite quick check／foreign key、restart 後 warning log も照合済みである。pre／post evidence は owner-only
 0600 で保存され、artifact と active config の SHA-256 は前後で一致した。
 
-ただし、これらを service／build receipt、logs、durable-state review と機械的に束ねる専用の final
-Step03 receipt publisher は未実装である。自然言語記録を final receipt の代替にせず、この owner check
-を manifest、strict input／hash validation、bounded non-leaking evidence、status／exit code、test とともに
-実装して production final chain を発行するまで、Step 03 全体は一部達成として扱う。
+D2e-4 で、これらを service／build receipt、logs、durable-state review と機械的に束ねる専用の
+`core-dci-identity-final` を `rencrow-core-verify` と owner manifestへ追加した。pre／post、service-cutover、
+cutover、deploy JSONLをowner-onlyの明示入力としてstrictに検証し、現在のservice／listener／readinessと
+post以降のwarning/error journalを自己収集する。成功evidenceは固定hash、canonical chain ID／counts、
+booleanだけを公開し、path、PID、query、credential、raw logを出さない。source-built verifierによる
+production read-only pre-deploy acceptanceは2026-09-02に`passed`したが、pushed/pinned artifactのdeployと
+配備済みverifierからのfresh final receiptが揃うまで、Step 03 全体は一部達成として扱う。
 
 ### Failure Knowledge
 

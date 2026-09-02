@@ -266,6 +266,35 @@
         }
       },
       "receipt_schema": "rencrow.check-receipt.v1"
+    },
+    {
+      "check_id": "core_dci_identity_final",
+      "guarantee_id": "core_dci_identity_final_receipt_chain",
+      "owner": "RenCrow_CORE",
+      "purpose": "bind the completed Step03 DCI migration and restart acceptance into one final receipt",
+      "target": "DCI migration receipts + deploy receipts + pre/post Shiro evidence -> current CORE runtime and clean journal",
+      "phase": "diagnostic",
+      "consumer": "Step03 DCI completion decision",
+      "failure_action": "blocked",
+      "cost": "high",
+      "safety_gate": true,
+      "coverage": ["canonical_e2e", "runtime_identity", "restart_binding", "receipt_trace", "durable_state", "logs"],
+      "executor": {
+        "kind": "owner_cli",
+        "command_id": "core-dci-identity-final",
+        "acquisition": {
+          "mode": "owner_self_collect",
+          "verification_safe": true,
+          "inputs": [
+            {"id": "pre_restart_evidence", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"},
+            {"id": "post_restart_evidence", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"},
+            {"id": "service_cutover_receipt", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"},
+            {"id": "cutover_receipt", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"},
+            {"id": "deploy_receipt_log", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"}
+          ]
+        }
+      },
+      "receipt_schema": "rencrow.check-receipt.v1"
     }
   ]
 }

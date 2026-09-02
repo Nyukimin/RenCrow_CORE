@@ -69,6 +69,19 @@ func testManifest(t *testing.T, commands ...string) string {
             {"id": "canonical_auth", "class": "credential_reference", "required": true, "source": "owner_active_config"},
             {"id": "owner_fixed_fixture", "class": "verification_fixture", "required": true, "source": "owner_fixed_fixture"},
             {"id": "pre_restart_evidence", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"}
+        ]
+        }`
+		} else if command == "core-dci-identity-final" {
+			safetyGate = true
+			acquisition = `{
+          "mode": "owner_self_collect",
+          "verification_safe": true,
+          "inputs": [
+            {"id": "pre_restart_evidence", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"},
+            {"id": "post_restart_evidence", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"},
+            {"id": "service_cutover_receipt", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"},
+            {"id": "cutover_receipt", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"},
+            {"id": "deploy_receipt_log", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"}
           ]
         }`
 		}
@@ -130,8 +143,8 @@ func TestVerifierAllowlistCoversCurrentManifestCommands(t *testing.T) {
 		}
 		seen[check.Executor.CommandID] = struct{}{}
 	}
-	if len(seen) != 10 {
-		t.Fatalf("current CORE manifest commands=%d, want 10: %#v", len(seen), seen)
+	if len(seen) != 11 {
+		t.Fatalf("current CORE manifest commands=%d, want 11: %#v", len(seen), seen)
 	}
 }
 
@@ -244,6 +257,16 @@ func TestVerifierDCIIdentityManifestUsesOnlyFixedOwnerInputs(t *testing.T) {
 				"canonical_auth":       "owner_active_config",
 				"owner_fixed_fixture":  "owner_fixed_fixture",
 				"pre_restart_evidence": "owner_external_artifact",
+			},
+		},
+		"core_dci_identity_final": {
+			command: "core-dci-identity-final",
+			inputs: map[string]string{
+				"pre_restart_evidence":    "owner_external_artifact",
+				"post_restart_evidence":   "owner_external_artifact",
+				"service_cutover_receipt": "owner_external_artifact",
+				"cutover_receipt":         "owner_external_artifact",
+				"deploy_receipt_log":      "owner_external_artifact",
 			},
 		},
 	}

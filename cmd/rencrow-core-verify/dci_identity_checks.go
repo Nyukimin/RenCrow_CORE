@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	dcipersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/dci"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/dcimigration"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -24,10 +26,13 @@ const (
 	dciIdentityResponseSchema        = "rencrow.agent-ops.dci-identity-acceptance/v1"
 	dciIdentityPreEvidenceSchema     = "rencrow.core-verify.dci-identity-pre-restart/v1"
 	dciIdentityPostEvidenceSchema    = "rencrow.core-verify.dci-identity-post-restart/v1"
+	dciIdentityFinalEvidenceSchema   = "rencrow.identity.dci-final/v1"
 	dciIdentityPreCommandID          = "core-dci-identity-pre-restart"
 	dciIdentityPostCommandID         = "core-dci-identity-post-restart"
+	dciIdentityFinalCommandID        = "core-dci-identity-final"
 	dciIdentityPrePhase              = "pre_restart"
 	dciIdentityPostPhase             = "post_restart"
+	dciIdentityFinalPhase            = "final"
 	dciIdentityEvidenceMaxBytes      = 64 << 10
 	dciIdentityMaxServicePID         = int64(^uint32(0) >> 1)
 	dciIdentityRoute                 = "/v1/agent/ops"
@@ -193,6 +198,234 @@ func runDCIIdentityPostRestart(ctx context.Context, options verifierOptions, che
 		response, responseFactsSHA256, runtimeObservation, dciIdentityPostEvidenceSchema,
 		dciIdentityPostCommandID, dciIdentityPostPhase, true, priorEvidenceSHA256,
 	)}
+}
+
+type dciDeployReceipt struct {
+	SchemaVersion   int      `json:"schema_version"`
+	ReceiptID       string   `json:"receipt_id"`
+	Component       string   `json:"component"`
+	BinaryPath      string   `json:"binary_path"`
+	SourcePath      string   `json:"source_path,omitempty"`
+	FromRevision    string   `json:"from_revision"`
+	TargetRevision  string   `json:"target_revision"`
+	Phase           string   `json:"phase"`
+	Outcome         string   `json:"outcome"`
+	RollbackOutcome string   `json:"rollback_outcome"`
+	RunningUnits    []string `json:"running_units"`
+	BackupPath      string   `json:"backup_path"`
+	StartedAt       string   `json:"started_at"`
+	FinishedAt      string   `json:"finished_at"`
+}
+
+func runDCIIdentityFinal(ctx context.Context, options verifierOptions, check manifestCheck, deps verifierDependencies) verifierOutcome {
+	deps = normalizeVerifierDependencies(deps)
+	post, postRaw, outcome := loadDCIIdentityPostEvidence(options.DCIPostRestartEvidence, deps)
+	if outcome.Status != "" {
+		return outcome
+	}
+	postAt, err := time.Parse(time.RFC3339Nano, post.ObservedAt)
+	if err != nil || postAt.After(options.ObservedAt) || postAt.Before(options.ObservedAt.Add(-24*time.Hour)) {
+		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical DCI post-restart evidence is stale or invalid"}
+	}
+	pre, preRaw, outcome := loadDCIIdentityPreEvidenceAt(options.DCIPreRestartEvidence, postAt, deps)
+	if outcome.Status != "" {
+		return outcome
+	}
+	if post.PreRestartEvidenceSHA256 != sha256Text(string(preRaw)) || !sameDCIIdentityStableFacts(pre.response(), post.response()) ||
+		post.ArtifactSHA256 != pre.ArtifactSHA256 || post.ConfigSHA256 != pre.ConfigSHA256 || post.ServiceGenerationSHA256 == pre.ServiceGenerationSHA256 ||
+		!post.FirstWriteReplay || !post.SecondWriteReplay || !post.OldGenerationAbsent {
+		return verifierOutcome{Status: "failed", FailureBoundary: "canonical DCI pre/post evidence chain is invalid"}
+	}
+	service, serviceSHA, err := loadServiceCutoverReceipt(options.DCIServiceCutoverReceipt)
+	if err != nil {
+		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical DCI service-cutover receipt is invalid"}
+	}
+	cutover, cutoverSHA, err := loadCutoverReceipt(options.DCICutoverReceipt)
+	if err != nil {
+		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical DCI cutover receipt is invalid"}
+	}
+	if service.Status != dcimigration.CutoverStatusApplied || service.CutoverSubreceiptStatus != dcimigration.CutoverStatusApplied ||
+		service.CutoverTerminalStatus != dcimigration.CutoverStatusApplied || service.CutoverSubreceiptSHA256 != cutoverSHA ||
+		service.NewRuntimeSHA256 != service.FinalRunning.RuntimeSHA256 || service.BuildReceiptSHA256 != cutover.BuildReceiptSHA256 ||
+		cutover.Status != dcimigration.CutoverStatusApplied || cutover.QuickCheckOK != 1 || cutover.ForeignKeyViolations != 0 ||
+		cutover.SidecarZero != 1 || cutover.LegacyKeyMarkers != 0 || cutover.OrphanActionRefs != 0 {
+		return verifierOutcome{Status: "failed", FailureBoundary: "canonical DCI migration receipt chain is invalid"}
+	}
+	deployRevision, deploySHA, err := loadDCIDeployRevision(options.DCIDeployReceiptLog, deps)
+	if err != nil {
+		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical DCI deployment receipt chain is invalid"}
+	}
+	runtimeObservation, outcome := observeDCIIdentityRuntime(ctx, options, check, deps)
+	if outcome.Status != "" {
+		return outcome
+	}
+	if runtimeObservation.ArtifactSHA256 != post.ArtifactSHA256 || runtimeObservation.ConfigSHA256 != post.ConfigSHA256 {
+		return verifierOutcome{Status: "failed", FailureBoundary: "canonical CORE runtime changed after DCI post-restart evidence"}
+	}
+	journal := deps.RunCommand(ctx, "journalctl", []string{"--user", "-u", canonicalCoreUnit, "--since", formatJournalctlTime(postAt), "--until", formatJournalctlTime(options.ObservedAt), "--priority=warning", "--no-pager", "--output=cat"})
+	if commandUnavailable(journal) || journal.ExitCode != 0 || journal.Err != nil {
+		return verifierOutcome{Status: "blocked", FailureBoundary: "canonical CORE journal review is unavailable"}
+	}
+	if strings.TrimSpace(journal.Stdout) != "" {
+		return verifierOutcome{Status: "failed", FailureBoundary: "canonical CORE warning or error log was observed"}
+	}
+	return verifierOutcome{Status: "passed", Evidence: map[string]any{
+		"evidence_schema": dciIdentityFinalEvidenceSchema, "command_id": dciIdentityFinalCommandID, "phase": dciIdentityFinalPhase,
+		"pre_evidence_sha256": sha256Text(string(preRaw)), "post_evidence_sha256": sha256Text(string(postRaw)),
+		"service_cutover_receipt_sha256": serviceSHA, "cutover_receipt_sha256": cutoverSHA, "deploy_receipt_log_sha256": deploySHA,
+		"deploy_revision": deployRevision, "request_id": post.RequestID, "agent_id": post.AgentID, "action_id": post.ActionID, "trace_id": post.TraceID,
+		"event_graph_sha256": post.EventGraphSHA256, "event_count": post.EventCount, "step_count": post.StepCount, "evidence_count": post.EvidenceCount,
+		"current_projection_count": post.CurrentProjectionCount, "archive_projection_count": post.ArchiveProjectionCount,
+		"artifact_sha256": post.ArtifactSHA256, "config_sha256": post.ConfigSHA256, "service_generation_sha256": runtimeObservation.ServiceGenerationSHA256,
+		"listener_ready": true, "readiness_ready": true, "old_generation_absent": true, "migration_integrity": true, "deploy_pair_verified": true, "journal_clean": true,
+	}}
+}
+
+func loadDCIIdentityPreEvidenceAt(path string, at time.Time, deps verifierDependencies) (dciIdentityEvidence, []byte, verifierOutcome) {
+	evidence, _, outcome := loadDCIIdentityPreEvidence(path, at, deps)
+	if outcome.Status != "" {
+		return dciIdentityEvidence{}, nil, outcome
+	}
+	raw, err := readRegularFile(path, dciIdentityEvidenceMaxBytes)
+	if err != nil {
+		return dciIdentityEvidence{}, nil, verifierOutcome{Status: "blocked", FailureBoundary: dciIdentityPriorBoundary}
+	}
+	return evidence, raw, verifierOutcome{}
+}
+
+func loadDCIIdentityPostEvidence(path string, deps verifierDependencies) (dciIdentityEvidence, []byte, verifierOutcome) {
+	raw, err := readOwnerOnlyEvidence(path, dciIdentityEvidenceMaxBytes, deps)
+	if err != nil {
+		return dciIdentityEvidence{}, nil, verifierOutcome{Status: "blocked", FailureBoundary: "canonical DCI post-restart evidence is unavailable"}
+	}
+	var evidence dciIdentityEvidence
+	values, err := decodeDCIIdentityObject(raw, &evidence, dciIdentityPostEvidenceKeys)
+	if err != nil || validateDCIIdentityPostEvidenceTypes(values) != nil {
+		return dciIdentityEvidence{}, nil, verifierOutcome{Status: "blocked", FailureBoundary: "canonical DCI post-restart evidence is invalid"}
+	}
+	if evidence.SchemaVersion != verifierSchemaVersion || evidence.ReceiptSchema != verifierReceiptSchema || evidence.CheckID != "core_dci_identity_post_restart" || evidence.Status != "passed" || evidence.FailureBoundary != "" || evidence.EvidenceSchema != dciIdentityPostEvidenceSchema || evidence.CommandID != dciIdentityPostCommandID || evidence.Phase != dciIdentityPostPhase || !evidence.ListenerReady || !evidence.ReadinessReady || !evidence.OldGenerationAbsent || !isLowercaseSHA256(evidence.PreRestartEvidenceSHA256) || !isLowercaseSHA256(evidence.ServiceGenerationSHA256) || !isLowercaseSHA256(evidence.ArtifactSHA256) || !isLowercaseSHA256(evidence.ConfigSHA256) {
+		return dciIdentityEvidence{}, nil, verifierOutcome{Status: "blocked", FailureBoundary: "canonical DCI post-restart evidence is invalid"}
+	}
+	facts, err := validateDCIIdentityResponseFacts(evidence.response(), evidence.RequestID)
+	if err != nil || facts != evidence.ResponseFactsSHA256 || !evidence.FirstWriteReplay || !evidence.SecondWriteReplay {
+		return dciIdentityEvidence{}, nil, verifierOutcome{Status: "blocked", FailureBoundary: "canonical DCI post-restart evidence is invalid"}
+	}
+	return evidence, raw, verifierOutcome{}
+}
+
+func validateDCIIdentityPostEvidenceTypes(fields map[string]json.RawMessage) error {
+	for _, key := range []string{"receipt_schema", "check_id", "status", "observed_at", "failure_boundary", "evidence_schema", "command_id", "phase", "response_schema_version", "response_status", "request_id", "agent_id", "role", "operation", "action_id", "trace_id", "event_graph_sha256", "fixture_sha256", "service_generation_sha256", "artifact_sha256", "config_sha256", "response_facts_sha256", "pre_restart_evidence_sha256"} {
+		if err := unmarshalDCIIdentityNonNull(fields[key], new(string)); err != nil {
+			return err
+		}
+	}
+	for _, key := range []string{"first_write_replay", "second_write_replay", "listener_ready", "readiness_ready", "old_generation_absent"} {
+		if err := unmarshalDCIIdentityNonNull(fields[key], new(bool)); err != nil {
+			return err
+		}
+	}
+	for _, key := range []string{"schema_version", "event_count", "step_count", "evidence_count", "current_projection_count", "archive_projection_count"} {
+		if err := unmarshalDCIIdentityNonNull(fields[key], new(int64)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readOwnerOnlyEvidence(path string, limit int, deps verifierDependencies) ([]byte, error) {
+	deps = normalizeVerifierDependencies(deps)
+	path = strings.TrimSpace(path)
+	info, err := deps.Lstat(path)
+	if err != nil || info == nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || (deps.Platform() != "windows" && info.Mode().Perm() != 0o600) {
+		return nil, errors.New("owner evidence unavailable")
+	}
+	return readRegularFile(path, limit)
+}
+
+func loadServiceCutoverReceipt(path string) (dcimigration.ServiceCutoverReceipt, string, error) {
+	before, _, err := sha256File(path)
+	if err != nil {
+		return dcimigration.ServiceCutoverReceipt{}, "", err
+	}
+	receipt, err := dcimigration.ReadValidatedServiceCutoverReceipt(path)
+	if err != nil {
+		return receipt, "", err
+	}
+	after, _, err := sha256File(path)
+	if err != nil || before != after {
+		return receipt, "", errors.New("service cutover receipt changed during validation")
+	}
+	return receipt, after, nil
+}
+func loadCutoverReceipt(path string) (dcimigration.CutoverReceipt, string, error) {
+	before, _, err := sha256File(path)
+	if err != nil {
+		return dcimigration.CutoverReceipt{}, "", err
+	}
+	receipt, err := dcimigration.ReadValidatedCutoverReceipt(path)
+	if err != nil {
+		return receipt, "", err
+	}
+	after, _, err := sha256File(path)
+	if err != nil || before != after {
+		return receipt, "", errors.New("cutover receipt changed during validation")
+	}
+	return receipt, after, nil
+}
+
+func loadDCIDeployRevision(path string, deps verifierDependencies) (string, string, error) {
+	data, err := readOwnerOnlyEvidence(path, maxVerifierFileBytes, deps)
+	if err != nil {
+		return "", "", err
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 4096), 64<<10)
+	pairs := map[string]map[string]bool{}
+	order := []string{}
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var receipt dciDeployReceipt
+		if err := decodeStrictJSON(line, &receipt); err != nil {
+			return "", "", err
+		}
+		if receipt.SchemaVersion != 1 || receipt.Component != "core" || receipt.Outcome != "success" || receipt.Phase != "complete" || !isFullGitSHA(receipt.TargetRevision) {
+			continue
+		}
+		name := filepath.Base(receipt.BinaryPath)
+		if name != "rencrow" && name != "rencrow-core-verify" {
+			continue
+		}
+		if pairs[receipt.TargetRevision] == nil {
+			pairs[receipt.TargetRevision] = map[string]bool{}
+			order = append(order, receipt.TargetRevision)
+		}
+		pairs[receipt.TargetRevision][name] = true
+	}
+	if err := scanner.Err(); err != nil {
+		return "", "", err
+	}
+	for i := len(order) - 1; i >= 0; i-- {
+		rev := order[i]
+		if pairs[rev]["rencrow"] && pairs[rev]["rencrow-core-verify"] {
+			return rev, sha256Text(string(data)), nil
+		}
+	}
+	return "", "", errors.New("paired deploy revision unavailable")
+}
+
+func isFullGitSHA(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= '0' && character <= '9') && !(character >= 'a' && character <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func observeDCIIdentityRuntime(ctx context.Context, options verifierOptions, check manifestCheck, deps verifierDependencies) (dciIdentityRuntimeObservation, verifierOutcome) {

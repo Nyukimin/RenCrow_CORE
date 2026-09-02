@@ -112,26 +112,30 @@ type manifestInput struct {
 }
 
 type verifierOptions struct {
-	ManifestPath          string
-	CheckID               string
-	ObservedAt            time.Time
-	EvidenceDir           string
-	CoreURL               string
-	SnapshotDir           string
-	RestoreCheck          string
-	CatalogPath           string
-	WorkspacePath         string
-	InstalledArtifact     string
-	StampedChecker        string
-	Python                string
-	Unit                  string
-	ConfigPath            string
-	RequestEvidence       string
-	JournalSince          time.Time
-	ActorTokenFile        string
-	RequestID             string
-	ActorMessage          string
-	DCIPreRestartEvidence string
+	ManifestPath             string
+	CheckID                  string
+	ObservedAt               time.Time
+	EvidenceDir              string
+	CoreURL                  string
+	SnapshotDir              string
+	RestoreCheck             string
+	CatalogPath              string
+	WorkspacePath            string
+	InstalledArtifact        string
+	StampedChecker           string
+	Python                   string
+	Unit                     string
+	ConfigPath               string
+	RequestEvidence          string
+	JournalSince             time.Time
+	ActorTokenFile           string
+	RequestID                string
+	ActorMessage             string
+	DCIPreRestartEvidence    string
+	DCIPostRestartEvidence   string
+	DCIServiceCutoverReceipt string
+	DCICutoverReceipt        string
+	DCIDeployReceiptLog      string
 }
 
 type verifierCommandResult struct {
@@ -246,6 +250,7 @@ var fixedVerifierCommands = map[string]string{
 	"core-canonical-actor-e2e":                 "core_canonical_actor_e2e",
 	"core-dci-identity-pre-restart":            "core_dci_identity_pre_restart",
 	"core-dci-identity-post-restart":           "core_dci_identity_post_restart",
+	"core-dci-identity-final":                  "core_dci_identity_final",
 }
 
 func checkIDForCommand(commandID string) (string, bool) {
@@ -277,6 +282,8 @@ func verifierForCommand(commandID string) (verifierHandler, bool) {
 		return runDCIIdentityPreRestart, true
 	case "core-dci-identity-post-restart":
 		return runDCIIdentityPostRestart, true
+	case "core-dci-identity-final":
+		return runDCIIdentityFinal, true
 	default:
 		return nil, false
 	}
@@ -559,6 +566,10 @@ func runVerifierCLI(ctx context.Context, args []string, out, errOut io.Writer, d
 	actorMessage := flags.String("actor-message", "", "bounded canonical Agent diagnostic message")
 	messageAlias := flags.String("message", "", "alias for --actor-message")
 	dciPreRestartEvidence := flags.String("dci-pre-restart-evidence", "", "owner-only DCI pre-restart evidence for the fixed post-restart check")
+	dciPostRestartEvidence := flags.String("dci-post-restart-evidence", "", "owner-only DCI post-restart evidence for the fixed final check")
+	dciServiceCutoverReceipt := flags.String("dci-service-cutover-receipt", "", "owner-only DCI service-cutover receipt for the fixed final check")
+	dciCutoverReceipt := flags.String("dci-cutover-receipt", "", "owner-only DCI cutover receipt for the fixed final check")
+	dciDeployReceiptLog := flags.String("dci-deploy-receipt-log", "", "owner-only DCI deployment receipt log for the fixed final check")
 	if err := flags.Parse(args[1:]); err != nil {
 		return verifierExitCLIError
 	}
@@ -659,7 +670,11 @@ func runVerifierCLI(ctx context.Context, args []string, out, errOut io.Writer, d
 		Python: *python, Unit: *unit, ConfigPath: *configPath,
 		RequestEvidence: *requestEvidence, JournalSince: journalSince,
 		ActorTokenFile: *actorTokenFile, RequestID: *requestID, ActorMessage: *actorMessage,
-		DCIPreRestartEvidence: *dciPreRestartEvidence,
+		DCIPreRestartEvidence:    *dciPreRestartEvidence,
+		DCIPostRestartEvidence:   *dciPostRestartEvidence,
+		DCIServiceCutoverReceipt: *dciServiceCutoverReceipt,
+		DCICutoverReceipt:        *dciCutoverReceipt,
+		DCIDeployReceiptLog:      *dciDeployReceiptLog,
 	}
 	deps = normalizeVerifierDependencies(deps)
 	outcome := handler(ctx, options, check, deps)

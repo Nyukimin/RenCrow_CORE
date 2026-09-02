@@ -21,6 +21,7 @@ func TestDCIIdentityCommandsAreFixedAndAllowlisted(t *testing.T) {
 	for command, checkID := range map[string]string{
 		"core-dci-identity-pre-restart":  "core_dci_identity_pre_restart",
 		"core-dci-identity-post-restart": "core_dci_identity_post_restart",
+		"core-dci-identity-final":        "core_dci_identity_final",
 	} {
 		if got, ok := checkIDForCommand(command); !ok || got != checkID {
 			t.Fatalf("checkIDForCommand(%q) = %q, %t; want %q, true", command, got, ok, checkID)
@@ -285,6 +286,48 @@ func TestDCIIdentityResponseRejectsUnknownMissingAndTamperedFacts(t *testing.T) 
 				t.Fatal("tampered response was accepted")
 			}
 		})
+	}
+}
+
+func TestDCIDeployRevisionRequiresOwnerOnlyStrictLatestPair(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deploy.jsonl")
+	record := func(binary, revision string) string {
+		value := map[string]any{
+			"schema_version": 1, "receipt_id": "receipt-1", "started_at": "2026-09-02T00:00:00Z",
+			"finished_at": "2026-09-02T00:00:01Z", "component": "core", "binary_path": "/opt/" + binary,
+			"from_revision": strings.Repeat("a", 40), "target_revision": revision, "running_units": []string{},
+			"phase": "complete", "outcome": "success", "rollback_outcome": "not_attempted", "backup_path": "/backup",
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(encoded) + "\n"
+	}
+	oldRevision := strings.Repeat("b", 40)
+	latestRevision := strings.Repeat("c", 40)
+	content := record("rencrow", oldRevision) + record("rencrow-core-verify", oldRevision) + record("rencrow", latestRevision) + record("rencrow-core-verify", latestRevision)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	revision, hash, err := loadDCIDeployRevision(path, verifierDependencies{Platform: func() string { return "linux" }})
+	if err != nil || revision != latestRevision || hash != sha256Text(content) {
+		t.Fatalf("revision/hash/err=%q/%q/%v", revision, hash, err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadDCIDeployRevision(path, verifierDependencies{Platform: func() string { return "linux" }}); err == nil {
+		t.Fatal("non-owner-only deploy receipt was accepted")
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.TrimSuffix(content, "\n")[:len(strings.TrimSuffix(content, "\n"))-1]+`,"unknown":true}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadDCIDeployRevision(path, verifierDependencies{Platform: func() string { return "linux" }}); err == nil {
+		t.Fatal("unknown deploy receipt field was accepted")
 	}
 }
 

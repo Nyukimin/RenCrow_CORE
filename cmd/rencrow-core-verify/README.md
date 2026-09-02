@@ -21,5 +21,14 @@ explicit owner inputs and return `blocked` when those inputs or the canonical
 route are unavailable. No fallback route, test double, restart, build, deploy,
 or external mutation is performed.
 
+Step 03 DCI acceptance uses three fixed checks. The pre check records a fresh
+authenticated Shiro route result, the post check binds the same request after a
+canonical service restart, and `core-dci-identity-final` strictly joins those
+owner-only evidence files with the service-cutover, cutover, and deploy
+receipts. The final check re-observes the canonical service, listener, and
+readiness and requires a clean warning/error journal since the post evidence.
+It emits only bounded hashes, canonical chain IDs/counts, and booleans; it does
+not expose input paths, process IDs, queries, credentials, or raw logs.
+
 Exit status is `0` for `passed`/`not_applicable`, `10` for `failed`, `20` for
 `blocked`, `30` for `unverified`, and `2` for a CLI, manifest, or schema error.

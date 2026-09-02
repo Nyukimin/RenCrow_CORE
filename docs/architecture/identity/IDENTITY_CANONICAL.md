@@ -2719,6 +2719,37 @@ chain へ結合する。
   pre／post、実 Shiro route、service generation、Action／Trace／Event graph／projection counts の
   全てが揃うまで D2e-3、D2e-2、または Step 03 を complete と報告しない。
 
+## D2e-4 final Step03 receipt publisher
+
+D2e-4 は上記 sequence の結果を一つの machine-readable chain に束ねる read-only owner check である。
+`cmd/rencrow-core-verify` に固定 command `core-dci-identity-final`、固定 check
+`core_dci_identity_final` を一つだけ追加する。generic finalizer、phase flag、任意 command、任意 DB／
+path discovery、restart／deploy／migration は実装しない。
+
+caller が明示できる入力は、同じ acceptance cohort の owner-only regular file である pre evidence、
+post evidence、service-cutover receipt、cutover subreceipt、deploy receipt JSONL の五つだけとする。
+symlink、owner 外 permission、bounded size 超過、unknown／duplicate field、trailing JSON、schema／status／
+hash 不一致を fail closed で拒否する。pre／post は D2e-3 の strict validator を再利用し、post が保持する
+pre physical SHA-256、stable Action／Trace／Event graph／counts、artifact／config hash、異なる generation、
+old-generation-absent を再照合する。service-cutover v3 と cutover v2 は各 owner schemaを strict に読み、
+`applied`、subreceipt physical SHA-256、内部 build／runtime binding、final running、quick-check、foreign-key、
+orphan、legacy key、sidecar zeroを検査する。migration cohort の runtime hashを後続 remediation artifact
+hashと同一視しない。
+
+deploy JSONL は bounded line数／line size／strict schemaで読み、最後の成功した `rencrow` と
+`rencrow-core-verify` の共通 full Git revisionを決定的に選ぶ。現在の canonical service owner、artifact、
+active config、listener、readinessを再観測し、pre／postのartifact／config hashと一致させる。post evidence
+の時刻以降の canonical unit journalをboundedに取得し、warning／error／panic／fatalが一件でもあれば
+`failed`、journal取得不能なら`blocked`とする。raw log本文は公開しない。
+
+成功 evidence schema は `rencrow.identity.dci-final/v1`、phase は `final` とする。公開してよいfieldは、
+command／phase、pre／post／service-cutover／cutover／deploy-logの各physical SHA-256、deploy revision、
+request／agent／Action／Trace、Event graph hash、event／step／evidence／current／archive counts、artifact／
+config／current generation hash、listener／readiness／old-generation-absent／migration-integrity／
+deploy-pair／journal-clean のbooleanだけである。filesystem path、PID、query、body、token、raw log、DB内容、
+任意IDは出力しない。standard receiptとfinal evidenceをowner-onlyで発行し、これが`passed`になるまで
+Step 03をcompleteとしない。
+
 ### Failure Knowledge
 
 - **Failure:** pre と post を一つの phase flag／generic verifier command にまとめ、restart を
