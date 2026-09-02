@@ -2,13 +2,67 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func TestJSONSessionRepositoryCanonicalIdentityRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	repo := NewJSONSessionRepository(dir)
+	address, err := session.NewChannelAddress("line", "U123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := modulecore.NewSessionID()
+	sess, err := session.NewCanonicalSession(id, "2026-09-02", address, time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.AddTask(task.NewTask(task.NewJobID(), "hello", "line", "U123"))
+	sess.SetMemory("key", "value")
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, string(id)+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["logical_date"]; !ok {
+		t.Fatal("logical_date is absent")
+	}
+	if _, ok := fields["channel_address"]; !ok {
+		t.Fatal("channel_address is absent")
+	}
+	if _, ok := fields["channel"]; ok {
+		t.Fatal("legacy channel must not be written for a canonical session")
+	}
+	if _, ok := fields["chat_id"]; ok {
+		t.Fatal("legacy chat_id must not be written for a canonical session")
+	}
+
+	loaded, err := repo.Load(context.Background(), string(id))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.ID() != string(id) || loaded.LogicalDate() != "2026-09-02" || loaded.ChannelAddress() != address {
+		t.Fatalf("loaded identity = id:%q date:%q address:%#v", loaded.ID(), loaded.LogicalDate(), loaded.ChannelAddress())
+	}
+	if !loaded.CreatedAt().Equal(sess.CreatedAt()) || !loaded.UpdatedAt().Equal(sess.UpdatedAt()) {
+		t.Fatalf("loaded timestamps = %s/%s, want %s/%s", loaded.CreatedAt(), loaded.UpdatedAt(), sess.CreatedAt(), sess.UpdatedAt())
+	}
+}
 
 func TestNewJSONSessionRepository(t *testing.T) {
 	tmpDir := t.TempDir()

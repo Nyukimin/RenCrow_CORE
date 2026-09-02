@@ -13,13 +13,15 @@ var ErrSessionNotFound = errors.New("session not found")
 // Session はユーザーセッションを表すエンティティ
 // 日次カットオーバーで切り替わり、会話履歴とメモリを保持
 type Session struct {
-	id        string                 // セッションID（日付ベース: "20260301-line-U123456"）
-	channel   string                 // チャネル（LINE/Slack等）
-	chatID    string                 // チャットID
-	history   []task.Task            // 会話履歴
-	memory    map[string]interface{} // セッションメモリ
-	createdAt time.Time              // セッション作成時刻
-	updatedAt time.Time              // 最終更新時刻
+	id             string // 不透明なCanonical SessionID。日付やrouting情報を埋め込まない。
+	logicalDate    string
+	channelAddress ChannelAddress
+	channel        string                 // チャネル（LINE/Slack等）
+	chatID         string                 // チャットID
+	history        []task.Task            // 会話履歴
+	memory         map[string]interface{} // セッションメモリ
+	createdAt      time.Time              // セッション作成時刻
+	updatedAt      time.Time              // 最終更新時刻
 }
 
 // NewSession は新しいセッションを作成
@@ -62,6 +64,16 @@ func (s *Session) Channel() string {
 // ChatID はチャットIDを返す
 func (s *Session) ChatID() string {
 	return s.chatID
+}
+
+// LogicalDate returns the explicit calendar partition used to find a session.
+func (s *Session) LogicalDate() string {
+	return s.logicalDate
+}
+
+// ChannelAddress returns routing information kept outside the opaque SessionID.
+func (s *Session) ChannelAddress() ChannelAddress {
+	return s.channelAddress
 }
 
 // CreatedAt は作成時刻を返す

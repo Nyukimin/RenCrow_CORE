@@ -11,6 +11,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // JSONSessionRepository はJSONファイルベースのSessionRepository実装
@@ -27,13 +28,15 @@ func NewJSONSessionRepository(baseDir string) *JSONSessionRepository {
 
 // sessionDTO はJSONシリアライズ用のDTO
 type sessionDTO struct {
-	ID        string                 `json:"id"`
-	Channel   string                 `json:"channel"`
-	ChatID    string                 `json:"chat_id"`
-	History   []taskDTO              `json:"history"`
-	Memory    map[string]interface{} `json:"memory"`
-	CreatedAt time.Time              `json:"created_at"`
-	UpdatedAt time.Time              `json:"updated_at"`
+	ID             string                  `json:"id"`
+	LogicalDate    string                  `json:"logical_date,omitempty"`
+	ChannelAddress *session.ChannelAddress `json:"channel_address,omitempty"`
+	Channel        string                  `json:"channel,omitempty"`
+	ChatID         string                  `json:"chat_id,omitempty"`
+	History        []taskDTO               `json:"history"`
+	Memory         map[string]interface{}  `json:"memory"`
+	CreatedAt      time.Time               `json:"created_at"`
+	UpdatedAt      time.Time               `json:"updated_at"`
 }
 
 // taskDTO はJSONシリアライズ用のDTO
@@ -80,7 +83,11 @@ func (r *JSONSessionRepository) Load(ctx context.Context, id string) (*session.S
 		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
 	}
 
-	return r.fromDTO(&dto), nil
+	result, err := r.fromDTO(&dto)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reconstruct session: %w", err)
+	}
+	return result, nil
 }
 
 // Exists はセッションが存在するか確認
@@ -127,40 +134,60 @@ func (r *JSONSessionRepository) toDTO(sess *session.Session) *sessionDTO {
 		})
 	}
 
-	return &sessionDTO{
+	dto := &sessionDTO{
 		ID:        sess.ID(),
-		Channel:   sess.Channel(),
-		ChatID:    sess.ChatID(),
 		History:   history,
 		Memory:    sess.GetAllMemory(),
 		CreatedAt: sess.CreatedAt(),
 		UpdatedAt: sess.UpdatedAt(),
 	}
+	if address := sess.ChannelAddress(); sess.LogicalDate() != "" && address.Channel != "" && address.Address != "" {
+		dto.LogicalDate = sess.LogicalDate()
+		dto.ChannelAddress = &address
+	} else {
+		dto.Channel = sess.Channel()
+		dto.ChatID = sess.ChatID()
+	}
+	return dto
 }
 
 // fromDTO はDTOからSessionを生成
-func (r *JSONSessionRepository) fromDTO(dto *sessionDTO) *session.Session {
-	sess := session.ReconstructSession(dto.ID, dto.Channel, dto.ChatID, dto.CreatedAt, dto.UpdatedAt)
-
-	// 履歴を復元
+func (r *JSONSessionRepository) fromDTO(dto *sessionDTO) (*session.Session, error) {
+	history := make([]task.Task, 0, len(dto.History))
 	for _, taskDTO := range dto.History {
 		jobID := task.JobIDFromString(taskDTO.JobID)
 		t := task.NewTask(jobID, taskDTO.UserMessage, taskDTO.Channel, taskDTO.ChatID)
-
 		if taskDTO.ForcedRoute != "" {
 			t = t.WithForcedRoute(routing.Route(taskDTO.ForcedRoute))
 		}
 		if taskDTO.Route != "" {
 			t = t.WithRoute(routing.Route(taskDTO.Route))
 		}
-
-		sess.AddTask(t)
+		history = append(history, t)
 	}
 
-	// メモリを復元
-	for key, value := range dto.Memory {
-		sess.SetMemory(key, value)
+	var sess *session.Session
+	if dto.LogicalDate != "" || dto.ChannelAddress != nil {
+		if dto.ChannelAddress == nil {
+			return nil, fmt.Errorf("channel_address is required with logical_date")
+		}
+		var err error
+		sess, err = session.ReconstructCanonicalSession(modulecore.SessionID(dto.ID), dto.LogicalDate, *dto.ChannelAddress, history, dto.Memory, dto.CreatedAt, dto.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		sess = session.ReconstructSession(dto.ID, dto.Channel, dto.ChatID, dto.CreatedAt, dto.UpdatedAt)
 	}
 
-	return sess
+	if dto.LogicalDate == "" && dto.ChannelAddress == nil {
+		for _, item := range history {
+			sess.AddTask(item)
+		}
+		for key, value := range dto.Memory {
+			sess.SetMemory(key, value)
+		}
+	}
+
+	return sess, nil
 }
