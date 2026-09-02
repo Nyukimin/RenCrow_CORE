@@ -2762,7 +2762,8 @@ Step 03をcompleteとしない。
   `MaxFilesRead`範囲だけへ限定し、rank時のcontentを同一requestの最終scanで再利用する。
   metadataのないfilesystem fallbackは全候補content rankを維持する。
 - **Invariant:** provider／registry候補に対するfile readは、content rankと最終scanを合わせて
-  最大`MaxFilesRead`であり、同一request内の各候補を一度だけ読む。
+  最大`MaxFilesRead`であり、同一request内の各候補を一度だけ読む。`MaxEvidence`等の成功終端を
+  満たした後は、同時にdeadlineへ達しても次候補のcontext判定で成功結果を失敗へ上書きしない。
 - **Enforcement / Tests:** Explorerの順序とbounded read testで強制し、fallbackのcontent discovery、
   provider統合、metadata優先、実Shiro production routeを回帰検証する。
 

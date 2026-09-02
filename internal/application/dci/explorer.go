@@ -232,6 +232,7 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID
 	}
 	lastEventID := modulecore.EventID("")
 	evidenceEventIDs := make([]modulecore.EventID, 0)
+	boundedCompletion := false
 	appendEvent := func(appendCtx context.Context, eventType string, cause modulecore.EventID, dependencies []modulecore.EventID, evidenceID modulecore.EvidenceID, payload map[string]any) (modulecore.EventEnvelope, error) {
 		event := modulecore.NewEventEnvelope(traceID, cause, dependencies, dciComponentID, eventType, e.cfg.Now().UTC(), payload)
 		event.ActionID = actionID
@@ -254,20 +255,28 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID
 			trace.ErrorMessage = ""
 			trace.FinalEvidenceCount = len(pack.Evidence)
 			trace.EndedAt = e.cfg.Now().UTC()
-			if searchCtx.Err() == nil {
+			if searchCtx.Err() == nil || boundedCompletion {
+				projectionCtx := searchCtx
+				var projectionRecoveryCancel context.CancelFunc
+				if searchCtx.Err() != nil {
+					projectionCtx, projectionRecoveryCancel = newDCIRecoveryContext(ctx)
+				}
 				projection := domaindci.SearchResult{
 					Pack:  pack,
 					Trace: trace,
 				}
-				if err := e.saveSourceCandidates(searchCtx, projection); err != nil {
+				if err := e.saveSourceCandidates(projectionCtx, projection); err != nil {
 					pack.Limitations = append(pack.Limitations, "dci source candidate save failed")
-					if searchCtx.Err() != nil {
+					if searchCtx.Err() != nil && !boundedCompletion {
 						status = "failed"
 						searchErr = searchCtx.Err()
 					}
 				}
+				if projectionRecoveryCancel != nil {
+					projectionRecoveryCancel()
+				}
 			}
-			if searchCtx.Err() != nil {
+			if searchCtx.Err() != nil && !boundedCompletion {
 				status = "failed"
 				searchErr = searchCtx.Err()
 			}
@@ -368,9 +377,6 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID
 	candidates = contentCandidates
 	filesRead := 0
 	for _, path := range candidates {
-		if searchCtx.Err() != nil {
-			return appendTerminal("failed", searchCtx.Err())
-		}
 		if stepNo > e.cfg.MaxSteps {
 			pack.Limitations = append(pack.Limitations, "max search steps reached")
 			break
@@ -382,6 +388,9 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID
 		if len(pack.Evidence) >= e.cfg.MaxEvidence {
 			pack.Limitations = append(pack.Limitations, "max evidence reached")
 			break
+		}
+		if searchCtx.Err() != nil {
+			return appendTerminal("failed", searchCtx.Err())
 		}
 		filesRead++
 		sourceSelected, err := appendEvent(searchCtx, dciSourceSelectedEventType, lastEventID, nil, "", map[string]any{
@@ -462,7 +471,9 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID
 			lastEventID = evidenceEvent.EventID
 		}
 	}
-	if searchCtx.Err() != nil {
+	boundedTerminalReached := len(pack.Evidence) >= e.cfg.MaxEvidence
+	boundedCompletion = boundedTerminalReached && errors.Is(searchCtx.Err(), context.DeadlineExceeded)
+	if searchCtx.Err() != nil && !boundedCompletion {
 		return appendTerminal("failed", searchCtx.Err())
 	}
 	if len(pack.Evidence) == 0 && trace.ErrorMessage == "" {

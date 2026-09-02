@@ -41,6 +41,26 @@ type cancelAfterFileReadAppender struct {
 	cancel context.CancelFunc
 }
 
+type delayAfterEvidenceAppender struct {
+	recordingEventAppender
+	after int
+	count int
+	delay time.Duration
+}
+
+func (a *delayAfterEvidenceAppender) Append(ctx context.Context, event modulecore.EventEnvelope) error {
+	if err := a.recordingEventAppender.Append(ctx, event); err != nil {
+		return err
+	}
+	if event.EventType == dciEvidenceCreatedEventType {
+		a.count++
+		if a.count == a.after {
+			time.Sleep(a.delay)
+		}
+	}
+	return nil
+}
+
 func (a *cancelAfterFileReadAppender) Append(ctx context.Context, event modulecore.EventEnvelope) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -989,6 +1009,29 @@ func TestExplorerContentRankingReadsOnlyFilesWithinExecutionBudget(t *testing.T)
 	}
 	if len(runner.calls) != 2 {
 		t.Fatalf("file reads=%d, want 2 (each executable candidate read once and reused for scan)", len(runner.calls))
+	}
+}
+
+func TestExplorerCompletesWhenEvidenceLimitReachedAtDeadline(t *testing.T) {
+	dir := t.TempDir()
+	ranks := make([]domaindci.SourceMetadataRank, 0, 4)
+	for index := 0; index < 4; index++ {
+		path := filepath.Join(dir, fmt.Sprintf("candidate-%d.md", index))
+		writeFile(t, path, "mediated evidence\n")
+		ranks = append(ranks, domaindci.SourceMetadataRank{FilePath: path, Score: float64(4 - index), SourceID: fmt.Sprintf("src_%d", index)})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	runner := &captureToolRunner{}
+	appender := &delayAfterEvidenceAppender{after: 3, delay: 40 * time.Millisecond}
+	explorer := newTestExplorer(Config{Enabled: true, Allowlist: []string{dir}, MaxCandidateFiles: 4, MaxFilesRead: 4, MaxEvidence: 3, Now: fixedNow}, nil,
+		WithToolRunner(runner), WithEventAppender(appender), WithSourceCandidateProvider(&dciSourceCandidateProvider{ranks: ranks}))
+	result, err := explorer.Search(ctx, "mediated")
+	if err != nil {
+		t.Fatalf("Search failed after satisfying evidence limit: %v", err)
+	}
+	if result.Trace.Status != "completed" || len(result.Pack.Evidence) != 3 {
+		t.Fatalf("status/evidence=%q/%d, want completed/3", result.Trace.Status, len(result.Pack.Evidence))
 	}
 }
 
