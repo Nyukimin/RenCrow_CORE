@@ -212,6 +212,8 @@ type dciDeployReceipt struct {
 	Outcome         string   `json:"outcome"`
 	RollbackOutcome string   `json:"rollback_outcome"`
 	RunningUnits    []string `json:"running_units"`
+	DeferredUnits   []string `json:"deferred_units,omitempty"`
+	Reason          string   `json:"reason,omitempty"`
 	BackupPath      string   `json:"backup_path"`
 	StartedAt       string   `json:"started_at"`
 	FinishedAt      string   `json:"finished_at"`

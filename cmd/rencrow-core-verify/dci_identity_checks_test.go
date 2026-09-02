@@ -306,7 +306,9 @@ func TestDCIDeployRevisionRequiresOwnerOnlyStrictLatestPair(t *testing.T) {
 	}
 	oldRevision := strings.Repeat("b", 40)
 	latestRevision := strings.Repeat("c", 40)
-	content := record("rencrow", oldRevision) + record("rencrow-core-verify", oldRevision) + record("rencrow", latestRevision) + record("rencrow-core-verify", latestRevision)
+	deferred := strings.Replace(record("rencrow", latestRevision), `"phase":"complete"`, `"deferred_units":["rencrow-resilience.service"],"reason":"active oneshot","phase":"preflight"`, 1)
+	deferred = strings.Replace(deferred, `"outcome":"success"`, `"outcome":"deferred"`, 1)
+	content := record("rencrow", oldRevision) + record("rencrow-core-verify", oldRevision) + deferred + record("rencrow", latestRevision) + record("rencrow-core-verify", latestRevision)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
