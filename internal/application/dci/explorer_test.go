@@ -3,6 +3,7 @@ package dci
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -969,6 +970,25 @@ func TestExplorerSearchUsesToolRunnerForFileReadWhenConfigured(t *testing.T) {
 	}
 	if len(result.Pack.Evidence) != 1 || result.Pack.Evidence[0].Snippet != "tool mediated DCI evidence" {
 		t.Fatalf("expected tool response evidence, got %#v", result.Pack.Evidence)
+	}
+}
+
+func TestExplorerContentRankingReadsOnlyFilesWithinExecutionBudget(t *testing.T) {
+	dir := t.TempDir()
+	ranks := make([]domaindci.SourceMetadataRank, 0, 5)
+	for index := 0; index < 5; index++ {
+		path := filepath.Join(dir, fmt.Sprintf("candidate-%d.md", index))
+		writeFile(t, path, "bounded ranking evidence\n")
+		ranks = append(ranks, domaindci.SourceMetadataRank{FilePath: path, Score: float64(5 - index), SourceID: fmt.Sprintf("src_%d", index)})
+	}
+	runner := &captureToolRunner{}
+	explorer := newTestExplorer(Config{Enabled: true, Allowlist: []string{dir}, MaxCandidateFiles: 5, MaxFilesRead: 2, MaxEvidence: 6, Now: fixedNow}, nil,
+		WithToolRunner(runner), WithSourceCandidateProvider(&dciSourceCandidateProvider{ranks: ranks}))
+	if _, err := explorer.Search(context.Background(), "bounded"); err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(runner.calls) != 4 {
+		t.Fatalf("file reads=%d, want 4 (two ranked candidates plus the same two execution reads)", len(runner.calls))
 	}
 }
 

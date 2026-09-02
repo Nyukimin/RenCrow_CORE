@@ -2750,6 +2750,20 @@ deploy-pair／journal-clean のbooleanだけである。filesystem path、PID、
 任意IDは出力しない。standard receiptとfinal evidenceをowner-onlyで発行し、これが`passed`になるまで
 Step 03をcompleteとしない。
 
+### D2e-4 Failure Knowledge: 実行不能候補のcontent rankによるdeadline消費
+
+- **Failure:** provider／registryが順位付き候補を返した後も、`MaxCandidateFiles`全件をcontent読取し、
+  実行対象の`MaxFilesRead`件をもう一度読んだ。
+- **Problem:** evidence生成前に検索deadlineを消費し、正しい候補と部分Evidenceが存在してもfresh DCIが
+  `context deadline exceeded`になった。
+- **Cause:** 候補収集上限と実行読取上限を同じbudgetとして扱わず、実行されない候補にもI/Oを行った。
+- **Lesson:** canonical metadata rankがある場合は先に決定的に順位付けし、content rankは実際に実行可能な
+  `MaxFilesRead`範囲だけへ限定する。metadataのないfilesystem fallbackは全候補content rankを維持する。
+- **Invariant:** provider／registry候補に対するcontent-rank読取件数は`MaxFilesRead`以下で、各実行fileの
+  最終scanと合わせてもfile readは最大`2 * MaxFilesRead`である。
+- **Enforcement / Tests:** Explorerの順序とbounded read testで強制し、fallbackのcontent discovery、
+  provider統合、metadata優先、実Shiro production routeを回帰検証する。
+
 ### Failure Knowledge
 
 - **Failure:** pre と post を一つの phase flag／generic verifier command にまとめ、restart を

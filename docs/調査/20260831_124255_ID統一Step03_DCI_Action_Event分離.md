@@ -884,6 +884,12 @@ booleanだけを公開し、path、PID、query、credential、raw logを出さ�
 production read-only pre-deploy acceptanceは2026-09-02に`passed`したが、pushed/pinned artifactのdeployと
 配備済みverifierからのfresh final receiptが揃うまで、Step 03 全体は一部達成として扱う。
 
+初回配備後のfresh preでは、provider候補の全件content rankと実行file再読取が10秒budgetを消費し、
+Evidence 2件または6件を得た後もterminalが`context deadline exceeded`となる回帰を実DBで再現した。
+provider／registry rankが存在する場合に限り、metadataで先に並べた`MaxFilesRead`件だけをcontent rankする。
+metadataのないfilesystem fallbackは従来の全候補rankを維持する。bounded reader testと既存fallback／provider
+suiteをGREENにし、再配備後のfresh pre／restart／post／finalで運用終端を再確認する。
+
 ### Failure Knowledge
 
 - **Failure:** pre／post を phase flag／generic command にし、verifier 内 restart、pre response の未保存、または post の新規 request を許した。

@@ -354,8 +354,18 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID
 	}
 	sourceRanks := e.rankCandidateFiles(searchCtx, candidates, terms, &pack)
 	sourceRanks = mergeSourceMetadataRanks(sourceRanks, seedRanks)
-	contentRanks := e.rankCandidateFilesByContent(searchCtx, candidates, terms, &pack)
-	sortCandidateFilesWithRank(candidates, terms, sourceRanks, contentRanks)
+	// Rank by canonical provider/registry metadata before reading content, then
+	// content-rank only the files this search can actually execute. Reading all
+	// MaxCandidateFiles here and reading MaxFilesRead again below consumed the
+	// bounded search deadline on files that could never produce evidence.
+	sortCandidateFilesWithRank(candidates, terms, sourceRanks, nil)
+	contentCandidates := candidates
+	if len(sourceRanks) > 0 && e.cfg.MaxFilesRead > 0 && len(contentCandidates) > e.cfg.MaxFilesRead {
+		contentCandidates = contentCandidates[:e.cfg.MaxFilesRead]
+	}
+	contentRanks := e.rankCandidateFilesByContent(searchCtx, contentCandidates, terms, &pack)
+	sortCandidateFilesWithRank(contentCandidates, terms, sourceRanks, contentRanks)
+	candidates = contentCandidates
 	filesRead := 0
 	for _, path := range candidates {
 		if searchCtx.Err() != nil {
