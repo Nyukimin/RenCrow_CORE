@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
@@ -526,26 +525,44 @@ func (e *Explorer) collectCandidateFiles(ctx context.Context, query string, term
 		}
 	}
 	type providerResult struct {
+		index int
 		ranks []domaindci.SourceMetadataRank
 		err   error
 	}
 	providerResults := make([]providerResult, len(e.sourceProviders))
+	providerReturned := make([]bool, len(e.sourceProviders))
+	resultCh := make(chan providerResult, len(e.sourceProviders))
 	providerCtx, cancelProviders := context.WithTimeout(ctx, dciCandidateProviderTimeout)
 	defer cancelProviders()
-	var providers sync.WaitGroup
+	pendingProviders := 0
 	for index, provider := range e.sourceProviders {
 		if provider == nil {
+			providerReturned[index] = true
 			continue
 		}
-		providers.Add(1)
+		pendingProviders++
 		go func(index int, provider SourceCandidateProvider) {
-			defer providers.Done()
-			providerResults[index].ranks, providerResults[index].err = provider.CandidateFiles(
+			ranks, err := provider.CandidateFiles(
 				providerCtx, query, terms, append([]string(nil), e.cfg.Allowlist...), maxCandidates,
 			)
+			resultCh <- providerResult{index: index, ranks: ranks, err: err}
 		}(index, provider)
 	}
-	providers.Wait()
+	for pendingProviders > 0 {
+		select {
+		case result := <-resultCh:
+			providerResults[result.index] = result
+			providerReturned[result.index] = true
+			pendingProviders--
+		case <-providerCtx.Done():
+			pendingProviders = 0
+		}
+	}
+	for index := range providerResults {
+		if !providerReturned[index] {
+			providerResults[index].err = providerCtx.Err()
+		}
+	}
 	for _, result := range providerResults {
 		if result.err != nil {
 			if pack != nil {
