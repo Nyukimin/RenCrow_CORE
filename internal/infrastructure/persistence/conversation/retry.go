@@ -8,6 +8,9 @@ import (
 	"net"
 	"os"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // RetryConfig はリトライ設定
@@ -48,6 +51,12 @@ func isRetryableError(err error) bool {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
+	}
+	// InvalidArgument describes a deterministic request/configuration mismatch
+	// (for example an embedding dimension incompatible with the collection).
+	// Repeating the same call only consumes the caller's bounded deadline.
+	if status.Code(err) == codes.InvalidArgument {
+		return false
 	}
 	if errors.Is(err, sql.ErrNoRows) ||
 		errors.Is(err, os.ErrNotExist) ||

@@ -2287,6 +2287,19 @@ Trace、Data Write、restart 後の exact lookup を成功とは主張しない�
 - **Tests:** busy DCI fixtureが`active_quiesce_dci_checkpoint`を返すことと、従来のrecovery／receipt
   projectionを検査する。
 
+#### Failure Knowledge: 非retryableなVector契約不一致が実Actor期限を消費した
+
+- **Failure:** D2e-3の実Shiro DCI requestで、1024次元queryと3584次元collectionの
+  gRPC `InvalidArgument`を3回再試行し、optional candidate providerだけで全体10秒deadlineの大半を消費した。
+- **Problem:** direct corpusからevidenceを得ても終端保存前にdeadlineとなり、正規routeはHTTP 500を返した。
+- **Cause:** conversation retry policyが型付き`InvalidArgument`を未知のtransient errorとして扱った。
+- **Lesson:** 同じ入力で結果が変わらないrequest／schema／dimension不一致は即時失敗させ、owner workflowへ
+  bounded limitationとして返す。timeout延長で契約不一致を隠さない。
+- **Invariant:** gRPC `InvalidArgument`は一回でnon-retryable terminalとなり、DCIの残りdeadlineを
+  canonical direct corpus、保存、receiptへ残す。
+- **Enforcement:** shared conversation retry classifierでcodeを判定し、error textの文字列判定は使わない。
+- **Tests:** `codes.InvalidArgument` operationのattempt countがexactly 1であることを検査する。
+
 ## D2d-2c production cutover owner CLI
 
 D2d-2c は、D2d-2b まで private に閉じていた service-managed cutover を、既存の

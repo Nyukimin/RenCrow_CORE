@@ -7,6 +7,9 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // mockRetryableError はリトライ可能なエラー
@@ -245,5 +248,19 @@ func TestIsRetryableError(t *testing.T) {
 				t.Errorf("isRetryableError(%v): want %v, got %v", tt.err, tt.retryable, got)
 			}
 		})
+	}
+}
+
+func TestInvalidArgumentGRPCErrorIsNotRetryable(t *testing.T) {
+	attempts := 0
+	err := withRetry(context.Background(), DefaultRetryConfig, func() error {
+		attempts++
+		return status.Error(codes.InvalidArgument, "vector dimension mismatch")
+	})
+	if err == nil {
+		t.Fatal("InvalidArgument unexpectedly succeeded")
+	}
+	if attempts != 1 {
+		t.Fatalf("InvalidArgument attempts=%d want 1", attempts)
 	}
 }
