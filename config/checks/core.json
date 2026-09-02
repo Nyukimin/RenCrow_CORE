@@ -223,7 +223,7 @@
       "failure_action": "blocked",
       "cost": "high",
       "safety_gate": true,
-      "coverage": ["canonical_e2e", "runtime_identity", "restart_binding", "receipt_trace"],
+      "coverage": ["canonical_e2e", "runtime_identity", "lifecycle", "receipt_trace"],
       "executor": {
         "kind": "owner_cli",
         "command_id": "core-dci-identity-pre-restart",
@@ -250,7 +250,7 @@
       "failure_action": "blocked",
       "cost": "high",
       "safety_gate": true,
-      "coverage": ["canonical_e2e", "runtime_identity", "restart_binding", "receipt_trace"],
+      "coverage": ["canonical_e2e", "runtime_identity", "lifecycle", "receipt_trace"],
       "executor": {
         "kind": "owner_cli",
         "command_id": "core-dci-identity-post-restart",
@@ -278,7 +278,7 @@
       "failure_action": "blocked",
       "cost": "high",
       "safety_gate": true,
-      "coverage": ["canonical_e2e", "runtime_identity", "restart_binding", "receipt_trace", "durable_state", "logs"],
+      "coverage": ["canonical_e2e", "runtime_identity", "lifecycle", "receipt_trace", "durability"],
       "executor": {
         "kind": "owner_cli",
         "command_id": "core-dci-identity-final",
