@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
@@ -523,19 +524,33 @@ func (e *Explorer) collectCandidateFiles(ctx context.Context, query string, term
 			seedRanks[path] = rank
 		}
 	}
-	for _, provider := range e.sourceProviders {
-		if provider == nil || len(candidates) >= maxCandidates {
+	type providerResult struct {
+		ranks []domaindci.SourceMetadataRank
+		err   error
+	}
+	providerResults := make([]providerResult, len(e.sourceProviders))
+	var providers sync.WaitGroup
+	for index, provider := range e.sourceProviders {
+		if provider == nil {
 			continue
 		}
-		remaining := maxCandidates - len(candidates)
-		ranks, err := provider.CandidateFiles(ctx, query, terms, append([]string(nil), e.cfg.Allowlist...), remaining)
-		if err != nil {
+		providers.Add(1)
+		go func(index int, provider SourceCandidateProvider) {
+			defer providers.Done()
+			providerResults[index].ranks, providerResults[index].err = provider.CandidateFiles(
+				ctx, query, terms, append([]string(nil), e.cfg.Allowlist...), maxCandidates,
+			)
+		}(index, provider)
+	}
+	providers.Wait()
+	for _, result := range providerResults {
+		if result.err != nil {
 			if pack != nil {
-				pack.Limitations = append(pack.Limitations, "dci candidate provider unavailable: "+err.Error())
+				pack.Limitations = append(pack.Limitations, "dci candidate provider unavailable: "+result.err.Error())
 			}
 			continue
 		}
-		for _, rank := range ranks {
+		for _, rank := range result.ranks {
 			addCandidate(rank.FilePath, rank)
 		}
 	}

@@ -2315,7 +2315,8 @@ Trace、Data Write、restart 後の exact lookup を成功とは主張しない�
   canceledとなっても、Evidence event、failed terminal、failed traceを一つのAction／Traceへ永続化する。
 - **Enforcement:** `VectorDBStore.ValidateKBVectorContract`を`RealConversationManager.SearchKB`のembedding前gateとし、
   ExplorerのEvidence appendはexpired search contextをbounded recovery contextへ置換する。provider候補が一件以上なら
-  それをcanonical narrowed setとし、filesystem walkは全providerが空の場合だけのfallbackとする。
+  それをcanonical narrowed setとし、filesystem walkは全providerが空の場合だけのfallbackとする。独立read-only providerは
+  同じbounded contextで並行取得し、登録順に結果とlimitationを統合して決定性を保つ。
 - **Tests:** collection contract failure時のembedding call zeroと、file read直後cancel時のEvidence／failed terminal／
   failed traceおよびfresh recovery context、provider候補取得後にwalk-only fileが混入しないことを検査する。
 
