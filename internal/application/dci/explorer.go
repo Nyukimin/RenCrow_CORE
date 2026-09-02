@@ -68,6 +68,7 @@ const (
 	dciSearchCompletedEventType = "dci.search.completed"
 	dciSearchFailedEventType    = "dci.search.failed"
 	dciRecoveryTimeout          = 5 * time.Second
+	dciCandidateProviderTimeout = 4 * time.Second
 )
 
 type Explorer struct {
@@ -529,6 +530,8 @@ func (e *Explorer) collectCandidateFiles(ctx context.Context, query string, term
 		err   error
 	}
 	providerResults := make([]providerResult, len(e.sourceProviders))
+	providerCtx, cancelProviders := context.WithTimeout(ctx, dciCandidateProviderTimeout)
+	defer cancelProviders()
 	var providers sync.WaitGroup
 	for index, provider := range e.sourceProviders {
 		if provider == nil {
@@ -538,7 +541,7 @@ func (e *Explorer) collectCandidateFiles(ctx context.Context, query string, term
 		go func(index int, provider SourceCandidateProvider) {
 			defer providers.Done()
 			providerResults[index].ranks, providerResults[index].err = provider.CandidateFiles(
-				ctx, query, terms, append([]string(nil), e.cfg.Allowlist...), maxCandidates,
+				providerCtx, query, terms, append([]string(nil), e.cfg.Allowlist...), maxCandidates,
 			)
 		}(index, provider)
 	}
