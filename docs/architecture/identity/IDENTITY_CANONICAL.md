@@ -2307,15 +2307,17 @@ Trace、Data Write、restart 後の exact lookup を成功とは主張しない�
 - **Problem:** requestはHTTP 500となり、期限切れ直後の`dci.evidence.created` appendもcanceled contextで失敗して、
   `dci.search.failed`とfailed traceが残らなかった。
 - **Cause:** KB collection契約をembedding前に検査するowner境界がなく、Explorerもfile read後のEvidence appendだけ
-  recovery contextへ切り替えていなかった。
+  recovery contextへ切り替えていなかった。さらにproviderが候補を返した後もallowlist walkで候補上限を埋め、
+  narrowing結果を無視してcontent rankの探索時間を増やしていた。
 - **Lesson:** 永続collectionの決定的なvector契約は高コストembeddingより前に検査する。探索期限後も、期限前に
   読み取ったbounded evidenceとfailed terminal／traceは新しい短時間のrecovery contextで閉じる。
 - **Invariant:** incompatible KB collectionはembedding call zeroでtyped `InvalidArgument`となる。DCIがfile read直後に
   canceledとなっても、Evidence event、failed terminal、failed traceを一つのAction／Traceへ永続化する。
 - **Enforcement:** `VectorDBStore.ValidateKBVectorContract`を`RealConversationManager.SearchKB`のembedding前gateとし、
-  ExplorerのEvidence appendはexpired search contextをbounded recovery contextへ置換する。
+  ExplorerのEvidence appendはexpired search contextをbounded recovery contextへ置換する。provider候補が一件以上なら
+  それをcanonical narrowed setとし、filesystem walkは全providerが空の場合だけのfallbackとする。
 - **Tests:** collection contract failure時のembedding call zeroと、file read直後cancel時のEvidence／failed terminal／
-  failed traceおよびfresh recovery contextを検査する。
+  failed traceおよびfresh recovery context、provider候補取得後にwalk-only fileが混入しないことを検査する。
 
 ## D2d-2c production cutover owner CLI
 

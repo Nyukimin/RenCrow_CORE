@@ -785,6 +785,24 @@ func TestExplorerSearchUsesFTSCandidateProviderBeforeWalkLimit(t *testing.T) {
 	}
 }
 
+func TestExplorerCandidateProviderResultsSuppressFilesystemFallbackWalk(t *testing.T) {
+	dir := t.TempDir()
+	providerTarget := filepath.Join(dir, "provider.md")
+	walkOnlyTarget := filepath.Join(dir, "walk-only.md")
+	writeFile(t, providerTarget, "provider evidence\n")
+	writeFile(t, walkOnlyTarget, "walk fallback evidence\n")
+	provider := &dciSourceCandidateProvider{ranks: []domaindci.SourceMetadataRank{{FilePath: providerTarget, Score: 1}}}
+	explorer := NewExplorer(Config{Enabled: true, Allowlist: []string{dir}, MaxCandidateFiles: 10, Now: fixedNow}, nil, WithSourceCandidateProvider(provider))
+
+	candidates, _, err := explorer.collectCandidateFiles(context.Background(), "evidence", []string{"evidence"}, nil)
+	if err != nil {
+		t.Fatalf("collectCandidateFiles failed: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0] != providerTarget {
+		t.Fatalf("provider candidates = %#v, want only %q", candidates, providerTarget)
+	}
+}
+
 func TestExplorerSearchCombinesMultipleCandidateProviders(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.md"), "not relevant\n")

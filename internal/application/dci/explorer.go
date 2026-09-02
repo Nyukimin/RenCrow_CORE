@@ -539,6 +539,13 @@ func (e *Explorer) collectCandidateFiles(ctx context.Context, query string, term
 			addCandidate(rank.FilePath, rank)
 		}
 	}
+	// Registered providers are the canonical narrowing layer.  A filesystem
+	// walk is only a fallback when every provider produced no usable candidate;
+	// filling the remaining capacity by walking defeats the narrowing contract
+	// and spends the bounded search budget ranking files that cannot all be read.
+	if len(candidates) > 0 {
+		return candidates, seedRanks, nil
+	}
 	for _, root := range e.cfg.Allowlist {
 		if ctx.Err() != nil {
 			return candidates, seedRanks, ctx.Err()
