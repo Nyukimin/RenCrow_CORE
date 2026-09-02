@@ -867,7 +867,19 @@ readiness owner が持つ。D2e-3 は service／readiness observation を genera
 restart -> runtime identity/lifecycle + readiness/old-generation-absent -> post -> logs/durable-state
 review -> final Step03 receipt chain` に凍結する。pre／post、実 Shiro route、generation、Action／Trace／
 Event graph／projection counts、logs、durable state が揃うまで D2e-3、D2e-2、または Step 03 を
-production/live/restart verified／complete と報告しない。現時点ではこの sequence は deferred である。
+production/live/restart verified／complete と報告しない。
+
+2026-09-02 の production 実行では、source／artifact／active config／service owner と readiness を照合し、
+実 Shiro の固定 route で fresh pre（first=false, second=true）を取得した。canonical service-manager
+restart 後は旧 generation 不在を確認し、同じ request／Action／Trace／Event graph／counts の post
+（first=true, second=true）を取得した。DCI／Event Store／current L1／archive L1 の durable state、
+SQLite quick check／foreign key、restart 後 warning log も照合済みである。pre／post evidence は owner-only
+0600 で保存され、artifact と active config の SHA-256 は前後で一致した。
+
+ただし、これらを service／build receipt、logs、durable-state review と機械的に束ねる専用の final
+Step03 receipt publisher は未実装である。自然言語記録を final receipt の代替にせず、この owner check
+を manifest、strict input／hash validation、bounded non-leaking evidence、status／exit code、test とともに
+実装して production final chain を発行するまで、Step 03 全体は一部達成として扱う。
 
 ### Failure Knowledge
 
