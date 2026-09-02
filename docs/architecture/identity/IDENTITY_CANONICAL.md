@@ -2764,6 +2764,8 @@ Step 03をcompleteとしない。
 - **Invariant:** provider／registry候補に対するfile readは、content rankと最終scanを合わせて
   最大`MaxFilesRead`であり、同一request内の各候補を一度だけ読む。`MaxEvidence`等の成功終端を
   満たした後は、同時にdeadlineへ達しても次候補のcontext判定で成功結果を失敗へ上書きしない。
+- **Runtime bound:** foreground開始時のbackground ToolRunner退避時間を含めても正規routeを完遂できるよう、
+  DCIの未指定時budgetは30秒とする。明示設定した短いbudgetと、Evidence未到達時のdeadline failureは維持する。
 - **Enforcement / Tests:** Explorerの順序とbounded read testで強制し、fallbackのcontent discovery、
   provider統合、metadata優先、実Shiro production routeを回帰検証する。
 

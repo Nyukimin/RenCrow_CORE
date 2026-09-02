@@ -447,7 +447,7 @@ server:
 	if cfg.DCI.SQLitePath != wantDCIPath || cfg.Storage.Databases.DCI != wantDCIPath {
 		t.Errorf("Expected DCI SQLitePath under workspace, got '%s'", cfg.DCI.SQLitePath)
 	}
-	if cfg.DCI.MaxSeconds != 10 || cfg.DCI.MaxSteps != 8 || cfg.DCI.MaxCandidateFiles != 50 || cfg.DCI.MaxFilesRead != 10 || cfg.DCI.MaxEvidence != 6 || cfg.DCI.MaxSnippetChars != 800 {
+	if cfg.DCI.MaxSeconds != 30 || cfg.DCI.MaxSteps != 8 || cfg.DCI.MaxCandidateFiles != 50 || cfg.DCI.MaxFilesRead != 10 || cfg.DCI.MaxEvidence != 6 || cfg.DCI.MaxSnippetChars != 800 {
 		t.Errorf("unexpected DCI limits: %+v", cfg.DCI)
 	}
 	if len(cfg.DCI.KnowledgeFTSDomains) != 3 || cfg.DCI.KnowledgeFTSDomains[0] != "general" || cfg.DCI.KnowledgeFTSDomains[1] != "creative" || cfg.DCI.KnowledgeFTSDomains[2] != "news" {

@@ -123,7 +123,7 @@ func WithSourceCandidateProvider(provider SourceCandidateProvider) Option {
 
 func NewExplorer(cfg Config, store TraceStore, opts ...Option) *Explorer {
 	if cfg.MaxSeconds <= 0 {
-		cfg.MaxSeconds = 10
+		cfg.MaxSeconds = 30
 	}
 	if cfg.MaxSteps <= 0 {
 		cfg.MaxSteps = 8

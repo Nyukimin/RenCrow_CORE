@@ -891,7 +891,9 @@ provider／registry rankが存在する場合に限り、metadataで先に並べ
 さらにrank時に読んだcontentを同一requestの最終scanで再利用し、各実行候補のfile readを一回に限定する。
 metadataのないfilesystem fallbackは従来の全候補rankを維持する。bounded reader testと既存fallback／provider
 suiteをGREENにする。また必要Evidenceを取得済みなら、次候補へ進む前のdeadlineより成功終端を先に判定し、
-完了済み結果を`context deadline exceeded`で上書きしない。再配備後のfresh pre／restart／post／finalで運用終端を再確認する。
+完了済み結果を`context deadline exceeded`で上書きしない。foreground開始時のbackground ToolRunner退避を
+含む実測が10秒を超えるため、未指定時budgetを30秒へ広げる。明示的な短いbudgetのfail closedは維持する。
+再配備後のfresh pre／restart／post／finalで運用終端を再確認する。
 
 ### Failure Knowledge
 
