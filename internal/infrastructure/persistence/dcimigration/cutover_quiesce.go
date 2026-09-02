@@ -39,14 +39,15 @@ func quiesceCutoverActiveSQLiteSources(ctx context.Context, options cutoverActiv
 		return cutoverActiveQuiesceEvidence{}, newCodedError("active_quiesce", "resolve active SQLite quiesce sources")
 	}
 	items := []struct {
+		role   string
 		path   string
 		sqlite bool
 	}{
-		{path: paths.dci, sqlite: true},
-		{path: paths.dciJSONL, sqlite: false},
-		{path: paths.eventStore, sqlite: true},
-		{path: paths.l1, sqlite: true},
-		{path: paths.archive, sqlite: true},
+		{role: "dci", path: paths.dci, sqlite: true},
+		{role: "dci_jsonl", path: paths.dciJSONL, sqlite: false},
+		{role: "event_store", path: paths.eventStore, sqlite: true},
+		{role: "l1", path: paths.l1, sqlite: true},
+		{role: "archive", path: paths.archive, sqlite: true},
 	}
 	bindings := make([]cutoverBoundFile, 0, len(items))
 	for _, item := range items {
@@ -57,7 +58,7 @@ func quiesceCutoverActiveSQLiteSources(ctx context.Context, options cutoverActiv
 		// first, then require sidecar-zero after the checkpoint below.
 		binding, err := bindCutoverFile(item.path, false, false)
 		if err != nil {
-			return cutoverActiveQuiesceEvidence{}, newCodedError("active_quiesce", "bind active SQLite quiesce source")
+			return cutoverActiveQuiesceEvidence{}, newCodedError(activeQuiesceCode(item.role, "bind"), "bind active SQLite quiesce source")
 		}
 		binding.sqlite = item.sqlite
 		bindings = append(bindings, binding)
@@ -72,7 +73,7 @@ func quiesceCutoverActiveSQLiteSources(ctx context.Context, options cutoverActiv
 			postBindings = append(postBindings, bindings[index])
 			continue
 		}
-		post, err := quiesceCutoverActiveSQLiteSource(ctx, bindings[index])
+		post, err := quiesceCutoverActiveSQLiteSource(ctx, item.role, bindings[index])
 		if err != nil {
 			return cutoverActiveQuiesceEvidence{}, err
 		}
@@ -91,17 +92,17 @@ func quiesceCutoverActiveSQLiteSources(ctx context.Context, options cutoverActiv
 	}, nil
 }
 
-func quiesceCutoverActiveSQLiteSource(ctx context.Context, before cutoverBoundFile) (cutoverBoundFile, error) {
+func quiesceCutoverActiveSQLiteSource(ctx context.Context, role string, before cutoverBoundFile) (cutoverBoundFile, error) {
 	if err := ctx.Err(); err != nil {
 		return cutoverBoundFile{}, err
 	}
 	current, err := os.Lstat(before.path)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 || !current.Mode().IsRegular() || !os.SameFile(before.info, current) {
-		return cutoverBoundFile{}, newCodedError("active_quiesce", "active SQLite source changed before quiesce")
+		return cutoverBoundFile{}, newCodedError(activeQuiesceCode(role, "binding"), "active SQLite source changed before quiesce")
 	}
 	db, err := sql.Open("sqlite", sqliteReadWriteNoWaitDSN(before.path))
 	if err != nil {
-		return cutoverBoundFile{}, newCodedError("active_quiesce", "open active SQLite source")
+		return cutoverBoundFile{}, newCodedError(activeQuiesceCode(role, "open"), "open active SQLite source")
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
@@ -111,7 +112,7 @@ func quiesceCutoverActiveSQLiteSource(ctx context.Context, before cutoverBoundFi
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return cutoverBoundFile{}, err
 		}
-		return cutoverBoundFile{}, newCodedError("active_quiesce", "bind active SQLite connection")
+		return cutoverBoundFile{}, newCodedError(activeQuiesceCode(role, "open"), "bind active SQLite connection")
 	}
 
 	var busy, logFrames, checkpointedFrames int
@@ -131,19 +132,33 @@ func quiesceCutoverActiveSQLiteSource(ctx context.Context, before cutoverBoundFi
 		if errors.Is(operationErr, context.Canceled) || errors.Is(operationErr, context.DeadlineExceeded) {
 			return cutoverBoundFile{}, operationErr
 		}
-		return cutoverBoundFile{}, newCodedError("active_quiesce", "quiesce active SQLite source")
+		return cutoverBoundFile{}, newCodedError(activeQuiesceCode(role, "checkpoint"), "quiesce active SQLite source")
 	}
 	if closeErr != nil {
-		return cutoverBoundFile{}, newCodedError("active_quiesce", "close active SQLite source after quiesce")
+		return cutoverBoundFile{}, newCodedError(activeQuiesceCode(role, "close"), "close active SQLite source after quiesce")
 	}
 	if err := ctx.Err(); err != nil {
 		return cutoverBoundFile{}, err
 	}
 	after, err := bindCutoverFile(before.path, false, true)
 	if err != nil || !os.SameFile(before.info, after.info) || (runtime.GOOS != "windows" && before.info.Mode().Perm() != after.info.Mode().Perm()) {
-		return cutoverBoundFile{}, newCodedError("active_quiesce", "active SQLite source binding changed during quiesce")
+		return cutoverBoundFile{}, newCodedError(activeQuiesceCode(role, "sidecar"), "active SQLite source binding changed during quiesce")
 	}
 	return after, nil
+}
+
+func activeQuiesceCode(role, phase string) string {
+	key := role + "_" + phase
+	switch key {
+	case "dci_bind", "dci_binding", "dci_open", "dci_checkpoint", "dci_close", "dci_sidecar",
+		"dci_jsonl_bind",
+		"event_store_bind", "event_store_binding", "event_store_open", "event_store_checkpoint", "event_store_close", "event_store_sidecar",
+		"l1_bind", "l1_binding", "l1_open", "l1_checkpoint", "l1_close", "l1_sidecar",
+		"archive_bind", "archive_binding", "archive_open", "archive_checkpoint", "archive_close", "archive_sidecar":
+		return "active_quiesce_" + key
+	default:
+		return "active_quiesce"
+	}
 }
 
 func sqliteReadWriteNoWaitDSN(path string) string {

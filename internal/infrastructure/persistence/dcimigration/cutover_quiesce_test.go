@@ -100,6 +100,8 @@ func TestQuiesceCutoverActiveSQLiteSourcesRejectsBusyAndUnsafeSources(t *testing
 	}
 	if evidence, err := quiesceCutoverActiveSQLiteSources(context.Background(), options); err == nil || evidence.valid() {
 		t.Fatalf("busy source accepted: evidence=%#v err=%v", evidence, err)
+	} else if got := errorCode(err, "fallback"); got != "active_quiesce_dci_checkpoint" {
+		t.Fatalf("busy source error code=%q want active_quiesce_dci_checkpoint", got)
 	}
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)

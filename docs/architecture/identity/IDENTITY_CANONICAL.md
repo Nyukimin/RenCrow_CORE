@@ -2270,6 +2270,23 @@ Trace、Data Write、restart 後の exact lookup を成功とは主張しない�
 - **Tests:** persistent WAL happy path、busy writer、symlink／alias、cancellation、same-file、sidecar-zero、
   stopped-before-quiesce順序、applied／rolled_back receipt必須性、pre-quiesce blocked zero projectionを検査する。
 
+#### Failure Knowledge: active quiesce失敗境界を単一codeへ潰したreceipt
+
+- **Failure:** production quiesceがapply前にblockedとなったが、4 sourceとopen／checkpoint／close／sidecarの
+  全失敗を`active_quiesce`へ潰し、同じ操作を再試行せずに原因を限定できなかった。
+- **Problem:** pathやdriver raw errorを非公開にする安全境界と、ownerが次の修正対象を機械判定するための
+  bounded observabilityを同一視し、receiptが再発防止に必要なphaseを失った。
+- **Cause:** quiesce helperの固定source roleと固定phaseをerror codeへ投影せず、最外層のgeneric codeだけを
+  durable receiptへ保存した。
+- **Lesson:** 秘密path、SQL、raw errorは公開せず、owner内で固定されたroleとphaseだけをbounded machine codeへ
+  投影する。未知の動的値をcode生成へ渡さない。
+- **Invariant:** source固有のquiesce失敗は`active_quiesce_<role>_<phase>`でfail closedし、zero evidence、
+  subreceiptなし、old-runtime running proofを維持する。generic codeはsource特定前の失敗だけに使う。
+- **Enforcement:** fixed role table、fixed call-site phase、bounded error syntax、strict service receipt、
+  path／raw error非漏洩testで強制する。
+- **Tests:** busy DCI fixtureが`active_quiesce_dci_checkpoint`を返すことと、従来のrecovery／receipt
+  projectionを検査する。
+
 ## D2d-2c production cutover owner CLI
 
 D2d-2c は、D2d-2b まで private に閉じていた service-managed cutover を、既存の
