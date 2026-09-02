@@ -954,8 +954,8 @@ func TestExplorerSearchUsesToolRunnerForFileReadWhenConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}
-	if len(runner.calls) != 2 {
-		t.Fatalf("expected content ranking and final file_read calls, got %d", len(runner.calls))
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected one cached content-ranking file_read, got %d", len(runner.calls))
 	}
 	for _, call := range runner.calls {
 		if call.name != "file_read" {
@@ -987,8 +987,8 @@ func TestExplorerContentRankingReadsOnlyFilesWithinExecutionBudget(t *testing.T)
 	if _, err := explorer.Search(context.Background(), "bounded"); err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}
-	if len(runner.calls) != 4 {
-		t.Fatalf("file reads=%d, want 4 (two ranked candidates plus the same two execution reads)", len(runner.calls))
+	if len(runner.calls) != 2 {
+		t.Fatalf("file reads=%d, want 2 (each executable candidate read once and reused for scan)", len(runner.calls))
 	}
 }
 

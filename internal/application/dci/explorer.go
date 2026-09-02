@@ -363,7 +363,7 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID
 	if len(sourceRanks) > 0 && e.cfg.MaxFilesRead > 0 && len(contentCandidates) > e.cfg.MaxFilesRead {
 		contentCandidates = contentCandidates[:e.cfg.MaxFilesRead]
 	}
-	contentRanks := e.rankCandidateFilesByContent(searchCtx, contentCandidates, terms, &pack)
+	contentRanks, rankedContent := e.rankCandidateFilesByContent(searchCtx, contentCandidates, terms, &pack)
 	sortCandidateFilesWithRank(contentCandidates, terms, sourceRanks, contentRanks)
 	candidates = contentCandidates
 	filesRead := 0
@@ -391,7 +391,13 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID
 			return domaindci.SearchResult{}, err
 		}
 		lastEventID = sourceSelected.EventID
-		matches, readErr := e.scanFile(searchCtx, path, terms, sourceRanks[path])
+		var matches []domaindci.Evidence
+		var readErr error
+		if content, ok := rankedContent[path]; ok {
+			matches = e.scanText(path, content, terms, sourceRanks[path])
+		} else {
+			matches, readErr = e.scanFile(searchCtx, path, terms, sourceRanks[path])
+		}
 		status := "ok"
 		errMsg := ""
 		if readErr != nil {
@@ -689,17 +695,18 @@ func (e *Explorer) rankCandidateFiles(ctx context.Context, candidates []string, 
 	return out
 }
 
-func (e *Explorer) rankCandidateFilesByContent(ctx context.Context, candidates []string, terms []string, pack *domaindci.EvidencePack) map[string]int {
+func (e *Explorer) rankCandidateFilesByContent(ctx context.Context, candidates []string, terms []string, pack *domaindci.EvidencePack) (map[string]int, map[string]string) {
 	if len(candidates) == 0 || len(terms) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make(map[string]int, len(candidates))
+	contentByPath := make(map[string]string, len(candidates))
 	for _, path := range candidates {
 		if ctx.Err() != nil {
 			if pack != nil {
 				pack.Limitations = append(pack.Limitations, "content ranking stopped: "+ctx.Err().Error())
 			}
-			return out
+			return out, contentByPath
 		}
 		if e.pathDenied(path) {
 			continue
@@ -708,12 +715,13 @@ func (e *Explorer) rankCandidateFilesByContent(ctx context.Context, candidates [
 		if err != nil {
 			continue
 		}
+		contentByPath[path] = content
 		score := contentCandidateScore(content, terms)
 		if score > 0 {
 			out[path] = score
 		}
 	}
-	return out
+	return out, contentByPath
 }
 
 func (e *Explorer) readCandidateRankContent(ctx context.Context, path string) (string, error) {

@@ -887,6 +887,7 @@ production read-only pre-deploy acceptanceは2026-09-02に`passed`したが、pu
 初回配備後のfresh preでは、provider候補の全件content rankと実行file再読取が10秒budgetを消費し、
 Evidence 2件または6件を得た後もterminalが`context deadline exceeded`となる回帰を実DBで再現した。
 provider／registry rankが存在する場合に限り、metadataで先に並べた`MaxFilesRead`件だけをcontent rankする。
+さらにrank時に読んだcontentを同一requestの最終scanで再利用し、各実行候補のfile readを一回に限定する。
 metadataのないfilesystem fallbackは従来の全候補rankを維持する。bounded reader testと既存fallback／provider
 suiteをGREENにし、再配備後のfresh pre／restart／post／finalで運用終端を再確認する。
 
