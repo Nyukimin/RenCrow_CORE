@@ -18,6 +18,8 @@
 
 **Step 00 evidence:** [`docs/調査/20260829_221132_ID統一Step00_baseline.md`](../../調査/20260829_221132_ID統一Step00_baseline.md)
 
+**Step 04 evidence:** [`docs/調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md`](../../調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md)
+
 ---
 
 ## 0. 最重要方針
@@ -1478,6 +1480,47 @@ Test:
 完了条件:
 
 - SessionID文字列から日付、Channel、Userを解析するコードzero
+
+#### Step 04配備契約
+
+- `SessionID`は`ses_` prefix付きCanonical UUIDv7だけを受理し、`logical_date`と
+  `ChannelAddress`は独立fieldとしてSession repositoryが保存・検索する。
+- requestが`SessionID`を明示しない場合だけ、CORE ingressは`logical_date + ChannelAddress`で
+  同一日Sessionをresolveし、不在時にCanonical `SessionID`を一度生成する。明示IDのload失敗を
+  新規Session作成へfallbackしない。
+- production cutoverはactive configが指すSession rootとwriter ownerを確認し、CORE停止後の
+  snapshotからfresh siblingへmaterializeする。source/output hash、既存history、Session再構築、
+  legacy count zeroを確認してから同一filesystem renameで切り替え、旧rootと旧runtimeをrollback用に保持する。
+- 配備後はinstalled binary、service PID executable、fixed `rencrow.service`、`:18790` listener、
+  readiness、実Actor `POST /viewer/send`、保存されたCanonical Session JSONを一つの証拠鎖として照合する。
+- cutover専用変換CLI／packageはproduction receipt確定後に削除し、runtime dual read／dual write、
+  legacy constructor、legacy JSON fieldを残さない。
+
+#### Step 04 Failure Knowledge: default Session pathをactive sourceと誤認した
+
+- **Failure:** inactiveな`~/.rencrow/sessions`をproduction source候補として先に監査した。
+- **Problem:** 正しいactive rootより少ないlegacy Sessionとhistoryをproduction現況として扱う危険があった。
+- **Cause:** default pathの存在をactive config、service environment、writer ownerより先に根拠化した。
+- **Lesson:** data pathは既定値や過去配置から推測せず、active configとservice ownerから解決する。
+- **Invariant:** Session cutover inputはfixed serviceの`RENCROW_CONFIG`が指すexisting rootに限定し、
+  writer停止後に取得したsource hashだけをapplyへ渡す。
+- **Enforcement:** active config／service identity確認、stopped PID／listener evidence、dry-runとapplyの
+  exact receipt binding、fresh output、post-start canonical-only scanで強制する。
+- **Tests:** source drift、fresh output、receipt path containment、legacy/canonical/non-session counts、
+  history再構築、date boundary、concurrent creation、production E2Eを検査する。
+
+#### Step 04 Failure Knowledge: 短いreadiness期限をstartup failureと誤認した
+
+- **Failure:** restart後30秒の最初のpollでは`:18790`がまだlistenせずreadinessを得られなかった。
+- **Problem:** processが正規startupを継続中でも早期rollbackすると、正常な配備を失敗扱いにする。
+- **Cause:** COREのL1 store等の初期化時間をservice ownerのbounded running timeoutより短く評価した。
+- **Lesson:** listener未生成だけで失敗を断定せず、PID、cgroup、restart count、startup phase、DB ownerを
+  同時に観測し、正規owner timeout内は同じgenerationを追跡する。
+- **Invariant:** `rencrow.service`がactive、MainPID positive、NRestarts zeroで進行中なら、fatal／panic／
+  typed startup errorがない限り最大300秒のowner timeoutまで同じprocessを監視する。
+- **Enforcement:** fixed timeout、30秒単位のpoll、journalとprocess evidence、最終readiness／listener／
+  executable hash照合で強制する。
+- **Tests:** delayed readiness、process exit、restart、wrong executable、timeoutをservice lifecycle testで検査する。
 
 ---
 

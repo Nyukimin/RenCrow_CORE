@@ -210,6 +210,22 @@ func TestCanonicalSessionIngressHasNoLegacyIDBuilder(t *testing.T) {
 	}
 }
 
+func TestCanonicalSessionMigrationCodeIsRemovedAfterCutover(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve current file")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	for _, relative := range []string{
+		filepath.Join("cmd", "rencrow-session-migrate"),
+		filepath.Join("internal", "infrastructure", "persistence", "sessionmigration"),
+	} {
+		if _, err := os.Stat(filepath.Join(repoRoot, relative)); err == nil || !os.IsNotExist(err) {
+			t.Fatalf("Step 04 migration source remains after production cutover: %s", relative)
+		}
+	}
+}
+
 func TestCanonicalEventRuntimeHasNoLegacyOwnerEventContract(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
