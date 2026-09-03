@@ -82,8 +82,8 @@ func TestRunDryRunAndApplyMigratesIdentityWithoutChangingHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load migrated Session through owner repository: %v", err)
 	}
-	if loaded.ID() != wantID || loaded.LogicalDate() != "2026-08-08" || loaded.Channel() != "viewer" || loaded.ChatID() != "viewer-user" || loaded.HistoryCount() != 1 {
-		t.Fatalf("reconstructed Session id=%q date=%q channel=%q address=%q history=%d", loaded.ID(), loaded.LogicalDate(), loaded.Channel(), loaded.ChatID(), loaded.HistoryCount())
+	if loaded.ID() != wantID || loaded.LogicalDate() != "2026-08-08" || loaded.ChannelAddress().Channel != "viewer" || loaded.ChannelAddress().Address != "viewer-user" || loaded.HistoryCount() != 1 {
+		t.Fatalf("reconstructed Session id=%q date=%q address=%#v history=%d", loaded.ID(), loaded.LogicalDate(), loaded.ChannelAddress(), loaded.HistoryCount())
 	}
 	copied, err := os.ReadFile(filepath.Join(output, "forecast_topic_stock.json"))
 	if err != nil || string(copied) != string(nonSession) {

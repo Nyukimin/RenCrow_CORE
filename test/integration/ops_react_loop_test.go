@@ -72,7 +72,6 @@ func TestOPSRoute_WithSubagentManager_CallsReActLoop(t *testing.T) {
 
 	// Execute - OPS ルートをトリガー
 	req := orchestrator.ProcessMessageRequest{
-		SessionID:   "test-session",
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "テストを実行して", // OPS ルートにマッチ
@@ -145,7 +144,6 @@ func TestOPSRoute_WithoutSubagentManager_UsesFallback(t *testing.T) {
 
 	// Execute - OPS ルートをトリガー
 	req := orchestrator.ProcessMessageRequest{
-		SessionID:   "test-session",
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "テストを実行して", // OPS ルートにマッチ
@@ -200,7 +198,6 @@ func TestOPSRoute_SubagentManagerError_PropagatesError(t *testing.T) {
 
 	// Execute - OPS ルートをトリガー
 	req := orchestrator.ProcessMessageRequest{
-		SessionID:   "test-session",
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "テストを実行して",

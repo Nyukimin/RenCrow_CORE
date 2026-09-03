@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -24,19 +23,23 @@ func newMessageSessionLifecycle(sessionRepo SessionRepository) *messageSessionLi
 }
 
 func (l *messageSessionLifecycle) LoadForRequest(ctx context.Context, req ProcessMessageRequest) (*session.Session, error) {
-	sess, err := l.loadOrCreate(ctx, req.SessionID, req.Channel, req.ChatID)
+	sess, err := l.load(ctx, req.SessionID)
 	if err != nil {
-		log.Printf("[MessageOrch] ProcessMessage ERROR: failed to load or create session: %v", err)
-		return nil, fmt.Errorf("failed to load or create session: %w", err)
+		log.Printf("[MessageOrch] ProcessMessage ERROR: failed to load session: %v", err)
+		return nil, fmt.Errorf("failed to load session: %w", err)
 	}
-	log.Printf("[MessageOrch] Session loaded/created: %s", sess.ID())
+	log.Printf("[MessageOrch] Session loaded: %s", sess.ID())
 	return sess, nil
 }
 
 func (l *messageSessionLifecycle) ResolveForRequest(ctx context.Context, req ProcessMessageRequest, now time.Time) (*session.Session, ProcessMessageRequest, error) {
 	if req.SessionID != "" {
 		sess, err := l.LoadForRequest(ctx, req)
-		return sess, req, err
+		if err != nil {
+			return nil, req, err
+		}
+		req.SessionID = sess.ID()
+		return sess, req, nil
 	}
 	address, err := session.NewChannelAddress(req.Channel, req.ChatID)
 	if err != nil {
@@ -63,13 +66,6 @@ func (l *messageSessionLifecycle) SaveCompletedTask(ctx context.Context, sess *s
 	return nil
 }
 
-func (l *messageSessionLifecycle) loadOrCreate(ctx context.Context, id, channel, chatID string) (*session.Session, error) {
-	sess, err := l.sessionRepo.Load(ctx, id)
-	if err != nil {
-		if errors.Is(err, session.ErrSessionNotFound) {
-			return session.NewSession(id, channel, chatID), nil
-		}
-		return nil, err
-	}
-	return sess, nil
+func (l *messageSessionLifecycle) load(ctx context.Context, id string) (*session.Session, error) {
+	return l.sessionRepo.Load(ctx, id)
 }

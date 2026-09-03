@@ -21,7 +21,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	startedAt := time.Now().UTC()
 	sess, req, err := o.sessions.ResolveForRequest(ctx, req, startedAt)
 	if err != nil {
-		return ProcessMessageResponse{}, fmt.Errorf("failed to load or create session: %w", err)
+		return ProcessMessageResponse{}, fmt.Errorf("failed to resolve session: %w", err)
 	}
 	defer func() {
 		if err == nil {

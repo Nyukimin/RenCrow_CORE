@@ -86,8 +86,6 @@ func ReconstructCanonicalSession(id modulecore.SessionID, logicalDate string, ad
 		id:             string(id),
 		logicalDate:    logicalDate,
 		channelAddress: normalizedAddress,
-		channel:        normalizedAddress.Channel,
-		chatID:         normalizedAddress.Address,
 		history:        storedHistory,
 		memory:         storedMemory,
 		createdAt:      createdAt,

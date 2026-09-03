@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
@@ -14,6 +15,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	infraRouting "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // === Mock Infrastructure ===
@@ -95,6 +97,22 @@ func (m *mockSessionRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (m *mockSessionRepository) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address session.ChannelAddress, createdAt time.Time) (*session.Session, error) {
+	for _, existing := range m.sessions {
+		if existing.LogicalDate() == logicalDate && existing.ChannelAddress() == address {
+			return existing, nil
+		}
+	}
+	created, err := session.NewCanonicalSession(modulecore.NewSessionID(), logicalDate, address, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.Save(ctx, created); err != nil {
+		return nil, err
+	}
+	return created, nil
+}
+
 type mockClassifier struct{}
 
 func (m *mockClassifier) Classify(ctx context.Context, t task.Task) (routing.Decision, error) {
@@ -119,7 +137,6 @@ func buildOrchestrator(llmResp string, sessionRepo *mockSessionRepository) *orch
 
 func defaultIntegrationReq(msg string) orchestrator.ProcessMessageRequest {
 	return orchestrator.ProcessMessageRequest{
-		SessionID:   "integ-test-session",
 		Channel:     "line",
 		ChatID:      "U_TEST",
 		UserMessage: msg,
@@ -197,12 +214,12 @@ func TestIntegration_SessionCreatedOnFirstMessage(t *testing.T) {
 	repo := newMockSessionRepo()
 	orch := buildOrchestrator("response", repo)
 
-	_, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("hello"))
+	resp, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("hello"))
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
 
-	exists, _ := repo.Exists(context.Background(), "integ-test-session")
+	exists, _ := repo.Exists(context.Background(), resp.SessionID)
 	if !exists {
 		t.Error("session should be saved after first message")
 	}
@@ -212,7 +229,7 @@ func TestIntegration_SessionReusedOnSubsequentMessages(t *testing.T) {
 	repo := newMockSessionRepo()
 	orch := buildOrchestrator("response", repo)
 
-	_, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("first"))
+	first, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("first"))
 	if err != nil {
 		t.Fatalf("first message failed: %v", err)
 	}
@@ -222,7 +239,7 @@ func TestIntegration_SessionReusedOnSubsequentMessages(t *testing.T) {
 		t.Fatalf("second message failed: %v", err)
 	}
 
-	sess, _ := repo.Load(context.Background(), "integ-test-session")
+	sess, _ := repo.Load(context.Background(), first.SessionID)
 	if sess.HistoryCount() != 2 {
 		t.Errorf("expected 2 tasks in history, got %d", sess.HistoryCount())
 	}
@@ -232,14 +249,16 @@ func TestIntegration_MultipleMessagesGrowHistory(t *testing.T) {
 	repo := newMockSessionRepo()
 	orch := buildOrchestrator("response", repo)
 
+	var sessionID string
 	for i := 0; i < 3; i++ {
-		_, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq(fmt.Sprintf("msg %d", i)))
+		resp, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq(fmt.Sprintf("msg %d", i)))
 		if err != nil {
 			t.Fatalf("message %d failed: %v", i, err)
 		}
+		sessionID = resp.SessionID
 	}
 
-	sess, _ := repo.Load(context.Background(), "integ-test-session")
+	sess, _ := repo.Load(context.Background(), sessionID)
 	if sess.HistoryCount() != 3 {
 		t.Errorf("expected 3 tasks, got %d", sess.HistoryCount())
 	}

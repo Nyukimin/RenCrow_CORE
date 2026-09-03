@@ -16,54 +16,15 @@ type Session struct {
 	id             string // 不透明なCanonical SessionID。日付やrouting情報を埋め込まない。
 	logicalDate    string
 	channelAddress ChannelAddress
-	channel        string                 // チャネル（LINE/Slack等）
-	chatID         string                 // チャットID
 	history        []task.Task            // 会話履歴
 	memory         map[string]interface{} // セッションメモリ
 	createdAt      time.Time              // セッション作成時刻
 	updatedAt      time.Time              // 最終更新時刻
 }
 
-// NewSession は新しいセッションを作成
-func NewSession(id, channel, chatID string) *Session {
-	now := time.Now()
-	return &Session{
-		id:        id,
-		channel:   channel,
-		chatID:    chatID,
-		history:   make([]task.Task, 0),
-		memory:    make(map[string]interface{}),
-		createdAt: now,
-		updatedAt: now,
-	}
-}
-
-// ReconstructSession は永続化層から復元する際に使用（タイムスタンプを保持）
-func ReconstructSession(id, channel, chatID string, createdAt, updatedAt time.Time) *Session {
-	return &Session{
-		id:        id,
-		channel:   channel,
-		chatID:    chatID,
-		history:   make([]task.Task, 0),
-		memory:    make(map[string]interface{}),
-		createdAt: createdAt,
-		updatedAt: updatedAt,
-	}
-}
-
 // ID はセッションIDを返す
 func (s *Session) ID() string {
 	return s.id
-}
-
-// Channel はチャネルを返す
-func (s *Session) Channel() string {
-	return s.channel
-}
-
-// ChatID はチャットIDを返す
-func (s *Session) ChatID() string {
-	return s.chatID
 }
 
 // LogicalDate returns the explicit calendar partition used to find a session.

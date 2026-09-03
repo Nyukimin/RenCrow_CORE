@@ -194,8 +194,10 @@ func TestCanonicalSessionIngressHasNoLegacyIDBuilder(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(content), "BuildSessionID") {
-			violations = append(violations, strings.TrimPrefix(path, repoRoot+string(filepath.Separator)))
+		for _, legacy := range []string{"BuildSessionID", "func NewSession(", "func ReconstructSession("} {
+			if strings.Contains(string(content), legacy) {
+				violations = append(violations, strings.TrimPrefix(path, repoRoot+string(filepath.Separator))+":"+legacy)
+			}
 		}
 		return nil
 	})
@@ -204,7 +206,7 @@ func TestCanonicalSessionIngressHasNoLegacyIDBuilder(t *testing.T) {
 	}
 	if len(violations) != 0 {
 		sort.Strings(violations)
-		t.Fatalf("legacy SessionID builder remains in runtime source: %v", violations)
+		t.Fatalf("legacy Session identity construction remains in runtime source: %v", violations)
 	}
 }
 

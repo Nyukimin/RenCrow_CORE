@@ -89,11 +89,12 @@ func (m *distMockSessionRepo) Save(ctx context.Context, sess *session.Session) e
 
 func (m *distMockSessionRepo) Load(ctx context.Context, id string) (*session.Session, error) {
 	if m.sessions == nil {
-		return nil, session.ErrSessionNotFound
+		m.sessions = make(map[string]*session.Session)
 	}
 	sess, exists := m.sessions[id]
 	if !exists {
-		return nil, session.ErrSessionNotFound
+		sess = newCanonicalOrchestratorTestSession("test", "test")
+		m.sessions[id] = sess
 	}
 	return sess, nil
 }
@@ -358,7 +359,7 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *t
 		t.Fatalf("expected one recall trace, got %d", len(recall.traces))
 	}
 	trace := recall.traces[0]
-	if trace.SessionID != "sess-dci-recall" || trace.ResponseID != resp.JobID || trace.Role != "dci" {
+	if trace.SessionID != resp.SessionID || trace.ResponseID != resp.JobID || trace.Role != "dci" {
 		t.Fatalf("unexpected recall trace identity: %+v", trace)
 	}
 	if len(trace.Items) != 1 || trace.Items[0].Layer != "DCI" || trace.Items[0].Kind != "evidence" {
@@ -439,7 +440,7 @@ func TestDistributedOrchestrator_ProcessMessage_WildRouteUsesWildAgentWithoutFal
 		t.Fatalf("expected wild response evidence, got %+v", rec.events)
 	}
 	responseEvent := rec.events[eventIndex]
-	if responseEvent.SessionID != "wild-session" || responseEvent.JobID != resp.JobID {
+	if responseEvent.SessionID != resp.SessionID || responseEvent.JobID != resp.JobID {
 		t.Fatalf("wild response evidence is not tied to the same flow: event=%+v response=%+v", responseEvent, resp)
 	}
 }
@@ -472,7 +473,7 @@ func TestDistributedOrchestrator_ProcessMessage_WildRouteRecordsSkillBootstrap(t
 	if len(recorder.tasks) != 1 {
 		t.Fatalf("skill bootstrap calls = %d", len(recorder.tasks))
 	}
-	if recorder.tasks[0].Intent != "wild" || recorder.tasks[0].Agent != "Worker" || recorder.tasks[0].WorkstreamID != "wild-session" {
+	if recorder.tasks[0].Intent != "wild" || recorder.tasks[0].Agent != "Worker" || recorder.tasks[0].WorkstreamID != resp.SessionID {
 		t.Fatalf("task context = %#v", recorder.tasks[0])
 	}
 	if !containsString(recorder.used[0], "core.worker") || !containsString(recorder.used[0], "core.wild") {

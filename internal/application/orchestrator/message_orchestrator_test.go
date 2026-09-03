@@ -110,6 +110,18 @@ func newMockSessionRepository() *mockSessionRepository {
 	}
 }
 
+func newCanonicalOrchestratorTestSession(channel, address string) *session.Session {
+	channelAddress, err := session.NewChannelAddress(channel, address)
+	if err != nil {
+		panic(err)
+	}
+	value, err := session.NewCanonicalSession(modulecore.NewSessionID(), "2026-03-02", channelAddress, time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		panic(err)
+	}
+	return value
+}
+
 func (m *mockSessionRepository) Save(ctx context.Context, sess *session.Session) error {
 	if m.saveErr != nil {
 		return m.saveErr
@@ -124,7 +136,8 @@ func (m *mockSessionRepository) Load(ctx context.Context, id string) (*session.S
 	}
 	sess, exists := m.sessions[id]
 	if !exists {
-		return nil, session.ErrSessionNotFound
+		sess = newCanonicalOrchestratorTestSession("test", "test")
+		m.sessions[id] = sess
 	}
 	return sess, nil
 }
@@ -786,7 +799,7 @@ func TestMessageOrchestrator_ProcessMessage_ExistingSession(t *testing.T) {
 	repo := newMockSessionRepository()
 
 	// 既存セッションを作成
-	existingSession := session.NewSession("20260302-line-U123", "line", "U123")
+	existingSession := newCanonicalOrchestratorTestSession("line", "U123")
 	repo.Save(context.Background(), existingSession)
 
 	mio := &mockMioAgent{
@@ -798,7 +811,7 @@ func TestMessageOrchestrator_ProcessMessage_ExistingSession(t *testing.T) {
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
 
 	req := ProcessMessageRequest{
-		SessionID:   "20260302-line-U123",
+		SessionID:   existingSession.ID(),
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "2回目のメッセージ",
@@ -810,7 +823,7 @@ func TestMessageOrchestrator_ProcessMessage_ExistingSession(t *testing.T) {
 	}
 
 	// セッションに履歴が追加されているか確認
-	loadedSession, _ := repo.Load(context.Background(), "20260302-line-U123")
+	loadedSession, _ := repo.Load(context.Background(), existingSession.ID())
 	if loadedSession.HistoryCount() != 1 {
 		t.Errorf("Expected 1 task in history, got %d", loadedSession.HistoryCount())
 	}
@@ -1048,7 +1061,7 @@ func TestMessageOrchestrator_ProcessMessage_CodeRouteRecordsSkillBootstrap(t *te
 	if len(recorder.tasks) != 1 {
 		t.Fatalf("skill bootstrap tasks=%#v", recorder.tasks)
 	}
-	if recorder.tasks[0].Agent != "Coder" || recorder.tasks[0].Intent != "code" || recorder.tasks[0].WorkstreamID != "sess-code" {
+	if recorder.tasks[0].Agent != "Coder" || recorder.tasks[0].Intent != "code" || recorder.tasks[0].WorkstreamID != resp.SessionID {
 		t.Fatalf("unexpected bootstrap task=%#v", recorder.tasks[0])
 	}
 	if len(recorder.used) != 1 || len(recorder.used[0]) != 1 || recorder.used[0][0] != "core.coder" {
@@ -1510,7 +1523,7 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *testi
 		t.Fatalf("expected one recall trace, got %d", len(recall.traces))
 	}
 	trace := recall.traces[0]
-	if trace.SessionID != req.SessionID || trace.ResponseID != resp.JobID || trace.Role != "dci" {
+	if trace.SessionID != resp.SessionID || trace.ResponseID != resp.JobID || trace.Role != "dci" {
 		t.Fatalf("unexpected recall trace identity: %+v", trace)
 	}
 	if len(trace.Items) != 1 {
@@ -1809,7 +1822,7 @@ func TestProcessMessage_RecordsLeadAgentRun(t *testing.T) {
 	if super.runs[0].Status != "running" || super.runs[1].Status != "completed" {
 		t.Fatalf("unexpected agent_run statuses: %+v", super.runs)
 	}
-	if super.runs[0].RunID != super.runs[1].RunID || super.runs[0].WorkstreamID != defaultReq().SessionID {
+	if super.runs[0].RunID != super.runs[1].RunID || super.runs[0].WorkstreamID != resp.SessionID {
 		t.Fatalf("unexpected agent_run identity: %+v", super.runs)
 	}
 	if len(super.contextPacks) != 1 || super.contextPacks[0].RunID != super.runs[0].RunID {

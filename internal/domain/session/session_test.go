@@ -5,21 +5,31 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func TestNewSession(t *testing.T) {
-	session := NewSession("20260301-line-U123", "line", "U123")
+func newCanonicalSessionForTest(t *testing.T) *Session {
+	t.Helper()
+	address, err := NewChannelAddress("line", "U123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := NewCanonicalSession(modulecore.NewSessionID(), "2026-03-01", address, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
 
-	if session.ID() != "20260301-line-U123" {
-		t.Errorf("Expected ID '20260301-line-U123', got '%s'", session.ID())
+func TestNewCanonicalSession(t *testing.T) {
+	session := newCanonicalSessionForTest(t)
+
+	if err := modulecore.SessionID(session.ID()).Validate(); err != nil {
+		t.Fatalf("SessionID: %v", err)
 	}
 
-	if session.Channel() != "line" {
-		t.Errorf("Expected channel 'line', got '%s'", session.Channel())
-	}
-
-	if session.ChatID() != "U123" {
-		t.Errorf("Expected chatID 'U123', got '%s'", session.ChatID())
+	if session.ChannelAddress() != (ChannelAddress{Channel: "line", Address: "U123"}) {
+		t.Errorf("ChannelAddress = %#v", session.ChannelAddress())
 	}
 
 	if session.HistoryCount() != 0 {
@@ -34,7 +44,7 @@ func TestNewSession(t *testing.T) {
 }
 
 func TestSessionAddTask(t *testing.T) {
-	session := NewSession("session1", "line", "U123")
+	session := newCanonicalSessionForTest(t)
 	jobID := task.NewJobID()
 	newTask := task.NewTask(jobID, "Hello", "line", "U123")
 
@@ -55,7 +65,7 @@ func TestSessionAddTask(t *testing.T) {
 }
 
 func TestSessionGetRecentHistory(t *testing.T) {
-	session := NewSession("session1", "line", "U123")
+	session := newCanonicalSessionForTest(t)
 
 	// 5つのタスクを追加
 	for i := 1; i <= 5; i++ {
@@ -87,7 +97,7 @@ func TestSessionGetRecentHistory(t *testing.T) {
 }
 
 func TestSessionMemory(t *testing.T) {
-	session := NewSession("session1", "line", "U123")
+	session := newCanonicalSessionForTest(t)
 
 	// メモリ設定
 	session.SetMemory("key1", "value1")
@@ -118,7 +128,7 @@ func TestSessionMemory(t *testing.T) {
 }
 
 func TestSessionClearMemory(t *testing.T) {
-	session := NewSession("session1", "line", "U123")
+	session := newCanonicalSessionForTest(t)
 
 	session.SetMemory("key1", "value1")
 	session.SetMemory("key2", "value2")
@@ -131,20 +141,24 @@ func TestSessionClearMemory(t *testing.T) {
 	}
 }
 
-func TestReconstructSession(t *testing.T) {
+func TestReconstructCanonicalSession(t *testing.T) {
 	createdAt := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	updatedAt := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
-
-	s := ReconstructSession("sid-1", "line", "U999", createdAt, updatedAt)
-
-	if s.ID() != "sid-1" {
-		t.Errorf("Expected ID 'sid-1', got '%s'", s.ID())
+	address, err := NewChannelAddress("line", "U999")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if s.Channel() != "line" {
-		t.Errorf("Expected channel 'line', got '%s'", s.Channel())
+	id := modulecore.NewSessionID()
+	s, err := ReconstructCanonicalSession(id, "2026-03-01", address, nil, nil, createdAt, updatedAt)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if s.ChatID() != "U999" {
-		t.Errorf("Expected chatID 'U999', got '%s'", s.ChatID())
+
+	if s.ID() != string(id) {
+		t.Errorf("Expected ID %q, got %q", id, s.ID())
+	}
+	if s.ChannelAddress() != address {
+		t.Errorf("Expected ChannelAddress %#v, got %#v", address, s.ChannelAddress())
 	}
 	if !s.CreatedAt().Equal(createdAt) {
 		t.Errorf("Expected createdAt %v, got %v", createdAt, s.CreatedAt())
@@ -158,7 +172,7 @@ func TestReconstructSession(t *testing.T) {
 }
 
 func TestSessionGetAllMemory(t *testing.T) {
-	s := NewSession("session1", "line", "U123")
+	s := newCanonicalSessionForTest(t)
 
 	s.SetMemory("key1", "value1")
 	s.SetMemory("key2", 42)
@@ -184,7 +198,7 @@ func TestSessionGetAllMemory(t *testing.T) {
 }
 
 func TestSessionUpdatedAt(t *testing.T) {
-	session := NewSession("session1", "line", "U123")
+	session := newCanonicalSessionForTest(t)
 	initialUpdatedAt := session.UpdatedAt()
 
 	// わずかに待機

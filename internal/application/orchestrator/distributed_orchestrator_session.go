@@ -18,12 +18,12 @@ func newDistributedSessionLifecycle(sessionRepo SessionRepository) *distributedS
 }
 
 func (l *distributedSessionLifecycle) LoadForRequest(ctx context.Context, req ProcessMessageRequest) (*session.Session, error) {
-	sess, err := l.loadOrCreate(ctx, req.SessionID, req.Channel, req.ChatID)
+	sess, err := l.load(ctx, req.SessionID)
 	if err != nil {
-		log.Printf("[DistributedOrch] ProcessMessage ERROR: failed to load or create session: %v", err)
+		log.Printf("[DistributedOrch] ProcessMessage ERROR: failed to load session: %v", err)
 		return nil, err
 	}
-	log.Printf("[DistributedOrch] Session loaded/created: %s", sess.ID())
+	log.Printf("[DistributedOrch] Session loaded: %s", sess.ID())
 	return sess, nil
 }
 
@@ -41,10 +41,6 @@ func (l *distributedSessionLifecycle) SaveCompletedTask(ctx context.Context, ses
 	return nil
 }
 
-func (l *distributedSessionLifecycle) loadOrCreate(ctx context.Context, id, channel, chatID string) (*session.Session, error) {
-	sess, err := l.sessionRepo.Load(ctx, id)
-	if err != nil {
-		return session.NewSession(id, channel, chatID), nil
-	}
-	return sess, nil
+func (l *distributedSessionLifecycle) load(ctx context.Context, id string) (*session.Session, error) {
+	return l.sessionRepo.Load(ctx, id)
 }

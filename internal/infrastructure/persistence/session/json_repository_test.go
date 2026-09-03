@@ -14,6 +14,19 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+func newCanonicalRepositoryTestSession(t *testing.T) *session.Session {
+	t.Helper()
+	address, err := session.NewChannelAddress("line", "U123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := session.NewCanonicalSession(modulecore.NewSessionID(), "2026-03-01", address, time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
 func TestJSONSessionRepositoryLoadOrCreateCanonicalUsesExplicitLookupAttributes(t *testing.T) {
 	repo := NewJSONSessionRepository(t.TempDir())
 	address, err := session.NewChannelAddress("line", "U123")
@@ -143,6 +156,38 @@ func TestJSONSessionRepositoryCanonicalIdentityRoundTrip(t *testing.T) {
 	}
 }
 
+func TestJSONSessionRepositoryRejectsLegacySessionContract(t *testing.T) {
+	dir := t.TempDir()
+	legacy := []byte(`{"id":"20260301-line-U123","channel":"line","chat_id":"U123","history":[],"memory":{},"created_at":"2026-03-01T00:00:00Z","updated_at":"2026-03-01T00:00:00Z"}`)
+	if err := os.WriteFile(filepath.Join(dir, "20260301-line-U123.json"), legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewJSONSessionRepository(dir)
+	if _, err := repo.Load(context.Background(), "20260301-line-U123"); err == nil {
+		t.Fatal("legacy Session was accepted by canonical repository Load")
+	}
+	address, err := session.NewChannelAddress("line", "U123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.LoadOrCreateCanonical(context.Background(), "2026-03-01", address, time.Now().UTC()); err == nil {
+		t.Fatal("legacy Session was skipped by canonical lookup")
+	}
+}
+
+func TestJSONSessionRepositoryRejectsCanonicalRecordWithLegacyIdentityFields(t *testing.T) {
+	dir := t.TempDir()
+	id := modulecore.NewSessionID()
+	mixed := []byte(`{"id":"` + string(id) + `","logical_date":"2026-03-01","channel_address":{"channel":"line","address":"U123"},"channel":"line","chat_id":"U123","history":[],"memory":{},"created_at":"2026-03-01T00:00:00Z","updated_at":"2026-03-01T00:00:00Z"}`)
+	if err := os.WriteFile(filepath.Join(dir, string(id)+".json"), mixed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewJSONSessionRepository(dir)
+	if _, err := repo.Load(context.Background(), string(id)); err == nil {
+		t.Fatal("canonical Session with legacy identity fields was accepted")
+	}
+}
+
 func TestNewJSONSessionRepository(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewJSONSessionRepository(tmpDir)
@@ -157,7 +202,7 @@ func TestJSONSessionRepository_SaveAndLoad(t *testing.T) {
 	repo := NewJSONSessionRepository(tmpDir)
 
 	// セッション作成
-	sess := session.NewSession("20260301-line-U123", "line", "U123")
+	sess := newCanonicalRepositoryTestSession(t)
 	jobID := task.NewJobID()
 	testTask := task.NewTask(jobID, "テストメッセージ", "line", "U123")
 	sess.AddTask(testTask)
@@ -170,7 +215,7 @@ func TestJSONSessionRepository_SaveAndLoad(t *testing.T) {
 	}
 
 	// ロード
-	loaded, err := repo.Load(context.Background(), "20260301-line-U123")
+	loaded, err := repo.Load(context.Background(), sess.ID())
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -179,12 +224,8 @@ func TestJSONSessionRepository_SaveAndLoad(t *testing.T) {
 		t.Errorf("Expected ID '%s', got '%s'", sess.ID(), loaded.ID())
 	}
 
-	if loaded.Channel() != sess.Channel() {
-		t.Errorf("Expected channel '%s', got '%s'", sess.Channel(), loaded.Channel())
-	}
-
-	if loaded.ChatID() != sess.ChatID() {
-		t.Errorf("Expected chatID '%s', got '%s'", sess.ChatID(), loaded.ChatID())
+	if loaded.ChannelAddress() != sess.ChannelAddress() {
+		t.Errorf("Expected ChannelAddress %#v, got %#v", sess.ChannelAddress(), loaded.ChannelAddress())
 	}
 
 	if loaded.HistoryCount() != 1 {
@@ -204,7 +245,7 @@ func TestJSONSessionRepository_LoadNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewJSONSessionRepository(tmpDir)
 
-	_, err := repo.Load(context.Background(), "nonexistent")
+	_, err := repo.Load(context.Background(), string(modulecore.NewSessionID()))
 	if err == nil {
 		t.Error("Expected error when loading non-existent session")
 	}
@@ -214,10 +255,12 @@ func TestJSONSessionRepository_Exists(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewJSONSessionRepository(tmpDir)
 
-	sess := session.NewSession("test-session", "line", "U123")
-	repo.Save(context.Background(), sess)
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
 
-	exists, err := repo.Exists(context.Background(), "test-session")
+	exists, err := repo.Exists(context.Background(), sess.ID())
 	if err != nil {
 		t.Fatalf("Exists failed: %v", err)
 	}
@@ -226,7 +269,7 @@ func TestJSONSessionRepository_Exists(t *testing.T) {
 		t.Error("Session should exist")
 	}
 
-	exists, err = repo.Exists(context.Background(), "nonexistent")
+	exists, err = repo.Exists(context.Background(), string(modulecore.NewSessionID()))
 	if err != nil {
 		t.Fatalf("Exists failed: %v", err)
 	}
@@ -240,23 +283,25 @@ func TestJSONSessionRepository_Delete(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewJSONSessionRepository(tmpDir)
 
-	sess := session.NewSession("test-session", "line", "U123")
-	repo.Save(context.Background(), sess)
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
 
 	// 削除前に存在確認
-	exists, _ := repo.Exists(context.Background(), "test-session")
+	exists, _ := repo.Exists(context.Background(), sess.ID())
 	if !exists {
 		t.Error("Session should exist before deletion")
 	}
 
 	// 削除
-	err := repo.Delete(context.Background(), "test-session")
+	err := repo.Delete(context.Background(), sess.ID())
 	if err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
 	// 削除後に存在確認
-	exists, _ = repo.Exists(context.Background(), "test-session")
+	exists, _ = repo.Exists(context.Background(), sess.ID())
 	if exists {
 		t.Error("Session should not exist after deletion")
 	}
@@ -266,11 +311,13 @@ func TestJSONSessionRepository_FileStructure(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewJSONSessionRepository(tmpDir)
 
-	sess := session.NewSession("20260301-line-U123", "line", "U123")
-	repo.Save(context.Background(), sess)
+	sess := newCanonicalRepositoryTestSession(t)
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
 
 	// ファイルが正しい場所に作成されているか確認
-	expectedPath := filepath.Join(tmpDir, "20260301-line-U123.json")
+	expectedPath := filepath.Join(tmpDir, sess.ID()+".json")
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 		t.Errorf("Expected file to exist at %s", expectedPath)
 	}
@@ -290,7 +337,7 @@ func TestJSONSessionRepository_MultipleHistoryItems(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewJSONSessionRepository(tmpDir)
 
-	sess := session.NewSession("test-session", "line", "U123")
+	sess := newCanonicalRepositoryTestSession(t)
 
 	// 複数のタスクを追加
 	for i := 0; i < 5; i++ {
@@ -300,8 +347,10 @@ func TestJSONSessionRepository_MultipleHistoryItems(t *testing.T) {
 	}
 
 	// 保存してロード
-	repo.Save(context.Background(), sess)
-	loaded, err := repo.Load(context.Background(), "test-session")
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := repo.Load(context.Background(), sess.ID())
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -320,13 +369,15 @@ func TestJSONSessionRepository_MemoryPreservation(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewJSONSessionRepository(tmpDir)
 
-	sess := session.NewSession("test-session", "line", "U123")
+	sess := newCanonicalRepositoryTestSession(t)
 	sess.SetMemory("string", "value")
 	sess.SetMemory("number", 42)
 	sess.SetMemory("bool", true)
 
-	repo.Save(context.Background(), sess)
-	loaded, err := repo.Load(context.Background(), "test-session")
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := repo.Load(context.Background(), sess.ID())
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}

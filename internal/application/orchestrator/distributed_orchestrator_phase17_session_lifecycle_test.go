@@ -40,25 +40,23 @@ func (r *phase17SessionRepo) Delete(context.Context, string) error {
 	return nil
 }
 
-func TestPhase17DistributedSessionLifecycleCreatesSessionForAnyLoadError(t *testing.T) {
-	repo := &phase17SessionRepo{loadErr: errors.New("temporary store error")}
+func TestPhase17DistributedSessionLifecycleReturnsLoadErrorWithoutLegacyCreation(t *testing.T) {
+	wantErr := errors.New("temporary store error")
+	repo := &phase17SessionRepo{loadErr: wantErr}
 	lifecycle := newDistributedSessionLifecycle(repo)
 
-	sess, err := lifecycle.LoadForRequest(context.Background(), ProcessMessageRequest{
+	_, err := lifecycle.LoadForRequest(context.Background(), ProcessMessageRequest{
 		SessionID: "sess-1",
 		Channel:   "line",
 		ChatID:    "U123",
 	})
-	if err != nil {
-		t.Fatalf("expected load error to become a new session, got %v", err)
-	}
-	if sess.ID() != "sess-1" || sess.Channel() != "line" || sess.ChatID() != "U123" {
-		t.Fatalf("unexpected session: id=%s channel=%s chatID=%s", sess.ID(), sess.Channel(), sess.ChatID())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("LoadForRequest() error=%v, want %v", err, wantErr)
 	}
 }
 
 func TestPhase17DistributedSessionLifecycleReturnsExistingSession(t *testing.T) {
-	existing := session.NewSession("sess-1", "line", "U123")
+	existing := newCanonicalOrchestratorTestSession("line", "U123")
 	repo := &phase17SessionRepo{loadSession: existing}
 	lifecycle := newDistributedSessionLifecycle(repo)
 
@@ -74,7 +72,7 @@ func TestPhase17DistributedSessionLifecycleReturnsExistingSession(t *testing.T) 
 func TestPhase17DistributedSessionLifecycleSaveCompletedTaskAddsTaskBeforeSave(t *testing.T) {
 	repo := &phase17SessionRepo{}
 	lifecycle := newDistributedSessionLifecycle(repo)
-	sess := session.NewSession("sess-1", "line", "U123")
+	sess := newCanonicalOrchestratorTestSession("line", "U123")
 	tk := task.NewTask(task.NewJobID(), "hello", "line", "U123")
 
 	if err := lifecycle.SaveCompletedTask(context.Background(), sess, tk); err != nil {
@@ -91,7 +89,7 @@ func TestPhase17DistributedSessionLifecycleSaveCompletedTaskAddsTaskBeforeSave(t
 func TestPhase17DistributedSessionLifecycleSaveErrorReturnsErrorAfterTaskAdded(t *testing.T) {
 	repo := &phase17SessionRepo{saveErr: errors.New("save failed")}
 	lifecycle := newDistributedSessionLifecycle(repo)
-	sess := session.NewSession("sess-1", "line", "U123")
+	sess := newCanonicalOrchestratorTestSession("line", "U123")
 	tk := task.NewTask(task.NewJobID(), "hello", "line", "U123")
 
 	err := lifecycle.SaveCompletedTask(context.Background(), sess, tk)

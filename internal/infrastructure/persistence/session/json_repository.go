@@ -63,11 +63,14 @@ func (r *JSONSessionRepository) LoadOrCreateCanonical(ctx context.Context, logic
 		if readErr != nil {
 			return nil, fmt.Errorf("read session identity: %w", readErr)
 		}
+		if err := rejectLegacySessionIdentityFields(raw); err != nil {
+			return nil, err
+		}
 		var probe sessionIdentityProbe
 		if err := json.Unmarshal(raw, &probe); err != nil {
 			return nil, fmt.Errorf("decode session identity: %w", err)
 		}
-		if probe.LogicalDate == "" && probe.ChannelAddress == nil {
+		if probe.ID == "" && probe.LogicalDate == "" && probe.ChannelAddress == nil {
 			continue
 		}
 		if probe.ID == "" || probe.LogicalDate == "" || probe.ChannelAddress == nil {
@@ -113,10 +116,8 @@ func NewJSONSessionRepository(baseDir string) *JSONSessionRepository {
 // sessionDTO はJSONシリアライズ用のDTO
 type sessionDTO struct {
 	ID             string                  `json:"id"`
-	LogicalDate    string                  `json:"logical_date,omitempty"`
-	ChannelAddress *session.ChannelAddress `json:"channel_address,omitempty"`
-	Channel        string                  `json:"channel,omitempty"`
-	ChatID         string                  `json:"chat_id,omitempty"`
+	LogicalDate    string                  `json:"logical_date"`
+	ChannelAddress *session.ChannelAddress `json:"channel_address"`
 	History        []taskDTO               `json:"history"`
 	Memory         map[string]interface{}  `json:"memory"`
 	CreatedAt      time.Time               `json:"created_at"`
@@ -142,6 +143,9 @@ func (r *JSONSessionRepository) Save(ctx context.Context, sess *session.Session)
 
 func (r *JSONSessionRepository) save(ctx context.Context, sess *session.Session) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateCanonicalSession(sess); err != nil {
 		return err
 	}
 	dto := r.toDTO(sess)
@@ -193,6 +197,9 @@ func (r *JSONSessionRepository) load(ctx context.Context, id string) (*session.S
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := modulecore.SessionID(id).Validate(); err != nil {
+		return nil, fmt.Errorf("invalid canonical session_id: %w", err)
+	}
 	filePath := r.getFilePath(id)
 
 	data, err := os.ReadFile(filePath)
@@ -201,6 +208,9 @@ func (r *JSONSessionRepository) load(ctx context.Context, id string) (*session.S
 			return nil, fmt.Errorf("session %s: %w", id, session.ErrSessionNotFound)
 		}
 		return nil, fmt.Errorf("failed to read session file: %w", err)
+	}
+	if err := rejectLegacySessionIdentityFields(data); err != nil {
+		return nil, err
 	}
 
 	var dto sessionDTO
@@ -215,10 +225,27 @@ func (r *JSONSessionRepository) load(ctx context.Context, id string) (*session.S
 	return result, nil
 }
 
+func rejectLegacySessionIdentityFields(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode session identity: %w", err)
+	}
+	if _, exists := fields["channel"]; exists {
+		return fmt.Errorf("legacy session identity field channel is not supported")
+	}
+	if _, exists := fields["chat_id"]; exists {
+		return fmt.Errorf("legacy session identity field chat_id is not supported")
+	}
+	return nil
+}
+
 // Exists はセッションが存在するか確認
 func (r *JSONSessionRepository) Exists(ctx context.Context, id string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := modulecore.SessionID(id).Validate(); err != nil {
+		return false, fmt.Errorf("invalid canonical session_id: %w", err)
+	}
 	filePath := r.getFilePath(id)
 	_, err := os.Stat(filePath)
 	if err != nil {
@@ -234,6 +261,9 @@ func (r *JSONSessionRepository) Exists(ctx context.Context, id string) (bool, er
 func (r *JSONSessionRepository) Delete(ctx context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := modulecore.SessionID(id).Validate(); err != nil {
+		return fmt.Errorf("invalid canonical session_id: %w", err)
+	}
 	filePath := r.getFilePath(id)
 	if err := os.Remove(filePath); err != nil {
 		if os.IsNotExist(err) {
@@ -263,19 +293,15 @@ func (r *JSONSessionRepository) toDTO(sess *session.Session) *sessionDTO {
 		})
 	}
 
+	address := sess.ChannelAddress()
 	dto := &sessionDTO{
-		ID:        sess.ID(),
-		History:   history,
-		Memory:    sess.GetAllMemory(),
-		CreatedAt: sess.CreatedAt(),
-		UpdatedAt: sess.UpdatedAt(),
-	}
-	if address := sess.ChannelAddress(); sess.LogicalDate() != "" && address.Channel != "" && address.Address != "" {
-		dto.LogicalDate = sess.LogicalDate()
-		dto.ChannelAddress = &address
-	} else {
-		dto.Channel = sess.Channel()
-		dto.ChatID = sess.ChatID()
+		ID:             sess.ID(),
+		LogicalDate:    sess.LogicalDate(),
+		ChannelAddress: &address,
+		History:        history,
+		Memory:         sess.GetAllMemory(),
+		CreatedAt:      sess.CreatedAt(),
+		UpdatedAt:      sess.UpdatedAt(),
 	}
 	return dto
 }
@@ -295,28 +321,24 @@ func (r *JSONSessionRepository) fromDTO(dto *sessionDTO) (*session.Session, erro
 		history = append(history, t)
 	}
 
-	var sess *session.Session
-	if dto.LogicalDate != "" || dto.ChannelAddress != nil {
-		if dto.ChannelAddress == nil {
-			return nil, fmt.Errorf("channel_address is required with logical_date")
-		}
-		var err error
-		sess, err = session.ReconstructCanonicalSession(modulecore.SessionID(dto.ID), dto.LogicalDate, *dto.ChannelAddress, history, dto.Memory, dto.CreatedAt, dto.UpdatedAt)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		sess = session.ReconstructSession(dto.ID, dto.Channel, dto.ChatID, dto.CreatedAt, dto.UpdatedAt)
+	if dto.ChannelAddress == nil {
+		return nil, fmt.Errorf("channel_address is required")
 	}
+	return session.ReconstructCanonicalSession(modulecore.SessionID(dto.ID), dto.LogicalDate, *dto.ChannelAddress, history, dto.Memory, dto.CreatedAt, dto.UpdatedAt)
+}
 
-	if dto.LogicalDate == "" && dto.ChannelAddress == nil {
-		for _, item := range history {
-			sess.AddTask(item)
-		}
-		for key, value := range dto.Memory {
-			sess.SetMemory(key, value)
-		}
+func validateCanonicalSession(sess *session.Session) error {
+	if sess == nil {
+		return fmt.Errorf("canonical Session is required")
 	}
-
-	return sess, nil
+	if err := modulecore.SessionID(sess.ID()).Validate(); err != nil {
+		return fmt.Errorf("invalid canonical session_id: %w", err)
+	}
+	if err := session.ValidateLogicalDate(sess.LogicalDate()); err != nil {
+		return fmt.Errorf("invalid canonical logical_date: %w", err)
+	}
+	if err := sess.ChannelAddress().Validate(); err != nil {
+		return fmt.Errorf("invalid canonical ChannelAddress: %w", err)
+	}
+	return nil
 }
