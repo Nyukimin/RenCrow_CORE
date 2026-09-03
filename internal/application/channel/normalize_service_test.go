@@ -1,17 +1,6 @@
 package channel
 
-import (
-	"testing"
-	"time"
-)
-
-func TestBuildSessionID(t *testing.T) {
-	now := time.Date(2026, 3, 9, 1, 2, 3, 0, time.UTC)
-	got := BuildSessionID(now, "line", "U123")
-	if got != "20260309-line-U123" {
-		t.Fatalf("unexpected session id: %s", got)
-	}
-}
+import "testing"
 
 func TestNormalizeEntryPlatformChannel(t *testing.T) {
 	tests := []struct {

@@ -16,7 +16,6 @@ import (
 
 	adapterchannels "github.com/Nyukimin/RenCrow_CORE/internal/adapter/channels"
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
-	channelapp "github.com/Nyukimin/RenCrow_CORE/internal/application/channel"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 )
@@ -171,9 +170,8 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := a.orchestrator.ProcessMessage(r.Context(), orchestrator.ProcessMessageRequest{
-		SessionID:   channelapp.BuildSessionID(time.Now().UTC(), "slack", normalized.ChatID),
 		Channel:     "slack",
-		ChatID:      normalized.UserID,
+		ChatID:      normalized.ChatID,
 		UserMessage: normalized.Text,
 		Attachments: attachments,
 	})

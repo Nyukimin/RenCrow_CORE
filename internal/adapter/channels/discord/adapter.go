@@ -14,7 +14,6 @@ import (
 
 	adapterchannels "github.com/Nyukimin/RenCrow_CORE/internal/adapter/channels"
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
-	channelapp "github.com/Nyukimin/RenCrow_CORE/internal/application/channel"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 )
@@ -228,9 +227,8 @@ func (a *Adapter) verifySignature(r *http.Request, body []byte) bool {
 
 func (a *Adapter) processChannelEvent(ctx context.Context, event adapterchannels.ChannelEvent, attachments []domainattachment.Attachment) (orchestrator.ProcessMessageResponse, error) {
 	return a.orchestrator.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
-		SessionID:   channelapp.BuildSessionID(time.Now().UTC(), "discord", event.ChatID),
 		Channel:     "discord",
-		ChatID:      event.UserID,
+		ChatID:      event.ChatID,
 		UserMessage: event.Text,
 		Attachments: attachments,
 	})

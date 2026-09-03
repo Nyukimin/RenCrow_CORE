@@ -60,6 +60,7 @@ type ProcessMessageRequest struct {
 // ProcessMessageResponse はメッセージ処理レスポンス
 type ProcessMessageResponse struct {
 	Response        string
+	SessionID       string `json:"session_id,omitempty"`
 	Route           routing.Route
 	Confidence      float64
 	JobID           string
@@ -468,6 +469,15 @@ func (o *MessageOrchestrator) ttsEnabled() bool {
 func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (resp ProcessMessageResponse, err error) {
 	latencyStartedAt := time.Now()
 	ctx = contextWithLatencyTrace(ctx, latencyStartedAt)
+	sess, req, err := o.sessions.ResolveForRequest(ctx, req, latencyStartedAt.UTC())
+	if err != nil {
+		return ProcessMessageResponse{}, err
+	}
+	defer func() {
+		if err == nil {
+			resp.SessionID = req.SessionID
+		}
+	}()
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
 	ensureProcessRequestIdentity(&req)
@@ -507,11 +517,6 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 
 	endChatBusy := o.idleBusyGuards.BeginChat()
 	defer endChatBusy()
-
-	sess, err := o.sessions.LoadForRequest(ctx, req)
-	if err != nil {
-		return ProcessMessageResponse{}, err
-	}
 
 	emitLatencyMetric(o.events.Emit, "network", "server_received", latencyStartedAt, "", jobID.String(), req.SessionID, req.Channel, req.ChatID, "")
 	if err := o.events.PublicationError(traceID); err != nil {

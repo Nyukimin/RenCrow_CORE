@@ -126,6 +126,9 @@ func runProcessMessage(ctx context.Context, proc messageProcessor, req entryadap
 }
 
 func toEntryResult(sessionID string, resp orchestrator.ProcessMessageResponse, evidenceRef string) entryadapter.Result {
+	if strings.TrimSpace(resp.SessionID) != "" {
+		sessionID = resp.SessionID
+	}
 	return entryadapter.Result{
 		SessionID:   sessionID,
 		Route:       string(resp.Route),

@@ -13,7 +13,6 @@ import (
 
 	adapterchannels "github.com/Nyukimin/RenCrow_CORE/internal/adapter/channels"
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
-	channelapp "github.com/Nyukimin/RenCrow_CORE/internal/application/channel"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	domainsecurity "github.com/Nyukimin/RenCrow_CORE/internal/domain/security"
@@ -226,7 +225,6 @@ func (h *Handler) processEvent(event WebhookEvent, scope domaintool.ToolExecutio
 
 	// セッションID生成（仕様: ChatID = ユーザーID、SessionID = line:<user_id>）
 	chatID := lineChatID(event.Source)
-	sessionID := h.generateSessionID(chatID)
 
 	attachments, err := h.attachmentsForEvent(ctx, event)
 	if err != nil {
@@ -241,7 +239,6 @@ func (h *Handler) processEvent(event WebhookEvent, scope domaintool.ToolExecutio
 
 	// オーケストレータを呼び出し
 	req := orchestrator.ProcessMessageRequest{
-		SessionID:   sessionID,
 		Channel:     "line",
 		ChatID:      chatID,
 		UserMessage: userMessage,
@@ -268,7 +265,7 @@ func (h *Handler) processEvent(event WebhookEvent, scope domaintool.ToolExecutio
 	if sendErr != nil {
 		log.Printf("[Webhook] Failed to send reply: %v", sendErr)
 	} else {
-		log.Printf("[Webhook] Reply sent successfully for session %s", sessionID)
+		log.Printf("[Webhook] Reply sent successfully for session %s", resp.SessionID)
 	}
 }
 
@@ -290,11 +287,6 @@ func toolExecutionScopeForEvent(event WebhookEvent) (domaintool.ToolExecutionSco
 		[]string{domaintool.DataScopeUser},
 		domaintool.AuthenticationSourceHTTP,
 	)
-}
-
-// generateSessionID はセッションIDを生成
-func (h *Handler) generateSessionID(userID string) string {
-	return channelapp.BuildSessionID(time.Now(), "line", userID)
 }
 
 func (h *Handler) authorizeEvent(event WebhookEvent) bool {

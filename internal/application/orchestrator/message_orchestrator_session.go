@@ -5,10 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
+
+type canonicalSessionRepository interface {
+	LoadOrCreateCanonical(context.Context, string, session.ChannelAddress, time.Time) (*session.Session, error)
+}
 
 type messageSessionLifecycle struct {
 	sessionRepo SessionRepository
@@ -26,6 +31,27 @@ func (l *messageSessionLifecycle) LoadForRequest(ctx context.Context, req Proces
 	}
 	log.Printf("[MessageOrch] Session loaded/created: %s", sess.ID())
 	return sess, nil
+}
+
+func (l *messageSessionLifecycle) ResolveForRequest(ctx context.Context, req ProcessMessageRequest, now time.Time) (*session.Session, ProcessMessageRequest, error) {
+	if req.SessionID != "" {
+		sess, err := l.LoadForRequest(ctx, req)
+		return sess, req, err
+	}
+	address, err := session.NewChannelAddress(req.Channel, req.ChatID)
+	if err != nil {
+		return nil, req, fmt.Errorf("invalid ChannelAddress: %w", err)
+	}
+	repo, ok := l.sessionRepo.(canonicalSessionRepository)
+	if !ok {
+		return nil, req, fmt.Errorf("canonical session repository is unavailable")
+	}
+	sess, err := repo.LoadOrCreateCanonical(ctx, now.UTC().Format("2006-01-02"), address, now.UTC())
+	if err != nil {
+		return nil, req, fmt.Errorf("resolve canonical session: %w", err)
+	}
+	req.SessionID = sess.ID()
+	return sess, req, nil
 }
 
 func (l *messageSessionLifecycle) SaveCompletedTask(ctx context.Context, sess *session.Session, t task.Task) error {

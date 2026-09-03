@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,84 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func TestJSONSessionRepositoryLoadOrCreateCanonicalUsesExplicitLookupAttributes(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	address, err := session.NewChannelAddress("line", "U123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	first, err := repo.LoadOrCreateCanonical(context.Background(), "2026-09-03", address, createdAt)
+	if err != nil {
+		t.Fatalf("first LoadOrCreateCanonical: %v", err)
+	}
+	second, err := repo.LoadOrCreateCanonical(context.Background(), "2026-09-03", address, createdAt.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("second LoadOrCreateCanonical: %v", err)
+	}
+	if first.ID() != second.ID() {
+		t.Fatalf("same lookup attributes produced %q and %q", first.ID(), second.ID())
+	}
+	if err := modulecore.SessionID(first.ID()).Validate(); err != nil {
+		t.Fatalf("created SessionID: %v", err)
+	}
+
+	nextDate, err := repo.LoadOrCreateCanonical(context.Background(), "2026-09-04", address, createdAt.Add(24*time.Hour))
+	if err != nil {
+		t.Fatalf("date boundary LoadOrCreateCanonical: %v", err)
+	}
+	if nextDate.ID() == first.ID() {
+		t.Fatal("date boundary reused the prior SessionID")
+	}
+}
+
+func TestJSONSessionRepositoryLoadOrCreateCanonicalIsConcurrentSafe(t *testing.T) {
+	dir := t.TempDir()
+	repo := NewJSONSessionRepository(dir)
+	address, err := session.NewChannelAddress("viewer", "ren")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const workers = 32
+	ids := make(chan string, workers)
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			item, loadErr := repo.LoadOrCreateCanonical(context.Background(), "2026-09-03", address, time.Now().UTC())
+			if loadErr != nil {
+				errs <- loadErr
+				return
+			}
+			ids <- item.ID()
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("LoadOrCreateCanonical: %v", err)
+	}
+	var want string
+	for id := range ids {
+		if want == "" {
+			want = id
+		}
+		if id != want {
+			t.Fatalf("concurrent IDs include %q and %q", want, id)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("session files = %d, want 1", len(entries))
+	}
+}
 
 func TestJSONSessionRepositoryCanonicalIdentityRoundTrip(t *testing.T) {
 	dir := t.TempDir()

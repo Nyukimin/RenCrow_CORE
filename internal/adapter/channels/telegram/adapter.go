@@ -13,7 +13,6 @@ import (
 	"time"
 
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
-	channelapp "github.com/Nyukimin/RenCrow_CORE/internal/application/channel"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 )
@@ -162,7 +161,6 @@ func (a *Adapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := orchestrator.ProcessMessageRequest{
-		SessionID:   channelapp.BuildSessionID(time.Now().UTC(), "telegram", strconv.FormatInt(update.Message.Chat.ID, 10)),
 		Channel:     "telegram",
 		ChatID:      strconv.FormatInt(update.Message.Chat.ID, 10),
 		UserMessage: text,

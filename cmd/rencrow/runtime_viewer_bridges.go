@@ -43,7 +43,6 @@ func buildViewerBridgeHandlers(
 				JobID:           req.JobID,
 				MessageID:       req.MessageID,
 				TraceID:         req.TraceID,
-				SessionID:       "viewer",
 				Channel:         "viewer",
 				ChatID:          "viewer-user",
 				UserMessage:     req.Message,

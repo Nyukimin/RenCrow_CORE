@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -24,6 +25,11 @@ func (l *distributedSessionLifecycle) LoadForRequest(ctx context.Context, req Pr
 	}
 	log.Printf("[DistributedOrch] Session loaded/created: %s", sess.ID())
 	return sess, nil
+}
+
+func (l *distributedSessionLifecycle) ResolveForRequest(ctx context.Context, req ProcessMessageRequest, now time.Time) (*session.Session, ProcessMessageRequest, error) {
+	delegate := messageSessionLifecycle{sessionRepo: l.sessionRepo}
+	return delegate.ResolveForRequest(ctx, req, now)
 }
 
 func (l *distributedSessionLifecycle) SaveCompletedTask(ctx context.Context, sess *session.Session, t task.Task) error {

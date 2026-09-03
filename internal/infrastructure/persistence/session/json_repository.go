@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -17,6 +19,88 @@ import (
 // JSONSessionRepository はJSONファイルベースのSessionRepository実装
 type JSONSessionRepository struct {
 	baseDir string
+	mu      sync.Mutex
+}
+
+type sessionIdentityProbe struct {
+	ID             string                  `json:"id"`
+	LogicalDate    string                  `json:"logical_date"`
+	ChannelAddress *session.ChannelAddress `json:"channel_address"`
+}
+
+// LoadOrCreateCanonical resolves a daily conversation using explicit lookup
+// attributes. SessionID remains opaque and is generated only when no matching
+// canonical session exists.
+func (r *JSONSessionRepository) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address session.ChannelAddress, createdAt time.Time) (*session.Session, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := session.ValidateLogicalDate(logicalDate); err != nil {
+		return nil, fmt.Errorf("invalid canonical session lookup: %w", err)
+	}
+	if err := address.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid canonical session lookup: %w", err)
+	}
+	if createdAt.IsZero() {
+		return nil, fmt.Errorf("invalid canonical session lookup: created_at is required")
+	}
+	entries, err := os.ReadDir(r.baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("read session directory: %w", err)
+	}
+	matchedID := ""
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		raw, readErr := os.ReadFile(filepath.Join(r.baseDir, entry.Name()))
+		if readErr != nil {
+			return nil, fmt.Errorf("read session identity: %w", readErr)
+		}
+		var probe sessionIdentityProbe
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			return nil, fmt.Errorf("decode session identity: %w", err)
+		}
+		if probe.LogicalDate == "" && probe.ChannelAddress == nil {
+			continue
+		}
+		if probe.ID == "" || probe.LogicalDate == "" || probe.ChannelAddress == nil {
+			return nil, fmt.Errorf("canonical session identity is incomplete")
+		}
+		if err := probe.ChannelAddress.Validate(); err != nil {
+			return nil, fmt.Errorf("canonical ChannelAddress is invalid: %w", err)
+		}
+		if err := session.ValidateLogicalDate(probe.LogicalDate); err != nil {
+			return nil, fmt.Errorf("canonical logical_date is invalid: %w", err)
+		}
+		if err := modulecore.SessionID(probe.ID).Validate(); err != nil {
+			return nil, fmt.Errorf("canonical session_id is invalid: %w", err)
+		}
+		if probe.LogicalDate != logicalDate || *probe.ChannelAddress != address {
+			continue
+		}
+		if matchedID != "" && matchedID != probe.ID {
+			return nil, fmt.Errorf("multiple canonical sessions match lookup attributes")
+		}
+		matchedID = probe.ID
+	}
+	if matchedID != "" {
+		return r.load(ctx, matchedID)
+	}
+	created, err := session.NewCanonicalSession(modulecore.NewSessionID(), logicalDate, address, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.save(ctx, created); err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
 // NewJSONSessionRepository は新しいJSONSessionRepositoryを作成
@@ -51,6 +135,15 @@ type taskDTO struct {
 
 // Save はセッションを保存
 func (r *JSONSessionRepository) Save(ctx context.Context, sess *session.Session) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.save(ctx, sess)
+}
+
+func (r *JSONSessionRepository) save(ctx context.Context, sess *session.Session) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dto := r.toDTO(sess)
 
 	data, err := json.MarshalIndent(dto, "", "  ")
@@ -58,16 +151,48 @@ func (r *JSONSessionRepository) Save(ctx context.Context, sess *session.Session)
 		return fmt.Errorf("failed to marshal session: %w", err)
 	}
 
-	filePath := r.getFilePath(sess.ID())
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write session file: %w", err)
+	temporary, err := os.CreateTemp(r.baseDir, ".session-*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create session temp file: %w", err)
 	}
-
+	temporaryPath := temporary.Name()
+	committed := false
+	defer func() {
+		_ = temporary.Close()
+		if !committed {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if err := temporary.Chmod(0600); err != nil {
+		return fmt.Errorf("failed to secure session temp file: %w", err)
+	}
+	if _, err := temporary.Write(data); err != nil {
+		return fmt.Errorf("failed to write session temp file: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		return fmt.Errorf("failed to sync session temp file: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("failed to close session temp file: %w", err)
+	}
+	if err := os.Rename(temporaryPath, r.getFilePath(sess.ID())); err != nil {
+		return fmt.Errorf("failed to commit session file: %w", err)
+	}
+	committed = true
 	return nil
 }
 
 // Load はセッションをロード
 func (r *JSONSessionRepository) Load(ctx context.Context, id string) (*session.Session, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.load(ctx, id)
+}
+
+func (r *JSONSessionRepository) load(ctx context.Context, id string) (*session.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	filePath := r.getFilePath(id)
 
 	data, err := os.ReadFile(filePath)
@@ -92,6 +217,8 @@ func (r *JSONSessionRepository) Load(ctx context.Context, id string) (*session.S
 
 // Exists はセッションが存在するか確認
 func (r *JSONSessionRepository) Exists(ctx context.Context, id string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	filePath := r.getFilePath(id)
 	_, err := os.Stat(filePath)
 	if err != nil {
@@ -105,6 +232,8 @@ func (r *JSONSessionRepository) Exists(ctx context.Context, id string) (bool, er
 
 // Delete はセッションを削除
 func (r *JSONSessionRepository) Delete(ctx context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	filePath := r.getFilePath(id)
 	if err := os.Remove(filePath); err != nil {
 		if os.IsNotExist(err) {

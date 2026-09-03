@@ -18,6 +18,16 @@ import (
 // ProcessMessage は既存MessageOrchestratorと同じシグネチャでメッセージを処理
 // 分散環境ではTransport経由でAgent間通信を行う
 func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (resp ProcessMessageResponse, err error) {
+	startedAt := time.Now().UTC()
+	sess, req, err := o.sessions.ResolveForRequest(ctx, req, startedAt)
+	if err != nil {
+		return ProcessMessageResponse{}, fmt.Errorf("failed to load or create session: %w", err)
+	}
+	defer func() {
+		if err == nil {
+			resp.SessionID = req.SessionID
+		}
+	}()
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
 	ensureProcessRequestIdentity(&req)
@@ -54,18 +64,10 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	if err := o.events.EmitMessageReceived(req, jobID.String()); err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	startedAt := time.Now().UTC()
-
 	if o.idleNotifier != nil {
 		o.idleNotifier.NotifyActivity()
 		o.idleNotifier.SetChatBusy(true)
 		defer o.idleNotifier.SetChatBusy(false)
-	}
-
-	// 1. セッションをロードまたは作成
-	sess, err := o.sessions.LoadForRequest(ctx, req)
-	if err != nil {
-		return ProcessMessageResponse{}, fmt.Errorf("failed to load or create session: %w", err)
 	}
 
 	if expandedReq, handled, err := o.expandRegisteredSlashCommand(ctx, req); err != nil {

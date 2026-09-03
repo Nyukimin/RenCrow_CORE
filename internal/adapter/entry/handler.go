@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	channelapp "github.com/Nyukimin/RenCrow_CORE/internal/application/channel"
 )
@@ -80,9 +79,6 @@ func HandleWithObserver(process Processor, observer Observer) http.HandlerFunc {
 		req.Platform, req.Channel = channelapp.NormalizeEntryPlatformChannel(req.Platform, req.Channel)
 		if req.UserID == "" {
 			req.UserID = "anonymous"
-		}
-		if req.SessionID == "" {
-			req.SessionID = channelapp.BuildSessionID(time.Now().UTC(), req.Channel, req.UserID)
 		}
 		if observer != nil {
 			observer(r.Context(), StageReceived, req, nil, nil)

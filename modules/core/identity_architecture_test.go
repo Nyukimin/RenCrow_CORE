@@ -169,6 +169,45 @@ func canonicalGeneratorLiteral(node ast.Node) (string, bool) {
 	return "", false
 }
 
+func TestCanonicalSessionIngressHasNoLegacyIDBuilder(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve current file")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	var violations []string
+	err := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", "vendor", "node_modules", "Tmp":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(content), "BuildSessionID") {
+			violations = append(violations, strings.TrimPrefix(path, repoRoot+string(filepath.Separator)))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan Go source: %v", err)
+	}
+	if len(violations) != 0 {
+		sort.Strings(violations)
+		t.Fatalf("legacy SessionID builder remains in runtime source: %v", violations)
+	}
+}
+
 func TestCanonicalEventRuntimeHasNoLegacyOwnerEventContract(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {

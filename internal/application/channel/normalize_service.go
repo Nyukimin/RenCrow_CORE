@@ -1,16 +1,6 @@
 package channel
 
-import (
-	"fmt"
-	"strings"
-	"time"
-)
-
-// BuildSessionID はチャネル共通のセッションID規約を組み立てる
-// format: YYYYMMDD-{channel}-{chatID}
-func BuildSessionID(now time.Time, channel, chatID string) string {
-	return fmt.Sprintf("%s-%s-%s", now.Format("20060102"), channel, chatID)
-}
+import "strings"
 
 // NormalizeEntryPlatformChannel normalizes unified entry platform/channel values.
 // platform: line|viewer|cli|chrome (default: viewer)

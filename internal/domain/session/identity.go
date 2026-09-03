@@ -32,7 +32,17 @@ func NewChannelAddress(channel, address string) (ChannelAddress, error) {
 	return value, nil
 }
 
-func validateLogicalDate(value string) error {
+func (a ChannelAddress) Validate() error {
+	if a.Channel == "" || a.Address == "" {
+		return fmt.Errorf("channel and channel address are required")
+	}
+	if strings.ToLower(strings.TrimSpace(a.Channel)) != a.Channel || strings.TrimSpace(a.Address) != a.Address {
+		return fmt.Errorf("channel address is not normalized")
+	}
+	return nil
+}
+
+func ValidateLogicalDate(value string) error {
 	parsed, err := time.Parse(logicalDateLayout, value)
 	if err != nil || parsed.Format(logicalDateLayout) != value {
 		return fmt.Errorf("logical_date must use YYYY-MM-DD")
@@ -52,7 +62,7 @@ func ReconstructCanonicalSession(id modulecore.SessionID, logicalDate string, ad
 	if err := id.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid session_id: %w", err)
 	}
-	if err := validateLogicalDate(logicalDate); err != nil {
+	if err := ValidateLogicalDate(logicalDate); err != nil {
 		return nil, err
 	}
 	normalizedAddress, err := NewChannelAddress(address.Channel, address.Address)

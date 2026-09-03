@@ -645,62 +645,6 @@ func TestHandler_WebhookEndpoint_NonTextMessage(t *testing.T) {
 	}
 }
 
-func TestHandler_GenerateSessionID(t *testing.T) {
-	tests := []struct {
-		name     string
-		userID   string
-		expected string // prefix check
-	}{
-		{
-			name:     "Standard user ID",
-			userID:   "U123456",
-			expected: "20260302-line-U123456", // 日付部分は実行日により変わる
-		},
-		{
-			name:     "Long user ID",
-			userID:   "Uabcdefghijklmnop",
-			expected: "20260302-line-Uabcdefghijklmnop",
-		},
-	}
-
-	orch := &mockOrchestrator{}
-	handler := NewHandler(orch, "test-secret", "test-token")
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sessionID := handler.generateSessionID(tt.userID)
-
-			// 形式チェック: YYYYMMDD-line-{userID}
-			if len(sessionID) < len("YYYYMMDD-line-") {
-				t.Errorf("Session ID too short: %s", sessionID)
-			}
-
-			// "line-"が含まれているか
-			if !contains(sessionID, "line-") {
-				t.Errorf("Session ID should contain 'line-': %s", sessionID)
-			}
-
-			// userIDが含まれているか
-			if !contains(sessionID, tt.userID) {
-				t.Errorf("Session ID should contain userID '%s': %s", tt.userID, sessionID)
-			}
-		})
-	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 func TestHandler_HealthCheck_NotHandled(t *testing.T) {
 	// /health は LINE handler ではなく専用の health handler が担当するため 404 を返す
 	orch := &mockOrchestrator{}

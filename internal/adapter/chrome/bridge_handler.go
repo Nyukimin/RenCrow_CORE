@@ -10,7 +10,6 @@ import (
 	"time"
 
 	entryadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/entry"
-	channelapp "github.com/Nyukimin/RenCrow_CORE/internal/application/channel"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
@@ -42,9 +41,6 @@ func HandleBridge(process entryadapter.Processor) http.HandlerFunc {
 			userID = "anonymous"
 		}
 		sessionID := strings.TrimSpace(req.SessionID)
-		if sessionID == "" {
-			sessionID = channelapp.BuildSessionID(time.Now().UTC(), "local", userID)
-		}
 		requestID := strings.TrimSpace(req.RequestID)
 		if requestID == "" {
 			requestID = fmt.Sprintf("req-%d", time.Now().UTC().UnixNano())
