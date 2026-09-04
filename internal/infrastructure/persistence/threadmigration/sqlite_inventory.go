@@ -464,9 +464,6 @@ type sqliteInventoryBuilder struct {
 	receipts           map[string]legacyReceiptRow
 	pendingChatGPTLogs map[legacyTuple]pendingChatGPTLog
 	pendingRawBindings []pendingChatGPTRawBinding
-
-	rawTableChecked bool
-	rawTableExists  bool
 }
 
 type legacyTuple struct {
@@ -784,9 +781,101 @@ func (builder *sqliteInventoryBuilder) resolvePendingChatGPTEventLogs() error {
 }
 
 func (builder *sqliteInventoryBuilder) validatePendingChatGPTRawBindings() error {
-	for _, pending := range builder.pendingRawBindings {
-		if err := builder.validateRawBinding(pending.recordKey, pending.conversationID); err != nil {
-			return fmt.Errorf("legacy %s row %q Raw binding: %w", pending.surface, pending.recordKey, err)
+	if err := contextError(builder.ctx); err != nil {
+		return err
+	}
+	if len(builder.pendingRawBindings) == 0 {
+		return nil
+	}
+
+	pending := append([]pendingChatGPTRawBinding(nil), builder.pendingRawBindings...)
+	sort.Slice(pending, func(left, right int) bool {
+		if pending[left].surface != pending[right].surface {
+			return pending[left].surface < pending[right].surface
+		}
+		if pending[left].recordKey != pending[right].recordKey {
+			return pending[left].recordKey < pending[right].recordKey
+		}
+		return pending[left].conversationID < pending[right].conversationID
+	})
+
+	expectedBySourceRecord := make(map[string]string, len(pending))
+	pendingBySourceRecord := make(map[string]pendingChatGPTRawBinding, len(pending))
+	for _, binding := range pending {
+		if err := contextError(builder.ctx); err != nil {
+			return err
+		}
+		if previous, exists := expectedBySourceRecord[binding.recordKey]; exists && previous != binding.conversationID {
+			return fmt.Errorf("legacy %s row %q Raw binding: source_record_id %q has conflicting ChatGPT conversations %q and %q", binding.surface, binding.recordKey, binding.recordKey, previous, binding.conversationID)
+		}
+		expectedBySourceRecord[binding.recordKey] = binding.conversationID
+		if _, exists := pendingBySourceRecord[binding.recordKey]; !exists {
+			pendingBySourceRecord[binding.recordKey] = binding
+		}
+	}
+	expectedSourceRecords := make([]string, 0, len(expectedBySourceRecord))
+	for sourceRecordID := range expectedBySourceRecord {
+		expectedSourceRecords = append(expectedSourceRecords, sourceRecordID)
+	}
+	sort.Strings(expectedSourceRecords)
+	firstSourceRecordID := expectedSourceRecords[0]
+	firstBinding := pendingBySourceRecord[firstSourceRecordID]
+
+	exists, err := sqliteTableExists(builder.ctx, builder.rawDB, "l1_raw_record")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("legacy %s row %q Raw binding: l1_raw_record table is required for a ChatGPT source binding", firstBinding.surface, firstBinding.recordKey)
+	}
+	if err := validateRawColumns(builder.ctx, builder.rawDB); err != nil {
+		return fmt.Errorf("legacy %s row %q Raw binding: %w", firstBinding.surface, firstBinding.recordKey, err)
+	}
+
+	rows, err := builder.rawDB.QueryContext(builder.ctx, `
+SELECT source_record_id, source_type, thread_id, typeof(thread_id)
+FROM l1_raw_record
+ORDER BY source_record_id ASC, source_type ASC, thread_id ASC, typeof(thread_id) ASC`)
+	if err != nil {
+		return fmt.Errorf("legacy %s row %q Raw binding: read l1_raw_record for source_record_id %q: %w", firstBinding.surface, firstBinding.recordKey, firstSourceRecordID, err)
+	}
+	defer rows.Close()
+	matchesBySourceRecord := make(map[string]int, len(expectedBySourceRecord))
+	for rows.Next() {
+		if err := contextError(builder.ctx); err != nil {
+			return err
+		}
+		var sourceRecordID, sourceType, threadID, threadType sql.NullString
+		if err := rows.Scan(&sourceRecordID, &sourceType, &threadID, &threadType); err != nil {
+			return fmt.Errorf("legacy %s row %q Raw binding: scan l1_raw_record for source_record_id %q: %w", firstBinding.surface, firstBinding.recordKey, firstSourceRecordID, err)
+		}
+		if !sourceRecordID.Valid {
+			continue
+		}
+		conversationID, expected := expectedBySourceRecord[sourceRecordID.String]
+		if !expected {
+			continue
+		}
+		matchesBySourceRecord[sourceRecordID.String]++
+		if !sourceType.Valid || !threadID.Valid || !threadType.Valid || sourceType.String != legacySourceChatGPT || threadID.String != conversationID || threadType.String != "text" {
+			binding := pendingBySourceRecord[sourceRecordID.String]
+			return fmt.Errorf("legacy %s row %q Raw binding: l1_raw_record for source_record_id %q does not preserve exact ChatGPT source/thread", binding.surface, binding.recordKey, sourceRecordID.String)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("legacy %s row %q Raw binding: iterate l1_raw_record for source_record_id %q: %w", firstBinding.surface, firstBinding.recordKey, firstSourceRecordID, err)
+	}
+	if err := contextError(builder.ctx); err != nil {
+		return err
+	}
+
+	for _, sourceRecordID := range expectedSourceRecords {
+		if err := contextError(builder.ctx); err != nil {
+			return err
+		}
+		if matches := matchesBySourceRecord[sourceRecordID]; matches != 1 {
+			binding := pendingBySourceRecord[sourceRecordID]
+			return fmt.Errorf("legacy %s row %q Raw binding: l1_raw_record for source_record_id %q has %d matching rows, want exactly one", binding.surface, binding.recordKey, sourceRecordID, matches)
 		}
 	}
 	return nil
@@ -1340,53 +1429,6 @@ func (builder *sqliteInventoryBuilder) registerChatGPT(sessionID string, threadI
 	}
 	builder.chatGPTByTuple[tuple] = conversationID
 	builder.tupleByChatGPT[conversationID] = tuple
-	return nil
-}
-
-func (builder *sqliteInventoryBuilder) validateRawBinding(sourceRecordID, conversationID string) error {
-	if err := contextError(builder.ctx); err != nil {
-		return err
-	}
-	if !builder.rawTableChecked {
-		exists, err := sqliteTableExists(builder.ctx, builder.rawDB, "l1_raw_record")
-		if err != nil {
-			return err
-		}
-		builder.rawTableChecked = true
-		builder.rawTableExists = exists
-	}
-	if !builder.rawTableExists {
-		return errors.New("l1_raw_record table is required for a ChatGPT source binding")
-	}
-	if err := validateRawColumns(builder.ctx, builder.rawDB); err != nil {
-		return err
-	}
-	rows, err := builder.rawDB.QueryContext(builder.ctx, `
-SELECT source_type, thread_id, typeof(thread_id)
-FROM l1_raw_record
-WHERE source_record_id = ?
-ORDER BY source_type ASC, thread_id ASC`, sourceRecordID)
-	if err != nil {
-		return fmt.Errorf("read l1_raw_record for source_record_id %q: %w", sourceRecordID, err)
-	}
-	defer rows.Close()
-	matches := 0
-	for rows.Next() {
-		matches++
-		var sourceType, threadID, threadType string
-		if err := rows.Scan(&sourceType, &threadID, &threadType); err != nil {
-			return fmt.Errorf("scan l1_raw_record for source_record_id %q: %w", sourceRecordID, err)
-		}
-		if sourceType != legacySourceChatGPT || threadID != conversationID || threadType != "text" {
-			return fmt.Errorf("l1_raw_record for source_record_id %q does not preserve exact ChatGPT source/thread", sourceRecordID)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate l1_raw_record for source_record_id %q: %w", sourceRecordID, err)
-	}
-	if matches != 1 {
-		return fmt.Errorf("l1_raw_record for source_record_id %q has %d matching rows, want exactly one", sourceRecordID, matches)
-	}
 	return nil
 }
 

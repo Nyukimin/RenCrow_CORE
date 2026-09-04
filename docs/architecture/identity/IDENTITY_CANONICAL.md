@@ -1636,6 +1636,14 @@ Test:
 - **Lesson / Invariant:** `allowZero` が選択され `thread_id==0` の L1 event／event log／archive だけは空Sessionを許可し、mappingを出さず optional-zero receiptへ数える。Archive materialization は空Session＋0を `(session_id='', thread_id='', thread_seq=0, thread_kind='')` として保持する。positive thread＋空Sessionと ChatGPT source＋0 は引き続き fail closed とする。
 - **Enforcement / Tests:** `legacyOptionalZeroSurfaces`、`contextAndIdentity`、receipt count relationship、`resolveSQLiteOptionalThreadTuple`、canonical archive tuple CHECK、および空／非空 optional-zero・positive／ChatGPT rejection testsで強制する。
 
+#### Step 05 Failure Knowledge: ChatGPT Raw bindingのN+1 scan
+
+- **Failure:** pending bindingごとに、indexのない`l1_raw_record`を全走査していた。
+- **Problem:** 同じRaw sourceへの反復参照があるcohortで、ChatGPT provenance検証の計算量が参照数に比例して増え、inventoryがboundedな検証期限へ到達できなくなった。
+- **Cause:** binding単位のtable／column確認と`source_record_id` queryを、同じRaw storeに対して繰り返していた。
+- **Lesson / Invariant:** pending bindingを`source_record_id -> exact conversation_id`へ決定的に縮約し、同一conversationの重複参照は一つの期待値として扱う。conflict、missing、duplicate、wrong source／thread／SQLite typeはfail closedとし、decoy Raw rowは無視する。pendingがあるinventoryではtable確認、column確認、ordered Raw scanを各一回だけ行う。
+- **Enforcement / Tests:** sorted pending／expected order、one-pass ordered query、sourceごとのmatch count、`TestInventorySQLiteAcceptsRepeatedChatGPTRawBindingAndIgnoresDecoys`、およびconflict／missing／duplicate／wrong provenance rejection testsで強制する。
+
 ---
 
 ### Step 06: TurnIDとMessageID

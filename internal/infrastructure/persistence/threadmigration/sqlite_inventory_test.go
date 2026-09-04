@@ -595,6 +595,38 @@ func TestInventorySQLiteResolvesChatGPTEventLogFromArchiveMetadata(t *testing.T)
 	}
 }
 
+func TestInventorySQLiteAcceptsRepeatedChatGPTRawBindingAndIgnoresDecoys(t *testing.T) {
+	fixture := newSQLiteInventoryFixture(t)
+	execInventory(t, fixture.archive, `UPDATE l1_memory_event_archive SET id = 'event-chatgpt' WHERE id = 'archive-chatgpt'`)
+	execInventory(t, fixture.l1, `INSERT INTO l1_raw_record (source_record_id, source_type, thread_id) VALUES (?, ?, ?)`, "decoy-raw", "other", "decoy-conversation")
+
+	result, err := InventorySQLite(context.Background(), SQLiteInventoryInput{L1DB: fixture.l1, ArchiveDB: fixture.archive})
+	if err != nil {
+		t.Fatalf("InventorySQLite() rejected repeated ChatGPT Raw binding: %v", err)
+	}
+	if _, found := result.Plan.LookupBySource(l1MemoryEventArchiveSurface, "event-chatgpt"); !found {
+		t.Fatal("repeated ChatGPT Raw binding archive source was not indexed")
+	}
+	if _, found := result.Plan.LookupChatGPT(fixture.chatGPTID); !found {
+		t.Fatal("ChatGPT mapping was lost after repeated Raw binding")
+	}
+}
+
+func TestInventorySQLiteRejectsConflictingRepeatedChatGPTRawBinding(t *testing.T) {
+	fixture := newSQLiteInventoryFixture(t)
+	const otherConversationID = "other-chatgpt-conversation"
+	otherSessionID, otherThreadID, err := chatGPTLegacyTuple(otherConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execInventory(t, fixture.archive, `UPDATE l1_memory_event_archive SET id = ?, session_id = ?, thread_id = ?, meta_json = ? WHERE id = 'archive-chatgpt'`,
+		"event-chatgpt", otherSessionID, otherThreadID, fmt.Sprintf(`{"conversation_id":%q}`, otherConversationID))
+
+	if _, err := InventorySQLite(context.Background(), SQLiteInventoryInput{L1DB: fixture.l1, ArchiveDB: fixture.archive}); err == nil || !strings.Contains(err.Error(), `legacy l1_memory_event_archive row "event-chatgpt" Raw binding`) || !strings.Contains(err.Error(), "conflicting ChatGPT conversations") {
+		t.Fatalf("conflicting repeated ChatGPT Raw binding error = %v", err)
+	}
+}
+
 func TestInventorySQLiteStreamsRowsWithSingleConnectionAndBoundsOutput(t *testing.T) {
 	fixture := newSQLiteInventoryFixture(t)
 	secretPayload := strings.Repeat("row-body-that-must-not-escape-", 256)
